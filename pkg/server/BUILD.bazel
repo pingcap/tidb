@@ -33,6 +33,7 @@ go_library(
         "//pkg/executor/mppcoordmanager",
         "//pkg/expression",
         "//pkg/extension",
+        "//pkg/format/textrow",
         "//pkg/infoschema",
         "//pkg/infoschema/issyncer/mdldef",
         "//pkg/keyspace",

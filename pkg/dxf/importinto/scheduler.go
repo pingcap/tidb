@@ -402,6 +402,9 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		zap.String("curr-step", proto.Step2Str(task.Type, task.Step)),
 		zap.String("next-step", proto.Step2Str(task.Type, nextStep)),
 		zap.Int("node-count", nodeCnt),
+		zap.String("db-name", taskMeta.Plan.DBName),
+		zap.String("table-name", taskMeta.Plan.TableInfo.Name.O),
+		zap.Int64("db-id", taskMeta.Plan.DBID),
 		zap.Int64("table-id", taskMeta.Plan.TableInfo.ID),
 	)
 	logger.Info("on next subtasks batch")

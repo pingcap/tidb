@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/log"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
 
@@ -45,6 +46,10 @@ var ErrNilKeyspaceMeta = errors.New("GetGroup: keyspace meta is nil")
 
 // ErrInvalidGroupID indicates the keyspace meta contains an invalid meta service group ID.
 var ErrInvalidGroupID = errors.New("invalid meta service group id: it must contain at least one letter and only contain letters, digits, '-' or '_'")
+
+// ErrKeyspaceLevelGCRequired indicates the keyspace must use keyspace-level GC
+// before it can be assigned to a dedicated meta service group.
+var ErrKeyspaceLevelGCRequired = errors.New("meta service group requires keyspace-level GC")
 
 // groupIDPattern validates keyspace meta service group IDs configured in keyspace meta.
 // Rules enforced by the pattern:
@@ -84,6 +89,14 @@ func GetGroup(keyspaceMeta *keyspacepb.KeyspaceMeta, pdAddrs []string) (*Group, 
 		groupID := val
 		if err := validateGroupID(groupID); err != nil {
 			return nil, err
+		}
+		if !pd.IsKeyspaceUsingKeyspaceLevelGC(keyspaceMeta) {
+			return nil, errors.Annotatef(
+				ErrKeyspaceLevelGCRequired,
+				"keyspace %q configured meta service group %q",
+				keyspaceMeta.GetName(),
+				groupID,
+			)
 		}
 		addrsStr, addrsOk := keyspaceMeta.Config[GroupAddrsKey]
 		if !addrsOk {
@@ -144,6 +157,29 @@ func GetInfo(keyspaceMeta *keyspacepb.KeyspaceMeta, pdAddrs []string) (*Info, er
 	}
 	log.Info("return keyspace meta service group info", zap.Any("meta-service-info", metaInfo))
 	return metaInfo, nil
+}
+
+// GroupAddrs returns the meta service group addresses.
+func (info *Info) GroupAddrs() []string {
+	return info.Group.Addrs
+}
+
+// FetchInfo loads meta service info for the keyspace using the PD client.
+func FetchInfo(ctx context.Context, pdClient pd.Client, keyspaceMeta *keyspacepb.KeyspaceMeta) (*Info, error) {
+	pdAddrs, err := GetPDAddrs(ctx, pdClient, false)
+	if err != nil {
+		return nil, err
+	}
+	return GetInfo(keyspaceMeta, pdAddrs)
+}
+
+// GetInfoAndGroupAddrs loads meta service info and returns resolved group addresses.
+func GetInfoAndGroupAddrs(ctx context.Context, pdClient pd.Client, keyspaceMeta *keyspacepb.KeyspaceMeta) (*Info, []string, error) {
+	info, err := FetchInfo(ctx, pdClient, keyspaceMeta)
+	if err != nil {
+		return nil, nil, err
+	}
+	return info, info.GroupAddrs(), nil
 }
 
 // ServiceClient is used to request meta service.

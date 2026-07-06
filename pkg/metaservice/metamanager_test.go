@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/metaservice"
 	"github.com/stretchr/testify/require"
+	pd "github.com/tikv/pd/client"
 )
 
 // TestGetGroup tests the GetGroup function.
@@ -39,8 +40,9 @@ func TestGetGroup(t *testing.T) {
 	// Test case with a valid group ID and addresses
 	keyspaceMeta := &keyspacepb.KeyspaceMeta{
 		Config: map[string]string{
-			metaservice.GroupIDKey:    "group1",
-			metaservice.GroupAddrsKey: expectedAddrsStr,
+			metaservice.GroupIDKey:            "group1",
+			metaservice.GroupAddrsKey:         expectedAddrsStr,
+			pd.KeyspaceConfigGCManagementType: pd.KeyspaceConfigGCManagementTypeKeyspaceLevel,
 		},
 	}
 
@@ -50,8 +52,28 @@ func TestGetGroup(t *testing.T) {
 
 	require.ElementsMatch(t, expectedAddrs, keyspaceMetaServiceGroup.Addrs)
 
+	// Test case where the keyspace does not use keyspace-level GC.
+	keyspaceMeta = &keyspacepb.KeyspaceMeta{
+		Name: "ks-unified-gc",
+		Config: map[string]string{
+			metaservice.GroupIDKey:            "group1",
+			metaservice.GroupAddrsKey:         expectedAddrsStr,
+			pd.KeyspaceConfigGCManagementType: pd.KeyspaceConfigGCManagementTypeUnified,
+		},
+	}
+	keyspaceMetaServiceGroup, err = metaservice.GetGroup(keyspaceMeta, pdAddrs)
+	require.Nil(t, keyspaceMetaServiceGroup)
+	require.ErrorIs(t, err, metaservice.ErrKeyspaceLevelGCRequired)
+	require.ErrorContains(t, err, "requires keyspace-level GC")
+
 	// Test case with blank entries in addresses
-	keyspaceMeta.Config[metaservice.GroupAddrsKey] = " 127.0.0.1:2388, ,127.0.0.1:2389,  "
+	keyspaceMeta = &keyspacepb.KeyspaceMeta{
+		Config: map[string]string{
+			metaservice.GroupIDKey:            "group1",
+			metaservice.GroupAddrsKey:         " 127.0.0.1:2388, ,127.0.0.1:2389,  ",
+			pd.KeyspaceConfigGCManagementType: pd.KeyspaceConfigGCManagementTypeKeyspaceLevel,
+		},
+	}
 	keyspaceMetaServiceGroup, err = metaservice.GetGroup(keyspaceMeta, pdAddrs)
 	require.NoError(t, err)
 	require.Equal(t, "group1", keyspaceMetaServiceGroup.GroupID)
@@ -106,8 +128,9 @@ func TestGetGroupRejectsInvalidGroupID(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			keyspaceMeta := &keyspacepb.KeyspaceMeta{
 				Config: map[string]string{
-					metaservice.GroupIDKey:    tc.groupID,
-					metaservice.GroupAddrsKey: "127.0.0.1:2388,127.0.0.1:2389",
+					metaservice.GroupIDKey:            tc.groupID,
+					metaservice.GroupAddrsKey:         "127.0.0.1:2388,127.0.0.1:2389",
+					pd.KeyspaceConfigGCManagementType: pd.KeyspaceConfigGCManagementTypeKeyspaceLevel,
 				},
 			}
 
@@ -134,8 +157,9 @@ func TestGetInfo(t *testing.T) {
 	// Test case with a valid keyspaceMeta
 	keyspaceMeta := &keyspacepb.KeyspaceMeta{
 		Config: map[string]string{
-			metaservice.GroupIDKey:    "group2",
-			metaservice.GroupAddrsKey: "127.0.0.1:2388,127.0.0.1:2389",
+			metaservice.GroupIDKey:            "group2",
+			metaservice.GroupAddrsKey:         "127.0.0.1:2388,127.0.0.1:2389",
+			pd.KeyspaceConfigGCManagementType: pd.KeyspaceConfigGCManagementTypeKeyspaceLevel,
 		},
 	}
 

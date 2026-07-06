@@ -5,16 +5,20 @@ package task
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	backup "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	kvconfig "github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/gc"
+	"github.com/pingcap/tidb/br/pkg/operation"
+	restoresplit "github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
+	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/require"
 )
@@ -59,6 +63,12 @@ func TestUrlNoQuery(t *testing.T) {
 			expectedValue: "s3://bucket/prefix/",
 		},
 		{
+			inputName:     FlagPiTRAddIndexSQLStorage,
+			expectedName:  "pitr-add-index-sql-storage",
+			inputValue:    "s3://bucket/pitr/add-index?access-key=1&secret-key=2",
+			expectedValue: "s3://bucket/pitr/add-index",
+		},
+		{
 			inputName:     flagFullBackupCipherKey,
 			expectedName:  "crypter.key",
 			inputValue:    "537570657253656372657456616C7565",
@@ -99,12 +109,74 @@ func TestUrlNoQuery(t *testing.T) {
 	}
 }
 
+func TestParseStreamRestoreFlagsPiTRAddIndexSQLStorage(t *testing.T) {
+	command := &cobra.Command{}
+	DefineStreamRestoreFlags(command)
+	require.NoError(t, command.Flags().Set(FlagPiTRAddIndexSQLStorage, "local:///tmp/pitr-add-index"))
+
+	cfg := RestoreConfig{}
+	require.NoError(t, cfg.ParseStreamRestoreFlags(command.Flags()))
+	require.Equal(t, "local:///tmp/pitr-add-index", cfg.PiTRAddIndexSQLStorage)
+}
+
 func TestTiDBConfigUnchanged(t *testing.T) {
 	cfg := config.GetGlobalConfig()
 	restoreConfig := tweakLocalConfForRestore()
 	require.NotEqual(t, config.GetGlobalConfig(), cfg)
 	restoreConfig()
 	require.Equal(t, config.GetGlobalConfig(), cfg)
+}
+
+func TestEnsureOperationContext(t *testing.T) {
+	t.Run("creates command boundary identity", func(t *testing.T) {
+		var cfg Config
+
+		require.NoError(t, cfg.EnsureOperationContext("log-restore"))
+
+		require.NotEmpty(t, cfg.OperationContext.OperationID)
+		require.False(t, cfg.OperationContext.StartedAt.IsZero())
+	})
+
+	t.Run("keeps existing identity snapshot", func(t *testing.T) {
+		startedAt := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+		cfg := Config{
+			OperationContext: operation.Context{
+				OperationID: "operation-id",
+				StartedAt:   startedAt,
+			},
+		}
+
+		require.NoError(t, cfg.EnsureOperationContext("log-restore"))
+
+		require.Equal(t, "operation-id", cfg.OperationContext.OperationID)
+		require.Equal(t, startedAt, cfg.OperationContext.StartedAt)
+	})
+
+	t.Run("rejects incomplete identity snapshot", func(t *testing.T) {
+		cfg := Config{
+			OperationContext: operation.Context{
+				OperationID: "operation-id",
+			},
+		}
+
+		err := cfg.EnsureOperationContext("log-restore")
+
+		require.Error(t, err)
+		require.ErrorContains(t, err, "operation started time")
+	})
+
+	t.Run("rejects started time without operation ID", func(t *testing.T) {
+		cfg := Config{
+			OperationContext: operation.Context{
+				StartedAt: time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC),
+			},
+		}
+
+		err := cfg.EnsureOperationContext("log-restore")
+
+		require.Error(t, err)
+		require.ErrorContains(t, err, "operation ID")
+	})
 }
 
 func TestStripingPDURL(t *testing.T) {
@@ -323,6 +395,7 @@ func expectedDefaultRestoreConfig() RestoreConfig {
 		BatchFlushInterval:       16000000000,
 		DdlBatchSize:             0x80,
 		RegionScanConcurrency:    256,
+		SplitRegionIndexStep:     restoresplit.DefaultRegionIndexStep,
 		WithPlacementPolicy:      "STRICT",
 		UseCheckpoint:            true,
 		AllowPITRFromIncremental: true,

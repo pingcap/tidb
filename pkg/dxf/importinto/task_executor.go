@@ -237,7 +237,7 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		objStore                  storeapi.Storage
 	)
 	defer func() {
-		task.End(zapcore.ErrorLevel, err, zap.Int64("data-kv-files", dataKVFiles.Load()),
+		task.End2(zapcore.ErrorLevel, err, zap.Int64("data-kv-files", dataKVFiles.Load()),
 			zap.Int64("index-kv-files", indexKVFiles.Load()),
 			zap.Stringer("obj-store-access", accessRec))
 	}()
@@ -487,7 +487,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	logger := m.logger.With(zap.Int64("subtask-id", subtask.ID), zap.String("kv-group", sm.KVGroup))
 	task := log.BeginTask(logger, "run subtask")
 	defer func() {
-		task.End(zapcore.ErrorLevel, err, zap.Stringer("obj-store-access", accessRec))
+		task.End2(zapcore.ErrorLevel, err, zap.Stringer("obj-store-access", accessRec))
 	}()
 
 	var mu sync.Mutex
@@ -711,7 +711,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 		zap.String("kv-group", sm.KVGroup))
 	task := log.BeginTask(logger, "run subtask")
 	defer func() {
-		task.End(zapcore.ErrorLevel, err, zap.Stringer("obj-store-access", accessRec))
+		task.End2(zapcore.ErrorLevel, err, zap.Stringer("obj-store-access", accessRec))
 	}()
 
 	_, engineUUID := backend.MakeUUID("", subtask.ID)
@@ -901,7 +901,7 @@ func (e *importExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor
 	if err := json.Unmarshal(task.Meta, &taskMeta); err != nil {
 		return nil, errors.Trace(err)
 	}
-	logger := logutil.BgLogger().With(
+	logger := logutil.ErrVerboseLogger().With(
 		zap.Int64("task-id", task.ID),
 		zap.String("task-key", task.Key),
 		zap.String("step", proto.Step2Str(task.Type, task.Step)),

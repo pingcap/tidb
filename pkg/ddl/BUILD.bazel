@@ -78,6 +78,7 @@ go_library(
     ],
     deps = [
         "//pkg/config",
+        "//pkg/config/deploymode",
         "//pkg/config/kerneltype",
         "//pkg/ddl/bdr",
         "//pkg/ddl/copr",
@@ -114,6 +115,7 @@ go_library(
         "//pkg/infoschema",
         "//pkg/infoschema/context",
         "//pkg/ingestor/engineapi",
+        "//pkg/ingestor/errdef",
         "//pkg/ingestor/globalsort",
         "//pkg/ingestor/ingestctrl",
         "//pkg/ingestor/simplesst",
@@ -313,6 +315,7 @@ go_test(
     deps = [
         "//pkg/autoid_service",
         "//pkg/config",
+        "//pkg/config/deploymode",
         "//pkg/config/kerneltype",
         "//pkg/ddl/copr",
         "//pkg/ddl/ingest",
@@ -348,6 +351,7 @@ go_test(
         "//pkg/expression/exprstatic",
         "//pkg/infoschema",
         "//pkg/infoschema/validatorapi",
+        "//pkg/ingestor/errdef",
         "//pkg/ingestor/globalsort",
         "//pkg/ingestor/simplesst",
         "//pkg/keyspace",

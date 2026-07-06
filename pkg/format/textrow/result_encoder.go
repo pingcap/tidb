@@ -1,4 +1,4 @@
-// Copyright 2015 PingCAP, Inc.
+// Copyright 2026 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -33,7 +33,7 @@
 // The above copyright notice and this permission notice shall be included in all
 // copies or substantial portions of the Software.
 
-package column
+package textrow
 
 import (
 	"bytes"
@@ -53,6 +53,8 @@ type ResultEncoder struct {
 
 	buffer *bytes.Buffer
 
+	scratch []byte
+
 	// chsName and encoding are unchanged after the initialization from
 	// session variable @@character_set_results.
 	chsName string
@@ -68,14 +70,19 @@ func NewResultEncoder(chs string) *ResultEncoder {
 		chsName:  chs,
 		encoding: charset.FindEncodingTakeUTF8AsNoop(chs),
 		buffer:   &bytes.Buffer{},
+		scratch:  make([]byte, 0, 48),
 		isBinary: chs == charset.CharsetBin,
 		isNull:   len(chs) == 0,
 	}
 }
 
-// Clean prevent the ResultEncoder from holding too much memory.
+// Clean releases the internal buffer so the ResultEncoder does not hold too much
+// memory. It is meant to be deferred at the end of a request/statement: the
+// encoder must not be reused afterwards, as the Encode* methods would then
+// re-allocate a temporary buffer on every call.
 func (d *ResultEncoder) Clean() {
 	d.buffer = nil
+	d.scratch = nil
 }
 
 // UpdateDataEncoding updates the data encoding.
@@ -88,51 +95,25 @@ func (d *ResultEncoder) UpdateDataEncoding(chsID uint16) {
 	d.dataIsBinary = chsID == mysql.BinaryDefaultCollationID
 }
 
-// ColumnTypeInfoCharsetID returns the charset ID for the column type info.
-func (d *ResultEncoder) ColumnTypeInfoCharsetID(info *Info) uint16 {
-	// Only replace the charset when @@character_set_results is valid and
-	// the target column is a non-binary string.
-	charset := info.dumpCharset()
-	if d.isNull || len(d.chsName) == 0 || !isStringColumnType(info.Type) {
-		return charset
+// ColumnCharsetID returns the charset ID to advertise for a column in the
+// text-protocol column definition. dumpCharset is the column's own charset and
+// isStringCol reports whether the column is a non-binary string type. When
+// @@character_set_results is set and the column is a non-binary string, the
+// result charset overrides the column charset (binary stays binary). Keeping the
+// decision here lets isNull/chsName stay private.
+func (d *ResultEncoder) ColumnCharsetID(dumpCharset uint16, isStringCol bool) uint16 {
+	if d.isNull || len(d.chsName) == 0 || !isStringCol {
+		return dumpCharset
 	}
-	if charset == mysql.BinaryDefaultCollationID {
+	if dumpCharset == mysql.BinaryDefaultCollationID {
 		return mysql.BinaryDefaultCollationID
 	}
 	return uint16(mysql.CharsetNameToID(d.chsName))
 }
 
-// EncodeMeta encodes bytes for meta info like column names.
-// Note that the result should be consumed immediately.
-func (d *ResultEncoder) EncodeMeta(src []byte) []byte {
-	return d.EncodeWith(src, d.encoding)
-}
-
-// EncodeData encodes bytes for row data.
-// Note that the result should be consumed immediately.
-func (d *ResultEncoder) EncodeData(src []byte) []byte {
-	// For the following cases, TiDB encodes the results with column charset
-	// instead of @@character_set_results:
-	//   - @@character_set_result = null.
-	//   - @@character_set_result = binary.
-	//   - The column is binary type like blob, binary char/varchar.
-	if d.isNull || d.isBinary || d.dataIsBinary {
-		// Use the column charset to encode.
-		return d.EncodeWith(src, d.dataEncoding)
-	}
-	return d.EncodeWith(src, d.encoding)
-}
-
-// EncodeWith encodes bytes with the given encoding.
-func (d *ResultEncoder) EncodeWith(src []byte, enc charset.Encoding) []byte {
-	data, err := enc.Transform(d.buffer, src, charset.OpEncodeReplace)
-	if err != nil {
-		logutil.BgLogger().Debug("encode error", zap.Error(err))
-	}
-	return data
-}
-
-func isStringColumnType(tp byte) bool {
+// IsStringColumnType reports whether tp is a non-binary string-like type for
+// text-protocol metadata charset rewriting.
+func IsStringColumnType(tp byte) bool {
 	switch tp {
 	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBit,
 		mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob,
@@ -143,4 +124,34 @@ func isStringColumnType(tp byte) bool {
 		return true
 	}
 	return false
+}
+
+// EncodeMeta encodes bytes for meta info like column names.
+// Note that the result should be consumed immediately.
+func (d *ResultEncoder) EncodeMeta(src []byte) []byte {
+	return d.encodeWith(src, d.encoding)
+}
+
+// EncodeData encodes bytes for row data.
+// Note that the result should be consumed immediately.
+func (d *ResultEncoder) EncodeData(src []byte) []byte {
+	// For the following cases, TiDB encodes the results with column charset
+	// instead of @@character_set_results:
+	//   - @@character_set_results = null.
+	//   - @@character_set_results = binary.
+	//   - The column is binary type like blob, binary char/varchar.
+	if d.isNull || d.isBinary || d.dataIsBinary {
+		// Use the column charset to encode.
+		return d.encodeWith(src, d.dataEncoding)
+	}
+	return d.encodeWith(src, d.encoding)
+}
+
+// encodeWith encodes bytes with the given encoding.
+func (d *ResultEncoder) encodeWith(src []byte, enc charset.Encoding) []byte {
+	data, err := enc.Transform(d.buffer, src, charset.OpEncodeReplace)
+	if err != nil {
+		logutil.BgLogger().Debug("encode error", zap.Error(err))
+	}
+	return data
 }
