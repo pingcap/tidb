@@ -160,7 +160,7 @@ func (dm *DDLReorgMeta) SetMaxWriteSpeed(maxWriteSpeed int) {
 // GetUseNewCollateOrDefault returns the captured new-collation mode, or
 // defaultVal for reorg metadata generated before the field existed.
 func (dm *DDLReorgMeta) GetUseNewCollateOrDefault(defaultVal bool) bool {
-	if dm == nil || dm.UseNewCollate == nil {
+	if dm.UseNewCollate == nil {
 		return defaultVal
 	}
 	return *dm.UseNewCollate
