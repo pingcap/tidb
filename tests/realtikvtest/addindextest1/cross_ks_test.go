@@ -79,7 +79,7 @@ func TestAddIndexOnUserKeyspaceWithDifferentNewCollation(t *testing.T) {
 		collate.SetNewCollationEnabledForTest(originNewCollationEnabled)
 	})
 
-	const userKeyspace = "keyspace2"
+	const userKeyspace = "keyspacecollate"
 	runtimes := realtikvtest.PrepareForCrossKSTestWithNewCollation(t, map[string]bool{
 		keyspace.System: true,
 		userKeyspace:    false,
