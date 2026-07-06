@@ -20,10 +20,10 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/schemaver"
-	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	kvstore "github.com/pingcap/tidb/pkg/store"
@@ -68,13 +68,18 @@ func TestAddIndexOnUserKeyspaceWithDifferentNewCollation(t *testing.T) {
 	if kerneltype.IsClassic() {
 		t.Skip("This test is only for nextgen kernel, skip it in classic kernel")
 	}
+	restore := config.RestoreFunc()
+	t.Cleanup(restore)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = true
+	})
 
 	originNewCollationEnabled := collate.NewCollationEnabled()
 	t.Cleanup(func() {
 		collate.SetNewCollationEnabledForTest(originNewCollationEnabled)
 	})
 
-	const userKeyspace = "keyspacecollateadd"
+	const userKeyspace = "keyspace2"
 	runtimes := realtikvtest.PrepareForCrossKSTestWithNewCollation(t, map[string]bool{
 		keyspace.System: true,
 		userKeyspace:    false,
@@ -86,19 +91,19 @@ func TestAddIndexOnUserKeyspaceWithDifferentNewCollation(t *testing.T) {
 	require.False(t, collate.NewCollationEnabled())
 
 	var backfillInitCnt atomic.Int64
-	testfailpoint.EnableCall(
+	testfailpoint.Enable(
 		t,
-		"github.com/pingcap/tidb/pkg/dxf/framework/storage/beforeSubmitTask",
-		func(*int, *proto.ExtraParams) {
-			collate.SetNewCollationEnabledForTest(true)
-		},
+		"github.com/pingcap/tidb/pkg/ddl/overrideDefaultUseNewCollateForBackfillStep",
+		"return(true)",
 	)
 	testfailpoint.EnableCall(
 		t,
-		"github.com/pingcap/tidb/pkg/ddl/beforeGetUserTableForBackfillStep",
-		func(job *model.Job) {
+		"github.com/pingcap/tidb/pkg/ddl/afterResolveUserTableNewCollateForBackfillStep",
+		func(job *model.Job, defaultUseNewCollate bool, useNewCollate bool) {
 			require.False(t, job.ReorgMeta.GetUseNewCollateOrDefault(true))
-			require.True(t, collate.NewCollationEnabled())
+			require.True(t, defaultUseNewCollate)
+			require.False(t, useNewCollate)
+			require.False(t, collate.NewCollationEnabled())
 			backfillInitCnt.Add(1)
 		},
 	)

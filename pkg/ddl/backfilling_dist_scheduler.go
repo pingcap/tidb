@@ -202,8 +202,14 @@ func getUserTableFromTaskStore(
 		return nil, err
 	}
 	// we don't touch table data during add-index, a fake Allocators is enough.
+	defaultUseNewCollate := collate.NewCollationEnabled()
+	failpoint.Inject("overrideDefaultUseNewCollateForBackfillStep", func(val failpoint.Value) {
+		defaultUseNewCollate = val.(bool)
+	})
+	useNewCollate := job.ReorgMeta.GetUseNewCollateOrDefault(defaultUseNewCollate)
+	failpoint.InjectCall("afterResolveUserTableNewCollateForBackfillStep", job, defaultUseNewCollate, useNewCollate)
 	tbl, err := tables.TableFromMetaWithCollate(
-		job.ReorgMeta.GetUseNewCollateOrDefault(collate.NewCollationEnabled()),
+		useNewCollate,
 		autoid.NewAllocators(tblInfo.SepAutoInc()),
 		tblInfo,
 	)

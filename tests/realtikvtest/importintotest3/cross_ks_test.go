@@ -144,7 +144,7 @@ func TestImportIntoOnUserKeyspaceWithDifferentNewCollation(t *testing.T) {
 		collate.SetNewCollationEnabledForTest(originNewCollationEnabled)
 	})
 
-	const userKeyspace = "keyspacecollateimport"
+	const userKeyspace = "keyspace2"
 	runtimes := realtikvtest.PrepareForCrossKSTestWithNewCollation(t, map[string]bool{
 		keyspace.System: true,
 		userKeyspace:    false,
@@ -163,7 +163,7 @@ func TestImportIntoOnUserKeyspaceWithDifferentNewCollation(t *testing.T) {
 		objStore.Close()
 	})
 
-	var prepareCnt atomic.Int64
+	var taskRefreshCnt atomic.Int64
 	testfailpoint.EnableCall(
 		t,
 		"github.com/pingcap/tidb/pkg/dxf/framework/storage/beforeSubmitTask",
@@ -173,13 +173,16 @@ func TestImportIntoOnUserKeyspaceWithDifferentNewCollation(t *testing.T) {
 	)
 	testfailpoint.EnableCall(
 		t,
-		"github.com/pingcap/tidb/pkg/dxf/importinto/afterPrepare",
+		"github.com/pingcap/tidb/pkg/dxf/framework/scheduler/afterRefreshTask",
 		func(task *proto.Task) {
+			if task == nil || task.Type != proto.ImportInto || !strings.HasPrefix(task.Key, userKeyspace+"/ImportInto/") {
+				return
+			}
 			var taskMeta importinto.TaskMeta
 			require.NoError(t, json.Unmarshal(task.Meta, &taskMeta))
 			require.False(t, taskMeta.Plan.GetUseNewCollateOrDefault(true))
 			require.True(t, collate.NewCollationEnabled())
-			prepareCnt.Add(1)
+			taskRefreshCnt.Add(1)
 		},
 	)
 
@@ -589,11 +592,11 @@ func TestImportIntoOnUserKeyspaceWithDifferentNewCollation(t *testing.T) {
 				userTK.MustExec(sql)
 			}
 			require.NoError(t, objStore.WriteFile(ctx, tc.fileName, []byte(tc.fileData)))
-			before := prepareCnt.Load()
+			before := taskRefreshCnt.Load()
 			fileURL := fmt.Sprintf("s3://next-gen-test/collate-data/%s?%s", tc.fileName, s3Args)
 			result := userTK.MustQuery(fmt.Sprintf(tc.importSQL, fileURL)).Rows()
 			require.Len(t, result, 1)
-			require.Greater(t, prepareCnt.Load(), before)
+			require.Greater(t, taskRefreshCnt.Load(), before)
 
 			collate.SetNewCollationEnabledForTest(false)
 			checkImportTableAndIndexes(userTK, tc.table, tc.indexes, "3")
