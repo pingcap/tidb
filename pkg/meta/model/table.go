@@ -581,19 +581,6 @@ func FindFKInfoByName(fks []*FKInfo, name string) *FKInfo {
 	return nil
 }
 
-<<<<<<< HEAD
-=======
-// GetIdxChangingFieldType gets the field type of index column.
-// Since both old/new type may coexist in one column during modify column,
-// we need to get the correct type for index column.
-func GetIdxChangingFieldType(idxCol *IndexColumn, col *ColumnInfo) *types.FieldType {
-	if idxCol.UseChangingType && col.ChangingFieldType != nil {
-		return col.ChangingFieldType
-	}
-	return &col.FieldType
-}
-
->>>>>>> ab1e19714d6 (codec, table: make new collation setting explicit in encoding (#69566))
 // TableNameInfo provides meta data describing a table name info.
 type TableNameInfo struct {
 	ID   int64     `json:"id"`

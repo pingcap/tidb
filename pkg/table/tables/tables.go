@@ -267,14 +267,7 @@ func initTableIndices(t *TableCommon) error {
 		}
 
 		// Use partition ID for index, because TableCommon may be table or partition.
-<<<<<<< HEAD
-		idx := NewIndex(t.physicalTableID, tblInfo, idxInfo)
-=======
-		idx, err := NewIndexWithCollate(t.encoder.UseNewCollate(), t.physicalTableID, tblInfo, idxInfo)
-		if err != nil {
-			return err
-		}
->>>>>>> ab1e19714d6 (codec, table: make new collation setting explicit in encoding (#69566))
+		idx := NewIndexWithCollate(t.encoder.UseNewCollate(), t.physicalTableID, tblInfo, idxInfo)
 		intest.AssertFunc(func() bool {
 			// `TableCommon.indices` is type of `[]table.Index` to implement interface method `Table.Indices`.
 			// However, we have an assumption that the specific type of each element in it should always be `*index`.

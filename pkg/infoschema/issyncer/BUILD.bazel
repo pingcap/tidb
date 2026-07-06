@@ -4,6 +4,7 @@ go_library(
     name = "issyncer",
     srcs = [
         "deferfn.go",
+        "filter.go",
         "loader.go",
         "mdl_check.go",
         "syncer.go",

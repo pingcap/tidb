@@ -377,14 +377,8 @@ type expressionRewriter struct {
 	disableFoldCounter int
 	tryFoldCounter     int
 
-<<<<<<< HEAD
-	planCtx *exprRewriterPlanCtx
-=======
-	astNodeStack []ast.Node
-
 	planCtx       *exprRewriterPlanCtx
 	useNewCollate bool
->>>>>>> ab1e19714d6 (codec, table: make new collation setting explicit in encoding (#69566))
 }
 
 func (er *expressionRewriter) ctxStackLen() int {

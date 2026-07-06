@@ -1618,11 +1618,7 @@ func GenIndexValueForClusteredIndexVersion1(useNewCollate bool, loc *time.Locati
 			if mysql.HasPriKeyFlag(col.GetFlag()) {
 				continue
 			}
-<<<<<<< HEAD
-			if types.NeedRestoredData(&col.FieldType) {
-=======
-			if types.NeedRestoredDataWithCollate(model.GetIdxChangingFieldType(idxCol, col), useNewCollate) {
->>>>>>> ab1e19714d6 (codec, table: make new collation setting explicit in encoding (#69566))
+			if types.NeedRestoredDataWithCollate(&col.FieldType, useNewCollate) {
 				colIds = append(colIds, col.ID)
 				if collate.IsBinCollation(col.GetCollate()) {
 					allRestoredData = append(allRestoredData, types.NewUintDatum(uint64(stringutil.GetTailSpaceCount(indexedValues[i].GetString()))))
