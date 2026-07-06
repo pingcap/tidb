@@ -358,7 +358,7 @@ func (p *Plan) GetOnDupKeyMode() OnDupKeyMode {
 // GetUseNewCollateOrDefault returns the captured collation mode, or defaultVal
 // for import metadata generated before the field existed.
 func (p *Plan) GetUseNewCollateOrDefault(defaultVal bool) bool {
-	if p == nil || p.UseNewCollate == nil {
+	if p.UseNewCollate == nil {
 		return defaultVal
 	}
 	return *p.UseNewCollate
