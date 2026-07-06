@@ -386,7 +386,7 @@ create table t (a int auto_increment primary key, b int);
 alter table t auto_increment = 110, auto_increment = 90;
 show warnings;
 Level	Code	Message
-Note	1105	Can't reset AUTO_INCREMENT to 90 without FORCE option, using 110 instead
+Note	1105	Your specified '90' is ignored and triggered automatic rebasing. AUTO_INCREMENT has been updated to 110.
 insert into t (b) values (1);
 select * from t;
 a	b
