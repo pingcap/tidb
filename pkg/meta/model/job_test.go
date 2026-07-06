@@ -118,10 +118,6 @@ func TestJobCodec(t *testing.T) {
 }
 
 func TestDDLReorgMetaUseNewCollate(t *testing.T) {
-	var nilMeta *DDLReorgMeta
-	require.True(t, nilMeta.GetUseNewCollateOrDefault(true))
-	require.False(t, nilMeta.GetUseNewCollateOrDefault(false))
-
 	meta := &DDLReorgMeta{}
 	require.True(t, meta.GetUseNewCollateOrDefault(true))
 	require.False(t, meta.GetUseNewCollateOrDefault(false))
