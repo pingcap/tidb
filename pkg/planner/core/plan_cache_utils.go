@@ -861,8 +861,9 @@ func checkTypesCompatibility4PC(expected, actual any) bool {
 		return false
 	}
 	for i := range tpsActual {
-		// We only use part of logic of `func (ft *FieldType) Equal(other *FieldType)` here because (1) only numeric and
-		// string types will show up here, and (2) we don't need flen and decimal to be matched exactly to use plan cache
+		// We only use part of the logic of `func (ft *FieldType) Equal(other *FieldType)` here:
+		// flen/decimal need not match exactly for most parameter types, but a few do need the
+		// extra checks below (decimal precision/scale, and the fsp of temporal types).
 		tpEqual := (tpsExpected[i].GetType() == tpsActual[i].GetType()) ||
 			(tpsExpected[i].GetType() == mysql.TypeVarchar && tpsActual[i].GetType() == mysql.TypeVarString) ||
 			(tpsExpected[i].GetType() == mysql.TypeVarString && tpsActual[i].GetType() == mysql.TypeVarchar)
@@ -874,6 +875,13 @@ func checkTypesCompatibility4PC(expected, actual any) bool {
 		// We can only use the plan when both Flen and Decimal should less equal than the cached one.
 		// We assume here that there is no correctness problem when the precision of the parameters is less than the precision of the parameters in the cache.
 		if tpEqual && tpsExpected[i].GetType() == mysql.TypeNewDecimal && !(tpsExpected[i].GetFlen() >= tpsActual[i].GetFlen() && tpsExpected[i].GetDecimal() >= tpsActual[i].GetDecimal()) {
+			return false
+		}
+		// Temporal types (datetime/timestamp/duration) carry fractional-seconds precision
+		// (fsp) in the Decimal field. A cached plan may bake a parameter's fsp into
+		// expression evaluation. Reusing it with a different current parameter fsp can
+		// round to the wrong precision, so require an exact fsp match here.
+		if tpEqual && types.IsTypeFractionable(tpsExpected[i].GetType()) && tpsExpected[i].GetDecimal() != tpsActual[i].GetDecimal() {
 			return false
 		}
 	}
