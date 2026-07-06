@@ -163,26 +163,26 @@ func TestImportIntoOnUserKeyspaceWithDifferentNewCollation(t *testing.T) {
 		objStore.Close()
 	})
 
-	var (
-		prepareCnt  atomic.Int64
-		metaMatched atomic.Bool
+	var prepareCnt atomic.Int64
+	testfailpoint.EnableCall(
+		t,
+		"github.com/pingcap/tidb/pkg/dxf/framework/storage/beforeSubmitTask",
+		func(*int, *proto.ExtraParams) {
+			collate.SetNewCollationEnabledForTest(true)
+		},
 	)
-	metaMatched.Store(true)
 	testfailpoint.EnableCall(
 		t,
 		"github.com/pingcap/tidb/pkg/dxf/importinto/afterPrepare",
 		func(task *proto.Task) {
 			var taskMeta importinto.TaskMeta
-			if err := json.Unmarshal(task.Meta, &taskMeta); err != nil ||
-				taskMeta.Plan.GetUseNewCollateOrDefault(true) {
-				metaMatched.Store(false)
-			}
-			collate.SetNewCollationEnabledForTest(true)
+			require.NoError(t, json.Unmarshal(task.Meta, &taskMeta))
+			require.False(t, taskMeta.Plan.GetUseNewCollateOrDefault(true))
+			require.True(t, collate.NewCollationEnabled())
 			prepareCnt.Add(1)
 		},
 	)
 
-	require.True(t, metaMatched.Load())
 	prepareAndUseDB("cross_ks_collate", userTK)
 
 	cases := []struct {
@@ -594,7 +594,6 @@ func TestImportIntoOnUserKeyspaceWithDifferentNewCollation(t *testing.T) {
 			result := userTK.MustQuery(fmt.Sprintf(tc.importSQL, fileURL)).Rows()
 			require.Len(t, result, 1)
 			require.Greater(t, prepareCnt.Load(), before)
-			require.True(t, metaMatched.Load())
 
 			collate.SetNewCollationEnabledForTest(false)
 			checkImportTableAndIndexes(userTK, tc.table, tc.indexes, "3")
