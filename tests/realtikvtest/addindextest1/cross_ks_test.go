@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/schemaver"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	kvstore "github.com/pingcap/tidb/pkg/store"
@@ -85,24 +86,32 @@ func TestAddIndexOnUserKeyspaceWithDifferentNewCollation(t *testing.T) {
 	require.False(t, collate.NewCollationEnabled())
 
 	var (
-		backfillInitCnt atomic.Int64
-		metaMatched     atomic.Bool
+		backfillInitCnt             atomic.Int64
+		unexpectedUseNewCollateMeta atomic.Bool
+		unexpectedExecutorGlobal    atomic.Bool
 	)
-	metaMatched.Store(true)
+	testfailpoint.EnableCall(
+		t,
+		"github.com/pingcap/tidb/pkg/dxf/framework/storage/beforeSubmitTask",
+		func(*int, *proto.ExtraParams) {
+			collate.SetNewCollationEnabledForTest(true)
+		},
+	)
 	testfailpoint.EnableCall(
 		t,
 		"github.com/pingcap/tidb/pkg/ddl/beforeGetUserTableForBackfillStep",
 		func(job *model.Job) {
-			if job == nil || job.ReorgMeta == nil || job.ReorgMeta.GetUseNewCollateOrDefault(true) {
-				metaMatched.Store(false)
+			if job.ReorgMeta.GetUseNewCollateOrDefault(true) {
+				unexpectedUseNewCollateMeta.Store(true)
 			}
-			collate.SetNewCollationEnabledForTest(true)
+			if !collate.NewCollationEnabled() {
+				unexpectedExecutorGlobal.Store(true)
+			}
 			backfillInitCnt.Add(1)
 		},
 	)
 
 	tk.PrepareDB("crossks_collate")
-	require.True(t, metaMatched.Load())
 
 	cases := []struct {
 		name        string
@@ -224,7 +233,8 @@ func TestAddIndexOnUserKeyspaceWithDifferentNewCollation(t *testing.T) {
 				collate.SetNewCollationEnabledForTest(false)
 				tk.MustExec(sql)
 				require.Greater(t, backfillInitCnt.Load(), before)
-				require.True(t, metaMatched.Load())
+				require.False(t, unexpectedUseNewCollateMeta.Load())
+				require.False(t, unexpectedExecutorGlobal.Load())
 				collate.SetNewCollationEnabledForTest(false)
 			}
 			checkTableAndIndexes(tk, tc.table, tc.indexes, "3")
