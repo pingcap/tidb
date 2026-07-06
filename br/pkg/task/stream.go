@@ -1908,6 +1908,13 @@ func restoreStream(
 		return errors.Trace(err)
 	}
 
+	// Force-rebase autoid service allocators for AUTO_ID_CACHE=1 tables so
+	// their in-memory state reflects the PiTR-replayed persisted IID value.
+	if err = client.RebaseAutoIDAllocatorsForSepAutoIncTables(ctx, schemasReplace); err != nil {
+    	return errors.Trace(err)
+	}
+
+
 	if err = client.CleanUpKVFiles(ctx); err != nil {
 		return errors.Annotate(err, "failed to clean up")
 	}
