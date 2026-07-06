@@ -139,7 +139,7 @@ func newBaseBuiltinFunc(ctx BuildContext, funcName string, args []Expression, tp
 		tp:   tp,
 	}
 	bf.SetCharsetAndCollation(ec.Charset, ec.Collation)
-	bf.setCollator(getCollatorFromBuildContext(ctx, ec.Collation))
+	bf.setCollator(collate.GetCollator(ec.Collation))
 	bf.SetCoercibility(ec.Coer)
 	bf.SetRepertoire(ec.Repe)
 	adjustNullFlagForReturnType(ctx.GetEvalCtx(), funcName, args, bf)
@@ -230,7 +230,7 @@ func newBaseBuiltinFuncWithTp(ctx BuildContext, funcName string, args []Expressi
 		tp:   fieldType,
 	}
 	bf.SetCharsetAndCollation(ec.Charset, ec.Collation)
-	bf.setCollator(getCollatorFromBuildContext(ctx, ec.Collation))
+	bf.setCollator(collate.GetCollator(ec.Collation))
 	bf.SetCoercibility(ec.Coer)
 	bf.SetRepertoire(ec.Repe)
 	// note this function must be called after wrap cast function to the args
@@ -290,7 +290,7 @@ func newBaseBuiltinFuncWithFieldTypes(ctx BuildContext, funcName string, args []
 		tp:   fieldType,
 	}
 	bf.SetCharsetAndCollation(ec.Charset, ec.Collation)
-	bf.setCollator(getCollatorFromBuildContext(ctx, ec.Collation))
+	bf.setCollator(collate.GetCollator(ec.Collation))
 	bf.SetCoercibility(ec.Coer)
 	bf.SetRepertoire(ec.Repe)
 	// note this function must be called after wrap cast function to the args

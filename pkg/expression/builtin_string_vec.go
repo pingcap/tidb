@@ -1294,7 +1294,7 @@ func (b *builtinStrcmpSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, resul
 		if result.IsNull(i) {
 			continue
 		}
-		i64s[i] = int64(b.ctor.Compare(leftBuf.GetString(i), rightBuf.GetString(i)))
+		i64s[i] = int64(types.CompareString(leftBuf.GetString(i), rightBuf.GetString(i), b.collation))
 	}
 	return nil
 }

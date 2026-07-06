@@ -267,7 +267,7 @@ func (b *builtinLeastStringSig) vecEvalString(ctx EvalContext, input *chunk.Chun
 			}
 			srcStr := src.GetString(i)
 			argStr := arg.GetString(i)
-			if b.ctor.Compare(srcStr, argStr) < 0 {
+			if types.CompareString(srcStr, argStr, b.collation) < 0 {
 				dst.AppendString(srcStr)
 			} else {
 				dst.AppendString(argStr)
@@ -790,7 +790,7 @@ func (b *builtinGreatestStringSig) vecEvalString(ctx EvalContext, input *chunk.C
 			}
 			srcStr := src.GetString(i)
 			argStr := arg.GetString(i)
-			if b.ctor.Compare(srcStr, argStr) > 0 {
+			if types.CompareString(srcStr, argStr, b.collation) > 0 {
 				dst.AppendString(srcStr)
 			} else {
 				dst.AppendString(argStr)

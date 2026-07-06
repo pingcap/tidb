@@ -818,10 +818,7 @@ func SubstituteCorCol2Constant(ctx BuildContext, expr Expression) (Expression, e
 }
 
 func locateStringWithCollation(str, substr, coll string) int64 {
-	return locateStringWithCollator(str, substr, collate.GetCollator(coll))
-}
-
-func locateStringWithCollator(str, substr string, collator collate.Collator) int64 {
+	collator := collate.GetCollator(coll)
 	strKey := collator.KeyWithoutTrimRightSpace(str)
 	subStrKey := collator.KeyWithoutTrimRightSpace(substr)
 

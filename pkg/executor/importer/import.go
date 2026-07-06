@@ -65,7 +65,6 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -336,10 +335,10 @@ type Plan struct {
 	ManualRecovery bool
 	// the keyspace name when submitting this job, only for import-into
 	Keyspace string
-	// UseNewCollate captures the submitting keyspace collation mode for key encoding.
-	// It is needed because an import task may execute in another keyspace with a
-	// different collation setting. Nil means old metadata and should fall back to
-	// the caller-provided default.
+	// UseNewCollate captures the collation mode used to build the target table
+	// snapshot. It is needed because an import task may execute in another
+	// keyspace with a different collation setting. Nil means old metadata and
+	// should fall back to the caller-provided default.
 	UseNewCollate *bool `json:"use_new_collate,omitempty"`
 }
 
@@ -364,7 +363,7 @@ func (p *Plan) GetUseNewCollateOrDefault(defaultVal bool) bool {
 	return *p.UseNewCollate
 }
 
-// SetUseNewCollate stores the submitting keyspace collation mode for key encoding.
+// SetUseNewCollate stores the collation mode used to rebuild the target table snapshot.
 func (p *Plan) SetUseNewCollate(useNewCollate bool) {
 	p.UseNewCollate = &useNewCollate
 }
@@ -573,7 +572,7 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 		User:                   userSctx.GetSessionVars().User.String(),
 		Keyspace:               userSctx.GetStore().GetKeyspace(),
 	}
-	p.SetUseNewCollate(collate.NewCollationEnabled())
+	p.SetUseNewCollate(tbl.UseNewCollate())
 	if err := p.initOptions(ctx, userSctx, plan.Options); err != nil {
 		return nil, err
 	}

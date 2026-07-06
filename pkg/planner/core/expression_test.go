@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/stretchr/testify/require"
 )
 
@@ -70,114 +69,6 @@ func buildExprAndEval(t *testing.T, ctx expression.BuildContext, exprNode any) t
 	val, err := expr.Eval(ctx.GetEvalCtx(), chunk.Row{})
 	require.NoError(t, err)
 	return val
-}
-
-func TestBuildSimpleExprWithUseNewCollate(t *testing.T) {
-	origin := collate.NewCollationEnabled()
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(origin)
-
-	ctx := coretestsdk.MockContext()
-	defer func() {
-		domain.GetDomain(ctx).StatsHandle().Close()
-	}()
-
-	tests := []struct {
-		name      string
-		expr      string
-		oldResult string
-		newResult string
-	}{
-		{
-			name: "eq",
-			expr: "if(" +
-				"_utf8mb4'aaa' COLLATE utf8mb4_general_ci = " +
-				"_utf8mb4'AAA' COLLATE utf8mb4_general_ci, 'match', 'miss')",
-			oldResult: "miss",
-			newResult: "match",
-		},
-		{
-			name: "null safe eq",
-			expr: "if(" +
-				"_utf8mb4'aaa' COLLATE utf8mb4_general_ci <=> " +
-				"_utf8mb4'AAA' COLLATE utf8mb4_general_ci, 'match', 'miss')",
-			oldResult: "miss",
-			newResult: "match",
-		},
-		{
-			name: "in",
-			expr: "if(" +
-				"_utf8mb4'aaa' COLLATE utf8mb4_general_ci in " +
-				"(_utf8mb4'AAA' COLLATE utf8mb4_general_ci), 'match', 'miss')",
-			oldResult: "miss",
-			newResult: "match",
-		},
-		{
-			name: "strcmp",
-			expr: "if(strcmp(" +
-				"_utf8mb4'aaa' COLLATE utf8mb4_general_ci, " +
-				"_utf8mb4'AAA' COLLATE utf8mb4_general_ci) = 0, 'match', 'miss')",
-			oldResult: "miss",
-			newResult: "match",
-		},
-		{
-			name: "least",
-			expr: "least(" +
-				"_utf8mb4'aaa' COLLATE utf8mb4_general_ci, " +
-				"_utf8mb4'AAA' COLLATE utf8mb4_general_ci)",
-			oldResult: "AAA",
-			newResult: "aaa",
-		},
-		{
-			name: "greatest",
-			expr: "greatest(" +
-				"_utf8mb4'AAA' COLLATE utf8mb4_general_ci, " +
-				"_utf8mb4'aaa' COLLATE utf8mb4_general_ci)",
-			oldResult: "aaa",
-			newResult: "AAA",
-		},
-		{
-			name: "locate",
-			expr: "if(locate(" +
-				"_utf8mb4'A' COLLATE utf8mb4_general_ci, " +
-				"_utf8mb4'aaa' COLLATE utf8mb4_general_ci) = 1, 'match', 'miss')",
-			oldResult: "miss",
-			newResult: "match",
-		},
-		{
-			name: "field",
-			expr: "if(field(" +
-				"_utf8mb4'aaa' COLLATE utf8mb4_general_ci, " +
-				"_utf8mb4'AAA' COLLATE utf8mb4_general_ci) = 1, 'match', 'miss')",
-			oldResult: "miss",
-			newResult: "match",
-		},
-		{
-			name: "weight string",
-			expr: "if(weight_string(" +
-				"_utf8mb4'aaa' COLLATE utf8mb4_general_ci) = weight_string(" +
-				"_utf8mb4'AAA' COLLATE utf8mb4_general_ci), 'match', 'miss')",
-			oldResult: "miss",
-			newResult: "match",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			exprNode := parseExpr(t, tt.expr)
-			expr, err := buildExpr(t, ctx, exprNode, expression.WithUseNewCollate(false))
-			require.NoError(t, err)
-			val, err := expr.Eval(ctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
-			require.NoError(t, err)
-			require.Equal(t, tt.oldResult, val.GetString())
-
-			expr, err = buildExpr(t, ctx, exprNode, expression.WithUseNewCollate(true))
-			require.NoError(t, err)
-			val, err = expr.Eval(ctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
-			require.NoError(t, err)
-			require.Equal(t, tt.newResult, val.GetString())
-		})
-	}
 }
 
 type testCase struct {

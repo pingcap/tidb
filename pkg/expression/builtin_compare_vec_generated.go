@@ -125,7 +125,7 @@ func (b *builtinLTStringSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, res
 		if result.IsNull(i) {
 			continue
 		}
-		val := b.ctor.Compare(buf0.GetString(i), buf1.GetString(i))
+		val := types.CompareString(buf0.GetString(i), buf1.GetString(i), b.collation)
 		i64s[i] = boolToInt64(val < 0)
 	}
 	return nil
@@ -349,7 +349,7 @@ func (b *builtinLEStringSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, res
 		if result.IsNull(i) {
 			continue
 		}
-		val := b.ctor.Compare(buf0.GetString(i), buf1.GetString(i))
+		val := types.CompareString(buf0.GetString(i), buf1.GetString(i), b.collation)
 		i64s[i] = boolToInt64(val <= 0)
 	}
 	return nil
@@ -573,7 +573,7 @@ func (b *builtinGTStringSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, res
 		if result.IsNull(i) {
 			continue
 		}
-		val := b.ctor.Compare(buf0.GetString(i), buf1.GetString(i))
+		val := types.CompareString(buf0.GetString(i), buf1.GetString(i), b.collation)
 		i64s[i] = boolToInt64(val > 0)
 	}
 	return nil
@@ -797,7 +797,7 @@ func (b *builtinGEStringSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, res
 		if result.IsNull(i) {
 			continue
 		}
-		val := b.ctor.Compare(buf0.GetString(i), buf1.GetString(i))
+		val := types.CompareString(buf0.GetString(i), buf1.GetString(i), b.collation)
 		i64s[i] = boolToInt64(val >= 0)
 	}
 	return nil
@@ -1021,7 +1021,7 @@ func (b *builtinEQStringSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, res
 		if result.IsNull(i) {
 			continue
 		}
-		val := b.ctor.Compare(buf0.GetString(i), buf1.GetString(i))
+		val := types.CompareString(buf0.GetString(i), buf1.GetString(i), b.collation)
 		i64s[i] = boolToInt64(val == 0)
 	}
 	return nil
@@ -1245,7 +1245,7 @@ func (b *builtinNEStringSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, res
 		if result.IsNull(i) {
 			continue
 		}
-		val := b.ctor.Compare(buf0.GetString(i), buf1.GetString(i))
+		val := types.CompareString(buf0.GetString(i), buf1.GetString(i), b.collation)
 		i64s[i] = boolToInt64(val != 0)
 	}
 	return nil
@@ -1480,7 +1480,7 @@ func (b *builtinNullEQStringSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk,
 			i64s[i] = 1
 		case isNull0 != isNull1:
 			i64s[i] = 0
-		case b.ctor.Compare(buf0.GetString(i), buf1.GetString(i)) == 0:
+		case types.CompareString(buf0.GetString(i), buf1.GetString(i), b.collation) == 0:
 			i64s[i] = 1
 		}
 	}

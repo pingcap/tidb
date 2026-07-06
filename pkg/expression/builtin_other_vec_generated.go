@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/collate"
 )
 
 func (b *builtinInIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
@@ -159,13 +160,14 @@ func (b *builtinInStringSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, res
 	var compareResult int
 	args := b.args[1:]
 	if len(b.hashSet) != 0 {
+		collator := collate.GetCollator(b.collation)
 		for i := 0; i < n; i++ {
 			if buf0.IsNull(i) {
 				hasNull[i] = true
 				continue
 			}
 			arg0 := buf0.GetString(i)
-			if _, ok := b.hashSet[string(b.ctor.Key(arg0))]; ok {
+			if _, ok := b.hashSet[string(collator.Key(arg0))]; ok {
 				r64s[i] = 1
 				result.SetNull(i, false)
 			}
@@ -190,7 +192,7 @@ func (b *builtinInStringSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, res
 			}
 			arg0 := buf0.GetString(i)
 			arg1 := buf1.GetString(i)
-			compareResult = b.ctor.Compare(arg0, arg1)
+			compareResult = types.CompareString(arg0, arg1, b.collation)
 			if compareResult == 0 {
 				result.SetNull(i, false)
 				r64s[i] = 1
