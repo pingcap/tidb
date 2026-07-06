@@ -156,14 +156,7 @@ func buildSimpleExpr(ctx expression.BuildContext, node ast.ExprNode, opts ...exp
 	}
 
 	if tbl := options.SourceTable; tbl != nil && rewriter.schema == nil {
-		cols, names, err := expression.ColumnInfos2ColumnsAndNamesWithCollate(
-			ctx,
-			options.SourceTableDB,
-			tbl.Name,
-			tbl.Cols(),
-			tbl,
-			options.UseNewCollate,
-		)
+		cols, names, err := expression.ColumnInfos2ColumnsAndNames(ctx, options.SourceTableDB, tbl.Name, tbl.Cols(), tbl)
 		if err != nil {
 			return nil, err
 		}
@@ -289,7 +282,6 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p base.LogicalP
 	rewriter.planCtx.aggrMap = nil
 	rewriter.planCtx.insertPlan = nil
 	rewriter.planCtx.rollExpand = b.currentBlockExpand
-	rewriter.useNewCollate = collate.NewCollationEnabled()
 	return
 }
 
