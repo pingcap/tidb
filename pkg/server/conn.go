@@ -2397,6 +2397,7 @@ func (cc *clientConn) handleFileTransInConn(ctx context.Context, status uint16) 
 		if err != nil {
 			return handled, err
 		}
+		break
 	}
 
 	// PlanReplayerDumpVarKey follows the result-set path, so it is not part of
