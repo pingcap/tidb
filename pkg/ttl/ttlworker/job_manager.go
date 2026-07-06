@@ -558,7 +558,7 @@ func (m *JobManager) findAllTasksForJob(se session.Session, jobID string) ([]*ca
 
 	allTasks := make([]*cache.TTLTask, 0, len(rows))
 	for _, r := range rows {
-		task, err := cache.RowToTTLTask(se.GetSessionVars().Location(), r)
+		task, err := cache.RowToTTLTask(se.GetSessionVars().Location(), r, m.infoSchemaCache)
 		if err != nil {
 			logutil.Logger(m.ctx).Warn("fail to read task", zap.Error(err), zap.String("jobID", jobID))
 			return nil, err
@@ -853,12 +853,26 @@ func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *
 			return errors.Wrapf(err, "execute sql: %s", sql)
 		}
 
-		ranges, err := table.SplitScanRanges(ctx, m.store, getScanSplitCnt(se.GetStore()))
-		if err != nil {
-			return errors.Wrap(err, "split scan ranges")
+		var ranges []cache.ScanRange
+		var splitBy *int64
+		if vardef.TTLEnableIndexScan.Load() {
+			if idx := table.FindTTLIndex(); idx != nil {
+				ranges, err = table.SplitIndexScanRanges(ctx, m.store, idx, expireTime, se.GetSessionVars().Location(), getScanSplitCnt(se.GetStore()))
+				if err != nil {
+					return errors.Wrap(err, "split index scan ranges")
+				}
+				splitBy = &idx.ID
+			}
+		}
+		if ranges == nil {
+			splitBy = nil
+			ranges, err = table.SplitScanRanges(ctx, m.store, getScanSplitCnt(se.GetStore()))
+			if err != nil {
+				return errors.Wrap(err, "split scan ranges")
+			}
 		}
 		for scanID, r := range ranges {
-			sql, args, err = cache.InsertIntoTTLTask(se.GetSessionVars().Location(), jobID, table.ID, scanID, r.Start, r.End, expireTime, now)
+			sql, args, err = cache.InsertIntoTTLTask(se.GetSessionVars().Location(), jobID, table.ID, scanID, r.Start, r.End, expireTime, now, splitBy)
 			if err != nil {
 				return errors.Wrap(err, "encode scan task")
 			}

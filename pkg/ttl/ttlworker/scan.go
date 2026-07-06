@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ttl/sqlbuilder"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -110,14 +109,6 @@ func (t *ttlScanTask) result(err error) *ttlScanTaskExecResult {
 		reason = ReasonError
 	}
 	return &ttlScanTaskExecResult{time: time.Now(), task: t, err: err, reason: reason}
-}
-
-func (t *ttlScanTask) getDatumRows(rows []chunk.Row) [][]types.Datum {
-	datums := make([][]types.Datum, len(rows))
-	for i, row := range rows {
-		datums[i] = row.GetDatumRow(t.tbl.KeyColumnTypes)
-	}
-	return datums
 }
 
 func (t *ttlScanTask) taskLogger(l *zap.Logger) *zap.Logger {
@@ -209,7 +200,19 @@ func (t *ttlScanTask) doScanWithSession(ctx context.Context, delCh chan<- *ttlDe
 	}
 	defer terror.Call(restoreSession)
 
-	generator, err := sqlbuilder.NewScanQueryGenerator(t.tbl, t.ExpireTime, t.ScanRangeStart, t.ScanRangeEnd)
+	var indexName string
+	if t.SplitBy != nil {
+		for _, idx := range t.tbl.Indices {
+			if idx.ID == *t.SplitBy {
+				indexName = idx.Name.O
+				break
+			}
+		}
+		if indexName == "" {
+			return errors.Errorf("TTL index with id %d not found", *t.SplitBy)
+		}
+	}
+	generator, err := sqlbuilder.NewScanQueryGenerator(t.tbl, t.ExpireTime, t.ScanRangeStart, t.ScanRangeEnd, indexName)
 	if err != nil {
 		return err
 	}
@@ -275,8 +278,23 @@ func (t *ttlScanTask) doScanWithSession(ctx context.Context, delCh chan<- *ttlDe
 		metrics.SelectSuccessDuration.Observe(selectInterval.Seconds())
 		retrySQL = ""
 		retryTimes = 0
-		lastResult = t.getDatumRows(rows)
-		if len(rows) == 0 {
+		lastResult = make([][]types.Datum, len(rows))
+		keyRows := make([][]types.Datum, len(rows))
+		if t.SplitBy != nil {
+			for i, row := range rows {
+				datums := row.GetDatumRow(t.tbl.IndexScanColumnTypes)
+				lastResult[i] = datums
+				keyRows[i] = datums[1:]
+			}
+		} else {
+			for i, row := range rows {
+				datums := row.GetDatumRow(t.tbl.KeyColumnTypes)
+				lastResult[i] = datums
+				keyRows[i] = datums
+			}
+		}
+
+		if len(lastResult) == 0 {
 			continue
 		}
 
@@ -285,7 +303,7 @@ func (t *ttlScanTask) doScanWithSession(ctx context.Context, delCh chan<- *ttlDe
 			scanID:     t.ScanID,
 			tbl:        t.tbl,
 			expire:     t.ExpireTime,
-			rows:       lastResult,
+			rows:       keyRows,
 			statistics: t.statistics,
 		}
 

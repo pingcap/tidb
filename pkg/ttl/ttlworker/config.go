@@ -115,6 +115,10 @@ func getTTLGCInterval() time.Duration {
 }
 
 func getScanSplitCnt(store kv.Storage) int {
+	failpoint.Inject("scan-split-cnt", func(val failpoint.Value) int {
+		return val.(int)
+	})
+
 	tikvStore, ok := store.(tikv.Storage)
 	if !ok {
 		return splitScanCount

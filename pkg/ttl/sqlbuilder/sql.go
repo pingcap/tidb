@@ -109,13 +109,16 @@ func (b *SQLBuilder) Build() (string, error) {
 	return b.sb.String(), nil
 }
 
-// WriteSelect writes a select statement to select key columns without any condition
-func (b *SQLBuilder) WriteSelect() error {
+// WriteSelect writes a select statement to select the given columns without any condition.
+func (b *SQLBuilder) WriteSelect(cols []*model.ColumnInfo) error {
 	if b.state != writeBegin {
 		return errors.Errorf("invalid state: %v", b.state)
 	}
+	if len(cols) == 0 {
+		return errors.New("select columns cannot be empty")
+	}
 	b.restoreCtx.WritePlain("SELECT LOW_PRIORITY SQL_NO_CACHE ")
-	b.writeColNames(b.tbl.KeyColumns, false)
+	b.writeColNames(cols, false)
 	b.restoreCtx.WritePlain(" FROM ")
 	if err := b.writeTblName(); err != nil {
 		return err
@@ -127,6 +130,17 @@ func (b *SQLBuilder) WriteSelect() error {
 	}
 	b.state = writeSelOrDel
 	b.isReadOnly = true
+	return nil
+}
+
+// WriteForceIndex writes a FORCE INDEX hint
+func (b *SQLBuilder) WriteForceIndex(indexName string) error {
+	if b.state != writeSelOrDel || !b.isReadOnly {
+		return errors.Errorf("invalid state for FORCE INDEX: %v", b.state)
+	}
+	b.restoreCtx.WritePlain(" FORCE INDEX(")
+	b.restoreCtx.WriteName(indexName)
+	b.restoreCtx.WritePlain(")")
 	return nil
 }
 
@@ -313,11 +327,16 @@ type ScanQueryGenerator struct {
 	limit         int
 	firstBuild    bool
 	exhausted     bool
+
+	// Index scan mode
+	indexName string
+	lastKey   []types.Datum
 }
 
-// NewScanQueryGenerator creates a new ScanQueryGenerator
+// NewScanQueryGenerator creates a new ScanQueryGenerator.
+// If indexName is non-empty, it generates index-scan SQLs with FORCE INDEX.
 func NewScanQueryGenerator(tbl *cache.PhysicalTable, expire time.Time,
-	rangeStart, rangeEnd []types.Datum) (*ScanQueryGenerator, error) {
+	rangeStart, rangeEnd []types.Datum, indexName string) (*ScanQueryGenerator, error) {
 	if err := tbl.ValidateKeyPrefix(rangeStart); err != nil {
 		return nil, err
 	}
@@ -326,16 +345,26 @@ func NewScanQueryGenerator(tbl *cache.PhysicalTable, expire time.Time,
 		return nil, err
 	}
 
+	if indexName != "" {
+		if len(rangeStart) > 1 {
+			return nil, errors.Errorf("invalid index scan range start length: %d, expected 1", len(rangeStart))
+		}
+		if len(rangeEnd) > 1 {
+			return nil, errors.Errorf("invalid index scan range end length: %d, expected 1", len(rangeEnd))
+		}
+	}
+
 	return &ScanQueryGenerator{
 		tbl:           tbl,
 		expire:        expire,
 		keyRangeStart: rangeStart,
 		keyRangeEnd:   rangeEnd,
 		firstBuild:    true,
+		indexName:     indexName,
 	}, nil
 }
 
-// NextSQL creates next sql of the scan task
+// NextSQL creates next sql of the scan task.
 func (g *ScanQueryGenerator) NextSQL(continueFromResult [][]types.Datum, nextLimit int) (string, error) {
 	if g.exhausted {
 		return "", errors.New("generator is exhausted")
@@ -349,6 +378,13 @@ func (g *ScanQueryGenerator) NextSQL(continueFromResult [][]types.Datum, nextLim
 		g.firstBuild = false
 	}()
 
+	if g.indexName != "" {
+		return g.nextSQLForIndex(continueFromResult, nextLimit)
+	}
+	return g.nextSQLForPK(continueFromResult, nextLimit)
+}
+
+func (g *ScanQueryGenerator) nextSQLForPK(continueFromResult [][]types.Datum, nextLimit int) (string, error) {
 	if g.stack == nil {
 		g.stack = make([][]types.Datum, 0, len(g.tbl.KeyColumns))
 	}
@@ -368,6 +404,18 @@ func (g *ScanQueryGenerator) NextSQL(continueFromResult [][]types.Datum, nextLim
 		if len(g.stack) == 0 {
 			g.exhausted = true
 		}
+	}
+	g.limit = nextLimit
+	return g.buildSQL()
+}
+
+func (g *ScanQueryGenerator) nextSQLForIndex(continueFromResult [][]types.Datum, nextLimit int) (string, error) {
+	if len(continueFromResult) >= g.limit {
+		if cnt := len(continueFromResult); cnt > 0 {
+			g.lastKey = continueFromResult[cnt-1]
+		}
+	} else if !g.firstBuild {
+		g.exhausted = true
 	}
 	g.limit = nextLimit
 	return g.buildSQL()
@@ -409,7 +457,14 @@ func (g *ScanQueryGenerator) buildSQL() (string, error) {
 	}
 
 	b := NewSQLBuilder(g.tbl)
-	if err := b.WriteSelect(); err != nil {
+	if g.indexName != "" {
+		return g.buildSQLForIndex(b)
+	}
+	return g.buildSQLForPK(b)
+}
+
+func (g *ScanQueryGenerator) buildSQLForPK(b *SQLBuilder) (string, error) {
+	if err := b.WriteSelect(b.tbl.KeyColumns); err != nil {
 		return "", err
 	}
 	if len(g.stack) > 0 {
@@ -445,6 +500,48 @@ func (g *ScanQueryGenerator) buildSQL() (string, error) {
 	}
 
 	if err := b.WriteOrderBy(g.tbl.KeyColumns, false); err != nil {
+		return "", err
+	}
+
+	if err := b.WriteLimit(g.limit); err != nil {
+		return "", err
+	}
+
+	return b.Build()
+}
+
+func (g *ScanQueryGenerator) buildSQLForIndex(b *SQLBuilder) (string, error) {
+	orderColumns := append([]*model.ColumnInfo{g.tbl.TimeColumn}, g.tbl.KeyColumns...)
+	if err := b.WriteSelect(orderColumns); err != nil {
+		return "", err
+	}
+	if err := b.WriteForceIndex(g.indexName); err != nil {
+		return "", err
+	}
+
+	if g.lastKey != nil {
+		// Continue from last result: (time_col, key_cols) > (last_time, last_keys)
+		if err := b.WriteCommonCondition(orderColumns, ">", g.lastKey); err != nil {
+			return "", err
+		}
+	} else if g.firstBuild && len(g.keyRangeStart) > 0 {
+		// First build: time_col >= range_start
+		if err := b.WriteCommonCondition([]*model.ColumnInfo{g.tbl.TimeColumn}, ">=", g.keyRangeStart); err != nil {
+			return "", err
+		}
+	}
+
+	if len(g.keyRangeEnd) > 0 {
+		if err := b.WriteCommonCondition([]*model.ColumnInfo{g.tbl.TimeColumn}, "<", g.keyRangeEnd); err != nil {
+			return "", err
+		}
+	}
+
+	if err := b.WriteExpireCondition(g.expire); err != nil {
+		return "", err
+	}
+
+	if err := b.WriteOrderBy(orderColumns, false); err != nil {
 		return "", err
 	}
 
