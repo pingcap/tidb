@@ -701,7 +701,7 @@ func TestBuildPagingTasksDisablePagingForSmallLimit(t *testing.T) {
 
 	ema := newRUEMA()
 	ema.Observe(1_048_576, time.Now())
-	worker := &copIteratorWorker{ema: ema}
+	worker := &copIteratorWorker{req: req, ema: ema}
 	require.Zero(t, worker.predictedReadBytesForTask(tasks[0]))
 }
 
@@ -737,6 +737,11 @@ func TestBuildCopTasksWithPagingSizeBytes(t *testing.T) {
 	require.False(t, tasks[0].paging)
 	require.Equal(t, uint64(0), tasks[0].pagingSize)
 	require.Equal(t, 18, cap(tasks[0].respChan))
+
+	ema := newRUEMA()
+	ema.Observe(1_048_576, time.Now())
+	worker := &copIteratorWorker{req: req, ema: ema}
+	require.Equal(t, uint64(1_048_576), worker.predictedReadBytesForTask(tasks[0]))
 
 	// Row-count paging with a tiny limit downgrades independently; the byte
 	// budget on the request is untouched by that downgrade.

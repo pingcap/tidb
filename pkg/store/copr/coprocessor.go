@@ -1657,8 +1657,9 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 }
 
 func (worker *copIteratorWorker) predictedReadBytesForTask(task *copTask) uint64 {
-	// PD treats PredictedReadBytes as the pre-charge signal and cannot see this task's paging state.
-	if !task.paging {
+	// Byte-budget paging is independent from row-count paging, so a request-level
+	// byte budget must still carry the pre-charge hint when task.paging is false.
+	if !task.paging && worker.req.Paging.PagingSizeBytes == 0 {
 		return 0
 	}
 	return worker.ema.Predict()
