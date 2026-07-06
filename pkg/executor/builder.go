@@ -3323,6 +3323,8 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) exec.Executor {
 	// buildAnalyzeSamplingPushdown reads base count / modify_count from mysql.stats_meta
 	// while constructing column analyze tasks. Flush pending deltas first so the base
 	// values include pre-analyze changes and later delta dumps cannot double count them.
+	// The flush is deliberately not the analyze source: it is lightweight metadata
+	// work, not the heavy scan that background throttling targets.
 	intest.Assert(b.ctx != nil, "missing statement context for analyze")
 	if err := flushStatsDeltaForAnalyze(kv.WithInternalSourceType(b.ctx, kv.InternalTxnStatsForegroundPriority), b.sctx, v); err != nil {
 		b.err = err

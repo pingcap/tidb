@@ -689,6 +689,8 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 	enableAnalyzeSnapshot := e.Ctx().GetSessionVars().EnableAnalyzeSnapshot
 	for range saveStatsConcurrency {
 		worker := newAnalyzeSaveStatsWorker(saveResultsCh, errCh, &e.Ctx().GetSessionVars().SQLKiller)
+		// Deliberately not the analyze source: the heavy TiKV scan is already done,
+		// so there is no point in throttling the save-stats writes as background work.
 		ctx1 := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsForegroundPriority)
 		wg.Run(func() {
 			worker.run(ctx1, statsHandle, enableAnalyzeSnapshot)
