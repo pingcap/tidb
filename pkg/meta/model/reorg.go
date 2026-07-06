@@ -166,9 +166,9 @@ func (dm *DDLReorgMeta) GetUseNewCollateOrDefault(defaultVal bool) bool {
 	return *dm.UseNewCollate
 }
 
-// SetUseNewCollate stores the new-collation mode captured from the persisted
+// setUseNewCollate stores the new-collation mode captured from the persisted
 // table snapshot.
-func (dm *DDLReorgMeta) SetUseNewCollate(useNewCollate bool) {
+func (dm *DDLReorgMeta) setUseNewCollate(useNewCollate bool) {
 	dm.UseNewCollate = &useNewCollate
 }
 

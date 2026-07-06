@@ -364,9 +364,9 @@ func (p *Plan) GetUseNewCollateOrDefault(defaultVal bool) bool {
 	return *p.UseNewCollate
 }
 
-// SetUseNewCollate stores the new-collation mode captured from the target table
+// setUseNewCollate stores the new-collation mode captured from the target table
 // snapshot.
-func (p *Plan) SetUseNewCollate(useNewCollate bool) {
+func (p *Plan) setUseNewCollate(useNewCollate bool) {
 	p.UseNewCollate = &useNewCollate
 }
 
@@ -574,7 +574,7 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 		User:                   userSctx.GetSessionVars().User.String(),
 		Keyspace:               userSctx.GetStore().GetKeyspace(),
 	}
-	p.SetUseNewCollate(tbl.UseNewCollate())
+	p.setUseNewCollate(tbl.UseNewCollate())
 	if err := p.initOptions(ctx, userSctx, plan.Options); err != nil {
 		return nil, err
 	}

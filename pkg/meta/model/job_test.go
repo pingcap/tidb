@@ -122,7 +122,7 @@ func TestDDLReorgMetaUseNewCollate(t *testing.T) {
 	require.True(t, meta.GetUseNewCollateOrDefault(true))
 	require.False(t, meta.GetUseNewCollateOrDefault(false))
 
-	meta.SetUseNewCollate(false)
+	meta.setUseNewCollate(false)
 	require.False(t, meta.GetUseNewCollateOrDefault(true))
 
 	data, err := json.Marshal(meta)
@@ -133,7 +133,7 @@ func TestDDLReorgMetaUseNewCollate(t *testing.T) {
 	require.NoError(t, json.Unmarshal(data, &decoded))
 	require.False(t, decoded.GetUseNewCollateOrDefault(true))
 
-	decoded.SetUseNewCollate(true)
+	decoded.setUseNewCollate(true)
 	require.True(t, decoded.GetUseNewCollateOrDefault(false))
 }
 

@@ -110,7 +110,7 @@ func TestPlanUseNewCollate(t *testing.T) {
 	require.True(t, plan.GetUseNewCollateOrDefault(true))
 	require.False(t, plan.GetUseNewCollateOrDefault(false))
 
-	plan.SetUseNewCollate(false)
+	plan.setUseNewCollate(false)
 	require.False(t, plan.GetUseNewCollateOrDefault(true))
 
 	data, err := json.Marshal(plan)
@@ -121,7 +121,7 @@ func TestPlanUseNewCollate(t *testing.T) {
 	require.NoError(t, json.Unmarshal(data, &decoded))
 	require.False(t, decoded.GetUseNewCollateOrDefault(true))
 
-	decoded.SetUseNewCollate(true)
+	decoded.setUseNewCollate(true)
 	require.True(t, decoded.GetUseNewCollateOrDefault(false))
 }
 
