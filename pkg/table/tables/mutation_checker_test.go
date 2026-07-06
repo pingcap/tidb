@@ -316,6 +316,45 @@ func TestCheckIndexKeysAndCheckHandleConsistency(t *testing.T) {
 			}
 		}
 	}
+
+	t.Run("common handle datums can follow primary key order", func(t *testing.T) {
+		varcharType := types.NewFieldTypeWithCollation(mysql.TypeVarchar, "utf8_unicode_ci", types.UnspecifiedLength)
+		intType := types.NewFieldType(mysql.TypeLonglong)
+		charType := types.NewFieldTypeWithCollation(mysql.TypeString, "utf8_unicode_ci", types.UnspecifiedLength)
+		tableInfo := &model.TableInfo{
+			ID:   1,
+			Name: ast.NewCIStr("t"),
+			Columns: []*model.ColumnInfo{
+				{ID: 1, Name: ast.NewCIStr("a"), Offset: 0, FieldType: *varcharType},
+				{ID: 2, Name: ast.NewCIStr("b"), Offset: 1, FieldType: *intType},
+				{ID: 3, Name: ast.NewCIStr("c"), Offset: 2, FieldType: *charType},
+			},
+			PKIsHandle:          false,
+			IsCommonHandle:      true,
+			CommonHandleVersion: 1,
+			Indices: []*model.IndexInfo{
+				{
+					ID:      1,
+					Name:    ast.NewCIStr("primary"),
+					Primary: true,
+					Columns: []*model.IndexColumn{
+						{Name: ast.NewCIStr("a"), Offset: 0, Length: types.UnspecifiedLength},
+						{Name: ast.NewCIStr("c"), Offset: 2, Length: types.UnspecifiedLength},
+					},
+				},
+				{
+					ID:      2,
+					Name:    ast.NewCIStr("idx"),
+					Columns: []*model.IndexColumn{{Name: ast.NewCIStr("b"), Offset: 1, Length: types.UnspecifiedLength}},
+				},
+			},
+		}
+
+		rsData := TryGetHandleRestoredData(tableInfo, FindPrimaryIndex(tableInfo), types.MakeDatums("a", "c"), tableInfo.Indices[1])
+		require.Len(t, rsData, 2)
+		require.Equal(t, "a", rsData[0].GetString())
+		require.Equal(t, "c", rsData[1].GetString())
+	})
 }
 
 func buildIndexKeyValue(index table.Index, rowToInsert []types.Datum, loc *time.Location,
