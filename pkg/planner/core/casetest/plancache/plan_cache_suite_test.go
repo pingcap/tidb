@@ -733,6 +733,25 @@ func TestPlanCacheWithSubquery(t *testing.T) {
 	}
 }
 
+func TestPlanCachePreparedJoinOnSubquery(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_prepared_plan_cache=1")
+	tk.MustExec("create table t0(c0 char, c1 bool, c2 bool)")
+	tk.MustExec("replace into t0 values (null, false, false)")
+
+	tk.MustQuery("select /* issue:65975 */ t0.c0 from t0 left join t0 as t0_0 on (('') != ((select t0.c1 from t0 where t0.c1 group by t0.c1 having ((t0.c2) and (null)))))").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+
+	tk.MustExec("set @d = ''")
+	tk.MustExec("set @f = null")
+	tk.MustExec("prepare stmt from 'select /* issue:65975 */ t0.c0 from t0 left join t0 as t0_0 on ((?) != ((select t0.c1 from t0 where t0.c1 group by t0.c1 having ((t0.c2) and (?)))))'")
+	tk.MustQuery("execute stmt using @d, @f").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: query has sub-queries in ON condition is un-cacheable"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
 func convertQueryToPrepExecStmt(q string) (normalQuery, prepStmt string, parameters []string) {
 	// select ... from t where a = #?1# and b = #?2#
 	normalQuery = strings.ReplaceAll(q, "#", "")
