@@ -90,6 +90,15 @@ var (
 	defaultMaxEngineSize = int64(5 * config.DefaultBatchSize)
 )
 
+func newEncodingTable(e *LoadDataController) (table.Table, error) {
+	idAlloc := kv.NewPanickingAllocators(e.Table.Meta().SepAutoInc())
+	tbl, err := tables.TableFromMetaWithCollate(e.Table.UseNewCollate(), idAlloc, e.Table.Meta())
+	if err != nil {
+		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", e.Table.Meta().Name)
+	}
+	return tbl, nil
+}
+
 // Chunk records the chunk information.
 type Chunk struct {
 	Path         string
@@ -187,10 +196,9 @@ func NewTableImporter(
 	id string,
 	kvStore tidbkv.Storage,
 ) (ti *TableImporter, err error) {
-	idAlloc := kv.NewPanickingAllocators(e.Table.Meta().SepAutoInc())
-	tbl, err := tables.TableFromMeta(idAlloc, e.Table.Meta())
+	tbl, err := newEncodingTable(e)
 	if err != nil {
-		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", e.Table.Meta().Name)
+		return nil, err
 	}
 
 	tidbCfg := tidb.GetGlobalConfig()
@@ -282,12 +290,16 @@ func (s *storeHelper) GetTiKVCodec() tikv.Codec {
 var _ local.StoreHelper = (*storeHelper)(nil)
 
 // NewTableImporterForTest creates a new table importer for test.
-func NewTableImporterForTest(ctx context.Context, e *LoadDataController, id string, kvStore tidbkv.Storage) (*TableImporter, error) {
+func NewTableImporterForTest(
+	ctx context.Context,
+	e *LoadDataController,
+	id string,
+	kvStore tidbkv.Storage,
+) (*TableImporter, error) {
 	helper := &storeHelper{kvStore: kvStore}
-	idAlloc := kv.NewPanickingAllocators(e.Table.Meta().SepAutoInc())
-	tbl, err := tables.TableFromMeta(idAlloc, e.Table.Meta())
+	tbl, err := newEncodingTable(e)
 	if err != nil {
-		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", e.Table.Meta().Name)
+		return nil, err
 	}
 
 	tidbCfg := tidb.GetGlobalConfig()

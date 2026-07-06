@@ -46,7 +46,9 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/backoff"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
@@ -204,7 +206,22 @@ func getUserStoreAndTable(
 			return nil, nil, err
 		}
 	}
+<<<<<<< HEAD
 	tblInfo, err := getTblInfo(ctx, store, job)
+=======
+	// we don't touch table data during add-index, a fake Allocators is enough.
+	defaultUseNewCollate := collate.NewCollationEnabled()
+	failpoint.Inject("overrideDefaultUseNewCollateForBackfillStep", func(val failpoint.Value) {
+		defaultUseNewCollate = val.(bool)
+	})
+	useNewCollate := job.ReorgMeta.GetUseNewCollateOrDefault(defaultUseNewCollate)
+	failpoint.InjectCall("afterResolveUserTableNewCollateForBackfillStep", job, defaultUseNewCollate, useNewCollate)
+	tbl, err := tables.TableFromMetaWithCollate(
+		useNewCollate,
+		autoid.NewAllocators(tblInfo.SepAutoInc()),
+		tblInfo,
+	)
+>>>>>>> 09d214004a2 (*: use user keyspace's collation mode for DXF tasks (#69677))
 	if err != nil {
 		return nil, nil, err
 	}

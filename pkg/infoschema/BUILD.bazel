@@ -49,6 +49,11 @@ go_library(
         "//pkg/table/tables",
         "//pkg/types",
         "//pkg/util",
+<<<<<<< HEAD
+=======
+        "//pkg/util/chunk",
+        "//pkg/util/collate",
+>>>>>>> 09d214004a2 (*: use user keyspace's collation mode for DXF tasks (#69677))
         "//pkg/util/dbterror",
         "//pkg/util/deadlockhistory",
         "//pkg/util/domainutil",
