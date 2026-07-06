@@ -95,10 +95,11 @@ type DDLReorgMeta struct {
 	MaxNodeCount      int                              `json:"max_node_count"`
 	AnalyzeState      int8                             `json:"analyze_state"`
 	Stage             ReorgStage                       `json:"stage"`
-	// UseNewCollate captures the submitting keyspace collation mode for key encoding.
-	// It is needed because a reorg task may execute in another keyspace with a
-	// different collation setting. Nil means old metadata and should fall back to
-	// the caller-provided default.
+	// UseNewCollate captures whether the new collation implementation was enabled
+	// when this reorg task's persisted table snapshot was created. Reorg execution
+	// may happen in another keyspace, so key and expression encoding must use this
+	// captured value instead of the executor process default. Nil means old metadata
+	// and should fall back to the caller-provided default.
 	UseNewCollate *bool `json:"use_new_collate,omitempty"`
 	// These two variables are used to control the concurrency and batch size of the reorganization process.
 	// They can be adjusted dynamically through `admin alter ddl jobs` command.
@@ -156,8 +157,8 @@ func (dm *DDLReorgMeta) SetMaxWriteSpeed(maxWriteSpeed int) {
 	dm.MaxWriteSpeed.Store(int64(maxWriteSpeed))
 }
 
-// GetUseNewCollateOrDefault returns the captured collation mode, or defaultVal
-// for reorg metadata generated before the field existed.
+// GetUseNewCollateOrDefault returns the captured new-collation mode, or
+// defaultVal for reorg metadata generated before the field existed.
 func (dm *DDLReorgMeta) GetUseNewCollateOrDefault(defaultVal bool) bool {
 	if dm == nil || dm.UseNewCollate == nil {
 		return defaultVal
@@ -165,7 +166,8 @@ func (dm *DDLReorgMeta) GetUseNewCollateOrDefault(defaultVal bool) bool {
 	return *dm.UseNewCollate
 }
 
-// SetUseNewCollate stores the submitting keyspace collation mode for key encoding.
+// SetUseNewCollate stores the new-collation mode captured from the persisted
+// table snapshot.
 func (dm *DDLReorgMeta) SetUseNewCollate(useNewCollate bool) {
 	dm.UseNewCollate = &useNewCollate
 }

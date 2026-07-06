@@ -117,6 +117,30 @@ func TestJobCodec(t *testing.T) {
 	require.Equal(t, int64(3), job.GetRowCount())
 }
 
+func TestDDLReorgMetaUseNewCollate(t *testing.T) {
+	var nilMeta *DDLReorgMeta
+	require.True(t, nilMeta.GetUseNewCollateOrDefault(true))
+	require.False(t, nilMeta.GetUseNewCollateOrDefault(false))
+
+	meta := &DDLReorgMeta{}
+	require.True(t, meta.GetUseNewCollateOrDefault(true))
+	require.False(t, meta.GetUseNewCollateOrDefault(false))
+
+	meta.SetUseNewCollate(false)
+	require.False(t, meta.GetUseNewCollateOrDefault(true))
+
+	data, err := json.Marshal(meta)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"use_new_collate":false`)
+
+	var decoded DDLReorgMeta
+	require.NoError(t, json.Unmarshal(data, &decoded))
+	require.False(t, decoded.GetUseNewCollateOrDefault(true))
+
+	decoded.SetUseNewCollate(true)
+	require.True(t, decoded.GetUseNewCollateOrDefault(false))
+}
+
 func TestLocation(t *testing.T) {
 	// test offset = 0
 	loc := &TimeZoneLocation{}

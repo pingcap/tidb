@@ -169,7 +169,7 @@ func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Ta
 }
 
 // TableFromMetaWithCollate creates a Table instance from model.TableInfo with a
-// fixed collation mode.
+// fixed new-collation mode for persisted key and expression encoding.
 func TableFromMetaWithCollate(useNewCollate bool, allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error) {
 	if tblInfo.State == model.StateNone {
 		return nil, table.ErrTableStateCantNone.GenWithStackByArgs(tblInfo.Name)

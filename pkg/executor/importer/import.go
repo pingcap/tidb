@@ -335,10 +335,11 @@ type Plan struct {
 	ManualRecovery bool
 	// the keyspace name when submitting this job, only for import-into
 	Keyspace string
-	// UseNewCollate captures the collation mode used to build the target table
-	// snapshot. It is needed because an import task may execute in another
-	// keyspace with a different collation setting. Nil means old metadata and
-	// should fall back to the caller-provided default.
+	// UseNewCollate captures whether the new collation implementation was enabled
+	// when this import plan's target table snapshot was created. Import execution
+	// may happen in another keyspace, so key and expression encoding must use this
+	// captured value instead of the executor process default. Nil means old metadata
+	// and should fall back to the caller-provided default.
 	UseNewCollate *bool `json:"use_new_collate,omitempty"`
 }
 
@@ -354,8 +355,8 @@ func (p *Plan) GetOnDupKeyMode() OnDupKeyMode {
 	return p.OnDupKey
 }
 
-// GetUseNewCollateOrDefault returns the captured collation mode, or defaultVal
-// for import metadata generated before the field existed.
+// GetUseNewCollateOrDefault returns the captured new-collation mode, or
+// defaultVal for import metadata generated before the field existed.
 func (p *Plan) GetUseNewCollateOrDefault(defaultVal bool) bool {
 	if p.UseNewCollate == nil {
 		return defaultVal
@@ -363,7 +364,8 @@ func (p *Plan) GetUseNewCollateOrDefault(defaultVal bool) bool {
 	return *p.UseNewCollate
 }
 
-// SetUseNewCollate stores the collation mode used to rebuild the target table snapshot.
+// SetUseNewCollate stores the new-collation mode captured from the target table
+// snapshot.
 func (p *Plan) SetUseNewCollate(useNewCollate bool) {
 	p.UseNewCollate = &useNewCollate
 }

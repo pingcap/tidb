@@ -2648,7 +2648,8 @@ func (it *infoschemaTable) Meta() *model.TableInfo {
 	return it.meta
 }
 
-// UseNewCollate implements table.Table UseNewCollate interface.
+// UseNewCollate implements table.Table UseNewCollate interface. Info schema
+// tables are not persisted user tables, so they use the current process default.
 func (it *infoschemaTable) UseNewCollate() bool {
 	return collate.NewCollationEnabled()
 }
@@ -2751,7 +2752,8 @@ func (vt *VirtualTable) Meta() *model.TableInfo {
 	return nil
 }
 
-// UseNewCollate implements table.Table UseNewCollate interface.
+// UseNewCollate implements table.Table UseNewCollate interface. Virtual tables
+// are not persisted user tables, so they use the current process default.
 func (vt *VirtualTable) UseNewCollate() bool {
 	return collate.NewCollationEnabled()
 }

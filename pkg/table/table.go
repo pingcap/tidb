@@ -459,7 +459,12 @@ type Table interface {
 	// Meta returns TableInfo.
 	Meta() *model.TableInfo
 
-	// UseNewCollate returns the collation mode used for table key encoding.
+	// UseNewCollate returns whether the new collation implementation should be used
+	// when encoding persisted keys or expressions for this table.
+	//
+	// For persisted user tables, this value must come from the table snapshot used
+	// to build the task. Virtual or non-persisted table implementations may use the
+	// current process default.
 	UseNewCollate() bool
 
 	// Type returns the type of table
