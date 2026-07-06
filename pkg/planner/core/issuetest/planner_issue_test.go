@@ -30,6 +30,28 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestIssue57848PredicatePushDownJSONJoin(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	defer func() {
+		tk.MustExec("delete from mysql.opt_rule_blacklist")
+		tk.MustExec("admin reload opt_rule_blacklist")
+	}()
+
+	tk.MustExec("create table t4(id int(11), j json, d double)")
+	tk.MustExec("insert into t4 values (3, cast(18446744073709551615 as json), 18446744073709551616.000000)")
+	query := "select /* issue:57848 */ t1.id, t2.id from t4 as t1 join t4 as t2 on t1.j = t2.d"
+
+	tk.MustExec("delete from mysql.opt_rule_blacklist")
+	tk.MustExec("admin reload opt_rule_blacklist")
+	tk.MustQuery(query).Check(testkit.Rows("3 3"))
+
+	tk.MustExec("insert into mysql.opt_rule_blacklist values ('predicate_push_down')")
+	tk.MustExec("admin reload opt_rule_blacklist")
+	tk.MustQuery(query).Check(testkit.Rows("3 3"))
+}
+
 func TestPlannerIssueRegressions(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	resetTestDB := func(t *testing.T, tk *testkit.TestKit) {
