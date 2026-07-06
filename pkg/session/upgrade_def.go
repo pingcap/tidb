@@ -2169,19 +2169,17 @@ func upgradeToVer262(s sessionapi.Session, _ int64) {
 		ORDER BY update_time DESC, create_time DESC, _tidb_rowid DESC`)
 	if err != nil {
 		logutil.BgLogger().Fatal("upgradeToVer262 error", zap.Error(err))
-		return
 	}
 
 	req := rs.NewChunk(nil)
 	updates := make([]bindingDigestUpdate, 0)
-	invlideBindingRowIDs := make([]int64, 0)
+	invalidBindingRowIDs := make([]int64, 0)
 	seenDigestPair := make(map[bindingDigestPair]struct{})
 	p := parser.New()
 	for {
 		err = rs.Next(ctx, req)
 		if err != nil {
 			logutil.BgLogger().Fatal("upgradeToVer262 error", zap.Error(err))
-			return
 		}
 		if req.NumRows() == 0 {
 			break
@@ -2205,7 +2203,7 @@ func upgradeToVer262(s sessionapi.Session, _ int64) {
 				logutil.BgLogger().Warn("skip refreshing binding digest because bind_sql cannot be parsed",
 					zap.String("bind_sql", bindingSQL), zap.Error(parseErr))
 				if planDigestNotNull {
-					invlideBindingRowIDs = append(invlideBindingRowIDs, rowID)
+					invalidBindingRowIDs = append(invalidBindingRowIDs, rowID)
 				}
 				continue
 			}
@@ -2214,7 +2212,7 @@ func upgradeToVer262(s sessionapi.Session, _ int64) {
 				logutil.BgLogger().Warn("skip refreshing binding digest because normalized binding SQL is empty",
 					zap.String("bind_sql", bindingSQL))
 				if planDigestNotNull {
-					invlideBindingRowIDs = append(invlideBindingRowIDs, rowID)
+					invalidBindingRowIDs = append(invalidBindingRowIDs, rowID)
 				}
 				continue
 			}
@@ -2240,7 +2238,7 @@ func upgradeToVer262(s sessionapi.Session, _ int64) {
 	}
 
 	// Update rows independently to avoid one large bootstrap transaction.
-	for _, rowID := range invlideBindingRowIDs {
+	for _, rowID := range invalidBindingRowIDs {
 		// Set invalid bindings' plan_digest to null to avoid duplicated key error in unique index (sql_digest, plan_digest).
 		mustExecute(s, "UPDATE HIGH_PRIORITY mysql.bind_info SET plan_digest=NULL WHERE _tidb_rowid=%?", rowID)
 	}
