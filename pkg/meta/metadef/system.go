@@ -156,6 +156,10 @@ const (
 	TiDBSoftDeleteTableStatusTableID = ReservedGlobalIDUpperBound - 61
 	// TiDBMaskingPolicyTableID is the table ID of `tidb_masking_policy`.
 	TiDBMaskingPolicyTableID = ReservedGlobalIDUpperBound - 62
+	// AutoAnalyzeTasksTableID is the table ID of `auto_analyze_tasks`.
+	AutoAnalyzeTasksTableID = ReservedGlobalIDUpperBound - 63
+	// AutoAnalyzeTasksHistoryTableID is the table ID of `auto_analyze_tasks_history`.
+	AutoAnalyzeTasksHistoryTableID = ReservedGlobalIDUpperBound - 64
 )
 
 // IsReservedID checks if the given ID is a reserved global ID.

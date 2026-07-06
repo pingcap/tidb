@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
@@ -214,6 +215,31 @@ func TestStatWorkRecoverFromPanic(t *testing.T) {
 	dom.Close()
 	isClose = dom.isClose()
 	require.True(t, isClose)
+}
+
+func TestRunAutoAnalyzeConfigFlag(t *testing.T) {
+	origCfg := config.GetGlobalConfig()
+	newCfg := *origCfg
+	config.StoreGlobalConfig(&newCfg)
+	defer config.StoreGlobalConfig(origCfg)
+
+	origSysVar := vardef.RunAutoAnalyze.Load()
+	defer vardef.RunAutoAnalyze.Store(origSysVar)
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.RunAutoAnalyze = false
+	})
+	vardef.RunAutoAnalyze.Store(true)
+	require.False(t, shouldRunAutoAnalyze())
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.RunAutoAnalyze = true
+	})
+	vardef.RunAutoAnalyze.Store(false)
+	require.False(t, shouldRunAutoAnalyze())
+
+	vardef.RunAutoAnalyze.Store(true)
+	require.True(t, shouldRunAutoAnalyze())
 }
 
 // ETCD use ip:port as unix socket address, however this address is invalid on windows.

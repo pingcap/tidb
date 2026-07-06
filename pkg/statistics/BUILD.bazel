@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "analyze.go",
         "analyze_jobs.go",
+        "autoanalyze_jobs.go",
         "builder.go",
         "cmsketch.go",
         "cmsketch_util.go",

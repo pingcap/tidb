@@ -94,6 +94,10 @@ var unRecoverableTable = map[string]map[string]struct{}{
 		"analyze_jobs": {},
 		// Table ID is recorded in the column `table_id` so that the table cannot be recovered simply.
 		"analyze_options": {},
+		// Table ID is recorded in the column `table_id`, and queued or historical
+		// auto analyze tasks do not need to be recovered.
+		"auto_analyze_tasks":         {},
+		"auto_analyze_tasks_history": {},
 		// Distributed eXecution Framework
 		// Records the tidb node information, no need to recovered.
 		"dist_framework_meta":             {},

@@ -14,7 +14,40 @@
 
 package extworkload
 
-import "github.com/pingcap/tidb/pkg/config"
+import (
+	"sync"
+
+	"github.com/pingcap/tidb/pkg/config"
+)
+
+var globalManager struct {
+	sync.RWMutex
+	mgr Manager
+}
+
+// InstallManager makes the process-wide external workload manager visible to
+// components that need role-dependent behavior after bootstrap.
+func InstallManager(m Manager) {
+	globalManager.Lock()
+	defer globalManager.Unlock()
+	globalManager.mgr = m
+}
+
+// GetManager returns the process-wide external workload manager, if any.
+func GetManager() Manager {
+	globalManager.RLock()
+	defer globalManager.RUnlock()
+	return globalManager.mgr
+}
+
+// ClearManager clears the process-wide manager if it still points at m.
+func ClearManager(m Manager) {
+	globalManager.Lock()
+	defer globalManager.Unlock()
+	if globalManager.mgr == m {
+		globalManager.mgr = nil
+	}
+}
 
 // IsEnabled reports whether a Manager is present.
 func IsEnabled(m Manager) bool { return m != nil }

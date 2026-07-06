@@ -154,3 +154,48 @@ func TestUpgradeToVer261BackfillsDefaultStringMatchSelectivity(t *testing.T) {
 	require.Equal(t, "0.8", chk.GetRow(0).GetString(0))
 	require.NoError(t, res.Close())
 }
+
+func TestUpgradeToVer262CreatesAutoAnalyzeTaskTables(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	seV261 := CreateSessionAndSetID(t, store)
+	MustExec(t, seV261, "drop table mysql.auto_analyze_tasks_history")
+	MustExec(t, seV261, "drop table mysql.auto_analyze_tasks")
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(version261))
+	require.NoError(t, err)
+	RevertVersionAndVariables(t, seV261, version261)
+	err = txn.Commit(ctx)
+	require.NoError(t, err)
+	store.SetOption(StoreBootstrappedKey, nil)
+
+	dom.Close()
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err := GetBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+
+	res := MustExecToRecodeSet(t, seCurVer, "select count(*) from mysql.auto_analyze_tasks")
+	chk := res.NewChunk(nil)
+	require.NoError(t, res.Next(ctx, chk))
+	require.Equal(t, int64(0), chk.GetRow(0).GetInt64(0))
+	require.NoError(t, res.Close())
+
+	res = MustExecToRecodeSet(t, seCurVer, "select count(*) from mysql.auto_analyze_tasks_history")
+	chk = res.NewChunk(nil)
+	require.NoError(t, res.Next(ctx, chk))
+	require.Equal(t, int64(0), chk.GetRow(0).GetInt64(0))
+	require.NoError(t, res.Close())
+}
