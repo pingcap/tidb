@@ -167,7 +167,7 @@ func NewBaseKVEncoder(config *encode.EncodingConfig) (*BaseKVEncoder, error) {
 	}
 
 	// collect expressions for evaluating stored generated columns
-	genCols, err := CollectGeneratedColumns(se, meta, cols)
+	genCols, err := CollectGeneratedColumns(se, config.Table)
 	if err != nil {
 		return nil, errors.Annotate(err, "failed to parse generated column expressions")
 	}

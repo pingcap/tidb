@@ -7535,6 +7535,7 @@ func getJobCheckInterval(action model.ActionType, i int) (time.Duration, bool) {
 // NewDDLReorgMeta create a DDL ReorgMeta.
 func NewDDLReorgMeta(ctx sessionctx.Context) *model.DDLReorgMeta {
 	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
+	useNewCollate := collate.NewCollationEnabled()
 	return &model.DDLReorgMeta{
 		SQLMode:           ctx.GetSessionVars().SQLMode,
 		Warnings:          make(map[errors.ErrorID]*terror.Error),
@@ -7542,6 +7543,7 @@ func NewDDLReorgMeta(ctx sessionctx.Context) *model.DDLReorgMeta {
 		Location:          &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
 		ResourceGroupName: ctx.GetSessionVars().StmtCtx.ResourceGroupName,
 		Version:           model.CurrentReorgMetaVersion,
+		UseNewCollate:     &useNewCollate,
 	}
 }
 
