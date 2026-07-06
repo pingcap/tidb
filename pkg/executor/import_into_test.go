@@ -23,6 +23,8 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -39,6 +41,7 @@ import (
 	semv1 "github.com/pingcap/tidb/pkg/util/sem"
 	semv2 "github.com/pingcap/tidb/pkg/util/sem/v2"
 	"github.com/stretchr/testify/require"
+	tikvutil "github.com/tikv/client-go/v2/util"
 )
 
 var (
@@ -252,6 +255,60 @@ func TestNextGenUnsupportedLocalSortAndOptions(t *testing.T) {
 			})
 		})
 	}
+}
+
+func TestCancelImportJobWithoutDXFTask(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("import job and dxf task is submitted together in classic, no such case")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	ctx := tikvutil.WithInternalSourceType(context.Background(), kv.InternalDistTask)
+	manager, err := storage.GetTaskManager()
+	require.NoError(t, err)
+	require.NoError(t, manager.InitMeta(ctx, ":4000", ""))
+
+	assertNoDXFTask := func(jobID int64) {
+		taskKey := importinto.TaskKey(jobID)
+		tk.MustQuery("select count(1) from mysql.tidb_global_task where task_key = ?", taskKey).
+			Check(testkit.Rows("0"))
+		tk.MustQuery("select count(1) from mysql.tidb_global_task_history where task_key = ?", taskKey).
+			Check(testkit.Rows("0"))
+	}
+
+	jobID, err := importer.CreateJob(ctx, tk.Session().GetSQLExecutor(), "test", "t", 1,
+		tk.Session().GetSessionVars().User.String(), "", &importer.ImportParameters{
+			Format: importer.DataFormatCSV,
+		}, 0)
+	require.NoError(t, err)
+	assertNoDXFTask(jobID)
+
+	tk.MustExec(fmt.Sprintf("cancel import job %d", jobID))
+	tk.MustQuery("select status, error_message from mysql.tidb_import_jobs where id = ?", jobID).
+		Check(testkit.Rows("cancelled cancelled by user"))
+	assertNoDXFTask(jobID)
+
+	err = tk.ExecToErr(fmt.Sprintf("cancel import job %d", jobID))
+	require.ErrorIs(t, err, exeerrors.ErrLoadDataInvalidOperation)
+	require.ErrorContains(t, err, "The current job status cannot perform the operation. CANCEL")
+	tk.MustQuery("select status, error_message from mysql.tidb_import_jobs where id = ?", jobID).
+		Check(testkit.Rows("cancelled cancelled by user"))
+	assertNoDXFTask(jobID)
+
+	runningJobID, err := importer.CreateJob(ctx, tk.Session().GetSQLExecutor(), "test", "t", 1,
+		tk.Session().GetSessionVars().User.String(), "", &importer.ImportParameters{
+			Format: importer.DataFormatCSV,
+		}, 0)
+	require.NoError(t, err)
+	require.NoError(t, importer.StartJob(ctx, tk.Session().GetSQLExecutor(), runningJobID, importer.JobStepImporting))
+	assertNoDXFTask(runningJobID)
+
+	err = tk.ExecToErr(fmt.Sprintf("cancel import job %d", runningJobID))
+	require.ErrorContains(t, err, "job state changed during cancel, please try again later")
+	tk.MustQuery("select status, step from mysql.tidb_import_jobs where id = ?", runningJobID).
+		Check(testkit.Rows("running importing"))
+	assertNoDXFTask(runningJobID)
 }
 
 func testNextGenUnsupportedLocalSortAndOptions(t *testing.T, store kv.Storage, initFn func(t *testing.T, tk *testkit.TestKit)) {
