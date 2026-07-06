@@ -856,11 +856,6 @@ func TestNewIndexWithColumnStats(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
-	// Keep the configured TopN/bucket numbers for all columns; the reduction for
-	// non-predicate columns is covered by TestAnalyzeNonPredicateColumnRatio.
-	origRatio := testKit.MustQuery("select @@global.tidb_analyze_non_predicate_column_ratio").Rows()[0][0].(string)
-	testKit.MustExec("set global tidb_analyze_non_predicate_column_ratio = 1")
-	defer testKit.MustExec("set global tidb_analyze_non_predicate_column_ratio = " + origRatio)
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("drop table if exists t2")
 	testKit.MustExec("create table t(a int)")
@@ -1513,11 +1508,6 @@ func testTopNAssistedEstimationInner(t *testing.T, input []string, output []outp
 	h.Clear()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	// Keep the configured TopN/bucket numbers for all columns; the reduction for
-	// non-predicate columns is covered by TestAnalyzeNonPredicateColumnRatio.
-	origRatio := tk.MustQuery("select @@global.tidb_analyze_non_predicate_column_ratio").Rows()[0][0].(string)
-	tk.MustExec("set global tidb_analyze_non_predicate_column_ratio = 1")
-	defer tk.MustExec("set global tidb_analyze_non_predicate_column_ratio = " + origRatio)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("set @@tidb_default_string_match_selectivity = 0")
 	tk.MustExec("set @@tidb_stats_load_sync_wait = 3000")

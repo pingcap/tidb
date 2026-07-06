@@ -180,7 +180,7 @@ func TestBuildStatsOnRowSample(t *testing.T) {
 		TotalSize: int64(len(data)) * 8,
 	}
 	tp := types.NewFieldType(mysql.TypeLonglong)
-	hist, topN, err := BuildHistAndTopN(ctx, 5, 4, 1, collector, tp, true, nil)
+	hist, topN, err := BuildHistAndTopN(ctx, 5, 4, 1, collector, tp, true, nil, 1)
 	require.Nilf(t, err, "%+v", err)
 	topNStr, err := topN.DecodedString(ctx, []byte{tp.GetType()})
 	require.NoError(t, err)
@@ -244,7 +244,7 @@ func TestBuildSampleFullNDV(t *testing.T) {
 
 	tp := types.NewFieldType(mysql.TypeLonglong)
 	// Build histogram buckets with 0 buckets, and default 100 TopN.
-	_, topN, err := BuildHistAndTopN(ctx, 0, 100, 1, collector, tp, true, nil)
+	_, topN, err := BuildHistAndTopN(ctx, 0, 100, 1, collector, tp, true, nil, 1)
 	require.NoError(t, err)
 	topNStr, err := topN.DecodedString(ctx, []byte{tp.GetType()})
 	require.NoError(t, err)

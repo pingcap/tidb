@@ -1370,10 +1370,10 @@ from t_outer_pk o
 join t_inner_pk i on o.a = i.a and i.b > 50
 where o.val = 100;
 id	estRows	task	access object	operator info
-IndexJoin	52.50	root		inner join, inner:IndexLookUp, outer key:planner__core__indexjoin.t_outer_pk.a, inner key:planner__core__indexjoin.t_inner_pk.a, equal cond:eq(planner__core__indexjoin.t_outer_pk.a, planner__core__indexjoin.t_inner_pk.a)
+IndexJoin	51.00	root		inner join, inner:IndexLookUp, outer key:planner__core__indexjoin.t_outer_pk.a, inner key:planner__core__indexjoin.t_inner_pk.a, equal cond:eq(planner__core__indexjoin.t_outer_pk.a, planner__core__indexjoin.t_inner_pk.a)
 ├─TableReader(Build)	1.00	root		data:Selection
 │ └─Selection	1.00	cop[tikv]		eq(planner__core__indexjoin.t_outer_pk.val, 100), not(isnull(planner__core__indexjoin.t_outer_pk.a))
 │   └─TableFullScan	1.00	cop[tikv]	table:o	keep order:false
-└─IndexLookUp(Probe)	52.50	root		
-  ├─IndexRangeScan(Build)	52.50	cop[tikv]	table:i, index:PRIMARY(a, b)	range: decided by [eq(planner__core__indexjoin.t_inner_pk.a, planner__core__indexjoin.t_outer_pk.a) gt(planner__core__indexjoin.t_inner_pk.b, 50)], keep order:false
-  └─TableRowIDScan(Probe)	52.50	cop[tikv]	table:i	keep order:false
+└─IndexLookUp(Probe)	51.00	root		
+  ├─IndexRangeScan(Build)	51.00	cop[tikv]	table:i, index:PRIMARY(a, b)	range: decided by [eq(planner__core__indexjoin.t_inner_pk.a, planner__core__indexjoin.t_outer_pk.a) gt(planner__core__indexjoin.t_inner_pk.b, 50)], keep order:false
+  └─TableRowIDScan(Probe)	51.00	cop[tikv]	table:i	keep order:false

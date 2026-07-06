@@ -35,11 +35,6 @@ func TestAnalyzeColumnsWithPrimaryKey(t *testing.T) {
 			tk.MustExec("use test")
 			tk.MustExec("drop table if exists t")
 			tk.MustExec("set @@tidb_analyze_version = 2")
-			// Pin the ratio so every analyzed column collects the configured TopN/bucket
-			// numbers; the reduction behavior is covered by TestAnalyzeNonPredicateColumnRatio.
-			origRatio := tk.MustQuery("select @@global.tidb_analyze_non_predicate_column_ratio").Rows()[0][0].(string)
-			tk.MustExec("set global tidb_analyze_non_predicate_column_ratio = 1")
-			defer tk.MustExec("set global tidb_analyze_non_predicate_column_ratio = " + origRatio)
 			tk.MustExec("create table t (a int, b int, c int primary key)")
 			statstestutil.HandleNextDDLEventWithTxn(h)
 			tk.MustExec("insert into t values (1,1,1), (1,1,2), (2,2,3), (2,2,4), (3,3,5), (4,3,6), (5,4,7), (6,4,8), (null,null,9)")
@@ -108,11 +103,6 @@ func TestAnalyzeColumnsWithIndex(t *testing.T) {
 			tk.MustExec("use test")
 			tk.MustExec("drop table if exists t")
 			tk.MustExec("set @@tidb_analyze_version = 2")
-			// Pin the ratio so every analyzed column collects the configured TopN/bucket
-			// numbers; the reduction behavior is covered by TestAnalyzeNonPredicateColumnRatio.
-			origRatio := tk.MustQuery("select @@global.tidb_analyze_non_predicate_column_ratio").Rows()[0][0].(string)
-			tk.MustExec("set global tidb_analyze_non_predicate_column_ratio = 1")
-			defer tk.MustExec("set global tidb_analyze_non_predicate_column_ratio = " + origRatio)
 			tk.MustExec("create table t (a int, b int, c int, d int, index idx_b_d(b, d))")
 			statstestutil.HandleNextDDLEventWithTxn(h)
 			tk.MustExec("insert into t values (1,1,null,1), (2,1,9,1), (1,1,8,1), (2,2,7,2), (1,3,7,3), (2,4,6,4), (1,4,6,5), (2,4,6,5), (1,5,6,5)")
@@ -190,11 +180,6 @@ func TestAnalyzeColumnsWithClusteredIndex(t *testing.T) {
 			tk.MustExec("use test")
 			tk.MustExec("drop table if exists t")
 			tk.MustExec("set @@tidb_analyze_version = 2")
-			// Pin the ratio so every analyzed column collects the configured TopN/bucket
-			// numbers; the reduction behavior is covered by TestAnalyzeNonPredicateColumnRatio.
-			origRatio := tk.MustQuery("select @@global.tidb_analyze_non_predicate_column_ratio").Rows()[0][0].(string)
-			tk.MustExec("set global tidb_analyze_non_predicate_column_ratio = 1")
-			defer tk.MustExec("set global tidb_analyze_non_predicate_column_ratio = " + origRatio)
 			tk.MustExec("create table t (a int, b int, c int, d int, primary key(b, d) clustered)")
 			statstestutil.HandleNextDDLEventWithTxn(h)
 			tk.MustExec("insert into t values (1,1,null,1), (2,2,9,2), (1,3,8,3), (2,4,7,4), (1,5,7,5), (2,6,6,6), (1,7,6,7), (2,8,6,8), (1,9,6,9)")
@@ -272,11 +257,6 @@ func TestAnalyzeColumnsWithDynamicPartitionTable(t *testing.T) {
 			tk.MustExec("use test")
 			tk.MustExec("drop table if exists t")
 			tk.MustExec("set @@tidb_analyze_version = 2")
-			// Pin the ratio so every analyzed column collects the configured TopN/bucket
-			// numbers; the reduction behavior is covered by TestAnalyzeNonPredicateColumnRatio.
-			origRatio := tk.MustQuery("select @@global.tidb_analyze_non_predicate_column_ratio").Rows()[0][0].(string)
-			tk.MustExec("set global tidb_analyze_non_predicate_column_ratio = 1")
-			defer tk.MustExec("set global tidb_analyze_non_predicate_column_ratio = " + origRatio)
 			tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 			tk.MustExec("create table t (a int, b int, c int, index idx(c)) partition by range (a) (partition p0 values less than (10), partition p1 values less than maxvalue)")
 			statstestutil.HandleNextDDLEventWithTxn(h)
@@ -403,11 +383,6 @@ func TestAnalyzeColumnsWithStaticPartitionTable(t *testing.T) {
 			tk.MustExec("use test")
 			tk.MustExec("drop table if exists t")
 			tk.MustExec("set @@tidb_analyze_version = 2")
-			// Pin the ratio so every analyzed column collects the configured TopN/bucket
-			// numbers; the reduction behavior is covered by TestAnalyzeNonPredicateColumnRatio.
-			origRatio := tk.MustQuery("select @@global.tidb_analyze_non_predicate_column_ratio").Rows()[0][0].(string)
-			tk.MustExec("set global tidb_analyze_non_predicate_column_ratio = 1")
-			defer tk.MustExec("set global tidb_analyze_non_predicate_column_ratio = " + origRatio)
 			tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
 			tk.MustExec("create table t (a int, b int, c int, index idx(c)) partition by range (a) (partition p0 values less than (10), partition p1 values less than maxvalue)")
 			statstestutil.HandleNextDDLEventWithTxn(h)
@@ -519,11 +494,6 @@ func TestAnalyzeColumnsWithVirtualColumnIndex(t *testing.T) {
 			tk.MustExec("use test")
 			tk.MustExec("drop table if exists t")
 			tk.MustExec("set @@tidb_analyze_version = 2")
-			// Pin the ratio so every analyzed column collects the configured TopN/bucket
-			// numbers; the reduction behavior is covered by TestAnalyzeNonPredicateColumnRatio.
-			origRatio := tk.MustQuery("select @@global.tidb_analyze_non_predicate_column_ratio").Rows()[0][0].(string)
-			tk.MustExec("set global tidb_analyze_non_predicate_column_ratio = 1")
-			defer tk.MustExec("set global tidb_analyze_non_predicate_column_ratio = " + origRatio)
 			tk.MustExec("create table t (a int, b int, c int as (b+1), index idx(c))")
 			statstestutil.HandleNextDDLEventWithTxn(h)
 			tk.MustExec("insert into t (a,b) values (1,1), (2,2), (3,3), (4,4), (5,4), (6,5), (7,5), (8,5), (null,null)")
@@ -587,9 +557,10 @@ func TestAnalyzeNonPredicateColumnRatio(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	h := dom.StatsHandle()
 	tk.MustExec("use test")
-	// The reduction is enabled by default with a ratio of 0.1.
+	// The reduction is enabled by default with a ratio of 0.1, so a reduced column
+	// collects 10 TopN values (10% of the default 100) and targets 25 histogram
+	// buckets (10% of the default 256).
 	tk.MustQuery("select @@global.tidb_analyze_non_predicate_column_ratio").Check(testkit.Rows("0.1"))
-	tk.MustExec("set global tidb_analyze_non_predicate_column_ratio = 0.5")
 	defer tk.MustExec("set global tidb_analyze_non_predicate_column_ratio = default")
 	tk.MustExec("set @@tidb_analyze_version = 2")
 
@@ -606,48 +577,78 @@ func TestAnalyzeNonPredicateColumnRatio(t *testing.T) {
 	prepareTable := func(tblName string) {
 		tk.MustExec(fmt.Sprintf("create table %s (a int, b int, c int, index ib (b))", tblName))
 		statstestutil.HandleNextDDLEventWithTxn(h)
-		// Every column gets 8 distinct values: 1~4 appear twice and 5~8 appear once, so
-		// with `with 2 topn, 2 buckets` a full-stats column collects 2 TopN values and
-		// 2 buckets while a reduced column collects 1 TopN value and 1 bucket.
-		for i := 1; i <= 4; i++ {
-			tk.MustExec(fmt.Sprintf("insert into %s values (%[2]d, %[2]d, %[2]d), (%[2]d, %[2]d, %[2]d)", tblName, i))
+		// Every column gets 20 skewed values (value i appears 31-i times, i.e. counts
+		// 30~11) plus 100 values appearing exactly once. With the default analyze
+		// options a full-stats column keeps the 20 skewed values as TopN (the
+		// single-occurrence values are pruned), while a reduced column keeps only 10%
+		// of the default TopN number, i.e. the 10 most skewed values.
+		values := ""
+		addRow := func(v int) {
+			if values != "" {
+				values += ","
+			}
+			values += fmt.Sprintf("(%[1]d,%[1]d,%[1]d)", v)
 		}
-		for i := 5; i <= 8; i++ {
-			tk.MustExec(fmt.Sprintf("insert into %s values (%[2]d, %[2]d, %[2]d)", tblName, i))
+		for i := 1; i <= 20; i++ {
+			for range 31 - i {
+				addRow(i)
+			}
 		}
+		for i := 1001; i <= 1100; i++ {
+			addRow(i)
+		}
+		tk.MustExec(fmt.Sprintf("insert into %s values %s", tblName, values))
 		tk.MustExec("flush stats_delta *.*")
 	}
 
-	// Case 1: column a is a predicate column, so it keeps the configured numbers while
-	// the other columns (including the indexed column b) collect the reduced numbers.
+	// Case 1: with the default analyze options, column a is a predicate column, so it
+	// keeps the default numbers while the other columns (including the indexed column
+	// b) collect the reduced numbers.
 	prepareTable("t1")
 	tk.MustExec("select * from t1 where a > 0")
 	require.NoError(t, h.DumpColStatsUsageToKV())
-	tk.MustExec("analyze table t1 all columns with 2 topn, 2 buckets")
-	checkStatsSize("t1", "a", 0, 2, 2)
-	checkStatsSize("t1", "b", 0, 1, 1)
-	checkStatsSize("t1", "c", 0, 1, 1)
-	// Index stats always keep the configured numbers.
-	checkStatsSize("t1", "ib", 1, 2, 2)
+	tk.MustExec("analyze table t1 all columns")
+	checkStatsSize("t1", "a", 0, 20, 34)
+	checkStatsSize("t1", "b", 0, 10, 20)
+	checkStatsSize("t1", "c", 0, 10, 20)
+	// Index stats always keep the default numbers.
+	checkStatsSize("t1", "ib", 1, 20, 34)
 
 	// Case 2: no predicate column has been collected for the table, so the first column
-	// of the index keeps the configured numbers while the other columns are reduced.
+	// of the index keeps the default numbers while the other columns are reduced.
 	prepareTable("t2")
-	tk.MustExec("analyze table t2 all columns with 2 topn, 2 buckets")
-	checkStatsSize("t2", "a", 0, 1, 1)
-	checkStatsSize("t2", "b", 0, 2, 2)
-	checkStatsSize("t2", "c", 0, 1, 1)
+	tk.MustExec("analyze table t2 all columns")
+	checkStatsSize("t2", "a", 0, 10, 20)
+	checkStatsSize("t2", "b", 0, 20, 34)
+	checkStatsSize("t2", "c", 0, 10, 20)
 
-	// Case 3: columns specified in ANALYZE ... COLUMNS keep the configured numbers.
+	// Case 3: columns specified in ANALYZE ... COLUMNS keep the default numbers.
 	prepareTable("t3")
-	tk.MustExec("analyze table t3 columns a, b with 2 topn, 2 buckets")
-	checkStatsSize("t3", "a", 0, 2, 2)
-	checkStatsSize("t3", "b", 0, 2, 2)
+	tk.MustExec("analyze table t3 columns a, b")
+	checkStatsSize("t3", "a", 0, 20, 34)
+	checkStatsSize("t3", "b", 0, 20, 34)
 
-	// Case 4: setting the ratio to 1 disables the reduction.
+	// Case 4: TopN/bucket numbers explicitly requested by the user are always honored,
+	// even for non-predicate columns (t4 has none of its columns used in predicates).
+	prepareTable("t4")
+	tk.MustExec("analyze table t4 all columns with 15 topn, 40 buckets")
+	checkStatsSize("t4", "a", 0, 15, 25)
+	checkStatsSize("t4", "b", 0, 15, 25)
+	checkStatsSize("t4", "c", 0, 15, 25)
+
+	// Case 5: the options are honored independently: an explicit TopN number is kept
+	// while the bucket number, left at the default, is still reduced for non-predicate
+	// columns (only b, the first column of the index, keeps the default bucket number).
+	prepareTable("t5")
+	tk.MustExec("analyze table t5 all columns with 15 topn")
+	checkStatsSize("t5", "a", 0, 15, 20)
+	checkStatsSize("t5", "b", 0, 15, 105)
+	checkStatsSize("t5", "c", 0, 15, 20)
+
+	// Case 6: setting the ratio to 1 disables the reduction.
 	tk.MustExec("set global tidb_analyze_non_predicate_column_ratio = 1")
-	tk.MustExec("analyze table t1 all columns with 2 topn, 2 buckets")
-	checkStatsSize("t1", "a", 0, 2, 2)
-	checkStatsSize("t1", "b", 0, 2, 2)
-	checkStatsSize("t1", "c", 0, 2, 2)
+	tk.MustExec("analyze table t2 all columns")
+	checkStatsSize("t2", "a", 0, 20, 34)
+	checkStatsSize("t2", "b", 0, 20, 34)
+	checkStatsSize("t2", "c", 0, 20, 34)
 }

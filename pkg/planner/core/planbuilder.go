@@ -2465,17 +2465,20 @@ func (b *PlanBuilder) getColumnsBasedOnPredicateColumns(
 	return getColumnListFromSet(tbl.TableInfo.Columns, colSet), nil
 }
 
-// getFullStatsColsAndRatio decides which columns keep the configured (full) TopN/bucket
-// numbers when tidb_analyze_non_predicate_column_ratio is smaller than 1:
+// getFullStatsColsAndRatio decides which columns keep the full TopN/bucket numbers
+// when tidb_analyze_non_predicate_column_ratio is smaller than 1:
 //   - Predicate columns always keep the full numbers.
 //   - Columns explicitly specified in ANALYZE TABLE ... COLUMNS keep the full numbers.
 //   - When no predicate column has been collected for the table yet, the handle column and
 //     the first column of each index keep the full numbers, since they are the most likely
 //     columns to be used in future predicates.
 //
-// Every other column only collects ratio times the configured TopN/bucket numbers.
+// Every other column only collects ratio times the default TopN/bucket numbers. The
+// reduction never applies to TopN/bucket numbers explicitly requested by the user (in
+// the ANALYZE statement or persisted analyze options): those are honored for every
+// column (see BuildHistAndTopN).
 // It returns a nil map when the reduction is disabled (ratio >= 1), meaning every column
-// keeps the configured numbers.
+// keeps the full numbers.
 func (b *PlanBuilder) getFullStatsColsAndRatio(
 	tbl *resolve.TableNameW,
 	predicateCols *calcOnceMap,

@@ -359,6 +359,10 @@ func BuildColumn(ctx sessionctx.Context, numBuckets, id int64, collector *Sample
 }
 
 // BuildHistAndTopN build a histogram and TopN for a column or an index from samples.
+// nonPredicateColRatio scales down the TopN/bucket numbers when it is smaller than 1,
+// which is used for columns that are not predicate columns. The reduction only applies
+// to numbers equal to the defaults: a non-default number was explicitly requested by
+// the user and is always honored.
 func BuildHistAndTopN(
 	ctx sessionctx.Context,
 	numBuckets, numTopN int,
@@ -367,6 +371,7 @@ func BuildHistAndTopN(
 	tp *types.FieldType,
 	isColumn bool,
 	memTracker *memory.Tracker,
+	nonPredicateColRatio float64,
 ) (*Histogram, *TopN, error) {
 	bufferedMemSize := int64(0)
 	bufferedReleaseSize := int64(0)
@@ -410,16 +415,25 @@ func BuildHistAndTopN(
 	if err != nil {
 		return nil, nil, err
 	}
+	// If a numTopN/numBuckets value other than default is passed in, we assume it's a value
+	// that the user wants us to honor: TopN pruning and the reduction below don't apply to it.
+	allowPruning := numTopN == DefaultTopNValue
+	defaultNumBuckets := numBuckets == DefaultHistogramBuckets
+	if nonPredicateColRatio < 1 {
+		// The column is not a predicate column, so only collect nonPredicateColRatio times
+		// the default TopN/bucket numbers.
+		if allowPruning {
+			numTopN = int(float64(numTopN) * nonPredicateColRatio)
+		}
+		if defaultNumBuckets {
+			numBuckets = max(1, int(float64(numBuckets)*nonPredicateColRatio))
+		}
+	}
 	hg := NewHistogram(id, ndv, nullCount, 0, tp, numBuckets, collector.TotalSize)
 
 	sampleNum := int64(len(samples))
 	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
 	sampleFactor := float64(count) / float64(sampleNum)
-	// If a numTopn value other than default is passed in, we assume it's a value that the user wants us to honor
-	allowPruning := true
-	if numTopN != DefaultTopNValue {
-		allowPruning = false
-	}
 
 	// Step1: collect topn from samples using bounded min-heap and track their index ranges
 	boundedMinHeap := generic.NewBoundedMinHeap(numTopN, func(a, b TopNWithRange) int {
@@ -529,7 +543,7 @@ func BuildHistAndTopN(
 	if samplesExcludingTopN > 0 {
 		remainingNDV := ndv - lenTopN
 		// if we pruned the topN, it means that there are no remaining skewed values in the samples
-		if lenTopN < int64(numTopN) && numBuckets == DefaultHistogramBuckets {
+		if lenTopN < int64(numTopN) && defaultNumBuckets {
 			// set the number of buckets to be the number of remaining distinct values divided by bucketNDVDivisor
 			// but no less than 1 and no more than the original number of buckets
 			numBuckets = int(min(max(1, remainingNDV/bucketNDVDivisor), int64(numBuckets)))

@@ -925,11 +925,6 @@ func TestInitStatsLiteRecordsSynthesizedColumnStats(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	// Keep the configured TopN/bucket numbers for all columns; the reduction for
-	// non-predicate columns is covered by TestAnalyzeNonPredicateColumnRatio.
-	origRatio := tk.MustQuery("select @@global.tidb_analyze_non_predicate_column_ratio").Rows()[0][0].(string)
-	tk.MustExec("set global tidb_analyze_non_predicate_column_ratio = 1")
-	defer tk.MustExec("set global tidb_analyze_non_predicate_column_ratio = " + origRatio)
 	tk.MustExec("create table t(a int)")
 
 	h := dom.StatsHandle()

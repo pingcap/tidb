@@ -1174,7 +1174,9 @@ const (
 	// TiDBAnalyzeNonPredicateColumnRatio scales down the number of TopN values and histogram buckets
 	// collected for columns that are not predicate columns. When ANALYZE collects statistics for a
 	// column that has never been used in query predicates, it collects only
-	// `ratio * (the configured TopN/bucket numbers)`. Setting it to 1 disables the reduction.
+	// `ratio * (the default TopN/bucket numbers)`. TopN/bucket numbers explicitly requested by
+	// the user (in the ANALYZE statement or persisted analyze options) are always honored and
+	// never reduced. Setting it to 1 disables the reduction.
 	TiDBAnalyzeNonPredicateColumnRatio = "tidb_analyze_non_predicate_column_ratio"
 	// TiDBDisableColumnTrackingTime records the last time TiDBEnableColumnTracking is set off.
 	// It is used to invalidate the collected predicate columns after turning off TiDBEnableColumnTracking, which avoids physical deletion.

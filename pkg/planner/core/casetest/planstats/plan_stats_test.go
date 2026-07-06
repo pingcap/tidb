@@ -591,11 +591,6 @@ func TestStatsAnalyzedInDDL(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		testKit.MustExec("use test")
 		testKit.MustExec("set session tidb_stats_update_during_ddl = 1")
-		// Keep the configured TopN/bucket numbers for all columns; the reduction for
-		// non-predicate columns is covered by TestAnalyzeNonPredicateColumnRatio.
-		origRatio := testKit.MustQuery("select @@global.tidb_analyze_non_predicate_column_ratio").Rows()[0][0].(string)
-		testKit.MustExec("set global tidb_analyze_non_predicate_column_ratio = 1")
-		defer testKit.MustExec("set global tidb_analyze_non_predicate_column_ratio = " + origRatio)
 		// test normal table
 		testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
 

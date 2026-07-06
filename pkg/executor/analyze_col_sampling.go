@@ -868,13 +868,16 @@ workLoop:
 			}
 			numTopN := int(e.opts[ast.AnalyzeOptNumTopN])
 			numBuckets := int(e.opts[ast.AnalyzeOptNumBuckets])
+			// The reduction only applies to the default TopN/bucket numbers; explicitly
+			// requested numbers are always honored, so pass ratio 1 for them inside
+			// BuildHistAndTopN.
+			nonPredicateColRatio := 1.0
 			if task.isColumn {
 				if e.fullStatsCols != nil {
 					if _, ok := e.fullStatsCols[e.colsInfo[task.slicePos].ID]; !ok {
 						// The column is not a predicate column, so only collect
-						// nonPredicateColRatio times the configured TopN/bucket numbers.
-						numTopN = int(float64(numTopN) * e.nonPredicateColRatio)
-						numBuckets = max(1, int(float64(numBuckets)*e.nonPredicateColRatio))
+						// nonPredicateColRatio times the default TopN/bucket numbers.
+						nonPredicateColRatio = e.nonPredicateColRatio
 					}
 				}
 				if e.tableInfo != nil && isColumnCoveredBySingleColUniqueIndex(e.tableInfo, e.colsInfo[task.slicePos].Offset) {
@@ -886,7 +889,7 @@ workLoop:
 					numTopN = 0
 				}
 			}
-			hist, topn, err := statistics.BuildHistAndTopN(e.ctx, numBuckets, numTopN, task.id, collector, task.tp, task.isColumn, e.memTracker)
+			hist, topn, err := statistics.BuildHistAndTopN(e.ctx, numBuckets, numTopN, task.id, collector, task.tp, task.isColumn, e.memTracker, nonPredicateColRatio)
 			if err != nil {
 				resultCh <- err
 				releaseCollectorMemory()
