@@ -2169,7 +2169,7 @@ func upgradeToVer262(s sessionapi.Session, _ int64) {
 
 	req := rs.NewChunk(nil)
 	updates := make([]bindingDigestUpdate, 0)
-	invlidBindingRowIDs := make([]int64, 0)
+	invlideBindingRowIDs := make([]int64, 0)
 	seenDigestPair := make(map[string]struct{})
 	p := parser.New()
 	for {
@@ -2200,7 +2200,7 @@ func upgradeToVer262(s sessionapi.Session, _ int64) {
 				logutil.BgLogger().Warn("skip refreshing binding digest because bind_sql cannot be parsed",
 					zap.String("bind_sql", bindingSQL), zap.Error(parseErr))
 				if planDigestNotNull {
-					invlidBindingRowIDs = append(invlidBindingRowIDs, rowID)
+					invlideBindingRowIDs = append(invlideBindingRowIDs, rowID)
 				}
 				continue
 			}
@@ -2209,7 +2209,7 @@ func upgradeToVer262(s sessionapi.Session, _ int64) {
 				logutil.BgLogger().Warn("skip refreshing binding digest because normalized binding SQL is empty",
 					zap.String("bind_sql", bindingSQL))
 				if planDigestNotNull {
-					invlidBindingRowIDs = append(invlidBindingRowIDs, rowID)
+					invlideBindingRowIDs = append(invlideBindingRowIDs, rowID)
 				}
 				continue
 			}
@@ -2235,18 +2235,19 @@ func upgradeToVer262(s sessionapi.Session, _ int64) {
 	}
 
 	// Update rows independently to avoid one large bootstrap transaction.
-	for _, rowID := range invlidBindingRowIDs {
+	for _, rowID := range invlideBindingRowIDs {
 		// Set invalid bindings' plan_digest to null to avoid duplicated key error in unique index (sql_digest, plan_digest).
 		mustExecute(s, "UPDATE HIGH_PRIORITY mysql.bind_info SET plan_digest=NULL WHERE _tidb_rowid=%?", rowID)
 	}
+	// Set all duplicated rows to NULL to avoid duplicated key error on the unique index (plan_digest, sql_digest).
 	for _, update := range updates {
 		if !update.duplicate {
 			continue
 		}
-		// Avoid duplicated key error on the unique index (plan_digest, sql_digest).
 		mustExecute(s, "UPDATE HIGH_PRIORITY mysql.bind_info SET status=%?, sql_digest=NULL, plan_digest=NULL WHERE _tidb_rowid=%?",
 			bindinfo.StatusDeleted, update.rowID)
 	}
+	// Actually update the original_sql and sql_digest for non-duplicated rows.
 	for _, update := range updates {
 		if update.duplicate || update.originalSQL == "" {
 			continue
