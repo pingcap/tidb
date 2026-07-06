@@ -117,6 +117,21 @@ func TestSlotManager(t *testing.T) {
 	require.Len(t, sm.executorTasks, 0)
 	require.Len(t, sm.taskID2Index, 0)
 	require.Equal(t, 10, sm.availableSlots())
+
+	t.Run("executor task slots snapshot", func(t *testing.T) {
+		sm := newSlotManager(16)
+		task1 := &proto.TaskBase{ID: 1, RequiredSlots: 3}
+		task2 := &proto.TaskBase{ID: 2, RequiredSlots: 5}
+		task3 := &proto.TaskBase{ID: 3, RequiredSlots: 7}
+		require.True(t, sm.alloc(task1))
+		require.True(t, sm.alloc(task2))
+		require.True(t, sm.alloc(task3))
+		require.ElementsMatch(t, []TaskSlotSnapshot{
+			{ID: 1, RequiredSlots: 3},
+			{ID: 2, RequiredSlots: 5},
+			{ID: 3, RequiredSlots: 7},
+		}, sm.executorTaskSlotsSnapshot())
+	})
 }
 
 func TestSlotManagerExchangeSlots(t *testing.T) {
