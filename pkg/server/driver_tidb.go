@@ -69,8 +69,10 @@ type TiDBStatement struct {
 	id          uint32
 	numParams   int
 	boundParams [][]byte
-	paramsType  []byte
-	ctx         *TiDBContext
+	// boundParamsBytes tracks the total bytes accumulated by COM_STMT_SEND_LONG_DATA for this statement.
+	boundParamsBytes uint64
+	paramsType       []byte
+	ctx              *TiDBContext
 	// this result set should have been closed before stored here. Only the `rowIterator` are used here. This field is
 	// not moved out to reuse the logic inside functions `writeResultSet...`
 	// TODO: move the `fetchedRows` into the statement, and remove the `ResultSet` from statement.
@@ -108,9 +110,14 @@ func (ts *TiDBStatement) AppendParam(paramID int, data []byte) error {
 	}
 	// If len(data) is 0, append an empty byte slice to the end to distinguish no data and no parameter.
 	if len(data) == 0 {
+		ts.boundParamsBytes -= uint64(len(ts.boundParams[paramID]))
 		ts.boundParams[paramID] = []byte{}
 	} else {
+		if ts.boundParamsBytes+uint64(len(data)) > ts.ctx.GetSessionVars().MaxAllowedPacket {
+			return servererr.ErrNetPacketTooLarge
+		}
 		ts.boundParams[paramID] = append(ts.boundParams[paramID], data...)
+		ts.boundParamsBytes += uint64(len(data))
 	}
 	return nil
 }
@@ -152,6 +159,7 @@ func (ts *TiDBStatement) Reset() error {
 	for i := range ts.boundParams {
 		ts.boundParams[i] = nil
 	}
+	ts.boundParamsBytes = 0
 	ts.hasActiveCursor = false
 
 	resultset.ReportCursorRUV2Delta(ts.rs, 0)

@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	servererr "github.com/pingcap/tidb/pkg/server/err"
 	"github.com/pingcap/tidb/pkg/server/internal"
 	"github.com/pingcap/tidb/pkg/server/internal/column"
 	"github.com/pingcap/tidb/pkg/server/internal/resultset"
@@ -575,6 +576,31 @@ func dispatchSendLongData(c *mockConn, stmtID int, paramIndex uint16, parameter 
 			parameter..., // the parameter
 		),
 	)
+}
+
+func TestStmtSendLongDataMaxAllowedPacket(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	srv := CreateMockServer(t, store)
+	srv.SetDomain(dom)
+	defer srv.Close()
+
+	c := CreateMockConn(t, srv).(*mockConn)
+	c.capability = mysql.ClientProtocol41
+
+	tk := testkit.NewTestKitWithSession(t, store, c.Context().Session)
+	tk.MustExec("use test")
+
+	stmt, _, _, err := c.Context().Prepare("select ?, ?")
+	require.NoError(t, err)
+
+	c.Context().GetSessionVars().MaxAllowedPacket = 1024
+	require.NoError(t, dispatchSendLongData(c, stmt.ID(), 0, bytes.Repeat([]byte{'a'}, 512)))
+	require.NoError(t, dispatchSendLongData(c, stmt.ID(), 1, bytes.Repeat([]byte{'b'}, 512)))
+
+	err = dispatchSendLongData(c, stmt.ID(), 0, []byte{'c'})
+	require.ErrorIs(t, err, servererr.ErrNetPacketTooLarge)
+	require.Len(t, stmt.BoundParams()[0], 512)
+	require.Len(t, stmt.BoundParams()[1], 512)
 }
 
 func TestCursorFetchSendLongData(t *testing.T) {
