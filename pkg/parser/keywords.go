@@ -642,6 +642,7 @@ var Keywords = []KeywordsType{
 	{"UNKNOWN", false, "unreserved"},
 	{"UNSET", false, "unreserved"},
 	{"USER", false, "unreserved"},
+	{"UUID", false, "unreserved"},
 	{"VALIDATION", false, "unreserved"},
 	{"VALUE", false, "unreserved"},
 	{"VARIABLES", false, "unreserved"},

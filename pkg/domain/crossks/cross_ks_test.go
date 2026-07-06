@@ -24,15 +24,23 @@ import (
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ddl/serverstate"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
+	"github.com/pingcap/tidb/pkg/ddl/systable"
+	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/etcd"
@@ -331,5 +339,234 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 	sessMgr, ok := crossKSMgr.Get(targetKS)
 	require.True(t, ok)
 	require.Same(t, sessMgr.Store(), handle.Store())
-	require.Same(t, sessMgr.SessPool(), handle.SessPool())
+	require.Same(t, sessMgr.SysSessionPool(), handle.SysSessionPool())
+}
+
+func TestDomainAlterTableModeInKeyspaceSubmitOnly(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("cross keyspace runtime acquire is supported only in nextgen kernel")
+	}
+	integration.BeforeTestExternal(t)
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 2})
+	t.Cleanup(func() {
+		cluster.Terminate(t)
+	})
+	keyspaceIDs := map[string]uint32{
+		keyspace.System: 1,
+		"ks-ddl-submit": 2,
+	}
+	getETCDCli := func(ks string, ksID uint32) *clientv3.Client {
+		for i := range 2 {
+			cli := cluster.Client(i)
+			if cli == nil {
+				continue
+			}
+			cluster.TakeClient(i)
+			codec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Id: ksID, Name: ks})
+			require.NoError(t, err)
+			etcd.SetEtcdCliByNamespace(cli, keyspace.MakeKeyspaceEtcdNamespace(codec))
+			return cli
+		}
+		require.Fail(t, "cannot find etcd client for keyspace %s", ks)
+		return nil
+	}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/injectETCDCli",
+		func(cliP **clientv3.Client, ks string) {
+			id, ok := keyspaceIDs[ks]
+			require.True(t, ok)
+			*cliP = getETCDCli(ks, id)
+		},
+	)
+
+	registerUnistore(t)
+	sysKSStore, sysKSDom := testkit.CreateMockStoreAndDomainForKS(t, keyspace.System)
+	storeMap := make(map[string]kv.Storage, 2)
+	storeMap[keyspace.System] = sysKSStore
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/beforeGetStore",
+		func(fnP *func(string) (store kv.Storage, err error)) {
+			*fnP = func(ks string) (store kv.Storage, err error) {
+				return storeMap[ks], nil
+			}
+		},
+	)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/skipCloseStore",
+		func(shouldCloseStore *bool) {
+			*shouldCloseStore = false
+		},
+	)
+
+	targetKS := "ks-ddl-submit"
+	targetStore, targetDom := testkit.CreateMockStoreAndDomainForKS(t, targetKS)
+	storeMap[targetKS] = targetStore
+	targetTK := testkit.NewTestKit(t, targetStore)
+	targetTK.MustExec("use test")
+	targetTK.MustExec("create table t_mode(id int)")
+	targetTK.MustExec("create table t_mode_upgrade(id int)")
+	originalKeyspace := config.GetGlobalKeyspaceName()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = keyspace.System
+	})
+	t.Cleanup(func() {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.KeyspaceName = originalKeyspace
+		})
+		sysKSDom.GetCrossKSMgr().CloseKS(targetKS)
+	})
+
+	dbInfo, tbl := getAlterTableModeTarget(t, targetDom.InfoSchema())
+	req := model.AlterTableModeTarget{
+		SchemaID:   dbInfo.ID,
+		SchemaName: ast.NewCIStr("test"),
+		TableID:    tbl.Meta().ID,
+		TableName:  ast.NewCIStr("t_mode"),
+		TargetMode: model.TableModeImport,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	require.NoError(t, alterTableModeInKeyspaceForTest(ctx, sysKSDom, "test/domain-alter-table-mode", targetKS, req))
+	require.Equal(t, model.TableModeImport, getTargetTableMode(t, targetStore, dbInfo.ID, tbl.Meta().ID))
+	globalIDAfterImport := getGlobalID(t, targetStore)
+	require.NoError(t, alterTableModeInKeyspaceForTest(ctx, sysKSDom, "test/domain-alter-table-mode-retry", targetKS, req))
+	require.Equal(t, globalIDAfterImport, getGlobalID(t, targetStore))
+	require.Equal(t, model.TableModeImport, getTargetTableMode(t, targetStore, dbInfo.ID, tbl.Meta().ID))
+
+	req.SchemaName = ast.NewCIStr("renamed_test")
+	err := alterTableModeInKeyspaceForTest(ctx, sysKSDom, "test/domain-alter-table-mode-schema-mismatch", targetKS, req)
+	require.ErrorContains(t, err, "expected schema name")
+
+	req.SchemaName = ast.NewCIStr("test")
+	req.TableName = ast.NewCIStr("renamed_t_mode")
+	err = alterTableModeInKeyspaceForTest(ctx, sysKSDom, "test/domain-alter-table-mode-mismatch", targetKS, req)
+	require.ErrorContains(t, err, "expected table name")
+
+	req.TableName = ast.NewCIStr("t_mode")
+	req.TargetMode = model.TableModeNormal
+	require.NoError(t, alterTableModeInKeyspaceForTest(ctx, sysKSDom, "test/domain-alter-table-mode", targetKS, req))
+	require.Equal(t, model.TableModeNormal, getTargetTableMode(t, targetStore, dbInfo.ID, tbl.Meta().ID))
+
+	_, upgradeTbl := getAlterTableModeTargetByName(t, targetDom.InfoSchema(), "t_mode_upgrade")
+	crossKSMgr := sysKSDom.GetCrossKSMgr()
+	sessMgr, ok := crossKSMgr.Get(targetKS)
+	require.True(t, ok)
+	require.Nil(t, sessMgr.ServerStateSyncer().WatchChan())
+	sysTblMgr := systable.NewManager(sess.NewSessionPool(sessMgr.SysSessionPool()))
+	jobCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	minJobID, err := sysTblMgr.GetMinJobID(jobCtx, 0)
+	require.NoError(t, err)
+	require.Zero(t, minJobID)
+
+	blockDDL := make(chan struct{})
+	var unblockDDL sync.Once
+	t.Cleanup(func() {
+		_ = sessMgr.ServerStateSyncer().UpdateGlobalState(
+			context.Background(), serverstate.NewStateInfo(serverstate.StateNormalRunning))
+		unblockDDL.Do(func() {
+			close(blockDDL)
+		})
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeLoadAndDeliverJobs", func() {
+		<-blockDDL
+	})
+	require.NoError(t, sessMgr.ServerStateSyncer().UpdateGlobalState(
+		context.Background(), serverstate.NewStateInfo(serverstate.StateUpgrading)))
+	require.False(t, sessMgr.ServerStateSyncer().IsUpgradingState())
+	upgradingReq := model.AlterTableModeTarget{
+		SchemaID:   dbInfo.ID,
+		SchemaName: ast.NewCIStr("test"),
+		TableID:    upgradeTbl.Meta().ID,
+		TableName:  ast.NewCIStr("t_mode_upgrade"),
+		TargetMode: model.TableModeImport,
+	}
+	upgradingCtx, upgradingCancel := context.WithCancel(context.Background())
+	defer upgradingCancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- alterTableModeInKeyspaceForTest(
+			upgradingCtx, sysKSDom, "test/domain-alter-table-mode-upgrading", targetKS, upgradingReq)
+	}()
+
+	var jobW *model.JobW
+	require.Eventually(t, func() bool {
+		if !sessMgr.ServerStateSyncer().IsUpgradingState() {
+			return false
+		}
+		currMinJobID, err := sysTblMgr.GetMinJobID(jobCtx, 0)
+		if err != nil || currMinJobID == 0 {
+			return false
+		}
+		currJob, err := sysTblMgr.GetJobByID(jobCtx, currMinJobID)
+		if err != nil || currJob == nil {
+			return false
+		}
+		minJobID = currMinJobID
+		jobW = currJob
+		return (jobW.State == model.JobStatePausing || jobW.State == model.JobStatePaused) &&
+			jobW.AdminOperator == model.AdminCommandBySystem
+	}, 30*time.Second, 50*time.Millisecond)
+	require.True(t, sessMgr.ServerStateSyncer().IsUpgradingState())
+	require.NotZero(t, minJobID)
+	require.Contains(t, []model.JobState{model.JobStatePausing, model.JobStatePaused}, jobW.State,
+		"job=%s, cross-KS submitter upgrading=%v",
+		jobW, sessMgr.ServerStateSyncer().IsUpgradingState())
+	require.Equal(t, model.AdminCommandBySystem, jobW.AdminOperator)
+
+	upgradingCancel()
+	select {
+	case err = <-errCh:
+		require.ErrorContains(t, err, "context canceled")
+	case <-time.After(10 * time.Second):
+		require.Fail(t, "cross keyspace AlterTableMode did not return after context cancellation")
+	}
+}
+
+func alterTableModeInKeyspaceForTest(
+	ctx context.Context,
+	acquirer sqlsvrapi.Server,
+	holderID string,
+	targetKS string,
+	req model.AlterTableModeTarget,
+) error {
+	runtime, err := acquirer.AcquireKSRuntime(targetKS, holderID)
+	if err != nil {
+		return err
+	}
+	defer runtime.Release()
+	return runtime.AlterTableMode(ctx, req)
+}
+
+func getAlterTableModeTarget(t *testing.T, is infoschema.InfoSchema) (*model.DBInfo, table.Table) {
+	return getAlterTableModeTargetByName(t, is, "t_mode")
+}
+
+func getAlterTableModeTargetByName(t *testing.T, is infoschema.InfoSchema, tableName string) (*model.DBInfo, table.Table) {
+	dbInfo, ok := is.SchemaByName(ast.NewCIStr("test"))
+	require.True(t, ok)
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(tableName))
+	require.NoError(t, err)
+	return dbInfo, tbl
+}
+
+func getTargetTableMode(t *testing.T, store kv.Storage, schemaID, tableID int64) model.TableMode {
+	var mode model.TableMode
+	require.NoError(t, kv.RunInNewTxn(context.Background(), store, true, func(_ context.Context, txn kv.Transaction) error {
+		tblInfo, err := meta.NewMutator(txn).GetTable(schemaID, tableID)
+		if err != nil {
+			return err
+		}
+		mode = tblInfo.Mode
+		return nil
+	}))
+	return mode
+}
+
+func getGlobalID(t *testing.T, store kv.Storage) int64 {
+	var id int64
+	require.NoError(t, kv.RunInNewTxn(context.Background(), store, false, func(_ context.Context, txn kv.Transaction) error {
+		var err error
+		id, err = meta.NewReader(txn).GetGlobalID()
+		return err
+	}))
+	return id
 }

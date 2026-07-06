@@ -52,6 +52,7 @@ var HeavyFunctionNameMap = map[string]struct{}{
 	"vec_negative_inner_product": {},
 	"vec_dims":                   {},
 	"vec_l2_norm":                {},
+	"fts_match_word":             {},
 }
 
 func attachPlan2Task(p base.PhysicalPlan, t base.Task) base.Task {

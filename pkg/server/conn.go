@@ -66,6 +66,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/extension"
+	"github.com/pingcap/tidb/pkg/format/textrow"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -107,11 +108,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/errmsg"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
@@ -187,20 +188,20 @@ type clientConn struct {
 		sync.RWMutex
 		*TiDBContext // an interface to execute sql statements.
 	}
-	attrs         map[string]string     // attributes parsed from client handshake response.
-	serverHost    string                // server host
-	peerHost      string                // peer host
-	peerPort      string                // peer port
-	status        int32                 // dispatching/reading/shutdown/waitshutdown
-	lastCode      uint16                // last error code
-	collation     uint8                 // collation used by client, may be different from the collation used by database.
-	lastActive    time.Time             // last active time
-	authPlugin    string                // default authentication plugin
-	isUnixSocket  bool                  // connection is Unix Socket file
-	closeOnce     sync.Once             // closeOnce is used to make sure clientConn closes only once
-	rsEncoder     *column.ResultEncoder // rsEncoder is used to encode the string result to different charsets
-	inputDecoder  *util2.InputDecoder   // inputDecoder is used to decode the different charsets of incoming strings to utf-8
-	socketCredUID uint32                // UID from the other end of the Unix Socket
+	attrs         map[string]string      // attributes parsed from client handshake response.
+	serverHost    string                 // server host
+	peerHost      string                 // peer host
+	peerPort      string                 // peer port
+	status        int32                  // dispatching/reading/shutdown/waitshutdown
+	lastCode      uint16                 // last error code
+	collation     uint8                  // collation used by client, may be different from the collation used by database.
+	lastActive    time.Time              // last active time
+	authPlugin    string                 // default authentication plugin
+	isUnixSocket  bool                   // connection is Unix Socket file
+	closeOnce     sync.Once              // closeOnce is used to make sure clientConn closes only once
+	rsEncoder     *textrow.ResultEncoder // rsEncoder is used to encode the string result to different charsets
+	inputDecoder  *util2.InputDecoder    // inputDecoder is used to decode the different charsets of incoming strings to utf-8
+	socketCredUID uint32                 // UID from the other end of the Unix Socket
 	// mu is used for cancelling the execution of current transaction.
 	mu struct {
 		sync.RWMutex
@@ -1099,7 +1100,7 @@ func (cc *clientConn) initResultEncoder(ctx context.Context) {
 		chs = ""
 		logutil.Logger(ctx).Warn("get character_set_results system variable failed", zap.Error(err))
 	}
-	cc.rsEncoder = column.NewResultEncoder(chs)
+	cc.rsEncoder = textrow.NewResultEncoder(chs)
 }
 
 func (cc *clientConn) initInputEncoder(ctx context.Context) {
@@ -1716,6 +1717,7 @@ func (cc *clientConn) writeError(ctx context.Context, e error) error {
 			m = mysql.NewErrf(mysql.ErrUnknown, "%s", nil, e.Error())
 		}
 	}
+	errmsg.Extend(m)
 
 	cc.lastCode = m.Code
 	defer errno.IncrementError(m.Code, cc.user, cc.peerHost)
@@ -2169,61 +2171,30 @@ func setResourceGroupTaggerForMultiStmtPrefetch(snapshot kv.Snapshot, sqls strin
 }
 
 // setSQLKillerConnectionAlive installs a connection-liveness probe on the
-// session SQLKiller and starts a background monitor for the current statement.
-// The returned cleanup is idempotent and must be called when the statement is
-// done to stop the monitor and clear the probe.
+// session SQLKiller for execution checkpoints such as HandleSignal and the
+// slow pre-commit backstop. It intentionally does not start a background
+// monitor, so short statements do not pay goroutine, ticker, or channel costs.
 func (cc *clientConn) setSQLKillerConnectionAlive() func() {
-	fn := func() bool {
-		if cc.bufReadConn != nil {
-			// IsAlive returns 0 only when the connection is known dead. Treat
-			// unknown states as alive so we do not interrupt queries
-			// conservatively when the liveness check itself cannot run.
-			return cc.bufReadConn.IsAlive() != 0
-		}
-		return true
-	}
-	cc.ctx.GetSessionVars().SQLKiller.IsConnectionAlive.Store(&fn)
-	stopMonitor := make(chan struct{})
-	doneMonitor := make(chan struct{})
-	go cc.monitorConnectionAlive(fn, stopMonitor, doneMonitor)
+	sessVars := cc.ctx.GetSessionVars()
+	isAlive := cc.isConnectionAlive
+	sessVars.SQLKiller.IsConnectionAlive.Store(&isAlive)
 
 	var clearOnce sync.Once
 	return func() {
 		clearOnce.Do(func() {
-			close(stopMonitor)
-			<-doneMonitor
-			cc.ctx.GetSessionVars().SQLKiller.IsConnectionAlive.Store(nil)
+			sessVars.SQLKiller.IsConnectionAlive.CompareAndSwap(&isAlive, nil)
 		})
 	}
 }
 
-func (cc *clientConn) monitorConnectionAlive(isAlive func() bool, stop <-chan struct{}, done chan<- struct{}) {
-	defer close(done)
-	checkInterval := time.Second
-	failpoint.Inject("mockConnectionAliveMonitorInterval", func(val failpoint.Value) {
-		if interval, ok := val.(int); ok {
-			checkInterval = time.Duration(interval) * time.Millisecond
-		}
-	})
-	ticker := time.NewTicker(checkInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			if !isAlive() {
-				select {
-				case <-stop:
-					return
-				default:
-				}
-				cc.ctx.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
-				cc.cancelDispatch()
-				return
-			}
-		case <-stop:
-			return
-		}
+func (cc *clientConn) isConnectionAlive() bool {
+	if cc.bufReadConn != nil {
+		// IsAlive returns 0 only when the connection is known dead. Treat
+		// unknown states as alive so we do not interrupt queries
+		// conservatively when the liveness check itself cannot run.
+		return cc.bufReadConn.IsAlive() != 0
 	}
+	return true
 }
 
 func (cc *clientConn) cancelDispatch() {
@@ -2235,7 +2206,7 @@ func (cc *clientConn) cancelDispatch() {
 	}
 }
 
-func shouldMonitorConnectionAliveDuringExecute(stmt ast.StmtNode, sessVars *variable.SessionVars) bool {
+func shouldInstallConnectionAliveDuringExecute(stmt ast.StmtNode, sessVars *variable.SessionVars) bool {
 	if !sessVars.IsAutocommit() || sessVars.InTxn() {
 		return false
 	}
@@ -2277,8 +2248,8 @@ func (cc *clientConn) handleStmt(
 	}
 
 	clearConnectionAlive := func() {}
-	monitoringConnectionAlive := shouldMonitorConnectionAliveDuringExecute(stmt, cc.ctx.GetSessionVars())
-	if monitoringConnectionAlive {
+	checkingConnectionAlive := shouldInstallConnectionAliveDuringExecute(stmt, cc.ctx.GetSessionVars())
+	if checkingConnectionAlive {
 		clearConnectionAlive = cc.setSQLKillerConnectionAlive()
 		defer clearConnectionAlive()
 	}
@@ -2316,7 +2287,7 @@ func (cc *clientConn) handleStmt(
 		if cc.getStatus() == connStatusShutdown {
 			return false, exeerrors.ErrQueryInterrupted
 		}
-		if !monitoringConnectionAlive {
+		if !checkingConnectionAlive {
 			clearConnectionAlive = cc.setSQLKillerConnectionAlive()
 			defer clearConnectionAlive()
 		}

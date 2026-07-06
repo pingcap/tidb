@@ -1154,6 +1154,8 @@ const (
 	ErrForbiddenDDL                       = 8267
 	ErrMaskingPolicyExists                = 8268
 	ErrMaskingPolicyNotExists             = 8269
+	ErrMaskingPolicyExprInvalidColumn     = 8275
+	ErrDDLAutoPausedByKVDiskFull          = 8276
 
 	// Resource group errors.
 	ErrResourceGroupExists                    = 8248

@@ -16,6 +16,7 @@ package snapclient_test
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -30,9 +31,11 @@ import (
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/pd/client/clients/router"
 	"github.com/tikv/pd/client/opt"
 )
 
@@ -118,12 +121,12 @@ func TestGetSSTMetaFromFile(t *testing.T) {
 type fakeImporterClient struct {
 	importclient.ImporterClient
 
-	speedLimit map[uint64]uint64
+	speedLimitReq map[uint64]*import_sstpb.SetDownloadSpeedLimitRequest
 }
 
 func newFakeImporterClient() *fakeImporterClient {
 	return &fakeImporterClient{
-		speedLimit: make(map[uint64]uint64),
+		speedLimitReq: make(map[uint64]*import_sstpb.SetDownloadSpeedLimitRequest),
 	}
 }
 
@@ -132,7 +135,11 @@ func (client *fakeImporterClient) SetDownloadSpeedLimit(
 	storeID uint64,
 	req *import_sstpb.SetDownloadSpeedLimitRequest,
 ) (*import_sstpb.SetDownloadSpeedLimitResponse, error) {
-	client.speedLimit[storeID] = req.SpeedLimit
+	client.speedLimitReq[storeID] = &import_sstpb.SetDownloadSpeedLimitRequest{
+		TaskId:     req.GetTaskId(),
+		SpeedLimit: req.GetSpeedLimit(),
+		TtlSeconds: req.GetTtlSeconds(),
+	}
 	return &import_sstpb.SetDownloadSpeedLimitResponse{}, nil
 }
 
@@ -179,7 +186,20 @@ func TestSnapImporter(t *testing.T) {
 	require.NoError(t, err)
 	err = importer.SetDownloadSpeedLimit(ctx, 1, 5)
 	require.NoError(t, err)
-	require.Equal(t, uint64(5), importClient.speedLimit[1])
+	setReq := importClient.speedLimitReq[1]
+	require.NotNil(t, setReq)
+	require.Equal(t, uint64(5), setReq.GetSpeedLimit())
+	require.NotEmpty(t, setReq.GetTaskId())
+	require.Equal(t, uint64(snapclient.DownloadRateLimitTTLSeconds), setReq.GetTtlSeconds())
+
+	err = importer.SetDownloadSpeedLimit(ctx, 1, 0)
+	require.NoError(t, err)
+	resetReq := importClient.speedLimitReq[1]
+	require.NotNil(t, resetReq)
+	require.Equal(t, uint64(0), resetReq.GetSpeedLimit())
+	require.Equal(t, setReq.GetTaskId(), resetReq.GetTaskId())
+	require.Equal(t, uint64(snapclient.DownloadRateLimitTTLSeconds), resetReq.GetTtlSeconds())
+
 	err = importer.SetRawRange(nil, nil)
 	require.Error(t, err)
 	files, rules := generateFiles()
@@ -274,4 +294,212 @@ func TestSnapImporterPDScanRequestFlowControl(t *testing.T) {
 		})
 	}
 	wg.Wait()
+}
+
+type blockingBatchDownloadImporterClient struct {
+	fakeImporterClient
+
+	active    atomic.Int32
+	maxActive atomic.Int32
+	startedCh chan struct{}
+	unblock   chan struct{}
+}
+
+func newBlockingBatchDownloadImporterClient() *blockingBatchDownloadImporterClient {
+	return &blockingBatchDownloadImporterClient{
+		fakeImporterClient: *newFakeImporterClient(),
+		startedCh:          make(chan struct{}, 16),
+		unblock:            make(chan struct{}),
+	}
+}
+
+func (client *blockingBatchDownloadImporterClient) waitUntilUnblocked(ctx context.Context) error {
+	active := client.active.Add(1)
+	defer client.active.Add(-1)
+	for {
+		maxActive := client.maxActive.Load()
+		if active <= maxActive || client.maxActive.CompareAndSwap(maxActive, active) {
+			break
+		}
+	}
+	client.startedCh <- struct{}{}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-client.unblock:
+	}
+	return nil
+}
+
+func (client *blockingBatchDownloadImporterClient) BatchDownloadSST(
+	ctx context.Context,
+	storeID uint64,
+	req *import_sstpb.DownloadRequest,
+) (*import_sstpb.DownloadResponse, error) {
+	if err := client.waitUntilUnblocked(ctx); err != nil {
+		return nil, err
+	}
+	return &import_sstpb.DownloadResponse{Range: *req.Sst.GetRange()}, nil
+}
+
+func (client *blockingBatchDownloadImporterClient) BatchDownloadLatestMVCC(
+	ctx context.Context,
+	storeID uint64,
+	req *import_sstpb.DownloadRequest,
+) (*import_sstpb.DownloadResponse, error) {
+	if err := client.waitUntilUnblocked(ctx); err != nil {
+		return nil, err
+	}
+
+	sst := req.Sst
+	return &import_sstpb.DownloadResponse{
+		Range: *req.Sst.GetRange(),
+		Ssts:  []*import_sstpb.SSTMeta{&sst},
+	}, nil
+}
+
+func (client *blockingBatchDownloadImporterClient) CheckBatchDownloadSupport(ctx context.Context, stores []uint64) (bool, error) {
+	return true, nil
+}
+
+func makeCompactedFileSets(fileGroupCount, filesPerGroup int) []restore.BackupFileSet {
+	fileSets := make([]restore.BackupFileSet, 0, fileGroupCount)
+	for i := 0; i < fileGroupCount; i++ {
+		files := make([]*backuppb.File, 0, filesPerGroup)
+		for j := 0; j < filesPerGroup; j++ {
+			files = append(files, &backuppb.File{
+				Name:     fmt.Sprintf("file-%d-%d_write.sst", i, j),
+				Cf:       restoreutils.WriteCFName,
+				StartKey: tablecodec.EncodeTablePrefix(100),
+				EndKey:   append(tablecodec.EncodeTablePrefix(100), 'z'),
+			})
+		}
+		fileSets = append(fileSets, restore.BackupFileSet{
+			SSTFiles: files,
+			RewriteRules: &restoreutils.RewriteRules{
+				Data: []*import_sstpb.RewriteRule{{
+					OldKeyPrefix: tablecodec.EncodeTablePrefix(100),
+					NewKeyPrefix: tablecodec.EncodeTablePrefix(1),
+				}},
+			},
+		})
+	}
+	return fileSets
+}
+
+func waitForConcurrentDownloads(t *testing.T, importClient *blockingBatchDownloadImporterClient, errCh <-chan error) {
+	t.Helper()
+	for i := 0; i < 2; i++ {
+		select {
+		case <-importClient.startedCh:
+		case err := <-errCh:
+			require.NoError(t, err)
+			require.Fail(t, "import finished before multiple download requests started")
+		case <-time.After(time.Second):
+			require.Fail(t, "expected multiple batch download requests to run concurrently")
+		}
+	}
+	close(importClient.unblock)
+	require.GreaterOrEqual(t, importClient.maxActive.Load(), int32(2))
+
+	select {
+	case err := <-errCh:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		require.Fail(t, "import did not finish")
+	}
+}
+
+func TestBatchDownloadLatestMVCCParallelizesFileGroupsPerPeer(t *testing.T) {
+	ctx := context.Background()
+	splitClient := split.NewFakeSplitClient()
+	splitClient.AppendPdRegion(&router.Region{
+		Meta: &metapb.Region{
+			Id:       1,
+			StartKey: codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(1)),
+			EndKey:   codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(2)),
+			Peers:    []*metapb.Peer{{StoreId: 1}},
+		},
+		Leader: &metapb.Peer{StoreId: 1},
+	})
+	importClient := newBlockingBatchDownloadImporterClient()
+	opt := snapclient.NewSnapFileImporterOptions(
+		nil,
+		splitClient,
+		importClient,
+		nil,
+		snapclient.RewriteModeKeyspace,
+		[]*metapb.Store{{Id: 1, State: metapb.StoreState_Up}},
+		2,
+		0,
+		true,
+		nil,
+		nil,
+	)
+	importer, err := snapclient.NewSnapFileImporter(ctx, kvrpcpb.APIVersion_V1, snapclient.TiDBCompacted, opt)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, importer.Close())
+	}()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- importer.Import(ctx, makeCompactedFileSets(3, 1)...)
+	}()
+	unblocked := false
+	defer func() {
+		if !unblocked {
+			close(importClient.unblock)
+		}
+	}()
+	waitForConcurrentDownloads(t, importClient, errCh)
+	unblocked = true
+}
+
+func TestBatchDownloadSSTParallelizesFileGroupsPerPeer(t *testing.T) {
+	ctx := context.Background()
+	splitClient := split.NewFakeSplitClient()
+	splitClient.AppendPdRegion(&router.Region{
+		Meta: &metapb.Region{
+			Id:       1,
+			StartKey: codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(1)),
+			EndKey:   codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(2)),
+			Peers:    []*metapb.Peer{{StoreId: 1}},
+		},
+		Leader: &metapb.Peer{StoreId: 1},
+	})
+	stores := []*metapb.Store{{Id: 1, State: metapb.StoreState_Up}}
+	importClient := newBlockingBatchDownloadImporterClient()
+	opt := snapclient.NewSnapFileImporterOptions(
+		nil,
+		splitClient,
+		importClient,
+		nil,
+		snapclient.RewriteModeKeyspace,
+		stores,
+		2,
+		0,
+		false,
+		nil,
+		nil,
+	)
+	importer, err := snapclient.NewSnapFileImporter(ctx, kvrpcpb.APIVersion_V1, snapclient.TiDBCompacted, opt)
+	require.NoError(t, err)
+	require.NoError(t, importer.CheckBatchDownloadSupport(ctx, stores))
+	defer func() {
+		require.NoError(t, importer.Close())
+	}()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- importer.Import(ctx, makeCompactedFileSets(3, 2)...)
+	}()
+	unblocked := false
+	defer func() {
+		if !unblocked {
+			close(importClient.unblock)
+		}
+	}()
+	waitForConcurrentDownloads(t, importClient, errCh)
+	unblocked = true
 }

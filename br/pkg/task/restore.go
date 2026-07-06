@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/registry"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
+	restoresplit "github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/stream"
@@ -57,7 +58,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/pkg/util/httputil"
@@ -88,6 +88,10 @@ const (
 	FlagPDConcurrency = "pd-concurrency"
 	// FlagRegionScanConcurrency controls max in-flight region scan requests to PD during restore.
 	FlagRegionScanConcurrency = "region-scan-concurrency"
+	// FlagSplitRegionIndexStep controls the split-key index step used by rough split during snapshot restore.
+	FlagSplitRegionIndexStep = "split-region-index-step"
+	// FlagCoarseScatter controls whether only rough split regions are scattered during snapshot restore.
+	FlagCoarseScatter = "coarse-scatter"
 	// FlagStatsConcurrency controls concurrency to restore statistic.
 	FlagStatsConcurrency = "stats-concurrency"
 	// FlagBatchFlushInterval controls after how long the restore batch would be auto sended.
@@ -108,8 +112,6 @@ const (
 	// FlagWaitTiFlashReady represents whether wait tiflash replica ready after table restored and checksumed.
 	FlagWaitTiFlashReady = "wait-tiflash-ready"
 
-	// FlagFromReplicationStorage is used for PITR from the replication external storage
-	FlagReplicationStatusSubPrefix = "replication-status-sub-prefix"
 	// FlagRestorePhase is used for the restore phase of PITR
 	FlagRestorePhase = "restore-phase"
 	// FlagStreamStartTS and FlagStreamRestoreTS is used for log restore timestamp range.
@@ -117,10 +119,14 @@ const (
 	FlagStreamRestoreTS = "restored-ts"
 	// FlagStreamFullBackupStorage is used for log restore, represents the full backup storage.
 	FlagStreamFullBackupStorage = "full-backup-storage"
+	// FlagPiTRAddIndexSQLStorage is used for PITR to output add index SQLs instead of rebuilding indexes.
+	FlagPiTRAddIndexSQLStorage = "pitr-add-index-sql-storage"
 	// FlagPiTRBatchCount and FlagPiTRBatchSize are used for restore log with batch method.
 	FlagPiTRBatchCount  = "pitr-batch-count"
 	FlagPiTRBatchSize   = "pitr-batch-size"
 	FlagPiTRConcurrency = "pitr-concurrency"
+	// FlagRetainLatestMVCCVersion controls whether restore keeps only newest MVCC version from compacted SSTs.
+	FlagRetainLatestMVCCVersion = "retain-latest-mvcc-version"
 
 	FlagResetSysUsers = "reset-sys-users"
 
@@ -272,6 +278,8 @@ type RestoreConfig struct {
 	FastLoadSysTables     bool          `json:"fast-load-sys-tables" toml:"fast-load-sys-tables"`
 	PDConcurrency         uint          `json:"pd-concurrency" toml:"pd-concurrency"`
 	RegionScanConcurrency uint          `json:"region-scan-concurrency" toml:"region-scan-concurrency"`
+	SplitRegionIndexStep  uint          `json:"split-region-index-step" toml:"split-region-index-step"`
+	CoarseScatter         bool          `json:"coarse-scatter" toml:"coarse-scatter"`
 	StatsConcurrency      uint          `json:"stats-concurrency" toml:"stats-concurrency"`
 	BatchFlushInterval    time.Duration `json:"batch-flush-interval" toml:"batch-flush-interval"`
 	// DdlBatchSize use to define the size of batch ddl to create tables
@@ -284,6 +292,9 @@ type RestoreConfig struct {
 	// FullBackupStorage is used to  run `restore full` before `restore log`.
 	// if it is empty, directly take restoring log justly.
 	FullBackupStorage string `json:"full-backup-storage" toml:"full-backup-storage"`
+
+	// PiTRAddIndexSQLStorage is the external storage used to output add index SQLs instead of rebuilding indexes.
+	PiTRAddIndexSQLStorage string `json:"pitr-add-index-sql-storage" toml:"pitr-add-index-sql-storage"`
 
 	// AllowPITRFromIncremental indicates whether this restore should enter a compatibility mode for incremental restore.
 	// In this restore mode, the restore will not perform timestamp rewrite on the incremental data.
@@ -301,6 +312,8 @@ type RestoreConfig struct {
 	PitrBatchCount  uint32                      `json:"pitr-batch-count" toml:"pitr-batch-count"`
 	PitrBatchSize   uint32                      `json:"pitr-batch-size" toml:"pitr-batch-size"`
 	PitrConcurrency uint32                      `json:"-" toml:"-"`
+	// RetainLatestMVCCVersion means restoring compacted SSTs by retaining only newest MVCC versions.
+	RetainLatestMVCCVersion bool `json:"retain-latest-mvcc-version" toml:"retain-latest-mvcc-version"`
 
 	UseCheckpoint                 bool                            `json:"use-checkpoint" toml:"use-checkpoint"`
 	CheckpointStorage             string                          `json:"checkpoint-storage" toml:"checkpoint-storage"`
@@ -320,11 +333,9 @@ type RestoreConfig struct {
 	RestoreStartTS      uint64                      `json:"-" toml:"-"`
 	tableMappingManager *stream.TableMappingManager `json:"-" toml:"-"`
 
-	// for PITR from the replication external storage
-	ReplicationStatusSubPrefix string `json:"replication-status-sub-prefix" toml:"replication-status-sub-prefix"`
-	RestorePhase               uint64 `json:"restore-phase" toml:"restore-phase"`
-	FromReplicationStorage     bool   `json:"-" toml:"-"`
-	RestoreInPhase             bool   `json:"-" toml:"-"`
+	// for phased PITR restore
+	RestorePhase   uint64 `json:"restore-phase" toml:"restore-phase"`
+	RestoreInPhase bool   `json:"-" toml:"-"`
 
 	// for ebs-based restore
 	FullBackupType      FullBackupType        `json:"full-backup-type" toml:"full-backup-type"`
@@ -391,7 +402,6 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(flagUseCheckpoint)
 
 	flags.String(flagCheckpointStorage, "", "specify the external storage url where checkpoint data is saved, eg, s3://bucket/path/prefix")
-	flags.String(FlagReplicationStatusSubPrefix, "", "specify the sub prefix of the replication status")
 	flags.Uint64(FlagRestorePhase, 0, "specify the phase of the restore, 1 for full restore, 2 for log restore")
 	flags.Bool(flagProtectTables, true, "protect restored tables until restore finishes")
 	_ = flags.MarkHidden(flagProtectTables)
@@ -403,6 +413,10 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 		" these ddl jobs are Add index, Modify column and Reorganize partition")
 	flags.Bool(FlagSysCheckCollation, false, "whether check the privileges table rows to permit to restore the privilege data"+
 		" from utf8mb4_bin collate column to utf8mb4_general_ci collate column")
+	flags.Uint(FlagSplitRegionIndexStep, restoresplit.DefaultRegionIndexStep,
+		"number of split-key indexes between two rough split keys during snapshot restore.")
+	_ = flags.MarkHidden(FlagSplitRegionIndexStep)
+	flags.Bool(FlagCoarseScatter, false, "only scatter regions from rough split during snapshot restore")
 
 	DefineRestoreCommonFlags(flags)
 }
@@ -415,9 +429,16 @@ func DefineStreamRestoreFlags(command *cobra.Command) {
 		"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23+0800'")
 	command.Flags().String(FlagStreamFullBackupStorage, "", "specify the backup full storage. "+
 		"fill it if want restore full backup before restore log.")
+	command.Flags().String(FlagPiTRAddIndexSQLStorage, "", "specify the external storage url where PITR add index SQLs are saved. "+
+		"When set, PITR drops incomplete indexes but does not rebuild them automatically; the SQLs are written to add-index.sql under this storage.")
 	command.Flags().Uint32(FlagPiTRBatchCount, defaultPiTRBatchCount, "specify the batch count to restore log.")
 	command.Flags().Uint32(FlagPiTRBatchSize, defaultPiTRBatchSize, "specify the batch size to retore log.")
 	command.Flags().Uint32(FlagPiTRConcurrency, defaultPiTRConcurrency, "specify the concurrency to restore log.")
+	command.Flags().Bool(
+		FlagRetainLatestMVCCVersion,
+		false,
+		"restore compacted SSTs by retaining only the newest MVCC version, and require no user DML log files",
+	)
 }
 
 // ParseStreamRestoreFlags parses the `restore stream` flags from the flag set.
@@ -443,6 +464,9 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 	if cfg.FullBackupStorage, err = flags.GetString(FlagStreamFullBackupStorage); err != nil {
 		return errors.Trace(err)
 	}
+	if cfg.PiTRAddIndexSQLStorage, err = flags.GetString(FlagPiTRAddIndexSQLStorage); err != nil {
+		return errors.Trace(err)
+	}
 
 	if cfg.StartTS > 0 && len(cfg.FullBackupStorage) > 0 {
 		return errors.Annotatef(berrors.ErrInvalidArgument, "%v and %v are mutually exclusive",
@@ -456,6 +480,9 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 	if cfg.PitrConcurrency, err = flags.GetUint32(FlagPiTRConcurrency); err != nil {
+		return errors.Trace(err)
+	}
+	if cfg.RetainLatestMVCCVersion, err = flags.GetBool(FlagRetainLatestMVCCVersion); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -503,6 +530,17 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 	cfg.RegionScanConcurrency, err = flags.GetUint(FlagRegionScanConcurrency)
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", FlagRegionScanConcurrency)
+	}
+	cfg.SplitRegionIndexStep, err = flags.GetUint(FlagSplitRegionIndexStep)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get flag %s", FlagSplitRegionIndexStep)
+	}
+	if cfg.SplitRegionIndexStep == 0 {
+		return errors.Annotatef(berrors.ErrInvalidArgument, "%s must be greater than 0", FlagSplitRegionIndexStep)
+	}
+	cfg.CoarseScatter, err = flags.GetBool(FlagCoarseScatter)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get flag %s", FlagCoarseScatter)
 	}
 	cfg.StatsConcurrency, err = flags.GetUint(FlagStatsConcurrency)
 	if err != nil {
@@ -553,10 +591,6 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", flagAllowPITRFromIncremental)
 	}
-	cfg.ReplicationStatusSubPrefix, err = flags.GetString(FlagReplicationStatusSubPrefix)
-	if err != nil {
-		return errors.Annotatef(err, "failed to get flag %s", FlagReplicationStatusSubPrefix)
-	}
 	cfg.RestorePhase, err = flags.GetUint64(FlagRestorePhase)
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", FlagRestorePhase)
@@ -570,7 +604,6 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 		return errors.Annotatef(berrors.ErrInvalidArgument, "%v requires %s to be enabled",
 			FlagRestorePhase, flagUseCheckpoint)
 	}
-	cfg.FromReplicationStorage = flags.Changed(FlagReplicationStatusSubPrefix) || len(cfg.ReplicationStatusSubPrefix) > 0
 
 	if flags.Lookup(flagFullBackupType) != nil {
 		// for restore full only
@@ -659,6 +692,7 @@ func (cfg *RestoreConfig) Adjust() {
 	if cfg.PDConcurrency == 0 {
 		cfg.PDConcurrency = defaultPDConcurrency
 	}
+	cfg.SplitRegionIndexStep = restoresplit.NormalizeRegionIndexStep(cfg.SplitRegionIndexStep)
 	if cfg.StatsConcurrency == 0 {
 		cfg.StatsConcurrency = defaultStatsConcurrency
 	}
@@ -800,6 +834,8 @@ func configureRestoreClient(ctx context.Context, client *snapclient.SnapClient, 
 	client.SetRateLimit(cfg.RateLimit)
 	client.SetCrypter(&cfg.CipherInfo)
 	client.SetRegionScanConcurrency(cfg.RegionScanConcurrency)
+	client.SetSplitRegionIndexStep(cfg.SplitRegionIndexStep)
+	client.SetCoarseScatter(cfg.CoarseScatter)
 	if cfg.NoSchema {
 		client.EnableSkipCreateSQL()
 	}
@@ -907,6 +943,13 @@ func IsStreamRestore(cmdName string) bool {
 	return cmdName == PointRestoreCmd
 }
 
+func restoreOperationCommandName(cmdName string) string {
+	if IsStreamRestore(cmdName) {
+		return "log-restore"
+	}
+	return cmdName
+}
+
 func registerTaskToPD(ctx context.Context, etcdCLI *clientv3.Client) (closeF func(context.Context) error, err error) {
 	register := utils.NewTaskRegister(etcdCLI, utils.RegisterRestore, fmt.Sprintf("restore-%s", uuid.New()))
 	err = register.RegisterTask(ctx)
@@ -932,8 +975,23 @@ func printRestoreMetrics() {
 	log.Info("Metric: upload_sst_meta_for_pitr_seconds", zap.Object("metric", logutil.MarshalHistogram(metrics.RestoreUploadSSTMetaForPiTRSeconds)))
 }
 
+func checkSnapshotRestoreMode(ctx context.Context, cfg *RestoreConfig) error {
+	_, _, backupMeta, err := ReadBackupMeta(ctx, metautil.MetaFile, &cfg.Config)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if backupMeta.IsRawKv || backupMeta.IsTxnKv {
+		return errors.Annotate(berrors.ErrRestoreModeMismatch, "cannot do transactional restore from raw/txn kv data")
+	}
+	return nil
+}
+
 // RunRestore starts a restore task inside the current goroutine.
 func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) (restoreErr error) {
+	if err := cfg.EnsureOperationContext(restoreOperationCommandName(cmdName)); err != nil {
+		return errors.Trace(err)
+	}
+
 	etcdCLI, err := dialEtcdWithCfg(c, cfg.Config)
 	if err != nil {
 		return err
@@ -959,6 +1017,14 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		conf.KeyspaceName = cfg.KeyspaceName
 	})
 
+	// Perform this check early (before NewMgr and the main restore flow) so we fail
+	// fast instead of running heavier logic first and checking afterward.
+	if !IsStreamRestore(cmdName) {
+		if err := checkSnapshotRestoreMode(c, cfg); err != nil {
+			return err
+		}
+	}
+
 	// TODO: remove version checker from `NewMgr`
 	mgr, err := NewMgr(c, g, cfg.KeyspaceName, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config), cfg.CheckRequirements, true, conn.NormalVersionChecker)
 	if err != nil {
@@ -967,7 +1033,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	defer mgr.Close()
 	defer cfg.CloseCheckpointMetaManager()
 	defer func() {
-		if logTaskBackend == nil || restoreErr != nil || cfg.PiTRTableTracker == nil {
+		if logTaskBackend == nil || restoreErr != nil {
 			return
 		}
 		restoreCommitTs, err := restore.GetTSWithRetry(c, mgr.GetPDClient())
@@ -1626,9 +1692,9 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		if isPiTR && cfg.tableMappingManager != nil {
 			cfg.tableMappingManager.SetPreallocatedRange(preAllocRange[0], preAllocRange[1])
 		}
-		keyRange := rewriteKeyRanges(preAllocRange)
+		keyRange := rewriteKeyRanges(mgr.GetStorage().GetCodec(), preAllocRange)
 		restoreSchedulersFunc, schedulersConfig, err = restore.FineGrainedRestorePreWork(
-			ctx, mgr, importModeSwitcher, keyRange, cfg.Online, true)
+			ctx, mgr, importModeSwitcher, keyRange, !cfg.Online)
 	}
 	if err != nil {
 		return errors.Trace(err)
@@ -1645,7 +1711,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		log.Info("start to restore pd scheduler")
 		// run the post-work to avoid being stuck in the import
 		// mode or emptied schedulers.
-		restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulersFunc, cfg.Online)
+		restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulersFunc)
 		log.Info("finish restoring pd scheduler")
 	}()
 
@@ -1682,9 +1748,10 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	err = client.InstallPiTRSupport(ctx, snapclient.PiTRCollDep{
-		PDCli:   mgr.GetPDClient(),
-		EtcdCli: mgr.GetDomain().GetEtcdClient(),
-		Storage: util.ProtoV1Clone(u),
+		PDCli:            mgr.GetPDClient(),
+		EtcdCli:          mgr.GetDomain().GetEtcdClient(),
+		Storage:          util.ProtoV1Clone(u),
+		OperationContext: cfg.OperationContext,
 	})
 	if err != nil {
 		return errors.Trace(err)
@@ -2626,12 +2693,14 @@ func encodeCompactAndCheckKey(codec tikv.Codec, preAlloced [2]int64) ([]byte, []
 	return codec.EncodeRange(checkStartKey, checkEndKey)
 }
 
-func rewriteKeyRanges(preAlloced [2]int64) [][2]kv.Key {
+func rewriteKeyRanges(codec tikv.Codec, preAlloced [2]int64) [][2]kv.Key {
 	if preAlloced == [2]int64{} {
 		return nil
 	}
-	startKey := codec.EncodeBytes([]byte{}, tablecodec.EncodeTablePrefix(preAlloced[0]))
-	endKey := codec.EncodeBytes([]byte{}, tablecodec.EncodeTablePrefix(preAlloced[1]))
+	startKey, endKey := codec.EncodeRegionRange(
+		tablecodec.EncodeTablePrefix(preAlloced[0]),
+		tablecodec.EncodeTablePrefix(preAlloced[1]),
+	)
 
 	return [][2]kv.Key{{startKey, endKey}}
 }
@@ -2806,6 +2875,9 @@ func createDBsAndTables(
 // in abort.go.
 func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
 	cfg.Adjust()
+	if err := cfg.EnsureOperationContext(restoreOperationCommandName(cmdName)); err != nil {
+		return errors.Trace(err)
+	}
 	defer summary.Summary(cmdName)
 	ctx, cancel := context.WithCancel(c)
 	defer cancel()
@@ -2830,7 +2902,7 @@ func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *Restor
 			if err != nil {
 				return errors.Trace(err)
 			}
-			logInfo, err := getLogInfoFromStorage(ctx, s, cfg.CheckRequirements, cfg.FromReplicationStorage, cfg.ReplicationStatusSubPrefix)
+			logInfo, err := getLogInfoFromStorage(ctx, s, cfg.CheckRequirements)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -2905,6 +2977,7 @@ func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *Restor
 	// update config with restore ID to clean up checkpoint
 	cfg.RestoreID = abortingRestoreID
 	cfg.RestoreTS = resolvedRestoreTS
+	setOperationContextRestoreID(&cfg.OperationContext, abortingRestoreID)
 
 	// initialize all checkpoint managers for cleanup (deletion is noop if checkpoints not exist)
 	var checkpointManagerInitErr error

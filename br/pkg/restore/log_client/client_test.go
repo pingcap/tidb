@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"math"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/mock"
+	"github.com/pingcap/tidb/br/pkg/operation"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
 	rawclient "github.com/pingcap/tidb/br/pkg/restore/internal/rawkv"
@@ -51,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -101,6 +104,72 @@ var deleteRangeQueryList = []*stream.PreDelRangeQuery{
 		Sql:        "INSERT IGNORE INTO mysql.gc_delete_range VALUES ",
 		ParamsList: nil,
 	},
+}
+
+func requireLockMetaInStorage(
+	ctx context.Context,
+	t *testing.T,
+	storage storeapi.Storage,
+	pathPrefix string,
+	resource operation.LockResourceType,
+) objstore.LockMeta {
+	t.Helper()
+
+	var metas []objstore.LockMeta
+	err := storage.WalkDir(ctx, &storeapi.WalkOption{}, func(path string, size int64) error {
+		if !strings.HasPrefix(path, pathPrefix) {
+			return nil
+		}
+		content, err := storage.ReadFile(ctx, path)
+		if err != nil {
+			return err
+		}
+		var meta objstore.LockMeta
+		if err := json.Unmarshal(content, &meta); err != nil {
+			if strings.Contains(path, ".INTENT.") {
+				return nil
+			}
+			return errors.Annotatef(err, "failed to parse lock metadata from %s", path)
+		}
+		if meta.LockType == string(resource) {
+			metas = append(metas, meta)
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	require.Len(t, metas, 1)
+	return metas[0]
+}
+
+func TestGetLockedMigrationsWritesOperationMetadata(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.ToSlash(t.TempDir())
+	backend, err := objstore.ParseBackend("local://"+path, nil)
+	require.NoError(t, err)
+	stg, err := objstore.New(ctx, backend, nil)
+	require.NoError(t, err)
+
+	appendOpCtx, err := operation.NewContext("test append migration")
+	require.NoError(t, err)
+	appendOpCtx.SetHintField("restore_id", "123")
+	_, err = stream.MigrationExtension(stg).WithOperationContext(appendOpCtx).AppendMigration(ctx, stream.NewMigration())
+	require.NoError(t, err)
+
+	opCtx, err := operation.NewContext("test log restore")
+	require.NoError(t, err)
+	client := logclient.TEST_NewLogClient(123, 1, 2, 1, domain.NewMockDomain(), fakeSession{})
+	require.NoError(t, client.SetStorage(ctx, backend, nil))
+	client.SetRestoreID(456)
+	client.SetOperationContext(opCtx)
+
+	migs, err := client.GetLockedMigrations(ctx)
+	require.NoError(t, err)
+	defer migs.ReadLock.UnlockOnCleanUp(ctx)
+
+	meta := requireLockMetaInStorage(ctx, t, stg, "v1/LOCK", operation.LockResourceMigrationRead)
+	require.Equal(t, opCtx.OperationID, meta.OwnerID)
+	require.Contains(t, meta.Hint, "operation_started_at="+opCtx.StartedAt.Format(time.RFC3339))
+	require.Contains(t, meta.Hint, "restore_id=456")
 }
 
 func TestDeleteRangeQueryExec(t *testing.T) {
@@ -772,6 +841,34 @@ func TestSortMetaKVFiles(t *testing.T) {
 	require.Equal(t, files[2].Path, "f3")
 	require.Equal(t, files[3].Path, "f4")
 	require.Equal(t, files[4].Path, "f5")
+
+	files = []*backuppb.DataFileInfo{
+		{
+			Path: "write-put",
+			Cf:   consts.WriteCF,
+			Type: backuppb.FileType_Put,
+		},
+		{
+			Path: "write-delete",
+			Cf:   consts.WriteCF,
+			Type: backuppb.FileType_Delete,
+		},
+		{
+			Path: "default-put",
+			Cf:   consts.DefaultCF,
+			Type: backuppb.FileType_Put,
+		},
+		{
+			Path: "default-delete",
+			Cf:   consts.DefaultCF,
+			Type: backuppb.FileType_Delete,
+		},
+	}
+	defaultFiles, writeFiles := logclient.SeparateAndSortFilesByCF(files)
+	require.Len(t, defaultFiles, 1)
+	require.Equal(t, "default-put", defaultFiles[0].Path)
+	require.Len(t, writeFiles, 2)
+	require.Equal(t, 3, logclient.TEST_CountReadableMetaKVFiles(files))
 }
 
 func toLogDataFileInfoIter(logIter iter.TryNextor[*backuppb.DataFileInfo]) logclient.LogIter {
@@ -1769,6 +1866,52 @@ func (m *mockCompactedStrategy) ShouldSplit() bool {
 	return m.AccumulateCount%m.expectSplitCount == 0
 }
 
+func TestCollectSSTFileSets(t *testing.T) {
+	ctx := context.Background()
+	client := logclient.TEST_NewLogClient(123, 1, 2, 1, nil, nil)
+	rules := map[int64]*utils.RewriteRules{
+		1: {
+			Data: []*import_sstpb.RewriteRule{
+				{
+					OldKeyPrefix: tablecodec.GenTableRecordPrefix(1),
+					NewKeyPrefix: tablecodec.GenTableRecordPrefix(100),
+				},
+			},
+		},
+	}
+
+	t.Run("skips ssts without rewrite rule", func(t *testing.T) {
+		fileSets, totalKVs, err := client.CollectSSTFileSets(ctx, iter.FromSlice([]logclient.SSTs{
+			fakeSubCompactionWithOneSst(1, 100, 16*units.MiB, 100),
+			fakeSubCompactionWithOneSst(3, 100, 16*units.MiB, 300),
+		}), rules)
+		require.NoError(t, err)
+		require.Equal(t, int64(100), totalKVs)
+		require.Len(t, fileSets, 1)
+		require.Equal(t, int64(1), fileSets[0].TableID)
+		require.Len(t, fileSets[0].SSTFiles, 1)
+	})
+
+	t.Run("counts only ssts that still need restore", func(t *testing.T) {
+		var skippedKVs uint64
+		strategy := logclient.NewCompactedFileSplitStrategy(rules, map[string]struct{}{
+			"1:200": {},
+		}, func(kvCount, _ uint64) {
+			skippedKVs += kvCount
+		})
+		ssts := fakeSubCompactionWithMultiSsts(1, 200, 32*units.MiB, 200)
+		require.False(t, strategy.ShouldSkip(ssts))
+
+		fileSets, totalKVs, err := client.CollectSSTFileSets(ctx, iter.FromSlice([]logclient.SSTs{ssts}), rules)
+		require.NoError(t, err)
+		require.Equal(t, uint64(200), skippedKVs)
+		require.Equal(t, int64(200), totalKVs)
+		require.Len(t, fileSets, 1)
+		require.Len(t, fileSets[0].SSTFiles, 1)
+		require.Equal(t, "1:201", fileSets[0].SSTFiles[0].Name)
+	})
+}
+
 func TestCompactedSplitStrategy(t *testing.T) {
 	ctx := context.Background()
 
@@ -2264,7 +2407,7 @@ func TestRepairIngestIndex(t *testing.T) {
 			"test", "repair_index_t1", tableInfo.ID, indexIDi2, "i2", "a",
 			json.RawMessage(fmt.Sprintf("[%d, false, [], false]", indexIDi2)),
 		), false))
-		require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, nil, g))
+		require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, nil, g, nil))
 		infoschema = s.Mock.InfoSchema()
 		table2, err := infoschema.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("repair_index_t1"))
 		require.NoError(t, err)
@@ -2282,6 +2425,107 @@ func TestRepairIngestIndex(t *testing.T) {
 		}
 		require.Equal(t, 2, existsCount)
 	}
+}
+
+func TestRepairIngestIndexOutputAddIndexSQL(t *testing.T) {
+	s := utiltest.CreateRestoreSchemaSuite(t)
+	tk := testkit.NewTestKit(t, s.Mock.Storage)
+	tk.MustExec("CREATE TABLE test.repair_index_export_t(id int, a int, b int, key i1(id), unique key i2(a));")
+	g := gluetidb.New()
+	ctx := context.Background()
+	client := logclient.TEST_NewLogClient(123, 1, 2, 1, s.Mock.Domain, fakeSession{})
+	client.SetUseCheckpoint()
+
+	fakeJob := func(
+		schemaName string,
+		tableName string,
+		tableID int64,
+		indexID int64,
+		indexName string,
+		columnName string,
+		args json.RawMessage,
+	) *model.Job {
+		return &model.Job{
+			Version:    model.JobVersion1,
+			SchemaName: schemaName,
+			TableName:  tableName,
+			TableID:    tableID,
+			Type:       model.ActionAddIndex,
+			State:      model.JobStateSynced,
+			RowCount:   100,
+			RawArgs:    args,
+			ReorgMeta: &model.DDLReorgMeta{
+				ReorgTp: model.ReorgTypeIngest,
+			},
+			BinlogInfo: &model.HistoryInfo{
+				TableInfo: &model.TableInfo{
+					Indices: []*model.IndexInfo{
+						{
+							ID:   indexID,
+							Name: ast.NewCIStr(indexName),
+							Columns: []*model.IndexColumn{{
+								Name: ast.NewCIStr(columnName),
+							}},
+						},
+					},
+				},
+			},
+		}
+	}
+
+	infoSchema := s.Mock.InfoSchema()
+	table, err := infoSchema.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("repair_index_export_t"))
+	require.NoError(t, err)
+	tableInfo := table.Meta()
+	var indexIDi1, indexIDi2 int64
+	for _, indexInfo := range tableInfo.Indices {
+		switch indexInfo.Name.L {
+		case "i1":
+			indexIDi1 = indexInfo.ID
+		case "i2":
+			indexIDi2 = indexInfo.ID
+		}
+	}
+	require.NotZero(t, indexIDi1)
+	require.NotZero(t, indexIDi2)
+
+	ingestRecorder := ingestrec.New()
+	require.NoError(t, ingestRecorder.TryAddJob(fakeJob(
+		"test", "repair_index_export_t", tableInfo.ID, indexIDi1, "i1", "id",
+		json.RawMessage(fmt.Sprintf("[%d, false, [], false]", indexIDi1)),
+	), false))
+	require.NoError(t, ingestRecorder.TryAddJob(fakeJob(
+		"test", "repair_index_export_t", tableInfo.ID, indexIDi2, "i2", "a",
+		json.RawMessage(fmt.Sprintf("[%d, false, [], false]", indexIDi2)),
+	), false))
+
+	checkpointStorage, err := objstore.NewLocalStorage(t.TempDir())
+	require.NoError(t, err)
+	logStorageMetaManager := checkpoint.NewLogStorageMetaManager(checkpointStorage, nil, 123, "test", 1)
+	defer logStorageMetaManager.Close()
+	sqlStorage, err := objstore.NewLocalStorage(t.TempDir())
+	require.NoError(t, err)
+	require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g, sqlStorage))
+
+	repairSQLs, err := logStorageMetaManager.LoadCheckpointIngestIndexRepairSQLs(ctx)
+	require.NoError(t, err)
+	require.Len(t, repairSQLs.SQLs, 2)
+
+	infoSchema = s.Mock.InfoSchema()
+	table, err = infoSchema.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("repair_index_export_t"))
+	require.NoError(t, err)
+	indexNames := make(map[string]struct{})
+	for _, indexInfo := range table.Meta().Indices {
+		indexNames[indexInfo.Name.L] = struct{}{}
+	}
+	require.NotContains(t, indexNames, "i1")
+	require.NotContains(t, indexNames, "i2")
+
+	data, err := sqlStorage.ReadFile(ctx, "add-index.sql")
+	require.NoError(t, err)
+	sqlText := string(data)
+	require.Contains(t, sqlText, "ALTER TABLE `test`.`repair_index_export_t` ADD INDEX `i1`(`id`) USING BTREE VISIBLE LOCAL;")
+	require.Contains(t, sqlText, "ALTER TABLE `test`.`repair_index_export_t` ADD UNIQUE KEY `i2`(`a`) USING BTREE VISIBLE LOCAL;")
 }
 
 func TestRepairIngestIndexFromCheckpoint(t *testing.T) {
@@ -2354,7 +2598,7 @@ func TestRepairIngestIndexFromCheckpoint(t *testing.T) {
 		},
 	}))
 	ingestRecorder := ingestrec.New()
-	require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, logCheckpointMetaManager, g))
+	require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, logCheckpointMetaManager, g, nil))
 	infoschema = s.Mock.InfoSchema()
 	table2, err := infoschema.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("repair_index_t1"))
 	require.NoError(t, err)
@@ -2444,7 +2688,7 @@ func TestRepairIngestIndexWithForeignKey(t *testing.T) {
 			"test", "parent", parentTableInfo.ID, parentTableIndexI2.ID, "i2", "id",
 			json.RawMessage(fmt.Sprintf("[%d, false, [], false]", parentTableIndexI2.ID)),
 		), false))
-		require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g))
+		require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g, nil))
 		infoSchema = s.Mock.InfoSchema()
 		newChildTableInfo, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("child"))
 		require.NoError(t, err)
@@ -2481,7 +2725,7 @@ func TestRepairIngestIndexWithForeignKey(t *testing.T) {
 		parentTableIndexI2 := parentTableInfo.Indices[0]
 
 		ingestRecorder := ingestrec.New()
-		require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g))
+		require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g, nil))
 		infoSchema = s.Mock.InfoSchema()
 		newChildTableInfo, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("child"))
 		require.NoError(t, err)
@@ -2517,21 +2761,21 @@ func TestRepairIngestIndexWithForeignKey(t *testing.T) {
 			"test", "parent", parentTableInfo.ID, parentTableIndexI2.ID, "i2", "id",
 			json.RawMessage(fmt.Sprintf("[%d, false, [], false]", parentTableIndexI2.ID)),
 		), false))
-		require.Error(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g))
+		require.Error(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g, nil))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-before-repair-ingest-index"))
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-before-create-ingest-index", `return(true)`))
 		defer func() {
 			failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-before-create-ingest-index")
 		}()
-		require.Error(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g))
+		require.Error(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g, nil))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-before-create-ingest-index"))
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-after-repair-ingest-index", `return(true)`))
 		defer func() {
 			failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-after-repair-ingest-index")
 		}()
-		require.Error(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g))
+		require.Error(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g, nil))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/restore/log_client/failed-after-repair-ingest-index"))
-		require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g))
+		require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, logStorageMetaManager, g, nil))
 
 		infoSchema = s.Mock.InfoSchema()
 		newChildTableInfo, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("child"))
@@ -2565,4 +2809,30 @@ func (m *mockBatchProcessor) ProcessBatch(
 	cf string,
 ) ([]*logclient.KvEntryWithTS, error) {
 	return m.processFunc(ctx, files, entries, filterTS, cf)
+}
+
+func TestGetLockedMigrationsReleasesReadLockOnLoadError(t *testing.T) {
+	ctx := context.Background()
+	stg, err := objstore.NewLocalStorage(t.TempDir())
+	require.NoError(t, err)
+
+	// Inject a malformed migration file so ext.Load()'s migIdOf parser fails.
+	// migIdOf takes the first 8 chars of the filename as an integer; "badfile."
+	// is not parseable, so Load() returns an error and exercises the error path
+	// in GetLockedMigrations.
+	require.NoError(t, stg.WriteFile(ctx, "v1/migrations/badfile.mgrt", []byte("garbage")))
+
+	client := logclient.TEST_NewLogClientWithStorage(stg)
+	_, err = client.GetLockedMigrations(ctx)
+	require.Error(t, err, "expected Load() to fail on malformed migration file")
+
+	var lingering []string
+	require.NoError(t, stg.WalkDir(ctx, &storeapi.WalkOption{
+		SubDir:    "v1",
+		ObjPrefix: "LOCK",
+	}, func(p string, _ int64) error {
+		lingering = append(lingering, p)
+		return nil
+	}))
+	require.Emptyf(t, lingering, "readLock was not released after Load error; lingering files: %v", lingering)
 }

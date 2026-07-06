@@ -406,9 +406,13 @@ func TestTLSBasic(t *testing.T) {
 	server, err := tidbserver.NewServer(cfg, ts.Tidbdrv)
 	require.NoError(t, err)
 	server.SetDomain(ts.Domain)
+	runErrCh := make(chan error, 1)
 	go func() {
-		err := server.Run(nil)
-		require.NoError(t, err)
+		runErrCh <- server.Run(nil)
+	}()
+	defer func() {
+		server.Close()
+		require.NoError(t, <-runErrCh)
 	}()
 	<-tidbserver.RunInGoTestChan
 	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
@@ -433,8 +437,6 @@ func TestTLSBasic(t *testing.T) {
 	require.True(t, hasKey)
 	require.Equal(t, serverCert.NotAfter.Format("Jan _2 15:04:05 2006 MST"), stats["Ssl_server_not_after"])
 	require.Equal(t, serverCert.NotBefore.Format("Jan _2 15:04:05 2006 MST"), stats["Ssl_server_not_before"])
-
-	server.Close()
 }
 
 func TestErrorNoRollback(t *testing.T) {

@@ -69,6 +69,9 @@ type SplitClient interface {
 	// new regions. It returns the new regions that need to be called with
 	// WaitRegionsScattered.
 	SplitKeysAndScatter(ctx context.Context, sortedSplitKeys [][]byte) ([]*RegionInfo, error)
+	// SplitKeys splits the related regions of the keys without scattering the new
+	// regions.
+	SplitKeys(ctx context.Context, sortedSplitKeys [][]byte) ([]*RegionInfo, error)
 
 	// SplitWaitAndScatter splits a region from a batch of keys, waits for the split
 	// is finished, and scatters the new regions. It will return the original region,
@@ -627,6 +630,14 @@ func (c *pdClient) getEncodedKeys(start, end []byte) (encodedStart, encodedEnd [
 }
 
 func (c *pdClient) SplitKeysAndScatter(ctx context.Context, sortedSplitKeys [][]byte) ([]*RegionInfo, error) {
+	return c.splitKeys(ctx, sortedSplitKeys, true)
+}
+
+func (c *pdClient) SplitKeys(ctx context.Context, sortedSplitKeys [][]byte) ([]*RegionInfo, error) {
+	return c.splitKeys(ctx, sortedSplitKeys, false)
+}
+
+func (c *pdClient) splitKeys(ctx context.Context, sortedSplitKeys [][]byte, scatter bool) ([]*RegionInfo, error) {
 	if len(sortedSplitKeys) == 0 {
 		return nil, nil
 	}
@@ -686,7 +697,7 @@ func (c *pdClient) SplitKeysAndScatter(ctx context.Context, sortedSplitKeys [][]
 		for region, splitKeys := range splitKeyMap {
 			workerPool.ApplyOnErrorGroup(eg, func() error {
 				// TODO(lance6716): add error handling to retry from scan or retry from split
-				newRegions, err2 := c.SplitWaitAndScatter(eCtx, region, splitKeys)
+				newRegions, err2 := c.splitWaitAndMaybeScatter(eCtx, region, splitKeys, scatter)
 				if err2 != nil {
 					if common.IsContextCanceledError(err2) {
 						return err2
@@ -701,14 +712,16 @@ func (c *pdClient) SplitKeysAndScatter(ctx context.Context, sortedSplitKeys [][]
 					return nil
 				}
 
-				if len(newRegions) != len(splitKeys) {
+				if scatter && len(newRegions) != len(splitKeys) {
 					log.Warn("split key count and new region count mismatch",
 						zap.Int("new region count", len(newRegions)),
 						zap.Int("split key count", len(splitKeys)))
 				}
-				mu.Lock()
-				ret = append(ret, newRegions...)
-				mu.Unlock()
+				if scatter {
+					mu.Lock()
+					ret = append(ret, newRegions...)
+					mu.Unlock()
+				}
 				return nil
 			})
 		}
@@ -729,6 +742,10 @@ func isNonRetryErrForSplit(err error) bool {
 }
 
 func (c *pdClient) SplitWaitAndScatter(ctx context.Context, region *RegionInfo, keys [][]byte) ([]*RegionInfo, error) {
+	return c.splitWaitAndMaybeScatter(ctx, region, keys, true)
+}
+
+func (c *pdClient) splitWaitAndMaybeScatter(ctx context.Context, region *RegionInfo, keys [][]byte, scatter bool) ([]*RegionInfo, error) {
 	failpoint.Inject("failToSplit", func(_ failpoint.Value) {
 		failpoint.Return(nil, errors.New("retryable error"))
 	})
@@ -761,12 +778,14 @@ func (c *pdClient) SplitWaitAndScatter(ctx context.Context, region *RegionInfo, 
 			if err = ctx.Err(); err != nil {
 				return nil, errors.Trace(err)
 			}
-			err = c.scatterRegions(ctx, newRegionsOfBatch)
-			if err != nil {
-				tidblogutil.Logger(ctx).Warn(
-					"scatter regions failed, will continue anyway",
-					zap.Error(err),
-				)
+			if scatter {
+				err = c.scatterRegions(ctx, newRegionsOfBatch)
+				if err != nil {
+					tidblogutil.Logger(ctx).Warn(
+						"scatter regions failed, will continue anyway",
+						zap.Error(err),
+					)
+				}
 			}
 			if c.onSplit != nil {
 				c.onSplit(keys[start:end])
