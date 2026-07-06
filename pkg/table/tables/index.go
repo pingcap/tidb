@@ -29,11 +29,32 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/collate"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
+>>>>>>> ab1e19714d6 (codec, table: make new collation setting explicit in encoding (#69566))
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 )
 
+<<<<<<< HEAD
+=======
+var indexConditionECtx exprctx.BuildContext
+
+// indexPartialCondition is a data structure to help implement the partial index.
+type indexPartialCondition struct {
+	conditionExpr expression.Expression
+	// conditionEvalBufferPool stores many eval buffer to avoid allocating chunk
+	// for evaluating partial index condition for each time.
+	// It's only initialized if the `partialConditionExpr` is not nil.
+	conditionEvalBufferPool sync.Pool
+}
+
+>>>>>>> ab1e19714d6 (codec, table: make new collation setting explicit in encoding (#69566))
 // index is the data structure for index data in the KV store.
 type index struct {
 	idxInfo  *model.IndexInfo
@@ -44,13 +65,22 @@ type index struct {
 	// the collation global variable is initialized *after* `NewIndex()`.
 	initNeedRestoreData sync.Once
 	needRestoredData    bool
+<<<<<<< HEAD
+=======
+	encoder             codec.Encoder
+	indexPartialCondition
+>>>>>>> ab1e19714d6 (codec, table: make new collation setting explicit in encoding (#69566))
 }
 
 // NeedRestoredData checks whether the index columns needs restored data.
-func NeedRestoredData(idxCols []*model.IndexColumn, colInfos []*model.ColumnInfo) bool {
+func NeedRestoredData(useNewCollate bool, idxCols []*model.IndexColumn, colInfos []*model.ColumnInfo) bool {
 	for _, idxCol := range idxCols {
 		col := colInfos[idxCol.Offset]
+<<<<<<< HEAD
 		if types.NeedRestoredData(&col.FieldType) {
+=======
+		if types.NeedRestoredDataWithCollate(model.GetIdxChangingFieldType(idxCol, col), useNewCollate) {
+>>>>>>> ab1e19714d6 (codec, table: make new collation setting explicit in encoding (#69566))
 			return true
 		}
 	}
@@ -58,13 +88,64 @@ func NeedRestoredData(idxCols []*model.IndexColumn, colInfos []*model.ColumnInfo
 }
 
 // NewIndex builds a new Index object.
+<<<<<<< HEAD
 func NewIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.IndexInfo) table.Index {
+=======
+func NewIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.IndexInfo) (table.Index, error) {
+	return NewIndexWithCollate(collate.NewCollationEnabled(), physicalID, tblInfo, indexInfo)
+}
+
+// NewIndexWithCollate builds a new Index object with the specified collation setting.
+func NewIndexWithCollate(
+	useNewCollate bool,
+	physicalID int64,
+	tblInfo *model.TableInfo,
+	indexInfo *model.IndexInfo,
+) (table.Index, error) {
+>>>>>>> ab1e19714d6 (codec, table: make new collation setting explicit in encoding (#69566))
 	index := &index{
 		idxInfo:  indexInfo,
 		tblInfo:  tblInfo,
 		phyTblID: physicalID,
+		encoder:  codec.NewEncoder(useNewCollate),
 	}
+<<<<<<< HEAD
 	return index
+=======
+
+	conditionString := indexInfo.ConditionExprString
+	if len(conditionString) > 0 {
+		var err error
+		index.conditionExpr, err = expression.ParseSimpleExpr(indexConditionECtx, conditionString,
+			expression.WithTableInfo("", tblInfo),
+			expression.WithUseNewCollate(useNewCollate))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		index.conditionEvalBufferPool = sync.Pool{
+			New: func() any {
+				// For INSERT path, it'll only pass all writable columns.
+				// For UPDATE/DELETE path, it'll contain all columns.
+				// As the writable columns are always at the beginning of the `tblInfo.Columns`, it'll not affect
+				// the offsets of related columns in the expression. Therefore, it's fine to always record all
+				// columns here.
+				evalBufferTypes := make([]*types.FieldType, 0, len(tblInfo.Columns)+1)
+				for _, col := range tblInfo.Columns {
+					evalBufferTypes = append(evalBufferTypes, &col.FieldType)
+				}
+
+				if !tblInfo.HasClusteredIndex() {
+					// If the table doesn't have clustered index, we need to append an extra handle column.
+					evalBufferTypes = append(evalBufferTypes, types.NewFieldType(mysql.TypeLonglong))
+				}
+
+				evalBuffer := chunk.MutRowFromTypes(evalBufferTypes)
+				return &evalBuffer
+			},
+		}
+	}
+	return index, nil
+>>>>>>> ab1e19714d6 (codec, table: make new collation setting explicit in encoding (#69566))
 }
 
 // Meta returns index info.
@@ -89,7 +170,17 @@ func (c *index) GenIndexKey(ec errctx.Context, loc *time.Location, indexedValues
 			idxTblID = c.tblInfo.ID
 		}
 	}
+<<<<<<< HEAD
 	key, distinct, err = tablecodec.GenIndexKey(loc, c.tblInfo, c.idxInfo, idxTblID, indexedValues, h, buf)
+=======
+
+	if err = c.castIndexValuesToChangingTypes(indexedValues); err != nil {
+		return
+	}
+
+	key, distinct, err = tablecodec.GenIndexKey(c.encoder, loc, c.tblInfo, c.idxInfo,
+		idxTblID, indexedValues, fullHandle, buf)
+>>>>>>> ab1e19714d6 (codec, table: make new collation setting explicit in encoding (#69566))
 	err = ec.HandleError(err)
 	return
 }
@@ -98,9 +189,19 @@ func (c *index) GenIndexKey(ec errctx.Context, loc *time.Location, indexedValues
 func (c *index) GenIndexValue(ec errctx.Context, loc *time.Location, distinct bool, indexedValues []types.Datum,
 	h kv.Handle, restoredData []types.Datum, buf []byte) ([]byte, error) {
 	c.initNeedRestoreData.Do(func() {
-		c.needRestoredData = NeedRestoredData(c.idxInfo.Columns, c.tblInfo.Columns)
+		c.needRestoredData = NeedRestoredData(c.encoder.UseNewCollate(), c.idxInfo.Columns, c.tblInfo.Columns)
 	})
+<<<<<<< HEAD
 	idx, err := tablecodec.GenIndexValuePortal(loc, c.tblInfo, c.idxInfo, c.needRestoredData, distinct, false, indexedValues, h, c.phyTblID, restoredData, buf)
+=======
+
+	if err := c.castIndexValuesToChangingTypes(indexedValues); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	idx, err := tablecodec.GenIndexValuePortal(c.encoder.UseNewCollate(), loc, c.tblInfo,
+		c.idxInfo, c.needRestoredData, distinct, untouched, indexedValues, h, c.phyTblID, restoredData, buf)
+>>>>>>> ab1e19714d6 (codec, table: make new collation setting explicit in encoding (#69566))
 	err = ec.HandleError(err)
 	return idx, err
 }
