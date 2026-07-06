@@ -2901,8 +2901,12 @@ def go_deps():
         name = "com_github_golang_geo",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/golang/geo",
-        sum = "h1:KeIaDS/+VEy/bhDYjG3Z78dOyLAU4HXcVxmd0WYHJTE=",
-        version = "v0.0.0-20260625163123-7c0e84413537",
+        sha256 = "579f7f317624a466e9ee85675bf57a2eb2e24e75bf9c7b5b62ca6e4fb5031819",
+        strip_prefix = "github.com/golang/geo@v0.0.0-20260625163123-7c0e84413537",
+        urls = [
+            "https://cache.hawkingrei.com/gomod/github.com/golang/geo/com_github_golang_geo-v0.0.0-20260625163123-7c0e84413537.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/golang/geo/com_github_golang_geo-v0.0.0-20260625163123-7c0e84413537.zip",
+        ],
     )
     go_repository(
         name = "com_github_golang_glog",
@@ -3205,8 +3209,12 @@ def go_deps():
         name = "com_github_google_go_units",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/google/go-units",
-        sum = "h1:hM8xVjUr4Iv/iQIx4Jq1xckZkKlXu51Gqku5HlEpQAE=",
-        version = "v0.0.0-20250612230646-eddd77f68220",
+        sha256 = "50d6448a505d84caa00bb92d9f2caa32af5efaea3b6bdd6684741a564bbdeb97",
+        strip_prefix = "github.com/google/go-units@v0.0.0-20250612230646-eddd77f68220",
+        urls = [
+            "https://cache.hawkingrei.com/gomod/github.com/google/go-units/com_github_google_go_units-v0.0.0-20250612230646-eddd77f68220.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/google/go-units/com_github_google_go_units-v0.0.0-20250612230646-eddd77f68220.zip",
+        ],
     )
     go_repository(
         name = "com_github_google_gofuzz",
@@ -4629,8 +4637,12 @@ def go_deps():
         name = "com_github_lib_pq",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/lib/pq",
-        sum = "h1:sJZmqHoEaY7f+NPP8pgLB/WxulyR3fewgCM2qaSlBb4=",
-        version = "v1.1.1",
+        sha256 = "0689e17f908c2e88687a0988c83f59c3fd9ee2db74cbaf516a82c9d6b843f5a4",
+        strip_prefix = "github.com/lib/pq@v1.1.1",
+        urls = [
+            "https://cache.hawkingrei.com/gomod/github.com/lib/pq/com_github_lib_pq-v1.1.1.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/lib/pq/com_github_lib_pq-v1.1.1.zip",
+        ],
     )
     go_repository(
         name = "com_github_linode_linodego",
@@ -5472,8 +5484,12 @@ def go_deps():
         name = "com_github_peterstace_simplefeatures",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/peterstace/simplefeatures",
-        sum = "h1:pmn+uh75K3CCGsJCLHnpBqgQmDECLYX3u5hfymVbqmQ=",
-        version = "v0.59.0",
+        sha256 = "d01a9f38c51025c6dfc72c743a97693625f955f6394de9edb962000a382d8305",
+        strip_prefix = "github.com/peterstace/simplefeatures@v0.59.0",
+        urls = [
+            "https://cache.hawkingrei.com/gomod/github.com/peterstace/simplefeatures/com_github_peterstace_simplefeatures-v0.59.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/peterstace/simplefeatures/com_github_peterstace_simplefeatures-v0.59.0.zip",
+        ],
     )
     go_repository(
         name = "com_github_phayes_freeport",
@@ -5600,9 +5616,12 @@ def go_deps():
         name = "com_github_pingcap_tipb",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/tipb",
-        replace = "github.com/mjonss/tipb",
-        sum = "h1:YutAZ5DDaz4X1xVRixmGrMWUusuhMP7y7xcGG2eJG2g=",
-        version = "v0.0.0-20260626151721-eacc7e94342e",
+        sha256 = "87bd26ffd053a55324df6d139d874e36151a72a90e6265299dc177be64a4bc7b",
+        strip_prefix = "github.com/mjonss/tipb@v0.0.0-20260626151721-eacc7e94342e",
+        urls = [
+            "https://cache.hawkingrei.com/gomod/github.com/mjonss/tipb/com_github_mjonss_tipb-v0.0.0-20260626151721-eacc7e94342e.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/mjonss/tipb/com_github_mjonss_tipb-v0.0.0-20260626151721-eacc7e94342e.zip",
+        ],
     )
     go_repository(
         name = "com_github_pkg_browser",
