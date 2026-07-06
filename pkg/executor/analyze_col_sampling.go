@@ -868,9 +868,10 @@ workLoop:
 			}
 			numTopN := int(e.opts[ast.AnalyzeOptNumTopN])
 			numBuckets := int(e.opts[ast.AnalyzeOptNumBuckets])
-			// The reduction only applies to the default TopN/bucket numbers; explicitly
-			// requested numbers are always honored, so pass ratio 1 for them inside
-			// BuildHistAndTopN.
+			// The ratio stays 1 for columns that keep full statistics. For the other
+			// columns, BuildHistAndTopN scales the TopN/bucket numbers down by the ratio,
+			// but only when they are the defaults: non-default (user-specified or
+			// persisted) numbers are never scaled down.
 			nonPredicateColRatio := 1.0
 			if task.isColumn {
 				if e.fullStatsCols != nil {
