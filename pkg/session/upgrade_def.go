@@ -2153,6 +2153,11 @@ type bindingDigestUpdate struct {
 	duplicate   bool
 }
 
+type bindingDigestPair struct {
+	sqlDigest  string
+	planDigest string
+}
+
 func upgradeToVer262(s sessionapi.Session, _ int64) {
 	// Refresh persisted binding digests after the #67363 normalization change.
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
@@ -2170,7 +2175,7 @@ func upgradeToVer262(s sessionapi.Session, _ int64) {
 	req := rs.NewChunk(nil)
 	updates := make([]bindingDigestUpdate, 0)
 	invlideBindingRowIDs := make([]int64, 0)
-	seenDigestPair := make(map[string]struct{})
+	seenDigestPair := make(map[bindingDigestPair]struct{})
 	p := parser.New()
 	for {
 		err = rs.Next(ctx, req)
@@ -2220,7 +2225,7 @@ func upgradeToVer262(s sessionapi.Session, _ int64) {
 			updates = append(updates, update)
 			if planDigestNotNull {
 				// Avoid duplicated key error on the unique index (plan_digest, sql_digest).
-				key := planDigest + "\x00" + update.sqlDigest
+				key := bindingDigestPair{sqlDigest: update.sqlDigest, planDigest: planDigest}
 				if _, ok := seenDigestPair[key]; ok {
 					updates[updateIdx].duplicate = true
 				} else {
