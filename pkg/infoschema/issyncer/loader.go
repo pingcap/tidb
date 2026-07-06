@@ -424,19 +424,21 @@ func (l *Loader) fetchAllSchemasWithTables(m meta.Reader, schemaCacheSize uint64
 			return nil, errors.New("system database not found")
 		}
 		allSchemas = []*model.DBInfo{dbInfo}
+	} else if l.filter != nil {
+		allSchemas = make([]*model.DBInfo, 0, 6)
+		err := m.IterDatabases(func(dbInfo *model.DBInfo) error {
+			if !l.filter.SkipLoadSchema(dbInfo) {
+				allSchemas = append(allSchemas, dbInfo)
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
 	} else {
 		allSchemas, err = m.ListDatabases()
 		if err != nil {
 			return nil, err
-		}
-		if l.filter != nil {
-			filteredSchemas := allSchemas[:0]
-			for _, dbInfo := range allSchemas {
-				if !l.filter.SkipLoadSchema(dbInfo) {
-					filteredSchemas = append(filteredSchemas, dbInfo)
-				}
-			}
-			allSchemas = filteredSchemas
 		}
 	}
 	if len(allSchemas) == 0 {
