@@ -60,6 +60,7 @@ http_archive(
 http_archive(
     name = "rules_cc",
     patch_cmds = [
+        "sed -i.bak '/NativeCcSharedLibraryHintInfo/d' cc/private/rules_impl/native.bzl",
         "printf '\\ncc_toolchain_alias(name = \"optional_current_cc_toolchain\")\\n' >> cc/BUILD",
     ],
     sha256 = "65b67b81c6da378f136cc7e7e14ee08d5b9375973427eceb8c773a4f69fa7e49",
