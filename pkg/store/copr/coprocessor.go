@@ -1807,8 +1807,8 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		queryCopStoreLimiter = worker.req.QueryCopStoreLimiter.GetStoreLimiter(queryCopStoreID)
 		failpoint.InjectCall("onBeforeAcquireQueryCopStoreLimiter", req, queryCopStoreID)
 	}
-	// Acquire the query-owned per-store limiter before the request-local limiter
-	// so waiting for per-store admission does not consume request-local tokens.
+	// Acquire both limiters without holding one token while waiting for the
+	// other, so a blocked request does not reduce effective concurrency.
 	// The long-term fix is to acquire both limiters in the client-go send path
 	// after the final RPCContext is selected.
 	releaseCoprRequestLimiters, limiterWaitTime, exit := acquireCoprRequestLimiters(
