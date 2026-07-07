@@ -60,6 +60,121 @@ func TestEnsureMonotonicKeyRanges(t *testing.T) {
 	require.False(t, reordered)
 }
 
+type testCoprRequestLimiter struct {
+	acquire    func(done <-chan struct{}) bool
+	tryAcquire func() bool
+	release    func()
+}
+
+func (l *testCoprRequestLimiter) Capacity() int {
+	return 1
+}
+
+func (l *testCoprRequestLimiter) Acquire(done <-chan struct{}) bool {
+	return l.acquire(done)
+}
+
+func (l *testCoprRequestLimiter) TryAcquire() bool {
+	return l.tryAcquire()
+}
+
+func (l *testCoprRequestLimiter) Release() {
+	l.release()
+}
+
+func TestAcquireCoprRequestLimitersReleasesPartialAcquire(t *testing.T) {
+	done := make(chan struct{})
+	firstAcquired := make(chan struct{})
+	firstReleased := make(chan struct{})
+	secondAcquireAllowed := make(chan struct{})
+	resultCh := make(chan struct {
+		release func()
+		exit    bool
+	}, 1)
+
+	var firstHeld atomic.Bool
+	var firstAcquireNotified atomic.Bool
+	var firstReleaseNotified atomic.Bool
+	first := &testCoprRequestLimiter{
+		acquire: func(done <-chan struct{}) bool {
+			firstHeld.Store(true)
+			if firstAcquireNotified.CompareAndSwap(false, true) {
+				close(firstAcquired)
+			}
+			return false
+		},
+		tryAcquire: func() bool {
+			acquired := firstHeld.CompareAndSwap(false, true)
+			if acquired && firstAcquireNotified.CompareAndSwap(false, true) {
+				close(firstAcquired)
+			}
+			return acquired
+		},
+		release: func() {
+			if firstHeld.CompareAndSwap(true, false) && firstReleaseNotified.CompareAndSwap(false, true) {
+				close(firstReleased)
+			}
+		},
+	}
+
+	var secondHeld atomic.Bool
+	second := &testCoprRequestLimiter{
+		acquire: func(done <-chan struct{}) bool {
+			select {
+			case <-done:
+				return true
+			case <-secondAcquireAllowed:
+				secondHeld.Store(true)
+				return false
+			}
+		},
+		tryAcquire: func() bool {
+			return false
+		},
+		release: func() {
+			secondHeld.Store(false)
+		},
+	}
+
+	go func() {
+		release, _, exit := acquireCoprRequestLimiters(first, second, done)
+		resultCh <- struct {
+			release func()
+			exit    bool
+		}{release: release, exit: exit}
+	}()
+
+	select {
+	case <-firstAcquired:
+	case <-time.After(time.Second):
+		require.Fail(t, "first limiter should be acquired")
+	}
+	select {
+	case <-firstReleased:
+	case <-time.After(time.Second):
+		require.Fail(t, "first limiter should be released before waiting on second limiter")
+	}
+	require.False(t, firstHeld.Load())
+
+	close(secondAcquireAllowed)
+	var result struct {
+		release func()
+		exit    bool
+	}
+	select {
+	case result = <-resultCh:
+	case <-time.After(time.Second):
+		require.Fail(t, "combined limiter acquire should finish")
+	}
+	require.False(t, result.exit)
+	require.True(t, firstHeld.Load())
+	require.True(t, secondHeld.Load())
+
+	result.release()
+	require.False(t, firstHeld.Load())
+	require.False(t, secondHeld.Load())
+}
+
 func TestBuildTasksWithoutBuckets(t *testing.T) {
 	// nil --- 'g' --- 'n' --- 't' --- nil
 	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->

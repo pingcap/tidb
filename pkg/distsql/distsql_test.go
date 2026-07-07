@@ -149,8 +149,7 @@ func TestSelectAppliesQueryCopStoreLimiter(t *testing.T) {
 	response, err = Select(checkRequest(func(req *kv.Request) {
 		require.Same(t, explicitLimiter, req.CoprRequestLimiter)
 		require.Same(t, dctx.QueryCopStoreLimiter, req.QueryCopStoreLimiter)
-		_, exit := req.CoprRequestLimiter.Acquire(make(chan struct{}))
-		require.False(t, exit)
+		require.False(t, req.CoprRequestLimiter.Acquire(make(chan struct{})))
 		req.CoprRequestLimiter.Release()
 	}), dctx, request, colTypes)
 	require.NoError(t, err)

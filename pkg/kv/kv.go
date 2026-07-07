@@ -420,9 +420,12 @@ type CoprRequestLimiter interface {
 	// Acquire blocks until this limiter admits one request attempt or done is
 	// closed. When exit is false, callers must call Release exactly once after
 	// the request attempt finishes. When exit is true, no token is held and
-	// callers should stop the current request attempt. waitTime only includes
-	// time spent waiting for an occupied limiter, not the fast acquire path.
-	Acquire(done <-chan struct{}) (waitTime time.Duration, exit bool)
+	// callers should stop the current request attempt.
+	Acquire(done <-chan struct{}) (exit bool)
+
+	// TryAcquire attempts to acquire one token without blocking. It must not
+	// bypass existing waiters.
+	TryAcquire() bool
 
 	// Release releases one token acquired by Acquire. It must only be called
 	// after Acquire returns false.
@@ -457,25 +460,24 @@ func NewCoprRequestLimiter(n int) CoprRequestLimiter {
 	}
 }
 
-func (l *fixedCoprRequestLimiter) Acquire(done <-chan struct{}) (waitTime time.Duration, exit bool) {
+func (l *fixedCoprRequestLimiter) Acquire(done <-chan struct{}) (exit bool) {
 	if l.tryAcquireFast() {
-		return 0, false
+		return false
 	}
 
 	select {
 	case <-done:
-		return 0, true
+		return true
 	default:
 	}
 
-	waitStart := time.Now()
 	waiter := &coprRequestWaiter{ready: make(chan struct{})}
 	l.waiters.Inc()
 	l.mu.Lock()
 	if l.head == nil && l.tryAcquire() {
 		l.waiters.Dec()
 		l.mu.Unlock()
-		return 0, false
+		return false
 	}
 	l.pushWaiter(waiter)
 	l.mu.Unlock()
@@ -485,16 +487,16 @@ func (l *fixedCoprRequestLimiter) Acquire(done <-chan struct{}) (waitTime time.D
 		l.mu.Lock()
 		if waiter.admitted {
 			l.mu.Unlock()
-			return time.Since(waitStart), false
+			return false
 		}
 		if waiter.queued {
 			l.removeWaiter(waiter)
 			l.waiters.Dec()
 		}
 		l.mu.Unlock()
-		return time.Since(waitStart), true
+		return true
 	case <-waiter.ready:
-		return time.Since(waitStart), false
+		return false
 	}
 }
 
@@ -521,6 +523,10 @@ func (l *fixedCoprRequestLimiter) Release() {
 	if admitted != nil {
 		close(admitted.ready)
 	}
+}
+
+func (l *fixedCoprRequestLimiter) TryAcquire() bool {
+	return l.tryAcquireFast()
 }
 
 func (l *fixedCoprRequestLimiter) Capacity() int {
