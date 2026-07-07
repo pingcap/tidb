@@ -66,6 +66,12 @@ func (s *testMydumpLoaderSuite) touch(t *testing.T, filename ...string) {
 	require.Nil(t, err)
 }
 
+func (s *testMydumpLoaderSuite) writeFile(t *testing.T, filename, content string) {
+	path := filepath.Join(s.sourceDir, filename)
+	err := os.WriteFile(path, []byte(content), 0o644)
+	require.NoError(t, err)
+}
+
 func (s *testMydumpLoaderSuite) mkdir(t *testing.T, dirname string) {
 	path := filepath.Join(s.sourceDir, dirname)
 	err := os.Mkdir(path, 0o755)
@@ -270,7 +276,7 @@ func TestDataNoHostTable(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestViewNoHostDB(t *testing.T) {
+func TestViewWithoutHostDBIsAccepted(t *testing.T) {
 	/*
 		Path/
 			notdb-schema-create.sql
@@ -279,13 +285,34 @@ func TestViewNoHostDB(t *testing.T) {
 	s := newTestMydumpLoaderSuite(t)
 
 	s.touch(t, "notdb-schema-create.sql")
-	s.touch(t, "db.tbl-schema-view.sql")
+	viewSQL := "CREATE VIEW tbl AS SELECT 1;"
+	s.writeFile(t, "db.tbl-schema-view.sql", viewSQL)
 
-	_, err := md.NewMyDumpLoader(context.Background(), s.cfg)
-	require.Contains(t, err.Error(), `invalid view schema file, miss host table schema for view 'tbl'`)
+	mdl, err := md.NewMyDumpLoader(context.Background(), s.cfg)
+	require.NoError(t, err)
+	require.Equal(t, []*md.MDDatabaseMeta{
+		{
+			Name:       "notdb",
+			SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "notdb", Name: ""}, FileMeta: md.SourceFileMeta{Path: "notdb-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
+		},
+		{
+			Name: "db",
+			SchemaFile: md.FileInfo{
+				TableName: filter.Table{Schema: "db", Name: ""},
+				FileMeta:  md.SourceFileMeta{Type: md.SourceTypeSchemaSchema},
+			},
+			Views: []*md.MDTableMeta{{
+				DB:           "db",
+				Name:         "tbl",
+				SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "db", Name: "tbl"}, FileMeta: md.SourceFileMeta{Path: "db.tbl-schema-view.sql", Type: md.SourceTypeViewSchema, FileSize: int64(len(viewSQL))}},
+				IndexRatio:   0.0,
+				IsRowOrdered: true,
+			}},
+		},
+	}, mdl.GetDatabases())
 }
 
-func TestViewNoHostTable(t *testing.T) {
+func TestViewWithoutHostTableIsAccepted(t *testing.T) {
 	/*
 		Path/
 			db-schema-create.sql
@@ -294,10 +321,22 @@ func TestViewNoHostTable(t *testing.T) {
 	s := newTestMydumpLoaderSuite(t)
 
 	s.touch(t, "db-schema-create.sql")
-	s.touch(t, "db.tbl-schema-view.sql")
+	viewSQL := "CREATE VIEW tbl AS SELECT 1;"
+	s.writeFile(t, "db.tbl-schema-view.sql", viewSQL)
 
-	_, err := md.NewMyDumpLoader(context.Background(), s.cfg)
-	require.Contains(t, err.Error(), `invalid view schema file, miss host table schema for view 'tbl'`)
+	mdl, err := md.NewMyDumpLoader(context.Background(), s.cfg)
+	require.NoError(t, err)
+	require.Equal(t, []*md.MDDatabaseMeta{{
+		Name:       "db",
+		SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "db", Name: ""}, FileMeta: md.SourceFileMeta{Path: "db-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
+		Views: []*md.MDTableMeta{{
+			DB:           "db",
+			Name:         "tbl",
+			SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "db", Name: "tbl"}, FileMeta: md.SourceFileMeta{Path: "db.tbl-schema-view.sql", Type: md.SourceTypeViewSchema, FileSize: int64(len(viewSQL))}},
+			IndexRatio:   0.0,
+			IsRowOrdered: true,
+		}},
+	}}, mdl.GetDatabases())
 }
 
 func TestDataWithoutSchema(t *testing.T) {
@@ -403,7 +442,7 @@ func TestRouter(t *testing.T) {
 		require.NoError(t, err)
 		dbs := mdl.GetDatabases()
 		// hit rules: a0.t0 -> b.u, a0.t1 -> b.0, a1.t2 -> b.u
-		// not hit: a1.s1, a1.v1
+		// not hit: a1.s1, a1.v1 (view placeholder is pruned from Tables)
 		expectedDBS := []*md.MDDatabaseMeta{
 			{
 				Name:       "a0",
@@ -418,14 +457,6 @@ func TestRouter(t *testing.T) {
 						Name:         "s1",
 						SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "a1", Name: "s1"}, FileMeta: md.SourceFileMeta{Path: "a1.s1-schema.sql", Type: md.SourceTypeTableSchema}},
 						DataFiles:    []md.FileInfo{{TableName: filter.Table{Schema: "a1", Name: "s1"}, FileMeta: md.SourceFileMeta{Path: "a1.s1.1.sql", Type: md.SourceTypeSQL, SortKey: "1"}}},
-						IndexRatio:   0.0,
-						IsRowOrdered: true,
-					},
-					{
-						DB:           "a1",
-						Name:         "v1",
-						SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "a1", Name: "v1"}, FileMeta: md.SourceFileMeta{Path: "a1.v1-schema.sql", Type: md.SourceTypeTableSchema}},
-						DataFiles:    []md.FileInfo{},
 						IndexRatio:   0.0,
 						IsRowOrdered: true,
 					},
@@ -531,16 +562,7 @@ func TestRouter(t *testing.T) {
 			{
 				Name:       "v",
 				SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "v", Name: ""}, FileMeta: md.SourceFileMeta{Path: "e0-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
-				Tables: []*md.MDTableMeta{
-					{
-						DB:           "v",
-						Name:         "vv",
-						SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "v", Name: "vv"}, FileMeta: md.SourceFileMeta{Path: "e0.f0-schema.sql", Type: md.SourceTypeTableSchema}},
-						DataFiles:    []md.FileInfo{},
-						IndexRatio:   0.0,
-						IsRowOrdered: true,
-					},
-				},
+				Tables:     []*md.MDTableMeta{},
 				Views: []*md.MDTableMeta{
 					{
 						DB:           "v",
@@ -795,17 +817,6 @@ func TestFileRouting(t *testing.T) {
 							FileMeta:  md.SourceFileMeta{Path: filepath.FromSlash("d1/test2.001.sql"), Type: md.SourceTypeSQL},
 						},
 					},
-					IndexRatio:   0.0,
-					IsRowOrdered: true,
-				},
-				{
-					DB:   "d1",
-					Name: "v1",
-					SchemaFile: md.FileInfo{
-						TableName: filter.Table{Schema: "d1", Name: "v1"},
-						FileMeta:  md.SourceFileMeta{Path: filepath.FromSlash("d1/v1-table.sql"), Type: md.SourceTypeTableSchema},
-					},
-					DataFiles:    []md.FileInfo{},
 					IndexRatio:   0.0,
 					IsRowOrdered: true,
 				},
