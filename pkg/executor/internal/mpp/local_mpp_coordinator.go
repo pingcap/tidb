@@ -306,7 +306,6 @@ func (c *localMppCoordinator) appendMPPDispatchReq(
 	return nil
 }
 
-<<<<<<< HEAD
 // fixTaskForCTEStorageAndReader fixes the upstream/downstream tasks for the producers and consumers.
 // After we split the fragments. A CTE producer in the fragment will holds all the task address of the consumers.
 // For example, the producer has two task on node_1 and node_2. As we know that each consumer also has two task on the same nodes(node_1 and node_2)
@@ -389,7 +388,8 @@ func (c *localMppCoordinator) fixTaskForCTEStorageAndReader(exec *tipb.Executor,
 		}
 	}
 	return nil
-=======
+}
+
 type tiFlashStoreInfo struct {
 	zone    string
 	storeID uint64
@@ -401,7 +401,6 @@ func addTiFlashStoreInfo(allTiFlashStoreInfo map[string]tiFlashStoreInfo, tiflas
 		storeInfo.zone = tiflashZone
 	}
 	allTiFlashStoreInfo[tiflashStore.GetAddr()] = storeInfo
->>>>>>> a9267dbdcbb (executor, distsql: reduce the log of dispatching mpp tasks (#68041))
 }
 
 // taskZoneInfoHelper used to help reset exchange executor's same zone flags
