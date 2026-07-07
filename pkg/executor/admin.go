@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
@@ -363,6 +364,7 @@ func (e *RecoverIndexExec) fetchRecoverRows(ctx context.Context, srcResult dists
 	idxValLen := len(e.index.Meta().Columns)
 	result.scanRowCount = 0
 
+	useNewCollate := collate.NewCollationEnabled()
 	for {
 		err := srcResult.Next(ctx, e.srcChunk)
 		if err != nil {
@@ -404,7 +406,7 @@ func (e *RecoverIndexExec) fetchRecoverRows(ctx context.Context, srcResult dists
 				return nil, err
 			}
 			e.idxValsBufs[result.scanRowCount] = idxVals
-			rsData := tables.TryGetHandleRestoredDataWrapper(e.table.Meta(), plannercore.GetCommonHandleDatum(e.handleCols, row), nil, e.index.Meta())
+			rsData := tables.TryGetHandleRestoredDataWrapper(useNewCollate, e.table.Meta(), plannercore.GetCommonHandleDatum(e.handleCols, row), nil, e.index.Meta())
 			e.recoverRows = append(e.recoverRows, recoverRows{handle: handle, idxVals: idxVals, rsData: rsData, skip: true})
 			result.scanRowCount++
 			result.currentHandle = handle

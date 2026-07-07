@@ -81,7 +81,9 @@ type TableCommon struct {
 	// recordPrefix and indexPrefix are generated using physicalTableID.
 	recordPrefix kv.Key
 	indexPrefix  kv.Key
-
+	// encoder keeps the collation setting captured when the table is initialized.
+	// All row and index writes through this table must use this fixed setting.
+	encoder codec.Encoder
 	// skipAssert is used for partitions that are in WriteOnly/DeleteOnly state.
 	skipAssert bool
 }
@@ -140,7 +142,7 @@ func MockTableFromMeta(tblInfo *model.TableInfo) table.Table {
 		return nil
 	}
 	var t TableCommon
-	initTableCommon(&t, tblInfo, tblInfo.ID, columns, autoid.NewAllocators(false), constraints)
+	t.initTableCommon(tblInfo, tblInfo.ID, columns, autoid.NewAllocators(false), constraints)
 	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
 		ret, err := newCachedTable(&t)
 		if err != nil {
@@ -214,7 +216,7 @@ func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Ta
 		return nil, err
 	}
 	var t TableCommon
-	initTableCommon(&t, tblInfo, tblInfo.ID, columns, allocs, constraints)
+	t.initTableCommon(tblInfo, tblInfo.ID, columns, allocs, constraints)
 	if tblInfo.GetPartitionInfo() == nil {
 		if err := initTableIndices(&t); err != nil {
 			return nil, err
@@ -240,7 +242,7 @@ func buildGeneratedExpr(tblInfo *model.TableInfo, genExpr string) (ast.ExprNode,
 }
 
 // initTableCommon initializes a TableCommon struct.
-func initTableCommon(t *TableCommon, tblInfo *model.TableInfo, physicalTableID int64, cols []*table.Column, allocs autoid.Allocators, constraints []*table.Constraint) {
+func (t *TableCommon) initTableCommon(tblInfo *model.TableInfo, physicalTableID int64, cols []*table.Column, allocs autoid.Allocators, constraints []*table.Constraint) {
 	t.tableID = tblInfo.ID
 	t.physicalTableID = physicalTableID
 	t.allocs = allocs
@@ -249,6 +251,7 @@ func initTableCommon(t *TableCommon, tblInfo *model.TableInfo, physicalTableID i
 	t.Constraints = constraints
 	t.recordPrefix = tablecodec.GenTableRecordPrefix(physicalTableID)
 	t.indexPrefix = tablecodec.GenTableIndexPrefix(physicalTableID)
+	t.encoder = codec.NewEncoder(collate.NewCollationEnabled())
 	if tblInfo.IsSequence() {
 		t.sequence = &sequenceCommon{meta: tblInfo.Sequence}
 	}
@@ -264,7 +267,7 @@ func initTableIndices(t *TableCommon) error {
 		}
 
 		// Use partition ID for index, because TableCommon may be table or partition.
-		idx, err := NewIndex(t.physicalTableID, tblInfo, idxInfo)
+		idx, err := NewIndexWithCollate(t.encoder.UseNewCollate(), t.physicalTableID, tblInfo, idxInfo)
 		if err != nil {
 			return err
 		}
@@ -308,7 +311,7 @@ func asIndex(idx table.Index) *index {
 }
 
 func initTableCommonWithIndices(t *TableCommon, tblInfo *model.TableInfo, physicalTableID int64, cols []*table.Column, allocs autoid.Allocators, constraints []*table.Constraint) error {
-	initTableCommon(t, tblInfo, physicalTableID, cols, allocs, constraints)
+	t.initTableCommon(tblInfo, physicalTableID, cols, allocs, constraints)
 	return initTableIndices(t)
 }
 
@@ -519,7 +522,7 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, txn kv.Transaction,
 	key := t.RecordKey(h)
 	evalCtx := sctx.GetExprCtx().GetEvalCtx()
 	tc, ec := evalCtx.TypeCtx(), evalCtx.ErrCtx()
-	err = encodeRowBuffer.WriteMemBufferEncoded(sctx.GetRowEncodingConfig(), tc.Location(), ec, memBuffer, key, h)
+	err = encodeRowBuffer.WriteMemBufferEncoded(t.encoder, sctx.GetRowEncodingConfig(), tc.Location(), ec, memBuffer, key, h)
 	if err != nil {
 		return err
 	}
@@ -788,7 +791,7 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 			}
 			tablecodec.TruncateIndexValues(tblInfo, pkIdx, pkDts)
 			var handleBytes []byte
-			handleBytes, err = codec.EncodeKey(tc.Location(), nil, pkDts...)
+			handleBytes, err = t.encoder.EncodeKey(tc.Location(), nil, pkDts...)
 			err = ec.HandleError(err)
 			if err != nil {
 				return
@@ -924,7 +927,7 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 		}
 	}
 
-	err = encodeRowBuffer.WriteMemBufferEncoded(sctx.GetRowEncodingConfig(), tc.Location(), ec, memBuffer, key, recordID, flags...)
+	err = encodeRowBuffer.WriteMemBufferEncoded(t.encoder, sctx.GetRowEncodingConfig(), tc.Location(), ec, memBuffer, key, recordID, flags...)
 	if err != nil {
 		return nil, err
 	}
@@ -1031,7 +1034,7 @@ func (t *TableCommon) addIndices(sctx table.MutateContext, recordID kv.Handle, r
 			}
 			dupErr = kv.GenKeyExistsErr(colStrVals, fmt.Sprintf("%s.%s", v.TableMeta().Name.String(), v.Meta().Name.String()))
 		}
-		rsData := TryGetHandleRestoredDataWrapper(t.meta, r, nil, v.Meta())
+		rsData := TryGetHandleRestoredDataWrapper(t.encoder.UseNewCollate(), t.meta, r, nil, v.Meta())
 		if dupHandle, err := asIndex(v).create(sctx, txn, indexVals, recordID, rsData, false, opt); err != nil {
 			if kv.ErrKeyExists.Equal(err) {
 				return dupHandle, dupErr
@@ -1311,7 +1314,7 @@ func (t *TableCommon) removeRowIndices(ctx table.MutateContext, txn kv.Transacti
 }
 
 func (t *TableCommon) buildIndexForRow(ctx table.MutateContext, h kv.Handle, vals []types.Datum, newData []types.Datum, idx *index, txn kv.Transaction, untouched bool, opt *table.CreateIdxOpt) error {
-	rsData := TryGetHandleRestoredDataWrapper(t.meta, newData, nil, idx.Meta())
+	rsData := TryGetHandleRestoredDataWrapper(t.encoder.UseNewCollate(), t.meta, newData, nil, idx.Meta())
 	if _, err := idx.create(ctx, txn, vals, h, rsData, untouched, opt); err != nil {
 		if kv.ErrKeyExists.Equal(err) {
 			// Make error message consistent with MySQL.
@@ -1518,14 +1521,14 @@ func (t *TableCommon) Type() table.Type {
 }
 
 func (t *TableCommon) canSkip(col *table.Column, value *types.Datum) bool {
-	return CanSkip(t.Meta(), col, value)
+	return CanSkip(t.encoder.UseNewCollate(), t.Meta(), col, value)
 }
 
 // CanSkip is for these cases, we can skip the columns in encoded row:
 // 1. the column is included in primary key;
 // 2. the column's default value is null, and the value equals to that but has no origin default;
 // 3. the column is virtual generated.
-func CanSkip(info *model.TableInfo, col *table.Column, value *types.Datum) bool {
+func CanSkip(useNewCollate bool, info *model.TableInfo, col *table.Column, value *types.Datum) bool {
 	if col.IsPKHandleColumn(info) {
 		return true
 	}
@@ -1536,7 +1539,7 @@ func CanSkip(info *model.TableInfo, col *table.Column, value *types.Datum) bool 
 				continue
 			}
 			canSkip := idxCol.Length == types.UnspecifiedLength
-			canSkip = canSkip && !types.NeedRestoredData(&col.FieldType)
+			canSkip = canSkip && !types.NeedRestoredDataWithCollate(&col.FieldType, useNewCollate)
 			return canSkip
 		}
 	}
@@ -1772,16 +1775,18 @@ func (t *TableCommon) GetSequenceCommon() *sequenceCommon {
 	return t.sequence
 }
 
-// TryGetHandleRestoredDataWrapper tries to get the restored data for handle if needed. The argument can be a slice or a map.
-func TryGetHandleRestoredDataWrapper(tblInfo *model.TableInfo, row []types.Datum, rowMap map[int64]types.Datum, idx *model.IndexInfo) []types.Datum {
-	if !collate.NewCollationEnabled() || !tblInfo.IsCommonHandle || tblInfo.CommonHandleVersion == 0 {
+// TryGetHandleRestoredDataWrapper tries to get the restored data for handle if
+// needed. The argument can be a slice or a map.
+func TryGetHandleRestoredDataWrapper(useNewCollate bool, tblInfo *model.TableInfo,
+	row []types.Datum, rowMap map[int64]types.Datum, idx *model.IndexInfo) []types.Datum {
+	if !useNewCollate || !tblInfo.IsCommonHandle || tblInfo.CommonHandleVersion == 0 {
 		return nil
 	}
 	rsData := make([]types.Datum, 0, 4)
 	pkIdx := FindPrimaryIndex(tblInfo)
 	for _, pkIdxCol := range pkIdx.Columns {
 		pkCol := tblInfo.Columns[pkIdxCol.Offset]
-		if !types.NeedRestoredData(&pkCol.FieldType) {
+		if !types.NeedRestoredDataWithCollate(&pkCol.FieldType, useNewCollate) {
 			continue
 		}
 		var datum types.Datum

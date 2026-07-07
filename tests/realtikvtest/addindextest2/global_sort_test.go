@@ -50,6 +50,8 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 	"github.com/stretchr/testify/require"
@@ -586,7 +588,7 @@ func TestIngestUseGivenTS(t *testing.T) {
 
 	dts := []types.Datum{types.NewIntDatum(1)}
 	sctx := tk.Session().GetSessionVars().StmtCtx
-	idxKey, _, err := tablecodec.GenIndexKey(sctx.TimeZone(), tblInfo, idxInfo, tblInfo.ID, dts, kv.IntHandle(1), nil)
+	idxKey, _, err := tablecodec.GenIndexKey(codec.NewEncoder(collate.NewCollationEnabled()), sctx.TimeZone(), tblInfo, idxInfo, tblInfo.ID, dts, kv.IntHandle(1), nil)
 	require.NoError(t, err)
 	tikvStore := dom.Store().(helper.Storage)
 	newHelper := helper.NewHelper(tikvStore)
