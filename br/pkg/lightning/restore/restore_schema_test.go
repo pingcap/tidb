@@ -93,7 +93,7 @@ func (s *restoreSchemaSuite) SetupSuite() {
 	// restore view schema files
 	fakeViewFilesCount := 8
 	for i := 1; i <= fakeViewFilesCount; i++ {
-		fakeViewName := fmt.Sprintf("tbl%d", i)
+		fakeViewName := fmt.Sprintf("view%d", i)
 		// please follow the `mydump.defaultFileRouteRules`, matches files like '{schema}.{table}-schema-view.sql'
 		fakeFileName := fmt.Sprintf("%s.%s-schema-view.sql", fakeDBName, fakeViewName)
 		fakeFileContent := []byte(fmt.Sprintf("CREATE ALGORITHM=UNDEFINED VIEW `%s` (`i`) AS SELECT `i` FROM `%s`.`%s`;", fakeViewName, fakeDBName, fmt.Sprintf("tbl%d", i)))
@@ -149,6 +149,17 @@ func (s *restoreSchemaSuite) SetupTest() {
 
 	mockDB, sqlMock, err := sqlmock.New()
 	require.NoError(s.T(), err)
+	sqlMock.ExpectQuery("^SELECT TABLE_NAME, TABLE_TYPE FROM information_schema\\.TABLES WHERE TABLE_SCHEMA = \\?$").
+		WithArgs("fakedb").
+		WillReturnRows(sqlmock.NewRows([]string{"TABLE_NAME", "TABLE_TYPE"}).
+			AddRow("tbl1", "BASE TABLE").
+			AddRow("tbl2", "BASE TABLE").
+			AddRow("tbl3", "BASE TABLE").
+			AddRow("tbl4", "BASE TABLE").
+			AddRow("tbl5", "BASE TABLE").
+			AddRow("tbl6", "BASE TABLE").
+			AddRow("tbl7", "BASE TABLE").
+			AddRow("tbl8", "BASE TABLE"))
 	for i := 0; i < 17; i++ {
 		sqlMock.ExpectExec(".*").WillReturnResult(sqlmock.NewResult(int64(i), 1))
 	}
@@ -218,6 +229,17 @@ func (s *restoreSchemaSuite) TestRestoreSchemaFailed() {
 	injectErr := stderrors.New("could not match actual sql")
 	mockDB, sqlMock, err := sqlmock.New()
 	require.NoError(s.T(), err)
+	sqlMock.ExpectQuery("^SELECT TABLE_NAME, TABLE_TYPE FROM information_schema\\.TABLES WHERE TABLE_SCHEMA = \\?$").
+		WithArgs("fakedb").
+		WillReturnRows(sqlmock.NewRows([]string{"TABLE_NAME", "TABLE_TYPE"}).
+			AddRow("tbl1", "BASE TABLE").
+			AddRow("tbl2", "BASE TABLE").
+			AddRow("tbl3", "BASE TABLE").
+			AddRow("tbl4", "BASE TABLE").
+			AddRow("tbl5", "BASE TABLE").
+			AddRow("tbl6", "BASE TABLE").
+			AddRow("tbl7", "BASE TABLE").
+			AddRow("tbl8", "BASE TABLE"))
 	sqlMock.ExpectExec(".*").WillReturnError(injectErr)
 	for i := 0; i < 16; i++ {
 		sqlMock.ExpectExec(".*").WillReturnResult(sqlmock.NewResult(int64(i), 1))
@@ -298,5 +320,5 @@ func (s *restoreSchemaSuite) TestRestoreSchemaContextCancel() {
 	err = s.rc.restoreSchema(childCtx)
 	cancel()
 	require.Error(s.T(), err)
-	require.Equal(s.T(), childCtx.Err(), err)
+	require.True(s.T(), errors.ErrorEqual(err, childCtx.Err()))
 }

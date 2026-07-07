@@ -1,0 +1,3 @@
+CREATE TABLE v4(
+  id TINYINT
+);

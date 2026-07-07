@@ -651,31 +651,7 @@ func (worker *restoreSchemaWorker) makeJobs(
 	if err != nil {
 		return err
 	}
-	// 3. restore views. Since views can cross database we must restore views after all table schemas are restored.
-	for _, dbMeta := range dbMetas {
-		for _, viewMeta := range dbMeta.Views {
-			sql, err := viewMeta.GetSchema(worker.ctx, worker.store)
-			if sql != "" {
-				err = worker.addJob(sql, &schemaJob{
-					dbName:   dbMeta.Name,
-					tblName:  viewMeta.Name,
-					stmtType: schemaCreateView,
-				})
-				if err != nil {
-					return err
-				}
-				// we don't support restore views concurrency, cauz it maybe will raise a error
-				err = worker.wait()
-				if err != nil {
-					return err
-				}
-			}
-			if err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+	return worker.enqueueViewJobs(dbMetas)
 }
 
 func (worker *restoreSchemaWorker) doJob() {

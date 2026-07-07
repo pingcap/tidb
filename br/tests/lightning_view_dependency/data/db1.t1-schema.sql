@@ -1,0 +1,4 @@
+CREATE TABLE t1(
+  id TINYINT PRIMARY KEY,
+  name VARCHAR(16)
+);
