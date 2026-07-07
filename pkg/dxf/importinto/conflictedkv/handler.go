@@ -137,7 +137,7 @@ func (h *BaseHandler) encodeAndHandleRow(ctx context.Context,
 	handle tidbkv.Handle, val []byte) (err error) {
 	tblMeta := h.targetTable.Meta()
 	decodedData, _, err := tables.DecodeRawRowData(h.encoder.SessionCtx.GetExprCtx(),
-		tblMeta, handle, h.targetTable.Cols(), val)
+		h.targetTable, handle, h.targetTable.Cols(), val)
 	if err != nil {
 		return errors.Trace(err)
 	}

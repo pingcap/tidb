@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -46,7 +47,9 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/backoff"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
@@ -204,15 +207,31 @@ func getUserStoreAndTable(
 			return nil, nil, err
 		}
 	}
-	tblInfo, err := getTblInfo(ctx, store, job)
+	tbl, err := getUserTableFromTaskStore(ctx, store, job)
+	return store, tbl, err
+}
+
+func getUserTableFromTaskStore(ctx context.Context, taskStore kv.Storage, job *model.Job) (table.Table, error) {
+	tblInfo, err := getTblInfo(ctx, taskStore, job)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	tbl, err := getTable(d.ddlCtx.getAutoIDRequirement(), job.SchemaID, tblInfo)
+	// we don't touch table data during add-index, a fake Allocators is enough.
+	defaultUseNewCollate := collate.NewCollationEnabled()
+	failpoint.Inject("overrideDefaultUseNewCollateForBackfillStep", func(val failpoint.Value) {
+		defaultUseNewCollate = val.(bool)
+	})
+	useNewCollate := job.ReorgMeta.GetUseNewCollateOrDefault(defaultUseNewCollate)
+	failpoint.InjectCall("afterResolveUserTableNewCollateForBackfillStep", job, defaultUseNewCollate, useNewCollate)
+	tbl, err := tables.TableFromMetaWithCollate(
+		useNewCollate,
+		autoid.NewAllocators(tblInfo.SepAutoInc()),
+		tblInfo,
+	)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	return store, tbl, nil
+	return tbl, nil
 }
 
 // GetNextStep implements scheduler.Extension interface.

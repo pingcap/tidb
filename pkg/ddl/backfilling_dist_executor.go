@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
@@ -149,9 +150,10 @@ func (s *backfillDistExecutor) newBackfillStepExecutor(
 			return nil, err
 		}
 	}
-	// TODO getTableByTxn is using DDL ctx which is never cancelled except when shutdown.
+	// TODO This is using DDL ctx which is never cancelled except when shutdown.
 	// we should move this operation out of GetStepExecutor, and put into Init.
-	_, tblIface, err := getTableByTxn(ddlObj.ctx, store, jobMeta.SchemaID, jobMeta.TableID)
+	failpoint.InjectCall("beforeGetUserTableForBackfillStep", jobMeta)
+	tblIface, err := getUserTableFromTaskStore(ddlObj.ctx, store, jobMeta)
 	if err != nil {
 		return nil, err
 	}
