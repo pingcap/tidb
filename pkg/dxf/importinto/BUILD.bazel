@@ -74,6 +74,7 @@ go_library(
         "//pkg/util",
         "//pkg/util/backoff",
         "//pkg/util/chunk",
+        "//pkg/util/collate",
         "//pkg/util/dbterror/exeerrors",
         "//pkg/util/disttask",
         "//pkg/util/logutil",

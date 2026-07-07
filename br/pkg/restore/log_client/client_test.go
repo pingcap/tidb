@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"math"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/mock"
+	"github.com/pingcap/tidb/br/pkg/operation"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
 	rawclient "github.com/pingcap/tidb/br/pkg/restore/internal/rawkv"
@@ -48,6 +50,8 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
@@ -102,6 +106,72 @@ var deleteRangeQueryList = []*stream.PreDelRangeQuery{
 		Sql:        "INSERT IGNORE INTO mysql.gc_delete_range VALUES ",
 		ParamsList: nil,
 	},
+}
+
+func requireLockMetaInStorage(
+	ctx context.Context,
+	t *testing.T,
+	storage storeapi.Storage,
+	pathPrefix string,
+	resource operation.LockResourceType,
+) objstore.LockMeta {
+	t.Helper()
+
+	var metas []objstore.LockMeta
+	err := storage.WalkDir(ctx, &storeapi.WalkOption{}, func(path string, size int64) error {
+		if !strings.HasPrefix(path, pathPrefix) {
+			return nil
+		}
+		content, err := storage.ReadFile(ctx, path)
+		if err != nil {
+			return err
+		}
+		var meta objstore.LockMeta
+		if err := json.Unmarshal(content, &meta); err != nil {
+			if strings.Contains(path, ".INTENT.") {
+				return nil
+			}
+			return errors.Annotatef(err, "failed to parse lock metadata from %s", path)
+		}
+		if meta.LockType == string(resource) {
+			metas = append(metas, meta)
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	require.Len(t, metas, 1)
+	return metas[0]
+}
+
+func TestGetLockedMigrationsWritesOperationMetadata(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.ToSlash(t.TempDir())
+	backend, err := objstore.ParseBackend("local://"+path, nil)
+	require.NoError(t, err)
+	stg, err := objstore.New(ctx, backend, nil)
+	require.NoError(t, err)
+
+	appendOpCtx, err := operation.NewContext("test append migration")
+	require.NoError(t, err)
+	appendOpCtx.SetHintField("restore_id", "123")
+	_, err = stream.MigrationExtension(stg).WithOperationContext(appendOpCtx).AppendMigration(ctx, stream.NewMigration())
+	require.NoError(t, err)
+
+	opCtx, err := operation.NewContext("test log restore")
+	require.NoError(t, err)
+	client := logclient.TEST_NewLogClient(123, 1, 2, 1, domain.NewMockDomain(), fakeSession{})
+	require.NoError(t, client.SetStorage(ctx, backend, nil))
+	client.SetRestoreID(456)
+	client.SetOperationContext(opCtx)
+
+	migs, err := client.GetLockedMigrations(ctx)
+	require.NoError(t, err)
+	defer migs.ReadLock.UnlockOnCleanUp(ctx)
+
+	meta := requireLockMetaInStorage(ctx, t, stg, "v1/LOCK", operation.LockResourceMigrationRead)
+	require.Equal(t, opCtx.OperationID, meta.OwnerID)
+	require.Contains(t, meta.Hint, "operation_started_at="+opCtx.StartedAt.Format(time.RFC3339))
+	require.Contains(t, meta.Hint, "restore_id=456")
 }
 
 func TestDeleteRangeQueryExec(t *testing.T) {
@@ -1675,6 +1745,73 @@ func TestPITRIDMapOnCheckpointStorage(t *testing.T) {
 	}
 }
 
+// TestRebaseAutoIncrementIDForSepAutoIncTables is a regression test for
+// https://github.com/pingcap/tidb/issues/69485: after PiTR log replay bumps the
+// persisted auto-increment counter of an AUTO_ID_CACHE=1 table directly in TiKV,
+// the autoid service's in-memory cache is stale and would hand out already-used
+// IDs. RebaseAutoIncrementIDForSepAutoIncTables must sync the service back to the
+// persisted value so the next allocation is persistedBase+1.
+func TestRebaseAutoIncrementIDForSepAutoIncTables(t *testing.T) {
+	ctx := context.Background()
+	s := utiltest.CreateRestoreSchemaSuite(t)
+	tk := testkit.NewTestKit(t, s.Mock.Storage)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id bigint primary key auto_increment, data bigint) auto_id_cache=1")
+	// The first insert primes the autoid service's in-memory cache (a non-zero
+	// base with a reserved range) exactly like a snapshot restore would.
+	tk.MustExec("insert into t (data) values (0)")
+
+	tbl, err := s.Mock.Domain.InfoSchema().TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	require.True(t, tbl.Meta().SepAutoInc())
+	dbID := tbl.Meta().DBID
+	tableID := tbl.Meta().ID
+
+	alloc := tbl.Allocators(nil).Get(autoid.AutoIncrementType)
+	require.NotNil(t, alloc)
+
+	// Simulate PiTR log replay writing a higher auto-increment counter straight
+	// to TiKV, bypassing the autoid service. Choose a target well above the
+	// service's reserved range so the in-memory cache is guaranteed to be stale.
+	var target int64
+	require.NoError(t, kv.RunInNewTxn(ctx, s.Mock.Storage, false, func(_ context.Context, txn kv.Transaction) error {
+		acc := meta.NewMutator(txn).GetAutoIDAccessors(dbID, tableID).IncrementID(model.TableInfoVersion5)
+		cur, err1 := acc.Get()
+		if err1 != nil {
+			return err1
+		}
+		target = cur + 1000000
+		_, err1 = acc.Inc(target - cur)
+		return err1
+	}))
+
+	// Before the fix: the service still allocates from its stale cache, not from
+	// the persisted value, which is the bug that causes duplicate-key errors.
+	staleNext, err := alloc.NextGlobalAutoID()
+	require.NoError(t, err)
+	require.Less(t, staleNext, target, "expected stale in-memory allocation before rebase")
+
+	client := logclient.TEST_NewLogClient(123, 1, 2, 3, s.Mock.Domain, nil)
+	schemasReplace := &stream.SchemasReplace{
+		DbReplaceMap: map[stream.UpstreamID]*stream.DBReplace{
+			dbID: {
+				Name: "test",
+				DbID: dbID,
+				TableMap: map[stream.UpstreamID]*stream.TableReplace{
+					tableID: {Name: "t", TableID: tableID},
+				},
+			},
+		},
+	}
+	require.NoError(t, client.RebaseAutoIncrementIDForSepAutoIncTables(ctx, schemasReplace))
+
+	// After the fix: the service is synced to the persisted value, so the next
+	// allocation is target+1 and no longer collides with restored rows.
+	fixedNext, err := alloc.NextGlobalAutoID()
+	require.NoError(t, err)
+	require.Equal(t, target+1, fixedNext)
+}
+
 type mockLogStrategy struct {
 	*logclient.LogSplitStrategy
 	expectSplitCount int
@@ -1796,6 +1933,52 @@ type mockCompactedStrategy struct {
 
 func (m *mockCompactedStrategy) ShouldSplit() bool {
 	return m.AccumulateCount%m.expectSplitCount == 0
+}
+
+func TestCollectSSTFileSets(t *testing.T) {
+	ctx := context.Background()
+	client := logclient.TEST_NewLogClient(123, 1, 2, 1, nil, nil)
+	rules := map[int64]*utils.RewriteRules{
+		1: {
+			Data: []*import_sstpb.RewriteRule{
+				{
+					OldKeyPrefix: tablecodec.GenTableRecordPrefix(1),
+					NewKeyPrefix: tablecodec.GenTableRecordPrefix(100),
+				},
+			},
+		},
+	}
+
+	t.Run("skips ssts without rewrite rule", func(t *testing.T) {
+		fileSets, totalKVs, err := client.CollectSSTFileSets(ctx, iter.FromSlice([]logclient.SSTs{
+			fakeSubCompactionWithOneSst(1, 100, 16*units.MiB, 100),
+			fakeSubCompactionWithOneSst(3, 100, 16*units.MiB, 300),
+		}), rules)
+		require.NoError(t, err)
+		require.Equal(t, int64(100), totalKVs)
+		require.Len(t, fileSets, 1)
+		require.Equal(t, int64(1), fileSets[0].TableID)
+		require.Len(t, fileSets[0].SSTFiles, 1)
+	})
+
+	t.Run("counts only ssts that still need restore", func(t *testing.T) {
+		var skippedKVs uint64
+		strategy := logclient.NewCompactedFileSplitStrategy(rules, map[string]struct{}{
+			"1:200": {},
+		}, func(kvCount, _ uint64) {
+			skippedKVs += kvCount
+		})
+		ssts := fakeSubCompactionWithMultiSsts(1, 200, 32*units.MiB, 200)
+		require.False(t, strategy.ShouldSkip(ssts))
+
+		fileSets, totalKVs, err := client.CollectSSTFileSets(ctx, iter.FromSlice([]logclient.SSTs{ssts}), rules)
+		require.NoError(t, err)
+		require.Equal(t, uint64(200), skippedKVs)
+		require.Equal(t, int64(200), totalKVs)
+		require.Len(t, fileSets, 1)
+		require.Len(t, fileSets[0].SSTFiles, 1)
+		require.Equal(t, "1:201", fileSets[0].SSTFiles[0].Name)
+	})
 }
 
 func TestCompactedSplitStrategy(t *testing.T) {

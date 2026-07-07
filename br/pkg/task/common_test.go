@@ -5,12 +5,15 @@ package task
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	backup "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	kvconfig "github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/gc"
+	"github.com/pingcap/tidb/br/pkg/operation"
+	restoresplit "github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/s3like"
@@ -122,6 +125,58 @@ func TestTiDBConfigUnchanged(t *testing.T) {
 	require.NotEqual(t, config.GetGlobalConfig(), cfg)
 	restoreConfig()
 	require.Equal(t, config.GetGlobalConfig(), cfg)
+}
+
+func TestEnsureOperationContext(t *testing.T) {
+	t.Run("creates command boundary identity", func(t *testing.T) {
+		var cfg Config
+
+		require.NoError(t, cfg.EnsureOperationContext("log-restore"))
+
+		require.NotEmpty(t, cfg.OperationContext.OperationID)
+		require.False(t, cfg.OperationContext.StartedAt.IsZero())
+	})
+
+	t.Run("keeps existing identity snapshot", func(t *testing.T) {
+		startedAt := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+		cfg := Config{
+			OperationContext: operation.Context{
+				OperationID: "operation-id",
+				StartedAt:   startedAt,
+			},
+		}
+
+		require.NoError(t, cfg.EnsureOperationContext("log-restore"))
+
+		require.Equal(t, "operation-id", cfg.OperationContext.OperationID)
+		require.Equal(t, startedAt, cfg.OperationContext.StartedAt)
+	})
+
+	t.Run("rejects incomplete identity snapshot", func(t *testing.T) {
+		cfg := Config{
+			OperationContext: operation.Context{
+				OperationID: "operation-id",
+			},
+		}
+
+		err := cfg.EnsureOperationContext("log-restore")
+
+		require.Error(t, err)
+		require.ErrorContains(t, err, "operation started time")
+	})
+
+	t.Run("rejects started time without operation ID", func(t *testing.T) {
+		cfg := Config{
+			OperationContext: operation.Context{
+				StartedAt: time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC),
+			},
+		}
+
+		err := cfg.EnsureOperationContext("log-restore")
+
+		require.Error(t, err)
+		require.ErrorContains(t, err, "operation ID")
+	})
 }
 
 func TestStripingPDURL(t *testing.T) {
@@ -340,6 +395,7 @@ func expectedDefaultRestoreConfig() RestoreConfig {
 		BatchFlushInterval:       16000000000,
 		DdlBatchSize:             0x80,
 		RegionScanConcurrency:    256,
+		SplitRegionIndexStep:     restoresplit.DefaultRegionIndexStep,
 		WithPlacementPolicy:      "STRICT",
 		UseCheckpoint:            true,
 		AllowPITRFromIncremental: true,

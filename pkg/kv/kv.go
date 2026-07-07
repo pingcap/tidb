@@ -854,6 +854,9 @@ type Request struct {
 		// when enabled, this field is adjusted to be max(MaxPagingSize, paging.MinAllowedMaxPagingSize),
 		// see paging.GrowPagingSize
 		MaxPagingSize uint64
+		// PagingSizeBytes is the byte budget per page.
+		// 0 means disabled (no byte-budget paging).
+		PagingSizeBytes uint64
 	}
 	// RequestSource indicates whether the request is an internal request.
 	RequestSource util.RequestSource
@@ -1023,6 +1026,7 @@ type Storage interface {
 // EtcdBackend is used for judging a storage is a real TiKV.
 type EtcdBackend interface {
 	EtcdAddrs() ([]string, error)
+	GetPDAddrs() ([]string, error)
 	TLSConfig() *tls.Config
 	StartGCWorker() error
 }

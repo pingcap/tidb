@@ -12,6 +12,8 @@ go_library(
         "//pkg/table",
         "//pkg/tablecodec",
         "//pkg/testkit",
+        "//pkg/util/codec",
+        "//pkg/util/collate",
         "@com_github_stretchr_testify//require",
     ],
 )

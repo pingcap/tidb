@@ -302,8 +302,12 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 			// Exclude the TopN in Stats Version 2
 			if idx.StatsVer == statistics.Version2 {
 				colIDs := coll.Idx2ColUniqueIDs[idx.Histogram.ID]
-				// Retrieve column statistics for the 1st index column
-				c := coll.GetCol(colIDs[0])
+				// Retrieve column statistics for the 1st index column.
+				// colIDs may be empty if the index-to-column mapping is not populated, so guard the access.
+				var c *statistics.Column
+				if len(colIDs) > 0 {
+					c = coll.GetCol(colIDs[0])
+				}
 				// If this is single column predicate - use the column's information rather than index.
 				// Index histograms are converted to string. Column uses original type - which can be more accurate for out of range
 				isSingleColRange := len(indexRange.LowVal) == len(indexRange.HighVal) && len(indexRange.LowVal) == 1

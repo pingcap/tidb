@@ -23,12 +23,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/planner/extstore"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/stretchr/testify/require"
 )
@@ -56,6 +58,52 @@ func checkFileName(s string) bool {
 		}
 	}
 	return false
+}
+
+type planReplayerPresignStorage struct {
+	storeapi.Storage
+	url string
+}
+
+func (s planReplayerPresignStorage) PresignFile(context.Context, string, time.Duration) (string, error) {
+	return s.url, nil
+}
+
+func requirePlanReplayerFileToken(t *testing.T, rows [][]any) string {
+	require.Len(t, rows, 1)
+	require.Len(t, rows[0], 2)
+	require.Equal(t, "File token", rows[0][0])
+	token, ok := rows[0][1].(string)
+	require.True(t, ok)
+	require.NotEmpty(t, token)
+	return token
+}
+
+func hasTiFlashTask(rows [][]any) bool {
+	for _, row := range rows {
+		if len(row) > 2 && strings.Contains(fmt.Sprint(row[2]), "tiflash") {
+			return true
+		}
+	}
+	return false
+}
+
+func requireZipFileContains(t *testing.T, content []byte, fileName, expected string) {
+	reader, err := zip.NewReader(bytes.NewReader(content), int64(len(content)))
+	require.NoError(t, err)
+	for _, file := range reader.File {
+		if file.Name != fileName {
+			continue
+		}
+		r, err := file.Open()
+		require.NoError(t, err)
+		data, err := io.ReadAll(r)
+		require.NoError(t, err)
+		require.NoError(t, r.Close())
+		require.Contains(t, string(data), expected)
+		return
+	}
+	require.FailNowf(t, "missing file in zip", "file %s not found", fileName)
 }
 
 func TestPlanReplayer(t *testing.T) {
@@ -98,6 +146,56 @@ func TestPlanReplayer(t *testing.T) {
 	token := tk.Session().GetSessionVars().LastPlanReplayerToken
 	rows := tk.MustQuery(fmt.Sprintf("select * from mysql.plan_replayer_status where token = '%v'", token)).Rows()
 	require.Len(t, rows, 1)
+}
+
+func TestPlanReplayerLoadTiFlashPlanWithHypoReplica(t *testing.T) {
+	tempDir := t.TempDir()
+	ctx := context.Background()
+	storage, err := extstore.NewExtStorage(ctx, "file://"+tempDir, "")
+	require.NoError(t, err)
+	extstore.SetGlobalExtStorageForTest(storage)
+	defer func() {
+		extstore.SetGlobalExtStorageForTest(nil)
+		storage.Close()
+	}()
+
+	const mockTiFlashStoreCount = "github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount"
+	require.NoError(t, failpoint.Enable(mockTiFlashStoreCount, `return(true)`))
+	defer func() {
+		_ = failpoint.Disable(mockTiFlashStoreCount)
+	}()
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_load_tiflash(a int, b int, index idx_a(a))")
+	tk.MustExec("alter table t_load_tiflash set tiflash replica 1")
+	testkit.SetTiFlashReplica(t, dom, "test", "t_load_tiflash")
+	res := tk.MustQuery("plan replayer dump explain select /*+ read_from_storage(tiflash[t_load_tiflash]) */ * from t_load_tiflash")
+	tiflashFileName := requirePlanReplayerFileToken(t, res.Rows())
+	filePath := filepath.Join(replayer.GetPlanReplayerDirName(), tiflashFileName)
+
+	fileReader, err := storage.Open(ctx, filePath, nil)
+	require.NoError(t, err)
+	content, err := io.ReadAll(fileReader)
+	require.NoError(t, err)
+	require.NoError(t, fileReader.Close())
+	requireZipFileContains(t, content, "explain.txt", "tiflash")
+
+	require.NoError(t, failpoint.Disable(mockTiFlashStoreCount))
+	loadStore := testkit.CreateMockStore(t)
+	loadTK := testkit.NewTestKit(t, loadStore)
+	loadTK.MustExec(fmt.Sprintf("plan replayer load '%s'", strings.ReplaceAll(filepath.Join(tempDir, filePath), "'", "''")))
+	// TestKit executes the SQL marker; clientConn normally completes the local-file
+	// transfer and calls Update, so feed the dumped bytes directly here.
+	loadInfo, ok := loadTK.Session().Value(executor.PlanReplayerLoadVarKey).(*executor.PlanReplayerLoadInfo)
+	require.True(t, ok)
+	defer loadTK.Session().ClearValue(executor.PlanReplayerLoadVarKey)
+	require.NoError(t, loadInfo.Update(content))
+
+	loadTK.MustExec("use test")
+	rows := loadTK.MustQuery("explain select /*+ read_from_storage(tiflash[t_load_tiflash]) */ * from t_load_tiflash").Rows()
+	require.True(t, hasTiFlashTask(rows), rows)
 }
 
 func TestPlanReplayerCaptureSEM(t *testing.T) {
@@ -209,9 +307,9 @@ func TestPlanReplayerDumpSingle(t *testing.T) {
 	tk.MustExec("drop table if exists t_dump_single")
 	tk.MustExec("create table t_dump_single(a int)")
 	res := tk.MustQuery("plan replayer dump explain select * from t_dump_single")
-	path := testdata.ConvertRowsToStrings(res.Rows())
+	fileName := requirePlanReplayerFileToken(t, res.Rows())
 
-	filePath := filepath.Join(replayer.GetPlanReplayerDirName(), path[0])
+	filePath := filepath.Join(replayer.GetPlanReplayerDirName(), fileName)
 	fileReader, err := storage.Open(ctx, filePath, nil)
 	require.NoError(t, err)
 	defer fileReader.Close()
@@ -246,12 +344,11 @@ func TestExplainExploreReplayer(t *testing.T) {
 	tk.MustExec("analyze table t_explain_explore_replayer")
 	tk.MustExec("create global binding using select * from test.t_explain_explore_replayer where b=1")
 	res := tk.MustQuery("plan replayer dump explain select * from test.t_explain_explore_replayer where b=1")
-	path := testdata.ConvertRowsToStrings(res.Rows())
-	require.Len(t, path, 1)
+	fileName := requirePlanReplayerFileToken(t, res.Rows())
 
 	loadStore := testkit.CreateMockStore(t)
 	loadTK := testkit.NewTestKit(t, loadStore)
-	replayerPath := filepath.Join(tempDir, replayer.GetPlanReplayerDirName(), path[0])
+	replayerPath := filepath.Join(tempDir, replayer.GetPlanReplayerDirName(), fileName)
 	replayerPath = strings.ReplaceAll(replayerPath, "'", "''")
 	for range 2 {
 		rows := loadTK.MustQuery(fmt.Sprintf("explain explore replayer '%s'", replayerPath)).Rows()
@@ -260,6 +357,35 @@ func TestExplainExploreReplayer(t *testing.T) {
 			require.NotEmpty(t, row[3])
 		}
 	}
+}
+
+func TestPlanReplayerDumpPresignedURLOutput(t *testing.T) {
+	ctx := context.Background()
+	tempDir := t.TempDir()
+	storage, err := extstore.NewExtStorage(ctx, "file://"+tempDir, "")
+	require.NoError(t, err)
+	const presignedURL = "https://example.com/replayer.zip?X-Amz-Expires=3600&X-Amz-Signature=test"
+	extstore.SetGlobalExtStorageForTest(planReplayerPresignStorage{
+		Storage: storage,
+		url:     presignedURL,
+	})
+	defer func() {
+		extstore.SetGlobalExtStorageForTest(nil)
+		storage.Close()
+	}()
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_presign(a int)")
+	tk.MustQuery("plan replayer dump explain select * from t_presign").Check(testkit.RowsWithSep("|",
+		"Download URL|"+presignedURL,
+		"Expires in|1h0m0s",
+		"Browser|Open the Download URL directly before it expires",
+		"curl|curl -L '"+presignedURL+"' -o plan_replayer.zip",
+		"Note|If the URL expires, rerun PLAN REPLAYER DUMP to get a new one",
+	))
+	require.Equal(t, presignedURL, tk.Session().GetSessionVars().LastPlanReplayerToken)
 }
 
 func TestPlanReplayerDumpMultipleError(t *testing.T) {
@@ -341,10 +467,9 @@ func TestPlanReplayerDumpMultiple(t *testing.T) {
 	}
 	sqlCmd := "plan replayer dump explain (" + strings.Join(stmts, ", ") + ")"
 	res := tk.MustQuery(sqlCmd)
-	path := testdata.ConvertRowsToStrings(res.Rows())
-	require.Len(t, path, 1)
+	fileName := requirePlanReplayerFileToken(t, res.Rows())
 
-	filePath := filepath.Join(replayer.GetPlanReplayerDirName(), path[0])
+	filePath := filepath.Join(replayer.GetPlanReplayerDirName(), fileName)
 	fileReader, err := storage.Open(ctx, filePath, nil)
 	require.NoError(t, err)
 	defer fileReader.Close()

@@ -137,7 +137,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
-	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
@@ -3472,6 +3471,14 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 				ruConsumptionReporter = rgCtl
 			}
 		}
+		pagingSizeBytes := vars.PagingSizeBytes
+		if pagingSizeBytes > 0 {
+			if !vardef.EnableResourceControl.Load() || dom == nil || sc.ResourceGroupName == "" {
+				pagingSizeBytes = 0
+			} else if rg, ok := dom.InfoSchema().ResourceGroupByName(ast.NewCIStr(sc.ResourceGroupName)); !ok || rg.GetBurstLimitAdjusted() < 0 {
+				pagingSizeBytes = 0
+			}
+		}
 		ret := &distsqlctx.DistSQLContext{
 			WarnHandler:     sc.WarnHandler,
 			InRestrictedSQL: sc.InRestrictedSQL,
@@ -3512,6 +3519,7 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 			EnablePaging:                  vars.EnablePaging,
 			MinPagingSize:                 vars.MinPagingSize,
 			MaxPagingSize:                 vars.MaxPagingSize,
+			PagingSizeBytes:               pagingSizeBytes,
 			RequestSourceType:             vars.RequestSourceType,
 			ExplicitRequestSourceType:     vars.ExplicitRequestSourceType,
 			StoreBatchSize:                vars.StoreBatchSize,
@@ -4356,6 +4364,15 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 			return nil, err
 		}
 	}
+	skipInitGlobalVarFromSystemDB := false
+	failpoint.Inject("skipInitGlobalVarFromSystemDB", func(val failpoint.Value) {
+		skipInitGlobalVarFromSystemDB = val.(bool)
+	})
+	if !skipInitGlobalVarFromSystemDB {
+		if err = initGlobalVarFromSystemDB(ctx, store); err != nil {
+			return nil, err
+		}
+	}
 
 	// initiate disttask framework components which need a store
 	scheduler.RegisterSchedulerFactory(
@@ -4379,7 +4396,6 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	if concurrency < 0 { // it is only for test, in the production, negative value is illegal.
 		concurrency = 0
 	}
-
 	ses, err := createSessionsImpl(store, 10)
 	if err != nil {
 		return nil, err
@@ -4397,20 +4413,6 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	for i := range ses {
 		ses[i].GetSessionVars().InRestrictedSQL = true
 	}
-
-	// get system tz from mysql.tidb
-	tz, err := ses[0].getTableValue(ctx, mysql.TiDBTable, tidbSystemTZ)
-	if err != nil {
-		return nil, err
-	}
-	timeutil.SetSystemTZ(tz)
-
-	// get the flag from `mysql`.`tidb` which indicating if new collations are enabled.
-	newCollationEnabled, err := loadCollationParameter(ctx, ses[0])
-	if err != nil {
-		return nil, err
-	}
-	collate.SetNewCollationEnabledForTest(newCollationEnabled)
 
 	// only start the domain after we have initialized some global variables.
 	dom := domain.GetDomain(ses[0])

@@ -1902,6 +1902,40 @@ func TestStatsLoadLimit(t *testing.T) {
 	checkQueueSizeValid(DefMaxOfStatsLoadQueueSizeLimit+1, false)
 }
 
+func TestExternalWorkloadValid(t *testing.T) {
+	conf := NewConfig()
+	require.NoError(t, conf.Valid())
+
+	conf.ExternalWorkload.Enable = true
+	require.ErrorContains(t, conf.Valid(), "external-workload can only be configured when deploy-mode is starter")
+
+	conf = NewConfig()
+	confFile := filepath.Join(t.TempDir(), "tidb.toml")
+	require.NoError(t, os.WriteFile(confFile, []byte("[external-workload]\nenable = false\n"), 0644))
+	require.ErrorContains(t, conf.Load(confFile), "external-workload can only be configured when deploy-mode is starter")
+
+	if kerneltype.IsClassic() {
+		t.Skip("only for nextgen kernel")
+	}
+
+	conf = NewConfig()
+	conf.DeployMode = deploymode.Starter
+	conf.ExternalWorkload.Enable = true
+	require.ErrorContains(t, conf.Valid(), "external-workload controller-addr must not be empty")
+
+	conf.ExternalWorkload.ControllerAddr = "http://127.0.0.1:1234"
+	conf.ExternalWorkload.TidbPool = ""
+	require.ErrorContains(t, conf.Valid(), "external-workload tidb-pool must not be empty")
+
+	conf.ExternalWorkload.TidbPool = "pool-a"
+	conf.ExternalWorkload.Role = "unknown"
+	require.ErrorContains(t, conf.Valid(), `invalid external-workload role "unknown"`)
+
+	conf.ExternalWorkload.Role = " GCV2 "
+	require.NoError(t, conf.Valid())
+	require.Equal(t, RoleGCV2Worker, conf.ExternalWorkload.Role)
+}
+
 func TestGetGlobalKeyspaceName(t *testing.T) {
 	conf := NewConfig()
 	require.Empty(t, conf.KeyspaceName)

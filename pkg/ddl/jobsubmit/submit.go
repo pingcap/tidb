@@ -38,8 +38,10 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	tikv "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
 
@@ -88,11 +90,15 @@ func SubmitBatch(ctx context.Context, opts SubmitOptions, specs []*JobSpec) erro
 
 	for _, spec := range specs {
 		job := spec.Job
+		job.NormalizeInvolvingSchemaInfo()
 		if err = job.CheckInvolvingSchemaInfo(); err != nil {
 			return err
 		}
 		intest.Assert(job.Version != 0, "Job version should not be zero")
-
+		if job.TraceInfo == nil {
+			// job scheduler expects TraceInfo to be non-nil.
+			job.TraceInfo = &tracing.TraceInfo{}
+		}
 		job.StartTS = startTS
 		job.BDRRole = bdrRole
 
@@ -486,4 +492,16 @@ func setJobStateToQueueing(job *model.Job) {
 		}
 	}
 	job.State = model.JobStateQueueing
+}
+
+// NotifyDDLOwnerByEtcd notifies the DDL owner to pick up new DDL jobs by etcd.
+func NotifyDDLOwnerByEtcd(ctx context.Context, etcdCli *clientv3.Client) {
+	if etcdCli == nil {
+		return
+	}
+
+	err := ddlutil.PutKVToEtcd(ctx, etcdCli, 1, ddlutil.AddingDDLJobNotifyKey, "0")
+	if err != nil {
+		logutil.DDLLogger().Info("notify new DDL job failed", zap.Error(err))
+	}
 }

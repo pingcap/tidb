@@ -66,6 +66,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/extension"
+	"github.com/pingcap/tidb/pkg/format/textrow"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -187,20 +188,20 @@ type clientConn struct {
 		sync.RWMutex
 		*TiDBContext // an interface to execute sql statements.
 	}
-	attrs         map[string]string     // attributes parsed from client handshake response.
-	serverHost    string                // server host
-	peerHost      string                // peer host
-	peerPort      string                // peer port
-	status        int32                 // dispatching/reading/shutdown/waitshutdown
-	lastCode      uint16                // last error code
-	collation     uint8                 // collation used by client, may be different from the collation used by database.
-	lastActive    time.Time             // last active time
-	authPlugin    string                // default authentication plugin
-	isUnixSocket  bool                  // connection is Unix Socket file
-	closeOnce     sync.Once             // closeOnce is used to make sure clientConn closes only once
-	rsEncoder     *column.ResultEncoder // rsEncoder is used to encode the string result to different charsets
-	inputDecoder  *util2.InputDecoder   // inputDecoder is used to decode the different charsets of incoming strings to utf-8
-	socketCredUID uint32                // UID from the other end of the Unix Socket
+	attrs         map[string]string      // attributes parsed from client handshake response.
+	serverHost    string                 // server host
+	peerHost      string                 // peer host
+	peerPort      string                 // peer port
+	status        int32                  // dispatching/reading/shutdown/waitshutdown
+	lastCode      uint16                 // last error code
+	collation     uint8                  // collation used by client, may be different from the collation used by database.
+	lastActive    time.Time              // last active time
+	authPlugin    string                 // default authentication plugin
+	isUnixSocket  bool                   // connection is Unix Socket file
+	closeOnce     sync.Once              // closeOnce is used to make sure clientConn closes only once
+	rsEncoder     *textrow.ResultEncoder // rsEncoder is used to encode the string result to different charsets
+	inputDecoder  *util2.InputDecoder    // inputDecoder is used to decode the different charsets of incoming strings to utf-8
+	socketCredUID uint32                 // UID from the other end of the Unix Socket
 	// mu is used for cancelling the execution of current transaction.
 	mu struct {
 		sync.RWMutex
@@ -1099,7 +1100,7 @@ func (cc *clientConn) initResultEncoder(ctx context.Context) {
 		chs = ""
 		logutil.Logger(ctx).Warn("get character_set_results system variable failed", zap.Error(err))
 	}
-	cc.rsEncoder = column.NewResultEncoder(chs)
+	cc.rsEncoder = textrow.NewResultEncoder(chs)
 }
 
 func (cc *clientConn) initInputEncoder(ctx context.Context) {
