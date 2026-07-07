@@ -61,6 +61,58 @@ import (
 // make sure `TableReaderExecutor` implements `Executor`.
 var _ exec.Executor = &TableReaderExecutor{}
 
+const (
+	keepOrderLimitSmallScanRows  = 1024
+	keepOrderLimitMediumScanRows = 10000
+)
+
+func keepOrderLimitScanConcurrencyCap(keepOrder bool, limitRows uint64) int {
+	if !keepOrder || limitRows == 0 {
+		return 0
+	}
+	if limitRows <= keepOrderLimitSmallScanRows {
+		return 1
+	}
+	if limitRows <= keepOrderLimitMediumScanRows {
+		return 2
+	}
+	return 0
+}
+
+func keepOrderLimitScanConcurrencyCapFromPlans(keepOrder bool, plans []base.PhysicalPlan) int {
+	limitRows, ok := minLimitRowsFromPlans(plans)
+	if !ok {
+		return 0
+	}
+	return keepOrderLimitScanConcurrencyCap(keepOrder, limitRows)
+}
+
+func keepOrderLimitScanConcurrencyCapFromPushedLimit(keepOrder bool, pushedLimit *physicalop.PushedDownLimit) int {
+	if pushedLimit == nil {
+		return 0
+	}
+	return keepOrderLimitScanConcurrencyCap(keepOrder, pushedLimit.Offset+pushedLimit.Count)
+}
+
+func minLimitRowsFromPlans(plans []base.PhysicalPlan) (uint64, bool) {
+	var (
+		limitRows uint64
+		found     bool
+	)
+	for _, plan := range plans {
+		limit, ok := plan.(*physicalop.PhysicalLimit)
+		if !ok {
+			continue
+		}
+		rows := limit.Offset + limit.Count
+		if !found || rows < limitRows {
+			limitRows = rows
+			found = true
+		}
+	}
+	return limitRows, found
+}
+
 // selectResultHook is used to hack distsql.SelectWithRuntimeStats safely for testing.
 type selectResultHook struct {
 	selectResultFunc func(ctx context.Context, dctx *distsqlctx.DistSQLContext, kvReq *kv.Request,
@@ -199,6 +251,8 @@ type TableReaderExecutor struct {
 	virtualColumnRetFieldTypes []*types.FieldType
 	// batchCop indicates whether use super batch coprocessor request, only works for TiFlash engine.
 	batchCop bool
+
+	keepOrderLimitScanConcurrencyCap int
 
 	// If dummy flag is set, this is not a real TableReader, it just provides the KV ranges for UnionScan.
 	// Used by the temporary table, cached table.
@@ -521,6 +575,7 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 			SetTxnScope(e.txnScope).
 			SetReadReplicaScope(e.readReplicaScope).
 			SetFromSessionVars(e.dctx).
+			SetKeepOrderLimitScanConcurrencyCap(e.keepOrderLimitScanConcurrencyCap).
 			SetFromInfoSchema(e.GetInfoSchema()).
 			SetMemTracker(e.memTracker).
 			SetStoreType(e.storeType).
@@ -562,6 +617,7 @@ func (e *TableReaderExecutor) buildKVReqForPartitionTableScan(ctx context.Contex
 		SetTxnScope(e.txnScope).
 		SetReadReplicaScope(e.readReplicaScope).
 		SetFromSessionVars(e.dctx).
+		SetKeepOrderLimitScanConcurrencyCap(e.keepOrderLimitScanConcurrencyCap).
 		SetFromInfoSchema(e.GetInfoSchema()).
 		SetMemTracker(e.memTracker).
 		SetStoreType(e.storeType).
@@ -607,6 +663,7 @@ func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.R
 		SetReadReplicaScope(e.readReplicaScope).
 		SetIsStaleness(e.isStaleness).
 		SetFromSessionVars(e.dctx).
+		SetKeepOrderLimitScanConcurrencyCap(e.keepOrderLimitScanConcurrencyCap).
 		SetFromInfoSchema(e.GetInfoSchema()).
 		SetMemTracker(e.memTracker).
 		SetStoreType(e.storeType).

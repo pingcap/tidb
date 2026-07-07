@@ -49,9 +49,12 @@ import (
 // Notice a builder can only be used once unless it returns an error in test.
 type RequestBuilder struct {
 	kv.Request
-	is   infoschema.MetaOnlyInfoSchema
-	err  error
-	used bool
+	is                               infoschema.MetaOnlyInfoSchema
+	err                              error
+	used                             bool
+	concurrencySetByCaller           bool
+	sessionScanConcurrency           int
+	keepOrderLimitScanConcurrencyCap int
 
 	// When SetDAGRequest is called, builder will also this field.
 	dag *tipb.DAGRequest
@@ -88,10 +91,12 @@ func (builder *RequestBuilder) Build() (*kv.Request, error) {
 		builder.Request.KeyRanges = kv.NewNonPartitionedKeyRanges(nil)
 	}
 
+	usesDefaultScanConcurrency := !builder.concurrencySetByCaller &&
+		builder.sessionScanConcurrency == vardef.DefDistSQLScanConcurrency
 	if dag := builder.dag; dag != nil {
 		if execCnt := len(dag.Executors); execCnt == 1 {
 			// select * from t order by id
-			if builder.Request.KeepOrder && builder.Request.Concurrency == vardef.DefDistSQLScanConcurrency {
+			if builder.Request.KeepOrder && usesDefaultScanConcurrency {
 				// When the DAG is just simple scan and keep order, set concurrency to 2.
 				// If a lot data are returned to client, mysql protocol is the bottleneck so concurrency 2 is enough.
 				// If very few data are returned to client, the speed is not optimal but good enough.
@@ -111,6 +116,9 @@ func (builder *RequestBuilder) Build() (*kv.Request, error) {
 				}
 			}
 		}
+	}
+	if builder.Request.KeepOrder && usesDefaultScanConcurrency && builder.keepOrderLimitScanConcurrencyCap > 0 {
+		builder.Request.Concurrency = min(builder.Request.Concurrency, builder.keepOrderLimitScanConcurrencyCap)
 	}
 
 	return &builder.Request, builder.err
@@ -338,6 +346,7 @@ func (*RequestBuilder) getKVPriority(dctx *distsqlctx.DistSQLContext) int {
 // "ResourceGroupTagger", "ResourceGroupName"
 func (builder *RequestBuilder) SetFromSessionVars(dctx *distsqlctx.DistSQLContext) *RequestBuilder {
 	distsqlConcurrency := dctx.DistSQLConcurrency
+	builder.sessionScanConcurrency = distsqlConcurrency
 	if builder.Request.Concurrency == 0 {
 		// Concurrency unset.
 		builder.Request.Concurrency = distsqlConcurrency
@@ -388,6 +397,15 @@ func (builder *RequestBuilder) SetPaging(paging bool) *RequestBuilder {
 // SetConcurrency sets "Concurrency" for "kv.Request".
 func (builder *RequestBuilder) SetConcurrency(concurrency int) *RequestBuilder {
 	builder.Request.Concurrency = concurrency
+	builder.concurrencySetByCaller = true
+	return builder
+}
+
+// SetKeepOrderLimitScanConcurrencyCap caps request concurrency for keep-order
+// scans with a small LIMIT. It is a request-local guard and does not modify
+// session variables.
+func (builder *RequestBuilder) SetKeepOrderLimitScanConcurrencyCap(concurrency int) *RequestBuilder {
+	builder.keepOrderLimitScanConcurrencyCap = concurrency
 	return builder
 }
 

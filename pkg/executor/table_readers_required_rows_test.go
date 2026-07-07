@@ -263,3 +263,34 @@ func TestIndexReaderRequiredRows(t *testing.T) {
 		require.NoError(t, executor.Close())
 	}
 }
+
+func TestKeepOrderLimitScanConcurrencyCap(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		keepOrder bool
+		limitRows uint64
+		expected  int
+	}{
+		{name: "not keep order", keepOrder: false, limitRows: 1, expected: 0},
+		{name: "zero limit rows", keepOrder: true, limitRows: 0, expected: 0},
+		{name: "small lower bound", keepOrder: true, limitRows: 1, expected: 1},
+		{name: "small upper bound", keepOrder: true, limitRows: keepOrderLimitSmallScanRows, expected: 1},
+		{name: "medium lower bound", keepOrder: true, limitRows: keepOrderLimitSmallScanRows + 1, expected: 2},
+		{name: "medium upper bound", keepOrder: true, limitRows: keepOrderLimitMediumScanRows, expected: 2},
+		{name: "large", keepOrder: true, limitRows: keepOrderLimitMediumScanRows + 1, expected: 0},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.expected, keepOrderLimitScanConcurrencyCap(tt.keepOrder, tt.limitRows))
+		})
+	}
+
+	require.Equal(t, 1, keepOrderLimitScanConcurrencyCapFromPushedLimit(true, &physicalop.PushedDownLimit{
+		Offset: 100,
+		Count:  900,
+	}))
+	require.Equal(t, 0, keepOrderLimitScanConcurrencyCapFromPushedLimit(false, &physicalop.PushedDownLimit{
+		Offset: 100,
+		Count:  900,
+	}))
+	require.Equal(t, 0, keepOrderLimitScanConcurrencyCapFromPushedLimit(true, nil))
+}

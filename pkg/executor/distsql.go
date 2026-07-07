@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -262,6 +263,8 @@ type IndexReaderExecutor struct {
 
 	selectResultHook // for testing
 
+	keepOrderLimitScanConcurrencyCap int
+
 	// If dummy flag is set, this is not a real IndexReader, it just provides the KV ranges for UnionScan.
 	// Used by the temporary table, cached table.
 	dummy bool
@@ -373,6 +376,7 @@ func (e *IndexReaderExecutor) buildKVReq(r []kv.KeyRange) (*kv.Request, error) {
 		SetReadReplicaScope(e.readReplicaScope).
 		SetIsStaleness(e.isStaleness).
 		SetFromSessionVars(e.dctx).
+		SetKeepOrderLimitScanConcurrencyCap(e.keepOrderLimitScanConcurrencyCap).
 		SetFromInfoSchema(e.infoSchema).
 		SetMemTracker(e.memTracker).
 		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &builder.Request, e.netDataSize)).
@@ -557,6 +561,8 @@ type IndexLookUpExecutor struct {
 
 	// Whether to push down the index lookup to TiKV
 	indexLookUpPushDown bool
+
+	keepOrderLimitScanConcurrencyCap int
 }
 
 type kvRangesWithPhysicalTblID struct {
@@ -881,8 +887,17 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 		worker.batchSize = e.calculateBatchSize(initBatchSize, worker.maxBatchSize)
 		indexTypes := e.getRetTpsForIndexReader()
 
+		distSQLConcurrency := e.dctx.DistSQLConcurrency
+		limitScanConcurrencyCap := 0
+		if e.keepOrderLimitScanConcurrencyCap > 0 && distSQLConcurrency == vardef.DefDistSQLScanConcurrency {
+			limitScanConcurrencyCap = e.keepOrderLimitScanConcurrencyCap
+		}
+
 		if !needMerge {
-			maxInFlight := getIndexScanMaxInFlight(e.dctx.DistSQLConcurrency)
+			maxInFlight := getIndexScanMaxInFlight(distSQLConcurrency)
+			if limitScanConcurrencyCap > 0 {
+				maxInFlight = min(maxInFlight, limitScanConcurrencyCap)
+			}
 			nextRange := 0
 			pushDownIntermediateTypes := [][]*types.FieldType{indexTypes}
 			buildNext := func(ctx context.Context) (selectResultWithMeta, bool, error) {
@@ -936,8 +951,12 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 			return
 		}
 
-		sharedCoprRequestRateLimit := getMergeSortSharedCoprRequestRateLimit(needMerge, e.dctx.DistSQLConcurrency)
-		mergeSortIndexScanConcurrency := getMergeSortIndexScanConcurrency(needMerge, len(kvRanges), e.dctx.DistSQLConcurrency)
+		mergeSortDistSQLConcurrency := distSQLConcurrency
+		if limitScanConcurrencyCap > 0 {
+			mergeSortDistSQLConcurrency = min(mergeSortDistSQLConcurrency, limitScanConcurrencyCap)
+		}
+		sharedCoprRequestRateLimit := getMergeSortSharedCoprRequestRateLimit(needMerge, mergeSortDistSQLConcurrency)
+		mergeSortIndexScanConcurrency := getMergeSortIndexScanConcurrency(needMerge, len(kvRanges), mergeSortDistSQLConcurrency)
 		results := make([]distsql.SelectResult, 0, len(kvRanges))
 		for idx := range kvRanges {
 			// check if executor is closed
@@ -1089,6 +1108,7 @@ func (e *IndexLookUpExecutor) buildIndexSelectResultForRange(
 		SetReadReplicaScope(e.readReplicaScope).
 		SetIsStaleness(e.isStaleness).
 		SetFromSessionVars(e.dctx).
+		SetKeepOrderLimitScanConcurrencyCap(e.keepOrderLimitScanConcurrencyCap).
 		SetFromInfoSchema(e.infoSchema).
 		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &builder.Request, e.idxNetDataSize/float64(totalRanges))).
 		SetMemTracker(tracker).

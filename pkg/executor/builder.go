@@ -3798,29 +3798,34 @@ func buildNoRangeTableReader(b *executorBuilder, v *physicalop.PhysicalTableRead
 		return nil, err
 	}
 	paging := b.sctx.GetSessionVars().EnablePaging
+	keepOrderLimitScanConcurrencyCap := 0
+	if v.StoreType == kv.TiKV {
+		keepOrderLimitScanConcurrencyCap = keepOrderLimitScanConcurrencyCapFromPlans(ts.KeepOrder, v.TablePlans)
+	}
 
 	e := &TableReaderExecutor{
-		BaseExecutorV2:             exec.NewBaseExecutorV2(b.sctx.GetSessionVars(), v.Schema(), v.ID()),
-		tableReaderExecutorContext: newTableReaderExecutorContext(b.sctx),
-		indexUsageReporter:         b.buildIndexUsageReporter(v, true),
-		dagPB:                      dagReq,
-		startTS:                    startTS,
-		txnScope:                   b.txnScope,
-		readReplicaScope:           b.readReplicaScope,
-		isStaleness:                b.isStaleness,
-		netDataSize:                v.GetNetDataSize(),
-		table:                      tbl,
-		keepOrder:                  ts.KeepOrder,
-		desc:                       ts.Desc,
-		byItems:                    ts.ByItems,
-		columns:                    ts.Columns,
-		paging:                     paging,
-		corColInFilter:             b.corColInDistPlan(v.TablePlans),
-		corColInAccess:             b.corColInAccess(v.TablePlans[0]),
-		plans:                      v.TablePlans,
-		tablePlan:                  v.GetTablePlan(),
-		storeType:                  v.StoreType,
-		batchCop:                   v.ReadReqType == physicalop.BatchCop,
+		BaseExecutorV2:                   exec.NewBaseExecutorV2(b.sctx.GetSessionVars(), v.Schema(), v.ID()),
+		tableReaderExecutorContext:       newTableReaderExecutorContext(b.sctx),
+		indexUsageReporter:               b.buildIndexUsageReporter(v, true),
+		dagPB:                            dagReq,
+		startTS:                          startTS,
+		txnScope:                         b.txnScope,
+		readReplicaScope:                 b.readReplicaScope,
+		isStaleness:                      b.isStaleness,
+		netDataSize:                      v.GetNetDataSize(),
+		table:                            tbl,
+		keepOrder:                        ts.KeepOrder,
+		desc:                             ts.Desc,
+		byItems:                          ts.ByItems,
+		columns:                          ts.Columns,
+		paging:                           paging,
+		corColInFilter:                   b.corColInDistPlan(v.TablePlans),
+		corColInAccess:                   b.corColInAccess(v.TablePlans[0]),
+		plans:                            v.TablePlans,
+		tablePlan:                        v.GetTablePlan(),
+		storeType:                        v.StoreType,
+		batchCop:                         v.ReadReqType == physicalop.BatchCop,
+		keepOrderLimitScanConcurrencyCap: keepOrderLimitScanConcurrencyCap,
 	}
 	e.buildVirtualColumnInfo()
 
@@ -4351,6 +4356,8 @@ func buildNoRangeIndexReader(b *executorBuilder, v *physicalop.PhysicalIndexRead
 		plans:                      v.IndexPlans,
 		outputColumns:              v.OutputColumns,
 		groupedRanges:              is.GroupedRanges,
+		keepOrderLimitScanConcurrencyCap: keepOrderLimitScanConcurrencyCapFromPlans(
+			is.KeepOrder, v.IndexPlans),
 	}
 
 	for _, col := range v.OutputColumns {
@@ -4601,6 +4608,8 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *physicalop.PhysicalInd
 		avgRowSize:                 v.GetAvgTableRowSize(),
 		groupedRanges:              is.GroupedRanges,
 		indexLookUpPushDown:        v.IndexLookUpPushDown,
+		keepOrderLimitScanConcurrencyCap: keepOrderLimitScanConcurrencyCapFromPushedLimit(
+			is.KeepOrder, v.PushedLimit),
 	}
 
 	if v.ExtraHandleCol != nil {
@@ -5249,6 +5258,7 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 		SetReadReplicaScope(e.readReplicaScope).
 		SetIsStaleness(e.isStaleness).
 		SetFromSessionVars(e.dctx).
+		SetKeepOrderLimitScanConcurrencyCap(e.keepOrderLimitScanConcurrencyCap).
 		SetFromInfoSchema(e.GetInfoSchema()).
 		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &reqBuilderWithRange.Request, e.netDataSize)).
 		SetPaging(e.paging).

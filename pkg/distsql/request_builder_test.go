@@ -837,6 +837,62 @@ func TestIndexLookUpPushDownScanConcurrency(t *testing.T) {
 	}
 }
 
+func TestKeepOrderLimitScanConcurrencyCap(t *testing.T) {
+	dctx := NewDistSQLContextForTest()
+	keyRanges := [][]kv.KeyRange{
+		{{StartKey: kv.Key{1}, EndKey: kv.Key{2}}},
+		{{StartKey: kv.Key{3}, EndKey: kv.Key{4}}},
+		{{StartKey: kv.Key{5}, EndKey: kv.Key{6}}},
+	}
+	dag := &tipb.DAGRequest{Executors: []*tipb.Executor{
+		{Tp: tipb.ExecType_TypeTableScan, TblScan: &tipb.TableScan{}},
+		{Tp: tipb.ExecType_TypeLimit, Limit: &tipb.Limit{Limit: 1024}},
+	}}
+
+	actual, err := (&RequestBuilder{}).
+		SetPartitionKeyRanges(keyRanges).
+		SetDAGRequest(dag).
+		SetKeepOrder(true).
+		SetFromSessionVars(dctx).
+		SetKeepOrderLimitScanConcurrencyCap(1).
+		Build()
+	require.NoError(t, err)
+	require.Equal(t, 1, actual.Concurrency)
+
+	actual, err = (&RequestBuilder{}).
+		SetPartitionKeyRanges(keyRanges).
+		SetDAGRequest(dag).
+		SetKeepOrder(false).
+		SetFromSessionVars(dctx).
+		SetKeepOrderLimitScanConcurrencyCap(1).
+		Build()
+	require.NoError(t, err)
+	require.Equal(t, len(keyRanges), actual.Concurrency)
+
+	customDctx := NewDistSQLContextForTest()
+	customDctx.DistSQLConcurrency = 4
+	actual, err = (&RequestBuilder{}).
+		SetPartitionKeyRanges(keyRanges).
+		SetDAGRequest(dag).
+		SetKeepOrder(true).
+		SetFromSessionVars(customDctx).
+		SetKeepOrderLimitScanConcurrencyCap(1).
+		Build()
+	require.NoError(t, err)
+	require.Equal(t, len(keyRanges), actual.Concurrency)
+
+	actual, err = (&RequestBuilder{}).
+		SetPartitionKeyRanges(keyRanges).
+		SetDAGRequest(dag).
+		SetConcurrency(4).
+		SetKeepOrder(true).
+		SetFromSessionVars(dctx).
+		SetKeepOrderLimitScanConcurrencyCap(1).
+		Build()
+	require.NoError(t, err)
+	require.Equal(t, 4, actual.Concurrency)
+}
+
 func getExpectedRanges(tid int64, hrs []*handleRange) []kv.KeyRange {
 	krs := make([]kv.KeyRange, 0, len(hrs))
 	for _, hr := range hrs {
