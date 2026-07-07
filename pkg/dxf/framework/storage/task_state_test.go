@@ -62,13 +62,24 @@ func TestTaskState(t *testing.T) {
 	id, err = gm.CreateTask(ctx, "key2", "test", "", 4, "", 0, proto.ExtraParams{}, []byte("test"))
 	require.NoError(t, err)
 	// require.Equal(t, int64(2), id) TODO: unstable for infoschema v2
+	var matched bool
 	require.NoError(t, gm.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
-		return gm.CancelTaskByKeySession(ctx, se, "key2")
+		var err error
+		matched, err = gm.CancelTaskByKeySession(ctx, se, "key2")
+		return err
 	}))
+	require.True(t, matched)
 	task, err = gm.GetTaskByID(ctx, id)
 	require.NoError(t, err)
 	checkTaskStateStep(t, task, proto.TaskStateCancelling, proto.StepInit)
+	require.NoError(t, gm.WithNewTxn(ctx, func(se sessionctx.Context) error {
+		ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+		var err error
+		matched, err = gm.CancelTaskByKeySession(ctx, se, "missing-key")
+		return err
+	}))
+	require.False(t, matched)
 
 	// 3. fail task
 	id, err = gm.CreateTask(ctx, "key3", "test", "", 4, "", 0, proto.ExtraParams{}, []byte("test"))

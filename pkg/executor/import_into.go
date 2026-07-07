@@ -408,11 +408,17 @@ func cancelAndWaitImportJob(ctx context.Context, jobID int64) error {
 		return err
 	}
 	taskKey := importinto.TaskKey(jobID)
+	var matched bool
 	if err := manager.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
-		return manager.CancelTaskByKeySession(ctx, se, taskKey)
+		matched, err = manager.CancelTaskByKeySession(ctx, se, taskKey)
+		return err
 	}); err != nil {
 		return err
+	}
+	if !matched {
+		failpoint.InjectCall("afterCancelImportTaskProbeMiss", jobID)
+		return cancelDanglingImportJob(ctx, jobID)
 	}
 	// TODO: Fix the next-gen race where CancelTaskByKeySession can miss a DXF
 	// task that has not been committed yet. If the task appears before
