@@ -16,8 +16,12 @@
 
 set -euE
 
+read_sql_require_primary_key() {
+  run_sql "SHOW VARIABLES LIKE 'sql_require_primary_key';" | awk '$1 == "Value:" {print $2}' | tail -n 1
+}
+
 original_sql_require_primary_key=$(
-  run_sql "SHOW VARIABLES LIKE 'sql_require_primary_key';" | awk '/sql_require_primary_key/{print $2}' | tail -n 1
+  read_sql_require_primary_key
 )
 reset_sql_require_primary_key() {
   run_sql "SET GLOBAL sql_require_primary_key='${original_sql_require_primary_key}'"
@@ -27,7 +31,7 @@ trap reset_sql_require_primary_key EXIT
 run_sql "SET GLOBAL sql_require_primary_key='ON'"
 value='OFF'
 for _ in $(seq 60); do
-  value=$(run_sql "SHOW VARIABLES LIKE 'sql_require_primary_key';" | awk '/sql_require_primary_key/{print $2}' | tail -n 1)
+  value=$(read_sql_require_primary_key)
   if [ "$value" = 'ON' ]; then
     break
   fi
