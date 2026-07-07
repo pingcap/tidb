@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	goerrors "errors"
+	"sync"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
@@ -41,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 )
 
 type cloudImportExecutor struct {
@@ -55,6 +57,7 @@ type cloudImportExecutor struct {
 	metric        *lightningmetric.Common
 	engine        atomic.Pointer[globalsort.Engine]
 	summary       *execute.SubtaskSummary
+	ingestedSSTs  *ingestedSSTRecorder
 }
 
 func newCloudImportExecutor(
@@ -64,14 +67,17 @@ func newCloudImportExecutor(
 	ptbl table.PhysicalTable,
 	cloudStoreURI string,
 ) (*cloudImportExecutor, error) {
-	return &cloudImportExecutor{
+	summary := &execute.SubtaskSummary{}
+	executor := &cloudImportExecutor{
 		job:           job,
 		store:         store,
 		indexes:       indexes,
 		ptbl:          ptbl,
 		cloudStoreURI: cloudStoreURI,
-		summary:       &execute.SubtaskSummary{},
-	}, nil
+		summary:       summary,
+		ingestedSSTs:  newIngestedSSTRecorder(),
+	}
+	return executor, nil
 }
 
 func (e *cloudImportExecutor) Init(ctx context.Context) error {
@@ -95,6 +101,7 @@ func (e *cloudImportExecutor) Init(ctx context.Context) error {
 
 func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
 	logutil.Logger(ctx).Info("cloud import executor run subtask")
+	e.ingestedSSTs.Reset()
 
 	accessRec, objStore, err := handle.NewObjStoreWithRecording(ctx, e.cloudStoreURI)
 	if err != nil {
@@ -117,7 +124,8 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	}
 
 	localBackend.SetCollector(&ingestCollector{
-		meterRec: meterRec,
+		meterRec:     meterRec,
+		ingestedSSTs: e.ingestedSSTs,
 	})
 
 	currentIdx, idxID, err := getIndexInfoAndID(sm.EleIDs, e.indexes)
@@ -170,6 +178,7 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 		err = context.DeadlineExceeded
 	})
 	if err == nil {
+		logIngestedSSTObservation(ctx, e.job.ID, subtask.TaskID, subtask.ID, subtask.Step, e.ingestedSSTs.Snapshot())
 		return nil
 	}
 
@@ -214,6 +223,7 @@ func (e *cloudImportExecutor) RealtimeSummary() *execute.SubtaskSummary {
 
 // ResetSummary resets the summary stored in the executor.
 func (e *cloudImportExecutor) ResetSummary() {
+	e.ingestedSSTs.Reset()
 	e.summary.Reset()
 }
 
@@ -257,15 +267,118 @@ func (e *cloudImportExecutor) ResourceModified(ctx context.Context, newResource 
 	return nil
 }
 
+// ingestCollector is shared with ingest worker callbacks. Its SST observation
+// path delegates to ingestedSSTRecorder, which protects mutable state.
 type ingestCollector struct {
 	execute.NoopCollector
-	meterRec *metering.Recorder
+	meterRec     *metering.Recorder
+	ingestedSSTs *ingestedSSTRecorder
 }
 
 func (c *ingestCollector) Processed(bytes, _ int64) {
 	// since the region job might be retried, this value might be larger than
 	// the total KV size.
 	c.meterRec.IncClusterWriteBytes(uint64(bytes))
+}
+
+func (c *ingestCollector) RecordIngestedSST(identity string, size uint64) {
+	if c.ingestedSSTs != nil {
+		c.ingestedSSTs.RecordIngestedSST(identity, size)
+	}
+}
+
+// ingestedSSTRecorder protects SST observation state because RecordIngestedSST
+// can be called concurrently by ingest workers. Reset is called before subtask
+// execution, and Snapshot is called after the ingest path finishes.
+type ingestedSSTRecorder struct {
+	execute.NoopCollector
+
+	mu                   sync.Mutex
+	seen                 map[string]struct{}
+	bytes                uint64
+	count                uint64
+	zeroSizeCount        uint64
+	invalidIdentityCount uint64
+}
+
+func newIngestedSSTRecorder() *ingestedSSTRecorder {
+	return &ingestedSSTRecorder{
+		seen: make(map[string]struct{}),
+	}
+}
+
+func (r *ingestedSSTRecorder) RecordIngestedSST(identity string, size uint64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if identity == "" {
+		r.invalidIdentityCount++
+		return
+	}
+	if _, ok := r.seen[identity]; ok {
+		return
+	}
+	r.seen[identity] = struct{}{}
+	r.count++
+	r.bytes += size
+	if size == 0 {
+		r.zeroSizeCount++
+	}
+}
+
+func (r *ingestedSSTRecorder) Reset() {
+	r.mu.Lock()
+	clear(r.seen)
+	r.bytes = 0
+	r.count = 0
+	r.zeroSizeCount = 0
+	r.invalidIdentityCount = 0
+	r.mu.Unlock()
+}
+
+func (r *ingestedSSTRecorder) Snapshot() ingestedSSTBytesObservation {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	observation := ingestedSSTBytesObservation{
+		bytes:                r.bytes,
+		count:                r.count,
+		zeroSizeCount:        r.zeroSizeCount,
+		invalidIdentityCount: r.invalidIdentityCount,
+		reliable:             true,
+		reason:               "ok",
+	}
+	switch {
+	case observation.invalidIdentityCount > 0:
+		observation.reliable = false
+		observation.reason = "ingested_sst_identity_unavailable"
+	case observation.zeroSizeCount > 0:
+		observation.reliable = false
+		observation.reason = "ingested_sst_size_unavailable"
+	}
+	return observation
+}
+
+func logIngestedSSTObservation(
+	ctx context.Context,
+	jobID int64,
+	taskID int64,
+	subtaskID int64,
+	step proto.Step,
+	observation ingestedSSTBytesObservation,
+) {
+	if observation.count == 0 && observation.invalidIdentityCount == 0 {
+		return
+	}
+	logutil.Logger(ctx).Info("observed ingested SST bytes for add-index subtask",
+		zap.Int64("jobID", jobID),
+		zap.Int64("taskID", taskID),
+		zap.Int64("subtaskID", subtaskID),
+		zap.Int("step", int(step)),
+		zap.Uint64("ingested_sst_bytes", observation.bytes),
+		zap.Uint64("ingested_sst_count", observation.count),
+		zap.Uint64("ingested_sst_zero_size_count", observation.zeroSizeCount),
+		zap.Uint64("ingested_sst_invalid_identity_count", observation.invalidIdentityCount),
+		zap.Bool("ingested_sst_bytes_reliable", observation.reliable),
+		zap.String("ingested_sst_bytes_reliable_reason", observation.reason))
 }
 
 func getIndexInfoAndID(eleIDs []int64, indexes []*model.IndexInfo) (currentIdx *model.IndexInfo, idxID int64, err error) {
