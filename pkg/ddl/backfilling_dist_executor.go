@@ -131,7 +131,6 @@ func (s *backfillDistExecutor) newBackfillStepExecutor(
 	jobMeta := &s.taskMeta.Job
 	ddlObj := s.d
 
-<<<<<<< HEAD
 	store := ddlObj.store
 	sessPool := ddlObj.sessPool
 	taskKS := s.task.Keyspace
@@ -151,12 +150,7 @@ func (s *backfillDistExecutor) newBackfillStepExecutor(
 			return nil, err
 		}
 	}
-	// TODO getTableByTxn is using DDL ctx which is never cancelled except when shutdown.
-=======
-	store := s.TaskRuntime.Store()
-	sessPool := sess.NewSessionPool(s.TaskRuntime.SysSessionPool())
 	// TODO This is using DDL ctx which is never cancelled except when shutdown.
->>>>>>> 09d214004a2 (*: use user keyspace's collation mode for DXF tasks (#69677))
 	// we should move this operation out of GetStepExecutor, and put into Init.
 	failpoint.InjectCall("beforeGetUserTableForBackfillStep", jobMeta)
 	tblIface, err := getUserTableFromTaskStore(ddlObj.ctx, store, jobMeta)

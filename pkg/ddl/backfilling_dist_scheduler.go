@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -206,9 +207,15 @@ func getUserStoreAndTable(
 			return nil, nil, err
 		}
 	}
-<<<<<<< HEAD
-	tblInfo, err := getTblInfo(ctx, store, job)
-=======
+	tbl, err := getUserTableFromTaskStore(ctx, store, job)
+	return store, tbl, err
+}
+
+func getUserTableFromTaskStore(ctx context.Context, taskStore kv.Storage, job *model.Job) (table.Table, error) {
+	tblInfo, err := getTblInfo(ctx, taskStore, job)
+	if err != nil {
+		return nil, err
+	}
 	// we don't touch table data during add-index, a fake Allocators is enough.
 	defaultUseNewCollate := collate.NewCollationEnabled()
 	failpoint.Inject("overrideDefaultUseNewCollateForBackfillStep", func(val failpoint.Value) {
@@ -221,15 +228,10 @@ func getUserStoreAndTable(
 		autoid.NewAllocators(tblInfo.SepAutoInc()),
 		tblInfo,
 	)
->>>>>>> 09d214004a2 (*: use user keyspace's collation mode for DXF tasks (#69677))
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	tbl, err := getTable(d.ddlCtx.getAutoIDRequirement(), job.SchemaID, tblInfo)
-	if err != nil {
-		return nil, nil, err
-	}
-	return store, tbl, nil
+	return tbl, nil
 }
 
 // GetNextStep implements scheduler.Extension interface.
