@@ -100,6 +100,7 @@ var (
 	_ AggFunc = (*maxMinCount4VectorFloat32)(nil)
 	_ AggFunc = (*maxMinCount4Enum)(nil)
 	_ AggFunc = (*maxMinCount4Set)(nil)
+	_ AggFunc = (*unsupportedRowBasedFinalMaxMinCount)(nil)
 
 	// All the AggFunc implementations for "AVG" are listed here.
 	_ AggFunc = (*avgPartial4Decimal)(nil)

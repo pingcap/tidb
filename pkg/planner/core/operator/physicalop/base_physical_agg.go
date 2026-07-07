@@ -281,6 +281,11 @@ func (p *BasePhysicalAgg) NewPartialAggregate(copTaskType kv.StoreType, isMPPTas
 	if !CheckAggCanPushCop(p.SCtx(), p.AggFuncs, p.GroupByItems, copTaskType) {
 		return nil, p.Self
 	}
+	// max_count/min_count currently support only one-stage execution on TiFlash.
+	// Do not split them into partial/final here.
+	if copTaskType == kv.TiFlash && containsMaxMinCountAgg(p.AggFuncs) {
+		return nil, p.Self
+	}
 	partialPref, finalPref, firstRowFuncMap := BuildFinalModeAggregation(p.SCtx(), &AggInfo{
 		AggFuncs:     p.AggFuncs,
 		GroupByItems: p.GroupByItems,
@@ -515,6 +520,15 @@ func computePartialCursorOffset(name string) int {
 		offset++
 	}
 	return offset
+}
+
+func containsMaxMinCountAgg(aggFuncs []*aggregation.AggFuncDesc) bool {
+	for _, aggFunc := range aggFuncs {
+		if aggregation.IsMaxMinCount(aggFunc.Name) {
+			return true
+		}
+	}
+	return false
 }
 
 // CheckAggCanPushCop checks whether the aggFuncs and groupByItems can

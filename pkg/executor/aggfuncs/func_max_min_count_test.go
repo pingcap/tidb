@@ -237,6 +237,34 @@ func TestMergePartialResult4MaxMinCount(t *testing.T) {
 	require.Equal(t, int64(2), resultChk.GetRow(0).GetInt64(0))
 }
 
+func TestRowBasedFinalMaxMinCountUnsupported(t *testing.T) {
+	ctx := mock.NewContext()
+	countType := types.NewFieldType(mysql.TypeLonglong)
+	valueType := types.NewFieldType(mysql.TypeLonglong)
+	args := []expression.Expression{
+		&expression.Column{RetType: countType, Index: 0},
+		&expression.Column{RetType: valueType, Index: 1},
+	}
+
+	for _, mode := range []aggregation.AggFunctionMode{aggregation.FinalMode, aggregation.Partial2Mode} {
+		for _, funcName := range []string{ast.AggFuncMaxCount, ast.AggFuncMinCount} {
+			desc, err := aggregation.NewAggFuncDesc(ctx, funcName, args, false)
+			require.NoError(t, err)
+			desc.Mode = mode
+
+			aggFunc := aggfuncs.Build(ctx, desc, 0)
+			require.NotNil(t, aggFunc)
+			pr, _ := aggFunc.AllocPartialResult()
+
+			src := chunk.NewChunkWithCapacity([]*types.FieldType{countType, valueType}, 1)
+			src.AppendInt64(0, 2)
+			src.AppendInt64(1, 10)
+			_, err = aggFunc.UpdatePartialResult(ctx, []chunk.Row{src.GetRow(0)}, pr)
+			require.ErrorContains(t, err, "row-based final aggregation for "+funcName+" is unsupported")
+		}
+	}
+}
+
 func TestMemMaxMinCount(t *testing.T) {
 	tests := []aggMemTest{
 		buildAggMemTester(ast.AggFuncMaxCount, mysql.TypeLonglong, 0, 5,

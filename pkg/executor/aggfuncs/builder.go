@@ -525,6 +525,16 @@ func buildMaxMinCount(ctx expression.EvalContext, aggFuncDesc *aggregation.AggFu
 		return nil
 	}
 
+	wrapUnsupportedRowBasedFinal := func(impl AggFunc) AggFunc {
+		if (aggFuncDesc.Mode == aggregation.FinalMode || aggFuncDesc.Mode == aggregation.Partial2Mode) && len(aggFuncDesc.Args) > 1 {
+			return &unsupportedRowBasedFinalMaxMinCount{
+				AggFunc: impl,
+				name:    aggFuncDesc.Name,
+			}
+		}
+		return impl
+	}
+
 	argTp := aggFuncDesc.Args[0].GetType(ctx)
 	base := baseMaxMinCountAggFunc{
 		baseMaxMinAggFunc: baseMaxMinAggFunc{
@@ -543,36 +553,36 @@ func buildMaxMinCount(ctx expression.EvalContext, aggFuncDesc *aggregation.AggFu
 	}
 	switch fieldType.GetType() {
 	case mysql.TypeEnum:
-		return &maxMinCount4Enum{base}
+		return wrapUnsupportedRowBasedFinal(&maxMinCount4Enum{base})
 	case mysql.TypeSet:
-		return &maxMinCount4Set{base}
+		return wrapUnsupportedRowBasedFinal(&maxMinCount4Set{base})
 	}
 
 	switch evalType {
 	case types.ETInt:
 		if mysql.HasUnsignedFlag(fieldType.GetFlag()) {
-			return &maxMinCount4Uint{base}
+			return wrapUnsupportedRowBasedFinal(&maxMinCount4Uint{base})
 		}
-		return &maxMinCount4Int{base}
+		return wrapUnsupportedRowBasedFinal(&maxMinCount4Int{base})
 	case types.ETReal:
 		switch fieldType.GetType() {
 		case mysql.TypeFloat:
-			return &maxMinCount4Float32{base}
+			return wrapUnsupportedRowBasedFinal(&maxMinCount4Float32{base})
 		case mysql.TypeDouble:
-			return &maxMinCount4Float64{base}
+			return wrapUnsupportedRowBasedFinal(&maxMinCount4Float64{base})
 		}
 	case types.ETDecimal:
-		return &maxMinCount4Decimal{base}
+		return wrapUnsupportedRowBasedFinal(&maxMinCount4Decimal{base})
 	case types.ETString:
-		return &maxMinCount4String{base}
+		return wrapUnsupportedRowBasedFinal(&maxMinCount4String{base})
 	case types.ETDatetime, types.ETTimestamp:
-		return &maxMinCount4Time{base}
+		return wrapUnsupportedRowBasedFinal(&maxMinCount4Time{base})
 	case types.ETDuration:
-		return &maxMinCount4Duration{base}
+		return wrapUnsupportedRowBasedFinal(&maxMinCount4Duration{base})
 	case types.ETJson:
-		return &maxMinCount4JSON{base}
+		return wrapUnsupportedRowBasedFinal(&maxMinCount4JSON{base})
 	case types.ETVectorFloat32:
-		return &maxMinCount4VectorFloat32{base}
+		return wrapUnsupportedRowBasedFinal(&maxMinCount4VectorFloat32{base})
 	}
 	return nil
 }

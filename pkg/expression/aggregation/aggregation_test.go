@@ -181,6 +181,39 @@ func TestCheckAggPushDownSumInt(t *testing.T) {
 	require.True(t, CheckAggPushDown(ctx.GetExprCtx().GetEvalCtx(), desc, kv.TiKV))
 }
 
+func TestCheckAggPushDownMaxMinCount(t *testing.T) {
+	ctx := mock.NewContext()
+	col := &expression.Column{
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	for _, funcName := range []string{ast.AggFuncMaxCount, ast.AggFuncMinCount} {
+		desc, err := NewAggFuncDesc(ctx, funcName, []expression.Expression{col}, false)
+		require.NoError(t, err)
+
+		desc.Mode = CompleteMode
+		require.True(t, CheckAggPushDown(ctx.GetExprCtx().GetEvalCtx(), desc, kv.TiFlash))
+		require.False(t, CheckAggPushDown(ctx.GetExprCtx().GetEvalCtx(), desc, kv.TiKV))
+
+		desc.Mode = Partial1Mode
+		require.True(t, CheckAggPushDown(ctx.GetExprCtx().GetEvalCtx(), desc, kv.TiFlash))
+
+		desc.Mode = FinalMode
+		require.True(t, CheckAggPushDown(ctx.GetExprCtx().GetEvalCtx(), desc, kv.TiFlash))
+
+		desc.Mode = DedupMode
+		require.False(t, CheckAggPushDown(ctx.GetExprCtx().GetEvalCtx(), desc, kv.TiFlash))
+
+		countCol := &expression.Column{
+			Index:   1,
+			RetType: types.NewFieldType(mysql.TypeLonglong),
+		}
+		desc.Args = []expression.Expression{countCol, col}
+		desc.Mode = FinalMode
+		require.False(t, CheckAggPushDown(ctx.GetExprCtx().GetEvalCtx(), desc, kv.TiFlash))
+	}
+}
+
 func TestBitAnd(t *testing.T) {
 	s := createAggFuncSuite()
 	col := &expression.Column{

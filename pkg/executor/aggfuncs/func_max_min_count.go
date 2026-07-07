@@ -17,6 +17,7 @@ package aggfuncs
 import (
 	"unsafe"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
@@ -54,6 +55,15 @@ const (
 
 type baseMaxMinCountAggFunc struct {
 	baseMaxMinAggFunc
+}
+
+type unsupportedRowBasedFinalMaxMinCount struct {
+	AggFunc
+	name string
+}
+
+func (e *unsupportedRowBasedFinalMaxMinCount) UpdatePartialResult(AggFuncUpdateContext, []chunk.Row, PartialResult) (int64, error) {
+	return 0, errors.Errorf("row-based final aggregation for %s is unsupported", e.name)
 }
 
 func (e *baseMaxMinCountAggFunc) appendFinalResult(isNull bool, count int64, chk *chunk.Chunk) {
