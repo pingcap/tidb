@@ -2697,6 +2697,58 @@ func getLocalWriterConfig(indexCnt, writerCnt int) *backend.LocalWriterConfig {
 	return writerCfg
 }
 
+func generateIndexKVsForRow(
+	indexes []table.Index,
+	loc *time.Location,
+	errCtx errctx.Context,
+	handle kv.Handle,
+	physicalID int64,
+	idxDataBuf []types.Datum,
+	checkPartialCondition func(int, table.Index) (bool, error),
+	fetchIndexValues func(int, table.Index, []types.Datum) ([]types.Datum, error),
+	restoreData func(int, table.Index) []types.Datum,
+	sink func(int, table.Index, []types.Datum, table.IndexKVGenerator) (int64, error),
+) (int64, error) {
+	var totalBytes int64
+	for i, index := range indexes {
+		if index.Meta().HasCondition() && checkPartialCondition != nil {
+			ok, err := checkPartialCondition(i, index)
+			if err != nil {
+				return totalBytes, errors.Trace(err)
+			}
+			if !ok {
+				continue
+			}
+		}
+		indexedValues, err := fetchIndexValues(i, index, idxDataBuf)
+		if err != nil {
+			return totalBytes, errors.Trace(err)
+		}
+		var rsData []types.Datum
+		if restoreData != nil {
+			rsData = restoreData(i, index)
+		}
+		indexHandle := indexKVHandleForPhysicalTable(index, physicalID, handle)
+		iter := index.GenIndexKVIter(errCtx, loc, indexedValues, indexHandle, rsData)
+		kvBytes, err := sink(i, index, indexedValues, iter)
+		if err != nil {
+			return totalBytes, errors.Trace(err)
+		}
+		totalBytes += kvBytes
+	}
+	return totalBytes, nil
+}
+
+func indexKVHandleForPhysicalTable(index table.Index, physicalID int64, handle kv.Handle) kv.Handle {
+	if index.Meta().Global && index.Meta().GlobalIndexVersion >= model.GlobalIndexVersionV1 {
+		if ph, ok := handle.(kv.PartitionHandle); ok {
+			handle = ph.Handle
+		}
+		return kv.NewPartitionHandle(physicalID, handle)
+	}
+	return handle
+}
+
 func writeChunk(
 	ctx context.Context,
 	writers []ingest.Writer,
@@ -2707,6 +2759,7 @@ func writeChunk(
 	errCtx errctx.Context,
 	writeStmtBufs *variable.WriteStmtBufs,
 	copChunk *chunk.Chunk,
+	physicalID int64,
 	tblInfo *model.TableInfo,
 	useNewCollate bool,
 ) (rowCnt int, bytes int, err error) {
@@ -2757,34 +2810,43 @@ func writeChunk(
 		if err != nil {
 			return 0, totalBytes, errors.Trace(err)
 		}
-		for i, index := range indexes {
-			// If the `IndexRecordChunk.conditionPushed` is true and we have only 1 index, the `indexConditionCheckers`
-			// will not be initialized.
-			if index.Meta().HasCondition() && indexConditionCheckers != nil {
+		var checkPartialCondition func(int, table.Index) (bool, error)
+		if indexConditionCheckers != nil {
+			checkPartialCondition = func(i int, _ table.Index) (bool, error) {
 				ok, err := indexConditionCheckers[i](row)
 				if err != nil {
-					return 0, 0, errors.Trace(err)
+					return false, errors.Trace(err)
 				}
-				if !ok {
-					continue
-				}
+				return ok, nil
 			}
-
-			idxID := index.Meta().ID
-			idxDataBuf = ExtractDatumByOffsets(ectx,
-				row, copCtx.IndexColumnOutputOffsets(idxID), c.ExprColumnInfos, idxDataBuf)
-			idxData := idxDataBuf[:len(index.Meta().Columns)]
-			var rsData []types.Datum
-			if needRestoreForIndexes[i] {
-				rsData = getRestoreData(useNewCollate, c.TableInfo, copCtx.IndexInfo(idxID), c.PrimaryKeyInfo, restoreDataBuf)
-			}
-			kvBytes, err := writeOneKV(ctx, writers[i], index, loc, errCtx, writeStmtBufs, idxData, rsData, h)
-			if err != nil {
-				err = ingest.TryConvertToKeyExistsErr(err, index.Meta(), tblInfo)
-				return 0, totalBytes, errors.Trace(err)
-			}
-			totalBytes += int(kvBytes)
 		}
+		kvBytes, err := generateIndexKVsForRow(
+			indexes, loc, errCtx, h, physicalID, idxDataBuf, checkPartialCondition,
+			func(_ int, index table.Index, buf []types.Datum) ([]types.Datum, error) {
+				idxID := index.Meta().ID
+				idxData := ExtractDatumByOffsets(ectx, row, copCtx.IndexColumnOutputOffsets(idxID), c.ExprColumnInfos, buf)
+				return idxData[:len(index.Meta().Columns)], nil
+			},
+			func(i int, index table.Index) []types.Datum {
+				if !needRestoreForIndexes[i] {
+					return nil
+				}
+				return tables.TryGetHandleRestoredData(
+					useNewCollate, c.TableInfo, c.PrimaryKeyInfo, restoreDataBuf, copCtx.IndexInfo(index.Meta().ID))
+			},
+			func(i int, _ table.Index, _ []types.Datum, iter table.IndexKVGenerator) (int64, error) {
+				kvBytes, err := writeOneKV(ctx, writers[i], writeStmtBufs, iter, h)
+				if err != nil {
+					err = ingest.TryConvertToKeyExistsErr(err, indexes[i].Meta(), tblInfo)
+					return 0, errors.Trace(err)
+				}
+				return kvBytes, nil
+			},
+		)
+		if err != nil {
+			return 0, totalBytes + int(kvBytes), errors.Trace(err)
+		}
+		totalBytes += int(kvBytes)
 		count++
 	}
 	return count, totalBytes, nil
@@ -2804,15 +2866,11 @@ func maxIndexColumnCount(indexes []table.Index) int {
 func writeOneKV(
 	ctx context.Context,
 	writer ingest.Writer,
-	index table.Index,
-	loc *time.Location,
-	errCtx errctx.Context,
 	writeBufs *variable.WriteStmtBufs,
-	idxDt, rsData []types.Datum,
+	iter table.IndexKVGenerator,
 	handle kv.Handle,
 ) (int64, error) {
 	var kvBytes int64
-	iter := index.GenIndexKVIter(errCtx, loc, idxDt, handle, rsData)
 	for iter.Valid() {
 		key, idxVal, _, err := iter.Next(writeBufs.IndexKeyBuf, writeBufs.RowValBuf)
 		if err != nil {

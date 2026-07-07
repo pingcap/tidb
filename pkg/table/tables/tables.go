@@ -1784,33 +1784,64 @@ func (t *TableCommon) GetSequenceCommon() *sequenceCommon {
 	return t.sequence
 }
 
+// TryGetHandleRestoredData returns restored common-handle data if needed.
+func TryGetHandleRestoredData(
+	useNewCollate bool,
+	tblInfo *model.TableInfo,
+	pkIdx *model.IndexInfo,
+	handleDts []types.Datum,
+	idx *model.IndexInfo,
+) []types.Datum {
+	if !needHandleRestoredData(useNewCollate, tblInfo, pkIdx) {
+		return nil
+	}
+	restoredHandleDts := make([]types.Datum, len(handleDts))
+	for i := range handleDts {
+		handleDts[i].Copy(&restoredHandleDts[i])
+	}
+	for i, pkIdxCol := range pkIdx.Columns {
+		pkCol := tblInfo.Columns[pkIdxCol.Offset]
+		if !types.NeedRestoredDataWithCollate(&pkCol.FieldType, useNewCollate) {
+			// Since the handle data cannot be null, SetNull marks this column as not restored.
+			restoredHandleDts[i].SetNull()
+			continue
+		}
+		TryTruncateRestoredData(&restoredHandleDts[i], pkCol, pkIdxCol, idx)
+		ConvertDatumToTailSpaceCount(&restoredHandleDts[i], pkCol)
+	}
+	rsData := restoredHandleDts[:0]
+	for _, handleDt := range restoredHandleDts {
+		if !handleDt.IsNull() {
+			rsData = append(rsData, handleDt)
+		}
+	}
+	return rsData
+}
+
+func needHandleRestoredData(useNewCollate bool, tblInfo *model.TableInfo, pkIdx *model.IndexInfo) bool {
+	return useNewCollate && tblInfo.IsCommonHandle && tblInfo.CommonHandleVersion != 0 && pkIdx != nil
+}
+
 // TryGetHandleRestoredDataWrapper tries to get the restored data for handle if
 // needed. The argument can be a slice or a map.
 func TryGetHandleRestoredDataWrapper(tbl table.Table,
 	row []types.Datum, rowMap map[int64]types.Datum, idx *model.IndexInfo) []types.Datum {
 	useNewCollate := tbl.UseNewCollate()
 	tblInfo := tbl.Meta()
-	if !useNewCollate || !tblInfo.IsCommonHandle || tblInfo.CommonHandleVersion == 0 {
+	pkIdx := FindPrimaryIndex(tblInfo)
+	if !needHandleRestoredData(useNewCollate, tblInfo, pkIdx) {
 		return nil
 	}
-	rsData := make([]types.Datum, 0, 4)
-	pkIdx := FindPrimaryIndex(tblInfo)
+	handleDts := make([]types.Datum, 0, len(pkIdx.Columns))
 	for _, pkIdxCol := range pkIdx.Columns {
 		pkCol := tblInfo.Columns[pkIdxCol.Offset]
-		if !types.NeedRestoredDataWithCollate(&pkCol.FieldType, useNewCollate) {
-			continue
-		}
-		var datum types.Datum
 		if len(rowMap) > 0 {
-			datum = rowMap[pkCol.ID]
+			handleDts = append(handleDts, rowMap[pkCol.ID])
 		} else {
-			datum = row[pkCol.Offset]
+			handleDts = append(handleDts, row[pkCol.Offset])
 		}
-		TryTruncateRestoredData(&datum, pkCol, pkIdxCol, idx)
-		ConvertDatumToTailSpaceCount(&datum, pkCol)
-		rsData = append(rsData, datum)
 	}
-	return rsData
+	return TryGetHandleRestoredData(useNewCollate, tblInfo, pkIdx, handleDts, idx)
 }
 
 // TryTruncateRestoredData tries to truncate index values.
