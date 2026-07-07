@@ -59,14 +59,13 @@ http_archive(
 
 http_archive(
     name = "rules_cc",
-    sha256 = "962251923438d27fc030c2d9d35c058a7f7da4fed42c42ad5342c7b4403d4cf2",
-    strip_prefix = "rules_cc-0.2.21",
-    url = "https://github.com/bazelbuild/rules_cc/releases/download/0.2.21/rules_cc-0.2.21.tar.gz",
+    patch_cmds = [
+        "printf '\\ncc_toolchain_alias(name = \"optional_current_cc_toolchain\")\\n' >> cc/BUILD",
+    ],
+    sha256 = "65b67b81c6da378f136cc7e7e14ee08d5b9375973427eceb8c773a4f69fa7e49",
+    strip_prefix = "rules_cc-0.0.10",
+    url = "https://github.com/bazelbuild/rules_cc/releases/download/0.0.10/rules_cc-0.0.10.tar.gz",
 )
-
-load("@rules_cc//cc:extensions.bzl", "compatibility_proxy_repo")
-
-compatibility_proxy_repo()
 
 http_archive(
     name = "rules_python",
