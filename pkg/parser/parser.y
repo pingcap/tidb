@@ -13856,7 +13856,7 @@ ConnectionOptions:
 		for _, option := range $2.([]*ast.ResourceOption) {
 			switch option.Type {
 			case ast.MaxUserConnections:
-			// do nothing.
+				// do nothing.
 			default:
 				needWarning = true
 			}
@@ -14413,7 +14413,7 @@ RecommendIndexStmt:
 
 		$$ = x
 	}
-|	"RECOMMEND" "INDEX" "SHOW" "OPTION"
+|	"RECOMMEND" "INDEX" "SHOW"
 	{
 		x := &ast.RecommendIndexStmt{
 			Action: "show",

@@ -2064,7 +2064,7 @@ func (n *RecommendIndexStmt) Restore(ctx *format.RestoreCtx) error {
 			}
 		}
 	case "show":
-		ctx.WriteKeyWord(" SHOW OPTION")
+		ctx.WriteKeyWord(" SHOW")
 	case "apply":
 		ctx.WriteKeyWord(" APPLY ")
 		ctx.WriteKeyWord(fmt.Sprintf("%d", n.ID))
