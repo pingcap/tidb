@@ -18,12 +18,14 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -161,4 +163,45 @@ func TestSetDataFromKeywords(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, types.NewStringDatum("ADD"), mt.rows[0][0]) // Keyword: ADD
 	require.Equal(t, types.NewIntDatum(1), mt.rows[0][1])        // Reserved: true(1)
+}
+
+// TestDataLockWaitsRetrieverBatchDigests is a regression test for an
+// out-of-bounds write in the DATA_LOCK_WAITS retriever. The per-row SQL-digest
+// slice is sized to the current batch, but the fill loop used to iterate every
+// lock wait, so more than batchSize (1024) waiters overran the slice and
+// panicked with "index out of range". It also verifies all rows are returned
+// across batches.
+func TestDataLockWaitsRetrieverBatchDigests(t *testing.T) {
+	const numLockWaits = 1500 // > batchSize (1024) so the fill loop overran the batch-sized slice
+	lockWaits := make([]*deadlock.WaitForEntry, numLockWaits)
+	for i := range lockWaits {
+		lockWaits[i] = &deadlock.WaitForEntry{
+			Txn:        uint64(i + 1),
+			WaitForTxn: uint64(i + 2),
+			Key:        []byte{byte(i), byte(i >> 8)},
+		}
+	}
+
+	r := &dataLockWaitsTableRetriever{
+		table: &model.TableInfo{Name: ast.NewCIStr("DATA_LOCK_WAITS")},
+		columns: []*model.ColumnInfo{
+			{Name: ast.NewCIStr(infoschema.DataLockWaitsColumnKey)},
+			{Name: ast.NewCIStr(infoschema.DataLockWaitsColumnSQLDigest)},
+		},
+		lockWaits:   lockWaits,
+		initialized: true, // skip the privilege check and store fetch; drive the batch loop directly
+	}
+	r.batchRetrieverHelper.totalRows = len(lockWaits)
+	r.batchRetrieverHelper.batchSize = 1024
+
+	sctx := mock.NewContext()
+	ctx := context.Background()
+
+	total := 0
+	for !r.retrieved {
+		rows, err := r.retrieve(ctx, sctx)
+		require.NoError(t, err)
+		total += len(rows)
+	}
+	require.Equal(t, numLockWaits, total)
 }

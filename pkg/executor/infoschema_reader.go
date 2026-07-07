@@ -3208,6 +3208,18 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 	var res [][]types.Datum
 
 	err := r.nextBatch(func(start, end int) error {
+		// data_lock_waits contains both lockWaits (pessimistic lock waiting)
+		// and resolving (optimistic lock "waiting") info. We return the lockWaits
+		// first, then resolving, so compute the batch boundaries within each
+		// slice up front. lockWaitsInBatch is the slice of lockWaits belonging to
+		// this batch; every per-row index below (digests included) is relative to
+		// it.
+		lockWaitsStart := min(start, len(r.lockWaits))
+		resolvingStart := start - lockWaitsStart
+		lockWaitsEnd := min(end, len(r.lockWaits))
+		resolvingEnd := end - lockWaitsEnd
+		lockWaitsInBatch := r.lockWaits[lockWaitsStart:lockWaitsEnd]
+
 		// Before getting rows, collect the SQL digests that needs to be retrieved first.
 		var needDigest bool
 		var needSQLText bool
@@ -3221,8 +3233,13 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 
 		var digests []string
 		if needDigest || needSQLText {
-			digests = make([]string, end-start)
-			for i, lockWait := range r.lockWaits {
+			// digests is indexed by the row offset within lockWaitsInBatch, so it
+			// must be sized and filled from that batch slice. Iterating the whole
+			// r.lockWaits here would write past the end of digests (an index
+			// out-of-range panic) whenever a batch does not contain every lock
+			// wait, and would also misalign digests[rowIdx] in later batches.
+			digests = make([]string, len(lockWaitsInBatch))
+			for i, lockWait := range lockWaitsInBatch {
 				digest, err := resourcegrouptag.DecodeResourceGroupTag(lockWait.ResourceGroupTag)
 				if err != nil {
 					// Ignore the error if failed to decode the digest from resource_group_tag. We still want to show
@@ -3253,15 +3270,7 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 
 		// Calculate rows.
 		res = make([][]types.Datum, 0, end-start)
-		// data_lock_waits contains both lockWaits (pessimistic lock waiting)
-		// and resolving (optimistic lock "waiting") info
-		// first we'll return the lockWaits, and then resolving, so we need to
-		// do some index calculation here
-		lockWaitsStart := min(start, len(r.lockWaits))
-		resolvingStart := start - lockWaitsStart
-		lockWaitsEnd := min(end, len(r.lockWaits))
-		resolvingEnd := end - lockWaitsEnd
-		for rowIdx, lockWait := range r.lockWaits[lockWaitsStart:lockWaitsEnd] {
+		for rowIdx, lockWait := range lockWaitsInBatch {
 			row := make([]types.Datum, 0, len(r.columns))
 
 			for _, col := range r.columns {
