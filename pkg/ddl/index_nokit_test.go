@@ -25,10 +25,47 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/mock"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
+
+func TestShouldAutoPauseExistingKVDiskFullTask(t *testing.T) {
+	task := &proto.Task{
+		TaskBase: proto.TaskBase{
+			ID:    123,
+			State: proto.TaskStatePaused,
+		},
+		Error: errdef.ErrKVDiskFull.GenWithStack("store 1 disk full"),
+	}
+	job := &model.Job{ID: 456}
+	require.True(t, shouldAutoPauseExistingKVDiskFullTask(job, task))
+
+	job.SetResumeReason(model.JobResumeReasonKVDiskFull)
+	require.False(t, shouldAutoPauseExistingKVDiskFullTask(job, task))
+
+	job.ClearResumeReason()
+	task.State = proto.TaskStateRunning
+	require.False(t, shouldAutoPauseExistingKVDiskFullTask(job, task))
+
+	task.State = proto.TaskStatePaused
+	task.Error = errors.New("not disk full")
+	require.False(t, shouldAutoPauseExistingKVDiskFullTask(job, task))
+
+	job.SetResumeReason(model.JobResumeReasonKVDiskFull)
+	err := errdef.ErrKVDiskFull.GenWithStack(
+		"the remaining storage capacity of TiFlash(127.0.0.1:3930) is less than 10%; please increase the storage capacity of TiFlash and try again")
+	err = autoPauseAddIndexJobOnKVDiskFull(job, task.ID, err)
+	require.True(t, dbterror.ErrDDLAutoPausedByKVDiskFull.Equal(err), "unexpected error: %v", err)
+	require.Contains(t, err.Error(), "TiFlash disk full")
+	require.NotContains(t, err.Error(), "because TiKV disk is full")
+	require.NotContains(t, err.Error(), "hit TiKV disk full")
+	require.True(t, job.IsPausingOrPausedBySystemForKVDiskFull())
+	require.Contains(t, job.PauseReason.Message, "TiFlash disk full")
+	require.Nil(t, job.ResumeReason)
+}
 
 func TestModifyTaskParamLoop(t *testing.T) {
 	type env struct {

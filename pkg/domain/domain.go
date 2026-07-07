@@ -69,6 +69,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -1259,6 +1260,16 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 // Deprecated: Use AdvancedSysSessionPool instead.
 func (do *Domain) SysSessionPool() util.DestroyableSessionPool {
 	return do.sysSessionPool
+}
+
+// AlterTableMode implements sqlsvrapi.Runtime.
+func (do *Domain) AlterTableMode(_ context.Context, target model.AlterTableModeTarget) error {
+	se, err := do.sysSessionPool.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer do.sysSessionPool.Put(se)
+	return ddl.AlterTableMode(do.ddlExecutor, se.(sessionctx.Context), target.TargetMode, target.SchemaID, target.TableID)
 }
 
 // AdvancedSysSessionPool is a more powerful session pool that returns a wrapped session which can detect

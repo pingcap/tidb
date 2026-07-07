@@ -904,6 +904,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	builtinStddevSamp
 	builtinSubstring
 	builtinSum
+	builtinSumInt
 	builtinSysDate
 	builtinTranslate
 	builtinTrim
@@ -9264,6 +9265,14 @@ SumExpr:
 		}
 	}
 |	builtinSum '(' BuggyDefaultFalseDistinctOpt Expression ')' OptWindowingClause
+	{
+		if $6 != nil {
+			$$ = &ast.WindowFuncExpr{Name: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool), Spec: *($6.(*ast.WindowSpec))}
+		} else {
+			$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
+		}
+	}
+|	builtinSumInt '(' BuggyDefaultFalseDistinctOpt Expression ')' OptWindowingClause
 	{
 		if $6 != nil {
 			$$ = &ast.WindowFuncExpr{Name: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool), Spec: *($6.(*ast.WindowSpec))}

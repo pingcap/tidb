@@ -17,14 +17,12 @@ package column
 import (
 	"fmt"
 	"math"
-	"strconv"
 
+	"github.com/pingcap/tidb/pkg/format/textrow"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/server/err"
 	"github.com/pingcap/tidb/pkg/server/internal/dump"
-	"github.com/pingcap/tidb/pkg/server/internal/util"
-	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hack"
 )
@@ -47,35 +45,35 @@ type Info struct {
 }
 
 // Dump dumps Info to bytes.
-func (column *Info) Dump(buffer []byte, d *ResultEncoder) []byte {
+func (column *Info) Dump(buffer []byte, d *textrow.ResultEncoder) []byte {
 	return column.dump(buffer, d, false)
 }
 
 // DumpWithDefault dumps Info to bytes, including column defaults. This is used for ComFieldList responses.
-func (column *Info) DumpWithDefault(buffer []byte, d *ResultEncoder) []byte {
+func (column *Info) DumpWithDefault(buffer []byte, d *textrow.ResultEncoder) []byte {
 	return column.dump(buffer, d, true)
 }
 
-func (column *Info) dump(buffer []byte, d *ResultEncoder, withDefault bool) []byte {
+func (column *Info) dump(buffer []byte, d *textrow.ResultEncoder, withDefault bool) []byte {
 	if d == nil {
-		d = NewResultEncoder(charset.CharsetUTF8MB4)
+		d = textrow.NewResultEncoder(charset.CharsetUTF8MB4)
 	}
-	nameDump, orgnameDump := []byte(column.Name), []byte(column.OrgName)
+	nameDump, orgnameDump := hack.Slice(column.Name), hack.Slice(column.OrgName)
 	if len(nameDump) > maxColumnNameSize {
 		nameDump = nameDump[0:maxColumnNameSize]
 	}
 	if len(orgnameDump) > maxColumnNameSize {
 		orgnameDump = orgnameDump[0:maxColumnNameSize]
 	}
-	buffer = dump.LengthEncodedString(buffer, []byte("def"))
-	buffer = dump.LengthEncodedString(buffer, d.EncodeMeta([]byte(column.Schema)))
-	buffer = dump.LengthEncodedString(buffer, d.EncodeMeta([]byte(column.Table)))
-	buffer = dump.LengthEncodedString(buffer, d.EncodeMeta([]byte(column.OrgTable)))
+	buffer = dump.LengthEncodedString(buffer, hack.Slice("def"))
+	buffer = dump.LengthEncodedString(buffer, d.EncodeMeta(hack.Slice(column.Schema)))
+	buffer = dump.LengthEncodedString(buffer, d.EncodeMeta(hack.Slice(column.Table)))
+	buffer = dump.LengthEncodedString(buffer, d.EncodeMeta(hack.Slice(column.OrgTable)))
 	buffer = dump.LengthEncodedString(buffer, d.EncodeMeta(nameDump))
 	buffer = dump.LengthEncodedString(buffer, d.EncodeMeta(orgnameDump))
 
 	buffer = append(buffer, 0x0c)
-	buffer = dump.Uint16(buffer, d.ColumnTypeInfoCharsetID(column))
+	buffer = dump.Uint16(buffer, d.ColumnCharsetID(column.dumpCharset(), textrow.IsStringColumnType(column.Type)))
 	buffer = dump.Uint32(buffer, column.dumpLength())
 	buffer = append(buffer, dumpType(column.Type))
 	buffer = dump.Uint16(buffer, DumpFlag(column.Type, column.Flag))
@@ -88,7 +86,7 @@ func (column *Info) dump(buffer []byte, d *ResultEncoder, withDefault bool) []by
 			buffer = append(buffer, 251) // NULL
 		default:
 			defaultValStr := fmt.Sprintf("%v", column.DefaultValue)
-			buffer = dump.LengthEncodedString(buffer, []byte(defaultValStr))
+			buffer = dump.LengthEncodedString(buffer, hack.Slice(defaultValStr))
 		}
 	}
 
@@ -147,87 +145,42 @@ func dumpType(tp byte) byte {
 	}
 }
 
-// DumpTextRow dumps a row to bytes.
-func DumpTextRow(buffer []byte, columns []*Info, row chunk.Row, d *ResultEncoder) ([]byte, error) {
-	if d == nil {
-		d = NewResultEncoder(charset.CharsetUTF8MB4)
+// toTextRow maps the serialization-relevant fields of Info onto the ColumnInfo.
+func (column *Info) toTextRow() textrow.ColumnInfo {
+	return textrow.ColumnInfo{
+		Type:    column.Type,
+		Charset: column.Charset,
+		Flag:    column.Flag,
+		Decimal: column.Decimal,
+		Table:   column.Table,
 	}
-	tmp := make([]byte, 0, 20)
+}
+
+// DumpTextRow dumps a row to bytes. Each value is produced by the shared
+// textrow serializer and then length-encoded into the text protocol (NULL is
+// the 0xfb marker).
+func DumpTextRow(buffer []byte, columns []*Info, row chunk.Row, d *textrow.ResultEncoder) ([]byte, error) {
+	if d == nil {
+		d = textrow.NewResultEncoder(charset.CharsetUTF8MB4)
+	}
 	for i, col := range columns {
 		if row.IsNull(i) {
 			buffer = append(buffer, 0xfb)
 			continue
 		}
-		switch col.Type {
-		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong:
-			tmp = strconv.AppendInt(tmp[:0], row.GetInt64(i), 10)
-			buffer = dump.LengthEncodedString(buffer, tmp)
-		case mysql.TypeYear:
-			year := row.GetInt64(i)
-			tmp = tmp[:0]
-			if year == 0 {
-				tmp = append(tmp, '0', '0', '0', '0')
-			} else {
-				tmp = strconv.AppendInt(tmp, year, 10)
-			}
-			buffer = dump.LengthEncodedString(buffer, tmp)
-		case mysql.TypeLonglong:
-			if mysql.HasUnsignedFlag(uint(columns[i].Flag)) {
-				tmp = strconv.AppendUint(tmp[:0], row.GetUint64(i), 10)
-			} else {
-				tmp = strconv.AppendInt(tmp[:0], row.GetInt64(i), 10)
-			}
-			buffer = dump.LengthEncodedString(buffer, tmp)
-		case mysql.TypeFloat:
-			prec := -1
-			if columns[i].Decimal > 0 && int(col.Decimal) != mysql.NotFixedDec && col.Table == "" {
-				prec = int(col.Decimal)
-			}
-			tmp = util.AppendFormatFloat(tmp[:0], float64(row.GetFloat32(i)), prec, 32)
-			buffer = dump.LengthEncodedString(buffer, tmp)
-		case mysql.TypeDouble:
-			prec := types.UnspecifiedLength
-			if col.Decimal > 0 && int(col.Decimal) != mysql.NotFixedDec && col.Table == "" {
-				prec = int(col.Decimal)
-			}
-			tmp = util.AppendFormatFloat(tmp[:0], row.GetFloat64(i), prec, 64)
-			buffer = dump.LengthEncodedString(buffer, tmp)
-		case mysql.TypeNewDecimal:
-			buffer = dump.LengthEncodedString(buffer, hack.Slice(row.GetMyDecimal(i).String()))
-		case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBit,
-			mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob, mysql.TypeGeometry:
-			d.UpdateDataEncoding(col.Charset)
-			buffer = dump.LengthEncodedString(buffer, d.EncodeData(row.GetBytes(i)))
-		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-			buffer = dump.LengthEncodedString(buffer, hack.Slice(row.GetTime(i).String()))
-		case mysql.TypeDuration:
-			dur := row.GetDuration(i, int(col.Decimal))
-			buffer = dump.LengthEncodedString(buffer, hack.Slice(dur.String()))
-		case mysql.TypeEnum:
-			d.UpdateDataEncoding(col.Charset)
-			buffer = dump.LengthEncodedString(buffer, d.EncodeData(hack.Slice(row.GetEnum(i).String())))
-		case mysql.TypeSet:
-			d.UpdateDataEncoding(col.Charset)
-			buffer = dump.LengthEncodedString(buffer, d.EncodeData(hack.Slice(row.GetSet(i).String())))
-		case mysql.TypeJSON:
-			// The collation of JSON type is always binary.
-			// To compatible with MySQL, here we treat it as utf-8.
-			d.UpdateDataEncoding(mysql.DefaultCollationID)
-			buffer = dump.LengthEncodedString(buffer, d.EncodeData(hack.Slice(row.GetJSON(i).String())))
-		case mysql.TypeTiDBVectorFloat32:
-			d.UpdateDataEncoding(mysql.DefaultCollationID)
-			buffer = dump.LengthEncodedString(buffer, d.EncodeData(hack.Slice(row.GetVectorFloat32(i).String())))
-		default:
-			return nil, err.ErrInvalidType.GenWithStack("invalid type %v", columns[i].Type)
+		val, err1 := textrow.FormatValueText(row, i, col.toTextRow(), d)
+		if err1 != nil {
+			return nil, err.ErrInvalidType.GenWithStack("invalid type %v", col.Type)
 		}
+		buffer = dump.LengthEncodedString(buffer, val)
 	}
 	return buffer, nil
 }
 
 // DumpBinaryRow dumps a row to bytes.
-func DumpBinaryRow(buffer []byte, columns []*Info, row chunk.Row, d *ResultEncoder) ([]byte, error) {
+func DumpBinaryRow(buffer []byte, columns []*Info, row chunk.Row, d *textrow.ResultEncoder) ([]byte, error) {
 	if d == nil {
-		d = NewResultEncoder(charset.CharsetUTF8MB4)
+		d = textrow.NewResultEncoder(charset.CharsetUTF8MB4)
 	}
 	buffer = append(buffer, mysql.OKHeader)
 	nullBitmapOff := len(buffer)

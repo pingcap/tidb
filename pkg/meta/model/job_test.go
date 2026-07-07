@@ -75,6 +75,7 @@ func TestJobCodec(t *testing.T) {
 	job.FillArgs(&RenameTableArgs{OldSchemaID: 2, NewTableName: ast.NewCIStr("table1")})
 	job.BinlogInfo.AddDBInfo(123, &DBInfo{ID: 1, Name: ast.NewCIStr("test_history_db")})
 	job.BinlogInfo.AddTableInfo(123, &TableInfo{ID: 1, Name: ast.NewCIStr("test_history_tbl")})
+	job.SetResumeReason(JobResumeReasonKVDiskFull)
 
 	require.Equal(t, false, job.IsCancelled())
 	b, err := job.Encode(false)
@@ -87,6 +88,7 @@ func TestJobCodec(t *testing.T) {
 	require.Greater(t, len(newJob.String()), 0)
 	require.Equal(t, newJob.ReorgMeta.Location.Name, tzName)
 	require.Equal(t, newJob.ReorgMeta.Location.Offset, tzOffset)
+	require.True(t, newJob.HasResumeReason(JobResumeReasonKVDiskFull))
 
 	job.BinlogInfo.Clean()
 	b1, err := job.Encode(true)
@@ -113,6 +115,26 @@ func TestJobCodec(t *testing.T) {
 	require.False(t, job.IsRollbackDone())
 	job.SetRowCount(3)
 	require.Equal(t, int64(3), job.GetRowCount())
+}
+
+func TestDDLReorgMetaUseNewCollate(t *testing.T) {
+	meta := &DDLReorgMeta{}
+	require.True(t, meta.GetUseNewCollateOrDefault(true))
+	require.False(t, meta.GetUseNewCollateOrDefault(false))
+
+	meta.setUseNewCollate(false)
+	require.False(t, meta.GetUseNewCollateOrDefault(true))
+
+	data, err := json.Marshal(meta)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"use_new_collate":false`)
+
+	var decoded DDLReorgMeta
+	require.NoError(t, json.Unmarshal(data, &decoded))
+	require.False(t, decoded.GetUseNewCollateOrDefault(true))
+
+	decoded.setUseNewCollate(true)
+	require.True(t, decoded.GetUseNewCollateOrDefault(false))
 }
 
 func TestLocation(t *testing.T) {
@@ -153,6 +175,7 @@ func TestJobClone(t *testing.T) {
 		TableName:       "t",
 		State:           JobStateDone,
 		MultiSchemaInfo: nil,
+		ResumeReason:    &JobResumeReason{Type: JobResumeReasonKVDiskFull},
 	}
 	clone := job.Clone()
 	require.Equal(t, job.ID, clone.ID)
@@ -163,6 +186,20 @@ func TestJobClone(t *testing.T) {
 	require.Equal(t, job.TableName, clone.TableName)
 	require.Equal(t, job.State, clone.State)
 	require.Equal(t, job.MultiSchemaInfo, clone.MultiSchemaInfo)
+	require.Equal(t, job.ResumeReason, clone.ResumeReason)
+}
+
+func TestSubJobToProxyJobWithResumeReason(t *testing.T) {
+	parentJob := &Job{
+		ID:           100,
+		ResumeReason: &JobResumeReason{Type: JobResumeReasonKVDiskFull},
+	}
+	subJob := &SubJob{
+		Type:  ActionAddIndex,
+		State: JobStateQueueing,
+	}
+	proxyJob := subJob.ToProxyJob(parentJob, 0)
+	require.True(t, proxyJob.HasResumeReason(JobResumeReasonKVDiskFull))
 }
 
 func TestJobSize(t *testing.T) {
@@ -170,7 +207,7 @@ func TestJobSize(t *testing.T) {
 - SubJob.FromProxyJob()
 - SubJob.ToProxyJob()
 `
-	require.Equal(t, 400, int(unsafe.Sizeof(Job{})), msg)
+	require.Equal(t, 416, int(unsafe.Sizeof(Job{})), msg)
 	require.Equal(t, 144, int(unsafe.Sizeof(SubJob{})), msg)
 }
 

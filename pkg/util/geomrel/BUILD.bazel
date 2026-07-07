@@ -9,8 +9,8 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/util/geomrel",
     visibility = ["//visibility:public"],
     deps = [
-        "@com_github_golang_geo//s2",
-        "@com_github_peterstace_simplefeatures//geom",
+        "@com_github_golang_geo//s2:go_default_library",
+        "@com_github_peterstace_simplefeatures//geom:go_default_library",
         "@com_github_pingcap_errors//:errors",
     ],
 )
@@ -22,7 +22,7 @@ go_test(
     embed = [":geomrel"],
     flaky = True,
     deps = [
-        "@com_github_peterstace_simplefeatures//geom",
+        "@com_github_peterstace_simplefeatures//geom:go_default_library",
         "@com_github_stretchr_testify//require",
     ],
 )

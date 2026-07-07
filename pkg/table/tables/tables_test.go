@@ -409,6 +409,29 @@ func TestTableFromMeta(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestTableFromMetaWithCollateUsesFixedMode(t *testing.T) {
+	tblInfo := &model.TableInfo{
+		ID:    1,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			{
+				ID:        1,
+				Name:      ast.NewCIStr("a"),
+				Offset:    0,
+				State:     model.StatePublic,
+				FieldType: *types.NewFieldType(mysql.TypeVarchar),
+			},
+		},
+	}
+
+	for _, useNewCollate := range []bool{false, true} {
+		tbl, err := tables.TableFromMetaWithCollate(useNewCollate, autoid.NewAllocators(false), tblInfo)
+		require.NoError(t, err)
+		require.Equal(t, useNewCollate, tbl.UseNewCollate())
+	}
+}
+
 func TestHiddenColumn(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -997,6 +1020,136 @@ func TestSkipWriteUntouchedIndices(t *testing.T) {
 		checkIndexWrittenInMemBuf(0, types.NewIntDatum(2), true, true)
 		checkIndexWrittenInMemBuf(0, types.NewIntDatum(12), true, false)
 		checkIndexWrittenInMemBuf(1, types.NewIntDatum(3), !c.isSkip, false)
+	}
+
+	collectIndexValues := func(r kv.Retriever, tbl table.PhysicalTable) [][]byte {
+		idxPrefix := indexPrefix(tbl)
+		it, err := r.Iter(idxPrefix, idxPrefix.PrefixNext())
+		require.NoError(t, err)
+		defer it.Close()
+		values := make([][]byte, 0, 1)
+		for it.Valid() {
+			values = append(values, append([]byte(nil), it.Value()...))
+			require.NoError(t, it.Next())
+		}
+		return values
+	}
+
+	type untouchedIndexStorageCase struct {
+		name             string
+		tableName        string
+		createTable      string
+		insertRow        string
+		updateUntouched  string
+		checkTable       func(table.Table)
+		checkCommitted   func([]byte)
+		checkUncommitted func([]byte)
+	}
+
+	checkUntouchedIndexNotStored := func(c untouchedIndexStorageCase) {
+		tk.MustExec("rollback")
+		tk.MustExec("drop table if exists " + c.tableName)
+		tk.MustExec(c.createTable)
+		tk.MustExec(c.insertRow)
+
+		tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(c.tableName))
+		require.NoError(t, err, c.name)
+		if c.checkTable != nil {
+			c.checkTable(tbl)
+		}
+		physicalTbl, ok := tbl.(table.PhysicalTable)
+		require.True(t, ok, c.name)
+
+		committedBefore := collectIndexValues(store.GetSnapshot(kv.MaxVersion), physicalTbl)
+		require.Len(t, committedBefore, 1, c.name)
+		c.checkCommitted(committedBefore[0])
+
+		tk.MustExec("begin")
+		tk.MustExec(c.updateUntouched)
+		txn, err := tk.Session().Txn(true)
+		require.NoError(t, err, c.name)
+		uncommitted := collectIndexValues(txn.GetMemBuffer(), physicalTbl)
+		require.Len(t, uncommitted, 1, c.name)
+		c.checkUncommitted(uncommitted[0])
+		require.NotEqual(t, committedBefore, uncommitted, c.name)
+
+		tk.MustExec("commit")
+		committedAfter := collectIndexValues(store.GetSnapshot(kv.MaxVersion), physicalTbl)
+		require.Equal(t, committedBefore, committedAfter, c.name)
+	}
+
+	for _, c := range []untouchedIndexStorageCase{
+		{
+			name:            "legacy non-unique index value",
+			tableName:       "t_legacy_non_unique",
+			createTable:     "create table t_legacy_non_unique(id int primary key, v int, k int, key idx_k(k))",
+			insertRow:       "insert into t_legacy_non_unique values(1, 10, 100)",
+			updateUntouched: "update t_legacy_non_unique set v = v + 1 where id = 1",
+			checkCommitted: func(value []byte) {
+				require.Equal(t, []byte{'0'}, value)
+			},
+			checkUncommitted: func(value []byte) {
+				require.Equal(t, []byte{kv.UnCommitIndexKVFlag}, value)
+			},
+		},
+		{
+			name:            "index-value-v0 with restored data",
+			tableName:       "t_index_value_v0",
+			createTable:     "create table t_index_value_v0(id int primary key, v int, k varchar(20) character set utf8mb4 collate utf8mb4_general_ci, key idx_k(k))",
+			insertRow:       "insert into t_index_value_v0 values(1, 10, 'abc')",
+			updateUntouched: "update t_index_value_v0 set v = v + 1 where id = 1",
+			checkCommitted: func(value []byte) {
+				require.Greater(t, len(value), tablecodec.MaxOldEncodeValueLen)
+				require.NotEqual(t, tablecodec.IndexVersionFlag, value[1])
+			},
+			checkUncommitted: func(value []byte) {
+				require.Greater(t, len(value), tablecodec.MaxOldEncodeValueLen)
+				require.Equal(t, kv.UnCommitIndexKVFlag, value[len(value)-1])
+			},
+		},
+		{
+			name:            "issue 69466 common-handle-v1 non-unique index value",
+			tableName:       "t_common_handle_v1",
+			createTable:     "create table t_common_handle_v1(id1 int, id2 int, v int, k int, primary key(id1, id2) clustered, key idx_k(k))",
+			insertRow:       "insert into t_common_handle_v1 values(1, 2, 10, 100)",
+			updateUntouched: "update t_common_handle_v1 set v = v + 1 where id1 = 1 and id2 = 2",
+			checkTable: func(tbl table.Table) {
+				require.True(t, tbl.Meta().IsCommonHandle)
+				require.Equal(t, uint16(1), tbl.Meta().CommonHandleVersion)
+			},
+			checkCommitted: func(value []byte) {
+				require.Equal(t, []byte{0, tablecodec.IndexVersionFlag, 1}, value)
+			},
+			checkUncommitted: func(value []byte) {
+				require.Equal(t, []byte{1, tablecodec.IndexVersionFlag, 1, kv.UnCommitIndexKVFlag}, value)
+			},
+		},
+		{
+			name:            "common-handle-v1 index value with restored data",
+			tableName:       "t_common_handle_v1_restored",
+			createTable:     "create table t_common_handle_v1_restored(id1 int, id2 int, v int, k varchar(20) character set utf8mb4 collate utf8mb4_general_ci, primary key(id1, id2) clustered, key idx_k(k))",
+			insertRow:       "insert into t_common_handle_v1_restored values(1, 2, 10, 'abc')",
+			updateUntouched: "update t_common_handle_v1_restored set v = v + 1 where id1 = 1 and id2 = 2",
+			checkTable: func(tbl table.Table) {
+				require.True(t, tbl.Meta().IsCommonHandle)
+				require.Equal(t, uint16(1), tbl.Meta().CommonHandleVersion)
+			},
+			checkCommitted: func(value []byte) {
+				require.Greater(t, len(value), tablecodec.MaxOldEncodeValueLen)
+				require.Equal(t, byte(0), value[0])
+				require.Equal(t, tablecodec.IndexVersionFlag, value[1])
+				require.Equal(t, byte(1), value[2])
+			},
+			checkUncommitted: func(value []byte) {
+				require.Greater(t, len(value), tablecodec.MaxOldEncodeValueLen)
+				require.Equal(t, byte(1), value[0])
+				require.Equal(t, tablecodec.IndexVersionFlag, value[1])
+				require.Equal(t, byte(1), value[2])
+				require.Equal(t, kv.UnCommitIndexKVFlag, value[len(value)-1])
+			},
+		},
+	} {
+		checkUntouchedIndexNotStored(c)
 	}
 }
 
