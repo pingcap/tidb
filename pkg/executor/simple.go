@@ -2669,7 +2669,7 @@ func userExistsWithRetryVariants(ctx context.Context, sctx sessionctx.Context, n
 
 // userExistsInternalWithRetryVariants behaves like userExistsWithRetryVariants
 // using the supplied SQL executor and also returns the resolved auth plugin.
-func userExistsInternalWithRetryVariants(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name *string, host string) (bool, string, string, error) {
+func userExistsInternalWithRetryVariants(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name *string, host string) (exists bool, authPlugin string, authString string, err error) {
 	for _, variant := range keyspace.GetUsernamePolicy().GetUsernameVariants(*name) {
 		exists, authPlugin, authString, err := userExistsInternal(ctx, sqlExecutor, variant, host)
 		if err != nil {
@@ -2754,7 +2754,7 @@ func buildAdditionalPasswordEntry(oldPwd, name, host string) (string, error) {
 // returned so RETAIN CURRENT PASSWORD can capture the pre-change primary hash
 // from the row already read here (under the same FOR UPDATE lock) instead of
 // issuing a second locking read.
-func userExistsInternal(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string) (bool, string, string, error) {
+func userExistsInternal(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string) (exists bool, authPlugin string, authString string, err error) {
 	sql := new(strings.Builder)
 	sqlescape.MustFormatSQL(sql, `SELECT * FROM %n.%n WHERE User=%? AND Host=%? FOR UPDATE;`, mysql.SystemDB, mysql.UserTable, name, strings.ToLower(host))
 	recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
@@ -2768,7 +2768,6 @@ func userExistsInternal(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, na
 		rows = req.NumRows()
 	}
 
-	var authPlugin, authString string
 	pluginColIdx, authStringColIdx := -1, -1
 	for i, f := range recordSet.Fields() {
 		switch f.ColumnAsName.L {
