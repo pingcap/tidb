@@ -1070,6 +1070,13 @@ func avgFloat(sum int64, count int64) float64 {
 	return 0
 }
 
+func avgFloat4Uint(sum uint64, count int64) float64 {
+	if count > 0 {
+		return float64(sum) / float64(count)
+	}
+	return 0
+}
+
 func avgSumFloat(sum float64, count int64) float64 {
 	if count > 0 {
 		return sum / float64(count)
