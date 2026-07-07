@@ -303,6 +303,47 @@ const PlanReplayerLoadVarKey planReplayerLoadKeyType = 0
 // PlanReplayerDumpVarKey is a variable key for plan replayer dump.
 const PlanReplayerDumpVarKey planReplayerDumpKeyType = 1
 
+// FileTransInConnHandler handles a session value that needs server-side local
+// file transfer before statement completion.
+type FileTransInConnHandler func(context.Context, any, func(context.Context, string) ([]byte, error)) error
+
+// FileTransInConnHandlers contains the no-result statements whose payloads
+// require the server connection layer to finish local file transfer.
+var FileTransInConnHandlers = map[fmt.Stringer]FileTransInConnHandler{
+	LoadStatsVarKey:        handleLoadStats,
+	PlanReplayerLoadVarKey: handlePlanReplayerLoad,
+}
+
+func handleLoadStats(ctx context.Context, value any, readFile func(context.Context, string) ([]byte, error)) error {
+	loadStatsInfo, ok := value.(*LoadStatsInfo)
+	if !ok || loadStatsInfo == nil {
+		return errors.New("load stats: info is empty")
+	}
+	data, err := readFile(ctx, loadStatsInfo.Path)
+	if err != nil {
+		return err
+	}
+	if len(data) == 0 {
+		return nil
+	}
+	return loadStatsInfo.Update(data)
+}
+
+func handlePlanReplayerLoad(ctx context.Context, value any, readFile func(context.Context, string) ([]byte, error)) error {
+	planReplayerLoadInfo, ok := value.(*PlanReplayerLoadInfo)
+	if !ok || planReplayerLoadInfo == nil {
+		return errors.New("plan replayer load: info is empty")
+	}
+	data, err := readFile(ctx, planReplayerLoadInfo.Path)
+	if err != nil {
+		return err
+	}
+	if len(data) == 0 {
+		return nil
+	}
+	return planReplayerLoadInfo.Update(data)
+}
+
 // Next implements the Executor Next interface.
 func (e *PlanReplayerLoadExec) Next(_ context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(e.MaxChunkSize())

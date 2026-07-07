@@ -1794,43 +1794,6 @@ func (cc *clientConn) getDataFromPath(ctx context.Context, path string) ([]byte,
 	return prevData, nil
 }
 
-// handleLoadStats does the additional work after processing the 'load stats' query.
-// It sends client a file path, then reads the file content from client, loads it into the storage.
-func (cc *clientConn) handleLoadStats(ctx context.Context, loadStatsInfo *executor.LoadStatsInfo) error {
-	// If the server handles the load data request, the client has to set the ClientLocalFiles capability.
-	if cc.capability&mysql.ClientLocalFiles == 0 {
-		return servererr.ErrNotAllowedCommand
-	}
-	if loadStatsInfo == nil {
-		return errors.New("load stats: info is empty")
-	}
-	data, err := cc.getDataFromPath(ctx, loadStatsInfo.Path)
-	if err != nil {
-		return err
-	}
-	if len(data) == 0 {
-		return nil
-	}
-	return loadStatsInfo.Update(data)
-}
-
-func (cc *clientConn) handlePlanReplayerLoad(ctx context.Context, planReplayerLoadInfo *executor.PlanReplayerLoadInfo) error {
-	if cc.capability&mysql.ClientLocalFiles == 0 {
-		return servererr.ErrNotAllowedCommand
-	}
-	if planReplayerLoadInfo == nil {
-		return errors.New("plan replayer load: info is empty")
-	}
-	data, err := cc.getDataFromPath(ctx, planReplayerLoadInfo.Path)
-	if err != nil {
-		return err
-	}
-	if len(data) == 0 {
-		return nil
-	}
-	return planReplayerLoadInfo.Update(data)
-}
-
 func (cc *clientConn) handlePlanReplayerDump(ctx context.Context, e *executor.PlanReplayerDumpInfo) error {
 	if cc.capability&mysql.ClientLocalFiles == 0 {
 		return servererr.ErrNotAllowedCommand
@@ -2420,26 +2383,26 @@ func (cc *clientConn) postprocessLoadDataLocal() {
 func (cc *clientConn) handleFileTransInConn(ctx context.Context, status uint16) (bool, error) {
 	handled := false
 
-	loadStats := cc.ctx.Value(executor.LoadStatsVarKey)
-	if loadStats != nil {
+	for key, handler := range executor.FileTransInConnHandlers {
+		value := cc.ctx.Value(key)
+		if value == nil {
+			continue
+		}
 		handled = true
-		defer cc.ctx.SetValue(executor.LoadStatsVarKey, nil)
-		//nolint:forcetypeassert
-		if err := cc.handleLoadStats(ctx, loadStats.(*executor.LoadStatsInfo)); err != nil {
+		if cc.capability&mysql.ClientLocalFiles == 0 {
+			cc.ctx.SetValue(key, nil)
+			return handled, servererr.ErrNotAllowedCommand
+		}
+		err := handler(ctx, value, cc.getDataFromPath)
+		cc.ctx.SetValue(key, nil)
+		if err != nil {
 			return handled, err
 		}
+		break
 	}
 
-	planReplayerLoad := cc.ctx.Value(executor.PlanReplayerLoadVarKey)
-	if planReplayerLoad != nil {
-		handled = true
-		defer cc.ctx.SetValue(executor.PlanReplayerLoadVarKey, nil)
-		//nolint:forcetypeassert
-		if err := cc.handlePlanReplayerLoad(ctx, planReplayerLoad.(*executor.PlanReplayerLoadInfo)); err != nil {
-			return handled, err
-		}
-	}
-
+	// PlanReplayerDumpVarKey follows the result-set path, so it is not part of
+	// executor.FileTransInConnHandlers used by session.hasFileTransInConn.
 	planReplayerDump := cc.ctx.Value(executor.PlanReplayerDumpVarKey)
 	if planReplayerDump != nil {
 		handled = true
