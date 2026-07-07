@@ -2895,7 +2895,9 @@ func (b *PlanBuilder) genV2AnalyzeOptions(
 func (b *PlanBuilder) getSavedAnalyzeOpts(physicalID int64, tblInfo *model.TableInfo) (map[ast.AnalyzeOptionType]uint64, pmodel.ColumnChoice, []*model.ColumnInfo, error) {
 	analyzeOptions := map[ast.AnalyzeOptionType]uint64{}
 	exec := b.ctx.GetRestrictedSQLExecutor()
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	// Deliberately not the analyze source: reading saved options is lightweight
+	// metadata work, not the heavy scan that background throttling targets.
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsForegroundPriority)
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select sample_num,sample_rate,buckets,topn,column_choice,column_ids from mysql.analyze_options where table_id = %?", physicalID)
 	if err != nil {
 		return nil, pmodel.DefaultChoice, nil, err
@@ -6474,3 +6476,33 @@ func GetMaxWriteSpeedFromExpression(opt *AlterDDLJobOpt) (maxWriteSpeed int64, e
 	}
 	return maxWriteSpeed, nil
 }
+<<<<<<< HEAD
+=======
+
+func (b *PlanBuilder) checkSEMStmt(stmt ast.Node) error {
+	if !semv2.IsEnabled() {
+		return nil
+	}
+
+	stmtNode, ok := stmt.(ast.StmtNode)
+	intest.Assert(ok, "node.Node should be ast.StmtNode, but got %T", stmt)
+	if !semv2.IsRestrictedSQL(stmtNode) {
+		return nil
+	}
+
+	activeRoles := b.ctx.GetSessionVars().ActiveRoles
+	checker := privilege.GetPrivilegeManager(b.ctx)
+	if checker == nil {
+		// During bootstrap, the privilege manager is unavailable until the system
+		// privilege tables are initialized, so restricted bootstrap SQL cannot be checked yet.
+		return nil
+	}
+	hasPriv := checker.RequestDynamicVerification(activeRoles, "RESTRICTED_SQL_ADMIN", false)
+
+	if hasPriv {
+		return nil
+	}
+
+	return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs(stmtNode.Text())
+}
+>>>>>>> e3dc39fc8bb (statistics, executor, session: integrate analyze resource control (#69452))

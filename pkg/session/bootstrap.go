@@ -44,7 +44,13 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+<<<<<<< HEAD
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+=======
+	"github.com/pingcap/tidb/pkg/resourcegroup"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+>>>>>>> e3dc39fc8bb (statistics, executor, session: integrate analyze resource control (#69452))
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	storepkg "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -3582,6 +3588,7 @@ func getBootstrapVersion(s sessiontypes.Session) (int64, error) {
 func doDDLWorks(s sessiontypes.Session) {
 	// Create a test database.
 	mustExecute(s, "CREATE DATABASE IF NOT EXISTS test")
+<<<<<<< HEAD
 	// Create system db.
 	mustExecute(s, "CREATE DATABASE IF NOT EXISTS %n", mysql.SystemDB)
 	// Create user table.
@@ -3690,6 +3697,24 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateIndexAdvisorTable)
 	// create mysql.tidb_kernel_options
 	mustExecute(s, CreateKernelOptionsTable)
+=======
+	// Only mark stats requests as background here; the effective background CPU cap is controlled
+	// by bg-cpu-throttle-threshold and fg-cpu-throttle-threshold.
+	mustExecute(s, "ALTER RESOURCE GROUP %n BACKGROUND=(TASK_TYPES=%?)",
+		resourcegroup.DefaultResourceGroupName, kv.InternalTxnStats)
+}
+
+func checkSystemTableConstraint(tblInfo *model.TableInfo) error {
+	if tblInfo.Partition != nil {
+		return errors.New("system table should not be partitioned table")
+	}
+	if tblInfo.SepAutoInc() {
+		// AUTO_ID_CACHE=1 is implemented through GRPC service and requires owner
+		// election, system tables should not depend on that.
+		return errors.New("system table should not use AUTO_ID_CACHE=1")
+	}
+	return nil
+>>>>>>> e3dc39fc8bb (statistics, executor, session: integrate analyze resource control (#69452))
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.

@@ -2222,6 +2222,44 @@ func resolvePreparedStmt(stmt ast.StmtNode, vars *variable.SessionVars) (ast.Stm
 	return prepareStmt.PreparedAst.Stmt, nil
 }
 
+<<<<<<< HEAD
+=======
+func shouldBypass(ctx context.Context, stmtNode ast.StmtNode, sessVars *variable.SessionVars) bool {
+	switch kv.GetInternalSourceType(ctx) {
+	case kv.InternalTxnOthers:
+		return true
+	// InternalTxnStats marks ANALYZE KV requests as background work. Since ANALYZE
+	// has no statement-level RU v2 charge yet, bypass TiDB-side RU v2 only for
+	// ANALYZE statements. Client-go still applies request-level bypass by
+	// request source and cop request type.
+	case kv.InternalTxnStats:
+		return isNextGenForRUV2() && isAnalyzeStatementForRUV2(stmtNode, sessVars)
+	default:
+		return false
+	}
+}
+
+func isAnalyzeStatementForRUV2(stmtNode ast.StmtNode, sessVars *variable.SessionVars) bool {
+	if stmtNode == nil || sessVars == nil {
+		return false
+	}
+	resolvedStmt, err := resolvePreparedStmt(stmtNode, sessVars)
+	if err != nil || resolvedStmt == nil {
+		return false
+	}
+	_, ok := resolvedStmt.(*ast.AnalyzeTableStmt)
+	return ok
+}
+
+func (s *session) GetSQLExecutor() sqlexec.SQLExecutor {
+	return s
+}
+
+func (s *session) GetRestrictedSQLExecutor() sqlexec.RestrictedSQLExecutor {
+	return s
+}
+
+>>>>>>> e3dc39fc8bb (statistics, executor, session: integrate analyze resource control (#69452))
 func (s *session) onTxnManagerStmtStartOrRetry(ctx context.Context, node ast.StmtNode) error {
 	if s.sessionVars.RetryInfo.Retrying {
 		return sessiontxn.GetTxnManager(s).OnStmtRetry(ctx)

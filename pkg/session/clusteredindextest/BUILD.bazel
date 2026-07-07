@@ -13,9 +13,17 @@ go_test(
     shard_count = 3,
     deps = [
         "//pkg/config",
+<<<<<<< HEAD:pkg/session/clusteredindextest/BUILD.bazel
         "//pkg/kv",
         "//pkg/session",
         "//pkg/sessionctx/variable",
+=======
+        "//pkg/executor",
+        "//pkg/kv",
+        "//pkg/meta/autoid",
+        "//pkg/objstore/storeapi",
+        "//pkg/planner/extstore",
+>>>>>>> e3dc39fc8bb (statistics, executor, session: integrate analyze resource control (#69452)):pkg/executor/test/planreplayer/BUILD.bazel
         "//pkg/testkit",
         "//pkg/testkit/testmain",
         "//pkg/testkit/testsetup",

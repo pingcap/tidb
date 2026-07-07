@@ -8,7 +8,11 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
+<<<<<<< HEAD:pkg/session/bootstraptest/BUILD.bazel
     shard_count = 16,
+=======
+    shard_count = 45,
+>>>>>>> e3dc39fc8bb (statistics, executor, session: integrate analyze resource control (#69452)):pkg/session/test/bootstraptest/BUILD.bazel
     deps = [
         "//pkg/config",
         "//pkg/ddl",
