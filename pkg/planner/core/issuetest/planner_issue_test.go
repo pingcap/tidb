@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
