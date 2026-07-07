@@ -23,9 +23,11 @@ go_test(
     embed = [":mppcoordmanager"],
     flaky = True,
     race = "on",
+    shard_count = 2,
     deps = [
         "//pkg/kv",
         "//pkg/store/copr",
+        "@com_github_pingcap_kvproto//pkg/mpp",
         "@com_github_stretchr_testify//require",
     ],
 )

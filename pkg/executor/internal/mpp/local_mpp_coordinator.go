@@ -507,6 +507,16 @@ func (c *localMppCoordinator) dispatchAll(ctx context.Context) {
 			defer func() {
 				c.wg.Done()
 			}()
+			// handleDispatchReq drives RPC dispatch and stream receiving; only
+			// sendToRespCh recovers today, so a panic elsewhere on this bare
+			// goroutine would crash the whole tidb-server. Recover here and
+			// surface it as a query error instead.
+			defer func() {
+				if r := recover(); r != nil {
+					logutil.BgLogger().Warn("localMppCoordinator dispatch goroutine panic", zap.Stack("stack"), zap.Any("recover", r))
+					c.sendError(util2.GetRecoverError(r))
+				}
+			}()
 			c.handleDispatchReq(ctx, bo, mppTask)
 		}(task)
 	}
