@@ -2740,22 +2740,24 @@ func skipExactUsernameLookup(name string) bool {
 	return policy.ValidateUsername(name) != nil && policy.ValidateUsernameFormat(name)
 }
 
-// use the same internal executor to read within the same transaction, otherwise same as userExists
 // isDualPasswordCapablePlugin reports whether a user whose plugin is `plugin` is
 // eligible to hold a secondary ("additional") password. Dual passwords are only
 // meaningful for password-based plugins. LDAP / socket / token plugins are excluded,
 // matching MySQL 8.0 behavior.
+//
+// It delegates to mysql.IsAuthPluginClearText, the canonical predicate for
+// "the plugin derives a server-side hash from a clear-text password"
+// (mysql_native_password / caching_sha2_password / tidb_sm3_password): those
+// are exactly the plugins that can hold a second stored hash. If the two sets
+// ever need to diverge, split this back into its own list and document the
+// difference.
 //
 // Callers MUST pass the resolved plugin (see effectiveAuthPlugin): an empty
 // `plugin` column on a legacy mysql.user row could resolve to anything via
 // `default_authentication_plugin`, and treating "" as natively capable would
 // wrongly allow RETAIN on an LDAP-default deployment.
 func isDualPasswordCapablePlugin(plugin string) bool {
-	switch plugin {
-	case mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
-		return true
-	}
-	return false
+	return mysql.IsAuthPluginClearText(plugin)
 }
 
 // effectiveAuthPlugin normalizes an auth-plugin name for equality comparisons.
