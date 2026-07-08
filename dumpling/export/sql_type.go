@@ -56,6 +56,7 @@ func initColTypeRowReceiverMap() {
 		dataTypeInt[s] = struct{}{}
 	}
 	for _, s := range dataTypeNumArr {
+		dataTypeNum[s] = struct{}{}
 		colTypeRowReceiverMap[s] = SQLTypeNumberMaker
 	}
 	for _, s := range dataTypeBinArr {
@@ -64,7 +65,7 @@ func initColTypeRowReceiverMap() {
 	}
 }
 
-var dataTypeString, dataTypeInt, dataTypeBin = make(map[string]struct{}), make(map[string]struct{}), make(map[string]struct{})
+var dataTypeString, dataTypeInt, dataTypeNum, dataTypeBin = make(map[string]struct{}), make(map[string]struct{}), make(map[string]struct{}), make(map[string]struct{})
 
 func escapeBackslashSQL(s []byte, bf *bytes.Buffer) {
 	var (

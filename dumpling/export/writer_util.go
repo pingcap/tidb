@@ -300,20 +300,35 @@ func WriteInsert(
 }
 
 // columnKinds maps Dumpling column type names to csvfile FieldKinds, mirroring
-// the Number/String/Bytes split that colTypeRowReceiverMap uses to pick a
-// RowReceiver.
+// the Number/String/Bytes split colTypeRowReceiverMap uses to pick a RowReceiver:
+// binary and numeric types keep their kind and everything else (string types and
+// any type absent from the maps) defaults to string, matching MakeRowReceiver's
+// string default so unlisted types stay quoted/escaped.
 func columnKinds(colTypes []string) []csvfile.FieldKind {
 	kinds := make([]csvfile.FieldKind, len(colTypes))
 	for i, ct := range colTypes {
-		if _, ok := dataTypeString[ct]; ok {
-			kinds[i] = csvfile.KindString
-		} else if _, ok := dataTypeBin[ct]; ok {
+		if _, ok := dataTypeBin[ct]; ok {
 			kinds[i] = csvfile.KindBytes
-		} else {
+		} else if _, ok := dataTypeNum[ct]; ok {
 			kinds[i] = csvfile.KindNumber
+		} else {
+			kinds[i] = csvfile.KindString
 		}
 	}
 	return kinds
+}
+
+// toCSVBinaryFormat maps the export BinaryFormat to its csvfile counterpart
+// explicitly, instead of relying on the two enums sharing integer values.
+func toCSVBinaryFormat(f BinaryFormat) csvfile.BinaryFormat {
+	switch f {
+	case BinaryFormatHEX:
+		return csvfile.BinaryFormatHEX
+	case BinaryFormatBase64:
+		return csvfile.BinaryFormatBase64
+	default:
+		return csvfile.BinaryFormatUTF8
+	}
 }
 
 // WriteInsertInCsv writes TableDataIR to an objectio.Writer in CSV format.
@@ -335,7 +350,7 @@ func WriteInsertInCsv(
 		Separator:       []byte(cfg.CsvSeparator),
 		Delimiter:       []byte(cfg.CsvDelimiter),
 		LineTerminator:  []byte(cfg.CsvLineTerminator),
-		BinaryFormat:    csvfile.BinaryFormat(DialectBinaryFormatMap[cfg.CsvOutputDialect]),
+		BinaryFormat:    toCSVBinaryFormat(DialectBinaryFormatMap[cfg.CsvOutputDialect]),
 		EscapeBackslash: cfg.EscapeBackslash,
 	}
 	// CSVWriter writes straight into the object store writer, mirroring the

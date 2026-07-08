@@ -234,8 +234,8 @@ func (w *Writer) WriteTableData(meta TableMeta, ir TableDataIR, currentChunk int
 
 const (
 	// csvUploadConcurrency and csvUploadPartSize configure the concurrent
-	// multipart upload of CSV data files, letting upload overlap with encoding
-	// in place of the writerPipe. Values mirror the distributed exporter.
+	// multipart upload of CSV data files, letting upload overlap with encoding in
+	// place of the writerPipe. The values are dumpling-chosen defaults.
 	csvUploadConcurrency = 4
 	csvUploadPartSize    = 8 * 1024 * 1024
 )

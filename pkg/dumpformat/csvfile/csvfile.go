@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // Package csvfile holds the CSV writer shared by Dumpling and the exporter,
-// the sibling of parquetfile and sqlfile.
+// the sibling of parquetfile.
 package csvfile
 
 // FieldKind classifies a column for CSV framing, mirroring dumpling's
@@ -55,14 +55,4 @@ type Config struct {
 	BinaryFormat BinaryFormat
 	// EscapeBackslash selects backslash escaping instead of delimiter doubling.
 	EscapeBackslash bool
-}
-
-// DefaultConfig returns the CSV defaults matching Dumpling.
-func DefaultConfig() *Config {
-	return &Config{
-		Separator:      []byte(","),
-		Delimiter:      []byte(`"`),
-		NullValue:      []byte(`\N`),
-		LineTerminator: []byte("\n"),
-	}
 }

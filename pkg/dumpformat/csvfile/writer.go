@@ -39,14 +39,6 @@ func NewCSVWriter(w io.Writer, kinds []FieldKind, cfg *Config) *CSVWriter {
 	return &CSVWriter{w: w, cfg: cfg, kinds: kinds}
 }
 
-// Reset points the writer at a new sink and resets the size counter, keeping the
-// column kinds, config and scratch buffer. Use it when the caller cuts a new
-// file.
-func (cw *CSVWriter) Reset(w io.Writer) {
-	cw.w = w
-	cw.written = 0
-}
-
 // Write encodes one row and writes it, with the line terminator, to the
 // underlying writer. len(row) must equal the configured column count; a nil
 // field is treated as NULL.
