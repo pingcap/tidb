@@ -2019,8 +2019,15 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 					return err
 				}
 			}
-			// we have assigned the currentAuthPlugin to spec.AuthOpt.AuthPlugin if the latter is empty, so keep the incomming argument defaultPlugin empty is ok.
-			pwd, ok := encodePasswordWithPlugin(*spec, authPluginImpl, "")
+			// spec.AuthOpt.AuthPlugin was backfilled from currentAuthPlugin above,
+			// but a legacy mysql.user row can have an EMPTY plugin column. The
+			// privilege cache resolves such rows via default_authentication_plugin,
+			// so pass that default here too: otherwise the new password would be
+			// encoded as mysql_native_password even when authentication resolves
+			// the account as caching_sha2_password / tidb_sm3_password, leaving an
+			// unverifiable hash. The plugin column itself is intentionally NOT
+			// rewritten for legacy rows (see the AuthPlugin != "" guard below).
+			pwd, ok := encodePasswordWithPlugin(*spec, authPluginImpl, defaultAuthPlugin)
 			if !ok {
 				return errors.Trace(exeerrors.ErrPasswordFormat)
 			}
@@ -2035,7 +2042,9 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 					pwd:        pwd,
 					authString: spec.AuthOpt.AuthString,
 				}
-				err := checkPasswordReusePolicy(ctx, sqlExecutor, userDetail, e.Ctx(), spec.AuthOpt.AuthPlugin, authPlugins)
+				// Use the resolved plugin so history comparisons hash the same
+				// way the password was encoded (legacy empty-plugin rows).
+				err := checkPasswordReusePolicy(ctx, sqlExecutor, userDetail, e.Ctx(), effectiveAuthPlugin(spec.AuthOpt.AuthPlugin, defaultAuthPlugin), authPlugins)
 				if err != nil {
 					return err
 				}
@@ -2881,16 +2890,20 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	if !exists {
 		return errors.Trace(exeerrors.ErrPasswordNoMatch)
 	}
+	// Resolve the empty-plugin legacy case via default_authentication_plugin.
+	// The resolved plugin drives BOTH the RETAIN capability check and the
+	// password encoding below: the privilege cache authenticates legacy rows
+	// as the resolved default, so encoding by the raw (empty) plugin would
+	// store a mysql_native hash that can never verify under a
+	// caching_sha2/sm3 default.
+	defaultAuthPlugin, derr := e.Ctx().GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.DefaultAuthPlugin)
+	if derr != nil {
+		defaultAuthPlugin = ""
+	}
+	resolvedAuthPlugin := effectiveAuthPlugin(authplugin, defaultAuthPlugin)
 	if s.RetainCurrentPassword {
-		// Resolve the empty-plugin legacy case via default_authentication_plugin
-		// so an LDAP-default deployment is correctly rejected.
-		defaultAuthPlugin, derr := e.Ctx().GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.DefaultAuthPlugin)
-		if derr != nil {
-			defaultAuthPlugin = ""
-		}
-		resolvedPlugin := effectiveAuthPlugin(authplugin, defaultAuthPlugin)
-		if !isDualPasswordCapablePlugin(resolvedPlugin) {
-			return errors.Errorf("Dual password is not supported for users authenticating with plugin '%s'", resolvedPlugin)
+		if !isDualPasswordCapablePlugin(resolvedAuthPlugin) {
+			return errors.Errorf("Dual password is not supported for users authenticating with plugin '%s'", resolvedAuthPlugin)
 		}
 		if s.Password == "" {
 			return exeerrors.ErrCurrentPasswordCannotBeRetained.GenWithStackByArgs(u, h)
@@ -2915,14 +2928,17 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	}
 	authPlugins := extensions.GetAuthPlugins()
 	var pwd string
-	switch authplugin {
+	// Switch on the RESOLVED plugin (not the raw column value) so legacy
+	// empty-plugin rows are encoded in the hash format the privilege cache
+	// will verify them with. The plugin column itself is left untouched.
+	switch resolvedAuthPlugin {
 	case mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
-		pwd = auth.NewHashPassword(s.Password, authplugin)
+		pwd = auth.NewHashPassword(s.Password, resolvedAuthPlugin)
 	case mysql.AuthSocket:
 		e.Ctx().GetSessionVars().StmtCtx.AppendNote(exeerrors.ErrSetPasswordAuthPlugin.FastGenByArgs(u, h))
 		pwd = ""
 	default:
-		if pluginImpl, ok := authPlugins[authplugin]; ok {
+		if pluginImpl, ok := authPlugins[resolvedAuthPlugin]; ok {
 			if pwd, ok = pluginImpl.GenerateAuthString(s.Password); !ok {
 				return exeerrors.ErrPasswordFormat.GenWithStackByArgs()
 			}
@@ -2949,7 +2965,7 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 			pwd:        pwd,
 			authString: s.Password,
 		}
-		err := checkPasswordReusePolicy(ctx, sqlExecutor, userDetail, e.Ctx(), authplugin, authPlugins)
+		err := checkPasswordReusePolicy(ctx, sqlExecutor, userDetail, e.Ctx(), resolvedAuthPlugin, authPlugins)
 		if err != nil {
 			return err
 		}

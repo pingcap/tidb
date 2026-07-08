@@ -16,6 +16,7 @@ package passwordtest
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -729,4 +730,61 @@ func TestDualPasswordSelfRetainWithExplicitSamePlugin(t *testing.T) {
 	require.Contains(t, err.Error(), "CREATE USER")
 	// Nothing changed.
 	require.NoError(t, authAs(t, tk, "dpsameplug", "%", "p3"))
+}
+
+// TestDualPasswordLegacyEmptyPluginEncodesWithResolvedPlugin covers the
+// reviewer-raised legacy-row encoding bug: for a mysql.user row whose plugin
+// column is EMPTY, authentication resolves the account via
+// @@global.default_authentication_plugin, so ALTER USER ... RETAIN and
+// SET PASSWORD ... RETAIN must encode the NEW primary password with that
+// resolved plugin too. Before the fix both paths fell back to
+// mysql_native_password encoding, storing a hash the resolved
+// caching_sha2_password verification could never match.
+func TestDualPasswordLegacyEmptyPluginEncodesWithResolvedPlugin(t *testing.T) {
+	tk := rootTK(t)
+	prevDefault := tk.MustQuery("SELECT @@global.default_authentication_plugin").Rows()[0][0]
+	defer tk.MustExec(fmt.Sprintf("SET GLOBAL default_authentication_plugin = '%s'", prevDefault))
+	tk.MustExec("SET GLOBAL default_authentication_plugin = 'caching_sha2_password'")
+
+	// caching_sha2 accounts authenticate with the PLAINTEXT password (full
+	// authentication); the native scramble helper does not apply here.
+	authPlain := func(user, password string) error {
+		sub := testkit.NewTestKit(t, tk.Session().GetStore())
+		return sub.Session().Auth(&auth.UserIdentity{Username: user, Hostname: "%"}, []byte(password), nil, nil)
+	}
+
+	tk.MustExec("DROP USER IF EXISTS dplegacyenc")
+	tk.MustExec("CREATE USER dplegacyenc IDENTIFIED WITH caching_sha2_password BY 'p1'")
+	// Simulate a legacy row: empty plugin column, resolved via the default.
+	tk.MustExec("UPDATE mysql.user SET plugin = '' WHERE User = 'dplegacyenc'")
+	tk.MustExec("FLUSH PRIVILEGES")
+	require.NoError(t, authPlain("dplegacyenc", "p1"))
+
+	// ALTER USER ... RETAIN on the legacy row: the new primary must be stored
+	// in caching_sha2 ($A$005$...) format, NOT mysql_native (*HEX) format,
+	// and the plugin column must stay empty (legacy value preserved).
+	tk.MustExec("ALTER USER dplegacyenc IDENTIFIED BY 'p2' RETAIN CURRENT PASSWORD")
+	rows := tk.MustQuery(`SELECT plugin, authentication_string,
+		JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.additional_password'))
+		FROM mysql.user WHERE User = 'dplegacyenc'`).Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, "", fmt.Sprint(rows[0][0]))
+	require.True(t, strings.HasPrefix(fmt.Sprint(rows[0][1]), "$A$005$"), "primary not sha2-encoded: %q", rows[0][1])
+	require.True(t, strings.HasPrefix(fmt.Sprint(rows[0][2]), "$A$005$"), "secondary not sha2-encoded: %q", rows[0][2])
+	// Both the new primary and the retained secondary authenticate.
+	require.NoError(t, authPlain("dplegacyenc", "p2"))
+	require.NoError(t, authPlain("dplegacyenc", "p1"))
+
+	// SET PASSWORD ... RETAIN takes a separate executor path: same contract.
+	tk.MustExec("SET PASSWORD FOR dplegacyenc = 'p3' RETAIN CURRENT PASSWORD")
+	rows = tk.MustQuery(`SELECT plugin, authentication_string,
+		JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.additional_password'))
+		FROM mysql.user WHERE User = 'dplegacyenc'`).Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, "", fmt.Sprint(rows[0][0]))
+	require.True(t, strings.HasPrefix(fmt.Sprint(rows[0][1]), "$A$005$"), "primary not sha2-encoded: %q", rows[0][1])
+	require.True(t, strings.HasPrefix(fmt.Sprint(rows[0][2]), "$A$005$"), "secondary not sha2-encoded: %q", rows[0][2])
+	require.NoError(t, authPlain("dplegacyenc", "p3"))
+	require.NoError(t, authPlain("dplegacyenc", "p2"))
+	require.Error(t, authPlain("dplegacyenc", "p1"))
 }
