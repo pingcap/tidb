@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
@@ -40,13 +41,20 @@ const (
 // indexWithScore stores an access path along with its coverage scores for ranking.
 type indexWithScore struct {
 	path                 *util.AccessPath
-	interestingCount     int     // Total number of interesting columns covered
+	interestingCount     int     // Total number of interesting columns covered (excluding discounted ones)
 	consecutiveColumnIDs []int64 // IDs of consecutive columns (for detecting different orderings)
+	coveredColumnIDs     []int64 // IDs of all covered interesting columns in index order; consecutive ones come first
 }
 
 // columnRequirements holds the column maps needed for index pruning.
 type columnRequirements struct {
 	interestingColIDs map[int64]struct{}
+	// discountedColIDs is the equality/IN-bound leading prefix of the clustered key
+	// (e.g. a tenant ID that leads every index in a multi-tenant schema). The table
+	// path serves these columns directly, so covering them carries no discriminating
+	// power when ranking indexes: they extend an index's usable prefix but contribute
+	// nothing to its score.
+	discountedColIDs map[int64]struct{}
 }
 
 // ShouldPreferIndexMerge returns true if index merge should be preferred, either due to hints or fix control.
@@ -64,6 +72,10 @@ func ShouldPreferIndexMerge(ds *logicalop.DataSource) bool {
 // 2. Have consecutive column matches from the index start (enabling index prefix usage)
 // 3. Support single-scan (covering index without table lookups)
 // 4. Have different consecutive column orderings (e.g., if interesting columns are A, B, keep both (A,B) and (B,A))
+// Leading clustered-key columns bound by equality/IN predicates (e.g. a tenant ID that
+// prefixes every index in a multi-tenant schema) are discounted: they extend an index's
+// usable prefix but contribute nothing to its score, since the table path serves them
+// directly and they cannot differentiate one index from another.
 // The threshold controls the behavior:
 // threshold = -1: disable pruning (handled by caller)
 // threshold = 0: only prune indexes with no interesting columns (score == 0)
@@ -87,6 +99,7 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 
 	// Build column ID maps and calculate totals
 	req := buildColumnRequirements(interestingColumns)
+	req.discountedColIDs = discountedHandlePrefixCols(ds, req.interestingColIDs)
 
 	preferredIndexes := make([]indexWithScore, 0, totalPathCount)
 	tablePaths := make([]*util.AccessPath, 0, 1)
@@ -204,8 +217,10 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 		return paths
 	}
 
-	// Additional safety: if we only have table paths and MVIndex paths and no regular indexes, keep original
-	if len(result) == len(tablePaths)+len(mvIndexPaths) && len(preferredIndexes) == 0 {
+	// Additional safety: if we only have table paths and MVIndex paths and no regular indexes, keep original.
+	// Exception: when discounted columns exist, an empty index set is an intentional outcome — every index
+	// covered only the equality-bound clustered-key prefix, which the table path already serves directly.
+	if len(result) == len(tablePaths)+len(mvIndexPaths) && len(preferredIndexes) == 0 && len(req.discountedColIDs) == 0 {
 		return paths
 	}
 
@@ -226,6 +241,108 @@ func buildColumnRequirements(interestingColumns []*expression.Column) columnRequ
 	return req
 }
 
+// collectEqOrInBoundColIDs returns the IDs of columns bound by an equality or IN
+// predicate against constants in the given conjunctive conditions.
+func collectEqOrInBoundColIDs(conds []expression.Expression) map[int64]struct{} {
+	var colIDs map[int64]struct{}
+	addCol := func(col *expression.Column) {
+		if colIDs == nil {
+			colIDs = make(map[int64]struct{})
+		}
+		colIDs[col.ID] = struct{}{}
+	}
+	for _, cond := range conds {
+		sf, ok := cond.(*expression.ScalarFunction)
+		if !ok {
+			continue
+		}
+		args := sf.GetArgs()
+		switch sf.FuncName.L {
+		case ast.EQ:
+			if col, ok := args[0].(*expression.Column); ok {
+				if _, isConst := args[1].(*expression.Constant); isConst {
+					addCol(col)
+				}
+			} else if col, ok := args[1].(*expression.Column); ok {
+				if _, isConst := args[0].(*expression.Constant); isConst {
+					addCol(col)
+				}
+			}
+		case ast.In:
+			col, ok := args[0].(*expression.Column)
+			if !ok {
+				continue
+			}
+			allConst := true
+			for _, arg := range args[1:] {
+				if _, isConst := arg.(*expression.Constant); !isConst {
+					allConst = false
+					break
+				}
+			}
+			if allConst {
+				addCol(col)
+			}
+		}
+	}
+	return colIDs
+}
+
+// discountedHandlePrefixCols returns the leading clustered-key columns that are bound
+// by equality or IN predicates on constants. In multi-tenant schemas every index leads
+// with the tenant column, so covering it says nothing about which index is better —
+// and the table path (clustered key) already provides the same access. Such columns
+// still extend an index's usable prefix, so scoring lets them anchor consecutive-column
+// tracking without contributing to the score. Only a bound leading prefix qualifies:
+// discounting stops at the first clustered-key column without an equality/IN predicate.
+func discountedHandlePrefixCols(ds *logicalop.DataSource, interestingColIDs map[int64]struct{}) map[int64]struct{} {
+	if ds.TableInfo == nil {
+		return nil
+	}
+	var pkColIDs []int64
+	if ds.TableInfo.PKIsHandle {
+		if pkCol := ds.TableInfo.GetPkColInfo(); pkCol != nil {
+			pkColIDs = []int64{pkCol.ID}
+		}
+	} else if ds.TableInfo.IsCommonHandle {
+		pk := ds.TableInfo.GetPrimaryKey()
+		if pk == nil {
+			return nil
+		}
+		for _, idxCol := range pk.Columns {
+			if idxCol.Offset < 0 || idxCol.Offset >= len(ds.TableInfo.Columns) {
+				return nil
+			}
+			if idxCol.Length > 0 {
+				// A prefix column cannot fully serve an equality predicate.
+				break
+			}
+			pkColIDs = append(pkColIDs, ds.TableInfo.Columns[idxCol.Offset].ID)
+		}
+	}
+	if len(pkColIDs) == 0 {
+		return nil
+	}
+	eqBound := collectEqOrInBoundColIDs(ds.PushedDownConds)
+	if len(eqBound) == 0 {
+		return nil
+	}
+	var discounted map[int64]struct{}
+	for _, colID := range pkColIDs {
+		if _, ok := eqBound[colID]; !ok {
+			break
+		}
+		if _, ok := interestingColIDs[colID]; !ok {
+			break
+		}
+		if discounted == nil {
+			discounted = make(map[int64]struct{}, len(pkColIDs))
+		}
+		discounted[colID] = struct{}{}
+	}
+	return discounted
+}
+
 // buildOrderingKey creates a string key representing the consecutive column ordering.
 // This is used to detect and keep indexes with different orderings.
 func buildOrderingKey(columnIDs []int64) string {
@@ -244,6 +361,17 @@ func buildOrderingKey(columnIDs []int64) string {
 		fmt.Fprintf(&builder, "%d", id)
 	}
 	return builder.String()
+}
+
+// buildCoverageKey builds a signature of the interesting columns an index covers:
+// the consecutive prefix (order-sensitive) followed by the remaining covered columns
+// (order-insensitive). Two indexes with the same signature cover the same interesting
+// columns with the same usable prefix, so for this query the higher-ranked one
+// dominates the other and the loser can be pruned.
+func buildCoverageKey(info indexWithScore) string {
+	rest := slices.Clone(info.coveredColumnIDs[len(info.consecutiveColumnIDs):])
+	slices.Sort(rest)
+	return buildOrderingKey(info.consecutiveColumnIDs) + "|" + buildOrderingKey(rest)
 }
 
 // scoreIndexPath calculates coverage metrics for a single index path.
@@ -271,25 +399,37 @@ func scoreIndexPath(
 	}
 
 	if path.FullIdxCols != nil {
-		// Normal path: use FullIdxCols which contains expression.Column with IDs
+		// Normal path: use FullIdxCols which contains expression.Column with IDs.
+		// chainPos tracks how far the usable index prefix extends: interesting columns
+		// and discounted (equality-bound clustered-key prefix) columns both extend it,
+		// but only non-discounted columns contribute to the score.
+		chainPos := 0
 		for i, idxCol := range path.FullIdxCols {
 			if idxCol == nil {
 				continue
 			}
 			idxColID := idxCol.ID
 
+			if _, discounted := req.discountedColIDs[idxColID]; discounted {
+				if i == chainPos {
+					chainPos++
+				}
+				continue
+			}
 			// Check if this index column matches an interesting column
 			if _, found := req.interestingColIDs[idxColID]; found {
 				score.interestingCount++
+				score.coveredColumnIDs = append(score.coveredColumnIDs, idxColID)
 				// Track consecutive columns from the start of the index
-				if i == len(score.consecutiveColumnIDs) {
+				if i == chainPos {
+					chainPos++
 					score.consecutiveColumnIDs = append(score.consecutiveColumnIDs, idxColID)
 				}
 			}
 			// Note: We continue checking all columns to count all interesting columns,
 			// even if they're not consecutive from the start. The consecutive tracking
-			// will naturally stop once we hit a non-interesting column, since the condition
-			// `i == len(score.consecutiveColumnIDs)` will no longer be true.
+			// naturally stops once we hit a column that is neither interesting nor
+			// discounted, since `i == chainPos` will no longer hold.
 		}
 	} else if path.Index != nil && tableColumns != nil {
 		// Fallback path: use Index.Columns (for static pruning mode when FullIdxCols is nil)
@@ -304,6 +444,9 @@ func scoreIndexPath(
 			}
 			idxColID := colInfo.ID
 
+			if _, discounted := req.discountedColIDs[idxColID]; discounted {
+				continue
+			}
 			// Check if this index column matches an interesting column
 			if _, found := req.interestingColIDs[idxColID]; found {
 				score.interestingCount++
@@ -332,8 +475,11 @@ func scoreAndSort(indexes []indexWithScore, req columnRequirements) []scoredInde
 		return nil
 	}
 	scored := make([]scoredIndex, 0, len(indexes))
+	// Discounted columns are excluded from per-index counts, so exclude them from
+	// the full-coverage target as well.
+	marginalTotal := len(req.interestingColIDs) - len(req.discountedColIDs)
 	for _, candidate := range indexes {
-		score := calculateScoreFromCoverage(candidate, len(req.interestingColIDs), candidate.path.IsSingleScan)
+		score := calculateScoreFromCoverage(candidate, marginalTotal, candidate.path.IsSingleScan)
 		// Skip indexes with score == 0 as they don't provide any value
 		if score == 0 {
 			continue
@@ -435,7 +581,7 @@ type indexSelectionState struct {
 	hasNonZeroScore          bool
 	phase1Count              int
 	seenConsecutiveColumnIDs map[int64]struct{}
-	seenOrderingKeys         map[string]struct{}
+	seenCoverageKeys         map[string]struct{}
 }
 
 func newIndexSelectionState(phase1Limit, maxToKeep int) *indexSelectionState {
@@ -443,7 +589,7 @@ func newIndexSelectionState(phase1Limit, maxToKeep int) *indexSelectionState {
 		phase1Limit:              phase1Limit,
 		remaining:                maxToKeep,
 		seenConsecutiveColumnIDs: make(map[int64]struct{}),
-		seenOrderingKeys:         make(map[string]struct{}),
+		seenCoverageKeys:         make(map[string]struct{}),
 	}
 }
 
@@ -476,41 +622,46 @@ func selectIndexes(preferredScored []scoredIndex, added map[*util.AccessPath]str
 
 // shouldAddIndex determines if an index should be added based on phase and diversity rules
 func shouldAddIndex(entry scoredIndex, path *util.AccessPath, req columnRequirements, state *indexSelectionState) bool {
+	hasConsecutive := len(entry.info.consecutiveColumnIDs) > 0
 	if state.phase1Count < state.phase1Limit {
-		// Phase 1: Keep top threshold/2 based solely on score
+		// Phase 1: Keep top threshold/2 based on score, but skip an index whose
+		// interesting-column coverage duplicates an already-selected index: the
+		// earlier (higher-ranked) index dominates it for this query, so keeping
+		// it wastes a slot, stats loading, and range building downstream.
+		if hasConsecutive {
+			if _, seen := state.seenCoverageKeys[buildCoverageKey(entry.info)]; seen {
+				return false
+			}
+		}
 		state.phase1Count++
-		recordConsecutiveColumns(entry.info.consecutiveColumnIDs, state)
+		recordCoverage(entry.info, state)
 		return true
 	}
 
 	// Phase 2: Apply diversity rules
-	hasConsecutive := len(entry.info.consecutiveColumnIDs) > 0
 	if hasConsecutive {
-		return shouldAddIndexWithConsecutive(entry.info.consecutiveColumnIDs, state)
+		return shouldAddIndexWithConsecutive(entry.info, state)
 	}
 
 	return shouldAddIndexWithoutConsecutive(entry, path, req, state)
 }
 
-// recordConsecutiveColumns tracks consecutive column IDs and ordering keys
-func recordConsecutiveColumns(consecutiveColumnIDs []int64, state *indexSelectionState) {
-	for _, colID := range consecutiveColumnIDs {
+// recordCoverage tracks consecutive column IDs and coverage keys
+func recordCoverage(info indexWithScore, state *indexSelectionState) {
+	for _, colID := range info.consecutiveColumnIDs {
 		state.seenConsecutiveColumnIDs[colID] = struct{}{}
 	}
-	if len(consecutiveColumnIDs) > 0 {
-		orderingKey := buildOrderingKey(consecutiveColumnIDs)
-		state.seenOrderingKeys[orderingKey] = struct{}{}
+	if len(info.consecutiveColumnIDs) > 0 {
+		state.seenCoverageKeys[buildCoverageKey(info)] = struct{}{}
 	}
 }
 
 // shouldAddIndexWithConsecutive checks if an index with consecutive columns should be added in phase 2
-func shouldAddIndexWithConsecutive(consecutiveColumnIDs []int64, state *indexSelectionState) bool {
-	orderingKey := buildOrderingKey(consecutiveColumnIDs)
-	if _, seen := state.seenOrderingKeys[orderingKey]; seen {
+func shouldAddIndexWithConsecutive(info indexWithScore, state *indexSelectionState) bool {
+	if _, seen := state.seenCoverageKeys[buildCoverageKey(info)]; seen {
 		return false
 	}
-	state.seenOrderingKeys[orderingKey] = struct{}{}
-	recordConsecutiveColumns(consecutiveColumnIDs, state)
+	recordCoverage(info, state)
 	return true
 }
 
@@ -541,6 +692,9 @@ func findSingleInterestingColumn(path *util.AccessPath, req columnRequirements) 
 	}
 	for _, idxCol := range path.FullIdxCols {
 		if idxCol != nil {
+			if _, discounted := req.discountedColIDs[idxCol.ID]; discounted {
+				continue
+			}
 			if _, found := req.interestingColIDs[idxCol.ID]; found {
 				return idxCol.ID
 			}
@@ -564,7 +718,7 @@ func calculateScoreFromCoverage(info indexWithScore, totalColumns int, isSingleS
 	score += len(info.consecutiveColumnIDs) * 10
 
 	// Bonus if the index is covering all interesting columns
-	if info.interestingCount == totalColumns {
+	if totalColumns > 0 && info.interestingCount == totalColumns {
 		score += 10
 	}
 
