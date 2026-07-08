@@ -114,14 +114,20 @@ func WriteInsert(
 		}
 	}()
 
+	// preambleSize counts the special comments written straight to the sink, which
+	// SQLWriter's EstimateFileSize does not see, so finishedSize covers the whole
+	// file.
+	var preambleSize int
 	specCmtIter := meta.SpecialComments()
 	for specCmtIter.HasNext() {
-		if _, err = sink.Write([]byte(specCmtIter.Next())); err != nil {
+		cmt := []byte(specCmtIter.Next())
+		if _, err = sink.Write(cmt); err != nil {
 			return 0, errors.Trace(err)
 		}
 		if _, err = sink.Write([]byte{'\n'}); err != nil {
 			return 0, errors.Trace(err)
 		}
+		preambleSize += len(cmt) + 1
 	}
 
 	// rawRow is reused across rows to avoid a per-row slice allocation.
@@ -152,7 +158,7 @@ func WriteInsert(
 		failpoint.Inject("AtEveryRow", nil)
 
 		fileRowIter.Next()
-		if cfg.FileSize != UnspecifiedSize && sw.EstimateFileSize() >= cfg.FileSize {
+		if cfg.FileSize != UnspecifiedSize && uint64(preambleSize)+sw.EstimateFileSize() >= cfg.FileSize {
 			break
 		}
 	}
@@ -162,7 +168,7 @@ func WriteInsert(
 	if err = sw.Close(); err != nil {
 		return counter, errors.Trace(err)
 	}
-	finishedSize = sw.EstimateFileSize()
+	finishedSize = uint64(preambleSize) + sw.EstimateFileSize()
 	AddGauge(metrics.finishedSizeGauge, float64(finishedSize))
 	if err = fileRowIter.Error(); err != nil {
 		return counter, errors.Trace(err)
