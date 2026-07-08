@@ -539,6 +539,10 @@ const (
 	// TiDBMaxPagingSize is used to control the max paging size in the coprocessor paging protocol.
 	TiDBMaxPagingSize = "tidb_max_paging_size"
 
+	// TiDBPagingSizeBytes is the byte budget per coprocessor page.
+	// 0 means disabled (no byte-budget paging).
+	TiDBPagingSizeBytes = "tidb_paging_size_bytes"
+
 	// TiDBEnableCascadesPlanner is used to control whether to enable the cascades planner.
 	TiDBEnableCascadesPlanner = "tidb_enable_cascades_planner"
 
@@ -720,6 +724,16 @@ const (
 
 	// TiDBStmtSummaryMaxSQLLength indicates the max length of displayed normalized sql and sample sql.
 	TiDBStmtSummaryMaxSQLLength = "tidb_stmt_summary_max_sql_length"
+
+	// TiDBStmtSummaryPersistEvicted controls whether per-record LRU evictions
+	// in the v2 (persistent) statement summary are persisted to the stmt log.
+	// Off by default because it adds log volume proportional to eviction rate.
+	TiDBStmtSummaryPersistEvicted = "tidb_stmt_summary_persist_evicted"
+
+	// TiDBStmtSummaryGroupByUser, when enabled, adds the executing user to the
+	// statement summary grouping key so the same digest run by different users
+	// produces separate rows. Off by default to avoid cardinality growth.
+	TiDBStmtSummaryGroupByUser = "tidb_stmt_summary_group_by_user"
 
 	// TiDBIgnoreInlistPlanDigest enables TiDB to generate the same plan digest with SQL using different in-list arguments.
 	TiDBIgnoreInlistPlanDigest = "tidb_ignore_inlist_plan_digest"
@@ -1496,6 +1510,7 @@ const (
 	DefInitChunkSize                        = 32
 	DefMinPagingSize                        = int(paging.MinPagingSize)
 	DefMaxPagingSize                        = int(paging.MinAllowedMaxPagingSize)
+	DefPagingSizeBytes                      = 0
 	DefMaxChunkSize                         = 1024
 	DefDMLBatchSize                         = 0
 	DefMaxPreparedStmtCount                 = -1
@@ -1622,6 +1637,8 @@ const (
 	DefTiDBStmtSummaryHistorySize                     = 24
 	DefTiDBStmtSummaryMaxStmtCount                    = 3000
 	DefTiDBStmtSummaryMaxSQLLength                    = 32768
+	DefTiDBStmtSummaryPersistEvicted                  = false
+	DefTiDBStmtSummaryGroupByUser                     = false
 	DefTiDBCapturePlanBaseline                        = Off
 	DefTiDBIgnoreInlistPlanDigest                     = true
 	DefTiDBEnableIndexMerge                           = true
@@ -1682,7 +1699,7 @@ const (
 	DefTiDBGenerateBinaryPlan                         = true
 	DefTiDBEnableDDLAnalyze                           = false
 	DefEnableTiDBGCAwareMemoryTrack                   = false
-	DefTiDBDefaultStrMatchSelectivity                 = 0.8
+	DefTiDBDefaultStrMatchSelectivity                 = 0
 	DefTiDBEnableTmpStorageOnOOM                      = true
 	DefTiDBEnableMDL                                  = true
 	DefTiFlashFastScan                                = false

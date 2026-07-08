@@ -28,6 +28,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -649,6 +650,56 @@ func TestCanSkipIndexEstimation(t *testing.T) {
 		"exclusive lower bound on NULL must drop the NULL row, estimate must be < RealtimeCount")
 }
 
+// TestOutOfRangeEstimationWithoutIdx2ColMapping verifies that the StatsVer2 out-of-range
+// estimation does not panic when the index-to-column mapping (Idx2ColUniqueIDs) is empty.
+// getIndexRowCountForStatsV2 reads Idx2ColUniqueIDs[idx.Histogram.ID][0] to prefer the leading
+// column's histogram for single-column ranges; if that mapping is not populated the
+// access must be guarded and the estimation must fall back to the index histogram.
+func TestOutOfRangeEstimationWithoutIdx2ColMapping(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, key idx(a))")
+	is := dom.InfoSchema()
+	tb, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tb.Meta()
+
+	// A fully-loaded StatsVer2 index whose histogram covers the encoded values [0, nonNullCount).
+	const nonNullCount = 50
+	statsTbl := mockStatsTable(tblInfo, nonNullCount)
+	idxValues := make([]types.Datum, nonNullCount)
+	for i := range idxValues {
+		enc, err := codec.EncodeKey(time.UTC, nil, types.NewIntDatum(int64(i)))
+		require.NoError(t, err)
+		idxValues[i].SetBytes(enc)
+	}
+	idxHist := mockStatsHistogram(tblInfo.Indices[0].ID, idxValues, 1, types.NewFieldType(mysql.TypeBlob))
+	statsTbl.SetIdx(tblInfo.Indices[0].ID, &statistics.Index{
+		Histogram:         *idxHist,
+		Info:              tblInfo.Indices[0],
+		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+		StatsVer:          2,
+	})
+	// Intentionally do NOT populate Idx2ColUniqueIDs: it stays empty, simulating a HistColl
+	// where the index-to-column mapping was not built. Before the guard, the out-of-range
+	// path indexed colIDs[0] on this empty slice and panicked.
+
+	idxID := tblInfo.Indices[0].ID
+	sctx := tk.Session().GetPlanCtx()
+
+	// An interval range fully above the histogram max forces the StatsVer2 out-of-range
+	// branch (a point range would short-circuit earlier). This must not panic and must
+	// return a small, positive estimate from the index histogram fallback.
+	require.NotPanics(t, func() {
+		countResult, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(1000, 2000), nil)
+		require.NoError(t, err)
+		require.Greater(t, countResult.Est, 0.0)
+		require.Less(t, countResult.Est, float64(nonNullCount))
+	})
+}
+
 func TestEstimationForUnknownValuesAfterModify(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
@@ -750,6 +801,53 @@ func TestIssue57948(t *testing.T) {
 	testKit.MustExec("create index idxb on t(b)")
 	// Create index after ANALYZE. SkyLine pruning should ensure that idxb is chosen because it has statistics
 	testKit.MustQuery("explain format='brief' select * from t where b = 5").CheckContain("idxb(b)")
+}
+
+func TestVirtualColumnIndexEstimation(t *testing.T) {
+	// A composite index whose last column is a virtual generated column. Virtual
+	// columns have no column statistics, so the exponential backoff estimation
+	// would skip the most selective column and heavily over-estimate the row
+	// count. Verify that estimation falls back to the index statistics instead.
+	// See https://github.com/pingcap/tidb/issues/69134.
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
+	tk.MustExec("create table t(a int, b int, c int, d int as (c + 1) virtual, index iabd(a, b, d))")
+	// a and b are low-selectivity columns (5 distinct values each), d is highly selective.
+	tk.MustExec("insert into t(a, b, c) select mod(x.a, 5), mod(x.a, 5), x.a from (with recursive x as (select 1 as a union all select a + 1 from x where a < 500) select a from x) as x")
+	// Use few buckets so the multi-column histogram upper bound cannot mask the
+	// exponential backoff over-estimation. Pin analyze version 2 so the test
+	// always exercises the stats-v2 estimation path.
+	tk.MustExec("set @@session.tidb_analyze_version=2")
+	tk.MustExec("analyze table t with 8 buckets, 0 topn")
+	// Confirm index iabd statistics were actually built before relying on the
+	// row-count comparisons below.
+	require.NotEmpty(t, tk.MustQuery("show stats_histograms where db_name = 'test' and table_name = 't' and column_name = 'iabd' and is_index = 1").Rows())
+	rows := tk.MustQuery("explain analyze format='brief' select * from t use index(iabd) where a = 1 and b = 1 and d > 447").Rows()
+	estRows, err := strconv.ParseFloat(rows[0][1].(string), 64)
+	require.NoError(t, err)
+	actRows, err := strconv.ParseFloat(rows[0][2].(string), 64)
+	require.NoError(t, err)
+	require.Equal(t, float64(10), actRows)
+	// Exponential backoff using only a and b would estimate ~45 rows.
+	require.Less(t, estRows, 25.0)
+
+	// Control case: identical data, but d is a real (non-virtual) column excluded
+	// from analyze, so it has no column stats. The exp-backoff estimate from the
+	// remaining columns (clamped by the index histogram upper bound to ~16 rows)
+	// must be kept, not abandoned for the raw index-stats estimate (~2 rows).
+	tk.MustExec("create table t2(a int, b int, c int, d int, index iabd(a, b, d))")
+	tk.MustExec("insert into t2 select a, b, c, d from t")
+	tk.MustExec("set @@session.tidb_analyze_version=2")
+	tk.MustExec("analyze table t2 columns a, b with 8 buckets, 0 topn")
+	// Confirm index iabd statistics were actually built before relying on the
+	// row-count comparison below.
+	require.NotEmpty(t, tk.MustQuery("show stats_histograms where db_name = 'test' and table_name = 't2' and column_name = 'iabd' and is_index = 1").Rows())
+	rows = tk.MustQuery("explain analyze format='brief' select * from t2 use index(iabd) where a = 1 and b = 1 and d > 447").Rows()
+	estRows, err = strconv.ParseFloat(rows[0][1].(string), 64)
+	require.NoError(t, err)
+	require.Greater(t, estRows, 10.0)
 }
 
 func TestNewIndexWithColumnStats(t *testing.T) {
@@ -1315,6 +1413,94 @@ func TestTopNAssistedEstimationWithNewCollation(t *testing.T) {
 	statsSuiteData := cardinality.GetCardinalitySuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
 	testTopNAssistedEstimationInner(t, input, output, store, dom)
+}
+
+func TestDefaultStringMatchSelectivityZeroImprovesLikeEstimation(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a varchar(64))")
+	for range 5 {
+		tk.MustExec(`insert into t values ("needle target")`)
+	}
+	for range 95 {
+		tk.MustExec(`insert into t values ("other value")`)
+	}
+	tk.MustExec("flush stats_delta *.*")
+	tk.MustExec("analyze table t all columns with 2 topn")
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+
+	query := "select * from t where a like '%needle%'"
+	actualRows, err := strconv.ParseFloat(tk.MustQuery("select count(*) from t where a like '%needle%'").Rows()[0][0].(string), 64)
+	require.NoError(t, err)
+
+	tk.MustExec("set @@tidb_default_string_match_selectivity = 0.8")
+	defaultEstimate := getTableReaderEstRows(t, tk, query)
+	tk.MustExec("set @@tidb_default_string_match_selectivity = 0")
+	topNAssistedEstimate := getTableReaderEstRows(t, tk, query)
+
+	// The default estimate is 0.8 * 100 = 80, while the topN assisted estimate should be around 5, which is much closer to the actual row count.
+	require.Less(t, math.Abs(topNAssistedEstimate-actualRows), math.Abs(defaultEstimate-actualRows))
+}
+
+func TestStringMatchSelectivityDoesNotRestoreTransientHistogramBoundsSelection(t *testing.T) {
+	sctx := mock.NewContext()
+	sctx.GetSessionVars().EnableVectorizedExpression = true
+
+	tp := types.NewFieldType(mysql.TypeVarchar)
+	hist := statistics.NewHistogram(1, 6, 0, 0, tp, 3, 0)
+	appendBucket := func(lower, upper string, count, repeat int64) {
+		lowerDatum := types.NewStringDatum(lower)
+		upperDatum := types.NewStringDatum(upper)
+		hist.AppendBucket(&lowerDatum, &upperDatum, count, repeat)
+	}
+	appendBucket("BRASS", "BRASS", 2, 1)
+	appendBucket("IRON", "IRON", 4, 1)
+	appendBucket("STEEL", "STEEL", 6, 1)
+
+	colStats := &statistics.Column{
+		Info: &model.ColumnInfo{
+			ID:        1,
+			Name:      ast.NewCIStr("a"),
+			FieldType: *tp,
+		},
+		Histogram:         *hist,
+		TopN:              &statistics.TopN{},
+		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+		StatsVer:          statistics.Version2,
+	}
+	coll := statistics.NewHistColl(1, 6, 0, 1, 0)
+	coll.SetCol(1, colStats)
+
+	filter, err := expression.NewFunction(
+		sctx,
+		ast.Like,
+		types.NewFieldType(mysql.TypeLonglong),
+		&expression.Column{UniqueID: 1, RetType: tp},
+		&expression.Constant{Value: types.NewStringDatum("%R%"), RetType: tp},
+		&expression.Constant{Value: types.NewIntDatum('\\'), RetType: types.NewFieldType(mysql.TypeLonglong)},
+	)
+	require.NoError(t, err)
+
+	// Simulate a concurrent VecEvalBool call that temporarily narrowed the
+	// shared cached histogram bounds chunk to unrelated rows.
+	transientSel := []int{4, 5}
+	colStats.Bounds.SetSel(transientSel)
+
+	ok, selectivity, err := cardinality.GetSelectivityByFilter(sctx, coll, filter)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.InEpsilon(t, 2.0/3.0, selectivity, 1e-12)
+	require.Equal(t, transientSel, colStats.Bounds.Sel())
+}
+
+func getTableReaderEstRows(t *testing.T, tk *testkit.TestKit, query string) float64 {
+	rows := tk.MustQuery("explain format = 'brief' " + query).Rows()
+	estRows, err := strconv.ParseFloat(rows[0][1].(string), 64)
+	require.NoError(t, err)
+	return estRows
 }
 
 func testTopNAssistedEstimationInner(t *testing.T, input []string, output []outputType, store kv.Storage, dom *domain.Domain) {
@@ -2254,7 +2440,7 @@ func TestBuiltinInEstWithoutStats(t *testing.T) {
 	tk.MustQuery("explain format='brief' select * from t where b in (1, 2, 3, 4, 5, 6, 7, 8)").Check(expectedB)
 
 	h.Clear()
-	require.NoError(t, h.InitStatsLite(context.Background()))
+	require.NoError(t, h.InitStatsLite(context.Background(), is))
 	tk.MustQuery("explain format='brief' select * from t where a in (1, 2, 3, 4, 5, 6, 7, 8)").Check(expectedA)
 	tk.MustQuery("explain format='brief' select * from t where b in (1, 2, 3, 4, 5, 6, 7, 8)").Check(expectedB)
 

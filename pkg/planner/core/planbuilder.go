@@ -82,7 +82,6 @@ import (
 	semv1 "github.com/pingcap/tidb/pkg/util/sem"
 	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	semv2 "github.com/pingcap/tidb/pkg/util/sem/v2"
-	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
@@ -260,12 +259,12 @@ type PlanBuilder struct {
 	// SelectLock need this information to locate the lock on partitions.
 	partitionedTable []table.PartitionedTable
 	// buildingViewStack is used to check whether there is a recursive view.
-	buildingViewStack set.StringSet
+	buildingViewStack map[schemaTableKey]struct{}
 	// ignoreTruncateErrForViewPredicateFolding narrows truncate relaxation to
 	// constant predicate folding while expanding a view.
 	ignoreTruncateErrForViewPredicateFolding bool
 	// renamingViewName is the name of the view which is being renamed.
-	renamingViewName string
+	renamingViewName schemaTableKey
 	// isCreateView indicates whether the query is create view.
 	isCreateView bool
 
@@ -2937,7 +2936,9 @@ func (b *PlanBuilder) genV2AnalyzeOptions(
 func (b *PlanBuilder) getSavedAnalyzeOpts(physicalID int64, tblInfo *model.TableInfo) (map[ast.AnalyzeOptionType]uint64, ast.ColumnChoice, []*model.ColumnInfo, error) {
 	analyzeOptions := map[ast.AnalyzeOptionType]uint64{}
 	exec := b.ctx.GetRestrictedSQLExecutor()
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	// Deliberately not the analyze source: reading saved options is lightweight
+	// metadata work, not the heavy scan that background throttling targets.
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsForegroundPriority)
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select sample_num,sample_rate,buckets,topn,column_choice,column_ids from mysql.analyze_options where table_id = %?", physicalID)
 	if err != nil {
 		return nil, ast.DefaultChoice, nil, err
@@ -5445,7 +5446,7 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 		}
 		b.isCreateView = true
 		b.capFlag |= canExpandAST | renameView
-		b.renamingViewName = v.ViewName.Schema.L + "." + v.ViewName.Name.L
+		b.renamingViewName = newSchemaTableKey(v.ViewName.Schema, v.ViewName.Name)
 		defer func() {
 			b.capFlag &= ^canExpandAST
 			b.capFlag &= ^renameView
@@ -5711,7 +5712,7 @@ func (b *PlanBuilder) buildTrace(trace *ast.TraceStmt) (base.Plan, error) {
 	return p, nil
 }
 
-func (b *PlanBuilder) buildExplainPlan(targetPlan base.Plan, format string, explainBriefBinary string, analyze, explore bool, execStmt ast.StmtNode, runtimeStats *execdetails.RuntimeStatsColl, sqlDigest string) (base.Plan, error) {
+func (b *PlanBuilder) buildExplainPlan(targetPlan base.Plan, format string, explainBriefBinary string, analyze, explore bool, execStmt ast.StmtNode, runtimeStats *execdetails.RuntimeStatsColl, sqlDigest, replayerFile string) (base.Plan, error) {
 	format = strings.ToLower(format)
 	if format == types.ExplainFormatTrueCardCost && !analyze {
 		return nil, errors.Errorf("'explain format=%v' cannot work without 'analyze', please use 'explain analyze format=%v'", format, format)
@@ -5723,6 +5724,7 @@ func (b *PlanBuilder) buildExplainPlan(targetPlan base.Plan, format string, expl
 		Analyze:          analyze,
 		Explore:          explore,
 		SQLDigest:        sqlDigest,
+		ReplayerFile:     replayerFile,
 		ExecStmt:         execStmt,
 		BriefBinaryPlan:  explainBriefBinary,
 		RuntimeStatsColl: runtimeStats,
@@ -5755,7 +5757,7 @@ func (b *PlanBuilder) buildExplainFor(explainFor *ast.ExplainForStmt) (base.Plan
 	if explainForFormat != types.ExplainFormatBrief && explainForFormat != types.ExplainFormatROW && explainForFormat != types.ExplainFormatVerbose {
 		return nil, errors.Errorf("explain format '%s' for connection is not supported now", explainForFormat)
 	}
-	return b.buildExplainPlan(targetPlan, explainForFormat, processInfo.BriefBinaryPlan, false, false, nil, processInfo.RuntimeStatsColl, "")
+	return b.buildExplainPlan(targetPlan, explainForFormat, processInfo.BriefBinaryPlan, false, false, nil, processInfo.RuntimeStatsColl, "", "")
 }
 
 // getHintedStmtThroughPlanDigest gets the hinted SQL like `select /*+ ... */ * from t where ...` from `stmt_summary`
@@ -5821,7 +5823,7 @@ func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt
 		}
 	}
 
-	return b.buildExplainPlan(targetPlan, explain.Format, "", explain.Analyze, explain.Explore, explain.Stmt, nil, explain.SQLDigest)
+	return b.buildExplainPlan(targetPlan, explain.Format, "", explain.Analyze, explain.Explore, explain.Stmt, nil, explain.SQLDigest, explain.ReplayerFile)
 }
 
 func (b *PlanBuilder) buildSelectInto(ctx context.Context, sel *ast.SelectStmt) (base.Plan, error) {
@@ -6143,8 +6145,9 @@ func (b *PlanBuilder) buildPlanReplayer(pc *ast.PlanReplayerStmt) base.Plan {
 		p.HistoricalStatsTS = calcTSForPlanReplayer(b.ctx, pc.HistoricalStatsInfo.TsExpr)
 	}
 
-	schema := newColumnsWithNames(1)
-	schema.Append(buildColumnWithName("", "File_token", mysql.TypeVarchar, 128))
+	schema := newColumnsWithNames(2)
+	schema.Append(buildColumnWithName("", "Item", mysql.TypeVarchar, 32))
+	schema.Append(buildColumnWithName("", "Value", mysql.TypeVarchar, mysql.MaxBlobWidth))
 	p.SetSchema(schema.col2Schema())
 	p.SetOutputNames(schema.names)
 	return p
@@ -6392,17 +6395,23 @@ func checkAlterDDLJobOptValue(opt *AlterDDLJobOpt) error {
 }
 
 // For nextgen IMPORT INTO with SEM, require explicit S3 authentication and
-// disallow explicit S3 external ID. The keyspace name is used as the S3 external ID.
+// disallow explicit S3 external ID unless it is the keyspace name. The keyspace
+// name is used as the S3 external ID.
 func checkNextGenS3PathWithSem(u *url.URL) error {
 	values := u.Query()
+	expectedExternalID := config.GetGlobalKeyspaceName()
 	hasAccessKey := false
 	hasSecretAccessKey := false
 	hasRoleARN := false
-	for k := range values {
+	for k, vs := range values {
 		normalizedK := objstore.NormalizeQueryParameterKey(k)
 		switch normalizedK {
 		case s3like.S3ExternalID:
-			return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO with explicit external ID")
+			for _, v := range vs {
+				if v != expectedExternalID {
+					return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO with explicit external ID")
+				}
+			}
 		case s3like.S3AccessKey:
 			hasAccessKey = hasAccessKey || values.Get(k) != ""
 		case s3like.S3SecretAccessKey:
@@ -6461,6 +6470,11 @@ func (b *PlanBuilder) checkSEMStmt(stmt ast.Node) error {
 
 	activeRoles := b.ctx.GetSessionVars().ActiveRoles
 	checker := privilege.GetPrivilegeManager(b.ctx)
+	if checker == nil {
+		// During bootstrap, the privilege manager is unavailable until the system
+		// privilege tables are initialized, so restricted bootstrap SQL cannot be checked yet.
+		return nil
+	}
 	hasPriv := checker.RequestDynamicVerification(activeRoles, "RESTRICTED_SQL_ADMIN", false)
 
 	if hasPriv {

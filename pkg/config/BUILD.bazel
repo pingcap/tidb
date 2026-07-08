@@ -6,6 +6,7 @@ go_library(
         "config.go",
         "config_util.go",
         "const.go",
+        "external_workload.go",
         "keyspace_observability.go",
         "store.go",
         "tiflash.go",
@@ -13,6 +14,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/config",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/config/configtypes",
         "//pkg/config/deploymode",
         "//pkg/config/kerneltype",
         "//pkg/parser/terror",
@@ -44,7 +46,7 @@ go_test(
     data = glob(["**"]),
     embed = [":config"],
     flaky = True,
-    shard_count = 35,
+    shard_count = 38,
     deps = [
         "//pkg/config/deploymode",
         "//pkg/config/kerneltype",

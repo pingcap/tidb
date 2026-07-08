@@ -1156,6 +1156,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrPlacementPolicyInUse:            mysql.Message("Placement policy '%-.192s' is still in use", nil),
 	ErrMaskingPolicyExists:             mysql.Message("masking policy already exists", nil),
 	ErrMaskingPolicyNotExists:          mysql.Message("masking policy doesn't exist", nil),
+	ErrMaskingPolicyExprInvalidColumn:  mysql.Message("masking policy expression can only reference the target column '%-.64s'", nil),
 	ErrOptOnCacheTable:                 mysql.Message("'%s' is unsupported on cache tables.", nil),
 	ErrResourceGroupExists:             mysql.Message("Resource group '%-.192s' already exists", nil),
 	ErrResourceGroupNotExists:          mysql.Message("Unknown resource group '%-.192s'", nil),
@@ -1200,6 +1201,8 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrCannotResumeDDLJob: mysql.Message("Job [%v] can't be resumed: %s", nil),
 	ErrPausedDDLJob:       mysql.Message("Job [%v] has already been paused", nil),
 	ErrBDRRestrictedDDL:   mysql.Message("The operation is not allowed while the bdr role of this cluster is set to %s.", nil),
+	ErrDDLAutoPausedByKVDiskFull: mysql.Message(
+		"Job [%v] has been paused by TiDB because a storage node does not have enough disk space: %s", nil),
 
 	ErrGlobalIndexNotExplicitlySet: mysql.Message("Global Index is needed for index '%-.192s', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption", nil),
 

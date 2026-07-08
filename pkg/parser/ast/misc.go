@@ -217,6 +217,8 @@ type ExplainStmt struct {
 	Explore bool
 	// SQLDigest to explain, used in `EXPLAIN EXPLORE <sql_digest>`.
 	SQLDigest string
+	// ReplayerFile to load, used in `EXPLAIN EXPLORE REPLAYER <replayer_file_path>`.
+	ReplayerFile string
 	// PlanDigest to explain, used in `EXPLAIN [ANALYZE] <plan_digest>`.
 	PlanDigest string
 }
@@ -242,7 +244,10 @@ func (n *ExplainStmt) Restore(ctx *format.RestoreCtx) error {
 	}
 	if n.Explore {
 		ctx.WriteKeyWord("EXPLORE ")
-		if n.SQLDigest != "" {
+		if n.ReplayerFile != "" {
+			ctx.WriteKeyWord("REPLAYER ")
+			ctx.WriteString(n.ReplayerFile)
+		} else if n.SQLDigest != "" {
 			ctx.WriteString(n.SQLDigest)
 		}
 	} else if !n.Analyze || strings.ToLower(n.Format) != "row" {

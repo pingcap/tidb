@@ -335,6 +335,12 @@ type Plan struct {
 	ManualRecovery bool
 	// the keyspace name when submitting this job, only for import-into
 	Keyspace string
+	// UseNewCollate captures whether the new collation implementation was enabled
+	// when this import plan's target table snapshot was created. Import execution
+	// may happen in another keyspace, so key and expression encoding must use this
+	// captured value instead of the executor process default. Nil means old metadata
+	// and should fall back to the caller-provided default.
+	UseNewCollate *bool `json:"use_new_collate,omitempty"`
 }
 
 // GetOnDupKeyMode returns the conflict handling mode.
@@ -347,6 +353,21 @@ func (p *Plan) GetOnDupKeyMode() OnDupKeyMode {
 		return OnDupKeyModeError
 	}
 	return p.OnDupKey
+}
+
+// GetUseNewCollateOrDefault returns the captured new-collation mode, or
+// defaultVal for import metadata generated before the field existed.
+func (p *Plan) GetUseNewCollateOrDefault(defaultVal bool) bool {
+	if p.UseNewCollate == nil {
+		return defaultVal
+	}
+	return *p.UseNewCollate
+}
+
+// setUseNewCollate stores the new-collation mode captured from the target table
+// snapshot.
+func (p *Plan) setUseNewCollate(useNewCollate bool) {
+	p.UseNewCollate = &useNewCollate
 }
 
 // ASTArgs is the arguments for ast.LoadDataStmt.
@@ -553,6 +574,7 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 		User:                   userSctx.GetSessionVars().User.String(),
 		Keyspace:               userSctx.GetStore().GetKeyspace(),
 	}
+	p.setUseNewCollate(tbl.UseNewCollate())
 	if err := p.initOptions(ctx, userSctx, plan.Options); err != nil {
 		return nil, err
 	}
@@ -1305,7 +1327,15 @@ func initExternalStore(ctx context.Context, u *url.URL, target string) (storeapi
 	return s, nil
 }
 
-func estimateCompressionRatio(
+// estimateFormatSizeExpansionRatio estimates how much larger the decoded row
+// data can be than the source file's physical bytes because of the file format.
+//
+// Row-oriented formats use 1.0 because their file size is already a reasonable
+// proxy for decoded data size. Parquet needs a separate estimate: its columnar
+// layout and internal compression can make the physical file much smaller than
+// the row data TiDB will import. The returned ratio is always at least 1.0, so
+// size planning never treats decoded data as smaller than the source file.
+func estimateFormatSizeExpansionRatio(
 	ctx context.Context,
 	filePath string,
 	fileSize int64,
@@ -1324,13 +1354,23 @@ func estimateCompressionRatio(
 	if err != nil {
 		return 1.0, err
 	}
-	// No row in the file, use 2.0 as default compression ratio.
+	// If there is no row data to sample, keep the historical default estimate.
 	if rowSize == 0 || rows == 0 {
 		return 2.0, nil
 	}
 
-	compressionRatio := (rowSize * float64(rows)) / float64(fileSize)
-	return compressionRatio, nil
+	ratio := (rowSize * float64(rows)) / float64(fileSize)
+	// Small parquet files or inefficient internal compression can make the
+	// sampled decoded row size smaller than the physical file size. Keep size
+	// planning conservative by normalizing the format expansion to 1.0.
+	if ratio < 1.0 {
+		logutil.BgLogger().Info("estimated size expansion ratio is less than 1.0, normalized to 1.0",
+			zap.String("filePath", filePath), zap.Int64("rows", rows),
+			zap.Float64("rowSize", rowSize), zap.Int64("fileSize", fileSize),
+			zap.Float64("estimatedRatio", ratio))
+		ratio = 1.0
+	}
+	return ratio, nil
 }
 
 // maxSampledCompressedFiles indicates the max number of files we used to sample
@@ -1471,9 +1511,10 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	s := e.dataStore
 	var (
 		sourceType mydump.SourceType
-		// sizeExpansionRatio is the estimated size expansion for parquet format.
-		// For non-parquet format, it's always 1.0.
-		sizeExpansionRatio = 1.0
+		// formatExpansionRatio adjusts file-size estimates for formats whose
+		// physical bytes are not a good proxy for decoded row data. It is
+		// currently greater than 1.0 only for parquet.
+		formatExpansionRatio = 1.0
 	)
 	dataFiles := []*mydump.SourceFileMeta{}
 	isAutoDetectingFormat := e.Format == DataFormatAuto
@@ -1494,7 +1535,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}
 		e.detectAndUpdateFormat(fileNameKey)
 		sourceType = e.getSourceType()
-		compressionRatio, err := estimateCompressionRatio(ctx, fileNameKey, size, sourceType, s)
+		formatExpansionRatio, err := estimateFormatSizeExpansionRatio(ctx, fileNameKey, size, sourceType, s)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1507,7 +1548,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			ParquetMeta: parquetfile.FileMeta{Loc: e.location},
 		}
 		fileMeta.RealSize = mydump.EstimateRealSizeForFile(ctx, fileMeta, s)
-		fileMeta.RealSize = int64(float64(fileMeta.RealSize) * compressionRatio)
+		fileMeta.RealSize = int64(float64(fileMeta.RealSize) * formatExpansionRatio)
 		dataFiles = append(dataFiles, &fileMeta)
 	} else {
 		var commonPrefix string
@@ -1550,7 +1591,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 				once.Do(func() {
 					e.detectAndUpdateFormat(path)
 					sourceType = e.getSourceType()
-					sizeExpansionRatio, err2 = estimateCompressionRatio(ctx, path, size, sourceType, s)
+					formatExpansionRatio, err2 = estimateFormatSizeExpansionRatio(ctx, path, size, sourceType, s)
 				})
 				if err2 != nil {
 					return nil, err2
@@ -1563,8 +1604,12 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 					Type:        sourceType,
 					ParquetMeta: parquetfile.FileMeta{Loc: e.location},
 				}
-				fileMeta.RealSize = int64(ce.estimate(ctx, fileMeta, s) * float64(fileMeta.FileSize))
-				fileMeta.RealSize = int64(float64(fileMeta.RealSize) * sizeExpansionRatio)
+				// Compression sampling can be below 1.0 for small files or
+				// inefficient compression. Keep RealSize at least the physical
+				// file size before applying the format expansion estimate.
+				compressionExpansionRatio := max(ce.estimate(ctx, fileMeta, s), 1.0)
+				fileMeta.RealSize = int64(compressionExpansionRatio * float64(fileMeta.FileSize))
+				fileMeta.RealSize = int64(float64(fileMeta.RealSize) * formatExpansionRatio)
 				return &fileMeta, nil
 			}); err != nil {
 			return err
@@ -1901,6 +1946,7 @@ func createColAssignSimpleExprs(
 	assignments []*ast.Assignment,
 	ctx expression.BuildContext,
 	mu *sync.Mutex,
+	useNewCollate bool,
 ) (_ []expression.Expression, _ []contextutil.SQLWarn, retErr error) {
 	if mu != nil {
 		mu.Lock()
@@ -1909,7 +1955,7 @@ func createColAssignSimpleExprs(
 	res := make([]expression.Expression, 0, len(assignments))
 	var allWarnings []contextutil.SQLWarn
 	for _, assign := range assignments {
-		newExpr, err := expression.BuildSimpleExpr(ctx, assign.Expr)
+		newExpr, err := expression.BuildSimpleExpr(ctx, assign.Expr, expression.WithUseNewCollate(useNewCollate))
 		// col assign expr warnings is static, we should generate it for each row processed.
 		// so we save it and clear it here.
 		if ctx.GetEvalCtx().WarningCount() > 0 {
@@ -1925,7 +1971,12 @@ func createColAssignSimpleExprs(
 
 // CreateColAssignSimpleExprs creates the column assignment expressions using `expression.BuildContext`.
 func (e *LoadDataController) CreateColAssignSimpleExprs(ctx expression.BuildContext) (_ []expression.Expression, _ []contextutil.SQLWarn, retErr error) {
-	return createColAssignSimpleExprs(e.ColumnAssignments, ctx, &e.colAssignMu)
+	return createColAssignSimpleExprs(
+		e.ColumnAssignments,
+		ctx,
+		&e.colAssignMu,
+		e.Table.UseNewCollate(),
+	)
 }
 
 func (e *LoadDataController) getLocalBackendCfg(keyspace, pdAddr, dataDir string) ingestctrl.BackendConfig {

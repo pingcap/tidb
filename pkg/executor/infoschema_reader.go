@@ -2531,7 +2531,7 @@ func dataForAnalyzeStatusHelper(ctx context.Context, e *memtableRetriever, sctx 
 	const maxAnalyzeJobs = 30
 	const sql = "SELECT table_schema, table_name, partition_name, job_info, processed_rows, CONVERT_TZ(start_time, @@TIME_ZONE, '+00:00'), CONVERT_TZ(end_time, @@TIME_ZONE, '+00:00'), state, fail_reason, instance, process_id FROM mysql.analyze_jobs ORDER BY update_time DESC LIMIT %?"
 	exec := sctx.GetRestrictedSQLExecutor()
-	kctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	kctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsForegroundPriority)
 	chunkRows, _, err := exec.ExecRestrictedSQL(kctx, nil, sql, maxAnalyzeJobs)
 	if err != nil {
 		return nil, err
@@ -3188,8 +3188,14 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 		r.initialized = true
 		var err error
 		r.lockWaits, err = sctx.GetStore().GetLockWaits()
-		tikvStore, _ := sctx.GetStore().(helper.Storage)
-		r.resolvingLocks = tikvStore.GetLockResolver().Resolving()
+		skipResolvingLocks := false
+		failpoint.Inject("dataLockWaitsSkipResolvingLocks", func() {
+			skipResolvingLocks = true
+		})
+		if !skipResolvingLocks {
+			tikvStore, _ := sctx.GetStore().(helper.Storage)
+			r.resolvingLocks = tikvStore.GetLockResolver().Resolving()
+		}
 		if err != nil {
 			r.retrieved = true
 			return nil, err
