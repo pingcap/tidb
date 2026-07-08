@@ -510,6 +510,25 @@ func TestDualPasswordSelfServiceDiscardWithExtraOptionsStillGated(t *testing.T) 
 	err = selfTK.ExecToErr("ALTER USER 'dpguard'@'%' DISCARD OLD PASSWORD PASSWORD EXPIRE")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "CREATE USER")
+
+	// RETAIN with a privileged option is gated the same way as DISCARD.
+	err = selfTK.ExecToErr("ALTER USER 'dpguard'@'%' IDENTIFIED BY 'p4' RETAIN CURRENT PASSWORD COMMENT 'x'")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "CREATE USER")
+
+	// COMMENT / ATTRIBUTE write the same user_attributes JSON the dual-password
+	// clauses manage — piggy-backing them must still require CREATE USER.
+	err = selfTK.ExecToErr(`ALTER USER 'dpguard'@'%' DISCARD OLD PASSWORD ATTRIBUTE '{"k": "v"}'`)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "CREATE USER")
+
+	// Resource options too.
+	err = selfTK.ExecToErr("ALTER USER 'dpguard'@'%' DISCARD OLD PASSWORD WITH MAX_USER_CONNECTIONS 10")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "CREATE USER")
+
+	// None of the denied statements removed the planted secondary.
+	tk.MustQuery("SELECT JSON_EXTRACT(user_attributes, '$.additional_password') IS NOT NULL FROM mysql.user WHERE User = 'dpguard'").Check(testkit.Rows("1"))
 }
 
 // TestDualPasswordLegacyEmptyPluginRejectsLDAPDefault guards the capability

@@ -1873,12 +1873,15 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			currentUserName, currentUserHost = authenticatedUserNameAndHost(user)
 		}
 		alterCurrentUser := spec.User.CurrentUser || ((user != nil) && (currentUserName == spec.User.Username) && (currentUserHost == spec.User.Hostname))
-		alterPassword := false
-		if spec.AuthOpt != nil && spec.AuthOpt.AuthPlugin == "" {
-			if len(s.AuthTokenOrTLSOptions) == 0 && len(s.ResourceOptions) == 0 && len(s.PasswordOrLockOptions) == 0 {
-				alterPassword = true
-			}
-		}
+		// alterPassword: a bare self password change (IDENTIFIED BY with no
+		// plugin change and no statement-level options), which MySQL allows
+		// without CREATE USER. It reuses the same option allowlist as the
+		// dual-password gate: the previous inline list here predated
+		// COMMENT/ATTRIBUTE and RESOURCE GROUP, so those options could
+		// piggy-back on the implicit self-password privilege and be applied
+		// without CREATE USER.
+		alterPassword := spec.AuthOpt != nil && spec.AuthOpt.AuthPlugin == "" &&
+			!alterUserHasPrivilegedOptions(s)
 		if alterCurrentUser && (alterPassword || specDualPwdRequested) {
 			spec.User.Username = currentUserName
 			spec.User.Hostname = currentUserHost
