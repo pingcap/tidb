@@ -124,6 +124,39 @@ func TestProfileStoreRecoversCapWithHealthySamples(t *testing.T) {
 	require.Equal(t, 2, cap)
 }
 
+func TestProfileStoreUsesOperatorActRowsForOverRead(t *testing.T) {
+	store := NewStore(8)
+	key := Key{
+		SchemaName:  "test",
+		SQLDigest:   "sql",
+		PlanDigest:  "plan",
+		ReaderType:  ReaderTypeIndexJoin,
+		KeepOrder:   true,
+		LimitBucket: LimitBucketLE1024,
+	}
+	sample := Sample{
+		Candidate: Candidate{
+			Key:       key,
+			LimitRows: 1000,
+			BaseCap:   5,
+			CapUsed:   5,
+		},
+		ResultRows:    1000,
+		RequestCount:  1,
+		ProcessedKeys: 1000,
+		LookupActRows: 100000,
+		Succeed:       true,
+	}
+
+	for range 3 {
+		store.Observe(sample)
+	}
+
+	cap, ok := store.LookupCap(key)
+	require.True(t, ok)
+	require.Equal(t, 1, cap)
+}
+
 func TestProfileStoreIgnoresInvalidSamples(t *testing.T) {
 	store := NewStore(8)
 	key := Key{

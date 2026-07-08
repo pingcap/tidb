@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	exec "github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -322,18 +323,18 @@ func TestLimitRowsFromIndexJoinOuterProp(t *testing.T) {
 }
 
 func TestAdaptiveIndexJoinLimitSettingsForRows(t *testing.T) {
-	batchSize, concurrency, ok := adaptiveIndexJoinLimitSettingsForRows(1000, 25000, 5)
-	require.True(t, ok)
-	require.Equal(t, 1000, batchSize)
-	require.Equal(t, 1, concurrency)
+	settings := adaptiveIndexJoinLimitSettingsForRows(1000, 25000, 5)
+	require.True(t, settings.Changed())
+	require.Equal(t, 1000, settings.BatchSize)
+	require.Equal(t, 1, settings.Concurrency)
 
-	batchSize, concurrency, ok = adaptiveIndexJoinLimitSettingsForRows(50000, 25000, 5)
-	require.True(t, ok)
-	require.Equal(t, 25000, batchSize)
-	require.Equal(t, 2, concurrency)
+	settings = adaptiveIndexJoinLimitSettingsForRows(50000, 25000, 5)
+	require.True(t, settings.Changed())
+	require.Equal(t, 0, settings.BatchSize)
+	require.Equal(t, 2, settings.Concurrency)
 
-	_, _, ok = adaptiveIndexJoinLimitSettingsForRows(200000, 25000, 5)
-	require.False(t, ok)
+	settings = adaptiveIndexJoinLimitSettingsForRows(200000, 25000, 5)
+	require.False(t, settings.Changed())
 }
 
 func TestAdaptiveIndexJoinLimitSettingsUsesOuterProperty(t *testing.T) {
@@ -349,12 +350,44 @@ func TestAdaptiveIndexJoinLimitSettingsUsesOuterProperty(t *testing.T) {
 		},
 		&property.PhysicalProperty{})
 
-	batchSize, concurrency, ok := adaptiveIndexJoinLimitSettings(sctx, indexJoin)
+	settings, ok := adaptiveIndexJoinLimitSettings(sctx, indexJoin)
 	require.True(t, ok)
-	require.Equal(t, 1000, batchSize)
-	require.Equal(t, 1, concurrency)
+	require.Equal(t, 1000, settings.BatchSize)
+	require.Equal(t, 1, settings.Concurrency)
 
 	sctx.GetSessionVars().EnableAdaptiveLimitScan = false
-	_, _, ok = adaptiveIndexJoinLimitSettings(sctx, indexJoin)
+	_, ok = adaptiveIndexJoinLimitSettings(sctx, indexJoin)
 	require.False(t, ok)
+}
+
+func TestApplyAdaptiveIndexJoinLimitSettingsToLookupThroughProjection(t *testing.T) {
+	sctx := defaultCtx()
+	lookup := &IndexLookUpExecutor{
+		indexLookUpExecutorContext: indexLookUpExecutorContext{
+			indexLookupSize:        25000,
+			indexLookupConcurrency: 5,
+		},
+		BaseExecutorV2: exec.NewBaseExecutorV2(sctx.GetSessionVars(), nil, 10),
+	}
+	projection := &ProjectionExec{
+		BaseExecutorV2: exec.NewBaseExecutorV2(sctx.GetSessionVars(), nil, 11, lookup),
+	}
+	settings := adaptiveIndexJoinLimitSettingsResult{
+		ScanConcurrencyCap: 1,
+		LookupBatchSize:    1000,
+		LookupConcurrency:  2,
+		LookupResultChSize: 2,
+	}
+
+	applied := applyAdaptiveIndexJoinLimitSettingsToLookup(projection, settings)
+	require.Same(t, lookup, applied)
+	require.Equal(t, 1, lookup.keepOrderLimitScanConcurrencyCap)
+	require.Equal(t, 1000, lookup.adaptiveLimitLookupBatchSize)
+	require.Equal(t, 2, lookup.adaptiveLimitLookupConcurrency)
+	require.Equal(t, 2, lookup.adaptiveLimitResultChSize)
+
+	lookup.applyAdaptiveLimitLookupSettings()
+	require.Equal(t, 1000, lookup.indexLookupSize)
+	require.Equal(t, 2, lookup.indexLookupConcurrency)
+	require.Equal(t, int32(2), lookup.lookupTableTaskChannelSize())
 }

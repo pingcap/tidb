@@ -3605,10 +3605,30 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *physicalop.PhysicalIndexJoin) 
 		LastColHelper: v.CompareFilters,
 		Finished:      &atomic.Value{},
 	}
-	if batchSize, concurrency, ok := adaptiveIndexJoinLimitSettings(b.sctx, v); ok {
-		e.AdaptiveLimitBatchSize = batchSize
-		e.AdaptiveLimitConcurrency = concurrency
-		recordAdaptiveLimitScanMetric(adaptiveLimitScanEventCap, earlystopprofile.ReaderTypeIndexJoin, adaptiveLimitScanResultChanged)
+	if settings, ok := adaptiveIndexJoinLimitSettings(b.sctx, v); ok {
+		e.AdaptiveLimitBatchSize = settings.BatchSize
+		e.AdaptiveLimitConcurrency = settings.Concurrency
+		outerLookup := applyAdaptiveIndexJoinLimitSettingsToLookup(outerExec, settings)
+		if settings.HasProfileKey {
+			candidate := earlystopprofile.Candidate{
+				Key:          settings.ProfileKey,
+				LimitRows:    settings.LimitRows,
+				BaseCap:      settings.ProfileBaseCap,
+				CapUsed:      settings.ProfileCapUsed,
+				ReaderPlanID: v.ID(),
+			}
+			if outerLookup != nil {
+				candidate.LookupPlanID = outerLookup.ID()
+				candidate.IndexPlanID = outerLookup.getIndexPlanRootID()
+				candidate.TablePlanID = outerLookup.getTableRootPlanID()
+			}
+			b.sctx.GetSessionVars().StmtCtx.AddEarlyStopProfileCandidate(candidate)
+		}
+		capResult := adaptiveLimitScanResultUnchanged
+		if settings.Changed() {
+			capResult = adaptiveLimitScanResultChanged
+		}
+		recordAdaptiveLimitScanMetric(adaptiveLimitScanEventCap, earlystopprofile.ReaderTypeIndexJoin, capResult)
 	}
 	colsFromChildren := v.Schema().Columns
 	if v.JoinType == base.LeftOuterSemiJoin || v.JoinType == base.AntiLeftOuterSemiJoin {

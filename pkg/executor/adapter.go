@@ -2347,8 +2347,27 @@ func observeEarlyStopProfile(
 		Latency:       totalLatency,
 		Succeed:       succeed,
 		Internal:      internal,
+		ReaderActRows: earlyStopProfileActRows(stmtCtx, candidates[0].ReaderPlanID),
+		LookupActRows: earlyStopProfileActRows(stmtCtx, candidates[0].LookupPlanID),
+		IndexActRows:  earlyStopProfileActRows(stmtCtx, candidates[0].IndexPlanID),
+		TableActRows:  earlyStopProfileActRows(stmtCtx, candidates[0].TablePlanID),
 	})
 	recordAdaptiveLimitScanMetric(adaptiveLimitScanEventObserve, candidates[0].Key.ReaderType, adaptiveLimitScanResultAccepted)
+}
+
+func earlyStopProfileActRows(stmtCtx *stmtctx.StatementContext, planID int) uint64 {
+	if stmtCtx == nil || stmtCtx.RuntimeStatsColl == nil || planID <= 0 {
+		return 0
+	}
+	rootRows := stmtCtx.RuntimeStatsColl.GetPlanActRows(planID)
+	_, copRows := stmtCtx.RuntimeStatsColl.GetCopCountAndRows(planID)
+	if copRows > rootRows {
+		rootRows = copRows
+	}
+	if rootRows <= 0 {
+		return 0
+	}
+	return uint64(rootRows)
 }
 
 // GetOriginalSQL implements StmtExecLazyInfo interface.

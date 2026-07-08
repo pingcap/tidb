@@ -563,6 +563,10 @@ type IndexLookUpExecutor struct {
 	indexLookUpPushDown bool
 
 	keepOrderLimitScanConcurrencyCap int
+
+	adaptiveLimitLookupBatchSize   int
+	adaptiveLimitLookupConcurrency int
+	adaptiveLimitResultChSize      int
 }
 
 type kvRangesWithPhysicalTblID struct {
@@ -711,6 +715,7 @@ func (e *IndexLookUpExecutor) open(_ context.Context) error {
 	// instead of in function "Open", because this "IndexLookUpExecutor" may be
 	// constructed by a "IndexLookUpJoin" and "Open" will not be called in that
 	// situation.
+	e.applyAdaptiveLimitLookupSettings()
 	e.initRuntimeStats()
 	if e.memTracker != nil {
 		e.memTracker.Reset()
@@ -720,7 +725,7 @@ func (e *IndexLookUpExecutor) open(_ context.Context) error {
 	e.memTracker.AttachTo(e.stmtMemTracker)
 
 	e.finished = make(chan struct{})
-	e.resultCh = make(chan *lookupTableTask, atomic.LoadInt32(&LookupTableTaskChannelSize))
+	e.resultCh = make(chan *lookupTableTask, e.lookupTableTaskChannelSize())
 
 	var err error
 	if e.corColInIdxSide {
@@ -760,6 +765,26 @@ func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize in
 	}
 	e.workerStarted = true
 	return nil
+}
+
+func (e *IndexLookUpExecutor) applyAdaptiveLimitLookupSettings() {
+	if e.adaptiveLimitLookupConcurrency > 0 && e.indexLookupConcurrency > e.adaptiveLimitLookupConcurrency {
+		e.indexLookupConcurrency = e.adaptiveLimitLookupConcurrency
+	}
+	if e.adaptiveLimitLookupBatchSize > 0 && e.indexLookupSize > e.adaptiveLimitLookupBatchSize {
+		e.indexLookupSize = e.adaptiveLimitLookupBatchSize
+	}
+}
+
+func (e *IndexLookUpExecutor) lookupTableTaskChannelSize() int32 {
+	size := atomic.LoadInt32(&LookupTableTaskChannelSize)
+	if e.adaptiveLimitResultChSize > 0 && size > int32(e.adaptiveLimitResultChSize) {
+		size = int32(e.adaptiveLimitResultChSize)
+	}
+	if size < 1 {
+		return 1
+	}
+	return size
 }
 
 func (e *IndexLookUpExecutor) needPartitionHandle(tp getHandleType) (bool, error) {

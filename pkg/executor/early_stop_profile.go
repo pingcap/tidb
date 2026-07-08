@@ -18,6 +18,7 @@ import (
 	"math"
 	"strings"
 
+	exec "github.com/pingcap/tidb/pkg/executor/internal/exec"
 	executor_metrics "github.com/pingcap/tidb/pkg/executor/metrics"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -164,7 +165,20 @@ func buildEarlyStopProfileKey(
 	keepOrder bool,
 	limitRows uint64,
 ) (earlystopprofile.Key, bool) {
+	return buildEarlyStopProfileKeyWithSingleScanCheck(sctx, readerType, keepOrder, limitRows, true)
+}
+
+func buildEarlyStopProfileKeyWithSingleScanCheck(
+	sctx sessionctx.Context,
+	readerType earlystopprofile.ReaderType,
+	keepOrder bool,
+	limitRows uint64,
+	requireSingleTiKVScan bool,
+) (earlystopprofile.Key, bool) {
 	if !keepOrder || limitRows == 0 || sctx == nil {
+		return earlystopprofile.Key{}, false
+	}
+	if requireSingleTiKVScan && !isSingleTiKVScanPlan(sctx.GetSessionVars().StmtCtx.GetPlan()) {
 		return earlystopprofile.Key{}, false
 	}
 	stmtCtx := sctx.GetSessionVars().StmtCtx
@@ -200,48 +214,168 @@ func candidateCapUsed(finalCap, defaultConcurrency int) int {
 func adaptiveIndexJoinLimitSettings(
 	sctx sessionctx.Context,
 	indexJoin *physicalop.PhysicalIndexJoin,
-) (batchSize int, concurrency int, ok bool) {
+) (adaptiveIndexJoinLimitSettingsResult, bool) {
 	if sctx == nil || indexJoin == nil {
-		return 0, 0, false
+		return adaptiveIndexJoinLimitSettingsResult{}, false
 	}
 	sessVars := sctx.GetSessionVars()
 	if !sessVars.EnableAdaptiveLimitScan {
-		return 0, 0, false
+		return adaptiveIndexJoinLimitSettingsResult{}, false
 	}
 	limitRows, ok := limitRowsFromIndexJoinOuterProp(indexJoin)
 	if !ok {
-		return 0, 0, false
+		return adaptiveIndexJoinLimitSettingsResult{}, false
 	}
-	return adaptiveIndexJoinLimitSettingsForRows(
+	settings := adaptiveIndexJoinLimitSettingsForRows(
 		limitRows,
 		sessVars.IndexJoinBatchSize,
 		sessVars.IndexLookupJoinConcurrency(),
 	)
+	settings.LimitRows = limitRows
+	settings.LookupBatchSize = adaptiveIndexJoinLookupBatchSize(limitRows, sessVars.IndexLookupSize)
+	settings.LookupConcurrency = adaptiveIndexJoinLookupConcurrency(sessVars.IndexLookupConcurrency())
+	if settings.LookupConcurrency > 0 {
+		settings.LookupResultChSize = 2
+	}
+	if settings.Concurrency > 0 {
+		settings.ScanConcurrencyCap = settings.Concurrency
+	}
+	key, hasKey := buildEarlyStopProfileKeyWithSingleScanCheck(
+		sctx, earlystopprofile.ReaderTypeIndexJoin, true, limitRows, false)
+	if hasKey {
+		settings.ProfileKey = key
+		settings.HasProfileKey = true
+		settings.ProfileBaseCap = vardef.DefDistSQLScanConcurrency
+		settings.ProfileCapUsed = vardef.DefDistSQLScanConcurrency
+		if profileCap, ok := earlystopprofile.LookupCap(key); ok {
+			recordAdaptiveLimitScanMetric(adaptiveLimitScanEventLookup, earlystopprofile.ReaderTypeIndexJoin, adaptiveLimitScanResultHit)
+			profileCap = mergeAdaptiveProfileCap(profileCap, vardef.DefDistSQLScanConcurrency)
+			settings.ProfileCapUsed = candidateCapUsed(profileCap, vardef.DefDistSQLScanConcurrency)
+			if profileCap > 0 {
+				if settings.Concurrency == 0 || settings.Concurrency > profileCap {
+					settings.Concurrency = profileCap
+				}
+				if settings.ScanConcurrencyCap == 0 || settings.ScanConcurrencyCap > profileCap {
+					settings.ScanConcurrencyCap = profileCap
+				}
+			}
+		} else {
+			recordAdaptiveLimitScanMetric(adaptiveLimitScanEventLookup, earlystopprofile.ReaderTypeIndexJoin, adaptiveLimitScanResultMiss)
+		}
+	} else {
+		recordAdaptiveLimitScanMetric(adaptiveLimitScanEventLookup, earlystopprofile.ReaderTypeIndexJoin, adaptiveLimitScanResultInvalidKey)
+	}
+	if !settings.Changed() {
+		return settings, settings.HasProfileKey
+	}
+	return settings, true
+}
+
+type adaptiveIndexJoinLimitSettingsResult struct {
+	LimitRows uint64
+
+	BatchSize          int
+	Concurrency        int
+	ScanConcurrencyCap int
+
+	LookupBatchSize    int
+	LookupConcurrency  int
+	LookupResultChSize int
+
+	ProfileKey     earlystopprofile.Key
+	HasProfileKey  bool
+	ProfileBaseCap int
+	ProfileCapUsed int
+}
+
+func (s adaptiveIndexJoinLimitSettingsResult) Changed() bool {
+	return s.BatchSize > 0 ||
+		s.Concurrency > 0 ||
+		s.ScanConcurrencyCap > 0 ||
+		s.LookupBatchSize > 0 ||
+		s.LookupConcurrency > 0 ||
+		s.LookupResultChSize > 0
 }
 
 func adaptiveIndexJoinLimitSettingsForRows(
 	limitRows uint64,
 	sessionBatchSize int,
 	sessionConcurrency int,
-) (batchSize int, concurrency int, ok bool) {
+) adaptiveIndexJoinLimitSettingsResult {
 	if limitRows == 0 || sessionBatchSize <= 0 || sessionConcurrency <= 0 {
-		return 0, 0, false
+		return adaptiveIndexJoinLimitSettingsResult{}
 	}
-	batchSize = sessionBatchSize
+	settings := adaptiveIndexJoinLimitSettingsResult{}
+	batchSize := sessionBatchSize
 	if limitRows < uint64(sessionBatchSize) {
 		batchSize = int(limitRows)
 	}
 	batchSize = max(1, batchSize)
 	batchesNeeded := (limitRows-1)/uint64(batchSize) + 1
-	concurrency = sessionConcurrency
+	concurrency := sessionConcurrency
 	if batchesNeeded < uint64(sessionConcurrency) {
 		concurrency = int(batchesNeeded)
 	}
 	concurrency = max(1, concurrency)
-	if batchSize == sessionBatchSize && concurrency == sessionConcurrency {
-		return 0, 0, false
+	if batchSize != sessionBatchSize {
+		settings.BatchSize = batchSize
 	}
-	return batchSize, concurrency, true
+	if concurrency != sessionConcurrency {
+		settings.Concurrency = concurrency
+	}
+	return settings
+}
+
+func adaptiveIndexJoinLookupBatchSize(limitRows uint64, sessionLookupSize int) int {
+	if limitRows == 0 || sessionLookupSize <= 0 || limitRows >= uint64(sessionLookupSize) {
+		return 0
+	}
+	return max(1, int(limitRows))
+}
+
+func adaptiveIndexJoinLookupConcurrency(sessionConcurrency int) int {
+	const adaptiveLookupConcurrency = 2
+	if sessionConcurrency <= adaptiveLookupConcurrency {
+		return 0
+	}
+	return adaptiveLookupConcurrency
+}
+
+func applyAdaptiveIndexJoinLimitSettingsToLookup(root exec.Executor, settings adaptiveIndexJoinLimitSettingsResult) *IndexLookUpExecutor {
+	lookup := findIndexLookUpExecutorForAdaptiveIndexJoin(root)
+	if lookup == nil {
+		return nil
+	}
+	if settings.ScanConcurrencyCap > 0 {
+		lookup.keepOrderLimitScanConcurrencyCap = settings.ScanConcurrencyCap
+	}
+	if settings.LookupBatchSize > 0 {
+		lookup.adaptiveLimitLookupBatchSize = settings.LookupBatchSize
+	}
+	if settings.LookupConcurrency > 0 {
+		lookup.adaptiveLimitLookupConcurrency = settings.LookupConcurrency
+	}
+	if settings.LookupResultChSize > 0 {
+		lookup.adaptiveLimitResultChSize = settings.LookupResultChSize
+	}
+	return lookup
+}
+
+func findIndexLookUpExecutorForAdaptiveIndexJoin(root exec.Executor) *IndexLookUpExecutor {
+	for current := root; current != nil; {
+		switch e := current.(type) {
+		case *IndexLookUpExecutor:
+			return e
+		case *ProjectionExec:
+			if e.ChildrenLen() != 1 {
+				return nil
+			}
+			current = e.Children(0)
+		default:
+			return nil
+		}
+	}
+	return nil
 }
 
 func limitRowsFromIndexJoinOuterProp(indexJoin *physicalop.PhysicalIndexJoin) (uint64, bool) {

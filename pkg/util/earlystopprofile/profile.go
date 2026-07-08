@@ -133,6 +133,11 @@ type Candidate struct {
 	LimitRows uint64
 	BaseCap   int
 	CapUsed   int
+
+	ReaderPlanID int
+	LookupPlanID int
+	IndexPlanID  int
+	TablePlanID  int
 }
 
 // Sample is observed after statement execution.
@@ -145,6 +150,11 @@ type Sample struct {
 	Latency       time.Duration
 	Succeed       bool
 	Internal      bool
+
+	ReaderActRows uint64
+	LookupActRows uint64
+	IndexActRows  uint64
+	TableActRows  uint64
 }
 
 // Profile is the historical feedback used to recommend a scan cap.
@@ -156,6 +166,10 @@ type Profile struct {
 	EWMAOverReadRatio          float64
 	EWMARequestCount           float64
 	EWMALatencyMS              float64
+	EWMAReaderActRowsPerResult float64
+	EWMALookupActRowsPerResult float64
+	EWMAIndexActRowsPerResult  float64
+	EWMATableActRowsPerResult  float64
 
 	BaseCap             int
 	RecommendedCap      int
@@ -227,10 +241,22 @@ func (s *Store) Observe(sample Sample) {
 
 	key := sample.Candidate.Key
 	now := time.Now().Unix()
-	overReadRatio := float64(sample.ProcessedKeys) / float64(max(sample.Candidate.LimitRows, sample.ResultRows, 1))
+	demandRows := max(sample.Candidate.LimitRows, sample.ResultRows, 1)
+	overReadRows := max(
+		sample.ProcessedKeys,
+		sample.ReaderActRows,
+		sample.LookupActRows,
+		sample.IndexActRows,
+		sample.TableActRows,
+	)
+	overReadRatio := float64(overReadRows) / float64(demandRows)
 	rowsPerTask := float64(sample.ResultRows) / float64(maxInt(sample.RequestCount, 1))
 	keysPerResult := float64(sample.ProcessedKeys) / float64(max(sample.ResultRows, 1))
 	latencyMS := float64(sample.Latency) / float64(time.Millisecond)
+	readerActRowsPerResult := float64(sample.ReaderActRows) / float64(demandRows)
+	lookupActRowsPerResult := float64(sample.LookupActRows) / float64(demandRows)
+	indexActRowsPerResult := float64(sample.IndexActRows) / float64(demandRows)
+	tableActRowsPerResult := float64(sample.TableActRows) / float64(demandRows)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -253,12 +279,20 @@ func (s *Store) Observe(sample Sample) {
 		profile.EWMAOverReadRatio = overReadRatio
 		profile.EWMARequestCount = float64(sample.RequestCount)
 		profile.EWMALatencyMS = latencyMS
+		profile.EWMAReaderActRowsPerResult = readerActRowsPerResult
+		profile.EWMALookupActRowsPerResult = lookupActRowsPerResult
+		profile.EWMAIndexActRowsPerResult = indexActRowsPerResult
+		profile.EWMATableActRowsPerResult = tableActRowsPerResult
 	} else {
 		profile.EWMARowsPerTask = ewma(profile.EWMARowsPerTask, rowsPerTask)
 		profile.EWMAProcessedKeysPerResult = ewma(profile.EWMAProcessedKeysPerResult, keysPerResult)
 		profile.EWMAOverReadRatio = ewma(profile.EWMAOverReadRatio, overReadRatio)
 		profile.EWMARequestCount = ewma(profile.EWMARequestCount, float64(sample.RequestCount))
 		profile.EWMALatencyMS = ewma(profile.EWMALatencyMS, latencyMS)
+		profile.EWMAReaderActRowsPerResult = ewma(profile.EWMAReaderActRowsPerResult, readerActRowsPerResult)
+		profile.EWMALookupActRowsPerResult = ewma(profile.EWMALookupActRowsPerResult, lookupActRowsPerResult)
+		profile.EWMAIndexActRowsPerResult = ewma(profile.EWMAIndexActRowsPerResult, indexActRowsPerResult)
+		profile.EWMATableActRowsPerResult = ewma(profile.EWMATableActRowsPerResult, tableActRowsPerResult)
 	}
 	profile.RecommendedCap = recommendCap(profile)
 	profile.LastUpdatedUnix = now
