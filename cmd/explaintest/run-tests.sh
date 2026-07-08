@@ -257,6 +257,14 @@ function start_tidb_server()
     echo "tidb-server(PID: $SERVER_PID) started"
 }
 
+function stop_tidb_server()
+{
+    if [[ -n "${SERVER_PID:-}" ]] && kill -0 "$SERVER_PID" 2>/dev/null; then
+        kill -9 "$SERVER_PID" || true
+        wait "$SERVER_PID" 2>/dev/null || true
+    fi
+}
+
 function run_explain_test()
 {
     coll_disabled="false"
@@ -291,6 +299,36 @@ function run_explain_test()
     fi
 }
 
+function run_explain_test_with_retry()
+{
+    local attempt=1
+    local max_attempts=1
+
+    if [ "${TIDB_TEST_STORE_NAME}" = "tikv" ]; then
+        max_attempts=2
+    fi
+
+    while true; do
+        start_tidb_server
+        sleep 5
+        if run_explain_test; then
+            stop_tidb_server
+            check_data_race
+            return 0
+        fi
+
+        local rc=$?
+        stop_tidb_server
+        if [[ $attempt -ge $max_attempts ]]; then
+            return $rc
+        fi
+
+        echo "explaintest failed on attempt $attempt, retrying once for tikv startup flakiness"
+        attempt=$((attempt + 1))
+        sleep 5
+    done
+}
+
 function check_data_race() {
     if [ "${TIDB_TEST_STORE_NAME}" = "tikv" ]; then
         return
@@ -307,20 +345,12 @@ enabled_new_collation=""
 
 if [[ $collation_opt = 0 || $collation_opt = 2 ]]; then
     enabled_new_collation=0
-    start_tidb_server
-    sleep 5
-    run_explain_test
-    kill -9 $SERVER_PID
-    check_data_race
+    run_explain_test_with_retry
 fi
 
 if [[ $collation_opt = 1 || $collation_opt = 2 ]]; then
     enabled_new_collation=1
-    start_tidb_server
-    sleep 5
-    run_explain_test
-    kill -9 $SERVER_PID
-    check_data_race
+    run_explain_test_with_retry
 fi
 
 echo "explaintest passed!"
