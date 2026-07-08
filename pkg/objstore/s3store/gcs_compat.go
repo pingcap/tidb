@@ -41,9 +41,10 @@ func (s *gcsS3CompatibleSigner) SignHTTP(
 	signingTime time.Time,
 	optFns ...func(*v4.SignerOptions),
 ) error {
-	// GCS S3 interoperability rejects signatures that include these SDK-added
-	// headers. Keep sending the headers, but exclude them from the canonical
-	// request to match AWS SDK v1 behavior.
+	// GCS S3 interoperability rejects signatures that include Accept-Encoding.
+	// AWS SDK v2 also signs the SDK request metadata headers below, while AWS
+	// SDK v1 did not. Keep sending them, but exclude all three from the canonical
+	// request to stay close to the AWS SDK v1 signing behavior.
 	savedHeaders := http.Header{}
 	for _, key := range []string{"Accept-Encoding", "Amz-Sdk-Invocation-Id", "Amz-Sdk-Request"} {
 		if values, ok := r.Header[key]; ok {
