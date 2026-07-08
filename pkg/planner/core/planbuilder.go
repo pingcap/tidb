@@ -3114,34 +3114,32 @@ func generateIndexTasks(idx *model.IndexInfo, as *ast.AnalyzeTableStmt, tblInfo 
 var CMSketchSizeLimit = kv.TxnEntrySizeLimit.Load() / binary.MaxVarintLen32
 
 var analyzeOptionLimit = map[ast.AnalyzeOptionType]uint64{
-	ast.AnalyzeOptNumBuckets:    100000,
-	ast.AnalyzeOptNumTopN:       100000,
+	ast.AnalyzeOptNumBuckets: vardef.MaxTiDBAnalyzeDefaultNumBuckets,
+	ast.AnalyzeOptNumTopN:    vardef.MaxTiDBAnalyzeDefaultNumTopN,
 	ast.AnalyzeOptCMSketchWidth: CMSketchSizeLimit,
 	ast.AnalyzeOptCMSketchDepth: CMSketchSizeLimit,
 	ast.AnalyzeOptNumSamples:    5000000,
 	ast.AnalyzeOptSampleRate:    math.Float64bits(1),
 }
 
+// AnalyzeOptionDefault returns the default analyze options.
 // TopN reduced from 500 to 100 due to concerns over large number of TopN values collected for customers with many tables.
 // 100 is more inline with other databases. 100-256 is also common for NumBuckets with other databases.
-var analyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
-	ast.AnalyzeOptNumBuckets:    statistics.DefaultHistogramBuckets,
-	ast.AnalyzeOptNumTopN:       statistics.DefaultTopNValue,
-	ast.AnalyzeOptCMSketchWidth: 2048,
-	ast.AnalyzeOptCMSketchDepth: 5,
-	ast.AnalyzeOptNumSamples:    0,
-	ast.AnalyzeOptSampleRate:    math.Float64bits(-1),
-}
-
-// GetAnalyzeOptionDefaultForTest returns the default analyze options for test.
-func GetAnalyzeOptionDefaultForTest() map[ast.AnalyzeOptionType]uint64 {
-	return analyzeOptionDefault
+func AnalyzeOptionDefault() map[ast.AnalyzeOptionType]uint64 {
+	return map[ast.AnalyzeOptionType]uint64{
+		ast.AnalyzeOptNumBuckets:    vardef.AnalyzeDefaultNumBuckets.Load(),
+		ast.AnalyzeOptNumTopN:       vardef.AnalyzeDefaultNumTopN.Load(),
+		ast.AnalyzeOptCMSketchWidth: 2048,
+		ast.AnalyzeOptCMSketchDepth: 5,
+		ast.AnalyzeOptNumSamples:    0,
+		ast.AnalyzeOptSampleRate:    math.Float64bits(-1),
+	}
 }
 
 // handleAnalyzeOptions validates analyze options and returns only the options
 // explicitly specified in the statement.
 func handleAnalyzeOptions(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint64, error) {
-	optMap := make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionDefault))
+	optMap := make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionLimit))
 	sampleNum, sampleRate := uint64(0), 0.0
 	for _, opt := range opts {
 		datumValue := opt.Value.(*driver.ValueExpr).Datum
@@ -3183,8 +3181,9 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint
 }
 
 func fillAnalyzeOptions(optMap map[ast.AnalyzeOptionType]uint64) map[ast.AnalyzeOptionType]uint64 {
-	filledMap := make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionDefault))
-	for key, defaultVal := range analyzeOptionDefault {
+	defaults := AnalyzeOptionDefault()
+	filledMap := make(map[ast.AnalyzeOptionType]uint64, len(defaults))
+	for key, defaultVal := range defaults {
 		if val, ok := optMap[key]; ok {
 			filledMap[key] = val
 		} else {
