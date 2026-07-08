@@ -1696,6 +1696,28 @@ func dualPasswordRequested(specs []*ast.UserSpec) bool {
 	return false
 }
 
+// alterUserHasPrivilegedOptions reports whether the ALTER USER statement
+// carries statement-level options beyond the per-spec password /
+// dual-password clauses (TLS requirements, resource limits, password/lock
+// policy, COMMENT/ATTRIBUTE, resource group). Those options mutate account
+// state that plain self-service password authority must not reach, so the
+// self-service dual-password gate in executeAlterUser applies only when this
+// returns false.
+//
+// NOTE: this is an ALLOWLIST of the statement-level option fields on
+// ast.AlterUserStmt and MUST be kept in sync when new option fields are
+// added there — a field missing here would leave the self-service bypass
+// enabled for a statement that also carries the new option. The table test
+// TestAlterUserHasPrivilegedOptions enumerates every current option so a new
+// field shows up as a review-visible gap.
+func alterUserHasPrivilegedOptions(s *ast.AlterUserStmt) bool {
+	return len(s.AuthTokenOrTLSOptions) > 0 ||
+		len(s.ResourceOptions) > 0 ||
+		len(s.PasswordOrLockOptions) > 0 ||
+		s.CommentOrAttributeOption != nil ||
+		s.ResourceGroupNameOption != nil
+}
+
 func authenticatedUserNameAndHost(user *auth.UserIdentity) (username string, hostname string) {
 	if user == nil {
 		return "", ""
@@ -1877,15 +1899,9 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		//
 		// hasOtherStmtOptions: the statement carries options beyond the password
 		// / dual-password clause, so it is not a pure self-service password
-		// change and must go through the standard admin check. Keep this list in
-		// sync with the mutating option fields on ast.AlterUserStmt; the
-		// default-deny posture below means a forgotten field falls back to
-		// requiring admin authority, not to bypassing it.
-		hasOtherStmtOptions := len(s.AuthTokenOrTLSOptions) > 0 ||
-			len(s.ResourceOptions) > 0 ||
-			len(s.PasswordOrLockOptions) > 0 ||
-			s.CommentOrAttributeOption != nil ||
-			s.ResourceGroupNameOption != nil
+		// change and must go through the standard admin check. See the
+		// allowlist note on alterUserHasPrivilegedOptions.
+		hasOtherStmtOptions := alterUserHasPrivilegedOptions(s)
 		// Read the target row (inside this transaction) BEFORE the privilege
 		// gate: classifying an explicit IDENTIFIED WITH as "no plugin change"
 		// needs the account's current plugin. The "user does not exist" outcome
