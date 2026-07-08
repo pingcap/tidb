@@ -57,11 +57,8 @@ func WriteInsert(
 		return 0, fileRowIter.Error()
 	}
 
-	// sink writes directly into the object store writer, mirroring the CSV/parquet
-	// paths. The writer's multipart uploader (enabled via WriterOption.Concurrency
-	// in buildInterceptFileWriter) overlaps upload with encoding, so no writerPipe
-	// goroutine is needed; SQLWriter owns the per-statement framing and sizing and
-	// counts written bytes for file-size rotation via EstimateFileSize.
+	// SQLWriter writes directly into the object store writer, whose concurrent
+	// multipart upload replaces the writerPipe; it owns the per-statement framing.
 	sink := &wrappedWriter{ctx: pCtx.Context, w: w}
 
 	selectedField := meta.SelectedField()
@@ -204,8 +201,8 @@ func toCSVBinaryFormat(f BinaryFormat) csvfile.BinaryFormat {
 	}
 }
 
-// sqlColumnKinds is the sqlfile counterpart of columnKinds, with the same
-// binary/numeric/string-default classification.
+// sqlColumnKinds classifies column types for sqlfile: binary and numeric types
+// keep their kind, everything else defaults to string.
 func sqlColumnKinds(colTypes []string) []sqlfile.FieldKind {
 	kinds := make([]sqlfile.FieldKind, len(colTypes))
 	for i, ct := range colTypes {

@@ -43,7 +43,7 @@ func AppendValue(dst, val []byte, isNull bool, kind FieldKind, escapeBackslash b
 	}
 }
 
-// appendEscaped mirrors dumpling's escapeSQL.
+// appendEscaped writes s to dst, escaping per escapeBackslash.
 func appendEscaped(dst, s []byte, escapeBackslash bool) []byte {
 	if escapeBackslash {
 		return appendEscapedBackslash(dst, s)
@@ -61,7 +61,7 @@ func appendEscaped(dst, s []byte, escapeBackslash bool) []byte {
 	}
 }
 
-// appendEscapedBackslash mirrors dumpling's escapeBackslashSQL.
+// appendEscapedBackslash writes s to dst with backslash escaping.
 func appendEscapedBackslash(dst, s []byte) []byte {
 	last := 0
 	for i := range s {

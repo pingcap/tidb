@@ -12,12 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package sqlfile holds the SQL (INSERT statement) writer shared by Dumpling and
-// the exporter, the sibling of csvfile and parquetfile.
+// Package sqlfile holds the SQL (INSERT statement) writer.
 package sqlfile
 
-// FieldKind classifies a column for SQL value framing, mirroring dumpling's
-// SQLTypeNumber/String/Bytes split.
+// FieldKind classifies a column for SQL value framing.
 type FieldKind uint8
 
 const (

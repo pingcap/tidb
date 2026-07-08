@@ -21,8 +21,7 @@ import (
 )
 
 // SQLWriter encodes rows into `INSERT INTO ... VALUES (..),(..);` statements and
-// writes them to an io.Writer, the sibling of csvfile.CSVWriter and
-// parquetfile.ParquetWriter. It owns the statement framing and splits at
+// writes them to an io.Writer. It owns the statement framing and splits at
 // Config.StatementSize; the caller owns buffering, file-size rotation and upload
 // and must call Close to terminate the open statement.
 type SQLWriter struct {
@@ -94,10 +93,8 @@ func (sw *SQLWriter) Write(row []sql.RawBytes) error {
 	return err
 }
 
-// EstimateFileSize returns the logical file size, mirroring
-// parquetfile.ParquetWriter and csvfile.CSVWriter so callers rotate files
-// uniformly across formats. It excludes any preamble the caller wrote directly
-// (e.g. SQL special comments).
+// EstimateFileSize returns the logical file size for rotation. It excludes any
+// preamble the caller wrote directly (e.g. SQL special comments).
 func (sw *SQLWriter) EstimateFileSize() uint64 {
 	return uint64(sw.fileSize)
 }
