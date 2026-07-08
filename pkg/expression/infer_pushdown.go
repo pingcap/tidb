@@ -227,6 +227,10 @@ func scalarExprSupportedByTiKV(ctx EvalContext, sf *ScalarFunction) bool {
 		// vector functions.
 		ast.VecDims, ast.VecL1Distance, ast.VecL2Distance, ast.VecNegativeInnerProduct, ast.VecCosineDistance, ast.VecL2Norm, ast.VecAsText,
 
+		// geospatial relational predicates (spatial-index refine pushdown).
+		ast.StWithin, ast.StContains, ast.StIntersects, ast.StEquals, ast.StDisjoint,
+		ast.StTouches, ast.StCrosses, ast.StOverlaps, ast.StCovers, ast.StCoveredBy,
+
 		// date functions.
 		ast.Date, ast.Week /* ast.YearWeek, ast.ToSeconds */, ast.DateDiff,
 		/* ast.TimeDiff, ast.AddTime,  ast.SubTime, */

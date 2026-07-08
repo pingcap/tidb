@@ -66,9 +66,8 @@ const (
 	NoDefaultValueFlag uint = 1 << 12 /* Field doesn't have a default value */
 	OnUpdateNowFlag    uint = 1 << 13 /* Field is set to NOW on UPDATE */
 	PartKeyFlag        uint = 1 << 14 /* Intern: Part of some keys */
-	NumFlag            uint = 1 << 15 /* Field is a num (for clients) */
+	SridFlag           uint = 1 << 15 /* Field has a SRID */
 
-	GroupFlag             uint = 1 << 15 /* Internal: Group field */
 	UniqueFlag            uint = 1 << 16 /* Internal: Used by sql_yacc */
 	BinCmpFlag            uint = 1 << 17 /* Internal: Used by sql_yacc */
 	ParseToJSONFlag       uint = 1 << 18 /* Internal: Used when we want to parse string to JSON in CAST */
@@ -170,4 +169,9 @@ func HasEnumSetAsIntFlag(flag uint) bool {
 // HasFlag checks if a flag is set.
 func HasFlag(flag uint, flagItem uint) bool {
 	return (flag & flagItem) > 0
+}
+
+// HasSridFlag checks if SridFlag is set.
+func HasSridFlag(flag uint) bool {
+	return (flag & SridFlag) > 0
 }

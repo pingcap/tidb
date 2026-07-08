@@ -75,7 +75,7 @@ func FormatValueText(row chunk.Row, idx int, col ColumnInfo, enc *ResultEncoder)
 	case mysql.TypeNewDecimal:
 		return hack.Slice(row.GetMyDecimal(idx).String()), nil
 	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBit,
-		mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
+		mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob, mysql.TypeGeometry:
 		enc.UpdateDataEncoding(col.Charset)
 		return enc.EncodeData(row.GetBytes(idx)), nil
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:

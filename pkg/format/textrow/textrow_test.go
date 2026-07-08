@@ -119,7 +119,9 @@ func TestFormatValueText(t *testing.T) {
 func TestFormatValueTextInvalidType(t *testing.T) {
 	utf8 := textrow.NewResultEncoder(charset.CharsetUTF8MB4)
 	row := chunk.MutRowFromDatums([]types.Datum{types.NewIntDatum(1)}).ToRow()
-	_, err := textrow.FormatValueText(row, 0, textrow.ColumnInfo{Type: mysql.TypeGeometry}, utf8)
+	// TypeGeometry is a supported string-like type in the spatial POC, so use
+	// TypeUnspecified as the unsupported type.
+	_, err := textrow.FormatValueText(row, 0, textrow.ColumnInfo{Type: mysql.TypeUnspecified}, utf8)
 	require.Error(t, err)
 }
 

@@ -60,6 +60,7 @@ require (
 	github.com/go-sql-driver/mysql v1.7.1
 	github.com/gobwas/glob v0.2.3
 	github.com/gogo/protobuf v1.3.2
+	github.com/golang/geo v0.0.0-20260625163123-7c0e84413537
 	github.com/golang/protobuf v1.5.4
 	github.com/golang/snappy v0.0.4
 	github.com/golangci/gofmt v0.0.0-20250106114630-d62b90e6713d
@@ -95,6 +96,7 @@ require (
 	github.com/openai/openai-go v0.1.0-alpha.59
 	github.com/opentracing/basictracer-go v1.0.0
 	github.com/opentracing/opentracing-go v1.2.0
+	github.com/peterstace/simplefeatures v0.59.0
 	github.com/phayes/freeport v0.0.0-20180830031419-95f893ade6f2
 	github.com/pingcap/badger v1.5.1-0.20241015064302-38533b6cbf8d
 	github.com/pingcap/errors v0.11.5-0.20260508054701-306e305bcf41
@@ -372,3 +374,5 @@ replace (
 	sourcegraph.com/sourcegraph/appdash => github.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
 	sourcegraph.com/sourcegraph/appdash-data => github.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
+
+replace github.com/pingcap/tipb => github.com/mjonss/tipb v0.0.0-20260626151721-eacc7e94342e

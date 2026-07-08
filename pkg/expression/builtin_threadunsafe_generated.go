@@ -87,6 +87,21 @@ func (s *builtinFtsMysqlMatchAgainstSig) SafeToShareAcrossSession() bool {
 }
 
 // SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinStTypedFromTextSig) SafeToShareAcrossSession() bool {
+	return false
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinGeomRelSig) SafeToShareAcrossSession() bool {
+	return false
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinStEndpointSig) SafeToShareAcrossSession() bool {
+	return false
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
 func (s *builtinIlikeSig) SafeToShareAcrossSession() bool {
 	return false
 }

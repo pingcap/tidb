@@ -1,0 +1,92 @@
+# Spatial PoC vs MySQL compatibility comparison.
+#
+# This file uses only the intersection of spatial features implemented by the
+# TiDB spatial-index PoC and by stock MySQL 8.0 / 9.x, so the SAME .test can be
+# replayed against either server and the outputs compared. It is written in the
+# mysql-test format on purpose: TiDB's tests/integrationtest runner and MySQL's
+# own mysql-test-run both understand it.
+#
+# Scope (the PoC scope): SRID 0 (planar) only, POINT/POLYGON geometries only.
+#
+# It asserts observable SQL RESULTS (values and row membership), never query
+# plans -- TiDB and MySQL EXPLAIN output is not comparable, and a spatial index
+# is an optimization that must not change results. The PoC's own index-usage
+# proof lives in pkg/executor TestPOCSpatialIndexEquivalence.
+#
+# How to use as a comparison:
+#   1. Record the expected output from the PoC TiDB server:
+#        cd tests/integrationtest && ./run-tests.sh -r spatial_compat
+#      This writes r/spatial_compat.result from the PoC.
+#   2. Replay the same t/spatial_compat.test against a stock MySQL via
+#      mysql-test-run (or pipe it through the `mysql` client) and diff its
+#      output against r/spatial_compat.result. Any diff is a PoC-vs-MySQL
+#      behavioral divergence to triage.
+#
+# Known likely divergences to expect in the diff (informational):
+#   - ST_AsText spacing: go-geom prints "POINT (3 4)" (space), MySQL "POINT(3 4)".
+#   - Point-on-boundary containment: OGC boundary semantics (MySQL) vs the PoC
+#     ray-casting test may disagree; the boundary points are called out below.
+
+drop table if exists pts;
+drop table if exists locs;
+
+--echo # === section 1: type round-trip + accessors ===
+create table pts (
+  id int primary key,
+  p  point not null srid 0
+);
+insert into pts (id, p) values
+  (1, ST_GeomFromText('POINT(0 0)',  0)),
+  (2, ST_GeomFromText('POINT(3 4)',  0)),
+  (3, ST_GeomFromText('POINT(10 10)',0)),
+  (4, ST_GeomFromText('POINT(5 5)',  0)),
+  (5, ST_GeomFromText('POINT(1 1)',  0));
+select id, ST_AsText(p) as wkt, ST_X(p) as x, ST_Y(p) as y, ST_SRID(p) as srid
+from pts order by id;
+
+--echo # === section 2: planar distance (SRID 0) ===
+# DECIMAL cast pins the textual formatting so the diff is stable across servers.
+select a.id as aid, b.id as bid,
+       cast(ST_Distance(a.p, b.p) as decimal(20,6)) as dist
+from pts a join pts b on a.id < b.id
+order by aid, bid;
+
+--echo # === section 3: containment (point-in-polygon) ===
+# Box POLYGON((0 0,10 0,10 10,0 10,0 0)). ids 1 and 3 sit on the boundary, where
+# OGC (MySQL) and PoC ray-casting MAY disagree -- that disagreement is the point.
+select id,
+       ST_Within(p,   ST_GeomFromText('POLYGON((0 0,10 0,10 10,0 10,0 0))',0)) as within_box,
+       ST_Contains(ST_GeomFromText('POLYGON((0 0,10 0,10 10,0 10,0 0))',0), p) as box_contains
+from pts order by id;
+
+--echo # === section 4: spatial index result-equivalence ===
+create table locs (
+  id int primary key,
+  p  point not null srid 0,
+  spatial index idx_p (p)
+);
+# A small grid; every point is strictly interior/exterior to the query regions
+# below (none on a boundary), so membership is unambiguous on both servers.
+insert into locs (id, p) values
+  (1, ST_GeomFromText('POINT(0 0)',  0)),
+  (2, ST_GeomFromText('POINT(1 1)',  0)),
+  (3, ST_GeomFromText('POINT(3 3)',  0)),
+  (4, ST_GeomFromText('POINT(4 6)',  0)),
+  (5, ST_GeomFromText('POINT(5 5)',  0)),
+  (6, ST_GeomFromText('POINT(6 4)',  0)),
+  (7, ST_GeomFromText('POINT(7 7)',  0)),
+  (8, ST_GeomFromText('POINT(9 9)',  0)),
+  (9, ST_GeomFromText('POINT(10 10)',0));
+
+--echo # proximity: points within Cartesian distance 3 of (5,5)
+select id from locs
+where ST_Distance(p, ST_GeomFromText('POINT(5 5)',0)) <= 3
+order by id;
+
+--echo # geofence: points inside box (2 2,8 8)
+select id from locs
+where ST_Within(p, ST_GeomFromText('POLYGON((2 2,8 2,8 8,2 8,2 2))',0)) = 1
+order by id;
+
+drop table pts;
+drop table locs;

@@ -2523,6 +2523,30 @@ func getColOffsetForAnalyze(colsInfo []*model.ColumnInfo, colID int64) int {
 	return -1
 }
 
+// isGeometryDerivedIndex reports whether idx is an expression index whose virtual
+// columns are generated from a geometry column. The ANALYZE row sampler cannot
+// decode geometry values (the codec has no TypeGeometry case), so recomputing such
+// an index's columns from the sampled rows yields NULL and an empty histogram.
+// Like a multi-valued index, it must instead be analyzed by scanning its
+// materialized index entries (the cell-key/x/y values are ordinary binary/double
+// columns), so it is routed to an independent index analyze task.
+func isGeometryDerivedIndex(idx *model.IndexInfo, tblInfo *model.TableInfo) bool {
+	for _, idxCol := range idx.Columns {
+		colInfo := tblInfo.Columns[idxCol.Offset]
+		if !colInfo.IsVirtualGenerated() {
+			continue
+		}
+		for dep := range colInfo.Dependences {
+			for _, c := range tblInfo.Columns {
+				if c.Name.L == dep && c.FieldType.GetType() == mysql.TypeGeometry {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 // getModifiedIndexesInfoForAnalyze returns indexesInfo for ANALYZE.
 // 1. If allColumns is true, we just return public indexes in tblInfo.Indices.
 // 2. If allColumns is false, colsInfo indicate the columns whose stats need to be collected. colsInfo is a subset of tbl.Columns. For each public index
@@ -2553,7 +2577,7 @@ func getModifiedIndexesInfoForAnalyze(
 			specialGlobalIdxsInfo = append(specialGlobalIdxsInfo, originIdx)
 			continue
 		}
-		if originIdx.MVIndex {
+		if originIdx.MVIndex || isGeometryDerivedIndex(originIdx, tblInfo) {
 			independentIdxsInfo = append(independentIdxsInfo, originIdx)
 			continue
 		}
@@ -2595,7 +2619,7 @@ func (b *PlanBuilder) filterSkipColumnTypes(origin []*model.ColumnInfo, tbl *res
 			skipCol = append(skipCol, colInfo)
 			continue
 		}
-		_, skip := skipTypes[types.TypeToStr(colInfo.FieldType.GetType(), colInfo.FieldType.GetCharset())]
+		_, skip := skipTypes[types.TypeToStr(colInfo.FieldType.GetType(), colInfo.FieldType.GetCharset(), colInfo.FieldType.GetGeometryType())]
 		// Currently, if the column exists in some index(except MV Index), we need to bring the column's sample values
 		// into TiDB to build the index statistics.
 		_, keep := mustAnalyze[colInfo.ID]

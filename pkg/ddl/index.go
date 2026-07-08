@@ -245,8 +245,10 @@ func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int, suppressTooLong
 		return errors.Trace(dbterror.ErrWrongKeyColumn.GenWithStackByArgs(col.Name))
 	}
 
-	// JSON column cannot index.
-	if col.FieldType.GetType() == mysql.TypeJSON && !col.FieldType.IsArray() {
+	// JSON and GEOMETRY values cannot be used as an ordinary (non-spatial) index
+	// key, including via a functional index over a JSON/geometry-returning
+	// expression such as ST_GeomFromText(...).
+	if (col.FieldType.GetType() == mysql.TypeJSON || col.FieldType.GetType() == mysql.TypeGeometry) && !col.FieldType.IsArray() {
 		if col.Hidden {
 			return dbterror.ErrFunctionalIndexOnJSONOrGeometryFunction
 		}

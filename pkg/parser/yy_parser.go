@@ -61,6 +61,8 @@ var (
 	ErrWrongUsage = terror.ClassParser.NewStd(mysql.ErrWrongUsage)
 	// ErrWrongDBName returns for incorrect DB name.
 	ErrWrongDBName = terror.ClassParser.NewStd(mysql.ErrWrongDBName)
+	// ErrDataOutOfRange returns for incorrect range.
+	ErrDataOutOfRange = terror.ClassParser.NewStd(mysql.ErrDataOutOfRange)
 	// SpecFieldPattern special result field pattern
 	SpecFieldPattern = regexp.MustCompile(`(\/\*!(M?[0-9]{5,6})?|\*\/)`)
 	specCodeStart    = regexp.MustCompile(`^\/\*!(M?[0-9]{5,6})?[ \t]*`)

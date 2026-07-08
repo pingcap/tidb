@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	ast "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -569,11 +570,11 @@ func testSelectUpdateDeleteEmptyStringError(t *testing.T) {
 }
 
 func TestFieldTypeToStr(t *testing.T) {
-	v := TypeToStr(mysql.TypeUnspecified, "not binary")
+	v := TypeToStr(mysql.TypeUnspecified, "not binary", ast.GeomGeometry)
 	require.Equal(t, TypeStr(mysql.TypeUnspecified), v)
-	v = TypeToStr(mysql.TypeBlob, charset.CharsetBin)
+	v = TypeToStr(mysql.TypeBlob, charset.CharsetBin, ast.GeomGeometry)
 	require.Equal(t, "blob", v)
-	v = TypeToStr(mysql.TypeString, charset.CharsetBin)
+	v = TypeToStr(mysql.TypeString, charset.CharsetBin, ast.GeomGeometry)
 	require.Equal(t, "binary", v)
 }
 

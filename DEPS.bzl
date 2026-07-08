@@ -1848,6 +1848,13 @@ def go_deps():
         version = "v0.0.0-20160601135302-2da839ab0f4d",
     )
     go_repository(
+        name = "com_github_golang_geo",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/golang/geo",
+        sum = "h1:KeIaDS/+VEy/bhDYjG3Z78dOyLAU4HXcVxmd0WYHJTE=",
+        version = "v0.0.0-20260625163123-7c0e84413537",
+    )
+    go_repository(
         name = "com_github_golang_glog",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/golang/glog",
@@ -2035,6 +2042,13 @@ def go_deps():
         importpath = "github.com/google/go-querystring",
         sum = "h1:AnCroh3fv4ZBgVIf1Iwtovgjaw/GiKJo8M8yD/fhyJ8=",
         version = "v1.1.0",
+    )
+    go_repository(
+        name = "com_github_google_go_units",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/google/go-units",
+        sum = "h1:hM8xVjUr4Iv/iQIx4Jq1xckZkKlXu51Gqku5HlEpQAE=",
+        version = "v0.0.0-20250612230646-eddd77f68220",
     )
     go_repository(
         name = "com_github_google_gofuzz",
@@ -2935,6 +2949,13 @@ def go_deps():
         version = "v1.0.1",
     )
     go_repository(
+        name = "com_github_lib_pq",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/lib/pq",
+        sum = "h1:sJZmqHoEaY7f+NPP8pgLB/WxulyR3fewgCM2qaSlBb4=",
+        version = "v1.1.1",
+    )
+    go_repository(
         name = "com_github_linode_linodego",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/linode/linodego",
@@ -3467,6 +3488,13 @@ def go_deps():
         version = "v0.0.0-20250813065127-a731cc31b4fe",
     )
     go_repository(
+        name = "com_github_peterstace_simplefeatures",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/peterstace/simplefeatures",
+        sum = "h1:pmn+uh75K3CCGsJCLHnpBqgQmDECLYX3u5hfymVbqmQ=",
+        version = "v0.59.0",
+    )
+    go_repository(
         name = "com_github_phayes_freeport",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/phayes/freeport",
@@ -3547,8 +3575,9 @@ def go_deps():
         name = "com_github_pingcap_tipb",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/tipb",
-        sum = "h1:9I5GHZesmR+hv68t00BO7tayKMFfywi+hlpn119GscM=",
-        version = "v0.0.0-20260623093813-5f9928e91afe",
+        replace = "github.com/mjonss/tipb",
+        sum = "h1:YutAZ5DDaz4X1xVRixmGrMWUusuhMP7y7xcGG2eJG2g=",
+        version = "v0.0.0-20260626151721-eacc7e94342e",
     )
     go_repository(
         name = "com_github_pkg_browser",
@@ -5903,8 +5932,8 @@ def go_deps():
         name = "org_golang_x_image",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/image",
-        sum = "h1:+qEpEAPhDZ1o0x3tHzZTQDArnOixOzGD9HUJfcg0mb4=",
-        version = "v0.0.0-20190802002840-cff245a6509b",
+        sum = "h1:HseQ7c2OpPKTPVzNjG5fwJsOTCiiwS4QdsYi5XU6H68=",
+        version = "v0.23.0",
     )
     go_repository(
         name = "org_golang_x_lint",

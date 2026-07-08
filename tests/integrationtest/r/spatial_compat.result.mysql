@@ -1,0 +1,86 @@
+drop table if exists pts;
+drop table if exists locs;
+# === section 1: type round-trip + accessors ===
+create table pts (
+id int primary key,
+p  point not null srid 0
+);
+insert into pts (id, p) values
+(1, ST_GeomFromText('POINT(0 0)',  0)),
+(2, ST_GeomFromText('POINT(3 4)',  0)),
+(3, ST_GeomFromText('POINT(10 10)',0)),
+(4, ST_GeomFromText('POINT(5 5)',  0)),
+(5, ST_GeomFromText('POINT(1 1)',  0));
+select id, ST_AsText(p) as wkt, ST_X(p) as x, ST_Y(p) as y, ST_SRID(p) as srid
+from pts order by id;
+id	wkt	x	y	srid
+1	POINT(0 0)	0	0	0
+2	POINT(3 4)	3	4	0
+3	POINT(10 10)	10	10	0
+4	POINT(5 5)	5	5	0
+5	POINT(1 1)	1	1	0
+# === section 2: planar distance (SRID 0) ===
+select a.id as aid, b.id as bid,
+cast(ST_Distance(a.p, b.p) as decimal(20,6)) as dist
+from pts a join pts b on a.id < b.id
+order by aid, bid;
+aid	bid	dist
+1	2	5.000000
+1	3	14.142136
+1	4	7.071068
+1	5	1.414214
+2	3	9.219544
+2	4	2.236068
+2	5	3.605551
+3	4	7.071068
+3	5	12.727922
+4	5	5.656854
+# === section 3: containment (point-in-polygon) ===
+select id,
+ST_Within(p,   ST_GeomFromText('POLYGON((0 0,10 0,10 10,0 10,0 0))',0)) as within_box,
+ST_Contains(ST_GeomFromText('POLYGON((0 0,10 0,10 10,0 10,0 0))',0), p) as box_contains
+from pts order by id;
+id	within_box	box_contains
+1	0	0
+2	1	1
+3	0	0
+4	1	1
+5	1	1
+# === section 4: spatial index result-equivalence ===
+create table locs (
+id int primary key,
+p  point not null srid 0,
+spatial index idx_p (p)
+);
+insert into locs (id, p) values
+(1, ST_GeomFromText('POINT(0 0)',  0)),
+(2, ST_GeomFromText('POINT(1 1)',  0)),
+(3, ST_GeomFromText('POINT(3 3)',  0)),
+(4, ST_GeomFromText('POINT(4 6)',  0)),
+(5, ST_GeomFromText('POINT(5 5)',  0)),
+(6, ST_GeomFromText('POINT(6 4)',  0)),
+(7, ST_GeomFromText('POINT(7 7)',  0)),
+(8, ST_GeomFromText('POINT(9 9)',  0)),
+(9, ST_GeomFromText('POINT(10 10)',0));
+# proximity: points within Cartesian distance 3 of (5,5)
+select id from locs
+where ST_Distance(p, ST_GeomFromText('POINT(5 5)',0)) <= 3
+order by id;
+id
+3
+4
+5
+6
+7
+# geofence: points inside box (2 2,8 8)
+select id from locs
+where ST_Within(p, ST_GeomFromText('POLYGON((2 2,8 2,8 8,2 8,2 2))',0)) = 1
+order by id;
+id
+3
+4
+5
+6
+7
+drop table pts;
+drop table locs;
