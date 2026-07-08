@@ -342,6 +342,9 @@ type PlanBuilder struct {
 	// uses this to enable the fts-like-fallback round even when round 1's
 	// native plan is executable, so the LIKE-based plan can compete on cost.
 	predicateMatchSeen bool
+
+	autoEmbedColumnTracker *autoEmbedColumnTracker
+	autoEmbedLineageOracle *autoEmbedLineageOracle
 }
 
 // HasNonViableFTSMatch reports whether the most recent build round saw a
@@ -501,10 +504,14 @@ func (PlanBuilderOptAllowCastArray) Apply(builder *PlanBuilder) {
 // NewPlanBuilder creates a new PlanBuilder.
 func NewPlanBuilder(opts ...PlanBuilderOpt) *PlanBuilder {
 	builder := &PlanBuilder{
-		outerCTEs:           make([]*cteInfo, 0),
-		colMapper:           make(map[*ast.ColumnNameExpr]int),
-		handleHelper:        &handleColHelper{id2HandleMapStack: make([]map[int64][]util.HandleCols, 0)},
-		correlatedAggMapper: make(map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn),
+		outerCTEs:              make([]*cteInfo, 0),
+		colMapper:              make(map[*ast.ColumnNameExpr]int),
+		handleHelper:           &handleColHelper{id2HandleMapStack: make([]map[int64][]util.HandleCols, 0)},
+		correlatedAggMapper:    make(map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn),
+		autoEmbedColumnTracker: newAutoEmbedColumnTracker(),
+	}
+	if intest.InTest {
+		builder.autoEmbedLineageOracle = newAutoEmbedLineageOracle()
 	}
 	for _, opt := range opts {
 		opt.Apply(builder)
@@ -529,6 +536,10 @@ func (b *PlanBuilder) Init(sctx base.PlanContext, is infoschema.InfoSchema, proc
 	b.ctx = sctx
 	b.is = is
 	b.hintProcessor = processor
+	b.autoEmbedTracker().Reset()
+	if intest.InTest {
+		b.autoEmbedOracle().reset()
+	}
 	if processor != nil {
 		b.hintState = processor.NewBuildState()
 	}
@@ -556,6 +567,14 @@ func (b *PlanBuilder) ResetForReuse() *PlanBuilder {
 	for k := range saveCorrelateAggMapper {
 		delete(saveCorrelateAggMapper, k)
 	}
+	saveAutoEmbedColumnTracker := b.autoEmbedColumnTracker
+	if saveAutoEmbedColumnTracker != nil {
+		saveAutoEmbedColumnTracker.Reset()
+	}
+	saveAutoEmbedLineageOracle := b.autoEmbedLineageOracle
+	if saveAutoEmbedLineageOracle != nil {
+		saveAutoEmbedLineageOracle.reset()
+	}
 
 	// Reset ALL the fields.
 	*b = PlanBuilder{}
@@ -566,6 +585,8 @@ func (b *PlanBuilder) ResetForReuse() *PlanBuilder {
 	b.colMapper = saveColMapper
 	b.handleHelper = saveHandleHelper
 	b.correlatedAggMapper = saveCorrelateAggMapper
+	b.autoEmbedColumnTracker = saveAutoEmbedColumnTracker
+	b.autoEmbedLineageOracle = saveAutoEmbedLineageOracle
 	b.noDecorrelate = false
 
 	// Add more fields if they are safe to be reused.
@@ -590,8 +611,15 @@ func (b *PlanBuilder) recordPlanBuilderMetric() {
 }
 
 // Build builds the ast node to a Plan.
-func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan, error) {
-	err := b.checkSEMStmt(node.Node)
+func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (ret base.Plan, err error) {
+	if intest.InTest {
+		oracleMark := b.autoEmbedOracle().beginBuild()
+		defer func() {
+			err = b.autoEmbedOracle().finishBuild(oracleMark, ret, err)
+		}()
+	}
+
+	err = b.checkSEMStmt(node.Node)
 	if err != nil {
 		return nil, err
 	}
@@ -4148,6 +4176,9 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		IsReplace:     insert.IsReplace,
 		IgnoreErr:     insert.IgnoreErr,
 	}.Init(b.ctx)
+	if err := b.recordAutoEmbedColumnsFromTableColumns(insertPlan.Table.Cols(), insertPlan.TableSchema); err != nil {
+		return nil, err
+	}
 
 	if tableInfo.GetPartitionInfo() != nil && len(insert.PartitionNames) != 0 {
 		givenPartitionSets := make(map[int64]struct{}, len(insert.PartitionNames))
@@ -4507,6 +4538,8 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 
 		schema4NewRow.Columns[ordinal].RetType = &types.FieldType{}
 		*schema4NewRow.Columns[ordinal].RetType = affectedValuesCols[i].FieldType
+		schema4NewRow.Columns[ordinal].UniqueID = insertPlan.SCtx().GetSessionVars().AllocPlanColumnID()
+		schema4NewRow.Columns[ordinal].CleanHashCode()
 
 		names4NewRow[ordinal] = names[i]
 	}

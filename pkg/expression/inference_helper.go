@@ -28,6 +28,16 @@ type AutoEmbedInfo struct {
 	OptsInJSON            string // Optional
 }
 
+// Equal compares auto-embedding metadata. Options are intentionally compared as
+// raw JSON text because extraction currently preserves the user-specified
+// constant instead of a canonical JSON representation.
+func (info *AutoEmbedInfo) Equal(other *AutoEmbedInfo) bool {
+	if info == nil || other == nil {
+		return info == other
+	}
+	return info.ModelNameWithProvider == other.ModelNameWithProvider && info.OptsInJSON == other.OptsInJSON
+}
+
 type autoEmbedFnVisitor struct {
 	found bool
 }
