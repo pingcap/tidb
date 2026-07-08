@@ -404,12 +404,10 @@ func (e *RecoverIndexExec) fetchRecoverRows(ctx context.Context, srcResult dists
 				return nil, err
 			}
 			e.idxValsBufs[result.scanRowCount] = idxVals
-			tblInfo := e.table.Meta()
-			rsData := tables.TryGetHandleRestoredData(
-				e.table.UseNewCollate(),
-				tblInfo,
-				tables.FindPrimaryIndex(tblInfo),
+			rsData := tables.TryGetHandleRestoredDataWrapper(
+				e.table,
 				plannercore.GetCommonHandleDatum(e.handleCols, row),
+				nil,
 				e.index.Meta(),
 			)
 			e.recoverRows = append(e.recoverRows, recoverRows{handle: handle, idxVals: idxVals, rsData: rsData, skip: true})

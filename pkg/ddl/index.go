@@ -2831,8 +2831,7 @@ func writeChunk(
 				if !needRestoreForIndexes[i] {
 					return nil
 				}
-				return tables.TryGetHandleRestoredData(
-					useNewCollate, c.TableInfo, c.PrimaryKeyInfo, restoreDataBuf, copCtx.IndexInfo(index.Meta().ID))
+				return getRestoreData(useNewCollate, c.TableInfo, copCtx.IndexInfo(index.Meta().ID), c.PrimaryKeyInfo, restoreDataBuf)
 			},
 			func(i int, _ table.Index, _ []types.Datum, iter table.IndexKVGenerator) (int64, error) {
 				kvBytes, err := writeOneKV(ctx, writers[i], writeStmtBufs, iter, h)
