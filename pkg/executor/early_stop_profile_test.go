@@ -15,13 +15,16 @@
 package executor
 
 import (
+	"math"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/earlystopprofile"
@@ -260,58 +263,62 @@ func TestMergeAdaptiveProfileCap(t *testing.T) {
 	require.Equal(t, 1, mergeAdaptiveProfileCap(4, 1))
 }
 
-func TestLimitRowsAboveIndexJoinMatchesIssueShape(t *testing.T) {
-	sctx := defaultCtx()
-	planCtx := sctx.(base.PlanContext)
-	indexJoin := physicalop.PhysicalIndexJoin{}.Init(planCtx, nil, 0)
-	indexJoin.SetID(79)
-	innerProjection := physicalop.PhysicalProjection{}.Init(planCtx, nil, 0)
-	innerProjection.SetID(73)
-	innerProjection.SetChildren(indexJoin)
-	limit := physicalop.PhysicalLimit{Count: 1000}.Init(planCtx, nil, 0)
-	limit.SetID(19)
-	limit.SetChildren(innerProjection)
-	rootProjection := physicalop.PhysicalProjection{}.Init(planCtx, nil, 0)
-	rootProjection.SetID(12)
-	rootProjection.SetChildren(limit)
-
-	limitRows, ok := limitRowsAboveIndexJoin(rootProjection, indexJoin.ID())
-	require.True(t, ok)
-	require.Equal(t, uint64(1000), limitRows)
+func newAdaptiveIndexJoinTestPlan(
+	planCtx base.PlanContext,
+	outerProp *property.PhysicalProperty,
+	innerProp *property.PhysicalProperty,
+) *physicalop.PhysicalIndexJoin {
+	indexJoin := physicalop.PhysicalIndexJoin{}.Init(planCtx, nil, 0, outerProp, innerProp)
+	indexJoin.InnerChildIdx = 1
+	indexJoin.SetChildren(
+		physicalop.PhysicalProjection{}.Init(planCtx, nil, 0),
+		physicalop.PhysicalProjection{}.Init(planCtx, nil, 0),
+	)
+	return indexJoin
 }
 
-func TestLimitRowsAboveIndexJoinSkipsUnsafeOperatorUnderLimit(t *testing.T) {
+func TestLimitRowsFromIndexJoinOuterProp(t *testing.T) {
 	sctx := defaultCtx()
 	planCtx := sctx.(base.PlanContext)
-	indexJoin := physicalop.PhysicalIndexJoin{}.Init(planCtx, nil, 0)
-	indexJoin.SetID(79)
-	selection := physicalop.PhysicalSelection{}.Init(planCtx, nil, 0)
-	selection.SetID(73)
-	selection.SetChildren(indexJoin)
-	limit := physicalop.PhysicalLimit{Count: 1000}.Init(planCtx, nil, 0)
-	limit.SetID(19)
-	limit.SetChildren(selection)
+	outerProp := &property.PhysicalProperty{
+		SortItems:   []property.SortItem{{Col: &expression.Column{UniqueID: 1}}},
+		ExpectedCnt: 1000,
+	}
+	innerProp := &property.PhysicalProperty{}
+	indexJoin := newAdaptiveIndexJoinTestPlan(planCtx, outerProp, innerProp)
 
-	_, ok := limitRowsAboveIndexJoin(limit, indexJoin.ID())
-	require.False(t, ok)
-}
-
-func TestLimitRowsAboveIndexJoinRequiresKeepOuterOrderForIndexHashJoin(t *testing.T) {
-	sctx := defaultCtx()
-	planCtx := sctx.(base.PlanContext)
-	indexHashJoin := physicalop.PhysicalIndexHashJoin{KeepOuterOrder: false}.Init(planCtx)
-	indexHashJoin.SetID(79)
-	limit := physicalop.PhysicalLimit{Count: 1000}.Init(planCtx, nil, 0)
-	limit.SetID(19)
-	limit.SetChildren(indexHashJoin)
-
-	_, ok := limitRowsAboveIndexJoin(limit, indexHashJoin.ID())
-	require.False(t, ok)
-
-	indexHashJoin.KeepOuterOrder = true
-	limitRows, ok := limitRowsAboveIndexJoin(limit, indexHashJoin.ID())
+	limitRows, ok := limitRowsFromIndexJoinOuterProp(indexJoin)
 	require.True(t, ok)
 	require.Equal(t, uint64(1000), limitRows)
+
+	noOrderJoin := newAdaptiveIndexJoinTestPlan(planCtx,
+		&property.PhysicalProperty{ExpectedCnt: 1000}, innerProp)
+	_, ok = limitRowsFromIndexJoinOuterProp(noOrderJoin)
+	require.False(t, ok)
+
+	missingChildrenJoin := physicalop.PhysicalIndexJoin{}.Init(planCtx, nil, 0, outerProp, innerProp)
+	missingChildrenJoin.InnerChildIdx = 1
+	_, ok = limitRowsFromIndexJoinOuterProp(missingChildrenJoin)
+	require.False(t, ok)
+
+	defaultExpectedCntJoin := newAdaptiveIndexJoinTestPlan(planCtx,
+		&property.PhysicalProperty{
+			SortItems:   []property.SortItem{{Col: &expression.Column{UniqueID: 1}}},
+			ExpectedCnt: math.MaxFloat64,
+		},
+		innerProp)
+	_, ok = limitRowsFromIndexJoinOuterProp(defaultExpectedCntJoin)
+	require.False(t, ok)
+
+	fractionalExpectedCntJoin := newAdaptiveIndexJoinTestPlan(planCtx,
+		&property.PhysicalProperty{
+			SortItems:   []property.SortItem{{Col: &expression.Column{UniqueID: 1}}},
+			ExpectedCnt: 1000.1,
+		},
+		innerProp)
+	limitRows, ok = limitRowsFromIndexJoinOuterProp(fractionalExpectedCntJoin)
+	require.True(t, ok)
+	require.Equal(t, uint64(1001), limitRows)
 }
 
 func TestAdaptiveIndexJoinLimitSettingsForRows(t *testing.T) {
@@ -329,21 +336,18 @@ func TestAdaptiveIndexJoinLimitSettingsForRows(t *testing.T) {
 	require.False(t, ok)
 }
 
-func TestAdaptiveIndexJoinLimitSettingsUsesStatementPlan(t *testing.T) {
+func TestAdaptiveIndexJoinLimitSettingsUsesOuterProperty(t *testing.T) {
 	sctx := defaultCtx()
 	sctx.GetSessionVars().EnableAdaptiveLimitScan = true
 	sctx.GetSessionVars().IndexJoinBatchSize = 25000
 	sctx.GetSessionVars().SetIndexLookupJoinConcurrency(5)
 	planCtx := sctx.(base.PlanContext)
-	indexJoin := physicalop.PhysicalIndexJoin{}.Init(planCtx, nil, 0)
-	indexJoin.SetID(79)
-	projection := physicalop.PhysicalProjection{}.Init(planCtx, nil, 0)
-	projection.SetID(73)
-	projection.SetChildren(indexJoin)
-	limit := physicalop.PhysicalLimit{Count: 1000}.Init(planCtx, nil, 0)
-	limit.SetID(19)
-	limit.SetChildren(projection)
-	sctx.GetSessionVars().StmtCtx.SetPlan(limit)
+	indexJoin := newAdaptiveIndexJoinTestPlan(planCtx,
+		&property.PhysicalProperty{
+			SortItems:   []property.SortItem{{Col: &expression.Column{UniqueID: 1}}},
+			ExpectedCnt: 1000,
+		},
+		&property.PhysicalProperty{})
 
 	batchSize, concurrency, ok := adaptiveIndexJoinLimitSettings(sctx, indexJoin)
 	require.True(t, ok)

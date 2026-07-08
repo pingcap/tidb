@@ -208,7 +208,7 @@ func adaptiveIndexJoinLimitSettings(
 	if !sessVars.EnableAdaptiveLimitScan {
 		return 0, 0, false
 	}
-	limitRows, ok := limitRowsAboveIndexJoin(sessVars.StmtCtx.GetPlan(), indexJoin.ID())
+	limitRows, ok := limitRowsFromIndexJoinOuterProp(indexJoin)
 	if !ok {
 		return 0, 0, false
 	}
@@ -244,49 +244,29 @@ func adaptiveIndexJoinLimitSettingsForRows(
 	return batchSize, concurrency, true
 }
 
-func limitRowsAboveIndexJoin(plan any, targetID int) (uint64, bool) {
-	root, ok := plan.(base.PhysicalPlan)
-	if !ok || root == nil {
+func limitRowsFromIndexJoinOuterProp(indexJoin *physicalop.PhysicalIndexJoin) (uint64, bool) {
+	if indexJoin == nil {
 		return 0, false
 	}
-	return findLimitRowsAboveIndexJoin(root, targetID, 0)
-}
-
-func findLimitRowsAboveIndexJoin(plan base.PhysicalPlan, targetID int, activeLimit uint64) (uint64, bool) {
-	if plan == nil {
+	outerIdx := 1 - indexJoin.InnerChildIdx
+	if outerIdx < 0 {
 		return 0, false
 	}
-	if plan.ID() == targetID {
-		if indexHashJoin, ok := plan.(*physicalop.PhysicalIndexHashJoin); ok && !indexHashJoin.KeepOuterOrder {
-			return 0, false
-		}
-		return activeLimit, activeLimit > 0
+	if outerIdx >= len(indexJoin.Children()) {
+		return 0, false
 	}
-	switch p := plan.(type) {
-	case *physicalop.PhysicalLimit:
-		limitRows := saturatedAddUint64(p.Offset, p.Count)
-		if activeLimit == 0 || limitRows < activeLimit {
-			activeLimit = limitRows
-		}
-	case *physicalop.PhysicalProjection:
-	default:
-		if activeLimit > 0 {
-			return 0, false
-		}
+	prop := indexJoin.GetChildReqProps(outerIdx)
+	if prop == nil || !prop.NeedKeepOrder() {
+		return 0, false
 	}
-	for _, child := range plan.Children() {
-		if limitRows, ok := findLimitRowsAboveIndexJoin(child, targetID, activeLimit); ok {
-			return limitRows, true
-		}
+	if prop.ExpectedCnt <= 0 || math.IsInf(prop.ExpectedCnt, 0) || prop.ExpectedCnt >= float64(math.MaxUint64) {
+		return 0, false
 	}
-	return 0, false
-}
-
-func saturatedAddUint64(a, b uint64) uint64 {
-	if math.MaxUint64-a < b {
-		return math.MaxUint64
+	limitRows := uint64(math.Ceil(prop.ExpectedCnt))
+	if limitRows == 0 {
+		return 0, false
 	}
-	return a + b
+	return limitRows, true
 }
 
 func isSingleTiKVScanPlan(plan any) bool {
