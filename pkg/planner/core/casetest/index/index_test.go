@@ -559,6 +559,38 @@ func TestIndexPruneWithSharedClusteredPrefix(t *testing.T) {
 		// Hinted indexes bypass pruning entirely.
 		tk.MustQuery(`explain format = 'plan_tree' select payload from tenant_obj
 			force index (ix_tenant_created) where tenant_ws = 'w1'`).CheckContain("ix_tenant_created")
+
+		// Dedup identity must include discounted columns at their declared chain
+		// position: idx(tenant_ws, a) and idx(a) score identically, but ranger only
+		// builds ranges over declared index columns, so idx(tenant_ws, a) reaches a
+		// two-column range while idx(a) ranges on `a` alone with tenant_ws as an
+		// index filter. Both must survive. ix_tenant_a_c_b is declared before
+		// ix_tenant_a_c so that an index-ID tiebreak would keep the wider index;
+		// the column-count tiebreak must prefer the narrower one at any chain length.
+		tk.MustExec("drop table if exists tenant_dup")
+		tk.MustExec(`create table tenant_dup (
+			id binary(16) not null,
+			tenant_ws varchar(64) not null,
+			a int, b int, c int, payload text,
+			primary key (tenant_ws, id) clustered,
+			key ix_tenant_ws_a (tenant_ws, a),
+			key ix_dup_a (a),
+			key ix_dup_a_b (a, b),
+			key ix_tenant_a_c_b (tenant_ws, a, c, b),
+			key ix_tenant_a_c (tenant_ws, a, c))`)
+		tk.MustExec("set @@tidb_opt_index_prune_threshold=5")
+
+		// idx(tenant_ws, a) and idx(a) both kept (different chains); idx(a, b) is a
+		// duplicate of idx(a), and both 3/4-column tenant indexes duplicate the
+		// (tenant_ws, a) chain with unused trailing columns.
+		kept = runQuery("explain format = 'plan_tree' select payload from tenant_dup where tenant_ws = 'w' and a = 1")
+		require.Equal(t, []string{"ix_dup_a", "ix_tenant_ws_a"}, kept)
+
+		// Longer chain: ix_tenant_a_c and ix_tenant_a_c_b share the chain
+		// (tenant_ws, a, c); the narrower ix_tenant_a_c must win the tie despite
+		// its larger index ID.
+		kept = runQuery("explain format = 'plan_tree' select payload from tenant_dup where tenant_ws = 'w' and a = 1 and c = 2")
+		require.Equal(t, []string{"ix_dup_a", "ix_tenant_a_c", "ix_tenant_ws_a"}, kept)
 	})
 }
 

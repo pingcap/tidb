@@ -44,6 +44,13 @@ type indexWithScore struct {
 	interestingCount     int     // Total number of interesting columns covered (excluding discounted ones)
 	consecutiveColumnIDs []int64 // IDs of consecutive columns (for detecting different orderings)
 	coveredColumnIDs     []int64 // IDs of all covered interesting columns in index order; consecutive ones come first
+	// chainColumnIDs is the usable index prefix: consecutiveColumnIDs plus discounted
+	// columns at their declared chain positions. Discounted columns are excluded from
+	// scoring but kept in the dedup identity, because ranger builds ranges only over
+	// declared index columns: idx(ws, a) reaches a two-column range while idx(a) on a
+	// clustered (ws, id) table ranges on `a` alone with ws as an index filter, so the
+	// two must not be conflated even though their scored coverage is identical.
+	chainColumnIDs []int64
 }
 
 // columnRequirements holds the column maps needed for index pruning.
@@ -364,14 +371,16 @@ func buildOrderingKey(columnIDs []int64) string {
 }
 
 // buildCoverageKey builds a signature of the interesting columns an index covers:
-// the consecutive prefix (order-sensitive) followed by the remaining covered columns
-// (order-insensitive). Two indexes with the same signature cover the same interesting
-// columns with the same usable prefix, so for this query the higher-ranked one
-// dominates the other and the loser can be pruned.
+// the usable prefix chain (order-sensitive, including discounted columns at their
+// declared positions) followed by the remaining covered columns (order-insensitive).
+// Two indexes with the same signature cover the same interesting columns through the
+// same usable prefix, so for this query the higher-ranked one dominates the other and
+// the loser can be pruned. Discounted columns stay in the identity even though they
+// don't score: idx(ws, a) and idx(a) score identically but build different ranges.
 func buildCoverageKey(info indexWithScore) string {
 	rest := slices.Clone(info.coveredColumnIDs[len(info.consecutiveColumnIDs):])
 	slices.Sort(rest)
-	return buildOrderingKey(info.consecutiveColumnIDs) + "|" + buildOrderingKey(rest)
+	return buildOrderingKey(info.chainColumnIDs) + "|" + buildOrderingKey(rest)
 }
 
 // scoreIndexPath calculates coverage metrics for a single index path.
@@ -413,6 +422,7 @@ func scoreIndexPath(
 			if _, discounted := req.discountedColIDs[idxColID]; discounted {
 				if i == chainPos {
 					chainPos++
+					score.chainColumnIDs = append(score.chainColumnIDs, idxColID)
 				}
 				continue
 			}
@@ -424,6 +434,7 @@ func scoreIndexPath(
 				if i == chainPos {
 					chainPos++
 					score.consecutiveColumnIDs = append(score.consecutiveColumnIDs, idxColID)
+					score.chainColumnIDs = append(score.chainColumnIDs, idxColID)
 				}
 			}
 			// Note: We continue checking all columns to count all interesting columns,
@@ -509,9 +520,10 @@ func scoreAndSort(indexes []indexWithScore, req columnRequirements) []scoredInde
 			}
 			return 1
 		}
-		// Tie-breaker: prefer indexes with fewer columns if
-		// they have only 1 consecutive column.
-		if a.totalConsecutive == 1 && a.columns != b.columns {
+		// Tie-breaker: prefer indexes with fewer columns — the entries are narrower,
+		// and on clustered tables the PK suffix (usable for index-side filtering and
+		// ordering) starts earlier in the effective index.
+		if a.columns != b.columns {
 			return a.columns - b.columns
 		}
 		// Tie-breaker: use index ID for deterministic ordering when all other criteria are equal
