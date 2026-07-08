@@ -299,7 +299,6 @@ func WriteInsert(
 	return counter, wp.Error()
 }
 
-// WriteInsertInCsv writes TableDataIR to objectio.Writer in csv type
 // columnKinds maps Dumpling column type names to csvfile FieldKinds, mirroring
 // the Number/String/Bytes split that colTypeRowReceiverMap uses to pick a
 // RowReceiver.
@@ -317,6 +316,7 @@ func columnKinds(colTypes []string) []csvfile.FieldKind {
 	return kinds
 }
 
+// WriteInsertInCsv writes TableDataIR to an objectio.Writer in CSV format.
 func WriteInsertInCsv(
 	pCtx *tcontext.Context,
 	cfg *Config,
