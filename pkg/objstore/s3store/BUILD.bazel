@@ -4,6 +4,7 @@ go_library(
     name = "s3store",
     srcs = [
         "client.go",
+        "gcs_s3_signer.go",
         "interface.go",
         "ks3.go",
         "logger.go",
@@ -28,6 +29,7 @@ go_library(
         "@com_github_aws_aws_sdk_go_v2//aws",
         "@com_github_aws_aws_sdk_go_v2//aws/ratelimit",
         "@com_github_aws_aws_sdk_go_v2//aws/retry",
+        "@com_github_aws_aws_sdk_go_v2//aws/signer/v4:signer",
         "@com_github_aws_aws_sdk_go_v2_config//:config",
         "@com_github_aws_aws_sdk_go_v2_credentials//:credentials",
         "@com_github_aws_aws_sdk_go_v2_credentials//stscreds",
@@ -57,6 +59,7 @@ go_test(
     timeout = "short",
     srcs = [
         "client_test.go",
+        "gcs_test.go",
         "main_test.go",
         "retry_test.go",
         "s3_flags_test.go",
