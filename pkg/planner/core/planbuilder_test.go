@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
@@ -708,6 +709,62 @@ func TestHandleAnalyzeOptions(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAnalyzeDefaultsFromGlobalVars(t *testing.T) {
+	// Save original values
+	origBuckets := vardef.AnalyzeDefaultNumBuckets.Load()
+	origTopN := vardef.AnalyzeDefaultNumTopN.Load()
+	origCMWidth := vardef.AnalyzeDefaultCMSketchWidth.Load()
+	origCMDepth := vardef.AnalyzeDefaultCMSketchDepth.Load()
+	origSamples := vardef.AnalyzeDefaultNumSamples.Load()
+
+	defer func() {
+		// Reset to original values
+		vardef.AnalyzeDefaultNumBuckets.Store(origBuckets)
+		vardef.AnalyzeDefaultNumTopN.Store(origTopN)
+		vardef.AnalyzeDefaultCMSketchWidth.Store(origCMWidth)
+		vardef.AnalyzeDefaultCMSketchDepth.Store(origCMDepth)
+		vardef.AnalyzeDefaultNumSamples.Store(origSamples)
+	}()
+
+	// Set custom values for the global variables
+	vardef.AnalyzeDefaultNumBuckets.Store(512)
+	vardef.AnalyzeDefaultNumTopN.Store(150)
+	vardef.AnalyzeDefaultCMSketchWidth.Store(4096)
+	vardef.AnalyzeDefaultCMSketchDepth.Store(10)
+	vardef.AnalyzeDefaultNumSamples.Store(20000)
+
+	// handleAnalyzeOptions only returns explicitly specified options; defaults
+	// are filled after validation.
+	optMap, err := handleAnalyzeOptions(nil)
+	require.NoError(t, err)
+	require.Empty(t, optMap)
+
+	filledMap := fillAnalyzeOptionsV2(optMap)
+	require.Equal(t, uint64(512), filledMap[ast.AnalyzeOptNumBuckets])
+	require.Equal(t, uint64(150), filledMap[ast.AnalyzeOptNumTopN])
+	require.Equal(t, uint64(4096), filledMap[ast.AnalyzeOptCMSketchWidth])
+	require.Equal(t, uint64(10), filledMap[ast.AnalyzeOptCMSketchDepth])
+	require.Equal(t, uint64(20000), filledMap[ast.AnalyzeOptNumSamples])
+
+	testDefaults := GetAnalyzeOptionDefaultV2ForTest()
+	require.Equal(t, uint64(512), testDefaults[ast.AnalyzeOptNumBuckets])
+	require.Equal(t, uint64(150), testDefaults[ast.AnalyzeOptNumTopN])
+	require.Equal(t, uint64(4096), testDefaults[ast.AnalyzeOptCMSketchWidth])
+	require.Equal(t, uint64(10), testDefaults[ast.AnalyzeOptCMSketchDepth])
+	require.Equal(t, uint64(20000), testDefaults[ast.AnalyzeOptNumSamples])
+
+	optMap, err = handleAnalyzeOptions([]ast.AnalyzeOpt{
+		{
+			Type:  ast.AnalyzeOptNumBuckets,
+			Value: ast.NewValueExpr(1024, "", ""),
+		},
+	})
+	require.NoError(t, err)
+	filledMap = fillAnalyzeOptionsV2(optMap)
+	require.Equal(t, uint64(1024), filledMap[ast.AnalyzeOptNumBuckets])
+	require.Equal(t, uint64(150), filledMap[ast.AnalyzeOptNumTopN])
 }
 
 func TestGetFullAnalyzeColumnsInfo(t *testing.T) {
