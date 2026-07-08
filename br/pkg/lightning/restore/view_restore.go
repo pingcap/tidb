@@ -479,13 +479,17 @@ func (worker *restoreSchemaWorker) queryStringRows(ctx context.Context, query st
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	defer conn.Close()
+	defer func() {
+		_ = conn.Close()
+	}()
 
 	rows, err := conn.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 
 	cols, err := rows.Columns()
 	if err != nil {
