@@ -37,8 +37,12 @@ type SQLWriter struct {
 	// currentStatementSize so statements split at the same row.
 	statementSize int64
 	inStatement   bool
-	// written tracks the bytes written to the sink, for EstimateFileSize.
-	written int64
+	// fileSize is the logical size for EstimateFileSize: like statementSize it
+	// counts the 2-byte separator anticipated after each row, but it never resets,
+	// matching dumpling's currentFileSize so files rotate at the same row. At
+	// Close the anticipated bytes equal the real ones, so it also equals the
+	// actual bytes written.
+	fileSize int64
 }
 
 // NewSQLWriter creates a SQLWriter over w. prefix is the INSERT statement prefix
@@ -65,6 +69,7 @@ func (sw *SQLWriter) Write(row []sql.RawBytes) error {
 	if !sw.inStatement {
 		sw.buf = append(sw.buf, sw.prefix...)
 		sw.statementSize = int64(len(sw.prefix))
+		sw.fileSize += int64(len(sw.prefix))
 		sw.inStatement = true
 	} else {
 		// The leading "," + "\n" of this row is the separator anticipated by the
@@ -82,18 +87,19 @@ func (sw *SQLWriter) Write(row []sql.RawBytes) error {
 	sw.buf = append(sw.buf, ')')
 	// Account the tuple plus the 2-byte separator that will follow it (",\n" for
 	// the next row, or ";\n" at statement end), matching dumpling.
-	sw.statementSize += int64(len(sw.buf)-start) + 2
-	n, err := sw.w.Write(sw.buf)
-	sw.written += int64(n)
+	tupleSize := int64(len(sw.buf)-start) + 2
+	sw.statementSize += tupleSize
+	sw.fileSize += tupleSize
+	_, err := sw.w.Write(sw.buf)
 	return err
 }
 
-// EstimateFileSize returns the bytes written to the sink, mirroring
+// EstimateFileSize returns the logical file size, mirroring
 // parquetfile.ParquetWriter and csvfile.CSVWriter so callers rotate files
 // uniformly across formats. It excludes any preamble the caller wrote directly
 // (e.g. SQL special comments).
 func (sw *SQLWriter) EstimateFileSize() uint64 {
-	return uint64(sw.written)
+	return uint64(sw.fileSize)
 }
 
 // Close terminates the open statement with ";\n". It is a no-op if no statement
@@ -103,7 +109,8 @@ func (sw *SQLWriter) Close() error {
 		return nil
 	}
 	sw.inStatement = false
-	n, err := sw.w.Write([]byte{';', '\n'})
-	sw.written += int64(n)
+	// The final ";\n" is the 2 bytes already anticipated by the last row, so
+	// fileSize is not incremented here.
+	_, err := sw.w.Write([]byte{';', '\n'})
 	return err
 }
