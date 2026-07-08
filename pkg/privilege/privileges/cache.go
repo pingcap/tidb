@@ -116,19 +116,19 @@ type UserRecord struct {
 	UserAttributesInfo
 
 	AuthenticationString string
-	// AdditionalAuthenticationString holds the MySQL-compatible secondary
+	// AdditionalAuthString holds the MySQL-compatible secondary
 	// ("additional") password hash decoded from user_attributes.$.additional_password.
 	// Empty when the user has no secondary password.
 	AdditionalAuthString string
-	Privileges                     mysql.PrivilegeType
-	AccountLocked                  bool // A role record when this field is true
-	AuthPlugin                     string
-	AuthTokenIssuer                string
-	PasswordExpired                bool
-	PasswordLastChanged            time.Time
-	PasswordLifeTime               int64
-	MaxUserConnections             int64
-	ResourceGroup                  string
+	Privileges           mysql.PrivilegeType
+	AccountLocked        bool // A role record when this field is true
+	AuthPlugin           string
+	AuthTokenIssuer      string
+	PasswordExpired      bool
+	PasswordLastChanged  time.Time
+	PasswordLifeTime     int64
+	MaxUserConnections   int64
+	ResourceGroup        string
 }
 
 // NewUserRecord return a UserRecord, only use for unit test.
@@ -1071,7 +1071,7 @@ func (p *MySQLPrivilege) decodeUserTableRow(userList map[string]struct{}) func(c
 					if err != nil {
 						return err
 					}
-					value.AdditionalAuthenticationString = strings.Clone(additional)
+					value.AdditionalAuthString = strings.Clone(additional)
 				}
 				passwordLocking := PasswordLocking{}
 				if err := passwordLocking.ParseJSON(bj); err != nil {

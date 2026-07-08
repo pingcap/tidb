@@ -736,7 +736,7 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 			if !primaryOK {
 				// MySQL-compatible dual-password fallback: try the retained
 				// secondary hash with the same per-plugin routine.
-				secondaryOK, _ := checkPasswordForPlugin(record.AuthPlugin, record.AdditionalAuthenticationString, salt, authentication)
+				secondaryOK, _ := checkPasswordForPlugin(record.AuthPlugin, record.AdditionalAuthString, salt, authentication)
 				if !secondaryOK {
 					info.FailedDueToWrongPassword = true
 					return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
