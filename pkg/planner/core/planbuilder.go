@@ -2866,7 +2866,7 @@ func (b *PlanBuilder) genV2AnalyzeOptions(
 		tblColChoice, tblColList = pickColumnList(astColChoice, astColList, tblSavedColChoice, tblSavedColList)
 	}
 
-	tblFilledOpts := fillAnalyzeOptionsV2(tblOpts)
+	tblFilledOpts := fillAnalyzeOptions(tblOpts)
 
 	tblColsInfo, tblColList, err := b.getFullAnalyzeColumnsInfo(tbl, tblColChoice, tblColList, predicateCols, mustAnalyzedCols, mustAllColumns, false)
 	if err != nil {
@@ -2911,7 +2911,7 @@ func (b *PlanBuilder) genV2AnalyzeOptions(
 			savedColChoice, savedColList := pickColumnList(parSavedColChoice, parSavedColList, tblSavedColChoice, tblSavedColList)
 			// then merge statement level options
 			mergedOpts := mergeAnalyzeOptions(astOpts, savedOpts)
-			filledMergedOpts := fillAnalyzeOptionsV2(mergedOpts)
+			filledMergedOpts := fillAnalyzeOptions(mergedOpts)
 			finalColChoice, mergedColList := pickColumnList(astColChoice, astColList, savedColChoice, savedColList)
 			finalColsInfo, finalColList, err := b.getFullAnalyzeColumnsInfo(tbl, finalColChoice, mergedColList, predicateCols, mustAnalyzedCols, mustAllColumns, false)
 			if err != nil {
@@ -3124,7 +3124,7 @@ var analyzeOptionLimit = map[ast.AnalyzeOptionType]uint64{
 
 // TopN reduced from 500 to 100 due to concerns over large number of TopN values collected for customers with many tables.
 // 100 is more inline with other databases. 100-256 is also common for NumBuckets with other databases.
-var analyzeOptionDefaultV2 = map[ast.AnalyzeOptionType]uint64{
+var analyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptNumBuckets:    statistics.DefaultHistogramBuckets,
 	ast.AnalyzeOptNumTopN:       statistics.DefaultTopNValue,
 	ast.AnalyzeOptCMSketchWidth: 2048,
@@ -3133,15 +3133,15 @@ var analyzeOptionDefaultV2 = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptSampleRate:    math.Float64bits(-1),
 }
 
-// GetAnalyzeOptionDefaultV2ForTest returns the default analyze options for test.
-func GetAnalyzeOptionDefaultV2ForTest() map[ast.AnalyzeOptionType]uint64 {
-	return analyzeOptionDefaultV2
+// GetAnalyzeOptionDefaultForTest returns the default analyze options for test.
+func GetAnalyzeOptionDefaultForTest() map[ast.AnalyzeOptionType]uint64 {
+	return analyzeOptionDefault
 }
 
 // handleAnalyzeOptions validates analyze options and returns only the options
 // explicitly specified in the statement.
 func handleAnalyzeOptions(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint64, error) {
-	optMap := make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionDefaultV2))
+	optMap := make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionDefault))
 	sampleNum, sampleRate := uint64(0), 0.0
 	for _, opt := range opts {
 		datumValue := opt.Value.(*driver.ValueExpr).Datum
@@ -3182,9 +3182,9 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uint
 	return optMap, nil
 }
 
-func fillAnalyzeOptionsV2(optMap map[ast.AnalyzeOptionType]uint64) map[ast.AnalyzeOptionType]uint64 {
-	filledMap := make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionDefaultV2))
-	for key, defaultVal := range analyzeOptionDefaultV2 {
+func fillAnalyzeOptions(optMap map[ast.AnalyzeOptionType]uint64) map[ast.AnalyzeOptionType]uint64 {
+	filledMap := make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionDefault))
+	for key, defaultVal := range analyzeOptionDefault {
 		if val, ok := optMap[key]; ok {
 			filledMap[key] = val
 		} else {
@@ -3209,7 +3209,7 @@ func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (base.Plan, error) 
 	if err != nil {
 		return nil, err
 	}
-	filledOpts := fillAnalyzeOptionsV2(opts)
+	filledOpts := fillAnalyzeOptions(opts)
 
 	if as.IndexFlag {
 		if len(as.IndexNames) == 0 {
