@@ -45,7 +45,11 @@ import (
 const (
 	defaultRegion = "us-east-1"
 	gcsProvider   = "gcs"
-	gcsEndpoint   = "storage.googleapis.com"
+	// GCS S3 interoperability documents storage.googleapis.com as the XML API
+	// endpoint for S3-compatible tools.
+	// See https://cloud.google.com/storage/docs/interoperability and
+	// https://cloud.google.com/storage/docs/request-endpoints.
+	gcsEndpoint = "storage.googleapis.com"
 	// to check the cloud type by endpoint tag.
 	domainAliyun = "aliyuncs.com"
 )
@@ -325,10 +329,6 @@ func isGCSS3Compatible(qs *backuppb.S3) bool {
 	if err != nil {
 		return false
 	}
-	// GCS S3 interoperability documents storage.googleapis.com as the XML API
-	// endpoint for S3-compatible tools.
-	// See https://cloud.google.com/storage/docs/interoperability and
-	// https://cloud.google.com/storage/docs/request-endpoints.
 	return strings.EqualFold(u.Hostname(), gcsEndpoint)
 }
 
