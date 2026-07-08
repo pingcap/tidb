@@ -147,22 +147,26 @@ func TestStarterBootstrapFileLoadInStarter(t *testing.T) {
 	require.Equal(t, []string{"SELECT 1"}, bootstrapFile.Bootstrap)
 }
 
-func TestShouldRunStarterBootstrapUpgrade(t *testing.T) {
+func TestShouldMarkStarterBootstrapPending(t *testing.T) {
 	if kerneltype.IsClassic() {
 		t.Skip("starter deploy mode is only available in nextgen")
 	}
 
 	originMode := deploymode.Get()
+	originConfig := config.GetGlobalConfig()
 	t.Cleanup(func() {
 		require.NoError(t, deploymode.Set(originMode))
+		config.StoreGlobalConfig(originConfig)
 	})
 
 	require.NoError(t, deploymode.Set(deploymode.Starter))
-	require.False(t, shouldRunStarterBootstrapUpgrade(notBootstrapped))
-	require.True(t, shouldRunStarterBootstrapUpgrade(notBootstrapped+1))
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.StarterParams.BootstrapFile = "/etc/tidb/starter-bootstrap.json"
+	})
+	require.True(t, shouldMarkStarterBootstrapPending())
 
 	require.NoError(t, deploymode.Set(deploymode.Premium))
-	require.False(t, shouldRunStarterBootstrapUpgrade(notBootstrapped+1))
+	require.False(t, shouldMarkStarterBootstrapPending())
 }
 
 func TestStarterBootstrapFileBootstrapBlocks(t *testing.T) {
@@ -196,6 +200,60 @@ func TestStarterBootstrapFileBootstrapBlocks(t *testing.T) {
 
 	require.Equal(t, "2", mustGetTiDBVarForStarterFile(t, se, starterBootstrapVersionVar))
 	require.Equal(t, "test_keyspace.boot", mustGetTiDBVarForStarterFile(t, se, "starter_file_bootstrap_test"))
+}
+
+func TestStarterBootstrapFileInitialBootstrapState(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("classic mock store is sufficient for bootstrap file SQL execution")
+	}
+	originConfig := config.GetGlobalConfig()
+	t.Cleanup(func() {
+		config.StoreGlobalConfig(originConfig)
+	})
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = "test_keyspace"
+	})
+
+	store, dom := CreateStoreAndBootstrap(t)
+	t.Cleanup(func() {
+		dom.Close()
+		require.NoError(t, store.Close())
+	})
+	se := CreateSessionAndSetID(t, store)
+	t.Cleanup(func() {
+		se.Close()
+	})
+	bootstrapFile, err := parseStarterBootstrapFile([]byte(`{
+		"version": 3,
+		"bootstrap": [
+			"INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('starter_file_initial_bootstrap', '<keyspace>.boot', 'test')"
+		],
+		"upgrades": [
+			{"version": 3, "sql": [
+				"INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('starter_file_initial_upgrade', '<keyspace>.upgrade', 'test')"
+			]}
+		]
+	}`))
+	require.NoError(t, err)
+
+	require.NoError(t, runStarterBootstrapLocked(se, bootstrapFile))
+	_, hasState, err := getStarterBootstrapState(se)
+	require.NoError(t, err)
+	require.False(t, hasState)
+	_, isNull, err := getTiDBVar(se, "starter_file_initial_bootstrap")
+	require.NoError(t, err)
+	require.True(t, isNull)
+
+	markStarterBootstrapPending(se)
+	require.NoError(t, runStarterBootstrapLocked(se, bootstrapFile))
+	require.Equal(t, "3", mustGetTiDBVarForStarterFile(t, se, starterBootstrapVersionVar))
+	require.Equal(t, "test_keyspace.boot", mustGetTiDBVarForStarterFile(t, se, "starter_file_initial_bootstrap"))
+	_, hasState, err = getStarterBootstrapState(se)
+	require.NoError(t, err)
+	require.False(t, hasState)
+	_, isNull, err = getTiDBVar(se, "starter_file_initial_upgrade")
+	require.NoError(t, err)
+	require.True(t, isNull)
 }
 
 func TestStarterBootstrapFileUpgrade(t *testing.T) {

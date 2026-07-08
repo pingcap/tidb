@@ -46,8 +46,11 @@ import (
 
 const (
 	starterBootstrapVersionVar          = "starter_version"
+	starterBootstrapStateVar            = "starter_bootstrap_state"
 	starterBootstrapKeyspacePlaceholder = "<keyspace>"
 	starterBootstrapVersionComment      = "Starter bootstrap file version. Do not delete."
+	starterBootstrapStateComment        = "Starter bootstrap file state. Do not delete."
+	starterBootstrapStatePending        = "pending"
 )
 
 var starterBootstrapPlaceholderRe = regexp.MustCompile(`<[A-Za-z0-9_-]+>`)
@@ -72,16 +75,32 @@ func runStarterBootstrap(s sessionapi.Session) error {
 		return nil
 	}
 
+	releaseFn, err := acquireLock(s.GetStore())
+	if err != nil {
+		return errors.Annotate(err, "acquire starter bootstrap file lock")
+	}
+	defer releaseFn()
+	return runStarterBootstrapLocked(s, bootstrapFile)
+}
+
+func runStarterBootstrapLocked(s sessionapi.Session, bootstrapFile *starterBootstrapFile) error {
+	state, hasState, err := getStarterBootstrapState(s)
+	if err != nil {
+		return err
+	}
 	storedVersion, err := getStarterBootstrapVersion(s)
 	if err != nil {
 		return err
 	}
-	// Bootstrap blocks only run before starter_version is initialized.
-	// Later file versions are handled by upgradeStarterBootstrap.
 	if storedVersion > 0 {
+		if hasState && state == starterBootstrapStatePending {
+			return clearStarterBootstrapState(s)
+		}
 		return nil
 	}
-
+	if !hasState || state != starterBootstrapStatePending {
+		return nil
+	}
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	if _, err = s.ExecuteInternal(ctx, "BEGIN"); err != nil {
 		return errors.Annotate(err, "begin starter bootstrap file")
@@ -99,6 +118,9 @@ func runStarterBootstrap(s sessionapi.Session) error {
 		return err
 	}
 	if err := updateStarterBootstrapVersion(s, bootstrapFile.Version); err != nil {
+		return err
+	}
+	if err := clearStarterBootstrapState(s); err != nil {
 		return err
 	}
 	if _, err = s.ExecuteInternal(ctx, "COMMIT"); err != nil {
@@ -155,6 +177,24 @@ func upgradeStarterBootstrap(store kv.Storage) error {
 	if err != nil {
 		return err
 	}
+	state, hasState, err := getStarterBootstrapState(s)
+	if err != nil {
+		return err
+	}
+	if storedVersion > 0 && hasState && state == starterBootstrapStatePending {
+		if err = clearStarterBootstrapState(s); err != nil {
+			return err
+		}
+	}
+	if storedVersion == 0 && hasState && state == starterBootstrapStatePending {
+		if err = runStarterBootstrapLocked(s, bootstrapFile); err != nil {
+			return err
+		}
+		logutil.BgLogger().Info("starter bootstrap file initialization finished",
+			zap.Int64("version", bootstrapFile.Version),
+			zap.Duration("cost", time.Since(startTime)))
+		return nil
+	}
 	if !needStarterBootstrapUpgrade(storedVersion, bootstrapFile) {
 		return nil
 	}
@@ -168,8 +208,13 @@ func upgradeStarterBootstrap(store kv.Storage) error {
 	return nil
 }
 
-func shouldRunStarterBootstrapUpgrade(initialBootstrapVersion int64) bool {
-	return deploymode.IsStarter() && initialBootstrapVersion != notBootstrapped
+func shouldMarkStarterBootstrapPending() bool {
+	return deploymode.IsStarter() && config.GetGlobalConfig().StarterParams.BootstrapFile != ""
+}
+
+func markStarterBootstrapPending(s sessionapi.Session) {
+	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE=%?`,
+		mysql.SystemDB, mysql.TiDBTable, starterBootstrapStateVar, starterBootstrapStatePending, starterBootstrapStateComment, starterBootstrapStatePending)
 }
 
 func loadStarterBootstrapFile() (*starterBootstrapFile, error) {
@@ -330,11 +375,32 @@ func getStarterBootstrapVersion(s sessionapi.Session) (int64, error) {
 	return version, nil
 }
 
+func getStarterBootstrapState(s sessionapi.Session) (string, bool, error) {
+	state, isNull, err := getTiDBVar(s, starterBootstrapStateVar)
+	if err != nil {
+		return "", false, errors.Trace(err)
+	}
+	return state, !isNull, nil
+}
+
 func updateStarterBootstrapVersion(s sessionapi.Session, version int64) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	rs, err := s.ExecuteInternal(ctx,
 		`INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE=%?`,
 		mysql.SystemDB, mysql.TiDBTable, starterBootstrapVersionVar, version, starterBootstrapVersionComment, version)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if rs != nil {
+		return errors.Trace(rs.Close())
+	}
+	return nil
+}
+
+func clearStarterBootstrapState(s sessionapi.Session) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rs, err := s.ExecuteInternal(ctx, `DELETE HIGH_PRIORITY FROM %n.%n WHERE VARIABLE_NAME=%?`,
+		mysql.SystemDB, mysql.TiDBTable, starterBootstrapStateVar)
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -90,7 +90,7 @@ func bootstrap(s sessionapi.Session) {
 			doDMLWorks(s)
 			if deploymode.IsStarter() {
 				if err := runStarterBootstrap(s); err != nil {
-					logutil.BgLogger().Fatal("starter bootstrap file failed", zap.Error(err))
+					terror.MustNil(err)
 				}
 			}
 			runBootstrapSQLFile = true
@@ -538,6 +538,10 @@ func doDMLWorks(s sessionapi.Session) {
 	writeDDLTableVersion(s)
 
 	writeClusterID(s)
+
+	if shouldMarkStarterBootstrapPending() {
+		markStarterBootstrapPending(s)
+	}
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	_, err := s.ExecuteInternal(ctx, "COMMIT")
