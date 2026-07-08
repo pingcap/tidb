@@ -2207,6 +2207,13 @@ func (h *Handle) Get() *MySQLPrivilege {
 // UpdateAll loads all the users' privilege info from kv storage.
 func (h *Handle) UpdateAll() error {
 	priv := newMySQLPrivilege()
+	// Propagate the sysvar accessor like updateUsers does: decodeUserTableRow
+	// resolves legacy empty-plugin rows via default_authentication_plugin, and
+	// without the accessor a full reload (e.g. FLUSH PRIVILEGES) would resolve
+	// those rows as mysql_native_password while the lazy per-user path resolves
+	// them via the configured default — the same row would authenticate
+	// differently depending on which path loaded it.
+	priv.globalVars = h.globalVars
 	res, err := h.sctx.Get()
 	if err != nil {
 		return errors.Trace(err)
