@@ -35,7 +35,7 @@ type Manager interface {
 	Meta() *keyspacepb.KeyspaceMeta
 
 	// InitializeGCV2 seeds the controller with an initial keyspace-level GC task.
-	InitializeGCV2(ctx context.Context) error
+	InitializeGCV2(ctx context.Context, gcLifeTime int64) error
 	// AbortGCV2 asks the controller to abort all outstanding keyspace-level GC tasks.
 	AbortGCV2(ctx context.Context) error
 	// RegisterGCV2 reports that a keyspace-level GC round at safePoint has completed.

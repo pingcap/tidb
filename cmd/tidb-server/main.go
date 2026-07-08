@@ -364,6 +364,39 @@ func closeExternalWorkloadManager(storage kv.Storage, mgr extworkload.Manager) {
 	}
 }
 
+func loadExternalWorkloadGCLifeTime(ctx context.Context, storage kv.Storage) (time.Duration, error) {
+	se, err := session.CreateSession(storage)
+	if err != nil {
+		return 0, err
+	}
+	defer se.Close()
+	gcLifeTimeVal, err := variable.GetSysVar(vardef.TiDBGCLifetime).GetGlobalFromHook(ctx, se.GetSessionVars())
+	if err != nil {
+		return 0, err
+	}
+	gcLifeTime, err := time.ParseDuration(gcLifeTimeVal)
+	if err != nil {
+		return 0, err
+	}
+	return gcLifeTime, nil
+}
+
+func initializeExternalWorkloadGCV2(ctx context.Context, storage kv.Storage, mgr extworkload.Manager) {
+	if !extworkload.IsMaster(mgr) || !pd.IsKeyspaceUsingKeyspaceLevelGC(mgr.Meta()) {
+		return
+	}
+	gcLifeTime, err := loadExternalWorkloadGCLifeTime(ctx, storage)
+	if err != nil {
+		logutil.BgLogger().Warn("failed to load GC life time for external workload GCV2 task; TiDB will continue without external workload coordination", zap.Error(err))
+		closeExternalWorkloadManager(storage, mgr)
+		return
+	}
+	if err := mgr.InitializeGCV2(ctx, int64(gcLifeTime/time.Second)); err != nil {
+		logutil.BgLogger().Warn("failed to initialize external workload GCV2 task; TiDB will continue without external workload coordination", zap.Error(err))
+		closeExternalWorkloadManager(storage, mgr)
+	}
+}
+
 func main() {
 	fset := initFlagSet()
 	if args := fset.Args(); len(args) != 0 {
@@ -647,12 +680,6 @@ func createStoreDDLOwnerMgrAndDomain(keyspaceName string) (kv.Storage, *domain.D
 		}
 	}
 	externalWorkloadManager := initExternalWorkloadManager(context.Background(), storage)
-	if extworkload.IsMaster(externalWorkloadManager) && pd.IsKeyspaceUsingKeyspaceLevelGC(externalWorkloadManager.Meta()) {
-		if err := externalWorkloadManager.InitializeGCV2(context.Background()); err != nil {
-			logutil.BgLogger().Warn("failed to initialize external workload GCV2 task; TiDB will continue without external workload coordination", zap.Error(err))
-			closeExternalWorkloadManager(storage, externalWorkloadManager)
-		}
-	}
 	copr.GlobalMPPFailedStoreProber.Run()
 	mppcoordmanager.InstanceMPPCoordinatorManager.Run()
 	// Bootstrap a session to load information schema.
@@ -664,6 +691,7 @@ func createStoreDDLOwnerMgrAndDomain(keyspaceName string) (kv.Storage, *domain.D
 	if err != nil {
 		return nil, nil, err
 	}
+	initializeExternalWorkloadGCV2(context.Background(), storage, externalWorkloadManager)
 	return storage, dom, nil
 }
 

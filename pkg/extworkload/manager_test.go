@@ -184,11 +184,11 @@ func TestManagerMethodsSetDeadlineAndMetrics(t *testing.T) {
 	}{
 		{
 			name: "InitializeGCV2",
-			call: func(m *manager) error { return m.InitializeGCV2(context.Background()) },
+			call: func(m *manager) error { return m.InitializeGCV2(context.Background(), 3600) },
 			check: func(cli *fakeClient) {
 				require.Equal(t, "RegisterGCV2", cli.call)
 				require.Equal(t, uint64(0), cli.safePoint)
-				require.Equal(t, int64(defGCLifeTimeSec), cli.gcLifeTime)
+				require.Equal(t, int64(3600), cli.gcLifeTime)
 				requireLabels(t, cli, string(config.RoleGCV2Worker), metrics.WorkerActionInit)
 			},
 		},

@@ -30,10 +30,6 @@ import (
 	"google.golang.org/grpc"
 )
 
-// defGCLifeTimeSec is the gc_life_time (seconds) seeded to the controller
-// at InitializeGCV2 time, before the local gc_life_time variable is loaded.
-const defGCLifeTimeSec = 600
-
 // dialTimeout bounds the synchronous dial + Ping during manager creation.
 const dialTimeout = 30 * time.Second
 
@@ -138,11 +134,11 @@ func withRequestTimeout(ctx context.Context) (context.Context, context.CancelFun
 	return context.WithTimeout(ctx, requestTimeout)
 }
 
-func (m *manager) InitializeGCV2(ctx context.Context) error {
+func (m *manager) InitializeGCV2(ctx context.Context, gcLifeTime int64) error {
 	ctx, cancel := withRequestTimeout(ctx)
 	defer cancel()
 	ctx = withMetric(ctx, string(config.RoleGCV2Worker), metrics.WorkerActionInit)
-	return m.cli.RegisterGCV2(ctx, 0, defGCLifeTimeSec)
+	return m.cli.RegisterGCV2(ctx, 0, gcLifeTime)
 }
 
 func (m *manager) AbortGCV2(ctx context.Context) error {
