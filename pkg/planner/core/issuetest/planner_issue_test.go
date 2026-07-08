@@ -663,6 +663,28 @@ GROUP BY field1
 HAVING (((field1 <> 6 AND field1 <= 8) OR field1 <> 7) OR field1 <= 9)
 ORDER BY field1`).Check(testkit.Rows())
 	}
+
+	// issue-67967-unionscan-should-eliminate-tabledual-for-null-comparison
+	{
+		tk := prepareSharedTestKit(t)
+		tk.MustExec("create table t_issue_67967 (id bigint not null primary key auto_increment, delete_flag tinyint default null)")
+
+		for _, sql := range []string{
+			"begin",
+			"insert into t_issue_67967(delete_flag) values (null)",
+		} {
+			tk.MustExec(sql)
+		}
+		tk.MustQuery("explain format='brief' select 1 from t_issue_67967 use index() where delete_flag = null").Check(testkit.Rows(
+			"Projection 0.00 root  1->Column#4",
+			"└─TableDual 0.00 root  rows:0",
+		))
+		tk.MustQuery("explain format='brief' select 1 from t_issue_67967 where delete_flag = null").Check(testkit.Rows(
+			"Projection 0.00 root  1->Column#4",
+			"└─TableDual 0.00 root  rows:0",
+		))
+		tk.MustExec("rollback")
+	}
 }
 
 func TestOnlyFullGroupCantFeelUnaryConstant(t *testing.T) {
