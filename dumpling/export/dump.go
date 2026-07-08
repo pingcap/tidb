@@ -1058,6 +1058,25 @@ func (d *Dumper) L() log.Logger {
 	return d.tctx.L()
 }
 
+// pkColKinds classifies primary-key column types for SQL value framing the way
+// the removed MakeRowReceiver did: numeric and binary types keep their kind and
+// everything else defaults to string. PK types come from INFORMATION_SCHEMA (and
+// so may be lower-cased and never match the upper-cased type maps), which relied
+// on that string default.
+func pkColKinds(colTypes []string) []sqlfile.FieldKind {
+	kinds := make([]sqlfile.FieldKind, len(colTypes))
+	for i, ct := range colTypes {
+		if _, ok := dataTypeBin[ct]; ok {
+			kinds[i] = sqlfile.KindBytes
+		} else if _, ok := dataTypeNum[ct]; ok {
+			kinds[i] = sqlfile.KindNumber
+		} else {
+			kinds[i] = sqlfile.KindString
+		}
+	}
+	return kinds
+}
+
 func selectTiDBTableSample(tctx *tcontext.Context, conn *BaseConn, meta TableMeta, partitions ...string) (pkFields []string, pkVals [][]string, err error) {
 	pkFields, pkColTypes, err := selectTiDBRowKeyFields(tctx, conn, meta, nil)
 	if err != nil {
@@ -1068,7 +1087,7 @@ func selectTiDBTableSample(tctx *tcontext.Context, conn *BaseConn, meta TableMet
 	pkValNum := len(pkFields)
 	var iter SQLRowIter
 	rowRec := MakeRowReceiver(pkColTypes)
-	pkKinds := sqlColumnKinds(pkColTypes)
+	pkKinds := pkColKinds(pkColTypes)
 	var (
 		rawRow []sql.RawBytes
 		valBuf []byte
@@ -1113,7 +1132,7 @@ func selectTiDBTableSampleForPartition(tctx *tcontext.Context, conn *BaseConn, m
 	pkValNum := len(pkFields)
 	var iter SQLRowIter
 	rowRec := MakeRowReceiver(pkColTypes)
-	pkKinds := sqlColumnKinds(pkColTypes)
+	pkKinds := pkColKinds(pkColTypes)
 	var (
 		rawRow []sql.RawBytes
 		valBuf []byte

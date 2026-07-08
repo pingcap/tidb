@@ -32,6 +32,12 @@ func initColTypeRowReceiverMap() {
 		"BIT", "GEOMETRY",
 	}
 
+	dataTypeNumArr := append(dataTypeIntArr, []string{
+		"FLOAT", "REAL", "DOUBLE", "DOUBLE PRECISION",
+		"DECIMAL", "NUMERIC", "FIXED",
+		"BOOL", "BOOLEAN",
+	}...)
+
 	for _, s := range dataTypeStringArr {
 		dataTypeString[s] = struct{}{}
 	}
