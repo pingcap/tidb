@@ -653,12 +653,6 @@ func GetIdxChangingFieldType(idxCol *IndexColumn, col *ColumnInfo) *types.FieldT
 	return &col.FieldType
 }
 
-// ColumnNeedRestoredData checks whether a single index column needs restored data.
-func ColumnNeedRestoredData(idxCol *IndexColumn, colInfos []*ColumnInfo) bool {
-	col := colInfos[idxCol.Offset]
-	return types.NeedRestoredData(GetIdxChangingFieldType(idxCol, col))
-}
-
 // TableNameInfo provides meta data describing a table name info.
 type TableNameInfo struct {
 	ID   int64     `json:"id"`

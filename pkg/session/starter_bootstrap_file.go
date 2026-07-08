@@ -168,6 +168,10 @@ func upgradeStarterBootstrap(store kv.Storage) error {
 	return nil
 }
 
+func shouldRunStarterBootstrapUpgrade(initialBootstrapVersion int64) bool {
+	return deploymode.IsStarter() && initialBootstrapVersion != notBootstrapped
+}
+
 func loadStarterBootstrapFile() (*starterBootstrapFile, error) {
 	if !deploymode.IsStarter() {
 		return nil, nil

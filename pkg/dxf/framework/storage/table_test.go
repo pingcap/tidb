@@ -845,6 +845,21 @@ func TestGetSubtaskCntByStates(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, cntByStates, 1)
 	require.Equal(t, int64(1), cntByStates[proto.SubtaskStateFailed])
+
+	taskID := int64(2)
+	failedWithErr := testutil.CreateSubTask(t, sm, taskID, proto.StepOne, "tidb1", nil, proto.TaskTypeExample, 1)
+	require.NoError(t, sm.UpdateSubtaskStateAndError(ctx, "tidb1", failedWithErr, proto.SubtaskStateFailed, errors.New("subtask failed")))
+	failedWithoutErr := testutil.CreateSubTask(t, sm, taskID, proto.StepOne, "tidb2", nil, proto.TaskTypeExample, 1)
+	require.NoError(t, sm.UpdateSubtaskStateAndError(ctx, "tidb2", failedWithoutErr, proto.SubtaskStateFailed, nil))
+	canceledWithoutErr := testutil.CreateSubTask(t, sm, taskID, proto.StepOne, "tidb3", nil, proto.TaskTypeExample, 1)
+	require.NoError(t, sm.UpdateSubtaskStateAndError(ctx, "tidb3", canceledWithoutErr, proto.SubtaskStateCanceled, nil))
+
+	cntByStates, subTaskErrs, err := sm.GetSubtaskStateCntAndErrorsByStep(ctx, taskID, proto.StepOne)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), cntByStates[proto.SubtaskStateFailed])
+	require.Equal(t, int64(1), cntByStates[proto.SubtaskStateCanceled])
+	require.Len(t, subTaskErrs, 1)
+	require.ErrorContains(t, subTaskErrs[0], "subtask failed")
 }
 
 func TestDistFrameworkMeta(t *testing.T) {

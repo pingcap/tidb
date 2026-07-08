@@ -147,6 +147,24 @@ func TestStarterBootstrapFileLoadInStarter(t *testing.T) {
 	require.Equal(t, []string{"SELECT 1"}, bootstrapFile.Bootstrap)
 }
 
+func TestShouldRunStarterBootstrapUpgrade(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("starter deploy mode is only available in nextgen")
+	}
+
+	originMode := deploymode.Get()
+	t.Cleanup(func() {
+		require.NoError(t, deploymode.Set(originMode))
+	})
+
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+	require.False(t, shouldRunStarterBootstrapUpgrade(notBootstrapped))
+	require.True(t, shouldRunStarterBootstrapUpgrade(notBootstrapped+1))
+
+	require.NoError(t, deploymode.Set(deploymode.Premium))
+	require.False(t, shouldRunStarterBootstrapUpgrade(notBootstrapped+1))
+}
+
 func TestStarterBootstrapFileBootstrapBlocks(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("classic mock store is sufficient for bootstrap file SQL execution")
