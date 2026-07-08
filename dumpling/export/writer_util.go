@@ -164,12 +164,9 @@ func WriteInsert(
 		bf.Grow(lengthLimit - bfCap)
 	}
 
-	// TODO(joechenrh): remove writerPipe for SQL too, mirroring the CSV path:
-	// write directly into the object store writer with concurrent multipart
-	// upload (WriterOption.Concurrency) instead of batching through this
-	// goroutine. Deferred because the SQL path also tracks per-statement size for
-	// INSERT framing, so it needs more care than CSV; kept here until it gets a
-	// dedicated PR with the test pass as the oracle.
+	// TODO(joechenrh): remove writerPipe for SQL too (write directly with
+	// concurrent multipart upload); deferred because the SQL path also tracks
+	// per-statement size for INSERT framing.
 	wp := newWriterPipe(w, cfg.FileSize, cfg.StatementSize, metrics, cfg.Labels)
 
 	// use context.Background here to make sure writerPipe can deplete all the chunks in pipeline
@@ -299,11 +296,8 @@ func WriteInsert(
 	return counter, wp.Error()
 }
 
-// columnKinds maps Dumpling column type names to csvfile FieldKinds, mirroring
-// the Number/String/Bytes split colTypeRowReceiverMap uses to pick a RowReceiver:
-// binary and numeric types keep their kind and everything else (string types and
-// any type absent from the maps) defaults to string, matching MakeRowReceiver's
-// string default so unlisted types stay quoted/escaped.
+// columnKinds maps Dumpling column type names to csvfile FieldKinds: binary and
+// numeric types keep their kind, everything else defaults to string.
 func columnKinds(colTypes []string) []csvfile.FieldKind {
 	kinds := make([]csvfile.FieldKind, len(colTypes))
 	for i, ct := range colTypes {
@@ -318,8 +312,7 @@ func columnKinds(colTypes []string) []csvfile.FieldKind {
 	return kinds
 }
 
-// toCSVBinaryFormat maps the export BinaryFormat to its csvfile counterpart
-// explicitly, instead of relying on the two enums sharing integer values.
+// toCSVBinaryFormat maps the export BinaryFormat to its csvfile counterpart.
 func toCSVBinaryFormat(f BinaryFormat) csvfile.BinaryFormat {
 	switch f {
 	case BinaryFormatHEX:
@@ -353,11 +346,8 @@ func WriteInsertInCsv(
 		BinaryFormat:    toCSVBinaryFormat(DialectBinaryFormatMap[cfg.CsvOutputDialect]),
 		EscapeBackslash: cfg.EscapeBackslash,
 	}
-	// CSVWriter writes straight into the object store writer, mirroring the
-	// parquet path. The writer's multipart uploader (enabled via
-	// WriterOption.Concurrency in buildInterceptFileWriter) overlaps upload with
-	// encoding, so no writerPipe goroutine is needed; CSVWriter counts written
-	// bytes for file-size rotation via EstimateFileSize.
+	// CSVWriter writes directly into the object store writer, whose concurrent
+	// multipart upload replaces the writerPipe.
 	selectedFields := meta.SelectedField()
 	var kinds []csvfile.FieldKind
 	if selectedFields != "" {

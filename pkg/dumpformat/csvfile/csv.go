@@ -47,7 +47,7 @@ func appendField(dst, val []byte, isNull bool, kind FieldKind, cfg *Config) []by
 	}
 }
 
-// appendEscaped mirrors dumpling's escapeCSV.
+// appendEscaped writes s to dst, escaping per cfg.
 func appendEscaped(dst, s []byte, cfg *Config) []byte {
 	switch {
 	case cfg.EscapeBackslash:
@@ -71,7 +71,7 @@ func appendEscaped(dst, s []byte, cfg *Config) []byte {
 	}
 }
 
-// appendEscapedBackslash mirrors dumpling's escapeBackslashCSV.
+// appendEscapedBackslash writes s to dst with backslash escaping.
 func appendEscapedBackslash(dst, s []byte, cfg *Config) []byte {
 	// With a delimiter, comment the delimiter byte; otherwise the separator byte.
 	var specCmt byte

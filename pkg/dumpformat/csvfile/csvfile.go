@@ -12,12 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package csvfile holds the CSV writer shared by Dumpling and the exporter,
-// the sibling of parquetfile.
+// Package csvfile holds the CSV writer.
 package csvfile
 
-// FieldKind classifies a column for CSV framing, mirroring dumpling's
-// Number/String/Bytes RowReceiver split.
+// FieldKind classifies a column for CSV framing.
 type FieldKind uint8
 
 const (
@@ -41,7 +39,7 @@ const (
 	BinaryFormatBase64
 )
 
-// Config holds the CSV framing knobs, mirroring dumpling's csvOption.
+// Config holds the CSV framing knobs.
 type Config struct {
 	// Separator is written between fields.
 	Separator []byte

@@ -21,8 +21,7 @@ import (
 )
 
 // CSVWriter is a single-stream CSV encoder that writes framed/escaped rows to an
-// io.Writer, mirroring parquetfile.ParquetWriter. The caller owns buffering and
-// file rotation.
+// io.Writer. The caller owns buffering and file rotation.
 type CSVWriter struct {
 	w     io.Writer
 	cfg   *Config
@@ -77,14 +76,12 @@ func (cw *CSVWriter) flush() error {
 	return err
 }
 
-// EstimateFileSize returns the bytes written to the current sink, mirroring
-// parquetfile.ParquetWriter so callers rotate files uniformly across formats.
+// EstimateFileSize returns the bytes written to the current sink.
 func (cw *CSVWriter) EstimateFileSize() uint64 {
 	return uint64(cw.written)
 }
 
-// Close finalizes the writer. CSV has no format trailer, so this is a no-op kept
-// for symmetry with ParquetWriter.
+// Close finalizes the writer; CSV has no trailer, so this is a no-op.
 func (cw *CSVWriter) Close() error {
 	return nil
 }
