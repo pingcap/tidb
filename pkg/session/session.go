@@ -4356,17 +4356,17 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 			return nil, err
 		}
 	}
+	if deploymode.IsStarter() {
+		if err = upgradeStarterBootstrap(store); err != nil {
+			return nil, err
+		}
+	}
 	skipInitGlobalVarFromSystemDB := false
 	failpoint.Inject("skipInitGlobalVarFromSystemDB", func(val failpoint.Value) {
 		skipInitGlobalVarFromSystemDB = val.(bool)
 	})
 	if !skipInitGlobalVarFromSystemDB {
 		if err = initGlobalVarFromSystemDB(ctx, store); err != nil {
-			return nil, err
-		}
-	}
-	if deploymode.IsStarter() {
-		if err = upgradeStarterBootstrap(store); err != nil {
 			return nil, err
 		}
 	}
