@@ -42,6 +42,7 @@ import (
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/disk"
+	"github.com/pingcap/tidb/pkg/util/earlystopprofile"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -555,6 +556,8 @@ type StatementContext struct {
 
 	// OperatorNum is used to record the number of operators in the current logical plan.
 	OperatorNum uint64
+
+	earlyStopProfileCandidates []earlystopprofile.Candidate
 }
 
 // DefaultStmtErrLevels is the default error levels for statement
@@ -1452,6 +1455,25 @@ func (sc *StatementContext) GetResultRowsCount() (resultRows int64) {
 		return 0
 	}
 	return sc.RuntimeStatsColl.GetPlanActRows(planID)
+}
+
+// AddEarlyStopProfileCandidate registers one keep-order LIMIT scan candidate
+// whose runtime result can later update the early-stop profile cache.
+func (sc *StatementContext) AddEarlyStopProfileCandidate(candidate earlystopprofile.Candidate) {
+	if sc == nil {
+		return
+	}
+	sc.earlyStopProfileCandidates = append(sc.earlyStopProfileCandidates, candidate)
+}
+
+// EarlyStopProfileCandidates returns statement-scoped early-stop profile candidates.
+func (sc *StatementContext) EarlyStopProfileCandidates() []earlystopprofile.Candidate {
+	if sc == nil || len(sc.earlyStopProfileCandidates) == 0 {
+		return nil
+	}
+	candidates := make([]earlystopprofile.Candidate, len(sc.earlyStopProfileCandidates))
+	copy(candidates, sc.earlyStopProfileCandidates)
+	return candidates
 }
 
 func newErrCtx(tc types.Context, otherLevels errctx.LevelMap, handler contextutil.WarnAppender) errctx.Context {

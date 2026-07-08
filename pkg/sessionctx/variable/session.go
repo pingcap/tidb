@@ -917,6 +917,9 @@ type SessionVars struct {
 	// InExplainExplore indicates if this statement is under EXPLAIN EXPLORE.
 	InExplainExplore bool
 
+	// EnableAdaptiveLimitScan indicates whether adaptive scan behavior for LIMIT queries is enabled.
+	EnableAdaptiveLimitScan bool
+
 	// SnapshotTS is used for reading history data. For simplicity, SnapshotTS only supports distsql request.
 	SnapshotTS uint64
 
@@ -2500,6 +2503,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		IndexLookUpPushDownPolicy:        vardef.DefTiDBIndexLookUpPushDownPolicy,
 		OptPartialOrderedIndexForTopN:    vardef.DefTiDBOptPartialOrderedIndexForTopN,
 		EnableCachePrepareStmt:           vardef.DefEnableCachePrepareStmt,
+		EnableAdaptiveLimitScan:          vardef.DefTiDBEnableAdaptiveLimitScan,
 	}
 	vars.TiFlashFineGrainedShuffleBatchSize = vardef.DefTiFlashFineGrainedShuffleBatchSize
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))

@@ -88,6 +88,7 @@ func TestNewSessionVars(t *testing.T) {
 	require.Equal(t, vardef.DefTiDBFoundInPlanCache, vars.FoundInPlanCache)
 	require.Equal(t, vardef.DefTiDBFoundInBinding, vars.FoundInBinding)
 	require.Equal(t, vardef.DefTiDBAllowAutoRandExplicitInsert, vars.AllowAutoRandExplicitInsert)
+	require.Equal(t, vardef.DefTiDBEnableAdaptiveLimitScan, vars.EnableAdaptiveLimitScan)
 	require.Equal(t, int64(vardef.DefTiDBShardAllocateStep), vars.ShardAllocateStep)
 	require.Equal(t, vardef.DefTiDBAnalyzeVersion, vars.AnalyzeVersion)
 	require.Equal(t, vardef.DefCTEMaxRecursionDepth, vars.CTEMaxRecursionDepth)
@@ -663,6 +664,10 @@ func TestConcurrencyVariables(t *testing.T) {
 	require.Equal(t, wdConcurrency, vars.WindowConcurrency())
 	require.Equal(t, mjConcurrency, vars.MergeJoinConcurrency())
 	require.Equal(t, saConcurrency, vars.StreamAggConcurrency())
+
+	err = vars.SetSystemVar(vardef.TiDBEnableAdaptiveLimitScan, vardef.On)
+	require.NoError(t, err)
+	require.True(t, vars.EnableAdaptiveLimitScan)
 }
 
 func TestHelperFuncs(t *testing.T) {

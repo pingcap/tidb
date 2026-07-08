@@ -79,6 +79,9 @@ var (
 
 	// IndexLookUpCopTaskCount records the number of cop tasks in index look up executor
 	IndexLookUpCopTaskCount *prometheus.CounterVec
+
+	// AdaptiveLimitScanCounter records adaptive LIMIT scan lookup, observe and cap decisions.
+	AdaptiveLimitScanCounter *prometheus.CounterVec
 )
 
 // InitExecutorMetrics initializes excutor metrics.
@@ -200,4 +203,12 @@ func InitExecutorMetrics() {
 			Name:      "index_lookup_cop_task_count",
 			Help:      "Counter for index lookup cop tasks",
 		}, []string{LblType})
+
+	AdaptiveLimitScanCounter = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "executor",
+			Name:      "adaptive_limit_scan_total",
+			Help:      "Counter of adaptive LIMIT scan lookup, observe and cap decisions.",
+		}, []string{LblEvent, "reader_type", LblResult})
 }

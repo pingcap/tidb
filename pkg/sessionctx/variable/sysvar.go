@@ -2256,6 +2256,10 @@ var defaultSysVars = []*SysVar{
 		s.distSQLScanConcurrency = tidbOptPositiveInt32(val, vardef.DefDistSQLScanConcurrency)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableAdaptiveLimitScan, Value: BoolToOnOff(vardef.DefTiDBEnableAdaptiveLimitScan), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableAdaptiveLimitScan = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBAnalyzeDistSQLScanConcurrency, Value: strconv.Itoa(vardef.DefAnalyzeDistSQLScanConcurrency), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
 		s.analyzeDistSQLScanConcurrency = tidbOptPositiveInt32(val, vardef.DefAnalyzeDistSQLScanConcurrency)
 		return nil

@@ -264,6 +264,7 @@ const (
 	LblRollback       = "rollback"
 	LblType           = "type"
 	LblDb             = "db"
+	LblEvent          = "event"
 	LblResult         = "result"
 	LblSQLType        = "sql_type"
 	LblCoprType       = "copr_type"

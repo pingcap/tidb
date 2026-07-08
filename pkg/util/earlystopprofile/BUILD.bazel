@@ -1,0 +1,18 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "earlystopprofile",
+    srcs = ["profile.go"],
+    importpath = "github.com/pingcap/tidb/pkg/util/earlystopprofile",
+    visibility = ["//visibility:public"],
+    deps = ["//pkg/util/kvcache"],
+)
+
+go_test(
+    name = "earlystopprofile_test",
+    timeout = "short",
+    srcs = ["profile_test.go"],
+    embed = [":earlystopprofile"],
+    flaky = True,
+    deps = ["@com_github_stretchr_testify//require"],
+)

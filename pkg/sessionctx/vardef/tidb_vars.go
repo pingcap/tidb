@@ -317,6 +317,10 @@ const (
 	// If the query has a LIMIT clause, high concurrency makes the system do much more work than needed.
 	TiDBDistSQLScanConcurrency = "tidb_distsql_scan_concurrency"
 
+	// TiDBEnableAdaptiveLimitScan controls adaptive scan behavior for LIMIT queries.
+	// The first version only adjusts keep-order LIMIT scan concurrency based on historical feedback.
+	TiDBEnableAdaptiveLimitScan = "tidb_enable_adaptive_limit_scan"
+
 	// TiDBAnalyzeDistSQLScanConcurrency is the number of concurrent workers to scan regions to collect statistics (FMSketch, Samples).
 	// For auto analyze, the value is controlled by tidb_sysproc_scan_concurrency variable.
 	// This variable was introduced in v7.6.0 to separate the scan concurrency of ANALYZE operations from normal queries. See: https://github.com/pingcap/tidb/pull/48829
@@ -1695,6 +1699,7 @@ const (
 	DefTiDBEnableFastCreateTable                      = true
 	DefTiDBSimplifiedMetrics                          = false
 	DefTiDBEnablePaging                               = true
+	DefTiDBEnableAdaptiveLimitScan                    = false
 	DefTiFlashFineGrainedShuffleStreamCount           = 0
 	DefStreamCountWhenMaxThreadsNotSet                = 8
 	DefTiFlashFineGrainedShuffleBatchSize             = 8192

@@ -159,7 +159,7 @@ func (e *IndexNestedLoopHashJoin) Open(ctx context.Context) error {
 }
 
 func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context, initBatchSize int) {
-	concurrency := e.Ctx().GetSessionVars().IndexLookupJoinConcurrency()
+	concurrency := e.indexLookupJoinConcurrency()
 	if e.stats != nil {
 		e.stats.concurrency = concurrency
 	}
@@ -454,7 +454,7 @@ func (*indexHashJoinOuterWorker) pushToChan(ctx context.Context, task *indexHash
 }
 
 func (e *IndexNestedLoopHashJoin) newOuterWorker(innerCh chan *indexHashJoinTask, initBatchSize int) *indexHashJoinOuterWorker {
-	maxBatchSize := e.Ctx().GetSessionVars().IndexJoinBatchSize
+	maxBatchSize := e.indexJoinBatchSize()
 	batchSize := min(initBatchSize, maxBatchSize)
 	ow := &indexHashJoinOuterWorker{
 		outerWorker: outerWorker{

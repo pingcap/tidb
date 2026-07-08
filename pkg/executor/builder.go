@@ -86,6 +86,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/cteutil"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tidb/pkg/util/earlystopprofile"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -3604,6 +3605,11 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *physicalop.PhysicalIndexJoin) 
 		LastColHelper: v.CompareFilters,
 		Finished:      &atomic.Value{},
 	}
+	if batchSize, concurrency, ok := adaptiveIndexJoinLimitSettings(b.sctx, v); ok {
+		e.AdaptiveLimitBatchSize = batchSize
+		e.AdaptiveLimitConcurrency = concurrency
+		recordAdaptiveLimitScanMetric(adaptiveLimitScanEventCap, earlystopprofile.ReaderTypeIndexJoin, adaptiveLimitScanResultChanged)
+	}
 	colsFromChildren := v.Schema().Columns
 	if v.JoinType == base.LeftOuterSemiJoin || v.JoinType == base.AntiLeftOuterSemiJoin {
 		colsFromChildren = colsFromChildren[:len(colsFromChildren)-1]
@@ -3801,6 +3807,10 @@ func buildNoRangeTableReader(b *executorBuilder, v *physicalop.PhysicalTableRead
 	keepOrderLimitScanConcurrencyCap := 0
 	if v.StoreType == kv.TiKV {
 		keepOrderLimitScanConcurrencyCap = keepOrderLimitScanConcurrencyCapFromPlans(ts.KeepOrder, v.TablePlans)
+		if !b.forDataReaderBuilder {
+			keepOrderLimitScanConcurrencyCap = keepOrderLimitScanConcurrencyCapFromPlansWithProfile(
+				b.sctx, earlystopprofile.ReaderTypeTable, ts.KeepOrder, v.TablePlans)
+		}
 	}
 
 	e := &TableReaderExecutor{
@@ -4356,8 +4366,8 @@ func buildNoRangeIndexReader(b *executorBuilder, v *physicalop.PhysicalIndexRead
 		plans:                      v.IndexPlans,
 		outputColumns:              v.OutputColumns,
 		groupedRanges:              is.GroupedRanges,
-		keepOrderLimitScanConcurrencyCap: keepOrderLimitScanConcurrencyCapFromPlans(
-			is.KeepOrder, v.IndexPlans),
+		keepOrderLimitScanConcurrencyCap: keepOrderLimitScanConcurrencyCapForIndexReader(
+			b, is.KeepOrder, v.IndexPlans),
 	}
 
 	for _, col := range v.OutputColumns {
@@ -4608,8 +4618,8 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *physicalop.PhysicalInd
 		avgRowSize:                 v.GetAvgTableRowSize(),
 		groupedRanges:              is.GroupedRanges,
 		indexLookUpPushDown:        v.IndexLookUpPushDown,
-		keepOrderLimitScanConcurrencyCap: keepOrderLimitScanConcurrencyCapFromPushedLimit(
-			is.KeepOrder, v.PushedLimit),
+		keepOrderLimitScanConcurrencyCap: keepOrderLimitScanConcurrencyCapForIndexLookUpReader(
+			b, is.KeepOrder, v.PushedLimit, v.IndexLookUpPushDown),
 	}
 
 	if v.ExtraHandleCol != nil {

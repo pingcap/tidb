@@ -65,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/breakpoint"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/earlystopprofile"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -2189,6 +2190,11 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	// Internal SQLs must also be recorded to keep the consistency of `PrevStmt` and `PrevStmtDigest`.
 	// If this SQL is under `explain explore {SQL}`, we still want to record them in stmt summary.
 	isInternalSQL := (sessVars.InRestrictedSQL || len(userString) == 0) && !sessVars.InExplainExplore
+	stmtCtx := sessVars.StmtCtx
+	costTime := sessVars.GetTotalCostDuration()
+	execDetail := stmtCtx.GetExecDetails()
+	resultRows := stmtCtx.GetResultRowsCount()
+	observeEarlyStopProfile(stmtCtx, execDetail, resultRows, costTime, succ, isInternalSQL)
 	if !stmtsummaryv2.Enabled() || (isInternalSQL && !stmtsummaryv2.EnabledInternal()) {
 		sessVars.SetPrevStmtDigest("")
 		return
@@ -2197,13 +2203,11 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	if _, ok := a.StmtNode.(*ast.PrepareStmt); ok {
 		return
 	}
-	stmtCtx := sessVars.StmtCtx
 	// Make sure StmtType is filled even if succ is false.
 	if stmtCtx.StmtType == "" {
 		stmtCtx.StmtType = stmtctx.GetStmtLabel(context.Background(), a.StmtNode)
 	}
 	normalizedSQL, digest := stmtCtx.SQLDigest()
-	costTime := sessVars.GetTotalCostDuration()
 	charset, collation := sessVars.GetCharsetInfo()
 
 	var prevSQL, prevSQLDigest string
@@ -2227,7 +2231,6 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		traceevent.CheckFlightRecorderDumpTrigger(a.GoCtx, "dump_trigger.user_command.plan_digest", planDigestAlias{planDigest}.planDigestDumpTriggerCheck)
 	}
 
-	execDetail := stmtCtx.GetExecDetails()
 	copTaskInfo := stmtCtx.CopTasksSummary()
 	memMax := sessVars.MemTracker.MaxConsumed()
 	diskMax := sessVars.DiskTracker.MaxConsumed()
@@ -2276,7 +2279,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	stmtExecInfo.PlanInBinding = sessVars.FoundInBinding
 	stmtExecInfo.ExecRetryCount = a.retryCount
 	stmtExecInfo.WriteSQLRespDuration = writeSQLRespDuration
-	stmtExecInfo.ResultRows = stmtCtx.GetResultRowsCount()
+	stmtExecInfo.ResultRows = resultRows
 	stmtExecInfo.TiKVExecDetails = &tikvExecDetail
 	stmtExecInfo.Prepared = a.isPreparedStmt
 	stmtExecInfo.KeyspaceName = keyspaceName
@@ -2293,6 +2296,59 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	stmtExecInfo.MemArbitration = stmtCtx.MemTracker.MemArbitration().Seconds()
 
 	stmtsummaryv2.Add(stmtExecInfo)
+}
+
+func observeEarlyStopProfile(
+	stmtCtx *stmtctx.StatementContext,
+	execDetail execdetails.ExecDetails,
+	resultRows int64,
+	totalLatency time.Duration,
+	succeed bool,
+	internal bool,
+) {
+	if stmtCtx == nil {
+		return
+	}
+	candidates := stmtCtx.EarlyStopProfileCandidates()
+	if len(candidates) == 0 {
+		return
+	}
+	if !succeed {
+		recordAdaptiveLimitScanMetricUnknown(adaptiveLimitScanEventObserve, adaptiveLimitScanResultSkippedFailed)
+		return
+	}
+	if internal {
+		recordAdaptiveLimitScanMetricUnknown(adaptiveLimitScanEventObserve, adaptiveLimitScanResultSkippedInternal)
+		return
+	}
+	if len(candidates) != 1 {
+		recordAdaptiveLimitScanMetricUnknown(adaptiveLimitScanEventObserve, adaptiveLimitScanResultSkippedMultiCandidate)
+		return
+	}
+	scanDetail := execDetail.ScanDetail
+	if scanDetail == nil {
+		recordAdaptiveLimitScanMetric(adaptiveLimitScanEventObserve, candidates[0].Key.ReaderType, adaptiveLimitScanResultSkippedNoScanDetail)
+		return
+	}
+	if scanDetail.ProcessedKeys == 0 {
+		recordAdaptiveLimitScanMetric(adaptiveLimitScanEventObserve, candidates[0].Key.ReaderType, adaptiveLimitScanResultSkippedZeroKeys)
+		return
+	}
+	observedResultRows := uint64(0)
+	if resultRows > 0 {
+		observedResultRows = uint64(resultRows)
+	}
+	earlystopprofile.Observe(earlystopprofile.Sample{
+		Candidate:     candidates[0],
+		ResultRows:    observedResultRows,
+		RequestCount:  execDetail.RequestCount,
+		ProcessedKeys: uint64(scanDetail.ProcessedKeys),
+		TotalKeys:     uint64(scanDetail.TotalKeys),
+		Latency:       totalLatency,
+		Succeed:       succeed,
+		Internal:      internal,
+	})
+	recordAdaptiveLimitScanMetric(adaptiveLimitScanEventObserve, candidates[0].Key.ReaderType, adaptiveLimitScanResultAccepted)
 }
 
 // GetOriginalSQL implements StmtExecLazyInfo interface.

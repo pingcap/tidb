@@ -148,6 +148,8 @@ var (
 	IndexLookUpExecutorWithPushDownEnabledDuration  prometheus.Observer
 	IndexLookUpIndexScanCopTasksNormal              prometheus.Counter
 	IndexLookUpIndexScanCopTasksWithPushDownEnabled prometheus.Counter
+
+	AdaptiveLimitScanCounter *prometheus.CounterVec
 )
 
 func init() {
@@ -254,6 +256,8 @@ func InitMetricsVars() {
 	IndexLookUpExecutorWithPushDownEnabledDuration = metrics.IndexLookUpExecutorDuration.WithLabelValues("enable_index_lookup_push_down")
 	IndexLookUpIndexScanCopTasksNormal = metrics.IndexLookUpCopTaskCount.WithLabelValues("index_scan_normal")
 	IndexLookUpIndexScanCopTasksWithPushDownEnabled = metrics.IndexLookUpCopTaskCount.WithLabelValues("index_scan_with_lookup_push_down")
+
+	AdaptiveLimitScanCounter = metrics.AdaptiveLimitScanCounter
 }
 
 // InitPhaseDurationObserverMap init observer map

@@ -94,6 +94,8 @@ func keepOrderLimitScanConcurrencyCapFromPushedLimit(keepOrder bool, pushedLimit
 	return keepOrderLimitScanConcurrencyCap(keepOrder, pushedLimit.Offset+pushedLimit.Count)
 }
 
+// minLimitRowsFromPlans scans a flattened pushed-down plan list, such as
+// TablePlans or IndexPlans. It is not a general physical plan tree analyzer.
 func minLimitRowsFromPlans(plans []base.PhysicalPlan) (uint64, bool) {
 	var (
 		limitRows uint64

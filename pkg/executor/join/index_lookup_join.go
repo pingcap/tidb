@@ -88,6 +88,11 @@ type IndexLookUpJoin struct {
 	stats    *indexLookUpJoinRuntimeStats
 	Finished *atomic.Value
 	prepared bool
+
+	// AdaptiveLimitBatchSize and AdaptiveLimitConcurrency are statement-local
+	// caps derived from an upper LIMIT. Zero means using the session variable.
+	AdaptiveLimitBatchSize   int
+	AdaptiveLimitConcurrency int
 }
 
 // OuterCtx is the outer ctx used in index lookup join
@@ -195,7 +200,7 @@ func (e *IndexLookUpJoin) Open(ctx context.Context) error {
 }
 
 func (e *IndexLookUpJoin) startWorkers(ctx context.Context, initBatchSize int) {
-	concurrency := e.Ctx().GetSessionVars().IndexLookupJoinConcurrency()
+	concurrency := e.indexLookupJoinConcurrency()
 	if e.stats != nil {
 		e.stats.concurrency = concurrency
 	}
@@ -214,7 +219,7 @@ func (e *IndexLookUpJoin) startWorkers(ctx context.Context, initBatchSize int) {
 }
 
 func (e *IndexLookUpJoin) newOuterWorker(resultCh, innerCh chan *lookUpJoinTask, initBatchSize int) *outerWorker {
-	maxBatchSize := e.Ctx().GetSessionVars().IndexJoinBatchSize
+	maxBatchSize := e.indexJoinBatchSize()
 	batchSize := min(initBatchSize, maxBatchSize)
 	ow := &outerWorker{
 		OuterCtx:         e.OuterCtx,
@@ -228,6 +233,22 @@ func (e *IndexLookUpJoin) newOuterWorker(resultCh, innerCh chan *lookUpJoinTask,
 		lookup:           e,
 	}
 	return ow
+}
+
+func (e *IndexLookUpJoin) indexLookupJoinConcurrency() int {
+	concurrency := e.Ctx().GetSessionVars().IndexLookupJoinConcurrency()
+	if e.AdaptiveLimitConcurrency > 0 {
+		concurrency = min(concurrency, e.AdaptiveLimitConcurrency)
+	}
+	return max(1, concurrency)
+}
+
+func (e *IndexLookUpJoin) indexJoinBatchSize() int {
+	batchSize := e.Ctx().GetSessionVars().IndexJoinBatchSize
+	if e.AdaptiveLimitBatchSize > 0 {
+		batchSize = min(batchSize, e.AdaptiveLimitBatchSize)
+	}
+	return max(1, batchSize)
 }
 
 func (e *IndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWorker {

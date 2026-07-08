@@ -20,6 +20,7 @@ go_library(
         "//pkg/util/context",
         "//pkg/util/dbterror/plannererrors",
         "//pkg/util/disk",
+        "//pkg/util/earlystopprofile",
         "//pkg/util/execdetails",
         "//pkg/util/hint",
         "//pkg/util/intest",
