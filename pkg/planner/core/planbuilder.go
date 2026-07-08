@@ -3116,6 +3116,8 @@ var CMSketchSizeLimit = kv.TxnEntrySizeLimit.Load() / binary.MaxVarintLen32
 var analyzeOptionLimit = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptNumBuckets: vardef.MaxTiDBAnalyzeDefaultNumBuckets,
 	ast.AnalyzeOptNumTopN:    vardef.MaxTiDBAnalyzeDefaultNumTopN,
+	// CMSketch width/depth are legacy ANALYZE knobs kept only to validate
+	// explicit options for compatibility.
 	ast.AnalyzeOptCMSketchWidth: CMSketchSizeLimit,
 	ast.AnalyzeOptCMSketchDepth: CMSketchSizeLimit,
 	ast.AnalyzeOptNumSamples:    5000000,
