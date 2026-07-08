@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -106,6 +107,48 @@ func TestDualPasswordSetPasswordRetain(t *testing.T) {
 
 	require.NoError(t, authAs(t, tk, "dpsetu", "%", "p1"))
 	require.NoError(t, authAs(t, tk, "dpsetu", "%", "p2"))
+
+	// SET PASSWORD takes a separate executor path from ALTER USER, so pin its
+	// own error and privilege branches too.
+
+	// Empty NEW password with RETAIN → ER_CURRENT_PASSWORD_CANNOT_BE_RETAINED.
+	err := tk.ExecToErr("SET PASSWORD FOR dpsetu = '' RETAIN CURRENT PASSWORD")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "new password is empty")
+
+	// Empty CURRENT primary with RETAIN → ER_SECOND_PASSWORD_CANNOT_BE_EMPTY.
+	tk.MustExec("DROP USER IF EXISTS dpsetempty")
+	tk.MustExec("CREATE USER dpsetempty IDENTIFIED BY ''")
+	err = tk.ExecToErr("SET PASSWORD FOR dpsetempty = 'p1' RETAIN CURRENT PASSWORD")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Empty password can not be retained as second password")
+
+	// Plain SET PASSWORD (no RETAIN) replaces the primary but leaves the
+	// existing secondary untouched (MySQL semantics).
+	tk.MustExec("SET PASSWORD FOR dpsetu = 'p3'")
+	require.NoError(t, authAs(t, tk, "dpsetu", "%", "p1")) // secondary survives
+	require.NoError(t, authAs(t, tk, "dpsetu", "%", "p3")) // new primary
+	require.Error(t, authAs(t, tk, "dpsetu", "%", "p2"))   // old primary not retained
+
+	// Cross-user RETAIN with APPLICATION_PASSWORD_ADMIN only: denied. SUPER is
+	// the cross-user SET PASSWORD authority; APPLICATION_PASSWORD_ADMIN never
+	// grants power over other accounts.
+	tk.MustExec("DROP USER IF EXISTS dpsetap2, dpsetvic2")
+	tk.MustExec("CREATE USER dpsetap2 IDENTIFIED BY 'a1'")
+	tk.MustExec("CREATE USER dpsetvic2 IDENTIFIED BY 'v1'")
+	tk.MustExec("GRANT APPLICATION_PASSWORD_ADMIN ON *.* TO dpsetap2")
+	apTK := testkit.NewTestKit(t, tk.Session().GetStore())
+	require.NoError(t, apTK.Session().Auth(&auth.UserIdentity{Username: "dpsetap2", Hostname: "%"}, sha1Password("a1"), nil, nil))
+	err = apTK.ExecToErr("SET PASSWORD FOR dpsetvic2 = 'v2' RETAIN CURRENT PASSWORD")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Access denied")
+	require.NoError(t, authAs(t, tk, "dpsetvic2", "%", "v1"))
+	require.Error(t, authAs(t, tk, "dpsetvic2", "%", "v2"))
+
+	// Self via the current-user form: allowed with APPLICATION_PASSWORD_ADMIN.
+	apTK.MustExec("SET PASSWORD = 'a2' RETAIN CURRENT PASSWORD")
+	require.NoError(t, authAs(t, tk, "dpsetap2", "%", "a1"))
+	require.NoError(t, authAs(t, tk, "dpsetap2", "%", "a2"))
 }
 
 func TestDualPasswordCreateUserRejectsRetain(t *testing.T) {
@@ -115,6 +158,12 @@ func TestDualPasswordCreateUserRejectsRetain(t *testing.T) {
 	err := tk.ExecToErr("CREATE USER dpcre IDENTIFIED BY 'x' RETAIN CURRENT PASSWORD")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "RETAIN CURRENT PASSWORD")
+
+	// The sibling clause is equally invalid on CREATE USER (MySQL disallows
+	// both; there is no old password to discard at account creation).
+	err = tk.ExecToErr("CREATE USER dpcre IDENTIFIED BY 'x' DISCARD OLD PASSWORD")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "DISCARD OLD PASSWORD")
 }
 
 func TestDualPasswordRejectsEmptyNew(t *testing.T) {
@@ -321,18 +370,45 @@ func TestDualPasswordSetPasswordSelfByExplicitName(t *testing.T) {
 func TestDualPasswordCachingSha2PasswordStorage(t *testing.T) {
 	tk := rootTK(t)
 
-	tk.MustExec("DROP USER IF EXISTS dpsha2")
+	tk.MustExec("DROP USER IF EXISTS dpsha2, dpsm3")
 	tk.MustExec("CREATE USER dpsha2 IDENTIFIED WITH caching_sha2_password BY 'p1'")
 	tk.MustExec("ALTER USER dpsha2 IDENTIFIED BY 'p2' RETAIN CURRENT PASSWORD")
 
-	rows := tk.MustQuery(`SELECT authentication_string, JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.additional_password'))
+	// Both hashes must be in the plugin's own storage format ($A$005$... for
+	// the sha2 crypt) and verify against the corresponding plaintext.
+	rows := tk.MustQuery(`SELECT plugin, authentication_string, JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.additional_password'))
 		FROM mysql.user WHERE User = 'dpsha2'`).Rows()
 	require.Len(t, rows, 1)
-	primary := fmt.Sprint(rows[0][0])
-	secondary := fmt.Sprint(rows[0][1])
-	require.NotEmpty(t, primary)
-	require.NotEmpty(t, secondary)
+	require.Equal(t, "caching_sha2_password", fmt.Sprint(rows[0][0]))
+	primary := fmt.Sprint(rows[0][1])
+	secondary := fmt.Sprint(rows[0][2])
+	require.True(t, strings.HasPrefix(primary, "$A$005$"), "primary: %q", primary)
+	require.True(t, strings.HasPrefix(secondary, "$A$005$"), "secondary: %q", secondary)
 	require.NotEqual(t, primary, secondary)
+	ok, err := auth.CheckHashingPassword([]byte(primary), "p2", mysql.AuthCachingSha2Password)
+	require.NoError(t, err)
+	require.True(t, ok)
+	ok, err = auth.CheckHashingPassword([]byte(secondary), "p1", mysql.AuthCachingSha2Password)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	// tidb_sm3_password is dual-password capable too: same storage contract.
+	tk.MustExec("CREATE USER dpsm3 IDENTIFIED WITH tidb_sm3_password BY 'p1'")
+	tk.MustExec("ALTER USER dpsm3 IDENTIFIED BY 'p2' RETAIN CURRENT PASSWORD")
+	rows = tk.MustQuery(`SELECT plugin, authentication_string, JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.additional_password'))
+		FROM mysql.user WHERE User = 'dpsm3'`).Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, "tidb_sm3_password", fmt.Sprint(rows[0][0]))
+	primary = fmt.Sprint(rows[0][1])
+	secondary = fmt.Sprint(rows[0][2])
+	require.True(t, strings.HasPrefix(primary, "$A$005$"), "primary: %q", primary)
+	require.True(t, strings.HasPrefix(secondary, "$A$005$"), "secondary: %q", secondary)
+	ok, err = auth.CheckHashingPassword([]byte(primary), "p2", mysql.AuthTiDBSM3Password)
+	require.NoError(t, err)
+	require.True(t, ok)
+	ok, err = auth.CheckHashingPassword([]byte(secondary), "p1", mysql.AuthTiDBSM3Password)
+	require.NoError(t, err)
+	require.True(t, ok)
 }
 
 // TestDualPasswordChainedRetain mirrors MySQL's DDL Test 1: two consecutive
@@ -463,6 +539,22 @@ func TestDualPasswordMultiUserAlter(t *testing.T) {
 	tk.MustExec("ALTER USER dpm1 DISCARD OLD PASSWORD, dpm3")
 	tk.MustQuery("SELECT count(*) FROM mysql.user WHERE User IN ('dpm1', 'dpm3') AND JSON_EXTRACT(user_attributes, '$.additional_password') IS NOT NULL").Check(testkit.Rows("0"))
 	require.Error(t, authAs(t, tk, "dpm1", "%", "p2"))
+
+	// Failure atomicity: when a later spec fails (missing user), the whole
+	// statement fails and the earlier spec's changes are rolled back — dpm1's
+	// primary stays p3 and no secondary is left behind.
+	err := tk.ExecToErr("ALTER USER dpm1 IDENTIFIED BY 'p5' RETAIN CURRENT PASSWORD, dpm_missing IDENTIFIED BY 'x' RETAIN CURRENT PASSWORD")
+	require.Error(t, err)
+	tk.MustQuery("SELECT JSON_EXTRACT(user_attributes, '$.additional_password') IS NOT NULL FROM mysql.user WHERE User = 'dpm1'").Check(testkit.Rows("0"))
+	require.NoError(t, authAs(t, tk, "dpm1", "%", "p3"))
+	require.Error(t, authAs(t, tk, "dpm1", "%", "p5"))
+
+	// Host scoping: the same username on two hosts is two accounts. RETAIN on
+	// one host must not touch the other row (queries filter User AND Host).
+	tk.MustExec("DROP USER IF EXISTS 'dpmh'@'%', 'dpmh'@'198.51.100.1'")
+	tk.MustExec("CREATE USER 'dpmh'@'%' IDENTIFIED BY 'h1', 'dpmh'@'198.51.100.1' IDENTIFIED BY 'h2'")
+	tk.MustExec("ALTER USER 'dpmh'@'%' IDENTIFIED BY 'h3' RETAIN CURRENT PASSWORD")
+	tk.MustQuery("SELECT Host, JSON_EXTRACT(user_attributes, '$.additional_password') IS NOT NULL FROM mysql.user WHERE User = 'dpmh' ORDER BY Host").Check(testkit.Rows("% 1", "198.51.100.1 0"))
 }
 
 // TestDualPasswordSelfServiceDiscardWithExtraOptionsStillGated guards the
@@ -622,6 +714,16 @@ func TestDualPasswordDiscardCollapsesEmptyAttributesToNull(t *testing.T) {
 	tk.MustQuery("SELECT JSON_EXTRACT(user_attributes, '$.additional_password') IS NOT NULL FROM mysql.user WHERE User = 'dpnull'").Check(testkit.Rows("1"))
 	tk.MustExec("ALTER USER dpnull DISCARD OLD PASSWORD")
 	tk.MustQuery("SELECT user_attributes IS NULL FROM mysql.user WHERE User = 'dpnull'").Check(testkit.Rows("1"))
+
+	// Conversely, RETAIN/DISCARD must strip ONLY $.additional_password:
+	// unrelated user_attributes content (metadata.comment) survives both, and
+	// the row does NOT collapse to NULL while other attributes remain.
+	tk.MustExec("DROP USER IF EXISTS dpattr")
+	tk.MustExec("CREATE USER dpattr IDENTIFIED BY 'p1' COMMENT 'keep me'")
+	tk.MustExec("ALTER USER dpattr IDENTIFIED BY 'p2' RETAIN CURRENT PASSWORD")
+	tk.MustQuery("SELECT JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.metadata.comment')), JSON_EXTRACT(user_attributes, '$.additional_password') IS NOT NULL FROM mysql.user WHERE User = 'dpattr'").Check(testkit.Rows("keep me 1"))
+	tk.MustExec("ALTER USER dpattr DISCARD OLD PASSWORD")
+	tk.MustQuery("SELECT JSON_UNQUOTE(JSON_EXTRACT(user_attributes, '$.metadata.comment')), JSON_EXTRACT(user_attributes, '$.additional_password'), user_attributes IS NULL FROM mysql.user WHERE User = 'dpattr'").Check(testkit.Rows("keep me <nil> 0"))
 }
 
 // TestDualPasswordSelfSetPasswordRetainAcceptsMysqlUpdate guards that the self
