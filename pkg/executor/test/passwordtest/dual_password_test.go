@@ -693,3 +693,40 @@ func TestDualPasswordAlterUserUserRetainAndDiscard(t *testing.T) {
 	require.Error(t, authAs(t, tk, "dpuserfn", "%", "u1"))
 	tk.MustQuery("SELECT JSON_EXTRACT(user_attributes, '$.additional_password') FROM mysql.user WHERE User = 'dpuserfn'").Check(testkit.Rows("<nil>"))
 }
+
+// TestDualPasswordSelfRetainWithExplicitSamePlugin covers the reviewer-raised
+// case that equivalent self-service syntax must not require different
+// privileges: an APPLICATION_PASSWORD_ADMIN-only user spelling the account's
+// CURRENT plugin explicitly (`IDENTIFIED WITH mysql_native_password BY ...
+// RETAIN CURRENT PASSWORD`) is still self-service. A real plugin change stays
+// admin-gated.
+func TestDualPasswordSelfRetainWithExplicitSamePlugin(t *testing.T) {
+	tk := rootTK(t)
+
+	tk.MustExec("DROP USER IF EXISTS dpsameplug")
+	tk.MustExec("CREATE USER dpsameplug IDENTIFIED WITH mysql_native_password BY 'p1'")
+	tk.MustExec("GRANT APPLICATION_PASSWORD_ADMIN ON *.* TO dpsameplug")
+
+	selfTK := testkit.NewTestKit(t, tk.Session().GetStore())
+	require.NoError(t, selfTK.Session().Auth(&auth.UserIdentity{Username: "dpsameplug", Hostname: "%"}, sha1Password("p1"), nil, nil))
+
+	// Explicit same plugin == no plugin change: allowed with
+	// APPLICATION_PASSWORD_ADMIN only (no CREATE USER).
+	selfTK.MustExec("ALTER USER 'dpsameplug'@'%' IDENTIFIED WITH mysql_native_password BY 'p2' RETAIN CURRENT PASSWORD")
+	require.NoError(t, authAs(t, tk, "dpsameplug", "%", "p1"))
+	require.NoError(t, authAs(t, tk, "dpsameplug", "%", "p2"))
+
+	// Explicit same plugin DISCARD is self-service too.
+	selfTK.MustExec("ALTER USER 'dpsameplug'@'%' IDENTIFIED WITH mysql_native_password BY 'p3' RETAIN CURRENT PASSWORD")
+	selfTK.MustExec("ALTER USER 'dpsameplug'@'%' DISCARD OLD PASSWORD")
+	require.Error(t, authAs(t, tk, "dpsameplug", "%", "p2"))
+	require.NoError(t, authAs(t, tk, "dpsameplug", "%", "p3"))
+
+	// A REAL plugin change is not self-service: without CREATE USER the
+	// admin gate rejects it before any dual-password validation.
+	err := selfTK.ExecToErr("ALTER USER 'dpsameplug'@'%' IDENTIFIED WITH caching_sha2_password BY 'p4' RETAIN CURRENT PASSWORD")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "CREATE USER")
+	// Nothing changed.
+	require.NoError(t, authAs(t, tk, "dpsameplug", "%", "p3"))
+}

@@ -1852,6 +1852,10 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		//   - A RETAIN CURRENT PASSWORD / DISCARD OLD PASSWORD that targets your
 		//     OWN account requires APPLICATION_PASSWORD_ADMIN (CREATE USER /
 		//     UPDATE-mysql also suffice, being a superset of self authority).
+		//     An explicit IDENTIFIED WITH is accepted on this path only when it
+		//     resolves to the account's current plugin — i.e. no plugin change —
+		//     so equivalent self-service syntax has identical privilege
+		//     behavior. A real plugin change keeps requiring admin authority.
 		//   - The same clause targeting ANOTHER account requires the normal
 		//     ALTER USER authority (CREATE USER, or UPDATE on the mysql schema).
 		//     APPLICATION_PASSWORD_ADMIN is NOT a substitute for that authority —
@@ -1868,12 +1872,22 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			len(s.PasswordOrLockOptions) > 0 ||
 			s.CommentOrAttributeOption != nil ||
 			s.ResourceGroupNameOption != nil
+		// Read the target row (inside this transaction) BEFORE the privilege
+		// gate: classifying an explicit IDENTIFIED WITH as "no plugin change"
+		// needs the account's current plugin. The "user does not exist" outcome
+		// is still handled only after the privilege checks below, so an
+		// unprivileged caller cannot probe account existence.
+		exists, currentAuthPlugin, currentAuthString, err := userExistsInternalWithRetryVariants(ctx, sqlExecutor, &spec.User.Username, spec.User.Hostname)
+		if err != nil {
+			return err
+		}
 		// selfServiceDualPwd: a dual-password change to the current user's own
 		// account that carries no other privileged options (the new password for
-		// RETAIN is allowed). Such a statement is governed by
-		// APPLICATION_PASSWORD_ADMIN, not the CREATE USER admin check.
-		selfServiceDualPwd := alterCurrentUser && specDualPwdRequested && !hasOtherStmtOptions &&
-			(spec.AuthOpt == nil || spec.AuthOpt.AuthPlugin == "")
+		// RETAIN is allowed) and no plugin change. Such a statement is governed
+		// by APPLICATION_PASSWORD_ADMIN, not the CREATE USER admin check.
+		sameOrUnspecifiedPlugin := spec.AuthOpt == nil || spec.AuthOpt.AuthPlugin == "" ||
+			effectiveAuthPlugin(spec.AuthOpt.AuthPlugin, defaultAuthPlugin) == effectiveAuthPlugin(currentAuthPlugin, defaultAuthPlugin)
+		selfServiceDualPwd := alterCurrentUser && specDualPwdRequested && !hasOtherStmtOptions && sameOrUnspecifiedPlugin
 		needAdminPrivCheck := !(alterCurrentUser && alterPassword) && !selfServiceDualPwd
 		if needAdminPrivCheck {
 			// The user executing the query (user) does not match the user specified (spec.User)
@@ -1902,10 +1916,6 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("APPLICATION_PASSWORD_ADMIN")
 		}
 
-		exists, currentAuthPlugin, currentAuthString, err := userExistsInternalWithRetryVariants(ctx, sqlExecutor, &spec.User.Username, spec.User.Hostname)
-		if err != nil {
-			return err
-		}
 		if !exists {
 			user := fmt.Sprintf(`'%s'@'%s'`, spec.User.Username, spec.User.Hostname)
 			failedUsers = append(failedUsers, user)
