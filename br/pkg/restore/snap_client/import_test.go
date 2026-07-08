@@ -351,13 +351,17 @@ func (client *blockingBatchDownloadImporterClient) CheckBatchDownloadSupport(ctx
 }
 
 func makeCompactedFileSets(fileGroupCount, filesPerGroup int) []restore.BackupFileSet {
+	return makeCompactedFileSetsWithCF(fileGroupCount, filesPerGroup, restoreutils.WriteCFName)
+}
+
+func makeCompactedFileSetsWithCF(fileGroupCount, filesPerGroup int, cf string) []restore.BackupFileSet {
 	fileSets := make([]restore.BackupFileSet, 0, fileGroupCount)
 	for i := 0; i < fileGroupCount; i++ {
 		files := make([]*backuppb.File, 0, filesPerGroup)
 		for j := 0; j < filesPerGroup; j++ {
 			files = append(files, &backuppb.File{
-				Name:     fmt.Sprintf("file-%d-%d_write.sst", i, j),
-				Cf:       restoreutils.WriteCFName,
+				Name:     fmt.Sprintf("file-%d-%d_%s.sst", i, j, cf),
+				Cf:       cf,
 				StartKey: tablecodec.EncodeTablePrefix(100),
 				EndKey:   append(tablecodec.EncodeTablePrefix(100), 'z'),
 			})
@@ -373,6 +377,31 @@ func makeCompactedFileSets(fileGroupCount, filesPerGroup int) []restore.BackupFi
 		})
 	}
 	return fileSets
+}
+
+type countingLatestMVCCImporterClient struct {
+	fakeImporterClient
+
+	calls atomic.Int32
+}
+
+func newCountingLatestMVCCImporterClient() *countingLatestMVCCImporterClient {
+	return &countingLatestMVCCImporterClient{
+		fakeImporterClient: *newFakeImporterClient(),
+	}
+}
+
+func (client *countingLatestMVCCImporterClient) BatchDownloadLatestMVCC(
+	ctx context.Context,
+	storeID uint64,
+	req *import_sstpb.DownloadRequest,
+) (*import_sstpb.DownloadResponse, error) {
+	client.calls.Add(1)
+	sst := req.Sst
+	return &import_sstpb.DownloadResponse{
+		Range: *req.Sst.GetRange(),
+		Ssts:  []*import_sstpb.SSTMeta{&sst},
+	}, nil
 }
 
 type retryDownloadImporterClient struct {
@@ -590,6 +619,42 @@ func TestBatchDownloadLatestMVCCParallelizesFileGroupsPerPeer(t *testing.T) {
 	}()
 	waitForConcurrentDownloads(t, importClient, errCh)
 	unblocked = true
+}
+
+func TestBatchDownloadLatestMVCCSkipsDefaultOnlyFileGroups(t *testing.T) {
+	ctx := context.Background()
+	splitClient := split.NewFakeSplitClient()
+	splitClient.AppendPdRegion(&pd.Region{
+		Meta: &metapb.Region{
+			Id:       1,
+			StartKey: codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(1)),
+			EndKey:   codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(2)),
+			Peers:    []*metapb.Peer{{StoreId: 1}},
+		},
+		Leader: &metapb.Peer{StoreId: 1},
+	})
+	importClient := newCountingLatestMVCCImporterClient()
+	opt := snapclient.NewSnapFileImporterOptions(
+		nil,
+		splitClient,
+		importClient,
+		nil,
+		snapclient.RewriteModeKeyspace,
+		[]*metapb.Store{{Id: 1, State: metapb.StoreState_Up}},
+		1,
+		0,
+		true,
+		nil,
+		nil,
+	)
+	importer, err := snapclient.NewSnapFileImporter(ctx, kvrpcpb.APIVersion_V1, snapclient.TiDBCompacted, opt)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, importer.Close())
+	}()
+
+	require.NoError(t, importer.Import(ctx, makeCompactedFileSetsWithCF(1, 2, restoreutils.DefaultCFName)...))
+	require.Equal(t, int32(0), importClient.calls.Load())
 }
 
 func TestBatchDownloadSSTParallelizesFileGroupsPerPeer(t *testing.T) {

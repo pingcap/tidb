@@ -922,7 +922,7 @@ func (importer *SnapFileImporter) batchDownloadNewestVersionSST(
 			}
 			downloadReq.Ssts[req.Name] = &sstMeta
 		}
-		if downloadReq != nil {
+		if downloadReq != nil && hasWriteCF {
 			downloadReqs = append(downloadReqs, downloadReq)
 		}
 	}
