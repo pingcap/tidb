@@ -1696,6 +1696,16 @@ func dualPasswordRequested(specs []*ast.UserSpec) bool {
 	return false
 }
 
+func authenticatedUserNameAndHost(user *auth.UserIdentity) (username string, hostname string) {
+	if user == nil {
+		return "", ""
+	}
+	if user.AuthUsername != "" && user.AuthHostname != "" {
+		return user.AuthUsername, user.AuthHostname
+	}
+	return user.Username, user.Hostname
+}
+
 func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt) error {
 	disableSandBoxMode := false
 	var err error
@@ -1715,11 +1725,11 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		// spec on AuthUsername/AuthHostname rather than the claimed
 		// Username/Hostname. For a proxy/mapped login where the two diverge,
 		// using the claimed Username would target the wrong mysql.user row (see
-		// pingcap/tidb#68937). In the common case the two are identical, so this
-		// is a no-op there.
+		// pingcap/tidb#68937). Some tests and legacy code paths construct
+		// UserIdentity manually without AuthUsername/AuthHostname; fall back to
+		// Username/Hostname in that case.
 		userCopy := *user
-		userCopy.Username = userCopy.AuthUsername
-		userCopy.Hostname = userCopy.AuthHostname
+		userCopy.Username, userCopy.Hostname = authenticatedUserNameAndHost(user)
 		// Propagate the per-statement USER() dual-password clause onto the
 		// synthetic UserSpec so the per-spec loop below only needs to inspect
 		// spec.DualPasswordOption. Covers both
@@ -1834,9 +1844,13 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		// (AuthUsername/AuthHostname), so an explicit `ALTER USER 'auth'@'host'`
 		// that names the caller's authenticated account is treated as
 		// self-service even for a proxy/mapped login where the claimed Username
-		// differs (pingcap/tidb#68937). In the common case Username ==
-		// AuthUsername, so behavior is unchanged.
-		alterCurrentUser := spec.User.CurrentUser || ((user != nil) && (user.AuthUsername == spec.User.Username) && (user.AuthHostname == spec.User.Hostname))
+		// differs (pingcap/tidb#68937). If the authenticated identity is not
+		// populated, fall back to Username/Hostname.
+		currentUserName, currentUserHost := "", ""
+		if user != nil {
+			currentUserName, currentUserHost = authenticatedUserNameAndHost(user)
+		}
+		alterCurrentUser := spec.User.CurrentUser || ((user != nil) && (currentUserName == spec.User.Username) && (currentUserHost == spec.User.Hostname))
 		alterPassword := false
 		if spec.AuthOpt != nil && spec.AuthOpt.AuthPlugin == "" {
 			if len(s.AuthTokenOrTLSOptions) == 0 && len(s.ResourceOptions) == 0 && len(s.PasswordOrLockOptions) == 0 {
@@ -1844,8 +1858,8 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			}
 		}
 		if alterCurrentUser && (alterPassword || specDualPwdRequested) {
-			spec.User.Username = user.AuthUsername
-			spec.User.Hostname = user.AuthHostname
+			spec.User.Username = currentUserName
+			spec.User.Hostname = currentUserHost
 		}
 		// MySQL dual-password privilege model
 		// (https://dev.mysql.com/doc/refman/8.0/en/password-management.html#password-management-dual-password):
@@ -2688,7 +2702,7 @@ func userExistsWithRetryVariants(ctx context.Context, sctx sessionctx.Context, n
 
 // userExistsInternalWithRetryVariants behaves like userExistsWithRetryVariants
 // using the supplied SQL executor and also returns the resolved auth plugin.
-func userExistsInternalWithRetryVariants(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name *string, host string) (bool, string, string, error) {
+func userExistsInternalWithRetryVariants(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name *string, host string) (exists bool, authPlugin string, authString string, err error) {
 	for _, variant := range keyspace.GetUsernamePolicy().GetUsernameVariants(*name) {
 		exists, authPlugin, authString, err := userExistsInternal(ctx, sqlExecutor, variant, host)
 		if err != nil {
@@ -2773,7 +2787,7 @@ func buildAdditionalPasswordEntry(oldPwd, name, host string) (string, error) {
 // returned so RETAIN CURRENT PASSWORD can capture the pre-change primary hash
 // from the row already read here (under the same FOR UPDATE lock) instead of
 // issuing a second locking read.
-func userExistsInternal(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string) (bool, string, string, error) {
+func userExistsInternal(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string) (exists bool, authPlugin string, authString string, err error) {
 	sql := new(strings.Builder)
 	sqlescape.MustFormatSQL(sql, `SELECT * FROM %n.%n WHERE User=%? AND Host=%? FOR UPDATE;`, mysql.SystemDB, mysql.UserTable, name, strings.ToLower(host))
 	recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
@@ -2787,7 +2801,6 @@ func userExistsInternal(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, na
 		rows = req.NumRows()
 	}
 
-	var authPlugin, authString string
 	pluginColIdx, authStringColIdx := -1, -1
 	for i, f := range recordSet.Fields() {
 		switch f.ColumnAsName.L {
@@ -2847,16 +2860,21 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	// caller as self-service. Match on the AUTHENTICATED identity
 	// (AuthUsername/AuthHostname), not the claimed Username: for a proxy/mapped
 	// login the two differ, and the self path operates on the authenticated
-	// account (u = sessUser.AuthUsername below), so matching on AuthUsername
-	// keeps the self-classification consistent with the row actually modified.
+	// account, so matching on AuthUsername keeps the self-classification
+	// consistent with the row actually modified. If the authenticated identity
+	// is not populated, fall back to Username/Hostname.
+	sessUserName, sessUserHost := "", ""
+	if sessUser != nil {
+		sessUserName, sessUserHost = authenticatedUserNameAndHost(sessUser)
+	}
 	setPwdForSelf := s.User == nil || s.User.CurrentUser ||
-		(sessUser != nil && sessUser.AuthUsername == s.User.Username && sessUser.AuthHostname == s.User.Hostname)
+		(sessUser != nil && sessUserName == s.User.Username && sessUserHost == s.User.Hostname)
 	if setPwdForSelf {
 		if sessUser == nil {
 			return errors.New("Session error is empty")
 		}
-		u = sessUser.AuthUsername
-		h = sessUser.AuthHostname
+		u = sessUserName
+		h = sessUserHost
 	} else {
 		u = s.User.Username
 		h = s.User.Hostname
@@ -2911,7 +2929,7 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	}
 	if e.Ctx().InSandBoxMode() {
 		if !(s.User == nil || s.User.CurrentUser ||
-			e.Ctx().GetSessionVars().User.AuthUsername == u && e.Ctx().GetSessionVars().User.AuthHostname == strings.ToLower(h)) {
+			sessUserName == u && sessUserHost == strings.ToLower(h)) {
 			return exeerrors.ErrMustChangePassword.GenWithStackByArgs()
 		}
 		disableSandboxMode = true
