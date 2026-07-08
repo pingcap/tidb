@@ -23,12 +23,9 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/stmtsummary"
@@ -53,64 +50,65 @@ const (
 	explainRUSectionSummary                                                  = "summary"
 	explainRUSectionPlan                                                     = "plan"
 	explainRUSourceSummaryTotal                                              = "summary_total"
-	explainRUWidthSourceOperatorHelper                                       = "operator_helper"
-	explainRUWidthSourcePlanStats                                            = "plan_stats"
-	explainRUWidthSourceSchemaTypeWidth                                      = "schema_type_width"
-	explainRUWidthSourceSchemaFallback                                       = "schema_fallback"
 
-	readBillingDemoModelVersion                = "v1"
-	readBillingDemoWeightVersion               = "v1"
-	readBillingDemoStatusSuccess               = "success"
-	readBillingDemoStatusUnsupported           = "unsupported"
-	readBillingDemoStatusUnknownInput          = "unknown_input"
-	readBillingDemoStatusError                 = "error"
-	readBillingDemoStatusOperatorOK            = "ok"
-	readBillingDemoReasonNone                  = "none"
-	readBillingDemoReasonStatementError        = "statement_error"
-	readBillingDemoReasonMissingPlan           = "missing_plan"
-	readBillingDemoReasonMissingRuntimeStats   = "missing_runtime_stats"
-	readBillingDemoReasonMissingRuntimeRows    = "missing_runtime_rows"
-	readBillingDemoReasonMissingScanDetail     = "missing_scan_detail"
-	readBillingDemoReasonUnsupportedOperator   = "unsupported_operator"
-	readBillingDemoReasonUnsupportedTiFlash    = "unsupported_tiflash"
-	readBillingDemoReasonUnsupportedMPP        = "unsupported_mpp"
-	readBillingDemoReasonUnsupportedIndexMerge = "unsupported_index_merge"
-	readBillingDemoReasonUnsupportedLock       = "unsupported_lock"
-	readBillingDemoReasonNonBillable           = "non_billable"
-	readBillingDemoSiteStatement               = "statement"
-	readBillingDemoSiteTiDB                    = "tidb"
-	readBillingDemoSiteTiKV                    = "tikv"
-	readBillingDemoOpClassStatement            = "statement"
-	readBillingDemoOpClassFilter               = "filter_eval"
-	readBillingDemoOpClassProjection           = "projection_eval"
-	readBillingDemoOpClassLimit                = "row_limit"
-	readBillingDemoOpClassTopN                 = "bounded_topn"
-	readBillingDemoOpClassSort                 = "full_ordering"
-	readBillingDemoOpClassWindow               = "window_eval"
-	readBillingDemoOpClassHashAgg              = "agg_hash"
-	readBillingDemoOpClassStreamAgg            = "agg_stream"
-	readBillingDemoOpClassHashJoin             = "join_hash"
-	readBillingDemoOpClassMergeJoin            = "join_merge"
-	readBillingDemoOpClassLookupJoin           = "join_lookup"
-	readBillingDemoOpClassReaderReceive        = "reader_receive"
-	readBillingDemoOpClassLookupReader         = "lookup_reader"
-	readBillingDemoOpClassOverlayReader        = "overlay_reader"
-	readBillingDemoOpClassMetadataReader       = "metadata_reader"
-	readBillingDemoOpClassPointLookup          = "kv_point_lookup"
-	readBillingDemoOpClassRangeScan            = "kv_range_scan"
-	readBillingDemoOpClassWrapper              = "wrapper"
-	readBillingDemoOpClassSynthetic            = "synthetic_source"
-	readBillingDemoOperatorStatement           = "statement"
-	readBillingDemoUnitFixedEvents             = "fixed_events"
-	readBillingDemoUnitInputRows               = "input_rows"
-	readBillingDemoUnitInputBytes              = "input_bytes"
-	readBillingDemoInputSourceRuntimeRows      = "runtime_act_rows"
-	readBillingDemoInputSourceScanDetail       = "scan_detail"
-	readBillingDemoInputSideAll                = "all"
-	readBillingDemoInputSideBuild              = "build"
-	readBillingDemoInputSideProbe              = "probe"
-	readBillingDemoInputSideLeft               = "left"
-	readBillingDemoInputSideRight              = "right"
+	explainRUWidthSourceRuntimeChunkAvg         = "runtime_chunk_avg"
+	explainRUWidthSourceScanDetailProcessedAvg  = "scan_detail_processed_key_avg"
+	explainRUWidthSourceNotApplicable           = "not_applicable"
+	readBillingDemoModelVersion                 = "v2"
+	readBillingDemoWeightVersion                = "v1"
+	readBillingDemoStatusSuccess                = "success"
+	readBillingDemoStatusUnsupported            = "unsupported"
+	readBillingDemoStatusUnknownInput           = "unknown_input"
+	readBillingDemoStatusError                  = "error"
+	readBillingDemoStatusOperatorOK             = "ok"
+	readBillingDemoReasonNone                   = "none"
+	readBillingDemoReasonStatementError         = "statement_error"
+	readBillingDemoReasonMissingPlan            = "missing_plan"
+	readBillingDemoReasonMissingRuntimeStats    = "missing_runtime_stats"
+	readBillingDemoReasonMissingRuntimeRows     = "missing_runtime_rows"
+	readBillingDemoReasonMissingRuntimeBytes    = "missing_runtime_bytes"
+	readBillingDemoReasonMissingInputBytes      = "missing_input_bytes"
+	readBillingDemoReasonMissingScanDetail      = "missing_scan_detail"
+	readBillingDemoReasonUnsupportedOperator    = "unsupported_operator"
+	readBillingDemoReasonUnsupportedTiFlash     = "unsupported_tiflash"
+	readBillingDemoReasonUnsupportedMPP         = "unsupported_mpp"
+	readBillingDemoReasonUnsupportedIndexMerge  = "unsupported_index_merge"
+	readBillingDemoReasonUnsupportedLock        = "unsupported_lock"
+	readBillingDemoReasonNonBillable            = "non_billable"
+	readBillingDemoSiteStatement                = "statement"
+	readBillingDemoSiteTiDB                     = "tidb"
+	readBillingDemoSiteTiKV                     = "tikv"
+	readBillingDemoOpClassStatement             = "statement"
+	readBillingDemoOpClassFilter                = "filter_eval"
+	readBillingDemoOpClassProjection            = "projection_eval"
+	readBillingDemoOpClassLimit                 = "row_limit"
+	readBillingDemoOpClassTopN                  = "bounded_topn"
+	readBillingDemoOpClassSort                  = "full_ordering"
+	readBillingDemoOpClassWindow                = "window_eval"
+	readBillingDemoOpClassHashAgg               = "agg_hash"
+	readBillingDemoOpClassStreamAgg             = "agg_stream"
+	readBillingDemoOpClassHashJoin              = "join_hash"
+	readBillingDemoOpClassMergeJoin             = "join_merge"
+	readBillingDemoOpClassLookupJoin            = "join_lookup"
+	readBillingDemoOpClassReaderReceive         = "reader_receive"
+	readBillingDemoOpClassLookupReader          = "lookup_reader"
+	readBillingDemoOpClassOverlayReader         = "overlay_reader"
+	readBillingDemoOpClassMetadataReader        = "metadata_reader"
+	readBillingDemoOpClassPointLookup           = "kv_point_lookup"
+	readBillingDemoOpClassRangeScan             = "kv_range_scan"
+	readBillingDemoOpClassWrapper               = "wrapper"
+	readBillingDemoOpClassSynthetic             = "synthetic_source"
+	readBillingDemoOperatorStatement            = "statement"
+	readBillingDemoUnitFixedEvents              = "fixed_events"
+	readBillingDemoUnitInputRows                = "input_rows"
+	readBillingDemoUnitInputBytes               = "input_bytes"
+	readBillingDemoInputSourceRuntimeChunkBytes = "runtime_chunk_bytes"
+	readBillingDemoInputSourceScanDetail        = "scan_detail"
+	readBillingDemoInputSideAll                 = "all"
+	readBillingDemoInputSideBuild               = "build"
+	readBillingDemoInputSideProbe               = "probe"
+	readBillingDemoInputSideLeft                = "left"
+	readBillingDemoInputSideRight               = "right"
 )
 
 type explainRUComponentSnapshotStatus string
@@ -456,17 +454,22 @@ func appendReadBillingDemoTree(result *readBillingDemoResult, sctx base.PlanCont
 			continue
 		}
 		var units []readBillingDemoUnit
+		var missingReason string
 		var ok bool
 		if op.IsRoot {
-			units, ok = readBillingDemoRootUnits(sctx, runtimeStats, tree, i, op, operator)
+			units, missingReason, ok = readBillingDemoRootUnits(runtimeStats, tree, i, op, operator)
 		} else {
-			units, ok = readBillingDemoCopUnits(sctx, runtimeStats, tree, i, op, operator)
+			units, missingReason, ok = readBillingDemoCopUnits(runtimeStats, tree, i, operator)
 		}
 		if !ok {
-			if op.IsRoot {
-				return readBillingDemoStatusUnknownInput, operator.withReason(readBillingDemoReasonMissingRuntimeRows)
+			if missingReason == "" {
+				if op.IsRoot {
+					missingReason = readBillingDemoReasonMissingRuntimeBytes
+				} else {
+					missingReason = readBillingDemoReasonMissingScanDetail
+				}
 			}
-			return readBillingDemoStatusUnknownInput, operator.withReason(readBillingDemoReasonMissingScanDetail)
+			return readBillingDemoStatusUnknownInput, operator.withReason(missingReason)
 		}
 		operator.status = readBillingDemoStatusOperatorOK
 		operator.reason = readBillingDemoReasonNone
@@ -576,41 +579,52 @@ func readBillingDemoClassifyOperator(op *FlatOperator) (readBillingDemoOperatorR
 	}
 }
 
-func readBillingDemoRootUnits(sctx base.PlanContext, runtimeStats *execdetails.RuntimeStatsColl, tree FlatPlanTree, idx int, op *FlatOperator, operator readBillingDemoOperatorResult) ([]readBillingDemoUnit, bool) {
-	outputRows, ok := readBillingDemoPlanActRows(runtimeStats, op.Origin.ID())
-	if !ok {
-		return nil, false
+func readBillingDemoRootUnits(runtimeStats *execdetails.RuntimeStatsColl, tree FlatPlanTree, idx int, op *FlatOperator, operator readBillingDemoOperatorResult) ([]readBillingDemoUnit, string, bool) {
+	if _, _, ok := readBillingDemoRootOutputRowsAndBytes(runtimeStats, op.Origin.ID()); !ok {
+		if _, rowsOK := readBillingDemoPlanActRows(runtimeStats, op.Origin.ID()); !rowsOK {
+			return nil, readBillingDemoReasonMissingRuntimeRows, false
+		}
+		return nil, readBillingDemoReasonMissingRuntimeBytes, false
 	}
-	rowWidth, rowWidthSource := explainRURowWidth(sctx, op.Origin, true)
-	units := []readBillingDemoUnit{{
-		unit:        readBillingDemoUnitFixedEvents,
-		source:      readBillingDemoInputSourceRuntimeRows,
-		side:        readBillingDemoInputSideAll,
-		value:       1,
-		rowWidth:    rowWidth,
-		widthSource: rowWidthSource,
-	}}
+	units := []readBillingDemoUnit{readBillingDemoFixedEventUnit(readBillingDemoInputSourceRuntimeChunkBytes)}
 	switch operator.opClass {
 	case readBillingDemoOpClassHashJoin:
-		return appendReadBillingDemoJoinUnits(units, sctx, runtimeStats, tree, idx, rowWidth, rowWidthSource, true)
+		return appendReadBillingDemoJoinUnits(units, runtimeStats, tree, idx, true)
 	case readBillingDemoOpClassMergeJoin, readBillingDemoOpClassLookupJoin:
-		return appendReadBillingDemoJoinUnits(units, sctx, runtimeStats, tree, idx, rowWidth, rowWidthSource, false)
+		return appendReadBillingDemoJoinUnits(units, runtimeStats, tree, idx, false)
 	default:
-		inputRows, inputRowWidth, ok := readBillingDemoDirectLocalInputRowsAndWidth(sctx, runtimeStats, tree, idx, rowWidth)
+		inputRows, inputBytes, reason, ok := readBillingDemoDirectLocalInputRowsAndBytes(runtimeStats, tree, idx, operator.opClass)
 		if !ok {
-			return nil, false
+			return nil, reason, false
 		}
-		if inputRows == 0 && (len(tree[idx].ChildrenIdx) == 0 || readBillingDemoUseOutputRowsAsInput(operator.opClass)) {
-			inputRows = outputRows
-			inputRowWidth = rowWidth
-		}
-		inputBytes := float64(inputRows) * inputRowWidth
-		units = append(units,
-			readBillingDemoUnit{unit: readBillingDemoUnitInputRows, source: readBillingDemoInputSourceRuntimeRows, side: readBillingDemoInputSideAll, value: float64(inputRows), rowWidth: inputRowWidth, widthSource: rowWidthSource},
-			readBillingDemoUnit{unit: readBillingDemoUnitInputBytes, source: readBillingDemoInputSourceRuntimeRows, side: readBillingDemoInputSideAll, value: inputBytes, rowWidth: inputRowWidth, widthSource: rowWidthSource},
-		)
-		return units, true
+		units = append(units, readBillingDemoRuntimeChunkInputUnits(inputRows, inputBytes, readBillingDemoInputSideAll)...)
+		return units, "", true
 	}
+}
+
+func readBillingDemoFixedEventUnit(inputSource string) readBillingDemoUnit {
+	return readBillingDemoUnit{
+		unit:        readBillingDemoUnitFixedEvents,
+		source:      inputSource,
+		side:        readBillingDemoInputSideAll,
+		value:       1,
+		widthSource: explainRUWidthSourceNotApplicable,
+	}
+}
+
+func readBillingDemoRuntimeChunkInputUnits(rows, bytes int64, side string) []readBillingDemoUnit {
+	rowWidth := readBillingDemoAverageRowWidth(rows, float64(bytes))
+	return []readBillingDemoUnit{
+		{unit: readBillingDemoUnitInputRows, source: readBillingDemoInputSourceRuntimeChunkBytes, side: side, value: float64(rows), rowWidth: rowWidth, widthSource: explainRUWidthSourceRuntimeChunkAvg},
+		{unit: readBillingDemoUnitInputBytes, source: readBillingDemoInputSourceRuntimeChunkBytes, side: side, value: float64(bytes), rowWidth: rowWidth, widthSource: explainRUWidthSourceRuntimeChunkAvg},
+	}
+}
+
+func readBillingDemoAverageRowWidth(rows int64, bytes float64) float64 {
+	if rows <= 0 || bytes <= 0 {
+		return 0
+	}
+	return bytes / float64(rows)
 }
 
 func readBillingDemoUseOutputRowsAsInput(opClass string) bool {
@@ -622,19 +636,14 @@ func readBillingDemoUseOutputRowsAsInput(opClass string) bool {
 	}
 }
 
-func appendReadBillingDemoJoinUnits(units []readBillingDemoUnit, sctx base.PlanContext, runtimeStats *execdetails.RuntimeStatsColl, tree FlatPlanTree, idx int, fallbackWidth float64, fallbackWidthSource string, useBuildProbe bool) ([]readBillingDemoUnit, bool) {
+func appendReadBillingDemoJoinUnits(units []readBillingDemoUnit, runtimeStats *execdetails.RuntimeStatsColl, tree FlatPlanTree, idx int, useBuildProbe bool) ([]readBillingDemoUnit, string, bool) {
 	for childOrder, childIdx := range tree[idx].ChildrenIdx {
 		if childIdx < 0 || childIdx >= len(tree) || tree[childIdx] == nil || !tree[childIdx].IsRoot {
 			continue
 		}
-		rows, ok := readBillingDemoPlanActRows(runtimeStats, tree[childIdx].Origin.ID())
+		rows, bytes, ok := readBillingDemoRootOutputRowsAndBytes(runtimeStats, tree[childIdx].Origin.ID())
 		if !ok {
-			return nil, false
-		}
-		width, widthSource := explainRURowWidth(sctx, tree[childIdx].Origin, true)
-		if width <= 0 {
-			width = fallbackWidth
-			widthSource = fallbackWidthSource
+			return nil, readBillingDemoReasonMissingInputBytes, false
 		}
 		side := readBillingDemoInputSideAll
 		if useBuildProbe {
@@ -655,36 +664,35 @@ func appendReadBillingDemoJoinUnits(units []readBillingDemoUnit, sctx base.PlanC
 		} else {
 			side = readBillingDemoInputSideRight
 		}
-		units = append(units,
-			readBillingDemoUnit{unit: readBillingDemoUnitInputRows, source: readBillingDemoInputSourceRuntimeRows, side: side, value: float64(rows), rowWidth: width, widthSource: widthSource},
-			readBillingDemoUnit{unit: readBillingDemoUnitInputBytes, source: readBillingDemoInputSourceRuntimeRows, side: side, value: float64(rows) * width, rowWidth: width, widthSource: widthSource},
-		)
+		units = append(units, readBillingDemoRuntimeChunkInputUnits(rows, bytes, side)...)
 	}
-	return units, true
+	return units, "", true
 }
 
-func readBillingDemoDirectLocalInputRowsAndWidth(sctx base.PlanContext, runtimeStats *execdetails.RuntimeStatsColl, tree FlatPlanTree, idx int, fallbackWidth float64) (int64, float64, bool) {
+func readBillingDemoDirectLocalInputRowsAndBytes(runtimeStats *execdetails.RuntimeStatsColl, tree FlatPlanTree, idx int, opClass string) (int64, int64, string, bool) {
 	if idx < 0 || idx >= len(tree) || tree[idx] == nil {
-		return 0, fallbackWidth, true
+		return 0, 0, "", true
 	}
-	var rows int64
-	inputBytes := 0.0
+	if len(tree[idx].ChildrenIdx) == 0 || readBillingDemoUseOutputRowsAsInput(opClass) {
+		rows, bytes, ok := readBillingDemoRootOutputRowsAndBytes(runtimeStats, tree[idx].Origin.ID())
+		if !ok {
+			return 0, 0, readBillingDemoReasonMissingRuntimeBytes, false
+		}
+		return rows, bytes, "", true
+	}
+	var rows, inputBytes int64
 	for _, childIdx := range tree[idx].ChildrenIdx {
 		if childIdx < 0 || childIdx >= len(tree) || tree[childIdx] == nil || !tree[childIdx].IsRoot {
 			continue
 		}
-		childRows, ok := readBillingDemoPlanActRows(runtimeStats, tree[childIdx].Origin.ID())
+		childRows, childBytes, ok := readBillingDemoRootOutputRowsAndBytes(runtimeStats, tree[childIdx].Origin.ID())
 		if !ok {
-			return 0, 0, false
+			return 0, 0, readBillingDemoReasonMissingInputBytes, false
 		}
-		childWidth, _ := explainRURowWidth(sctx, tree[childIdx].Origin, true)
 		rows += childRows
-		inputBytes += float64(childRows) * childWidth
+		inputBytes += childBytes
 	}
-	if rows == 0 {
-		return 0, fallbackWidth, true
-	}
-	return rows, inputBytes / float64(rows), true
+	return rows, inputBytes, "", true
 }
 
 func readBillingDemoPlanActRows(runtimeStats *execdetails.RuntimeStatsColl, planID int) (int64, bool) {
@@ -694,99 +702,45 @@ func readBillingDemoPlanActRows(runtimeStats *execdetails.RuntimeStatsColl, plan
 	return runtimeStats.GetPlanActRows(planID), true
 }
 
-func readBillingDemoCopUnits(sctx base.PlanContext, runtimeStats *execdetails.RuntimeStatsColl, tree FlatPlanTree, idx int, op *FlatOperator, operator readBillingDemoOperatorResult) ([]readBillingDemoUnit, bool) {
+func readBillingDemoRootOutputRowsAndBytes(runtimeStats *execdetails.RuntimeStatsColl, planID int) (int64, int64, bool) {
+	if runtimeStats == nil || !runtimeStats.ExistsRootStats(planID) {
+		return 0, 0, false
+	}
+	basic := runtimeStats.GetBasicRuntimeStats(planID, false)
+	if basic == nil || !basic.HasBytes() {
+		return 0, 0, false
+	}
+	return basic.GetActRows(), basic.GetOutputBytes(), true
+}
+
+func readBillingDemoCopUnits(runtimeStats *execdetails.RuntimeStatsColl, tree FlatPlanTree, idx int, operator readBillingDemoOperatorResult) ([]readBillingDemoUnit, string, bool) {
+	if operator.opClass != readBillingDemoOpClassRangeScan {
+		return nil, readBillingDemoReasonMissingRuntimeBytes, false
+	}
 	copStats := readBillingDemoCopStats(runtimeStats, tree, idx, operator.opClass)
 	if copStats == nil {
-		return nil, false
+		return nil, readBillingDemoReasonMissingScanDetail, false
 	}
 	scanDetail := copStats.GetScanDetail()
-	rowWidth, rowWidthSource := explainRURowWidth(sctx, op.Origin, false)
-	units := []readBillingDemoUnit{{
-		unit:        readBillingDemoUnitFixedEvents,
-		source:      readBillingDemoInputSourceScanDetail,
-		side:        readBillingDemoInputSideAll,
-		value:       1,
-		rowWidth:    rowWidth,
-		widthSource: rowWidthSource,
-	}}
-	switch operator.opClass {
-	case readBillingDemoOpClassRangeScan:
-		scanInputRows, scanInputBytes, scanInputSource := readBillingDemoRangeScanInput(scanDetail.TotalKeys, scanDetail.ProcessedKeysSize, copStats.GetActRows(), rowWidth)
-		units = append(units,
-			readBillingDemoUnit{unit: readBillingDemoUnitInputRows, source: scanInputSource, side: readBillingDemoInputSideAll, value: float64(scanInputRows), rowWidth: rowWidth, widthSource: rowWidthSource},
-			readBillingDemoUnit{unit: readBillingDemoUnitInputBytes, source: scanInputSource, side: readBillingDemoInputSideAll, value: scanInputBytes, rowWidth: rowWidth, widthSource: rowWidthSource},
-		)
-	default:
-		rows, inputRowWidth, inputRowWidthSource, ok := readBillingDemoDirectCopInputRowsAndWidth(sctx, runtimeStats, tree, idx, rowWidth, rowWidthSource, copStats)
-		if !ok {
-			return nil, false
-		}
-		units = append(units,
-			readBillingDemoUnit{unit: readBillingDemoUnitInputRows, source: readBillingDemoInputSourceRuntimeRows, side: readBillingDemoInputSideAll, value: float64(rows), rowWidth: inputRowWidth, widthSource: inputRowWidthSource},
-			readBillingDemoUnit{unit: readBillingDemoUnitInputBytes, source: readBillingDemoInputSourceRuntimeRows, side: readBillingDemoInputSideAll, value: float64(rows) * inputRowWidth, rowWidth: inputRowWidth, widthSource: inputRowWidthSource},
-		)
+	scanInputRows, scanInputBytes, ok := readBillingDemoRangeScanInput(scanDetail.TotalKeys, scanDetail.ProcessedKeys, scanDetail.ProcessedKeysSize)
+	if !ok {
+		return nil, readBillingDemoReasonMissingScanDetail, false
 	}
-	return units, true
+	rowWidth := readBillingDemoAverageRowWidth(scanInputRows, scanInputBytes)
+	units := []readBillingDemoUnit{readBillingDemoFixedEventUnit(readBillingDemoInputSourceScanDetail)}
+	units = append(units,
+		readBillingDemoUnit{unit: readBillingDemoUnitInputRows, source: readBillingDemoInputSourceScanDetail, side: readBillingDemoInputSideAll, value: float64(scanInputRows), rowWidth: rowWidth, widthSource: explainRUWidthSourceScanDetailProcessedAvg},
+		readBillingDemoUnit{unit: readBillingDemoUnitInputBytes, source: readBillingDemoInputSourceScanDetail, side: readBillingDemoInputSideAll, value: scanInputBytes, rowWidth: rowWidth, widthSource: explainRUWidthSourceScanDetailProcessedAvg},
+	)
+	return units, "", true
 }
 
-func readBillingDemoRangeScanInput(totalKeys, processedKeysSize, actRows int64, rowWidth float64) (int64, float64, string) {
-	if totalKeys != 0 || processedKeysSize != 0 {
-		inputBytes := float64(processedKeysSize)
-		if inputBytes == 0 && totalKeys > 0 {
-			inputBytes = float64(totalKeys) * rowWidth
-		}
-		return totalKeys, inputBytes, readBillingDemoInputSourceScanDetail
+func readBillingDemoRangeScanInput(totalKeys, processedKeys, processedKeysSize int64) (int64, float64, bool) {
+	if totalKeys <= 0 || processedKeys <= 0 || processedKeysSize <= 0 {
+		return 0, 0, false
 	}
-	// Mock-store based tests can return executor rows without legacy scan-detail
-	// key counters. Keep the source explicit instead of pretending actRows are
-	// scan-detail TotalKeys.
-	if actRows > 0 {
-		return actRows, float64(actRows) * rowWidth, readBillingDemoInputSourceRuntimeRows
-	}
-	return 0, 0, readBillingDemoInputSourceScanDetail
-}
-
-func readBillingDemoDirectCopInputRowsAndWidth(
-	sctx base.PlanContext,
-	runtimeStats *execdetails.RuntimeStatsColl,
-	tree FlatPlanTree,
-	idx int,
-	fallbackWidth float64,
-	fallbackWidthSource string,
-	ownStats *execdetails.CopRuntimeStats,
-) (int64, float64, string, bool) {
-	var rows int64
-	inputBytes := 0.0
-	inputRowWidth := fallbackWidth
-	inputRowWidthSource := fallbackWidthSource
-	hasCopChild := false
-	for _, childIdx := range tree[idx].ChildrenIdx {
-		if childIdx < 0 || childIdx >= len(tree) || tree[childIdx] == nil || tree[childIdx].IsRoot {
-			continue
-		}
-		hasCopChild = true
-		childStats := runtimeStats.GetCopStats(tree[childIdx].Origin.ID())
-		if childStats == nil {
-			return 0, 0, "", false
-		}
-		childRows := childStats.GetActRows()
-		childWidth, childWidthSource := explainRURowWidth(sctx, tree[childIdx].Origin, false)
-		if childWidth <= 0 {
-			childWidth = fallbackWidth
-			childWidthSource = fallbackWidthSource
-		}
-		inputRowWidth = childWidth
-		inputRowWidthSource = childWidthSource
-		rows += childRows
-		inputBytes += float64(childRows) * childWidth
-	}
-	if !hasCopChild {
-		return ownStats.GetActRows(), fallbackWidth, fallbackWidthSource, true
-	}
-	if rows == 0 {
-		return 0, inputRowWidth, inputRowWidthSource, true
-	}
-	return rows, inputBytes / float64(rows), inputRowWidthSource, true
+	inputBytes := float64(processedKeysSize) / float64(processedKeys) * float64(totalKeys)
+	return totalKeys, inputBytes, true
 }
 
 func readBillingDemoCopStats(runtimeStats *execdetails.RuntimeStatsColl, tree FlatPlanTree, idx int, opClass string) *execdetails.CopRuntimeStats {
@@ -831,7 +785,7 @@ func readBillingDemoCopStatsUsable(copStats *execdetails.CopRuntimeStats, opClas
 		return true
 	}
 	scanDetail := copStats.GetScanDetail()
-	return scanDetail.TotalKeys != 0 || scanDetail.ProcessedKeysSize != 0
+	return scanDetail.TotalKeys > 0 && scanDetail.ProcessedKeys > 0 && scanDetail.ProcessedKeysSize > 0
 }
 
 func recordReadBillingDemoResult(result readBillingDemoResult) {
@@ -1160,67 +1114,6 @@ func explainRUExtractComponentSnapshot(runtimeStats *execdetails.RuntimeStatsCol
 		return ruStats, explainRUComponentSnapshotOK
 	}
 	return nil, explainRUComponentSnapshotMissing
-}
-
-func explainRURowWidth(sctx base.PlanContext, p base.Plan, includedRoot bool) (float64, string) {
-	if includedRoot {
-		// Root reader helpers describe SQL-visible row width for included TiDB
-		// work. Scan helpers below describe TiKV cop-side scan input width.
-		switch x := p.(type) {
-		case *physicalop.PhysicalTableReader:
-			if width := x.GetAvgRowSize(); width > 0 {
-				return width, explainRUWidthSourceOperatorHelper
-			}
-		case *physicalop.PhysicalIndexLookUpReader:
-			if width := x.GetAvgTableRowSize(); width > 0 {
-				return width, explainRUWidthSourceOperatorHelper
-			}
-		case *physicalop.PhysicalIndexMergeReader:
-			if width := x.GetAvgTableRowSize(); width > 0 {
-				return width, explainRUWidthSourceOperatorHelper
-			}
-		case *physicalop.PointGetPlan:
-			if width := x.GetAvgRowSize(); width > 0 {
-				return width, explainRUWidthSourceOperatorHelper
-			}
-		case *physicalop.BatchPointGetPlan:
-			if width := x.GetAvgRowSize(); width > 0 {
-				return width, explainRUWidthSourceOperatorHelper
-			}
-		}
-	} else {
-		switch x := p.(type) {
-		case *physicalop.PhysicalTableScan:
-			if width := x.GetScanRowSize(); width > 0 {
-				return width, explainRUWidthSourceOperatorHelper
-			}
-		case *physicalop.PhysicalIndexScan:
-			if width := x.GetScanRowSize(); width > 0 {
-				return width, explainRUWidthSourceOperatorHelper
-			}
-		}
-	}
-	if sctx == nil {
-		sctx = p.SCtx()
-	}
-	if stats := p.StatsInfo(); sctx != nil && stats != nil && stats.HistColl != nil && p.Schema() != nil {
-		if width := cardinality.GetAvgRowSize(sctx, stats.HistColl, p.Schema().Columns, false, false); width > 0 {
-			return width, explainRUWidthSourcePlanStats
-		}
-	}
-	if p.Schema() != nil {
-		width := 0
-		for _, col := range p.Schema().Columns {
-			width += chunk.EstimateTypeWidth(col.GetStaticType())
-		}
-		if width > 0 {
-			return float64(width), explainRUWidthSourceSchemaTypeWidth
-		}
-		if len(p.Schema().Columns) > 0 {
-			return float64(8 * len(p.Schema().Columns)), explainRUWidthSourceSchemaFallback
-		}
-	}
-	return 8, explainRUWidthSourceSchemaFallback
 }
 
 func (row explainRURow) toStrings() []string {

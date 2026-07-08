@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -540,9 +541,11 @@ func TestExplainAnalyzeFormatRUOutput(t *testing.T) {
 	tk.MustExec("drop table if exists explain_ru_t")
 	tk.MustExec("create table explain_ru_t(a int primary key, b varchar(20))")
 	tk.MustExec("insert into explain_ru_t values (1, 'x'), (2, 'yy')")
-	rows = tk.MustQuery("explain analyze format='ru' select * from explain_ru_t where a > 0").Rows()
-	requireExplainRUPlanRow(t, rows)
-	requireExplainRUOperatorClass(t, rows, "tikv/kv_range_scan")
+	_, err := queryExplainRURowsOrErr(t, tk, "explain analyze format='ru' select * from explain_ru_t where a > 0")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "status=unknown_input")
+	require.Contains(t, err.Error(), "reason=missing_scan_detail")
+	require.Contains(t, err.Error(), "operator=tikv/kv_range_scan")
 
 	rows = tk.MustQuery("explain analyze format='ru' select * from explain_ru_t where a = 1").Rows()
 	requireExplainRUWeightedOperatorClass(t, rows, "tikv/kv_point_lookup")
@@ -557,58 +560,82 @@ func TestExplainAnalyzeFormatRUTiKVCopOperatorClasses(t *testing.T) {
 	tk.MustExec("insert into explain_ru_cop values (1, 10, 'a'), (2, 20, 'bb'), (3, 20, 'ccc'), (4, 30, 'dddd')")
 
 	cases := []struct {
-		sql       string
-		opClasses []string
+		sql            string
+		nonScanOpClass string
 	}{
 		{
-			sql: "explain analyze format='ru' select * from explain_ru_cop ignore index(idx_b) where b > 10",
-			opClasses: []string{
-				"tikv/filter_eval",
-				"tikv/kv_range_scan",
-			},
+			sql:            "explain analyze format='ru' select * from explain_ru_cop ignore index(idx_b) where b > 10",
+			nonScanOpClass: "tikv/filter_eval",
 		},
 		{
-			sql: "explain analyze format='ru' select a from explain_ru_cop where b > 10",
-			opClasses: []string{
-				"tikv/projection_eval",
-				"tikv/kv_range_scan",
-			},
+			sql:            "explain analyze format='ru' select a from explain_ru_cop where b > 10",
+			nonScanOpClass: "tikv/projection_eval",
 		},
 		{
-			sql: "explain analyze format='ru' select * from explain_ru_cop limit 2",
-			opClasses: []string{
-				"tikv/row_limit",
-				"tikv/kv_range_scan",
-			},
+			sql:            "explain analyze format='ru' select * from explain_ru_cop limit 2",
+			nonScanOpClass: "tikv/row_limit",
 		},
 		{
-			sql: "explain analyze format='ru' select * from explain_ru_cop ignore index(idx_b) order by c limit 2",
-			opClasses: []string{
-				"tikv/bounded_topn",
-				"tikv/kv_range_scan",
-			},
+			sql:            "explain analyze format='ru' select * from explain_ru_cop ignore index(idx_b) order by c limit 2",
+			nonScanOpClass: "tikv/bounded_topn",
 		},
 		{
-			sql: "explain analyze format='ru' select /*+ agg_to_cop(), hash_agg() */ b, count(*) from explain_ru_cop group by b",
-			opClasses: []string{
-				"tikv/agg_hash",
-				"tikv/kv_range_scan",
-			},
+			sql:            "explain analyze format='ru' select /*+ agg_to_cop(), hash_agg() */ b, count(*) from explain_ru_cop group by b",
+			nonScanOpClass: "tikv/agg_hash",
 		},
 		{
-			sql: "explain analyze format='ru' select /*+ agg_to_cop(), stream_agg() */ b, count(*) from explain_ru_cop group by b",
-			opClasses: []string{
-				"tikv/agg_stream",
-				"tikv/kv_range_scan",
-			},
+			sql:            "explain analyze format='ru' select /*+ agg_to_cop(), stream_agg() */ b, count(*) from explain_ru_cop group by b",
+			nonScanOpClass: "tikv/agg_stream",
 		},
 	}
 	for _, tc := range cases {
-		rows := tk.MustQuery(tc.sql).Rows()
-		for _, opClass := range tc.opClasses {
-			requireExplainRUWeightedOperatorClass(t, rows, opClass)
+		rows, err := queryExplainRURowsOrErr(t, tk, tc.sql)
+		if err != nil {
+			require.Contains(t, err.Error(), "status=unknown_input", tc.sql)
+			require.Contains(t, err.Error(), "reason=missing_runtime_bytes", tc.sql)
+			require.Contains(t, err.Error(), "operator="+tc.nonScanOpClass, tc.sql)
+			continue
+		}
+		requireExplainRUWeightedOperatorClass(t, rows, "tikv/kv_range_scan")
+		requireNoExplainRUOperatorClass(t, rows, tc.nonScanOpClass)
+	}
+}
+
+func queryExplainRURowsOrErr(t *testing.T, tk *testkit.TestKit, sql string) ([][]any, error) {
+	t.Helper()
+	rs, err := tk.Exec(sql)
+	if err != nil {
+		if rs != nil {
+			require.NoError(t, rs.Close())
+		}
+		return nil, err
+	}
+	fields := rs.Fields()
+	chunkRows, err := session.GetRows4Test(context.Background(), tk.Session(), rs)
+	closeErr := rs.Close()
+	if err != nil {
+		return nil, err
+	}
+	if closeErr != nil {
+		return nil, closeErr
+	}
+	anyRows := make([][]any, len(chunkRows))
+	for i, row := range chunkRows {
+		anyRows[i] = make([]any, row.Len())
+		for j := range row.Len() {
+			if row.IsNull(j) {
+				anyRows[i][j] = "<nil>"
+				continue
+			}
+			datum := row.GetDatum(j, &fields[j].Column.FieldType)
+			value, err := datum.ToString()
+			if err != nil {
+				return nil, err
+			}
+			anyRows[i][j] = value
 		}
 	}
+	return anyRows, nil
 }
 
 func requireExplainRUPlanRow(t *testing.T, rows [][]any) {
@@ -622,7 +649,6 @@ func requireExplainRUPlanRow(t *testing.T, rows [][]any) {
 		require.NotEmpty(t, row[2])
 		require.Contains(t, fmt.Sprint(row[3]), "/")
 		require.NotEmpty(t, row[4])
-		require.NotEmpty(t, row[7])
 		require.NotEmpty(t, row[8])
 		require.NotEmpty(t, row[11])
 		require.NotEmpty(t, row[12])
@@ -635,16 +661,14 @@ func requireExplainRUPlanRow(t *testing.T, rows [][]any) {
 	require.Fail(t, "missing FORMAT='RU' plan row")
 }
 
-func requireExplainRUOperatorClass(t *testing.T, rows [][]any, operatorClass string) {
+func requireNoExplainRUOperatorClass(t *testing.T, rows [][]any, operatorClass string) {
 	t.Helper()
 	for _, row := range rows {
 		require.Len(t, row, 17)
-		if row[0] != "plan" || row[3] != operatorClass {
-			continue
+		if row[0] == "plan" && row[3] == operatorClass {
+			require.Failf(t, "unexpected FORMAT='RU' operator class", "operatorClass=%s rows=%v", operatorClass, rows)
 		}
-		return
 	}
-	require.Failf(t, "missing FORMAT='RU' operator class", "operatorClass=%s rows=%v", operatorClass, rows)
 }
 
 func requireExplainRUWeightedOperatorClass(t *testing.T, rows [][]any, operatorClass string) {
@@ -782,11 +806,11 @@ func TestReadBillingDemoMetricsHook(t *testing.T) {
 	tk.MustExec("create table read_billing_demo(a int primary key)")
 	tk.MustExec("insert into read_billing_demo values (1), (2)")
 
-	success := metrics.ReadBillingDemoStatementsCounter.WithLabelValues("success", "v1")
-	unsupported := metrics.ReadBillingDemoStatementsCounter.WithLabelValues("unsupported", "v1")
-	unknownInput := metrics.ReadBillingDemoStatementsCounter.WithLabelValues("unknown_input", "v1")
-	errorStatus := metrics.ReadBillingDemoStatementsCounter.WithLabelValues("error", "v1")
-	projectionFixedEvents := metrics.ReadBillingDemoBaseUnitsCounter.WithLabelValues("tidb", "projection_eval", "projection", "fixed_events", "runtime_act_rows", "all", "v1")
+	success := metrics.ReadBillingDemoStatementsCounter.WithLabelValues("success", "v2")
+	unsupported := metrics.ReadBillingDemoStatementsCounter.WithLabelValues("unsupported", "v2")
+	unknownInput := metrics.ReadBillingDemoStatementsCounter.WithLabelValues("unknown_input", "v2")
+	errorStatus := metrics.ReadBillingDemoStatementsCounter.WithLabelValues("error", "v2")
+	projectionFixedEvents := metrics.ReadBillingDemoBaseUnitsCounter.WithLabelValues("tidb", "projection_eval", "projection", "fixed_events", "runtime_chunk_bytes", "all", "v2")
 
 	tk.MustQuery("select 1 + 1").Check(testkit.Rows("2"))
 	require.Equal(t, 0.0, readExecutorCounterValue(t, success))
@@ -796,8 +820,8 @@ func TestReadBillingDemoMetricsHook(t *testing.T) {
 	require.Equal(t, 1.0, readExecutorCounterValue(t, success))
 	require.Equal(t, 1.0, readExecutorCounterValue(t, projectionFixedEvents))
 	tk.MustExec("set tidb_enable_read_billing_demo=off")
-	tk.MustQuery(`select exec_count, sum_read_billing_demo_fixed_events > 0, sum_read_billing_demo_input_rows > 0, sum_read_billing_demo_input_bytes > 0 from information_schema.statements_summary where digest_text = 'select ? + ?'`).Check(testkit.Rows("2 1 1 1"))
-	tk.MustQuery(`select site, op_class, operator_kind, unit, input_source, input_side, model_version, weight_version, sample_count, value > 0, avg_row_width > 0 from information_schema.statements_summary_read_billing_demo_base_units where digest_text = 'select ? + ?' and site = 'tidb' and op_class = 'projection_eval' and operator_kind = 'projection' and unit = 'fixed_events'`).Check(testkit.Rows("tidb projection_eval projection fixed_events runtime_act_rows all v1 v1 1 1 1"))
+	tk.MustQuery(`select exec_count, sum_read_billing_demo_fixed_events > 0, sum_read_billing_demo_input_rows > 0, sum_read_billing_demo_input_bytes = 0 from information_schema.statements_summary where digest_text = 'select ? + ?'`).Check(testkit.Rows("2 1 1 1"))
+	tk.MustQuery(`select site, op_class, operator_kind, unit, input_source, input_side, model_version, weight_version, sample_count, value > 0, avg_row_width = 0 from information_schema.statements_summary_read_billing_demo_base_units where digest_text = 'select ? + ?' and site = 'tidb' and op_class = 'projection_eval' and operator_kind = 'projection' and unit = 'fixed_events'`).Check(testkit.Rows("tidb projection_eval projection fixed_events runtime_chunk_bytes all v2 v1 1 1 1"))
 	tk.MustQuery(`select site, op_class, operator_kind, status, reason, count from information_schema.statements_summary_read_billing_demo_status where digest_text = 'select ? + ?' and site = 'statement'`).Check(testkit.Rows("statement statement statement success none 1"))
 	tk.MustQuery(`select column_name from information_schema.columns where table_schema = 'INFORMATION_SCHEMA' and table_name = 'CLUSTER_STATEMENTS_SUMMARY_READ_BILLING_DEMO_BASE_UNITS' and ordinal_position = 1`).Check(testkit.Rows("INSTANCE"))
 	tk.MustExec("set tidb_enable_read_billing_demo=on")
@@ -833,6 +857,14 @@ func TestReadBillingDemoMetricsHook(t *testing.T) {
 	require.Equal(t, beforeUnknownInput+1, readExecutorCounterValue(t, unknownInput))
 	require.Equal(t, beforeBaseUnits, readExecutorCounterValue(t, projectionFixedEvents))
 	require.Equal(t, beforeBaseUnitsTotal, readExecutorCounterVecTotal(t, metrics.ReadBillingDemoBaseUnitsCounter))
+
+	beforeUnknownInput = readExecutorCounterValue(t, unknownInput)
+	beforeBaseUnitsTotal = readExecutorCounterVecTotal(t, metrics.ReadBillingDemoBaseUnitsCounter)
+	tk.MustQuery("select * from read_billing_demo where a > 0").Sort().Check(testkit.Rows("1", "2", "3"))
+	require.Equal(t, beforeUnknownInput+1, readExecutorCounterValue(t, unknownInput))
+	require.Equal(t, beforeBaseUnitsTotal, readExecutorCounterVecTotal(t, metrics.ReadBillingDemoBaseUnitsCounter))
+	tk.MustQuery(`select status, reason, sum(count) from information_schema.statements_summary_read_billing_demo_status where digest_text = 'select * from ` + "`read_billing_demo`" + ` where ` + "`a`" + ` > ?' and site = 'statement' group by status, reason`).Check(testkit.Rows("unknown_input missing_scan_detail 1"))
+	tk.MustQuery(`select count(*) from information_schema.statements_summary_read_billing_demo_base_units where digest_text = 'select * from ` + "`read_billing_demo`" + ` where ` + "`a`" + ` > ?'`).Check(testkit.Rows("0"))
 
 	tk.MustExec("set tidb_enable_read_billing_demo=off")
 	tk.MustExec("create table read_billing_compile_error(a int)")

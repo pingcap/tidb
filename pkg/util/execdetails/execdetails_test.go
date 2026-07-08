@@ -1001,6 +1001,23 @@ func TestRootRuntimeStats(t *testing.T) {
 	require.Equal(t, expect, stats.String())
 }
 
+func TestBasicRuntimeStatsBytes(t *testing.T) {
+	stats := &BasicRuntimeStats{}
+	require.False(t, stats.HasBytes())
+
+	stats.RecordBytes(0, 0)
+	require.True(t, stats.HasBytes())
+	require.Equal(t, int64(0), stats.GetInputBytes())
+	require.Equal(t, int64(0), stats.GetOutputBytes())
+
+	other := &BasicRuntimeStats{}
+	other.RecordBytes(11, 22)
+	stats.Merge(other)
+	require.True(t, stats.HasBytes())
+	require.Equal(t, int64(11), stats.GetInputBytes())
+	require.Equal(t, int64(22), stats.GetOutputBytes())
+}
+
 func TestFormatDurationForExplain(t *testing.T) {
 	cases := []struct {
 		t string

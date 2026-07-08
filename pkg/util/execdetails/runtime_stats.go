@@ -331,11 +331,33 @@ type BasicRuntimeStats struct {
 	close atomic.Int64
 	// executor return row count.
 	rows atomic.Int64
+	// executor input bytes counted from child output chunks.
+	inputBytes atomic.Int64
+	// executor output bytes counted from returned chunks.
+	outputBytes atomic.Int64
+	// runtime byte accounting records, used to distinguish zero bytes from
+	// missing byte evidence.
+	byteRecords atomic.Int64
 }
 
 // GetActRows return total rows of BasicRuntimeStats.
 func (e *BasicRuntimeStats) GetActRows() int64 {
 	return e.rows.Load()
+}
+
+// GetInputBytes returns total input bytes of BasicRuntimeStats.
+func (e *BasicRuntimeStats) GetInputBytes() int64 {
+	return e.inputBytes.Load()
+}
+
+// GetOutputBytes returns total output bytes of BasicRuntimeStats.
+func (e *BasicRuntimeStats) GetOutputBytes() int64 {
+	return e.outputBytes.Load()
+}
+
+// HasBytes returns whether runtime byte accounting has recorded evidence.
+func (e *BasicRuntimeStats) HasBytes() bool {
+	return e != nil && e.byteRecords.Load() > 0
 }
 
 // Clone implements the RuntimeStats interface.
@@ -356,6 +378,9 @@ func (e *BasicRuntimeStats) Merge(rs RuntimeStats) {
 	e.open.Add(tmp.open.Load())
 	e.close.Add(tmp.close.Load())
 	e.rows.Add(tmp.rows.Load())
+	e.inputBytes.Add(tmp.inputBytes.Load())
+	e.outputBytes.Add(tmp.outputBytes.Load())
+	e.byteRecords.Add(tmp.byteRecords.Load())
 }
 
 // Tp implements the RuntimeStats interface.
@@ -408,6 +433,20 @@ func (e *BasicRuntimeStats) Record(d time.Duration, rowNum int) {
 	e.loop.Add(1)
 	e.consume.Add(int64(d))
 	e.rows.Add(int64(rowNum))
+}
+
+// RecordBytes records executor input and output bytes for one Next call.
+func (e *BasicRuntimeStats) RecordBytes(inputBytes, outputBytes int64) {
+	if e == nil {
+		return
+	}
+	e.byteRecords.Add(1)
+	if inputBytes > 0 {
+		e.inputBytes.Add(inputBytes)
+	}
+	if outputBytes > 0 {
+		e.outputBytes.Add(outputBytes)
+	}
 }
 
 // RecordOpen records executor's open time.

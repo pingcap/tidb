@@ -40,6 +40,16 @@ preview_ru =
 
 Prometheus `tidb_read_billing_demo_*` metrics 可以继续作为 bounded observability 辅助，但不能作为 workload testers 的必需接口；校准契约以 SQL 查询面为准。
 
+### v2 实现说明
+
+当前实现的 `model_version = 'v2'` 已经把 `input_bytes` 从 v1 的 planner/schema row-width 估算切换为执行期 byte evidence：
+
+- TiDB root operator 使用 runtime chunk 的 logical live bytes，`input_source = runtime_chunk_bytes`，`row_width_source = runtime_chunk_avg`。
+- TiKV range scan 使用 scan detail 中的 `processed_key_size / processed_keys * total_keys`，`row_width_source = scan_detail_processed_key_avg`。
+- 缺少 byte evidence 的路径以 `unknown_input` fail closed，不产出 partial billable base units。
+
+本文后续保留的 `runtime_act_rows`、`plan_stats`、`schema_type_width`、`schema_fallback`、`operator_helper` 等描述只适用于 v1 历史估算模型或背景说明，不再代表 v2 的 `input_bytes` 构造规则。
+
 ## 背景和目标
 
 现有 RU v2 主要是 statement-level billing 逻辑，不适合回答两个问题：

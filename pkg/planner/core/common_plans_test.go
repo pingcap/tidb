@@ -25,11 +25,9 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/mock"
-	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 	tikvutil "github.com/tikv/client-go/v2/util"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
@@ -181,7 +179,7 @@ func TestExplainRURowFormatting(t *testing.T) {
 		hasOutputRows:  true,
 		rowWidth:       8,
 		hasRowWidth:    true,
-		rowWidthSource: explainRUWidthSourcePlanStats,
+		rowWidthSource: explainRUWidthSourceRuntimeChunkAvg,
 		workRows:       2,
 		hasWorkRows:    true,
 		unit:           readBillingDemoUnitInputRows,
@@ -191,15 +189,15 @@ func TestExplainRURowFormatting(t *testing.T) {
 		hasWeight:      true,
 		previewRU:      6,
 		hasPreviewRU:   true,
-		source:         readBillingDemoInputSourceRuntimeRows,
+		source:         readBillingDemoInputSourceRuntimeChunkBytes,
 		note:           "input_side=all,weight_version=v1",
 	}
 	require.Equal(t, []string{
-		"plan", "Projection_1", "projection", "tidb/projection_eval", "1", "2", "1", "8.000000", "plan_stats", "2", "", "input_rows", "2", "0.250000", "6.000000", "runtime_act_rows", "input_side=all,weight_version=v1",
+		"plan", "Projection_1", "projection", "tidb/projection_eval", "1", "2", "1", "8.000000", "runtime_chunk_avg", "2", "", "input_rows", "2", "0.250000", "6.000000", "runtime_chunk_bytes", "input_side=all,weight_version=v1",
 	}, row.toStrings())
 }
 
-func TestExplainRUPlanFormulaUsesRowsAndModeledBytes(t *testing.T) {
+func TestExplainRUPlanFormulaAndOperatorClasses(t *testing.T) {
 	tidbWeights, ok := readBillingDemoResolveWeights(readBillingDemoSiteTiDB, readBillingDemoOpClassProjection, readBillingDemoWeightVersion)
 	require.True(t, ok)
 	tikvWeights, ok := readBillingDemoResolveWeights(readBillingDemoSiteTiKV, readBillingDemoOpClassProjection, readBillingDemoWeightVersion)
@@ -363,36 +361,19 @@ func extractExplainRUTestSnapshot(stats *execdetails.RURuntimeStats) (*execdetai
 	return explainRUExtractComponentSnapshot(coll, 1)
 }
 
-func TestReadBillingDemoDirectCopInputRowsAndWidthUsesChildRows(t *testing.T) {
+func TestReadBillingDemoNonScanCopWithoutBytesFailsClosed(t *testing.T) {
 	ctx := mock.NewContext()
 	col := &expression.Column{RetType: types.NewFieldType(mysql.TypeLonglong)}
 	schema := expression.NewSchema(col)
 	stats := &property.StatsInfo{RowCount: 5}
-	parent := (&physicalop.PhysicalHashAgg{}).InitForHash(ctx, stats, 0, schema).(*physicalop.PhysicalHashAgg)
-	child := (&physicalop.PhysicalSelection{}).Init(ctx, stats, 0)
-	childInput := physicalop.PhysicalTableScan{}.Init(ctx, 0)
-	childInput.SetSchema(schema)
-	child.SetChildren(childInput)
+	proj := physicalop.PhysicalProjection{}.Init(ctx, stats, 0)
+	proj.SetSchema(schema)
 	tree := FlatPlanTree{
-		{Origin: parent, ChildrenIdx: []int{1}, ChildrenEndIdx: 1, IsRoot: false, StoreType: kv.TiKV},
-		{Origin: child, IsRoot: false, StoreType: kv.TiKV},
+		{Origin: proj, IsRoot: false, StoreType: kv.TiKV},
 	}
 
 	runtimeStats := execdetails.NewRuntimeStatsColl(nil)
-	recordCopRows := func(planID int, rows uint64) {
-		iterations := uint64(1)
-		duration := uint64(1)
-		runtimeStats.RecordOneCopTask(planID, kv.TiKV, &tipb.ExecutorExecutionSummary{
-			NumProducedRows: &rows,
-			NumIterations:   &iterations,
-			TimeProcessedNs: &duration,
-		})
-	}
-	recordCopRows(parent.ID(), 1)
-	recordCopRows(child.ID(), 5)
-
-	proj := physicalop.PhysicalProjection{}.Init(ctx, stats, 0)
-	proj.SetSchema(schema)
+	runtimeStats.RecordCopStats(proj.ID(), kv.TiKV, &tikvutil.ScanDetail{}, tikvutil.TimeDetail{}, nil)
 	operator, supported, reason := readBillingDemoClassifyOperator(&FlatOperator{
 		Origin:    proj,
 		IsRoot:    false,
@@ -403,74 +384,65 @@ func TestReadBillingDemoDirectCopInputRowsAndWidthUsesChildRows(t *testing.T) {
 	require.Equal(t, readBillingDemoSiteTiKV, operator.site)
 	require.Equal(t, readBillingDemoOpClassProjection, operator.opClass)
 
-	rows, width, widthSource, ok := readBillingDemoDirectCopInputRowsAndWidth(
-		ctx,
-		runtimeStats,
-		tree,
-		0,
-		8,
-		explainRUWidthSourceSchemaFallback,
-		runtimeStats.GetCopStats(parent.ID()),
-	)
-	require.True(t, ok)
-	require.Equal(t, int64(5), rows)
-	require.Equal(t, float64(8), width)
-	require.Equal(t, explainRUWidthSourceSchemaTypeWidth, widthSource)
+	units, actualReason, ok := readBillingDemoCopUnits(runtimeStats, tree, 0, operator)
+	require.False(t, ok)
+	require.Nil(t, units)
+	require.Equal(t, readBillingDemoReasonMissingRuntimeBytes, actualReason)
 }
 
-func TestReadBillingDemoRangeScanKeepsFixedEventForEmptyInput(t *testing.T) {
+func TestReadBillingDemoRangeScanUsesProcessedKeyAverage(t *testing.T) {
 	ctx := mock.NewContext()
 	col := &expression.Column{RetType: types.NewFieldType(mysql.TypeLonglong)}
 	schema := expression.NewSchema(col)
 	scan := physicalop.PhysicalTableScan{}.Init(ctx, 0)
 	scan.SetSchema(schema)
 	scan.StoreType = kv.TiKV
-	scan.TblColHists = &statistics.HistColl{Pseudo: true}
 	scan.TblCols = []*expression.Column{col}
 	tree := FlatPlanTree{
 		{Origin: scan, IsRoot: false, StoreType: kv.TiKV},
 	}
 
-	buildUnits := func(scanDetail *tikvutil.ScanDetail, producedRows uint64) ([]readBillingDemoUnit, bool) {
+	rows, bytes, ok := readBillingDemoRangeScanInput(10, 5, 100)
+	require.True(t, ok)
+	require.Equal(t, int64(10), rows)
+	require.Equal(t, 200.0, bytes)
+	for _, tc := range []struct {
+		totalKeys         int64
+		processedKeys     int64
+		processedKeysSize int64
+	}{
+		{0, 5, 100},
+		{10, 0, 100},
+		{10, 5, 0},
+	} {
+		_, _, ok = readBillingDemoRangeScanInput(tc.totalKeys, tc.processedKeys, tc.processedKeysSize)
+		require.False(t, ok)
+	}
+
+	buildUnits := func(scanDetail *tikvutil.ScanDetail) ([]readBillingDemoUnit, string, bool) {
 		runtimeStats := execdetails.NewRuntimeStatsColl(nil)
 		runtimeStats.RecordCopStats(scan.ID(), kv.TiKV, scanDetail, tikvutil.TimeDetail{}, nil)
-		iterations := uint64(1)
-		duration := uint64(1)
-		runtimeStats.RecordOneCopTask(scan.ID(), kv.TiKV, &tipb.ExecutorExecutionSummary{
-			NumProducedRows: &producedRows,
-			NumIterations:   &iterations,
-			TimeProcessedNs: &duration,
-		})
 		return readBillingDemoCopUnits(
-			ctx,
 			runtimeStats,
 			tree,
 			0,
-			tree[0],
 			readBillingDemoOperatorResult{site: readBillingDemoSiteTiKV, opClass: readBillingDemoOpClassRangeScan, operatorKind: "tablescan"},
 		)
 	}
 
-	units, ok := buildUnits(&tikvutil.ScanDetail{}, 0)
+	units, actualReason, ok := buildUnits(&tikvutil.ScanDetail{TotalKeys: 10, ProcessedKeys: 5, ProcessedKeysSize: 100})
 	require.True(t, ok)
+	require.Empty(t, actualReason)
 	require.Equal(t, 1.0, readBillingDemoUnitValue(units, readBillingDemoUnitFixedEvents, readBillingDemoInputSideAll))
-	require.Equal(t, 0.0, readBillingDemoUnitValue(units, readBillingDemoUnitInputRows, readBillingDemoInputSideAll))
-	require.Equal(t, 0.0, readBillingDemoUnitValue(units, readBillingDemoUnitInputBytes, readBillingDemoInputSideAll))
+	require.Equal(t, 10.0, readBillingDemoUnitValue(units, readBillingDemoUnitInputRows, readBillingDemoInputSideAll))
+	require.Equal(t, 200.0, readBillingDemoUnitValue(units, readBillingDemoUnitInputBytes, readBillingDemoInputSideAll))
 	require.Equal(t, readBillingDemoInputSourceScanDetail, readBillingDemoUnitSource(units, readBillingDemoUnitInputRows, readBillingDemoInputSideAll))
-	require.False(t, readBillingDemoUnitExists(units, "scan_total_keys", readBillingDemoInputSideAll))
-	require.False(t, readBillingDemoUnitExists(units, "processed_key_size", readBillingDemoInputSideAll))
+	require.Equal(t, explainRUWidthSourceScanDetailProcessedAvg, readBillingDemoUnitWidthSource(units, readBillingDemoUnitInputBytes, readBillingDemoInputSideAll))
 
-	units, ok = buildUnits(&tikvutil.ScanDetail{TotalKeys: 4, ProcessedKeysSize: 128}, 2)
-	require.True(t, ok)
-	require.Equal(t, 4.0, readBillingDemoUnitValue(units, readBillingDemoUnitInputRows, readBillingDemoInputSideAll))
-	require.Equal(t, 128.0, readBillingDemoUnitValue(units, readBillingDemoUnitInputBytes, readBillingDemoInputSideAll))
-	require.Equal(t, readBillingDemoInputSourceScanDetail, readBillingDemoUnitSource(units, readBillingDemoUnitInputRows, readBillingDemoInputSideAll))
-
-	units, ok = buildUnits(&tikvutil.ScanDetail{}, 2)
-	require.True(t, ok)
-	require.Equal(t, 2.0, readBillingDemoUnitValue(units, readBillingDemoUnitInputRows, readBillingDemoInputSideAll))
-	require.Equal(t, readBillingDemoInputSourceRuntimeRows, readBillingDemoUnitSource(units, readBillingDemoUnitInputRows, readBillingDemoInputSideAll))
-	require.Greater(t, readBillingDemoUnitValue(units, readBillingDemoUnitInputBytes, readBillingDemoInputSideAll), 0.0)
+	units, actualReason, ok = buildUnits(&tikvutil.ScanDetail{})
+	require.False(t, ok)
+	require.Nil(t, units)
+	require.Equal(t, readBillingDemoReasonMissingScanDetail, actualReason)
 }
 
 func TestReadBillingDemoHashJoinUnitsUseBuildProbeSides(t *testing.T) {
@@ -492,14 +464,15 @@ func TestReadBillingDemoHashJoinUnitsUseBuildProbeSides(t *testing.T) {
 
 	runtimeStats := execdetails.NewRuntimeStatsColl(nil)
 	recordRootRows := func(planID int, rows int) {
-		runtimeStats.GetBasicRuntimeStats(planID, true).Record(time.Millisecond, rows)
+		stats := runtimeStats.GetBasicRuntimeStats(planID, true)
+		stats.Record(time.Millisecond, rows)
+		stats.RecordBytes(0, int64(rows*10))
 	}
 	recordRootRows(join.ID(), 6)
 	recordRootRows(left.ID(), 4)
 	recordRootRows(right.ID(), 6)
 
-	units, ok := readBillingDemoRootUnits(
-		ctx,
+	units, reason, ok := readBillingDemoRootUnits(
 		runtimeStats,
 		tree,
 		0,
@@ -507,9 +480,14 @@ func TestReadBillingDemoHashJoinUnitsUseBuildProbeSides(t *testing.T) {
 		readBillingDemoOperatorResult{site: readBillingDemoSiteTiDB, opClass: readBillingDemoOpClassHashJoin, operatorKind: "hashjoin"},
 	)
 	require.True(t, ok)
+	require.Empty(t, reason)
 	require.Equal(t, 1.0, readBillingDemoUnitValue(units, readBillingDemoUnitFixedEvents, readBillingDemoInputSideAll))
 	require.Equal(t, 4.0, readBillingDemoUnitValue(units, readBillingDemoUnitInputRows, readBillingDemoInputSideBuild))
 	require.Equal(t, 6.0, readBillingDemoUnitValue(units, readBillingDemoUnitInputRows, readBillingDemoInputSideProbe))
+	require.Equal(t, 40.0, readBillingDemoUnitValue(units, readBillingDemoUnitInputBytes, readBillingDemoInputSideBuild))
+	require.Equal(t, 60.0, readBillingDemoUnitValue(units, readBillingDemoUnitInputBytes, readBillingDemoInputSideProbe))
+	require.Equal(t, readBillingDemoInputSourceRuntimeChunkBytes, readBillingDemoUnitSource(units, readBillingDemoUnitInputBytes, readBillingDemoInputSideBuild))
+	require.Equal(t, explainRUWidthSourceRuntimeChunkAvg, readBillingDemoUnitWidthSource(units, readBillingDemoUnitInputBytes, readBillingDemoInputSideProbe))
 }
 
 func readBillingDemoUnitValue(units []readBillingDemoUnit, unitName, side string) float64 {
@@ -525,6 +503,15 @@ func readBillingDemoUnitSource(units []readBillingDemoUnit, unitName, side strin
 	for _, unit := range units {
 		if unit.unit == unitName && unit.side == side {
 			return unit.source
+		}
+	}
+	return ""
+}
+
+func readBillingDemoUnitWidthSource(units []readBillingDemoUnit, unitName, side string) string {
+	for _, unit := range units {
+		if unit.unit == unitName && unit.side == side {
+			return unit.widthSource
 		}
 	}
 	return ""
