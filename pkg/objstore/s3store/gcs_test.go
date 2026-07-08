@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -57,26 +58,35 @@ func TestGCSS3CompatibleSignerSkipsSDKHeaders(t *testing.T) {
   <IsTruncated>false</IsTruncated>
 </ListBucketResult>`
 
-	var checkedRequests int
+	type requestInfo struct {
+		method        string
+		signedHeaders string
+		listType      string
+		writeErr      error
+	}
+
+	var (
+		mu       sync.Mutex
+		requests []requestInfo
+	)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		signedHeaders := getSignedHeaders(r.Header.Get("Authorization"))
-		require.NotEmpty(t, signedHeaders)
-		require.NotContains(t, signedHeaders, "accept-encoding")
-		require.NotContains(t, signedHeaders, "amz-sdk-invocation-id")
-		require.NotContains(t, signedHeaders, "amz-sdk-request")
-		require.Contains(t, signedHeaders, "host")
-		require.Contains(t, signedHeaders, "x-amz-content-sha256")
-		require.Contains(t, signedHeaders, "x-amz-date")
-		checkedRequests++
+		info := requestInfo{
+			method:        r.Method,
+			signedHeaders: getSignedHeaders(r.Header.Get("Authorization")),
+			listType:      r.URL.Query().Get("list-type"),
+		}
+		defer func() {
+			mu.Lock()
+			requests = append(requests, info)
+			mu.Unlock()
+		}()
 
 		switch r.Method {
 		case http.MethodHead:
 			w.WriteHeader(http.StatusOK)
 		case http.MethodGet:
-			require.Equal(t, "2", r.URL.Query().Get("list-type"))
 			w.Header().Set("Content-Type", "application/xml")
-			_, err := w.Write([]byte(listObjectsV2Response))
-			require.NoError(t, err)
+			_, info.writeErr = w.Write([]byte(listObjectsV2Response))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -95,7 +105,35 @@ func TestGCSS3CompatibleSignerSkipsSDKHeaders(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotNil(t, storage)
-	require.Equal(t, 2, checkedRequests)
+
+	mu.Lock()
+	observedRequests := append([]requestInfo(nil), requests...)
+	mu.Unlock()
+	require.Len(t, observedRequests, 2)
+
+	var headSeen, listSeen bool
+	for _, req := range observedRequests {
+		require.NoError(t, req.writeErr)
+		require.NotEmpty(t, req.signedHeaders)
+		require.NotContains(t, req.signedHeaders, "accept-encoding")
+		require.NotContains(t, req.signedHeaders, "amz-sdk-invocation-id")
+		require.NotContains(t, req.signedHeaders, "amz-sdk-request")
+		require.Contains(t, req.signedHeaders, "host")
+		require.Contains(t, req.signedHeaders, "x-amz-content-sha256")
+		require.Contains(t, req.signedHeaders, "x-amz-date")
+
+		switch req.method {
+		case http.MethodHead:
+			headSeen = true
+		case http.MethodGet:
+			listSeen = true
+			require.Equal(t, "2", req.listType)
+		default:
+			require.Failf(t, "unexpected request method", "method: %s", req.method)
+		}
+	}
+	require.True(t, headSeen)
+	require.True(t, listSeen)
 }
 
 func getSignedHeaders(authorization string) string {
