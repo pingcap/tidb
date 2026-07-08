@@ -119,7 +119,7 @@ type UserRecord struct {
 	// AdditionalAuthenticationString holds the MySQL-compatible secondary
 	// ("additional") password hash decoded from user_attributes.$.additional_password.
 	// Empty when the user has no secondary password.
-	AdditionalAuthenticationString string
+	AdditionalAuthString string
 	Privileges                     mysql.PrivilegeType
 	AccountLocked                  bool // A role record when this field is true
 	AuthPlugin                     string
