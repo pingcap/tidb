@@ -1696,7 +1696,7 @@ func dualPasswordRequested(specs []*ast.UserSpec) bool {
 	return false
 }
 
-func authenticatedUserNameAndHost(user *auth.UserIdentity) (string, string) {
+func authenticatedUserNameAndHost(user *auth.UserIdentity) (username string, hostname string) {
 	if user == nil {
 		return "", ""
 	}
