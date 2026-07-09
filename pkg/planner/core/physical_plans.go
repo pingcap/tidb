@@ -312,6 +312,7 @@ func (p *PhysicalTableReader) Clone(newCtx base.PlanContext) (base.PhysicalPlan,
 	cloned.StoreType = p.StoreType
 	cloned.ReadReqType = p.ReadReqType
 	cloned.IsCommonHandle = p.IsCommonHandle
+	cloned.PlanPartInfo = p.PlanPartInfo.Clone()
 	if cloned.tablePlan, err = p.tablePlan.Clone(newCtx); err != nil {
 		return nil, err
 	}
@@ -380,6 +381,7 @@ func (p *PhysicalIndexReader) Clone(newCtx base.PlanContext) (base.PhysicalPlan,
 		return nil, err
 	}
 	cloned.OutputColumns = util.CloneCols(p.OutputColumns)
+	cloned.PlanPartInfo = p.PlanPartInfo.Clone()
 	return cloned, err
 }
 
@@ -537,6 +539,7 @@ func (p *PhysicalIndexLookUpReader) Clone(newCtx base.PlanContext) (base.Physica
 	if cloned.tablePlan, err = p.tablePlan.Clone(newCtx); err != nil {
 		return nil, err
 	}
+	cloned.PlanPartInfo = p.PlanPartInfo.Clone()
 	if p.ExtraHandleCol != nil {
 		cloned.ExtraHandleCol = p.ExtraHandleCol.Clone().(*expression.Column)
 	}
@@ -1064,6 +1067,7 @@ func (ts *PhysicalTableScan) Clone(newCtx base.PlanContext) (base.PhysicalPlan, 
 	clonedScan.AccessCondition = util.CloneExprs(ts.AccessCondition)
 	clonedScan.filterCondition = util.CloneExprs(ts.filterCondition)
 	clonedScan.LateMaterializationFilterCondition = util.CloneExprs(ts.LateMaterializationFilterCondition)
+	clonedScan.PlanPartInfo = ts.PlanPartInfo.Clone()
 	if ts.Table != nil {
 		clonedScan.Table = ts.Table.Clone()
 	}
