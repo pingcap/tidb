@@ -138,7 +138,6 @@ func TestTaskState(t *testing.T) {
 	checkTaskStateStep(t, task, proto.TaskStateSucceed, proto.StepDone)
 }
 
-<<<<<<< HEAD
 func TestPauseTaskOnError(t *testing.T) {
 	_, gm, ctx := testutil.InitTableTest(t)
 	require.NoError(t, gm.InitMeta(ctx, ":4000", ""))
@@ -186,7 +185,8 @@ func TestPauseTaskOnError(t *testing.T) {
 	subtaskErrs, err := gm.GetSubtaskErrors(ctx, id)
 	require.NoError(t, err)
 	require.Empty(t, subtaskErrs)
-=======
+}
+
 func TestWithNewTxnRollbackOnCanceledCtx(t *testing.T) {
 	_, _ = testkit.CreateMockStoreAndDomain(t)
 	gm, err := storage.GetTaskManager()
@@ -212,7 +212,6 @@ func TestWithNewTxnRollbackOnCanceledCtx(t *testing.T) {
 		_, err := sqlexec.ExecSQL(verifyCtx, se.GetSQLExecutor(), "select 1")
 		return err
 	}))
->>>>>>> 7d3162ccc8e (ttl: honor scan task cancellation across statement boundaries (#67285))
 }
 
 func TestUpdateTaskExtraParams(t *testing.T) {
