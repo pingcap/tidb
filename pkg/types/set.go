@@ -51,12 +51,11 @@ func (e Set) Copy() Set {
 
 // ParseSet creates a Set with name or value.
 func ParseSet(elems []string, name string, collation string) (Set, error) {
-	return ParseSetWithCollate(collate.NewCollationEnabled(), elems, name, collation)
+	return parseSetWithCollate(collate.NewCollationEnabled(), elems, name, collation)
 }
 
-// ParseSetWithCollate creates a Set with an explicit new collation mode.
-func ParseSetWithCollate(useNewCollate bool, elems []string, name string, collation string) (Set, error) {
-	if setName, err := ParseSetNameWithCollate(useNewCollate, elems, name, collation); err == nil {
+func parseSetWithCollate(useNewCollate bool, elems []string, name string, collation string) (Set, error) {
+	if setName, err := parseSetNameWithCollate(useNewCollate, elems, name, collation); err == nil {
 		return setName, nil
 	}
 	// name doesn't exist, maybe an integer?
@@ -69,11 +68,10 @@ func ParseSetWithCollate(useNewCollate bool, elems []string, name string, collat
 
 // ParseSetName creates a Set with name.
 func ParseSetName(elems []string, name string, collation string) (Set, error) {
-	return ParseSetNameWithCollate(collate.NewCollationEnabled(), elems, name, collation)
+	return parseSetNameWithCollate(collate.NewCollationEnabled(), elems, name, collation)
 }
 
-// ParseSetNameWithCollate creates a Set with an explicit new collation mode.
-func ParseSetNameWithCollate(useNewCollate bool, elems []string, name string, collation string) (Set, error) {
+func parseSetNameWithCollate(useNewCollate bool, elems []string, name string, collation string) (Set, error) {
 	if len(name) == 0 {
 		return zeroSet, nil
 	}

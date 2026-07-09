@@ -22,6 +22,7 @@ import (
 	_ "github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 )
@@ -46,7 +47,7 @@ type CopContextBase struct {
 	ExprCtx        exprctx.BuildContext
 	PushDownFlags  uint64
 	RequestSource  string
-	UseNewCollate  bool
+	encoding       table.EncodingConfig
 
 	ColumnInfos []*model.ColumnInfo
 	FieldTypes  []*types.FieldType
@@ -84,6 +85,7 @@ func NewCopContextBase(
 	useNewCollate bool,
 ) (*CopContextBase, error) {
 	var err error
+	encoding := table.NewEncodingConfig(useNewCollate)
 	usedColumnIDs := make(map[int64]struct{}, len(idxCols))
 	usedColumnIDs, err = fillUsedColumns(usedColumnIDs, idxCols, tblInfo)
 	var handleIDs []int64
@@ -133,7 +135,7 @@ func NewCopContextBase(
 		tblInfo.Name,
 		colInfos,
 		tblInfo,
-		useNewCollate,
+		encoding.UseNewCollate(),
 	)
 	if err != nil {
 		return nil, err
@@ -147,7 +149,7 @@ func NewCopContextBase(
 		ExprCtx:                     exprCtx,
 		PushDownFlags:               pushDownFlags,
 		RequestSource:               requestSource,
-		UseNewCollate:               useNewCollate,
+		encoding:                    encoding,
 		ColumnInfos:                 colInfos,
 		FieldTypes:                  fieldTps,
 		ExprColumnInfos:             expColInfos,
@@ -234,7 +236,7 @@ func (c *CopContextSingleIndex) GetCondition() (expression.Expression, error) {
 	expr, err := expression.ParseSimpleExpr(c.GetBase().ExprCtx,
 		c.idxInfo.ConditionExprString,
 		expression.WithInputSchemaAndNames(schema, names, c.GetBase().TableInfo),
-		expression.WithUseNewCollate(c.GetBase().UseNewCollate))
+		c.GetBase().encoding.BuildExprOption())
 	if err != nil {
 		return nil, err
 	}
@@ -325,7 +327,7 @@ func (c *CopContextMultiIndex) GetCondition() (expression.Expression, error) {
 		expr, err := expression.ParseSimpleExpr(c.GetBase().ExprCtx,
 			idxInfo.ConditionExprString,
 			expression.WithInputSchemaAndNames(schema, names, c.GetBase().TableInfo),
-			expression.WithUseNewCollate(c.GetBase().UseNewCollate))
+			c.GetBase().encoding.BuildExprOption())
 		if err != nil {
 			return nil, err
 		}

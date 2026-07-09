@@ -1771,17 +1771,17 @@ func (d *Datum) convertToMysqlEnumWithCollate(ctx Context, target *FieldType, us
 	)
 	switch d.k {
 	case KindString, KindBytes, KindBinaryLiteral:
-		e, err = ParseEnumWithCollate(useNewCollate, target.GetElems(), d.GetString(), target.GetCollate())
+		e, err = parseEnumWithCollate(useNewCollate, target.GetElems(), d.GetString(), target.GetCollate())
 	case KindMysqlEnum:
 		if d.i == 0 {
 			// MySQL enum zero value has an empty string name(Enum{Name: '', Value: 0}). It is
 			// different from the normal enum string value(Enum{Name: '', Value: n}, n > 0).
 			e = Enum{}
 		} else {
-			e, err = ParseEnumWithCollate(useNewCollate, target.GetElems(), d.GetMysqlEnum().Name, target.GetCollate())
+			e, err = parseEnumWithCollate(useNewCollate, target.GetElems(), d.GetMysqlEnum().Name, target.GetCollate())
 		}
 	case KindMysqlSet:
-		e, err = ParseEnumWithCollate(useNewCollate, target.GetElems(), d.GetMysqlSet().Name, target.GetCollate())
+		e, err = parseEnumWithCollate(useNewCollate, target.GetElems(), d.GetMysqlSet().Name, target.GetCollate())
 	default:
 		var uintDatum Datum
 		uintDatum, err = d.convertToUint(ctx, target)
@@ -1807,11 +1807,11 @@ func (d *Datum) convertToMysqlSetWithCollate(ctx Context, target *FieldType, use
 	)
 	switch d.k {
 	case KindString, KindBytes, KindBinaryLiteral:
-		s, err = ParseSetWithCollate(useNewCollate, target.GetElems(), d.GetString(), target.GetCollate())
+		s, err = parseSetWithCollate(useNewCollate, target.GetElems(), d.GetString(), target.GetCollate())
 	case KindMysqlEnum:
-		s, err = ParseSetWithCollate(useNewCollate, target.GetElems(), d.GetMysqlEnum().Name, target.GetCollate())
+		s, err = parseSetWithCollate(useNewCollate, target.GetElems(), d.GetMysqlEnum().Name, target.GetCollate())
 	case KindMysqlSet:
-		s, err = ParseSetWithCollate(useNewCollate, target.GetElems(), d.GetMysqlSet().Name, target.GetCollate())
+		s, err = parseSetWithCollate(useNewCollate, target.GetElems(), d.GetMysqlSet().Name, target.GetCollate())
 	case KindVectorFloat32:
 		return invalidConv(d, mysql.TypeSet)
 	default:

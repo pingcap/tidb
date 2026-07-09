@@ -115,8 +115,8 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 		return nil, table.ErrUnknownPartition
 	}
 	ret := &partitionedTable{TableCommon: tbl.Copy()}
-	useNewCollate := tbl.encoder.UseNewCollate()
-	partitionExpr, err := newPartitionExpr(tblInfo, pi.Type, pi.Expr, pi.Columns, pi.Definitions, useNewCollate)
+	encoding := table.NewEncodingConfig(tbl.encoder.UseNewCollate())
+	partitionExpr, err := newPartitionExpr(tblInfo, pi.Type, pi.Expr, pi.Columns, pi.Definitions, encoding)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -216,9 +216,9 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 	if pi.DDLState == model.StateDeleteReorganization || pi.DDLState == model.StatePublic {
 		// TODO: Explicitly explain the different DDL/New fields!
 		if pi.NewTableID != 0 {
-			ret.reorgPartitionExpr, err = newPartitionExpr(tblInfo, pi.DDLType, pi.DDLExpr, pi.DDLColumns, pi.DroppingDefinitions, useNewCollate)
+			ret.reorgPartitionExpr, err = newPartitionExpr(tblInfo, pi.DDLType, pi.DDLExpr, pi.DDLColumns, pi.DroppingDefinitions, encoding)
 		} else {
-			ret.reorgPartitionExpr, err = newPartitionExpr(tblInfo, pi.Type, pi.Expr, pi.Columns, pi.DroppingDefinitions, useNewCollate)
+			ret.reorgPartitionExpr, err = newPartitionExpr(tblInfo, pi.Type, pi.Expr, pi.Columns, pi.DroppingDefinitions, encoding)
 		}
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -242,10 +242,10 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 		if len(pi.AddingDefinitions) > 0 {
 			if pi.NewTableID != 0 {
 				// REMOVE PARTITIONING or PARTITION BY
-				ret.reorgPartitionExpr, err = newPartitionExpr(tblInfo, pi.DDLType, pi.DDLExpr, pi.DDLColumns, pi.AddingDefinitions, useNewCollate)
+				ret.reorgPartitionExpr, err = newPartitionExpr(tblInfo, pi.DDLType, pi.DDLExpr, pi.DDLColumns, pi.AddingDefinitions, encoding)
 			} else {
 				// REORGANIZE PARTITION
-				ret.reorgPartitionExpr, err = newPartitionExpr(tblInfo, pi.Type, pi.Expr, pi.Columns, pi.AddingDefinitions, useNewCollate)
+				ret.reorgPartitionExpr, err = newPartitionExpr(tblInfo, pi.Type, pi.Expr, pi.Columns, pi.AddingDefinitions, encoding)
 			}
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -303,10 +303,10 @@ func NewPartitionExprBuildCtx() expression.BuildContext {
 	)
 }
 
-func newPartitionExpr(tblInfo *model.TableInfo, tp ast.PartitionType, expr string, partCols []ast.CIStr, defs []model.PartitionDefinition, useNewCollate bool) (*PartitionExpr, error) {
+func newPartitionExpr(tblInfo *model.TableInfo, tp ast.PartitionType, expr string, partCols []ast.CIStr, defs []model.PartitionDefinition, encoding table.EncodingConfig) (*PartitionExpr, error) {
 	ctx := NewPartitionExprBuildCtx()
 	dbName := ast.NewCIStr(ctx.GetEvalCtx().CurrentDB())
-	columns, names, err := expression.ColumnInfos2ColumnsAndNamesWithCollate(ctx, dbName, tblInfo.Name, tblInfo.Cols(), tblInfo, useNewCollate)
+	columns, names, err := expression.ColumnInfos2ColumnsAndNamesWithCollate(ctx, dbName, tblInfo.Name, tblInfo.Cols(), tblInfo, encoding.UseNewCollate())
 	if err != nil {
 		return nil, err
 	}
@@ -315,13 +315,13 @@ func newPartitionExpr(tblInfo *model.TableInfo, tp ast.PartitionType, expr strin
 		// Nothing to do
 		return nil, nil
 	case ast.PartitionTypeRange:
-		return generateRangePartitionExpr(ctx, expr, partCols, defs, columns, names, useNewCollate)
+		return generateRangePartitionExpr(ctx, expr, partCols, defs, columns, names, encoding)
 	case ast.PartitionTypeHash:
-		return generateHashPartitionExpr(ctx, expr, columns, names, useNewCollate)
+		return generateHashPartitionExpr(ctx, expr, columns, names, encoding)
 	case ast.PartitionTypeKey:
-		return generateKeyPartitionExpr(ctx, expr, partCols, columns, names, useNewCollate)
+		return generateKeyPartitionExpr(ctx, expr, partCols, columns, names, encoding)
 	case ast.PartitionTypeList:
-		return generateListPartitionExpr(ctx, tblInfo, expr, partCols, defs, columns, names, useNewCollate)
+		return generateListPartitionExpr(ctx, tblInfo, expr, partCols, defs, columns, names, encoding)
 	}
 	panic("cannot reach here")
 }
@@ -405,7 +405,7 @@ type ForRangeColumnsPruning struct {
 	LessThan [][]*expression.Expression
 }
 
-func dataForRangeColumnsPruning(ctx expression.BuildContext, defs []model.PartitionDefinition, schema *expression.Schema, names []*types.FieldName, p *parser.Parser, colOffsets []int, useNewCollate bool) (*ForRangeColumnsPruning, error) {
+func dataForRangeColumnsPruning(ctx expression.BuildContext, defs []model.PartitionDefinition, schema *expression.Schema, names []*types.FieldName, p *parser.Parser, colOffsets []int, encoding table.EncodingConfig) (*ForRangeColumnsPruning, error) {
 	var res ForRangeColumnsPruning
 	res.LessThan = make([][]*expression.Expression, 0, len(defs))
 	for i := range defs {
@@ -417,7 +417,7 @@ func dataForRangeColumnsPruning(ctx expression.BuildContext, defs []model.Partit
 				// No column after MAXVALUE matters
 				break
 			}
-			tmp, err := parseSimpleExprWithNames(p, ctx, defs[i].LessThan[j], schema, names, useNewCollate)
+			tmp, err := parseSimpleExprWithNames(p, ctx, defs[i].LessThan[j], schema, names, encoding)
 			if err != nil {
 				return nil, err
 			}
@@ -441,7 +441,7 @@ func dataForRangeColumnsPruning(ctx expression.BuildContext, defs []model.Partit
 
 // parseSimpleExprWithNames parses simple expression string to Expression.
 // The expression string must only reference the column in the given NameSlice.
-func parseSimpleExprWithNames(p *parser.Parser, ctx expression.BuildContext, exprStr string, schema *expression.Schema, names types.NameSlice, useNewCollate bool) (expression.Expression, error) {
+func parseSimpleExprWithNames(p *parser.Parser, ctx expression.BuildContext, exprStr string, schema *expression.Schema, names types.NameSlice, encoding table.EncodingConfig) (expression.Expression, error) {
 	exprNode, err := parseExpr(p, exprStr)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -450,7 +450,7 @@ func parseSimpleExprWithNames(p *parser.Parser, ctx expression.BuildContext, exp
 		ctx,
 		exprNode,
 		expression.WithInputSchemaAndNames(schema, names, nil),
-		expression.WithUseNewCollate(useNewCollate),
+		encoding.BuildExprOption(),
 	)
 }
 
@@ -516,7 +516,7 @@ type ForListColumnPruning struct {
 	valueTp  *types.FieldType
 	valueMap map[string]ListPartitionLocation
 	sorted   *btree.BTreeG[*btreeListColumnItem]
-	encoder  codec.Encoder
+	encoding table.EncodingConfig
 
 	// To deal with the location partition failure caused by inconsistent NewCollationEnabled values(see issue #32416).
 	// The following fields are used to delay building valueMap.
@@ -677,7 +677,7 @@ type ForRangePruning struct {
 }
 
 // dataForRangePruning extracts the less than parts from 'partition p0 less than xx ... partition p1 less than ...'
-func dataForRangePruning(sctx expression.BuildContext, defs []model.PartitionDefinition, useNewCollate bool) (*ForRangePruning, error) {
+func dataForRangePruning(sctx expression.BuildContext, defs []model.PartitionDefinition, encoding table.EncodingConfig) (*ForRangePruning, error) {
 	var maxValue bool
 	var unsigned bool
 	lessThan := make([]int64, len(defs))
@@ -696,7 +696,7 @@ func dataForRangePruning(sctx expression.BuildContext, defs []model.PartitionDef
 				unsigned = true
 			}
 			if err != nil {
-				val, ok := fixOldVersionPartitionInfo(sctx, defs[i].LessThan[0], useNewCollate)
+				val, ok := fixOldVersionPartitionInfo(sctx, defs[i].LessThan[0], encoding)
 				if !ok {
 					logutil.BgLogger().Error("wrong partition definition", zap.String("less than", defs[i].LessThan[0]))
 					return nil, errors.WithStack(err)
@@ -712,10 +712,10 @@ func dataForRangePruning(sctx expression.BuildContext, defs []model.PartitionDef
 	}, nil
 }
 
-func fixOldVersionPartitionInfo(sctx expression.BuildContext, str string, useNewCollate bool) (int64, bool) {
+func fixOldVersionPartitionInfo(sctx expression.BuildContext, str string, encoding table.EncodingConfig) (int64, bool) {
 	// less than value should be calculate to integer before persistent.
 	// Old version TiDB may not do it and store the raw expression.
-	tmp, err := parseSimpleExprWithNames(parser.New(), sctx, str, nil, nil, useNewCollate)
+	tmp, err := parseSimpleExprWithNames(parser.New(), sctx, str, nil, nil, encoding)
 	if err != nil {
 		return 0, false
 	}
@@ -740,11 +740,11 @@ func rangePartitionExprStrings(cols []ast.CIStr, expr string) []string {
 }
 
 func generateKeyPartitionExpr(ctx expression.BuildContext, expr string, partCols []ast.CIStr,
-	columns []*expression.Column, names types.NameSlice, useNewCollate bool) (*PartitionExpr, error) {
+	columns []*expression.Column, names types.NameSlice, encoding table.EncodingConfig) (*PartitionExpr, error) {
 	ret := &PartitionExpr{
 		ForKeyPruning: &ForKeyPruning{},
 	}
-	_, partColumns, offset, err := extractPartitionExprColumns(ctx, expr, partCols, columns, names, useNewCollate)
+	_, partColumns, offset, err := extractPartitionExprColumns(ctx, expr, partCols, columns, names, encoding)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -755,12 +755,12 @@ func generateKeyPartitionExpr(ctx expression.BuildContext, expr string, partCols
 }
 
 func generateRangePartitionExpr(ctx expression.BuildContext, expr string, partCols []ast.CIStr,
-	defs []model.PartitionDefinition, columns []*expression.Column, names types.NameSlice, useNewCollate bool) (*PartitionExpr, error) {
+	defs []model.PartitionDefinition, columns []*expression.Column, names types.NameSlice, encoding table.EncodingConfig) (*PartitionExpr, error) {
 	// The caller should assure partition info is not nil.
 	p := parser.New()
 	schema := expression.NewSchema(columns...)
 	partStrs := rangePartitionExprStrings(partCols, expr)
-	locateExprs, err := getRangeLocateExprs(ctx, p, defs, partStrs, schema, names, useNewCollate)
+	locateExprs, err := getRangeLocateExprs(ctx, p, defs, partStrs, schema, names, encoding)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -768,21 +768,21 @@ func generateRangePartitionExpr(ctx expression.BuildContext, expr string, partCo
 		UpperBounds: locateExprs,
 	}
 
-	partExpr, _, offset, err := extractPartitionExprColumns(ctx, expr, partCols, columns, names, useNewCollate)
+	partExpr, _, offset, err := extractPartitionExprColumns(ctx, expr, partCols, columns, names, encoding)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	ret.ColumnOffset = offset
 
 	if len(partCols) < 1 {
-		tmp, err := dataForRangePruning(ctx, defs, useNewCollate)
+		tmp, err := dataForRangePruning(ctx, defs, encoding)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		ret.Expr = partExpr
 		ret.ForRangePruning = tmp
 	} else {
-		tmp, err := dataForRangeColumnsPruning(ctx, defs, schema, names, p, offset, useNewCollate)
+		tmp, err := dataForRangeColumnsPruning(ctx, defs, schema, names, p, offset, encoding)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -791,7 +791,7 @@ func generateRangePartitionExpr(ctx expression.BuildContext, expr string, partCo
 	return ret, nil
 }
 
-func getRangeLocateExprs(ctx expression.BuildContext, p *parser.Parser, defs []model.PartitionDefinition, partStrs []string, schema *expression.Schema, names types.NameSlice, useNewCollate bool) ([]expression.Expression, error) {
+func getRangeLocateExprs(ctx expression.BuildContext, p *parser.Parser, defs []model.PartitionDefinition, partStrs []string, schema *expression.Schema, names types.NameSlice, encoding table.EncodingConfig) ([]expression.Expression, error) {
 	var buf bytes.Buffer
 	locateExprs := make([]expression.Expression, 0, len(defs))
 	for i := range defs {
@@ -813,7 +813,7 @@ func getRangeLocateExprs(ctx expression.BuildContext, p *parser.Parser, defs []m
 			}
 		}
 
-		expr, err := parseSimpleExprWithNames(p, ctx, buf.String(), schema, names, useNewCollate)
+		expr, err := parseSimpleExprWithNames(p, ctx, buf.String(), schema, names, encoding)
 		if err != nil {
 			// If it got an error here, ddl may hang forever, so this error log is important.
 			logutil.BgLogger().Error("wrong table partition expression", zap.String("expression", buf.String()), zap.Error(err))
@@ -844,7 +844,7 @@ func findIdxByColUniqueID(cols []*expression.Column, col *expression.Column) int
 	return -1
 }
 
-func extractPartitionExprColumns(ctx expression.BuildContext, expr string, partCols []ast.CIStr, columns []*expression.Column, names types.NameSlice, useNewCollate bool) (expression.Expression, []*expression.Column, []int, error) {
+func extractPartitionExprColumns(ctx expression.BuildContext, expr string, partCols []ast.CIStr, columns []*expression.Column, names types.NameSlice, encoding table.EncodingConfig) (expression.Expression, []*expression.Column, []int, error) {
 	var cols []*expression.Column
 	var partExpr expression.Expression
 	if len(partCols) == 0 {
@@ -856,7 +856,7 @@ func extractPartitionExprColumns(ctx expression.BuildContext, expr string, partC
 			ctx,
 			expr,
 			expression.WithInputSchemaAndNames(schema, names, nil),
-			expression.WithUseNewCollate(useNewCollate),
+			encoding.BuildExprOption(),
 		)
 		if err != nil {
 			return nil, nil, nil, err
@@ -884,17 +884,17 @@ func extractPartitionExprColumns(ctx expression.BuildContext, expr string, partC
 }
 
 func generateListPartitionExpr(ctx expression.BuildContext, tblInfo *model.TableInfo, expr string, partCols []ast.CIStr,
-	defs []model.PartitionDefinition, columns []*expression.Column, names types.NameSlice, useNewCollate bool) (*PartitionExpr, error) {
+	defs []model.PartitionDefinition, columns []*expression.Column, names types.NameSlice, encoding table.EncodingConfig) (*PartitionExpr, error) {
 	// The caller should assure partition info is not nil.
-	partExpr, exprCols, offset, err := extractPartitionExprColumns(ctx, expr, partCols, columns, names, useNewCollate)
+	partExpr, exprCols, offset, err := extractPartitionExprColumns(ctx, expr, partCols, columns, names, encoding)
 	if err != nil {
 		return nil, err
 	}
 	listPrune := &ForListPruning{}
 	if len(partCols) == 0 {
-		err = listPrune.buildListPruner(ctx, expr, defs, exprCols, columns, names, useNewCollate)
+		err = listPrune.buildListPruner(ctx, expr, defs, exprCols, columns, names, encoding)
 	} else {
-		err = listPrune.buildListColumnsPruner(ctx, tblInfo, partCols, defs, columns, names, useNewCollate)
+		err = listPrune.buildListColumnsPruner(ctx, tblInfo, partCols, defs, columns, names, encoding)
 	}
 	if err != nil {
 		return nil, err
@@ -931,10 +931,10 @@ func (lp *ForListPruning) Clone() *ForListPruning {
 }
 
 func (lp *ForListPruning) buildListPruner(ctx expression.BuildContext, exprStr string, defs []model.PartitionDefinition, exprCols []*expression.Column,
-	columns []*expression.Column, names types.NameSlice, useNewCollate bool) error {
+	columns []*expression.Column, names types.NameSlice, encoding table.EncodingConfig) error {
 	schema := expression.NewSchema(columns...)
 	p := parser.New()
-	expr, err := parseSimpleExprWithNames(p, ctx, exprStr, schema, names, useNewCollate)
+	expr, err := parseSimpleExprWithNames(p, ctx, exprStr, schema, names, encoding)
 	if err != nil {
 		// If it got an error here, ddl may hang forever, so this error log is important.
 		logutil.BgLogger().Error("wrong table partition expression", zap.String("expression", exprStr), zap.Error(err))
@@ -952,7 +952,7 @@ func (lp *ForListPruning) buildListPruner(ctx expression.BuildContext, exprStr s
 		}
 		c.Index = idx
 	}
-	err = lp.buildListPartitionValueMap(ctx, defs, schema, names, p, useNewCollate)
+	err = lp.buildListPartitionValueMap(ctx, defs, schema, names, p, encoding)
 	if err != nil {
 		return err
 	}
@@ -961,7 +961,7 @@ func (lp *ForListPruning) buildListPruner(ctx expression.BuildContext, exprStr s
 
 func (lp *ForListPruning) buildListColumnsPruner(ctx expression.BuildContext,
 	tblInfo *model.TableInfo, partCols []ast.CIStr, defs []model.PartitionDefinition,
-	columns []*expression.Column, names types.NameSlice, useNewCollate bool) error {
+	columns []*expression.Column, names types.NameSlice, encoding table.EncodingConfig) error {
 	schema := expression.NewSchema(columns...)
 	p := parser.New()
 	colPrunes := make([]*ForListColumnPruning, 0, len(partCols))
@@ -981,7 +981,7 @@ func (lp *ForListPruning) buildListColumnsPruner(ctx expression.BuildContext,
 			schema:   schema,
 			names:    names,
 			colIdx:   colIdx,
-			encoder:  codec.NewEncoder(useNewCollate),
+			encoding: encoding,
 			ExprCol:  columns[idx],
 			valueTp:  &colInfo.FieldType,
 			valueMap: make(map[string]ListPartitionLocation),
@@ -1012,7 +1012,7 @@ func (lp *ForListPruning) buildListColumnsPruner(ctx expression.BuildContext,
 // The map is column value -> partition index.
 // colIdx is the column index in the list columns.
 func (lp *ForListPruning) buildListPartitionValueMap(ctx expression.BuildContext, defs []model.PartitionDefinition,
-	schema *expression.Schema, names types.NameSlice, p *parser.Parser, useNewCollate bool) error {
+	schema *expression.Schema, names types.NameSlice, p *parser.Parser, encoding table.EncodingConfig) error {
 	lp.valueToPartitionIdxBTree = btree.NewG[*btreeListItem](btreeDegree, func(a, b *btreeListItem) bool { return a.key < b.key })
 	lp.nullPartitionIdx = -1
 	lp.defaultPartitionIdx = -1
@@ -1022,7 +1022,7 @@ func (lp *ForListPruning) buildListPartitionValueMap(ctx expression.BuildContext
 				lp.defaultPartitionIdx = partitionIdx
 				continue
 			}
-			expr, err := parseSimpleExprWithNames(p, ctx, vs[0], schema, names, useNewCollate)
+			expr, err := parseSimpleExprWithNames(p, ctx, vs[0], schema, names, encoding)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -1232,7 +1232,7 @@ DEFS:
 
 func (lp *ForListColumnPruning) genConstExprKey(ctx expression.BuildContext, exprStr string,
 	schema *expression.Schema, names types.NameSlice, p *parser.Parser) ([]byte, error) {
-	expr, err := parseSimpleExprWithNames(p, ctx, exprStr, schema, names, lp.encoder.UseNewCollate())
+	expr, err := parseSimpleExprWithNames(p, ctx, exprStr, schema, names, lp.encoding)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1254,7 +1254,7 @@ func (lp *ForListColumnPruning) genKey(tc types.Context, ec errctx.Context, v ty
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	valByte, err := lp.encoder.EncodeKey(tc.Location(), nil, v)
+	valByte, err := lp.encoding.Encoder().EncodeKey(tc.Location(), nil, v)
 	err = ec.HandleError(err)
 	return valByte, err
 }
@@ -1331,7 +1331,7 @@ func (lp *ForListColumnPruning) LocateRanges(tc types.Context, ec errctx.Context
 }
 
 func generateHashPartitionExpr(ctx expression.BuildContext, exprStr string,
-	columns []*expression.Column, names types.NameSlice, useNewCollate bool) (*PartitionExpr, error) {
+	columns []*expression.Column, names types.NameSlice, encoding table.EncodingConfig) (*PartitionExpr, error) {
 	// The caller should assure partition info is not nil.
 	schema := expression.NewSchema(columns...)
 	origExpr, err := parseExpr(parser.New(), exprStr)
@@ -1342,7 +1342,7 @@ func generateHashPartitionExpr(ctx expression.BuildContext, exprStr string,
 		ctx,
 		origExpr,
 		expression.WithInputSchemaAndNames(schema, names, nil),
-		expression.WithUseNewCollate(useNewCollate),
+		encoding.BuildExprOption(),
 	)
 	if err != nil {
 		// If it got an error here, ddl may hang forever, so this error log is important.

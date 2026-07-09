@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "column.go",
         "constraint.go",
+        "encoding_config.go",
         "index.go",
         "table.go",
     ],
@@ -29,6 +30,7 @@ go_library(
         "//pkg/table/tblctx",
         "//pkg/types",
         "//pkg/util/chunk",
+        "//pkg/util/codec",
         "//pkg/util/context",
         "//pkg/util/dbterror",
         "//pkg/util/hack",

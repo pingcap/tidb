@@ -346,13 +346,6 @@ func CastColumnValue(ctx expression.BuildContext, val types.Datum, col *model.Co
 	return castColumnValue(evalCtx.TypeCtx(), evalCtx.ErrCtx(), evalCtx.SQLMode(), val, &col.FieldType, col.Name.O, ctx.ConnectionID(), returnErr, forceIgnoreTruncate)
 }
 
-// CastColumnValueWithCollate casts a value with an explicit new collation mode
-// for conversions whose result depends on collation, such as ENUM/SET.
-func CastColumnValueWithCollate(ctx expression.BuildContext, val types.Datum, col *model.ColumnInfo, returnErr, forceIgnoreTruncate bool, useNewCollate bool) (casted types.Datum, err error) {
-	evalCtx := ctx.GetEvalCtx()
-	return castColumnValueWithCollate(evalCtx.TypeCtx(), evalCtx.ErrCtx(), evalCtx.SQLMode(), val, &col.FieldType, col.Name.O, ctx.ConnectionID(), returnErr, forceIgnoreTruncate, useNewCollate)
-}
-
 // castColumnValue casts a value based on column type.
 func castColumnValue(tc types.Context, ec errctx.Context, sqlMode mysql.SQLMode, val types.Datum, ft *types.FieldType, colName string, connID uint64, returnErr, forceIgnoreTruncate bool) (casted types.Datum, err error) {
 	casted, err = val.ConvertTo(tc, ft)

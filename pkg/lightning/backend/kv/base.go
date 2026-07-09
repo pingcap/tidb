@@ -123,6 +123,7 @@ type BaseKVEncoder struct {
 	GenCols    []GeneratedCol
 	SessionCtx *Session
 	table      table.Table
+	encoding   table.EncodingConfig
 	// public columns
 	Columns         []*table.Column
 	AutoRandomColID int64
@@ -175,6 +176,7 @@ func NewBaseKVEncoder(config *encode.EncodingConfig) (*BaseKVEncoder, error) {
 		GenCols:         genCols,
 		SessionCtx:      se,
 		table:           config.Table,
+		encoding:        table.EncodingConfigFromTable(config.Table),
 		Columns:         cols,
 		AutoRandomColID: autoRandomColID,
 		AutoIDFn:        autoIDFn,
@@ -262,7 +264,7 @@ func (e *BaseKVEncoder) getActualDatum(col *table.Column, rowID int64, inputDatu
 	errCtx := exprCtx.GetEvalCtx().ErrCtx()
 	if inputDatum != nil {
 		if needCast {
-			value, err = table.CastColumnValueWithCollate(exprCtx, *inputDatum, col.ToInfo(), false, false, e.table.UseNewCollate())
+			value, err = e.encoding.CastColumnValue(exprCtx, *inputDatum, col.ToInfo(), false, false)
 			if err != nil {
 				return value, err
 			}
@@ -278,8 +280,7 @@ func (e *BaseKVEncoder) getActualDatum(col *table.Column, rowID int64, inputDatu
 	switch {
 	case IsAutoIncCol(col.ToInfo()):
 		// we still need a conversion, e.g. to catch overflow with a TINYINT column.
-		value, err = table.CastColumnValueWithCollate(exprCtx,
-			types.NewIntDatum(rowID), col.ToInfo(), false, false, e.table.UseNewCollate())
+		value, err = e.encoding.CastColumnValue(exprCtx, types.NewIntDatum(rowID), col.ToInfo(), false, false)
 	case e.IsAutoRandomCol(col.ToInfo()):
 		var val types.Datum
 		realRowID := e.AutoIDFn(rowID)
@@ -288,7 +289,7 @@ func (e *BaseKVEncoder) getActualDatum(col *table.Column, rowID int64, inputDatu
 		} else {
 			val = types.NewIntDatum(realRowID)
 		}
-		value, err = table.CastColumnValueWithCollate(exprCtx, val, col.ToInfo(), false, false, e.table.UseNewCollate())
+		value, err = e.encoding.CastColumnValue(exprCtx, val, col.ToInfo(), false, false)
 	case col.IsGenerated():
 		// inject some dummy value for gen col so that MutRowFromDatums below sees a real value instead of nil.
 		// if MutRowFromDatums sees a nil it won't initialize the underlying storage and cause SetDatum to panic.
@@ -309,7 +310,7 @@ func (e *BaseKVEncoder) IsAutoRandomCol(col *model.ColumnInfo) bool {
 // EvalGeneratedColumns evaluates the generated columns.
 func (e *BaseKVEncoder) EvalGeneratedColumns(record []types.Datum,
 	cols []*table.Column) (errCol *model.ColumnInfo, err error) {
-	return evalGeneratedColumns(e.SessionCtx, record, cols, e.GenCols, e.table.UseNewCollate())
+	return evalGeneratedColumns(e.SessionCtx, record, cols, e.GenCols, e.encoding)
 }
 
 func datumToValueStringForCastError(d types.Datum) string {
@@ -382,7 +383,7 @@ func (e *BaseKVEncoder) TruncateWarns() {
 }
 
 func evalGeneratedColumns(se *Session, record []types.Datum, cols []*table.Column,
-	genCols []GeneratedCol, useNewCollate bool) (errCol *model.ColumnInfo, err error) {
+	genCols []GeneratedCol, encoding table.EncodingConfig) (errCol *model.ColumnInfo, err error) {
 	mutRow := chunk.MutRowFromDatums(record)
 	for _, gc := range genCols {
 		col := cols[gc.Index].ToInfo()
@@ -390,7 +391,7 @@ func evalGeneratedColumns(se *Session, record []types.Datum, cols []*table.Colum
 		if err != nil {
 			return col, err
 		}
-		value, err := table.CastColumnValueWithCollate(se.GetExprCtx(), evaluated, col, false, false, useNewCollate)
+		value, err := encoding.CastColumnValue(se.GetExprCtx(), evaluated, col, false, false)
 		if err != nil {
 			return col, err
 		}

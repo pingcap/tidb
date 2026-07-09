@@ -49,12 +49,11 @@ func (e Enum) ToNumber() float64 {
 
 // ParseEnum creates a Enum with item name or value.
 func ParseEnum(elems []string, name string, collation string) (Enum, error) {
-	return ParseEnumWithCollate(collate.NewCollationEnabled(), elems, name, collation)
+	return parseEnumWithCollate(collate.NewCollationEnabled(), elems, name, collation)
 }
 
-// ParseEnumWithCollate creates an Enum with an explicit new collation mode.
-func ParseEnumWithCollate(useNewCollate bool, elems []string, name string, collation string) (Enum, error) {
-	if enumName, err := ParseEnumNameWithCollate(useNewCollate, elems, name, collation); err == nil {
+func parseEnumWithCollate(useNewCollate bool, elems []string, name string, collation string) (Enum, error) {
+	if enumName, err := parseEnumNameWithCollate(useNewCollate, elems, name, collation); err == nil {
 		return enumName, nil
 	}
 	// name doesn't exist, maybe an integer?
@@ -67,11 +66,10 @@ func ParseEnumWithCollate(useNewCollate bool, elems []string, name string, colla
 
 // ParseEnumName creates a Enum with item name.
 func ParseEnumName(elems []string, name string, collation string) (Enum, error) {
-	return ParseEnumNameWithCollate(collate.NewCollationEnabled(), elems, name, collation)
+	return parseEnumNameWithCollate(collate.NewCollationEnabled(), elems, name, collation)
 }
 
-// ParseEnumNameWithCollate creates an Enum with an explicit new collation mode.
-func ParseEnumNameWithCollate(useNewCollate bool, elems []string, name string, collation string) (Enum, error) {
+func parseEnumNameWithCollate(useNewCollate bool, elems []string, name string, collation string) (Enum, error) {
 	ctor := collate.GetCollatorWithCollate(useNewCollate, collation)
 	for i, n := range elems {
 		if ctor.Compare(n, name) == 0 {
