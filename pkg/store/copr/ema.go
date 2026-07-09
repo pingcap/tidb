@@ -24,8 +24,9 @@ import (
 // 1/e after τ.
 const defaultRUEMATau = time.Second
 
-// ruEMA is a time-aware EMA weighting older samples by exp(-Δt/τ) so long
-// gaps decay stale samples. Safe for concurrent Observe/Predict.
+// ruEMA is a time-aware exponential moving average (EMA) weighting older
+// samples by exp(-Δt/τ) so long gaps decay stale samples. Safe for concurrent
+// Observe/Predict.
 type ruEMA struct {
 	mu        sync.Mutex
 	tau       time.Duration
