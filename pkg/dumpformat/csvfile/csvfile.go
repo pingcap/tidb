@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package csvfile holds the CSV writer.
 package csvfile
 
 // FieldKind classifies a column for CSV framing.

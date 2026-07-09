@@ -40,7 +40,7 @@ func appendField(dst, val []byte, isNull bool, kind FieldKind, cfg *Config) []by
 			dst = appendEscaped(dst, val, cfg)
 		}
 		return append(dst, cfg.Delimiter...)
-	default: // KindString
+	default:
 		dst = append(dst, cfg.Delimiter...)
 		dst = appendEscaped(dst, val, cfg)
 		return append(dst, cfg.Delimiter...)
