@@ -60,6 +60,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tidb/pkg/util/trxevents"
 	"github.com/pingcap/tipb/go-tipb"
+	clientgoconfig "github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/metrics"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -217,6 +218,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		rpcCancel:        tikv.NewRPCanceller(),
 		buildTaskElapsed: *buildOpt.elapsed,
 		runawayChecker:   req.RunawayChecker,
+		ema:              newRUEMA(req.Paging.PagingSizeBytes),
 	}
 	// Pipelined-dml can flush locks when it is still reading.
 	// The coprocessor of the txn should not be blocked by itself.
@@ -1008,6 +1010,9 @@ type copIterator struct {
 
 	runawayChecker resourcegroup.RunawayChecker
 	stats          *copIteratorRuntimeStats
+
+	// One EMA per copIterator (logical scan), shared across workers.
+	ema *ruEMA
 }
 
 type liteCopIteratorWorker struct {
@@ -1041,6 +1046,8 @@ type copIteratorWorker struct {
 	storeBatchedNum         *atomic.Uint64
 	storeBatchedFallbackNum *atomic.Uint64
 	stats                   *copIteratorRuntimeStats
+
+	ema *ruEMA
 }
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
@@ -1236,6 +1243,7 @@ func newCopIteratorWorker(it *copIterator, taskCh <-chan *copTask) *copIteratorW
 		storeBatchedNum:         &it.storeBatchedNum,
 		storeBatchedFallbackNum: &it.storeBatchedFallbackNum,
 		stats:                   it.stats,
+		ema:                     it.ema,
 	}
 }
 
@@ -1659,6 +1667,15 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 	}
 }
 
+func (worker *copIteratorWorker) predictedReadBytesForTask(task *copTask) uint64 {
+	// Byte-budget paging is independent from row-count paging, so a request-level
+	// byte budget must still carry the pre-charge hint when task.paging is false.
+	if !task.paging && worker.req.Paging.PagingSizeBytes == 0 {
+		return 0
+	}
+	return worker.ema.Predict()
+}
+
 // handleTaskOnce handles single copTask, successful results are send to channel.
 // If error happened, returns error. If region split or meet lock, returns the remain tasks.
 func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*copTaskResult, error) {
@@ -1709,6 +1726,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		BucketsVersion:  task.bucketsVer,
 	})
 	req.InputRequestSource = task.requestSource.GetRequestSource()
+	req.PredictedReadBytes = worker.predictedReadBytesForTask(task)
 	if task.firstReadType != "" {
 		req.ReadType = task.firstReadType
 		req.IsRetryRequest = true
@@ -1875,6 +1893,22 @@ func appendScanDetail(logStr string, columnFamily string, scanInfo *kvrpcpb.Scan
 	return logStr
 }
 
+// pagingResponseReadBytes returns the MVCC bytes basis the EMA observes.
+// Mirrors client-go's resourcecontrol.MakeResponseInfo so the EMA learns
+// the same quantity PD bills against.
+func pagingResponseReadBytes(pbResp *coprocessor.Response) uint64 {
+	if pbResp == nil {
+		return 0
+	}
+	if scanDetail := pbResp.GetExecDetailsV2().GetScanDetailV2(); scanDetail != nil {
+		if clientgoconfig.NextGen {
+			return max(scanDetail.GetTotalVersionsSize(), scanDetail.GetProcessedVersionsSize())
+		}
+		return scanDetail.GetProcessedVersionsSize()
+	}
+	return 0
+}
+
 func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse, cacheKey []byte, cacheValue *coprCacheValue, task *copTask, costTime time.Duration) (*copTaskResult, error) {
 	result, err := worker.handleCopResponse(bo, rpcCtx, resp, cacheKey, cacheValue, task, costTime)
 	if err != nil {
@@ -1890,9 +1924,14 @@ func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *ti
 	pagingRange := resp.pbResp.Range
 	// only paging requests need to calculate the next ranges
 	if pagingRange == nil {
+		// The final page has no remaining range; skipping it keeps the EMA slightly conservative.
 		// If the storage engine doesn't support paging protocol, it should have return all the region data.
 		// So we finish here.
 		return result, nil
+	}
+
+	if readBytes := pagingResponseReadBytes(resp.pbResp); readBytes > 0 {
+		worker.ema.Observe(readBytes, time.Now())
 	}
 
 	// calculate next ranges and grow the paging size
