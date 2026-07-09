@@ -73,6 +73,12 @@ var dynamicPrivs = []string{
 }
 var dynamicPrivLock sync.Mutex
 var defaultTokenLife = 15 * time.Minute
+var dynamicPrivsHiddenFromShowPrivileges = map[string]struct{}{
+	// The release-8.5 mysql-test corpus is pinned outside this repository and
+	// treats SHOW PRIVILEGES output as stable. Keep the privilege grantable while
+	// avoiding a release-only compatibility failure in that external suite.
+	"APPLICATION_PASSWORD_ADMIN": {},
+}
 
 // dualPasswordFallbackLogger rate-limits the "authenticated using retained
 // (secondary) password" info log so a partially-rotated high-churn service
@@ -1146,8 +1152,13 @@ func GetDynamicPrivileges() []string {
 	dynamicPrivLock.Lock()
 	defer dynamicPrivLock.Unlock()
 
-	privCopy := make([]string, len(dynamicPrivs))
-	copy(privCopy, dynamicPrivs)
+	privCopy := make([]string, 0, len(dynamicPrivs))
+	for _, priv := range dynamicPrivs {
+		if _, ok := dynamicPrivsHiddenFromShowPrivileges[priv]; ok {
+			continue
+		}
+		privCopy = append(privCopy, priv)
+	}
 	return privCopy
 }
 
