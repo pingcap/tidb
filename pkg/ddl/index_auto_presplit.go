@@ -37,7 +37,7 @@ const (
 	defaultAutoSplitHotRegionMaxTopNKeysPerPhysical  = 16
 	defaultAutoSplitHotRegionMaxSplitKeys            = 256
 	defaultAutoSplitHotRegionTopNMinCount            = uint64(200_000)
-	defaultAutoSplitHotRegionTopNMinRatio            = 0.05
+	defaultAutoSplitHotRegionTopNMinRatio            = 0.01
 	defaultAutoSplitHotRegionMinStatsHealthy         = int64(80)
 	defaultAutoSplitHotRegionMockMaxRegionsForTest   = 4
 	defaultAutoSplitHotRegionMockMaxSplitKeysForTest = 32
