@@ -306,7 +306,7 @@ func NewPartitionExprBuildCtx() expression.BuildContext {
 func newPartitionExpr(tblInfo *model.TableInfo, tp ast.PartitionType, expr string, partCols []ast.CIStr, defs []model.PartitionDefinition, encoding table.EncodingConfig) (*PartitionExpr, error) {
 	ctx := NewPartitionExprBuildCtx()
 	dbName := ast.NewCIStr(ctx.GetEvalCtx().CurrentDB())
-	columns, names, err := expression.ColumnInfos2ColumnsAndNamesWithBuildOption(
+	columns, names, err := expression.ColumnInfos2ColumnsAndNames(
 		ctx,
 		dbName,
 		tblInfo.Name,
