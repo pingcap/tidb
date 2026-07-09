@@ -30,8 +30,7 @@ type CSVWriter struct {
 	written int64
 }
 
-// NewCSVWriter creates a CSVWriter over w. kinds classifies each column
-// (Number/String/Bytes) and cfg holds the framing knobs; both are caller inputs.
+// NewCSVWriter creates a CSVWriter over w.
 func NewCSVWriter(w io.Writer, kinds []FieldKind, cfg *Config) *CSVWriter {
 	return &CSVWriter{w: w, cfg: cfg, kinds: kinds}
 }

@@ -176,8 +176,6 @@ func (r RowReceiverArr) GetRawBytes() []sql.RawBytes {
 	return r.appendRawBytes(make([]sql.RawBytes, 0, len(r.receivers)))
 }
 
-// appendRawBytes appends each receiver's raw bytes to dst and returns it, so the
-// caller can reuse one slice across rows instead of allocating per row.
 func (r RowReceiverArr) appendRawBytes(dst []sql.RawBytes) []sql.RawBytes {
 	for _, receiver := range r.receivers {
 		dst = append(dst, receiver.GetRawBytes()[0])

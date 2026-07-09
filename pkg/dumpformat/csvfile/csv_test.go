@@ -66,8 +66,6 @@ func TestCSVWriterBytesHex(t *testing.T) {
 	require.Equal(t, "\"6162\"\n", bf.String())
 }
 
-// TestCSVWriterEmptyRow covers the all-generated-columns path, where the caller
-// writes empty rows (nil row, nil kinds) and only line terminators are emitted.
 func TestCSVWriterEmptyRow(t *testing.T) {
 	cfg := baseConfig()
 	var bf bytes.Buffer
