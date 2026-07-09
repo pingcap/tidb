@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tidb/pkg/util/trxevents"
 	"github.com/pingcap/tipb/go-tipb"
+	clientgoconfig "github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/metrics"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -1949,14 +1950,14 @@ func appendScanDetail(logStr string, columnFamily string, scanInfo *kvrpcpb.Scan
 // pagingResponseReadBytes returns the MVCC bytes basis the EMA observes.
 // Mirrors client-go's resourcecontrol.MakeResponseInfo so the EMA learns
 // the same quantity PD bills against.
-//
-// TODO: for NextGen, PD bills max(TotalVersionsSize, ProcessedVersionsSize).
-// Mirror that here once a TiDB-side NextGen gate is available.
 func pagingResponseReadBytes(pbResp *coprocessor.Response) uint64 {
 	if pbResp == nil {
 		return 0
 	}
 	if scanDetail := pbResp.GetExecDetailsV2().GetScanDetailV2(); scanDetail != nil {
+		if clientgoconfig.NextGen {
+			return max(scanDetail.GetTotalVersionsSize(), scanDetail.GetProcessedVersionsSize())
+		}
 		return scanDetail.GetProcessedVersionsSize()
 	}
 	return 0
@@ -1977,6 +1978,7 @@ func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *ti
 	pagingRange := resp.pbResp.Range
 	// only paging requests need to calculate the next ranges
 	if pagingRange == nil {
+		// The final page has no remaining range; skipping it keeps the EMA slightly conservative.
 		// If the storage engine doesn't support paging protocol, it should have return all the region data.
 		// So we finish here.
 		return result, nil

@@ -59,8 +59,5 @@ func (e *ruEMA) Observe(bytes uint64, now time.Time) {
 func (e *ruEMA) Predict() uint64 {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.value < 0 {
-		return 0
-	}
 	return uint64(e.value)
 }

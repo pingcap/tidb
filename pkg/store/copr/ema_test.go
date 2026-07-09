@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/stretchr/testify/require"
+	clientgoconfig "github.com/tikv/client-go/v2/config"
 )
 
 func TestRUEMASeedAndConverge(t *testing.T) {
@@ -88,15 +89,45 @@ func TestPagingResponseReadBytes(t *testing.T) {
 	require.Zero(t, pagingResponseReadBytes(nil))
 	require.Zero(t, pagingResponseReadBytes(&coprocessor.Response{}))
 
-	// A normal paging response carries processed_versions_size on ScanDetailV2.
-	resp := &coprocessor.Response{
-		ExecDetailsV2: &kvrpcpb.ExecDetailsV2{
-			ScanDetailV2: &kvrpcpb.ScanDetailV2{
+	tests := []struct {
+		name        string
+		scanDetail  *kvrpcpb.ScanDetailV2
+		classicWant uint64
+		nextGenWant uint64
+	}{
+		{
+			name: "classic uses processed versions size",
+			scanDetail: &kvrpcpb.ScanDetailV2{
 				ProcessedVersionsSize: 1_048_576,
+				TotalVersionsSize:     2_097_152,
 			},
+			classicWant: 1_048_576,
+			nextGenWant: 2_097_152,
+		},
+		{
+			name: "nextgen keeps compatibility when total is smaller",
+			scanDetail: &kvrpcpb.ScanDetailV2{
+				ProcessedVersionsSize: 1_048_576,
+				TotalVersionsSize:     512 * 1024,
+			},
+			classicWant: 1_048_576,
+			nextGenWant: 1_048_576,
 		},
 	}
-	require.Equal(t, uint64(1_048_576), pagingResponseReadBytes(resp))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := &coprocessor.Response{
+				ExecDetailsV2: &kvrpcpb.ExecDetailsV2{
+					ScanDetailV2: tt.scanDetail,
+				},
+			}
+			want := tt.classicWant
+			if clientgoconfig.NextGen {
+				want = tt.nextGenWant
+			}
+			require.Equal(t, want, pagingResponseReadBytes(resp))
+		})
+	}
 }
 
 func TestRUEMAConcurrentObserveAndPredict(t *testing.T) {
