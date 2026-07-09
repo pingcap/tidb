@@ -21,6 +21,22 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+const (
+	mvMetricComponentService = "service"
+
+	mvMetricExecutorEventSubmitted    = "submitted"
+	mvMetricExecutorEventFinished     = "finished"
+	mvMetricExecutorEventFailed       = "failed"
+	mvMetricExecutorEventTimeout      = "timeout"
+	mvMetricExecutorEventRejected     = "rejected"
+	mvMetricExecutorEventBackpressure = "backpressure"
+
+	mvMetricExecutorStatusRunning             = "running"
+	mvMetricExecutorStatusWaiting             = "waiting"
+	mvMetricExecutorStatusTimedOutRunning     = "timed_out_running"
+	mvMetricExecutorStatusBackpressureBlocked = "backpressure_blocked"
+)
+
 // reportCounterDelta reports only the positive delta since last flush.
 func reportCounterDelta(counter interface{ Add(float64) }, last *int64, current int64) {
 	if current > *last {
@@ -32,26 +48,33 @@ func reportCounterDelta(counter interface{ Add(float64) }, last *int64, current 
 // reportMetrics flushes MVService runtime metrics into the metrics module.
 func (h *serviceHelper) reportMetrics(s *MVService) {
 	// Executor metrics
-	executorMetrics := s.combinedTaskExecutorMetrics()
-	reportCounterDelta(tidbmetrics.MVTaskExecutorSubmittedCounter, &h.reportCache.submittedCount, executorMetrics.submittedCount)
-	reportCounterDelta(tidbmetrics.MVTaskExecutorFinishedCounter, &h.reportCache.finishedCount, executorMetrics.finishedCount)
-	reportCounterDelta(tidbmetrics.MVTaskExecutorFailedCounter, &h.reportCache.failedCount, executorMetrics.failedCount)
-	reportCounterDelta(tidbmetrics.MVTaskExecutorTimeoutCounter, &h.reportCache.timeoutCount, executorMetrics.timeoutCount)
-	reportCounterDelta(tidbmetrics.MVTaskExecutorRejectedCounter, &h.reportCache.rejectedCount, executorMetrics.rejectedCount)
-	reportCounterDelta(tidbmetrics.MVTaskExecutorBackpressureCounter, &h.reportCache.backpressureCount, executorMetrics.backpressureCount)
-	tidbmetrics.MVTaskExecutorRunningTaskGauge.Set(float64(executorMetrics.runningCount))
-	tidbmetrics.MVTaskExecutorWaitingTaskGauge.Set(float64(executorMetrics.waitingCount))
-	tidbmetrics.MVTaskExecutorTimedOutRunningTaskGauge.Set(float64(executorMetrics.timedOutRunningCount))
-	tidbmetrics.MVTaskExecutorBackpressureBlockedGauge.Set(float64(executorMetrics.backpressureBlocked))
+	h.reportTaskExecutorMetrics(mvTaskDurationTypeRefresh, snapshotTaskExecutorMetrics(s.refreshExecutor), &h.reportCache.refresh)
+	h.reportTaskExecutorMetrics(mvTaskDurationTypePurge, snapshotTaskExecutorMetrics(s.purgeExecutor), &h.reportCache.purge)
+	h.reportTaskExecutorMetrics(mvTaskDurationTypeMLogAnalyze, snapshotTaskExecutorMetrics(s.mlogAnalyzeExecutor), &h.reportCache.mlogAnalyze)
 
 	// MVService metrics
 	tidbmetrics.MVServiceMVRefreshTotalGauge.Set(float64(s.metrics.mvCount.Load()))
 	tidbmetrics.MVServiceMVLogPurgeTotalGauge.Set(float64(s.metrics.mvLogCount.Load()))
-	tidbmetrics.MVServiceMVRefreshRunningGauge.Set(float64(s.metrics.runningMVRefreshCount.Load()))
-	tidbmetrics.MVServiceMVLogPurgeRunningGauge.Set(float64(s.metrics.runningMVLogPurgeCount.Load()))
 	tidbmetrics.MVServiceMVRefreshWarningGauge.Set(float64(s.metrics.alertWarningCount.Load()))
 	tidbmetrics.MVServiceMVRefreshOverdueGauge.Set(float64(s.metrics.alertOverdueCount.Load()))
 	tidbmetrics.MVServiceMVLogAccumulationGauge.Set(float64(s.metrics.mvLogAccumulationCount.Load()))
+}
+
+func (h *serviceHelper) reportTaskExecutorMetrics(component string, metrics taskExecutorMetricsSnapshot, cache *taskExecutorReportCache) {
+	if cache == nil {
+		return
+	}
+	reportCounterDelta(h.getRunEventCounter(component, mvMetricExecutorEventSubmitted), &cache.submittedCount, metrics.submittedCount)
+	reportCounterDelta(h.getRunEventCounter(component, mvMetricExecutorEventFinished), &cache.finishedCount, metrics.finishedCount)
+	reportCounterDelta(h.getRunEventCounter(component, mvMetricExecutorEventFailed), &cache.failedCount, metrics.failedCount)
+	reportCounterDelta(h.getRunEventCounter(component, mvMetricExecutorEventTimeout), &cache.timeoutCount, metrics.timeoutCount)
+	reportCounterDelta(h.getRunEventCounter(component, mvMetricExecutorEventRejected), &cache.rejectedCount, metrics.rejectedCount)
+	reportCounterDelta(h.getRunEventCounter(component, mvMetricExecutorEventBackpressure), &cache.backpressureCount, metrics.backpressureCount)
+
+	tidbmetrics.MVServiceTaskStatusGaugeVec.WithLabelValues(component, mvMetricExecutorStatusRunning).Set(float64(metrics.runningCount))
+	tidbmetrics.MVServiceTaskStatusGaugeVec.WithLabelValues(component, mvMetricExecutorStatusWaiting).Set(float64(metrics.waitingCount))
+	tidbmetrics.MVServiceTaskStatusGaugeVec.WithLabelValues(component, mvMetricExecutorStatusTimedOutRunning).Set(float64(metrics.timedOutRunningCount))
+	tidbmetrics.MVServiceTaskStatusGaugeVec.WithLabelValues(component, mvMetricExecutorStatusBackpressureBlocked).Set(float64(metrics.backpressureBlocked))
 }
 
 // observeTaskDuration reports one task execution duration sample.
@@ -67,7 +90,7 @@ func (h *serviceHelper) observeRunEvent(eventType string) {
 	if eventType == "" {
 		return
 	}
-	h.getRunEventCounter(eventType).Inc()
+	h.getRunEventCounter(mvMetricComponentService, eventType).Inc()
 }
 
 // getDurationObserver returns a cached observer for (type, result) labels.
@@ -94,12 +117,13 @@ func (h *serviceHelper) getDurationObserver(metricType, result string) prometheu
 }
 
 // getRunEventCounter returns a cached counter for eventType label.
-func (h *serviceHelper) getRunEventCounter(eventType string) prometheus.Counter {
+func (h *serviceHelper) getRunEventCounter(component, eventType string) prometheus.Counter {
 	if h == nil {
-		return tidbmetrics.MVServiceRunEventCounterVec.WithLabelValues(eventType)
+		return tidbmetrics.MVServiceRunEventCounterVec.WithLabelValues(component, eventType)
 	}
+	key := mvMetricComponentTypeKey{component: component, typ: eventType}
 	h.runEventCounterCache.mu.RLock()
-	if counter, ok := h.runEventCounterCache.data[eventType]; ok {
+	if counter, ok := h.runEventCounterCache.data[key]; ok {
 		h.runEventCounterCache.mu.RUnlock()
 		return counter
 	}
@@ -107,10 +131,10 @@ func (h *serviceHelper) getRunEventCounter(eventType string) prometheus.Counter 
 
 	h.runEventCounterCache.mu.Lock()
 	defer h.runEventCounterCache.mu.Unlock()
-	if counter, ok := h.runEventCounterCache.data[eventType]; ok {
+	if counter, ok := h.runEventCounterCache.data[key]; ok {
 		return counter
 	}
-	counter := tidbmetrics.MVServiceRunEventCounterVec.WithLabelValues(eventType)
-	h.runEventCounterCache.data[eventType] = counter
+	counter := tidbmetrics.MVServiceRunEventCounterVec.WithLabelValues(component, eventType)
+	h.runEventCounterCache.data[key] = counter
 	return counter
 }

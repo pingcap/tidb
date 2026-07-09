@@ -19,26 +19,16 @@ import (
 )
 
 const (
-	mvMetricRunEventTaskExecSubmitted    = "exec_submitted"
-	mvMetricRunEventTaskExecFinished     = "exec_finished"
-	mvMetricRunEventTaskExecFailed       = "exec_failed"
-	mvMetricRunEventTaskExecTimeout      = "exec_timeout"
-	mvMetricRunEventTaskExecRejected     = "exec_rejected"
-	mvMetricRunEventTaskExecBackpressure = "exec_backpressure"
+	mvMetricLabelComponent = "component"
 
-	mvMetricTaskStatusTaskExecRunning         = "exec_running"
-	mvMetricTaskStatusTaskExecWaiting         = "exec_waiting"
-	mvMetricTaskStatusTaskExecTimedOutRunning = "exec_timed_out_running"
-	mvMetricTaskStatusTaskExecBackpressureBlk = "exec_backpressure_blocked"
+	mvMetricComponentService = "service"
 
 	mvMetricTaskStatusMVTotal           = "mv_total"
 	mvMetricTaskStatusMVLogTotal        = "mvlog_total"
-	mvMetricTaskStatusMVRefreshRun      = "mv_refresh_running"
-	mvMetricTaskStatusMVLogPurgeRun     = "mvlog_purge_running"
 	mvMetricTaskStatusMVRefreshWarning  = "mv_refresh_warning"
 	mvMetricTaskStatusMVRefreshOverdue  = "mv_refresh_overdue"
 	mvMetricTaskStatusMVLogAccumulation = "mvlog_accumulation"
-	mvMetricTaskStatusMVServicePanic    = "mv_service_panic"
+	mvMetricTaskStatusMVServicePanic    = "panic"
 )
 
 // Metrics for materialized view service.
@@ -49,22 +39,8 @@ var (
 
 	MVServiceRunEventCounterVec *prometheus.CounterVec
 
-	MVTaskExecutorSubmittedCounter    prometheus.Counter
-	MVTaskExecutorFinishedCounter     prometheus.Counter
-	MVTaskExecutorFailedCounter       prometheus.Counter
-	MVTaskExecutorTimeoutCounter      prometheus.Counter
-	MVTaskExecutorRejectedCounter     prometheus.Counter
-	MVTaskExecutorBackpressureCounter prometheus.Counter
-
-	MVTaskExecutorRunningTaskGauge         prometheus.Gauge
-	MVTaskExecutorWaitingTaskGauge         prometheus.Gauge
-	MVTaskExecutorTimedOutRunningTaskGauge prometheus.Gauge
-	MVTaskExecutorBackpressureBlockedGauge prometheus.Gauge
-
 	MVServiceMVRefreshTotalGauge    prometheus.Gauge
 	MVServiceMVLogPurgeTotalGauge   prometheus.Gauge
-	MVServiceMVRefreshRunningGauge  prometheus.Gauge
-	MVServiceMVLogPurgeRunningGauge prometheus.Gauge
 	MVServiceMVRefreshWarningGauge  prometheus.Gauge
 	MVServiceMVRefreshOverdueGauge  prometheus.Gauge
 	MVServiceMVLogAccumulationGauge prometheus.Gauge
@@ -78,8 +54,8 @@ func InitMVMetrics() {
 			Namespace: "tidb",
 			Subsystem: "mv",
 			Name:      "service_task_status",
-			Help:      "Number of MV service and task executor tasks by status and role.",
-		}, []string{LblType})
+			Help:      "Number of MV service and task executor tasks by component and status type.",
+		}, []string{mvMetricLabelComponent, LblType})
 
 	MVServiceOperationDurationHistogramVec = NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -95,25 +71,13 @@ func InitMVMetrics() {
 			Namespace: "tidb",
 			Subsystem: "mv",
 			Name:      "service_run_event_total",
-			Help:      "Counter of MV service scheduler and task executor events.",
-		}, []string{LblType})
+			Help:      "Counter of MV service scheduler and task executor events by component and event type.",
+		}, []string{mvMetricLabelComponent, LblType})
 
-	MVTaskExecutorSubmittedCounter = MVServiceRunEventCounterVec.WithLabelValues(mvMetricRunEventTaskExecSubmitted)
-	MVTaskExecutorFinishedCounter = MVServiceRunEventCounterVec.WithLabelValues(mvMetricRunEventTaskExecFinished)
-	MVTaskExecutorFailedCounter = MVServiceRunEventCounterVec.WithLabelValues(mvMetricRunEventTaskExecFailed)
-	MVTaskExecutorTimeoutCounter = MVServiceRunEventCounterVec.WithLabelValues(mvMetricRunEventTaskExecTimeout)
-	MVTaskExecutorRejectedCounter = MVServiceRunEventCounterVec.WithLabelValues(mvMetricRunEventTaskExecRejected)
-	MVTaskExecutorBackpressureCounter = MVServiceRunEventCounterVec.WithLabelValues(mvMetricRunEventTaskExecBackpressure)
-	MVTaskExecutorRunningTaskGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricTaskStatusTaskExecRunning)
-	MVTaskExecutorWaitingTaskGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricTaskStatusTaskExecWaiting)
-	MVTaskExecutorTimedOutRunningTaskGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricTaskStatusTaskExecTimedOutRunning)
-	MVTaskExecutorBackpressureBlockedGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricTaskStatusTaskExecBackpressureBlk)
-	MVServiceMVRefreshTotalGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricTaskStatusMVTotal)
-	MVServiceMVLogPurgeTotalGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricTaskStatusMVLogTotal)
-	MVServiceMVRefreshRunningGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricTaskStatusMVRefreshRun)
-	MVServiceMVLogPurgeRunningGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricTaskStatusMVLogPurgeRun)
-	MVServiceMVRefreshWarningGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricTaskStatusMVRefreshWarning)
-	MVServiceMVRefreshOverdueGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricTaskStatusMVRefreshOverdue)
-	MVServiceMVLogAccumulationGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricTaskStatusMVLogAccumulation)
-	MVServicePanicGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricTaskStatusMVServicePanic)
+	MVServiceMVRefreshTotalGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricComponentService, mvMetricTaskStatusMVTotal)
+	MVServiceMVLogPurgeTotalGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricComponentService, mvMetricTaskStatusMVLogTotal)
+	MVServiceMVRefreshWarningGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricComponentService, mvMetricTaskStatusMVRefreshWarning)
+	MVServiceMVRefreshOverdueGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricComponentService, mvMetricTaskStatusMVRefreshOverdue)
+	MVServiceMVLogAccumulationGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricComponentService, mvMetricTaskStatusMVLogAccumulation)
+	MVServicePanicGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricComponentService, mvMetricTaskStatusMVServicePanic)
 }

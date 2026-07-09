@@ -24885,7 +24885,7 @@
                 "aliasColors": {},
                 "dashLength": 10,
                 "datasource": "${DS_TEST-CLUSTER}",
-                "description": "Current MV service and task executor counts by status type.",
+                "description": "Current MV service and task executor counts by component and status type.",
                 "fill": 1,
                 "gridPos": {
                     "h": 6,
@@ -24920,10 +24920,10 @@
                 "spaceLength": 10,
                 "targets": [
                     {
-                        "expr": "sum(tidb_mv_service_task_status{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}) by (type)",
+                        "expr": "sum(tidb_mv_service_task_status{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}) by (component, type)",
                         "format": "time_series",
                         "intervalFactor": 2,
-                        "legendFormat": "{{type}}",
+                        "legendFormat": "{{component}}/{{type}}",
                         "refId": "A"
                     }
                 ],
@@ -24979,7 +24979,7 @@
                 "dashLength": 10,
                 "dashes": false,
                 "datasource": "${DS_TEST-CLUSTER}",
-                "description": "MV service scheduler and task executor events per second by type.",
+                "description": "MV service scheduler and task executor events per second by component and type.",
                 "fill": 1,
                 "fillGradient": 0,
                 "gridPos": {
@@ -25020,10 +25020,10 @@
                 "steppedLine": false,
                 "targets": [
                     {
-                        "expr": "sum(rate(tidb_mv_service_run_event_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (type)",
+                        "expr": "sum(rate(tidb_mv_service_run_event_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (component, type)",
                         "format": "time_series",
                         "intervalFactor": 2,
-                        "legendFormat": "{{type}}",
+                        "legendFormat": "{{component}}/{{type}}",
                         "refId": "A"
                     }
                 ],

@@ -252,7 +252,7 @@ Runtime observability:
 
 - MVService periodically scans every MLog tracked by `mysql.tidb_mlog_purge_info`;
 - for each MLog with alerting enabled, it checks the current physical MLog row count;
-- if the count is greater than the effective threshold, the MLog is reported into metric `tidb_mv_service_task_status{type="mvlog_accumulation"}`.
+- if the count is greater than the effective threshold, the MLog is reported into metric `tidb_mv_service_task_status{component="service", type="mvlog_accumulation"}`.
 
 This metric reports the number of MLogs currently exceeding their configured accumulation threshold, after TiDB-node ownership filtering, so the same MLog is not double-counted by multiple nodes.
 
