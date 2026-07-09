@@ -25,17 +25,30 @@ import (
 )
 
 func TestRUEMASeedAndConverge(t *testing.T) {
-	e := newRUEMA(0)
-	require.Zero(t, e.Predict(), "fresh EMA: no prediction")
+	t.Run("seeded prediction", func(t *testing.T) {
+		const pageSizeBytes uint64 = 4 * 1024 * 1024
+		e := newRUEMA(pageSizeBytes)
+		require.Equal(t, pageSizeBytes, e.Predict(), "fresh seeded EMA predicts the requested page size")
 
-	now := time.Now()
-	e.Observe(1_000_000, now)
-	require.Equal(t, uint64(1_000_000), e.Predict(),
-		"first sample seeds the EMA via a ~infinite dt (alpha≈1)")
+		now := time.Now()
+		e.Observe(1_000_000, now)
+		require.Equal(t, uint64(1_000_000), e.Predict(),
+			"first real sample replaces the seed via a ~infinite dt (alpha≈1)")
+	})
 
-	e.Observe(1_000_000, now.Add(100*time.Millisecond))
-	require.InDelta(t, float64(1_000_000), float64(e.Predict()), 1,
-		"steady input: prediction stays at the input")
+	t.Run("unseeded first observation", func(t *testing.T) {
+		e := newRUEMA(0)
+		require.Zero(t, e.Predict(), "fresh unseeded EMA: no prediction")
+
+		now := time.Now()
+		e.Observe(1_000_000, now)
+		require.Equal(t, uint64(1_000_000), e.Predict(),
+			"first sample seeds the EMA via a ~infinite dt (alpha≈1)")
+
+		e.Observe(1_000_000, now.Add(100*time.Millisecond))
+		require.InDelta(t, float64(1_000_000), float64(e.Predict()), 1,
+			"steady input: prediction stays at the input")
+	})
 }
 
 func TestRUEMATracksShift(t *testing.T) {
