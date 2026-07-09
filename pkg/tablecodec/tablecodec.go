@@ -915,10 +915,9 @@ func buildColumnIDOffsets(allCols []rowcodec.ColInfo) map[int64]int {
 }
 
 func buildRestoredColumn(useNewCollate bool, allCols []rowcodec.ColInfo) []rowcodec.ColInfo {
-	encoding := types.NewEncodingConfig(useNewCollate)
 	restoredColumns := make([]rowcodec.ColInfo, 0, len(allCols))
 	for i, col := range allCols {
-		if !encoding.NeedRestoredData(col.Ft) {
+		if !types.NeedRestoredDataWithCollate(col.Ft, useNewCollate) {
 			continue
 		}
 		copyColInfo := rowcodec.ColInfo{
@@ -996,18 +995,17 @@ func DecodeIndexKVEx(key, value []byte, colsLen int, hdStatus HandleStatus, colu
 //	`colsLen` is expected to be index columns count.
 //	`columns` is expected to be index columns + handle columns(if hdStatus is not HandleNotNeeded).
 func DecodeIndexKV(key, value []byte, colsLen int, hdStatus HandleStatus, columns []rowcodec.ColInfo) ([][]byte, error) {
-	return DecodeIndexKVWithConfig(types.CurrentEncodingConfig(), key, value, colsLen, hdStatus, columns)
+	return DecodeIndexKVWithCollate(collate.NewCollationEnabled(), key, value, colsLen, hdStatus, columns)
 }
 
-// DecodeIndexKVWithConfig is similar to DecodeIndexKV but uses a caller-owned
-// encoding config.
-func DecodeIndexKVWithConfig(encoding types.EncodingConfig, key, value []byte, colsLen int, hdStatus HandleStatus, columns []rowcodec.ColInfo) ([][]byte, error) {
+// DecodeIndexKVWithCollate is similar to DecodeIndexKV but with explicit useNewCollate param.
+func DecodeIndexKVWithCollate(useNewCollate bool, key, value []byte, colsLen int, hdStatus HandleStatus, columns []rowcodec.ColInfo) ([][]byte, error) {
 	if len(value) <= MaxOldEncodeValueLen {
 		preAlloc := make([][]byte, colsLen, colsLen+len(columns))
 		return decodeIndexKvOldCollation(key, value, hdStatus, nil, preAlloc)
 	}
 	if getIndexVersion(value) == 1 {
-		return decodeIndexKvForClusteredIndexVersion1(encoding.UseNewCollate(), key, value, colsLen, hdStatus, columns)
+		return decodeIndexKvForClusteredIndexVersion1(useNewCollate, key, value, colsLen, hdStatus, columns)
 	}
 	return decodeIndexKvGeneral(key, value, colsLen, hdStatus, columns)
 }
@@ -1663,9 +1661,8 @@ func TryGetCommonPkColumnRestoredIds(useNewCollate bool, tbl *model.TableInfo) [
 	if pkIdx == nil {
 		return pkColIDs
 	}
-	encoding := types.NewEncodingConfig(useNewCollate)
 	for _, idxCol := range pkIdx.Columns {
-		if encoding.NeedRestoredData(&tbl.Columns[idxCol.Offset].FieldType) {
+		if types.NeedRestoredDataWithCollate(&tbl.Columns[idxCol.Offset].FieldType, useNewCollate) {
 			pkColIDs = append(pkColIDs, tbl.Columns[idxCol.Offset].ID)
 		}
 	}
@@ -1695,7 +1692,6 @@ func GenIndexValueForClusteredIndexVersion1(useNewCollate bool, loc *time.Locati
 		idxVal = encodePartitionID(idxVal, partitionID)
 	}
 	if idxValNeedRestoredData || len(handleRestoredData) > 0 {
-		encoding := types.NewEncodingConfig(useNewCollate)
 		colIds := make([]int64, 0, len(idxInfo.Columns))
 		allRestoredData := make([]types.Datum, 0, len(handleRestoredData)+len(idxInfo.Columns))
 		for i, idxCol := range idxInfo.Columns {
@@ -1705,7 +1701,7 @@ func GenIndexValueForClusteredIndexVersion1(useNewCollate bool, loc *time.Locati
 			if mysql.HasPriKeyFlag(col.GetFlag()) {
 				continue
 			}
-			if encoding.NeedRestoredData(model.GetIdxChangingFieldType(idxCol, col)) {
+			if types.NeedRestoredDataWithCollate(model.GetIdxChangingFieldType(idxCol, col), useNewCollate) {
 				colIds = append(colIds, col.ID)
 				if collate.IsBinCollation(model.GetIdxChangingFieldType(idxCol, col).GetCollate()) {
 					allRestoredData = append(allRestoredData, types.NewUintDatum(uint64(stringutil.GetTailSpaceCount(indexedValues[i].GetString()))))

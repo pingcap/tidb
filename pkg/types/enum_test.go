@@ -18,7 +18,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/stretchr/testify/require"
 )
 
@@ -99,18 +98,5 @@ func TestEnum(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, float64(test.Expected), e.ToNumber())
 		}
-	})
-
-	t.Run("EncodingConfig_parseEnum", func(t *testing.T) {
-		origin := collate.NewCollationEnabled()
-		collate.SetNewCollationEnabledForTest(true)
-		defer collate.SetNewCollationEnabledForTest(origin)
-
-		_, err := NewEncodingConfig(false).parseEnum([]string{"a"}, "A", "utf8_general_ci")
-		require.Error(t, err)
-
-		e, err := NewEncodingConfig(true).parseEnum([]string{"a"}, "A", "utf8_general_ci")
-		require.NoError(t, err)
-		require.Equal(t, uint64(1), e.Value)
 	})
 }

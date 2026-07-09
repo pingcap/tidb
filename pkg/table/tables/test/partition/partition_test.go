@@ -65,7 +65,7 @@ func TestPartitionTableUsesTableCollationSnapshot(t *testing.T) {
 	collate.SetNewCollationEnabledForTest(true)
 	snapshotTbl, err := tables.TableFromMeta(autoid.NewAllocators(tblInfo.SepAutoInc()), tblInfo)
 	require.NoError(t, err)
-	require.NoError(t, tables.SetTableEncodingConfig(snapshotTbl, table.NewEncodingConfig(false)))
+	require.NoError(t, tables.SetTableUseNewCollate(snapshotTbl, false))
 
 	pt := snapshotTbl.GetPartitionedTable()
 	require.NotNil(t, pt)

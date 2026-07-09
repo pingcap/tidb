@@ -11,7 +11,6 @@ go_library(
         "//pkg/infoschema",
         "//pkg/meta/model",
         "//pkg/parser/ast",
-        "//pkg/table",
         "//pkg/table/tables",
         "//pkg/types",
         "@com_github_pingcap_errors//:errors",
@@ -21,10 +20,7 @@ go_library(
 go_test(
     name = "copr_test",
     timeout = "short",
-    srcs = [
-        "copr_ctx_collate_test.go",
-        "copr_ctx_test.go",
-    ],
+    srcs = ["copr_ctx_test.go"],
     embed = [":copr"],
     flaky = True,
     shard_count = 4,
@@ -34,7 +30,6 @@ go_test(
         "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
-        "//pkg/planner/core",
         "//pkg/types",
         "//pkg/util/collate",
         "//pkg/util/mock",

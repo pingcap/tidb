@@ -82,7 +82,7 @@ func (t *TableKVDecoder) IterRawIndexKeys(h kv.Handle, rawRow []byte, fn func([]
 				row[i] = types.GetMinValue(&col.FieldType)
 			}
 		}
-		if _, err := evalGeneratedColumns(t.se, row, t.tbl.Cols(), t.genCols, table.EncodingConfigFromTable(t.tbl)); err != nil {
+		if _, err := evalGeneratedColumns(t.se, row, t.tbl.Cols(), t.genCols); err != nil {
 			return err
 		}
 	}

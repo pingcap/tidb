@@ -22,7 +22,6 @@ import (
 	_ "github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 )
@@ -47,7 +46,7 @@ type CopContextBase struct {
 	ExprCtx        exprctx.BuildContext
 	PushDownFlags  uint64
 	RequestSource  string
-	encoding       table.EncodingConfig
+	UseNewCollate  bool
 
 	ColumnInfos []*model.ColumnInfo
 	FieldTypes  []*types.FieldType
@@ -85,7 +84,6 @@ func NewCopContextBase(
 	useNewCollate bool,
 ) (*CopContextBase, error) {
 	var err error
-	encoding := table.NewEncodingConfig(useNewCollate)
 	usedColumnIDs := make(map[int64]struct{}, len(idxCols))
 	usedColumnIDs, err = fillUsedColumns(usedColumnIDs, idxCols, tblInfo)
 	var handleIDs []int64
@@ -129,13 +127,13 @@ func NewCopContextBase(
 		handleIDs = []int64{extra.ID}
 	}
 
-	expColInfos, _, err := expression.ColumnInfos2ColumnsAndNames(
+	expColInfos, _, err := expression.ColumnInfos2ColumnsAndNamesWithCollate(
 		exprCtx,
 		ast.CIStr{}, // unused
 		tblInfo.Name,
 		colInfos,
 		tblInfo,
-		encoding.BuildExprOption(),
+		useNewCollate,
 	)
 	if err != nil {
 		return nil, err
@@ -149,7 +147,7 @@ func NewCopContextBase(
 		ExprCtx:                     exprCtx,
 		PushDownFlags:               pushDownFlags,
 		RequestSource:               requestSource,
-		encoding:                    encoding,
+		UseNewCollate:               useNewCollate,
 		ColumnInfos:                 colInfos,
 		FieldTypes:                  fieldTps,
 		ExprColumnInfos:             expColInfos,
@@ -191,7 +189,7 @@ func NewCopContextSingleIndex(
 	useNewCollate bool,
 ) (*CopContextSingleIndex, error) {
 	cols := idxInfo.Columns
-	neededCols, err := tables.ExtractColumnsFromCondition(exprCtx, idxInfo, tblInfo, false)
+	neededCols, err := tables.ExtractColumnsFromCondition(exprCtx, idxInfo, tblInfo, false, useNewCollate)
 	if err != nil {
 		return nil, err
 	}
@@ -236,7 +234,7 @@ func (c *CopContextSingleIndex) GetCondition() (expression.Expression, error) {
 	expr, err := expression.ParseSimpleExpr(c.GetBase().ExprCtx,
 		c.idxInfo.ConditionExprString,
 		expression.WithInputSchemaAndNames(schema, names, c.GetBase().TableInfo),
-		c.GetBase().encoding.BuildExprOption())
+		expression.WithUseNewCollate(c.GetBase().UseNewCollate))
 	if err != nil {
 		return nil, err
 	}
@@ -266,7 +264,7 @@ func NewCopContextMultiIndex(
 	for _, idxInfo := range allIdxInfo {
 		allIdxCols = append(allIdxCols, idxInfo.Columns...)
 
-		neededCols, err := tables.ExtractColumnsFromCondition(exprCtx, idxInfo, tblInfo, false)
+		neededCols, err := tables.ExtractColumnsFromCondition(exprCtx, idxInfo, tblInfo, false, useNewCollate)
 		if err != nil {
 			return nil, err
 		}
@@ -327,7 +325,7 @@ func (c *CopContextMultiIndex) GetCondition() (expression.Expression, error) {
 		expr, err := expression.ParseSimpleExpr(c.GetBase().ExprCtx,
 			idxInfo.ConditionExprString,
 			expression.WithInputSchemaAndNames(schema, names, c.GetBase().TableInfo),
-			c.GetBase().encoding.BuildExprOption())
+			expression.WithUseNewCollate(c.GetBase().UseNewCollate))
 		if err != nil {
 			return nil, err
 		}

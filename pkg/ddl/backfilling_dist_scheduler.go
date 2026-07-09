@@ -212,7 +212,7 @@ func getUserTableFromTaskStore(
 	if err != nil {
 		return nil, err
 	}
-	if err := tables.SetTableEncodingConfig(tbl, table.NewEncodingConfig(useNewCollate)); err != nil {
+	if err := tables.SetTableUseNewCollate(tbl, useNewCollate); err != nil {
 		return nil, err
 	}
 	return tbl, nil

@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/stretchr/testify/require"
@@ -647,11 +648,11 @@ func TestExtractColumnsFromCondition(t *testing.T) {
 		t.Run(tt.cond, func(t *testing.T) {
 			idxInfo.ConditionExprString = tt.cond
 
-			got, err := tables.ExtractColumnsFromCondition(ctx, idxInfo, tblInfo, false)
+			got, err := tables.ExtractColumnsFromCondition(ctx, idxInfo, tblInfo, false, collate.NewCollationEnabled())
 			require.NoError(t, err)
 			require.ElementsMatch(t, tt.expected, got)
 
-			got, err = tables.ExtractColumnsFromCondition(ctx, idxInfo, tblInfo, true)
+			got, err = tables.ExtractColumnsFromCondition(ctx, idxInfo, tblInfo, true, collate.NewCollationEnabled())
 			require.NoError(t, err)
 			require.ElementsMatch(t, tt.expectedColumnInWithVirtualGeneratedColumn, got)
 		})

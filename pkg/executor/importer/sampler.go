@@ -213,7 +213,7 @@ func (s *kvSizeSampler) CreateColAssignSimpleExprs(
 		s.cfg.ColumnAssignments,
 		ctx,
 		&s.colAssignMu,
-		table.EncodingConfigFromTable(s.table),
+		s.table.UseNewCollate(),
 	)
 }
 
@@ -340,7 +340,7 @@ func (s *kvSizeSampler) sampleOneFile(
 	if err != nil {
 		return 0, 0, 0, errors.Annotatef(err, "failed to tables.TableFromMeta %s", s.table.Meta().Name)
 	}
-	if err := tables.SetTableEncodingConfig(tbl, table.EncodingConfigFromTable(s.table)); err != nil {
+	if err := tables.SetTableUseNewCollate(tbl, s.table.UseNewCollate()); err != nil {
 		return 0, 0, 0, err
 	}
 	encoder, err := s.getKVEncoder(s.logger, chunk, tbl)

@@ -349,10 +349,6 @@ func CastColumnValue(ctx expression.BuildContext, val types.Datum, col *model.Co
 // castColumnValue casts a value based on column type.
 func castColumnValue(tc types.Context, ec errctx.Context, sqlMode mysql.SQLMode, val types.Datum, ft *types.FieldType, colName string, connID uint64, returnErr, forceIgnoreTruncate bool) (casted types.Datum, err error) {
 	casted, err = val.ConvertTo(tc, ft)
-	return handleCastColumnValueResult(tc, ec, sqlMode, val, ft, colName, connID, returnErr, forceIgnoreTruncate, casted, err)
-}
-
-func handleCastColumnValueResult(tc types.Context, ec errctx.Context, sqlMode mysql.SQLMode, val types.Datum, ft *types.FieldType, colName string, connID uint64, returnErr, forceIgnoreTruncate bool, casted types.Datum, err error) (types.Datum, error) {
 	// TODO: make sure all truncate errors are handled by ConvertTo.
 	if returnErr && err != nil {
 		return casted, err

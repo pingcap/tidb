@@ -135,50 +135,22 @@ func IsNonBinaryStr(ft *FieldType) bool {
 	return false
 }
 
-// EncodingConfig keeps collation-sensitive type behavior fixed to a caller-owned
-// encoding mode.
-type EncodingConfig struct {
-	mode collate.Mode
+// NeedRestoredData returns if a type needs restored data.
+// If the type is char and the collation is _bin, NeedRestoredData() returns false.
+func NeedRestoredData(ft *FieldType) bool {
+	return NeedRestoredDataWithCollate(ft, collate.NewCollationEnabled())
 }
 
-// NewEncodingConfig creates an EncodingConfig from an explicit new-collation
-// mode.
-func NewEncodingConfig(useNewCollate bool) EncodingConfig {
-	return EncodingConfig{mode: collate.NewMode(useNewCollate)}
-}
-
-// CurrentEncodingConfig creates an EncodingConfig from the process-global
-// new-collation setting.
-func CurrentEncodingConfig() EncodingConfig {
-	return NewEncodingConfig(collate.NewCollationEnabled())
-}
-
-// UseNewCollate returns whether the config uses the new collation
-// implementation.
-func (c EncodingConfig) UseNewCollate() bool {
-	return c.mode.Enabled()
-}
-
-// Collator returns the collator for this config.
-func (c EncodingConfig) Collator(collation string) collate.Collator {
-	return c.mode.Collator(collation)
-}
-
-// NeedRestoredData reports if a type needs restored data under this config.
-func (c EncodingConfig) NeedRestoredData(ft *FieldType) bool {
-	if c.UseNewCollate() &&
-		IsNonBinaryStr(ft) &&
+// NeedRestoredDataWithCollate reports restored-data needs under a caller-owned
+// collation mode, so encode/decode paths can use the same setting captured by
+// their table or index.
+func NeedRestoredDataWithCollate(ft *FieldType, useNewCollate bool) bool {
+	if useNewCollate && IsNonBinaryStr(ft) &&
 		(!collate.IsBinCollation(ft.GetCollate()) || IsTypeVarchar(ft.GetType())) &&
 		ft.GetCollate() != "utf8mb4_0900_bin" {
 		return true
 	}
 	return false
-}
-
-// NeedRestoredData returns if a type needs restored data.
-// If the type is char and the collation is _bin, NeedRestoredData() returns false.
-func NeedRestoredData(ft *FieldType) bool {
-	return CurrentEncodingConfig().NeedRestoredData(ft)
 }
 
 // IsString returns a boolean indicating

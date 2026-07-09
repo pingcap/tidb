@@ -115,7 +115,7 @@ func NewAddIndexIngestPipeline(
 		if err != nil {
 			return nil, err
 		}
-		if err := tables.SetIndexEncodingConfig(index, table.NewEncodingConfig(tbl.UseNewCollate())); err != nil {
+		if err := tables.SetIndexUseNewCollate(index, tbl.UseNewCollate()); err != nil {
 			return nil, err
 		}
 		indexes = append(indexes, index)
@@ -176,7 +176,7 @@ func NewWriteIndexToExternalStoragePipeline(
 		if err != nil {
 			return nil, err
 		}
-		if err := tables.SetIndexEncodingConfig(index, table.NewEncodingConfig(tbl.UseNewCollate())); err != nil {
+		if err := tables.SetIndexUseNewCollate(index, tbl.UseNewCollate()); err != nil {
 			return nil, err
 		}
 		indexes = append(indexes, index)

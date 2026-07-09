@@ -69,7 +69,6 @@ go_library(
         "//pkg/sessionctx/variable",
         "//pkg/statistics/handle/storage",
         "//pkg/store",
-        "//pkg/table",
         "//pkg/table/tables",
         "//pkg/types",
         "//pkg/util",

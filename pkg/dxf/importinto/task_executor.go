@@ -50,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/recording"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
-	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -112,9 +111,9 @@ func getTableImporter(
 	if err != nil {
 		return nil, err
 	}
-	if err := tables.SetTableEncodingConfig(
+	if err := tables.SetTableUseNewCollate(
 		tbl,
-		table.NewEncodingConfig(taskMeta.Plan.GetUseNewCollateOrDefault(collate.NewCollationEnabled())),
+		taskMeta.Plan.GetUseNewCollateOrDefault(collate.NewCollationEnabled()),
 	); err != nil {
 		return nil, err
 	}

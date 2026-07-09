@@ -98,27 +98,6 @@ func NewCollationEnabled() bool {
 	return atomic.LoadInt32(&newCollationEnabled) == 1
 }
 
-// Mode carries a fixed new-collation setting for encoding paths that must not
-// depend on the process-global setting.
-type Mode struct {
-	enabled bool
-}
-
-// NewMode creates a fixed collation mode.
-func NewMode(enabled bool) Mode {
-	return Mode{enabled: enabled}
-}
-
-// CurrentMode creates a collation mode from the process-global setting.
-func CurrentMode() Mode {
-	return NewMode(NewCollationEnabled())
-}
-
-// Enabled returns whether the mode uses the new collation implementation.
-func (m Mode) Enabled() bool {
-	return m.enabled
-}
-
 // CompatibleCollate checks whether the two collate are the same.
 func CompatibleCollate(collate1, collate2 string) bool {
 	if (collate1 == "utf8mb4_general_ci" || collate1 == "utf8_general_ci") && (collate2 == "utf8mb4_general_ci" || collate2 == "utf8_general_ci") {
@@ -160,12 +139,12 @@ func RestoreCollationIDIfNeeded(id int32) int32 {
 // GetCollator get the collator according to collate, it will return the binary
 // collator if the corresponding collator doesn't exist.
 func GetCollator(collate string) Collator {
-	return CurrentMode().Collator(collate)
+	return GetCollatorWithCollate(NewCollationEnabled(), collate)
 }
 
-// Collator returns the collator for the mode.
-func (m Mode) Collator(collate string) Collator {
-	if m.enabled {
+// GetCollatorWithCollate is similar with GetCollator but allow explicit useNewCollate.
+func GetCollatorWithCollate(useNewCollate bool, collate string) Collator {
+	if useNewCollate {
 		ctor, ok := newCollatorMap[collate]
 		if !ok {
 			if collate != "" {
@@ -200,12 +179,7 @@ func GetBinaryCollatorSlice(n int) []Collator {
 
 // GetCollatorByID get the collator according to id, it will return the binary collator if the corresponding collator doesn't exist.
 func GetCollatorByID(id int) Collator {
-	return CurrentMode().CollatorByID(id)
-}
-
-// CollatorByID returns the collator for the ID under the mode.
-func (m Mode) CollatorByID(id int) Collator {
-	if m.enabled {
+	if NewCollationEnabled() {
 		ctor, ok := newCollatorIDMap[id]
 		if !ok {
 			logutil.BgLogger().Warn(

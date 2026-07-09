@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/collate"
 	utilmock "github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -93,12 +92,6 @@ func TestKVEncoderForDupResolve(t *testing.T) {
 func newKVEncoderTestTable(t *testing.T, createSQL string) table.Table {
 	t.Helper()
 
-	return newKVEncoderTestTableWithEncoding(t, createSQL, table.NewEncodingConfig(collate.NewCollationEnabled()))
-}
-
-func newKVEncoderTestTableWithEncoding(t *testing.T, createSQL string, encoding table.EncodingConfig) table.Table {
-	t.Helper()
-
 	stmt, err := parser.New().ParseOneStmt(createSQL, "", "")
 	require.NoError(t, err)
 	tblInfo, err := ddl.MockTableInfo(utilmock.NewContext(), stmt.(*ast.CreateTableStmt), 1)
@@ -106,7 +99,6 @@ func newKVEncoderTestTableWithEncoding(t *testing.T, createSQL string, encoding 
 	tblInfo.State = model.StatePublic
 	tbl, err := tables.TableFromMeta(lightningkv.NewPanickingAllocators(tblInfo.SepAutoInc()), tblInfo)
 	require.NoError(t, err)
-	require.NoError(t, tables.SetTableEncodingConfig(tbl, encoding))
 	return tbl
 }
 
@@ -175,40 +167,4 @@ func TestKVEncoderCastEnumErrorMessage(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "[Import:ErrCastValue]Value conversion failed for column 'c1'. Expected type: enum('a','b'), received value: \"c\". Reason:")
 	require.Contains(t, err.Error(), "Data truncated")
-}
-
-func TestKVEncoderCastEnumSetUsesTableCollationSnapshot(t *testing.T) {
-	origin := collate.NewCollationEnabled()
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(origin)
-
-	tbl := newKVEncoderTestTableWithEncoding(t, `create table t(
-		c1 enum('a','b') character set utf8mb4 collate utf8mb4_general_ci,
-		c2 set('a','b') character set utf8mb4 collate utf8mb4_general_ci
-	)`, table.NewEncodingConfig(false))
-
-	encodeCfg := &encode.EncodingConfig{
-		Table:  tbl,
-		Logger: log.L(),
-		SessionOptions: encode.SessionOptions{
-			SQLMode:   mysql.ModeStrictAllTables,
-			Timestamp: 1234567890,
-		},
-	}
-	controller := &importer.LoadDataController{
-		ASTArgs: &importer.ASTArgs{},
-		Plan:    &importer.Plan{},
-		Table:   tbl,
-	}
-	encoder, err := importer.NewTableKVEncoderForDupResolve(encodeCfg, controller)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, encoder.Close()) })
-
-	_, err = encoder.Encode([]types.Datum{types.NewStringDatum("A"), types.NewStringDatum("a")}, 1)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "Value conversion failed for column 'c1'")
-
-	_, err = encoder.Encode([]types.Datum{types.NewStringDatum("a"), types.NewStringDatum("A")}, 1)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "Value conversion failed for column 'c2'")
 }

@@ -39,7 +39,6 @@ type TableKVEncoder struct {
 	columnAssignments []expression.Expression
 	fieldMappings     []*FieldMapping
 	insertColumns     []*table.Column
-	encoding          table.EncodingConfig
 	// Following cache use to avoid `runtime.makeslice`.
 	insertColumnRowCache []types.Datum
 	rowCache             []types.Datum
@@ -88,7 +87,6 @@ func newTableKVEncoderInner(
 		columnAssignments: colAssignExprs,
 		fieldMappings:     fieldMappings,
 		insertColumns:     insertColumns,
-		encoding:          table.EncodingConfigFromTable(config.Table),
 	}, nil
 }
 
@@ -193,7 +191,7 @@ func (en *TableKVEncoder) parserData2TableData(parserData []types.Datum, rowID i
 func (en *TableKVEncoder) getRow(vals []types.Datum, hasValue []bool, rowID int64) ([]types.Datum, error) {
 	row := en.rowCache
 	for i := range en.insertColumns {
-		casted, err := en.encoding.CastColumnValue(en.SessionCtx.GetExprCtx(), vals[i], en.insertColumns[i].ToInfo(), false, false)
+		casted, err := table.CastColumnValue(en.SessionCtx.GetExprCtx(), vals[i], en.insertColumns[i].ToInfo(), false, false)
 		if err != nil {
 			return nil, en.LogKVConvertFailed(vals, i, en.insertColumns[i].ToInfo(), err)
 		}

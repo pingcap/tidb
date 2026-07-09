@@ -66,17 +66,17 @@ const (
 
 // Encoder encodes Datum values with a fixed new collation setting.
 type Encoder struct {
-	mode collate.Mode
+	useNewCollate bool
 }
 
 // NewEncoder creates an Encoder with the given new collation setting.
 func NewEncoder(useNewCollate bool) Encoder {
-	return Encoder{mode: collate.NewMode(useNewCollate)}
+	return Encoder{useNewCollate: useNewCollate}
 }
 
 // UseNewCollate returns whether the encoder is using new collation.
 func (enc Encoder) UseNewCollate() bool {
-	return enc.mode.Enabled()
+	return enc.useNewCollate
 }
 
 func preRealloc(b []byte, vals []types.Datum, comparable1 bool) []byte {
@@ -231,8 +231,8 @@ func EncodeMySQLTime(loc *time.Location, t types.Time, tp byte, b []byte) (_ []b
 }
 
 func (enc Encoder) encodeString(b []byte, val types.Datum, comparable1 bool) []byte {
-	if enc.UseNewCollate() && comparable1 {
-		return encodeBytes(b, enc.mode.Collator(val.Collation()).ImmutableKey(val.GetString()), true)
+	if enc.useNewCollate && comparable1 {
+		return encodeBytes(b, collate.GetCollatorWithCollate(enc.useNewCollate, val.Collation()).ImmutableKey(val.GetString()), true)
 	}
 	return encodeBytes(b, val.GetBytes(), comparable1)
 }

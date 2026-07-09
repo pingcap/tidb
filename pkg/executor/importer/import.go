@@ -1946,7 +1946,7 @@ func createColAssignSimpleExprs(
 	assignments []*ast.Assignment,
 	ctx expression.BuildContext,
 	mu *sync.Mutex,
-	encoding table.EncodingConfig,
+	useNewCollate bool,
 ) (_ []expression.Expression, _ []contextutil.SQLWarn, retErr error) {
 	if mu != nil {
 		mu.Lock()
@@ -1955,7 +1955,7 @@ func createColAssignSimpleExprs(
 	res := make([]expression.Expression, 0, len(assignments))
 	var allWarnings []contextutil.SQLWarn
 	for _, assign := range assignments {
-		newExpr, err := expression.BuildSimpleExpr(ctx, assign.Expr, encoding.BuildExprOption())
+		newExpr, err := expression.BuildSimpleExpr(ctx, assign.Expr, expression.WithUseNewCollate(useNewCollate))
 		// col assign expr warnings is static, we should generate it for each row processed.
 		// so we save it and clear it here.
 		if ctx.GetEvalCtx().WarningCount() > 0 {
@@ -1975,7 +1975,7 @@ func (e *LoadDataController) CreateColAssignSimpleExprs(ctx expression.BuildCont
 		e.ColumnAssignments,
 		ctx,
 		&e.colAssignMu,
-		table.EncodingConfigFromTable(e.Table),
+		e.Table.UseNewCollate(),
 	)
 }
 

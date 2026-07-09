@@ -50,8 +50,8 @@ func TestEncoderNewCollationEnabled(t *testing.T) {
 
 	lower := types.NewCollationStringDatum("aaa", "utf8_general_ci")
 	upper := types.NewCollationStringDatum("AAA", "utf8_general_ci")
-	enabledEncoder := NewEncoder(true)
-	disabledEncoder := NewEncoder(false)
+	enabledEncoder := Encoder{useNewCollate: true}
+	disabledEncoder := Encoder{useNewCollate: false}
 
 	collate.SetNewCollationEnabledForTest(true)
 	enabledLower, err := enabledEncoder.EncodeKey(time.Local, nil, lower)

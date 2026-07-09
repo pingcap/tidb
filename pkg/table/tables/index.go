@@ -49,6 +49,8 @@ var indexConditionECtx exprctx.BuildContext
 // indexPartialCondition is a data structure to help implement the partial index.
 type indexPartialCondition struct {
 	conditionExpr expression.Expression
+	conditionInit sync.Once
+	conditionErr  error
 	// conditionEvalBufferPool stores many eval buffer to avoid allocating chunk
 	// for evaluating partial index condition for each time.
 	// It's only initialized if the `partialConditionExpr` is not nil.
@@ -71,10 +73,9 @@ type index struct {
 
 // NeedRestoredData checks whether the index columns needs restored data.
 func NeedRestoredData(useNewCollate bool, idxCols []*model.IndexColumn, colInfos []*model.ColumnInfo) bool {
-	encoding := types.NewEncodingConfig(useNewCollate)
 	for _, idxCol := range idxCols {
 		col := colInfos[idxCol.Offset]
-		if encoding.NeedRestoredData(model.GetIdxChangingFieldType(idxCol, col)) {
+		if types.NeedRestoredDataWithCollate(model.GetIdxChangingFieldType(idxCol, col), useNewCollate) {
 			return true
 		}
 	}
@@ -88,41 +89,44 @@ func NewIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.Index
 		tblInfo:  tblInfo,
 		phyTblID: physicalID,
 	}
-	if err := index.setEncodingConfig(table.NewEncodingConfig(collate.NewCollationEnabled())); err != nil {
-		return nil, errors.Trace(err)
-	}
+	index.setUseNewCollate(collate.NewCollationEnabled())
 	return index, nil
 }
 
-// SetIndexEncodingConfig sets the encoding config for an Index built by NewIndex.
-// It also rebuilds the partial-index condition with the same encoding config.
-func SetIndexEncodingConfig(idx table.Index, encoding table.EncodingConfig) error {
+// SetIndexUseNewCollate sets the new-collation mode for an Index built by NewIndex.
+// It also rebuilds the partial-index condition with the same mode.
+func SetIndexUseNewCollate(idx table.Index, useNewCollate bool) error {
 	index, ok := idx.(*index)
 	if !ok {
 		return errors.Errorf("unexpected index type %T", idx)
 	}
-	return index.setEncodingConfig(encoding)
+	index.setUseNewCollate(useNewCollate)
+	return index.initPartialCondition()
 }
 
-func (c *index) setEncodingConfig(encoding table.EncodingConfig) error {
-	c.encoder = encoding.Encoder()
+func (c *index) setUseNewCollate(useNewCollate bool) {
+	c.encoder = codec.NewEncoder(useNewCollate)
 	c.initNeedRestoreData = sync.Once{}
 	c.needRestoredData = false
 	c.conditionExpr = nil
+	c.conditionInit = sync.Once{}
+	c.conditionErr = nil
 	c.conditionEvalBufferPool = sync.Pool{}
-
-	return c.initPartialCondition(encoding)
 }
 
-func (c *index) initPartialCondition(encoding table.EncodingConfig) error {
+func (c *index) initPartialCondition() error {
 	conditionString := c.idxInfo.ConditionExprString
-	if len(conditionString) > 0 {
+	if len(conditionString) == 0 {
+		return nil
+	}
+	c.conditionInit.Do(func() {
 		var err error
 		c.conditionExpr, err = expression.ParseSimpleExpr(indexConditionECtx, conditionString,
 			expression.WithTableInfo("", c.tblInfo),
-			encoding.BuildExprOption())
+			expression.WithUseNewCollate(c.encoder.UseNewCollate()))
 		if err != nil {
-			return errors.Trace(err)
+			c.conditionErr = errors.Trace(err)
+			return
 		}
 		c.conditionEvalBufferPool = sync.Pool{
 			New: func() any {
@@ -145,8 +149,8 @@ func (c *index) initPartialCondition(encoding table.EncodingConfig) error {
 				return &evalBuffer
 			},
 		}
-	}
-	return nil
+	})
+	return c.conditionErr
 }
 
 // Meta returns index info.
@@ -276,6 +280,9 @@ out:
 
 // MeetPartialCondition checks whether the row meets the partial index condition of the index.
 func (c *index) MeetPartialCondition(row []types.Datum) (meet bool, err error) {
+	if err := c.initPartialCondition(); err != nil {
+		return false, err
+	}
 	if c.conditionExpr == nil {
 		return true, nil
 	}
@@ -288,6 +295,12 @@ func (c *index) MeetPartialCondition(row []types.Datum) (meet bool, err error) {
 }
 
 func (c *index) MeetPartialConditionWithChunk(row chunk.Row) (meet bool, err error) {
+	if err := c.initPartialCondition(); err != nil {
+		return false, err
+	}
+	if c.conditionExpr == nil {
+		return true, nil
+	}
 	defer func() {
 		r := recover()
 		if r != nil {
@@ -988,12 +1001,14 @@ func GenIndexValueFromIndex(key []byte, value []byte, tblInfo *model.TableInfo, 
 // ExtractColumnsFromCondition returns the columns that are referenced in the index condition expression.
 // If `includeColumnsReferencedByVirtualGeneratedColumns` is true, it will recursively extract the columns from the virtual generated columns.
 // The returned columns might be duplicated.
-func ExtractColumnsFromCondition(ctx expression.BuildContext, idxInfo *model.IndexInfo, tblInfo *model.TableInfo, includeColumnsReferencedByVirtualGeneratedColumns bool) ([]*model.IndexColumn, error) {
+func ExtractColumnsFromCondition(ctx expression.BuildContext, idxInfo *model.IndexInfo, tblInfo *model.TableInfo, includeColumnsReferencedByVirtualGeneratedColumns bool, useNewCollate bool) ([]*model.IndexColumn, error) {
 	if len(idxInfo.ConditionExprString) == 0 {
 		return nil, nil
 	}
 
-	expr, err := expression.ParseSimpleExpr(ctx, idxInfo.ConditionExprString, expression.WithTableInfo("", tblInfo))
+	expr, err := expression.ParseSimpleExpr(ctx, idxInfo.ConditionExprString,
+		expression.WithTableInfo("", tblInfo),
+		expression.WithUseNewCollate(useNewCollate))
 	if err != nil {
 		return nil, err
 	}

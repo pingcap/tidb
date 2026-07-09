@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -357,9 +356,9 @@ func buildControllerForPlan(p *LogicalPlan) (*importer.LoadDataController, error
 	if err != nil {
 		return nil, err
 	}
-	if err := tables.SetTableEncodingConfig(
+	if err := tables.SetTableUseNewCollate(
 		tbl,
-		table.NewEncodingConfig(plan.GetUseNewCollateOrDefault(collate.NewCollationEnabled())),
+		plan.GetUseNewCollateOrDefault(collate.NewCollationEnabled()),
 	); err != nil {
 		return nil, err
 	}

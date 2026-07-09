@@ -97,7 +97,7 @@ func newEncodingTable(e *LoadDataController) (table.Table, error) {
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", e.Table.Meta().Name)
 	}
-	if err := tables.SetTableEncodingConfig(tbl, table.EncodingConfigFromTable(e.Table)); err != nil {
+	if err := tables.SetTableUseNewCollate(tbl, e.Table.UseNewCollate()); err != nil {
 		return nil, err
 	}
 	return tbl, nil
