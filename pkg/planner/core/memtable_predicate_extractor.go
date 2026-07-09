@@ -459,16 +459,18 @@ func (helper extractHelper) extractLikePattern(
 	case ast.EQ:
 		return true, "^" + regexp.QuoteMeta(datums[0].GetString()) + "$"
 	case ast.Like, ast.Ilike:
-		// The extracted pattern is compiled with the default escape ('\') by
-		// stringutil.CompileLike2Regexp, so a non-default ESCAPE would make the
-		// pushed-down pattern diverge from the original predicate. Only build a
-		// pattern when the escape is the default; otherwise skip extraction so
-		// the scalar predicate is kept and rechecked (issue #69653).
-		if !likeEscapeIsDefault(fn) {
+		// The pushed-down pattern must honour the LIKE ESCAPE so it does not
+		// diverge from the original predicate (issue #69653). The escape has to
+		// be resolvable at plan time: for a constant escape (including the
+		// default '\' and the empty escape of NO_BACKSLASH_ESCAPES) we compile
+		// the regexp with it; a non-constant/deferred escape can't be resolved
+		// here, so we skip extraction and let the scalar predicate be rechecked.
+		escape, ok := likeEscapeConst(fn)
+		if !ok {
 			return false, ""
 		}
 		if needLike2Regexp {
-			return true, stringutil.CompileLike2Regexp(datums[0].GetString())
+			return true, stringutil.CompileLike2Regexp(datums[0].GetString(), escape)
 		}
 		return true, datums[0].GetString()
 	case ast.Regexp, ast.RegexpLike:
@@ -478,21 +480,21 @@ func (helper extractHelper) extractLikePattern(
 	}
 }
 
-// likeEscapeIsDefault reports whether the ESCAPE argument of a LIKE/ILIKE
-// ScalarFunction is the default backslash escape. Only then is it safe to
-// compile the pattern with stringutil.CompileLike2Regexp, which hardcodes '\'
-// as the escape. A non-default (or non-constant) escape must fall back to a
-// scalar recheck instead of being pushed down. See issue #69653.
-func likeEscapeIsDefault(fn *expression.ScalarFunction) bool {
+// likeEscapeConst returns the ESCAPE byte of a LIKE/ILIKE ScalarFunction when
+// it is a plan-time constant (ok=true). The escape must be constant so the
+// pushed-down pattern can be compiled to match the predicate exactly (issue
+// #69653); a non-constant, deferred, or parameterized escape returns ok=false,
+// telling the caller to skip pushdown and keep a scalar recheck.
+func likeEscapeConst(fn *expression.ScalarFunction) (byte, bool) {
 	args := fn.GetArgs()
 	if len(args) < 3 {
-		return false
+		return 0, false
 	}
 	escape, ok := args[2].(*expression.Constant)
 	if !ok || escape.DeferredExpr != nil || escape.ParamMarker != nil {
-		return false
+		return 0, false
 	}
-	return escape.Value.GetInt64() == int64('\\')
+	return byte(escape.Value.GetInt64()), true
 }
 
 func (extractHelper) findColumn(schema *expression.Schema, names []*types.FieldName, colName string) map[int64]*types.FieldName {
