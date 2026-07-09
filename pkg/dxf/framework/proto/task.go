@@ -17,6 +17,7 @@ package proto
 import (
 	"cmp"
 	"fmt"
+	"sync/atomic"
 	"time"
 )
 
@@ -63,9 +64,51 @@ const (
 	NormalPriority = 512
 )
 
-// MaxConcurrentTask is the max concurrency of task.
-// TODO: remove this limit later.
-var MaxConcurrentTask = 16
+const (
+	// maxConcurrentTaskLowerBound is the minimum allowed DXF task concurrency.
+	maxConcurrentTaskLowerBound = 16
+	// MaxConcurrentTaskUpperBound is the current safety cap for DXF task concurrency.
+	// TODO: remove this cap after the DXF scheduler no longer runs all schedulers on the owner node.
+	MaxConcurrentTaskUpperBound = 1000
+	// DefaultMaxConcurrentTask is the default DXF task concurrency.
+	DefaultMaxConcurrentTask = maxConcurrentTaskLowerBound
+)
+
+// maxConcurrentTask is an owner-local emergency tuning knob for DXF scheduling.
+// It is intentionally kept in memory only: it is not persisted to TiKV, is reset
+// on restart, and only affects the TiDB node that receives the update. Operators
+// should change it through the DXF owner node when many small tasks are blocked
+// by the default limit. Raising it increases scheduler overhead and memory usage
+// on the owner, so the owner node may need a larger resource spec first.
+var maxConcurrentTask atomic.Int64
+
+func init() {
+	maxConcurrentTask.Store(DefaultMaxConcurrentTask)
+}
+
+// GetMaxConcurrentTask returns the max concurrency of task.
+func GetMaxConcurrentTask() int {
+	return int(maxConcurrentTask.Load())
+}
+
+// SetMaxConcurrentTask updates the max concurrency of task.
+func SetMaxConcurrentTask(value int) error {
+	if value < maxConcurrentTaskLowerBound || value > MaxConcurrentTaskUpperBound {
+		return fmt.Errorf("max_concurrent_task %d is out of range [%d, %d]",
+			value, maxConcurrentTaskLowerBound, MaxConcurrentTaskUpperBound)
+	}
+	maxConcurrentTask.Store(int64(value))
+	return nil
+}
+
+// SetMaxConcurrentTaskForTest updates the max concurrency of task and returns a restore function.
+func SetMaxConcurrentTaskForTest(value int) func() {
+	old := GetMaxConcurrentTask()
+	maxConcurrentTask.Store(int64(value))
+	return func() {
+		maxConcurrentTask.Store(int64(old))
+	}
+}
 
 // ExtraParams is the extra params of task.
 // Note: only store params that's not used for filter or sort in this struct.

@@ -146,6 +146,55 @@ func TestDXFAPI(t *testing.T) {
 		require.EqualValues(t, 2, out.PerKeyspace["ks1"])
 	})
 
+	t.Run("max concurrent task api", func(t *testing.T) {
+		restore := proto.SetMaxConcurrentTaskForTest(proto.DefaultMaxConcurrentTask)
+		defer restore()
+		const maxConcurrentTaskPath = "/dxf/schedule/max_concurrent_task"
+		checkMaxConcurrentTaskOutput := func(body []byte, expected int) {
+			out := struct {
+				MaxConcurrentTask int    `json:"max_concurrent_task"`
+				Persistence       string `json:"persistence"`
+			}{}
+			require.NoError(t, json.Unmarshal(body, &out))
+			require.Equal(t, expected, out.MaxConcurrentTask)
+			require.Equal(t, "memory_only", out.Persistence)
+			require.NotContains(t, string(body), "scope")
+		}
+
+		runAndCheckReqFn(t, http.StatusBadRequest, "This api only support GET and POST method", func() (*http.Response, error) {
+			req, err := http.NewRequest(http.MethodDelete, ts.StatusURL(maxConcurrentTaskPath), nil)
+			require.NoError(t, err)
+			return http.DefaultClient.Do(req)
+		})
+		for _, c := range [][2]string{
+			{maxConcurrentTaskPath, "invalid value "},
+			{maxConcurrentTaskPath + "?value=aa", "invalid value "},
+			{maxConcurrentTaskPath + "?value=15", "out of range"},
+			{fmt.Sprintf("%s?value=%d", maxConcurrentTaskPath, proto.MaxConcurrentTaskUpperBound+1), "out of range"},
+		} {
+			path, errMsg := c[0], c[1]
+			runAndCheckReqFn(t, http.StatusBadRequest, errMsg, func() (*http.Response, error) {
+				return ts.PostStatus(path, "", bytes.NewBuffer([]byte("")))
+			})
+		}
+
+		body := runAndCheckReqFn(t, http.StatusOK, "", func() (*http.Response, error) {
+			return ts.FetchStatus(maxConcurrentTaskPath)
+		})
+		checkMaxConcurrentTaskOutput(body, proto.DefaultMaxConcurrentTask)
+
+		body = runAndCheckReqFn(t, http.StatusOK, "", func() (*http.Response, error) {
+			return ts.PostStatus(maxConcurrentTaskPath+"?value=128", "", bytes.NewBuffer([]byte("")))
+		})
+		checkMaxConcurrentTaskOutput(body, 128)
+		require.Equal(t, 128, proto.GetMaxConcurrentTask())
+
+		body = runAndCheckReqFn(t, http.StatusOK, "", func() (*http.Response, error) {
+			return ts.FetchStatus(maxConcurrentTaskPath)
+		})
+		checkMaxConcurrentTaskOutput(body, 128)
+	})
+
 	t.Run("task history api", func(t *testing.T) {
 		seedHistoryTasks := func(t *testing.T) []int64 {
 			t.Helper()

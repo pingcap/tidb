@@ -201,11 +201,7 @@ func TestManagerSchedulerNotAllocateSlots(t *testing.T) {
 }
 
 func TestFastRespondNoNeedResourceTaskWhenSchedulersReachLimit(t *testing.T) {
-	bak := proto.MaxConcurrentTask
-	t.Cleanup(func() {
-		proto.MaxConcurrentTask = bak
-	})
-	proto.MaxConcurrentTask = 1
+	t.Cleanup(proto.SetMaxConcurrentTaskForTest(1))
 
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
