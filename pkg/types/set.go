@@ -51,7 +51,12 @@ func (e Set) Copy() Set {
 
 // ParseSet creates a Set with name or value.
 func ParseSet(elems []string, name string, collation string) (Set, error) {
-	if setName, err := ParseSetName(elems, name, collation); err == nil {
+	return ParseSetWithCollate(collate.NewCollationEnabled(), elems, name, collation)
+}
+
+// ParseSetWithCollate creates a Set with an explicit new collation mode.
+func ParseSetWithCollate(useNewCollate bool, elems []string, name string, collation string) (Set, error) {
+	if setName, err := ParseSetNameWithCollate(useNewCollate, elems, name, collation); err == nil {
 		return setName, nil
 	}
 	// name doesn't exist, maybe an integer?
@@ -64,11 +69,16 @@ func ParseSet(elems []string, name string, collation string) (Set, error) {
 
 // ParseSetName creates a Set with name.
 func ParseSetName(elems []string, name string, collation string) (Set, error) {
+	return ParseSetNameWithCollate(collate.NewCollationEnabled(), elems, name, collation)
+}
+
+// ParseSetNameWithCollate creates a Set with an explicit new collation mode.
+func ParseSetNameWithCollate(useNewCollate bool, elems []string, name string, collation string) (Set, error) {
 	if len(name) == 0 {
 		return zeroSet, nil
 	}
 
-	ctor := collate.GetCollator(collation)
+	ctor := collate.GetCollatorWithCollate(useNewCollate, collation)
 
 	seps := strings.Split(name, ",")
 	marked := make(map[string]struct{}, len(seps))

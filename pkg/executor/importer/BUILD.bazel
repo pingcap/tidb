@@ -120,7 +120,7 @@ go_test(
     embed = [":importer"],
     flaky = True,
     race = "on",
-    shard_count = 42,
+    shard_count = 43,
     deps = [
         "//br/pkg/mock",
         "//br/pkg/streamhelper",
@@ -175,6 +175,7 @@ go_test(
         "//pkg/util",
         "//pkg/util/cdcutil",
         "//pkg/util/chunk",
+        "//pkg/util/collate",
         "//pkg/util/dbterror/exeerrors",
         "//pkg/util/dbterror/plannererrors",
         "//pkg/util/etcd",

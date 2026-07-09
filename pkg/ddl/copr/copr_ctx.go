@@ -233,7 +233,8 @@ func (c *CopContextSingleIndex) GetCondition() (expression.Expression, error) {
 
 	expr, err := expression.ParseSimpleExpr(c.GetBase().ExprCtx,
 		c.idxInfo.ConditionExprString,
-		expression.WithInputSchemaAndNames(schema, names, c.GetBase().TableInfo))
+		expression.WithInputSchemaAndNames(schema, names, c.GetBase().TableInfo),
+		expression.WithUseNewCollate(c.GetBase().UseNewCollate))
 	if err != nil {
 		return nil, err
 	}
@@ -323,7 +324,8 @@ func (c *CopContextMultiIndex) GetCondition() (expression.Expression, error) {
 		schema, names := c.GetBase().GetSchemaAndNames()
 		expr, err := expression.ParseSimpleExpr(c.GetBase().ExprCtx,
 			idxInfo.ConditionExprString,
-			expression.WithInputSchemaAndNames(schema, names, c.GetBase().TableInfo))
+			expression.WithInputSchemaAndNames(schema, names, c.GetBase().TableInfo),
+			expression.WithUseNewCollate(c.GetBase().UseNewCollate))
 		if err != nil {
 			return nil, err
 		}

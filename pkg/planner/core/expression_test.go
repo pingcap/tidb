@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/stretchr/testify/require"
 )
 
@@ -246,6 +247,47 @@ func TestCastRetTypeDoesNotShareASTFieldType(t *testing.T) {
 	require.Equal(t, mysql.TypeLonglong, sf2.RetType.GetType())
 	require.False(t, mysql.HasNotNullFlag(sf2.RetType.GetFlag()))
 	require.False(t, mysql.HasUnsignedFlag(sf2.RetType.GetFlag()))
+}
+
+func TestBuildSimpleExprWithTableInfoUsesFixedCollation(t *testing.T) {
+	origin := collate.NewCollationEnabled()
+	collate.SetNewCollationEnabledForTest(false)
+	defer collate.SetNewCollationEnabledForTest(origin)
+
+	ctx := coretestsdk.MockContext()
+	defer func() {
+		do := domain.GetDomain(ctx)
+		do.StatsHandle().Close()
+	}()
+
+	strTp := types.NewFieldTypeWithCollation(mysql.TypeVarchar, "utf8mb4_general_ci", 16)
+	tbl := &model.TableInfo{
+		Name: ast.NewCIStr("t"),
+		Columns: []*model.ColumnInfo{
+			{
+				ID:        1,
+				Name:      ast.NewCIStr("a"),
+				Offset:    0,
+				State:     model.StatePublic,
+				FieldType: *strTp,
+			},
+			{
+				ID:                  2,
+				Name:                ast.NewCIStr("b"),
+				Offset:              1,
+				State:               model.StatePublic,
+				FieldType:           *strTp,
+				GeneratedExprString: "a collate utf8_general_ci",
+				Dependences:         map[string]struct{}{"a": {}},
+			},
+		},
+	}
+
+	_, err := buildExpr(t, ctx, "b", expression.WithTableInfo("", tbl), expression.WithUseNewCollate(false))
+	require.NoError(t, err)
+
+	_, err = buildExpr(t, ctx, "b", expression.WithTableInfo("", tbl), expression.WithUseNewCollate(true))
+	require.Error(t, err)
 }
 
 func TestPatternIn(t *testing.T) {

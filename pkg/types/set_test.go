@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/stretchr/testify/require"
 )
 
@@ -100,5 +101,18 @@ func TestSet(t *testing.T) {
 			_, err := ParseSetValue(elems, test)
 			require.Error(t, err)
 		}
+	})
+
+	t.Run("ParseSetWithCollate", func(t *testing.T) {
+		origin := collate.NewCollationEnabled()
+		collate.SetNewCollationEnabledForTest(true)
+		defer collate.SetNewCollationEnabledForTest(origin)
+
+		_, err := ParseSetWithCollate(false, elems, "A", "utf8_general_ci")
+		require.Error(t, err)
+
+		s, err := ParseSetWithCollate(true, elems, "A", "utf8_general_ci")
+		require.NoError(t, err)
+		require.Equal(t, uint64(1), s.Value)
 	})
 }
