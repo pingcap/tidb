@@ -90,7 +90,59 @@ func TestPickBackfillType(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, tp, model.ReorgTypeIngest)
 	ingest.LitInitialized = false
+
+	t.Run("cloud storage skips local disk precheck", func(t *testing.T) {
+		oldLitInitialized := ingest.LitInitialized
+		oldLitDiskRoot := ingest.LitDiskRoot
+		oldCloudStorageURI := vardef.CloudStorageURI.Load()
+		t.Cleanup(func() {
+			ingest.LitInitialized = oldLitInitialized
+			ingest.LitDiskRoot = oldLitDiskRoot
+			vardef.CloudStorageURI.Store(oldCloudStorageURI)
+		})
+
+		ingest.LitInitialized = true
+		ingest.LitDiskRoot = diskRootWithFailedPreCheck{}
+		vardef.CloudStorageURI.Store("s3://bucket")
+
+		job := &model.Job{
+			ID: 2,
+			ReorgMeta: &model.DDLReorgMeta{
+				IsFastReorg: true,
+				IsDistReorg: true,
+			},
+		}
+		w := &worker{
+			workCtx: context.Background(),
+			ddlCtx:  &ddlCtx{},
+		}
+
+		err := initForReorgIndexes(w, job, []*model.IndexInfo{{}})
+		require.NoError(t, err)
+		require.True(t, job.ReorgMeta.UseCloudStorage)
+		require.Equal(t, model.ReorgTypeIngest, job.ReorgMeta.ReorgTp)
+	})
 }
+
+type diskRootWithFailedPreCheck struct{}
+
+func (diskRootWithFailedPreCheck) Add(int64, ingest.ResourceTracker) {}
+
+func (diskRootWithFailedPreCheck) Remove(int64) {}
+
+func (diskRootWithFailedPreCheck) Count() int { return 0 }
+
+func (diskRootWithFailedPreCheck) UpdateUsage() {}
+
+func (diskRootWithFailedPreCheck) ShouldImport() bool { return false }
+
+func (diskRootWithFailedPreCheck) UsageInfo() string { return "" }
+
+func (diskRootWithFailedPreCheck) PreCheckUsage() error {
+	return errors.New("local disk precheck should be skipped when cloud storage is used")
+}
+
+func (diskRootWithFailedPreCheck) StartupCheck() error { return nil }
 
 func assertStaticExprContextEqual(t *testing.T, sctx sessionctx.Context, exprCtx *exprstatic.ExprContext, warnHandler contextutil.WarnHandler) {
 	exprCtxManualCheckFields := []struct {
