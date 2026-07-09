@@ -19,6 +19,8 @@ import (
 )
 
 const (
+	mvMetricLabelComponent = "component"
+
 	mvMetricComponentService = "service"
 
 	mvMetricTaskStatusMVTotal           = "mv_total"
@@ -53,7 +55,7 @@ func InitMVMetrics() {
 			Subsystem: "mv",
 			Name:      "service_task_status",
 			Help:      "Number of MV service and task executor tasks by component and status type.",
-		}, []string{LblComponent, LblType})
+		}, []string{mvMetricLabelComponent, LblType})
 
 	MVServiceOperationDurationHistogramVec = NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -70,7 +72,7 @@ func InitMVMetrics() {
 			Subsystem: "mv",
 			Name:      "service_run_event_total",
 			Help:      "Counter of MV service scheduler and task executor events by component and event type.",
-		}, []string{LblComponent, LblType})
+		}, []string{mvMetricLabelComponent, LblType})
 
 	MVServiceMVRefreshTotalGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricComponentService, mvMetricTaskStatusMVTotal)
 	MVServiceMVLogPurgeTotalGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricComponentService, mvMetricTaskStatusMVLogTotal)
