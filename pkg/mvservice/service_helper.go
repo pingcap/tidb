@@ -65,13 +65,19 @@ type serviceHelper struct {
 	sysProcTracker        sysproctrack.Tracker
 
 	reportCache struct {
-		submittedCount    int64
-		finishedCount     int64
-		failedCount       int64
-		timeoutCount      int64
-		rejectedCount     int64
-		backpressureCount int64
+		refresh     taskExecutorReportCache
+		purge       taskExecutorReportCache
+		mlogAnalyze taskExecutorReportCache
 	}
+}
+
+type taskExecutorReportCache struct {
+	submittedCount    int64
+	finishedCount     int64
+	failedCount       int64
+	timeoutCount      int64
+	rejectedCount     int64
+	backpressureCount int64
 }
 
 type mvMetricTypeResultKey struct {
@@ -95,7 +101,7 @@ func newDurationObserverCache(capacity int) durationObserverCache {
 
 type runEventCounterCache struct {
 	mu   sync.RWMutex
-	data map[string]prometheus.Counter
+	data map[mvMetricComponentTypeKey]prometheus.Counter
 }
 
 func newRunEventCounterCache(capacity int) runEventCounterCache {
@@ -103,8 +109,13 @@ func newRunEventCounterCache(capacity int) runEventCounterCache {
 		capacity = 0
 	}
 	return runEventCounterCache{
-		data: make(map[string]prometheus.Counter, capacity),
+		data: make(map[mvMetricComponentTypeKey]prometheus.Counter, capacity),
 	}
+}
+
+type mvMetricComponentTypeKey struct {
+	component string
+	typ       string
 }
 
 // newServiceHelper builds a default helper used by MVService.

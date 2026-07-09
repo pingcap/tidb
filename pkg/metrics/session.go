@@ -239,6 +239,7 @@ const (
 	LblAbort          = "abort"
 	LblRollback       = "rollback"
 	LblType           = "type"
+	LblComponent      = "component"
 	LblDb             = "db"
 	LblResult         = "result"
 	LblSQLType        = "sql_type"
