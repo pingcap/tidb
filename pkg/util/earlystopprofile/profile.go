@@ -235,13 +235,6 @@ func (s *Store) Observe(sample Sample) {
 	if !sample.Succeed || sample.Internal || sample.Candidate.LimitRows == 0 || sample.Candidate.CapUsed <= 0 {
 		return
 	}
-	if sample.ProcessedKeys == 0 {
-		return
-	}
-
-	key := sample.Candidate.Key
-	now := time.Now().Unix()
-	demandRows := max(sample.Candidate.LimitRows, sample.ResultRows, 1)
 	overReadRows := max(
 		sample.ProcessedKeys,
 		sample.ReaderActRows,
@@ -249,6 +242,13 @@ func (s *Store) Observe(sample Sample) {
 		sample.IndexActRows,
 		sample.TableActRows,
 	)
+	if overReadRows == 0 {
+		return
+	}
+
+	key := sample.Candidate.Key
+	now := time.Now().Unix()
+	demandRows := max(sample.Candidate.LimitRows, sample.ResultRows, 1)
 	overReadRatio := float64(overReadRows) / float64(demandRows)
 	rowsPerTask := float64(sample.ResultRows) / float64(maxInt(sample.RequestCount, 1))
 	keysPerResult := float64(sample.ProcessedKeys) / float64(max(sample.ResultRows, 1))

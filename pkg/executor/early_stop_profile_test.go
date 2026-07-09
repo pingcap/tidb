@@ -239,6 +239,62 @@ func TestObserveEarlyStopProfileUsesStmtContextDirectly(t *testing.T) {
 	require.Equal(t, 1, cap)
 }
 
+func TestObserveEarlyStopProfileUsesActRowsWithoutProcessedKeys(t *testing.T) {
+	earlystopprofile.ResetForTest()
+	sctx := defaultCtx()
+	sctx.GetSessionVars().EnableAdaptiveLimitScan = true
+	initEarlyStopProfileTestContext(t, sctx)
+	key, ok := buildEarlyStopProfileKeyWithSingleScanCheck(
+		sctx, earlystopprofile.ReaderTypeIndexJoin, true, 1000, false)
+	require.True(t, ok)
+
+	const lookupPlanID = 42
+	sctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
+	sctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetBasicRuntimeStats(lookupPlanID, true).Record(time.Millisecond, 100000)
+	sctx.GetSessionVars().StmtCtx.AddEarlyStopProfileCandidate(earlystopprofile.Candidate{
+		Key:          key,
+		LimitRows:    1000,
+		BaseCap:      5,
+		CapUsed:      5,
+		LookupPlanID: lookupPlanID,
+	})
+	for range 3 {
+		observeEarlyStopProfile(
+			sctx.GetSessionVars().StmtCtx,
+			execdetails.ExecDetails{RequestCount: 1},
+			1000,
+			10*time.Millisecond,
+			true,
+			false,
+		)
+	}
+
+	cap, ok := earlystopprofile.LookupCap(key)
+	require.True(t, ok)
+	require.Equal(t, 1, cap)
+}
+
+func TestSelectEarlyStopProfileCandidate(t *testing.T) {
+	indexJoinCandidate := earlystopprofile.Candidate{
+		Key: earlystopprofile.Key{ReaderType: earlystopprofile.ReaderTypeIndexJoin},
+	}
+	tableCandidate := earlystopprofile.Candidate{
+		Key: earlystopprofile.Key{ReaderType: earlystopprofile.ReaderTypeTable},
+	}
+	selected, ok := selectEarlyStopProfileCandidate([]earlystopprofile.Candidate{
+		tableCandidate,
+		indexJoinCandidate,
+	})
+	require.True(t, ok)
+	require.Equal(t, earlystopprofile.ReaderTypeIndexJoin, selected.Key.ReaderType)
+
+	_, ok = selectEarlyStopProfileCandidate([]earlystopprofile.Candidate{
+		indexJoinCandidate,
+		indexJoinCandidate,
+	})
+	require.False(t, ok)
+}
+
 func TestKeepOrderLimitScanConcurrencyCapWithProfileFallbacks(t *testing.T) {
 	earlystopprofile.ResetForTest()
 	sctx := defaultCtx()
@@ -338,10 +394,12 @@ func TestAdaptiveIndexJoinLimitSettingsForRows(t *testing.T) {
 }
 
 func TestAdaptiveIndexJoinLimitSettingsUsesOuterProperty(t *testing.T) {
+	earlystopprofile.ResetForTest()
 	sctx := defaultCtx()
 	sctx.GetSessionVars().EnableAdaptiveLimitScan = true
 	sctx.GetSessionVars().IndexJoinBatchSize = 25000
 	sctx.GetSessionVars().SetIndexLookupJoinConcurrency(5)
+	initEarlyStopProfileTestContext(t, sctx)
 	planCtx := sctx.(base.PlanContext)
 	indexJoin := newAdaptiveIndexJoinTestPlan(planCtx,
 		&property.PhysicalProperty{
@@ -354,6 +412,8 @@ func TestAdaptiveIndexJoinLimitSettingsUsesOuterProperty(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, 1000, settings.BatchSize)
 	require.Equal(t, 1, settings.Concurrency)
+	require.True(t, settings.HasProfileKey)
+	require.Equal(t, 1, settings.ProfileCapUsed)
 
 	sctx.GetSessionVars().EnableAdaptiveLimitScan = false
 	_, ok = adaptiveIndexJoinLimitSettings(sctx, indexJoin)

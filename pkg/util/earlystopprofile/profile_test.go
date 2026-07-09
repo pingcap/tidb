@@ -143,7 +143,7 @@ func TestProfileStoreUsesOperatorActRowsForOverRead(t *testing.T) {
 		},
 		ResultRows:    1000,
 		RequestCount:  1,
-		ProcessedKeys: 1000,
+		ProcessedKeys: 0,
 		LookupActRows: 100000,
 		Succeed:       true,
 	}

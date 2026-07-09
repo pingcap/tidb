@@ -2321,17 +2321,23 @@ func observeEarlyStopProfile(
 		recordAdaptiveLimitScanMetricUnknown(adaptiveLimitScanEventObserve, adaptiveLimitScanResultSkippedInternal)
 		return
 	}
-	if len(candidates) != 1 {
+	candidate, ok := selectEarlyStopProfileCandidate(candidates)
+	if !ok {
 		recordAdaptiveLimitScanMetricUnknown(adaptiveLimitScanEventObserve, adaptiveLimitScanResultSkippedMultiCandidate)
 		return
 	}
 	scanDetail := execDetail.ScanDetail
-	if scanDetail == nil {
-		recordAdaptiveLimitScanMetric(adaptiveLimitScanEventObserve, candidates[0].Key.ReaderType, adaptiveLimitScanResultSkippedNoScanDetail)
-		return
+	processedKeys, totalKeys := uint64(0), uint64(0)
+	if scanDetail != nil {
+		processedKeys = uint64(scanDetail.ProcessedKeys)
+		totalKeys = uint64(scanDetail.TotalKeys)
 	}
-	if scanDetail.ProcessedKeys == 0 {
-		recordAdaptiveLimitScanMetric(adaptiveLimitScanEventObserve, candidates[0].Key.ReaderType, adaptiveLimitScanResultSkippedZeroKeys)
+	readerActRows := earlyStopProfileActRows(stmtCtx, candidate.ReaderPlanID)
+	lookupActRows := earlyStopProfileActRows(stmtCtx, candidate.LookupPlanID)
+	indexActRows := earlyStopProfileActRows(stmtCtx, candidate.IndexPlanID)
+	tableActRows := earlyStopProfileActRows(stmtCtx, candidate.TablePlanID)
+	if max(processedKeys, readerActRows, lookupActRows, indexActRows, tableActRows) == 0 {
+		recordAdaptiveLimitScanMetric(adaptiveLimitScanEventObserve, candidate.Key.ReaderType, adaptiveLimitScanResultSkippedNoRowsSignal)
 		return
 	}
 	observedResultRows := uint64(0)
@@ -2339,20 +2345,63 @@ func observeEarlyStopProfile(
 		observedResultRows = uint64(resultRows)
 	}
 	earlystopprofile.Observe(earlystopprofile.Sample{
-		Candidate:     candidates[0],
+		Candidate:     candidate,
 		ResultRows:    observedResultRows,
 		RequestCount:  execDetail.RequestCount,
-		ProcessedKeys: uint64(scanDetail.ProcessedKeys),
-		TotalKeys:     uint64(scanDetail.TotalKeys),
+		ProcessedKeys: processedKeys,
+		TotalKeys:     totalKeys,
 		Latency:       totalLatency,
 		Succeed:       succeed,
 		Internal:      internal,
-		ReaderActRows: earlyStopProfileActRows(stmtCtx, candidates[0].ReaderPlanID),
-		LookupActRows: earlyStopProfileActRows(stmtCtx, candidates[0].LookupPlanID),
-		IndexActRows:  earlyStopProfileActRows(stmtCtx, candidates[0].IndexPlanID),
-		TableActRows:  earlyStopProfileActRows(stmtCtx, candidates[0].TablePlanID),
+		ReaderActRows: readerActRows,
+		LookupActRows: lookupActRows,
+		IndexActRows:  indexActRows,
+		TableActRows:  tableActRows,
 	})
-	recordAdaptiveLimitScanMetric(adaptiveLimitScanEventObserve, candidates[0].Key.ReaderType, adaptiveLimitScanResultAccepted)
+	recordAdaptiveLimitScanMetric(adaptiveLimitScanEventObserve, candidate.Key.ReaderType, adaptiveLimitScanResultAccepted)
+}
+
+func selectEarlyStopProfileCandidate(candidates []earlystopprofile.Candidate) (earlystopprofile.Candidate, bool) {
+	if len(candidates) == 0 {
+		return earlystopprofile.Candidate{}, false
+	}
+	bestRank := math.MaxInt
+	bestIndex := -1
+	ambiguous := false
+	for i, candidate := range candidates {
+		rank := earlyStopProfileCandidateRank(candidate.Key.ReaderType)
+		if rank == 0 {
+			continue
+		}
+		if rank < bestRank {
+			bestRank = rank
+			bestIndex = i
+			ambiguous = false
+			continue
+		}
+		if rank == bestRank {
+			ambiguous = true
+		}
+	}
+	if bestIndex < 0 || ambiguous {
+		return earlystopprofile.Candidate{}, false
+	}
+	return candidates[bestIndex], true
+}
+
+func earlyStopProfileCandidateRank(readerType earlystopprofile.ReaderType) int {
+	switch readerType {
+	case earlystopprofile.ReaderTypeIndexJoin:
+		return 1
+	case earlystopprofile.ReaderTypeIndexLookup, earlystopprofile.ReaderTypeIndexLookupPushDown:
+		return 2
+	case earlystopprofile.ReaderTypeIndex:
+		return 3
+	case earlystopprofile.ReaderTypeTable:
+		return 4
+	default:
+		return 0
+	}
 }
 
 func earlyStopProfileActRows(stmtCtx *stmtctx.StatementContext, planID int) uint64 {

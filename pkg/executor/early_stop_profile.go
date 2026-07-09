@@ -43,9 +43,8 @@ const (
 	adaptiveLimitScanResultSkippedFailed         = "skipped_failed"
 	adaptiveLimitScanResultSkippedInternal       = "skipped_internal"
 	adaptiveLimitScanResultSkippedMultiCandidate = "skipped_multi_candidate"
-	adaptiveLimitScanResultSkippedNoScanDetail   = "skipped_no_scan_detail"
+	adaptiveLimitScanResultSkippedNoRowsSignal   = "skipped_no_rows_signal"
 	adaptiveLimitScanResultSkippedNonSingleScan  = "skipped_non_single_scan"
-	adaptiveLimitScanResultSkippedZeroKeys       = "skipped_zero_processed_keys"
 	adaptiveLimitScanResultUnchanged             = "unchanged"
 )
 
@@ -264,6 +263,9 @@ func adaptiveIndexJoinLimitSettings(
 		}
 	} else {
 		recordAdaptiveLimitScanMetric(adaptiveLimitScanEventLookup, earlystopprofile.ReaderTypeIndexJoin, adaptiveLimitScanResultInvalidKey)
+	}
+	if settings.HasProfileKey && settings.ScanConcurrencyCap > 0 {
+		settings.ProfileCapUsed = candidateCapUsed(settings.ScanConcurrencyCap, vardef.DefDistSQLScanConcurrency)
 	}
 	if !settings.Changed() {
 		return settings, settings.HasProfileKey
