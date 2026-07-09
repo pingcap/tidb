@@ -61,39 +61,6 @@ import (
 // make sure `TableReaderExecutor` implements `Executor`.
 var _ exec.Executor = &TableReaderExecutor{}
 
-const (
-	keepOrderLimitSmallScanRows  = 1024
-	keepOrderLimitMediumScanRows = 10000
-)
-
-func keepOrderLimitScanConcurrencyCap(keepOrder bool, limitRows uint64) int {
-	if !keepOrder || limitRows == 0 {
-		return 0
-	}
-	if limitRows <= keepOrderLimitSmallScanRows {
-		return 1
-	}
-	if limitRows <= keepOrderLimitMediumScanRows {
-		return 2
-	}
-	return 0
-}
-
-func keepOrderLimitScanConcurrencyCapFromPlans(keepOrder bool, plans []base.PhysicalPlan) int {
-	limitRows, ok := minLimitRowsFromPlans(plans)
-	if !ok {
-		return 0
-	}
-	return keepOrderLimitScanConcurrencyCap(keepOrder, limitRows)
-}
-
-func keepOrderLimitScanConcurrencyCapFromPushedLimit(keepOrder bool, pushedLimit *physicalop.PushedDownLimit) int {
-	if pushedLimit == nil {
-		return 0
-	}
-	return keepOrderLimitScanConcurrencyCap(keepOrder, pushedLimit.Offset+pushedLimit.Count)
-}
-
 // minLimitRowsFromPlans scans a flattened pushed-down plan list, such as
 // TablePlans or IndexPlans. It is not a general physical plan tree analyzer.
 func minLimitRowsFromPlans(plans []base.PhysicalPlan) (uint64, bool) {

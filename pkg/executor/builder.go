@@ -3825,12 +3825,9 @@ func buildNoRangeTableReader(b *executorBuilder, v *physicalop.PhysicalTableRead
 	}
 	paging := b.sctx.GetSessionVars().EnablePaging
 	keepOrderLimitScanConcurrencyCap := 0
-	if v.StoreType == kv.TiKV {
-		keepOrderLimitScanConcurrencyCap = keepOrderLimitScanConcurrencyCapFromPlans(ts.KeepOrder, v.TablePlans)
-		if !b.forDataReaderBuilder {
-			keepOrderLimitScanConcurrencyCap = keepOrderLimitScanConcurrencyCapFromPlansWithProfile(
-				b.sctx, earlystopprofile.ReaderTypeTable, ts.KeepOrder, v.TablePlans)
-		}
+	if v.StoreType == kv.TiKV && !b.forDataReaderBuilder {
+		keepOrderLimitScanConcurrencyCap = keepOrderLimitScanConcurrencyCapFromPlansWithProfile(
+			b.sctx, earlystopprofile.ReaderTypeTable, ts.KeepOrder, v.TablePlans)
 	}
 
 	e := &TableReaderExecutor{

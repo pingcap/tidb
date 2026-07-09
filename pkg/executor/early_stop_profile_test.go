@@ -97,7 +97,7 @@ func TestKeepOrderLimitScanConcurrencyCapWithProfile(t *testing.T) {
 	require.Equal(t, 1, candidates[0].CapUsed)
 }
 
-func TestKeepOrderLimitScanConcurrencyCapWithProfileCanRecoverBeyondStaticThreshold(t *testing.T) {
+func TestKeepOrderLimitScanConcurrencyCapWithProfileCanRecoverToDefault(t *testing.T) {
 	earlystopprofile.ResetForTest()
 	sctx := defaultCtx()
 	sctx.GetSessionVars().EnableAdaptiveLimitScan = true
@@ -132,7 +132,7 @@ func TestKeepOrderLimitLargeScanCanLearnWithoutStaticCap(t *testing.T) {
 	sctx.GetSessionVars().EnableAdaptiveLimitScan = true
 	initEarlyStopProfileTestContext(t, sctx)
 
-	limitRows := uint64(keepOrderLimitMediumScanRows + 1)
+	limitRows := uint64(20000)
 	key, ok := buildEarlyStopProfileKey(sctx, earlystopprofile.ReaderTypeTable, true, limitRows)
 	require.True(t, ok)
 
@@ -302,7 +302,7 @@ func TestKeepOrderLimitScanConcurrencyCapWithProfileFallbacks(t *testing.T) {
 
 	require.Equal(t, 0, keepOrderLimitScanConcurrencyCapWithProfile(sctx, earlystopprofile.ReaderTypeTable, false, 5000))
 	require.Equal(t, 0, keepOrderLimitScanConcurrencyCapWithProfile(sctx, earlystopprofile.ReaderTypeTable, true, 0))
-	require.Equal(t, 2, keepOrderLimitScanConcurrencyCapWithProfile(sctx, earlystopprofile.ReaderTypeTable, true, 5000))
+	require.Equal(t, 0, keepOrderLimitScanConcurrencyCapWithProfile(sctx, earlystopprofile.ReaderTypeTable, true, 5000))
 	require.Empty(t, sctx.GetSessionVars().StmtCtx.EarlyStopProfileCandidates())
 
 	customSctx := defaultCtx()

@@ -53,9 +53,8 @@ func keepOrderLimitScanConcurrencyCapForIndexReader(
 	keepOrder bool,
 	plans []base.PhysicalPlan,
 ) int {
-	staticCap := keepOrderLimitScanConcurrencyCapFromPlans(keepOrder, plans)
 	if b == nil || b.forDataReaderBuilder {
-		return staticCap
+		return 0
 	}
 	return keepOrderLimitScanConcurrencyCapFromPlansWithProfile(
 		b.sctx, earlystopprofile.ReaderTypeIndex, keepOrder, plans)
@@ -67,9 +66,8 @@ func keepOrderLimitScanConcurrencyCapForIndexLookUpReader(
 	pushedLimit *physicalop.PushedDownLimit,
 	indexLookUpPushDown bool,
 ) int {
-	staticCap := keepOrderLimitScanConcurrencyCapFromPushedLimit(keepOrder, pushedLimit)
 	if b == nil || b.forDataReaderBuilder {
-		return staticCap
+		return 0
 	}
 	readerType := earlystopprofile.ReaderTypeIndexLookup
 	if indexLookUpPushDown {
@@ -110,17 +108,16 @@ func keepOrderLimitScanConcurrencyCapWithProfile(
 	keepOrder bool,
 	limitRows uint64,
 ) int {
-	legacyCap := keepOrderLimitScanConcurrencyCap(keepOrder, limitRows)
 	if !keepOrder || limitRows == 0 {
 		return 0
 	}
 	if sctx == nil {
-		return legacyCap
+		return 0
 	}
 	sessVars := sctx.GetSessionVars()
 	if !sessVars.EnableAdaptiveLimitScan {
 		recordAdaptiveLimitScanMetric(adaptiveLimitScanEventLookup, readerType, adaptiveLimitScanResultDisabled)
-		return legacyCap
+		return 0
 	}
 	if sessVars.DistSQLScanConcurrency() != vardef.DefDistSQLScanConcurrency {
 		recordAdaptiveLimitScanMetric(adaptiveLimitScanEventLookup, readerType, adaptiveLimitScanResultCustomScanConcurrency)
