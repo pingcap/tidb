@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/stretchr/testify/require"
 )
@@ -444,5 +445,48 @@ func TestRedactTrafficStmt(t *testing.T) {
 		n, ok := node.(ast.SensitiveStmtNode)
 		require.True(t, ok, tc.input)
 		require.Equal(t, tc.secured, n.SecureText(), tc.input)
+	}
+}
+
+func TestSetPwdStmtSecureText(t *testing.T) {
+	// Direct construction: SetPwdStmt.User can be nil (current-user form),
+	// matching what Restore handles. SecureText must not leak "<nil>".
+	cases := []struct {
+		name string
+		stmt *ast.SetPwdStmt
+		want string
+	}{
+		{
+			name: "nil user",
+			stmt: &ast.SetPwdStmt{Password: "x"},
+			want: "set password",
+		},
+		{
+			name: "nil user with retain",
+			stmt: &ast.SetPwdStmt{Password: "x", RetainCurrentPassword: true},
+			want: "set password RETAIN CURRENT PASSWORD",
+		},
+		{
+			name: "named user",
+			stmt: &ast.SetPwdStmt{
+				User:     &auth.UserIdentity{Username: "u", Hostname: "%"},
+				Password: "x",
+			},
+			want: "set password for user u@%",
+		},
+		{
+			name: "named user with retain",
+			stmt: &ast.SetPwdStmt{
+				User:                  &auth.UserIdentity{Username: "u", Hostname: "%"},
+				Password:              "x",
+				RetainCurrentPassword: true,
+			},
+			want: "set password for user u@% RETAIN CURRENT PASSWORD",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			require.Equal(t, c.want, c.stmt.SecureText())
+		})
 	}
 }

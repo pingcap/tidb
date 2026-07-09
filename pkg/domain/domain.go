@@ -69,6 +69,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -853,6 +854,18 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 			return err
 		}
 	}
+	// Only the SYSTEM keyspace domain runs this GC loop: user-keyspace domains
+	// only access the long-lived SYSTEM keyspace runtime, which is never evicted
+	// here.
+	// there are still calls to GetKSInfoCache/GetKSStore without holder ID, but
+	// they are only used in the path of creating session when the runtime is
+	// Acquired with a holder ID, so it's ok. we cannot remove those calls now
+	// as explained in the comments of GetKSStore.
+	if kv.IsSystemKS(do.store) {
+		do.wg.Run(func() {
+			do.crossKSSessMgr.RunSystemKSGCLoop(do.ctx)
+		}, "crossKSSessMgrGCLoop")
+	}
 
 	return nil
 }
@@ -1247,6 +1260,16 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 // Deprecated: Use AdvancedSysSessionPool instead.
 func (do *Domain) SysSessionPool() util.DestroyableSessionPool {
 	return do.sysSessionPool
+}
+
+// AlterTableMode implements sqlsvrapi.Runtime.
+func (do *Domain) AlterTableMode(_ context.Context, target model.AlterTableModeTarget) error {
+	se, err := do.sysSessionPool.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer do.sysSessionPool.Put(se)
+	return ddl.AlterTableMode(do.ddlExecutor, se.(sessionctx.Context), target.TargetMode, target.SchemaID, target.TableID)
 }
 
 // AdvancedSysSessionPool is a more powerful session pool that returns a wrapped session which can detect
@@ -1683,7 +1706,7 @@ func (do *Domain) TelemetryLoop(ctx sessionctx.Context) {
 
 // SetupPlanReplayerHandle setup plan replayer handle
 func (do *Domain) SetupPlanReplayerHandle(collectorSctx sessionctx.Context, workersSctxs []sessionctx.Context) {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsForegroundPriority)
 	do.planReplayerHandle = &planReplayerHandle{}
 	do.planReplayerHandle.planReplayerTaskCollectorHandle = &planReplayerTaskCollectorHandle{
 		ctx:  ctx,
@@ -2068,7 +2091,7 @@ func (do *Domain) initStats(ctx context.Context) {
 	liteInitStats := config.GetGlobalConfig().Performance.LiteInitStats
 	var err error
 	if liteInitStats {
-		err = statsHandle.InitStatsLite(ctx)
+		err = statsHandle.InitStatsLite(ctx, do.InfoSchema())
 	} else {
 		err = statsHandle.InitStats(ctx, do.InfoSchema())
 	}

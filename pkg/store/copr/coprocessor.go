@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tidb/pkg/util/trxevents"
 	"github.com/pingcap/tipb/go-tipb"
+	clientgoconfig "github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/metrics"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -124,6 +125,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 	eventCb := option.EventCb
 	failpoint.Inject("DisablePaging", func(_ failpoint.Value) {
 		req.Paging.Enable = false
+		req.Paging.PagingSizeBytes = 0
 	})
 	if req.StoreType == kv.TiDB {
 		// coprocessor on TiDB doesn't support paging
@@ -133,8 +135,14 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		// coprocessor request but type is not DAG
 		req.Paging.Enable = false
 	}
+	// Byte-budget paging only applies to TiKV DAG requests. Zero it out for any
+	// other case so that req.Paging.PagingSizeBytes stays the single source of
+	// truth downstream, mirroring how req.Paging.Enable is handled above.
+	if req.StoreType != kv.TiKV || req.Tp != kv.ReqTypeDAG {
+		req.Paging.PagingSizeBytes = 0
+	}
 	failpoint.Inject("checkKeyRangeSortedForPaging", func(_ failpoint.Value) {
-		if req.Paging.Enable {
+		if req.Paging.Enable || req.Paging.PagingSizeBytes > 0 {
 			if !req.KeyRanges.IsFullySorted() {
 				logutil.BgLogger().Fatal("distsql request key range not sorted!")
 			}
@@ -211,6 +219,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		rpcCancel:        tikv.NewRPCanceller(),
 		buildTaskElapsed: *buildOpt.elapsed,
 		runawayChecker:   req.RunawayChecker,
+		ema:              newRUEMA(req.Paging.PagingSizeBytes),
 		maxKeysRead:      req.MaxKeysRead,
 		keysRead:         pickKeysReadCounter(req),
 	}
@@ -339,11 +348,12 @@ func (r *copTask) ToPBBatchTasks() []*coprocessor.StoreBatchTask {
 	pbTasks := make([]*coprocessor.StoreBatchTask, 0, len(r.batchTaskList))
 	for _, task := range r.batchTaskList {
 		storeBatchTask := &coprocessor.StoreBatchTask{
-			RegionId:    task.region.GetRegionId(),
-			RegionEpoch: task.region.GetRegionEpoch(),
-			Peer:        task.peer,
-			Ranges:      task.region.GetRanges(),
-			TaskId:      task.task.taskID,
+			RegionId:       task.region.GetRegionId(),
+			RegionEpoch:    task.region.GetRegionEpoch(),
+			Peer:           task.peer,
+			Ranges:         task.region.GetRanges(),
+			TaskId:         task.task.taskID,
+			BucketsVersion: task.task.bucketsVer,
 		}
 		pbTasks = append(pbTasks, storeBatchTask)
 	}
@@ -639,7 +649,7 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 	chanSize := 2
 	// in paging request, a request will be returned in multi batches,
 	// enlarge the channel size to avoid the request blocked by buffer full.
-	if req.Paging.Enable {
+	if req.Paging.Enable || req.Paging.PagingSizeBytes > 0 {
 		chanSize = 18
 	}
 
@@ -1004,6 +1014,8 @@ type copIterator struct {
 	runawayChecker resourcegroup.RunawayChecker
 	stats          *copIteratorRuntimeStats
 
+	// One EMA per copIterator (logical scan), shared across workers.
+	ema         *ruEMA
 	maxKeysRead uint64          // global limit from kv.Request (0 = unlimited)
 	keysRead    *atomic2.Uint64 // cumulative storage engine keys read across all completed tasks; may be shared across copIterators in the same statement
 }
@@ -1053,6 +1065,7 @@ type copIteratorWorker struct {
 	storeBatchedFallbackNum *atomic.Uint64
 	stats                   *copIteratorRuntimeStats
 
+	ema         *ruEMA
 	maxKeysRead uint64          // global limit (0 = unlimited)
 	keysRead    *atomic2.Uint64 // shared with copIterator for cumulative tracking
 }
@@ -1250,6 +1263,7 @@ func newCopIteratorWorker(it *copIterator, taskCh <-chan *copTask) *copIteratorW
 		storeBatchedNum:         &it.storeBatchedNum,
 		storeBatchedFallbackNum: &it.storeBatchedFallbackNum,
 		stats:                   it.stats,
+		ema:                     it.ema,
 		maxKeysRead:             it.maxKeysRead,
 		keysRead:                it.keysRead,
 	}
@@ -1695,6 +1709,15 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 	}
 }
 
+func (worker *copIteratorWorker) predictedReadBytesForTask(task *copTask) uint64 {
+	// Byte-budget paging is independent from row-count paging, so a request-level
+	// byte budget must still carry the pre-charge hint when task.paging is false.
+	if !task.paging && worker.req.Paging.PagingSizeBytes == 0 {
+		return 0
+	}
+	return worker.ema.Predict()
+}
+
 // handleTaskOnce handles single copTask, successful results are send to channel.
 // If error happened, returns error. If region split or meet lock, returns the remain tasks.
 func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*copTaskResult, error) {
@@ -1704,7 +1727,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		}
 	})
 
-	if task.paging {
+	if task.paging || worker.req.Paging.PagingSizeBytes > 0 {
 		task.pagingTaskIdx = atomic.AddUint32(worker.pagingTaskIdx, 1)
 	}
 
@@ -1727,6 +1750,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		SchemaVer:       worker.req.SchemaVar,
 		PagingSize:      task.pagingSize,
 		MaxKeysRead:     taskMaxKeysRead,
+		PagingSizeBytes: worker.req.Paging.PagingSizeBytes,
 		Tasks:           task.ToPBBatchTasks(),
 		ConnectionId:    worker.req.ConnID,
 		ConnectionAlias: worker.req.ConnAlias,
@@ -1756,6 +1780,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		BucketsVersion:  task.bucketsVer,
 	})
 	req.InputRequestSource = task.requestSource.GetRequestSource()
+	req.PredictedReadBytes = worker.predictedReadBytesForTask(task)
 	if task.firstReadType != "" {
 		req.ReadType = task.firstReadType
 		req.IsRetryRequest = true
@@ -1922,6 +1947,22 @@ func appendScanDetail(logStr string, columnFamily string, scanInfo *kvrpcpb.Scan
 	return logStr
 }
 
+// pagingResponseReadBytes returns the MVCC bytes basis the EMA observes.
+// Mirrors client-go's resourcecontrol.MakeResponseInfo so the EMA learns
+// the same quantity PD bills against.
+func pagingResponseReadBytes(pbResp *coprocessor.Response) uint64 {
+	if pbResp == nil {
+		return 0
+	}
+	if scanDetail := pbResp.GetExecDetailsV2().GetScanDetailV2(); scanDetail != nil {
+		if clientgoconfig.NextGen {
+			return max(scanDetail.GetTotalVersionsSize(), scanDetail.GetProcessedVersionsSize())
+		}
+		return scanDetail.GetProcessedVersionsSize()
+	}
+	return 0
+}
+
 func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse, cacheKey []byte, cacheValue *coprCacheValue, task *copTask, costTime time.Duration) (*copTaskResult, error) {
 	result, err := worker.handleCopResponse(bo, rpcCtx, resp, cacheKey, cacheValue, task, costTime)
 	if err != nil {
@@ -1937,9 +1978,14 @@ func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *ti
 	pagingRange := resp.pbResp.Range
 	// only paging requests need to calculate the next ranges
 	if pagingRange == nil {
+		// The final page has no remaining range; skipping it keeps the EMA slightly conservative.
 		// If the storage engine doesn't support paging protocol, it should have return all the region data.
 		// So we finish here.
 		return result, nil
+	}
+
+	if readBytes := pagingResponseReadBytes(resp.pbResp); readBytes > 0 {
+		worker.ema.Observe(readBytes, time.Now())
 	}
 
 	// calculate next ranges and grow the paging size
@@ -2340,6 +2386,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 			batchResp.RegionError = &errorpb.Error{}
 		})
 		if regionErr := getRegionError(bo.GetCtx(), batchResp); regionErr != nil {
+			worker.handleBatchBucketVersionNotMatch(bo, task, regionErr)
 			errStr := fmt.Sprintf("region_id:%v, region_ver:%v, store_type:%s, peer_addr:%s, error:%s",
 				task.region.GetID(), task.region.GetVer(), task.storeType.Name(), task.storeAddr, regionErr.String())
 			if err := bo.Backoff(tikv.BoRegionMiss(), errors.New(errStr)); err != nil {
@@ -2372,8 +2419,13 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 		if otherErr := batchResp.GetOtherError(); otherErr != "" {
 			err := errors.Errorf("other error: %s", otherErr)
 
-			firstRangeStartKey := task.ranges.At(0).StartKey
-			lastRangeEndKey := task.ranges.At(task.ranges.Len() - 1).EndKey
+			// A rangeless task (e.g. a BroadcastQuery request) has no ranges, so
+			// guard At(0)/At(Len-1) to avoid a nil dereference.
+			var firstRangeStartKey, lastRangeEndKey []byte
+			if task.ranges.Len() > 0 {
+				firstRangeStartKey = task.ranges.At(0).StartKey
+				lastRangeEndKey = task.ranges.At(task.ranges.Len() - 1).EndKey
+			}
 
 			logutil.Logger(bo.GetCtx()).Warn("other error",
 				zap.Uint64("txnStartTS", worker.req.StartTs),
@@ -2404,8 +2456,13 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 		// when the error is generated by client or a load-based server busy,
 		// response is empty by design, skip warning for this case.
 		if len(batchResps) != 0 {
-			firstRangeStartKey := task.ranges.At(0).StartKey
-			lastRangeEndKey := task.ranges.At(task.ranges.Len() - 1).EndKey
+			// A rangeless task (e.g. a BroadcastQuery request) has no ranges, so
+			// guard At(0)/At(Len-1) to avoid a nil dereference.
+			var firstRangeStartKey, lastRangeEndKey []byte
+			if task.ranges.Len() > 0 {
+				firstRangeStartKey = task.ranges.At(0).StartKey
+				lastRangeEndKey = task.ranges.At(task.ranges.Len() - 1).EndKey
+			}
 			logutil.Logger(bo.GetCtx()).Error("response of batched task missing",
 				zap.Uint64("id", task.taskID),
 				zap.Uint64("txnStartTS", worker.req.StartTs),
@@ -2437,6 +2494,19 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 		remainTasks = handler.build()
 	}
 	return batchRespList, remainTasks, nil
+}
+
+func (worker *copIteratorWorker) handleBatchBucketVersionNotMatch(bo *Backoffer, task *copTask, regionErr *errorpb.Error) {
+	bucketVersionNotMatch := regionErr.GetBucketVersionNotMatch()
+	if bucketVersionNotMatch == nil {
+		return
+	}
+	logutil.Logger(bo.GetCtx()).Debug("tikv reports `BucketVersionNotMatch` for batched cop task",
+		zap.Uint64("latest bucket version", bucketVersionNotMatch.GetVersion()),
+		zap.Uint64("request bucket version", task.bucketsVer),
+		zap.Uint64("regionID", task.region.GetID()))
+	childRPCCtx := &tikv.RPCContext{Region: task.region}
+	worker.store.GetRegionCache().OnBucketVersionNotMatch(childRPCCtx, bucketVersionNotMatch.GetVersion(), bucketVersionNotMatch.GetKeys())
 }
 
 func (worker *copIteratorWorker) handleLockErr(bo *Backoffer, lockErr *kvrpcpb.LockInfo, task *copTask) error {
@@ -2515,7 +2585,7 @@ func (worker *copIteratorWorker) handleCopCache(task *copTask, resp *copResponse
 		// Cache hit and is valid: use cached data as response data and we don't update the cache.
 		data := slices.Clone(cacheValue.Data)
 		resp.pbResp.Data = data
-		if worker.req.Paging.Enable {
+		if worker.req.Paging.Enable || worker.req.Paging.PagingSizeBytes > 0 {
 			var start, end []byte
 			if cacheValue.PageStart != nil {
 				start = slices.Clone(cacheValue.PageStart)
@@ -2979,8 +3049,8 @@ func checkStoreBatchCopr(req *kv.Request) bool {
 		// Disable batch copr for follower read
 		return false
 	}
-	// Disable batch copr when paging is enabled.
-	if req.Paging.Enable {
+	// Disable batch copr for paged requests.
+	if req.Paging.Enable || req.Paging.PagingSizeBytes > 0 {
 		return false
 	}
 	// Disable it for internal requests to avoid regression.

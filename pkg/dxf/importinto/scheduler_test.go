@@ -19,16 +19,23 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	sqlsvrapimock "github.com/pingcap/tidb/pkg/domain/sqlsvrapi/mock"
+	"github.com/pingcap/tidb/pkg/dxf/framework/mock"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/kv"
 	drivererr "github.com/pingcap/tidb/pkg/store/driver/error"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	utilmock "github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+	"go.uber.org/mock/gomock"
 )
 
 type importIntoSuite struct {
@@ -37,6 +44,39 @@ type importIntoSuite struct {
 
 func TestImportInto(t *testing.T) {
 	suite.Run(t, &importIntoSuite{})
+}
+
+func newMockRuntime(
+	ctrl *gomock.Controller,
+	store kv.Storage,
+	sePool tidbutil.DestroyableSessionPool,
+) *sqlsvrapimock.MockRuntime {
+	runtime := sqlsvrapimock.NewMockRuntime(ctrl)
+	runtime.EXPECT().Store().Return(store).AnyTimes()
+	runtime.EXPECT().SysSessionPool().Return(sePool).AnyTimes()
+	return runtime
+}
+
+func newSchedulerParamForTest(
+	t *testing.T,
+	taskMgr scheduler.TaskManager,
+	store kv.Storage,
+	sePool tidbutil.DestroyableSessionPool,
+) scheduler.Param {
+	t.Helper()
+
+	ctrl := gomock.NewController(t)
+	if sePool == nil {
+		sePool = tidbutil.NewSessionPool(1, func() (pools.Resource, error) {
+			se := utilmock.NewContext()
+			se.Store = store
+			return se, nil
+		}, nil, nil, nil)
+		t.Cleanup(sePool.Close)
+	}
+
+	param := scheduler.NewParamForTest(taskMgr, newMockRuntime(ctrl, store, sePool))
+	return param
 }
 
 func (s *importIntoSuite) enableFailPoint(path, term string) {
@@ -105,7 +145,7 @@ func (s *importIntoSuite) TestSchedulerInit() {
 		BaseScheduler: scheduler.NewBaseScheduler(context.Background(), &proto.Task{
 			TaskBase: proto.TaskBase{Keyspace: taskKS},
 			Meta:     bytes,
-		}, scheduler.Param{TaskStore: &StoreWithKS{ks: taskKS}}),
+		}, newSchedulerParamForTest(s.T(), nil, &StoreWithKS{ks: taskKS}, nil)),
 	}
 	s.NoError(sch.Init())
 	s.False(sch.Extension.(*importScheduler).GlobalSort)
@@ -117,7 +157,7 @@ func (s *importIntoSuite) TestSchedulerInit() {
 		BaseScheduler: scheduler.NewBaseScheduler(context.Background(), &proto.Task{
 			TaskBase: proto.TaskBase{Keyspace: taskKS},
 			Meta:     bytes,
-		}, scheduler.Param{TaskStore: &StoreWithKS{ks: taskKS}}),
+		}, newSchedulerParamForTest(s.T(), nil, &StoreWithKS{ks: taskKS}, nil)),
 	}
 	s.NoError(sch.Init())
 	s.True(sch.Extension.(*importScheduler).GlobalSort)
@@ -127,10 +167,37 @@ func (s *importIntoSuite) TestSchedulerInit() {
 			BaseScheduler: scheduler.NewBaseScheduler(context.Background(), &proto.Task{
 				TaskBase: proto.TaskBase{Keyspace: taskKS},
 				Meta:     bytes,
-			}, scheduler.Param{TaskStore: &StoreWithKS{}}),
+			}, newSchedulerParamForTest(s.T(), nil, &StoreWithKS{}, nil)),
 		}
 		s.ErrorContains(sch.Init(), "store keyspace mismatch with task")
 	}
+}
+
+func (s *importIntoSuite) TestGetTaskMgrForAccessingImportJobUsesTaskRuntime() {
+	if !kerneltype.IsNextGen() {
+		s.T().Skip("TaskRuntime is used only for nextgen user keyspace tasks")
+	}
+	ctrl := gomock.NewController(s.T())
+	defer ctrl.Finish()
+	taskMgr := mock.NewMockTaskManager(ctrl)
+
+	sessPool := tidbutil.NewSessionPool(1, func() (pools.Resource, error) {
+		return nil, errors.New("unexpected session pool use")
+	}, nil, nil, nil)
+	s.T().Cleanup(sessPool.Close)
+
+	taskKS := "user_keyspace"
+	param := newSchedulerParamForTest(s.T(), taskMgr, &StoreWithKS{ks: taskKS}, sessPool)
+	sch := importScheduler{
+		BaseScheduler: scheduler.NewBaseScheduler(context.Background(), &proto.Task{
+			TaskBase: proto.TaskBase{Keyspace: taskKS},
+		}, param),
+	}
+
+	got, err := sch.getTaskMgrForAccessingImportJob()
+	require.NoError(s.T(), err)
+	require.NotNil(s.T(), got)
+	require.Same(s.T(), got, sch.taskKSTaskMgr)
 }
 
 func (s *importIntoSuite) TestGetNextStep() {

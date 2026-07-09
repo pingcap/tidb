@@ -102,6 +102,10 @@ var ExtraCommitTSName = ast.NewCIStr("_tidb_commit_ts")
 // so a distance column will be added to table_scan. this field is used in the action.
 const VirtualColVecSearchDistanceID int64 = -2000
 
+// VirtualColFTSScoreID is the ID of the column that holds the score of a
+// TiFlash full-text search scan.
+const VirtualColFTSScoreID int64 = -2050
+
 // Deprecated: Use ExtraPhysTblIDName instead.
 // var ExtraPartitionIdName = NewCIStr("_tidb_pid") //nolint:revive
 
@@ -649,12 +653,6 @@ func GetIdxChangingFieldType(idxCol *IndexColumn, col *ColumnInfo) *types.FieldT
 	return &col.FieldType
 }
 
-// ColumnNeedRestoredData checks whether a single index column needs restored data.
-func ColumnNeedRestoredData(idxCol *IndexColumn, colInfos []*ColumnInfo) bool {
-	col := colInfos[idxCol.Offset]
-	return types.NeedRestoredData(GetIdxChangingFieldType(idxCol, col))
-}
-
 // TableNameInfo provides meta data describing a table name info.
 type TableNameInfo struct {
 	ID   int64     `json:"id"`
@@ -756,38 +754,6 @@ func (t TableLockState) String() string {
 		return "public"
 	default:
 		return "none"
-	}
-}
-
-// TableMode is the state for table mode, it's a table level metadata for prevent
-// table read/write during importing(import into) or BR restoring.
-// when table mode isn't TableModeNormal, DMLs or DDLs that change the table will
-// return error.
-// To modify table mode, only internal DDL operations(AlterTableMode) are permitted.
-// Now allow switching between the same table modes, and not allow convert between
-// TableModeImport and TableModeRestore
-type TableMode byte
-
-const (
-	// TableModeNormal means the table is in normal mode.
-	TableModeNormal TableMode = iota
-	// TableModeImport means the table is in import mode.
-	TableModeImport
-	// TableModeRestore means the table is in restore mode.
-	TableModeRestore
-)
-
-// String implements fmt.Stringer interface.
-func (t TableMode) String() string {
-	switch t {
-	case TableModeNormal:
-		return "Normal"
-	case TableModeImport:
-		return "Import"
-	case TableModeRestore:
-		return "Restore"
-	default:
-		return ""
 	}
 }
 

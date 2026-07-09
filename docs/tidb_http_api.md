@@ -782,3 +782,41 @@ curl -X POST "http://{TiDBIP}:10080/test/delete/indexkey/{db}/{table}/{index}?{i
  "table": "t"
 }
 ```
+
+## APIs unique to TiDB-X SYSTEM keyspace
+
+These APIs are registered only on TiDB instances running in the TiDB-X SYSTEM keyspace.
+
+### Get or update the DXF max concurrent task limit
+
+This API gets or updates the process-local maximum number of DXF tasks that can be scheduled concurrently. The value is kept in memory only, is not persisted to TiKV, and is reset when the TiDB process restarts. When updating the value, send the request to the current DXF owner.
+
+Get the current value:
+
+```shell
+curl http://{TiDBIP}:10080/dxf/schedule/max_concurrent_task
+```
+
+Example response:
+
+```json
+{
+ "max_concurrent_task": 16,
+ "persistence": "memory_only"
+}
+```
+
+Update the value:
+
+```shell
+curl -X POST "http://{TiDBIP}:10080/dxf/schedule/max_concurrent_task?value={number}"
+```
+
+`value` must be an integer in the range `[16, 1000]`. The response uses the same format as the `GET` request:
+
+```json
+{
+ "max_concurrent_task": 128,
+ "persistence": "memory_only"
+}
+```

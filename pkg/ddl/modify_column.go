@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl/bdr"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
@@ -2005,8 +2006,8 @@ func GetModifiableColumnJob(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if bdrRole == string(ast.BDRRolePrimary) &&
-		deniedByBDRWhenModifyColumn(newCol.FieldType, col.FieldType, specNewColumn.Options) && !filter.IsSystemSchema(schema.Name.L) {
+	if bdr.IsModifyColumnDenied(ast.BDRRole(bdrRole), newCol.FieldType, col.FieldType, specNewColumn.Options) &&
+		!filter.IsSystemSchema(schema.Name.L) {
 		return nil, dbterror.ErrBDRRestrictedDDL.FastGenByArgs(bdrRole)
 	}
 

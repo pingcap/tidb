@@ -364,8 +364,19 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	return s, nil
 }
 
+// InitTiDBListener prepares the MySQL protocol listener before activation succeeds.
+func (s *Server) InitTiDBListener() error {
+	return s.initTiDBListener()
+}
+
 func (s *Server) initTiDBListener() (err error) {
-	if s.cfg.Host != "" && (s.cfg.Port != 0 || RunInGoTest) {
+	needTCPListener := s.cfg.Host != "" && (s.cfg.Port != 0 || RunInGoTest)
+	needUnixSocket := s.cfg.Socket != ""
+	if (!needTCPListener || s.listener != nil) && (!needUnixSocket || s.socket != nil) &&
+		(s.listener != nil || s.socket != nil) {
+		return nil
+	}
+	if needTCPListener && s.listener == nil {
 		addr := net.JoinHostPort(s.cfg.Host, strconv.Itoa(int(s.cfg.Port)))
 		tcpProto := "tcp"
 		if s.cfg.EnableTCP4Only {
@@ -380,7 +391,7 @@ func (s *Server) initTiDBListener() (err error) {
 		}
 	}
 
-	if s.cfg.Socket != "" {
+	if needUnixSocket && s.socket == nil {
 		if err := cleanupStaleSocket(s.cfg.Socket); err != nil {
 			return errors.Trace(err)
 		}

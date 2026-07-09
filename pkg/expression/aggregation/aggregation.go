@@ -63,6 +63,10 @@ func NewDistAggFunc(expr *tipb.Expr, fieldTps []*types.FieldType, ctx expression
 		aggF := newAggFunc(ast.AggFuncSum, args, false)
 		aggF.Mode = AggFunctionMode(*expr.AggFuncMode)
 		return &sumFunction{aggFunction: aggF}, aggF.AggFuncDesc, nil
+	case tipb.ExprType_SumInt:
+		aggF := newAggFunc(ast.AggFuncSumInt, args, false)
+		aggF.Mode = AggFunctionMode(*expr.AggFuncMode)
+		return &sumIntFunction{aggFunction: aggF}, aggF.AggFuncDesc, nil
 	case tipb.ExprType_Count:
 		aggF := newAggFunc(ast.AggFuncCount, args, false)
 		aggF.Mode = AggFunctionMode(*expr.AggFuncMode)
@@ -212,7 +216,7 @@ func NeedCount(name string) bool {
 // NeedValue indicates whether the aggregate function should record value.
 func NeedValue(name string) bool {
 	switch name {
-	case ast.AggFuncSum, ast.AggFuncAvg, ast.AggFuncFirstRow, ast.AggFuncMax, ast.AggFuncMin,
+	case ast.AggFuncSum, ast.AggFuncSumInt, ast.AggFuncAvg, ast.AggFuncFirstRow, ast.AggFuncMax, ast.AggFuncMin,
 		ast.AggFuncGroupConcat, ast.AggFuncBitOr, ast.AggFuncBitAnd, ast.AggFuncBitXor, ast.AggFuncApproxPercentile:
 		return true
 	default:
@@ -251,7 +255,7 @@ func CheckAggPushDown(ctx expression.EvalContext, aggFunc *AggFuncDesc, storeTyp
 	case kv.TiFlash:
 		ret = CheckAggPushFlash(ctx, aggFunc)
 	case kv.TiKV:
-		// TiKV does not support group_concat now
+		// TiKV does not support group_concat now.
 		ret = aggFunc.Name != ast.AggFuncGroupConcat
 	}
 	if ret {
@@ -287,7 +291,7 @@ func CheckAggPushFlash(ctx expression.EvalContext, aggFunc *AggFuncDesc) bool {
 	switch aggFunc.Name {
 	case ast.AggFuncCount, ast.AggFuncMin, ast.AggFuncMax, ast.AggFuncFirstRow, ast.AggFuncApproxCountDistinct:
 		return true
-	case ast.AggFuncSum, ast.AggFuncAvg, ast.AggFuncGroupConcat:
+	case ast.AggFuncSum, ast.AggFuncSumInt, ast.AggFuncAvg, ast.AggFuncGroupConcat:
 		// Now tiflash doesn't support CastJsonAsReal and CastJsonAsString.
 		return aggFunc.Args[0].GetType(ctx).GetType() != mysql.TypeJSON
 	}

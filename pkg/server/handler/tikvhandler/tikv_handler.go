@@ -1275,7 +1275,7 @@ func (h *TableHandler) getPDAddr() ([]string, error) {
 	if !ok {
 		return nil, errors.New("not implemented")
 	}
-	pdAddrs, err := etcd.EtcdAddrs()
+	pdAddrs, err := etcd.GetPDAddrs()
 	if err != nil {
 		return nil, err
 	}

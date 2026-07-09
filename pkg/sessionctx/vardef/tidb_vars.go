@@ -539,6 +539,10 @@ const (
 	// TiDBMaxPagingSize is used to control the max paging size in the coprocessor paging protocol.
 	TiDBMaxPagingSize = "tidb_max_paging_size"
 
+	// TiDBPagingSizeBytes is the byte budget per coprocessor page.
+	// 0 means disabled (no byte-budget paging).
+	TiDBPagingSizeBytes = "tidb_paging_size_bytes"
+
 	// TiDBEnableCascadesPlanner is used to control whether to enable the cascades planner.
 	TiDBEnableCascadesPlanner = "tidb_enable_cascades_planner"
 
@@ -1167,6 +1171,10 @@ const (
 	// `PREDICATE`: Analyze only the columns that are used in the predicates of the query.
 	// `ALL`: Analyze all columns in the table.
 	TiDBAnalyzeColumnOptions = "tidb_analyze_column_options"
+	// TiDBAnalyzeDefaultNumBuckets sets the default number of histogram buckets for analyze operations.
+	TiDBAnalyzeDefaultNumBuckets = "tidb_analyze_default_num_buckets"
+	// TiDBAnalyzeDefaultNumTopN sets the default number of TopN entries for analyze operations.
+	TiDBAnalyzeDefaultNumTopN = "tidb_analyze_default_num_topn"
 	// TiDBDisableColumnTrackingTime records the last time TiDBEnableColumnTracking is set off.
 	// It is used to invalidate the collected predicate columns after turning off TiDBEnableColumnTracking, which avoids physical deletion.
 	// It doesn't have cache in memory, and we directly get/set the variable value from/to mysql.tidb.
@@ -1506,6 +1514,7 @@ const (
 	DefInitChunkSize                        = 32
 	DefMinPagingSize                        = int(paging.MinPagingSize)
 	DefMaxPagingSize                        = int(paging.MinAllowedMaxPagingSize)
+	DefPagingSizeBytes                      = 0
 	DefMaxChunkSize                         = 1024
 	DefDMLBatchSize                         = 0
 	DefMaxPreparedStmtCount                 = -1
@@ -1671,6 +1680,8 @@ const (
 	DefTiDBEnableAutoAnalyze                          = true
 	DefTiDBEnableAutoAnalyzePriorityQueue             = true
 	DefTiDBAnalyzeColumnOptions                       = "ALL"
+	DefTiDBAnalyzeDefaultNumBuckets                   = 256
+	DefTiDBAnalyzeDefaultNumTopN                      = 100
 	DefTiDBMemOOMAction                               = "CANCEL"
 	DefTiDBMaxAutoAnalyzeTime                         = 12 * 60 * 60
 	DefTiDBAutoAnalyzeConcurrency                     = 3
@@ -1831,6 +1842,17 @@ const (
 	DefConnectAttrsSize int64 = 4096
 )
 
+const (
+	// MinTiDBAnalyzeDefaultNumBuckets is the lower bound for the default ANALYZE bucket count.
+	MinTiDBAnalyzeDefaultNumBuckets int64 = 1
+	// MaxTiDBAnalyzeDefaultNumBuckets is the upper bound for the default ANALYZE bucket count.
+	MaxTiDBAnalyzeDefaultNumBuckets uint64 = 100000
+	// MinTiDBAnalyzeDefaultNumTopN is the lower bound for the default ANALYZE TopN count; 0 disables TopN collection.
+	MinTiDBAnalyzeDefaultNumTopN int64 = 0
+	// MaxTiDBAnalyzeDefaultNumTopN is the upper bound for the default ANALYZE TopN count.
+	MaxTiDBAnalyzeDefaultNumTopN uint64 = 100000
+)
+
 // Process global variables.
 var (
 	ProcessGeneralLog              = atomic.NewBool(false)
@@ -1844,7 +1866,12 @@ var (
 	//    the value of `tidb_analyze_column_options` determines the behavior of the analyze operation.
 	// 2. If `tidb_persist_analyze_options` is disabled, `tidb_analyze_column_options` is used directly to decide
 	//    whether to analyze all columns or just the predicate columns.
-	AnalyzeColumnOptions           = atomic.NewString(DefTiDBAnalyzeColumnOptions)
+	AnalyzeColumnOptions = atomic.NewString(DefTiDBAnalyzeColumnOptions)
+	// AnalyzeDefaultNumBuckets is the global default number of histogram buckets for analyze operations.
+	AnalyzeDefaultNumBuckets = atomic.NewUint64(DefTiDBAnalyzeDefaultNumBuckets)
+	// AnalyzeDefaultNumTopN is the global default number of TopN entries for analyze operations.
+	AnalyzeDefaultNumTopN = atomic.NewUint64(DefTiDBAnalyzeDefaultNumTopN)
+
 	GlobalLogMaxDays               = atomic.NewInt32(int32(config.GetGlobalConfig().Log.File.MaxDays))
 	QueryLogMaxLen                 = atomic.NewInt32(DefTiDBQueryLogMaxLen)
 	EnablePProfSQLCPU              = atomic.NewBool(false)

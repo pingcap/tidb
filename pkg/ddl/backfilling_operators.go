@@ -111,7 +111,7 @@ func NewAddIndexIngestPipeline(
 ) (*operator.AsyncPipeline, error) {
 	indexes := make([]table.Index, 0, len(idxInfos))
 	for _, idxInfo := range idxInfos {
-		index, err := tables.NewIndex(tbl.GetPhysicalID(), tbl.Meta(), idxInfo)
+		index, err := tables.NewIndexWithCollate(tbl.UseNewCollate(), tbl.GetPhysicalID(), tbl.Meta(), idxInfo)
 		if err != nil {
 			return nil, err
 		}
@@ -169,7 +169,7 @@ func NewWriteIndexToExternalStoragePipeline(
 ) (*operator.AsyncPipeline, error) {
 	indexes := make([]table.Index, 0, len(idxInfos))
 	for _, idxInfo := range idxInfos {
-		index, err := tables.NewIndex(tbl.GetPhysicalID(), tbl.Meta(), idxInfo)
+		index, err := tables.NewIndexWithCollate(tbl.UseNewCollate(), tbl.GetPhysicalID(), tbl.Meta(), idxInfo)
 		if err != nil {
 			return nil, err
 		}
@@ -533,9 +533,11 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 		idxResults  []IndexRecordChunk
 		execDetails kvutil.ExecDetails
 	)
+
 	// Local ingest may trigger partial import/reset while the scan transaction is
 	// still open, so only the global-sort path can stream results immediately.
 	enableStreaming := w.reorgMeta.UseCloudStorage
+	failpoint.InjectCall("checkEnableStreaming", enableStreaming)
 	sendResult := func(idxResult IndexRecordChunk) {
 		sender(idxResult)
 		if w.cpOp != nil {
@@ -912,7 +914,8 @@ func (w *indexIngestWorker) WriteChunk(rs *IndexRecordChunk) (count int, bytes i
 		// skip running the checker in TiDB side.
 		indexConditionCheckers = nil
 	}
-	cnt, kvBytes, err := writeChunk(w.ctx, w.writers, w.indexes, indexConditionCheckers, w.copCtx, sc.TimeZone(), sc.ErrCtx(), vars.GetWriteStmtBufs(), rs.Chunk, w.tbl.Meta())
+	cnt, kvBytes, err := writeChunk(w.ctx, w.writers, w.indexes, indexConditionCheckers, w.copCtx,
+		sc.TimeZone(), sc.ErrCtx(), vars.GetWriteStmtBufs(), rs.Chunk, w.tbl.Meta(), w.tbl.UseNewCollate())
 	if err != nil || cnt == 0 {
 		return 0, 0, err
 	}

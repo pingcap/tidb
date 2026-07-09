@@ -15,6 +15,7 @@
 package store
 
 import (
+	"crypto/tls"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/kv"
@@ -24,12 +25,21 @@ import (
 type mockEtcdBackend struct {
 	kv.Storage
 	kv.EtcdBackend
-	pdAddrs []string
+	pdAddrs   []string
+	metaAddrs []string
 }
 
 func (mebd *mockEtcdBackend) EtcdAddrs() ([]string, error) {
+	return mebd.metaAddrs, nil
+}
+
+func (mebd *mockEtcdBackend) GetPDAddrs() ([]string, error) {
 	return mebd.pdAddrs, nil
 }
+
+func (*mockEtcdBackend) TLSConfig() *tls.Config { return nil }
+
+func (*mockEtcdBackend) StartGCWorker() error { return nil }
 
 func TestNewEtcdCliGetEtcdAddrs(t *testing.T) {
 	etcdStore, addrs, err := GetEtcdAddrs(nil)
@@ -37,9 +47,12 @@ func TestNewEtcdCliGetEtcdAddrs(t *testing.T) {
 	require.Empty(t, addrs)
 	require.Nil(t, etcdStore)
 
-	etcdStore, addrs, err = GetEtcdAddrs(&mockEtcdBackend{pdAddrs: []string{"localhost:2379"}})
+	etcdStore, addrs, err = GetEtcdAddrs(&mockEtcdBackend{
+		pdAddrs:   []string{"localhost:2379"},
+		metaAddrs: []string{"localhost:2389"},
+	})
 	require.NoError(t, err)
-	require.Equal(t, []string{"localhost:2379"}, addrs)
+	require.Equal(t, []string{"localhost:2389"}, addrs)
 	require.NotNil(t, etcdStore)
 
 	cli, err := NewEtcdCli(nil)

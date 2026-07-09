@@ -33,6 +33,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ddl/bdr"
+	"github.com/pingcap/tidb/pkg/ddl/jobsubmit"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/resourcegroup"
@@ -2230,7 +2232,7 @@ func (e *executor) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.Alt
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if bdrRole == string(ast.BDRRolePrimary) && deniedByBDRWhenAddColumn(specNewColumn.Options) && !filter.IsSystemSchema(schema.Name.L) {
+	if bdr.IsAddColumnDenied(ast.BDRRole(bdrRole), specNewColumn.Options) && !filter.IsSystemSchema(schema.Name.L) {
 		return dbterror.ErrBDRRestrictedDDL.FastGenByArgs(bdrRole)
 	}
 
@@ -4924,9 +4926,6 @@ func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, ind
 	}
 
 	tblInfo := t.Meta()
-	if err := checkTableTypeForColumnarIndex(tblInfo); err != nil {
-		return errors.Trace(err)
-	}
 
 	var columnarIndexType model.ColumnarIndexType
 	switch indexOption.Tp {
@@ -4938,6 +4937,15 @@ func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, ind
 		columnarIndexType = model.ColumnarIndexTypeFulltext
 	default:
 		return dbterror.ErrUnsupportedIndexType.GenWithStackByArgs(indexOption.Tp)
+	}
+	if columnarIndexType == model.ColumnarIndexTypeFulltext {
+		if err := checkFullTextSupportedInStarter(); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	if err := checkTableTypeForColumnarIndex(tblInfo); err != nil {
+		return errors.Trace(err)
 	}
 
 	metaBuildCtx := NewMetaBuildContextWithSctx(ctx)
@@ -5869,32 +5877,23 @@ func (e *executor) AlterTableMode(sctx sessionctx.Context, args *model.AlterTabl
 			schema.Name, fmt.Sprintf("TableID: %d", args.TableID))
 	}
 
-	ok = validateTableMode(table.Meta().Mode, args.TableMode)
-	if !ok {
-		return infoschema.ErrInvalidTableModeSet.GenWithStackByArgs(table.Meta().Mode, args.TableMode, table.Meta().Name.O)
+	job, jobArgs, noop, err := jobsubmit.BuildAlterTableModeJob(sctx, model.AlterTableModeTarget{
+		SchemaID:    args.SchemaID,
+		SchemaName:  schema.Name,
+		TableID:     args.TableID,
+		TableName:   table.Meta().Name,
+		CurrentMode: table.Meta().Mode,
+		TargetMode:  args.TableMode,
+	})
+	if err != nil {
+		return errors.Trace(err)
 	}
-	if table.Meta().Mode == args.TableMode {
+	if noop {
 		return nil
 	}
 
-	job := &model.Job{
-		Version:        model.JobVersion2,
-		SchemaID:       args.SchemaID,
-		TableID:        args.TableID,
-		SchemaName:     schema.Name.O,
-		Type:           model.ActionAlterTableMode,
-		BinlogInfo:     &model.HistoryInfo{},
-		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
-		SQLMode:        sctx.GetSessionVars().SQLMode,
-		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
-			{
-				Database: schema.Name.L,
-				Table:    table.Meta().Name.L,
-			},
-		},
-	}
 	sctx.SetValue(sessionctx.QueryString, "skip")
-	err := e.doDDLJob2(sctx, job, args)
+	err = e.doDDLJob2(sctx, job, jobArgs)
 	return errors.Trace(err)
 }
 
@@ -7351,6 +7350,24 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 			continue
 		}
 		if historyJob == nil {
+			currentJob, getCurrentJobErr := e.getCurrentDDLJobByID(jobID)
+			if getCurrentJobErr != nil {
+				logutil.DDLLogger().Warn("get current DDL job failed, check again", zap.Error(getCurrentJobErr))
+				continue
+			}
+			if currentJob != nil && currentJob.IsPausedBySystemForKVDiskFull() {
+				logutil.DDLLogger().Info("DDL job is auto-paused because a storage node disk is full", zap.Int64("jobID", jobID))
+				if currentJob.Error != nil {
+					err = errors.Trace(currentJob.Error)
+					return err
+				}
+				message := ""
+				if currentJob.PauseReason != nil {
+					message = currentJob.PauseReason.Message
+				}
+				err = dbterror.ErrDDLAutoPausedByKVDiskFull.GenWithStackByArgs(jobID, message)
+				return err
+			}
 			logutil.DDLLogger().Debug("DDL job is not in history, maybe not run", zap.Int64("jobID", jobID))
 			continue
 		}
@@ -7388,6 +7405,22 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 		}
 		panic("When the state is JobStateRollbackDone or JobStateCancelled, historyJob.Error should never be nil")
 	}
+}
+
+func (e *executor) getCurrentDDLJobByID(jobID int64) (*model.Job, error) {
+	se, err := e.sessPool.Get()
+	if err != nil {
+		return nil, err
+	}
+	defer e.sessPool.Put(se)
+	jobs, err := getJobsBySQL(context.Background(), sess.NewSession(se), fmt.Sprintf("job_id = %d", jobID))
+	if err != nil {
+		return nil, err
+	}
+	if len(jobs) == 0 {
+		return nil, nil
+	}
+	return jobs[0], nil
 }
 
 // HandleLockTablesOnSuccessSubmit handles the table lock for the job which is submitted
@@ -7502,6 +7535,7 @@ func getJobCheckInterval(action model.ActionType, i int) (time.Duration, bool) {
 // NewDDLReorgMeta create a DDL ReorgMeta.
 func NewDDLReorgMeta(ctx sessionctx.Context) *model.DDLReorgMeta {
 	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
+	useNewCollate := collate.NewCollationEnabled()
 	return &model.DDLReorgMeta{
 		SQLMode:           ctx.GetSessionVars().SQLMode,
 		Warnings:          make(map[errors.ErrorID]*terror.Error),
@@ -7509,6 +7543,7 @@ func NewDDLReorgMeta(ctx sessionctx.Context) *model.DDLReorgMeta {
 		Location:          &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
 		ResourceGroupName: ctx.GetSessionVars().StmtCtx.ResourceGroupName,
 		Version:           model.CurrentReorgMetaVersion,
+		UseNewCollate:     &useNewCollate,
 	}
 }
 

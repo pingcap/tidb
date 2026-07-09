@@ -611,6 +611,12 @@ func shouldTryCorrelateRound(sessVars *variable.SessionVars) bool {
 		sessVars.StmtCtx.AlternativeLogicalPlanPreferCorrelate
 }
 
+func shouldTrySemiJoinRewriteRound(sessVars *variable.SessionVars) bool {
+	return sessVars.EnableAlternativeLogicalPlans &&
+		sessVars.StmtCtx.AlternativeLogicalPlanSemiJoinRewrite &&
+		!sessVars.EnableSemiJoinRewrite
+}
+
 // alternativeRound describes one alternative logical-plan round.
 // adjustFlag adjusts the optimization flags for the round.
 // enabled returns true when the round should be attempted.
@@ -655,6 +661,17 @@ var alternativeRounds = [...]alternativeRound{
 		},
 		cleanup: func(sv *variable.SessionVars) {
 			sv.EnableCorrelateSubquery = savedEnableCorrelateSubquery
+		},
+	},
+	{
+		name:    "semi-join-rewrite",
+		enabled: shouldTrySemiJoinRewriteRound,
+		setup: func(sv *variable.SessionVars) {
+			sv.EnableSemiJoinRewrite = true
+		},
+		cleanup: func(sv *variable.SessionVars) {
+			// This round is enabled only when the original value is false.
+			sv.EnableSemiJoinRewrite = false
 		},
 	},
 	{
@@ -784,7 +801,8 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 	for _, round := range enabledRounds {
 		restoreLogicalPlanBuildCtx(sessVars, initialLogicalPlanCtx)
 		failpoint.Inject("failIfAlternativeLogicalPlanRoundTriggered", func(val failpoint.Value) {
-			if testSQL, ok := val.(string); ok && testSQL == node.Node.OriginalText() {
+			if testRoundAndSQL, ok := val.(string); ok &&
+				testRoundAndSQL == round.name+":"+node.Node.OriginalText() {
 				failpoint.Return(nil, nil, 0, errors.New("unexpected alternative logical plan round"))
 			}
 		})

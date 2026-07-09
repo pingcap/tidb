@@ -81,6 +81,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/config",
+        "//pkg/config/deploymode",
         "//pkg/errctx",
         "//pkg/errno",
         "//pkg/expression/exprctx",
