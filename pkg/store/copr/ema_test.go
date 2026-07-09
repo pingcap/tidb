@@ -25,7 +25,7 @@ import (
 )
 
 func TestRUEMASeedAndConverge(t *testing.T) {
-	e := newRUEMA()
+	e := newRUEMA(0)
 	require.Zero(t, e.Predict(), "fresh EMA: no prediction")
 
 	now := time.Now()
@@ -39,7 +39,7 @@ func TestRUEMASeedAndConverge(t *testing.T) {
 }
 
 func TestRUEMATracksShift(t *testing.T) {
-	e := newRUEMA()
+	e := newRUEMA(0)
 	now := time.Now()
 	for i := 0; i < 5; i++ {
 		e.Observe(100_000, now.Add(time.Duration(i)*100*time.Millisecond))
@@ -59,7 +59,7 @@ func TestRUEMATracksShift(t *testing.T) {
 }
 
 func TestRUEMALargeGapCollapsesWeight(t *testing.T) {
-	e := newRUEMA()
+	e := newRUEMA(0)
 	now := time.Now()
 	e.Observe(100_000, now)
 	// A gap much larger than tau (default 1s) means alpha ≈ 1, so the new
@@ -91,7 +91,7 @@ func TestRUEMAConcurrentObserveAndPredict(t *testing.T) {
 	// Predict must be race-free. Run with `go test -race` to exercise the
 	// mutex; this test guarantees no panic/deadlock and that readiness is
 	// eventually observed from a reader goroutine.
-	e := newRUEMA()
+	e := newRUEMA(0)
 	const writers = 8
 	const iters = 200
 	done := make(chan struct{})
@@ -128,7 +128,7 @@ func TestRUEMANonMonotonicTime(t *testing.T) {
 	// (clock skew, test fixture), Observe must not blow up with a negative
 	// Δt. The behavior we want: treat the gap as zero and use the new
 	// sample only minimally.
-	e := newRUEMA()
+	e := newRUEMA(0)
 	now := time.Now()
 	e.Observe(100_000, now)
 	e.Observe(500_000, now.Add(-1*time.Second))

@@ -33,8 +33,11 @@ type ruEMA struct {
 	lastObsAt time.Time
 }
 
-func newRUEMA() *ruEMA {
-	return &ruEMA{tau: defaultRUEMATau}
+func newRUEMA(seedReadBytes uint64) *ruEMA {
+	// lastObsAt is intentionally left as the zero time. If there is no seed,
+	// the first Observe gets alpha ~= 1 and seeds value from the first sample;
+	// if there is a byte-budget seed, the first real sample replaces it.
+	return &ruEMA{tau: defaultRUEMATau, value: float64(seedReadBytes)}
 }
 
 func (e *ruEMA) Observe(bytes uint64, now time.Time) {

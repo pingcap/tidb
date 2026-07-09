@@ -218,7 +218,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		rpcCancel:        tikv.NewRPCanceller(),
 		buildTaskElapsed: *buildOpt.elapsed,
 		runawayChecker:   req.RunawayChecker,
-		ema:              newRUEMA(),
+		ema:              newRUEMA(req.Paging.PagingSizeBytes),
 		maxKeysRead:      req.MaxKeysRead,
 		keysRead:         pickKeysReadCounter(req),
 	}
