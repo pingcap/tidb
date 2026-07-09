@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/deeptest"
@@ -109,7 +110,8 @@ func TestPickBackfillType(t *testing.T) {
 		})
 
 		ingest.LitInitialized = true
-		ingest.LitDiskRoot = diskRootWithFailedPreCheck{}
+		ingest.LitDiskRoot = ingest.NewDiskRootImpl(t.TempDir())
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/ingest/mockIngestCheckEnvFailed", "return(true)")
 		vardef.CloudStorageURI.Store("s3://bucket")
 
 		job := &model.Job{
@@ -130,26 +132,6 @@ func TestPickBackfillType(t *testing.T) {
 		require.Equal(t, model.ReorgTypeIngest, job.ReorgMeta.ReorgTp)
 	})
 }
-
-type diskRootWithFailedPreCheck struct{}
-
-func (diskRootWithFailedPreCheck) Add(int64, ingest.ResourceTracker) {}
-
-func (diskRootWithFailedPreCheck) Remove(int64) {}
-
-func (diskRootWithFailedPreCheck) Count() int { return 0 }
-
-func (diskRootWithFailedPreCheck) UpdateUsage() {}
-
-func (diskRootWithFailedPreCheck) ShouldImport() bool { return false }
-
-func (diskRootWithFailedPreCheck) UsageInfo() string { return "" }
-
-func (diskRootWithFailedPreCheck) PreCheckUsage() error {
-	return errors.New("local disk precheck should be skipped when cloud storage is used")
-}
-
-func (diskRootWithFailedPreCheck) StartupCheck() error { return nil }
 
 func assertStaticExprContextEqual(t *testing.T, sctx sessionctx.Context, exprCtx *exprstatic.ExprContext, warnHandler contextutil.WarnHandler) {
 	exprCtxManualCheckFields := []struct {
