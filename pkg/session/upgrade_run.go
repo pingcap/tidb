@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -51,6 +52,8 @@ func upgrade(s sessionapi.Session) {
 	if isNull {
 		upgradeToVer99Before(s)
 	}
+
+	ensureTiDBMaskingPolicyTableBeforeUpgradeDDL(s, ver)
 
 	// It is only used in test.
 	upgradeFns := addMockBootstrapVersionForTest(s)
@@ -90,6 +93,14 @@ func upgrade(s sessionapi.Session) {
 			zap.Int64("to", currentBootstrapVersion),
 			zap.Error(err))
 	}
+}
+
+func ensureTiDBMaskingPolicyTableBeforeUpgradeDDL(s sessionapi.Session, ver int64) {
+	if ver >= version260 {
+		return
+	}
+	// Later DDL code may consult this table while running earlier reentrant upgrade DDLs.
+	mustExecute(s, metadef.CreateTiDBMaskingPolicyTable)
 }
 
 // InitMDLVariableForUpgrade initializes the metadata lock variable.
