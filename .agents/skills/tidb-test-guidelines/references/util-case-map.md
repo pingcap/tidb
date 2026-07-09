@@ -528,6 +528,7 @@
 ### Tests
 - `pkg/util/stmtsummary/evicted_test.go` - util/stmtsummary: Tests map to evicted count datum.
 - `pkg/util/stmtsummary/main_test.go` - Configures default goleak settings and registers testdata.
+- `pkg/util/stmtsummary/read_billing_test.go` - util/stmtsummary: Tests preview RU dimension aggregation, caps, and DML-kind separation.
 - `pkg/util/stmtsummary/statement_summary_test.go` - util/stmtsummary: Tests set up.
 
 ## pkg/util/stmtsummary/v2
@@ -535,8 +536,8 @@
 ### Tests
 - `pkg/util/stmtsummary/v2/column_test.go` - util/stmtsummary/v2: Tests column.
 - `pkg/util/stmtsummary/v2/main_test.go` - Configures default goleak settings and registers testdata.
-- `pkg/util/stmtsummary/v2/reader_test.go` - util/stmtsummary/v2: Tests time range overlap.
-- `pkg/util/stmtsummary/v2/record_test.go` - util/stmtsummary/v2: Tests stmt record.
+- `pkg/util/stmtsummary/v2/reader_test.go` - util/stmtsummary/v2: Tests time ranges plus current/history preview RU rows and backward-compatible DML kind reads.
+- `pkg/util/stmtsummary/v2/record_test.go` - util/stmtsummary/v2: Tests statement records, including preview RU DML kind aggregation and JSON round trips.
 - `pkg/util/stmtsummary/v2/stmtsummary_benchmark_test.go` - util/stmtsummary/v2: Tests stmt summary add single workload.
 - `pkg/util/stmtsummary/v2/stmtsummary_test.go` - util/stmtsummary/v2: Tests stmt window.
 

@@ -1,5 +1,10 @@
 # TiDB 写入计费 Unit 和初始权重设计
 
+> **已被取代。** 本文保留为早期多 opclass / rows-cells 方案的历史记录，
+> 不再描述当前 preview RU 写侧实现。当前收敛模型见
+> [Preview RU TiDB KV mutation operator](2026-07-10-preview-ru-tidb-kv-mutation.md)。
+> 不得把本文的 L5、rows/cells 或 seed 权重用于 `tidb/kv_mutation`。
+
 - Author(s): Codex
 - Discussion PR: N/A
 - Tracking Issue: N/A

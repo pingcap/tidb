@@ -83,6 +83,36 @@ func TestReadBillingDemoAggregationCaps(t *testing.T) {
 	require.Zero(t, acceptedSummary.SumReadBillingDemoInputBytes)
 }
 
+func TestReadBillingDemoDMLKindAggregation(t *testing.T) {
+	stats := ReadBillingDemoStatementStats{ModelVersion: "v2", WeightVersion: "v1"}
+	for _, dmlKind := range []string{"insert", "update"} {
+		stats.BaseUnits = append(stats.BaseUnits, ReadBillingDemoBaseUnitSample{
+			ModelVersion:   "v2",
+			WeightVersion:  "v1",
+			Site:           "tidb",
+			OpClass:        "kv_mutation",
+			OperatorKind:   "memdb_mutation",
+			DMLKind:        dmlKind,
+			Unit:           "encoded_mutation_count",
+			InputSource:    "stmt_memdb_mutation_calls",
+			InputSide:      "all",
+			RowWidthSource: "not_applicable",
+			Value:          1,
+		})
+	}
+
+	aggs, _, _ := AddReadBillingDemoStatementStatsToMaps(nil, nil, &stats)
+	require.Len(t, aggs, 2)
+	entries := ReadBillingDemoBaseUnitEntriesFromMap(aggs)
+	require.Equal(t, "insert", entries[0].DMLKind)
+	require.Equal(t, "update", entries[1].DMLKind)
+	for _, entry := range entries {
+		require.Equal(t, "kv_mutation", entry.OpClass)
+		require.Equal(t, "memdb_mutation", entry.OperatorKind)
+		require.Equal(t, "encoded_mutation_count", entry.Unit)
+	}
+}
+
 func TestReadBillingDemoReservedStatusMergeBypassesStatusCap(t *testing.T) {
 	fullStatusAggs := make(map[ReadBillingDemoStatusKey]ReadBillingDemoStatusAgg)
 	fullStatusEntries := make([]ReadBillingDemoStatusAggEntry, 0, MaxReadBillingDemoStatusKeysPerRecord)

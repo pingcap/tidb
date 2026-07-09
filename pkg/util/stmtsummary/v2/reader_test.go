@@ -281,6 +281,7 @@ func TestReadBillingDemoMemReader(t *testing.T) {
 			Site:           "tidb",
 			OpClass:        "projection_eval",
 			OperatorKind:   "projection",
+			DMLKind:        "insert",
 			Unit:           "fixed_events",
 			InputSource:    "runtime_act_rows",
 			InputSide:      "all",
@@ -330,6 +331,7 @@ func TestReadBillingDemoMemReader(t *testing.T) {
 		{Name: ast.NewCIStr(DigestStr)},
 		{Name: ast.NewCIStr(stmtsummarybase.ReadBillingDemoSiteStr)},
 		{Name: ast.NewCIStr(stmtsummarybase.ReadBillingDemoOpClassStr)},
+		{Name: ast.NewCIStr(stmtsummarybase.ReadBillingDemoDMLKindStr)},
 		{Name: ast.NewCIStr(stmtsummarybase.ReadBillingDemoUnitStr)},
 		{Name: ast.NewCIStr(stmtsummarybase.ReadBillingDemoValueStr)},
 		{Name: ast.NewCIStr(stmtsummarybase.ReadBillingDemoSampleCountStr)},
@@ -337,8 +339,8 @@ func TestReadBillingDemoMemReader(t *testing.T) {
 	baseRows := NewReadBillingDemoMemReader(ss, baseUnitCols, "", timeLocation, nil, false, nil, nil, stmtsummarybase.ReadBillingDemoTableBaseUnits).Rows()
 	require.Len(t, baseRows, 1)
 	require.Equal(t, map[string]string{
-		"digest_read_billing/tidb/projection_eval/fixed_events": "2 1",
-	}, readBillingDemoRowsByKey(baseRows, 4))
+		"digest_read_billing/tidb/projection_eval/insert/fixed_events": "2 1",
+	}, readBillingDemoRowsByKey(baseRows, 5))
 
 	statusCols := []*model.ColumnInfo{
 		{Name: ast.NewCIStr(DigestStr)},
@@ -526,9 +528,11 @@ func TestReadBillingDemoHistoryReader(t *testing.T) {
 	defer func() {
 		require.NoError(t, os.Remove(filename))
 	}()
-	_, err = file.WriteString(`{"begin":1672129270,"end":1672129280,"digest":"digest_read_billing","normalized_sql":"select ?","stmt_type":"Select","auth_users":{"user":{}},"read_billing_demo_base_unit_aggs":[{"model_version":"v1","weight_version":"v1","site":"tidb","op_class":"projection_eval","operator_kind":"projection","unit":"fixed_events","input_source":"runtime_act_rows","input_side":"all","row_width_source":"operator_helper","value":2,"sample_count":1,"row_width_sum":16}],"read_billing_demo_status_aggs":[{"model_version":"v1","weight_version":"v1","site":"statement","op_class":"statement","operator_kind":"statement","status":"success","reason":"none","count":1}]}` + "\n")
+	_, err = file.WriteString(`{"begin":1672129270,"end":1672129280,"digest":"digest_read_billing","normalized_sql":"select ?","stmt_type":"Select","auth_users":{"user":{}},"read_billing_demo_base_unit_aggs":[{"model_version":"v1","weight_version":"v1","site":"tidb","op_class":"projection_eval","operator_kind":"projection","dml_kind":"insert","unit":"fixed_events","input_source":"runtime_act_rows","input_side":"all","row_width_source":"operator_helper","value":2,"sample_count":1,"row_width_sum":16}],"read_billing_demo_status_aggs":[{"model_version":"v1","weight_version":"v1","site":"statement","op_class":"statement","operator_kind":"statement","status":"success","reason":"none","count":1}]}` + "\n")
 	require.NoError(t, err)
-	_, err = file.WriteString(`{"begin":1672129270,"end":1672129280,"digest":"digest_read_billing_error","normalized_sql":"select ?","stmt_type":"Select","auth_users":{"user":{}},"read_billing_demo_status_aggs":[{"model_version":"v1","weight_version":"v1","site":"statement","op_class":"statement","operator_kind":"statement","status":"error","reason":"statement_error","count":1}]}` + "\n")
+	// The second persisted record intentionally omits dml_kind to prove older
+	// JSON remains readable and yields the empty diagnostic dimension.
+	_, err = file.WriteString(`{"begin":1672129270,"end":1672129280,"digest":"digest_read_billing_error","normalized_sql":"select ?","stmt_type":"Select","auth_users":{"user":{}},"read_billing_demo_base_unit_aggs":[{"model_version":"v1","weight_version":"v1","site":"tidb","op_class":"projection_eval","operator_kind":"projection","unit":"fixed_events","input_source":"runtime_act_rows","input_side":"all","row_width_source":"operator_helper","value":1,"sample_count":1,"row_width_sum":8}],"read_billing_demo_status_aggs":[{"model_version":"v1","weight_version":"v1","site":"statement","op_class":"statement","operator_kind":"statement","status":"error","reason":"statement_error","count":1}]}` + "\n")
 	require.NoError(t, err)
 	require.NoError(t, file.Close())
 
@@ -538,6 +542,7 @@ func TestReadBillingDemoHistoryReader(t *testing.T) {
 		{Name: ast.NewCIStr(DigestStr)},
 		{Name: ast.NewCIStr(stmtsummarybase.ReadBillingDemoSiteStr)},
 		{Name: ast.NewCIStr(stmtsummarybase.ReadBillingDemoOpClassStr)},
+		{Name: ast.NewCIStr(stmtsummarybase.ReadBillingDemoDMLKindStr)},
 		{Name: ast.NewCIStr(stmtsummarybase.ReadBillingDemoUnitStr)},
 		{Name: ast.NewCIStr(stmtsummarybase.ReadBillingDemoValueStr)},
 	}
@@ -546,8 +551,9 @@ func TestReadBillingDemoHistoryReader(t *testing.T) {
 	baseRows := readAllRows(t, baseReader)
 	require.NoError(t, baseReader.Close())
 	require.Equal(t, map[string]string{
-		"digest_read_billing/tidb/projection_eval/fixed_events": "2",
-	}, readBillingDemoRowsByKey(baseRows, 4))
+		"digest_read_billing/tidb/projection_eval/insert/fixed_events": "2",
+		"digest_read_billing_error/tidb/projection_eval//fixed_events": "1",
+	}, readBillingDemoRowsByKey(baseRows, 5))
 
 	statusCols := []*model.ColumnInfo{
 		{Name: ast.NewCIStr(DigestStr)},

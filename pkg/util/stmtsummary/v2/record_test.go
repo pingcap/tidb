@@ -143,6 +143,7 @@ func TestStmtRecordReadBillingDemoStructuredStats(t *testing.T) {
 				Site:           "tidb",
 				OpClass:        "projection_eval",
 				OperatorKind:   "projection",
+				DMLKind:        "insert",
 				Unit:           "fixed_events",
 				InputSource:    "runtime_act_rows",
 				InputSide:      "all",
@@ -156,6 +157,7 @@ func TestStmtRecordReadBillingDemoStructuredStats(t *testing.T) {
 				Site:           "tidb",
 				OpClass:        "projection_eval",
 				OperatorKind:   "projection",
+				DMLKind:        "insert",
 				Unit:           "fixed_events",
 				InputSource:    "runtime_act_rows",
 				InputSide:      "all",
@@ -177,6 +179,7 @@ func TestStmtRecordReadBillingDemoStructuredStats(t *testing.T) {
 	require.Equal(t, 6.0, record.ReadBillingDemoBaseUnitAggs[0].Value)
 	require.Equal(t, uint64(2), record.ReadBillingDemoBaseUnitAggs[0].SampleCount)
 	require.Equal(t, 40.0, record.ReadBillingDemoBaseUnitAggs[0].RowWidthSum)
+	require.Equal(t, "insert", record.ReadBillingDemoBaseUnitAggs[0].DMLKind)
 	require.Len(t, record.ReadBillingDemoStatusAggs, 1)
 
 	b, err := marshalStmtRecord(record)

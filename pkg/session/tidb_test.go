@@ -16,19 +16,154 @@ package session
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
+
+type previewMutationTestBuffer struct {
+	kv.MemBuffer
+	setErr             error
+	setWithFlagsErr    error
+	deleteErr          error
+	deleteWithFlagsErr error
+	nextStaging        kv.StagingHandle
+}
+
+func (b *previewMutationTestBuffer) Set(_ kv.Key, _ []byte) error {
+	return b.setErr
+}
+
+func (b *previewMutationTestBuffer) SetWithFlags(_ kv.Key, _ []byte, _ ...kv.FlagsOp) error {
+	return b.setWithFlagsErr
+}
+
+func (b *previewMutationTestBuffer) Delete(_ kv.Key) error {
+	return b.deleteErr
+}
+
+func (b *previewMutationTestBuffer) DeleteWithFlags(_ kv.Key, _ ...kv.FlagsOp) error {
+	return b.deleteWithFlagsErr
+}
+
+func (*previewMutationTestBuffer) UpdateFlags(_ kv.Key, _ ...kv.FlagsOp) {}
+
+func (b *previewMutationTestBuffer) Staging() kv.StagingHandle {
+	b.nextStaging++
+	return b.nextStaging
+}
+
+func (*previewMutationTestBuffer) Release(kv.StagingHandle) {}
+
+func (*previewMutationTestBuffer) Cleanup(kv.StagingHandle) {}
+
+type previewMutationTestTxn struct {
+	kv.Transaction
+	buffer    kv.MemBuffer
+	pipelined bool
+}
+
+func (t *previewMutationTestTxn) Set(key kv.Key, value []byte) error {
+	return t.buffer.Set(key, value)
+}
+
+func (t *previewMutationTestTxn) Delete(key kv.Key) error {
+	return t.buffer.Delete(key)
+}
+
+func (t *previewMutationTestTxn) GetMemBuffer() kv.MemBuffer {
+	return t.buffer
+}
+
+func (t *previewMutationTestTxn) IsPipelined() bool {
+	return t.pipelined
+}
+
+func (*previewMutationTestTxn) Valid() bool {
+	return true
+}
+
+func TestPreviewKVMutationRecorder(t *testing.T) {
+	vars := variable.NewSessionVars(nil)
+	vars.StmtCtx.PreviewKVMutationRecorder = &stmtctx.PreviewKVMutationRecorder{}
+	buffer := &previewMutationTestBuffer{}
+	innerTxn := &previewMutationTestTxn{buffer: buffer}
+	txn := &LazyTxn{Transaction: innerTxn}
+	txn.setPreviewKVMutationCollection(vars, true)
+
+	memBuffer := txn.GetMemBuffer()
+	require.NoError(t, memBuffer.Set(kv.Key("a"), []byte("12")))
+	require.NoError(t, memBuffer.SetWithFlags(kv.Key("bb"), []byte("3"), kv.SetNeedLocked))
+	require.NoError(t, memBuffer.Delete(kv.Key("ccc")))
+	require.NoError(t, memBuffer.DeleteWithFlags(kv.Key("d"), kv.SetNeedLocked))
+	memBuffer.UpdateFlags(kv.Key("flags-only"), kv.SetNeedLocked)
+
+	stage := memBuffer.Staging()
+	require.NoError(t, memBuffer.Set(kv.Key("same"), []byte("v1")))
+	require.NoError(t, memBuffer.Set(kv.Key("same"), []byte("v2")))
+	memBuffer.Cleanup(stage)
+
+	// Direct Transaction calls use the same recorder but do not pass through
+	// the MemBuffer wrapper, so each attempted mutation is counted once.
+	require.NoError(t, txn.Set(kv.Key("z"), []byte("vv")))
+	require.NoError(t, txn.Delete(kv.Key("zz")))
+
+	buffer.setErr = errors.New("injected set failure")
+	require.Error(t, memBuffer.Set(kv.Key("fail"), []byte("x")))
+	buffer.setWithFlagsErr = errors.New("injected set-with-flags failure")
+	require.Error(t, memBuffer.SetWithFlags(kv.Key("fail-flags"), []byte("vv"), kv.SetNeedLocked))
+	buffer.deleteErr = errors.New("injected delete failure")
+	require.Error(t, memBuffer.Delete(kv.Key("fail-delete")))
+	buffer.deleteWithFlagsErr = errors.New("injected delete-with-flags failure")
+	require.Error(t, memBuffer.DeleteWithFlags(kv.Key("fail-delete-flags"), kv.SetNeedLocked))
+
+	// A pessimistic statement retry resets execution state but must retain the
+	// attempted mutation work from the previous attempt.
+	vars.StmtCtx.ResetForRetry()
+	buffer.setErr = nil
+	buffer.setWithFlagsErr = nil
+	buffer.deleteErr = nil
+	buffer.deleteWithFlagsErr = nil
+	require.NoError(t, memBuffer.Set(kv.Key("retry"), []byte("v")))
+
+	innerTxn.pipelined = true
+	require.NoError(t, txn.GetMemBuffer().Set(kv.Key("p"), []byte("v")))
+
+	snapshot := vars.StmtCtx.PreviewKVMutationRecorder.Snapshot()
+	require.Equal(t, uint64(14), snapshot.EncodedMutationCount)
+	require.Equal(t, uint64(80), snapshot.EncodedMutationBytes)
+	require.Equal(t, uint64(9), snapshot.SetCount)
+	require.Equal(t, uint64(5), snapshot.DeleteCount)
+	require.Equal(t, uint64(66), snapshot.KeyBytes)
+	require.Equal(t, uint64(14), snapshot.ValueBytes)
+	require.True(t, snapshot.Pipelined)
+
+	// The explicit COMMIT statement has no mutation call through which to
+	// observe pipelined mode. Preserve the transaction mode before commit
+	// invalidates the transaction so its TiKV payload is reported partial.
+	vars.StmtCtx.PreviewKVMutationRecorder = &stmtctx.PreviewKVMutationRecorder{}
+	se := &session{sessionVars: vars, txn: *txn}
+	se.markPreviewKVMutationTxnPipelined()
+	commitSnapshot := vars.StmtCtx.PreviewKVMutationRecorder.Snapshot()
+	require.True(t, commitSnapshot.Pipelined)
+
+	// Disabling preview collection restores the original hot path.
+	txn.setPreviewKVMutationCollection(nil, false)
+	require.NoError(t, txn.GetMemBuffer().Set(kv.Key("ignored"), []byte("ignored")))
+	require.Equal(t, commitSnapshot, vars.StmtCtx.PreviewKVMutationRecorder.Snapshot())
+}
 
 func TestDomapHandleNil(t *testing.T) {
 	// this is required for enterprise plugins

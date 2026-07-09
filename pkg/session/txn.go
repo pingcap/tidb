@@ -32,6 +32,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -57,6 +59,10 @@ type LazyTxn struct {
 	initCnt       int
 	stagingHandle kv.StagingHandle
 	writeSLI      sli.TxnWriteThroughputSLI
+	// previewMutationVars is set only while preview RU collection is enabled.
+	// Reading the current StmtCtx through SessionVars keeps optimistic replay
+	// mutations attributed to the statement being replayed.
+	previewMutationVars *variable.SessionVars
 
 	enterFairLockingOnValid bool
 
@@ -74,6 +80,80 @@ type LazyTxn struct {
 
 	// commit ts of the last successful transaction, to ensure ordering of TS
 	lastCommitTS uint64
+}
+
+type previewMutationMemBuffer struct {
+	kv.MemBuffer
+	recorder *stmtctx.PreviewKVMutationRecorder
+}
+
+func (b *previewMutationMemBuffer) Set(key kv.Key, value []byte) error {
+	b.recorder.RecordSet(len(key), len(value))
+	return b.MemBuffer.Set(key, value)
+}
+
+func (b *previewMutationMemBuffer) SetWithFlags(key kv.Key, value []byte, flags ...kv.FlagsOp) error {
+	b.recorder.RecordSet(len(key), len(value))
+	return b.MemBuffer.SetWithFlags(key, value, flags...)
+}
+
+func (b *previewMutationMemBuffer) Delete(key kv.Key) error {
+	b.recorder.RecordDelete(len(key))
+	return b.MemBuffer.Delete(key)
+}
+
+func (b *previewMutationMemBuffer) DeleteWithFlags(key kv.Key, flags ...kv.FlagsOp) error {
+	b.recorder.RecordDelete(len(key))
+	return b.MemBuffer.DeleteWithFlags(key, flags...)
+}
+
+func (txn *LazyTxn) setPreviewKVMutationCollection(vars *variable.SessionVars, enabled bool) {
+	if !enabled {
+		txn.previewMutationVars = nil
+		return
+	}
+	txn.previewMutationVars = vars
+}
+
+func (txn *LazyTxn) previewKVMutationRecorder() *stmtctx.PreviewKVMutationRecorder {
+	vars := txn.previewMutationVars
+	if vars == nil || vars.StmtCtx == nil || vars.StmtCtx.PreviewKVMutationRecorder == nil {
+		return nil
+	}
+	recorder := vars.StmtCtx.PreviewKVMutationRecorder
+	if txn.Transaction != nil && txn.Transaction.IsPipelined() {
+		recorder.MarkPipelined()
+	}
+	return recorder
+}
+
+// GetMemBuffer overrides the embedded transaction method so all foreground
+// table record/index Set/Delete calls share one preview recorder. The normal
+// production path returns the original MemBuffer directly.
+func (txn *LazyTxn) GetMemBuffer() kv.MemBuffer {
+	buffer := txn.Transaction.GetMemBuffer()
+	if recorder := txn.previewKVMutationRecorder(); recorder != nil {
+		return &previewMutationMemBuffer{MemBuffer: buffer, recorder: recorder}
+	}
+	return buffer
+}
+
+// Set overrides the embedded transaction method for the few foreground paths
+// that write through Transaction rather than GetMemBuffer.
+func (txn *LazyTxn) Set(key kv.Key, value []byte) error {
+	if recorder := txn.previewKVMutationRecorder(); recorder != nil {
+		recorder.RecordSet(len(key), len(value))
+	}
+	return txn.Transaction.Set(key, value)
+}
+
+// Delete overrides the embedded transaction method for record deletes and
+// other foreground paths that write through Transaction directly.
+func (txn *LazyTxn) Delete(key kv.Key) error {
+	if recorder := txn.previewKVMutationRecorder(); recorder != nil {
+		recorder.RecordDelete(len(key))
+	}
+	return txn.Transaction.Delete(key)
 }
 
 // GetTableInfo returns the cached index name.

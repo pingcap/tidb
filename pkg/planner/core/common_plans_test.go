@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -172,6 +173,8 @@ func TestExplainRUTargetGateStatus(t *testing.T) {
 	}{
 		{"explain analyze format='ru' select 1", explainRUStatusSuccess},
 		{"explain analyze format='ru' insert into t values (1)", explainRUStatusSuccess},
+		{"explain analyze format='ru' insert ignore into t values (1)", explainRUStatusSuccess},
+		{"explain analyze format='ru' insert into t values (1) on duplicate key update a = values(a)", explainRUStatusSuccess},
 		{"explain analyze format='ru' update t set a = 2 where a = 1", explainRUStatusSuccess},
 		{"explain analyze format='ru' delete from t where a = 1", explainRUStatusSuccess},
 		{"explain analyze format='ru' replace into t values (1)", explainRUStatusUnsupportedNonSelect},
@@ -184,6 +187,20 @@ func TestExplainRUTargetGateStatus(t *testing.T) {
 		require.NoError(t, err, tc.sql)
 		explain := stmt.(*ast.ExplainStmt)
 		require.Equal(t, tc.expected, explainRUTargetGateStatus(explain.Stmt), tc.sql)
+	}
+
+	for sql, expectedKind := range map[string]string{
+		"insert into t values (1)":                                       "insert",
+		"insert ignore into t values (1)":                                "insert_ignore",
+		"insert into t values (1) on duplicate key update a = values(a)": "upsert",
+		"update t set a = 2 where a = 1":                                 "update",
+		"delete from t where a = 1":                                      "delete",
+	} {
+		stmt, err := parser.New().ParseOneStmt(sql, "", "")
+		require.NoError(t, err)
+		kind, ok := explainRUWriteDMLKind(stmt)
+		require.True(t, ok)
+		require.Equal(t, expectedKind, kind)
 	}
 }
 
@@ -258,6 +275,19 @@ func TestExplainRUPlanFormulaAndOperatorClasses(t *testing.T) {
 	require.Equal(t, 4096*writeWeights.writeByte, previewRU)
 	for _, diagnosticUnit := range []string{readBillingDemoUnitPrewriteRegionNum, readBillingDemoUnitTiKVWriteRPCCount} {
 		weight, previewRU, ok = readBillingDemoUnitPreviewRU(readBillingDemoUnit{unit: diagnosticUnit, value: 99}, writeWeights)
+		require.True(t, ok)
+		require.Zero(t, weight)
+		require.Zero(t, previewRU)
+	}
+
+	mutationWeights, ok := readBillingDemoResolveWeights(readBillingDemoSiteTiDB, readBillingDemoOpClassKVMutation, readBillingDemoWeightVersion)
+	require.True(t, ok)
+	require.Zero(t, mutationWeights.mutationCount)
+	require.Zero(t, mutationWeights.mutationByte)
+	require.NotEqual(t, writeWeights.writeKey, mutationWeights.mutationCount)
+	require.NotEqual(t, writeWeights.writeByte, mutationWeights.mutationByte)
+	for _, mutationUnit := range []string{readBillingDemoUnitEncodedMutationCount, readBillingDemoUnitEncodedMutationBytes} {
+		weight, previewRU, ok = readBillingDemoUnitPreviewRU(readBillingDemoUnit{unit: mutationUnit, value: 99}, mutationWeights)
 		require.True(t, ok)
 		require.Zero(t, weight)
 		require.Zero(t, previewRU)
@@ -393,6 +423,41 @@ func TestExplainRUComponentSnapshotStatusAndWeights(t *testing.T) {
 }
 
 func TestReadBillingDemoWriteDMLResult(t *testing.T) {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().StmtCtx.PreviewKVMutationRecorder = &stmtctx.PreviewKVMutationRecorder{}
+	ctx.GetSessionVars().StmtCtx.PreviewKVMutationRecorder.RecordSet(5, 7)
+	ctx.GetSessionVars().StmtCtx.PreviewKVMutationRecorder.RecordDelete(3)
+	for _, dmlKind := range []string{"insert", "update", "delete", "upsert"} {
+		result := readBillingDemoResult{status: readBillingDemoStatusSuccess, reason: readBillingDemoReasonNone}
+		appendReadBillingDemoMutation(&result, ctx, dmlKind)
+		require.NotEmpty(t, result.operators)
+		op := result.operators[0]
+		require.Equal(t, readBillingDemoSiteTiDB, op.site)
+		require.Equal(t, readBillingDemoOpClassKVMutation, op.opClass)
+		require.Equal(t, readBillingDemoOperatorMemDBMutation, op.operatorKind)
+		require.Equal(t, dmlKind, op.dmlKind)
+		require.Equal(t, readBillingDemoScopeStatementAttempted, op.scope)
+		units := make(map[string]readBillingDemoUnit)
+		for _, unit := range op.units {
+			units[unit.unit] = unit
+		}
+		require.Equal(t, 2.0, units[readBillingDemoUnitEncodedMutationCount].value)
+		require.Equal(t, 15.0, units[readBillingDemoUnitEncodedMutationBytes].value)
+		weights, ok := readBillingDemoResolveWeights(op.site, op.opClass, readBillingDemoWeightVersion)
+		require.True(t, ok)
+		require.Zero(t, weights.mutationCount)
+		require.Zero(t, weights.mutationByte)
+		require.Contains(t, result.operators, readBillingDemoMutationDiagnostic(dmlKind, readBillingDemoReasonDMLAncillaryPartial))
+	}
+
+	ctx.GetSessionVars().SetInTxn(true)
+	ctx.GetSessionVars().TxnCtx.CouldRetry = true
+	retryableResult := readBillingDemoResult{status: readBillingDemoStatusSuccess, reason: readBillingDemoReasonNone}
+	appendReadBillingDemoMutation(&retryableResult, ctx, "update")
+	require.Contains(t, retryableResult.operators, readBillingDemoMutationDiagnostic("update", readBillingDemoReasonOptimisticReplayPartial))
+	ctx.GetSessionVars().SetInTxn(false)
+	ctx.GetSessionVars().TxnCtx.CouldRetry = false
+
 	ruv2Metrics := execdetails.NewRUV2Metrics()
 	ruv2Metrics.AddResourceManagerWriteCnt(7)
 	commitDetail := &tikvutil.CommitDetails{
@@ -405,6 +470,8 @@ func TestReadBillingDemoWriteDMLResult(t *testing.T) {
 	require.Equal(t, readBillingDemoReasonNone, result.reason)
 	require.Len(t, result.operators, 1)
 	require.Equal(t, readBillingDemoStatusOperatorOK, result.operators[0].status)
+	require.Equal(t, readBillingDemoOperatorTxnPrewrite, result.operators[0].operatorKind)
+	require.Equal(t, "insert", result.operators[0].dmlKind)
 
 	units := make(map[string]readBillingDemoUnit)
 	for _, unit := range result.operators[0].units {
@@ -414,6 +481,20 @@ func TestReadBillingDemoWriteDMLResult(t *testing.T) {
 	require.Equal(t, 66.0, units[readBillingDemoUnitWriteByte].value)
 	require.Equal(t, 2.0, units[readBillingDemoUnitPrewriteRegionNum].value)
 	require.Equal(t, 7.0, units[readBillingDemoUnitTiKVWriteRPCCount].value)
+
+	ctx.GetSessionVars().StmtCtx.MergeExecDetails(commitDetail)
+	commitResult := buildTxnCommitBillingDemoResult(ctx, ruv2Metrics, nil)
+	require.Equal(t, readBillingDemoStatusSuccess, commitResult.status)
+	require.NotEmpty(t, commitResult.operators)
+	require.Equal(t, readBillingDemoStatusOperatorOK, commitResult.operators[0].status)
+	require.Empty(t, commitResult.operators[0].dmlKind)
+	require.Equal(t, readBillingDemoScopeTxnPrewritePayload, commitResult.operators[0].scope)
+	commitUnits := make(map[string]readBillingDemoUnit)
+	for _, unit := range commitResult.operators[0].units {
+		commitUnits[unit.unit] = unit
+	}
+	require.Equal(t, 3.0, commitUnits[readBillingDemoUnitWriteKeys].value)
+	require.Equal(t, 66.0, commitUnits[readBillingDemoUnitWriteByte].value)
 
 	rows := explainRUBuildReadBillingRows(result, explainRUComponentSnapshotOK)
 	require.InEpsilon(t,
@@ -445,22 +526,38 @@ func TestReadBillingDemoWriteDMLResult(t *testing.T) {
 	require.Contains(t, rows[0].note, "partial_missing_write_rpc_count")
 
 	missingResult := buildWriteBillingDemoResultFromDetails("update", nil, ruv2Metrics)
-	require.Equal(t, readBillingDemoStatusUnknownInput, missingResult.status)
-	require.Equal(t, readBillingDemoReasonMissingCommitDetail, missingResult.reason)
+	require.Equal(t, readBillingDemoStatusSuccess, missingResult.status)
+	require.Len(t, missingResult.operators, 1)
+	require.Equal(t, readBillingDemoStatusPartial, missingResult.operators[0].status)
+	require.Equal(t, readBillingDemoReasonMissingCommitDetail, missingResult.operators[0].reason)
+	require.True(t, missingResult.operators[0].emitStatusRow)
+	// Pipelined transactions expose a non-nil CommitDetails without logical
+	// WriteKeys/WriteSize. The incomplete payload must not become billable zero
+	// units merely because the detail object exists.
+	pipelinedResult := buildTiKVWriteBillingDemoOperators("update", &tikvutil.CommitDetails{}, ruv2Metrics, true)
+	require.Len(t, pipelinedResult, 1)
+	require.Equal(t, readBillingDemoStatusPartial, pipelinedResult[0].status)
+	require.Equal(t, readBillingDemoReasonPipelinedWritePartial, pipelinedResult[0].reason)
+	require.True(t, pipelinedResult[0].emitStatusRow)
+	require.Empty(t, pipelinedResult[0].units)
+	require.Empty(t, buildReadBillingDemoStatementStats(readBillingDemoResult{
+		status:    readBillingDemoStatusSuccess,
+		operators: pipelinedResult,
+	}).BaseUnits)
 
 	missingWriteKeys := buildWriteBillingDemoResultFromDetails("update", &tikvutil.CommitDetails{WriteSize: 2}, ruv2Metrics)
-	require.Equal(t, readBillingDemoStatusUnknownInput, missingWriteKeys.status)
-	require.Equal(t, readBillingDemoReasonMissingWriteKeys, missingWriteKeys.reason)
+	require.Equal(t, readBillingDemoStatusSuccess, missingWriteKeys.status)
+	require.Contains(t, missingWriteKeys.operators, readBillingDemoWriteDiagnosticStatus("update", readBillingDemoReasonMissingWriteKeys))
 
 	missingWriteByte := buildWriteBillingDemoResultFromDetails("update", &tikvutil.CommitDetails{WriteKeys: 1}, ruv2Metrics)
-	require.Equal(t, readBillingDemoStatusUnknownInput, missingWriteByte.status)
-	require.Equal(t, readBillingDemoReasonMissingWriteByte, missingWriteByte.reason)
+	require.Equal(t, readBillingDemoStatusSuccess, missingWriteByte.status)
+	require.Contains(t, missingWriteByte.operators, readBillingDemoWriteDiagnosticStatus("update", readBillingDemoReasonMissingWriteByte))
 
 	zeroResult := buildWriteBillingDemoResultFromDetails("update", &tikvutil.CommitDetails{}, ruv2Metrics)
 	require.Equal(t, readBillingDemoStatusSuccess, zeroResult.status)
-	require.Len(t, zeroResult.operators, 1)
 	require.Equal(t, readBillingDemoReasonZeroMutation, zeroResult.operators[0].reason)
-	require.Empty(t, zeroResult.operators[0].units)
+	require.Equal(t, 0.0, zeroResult.operators[0].units[0].value)
+	require.Equal(t, 0.0, zeroResult.operators[0].units[1].value)
 }
 
 func extractExplainRUTestSnapshotStatus(stats *execdetails.RURuntimeStats) explainRUComponentSnapshotStatus {

@@ -669,6 +669,8 @@ func readBillingDemoBaseUnitColumnValue(info columnInfo, col string, record *Stm
 		return entry.OpClass
 	case stmtsummarybase.ReadBillingDemoOperatorKindStr:
 		return entry.OperatorKind
+	case stmtsummarybase.ReadBillingDemoDMLKindStr:
+		return entry.DMLKind
 	case stmtsummarybase.ReadBillingDemoUnitStr:
 		return entry.Unit
 	case stmtsummarybase.ReadBillingDemoInputSourceStr:

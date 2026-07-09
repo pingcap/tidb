@@ -1485,6 +1485,7 @@ var tableStatementsSummaryReadBillingDemoBaseUnitCols = []columnInfo{
 	{name: stmtsummary.ReadBillingDemoSampleCountStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Number of unit samples"},
 	{name: stmtsummary.ReadBillingDemoRowWidthSumStr, tp: mysql.TypeDouble, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Sum of row-width samples"},
 	{name: stmtsummary.ReadBillingDemoAvgRowWidthStr, tp: mysql.TypeDouble, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average row-width sample"},
+	{name: stmtsummary.ReadBillingDemoDMLKindStr, tp: mysql.TypeVarchar, size: 32, flag: mysql.NotNullFlag, comment: "Diagnostic DML kind; not part of the preview weight key"},
 }
 
 var tableStatementsSummaryReadBillingDemoStatusCols = []columnInfo{

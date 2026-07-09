@@ -313,6 +313,8 @@ func (ssr *stmtSummaryReader) readBillingDemoBaseUnitColumnValue(col string, ssE
 		return entry.OpClass
 	case ReadBillingDemoOperatorKindStr:
 		return entry.OperatorKind
+	case ReadBillingDemoDMLKindStr:
+		return entry.DMLKind
 	case ReadBillingDemoUnitStr:
 		return entry.Unit
 	case ReadBillingDemoInputSourceStr:

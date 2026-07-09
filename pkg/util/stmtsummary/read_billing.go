@@ -36,6 +36,7 @@ const (
 	ReadBillingDemoSiteStr          = "SITE"
 	ReadBillingDemoOpClassStr       = "OP_CLASS"
 	ReadBillingDemoOperatorKindStr  = "OPERATOR_KIND"
+	ReadBillingDemoDMLKindStr       = "DML_KIND"
 	ReadBillingDemoUnitStr          = "UNIT"
 	ReadBillingDemoInputSourceStr   = "INPUT_SOURCE"
 	ReadBillingDemoInputSideStr     = "INPUT_SIDE"
@@ -121,6 +122,7 @@ type ReadBillingDemoBaseUnitSample struct {
 	Site           string
 	OpClass        string
 	OperatorKind   string
+	DMLKind        string
 	Unit           string
 	InputSource    string
 	InputSide      string
@@ -147,6 +149,7 @@ type ReadBillingDemoBaseUnitKey struct {
 	Site           string
 	OpClass        string
 	OperatorKind   string
+	DMLKind        string
 	Unit           string
 	InputSource    string
 	InputSide      string
@@ -167,6 +170,7 @@ type ReadBillingDemoBaseUnitAggEntry struct {
 	Site           string  `json:"site"`
 	OpClass        string  `json:"op_class"`
 	OperatorKind   string  `json:"operator_kind"`
+	DMLKind        string  `json:"dml_kind,omitempty"`
 	Unit           string  `json:"unit"`
 	InputSource    string  `json:"input_source"`
 	InputSide      string  `json:"input_side"`
@@ -211,6 +215,7 @@ func makeReadBillingDemoBaseUnitKey(sample ReadBillingDemoBaseUnitSample) ReadBi
 		Site:           sample.Site,
 		OpClass:        sample.OpClass,
 		OperatorKind:   sample.OperatorKind,
+		DMLKind:        sample.DMLKind,
 		Unit:           sample.Unit,
 		InputSource:    sample.InputSource,
 		InputSide:      sample.InputSide,
@@ -237,6 +242,7 @@ func (e ReadBillingDemoBaseUnitAggEntry) key() ReadBillingDemoBaseUnitKey {
 		Site:           e.Site,
 		OpClass:        e.OpClass,
 		OperatorKind:   e.OperatorKind,
+		DMLKind:        e.DMLKind,
 		Unit:           e.Unit,
 		InputSource:    e.InputSource,
 		InputSide:      e.InputSide,
@@ -305,6 +311,7 @@ func readBillingDemoBaseUnitEntry(key ReadBillingDemoBaseUnitKey, agg ReadBillin
 		Site:           key.Site,
 		OpClass:        key.OpClass,
 		OperatorKind:   key.OperatorKind,
+		DMLKind:        key.DMLKind,
 		Unit:           key.Unit,
 		InputSource:    key.InputSource,
 		InputSide:      key.InputSide,
@@ -673,6 +680,7 @@ func sortReadBillingDemoBaseUnitEntries(entries []ReadBillingDemoBaseUnitAggEntr
 			cmp.Compare(i.Site, j.Site),
 			cmp.Compare(i.OpClass, j.OpClass),
 			cmp.Compare(i.OperatorKind, j.OperatorKind),
+			cmp.Compare(i.DMLKind, j.DMLKind),
 			cmp.Compare(i.Unit, j.Unit),
 			cmp.Compare(i.InputSource, j.InputSource),
 			cmp.Compare(i.InputSide, j.InputSide),

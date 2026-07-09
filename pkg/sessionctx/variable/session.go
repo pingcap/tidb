@@ -1231,7 +1231,7 @@ type SessionVars struct {
 	// AllowProjectionPushDown enables pushdown projection on TiKV.
 	AllowProjectionPushDown bool
 
-	// EnableReadBillingDemo indicates whether read billing demo metrics are emitted for SELECT reads.
+	// EnableReadBillingDemo indicates whether preview RU base-unit metrics are emitted for foreground statements.
 	EnableReadBillingDemo bool
 
 	// EnableStrictNotNullCheck enables strict not-null check for single-row insert in non-strict mode.
