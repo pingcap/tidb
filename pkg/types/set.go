@@ -19,7 +19,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 )
 
@@ -51,11 +50,11 @@ func (e Set) Copy() Set {
 
 // ParseSet creates a Set with name or value.
 func ParseSet(elems []string, name string, collation string) (Set, error) {
-	return parseSetWithCollate(collate.NewCollationEnabled(), elems, name, collation)
+	return CurrentEncodingConfig().parseSet(elems, name, collation)
 }
 
-func parseSetWithCollate(useNewCollate bool, elems []string, name string, collation string) (Set, error) {
-	if setName, err := parseSetNameWithCollate(useNewCollate, elems, name, collation); err == nil {
+func (c EncodingConfig) parseSet(elems []string, name string, collation string) (Set, error) {
+	if setName, err := c.parseSetName(elems, name, collation); err == nil {
 		return setName, nil
 	}
 	// name doesn't exist, maybe an integer?
@@ -68,15 +67,15 @@ func parseSetWithCollate(useNewCollate bool, elems []string, name string, collat
 
 // ParseSetName creates a Set with name.
 func ParseSetName(elems []string, name string, collation string) (Set, error) {
-	return parseSetNameWithCollate(collate.NewCollationEnabled(), elems, name, collation)
+	return CurrentEncodingConfig().parseSetName(elems, name, collation)
 }
 
-func parseSetNameWithCollate(useNewCollate bool, elems []string, name string, collation string) (Set, error) {
+func (c EncodingConfig) parseSetName(elems []string, name string, collation string) (Set, error) {
 	if len(name) == 0 {
 		return zeroSet, nil
 	}
 
-	ctor := collate.GetCollatorWithCollate(useNewCollate, collation)
+	ctor := c.Collator(collation)
 
 	seps := strings.Split(name, ",")
 	marked := make(map[string]struct{}, len(seps))

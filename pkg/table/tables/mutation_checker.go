@@ -256,8 +256,8 @@ func checkIndexKeys(
 			continue
 		}
 
-		decodedIndexValues, err := tablecodec.DecodeIndexKVWithCollate(
-			useNewCollate,
+		decodedIndexValues, err := tablecodec.DecodeIndexKVWithConfig(
+			types.NewEncodingConfig(useNewCollate),
 			m.key, value, len(indexInfo.Columns), tablecodec.HandleNotNeeded, rowColInfos,
 		)
 		if err != nil {
@@ -392,7 +392,7 @@ func compareIndexData(
 		)
 
 		comparison, err := CompareIndexAndVal(tc, expectedDatum, decodedMutationDatum,
-			collate.GetCollatorWithCollate(useNewCollate, decodedMutationDatum.Collation()),
+			types.NewEncodingConfig(useNewCollate).Collator(decodedMutationDatum.Collation()),
 			cols[offsetInTable].ColumnInfo.FieldType.IsArray() && expectedDatum.Kind() == types.KindMysqlJSON)
 		if err != nil {
 			return errors.Trace(err)

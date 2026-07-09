@@ -101,15 +101,15 @@ func TestEnum(t *testing.T) {
 		}
 	})
 
-	t.Run("parseEnumWithCollate", func(t *testing.T) {
+	t.Run("EncodingConfig_parseEnum", func(t *testing.T) {
 		origin := collate.NewCollationEnabled()
 		collate.SetNewCollationEnabledForTest(true)
 		defer collate.SetNewCollationEnabledForTest(origin)
 
-		_, err := parseEnumWithCollate(false, []string{"a"}, "A", "utf8_general_ci")
+		_, err := NewEncodingConfig(false).parseEnum([]string{"a"}, "A", "utf8_general_ci")
 		require.Error(t, err)
 
-		e, err := parseEnumWithCollate(true, []string{"a"}, "A", "utf8_general_ci")
+		e, err := NewEncodingConfig(true).parseEnum([]string{"a"}, "A", "utf8_general_ci")
 		require.NoError(t, err)
 		require.Equal(t, uint64(1), e.Value)
 	})

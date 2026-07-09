@@ -103,15 +103,15 @@ func TestSet(t *testing.T) {
 		}
 	})
 
-	t.Run("parseSetWithCollate", func(t *testing.T) {
+	t.Run("EncodingConfig_parseSet", func(t *testing.T) {
 		origin := collate.NewCollationEnabled()
 		collate.SetNewCollationEnabledForTest(true)
 		defer collate.SetNewCollationEnabledForTest(origin)
 
-		_, err := parseSetWithCollate(false, elems, "A", "utf8_general_ci")
+		_, err := NewEncodingConfig(false).parseSet(elems, "A", "utf8_general_ci")
 		require.Error(t, err)
 
-		s, err := parseSetWithCollate(true, elems, "A", "utf8_general_ci")
+		s, err := NewEncodingConfig(true).parseSet(elems, "A", "utf8_general_ci")
 		require.NoError(t, err)
 		require.Equal(t, uint64(1), s.Value)
 	})

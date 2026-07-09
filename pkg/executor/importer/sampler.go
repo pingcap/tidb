@@ -336,7 +336,7 @@ func (s *kvSizeSampler) sampleOneFile(
 		ParquetMeta: file.ParquetMeta,
 	}
 	idAlloc := kv.NewPanickingAllocators(s.table.Meta().SepAutoInc())
-	tbl, err := tables.TableFromMetaWithCollate(s.table.UseNewCollate(), idAlloc, s.table.Meta())
+	tbl, err := tables.TableFromMetaWithEncodingConfig(table.EncodingConfigFromTable(s.table), idAlloc, s.table.Meta())
 	if err != nil {
 		return 0, 0, 0, errors.Annotatef(err, "failed to tables.TableFromMeta %s", s.table.Meta().Name)
 	}

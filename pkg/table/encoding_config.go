@@ -24,16 +24,16 @@ import (
 // EncodingConfig keeps the collation-sensitive encoding behavior fixed to a
 // table or task snapshot.
 type EncodingConfig struct {
-	useNewCollate bool
-	encoder       codec.Encoder
+	typeConfig types.EncodingConfig
+	encoder    codec.Encoder
 }
 
 // NewEncodingConfig creates an EncodingConfig from an explicit new-collation
 // mode.
 func NewEncodingConfig(useNewCollate bool) EncodingConfig {
 	return EncodingConfig{
-		useNewCollate: useNewCollate,
-		encoder:       codec.NewEncoder(useNewCollate),
+		typeConfig: types.NewEncodingConfig(useNewCollate),
+		encoder:    codec.NewEncoder(useNewCollate),
 	}
 }
 
@@ -45,7 +45,7 @@ func EncodingConfigFromTable(tbl Table) EncodingConfig {
 // UseNewCollate returns whether the config uses the new collation
 // implementation.
 func (c EncodingConfig) UseNewCollate() bool {
-	return c.useNewCollate
+	return c.typeConfig.UseNewCollate()
 }
 
 // Encoder returns a codec encoder fixed to this config.
@@ -55,14 +55,20 @@ func (c EncodingConfig) Encoder() codec.Encoder {
 
 // BuildExprOption returns the expression build option fixed to this config.
 func (c EncodingConfig) BuildExprOption() expression.BuildOption {
-	return expression.WithUseNewCollate(c.useNewCollate)
+	return expression.WithUseNewCollate(c.UseNewCollate())
+}
+
+// NeedRestoredData reports if a type needs restored data under this config.
+func (c EncodingConfig) NeedRestoredData(ft *types.FieldType) bool {
+	return c.typeConfig.NeedRestoredData(ft)
 }
 
 // CastColumnValue casts a column value using this config for collation-sensitive
 // conversions.
 func (c EncodingConfig) CastColumnValue(ctx expression.BuildContext, val types.Datum, col *model.ColumnInfo, returnErr, forceIgnoreTruncate bool) (types.Datum, error) {
 	evalCtx := ctx.GetEvalCtx()
-	return castColumnValueWithCollate(
+	casted, err := c.typeConfig.ConvertTo(evalCtx.TypeCtx(), val, &col.FieldType)
+	return handleCastColumnValueResult(
 		evalCtx.TypeCtx(),
 		evalCtx.ErrCtx(),
 		evalCtx.SQLMode(),
@@ -72,6 +78,7 @@ func (c EncodingConfig) CastColumnValue(ctx expression.BuildContext, val types.D
 		ctx.ConnectionID(),
 		returnErr,
 		forceIgnoreTruncate,
-		c.useNewCollate,
+		casted,
+		err,
 	)
 }

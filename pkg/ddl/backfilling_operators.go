@@ -111,7 +111,12 @@ func NewAddIndexIngestPipeline(
 ) (*operator.AsyncPipeline, error) {
 	indexes := make([]table.Index, 0, len(idxInfos))
 	for _, idxInfo := range idxInfos {
-		index, err := tables.NewIndexWithCollate(tbl.UseNewCollate(), tbl.GetPhysicalID(), tbl.Meta(), idxInfo)
+		index, err := tables.NewIndexWithEncodingConfig(
+			table.NewEncodingConfig(tbl.UseNewCollate()),
+			tbl.GetPhysicalID(),
+			tbl.Meta(),
+			idxInfo,
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -169,7 +174,12 @@ func NewWriteIndexToExternalStoragePipeline(
 ) (*operator.AsyncPipeline, error) {
 	indexes := make([]table.Index, 0, len(idxInfos))
 	for _, idxInfo := range idxInfos {
-		index, err := tables.NewIndexWithCollate(tbl.UseNewCollate(), tbl.GetPhysicalID(), tbl.Meta(), idxInfo)
+		index, err := tables.NewIndexWithEncodingConfig(
+			table.NewEncodingConfig(tbl.UseNewCollate()),
+			tbl.GetPhysicalID(),
+			tbl.Meta(),
+			idxInfo,
+		)
 		if err != nil {
 			return nil, err
 		}

@@ -1068,17 +1068,17 @@ func (d *Datum) ConvertTo(ctx Context, target *FieldType) (Datum, error) {
 	}
 }
 
-// ConvertToWithCollate converts a datum to the target field type using an
-// explicit new collation mode for conversions whose result depends on collation.
-func (d *Datum) ConvertToWithCollate(ctx Context, target *FieldType, useNewCollate bool) (Datum, error) {
+// ConvertTo converts a datum to the target field type using this config for
+// conversions whose result depends on collation.
+func (c EncodingConfig) ConvertTo(ctx Context, d Datum, target *FieldType) (Datum, error) {
 	if d.k == KindNull {
 		return Datum{}, nil
 	}
 	switch target.GetType() {
 	case mysql.TypeEnum:
-		return d.convertToMysqlEnumWithCollate(ctx, target, useNewCollate)
+		return d.convertToMysqlEnumByConfig(ctx, target, c)
 	case mysql.TypeSet:
-		return d.convertToMysqlSetWithCollate(ctx, target, useNewCollate)
+		return d.convertToMysqlSetByConfig(ctx, target, c)
 	default:
 		return d.ConvertTo(ctx, target)
 	}
@@ -1760,10 +1760,10 @@ func (d *Datum) convertToMysqlBit(ctx Context, target *FieldType) (Datum, error)
 }
 
 func (d *Datum) convertToMysqlEnum(ctx Context, target *FieldType) (Datum, error) {
-	return d.convertToMysqlEnumWithCollate(ctx, target, collate.NewCollationEnabled())
+	return d.convertToMysqlEnumByConfig(ctx, target, CurrentEncodingConfig())
 }
 
-func (d *Datum) convertToMysqlEnumWithCollate(ctx Context, target *FieldType, useNewCollate bool) (Datum, error) {
+func (d *Datum) convertToMysqlEnumByConfig(ctx Context, target *FieldType, encoding EncodingConfig) (Datum, error) {
 	var (
 		ret Datum
 		e   Enum
@@ -1771,17 +1771,17 @@ func (d *Datum) convertToMysqlEnumWithCollate(ctx Context, target *FieldType, us
 	)
 	switch d.k {
 	case KindString, KindBytes, KindBinaryLiteral:
-		e, err = parseEnumWithCollate(useNewCollate, target.GetElems(), d.GetString(), target.GetCollate())
+		e, err = encoding.parseEnum(target.GetElems(), d.GetString(), target.GetCollate())
 	case KindMysqlEnum:
 		if d.i == 0 {
 			// MySQL enum zero value has an empty string name(Enum{Name: '', Value: 0}). It is
 			// different from the normal enum string value(Enum{Name: '', Value: n}, n > 0).
 			e = Enum{}
 		} else {
-			e, err = parseEnumWithCollate(useNewCollate, target.GetElems(), d.GetMysqlEnum().Name, target.GetCollate())
+			e, err = encoding.parseEnum(target.GetElems(), d.GetMysqlEnum().Name, target.GetCollate())
 		}
 	case KindMysqlSet:
-		e, err = parseEnumWithCollate(useNewCollate, target.GetElems(), d.GetMysqlSet().Name, target.GetCollate())
+		e, err = encoding.parseEnum(target.GetElems(), d.GetMysqlSet().Name, target.GetCollate())
 	default:
 		var uintDatum Datum
 		uintDatum, err = d.convertToUint(ctx, target)
@@ -1796,10 +1796,10 @@ func (d *Datum) convertToMysqlEnumWithCollate(ctx Context, target *FieldType, us
 }
 
 func (d *Datum) convertToMysqlSet(ctx Context, target *FieldType) (Datum, error) {
-	return d.convertToMysqlSetWithCollate(ctx, target, collate.NewCollationEnabled())
+	return d.convertToMysqlSetByConfig(ctx, target, CurrentEncodingConfig())
 }
 
-func (d *Datum) convertToMysqlSetWithCollate(ctx Context, target *FieldType, useNewCollate bool) (Datum, error) {
+func (d *Datum) convertToMysqlSetByConfig(ctx Context, target *FieldType, encoding EncodingConfig) (Datum, error) {
 	var (
 		ret Datum
 		s   Set
@@ -1807,11 +1807,11 @@ func (d *Datum) convertToMysqlSetWithCollate(ctx Context, target *FieldType, use
 	)
 	switch d.k {
 	case KindString, KindBytes, KindBinaryLiteral:
-		s, err = parseSetWithCollate(useNewCollate, target.GetElems(), d.GetString(), target.GetCollate())
+		s, err = encoding.parseSet(target.GetElems(), d.GetString(), target.GetCollate())
 	case KindMysqlEnum:
-		s, err = parseSetWithCollate(useNewCollate, target.GetElems(), d.GetMysqlEnum().Name, target.GetCollate())
+		s, err = encoding.parseSet(target.GetElems(), d.GetMysqlEnum().Name, target.GetCollate())
 	case KindMysqlSet:
-		s, err = parseSetWithCollate(useNewCollate, target.GetElems(), d.GetMysqlSet().Name, target.GetCollate())
+		s, err = encoding.parseSet(target.GetElems(), d.GetMysqlSet().Name, target.GetCollate())
 	case KindVectorFloat32:
 		return invalidConv(d, mysql.TypeSet)
 	default:

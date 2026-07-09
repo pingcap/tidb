@@ -1107,17 +1107,24 @@ func TableInfo2SchemaAndNames(ctx BuildContext, dbName ast.CIStr, tbl *model.Tab
 
 // ColumnInfos2ColumnsAndNames converts the ColumnInfo to the *Column and NameSlice.
 func ColumnInfos2ColumnsAndNames(ctx BuildContext, dbName, tblName ast.CIStr, colInfos []*model.ColumnInfo, tblInfo *model.TableInfo) ([]*Column, types.NameSlice, error) {
-	return ColumnInfos2ColumnsAndNamesWithCollate(ctx, dbName, tblName, colInfos, tblInfo, collate.NewCollationEnabled())
+	return ColumnInfos2ColumnsAndNamesWithBuildOption(
+		ctx,
+		dbName,
+		tblName,
+		colInfos,
+		tblInfo,
+		WithUseNewCollate(collate.NewCollationEnabled()),
+	)
 }
 
-// ColumnInfos2ColumnsAndNamesWithCollate converts the ColumnInfo to the *Column
-// and NameSlice with a fixed collation mode.
-func ColumnInfos2ColumnsAndNamesWithCollate(
+// ColumnInfos2ColumnsAndNamesWithBuildOption converts the ColumnInfo to the
+// *Column and NameSlice with the specified expression build option.
+func ColumnInfos2ColumnsAndNamesWithBuildOption(
 	ctx BuildContext,
 	dbName, tblName ast.CIStr,
 	colInfos []*model.ColumnInfo,
 	tblInfo *model.TableInfo,
-	useNewCollate bool,
+	buildOption BuildOption,
 ) ([]*Column, types.NameSlice, error) {
 	columns := make([]*Column, 0, len(colInfos))
 	names := make([]*types.FieldName, 0, len(colInfos))
@@ -1162,7 +1169,7 @@ func ColumnInfos2ColumnsAndNamesWithCollate(
 			e, err := BuildSimpleExpr(ctx, expr,
 				WithInputSchemaAndNames(mockSchema, names, tblInfo),
 				WithAllowCastArray(true),
-				WithUseNewCollate(useNewCollate))
+				buildOption)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}

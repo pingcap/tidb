@@ -71,9 +71,10 @@ type index struct {
 
 // NeedRestoredData checks whether the index columns needs restored data.
 func NeedRestoredData(useNewCollate bool, idxCols []*model.IndexColumn, colInfos []*model.ColumnInfo) bool {
+	encoding := types.NewEncodingConfig(useNewCollate)
 	for _, idxCol := range idxCols {
 		col := colInfos[idxCol.Offset]
-		if types.NeedRestoredDataWithCollate(model.GetIdxChangingFieldType(idxCol, col), useNewCollate) {
+		if encoding.NeedRestoredData(model.GetIdxChangingFieldType(idxCol, col)) {
 			return true
 		}
 	}
@@ -82,12 +83,13 @@ func NeedRestoredData(useNewCollate bool, idxCols []*model.IndexColumn, colInfos
 
 // NewIndex builds a new Index object.
 func NewIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.IndexInfo) (table.Index, error) {
-	return NewIndexWithCollate(collate.NewCollationEnabled(), physicalID, tblInfo, indexInfo)
+	return NewIndexWithEncodingConfig(table.NewEncodingConfig(collate.NewCollationEnabled()), physicalID, tblInfo, indexInfo)
 }
 
-// NewIndexWithCollate builds a new Index object with the specified collation setting.
-func NewIndexWithCollate(
-	useNewCollate bool,
+// NewIndexWithEncodingConfig builds a new Index object with the specified
+// encoding config.
+func NewIndexWithEncodingConfig(
+	encoding table.EncodingConfig,
 	physicalID int64,
 	tblInfo *model.TableInfo,
 	indexInfo *model.IndexInfo,
@@ -96,7 +98,7 @@ func NewIndexWithCollate(
 		idxInfo:  indexInfo,
 		tblInfo:  tblInfo,
 		phyTblID: physicalID,
-		encoder:  codec.NewEncoder(useNewCollate),
+		encoder:  encoding.Encoder(),
 	}
 
 	conditionString := indexInfo.ConditionExprString
@@ -104,7 +106,7 @@ func NewIndexWithCollate(
 		var err error
 		index.conditionExpr, err = expression.ParseSimpleExpr(indexConditionECtx, conditionString,
 			expression.WithTableInfo("", tblInfo),
-			expression.WithUseNewCollate(useNewCollate))
+			encoding.BuildExprOption())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

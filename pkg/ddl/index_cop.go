@@ -152,9 +152,10 @@ func getRestoreData(useNewCollate bool, tblInfo *model.TableInfo, targetIdx, pkI
 	if pkIdx == nil {
 		return nil
 	}
+	encoding := types.NewEncodingConfig(useNewCollate)
 	for i, pkIdxCol := range pkIdx.Columns {
 		pkCol := tblInfo.Columns[pkIdxCol.Offset]
-		if !types.NeedRestoredDataWithCollate(&pkCol.FieldType, useNewCollate) {
+		if !encoding.NeedRestoredData(&pkCol.FieldType) {
 			// Since the handle data cannot be null, we can use SetNull to
 			// indicate that this column does not need to be restored.
 			handleDts[i].SetNull()

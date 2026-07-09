@@ -19,7 +19,6 @@ import (
 	"strconv"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 )
 
@@ -49,11 +48,11 @@ func (e Enum) ToNumber() float64 {
 
 // ParseEnum creates a Enum with item name or value.
 func ParseEnum(elems []string, name string, collation string) (Enum, error) {
-	return parseEnumWithCollate(collate.NewCollationEnabled(), elems, name, collation)
+	return CurrentEncodingConfig().parseEnum(elems, name, collation)
 }
 
-func parseEnumWithCollate(useNewCollate bool, elems []string, name string, collation string) (Enum, error) {
-	if enumName, err := parseEnumNameWithCollate(useNewCollate, elems, name, collation); err == nil {
+func (c EncodingConfig) parseEnum(elems []string, name string, collation string) (Enum, error) {
+	if enumName, err := c.parseEnumName(elems, name, collation); err == nil {
 		return enumName, nil
 	}
 	// name doesn't exist, maybe an integer?
@@ -66,11 +65,11 @@ func parseEnumWithCollate(useNewCollate bool, elems []string, name string, colla
 
 // ParseEnumName creates a Enum with item name.
 func ParseEnumName(elems []string, name string, collation string) (Enum, error) {
-	return parseEnumNameWithCollate(collate.NewCollationEnabled(), elems, name, collation)
+	return CurrentEncodingConfig().parseEnumName(elems, name, collation)
 }
 
-func parseEnumNameWithCollate(useNewCollate bool, elems []string, name string, collation string) (Enum, error) {
-	ctor := collate.GetCollatorWithCollate(useNewCollate, collation)
+func (c EncodingConfig) parseEnumName(elems []string, name string, collation string) (Enum, error) {
+	ctor := c.Collator(collation)
 	for i, n := range elems {
 		if ctor.Compare(n, name) == 0 {
 			return Enum{Name: n, Value: uint64(i) + 1}, nil

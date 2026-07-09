@@ -165,12 +165,12 @@ func MockTableFromMeta(tblInfo *model.TableInfo) table.Table {
 
 // TableFromMeta creates a Table instance from model.TableInfo.
 func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error) {
-	return TableFromMetaWithCollate(collate.NewCollationEnabled(), allocs, tblInfo)
+	return TableFromMetaWithEncodingConfig(table.NewEncodingConfig(collate.NewCollationEnabled()), allocs, tblInfo)
 }
 
-// TableFromMetaWithCollate creates a Table instance from model.TableInfo with a
-// fixed new-collation mode for persisted key and expression encoding.
-func TableFromMetaWithCollate(useNewCollate bool, allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error) {
+// TableFromMetaWithEncodingConfig creates a Table instance from model.TableInfo
+// with fixed persisted key and expression encoding behavior.
+func TableFromMetaWithEncodingConfig(encoding table.EncodingConfig, allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error) {
 	if tblInfo.State == model.StateNone {
 		return nil, table.ErrTableStateCantNone.GenWithStackByArgs(tblInfo.Name)
 	}
@@ -220,7 +220,7 @@ func TableFromMetaWithCollate(useNewCollate bool, allocs autoid.Allocators, tblI
 	if err != nil {
 		return nil, err
 	}
-	t := newTableCommon(tblInfo, tblInfo.ID, columns, allocs, constraints, useNewCollate)
+	t := newTableCommon(tblInfo, tblInfo.ID, columns, allocs, constraints, encoding.UseNewCollate())
 	if tblInfo.GetPartitionInfo() == nil {
 		if err := t.initTableIndices(); err != nil {
 			return nil, err
@@ -273,7 +273,12 @@ func (t *TableCommon) initTableIndices() error {
 		}
 
 		// Use partition ID for index, because TableCommon may be table or partition.
-		idx, err := NewIndexWithCollate(t.encoder.UseNewCollate(), t.physicalTableID, tblInfo, idxInfo)
+		idx, err := NewIndexWithEncodingConfig(
+			table.NewEncodingConfig(t.encoder.UseNewCollate()),
+			t.physicalTableID,
+			tblInfo,
+			idxInfo,
+		)
 		if err != nil {
 			return err
 		}
@@ -1083,7 +1088,7 @@ func containFullColInHandle(meta *model.TableInfo, col *table.Column) (containFu
 func DecodeRawRowData(ctx expression.BuildContext, tbl table.Table, h kv.Handle, cols []*table.Column,
 	value []byte) ([]types.Datum, map[int64]types.Datum, error) {
 	meta := tbl.Meta()
-	useNewCollate := tbl.UseNewCollate()
+	encoding := table.EncodingConfigFromTable(tbl)
 	v := make([]types.Datum, len(cols))
 	colTps := make(map[int64]*types.FieldType, len(cols))
 	prefixCols := make(map[int64]struct{})
@@ -1099,7 +1104,7 @@ func DecodeRawRowData(ctx expression.BuildContext, tbl table.Table, h kv.Handle,
 			}
 			continue
 		}
-		if col.IsCommonHandleColumn(meta) && !types.NeedRestoredDataWithCollate(&col.FieldType, useNewCollate) {
+		if col.IsCommonHandleColumn(meta) && !encoding.NeedRestoredData(&col.FieldType) {
 			if containFullCol, idxInHandle := containFullColInHandle(meta, col); containFullCol {
 				dtBytes := h.EncodedCol(idxInHandle)
 				_, dt, err := codec.DecodeOne(dtBytes)
@@ -1127,7 +1132,7 @@ func DecodeRawRowData(ctx expression.BuildContext, tbl table.Table, h kv.Handle,
 			continue
 		}
 		if col.IsPKHandleColumn(meta) ||
-			(col.IsCommonHandleColumn(meta) && !types.NeedRestoredDataWithCollate(&col.FieldType, useNewCollate)) {
+			(col.IsCommonHandleColumn(meta) && !encoding.NeedRestoredData(&col.FieldType)) {
 			if _, isPrefix := prefixCols[col.ID]; !isPrefix {
 				continue
 			}
@@ -1538,6 +1543,7 @@ func (t *TableCommon) canSkip(col *table.Column, value *types.Datum) bool {
 // 2. the column's default value is null, and the value equals to that but has no origin default;
 // 3. the column is virtual generated.
 func CanSkip(useNewCollate bool, info *model.TableInfo, col *table.Column, value *types.Datum) bool {
+	encoding := types.NewEncodingConfig(useNewCollate)
 	if col.IsPKHandleColumn(info) {
 		return true
 	}
@@ -1548,7 +1554,7 @@ func CanSkip(useNewCollate bool, info *model.TableInfo, col *table.Column, value
 				continue
 			}
 			canSkip := idxCol.Length == types.UnspecifiedLength
-			canSkip = canSkip && !types.NeedRestoredDataWithCollate(&col.FieldType, useNewCollate)
+			canSkip = canSkip && !encoding.NeedRestoredData(&col.FieldType)
 			return canSkip
 		}
 	}
@@ -1794,10 +1800,11 @@ func TryGetHandleRestoredDataWrapper(tbl table.Table,
 		return nil
 	}
 	rsData := make([]types.Datum, 0, 4)
+	encoding := table.EncodingConfigFromTable(tbl)
 	pkIdx := FindPrimaryIndex(tblInfo)
 	for _, pkIdxCol := range pkIdx.Columns {
 		pkCol := tblInfo.Columns[pkIdxCol.Offset]
-		if !types.NeedRestoredDataWithCollate(&pkCol.FieldType, useNewCollate) {
+		if !encoding.NeedRestoredData(&pkCol.FieldType) {
 			continue
 		}
 		var datum types.Datum

@@ -129,13 +129,13 @@ func NewCopContextBase(
 		handleIDs = []int64{extra.ID}
 	}
 
-	expColInfos, _, err := expression.ColumnInfos2ColumnsAndNamesWithCollate(
+	expColInfos, _, err := expression.ColumnInfos2ColumnsAndNamesWithBuildOption(
 		exprCtx,
 		ast.CIStr{}, // unused
 		tblInfo.Name,
 		colInfos,
 		tblInfo,
-		encoding.UseNewCollate(),
+		encoding.BuildExprOption(),
 	)
 	if err != nil {
 		return nil, err

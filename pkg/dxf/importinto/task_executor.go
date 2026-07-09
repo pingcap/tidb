@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/recording"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -107,8 +108,8 @@ func getTableImporter(
 	logger *zap.Logger,
 ) (*importer.TableImporter, error) {
 	idAlloc := kv.NewPanickingAllocators(taskMeta.Plan.TableInfo.SepAutoInc())
-	tbl, err := tables.TableFromMetaWithCollate(
-		taskMeta.Plan.GetUseNewCollateOrDefault(collate.NewCollationEnabled()),
+	tbl, err := tables.TableFromMetaWithEncodingConfig(
+		table.NewEncodingConfig(taskMeta.Plan.GetUseNewCollateOrDefault(collate.NewCollationEnabled())),
 		idAlloc,
 		taskMeta.Plan.TableInfo,
 	)

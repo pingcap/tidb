@@ -93,10 +93,10 @@ func TestKVEncoderForDupResolve(t *testing.T) {
 func newKVEncoderTestTable(t *testing.T, createSQL string) table.Table {
 	t.Helper()
 
-	return newKVEncoderTestTableWithCollate(t, createSQL, collate.NewCollationEnabled())
+	return newKVEncoderTestTableWithEncodingConfig(t, createSQL, table.NewEncodingConfig(collate.NewCollationEnabled()))
 }
 
-func newKVEncoderTestTableWithCollate(t *testing.T, createSQL string, useNewCollate bool) table.Table {
+func newKVEncoderTestTableWithEncodingConfig(t *testing.T, createSQL string, encoding table.EncodingConfig) table.Table {
 	t.Helper()
 
 	stmt, err := parser.New().ParseOneStmt(createSQL, "", "")
@@ -104,7 +104,11 @@ func newKVEncoderTestTableWithCollate(t *testing.T, createSQL string, useNewColl
 	tblInfo, err := ddl.MockTableInfo(utilmock.NewContext(), stmt.(*ast.CreateTableStmt), 1)
 	require.NoError(t, err)
 	tblInfo.State = model.StatePublic
-	tbl, err := tables.TableFromMetaWithCollate(useNewCollate, lightningkv.NewPanickingAllocators(tblInfo.SepAutoInc()), tblInfo)
+	tbl, err := tables.TableFromMetaWithEncodingConfig(
+		encoding,
+		lightningkv.NewPanickingAllocators(tblInfo.SepAutoInc()),
+		tblInfo,
+	)
 	require.NoError(t, err)
 	return tbl
 }
@@ -181,10 +185,10 @@ func TestKVEncoderCastEnumSetUsesTableCollationSnapshot(t *testing.T) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(origin)
 
-	tbl := newKVEncoderTestTableWithCollate(t, `create table t(
+	tbl := newKVEncoderTestTableWithEncodingConfig(t, `create table t(
 		c1 enum('a','b') character set utf8mb4 collate utf8mb4_general_ci,
 		c2 set('a','b') character set utf8mb4 collate utf8mb4_general_ci
-	)`, false)
+	)`, table.NewEncodingConfig(false))
 
 	encodeCfg := &encode.EncodingConfig{
 		Table:  tbl,

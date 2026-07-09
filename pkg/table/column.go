@@ -352,11 +352,6 @@ func castColumnValue(tc types.Context, ec errctx.Context, sqlMode mysql.SQLMode,
 	return handleCastColumnValueResult(tc, ec, sqlMode, val, ft, colName, connID, returnErr, forceIgnoreTruncate, casted, err)
 }
 
-func castColumnValueWithCollate(tc types.Context, ec errctx.Context, sqlMode mysql.SQLMode, val types.Datum, ft *types.FieldType, colName string, connID uint64, returnErr, forceIgnoreTruncate bool, useNewCollate bool) (casted types.Datum, err error) {
-	casted, err = val.ConvertToWithCollate(tc, ft, useNewCollate)
-	return handleCastColumnValueResult(tc, ec, sqlMode, val, ft, colName, connID, returnErr, forceIgnoreTruncate, casted, err)
-}
-
 func handleCastColumnValueResult(tc types.Context, ec errctx.Context, sqlMode mysql.SQLMode, val types.Datum, ft *types.FieldType, colName string, connID uint64, returnErr, forceIgnoreTruncate bool, casted types.Datum, err error) (types.Datum, error) {
 	// TODO: make sure all truncate errors are handled by ConvertTo.
 	if returnErr && err != nil {
