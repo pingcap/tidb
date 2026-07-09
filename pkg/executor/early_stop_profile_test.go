@@ -410,14 +410,80 @@ func TestAdaptiveIndexJoinLimitSettingsUsesOuterProperty(t *testing.T) {
 
 	settings, ok := adaptiveIndexJoinLimitSettings(sctx, indexJoin)
 	require.True(t, ok)
+	require.False(t, settings.Changed())
+	require.True(t, settings.HasProfileKey)
+	require.Equal(t, vardef.DefDistSQLScanConcurrency, settings.ProfileCapUsed)
+
+	for range 3 {
+		earlystopprofile.Observe(earlystopprofile.Sample{
+			Candidate: earlystopprofile.Candidate{
+				Key:       settings.ProfileKey,
+				LimitRows: settings.LimitRows,
+				BaseCap:   vardef.DefDistSQLScanConcurrency,
+				CapUsed:   vardef.DefDistSQLScanConcurrency,
+			},
+			ResultRows:    1000,
+			RequestCount:  1,
+			ProcessedKeys: 100000,
+			Succeed:       true,
+		})
+	}
+	settings, ok = adaptiveIndexJoinLimitSettings(sctx, indexJoin)
+	require.True(t, ok)
+	require.True(t, settings.Changed())
 	require.Equal(t, 1000, settings.BatchSize)
 	require.Equal(t, 1, settings.Concurrency)
+	require.Equal(t, 1, settings.ScanConcurrencyCap)
+	require.Equal(t, 1000, settings.LookupBatchSize)
+	require.Equal(t, 2, settings.LookupConcurrency)
+	require.Equal(t, 2, settings.LookupResultChSize)
 	require.True(t, settings.HasProfileKey)
 	require.Equal(t, 1, settings.ProfileCapUsed)
 
 	sctx.GetSessionVars().EnableAdaptiveLimitScan = false
 	_, ok = adaptiveIndexJoinLimitSettings(sctx, indexJoin)
 	require.False(t, ok)
+}
+
+func TestAdaptiveIndexJoinLimitSettingsDoesNotThrottleHealthyProfile(t *testing.T) {
+	earlystopprofile.ResetForTest()
+	sctx := defaultCtx()
+	sctx.GetSessionVars().EnableAdaptiveLimitScan = true
+	sctx.GetSessionVars().IndexJoinBatchSize = 25000
+	sctx.GetSessionVars().SetIndexLookupJoinConcurrency(5)
+	initEarlyStopProfileTestContext(t, sctx)
+	planCtx := sctx.(base.PlanContext)
+	indexJoin := newAdaptiveIndexJoinTestPlan(planCtx,
+		&property.PhysicalProperty{
+			SortItems:   []property.SortItem{{Col: &expression.Column{UniqueID: 1}}},
+			ExpectedCnt: 1000,
+		},
+		&property.PhysicalProperty{})
+
+	settings, ok := adaptiveIndexJoinLimitSettings(sctx, indexJoin)
+	require.True(t, ok)
+	require.False(t, settings.Changed())
+	require.True(t, settings.HasProfileKey)
+
+	for range 3 {
+		earlystopprofile.Observe(earlystopprofile.Sample{
+			Candidate: earlystopprofile.Candidate{
+				Key:       settings.ProfileKey,
+				LimitRows: settings.LimitRows,
+				BaseCap:   vardef.DefDistSQLScanConcurrency,
+				CapUsed:   vardef.DefDistSQLScanConcurrency,
+			},
+			ResultRows:    1000,
+			RequestCount:  1,
+			ProcessedKeys: 1000,
+			Succeed:       true,
+		})
+	}
+	settings, ok = adaptiveIndexJoinLimitSettings(sctx, indexJoin)
+	require.True(t, ok)
+	require.False(t, settings.Changed())
+	require.True(t, settings.HasProfileKey)
+	require.Equal(t, vardef.DefDistSQLScanConcurrency, settings.ProfileCapUsed)
 }
 
 func TestApplyAdaptiveIndexJoinLimitSettingsToLookupThroughProjection(t *testing.T) {

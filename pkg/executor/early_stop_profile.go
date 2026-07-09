@@ -225,20 +225,7 @@ func adaptiveIndexJoinLimitSettings(
 	if !ok {
 		return adaptiveIndexJoinLimitSettingsResult{}, false
 	}
-	settings := adaptiveIndexJoinLimitSettingsForRows(
-		limitRows,
-		sessVars.IndexJoinBatchSize,
-		sessVars.IndexLookupJoinConcurrency(),
-	)
-	settings.LimitRows = limitRows
-	settings.LookupBatchSize = adaptiveIndexJoinLookupBatchSize(limitRows, sessVars.IndexLookupSize)
-	settings.LookupConcurrency = adaptiveIndexJoinLookupConcurrency(sessVars.IndexLookupConcurrency())
-	if settings.LookupConcurrency > 0 {
-		settings.LookupResultChSize = 2
-	}
-	if settings.Concurrency > 0 {
-		settings.ScanConcurrencyCap = settings.Concurrency
-	}
+	settings := adaptiveIndexJoinLimitSettingsResult{LimitRows: limitRows}
 	key, hasKey := buildEarlyStopProfileKeyWithSingleScanCheck(
 		sctx, earlystopprofile.ReaderTypeIndexJoin, true, limitRows, false)
 	if hasKey {
@@ -250,7 +237,22 @@ func adaptiveIndexJoinLimitSettings(
 			recordAdaptiveLimitScanMetric(adaptiveLimitScanEventLookup, earlystopprofile.ReaderTypeIndexJoin, adaptiveLimitScanResultHit)
 			profileCap = mergeAdaptiveProfileCap(profileCap, vardef.DefDistSQLScanConcurrency)
 			settings.ProfileCapUsed = candidateCapUsed(profileCap, vardef.DefDistSQLScanConcurrency)
-			if profileCap > 0 {
+			if profileCap > 0 && profileCap < vardef.DefDistSQLScanConcurrency {
+				profileSettings := adaptiveIndexJoinLimitSettingsForRows(
+					limitRows,
+					sessVars.IndexJoinBatchSize,
+					sessVars.IndexLookupJoinConcurrency(),
+				)
+				settings.BatchSize = profileSettings.BatchSize
+				settings.Concurrency = profileSettings.Concurrency
+				settings.LookupBatchSize = adaptiveIndexJoinLookupBatchSize(limitRows, sessVars.IndexLookupSize)
+				settings.LookupConcurrency = adaptiveIndexJoinLookupConcurrency(sessVars.IndexLookupConcurrency())
+				if settings.LookupConcurrency > 0 {
+					settings.LookupResultChSize = 2
+				}
+				if settings.Concurrency > 0 {
+					settings.ScanConcurrencyCap = settings.Concurrency
+				}
 				if settings.Concurrency == 0 || settings.Concurrency > profileCap {
 					settings.Concurrency = profileCap
 				}

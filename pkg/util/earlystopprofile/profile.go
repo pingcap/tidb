@@ -24,7 +24,7 @@ import (
 const (
 	defaultCapacity          = 3000
 	minSamplesForUse         = 3
-	defaultTTL               = time.Hour
+	defaultTTL               = 48 * time.Hour
 	ewmaAlpha                = 0.2
 	highOverReadRatio        = 64
 	midOverReadRatio         = 16
