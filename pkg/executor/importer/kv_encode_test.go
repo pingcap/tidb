@@ -104,10 +104,10 @@ func newKVEncoderTestTableWithEncodingConfig(t *testing.T, createSQL string, enc
 	tblInfo, err := ddl.MockTableInfo(utilmock.NewContext(), stmt.(*ast.CreateTableStmt), 1)
 	require.NoError(t, err)
 	tblInfo.State = model.StatePublic
-	tbl, err := tables.TableFromMetaWithEncodingConfig(
-		encoding,
+	tbl, err := tables.TableFromMeta(
 		lightningkv.NewPanickingAllocators(tblInfo.SepAutoInc()),
 		tblInfo,
+		tables.WithEncodingConfig(encoding),
 	)
 	require.NoError(t, err)
 	return tbl

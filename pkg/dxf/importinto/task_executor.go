@@ -108,10 +108,12 @@ func getTableImporter(
 	logger *zap.Logger,
 ) (*importer.TableImporter, error) {
 	idAlloc := kv.NewPanickingAllocators(taskMeta.Plan.TableInfo.SepAutoInc())
-	tbl, err := tables.TableFromMetaWithEncodingConfig(
-		table.NewEncodingConfig(taskMeta.Plan.GetUseNewCollateOrDefault(collate.NewCollationEnabled())),
+	tbl, err := tables.TableFromMeta(
 		idAlloc,
 		taskMeta.Plan.TableInfo,
+		tables.WithEncodingConfig(table.NewEncodingConfig(
+			taskMeta.Plan.GetUseNewCollateOrDefault(collate.NewCollationEnabled()),
+		)),
 	)
 	if err != nil {
 		return nil, err

@@ -208,10 +208,10 @@ func getUserTableFromTaskStore(
 	})
 	useNewCollate := job.ReorgMeta.GetUseNewCollateOrDefault(defaultUseNewCollate)
 	failpoint.InjectCall("afterResolveUserTableNewCollateForBackfillStep", job, defaultUseNewCollate, useNewCollate)
-	tbl, err := tables.TableFromMetaWithEncodingConfig(
-		table.NewEncodingConfig(useNewCollate),
+	tbl, err := tables.TableFromMeta(
 		autoid.NewAllocators(tblInfo.SepAutoInc()),
 		tblInfo,
+		tables.WithEncodingConfig(table.NewEncodingConfig(useNewCollate)),
 	)
 	if err != nil {
 		return nil, err

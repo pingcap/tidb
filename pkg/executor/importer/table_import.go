@@ -93,7 +93,11 @@ var (
 
 func newEncodingTable(e *LoadDataController) (table.Table, error) {
 	idAlloc := kv.NewPanickingAllocators(e.Table.Meta().SepAutoInc())
-	tbl, err := tables.TableFromMetaWithEncodingConfig(table.EncodingConfigFromTable(e.Table), idAlloc, e.Table.Meta())
+	tbl, err := tables.TableFromMeta(
+		idAlloc,
+		e.Table.Meta(),
+		tables.WithEncodingConfig(table.EncodingConfigFromTable(e.Table)),
+	)
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", e.Table.Meta().Name)
 	}

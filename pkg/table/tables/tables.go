@@ -163,14 +163,34 @@ func MockTableFromMeta(tblInfo *model.TableInfo) table.Table {
 	return ret
 }
 
-// TableFromMeta creates a Table instance from model.TableInfo.
-func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error) {
-	return TableFromMetaWithEncodingConfig(table.NewEncodingConfig(collate.NewCollationEnabled()), allocs, tblInfo)
+type tableFromMetaOptions struct {
+	encoding table.EncodingConfig
 }
 
-// TableFromMetaWithEncodingConfig creates a Table instance from model.TableInfo
-// with fixed persisted key and expression encoding behavior.
-func TableFromMetaWithEncodingConfig(encoding table.EncodingConfig, allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error) {
+// TableFromMetaOption configures TableFromMeta.
+type TableFromMetaOption func(*tableFromMetaOptions)
+
+// WithEncodingConfig sets the persisted key and expression encoding behavior
+// for the created table.
+func WithEncodingConfig(encoding table.EncodingConfig) TableFromMetaOption {
+	return func(options *tableFromMetaOptions) {
+		options.encoding = encoding
+	}
+}
+
+func defaultTableFromMetaOptions() tableFromMetaOptions {
+	return tableFromMetaOptions{
+		encoding: table.NewEncodingConfig(collate.NewCollationEnabled()),
+	}
+}
+
+// TableFromMeta creates a Table instance from model.TableInfo.
+func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo, opts ...TableFromMetaOption) (table.Table, error) {
+	options := defaultTableFromMetaOptions()
+	for _, opt := range opts {
+		opt(&options)
+	}
+
 	if tblInfo.State == model.StateNone {
 		return nil, table.ErrTableStateCantNone.GenWithStackByArgs(tblInfo.Name)
 	}
@@ -220,7 +240,7 @@ func TableFromMetaWithEncodingConfig(encoding table.EncodingConfig, allocs autoi
 	if err != nil {
 		return nil, err
 	}
-	t := newTableCommon(tblInfo, tblInfo.ID, columns, allocs, constraints, encoding.UseNewCollate())
+	t := newTableCommon(tblInfo, tblInfo.ID, columns, allocs, constraints, options.encoding.UseNewCollate())
 	if tblInfo.GetPartitionInfo() == nil {
 		if err := t.initTableIndices(); err != nil {
 			return nil, err
@@ -1614,7 +1634,9 @@ func getDuplicateError(tblInfo *model.TableInfo, handle kv.Handle, row []types.D
 }
 
 func init() {
-	table.TableFromMeta = TableFromMeta
+	table.TableFromMeta = func(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error) {
+		return TableFromMeta(allocs, tblInfo)
+	}
 	table.MockTableFromMeta = MockTableFromMeta
 	tableutil.TempTableFromMeta = TempTableFromMeta
 }
