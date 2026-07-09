@@ -202,12 +202,13 @@ func TestDXFAPI(t *testing.T) {
 			taskSpecs := []struct {
 				key      string
 				keyspace string
+				taskErr  error
 			}{
 				{key: "history-key-1", keyspace: "ks1"},
 				{key: "history-key-2", keyspace: "ks2"},
 				{key: "history-key-3", keyspace: "ks1"},
 				{key: "history-key-4", keyspace: "ks3"},
-				{key: "history-key-5", keyspace: "ks1"},
+				{key: "history-key-5", keyspace: "ks1", taskErr: fmt.Errorf("history task failed")},
 			}
 			ids := make([]int64, 0, len(taskSpecs))
 			tasksToTransfer := make([]*proto.Task, 0, len(taskSpecs))
@@ -217,7 +218,11 @@ func TestDXFAPI(t *testing.T) {
 				task, err := tm.GetTaskByID(ctx, id)
 				require.NoError(t, err)
 				require.NoError(t, tm.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.StepOne, nil))
-				require.NoError(t, tm.SucceedTask(ctx, id))
+				if spec.taskErr != nil {
+					require.NoError(t, tm.FailTask(ctx, id, proto.TaskStateRunning, spec.taskErr))
+				} else {
+					require.NoError(t, tm.SucceedTask(ctx, id))
+				}
 				task, err = tm.GetTaskByID(ctx, id)
 				require.NoError(t, err)
 				ids = append(ids, id)
@@ -233,6 +238,7 @@ func TestDXFAPI(t *testing.T) {
 				Key             string
 				Keyspace        string
 				State           string
+				Error           string
 				StartTime       string
 				StateUpdateTime string
 				EndTime         string
@@ -248,6 +254,7 @@ func TestDXFAPI(t *testing.T) {
 					Key             string
 					Keyspace        string
 					State           string
+					Error           string
 					StartTime       string
 					StateUpdateTime string
 					EndTime         string
@@ -298,7 +305,9 @@ func TestDXFAPI(t *testing.T) {
 			require.Equal(t, ids[4], firstPage.Items[0].ID)
 			require.Equal(t, ids[3], firstPage.Items[1].ID)
 			require.Equal(t, "history-key-5", firstPage.Items[0].Key)
-			require.Equal(t, "succeed", firstPage.Items[0].State)
+			require.Equal(t, "failed", firstPage.Items[0].State)
+			require.Contains(t, firstPage.Items[0].Error, "history task failed")
+			require.Empty(t, firstPage.Items[1].Error)
 			require.NotEmpty(t, firstPage.Items[0].StartTime)
 			require.NotEmpty(t, firstPage.Items[0].StateUpdateTime)
 			require.NotEmpty(t, firstPage.Items[0].EndTime)

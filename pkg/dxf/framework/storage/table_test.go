@@ -1070,12 +1070,13 @@ func TestTaskHistoryTable(t *testing.T) {
 		taskSpecs := []struct {
 			key      string
 			keyspace string
+			taskErr  error
 		}{
 			{key: "history-task-1", keyspace: "ks1"},
 			{key: "history-task-2", keyspace: "ks2"},
 			{key: "history-task-3", keyspace: "ks1"},
 			{key: "history-task-4", keyspace: "ks3"},
-			{key: "history-task-5", keyspace: "ks1"},
+			{key: "history-task-5", keyspace: "ks1", taskErr: errors.New("history task failed")},
 		}
 		allIDs := make([]int64, 0, len(taskSpecs))
 		tasksToTransfer := make([]*proto.Task, 0, len(taskSpecs))
@@ -1085,7 +1086,11 @@ func TestTaskHistoryTable(t *testing.T) {
 			task, err2 := gm.GetTaskByID(ctx, id)
 			require.NoError(t, err2)
 			require.NoError(t, gm.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.StepOne, nil))
-			require.NoError(t, gm.SucceedTask(ctx, id))
+			if spec.taskErr != nil {
+				require.NoError(t, gm.FailTask(ctx, id, proto.TaskStateRunning, spec.taskErr))
+			} else {
+				require.NoError(t, gm.SucceedTask(ctx, id))
+			}
 			task, err2 = gm.GetTaskByID(ctx, id)
 			require.NoError(t, err2)
 			allIDs = append(allIDs, id)
@@ -1104,6 +1109,9 @@ func TestTaskHistoryTable(t *testing.T) {
 		require.Equal(t, allIDs[1], firstPage.NextPageToken)
 		require.Equal(t, "history-task-5", firstPage.Items[0].Key)
 		require.Equal(t, "ks1", firstPage.Items[0].Keyspace)
+		require.Equal(t, proto.TaskStateFailed, firstPage.Items[0].State)
+		require.Contains(t, firstPage.Items[0].Error, "history task failed")
+		require.Empty(t, firstPage.Items[1].Error)
 		require.NotZero(t, firstPage.Items[0].CreateTime)
 		require.NotZero(t, firstPage.Items[0].StartTime)
 		require.NotZero(t, firstPage.Items[0].StateUpdateTime)
