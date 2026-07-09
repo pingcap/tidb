@@ -5719,7 +5719,7 @@ func (b *PlanBuilder) buildExplainPlan(targetPlan base.Plan, format string, expl
 	if format == types.ExplainFormatRU && analyze {
 		// Secondary guard for callers that already have a target plan. The main
 		// SQL path below rejects before optimization or no-delay execution.
-		if status := explainRUSelectGateStatus(execStmt); status != explainRUStatusSuccess {
+		if status := explainRUTargetGateStatus(execStmt); status != explainRUStatusSuccess {
 			recordExplainRUStatus(status)
 			return nil, explainRUError(status)
 		}
@@ -5831,7 +5831,7 @@ func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt
 			recordExplainRUStatus(explainRUStatusUnsupportedNonSelect)
 			return nil, explainRUError(explainRUStatusUnsupportedNonSelect)
 		}
-		if status := explainRUSelectGateStatus(explain.Stmt); status != explainRUStatusSuccess {
+		if status := explainRUTargetGateStatus(explain.Stmt); status != explainRUStatusSuccess {
 			recordExplainRUStatus(status)
 			return nil, explainRUError(status)
 		}

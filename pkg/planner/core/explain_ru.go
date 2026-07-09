@@ -17,6 +17,7 @@ package core
 import (
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/stmtsummary"
+	tikvutil "github.com/tikv/client-go/v2/util"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
 
@@ -61,6 +63,7 @@ const (
 	readBillingDemoStatusUnknownInput           = "unknown_input"
 	readBillingDemoStatusError                  = "error"
 	readBillingDemoStatusOperatorOK             = "ok"
+	readBillingDemoStatusPartial                = "partial"
 	readBillingDemoReasonNone                   = "none"
 	readBillingDemoReasonStatementError         = "statement_error"
 	readBillingDemoReasonMissingPlan            = "missing_plan"
@@ -75,6 +78,12 @@ const (
 	readBillingDemoReasonUnsupportedIndexMerge  = "unsupported_index_merge"
 	readBillingDemoReasonUnsupportedLock        = "unsupported_lock"
 	readBillingDemoReasonNonBillable            = "non_billable"
+	readBillingDemoReasonMissingCommitDetail    = "missing_commit_detail"
+	readBillingDemoReasonMissingWriteKeys       = "missing_write_keys"
+	readBillingDemoReasonMissingWriteByte       = "missing_write_byte"
+	readBillingDemoReasonZeroMutation           = "zero_mutation"
+	readBillingDemoReasonMissingPrewriteRegion  = "missing_prewrite_region_num"
+	readBillingDemoReasonMissingWriteRPCCount   = "missing_write_rpc_count"
 	readBillingDemoSiteStatement                = "statement"
 	readBillingDemoSiteTiDB                     = "tidb"
 	readBillingDemoSiteTiKV                     = "tikv"
@@ -96,19 +105,36 @@ const (
 	readBillingDemoOpClassMetadataReader        = "metadata_reader"
 	readBillingDemoOpClassPointLookup           = "kv_point_lookup"
 	readBillingDemoOpClassRangeScan             = "kv_range_scan"
+	readBillingDemoOpClassKVWrite               = "kv_write"
 	readBillingDemoOpClassWrapper               = "wrapper"
 	readBillingDemoOpClassSynthetic             = "synthetic_source"
 	readBillingDemoOperatorStatement            = "statement"
 	readBillingDemoUnitFixedEvents              = "fixed_events"
 	readBillingDemoUnitInputRows                = "input_rows"
 	readBillingDemoUnitInputBytes               = "input_bytes"
+	readBillingDemoUnitWriteKeys                = "write_keys"
+	readBillingDemoUnitWriteByte                = "write_byte"
+	readBillingDemoUnitPrewriteRegionNum        = "prewrite_region_num"
+	readBillingDemoUnitTiKVWriteRPCCount        = "tikv_write_rpc_count"
 	readBillingDemoInputSourceRuntimeChunkBytes = "runtime_chunk_bytes"
 	readBillingDemoInputSourceScanDetail        = "scan_detail"
+	readBillingDemoInputSourceCommitDetail      = "commit_detail"
+	readBillingDemoInputSourceRUV2Metrics       = "ruv2_metrics"
 	readBillingDemoInputSideAll                 = "all"
 	readBillingDemoInputSideBuild               = "build"
 	readBillingDemoInputSideProbe               = "probe"
 	readBillingDemoInputSideLeft                = "left"
 	readBillingDemoInputSideRight               = "right"
+
+	// The first write-side preview formula intentionally has no fixed/RPC/region
+	// terms: write keys use the current scaled RUv2 write-key coefficient, and
+	// write bytes use the existing TiKV range-scan byte coefficient as a
+	// calibration seed because RUv2 only shadows commit WriteSize today.
+	readBillingDemoWriteRUScale         = 2.01
+	readBillingDemoRUV2WriteKeysWeight  = 0.330760861554226
+	readBillingDemoWriteKeyWeight       = readBillingDemoWriteRUScale * readBillingDemoRUV2WriteKeysWeight
+	readBillingDemoWriteByteWeight      = 0.000020
+	readBillingDemoDiagnosticZeroWeight = 0.0
 )
 
 type explainRUComponentSnapshotStatus string
@@ -144,6 +170,10 @@ type readBillingDemoOperatorWeights struct {
 	fixedEvent float64
 	row        float64
 	byte       float64
+	writeKey   float64
+	writeByte  float64
+	writeRPC   float64
+	region     float64
 }
 
 type readBillingDemoWeightKey struct {
@@ -154,6 +184,7 @@ type readBillingDemoWeightKey struct {
 
 var readBillingDemoWeights = map[readBillingDemoWeightKey]readBillingDemoOperatorWeights{
 	{readBillingDemoSiteTiKV, readBillingDemoOpClassRangeScan, readBillingDemoWeightVersion}:     {fixedEvent: 0.070, row: 0.000045, byte: 0.000020},
+	{readBillingDemoSiteTiKV, readBillingDemoOpClassKVWrite, readBillingDemoWeightVersion}:       {writeKey: readBillingDemoWriteKeyWeight, writeByte: readBillingDemoWriteByteWeight, writeRPC: readBillingDemoDiagnosticZeroWeight, region: readBillingDemoDiagnosticZeroWeight},
 	{readBillingDemoSiteTiKV, readBillingDemoOpClassFilter, readBillingDemoWeightVersion}:        {fixedEvent: 0.020, row: 0.000040, byte: 0.000006},
 	{readBillingDemoSiteTiKV, readBillingDemoOpClassProjection, readBillingDemoWeightVersion}:    {fixedEvent: 0.020, row: 0.000030, byte: 0.000006},
 	{readBillingDemoSiteTiKV, readBillingDemoOpClassLimit, readBillingDemoWeightVersion}:         {fixedEvent: 0.010, row: 0.000008, byte: 0.000002},
@@ -227,20 +258,23 @@ func RecordReadBillingDemoForStatement(sctx sessionctx.Context, plan base.Plan, 
 	if planCtx == nil {
 		planCtx = sctx.GetPlanCtx()
 	}
-	result := buildReadBillingDemoResult(planCtx, plan, stmt, execErr)
+	result := buildReadBillingDemoResult(planCtx, plan, stmt, execErr, nil)
 	recordReadBillingDemoResult(result)
 	return buildReadBillingDemoStatementStats(result)
 }
 
-func buildReadBillingDemoResult(sctx base.PlanContext, plan base.Plan, stmt ast.StmtNode, execErr error) readBillingDemoResult {
+func buildReadBillingDemoResult(sctx base.PlanContext, plan base.Plan, stmt ast.StmtNode, execErr error, ruv2Metrics *execdetails.RUV2Metrics) readBillingDemoResult {
 	if execErr != nil {
 		return readBillingDemoFailure(readBillingDemoStatusError, readBillingDemoReasonStatementError)
 	}
 	if plan == nil {
 		return readBillingDemoFailure(readBillingDemoStatusUnknownInput, readBillingDemoReasonMissingPlan)
 	}
-	if gateStatus := explainRUSelectGateStatus(stmt); gateStatus != explainRUStatusSuccess {
+	if gateStatus := explainRUTargetGateStatus(stmt); gateStatus != explainRUStatusSuccess {
 		return readBillingDemoFailure(readBillingDemoStatusUnsupported, string(gateStatus))
+	}
+	if operatorKind, ok := explainRUWriteDMLKind(stmt); ok {
+		return buildWriteBillingDemoResult(sctx, operatorKind, ruv2Metrics)
 	}
 	if sctx == nil || sctx.GetSessionVars() == nil || sctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil {
 		return readBillingDemoFailure(readBillingDemoStatusUnknownInput, readBillingDemoReasonMissingRuntimeStats)
@@ -272,6 +306,110 @@ func buildReadBillingDemoResult(sctx base.PlanContext, plan base.Plan, stmt ast.
 	return result
 }
 
+func buildWriteBillingDemoResult(sctx base.PlanContext, operatorKind string, ruv2Metrics *execdetails.RUV2Metrics) readBillingDemoResult {
+	var commitDetail *tikvutil.CommitDetails
+	if sctx != nil && sctx.GetSessionVars() != nil {
+		if ruv2Metrics == nil {
+			ruv2Metrics = sctx.GetSessionVars().RUV2Metrics
+		}
+		if sctx.GetSessionVars().StmtCtx != nil {
+			commitDetail = sctx.GetSessionVars().StmtCtx.GetExecDetails().CommitDetail
+		}
+	}
+	return buildWriteBillingDemoResultFromDetails(operatorKind, commitDetail, ruv2Metrics)
+}
+
+func buildWriteBillingDemoResultFromDetails(operatorKind string, commitDetail *tikvutil.CommitDetails, ruv2Metrics *execdetails.RUV2Metrics) readBillingDemoResult {
+	operator := readBillingDemoOperatorResult{
+		id:           "commit_txn",
+		site:         readBillingDemoSiteTiKV,
+		opClass:      readBillingDemoOpClassKVWrite,
+		operatorKind: operatorKind,
+	}
+	if commitDetail == nil {
+		return readBillingDemoFailedOperator(readBillingDemoStatusUnknownInput, operator.withReason(readBillingDemoReasonMissingCommitDetail))
+	}
+
+	result := readBillingDemoResult{
+		status: readBillingDemoStatusSuccess,
+		reason: readBillingDemoReasonNone,
+	}
+	operator.status = readBillingDemoStatusOperatorOK
+	operator.reason = readBillingDemoReasonNone
+
+	writeKeys := int64(commitDetail.WriteKeys)
+	writeBytes := int64(commitDetail.WriteSize)
+	if writeKeys == 0 && writeBytes == 0 {
+		operator.reason = readBillingDemoReasonZeroMutation
+		result.operators = append(result.operators, operator)
+		return result
+	}
+	if writeKeys == 0 {
+		return readBillingDemoFailedOperator(readBillingDemoStatusUnknownInput, operator.withReason(readBillingDemoReasonMissingWriteKeys))
+	}
+	if writeBytes == 0 {
+		return readBillingDemoFailedOperator(readBillingDemoStatusUnknownInput, operator.withReason(readBillingDemoReasonMissingWriteByte))
+	}
+	operator.units = append(operator.units,
+		readBillingDemoUnit{
+			unit:        readBillingDemoUnitWriteKeys,
+			source:      readBillingDemoInputSourceCommitDetail,
+			side:        readBillingDemoInputSideAll,
+			value:       float64(writeKeys),
+			widthSource: explainRUWidthSourceNotApplicable,
+		},
+		readBillingDemoUnit{
+			unit:        readBillingDemoUnitWriteByte,
+			source:      readBillingDemoInputSourceCommitDetail,
+			side:        readBillingDemoInputSideAll,
+			value:       float64(writeBytes),
+			widthSource: explainRUWidthSourceNotApplicable,
+		},
+	)
+	prewriteRegionNum := int64(atomic.LoadInt32(&commitDetail.PrewriteRegionNum))
+	if prewriteRegionNum > 0 {
+		operator.units = append(operator.units, readBillingDemoUnit{
+			unit:        readBillingDemoUnitPrewriteRegionNum,
+			source:      readBillingDemoInputSourceCommitDetail,
+			side:        readBillingDemoInputSideAll,
+			value:       float64(prewriteRegionNum),
+			widthSource: explainRUWidthSourceNotApplicable,
+		})
+	}
+	writeRPCCount := int64(0)
+	if ruv2Metrics != nil && !ruv2Metrics.Bypass() {
+		writeRPCCount = ruv2Metrics.ResourceManagerWriteCnt()
+	}
+	if writeRPCCount > 0 {
+		operator.units = append(operator.units, readBillingDemoUnit{
+			unit:        readBillingDemoUnitTiKVWriteRPCCount,
+			source:      readBillingDemoInputSourceRUV2Metrics,
+			side:        readBillingDemoInputSideAll,
+			value:       float64(writeRPCCount),
+			widthSource: explainRUWidthSourceNotApplicable,
+		})
+	}
+	result.operators = append(result.operators, operator)
+	if prewriteRegionNum == 0 {
+		result.operators = append(result.operators, readBillingDemoWriteDiagnosticStatus(operatorKind, readBillingDemoReasonMissingPrewriteRegion))
+	}
+	if writeRPCCount == 0 {
+		result.operators = append(result.operators, readBillingDemoWriteDiagnosticStatus(operatorKind, readBillingDemoReasonMissingWriteRPCCount))
+	}
+	return result
+}
+
+func readBillingDemoWriteDiagnosticStatus(operatorKind, reason string) readBillingDemoOperatorResult {
+	return readBillingDemoOperatorResult{
+		id:           "commit_txn",
+		site:         readBillingDemoSiteTiKV,
+		opClass:      readBillingDemoOpClassKVWrite,
+		operatorKind: operatorKind,
+		status:       readBillingDemoStatusPartial,
+		reason:       reason,
+	}
+}
+
 func readBillingDemoPlanContext(plan base.Plan) base.PlanContext {
 	if plan == nil {
 		return nil
@@ -292,6 +430,14 @@ func readBillingDemoUnitWeight(weights readBillingDemoOperatorWeights, unit stri
 		return weights.row, true
 	case readBillingDemoUnitInputBytes:
 		return weights.byte, true
+	case readBillingDemoUnitWriteKeys:
+		return weights.writeKey, true
+	case readBillingDemoUnitWriteByte:
+		return weights.writeByte, true
+	case readBillingDemoUnitPrewriteRegionNum:
+		return weights.region, true
+	case readBillingDemoUnitTiKVWriteRPCCount:
+		return weights.writeRPC, true
 	default:
 		return 0, false
 	}
@@ -833,6 +979,38 @@ func (e *Explain) recordExplainRUStatus(status explainRUStatus) {
 	recordExplainRUStatus(status)
 }
 
+// explainRUTargetGateStatus is the pre-execution safety gate for FORMAT='RU'.
+// SELECT keeps the side-effect-free checks from the read-side demo; write DML
+// is limited to statements whose commit details expose foreground write volume.
+func explainRUTargetGateStatus(stmt ast.StmtNode) explainRUStatus {
+	if _, ok := explainRUWriteDMLKind(stmt); ok {
+		return explainRUStatusSuccess
+	}
+	return explainRUSelectGateStatus(stmt)
+}
+
+func explainRUWriteDMLKind(stmt ast.StmtNode) (string, bool) {
+	switch x := stmt.(type) {
+	case *ast.InsertStmt:
+		if x == nil || x.IsReplace {
+			return "", false
+		}
+		return "insert", true
+	case *ast.UpdateStmt:
+		if x == nil {
+			return "", false
+		}
+		return "update", true
+	case *ast.DeleteStmt:
+		if x == nil {
+			return "", false
+		}
+		return "delete", true
+	default:
+		return "", false
+	}
+}
+
 // explainRUSelectGateStatus is the first-demo pre-execution safety gate. It
 // accepts only SELECT keyword surfaces and set operations whose leaves can be
 // checked before EXPLAIN ANALYZE can run the target statement.
@@ -958,7 +1136,7 @@ func (e *Explain) renderRUExplain() (err error) {
 		status = explainRUStatusUnsupportedNonAnalyze
 		return explainRUError(explainRUStatusUnsupportedNonAnalyze)
 	}
-	if gateStatus := explainRUSelectGateStatus(e.ExecStmt); gateStatus != explainRUStatusSuccess {
+	if gateStatus := explainRUTargetGateStatus(e.ExecStmt); gateStatus != explainRUStatusSuccess {
 		status = gateStatus
 		return explainRUError(gateStatus)
 	}
@@ -973,9 +1151,13 @@ func (e *Explain) renderRUExplain() (err error) {
 	// The snapshot belongs to the target statement execution. Returning this
 	// EXPLAIN result can add more result-chunk counters later, so render output
 	// and Demo Metrics are derived from this frozen input and the generated rows.
-	_, snapshotStatus := explainRUExtractComponentSnapshot(runtimeStats, e.TargetPlan.ID())
+	snapshot, snapshotStatus := explainRUExtractComponentSnapshot(runtimeStats, e.TargetPlan.ID())
 	metrics.RecordExplainRUComponentSnapshot(string(snapshotStatus))
-	result := buildReadBillingDemoResult(e.SCtx(), e.TargetPlan, e.ExecStmt, nil)
+	var snapshotRUV2Metrics *execdetails.RUV2Metrics
+	if snapshot != nil {
+		snapshotRUV2Metrics = snapshot.Metrics
+	}
+	result := buildReadBillingDemoResult(e.SCtx(), e.TargetPlan, e.ExecStmt, nil, snapshotRUV2Metrics)
 	if result.status != readBillingDemoStatusSuccess {
 		operator := ""
 		if len(result.operators) > 0 {
@@ -984,7 +1166,7 @@ func (e *Explain) renderRUExplain() (err error) {
 		}
 		status = explainRUStatusError
 		return errors.NewNoStackErrorf(
-			"EXPLAIN ANALYZE FORMAT='RU' cannot render a complete read billing model result: status=%s reason=%s%s",
+			"EXPLAIN ANALYZE FORMAT='RU' cannot render a complete preview RU model result: status=%s reason=%s%s",
 			result.status,
 			result.reason,
 			operator,
@@ -1007,7 +1189,7 @@ func explainRUBuildReadBillingRows(result readBillingDemoResult, snapshotStatus 
 		component:    "total_preview_ru",
 		hasPreviewRU: true,
 		source:       explainRUSourceSummaryTotal,
-		note:         explainRUReadBillingSummaryNote(snapshotStatus),
+		note:         explainRUReadBillingSummaryNote(snapshotStatus, result),
 	}}
 	totalPreviewRU := 0.0
 	for _, op := range result.operators {
@@ -1035,10 +1217,15 @@ func explainRUBuildReadBillingRows(result readBillingDemoResult, snapshotStatus 
 	return rows
 }
 
-func explainRUReadBillingSummaryNote(snapshotStatus explainRUComponentSnapshotStatus) string {
+func explainRUReadBillingSummaryNote(snapshotStatus explainRUComponentSnapshotStatus, result readBillingDemoResult) string {
 	note := "weight_version=" + readBillingDemoWeightVersion
 	if snapshotStatus != explainRUComponentSnapshotOK {
 		note = appendExplainRUNote(note, "component_snapshot_"+string(snapshotStatus))
+	}
+	for _, op := range result.operators {
+		if op.status == readBillingDemoStatusPartial && op.reason != "" {
+			note = appendExplainRUNote(note, "partial_"+op.reason)
+		}
 	}
 	return note
 }
@@ -1055,6 +1242,9 @@ func explainRUReadBillingUnitRow(op readBillingDemoOperatorResult, unit readBill
 		unit:           unit.unit,
 		source:         unit.source,
 		note:           "input_side=" + unit.side + ",weight_version=" + readBillingDemoWeightVersion,
+	}
+	if readBillingDemoUnitDiagnosticOnly(unit.unit) {
+		row.note = appendExplainRUNote(row.note, "diagnostic_only=true")
 	}
 	if op.hasActRows {
 		row.actRows = op.actRows
@@ -1076,8 +1266,23 @@ func explainRUReadBillingUnitRow(op readBillingDemoOperatorResult, unit readBill
 	case readBillingDemoUnitInputBytes:
 		row.workBytes = unit.value
 		row.hasWorkBytes = true
+	case readBillingDemoUnitWriteKeys, readBillingDemoUnitPrewriteRegionNum, readBillingDemoUnitTiKVWriteRPCCount:
+		row.count = int64(unit.value)
+		row.hasCount = true
+	case readBillingDemoUnitWriteByte:
+		row.workBytes = unit.value
+		row.hasWorkBytes = true
 	}
 	return row
+}
+
+func readBillingDemoUnitDiagnosticOnly(unit string) bool {
+	switch unit {
+	case readBillingDemoUnitPrewriteRegionNum, readBillingDemoUnitTiKVWriteRPCCount:
+		return true
+	default:
+		return false
+	}
 }
 
 func appendExplainRUNote(note, extra string) string {

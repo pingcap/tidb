@@ -417,6 +417,7 @@ func TestRUV2MetricsSnapshotCalculateRUValues(t *testing.T) {
 	metrics.AddResourceManagerWriteCnt(31)
 	metrics.AddWriteKeys(3)
 	metrics.AddWriteSize(66)
+	metrics.AddPrewriteRegionNum(4)
 	metrics.AddSessionParserTotal(37)
 	metrics.AddTxnCnt(41)
 	metrics.AddTiKVKVEngineCacheMiss(43)
@@ -438,6 +439,7 @@ func TestRUV2MetricsSnapshotCalculateRUValues(t *testing.T) {
 	require.InEpsilon(t, 181980.2851783309, totalRU, 0.01)
 	require.Equal(t, int64(3), metrics.WriteKeys())
 	require.Equal(t, int64(66), metrics.WriteSize())
+	require.Equal(t, int64(4), metrics.PrewriteRegionNum())
 
 	t.Run("zero scale stays zero", func(t *testing.T) {
 		zeroScaleWeights := weights
@@ -480,26 +482,31 @@ func TestUpdateRUV2MetricsFromCommitDetails(t *testing.T) {
 	beforeRU := metrics.CalculateRUValues(weights)
 
 	UpdateRUV2MetricsFromCommitDetails(metrics, &util.CommitDetails{
-		WriteKeys: 3,
-		WriteSize: 66,
+		WriteKeys:         3,
+		WriteSize:         66,
+		PrewriteRegionNum: 4,
 	})
 
 	require.Equal(t, int64(3), metrics.WriteKeys())
 	require.Equal(t, int64(66), metrics.WriteSize())
+	require.Equal(t, int64(4), metrics.PrewriteRegionNum())
 	require.InEpsilon(t, beforeRU+float64(3)*weights.WriteKeys*weights.RUScale, metrics.CalculateRUValues(weights), 0.01)
 
 	detail := FormatRUV2Metrics(metrics, weights, 0, 0)
 	require.Contains(t, detail, "write_keys:3")
 	require.Contains(t, detail, "write_size:66")
+	require.Contains(t, detail, "prewrite_region_num:4")
 
 	bypassed := NewRUV2Metrics()
 	bypassed.SetBypass(true)
 	UpdateRUV2MetricsFromCommitDetails(bypassed, &util.CommitDetails{
-		WriteKeys: 1,
-		WriteSize: 2,
+		WriteKeys:         1,
+		WriteSize:         2,
+		PrewriteRegionNum: 3,
 	})
 	require.Zero(t, bypassed.WriteKeys())
 	require.Zero(t, bypassed.WriteSize())
+	require.Zero(t, bypassed.PrewriteRegionNum())
 }
 
 func TestRUV2MetricsSnapshotFreezesRUValues(t *testing.T) {

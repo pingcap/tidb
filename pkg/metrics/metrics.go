@@ -353,6 +353,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(RUV2ResourceManagerWriteCnt)
 	prometheus.MustRegister(RUV2WriteKeys)
 	prometheus.MustRegister(RUV2WriteSize)
+	prometheus.MustRegister(RUV2PrewriteRegionNum)
 	prometheus.MustRegister(RUV2SessionParserTotal)
 	prometheus.MustRegister(RUV2TxnCnt)
 	prometheus.MustRegister(RUV2TiKVKVEngineCacheMiss)

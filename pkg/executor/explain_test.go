@@ -686,6 +686,51 @@ func requireExplainRUWeightedOperatorClass(t *testing.T, rows [][]any, operatorC
 	require.Failf(t, "missing weighted FORMAT='RU' operator class", "operatorClass=%s rows=%v", operatorClass, rows)
 }
 
+func requireExplainRUWriteRows(t *testing.T, rows [][]any, operatorKind string) {
+	t.Helper()
+	require.NotEmpty(t, rows)
+	require.Len(t, rows[0], 17)
+	require.Equal(t, "summary", rows[0][0])
+	require.Equal(t, "total_preview_ru", rows[0][2])
+	require.Contains(t, fmt.Sprint(rows[0][16]), "weight_version=v1")
+	summaryPreviewRU, err := strconv.ParseFloat(fmt.Sprint(rows[0][14]), 64)
+	require.NoError(t, err)
+
+	var writeKeysRows, writeByteRows int
+	var planPreviewRU float64
+	for _, row := range rows {
+		require.Len(t, row, 17)
+		if row[0] != "plan" || row[2] != operatorKind || row[3] != "tikv/kv_write" {
+			continue
+		}
+		previewRU, err := strconv.ParseFloat(fmt.Sprint(row[14]), 64)
+		require.NoError(t, err)
+		planPreviewRU += previewRU
+		switch row[11] {
+		case "write_keys":
+			writeKeysRows++
+			require.NotEmpty(t, row[12])
+			require.NotEmpty(t, row[13])
+			require.NotEmpty(t, row[14])
+			require.Equal(t, "commit_detail", row[15])
+		case "write_byte":
+			writeByteRows++
+			require.NotEmpty(t, row[10])
+			require.NotEmpty(t, row[13])
+			require.NotEmpty(t, row[14])
+			require.Equal(t, "commit_detail", row[15])
+		case "prewrite_region_num", "tikv_write_rpc_count":
+			require.NotEmpty(t, row[12])
+			require.Equal(t, "0.000000", row[13])
+			require.Equal(t, "0.000000", row[14])
+			require.Contains(t, fmt.Sprint(row[16]), "diagnostic_only=true")
+		}
+	}
+	require.Equal(t, 1, writeKeysRows, rows)
+	require.Equal(t, 1, writeByteRows, rows)
+	require.InEpsilon(t, planPreviewRU, summaryPreviewRU, 0.000001)
+}
+
 func TestExplainAnalyzeFormatRUPlanDigest(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -717,6 +762,34 @@ func TestExplainAnalyzeFormatRUPlanDigest(t *testing.T) {
 	requireExplainRUPlanRow(t, rows)
 }
 
+func TestExplainAnalyzeFormatRUWriteDML(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists explain_ru_write")
+	tk.MustExec("create table explain_ru_write(a int primary key, b int, c varchar(20), key idx_b(b))")
+
+	rows, err := queryExplainRURowsOrErr(t, tk, "explain analyze format='ru' insert into explain_ru_write values (1, 10, 'aa')")
+	require.NoError(t, err)
+	requireExplainRUWriteRows(t, rows, "insert")
+	tk.MustQuery("select a, b, c from explain_ru_write").Check(testkit.Rows("1 10 aa"))
+
+	rows, err = queryExplainRURowsOrErr(t, tk, "explain analyze format='ru' update explain_ru_write set c = 'bbb' where a = 1")
+	require.NoError(t, err)
+	requireExplainRUWriteRows(t, rows, "update")
+	tk.MustQuery("select a, b, c from explain_ru_write").Check(testkit.Rows("1 10 bbb"))
+
+	rows, err = queryExplainRURowsOrErr(t, tk, "explain analyze format='ru' update explain_ru_write set b = 11 where a = 1")
+	require.NoError(t, err)
+	requireExplainRUWriteRows(t, rows, "update")
+	tk.MustQuery("select a, b, c from explain_ru_write").Check(testkit.Rows("1 11 bbb"))
+
+	rows, err = queryExplainRURowsOrErr(t, tk, "explain analyze format='ru' delete from explain_ru_write where a = 1")
+	require.NoError(t, err)
+	requireExplainRUWriteRows(t, rows, "delete")
+	tk.MustQuery("select count(*) from explain_ru_write").Check(testkit.Rows("0"))
+}
+
 func TestExplainAnalyzeFormatRUUnsupportedTargetsBeforeExecution(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -733,14 +806,7 @@ func TestExplainAnalyzeFormatRUUnsupportedTargetsBeforeExecution(t *testing.T) {
 	err = tk.ExecToErr("explain analyze format=ru select 1")
 	require.Error(t, err)
 
-	err = tk.ExecToErr("explain analyze format='ru' insert into explain_ru_dml values (2)")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "unsupported_non_select")
-	tk.MustQuery("select * from explain_ru_dml order by a").Check(testkit.Rows("1"))
-
 	for _, sql := range []string{
-		"explain analyze format='ru' update explain_ru_dml set a = 2 where a = 1",
-		"explain analyze format='ru' delete from explain_ru_dml where a = 1",
 		"explain analyze format='ru' replace into explain_ru_dml values (2)",
 		"explain analyze format='ru' alter table explain_ru_dml add column b int",
 		"explain analyze format='ru' import into explain_ru_dml from select * from explain_ru_dml",
@@ -843,12 +909,21 @@ func TestReadBillingDemoMetricsHook(t *testing.T) {
 
 	beforeBaseUnits := readExecutorCounterValue(t, projectionFixedEvents)
 	beforeBaseUnitsTotal := readExecutorCounterVecTotal(t, metrics.ReadBillingDemoBaseUnitsCounter)
+	writeKeys := metrics.ReadBillingDemoBaseUnitsCounter.WithLabelValues("tikv", "kv_write", "insert", "write_keys", "commit_detail", "all", "v2")
+	writeByte := metrics.ReadBillingDemoBaseUnitsCounter.WithLabelValues("tikv", "kv_write", "insert", "write_byte", "commit_detail", "all", "v2")
+	beforeWriteKeys := readExecutorCounterValue(t, writeKeys)
+	beforeWriteByte := readExecutorCounterValue(t, writeByte)
+	beforeWriteSuccess := readExecutorCounterValue(t, success)
 	beforeUnsupported := readExecutorCounterValue(t, unsupported)
 	tk.MustExec("insert into read_billing_demo values (3)")
-	require.Equal(t, beforeUnsupported+1, readExecutorCounterValue(t, unsupported))
+	require.Equal(t, beforeUnsupported, readExecutorCounterValue(t, unsupported))
+	require.Equal(t, beforeWriteSuccess+1, readExecutorCounterValue(t, success))
 	require.Equal(t, beforeBaseUnits, readExecutorCounterValue(t, projectionFixedEvents))
-	require.Equal(t, beforeBaseUnitsTotal, readExecutorCounterVecTotal(t, metrics.ReadBillingDemoBaseUnitsCounter))
-	tk.MustQuery("select status, reason, sum(count) from information_schema.statements_summary_read_billing_demo_status where digest_text like 'insert into `read_billing_demo`%' and status = 'unsupported' group by status, reason").Check(testkit.Rows("unsupported unsupported_non_select 1"))
+	require.Greater(t, readExecutorCounterValue(t, writeKeys), beforeWriteKeys)
+	require.Greater(t, readExecutorCounterValue(t, writeByte), beforeWriteByte)
+	require.Greater(t, readExecutorCounterVecTotal(t, metrics.ReadBillingDemoBaseUnitsCounter), beforeBaseUnitsTotal)
+	tk.MustQuery("select status, reason, sum(count) from information_schema.statements_summary_read_billing_demo_status where digest_text like 'insert into `read_billing_demo`%' and site = 'statement' group by status, reason").Check(testkit.Rows("success none 1"))
+	tk.MustQuery("select unit, input_source, input_side, value > 0 from information_schema.statements_summary_read_billing_demo_base_units where digest_text like 'insert into `read_billing_demo`%' and site = 'tikv' and op_class = 'kv_write' and operator_kind = 'insert' and unit in ('write_byte', 'write_keys') order by unit").Check(testkit.Rows("write_byte commit_detail all 1", "write_keys commit_detail all 1"))
 
 	beforeUnknownInput := readExecutorCounterValue(t, unknownInput)
 	beforeBaseUnits = readExecutorCounterValue(t, projectionFixedEvents)
@@ -888,7 +963,9 @@ func TestReadBillingDemoMetricsHook(t *testing.T) {
 
 	tk.MustExec("drop table if exists read_billing_outer")
 	tk.MustExec("create table read_billing_outer(a int)")
+	tk.MustExec("set tidb_enable_read_billing_demo=off")
 	tk.MustExec("insert into read_billing_outer values (0)")
+	tk.MustExec("set tidb_enable_read_billing_demo=on")
 	tk.MustExec("set @@tidb_init_chunk_size=1")
 	rs, err := tk.Exec("select (select t.a from read_billing_demo t where t.a > o.a) from read_billing_outer o")
 	require.NoError(t, err)

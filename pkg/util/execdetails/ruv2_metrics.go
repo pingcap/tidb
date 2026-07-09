@@ -160,6 +160,9 @@ func UpdateRUV2MetricsFromCommitDetails(metrics *RUV2Metrics, commitDetails *tik
 	if commitDetails.WriteSize != 0 {
 		metrics.AddWriteSize(int64(commitDetails.WriteSize))
 	}
+	if prewriteRegionNum := atomic.LoadInt32(&commitDetails.PrewriteRegionNum); prewriteRegionNum != 0 {
+		metrics.AddPrewriteRegionNum(int64(prewriteRegionNum))
+	}
 }
 
 // RUV2Metrics stores statement-level RUv2 metrics.
@@ -193,6 +196,7 @@ type ruv2MetricsExtra struct {
 	resourceManagerWriteCnt int64
 	writeKeys               int64
 	writeSize               int64
+	prewriteRegionNum       int64
 
 	tikvCoprocessorExecutorIterations int64
 	tikvCoprocessorResponseBytes      int64
@@ -398,6 +402,15 @@ func (m *RUV2Metrics) AddWriteSize(delta int64) {
 	}
 	metrics.RUV2WriteSize.Add(float64(delta))
 	atomic.AddInt64(&m.ensureExtra().writeSize, delta)
+}
+
+// AddPrewriteRegionNum records commit prewrite region fanout for RUv2 diagnostics.
+func (m *RUV2Metrics) AddPrewriteRegionNum(delta int64) {
+	if m.Bypass() {
+		return
+	}
+	metrics.RUV2PrewriteRegionNum.Add(float64(delta))
+	atomic.AddInt64(&m.ensureExtra().prewriteRegionNum, delta)
 }
 
 // AddTiKVKVEngineCacheMiss records TiKV kv_engine_cache_miss counters from ExecDetailsV2.
@@ -680,6 +693,7 @@ func cloneRUV2MetricsExtra(dst, src *ruv2MetricsExtra) {
 	addRUV2FixedCounter(&dst.resourceManagerWriteCnt, atomic.LoadInt64(&src.resourceManagerWriteCnt))
 	addRUV2FixedCounter(&dst.writeKeys, atomic.LoadInt64(&src.writeKeys))
 	addRUV2FixedCounter(&dst.writeSize, atomic.LoadInt64(&src.writeSize))
+	addRUV2FixedCounter(&dst.prewriteRegionNum, atomic.LoadInt64(&src.prewriteRegionNum))
 	addRUV2FixedCounter(&dst.tikvCoprocessorExecutorIterations, atomic.LoadInt64(&src.tikvCoprocessorExecutorIterations))
 	addRUV2FixedCounter(&dst.tikvCoprocessorResponseBytes, atomic.LoadInt64(&src.tikvCoprocessorResponseBytes))
 	addRUV2FixedCounter(&dst.tikvRaftstoreStoreWriteTriggerWB, atomic.LoadInt64(&src.tikvRaftstoreStoreWriteTriggerWB))
@@ -793,6 +807,15 @@ func (m *RUV2Metrics) WriteSize() int64 {
 	return atomic.LoadInt64(&extra.writeSize)
 }
 
+// PrewriteRegionNum returns commit prewrite region fanout for RUv2 diagnostics.
+func (m *RUV2Metrics) PrewriteRegionNum() int64 {
+	extra := m.loadExtra()
+	if extra == nil {
+		return 0
+	}
+	return atomic.LoadInt64(&extra.prewriteRegionNum)
+}
+
 // TiKVKVEngineCacheMiss returns TiKV kv_engine_cache_miss counters from ExecDetailsV2.
 func (m *RUV2Metrics) TiKVKVEngineCacheMiss() int64 {
 	if m == nil {
@@ -869,6 +892,7 @@ func (m *RUV2Metrics) IsZero() bool {
 			m.ResourceManagerWriteCnt() == 0 &&
 			m.WriteKeys() == 0 &&
 			m.WriteSize() == 0 &&
+			m.PrewriteRegionNum() == 0 &&
 			m.TiKVCoprocessorExecutorIterations() == 0 &&
 			m.TiKVCoprocessorResponseBytes() == 0 &&
 			m.TiKVRaftstoreStoreWriteTriggerWB() == 0 &&
@@ -949,6 +973,7 @@ func FormatRUV2Summary(metrics *RUV2Metrics, weights RUV2Weights, tiKVRU, tiFlas
 		resourceManagerWriteCnt           int64
 		writeKeys                         int64
 		writeSize                         int64
+		prewriteRegionNum                 int64
 		tiKVKVEngineCacheMiss             int64
 		tiKVCoprocessorExecutorIterations int64
 		tiKVCoprocessorResponseBytes      int64
@@ -969,6 +994,7 @@ func FormatRUV2Summary(metrics *RUV2Metrics, weights RUV2Weights, tiKVRU, tiFlas
 			resourceManagerWriteCnt = atomic.LoadInt64(&extra.resourceManagerWriteCnt)
 			writeKeys = atomic.LoadInt64(&extra.writeKeys)
 			writeSize = atomic.LoadInt64(&extra.writeSize)
+			prewriteRegionNum = atomic.LoadInt64(&extra.prewriteRegionNum)
 			tiKVCoprocessorExecutorIterations = atomic.LoadInt64(&extra.tikvCoprocessorExecutorIterations)
 			tiKVCoprocessorResponseBytes = atomic.LoadInt64(&extra.tikvCoprocessorResponseBytes)
 			tiKVRaftstoreStoreWriteTriggerWB = atomic.LoadInt64(&extra.tikvRaftstoreStoreWriteTriggerWB)
@@ -996,6 +1022,7 @@ func FormatRUV2Summary(metrics *RUV2Metrics, weights RUV2Weights, tiKVRU, tiFlas
 		resourceManagerWriteCnt == 0 &&
 		writeKeys == 0 &&
 		writeSize == 0 &&
+		prewriteRegionNum == 0 &&
 		tiKVKVEngineCacheMiss == 0 &&
 		tiKVCoprocessorExecutorIterations == 0 &&
 		tiKVCoprocessorResponseBytes == 0 &&
@@ -1046,6 +1073,7 @@ func FormatRUV2Summary(metrics *RUV2Metrics, weights RUV2Weights, tiKVRU, tiFlas
 	appendInt("resource_manager_write_cnt", resourceManagerWriteCnt)
 	appendInt("write_keys", writeKeys)
 	appendInt("write_size", writeSize)
+	appendInt("prewrite_region_num", prewriteRegionNum)
 	appendInt("tikv_kv_engine_cache_miss", tiKVKVEngineCacheMiss)
 	appendInt("tikv_coprocessor_executor_iterations", tiKVCoprocessorExecutorIterations)
 	appendInt("tikv_coprocessor_response_bytes", tiKVCoprocessorResponseBytes)
