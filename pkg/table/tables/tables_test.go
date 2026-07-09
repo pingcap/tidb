@@ -408,7 +408,7 @@ func TestTableFromMeta(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestTableFromMetaEncodingConfigOptionUsesFixedMode(t *testing.T) {
+func TestSetTableEncodingConfigUsesFixedMode(t *testing.T) {
 	tblInfo := &model.TableInfo{
 		ID:    1,
 		Name:  ast.NewCIStr("t"),
@@ -425,12 +425,9 @@ func TestTableFromMetaEncodingConfigOptionUsesFixedMode(t *testing.T) {
 	}
 
 	for _, useNewCollate := range []bool{false, true} {
-		tbl, err := tables.TableFromMeta(
-			autoid.NewAllocators(false),
-			tblInfo,
-			tables.WithEncodingConfig(table.NewEncodingConfig(useNewCollate)),
-		)
+		tbl, err := tables.TableFromMeta(autoid.NewAllocators(false), tblInfo)
 		require.NoError(t, err)
+		require.NoError(t, tables.SetTableEncodingConfig(tbl, table.NewEncodingConfig(useNewCollate)))
 		require.Equal(t, useNewCollate, tbl.UseNewCollate())
 	}
 }

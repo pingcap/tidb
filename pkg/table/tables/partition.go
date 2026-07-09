@@ -282,6 +282,63 @@ func initPartition(t *partitionedTable, def model.PartitionDefinition) (*partiti
 	return &newPart, nil
 }
 
+func (t *partitionedTable) setEncodingConfig(encoding table.EncodingConfig) error {
+	if err := t.TableCommon.setEncodingConfig(encoding); err != nil {
+		return err
+	}
+	if err := t.rebuildPartitionExprs(encoding); err != nil {
+		return err
+	}
+	for _, p := range t.partitions {
+		if err := p.TableCommon.setEncodingConfig(encoding); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (t *partitionedTable) rebuildPartitionExprs(encoding table.EncodingConfig) error {
+	pi := t.meta.GetPartitionInfo()
+	if pi == nil {
+		t.partitionExpr = nil
+		t.reorgPartitionExpr = nil
+		return nil
+	}
+
+	partitionExpr, err := newPartitionExpr(t.meta, pi.Type, pi.Expr, pi.Columns, pi.Definitions, encoding)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	t.partitionExpr = partitionExpr
+
+	if t.reorgPartitionExpr == nil {
+		return nil
+	}
+
+	var (
+		tp   = pi.Type
+		expr = pi.Expr
+		cols = pi.Columns
+		defs []model.PartitionDefinition
+	)
+	if pi.DDLState == model.StateDeleteReorganization || pi.DDLState == model.StatePublic {
+		defs = pi.DroppingDefinitions
+	} else {
+		defs = pi.AddingDefinitions
+	}
+	if pi.NewTableID != 0 {
+		tp = pi.DDLType
+		expr = pi.DDLExpr
+		cols = pi.DDLColumns
+	}
+	reorgPartitionExpr, err := newPartitionExpr(t.meta, tp, expr, cols, defs, encoding)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	t.reorgPartitionExpr = reorgPartitionExpr
+	return nil
+}
+
 // NewPartitionExprBuildCtx returns a context to build partition expression.
 func NewPartitionExprBuildCtx() expression.BuildContext {
 	return exprstatic.NewExprContext(

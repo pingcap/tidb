@@ -163,34 +163,8 @@ func MockTableFromMeta(tblInfo *model.TableInfo) table.Table {
 	return ret
 }
 
-type tableFromMetaOptions struct {
-	encoding table.EncodingConfig
-}
-
-// TableFromMetaOption configures TableFromMeta.
-type TableFromMetaOption func(*tableFromMetaOptions)
-
-// WithEncodingConfig sets the persisted key and expression encoding behavior
-// for the created table.
-func WithEncodingConfig(encoding table.EncodingConfig) TableFromMetaOption {
-	return func(options *tableFromMetaOptions) {
-		options.encoding = encoding
-	}
-}
-
-func defaultTableFromMetaOptions() tableFromMetaOptions {
-	return tableFromMetaOptions{
-		encoding: table.NewEncodingConfig(collate.NewCollationEnabled()),
-	}
-}
-
 // TableFromMeta creates a Table instance from model.TableInfo.
-func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo, opts ...TableFromMetaOption) (table.Table, error) {
-	options := defaultTableFromMetaOptions()
-	for _, opt := range opts {
-		opt(&options)
-	}
-
+func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error) {
 	if tblInfo.State == model.StateNone {
 		return nil, table.ErrTableStateCantNone.GenWithStackByArgs(tblInfo.Name)
 	}
@@ -240,7 +214,7 @@ func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo, opts ...T
 	if err != nil {
 		return nil, err
 	}
-	t := newTableCommon(tblInfo, tblInfo.ID, columns, allocs, constraints, options.encoding.UseNewCollate())
+	t := newTableCommon(tblInfo, tblInfo.ID, columns, allocs, constraints, collate.NewCollationEnabled())
 	if tblInfo.GetPartitionInfo() == nil {
 		if err := t.initTableIndices(); err != nil {
 			return nil, err
@@ -251,6 +225,24 @@ func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo, opts ...T
 		return &t, nil
 	}
 	return newPartitionedTable(&t, tblInfo)
+}
+
+// SetTableEncodingConfig sets the encoding config for a Table built by TableFromMeta.
+// For partitioned tables, it also rebuilds partition expressions and updates all
+// physical partitions.
+func SetTableEncodingConfig(tbl table.Table, encoding table.EncodingConfig) error {
+	switch t := tbl.(type) {
+	case *partitionedTable:
+		return t.setEncodingConfig(encoding)
+	case *partition:
+		return t.TableCommon.setEncodingConfig(encoding)
+	case *cachedTable:
+		return t.TableCommon.setEncodingConfig(encoding)
+	case *TableCommon:
+		return t.setEncodingConfig(encoding)
+	default:
+		return errors.Errorf("unexpected table type %T", tbl)
+	}
 }
 
 func buildGeneratedExpr(tblInfo *model.TableInfo, genExpr string) (ast.ExprNode, error) {
@@ -310,6 +302,16 @@ func (t *TableCommon) initTableIndices() error {
 			return true
 		})
 		t.indices = append(t.indices, idx)
+	}
+	return nil
+}
+
+func (t *TableCommon) setEncodingConfig(encoding table.EncodingConfig) error {
+	t.encoder = encoding.Encoder()
+	for _, idx := range t.indices {
+		if err := SetIndexEncodingConfig(idx, encoding); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -1632,9 +1634,7 @@ func getDuplicateError(tblInfo *model.TableInfo, handle kv.Handle, row []types.D
 }
 
 func init() {
-	table.TableFromMeta = func(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error) {
-		return TableFromMeta(allocs, tblInfo)
-	}
+	table.TableFromMeta = TableFromMeta
 	table.MockTableFromMeta = MockTableFromMeta
 	tableutil.TempTableFromMeta = TempTableFromMeta
 }
