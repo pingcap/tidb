@@ -378,8 +378,11 @@ func buildOrderingKey(columnIDs []int64) string {
 // the loser can be pruned. Discounted columns stay in the identity even though they
 // don't score: idx(ws, a) and idx(a) score identically but build different ranges.
 func buildCoverageKey(info indexWithScore) string {
-	rest := slices.Clone(info.coveredColumnIDs[len(info.consecutiveColumnIDs):])
-	slices.Sort(rest)
+	rest := info.coveredColumnIDs[len(info.consecutiveColumnIDs):]
+	if len(rest) > 1 {
+		rest = slices.Clone(rest)
+		slices.Sort(rest)
+	}
 	return buildOrderingKey(info.chainColumnIDs) + "|" + buildOrderingKey(rest)
 }
 
@@ -479,6 +482,9 @@ type scoredIndex struct {
 	columns          int
 	isSingleScan     bool
 	totalConsecutive int
+	// coverageKey caches buildCoverageKey so selection doesn't rebuild it on every
+	// duplicate check; empty when the index has no consecutive interesting columns.
+	coverageKey string
 }
 
 func scoreAndSort(indexes []indexWithScore, req columnRequirements) []scoredIndex {
@@ -496,12 +502,17 @@ func scoreAndSort(indexes []indexWithScore, req columnRequirements) []scoredInde
 			continue
 		}
 		cols := len(candidate.path.FullIdxCols)
+		coverageKey := ""
+		if len(candidate.consecutiveColumnIDs) > 0 {
+			coverageKey = buildCoverageKey(candidate)
+		}
 		scored = append(scored, scoredIndex{
 			info:             candidate,
 			score:            score,
 			columns:          cols,
 			isSingleScan:     candidate.path.IsSingleScan,
 			totalConsecutive: len(candidate.consecutiveColumnIDs),
+			coverageKey:      coverageKey,
 		})
 	}
 	slices.SortFunc(scored, func(a, b scoredIndex) int {
@@ -634,46 +645,46 @@ func selectIndexes(preferredScored []scoredIndex, added map[*util.AccessPath]str
 
 // shouldAddIndex determines if an index should be added based on phase and diversity rules
 func shouldAddIndex(entry scoredIndex, path *util.AccessPath, req columnRequirements, state *indexSelectionState) bool {
-	hasConsecutive := len(entry.info.consecutiveColumnIDs) > 0
+	hasConsecutive := entry.totalConsecutive > 0
 	if state.phase1Count < state.phase1Limit {
 		// Phase 1: Keep top threshold/2 based on score, but skip an index whose
 		// interesting-column coverage duplicates an already-selected index: the
 		// earlier (higher-ranked) index dominates it for this query, so keeping
 		// it wastes a slot, stats loading, and range building downstream.
 		if hasConsecutive {
-			if _, seen := state.seenCoverageKeys[buildCoverageKey(entry.info)]; seen {
+			if _, seen := state.seenCoverageKeys[entry.coverageKey]; seen {
 				return false
 			}
 		}
 		state.phase1Count++
-		recordCoverage(entry.info, state)
+		recordCoverage(entry, state)
 		return true
 	}
 
 	// Phase 2: Apply diversity rules
 	if hasConsecutive {
-		return shouldAddIndexWithConsecutive(entry.info, state)
+		return shouldAddIndexWithConsecutive(entry, state)
 	}
 
 	return shouldAddIndexWithoutConsecutive(entry, path, req, state)
 }
 
 // recordCoverage tracks consecutive column IDs and coverage keys
-func recordCoverage(info indexWithScore, state *indexSelectionState) {
-	for _, colID := range info.consecutiveColumnIDs {
+func recordCoverage(entry scoredIndex, state *indexSelectionState) {
+	for _, colID := range entry.info.consecutiveColumnIDs {
 		state.seenConsecutiveColumnIDs[colID] = struct{}{}
 	}
-	if len(info.consecutiveColumnIDs) > 0 {
-		state.seenCoverageKeys[buildCoverageKey(info)] = struct{}{}
+	if entry.coverageKey != "" {
+		state.seenCoverageKeys[entry.coverageKey] = struct{}{}
 	}
 }
 
 // shouldAddIndexWithConsecutive checks if an index with consecutive columns should be added in phase 2
-func shouldAddIndexWithConsecutive(info indexWithScore, state *indexSelectionState) bool {
-	if _, seen := state.seenCoverageKeys[buildCoverageKey(info)]; seen {
+func shouldAddIndexWithConsecutive(entry scoredIndex, state *indexSelectionState) bool {
+	if _, seen := state.seenCoverageKeys[entry.coverageKey]; seen {
 		return false
 	}
-	recordCoverage(info, state)
+	recordCoverage(entry, state)
 	return true
 }
 
