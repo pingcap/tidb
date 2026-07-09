@@ -30,7 +30,8 @@ type CSVWriter struct {
 	written int64
 }
 
-// NewCSVWriter creates a CSVWriter over w. kinds
+// NewCSVWriter creates a CSVWriter over w. kinds classifies each column
+// (Number/String/Bytes) and cfg holds the framing knobs; both are caller inputs.
 func NewCSVWriter(w io.Writer, kinds []FieldKind, cfg *Config) *CSVWriter {
 	return &CSVWriter{w: w, cfg: cfg, kinds: kinds}
 }
@@ -51,8 +52,8 @@ func (cw *CSVWriter) Write(row []sql.RawBytes) error {
 	return cw.flush()
 }
 
-// WriteHeader writes a header row: each name as a quoted string field, separated
-// and terminated like a data row.
+// WriteHeader writes a header row: each name as a string field (delimiter-quoted
+// when a Delimiter is set), separated and terminated like a data row.
 func (cw *CSVWriter) WriteHeader(names [][]byte) error {
 	cw.buf = cw.buf[:0]
 	for i, name := range names {

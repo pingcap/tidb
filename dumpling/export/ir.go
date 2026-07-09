@@ -58,7 +58,7 @@ type RowReceiverStringer interface {
 	Stringer
 }
 
-// Stringer is an interface which represents sql types that support writing to buffer in sql/csv type
+// Stringer is an interface which represents sql types that support writing to buffer.
 type Stringer interface {
 	WriteToBuffer(*bytes.Buffer, bool)
 	GetRawBytes() []sql.RawBytes

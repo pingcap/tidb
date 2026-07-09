@@ -21,7 +21,6 @@ type csvOption struct {
 	separator      []byte
 	delimiter      []byte
 	lineTerminator []byte
-	binaryFormat   BinaryFormat
 }
 
 // BytesWriter is a Writer implementation on top of bytes.Buffer that is useful for testing.

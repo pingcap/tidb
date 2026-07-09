@@ -173,12 +173,12 @@ func (r *RowReceiverArr) WriteToBuffer(bf *bytes.Buffer, escapeBackslash bool) {
 
 // GetRawBytes implements Stringer.GetRawBytes.
 func (r RowReceiverArr) GetRawBytes() []sql.RawBytes {
-	return r.AppendRawBytes(make([]sql.RawBytes, 0, len(r.receivers)))
+	return r.appendRawBytes(make([]sql.RawBytes, 0, len(r.receivers)))
 }
 
-// AppendRawBytes appends each receiver's raw bytes to dst and returns it, so the
+// appendRawBytes appends each receiver's raw bytes to dst and returns it, so the
 // caller can reuse one slice across rows instead of allocating per row.
-func (r RowReceiverArr) AppendRawBytes(dst []sql.RawBytes) []sql.RawBytes {
+func (r RowReceiverArr) appendRawBytes(dst []sql.RawBytes) []sql.RawBytes {
 	for _, receiver := range r.receivers {
 		dst = append(dst, receiver.GetRawBytes()[0])
 	}

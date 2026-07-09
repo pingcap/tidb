@@ -404,7 +404,7 @@ func WriteInsertInCsv(
 			if err = fileRowIter.Decode(row); err != nil {
 				return counter, errors.Trace(err)
 			}
-			rawRow = row.AppendRawBytes(rawRow[:0])
+			rawRow = row.appendRawBytes(rawRow[:0])
 			if err = cw.Write(rawRow); err != nil {
 				return counter, errors.Trace(err)
 			}
