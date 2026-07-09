@@ -201,5 +201,66 @@ func TestCommonHandleIndexRanges(t *testing.T) {
 		tk.MustQuery(
 			"select * from t_chr_prefix use index(ic) where c = 0 and p1 = 'abz' and p2 = 1",
 		).Check(testkit.Rows("abz 1 0"))
+
+		// ---------------------------------------------------------------
+		// Case 11: Single-column string common handle — a single non-int
+		// clustered PK is also a common handle, so the same range
+		// extension applies with a one-column suffix.
+		// ---------------------------------------------------------------
+		tk.MustExec("drop table if exists t_chr_single")
+		tk.MustExec(`CREATE TABLE t_chr_single (
+			pk varchar(32),
+			a int,
+			b int,
+			PRIMARY KEY(pk) CLUSTERED,
+			KEY ia(a)
+		)`)
+		tk.MustExec(`insert into t_chr_single values
+			('u1', 10, 1),
+			('u2', 10, 2),
+			('u3', 10, 3),
+			('u4', 20, 4)`)
+		rows = tk.MustQuery(
+			"explain format = 'plan_tree' select * from t_chr_single use index(ia) where a = 10 and pk = 'u2'",
+		).Rows()
+		require.True(t, explainHas(rows, `range:[10 "u2",10 "u2"]`),
+			"case 11: expected the PK predicate to appear in the index range")
+		tk.MustQuery(
+			"select * from t_chr_single use index(ia) where a = 10 and pk = 'u2'",
+		).Check(testkit.Rows("u2 10 2"))
+		rows = tk.MustQuery(
+			"explain format = 'plan_tree' select * from t_chr_single use index(ia) where a = 10 and pk > 'u1'",
+		).Rows()
+		require.True(t, explainHas(rows, `range:(10 "u1",10 +inf]`),
+			"case 11: expected a non-point range on the PK column")
+		tk.MustQuery(
+			"select * from t_chr_single use index(ia) where a = 10 and pk > 'u1' order by pk",
+		).Check(testkit.Rows("u2 10 2", "u3 10 3"))
+		rows = tk.MustQuery(
+			"explain format = 'plan_tree' select pk, a from t_chr_single use index(ia) where a = 10 and pk = 'u2'",
+		).Rows()
+		require.True(t, explainHas(rows, "IndexReader"),
+			"case 11: expected a single-scan IndexReader for the covering read")
+
+		// ---------------------------------------------------------------
+		// Case 12: Single-column decimal common handle — non-int, non-string
+		// handle types take the same path.
+		// ---------------------------------------------------------------
+		tk.MustExec("drop table if exists t_chr_dec")
+		tk.MustExec(`CREATE TABLE t_chr_dec (
+			pk decimal(10,2),
+			a int,
+			PRIMARY KEY(pk) CLUSTERED,
+			KEY ia(a)
+		)`)
+		tk.MustExec(`insert into t_chr_dec values (1.50, 10), (2.50, 10), (3.50, 20)`)
+		rows = tk.MustQuery(
+			"explain format = 'plan_tree' select * from t_chr_dec use index(ia) where a = 10 and pk = 2.50",
+		).Rows()
+		require.True(t, explainHas(rows, "range:[10 2.50,10 2.50]"),
+			"case 12: expected the decimal PK predicate to appear in the index range")
+		tk.MustQuery(
+			"select * from t_chr_dec use index(ia) where a = 10 and pk = 2.50",
+		).Check(testkit.Rows("2.50 10"))
 	})
 }
