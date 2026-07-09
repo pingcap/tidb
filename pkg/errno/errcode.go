@@ -1154,6 +1154,8 @@ const (
 	ErrForbiddenDDL                       = 8267
 	ErrMaskingPolicyExists                = 8268
 	ErrMaskingPolicyNotExists             = 8269
+	ErrMaskingPolicyExprInvalidColumn     = 8275
+	ErrDDLAutoPausedByKVDiskFull          = 8276
 
 	// Resource group errors.
 	ErrResourceGroupExists                    = 8248
@@ -1171,6 +1173,7 @@ const (
 	ErrStorageClassInvalidSpec                  = 8271
 	ErrModifyColumnReferencedByPartialCondition = 8272
 	ErrCheckPartialIndexWithoutFastCheck        = 8273
+	ErrMaxKeysReadExceeded                      = 8274
 
 	// [8800, 8900) are reserved for a downstream fork
 
@@ -1189,4 +1192,5 @@ const (
 	ErrTiFlashServerTimeout      = 9012
 	ErrTiFlashServerBusy         = 9013
 	ErrTiFlashBackfillIndex      = 9014
+	ErrUserPrefixMismatch        = 20003
 )

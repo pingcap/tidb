@@ -660,8 +660,9 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 				tmpArgForCollCheck[idx] = newFuncExpr
 				newCollEt, err := CheckAndDeriveCollationFromExprs(ctx, v.FuncName.L, v.RetType.EvalType(), tmpArgForCollCheck...)
 				if err != nil {
-					logutil.BgLogger().Warn("Unexpected error happened during ColumnSubstitution", zap.Stack("stack"), zap.Error(err))
-					return false, failed, v
+					// The substituted arguments may be invalid under collation rules;
+					// treat it as an unsafe substitution.
+					return false, true, v
 				}
 				if oldCollEt.Collation == newCollEt.Collation {
 					if newFuncExpr.GetType(ctx.GetEvalCtx()).GetCollate() == arg.GetType(ctx.GetEvalCtx()).GetCollate() && newFuncExpr.Coercibility() == arg.Coercibility() {
@@ -1273,6 +1274,13 @@ func extractFiltersFromDNF(ctx BuildContext, dnfFunc *ScalarFunction) ([]Express
 	extractedExpr := make([]Expression, 0, len(hashcode2Expr))
 	for _, expr := range hashcode2Expr {
 		extractedExpr = append(extractedExpr, expr)
+	}
+	// The map above is keyed by hash for set semantics; sort the extracted filters
+	// before returning them so plan and test output stay deterministic.
+	if len(extractedExpr) > 1 {
+		slices.SortFunc(extractedExpr, func(a, b Expression) int {
+			return bytes.Compare(a.HashCode(), b.HashCode())
+		})
 	}
 	if onlyNeedExtracted {
 		return extractedExpr, nil

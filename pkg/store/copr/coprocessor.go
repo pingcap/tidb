@@ -50,6 +50,7 @@ import (
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/store/driver/options"
 	util2 "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -218,6 +219,8 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		buildTaskElapsed: *buildOpt.elapsed,
 		runawayChecker:   req.RunawayChecker,
 		ema:              newRUEMA(),
+		maxKeysRead:      req.MaxKeysRead,
+		keysRead:         pickKeysReadCounter(req),
 	}
 	// Pipelined-dml can flush locks when it is still reading.
 	// The coprocessor of the txn should not be blocked by itself.
@@ -344,11 +347,12 @@ func (r *copTask) ToPBBatchTasks() []*coprocessor.StoreBatchTask {
 	pbTasks := make([]*coprocessor.StoreBatchTask, 0, len(r.batchTaskList))
 	for _, task := range r.batchTaskList {
 		storeBatchTask := &coprocessor.StoreBatchTask{
-			RegionId:    task.region.GetRegionId(),
-			RegionEpoch: task.region.GetRegionEpoch(),
-			Peer:        task.peer,
-			Ranges:      task.region.GetRanges(),
-			TaskId:      task.task.taskID,
+			RegionId:       task.region.GetRegionId(),
+			RegionEpoch:    task.region.GetRegionEpoch(),
+			Peer:           task.peer,
+			Ranges:         task.region.GetRanges(),
+			TaskId:         task.task.taskID,
+			BucketsVersion: task.task.bucketsVer,
 		}
 		pbTasks = append(pbTasks, storeBatchTask)
 	}
@@ -1010,7 +1014,22 @@ type copIterator struct {
 	stats          *copIteratorRuntimeStats
 
 	// One EMA per copIterator (logical scan), shared across workers.
-	ema *ruEMA
+	ema         *ruEMA
+	maxKeysRead uint64          // global limit from kv.Request (0 = unlimited)
+	keysRead    *atomic2.Uint64 // cumulative storage engine keys read across all completed tasks; may be shared across copIterators in the same statement
+}
+
+// pickKeysReadCounter returns the counter used by a copIterator for cumulative
+// tracking of scanned keys. When the request carries a shared counter (set via
+// DistSQLContext.MaxKeysReadCounter), all coprocessor iterators in the same
+// statement accumulate into it so that max_keys_read is enforced as a
+// statement-wide budget rather than per-iterator. Falls back to a fresh
+// per-iterator counter for internal callers that don't plumb the shared one.
+func pickKeysReadCounter(req *kv.Request) *atomic2.Uint64 {
+	if req.MaxKeysReadCounter != nil {
+		return req.MaxKeysReadCounter
+	}
+	return new(atomic2.Uint64)
 }
 
 type liteCopIteratorWorker struct {
@@ -1029,8 +1048,11 @@ type copIteratorWorker struct {
 	req      *kv.Request
 	respChan chan<- *copResponse
 	finishCh <-chan struct{}
-	vars     *tikv.Variables
-	kvclient *txnsnapshot.ClientHelper
+	// requestRateLimit controls the aggregate number of in-flight cop requests.
+	// The token lifecycle is tied to one send attempt instead of response consumption.
+	requestRateLimit *util.RateLimit
+	vars             *tikv.Variables
+	kvclient         *txnsnapshot.ClientHelper
 
 	memTracker *memory.Tracker
 
@@ -1042,7 +1064,9 @@ type copIteratorWorker struct {
 	storeBatchedFallbackNum *atomic.Uint64
 	stats                   *copIteratorRuntimeStats
 
-	ema *ruEMA
+	ema         *ruEMA
+	maxKeysRead uint64          // global limit (0 = unlimited)
+	keysRead    *atomic2.Uint64 // shared with copIterator for cumulative tracking
 }
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
@@ -1229,6 +1253,7 @@ func newCopIteratorWorker(it *copIterator, taskCh <-chan *copTask) *copIteratorW
 		req:                     it.req,
 		respChan:                it.respChan,
 		finishCh:                it.finishCh,
+		requestRateLimit:        it.req.CoprRequestRateLimit,
 		vars:                    it.vars,
 		kvclient:                txnsnapshot.NewClientHelper(it.store.store, &it.resolvedLocks, &it.committedLocks, false),
 		memTracker:              it.memTracker,
@@ -1238,6 +1263,8 @@ func newCopIteratorWorker(it *copIterator, taskCh <-chan *copTask) *copIteratorW
 		storeBatchedFallbackNum: &it.storeBatchedFallbackNum,
 		stats:                   it.stats,
 		ema:                     it.ema,
+		maxKeysRead:             it.maxKeysRead,
+		keysRead:                it.keysRead,
 	}
 }
 
@@ -1335,6 +1362,11 @@ func (it *copIterator) GetBuildTaskElapsed() time.Duration {
 // GetSendRate returns the rate-limit object.
 func (it *copIterator) GetSendRate() *util.RateLimit {
 	return it.sendRate
+}
+
+// GetRequestRateLimit returns the shared request rate-limit object.
+func (it *copIterator) GetRequestRateLimit() *util.RateLimit {
+	return it.req.CoprRequestRateLimit
 }
 
 // GetTasks returns the built tasks.
@@ -1467,6 +1499,26 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 
 	if resp.err != nil {
 		return nil, errors.Trace(resp.err)
+	}
+
+	// Accumulate keys read and enforce the tidb_max_keys_read cap. Both the lite
+	// single-task path and the concurrent worker path funnel responses through
+	// here, so doing it here covers both uniformly. Sequential tasks pick up the
+	// updated remaining budget at handleTaskOnce dispatch via keysRead.Load().
+	if it.maxKeysRead > 0 {
+		if resp.detail != nil && resp.detail.ScanDetail != nil {
+			if pk := resp.detail.ScanDetail.ProcessedKeys; pk > 0 {
+				it.keysRead.Add(uint64(pk))
+			}
+		}
+		if it.keysRead.Load() > it.maxKeysRead {
+			if atomic.CompareAndSwapUint32(&it.closed, 0, 1) {
+				close(it.finishCh)
+			}
+			// Return resp (non-nil) so the caller can still merge CopRuntimeStats
+			// into StmtCtx.ExecDetails, which flows into tidb_keys_examined.
+			return resp, exeerrors.ErrMaxKeysReadExceeded
+		}
 	}
 
 	err := it.store.CheckVisibility(it.req.StartTs)
@@ -1678,6 +1730,17 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		task.pagingTaskIdx = atomic.AddUint32(worker.pagingTaskIdx, 1)
 	}
 
+	// All concurrent tasks get the full remaining budget; the cumulative check
+	// in Next() enforces the global limit.
+	var taskMaxKeysRead uint64
+	if worker.maxKeysRead > 0 {
+		scanned := worker.keysRead.Load()
+		if scanned >= worker.maxKeysRead {
+			return nil, exeerrors.ErrMaxKeysReadExceeded
+		}
+		taskMaxKeysRead = worker.maxKeysRead - scanned
+	}
+
 	copReq := coprocessor.Request{
 		Tp:              worker.req.Tp,
 		StartTs:         worker.req.StartTs,
@@ -1685,6 +1748,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		Ranges:          task.ranges.ToPBRanges(),
 		SchemaVer:       worker.req.SchemaVar,
 		PagingSize:      task.pagingSize,
+		MaxKeysRead:     taskMaxKeysRead,
 		PagingSizeBytes: worker.req.Paging.PagingSizeBytes,
 		Tasks:           task.ToPBBatchTasks(),
 		ConnectionId:    worker.req.ConnID,
@@ -1760,9 +1824,25 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		ops = append(ops, tikv.WithMatchStores([]uint64{*task.redirect2Replica}))
 	}
 
-	failpoint.InjectCall("onBeforeSendReqCtx", req)
-	resp, rpcCtx, storeAddr, err := worker.kvclient.SendReqCtx(bo.TiKVBackoffer(), req, task.region,
-		timeout, getEndPointType(task.storeType), task.storeAddr, ops...)
+	if worker.requestRateLimit != nil {
+		exit := worker.requestRateLimit.GetToken(worker.finishCh)
+		if exit {
+			return nil, nil
+		}
+	}
+	// Keep the request-rate token and send attempt in a small scope so the
+	// token is released immediately after the send attempt returns, while
+	// still remaining panic-safe.
+	resp, rpcCtx, storeAddr, err := func() (*tikvrpc.Response, *tikv.RPCContext, string, error) {
+		defer func() {
+			if worker.requestRateLimit != nil {
+				worker.requestRateLimit.PutToken()
+			}
+		}()
+		failpoint.InjectCall("onBeforeSendReqCtx", req)
+		return worker.kvclient.SendReqCtx(bo.TiKVBackoffer(), req, task.region,
+			timeout, getEndPointType(task.storeType), task.storeAddr, ops...)
+	}()
 	err = derr.ToTiDBErr(err)
 	if worker.req.RunawayChecker != nil {
 		err = worker.req.RunawayChecker.CheckThresholds(nil, 0, err)
@@ -2304,6 +2384,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 			batchResp.RegionError = &errorpb.Error{}
 		})
 		if regionErr := getRegionError(bo.GetCtx(), batchResp); regionErr != nil {
+			worker.handleBatchBucketVersionNotMatch(bo, task, regionErr)
 			errStr := fmt.Sprintf("region_id:%v, region_ver:%v, store_type:%s, peer_addr:%s, error:%s",
 				task.region.GetID(), task.region.GetVer(), task.storeType.Name(), task.storeAddr, regionErr.String())
 			if err := bo.Backoff(tikv.BoRegionMiss(), errors.New(errStr)); err != nil {
@@ -2336,8 +2417,13 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 		if otherErr := batchResp.GetOtherError(); otherErr != "" {
 			err := errors.Errorf("other error: %s", otherErr)
 
-			firstRangeStartKey := task.ranges.At(0).StartKey
-			lastRangeEndKey := task.ranges.At(task.ranges.Len() - 1).EndKey
+			// A rangeless task (e.g. a BroadcastQuery request) has no ranges, so
+			// guard At(0)/At(Len-1) to avoid a nil dereference.
+			var firstRangeStartKey, lastRangeEndKey []byte
+			if task.ranges.Len() > 0 {
+				firstRangeStartKey = task.ranges.At(0).StartKey
+				lastRangeEndKey = task.ranges.At(task.ranges.Len() - 1).EndKey
+			}
 
 			logutil.Logger(bo.GetCtx()).Warn("other error",
 				zap.Uint64("txnStartTS", worker.req.StartTs),
@@ -2368,8 +2454,13 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 		// when the error is generated by client or a load-based server busy,
 		// response is empty by design, skip warning for this case.
 		if len(batchResps) != 0 {
-			firstRangeStartKey := task.ranges.At(0).StartKey
-			lastRangeEndKey := task.ranges.At(task.ranges.Len() - 1).EndKey
+			// A rangeless task (e.g. a BroadcastQuery request) has no ranges, so
+			// guard At(0)/At(Len-1) to avoid a nil dereference.
+			var firstRangeStartKey, lastRangeEndKey []byte
+			if task.ranges.Len() > 0 {
+				firstRangeStartKey = task.ranges.At(0).StartKey
+				lastRangeEndKey = task.ranges.At(task.ranges.Len() - 1).EndKey
+			}
 			logutil.Logger(bo.GetCtx()).Error("response of batched task missing",
 				zap.Uint64("id", task.taskID),
 				zap.Uint64("txnStartTS", worker.req.StartTs),
@@ -2401,6 +2492,19 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 		remainTasks = handler.build()
 	}
 	return batchRespList, remainTasks, nil
+}
+
+func (worker *copIteratorWorker) handleBatchBucketVersionNotMatch(bo *Backoffer, task *copTask, regionErr *errorpb.Error) {
+	bucketVersionNotMatch := regionErr.GetBucketVersionNotMatch()
+	if bucketVersionNotMatch == nil {
+		return
+	}
+	logutil.Logger(bo.GetCtx()).Debug("tikv reports `BucketVersionNotMatch` for batched cop task",
+		zap.Uint64("latest bucket version", bucketVersionNotMatch.GetVersion()),
+		zap.Uint64("request bucket version", task.bucketsVer),
+		zap.Uint64("regionID", task.region.GetID()))
+	childRPCCtx := &tikv.RPCContext{Region: task.region}
+	worker.store.GetRegionCache().OnBucketVersionNotMatch(childRPCCtx, bucketVersionNotMatch.GetVersion(), bucketVersionNotMatch.GetKeys())
 }
 
 func (worker *copIteratorWorker) handleLockErr(bo *Backoffer, lockErr *kvrpcpb.LockInfo, task *copTask) error {

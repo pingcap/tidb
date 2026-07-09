@@ -436,7 +436,7 @@ func (r *StmtRecord) Add(info *stmtsummary.StmtExecInfo) {
 	r.SumKVTotal += time.Duration(tikvExecDetails.WaitKVRespDuration)
 	r.SumPDTotal += time.Duration(tikvExecDetails.WaitPDRespDuration)
 	r.SumBackoffTotal += time.Duration(tikvExecDetails.BackoffDuration)
-	r.SumWriteSQLRespTotal += info.StmtExecDetails.WriteSQLRespDuration
+	r.SumWriteSQLRespTotal += info.WriteSQLRespDuration
 	r.SumTidbCPU += info.CPUUsages.TidbCPUTime
 	r.SumTikvCPU += info.CPUUsages.TikvCPUTime
 

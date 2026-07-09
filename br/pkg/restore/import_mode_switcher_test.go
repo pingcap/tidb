@@ -109,7 +109,7 @@ func TestRestorePreWork(t *testing.T) {
 		}
 	}
 	<-ch
-	restore.RestorePostWork(ctx, switcher, undo, false)
+	restore.RestorePostWork(ctx, switcher, undo)
 	// check the cfg done
 	{
 		cfgs, err := pdHTTPCli.GetConfig(context.TODO())
@@ -126,11 +126,4 @@ func TestRestorePreWork(t *testing.T) {
 
 	s.Stop()
 	lis.Close()
-}
-
-func TestRestorePreWorkOnline(t *testing.T) {
-	ctx := context.Background()
-	undo, _, err := restore.RestorePreWork(ctx, nil, nil, true, false)
-	require.NoError(t, err)
-	restore.RestorePostWork(ctx, nil, undo, true)
 }

@@ -41,6 +41,15 @@ type (
 	TaskState string
 	// TaskType is the type of task.
 	TaskType string
+	// PrepareMode controls whether a task needs prepare-mode scheduling.
+	PrepareMode int
+)
+
+const (
+	// PrepareModeDisabled means prepare mode is disabled, this is the default.
+	PrepareModeDisabled PrepareMode = 0
+	// PrepareModeRequired means task scheduling must enter prepare mode.
+	PrepareModeRequired PrepareMode = 1
 )
 
 func (t TaskType) String() string {
@@ -49,6 +58,17 @@ func (t TaskType) String() string {
 
 func (s TaskState) String() string {
 	return string(s)
+}
+
+func (m PrepareMode) String() string {
+	switch m {
+	case PrepareModeDisabled:
+		return "disabled"
+	case PrepareModeRequired:
+		return "required"
+	default:
+		return fmt.Sprintf("unknown(%d)", m)
+	}
 }
 
 // CanMoveToModifying checks if current state can move to 'modifying' state.
@@ -74,6 +94,9 @@ type ExtraParams struct {
 	// if enabled, the task will enter 'awaiting-resolution' state when it failed,
 	// then the user can recover the task manually or fail it if it's not recoverable.
 	ManualRecovery bool `json:"manual_recovery,omitempty"`
+	// PauseOnKVDiskFull indicates whether the task should be paused instead of
+	// reverted when TiKV reports disk full.
+	PauseOnKVDiskFull bool `json:"pause_on_kv_disk_full,omitempty"`
 	// MaxRuntimeSlots is the max slots when running subtasks of this task in
 	// TargetSteps steps.
 	// normally it's 0, means we will use the RequiredSlots to run the subtasks.
@@ -91,6 +114,9 @@ type ExtraParams struct {
 	// normally OOM only happens in some specific steps, so we can just limit the
 	// concurrency in those steps to reduce the impact on the overall performance.
 	TargetSteps []Step `json:"target_steps,omitempty"`
+	// PrepareMode controls whether this task requires prepare-mode scheduling.
+	// default is PrepareModeDisabled for backward compatibility.
+	PrepareMode PrepareMode `json:"prepare_mode,omitempty"`
 }
 
 // TaskBase contains the basic information of a task.

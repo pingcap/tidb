@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -27,6 +28,7 @@ func TestIsRequestTypeSupported(t *testing.T) {
 	assert.True(t, checker(kv.ReqTypeDAG, kv.ReqSubTypeSignature))
 	assert.True(t, checker(kv.ReqTypeDAG, kv.ReqSubTypeDesc))
 	assert.True(t, checker(kv.ReqTypeDAG, kv.ReqSubTypeSignature))
+	assert.True(t, checker(kv.ReqTypeSelect, int64(tipb.ExprType_SumInt)))
 	assert.False(t, checker(kv.ReqTypeDAG, kv.ReqSubTypeAnalyzeIdx))
 	assert.True(t, checker(kv.ReqTypeAnalyze, 0))
 	assert.False(t, checker(kv.ReqTypeChecksum, 0))

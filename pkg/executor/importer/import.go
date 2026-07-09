@@ -37,11 +37,12 @@ import (
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/util"
+	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	litlog "github.com/pingcap/tidb/pkg/lightning/log"
@@ -74,6 +75,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/naming"
 	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -236,8 +238,8 @@ func (t DataSourceType) String() string {
 }
 
 var (
-	// NewClientWithContext returns a kv.Client.
-	NewClientWithContext = pd.NewClientWithContext
+	// NewClientWithAPIContext returns a kv.Client.
+	NewClientWithAPIContext = pd.NewClientWithAPIContext
 )
 
 // FieldMapping indicates the relationship between input field and table column or user variable
@@ -275,9 +277,9 @@ type Plan struct {
 	// ref https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-column-assignments
 	Restrictive bool
 
-	// Location is used to convert time type for parquet, see
+	// LocationID is used to convert time type for parquet, see
 	// https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#timestamp
-	Location *time.Location
+	LocationID string
 
 	SQLMode mysql.SQLMode
 	// Charset is the charset of the data file when file is CSV or TSV.
@@ -319,7 +321,7 @@ type Plan struct {
 	// only initialized for IMPORT INTO, used when creating job.
 	Parameters *ImportParameters `json:"-"`
 	// only initialized for IMPORT INTO, used when format is detected automatically
-	specifiedOptions map[string]*plannercore.LoadDataOpt
+	SpecifiedOptionNames map[string]struct{} `json:",omitempty"`
 	// the user who executes the statement, in the form of user@host
 	// only initialized for IMPORT INTO
 	User string `json:"-"`
@@ -333,6 +335,12 @@ type Plan struct {
 	ManualRecovery bool
 	// the keyspace name when submitting this job, only for import-into
 	Keyspace string
+	// UseNewCollate captures whether the new collation implementation was enabled
+	// when this import plan's target table snapshot was created. Import execution
+	// may happen in another keyspace, so key and expression encoding must use this
+	// captured value instead of the executor process default. Nil means old metadata
+	// and should fall back to the caller-provided default.
+	UseNewCollate *bool `json:"use_new_collate,omitempty"`
 }
 
 // GetOnDupKeyMode returns the conflict handling mode.
@@ -345,6 +353,21 @@ func (p *Plan) GetOnDupKeyMode() OnDupKeyMode {
 		return OnDupKeyModeError
 	}
 	return p.OnDupKey
+}
+
+// GetUseNewCollateOrDefault returns the captured new-collation mode, or
+// defaultVal for import metadata generated before the field existed.
+func (p *Plan) GetUseNewCollateOrDefault(defaultVal bool) bool {
+	if p.UseNewCollate == nil {
+		return defaultVal
+	}
+	return *p.UseNewCollate
+}
+
+// setUseNewCollate stores the new-collation mode captured from the target table
+// snapshot.
+func (p *Plan) setUseNewCollate(useNewCollate bool) {
+	p.UseNewCollate = &useNewCollate
 }
 
 // ASTArgs is the arguments for ast.LoadDataStmt.
@@ -421,10 +444,10 @@ type LoadDataController struct {
 	// - "...(a,b) set b=100" will set b=100 in mysql, but in tidb the set is ignored.
 	// - ref columns in set clause is allowed in mysql, but not in tidb
 	InsertColumns []*table.Column
-
-	logger    *zap.Logger
-	dataStore storeapi.Storage
-	dataFiles []*mydump.SourceFileMeta
+	location      *time.Location
+	logger        *zap.Logger
+	dataStore     storeapi.Storage
+	dataFiles     []*mydump.SourceFileMeta
 	// exported for testing.
 	TotalRealSize int64
 	// globalSortStore is used to store sorted data when using global sort.
@@ -525,7 +548,10 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 	}
 	restrictive := userSctx.GetSessionVars().SQLMode.HasStrictMode()
 	lineFieldsInfo := newDefaultLineFieldsInfo()
-
+	// TiDB doesn't support setting zones like UTC+8, it should be parsable by
+	// ParseTimeZone, i.e. in IANA format like Asia/Shanghai, or in offset form
+	// like +08:00.
+	location := userSctx.GetSessionVars().Location()
 	p := &Plan{
 		TableInfo:        tbl.Meta(),
 		DesiredTableInfo: tbl.Meta(),
@@ -538,7 +564,7 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 		FieldNullDef:   defaultFieldNullDef,
 		LineFieldsInfo: lineFieldsInfo,
 
-		Location:         userSctx.GetSessionVars().Location(),
+		LocationID:       timeutil.ZoneName(location),
 		SQLMode:          userSctx.GetSessionVars().SQLMode,
 		ImportantSysVars: getImportantSysVars(userSctx),
 
@@ -548,6 +574,7 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 		User:                   userSctx.GetSessionVars().User.String(),
 		Keyspace:               userSctx.GetStore().GetKeyspace(),
 	}
+	p.setUseNewCollate(tbl.UseNewCollate())
 	if err := p.initOptions(ctx, userSctx, plan.Options); err != nil {
 		return nil, err
 	}
@@ -626,10 +653,25 @@ func WithLogger(logger *zap.Logger) Option {
 func NewLoadDataController(plan *Plan, tbl table.Table, astArgs *ASTArgs, options ...Option) (*LoadDataController, error) {
 	fullTableName := tbl.Meta().Name.String()
 	logger := log.L().With(zap.String("table", fullTableName))
+	loc := time.UTC
+	// historically, we store *time.Location in Plan, but *time.Location cannot
+	// be marshaled into JSON. New task metadata stores a timezone specifier
+	// string (IANA name or offset form), and resolves it when creating the
+	// controller. Old task metadata has no LocationID, so use UTC as the
+	// compatibility fallback before the location is passed to parquet parsing.
+	// see sparkRebaseTimeZoneID too.
+	if plan.LocationID != "" {
+		location, err := timeutil.ParseTimeZone(plan.LocationID)
+		if err != nil {
+			return nil, errors.Wrapf(err, "invalid location %s", plan.LocationID)
+		}
+		loc = location
+	}
 	c := &LoadDataController{
 		Plan:            plan,
 		ASTArgs:         astArgs,
 		Table:           tbl,
+		location:        loc,
 		logger:          logger,
 		ExecuteNodesCnt: 1,
 	}
@@ -646,6 +688,12 @@ func NewLoadDataController(plan *Plan, tbl table.Table, astArgs *ASTArgs, option
 		return nil, err
 	}
 	return c, nil
+}
+
+// ParquetLocation returns the timezone used to interpret parquet temporal values.
+// Callers should treat the returned location as read-only controller state.
+func (e *LoadDataController) ParquetLocation() *time.Location {
+	return e.location
 }
 
 // InitTiKVConfigs initializes some TiKV related configs.
@@ -737,7 +785,10 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		}
 		specifiedOptions[opt.Name] = opt
 	}
-	p.specifiedOptions = specifiedOptions
+	p.SpecifiedOptionNames = make(map[string]struct{}, len(specifiedOptions))
+	for k := range specifiedOptions {
+		p.SpecifiedOptionNames[k] = struct{}{}
+	}
 
 	if kerneltype.IsNextGen() && sem.IsEnabled() {
 		if p.DataSourceType == DataSourceTypeQuery {
@@ -1276,7 +1327,15 @@ func initExternalStore(ctx context.Context, u *url.URL, target string) (storeapi
 	return s, nil
 }
 
-func estimateCompressionRatio(
+// estimateFormatSizeExpansionRatio estimates how much larger the decoded row
+// data can be than the source file's physical bytes because of the file format.
+//
+// Row-oriented formats use 1.0 because their file size is already a reasonable
+// proxy for decoded data size. Parquet needs a separate estimate: its columnar
+// layout and internal compression can make the physical file much smaller than
+// the row data TiDB will import. The returned ratio is always at least 1.0, so
+// size planning never treats decoded data as smaller than the source file.
+func estimateFormatSizeExpansionRatio(
 	ctx context.Context,
 	filePath string,
 	fileSize int64,
@@ -1291,17 +1350,27 @@ func estimateCompressionRatio(
 			failpoint.Return(2.0, nil)
 		}
 	})
-	rows, rowSize, err := mydump.SampleStatisticsFromParquet(ctx, filePath, store)
+	rows, rowSize, err := parquetfile.SampleStatisticsFromParquet(ctx, filePath, store)
 	if err != nil {
 		return 1.0, err
 	}
-	// No row in the file, use 2.0 as default compression ratio.
+	// If there is no row data to sample, keep the historical default estimate.
 	if rowSize == 0 || rows == 0 {
 		return 2.0, nil
 	}
 
-	compressionRatio := (rowSize * float64(rows)) / float64(fileSize)
-	return compressionRatio, nil
+	ratio := (rowSize * float64(rows)) / float64(fileSize)
+	// Small parquet files or inefficient internal compression can make the
+	// sampled decoded row size smaller than the physical file size. Keep size
+	// planning conservative by normalizing the format expansion to 1.0.
+	if ratio < 1.0 {
+		logutil.BgLogger().Info("estimated size expansion ratio is less than 1.0, normalized to 1.0",
+			zap.String("filePath", filePath), zap.Int64("rows", rows),
+			zap.Float64("rowSize", rowSize), zap.Int64("fileSize", fileSize),
+			zap.Float64("estimatedRatio", ratio))
+		ratio = 1.0
+	}
+	return ratio, nil
 }
 
 // maxSampledCompressedFiles indicates the max number of files we used to sample
@@ -1442,9 +1511,10 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	s := e.dataStore
 	var (
 		sourceType mydump.SourceType
-		// sizeExpansionRatio is the estimated size expansion for parquet format.
-		// For non-parquet format, it's always 1.0.
-		sizeExpansionRatio = 1.0
+		// formatExpansionRatio adjusts file-size estimates for formats whose
+		// physical bytes are not a good proxy for decoded row data. It is
+		// currently greater than 1.0 only for parquet.
+		formatExpansionRatio = 1.0
 	)
 	dataFiles := []*mydump.SourceFileMeta{}
 	isAutoDetectingFormat := e.Format == DataFormatAuto
@@ -1465,7 +1535,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}
 		e.detectAndUpdateFormat(fileNameKey)
 		sourceType = e.getSourceType()
-		compressionRatio, err := estimateCompressionRatio(ctx, fileNameKey, size, sourceType, s)
+		formatExpansionRatio, err := estimateFormatSizeExpansionRatio(ctx, fileNameKey, size, sourceType, s)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1475,9 +1545,10 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			FileSize:    size,
 			Compression: compressTp,
 			Type:        sourceType,
+			ParquetMeta: parquetfile.FileMeta{Loc: e.location},
 		}
 		fileMeta.RealSize = mydump.EstimateRealSizeForFile(ctx, fileMeta, s)
-		fileMeta.RealSize = int64(float64(fileMeta.RealSize) * compressionRatio)
+		fileMeta.RealSize = int64(float64(fileMeta.RealSize) * formatExpansionRatio)
 		dataFiles = append(dataFiles, &fileMeta)
 	} else {
 		var commonPrefix string
@@ -1520,7 +1591,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 				once.Do(func() {
 					e.detectAndUpdateFormat(path)
 					sourceType = e.getSourceType()
-					sizeExpansionRatio, err2 = estimateCompressionRatio(ctx, path, size, sourceType, s)
+					formatExpansionRatio, err2 = estimateFormatSizeExpansionRatio(ctx, path, size, sourceType, s)
 				})
 				if err2 != nil {
 					return nil, err2
@@ -1531,9 +1602,14 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 					FileSize:    size,
 					Compression: compressTp,
 					Type:        sourceType,
+					ParquetMeta: parquetfile.FileMeta{Loc: e.location},
 				}
-				fileMeta.RealSize = int64(ce.estimate(ctx, fileMeta, s) * float64(fileMeta.FileSize))
-				fileMeta.RealSize = int64(float64(fileMeta.RealSize) * sizeExpansionRatio)
+				// Compression sampling can be below 1.0 for small files or
+				// inefficient compression. Keep RealSize at least the physical
+				// file size before applying the format expansion estimate.
+				compressionExpansionRatio := max(ce.estimate(ctx, fileMeta, s), 1.0)
+				fileMeta.RealSize = int64(compressionExpansionRatio * float64(fileMeta.FileSize))
+				fileMeta.RealSize = int64(float64(fileMeta.RealSize) * formatExpansionRatio)
 				return &fileMeta, nil
 			}); err != nil {
 			return err
@@ -1546,7 +1622,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}
 	}
 	if e.InImportInto && isAutoDetectingFormat && e.Format != DataFormatCSV {
-		if err2 = e.checkNonCSVFormatOptions(); err2 != nil {
+		if err2 = e.CheckNonCSVFormatOptions(); err2 != nil {
 			return err2
 		}
 	}
@@ -1594,6 +1670,9 @@ func (e *LoadDataController) CalResourceParams(ctx context.Context, ksCodec []by
 	e.MaxNodeCnt = cal.CalcMaxNodeCountForImportInto()
 	e.DistSQLScanConcurrency = scheduler.CalcDistSQLConcurrency(e.ThreadCnt, e.MaxNodeCnt, targetNodeCPUCnt)
 	e.logger.Info("auto calculate resource related params",
+		zap.String("db", e.DBName),
+		zap.String("table", e.TableInfo.Name.O),
+		zap.Int64("tableID", e.TableInfo.ID),
 		zap.Int("thread", e.ThreadCnt),
 		zap.Int("maxNode", e.MaxNodeCnt),
 		zap.Int("distsqlScanConcurrency", e.DistSQLScanConcurrency),
@@ -1615,7 +1694,10 @@ func (e *LoadDataController) detectAndUpdateFormat(path string) {
 		e.Format = parseFileType(path)
 		e.logger.Info("detect and update import plan format based on file extension",
 			zap.String("file", path), zap.String("detected format", e.Format))
-		e.Parameters.Format = e.Format
+		// Plan.Parameters doesn't exist if we run with async prepare.
+		if e.Parameters != nil {
+			e.Parameters.Format = e.Format
+		}
 	}
 }
 
@@ -1716,7 +1798,7 @@ func newLoadDataParser(
 			nil,
 		)
 	case DataFormatParquet:
-		parser, err = mydump.NewParquetParser(
+		parser, err = parquetfile.NewParser(
 			ctx,
 			dataStore,
 			reader,
@@ -1801,11 +1883,11 @@ func (p *Plan) IsGlobalSort() bool {
 	return !p.IsLocalSort()
 }
 
-// non CSV format should not specify CSV only options, we check it again if the
-// format is detected automatically.
-func (p *Plan) checkNonCSVFormatOptions() error {
+// CheckNonCSVFormatOptions non CSV format should not specify CSV only options,
+// we check it again if the format is detected automatically.
+func (p *Plan) CheckNonCSVFormatOptions() error {
 	for k := range csvOnlyOptions {
-		if _, ok := p.specifiedOptions[k]; ok {
+		if _, ok := p.SpecifiedOptionNames[k]; ok {
 			return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(k, "non-CSV format")
 		}
 	}
@@ -1864,6 +1946,7 @@ func createColAssignSimpleExprs(
 	assignments []*ast.Assignment,
 	ctx expression.BuildContext,
 	mu *sync.Mutex,
+	useNewCollate bool,
 ) (_ []expression.Expression, _ []contextutil.SQLWarn, retErr error) {
 	if mu != nil {
 		mu.Lock()
@@ -1872,7 +1955,7 @@ func createColAssignSimpleExprs(
 	res := make([]expression.Expression, 0, len(assignments))
 	var allWarnings []contextutil.SQLWarn
 	for _, assign := range assignments {
-		newExpr, err := expression.BuildSimpleExpr(ctx, assign.Expr)
+		newExpr, err := expression.BuildSimpleExpr(ctx, assign.Expr, expression.WithUseNewCollate(useNewCollate))
 		// col assign expr warnings is static, we should generate it for each row processed.
 		// so we save it and clear it here.
 		if ctx.GetEvalCtx().WarningCount() > 0 {
@@ -1888,11 +1971,16 @@ func createColAssignSimpleExprs(
 
 // CreateColAssignSimpleExprs creates the column assignment expressions using `expression.BuildContext`.
 func (e *LoadDataController) CreateColAssignSimpleExprs(ctx expression.BuildContext) (_ []expression.Expression, _ []contextutil.SQLWarn, retErr error) {
-	return createColAssignSimpleExprs(e.ColumnAssignments, ctx, &e.colAssignMu)
+	return createColAssignSimpleExprs(
+		e.ColumnAssignments,
+		ctx,
+		&e.colAssignMu,
+		e.Table.UseNewCollate(),
+	)
 }
 
-func (e *LoadDataController) getLocalBackendCfg(keyspace, pdAddr, dataDir string) local.BackendConfig {
-	backendConfig := local.BackendConfig{
+func (e *LoadDataController) getLocalBackendCfg(keyspace, pdAddr, dataDir string) ingestctrl.BackendConfig {
+	backendConfig := ingestctrl.BackendConfig{
 		PDAddr:                 pdAddr,
 		LocalStoreDir:          dataDir,
 		MaxConnPerStore:        config.DefaultRangeConcurrency,

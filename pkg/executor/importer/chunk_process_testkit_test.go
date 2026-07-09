@@ -26,8 +26,8 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
@@ -92,6 +92,7 @@ func TestFileChunkProcess(t *testing.T) {
 		},
 		&importer.LoadDataController{
 			ASTArgs:       &importer.ASTArgs{},
+			Table:         table,
 			InsertColumns: table.VisibleCols(),
 			FieldMappings: fieldMappings,
 		},
@@ -275,7 +276,7 @@ func TestFileChunkProcess(t *testing.T) {
 }
 
 func TestNewIndexRouteWriterFactoryErr(t *testing.T) {
-	writer := importer.NewIndexRouteWriter(zap.NewNop(), func(indexID int64) (*external.Writer, error) {
+	writer := importer.NewIndexRouteWriter(zap.NewNop(), func(indexID int64) (*simplesst.Writer, error) {
 		return nil, errors.New("some err")
 	})
 	require.ErrorContains(t, writer.AppendRows(context.Background(), nil, kv.GroupedPairs{1: []common.KvPair{{}}}), "some err")

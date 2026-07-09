@@ -11,24 +11,24 @@
 ### Tests
 - `pkg/lightning/backend/backend_test.go` - lightning/backend: Tests open/close import cleanup engine.
 
-## pkg/lightning/backend/external
+## pkg/ingestor/globalsort
 
 ### Tests
-- `pkg/lightning/backend/external/bench_test.go` - lightning/backend/external: Tests compare writer.
-- `pkg/lightning/backend/external/byte_reader_test.go` - lightning/backend/external: Tests byte reader.
-- `pkg/lightning/backend/external/codec_test.go` - lightning/backend/external: Tests range property codec.
-- `pkg/lightning/backend/external/concurrent_reader_test.go` - lightning/backend/external: Tests concurrent read.
-- `pkg/lightning/backend/external/engine_test.go` - lightning/backend/external: Tests memory ingest data.
-- `pkg/lightning/backend/external/file_test.go` - lightning/backend/external: Tests add key-value maintain range property.
-- `pkg/lightning/backend/external/iter_test.go` - lightning/backend/external: Tests merge KV iter.
-- `pkg/lightning/backend/external/merge_test.go` - lightning/backend/external: Tests split data files.
-- `pkg/lightning/backend/external/misc_bench_test.go` - lightning/backend/external: Tests misc bench.
-- `pkg/lightning/backend/external/onefile_writer_test.go` - lightning/backend/external: Tests onefile writer basic.
-- `pkg/lightning/backend/external/reader_test.go` - lightning/backend/external: Tests read all data basic.
-- `pkg/lightning/backend/external/sort_test.go` - lightning/backend/external: Tests global sort local basic.
-- `pkg/lightning/backend/external/split_test.go` - lightning/backend/external: Tests general properties.
-- `pkg/lightning/backend/external/util_test.go` - lightning/backend/external: Tests seek props offsets.
-- `pkg/lightning/backend/external/writer_test.go` - lightning/backend/external: Tests writer.
+- `pkg/ingestor/globalsort/bench_test.go` - ingestor/globalsort: Tests compare writer.
+- `pkg/ingestor/globalsort/byte_reader_test.go` - ingestor/globalsort: Tests byte reader.
+- `pkg/ingestor/globalsort/codec_test.go` - ingestor/globalsort: Tests range property codec.
+- `pkg/ingestor/globalsort/concurrent_reader_test.go` - ingestor/globalsort: Tests concurrent read.
+- `pkg/ingestor/globalsort/engine_test.go` - ingestor/globalsort: Tests memory ingest data.
+- `pkg/ingestor/globalsort/file_test.go` - ingestor/globalsort: Tests add key-value maintain range property.
+- `pkg/ingestor/globalsort/iter_test.go` - ingestor/globalsort: Tests merge KV iter.
+- `pkg/ingestor/globalsort/merge_test.go` - ingestor/globalsort: Tests split data files.
+- `pkg/ingestor/globalsort/misc_bench_test.go` - ingestor/globalsort: Tests misc bench.
+- `pkg/ingestor/globalsort/onefile_writer_test.go` - ingestor/globalsort: Tests onefile writer basic.
+- `pkg/ingestor/globalsort/reader_test.go` - ingestor/globalsort: Tests read all data basic.
+- `pkg/ingestor/globalsort/sort_test.go` - ingestor/globalsort: Tests global sort local basic.
+- `pkg/ingestor/globalsort/split_test.go` - ingestor/globalsort: Tests general properties.
+- `pkg/ingestor/globalsort/util_test.go` - ingestor/globalsort: Tests seek props offsets.
+- `pkg/ingestor/globalsort/writer_test.go` - ingestor/globalsort: Tests writer.
 
 ## pkg/lightning/backend/kv
 

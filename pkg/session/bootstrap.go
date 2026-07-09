@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -330,6 +331,11 @@ var (
 		{ID: metadef.TiDBKernelOptionsTableID, Name: "tidb_kernel_options", SQL: metadef.CreateTiDBKernelOptionsTable},
 		{ID: metadef.TiDBWorkloadValuesTableID, Name: "tidb_workload_values", SQL: metadef.CreateTiDBWorkloadValuesTable},
 	}
+	// systemTablesOfMaskingPolicyNextGenVersion contains system tables introduced in
+	// the masking-policy bootstrap version.
+	systemTablesOfMaskingPolicyNextGenVersion = []TableBasicInfo{
+		{ID: metadef.TiDBMaskingPolicyTableID, Name: "tidb_masking_policy", SQL: metadef.CreateTiDBMaskingPolicyTable},
+	}
 )
 
 type versionedBootstrapSchema struct {
@@ -346,6 +352,9 @@ var versionedBootstrapSchemas = []versionedBootstrapSchema{
 	{ver: meta.BaseNextGenBootTableVersion, databases: []DatabaseBasicInfo{
 		{ID: metadef.SystemDatabaseID, Name: mysql.SystemDB, Tables: systemTablesOfBaseNextGenVersion},
 		{ID: metadef.SysDatabaseID, Name: mysql.SysDB},
+	}},
+	{ver: meta.MaskingPolicyNextGenBootTableVersion, databases: []DatabaseBasicInfo{
+		{ID: metadef.SystemDatabaseID, Name: mysql.SystemDB, Tables: systemTablesOfMaskingPolicyNextGenVersion},
 	}},
 }
 
@@ -407,6 +416,10 @@ func doDDLWorks(s sessionapi.Session) {
 	mustExecute(s, metadef.CreateSchemaUnusedIndexesView)
 	// Create a test database.
 	mustExecute(s, "CREATE DATABASE IF NOT EXISTS test")
+	// Only mark stats requests as background here; the effective background CPU cap is controlled
+	// by bg-cpu-throttle-threshold and fg-cpu-throttle-threshold.
+	mustExecute(s, "ALTER RESOURCE GROUP %n BACKGROUND=(TASK_TYPES=%?)",
+		resourcegroup.DefaultResourceGroupName, kv.InternalTxnStats)
 }
 
 func checkSystemTableConstraint(tblInfo *model.TableInfo) error {

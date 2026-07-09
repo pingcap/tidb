@@ -64,19 +64,19 @@ func TestResourceGroupBasic(t *testing.T) {
 	tk.MustExec("set global tidb_enable_resource_control = 'on'")
 
 	// test default resource group.
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default UNLIMITED MEDIUM UNLIMITED <nil> <nil>"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default UNLIMITED MEDIUM UNLIMITED <nil> TASK_TYPES='stats'"))
 	tk.MustExec("alter resource group `default` PRIORITY=LOW")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default UNLIMITED LOW UNLIMITED <nil> <nil>"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default UNLIMITED LOW UNLIMITED <nil> TASK_TYPES='stats'"))
 	tk.MustExec("alter resource group `default` ru_per_sec=1000")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 LOW UNLIMITED <nil> <nil>"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 LOW UNLIMITED <nil> TASK_TYPES='stats'"))
 	tk.MustExec("alter resource group `default` BURSTABLE")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 LOW MODERATED <nil> <nil>"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 LOW MODERATED <nil> TASK_TYPES='stats'"))
 	tk.MustExec("alter resource group `default` BURSTABLE=OFF")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 LOW OFF <nil> <nil>"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 LOW OFF <nil> TASK_TYPES='stats'"))
 	tk.MustExec("alter resource group `default` BURSTABLE=MODERATED")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 LOW MODERATED <nil> <nil>"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 LOW MODERATED <nil> TASK_TYPES='stats'"))
 	tk.MustExec("alter resource group `default` BURSTABLE=UNLIMITED")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 LOW UNLIMITED <nil> <nil>"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'default'").Check(testkit.Rows("default 1000 LOW UNLIMITED <nil> TASK_TYPES='stats'"))
 
 	tk.MustContainErrMsg("drop resource group `default`", "can't drop reserved resource group")
 
@@ -386,8 +386,10 @@ func TestResourceGroupRunaway(t *testing.T) {
 	tk.EventuallyMustQueryAndCheck("select SQL_NO_CACHE resource_group_name, sample_sql, match_type from mysql.tidb_runaway_queries", nil,
 		testkit.Rows("rg2 select /*+ resource_group(rg2) */ * from t identify",
 			"rg2 select /*+ resource_group(rg2) */ * from t watch"), maxWaitDuration, tryInterval)
-	tk.MustQuery("select SQL_NO_CACHE resource_group_name, watch_text from mysql.tidb_runaway_watch").
-		Check(testkit.Rows("rg2 select /*+ resource_group(rg2) */ * from t"))
+	// Watch records are flushed asynchronously; under loaded CI the watch row may not be
+	// visible immediately after the query returns.
+	tk.EventuallyMustQueryAndCheck("select SQL_NO_CACHE resource_group_name, watch_text from mysql.tidb_runaway_watch", nil,
+		testkit.Rows("rg2 select /*+ resource_group(rg2) */ * from t"), maxWaitDuration, tryInterval)
 	// wait for the runaway watch to be cleaned up
 	tk.EventuallyMustQueryAndCheck("select SQL_NO_CACHE resource_group_name, watch_text from mysql.tidb_runaway_watch", nil, testkit.Rows(), maxWaitDuration, tryInterval)
 	err = tk.QueryToErr("select /*+ resource_group(rg2) */ * from t")

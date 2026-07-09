@@ -17,10 +17,10 @@ package scheduler
 import (
 	"context"
 
+	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 )
@@ -60,6 +60,8 @@ type TaskManager interface {
 	RevertedTask(ctx context.Context, taskID int64) error
 	// PauseTask updated task state to pausing.
 	PauseTask(ctx context.Context, taskKey string) (bool, error)
+	// PauseTaskOnError updates task state to pausing and records the task error.
+	PauseTaskOnError(ctx context.Context, taskID int64, taskState proto.TaskState, step proto.Step, taskErr error) error
 	// PausedTask updated task state to 'paused'.
 	PausedTask(ctx context.Context, taskID int64) error
 	// ResumedTask updated task state from resuming to running.
@@ -81,6 +83,13 @@ type TaskManager interface {
 	// And each subtask of this step must be different, to handle the network
 	// partition or owner change.
 	SwitchTaskStepInBatch(ctx context.Context, task *proto.Task, nextState proto.TaskState, nextStep proto.Step, subtasks []*proto.Subtask) error
+	// SwitchTaskStepAfterPrepare atomically persists prepare completion when task
+	// is still pending+init. It updates task to pending+prepared and persists:
+	//   - task.Meta
+	//   - task.RequiredSlots (stored in concurrency column)
+	//   - task.MaxNodeCount
+	// Return switched=false means the CAS matched zero rows (benign owner/state race).
+	SwitchTaskStepAfterPrepare(ctx context.Context, task *proto.Task) (switched bool, err error)
 	// GetUsedSlotsOnNodes returns the used slots on nodes that have subtask scheduled.
 	// subtasks of each task on one node is only accounted once as we don't support
 	// running them concurrently.
@@ -91,6 +100,8 @@ type TaskManager interface {
 	GetActiveSubtasks(ctx context.Context, taskID int64) ([]*proto.SubtaskBase, error)
 	// GetSubtaskCntGroupByStates returns the count of subtasks of some step group by state.
 	GetSubtaskCntGroupByStates(ctx context.Context, taskID int64, step proto.Step) (map[proto.SubtaskState]int64, error)
+	// GetSubtaskStateCntAndErrorsByStep returns the subtask count by state and failed/canceled errors of some step.
+	GetSubtaskStateCntAndErrorsByStep(ctx context.Context, taskID int64, step proto.Step) (map[proto.SubtaskState]int64, []error, error)
 	ResumeSubtasks(ctx context.Context, taskID int64) error
 	GetSubtaskErrors(ctx context.Context, taskID int64) ([]error, error)
 	UpdateSubtasksExecIDs(ctx context.Context, subtasks []*proto.SubtaskBase) error
@@ -143,11 +154,22 @@ type Extension interface {
 	IsRetryableErr(err error) bool
 
 	// GetNextStep is used to get the next step for the task.
-	// if task runs successfully, it should go from StepInit to business steps,
-	// then to StepDone, then scheduler will mark it as finished.
+	// If task runs successfully, business progression should go from StepInit to
+	// business steps, then to StepDone, and scheduler will mark it as finished.
+	// In prepare mode, on the pending+init path after OnPrepare, scheduler
+	// persists task step as StepPrepared, then calls this method with current
+	// task step.
 	// NOTE: don't depend on task meta to decide the next step, if it's really needed,
 	// initialize required fields on scheduler.Init
 	GetNextStep(task *proto.TaskBase) proto.Step
+	// OnPrepare is called when task is in pending+init and prepare mode is
+	// required.
+	// The implementation is allowed to update:
+	//   - task.Meta
+	//   - task.RequiredSlots
+	//   - task.MaxNodeCount
+	// and should not modify other task fields.
+	OnPrepare(ctx context.Context, h storage.TaskHandle, task *proto.Task) error
 	// ModifyMeta is used to modify the task meta when the task is in modifying
 	// state, it should return new meta after applying the modifications to the
 	// old meta.
@@ -164,15 +186,15 @@ type Param struct {
 	serverID       string
 	allocatedSlots bool
 	nodeRes        *proto.NodeResource
-	// store of the task, this store corresponds to the task keyspace in nextgen.
-	TaskStore kv.Storage
+	// TaskRuntime is the non-owning task keyspace runtime view. Managers own its release.
+	TaskRuntime sqlsvrapi.Runtime
 }
 
 // NewParamForTest creates a new Param for test.
-func NewParamForTest(taskMgr TaskManager, store kv.Storage) Param {
+func NewParamForTest(taskMgr TaskManager, runtime sqlsvrapi.Runtime) Param {
 	return Param{
-		taskMgr:   taskMgr,
-		TaskStore: store,
+		taskMgr:     taskMgr,
+		TaskRuntime: runtime,
 	}
 }
 

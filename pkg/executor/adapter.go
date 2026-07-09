@@ -187,8 +187,14 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	}
 	ctx = inheritStmtRUV2Context(ctx, a.stmt)
 
-	err = a.stmt.next(ctx, a.executor, req)
-	syncRUV2MetricsAfterExec(a.stmt)
+	e := a.executor
+	if e == nil {
+		err = exeerrors.ErrQueryInterrupted.GenWithStackByArgs()
+		a.lastErrs = append(a.lastErrs, err)
+		return err
+	}
+
+	err = a.stmt.next(ctx, e, req)
 	if err != nil {
 		a.lastErrs = append(a.lastErrs, err)
 		return err
@@ -213,31 +219,48 @@ func inheritStmtRUV2Context(ctx context.Context, stmt *ExecStmt) context.Context
 	return execdetails.ContextWithInheritedRUV2Details(ctx, stmt.GoCtx)
 }
 
-func syncRUV2MetricsAfterExec(stmt *ExecStmt) {
-	if stmt == nil || stmt.GoCtx == nil {
-		return
+func (a *recordSet) chunkConfig() (fields []*types.FieldType, initCap int, maxChunkSize int) {
+	if a.executor != nil {
+		return a.executor.RetFieldTypes(), a.executor.InitCap(), a.executor.MaxChunkSize()
 	}
-	sessVars := stmt.Ctx.GetSessionVars()
-	if sessVars.RUV2Metrics == nil {
-		return
+	if a.schema != nil {
+		fields = make([]*types.FieldType, 0, a.schema.Len())
+		for _, col := range a.schema.Columns {
+			fields = append(fields, col.RetType)
+		}
 	}
-	ruDetail, _ := stmt.GoCtx.Value(util.RUDetailsCtxKey).(*util.RUDetails)
-	execdetails.SyncRUV2MetricsFromRUDetails(sessVars.RUV2Metrics, ruDetail)
+	if a.stmt == nil || a.stmt.Ctx == nil {
+		return fields, vardef.DefInitChunkSize, vardef.DefMaxChunkSize
+	}
+	sessVars := a.stmt.Ctx.GetSessionVars()
+	return fields, sessVars.InitChunkSize, sessVars.MaxChunkSize
 }
 
-// NewChunk create a chunk base on top-level executor's exec.NewFirstChunk().
+// NewChunk creates a chunk based on the top-level executor's result schema.
 func (a *recordSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
-	if alloc == nil {
-		return exec.NewFirstChunk(a.executor)
+	e := a.executor
+	if e == nil {
+		fields, initCap, maxChunkSize := a.chunkConfig()
+		if alloc == nil {
+			return chunk.New(fields, initCap, maxChunkSize)
+		}
+		return alloc.Alloc(fields, initCap, maxChunkSize)
 	}
 
-	return alloc.Alloc(a.executor.RetFieldTypes(), a.executor.InitCap(), a.executor.MaxChunkSize())
+	if alloc == nil {
+		return exec.NewFirstChunk(e)
+	}
+
+	return alloc.Alloc(e.RetFieldTypes(), e.InitCap(), e.MaxChunkSize())
 }
 
 func (a *recordSet) Finish() error {
 	var err error
 	a.once.Do(func() {
-		err = exec.Close(a.executor)
+		if a.executor != nil {
+			err = exec.Close(a.executor)
+			a.executor = nil
+		}
 		cteErr := resetCTEStorageMap(a.stmt.Ctx)
 		if cteErr != nil {
 			logutil.BgLogger().Error("got error when reset cte storage, should check if the spill disk file deleted or not", zap.Error(cteErr))
@@ -245,7 +268,6 @@ func (a *recordSet) Finish() error {
 		if err == nil {
 			err = cteErr
 		}
-		a.executor = nil
 		if a.stmt != nil {
 			status := a.stmt.Ctx.GetSessionVars().SQLKiller.GetKillSignal()
 			inWriteResultSet := a.stmt.Ctx.GetSessionVars().SQLKiller.InWriteResultSet.Load()
@@ -419,7 +441,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 	}
 
 	if executor == nil {
-		b := newExecutorBuilder(a.Ctx, a.InfoSchema, a.Ti)
+		b := newExecutorBuilder(ctx, a.Ctx, a.InfoSchema, a.Ti)
 		executor = b.build(a.Plan)
 		if b.err != nil {
 			return nil, b.err
@@ -678,7 +700,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		execStartTime = time.Now()
 	}
 
-	e, err := a.buildExecutor()
+	e, err := a.buildExecutor(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1131,7 +1153,6 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e exec.Executor) (
 	}
 
 	err = a.next(ctx, e, exec.TryNewCacheChunk(e))
-	syncRUV2MetricsAfterExec(a)
 	if err != nil {
 		return nil, err
 	}
@@ -1281,6 +1302,11 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 
 		// acquire xlocks
 		keys = txnCtx.CollectUnchangedKeysForXLock(keys)
+		sharedKeys := txnCtx.CollectUnchangedKeysForSLock(nil)
+		keys, sharedKeys, err = moveWrittenSharedLockKeysToExclusive(ctx, txn, keys, sharedKeys)
+		if err != nil {
+			return err
+		}
 		if ex, err := tryLockKeys(e, keys, false); err != nil {
 			return err
 		} else if ex != nil {
@@ -1289,9 +1315,8 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 		}
 
 		// acquire slocks
-		keys = txnCtx.CollectUnchangedKeysForSLock(keys[:0])
 		startLock := time.Now()
-		if ex, err := tryLockKeys(e, keys, true); err != nil {
+		if ex, err := tryLockKeys(e, sharedKeys, true); err != nil {
 			return err
 		} else if ex != nil {
 			e = ex
@@ -1301,6 +1326,52 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 
 		return nil
 	}
+}
+
+func moveWrittenSharedLockKeysToExclusive(
+	ctx context.Context,
+	txn kv.Transaction,
+	exclusiveKeys []kv.Key,
+	sharedKeys []kv.Key,
+) (finalExclusiveKeys []kv.Key, finalSharedKeys []kv.Key, err error) {
+	if len(sharedKeys) == 0 {
+		return exclusiveKeys, sharedKeys, nil
+	}
+
+	exclusiveKeySet := make(map[string]struct{}, len(exclusiveKeys))
+	for _, key := range exclusiveKeys {
+		exclusiveKeySet[string(key)] = struct{}{}
+	}
+
+	memBuffer := txn.GetMemBuffer()
+	memBuffer.RLock()
+	defer memBuffer.RUnlock()
+
+	// sharedKeys is collected locally for this lock phase, so reuse its buffer
+	// for the filtered shared-only result.
+	sharedOnlyKeys := sharedKeys[:0]
+	for _, key := range sharedKeys {
+		if _, ok := exclusiveKeySet[string(key)]; ok {
+			continue
+		}
+
+		// A key written by this transaction must not be protected only by a
+		// shared pessimistic lock, otherwise commit prewrite would put over
+		// its own shared pessimistic lock.
+		_, err := memBuffer.GetLocal(ctx, key)
+		if err == nil {
+			exclusiveKeys = append(exclusiveKeys, key)
+			exclusiveKeySet[string(key)] = struct{}{}
+			continue
+		}
+		if !kv.ErrNotExist.Equal(err) {
+			return nil, nil, err
+		}
+
+		sharedOnlyKeys = append(sharedOnlyKeys, key)
+	}
+
+	return exclusiveKeys, sharedOnlyKeys, nil
 }
 
 // updateFKCheckLockStats updates the Lock stats of FK check executors after the deferred
@@ -1371,7 +1442,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 	a.resetPhaseDurations()
 
 	a.inheritContextFromExecuteStmt()
-	e, err := a.buildExecutor()
+	e, err := a.buildExecutor(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1397,20 +1468,20 @@ type pessimisticTxn interface {
 }
 
 // buildExecutor build an executor from plan, prepared statement may need additional procedure.
-func (a *ExecStmt) buildExecutor() (exec.Executor, error) {
+func (a *ExecStmt) buildExecutor(ctx context.Context) (exec.Executor, error) {
 	defer func(start time.Time) { a.phaseBuildDurations[0] += time.Since(start) }(time.Now())
-	ctx := a.Ctx
-	stmtCtx := ctx.GetSessionVars().StmtCtx
+	sctx := a.Ctx
+	stmtCtx := sctx.GetSessionVars().StmtCtx
 	if _, ok := a.Plan.(*plannercore.Execute); !ok {
 		if stmtCtx.Priority == mysql.NoPriority && a.LowerPriority {
 			stmtCtx.Priority = kv.PriorityLow
 		}
 	}
-	if _, ok := a.Plan.(*plannercore.Analyze); ok && ctx.GetSessionVars().InRestrictedSQL {
-		ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityLow
+	if _, ok := a.Plan.(*plannercore.Analyze); ok && sctx.GetSessionVars().InRestrictedSQL {
+		sctx.GetSessionVars().StmtCtx.Priority = kv.PriorityLow
 	}
 
-	b := newExecutorBuilder(ctx, a.InfoSchema, a.Ti)
+	b := newExecutorBuilder(ctx, sctx, a.InfoSchema, a.Ti)
 	e := b.build(a.Plan)
 	if b.err != nil {
 		return nil, errors.Trace(b.err)
@@ -1418,7 +1489,7 @@ func (a *ExecStmt) buildExecutor() (exec.Executor, error) {
 
 	failpoint.Inject("assertTxnManagerAfterBuildExecutor", func() {
 		sessiontxn.RecordAssert(a.Ctx, "assertTxnManagerAfterBuildExecutor", true)
-		sessiontxn.AssertTxnManagerInfoSchema(b.ctx, b.is)
+		sessiontxn.AssertTxnManagerInfoSchema(b.sctx, b.is)
 	})
 
 	// ExecuteExec is not a real Executor, we only use it to build another Executor from a prepared statement.
@@ -1428,7 +1499,7 @@ func (a *ExecStmt) buildExecutor() (exec.Executor, error) {
 			return nil, err
 		}
 		if executorExec.lowerPriority {
-			ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityLow
+			sctx.GetSessionVars().StmtCtx.Priority = kv.PriorityLow
 		}
 		e = executorExec.stmtExec
 	}
@@ -1600,11 +1671,14 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	if execDetail.CommitDetail != nil && execDetail.CommitDetail.WriteSize > 0 {
 		a.Ctx.GetTxnWriteThroughputSLI().AddTxnWriteSize(execDetail.CommitDetail.WriteSize, execDetail.CommitDetail.WriteKeys)
 	}
-	if execDetail.ScanDetail != nil && sessVars.StmtCtx.AffectedRows() > 0 {
+	if execDetail.ScanDetail != nil {
 		processedKeys := atomic.LoadInt64(&execDetail.ScanDetail.ProcessedKeys)
 		if processedKeys > 0 {
-			// Only record the read keys in write statement which affect row more than 0.
-			a.Ctx.GetTxnWriteThroughputSLI().AddReadKeys(processedKeys)
+			if sessVars.StmtCtx.AffectedRows() > 0 {
+				// Only record the read keys in write statement which affect row more than 0.
+				a.Ctx.GetTxnWriteThroughputSLI().AddReadKeys(processedKeys)
+			}
+			sessVars.KeysExamined += uint64(processedKeys)
 		}
 	}
 	succ := err == nil
@@ -1614,7 +1688,6 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 		sessVars.StmtCtx.SetPlan(a.Plan)
 	}
 
-	a.recordInsertRows2Metrics()
 	a.finalizeStatementRUV2Metrics()
 	a.updateNetworkTrafficStatsAndMetrics()
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
@@ -1702,37 +1775,35 @@ func (a *ExecStmt) recordAffectedRows2Metrics() {
 	}
 }
 
-func (a *ExecStmt) recordInsertRows2Metrics() {
-	recordInsertRows2Metrics(a.Ctx.GetSessionVars())
-}
-
-func recordInsertRows2Metrics(sessVars *variable.SessionVars) {
-	stmtCtx := sessVars.StmtCtx
-	if stmtCtx.StmtType != "Insert" {
-		return
-	}
-	// EXPLAIN ANALYZE INSERT snapshots RU before FinishExecuteStmt runs, while the final statement reporting
-	// still goes through FinishExecuteStmt. Keep this accounting idempotent so both paths can share it safely.
-	if stmtCtx.InsertRowsAsRUV2Recorded {
+func recordDMLRowsColMultiply2Metrics(sessVars *variable.SessionVars, rowCount, columnCount int64) {
+	if rowCount <= 0 || columnCount <= 0 {
 		return
 	}
 
-	affectedRows := stmtCtx.AffectedRows()
-	if affectedRows <= 0 {
-		return
+	rowsColMultiply := rowCount * columnCount
+	if rowCount > math.MaxInt64/columnCount {
+		rowsColMultiply = math.MaxInt64
 	}
-
 	if sessVars.RUV2Metrics != nil {
-		sessVars.RUV2Metrics.AddExecutorL5InsertRows(int64(affectedRows))
+		sessVars.RUV2Metrics.AddExecutorL5InsertRows(rowsColMultiply)
 	}
-	stmtCtx.InsertRowsAsRUV2Recorded = true
 }
 
+func recordInsertRowsColMultiply2Metrics(sessVars *variable.SessionVars, rowsColMultiply int64) {
+	recordDMLRowsColMultiply2Metrics(sessVars, rowsColMultiply, 1)
+}
+
+// finalizeStatementRUV2Metrics is the sole drain of raw RUv2 counters. In-flight
+// TopRU samples see ResourceManager{Read,Write}Cnt as zero until this runs;
+// per-statement totals telescope correctly across the post-finalize sample.
 func (a *ExecStmt) finalizeStatementRUV2Metrics() {
 	sessVars := a.Ctx.GetSessionVars()
 	if sessVars.RUV2Metrics == nil || sessVars.RUV2Metrics.Bypass() {
 		return
 	}
+
+	execDetail := sessVars.StmtCtx.GetExecDetails()
+	execdetails.UpdateRUV2MetricsFromCommitDetails(sessVars.RUV2Metrics, execDetail.CommitDetail)
 
 	ruDetailRaw := a.GoCtx.Value(util.RUDetailsCtxKey)
 	ruDetail, _ := ruDetailRaw.(*util.RUDetails)
@@ -1800,7 +1871,10 @@ func (a *ExecStmt) recordLastQueryInfo(err error) {
 }
 
 func (a *ExecStmt) checkPlanReplayerCapture(txnTS uint64) {
-	if kv.GetInternalSourceType(a.GoCtx) == kv.InternalTxnStats {
+	source := kv.GetInternalSourceType(a.GoCtx)
+	// Analyze and foreground-priority statistics work use these request sources.
+	// Filter both so plan replayer capture skips all internal statistics work.
+	if source == kv.InternalTxnStats || source == kv.InternalTxnStatsForegroundPriority {
 		return
 	}
 	se := a.Ctx
@@ -2160,7 +2234,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	copTaskInfo := stmtCtx.CopTasksSummary()
 	memMax := sessVars.MemTracker.MaxConsumed()
 	diskMax := sessVars.DiskTracker.MaxConsumed()
-	stmtDetail, tikvExecDetail, ruDetail := execdetails.GetExecDetailsFromContext(a.GoCtx)
+	writeSQLRespDuration, tikvExecDetail, ruDetail := execdetails.GetExecDetailsFromContext(a.GoCtx)
 
 	if stmtCtx.WaitLockLeaseTime > 0 {
 		if execDetail.BackoffSleep == nil {
@@ -2204,7 +2278,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	stmtExecInfo.PlanInCache = sessVars.FoundInPlanCache
 	stmtExecInfo.PlanInBinding = sessVars.FoundInBinding
 	stmtExecInfo.ExecRetryCount = a.retryCount
-	stmtExecInfo.StmtExecDetails = stmtDetail
+	stmtExecInfo.WriteSQLRespDuration = writeSQLRespDuration
 	stmtExecInfo.ResultRows = stmtCtx.GetResultRowsCount()
 	stmtExecInfo.TiKVExecDetails = &tikvExecDetail
 	stmtExecInfo.Prepared = a.isPreparedStmt

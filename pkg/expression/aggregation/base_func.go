@@ -134,10 +134,12 @@ func (a *baseFuncDesc) TypeInfer(ctx expression.BuildContext) error {
 		return a.typeInfer4ApproxPercentile(ctx.GetEvalCtx())
 	case ast.AggFuncSum:
 		a.typeInfer4Sum(ctx.GetEvalCtx())
+	case ast.AggFuncSumInt:
+		return a.typeInfer4SumInt(ctx.GetEvalCtx())
 	case ast.AggFuncAvg:
 		a.typeInfer4Avg(ctx.GetEvalCtx())
 	case ast.AggFuncGroupConcat:
-		a.typeInfer4GroupConcat(ctx)
+		return a.typeInfer4GroupConcat(ctx)
 	case ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncFirstRow,
 		ast.WindowFuncFirstValue, ast.WindowFuncLastValue, ast.WindowFuncNthValue:
 		a.typeInfer4MaxMin(ctx)
@@ -244,6 +246,26 @@ func (a *baseFuncDesc) typeInfer4Sum(ctx expression.EvalContext) {
 	types.SetBinChsClnFlag(a.RetTp)
 }
 
+func (a *baseFuncDesc) typeInfer4SumInt(ctx expression.EvalContext) error {
+	if len(a.Args) != 1 {
+		return errors.New("sum_int should take 1 argument")
+	}
+	argTp := a.Args[0].GetType(ctx)
+	switch argTp.GetType() {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+	default:
+		return errors.New("sum_int only accepts integer arguments")
+	}
+	a.RetTp = types.NewFieldType(mysql.TypeLonglong)
+	a.RetTp.SetFlen(21)
+	a.RetTp.SetDecimal(0)
+	if mysql.HasUnsignedFlag(argTp.GetFlag()) {
+		a.RetTp.AddFlag(mysql.UnsignedFlag)
+	}
+	types.SetBinChsClnFlag(a.RetTp)
+	return nil
+}
+
 // TypeInfer4AvgSum infers the type of sum from avg, which should extend the precision of decimal
 // compatible with mysql.
 func (a *baseFuncDesc) TypeInfer4AvgSum(ctx expression.EvalContext, avgRetType *types.FieldType) error {
@@ -298,11 +320,32 @@ func (a *baseFuncDesc) typeInfer4Avg(ctx expression.EvalContext) {
 	types.SetBinChsClnFlag(a.RetTp)
 }
 
-func (a *baseFuncDesc) typeInfer4GroupConcat(ctx expression.BuildContext) {
+func (a *baseFuncDesc) typeInfer4GroupConcat(ctx expression.BuildContext) error {
 	a.RetTp = types.NewFieldType(mysql.TypeVarString)
-	charset, collate := charset.GetDefaultCharsetAndCollate()
-	a.RetTp.SetCharset(charset)
-	a.RetTp.SetCollate(collate)
+	ec, err := expression.CheckAndDeriveCollationFromExprs(ctx, ast.AggFuncGroupConcat, types.ETString, a.Args...)
+	if err != nil {
+		return err
+	}
+	if ec.Charset == "" || ec.Collation == "" {
+		connCharset, connCollation := ctx.GetCharsetInfo()
+		if connCharset == "" || connCollation == "" {
+			connCharset, connCollation = charset.GetDefaultCharsetAndCollate()
+		}
+		if ec.Charset == "" {
+			ec.Charset = connCharset
+		}
+		if ec.Collation == "" {
+			if ec.Charset == connCharset {
+				ec.Collation = connCollation
+			} else if coll, err := charset.GetDefaultCollation(ec.Charset); err == nil {
+				ec.Collation = coll
+			} else {
+				ec.Collation = connCollation
+			}
+		}
+	}
+	a.RetTp.SetCharset(ec.Charset)
+	a.RetTp.SetCollate(ec.Collation)
 
 	a.RetTp.SetFlen(mysql.MaxBlobWidth)
 	a.RetTp.SetDecimal(0)
@@ -312,6 +355,7 @@ func (a *baseFuncDesc) typeInfer4GroupConcat(ctx expression.BuildContext) {
 			a.Args[i] = expression.BuildCastFunction(ctx, a.Args[i], tp)
 		}
 	}
+	return nil
 }
 
 func (a *baseFuncDesc) typeInfer4MaxMin(ctx expression.BuildContext) {
@@ -425,7 +469,7 @@ func (a *baseFuncDesc) GetDefaultValue() (v types.Datum) {
 		if a.RetTp.GetType() != mysql.TypeString {
 			v = types.NewIntDatum(0)
 		}
-	case ast.AggFuncFirstRow, ast.AggFuncAvg, ast.AggFuncSum, ast.AggFuncMax,
+	case ast.AggFuncFirstRow, ast.AggFuncAvg, ast.AggFuncSum, ast.AggFuncSumInt, ast.AggFuncMax,
 		ast.AggFuncMin, ast.AggFuncGroupConcat, ast.AggFuncApproxPercentile:
 		v = types.Datum{}
 	case ast.AggFuncBitAnd:

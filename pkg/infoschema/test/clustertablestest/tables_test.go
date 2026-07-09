@@ -144,11 +144,12 @@ func TestInfoSchemaFieldValue(t *testing.T) {
 	// Fix issue 9836
 	sm := &testkit.MockSessionManager{PS: make([]*sessmgr.ProcessInfo, 0)}
 	sm.PS = append(sm.PS, &sessmgr.ProcessInfo{
-		ID:      1,
-		User:    "root",
-		Host:    "127.0.0.1",
-		Command: mysql.ComQuery,
-		StmtCtx: tk.Session().GetSessionVars().StmtCtx,
+		ID:                1,
+		User:              "root",
+		Host:              "127.0.0.1",
+		Command:           mysql.ComQuery,
+		StmtCtx:           tk.Session().GetSessionVars().StmtCtx,
+		RefCountOfStmtCtx: &tk.Session().GetSessionVars().RefCountOfStmtCtx,
 	})
 	tk.Session().SetSessionManager(sm)
 	tk.MustQuery("SELECT user,host,command FROM information_schema.processlist;").Check(testkit.Rows("root 127.0.0.1 Query"))
@@ -232,6 +233,7 @@ func TestSomeTables(t *testing.T) {
 		StmtCtx:           tk.Session().GetSessionVars().StmtCtx,
 		ResourceGroupName: "rg1",
 		SessionAlias:      "alias1",
+		RefCountOfStmtCtx: &tk.Session().GetSessionVars().RefCountOfStmtCtx,
 	})
 	sm.PS = append(sm.PS, &sessmgr.ProcessInfo{
 		ID:                2,
@@ -245,6 +247,7 @@ func TestSomeTables(t *testing.T) {
 		Info:              strings.Repeat("x", 101),
 		StmtCtx:           tk.Session().GetSessionVars().StmtCtx,
 		ResourceGroupName: "rg2",
+		RefCountOfStmtCtx: &tk.Session().GetSessionVars().RefCountOfStmtCtx,
 	})
 	sm.PS = append(sm.PS, &sessmgr.ProcessInfo{
 		ID:                3,
@@ -259,6 +262,7 @@ func TestSomeTables(t *testing.T) {
 		StmtCtx:           se2.GetSessionVars().StmtCtx,
 		ResourceGroupName: "rg3",
 		SessionAlias:      "中文alias",
+		RefCountOfStmtCtx: &se2.GetSessionVars().RefCountOfStmtCtx,
 	})
 	tk.Session().SetSessionManager(sm)
 	tk.Session().GetSessionVars().TimeZone = time.UTC
@@ -307,6 +311,7 @@ func TestSomeTables(t *testing.T) {
 		ResourceGroupName: "rg2",
 		SessionAlias:      "alias3",
 		StmtCtx:           se2.GetSessionVars().StmtCtx,
+		RefCountOfStmtCtx: &se2.GetSessionVars().RefCountOfStmtCtx,
 	})
 	tk.Session().SetSessionManager(sm)
 	tk.Session().GetSessionVars().TimeZone = time.UTC
@@ -1445,8 +1450,10 @@ func TestMemoryUsageAndOpsHistory(t *testing.T) {
 
 	var tmp string
 	var ok bool
+	const expectedSQLDigest = "e3237ec256015a3566757e0c2742507cd30ae04e4cac2fbc14d269eafe7b067b"
+	const expectedSQLText = "explain analyze select * from t t1 join t t2 join t t3 on t1.a=t2.a and t1.a=t3.a order by t1.a"
 	var beginTime = time.Now().Format(types.TimeFormat)
-	err = tk.QueryToErr("explain analyze select * from t t1 join t t2 join t t3 on t1.a=t2.a and t1.a=t3.a order by t1.a")
+	err = tk.QueryToErr(expectedSQLText)
 	var endTime = time.Now().Format(types.TimeFormat)
 	require.NotNil(t, err)
 	// Check Memory Table
@@ -1479,7 +1486,13 @@ func TestMemoryUsageAndOpsHistory(t *testing.T) {
 
 	rows = tk.MustQuery("select * from INFORMATION_SCHEMA.MEMORY_USAGE_OPS_HISTORY").Rows()
 	require.Greater(t, len(rows), 0)
-	row = rows[len(rows)-1]
+	row = nil
+	for _, historyRow := range rows {
+		if historyRow[10] == expectedSQLDigest && historyRow[11] == expectedSQLText {
+			row = historyRow
+		}
+	}
+	require.NotNil(t, row)
 	require.Len(t, row, 12)
 	require.GreaterOrEqual(t, row[0], beginTime) // TIME
 	require.LessOrEqual(t, row[0], endTime)
@@ -1491,14 +1504,14 @@ func TestMemoryUsageAndOpsHistory(t *testing.T) {
 	require.Nil(t, err)
 	require.Greater(t, val, uint64(536870912))
 
-	require.Greater(t, row[4], "0")                                                                                              // PROCESSID
-	require.Greater(t, row[5], "0")                                                                                              // MEM
-	require.Equal(t, row[6], "0")                                                                                                // DISK
-	require.Equal(t, row[7], "")                                                                                                 // CLIENT
-	require.Equal(t, row[8], "test")                                                                                             // DB
-	require.Equal(t, row[9], "")                                                                                                 // USER
-	require.Equal(t, row[10], "e3237ec256015a3566757e0c2742507cd30ae04e4cac2fbc14d269eafe7b067b")                                // SQL_DIGEST
-	require.Equal(t, row[11], "explain analyze select * from t t1 join t t2 join t t3 on t1.a=t2.a and t1.a=t3.a order by t1.a") // SQL_TEXT
+	require.Greater(t, row[4], "0")              // PROCESSID
+	require.Greater(t, row[5], "0")              // MEM
+	require.Equal(t, row[6], "0")                // DISK
+	require.Equal(t, row[7], "")                 // CLIENT
+	require.Equal(t, row[8], "test")             // DB
+	require.Equal(t, row[9], "")                 // USER
+	require.Equal(t, row[10], expectedSQLDigest) // SQL_DIGEST
+	require.Equal(t, row[11], expectedSQLText)   // SQL_TEXT
 }
 
 func TestAddFieldsForBinding(t *testing.T) {

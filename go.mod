@@ -1,6 +1,6 @@
 module github.com/pingcap/tidb
 
-go 1.25.9
+go 1.25.10
 
 require (
 	cloud.google.com/go/kms v1.15.8
@@ -69,7 +69,6 @@ require (
 	github.com/golangci/prealloc v0.0.0-20180630174525-215b22d4de21
 	github.com/google/btree v1.1.2
 	github.com/google/pprof v0.0.0-20250903194437-c28834ac2320
-	github.com/google/skylark v0.0.0-20181101142754-a5f7082aabed
 	github.com/google/uuid v1.6.1-0.20241114170450-2d3c2a9cc518
 	github.com/gordonklaus/ineffassign v0.2.0
 	github.com/gorilla/mux v1.8.1
@@ -98,7 +97,7 @@ require (
 	github.com/opentracing/opentracing-go v1.2.0
 	github.com/phayes/freeport v0.0.0-20180830031419-95f893ade6f2
 	github.com/pingcap/badger v1.5.1-0.20241015064302-38533b6cbf8d
-	github.com/pingcap/errors v0.11.5-0.20260310054046-9c8b3586e4b2
+	github.com/pingcap/errors v0.11.5-0.20260508054701-306e305bcf41
 	github.com/pingcap/failpoint v0.0.0-20240528011301-b51a646c7c86
 	github.com/pingcap/fn v1.0.0
 	github.com/pingcap/kvproto v0.0.0-20260611082716-a15c348f8713
@@ -106,7 +105,7 @@ require (
 	github.com/pingcap/metering_sdk v0.0.0-20260324055927-14fead745f1d
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
-	github.com/pingcap/tipb v0.0.0-20260210113932-1447c9d7e9fe
+	github.com/pingcap/tipb v0.0.0-20260623093813-5f9928e91afe
 	github.com/prometheus/client_golang v1.23.0
 	github.com/prometheus/client_model v0.6.2
 	github.com/prometheus/common v0.65.0
@@ -123,8 +122,8 @@ require (
 	github.com/stathat/consistent v1.0.0
 	github.com/stretchr/testify v1.11.1
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.8-0.20260414033830-1adc54c38a51
-	github.com/tikv/pd/client v0.0.0-20260404141330-8a6813497b52
+	github.com/tikv/client-go/v2 v2.0.8-0.20260617030124-661db4f5f4e8
+	github.com/tikv/pd/client v0.0.0-20260601035915-3ef6a3b10c84
 	github.com/timakin/bodyclose v0.0.0-20241222091800-1db5c5ca4d67
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
@@ -144,14 +143,14 @@ require (
 	go.uber.org/multierr v1.11.0
 	go.uber.org/zap v1.27.1
 	golang.org/x/exp v0.0.0-20250620022241-b7579e27df2b
-	golang.org/x/net v0.52.0
+	golang.org/x/net v0.54.0
 	golang.org/x/oauth2 v0.33.0
 	golang.org/x/sync v0.20.0
-	golang.org/x/sys v0.42.0
-	golang.org/x/term v0.41.0
-	golang.org/x/text v0.35.0
+	golang.org/x/sys v0.44.0
+	golang.org/x/term v0.43.0
+	golang.org/x/text v0.37.0
 	golang.org/x/time v0.14.0
-	golang.org/x/tools v0.43.0
+	golang.org/x/tools v0.44.0
 	google.golang.org/api v0.170.0
 	google.golang.org/grpc v1.75.1
 	gopkg.in/yaml.v2 v2.4.0
@@ -213,7 +212,7 @@ require (
 	github.com/tjfoc/gmsm v1.4.1 // indirect
 	github.com/zeebo/xxh3 v1.0.2 // indirect
 	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
-	golang.org/x/telemetry v0.0.0-20260311193753-579e4da9a98c // indirect
+	golang.org/x/telemetry v0.0.0-20260409153401-be6f6cb8b1fa // indirect
 	golang.org/x/tools/godoc v0.1.0-deprecated // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 )
@@ -316,7 +315,7 @@ require (
 	github.com/ryszard/goskiplist v0.0.0-20150312221310-2dfbae5fcf46 // indirect
 	github.com/segmentio/asm v1.2.0 // indirect
 	github.com/shabbyrobe/gocovmerge v0.0.0-20190829150210-3e036491d500 // indirect
-	github.com/shoenig/go-m1cpu v0.1.7 // indirect
+	github.com/shoenig/go-m1cpu v0.2.1 // indirect
 	github.com/shopspring/decimal v1.2.0 // indirect
 	github.com/shurcooL/httpfs v0.0.0-20230704072500-f1e31cf0ba5c // indirect
 	github.com/shurcooL/vfsgen v0.0.0-20181202132449-6a9ea43bcacd // indirect
@@ -343,9 +342,9 @@ require (
 	go.opentelemetry.io/otel/sdk v1.37.0 // indirect
 	go.opentelemetry.io/otel/trace v1.37.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.1.0 // indirect
-	golang.org/x/crypto v0.49.0 // indirect
+	golang.org/x/crypto v0.51.0 // indirect
 	golang.org/x/exp/typeparams v0.0.0-20260209203927-2842357ff358 // indirect
-	golang.org/x/mod v0.34.0 // indirect
+	golang.org/x/mod v0.35.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
 	google.golang.org/genproto v0.0.0-20240401170217-c3f982113cda // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20250707201910-8d1bb00bc6a7 // indirect

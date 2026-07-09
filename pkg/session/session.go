@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
@@ -136,7 +137,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
-	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
@@ -147,6 +147,7 @@ import (
 	"github.com/tikv/client-go/v2/trace"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	tikvutil "github.com/tikv/client-go/v2/util"
+	gouberatomic "go.uber.org/atomic"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -1334,7 +1335,7 @@ func getSessionFactoryInternal(store kv.Storage, createSessFn func(store kv.Stor
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = se.sessionVars.SetSystemVar(vardef.MaxAllowedPacket, strconv.FormatUint(vardef.DefMaxAllowedPacket, 10))
+		err = se.sessionVars.SetSystemVar(vardef.MaxAllowedPacket, strconv.FormatUint(config.GetMaxAllowedPacket(), 10))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -2768,6 +2769,10 @@ func shouldBypass(ctx context.Context, stmtNode ast.StmtNode, sessVars *variable
 	switch kv.GetInternalSourceType(ctx) {
 	case kv.InternalTxnOthers:
 		return true
+	// InternalTxnStats marks ANALYZE KV requests as background work. Since ANALYZE
+	// has no statement-level RU v2 charge yet, bypass TiDB-side RU v2 only for
+	// ANALYZE statements. Client-go still applies request-level bypass by
+	// request source and cop request type.
 	case kv.InternalTxnStats:
 		return isNextGenForRUV2() && isAnalyzeStatementForRUV2(stmtNode, sessVars)
 	default:
@@ -2844,18 +2849,11 @@ func (s *session) validateStatementReadOnlyInStaleness(stmtNode ast.StmtNode) er
 	return nil
 }
 
-// fileTransInConnKeys contains the keys of queries that will be handled by handleFileTransInConn.
-var fileTransInConnKeys = []fmt.Stringer{
-	executor.LoadDataVarKey,
-	executor.LoadStatsVarKey,
-	executor.PlanReplayerLoadVarKey,
-}
-
 func (s *session) hasFileTransInConn() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	for _, k := range fileTransInConnKeys {
+	for k := range executor.FileTransInConnHandlers {
 		v := s.mu.values[k]
 		if v != nil {
 			return true
@@ -3523,12 +3521,16 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 			RUConsumptionReporter:         ruConsumptionReporter,
 			TiKVClientReadTimeout:         vars.GetTiKVClientReadTimeout(),
 			MaxExecutionTime:              vars.GetMaxExecutionTime(),
+			MaxKeysRead:                   vars.GetMaxKeysRead(),
 
 			ReplicaClosestReadThreshold: vars.ReplicaClosestReadThreshold,
 			ConnectionID:                vars.ConnectionID,
 			SessionAlias:                vars.SessionAlias,
 
 			ExecDetails: &sc.SyncExecDetails,
+		}
+		if ret.MaxKeysRead > 0 {
+			ret.MaxKeysReadCounter = new(gouberatomic.Uint64)
 		}
 		return ret
 	})
@@ -3949,7 +3951,7 @@ func (s *session) MatchIdentity(ctx context.Context, username, remoteHost string
 		return user, nil
 	}
 	// This error will not be returned to the user, access denied will be instead
-	return nil, fmt.Errorf("could not find matching user in MatchIdentity: %s, %s", username, remoteHost)
+	return nil, errors.Wrapf(sessionapi.ErrIdentityNotFound, "could not find matching user in MatchIdentity: %s, %s", username, remoteHost)
 }
 
 // AuthWithoutVerification is required by the ResetConnection RPC
@@ -4310,12 +4312,14 @@ func BootstrapSession4DistExecution(store kv.Storage) (*domain.Domain, error) {
 func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsImpl func(store kv.Storage, cnt int) ([]*session, error)) (*domain.Domain, error) {
 	ver := getStoreBootstrapVersionWithCache(store)
 	if kv.IsUserKS(store) {
+		targetVer := currentBootstrapVersion
 		systemKSVer := mustGetStoreBootstrapVersion(kvstore.GetSystemStorage())
 		if systemKSVer == notBootstrapped {
 			logutil.BgLogger().Fatal("SYSTEM keyspace is not bootstrapped")
-		} else if ver > systemKSVer {
-			logutil.BgLogger().Fatal("bootstrap version of user keyspace must be smaller or equal to that of SYSTEM keyspace",
-				zap.Int64("user", ver), zap.Int64("system", systemKSVer))
+		} else if targetVer > systemKSVer {
+			logutil.BgLogger().Fatal("bootstrap version of user keyspace must be smaller or equal to that of SYSTEM keyspace. if you are upgrading user keyspace, please make sure to upgrade SYSTEM keyspace first",
+				zap.Int64("userCurr", ver), zap.Int64("userTarget", targetVer),
+				zap.Int64("system", systemKSVer))
 		}
 	}
 
@@ -4352,6 +4356,15 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 			return nil, err
 		}
 	}
+	skipInitGlobalVarFromSystemDB := false
+	failpoint.Inject("skipInitGlobalVarFromSystemDB", func(val failpoint.Value) {
+		skipInitGlobalVarFromSystemDB = val.(bool)
+	})
+	if !skipInitGlobalVarFromSystemDB {
+		if err = initGlobalVarFromSystemDB(ctx, store); err != nil {
+			return nil, err
+		}
+	}
 
 	// initiate disttask framework components which need a store
 	scheduler.RegisterSchedulerFactory(
@@ -4375,7 +4388,6 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	if concurrency < 0 { // it is only for test, in the production, negative value is illegal.
 		concurrency = 0
 	}
-
 	ses, err := createSessionsImpl(store, 10)
 	if err != nil {
 		return nil, err
@@ -4393,20 +4405,6 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	for i := range ses {
 		ses[i].GetSessionVars().InRestrictedSQL = true
 	}
-
-	// get system tz from mysql.tidb
-	tz, err := ses[0].getTableValue(ctx, mysql.TiDBTable, tidbSystemTZ)
-	if err != nil {
-		return nil, err
-	}
-	timeutil.SetSystemTZ(tz)
-
-	// get the flag from `mysql`.`tidb` which indicating if new collations are enabled.
-	newCollationEnabled, err := loadCollationParameter(ctx, ses[0])
-	if err != nil {
-		return nil, err
-	}
-	collate.SetNewCollationEnabledForTest(newCollationEnabled)
 
 	// only start the domain after we have initialized some global variables.
 	dom := domain.GetDomain(ses[0])
@@ -4864,7 +4862,7 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	if s.Value(sessionctx.Initing) != nil {
 		// When running bootstrap or upgrade, we should not access global storage.
 		// But we need to init max_allowed_packet to use concat function during bootstrap or upgrade.
-		err := vars.SetSystemVar(vardef.MaxAllowedPacket, strconv.FormatUint(vardef.DefMaxAllowedPacket, 10))
+		err := vars.SetSystemVar(vardef.MaxAllowedPacket, strconv.FormatUint(config.GetMaxAllowedPacket(), 10))
 		if err != nil {
 			logutil.BgLogger().Error("set system variable max_allowed_packet error", zap.Error(err))
 		}
@@ -5649,6 +5647,13 @@ func (s *session) usePipelinedDmlOrWarn(ctx context.Context) bool {
 		return false
 	}
 	if stmtCtx.IsReadOnly {
+		return false
+	}
+	// The Starter deploy mode schedules background workloads on separate worker
+	// instances that do not support the pipelined protocol, so fall back to the
+	// standard path there.
+	if deploymode.IsStarter() {
+		stmtCtx.AppendWarning(errors.New("Pipelined DML is not supported in this deployment. Fallback to standard mode"))
 		return false
 	}
 	vars := s.GetSessionVars()
