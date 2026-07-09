@@ -4,6 +4,7 @@ go_test(
     name = "index_test",
     timeout = "short",
     srcs = [
+        "index_prune_bench_test.go",
         "index_test.go",
         "main_test.go",
     ],
