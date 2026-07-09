@@ -293,13 +293,11 @@ func (t *TableCommon) initTableIndices() error {
 		}
 
 		// Use partition ID for index, because TableCommon may be table or partition.
-		idx, err := NewIndexWithEncodingConfig(
-			table.NewEncodingConfig(t.encoder.UseNewCollate()),
-			t.physicalTableID,
-			tblInfo,
-			idxInfo,
-		)
+		idx, err := NewIndex(t.physicalTableID, tblInfo, idxInfo)
 		if err != nil {
+			return err
+		}
+		if err := SetIndexEncodingConfig(idx, table.NewEncodingConfig(t.encoder.UseNewCollate())); err != nil {
 			return err
 		}
 		intest.AssertFunc(func() bool {

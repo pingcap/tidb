@@ -83,46 +83,60 @@ func NeedRestoredData(useNewCollate bool, idxCols []*model.IndexColumn, colInfos
 
 // NewIndex builds a new Index object.
 func NewIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.IndexInfo) (table.Index, error) {
-	return NewIndexWithEncodingConfig(table.NewEncodingConfig(collate.NewCollationEnabled()), physicalID, tblInfo, indexInfo)
-}
-
-// NewIndexWithEncodingConfig builds a new Index object with the specified
-// encoding config.
-func NewIndexWithEncodingConfig(
-	encoding table.EncodingConfig,
-	physicalID int64,
-	tblInfo *model.TableInfo,
-	indexInfo *model.IndexInfo,
-) (table.Index, error) {
 	index := &index{
 		idxInfo:  indexInfo,
 		tblInfo:  tblInfo,
 		phyTblID: physicalID,
-		encoder:  encoding.Encoder(),
 	}
+	if err := index.setEncodingConfig(table.NewEncodingConfig(collate.NewCollationEnabled())); err != nil {
+		return nil, errors.Trace(err)
+	}
+	return index, nil
+}
 
-	conditionString := indexInfo.ConditionExprString
+// SetIndexEncodingConfig sets the encoding config for an Index built by NewIndex.
+// It also rebuilds the partial-index condition with the same encoding config.
+func SetIndexEncodingConfig(idx table.Index, encoding table.EncodingConfig) error {
+	index, ok := idx.(*index)
+	if !ok {
+		return errors.Errorf("unexpected index type %T", idx)
+	}
+	return index.setEncodingConfig(encoding)
+}
+
+func (c *index) setEncodingConfig(encoding table.EncodingConfig) error {
+	c.encoder = encoding.Encoder()
+	c.initNeedRestoreData = sync.Once{}
+	c.needRestoredData = false
+	c.conditionExpr = nil
+	c.conditionEvalBufferPool = sync.Pool{}
+
+	return c.initPartialCondition(encoding)
+}
+
+func (c *index) initPartialCondition(encoding table.EncodingConfig) error {
+	conditionString := c.idxInfo.ConditionExprString
 	if len(conditionString) > 0 {
 		var err error
-		index.conditionExpr, err = expression.ParseSimpleExpr(indexConditionECtx, conditionString,
-			expression.WithTableInfo("", tblInfo),
+		c.conditionExpr, err = expression.ParseSimpleExpr(indexConditionECtx, conditionString,
+			expression.WithTableInfo("", c.tblInfo),
 			encoding.BuildExprOption())
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
-		index.conditionEvalBufferPool = sync.Pool{
+		c.conditionEvalBufferPool = sync.Pool{
 			New: func() any {
 				// For INSERT path, it'll only pass all writable columns.
 				// For UPDATE/DELETE path, it'll contain all columns.
 				// As the writable columns are always at the beginning of the `tblInfo.Columns`, it'll not affect
 				// the offsets of related columns in the expression. Therefore, it's fine to always record all
 				// columns here.
-				evalBufferTypes := make([]*types.FieldType, 0, len(tblInfo.Columns)+1)
-				for _, col := range tblInfo.Columns {
+				evalBufferTypes := make([]*types.FieldType, 0, len(c.tblInfo.Columns)+1)
+				for _, col := range c.tblInfo.Columns {
 					evalBufferTypes = append(evalBufferTypes, &col.FieldType)
 				}
 
-				if !tblInfo.HasClusteredIndex() {
+				if !c.tblInfo.HasClusteredIndex() {
 					// If the table doesn't have clustered index, we need to append an extra handle column.
 					evalBufferTypes = append(evalBufferTypes, types.NewFieldType(mysql.TypeLonglong))
 				}
@@ -132,7 +146,7 @@ func NewIndexWithEncodingConfig(
 			},
 		}
 	}
-	return index, nil
+	return nil
 }
 
 // Meta returns index info.
