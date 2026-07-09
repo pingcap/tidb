@@ -41,6 +41,7 @@
 - `pkg/ddl/export_test.go` - ddl: Tests export.
 - `pkg/ddl/fail_test.go` - ddl: Tests fail before decode args.
 - `pkg/ddl/foreign_key_test.go` - ddl: Tests foreign key.
+- `pkg/ddl/index_auto_presplit_test.go` - ddl: Tests auto split index region planning.
 - `pkg/ddl/index_change_test.go` - ddl: Tests index change.
 - `pkg/ddl/index_cop_test.go` - ddl: Tests add index fetch rows from coprocessor.
 - `pkg/ddl/index_modify_test.go` - ddl: Tests add primary key1.
