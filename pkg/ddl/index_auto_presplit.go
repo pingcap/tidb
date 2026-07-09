@@ -33,10 +33,10 @@ import (
 const (
 	defaultAutoSplitHotRegionMinTableRows            = int64(1_000_000)
 	defaultAutoSplitHotRegionRowsPerRegion           = int64(500_000)
-	defaultAutoSplitHotRegionMaxRegionsPerPhysical   = 16
-	defaultAutoSplitHotRegionMaxTopNKeysPerPhysical  = 16
-	defaultAutoSplitHotRegionMaxSplitKeys            = 256
-	defaultAutoSplitHotRegionTopNMinCount            = uint64(200_000)
+	defaultAutoSplitHotRegionMaxRegionsPerPhysical   = 100
+	defaultAutoSplitHotRegionMaxTopNKeysPerPhysical  = 100
+	defaultAutoSplitHotRegionMaxSplitKeys            = 2560
+	defaultAutoSplitHotRegionTopNMinCount            = uint64(1_000_000)
 	defaultAutoSplitHotRegionTopNMinRatio            = 0.01
 	defaultAutoSplitHotRegionMinStatsHealthy         = int64(80)
 	defaultAutoSplitHotRegionMockMaxRegionsForTest   = 4
