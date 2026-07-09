@@ -15,7 +15,6 @@
 package stmtsummary
 
 import (
-	"fmt"
 	"strings"
 	"time"
 
@@ -56,10 +55,9 @@ func NewStmtSummaryReader(user *auth.UserIdentity, hasProcessPriv bool, cols []*
 	reader.columnValueFactories = make([]columnValueFactory, len(reader.columns))
 	for i, col := range reader.columns {
 		factory, ok := columnValueFactoryMap[col.Name.O]
-		if !ok {
-			panic(fmt.Sprintf("should never happen, should register new column %v into columnValueFactoryMap", col.Name.O))
+		if ok {
+			reader.columnValueFactories[i] = factory
 		}
-		reader.columnValueFactories[i] = factory
 	}
 	return reader
 }
@@ -135,6 +133,238 @@ func (ssr *stmtSummaryReader) GetStmtSummaryHistoryRows() [][]types.Datum {
 	return rows
 }
 
+// GetReadBillingDemoCurrentRows gets current-window read billing demo rows.
+func (ssr *stmtSummaryReader) GetReadBillingDemoCurrentRows(kind ReadBillingDemoTableKind) [][]types.Datum {
+	ssMap := ssr.ssMap
+	ssMap.Lock()
+	values := ssMap.summaryMap.Values()
+	beginTime := ssMap.beginTimeForCurInterval
+	other := ssMap.other
+	ssMap.Unlock()
+
+	rows := make([][]types.Datum, 0, len(values))
+	for _, value := range values {
+		ssbd := value.(*stmtSummaryByDigest)
+		if ssr.checker != nil && !ssr.checker.isDigestValid(ssbd.digest) {
+			continue
+		}
+		rows = append(rows, ssr.getReadBillingDemoCurrentRows(ssbd, beginTime, kind)...)
+	}
+	if ssr.checker == nil {
+		rows = append(rows, ssr.getReadBillingDemoEvictedOtherRows(other, kind)...)
+	}
+	return rows
+}
+
+// GetReadBillingDemoHistoryRows gets history-window read billing demo rows.
+func (ssr *stmtSummaryReader) GetReadBillingDemoHistoryRows(kind ReadBillingDemoTableKind) [][]types.Datum {
+	ssMap := ssr.ssMap
+	ssMap.Lock()
+	values := ssMap.summaryMap.Values()
+	other := ssMap.other
+	ssMap.Unlock()
+
+	historySize := ssMap.historySize()
+	rows := make([][]types.Datum, 0, len(values)*historySize)
+	for _, value := range values {
+		ssbd := value.(*stmtSummaryByDigest)
+		ssElements := ssbd.collectHistorySummaries(ssr.checker, historySize)
+		for _, ssElement := range ssElements {
+			rows = append(rows, ssr.getReadBillingDemoElementRows(ssElement, ssbd, kind)...)
+		}
+	}
+	if ssr.checker == nil {
+		rows = append(rows, ssr.getReadBillingDemoEvictedOtherHistoryRows(other, historySize, kind)...)
+	}
+	return rows
+}
+
+func (ssr *stmtSummaryReader) getReadBillingDemoCurrentRows(ssbd *stmtSummaryByDigest, beginTimeForCurInterval int64, kind ReadBillingDemoTableKind) [][]types.Datum {
+	var ssElement *stmtSummaryByDigestElement
+
+	ssbd.Lock()
+	if ssbd.initialized && ssbd.history.Len() > 0 {
+		ssElement = ssbd.history.Back().Value.(*stmtSummaryByDigestElement)
+	}
+	ssbd.Unlock()
+
+	if ssElement == nil || ssElement.beginTime < beginTimeForCurInterval {
+		return nil
+	}
+	return ssr.getReadBillingDemoElementRows(ssElement, ssbd, kind)
+}
+
+func (ssr *stmtSummaryReader) getReadBillingDemoEvictedOtherRows(ssbde *stmtSummaryByDigestEvicted, kind ReadBillingDemoTableKind) [][]types.Datum {
+	var seElement *stmtSummaryByDigestEvictedElement
+
+	ssbde.Lock()
+	if ssbde.history.Len() > 0 {
+		seElement = ssbde.history.Back().Value.(*stmtSummaryByDigestEvictedElement)
+	}
+	ssbde.Unlock()
+
+	if seElement == nil {
+		return nil
+	}
+	return ssr.getReadBillingDemoElementRows(seElement.otherSummary, new(stmtSummaryByDigest), kind)
+}
+
+func (ssr *stmtSummaryReader) getReadBillingDemoEvictedOtherHistoryRows(ssbde *stmtSummaryByDigestEvicted, historySize int, kind ReadBillingDemoTableKind) [][]types.Datum {
+	ssbde.Lock()
+	seElements := ssbde.collectHistorySummaries(historySize)
+	ssbde.Unlock()
+	rows := make([][]types.Datum, 0, len(seElements))
+
+	ssbd := new(stmtSummaryByDigest)
+	for _, seElement := range seElements {
+		rows = append(rows, ssr.getReadBillingDemoElementRows(seElement.otherSummary, ssbd, kind)...)
+	}
+	return rows
+}
+
+func (ssr *stmtSummaryReader) getReadBillingDemoElementRows(ssElement *stmtSummaryByDigestElement, ssbd *stmtSummaryByDigest, kind ReadBillingDemoTableKind) [][]types.Datum {
+	ssElement.Lock()
+	defer ssElement.Unlock()
+	if !ssr.isAuthed(&ssElement.stmtSummaryStats) {
+		return nil
+	}
+
+	switch kind {
+	case ReadBillingDemoTableBaseUnits:
+		entries := ReadBillingDemoBaseUnitEntriesFromMap(ssElement.ReadBillingDemoBaseUnitAggs)
+		rows := make([][]types.Datum, 0, len(entries))
+		for _, entry := range entries {
+			rows = append(rows, ssr.readBillingDemoBaseUnitRow(ssElement, ssbd, entry))
+		}
+		return rows
+	case ReadBillingDemoTableStatus:
+		entries := ReadBillingDemoStatusEntriesFromMap(ssElement.ReadBillingDemoStatusAggs)
+		rows := make([][]types.Datum, 0, len(entries))
+		for _, entry := range entries {
+			rows = append(rows, ssr.readBillingDemoStatusRow(ssElement, ssbd, entry))
+		}
+		return rows
+	default:
+		return nil
+	}
+}
+
+func (ssr *stmtSummaryReader) readBillingDemoBaseUnitRow(ssElement *stmtSummaryByDigestElement, ssbd *stmtSummaryByDigest, entry ReadBillingDemoBaseUnitAggEntry) []types.Datum {
+	row := make([]types.Datum, len(ssr.columns))
+	for i, col := range ssr.columns {
+		row[i] = types.NewDatum(ssr.readBillingDemoBaseUnitColumnValue(col.Name.O, ssElement, ssbd, entry))
+	}
+	return row
+}
+
+func (ssr *stmtSummaryReader) readBillingDemoStatusRow(ssElement *stmtSummaryByDigestElement, ssbd *stmtSummaryByDigest, entry ReadBillingDemoStatusAggEntry) []types.Datum {
+	row := make([]types.Datum, len(ssr.columns))
+	for i, col := range ssr.columns {
+		row[i] = types.NewDatum(ssr.readBillingDemoStatusColumnValue(col.Name.O, ssElement, ssbd, entry))
+	}
+	return row
+}
+
+func (ssr *stmtSummaryReader) readBillingDemoCommonColumnValue(col string, ssElement *stmtSummaryByDigestElement, ssbd *stmtSummaryByDigest) (any, bool) {
+	switch col {
+	case ClusterTableInstanceColumnNameStr:
+		return ssr.instanceAddr, true
+	case SummaryBeginTimeStr:
+		beginTime := time.Unix(ssElement.beginTime, 0)
+		if beginTime.Location() != ssr.tz {
+			beginTime = beginTime.In(ssr.tz)
+		}
+		return types.NewTime(types.FromGoTime(beginTime), mysql.TypeTimestamp, 0), true
+	case SummaryEndTimeStr:
+		endTime := time.Unix(ssElement.endTime, 0)
+		if endTime.Location() != ssr.tz {
+			endTime = endTime.In(ssr.tz)
+		}
+		return types.NewTime(types.FromGoTime(endTime), mysql.TypeTimestamp, 0), true
+	case StmtTypeStr:
+		return ssbd.stmtType, true
+	case SchemaNameStr:
+		return convertEmptyToNil(ssbd.schemaName), true
+	case DigestStr:
+		return convertEmptyToNil(ssbd.digest), true
+	case DigestTextStr:
+		return ssbd.normalizedSQL, true
+	case PlanDigestStr:
+		return convertEmptyToNil(ssbd.planDigest), true
+	case ResourceGroupName:
+		return ssElement.resourceGroupName, true
+	default:
+		return nil, false
+	}
+}
+
+func (ssr *stmtSummaryReader) readBillingDemoBaseUnitColumnValue(col string, ssElement *stmtSummaryByDigestElement, ssbd *stmtSummaryByDigest, entry ReadBillingDemoBaseUnitAggEntry) any {
+	if value, ok := ssr.readBillingDemoCommonColumnValue(col, ssElement, ssbd); ok {
+		return value
+	}
+	switch col {
+	case ReadBillingDemoModelVersionStr:
+		return entry.ModelVersion
+	case ReadBillingDemoWeightVersionStr:
+		return entry.WeightVersion
+	case ReadBillingDemoSiteStr:
+		return entry.Site
+	case ReadBillingDemoOpClassStr:
+		return entry.OpClass
+	case ReadBillingDemoOperatorKindStr:
+		return entry.OperatorKind
+	case ReadBillingDemoDMLKindStr:
+		return entry.DMLKind
+	case ReadBillingDemoUnitStr:
+		return entry.Unit
+	case ReadBillingDemoInputSourceStr:
+		return entry.InputSource
+	case ReadBillingDemoInputSideStr:
+		return entry.InputSide
+	case ReadBillingDemoRowWidthSource:
+		return entry.RowWidthSource
+	case ReadBillingDemoValueStr:
+		return entry.Value
+	case ReadBillingDemoSampleCountStr:
+		return entry.SampleCount
+	case ReadBillingDemoRowWidthSumStr:
+		return entry.RowWidthSum
+	case ReadBillingDemoAvgRowWidthStr:
+		if entry.SampleCount == 0 {
+			return float64(0)
+		}
+		return entry.RowWidthSum / float64(entry.SampleCount)
+	default:
+		return nil
+	}
+}
+
+func (ssr *stmtSummaryReader) readBillingDemoStatusColumnValue(col string, ssElement *stmtSummaryByDigestElement, ssbd *stmtSummaryByDigest, entry ReadBillingDemoStatusAggEntry) any {
+	if value, ok := ssr.readBillingDemoCommonColumnValue(col, ssElement, ssbd); ok {
+		return value
+	}
+	switch col {
+	case ReadBillingDemoModelVersionStr:
+		return entry.ModelVersion
+	case ReadBillingDemoWeightVersionStr:
+		return entry.WeightVersion
+	case ReadBillingDemoSiteStr:
+		return entry.Site
+	case ReadBillingDemoOpClassStr:
+		return entry.OpClass
+	case ReadBillingDemoOperatorKindStr:
+		return entry.OperatorKind
+	case ReadBillingDemoStatusStr:
+		return entry.Status
+	case ReadBillingDemoReasonStr:
+		return entry.Reason
+	case ReadBillingDemoCountStr:
+		return entry.Count
+	default:
+		return nil
+	}
+}
+
 func (ssr *stmtSummaryReader) SetChecker(checker *stmtSummaryChecker) {
 	ssr.checker = checker
 }
@@ -151,6 +381,9 @@ func (ssr *stmtSummaryReader) getStmtByDigestCumulativeRow(ssbd *stmtSummaryByDi
 	ssbd.Lock()
 	defer ssbd.Unlock()
 	if !ssr.isAuthed(&ssbd.cumulative) {
+		return nil
+	}
+	if ssbd.cumulative.isReadBillingDemoStatusOnly() {
 		return nil
 	}
 
@@ -182,6 +415,9 @@ func (ssr *stmtSummaryReader) getStmtByDigestElementRow(ssElement *stmtSummaryBy
 	ssElement.Lock()
 	defer ssElement.Unlock()
 	if !ssr.isAuthed(&ssElement.stmtSummaryStats) {
+		return nil
+	}
+	if ssElement.stmtSummaryStats.isReadBillingDemoStatusOnly() {
 		return nil
 	}
 
@@ -368,6 +604,9 @@ const (
 	MaxQueuedRcTimeStr                         = "MAX_QUEUED_RC_TIME"
 	AvgRequestUnitV2Str                        = "AVG_REQUEST_UNIT_V2"
 	MaxRequestUnitV2Str                        = "MAX_REQUEST_UNIT_V2"
+	SumReadBillingDemoFixedEventsStr           = "SUM_READ_BILLING_DEMO_FIXED_EVENTS"
+	SumReadBillingDemoInputRowsStr             = "SUM_READ_BILLING_DEMO_INPUT_ROWS"
+	SumReadBillingDemoInputBytesStr            = "SUM_READ_BILLING_DEMO_INPUT_BYTES"
 	ResourceGroupName                          = "RESOURCE_GROUP"
 	SumUnpackedBytesSentTiKVTotalStr           = "SUM_UNPACKED_BYTES_SENT_TIKV_TOTAL"
 	SumUnpackedBytesReceivedTiKVTotalStr       = "SUM_UNPACKED_BYTES_RECEIVED_TIKV_TOTAL"
@@ -924,6 +1163,15 @@ var columnValueFactoryMap = map[string]columnValueFactory{
 	},
 	MaxRequestUnitV2Str: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
 		return ssStats.MaxRUV2
+	},
+	SumReadBillingDemoFixedEventsStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.SumReadBillingDemoFixedEvents
+	},
+	SumReadBillingDemoInputRowsStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.SumReadBillingDemoInputRows
+	},
+	SumReadBillingDemoInputBytesStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.SumReadBillingDemoInputBytes
 	},
 	ResourceGroupName: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
 		return ssStats.resourceGroupName

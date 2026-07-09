@@ -1231,6 +1231,9 @@ type SessionVars struct {
 	// AllowProjectionPushDown enables pushdown projection on TiKV.
 	AllowProjectionPushDown bool
 
+	// EnableReadBillingDemo indicates whether preview RU base-unit metrics are emitted for foreground statements.
+	EnableReadBillingDemo bool
+
 	// EnableStrictNotNullCheck enables strict not-null check for single-row insert in non-strict mode.
 	EnableStrictNotNullCheck bool
 
@@ -2496,6 +2499,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		OptOrderingIdxSelRatio:           vardef.DefTiDBOptOrderingIdxSelRatio,
 		RegardNULLAsPoint:                vardef.DefTiDBRegardNULLAsPoint,
 		AllowProjectionPushDown:          vardef.DefOptEnableProjectionPushDown,
+		EnableReadBillingDemo:            vardef.DefTiDBEnableReadBillingDemo,
 		SkipMissingPartitionStats:        vardef.DefTiDBSkipMissingPartitionStats,
 		IndexLookUpPushDownPolicy:        vardef.DefTiDBIndexLookUpPushDownPolicy,
 		OptPartialOrderedIndexForTopN:    vardef.DefTiDBOptPartialOrderedIndexForTopN,

@@ -254,6 +254,9 @@ type stmtSummaryStats struct {
 	// request-units
 	resourceGroupName string
 	StmtRUSummary
+	ReadBillingDemoBaseUnitSummary
+	ReadBillingDemoBaseUnitAggs map[ReadBillingDemoBaseUnitKey]ReadBillingDemoBaseUnitAgg
+	ReadBillingDemoStatusAggs   map[ReadBillingDemoStatusKey]ReadBillingDemoStatusAgg
 	StmtNetworkTrafficSummary
 
 	planCacheUnqualifiedCount int64
@@ -296,15 +299,17 @@ type StmtExecInfo struct {
 
 	WriteSQLRespDuration time.Duration
 
-	ResultRows        int64
-	TiKVExecDetails   *util.ExecDetails
-	Prepared          bool
-	KeyspaceName      string
-	KeyspaceID        uint32
-	ResourceGroupName string
-	RUDetail          *util.RUDetails
-	TotalRUV2         float64
-	CPUUsages         ppcpuusage.CPUUsages
+	ResultRows               int64
+	TiKVExecDetails          *util.ExecDetails
+	Prepared                 bool
+	KeyspaceName             string
+	KeyspaceID               uint32
+	ResourceGroupName        string
+	RUDetail                 *util.RUDetails
+	TotalRUV2                float64
+	ReadBillingDemoBaseUnits ReadBillingDemoBaseUnitSummary
+	ReadBillingDemoStats     ReadBillingDemoStatementStats
+	CPUUsages                ppcpuusage.CPUUsages
 
 	PlanCacheUnqualified string
 
@@ -425,6 +430,75 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 	summary.isInternal = summary.isInternal && sei.IsInternal
 	if summary != nil {
 		summary.add(sei, beginTime, intervalSeconds, historySize)
+	}
+	if exist {
+		StmtDigestKeyPool.Put(key)
+	}
+	ssMap.updateMetricsLocked()
+}
+
+// AddReadBillingDemoStatusOnly records read billing demo statuses that happen
+// before the normal statement finish path can build a full StmtExecInfo.
+func (ssMap *stmtSummaryByDigestMap) AddReadBillingDemoStatusOnly(sei *StmtExecInfo) {
+	var ok bool
+	sei, ok = ReadBillingDemoStatusOnlyExecInfo(sei)
+	if !ok {
+		return
+	}
+	now := time.Now().Unix()
+	failpoint.Inject("mockTimeForStatementsSummary", func(val failpoint.Value) {
+		if unixTimeStr, ok := val.(string); ok {
+			unixTime, err := strconv.ParseInt(unixTimeStr, 10, 64)
+			if err != nil {
+				panic(err.Error())
+			}
+			now = unixTime
+		}
+	})
+
+	intervalSeconds := ssMap.refreshInterval()
+	historySize := 0
+	if ssMap.historyEnabled() {
+		historySize = ssMap.historySize()
+	}
+
+	key := StmtDigestKeyPool.Get().(*StmtDigestKey)
+
+	ssMap.Lock()
+	defer ssMap.Unlock()
+
+	userForKey := ""
+	if ssMap.optGroupByUser.Load() {
+		userForKey = sei.User
+	}
+	key.Init(sei.SchemaName, sei.Digest, sei.PrevSQLDigest, sei.PlanDigest, sei.ResourceGroupName, userForKey)
+
+	if !ssMap.Enabled() {
+		StmtDigestKeyPool.Put(key)
+		return
+	}
+	if sei.IsInternal && !ssMap.EnabledInternal() {
+		StmtDigestKeyPool.Put(key)
+		return
+	}
+
+	if ssMap.beginTimeForCurInterval+intervalSeconds <= now {
+		ssMap.beginTimeForCurInterval = now / intervalSeconds * intervalSeconds
+		ssMap.currentWindowEvictedCount = 0
+	}
+
+	beginTime := ssMap.beginTimeForCurInterval
+	value, exist := ssMap.summaryMap.Get(key)
+	var summary *stmtSummaryByDigest
+	if !exist {
+		summary = new(stmtSummaryByDigest)
+		ssMap.summaryMap.Put(key, summary)
+	} else {
+		summary = value.(*stmtSummaryByDigest)
+	}
+	summary.isInternal = summary.isInternal && sei.IsInternal
+	if summary != nil {
+		summary.addReadBillingDemoStatusOnly(sei, beginTime, intervalSeconds, historySize)
 	}
 	if exist {
 		StmtDigestKeyPool.Put(key)
@@ -692,6 +766,59 @@ func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo, beginTime int64, interva
 	}
 }
 
+func (ssbd *stmtSummaryByDigest) initReadBillingDemoStatusOnly(sei *StmtExecInfo) {
+	ssbd.cumulative = *newReadBillingDemoStatusOnlyStats(sei)
+	ssbd.schemaName = sei.SchemaName
+	ssbd.digest = sei.Digest
+	ssbd.planDigest = sei.PlanDigest
+	if sei.StmtCtx != nil {
+		ssbd.stmtType = sei.StmtCtx.StmtType
+	}
+	ssbd.normalizedSQL = formatSQL(sei.NormalizedSQL)
+	ssbd.history = list.New()
+	ssbd.initialized = true
+}
+
+func (ssbd *stmtSummaryByDigest) addReadBillingDemoStatusOnly(sei *StmtExecInfo, beginTime int64, intervalSeconds int64, historySize int) {
+	ssElement, isElementNew := func() (*stmtSummaryByDigestElement, bool) {
+		ssbd.Lock()
+		defer ssbd.Unlock()
+
+		initializedNow := false
+		if !ssbd.initialized {
+			ssbd.initReadBillingDemoStatusOnly(sei)
+			initializedNow = true
+		}
+		if !initializedNow {
+			ssbd.cumulative.addReadBillingDemoStatementStats(sei.User, &sei.ReadBillingDemoStats)
+		}
+
+		var ssElement *stmtSummaryByDigestElement
+		isElementNew := true
+		if ssbd.history.Len() > 0 {
+			lastElement := ssbd.history.Back().Value.(*stmtSummaryByDigestElement)
+			if lastElement.beginTime >= beginTime {
+				ssElement = lastElement
+				isElementNew = false
+			} else {
+				lastElement.onExpire(intervalSeconds)
+			}
+		}
+		if isElementNew {
+			ssElement = newReadBillingDemoStatusOnlyElement(sei, beginTime)
+			ssbd.history.PushBack(ssElement)
+		}
+		for ssbd.history.Len() > historySize && ssbd.history.Len() > 1 {
+			ssbd.history.Remove(ssbd.history.Front())
+		}
+		return ssElement, isElementNew
+	}()
+
+	if !isElementNew {
+		ssElement.addReadBillingDemoStatusOnly(sei)
+	}
+}
+
 // collectHistorySummaries puts at most `historySize` summaries to an array.
 func (ssbd *stmtSummaryByDigest) collectHistorySummaries(checker *stmtSummaryChecker, historySize int) []*stmtSummaryByDigestElement {
 	ssbd.Lock()
@@ -754,6 +881,28 @@ func newStmtSummaryStats(sei *StmtExecInfo) *stmtSummaryStats {
 	}
 }
 
+func newReadBillingDemoStatusOnlyStats(sei *StmtExecInfo) *stmtSummaryStats {
+	sei, ok := ReadBillingDemoStatusOnlyExecInfo(sei)
+	if !ok {
+		return &stmtSummaryStats{}
+	}
+	startTime := sei.StartTime
+	if startTime.IsZero() {
+		startTime = time.Now()
+	}
+	stats := &stmtSummaryStats{
+		backoffTypes:      make(map[string]int),
+		authUsers:         make(map[string]struct{}),
+		minLatency:        time.Duration(math.MaxInt64),
+		minResultRows:     math.MaxInt64,
+		firstSeen:         startTime,
+		lastSeen:          startTime,
+		resourceGroupName: sei.ResourceGroupName,
+	}
+	stats.addReadBillingDemoStatementStats(sei.User, &sei.ReadBillingDemoStats)
+	return stats
+}
+
 func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalSeconds int64, warningCount int, affectedRows uint64) *stmtSummaryByDigestElement {
 	ssElement := &stmtSummaryByDigestElement{
 		beginTime:        beginTime,
@@ -761,6 +910,13 @@ func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalS
 	}
 	ssElement.add(sei, intervalSeconds, warningCount, affectedRows)
 	return ssElement
+}
+
+func newReadBillingDemoStatusOnlyElement(sei *StmtExecInfo, beginTime int64) *stmtSummaryByDigestElement {
+	return &stmtSummaryByDigestElement{
+		beginTime:        beginTime,
+		stmtSummaryStats: *newReadBillingDemoStatusOnlyStats(sei),
+	}
 }
 
 // onExpire is called when this element expires to history.
@@ -779,6 +935,35 @@ func (ssElement *stmtSummaryByDigestElement) onExpire(intervalSeconds int64) {
 			ssElement.endTime = now
 		}
 	}
+}
+
+func (ssStats *stmtSummaryStats) addReadBillingDemoStatementStats(user string, stats *ReadBillingDemoStatementStats) {
+	if stats == nil {
+		return
+	}
+	if len(user) > 0 {
+		if ssStats.authUsers == nil {
+			ssStats.authUsers = make(map[string]struct{})
+		}
+		ssStats.authUsers[user] = struct{}{}
+	}
+	var acceptedSummary ReadBillingDemoBaseUnitSummary
+	ssStats.ReadBillingDemoBaseUnitAggs, ssStats.ReadBillingDemoStatusAggs, acceptedSummary = AddReadBillingDemoStatementStatsToMaps(
+		ssStats.ReadBillingDemoBaseUnitAggs,
+		ssStats.ReadBillingDemoStatusAggs,
+		stats,
+	)
+	ssStats.ReadBillingDemoBaseUnitSummary.Add(&acceptedSummary)
+}
+
+func (ssStats *stmtSummaryStats) isReadBillingDemoStatusOnly() bool {
+	if ssStats == nil || ssStats.execCount != 0 {
+		return false
+	}
+	return len(ssStats.ReadBillingDemoBaseUnitAggs) > 0 || len(ssStats.ReadBillingDemoStatusAggs) > 0 ||
+		ssStats.SumReadBillingDemoFixedEvents != 0 ||
+		ssStats.SumReadBillingDemoInputRows != 0 ||
+		ssStats.SumReadBillingDemoInputBytes != 0
 }
 
 func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo, warningCount int, affectedRows uint64) {
@@ -997,6 +1182,17 @@ func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo, warningCount int, affect
 
 	// request-units
 	ssStats.StmtRUSummary.Add(sei.RUDetail, sei.TotalRUV2)
+	if !sei.ReadBillingDemoStats.IsEmpty() {
+		var acceptedSummary ReadBillingDemoBaseUnitSummary
+		ssStats.ReadBillingDemoBaseUnitAggs, ssStats.ReadBillingDemoStatusAggs, acceptedSummary = AddReadBillingDemoStatementStatsToMaps(
+			ssStats.ReadBillingDemoBaseUnitAggs,
+			ssStats.ReadBillingDemoStatusAggs,
+			&sei.ReadBillingDemoStats,
+		)
+		ssStats.ReadBillingDemoBaseUnitSummary.Add(&acceptedSummary)
+	} else {
+		ssStats.ReadBillingDemoBaseUnitSummary.Add(&sei.ReadBillingDemoBaseUnits)
+	}
 
 	ssStats.storageKV = sei.StmtCtx.IsTiKV.Load()
 	ssStats.storageMPP = sei.StmtCtx.IsTiFlash.Load()
@@ -1009,6 +1205,13 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 	// refreshInterval may change anytime, update endTime ASAP.
 	ssElement.endTime = ssElement.beginTime + intervalSeconds
 	ssElement.stmtSummaryStats.add(sei, warningCount, affectedRows)
+}
+
+func (ssElement *stmtSummaryByDigestElement) addReadBillingDemoStatusOnly(sei *StmtExecInfo) {
+	ssElement.Lock()
+	defer ssElement.Unlock()
+
+	ssElement.stmtSummaryStats.addReadBillingDemoStatementStats(sei.User, &sei.ReadBillingDemoStats)
 }
 
 // Truncate SQL to maxSQLLength.
@@ -1139,6 +1342,28 @@ func (s *StmtRUSummary) Merge(other *StmtRUSummary) {
 	if s.MaxRUV2 < other.MaxRUV2 {
 		s.MaxRUV2 = other.MaxRUV2
 	}
+}
+
+// ReadBillingDemoBaseUnitSummary is the read billing demo base-unit summary for each type of statements.
+type ReadBillingDemoBaseUnitSummary struct {
+	SumReadBillingDemoFixedEvents float64 `json:"sum_read_billing_demo_fixed_events"`
+	SumReadBillingDemoInputRows   float64 `json:"sum_read_billing_demo_input_rows"`
+	SumReadBillingDemoInputBytes  float64 `json:"sum_read_billing_demo_input_bytes"`
+}
+
+// Add adds one read billing demo base-unit sample to the summary.
+func (s *ReadBillingDemoBaseUnitSummary) Add(other *ReadBillingDemoBaseUnitSummary) {
+	if other == nil {
+		return
+	}
+	s.SumReadBillingDemoFixedEvents += other.SumReadBillingDemoFixedEvents
+	s.SumReadBillingDemoInputRows += other.SumReadBillingDemoInputRows
+	s.SumReadBillingDemoInputBytes += other.SumReadBillingDemoInputBytes
+}
+
+// Merge merges another read billing demo base-unit summary.
+func (s *ReadBillingDemoBaseUnitSummary) Merge(other *ReadBillingDemoBaseUnitSummary) {
+	s.Add(other)
 }
 
 // StmtNetworkTrafficSummary is the network traffic summary for each type of statements.

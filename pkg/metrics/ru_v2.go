@@ -32,6 +32,7 @@ var (
 	RUV2ResourceManagerWriteCnt prometheus.Counter
 	RUV2WriteKeys               prometheus.Counter
 	RUV2WriteSize               prometheus.Counter
+	RUV2PrewriteRegionNum       prometheus.Counter
 	RUV2SessionParserTotal      prometheus.Counter
 	RUV2TxnCnt                  prometheus.Counter
 
@@ -180,6 +181,15 @@ func InitRUV2Metrics() {
 			Subsystem: "ruv2",
 			Name:      "write_size",
 			Help:      "Shadow counter of commit write size for RU v2.",
+		},
+	)
+
+	RUV2PrewriteRegionNum = metricscommon.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "ruv2",
+			Name:      "prewrite_region_num",
+			Help:      "Diagnostic counter of commit prewrite region fanout for RU v2.",
 		},
 	)
 

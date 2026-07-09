@@ -159,7 +159,13 @@ func (e *stmtSummaryRetriever) initSummaryRowsReader(sctx sessionctx.Context) (*
 	}
 
 	var rows [][]types.Datum
-	if isCumulativeTable(e.table.Name.O) {
+	if kind, ok := readBillingDemoTableKind(e.table.Name.O); ok {
+		if isCurrentTable(e.table.Name.O) {
+			rows = reader.GetReadBillingDemoCurrentRows(kind)
+		} else if isHistoryTable(e.table.Name.O) {
+			rows = reader.GetReadBillingDemoHistoryRows(kind)
+		}
+	} else if isCumulativeTable(e.table.Name.O) {
 		rows = reader.GetStmtSummaryCumulativeRows()
 	} else if isCurrentTable(e.table.Name.O) {
 		rows = reader.GetStmtSummaryCurrentRows()
@@ -254,8 +260,14 @@ func (r *stmtSummaryRetrieverV2) initSummaryRowsReader(ctx context.Context, sctx
 		return nil, err
 	}
 
-	mem := stmtsummaryv2.NewMemReader(stmtSummary, columns, instanceAddr, tz, user, priv, digests, timeRanges)
-	memRows := mem.Rows()
+	var memRows [][]types.Datum
+	var readBillingDemoKind stmtsummary.ReadBillingDemoTableKind
+	readBillingDemoKind, isReadBillingDemoTable := readBillingDemoTableKind(r.table.Name.O)
+	if isReadBillingDemoTable {
+		memRows = stmtsummaryv2.NewReadBillingDemoMemReader(stmtSummary, columns, instanceAddr, tz, user, priv, digests, timeRanges, readBillingDemoKind).Rows()
+	} else {
+		memRows = stmtsummaryv2.NewMemReader(stmtSummary, columns, instanceAddr, tz, user, priv, digests, timeRanges).Rows()
+	}
 
 	var rowsReader *rowsReader
 	if isCurrentTable(r.table.Name.O) {
@@ -264,7 +276,13 @@ func (r *stmtSummaryRetrieverV2) initSummaryRowsReader(ctx context.Context, sctx
 	if isHistoryTable(r.table.Name.O) {
 		// history table should return all rows including mem and disk
 		concurrent := sctx.GetSessionVars().Concurrency.DistSQLScanConcurrency()
-		history, err := stmtsummaryv2.NewHistoryReader(ctx, columns, instanceAddr, tz, user, priv, digests, timeRanges, concurrent)
+		var history rowsPuller
+		var err error
+		if isReadBillingDemoTable {
+			history, err = stmtsummaryv2.NewReadBillingDemoHistoryReader(ctx, columns, instanceAddr, tz, user, priv, digests, timeRanges, concurrent, readBillingDemoKind)
+		} else {
+			history, err = stmtsummaryv2.NewHistoryReader(ctx, columns, instanceAddr, tz, user, priv, digests, timeRanges, concurrent)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -347,6 +365,10 @@ func isClusterTable(originalTableName string) bool {
 	case infoschema.ClusterTableStatementsSummary,
 		infoschema.ClusterTableStatementsSummaryHistory,
 		infoschema.ClusterTableStatementsSummaryEvicted,
+		infoschema.ClusterTableStatementsSummaryReadBillingDemoBaseUnits,
+		infoschema.ClusterTableStatementsSummaryHistoryReadBillingDemoBaseUnits,
+		infoschema.ClusterTableStatementsSummaryReadBillingDemoStatus,
+		infoschema.ClusterTableStatementsSummaryHistoryReadBillingDemoStatus,
 		infoschema.ClusterTableTiDBStatementsStats:
 		return true
 	}
@@ -367,7 +389,11 @@ func isCumulativeTable(originalTableName string) bool {
 func isCurrentTable(originalTableName string) bool {
 	switch originalTableName {
 	case infoschema.TableStatementsSummary,
-		infoschema.ClusterTableStatementsSummary:
+		infoschema.ClusterTableStatementsSummary,
+		infoschema.TableStatementsSummaryReadBillingDemoBaseUnits,
+		infoschema.ClusterTableStatementsSummaryReadBillingDemoBaseUnits,
+		infoschema.TableStatementsSummaryReadBillingDemoStatus,
+		infoschema.ClusterTableStatementsSummaryReadBillingDemoStatus:
 		return true
 	}
 
@@ -377,11 +403,32 @@ func isCurrentTable(originalTableName string) bool {
 func isHistoryTable(originalTableName string) bool {
 	switch originalTableName {
 	case infoschema.TableStatementsSummaryHistory,
-		infoschema.ClusterTableStatementsSummaryHistory:
+		infoschema.ClusterTableStatementsSummaryHistory,
+		infoschema.TableStatementsSummaryHistoryReadBillingDemoBaseUnits,
+		infoschema.ClusterTableStatementsSummaryHistoryReadBillingDemoBaseUnits,
+		infoschema.TableStatementsSummaryHistoryReadBillingDemoStatus,
+		infoschema.ClusterTableStatementsSummaryHistoryReadBillingDemoStatus:
 		return true
 	}
 
 	return false
+}
+
+func readBillingDemoTableKind(originalTableName string) (stmtsummary.ReadBillingDemoTableKind, bool) {
+	switch originalTableName {
+	case infoschema.TableStatementsSummaryReadBillingDemoBaseUnits,
+		infoschema.TableStatementsSummaryHistoryReadBillingDemoBaseUnits,
+		infoschema.ClusterTableStatementsSummaryReadBillingDemoBaseUnits,
+		infoschema.ClusterTableStatementsSummaryHistoryReadBillingDemoBaseUnits:
+		return stmtsummary.ReadBillingDemoTableBaseUnits, true
+	case infoschema.TableStatementsSummaryReadBillingDemoStatus,
+		infoschema.TableStatementsSummaryHistoryReadBillingDemoStatus,
+		infoschema.ClusterTableStatementsSummaryReadBillingDemoStatus,
+		infoschema.ClusterTableStatementsSummaryHistoryReadBillingDemoStatus:
+		return stmtsummary.ReadBillingDemoTableStatus, true
+	default:
+		return 0, false
+	}
 }
 
 func isEvictedTable(originalTableName string) bool {

@@ -192,6 +192,41 @@ func (c *Chunk) MemoryUsage() (sum int64) {
 	return
 }
 
+// LogicalLiveBytes returns bytes for the logical live rows in this chunk.
+// It counts payload bytes plus the logical null bitmap and offset arrays, not
+// retained allocation capacity.
+func (c *Chunk) LogicalLiveBytes() (sum int64) {
+	if c == nil {
+		return 0
+	}
+	rows := c.NumRows()
+	if rows <= 0 || len(c.columns) == 0 {
+		return 0
+	}
+	for _, col := range c.columns {
+		sum += col.logicalLiveBytes(c.sel, rows)
+	}
+	return sum
+}
+
+func (c *Column) logicalLiveBytes(sel []int, rows int) int64 {
+	if c == nil || rows <= 0 {
+		return 0
+	}
+	sum := int64((rows + 7) >> 3)
+	if c.IsFixed() {
+		return sum + int64(rows*len(c.elemBuf))
+	}
+	sum += int64((rows + 1) * 8)
+	if sel == nil {
+		return sum + int64(c.offsets[rows]-c.offsets[0])
+	}
+	for _, rowIdx := range sel {
+		sum += int64(c.offsets[rowIdx+1] - c.offsets[rowIdx])
+	}
+	return sum
+}
+
 // RequiredRows returns how many rows is considered full.
 func (c *Chunk) RequiredRows() int {
 	return c.requiredRows

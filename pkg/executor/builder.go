@@ -2616,10 +2616,18 @@ func (b *executorBuilder) buildMemTable(v *physicalop.PhysicalMemTable) exec.Exe
 		case strings.ToLower(infoschema.TableStatementsSummary),
 			strings.ToLower(infoschema.TableStatementsSummaryHistory),
 			strings.ToLower(infoschema.TableStatementsSummaryEvicted),
+			strings.ToLower(infoschema.TableStatementsSummaryReadBillingDemoBaseUnits),
+			strings.ToLower(infoschema.TableStatementsSummaryHistoryReadBillingDemoBaseUnits),
+			strings.ToLower(infoschema.TableStatementsSummaryReadBillingDemoStatus),
+			strings.ToLower(infoschema.TableStatementsSummaryHistoryReadBillingDemoStatus),
 			strings.ToLower(infoschema.TableTiDBStatementsStats),
 			strings.ToLower(infoschema.ClusterTableStatementsSummary),
 			strings.ToLower(infoschema.ClusterTableStatementsSummaryHistory),
 			strings.ToLower(infoschema.ClusterTableStatementsSummaryEvicted),
+			strings.ToLower(infoschema.ClusterTableStatementsSummaryReadBillingDemoBaseUnits),
+			strings.ToLower(infoschema.ClusterTableStatementsSummaryHistoryReadBillingDemoBaseUnits),
+			strings.ToLower(infoschema.ClusterTableStatementsSummaryReadBillingDemoStatus),
+			strings.ToLower(infoschema.ClusterTableStatementsSummaryHistoryReadBillingDemoStatus),
 			strings.ToLower(infoschema.ClusterTableTiDBStatementsStats):
 			var extractor *plannercore.StatementsSummaryExtractor
 			if v.Extractor != nil {

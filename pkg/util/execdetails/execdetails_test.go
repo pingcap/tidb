@@ -417,6 +417,7 @@ func TestRUV2MetricsSnapshotCalculateRUValues(t *testing.T) {
 	metrics.AddResourceManagerWriteCnt(31)
 	metrics.AddWriteKeys(3)
 	metrics.AddWriteSize(66)
+	metrics.AddPrewriteRegionNum(4)
 	metrics.AddSessionParserTotal(37)
 	metrics.AddTxnCnt(41)
 	metrics.AddTiKVKVEngineCacheMiss(43)
@@ -438,6 +439,7 @@ func TestRUV2MetricsSnapshotCalculateRUValues(t *testing.T) {
 	require.InEpsilon(t, 181980.2851783309, totalRU, 0.01)
 	require.Equal(t, int64(3), metrics.WriteKeys())
 	require.Equal(t, int64(66), metrics.WriteSize())
+	require.Equal(t, int64(4), metrics.PrewriteRegionNum())
 
 	t.Run("zero scale stays zero", func(t *testing.T) {
 		zeroScaleWeights := weights
@@ -480,26 +482,31 @@ func TestUpdateRUV2MetricsFromCommitDetails(t *testing.T) {
 	beforeRU := metrics.CalculateRUValues(weights)
 
 	UpdateRUV2MetricsFromCommitDetails(metrics, &util.CommitDetails{
-		WriteKeys: 3,
-		WriteSize: 66,
+		WriteKeys:         3,
+		WriteSize:         66,
+		PrewriteRegionNum: 4,
 	})
 
 	require.Equal(t, int64(3), metrics.WriteKeys())
 	require.Equal(t, int64(66), metrics.WriteSize())
+	require.Equal(t, int64(4), metrics.PrewriteRegionNum())
 	require.InEpsilon(t, beforeRU+float64(3)*weights.WriteKeys*weights.RUScale, metrics.CalculateRUValues(weights), 0.01)
 
 	detail := FormatRUV2Metrics(metrics, weights, 0, 0)
 	require.Contains(t, detail, "write_keys:3")
 	require.Contains(t, detail, "write_size:66")
+	require.Contains(t, detail, "prewrite_region_num:4")
 
 	bypassed := NewRUV2Metrics()
 	bypassed.SetBypass(true)
 	UpdateRUV2MetricsFromCommitDetails(bypassed, &util.CommitDetails{
-		WriteKeys: 1,
-		WriteSize: 2,
+		WriteKeys:         1,
+		WriteSize:         2,
+		PrewriteRegionNum: 3,
 	})
 	require.Zero(t, bypassed.WriteKeys())
 	require.Zero(t, bypassed.WriteSize())
+	require.Zero(t, bypassed.PrewriteRegionNum())
 }
 
 func TestRUV2MetricsSnapshotFreezesRUValues(t *testing.T) {
@@ -999,6 +1006,23 @@ func TestRootRuntimeStats(t *testing.T) {
 	stats := stmtStats.GetRootStats(1)
 	expect := "total_time:3.11s, total_open:10ms, total_close:100ms, loops:2, worker:15, commit_txn: {prewrite:1s, get_commit_ts:1s, commit:1s, region_num:5, write_keys:3, write_byte:66, txn_retry:2}"
 	require.Equal(t, expect, stats.String())
+}
+
+func TestBasicRuntimeStatsBytes(t *testing.T) {
+	stats := &BasicRuntimeStats{}
+	require.False(t, stats.HasBytes())
+
+	stats.RecordBytes(0, 0)
+	require.True(t, stats.HasBytes())
+	require.Equal(t, int64(0), stats.GetInputBytes())
+	require.Equal(t, int64(0), stats.GetOutputBytes())
+
+	other := &BasicRuntimeStats{}
+	other.RecordBytes(11, 22)
+	stats.Merge(other)
+	require.True(t, stats.HasBytes())
+	require.Equal(t, int64(11), stats.GetInputBytes())
+	require.Equal(t, int64(22), stats.GetOutputBytes())
 }
 
 func TestFormatDurationForExplain(t *testing.T) {

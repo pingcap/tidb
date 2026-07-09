@@ -31,10 +31,12 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/set"
+	stmtsummarybase "github.com/pingcap/tidb/pkg/util/stmtsummary"
 	"go.uber.org/zap"
 )
 
@@ -63,6 +65,17 @@ type MemReader struct {
 	checker         *stmtChecker
 }
 
+// ReadBillingDemoMemReader expands read billing demo aggregates from the
+// current in-memory statement summary window.
+type ReadBillingDemoMemReader struct {
+	s            *StmtSummary
+	columns      []*model.ColumnInfo
+	instanceAddr string
+	timeLocation *time.Location
+	kind         stmtsummarybase.ReadBillingDemoTableKind
+	checker      *stmtChecker
+}
+
 // NewMemReader creates a MemReader from StmtSummary and other necessary parameters.
 func NewMemReader(s *StmtSummary,
 	columns []*model.ColumnInfo,
@@ -78,6 +91,31 @@ func NewMemReader(s *StmtSummary,
 		instanceAddr:    instanceAddr,
 		timeLocation:    timeLocation,
 		columnFactories: makeColumnFactories(columns),
+		checker: &stmtChecker{
+			user:           user,
+			hasProcessPriv: hasProcessPriv,
+			digests:        digests,
+			timeRanges:     timeRanges,
+		},
+	}
+}
+
+// NewReadBillingDemoMemReader creates a reader for current read billing demo rows.
+func NewReadBillingDemoMemReader(s *StmtSummary,
+	columns []*model.ColumnInfo,
+	instanceAddr string,
+	timeLocation *time.Location,
+	user *auth.UserIdentity,
+	hasProcessPriv bool,
+	digests set.StringSet,
+	timeRanges []*StmtTimeRange,
+	kind stmtsummarybase.ReadBillingDemoTableKind) *ReadBillingDemoMemReader {
+	return &ReadBillingDemoMemReader{
+		s:            s,
+		columns:      columns,
+		instanceAddr: instanceAddr,
+		timeLocation: timeLocation,
+		kind:         kind,
 		checker: &stmtChecker{
 			user:           user,
 			hasProcessPriv: hasProcessPriv,
@@ -116,6 +154,9 @@ func (r *MemReader) Rows() [][]types.Datum {
 			if !r.checker.hasPrivilege(record.AuthUsers) {
 				return
 			}
+			if record.StmtRecord.isReadBillingDemoStatusOnly() {
+				return
+			}
 			record.Begin = w.begin.Unix()
 			record.End = end
 			row := make([]types.Datum, len(r.columnFactories))
@@ -147,6 +188,53 @@ func (r *MemReader) Rows() [][]types.Datum {
 	return rows
 }
 
+// Rows returns expanded read billing demo rows from the current window.
+func (r *ReadBillingDemoMemReader) Rows() [][]types.Datum {
+	if r.s == nil {
+		return nil
+	}
+	end := timeNow().Unix()
+	r.s.windowLock.Lock()
+	w := r.s.window
+	if !r.checker.isTimeValid(w.begin.Unix(), end) {
+		r.s.windowLock.Unlock()
+		return nil
+	}
+	values := w.lru.Values()
+	evicted := w.evicted
+	r.s.windowLock.Unlock()
+	rows := make([][]types.Datum, 0, len(values))
+	for _, v := range values {
+		record := v.(*lockedStmtRecord)
+		if !r.checker.isDigestValid(record.Digest) {
+			continue
+		}
+		func() {
+			record.Lock()
+			defer record.Unlock()
+			if !r.checker.hasPrivilege(record.AuthUsers) {
+				return
+			}
+			record.Begin = w.begin.Unix()
+			record.End = end
+			rows = append(rows, readBillingDemoRowsFromRecord(r, r.columns, record.StmtRecord, r.kind)...)
+		}()
+	}
+	if r.checker.digests == nil {
+		func() {
+			evicted.Lock()
+			defer evicted.Unlock()
+			if !r.checker.hasPrivilege(evicted.other.AuthUsers) {
+				return
+			}
+			evicted.other.Begin = w.begin.Unix()
+			evicted.other.End = end
+			rows = append(rows, readBillingDemoRowsFromRecord(r, r.columns, evicted.other, r.kind)...)
+		}()
+	}
+	return rows
+}
+
 // getInstanceAddr implements columnInfo.
 func (r *MemReader) getInstanceAddr() string {
 	return r.instanceAddr
@@ -154,6 +242,16 @@ func (r *MemReader) getInstanceAddr() string {
 
 // getInstanceAddr implements columnInfo.
 func (r *MemReader) getTimeLocation() *time.Location {
+	return r.timeLocation
+}
+
+// getInstanceAddr implements columnInfo.
+func (r *ReadBillingDemoMemReader) getInstanceAddr() string {
+	return r.instanceAddr
+}
+
+// getInstanceAddr implements columnInfo.
+func (r *ReadBillingDemoMemReader) getTimeLocation() *time.Location {
 	return r.timeLocation
 }
 
@@ -166,9 +264,12 @@ type HistoryReader struct {
 	instanceAddr string
 	timeLocation *time.Location
 
+	columns         []*model.ColumnInfo
 	columnFactories []columnFactory
 	checker         *stmtChecker
 	files           *stmtFiles
+	readBillingDemo bool
+	readBillingKind stmtsummarybase.ReadBillingDemoTableKind
 
 	concurrent int
 	rowsCh     <-chan [][]types.Datum
@@ -189,6 +290,22 @@ func NewHistoryReader(
 	timeRanges []*StmtTimeRange,
 	concurrent int,
 ) (*HistoryReader, error) {
+	return newHistoryReader(ctx, columns, instanceAddr, timeLocation, user, hasProcessPriv, digests, timeRanges, concurrent, false, 0)
+}
+
+func newHistoryReader(
+	ctx context.Context,
+	columns []*model.ColumnInfo,
+	instanceAddr string,
+	timeLocation *time.Location,
+	user *auth.UserIdentity,
+	hasProcessPriv bool,
+	digests set.StringSet,
+	timeRanges []*StmtTimeRange,
+	concurrent int,
+	readBillingDemo bool,
+	readBillingKind stmtsummarybase.ReadBillingDemoTableKind,
+) (*HistoryReader, error) {
 	files, err := newStmtFiles(ctx, timeRanges)
 	if err != nil {
 		return nil, err
@@ -201,23 +318,30 @@ func NewHistoryReader(
 	errCh := make(chan error, concurrent)
 
 	ctx, cancel := context.WithCancel(ctx)
+	var columnFactories []columnFactory
+	if !readBillingDemo {
+		columnFactories = makeColumnFactories(columns)
+	}
 	r := &HistoryReader{
 		ctx:    ctx,
 		cancel: cancel,
 
 		instanceAddr:    instanceAddr,
 		timeLocation:    timeLocation,
-		columnFactories: makeColumnFactories(columns),
+		columns:         columns,
+		columnFactories: columnFactories,
 		checker: &stmtChecker{
 			user:           user,
 			hasProcessPriv: hasProcessPriv,
 			digests:        digests,
 			timeRanges:     timeRanges,
 		},
-		files:      files,
-		concurrent: concurrent,
-		rowsCh:     rowsCh,
-		errCh:      errCh,
+		files:           files,
+		readBillingDemo: readBillingDemo,
+		readBillingKind: readBillingKind,
+		concurrent:      concurrent,
+		rowsCh:          rowsCh,
+		errCh:           errCh,
 	}
 
 	r.wg.Add(1)
@@ -226,6 +350,22 @@ func NewHistoryReader(
 		r.scheduleTasks(rowsCh, errCh)
 	}()
 	return r, nil
+}
+
+// NewReadBillingDemoHistoryReader creates a history reader for persisted read billing demo rows.
+func NewReadBillingDemoHistoryReader(
+	ctx context.Context,
+	columns []*model.ColumnInfo,
+	instanceAddr string,
+	timeLocation *time.Location,
+	user *auth.UserIdentity,
+	hasProcessPriv bool,
+	digests set.StringSet,
+	timeRanges []*StmtTimeRange,
+	concurrent int,
+	kind stmtsummarybase.ReadBillingDemoTableKind,
+) (*HistoryReader, error) {
+	return newHistoryReader(ctx, columns, instanceAddr, timeLocation, user, hasProcessPriv, digests, timeRanges, concurrent, true, kind)
 }
 
 // Rows returns rows converted from records in files. Reading and parsing
@@ -311,7 +451,10 @@ func (r *HistoryReader) scheduleTasks(
 		instanceAddr:    r.instanceAddr,
 		timeLocation:    r.timeLocation,
 		checker:         r.checker,
+		columns:         r.columns,
 		columnFactories: r.columnFactories,
+		readBillingDemo: r.readBillingDemo,
+		readBillingKind: r.readBillingKind,
 	}
 
 	concurrent := r.concurrent
@@ -441,6 +584,141 @@ func (c *stmtChecker) needStop(curBegin int64) bool {
 		}
 	}
 	return stop
+}
+
+func readBillingDemoRowsFromRecord(info columnInfo, columns []*model.ColumnInfo, record *StmtRecord, kind stmtsummarybase.ReadBillingDemoTableKind) [][]types.Datum {
+	switch kind {
+	case stmtsummarybase.ReadBillingDemoTableBaseUnits:
+		rows := make([][]types.Datum, 0, len(record.ReadBillingDemoBaseUnitAggs))
+		for _, entry := range record.ReadBillingDemoBaseUnitAggs {
+			rows = append(rows, readBillingDemoBaseUnitRow(info, columns, record, entry))
+		}
+		return rows
+	case stmtsummarybase.ReadBillingDemoTableStatus:
+		rows := make([][]types.Datum, 0, len(record.ReadBillingDemoStatusAggs))
+		for _, entry := range record.ReadBillingDemoStatusAggs {
+			rows = append(rows, readBillingDemoStatusRow(info, columns, record, entry))
+		}
+		return rows
+	default:
+		return nil
+	}
+}
+
+func readBillingDemoBaseUnitRow(info columnInfo, columns []*model.ColumnInfo, record *StmtRecord, entry stmtsummarybase.ReadBillingDemoBaseUnitAggEntry) []types.Datum {
+	row := make([]types.Datum, len(columns))
+	for i, col := range columns {
+		row[i] = types.NewDatum(readBillingDemoBaseUnitColumnValue(info, col.Name.O, record, entry))
+	}
+	return row
+}
+
+func readBillingDemoStatusRow(info columnInfo, columns []*model.ColumnInfo, record *StmtRecord, entry stmtsummarybase.ReadBillingDemoStatusAggEntry) []types.Datum {
+	row := make([]types.Datum, len(columns))
+	for i, col := range columns {
+		row[i] = types.NewDatum(readBillingDemoStatusColumnValue(info, col.Name.O, record, entry))
+	}
+	return row
+}
+
+func readBillingDemoCommonColumnValue(info columnInfo, col string, record *StmtRecord) (any, bool) {
+	switch col {
+	case ClusterTableInstanceColumnNameStr:
+		return info.getInstanceAddr(), true
+	case SummaryBeginTimeStr:
+		beginTime := time.Unix(record.Begin, 0)
+		if beginTime.Location() != info.getTimeLocation() {
+			beginTime = beginTime.In(info.getTimeLocation())
+		}
+		return types.NewTime(types.FromGoTime(beginTime), mysql.TypeTimestamp, 0), true
+	case SummaryEndTimeStr:
+		endTime := time.Unix(record.End, 0)
+		if endTime.Location() != info.getTimeLocation() {
+			endTime = endTime.In(info.getTimeLocation())
+		}
+		return types.NewTime(types.FromGoTime(endTime), mysql.TypeTimestamp, 0), true
+	case StmtTypeStr:
+		return record.StmtType, true
+	case SchemaNameStr:
+		return convertEmptyToNil(record.SchemaName), true
+	case DigestStr:
+		return convertEmptyToNil(record.Digest), true
+	case DigestTextStr:
+		return record.NormalizedSQL, true
+	case PlanDigestStr:
+		return convertEmptyToNil(record.PlanDigest), true
+	case ResourceGroupName:
+		return record.ResourceGroupName, true
+	default:
+		return nil, false
+	}
+}
+
+func readBillingDemoBaseUnitColumnValue(info columnInfo, col string, record *StmtRecord, entry stmtsummarybase.ReadBillingDemoBaseUnitAggEntry) any {
+	if value, ok := readBillingDemoCommonColumnValue(info, col, record); ok {
+		return value
+	}
+	switch col {
+	case stmtsummarybase.ReadBillingDemoModelVersionStr:
+		return entry.ModelVersion
+	case stmtsummarybase.ReadBillingDemoWeightVersionStr:
+		return entry.WeightVersion
+	case stmtsummarybase.ReadBillingDemoSiteStr:
+		return entry.Site
+	case stmtsummarybase.ReadBillingDemoOpClassStr:
+		return entry.OpClass
+	case stmtsummarybase.ReadBillingDemoOperatorKindStr:
+		return entry.OperatorKind
+	case stmtsummarybase.ReadBillingDemoDMLKindStr:
+		return entry.DMLKind
+	case stmtsummarybase.ReadBillingDemoUnitStr:
+		return entry.Unit
+	case stmtsummarybase.ReadBillingDemoInputSourceStr:
+		return entry.InputSource
+	case stmtsummarybase.ReadBillingDemoInputSideStr:
+		return entry.InputSide
+	case stmtsummarybase.ReadBillingDemoRowWidthSource:
+		return entry.RowWidthSource
+	case stmtsummarybase.ReadBillingDemoValueStr:
+		return entry.Value
+	case stmtsummarybase.ReadBillingDemoSampleCountStr:
+		return entry.SampleCount
+	case stmtsummarybase.ReadBillingDemoRowWidthSumStr:
+		return entry.RowWidthSum
+	case stmtsummarybase.ReadBillingDemoAvgRowWidthStr:
+		if entry.SampleCount == 0 {
+			return float64(0)
+		}
+		return entry.RowWidthSum / float64(entry.SampleCount)
+	default:
+		return nil
+	}
+}
+
+func readBillingDemoStatusColumnValue(info columnInfo, col string, record *StmtRecord, entry stmtsummarybase.ReadBillingDemoStatusAggEntry) any {
+	if value, ok := readBillingDemoCommonColumnValue(info, col, record); ok {
+		return value
+	}
+	switch col {
+	case stmtsummarybase.ReadBillingDemoModelVersionStr:
+		return entry.ModelVersion
+	case stmtsummarybase.ReadBillingDemoWeightVersionStr:
+		return entry.WeightVersion
+	case stmtsummarybase.ReadBillingDemoSiteStr:
+		return entry.Site
+	case stmtsummarybase.ReadBillingDemoOpClassStr:
+		return entry.OpClass
+	case stmtsummarybase.ReadBillingDemoOperatorKindStr:
+		return entry.OperatorKind
+	case stmtsummarybase.ReadBillingDemoStatusStr:
+		return entry.Status
+	case stmtsummarybase.ReadBillingDemoReasonStr:
+		return entry.Reason
+	case stmtsummarybase.ReadBillingDemoCountStr:
+		return entry.Count
+	default:
+		return nil
+	}
 }
 
 type stmtTinyRecord struct {
@@ -730,7 +1008,10 @@ type stmtParseWorker struct {
 	instanceAddr    string
 	timeLocation    *time.Location
 	checker         *stmtChecker
+	columns         []*model.ColumnInfo
 	columnFactories []columnFactory
+	readBillingDemo bool
+	readBillingKind stmtsummarybase.ReadBillingDemoTableKind
 }
 
 func (w *stmtParseWorker) run(
@@ -779,8 +1060,12 @@ func (w *stmtParseWorker) handleLines(
 			continue
 		}
 
-		row := w.buildRow(record)
-		rows = append(rows, row)
+		if w.readBillingDemo {
+			rows = append(rows, readBillingDemoRowsFromRecord(w, w.columns, record, w.readBillingKind)...)
+		} else {
+			row := w.buildRow(record)
+			rows = append(rows, row)
+		}
 	}
 
 	if len(rows) > 0 {
@@ -821,6 +1106,9 @@ func (w *stmtParseWorker) matchConds(record *StmtRecord) bool {
 		return false
 	}
 	if !w.checker.hasPrivilege(record.AuthUsers) {
+		return false
+	}
+	if !w.readBillingDemo && record.isReadBillingDemoStatusOnly() {
 		return false
 	}
 	return true

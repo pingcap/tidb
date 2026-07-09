@@ -43,6 +43,14 @@ const (
 	ClusterTableStatementsSummaryHistory = "CLUSTER_STATEMENTS_SUMMARY_HISTORY"
 	// ClusterTableStatementsSummaryEvicted is the string constant of cluster statement summary evict table.
 	ClusterTableStatementsSummaryEvicted = "CLUSTER_STATEMENTS_SUMMARY_EVICTED"
+	// ClusterTableStatementsSummaryReadBillingDemoBaseUnits is the string constant of cluster read billing demo base-unit summary table.
+	ClusterTableStatementsSummaryReadBillingDemoBaseUnits = "CLUSTER_STATEMENTS_SUMMARY_READ_BILLING_DEMO_BASE_UNITS"
+	// ClusterTableStatementsSummaryHistoryReadBillingDemoBaseUnits is the string constant of cluster read billing demo history base-unit summary table.
+	ClusterTableStatementsSummaryHistoryReadBillingDemoBaseUnits = "CLUSTER_STATEMENTS_SUMMARY_HISTORY_READ_BILLING_DEMO_BASE_UNITS"
+	// ClusterTableStatementsSummaryReadBillingDemoStatus is the string constant of cluster read billing demo status summary table.
+	ClusterTableStatementsSummaryReadBillingDemoStatus = "CLUSTER_STATEMENTS_SUMMARY_READ_BILLING_DEMO_STATUS"
+	// ClusterTableStatementsSummaryHistoryReadBillingDemoStatus is the string constant of cluster read billing demo history status summary table.
+	ClusterTableStatementsSummaryHistoryReadBillingDemoStatus = "CLUSTER_STATEMENTS_SUMMARY_HISTORY_READ_BILLING_DEMO_STATUS"
 	// ClusterTableTiDBStatementsStats is the string constant of the cluster statement stats table.
 	ClusterTableTiDBStatementsStats = "CLUSTER_TIDB_STATEMENTS_STATS"
 	// ClusterTableTiDBTrx is the string constant of cluster transaction running table.
@@ -63,19 +71,23 @@ const (
 
 // memTableToAllTiDBClusterTables means add memory table to cluster table that will send cop request to all TiDB nodes.
 var memTableToAllTiDBClusterTables = map[string]string{
-	TableSlowQuery:                ClusterTableSlowLog,
-	TableProcesslist:              ClusterTableProcesslist,
-	TableStatementsSummary:        ClusterTableStatementsSummary,
-	TableStatementsSummaryHistory: ClusterTableStatementsSummaryHistory,
-	TableStatementsSummaryEvicted: ClusterTableStatementsSummaryEvicted,
-	TableTiDBStatementsStats:      ClusterTableTiDBStatementsStats,
-	TableTiDBTrx:                  ClusterTableTiDBTrx,
-	TableDeadlocks:                ClusterTableDeadlocks,
-	TableTrxSummary:               ClusterTableTrxSummary,
-	TableMemoryUsage:              ClusterTableMemoryUsage,
-	TableMemoryUsageOpsHistory:    ClusterTableMemoryUsageOpsHistory,
-	TableTiDBIndexUsage:           ClusterTableTiDBIndexUsage,
-	TableTiDBPlanCache:            ClusterTableTiDBPlanCache,
+	TableSlowQuery:                                        ClusterTableSlowLog,
+	TableProcesslist:                                      ClusterTableProcesslist,
+	TableStatementsSummary:                                ClusterTableStatementsSummary,
+	TableStatementsSummaryHistory:                         ClusterTableStatementsSummaryHistory,
+	TableStatementsSummaryEvicted:                         ClusterTableStatementsSummaryEvicted,
+	TableStatementsSummaryReadBillingDemoBaseUnits:        ClusterTableStatementsSummaryReadBillingDemoBaseUnits,
+	TableStatementsSummaryHistoryReadBillingDemoBaseUnits: ClusterTableStatementsSummaryHistoryReadBillingDemoBaseUnits,
+	TableStatementsSummaryReadBillingDemoStatus:           ClusterTableStatementsSummaryReadBillingDemoStatus,
+	TableStatementsSummaryHistoryReadBillingDemoStatus:    ClusterTableStatementsSummaryHistoryReadBillingDemoStatus,
+	TableTiDBStatementsStats:                              ClusterTableTiDBStatementsStats,
+	TableTiDBTrx:                                          ClusterTableTiDBTrx,
+	TableDeadlocks:                                        ClusterTableDeadlocks,
+	TableTrxSummary:                                       ClusterTableTrxSummary,
+	TableMemoryUsage:                                      ClusterTableMemoryUsage,
+	TableMemoryUsageOpsHistory:                            ClusterTableMemoryUsageOpsHistory,
+	TableTiDBIndexUsage:                                   ClusterTableTiDBIndexUsage,
+	TableTiDBPlanCache:                                    ClusterTableTiDBPlanCache,
 }
 
 var memTableToAllTiDBClusterTablesWithLowerCase = make(map[string]string)

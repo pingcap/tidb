@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -41,8 +40,10 @@ import (
 
 // nextIOAcc accumulates input volume for a single Executor.Next() invocation.
 type nextIOAcc struct {
-	inRows  int64
-	inCells int64
+	inRows     int64
+	inCells    int64
+	inBytes    int64
+	trackBytes bool
 }
 
 func (a *nextIOAcc) reset() {
@@ -51,6 +52,8 @@ func (a *nextIOAcc) reset() {
 	}
 	stdatomic.StoreInt64(&a.inRows, 0)
 	stdatomic.StoreInt64(&a.inCells, 0)
+	stdatomic.StoreInt64(&a.inBytes, 0)
+	a.trackBytes = false
 }
 
 func calcCellCount(rows, cols int) int64 {
@@ -60,13 +63,16 @@ func calcCellCount(rows, cols int) int64 {
 	return int64(rows) * int64(cols)
 }
 
-// addInput adds rows and cells (rows*cols) into the accumulator.
-func (a *nextIOAcc) addInput(rows, cols int) {
+// addInput adds rows, cells (rows*cols), and optional bytes into the accumulator.
+func (a *nextIOAcc) addInput(rows, cols int, bytes int64) {
 	if a == nil || rows <= 0 {
 		return
 	}
 	stdatomic.AddInt64(&a.inRows, int64(rows))
 	stdatomic.AddInt64(&a.inCells, calcCellCount(rows, cols))
+	if bytes > 0 {
+		stdatomic.AddInt64(&a.inBytes, bytes)
+	}
 }
 
 type nextIOAccKeyType struct{}
@@ -392,10 +398,12 @@ type executorStats struct {
 	normalizedSQL          string
 	normalizedPlan         string
 	inRestrictedSQL        bool
+	collectRuntimeBytes    bool
 }
 
 // newExecutorStats creates a new `executorStats`
-func newExecutorStats(stmtCtx *stmtctx.StatementContext, id int) executorStats {
+func newExecutorStats(vars *variable.SessionVars, id int) executorStats {
+	stmtCtx := vars.StmtCtx
 	normalizedSQL, sqlDigest := stmtCtx.SQLDigest()
 	normalizedPlan, planDigest := stmtCtx.GetPlanDigest()
 	e := executorStats{
@@ -405,6 +413,7 @@ func newExecutorStats(stmtCtx *stmtctx.StatementContext, id int) executorStats {
 		normalizedPlan:         normalizedPlan,
 		planDigest:             planDigest,
 		inRestrictedSQL:        stmtCtx.InRestrictedSQL,
+		collectRuntimeBytes:    needReadBillingRuntimeBytes(vars),
 	}
 
 	if stmtCtx.RuntimeStatsColl != nil {
@@ -414,6 +423,17 @@ func newExecutorStats(stmtCtx *stmtctx.StatementContext, id int) executorStats {
 	}
 
 	return e
+}
+
+func needReadBillingRuntimeBytes(vars *variable.SessionVars) bool {
+	if vars == nil || vars.StmtCtx == nil {
+		return false
+	}
+	if vars.EnableReadBillingDemo {
+		return true
+	}
+	stmtCtx := vars.StmtCtx
+	return stmtCtx.InExplainStmt && stmtCtx.InExplainAnalyzeStmt && stmtCtx.ExplainFormat == types.ExplainFormatRU
 }
 
 // RuntimeStats returns the runtime stats of an executor.
@@ -464,7 +484,7 @@ func NewBaseExecutorV2(vars *variable.SessionVars, schema *expression.Schema, id
 	executorMeta := newExecutorMeta(schema, id, children...)
 	e := BaseExecutorV2{
 		executorMeta:           executorMeta,
-		executorStats:          newExecutorStats(vars.StmtCtx, id),
+		executorStats:          newExecutorStats(vars, id),
 		executorChunkAllocator: newExecutorChunkAllocator(vars, executorMeta.RetFieldTypes()),
 		executorKillerHandler:  newExecutorKillerHandler(&vars.SQLKiller),
 	}
@@ -510,6 +530,10 @@ func (e *BaseExecutorV2) reusableNextIOAcc() *nextIOAcc {
 
 func (e *BaseExecutorV2) ruv2NextCache() *ruv2NextCacheState {
 	return &e.ruv2CacheState
+}
+
+func (e *BaseExecutorV2) needReadBillingRuntimeBytes() bool {
+	return e.collectRuntimeBytes && e.runtimeStats != nil
 }
 
 // BuildNewBaseExecutorV2 builds a new `BaseExecutorV2` based on the configuration of the current base executor.
@@ -630,9 +654,10 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) (err error) {
 			err = util.GetRecoverError(r)
 		}
 	}()
-	if e.RuntimeStats() != nil {
+	runtimeStats := e.RuntimeStats()
+	if runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.RuntimeStats().Record(time.Since(start), req.NumRows()) }()
+		defer func() { runtimeStats.Record(time.Since(start), req.NumRows()) }()
 	}
 
 	if err := e.HandleSQLKillerSignal(); err != nil {
@@ -640,11 +665,12 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) (err error) {
 	}
 
 	var (
-		regionName  string
-		info        ruv2ExecutorMetric
-		trackRUV2   bool
-		ruv2Metrics *execdetails.RUV2Metrics
-		recorder    execdetails.ExecutorMetricRecorder
+		regionName        string
+		info              ruv2ExecutorMetric
+		trackRUV2         bool
+		trackRuntimeBytes bool
+		ruv2Metrics       *execdetails.RUV2Metrics
+		recorder          execdetails.ExecutorMetricRecorder
 	)
 	if provider, ok := e.(ruv2CacheProvider); ok {
 		cache := provider.ruv2NextCache()
@@ -670,16 +696,19 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) (err error) {
 	// A tracked-type executor whose statement is bypassed leaves ruv2Metrics nil
 	// and must skip the per-child IO accumulator setup as well as the late update.
 	trackRUV2 = ruv2Metrics != nil
+	if provider, ok := e.(interface{ needReadBillingRuntimeBytes() bool }); ok {
+		trackRuntimeBytes = provider.needReadBillingRuntimeBytes()
+	}
 
 	r, ctx := tracing.StartRegionEx(ctx, regionName)
 	defer r.End()
 
 	parentAcc, _ := ctx.Value(nextIOAccKey).(*nextIOAcc)
 	childCount := 0
-	if trackRUV2 || parentAcc != nil {
+	if trackRUV2 || trackRuntimeBytes || parentAcc != nil {
 		childCount = len(e.AllChildren())
 	}
-	needLocalAcc := needNextIOAcc(trackRUV2, parentAcc, childCount)
+	needLocalAcc := needNextIOAcc(trackRUV2 || trackRuntimeBytes, parentAcc, childCount)
 	var myAcc *nextIOAcc
 	if needLocalAcc {
 		// Keep descendant IO local to this executor before optionally bubbling the
@@ -687,6 +716,7 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) (err error) {
 		// local accumulator, and BaseExecutorV2-backed executors can reuse one
 		// across Next() calls.
 		myAcc = getReusableNextIOAcc(e)
+		myAcc.trackBytes = trackRuntimeBytes
 		ctx = context.WithValue(ctx, nextIOAccKey, myAcc)
 	}
 
@@ -699,8 +729,22 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) (err error) {
 
 	outRows := req.NumRows()
 	outCols := req.NumCols()
+	var outBytes int64
+	if trackRuntimeBytes || (parentAcc != nil && parentAcc.trackBytes) {
+		outBytes = req.LogicalLiveBytes()
+	}
 	if parentAcc != nil {
-		parentAcc.addInput(outRows, outCols)
+		parentAcc.addInput(outRows, outCols, outBytes)
+	}
+
+	var inRows, inCells, inBytes int64
+	if myAcc != nil {
+		inRows = stdatomic.LoadInt64(&myAcc.inRows)
+		inCells = stdatomic.LoadInt64(&myAcc.inCells)
+		inBytes = stdatomic.LoadInt64(&myAcc.inBytes)
+	}
+	if trackRuntimeBytes && runtimeStats != nil {
+		runtimeStats.RecordBytes(inBytes, outBytes)
 	}
 
 	if !trackRUV2 {
@@ -708,11 +752,6 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) (err error) {
 		return e.HandleSQLKillerSignal()
 	}
 
-	var inRows, inCells int64
-	if myAcc != nil {
-		inRows = stdatomic.LoadInt64(&myAcc.inRows)
-		inCells = stdatomic.LoadInt64(&myAcc.inCells)
-	}
 	outCells := calcCellCount(outRows, outCols)
 	addRUV2ExecutorMetricCached(ruv2Metrics, info, recorder, inRows, int64(outRows), inCells, outCells)
 	// recheck whether the session/query is killed during the Next()

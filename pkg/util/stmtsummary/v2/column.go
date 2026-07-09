@@ -144,6 +144,9 @@ const (
 	MaxQueuedRcTimeStr                         = "MAX_QUEUED_RC_TIME"
 	AvgRequestUnitV2                           = "AVG_REQUEST_UNIT_V2"
 	MaxRequestUnitV2                           = "MAX_REQUEST_UNIT_V2"
+	SumReadBillingDemoFixedEventsStr           = "SUM_READ_BILLING_DEMO_FIXED_EVENTS"
+	SumReadBillingDemoInputRowsStr             = "SUM_READ_BILLING_DEMO_INPUT_ROWS"
+	SumReadBillingDemoInputBytesStr            = "SUM_READ_BILLING_DEMO_INPUT_BYTES"
 	ResourceGroupName                          = "RESOURCE_GROUP"
 	SumUnpackedBytesSentTiKVTotalStr           = "SUM_UNPACKED_BYTES_SENT_TIKV_TOTAL"
 	SumUnpackedBytesReceivedTiKVTotalStr       = "SUM_UNPACKED_BYTES_RECEIVED_TIKV_TOTAL"
@@ -522,6 +525,15 @@ var columnFactoryMap = map[string]columnFactory{
 	},
 	MaxRequestUnitV2: func(_ columnInfo, record *StmtRecord) any {
 		return record.MaxRUV2
+	},
+	SumReadBillingDemoFixedEventsStr: func(_ columnInfo, record *StmtRecord) any {
+		return record.SumReadBillingDemoFixedEvents
+	},
+	SumReadBillingDemoInputRowsStr: func(_ columnInfo, record *StmtRecord) any {
+		return record.SumReadBillingDemoInputRows
+	},
+	SumReadBillingDemoInputBytesStr: func(_ columnInfo, record *StmtRecord) any {
+		return record.SumReadBillingDemoInputBytes
 	},
 	ResourceGroupName: func(_ columnInfo, record *StmtRecord) any {
 		return record.ResourceGroupName

@@ -16,18 +16,29 @@ package executor_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 )
 
@@ -496,6 +507,7 @@ func TestExplainFormatInCtx(t *testing.T) {
 		types.ExplainFormatTiDBJSON,
 		types.ExplainFormatCostTrace,
 		types.ExplainFormatPlanCache,
+		types.ExplainFormatRU,
 	}
 
 	tk.MustExec("select * from t")
@@ -513,6 +525,795 @@ func TestExplainFormatInCtx(t *testing.T) {
 			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 		}
 	}
+}
+
+func TestExplainAnalyzeFormatRUOutput(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	rows := tk.MustQuery("explain analyze format='ru' select 1").Rows()
+	require.NotEmpty(t, rows)
+	require.Equal(t, "summary", rows[0][0])
+	require.Equal(t, "total_preview_ru", rows[0][2])
+	require.Equal(t, "summary_total", rows[0][15])
+	requireExplainRUPlanRow(t, rows)
+
+	tk.MustExec("drop table if exists explain_ru_t")
+	tk.MustExec("create table explain_ru_t(a int primary key, b varchar(20))")
+	tk.MustExec("insert into explain_ru_t values (1, 'x'), (2, 'yy')")
+	_, err := queryExplainRURowsOrErr(t, tk, "explain analyze format='ru' select * from explain_ru_t where a > 0")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "status=unknown_input")
+	require.Contains(t, err.Error(), "reason=missing_scan_detail")
+	require.Contains(t, err.Error(), "operator=tikv/kv_range_scan")
+
+	rows = tk.MustQuery("explain analyze format='ru' select * from explain_ru_t where a = 1").Rows()
+	requireExplainRUWeightedOperatorClass(t, rows, "tikv/kv_point_lookup")
+}
+
+func TestExplainAnalyzeFormatRUTiKVCopOperatorClasses(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists explain_ru_cop")
+	tk.MustExec("create table explain_ru_cop(a int primary key, b int, c varchar(20), key idx_b(b))")
+	tk.MustExec("insert into explain_ru_cop values (1, 10, 'a'), (2, 20, 'bb'), (3, 20, 'ccc'), (4, 30, 'dddd')")
+
+	cases := []struct {
+		sql            string
+		nonScanOpClass string
+	}{
+		{
+			sql:            "explain analyze format='ru' select * from explain_ru_cop ignore index(idx_b) where b > 10",
+			nonScanOpClass: "tikv/filter_eval",
+		},
+		{
+			sql:            "explain analyze format='ru' select a from explain_ru_cop where b > 10",
+			nonScanOpClass: "tikv/projection_eval",
+		},
+		{
+			sql:            "explain analyze format='ru' select * from explain_ru_cop limit 2",
+			nonScanOpClass: "tikv/row_limit",
+		},
+		{
+			sql:            "explain analyze format='ru' select * from explain_ru_cop ignore index(idx_b) order by c limit 2",
+			nonScanOpClass: "tikv/bounded_topn",
+		},
+		{
+			sql:            "explain analyze format='ru' select /*+ agg_to_cop(), hash_agg() */ b, count(*) from explain_ru_cop group by b",
+			nonScanOpClass: "tikv/agg_hash",
+		},
+		{
+			sql:            "explain analyze format='ru' select /*+ agg_to_cop(), stream_agg() */ b, count(*) from explain_ru_cop group by b",
+			nonScanOpClass: "tikv/agg_stream",
+		},
+	}
+	for _, tc := range cases {
+		rows, err := queryExplainRURowsOrErr(t, tk, tc.sql)
+		if err != nil {
+			require.Contains(t, err.Error(), "status=unknown_input", tc.sql)
+			require.Contains(t, err.Error(), "reason=missing_runtime_bytes", tc.sql)
+			require.Contains(t, err.Error(), "operator="+tc.nonScanOpClass, tc.sql)
+			continue
+		}
+		requireExplainRUWeightedOperatorClass(t, rows, "tikv/kv_range_scan")
+		requireNoExplainRUOperatorClass(t, rows, tc.nonScanOpClass)
+	}
+}
+
+func queryExplainRURowsOrErr(t *testing.T, tk *testkit.TestKit, sql string) ([][]any, error) {
+	t.Helper()
+	rs, err := tk.Exec(sql)
+	if err != nil {
+		if rs != nil {
+			require.NoError(t, rs.Close())
+		}
+		return nil, err
+	}
+	fields := rs.Fields()
+	chunkRows, err := session.GetRows4Test(context.Background(), tk.Session(), rs)
+	closeErr := rs.Close()
+	if err != nil {
+		return nil, err
+	}
+	if closeErr != nil {
+		return nil, closeErr
+	}
+	anyRows := make([][]any, len(chunkRows))
+	for i, row := range chunkRows {
+		anyRows[i] = make([]any, row.Len())
+		for j := range row.Len() {
+			if row.IsNull(j) {
+				anyRows[i][j] = "<nil>"
+				continue
+			}
+			datum := row.GetDatum(j, &fields[j].Column.FieldType)
+			value, err := datum.ToString()
+			if err != nil {
+				return nil, err
+			}
+			anyRows[i][j] = value
+		}
+	}
+	return anyRows, nil
+}
+
+func requireExplainRUPlanRow(t *testing.T, rows [][]any) {
+	t.Helper()
+	for _, row := range rows {
+		require.Len(t, row, 17)
+		if row[0] != "plan" {
+			continue
+		}
+		require.NotEmpty(t, row[1])
+		require.NotEmpty(t, row[2])
+		require.Contains(t, fmt.Sprint(row[3]), "/")
+		require.NotEmpty(t, row[4])
+		require.NotEmpty(t, row[8])
+		require.NotEmpty(t, row[11])
+		require.NotEmpty(t, row[12])
+		require.NotEmpty(t, row[13])
+		require.NotEmpty(t, row[14])
+		require.NotEmpty(t, row[15])
+		require.Contains(t, fmt.Sprint(row[16]), "weight_version=v1")
+		return
+	}
+	require.Fail(t, "missing FORMAT='RU' plan row")
+}
+
+func requireNoExplainRUOperatorClass(t *testing.T, rows [][]any, operatorClass string) {
+	t.Helper()
+	for _, row := range rows {
+		require.Len(t, row, 17)
+		if row[0] == "plan" && row[3] == operatorClass {
+			require.Failf(t, "unexpected FORMAT='RU' operator class", "operatorClass=%s rows=%v", operatorClass, rows)
+		}
+	}
+}
+
+func requireExplainRUWeightedOperatorClass(t *testing.T, rows [][]any, operatorClass string) {
+	t.Helper()
+	for _, row := range rows {
+		require.Len(t, row, 17)
+		if row[0] != "plan" || row[3] != operatorClass {
+			continue
+		}
+		require.NotEmpty(t, row[13], "missing weight for %s row %v", operatorClass, row)
+		require.NotEmpty(t, row[14], "missing preview RU for %s row %v", operatorClass, row)
+		require.Contains(t, fmt.Sprint(row[16]), "weight_version=v1")
+		return
+	}
+	require.Failf(t, "missing weighted FORMAT='RU' operator class", "operatorClass=%s rows=%v", operatorClass, rows)
+}
+
+func requireExplainRUDMLRows(t *testing.T, rows [][]any, dmlKind string, requireReadTree, requireTiKV, requireMutations bool) {
+	t.Helper()
+	require.NotEmpty(t, rows)
+	require.Len(t, rows[0], 17)
+	require.Equal(t, "summary", rows[0][0])
+	require.Equal(t, "total_preview_ru", rows[0][2])
+	require.Contains(t, fmt.Sprint(rows[0][16]), "weight_version=v1")
+	require.Contains(t, fmt.Sprint(rows[0][16]), "mutation_weights_uncalibrated=true")
+	require.Contains(t, fmt.Sprint(rows[0][16]), "partial_dml_ancillary_work_partial")
+	summaryPreviewRU, err := strconv.ParseFloat(fmt.Sprint(rows[0][14]), 64)
+	require.NoError(t, err)
+
+	var mutationCountRows, mutationByteRows, writeKeysRows, writeByteRows, partialWriteRows, readRows int
+	var mutationCount float64
+	var planPreviewRU float64
+	seenPlanUnits := make(map[string]struct{})
+	for _, row := range rows {
+		require.Len(t, row, 17)
+		if row[0] != "plan" {
+			continue
+		}
+		if unit := fmt.Sprint(row[11]); unit != "" {
+			key := fmt.Sprintf("%s/%s/%s/%s/%s", row[1], row[3], unit, row[15], row[16])
+			require.NotContains(t, seenPlanUnits, key, "DML plan/unit row must not be emitted twice: %v", row)
+			seenPlanUnits[key] = struct{}{}
+		}
+		if fmt.Sprint(row[14]) != "" {
+			previewRU, err := strconv.ParseFloat(fmt.Sprint(row[14]), 64)
+			require.NoError(t, err)
+			planPreviewRU += previewRU
+		}
+		if row[3] != "tidb/kv_mutation" && row[3] != "tikv/kv_write" {
+			readRows++
+			continue
+		}
+		require.Contains(t, fmt.Sprint(row[16]), "dml_kind="+dmlKind)
+		if row[3] == "tikv/kv_write" && row[11] == "" {
+			partialWriteRows++
+			require.Contains(t, fmt.Sprint(row[16]), "status=partial")
+			require.Contains(t, fmt.Sprint(row[16]), "reason=missing_commit_detail")
+			require.Contains(t, fmt.Sprint(row[16]), "scope=txn_prewrite_payload")
+			continue
+		}
+		switch row[11] {
+		case "encoded_mutation_count":
+			mutationCountRows++
+			require.Equal(t, "memdb_mutation", row[2])
+			require.Equal(t, "tidb/kv_mutation", row[3])
+			require.Equal(t, "stmt_memdb_mutation_calls", row[15])
+			require.Contains(t, fmt.Sprint(row[16]), "scope=statement_attempted")
+			require.Contains(t, fmt.Sprint(row[16]), "uncalibrated=true")
+			mutationCount, err = strconv.ParseFloat(fmt.Sprint(row[12]), 64)
+			require.NoError(t, err)
+		case "encoded_mutation_bytes":
+			mutationByteRows++
+			require.Equal(t, "memdb_mutation", row[2])
+			require.Equal(t, "tidb/kv_mutation", row[3])
+			require.Equal(t, "stmt_memdb_mutation_calls", row[15])
+			require.Contains(t, fmt.Sprint(row[16]), "scope=statement_attempted")
+		case "write_keys":
+			writeKeysRows++
+			require.Equal(t, "txn_prewrite", row[2])
+			require.NotEmpty(t, row[12])
+			require.NotEmpty(t, row[13])
+			require.NotEmpty(t, row[14])
+			require.Equal(t, "commit_detail", row[15])
+			require.Contains(t, fmt.Sprint(row[16]), "scope=txn_prewrite_payload")
+		case "write_byte":
+			writeByteRows++
+			require.Equal(t, "txn_prewrite", row[2])
+			require.NotEmpty(t, row[10])
+			require.NotEmpty(t, row[13])
+			require.NotEmpty(t, row[14])
+			require.Equal(t, "commit_detail", row[15])
+			require.Contains(t, fmt.Sprint(row[16]), "semantic_name=write_bytes")
+		case "prewrite_region_num", "tikv_write_rpc_count":
+			require.NotEmpty(t, row[12])
+			require.Equal(t, "0.000000", row[13])
+			require.Equal(t, "0.000000", row[14])
+			require.Contains(t, fmt.Sprint(row[16]), "diagnostic_only=true")
+		}
+	}
+	require.Equal(t, 1, mutationCountRows, rows)
+	require.Equal(t, 1, mutationByteRows, rows)
+	if requireMutations {
+		require.Positive(t, mutationCount, rows)
+	} else {
+		require.Zero(t, mutationCount, rows)
+	}
+	if requireReadTree {
+		require.Positive(t, readRows, rows)
+	}
+	if requireTiKV {
+		require.Equal(t, 1, writeKeysRows, rows)
+		require.Equal(t, 1, writeByteRows, rows)
+	} else {
+		require.Zero(t, writeKeysRows, rows)
+		require.Zero(t, writeByteRows, rows)
+		require.Equal(t, 1, partialWriteRows, rows)
+		require.Contains(t, fmt.Sprint(rows[0][16]), "partial_missing_commit_detail")
+	}
+	require.InDelta(t, planPreviewRU, summaryPreviewRU, 0.000001)
+}
+
+func requireExplainRUOperatorClass(t *testing.T, rows [][]any, operatorClass string) {
+	t.Helper()
+	for _, row := range rows {
+		if len(row) == 17 && row[0] == "plan" && row[3] == operatorClass {
+			return
+		}
+	}
+	require.Failf(t, "missing RU operator class", "operatorClass=%s rows=%v", operatorClass, rows)
+}
+
+func explainRUCountUnitValue(t *testing.T, rows [][]any, operatorClass, unit string) float64 {
+	t.Helper()
+	for _, row := range rows {
+		if len(row) != 17 || row[0] != "plan" || row[3] != operatorClass || row[11] != unit {
+			continue
+		}
+		value, err := strconv.ParseFloat(fmt.Sprint(row[12]), 64)
+		require.NoError(t, err)
+		return value
+	}
+	require.Failf(t, "missing RU count unit", "operatorClass=%s unit=%s rows=%v", operatorClass, unit, rows)
+	return 0
+}
+
+func TestExplainAnalyzeFormatRUPlanDigest(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	tk.MustExec("use test")
+
+	originEnableStmtSummary := fmt.Sprint(tk.MustQuery("select @@global.tidb_enable_stmt_summary").Rows()[0][0])
+	originStmtSummaryRefreshInterval := fmt.Sprint(tk.MustQuery("select @@global.tidb_stmt_summary_refresh_interval").Rows()[0][0])
+	originStmtSummaryHistorySize := fmt.Sprint(tk.MustQuery("select @@global.tidb_stmt_summary_history_size").Rows()[0][0])
+	defer tk.MustExec(fmt.Sprintf("set global tidb_enable_stmt_summary = %s", originEnableStmtSummary))
+	defer tk.MustExec(fmt.Sprintf("set global tidb_stmt_summary_refresh_interval = %s", originStmtSummaryRefreshInterval))
+	defer tk.MustExec(fmt.Sprintf("set global tidb_stmt_summary_history_size = %s", originStmtSummaryHistorySize))
+	tk.MustExec("set global tidb_stmt_summary_history_size = 24")
+	tk.MustExec("set global tidb_stmt_summary_refresh_interval = 999999999")
+	tk.MustExec("set global tidb_enable_stmt_summary = 0")
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+
+	tk.MustExec("drop table if exists explain_ru_digest")
+	tk.MustExec("create table explain_ru_digest(a int primary key, b int)")
+	tk.MustExec("insert into explain_ru_digest values (1, 10)")
+	tk.MustQuery("select b from explain_ru_digest where a = 1").Check(testkit.Rows("10"))
+
+	digestRows := tk.MustQuery("select plan_digest from information_schema.statements_summary_history where digest_text like 'select `b` from `explain_ru_digest`%' and plan_digest != ''").Rows()
+	require.NotEmpty(t, digestRows)
+	planDigest := fmt.Sprint(digestRows[0][0])
+	rows := tk.MustQuery(fmt.Sprintf("explain analyze format='ru' '%s'", planDigest)).Rows()
+	require.NotEmpty(t, rows)
+	require.Equal(t, "summary", rows[0][0])
+	requireExplainRUPlanRow(t, rows)
+}
+
+func TestExplainAnalyzeFormatRUWriteDML(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists explain_ru_write")
+	tk.MustExec("create table explain_ru_write(a int primary key, b int, c varchar(20), key idx_b(b))")
+	tk.MustExec("drop table if exists explain_ru_write_src")
+	tk.MustExec("create table explain_ru_write_src(a int primary key, b int, c varchar(20))")
+	tk.MustExec("insert into explain_ru_write_src values (2, 20, 'src2'), (3, 30, 'src3')")
+
+	rows, err := queryExplainRURowsOrErr(t, tk, "explain analyze format='ru' insert into explain_ru_write values (1, 10, 'aa')")
+	require.NoError(t, err)
+	requireExplainRUDMLRows(t, rows, "insert", false, true, true)
+	require.Equal(t, 2.0, explainRUCountUnitValue(t, rows, "tidb/kv_mutation", "encoded_mutation_count"), rows)
+	require.Equal(t, 2.0, explainRUCountUnitValue(t, rows, "tidb/kv_mutation", "set_count"), rows)
+	require.Zero(t, explainRUCountUnitValue(t, rows, "tidb/kv_mutation", "delete_count"), rows)
+	tk.MustQuery("select a, b, c from explain_ru_write").Check(testkit.Rows("1 10 aa"))
+
+	rows, err = queryExplainRURowsOrErr(t, tk, "explain analyze format='ru' insert into explain_ru_write select * from explain_ru_write_src where a = 2")
+	require.NoError(t, err)
+	requireExplainRUDMLRows(t, rows, "insert", true, true, true)
+
+	rows, err = queryExplainRURowsOrErr(t, tk, "explain analyze format='ru' insert into explain_ru_write values (2, 20, 'upsert') on duplicate key update c = values(c)")
+	require.NoError(t, err)
+	requireExplainRUDMLRows(t, rows, "upsert", false, true, true)
+
+	rows, err = queryExplainRURowsOrErr(t, tk, "explain analyze format='ru' insert ignore into explain_ru_write values (2, 20, 'ignored')")
+	require.NoError(t, err)
+	requireExplainRUDMLRows(t, rows, "insert_ignore", false, false, false)
+
+	rows, err = queryExplainRURowsOrErr(t, tk, "explain analyze format='ru' insert into explain_ru_write with cte as (select * from explain_ru_write_src where a = 3) select * from cte")
+	require.NoError(t, err)
+	requireExplainRUDMLRows(t, rows, "insert", true, true, true)
+
+	rows, err = queryExplainRURowsOrErr(t, tk, "explain analyze format='ru' update explain_ru_write set c = (select 'scalar') where a = 3")
+	require.NoError(t, err)
+	requireExplainRUDMLRows(t, rows, "update", true, true, true)
+
+	// Changing an indexed column emits one record Set plus an index Delete/Set.
+	rows, err = queryExplainRURowsOrErr(t, tk, "explain analyze format='ru' update explain_ru_write set b = 21 where a = 2")
+	require.NoError(t, err)
+	requireExplainRUDMLRows(t, rows, "update", true, true, true)
+	require.Equal(t, 3.0, explainRUCountUnitValue(t, rows, "tidb/kv_mutation", "encoded_mutation_count"), rows)
+	require.Equal(t, 2.0, explainRUCountUnitValue(t, rows, "tidb/kv_mutation", "set_count"), rows)
+	require.Equal(t, 1.0, explainRUCountUnitValue(t, rows, "tidb/kv_mutation", "delete_count"), rows)
+
+	rows, err = queryExplainRURowsOrErr(t, tk, "explain analyze format='ru' update explain_ru_write set c = 'bbb' where b >= 10")
+	require.NoError(t, err)
+	requireExplainRUDMLRows(t, rows, "update", true, true, true)
+	tk.MustQuery("select a, b, c from explain_ru_write order by a").Check(testkit.Rows("1 10 bbb", "2 21 bbb", "3 30 bbb"))
+
+	rows, err = queryExplainRURowsOrErr(t, tk, "explain analyze format='ru' update explain_ru_write set c = 'never' where a = 999")
+	require.NoError(t, err)
+	requireExplainRUDMLRows(t, rows, "update", true, false, false)
+
+	// A matched but unchanged row only contributes read/compare work. The
+	// unchanged-key lock bookkeeping must not become a MemDB mutation.
+	rows, err = queryExplainRURowsOrErr(t, tk, "explain analyze format='ru' update explain_ru_write set c = 'bbb' where a = 2")
+	require.NoError(t, err)
+	requireExplainRUDMLRows(t, rows, "update", true, false, false)
+
+	rows, err = queryExplainRURowsOrErr(t, tk, "explain analyze format='ru' delete from explain_ru_write where b = 10")
+	require.NoError(t, err)
+	requireExplainRUDMLRows(t, rows, "delete", true, true, true)
+	require.Equal(t, 2.0, explainRUCountUnitValue(t, rows, "tidb/kv_mutation", "encoded_mutation_count"), rows)
+	require.Zero(t, explainRUCountUnitValue(t, rows, "tidb/kv_mutation", "set_count"), rows)
+	require.Equal(t, 2.0, explainRUCountUnitValue(t, rows, "tidb/kv_mutation", "delete_count"), rows)
+	tk.MustQuery("select a, b, c from explain_ru_write order by a").Check(testkit.Rows("2 21 bbb", "3 30 bbb"))
+
+	// Keep the join, projection, sort, reader, filter, and scan descendants of
+	// INSERT SELECT visible alongside the shared mutation/write operators.
+	tk.MustExec("create table explain_ru_write_join_dst(a int primary key, b int, c varchar(20))")
+	tk.MustExec("create table explain_ru_write_join_dim(a int primary key, d int)")
+	tk.MustExec("insert into explain_ru_write_join_dim values (2, 200), (3, 300)")
+	rows, err = queryExplainRURowsOrErr(t, tk, "explain analyze format='ru' insert into explain_ru_write_join_dst select /*+ hash_join(s, d) */ s.a, s.b, s.c from explain_ru_write_src s join explain_ru_write_join_dim d on s.a = d.a where d.d >= 200 order by d.d + s.b desc")
+	require.NoError(t, err)
+	requireExplainRUDMLRows(t, rows, "insert", true, true, true)
+	for _, operatorClass := range []string{
+		"tidb/join_hash",
+		"tidb/full_ordering",
+		"tidb/projection_eval",
+		"tidb/reader_receive",
+		"tikv/filter_eval",
+		"tikv/kv_range_scan",
+	} {
+		requireExplainRUOperatorClass(t, rows, operatorClass)
+	}
+	tk.MustQuery("select * from explain_ru_write_join_dst order by a").Check(testkit.Rows("2 20 src2", "3 30 src3"))
+
+	// An unsupported reader must make only that operator partial. The scans
+	// below it still belong to the DML plan tree and must remain in the output.
+	tk.MustExec("set tidb_enable_index_merge=on")
+	tk.MustExec("create table explain_ru_write_index_merge(id int primary key, a int, b int, c int, key idx_a(a), key idx_b(b))")
+	tk.MustExec("insert into explain_ru_write_index_merge values (1, 10, 1, 1), (2, 2, 20, 2)")
+	rows, err = queryExplainRURowsOrErr(t, tk, "explain analyze format='ru' update /*+ use_index_merge(explain_ru_write_index_merge, idx_a, idx_b) */ explain_ru_write_index_merge set c = c + 1 where a = 10 or b = 20")
+	require.NoError(t, err)
+	requireExplainRUDMLRows(t, rows, "update", true, true, true)
+	require.Contains(t, fmt.Sprint(rows[0][16]), "partial_unsupported_index_merge")
+	var hasPartialIndexMerge, hasPartialScan bool
+	for _, row := range rows {
+		if len(row) != 17 || row[0] != "plan" || !strings.Contains(fmt.Sprint(row[16]), "status=partial") {
+			continue
+		}
+		note := fmt.Sprint(row[16])
+		hasPartialIndexMerge = hasPartialIndexMerge || strings.Contains(note, "reason=unsupported_index_merge")
+		hasPartialScan = hasPartialScan ||
+			(strings.Contains(strings.ToLower(fmt.Sprint(row[2])), "scan") && strings.Contains(note, "reason=missing_scan_detail"))
+	}
+	require.True(t, hasPartialIndexMerge, rows)
+	require.True(t, hasPartialScan, rows)
+
+	tk.MustExec("begin")
+	rows, err = queryExplainRURowsOrErr(t, tk, "explain analyze format='ru' update explain_ru_write set c = 'txn' where a = 2")
+	require.NoError(t, err)
+	requireExplainRUDMLRows(t, rows, "update", true, false, true)
+
+	// The next statement gets a fresh recorder even though it shares the same
+	// explicit transaction and the previous statement attempted mutations.
+	rows, err = queryExplainRURowsOrErr(t, tk, "explain analyze format='ru' update explain_ru_write set c = 'never' where a = 999")
+	require.NoError(t, err)
+	requireExplainRUDMLRows(t, rows, "update", true, false, false)
+
+	tk.MustExec("savepoint explain_ru_write_savepoint")
+	rows, err = queryExplainRURowsOrErr(t, tk, "explain analyze format='ru' update explain_ru_write set c = 'savepoint' where a = 3")
+	require.NoError(t, err)
+	requireExplainRUDMLRows(t, rows, "update", true, false, true)
+	tk.MustExec("rollback to savepoint explain_ru_write_savepoint")
+	tk.MustQuery("select c from explain_ru_write where a = 3").Check(testkit.Rows("bbb"))
+	tk.MustExec("rollback")
+	tk.MustQuery("select a, b, c from explain_ru_write order by a").Check(testkit.Rows("2 21 bbb", "3 30 bbb"))
+
+	tk.MustExec("create temporary table explain_ru_write_tmp(a int primary key)")
+	rows, err = queryExplainRURowsOrErr(t, tk, "explain analyze format='ru' insert into explain_ru_write_tmp values (1)")
+	require.NoError(t, err)
+	requireExplainRUDMLRows(t, rows, "insert", false, false, true)
+	require.Equal(t, 1.0, explainRUCountUnitValue(t, rows, "tidb/kv_mutation", "encoded_mutation_count"), rows)
+
+	originalEnableBatchDML := fmt.Sprint(tk.MustQuery("select @@global.tidb_enable_batch_dml").Rows()[0][0])
+	defer tk.MustExec("set global tidb_enable_batch_dml=" + originalEnableBatchDML)
+	tk.MustExec("set global tidb_enable_batch_dml=on")
+	tk.MustExec("set tidb_batch_insert=on")
+	tk.MustExec("set tidb_dml_batch_size=1")
+	tk.MustExec("create table explain_ru_write_batch(a int primary key)")
+	rows, err = queryExplainRURowsOrErr(t, tk, "explain analyze format='ru' insert into explain_ru_write_batch values (1), (2)")
+	require.NoError(t, err)
+	requireExplainRUDMLRows(t, rows, "insert", false, true, true)
+	require.Equal(t, 2.0, explainRUCountUnitValue(t, rows, "tidb/kv_mutation", "encoded_mutation_count"), rows)
+}
+
+func TestExplainAnalyzeFormatRUUnsupportedTargetsBeforeExecution(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists explain_ru_dml")
+	tk.MustExec("create table explain_ru_dml(a int primary key)")
+	tk.MustExec("insert into explain_ru_dml values (1)")
+
+	err := tk.ExecToErr("explain format='ru' select 1")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "cannot work without 'analyze'")
+	require.Contains(t, err.Error(), "format=ru")
+
+	err = tk.ExecToErr("explain analyze format=ru select 1")
+	require.Error(t, err)
+
+	for _, sql := range []string{
+		"explain analyze format='ru' replace into explain_ru_dml values (2)",
+		"explain analyze format='ru' alter table explain_ru_dml add column b int",
+		"explain analyze format='ru' import into explain_ru_dml from select * from explain_ru_dml",
+	} {
+		err = tk.ExecToErr(sql)
+		require.Error(t, err, sql)
+		require.Contains(t, err.Error(), "unsupported_non_select", sql)
+		tk.MustQuery("select * from explain_ru_dml order by a").Check(testkit.Rows("1"))
+	}
+	tk.MustQuery("show columns from explain_ru_dml").Check(testkit.Rows("a int(11) NO PRI <nil> "))
+
+	err = tk.ExecToErr("explain analyze format='ru' values (1)")
+	require.Error(t, err)
+
+	err = tk.ExecToErr("explain analyze format='ru' table explain_ru_dml")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unsupported_non_select")
+
+	tk.MustExec("set @explain_ru_var := 7")
+	err = tk.ExecToErr("explain analyze format='ru' select @explain_ru_var := 9")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unsupported_side_effecting_select")
+	tk.MustQuery("select @explain_ru_var").Check(testkit.Rows("7"))
+
+	tk.MustQuery("select last_insert_id(11)").Check(testkit.Rows("11"))
+	err = tk.ExecToErr("explain analyze format='ru' select last_insert_id(123)")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unsupported_side_effecting_select")
+	tk.MustQuery("select last_insert_id()").Check(testkit.Rows("11"))
+
+	outFile := filepath.Join(t.TempDir(), "explain_ru.csv")
+	err = tk.ExecToErr(fmt.Sprintf("explain analyze format='ru' select 1 into outfile %q", outFile))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unsupported_side_effecting_select")
+	_, statErr := os.Stat(outFile)
+	require.True(t, os.IsNotExist(statErr))
+
+	err = tk.ExecToErr("explain analyze format='ru' select * from explain_ru_dml for update skip locked")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unsupported_locking_select")
+
+	err = tk.ExecToErr("explain analyze format='ru' select get_lock('explain_ru', 0)")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unsupported_side_effecting_select")
+	tk.MustQuery("select is_free_lock('explain_ru')").Check(testkit.Rows("1"))
+}
+
+func TestReadBillingDemoMetricsHook(t *testing.T) {
+	metrics.InitExplainRUMetrics()
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	tk.MustExec("use test")
+
+	originEnableStmtSummary := fmt.Sprint(tk.MustQuery("select @@global.tidb_enable_stmt_summary").Rows()[0][0])
+	defer tk.MustExec(fmt.Sprintf("set global tidb_enable_stmt_summary = %s", originEnableStmtSummary))
+	tk.MustExec("set global tidb_enable_stmt_summary = 0")
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+
+	tk.MustQuery("select @@tidb_enable_read_billing_demo").Check(testkit.Rows("0"))
+	tk.MustExec("drop table if exists read_billing_demo")
+	tk.MustExec("create table read_billing_demo(a int primary key)")
+	tk.MustExec("insert into read_billing_demo values (1), (2)")
+
+	success := metrics.ReadBillingDemoStatementsCounter.WithLabelValues("success", "v2")
+	unsupported := metrics.ReadBillingDemoStatementsCounter.WithLabelValues("unsupported", "v2")
+	unknownInput := metrics.ReadBillingDemoStatementsCounter.WithLabelValues("unknown_input", "v2")
+	errorStatus := metrics.ReadBillingDemoStatementsCounter.WithLabelValues("error", "v2")
+	projectionFixedEvents := metrics.ReadBillingDemoBaseUnitsCounter.WithLabelValues("tidb", "projection_eval", "projection", "fixed_events", "runtime_chunk_bytes", "all", "v2")
+	mutationCount := metrics.ReadBillingDemoBaseUnitsCounter.WithLabelValues("tidb", "kv_mutation", "memdb_mutation", "encoded_mutation_count", "stmt_memdb_mutation_calls", "all", "v2")
+	mutationBytes := metrics.ReadBillingDemoBaseUnitsCounter.WithLabelValues("tidb", "kv_mutation", "memdb_mutation", "encoded_mutation_bytes", "stmt_memdb_mutation_calls", "all", "v2")
+	writeKeys := metrics.ReadBillingDemoBaseUnitsCounter.WithLabelValues("tikv", "kv_write", "txn_prewrite", "write_keys", "commit_detail", "all", "v2")
+	writeByte := metrics.ReadBillingDemoBaseUnitsCounter.WithLabelValues("tikv", "kv_write", "txn_prewrite", "write_byte", "commit_detail", "all", "v2")
+
+	tk.MustQuery("select 1 + 1").Check(testkit.Rows("2"))
+	require.Equal(t, 0.0, readExecutorCounterValue(t, success))
+
+	tk.MustExec("set tidb_enable_read_billing_demo=on")
+	tk.MustQuery("select 1 + 1").Check(testkit.Rows("2"))
+	require.Equal(t, 1.0, readExecutorCounterValue(t, success))
+	require.Equal(t, 1.0, readExecutorCounterValue(t, projectionFixedEvents))
+	tk.MustExec("set tidb_enable_read_billing_demo=off")
+	tk.MustQuery(`select exec_count, sum_read_billing_demo_fixed_events > 0, sum_read_billing_demo_input_rows > 0, sum_read_billing_demo_input_bytes = 0 from information_schema.statements_summary where digest_text = 'select ? + ?'`).Check(testkit.Rows("2 1 1 1"))
+	tk.MustQuery(`select site, op_class, operator_kind, unit, input_source, input_side, model_version, weight_version, sample_count, value > 0, avg_row_width = 0 from information_schema.statements_summary_read_billing_demo_base_units where digest_text = 'select ? + ?' and site = 'tidb' and op_class = 'projection_eval' and operator_kind = 'projection' and unit = 'fixed_events'`).Check(testkit.Rows("tidb projection_eval projection fixed_events runtime_chunk_bytes all v2 v1 1 1 1"))
+	tk.MustQuery(`select site, op_class, operator_kind, status, reason, count from information_schema.statements_summary_read_billing_demo_status where digest_text = 'select ? + ?' and site = 'statement'`).Check(testkit.Rows("statement statement statement success none 1"))
+	tk.MustQuery(`select column_name from information_schema.columns where table_schema = 'INFORMATION_SCHEMA' and table_name = 'CLUSTER_STATEMENTS_SUMMARY_READ_BILLING_DEMO_BASE_UNITS' and ordinal_position = 1`).Check(testkit.Rows("INSTANCE"))
+	// Append the diagnostic dimension so consumers that depend on the existing
+	// base-unit column ordinals keep seeing UNIT and every later legacy column
+	// at the same position.
+	tk.MustQuery(`select column_name, ordinal_position from information_schema.columns where table_schema = 'INFORMATION_SCHEMA' and table_name = 'STATEMENTS_SUMMARY_READ_BILLING_DEMO_BASE_UNITS' and column_name in ('UNIT', 'DML_KIND') order by ordinal_position`).Check(testkit.Rows(
+		"UNIT 14",
+		"DML_KIND 22",
+	))
+	tk.MustExec("set tidb_enable_read_billing_demo=on")
+
+	beforeRestrictedSuccess := readExecutorCounterValue(t, success)
+	beforeRestrictedBaseUnits := readExecutorCounterValue(t, projectionFixedEvents)
+	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	_, _, restrictedErr := tk.Session().GetRestrictedSQLExecutor().ExecRestrictedSQL(internalCtx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, "select 1 + 1")
+	require.NoError(t, restrictedErr)
+	require.Equal(t, beforeRestrictedSuccess, readExecutorCounterValue(t, success))
+	require.Equal(t, beforeRestrictedBaseUnits, readExecutorCounterValue(t, projectionFixedEvents))
+
+	// The statement-taking restricted API must also mark a current-session DML
+	// as internal. It may modify its target table, but must not become a
+	// foreground mutation sample merely because the preview flag is enabled.
+	tk.MustExec("create table read_billing_internal(a int primary key)")
+	beforeRestrictedSuccess = readExecutorCounterValue(t, success)
+	beforeRestrictedMutation := readExecutorCounterValue(t, mutationCount)
+	internalInsert, err := session.ParseWithParams4Test(context.Background(), tk.Session(), "insert into read_billing_internal values (1)")
+	require.NoError(t, err)
+	_, _, restrictedErr = tk.Session().GetRestrictedSQLExecutor().ExecRestrictedStmt(internalCtx, internalInsert, sqlexec.ExecOptionUseCurSession)
+	require.NoError(t, restrictedErr)
+	tk.MustQuery("select * from read_billing_internal").Check(testkit.Rows("1"))
+	require.Equal(t, beforeRestrictedSuccess, readExecutorCounterValue(t, success))
+	require.Equal(t, beforeRestrictedMutation, readExecutorCounterValue(t, mutationCount))
+
+	// Preview collection is isolated from production RUv2. Equivalent INSERTs
+	// with the flag off/on retain identical RUv2 inputs, while only the enabled
+	// statement publishes preview mutation units.
+	tk.MustExec("set tidb_enable_read_billing_demo=off")
+	tk.MustExec("create table read_billing_ruv2_off(a int primary key)")
+	tk.MustExec("create table read_billing_ruv2_on(a int primary key)")
+	tk.MustExec("create table read_billing_plain_explain(a int primary key)")
+	beforeFlagOffMutation := readExecutorCounterValue(t, mutationCount)
+	tk.MustExec("insert into read_billing_ruv2_off values (1)")
+	offRUV2 := tk.Session().GetSessionVars().RUV2Metrics.Clone()
+	require.Nil(t, tk.Session().GetSessionVars().StmtCtx.PreviewKVMutationRecorder)
+	require.Equal(t, beforeFlagOffMutation, readExecutorCounterValue(t, mutationCount))
+	plainExplainRows := tk.MustQuery("explain analyze insert into read_billing_plain_explain values (1)").Rows()
+	require.NotEmpty(t, plainExplainRows)
+	require.Nil(t, tk.Session().GetSessionVars().StmtCtx.PreviewKVMutationRecorder)
+	require.Equal(t, beforeFlagOffMutation, readExecutorCounterValue(t, mutationCount))
+	tk.MustExec("set tidb_enable_read_billing_demo=on")
+	tk.MustExec("insert into read_billing_ruv2_on values (1)")
+	onRUV2 := tk.Session().GetSessionVars().RUV2Metrics.Clone()
+	require.Equal(t, offRUV2.ExecutorL5InsertRows(), onRUV2.ExecutorL5InsertRows())
+	require.Equal(t, offRUV2.PlanCnt(), onRUV2.PlanCnt())
+	require.Equal(t, offRUV2.PlanDeriveStatsPaths(), onRUV2.PlanDeriveStatsPaths())
+	require.Equal(t, offRUV2.SessionParserTotal(), onRUV2.SessionParserTotal())
+	require.Equal(t, offRUV2.TxnCnt(), onRUV2.TxnCnt())
+	require.Equal(t, offRUV2.ResourceManagerReadCnt(), onRUV2.ResourceManagerReadCnt())
+	require.Equal(t, offRUV2.ResourceManagerWriteCnt(), onRUV2.ResourceManagerWriteCnt())
+	require.Equal(t, offRUV2.WriteKeys(), onRUV2.WriteKeys())
+	require.Equal(t, offRUV2.WriteSize(), onRUV2.WriteSize())
+	require.Equal(t, offRUV2.PrewriteRegionNum(), onRUV2.PrewriteRegionNum())
+	require.Greater(t, readExecutorCounterValue(t, mutationCount), beforeFlagOffMutation)
+
+	tk.MustExec("set tidb_enable_read_billing_demo=off")
+	tk.MustExec("prepare read_billing_demo_stmt from 'select ? + 1'")
+	tk.MustExec("set @read_billing_demo_param := 2")
+	tk.MustExec("set tidb_enable_read_billing_demo=on")
+	beforePreparedSuccess := readExecutorCounterValue(t, success)
+	tk.MustQuery("execute read_billing_demo_stmt using @read_billing_demo_param").Check(testkit.Rows("3"))
+	require.Equal(t, beforePreparedSuccess+1, readExecutorCounterValue(t, success))
+
+	beforeBaseUnits := readExecutorCounterValue(t, projectionFixedEvents)
+	beforeBaseUnitsTotal := readExecutorCounterVecTotal(t, metrics.ReadBillingDemoBaseUnitsCounter)
+	beforeMutationCount := readExecutorCounterValue(t, mutationCount)
+	beforeMutationBytes := readExecutorCounterValue(t, mutationBytes)
+	beforeWriteKeys := readExecutorCounterValue(t, writeKeys)
+	beforeWriteByte := readExecutorCounterValue(t, writeByte)
+	beforeWriteSuccess := readExecutorCounterValue(t, success)
+	beforeUnsupported := readExecutorCounterValue(t, unsupported)
+	tk.MustExec("insert into read_billing_demo values (3)")
+	require.Equal(t, beforeUnsupported, readExecutorCounterValue(t, unsupported))
+	require.Equal(t, beforeWriteSuccess+1, readExecutorCounterValue(t, success))
+	require.Equal(t, beforeBaseUnits, readExecutorCounterValue(t, projectionFixedEvents))
+	require.Greater(t, readExecutorCounterValue(t, mutationCount), beforeMutationCount)
+	require.Greater(t, readExecutorCounterValue(t, mutationBytes), beforeMutationBytes)
+	require.Greater(t, readExecutorCounterValue(t, writeKeys), beforeWriteKeys)
+	require.Greater(t, readExecutorCounterValue(t, writeByte), beforeWriteByte)
+	require.Greater(t, readExecutorCounterVecTotal(t, metrics.ReadBillingDemoBaseUnitsCounter), beforeBaseUnitsTotal)
+	tk.MustQuery("select status, reason, sum(count) from information_schema.statements_summary_read_billing_demo_status where digest_text like 'insert into `read_billing_demo`%' and site = 'statement' group by status, reason").Check(testkit.Rows("success none 1"))
+	tk.MustQuery("select site, op_class, operator_kind, dml_kind, unit, input_source, input_side, value > 0 from information_schema.statements_summary_read_billing_demo_base_units where digest_text like 'insert into `read_billing_demo`%' and unit in ('encoded_mutation_bytes', 'encoded_mutation_count', 'write_byte', 'write_keys') order by site, unit").Check(testkit.Rows(
+		"tidb kv_mutation memdb_mutation insert encoded_mutation_bytes stmt_memdb_mutation_calls all 1",
+		"tidb kv_mutation memdb_mutation insert encoded_mutation_count stmt_memdb_mutation_calls all 1",
+		"tikv kv_write txn_prewrite insert write_byte commit_detail all 1",
+		"tikv kv_write txn_prewrite insert write_keys commit_detail all 1",
+	))
+
+	// Explicit-transaction DML keeps statement-local TiDB units and reports a
+	// missing TiKV payload. The final COMMIT owns the transaction-scoped
+	// prewrite payload without guessing a DML kind or backfilling prior SQL.
+	tk.MustExec("create table read_billing_explicit_txn(a int primary key)")
+	tk.MustExec("begin")
+	tk.MustExec("insert into read_billing_explicit_txn values (1)")
+	tk.MustQuery("select count(*) from information_schema.statements_summary_read_billing_demo_base_units where digest_text like 'insert into `read_billing_explicit_txn`%' and site = 'tikv'").Check(testkit.Rows("0"))
+	tk.MustQuery("select status, reason from information_schema.statements_summary_read_billing_demo_status where digest_text like 'insert into `read_billing_explicit_txn`%' and site = 'tikv' and op_class = 'kv_write'").Check(testkit.Rows("partial missing_commit_detail"))
+	tk.MustExec("commit")
+	tk.MustQuery("select unit, input_source, value > 0 from information_schema.statements_summary_read_billing_demo_base_units where digest_text = 'commit' and site = 'tikv' and op_class = 'kv_write' and unit in ('write_byte', 'write_keys') order by unit").Check(testkit.Rows(
+		"write_byte commit_detail 1",
+		"write_keys commit_detail 1",
+	))
+	tk.MustQuery("select count(*) from information_schema.statements_summary_read_billing_demo_base_units where digest_text = 'commit' and site = 'tikv' and dml_kind <> ''").Check(testkit.Rows("0"))
+
+	beforeUnknownInput := readExecutorCounterValue(t, unknownInput)
+	beforeBaseUnits = readExecutorCounterValue(t, projectionFixedEvents)
+	beforeBaseUnitsTotal = readExecutorCounterVecTotal(t, metrics.ReadBillingDemoBaseUnitsCounter)
+	plannercore.RecordReadBillingDemoForStatement(tk.Session(), nil, nil, nil)
+	require.Equal(t, beforeUnknownInput+1, readExecutorCounterValue(t, unknownInput))
+	require.Equal(t, beforeBaseUnits, readExecutorCounterValue(t, projectionFixedEvents))
+	require.Equal(t, beforeBaseUnitsTotal, readExecutorCounterVecTotal(t, metrics.ReadBillingDemoBaseUnitsCounter))
+
+	beforeUnknownInput = readExecutorCounterValue(t, unknownInput)
+	beforeBaseUnitsTotal = readExecutorCounterVecTotal(t, metrics.ReadBillingDemoBaseUnitsCounter)
+	tk.MustQuery("select * from read_billing_demo where a > 0").Sort().Check(testkit.Rows("1", "2", "3"))
+	require.Equal(t, beforeUnknownInput+1, readExecutorCounterValue(t, unknownInput))
+	require.Equal(t, beforeBaseUnitsTotal, readExecutorCounterVecTotal(t, metrics.ReadBillingDemoBaseUnitsCounter))
+	tk.MustQuery(`select status, reason, sum(count) from information_schema.statements_summary_read_billing_demo_status where digest_text = 'select * from ` + "`read_billing_demo`" + ` where ` + "`a`" + ` > ?' and site = 'statement' group by status, reason`).Check(testkit.Rows("unknown_input missing_scan_detail 1"))
+	tk.MustQuery(`select count(*) from information_schema.statements_summary_read_billing_demo_base_units where digest_text = 'select * from ` + "`read_billing_demo`" + ` where ` + "`a`" + ` > ?'`).Check(testkit.Rows("0"))
+
+	// Inject an error after AddRecord has emitted its MemDB mutation. Statement
+	// staging cleanup removes the table change but must not erase the attempted
+	// mutation counters.
+	tk.MustExec("create table read_billing_fail(a int primary key)")
+	beforeMutationCount = readExecutorCounterValue(t, mutationCount)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/table/tables/corruptMutations", `return("unknown-command")`))
+	err = tk.ExecToErr("insert into read_billing_fail values (1)")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/table/tables/corruptMutations"))
+	require.Error(t, err)
+	tk.MustQuery("select count(*) from read_billing_fail").Check(testkit.Rows("0"))
+	require.Greater(t, readExecutorCounterValue(t, mutationCount), beforeMutationCount)
+	tk.MustQuery("select status, reason from information_schema.statements_summary_read_billing_demo_status where digest_text like 'insert into `read_billing_fail`%' and site = 'statement'").Check(testkit.Rows("error statement_error"))
+	tk.MustQuery("select dml_kind, value > 0 from information_schema.statements_summary_read_billing_demo_base_units where digest_text like 'insert into `read_billing_fail`%' and site = 'tidb' and op_class = 'kv_mutation' and unit = 'encoded_mutation_count'").Check(testkit.Rows("insert 1"))
+
+	// A retryable autocommit failure replays the whole statement. Both the
+	// original record Set and the replayed Set are attempted local mutation
+	// work, even though the injected commit error ultimately rolls them back.
+	tk.MustExec("set tidb_txn_mode='optimistic'")
+	tk.MustExec("set tidb_retry_limit=1")
+	tk.MustExec("create table read_billing_retry(a int primary key, b int)")
+	tk.MustExec("insert into read_billing_retry values (1, 1)")
+	beforeMutationCount = readExecutorCounterValue(t, mutationCount)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/mockCommitError8942", `return(true)`))
+	err = tk.ExecToErr("update read_billing_retry set b = b + 1 where a = 1")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/mockCommitError8942"))
+	require.Error(t, err)
+	require.True(t, kv.ErrTxnRetryable.Equal(err), err)
+	require.Equal(t, beforeMutationCount+2, readExecutorCounterValue(t, mutationCount))
+	tk.MustQuery("select b from read_billing_retry where a = 1").Check(testkit.Rows("1"))
+	tk.MustQuery("select dml_kind, value from information_schema.statements_summary_read_billing_demo_base_units where digest_text like 'update `read_billing_retry`%' and site = 'tidb' and op_class = 'kv_mutation' and unit = 'encoded_mutation_count'").Check(testkit.Rows("update 2"))
+
+	tk.MustExec("set tidb_enable_read_billing_demo=off")
+	tk.MustExec("create table read_billing_compile_error(a int)")
+	tk.MustExec("prepare read_billing_compile_error_stmt from 'select * from read_billing_compile_error'")
+	tk.MustExec("drop table read_billing_compile_error")
+	tk.MustExec("set tidb_enable_read_billing_demo=on")
+	beforeError := readExecutorCounterValue(t, errorStatus)
+	beforeBaseUnitsTotal = readExecutorCounterVecTotal(t, metrics.ReadBillingDemoBaseUnitsCounter)
+	err = tk.ExecToErr("execute read_billing_compile_error_stmt")
+	require.Error(t, err)
+	require.Equal(t, beforeError+1, readExecutorCounterValue(t, errorStatus))
+	require.Equal(t, beforeBaseUnitsTotal, readExecutorCounterVecTotal(t, metrics.ReadBillingDemoBaseUnitsCounter))
+
+	beforeEarlyError := readExecutorCounterValue(t, errorStatus)
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = tk.ExecWithContext(canceledCtx, "select 1")
+	require.Error(t, err)
+	require.Equal(t, beforeEarlyError+1, readExecutorCounterValue(t, errorStatus))
+	require.Equal(t, beforeBaseUnitsTotal, readExecutorCounterVecTotal(t, metrics.ReadBillingDemoBaseUnitsCounter))
+
+	tk.MustExec("drop table if exists read_billing_outer")
+	tk.MustExec("create table read_billing_outer(a int)")
+	tk.MustExec("set tidb_enable_read_billing_demo=off")
+	tk.MustExec("insert into read_billing_outer values (0)")
+	tk.MustExec("set tidb_enable_read_billing_demo=on")
+	tk.MustExec("set @@tidb_init_chunk_size=1")
+	rs, err := tk.Exec("select (select t.a from read_billing_demo t where t.a > o.a) from read_billing_outer o")
+	require.NoError(t, err)
+	err = rs.Next(context.TODO(), rs.NewChunk(nil))
+	require.Error(t, err)
+	require.NoError(t, rs.Close())
+	require.Equal(t, beforeEarlyError+2, readExecutorCounterValue(t, errorStatus))
+	require.Equal(t, beforeBaseUnitsTotal, readExecutorCounterVecTotal(t, metrics.ReadBillingDemoBaseUnitsCounter))
+	tk.MustQuery(`select sum(count) from information_schema.statements_summary_read_billing_demo_status where site = 'statement' and status = 'error' and reason = 'statement_error'`).Check(testkit.Rows("5"))
+	tk.MustQuery(`select count(*) from information_schema.statements_summary_read_billing_demo_base_units b join information_schema.statements_summary_read_billing_demo_status s on b.digest = s.digest where s.status in ('unsupported', 'error') and b.digest_text not like 'insert into ` + "`read_billing_fail`" + `%' and b.digest_text not like 'update ` + "`read_billing_retry`" + `%'`).Check(testkit.Rows("0"))
+}
+
+func readExecutorCounterValue(t *testing.T, counter prometheus.Counter) float64 {
+	t.Helper()
+	m := &dto.Metric{}
+	require.NoError(t, counter.Write(m))
+	return m.GetCounter().GetValue()
+}
+
+func readExecutorCounterVecTotal(t *testing.T, collector prometheus.Collector) float64 {
+	t.Helper()
+	ch := make(chan prometheus.Metric)
+	go func() {
+		collector.Collect(ch)
+		close(ch)
+	}()
+	var total float64
+	for metric := range ch {
+		m := &dto.Metric{}
+		require.NoError(t, metric.Write(m))
+		total += m.GetCounter().GetValue()
+	}
+	return total
 }
 
 func TestExplainImportFromSelect(t *testing.T) {

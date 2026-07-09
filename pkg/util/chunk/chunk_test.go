@@ -610,6 +610,32 @@ func TestChunkMemoryUsage(t *testing.T) {
 	require.Equal(t, int64(expectedUsage), chk.MemoryUsage())
 }
 
+func TestChunkLogicalLiveBytes(t *testing.T) {
+	fieldTypes := []*types.FieldType{
+		types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeVarchar),
+	}
+	chk := NewChunkWithCapacity(fieldTypes, 8)
+	chk.AppendInt64(0, 1)
+	chk.AppendString(1, "abc")
+	chk.AppendNull(0)
+	chk.AppendString(1, "d")
+
+	require.Equal(t, int64(46), chk.LogicalLiveBytes())
+	require.Greater(t, chk.MemoryUsage(), chk.LogicalLiveBytes())
+
+	chk.SetSel([]int{1})
+	require.Equal(t, int64(27), chk.LogicalLiveBytes())
+
+	chk.SetSel(nil)
+	chk.MakeRef(0, 1)
+	require.Equal(t, int64(34), chk.LogicalLiveBytes())
+
+	virtualRows := NewChunkWithCapacity(nil, 8)
+	virtualRows.SetNumVirtualRows(3)
+	require.Equal(t, int64(0), virtualRows.LogicalLiveBytes())
+}
+
 func TestSwapColumn(t *testing.T) {
 	fieldTypes := make([]*types.FieldType, 0, 2)
 	fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeFloat))

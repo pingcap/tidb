@@ -16,9 +16,11 @@ package stmtsummary
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
+	stmtsummarybase "github.com/pingcap/tidb/pkg/util/stmtsummary"
 	"github.com/stretchr/testify/require"
 )
 
@@ -67,6 +69,9 @@ func TestStmtRecord(t *testing.T) {
 	require.Equal(t, info.RUDetail.RUWaitDuration(), record1.SumRUWaitDuration)
 	require.Equal(t, info.TotalRUV2, record1.MaxRUV2)
 	require.Equal(t, info.TotalRUV2, record1.SumRUV2)
+	require.Equal(t, info.ReadBillingDemoBaseUnits.SumReadBillingDemoFixedEvents, record1.SumReadBillingDemoFixedEvents)
+	require.Equal(t, info.ReadBillingDemoBaseUnits.SumReadBillingDemoInputRows, record1.SumReadBillingDemoInputRows)
+	require.Equal(t, info.ReadBillingDemoBaseUnits.SumReadBillingDemoInputBytes, record1.SumReadBillingDemoInputBytes)
 	require.Equal(t, info.CPUUsages.TidbCPUTime, record1.SumTidbCPU)
 	require.Equal(t, info.CPUUsages.TikvCPUTime, record1.SumTikvCPU)
 
@@ -83,6 +88,9 @@ func TestStmtRecord(t *testing.T) {
 	require.Equal(t, info.RUDetail.WRU()*2, record2.SumWRU)
 	require.Equal(t, info.RUDetail.RUWaitDuration()*2, record2.SumRUWaitDuration)
 	require.Equal(t, info.TotalRUV2*2, record2.SumRUV2)
+	require.Equal(t, info.ReadBillingDemoBaseUnits.SumReadBillingDemoFixedEvents*2, record2.SumReadBillingDemoFixedEvents)
+	require.Equal(t, info.ReadBillingDemoBaseUnits.SumReadBillingDemoInputRows*2, record2.SumReadBillingDemoInputRows)
+	require.Equal(t, info.ReadBillingDemoBaseUnits.SumReadBillingDemoInputBytes*2, record2.SumReadBillingDemoInputBytes)
 	require.Equal(t, info.CPUUsages.TidbCPUTime*2, record2.SumTidbCPU)
 	require.Equal(t, info.CPUUsages.TikvCPUTime*2, record2.SumTikvCPU)
 
@@ -103,6 +111,7 @@ func TestStmtRecord(t *testing.T) {
 	require.NoError(t, json.Unmarshal(b, &items))
 	require.Equal(t, map[string]any{"stmt_meta_a": "value_a"}, items["additional_fields"])
 	require.Equal(t, record2.Digest, items["digest"])
+	require.Equal(t, record2.SumReadBillingDemoInputBytes, items["sum_read_billing_demo_input_bytes"])
 
 	b, err = marshalEvictedStmtRecord(record2)
 	require.NoError(t, err)
@@ -111,4 +120,165 @@ func TestStmtRecord(t *testing.T) {
 	require.Equal(t, map[string]any{"stmt_meta_a": "value_a"}, items["additional_fields"])
 	require.Equal(t, true, items["evicted"])
 	require.Equal(t, record2.Digest, items["digest"])
+}
+
+func TestStmtRecordReadBillingDemoStructuredStats(t *testing.T) {
+	info := GenerateStmtExecInfo4Test("digest_read_billing")
+	info.ReadBillingDemoStats = stmtsummarybase.ReadBillingDemoStatementStats{
+		ModelVersion:  "v1",
+		WeightVersion: "v1",
+		Statuses: []stmtsummarybase.ReadBillingDemoStatusSample{{
+			ModelVersion:  "v1",
+			WeightVersion: "v1",
+			Site:          "statement",
+			OpClass:       "statement",
+			OperatorKind:  "statement",
+			Status:        "success",
+			Reason:        "none",
+		}},
+		BaseUnits: []stmtsummarybase.ReadBillingDemoBaseUnitSample{
+			{
+				ModelVersion:   "v1",
+				WeightVersion:  "v1",
+				Site:           "tidb",
+				OpClass:        "projection_eval",
+				OperatorKind:   "projection",
+				DMLKind:        "insert",
+				Unit:           "fixed_events",
+				InputSource:    "runtime_act_rows",
+				InputSide:      "all",
+				RowWidthSource: "operator_helper",
+				Value:          2,
+				RowWidth:       16,
+			},
+			{
+				ModelVersion:   "v1",
+				WeightVersion:  "v1",
+				Site:           "tidb",
+				OpClass:        "projection_eval",
+				OperatorKind:   "projection",
+				DMLKind:        "insert",
+				Unit:           "fixed_events",
+				InputSource:    "runtime_act_rows",
+				InputSide:      "all",
+				RowWidthSource: "operator_helper",
+				Value:          4,
+				RowWidth:       24,
+			},
+		},
+		Totals: stmtsummarybase.ReadBillingDemoBaseUnitSummary{
+			SumReadBillingDemoFixedEvents: 6,
+		},
+	}
+
+	record := NewStmtRecord(info)
+	record.Add(info)
+	require.Equal(t, int64(1), record.ExecCount)
+	require.Equal(t, 6.0, record.SumReadBillingDemoFixedEvents)
+	require.Len(t, record.ReadBillingDemoBaseUnitAggs, 1)
+	require.Equal(t, 6.0, record.ReadBillingDemoBaseUnitAggs[0].Value)
+	require.Equal(t, uint64(2), record.ReadBillingDemoBaseUnitAggs[0].SampleCount)
+	require.Equal(t, 40.0, record.ReadBillingDemoBaseUnitAggs[0].RowWidthSum)
+	require.Equal(t, "insert", record.ReadBillingDemoBaseUnitAggs[0].DMLKind)
+	require.Len(t, record.ReadBillingDemoStatusAggs, 1)
+
+	b, err := marshalStmtRecord(record)
+	require.NoError(t, err)
+	var restored StmtRecord
+	require.NoError(t, json.Unmarshal(b, &restored))
+	require.Equal(t, record.ReadBillingDemoBaseUnitAggs, restored.ReadBillingDemoBaseUnitAggs)
+	require.Equal(t, record.ReadBillingDemoStatusAggs, restored.ReadBillingDemoStatusAggs)
+
+	statusOnly := GenerateStmtExecInfo4Test("digest_read_billing_error")
+	statusOnly.ReadBillingDemoStats = stmtsummarybase.ReadBillingDemoStatementStats{
+		ModelVersion:  "v1",
+		WeightVersion: "v1",
+		Statuses: []stmtsummarybase.ReadBillingDemoStatusSample{{
+			ModelVersion:  "v1",
+			WeightVersion: "v1",
+			Site:          "statement",
+			OpClass:       "statement",
+			OperatorKind:  "statement",
+			Status:        "error",
+			Reason:        "statement_error",
+		}},
+		BaseUnits: []stmtsummarybase.ReadBillingDemoBaseUnitSample{{
+			ModelVersion:   "v1",
+			WeightVersion:  "v1",
+			Site:           "tidb",
+			OpClass:        "projection_eval",
+			OperatorKind:   "projection",
+			Unit:           "fixed_events",
+			InputSource:    "runtime_act_rows",
+			InputSide:      "all",
+			RowWidthSource: "operator_helper",
+			Value:          999,
+			RowWidth:       999,
+		}},
+		Totals: stmtsummarybase.ReadBillingDemoBaseUnitSummary{
+			SumReadBillingDemoFixedEvents: 999,
+		},
+	}
+	statusOnlyRecord := NewReadBillingDemoStatusOnlyRecord(statusOnly)
+	require.Zero(t, statusOnlyRecord.ExecCount)
+	require.True(t, statusOnlyRecord.isReadBillingDemoStatusOnly())
+	require.Len(t, statusOnlyRecord.ReadBillingDemoStatusAggs, 1)
+	require.Empty(t, statusOnlyRecord.ReadBillingDemoBaseUnitAggs)
+	require.Zero(t, statusOnlyRecord.SumReadBillingDemoFixedEvents)
+	require.Contains(t, statusOnlyRecord.AuthUsers, "user")
+}
+
+func TestStmtRecordMergeReadBillingDemoReservedStatusBypassesStatusCap(t *testing.T) {
+	record := NewStmtRecord(GenerateStmtExecInfo4Test("digest_read_billing_dst"))
+	for i := 0; i < stmtsummarybase.MaxReadBillingDemoStatusKeysPerRecord; i++ {
+		record.ReadBillingDemoStatusAggs = append(record.ReadBillingDemoStatusAggs, stmtsummarybase.ReadBillingDemoStatusAggEntry{
+			ModelVersion:  "v1",
+			WeightVersion: "v1",
+			Site:          "tidb",
+			OpClass:       fmt.Sprintf("op_%03d", i),
+			OperatorKind:  "projection",
+			Status:        "unsupported",
+			Reason:        "unsupported_operator",
+			Count:         1,
+		})
+	}
+
+	other := NewStmtRecord(GenerateStmtExecInfo4Test("digest_read_billing_src"))
+	other.ReadBillingDemoStatusAggs = []stmtsummarybase.ReadBillingDemoStatusAggEntry{
+		{
+			ModelVersion:  "v1",
+			WeightVersion: "v1",
+			Site:          "statement",
+			OpClass:       "statement",
+			OperatorKind:  "statement",
+			Status:        "unknown_input",
+			Reason:        "aggregation_overflow",
+			Count:         7,
+		},
+		{
+			ModelVersion:  "v1",
+			WeightVersion: "v1",
+			Site:          "statement",
+			OpClass:       "statement",
+			OperatorKind:  "statement",
+			Status:        "unknown_input",
+			Reason:        "status_aggregation_overflow",
+			Count:         11,
+		},
+	}
+
+	record.Merge(other)
+	require.Equal(t, uint64(7), requireReadBillingDemoStatusReason(t, record.ReadBillingDemoStatusAggs, "aggregation_overflow").Count)
+	require.Equal(t, uint64(11), requireReadBillingDemoStatusReason(t, record.ReadBillingDemoStatusAggs, "status_aggregation_overflow").Count)
+}
+
+func requireReadBillingDemoStatusReason(t *testing.T, entries []stmtsummarybase.ReadBillingDemoStatusAggEntry, reason string) stmtsummarybase.ReadBillingDemoStatusAggEntry {
+	t.Helper()
+	for _, entry := range entries {
+		if entry.Reason == reason {
+			return entry
+		}
+	}
+	require.Failf(t, "missing read billing status reason", "reason=%s entries=%v", reason, entries)
+	return stmtsummarybase.ReadBillingDemoStatusAggEntry{}
 }

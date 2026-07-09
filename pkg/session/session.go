@@ -136,6 +136,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sli"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/stmtsummary"
+	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
@@ -984,6 +986,7 @@ func (s *session) CommitTxn(ctx context.Context) error {
 	defer r.End()
 
 	s.setLastTxnInfoBeforeTxnEnd()
+	s.markPreviewKVMutationTxnPipelined()
 	var commitDetail *tikvutil.CommitDetails
 	ctx = context.WithValue(ctx, tikvutil.CommitDetailCtxKey, &commitDetail)
 	err := s.doCommitWithRetry(ctx)
@@ -1017,6 +1020,16 @@ func (s *session) CommitTxn(ctx context.Context) error {
 	s.sessionVars.TxnCtx.Cleanup()
 	s.sessionVars.CleanupTxnReadTSIfUsed()
 	return err
+}
+
+func (s *session) markPreviewKVMutationTxnPipelined() {
+	// Pipelined transactions currently do not populate CommitDetails write
+	// keys/bytes. Preserve that fact on the COMMIT statement recorder before
+	// doCommitWithRetry invalidates the transaction.
+	if recorder := s.sessionVars.StmtCtx.PreviewKVMutationRecorder; recorder != nil &&
+		s.txn.Valid() && s.txn.IsPipelined() {
+		recorder.MarkPipelined()
+	}
 }
 
 func (s *session) RollbackTxn(ctx context.Context) {
@@ -2171,7 +2184,7 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 	startTime := time.Now()
 	metrics.SessionRestrictedSQLCounter.Inc()
 	ctx = execdetails.ContextWithInitializedExecDetails(ctx)
-	rs, err := se.ExecuteStmt(ctx, stmtNode)
+	rs, err := se.ExecuteInternalStmt(ctx, stmtNode)
 	if err != nil {
 		se.sessionVars.StmtCtx.AppendError(err)
 	}
@@ -2423,10 +2436,19 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	return rs, err
 }
 
-func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (sqlexec.RecordSet, error) {
+func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (recordSet sqlexec.RecordSet, err error) {
 	r, ctx := tracing.StartRegionEx(ctx, "session.ExecuteStmt")
 	defer r.End()
 	ctx = execdetails.ContextWithMissingExecDetailsInitialized(ctx)
+	// Prevent a recorder from the previous statement from observing any setup
+	// work before this statement receives a fresh StatementContext.
+	s.txn.setPreviewKVMutationCollection(nil, false)
+	readBillingDemoHandledByStmt := false
+	defer func() {
+		if err != nil && !readBillingDemoHandledByStmt {
+			s.recordReadBillingDemoEarlyError(stmtNode, err)
+		}
+	}()
 
 	if err := s.PrepareTxnCtx(ctx, stmtNode); err != nil {
 		return nil, err
@@ -2443,6 +2465,14 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 	if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
 		return nil, err
 	}
+	previewKVMutationEnabled := !s.sessionVars.InRestrictedSQL &&
+		(s.sessionVars.EnableReadBillingDemo ||
+			(s.sessionVars.StmtCtx.InExplainStmt && s.sessionVars.StmtCtx.InExplainAnalyzeStmt &&
+				strings.EqualFold(s.sessionVars.StmtCtx.ExplainFormat, "ru")))
+	if previewKVMutationEnabled {
+		s.sessionVars.StmtCtx.PreviewKVMutationRecorder = &stmtctx.PreviewKVMutationRecorder{}
+	}
+	s.txn.setPreviewKVMutationCollection(s.sessionVars, previewKVMutationEnabled)
 	// ResetContextOfStmt clears SQLKiller, so honor a canceled caller before executing the next statement.
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -2571,7 +2601,6 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 	}
 
 	var stmt *executor.ExecStmt
-	var err error
 
 	{
 		// Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
@@ -2677,7 +2706,6 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 		}()
 	}
 
-	var recordSet sqlexec.RecordSet
 	if stmt.PsStmt != nil { // point plan short path
 		ctx, prevTraceID := resetStmtTraceID(ctx, s)
 
@@ -2710,6 +2738,7 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 		s.setLastTxnInfoBeforeTxnEnd()
 		s.txn.changeToInvalid()
 	} else {
+		readBillingDemoHandledByStmt = true
 		recordSet, err = runStmt(ctx, s, stmt)
 	}
 
@@ -2763,6 +2792,46 @@ func resolvePreparedStmt(stmt ast.StmtNode, vars *variable.SessionVars) (ast.Stm
 		return nil, nil
 	}
 	return prepareStmt.PreparedAst.Stmt, nil
+}
+
+func (s *session) recordReadBillingDemoEarlyError(stmtNode ast.StmtNode, err error) {
+	if err == nil {
+		return
+	}
+	metricsStmt := stmtNode
+	if resolvedStmt, resolveErr := resolvePreparedStmt(stmtNode, s.sessionVars); resolveErr == nil && resolvedStmt != nil {
+		metricsStmt = resolvedStmt
+	}
+	readBillingDemoStats := plannercore.RecordReadBillingDemoForStatement(s, nil, metricsStmt, err)
+	if readBillingDemoStats.IsEmpty() || s.sessionVars == nil || s.sessionVars.StmtCtx == nil {
+		return
+	}
+	userString := ""
+	if s.sessionVars.User != nil {
+		userString = s.sessionVars.User.Username
+	}
+	stmtCtx := s.sessionVars.StmtCtx
+	if stmtCtx.StmtType == "" {
+		stmtCtx.StmtType = stmtctx.GetStmtLabel(context.Background(), metricsStmt)
+	}
+	normalizedSQL, digest := stmtCtx.SQLDigest()
+	digestString := ""
+	if digest != nil {
+		digestString = digest.String()
+	}
+	isInternalSQL := (s.sessionVars.InRestrictedSQL || len(userString) == 0) && !s.sessionVars.InExplainExplore
+	stmtsummaryv2.AddReadBillingDemoStatusOnly(&stmtsummary.StmtExecInfo{
+		SchemaName:           strings.ToLower(s.sessionVars.CurrentDB),
+		NormalizedSQL:        normalizedSQL,
+		Digest:               digestString,
+		User:                 userString,
+		StmtCtx:              stmtCtx,
+		StartTime:            s.sessionVars.StartTime,
+		IsInternal:           isInternalSQL,
+		Succeed:              false,
+		ResourceGroupName:    stmtCtx.ResourceGroupName,
+		ReadBillingDemoStats: readBillingDemoStats,
+	})
 }
 
 func shouldBypass(ctx context.Context, stmtNode ast.StmtNode, sessVars *variable.SessionVars) bool {
@@ -2988,6 +3057,7 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	origTxnCtx := sessVars.TxnCtx
 	err = se.checkTxnAborted(s)
 	if err != nil {
+		se.recordReadBillingDemoEarlyError(s.GetStmtNode(), err)
 		return nil, err
 	}
 	if sessVars.TxnCtx.CouldRetry && !s.IsReadOnly(sessVars) {
@@ -2995,6 +3065,7 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 		// otherwise, the stmt won't be add into stmt history, and also don't need check.
 		// About `stmt-count-limit`, see more in https://docs.pingcap.com/tidb/stable/tidb-configuration-file#stmt-count-limit
 		if err := checkStmtLimit(ctx, se, false); err != nil {
+			se.recordReadBillingDemoEarlyError(s.GetStmtNode(), err)
 			return nil, err
 		}
 	}

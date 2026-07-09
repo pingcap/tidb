@@ -155,6 +155,9 @@ type StmtRecord struct {
 	// request units(RU)
 	ResourceGroupName string `json:"resource_group_name"`
 	stmtsummary.StmtRUSummary
+	stmtsummary.ReadBillingDemoBaseUnitSummary
+	ReadBillingDemoBaseUnitAggs []stmtsummary.ReadBillingDemoBaseUnitAggEntry `json:"read_billing_demo_base_unit_aggs,omitempty"`
+	ReadBillingDemoStatusAggs   []stmtsummary.ReadBillingDemoStatusAggEntry   `json:"read_billing_demo_status_aggs,omitempty"`
 
 	PlanCacheUnqualifiedCount      int64  `json:"plan_cache_unqualified_count"`
 	PlanCacheUnqualifiedLastReason string `json:"plan_cache_unqualified_last_reason"` // the reason why this query is unqualified for the plan cache
@@ -235,6 +238,44 @@ func NewStmtRecord(info *stmtsummary.StmtExecInfo) *StmtRecord {
 		KeyspaceID:        info.KeyspaceID,
 		ResourceGroupName: info.ResourceGroupName,
 	}
+}
+
+// NewReadBillingDemoStatusOnlyRecord creates a minimal record for status-only
+// read billing demo rows produced before the normal statement finish path.
+func NewReadBillingDemoStatusOnlyRecord(info *stmtsummary.StmtExecInfo) *StmtRecord {
+	var ok bool
+	info, ok = stmtsummary.ReadBillingDemoStatusOnlyExecInfo(info)
+	if !ok {
+		return &StmtRecord{
+			AuthUsers:     make(map[string]struct{}),
+			BackoffTypes:  make(map[string]int),
+			MinLatency:    time.Duration(math.MaxInt64),
+			MinResultRows: math.MaxInt64,
+		}
+	}
+	startTime := info.StartTime
+	if startTime.IsZero() {
+		startTime = time.Now()
+	}
+	record := &StmtRecord{
+		SchemaName:        info.SchemaName,
+		Digest:            info.Digest,
+		PlanDigest:        info.PlanDigest,
+		NormalizedSQL:     info.NormalizedSQL,
+		IsInternal:        info.IsInternal,
+		AuthUsers:         make(map[string]struct{}),
+		BackoffTypes:      make(map[string]int),
+		MinLatency:        time.Duration(math.MaxInt64),
+		MinResultRows:     math.MaxInt64,
+		FirstSeen:         startTime,
+		LastSeen:          startTime,
+		ResourceGroupName: info.ResourceGroupName,
+	}
+	if info.StmtCtx != nil {
+		record.StmtType = info.StmtCtx.StmtType
+	}
+	record.AddReadBillingDemoStatusOnly(info)
+	return record
 }
 
 // Add adds the statistics of StmtExecInfo to StmtRecord.
@@ -444,9 +485,57 @@ func (r *StmtRecord) Add(info *stmtsummary.StmtExecInfo) {
 	r.StmtNetworkTrafficSummary.Add(&tikvExecDetails)
 	// RU
 	r.StmtRUSummary.Add(info.RUDetail, info.TotalRUV2)
+	if !info.ReadBillingDemoStats.IsEmpty() {
+		var acceptedSummary stmtsummary.ReadBillingDemoBaseUnitSummary
+		r.ReadBillingDemoBaseUnitAggs, r.ReadBillingDemoStatusAggs, acceptedSummary = stmtsummary.AddReadBillingDemoStatementStatsToEntries(
+			r.ReadBillingDemoBaseUnitAggs,
+			r.ReadBillingDemoStatusAggs,
+			&info.ReadBillingDemoStats,
+		)
+		r.ReadBillingDemoBaseUnitSummary.Add(&acceptedSummary)
+	} else {
+		r.ReadBillingDemoBaseUnitSummary.Add(&info.ReadBillingDemoBaseUnits)
+	}
 
 	r.StorageKV = info.StmtCtx.IsTiKV.Load()
 	r.StorageMPP = info.StmtCtx.IsTiFlash.Load()
+}
+
+// AddReadBillingDemoStatusOnly adds only read billing demo status/base-unit
+// aggregates without changing ordinary statement summary counters.
+func (r *StmtRecord) AddReadBillingDemoStatusOnly(info *stmtsummary.StmtExecInfo) {
+	var ok bool
+	info, ok = stmtsummary.ReadBillingDemoStatusOnlyExecInfo(info)
+	if !ok {
+		return
+	}
+	if len(info.User) > 0 {
+		if r.AuthUsers == nil {
+			r.AuthUsers = make(map[string]struct{})
+		}
+		r.AuthUsers[info.User] = struct{}{}
+	}
+	var acceptedSummary stmtsummary.ReadBillingDemoBaseUnitSummary
+	r.ReadBillingDemoBaseUnitAggs, r.ReadBillingDemoStatusAggs, acceptedSummary = stmtsummary.AddReadBillingDemoStatementStatsToEntries(
+		r.ReadBillingDemoBaseUnitAggs,
+		r.ReadBillingDemoStatusAggs,
+		&info.ReadBillingDemoStats,
+	)
+	r.ReadBillingDemoBaseUnitSummary.Add(&acceptedSummary)
+}
+
+func (r *StmtRecord) isReadBillingDemoStatusOnly() bool {
+	return r != nil && r.ExecCount == 0 && r.hasReadBillingDemoData()
+}
+
+func (r *StmtRecord) hasReadBillingDemoData() bool {
+	if r == nil {
+		return false
+	}
+	return len(r.ReadBillingDemoBaseUnitAggs) > 0 || len(r.ReadBillingDemoStatusAggs) > 0 ||
+		r.SumReadBillingDemoFixedEvents != 0 ||
+		r.SumReadBillingDemoInputRows != 0 ||
+		r.SumReadBillingDemoInputBytes != 0
 }
 
 // Merge merges the statistics of another StmtRecord to this StmtRecord.
@@ -608,6 +697,18 @@ func (r *StmtRecord) Merge(other *StmtRecord) {
 	r.SumTikvCPU += other.SumTikvCPU
 	r.SumErrors += other.SumErrors
 	r.StmtRUSummary.Merge(&other.StmtRUSummary)
+	var acceptedSummary stmtsummary.ReadBillingDemoBaseUnitSummary
+	r.ReadBillingDemoBaseUnitAggs, r.ReadBillingDemoStatusAggs, acceptedSummary = stmtsummary.MergeReadBillingDemoEntrySlices(
+		r.ReadBillingDemoBaseUnitAggs,
+		r.ReadBillingDemoStatusAggs,
+		other.ReadBillingDemoBaseUnitAggs,
+		other.ReadBillingDemoStatusAggs,
+	)
+	if len(other.ReadBillingDemoBaseUnitAggs) == 0 && len(other.ReadBillingDemoStatusAggs) == 0 {
+		r.ReadBillingDemoBaseUnitSummary.Merge(&other.ReadBillingDemoBaseUnitSummary)
+	} else {
+		r.ReadBillingDemoBaseUnitSummary.Add(&acceptedSummary)
+	}
 }
 
 // Truncate SQL to maxSQLLength.
@@ -712,10 +813,15 @@ func GenerateStmtExecInfo4Test(digest string) *stmtsummary.StmtExecInfo {
 		ResourceGroupName: "rg1",
 		RUDetail:          util.NewRUDetailsWith(1.2, 3.4, 2*time.Millisecond),
 		TotalRUV2:         12345,
-		TiKVExecDetails:   &util.ExecDetails{},
-		CPUUsages:         ppcpuusage.CPUUsages{TidbCPUTime: time.Duration(20), TikvCPUTime: time.Duration(10000)},
-		LazyInfo:          &mockLazyInfo{},
-		MemArbitration:    22222,
+		ReadBillingDemoBaseUnits: stmtsummary.ReadBillingDemoBaseUnitSummary{
+			SumReadBillingDemoFixedEvents: 2,
+			SumReadBillingDemoInputRows:   100,
+			SumReadBillingDemoInputBytes:  2048,
+		},
+		TiKVExecDetails: &util.ExecDetails{},
+		CPUUsages:       ppcpuusage.CPUUsages{TidbCPUTime: time.Duration(20), TikvCPUTime: time.Duration(10000)},
+		LazyInfo:        &mockLazyInfo{},
+		MemArbitration:  22222,
 	}
 	stmtExecInfo.StmtCtx.AddAffectedRows(10000)
 	return stmtExecInfo

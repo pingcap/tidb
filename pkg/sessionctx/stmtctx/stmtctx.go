@@ -89,6 +89,86 @@ type LogicalPlanBuildState struct {
 	planCacheAlwaysWarn  bool
 }
 
+// PreviewKVMutationSnapshot is a statement-local snapshot of attempted encoded
+// mutations sent to the foreground transaction MemDB. It deliberately counts
+// calls rather than the final distinct write set, so staging cleanup and
+// same-key overwrites do not subtract from these values.
+type PreviewKVMutationSnapshot struct {
+	EncodedMutationCount uint64
+	EncodedMutationBytes uint64
+	SetCount             uint64
+	DeleteCount          uint64
+	KeyBytes             uint64
+	ValueBytes           uint64
+	Pipelined            bool
+}
+
+// PreviewKVMutationRecorder records attempted transaction MemDB mutation calls
+// for the preview RU model. A recorder is allocated only for statements that
+// explicitly enable preview collection.
+type PreviewKVMutationRecorder struct {
+	encodedMutationCount atomic.Uint64
+	encodedMutationBytes atomic.Uint64
+	setCount             atomic.Uint64
+	deleteCount          atomic.Uint64
+	keyBytes             atomic.Uint64
+	valueBytes           atomic.Uint64
+	pipelined            atomic.Bool
+}
+
+// RecordSet records one attempted Set or SetWithFlags call before the MemDB is
+// invoked. Recording before the call preserves work when the MemDB returns an
+// error.
+func (r *PreviewKVMutationRecorder) RecordSet(keyBytes, valueBytes int) {
+	if r == nil {
+		return
+	}
+	keySize, valueSize := uint64(keyBytes), uint64(valueBytes)
+	r.encodedMutationCount.Add(1)
+	r.encodedMutationBytes.Add(keySize + valueSize)
+	r.setCount.Add(1)
+	r.keyBytes.Add(keySize)
+	r.valueBytes.Add(valueSize)
+}
+
+// RecordDelete records one attempted Delete or DeleteWithFlags call before the
+// MemDB is invoked.
+func (r *PreviewKVMutationRecorder) RecordDelete(keyBytes int) {
+	if r == nil {
+		return
+	}
+	keySize := uint64(keyBytes)
+	r.encodedMutationCount.Add(1)
+	r.encodedMutationBytes.Add(keySize)
+	r.deleteCount.Add(1)
+	r.keyBytes.Add(keySize)
+}
+
+// MarkPipelined records that at least one mutation used a pipelined MemDB. The
+// TiDB mutation units remain valid, while the current TiKV commit payload source
+// is incomplete for this path.
+func (r *PreviewKVMutationRecorder) MarkPipelined() {
+	if r != nil {
+		r.pipelined.Store(true)
+	}
+}
+
+// Snapshot returns the current statement-local attempted mutation counters.
+func (r *PreviewKVMutationRecorder) Snapshot() PreviewKVMutationSnapshot {
+	if r == nil {
+		return PreviewKVMutationSnapshot{}
+	}
+	return PreviewKVMutationSnapshot{
+		EncodedMutationCount: r.encodedMutationCount.Load(),
+		EncodedMutationBytes: r.encodedMutationBytes.Load(),
+		SetCount:             r.setCount.Load(),
+		DeleteCount:          r.deleteCount.Load(),
+		KeyBytes:             r.keyBytes.Load(),
+		ValueBytes:           r.valueBytes.Load(),
+		Pipelined:            r.pipelined.Load(),
+	}
+}
+
 // ReferenceCount indicates the reference count of StmtCtx.
 type ReferenceCount int32
 
@@ -436,6 +516,10 @@ type StatementContext struct {
 	// Its life cycle is limited to this execution, and a new KvExecCounter is
 	// always created during each statement execution.
 	KvExecCounter *stmtstats.KvExecCounter
+
+	// PreviewKVMutationRecorder is non-nil only while the preview RU model needs
+	// statement-local foreground transaction MemDB mutation counters.
+	PreviewKVMutationRecorder *PreviewKVMutationRecorder
 
 	// WeakConsistency is true when read consistency is weak and in a read statement and not in a transaction.
 	WeakConsistency bool
