@@ -225,7 +225,7 @@ alter table test_error_code_succ drop c_not_exist;
 Error 1091 (42000): Can't DROP 'c_not_exist'; check that column/key exists
 create table test_drop_column (c1 int );
 alter table test_drop_column drop column c1;
-Error 1090 (42000): can't drop only column c1 in table test_drop_column
+Error 1090 (42000): You can't delete all columns with ALTER TABLE; use DROP TABLE instead
 alter table test_error_code_succ drop c_not_exist, drop cc_not_exist;
 Error 1091 (42000): Can't DROP 'c_not_exist'; check that column/key exists
 create table test_drop_columns (c1 int);
@@ -235,7 +235,7 @@ Error 1090 (42000): You can't delete all columns with ALTER TABLE; use DROP TABL
 alter table test_drop_columns drop column c1, add column c2 int;
 Error 1060 (42S21): Duplicate column name 'c2'
 alter table test_drop_columns drop column c1, drop column c1;
-Error 8200 (HY000): Unsupported operate same column 'c1'
+Error 1091 (42000): column c1 doesn't exist
 alter table test_error_code_succ add index idx (c_not_exist);
 Error 1072 (42000): column does not exist: c_not_exist
 alter table test_error_code_succ add index idx (c1);

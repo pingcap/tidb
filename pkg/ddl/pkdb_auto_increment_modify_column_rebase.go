@@ -144,8 +144,9 @@ func scanMaxColumnUint64(ctx *ReorgContext, store kv.Storage, priority int, tbl 
 	var maxVal uint64
 	err := forEachPhysicalTable(tbl, func(physTbl table.PhysicalTable) error {
 		return iterateSnapshotKeys(ctx, store, priority, physTbl.RecordPrefix(), kv.MaxVersion.Ver, nil, nil,
-			func(_ kv.Handle, _ kv.Key, rawRow []byte) (bool, error) {
+			func(handle kv.Handle, _ kv.Key, rawRow []byte) (bool, error) {
 				rowMap, err := tablecodec.DecodeRowToDatumMap(rawRow, colTps, time.UTC)
+				rowMap, err = tablecodec.DecodeHandleToDatumMap(handle, []int64{colID}, colTps, time.UTC, rowMap)
 				if err != nil {
 					return false, errors.Trace(err)
 				}
@@ -176,8 +177,9 @@ func scanMaxColumnInt64(ctx *ReorgContext, store kv.Storage, priority int, tbl t
 	var inited bool
 	err := forEachPhysicalTable(tbl, func(physTbl table.PhysicalTable) error {
 		return iterateSnapshotKeys(ctx, store, priority, physTbl.RecordPrefix(), kv.MaxVersion.Ver, nil, nil,
-			func(_ kv.Handle, _ kv.Key, rawRow []byte) (bool, error) {
+			func(handle kv.Handle, _ kv.Key, rawRow []byte) (bool, error) {
 				rowMap, err := tablecodec.DecodeRowToDatumMap(rawRow, colTps, time.UTC)
+				rowMap, err = tablecodec.DecodeHandleToDatumMap(handle, []int64{colID}, colTps, time.UTC, rowMap)
 				if err != nil {
 					return false, errors.Trace(err)
 				}

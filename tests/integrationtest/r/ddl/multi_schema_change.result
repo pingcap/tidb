@@ -65,7 +65,8 @@ a	b	c	d
 drop table if exists t;
 create table t (a int);
 alter table t add column b int after a, add column c int after b;
-Error 1054 (42S22): Unknown column 'b' in 't'
+drop table if exists t;
+create table t (a int);
 alter table t add column c int after b, add column b int;
 Error 1054 (42S22): Unknown column 'b' in 't'
 drop table if exists t;
@@ -98,12 +99,12 @@ a	b	c	d
 drop table if exists t;
 create table t (a int default 1, c int default 4);
 alter table t add column b int default 2, add column b int default 3;
-Error 8200 (HY000): Unsupported operate same column 'b'
+Error 1060 (42S21): Duplicate column name 'b'
 drop table if exists t;
 create table t(a int, b int);
 insert into t values (1, 2);
 alter table t modify column b double, add column c double as (a + b);
-Error 8200 (HY000): Unsupported operate same column 'b'
+Error 8200 (HY000): Unsupported modify column: oldCol is a dependent column 'b' for generated column
 drop table if exists t;
 create table t (a int, b int);
 alter table t drop column a, drop column b;
@@ -118,7 +119,7 @@ c	e
 drop table if exists t;
 create table t (a int default 1, c int default 4);
 alter table t drop column a, drop column a;
-Error 8200 (HY000): Unsupported operate same column 'a'
+Error 1091 (42000): column a doesn't exist
 drop table if exists t;
 create table t (a int default 1, b int default 2);
 insert into t values ();
@@ -157,7 +158,7 @@ drop table if exists t;
 create table t (a int default 1, b int default 2);
 insert into t values ();
 alter table t add column c int default 3 after a, add column d int default 4 first, drop column a, drop column b;
-Error 8200 (HY000): Unsupported operate same column 'a'
+Error 1054 (42S22): Unknown column 'a' in 't'
 drop table if exists t;
 create table t (a int, b int, c int);
 insert into t values (1, 2, 3);
@@ -170,15 +171,15 @@ admin check table t;
 drop table if exists t;
 create table t (a int, b int, c int);
 alter table t add index t(a), add index t(b);
-Error 8200 (HY000): Unsupported operate same index 't'
+Error 1061 (42000): Duplicate key name 't'
 show index from t;
 Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
 drop table if exists t;
 create table t (a int, b int, c int);
 alter table t add index t(a), drop column a;
-Error 8200 (HY000): Unsupported operate same column 'a'
+Error 1072 (42000): column does not exist: a
 alter table t add index t(a, b), drop column a;
-Error 8200 (HY000): Unsupported operate same column 'a'
+Error 1072 (42000): column does not exist: a
 show index from t;
 Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
 drop table if exists t;
@@ -192,7 +193,7 @@ alter table t add index i1(a), add index i2(a, b), add index i3(c);
 drop table if exists t;
 create table t (a int, b int, c int, index t(a));
 alter table t drop index t, drop index t;
-Error 8200 (HY000): Unsupported operate same index 't'
+Error 1091 (42000): index t doesn't exist
 drop table if exists t;
 create table t (id int, c1 int, c2 int, primary key(id) nonclustered, key i1(c1), key i2(c2), key i3(c1, c2));
 insert into t values (1, 2, 3);
@@ -215,7 +216,7 @@ Error 1176 (42000): Key 't' doesn't exist in table 't'
 drop table if exists t;
 create table t (a int, b int, c int, index t(a));
 alter table t drop index t, add index t(b);
-Error 1061 (42000): Duplicate key name 't'
+Error 1061 (42000): index already exist t
 drop table if exists t;
 create table t (a int, b int, c int, index t(a));
 alter table t add index t1(b), drop index t1;
@@ -238,32 +239,32 @@ drop table if exists t;
 create table t (a int default 1, b int default 2);
 insert into t values ();
 alter table t modify column a int default 2, modify column a bigint;
-Error 8200 (HY000): Unsupported operate same column 'a'
+Error 1054 (42S22): Unknown column 'a' in 't'
 drop table if exists t;
 create table t (a int default 1, b int default 2);
 insert into t values ();
 alter table t modify column b double, drop column b;
-Error 8200 (HY000): Unsupported operate same column 'b'
+Error 1054 (42S22): Unknown column 'b' in 't'
 drop table if exists t;
 create table t (a int default 1, b int default 2, c int default 3);
 insert into t values ();
 alter table t modify column b double after c, drop column c;
-Error 8200 (HY000): Unsupported operate same column 'c'
+Error 1054 (42S22): Unknown column 'c' in 't'
 drop table if exists t;
 create table t(a int, b int);
 insert into t values (1, 2);
 alter table t add index i(a), modify column a int null default 1 after a;
-Error 8200 (HY000): Unsupported operate same column 'a'
+Error 1054 (42S22): Unknown column 'a' in 't'
 drop table if exists t;
 create table t(a int, b int);
 insert into t values (1, 2);
 alter table t add primary key(a), modify column a int null default 1 after a;
-Error 8200 (HY000): Unsupported operate same column 'a'
+Error 1054 (42S22): Unknown column 'a' in 't'
 drop table if exists t;
 create table t(a int, b int);
 insert into t values (1, 2);
 alter table t modify column b double, add index idx((a + b));
-Error 8200 (HY000): Unsupported operate same column 'b'
+Error 8200 (HY000): Unsupported modify column: oldCol is a dependent column 'b' for generated column
 drop table if exists t;
 create table t (a int default 1, b int default 2);
 insert into t values ();
@@ -416,7 +417,6 @@ a	b
 drop table if exists t;
 create table t (a int, b int);
 alter table t add column c int, auto_id_cache = 10;
-Error 8200 (HY000): Unsupported multi schema change for modify auto id cache
 drop table if exists t;
 CREATE TABLE t (a SMALLINT DEFAULT '30219', b TIME NULL DEFAULT '02:45:06', PRIMARY KEY (a));
 ALTER TABLE t ADD unique INDEX idx4 (b), change column a e MEDIUMINT DEFAULT '5280454' FIRST;

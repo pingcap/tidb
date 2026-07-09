@@ -29,12 +29,16 @@ func pkdbCheckModifyColumnEnableAutoIncrement(
 	originalColName pmodel.CIStr,
 	newCol *table.Column,
 ) error {
+	tbInfo := t.Meta()
+	if tbInfo.ContainsAutoRandomBits() {
+		return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("can't set auto_increment")
+	}
+
 	// Multi-schema change validates the pairing (ADD/MODIFY AUTO_INCREMENT + ADD PRIMARY KEY) at statement level.
 	if sctx.GetSessionVars().StmtCtx.MultiSchemaInfo != nil {
 		return nil
 	}
 
-	tbInfo := t.Meta()
 	if tbInfo.GetAutoIncrementColInfo() != nil {
 		// TiDB supports at most one AUTO_INCREMENT column.
 		return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("can't set auto_increment")
@@ -48,9 +52,16 @@ func pkdbCheckModifyColumnEnableAutoIncrement(
 		return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("can't set auto_increment")
 	}
 
-	// Only allow enabling AUTO_INCREMENT on an existing NONCLUSTERED PRIMARY KEY column.
-	if tbInfo.PKIsHandle || tbInfo.IsCommonHandle {
+	// Only allow enabling AUTO_INCREMENT on an existing integer PRIMARY KEY column.
+	if tbInfo.IsCommonHandle {
 		return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("can't set auto_increment")
+	}
+	if tbInfo.PKIsHandle {
+		pkCol := tbInfo.GetPkColInfo()
+		if pkCol.Name.L != originalColName.L {
+			return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("can't set auto_increment")
+		}
+		return nil
 	}
 	pk := tables.FindPrimaryIndex(tbInfo)
 	if pk == nil || len(pk.Columns) != 1 || pk.Columns[0].Name.L != originalColName.L {

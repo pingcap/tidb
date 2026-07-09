@@ -22,55 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
 
-// pkdbAllowedRelativeDupColsForAutoIncrementPK returns the set of column names that are allowed to
-// appear in both ModifyColumns/AddColumns and RelativeColumns within a multi-schema change.
-//
-// This is needed for the supported pattern:
-//   - ADD/MODIFY COLUMN (AUTO_INCREMENT) ... then ADD PRIMARY KEY(col) ... in the same statement.
-func pkdbAllowedRelativeDupColsForAutoIncrementPK(info *model.MultiSchemaInfo) map[string]struct{} {
-	keep := make(map[string]struct{})
-	for _, sub := range info.SubJobs {
-		switch sub.Type {
-		case model.ActionAddColumn:
-			args := sub.JobArgs.(*model.TableColumnArgs)
-			if mysql.HasAutoIncrementFlag(args.Col.GetFlag()) {
-				keep[args.Col.Name.L] = struct{}{}
-			}
-		case model.ActionModifyColumn:
-			args := sub.JobArgs.(*model.ModifyColumnArgs)
-			if mysql.HasAutoIncrementFlag(args.Column.GetFlag()) {
-				keep[args.Column.Name.L] = struct{}{}
-			}
-		}
-	}
-	if len(keep) == 0 {
-		return nil
-	}
-
-	allowed := make(map[string]struct{}, len(keep))
-	for _, sub := range info.SubJobs {
-		if sub.Type != model.ActionAddPrimaryKey {
-			continue
-		}
-		args := sub.JobArgs.(*model.ModifyIndexArgs)
-		if len(args.IndexArgs) != 1 {
-			continue
-		}
-		for _, idxPart := range args.IndexArgs[0].IndexPartSpecifications {
-			if idxPart.Column == nil {
-				continue
-			}
-			if _, ok := keep[idxPart.Column.Name.L]; ok {
-				allowed[idxPart.Column.Name.L] = struct{}{}
-			}
-		}
-	}
-	if len(allowed) == 0 {
-		return nil
-	}
-	return allowed
-}
-
 func pkdbCheckMultiSchemaAutoIncrementWithNonclusteredPK(info *model.MultiSchemaInfo, t table.Table) error {
 	if err := pkdbCheckModifyColumnAddAutoIncrementWithNonclusteredPK(info, t); err != nil {
 		return err

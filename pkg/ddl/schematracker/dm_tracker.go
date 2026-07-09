@@ -543,8 +543,7 @@ func (d *SchemaTracker) dropColumn(_ sessionctx.Context, ti ast.Ident, spec *ast
 		return dbterror.ErrCantDropFieldOrKey.GenWithStackByArgs(colName)
 	}
 	if len(tblInfo.Columns) == 1 {
-		return dbterror.ErrCantRemoveAllFields.GenWithStack("can't drop only column %s in table %s",
-			colName, tblInfo.Name)
+		return dbterror.ErrCantRemoveAllFields
 	}
 
 	// do drop column

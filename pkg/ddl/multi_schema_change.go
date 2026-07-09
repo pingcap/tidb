@@ -18,14 +18,11 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
 
@@ -190,10 +187,6 @@ func handleRollbackException(runJobErr error, proxyJobErr *terror.Error) error {
 }
 
 func appendToSubJobs(m *model.MultiSchemaInfo, jobW *JobWrapper) error {
-	err := fillMultiSchemaInfo(m, jobW)
-	if err != nil {
-		return err
-	}
 	var reorgTp model.ReorgType
 	if jobW.ReorgMeta != nil {
 		reorgTp = jobW.ReorgMeta.ReorgTp
@@ -209,138 +202,6 @@ func appendToSubJobs(m *model.MultiSchemaInfo, jobW *JobWrapper) error {
 		ReorgTp:     reorgTp,
 	})
 	return nil
-}
-
-func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *JobWrapper) error {
-	switch job.Type {
-	case model.ActionAddColumn:
-		args := job.JobArgs.(*model.TableColumnArgs)
-		col, pos := args.Col, args.Pos
-		info.AddColumns = append(info.AddColumns, col.Name)
-		for colName := range col.Dependences {
-			info.RelativeColumns = append(info.RelativeColumns, pmodel.CIStr{L: colName, O: colName})
-		}
-		if pos != nil && pos.Tp == ast.ColumnPositionAfter {
-			info.PositionColumns = append(info.PositionColumns, pos.RelativeColumn.Name)
-		}
-	case model.ActionDropColumn:
-		colName := job.JobArgs.(*model.TableColumnArgs).Col.Name
-		info.DropColumns = append(info.DropColumns, colName)
-	case model.ActionDropIndex, model.ActionDropPrimaryKey:
-		args := job.JobArgs.(*model.ModifyIndexArgs)
-		info.DropIndexes = append(info.DropIndexes, args.IndexArgs[0].IndexName)
-	case model.ActionAddIndex, model.ActionAddPrimaryKey:
-		args := job.JobArgs.(*model.ModifyIndexArgs)
-		// This job has not been merged, len(args) should be one.
-		intest.Assert(len(args.IndexArgs) == 1, "len(args.IndexArgs) != 1")
-		indexArg := args.IndexArgs[0]
-		info.AddIndexes = append(info.AddIndexes, indexArg.IndexName)
-		for _, indexPartSpecification := range indexArg.IndexPartSpecifications {
-			info.RelativeColumns = append(info.RelativeColumns, indexPartSpecification.Column.Name)
-		}
-		for _, c := range indexArg.HiddenCols {
-			for depColName := range c.Dependences {
-				info.RelativeColumns = append(info.RelativeColumns, pmodel.NewCIStr(depColName))
-			}
-		}
-	case model.ActionRenameIndex:
-		args := job.JobArgs.(*model.ModifyIndexArgs)
-		from, to := args.GetRenameIndexes()
-		info.AddIndexes = append(info.AddIndexes, from)
-		info.DropIndexes = append(info.DropIndexes, to)
-	case model.ActionModifyColumn:
-		args := job.JobArgs.(*model.ModifyColumnArgs)
-		newCol, oldColName, pos := args.Column, args.OldColumnName, args.Position
-		if newCol.Name.L != oldColName.L {
-			info.AddColumns = append(info.AddColumns, newCol.Name)
-			info.DropColumns = append(info.DropColumns, oldColName)
-		} else {
-			info.ModifyColumns = append(info.ModifyColumns, newCol.Name)
-		}
-		if pos != nil && pos.Tp == ast.ColumnPositionAfter {
-			info.PositionColumns = append(info.PositionColumns, pos.RelativeColumn.Name)
-		}
-	case model.ActionSetDefaultValue:
-		args := job.JobArgs.(*model.SetDefaultValueArgs)
-		col := args.Col
-		info.ModifyColumns = append(info.ModifyColumns, col.Name)
-	case model.ActionAlterIndexVisibility:
-		idxName := job.JobArgs.(*model.AlterIndexVisibilityArgs).IndexName
-		info.AlterIndexes = append(info.AlterIndexes, idxName)
-	case model.ActionRebaseAutoID, model.ActionModifyTableComment, model.ActionModifyTableCharsetAndCollate:
-	case model.ActionAddForeignKey:
-		fkInfo := job.JobArgs.(*model.AddForeignKeyArgs).FkInfo
-		info.AddForeignKeys = append(info.AddForeignKeys, model.AddForeignKeyInfo{
-			Name: fkInfo.Name,
-			Cols: fkInfo.Cols,
-		})
-	case model.ActionDropForeignKey:
-		// there is nothing to verify for `DROP FOREIGN KEY`
-	default:
-		return dbterror.ErrRunMultiSchemaChanges.FastGenByArgs(job.Type.String())
-	}
-	return nil
-}
-
-func checkOperateSameColAndIdx(info *model.MultiSchemaInfo) error {
-	modifyCols := make(map[string]struct{})
-	modifyIdx := make(map[string]struct{})
-
-	checkColumns := func(colNames []pmodel.CIStr, addToModifyCols bool) error {
-		allowedRelativeDupCols := pkdbAllowedRelativeDupColsForAutoIncrementPK(info)
-		for _, colName := range colNames {
-			name := colName.L
-			if _, ok := modifyCols[name]; ok {
-				if !addToModifyCols {
-					if _, ok := allowedRelativeDupCols[name]; ok {
-						continue
-					}
-				}
-				return dbterror.ErrOperateSameColumn.GenWithStackByArgs(name)
-			}
-			if addToModifyCols {
-				modifyCols[name] = struct{}{}
-			}
-		}
-		return nil
-	}
-
-	checkIndexes := func(idxNames []pmodel.CIStr, addToModifyIdx bool) error {
-		for _, idxName := range idxNames {
-			name := idxName.L
-			if _, ok := modifyIdx[name]; ok {
-				return dbterror.ErrOperateSameIndex.GenWithStackByArgs(name)
-			}
-			if addToModifyIdx {
-				modifyIdx[name] = struct{}{}
-			}
-		}
-		return nil
-	}
-
-	if err := checkColumns(info.AddColumns, true); err != nil {
-		return err
-	}
-	if err := checkColumns(info.DropColumns, true); err != nil {
-		return err
-	}
-	if err := checkColumns(info.PositionColumns, false); err != nil {
-		return err
-	}
-	if err := checkColumns(info.ModifyColumns, true); err != nil {
-		return err
-	}
-	if err := checkColumns(info.RelativeColumns, false); err != nil {
-		return err
-	}
-
-	if err := checkIndexes(info.AddIndexes, true); err != nil {
-		return err
-	}
-	if err := checkIndexes(info.DropIndexes, true); err != nil {
-		return err
-	}
-	return checkIndexes(info.AlterIndexes, true)
 }
 
 func mergeAddIndex(info *model.MultiSchemaInfo) {
@@ -440,16 +301,11 @@ func checkOperateDropIndexUseByForeignKey(info *model.MultiSchemaInfo, t table.T
 }
 
 func checkMultiSchemaInfo(info *model.MultiSchemaInfo, t table.Table) error {
-	err := checkOperateSameColAndIdx(info)
-	if err != nil {
-		return err
-	}
-
 	if err := pkdbCheckMultiSchemaAutoIncrementWithNonclusteredPK(info, t); err != nil {
 		return err
 	}
 
-	err = checkVisibleColumnCnt(t, len(info.AddColumns), len(info.DropColumns))
+	err := checkVisibleColumnCnt(t, len(info.AddColumns), len(info.DropColumns))
 	if err != nil {
 		return err
 	}
