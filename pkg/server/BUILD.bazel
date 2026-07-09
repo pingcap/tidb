@@ -80,7 +80,6 @@ go_library(
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/sessiontxn",
-        "//pkg/statistics/handle",
         "//pkg/statistics/handle/initstats",
         "//pkg/statistics/handle/util",
         "//pkg/store",

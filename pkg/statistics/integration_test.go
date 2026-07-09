@@ -389,33 +389,6 @@ func TestTableLastAnalyzeVersion(t *testing.T) {
 	require.NotEqual(t, uint64(0), statsTbl.LastAnalyzeVersion)
 }
 
-func TestGlobalIndexWithHistoricalStats(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("set tidb_analyze_version = 2")
-	tk.MustExec("set global tidb_enable_historical_stats = true")
-	defer tk.MustExec("set global tidb_enable_historical_stats = default")
-
-	tk.MustExec("use test")
-	tk.MustExec(`CREATE TABLE t ( a int, b int, c int default 0)
-					PARTITION BY RANGE (a) (
-					PARTITION p0 VALUES LESS THAN (10),
-					PARTITION p1 VALUES LESS THAN (20),
-					PARTITION p2 VALUES LESS THAN (30),
-					PARTITION p3 VALUES LESS THAN (40))`)
-	tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b) GLOBAL")
-	tk.MustExec("INSERT INTO t(a, b) values(1, 1), (2, 2), (3, 3), (15, 15), (25, 25), (35, 35)")
-
-	tblID := dom.MustGetTableID(t, "test", "t")
-
-	for range 10 {
-		tk.MustExec("analyze table t")
-	}
-	// Each analyze will only generate one record
-	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_history where table_id=%d", tblID)).Equal(testkit.Rows("10"))
-}
-
 func TestLastAnalyzeVersionNotChangedWithAsyncStatsLoad(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

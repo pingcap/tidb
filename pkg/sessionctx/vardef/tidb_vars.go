@@ -1159,7 +1159,7 @@ const (
 	TiDBGCMaxWaitTime = "tidb_gc_max_wait_time"
 	// TiDBEnableEnhancedSecurity restricts SUPER users from certain operations.
 	TiDBEnableEnhancedSecurity = "tidb_enable_enhanced_security"
-	// TiDBEnableHistoricalStats enables the historical statistics feature (default off)
+	// TiDBEnableHistoricalStats keeps compatibility for the removed historical statistics feature.
 	TiDBEnableHistoricalStats = "tidb_enable_historical_stats"
 	// TiDBPersistAnalyzeOptions persists analyze options for later analyze and auto-analyze
 	TiDBPersistAnalyzeOptions = "tidb_persist_analyze_options"
@@ -1286,9 +1286,9 @@ const (
 	PasswordReuseHistory = "password_history"
 	// PasswordReuseTime limit how long passwords can be reused.
 	PasswordReuseTime = "password_reuse_interval"
-	// TiDBHistoricalStatsDuration indicates the duration to remain tidb historical stats
+	// TiDBHistoricalStatsDuration keeps compatibility for the removed historical statistics feature.
 	TiDBHistoricalStatsDuration = "tidb_historical_stats_duration"
-	// TiDBEnableHistoricalStatsForCapture indicates whether use historical stats in plan replayer capture
+	// TiDBEnableHistoricalStatsForCapture keeps compatibility for the removed historical statistics feature.
 	TiDBEnableHistoricalStatsForCapture = "tidb_enable_historical_stats_for_capture"
 	// TiDBEnableResourceControl indicates whether resource control feature is enabled
 	TiDBEnableResourceControl = "tidb_enable_resource_control"

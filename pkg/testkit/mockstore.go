@@ -230,7 +230,6 @@ func tryMakeImageOnce(t testing.TB) (retry bool, err error) {
 	vardef.SetSchemaLease(500 * time.Millisecond)
 	session.DisableStats4Test()
 	domain.DisablePlanReplayerBackgroundJob4Test()
-	domain.DisableDumpHistoricalStats4Test()
 	dom, err := session.BootstrapSession(store)
 	if err != nil {
 		return false, err
@@ -387,7 +386,6 @@ func bootstrap4DistExecution(t testing.TB, store kv.Storage, lease time.Duration
 	vardef.SetSchemaLease(lease)
 	session.DisableStats4Test()
 	domain.DisablePlanReplayerBackgroundJob4Test()
-	domain.DisableDumpHistoricalStats4Test()
 
 	// Multi-domain tests intentionally keep multiple live domains for one mock
 	// store. Skip the temporary global-init domain so it cannot reuse and close
@@ -410,7 +408,6 @@ func bootstrap(t testing.TB, store kv.Storage, lease time.Duration) *domain.Doma
 	vardef.SetSchemaLease(lease)
 	session.DisableStats4Test()
 	domain.DisablePlanReplayerBackgroundJob4Test()
-	domain.DisableDumpHistoricalStats4Test()
 	dom, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 

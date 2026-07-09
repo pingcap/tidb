@@ -1499,7 +1499,7 @@ type SessionVars struct {
 	// UseHashJoinV2 indicates whether to use hash join v2.
 	UseHashJoinV2 bool
 
-	// EnableHistoricalStats indicates whether to enable historical statistics.
+	// EnableHistoricalStats keeps compatibility for the removed historical statistics feature.
 	EnableHistoricalStats bool
 
 	// EnableIndexMergeJoin indicates whether to enable index merge join.

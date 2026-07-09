@@ -4460,7 +4460,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	if concurrency < 0 { // it is only for test, in the production, negative value is illegal.
 		concurrency = 0
 	}
-	ses, err := createSessionsImpl(store, 10)
+	ses, err := createSessionsImpl(store, 9)
 	if err != nil {
 		return nil, err
 	}
@@ -4472,8 +4472,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	// ses[5]: telemetry, expression pushdown
 	// ses[6]: plan replayer collector
 	// ses[7]: dump file GC
-	// ses[8]: historical stats
-	// ses[9]: bootstrap SQL file
+	// ses[8]: bootstrap SQL file
 	for i := range ses {
 		ses[i].GetSessionVars().InRestrictedSQL = true
 	}
@@ -4560,16 +4559,13 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	// setup dumpFileGcChecker
 	dom.SetupDumpFileGCChecker(ses[7])
 	dom.DumpFileGcCheckerLoop()
-	// setup historical stats worker
-	dom.SetupHistoricalStatsWorker(ses[8])
-	dom.StartHistoricalStatsWorker()
 	failToLoadOrParseSQLFile := false // only used for unit test
 	if runBootstrapSQLFile {
 		pm := &privileges.UserPrivileges{
 			Handle: dom.PrivilegeHandle(),
 		}
-		privilege.BindPrivilegeManager(ses[9], pm)
-		if err := doBootstrapSQLFile(ses[9]); err != nil && intest.EnableInternalCheck {
+		privilege.BindPrivilegeManager(ses[8], pm)
+		if err := doBootstrapSQLFile(ses[8]); err != nil && intest.EnableInternalCheck {
 			failToLoadOrParseSQLFile = true
 		}
 	}

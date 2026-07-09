@@ -75,13 +75,12 @@ func TestUpdateStatsMetaVersionForGC(t *testing.T) {
 	// Parse version from stats_meta.
 	version := rows[0][0].(string)
 
-	// Check stats_meta_history again. The version should be the same.
-	rows = testKit.MustQuery(
+	// Historical stats tables remain for compatibility, but stats updates should no longer append records.
+	testKit.MustQuery(
 		"select count(*) from mysql.stats_meta_history where table_id = ? and version = ?",
 		p0.ID,
 		version,
-	).Rows()
-	require.Equal(t, 1, len(rows))
+	).Check(testkit.Rows("0"))
 }
 
 func TestSlowStatsSaving(t *testing.T) {

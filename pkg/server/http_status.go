@@ -224,8 +224,6 @@ func (s *Server) startHTTPServer() {
 	// HTTP path for dump statistics.
 	router.Handle("/stats/dump/{db}/{table}", s.newStatsHandler()).
 		Name("StatsDump")
-	router.Handle("/stats/dump/{db}/{table}/{snapshot}", s.newStatsHistoryHandler()).
-		Name("StatsHistoryDump")
 	router.Handle("/stats/priority-queue", s.newStatsPriorityQueueHandler()).
 		Name("StatsPriorityQueue")
 
@@ -726,19 +724,6 @@ func (s *Server) newStatsHandler() *optimizor.StatsHandler {
 		panic("Failed to get domain")
 	}
 	return optimizor.NewStatsHandler(do)
-}
-
-func (s *Server) newStatsHistoryHandler() *optimizor.StatsHistoryHandler {
-	store, ok := s.driver.(*TiDBDriver)
-	if !ok {
-		panic("Illegal driver")
-	}
-
-	do, err := session.GetDomain(store.store)
-	if err != nil {
-		panic("Failed to get domain")
-	}
-	return optimizor.NewStatsHistoryHandler(do)
 }
 
 func (s *Server) newStatsPriorityQueueHandler() *optimizor.StatsPriorityQueueHandler {

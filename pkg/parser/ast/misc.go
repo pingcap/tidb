@@ -288,10 +288,9 @@ func (n *ExplainStmt) Accept(v Visitor) (Node, bool) {
 type PlanReplayerStmt struct {
 	stmtNode
 
-	Stmt                StmtNode
-	Analyze             bool
-	Load                bool
-	HistoricalStatsInfo *AsOfClause
+	Stmt    StmtNode
+	Analyze bool
+	Load    bool
 
 	// Capture indicates 'plan replayer capture <sql_digest> <plan_digest>'
 	Capture bool
@@ -344,13 +343,6 @@ func (n *PlanReplayerStmt) Restore(ctx *format.RestoreCtx) error {
 
 	ctx.WriteKeyWord("PLAN REPLAYER DUMP ")
 
-	if n.HistoricalStatsInfo != nil {
-		ctx.WriteKeyWord("WITH STATS ")
-		if err := n.HistoricalStatsInfo.Restore(ctx); err != nil {
-			return errors.Annotate(err, "An error occurred while restore PlanReplayerStmt.HistoricalStatsInfo")
-		}
-		ctx.WriteKeyWord(" ")
-	}
 	if n.Analyze {
 		ctx.WriteKeyWord("EXPLAIN ANALYZE ")
 	} else {
@@ -410,14 +402,6 @@ func (n *PlanReplayerStmt) Accept(v Visitor) (Node, bool) {
 
 	if n.Load {
 		return v.Leave(n)
-	}
-
-	if n.HistoricalStatsInfo != nil {
-		info, ok := n.HistoricalStatsInfo.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.HistoricalStatsInfo = info.(*AsOfClause)
 	}
 
 	if n.Stmt == nil {

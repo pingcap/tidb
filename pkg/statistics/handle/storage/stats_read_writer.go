@@ -29,12 +29,10 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
-	handle_metrics "github.com/pingcap/tidb/pkg/statistics/handle/metrics"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/predicatecolumn"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
@@ -65,20 +63,9 @@ func (s *statsReadWriter) ChangeGlobalStatsID(from, to int64) (err error) {
 // UpdateStatsMetaVersionForGC update the version of mysql.stats_meta. See more
 // details in the interface definition.
 func (s *statsReadWriter) UpdateStatsMetaVersionForGC(physicalID int64) (err error) {
-	statsVer := uint64(0)
-	defer func() {
-		if err == nil && statsVer != 0 {
-			s.statsHandler.RecordHistoricalStatsMeta(statsVer, util.StatsMetaHistorySourceSchemaChange, false, physicalID)
-		}
-	}()
-
 	return util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
-		startTS, err := UpdateStatsMetaVerAndLastHistUpdateVer(util.StatsCtx, sctx, physicalID)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		statsVer = startTS
-		return nil
+		_, err := UpdateStatsMetaVerAndLastHistUpdateVer(util.StatsCtx, sctx, physicalID)
+		return errors.Trace(err)
 	}, util.FlagWrapTxn)
 }
 
@@ -150,7 +137,7 @@ func (s *statsReadWriter) SaveAnalyzeResultToStorage(results *statistics.Analyze
 	if err == nil && statsVer != 0 {
 		tableID := results.TableID.GetStatisticsID()
 		// Check if saving was slow and update stats version if needed
-		version, err2 := s.handleSlowStatsSaving(tableID, start)
+		_, err2 := s.handleSlowStatsSaving(tableID, start)
 		if err2 != nil {
 			statslogutil.StatsLogger().Error("Failed to update stats meta version for slow saving during analyze job execution",
 				zap.Int64("physicalID", tableID),
@@ -162,10 +149,6 @@ func (s *statsReadWriter) SaveAnalyzeResultToStorage(results *statistics.Analyze
 			)
 			return err2
 		}
-		if version != 0 {
-			statsVer = version
-		}
-		s.statsHandler.RecordHistoricalStatsMeta(statsVer, source, true, tableID)
 	}
 	return err
 }
@@ -217,14 +200,10 @@ func (s *statsReadWriter) SaveColOrIdxStatsToStorage(
 	}, util.FlagWrapTxn)
 	if err == nil && statsVer != 0 {
 		// Check if saving was slow and update stats version if needed
-		version, err2 := s.handleSlowStatsSaving(tableID, start)
+		_, err2 := s.handleSlowStatsSaving(tableID, start)
 		if err2 != nil {
 			return err2
 		}
-		if version != 0 {
-			statsVer = version
-		}
-		s.statsHandler.RecordHistoricalStatsMeta(statsVer, source, false, tableID)
 	}
 	return
 }
@@ -237,18 +216,10 @@ func (s *statsReadWriter) SaveMetaToStorage(
 	metaUpdates ...statstypes.MetaUpdate,
 ) (err error) {
 	intest.Assert(len(metaUpdates) > 0, "meta updates is empty")
-	var statsVer uint64
 	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
-		statsVer, err = SaveMetaToStorage(sctx, refreshLastHistVer, metaUpdates)
+		_, err = SaveMetaToStorage(sctx, refreshLastHistVer, metaUpdates)
 		return err
 	}, util.FlagWrapTxn)
-	if err == nil && statsVer != 0 {
-		tableIDs := make([]int64, 0, len(metaUpdates))
-		for i := range metaUpdates {
-			tableIDs = append(tableIDs, metaUpdates[i].PhysicalID)
-		}
-		s.statsHandler.RecordHistoricalStatsMeta(statsVer, source, false, tableIDs...)
-	}
 	return
 }
 
@@ -284,70 +255,6 @@ func (s *statsReadWriter) DumpStatsToJSON(dbName string, tableInfo *model.TableI
 		snapshot = sctx.GetSessionVars().SnapshotTS
 	}
 	return s.DumpStatsToJSONBySnapshot(dbName, tableInfo, snapshot, dumpPartitionStats)
-}
-
-// DumpHistoricalStatsBySnapshot dumped json tables from mysql.stats_meta_history and mysql.stats_history.
-// As implemented in getTableHistoricalStatsToJSONWithFallback, if historical stats are nonexistent, it will fall back
-// to the latest stats, and these table names (and partition names) will be returned in fallbackTbls.
-func (s *statsReadWriter) DumpHistoricalStatsBySnapshot(
-	dbName string,
-	tableInfo *model.TableInfo,
-	snapshot uint64,
-) (
-	jt *statsutil.JSONTable,
-	fallbackTbls []string,
-	err error,
-) {
-	historicalStatsEnabled, err := s.statsHandler.CheckHistoricalStatsEnable()
-	if err != nil {
-		return nil, nil, errors.Errorf("check %v failed: %v", vardef.TiDBEnableHistoricalStats, err)
-	}
-	if !historicalStatsEnabled {
-		return nil, nil, errors.Errorf("%v should be enabled", vardef.TiDBEnableHistoricalStats)
-	}
-
-	defer func() {
-		if err == nil {
-			handle_metrics.DumpHistoricalStatsSuccessCounter.Inc()
-		} else {
-			handle_metrics.DumpHistoricalStatsFailedCounter.Inc()
-		}
-	}()
-	pi := tableInfo.GetPartitionInfo()
-	if pi == nil {
-		jt, fallback, err := s.getTableHistoricalStatsToJSONWithFallback(dbName, tableInfo, tableInfo.ID, snapshot)
-		if fallback {
-			fallbackTbls = append(fallbackTbls, fmt.Sprintf("%s.%s", dbName, tableInfo.Name.O))
-		}
-		return jt, fallbackTbls, err
-	}
-	jsonTbl := &statsutil.JSONTable{
-		DatabaseName: dbName,
-		TableName:    tableInfo.Name.L,
-		Partitions:   make(map[string]*statsutil.JSONTable, len(pi.Definitions)),
-	}
-	for _, def := range pi.Definitions {
-		tbl, fallback, err := s.getTableHistoricalStatsToJSONWithFallback(dbName, tableInfo, def.ID, snapshot)
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-		if fallback {
-			fallbackTbls = append(fallbackTbls, fmt.Sprintf("%s.%s %s", dbName, tableInfo.Name.O, def.Name.O))
-		}
-		jsonTbl.Partitions[def.Name.L] = tbl
-	}
-	tbl, fallback, err := s.getTableHistoricalStatsToJSONWithFallback(dbName, tableInfo, tableInfo.ID, snapshot)
-	if err != nil {
-		return nil, nil, err
-	}
-	if fallback {
-		fallbackTbls = append(fallbackTbls, fmt.Sprintf("%s.%s global", dbName, tableInfo.Name.O))
-	}
-	// dump its global-stats if existed
-	if tbl != nil {
-		jsonTbl.Partitions[statsutil.TiDBGlobalStats] = tbl
-	}
-	return jsonTbl, fallbackTbls, nil
 }
 
 // PersistStatsBySnapshot dumps statistic to json and call the function for each partition statistic to persist.
@@ -433,41 +340,6 @@ func (s *statsReadWriter) DumpStatsToJSONBySnapshot(dbName string, tableInfo *mo
 		jsonTbl.Partitions[statsutil.TiDBGlobalStats] = tbl
 	}
 	return jsonTbl, nil
-}
-
-// getTableHistoricalStatsToJSONWithFallback try to get table historical stats, if not exist, directly fallback to the
-// latest stats, and the second return value would be true.
-func (s *statsReadWriter) getTableHistoricalStatsToJSONWithFallback(
-	dbName string,
-	tableInfo *model.TableInfo,
-	physicalID int64,
-	snapshot uint64,
-) (
-	*statsutil.JSONTable,
-	bool,
-	error,
-) {
-	jt, exist, err := s.tableHistoricalStatsToJSON(physicalID, snapshot)
-	if err != nil {
-		return nil, false, err
-	}
-	if !exist {
-		jt, err = s.TableStatsToJSON(dbName, tableInfo, physicalID, 0)
-		fallback := true
-		if snapshot == 0 {
-			fallback = false
-		}
-		return jt, fallback, err
-	}
-	return jt, false, nil
-}
-
-func (s *statsReadWriter) tableHistoricalStatsToJSON(physicalID int64, snapshot uint64) (jt *statsutil.JSONTable, exist bool, err error) {
-	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
-		jt, exist, err = TableHistoricalStatsToJSON(sctx, physicalID, snapshot)
-		return err
-	}, util.FlagWrapTxn)
-	return
 }
 
 // TableStatsToJSON dumps statistic to json.

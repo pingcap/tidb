@@ -188,7 +188,7 @@ func forCount(total int64, batch int64) int64 {
 	return result
 }
 
-// ClearOutdatedHistoryStats clear outdated historical stats
+// ClearOutdatedHistoryStats clear outdated historical stats.
 func ClearOutdatedHistoryStats(sctx sessionctx.Context) error {
 	sql := "select count(*) from mysql.stats_meta_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND"
 	rs, err := util.Exec(sctx, sql, vardef.HistoricalStatsDuration.Load().Seconds())
@@ -222,7 +222,7 @@ func ClearOutdatedHistoryStats(sctx sessionctx.Context) error {
 	return nil
 }
 
-// gcHistoryStatsFromKV delete history stats from kv.
+// gcHistoryStatsFromKV deletes historical stats from kv.
 func gcHistoryStatsFromKV(sctx sessionctx.Context, physicalID int64) (err error) {
 	sql := "delete from mysql.stats_history where table_id = %?"
 	_, err = util.Exec(sctx, sql, physicalID)

@@ -625,20 +625,6 @@ func (e *AnalyzeExec) saveAnalyzeOptions() error {
 	return nil
 }
 
-func recordHistoricalStats(sctx sessionctx.Context, tableID int64) error {
-	statsHandle := domain.GetDomain(sctx).StatsHandle()
-	historicalStatsEnabled, err := statsHandle.CheckHistoricalStatsEnable()
-	if err != nil {
-		return errors.Errorf("check tidb_enable_historical_stats failed: %v", err)
-	}
-	if !historicalStatsEnabled {
-		return nil
-	}
-	historicalStatsWorker := domain.GetDomain(sctx).GetHistoricalStatsWorker()
-	historicalStatsWorker.SendTblToDumpHistoricalStats(tableID)
-	return nil
-}
-
 // handleResultsError will handle the error fetch from resultsCh and record it in log
 func (e *AnalyzeExec) handleResultsError(
 	buildStatsConcurrency int,
@@ -696,7 +682,6 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 			worker.run(ctx1, statsHandle, enableAnalyzeSnapshot)
 		})
 	}
-	tableIDs := map[int64]struct{}{}
 	panicCnt := 0
 	var err error
 	// Only if all the analyze workers exit can we close the saveResultsCh.
@@ -720,7 +705,6 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 			continue
 		}
 		handleGlobalStats(needGlobalStats, globalStatsMap, results)
-		tableIDs[results.TableID.GetStatisticsID()] = struct{}{}
 		failpoint.InjectCall("analyzeBeforeSendToSaveResults")
 		saveResultsCh <- results
 	}
@@ -735,12 +719,6 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 		intest.Assert(len(errSet) > 0, "errSet should at least contain one error")
 		errMsg := slices.Collect(maps.Keys(errSet))
 		err = errors.New(strings.Join(errMsg, ","))
-	}
-	for tableID := range tableIDs {
-		// Dump stats to historical storage.
-		if err := recordHistoricalStats(e.Ctx(), tableID); err != nil {
-			statslogutil.StatsErrVerboseLogger().Error("record historical stats failed", zap.Error(err))
-		}
 	}
 	return err
 }

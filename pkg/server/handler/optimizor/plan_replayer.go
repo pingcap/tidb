@@ -15,30 +15,17 @@
 package optimizor
 
 import (
-	"archive/zip"
-	"bytes"
-	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"path/filepath"
 	"strconv"
-	"strings"
 
-	"github.com/BurntSushi/toml"
 	"github.com/gorilla/mux"
-	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/extstore"
 	"github.com/pingcap/tidb/pkg/server/handler"
-	"github.com/pingcap/tidb/pkg/statistics/handle"
-	util2 "github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/replayer"
@@ -47,21 +34,17 @@ import (
 
 // PlanReplayerHandler is the handler for dumping plan replayer file.
 type PlanReplayerHandler struct {
-	is          infoschema.InfoSchema
-	statsHandle *handle.Handle
-	infoGetter  *infosync.InfoSyncer
-	address     string
-	statusPort  uint
+	infoGetter *infosync.InfoSyncer
+	address    string
+	statusPort uint
 }
 
 // NewPlanReplayerHandler creates a new PlanReplayerHandler.
-func NewPlanReplayerHandler(is infoschema.InfoSchema, statsHandle *handle.Handle, infoGetter *infosync.InfoSyncer, address string, statusPort uint) *PlanReplayerHandler {
+func NewPlanReplayerHandler(infoGetter *infosync.InfoSyncer, address string, statusPort uint) *PlanReplayerHandler {
 	return &PlanReplayerHandler{
-		is:          is,
-		statsHandle: statsHandle,
-		infoGetter:  infoGetter,
-		address:     address,
-		statusPort:  statusPort,
+		infoGetter: infoGetter,
+		address:    address,
+		statusPort: statusPort,
 	}
 }
 
@@ -71,15 +54,12 @@ func (prh PlanReplayerHandler) ServeHTTP(w http.ResponseWriter, req *http.Reques
 	name := params[handler.FileName]
 	handler := downloadFileHandler{
 		filePath:           filepath.Join(replayer.GetPlanReplayerDirName(), name),
-		fileName:           name,
 		infoGetter:         prh.infoGetter,
 		address:            prh.address,
 		statusPort:         prh.statusPort,
 		urlPath:            fmt.Sprintf("plan_replayer/dump/%s", name),
 		downloadedFilename: "plan_replayer",
 		scheme:             util.InternalHTTPSchema(),
-		statsHandle:        prh.statsHandle,
-		is:                 prh.is,
 	}
 	handleDownloadFile(handler, w, req)
 }
@@ -110,36 +90,14 @@ func handleDownloadFile(dfHandler downloadFileHandler, w http.ResponseWriter, re
 		}
 		defer fileReader.Close()
 
-		// For capture_replayer files, we need to read all content to process it
-		if dfHandler.downloadedFilename == "plan_replayer" && strings.HasPrefix(dfHandler.fileName, "capture_replayer") {
-			content, err := io.ReadAll(fileReader)
-			if err != nil {
-				handler.WriteError(w, err)
-				return
-			}
-			content, err = handlePlanReplayerCaptureFile(content, dfHandler)
-			if err != nil {
-				handler.WriteError(w, err)
-				return
-			}
-			// Set headers BEFORE writing body
-			w.Header().Set("Content-Type", "application/zip")
-			w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s.zip\"", dfHandler.downloadedFilename))
-			_, err = w.Write(content)
-			if err != nil {
-				handler.WriteError(w, err)
-				return
-			}
-		} else {
-			// Set headers BEFORE writing body
-			w.Header().Set("Content-Type", "application/zip")
-			w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s.zip\"", dfHandler.downloadedFilename))
-			// Use streaming io.Copy instead of io.ReadAll to avoid memory bloat
-			_, err = io.Copy(w, fileReader)
-			if err != nil {
-				handler.WriteError(w, err)
-				return
-			}
+		// Set headers BEFORE writing body
+		w.Header().Set("Content-Type", "application/zip")
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s.zip\"", dfHandler.downloadedFilename))
+		// Use streaming io.Copy instead of io.ReadAll to avoid memory bloat.
+		_, err = io.Copy(w, fileReader)
+		if err != nil {
+			handler.WriteError(w, err)
+			return
 		}
 		logutil.BgLogger().Info("return dump file successfully", zap.String("filename", name),
 			zap.String("address", localAddr), zap.Bool("forwarded", isForwarded))
@@ -206,148 +164,9 @@ func handleDownloadFile(dfHandler downloadFileHandler, w http.ResponseWriter, re
 type downloadFileHandler struct {
 	scheme             string
 	filePath           string
-	fileName           string
 	infoGetter         *infosync.InfoSyncer
 	address            string
 	statusPort         uint
 	urlPath            string
 	downloadedFilename string
-
-	statsHandle *handle.Handle
-	is          infoschema.InfoSchema
-}
-
-// handlePlanReplayerCaptureFile handles capture_replayer files by adding historical stats.
-// This function is called only when the file is a capture_replayer file (already checked by caller).
-func handlePlanReplayerCaptureFile(content []byte, handler downloadFileHandler) ([]byte, error) {
-	b := bytes.NewReader(content)
-	zr, err := zip.NewReader(b, int64(len(content)))
-	if err != nil {
-		return nil, err
-	}
-	startTS, err := loadSQLMetaFile(zr)
-	if err != nil {
-		return nil, err
-	}
-	if startTS == 0 {
-		return content, nil
-	}
-	tbls, err := loadSchemaMeta(zr, handler.is)
-	if err != nil {
-		return nil, err
-	}
-	for _, tbl := range tbls {
-		jsonStats, _, err := handler.statsHandle.DumpHistoricalStatsBySnapshot(tbl.dbName, tbl.info, startTS)
-		if err != nil {
-			return nil, err
-		}
-		tbl.jsonStats = jsonStats
-	}
-	// Create a new zip with the additional stats in memory instead of writing to local filesystem
-	return dumpJSONStatsIntoZipInMemory(tbls, content)
-}
-
-func loadSQLMetaFile(z *zip.Reader) (uint64, error) {
-	for _, zipFile := range z.File {
-		if zipFile.Name == domain.PlanReplayerSQLMetaFile {
-			varMap := make(map[string]string)
-			v, err := zipFile.Open()
-			if err != nil {
-				return 0, errors.AddStack(err)
-			}
-			//nolint: errcheck,all_revive,revive
-			defer v.Close()
-			_, err = toml.NewDecoder(v).Decode(&varMap)
-			if err != nil {
-				return 0, errors.AddStack(err)
-			}
-			startTS, err := strconv.ParseUint(varMap[domain.PlanReplayerSQLMetaStartTS], 10, 64)
-			if err != nil {
-				return 0, err
-			}
-			return startTS, nil
-		}
-	}
-	return 0, nil
-}
-
-func loadSchemaMeta(z *zip.Reader, is infoschema.InfoSchema) (map[int64]*tblInfo, error) {
-	r := make(map[int64]*tblInfo, 0)
-	for _, zipFile := range z.File {
-		if zipFile.Name == fmt.Sprintf("schema/%v", domain.PlanReplayerSchemaMetaFile) {
-			v, err := zipFile.Open()
-			if err != nil {
-				return nil, errors.AddStack(err)
-			}
-			//nolint: errcheck,all_revive,revive
-			defer v.Close()
-			buf := new(bytes.Buffer)
-			_, err = buf.ReadFrom(v)
-			if err != nil {
-				return nil, errors.AddStack(err)
-			}
-			rows := strings.Split(buf.String(), "\n")
-			for _, row := range rows {
-				s := strings.Split(row, ";")
-				databaseName := s[0]
-				tableName := s[1]
-				t, err := is.TableByName(context.Background(), ast.NewCIStr(databaseName), ast.NewCIStr(tableName))
-				if err != nil {
-					return nil, err
-				}
-				r[t.Meta().ID] = &tblInfo{
-					info:    t.Meta(),
-					dbName:  databaseName,
-					tblName: tableName,
-				}
-			}
-			break
-		}
-	}
-	return r, nil
-}
-
-// dumpJSONStatsIntoZipInMemory creates a new zip with additional stats in memory.
-func dumpJSONStatsIntoZipInMemory(tbls map[int64]*tblInfo, content []byte) ([]byte, error) {
-	zr, err := zip.NewReader(bytes.NewReader(content), int64(len(content)))
-	if err != nil {
-		return nil, err
-	}
-	// Create new zip in memory
-	var buf bytes.Buffer
-	zw := zip.NewWriter(&buf)
-	for _, f := range zr.File {
-		err = zw.Copy(f)
-		if err != nil {
-			logutil.BgLogger().Warn("copy plan replayer zip file failed", zap.Error(err))
-			return nil, err
-		}
-	}
-	for _, tbl := range tbls {
-		w, err := zw.Create(fmt.Sprintf("stats/%v.%v.json", tbl.dbName, tbl.tblName))
-		if err != nil {
-			return nil, err
-		}
-		data, err := json.Marshal(tbl.jsonStats)
-		if err != nil {
-			return nil, err
-		}
-		_, err = w.Write(data)
-		if err != nil {
-			return nil, err
-		}
-	}
-	err = zw.Close()
-	if err != nil {
-		logutil.BgLogger().Warn("Closing zip writer failed", zap.Error(err))
-		return nil, err
-	}
-	return buf.Bytes(), nil
-}
-
-type tblInfo struct {
-	info      *model.TableInfo
-	jsonStats *util2.JSONTable
-	dbName    string
-	tblName   string
 }

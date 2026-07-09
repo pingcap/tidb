@@ -130,7 +130,7 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 	}
 	sctx.GetSessionVars().AnalyzeVersion = int(ver)
 
-	// enable historical stats
+	// enable historical stats (compatibility variable only)
 	val, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBEnableHistoricalStats)
 	if err != nil {
 		return err
