@@ -40,11 +40,11 @@ versions.check(minimum_bazel_version = "6.0.0")
 
 http_archive(
     name = "io_bazel_rules_go",
-    sha256 = "763f4a3f6b03469fdb00a77a333dd0b5546d3ee1fa29db373128c08fee73e0e8",
+    sha256 = "86d3dc8f59d253524f933aaf2f3c05896cb0b605fc35b460c0b4b039996124c6",
     urls = [
-        "https://cache.hawkingrei.com/bazel-contrib/rules_go/releases/download/v0.61.1/rules_go-v0.61.1.zip",
-        "https://mirror.bazel.build/github.com/bazel-contrib/rules_go/releases/download/v0.61.1/rules_go-v0.61.1.zip",
-        "https://github.com/bazel-contrib/rules_go/releases/download/v0.61.1/rules_go-v0.61.1.zip",
+        "https://cache.hawkingrei.com/bazel-contrib/rules_go/releases/download/v0.60.0/rules_go-v0.60.0.zip",
+        "https://mirror.bazel.build/github.com/bazel-contrib/rules_go/releases/download/v0.60.0/rules_go-v0.60.0.zip",
+        "https://github.com/bazel-contrib/rules_go/releases/download/v0.60.0/rules_go-v0.60.0.zip",
     ],
 )
 
@@ -59,13 +59,11 @@ http_archive(
 
 http_archive(
     name = "rules_cc",
-    patch_cmds = [
-        "sed -i.bak '/NativeCcSharedLibraryHintInfo/d' cc/private/rules_impl/native.bzl",
-        "printf '\\ncc_toolchain_alias(name = \"optional_current_cc_toolchain\")\\n' >> cc/BUILD",
+    sha256 = "d62624b45e0912713dcd3b8e30ba6ae55418ed6bf99e6d135cd61b8addae312b",
+    strip_prefix = "rules_cc-0.1.2",
+    urls = [
+        "https://github.com/bazelbuild/rules_cc/releases/download/0.1.2/rules_cc-0.1.2.tar.gz",
     ],
-    sha256 = "65b67b81c6da378f136cc7e7e14ee08d5b9375973427eceb8c773a4f69fa7e49",
-    strip_prefix = "rules_cc-0.0.10",
-    url = "https://github.com/bazelbuild/rules_cc/releases/download/0.0.10/rules_cc-0.0.10.tar.gz",
 )
 
 http_archive(

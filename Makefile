@@ -754,7 +754,7 @@ bazel_bin: ## Build importer/tidb binary files with Bazel build system
  	cp -f ${IMPORTER_PATH} ./bin/ ;
 
 .PHONY: bazel_build
-bazel_build: bazel_sync ## Build TiDB using Bazel build system
+bazel_build: ## Build TiDB using Bazel build system
 	mkdir -p bin
 	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
 		//... --//build:with_nogo_flag=$(NOGO_FLAG)
@@ -925,7 +925,7 @@ bazel_mirror:
 
 .PHONY: bazel_sync
 bazel_sync:
-	bazel $(BAZEL_GLOBAL_CONFIG) sync --configure $(BAZEL_SYNC_CONFIG)
+	bazel $(BAZEL_GLOBAL_CONFIG) sync $(BAZEL_SYNC_CONFIG)
 
 .PHONY: bazel_mirror_upload
 bazel_mirror_upload:
