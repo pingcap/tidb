@@ -55,8 +55,6 @@ func (h *serviceHelper) reportMetrics(s *MVService) {
 	// MVService metrics
 	tidbmetrics.MVServiceMVRefreshTotalGauge.Set(float64(s.metrics.mvCount.Load()))
 	tidbmetrics.MVServiceMVLogPurgeTotalGauge.Set(float64(s.metrics.mvLogCount.Load()))
-	tidbmetrics.MVServiceMVRefreshRunningGauge.Set(float64(s.metrics.runningMVRefreshCount.Load()))
-	tidbmetrics.MVServiceMVLogPurgeRunningGauge.Set(float64(s.metrics.runningMVLogPurgeCount.Load()))
 	tidbmetrics.MVServiceMVRefreshWarningGauge.Set(float64(s.metrics.alertWarningCount.Load()))
 	tidbmetrics.MVServiceMVRefreshOverdueGauge.Set(float64(s.metrics.alertOverdueCount.Load()))
 	tidbmetrics.MVServiceMVLogAccumulationGauge.Set(float64(s.metrics.mvLogAccumulationCount.Load()))

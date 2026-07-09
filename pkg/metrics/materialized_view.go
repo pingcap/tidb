@@ -23,8 +23,6 @@ const (
 
 	mvMetricTaskStatusMVTotal           = "mv_total"
 	mvMetricTaskStatusMVLogTotal        = "mvlog_total"
-	mvMetricTaskStatusMVRefreshRun      = "mv_refresh_running"
-	mvMetricTaskStatusMVLogPurgeRun     = "mvlog_purge_running"
 	mvMetricTaskStatusMVRefreshWarning  = "mv_refresh_warning"
 	mvMetricTaskStatusMVRefreshOverdue  = "mv_refresh_overdue"
 	mvMetricTaskStatusMVLogAccumulation = "mvlog_accumulation"
@@ -41,8 +39,6 @@ var (
 
 	MVServiceMVRefreshTotalGauge    prometheus.Gauge
 	MVServiceMVLogPurgeTotalGauge   prometheus.Gauge
-	MVServiceMVRefreshRunningGauge  prometheus.Gauge
-	MVServiceMVLogPurgeRunningGauge prometheus.Gauge
 	MVServiceMVRefreshWarningGauge  prometheus.Gauge
 	MVServiceMVRefreshOverdueGauge  prometheus.Gauge
 	MVServiceMVLogAccumulationGauge prometheus.Gauge
@@ -78,8 +74,6 @@ func InitMVMetrics() {
 
 	MVServiceMVRefreshTotalGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricComponentService, mvMetricTaskStatusMVTotal)
 	MVServiceMVLogPurgeTotalGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricComponentService, mvMetricTaskStatusMVLogTotal)
-	MVServiceMVRefreshRunningGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricComponentService, mvMetricTaskStatusMVRefreshRun)
-	MVServiceMVLogPurgeRunningGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricComponentService, mvMetricTaskStatusMVLogPurgeRun)
 	MVServiceMVRefreshWarningGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricComponentService, mvMetricTaskStatusMVRefreshWarning)
 	MVServiceMVRefreshOverdueGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricComponentService, mvMetricTaskStatusMVRefreshOverdue)
 	MVServiceMVLogAccumulationGauge = MVServiceTaskStatusGaugeVec.WithLabelValues(mvMetricComponentService, mvMetricTaskStatusMVLogAccumulation)
