@@ -58,12 +58,20 @@ go_test(
         "//pkg/meta/model",
         "//pkg/metrics",
         "//pkg/parser/auth",
+<<<<<<< HEAD
         "//pkg/parser/model",
         "//pkg/sessionctx/stmtctx",
         "//pkg/testkit/testsetup",
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/plancodec",
+=======
+        "//pkg/parser/mysql",
+        "//pkg/testkit/testsetup",
+        "//pkg/types",
+        "//pkg/util",
+        "//pkg/util/chunk",
+>>>>>>> 59ca78807ec (stmtsummary: fix AVG_ROCKSDB_* columns returning subnormal floats (#69708))
         "//pkg/util/set",
         "//pkg/util/stmtsummary",
         "@com_github_prometheus_client_golang//prometheus",
