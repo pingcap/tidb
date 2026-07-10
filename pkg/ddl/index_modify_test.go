@@ -1991,7 +1991,7 @@ func TestFullTextIndexSysvarsPassedToTiCI(t *testing.T) {
 	assertTiCIFulltextParserInfo(t, raw)
 	assertFullTextParserConfigPersisted(t, dom.InfoSchema(), "t_create")
 
-	tk.MustExec("create table t (id int, c text)")
+	tk.MustExec("create table t (id int, c text, d text)")
 	tk.MustExec("alter table t set tiflash replica 2 location labels 'a','b';")
 
 	tici.ResetMockTiCICreateIndexRequest()
@@ -2017,6 +2017,23 @@ func TestFullTextIndexSysvarsPassedToTiCI(t *testing.T) {
 	var finishReq tici.FinishImportIndexUploadRequest
 	require.NoError(t, json.Unmarshal(raw, &finishReq))
 	require.Equal(t, expectedTaskID, finishReq.TidbTaskId)
+
+	// Sequential ALTER ADD must apply the same per-table parser-config bound
+	// as CREATE TABLE. Lower the bound after the first index so each individual
+	// snapshot still fits while their aggregate does not.
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	firstConfig, err := json.Marshal(tbl.Meta().FindIndexByName("fts_idx").FullTextInfo.ParserConfig)
+	require.NoError(t, err)
+	vardef.SetDDLErrorCountLimit(1)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockFullTextParserConfigSizeLimit",
+		fmt.Sprintf("return(%d)", len(firstConfig)*3/2))
+	tk.MustContainErrMsg("alter table t add fulltext index fts_idx_d(d)",
+		"fulltext parser configurations are too large for one table")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/mockFullTextParserConfigSizeLimit")
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	require.Nil(t, tbl.Meta().FindIndexByName("fts_idx_d"))
 }
 
 func TestFulltextIndexRequiresGlobalSortForBackfill(t *testing.T) {

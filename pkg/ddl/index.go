@@ -1648,7 +1648,7 @@ func (w *worker) onCreateFulltextIndex(jobCtx *jobContext, job *model.Job) (ver 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		if err := persistFullTextParserConfig(indexInfo, parserInfo); err != nil {
+		if err := persistFullTextParserConfig(tblInfo, indexInfo, parserInfo); err != nil {
 			return ver, errors.Trace(err)
 		}
 		// Keep the fulltext add-index state machine aligned with onCreateIndex
@@ -2303,6 +2303,16 @@ const (
 	maxFullTextParserConfigBytes = 1 << 20 // 1MiB
 )
 
+func fullTextParserConfigSizeLimit() int {
+	limit := maxFullTextParserConfigBytes
+	failpoint.Inject("mockFullTextParserConfigSizeLimit", func(val failpoint.Value) {
+		if testLimit, ok := val.(int); ok && testLimit > 0 {
+			limit = testLimit
+		}
+	})
+	return limit
+}
+
 func (w *worker) buildTiCIFulltextParserInfo(jobCtx *jobContext, job *model.Job, indexInfo *model.IndexInfo) (*tici.ParserInfo, error) {
 	return buildTiCIFulltextParserInfo(job, indexInfo, func(dbName, tblName string) ([]string, error) {
 		return w.readFullTextStopwords(jobCtx, dbName, tblName)
@@ -2401,10 +2411,11 @@ func tiCIParserType(parserType model.FullTextParserType) tici.ParserType {
 	return tici.ParserType_OTHER_PARSER
 }
 
-func persistFullTextParserConfig(indexInfo *model.IndexInfo, parserInfo *tici.ParserInfo) error {
+func persistFullTextParserConfig(tblInfo *model.TableInfo, indexInfo *model.IndexInfo, parserInfo *tici.ParserInfo) error {
 	if indexInfo == nil || indexInfo.FullTextInfo == nil || parserInfo == nil {
 		return errors.New("missing fulltext parser configuration")
 	}
+	originalConfig := indexInfo.FullTextInfo.ParserConfig
 	config := &model.FullTextIndexParserConfig{
 		ParserParams: maps.Clone(parserInfo.ParserParams),
 		StopWords:    slices.Clone(parserInfo.StopWords),
@@ -2413,10 +2424,17 @@ func persistFullTextParserConfig(indexInfo *model.IndexInfo, parserInfo *tici.Pa
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if len(encoded) > maxFullTextParserConfigBytes {
+	if len(encoded) > fullTextParserConfigSizeLimit() {
 		return dbterror.ErrUnsupportedAddColumnarIndex.FastGen("fulltext parser configuration is too large")
 	}
 	indexInfo.FullTextInfo.ParserConfig = config
+	if err := validateTableFullTextParserConfigSize(tblInfo); err != nil {
+		// Keep the caller's TableInfo unchanged on validation failure. This is
+		// especially important for ADD INDEX retries, where the snapshot must not
+		// appear persisted until the whole TableInfo satisfies the metadata bound.
+		indexInfo.FullTextInfo.ParserConfig = originalConfig
+		return err
+	}
 	return nil
 }
 
@@ -2434,7 +2452,7 @@ func validateTableFullTextParserConfigSize(tblInfo *model.TableInfo) error {
 			return errors.Trace(err)
 		}
 		totalBytes += len(encoded)
-		if totalBytes > maxFullTextParserConfigBytes {
+		if totalBytes > fullTextParserConfigSizeLimit() {
 			return dbterror.ErrUnsupportedAddColumnarIndex.FastGen("fulltext parser configurations are too large for one table")
 		}
 	}
@@ -2453,7 +2471,7 @@ func (w *worker) prepareTableFullTextParserConfigs(jobCtx *jobContext, job *mode
 		if err != nil {
 			return err
 		}
-		if err := persistFullTextParserConfig(indexInfo, parserInfo); err != nil {
+		if err := persistFullTextParserConfig(tblInfo, indexInfo, parserInfo); err != nil {
 			return err
 		}
 	}

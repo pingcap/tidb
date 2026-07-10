@@ -17,6 +17,9 @@ package ddl
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/tici"
 	"github.com/stretchr/testify/require"
 )
@@ -53,4 +56,27 @@ func TestMarshalTiCIParserInfoKeyNil(t *testing.T) {
 	key, err := marshalTiCIParserInfoKey(nil)
 	require.NoError(t, err)
 	require.Equal(t, "nil", key)
+}
+
+func TestValidateTiCIAddPartitionParserConfigs(t *testing.T) {
+	legacy := &model.TableInfo{Indices: []*model.IndexInfo{{
+		Name: ast.NewCIStr("ft_legacy"),
+		FullTextInfo: &model.FullTextIndexInfo{
+			ParserType: model.FullTextParserTypeStandardV1,
+		},
+	}}}
+	err := validateTiCIAddPartitionParserConfigs(legacy)
+	require.ErrorContains(t, err, "analyzer snapshot is missing")
+	require.ErrorContains(t, err, "ft_legacy")
+
+	legacy.Indices[0].FullTextInfo.ParserConfig = &model.FullTextIndexParserConfig{
+		ParserParams: map[string]string{
+			"parser_name":                    "standard",
+			vardef.InnodbFtMinTokenSize:      "3",
+			vardef.InnodbFtMaxTokenSize:      "84",
+			vardef.InnodbFtEnableStopword:    vardef.Off,
+			vardef.InnodbFtUserStopwordTable: "",
+		},
+	}
+	require.NoError(t, validateTiCIAddPartitionParserConfigs(legacy))
 }

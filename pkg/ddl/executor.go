@@ -2237,6 +2237,9 @@ func (e *executor) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, s
 	if pi == nil {
 		return errors.Trace(dbterror.ErrPartitionMgmtOnNonpartitioned)
 	}
+	if err := validateTiCIAddPartitionParserConfigs(meta); err != nil {
+		return errors.Trace(err)
+	}
 
 	if meta.Affinity != nil {
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("ADD PARTITION of a table with AFFINITY option")
@@ -5254,7 +5257,7 @@ func (e *executor) prepareTableFullTextParserConfigs(job *model.Job, tblInfo *mo
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if err := persistFullTextParserConfig(indexInfo, parserInfo); err != nil {
+		if err := persistFullTextParserConfig(tblInfo, indexInfo, parserInfo); err != nil {
 			return errors.Trace(err)
 		}
 	}

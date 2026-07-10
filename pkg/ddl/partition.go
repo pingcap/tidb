@@ -2202,9 +2202,34 @@ func marshalTiCIParserInfoKey(parserInfo *tici.ParserInfo) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
+func validateTiCIAddPartitionParserConfigs(tblInfo *model.TableInfo) error {
+	if tblInfo == nil {
+		return nil
+	}
+	for _, idxInfo := range tblInfo.Indices {
+		if idxInfo == nil || idxInfo.FullTextInfo == nil || idxInfo.FullTextInfo.ParserConfig != nil {
+			continue
+		}
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf(
+			"ADD PARTITION cannot safely extend FULLTEXT index %s because its analyzer snapshot is missing; rebuild the FULLTEXT index first",
+			idxInfo.Name.O,
+		))
+	}
+	return nil
+}
+
 func (w *worker) buildTiCIAddPartitionGroups(jobCtx *jobContext, job *model.Job, tblInfo *model.TableInfo) ([]ticiAddPartitionGroup, error) {
 	if tblInfo == nil {
 		return nil, nil
+	}
+	// New ADD PARTITION jobs are rejected by the executor before enqueueing,
+	// while this worker-side check also protects jobs submitted by an older
+	// owner during a rolling upgrade. Rollback must keep the legacy fallback so
+	// it can clean up TiCI side effects already made by that older owner.
+	if job == nil || !job.IsRollingback() {
+		if err := validateTiCIAddPartitionParserConfigs(tblInfo); err != nil {
+			return nil, err
+		}
 	}
 
 	groupMap := make(map[string]*ticiAddPartitionGroup)

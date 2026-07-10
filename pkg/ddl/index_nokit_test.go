@@ -256,7 +256,8 @@ func TestFullTextParserConfigSizeLimit(t *testing.T) {
 			// escaping doubles it. The persisted form must be bounded instead.
 			StopWords: []string{strings.Repeat(`"`, maxFullTextStopwordBytes/2+1)},
 		}
-		err := persistFullTextParserConfig(indexInfo, parserInfo)
+		tblInfo := &model.TableInfo{Indices: []*model.IndexInfo{indexInfo}}
+		err := persistFullTextParserConfig(tblInfo, indexInfo, parserInfo)
 		require.ErrorContains(t, err, "fulltext parser configuration is too large")
 		require.Nil(t, indexInfo.FullTextInfo.ParserConfig)
 	})
@@ -273,5 +274,24 @@ func TestFullTextParserConfigSizeLimit(t *testing.T) {
 		tblInfo := &model.TableInfo{Indices: []*model.IndexInfo{newIndex("a"), newIndex("b")}}
 		err := validateTableFullTextParserConfigSize(tblInfo)
 		require.ErrorContains(t, err, "fulltext parser configurations are too large for one table")
+	})
+
+	t.Run("aggregate add index persistence", func(t *testing.T) {
+		existing := &model.IndexInfo{FullTextInfo: &model.FullTextIndexInfo{
+			ParserConfig: &model.FullTextIndexParserConfig{
+				ParserParams: map[string]string{"parser_name": "standard"},
+				StopWords:    []string{strings.Repeat("a", maxFullTextParserConfigBytes*3/5)},
+			},
+		}}
+		added := &model.IndexInfo{FullTextInfo: &model.FullTextIndexInfo{}}
+		tblInfo := &model.TableInfo{Indices: []*model.IndexInfo{existing, added}}
+		parserInfo := &tici.ParserInfo{
+			ParserParams: map[string]string{"parser_name": "standard"},
+			StopWords:    []string{strings.Repeat("b", maxFullTextParserConfigBytes*3/5)},
+		}
+
+		err := persistFullTextParserConfig(tblInfo, added, parserInfo)
+		require.ErrorContains(t, err, "fulltext parser configurations are too large for one table")
+		require.Nil(t, added.FullTextInfo.ParserConfig)
 	})
 }
