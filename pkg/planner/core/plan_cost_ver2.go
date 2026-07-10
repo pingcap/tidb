@@ -1074,7 +1074,16 @@ func localMatchAgainstExprCostWeight(expr expression.Expression) float64 {
 			if columnCount == 0 {
 				columnCount = 1
 			}
-			return 8 + float64(columnCount)*0.5
+			estimatedRowBytes := info.EstimatedRowBytes
+			if estimatedRowBytes <= 0 {
+				// Use a moderate fallback until column statistics are available.
+				estimatedRowBytes = float64(columnCount) * 64
+			}
+			queryWork := max(1, info.QueryMatchCost)
+			// Tokenization and document-map construction scan every matched byte;
+			// 16 bytes per scalar-CPU unit keeps the old short-text calibration
+			// while making long TEXT and complex queries appropriately expensive.
+			return 2 + estimatedRowBytes/16 + queryWork
 		}
 	}
 	weight := 0.0

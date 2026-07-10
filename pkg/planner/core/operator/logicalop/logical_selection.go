@@ -30,6 +30,7 @@ import (
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -234,7 +235,11 @@ func (p *LogicalSelection) DeriveStats(childStats []*property.StatsInfo, _ *expr
 		return p.StatsInfo(), false, nil
 	}
 	selectivity := cost.SelectionFactor
-	if expression.ContainsLocalFullTextSearchFn(p.Conditions...) && childStats[0].HistColl != nil {
+	hasLocalMatch := expression.ContainsLocalFullTextSearchFn(p.Conditions...)
+	if hasLocalMatch && localMatchConditionsAlwaysFalse(p.Conditions) {
+		selectivity = 0
+	} else if hasLocalMatch && childStats[0].HistColl != nil {
+		updateLocalMatchCostEstimates(p.Conditions, childStats[0].HistColl)
 		if sel, err := cardinality.Selectivity(p.SCtx(), childStats[0].HistColl, p.Conditions, nil); err == nil {
 			selectivity = sel
 		}
@@ -242,6 +247,79 @@ func (p *LogicalSelection) DeriveStats(childStats []*property.StatsInfo, _ *expr
 	p.SetStats(childStats[0].Scale(p.SCtx().GetSessionVars(), selectivity))
 	p.StatsInfo().GroupNDVs = nil
 	return p.StatsInfo(), true, nil
+}
+
+func localMatchConditionsAlwaysFalse(conditions []expression.Expression) bool {
+	for _, condition := range conditions {
+		if localMatchExprAlwaysFalse(condition) {
+			return true
+		}
+	}
+	return false
+}
+
+func localMatchExprAlwaysFalse(expr expression.Expression) bool {
+	sf, ok := expr.(*expression.ScalarFunction)
+	if !ok {
+		return false
+	}
+	if sf.FuncName.L == ast.FTSMysqlMatchAgainst {
+		info, local := expression.FTSMysqlMatchAgainstLocalEvalInfo(sf)
+		return local && info.NoScore && info.MatchNothing
+	}
+	switch sf.FuncName.L {
+	case ast.LogicAnd:
+		for _, arg := range sf.GetArgs() {
+			if localMatchExprAlwaysFalse(arg) {
+				return true
+			}
+		}
+	case ast.LogicOr:
+		args := sf.GetArgs()
+		if len(args) == 0 {
+			return false
+		}
+		for _, arg := range args {
+			if !localMatchExprAlwaysFalse(arg) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+func updateLocalMatchCostEstimates(exprs []expression.Expression, histColl *statistics.HistColl) {
+	for _, expr := range exprs {
+		updateLocalMatchExprCostEstimate(expr, histColl)
+	}
+}
+
+func updateLocalMatchExprCostEstimate(expr expression.Expression, histColl *statistics.HistColl) {
+	sf, ok := expr.(*expression.ScalarFunction)
+	if !ok {
+		return
+	}
+	if sf.FuncName.L == ast.FTSMysqlMatchAgainst {
+		info, local := expression.FTSMysqlMatchAgainstLocalEvalInfo(sf)
+		if !local || !info.NoScore {
+			return
+		}
+		estimatedBytes := 0.0
+		for _, uniqueID := range info.ColumnUniqueIDs {
+			if column := histColl.GetCol(uniqueID); column != nil {
+				estimatedBytes += cardinality.AvgColSize(column, histColl.RealtimeCount, false)
+			}
+		}
+		if estimatedBytes > 0 {
+			info.EstimatedRowBytes = estimatedBytes
+			_ = expression.SetFTSMysqlMatchAgainstLocalEvalInfo(sf, info)
+		}
+		return
+	}
+	for _, arg := range sf.GetArgs() {
+		updateLocalMatchExprCostEstimate(arg, histColl)
+	}
 }
 
 // ExtractColGroups inherits BaseLogicalPlan.<12th> implementation.

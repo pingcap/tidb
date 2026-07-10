@@ -564,12 +564,18 @@ func TestLocalMatchAgainstUsesIndexAnalyzerSnapshot(t *testing.T) {
 		tk.MustExec("set @@global.innodb_ft_min_token_size = 1")
 		tk.MustExec("set @@innodb_ft_user_stopword_table = ''")
 		tk.MustExec("set tidb_enable_local_match_against = on")
-		tk.MustExec("begin")
 		tk.MustExec("insert into t values (1, 'go'), (2, 'foo'), (3, 'tidb')")
+		tk.MustExec("analyze table t")
+		tk.MustExec("begin")
+		tk.MustExec("update t set title = 'tidb updated' where id = 3")
 
 		tk.MustQuery("select id from t where match(title) against('+go' in boolean mode)").Check(testkit.Rows())
 		tk.MustQuery("select id from t where match(title) against('+foo' in boolean mode)").Check(testkit.Rows())
 		tk.MustQuery("select id from t where match(title) against('+tidb' in boolean mode)").Check(testkit.Rows("3"))
+		plan := testdata.ConvertRowsToStrings(tk.MustQuery(
+			"explain format='brief' select id from t where match(title) against('+go' in boolean mode)",
+		).Rows())
+		requirePlanLineContains(t, plan, "Selection 0.00", "match_against")
 		tk.MustExec("rollback")
 	})
 }

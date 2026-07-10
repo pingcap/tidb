@@ -24,7 +24,10 @@ import (
 
 // Query is an executable no-score boolean fulltext query.
 type Query struct {
-	root queryNode
+	root            queryNode
+	matchCost       float64
+	matchesNothing  bool
+	selectivityTerm string
 }
 
 // CompileBooleanQuery parses and normalizes a BOOLEAN MODE query for local
@@ -43,7 +46,15 @@ func CompileBooleanQuery(search string, config AnalyzerConfig) (*Query, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Query{root: root}, nil
+	query := &Query{
+		root:           root,
+		matchCost:      estimateQueryNodeWork(root),
+		matchesNothing: queryNodeMatchesNothing(root),
+	}
+	if config.ParserType == model.FullTextParserTypeStandardV1 && !query.matchesNothing {
+		query.selectivityTerm, _ = singlePositiveTerm(root)
+	}
+	return query, nil
 }
 
 // Match returns whether the document matches the no-score query.
@@ -52,6 +63,31 @@ func (q *Query) Match(doc *Document) bool {
 		return false
 	}
 	return q.root.match(doc)
+}
+
+// MatchCost returns a relative per-document matching cost. Document analysis
+// is accounted for separately; this value reflects term lookups and the extra
+// work of prefix and phrase nodes.
+func (q *Query) MatchCost() float64 {
+	if q == nil {
+		return 0
+	}
+	return q.matchCost
+}
+
+// MatchesNothing reports whether normalization proved that no document can
+// match, for example because a required term was removed by the analyzer.
+func (q *Query) MatchesNothing() bool {
+	return q == nil || q.matchesNothing
+}
+
+// SelectivityTerm returns the analyzed token when a STANDARD query can be
+// approximated by one string-match predicate for cardinality estimation.
+func (q *Query) SelectivityTerm() (string, bool) {
+	if q == nil || q.selectivityTerm == "" {
+		return "", false
+	}
+	return q.selectivityTerm, true
 }
 
 func parseBooleanQuery(search string, parserType model.FullTextParserType) (*matchagainst.BooleanGroup, error) {
@@ -143,6 +179,88 @@ type groupNode struct {
 	must    []queryNode
 	should  []queryNode
 	mustNot []queryNode
+}
+
+func estimateQueryNodeWork(node queryNode) float64 {
+	switch n := node.(type) {
+	case nil:
+		return 0
+	case neverNode:
+		return 0.1
+	case termNode:
+		return 1
+	case prefixNode:
+		// Prefix matching scans the document's unique token set.
+		return 4
+	case phraseNode:
+		return max(2, float64(len(n.tokens))*2)
+	case groupNode:
+		work := 1.0
+		for _, child := range n.must {
+			work += estimateQueryNodeWork(child)
+		}
+		for _, child := range n.mustNot {
+			work += estimateQueryNodeWork(child)
+		}
+		if len(n.must) == 0 {
+			for _, child := range n.should {
+				work += estimateQueryNodeWork(child)
+			}
+		}
+		return work
+	default:
+		return 1
+	}
+}
+
+func queryNodeMatchesNothing(node queryNode) bool {
+	switch n := node.(type) {
+	case nil, neverNode:
+		return true
+	case termNode, prefixNode, phraseNode:
+		return false
+	case groupNode:
+		for _, child := range n.must {
+			if queryNodeMatchesNothing(child) {
+				return true
+			}
+		}
+		if len(n.must) > 0 {
+			return false
+		}
+		if len(n.should) == 0 {
+			return true
+		}
+		for _, child := range n.should {
+			if !queryNodeMatchesNothing(child) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
+func singlePositiveTerm(node queryNode) (string, bool) {
+	group, ok := node.(groupNode)
+	if !ok || len(group.mustNot) > 0 {
+		return "", false
+	}
+	var child queryNode
+	switch {
+	case len(group.must) == 1:
+		child = group.must[0]
+	case len(group.must) == 0 && len(group.should) == 1:
+		child = group.should[0]
+	default:
+		return "", false
+	}
+	term, ok := child.(termNode)
+	if !ok {
+		return "", false
+	}
+	return term.token, true
 }
 
 func (n groupNode) match(doc *Document) bool {

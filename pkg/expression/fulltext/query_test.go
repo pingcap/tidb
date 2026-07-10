@@ -201,6 +201,32 @@ func TestCompileBooleanQueryNgram(t *testing.T) {
 	require.False(t, matchQueryForTest(t, config, "abc*", []ColumnInput{{Text: "abc"}}))
 }
 
+func TestCompiledQueryEstimationMetadata(t *testing.T) {
+	simple, err := CompileBooleanQuery("+tidb", standardConfigForTest())
+	require.NoError(t, err)
+	require.False(t, simple.MatchesNothing())
+	term, ok := simple.SelectivityTerm()
+	require.True(t, ok)
+	require.Equal(t, "tidb", term)
+
+	filtered, err := CompileBooleanQuery("+go", standardConfigForTest())
+	require.NoError(t, err)
+	require.True(t, filtered.MatchesNothing())
+	_, ok = filtered.SelectivityTerm()
+	require.False(t, ok)
+
+	phrase, err := CompileBooleanQuery(`"tidb database"`, standardConfigForTest())
+	require.NoError(t, err)
+	require.Greater(t, phrase.MatchCost(), simple.MatchCost())
+	_, ok = phrase.SelectivityTerm()
+	require.False(t, ok)
+
+	ngram, err := CompileBooleanQuery("tidb", ngramConfigForTest())
+	require.NoError(t, err)
+	_, ok = ngram.SelectivityTerm()
+	require.False(t, ok)
+}
+
 func matchQueryForTest(t *testing.T, config AnalyzerConfig, query string, columns []ColumnInput) bool {
 	compiled, err := CompileBooleanQuery(query, config)
 	require.NoError(t, err)

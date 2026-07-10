@@ -417,6 +417,10 @@ func BuildFTSToILikeExpressionFromBuiltin(ctx BuildContext, fts *ScalarFunction)
 	if len(args) < 2 {
 		return nil, errors.Errorf("%s expects at least 2 args, got %d", ast.FTSMysqlMatchAgainst, len(args))
 	}
+	localInfo, local := FTSMysqlMatchAgainstLocalEvalInfo(fts)
+	if local && localInfo.MatchNothing {
+		return ftsZeroIntConst(), nil
+	}
 	if len(args) > 2 {
 		return nil, ErrNotSupportedYet.GenWithStackByArgs("multi-column MATCH...AGAINST in selectivity substitution")
 	}
@@ -442,6 +446,14 @@ func BuildFTSToILikeExpressionFromBuiltin(ctx BuildContext, fts *ScalarFunction)
 	sig, ok := fts.Function.(*builtinFtsMysqlMatchAgainstSig)
 	if !ok {
 		return nil, errors.Errorf("unexpected builtin signature for %s: %T", ast.FTSMysqlMatchAgainst, fts.Function)
+	}
+	if local {
+		if localInfo.SelectivityTerm == "" {
+			return nil, ErrNotSupportedYet.GenWithStackByArgs(
+				"local MATCH...AGAINST query has no analyzer-safe string selectivity proxy",
+			)
+		}
+		return buildFTSILikePredicate(ctx, args[1], localInfo.SelectivityTerm)
 	}
 	return BuildFTSToILikeExpression(ctx, args[1:], againstConst.Value.GetString(), sig.modifier)
 }

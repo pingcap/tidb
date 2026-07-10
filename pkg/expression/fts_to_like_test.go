@@ -285,6 +285,7 @@ func newFTSMatchAgainstForTest(t *testing.T, ctx BuildContext, search string, nu
 func TestBuildFTSToILikeExpressionFromBuiltin(t *testing.T) {
 	ctx := mock.NewContext()
 	naturalMode := ast.FulltextSearchModifier(ast.FulltextSearchModifierNaturalLanguageMode)
+	booleanMode := ast.FulltextSearchModifier(ast.FulltextSearchModifierBooleanMode)
 
 	t.Run("nil scalar function", func(t *testing.T) {
 		_, err := BuildFTSToILikeExpressionFromBuiltin(ctx, nil)
@@ -352,6 +353,33 @@ func TestBuildFTSToILikeExpressionFromBuiltin(t *testing.T) {
 		sf := newFTSMatchAgainstForTest(t, ctx, "xx-yy", 1, naturalMode)
 		_, err := BuildFTSToILikeExpressionFromBuiltin(ctx, sf)
 		require.Error(t, err)
+	})
+
+	t.Run("local analyzer filtered query is constant false", func(t *testing.T) {
+		sf := newFTSMatchAgainstForTest(t, ctx, "+go", 2, booleanMode)
+		require.NoError(t, SetFTSMysqlMatchAgainstLocalEvalInfo(sf, &FTSLocalEvalInfo{
+			NoScore:      true,
+			MatchNothing: true,
+		}))
+		expr, err := BuildFTSToILikeExpressionFromBuiltin(ctx, sf)
+		require.NoError(t, err)
+		constant, ok := expr.(*Constant)
+		require.True(t, ok)
+		value, err := constant.Value.ToBool(ctx.GetSessionVars().StmtCtx.TypeCtx())
+		require.NoError(t, err)
+		require.Equal(t, int64(0), value)
+	})
+
+	t.Run("local simple term uses analyzed selectivity token", func(t *testing.T) {
+		sf := newFTSMatchAgainstForTest(t, ctx, "+TiDB", 1, booleanMode)
+		require.NoError(t, SetFTSMysqlMatchAgainstLocalEvalInfo(sf, &FTSLocalEvalInfo{
+			NoScore:         true,
+			SelectivityTerm: "tidb",
+		}))
+		expr, err := BuildFTSToILikeExpressionFromBuiltin(ctx, sf)
+		require.NoError(t, err)
+		_, ok := expr.(*ScalarFunction)
+		require.True(t, ok)
 	})
 }
 

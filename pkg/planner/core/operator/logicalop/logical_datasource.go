@@ -791,19 +791,27 @@ func (ds *DataSource) bindLocalMatchAgainst(sf *expression.ScalarFunction) error
 	if err != nil {
 		return err
 	}
-	if err := expression.ValidateFTSMysqlMatchAgainstLocalQuery(ds.SCtx().GetExprCtx().GetEvalCtx(), sf, config); err != nil {
+	query, err := expression.CompileFTSMysqlMatchAgainstLocalQuery(ds.SCtx().GetExprCtx().GetEvalCtx(), sf, config)
+	if err != nil {
 		return err
 	}
 	ds.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache("local MATCH ... AGAINST validates prepared search syntax during plan binding")
-	return expression.SetFTSMysqlMatchAgainstLocalEvalInfo(sf, &expression.FTSLocalEvalInfo{
-		TableID:         ds.TableInfo.ID,
-		IndexID:         index.ID,
-		ParserType:      index.FullTextInfo.ParserType,
-		AnalyzerConfig:  config,
-		ColumnIDs:       columnIDs,
-		ColumnUniqueIDs: columnUniqueIDs,
-		NoScore:         true,
-	})
+	localInfo := &expression.FTSLocalEvalInfo{
+		TableID:           ds.TableInfo.ID,
+		IndexID:           index.ID,
+		ParserType:        index.FullTextInfo.ParserType,
+		AnalyzerConfig:    config,
+		ColumnIDs:         columnIDs,
+		ColumnUniqueIDs:   columnUniqueIDs,
+		EstimatedRowBytes: float64(max(1, len(columnUniqueIDs))) * 64,
+		NoScore:           true,
+	}
+	if query != nil {
+		localInfo.QueryMatchCost = query.MatchCost()
+		localInfo.MatchNothing = query.MatchesNothing()
+		localInfo.SelectivityTerm, _ = query.SelectivityTerm()
+	}
+	return expression.SetFTSMysqlMatchAgainstLocalEvalInfo(sf, localInfo)
 }
 
 func (ds *DataSource) resolveLocalFTSIndex(sf *expression.ScalarFunction) (
