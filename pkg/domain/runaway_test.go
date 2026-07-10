@@ -18,13 +18,17 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/pingcap/kvproto/pkg/meta_storagepb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	pd "github.com/tikv/pd/client"
+	pderr "github.com/tikv/pd/client/errs"
 	"github.com/tikv/pd/client/opt"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
@@ -79,6 +83,28 @@ func (s *resourceGroupProviderStub) Put(context.Context, []byte, []byte, ...opt.
 	return &meta_storagepb.PutResponse{Header: &meta_storagepb.ResponseHeader{}}, nil
 }
 
+func newStarterControllerForTest(t *testing.T, provider rmclient.ResourceGroupProvider) *rmclient.ResourceGroupsController {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+	controller, err := rmclient.NewResourceGroupController(
+		ctx,
+		1,
+		newStarterResourceGroupProvider(provider),
+		nil,
+		0,
+		newResourceGroupsControllerOptions()...,
+	)
+	require.NoError(t, err)
+	controller.Start(ctx)
+	t.Cleanup(func() {
+		require.NoError(t, controller.Stop())
+	})
+	return controller
+}
+
 func TestResourceGroupsControllerOptionsProvideDegradedFallback(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		// Preserve the process-wide deploy mode because deploymode.IsStarter reads
@@ -89,12 +115,9 @@ func TestResourceGroupsControllerOptionsProvideDegradedFallback(t *testing.T) {
 		})
 	}
 
-	// Use one cancelable context for the short-lived controllers created below.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Return a normal resource group together with an error. The error path is
-	// what should trigger the degraded RU fallback in Starter mode.
 	provider := &resourceGroupProviderStub{
 		resourceGroup: &rmpb.ResourceGroup{
 			Name: "test-group",
@@ -105,12 +128,13 @@ func TestResourceGroupsControllerOptionsProvideDegradedFallback(t *testing.T) {
 				},
 			},
 		},
-		resourceErr: errors.New("resource group unavailable"),
+		resourceErr: &pderr.ErrClientGetResourceGroup{
+			ResourceGroupName: "test-group",
+			Cause:             "resource group unavailable",
+		},
 	}
 
 	if !kerneltype.IsNextGen() {
-		// In classic builds deploymode.IsStarter is always false. This still guards
-		// against accidentally enabling degraded fallback outside NextGen Starter.
 		controller, err := rmclient.NewResourceGroupController(
 			ctx,
 			1,
@@ -131,35 +155,11 @@ func TestResourceGroupsControllerOptionsProvideDegradedFallback(t *testing.T) {
 		return
 	}
 
-	// Step 1: build a controller in Starter mode so default options include
-	// degraded RU settings.
-	require.NoError(t, deploymode.Set(deploymode.Starter))
-	controllerWithFallback, err := rmclient.NewResourceGroupController(
-		ctx,
-		1,
-		provider,
-		nil,
-		0,
-		newResourceGroupsControllerOptions()...,
-	)
-	require.NoError(t, err)
-	controllerWithFallback.Start(ctx)
-	defer func() {
-		require.NoError(t, controllerWithFallback.Stop())
-	}()
-
-	// Step 2: when loading the group fails, Starter should synthesize a degraded
-	// fallback group instead of returning the provider error.
+	controllerWithFallback := newStarterControllerForTest(t, provider)
 	group, err := controllerWithFallback.GetResourceGroup("test-group")
 	require.NoError(t, err)
-	require.Equal(t, &rmpb.ResourceGroup{
-		Name:       "test-group",
-		Mode:       rmpb.GroupMode_RUMode,
-		RUSettings: newDefaultDegradedRUSettings(),
-	}, group)
+	require.Equal(t, newDegradedResourceGroup("test-group", newDefaultDegradedRUSettings()), group)
 
-	// Step 3: rebuild the controller as a non-Starter edition with the same
-	// provider, so the only behavior change is the edition-gated option.
 	require.NoError(t, deploymode.Set(deploymode.Premium))
 	controllerWithoutFallback, err := rmclient.NewResourceGroupController(
 		ctx,
@@ -175,9 +175,86 @@ func TestResourceGroupsControllerOptionsProvideDegradedFallback(t *testing.T) {
 		require.NoError(t, controllerWithoutFallback.Stop())
 	}()
 
-	// Step 4: non-Starter editions must not install degraded RU fallback, so the
-	// provider error is returned and no group is synthesized.
 	group, err = controllerWithoutFallback.GetResourceGroup("test-group")
 	require.Error(t, err)
 	require.Nil(t, group)
+}
+
+func TestStarterResourceGroupProviderNonRetryableErrors(t *testing.T) {
+	if !kerneltype.IsNextGen() {
+		t.Skip("Starter deploy mode is only available in NextGen builds")
+	}
+	originalDeployMode := deploymode.Get()
+	t.Cleanup(func() {
+		require.NoError(t, deploymode.Set(originalDeployMode))
+	})
+
+	t.Run("NotFound", func(t *testing.T) {
+		provider := &resourceGroupProviderStub{
+			resourceErr: rmclient.NewResourceGroupNotExistErr("missing-group"),
+		}
+		controller := newStarterControllerForTest(t, provider)
+
+		group, err := controller.GetResourceGroup("missing-group")
+		require.Error(t, err)
+		require.Nil(t, group)
+	})
+
+	t.Run("ContextCanceled", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		provider := &resourceGroupProviderStub{
+			resourceErr: context.Canceled,
+		}
+		wrapped := newStarterResourceGroupProvider(provider)
+		group, err := wrapped.GetResourceGroup(ctx, "test-group")
+		require.ErrorIs(t, err, context.Canceled)
+		require.Nil(t, group)
+	})
+
+	t.Run("GenericNonRetryableError", func(t *testing.T) {
+		provider := &resourceGroupProviderStub{
+			resourceErr: errors.New("invalid resource group lookup"),
+		}
+		controller := newStarterControllerForTest(t, provider)
+
+		group, err := controller.GetResourceGroup("test-group")
+		require.Error(t, err)
+		require.Nil(t, group)
+	})
+}
+
+func TestStarterSwitchGroupRejectsMissingGroup(t *testing.T) {
+	if !kerneltype.IsNextGen() {
+		t.Skip("Starter deploy mode is only available in NextGen builds")
+	}
+	originalDeployMode := deploymode.Get()
+	t.Cleanup(func() {
+		require.NoError(t, deploymode.Set(originalDeployMode))
+	})
+
+	provider := &resourceGroupProviderStub{
+		resourceErr: rmclient.NewResourceGroupNotExistErr("missing-switch-group"),
+	}
+	controller := newStarterControllerForTest(t, provider)
+	manager := runaway.NewRunawayManager(controller, "127.0.0.1:4000", nil, make(chan struct{}), nil, nil)
+	checker := runaway.NewChecker(
+		manager,
+		"source-group",
+		&rmpb.RunawaySettings{
+			Action:          rmpb.RunawayAction_SwitchGroup,
+			SwitchGroupName: "missing-switch-group",
+			Rule:            &rmpb.RunawayRule{ProcessedKeys: 1},
+		},
+		"SELECT 1",
+		"sql_digest",
+		"plan_digest",
+		time.Now(),
+	)
+
+	require.NoError(t, checker.CheckThresholds(nil, 10, nil))
+	req := &tikvrpc.Request{}
+	require.NoError(t, checker.BeforeCopRequest(req))
+	require.Empty(t, req.ResourceControlContext.ResourceGroupName)
 }

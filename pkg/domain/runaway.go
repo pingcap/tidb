@@ -59,7 +59,6 @@ func newResourceGroupsControllerOptions() []rmclient.ResourceControlCreateOption
 	if deploymode.IsStarter() {
 		opts = append(opts,
 			rmclient.WithDegradedModeWaitDuration(defaultDegradedModeWaitTimeout),
-			rmclient.WithDegradedRUSettings(newDefaultDegradedRUSettings()),
 		)
 	}
 	if strings.Contains(os.Getenv("NAMESPACE"), "vip") {
@@ -82,7 +81,11 @@ func (do *Domain) initResourceGroupsController(ctx context.Context, pdClient pd.
 	if codec := do.Store().GetCodec(); codec != nil {
 		keyspaceID = uint32(codec.GetKeyspaceID())
 	}
-	control, err := rmclient.NewResourceGroupController(ctx, uniqueID, pdClient, nil, keyspaceID, newResourceGroupsControllerOptions()...)
+	var provider rmclient.ResourceGroupProvider = pdClient
+	if deploymode.IsStarter() {
+		provider = newStarterResourceGroupProvider(pdClient)
+	}
+	control, err := rmclient.NewResourceGroupController(ctx, uniqueID, provider, nil, keyspaceID, newResourceGroupsControllerOptions()...)
 	if err != nil {
 		return err
 	}
