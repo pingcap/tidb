@@ -73,6 +73,9 @@ func TestAdjustVars(t *testing.T) {
 	v, err = adjustVar(vardef.TiDBOptOrderingIdxSelRatio, 0.95)
 	require.NoError(t, err)
 	require.Equal(t, roundTo4Decimal(v.(float64)), 0.95)
+	v, err = adjustVar(vardef.TiDBEnableLocalMatchAgainst, false)
+	require.NoError(t, err)
+	require.Equal(t, true, v)
 
 	_, err = adjustVar(vardef.TiFlashReplicaRead, -1.0)
 	require.Error(t, err) // unsupported
@@ -106,10 +109,11 @@ func TestStartState(t *testing.T) {
 		vardef.TiDBOptEnableNoDecorrelateInSelect,
 		vardef.TiDBOptEnableSemiJoinRewrite,
 		vardef.TiDBOptCartesianJoinOrderThreshold,
+		vardef.TiDBEnableLocalMatchAgainst,
 	}
 	fixes := []uint64{fixcontrol.Fix44855, fixcontrol.Fix45132, fixcontrol.Fix52869}
 
 	state, err := getStartState(vars, fixes, 0)
 	require.NoError(t, err)
-	require.Equal(t, state.Encode(), "1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,0.0100,0.0000,0.0000,0.0000,0.8000,true,false,false,0.0000,OFF,1000,OFF")
+	require.Equal(t, state.Encode(), "1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,0.0100,0.0000,0.0000,0.0000,0.8000,true,false,false,0.0000,false,OFF,1000,OFF")
 }
