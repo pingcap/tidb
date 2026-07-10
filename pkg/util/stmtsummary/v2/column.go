@@ -78,6 +78,12 @@ const (
 	MaxRocksdbBlockReadCountStr                = "MAX_ROCKSDB_BLOCK_READ_COUNT"
 	AvgRocksdbBlockReadByteStr                 = "AVG_ROCKSDB_BLOCK_READ_BYTE"
 	MaxRocksdbBlockReadByteStr                 = "MAX_ROCKSDB_BLOCK_READ_BYTE"
+	AvgIARemoteReadSegmentCountStr             = "AVG_IA_REMOTE_READ_SEGMENT_COUNT"
+	MaxIARemoteReadSegmentCountStr             = "MAX_IA_REMOTE_READ_SEGMENT_COUNT"
+	AvgIARemoteReadSegmentSizeStr              = "AVG_IA_REMOTE_READ_SEGMENT_SIZE"
+	MaxIARemoteReadSegmentSizeStr              = "MAX_IA_REMOTE_READ_SEGMENT_SIZE"
+	AvgIARemoteReadSegmentWaitTimeStr          = "AVG_IA_REMOTE_READ_SEGMENT_WAIT_TIME"
+	MaxIARemoteReadSegmentWaitTimeStr          = "MAX_IA_REMOTE_READ_SEGMENT_WAIT_TIME"
 	AvgPrewriteTimeStr                         = "AVG_PREWRITE_TIME"
 	MaxPrewriteTimeStr                         = "MAX_PREWRITE_TIME"
 	AvgCommitTimeStr                           = "AVG_COMMIT_TIME"
@@ -321,6 +327,24 @@ var columnFactoryMap = map[string]columnFactory{
 	},
 	MaxRocksdbBlockReadByteStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.MaxRocksdbBlockReadByte
+	},
+	AvgIARemoteReadSegmentCountStr: func(_ columnInfo, record *StmtRecord) any {
+		return avgFloat4Uint(record.SumIARemoteReadSegmentCount, record.ExecCount)
+	},
+	MaxIARemoteReadSegmentCountStr: func(_ columnInfo, record *StmtRecord) any {
+		return record.MaxIARemoteReadSegmentCount
+	},
+	AvgIARemoteReadSegmentSizeStr: func(_ columnInfo, record *StmtRecord) any {
+		return avgFloat4Uint(record.SumIARemoteReadSegmentSize, record.ExecCount)
+	},
+	MaxIARemoteReadSegmentSizeStr: func(_ columnInfo, record *StmtRecord) any {
+		return record.MaxIARemoteReadSegmentSize
+	},
+	AvgIARemoteReadSegmentWaitTimeStr: func(_ columnInfo, record *StmtRecord) any {
+		return avgInt(int64(record.SumIARemoteReadSegmentWaitTime), record.ExecCount)
+	},
+	MaxIARemoteReadSegmentWaitTimeStr: func(_ columnInfo, record *StmtRecord) any {
+		return int64(record.MaxIARemoteReadSegmentWaitTime)
 	},
 	AvgPrewriteTimeStr: func(_ columnInfo, record *StmtRecord) any {
 		return avgInt(int64(record.SumPrewriteTime), record.CommitCount)
