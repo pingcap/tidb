@@ -2296,9 +2296,24 @@ const (
 	maxFullTextStopwordCount = 10000
 	// maxFullTextStopwordBytes limits total stopword payload bytes per FULLTEXT index creation.
 	maxFullTextStopwordBytes = 1 << 20 // 1MiB
+	// maxFullTextParserConfigBytes bounds the JSON-encoded analyzer snapshots
+	// stored in one TableInfo. The per-table bound covers JSON escaping and
+	// prevents repeated stopword lists on multiple indexes from exhausting the
+	// metadata entry/transaction limit or bloating schema synchronization.
+	maxFullTextParserConfigBytes = 1 << 20 // 1MiB
 )
 
 func (w *worker) buildTiCIFulltextParserInfo(jobCtx *jobContext, job *model.Job, indexInfo *model.IndexInfo) (*tici.ParserInfo, error) {
+	return buildTiCIFulltextParserInfo(job, indexInfo, func(dbName, tblName string) ([]string, error) {
+		return w.readFullTextStopwords(jobCtx, dbName, tblName)
+	})
+}
+
+func buildTiCIFulltextParserInfo(
+	job *model.Job,
+	indexInfo *model.IndexInfo,
+	readStopwords func(dbName, tblName string) ([]string, error),
+) (*tici.ParserInfo, error) {
 	getJobSysVar := func(name, fallback string) string {
 		if val, ok := job.GetSystemVars(name); ok {
 			return val
@@ -2361,7 +2376,10 @@ func (w *worker) buildTiCIFulltextParserInfo(jobCtx *jobContext, job *model.Job,
 					vardef.InnodbFtEnableStopword,
 				)
 			}
-			stopwords, err := w.readFullTextStopwords(jobCtx, dbName, tblName)
+			if readStopwords == nil {
+				return nil, errors.New("missing fulltext stopword reader")
+			}
+			stopwords, err := readStopwords(dbName, tblName)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -2387,9 +2405,38 @@ func persistFullTextParserConfig(indexInfo *model.IndexInfo, parserInfo *tici.Pa
 	if indexInfo == nil || indexInfo.FullTextInfo == nil || parserInfo == nil {
 		return errors.New("missing fulltext parser configuration")
 	}
-	indexInfo.FullTextInfo.ParserConfig = &model.FullTextIndexParserConfig{
+	config := &model.FullTextIndexParserConfig{
 		ParserParams: maps.Clone(parserInfo.ParserParams),
 		StopWords:    slices.Clone(parserInfo.StopWords),
+	}
+	encoded, err := json.Marshal(config)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(encoded) > maxFullTextParserConfigBytes {
+		return dbterror.ErrUnsupportedAddColumnarIndex.FastGen("fulltext parser configuration is too large")
+	}
+	indexInfo.FullTextInfo.ParserConfig = config
+	return nil
+}
+
+func validateTableFullTextParserConfigSize(tblInfo *model.TableInfo) error {
+	if tblInfo == nil {
+		return nil
+	}
+	totalBytes := 0
+	for _, indexInfo := range tblInfo.Indices {
+		if indexInfo == nil || indexInfo.FullTextInfo == nil || indexInfo.FullTextInfo.ParserConfig == nil {
+			continue
+		}
+		encoded, err := json.Marshal(indexInfo.FullTextInfo.ParserConfig)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		totalBytes += len(encoded)
+		if totalBytes > maxFullTextParserConfigBytes {
+			return dbterror.ErrUnsupportedAddColumnarIndex.FastGen("fulltext parser configurations are too large for one table")
+		}
 	}
 	return nil
 }
@@ -2410,10 +2457,22 @@ func (w *worker) prepareTableFullTextParserConfigs(jobCtx *jobContext, job *mode
 			return err
 		}
 	}
-	return nil
+	return validateTableFullTextParserConfigSize(tblInfo)
 }
 
 func (w *worker) readFullTextStopwords(jobCtx *jobContext, dbName, tblName string) (stopwords []string, err error) {
+	ctx := jobCtx.stepCtx
+	if ctx == nil {
+		ctx = jobCtx.ctx
+	}
+	return readFullTextStopwordsWithExecutor(ctx, w.sess.Context.GetSQLExecutor(), dbName, tblName)
+}
+
+func readFullTextStopwordsWithExecutor(
+	ctx context.Context,
+	sqlExecutor sqlexec.SQLExecutor,
+	dbName, tblName string,
+) (stopwords []string, err error) {
 	const label = "ddl_read_fulltext_stopwords"
 	startTime := time.Now()
 	defer func() {
@@ -2423,11 +2482,10 @@ func (w *worker) readFullTextStopwords(jobCtx *jobContext, dbName, tblName strin
 	var sb strings.Builder
 	sqlescape.MustFormatSQL(&sb, "SELECT `value` FROM %n.%n", dbName, tblName)
 
-	ctx := jobCtx.stepCtx
 	if ctx.Value(kv.RequestSourceKey) == nil {
 		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	}
-	rs, err := w.sess.Context.GetSQLExecutor().ExecuteInternal(ctx, sb.String())
+	rs, err := sqlExecutor.ExecuteInternal(ctx, sb.String())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

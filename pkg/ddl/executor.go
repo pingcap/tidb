@@ -1149,6 +1149,13 @@ func (e *executor) createTableWithInfoJob(
 	if err := e.captureFullTextIndexSysvarsToJobFromTableInfo(ctx, job, tbInfo); err != nil {
 		return nil, errors.Trace(err)
 	}
+	// Resolve and persist the exact analyzer configuration before the job is
+	// enqueued. CREATE TABLE calls TiCI before its metadata transaction commits;
+	// keeping the snapshot in the initial job args prevents a retry from reading
+	// a changed stopword table after an earlier TiCI RPC already succeeded.
+	if err := e.prepareTableFullTextParserConfigs(job, tbInfo); err != nil {
+		return nil, errors.Trace(err)
+	}
 	args := &model.CreateTableArgs{
 		TableInfo:      tbInfo,
 		OnExistReplace: cfg.OnExist == OnExistReplace,
@@ -5215,6 +5222,43 @@ func (e *executor) captureFullTextIndexSysvarsToJobFromTableInfo(sctx sessionctx
 		}
 	}
 	return nil
+}
+
+func (e *executor) prepareTableFullTextParserConfigs(job *model.Job, tblInfo *model.TableInfo) error {
+	if tblInfo == nil {
+		return nil
+	}
+
+	var querySession sessionctx.Context
+	defer func() {
+		if querySession != nil {
+			e.sessPool.Put(querySession)
+		}
+	}()
+	readStopwords := func(dbName, tblName string) ([]string, error) {
+		if querySession == nil {
+			var err error
+			querySession, err = e.sessPool.Get()
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+		return readFullTextStopwordsWithExecutor(e.ctx, querySession.GetSQLExecutor(), dbName, tblName)
+	}
+
+	for _, indexInfo := range tblInfo.Indices {
+		if indexInfo == nil || indexInfo.FullTextInfo == nil || indexInfo.FullTextInfo.ParserConfig != nil {
+			continue
+		}
+		parserInfo, err := buildTiCIFulltextParserInfo(job, indexInfo, readStopwords)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if err := persistFullTextParserConfig(indexInfo, parserInfo); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return validateTableFullTextParserConfigSize(tblInfo)
 }
 
 func splitFullTextStopwordTableName(raw string) (dbName string, tblName string, ok bool) {

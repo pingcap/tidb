@@ -1968,8 +1968,24 @@ func TestFullTextIndexSysvarsPassedToTiCI(t *testing.T) {
 	tk.MustExec("set @@innodb_ft_user_stopword_table='test/sw'")
 
 	// CREATE TABLE with FULLTEXT INDEX should also pass sysvars + stopwords.
+	// The analyzer snapshot must already be present in the initially persisted
+	// job args, before the worker can make any TiCI RPC.
+	var configInInitialJobArgs atomic.Bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.Type != model.ActionCreateTable || job.TableName != "t_create" {
+			return
+		}
+		args, err := model.GetCreateTableArgs(job)
+		if err == nil && args.TableInfo != nil && len(args.TableInfo.Indices) == 1 &&
+			args.TableInfo.Indices[0].FullTextInfo != nil &&
+			args.TableInfo.Indices[0].FullTextInfo.ParserConfig != nil {
+			configInInitialJobArgs.Store(true)
+		}
+	})
 	tici.ResetMockTiCICreateIndexRequest()
 	tk.MustExec("create table t_create (id int, c text, fulltext index fts_idx(c))")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
+	require.True(t, configInInitialJobArgs.Load())
 	raw := tici.GetMockTiCICreateIndexRequest()
 	require.NotEmpty(t, raw)
 	assertTiCIFulltextParserInfo(t, raw)

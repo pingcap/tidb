@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/tici"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -243,4 +245,33 @@ func TestBuildFullTextInfoWithCheckParser(t *testing.T) {
 	ftsInfo, err = buildFullTextInfoWithCheck(idxParts, &ast.IndexOption{ParserName: ast.NewCIStr("ngram")}, tblInfo)
 	require.NoError(t, err)
 	require.Equal(t, model.FullTextParserTypeNgramV1, ftsInfo.ParserType)
+}
+
+func TestFullTextParserConfigSizeLimit(t *testing.T) {
+	t.Run("JSON escaping", func(t *testing.T) {
+		indexInfo := &model.IndexInfo{FullTextInfo: &model.FullTextIndexInfo{}}
+		parserInfo := &tici.ParserInfo{
+			ParserParams: map[string]string{"parser_name": "standard"},
+			// The raw payload is below the old per-index byte limit, but JSON
+			// escaping doubles it. The persisted form must be bounded instead.
+			StopWords: []string{strings.Repeat(`"`, maxFullTextStopwordBytes/2+1)},
+		}
+		err := persistFullTextParserConfig(indexInfo, parserInfo)
+		require.ErrorContains(t, err, "fulltext parser configuration is too large")
+		require.Nil(t, indexInfo.FullTextInfo.ParserConfig)
+	})
+
+	t.Run("aggregate table size", func(t *testing.T) {
+		newIndex := func(fill string) *model.IndexInfo {
+			return &model.IndexInfo{FullTextInfo: &model.FullTextIndexInfo{
+				ParserConfig: &model.FullTextIndexParserConfig{
+					ParserParams: map[string]string{"parser_name": "standard"},
+					StopWords:    []string{strings.Repeat(fill, maxFullTextParserConfigBytes*3/5)},
+				},
+			}}
+		}
+		tblInfo := &model.TableInfo{Indices: []*model.IndexInfo{newIndex("a"), newIndex("b")}}
+		err := validateTableFullTextParserConfigSize(tblInfo)
+		require.ErrorContains(t, err, "fulltext parser configurations are too large for one table")
+	})
 }
