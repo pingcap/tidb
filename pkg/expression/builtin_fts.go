@@ -278,6 +278,27 @@ func SetFTSMysqlMatchAgainstLocalEvalInfo(sf *ScalarFunction, info *FTSLocalEval
 	return nil
 }
 
+// ValidateFTSMysqlMatchAgainstLocalQuery compiles the current constant or
+// prepared-parameter search value before execution starts. Local evaluation
+// must not defer BOOLEAN syntax and capability errors until the first input
+// row, because an empty input or an earlier false predicate would then hide
+// the error.
+func ValidateFTSMysqlMatchAgainstLocalQuery(ctx EvalContext, sf *ScalarFunction, config fulltext.AnalyzerConfig) error {
+	sig, ok := sf.Function.(*builtinFtsMysqlMatchAgainstSig)
+	if !ok {
+		return errors.Errorf("unexpected builtin signature for %s: %T", ast.FTSMysqlMatchAgainst, sf.Function)
+	}
+	if !FTSModifierSupportedByLocalNoScore(sig.modifier) {
+		return errors.Errorf("local MATCH ... AGAINST only supports IN BOOLEAN MODE")
+	}
+	search, isNull, err := sf.GetArgs()[0].EvalString(ctx, chunk.Row{})
+	if err != nil || isNull {
+		return err
+	}
+	_, err = fulltext.CompileBooleanQuery(search, config)
+	return err
+}
+
 // FTSMysqlMatchAgainstLocalEvalInfo returns the local no-score evaluation
 // metadata attached to MATCH ... AGAINST, if any.
 func FTSMysqlMatchAgainstLocalEvalInfo(sf *ScalarFunction) (*FTSLocalEvalInfo, bool) {

@@ -15,6 +15,8 @@
 package fulltext
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -161,6 +163,32 @@ func TestCompileBooleanQueryStandardPrefix(t *testing.T) {
 	require.True(t, matchQueryForTest(t, config, "ti*", []ColumnInput{{Text: "TiDB storage"}}))
 	require.False(t, matchQueryForTest(t, config, "tidb-mysql*", []ColumnInput{{Text: "tidb mysql"}}))
 	require.False(t, matchQueryForTest(t, config, "+tidb-mysql*", []ColumnInput{{Text: "tidb mysql"}}))
+}
+
+func TestCompileBooleanQueryRepeatedTokenPhraseMiss(t *testing.T) {
+	const repetitions = 4096
+	document := strings.TrimSpace(strings.Repeat("foo ", repetitions))
+	require.False(t, matchQueryForTest(t, standardConfigForTest(), `"foo foo never"`, []ColumnInput{{Text: document}}))
+}
+
+func BenchmarkRepeatedTokenPhraseMiss(b *testing.B) {
+	config := standardConfigForTest()
+	analyzer, err := GetAnalyzer(config)
+	require.NoError(b, err)
+	query, err := CompileBooleanQuery(`"foo foo never"`, config)
+	require.NoError(b, err)
+
+	for _, repetitions := range []int{1024, 2048, 4096} {
+		b.Run(fmt.Sprintf("tokens-%d", repetitions), func(b *testing.B) {
+			document := strings.TrimSpace(strings.Repeat("foo ", repetitions))
+			doc, err := BuildDocument([]ColumnInput{{Text: document}}, analyzer)
+			require.NoError(b, err)
+			b.ResetTimer()
+			for b.Loop() {
+				query.Match(doc)
+			}
+		})
+	}
 }
 
 func TestCompileBooleanQueryNgram(t *testing.T) {

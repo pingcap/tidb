@@ -103,31 +103,40 @@ func (n phraseNode) match(doc *Document) bool {
 	firstToken := n.tokens[0]
 	for _, col := range doc.Columns {
 		startPositions := col.Positions[firstToken]
-		for _, start := range startPositions {
-			if n.matchesAt(col, start) {
-				return true
-			}
+		if len(startPositions) == 0 {
+			continue
 		}
-	}
-	return false
-}
-
-func (n phraseNode) matchesAt(col ColumnDocument, start int) bool {
-	for i := 1; i < len(n.tokens); i++ {
-		if !positionsContain(col.Positions[n.tokens[i]], start+n.offsets[i]) {
-			return false
+		// Position lists are built in token-stream order. Intersect the possible
+		// phrase starts with each following token's shifted positions so a miss
+		// remains linear even when the phrase and document repeat one token many
+		// times (for example, `"foo foo never"`).
+		candidates := append([]int(nil), startPositions...)
+		for i := 1; i < len(n.tokens) && len(candidates) > 0; i++ {
+			candidates = intersectPhraseStarts(candidates, col.Positions[n.tokens[i]], n.offsets[i])
 		}
-	}
-	return true
-}
-
-func positionsContain(positions []int, target int) bool {
-	for _, pos := range positions {
-		if pos == target {
+		if len(candidates) > 0 {
 			return true
 		}
 	}
 	return false
+}
+
+func intersectPhraseStarts(starts, positions []int, offset int) []int {
+	matched := starts[:0]
+	for i, j := 0, 0; i < len(starts) && j < len(positions); {
+		target := starts[i] + offset
+		switch {
+		case target < positions[j]:
+			i++
+		case target > positions[j]:
+			j++
+		default:
+			matched = append(matched, starts[i])
+			i++
+			j++
+		}
+	}
+	return matched
 }
 
 type groupNode struct {

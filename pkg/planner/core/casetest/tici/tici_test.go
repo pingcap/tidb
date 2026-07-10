@@ -517,6 +517,33 @@ func TestLocalMatchAgainstSkipsPreparedPlanCache(t *testing.T) {
 	})
 }
 
+func TestLocalMatchAgainstValidatesQueryBeforeRows(t *testing.T) {
+	runTiCITest(t, func(tk *testkit.TestKit) {
+		tk.MustExec(`create table t(
+			id int primary key,
+			title text,
+			fulltext index ft_title(title)
+		)`)
+		tk.MustExec("set tidb_enable_local_match_against = on")
+		tk.MustExec("begin")
+		tk.MustExec("insert into t values (1, 'TiDB database')")
+
+		// id < 0 removes every row before MATCH is evaluated. BOOLEAN syntax
+		// errors must still be raised while the local plan is bound.
+		tk.MustContainErrMsg(
+			"select id from t where id < 0 and match(title) against('%' in boolean mode)",
+			"unexpected char",
+		)
+
+		tk.MustExec("prepare local_match from 'select id from t where id < 0 and match(title) against(? in boolean mode)'")
+		tk.MustExec("set @search = '%'")
+		tk.MustContainErrMsg("execute local_match using @search", "unexpected char")
+		tk.MustExec("set @search = 'tidb'")
+		tk.MustQuery("execute local_match using @search").Check(testkit.Rows())
+		tk.MustExec("rollback")
+	})
+}
+
 func TestLocalMatchAgainstCBOChoosesResidualIndex(t *testing.T) {
 	runTiCITest(t, func(tk *testkit.TestKit) {
 		tk.MustExec(`create table t(
