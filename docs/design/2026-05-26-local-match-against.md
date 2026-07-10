@@ -120,6 +120,15 @@ executor therefore resolves stopwords and stores the snapshot in the initial
 DDL job arguments before enqueueing the job. A retry cannot send one analyzer
 to TiCI and later persist another after a stopword table changes.
 
+The worker never synthesizes a missing CREATE TABLE snapshot. During a rolling
+upgrade, a legacy job with no snapshot may already have completed a TiCI RPC
+before its DDL-step transaction failed; even an initial-state job cannot prove
+that no external side effect occurred. A foreign-key CREATE TABLE in
+DeleteOnly or WriteOnly is an explicit instance of this case. Such jobs keep
+legacy metadata without `ParserConfig`: native execution remains available,
+but local MATCH and new partition expansion reject the index until it is
+rebuilt.
+
 ADD FULLTEXT INDEX persists its snapshot in the first schema-state transition,
 before TiCI creation/backfill side effects. ADD PARTITION reuses the existing
 index snapshots when grouping TiCI requests.

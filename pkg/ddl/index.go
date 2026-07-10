@@ -2459,25 +2459,6 @@ func validateTableFullTextParserConfigSize(tblInfo *model.TableInfo) error {
 	return nil
 }
 
-func (w *worker) prepareTableFullTextParserConfigs(jobCtx *jobContext, job *model.Job, tblInfo *model.TableInfo) error {
-	if tblInfo == nil {
-		return nil
-	}
-	for _, indexInfo := range tblInfo.Indices {
-		if indexInfo == nil || indexInfo.FullTextInfo == nil || indexInfo.FullTextInfo.ParserConfig != nil {
-			continue
-		}
-		parserInfo, err := w.buildTiCIFulltextParserInfo(jobCtx, job, indexInfo)
-		if err != nil {
-			return err
-		}
-		if err := persistFullTextParserConfig(tblInfo, indexInfo, parserInfo); err != nil {
-			return err
-		}
-	}
-	return validateTableFullTextParserConfigSize(tblInfo)
-}
-
 func (w *worker) readFullTextStopwords(jobCtx *jobContext, dbName, tblName string) (stopwords []string, err error) {
 	ctx := jobCtx.stepCtx
 	if ctx == nil {

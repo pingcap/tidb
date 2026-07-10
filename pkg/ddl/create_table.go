@@ -286,7 +286,14 @@ func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 	jobCtx.jobArgs = args
 
 	tbInfo := args.TableInfo
-	if err := w.prepareTableFullTextParserConfigs(jobCtx, job, tbInfo); err != nil {
+	// Only trust analyzer snapshots captured by the executor before the job was
+	// enqueued. A legacy job without ParserConfig may already have completed a
+	// TiCI RPC before its DDL-step transaction failed, so rebuilding a snapshot
+	// from the current stopword table here could make local MATCH disagree with
+	// the existing TiCI index. Keep legacy metadata unbound instead; the native
+	// path can still use the job's captured sysvars, while local MATCH and new
+	// partition expansion conservatively reject the missing snapshot.
+	if err := validateTableFullTextParserConfigSize(tbInfo); err != nil {
 		return ver, errors.Trace(err)
 	}
 
@@ -387,6 +394,16 @@ func (w *worker) onCreateTables(jobCtx *jobContext, job *model.Job) (int64, erro
 	//
 	// it clones a stub job from the ActionCreateTables job
 	stubJob := job.Clone()
+	// Validate every executor-captured snapshot before making any TiCI side
+	// effect. Do not synthesize missing snapshots for legacy batch jobs: a
+	// previous owner may already have completed an RPC for any table in the
+	// batch before the shared DDL-step transaction failed.
+	for _, tblArgs := range args.Tables {
+		if err := validateTableFullTextParserConfigSize(tblArgs.TableInfo); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+	}
 	for i := range args.Tables {
 		tblArgs := args.Tables[i]
 		tableInfo := tblArgs.TableInfo
@@ -399,10 +416,6 @@ func (w *worker) onCreateTables(jobCtx *jobContext, job *model.Job) (int64, erro
 			}
 			tableInfos = append(tableInfos, tableInfo)
 		} else {
-			if err := w.prepareTableFullTextParserConfigs(jobCtx, stubJob, tableInfo); err != nil {
-				job.State = model.JobStateCancelled
-				return ver, errors.Trace(err)
-			}
 			tbInfo, err := createTable(jobCtx, stubJob, &asAutoIDRequirement{
 				store:     w.store,
 				autoidCli: w.autoidCli,

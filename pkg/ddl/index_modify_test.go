@@ -1931,7 +1931,7 @@ func TestFullTextIndexSysvarsPassedToTiCI(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, tiflashReplicaLease, mockstore.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t, t_create, sw;")
+	tk.MustExec("drop table if exists t, t_create, t_legacy, t_legacy_fk, parent, sw;")
 
 	tiflash := infosync.NewMockTiFlash()
 	infosync.SetMockTiFlash(tiflash)
@@ -1990,6 +1990,72 @@ func TestFullTextIndexSysvarsPassedToTiCI(t *testing.T) {
 	require.NotEmpty(t, raw)
 	assertTiCIFulltextParserInfo(t, raw)
 	assertFullTextParserConfigPersisted(t, dom.InfoSchema(), "t_create")
+
+	// Simulate a CREATE TABLE job submitted by an older executor, before
+	// ParserConfig was added to the initial job args. The worker cannot know
+	// whether an earlier owner already completed the TiCI RPC and then failed to
+	// commit the DDL step, so it must not turn the current stopword table into a
+	// trusted snapshot. Native TiCI creation still receives the legacy job
+	// configuration, while metadata remains unbound for local MATCH.
+	var strippedLegacySnapshot atomic.Bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.Type != model.ActionCreateTable || job.TableName != "t_legacy" ||
+			!strippedLegacySnapshot.CompareAndSwap(false, true) {
+			return
+		}
+		args, err := model.GetCreateTableArgs(job)
+		if err != nil || args.TableInfo == nil {
+			return
+		}
+		index := args.TableInfo.FindIndexByName("fts_idx")
+		if index != nil && index.FullTextInfo != nil {
+			index.FullTextInfo.ParserConfig = nil
+		}
+	})
+	tici.ResetMockTiCICreateIndexRequest()
+	tk.MustExec("create table t_legacy (id int, c text, fulltext index fts_idx(c))")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
+	require.True(t, strippedLegacySnapshot.Load())
+	raw = tici.GetMockTiCICreateIndexRequest()
+	require.NotEmpty(t, raw)
+	assertTiCIFulltextParserInfo(t, raw)
+	legacyTable, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_legacy"))
+	require.NoError(t, err)
+	require.Nil(t, legacyTable.Meta().FindIndexByName("fts_idx").FullTextInfo.ParserConfig)
+
+	// A legacy foreign-key CREATE TABLE in DeleteOnly has definitely reached a
+	// step where TiCI may already have been created. Publishing the table must
+	// preserve the missing snapshot instead of synthesizing one during the
+	// DeleteOnly -> Public transition.
+	tk.MustExec("create table parent (id int primary key)")
+	var strippedLegacyFKSnapshot atomic.Bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.Type != model.ActionCreateTable || job.TableName != "t_legacy_fk" ||
+			job.SchemaState != model.StateDeleteOnly ||
+			!strippedLegacyFKSnapshot.CompareAndSwap(false, true) {
+			return
+		}
+		args, err := model.GetCreateTableArgs(job)
+		if err != nil || args.TableInfo == nil {
+			return
+		}
+		index := args.TableInfo.FindIndexByName("fts_idx")
+		if index != nil && index.FullTextInfo != nil {
+			index.FullTextInfo.ParserConfig = nil
+		}
+	})
+	tk.MustExec(`create table t_legacy_fk (
+		id int primary key,
+		parent_id int,
+		c text,
+		fulltext index fts_idx(c),
+		foreign key (parent_id) references parent(id)
+	)`)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
+	require.True(t, strippedLegacyFKSnapshot.Load())
+	legacyFKTable, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_legacy_fk"))
+	require.NoError(t, err)
+	require.Nil(t, legacyFKTable.Meta().FindIndexByName("fts_idx").FullTextInfo.ParserConfig)
 
 	tk.MustExec("create table t (id int, c text, d text)")
 	tk.MustExec("alter table t set tiflash replica 2 location labels 'a','b';")
