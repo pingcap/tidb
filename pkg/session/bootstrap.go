@@ -804,6 +804,7 @@ const (
 		KEY idx_mv_name_commit_tso (MV_SCHEMA, MV_NAME, REFRESH_COMMIT_TSO),
 		KEY idx_mview_status (MVIEW_ID, REFRESH_STATUS, REFRESH_TIME),
 		KEY idx_refresh_duration_sec (REFRESH_DURATION_SEC),
+		KEY idx_refresh_schedule_duration_sec (REFRESH_SCHEDULE_DURATION_SEC),
 		KEY idx_refresh_time (REFRESH_TIME),
 		KEY idx_refresh_status (REFRESH_STATUS, REFRESH_TIME))`
 
@@ -3477,6 +3478,7 @@ func upgradeToVer229(s sessiontypes.Session, ver int64) {
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mview_refresh_info ADD COLUMN `LAST_SUCCESS_ENDTIME` datetime(6) DEFAULT NULL AFTER `LAST_SUCCESS_READ_TSO`", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mview_refresh_hist ADD COLUMN `REFRESH_SCHEDULE_DURATION_SEC` decimal(18,6) DEFAULT NULL AFTER `REFRESH_DURATION_SEC`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mview_refresh_hist ADD INDEX idx_refresh_schedule_duration_sec (REFRESH_SCHEDULE_DURATION_SEC)", dbterror.ErrDupKeyName)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.

@@ -70,6 +70,8 @@ func TestBootstrapMaterializedViewSystemTables(t *testing.T) {
 		Check(testkit.Rows("mview_id", "refresh_status", "refresh_time"))
 	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and index_name='idx_refresh_duration_sec' order by seq_in_index").
 		Check(testkit.Rows("refresh_duration_sec"))
+	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and index_name='idx_refresh_schedule_duration_sec' order by seq_in_index").
+		Check(testkit.Rows("refresh_schedule_duration_sec"))
 	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and index_name='idx_refresh_time' order by seq_in_index").
 		Check(testkit.Rows("refresh_time"))
 	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and index_name='idx_refresh_status' order by seq_in_index").
@@ -221,6 +223,8 @@ func TestUpgradeToVer221MaterializedViewSystemTables(t *testing.T) {
 		Check(testkit.Rows("decimal(18,6)"))
 	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and column_name='REFRESH_SCHEDULE_DURATION_SEC'").
 		Check(testkit.Rows("decimal(18,6)"))
+	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and index_name='idx_refresh_schedule_duration_sec' order by seq_in_index").
+		Check(testkit.Rows("refresh_schedule_duration_sec"))
 	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and column_name='PURGE_JOB_ID'").
 		Check(testkit.Rows("bigint(20) unsigned"))
 	tk.MustQuery("select lower(column_type) from information_schema.columns where table_schema='mysql' and table_name='tidb_mlog_purge_hist' and column_name in ('BASE_TABLE_SCHEMA', 'BASE_TABLE_NAME') order by column_name").
@@ -756,4 +760,6 @@ func TestUpgradeToVer229MaterializedViewRefreshScheduleDuration(t *testing.T) {
 		Check(testkit.Rows("mview_id bigint(20) NO", "last_success_read_tso bigint(20) unsigned YES", "last_success_endtime datetime(6) YES", "next_time datetime YES"))
 	tk.MustQuery("select lower(column_name), lower(column_type), is_nullable from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and column_name='REFRESH_SCHEDULE_DURATION_SEC'").
 		Check(testkit.Rows("refresh_schedule_duration_sec decimal(18,6) YES"))
+	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_refresh_hist' and index_name='idx_refresh_schedule_duration_sec' order by seq_in_index").
+		Check(testkit.Rows("refresh_schedule_duration_sec"))
 }

@@ -25235,7 +25235,7 @@
                         "format": "time_series",
                         "interval": "",
                         "intervalFactor": 2,
-                        "legendFormat": "refresh-success-p999",
+                        "legendFormat": "refresh-success-duration-p999",
                         "refId": "A"
                     },
                     {
@@ -25245,7 +25245,7 @@
                         "hide": false,
                         "interval": "",
                         "intervalFactor": 2,
-                        "legendFormat": "refresh-failed-p999",
+                        "legendFormat": "refresh-failed-duration-p999",
                         "refId": "B"
                     },
                     {
@@ -25255,7 +25255,7 @@
                         "hide": false,
                         "interval": "",
                         "intervalFactor": 2,
-                        "legendFormat": "refresh-success-avg",
+                        "legendFormat": "refresh-success-duration-avg",
                         "refId": "C"
                     },
                     {
@@ -25265,7 +25265,7 @@
                         "hide": false,
                         "interval": "",
                         "intervalFactor": 2,
-                        "legendFormat": "refresh-failed-avg",
+                        "legendFormat": "refresh-failed-duration-avg",
                         "refId": "D"
                     },
                     {
@@ -25274,7 +25274,7 @@
                         "format": "time_series",
                         "interval": "",
                         "intervalFactor": 2,
-                        "legendFormat": "schedule-p999",
+                        "legendFormat": "schedule-duration-p999",
                         "refId": "E"
                     },
                     {
@@ -25284,7 +25284,7 @@
                         "hide": false,
                         "interval": "",
                         "intervalFactor": 2,
-                        "legendFormat": "schedule-avg",
+                        "legendFormat": "schedule-duration-avg",
                         "refId": "F"
                     }
                 ],
