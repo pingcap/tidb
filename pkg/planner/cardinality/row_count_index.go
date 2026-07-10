@@ -650,7 +650,7 @@ func AdjustRowCountForAppendedHandleColumns(
 			}
 		}
 		adjusted.Est *= factor
-		// Damping a usable estimate should not push it below one row.
+		// Damping should not push the estimate below 1 row unless the prefix estimate is already < 1.
 		adjusted.Est = max(adjusted.Est, min(prefixCount.Est, 1))
 		// Full independence gives the most optimistic count; the unadjusted prefix
 		// estimate remains the upper bound in MaxEst.
