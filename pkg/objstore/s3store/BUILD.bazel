@@ -4,6 +4,7 @@ go_library(
     name = "s3store",
     srcs = [
         "client.go",
+        "gcs_s3_fault.go",
         "gcs_s3_signer.go",
         "interface.go",
         "ks3.go",

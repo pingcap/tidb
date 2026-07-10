@@ -48,7 +48,9 @@ func TestIsGCSS3Compatible(t *testing.T) {
 	}))
 }
 
-func TestGCSS3CompatibleSignerSkipsSDKHeaders(t *testing.T) {
+func TestGCSS3CompatibleSignerSkipsAcceptEncodingWithRetry(t *testing.T) {
+	t.Setenv(gcsS3FaultRateEnv, "0")
+
 	const listObjectsV2Response = `<?xml version="1.0" encoding="UTF-8"?>
 <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
   <Name>bucket</Name>
@@ -62,12 +64,14 @@ func TestGCSS3CompatibleSignerSkipsSDKHeaders(t *testing.T) {
 		method        string
 		signedHeaders string
 		listType      string
+		statusCode    int
 		writeErr      error
 	}
 
 	var (
-		mu       sync.Mutex
-		requests []requestInfo
+		mu          sync.Mutex
+		getAttempts int
+		requests    []requestInfo
 	)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		info := requestInfo{
@@ -83,11 +87,25 @@ func TestGCSS3CompatibleSignerSkipsSDKHeaders(t *testing.T) {
 
 		switch r.Method {
 		case http.MethodHead:
+			info.statusCode = http.StatusOK
 			w.WriteHeader(http.StatusOK)
 		case http.MethodGet:
+			mu.Lock()
+			getAttempts++
+			getAttempt := getAttempts
+			mu.Unlock()
+
+			if getAttempt == 1 {
+				info.statusCode = http.StatusInternalServerError
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+
+			info.statusCode = http.StatusOK
 			w.Header().Set("Content-Type", "application/xml")
 			_, info.writeErr = w.Write([]byte(listObjectsV2Response))
 		default:
+			info.statusCode = http.StatusNotFound
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
@@ -109,15 +127,16 @@ func TestGCSS3CompatibleSignerSkipsSDKHeaders(t *testing.T) {
 	mu.Lock()
 	observedRequests := append([]requestInfo(nil), requests...)
 	mu.Unlock()
-	require.Len(t, observedRequests, 2)
+	require.Len(t, observedRequests, 3)
 
-	var headSeen, listSeen bool
+	var headSeen bool
+	var listStatuses []int
 	for _, req := range observedRequests {
 		require.NoError(t, req.writeErr)
 		require.NotEmpty(t, req.signedHeaders)
 		require.NotContains(t, req.signedHeaders, "accept-encoding")
-		require.NotContains(t, req.signedHeaders, "amz-sdk-invocation-id")
-		require.NotContains(t, req.signedHeaders, "amz-sdk-request")
+		require.Contains(t, req.signedHeaders, "amz-sdk-invocation-id")
+		require.Contains(t, req.signedHeaders, "amz-sdk-request")
 		require.Contains(t, req.signedHeaders, "host")
 		require.Contains(t, req.signedHeaders, "x-amz-content-sha256")
 		require.Contains(t, req.signedHeaders, "x-amz-date")
@@ -125,15 +144,90 @@ func TestGCSS3CompatibleSignerSkipsSDKHeaders(t *testing.T) {
 		switch req.method {
 		case http.MethodHead:
 			headSeen = true
+			require.Equal(t, http.StatusOK, req.statusCode)
 		case http.MethodGet:
-			listSeen = true
 			require.Equal(t, "2", req.listType)
+			listStatuses = append(listStatuses, req.statusCode)
 		default:
 			require.Failf(t, "unexpected request method", "method: %s", req.method)
 		}
 	}
 	require.True(t, headSeen)
-	require.True(t, listSeen)
+	require.Equal(t, []int{http.StatusInternalServerError, http.StatusOK}, listStatuses)
+}
+
+func TestGCSS3CompatibleFaultInjectionRetries(t *testing.T) {
+	const listObjectsV2Response = `<?xml version="1.0" encoding="UTF-8"?>
+<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+  <Name>bucket</Name>
+  <Prefix></Prefix>
+  <KeyCount>0</KeyCount>
+  <MaxKeys>1</MaxKeys>
+  <IsTruncated>false</IsTruncated>
+</ListBucketResult>`
+
+	for _, mode := range []string{gcsS3FaultModeHTTP500, gcsS3FaultModeConnectionReset} {
+		t.Run(mode, func(t *testing.T) {
+			t.Setenv(gcsS3FaultRateEnv, "1")
+			t.Setenv(gcsS3FaultModeEnv, mode)
+			t.Setenv(gcsS3FaultMaxEnv, "1")
+
+			type faultRequestInfo struct {
+				method   string
+				listType string
+				writeErr error
+			}
+
+			var (
+				mu       sync.Mutex
+				requests []faultRequestInfo
+			)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				info := faultRequestInfo{
+					method:   r.Method,
+					listType: r.URL.Query().Get("list-type"),
+				}
+				defer func() {
+					mu.Lock()
+					requests = append(requests, info)
+					mu.Unlock()
+				}()
+
+				switch r.Method {
+				case http.MethodHead:
+					w.WriteHeader(http.StatusOK)
+				case http.MethodGet:
+					w.Header().Set("Content-Type", "application/xml")
+					_, info.writeErr = w.Write([]byte(listObjectsV2Response))
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer server.Close()
+
+			storage, err := NewS3Storage(context.Background(), &backuppb.S3{
+				Bucket:          "bucket",
+				Endpoint:        server.URL,
+				Provider:        "gcs",
+				ForcePathStyle:  true,
+				AccessKey:       "access-key",
+				SecretAccessKey: "secret-access-key",
+			}, &storeapi.Options{
+				CheckPermissions: []storeapi.Permission{storeapi.AccessBuckets, storeapi.ListObjects},
+			})
+			require.NoError(t, err)
+			require.NotNil(t, storage)
+
+			mu.Lock()
+			observedRequests := append([]faultRequestInfo(nil), requests...)
+			mu.Unlock()
+			require.Len(t, observedRequests, 2)
+			require.Equal(t, http.MethodHead, observedRequests[0].method)
+			require.Equal(t, http.MethodGet, observedRequests[1].method)
+			require.Equal(t, "2", observedRequests[1].listType)
+			require.NoError(t, observedRequests[1].writeErr)
+		})
+	}
 }
 
 func getSignedHeaders(authorization string) string {

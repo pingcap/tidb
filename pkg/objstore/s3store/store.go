@@ -116,6 +116,13 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opti
 	if opts.HTTPClient != nil {
 		cfg.HTTPClient = opts.HTTPClient
 	}
+	var gcsS3FaultHTTPClient aws.HTTPClient
+	if gcsS3Compatible {
+		gcsS3FaultHTTPClient = newGCSS3FaultInjectingHTTPClient(cfg.HTTPClient, logger)
+		if gcsS3FaultHTTPClient != nil {
+			cfg.HTTPClient = gcsS3FaultHTTPClient
+		}
+	}
 
 	// Configure S3-specific options
 	var s3Opts []func(*s3.Options)
@@ -151,6 +158,11 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opti
 	if opts.HTTPClient != nil {
 		s3Opts = append(s3Opts, func(o *s3.Options) {
 			o.HTTPClient = opts.HTTPClient
+		})
+	}
+	if gcsS3FaultHTTPClient != nil {
+		s3Opts = append(s3Opts, func(o *s3.Options) {
+			o.HTTPClient = gcsS3FaultHTTPClient
 		})
 	}
 	// When using a profile, let AWS SDK handle credentials through the profile
