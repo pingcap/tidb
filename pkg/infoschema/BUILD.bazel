@@ -49,7 +49,6 @@ go_library(
         "//pkg/table/tables",
         "//pkg/types",
         "//pkg/util",
-        "//pkg/util/chunk",
         "//pkg/util/collate",
         "//pkg/util/dbterror",
         "//pkg/util/deadlockhistory",
