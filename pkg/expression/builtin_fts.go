@@ -382,6 +382,12 @@ func (b *builtinFtsMysqlMatchAgainstSig) evalReal(ctx EvalContext, row chunk.Row
 	if err != nil {
 		return 0, false, err
 	}
+	if plan.query.MatchesNothing() {
+		// Analyzer-filtered required terms, empty queries, and pure-negative
+		// filter-only queries cannot match any document. Avoid tokenizing every
+		// row after the query has already proved that result.
+		return 0, false, nil
+	}
 	columns, err := b.evalLocalMatchColumns(ctx, row)
 	if err != nil {
 		return 0, false, err

@@ -402,13 +402,12 @@ func buildFTSNaturalLanguageModeILikeExpression(ctx BuildContext, columns []Expr
 // reuse its TopN/histogram-based estimation paths instead of falling back
 // to a flat default that ignores column statistics.
 //
-// Restricted to single-column MATCH: GetSelectivityByFilter only estimates
-// expressions over a single column, so a multi-column substituted ILIKE would
-// be declined by the stats engine and fall through to the same str-match
-// default that the un-substituted FTS expression already receives. Returning
-// an error for the multi-column case lets the selectivity caller's existing
-// err-check fall through cleanly, without producing a substitute that would
-// never improve the estimate.
+// Non-NULL string proxies are restricted to single-column MATCH:
+// GetSelectivityByFilter only estimates expressions over one column, so a
+// multi-column substituted ILIKE would be declined by the stats engine and
+// fall through to the same str-match default. A NULL search is returned before
+// that restriction because it is column-independent and preserves SQL
+// three-valued logic for every MATCH arity.
 func BuildFTSToILikeExpressionFromBuiltin(ctx BuildContext, fts *ScalarFunction) (Expression, error) {
 	if fts == nil || fts.FuncName.L != ast.FTSMysqlMatchAgainst {
 		return nil, errors.Errorf("expected %s, got %v", ast.FTSMysqlMatchAgainst, fts)
@@ -416,13 +415,6 @@ func BuildFTSToILikeExpressionFromBuiltin(ctx BuildContext, fts *ScalarFunction)
 	args := fts.GetArgs()
 	if len(args) < 2 {
 		return nil, errors.Errorf("%s expects at least 2 args, got %d", ast.FTSMysqlMatchAgainst, len(args))
-	}
-	localInfo, local := FTSMysqlMatchAgainstLocalEvalInfo(fts)
-	if local && localInfo.MatchNothing {
-		return ftsZeroIntConst(), nil
-	}
-	if len(args) > 2 {
-		return nil, ErrNotSupportedYet.GenWithStackByArgs("multi-column MATCH...AGAINST in selectivity substitution")
 	}
 	againstConst, ok := args[0].(*Constant)
 	if !ok {
@@ -439,6 +431,13 @@ func BuildFTSToILikeExpressionFromBuiltin(ctx BuildContext, fts *ScalarFunction)
 			Value:   types.Datum{},
 			RetType: types.NewFieldType(mysql.TypeTiny),
 		}, nil
+	}
+	localInfo, local := FTSMysqlMatchAgainstLocalEvalInfo(fts)
+	if local && localInfo.MatchNothing {
+		return ftsZeroIntConst(), nil
+	}
+	if len(args) > 2 {
+		return nil, ErrNotSupportedYet.GenWithStackByArgs("multi-column MATCH...AGAINST in selectivity substitution")
 	}
 	if againstConst.Value.Kind() != types.KindString {
 		return nil, ErrNotSupportedYet.GenWithStackByArgs("MATCH...AGAINST with non-string search constant")

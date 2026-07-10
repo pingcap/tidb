@@ -1067,6 +1067,12 @@ func localMatchAgainstExprCostWeight(expr expression.Expression) float64 {
 	}
 	if sf.FuncName.L == ast.FTSMysqlMatchAgainst {
 		if info, ok := expression.FTSMysqlMatchAgainstLocalEvalInfo(sf); ok && info.NoScore {
+			if info.MatchNothing {
+				// The executor returns before document analysis for a query that
+				// normalization proved cannot match. numFunctions still accounts
+				// for evaluating the scalar itself.
+				return 0
+			}
 			columnCount := len(info.ColumnUniqueIDs)
 			if columnCount == 0 {
 				columnCount = len(info.ColumnIDs)

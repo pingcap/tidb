@@ -327,24 +327,27 @@ func TestBuildFTSToILikeExpressionFromBuiltin(t *testing.T) {
 		require.Contains(t, err.Error(), "multi-column")
 	})
 
-	t.Run("NULL search constant returns Constant(NULL)", func(t *testing.T) {
+	t.Run("NULL search constant returns Constant(NULL) for any column count", func(t *testing.T) {
 		// The builtin's getFunction allows NULL search constants explicitly
-		// (builtin_fts.go:129); the substitution short-circuits to Constant(NULL)
-		// rather than Constant(0) so it composes correctly under SQL three-valued
-		// logic and matches the planner-side matchAgainstToLike NULL fast-path.
-		stringTp := types.NewFieldType(mysql.TypeVarchar)
-		nullArg := &Constant{Value: types.NewDatum(nil), RetType: stringTp}
-		col := &Column{Index: 0, RetType: stringTp}
-		fn, err := NewFunction(ctx, ast.FTSMysqlMatchAgainst, types.NewFieldType(mysql.TypeDouble), nullArg, col)
-		require.NoError(t, err)
-		sf := fn.(*ScalarFunction)
-		require.NoError(t, SetFTSMysqlMatchAgainstModifier(sf, naturalMode))
+		// (it returns NULL at evaluation time). Verify substitution preserves
+		// that before applying the single-column ILIKE restriction.
+		for _, columnCount := range []int{1, 2} {
+			stringTp := types.NewFieldType(mysql.TypeVarchar)
+			args := []Expression{&Constant{Value: types.NewDatum(nil), RetType: stringTp}}
+			for i := range columnCount {
+				args = append(args, &Column{Index: i, RetType: stringTp})
+			}
+			fn, err := NewFunction(ctx, ast.FTSMysqlMatchAgainst, types.NewFieldType(mysql.TypeDouble), args...)
+			require.NoError(t, err)
+			sf := fn.(*ScalarFunction)
+			require.NoError(t, SetFTSMysqlMatchAgainstModifier(sf, naturalMode))
 
-		expr, err := BuildFTSToILikeExpressionFromBuiltin(ctx, sf)
-		require.NoError(t, err)
-		c, ok := expr.(*Constant)
-		require.True(t, ok)
-		require.True(t, c.Value.IsNull(), "expected Constant(NULL), got %v", c.Value)
+			expr, err := BuildFTSToILikeExpressionFromBuiltin(ctx, sf)
+			require.NoError(t, err)
+			c, ok := expr.(*Constant)
+			require.True(t, ok)
+			require.True(t, c.Value.IsNull(), "expected Constant(NULL), got %v", c.Value)
+		}
 	})
 
 	t.Run("search string outside strict subset rejected", func(t *testing.T) {

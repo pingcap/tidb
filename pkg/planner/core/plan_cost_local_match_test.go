@@ -26,23 +26,34 @@ import (
 )
 
 func TestLocalMatchCostReflectsDocumentAndQueryWork(t *testing.T) {
-	shortSimple := localMatchCostExprForTest(t, 16, 1, 0)
-	longSimple := localMatchCostExprForTest(t, 4096, 1, 0)
-	shortPhrase := localMatchCostExprForTest(t, 16, 8, 1)
-	longSparsePhrase := localMatchCostExprForTest(t, 4096, 8, 4)
+	shortSimple := localMatchCostExprForTest(t, 16, 1, 0, false)
+	longSimple := localMatchCostExprForTest(t, 4096, 1, 0, false)
+	shortPhrase := localMatchCostExprForTest(t, 16, 8, 1, false)
+	longSparsePhrase := localMatchCostExprForTest(t, 4096, 8, 4, false)
+	shortNever := localMatchCostExprForTest(t, 16, 1, 0, true)
+	longNever := localMatchCostExprForTest(t, 4096, 1, 4, true)
 
 	shortSimpleCost := localMatchAgainstFilterCostWeight([]expression.Expression{shortSimple})
 	longSimpleCost := localMatchAgainstFilterCostWeight([]expression.Expression{longSimple})
 	shortPhraseCost := localMatchAgainstFilterCostWeight([]expression.Expression{shortPhrase})
 	longSparsePhraseCost := localMatchAgainstFilterCostWeight([]expression.Expression{longSparsePhrase})
+	shortNeverCost := localMatchAgainstFilterCostWeight([]expression.Expression{shortNever})
+	longNeverCost := localMatchAgainstFilterCostWeight([]expression.Expression{longNever})
 	require.Equal(t, float64(4), shortSimpleCost)
 	require.Greater(t, longSimpleCost, shortSimpleCost)
 	require.Greater(t, shortPhraseCost, shortSimpleCost)
 	require.Greater(t, longSparsePhraseCost, longSimpleCost+shortPhraseCost,
 		"document size and phrase work must interact instead of being purely additive")
+	require.Zero(t, shortNeverCost)
+	require.Equal(t, shortNeverCost, longNeverCost,
+		"queries proved false return before document-sized work")
 }
 
-func localMatchCostExprForTest(t *testing.T, estimatedRowBytes, queryMatchCost, queryDocumentCost float64) expression.Expression {
+func localMatchCostExprForTest(
+	t *testing.T,
+	estimatedRowBytes, queryMatchCost, queryDocumentCost float64,
+	matchNothing bool,
+) expression.Expression {
 	t.Helper()
 	ctx := mock.NewContext()
 	stringType := types.NewFieldType(mysql.TypeVarchar)
@@ -62,6 +73,7 @@ func localMatchCostExprForTest(t *testing.T, estimatedRowBytes, queryMatchCost, 
 		EstimatedRowBytes: estimatedRowBytes,
 		QueryMatchCost:    queryMatchCost,
 		QueryDocumentCost: queryDocumentCost,
+		MatchNothing:      matchNothing,
 		NoScore:           true,
 	}))
 	return sf

@@ -759,12 +759,6 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 		//   * HasLocalMatchCandidate: a direct-filter boolean MATCH that can be
 		//     planned as a local residual Selection in a separate alternative
 		//     round when local MATCH and alternative plans are both enabled.
-		//     ILIKE-based plan; the cheaper of the two wins. If the real native
-		//     planning path later fails, maybeArmFTSLikeFallback forces the LIKE
-		//     round from the native error.
-		//   * HasLocalMatchCandidate: a direct-filter boolean MATCH that can be
-		//     planned as a local residual Selection in a separate alternative
-		//     round when local MATCH and alternative plans are both enabled.
 	}
 
 	p, names, nonLogical, err := buildAndOptimizeLogicalPlanRound(
