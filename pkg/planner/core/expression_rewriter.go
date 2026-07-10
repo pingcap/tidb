@@ -2377,9 +2377,15 @@ func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
 	if er.planCtx != nil && er.planCtx.builder != nil && er.planCtx.builder.ctx != nil {
 		sessVars := er.planCtx.builder.ctx.GetSessionVars()
 		if er.inDirectMatchBooleanContext() {
-			sessVars.RecordRelevantOptVar(vardef.TiDBEnableLocalMatchAgainst)
+			// Alternative logical planning is a dependency of both the legacy
+			// ILIKE fallback and the local residual round. Record it regardless
+			// of the current switch values so EXPLAIN EXPLORE can enumerate the
+			// joint local=ON, alternative=ON state from their default OFF state.
+			sessVars.RecordRelevantOptVar(vardef.TiDBOptEnableAlternativeLogicalPlans)
+			if expression.FTSModifierSupportedByLocalNoScore(v.Modifier) {
+				sessVars.RecordRelevantOptVar(vardef.TiDBEnableLocalMatchAgainst)
+			}
 			if sessVars.EnableLocalMatchAgainst && expression.FTSModifierSupportedByLocalNoScore(v.Modifier) {
-				sessVars.RecordRelevantOptVar(vardef.TiDBOptEnableAlternativeLogicalPlans)
 				if sessVars.EnableAlternativeLogicalPlans {
 					er.planCtx.builder.MarkLocalMatchCandidate()
 				}

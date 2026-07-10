@@ -16,7 +16,9 @@ package bindinfo
 
 import (
 	"container/list"
+	"context"
 	"fmt"
+	"maps"
 	"sort"
 	"strconv"
 	"strings"
@@ -53,6 +55,14 @@ func (g *planGenerator) Generate(defaultSchema, sql, charset, collation string) 
 	}
 
 	err = callWithSCtx(g.sPool, false, func(sctx sessionctx.Context) error {
+		sessVars := sctx.GetSessionVars()
+		originalCurrentDB := sessVars.CurrentDB
+		originalCostModelVersion := sessVars.CostModelVersion
+		defer func() {
+			sessVars.CurrentDB = originalCurrentDB
+			sessVars.CostModelVersion = originalCostModelVersion
+		}()
+
 		genedPlans, err := generatePlanWithSCtx(sctx, defaultSchema, sql, charset, collation)
 		if err != nil {
 			return err
@@ -254,8 +264,9 @@ func generatePlanWithSCtx(sctx sessionctx.Context, defaultSchema, sql, charset, 
 	if err != nil {
 		return nil, err
 	}
-	sctx.GetSessionVars().CurrentDB = defaultSchema
-	sctx.GetSessionVars().CostModelVersion = 2 // cost factor only works on cost-model v2
+	sessVars := sctx.GetSessionVars()
+	sessVars.CurrentDB = defaultSchema
+	sessVars.CostModelVersion = 2 // cost factor only works on cost-model v2
 	vars, fixes, err := RecordRelevantOptVarsAndFixes(sctx, stmt)
 	if err != nil {
 		return nil, err
@@ -354,6 +365,25 @@ func breadthFirstPlanSearch(sctx sessionctx.Context, stmt ast.StmtNode,
 
 // genPlanUnderState returns a plan generated under the given state (vars and fix-controls).
 func genPlanUnderState(sctx sessionctx.Context, stmt ast.StmtNode, state *state) (plan *genedPlan, err error) {
+	sessVars := sctx.GetSessionVars()
+	originalVarValues := make(map[string]string, len(state.varNames))
+	for _, varName := range state.varNames {
+		value, getErr := sessVars.GetSessionOrGlobalSystemVar(context.Background(), varName)
+		if getErr != nil {
+			return nil, getErr
+		}
+		originalVarValues[varName] = value
+	}
+	originalFixControl := maps.Clone(sessVars.OptimizerFixControl)
+	defer func() {
+		sessVars.OptimizerFixControl = originalFixControl
+		for _, varName := range state.varNames {
+			if restoreErr := sessVars.SetSystemVarWithoutValidation(varName, originalVarValues[varName]); restoreErr != nil && err == nil {
+				err = restoreErr
+			}
+		}
+	}()
+
 	for i, varName := range state.varNames {
 		switch varName {
 		case vardef.TiDBOptIndexScanCostFactor:

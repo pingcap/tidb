@@ -16,6 +16,7 @@ package tici
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -613,6 +614,25 @@ func TestLocalMatchAgainstCBOChoosesResidualIndex(t *testing.T) {
 		requirePlanLineContains(t, cboPlan, "Selection", "match_against")
 		requireNoPlanLineContains(t, cboPlan, "search func:fts_match_word")
 		tk.MustQuery(query).Check(testkit.Rows("1"))
+
+		// EXPLAIN EXPLORE starts both switches from OFF. It must still discover
+		// their joint ON state, and plan generation must not leak that state into
+		// the pooled session used by the next identical call.
+		tk.MustExec("set tidb_opt_enable_alternative_logical_plans = off")
+		tk.MustExec("set tidb_enable_local_match_against = off")
+		exploreSQL := "explain explore " + query
+		firstExplore := tk.MustQuery(exploreSQL).Rows()
+		secondExplore := tk.MustQuery(exploreSQL).Rows()
+		require.Equal(t, firstExplore, secondExplore)
+		hasLocalResidual := false
+		for _, row := range firstExplore {
+			plan := row[2].(string)
+			if strings.Contains(plan, "idx_status") && strings.Contains(plan, "match_against") {
+				hasLocalResidual = true
+				break
+			}
+		}
+		require.True(t, hasLocalResidual, "EXPLAIN EXPLORE should include a local residual plan")
 	})
 }
 

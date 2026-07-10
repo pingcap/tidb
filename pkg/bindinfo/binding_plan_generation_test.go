@@ -18,8 +18,10 @@ import (
 	"math"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -116,4 +118,30 @@ func TestStartState(t *testing.T) {
 	state, err := getStartState(vars, fixes, 0)
 	require.NoError(t, err)
 	require.Equal(t, state.Encode(), "1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,1.0000,0.0100,0.0000,0.0000,0.0000,0.8000,true,false,false,0.0000,false,OFF,1000,OFF")
+}
+
+func TestGenPlanUnderStateRestoresSessionVars(t *testing.T) {
+	sctx := mock.NewContext()
+	stmt, err := parser.New().ParseOneStmt("select 1", "", "")
+	require.NoError(t, err)
+	sessVars := sctx.GetSessionVars()
+	sessVars.EnableLocalMatchAgainst = false
+	sessVars.EnableAlternativeLogicalPlans = false
+	sessVars.OptimizerFixControl = map[uint64]string{fixcontrol.Fix44855: vardef.Off}
+
+	_, err = genPlanUnderState(sctx, stmt, &state{
+		varNames: []string{
+			vardef.TiDBEnableLocalMatchAgainst,
+			vardef.TiDBOptEnableAlternativeLogicalPlans,
+		},
+		varValues: []any{true, true},
+		fixIDs:    []uint64{fixcontrol.Fix44855},
+		fixValues: []string{vardef.On},
+	})
+	// The minimal mock context cannot complete physical optimization, but state
+	// restoration must run on both success and error paths.
+	require.Error(t, err)
+	require.False(t, sessVars.EnableLocalMatchAgainst)
+	require.False(t, sessVars.EnableAlternativeLogicalPlans)
+	require.Equal(t, map[uint64]string{fixcontrol.Fix44855: vardef.Off}, sessVars.OptimizerFixControl)
 }
