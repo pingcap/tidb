@@ -4189,6 +4189,49 @@ func InitDDLTables(store kv.Storage) error {
 	})
 }
 
+// initBootstrapDependentTables creates system tables that bootstrap and upgrade
+// DDL may consult before the ordinary bootstrap DDL reaches their creation step.
+func initBootstrapDependentTables(store kv.Storage) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	return kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMutator(txn)
+		dbID, err := t.CreateMySQLDatabaseIfNotExists()
+		if err != nil {
+			return err
+		}
+		return createAndSplitTablesIfNotExists(ctx, store, t, dbID, systemTablesOfMaskingPolicyNextGenVersion)
+	})
+}
+
+func createAndSplitTablesIfNotExists(
+	ctx context.Context,
+	store kv.Storage,
+	t *meta.Mutator,
+	dbID int64,
+	tables []TableBasicInfo,
+) error {
+	existingTables, err := t.ListTables(ctx, dbID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	existingNames := make(map[string]struct{}, len(existingTables))
+	for _, tblInfo := range existingTables {
+		existingNames[tblInfo.Name.L] = struct{}{}
+	}
+
+	missingTables := make([]TableBasicInfo, 0, len(tables))
+	for _, tbl := range tables {
+		if _, ok := existingNames[tbl.Name]; ok {
+			continue
+		}
+		missingTables = append(missingTables, tbl)
+	}
+	if len(missingTables) == 0 {
+		return nil
+	}
+	return createAndSplitTables(store, t, dbID, missingTables)
+}
+
 func createAndSplitTables(store kv.Storage, t *meta.Mutator, dbID int64, tables []TableBasicInfo) error {
 	var (
 		tableIDs = make([]int64, 0, len(tables))
@@ -4350,6 +4393,10 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 		}
 	}
 	err := InitDDLTables(store)
+	if err != nil {
+		return nil, err
+	}
+	err = initBootstrapDependentTables(store)
 	if err != nil {
 		return nil, err
 	}
