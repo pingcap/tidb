@@ -178,6 +178,21 @@ type Profile struct {
 	LastUpdatedUnix     int64
 }
 
+// Recommendation is the stable feedback exposed to executor builders.
+type Recommendation struct {
+	Cap int
+
+	RowsPerTask            float64
+	ProcessedKeysPerResult float64
+	OverReadRatio          float64
+	RequestCount           float64
+	LatencyMS              float64
+	ReaderRowsPerResult    float64
+	LookupRowsPerResult    float64
+	IndexRowsPerResult     float64
+	TableRowsPerResult     float64
+}
+
 // Store is a mutex-protected LRU cache of early-stop scan profiles.
 type Store struct {
 	mu    sync.Mutex
@@ -200,6 +215,11 @@ func LookupCap(key Key) (int, bool) {
 	return globalStore.LookupCap(key)
 }
 
+// LookupRecommendation returns a recommendation from the global store.
+func LookupRecommendation(key Key) (Recommendation, bool) {
+	return globalStore.LookupRecommendation(key)
+}
+
 // Observe updates the global store with one statement sample.
 func Observe(sample Sample) {
 	globalStore.Observe(sample)
@@ -212,22 +232,42 @@ func ResetForTest() {
 
 // LookupCap returns a recommended concurrency cap.
 func (s *Store) LookupCap(key Key) (int, bool) {
+	recommendation, ok := s.LookupRecommendation(key)
+	if !ok {
+		return 0, false
+	}
+	return recommendation.Cap, true
+}
+
+// LookupRecommendation returns a recommended concurrency cap and budget signals.
+func (s *Store) LookupRecommendation(key Key) (Recommendation, bool) {
 	now := time.Now().Unix()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	value, ok := s.cache.Get(key)
 	if !ok {
-		return 0, false
+		return Recommendation{}, false
 	}
 	profile := value.(*Profile)
 	if profile.Samples < minSamplesForUse || profile.RecommendedCap <= 0 {
-		return 0, false
+		return Recommendation{}, false
 	}
 	if s.ttl > 0 && now-profile.LastUpdatedUnix > int64(s.ttl.Seconds()) {
-		return 0, false
+		return Recommendation{}, false
 	}
-	return profile.RecommendedCap, true
+	return Recommendation{
+		Cap:                    profile.RecommendedCap,
+		RowsPerTask:            profile.EWMARowsPerTask,
+		ProcessedKeysPerResult: profile.EWMAProcessedKeysPerResult,
+		OverReadRatio:          profile.EWMAOverReadRatio,
+		RequestCount:           profile.EWMARequestCount,
+		LatencyMS:              profile.EWMALatencyMS,
+		ReaderRowsPerResult:    profile.EWMAReaderActRowsPerResult,
+		LookupRowsPerResult:    profile.EWMALookupActRowsPerResult,
+		IndexRowsPerResult:     profile.EWMAIndexActRowsPerResult,
+		TableRowsPerResult:     profile.EWMATableActRowsPerResult,
+	}, true
 }
 
 // Observe updates the store with one statement sample.

@@ -69,6 +69,12 @@ func TestProfileStoreLookupCapAfterEnoughSamples(t *testing.T) {
 	cap, ok := store.LookupCap(key)
 	require.True(t, ok)
 	require.Equal(t, 1, cap)
+	recommendation, ok := store.LookupRecommendation(key)
+	require.True(t, ok)
+	require.Equal(t, 1, recommendation.Cap)
+	require.Equal(t, float64(1000), recommendation.ProcessedKeysPerResult)
+	require.Equal(t, float64(1000), recommendation.OverReadRatio)
+	require.Equal(t, float64(16), recommendation.RequestCount)
 }
 
 func TestProfileStoreRecoversCapWithHealthySamples(t *testing.T) {
@@ -155,6 +161,9 @@ func TestProfileStoreUsesOperatorActRowsForOverRead(t *testing.T) {
 	cap, ok := store.LookupCap(key)
 	require.True(t, ok)
 	require.Equal(t, 1, cap)
+	recommendation, ok := store.LookupRecommendation(key)
+	require.True(t, ok)
+	require.Equal(t, float64(100), recommendation.LookupRowsPerResult)
 }
 
 func TestProfileStoreIgnoresInvalidSamples(t *testing.T) {

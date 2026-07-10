@@ -97,7 +97,7 @@ func TestKeepOrderLimitScanConcurrencyCapWithProfile(t *testing.T) {
 	require.Equal(t, 1, candidates[0].CapUsed)
 }
 
-func TestKeepOrderLimitScanConcurrencyCapWithProfileCanRecoverToDefault(t *testing.T) {
+func TestKeepOrderLimitScanConcurrencyCapWithProfileCanRecoverToNoThrottle(t *testing.T) {
 	earlystopprofile.ResetForTest()
 	sctx := defaultCtx()
 	sctx.GetSessionVars().EnableAdaptiveLimitScan = true
@@ -122,8 +122,7 @@ func TestKeepOrderLimitScanConcurrencyCapWithProfileCanRecoverToDefault(t *testi
 		})
 	}
 
-	require.Equal(t, vardef.DefDistSQLScanConcurrency,
-		keepOrderLimitScanConcurrencyCapWithProfile(sctx, earlystopprofile.ReaderTypeTable, true, 5000))
+	require.Equal(t, 0, keepOrderLimitScanConcurrencyCapWithProfile(sctx, earlystopprofile.ReaderTypeTable, true, 5000))
 }
 
 func TestKeepOrderLimitLargeScanCanLearnWithoutStaticCap(t *testing.T) {

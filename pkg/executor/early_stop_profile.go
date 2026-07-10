@@ -33,6 +33,8 @@ const (
 	adaptiveLimitScanEventCap     = "cap"
 	adaptiveLimitScanEventObserve = "observe"
 
+	adaptiveLimitRowsBudgetSafetyFactor = 1.25
+
 	adaptiveLimitScanResultAccepted              = "accepted"
 	adaptiveLimitScanResultChanged               = "changed"
 	adaptiveLimitScanResultCustomScanConcurrency = "skipped_custom_scan_concurrency"
@@ -135,9 +137,12 @@ func keepOrderLimitScanConcurrencyCapWithProfile(
 	}
 
 	finalCap := 0
-	if profileCap, ok := earlystopprofile.LookupCap(key); ok {
+	if recommendation, ok := earlystopprofile.LookupRecommendation(key); ok {
 		recordAdaptiveLimitScanMetric(adaptiveLimitScanEventLookup, readerType, adaptiveLimitScanResultHit)
-		finalCap = mergeAdaptiveProfileCap(profileCap, vardef.DefDistSQLScanConcurrency)
+		profileCap := mergeAdaptiveProfileCap(recommendation.Cap, vardef.DefDistSQLScanConcurrency)
+		if profileCap > 0 && profileCap < vardef.DefDistSQLScanConcurrency {
+			finalCap = profileCap
+		}
 	} else {
 		recordAdaptiveLimitScanMetric(adaptiveLimitScanEventLookup, readerType, adaptiveLimitScanResultMiss)
 	}
@@ -230,20 +235,22 @@ func adaptiveIndexJoinLimitSettings(
 		settings.HasProfileKey = true
 		settings.ProfileBaseCap = vardef.DefDistSQLScanConcurrency
 		settings.ProfileCapUsed = vardef.DefDistSQLScanConcurrency
-		if profileCap, ok := earlystopprofile.LookupCap(key); ok {
+		if recommendation, ok := earlystopprofile.LookupRecommendation(key); ok {
 			recordAdaptiveLimitScanMetric(adaptiveLimitScanEventLookup, earlystopprofile.ReaderTypeIndexJoin, adaptiveLimitScanResultHit)
-			profileCap = mergeAdaptiveProfileCap(profileCap, vardef.DefDistSQLScanConcurrency)
+			profileCap := mergeAdaptiveProfileCap(recommendation.Cap, vardef.DefDistSQLScanConcurrency)
 			settings.ProfileCapUsed = candidateCapUsed(profileCap, vardef.DefDistSQLScanConcurrency)
 			if profileCap > 0 && profileCap < vardef.DefDistSQLScanConcurrency {
-				profileSettings := adaptiveIndexJoinLimitSettingsForRows(
+				rowsBudget := adaptiveLimitRowsBudget(limitRows, recommendation, profileCap)
+				profileSettings := adaptiveIndexJoinLimitSettingsForBudget(
 					limitRows,
+					rowsBudget,
 					sessVars.IndexJoinBatchSize,
 					sessVars.IndexLookupJoinConcurrency(),
 				)
 				settings.BatchSize = profileSettings.BatchSize
 				settings.Concurrency = profileSettings.Concurrency
-				settings.LookupBatchSize = adaptiveIndexJoinLookupBatchSize(limitRows, sessVars.IndexLookupSize)
-				settings.LookupConcurrency = adaptiveIndexJoinLookupConcurrency(sessVars.IndexLookupConcurrency())
+				settings.LookupBatchSize = adaptiveIndexJoinLookupBatchSizeForBudget(limitRows, rowsBudget, sessVars.IndexLookupSize)
+				settings.LookupConcurrency = adaptiveIndexJoinLookupConcurrencyForBudget(rowsBudget, sessVars.IndexLookupSize, sessVars.IndexLookupConcurrency())
 				if settings.LookupConcurrency > 0 {
 					settings.LookupResultChSize = 2
 				}
@@ -303,16 +310,29 @@ func adaptiveIndexJoinLimitSettingsForRows(
 	sessionBatchSize int,
 	sessionConcurrency int,
 ) adaptiveIndexJoinLimitSettingsResult {
+	return adaptiveIndexJoinLimitSettingsForBudget(limitRows, limitRows, sessionBatchSize, sessionConcurrency)
+}
+
+func adaptiveIndexJoinLimitSettingsForBudget(
+	limitRows uint64,
+	rowsBudget uint64,
+	sessionBatchSize int,
+	sessionConcurrency int,
+) adaptiveIndexJoinLimitSettingsResult {
 	if limitRows == 0 || sessionBatchSize <= 0 || sessionConcurrency <= 0 {
 		return adaptiveIndexJoinLimitSettingsResult{}
 	}
+	if rowsBudget == 0 {
+		rowsBudget = limitRows
+	}
 	settings := adaptiveIndexJoinLimitSettingsResult{}
+	batchRows := min(limitRows, rowsBudget)
 	batchSize := sessionBatchSize
-	if limitRows < uint64(sessionBatchSize) {
-		batchSize = int(limitRows)
+	if batchRows < uint64(sessionBatchSize) {
+		batchSize = int(batchRows)
 	}
 	batchSize = max(1, batchSize)
-	batchesNeeded := (limitRows-1)/uint64(batchSize) + 1
+	batchesNeeded := (rowsBudget-1)/uint64(batchSize) + 1
 	concurrency := sessionConcurrency
 	if batchesNeeded < uint64(sessionConcurrency) {
 		concurrency = int(batchesNeeded)
@@ -327,19 +347,74 @@ func adaptiveIndexJoinLimitSettingsForRows(
 	return settings
 }
 
-func adaptiveIndexJoinLookupBatchSize(limitRows uint64, sessionLookupSize int) int {
-	if limitRows == 0 || sessionLookupSize <= 0 || limitRows >= uint64(sessionLookupSize) {
+func adaptiveIndexJoinLookupBatchSizeForBudget(limitRows uint64, rowsBudget uint64, sessionLookupSize int) int {
+	if limitRows == 0 || rowsBudget == 0 || sessionLookupSize <= 0 {
 		return 0
 	}
-	return max(1, int(limitRows))
+	batchRows := min(limitRows, rowsBudget)
+	if batchRows >= uint64(sessionLookupSize) {
+		return 0
+	}
+	return max(1, int(batchRows))
 }
 
-func adaptiveIndexJoinLookupConcurrency(sessionConcurrency int) int {
-	const adaptiveLookupConcurrency = 2
-	if sessionConcurrency <= adaptiveLookupConcurrency {
+func adaptiveIndexJoinLookupConcurrencyForBudget(rowsBudget uint64, sessionLookupSize int, sessionConcurrency int) int {
+	if rowsBudget == 0 || sessionLookupSize <= 0 || sessionConcurrency <= 0 {
 		return 0
 	}
-	return adaptiveLookupConcurrency
+	const minAdaptiveLookupConcurrency = 2
+	if sessionConcurrency <= minAdaptiveLookupConcurrency {
+		return 0
+	}
+	return minAdaptiveLookupConcurrency
+}
+
+func adaptiveLimitRowsBudget(
+	limitRows uint64,
+	recommendation earlystopprofile.Recommendation,
+	profileCap int,
+) uint64 {
+	if limitRows == 0 {
+		return 0
+	}
+	ratio := maxFloat64(
+		recommendation.LookupRowsPerResult,
+		recommendation.ReaderRowsPerResult,
+		recommendation.IndexRowsPerResult,
+		recommendation.TableRowsPerResult,
+		recommendation.ProcessedKeysPerResult,
+	)
+	if ratio <= 0 || math.IsInf(ratio, 0) || math.IsNaN(ratio) {
+		ratio = 1
+	}
+	ratio = maxFloat64(1, ratio*adaptiveLimitRowsBudgetSafetyFactor)
+	ratio = min(ratio, adaptiveLimitRowsBudgetMaxRatio(profileCap))
+	maxUint64 := ^uint64(0)
+	if float64(limitRows) > float64(maxUint64)/ratio {
+		return maxUint64
+	}
+	return max(limitRows, uint64(math.Ceil(float64(limitRows)*ratio)))
+}
+
+func adaptiveLimitRowsBudgetMaxRatio(profileCap int) float64 {
+	switch {
+	case profileCap <= 1:
+		return 4
+	case profileCap == 2:
+		return 8
+	default:
+		return 16
+	}
+}
+
+func maxFloat64(values ...float64) float64 {
+	var ret float64
+	for _, value := range values {
+		if value > ret {
+			ret = value
+		}
+	}
+	return ret
 }
 
 func applyAdaptiveIndexJoinLimitSettingsToLookup(root exec.Executor, settings adaptiveIndexJoinLimitSettingsResult) *IndexLookUpExecutor {
