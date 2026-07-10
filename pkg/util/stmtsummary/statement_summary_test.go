@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -847,6 +848,72 @@ func newStmtSummaryReaderForTest(ssMap *stmtSummaryByDigestMap) *stmtSummaryRead
 	reader := NewStmtSummaryReader(nil, true, cols, "", time.UTC)
 	reader.ssMap = ssMap
 	return reader
+}
+
+func TestColumnValueFactoryDoubleUintMetrics(t *testing.T) {
+	const uintMetricSum = uint64(1 << 63)
+	ssElement := &stmtSummaryByDigestElement{
+		execCount:                    2,
+		sumRocksdbDeleteSkippedCount: uintMetricSum,
+		sumRocksdbKeySkippedCount:    uintMetricSum,
+		sumRocksdbBlockCacheHitCount: uintMetricSum,
+		sumRocksdbBlockReadCount:     uintMetricSum,
+		sumRocksdbBlockReadByte:      uintMetricSum,
+		sumAffectedRows:              uintMetricSum,
+	}
+	avgUintMetric := float64(uintMetricSum) / float64(ssElement.execCount)
+	cases := []struct {
+		name     string
+		expected float64
+	}{
+		{name: AvgRocksdbDeleteSkippedCountStr, expected: avgUintMetric},
+		{name: AvgRocksdbKeySkippedCountStr, expected: avgUintMetric},
+		{name: AvgRocksdbBlockCacheHitCountStr, expected: avgUintMetric},
+		{name: AvgRocksdbBlockReadCountStr, expected: avgUintMetric},
+		{name: AvgRocksdbBlockReadByteStr, expected: avgUintMetric},
+		{name: AvgAffectedRowsStr, expected: avgUintMetric},
+	}
+
+	for _, tc := range cases {
+		factory, ok := columnValueFactoryMap[tc.name]
+		require.Truef(t, ok, "missing column value factory: %s", tc.name)
+		datum := types.NewDatum(factory(nil, ssElement, nil))
+		require.Equal(t, tc.expected, datum.GetValue(), tc.name)
+
+		row := chunk.MutRowFromTypes([]*types.FieldType{types.NewFieldType(mysql.TypeDouble)})
+		row.SetDatums(datum)
+		require.Equal(t, tc.expected, row.ToRow().GetFloat64(0), tc.name)
+	}
+
+	smallElement := &stmtSummaryByDigestElement{
+		execCount:                    1,
+		sumRocksdbDeleteSkippedCount: 7,
+		sumRocksdbKeySkippedCount:    19,
+		sumRocksdbBlockCacheHitCount: 60,
+		sumRocksdbBlockReadCount:     21103,
+		sumRocksdbBlockReadByte:      4096,
+		sumAffectedRows:              3,
+	}
+	smallCases := []struct {
+		name     string
+		expected float64
+	}{
+		{name: AvgRocksdbDeleteSkippedCountStr, expected: 7},
+		{name: AvgRocksdbKeySkippedCountStr, expected: 19},
+		{name: AvgRocksdbBlockCacheHitCountStr, expected: 60},
+		{name: AvgRocksdbBlockReadCountStr, expected: 21103},
+		{name: AvgRocksdbBlockReadByteStr, expected: 4096},
+		{name: AvgAffectedRowsStr, expected: 3},
+	}
+	for _, tc := range smallCases {
+		factory, ok := columnValueFactoryMap[tc.name]
+		require.Truef(t, ok, "missing column value factory: %s", tc.name)
+		datum := types.NewDatum(factory(nil, smallElement, nil))
+
+		row := chunk.MutRowFromTypes([]*types.FieldType{types.NewFieldType(mysql.TypeDouble)})
+		row.SetDatums(datum)
+		require.Equal(t, tc.expected, row.ToRow().GetFloat64(0), tc.name)
+	}
 }
 
 // Test stmtSummaryByDigest.ToDatum.
