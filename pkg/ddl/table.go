@@ -834,7 +834,7 @@ func (w *worker) onRenameTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 		job.State = model.JobStateCancelled
 		return ver, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("schema-ID: %v", newSchemaID))
 	}
-	if err = w.updateMaskingPolicyNamesAfterRename(jobCtx.stepCtx, tblInfo.ID,
+	if err = w.updateMaskingPolicyNamesAfterRename(jobCtx, tblInfo.ID,
 		oldSchemaName, newDB.Name, oldTableName, tableName); err != nil {
 		return ver, errors.Wrapf(err, "failed to update masking policy names after table rename")
 	}
@@ -884,7 +884,7 @@ func (w *worker) onRenameTables(jobCtx *jobContext, job *model.Job) (ver int64, 
 			job.State = model.JobStateCancelled
 			return ver, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("schema-ID: %v", info.NewSchemaID))
 		}
-		if err = w.updateMaskingPolicyNamesAfterRename(jobCtx.stepCtx, tblInfo.ID,
+		if err = w.updateMaskingPolicyNamesAfterRename(jobCtx, tblInfo.ID,
 			info.OldSchemaName, newDB.Name, info.OldTableName, info.NewTableName); err != nil {
 			return ver, errors.Wrapf(err, "failed to update masking policy names after table rename")
 		}
