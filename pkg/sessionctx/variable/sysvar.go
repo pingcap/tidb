@@ -1208,6 +1208,40 @@ var defaultSysVars = []*SysVar{
 		},
 	},
 	{
+		Scope:    vardef.ScopeGlobal,
+		Name:     vardef.TiDBAnalyzeDefaultNumBuckets,
+		Value:    strconv.FormatUint(vardef.DefTiDBAnalyzeDefaultNumBuckets, 10),
+		Type:     vardef.TypeUnsigned,
+		MinValue: vardef.MinTiDBAnalyzeDefaultNumBuckets, MaxValue: vardef.MaxTiDBAnalyzeDefaultNumBuckets,
+		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return strconv.FormatUint(vardef.AnalyzeDefaultNumBuckets.Load(), 10), nil
+		},
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			num, err := strconv.ParseUint(val, 10, 64)
+			if err == nil {
+				vardef.AnalyzeDefaultNumBuckets.Store(num)
+			}
+			return err
+		},
+	},
+	{
+		Scope:    vardef.ScopeGlobal,
+		Name:     vardef.TiDBAnalyzeDefaultNumTopN,
+		Value:    strconv.FormatUint(vardef.DefTiDBAnalyzeDefaultNumTopN, 10),
+		Type:     vardef.TypeUnsigned,
+		MinValue: vardef.MinTiDBAnalyzeDefaultNumTopN, MaxValue: vardef.MaxTiDBAnalyzeDefaultNumTopN,
+		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return strconv.FormatUint(vardef.AnalyzeDefaultNumTopN.Load(), 10), nil
+		},
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			num, err := strconv.ParseUint(val, 10, 64)
+			if err == nil {
+				vardef.AnalyzeDefaultNumTopN.Store(num)
+			}
+			return err
+		},
+	},
+	{
 		Scope: vardef.ScopeGlobal,
 		Name:  vardef.TiDBEnableAutoAnalyzePriorityQueue,
 		Value: BoolToOnOff(vardef.DefTiDBEnableAutoAnalyzePriorityQueue),

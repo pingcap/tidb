@@ -2769,6 +2769,10 @@ func shouldBypass(ctx context.Context, stmtNode ast.StmtNode, sessVars *variable
 	switch kv.GetInternalSourceType(ctx) {
 	case kv.InternalTxnOthers:
 		return true
+	// InternalTxnStats marks ANALYZE KV requests as background work. Since ANALYZE
+	// has no statement-level RU v2 charge yet, bypass TiDB-side RU v2 only for
+	// ANALYZE statements. Client-go still applies request-level bypass by
+	// request source and cop request type.
 	case kv.InternalTxnStats:
 		return isNextGenForRUV2() && isAnalyzeStatementForRUV2(stmtNode, sessVars)
 	default:
@@ -2845,18 +2849,11 @@ func (s *session) validateStatementReadOnlyInStaleness(stmtNode ast.StmtNode) er
 	return nil
 }
 
-// fileTransInConnKeys contains the keys of queries that will be handled by handleFileTransInConn.
-var fileTransInConnKeys = []fmt.Stringer{
-	executor.LoadDataVarKey,
-	executor.LoadStatsVarKey,
-	executor.PlanReplayerLoadVarKey,
-}
-
 func (s *session) hasFileTransInConn() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	for _, k := range fileTransInConnKeys {
+	for k := range executor.FileTransInConnHandlers {
 		v := s.mu.values[k]
 		if v != nil {
 			return true
