@@ -2440,6 +2440,10 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 	if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
 		return nil, err
 	}
+	// ResetContextOfStmt clears SQLKiller, so honor a canceled caller before executing the next statement.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	ruv2Metrics := execdetails.RUV2MetricsFromContext(ctx)
 	sessVars.RUV2Metrics = ruv2Metrics
 	bypass := shouldBypass(ctx, stmtNode, sessVars)

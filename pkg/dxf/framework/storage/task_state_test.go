@@ -21,6 +21,7 @@ import (
 	"slices"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -183,6 +185,33 @@ func TestPauseTaskOnError(t *testing.T) {
 	subtaskErrs, err := gm.GetSubtaskErrors(ctx, id)
 	require.NoError(t, err)
 	require.Empty(t, subtaskErrs)
+}
+
+func TestWithNewTxnRollbackOnCanceledCtx(t *testing.T) {
+	_, _ = testkit.CreateMockStoreAndDomain(t)
+	gm, err := storage.GetTaskManager()
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(util.WithInternalSourceType(context.Background(), kv.InternalDistTask))
+	require.NotPanics(t, func() {
+		err := gm.WithNewTxn(ctx, func(se sessionctx.Context) error {
+			timer := time.AfterFunc(100*time.Millisecond, cancel)
+			defer timer.Stop()
+
+			_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), "select sleep(10)")
+			if err != nil {
+				return err
+			}
+			return ctx.Err()
+		})
+		require.ErrorIs(t, err, context.Canceled)
+	})
+
+	verifyCtx := util.WithInternalSourceType(context.Background(), kv.InternalDistTask)
+	require.NoError(t, gm.WithNewTxn(verifyCtx, func(se sessionctx.Context) error {
+		_, err := sqlexec.ExecSQL(verifyCtx, se.GetSQLExecutor(), "select 1")
+		return err
+	}))
 }
 
 func TestUpdateTaskExtraParams(t *testing.T) {

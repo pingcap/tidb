@@ -1003,6 +1003,9 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.MemTracker.SessionID.Store(vars.ConnectionID)
 	vars.MemTracker.Killer = &vars.SQLKiller
 	vars.DiskTracker.Killer = &vars.SQLKiller
+	if vars.InRestrictedSQL && vars.InternalSQLScanUserTable {
+		failpoint.InjectCall("beforeResetSQLKillerForTTLScan", s)
+	}
 	vars.SQLKiller.Reset()
 	vars.SQLKiller.ConnID.Store(vars.ConnectionID)
 	vars.ResetRelevantOptVarsAndFixes(false)
