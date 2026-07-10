@@ -61,6 +61,24 @@ func TestRetryerIsInstanceMetadataError(t *testing.T) {
 	require.True(t, retry.IsErrorRetryable(errors.Annotate(context.DeadlineExceeded, "normal err")))
 }
 
+func TestIsBucketRegionRedirectError(t *testing.T) {
+	newHTTPAPIError := func(code string, statusCode int) error {
+		return &smithyhttp.ResponseError{
+			Response: &smithyhttp.Response{
+				Response: &http.Response{StatusCode: statusCode},
+			},
+			Err: &smithy.GenericAPIError{Code: code, Message: "test error", Fault: smithy.FaultUnknown},
+		}
+	}
+
+	require.True(t, isBucketRegionRedirectError(newHTTPAPIError("MovedPermanently", http.StatusMovedPermanently)))
+	require.True(t, isBucketRegionRedirectError(newHTTPAPIError("PermanentRedirect", http.StatusMovedPermanently)))
+
+	require.False(t, isBucketRegionRedirectError(newHTTPAPIError("MovedPermanently", http.StatusForbidden)))
+	require.False(t, isBucketRegionRedirectError(newHTTPAPIError("AccessDenied", http.StatusMovedPermanently)))
+	require.False(t, isBucketRegionRedirectError(&smithy.GenericAPIError{Code: "MovedPermanently", Message: "missing response"}))
+}
+
 func TestBucketRegionDetectionRetryerSuppressesOnlyExpectedRedirectWarning(t *testing.T) {
 	err := &smithyhttp.ResponseError{
 		Response: &smithyhttp.Response{

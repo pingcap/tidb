@@ -15,12 +15,16 @@
 package s3store
 
 import (
+	"errors"
+	"net/http"
 	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/ratelimit"
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
+	"github.com/aws/smithy-go"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"github.com/pingcap/tidb/pkg/objstore/s3like"
 )
 
@@ -31,15 +35,7 @@ const (
 )
 
 func newRetryer() *s3like.Retryer {
-	return newRetryerWithLogSuppressor(nil)
-}
-
-func newBucketRegionDetectionRetryer() *s3like.Retryer {
-	return newRetryerWithLogSuppressor(s3like.IsBucketRegionRedirectError)
-}
-
-func newRetryerWithLogSuppressor(suppressRetryableErrorLog func(error) bool) *s3like.Retryer {
-	return s3like.NewRetryerWithLogSuppressor(&retryer{
+	return s3like.NewRetryer(&retryer{
 		Retryer: retry.NewStandard(func(so *retry.StandardOptions) {
 			so.MaxAttempts = maxAttempts
 			// Standard uses exponential backoff with jitter by default, it will
@@ -52,7 +48,29 @@ func newRetryerWithLogSuppressor(suppressRetryableErrorLog func(error) bool) *s3
 			// network issue might exhaust the bucket.
 			so.RateLimiter = ratelimit.None
 		}),
-	}, suppressRetryableErrorLog)
+	})
+}
+
+func newBucketRegionDetectionRetryer() *s3like.Retryer {
+	return newRetryer().WithLogSuppressor(isBucketRegionRedirectError)
+}
+
+func isBucketRegionRedirectError(err error) bool {
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	switch apiErr.ErrorCode() {
+	case "MovedPermanently", "PermanentRedirect":
+	default:
+		return false
+	}
+
+	var responseErr *smithyhttp.ResponseError
+	if !errors.As(err, &responseErr) {
+		return false
+	}
+	return responseErr.HTTPStatusCode() == http.StatusMovedPermanently
 }
 
 type retryer struct {

@@ -16,15 +16,11 @@ package s3like
 
 import (
 	"context"
-	stderrors "errors"
-	"net/http"
 	"strings"
 	"time"
 
 	ossretry "github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss/retry"
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/smithy-go"
-	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
@@ -53,8 +49,8 @@ var (
 
 // Retryer implements aws.Retryer for TiDB-specific retry logic
 type Retryer struct {
-	standardRetryer           StandardRetryer
-	suppressRetryableErrorLog func(error) bool
+	standardRetryer StandardRetryer
+	suppressLog     func(error) bool
 }
 
 var (
@@ -69,13 +65,11 @@ func NewRetryer(inner StandardRetryer) *Retryer {
 	}
 }
 
-// NewRetryerWithLogSuppressor creates a new Retryer that skips the retryability
-// warning for errors matched by suppressRetryableErrorLog.
-func NewRetryerWithLogSuppressor(inner StandardRetryer, suppressRetryableErrorLog func(error) bool) *Retryer {
-	return &Retryer{
-		standardRetryer:           inner,
-		suppressRetryableErrorLog: suppressRetryableErrorLog,
-	}
+// WithLogSuppressor configures the Retryer to skip retryability warnings for
+// errors matched by suppressLog.
+func (tr *Retryer) WithLogSuppressor(suppressLog func(error) bool) *Retryer {
+	tr.suppressLog = suppressLog
+	return tr
 }
 
 // IsErrorRetryable implements the aws.Retryer interface.
@@ -85,7 +79,7 @@ func (tr *Retryer) IsErrorRetryable(err error) bool {
 		if isRetryable {
 			metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
 		}
-		if err != nil && tr.suppressRetryableErrorLog != nil && tr.suppressRetryableErrorLog(err) {
+		if err != nil && tr.suppressLog != nil && tr.suppressLog(err) {
 			return
 		}
 		log.Warn("failed to request s3, checking whether we can retry", zap.Error(err), zap.Bool("retry", isRetryable))
@@ -123,26 +117,6 @@ func (tr *Retryer) IsErrorRetryable(err error) bool {
 	// Fall back to standard retry logic
 	isRetryable = tr.standardRetryer.IsErrorRetryable(err)
 	return isRetryable
-}
-
-// IsBucketRegionRedirectError reports whether err is the expected S3 bucket
-// region discovery redirect returned by HeadBucket.
-func IsBucketRegionRedirectError(err error) bool {
-	var apiErr smithy.APIError
-	if !stderrors.As(err, &apiErr) {
-		return false
-	}
-	switch apiErr.ErrorCode() {
-	case "MovedPermanently", "PermanentRedirect":
-	default:
-		return false
-	}
-
-	var responseErr *smithyhttp.ResponseError
-	if !stderrors.As(err, &responseErr) {
-		return false
-	}
-	return responseErr.HTTPStatusCode() == http.StatusMovedPermanently
 }
 
 // MaxAttempts implements the aws.Retryer interface.
