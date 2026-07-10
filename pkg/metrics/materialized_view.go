@@ -35,7 +35,8 @@ const (
 var (
 	MVServiceTaskStatusGaugeVec *prometheus.GaugeVec
 
-	MVServiceOperationDurationHistogramVec *prometheus.HistogramVec
+	MVServiceOperationDurationHistogramVec    *prometheus.HistogramVec
+	MVServiceRefreshScheduleDurationHistogram prometheus.Histogram
 
 	MVServiceRunEventCounterVec *prometheus.CounterVec
 
@@ -65,6 +66,15 @@ func InitMVMetrics() {
 			Help:      "Bucketed histogram of MV service operation duration.",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 524s
 		}, []string{LblType, LblResult})
+
+	MVServiceRefreshScheduleDurationHistogram = NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "mv",
+			Name:      "service_refresh_schedule_duration_seconds",
+			Help:      "Bucketed histogram of the interval between two successful MV service refreshes, excluding the current refresh duration.",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 25), // 1s ~ 194d
+		})
 
 	MVServiceRunEventCounterVec = NewCounterVec(
 		prometheus.CounterOpts{

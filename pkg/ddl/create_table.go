@@ -919,7 +919,7 @@ func (w *worker) prewriteCreateMaterializedViewRefreshInfo(jobCtx *jobContext, m
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if err = execCreateMaterializedViewRefreshInfoUpsert(ctx, ddlSess, mviewID, startTS, nil, false); err != nil {
+	if err = execCreateMaterializedViewRefreshInfoUpsert(ctx, ddlSess, mviewID, startTS, nil, nil, false); err != nil {
 		return errors.Trace(err)
 	}
 	if err = ddlSess.Commit(ctx); err != nil {
@@ -953,7 +953,8 @@ func (w *worker) upsertCreateMaterializedViewRefreshInfo(jobCtx *jobContext, mvS
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return errors.Trace(execCreateMaterializedViewRefreshInfoUpsert(ctx, w.sess, mvTblInfo.ID, readTS, nextTime, shouldUpdateNextTime))
+	lastSuccessEndTime := formatMViewRefreshInfoEndTime(time.Now())
+	return errors.Trace(execCreateMaterializedViewRefreshInfoUpsert(ctx, w.sess, mvTblInfo.ID, readTS, &lastSuccessEndTime, nextTime, shouldUpdateNextTime))
 }
 
 func (w *worker) upsertCreateMaterializedViewLogPurgeInfo(jobCtx *jobContext, mlogSchemaName string, mlogTblInfo *model.TableInfo) error {
@@ -1002,10 +1003,11 @@ func execCreateMaterializedViewRefreshInfoUpsert(
 	ddlSess *sess.Session,
 	mviewID int64,
 	readTS uint64,
+	lastSuccessEndTime *string,
 	nextTime *string,
 	shouldUpdateNextTime bool,
 ) error {
-	upsertSQL := buildCreateMaterializedViewRefreshInfoUpsertSQL(mviewID, readTS, nextTime, shouldUpdateNextTime)
+	upsertSQL := buildCreateMaterializedViewRefreshInfoUpsertSQL(mviewID, readTS, lastSuccessEndTime, nextTime, shouldUpdateNextTime)
 	_, err := ddlSess.Execute(ctx, upsertSQL, "mview-refresh-info-upsert")
 	failpoint.Inject("mockUpsertCreateMaterializedViewRefreshInfoTableNotExists", func(val failpoint.Value) {
 		if val.(bool) {
@@ -1328,7 +1330,15 @@ func evalCreateMaterializedViewScheduleExprToDatetime(ddlSess *sess.Session, exp
 	return &t, nil
 }
 
-func buildCreateMaterializedViewRefreshInfoUpsertSQL(mviewID int64, readTS uint64, nextTime *string, shouldUpdateNextTime bool) string {
+func formatMViewRefreshInfoEndTime(t time.Time) string {
+	return t.UTC().Truncate(time.Microsecond).Format(types.TimeFSPFormat)
+}
+
+func buildCreateMaterializedViewRefreshInfoUpsertSQL(mviewID int64, readTS uint64, lastSuccessEndTime *string, nextTime *string, shouldUpdateNextTime bool) string {
+	var lastSuccessEndTimeArg any
+	if lastSuccessEndTime != nil {
+		lastSuccessEndTimeArg = *lastSuccessEndTime
+	}
 	if shouldUpdateNextTime {
 		var nextTimeArg any
 		if nextTime != nil {
@@ -1337,24 +1347,30 @@ func buildCreateMaterializedViewRefreshInfoUpsertSQL(mviewID int64, readTS uint6
 		return sqlescape.MustEscapeSQL(`INSERT INTO mysql.tidb_mview_refresh_info (
 		MVIEW_ID,
 		LAST_SUCCESS_READ_TSO,
+		LAST_SUCCESS_ENDTIME,
 		NEXT_TIME
-	) VALUES (%?, %?, %?)
+	) VALUES (%?, %?, %?, %?)
 	ON DUPLICATE KEY UPDATE
 		LAST_SUCCESS_READ_TSO = VALUES(LAST_SUCCESS_READ_TSO),
+		LAST_SUCCESS_ENDTIME = VALUES(LAST_SUCCESS_ENDTIME),
 		NEXT_TIME = VALUES(NEXT_TIME)`,
 			mviewID,
 			readTS,
+			lastSuccessEndTimeArg,
 			nextTimeArg,
 		)
 	}
 	return sqlescape.MustEscapeSQL(`INSERT INTO mysql.tidb_mview_refresh_info (
 		MVIEW_ID,
-		LAST_SUCCESS_READ_TSO
-	) VALUES (%?, %?)
+		LAST_SUCCESS_READ_TSO,
+		LAST_SUCCESS_ENDTIME
+	) VALUES (%?, %?, %?)
 	ON DUPLICATE KEY UPDATE
-		LAST_SUCCESS_READ_TSO = VALUES(LAST_SUCCESS_READ_TSO)`,
+		LAST_SUCCESS_READ_TSO = VALUES(LAST_SUCCESS_READ_TSO),
+		LAST_SUCCESS_ENDTIME = VALUES(LAST_SUCCESS_ENDTIME)`,
 		mviewID,
 		readTS,
+		lastSuccessEndTimeArg,
 	)
 }
 

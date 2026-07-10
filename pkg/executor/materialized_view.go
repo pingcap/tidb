@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/mvservice"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -888,6 +889,13 @@ func formatDurationSecondsBetween(startAt, endAt time.Time) string {
 	return formatDurationSecondsFromMicroseconds(durationMicrosecondsBetween(startAt, endAt))
 }
 
+func formatDurationSeconds(duration time.Duration) string {
+	if duration <= 0 {
+		return "0.000000"
+	}
+	return formatDurationSecondsFromMicroseconds(duration.Microseconds())
+}
+
 func histTime(t time.Time, loc *time.Location) time.Time {
 	if t.IsZero() {
 		return t
@@ -896,6 +904,10 @@ func histTime(t time.Time, loc *time.Location) time.Time {
 		t = t.In(loc)
 	}
 	return t.Truncate(time.Microsecond)
+}
+
+func formatMViewRefreshInfoEndTime(t time.Time) string {
+	return t.UTC().Truncate(time.Microsecond).Format(types.TimeFSPFormat)
 }
 
 type mvRefreshStmtResult struct {
@@ -3970,10 +3982,11 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	})
 
 	if refreshMode == ast.RefreshMaterializedViewModeCompleteOutOfPlace {
-		expectedLastSuccessReadTSO, expectedLastSuccessReadTSONull, err := readRefreshInfoReadTSO(kctx, sqlExec, mviewID)
+		expectedRefreshInfo, err := readRefreshInfoSnapshot(kctx, sqlExec, mviewID)
 		if err != nil {
 			return err
 		}
+		refreshScheduleDuration := buildRefreshScheduleDuration(isInternalSQL, refreshStart, expectedRefreshInfo)
 		refreshJobID, err = allocJobID(e.Ctx().GetStore())
 		if err != nil {
 			return errors.Annotate(err, "refresh materialized view: failed to allocate refresh job id")
@@ -4022,6 +4035,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 					histTime(refreshStart, histLoc),
 					histTime(refreshEndAt, histLoc),
 					nil,
+					nil,
 					&refreshErrMsg,
 				)
 			})
@@ -4044,6 +4058,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 					histTime(refreshStart, histLoc),
 					histTime(refreshEndAt, histLoc),
 					nil,
+					refreshScheduleDuration,
 					nil,
 				)
 			}); err != nil {
@@ -4088,14 +4103,15 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 			schemaName,
 			tblInfo,
 			stepSet,
-			expectedLastSuccessReadTSO,
-			expectedLastSuccessReadTSONull,
+			expectedRefreshInfo.lastSuccessReadTSO,
+			expectedRefreshInfo.lastSuccessReadTSONull,
 			refreshExecutionVars,
 		)
 		if err != nil {
 			return finalizeFailure(err)
 		}
 		refreshStmtResult := captureMVRefreshStmtResult(sessVars)
+		observeMVRefreshScheduleDuration(refreshScheduleDuration)
 		finalizeSuccess(buildReadTSO)
 		applyMVRefreshStmtResult(e.Ctx().GetSessionVars().StmtCtx, refreshStmtResult)
 		return nil
@@ -4141,21 +4157,21 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	failpoint.Inject("pauseRefreshMaterializedViewAfterBegin", func() {})
 
 	mviewID = tblInfo.ID
-	var lockedReadTSO uint64
-	var lockedReadTSONull bool
+	var lockedRefreshInfo refreshInfoSnapshot
 	if err := observeMVRefreshStep(e.stepObserver, stepSet.lockRefreshInfo, func() error {
 		lockRefreshInfoRowStart := time.Now()
 		var lockErr error
-		lockedReadTSO, lockedReadTSONull, lockErr = lockRefreshInfoRow(kctx, sqlExec, mviewID)
+		lockedRefreshInfo, lockErr = lockRefreshInfoRow(kctx, sqlExec, mviewID)
 		lockRefreshInfoRowDur = time.Since(lockRefreshInfoRowStart)
 		return lockErr
 	}); err != nil {
 		return err
 	}
-	if refreshMode == ast.RefreshMaterializedViewModeFast && lockedReadTSONull {
+	refreshScheduleDuration := buildRefreshScheduleDuration(isInternalSQL, refreshStart, lockedRefreshInfo)
+	if refreshMode == ast.RefreshMaterializedViewModeFast && lockedRefreshInfo.lastSuccessReadTSONull {
 		return errors.New("refresh materialized view fast: LAST_SUCCESS_READ_TSO is NULL")
 	}
-	if refreshMode == ast.RefreshMaterializedViewModeFast && targetRefreshReadTSO > 0 && targetRefreshReadTSO == lockedReadTSO {
+	if refreshMode == ast.RefreshMaterializedViewModeFast && targetRefreshReadTSO > 0 && targetRefreshReadTSO == lockedRefreshInfo.lastSuccessReadTSO {
 		applyMVRefreshStmtResult(e.Ctx().GetSessionVars().StmtCtx, newMVRefreshStmtResultFromWriteCounts(0, 0, 0))
 		return nil
 	}
@@ -4169,7 +4185,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 
 	boundedFastRefresh := refreshMode == ast.RefreshMaterializedViewModeFast &&
 		targetRefreshReadTSO > 0 &&
-		targetRefreshReadTSO > lockedReadTSO
+		targetRefreshReadTSO > lockedRefreshInfo.lastSuccessReadTSO
 	var mlogRetainedLowerTSO uint64
 	if refreshMode == ast.RefreshMaterializedViewModeFast {
 		// Read purge metadata through an internal session so this precheck sees latest committed state
@@ -4179,7 +4195,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		// In theory, a concurrently-started purge should still be safe because purge computes safePurgeTSO
 		// from persisted LAST_SUCCESS_READ_TSO, which does not advance until this refresh commits.
 		is := e.Ctx().GetDomainInfoSchema().(infoschema.InfoSchema)
-		mlogIntegrity, err := checkFastRefreshMLogIntegrity(kctx, histSQLExec, is, schemaName, tblInfo, lockedReadTSO)
+		mlogIntegrity, err := checkFastRefreshMLogIntegrity(kctx, histSQLExec, is, schemaName, tblInfo, lockedRefreshInfo.lastSuccessReadTSO)
 		if err != nil {
 			return err
 		}
@@ -4245,6 +4261,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 				histTime(refreshStart, histLoc),
 				histTime(refreshEndAt, histLoc),
 				nil,
+				nil,
 				&refreshErrMsg,
 			)
 		})
@@ -4273,6 +4290,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 				histTime(refreshStart, histLoc),
 				histTime(refreshEndAt, histLoc),
 				refreshRows,
+				refreshScheduleDuration,
 				nil,
 			)
 		}); err != nil {
@@ -4311,7 +4329,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 
 	var lastSuccessfulRefreshReadTSO uint64
 	if refreshMode == ast.RefreshMaterializedViewModeFast {
-		lastSuccessfulRefreshReadTSO = lockedReadTSO
+		lastSuccessfulRefreshReadTSO = lockedRefreshInfo.lastSuccessReadTSO
 		if targetRefreshReadTSO > 0 {
 			if targetRefreshReadTSO < lastSuccessfulRefreshReadTSO {
 				return finalizeFailure(errors.Errorf(
@@ -4390,14 +4408,16 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		return finalizeFailure(err)
 	}
 
+	lastSuccessEndTime := formatMViewRefreshInfoEndTime(time.Now())
 	if err := observeMVRefreshStep(e.stepObserver, stepSet.persistRefreshInfo, func() error {
 		return persistRefreshSuccess(
 			kctx,
 			sqlExec,
 			mviewID,
-			lockedReadTSO,
-			lockedReadTSONull,
+			lockedRefreshInfo.lastSuccessReadTSO,
+			lockedRefreshInfo.lastSuccessReadTSONull,
 			refreshReadTSO,
+			lastSuccessEndTime,
 			nextTime,
 			shouldUpdateNextTime,
 		)
@@ -4423,6 +4443,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		refreshCommitTSO = nil
 	}
 	applyMVRefreshStmtResult(e.Ctx().GetSessionVars().StmtCtx, refreshStmtResult)
+	observeMVRefreshScheduleDuration(refreshScheduleDuration)
 	finalizeSuccess(refreshReadTSO, refreshCommitTSO, refreshRows)
 	return nil
 }
@@ -4637,6 +4658,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 		if err := kctx.Err(); err != nil {
 			return err
 		}
+		lastSuccessEndTime := formatMViewRefreshInfoEndTime(time.Now())
 		return domain.GetDomain(e.Ctx()).DDLExecutor().RefreshMaterializedViewCompleteOutOfPlaceCutover(
 			e.Ctx(),
 			tblInfo.DBID,
@@ -4648,6 +4670,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 			&expectedOldMViewRevision,
 			expectedLastSuccessReadTSO,
 			expectedLastSuccessReadTSONull,
+			lastSuccessEndTime,
 			nextTime,
 			shouldUpdateNextTime,
 		)
@@ -5112,44 +5135,101 @@ func checkRefreshMaterializedViewReady(schemaName pmodel.CIStr, tblInfo *model.T
 	return errors.New(initBuildState.AccessErrorMessage(objectName))
 }
 
+type refreshInfoSnapshot struct {
+	lastSuccessReadTSO     uint64
+	lastSuccessReadTSONull bool
+	lastSuccessEndTime     time.Time
+	lastSuccessEndTimeNull bool
+}
+
+func (s refreshInfoSnapshot) previousSuccessTime() time.Time {
+	if !s.lastSuccessEndTimeNull && !s.lastSuccessEndTime.IsZero() {
+		return s.lastSuccessEndTime
+	}
+	if !s.lastSuccessReadTSONull && s.lastSuccessReadTSO > 0 {
+		return time.UnixMilli(oracle.ExtractPhysical(s.lastSuccessReadTSO))
+	}
+	return time.Time{}
+}
+
+func buildRefreshScheduleDuration(isInternalSQL bool, refreshStart time.Time, info refreshInfoSnapshot) *time.Duration {
+	if !isInternalSQL {
+		return nil
+	}
+	previousSuccessTime := info.previousSuccessTime()
+	if previousSuccessTime.IsZero() {
+		return nil
+	}
+	// Defined as current success time - previous success time - current refresh duration,
+	// which is equivalent to current refresh start time - previous success time.
+	duration := refreshStart.Sub(previousSuccessTime)
+	if duration < 0 {
+		return nil
+	}
+	return &duration
+}
+
+func observeMVRefreshScheduleDuration(duration *time.Duration) {
+	if duration == nil || *duration < 0 {
+		return
+	}
+	tidbmetrics.MVServiceRefreshScheduleDurationHistogram.Observe(duration.Seconds())
+}
+
+func decodeRefreshInfoSnapshot(row chunk.Row, readTSOIdx int, endTimeIdx int) (refreshInfoSnapshot, error) {
+	info := refreshInfoSnapshot{
+		lastSuccessReadTSONull: true,
+		lastSuccessEndTimeNull: true,
+	}
+	if !row.IsNull(readTSOIdx) {
+		info.lastSuccessReadTSO = row.GetUint64(readTSOIdx)
+		info.lastSuccessReadTSONull = false
+	}
+	if !row.IsNull(endTimeIdx) {
+		lastSuccessEndTime, err := row.GetTime(endTimeIdx).GoTime(time.UTC)
+		if err != nil {
+			return info, errors.Trace(err)
+		}
+		info.lastSuccessEndTime = lastSuccessEndTime
+		info.lastSuccessEndTimeNull = false
+	}
+	return info, nil
+}
+
 func lockRefreshInfoRow(
 	kctx context.Context,
 	sqlExec sqlexec.SQLExecutor,
 	mviewID int64,
-) (lockedReadTSO uint64, lockedReadTSONull bool, err error) {
+) (refreshInfoSnapshot, error) {
 	lockRS, err := sqlExec.ExecuteInternal(
 		kctx,
 		// Also select LAST_SUCCESS_READ_TSO so FAST refresh can reuse this mutex/metadata load path.
-		"SELECT MVIEW_ID, LAST_SUCCESS_READ_TSO FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? FOR UPDATE NOWAIT",
+		"SELECT MVIEW_ID, LAST_SUCCESS_READ_TSO, LAST_SUCCESS_ENDTIME FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %? FOR UPDATE NOWAIT",
 		mviewID,
 	)
 	if infoschema.ErrTableNotExists.Equal(err) {
-		return 0, false, errors.New("refresh materialized view: required system table mysql.tidb_mview_refresh_info does not exist")
+		return refreshInfoSnapshot{}, errors.New("refresh materialized view: required system table mysql.tidb_mview_refresh_info does not exist")
 	}
 	if err != nil {
-		return 0, false, errors.Trace(err)
+		return refreshInfoSnapshot{}, errors.Trace(err)
 	}
 	if lockRS == nil {
-		return 0, false, errors.New("refresh materialized view: cannot lock mysql.tidb_mview_refresh_info row")
+		return refreshInfoSnapshot{}, errors.New("refresh materialized view: cannot lock mysql.tidb_mview_refresh_info row")
 	}
 	lockRows, drainErr := sqlexec.DrainRecordSet(kctx, lockRS, 1)
 	closeErr := lockRS.Close()
 	if drainErr != nil {
-		return 0, false, errors.Trace(drainErr)
+		return refreshInfoSnapshot{}, errors.Trace(drainErr)
 	}
 	if closeErr != nil {
-		return 0, false, errors.Trace(closeErr)
+		return refreshInfoSnapshot{}, errors.Trace(closeErr)
 	}
 	if len(lockRows) == 0 {
-		return 0, false, errors.New("refresh materialized view: refresh info row missing in mysql.tidb_mview_refresh_info")
+		return refreshInfoSnapshot{}, errors.New("refresh materialized view: refresh info row missing in mysql.tidb_mview_refresh_info")
 	}
 
-	lockedRow := lockRows[0]
-	lockedReadTSONull = lockedRow.IsNull(1)
-	if !lockedReadTSONull {
-		lockedReadTSO = lockedRow.GetUint64(1)
-	}
-	return lockedReadTSO, lockedReadTSONull, nil
+	info, err := decodeRefreshInfoSnapshot(lockRows[0], 1, 2)
+	return info, errors.Trace(err)
 }
 
 func buildMVRefreshAdvisoryLockName(schemaID int64, mviewID int64) string {
@@ -5201,37 +5281,45 @@ func readRefreshInfoReadTSO(
 	sqlExec sqlexec.SQLExecutor,
 	mviewID int64,
 ) (readTSO uint64, readTSONull bool, err error) {
+	info, err := readRefreshInfoSnapshot(kctx, sqlExec, mviewID)
+	if err != nil {
+		return 0, false, err
+	}
+	return info.lastSuccessReadTSO, info.lastSuccessReadTSONull, nil
+}
+
+func readRefreshInfoSnapshot(
+	kctx context.Context,
+	sqlExec sqlexec.SQLExecutor,
+	mviewID int64,
+) (refreshInfoSnapshot, error) {
 	recheckRS, err := sqlExec.ExecuteInternal(
 		kctx,
-		"SELECT LAST_SUCCESS_READ_TSO FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %?",
+		"SELECT LAST_SUCCESS_READ_TSO, LAST_SUCCESS_ENDTIME FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %?",
 		mviewID,
 	)
 	if err != nil {
 		if infoschema.ErrTableNotExists.Equal(err) {
-			return 0, false, errors.New("refresh materialized view: required system table mysql.tidb_mview_refresh_info does not exist")
+			return refreshInfoSnapshot{}, errors.New("refresh materialized view: required system table mysql.tidb_mview_refresh_info does not exist")
 		}
-		return 0, false, errors.Trace(err)
+		return refreshInfoSnapshot{}, errors.Trace(err)
 	}
 	if recheckRS == nil {
-		return 0, false, errors.New("refresh materialized view: cannot read mysql.tidb_mview_refresh_info row")
+		return refreshInfoSnapshot{}, errors.New("refresh materialized view: cannot read mysql.tidb_mview_refresh_info row")
 	}
 	recheckRows, drainErr := sqlexec.DrainRecordSet(kctx, recheckRS, 1)
 	closeErr := recheckRS.Close()
 	if drainErr != nil {
-		return 0, false, errors.Trace(drainErr)
+		return refreshInfoSnapshot{}, errors.Trace(drainErr)
 	}
 	if closeErr != nil {
-		return 0, false, errors.Trace(closeErr)
+		return refreshInfoSnapshot{}, errors.Trace(closeErr)
 	}
 	if len(recheckRows) == 0 {
-		return 0, false, errors.New("refresh materialized view: refresh info row missing in mysql.tidb_mview_refresh_info")
+		return refreshInfoSnapshot{}, errors.New("refresh materialized view: refresh info row missing in mysql.tidb_mview_refresh_info")
 	}
-	recheckRow := recheckRows[0]
-	readTSONull = recheckRow.IsNull(0)
-	if !readTSONull {
-		readTSO = recheckRow.GetUint64(0)
-	}
-	return readTSO, readTSONull, nil
+	info, err := decodeRefreshInfoSnapshot(recheckRows[0], 0, 1)
+	return info, errors.Trace(err)
 }
 
 func readMLogPurgeInfoLastPurgedTSO(
@@ -5772,11 +5860,15 @@ func persistRefreshSuccess(
 	lockedReadTSO uint64,
 	lockedReadTSONull bool,
 	refreshReadTSO uint64,
+	lastSuccessEndTime string,
 	nextTime *string,
 	shouldUpdateNextTime bool,
 ) error {
-	setClauses := []string{"LAST_SUCCESS_READ_TSO = %?"}
-	args := []any{refreshReadTSO}
+	setClauses := []string{
+		"LAST_SUCCESS_READ_TSO = %?",
+		"LAST_SUCCESS_ENDTIME = %?",
+	}
+	args := []any{refreshReadTSO, lastSuccessEndTime}
 	if shouldUpdateNextTime {
 		setClauses = append(setClauses, "NEXT_TIME = %?")
 		var nextTimeArg any
@@ -6105,6 +6197,7 @@ func finalizeRefreshHistWithRetry(
 	refreshStartAt time.Time,
 	refreshEndAt time.Time,
 	refreshRows *int64,
+	refreshScheduleDuration *time.Duration,
 	refreshFailedReason *string,
 ) error {
 	firstErr := finalizeRefreshHist(
@@ -6118,6 +6211,7 @@ func finalizeRefreshHistWithRetry(
 		refreshStartAt,
 		refreshEndAt,
 		refreshRows,
+		refreshScheduleDuration,
 		refreshFailedReason,
 	)
 	if firstErr == nil {
@@ -6134,6 +6228,7 @@ func finalizeRefreshHistWithRetry(
 		refreshStartAt,
 		refreshEndAt,
 		refreshRows,
+		refreshScheduleDuration,
 		refreshFailedReason,
 	)
 	if retryErr == nil {
@@ -6160,6 +6255,7 @@ func finalizeRefreshHist(
 	refreshStartAt time.Time,
 	refreshEndAt time.Time,
 	refreshRows *int64,
+	refreshScheduleDuration *time.Duration,
 	refreshFailedReason *string,
 ) error {
 	failpoint.Inject("mockFinalizeRefreshHistError", func(val failpoint.Value) {
@@ -6180,6 +6276,10 @@ func finalizeRefreshHist(
 	if refreshRows != nil {
 		refreshRowsArg = *refreshRows
 	}
+	var refreshScheduleDurationArg any
+	if refreshScheduleDuration != nil {
+		refreshScheduleDurationArg = formatDurationSeconds(*refreshScheduleDuration)
+	}
 	var refreshFailedReasonArg any
 	if refreshFailedReason != nil {
 		refreshFailedReasonArg = *refreshFailedReason
@@ -6190,6 +6290,7 @@ SET
 	REFRESH_STATUS = %?,
 	REFRESH_ROWS = %?,
 	REFRESH_DURATION_SEC = %?,
+	REFRESH_SCHEDULE_DURATION_SEC = %?,
 	REFRESH_READ_TSO = %?,
 	REFRESH_COMMIT_TSO = %?,
 	REFRESH_FAILED_REASON = %?
@@ -6202,6 +6303,7 @@ WHERE REFRESH_JOB_ID = %?
 		refreshStatus,
 		refreshRowsArg,
 		formatDurationSecondsBetween(refreshStartAt, refreshEndAt),
+		refreshScheduleDurationArg,
 		refreshReadTSOArg,
 		refreshCommitTSOArg,
 		refreshFailedReasonArg,

@@ -423,6 +423,14 @@ func readAffectedRowsMetricValue(t *testing.T, label string) float64 {
 	return pb.GetCounter().GetValue()
 }
 
+func readMVServiceRefreshScheduleDurationCount(t *testing.T) uint64 {
+	t.Helper()
+
+	pb := &dto.Metric{}
+	require.NoError(t, metrics.MVServiceRefreshScheduleDurationHistogram.Write(pb))
+	return pb.GetHistogram().GetSampleCount()
+}
+
 func setupMaterializedViewRefreshStatementResultTest(t *testing.T) *testkit.TestKit {
 	t.Helper()
 	store, _ := testkit.CreateMockStoreAndDomain(t)
@@ -1272,6 +1280,48 @@ func TestMaterializedViewRefreshNextTimeOnlyUpdatesForInternalSQL(t *testing.T) 
 		"select REFRESH_METHOD from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1",
 		mviewID,
 	)).Check(testkit.Rows("complete delta apply auto"))
+}
+
+func TestMaterializedViewRefreshScheduleDurationOnlyForInternalSQL(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_refresh_schedule_duration (a int not null, b int not null)")
+	tk.MustExec("insert into t_refresh_schedule_duration values (1, 10), (2, 20)")
+	tk.MustExec("create materialized view log on t_refresh_schedule_duration (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_refresh_schedule_duration (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_refresh_schedule_duration group by a")
+
+	is := dom.InfoSchema()
+	mvTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_refresh_schedule_duration"))
+	require.NoError(t, err)
+	mviewID := mvTable.Meta().ID
+
+	tk.MustQuery(fmt.Sprintf("select LAST_SUCCESS_ENDTIME is not null from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mviewID)).
+		Check(testkit.Rows("1"))
+
+	tk.MustExec("insert into t_refresh_schedule_duration values (3, 30)")
+	tk.MustExec("refresh materialized view mv_refresh_schedule_duration fast")
+	tk.MustQuery(fmt.Sprintf(
+		"select REFRESH_METHOD, REFRESH_SCHEDULE_DURATION_SEC is null from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1",
+		mviewID,
+	)).Check(testkit.Rows("fast manual 1"))
+
+	tk.MustExec("insert into t_refresh_schedule_duration values (4, 40)")
+	metricCountBefore := readMVServiceRefreshScheduleDurationCount(t)
+	mustExecInternal(t, tk, "refresh materialized view mv_refresh_schedule_duration fast")
+	tk.MustQuery(fmt.Sprintf(
+		"select REFRESH_METHOD, REFRESH_SCHEDULE_DURATION_SEC is not null, REFRESH_SCHEDULE_DURATION_SEC >= 0 from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1",
+		mviewID,
+	)).Check(testkit.Rows("fast auto 1 1"))
+	require.Greater(t, readMVServiceRefreshScheduleDurationCount(t), metricCountBefore)
+
+	tk.MustExec(fmt.Sprintf("update mysql.tidb_mview_refresh_info set LAST_SUCCESS_ENDTIME = null where MVIEW_ID = %d", mviewID))
+	tk.MustExec("insert into t_refresh_schedule_duration values (5, 50)")
+	mustExecInternal(t, tk, "refresh materialized view mv_refresh_schedule_duration fast")
+	tk.MustQuery(fmt.Sprintf(
+		"select REFRESH_METHOD, REFRESH_SCHEDULE_DURATION_SEC is not null, REFRESH_SCHEDULE_DURATION_SEC >= 0 from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d order by REFRESH_JOB_ID desc limit 1",
+		mviewID,
+	)).Check(testkit.Rows("fast auto 1 1"))
 }
 
 func TestMaterializedViewRefreshInternalSQLStartWithNoNextSetsNextTimeNull(t *testing.T) {

@@ -768,6 +768,7 @@ const (
 	CreateTiDBMViewRefreshInfoTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mview_refresh_info (
 		MVIEW_ID bigint NOT NULL,
 		LAST_SUCCESS_READ_TSO bigint unsigned DEFAULT NULL,
+		LAST_SUCCESS_ENDTIME datetime(6) DEFAULT NULL,
 		NEXT_TIME datetime DEFAULT NULL,
 		PRIMARY KEY(MVIEW_ID))`
 
@@ -788,6 +789,7 @@ const (
 		REFRESH_TIME datetime(6) DEFAULT NULL,
 		REFRESH_ENDTIME datetime(6) DEFAULT NULL,
 		REFRESH_DURATION_SEC decimal(18,6) DEFAULT NULL,
+		REFRESH_SCHEDULE_DURATION_SEC decimal(18,6) DEFAULT NULL,
 		REFRESH_STATUS varchar(16) DEFAULT NULL,
 		REFRESH_ROWS bigint DEFAULT NULL,
 		REFRESH_READ_TSO bigint unsigned DEFAULT NULL,
@@ -1317,12 +1319,16 @@ const (
 	// Add OPERATE VIEW static privilege to grant tables and PURGE_CUTOFF_TSO to MV log purge history table.
 	version228 = 228
 
-	// next version should start with 229
+	// version 229
+	// Add LAST_SUCCESS_ENDTIME to MV refresh info and REFRESH_SCHEDULE_DURATION_SEC to MV refresh history table.
+	version229 = 229
+
+	// next version should start with 230
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version228
+var currentBootstrapVersion int64 = version229
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1506,6 +1512,7 @@ var (
 		upgradeToVer226,
 		upgradeToVer227,
 		upgradeToVer228,
+		upgradeToVer229,
 	}
 )
 
@@ -3462,6 +3469,14 @@ func upgradeToVer228(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tables_priv MODIFY COLUMN Table_priv SET('Select','Insert','Update','Delete','Create','Drop','Grant','Index','Alter','Create View','Show View','Operate View','Trigger','References')")
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mlog_purge_hist ADD COLUMN `PURGE_CUTOFF_TSO` bigint unsigned DEFAULT NULL AFTER `PURGE_STATUS`", infoschema.ErrColumnExists)
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Operate_view_priv='Y' WHERE Super_priv='Y'")
+}
+
+func upgradeToVer229(s sessiontypes.Session, ver int64) {
+	if ver >= version229 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mview_refresh_info ADD COLUMN `LAST_SUCCESS_ENDTIME` datetime(6) DEFAULT NULL AFTER `LAST_SUCCESS_READ_TSO`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mview_refresh_hist ADD COLUMN `REFRESH_SCHEDULE_DURATION_SEC` decimal(18,6) DEFAULT NULL AFTER `REFRESH_DURATION_SEC`", infoschema.ErrColumnExists)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
