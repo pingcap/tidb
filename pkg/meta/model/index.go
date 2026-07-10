@@ -17,6 +17,8 @@ package model
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/parser"
@@ -191,8 +193,28 @@ func GetFullTextParserTypeBySQLName(name string) FullTextParserType {
 
 // FullTextIndexInfo is the information of FULLTEXT index of a column.
 type FullTextIndexInfo struct {
-	ParserType FullTextParserType `json:"parser_type"`
-	// TODO: Add other options
+	ParserType   FullTextParserType         `json:"parser_type"`
+	ParserConfig *FullTextIndexParserConfig `json:"parser_config,omitempty"`
+}
+
+// FullTextIndexParserConfig is the immutable analyzer snapshot sent to TiCI
+// when a FULLTEXT index is created. Keeping the exact parser parameters and
+// stopword contents in schema metadata lets every later consumer reproduce
+// the index's token stream instead of consulting mutable global variables.
+type FullTextIndexParserConfig struct {
+	ParserParams map[string]string `json:"parser_params"`
+	StopWords    []string          `json:"stop_words,omitempty"`
+}
+
+// Clone returns a deep copy of the parser configuration.
+func (c *FullTextIndexParserConfig) Clone() *FullTextIndexParserConfig {
+	if c == nil {
+		return nil
+	}
+	return &FullTextIndexParserConfig{
+		ParserParams: maps.Clone(c.ParserParams),
+		StopWords:    slices.Clone(c.StopWords),
+	}
 }
 
 // HybridIndexInfo is the information of HYBRID index of a column.
@@ -562,6 +584,12 @@ func (index *IndexInfo) Clone() *IndexInfo {
 	ni.Columns = make([]*IndexColumn, len(index.Columns))
 	for i := range index.Columns {
 		ni.Columns[i] = index.Columns[i].Clone()
+	}
+	if index.FullTextInfo != nil {
+		ni.FullTextInfo = &FullTextIndexInfo{
+			ParserType:   index.FullTextInfo.ParserType,
+			ParserConfig: index.FullTextInfo.ParserConfig.Clone(),
+		}
 	}
 	if index.HybridInfo != nil {
 		ni.HybridInfo = index.HybridInfo.Clone()

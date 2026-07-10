@@ -787,18 +787,14 @@ func (ds *DataSource) bindLocalMatchAgainst(sf *expression.ScalarFunction) error
 		return errors.Errorf("local MATCH ... AGAINST only supports IN BOOLEAN MODE")
 	}
 
-	index, columnIDs, columnUniqueIDs, err := ds.resolveLocalFTSIndex(sf)
-	if err != nil {
-		return err
-	}
-	config, err := fulltext.AnalyzerConfigFromSessionVars(ds.SCtx().GetSessionVars(), index.FullTextInfo.ParserType)
+	index, config, columnIDs, columnUniqueIDs, err := ds.resolveLocalFTSIndex(sf)
 	if err != nil {
 		return err
 	}
 	if err := expression.ValidateFTSMysqlMatchAgainstLocalQuery(ds.SCtx().GetExprCtx().GetEvalCtx(), sf, config); err != nil {
 		return err
 	}
-	ds.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache("local MATCH ... AGAINST uses query-time fulltext analyzer config")
+	ds.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache("local MATCH ... AGAINST validates prepared search syntax during plan binding")
 	return expression.SetFTSMysqlMatchAgainstLocalEvalInfo(sf, &expression.FTSLocalEvalInfo{
 		TableID:         ds.TableInfo.ID,
 		IndexID:         index.ID,
@@ -810,10 +806,16 @@ func (ds *DataSource) bindLocalMatchAgainst(sf *expression.ScalarFunction) error
 	})
 }
 
-func (ds *DataSource) resolveLocalFTSIndex(sf *expression.ScalarFunction) (index *model.IndexInfo, columnIDs []int64, columnUniqueIDs []int64, err error) {
+func (ds *DataSource) resolveLocalFTSIndex(sf *expression.ScalarFunction) (
+	index *model.IndexInfo,
+	config fulltext.AnalyzerConfig,
+	columnIDs []int64,
+	columnUniqueIDs []int64,
+	err error,
+) {
 	args := sf.GetArgs()
 	if len(args) <= 1 {
-		return nil, nil, nil, errors.Errorf("local MATCH ... AGAINST requires matched columns")
+		return nil, fulltext.AnalyzerConfig{}, nil, nil, errors.Errorf("local MATCH ... AGAINST requires matched columns")
 	}
 
 	matchedColSet := intset.NewFastIntSet()
@@ -821,21 +823,35 @@ func (ds *DataSource) resolveLocalFTSIndex(sf *expression.ScalarFunction) (index
 	for _, arg := range args[1:] {
 		col, ok := arg.(*expression.Column)
 		if !ok {
-			return nil, nil, nil, errors.Errorf("local MATCH ... AGAINST requires column arguments")
+			return nil, fulltext.AnalyzerConfig{}, nil, nil, errors.Errorf("local MATCH ... AGAINST requires column arguments")
 		}
 		matchedColSet.Insert(int(col.ID))
 		matchedColumns[col.ID] = col
 	}
 
-	for _, index := range ds.TableInfo.Indices {
-		if index.FullTextInfo == nil || !index.IsPublic() {
+	for _, candidateIndex := range ds.TableInfo.Indices {
+		if candidateIndex.FullTextInfo == nil || !candidateIndex.IsPublic() {
 			continue
 		}
-		if !ds.localFTSIndexColumnSet(index).Equals(matchedColSet) {
+		if !ds.localFTSIndexColumnSet(candidateIndex).Equals(matchedColSet) {
 			continue
 		}
-		columnIDs := make([]int64, 0, len(index.Columns))
-		columnUniqueIDs := make([]int64, 0, len(index.Columns))
+		candidateConfig, err := fulltext.AnalyzerConfigFromFullTextIndexInfo(candidateIndex.FullTextInfo)
+		if err != nil {
+			return nil, fulltext.AnalyzerConfig{}, nil, nil, errors.Wrapf(err, "FULLTEXT index %s cannot be used for local evaluation", candidateIndex.Name.O)
+		}
+		if index != nil && !config.Equal(candidateConfig) {
+			return nil, fulltext.AnalyzerConfig{}, nil, nil, errors.Errorf(
+				"matching FULLTEXT indexes have different analyzer configurations; local MATCH ... AGAINST is ambiguous",
+			)
+		}
+		if index != nil {
+			continue
+		}
+		index = candidateIndex
+		config = candidateConfig
+		columnIDs = make([]int64, 0, len(index.Columns))
+		columnUniqueIDs = make([]int64, 0, len(index.Columns))
 		for _, indexCol := range index.Columns {
 			colInfo := ds.TableInfo.Columns[indexCol.Offset]
 			columnIDs = append(columnIDs, colInfo.ID)
@@ -843,9 +859,11 @@ func (ds *DataSource) resolveLocalFTSIndex(sf *expression.ScalarFunction) (index
 				columnUniqueIDs = append(columnUniqueIDs, matchedCol.UniqueID)
 			}
 		}
-		return index, columnIDs, columnUniqueIDs, nil
 	}
-	return nil, nil, nil, errors.Errorf("MATCH ... AGAINST local execution requires a matching FULLTEXT index")
+	if index == nil {
+		return nil, fulltext.AnalyzerConfig{}, nil, nil, errors.Errorf("MATCH ... AGAINST local execution requires a matching FULLTEXT index")
+	}
+	return index, config, columnIDs, columnUniqueIDs, nil
 }
 
 func (ds *DataSource) localFTSIndexColumnSet(index *model.IndexInfo) intset.FastIntSet {

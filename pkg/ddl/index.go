@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	goerrors "errors"
 	"fmt"
+	"maps"
 	"os"
 	"slices"
 	"strconv"
@@ -1643,6 +1644,13 @@ func (w *worker) onCreateFulltextIndex(jobCtx *jobContext, job *model.Job) (ver 
 	originalState := indexInfo.State
 	switch indexInfo.State {
 	case model.StateNone:
+		parserInfo, err := w.buildTiCIFulltextParserInfo(jobCtx, job, indexInfo)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		if err := persistFullTextParserConfig(indexInfo, parserInfo); err != nil {
+			return ver, errors.Trace(err)
+		}
 		// Keep the fulltext add-index state machine aligned with onCreateIndex
 		// for fast-reorg setup.
 		err = initForReorgIndexes(w, job, []*model.IndexInfo{indexInfo})
@@ -2301,6 +2309,13 @@ func (w *worker) buildTiCIFulltextParserInfo(jobCtx *jobContext, job *model.Job,
 	if indexInfo == nil || indexInfo.FullTextInfo == nil {
 		return nil, errors.New("missing fulltext info")
 	}
+	if config := indexInfo.FullTextInfo.ParserConfig; config != nil {
+		return &tici.ParserInfo{
+			ParserType:   tiCIParserType(indexInfo.FullTextInfo.ParserType),
+			ParserParams: maps.Clone(config.ParserParams),
+			StopWords:    slices.Clone(config.StopWords),
+		}, nil
+	}
 
 	var parserType tici.ParserType
 	parserParams := make(map[string]string, 8)
@@ -2359,6 +2374,43 @@ func (w *worker) buildTiCIFulltextParserInfo(jobCtx *jobContext, job *model.Job,
 		ParserParams: parserParams,
 		StopWords:    stopWords,
 	}, nil
+}
+
+func tiCIParserType(parserType model.FullTextParserType) tici.ParserType {
+	if parserType == model.FullTextParserTypeStandardV1 {
+		return tici.ParserType_DEFAULT_PARSER
+	}
+	return tici.ParserType_OTHER_PARSER
+}
+
+func persistFullTextParserConfig(indexInfo *model.IndexInfo, parserInfo *tici.ParserInfo) error {
+	if indexInfo == nil || indexInfo.FullTextInfo == nil || parserInfo == nil {
+		return errors.New("missing fulltext parser configuration")
+	}
+	indexInfo.FullTextInfo.ParserConfig = &model.FullTextIndexParserConfig{
+		ParserParams: maps.Clone(parserInfo.ParserParams),
+		StopWords:    slices.Clone(parserInfo.StopWords),
+	}
+	return nil
+}
+
+func (w *worker) prepareTableFullTextParserConfigs(jobCtx *jobContext, job *model.Job, tblInfo *model.TableInfo) error {
+	if tblInfo == nil {
+		return nil
+	}
+	for _, indexInfo := range tblInfo.Indices {
+		if indexInfo == nil || indexInfo.FullTextInfo == nil || indexInfo.FullTextInfo.ParserConfig != nil {
+			continue
+		}
+		parserInfo, err := w.buildTiCIFulltextParserInfo(jobCtx, job, indexInfo)
+		if err != nil {
+			return err
+		}
+		if err := persistFullTextParserConfig(indexInfo, parserInfo); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (w *worker) readFullTextStopwords(jobCtx *jobContext, dbName, tblName string) (stopwords []string, err error) {

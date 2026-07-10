@@ -286,6 +286,9 @@ func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 	jobCtx.jobArgs = args
 
 	tbInfo := args.TableInfo
+	if err := w.prepareTableFullTextParserConfigs(jobCtx, job, tbInfo); err != nil {
+		return ver, errors.Trace(err)
+	}
 
 	if len(tbInfo.ForeignKeys) > 0 {
 		return w.createTableWithForeignKeys(jobCtx, job, args)
@@ -396,6 +399,10 @@ func (w *worker) onCreateTables(jobCtx *jobContext, job *model.Job) (int64, erro
 			}
 			tableInfos = append(tableInfos, tableInfo)
 		} else {
+			if err := w.prepareTableFullTextParserConfigs(jobCtx, stubJob, tableInfo); err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
 			tbInfo, err := createTable(jobCtx, stubJob, &asAutoIDRequirement{
 				store:     w.store,
 				autoidCli: w.autoidCli,

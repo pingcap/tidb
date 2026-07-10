@@ -1928,7 +1928,7 @@ func TestAddColumnarIndexSimple(t *testing.T) {
 }
 
 func TestFullTextIndexSysvarsPassedToTiCI(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomainWithSchemaLease(t, tiflashReplicaLease, mockstore.WithMockTiFlash(2))
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, tiflashReplicaLease, mockstore.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, t_create, sw;")
@@ -1973,6 +1973,7 @@ func TestFullTextIndexSysvarsPassedToTiCI(t *testing.T) {
 	raw := tici.GetMockTiCICreateIndexRequest()
 	require.NotEmpty(t, raw)
 	assertTiCIFulltextParserInfo(t, raw)
+	assertFullTextParserConfigPersisted(t, dom.InfoSchema(), "t_create")
 
 	tk.MustExec("create table t (id int, c text)")
 	tk.MustExec("alter table t set tiflash replica 2 location labels 'a','b';")
@@ -1985,6 +1986,7 @@ func TestFullTextIndexSysvarsPassedToTiCI(t *testing.T) {
 	raw = tici.GetMockTiCICreateIndexRequest()
 	require.NotEmpty(t, raw)
 	assertTiCIFulltextParserInfo(t, raw)
+	assertFullTextParserConfigPersisted(t, dom.InfoSchema(), "t")
 
 	rows := tk.MustQuery("admin show ddl jobs 1").Rows()
 	require.Len(t, rows, 1)
@@ -2150,6 +2152,21 @@ func assertTiCIFulltextParserInfo(t *testing.T, raw []byte) {
 	stopwords := append([]string(nil), req.ParserInfo.StopWords...)
 	sort.Strings(stopwords)
 	require.Equal(t, []string{"a", "foo", "the"}, stopwords)
+}
+
+func assertFullTextParserConfigPersisted(t *testing.T, is infoschema.InfoSchema, tableName string) {
+	t.Helper()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(tableName))
+	require.NoError(t, err)
+	index := tbl.Meta().FindIndexByName("fts_idx")
+	require.NotNil(t, index)
+	require.NotNil(t, index.FullTextInfo)
+	require.NotNil(t, index.FullTextInfo.ParserConfig)
+	require.Equal(t, "1", index.FullTextInfo.ParserConfig.ParserParams[vardef.InnodbFtMinTokenSize])
+	require.Equal(t, "10", index.FullTextInfo.ParserConfig.ParserParams[vardef.InnodbFtMaxTokenSize])
+	require.Equal(t, vardef.On, index.FullTextInfo.ParserConfig.ParserParams[vardef.InnodbFtEnableStopword])
+	require.Equal(t, "test/sw", index.FullTextInfo.ParserConfig.ParserParams[vardef.InnodbFtUserStopwordTable])
+	require.Equal(t, []string{"a", "foo", "the"}, index.FullTextInfo.ParserConfig.StopWords)
 }
 
 func testAddColumnarIndexRollback(prepareSQL []string, addIdxSQL string, t *testing.T) {

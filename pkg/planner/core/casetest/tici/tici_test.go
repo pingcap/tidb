@@ -544,6 +544,36 @@ func TestLocalMatchAgainstValidatesQueryBeforeRows(t *testing.T) {
 	})
 }
 
+func TestLocalMatchAgainstUsesIndexAnalyzerSnapshot(t *testing.T) {
+	runTiCITest(t, func(tk *testkit.TestKit) {
+		tk.MustExec("set @@global.innodb_ft_min_token_size = 3")
+		defer tk.MustExec("set @@global.innodb_ft_min_token_size = 3")
+		tk.MustExec("create table sw(value varchar(20))")
+		tk.MustExec("insert into sw values ('foo')")
+		tk.MustExec("set @@innodb_ft_enable_stopword = on")
+		tk.MustExec("set @@innodb_ft_user_stopword_table = 'test/sw'")
+		tk.MustExec(`create table t(
+			id int primary key,
+			title text,
+			fulltext index ft_title(title)
+		)`)
+
+		// Change every mutable query-time input that used to feed the local
+		// analyzer. Local matching must continue to use the snapshot that TiCI
+		// received when ft_title was created.
+		tk.MustExec("set @@global.innodb_ft_min_token_size = 1")
+		tk.MustExec("set @@innodb_ft_user_stopword_table = ''")
+		tk.MustExec("set tidb_enable_local_match_against = on")
+		tk.MustExec("begin")
+		tk.MustExec("insert into t values (1, 'go'), (2, 'foo'), (3, 'tidb')")
+
+		tk.MustQuery("select id from t where match(title) against('+go' in boolean mode)").Check(testkit.Rows())
+		tk.MustQuery("select id from t where match(title) against('+foo' in boolean mode)").Check(testkit.Rows())
+		tk.MustQuery("select id from t where match(title) against('+tidb' in boolean mode)").Check(testkit.Rows("3"))
+		tk.MustExec("rollback")
+	})
+}
+
 func TestLocalMatchAgainstCBOChoosesResidualIndex(t *testing.T) {
 	runTiCITest(t, func(tk *testkit.TestKit) {
 		tk.MustExec(`create table t(

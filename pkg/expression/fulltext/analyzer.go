@@ -17,6 +17,7 @@ package fulltext
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -44,6 +45,18 @@ type AnalyzerConfig struct {
 	InnodbFtEnableStopword bool
 	Stopwords              []string
 	NgramTokenSize         int
+}
+
+// Equal reports whether two analyzer configurations produce the same token
+// stream. Stopword order does not affect analysis; DDL stores it sorted, so an
+// order-sensitive comparison also catches malformed or non-canonical metadata.
+func (c AnalyzerConfig) Equal(other AnalyzerConfig) bool {
+	return c.ParserType == other.ParserType &&
+		c.InnodbFtMinTokenSize == other.InnodbFtMinTokenSize &&
+		c.InnodbFtMaxTokenSize == other.InnodbFtMaxTokenSize &&
+		c.InnodbFtEnableStopword == other.InnodbFtEnableStopword &&
+		c.NgramTokenSize == other.NgramTokenSize &&
+		slices.Equal(c.Stopwords, other.Stopwords)
 }
 
 // Analyzer analyzes text into fulltext tokens.
@@ -114,6 +127,66 @@ func AnalyzerConfigFromSessionVars(sessVars *variable.SessionVars, parserType mo
 		InnodbFtEnableStopword: variable.TiDBOptOn(enableStopword),
 		NgramTokenSize:         ngramTokenSize,
 	}, nil
+}
+
+// AnalyzerConfigFromFullTextIndexInfo restores the analyzer snapshot captured
+// when TiCI created the index. Older metadata without a snapshot is rejected:
+// mutable query-time sysvars cannot prove semantic equivalence with that index.
+func AnalyzerConfigFromFullTextIndexInfo(indexInfo *model.FullTextIndexInfo) (AnalyzerConfig, error) {
+	if indexInfo == nil {
+		return AnalyzerConfig{}, fmt.Errorf("missing fulltext index info")
+	}
+	if indexInfo.ParserConfig == nil {
+		return AnalyzerConfig{}, fmt.Errorf("fulltext index is missing its analyzer configuration snapshot")
+	}
+	params := indexInfo.ParserConfig.ParserParams
+	getParam := func(name string) (string, error) {
+		value, ok := params[name]
+		if !ok {
+			return "", fmt.Errorf("fulltext index analyzer configuration is missing %s", name)
+		}
+		return value, nil
+	}
+	getIntParam := func(name string) (int, error) {
+		value, err := getParam(name)
+		if err != nil {
+			return 0, err
+		}
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			return 0, fmt.Errorf("parse fulltext index analyzer parameter %s: %w", name, err)
+		}
+		return parsed, nil
+	}
+
+	enableStopword, err := getParam(vardef.InnodbFtEnableStopword)
+	if err != nil {
+		return AnalyzerConfig{}, err
+	}
+	config := AnalyzerConfig{
+		ParserType:             indexInfo.ParserType,
+		InnodbFtEnableStopword: variable.TiDBOptOn(enableStopword),
+		Stopwords:              slices.Clone(indexInfo.ParserConfig.StopWords),
+	}
+	switch indexInfo.ParserType {
+	case model.FullTextParserTypeStandardV1:
+		config.InnodbFtMinTokenSize, err = getIntParam(vardef.InnodbFtMinTokenSize)
+		if err != nil {
+			return AnalyzerConfig{}, err
+		}
+		config.InnodbFtMaxTokenSize, err = getIntParam(vardef.InnodbFtMaxTokenSize)
+		if err != nil {
+			return AnalyzerConfig{}, err
+		}
+	case model.FullTextParserTypeNgramV1:
+		config.NgramTokenSize, err = getIntParam(vardef.NgramTokenSize)
+		if err != nil {
+			return AnalyzerConfig{}, err
+		}
+	default:
+		return AnalyzerConfig{}, fmt.Errorf("unsupported fulltext parser type for local evaluation: %s", indexInfo.ParserType)
+	}
+	return config, nil
 }
 
 // PreserveUnderscoreTokenize tokenizes text with TiCI's PreserveUnderscore
