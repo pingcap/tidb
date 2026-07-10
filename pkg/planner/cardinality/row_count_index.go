@@ -16,6 +16,7 @@ package cardinality
 
 import (
 	"bytes"
+	"math"
 	"slices"
 	"strings"
 	"time"
@@ -566,6 +567,113 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 	multResult := ApplyExponentialBackoff(singleColumnEstResults, minBound, 1.0)
 
 	return multResult, minSel, maxSel, true, nil
+}
+
+// AdjustRowCountForAppendedHandleColumns damps a row count estimated from the declared
+// index columns with the selectivity of the handle columns that fillIndexPath appended
+// to the range columns of a non-unique index path. Index statistics only cover the
+// declared columns, so prefixCount was computed from ranges pruned back to
+// declaredColCnt dimensions and gives the appended handle predicates no credit; without
+// an adjustment, a path whose benefit is the handle seek looks as expensive as one
+// without it. Following expBackoffEstimation, the prefix estimate keeps the full-weight
+// slot and each handle column contributes sel^(1/2), sel^(1/4), ... starting from the
+// most selective one, which credits the handle predicates without assuming full
+// independence between the index columns and the primary key. The full ranges must not
+// reach the index statistics directly: bounds encoded from the appended dimensions sort
+// past the truncated statistics keys and would collapse the estimate.
+func AdjustRowCountForAppendedHandleColumns(
+	sctx planctx.PlanContext,
+	coll *statistics.HistColl,
+	ranges []*ranger.Range,
+	idxCols []*expression.Column,
+	declaredColCnt int,
+	prefixCount statistics.RowEstimate,
+) statistics.RowEstimate {
+	realtimeCount := float64(coll.RealtimeCount)
+	if realtimeCount <= 0 || len(ranges) == 0 || len(idxCols) <= declaredColCnt {
+		return prefixCount
+	}
+	sels := make([]float64, 0, len(idxCols)-declaredColCnt)
+	for dim := declaredColCnt; dim < len(idxCols); dim++ {
+		col := idxCols[dim]
+		if col == nil || statistics.ColumnStatsIsInvalid(coll.GetCol(col.UniqueID), sctx, coll, col.UniqueID) {
+			continue
+		}
+		colRanges := make(ranger.Ranges, 0, len(ranges))
+		allBound := true
+		for _, ran := range ranges {
+			if len(ran.LowVal) <= dim || len(ran.HighVal) <= dim {
+				// Some range does not constrain this dimension, so the column is not
+				// bound across the whole path and must not contribute selectivity.
+				allBound = false
+				break
+			}
+			colRanges = append(colRanges, &ranger.Range{
+				LowVal:    []types.Datum{ran.LowVal[dim]},
+				HighVal:   []types.Datum{ran.HighVal[dim]},
+				Collators: []collate.Collator{ran.Collators[dim]},
+				// The exclusion flags of a multi-column range apply to its last dimension.
+				LowExclude:  ran.LowExclude && dim == len(ran.LowVal)-1,
+				HighExclude: ran.HighExclude && dim == len(ran.HighVal)-1,
+			})
+		}
+		if !allBound {
+			continue
+		}
+		// Ranges that differ only in earlier dimensions repeat the same handle bound;
+		// merge them so the column row count is not summed once per range.
+		merged, err := ranger.UnionRanges(sctx.GetRangerCtx(), colRanges, false)
+		if err != nil {
+			continue
+		}
+		countEst, err := GetRowCountByColumnRanges(sctx, coll, col.UniqueID, merged, false)
+		if err != nil {
+			continue
+		}
+		if sel := countEst.Est / realtimeCount; sel > 0 && sel < 1 {
+			sels = append(sels, sel)
+		}
+	}
+	adjusted := prefixCount
+	if len(sels) > 0 {
+		slices.Sort(sels)
+		factor, indepFactor := 1.0, 1.0
+		for i, sel := range sels {
+			indepFactor *= sel
+			// The prefix estimate occupies the full-weight slot, so the i-th handle
+			// selectivity gets weight 1/2^(i+1).
+			if i+1 < MaxExponentialBackoffCols {
+				for range i + 1 {
+					sel = math.Sqrt(sel)
+				}
+				factor *= sel
+			}
+		}
+		adjusted.Est *= factor
+		// Damping a usable estimate should not push it below one row.
+		adjusted.Est = max(adjusted.Est, min(prefixCount.Est, 1))
+		// Full independence gives the most optimistic count; the unadjusted prefix
+		// estimate remains the upper bound in MaxEst.
+		adjusted.MinEst = min(adjusted.MinEst*indepFactor, adjusted.Est)
+	}
+	// A point range over the declared columns plus the full handle identifies at most
+	// one row, because the physical key of a non-unique index ends with the complete
+	// handle and is therefore unique.
+	fullPoints := true
+	for _, ran := range ranges {
+		if len(ran.LowVal) != len(idxCols) || len(ran.HighVal) != len(idxCols) ||
+			!ran.IsPoint(sctx.GetRangerCtx()) {
+			fullPoints = false
+			break
+		}
+	}
+	if fullPoints {
+		pointCap := float64(len(ranges))
+		adjusted.Est = min(adjusted.Est, pointCap)
+		adjusted.MinEst = min(adjusted.MinEst, adjusted.Est)
+		adjusted.MaxEst = min(adjusted.MaxEst, pointCap)
+	}
+	return adjusted
 }
 
 // outOfRangeOnIndex checks if the datum is out of the range.
