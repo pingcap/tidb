@@ -24,10 +24,11 @@ import (
 
 // Query is an executable no-score boolean fulltext query.
 type Query struct {
-	root            queryNode
-	matchCost       float64
-	matchesNothing  bool
-	selectivityTerm string
+	root              queryNode
+	matchCost         float64
+	documentMatchCost float64
+	matchesNothing    bool
+	selectivityTerm   string
 }
 
 // CompileBooleanQuery parses and normalizes a BOOLEAN MODE query for local
@@ -46,10 +47,12 @@ func CompileBooleanQuery(search string, config AnalyzerConfig) (*Query, error) {
 	if err != nil {
 		return nil, err
 	}
+	work := estimateQueryNodeWork(root)
 	query := &Query{
-		root:           root,
-		matchCost:      estimateQueryNodeWork(root),
-		matchesNothing: queryNodeMatchesNothing(root),
+		root:              root,
+		matchCost:         work.fixed,
+		documentMatchCost: work.perDocument,
+		matchesNothing:    queryNodeMatchesNothing(root),
 	}
 	if config.ParserType == model.FullTextParserTypeStandardV1 && !query.matchesNothing {
 		query.selectivityTerm, _ = singlePositiveTerm(root)
@@ -65,14 +68,24 @@ func (q *Query) Match(doc *Document) bool {
 	return q.root.match(doc)
 }
 
-// MatchCost returns a relative per-document matching cost. Document analysis
-// is accounted for separately; this value reflects term lookups and the extra
-// work of prefix and phrase nodes.
+// MatchCost returns fixed query work such as term lookups and phrase setup.
+// Work that scales with document size is reported by DocumentMatchCost.
 func (q *Query) MatchCost() float64 {
 	if q == nil {
 		return 0
 	}
 	return q.matchCost
+}
+
+// DocumentMatchCost returns how many additional document-sized passes local
+// matching performs after tokenization. Dense phrases use one KMP pass;
+// prefixes scan the token set; sparse phrases may intersect one position list
+// per analyzed query token.
+func (q *Query) DocumentMatchCost() float64 {
+	if q == nil {
+		return 0
+	}
+	return q.documentMatchCost
 }
 
 // MatchesNothing reports whether normalization proved that no document can
@@ -130,24 +143,47 @@ func (n prefixNode) match(doc *Document) bool {
 type phraseNode struct {
 	tokens  []string
 	offsets []int
+	failure []int
 }
 
 func (n phraseNode) match(doc *Document) bool {
 	if doc == nil || len(n.tokens) == 0 || len(n.tokens) != len(n.offsets) {
 		return false
 	}
-	firstToken := n.tokens[0]
 	for _, col := range doc.Columns {
-		startPositions := col.Positions[firstToken]
-		if len(startPositions) == 0 {
+		if n.isDense() {
+			if n.matchDense(col) {
+				return true
+			}
 			continue
 		}
-		// Position lists are built in token-stream order. Intersect the possible
-		// phrase starts with each following token's shifted positions so a miss
-		// remains linear even when the phrase and document repeat one token many
-		// times (for example, `"foo foo never"`).
-		candidates := append([]int(nil), startPositions...)
-		for i := 1; i < len(n.tokens) && len(candidates) > 0; i++ {
+
+		// Sparse offsets arise when the analyzer removes phrase terms. Start
+		// from the rarest document token so a missing or selective term ends the
+		// intersection before repeated common-token lists are scanned.
+		anchor := -1
+		for i, token := range n.tokens {
+			positions := col.Positions[token]
+			if len(positions) == 0 {
+				anchor = -1
+				break
+			}
+			if anchor < 0 || len(positions) < len(col.Positions[n.tokens[anchor]]) {
+				anchor = i
+			}
+		}
+		if anchor < 0 {
+			continue
+		}
+		anchorPositions := col.Positions[n.tokens[anchor]]
+		candidates := make([]int, len(anchorPositions))
+		for i, position := range anchorPositions {
+			candidates[i] = position - n.offsets[anchor]
+		}
+		for i := range n.tokens {
+			if i == anchor || len(candidates) == 0 {
+				continue
+			}
 			candidates = intersectPhraseStarts(candidates, col.Positions[n.tokens[i]], n.offsets[i])
 		}
 		if len(candidates) > 0 {
@@ -155,6 +191,60 @@ func (n phraseNode) match(doc *Document) bool {
 		}
 	}
 	return false
+}
+
+func (n phraseNode) isDense() bool {
+	if len(n.tokens) == 0 || len(n.tokens) != len(n.offsets) {
+		return false
+	}
+	for i, offset := range n.offsets {
+		if offset != i {
+			return false
+		}
+	}
+	return true
+}
+
+func (n phraseNode) matchDense(col ColumnDocument) bool {
+	if len(col.Tokens) < len(n.tokens) {
+		return false
+	}
+	failure := n.failure
+	if len(failure) != len(n.tokens) {
+		failure = buildPhraseFailure(n.tokens)
+	}
+	matched := 0
+	previousPosition := -1
+	for _, token := range col.Tokens {
+		if previousPosition >= 0 && token.Position != previousPosition+1 {
+			matched = 0
+		}
+		previousPosition = token.Position
+		for matched > 0 && token.Text != n.tokens[matched] {
+			matched = failure[matched-1]
+		}
+		if token.Text == n.tokens[matched] {
+			matched++
+			if matched == len(n.tokens) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func buildPhraseFailure(tokens []string) []int {
+	failure := make([]int, len(tokens))
+	for i, matched := 1, 0; i < len(tokens); i++ {
+		for matched > 0 && tokens[i] != tokens[matched] {
+			matched = failure[matched-1]
+		}
+		if tokens[i] == tokens[matched] {
+			matched++
+		}
+		failure[i] = matched
+	}
+	return failure
 }
 
 func intersectPhraseStarts(starts, positions []int, offset int) []int {
@@ -181,35 +271,51 @@ type groupNode struct {
 	mustNot []queryNode
 }
 
-func estimateQueryNodeWork(node queryNode) float64 {
+type queryWorkEstimate struct {
+	fixed       float64
+	perDocument float64
+}
+
+func (w *queryWorkEstimate) add(other queryWorkEstimate) {
+	w.fixed += other.fixed
+	w.perDocument += other.perDocument
+}
+
+func estimateQueryNodeWork(node queryNode) queryWorkEstimate {
 	switch n := node.(type) {
 	case nil:
-		return 0
+		return queryWorkEstimate{}
 	case neverNode:
-		return 0.1
+		return queryWorkEstimate{fixed: 0.1}
 	case termNode:
-		return 1
+		return queryWorkEstimate{fixed: 1}
 	case prefixNode:
 		// Prefix matching scans the document's unique token set.
-		return 4
+		return queryWorkEstimate{fixed: 1, perDocument: 1}
 	case phraseNode:
-		return max(2, float64(len(n.tokens))*2)
+		work := queryWorkEstimate{fixed: max(2, float64(len(n.tokens))*2)}
+		if n.isDense() {
+			work.perDocument = 1
+		} else {
+			work.perDocument = float64(len(n.tokens))
+		}
+		return work
 	case groupNode:
-		work := 1.0
+		work := queryWorkEstimate{fixed: 1}
 		for _, child := range n.must {
-			work += estimateQueryNodeWork(child)
+			work.add(estimateQueryNodeWork(child))
 		}
 		for _, child := range n.mustNot {
-			work += estimateQueryNodeWork(child)
+			work.add(estimateQueryNodeWork(child))
 		}
 		if len(n.must) == 0 {
 			for _, child := range n.should {
-				work += estimateQueryNodeWork(child)
+				work.add(estimateQueryNodeWork(child))
 			}
 		}
 		return work
 	default:
-		return 1
+		return queryWorkEstimate{fixed: 1}
 	}
 }
 
@@ -422,6 +528,9 @@ func buildPhraseNode(tokens []Token) queryNode {
 	for _, token := range tokens {
 		node.tokens = append(node.tokens, token.Text)
 		node.offsets = append(node.offsets, token.Position-firstPosition)
+	}
+	if node.isDense() {
+		node.failure = buildPhraseFailure(node.tokens)
 	}
 	return node
 }

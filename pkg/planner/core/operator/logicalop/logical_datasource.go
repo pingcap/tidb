@@ -808,6 +808,7 @@ func (ds *DataSource) bindLocalMatchAgainst(sf *expression.ScalarFunction) error
 	}
 	if query != nil {
 		localInfo.QueryMatchCost = query.MatchCost()
+		localInfo.QueryDocumentCost = query.DocumentMatchCost()
 		localInfo.MatchNothing = query.MatchesNothing()
 		localInfo.SelectivityTerm, _ = query.SelectivityTerm()
 	}

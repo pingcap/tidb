@@ -166,21 +166,24 @@ func TestCompileBooleanQueryStandardPrefix(t *testing.T) {
 }
 
 func TestCompileBooleanQueryRepeatedTokenPhraseMiss(t *testing.T) {
-	const repetitions = 4096
-	document := strings.TrimSpace(strings.Repeat("foo ", repetitions))
-	require.False(t, matchQueryForTest(t, standardConfigForTest(), `"foo foo never"`, []ColumnInput{{Text: document}}))
+	const repetitions = 2048
+	document := strings.TrimSpace(strings.Repeat("foo ", repetitions*2))
+	phrase := `"` + strings.Repeat("foo ", repetitions) + `never"`
+	require.False(t, matchQueryForTest(t, standardConfigForTest(), phrase, []ColumnInput{{Text: document}}))
 }
 
 func BenchmarkRepeatedTokenPhraseMiss(b *testing.B) {
 	config := standardConfigForTest()
 	analyzer, err := GetAnalyzer(config)
 	require.NoError(b, err)
-	query, err := CompileBooleanQuery(`"foo foo never"`, config)
-	require.NoError(b, err)
-
-	for _, repetitions := range []int{1024, 2048, 4096} {
-		b.Run(fmt.Sprintf("tokens-%d", repetitions), func(b *testing.B) {
-			document := strings.TrimSpace(strings.Repeat("foo ", repetitions))
+	for _, repetitions := range []int{128, 256, 512} {
+		b.Run(fmt.Sprintf("query-%d-document-%d", repetitions, repetitions*2), func(b *testing.B) {
+			query, err := CompileBooleanQuery(
+				`"`+strings.Repeat("foo ", repetitions)+`never"`,
+				config,
+			)
+			require.NoError(b, err)
+			document := strings.TrimSpace(strings.Repeat("foo ", repetitions*2))
 			doc, err := BuildDocument([]ColumnInput{{Text: document}}, analyzer)
 			require.NoError(b, err)
 			b.ResetTimer()
@@ -205,6 +208,7 @@ func TestCompiledQueryEstimationMetadata(t *testing.T) {
 	simple, err := CompileBooleanQuery("+tidb", standardConfigForTest())
 	require.NoError(t, err)
 	require.False(t, simple.MatchesNothing())
+	require.Zero(t, simple.DocumentMatchCost())
 	term, ok := simple.SelectivityTerm()
 	require.True(t, ok)
 	require.Equal(t, "tidb", term)
@@ -218,8 +222,13 @@ func TestCompiledQueryEstimationMetadata(t *testing.T) {
 	phrase, err := CompileBooleanQuery(`"tidb database"`, standardConfigForTest())
 	require.NoError(t, err)
 	require.Greater(t, phrase.MatchCost(), simple.MatchCost())
+	require.Equal(t, float64(1), phrase.DocumentMatchCost())
 	_, ok = phrase.SelectivityTerm()
 	require.False(t, ok)
+
+	sparsePhrase, err := CompileBooleanQuery(`"tidb a database"`, standardConfigForTest())
+	require.NoError(t, err)
+	require.Greater(t, sparsePhrase.DocumentMatchCost(), phrase.DocumentMatchCost())
 
 	ngram, err := CompileBooleanQuery("tidb", ngramConfigForTest())
 	require.NoError(t, err)

@@ -1080,10 +1080,11 @@ func localMatchAgainstExprCostWeight(expr expression.Expression) float64 {
 				estimatedRowBytes = float64(columnCount) * 64
 			}
 			queryWork := max(1, info.QueryMatchCost)
+			documentWork := max(0, info.QueryDocumentCost)
 			// Tokenization and document-map construction scan every matched byte;
-			// 16 bytes per scalar-CPU unit keeps the old short-text calibration
-			// while making long TEXT and complex queries appropriately expensive.
-			return 2 + estimatedRowBytes/16 + queryWork
+			// matching adds more document-sized passes for prefixes and phrases.
+			// 16 bytes per scalar-CPU unit keeps the old short-text calibration.
+			return 2 + queryWork + (estimatedRowBytes/16)*(1+documentWork)
 		}
 	}
 	weight := 0.0

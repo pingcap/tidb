@@ -86,6 +86,7 @@ type FTSLocalEvalInfo struct {
 	ColumnOffsets     []int
 	EstimatedRowBytes float64
 	QueryMatchCost    float64
+	QueryDocumentCost float64
 	SelectivityTerm   string
 	MatchNothing      bool
 
