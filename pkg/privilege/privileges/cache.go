@@ -117,6 +117,10 @@ type UserRecord struct {
 	UserAttributesInfo
 
 	AuthenticationString string
+	// AdditionalAuthString holds the MySQL-compatible secondary
+	// ("additional") password hash decoded from user_attributes.$.additional_password.
+	// Empty when the user has no secondary password.
+	AdditionalAuthString string
 	Privileges           mysql.PrivilegeType
 	AccountLocked        bool // A role record when this field is true
 	AuthPlugin           string
@@ -350,6 +354,8 @@ func (bt *bTree[T]) Clone() *btree.BTreeG[T] {
 
 // MySQLPrivilege is the in-memory cache of mysql privilege tables.
 type MySQLPrivilege struct {
+	globalVars variable.GlobalVarAccessor
+
 	// In MySQL, a user identity consists of a user + host.
 	// Either portion of user or host can contain wildcards,
 	// requiring the privileges system to use a list-like
@@ -1010,6 +1016,16 @@ func (record *baseRecord) assignUserOrHost(row chunk.Row, i int, f *resolve.Resu
 func (p *MySQLPrivilege) decodeUserTableRow(userList map[string]struct{}) func(chunk.Row, []*resolve.ResultField) error {
 	return func(row chunk.Row, fs []*resolve.ResultField) error {
 		var value UserRecord
+		defaultAuthPlugin := ""
+		if p.globalVars != nil {
+			val, err := p.globalVars.GetGlobalSysVar(variable.DefaultAuthPlugin)
+			if err == nil {
+				defaultAuthPlugin = val
+			}
+		}
+		if defaultAuthPlugin == "" {
+			defaultAuthPlugin = mysql.AuthNativePassword
+		}
 		for i, f := range fs {
 			switch {
 			case f.ColumnAsName.L == "authentication_string":
@@ -1022,7 +1038,7 @@ func (p *MySQLPrivilege) decodeUserTableRow(userList map[string]struct{}) func(c
 				if row.GetString(i) != "" {
 					value.AuthPlugin = strings.Clone(row.GetString(i))
 				} else {
-					value.AuthPlugin = mysql.AuthNativePassword
+					value.AuthPlugin = defaultAuthPlugin
 				}
 			case f.ColumnAsName.L == "token_issuer":
 				value.AuthTokenIssuer = strings.Clone(row.GetString(i))
@@ -1052,6 +1068,17 @@ func (p *MySQLPrivilege) decodeUserTableRow(userList map[string]struct{}) func(c
 						return err
 					}
 					value.ResourceGroup = strings.Clone(resourceGroup)
+				}
+				pathExpr, err = types.ParseJSONPathExpr("$.additional_password")
+				if err != nil {
+					return err
+				}
+				if additionalBJ, found := bj.Extract([]types.JSONPathExpression{pathExpr}); found {
+					additional, err := additionalBJ.Unquote()
+					if err != nil {
+						return err
+					}
+					value.AdditionalAuthString = strings.Clone(additional)
 				}
 				passwordLocking := PasswordLocking{}
 				if err := passwordLocking.ParseJSON(bj); err != nil {
@@ -2297,15 +2324,20 @@ func (p *MySQLPrivilege) getAllRoles(user, host string) []*auth.RoleIdentity {
 
 // Handle wraps MySQLPrivilege providing thread safe access.
 type Handle struct {
-	sctx util.SessionPool
-	priv atomic.Pointer[MySQLPrivilege]
+	sctx       util.SessionPool
+	priv       atomic.Pointer[MySQLPrivilege]
+	globalVars variable.GlobalVarAccessor
 }
 
 // NewHandle returns a Handle.
-func NewHandle(sctx util.SessionPool) *Handle {
+func NewHandle(sctx util.SessionPool, globalVars ...variable.GlobalVarAccessor) *Handle {
 	priv := newMySQLPrivilege()
 	ret := &Handle{}
 	ret.sctx = sctx
+	if len(globalVars) > 0 {
+		ret.globalVars = globalVars[0]
+		priv.globalVars = globalVars[0]
+	}
 	ret.priv.Store(priv)
 	return ret
 }
@@ -2328,6 +2360,13 @@ func (h *Handle) Get() *MySQLPrivilege {
 // UpdateAll loads all the users' privilege info from kv storage.
 func (h *Handle) UpdateAll() error {
 	priv := newMySQLPrivilege()
+	// Propagate the sysvar accessor like updateUsers does: decodeUserTableRow
+	// resolves legacy empty-plugin rows via default_authentication_plugin, and
+	// without the accessor a full reload (e.g. FLUSH PRIVILEGES) would resolve
+	// those rows as mysql_native_password while the lazy per-user path resolves
+	// them via the configured default — the same row would authenticate
+	// differently depending on which path loaded it.
+	priv.globalVars = h.globalVars
 	res, err := h.sctx.Get()
 	if err != nil {
 		return errors.Trace(err)
@@ -2361,6 +2400,7 @@ func (h *Handle) updateUsers(userList []string) error {
 	exec := res.(sqlexec.SQLExecutor)
 
 	p := newMySQLPrivilege()
+	p.globalVars = h.globalVars
 	// Load the full role edge table first.
 	p.roleGraph = make(map[auth.RoleIdentity]roleGraphEdgesTable)
 	err = loadTable(exec, sqlLoadRoleGraph, p.decodeRoleEdgesTable)
