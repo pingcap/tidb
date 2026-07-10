@@ -2164,9 +2164,10 @@ func getTiCIIndexIDs(tblInfo *model.TableInfo) []int64 {
 }
 
 type ticiAddPartitionGroup struct {
-	key        string
-	parserInfo *tici.ParserInfo
-	indexIDs   []int64
+	key                   string
+	parserInfo            *tici.ParserInfo
+	indexIDs              []int64
+	mutableLegacyAnalyzer bool
 }
 
 func canonicalizeTiCIParserInfo(parserInfo *tici.ParserInfo) *tici.ParserInfo {
@@ -2240,12 +2241,30 @@ func (w *worker) buildTiCIAddPartitionGroups(jobCtx *jobContext, job *model.Job,
 		}
 
 		var parserInfo *tici.ParserInfo
+		mutableLegacyAnalyzer := false
 		if idxInfo.FullTextInfo != nil {
-			info, err := w.buildTiCIFulltextParserInfo(jobCtx, job, idxInfo)
+			var info *tici.ParserInfo
+			var err error
+			if job != nil && job.IsRollingback() && idxInfo.FullTextInfo.ParserConfig == nil {
+				// A rolling-upgrade job may already have persisted a successful
+				// group hash before analyzer snapshots were introduced. Do not
+				// re-read its mutable stopword table during rollback: cleanup only
+				// needs index IDs, and the table may have changed or disappeared.
+				info, err = buildTiCIFulltextParserInfo(job, idxInfo, func(string, string) ([]string, error) {
+					return nil, nil
+				})
+			} else {
+				info, err = w.buildTiCIFulltextParserInfo(jobCtx, job, idxInfo)
+			}
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			parserInfo = info
+			mutableLegacyAnalyzer = idxInfo.FullTextInfo.ParserConfig == nil &&
+				idxInfo.FullTextInfo.ParserType == model.FullTextParserTypeStandardV1 &&
+				strings.EqualFold(parserInfo.ParserParams[vardef.InnodbFtEnableStopword], vardef.On) &&
+				(strings.TrimSpace(parserInfo.ParserParams[vardef.InnodbFtUserStopwordTable]) != "" ||
+					strings.TrimSpace(parserInfo.ParserParams[vardef.InnodbFtServerStopwordTable]) != "")
 		}
 
 		key, err := marshalTiCIParserInfoKey(parserInfo)
@@ -2262,6 +2281,7 @@ func (w *worker) buildTiCIAddPartitionGroups(jobCtx *jobContext, job *model.Job,
 			groupKeys = append(groupKeys, key)
 		}
 		group.indexIDs = append(group.indexIDs, idxInfo.ID)
+		group.mutableLegacyAnalyzer = group.mutableLegacyAnalyzer || mutableLegacyAnalyzer
 	}
 
 	slices.Sort(groupKeys)
@@ -2299,13 +2319,29 @@ func getTiCIAddedPartitionIndexIDs(reorgMeta *model.DDLReorgMeta, groups []ticiA
 	}
 
 	indexIDs := make([]int64, 0, len(groups))
+	matchedGroups := make(map[string]struct{}, len(addedGroups))
 	for _, group := range groups {
 		if _, ok := addedGroups[group.key]; !ok {
 			continue
 		}
 		indexIDs = append(indexIDs, group.indexIDs...)
+		matchedGroups[group.key] = struct{}{}
 	}
-	return indexIDs
+
+	// Before analyzer snapshots were persisted, a successful STANDARD group
+	// hash included the then-current custom stopword contents. If rollback runs
+	// after that table changes, the hash cannot be reconstructed. There is only
+	// one such mutable group per job (all STANDARD indexes share the captured
+	// parser sysvars), so an unmatched persisted marker identifies that group.
+	if len(matchedGroups) < len(addedGroups) {
+		for _, group := range groups {
+			if group.mutableLegacyAnalyzer {
+				indexIDs = append(indexIDs, group.indexIDs...)
+			}
+		}
+	}
+	slices.Sort(indexIDs)
+	return slices.Compact(indexIDs)
 }
 
 // getTableInfoWithDroppingPartitions builds oldTableInfo including dropping partitions, only used by onDropTablePartition.
