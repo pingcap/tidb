@@ -1806,24 +1806,17 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		ops = append(ops, tikv.WithMatchStores([]uint64{*task.redirect2Replica}))
 	}
 
-	queryCopStoreID, hasQueryCopStore, err := worker.resolveQueryCopStoreID(bo, task, req, ops)
-	if err != nil {
+	coprRequestLimiter := worker.req.CoprRequestLimiter
+	if queryCopStoreID, hasQueryCopStore, err := worker.resolveQueryCopStoreID(bo, task, req, ops); err != nil {
 		return nil, errors.Trace(err)
-	}
-	var queryCopStoreLimiter kv.CoprRequestLimiter
-	if hasQueryCopStore {
-		queryCopStoreLimiter = worker.req.QueryCopStoreLimiter.GetStoreLimiter(queryCopStoreID)
+	} else if hasQueryCopStore {
+		queryCopStoreLimiter := worker.req.QueryCopStoreLimiter.GetStoreLimiter(queryCopStoreID)
 		failpoint.InjectCall("onBeforeAcquireQueryCopStoreLimiter", req, queryCopStoreID)
+		if queryCopStoreLimiter != nil {
+			coprRequestLimiter = queryCopStoreLimiter
+		}
 	}
-	// Acquire both limiters without holding one token while waiting for the
-	// other, so a blocked request does not reduce effective concurrency.
-	// The long-term fix is to acquire both limiters in the client-go send path
-	// after the final RPCContext is selected.
-	releaseCoprRequestLimiters, limiterWaitTime, exit := acquireCoprRequestLimiters(
-		queryCopStoreLimiter,
-		worker.req.CoprRequestLimiter,
-		worker.finishCh,
-	)
+	releaseCoprRequestLimiter, limiterWaitTime, exit := acquireCoprRequestLimiter(coprRequestLimiter, worker.finishCh)
 	if exit {
 		return nil, nil
 	}
@@ -1832,7 +1825,9 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 	// remaining panic-safe.
 	resp, rpcCtx, storeAddr, err := func() (*tikvrpc.Response, *tikv.RPCContext, string, error) {
 		defer func() {
-			releaseCoprRequestLimiters()
+			if releaseCoprRequestLimiter != nil {
+				releaseCoprRequestLimiter()
+			}
 		}()
 		failpoint.InjectCall("onBeforeSendReqCtx", req)
 		return worker.kvclient.SendReqCtx(bo.TiKVBackoffer(), req, task.region,
@@ -1897,50 +1892,6 @@ func acquireCoprRequestLimiter(limiter kv.CoprRequestLimiter, done <-chan struct
 	}
 	waitTime = time.Since(waitStart)
 	return limiter.Release, waitTime, false
-}
-
-func acquireCoprRequestLimiters(
-	first kv.CoprRequestLimiter,
-	second kv.CoprRequestLimiter,
-	done <-chan struct{},
-) (release func(), waitTime time.Duration, exit bool) {
-	if first == nil && second == nil {
-		return func() {}, 0, false
-	}
-	if first == nil {
-		return acquireCoprRequestLimiter(second, done)
-	}
-	if second == nil || first == second {
-		return acquireCoprRequestLimiter(first, done)
-	}
-
-	for {
-		releaseFirst, wait, exit := acquireCoprRequestLimiter(first, done)
-		waitTime += wait
-		if exit {
-			return nil, waitTime, true
-		}
-		if second.TryAcquire() {
-			return func() {
-				second.Release()
-				releaseFirst()
-			}, waitTime, false
-		}
-		releaseFirst()
-
-		releaseSecond, wait, exit := acquireCoprRequestLimiter(second, done)
-		waitTime += wait
-		if exit {
-			return nil, waitTime, true
-		}
-		if first.TryAcquire() {
-			return func() {
-				first.Release()
-				releaseSecond()
-			}, waitTime, false
-		}
-		releaseSecond()
-	}
 }
 
 func (worker *copIteratorWorker) resolveQueryCopStoreID(
