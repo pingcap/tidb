@@ -979,12 +979,12 @@ func getRegionSplitKeys(
 	engineFileTotalSize, engineFileLength := engine.KVStatistics()
 
 	if minRegionNum > 0 && engineFileTotalSize/sizeLimit < minRegionNum {
-		sizeLimit = engineFileTotalSize / minRegionNum
+		sizeLimit = max(1, engineFileTotalSize/minRegionNum)
 		logger.Info("enforce minRegionNum",
 			zap.Int64("totalSize", engineFileTotalSize), zap.Int64("minRegionNum", minRegionNum), zap.Int64("sizeLimit", sizeLimit))
 	}
 	if minRegionNum > 0 && engineFileLength/keysLimit < minRegionNum {
-		keysLimit = engineFileLength / minRegionNum
+		keysLimit = max(1, engineFileLength/minRegionNum)
 		logger.Info("enforce minRegionNum",
 			zap.Int64("totalCount", engineFileLength), zap.Int64("minRegionNum", minRegionNum), zap.Int64("keysLimit", keysLimit))
 	}
