@@ -4658,7 +4658,6 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 		if err := kctx.Err(); err != nil {
 			return err
 		}
-		lastSuccessEndTime := formatMViewRefreshInfoEndTime(time.Now())
 		return domain.GetDomain(e.Ctx()).DDLExecutor().RefreshMaterializedViewCompleteOutOfPlaceCutover(
 			e.Ctx(),
 			tblInfo.DBID,
@@ -4670,7 +4669,6 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 			&expectedOldMViewRevision,
 			expectedLastSuccessReadTSO,
 			expectedLastSuccessReadTSONull,
-			lastSuccessEndTime,
 			nextTime,
 			shouldUpdateNextTime,
 		)

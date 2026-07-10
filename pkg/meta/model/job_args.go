@@ -795,7 +795,6 @@ type RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs struct {
 	ExpectedOldMViewRevision       *uint64 `json:"expected_old_mview_revision,omitempty"`
 	ExpectedLastSuccessReadTSO     uint64  `json:"expected_last_success_read_tso,omitempty"`
 	ExpectedLastSuccessReadTSONull bool    `json:"expected_last_success_read_tso_null,omitempty"`
-	LastSuccessEndTime             string  `json:"last_success_end_time,omitempty"`
 	NextTime                       *string `json:"next_time,omitempty"`
 	ShouldUpdateNextTime           bool    `json:"should_update_next_time,omitempty"`
 }
@@ -810,7 +809,6 @@ func (a *RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs) getArgsV1(*Job) [
 		a.NextTime,
 		a.ShouldUpdateNextTime,
 		a.ExpectedOldMViewRevision,
-		a.LastSuccessEndTime,
 	}
 }
 
@@ -824,7 +822,6 @@ func (a *RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs) decodeV1(job *Job
 		&a.NextTime,
 		&a.ShouldUpdateNextTime,
 		&a.ExpectedOldMViewRevision,
-		&a.LastSuccessEndTime,
 	))
 }
 

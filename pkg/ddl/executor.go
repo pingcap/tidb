@@ -133,7 +133,6 @@ type Executor interface {
 		expectedOldMViewRevision *uint64,
 		expectedLastSuccessReadTSO uint64,
 		expectedLastSuccessReadTSONull bool,
-		lastSuccessEndTime string,
 		nextTime *string,
 		shouldUpdateNextTime bool,
 	) error

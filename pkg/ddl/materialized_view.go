@@ -1013,7 +1013,6 @@ func (e *executor) RefreshMaterializedViewCompleteOutOfPlaceCutover(
 	expectedOldMViewRevision *uint64,
 	expectedLastSuccessReadTSO uint64,
 	expectedLastSuccessReadTSONull bool,
-	lastSuccessEndTime string,
 	nextTime *string,
 	shouldUpdateNextTime bool,
 ) error {
@@ -1047,7 +1046,6 @@ func (e *executor) RefreshMaterializedViewCompleteOutOfPlaceCutover(
 		ExpectedOldMViewRevision:       expectedOldMViewRevision,
 		ExpectedLastSuccessReadTSO:     expectedLastSuccessReadTSO,
 		ExpectedLastSuccessReadTSONull: expectedLastSuccessReadTSONull,
-		LastSuccessEndTime:             lastSuccessEndTime,
 		NextTime:                       nextTime,
 		ShouldUpdateNextTime:           shouldUpdateNextTime,
 	}
