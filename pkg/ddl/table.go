@@ -46,6 +46,7 @@ import (
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
+	"github.com/pingcap/tidb/pkg/util/mviewutil"
 	"go.uber.org/zap"
 )
 
@@ -1447,7 +1448,7 @@ func (w *worker) migrateMViewRefreshInfoForOutOfPlaceCutover(
 	copy(newDatums, oldDatums)
 	newDatums[0] = types.NewIntDatum(args.ShadowTableID)
 	newDatums[1] = types.NewUintDatum(args.BuildReadTSO)
-	lastSuccessEndTime := formatMViewRefreshInfoEndTime(time.Now())
+	lastSuccessEndTime := mviewutil.FormatMViewRefreshInfoEndTime(time.Now())
 	endTimeDatum := types.NewStringDatum(lastSuccessEndTime)
 	newDatums[2], err = table.CastColumnValue(sctx.GetExprCtx(), endTimeDatum, refreshInfoTbl.Meta().Columns[2], false, false)
 	if err != nil {

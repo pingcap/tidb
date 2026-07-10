@@ -16,10 +16,17 @@ package mviewutil
 
 import (
 	"strings"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/types"
 )
+
+// FormatMViewRefreshInfoEndTime formats LAST_SUCCESS_ENDTIME for mysql.tidb_mview_refresh_info.
+func FormatMViewRefreshInfoEndTime(t time.Time) string {
+	return t.UTC().Truncate(time.Microsecond).Format(types.TimeFSPFormat)
+}
 
 // FindVisibleIndexWithPrefixCoveringColumns returns the first public visible key layout
 // usable by MIN/MAX materialized-view refresh.

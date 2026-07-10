@@ -65,6 +65,7 @@ import (
 	plannererrors "github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/mviewutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
@@ -906,10 +907,6 @@ func histTime(t time.Time, loc *time.Location) time.Time {
 	return t.Truncate(time.Microsecond)
 }
 
-func formatMViewRefreshInfoEndTime(t time.Time) string {
-	return t.UTC().Truncate(time.Microsecond).Format(types.TimeFSPFormat)
-}
-
 type mvRefreshStmtResult struct {
 	affectedRows uint64
 	message      string
@@ -1559,21 +1556,21 @@ func (e *CompareMaterializedViewExec) readCompareMaterializedViewLastSuccessRead
 	}
 	defer func() { _ = cleanup() }()
 
-	readTSO, readTSONull, err := readRefreshInfoReadTSO(ctx, sctx.GetSQLExecutor(), mviewID)
+	refreshInfo, err := readRefreshInfoSnapshot(ctx, sctx.GetSQLExecutor(), mviewID)
 	if err != nil {
 		return 0, err
 	}
-	if readTSONull {
+	if refreshInfo.lastSuccessReadTSONull {
 		return 0, errors.New("compare materialized view: LAST_SUCCESS_READ_TSO is NULL")
 	}
-	if readTSO > compareSnapshotTS {
+	if refreshInfo.lastSuccessReadTSO > compareSnapshotTS {
 		return 0, errors.Errorf(
 			"compare materialized view: LAST_SUCCESS_READ_TSO %d is newer than compare snapshot %d",
-			readTSO,
+			refreshInfo.lastSuccessReadTSO,
 			compareSnapshotTS,
 		)
 	}
-	return readTSO, nil
+	return refreshInfo.lastSuccessReadTSO, nil
 }
 
 func (e *CompareMaterializedViewExec) openCompareMaterializedViewQueryExec(
@@ -4408,7 +4405,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		return finalizeFailure(err)
 	}
 
-	lastSuccessEndTime := formatMViewRefreshInfoEndTime(time.Now())
+	lastSuccessEndTime := mviewutil.FormatMViewRefreshInfoEndTime(time.Now())
 	if err := observeMVRefreshStep(e.stepObserver, stepSet.persistRefreshInfo, func() error {
 		return persistRefreshSuccess(
 			kctx,
@@ -5274,18 +5271,6 @@ func releaseMVRefreshAdvisoryLockFully(refreshSctx sessionctx.Context, lockName 
 	return releasedCnt
 }
 
-func readRefreshInfoReadTSO(
-	kctx context.Context,
-	sqlExec sqlexec.SQLExecutor,
-	mviewID int64,
-) (readTSO uint64, readTSONull bool, err error) {
-	info, err := readRefreshInfoSnapshot(kctx, sqlExec, mviewID)
-	if err != nil {
-		return 0, false, err
-	}
-	return info.lastSuccessReadTSO, info.lastSuccessReadTSONull, nil
-}
-
 func readRefreshInfoSnapshot(
 	kctx context.Context,
 	sqlExec sqlexec.SQLExecutor,
@@ -5894,11 +5879,11 @@ WHERE MVIEW_ID = %%? AND LAST_SUCCESS_READ_TSO <=> %%?`,
 		}
 		return errors.Trace(err)
 	}
-	persistedReadTSO, persistedReadTSONull, err := readRefreshInfoReadTSO(kctx, sqlExec, mviewID)
+	persistedRefreshInfo, err := readRefreshInfoSnapshot(kctx, sqlExec, mviewID)
 	if err != nil {
 		return err
 	}
-	if persistedReadTSONull || persistedReadTSO != refreshReadTSO {
+	if persistedRefreshInfo.lastSuccessReadTSONull || persistedRefreshInfo.lastSuccessReadTSO != refreshReadTSO {
 		return errors.New("refresh materialized view: inconsistent LAST_SUCCESS_READ_TSO after success update")
 	}
 	return nil

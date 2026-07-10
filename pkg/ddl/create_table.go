@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/mviewutil"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"go.uber.org/zap"
@@ -953,7 +954,7 @@ func (w *worker) upsertCreateMaterializedViewRefreshInfo(jobCtx *jobContext, mvS
 	if err != nil {
 		return errors.Trace(err)
 	}
-	lastSuccessEndTime := formatMViewRefreshInfoEndTime(time.Now())
+	lastSuccessEndTime := mviewutil.FormatMViewRefreshInfoEndTime(time.Now())
 	return errors.Trace(execCreateMaterializedViewRefreshInfoUpsert(ctx, w.sess, mvTblInfo.ID, readTS, &lastSuccessEndTime, nextTime, shouldUpdateNextTime))
 }
 
@@ -1328,10 +1329,6 @@ func evalCreateMaterializedViewScheduleExprToDatetime(ddlSess *sess.Session, exp
 
 	t := datetimeV.GetMysqlTime()
 	return &t, nil
-}
-
-func formatMViewRefreshInfoEndTime(t time.Time) string {
-	return t.UTC().Truncate(time.Microsecond).Format(types.TimeFSPFormat)
 }
 
 func buildCreateMaterializedViewRefreshInfoUpsertSQL(mviewID int64, readTS uint64, lastSuccessEndTime *string, nextTime *string, shouldUpdateNextTime bool) string {
