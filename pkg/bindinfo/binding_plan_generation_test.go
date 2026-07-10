@@ -145,3 +145,17 @@ func TestGenPlanUnderStateRestoresSessionVars(t *testing.T) {
 	require.False(t, sessVars.EnableAlternativeLogicalPlans)
 	require.Equal(t, map[uint64]string{fixcontrol.Fix44855: vardef.Off}, sessVars.OptimizerFixControl)
 }
+
+func TestAddFeatureGateStateHints(t *testing.T) {
+	hints := addFeatureGateStateHints("use_index(@`sel_1` `test`.`t` `idx_a`)", &state{
+		varNames: []string{
+			vardef.TiDBEnableLocalMatchAgainst,
+			vardef.TiDBOptEnableAlternativeLogicalPlans,
+		},
+		varValues: []any{true, false},
+	})
+	require.Equal(t,
+		"set_var(tidb_enable_local_match_against=on), set_var(tidb_opt_enable_alternative_logical_plans=off), use_index(@`sel_1` `test`.`t` `idx_a`)",
+		hints,
+	)
+}

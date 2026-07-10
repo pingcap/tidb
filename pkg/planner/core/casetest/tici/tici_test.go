@@ -625,14 +625,31 @@ func TestLocalMatchAgainstCBOChoosesResidualIndex(t *testing.T) {
 		secondExplore := tk.MustQuery(exploreSQL).Rows()
 		require.Equal(t, firstExplore, secondExplore)
 		hasLocalResidual := false
+		localRunStmt, localBindingSQL := "", ""
 		for _, row := range firstExplore {
 			plan := row[2].(string)
 			if strings.Contains(plan, "idx_status") && strings.Contains(plan, "match_against") {
 				hasLocalResidual = true
+				localRunStmt = row[12].(string)
+				localBindingSQL = row[13].(string)
 				break
 			}
 		}
 		require.True(t, hasLocalResidual, "EXPLAIN EXPLORE should include a local residual plan")
+		require.Contains(t, strings.ToLower(localRunStmt), "set_var(tidb_enable_local_match_against=on)")
+		require.Contains(t, strings.ToLower(localRunStmt), "set_var(tidb_opt_enable_alternative_logical_plans=on)")
+
+		// The commands emitted by EXPLAIN EXPLORE must reproduce the displayed
+		// candidate even though the caller's two feature gates remain OFF.
+		reproducedPlan := testdata.ConvertRowsToStrings(tk.MustQuery(localRunStmt).Rows())
+		requirePlanLineContains(t, reproducedPlan, "idx_status")
+		requirePlanLineContains(t, reproducedPlan, "Selection", "match_against")
+		tk.MustExec(localBindingSQL)
+		tk.MustQuery(query).Check(testkit.Rows("1"))
+		tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+		boundPlan := testdata.ConvertRowsToStrings(tk.MustQuery("explain format='brief' " + query).Rows())
+		requirePlanLineContains(t, boundPlan, "idx_status")
+		requirePlanLineContains(t, boundPlan, "Selection", "match_against")
 	})
 }
 

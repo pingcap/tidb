@@ -510,11 +510,40 @@ func genPlanUnderState(sctx sessionctx.Context, stmt ast.StmtNode, state *state)
 	if err != nil {
 		return nil, err
 	}
+	planHints = addFeatureGateStateHints(planHints, state)
 	return &genedPlan{
 		planDigest: planDigest,
 		planText:   planText,
 		planHints:  planHints,
 	}, nil
+}
+
+func addFeatureGateStateHints(planHints string, state *state) string {
+	if state == nil {
+		return planHints
+	}
+	hints := make([]string, 0, 3)
+	for i, varName := range state.varNames {
+		if i >= len(state.varValues) {
+			break
+		}
+		switch varName {
+		case vardef.TiDBEnableLocalMatchAgainst, vardef.TiDBOptEnableAlternativeLogicalPlans:
+			value, ok := state.varValues[i].(bool)
+			if !ok {
+				continue
+			}
+			onOff := "off"
+			if value {
+				onOff = "on"
+			}
+			hints = append(hints, fmt.Sprintf("set_var(%s=%s)", varName, onOff))
+		}
+	}
+	if planHints != "" {
+		hints = append(hints, planHints)
+	}
+	return strings.Join(hints, ", ")
 }
 
 // adjustVar returns the new value of the variable for plan generation.
