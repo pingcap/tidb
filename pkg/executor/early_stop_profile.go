@@ -21,6 +21,7 @@ import (
 	exec "github.com/pingcap/tidb/pkg/executor/internal/exec"
 	executor_metrics "github.com/pingcap/tidb/pkg/executor/metrics"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -35,19 +36,21 @@ const (
 
 	adaptiveLimitRowsBudgetSafetyFactor = 1.25
 
-	adaptiveLimitScanResultAccepted              = "accepted"
-	adaptiveLimitScanResultChanged               = "changed"
-	adaptiveLimitScanResultCustomScanConcurrency = "skipped_custom_scan_concurrency"
-	adaptiveLimitScanResultDisabled              = "disabled"
-	adaptiveLimitScanResultHit                   = "hit"
-	adaptiveLimitScanResultInvalidKey            = "invalid_key"
-	adaptiveLimitScanResultMiss                  = "miss"
-	adaptiveLimitScanResultSkippedFailed         = "skipped_failed"
-	adaptiveLimitScanResultSkippedInternal       = "skipped_internal"
-	adaptiveLimitScanResultSkippedMultiCandidate = "skipped_multi_candidate"
-	adaptiveLimitScanResultSkippedNoRowsSignal   = "skipped_no_rows_signal"
-	adaptiveLimitScanResultSkippedNonSingleScan  = "skipped_non_single_scan"
-	adaptiveLimitScanResultUnchanged             = "unchanged"
+	adaptiveLimitScanResultAccepted                 = "accepted"
+	adaptiveLimitScanResultChanged                  = "changed"
+	adaptiveLimitScanResultCustomScanConcurrency    = "skipped_custom_scan_concurrency"
+	adaptiveLimitScanResultDisabled                 = "disabled"
+	adaptiveLimitScanResultHit                      = "hit"
+	adaptiveLimitScanResultInvalidKey               = "invalid_key"
+	adaptiveLimitScanResultMiss                     = "miss"
+	adaptiveLimitScanResultSkippedExplainAnalyze    = "skipped_explain_analyze"
+	adaptiveLimitScanResultSkippedFailed            = "skipped_failed"
+	adaptiveLimitScanResultSkippedInternal          = "skipped_internal"
+	adaptiveLimitScanResultSkippedLimitNotSatisfied = "skipped_limit_not_satisfied"
+	adaptiveLimitScanResultSkippedMultiCandidate    = "skipped_multi_candidate"
+	adaptiveLimitScanResultSkippedNoRowsSignal      = "skipped_no_rows_signal"
+	adaptiveLimitScanResultSkippedNonSingleScan     = "skipped_non_single_scan"
+	adaptiveLimitScanResultUnchanged                = "unchanged"
 )
 
 func keepOrderLimitScanConcurrencyCapForIndexReader(
@@ -67,6 +70,7 @@ func keepOrderLimitScanConcurrencyCapForIndexLookUpReader(
 	keepOrder bool,
 	pushedLimit *physicalop.PushedDownLimit,
 	indexLookUpPushDown bool,
+	indexPlans []base.PhysicalPlan,
 ) int {
 	if b == nil || b.forDataReaderBuilder {
 		return 0
@@ -76,7 +80,7 @@ func keepOrderLimitScanConcurrencyCapForIndexLookUpReader(
 		readerType = earlystopprofile.ReaderTypeIndexLookupPushDown
 	}
 	return keepOrderLimitScanConcurrencyCapFromPushedLimitWithProfile(
-		b.sctx, readerType, keepOrder, pushedLimit)
+		b.sctx, readerType, keepOrder, pushedLimit, indexPlans)
 }
 
 func keepOrderLimitScanConcurrencyCapFromPlansWithProfile(
@@ -89,7 +93,9 @@ func keepOrderLimitScanConcurrencyCapFromPlansWithProfile(
 	if !ok {
 		return 0
 	}
-	return keepOrderLimitScanConcurrencyCapWithProfile(sctx, readerType, keepOrder, limitRows)
+	return keepOrderLimitScanConcurrencyCapWithLimitRows(
+		sctx, readerType, keepOrder, limitRows,
+		estimatedScanRowsForAdaptiveLimit(sctx, keepOrder, plans))
 }
 
 func keepOrderLimitScanConcurrencyCapFromPushedLimitWithProfile(
@@ -97,11 +103,21 @@ func keepOrderLimitScanConcurrencyCapFromPushedLimitWithProfile(
 	readerType earlystopprofile.ReaderType,
 	keepOrder bool,
 	pushedLimit *physicalop.PushedDownLimit,
+	indexPlans []base.PhysicalPlan,
 ) int {
 	if pushedLimit == nil {
 		return 0
 	}
-	return keepOrderLimitScanConcurrencyCapWithProfile(sctx, readerType, keepOrder, pushedLimit.Offset+pushedLimit.Count)
+	return keepOrderLimitScanConcurrencyCapWithLimitRows(
+		sctx,
+		readerType,
+		keepOrder,
+		earlyStopLimitRows{
+			DemandRows: pushedLimit.Offset + pushedLimit.Count,
+			OutputRows: pushedLimit.Count,
+		},
+		estimatedScanRowsForAdaptiveLimit(sctx, keepOrder, indexPlans),
+	)
 }
 
 func keepOrderLimitScanConcurrencyCapWithProfile(
@@ -110,7 +126,37 @@ func keepOrderLimitScanConcurrencyCapWithProfile(
 	keepOrder bool,
 	limitRows uint64,
 ) int {
-	if !keepOrder || limitRows == 0 {
+	return keepOrderLimitScanConcurrencyCapWithLimitRows(
+		sctx, readerType, keepOrder,
+		earlyStopLimitRows{DemandRows: limitRows, OutputRows: limitRows}, 0)
+}
+
+func keepOrderLimitScanConcurrencyCapWithScanRows(
+	sctx sessionctx.Context,
+	readerType earlystopprofile.ReaderType,
+	keepOrder bool,
+	limitRows uint64,
+	estimatedScanRows float64,
+) int {
+	return keepOrderLimitScanConcurrencyCapWithLimitRows(
+		sctx, readerType, keepOrder,
+		earlyStopLimitRows{DemandRows: limitRows, OutputRows: limitRows}, estimatedScanRows)
+}
+
+type earlyStopLimitRows struct {
+	DemandRows uint64
+	OutputRows uint64
+}
+
+func keepOrderLimitScanConcurrencyCapWithLimitRows(
+	sctx sessionctx.Context,
+	readerType earlystopprofile.ReaderType,
+	keepOrder bool,
+	limitRows earlyStopLimitRows,
+	estimatedScanRows float64,
+) int {
+	if !keepOrder || limitRows.DemandRows == 0 || limitRows.OutputRows == 0 ||
+		limitRows.OutputRows > limitRows.DemandRows {
 		return 0
 	}
 	if sctx == nil {
@@ -130,7 +176,8 @@ func keepOrderLimitScanConcurrencyCapWithProfile(
 		return 0
 	}
 
-	key, ok := buildEarlyStopProfileKey(sctx, readerType, keepOrder, limitRows)
+	key, ok := buildEarlyStopProfileKeyWithScanRows(
+		sctx, readerType, keepOrder, limitRows.DemandRows, estimatedScanRows, true)
 	if !ok {
 		recordAdaptiveLimitScanMetric(adaptiveLimitScanEventLookup, readerType, adaptiveLimitScanResultInvalidKey)
 		return 0
@@ -152,10 +199,11 @@ func keepOrderLimitScanConcurrencyCapWithProfile(
 	}
 	recordAdaptiveLimitScanMetric(adaptiveLimitScanEventCap, readerType, capResult)
 	sctx.GetSessionVars().StmtCtx.AddEarlyStopProfileCandidate(earlystopprofile.Candidate{
-		Key:       key,
-		LimitRows: limitRows,
-		BaseCap:   vardef.DefDistSQLScanConcurrency,
-		CapUsed:   candidateCapUsed(finalCap, vardef.DefDistSQLScanConcurrency),
+		Key:                key,
+		LimitRows:          limitRows.DemandRows,
+		ExpectedOutputRows: limitRows.OutputRows,
+		BaseCap:            vardef.DefDistSQLScanConcurrency,
+		CapUsed:            candidateCapUsed(finalCap, vardef.DefDistSQLScanConcurrency),
 	})
 	return finalCap
 }
@@ -166,7 +214,7 @@ func buildEarlyStopProfileKey(
 	keepOrder bool,
 	limitRows uint64,
 ) (earlystopprofile.Key, bool) {
-	return buildEarlyStopProfileKeyWithSingleScanCheck(sctx, readerType, keepOrder, limitRows, true)
+	return buildEarlyStopProfileKeyWithScanRows(sctx, readerType, keepOrder, limitRows, 0, true)
 }
 
 func buildEarlyStopProfileKeyWithSingleScanCheck(
@@ -174,6 +222,18 @@ func buildEarlyStopProfileKeyWithSingleScanCheck(
 	readerType earlystopprofile.ReaderType,
 	keepOrder bool,
 	limitRows uint64,
+	requireSingleTiKVScan bool,
+) (earlystopprofile.Key, bool) {
+	return buildEarlyStopProfileKeyWithScanRows(
+		sctx, readerType, keepOrder, limitRows, 0, requireSingleTiKVScan)
+}
+
+func buildEarlyStopProfileKeyWithScanRows(
+	sctx sessionctx.Context,
+	readerType earlystopprofile.ReaderType,
+	keepOrder bool,
+	limitRows uint64,
+	estimatedScanRows float64,
 	requireSingleTiKVScan bool,
 ) (earlystopprofile.Key, bool) {
 	if !keepOrder || limitRows == 0 || sctx == nil {
@@ -189,12 +249,13 @@ func buildEarlyStopProfileKeyWithSingleScanCheck(
 		return earlystopprofile.Key{}, false
 	}
 	return earlystopprofile.Key{
-		SchemaName:  strings.ToLower(sctx.GetSessionVars().CurrentDB),
-		SQLDigest:   sqlDigest.String(),
-		PlanDigest:  planDigest.String(),
-		ReaderType:  readerType,
-		KeepOrder:   keepOrder,
-		LimitBucket: earlystopprofile.LimitBucketForRows(limitRows),
+		SchemaName:      strings.ToLower(sctx.GetSessionVars().CurrentDB),
+		SQLDigest:       sqlDigest.String(),
+		PlanDigest:      planDigest.String(),
+		ReaderType:      readerType,
+		KeepOrder:       keepOrder,
+		LimitBucket:     earlystopprofile.LimitBucketForRows(limitRows),
+		ScanRatioBucket: earlystopprofile.ScanRatioBucketForRows(estimatedScanRows, limitRows),
 	}, true
 }
 
@@ -227,9 +288,18 @@ func adaptiveIndexJoinLimitSettings(
 	if !ok {
 		return adaptiveIndexJoinLimitSettingsResult{}, false
 	}
-	settings := adaptiveIndexJoinLimitSettingsResult{LimitRows: limitRows}
-	key, hasKey := buildEarlyStopProfileKeyWithSingleScanCheck(
-		sctx, earlystopprofile.ReaderTypeIndexJoin, true, limitRows, false)
+	settings := adaptiveIndexJoinLimitSettingsResult{
+		LimitRows:          limitRows,
+		ExpectedOutputRows: limitRows,
+	}
+	key, hasKey := buildEarlyStopProfileKeyWithScanRows(
+		sctx,
+		earlystopprofile.ReaderTypeIndexJoin,
+		true,
+		limitRows,
+		estimatedScanRowsFromIndexJoinOuter(indexJoin),
+		false,
+	)
 	if hasKey {
 		settings.ProfileKey = key
 		settings.HasProfileKey = true
@@ -280,7 +350,8 @@ func adaptiveIndexJoinLimitSettings(
 }
 
 type adaptiveIndexJoinLimitSettingsResult struct {
-	LimitRows uint64
+	LimitRows          uint64
+	ExpectedOutputRows uint64
 
 	BatchSize          int
 	Concurrency        int
@@ -477,6 +548,126 @@ func limitRowsFromIndexJoinOuterProp(indexJoin *physicalop.PhysicalIndexJoin) (u
 		return 0, false
 	}
 	return limitRows, true
+}
+
+func estimatedScanRowsFromIndexJoinOuter(indexJoin *physicalop.PhysicalIndexJoin) float64 {
+	if indexJoin == nil {
+		return 0
+	}
+	outerIdx := 1 - indexJoin.InnerChildIdx
+	if outerIdx < 0 || outerIdx >= len(indexJoin.Children()) {
+		return 0
+	}
+	return estimatedScanRowsFromPlan(indexJoin.Children()[outerIdx])
+}
+
+func estimatedScanRowsFromPlan(plan base.PhysicalPlan) float64 {
+	if plan == nil {
+		return 0
+	}
+	switch p := plan.(type) {
+	case *physicalop.PhysicalTableReader:
+		return estimatedScanRowsFromPlans(p.TablePlans)
+	case *physicalop.PhysicalIndexReader:
+		return estimatedScanRowsFromPlans(p.IndexPlans)
+	case *physicalop.PhysicalIndexLookUpReader:
+		return estimatedScanRowsFromPlans(p.IndexPlans)
+	case *physicalop.PhysicalTableScan, *physicalop.PhysicalIndexScan:
+		return estimatedScanRows(plan)
+	}
+
+	var scanRows float64
+	for _, child := range plan.Children() {
+		childScanRows := estimatedScanRowsFromPlan(child)
+		if childScanRows <= 0 {
+			continue
+		}
+		if scanRows > 0 {
+			return 0
+		}
+		scanRows = childScanRows
+	}
+	return scanRows
+}
+
+func estimatedScanRowsFromPlans(plans []base.PhysicalPlan) float64 {
+	var indexScanRows, tableScanRows float64
+	indexScanCount, tableScanCount := 0, 0
+	for _, plan := range plans {
+		switch plan.(type) {
+		case *physicalop.PhysicalIndexScan:
+			indexScanCount++
+			indexScanRows = estimatedScanRows(plan)
+		case *physicalop.PhysicalTableScan:
+			tableScanCount++
+			tableScanRows = estimatedScanRows(plan)
+		}
+	}
+	if indexScanCount == 1 {
+		return indexScanRows
+	}
+	if indexScanCount > 1 {
+		return 0
+	}
+	if tableScanCount == 1 {
+		return tableScanRows
+	}
+	return 0
+}
+
+func estimatedScanRowsForAdaptiveLimit(
+	sctx sessionctx.Context,
+	keepOrder bool,
+	plans []base.PhysicalPlan,
+) float64 {
+	if sctx == nil || !keepOrder {
+		return 0
+	}
+	sessVars := sctx.GetSessionVars()
+	if !sessVars.EnableAdaptiveLimitScan ||
+		sessVars.DistSQLScanConcurrency() != vardef.DefDistSQLScanConcurrency {
+		return 0
+	}
+	return estimatedScanRowsFromPlans(plans)
+}
+
+func estimatedScanRows(plan base.PhysicalPlan) float64 {
+	if plan == nil {
+		return 0
+	}
+	switch p := plan.(type) {
+	case *physicalop.PhysicalIndexScan:
+		if p.TblColHists != nil && p.Index != nil && len(p.Ranges) > 0 {
+			estimate, err := cardinality.GetRowCountByIndexRanges(
+				p.SCtx(), p.TblColHists, p.Index.ID, p.Ranges, p.IdxCols)
+			if err == nil && validEstimatedScanRows(estimate.Est) {
+				return estimate.Est
+			}
+		}
+	case *physicalop.PhysicalTableScan:
+		if p.TblColHists != nil && p.HandleCols != nil && p.HandleCols.IsInt() && len(p.Ranges) > 0 {
+			handleCol := p.HandleCols.GetCol(0)
+			if handleCol != nil {
+				estimate, err := cardinality.GetRowCountByColumnRanges(
+					p.SCtx(), p.TblColHists, handleCol.UniqueID, p.Ranges, true)
+				if err == nil && validEstimatedScanRows(estimate.Est) {
+					return estimate.Est
+				}
+			}
+		}
+	}
+	if plan.StatsInfo() == nil {
+		return 0
+	}
+	rows := plan.StatsInfo().RowCount
+	if !validEstimatedScanRows(rows) {
+		return 0
+	}
+	return rows
+}
+
+func validEstimatedScanRows(rows float64) bool {
+	return rows > 0 && !math.IsInf(rows, 0) && !math.IsNaN(rows)
 }
 
 func isSingleTiKVScanPlan(plan any) bool {

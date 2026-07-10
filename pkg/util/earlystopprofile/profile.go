@@ -104,35 +104,80 @@ func LimitBucketForRows(limitRows uint64) LimitBucket {
 	}
 }
 
+// ScanRatioBucket groups the estimated scan rows relative to LIMIT demand.
+// It separates parameter values with materially different scan shapes while
+// keeping the profile cardinality bounded.
+type ScanRatioBucket uint8
+
+const (
+	// ScanRatioBucketUnknown is used when no reliable scan-row estimate is available.
+	ScanRatioBucketUnknown ScanRatioBucket = iota
+	// ScanRatioBucketLE4 is for estimated scan rows <= 4x LIMIT demand.
+	ScanRatioBucketLE4
+	// ScanRatioBucketLE16 is for estimated scan rows <= 16x LIMIT demand.
+	ScanRatioBucketLE16
+	// ScanRatioBucketLE64 is for estimated scan rows <= 64x LIMIT demand.
+	ScanRatioBucketLE64
+	// ScanRatioBucketLE256 is for estimated scan rows <= 256x LIMIT demand.
+	ScanRatioBucketLE256
+	// ScanRatioBucketGT256 is for estimated scan rows > 256x LIMIT demand.
+	ScanRatioBucketGT256
+)
+
+// ScanRatioBucketForRows maps an estimated scan size and LIMIT demand into a
+// bounded profile bucket. Non-positive and NaN estimates map to unknown.
+func ScanRatioBucketForRows(estimatedScanRows float64, limitRows uint64) ScanRatioBucket {
+	if limitRows == 0 || !(estimatedScanRows > 0) {
+		return ScanRatioBucketUnknown
+	}
+	ratio := estimatedScanRows / float64(limitRows)
+	switch {
+	case ratio <= 4:
+		return ScanRatioBucketLE4
+	case ratio <= 16:
+		return ScanRatioBucketLE16
+	case ratio <= 64:
+		return ScanRatioBucketLE64
+	case ratio <= 256:
+		return ScanRatioBucketLE256
+	default:
+		return ScanRatioBucketGT256
+	}
+}
+
 // Key identifies a keep-order LIMIT scan profile.
 type Key struct {
-	SchemaName  string
-	SQLDigest   string
-	PlanDigest  string
-	ReaderType  ReaderType
-	KeepOrder   bool
-	LimitBucket LimitBucket
+	SchemaName      string
+	SQLDigest       string
+	PlanDigest      string
+	ReaderType      ReaderType
+	KeepOrder       bool
+	LimitBucket     LimitBucket
+	ScanRatioBucket ScanRatioBucket
 }
 
 // Hash implements kvcache.Key.
 func (k Key) Hash() []byte {
-	b := make([]byte, 0, len(k.SchemaName)+len(k.SQLDigest)+len(k.PlanDigest)+8)
+	b := make([]byte, 0, len(k.SchemaName)+len(k.SQLDigest)+len(k.PlanDigest)+9)
 	b = append(b, k.SchemaName...)
 	b = append(b, 0)
 	b = append(b, k.SQLDigest...)
 	b = append(b, 0)
 	b = append(b, k.PlanDigest...)
-	b = append(b, 0, byte(k.ReaderType), boolByte(k.KeepOrder), byte(k.LimitBucket))
+	b = append(b, 0, byte(k.ReaderType), boolByte(k.KeepOrder), byte(k.LimitBucket), byte(k.ScanRatioBucket))
 	return b
 }
 
 // Candidate is registered during executor construction when the current plan
 // proves that a reader is a keep-order LIMIT early-stop candidate.
 type Candidate struct {
-	Key       Key
+	Key Key
+	// LimitRows is the scan demand, including OFFSET rows.
 	LimitRows uint64
-	BaseCap   int
-	CapUsed   int
+	// ExpectedOutputRows is the LIMIT count visible to the client.
+	ExpectedOutputRows uint64
+	BaseCap            int
+	CapUsed            int
 
 	ReaderPlanID int
 	LookupPlanID int
@@ -220,9 +265,9 @@ func LookupRecommendation(key Key) (Recommendation, bool) {
 	return globalStore.LookupRecommendation(key)
 }
 
-// Observe updates the global store with one statement sample.
-func Observe(sample Sample) {
-	globalStore.Observe(sample)
+// Observe updates the global store with one statement sample and reports whether it was accepted.
+func Observe(sample Sample) bool {
+	return globalStore.Observe(sample)
 }
 
 // ResetForTest clears the global store.
@@ -270,10 +315,13 @@ func (s *Store) LookupRecommendation(key Key) (Recommendation, bool) {
 	}, true
 }
 
-// Observe updates the store with one statement sample.
-func (s *Store) Observe(sample Sample) {
-	if !sample.Succeed || sample.Internal || sample.Candidate.LimitRows == 0 || sample.Candidate.CapUsed <= 0 {
-		return
+// Observe updates the store with one statement sample and reports whether it was accepted.
+func (s *Store) Observe(sample Sample) bool {
+	candidate := sample.Candidate
+	if !sample.Succeed || sample.Internal || candidate.LimitRows == 0 ||
+		candidate.ExpectedOutputRows == 0 || candidate.ExpectedOutputRows > candidate.LimitRows ||
+		candidate.CapUsed <= 0 || sample.ResultRows < candidate.ExpectedOutputRows {
+		return false
 	}
 	overReadRows := max(
 		sample.ProcessedKeys,
@@ -283,12 +331,12 @@ func (s *Store) Observe(sample Sample) {
 		sample.TableActRows,
 	)
 	if overReadRows == 0 {
-		return
+		return false
 	}
 
-	key := sample.Candidate.Key
+	key := candidate.Key
 	now := time.Now().Unix()
-	demandRows := max(sample.Candidate.LimitRows, sample.ResultRows, 1)
+	demandRows := max(candidate.LimitRows, sample.ResultRows, 1)
 	overReadRatio := float64(overReadRows) / float64(demandRows)
 	rowsPerTask := float64(sample.ResultRows) / float64(maxInt(sample.RequestCount, 1))
 	keysPerResult := float64(sample.ProcessedKeys) / float64(max(sample.ResultRows, 1))
@@ -305,9 +353,9 @@ func (s *Store) Observe(sample Sample) {
 	if value, ok := s.cache.Get(key); ok {
 		profile = value.(*Profile)
 	}
-	baseCap := sample.Candidate.BaseCap
+	baseCap := candidate.BaseCap
 	if baseCap <= 0 {
-		baseCap = sample.Candidate.CapUsed
+		baseCap = candidate.CapUsed
 	}
 	if profile.BaseCap < baseCap {
 		profile.BaseCap = baseCap
@@ -337,6 +385,7 @@ func (s *Store) Observe(sample Sample) {
 	profile.RecommendedCap = recommendCap(profile)
 	profile.LastUpdatedUnix = now
 	s.cache.Put(key, profile)
+	return true
 }
 
 func recommendCap(profile *Profile) int {

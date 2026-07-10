@@ -2321,6 +2321,10 @@ func observeEarlyStopProfile(
 		recordAdaptiveLimitScanMetricUnknown(adaptiveLimitScanEventObserve, adaptiveLimitScanResultSkippedInternal)
 		return
 	}
+	if stmtCtx.InExplainAnalyzeStmt {
+		recordAdaptiveLimitScanMetricUnknown(adaptiveLimitScanEventObserve, adaptiveLimitScanResultSkippedExplainAnalyze)
+		return
+	}
 	candidate, ok := selectEarlyStopProfileCandidate(candidates)
 	if !ok {
 		recordAdaptiveLimitScanMetricUnknown(adaptiveLimitScanEventObserve, adaptiveLimitScanResultSkippedMultiCandidate)
@@ -2344,7 +2348,15 @@ func observeEarlyStopProfile(
 	if resultRows > 0 {
 		observedResultRows = uint64(resultRows)
 	}
-	earlystopprofile.Observe(earlystopprofile.Sample{
+	if observedResultRows < candidate.ExpectedOutputRows {
+		recordAdaptiveLimitScanMetric(
+			adaptiveLimitScanEventObserve,
+			candidate.Key.ReaderType,
+			adaptiveLimitScanResultSkippedLimitNotSatisfied,
+		)
+		return
+	}
+	accepted := earlystopprofile.Observe(earlystopprofile.Sample{
 		Candidate:     candidate,
 		ResultRows:    observedResultRows,
 		RequestCount:  execDetail.RequestCount,
@@ -2358,7 +2370,9 @@ func observeEarlyStopProfile(
 		IndexActRows:  indexActRows,
 		TableActRows:  tableActRows,
 	})
-	recordAdaptiveLimitScanMetric(adaptiveLimitScanEventObserve, candidate.Key.ReaderType, adaptiveLimitScanResultAccepted)
+	if accepted {
+		recordAdaptiveLimitScanMetric(adaptiveLimitScanEventObserve, candidate.Key.ReaderType, adaptiveLimitScanResultAccepted)
+	}
 }
 
 func selectEarlyStopProfileCandidate(candidates []earlystopprofile.Candidate) (earlystopprofile.Candidate, bool) {

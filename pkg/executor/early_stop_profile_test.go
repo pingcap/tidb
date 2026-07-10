@@ -74,9 +74,10 @@ func TestKeepOrderLimitScanConcurrencyCapWithProfile(t *testing.T) {
 	for range 3 {
 		earlystopprofile.Observe(earlystopprofile.Sample{
 			Candidate: earlystopprofile.Candidate{
-				Key:       key,
-				LimitRows: 5000,
-				CapUsed:   2,
+				Key:                key,
+				LimitRows:          5000,
+				ExpectedOutputRows: 10,
+				CapUsed:            2,
 			},
 			ResultRows:    10,
 			RequestCount:  16,
@@ -93,8 +94,19 @@ func TestKeepOrderLimitScanConcurrencyCapWithProfile(t *testing.T) {
 	require.Len(t, candidates, 1)
 	require.Equal(t, key, candidates[0].Key)
 	require.Equal(t, uint64(5000), candidates[0].LimitRows)
+	require.Equal(t, uint64(5000), candidates[0].ExpectedOutputRows)
 	require.Equal(t, vardef.DefDistSQLScanConcurrency, candidates[0].BaseCap)
 	require.Equal(t, 1, candidates[0].CapUsed)
+
+	lowScanKey, ok := buildEarlyStopProfileKeyWithScanRows(
+		sctx, earlystopprofile.ReaderTypeTable, true, 5000, 20000, true)
+	require.True(t, ok)
+	highScanKey, ok := buildEarlyStopProfileKeyWithScanRows(
+		sctx, earlystopprofile.ReaderTypeTable, true, 5000, 320000, true)
+	require.True(t, ok)
+	require.NotEqual(t, lowScanKey, highScanKey)
+	require.Equal(t, earlystopprofile.ScanRatioBucketLE4, lowScanKey.ScanRatioBucket)
+	require.Equal(t, earlystopprofile.ScanRatioBucketLE64, highScanKey.ScanRatioBucket)
 }
 
 func TestKeepOrderLimitScanConcurrencyCapWithProfileCanRecoverToNoThrottle(t *testing.T) {
@@ -108,10 +120,11 @@ func TestKeepOrderLimitScanConcurrencyCapWithProfileCanRecoverToNoThrottle(t *te
 	for range 3 {
 		earlystopprofile.Observe(earlystopprofile.Sample{
 			Candidate: earlystopprofile.Candidate{
-				Key:       key,
-				LimitRows: 5000,
-				BaseCap:   vardef.DefDistSQLScanConcurrency,
-				CapUsed:   vardef.DefDistSQLScanConcurrency,
+				Key:                key,
+				LimitRows:          5000,
+				ExpectedOutputRows: 5000,
+				BaseCap:            vardef.DefDistSQLScanConcurrency,
+				CapUsed:            vardef.DefDistSQLScanConcurrency,
 			},
 			ResultRows:    5000,
 			RequestCount:  1,
@@ -144,10 +157,11 @@ func TestKeepOrderLimitLargeScanCanLearnWithoutStaticCap(t *testing.T) {
 	for range 3 {
 		earlystopprofile.Observe(earlystopprofile.Sample{
 			Candidate: earlystopprofile.Candidate{
-				Key:       key,
-				LimitRows: limitRows,
-				BaseCap:   vardef.DefDistSQLScanConcurrency,
-				CapUsed:   vardef.DefDistSQLScanConcurrency,
+				Key:                key,
+				LimitRows:          limitRows,
+				ExpectedOutputRows: 10,
+				BaseCap:            vardef.DefDistSQLScanConcurrency,
+				CapUsed:            vardef.DefDistSQLScanConcurrency,
 			},
 			ResultRows:    10,
 			RequestCount:  16,
@@ -196,6 +210,7 @@ func TestKeepOrderLimitScanConcurrencyCapWithProfileColdStartDoesNotUseStaticThr
 	candidates := sctx.GetSessionVars().StmtCtx.EarlyStopProfileCandidates()
 	require.Len(t, candidates, 1)
 	require.Equal(t, uint64(5000), candidates[0].LimitRows)
+	require.Equal(t, uint64(5000), candidates[0].ExpectedOutputRows)
 	require.Equal(t, vardef.DefDistSQLScanConcurrency, candidates[0].BaseCap)
 	require.Equal(t, vardef.DefDistSQLScanConcurrency, candidates[0].CapUsed)
 }
@@ -209,11 +224,56 @@ func TestObserveEarlyStopProfileUsesStmtContextDirectly(t *testing.T) {
 	require.True(t, ok)
 
 	sctx.GetSessionVars().StmtCtx.AddEarlyStopProfileCandidate(earlystopprofile.Candidate{
-		Key:       key,
-		LimitRows: 5000,
-		BaseCap:   2,
-		CapUsed:   2,
+		Key:                key,
+		LimitRows:          5000,
+		ExpectedOutputRows: 10,
+		BaseCap:            2,
+		CapUsed:            2,
 	})
+	sctx.GetSessionVars().StmtCtx.InExplainAnalyzeStmt = true
+	for range 3 {
+		observeEarlyStopProfile(
+			sctx.GetSessionVars().StmtCtx,
+			execdetails.ExecDetails{
+				RequestCount: 16,
+				CopExecDetails: execdetails.CopExecDetails{
+					ScanDetail: &tikvutil.ScanDetail{
+						ProcessedKeys: 500000,
+						TotalKeys:     500000,
+					},
+				},
+			},
+			10,
+			10*time.Millisecond,
+			true,
+			false,
+		)
+	}
+	_, ok = earlystopprofile.LookupCap(key)
+	require.False(t, ok)
+	sctx.GetSessionVars().StmtCtx.InExplainAnalyzeStmt = false
+
+	for range 3 {
+		observeEarlyStopProfile(
+			sctx.GetSessionVars().StmtCtx,
+			execdetails.ExecDetails{
+				RequestCount: 16,
+				CopExecDetails: execdetails.CopExecDetails{
+					ScanDetail: &tikvutil.ScanDetail{
+						ProcessedKeys: 500000,
+						TotalKeys:     500000,
+					},
+				},
+			},
+			9,
+			10*time.Millisecond,
+			true,
+			false,
+		)
+	}
+	_, ok = earlystopprofile.LookupCap(key)
+	require.False(t, ok)
+
 	for range 3 {
 		observeEarlyStopProfile(
 			sctx.GetSessionVars().StmtCtx,
@@ -251,11 +311,12 @@ func TestObserveEarlyStopProfileUsesActRowsWithoutProcessedKeys(t *testing.T) {
 	sctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
 	sctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetBasicRuntimeStats(lookupPlanID, true).Record(time.Millisecond, 100000)
 	sctx.GetSessionVars().StmtCtx.AddEarlyStopProfileCandidate(earlystopprofile.Candidate{
-		Key:          key,
-		LimitRows:    1000,
-		BaseCap:      5,
-		CapUsed:      5,
-		LookupPlanID: lookupPlanID,
+		Key:                key,
+		LimitRows:          1000,
+		ExpectedOutputRows: 1000,
+		BaseCap:            5,
+		CapUsed:            5,
+		LookupPlanID:       lookupPlanID,
 	})
 	for range 3 {
 		observeEarlyStopProfile(
@@ -310,6 +371,21 @@ func TestKeepOrderLimitScanConcurrencyCapWithProfileFallbacks(t *testing.T) {
 	customSctx.GetSessionVars().Concurrency.SetDistSQLScanConcurrency(vardef.DefDistSQLScanConcurrency + 1)
 	require.Equal(t, 0, keepOrderLimitScanConcurrencyCapWithProfile(customSctx, earlystopprofile.ReaderTypeTable, true, 5000))
 	require.Empty(t, customSctx.GetSessionVars().StmtCtx.EarlyStopProfileCandidates())
+
+	offsetSctx := defaultCtx()
+	offsetSctx.GetSessionVars().EnableAdaptiveLimitScan = true
+	initEarlyStopProfileTestContext(t, offsetSctx)
+	require.Equal(t, 0, keepOrderLimitScanConcurrencyCapFromPushedLimitWithProfile(
+		offsetSctx,
+		earlystopprofile.ReaderTypeIndexLookup,
+		true,
+		&physicalop.PushedDownLimit{Offset: 1000, Count: 100},
+		nil,
+	))
+	offsetCandidates := offsetSctx.GetSessionVars().StmtCtx.EarlyStopProfileCandidates()
+	require.Len(t, offsetCandidates, 1)
+	require.Equal(t, uint64(1100), offsetCandidates[0].LimitRows)
+	require.Equal(t, uint64(100), offsetCandidates[0].ExpectedOutputRows)
 }
 
 func TestMergeAdaptiveProfileCap(t *testing.T) {
@@ -375,6 +451,25 @@ func TestLimitRowsFromIndexJoinOuterProp(t *testing.T) {
 	limitRows, ok = limitRowsFromIndexJoinOuterProp(fractionalExpectedCntJoin)
 	require.True(t, ok)
 	require.Equal(t, uint64(1001), limitRows)
+
+	indexScan := physicalop.PhysicalIndexScan{}.Init(planCtx, 0)
+	indexScan.SetStats(&property.StatsInfo{RowCount: 32000})
+	indexReader := physicalop.PhysicalIndexReader{}.Init(planCtx, 0)
+	indexReader.IndexPlans = []base.PhysicalPlan{indexScan}
+	outerProjection := physicalop.PhysicalProjection{}.Init(planCtx, nil, 0)
+	outerProjection.SetChildren(indexReader)
+	indexJoin.SetChild(0, outerProjection)
+	require.Equal(t, float64(32000), estimatedScanRowsFromIndexJoinOuter(indexJoin))
+
+	tableScan := physicalop.PhysicalTableScan{}.Init(planCtx, 0)
+	tableScan.SetStats(&property.StatsInfo{RowCount: 1000000})
+	require.Equal(t, float64(32000), estimatedScanRowsFromPlans([]base.PhysicalPlan{indexScan, tableScan}))
+
+	limit := physicalop.PhysicalLimit{Offset: 1000, Count: 100}.Init(planCtx, nil, 0)
+	limitRowsInfo, ok := minLimitRowsFromPlans([]base.PhysicalPlan{limit})
+	require.True(t, ok)
+	require.Equal(t, uint64(1100), limitRowsInfo.DemandRows)
+	require.Equal(t, uint64(100), limitRowsInfo.OutputRows)
 }
 
 func TestAdaptiveIndexJoinLimitSettingsForRows(t *testing.T) {
@@ -416,10 +511,11 @@ func TestAdaptiveIndexJoinLimitSettingsUsesOuterProperty(t *testing.T) {
 	for range 3 {
 		earlystopprofile.Observe(earlystopprofile.Sample{
 			Candidate: earlystopprofile.Candidate{
-				Key:       settings.ProfileKey,
-				LimitRows: settings.LimitRows,
-				BaseCap:   vardef.DefDistSQLScanConcurrency,
-				CapUsed:   vardef.DefDistSQLScanConcurrency,
+				Key:                settings.ProfileKey,
+				LimitRows:          settings.LimitRows,
+				ExpectedOutputRows: settings.ExpectedOutputRows,
+				BaseCap:            vardef.DefDistSQLScanConcurrency,
+				CapUsed:            vardef.DefDistSQLScanConcurrency,
 			},
 			ResultRows:    1000,
 			RequestCount:  1,
@@ -467,10 +563,11 @@ func TestAdaptiveIndexJoinLimitSettingsDoesNotThrottleHealthyProfile(t *testing.
 	for range 3 {
 		earlystopprofile.Observe(earlystopprofile.Sample{
 			Candidate: earlystopprofile.Candidate{
-				Key:       settings.ProfileKey,
-				LimitRows: settings.LimitRows,
-				BaseCap:   vardef.DefDistSQLScanConcurrency,
-				CapUsed:   vardef.DefDistSQLScanConcurrency,
+				Key:                settings.ProfileKey,
+				LimitRows:          settings.LimitRows,
+				ExpectedOutputRows: settings.ExpectedOutputRows,
+				BaseCap:            vardef.DefDistSQLScanConcurrency,
+				CapUsed:            vardef.DefDistSQLScanConcurrency,
 			},
 			ResultRows:    1000,
 			RequestCount:  1,

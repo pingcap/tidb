@@ -33,6 +33,15 @@ func TestLimitBucketForRows(t *testing.T) {
 	require.Equal(t, LimitBucketLE10000, LimitBucketForRows(1025))
 	require.Equal(t, LimitBucketLE10000, LimitBucketForRows(10000))
 	require.Equal(t, LimitBucketGT10000, LimitBucketForRows(10001))
+
+	require.Equal(t, ScanRatioBucketUnknown, ScanRatioBucketForRows(0, 1000))
+	require.Equal(t, ScanRatioBucketUnknown, ScanRatioBucketForRows(1000, 0))
+	require.Equal(t, ScanRatioBucketLE4, ScanRatioBucketForRows(4000, 1000))
+	require.Equal(t, ScanRatioBucketLE16, ScanRatioBucketForRows(4001, 1000))
+	require.Equal(t, ScanRatioBucketLE16, ScanRatioBucketForRows(16000, 1000))
+	require.Equal(t, ScanRatioBucketLE64, ScanRatioBucketForRows(16001, 1000))
+	require.Equal(t, ScanRatioBucketLE256, ScanRatioBucketForRows(256000, 1000))
+	require.Equal(t, ScanRatioBucketGT256, ScanRatioBucketForRows(256001, 1000))
 }
 
 func TestProfileStoreLookupCapAfterEnoughSamples(t *testing.T) {
@@ -47,9 +56,10 @@ func TestProfileStoreLookupCapAfterEnoughSamples(t *testing.T) {
 	}
 	sample := Sample{
 		Candidate: Candidate{
-			Key:       key,
-			LimitRows: 10,
-			CapUsed:   4,
+			Key:                key,
+			LimitRows:          10,
+			ExpectedOutputRows: 10,
+			CapUsed:            4,
 		},
 		ResultRows:    10,
 		RequestCount:  16,
@@ -89,10 +99,11 @@ func TestProfileStoreRecoversCapWithHealthySamples(t *testing.T) {
 	}
 	overReadSample := Sample{
 		Candidate: Candidate{
-			Key:       key,
-			LimitRows: 100,
-			BaseCap:   2,
-			CapUsed:   2,
+			Key:                key,
+			LimitRows:          100,
+			ExpectedOutputRows: 100,
+			BaseCap:            2,
+			CapUsed:            2,
 		},
 		ResultRows:    100,
 		RequestCount:  16,
@@ -110,10 +121,11 @@ func TestProfileStoreRecoversCapWithHealthySamples(t *testing.T) {
 
 	healthySample := Sample{
 		Candidate: Candidate{
-			Key:       key,
-			LimitRows: 100,
-			BaseCap:   2,
-			CapUsed:   1,
+			Key:                key,
+			LimitRows:          100,
+			ExpectedOutputRows: 100,
+			BaseCap:            2,
+			CapUsed:            1,
 		},
 		ResultRows:    100,
 		RequestCount:  1,
@@ -142,10 +154,11 @@ func TestProfileStoreUsesOperatorActRowsForOverRead(t *testing.T) {
 	}
 	sample := Sample{
 		Candidate: Candidate{
-			Key:       key,
-			LimitRows: 1000,
-			BaseCap:   5,
-			CapUsed:   5,
+			Key:                key,
+			LimitRows:          1000,
+			ExpectedOutputRows: 1000,
+			BaseCap:            5,
+			CapUsed:            5,
 		},
 		ResultRows:    1000,
 		RequestCount:  1,
@@ -178,9 +191,10 @@ func TestProfileStoreIgnoresInvalidSamples(t *testing.T) {
 	}
 	valid := Sample{
 		Candidate: Candidate{
-			Key:       key,
-			LimitRows: 100,
-			CapUsed:   2,
+			Key:                key,
+			LimitRows:          100,
+			ExpectedOutputRows: 100,
+			CapUsed:            2,
 		},
 		ResultRows:    100,
 		RequestCount:  4,
@@ -193,8 +207,9 @@ func TestProfileStoreIgnoresInvalidSamples(t *testing.T) {
 		{Candidate: valid.Candidate, ResultRows: 100, RequestCount: 4, ProcessedKeys: 100, Succeed: false},
 		{Candidate: valid.Candidate, ResultRows: 100, RequestCount: 4, ProcessedKeys: 100, Succeed: true, Internal: true},
 		{Candidate: valid.Candidate, ResultRows: 100, RequestCount: 4, ProcessedKeys: 0, Succeed: true},
+		{Candidate: valid.Candidate, ResultRows: 10, RequestCount: 4, ProcessedKeys: 10000, Succeed: true},
 		{Candidate: Candidate{Key: key, LimitRows: 0, CapUsed: 2}, ResultRows: 100, RequestCount: 4, ProcessedKeys: 100, Succeed: true},
-		{Candidate: Candidate{Key: key, LimitRows: 100, CapUsed: 0}, ResultRows: 100, RequestCount: 4, ProcessedKeys: 100, Succeed: true},
+		{Candidate: Candidate{Key: key, LimitRows: 100, ExpectedOutputRows: 100, CapUsed: 0}, ResultRows: 100, RequestCount: 4, ProcessedKeys: 100, Succeed: true},
 	} {
 		store.Observe(sample)
 	}
@@ -207,6 +222,27 @@ func TestProfileStoreIgnoresInvalidSamples(t *testing.T) {
 	cap, ok := store.LookupCap(key)
 	require.True(t, ok)
 	require.Equal(t, 2, cap)
+
+	offsetKey := key
+	offsetKey.LimitBucket = LimitBucketLE10000
+	offsetSample := Sample{
+		Candidate: Candidate{
+			Key:                offsetKey,
+			LimitRows:          1100,
+			ExpectedOutputRows: 100,
+			CapUsed:            2,
+		},
+		ResultRows:    100,
+		RequestCount:  4,
+		ProcessedKeys: 110000,
+		Succeed:       true,
+	}
+	for range 3 {
+		store.Observe(offsetSample)
+	}
+	offsetCap, ok := store.LookupCap(offsetKey)
+	require.True(t, ok)
+	require.Equal(t, 1, offsetCap)
 }
 
 func TestProfileKeyHashDistinguishesFields(t *testing.T) {
@@ -228,5 +264,9 @@ func TestProfileKeyHashDistinguishesFields(t *testing.T) {
 
 	changed = base
 	changed.KeepOrder = false
+	require.NotEqual(t, string(base.Hash()), string(changed.Hash()))
+
+	changed = base
+	changed.ScanRatioBucket = ScanRatioBucketLE16
 	require.NotEqual(t, string(base.Hash()), string(changed.Hash()))
 }

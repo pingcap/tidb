@@ -3611,11 +3611,12 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *physicalop.PhysicalIndexJoin) 
 		outerLookup := applyAdaptiveIndexJoinLimitSettingsToLookup(outerExec, settings)
 		if settings.HasProfileKey {
 			candidate := earlystopprofile.Candidate{
-				Key:          settings.ProfileKey,
-				LimitRows:    settings.LimitRows,
-				BaseCap:      settings.ProfileBaseCap,
-				CapUsed:      settings.ProfileCapUsed,
-				ReaderPlanID: v.ID(),
+				Key:                settings.ProfileKey,
+				LimitRows:          settings.LimitRows,
+				ExpectedOutputRows: settings.ExpectedOutputRows,
+				BaseCap:            settings.ProfileBaseCap,
+				CapUsed:            settings.ProfileCapUsed,
+				ReaderPlanID:       v.ID(),
 			}
 			if outerLookup != nil {
 				candidate.LookupPlanID = outerLookup.ID()
@@ -4636,7 +4637,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *physicalop.PhysicalInd
 		groupedRanges:              is.GroupedRanges,
 		indexLookUpPushDown:        v.IndexLookUpPushDown,
 		keepOrderLimitScanConcurrencyCap: keepOrderLimitScanConcurrencyCapForIndexLookUpReader(
-			b, is.KeepOrder, v.PushedLimit, v.IndexLookUpPushDown),
+			b, is.KeepOrder, v.PushedLimit, v.IndexLookUpPushDown, v.IndexPlans),
 	}
 
 	if v.ExtraHandleCol != nil {

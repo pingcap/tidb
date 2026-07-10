@@ -63,9 +63,9 @@ var _ exec.Executor = &TableReaderExecutor{}
 
 // minLimitRowsFromPlans scans a flattened pushed-down plan list, such as
 // TablePlans or IndexPlans. It is not a general physical plan tree analyzer.
-func minLimitRowsFromPlans(plans []base.PhysicalPlan) (uint64, bool) {
+func minLimitRowsFromPlans(plans []base.PhysicalPlan) (earlyStopLimitRows, bool) {
 	var (
-		limitRows uint64
+		limitRows earlyStopLimitRows
 		found     bool
 	)
 	for _, plan := range plans {
@@ -73,8 +73,11 @@ func minLimitRowsFromPlans(plans []base.PhysicalPlan) (uint64, bool) {
 		if !ok {
 			continue
 		}
-		rows := limit.Offset + limit.Count
-		if !found || rows < limitRows {
+		rows := earlyStopLimitRows{
+			DemandRows: limit.Offset + limit.Count,
+			OutputRows: limit.Count,
+		}
+		if !found || rows.DemandRows < limitRows.DemandRows {
 			limitRows = rows
 			found = true
 		}
