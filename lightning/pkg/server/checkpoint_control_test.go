@@ -20,9 +20,10 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/pingcap/tidb/lightning/pkg/checkpoints"
 	mockimport "github.com/pingcap/tidb/lightning/pkg/importinto/mock"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -173,17 +174,17 @@ func setupFileCheckpointsDB(t *testing.T, cfg *config.Config) *checkpoints.FileC
 	require.NoError(t, err)
 
 	// Initialize with checkpoint data
-	err = cpdb.Initialize(ctx, cfg, map[string]*checkpoints.TidbDBInfo{
+	err = cpdb.Initialize(ctx, cfg, map[string]*importdef.DBInfo{
 		"db1": {
 			Name: "db1",
-			Tables: map[string]*checkpoints.TidbTableInfo{
+			Tables: map[string]*importdef.TableInfo{
 				"t1": {Name: "t1"},
 				"t2": {Name: "t2"},
 			},
 		},
 		"db2": {
 			Name: "db2",
-			Tables: map[string]*checkpoints.TidbTableInfo{
+			Tables: map[string]*importdef.TableInfo{
 				"t3": {Name: "t3"},
 			},
 		},

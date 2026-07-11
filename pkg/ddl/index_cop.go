@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -146,8 +145,8 @@ func completeErr(err error, idxInfo *model.IndexInfo) error {
 	return errors.Trace(err)
 }
 
-func getRestoreData(tblInfo *model.TableInfo, targetIdx, pkIdx *model.IndexInfo, handleDts []types.Datum) []types.Datum {
-	if !collate.NewCollationEnabled() || !tblInfo.IsCommonHandle || tblInfo.CommonHandleVersion == 0 {
+func getRestoreData(useNewCollate bool, tblInfo *model.TableInfo, targetIdx, pkIdx *model.IndexInfo, handleDts []types.Datum) []types.Datum {
+	if !useNewCollate || !tblInfo.IsCommonHandle || tblInfo.CommonHandleVersion == 0 {
 		return nil
 	}
 	if pkIdx == nil {
@@ -155,7 +154,7 @@ func getRestoreData(tblInfo *model.TableInfo, targetIdx, pkIdx *model.IndexInfo,
 	}
 	for i, pkIdxCol := range pkIdx.Columns {
 		pkCol := tblInfo.Columns[pkIdxCol.Offset]
-		if !types.NeedRestoredData(&pkCol.FieldType) {
+		if !types.NeedRestoredDataWithCollate(&pkCol.FieldType, useNewCollate) {
 			// Since the handle data cannot be null, we can use SetNull to
 			// indicate that this column does not need to be restored.
 			handleDts[i].SetNull()
@@ -257,11 +256,11 @@ func ExtractDatumByOffsets(ctx expression.EvalContext, row chunk.Row, offsets []
 }
 
 // BuildHandle is exported for test.
-func BuildHandle(pkDts []types.Datum, tblInfo *model.TableInfo,
+func BuildHandle(useNewCollate bool, pkDts []types.Datum, tblInfo *model.TableInfo,
 	pkInfo *model.IndexInfo, loc *time.Location, errCtx errctx.Context) (kv.Handle, error) {
 	if tblInfo.IsCommonHandle {
 		tablecodec.TruncateIndexValues(tblInfo, pkInfo, pkDts)
-		handleBytes, err := codec.EncodeKey(loc, nil, pkDts...)
+		handleBytes, err := codec.NewEncoder(useNewCollate).EncodeKey(loc, nil, pkDts...)
 		err = errCtx.HandleError(err)
 		if err != nil {
 			return nil, err

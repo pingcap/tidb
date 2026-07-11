@@ -16,6 +16,7 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/pkg/caller"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
@@ -125,6 +126,10 @@ func (mgr *StoreManager) getDialTimeout() time.Duration {
 
 func (mgr *StoreManager) PDClient() pd.Client {
 	return mgr.pdClient
+}
+
+func (mgr *StoreManager) ResetPDClientCallerComponent(component caller.Component) {
+	mgr.pdClient = mgr.pdClient.WithCallerComponent(component)
 }
 
 func (mgr *StoreManager) getGrpcConnLocked(ctx context.Context, storeID uint64) (*grpc.ClientConn, error) {

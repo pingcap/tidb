@@ -15,6 +15,7 @@
 package errdef
 
 import (
+	goerrors "errors"
 	"fmt"
 
 	"github.com/pingcap/errors"
@@ -32,6 +33,21 @@ var (
 	ErrKVIngestFailed        = errors.Normalize("ingest tikv failed", errors.RFCCodeText("Ingest:ErrKVIngestFailed"))
 	ErrKVRaftProposalDropped = errors.Normalize("raft proposal dropped", errors.RFCCodeText("Ingest:ErrKVRaftProposalDropped"))
 )
+
+// IsKVDiskFullError returns whether err is caused by TiKV reporting disk full.
+func IsKVDiskFullError(err error) bool {
+	if goerrors.Is(err, ErrKVDiskFull) {
+		return true
+	}
+	var tErr *errors.Error
+	if goerrors.As(err, &tErr) {
+		return tErr.RFCCode() == ErrKVDiskFull.RFCCode()
+	}
+	if cause, ok := errors.Cause(err).(*errors.Error); ok {
+		return cause.RFCCode() == ErrKVDiskFull.RFCCode()
+	}
+	return false
+}
 
 // HTTPStatusError is used in nextgen write and ingest API to indicate that the
 // request failed with a non 200 status code, and there is no response body to

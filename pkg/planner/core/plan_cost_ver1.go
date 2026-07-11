@@ -1146,6 +1146,11 @@ func getPlanCostVer14PhysicalUnionAll(pp base.PhysicalPlan, taskType property.Ta
 		childMaxCost = math.Max(childMaxCost, childCost)
 	}
 	p.PlanCost = childMaxCost + float64(1+len(p.Children()))*p.SCtx().GetSessionVars().GetConcurrencyFactor()
+	if p.Mpp && p.SCtx().GetSessionVars().IsMPPEnforced() &&
+		!hasCostFlag(costFlag, costusage.CostFlagRecalculate) { // show the real cost in explain-statements
+		// Keep enforced MPP UnionAll comparable through cost instead of bypassing the normal plan comparison path.
+		p.PlanCost /= 1000000000
+	}
 	p.PlanCostInit = true
 	return p.PlanCost, nil
 }

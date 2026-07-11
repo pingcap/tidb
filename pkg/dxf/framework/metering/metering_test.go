@@ -52,17 +52,38 @@ func TestNewMeterEmptyBucket(t *testing.T) {
 }
 
 func TestNewMeterValidConfig(t *testing.T) {
-	cfg := &mconfig.MeteringConfig{
-		Bucket: "test-bucket",
-		Type:   "s3",
-		AWS: &mconfig.MeteringAWSConfig{
-			AssumeRoleARN: "test-role-arn",
+	testCases := []struct {
+		name string
+		cfg  *mconfig.MeteringConfig
+	}{
+		{
+			name: "s3",
+			cfg: &mconfig.MeteringConfig{
+				Bucket: "test-bucket",
+				Type:   "s3",
+				AWS: &mconfig.MeteringAWSConfig{
+					AssumeRoleARN: "test-role-arn",
+				},
+			},
+		},
+		{
+			name: "azure",
+			cfg: func() *mconfig.MeteringConfig {
+				cfg, err := mconfig.NewFromURI("azure://test-container/test-prefix?account-name=test-account&account-key=MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE=")
+				require.NoError(t, err)
+				return cfg
+			}(),
 		},
 	}
-	m, err := NewMeter(cfg)
-	require.NotNil(t, m)
-	require.NoError(t, err)
-	require.NotEmpty(t, m.uuid)
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			m, err := NewMeter(tc.cfg)
+			require.NotNil(t, m)
+			require.NoError(t, err)
+			require.NotEmpty(t, m.uuid)
+		})
+	}
 }
 
 func TestMeterRegisterUnregisterRecorderInClassic(t *testing.T) {

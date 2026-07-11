@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
@@ -58,20 +59,22 @@ func TestTxnScopeAndValidateReadTs(t *testing.T) {
 	tk.MustQuery("select * from t1 AS OF TIMESTAMP NOW() where id = 1;").Check(testkit.Rows())
 
 	// replica read
-	tk.MustExec("set @@tidb_replica_read = 'closest-replicas';")
-	tk.MustExec("begin")
-	tk.MustQuery("select * from t1 where id = 1;").Check(testkit.Rows())
-	tk.MustExec("commit")
+	if !kerneltype.IsNextGen() {
+		tk.MustExec("set @@tidb_replica_read = 'closest-replicas';")
+		tk.MustExec("begin")
+		tk.MustQuery("select * from t1 where id = 1;").Check(testkit.Rows())
+		tk.MustExec("commit")
 
-	tk.MustExec("set @@tidb_replica_read = 'follower';")
-	tk.MustExec("begin")
-	tk.MustQuery("select * from t1 where id = 1;").Check(testkit.Rows())
-	tk.MustExec("commit")
+		tk.MustExec("set @@tidb_replica_read = 'follower';")
+		tk.MustExec("begin")
+		tk.MustQuery("select * from t1 where id = 1;").Check(testkit.Rows())
+		tk.MustExec("commit")
 
-	tk.MustExec("set @@tidb_replica_read = 'closest-adaptive';")
-	tk.MustExec("begin")
-	tk.MustQuery("select * from t1 where id = 1;").Check(testkit.Rows())
-	tk.MustExec("commit")
+		tk.MustExec("set @@tidb_replica_read = 'closest-adaptive';")
+		tk.MustExec("begin")
+		tk.MustQuery("select * from t1 where id = 1;").Check(testkit.Rows())
+		tk.MustExec("commit")
+	}
 }
 
 func TestExactStalenessTransaction(t *testing.T) {
@@ -347,27 +350,29 @@ func TestStaleReadKVRequest(t *testing.T) {
 			assert: "github.com/pingcap/tidb/pkg/executor/assertBatchPointReplicaOption",
 		},
 	}
-	tk.MustExec("set @@tidb_replica_read='closest-replicas'")
-	for _, testcase := range testcases {
-		require.NoError(t, failpoint.Enable(testcase.assert, `return("sh")`))
-		tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP NOW() - INTERVAL 1 SECOND`)
-		tk.MustQuery(testcase.sql)
-		tk.MustExec(`commit`)
-		require.NoError(t, failpoint.Disable(testcase.assert))
-	}
-	for _, testcase := range testcases {
-		require.NoError(t, failpoint.Enable(testcase.assert, `return("sh")`))
-		tk.MustExec(`SET TRANSACTION READ ONLY AS OF TIMESTAMP NOW() - INTERVAL 1 SECOND`)
-		tk.MustExec(`begin;`)
-		tk.MustQuery(testcase.sql)
-		tk.MustExec(`commit`)
-		require.NoError(t, failpoint.Disable(testcase.assert))
-	}
-	// assert follower read closest read
-	for _, testcase := range testcases {
-		require.NoError(t, failpoint.Enable(testcase.assert, `return("sh")`))
-		tk.MustQuery(testcase.sql)
-		require.NoError(t, failpoint.Disable(testcase.assert))
+	if !kerneltype.IsNextGen() {
+		tk.MustExec("set @@tidb_replica_read='closest-replicas'")
+		for _, testcase := range testcases {
+			require.NoError(t, failpoint.Enable(testcase.assert, `return("sh")`))
+			tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP NOW() - INTERVAL 1 SECOND`)
+			tk.MustQuery(testcase.sql)
+			tk.MustExec(`commit`)
+			require.NoError(t, failpoint.Disable(testcase.assert))
+		}
+		for _, testcase := range testcases {
+			require.NoError(t, failpoint.Enable(testcase.assert, `return("sh")`))
+			tk.MustExec(`SET TRANSACTION READ ONLY AS OF TIMESTAMP NOW() - INTERVAL 1 SECOND`)
+			tk.MustExec(`begin;`)
+			tk.MustQuery(testcase.sql)
+			tk.MustExec(`commit`)
+			require.NoError(t, failpoint.Disable(testcase.assert))
+		}
+		// assert follower read closest read
+		for _, testcase := range testcases {
+			require.NoError(t, failpoint.Enable(testcase.assert, `return("sh")`))
+			tk.MustQuery(testcase.sql)
+			require.NoError(t, failpoint.Disable(testcase.assert))
+		}
 	}
 	tk.MustExec(`insert into t1 (c,d,e) values (1,1,1);`)
 	tk.MustExec(`insert into t1 (c,d,e) values (2,3,5);`)
@@ -1286,20 +1291,30 @@ func TestStaleSessionQuery(t *testing.T) {
 func TestStaleReadCompatibility(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	getCurrentTime := func() time.Time {
+		tk.MustExec("begin")
+		tsStr := tk.MustQuery("select @@tidb_current_ts").Rows()[0][0].(string)
+		tk.MustExec("rollback")
+		ts, err := strconv.ParseUint(tsStr, 10, 64)
+		require.NoError(t, err)
+		return oracle.GetTimeFromTS(ts)
+	}
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	defer tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int)")
 	tk.MustExec("insert into t(id) values (1)")
 	time.Sleep(2 * time.Second)
-	t1 := time.Now()
+	t1 := getCurrentTime()
 	tk.MustExec("insert into t(id) values (2)")
 	time.Sleep(2 * time.Second)
-	t2 := time.Now()
+	t2 := getCurrentTime()
 	tk.MustExec("insert into t(id) values (3)")
+	t1Str := t1.Format("2006-1-2 15:04:05")
+	t2Str := t2.Format("2006-1-2 15:04:05")
 	// assert select as of timestamp won't work after set transaction read only as of timestamp
-	tk.MustExec(fmt.Sprintf("set transaction read only as of timestamp '%s';", t1.Format("2006-1-2 15:04:05")))
-	err := tk.ExecToErr(fmt.Sprintf("select * from t as of timestamp '%s';", t1.Format("2006-1-2 15:04:05")))
+	tk.MustExec(fmt.Sprintf("set transaction read only as of timestamp '%s';", t1Str))
+	err := tk.ExecToErr(fmt.Sprintf("select * from t as of timestamp '%s';", t1Str))
 	require.Error(t, err)
 	require.Regexp(t, ".*invalid as of timestamp: can't use select as of while already set transaction as of.*", err.Error())
 	// assert set transaction read only as of timestamp is consumed
@@ -1307,25 +1322,27 @@ func TestStaleReadCompatibility(t *testing.T) {
 	// enable tidb_read_staleness
 	tk.MustExec("set @@tidb_read_staleness='-1'")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/expression/injectNow", fmt.Sprintf(`return(%d)`, t1.Unix())))
-	require.Len(t, tk.MustQuery("select * from t;").Rows(), 1)
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/expression/injectNow"))
+	}()
+	tk.MustQuery("select * from t order by id;").Check(testkit.Rows("1"))
 	// assert select as of timestamp during tidb_read_staleness
-	require.Len(t, tk.MustQuery(fmt.Sprintf("select * from t as of timestamp '%s'", t2.Format("2006-1-2 15:04:05"))).Rows(), 2)
+	require.Len(t, tk.MustQuery(fmt.Sprintf("select * from t as of timestamp '%s'", t2Str)).Rows(), 2)
 	// assert set transaction as of timestamp during tidb_read_staleness
-	tk.MustExec(fmt.Sprintf("set transaction read only as of timestamp '%s';", t2.Format("2006-1-2 15:04:05")))
+	tk.MustExec(fmt.Sprintf("set transaction read only as of timestamp '%s';", t2Str))
 	require.Len(t, tk.MustQuery("select * from t;").Rows(), 2)
 
 	// assert begin stale transaction during tidb_read_staleness
-	tk.MustExec(fmt.Sprintf("start transaction read only as of timestamp '%v'", t2.Format("2006-1-2 15:04:05")))
+	tk.MustExec(fmt.Sprintf("start transaction read only as of timestamp '%v'", t2Str))
 	require.Len(t, tk.MustQuery("select * from t;").Rows(), 2)
 	tk.MustExec("commit")
 
 	// assert session query still is affected by tidb_read_staleness
-	require.Len(t, tk.MustQuery("select * from t;").Rows(), 1)
+	tk.MustQuery("select * from t order by id;").Check(testkit.Rows("1"))
 
 	// disable tidb_read_staleness
 	tk.MustExec("set @@tidb_read_staleness=''")
 	require.Len(t, tk.MustQuery("select * from t;").Rows(), 3)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/expression/injectNow"))
 }
 
 func TestStaleReadNoExtraTSORequest(t *testing.T) {
@@ -1480,6 +1497,9 @@ func TestStaleTSO(t *testing.T) {
 }
 
 func TestStaleReadNoBackoff(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("tidb_replica_read closest-replicas is not supported in next generation")
+	}
 	cfg := config.GetGlobalConfig()
 	cfg.Labels = map[string]string{"zone": "us-east-1a"}
 	config.StoreGlobalConfig(cfg)
@@ -1690,9 +1710,13 @@ func TestStaleReadAllCombinations(t *testing.T) {
 
 	replicaReadSettings := []string{
 		"leader",
-		"follower",
-		"closest-replicas",
-		"closest-adaptive",
+	}
+	if !kerneltype.IsNextGen() {
+		replicaReadSettings = append(replicaReadSettings,
+			"follower",
+			"closest-replicas",
+			"closest-adaptive",
+		)
 	}
 
 	transactionModes := []struct {

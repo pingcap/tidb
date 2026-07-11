@@ -35,7 +35,7 @@ func IsReserved(tp int) bool {
 		interval, into, is, iterate,
 		join,
 		key, keys, kill,
-		lag, lastValue, lead, leading, leave, left, like, limit, linear, lines,
+		lag, lastValue, lateral, lead, leading, leave, left, like, limit, linear, lines,
 		load, localTime, localTs, lock, long, longblobType, longtextType, lowPriority,
 		match, maxValue, mediumblobType, mediumIntType, mediumtextType,
 		middleIntType, minuteMicrosecond, minuteSecond, mod,

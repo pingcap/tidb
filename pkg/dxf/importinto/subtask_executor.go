@@ -20,18 +20,15 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
-	"github.com/pingcap/tidb/pkg/lightning/backend/local"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/lightning/log"
-	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
-	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -71,16 +68,16 @@ func (e *importMinimalTaskExecutor) Run(
 	failpoint.InjectCall("syncBeforeSortChunk")
 	sharedVars := e.mTtask.SharedVars
 
-	chunkCheckpoint := toChunkCheckpoint(e.mTtask.Chunk)
-	chunkCheckpoint.FileMeta.ParquetMeta = mydump.ParquetFileMeta{
-		Loc: sharedVars.TableImporter.Location,
+	chunk := e.mTtask.Chunk
+	chunk.ParquetMeta = parquetfile.FileMeta{
+		Loc: sharedVars.TableImporter.ParquetLocation(),
 	}
 
 	checksum := verify.NewKVGroupChecksumWithKeyspace(sharedVars.TableImporter.GetKeySpace())
 	if sharedVars.TableImporter.IsLocalSort() {
 		if err := importer.ProcessChunk(
 			ctx,
-			&chunkCheckpoint,
+			&chunk,
 			sharedVars.TableImporter,
 			sharedVars.DataEngine,
 			sharedVars.IndexEngine,
@@ -93,7 +90,7 @@ func (e *importMinimalTaskExecutor) Run(
 	} else {
 		if err := importer.ProcessChunkWithWriter(
 			ctx,
-			&chunkCheckpoint,
+			&chunk,
 			sharedVars.TableImporter,
 			dataWriter,
 			indexWriter,
@@ -151,13 +148,13 @@ func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *
 	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	if kerneltype.IsNextGen() {
 		bfWeight := importer.GetBackoffWeight(plan)
-		mgr := local.NewTiKVChecksumManagerForImportInto(p.store, p.taskID,
+		mgr := ingestctrl.NewTiKVChecksumManagerForImportInto(p.store, p.taskID,
 			uint(plan.DistSQLScanConcurrency), bfWeight, resourcegroup.DefaultResourceGroupName)
 		defer mgr.Close()
 		return importer.VerifyChecksum(ctx, plan, finalChecksum, logger,
-			func() (*local.RemoteChecksum, error) {
+			func() (*ingestctrl.RemoteChecksum, error) {
 				ctxWithLogger := logutil.WithLogger(ctx, logger)
-				return mgr.Checksum(ctxWithLogger, &checkpoints.TidbTableInfo{
+				return mgr.Checksum(ctxWithLogger, &importdef.TableInfo{
 					DB:   plan.DBName,
 					Name: plan.TableInfo.Name.L,
 					Core: plan.TableInfo,
@@ -168,21 +165,10 @@ func (p *postProcessStepExecutor) postProcess(ctx context.Context, subtaskMeta *
 
 	return p.taskTbl.WithNewSession(func(se sessionctx.Context) error {
 		err = importer.VerifyChecksum(ctx, plan, finalChecksum, logger,
-			func() (*local.RemoteChecksum, error) {
+			func() (*ingestctrl.RemoteChecksum, error) {
 				return importer.RemoteChecksumTableBySQL(ctx, se, plan, logger)
 			},
 		)
-		if kerneltype.IsClassic() {
-			failpoint.Inject("skipPostProcessAlterTableMode", func() {
-				failpoint.Return(err)
-			})
-			// log error instead of raise error to avoid user rerun task,
-			// clean up will alter table mode to normal finally.
-			err2 := ddl.AlterTableMode(domain.GetDomain(se).DDLExecutor(), se, model.TableModeNormal, p.taskMeta.Plan.DBID, p.taskMeta.Plan.TableInfo.ID)
-			if err2 != nil {
-				callLog.Warn("alter table mode to normal failure", zap.Error(err2))
-			}
-		}
 		return err
 	})
 }

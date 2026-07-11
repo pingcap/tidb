@@ -409,34 +409,138 @@ func TestRefreshStatsConcurrently(t *testing.T) {
 }
 
 func TestFlushStatsDelta(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a int, b int)")
+	t.Run("full scope", func(t *testing.T) {
+		store, dom := testkit.CreateMockStoreAndDomain(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (a int, b int)")
 
-	// Get table ID for later query
-	ctx := context.Background()
-	is := dom.InfoSchema()
-	tbl, err := is.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t"))
-	require.NoError(t, err)
-	tableID := tbl.Meta().ID
+		ctx := context.Background()
+		is := dom.InfoSchema()
+		tbl, err := is.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t"))
+		require.NoError(t, err)
+		tableID := tbl.Meta().ID
 
-	// Insert some rows to generate stats delta
-	tk.MustExec("insert into t values (1,1), (2,2), (3,3), (4,4), (5,5)")
-	tk.MustExec("flush stats_delta")
-	rows := tk.MustQuery("select modify_count from mysql.stats_meta where table_id = ?", tableID).Rows()
-	require.Len(t, rows, 1, "stats_meta should have entry for the table")
-	modifyCnt, err := strconv.ParseInt(rows[0][0].(string), 10, 64)
-	require.NoError(t, err)
-	require.Equal(t, int64(5), modifyCnt, "modify_count should be 5 after inserting 5 rows and flushing")
+		tk.MustExec("insert into t values (1,1), (2,2), (3,3), (4,4), (5,5)")
+		tk.MustExec("flush stats_delta *.*")
+		rows := tk.MustQuery("select modify_count from mysql.stats_meta where table_id = ?", tableID).Rows()
+		require.Len(t, rows, 1, "stats_meta should have entry for the table")
+		modifyCnt, err := strconv.ParseInt(rows[0][0].(string), 10, 64)
+		require.NoError(t, err)
+		require.Equal(t, int64(5), modifyCnt, "modify_count should be 5 after inserting 5 rows and flushing")
 
-	// Insert 2 more rows and flush again
-	tk.MustExec("insert into t values (6,6), (7,7)")
-	tk.MustExec("flush stats_delta")
-	rows = tk.MustQuery("select modify_count from mysql.stats_meta where table_id = ?", tableID).Rows()
-	require.Len(t, rows, 1, "stats_meta should have entry for the table")
-	modifyCnt, err = strconv.ParseInt(rows[0][0].(string), 10, 64)
-	require.NoError(t, err)
-	require.Equal(t, int64(7), modifyCnt, "modify_count should be 7 after inserting 2 more rows and flushing")
+		tk.MustExec("insert into t values (6,6), (7,7)")
+		tk.MustExec("flush stats_delta *.*")
+		rows = tk.MustQuery("select modify_count from mysql.stats_meta where table_id = ?", tableID).Rows()
+		require.Len(t, rows, 1, "stats_meta should have entry for the table")
+		modifyCnt, err = strconv.ParseInt(rows[0][0].(string), 10, 64)
+		require.NoError(t, err)
+		require.Equal(t, int64(7), modifyCnt, "modify_count should be 7 after inserting 2 more rows and flushing")
+	})
+
+	t.Run("scoped behavior", func(t *testing.T) {
+		store, dom := testkit.CreateMockStoreAndDomain(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t1, t2, tp")
+		tk.MustExec("create table t1 (a int, b int)")
+		tk.MustExec("create table t2 (a int, b int)")
+		tk.MustExec(`create table tp (a int, b int)
+			partition by range(a) (
+				partition p0 values less than (10),
+				partition p1 values less than (20)
+			)`)
+
+		ctx := context.Background()
+		is := dom.InfoSchema()
+		t1, err := is.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t1"))
+		require.NoError(t, err)
+		t2, err := is.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t2"))
+		require.NoError(t, err)
+		tp, err := is.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("tp"))
+		require.NoError(t, err)
+		partitionInfo := tp.Meta().GetPartitionInfo()
+		require.NotNil(t, partitionInfo)
+		p0ID := partitionInfo.Definitions[0].ID
+		p1ID := partitionInfo.Definitions[1].ID
+
+		getModifyCount := func(tableID int64) int64 {
+			rows := tk.MustQuery("select modify_count from mysql.stats_meta where table_id = ?", tableID).Rows()
+			if len(rows) == 0 {
+				return -1
+			}
+			modifyCnt, err := strconv.ParseInt(rows[0][0].(string), 10, 64)
+			require.NoError(t, err)
+			return modifyCnt
+		}
+
+		tk.MustExec("insert into t1 values (1,1), (2,2)")
+		tk.MustExec("insert into t2 values (3,3), (4,4), (5,5)")
+		tk.MustExec("insert into tp values (1,1), (2,2), (11,11)")
+
+		tk.MustExec("flush stats_delta t1")
+		require.Equal(t, int64(2), getModifyCount(t1.Meta().ID))
+		require.NotEqual(t, int64(3), getModifyCount(t2.Meta().ID), "unrelated table should not be flushed by table scope")
+		require.NotEqual(t, int64(3), getModifyCount(tp.Meta().ID), "partitioned table should not be flushed by unrelated table scope")
+
+		tk.MustExec("flush stats_delta tp")
+		require.Equal(t, int64(3), getModifyCount(tp.Meta().ID), "global stats for the partitioned table should be flushed")
+		require.Equal(t, int64(2), getModifyCount(p0ID), "partition p0 should be flushed")
+		require.Equal(t, int64(1), getModifyCount(p1ID), "partition p1 should be flushed")
+		require.NotEqual(t, int64(3), getModifyCount(t2.Meta().ID), "database scope has not been flushed yet")
+
+		tk.MustExec("flush stats_delta test.*")
+		require.Equal(t, int64(3), getModifyCount(t2.Meta().ID), "database scope should flush the remaining table")
+	})
+
+	t.Run("privilege checks", func(t *testing.T) {
+		store, _ := testkit.CreateMockStoreAndDomain(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t_flush_priv")
+		tk.MustExec("create table t_flush_priv (a int)")
+
+		t.Run("table scope requires select", func(t *testing.T) {
+			tk.MustExec("drop user if exists 'flush_reader'@'%'")
+			tk.MustExec("create user 'flush_reader'@'%'")
+
+			tkUser := testkit.NewTestKit(t, store)
+			require.NoError(t, tkUser.Session().Auth(&auth.UserIdentity{Username: "flush_reader", Hostname: "%"}, nil, nil, nil))
+			tkUser.MustGetErrCode("flush stats_delta test.t_flush_priv", errno.ErrTableaccessDenied)
+
+			tk.MustExec("grant select on test.t_flush_priv to 'flush_reader'@'%'")
+			tkUser.MustExec("flush stats_delta test.t_flush_priv")
+		})
+
+		t.Run("database scope requires select", func(t *testing.T) {
+			tk.MustExec("drop user if exists 'flush_db_reader'@'%'")
+			tk.MustExec("create user 'flush_db_reader'@'%'")
+
+			tkUser := testkit.NewTestKit(t, store)
+			require.NoError(t, tkUser.Session().Auth(&auth.UserIdentity{Username: "flush_db_reader", Hostname: "%"}, nil, nil, nil))
+			tkUser.MustGetErrCode("flush stats_delta test.*", errno.ErrDBaccessDenied)
+
+			tk.MustExec("grant select on test.* to 'flush_db_reader'@'%'")
+			tkUser.MustExec("flush stats_delta test.*")
+		})
+
+		t.Run("global scope requires global select", func(t *testing.T) {
+			tk.MustExec("drop user if exists 'flush_global_reader'@'%'")
+			tk.MustExec("create user 'flush_global_reader'@'%'")
+
+			tkUser := testkit.NewTestKit(t, store)
+			require.NoError(t, tkUser.Session().Auth(&auth.UserIdentity{Username: "flush_global_reader", Hostname: "%"}, nil, nil, nil))
+			tkUser.MustGetErrCode("flush stats_delta *.*", errno.ErrPrivilegeCheckFail)
+
+			tk.MustExec("grant select on *.* to 'flush_global_reader'@'%'")
+			tkUser.MustExec("flush stats_delta *.*")
+		})
+	})
+
+	t.Run("requires default db for bare table", func(t *testing.T) {
+		store, _ := testkit.CreateMockStoreAndDomain(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustGetDBError("flush stats_delta t1", plannererrors.ErrNoDB)
+	})
 }

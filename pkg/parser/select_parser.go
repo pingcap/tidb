@@ -458,8 +458,10 @@ func (p *HandParser) parseSelectField() *ast.SelectField {
 		}
 		p.next()
 		sf.AsName = ast.NewCIStr(aliasTok.Lit)
-	} else if p.CanBeImplicitAlias(p.peek()) {
-		// Implicit alias (without AS).
+	} else if p.peek().Tp != returning && p.CanBeImplicitAlias(p.peek()) {
+		// Implicit alias (without AS). RETURNING is never an implicit field
+		// alias so that it can start a DML RETURNING clause
+		// (yacc: FieldAsNameOpt %prec higherThanReturning).
 		aliasTok := p.next()
 		sf.AsName = ast.NewCIStr(aliasTok.Lit)
 	}

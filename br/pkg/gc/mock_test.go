@@ -108,8 +108,10 @@ func newTestMockPD(t *testing.T) *mockPDClient {
 
 // findBarrier finds a barrier by ID in the GC state.
 // Returns nil if not found.
-func findBarrier(state pdgc.GCState, barrierID string) *pdgc.GCBarrierInfo {
-	for _, b := range state.GCBarriers {
+func findBarrier(t *testing.T, state pdgc.GCState, barrierID string) *pdgc.GCBarrierInfo {
+	gcBarriers, err := state.GetGCBarriers()
+	require.NoError(t, err)
+	for _, b := range gcBarriers {
 		if b.BarrierID == barrierID {
 			return b
 		}
@@ -119,21 +121,21 @@ func findBarrier(state pdgc.GCState, barrierID string) *pdgc.GCBarrierInfo {
 
 // requireBarrier asserts that a barrier exists with the expected TS.
 func requireBarrier(t *testing.T, state pdgc.GCState, barrierID string, expectedTS uint64) {
-	barrier := findBarrier(state, barrierID)
+	barrier := findBarrier(t, state, barrierID)
 	require.NotNil(t, barrier, "barrier %q should exist", barrierID)
 	require.Equal(t, expectedTS, barrier.BarrierTS, "barrier %q TS mismatch", barrierID)
 }
 
 // requireNoBarrier asserts that a barrier does not exist.
 func requireNoBarrier(t *testing.T, state pdgc.GCState, barrierID string) {
-	barrier := findBarrier(state, barrierID)
+	barrier := findBarrier(t, state, barrierID)
 	require.Nil(t, barrier, "barrier %q should not exist", barrierID)
 }
 
 // getState returns the GC state for the specified keyspace.
 // Use tikv.NullspaceID for global mode.
 func getState(ctx context.Context, t *testing.T, mockPD *mockPDClient, keyspaceID tikv.KeyspaceID) pdgc.GCState {
-	state, err := mockPD.GetGCStatesClient(uint32(keyspaceID)).GetGCState(ctx)
+	state, err := mockPD.GetGCStatesClient(uint32(keyspaceID)).GetGCState(ctx, pdgc.ExcludeGCBarriers(false))
 	require.NoError(t, err)
 	return state
 }

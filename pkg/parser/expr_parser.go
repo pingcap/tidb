@@ -606,14 +606,16 @@ func (p *HandParser) parseLikeExpr(left ast.ExprNode, isNot bool, isLike bool) a
 		}
 		switch len(escTok.Lit) {
 		case 0:
-			// Empty string: default to backslash (Restore omits ESCAPE when '\\').
-			node.Escape = '\\'
+			// When ESCAPE '' is specified, no escape character should be
+			// used (Escape = 0).
+			node.Escape = 0
 		case 1:
 			node.Escape = escTok.Lit[0]
 		default:
 			p.errs = append(p.errs, ErrWrongArguments.GenWithStackByArgs("ESCAPE"))
 			return nil
 		}
+		node.EscapeExplicit = true
 	} else {
 		node.Escape = '\\'
 	}

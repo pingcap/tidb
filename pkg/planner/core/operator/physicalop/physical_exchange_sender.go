@@ -34,10 +34,9 @@ import (
 type PhysicalExchangeSender struct {
 	BasePhysicalPlan
 
-	TargetTasks          []*kv.MPPTask
-	TargetCTEReaderTasks [][]*kv.MPPTask
-	ExchangeType         tipb.ExchangeType
-	HashCols             []*property.MPPPartitionColumn
+	TargetTasks  []*kv.MPPTask
+	ExchangeType tipb.ExchangeType
+	HashCols     []*property.MPPPartitionColumn
 	// Tasks is the mpp task for current PhysicalExchangeSender.
 	Tasks           []*kv.MPPTask
 	CompressionMode vardef.ExchangeCompressionMode
@@ -180,21 +179,6 @@ func (p *PhysicalExchangeSender) ToPB(ctx *base.BuildPBContext, storeType kv.Sto
 		encodedTask = append(encodedTask, encodedStr)
 	}
 
-	encodedUpstreamCTETask := make([]*tipb.EncodedBytesSlice, 0, len(p.TargetCTEReaderTasks))
-	for _, cteRTasks := range p.TargetCTEReaderTasks {
-		encodedTasksForOneCTEReader := &tipb.EncodedBytesSlice{
-			EncodedTasks: make([][]byte, 0, len(cteRTasks)),
-		}
-		for _, task := range cteRTasks {
-			encodedStr, err := task.ToPB().Marshal()
-			if err != nil {
-				return nil, err
-			}
-			encodedTasksForOneCTEReader.EncodedTasks = append(encodedTasksForOneCTEReader.EncodedTasks, encodedStr)
-		}
-		encodedUpstreamCTETask = append(encodedUpstreamCTETask, encodedTasksForOneCTEReader)
-	}
-
 	hashCols := make([]expression.Expression, 0, len(p.HashCols))
 	hashColTypes := make([]*tipb.FieldType, 0, len(p.HashCols))
 	for _, col := range p.HashCols {
@@ -219,14 +203,13 @@ func (p *PhysicalExchangeSender) ToPB(ctx *base.BuildPBContext, storeType kv.Sto
 		return nil, perrors.Trace(err)
 	}
 	ecExec := &tipb.ExchangeSender{
-		Tp:                  p.ExchangeType,
-		EncodedTaskMeta:     encodedTask,
-		PartitionKeys:       hashColPb,
-		Child:               child,
-		Types:               hashColTypes,
-		AllFieldTypes:       allFieldTypes,
-		Compression:         p.CompressionMode.ToTipbCompressionMode(),
-		UpstreamCteTaskMeta: encodedUpstreamCTETask,
+		Tp:              p.ExchangeType,
+		EncodedTaskMeta: encodedTask,
+		PartitionKeys:   hashColPb,
+		Child:           child,
+		Types:           hashColTypes,
+		AllFieldTypes:   allFieldTypes,
+		Compression:     p.CompressionMode.ToTipbCompressionMode(),
 	}
 	executorID := p.ExplainID().String()
 	return &tipb.Executor{

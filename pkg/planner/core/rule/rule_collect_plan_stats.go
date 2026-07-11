@@ -39,6 +39,8 @@ import (
 // CollectPredicateColumnsPoint collects the columns that are used in the predicates.
 type CollectPredicateColumnsPoint struct{}
 
+const skipPlanCacheReasonSyncLoadFallback = "sync-load timed out and fell back to pseudo stats"
+
 // Optimize implements LogicalOptRule.<0th> interface.
 func (c *CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.LogicalPlan) (base.LogicalPlan, bool, error) {
 	planChanged := false
@@ -349,6 +351,7 @@ func RequestLoadStats(ctx base.PlanContext, neededHistItems []model.StatsLoadIte
 	if err != nil {
 		stmtCtx.IsSyncStatsFailed = true
 		if vardef.StatsLoadPseudoTimeout.Load() {
+			stmtCtx.SetSkipPlanCache(skipPlanCacheReasonSyncLoadFallback)
 			logutil.ErrVerboseLogger().Warn("RequestLoadStats failed", zap.Error(err))
 			stmtCtx.AppendWarning(err)
 			return nil
@@ -373,6 +376,7 @@ func SyncWaitStatsLoad(plan base.LogicalPlan) error {
 	if err != nil {
 		stmtCtx.IsSyncStatsFailed = true
 		if vardef.StatsLoadPseudoTimeout.Load() {
+			stmtCtx.SetSkipPlanCache(skipPlanCacheReasonSyncLoadFallback)
 			logutil.ErrVerboseLogger().Warn("SyncWaitStatsLoad failed", zap.Error(err))
 			stmtCtx.AppendWarning(err)
 			return nil

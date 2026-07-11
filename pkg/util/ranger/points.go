@@ -71,14 +71,6 @@ func (rp *point) String() string {
 	return fmt.Sprintf("%v%s", val, symbol)
 }
 
-func (rp *point) Clone(value types.Datum) *point {
-	return &point{
-		value: value,
-		excl:  rp.excl,
-		start: rp.start,
-	}
-}
-
 func rangePointCmp(tc types.Context, a, b *point, collator collate.Collator) (int, error) {
 	if a.value.Kind() == types.KindMysqlEnum && b.value.Kind() == types.KindMysqlEnum {
 		return rangePointEnumCmp(a, b)
@@ -115,7 +107,7 @@ func rangePointEqualValueCmp(a, b *point) int {
 	return 0
 }
 
-func pointsConvertToSortKey(sctx *rangerctx.RangerContext, inputPs []*point, newTp *types.FieldType) ([]*point, error) {
+func convertPointsToSortKeyInPlace(sctx *rangerctx.RangerContext, points []*point, newTp *types.FieldType) error {
 	// Only handle normal string type here.
 	// Currently, set won't be pushed down and it shouldn't reach here in theory.
 	// For enum, we have separate logic for it, like handleEnumFromBinOp(). For now, it only supports point range,
@@ -123,31 +115,27 @@ func pointsConvertToSortKey(sctx *rangerctx.RangerContext, inputPs []*point, new
 	if newTp.EvalType() != types.ETString ||
 		newTp.GetType() == mysql.TypeEnum ||
 		newTp.GetType() == mysql.TypeSet {
-		return inputPs, nil
+		return nil
 	}
-	ps := make([]*point, 0, len(inputPs))
-	for _, p := range inputPs {
-		np, err := pointConvertToSortKey(sctx, p, newTp, true)
-		if err != nil {
-			return nil, err
+	for _, p := range points {
+		if err := convertPointToSortKeyInPlace(sctx, p, newTp, true); err != nil {
+			return err
 		}
-		ps = append(ps, np)
 	}
-	return ps, nil
+	return nil
 }
 
-func pointConvertToSortKey(
+func convertPointToSortKeyInPlace(
 	sctx *rangerctx.RangerContext,
-	inputP *point,
+	p *point,
 	newTp *types.FieldType,
 	trimTrailingSpace bool,
-) (*point, error) {
-	p, err := convertPoint(sctx, inputP, newTp)
-	if err != nil {
-		return nil, err
+) error {
+	if err := convertPointInPlace(sctx, p, newTp); err != nil {
+		return err
 	}
 	if p.value.Kind() != types.KindString || newTp.GetCollate() == charset.CollationBin || !collate.NewCollationEnabled() {
-		return p, nil
+		return nil
 	}
 	sortKey := p.value.GetBytes()
 	if !trimTrailingSpace {
@@ -156,7 +144,8 @@ func pointConvertToSortKey(
 		sortKey = collate.GetCollator(newTp.GetCollate()).Key(string(hack.String(sortKey)))
 	}
 
-	return &point{value: types.NewBytesDatum(sortKey), excl: p.excl, start: p.start}, nil
+	p.value = types.NewBytesDatum(sortKey)
+	return nil
 }
 
 /*
@@ -441,8 +430,7 @@ func (r *builder) buildFromBinOp(
 	}
 	cutPrefixForPoints(res, prefixLen, ft)
 	if convertToSortKey {
-		res, err = pointsConvertToSortKey(r.sctx, res, newTp)
-		if err != nil {
+		if err = convertPointsToSortKeyInPlace(r.sctx, res, newTp); err != nil {
 			r.err = err
 			return getFullRange()
 		}
@@ -637,6 +625,8 @@ func (r *builder) buildFromIn(
 ) ([]*point, bool) {
 	list := expr.GetArgs()[1:]
 	rangePoints := make([]*point, 0, len(list)*2)
+	pointObjs := make([]point, len(list)*2)
+	pointCount := 0
 	hasNull := false
 	ft := expr.GetArgs()[0].GetType(r.sctx.ExprCtx.GetEvalCtx())
 	colCollate := ft.GetCollate()
@@ -657,19 +647,18 @@ func (r *builder) buildFromIn(
 			hasNull = true
 			continue
 		}
-		if expr.GetArgs()[0].GetType(r.sctx.ExprCtx.GetEvalCtx()).GetType() == mysql.TypeEnum {
+		if ft.GetType() == mysql.TypeEnum {
 			switch dt.Kind() {
 			case types.KindString, types.KindBytes, types.KindBinaryLiteral:
 				// Can't use ConvertTo directly, since we shouldn't convert numerical string to Enum in select stmt.
-				targetType := expr.GetArgs()[0].GetType(r.sctx.ExprCtx.GetEvalCtx())
-				enum, parseErr := types.ParseEnumName(targetType.GetElems(), dt.GetString(), targetType.GetCollate())
+				enum, parseErr := types.ParseEnumName(ft.GetElems(), dt.GetString(), ft.GetCollate())
 				if parseErr == nil {
-					dt.SetMysqlEnum(enum, targetType.GetCollate())
+					dt.SetMysqlEnum(enum, ft.GetCollate())
 				} else {
 					err = parseErr
 				}
 			default:
-				dt, err = dt.ConvertTo(tc, expr.GetArgs()[0].GetType(r.sctx.ExprCtx.GetEvalCtx()))
+				dt, err = dt.ConvertTo(tc, ft)
 			}
 
 			if err != nil {
@@ -677,21 +666,23 @@ func (r *builder) buildFromIn(
 				continue
 			}
 		}
-		if expr.GetArgs()[0].GetType(r.sctx.ExprCtx.GetEvalCtx()).GetType() == mysql.TypeYear {
-			dt, err = dt.ConvertToMysqlYear(tc, expr.GetArgs()[0].GetType(r.sctx.ExprCtx.GetEvalCtx()))
+		if ft.GetType() == mysql.TypeYear {
+			dt, err = dt.ConvertToMysqlYear(tc, ft)
 			if err != nil {
 				// in (..., an impossible value (not valid year), ...), the range is empty, so skip it.
 				continue
 			}
 		}
-		if expr.GetArgs()[0].GetType(r.sctx.ExprCtx.GetEvalCtx()).EvalType() == types.ETString && (dt.Kind() == types.KindString || dt.Kind() == types.KindBinaryLiteral) {
-			dt.SetString(dt.GetString(), expr.GetArgs()[0].GetType(r.sctx.ExprCtx.GetEvalCtx()).GetCollate()) // refine the string like what we did in builder.buildFromBinOp
+		if ft.EvalType() == types.ETString && (dt.Kind() == types.KindString || dt.Kind() == types.KindBinaryLiteral) {
+			dt.SetString(dt.GetString(), ft.GetCollate()) // refine the string like what we did in builder.buildFromBinOp
 		}
-		var startValue, endValue types.Datum
-		dt.Copy(&startValue)
-		dt.Copy(&endValue)
-		startPoint := &point{value: startValue, start: true}
-		endPoint := &point{value: endValue}
+		dt.Copy(&pointObjs[pointCount].value)
+		pointObjs[pointCount].start = true
+		startPoint := &pointObjs[pointCount]
+		pointCount++
+		dt.Copy(&pointObjs[pointCount].value)
+		endPoint := &pointObjs[pointCount]
+		pointCount++
 		rangePoints = append(rangePoints, startPoint, endPoint)
 	}
 	collator := collate.GetCollator(colCollate)
@@ -715,10 +706,8 @@ func (r *builder) buildFromIn(
 	}
 	rangePoints = rangePoints[:curPos]
 	cutPrefixForPoints(rangePoints, prefixLen, ft)
-	var err error
 	if convertToSortKey {
-		rangePoints, err = pointsConvertToSortKey(r.sctx, rangePoints, newTp)
-		if err != nil {
+		if err := convertPointsToSortKeyInPlace(r.sctx, rangePoints, newTp); err != nil {
 			r.err = err
 			return getFullRange(), false
 		}
@@ -753,8 +742,7 @@ func (r *builder) newBuildFromPatternLike(
 		endPoint := &point{value: types.NewStringDatum("")}
 		res := []*point{startPoint, endPoint}
 		if convertToSortKey {
-			res, err = pointsConvertToSortKey(r.sctx, res, newTp)
-			if err != nil {
+			if err := convertPointsToSortKeyInPlace(r.sctx, res, newTp); err != nil {
 				r.err = err
 				return getFullRange()
 			}
@@ -812,8 +800,7 @@ func (r *builder) newBuildFromPatternLike(
 		res := []*point{startPoint, endPoint}
 		cutPrefixForPoints(res, prefixLen, tpOfPattern)
 		if convertToSortKey {
-			res, err = pointsConvertToSortKey(r.sctx, res, newTp)
-			if err != nil {
+			if err := convertPointsToSortKeyInPlace(r.sctx, res, newTp); err != nil {
 				r.err = err
 				return getFullRange()
 			}
@@ -833,9 +820,9 @@ func (r *builder) newBuildFromPatternLike(
 
 	// non-exceptional return case 4-2: build a range for the wildcard
 	// the end_key is sortKey(start_value) + 1
-	originalStartPoint := &point{start: true, excl: exclude}
+	originalStartPoint := point{start: true, excl: exclude}
 	originalStartPoint.value.SetBytesAsString(lowValue, tpOfPattern.GetCollate(), uint32(tpOfPattern.GetFlen()))
-	cutPrefixForPoints([]*point{originalStartPoint}, prefixLen, tpOfPattern)
+	cutPrefixForPoints([]*point{&originalStartPoint}, prefixLen, tpOfPattern)
 
 	// If we don't trim the trailing spaces, which means using KeyWithoutTrimRightSpace() instead of Key(), we can build
 	// a smaller range for better performance, e.g., LIKE '  %'.
@@ -844,13 +831,13 @@ func (r *builder) newBuildFromPatternLike(
 	// column, the start key should be 'abd' instead of 'abc ', but the end key can be 'abc!'. ( ' ' is 32 and '!' is 33
 	// in ASCII)
 	shouldTrimTrailingSpace := collate.IsPadSpaceCollation(collation)
-	startPoint, err := pointConvertToSortKey(r.sctx, originalStartPoint, newTp, shouldTrimTrailingSpace)
-	if err != nil {
+	startPoint := originalStartPoint
+	if err := convertPointToSortKeyInPlace(r.sctx, &startPoint, newTp, shouldTrimTrailingSpace); err != nil {
 		r.err = errors.Trace(err)
 		return getFullRange()
 	}
-	sortKeyPointWithoutTrim, err := pointConvertToSortKey(r.sctx, originalStartPoint, newTp, false)
-	if err != nil {
+	sortKeyPointWithoutTrim := originalStartPoint
+	if err := convertPointToSortKeyInPlace(r.sctx, &sortKeyPointWithoutTrim, newTp, false); err != nil {
 		r.err = errors.Trace(err)
 		return getFullRange()
 	}
@@ -870,7 +857,7 @@ func (r *builder) newBuildFromPatternLike(
 			endPoint.value = types.MaxValueDatum()
 		}
 	}
-	return []*point{startPoint, endPoint}
+	return []*point{&startPoint, endPoint}
 }
 
 func (r *builder) buildFromNot(
@@ -926,9 +913,7 @@ func (r *builder) buildFromNot(
 		retRangePoints = append(retRangePoints, &point{value: types.MaxValueDatum()})
 		cutPrefixForPoints(retRangePoints, prefixLen, expr.GetArgs()[0].GetType(r.sctx.ExprCtx.GetEvalCtx()))
 		if convertToSortKey {
-			var err error
-			retRangePoints, err = pointsConvertToSortKey(r.sctx, retRangePoints, newTp)
-			if err != nil {
+			if err := convertPointsToSortKeyInPlace(r.sctx, retRangePoints, newTp); err != nil {
 				r.err = err
 				return getFullRange()
 			}

@@ -26,8 +26,8 @@ import (
 
 func TestMergePartialResult4Avg(t *testing.T) {
 	tests := []aggTest{
-		buildAggTester(ast.AggFuncAvg, mysql.TypeNewDecimal, 5, 2.0, 3.0, 2.375),
-		buildAggTester(ast.AggFuncAvg, mysql.TypeDouble, 5, 2.0, 3.0, 2.375),
+		buildAggTester(ast.AggFuncAvg, mysql.TypeNewDecimal, 0, 5, 2.0, 3.0, 2.375),
+		buildAggTester(ast.AggFuncAvg, mysql.TypeDouble, 0, 5, 2.0, 3.0, 2.375),
 	}
 	for _, test := range tests {
 		testMergePartialResult(t, test)
@@ -36,8 +36,8 @@ func TestMergePartialResult4Avg(t *testing.T) {
 
 func TestAvg(t *testing.T) {
 	tests := []aggTest{
-		buildAggTester(ast.AggFuncAvg, mysql.TypeNewDecimal, 5, nil, 2.0),
-		buildAggTester(ast.AggFuncAvg, mysql.TypeDouble, 5, nil, 2.0),
+		buildAggTester(ast.AggFuncAvg, mysql.TypeNewDecimal, 0, 5, nil, 2.0),
+		buildAggTester(ast.AggFuncAvg, mysql.TypeDouble, 0, 5, nil, 2.0),
 	}
 
 	for _, test := range tests {
@@ -47,15 +47,16 @@ func TestAvg(t *testing.T) {
 
 func TestMemAvg(t *testing.T) {
 	tests := []aggMemTest{
-		buildAggMemTester(ast.AggFuncAvg, mysql.TypeNewDecimal, 5,
+		buildAggMemTester(ast.AggFuncAvg, mysql.TypeNewDecimal, 0, 5,
 			aggfuncs.DefPartialResult4AvgDecimalSize, defaultUpdateMemDeltaGens, false),
-		buildAggMemTester(ast.AggFuncAvg, mysql.TypeNewDecimal, 5,
+		buildAggMemTester(ast.AggFuncAvg, mysql.TypeNewDecimal, mysql.TypeNewDecimal, 5,
 			aggfuncs.DefPartialResult4AvgDistinctDecimalSize+hack.DefBucketMemoryUsageForSetString, distinctUpdateMemDeltaGens, true),
-		buildAggMemTester(ast.AggFuncAvg, mysql.TypeDouble, 5,
+		buildAggMemTester(ast.AggFuncAvg, mysql.TypeDouble, 0, 5,
 			aggfuncs.DefPartialResult4AvgFloat64Size, defaultUpdateMemDeltaGens, false),
-		buildAggMemTester(ast.AggFuncAvg, mysql.TypeDouble, 5,
+		buildAggMemTester(ast.AggFuncAvg, mysql.TypeDouble, 0, 5,
 			aggfuncs.DefPartialResult4AvgDistinctFloat64Size+hack.DefBucketMemoryUsageForSetFloat64, distinctUpdateMemDeltaGens, true),
 	}
+
 	for _, test := range tests {
 		testAggMemFunc(t, test)
 	}
@@ -66,8 +67,8 @@ func BenchmarkAvg(b *testing.B) {
 
 	rowNum := 50000
 	tests := []aggTest{
-		buildAggTester(ast.AggFuncAvg, mysql.TypeNewDecimal, rowNum, nil, 2.0),
-		buildAggTester(ast.AggFuncAvg, mysql.TypeDouble, rowNum, nil, 2.0),
+		buildAggTester(ast.AggFuncAvg, mysql.TypeNewDecimal, 0, rowNum, nil, 2.0),
+		buildAggTester(ast.AggFuncAvg, mysql.TypeDouble, 0, rowNum, nil, 2.0),
 	}
 	for _, test := range tests {
 		benchmarkAggFunc(b, ctx, test)

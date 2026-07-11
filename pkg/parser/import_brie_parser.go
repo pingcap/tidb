@@ -198,22 +198,31 @@ func (p *HandParser) parseCancelStmt() ast.StmtNode {
 	}
 }
 
-// parseShowImportStmt parses SHOW IMPORT variants. SHOW has already been consumed.
+// parseShowImportStmt parses SHOW [RAW] IMPORT variants. SHOW has already been consumed.
 func (p *HandParser) parseShowImportStmt() ast.StmtNode {
+	_, isRaw := p.accept(raw)
 	p.expect(importKwd)
 
 	switch p.peek().Tp {
 	case jobs:
 		p.next()
-		stmt := &ast.ShowStmt{Tp: ast.ShowImportJobs}
+		stmt := &ast.ShowStmt{Tp: ast.ShowImportJobs, ImportJobRaw: isRaw}
 		p.parseShowLikeOrWhere(stmt)
 		return stmt
 	case job:
 		p.next()
-		stmt := &ast.ShowStmt{Tp: ast.ShowImportJobs}
+		stmt := &ast.ShowStmt{Tp: ast.ShowImportJobs, ImportJobRaw: isRaw}
 		jobID := int64(p.parseUint64())
 		stmt.ImportJobID = &jobID
 		return stmt
+	}
+	// RAW is only valid before IMPORT JOB(S), not IMPORT GROUP(S).
+	if isRaw {
+		p.syntaxErrorAt(p.peek())
+		return nil
+	}
+
+	switch p.peek().Tp {
 	case groups:
 		p.next()
 		stmt := &ast.ShowStmt{Tp: ast.ShowImportGroups}

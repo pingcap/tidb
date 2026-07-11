@@ -92,13 +92,16 @@ var isHintUpdatableVerified = map[string]struct{}{
 	"tidb_max_chunk_size":                             {},
 	"tidb_min_paging_size":                            {},
 	"tidb_max_paging_size":                            {},
+	"tidb_paging_size_bytes":                          {},
 	"tidb_enable_cascades_planner":                    {},
 	"tidb_merge_join_concurrency":                     {},
 	"tidb_index_merge_intersection_concurrency":       {},
 	"tidb_opt_projection_push_down":                   {},
 	"tidb_enable_vectorized_expression":               {},
 	"tidb_opt_join_reorder_threshold":                 {},
+	"tidb_opt_enable_advanced_join_reorder":           {},
 	"tidb_enable_index_merge":                         {},
+	"tidb_enable_no_backslash_escapes_in_like":        {},
 	"tidb_enable_extended_stats":                      {},
 	"tidb_isolation_read_engines":                     {},
 	"tidb_executor_concurrency":                       {},
@@ -120,6 +123,7 @@ var isHintUpdatableVerified = map[string]struct{}{
 	"mpp_version":                                     {},
 	"tidb_enable_inl_join_inner_multi_pattern":        {},
 	"tidb_opt_enable_no_decorrelate_in_select":        {},
+	"tidb_opt_enable_alternative_logical_plans":       {},
 	"tidb_opt_enable_late_materialization":            {},
 	"tidb_opt_ordering_index_selectivity_threshold":   {},
 	"tidb_opt_ordering_index_selectivity_ratio":       {},
@@ -136,10 +140,12 @@ var isHintUpdatableVerified = map[string]struct{}{
 	"tiflash_fine_grained_shuffle_stream_count":       {},
 	"tidb_hash_join_version":                          {},
 	"tidb_allow_tiflash_cop":                          {},
+	"tidb_enable_cache_prepare_stmt":                  {},
 	// Variables that is compatible with MySQL.
 	"cte_max_recursion_depth": {},
 	"sql_mode":                {},
 	"max_execution_time":      {},
+	"tidb_max_keys_read":      {},
 }
 
 func setHintUpdatable(vars []*SysVar) {

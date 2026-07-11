@@ -1,4 +1,3 @@
-set tidb_cost_model_version=1;
 drop table if exists t1;
 drop table if exists t2;
 create table t1(a bigint, b bigint);
@@ -19,9 +18,9 @@ analyze table t;
 explain format = 'plan_tree' select t.c in (select count(*) from t s use index(idx), t t1 where s.b = 1 and s.c = 1 and s.d = t.a and s.a = t1.a) from t;
 id	task	access object	operator info
 Projection	root		Column
-└─Apply	root		CARTESIAN left outer semi join, left side:TableReader, other cond:eq(subquery.t.c, Column)
-  ├─TableReader(Build)	root		data:TableFullScan
-  │ └─TableFullScan	cop[tikv]	table:t	keep order:false
+└─Apply	root		CARTESIAN left outer semi join, left side:IndexReader, other cond:eq(subquery.t.c, Column)
+  ├─IndexReader(Build)	root		index:IndexFullScan
+  │ └─IndexFullScan	cop[tikv]	table:t, index:idx(b, c, d)	keep order:false
   └─StreamAgg(Probe)	root		funcs:count(1)->Column
     └─IndexJoin	root		inner join, inner:TableReader, outer key:subquery.t.a, inner key:subquery.t.a, equal cond:eq(subquery.t.a, subquery.t.a)
       ├─IndexReader(Build)	root		index:IndexRangeScan

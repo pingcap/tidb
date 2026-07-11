@@ -60,7 +60,7 @@ func (s *mockGCSSuite) TestStepSubtaskCount() {
 		s.NoError(err)
 	})
 	importSQL := fmt.Sprintf(`import into t FROM 'gs://step-subtasks/*.csv?endpoint=%s'
-		with __force_merge_step, __max_engine_size='1', cloud_storage_uri='%s'`, gcsEndpoint,
+		with __force_merge_step, __max_engine_size='1', on_duplicate_key='capture', cloud_storage_uri='%s'`, gcsEndpoint,
 		realtikvtest.GetNextGenObjStoreURI("gl-sort"))
 	rs := s.tk.MustQuery(importSQL).Rows()
 	jobID, err := strconv.Atoi(rs[0][0].(string))

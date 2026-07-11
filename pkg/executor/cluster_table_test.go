@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 )
@@ -390,4 +391,39 @@ func removeFiles(t *testing.T, fileNames []string) {
 	for _, fileName := range fileNames {
 		require.NoError(t, os.Remove(fileName))
 	}
+}
+
+func TestClusterTableSlowQuerySessionConnectAttrs(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	srv := createRPCServer(t, dom)
+	defer srv.Stop()
+
+	logData := `
+# Time: 2024-01-15T10:00:00.000000+08:00
+# Txn_start_ts: 123456789
+# User@Host: root[root] @ localhost [127.0.0.1]
+# Query_time: 0.5
+# Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
+# Is_internal: false
+# Succ: true
+` + testutil.DefaultSessionConnectAttrsSlowLogLine() + `
+select * from t;`
+	fileName := "tidb-slow-query-attrs.log"
+	prepareLogs(t, []string{logData}, []string{fileName})
+	defer removeFiles(t, []string{fileName})
+
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Log.SlowQueryFile = fileName
+	})
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use information_schema")
+
+	// Verify Session_connect_attrs column is present in cluster_slow_query as well.
+	clusterRows := tk.MustQuery("select Session_connect_attrs from information_schema.cluster_slow_query " +
+		"where time > '2024-01-01 00:00:00' and query = 'select * from t;'").Rows()
+	require.Len(t, clusterRows, 1)
+	clusterAttrsStr := clusterRows[0][0].(string)
+	testutil.RequireContainsDefaultSessionConnectAttrs(t, clusterAttrsStr)
 }

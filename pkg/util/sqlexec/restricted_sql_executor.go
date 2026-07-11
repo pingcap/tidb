@@ -83,11 +83,6 @@ var ExecOptionEnableDDLAnalyze = func(option *ExecOption) {
 	option.EnableDDLAnalyze = true
 }
 
-// ExecOptionAnalyzeVer1 tells ExecRestrictedStmt/SQL to collect statistics with version1.
-var ExecOptionAnalyzeVer1 = func(option *ExecOption) {
-	option.AnalyzeVer = 1
-}
-
 // ExecOptionAnalyzeVer2 tells ExecRestrictedStmt/SQL to collect statistics with version2.
 var ExecOptionAnalyzeVer2 = func(option *ExecOption) {
 	option.AnalyzeVer = 2

@@ -251,12 +251,11 @@ func (p *HandParser) parseFieldType() *types.FieldType {
 		tp.SetType(mysql.TypeGeometry)
 	case identifier:
 		// Handle LINESTRING, POLYGON, etc. which are not keywords
-		if geometryTypeNames[strings.ToUpper(token.Lit)] {
-			p.next()
-			tp.SetType(mysql.TypeGeometry)
-		} else {
+		if !geometryTypeNames[strings.ToUpper(token.Lit)] {
 			return nil // Not a known type
 		}
+		p.next()
+		tp.SetType(mysql.TypeGeometry)
 	case vectorType:
 		p.next()
 		tp.SetType(mysql.TypeTiDBVectorFloat32)
@@ -291,6 +290,15 @@ func (p *HandParser) parseFieldType() *types.FieldType {
 		tp.SetType(mysql.TypeTiny)
 		tp.SetFlen(1)
 		p.parseIntegerOptions(tp)
+	case uuid:
+		// MariaDB UUID has no native TiDB type; restore emits CHAR(36).
+		// Only accepted in MariaDB mode (yacc appends ErrSyntax otherwise).
+		if !p.enableMariaDB {
+			return nil
+		}
+		p.next()
+		tp.SetType(mysql.TypeString)
+		tp.SetFlen(36)
 	default:
 		return nil
 	}

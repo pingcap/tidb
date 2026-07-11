@@ -1,0 +1,14 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "testutils",
+    srcs = ["util.go"],
+    importpath = "github.com/pingcap/tidb/pkg/ingestor/testutils",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/objstore",
+        "//pkg/objstore/objectio",
+        "//pkg/objstore/storeapi",
+        "@org_uber_go_atomic//:atomic",
+    ],
+)

@@ -38,7 +38,7 @@ func TestAnalyzeColumnsWithPrimaryKey(t *testing.T) {
 			tk.MustExec("create table t (a int, b int, c int primary key)")
 			statstestutil.HandleNextDDLEventWithTxn(h)
 			tk.MustExec("insert into t values (1,1,1), (1,1,2), (2,2,3), (2,2,4), (3,3,5), (4,3,6), (5,4,7), (6,4,8), (null,null,9)")
-			tk.MustExec("flush stats_delta")
+			tk.MustExec("flush stats_delta *.*")
 
 			is := dom.InfoSchema()
 			tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -106,7 +106,7 @@ func TestAnalyzeColumnsWithIndex(t *testing.T) {
 			tk.MustExec("create table t (a int, b int, c int, d int, index idx_b_d(b, d))")
 			statstestutil.HandleNextDDLEventWithTxn(h)
 			tk.MustExec("insert into t values (1,1,null,1), (2,1,9,1), (1,1,8,1), (2,2,7,2), (1,3,7,3), (2,4,6,4), (1,4,6,5), (2,4,6,5), (1,5,6,5)")
-			tk.MustExec("flush stats_delta")
+			tk.MustExec("flush stats_delta *.*")
 
 			is := dom.InfoSchema()
 			tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -183,7 +183,7 @@ func TestAnalyzeColumnsWithClusteredIndex(t *testing.T) {
 			tk.MustExec("create table t (a int, b int, c int, d int, primary key(b, d) clustered)")
 			statstestutil.HandleNextDDLEventWithTxn(h)
 			tk.MustExec("insert into t values (1,1,null,1), (2,2,9,2), (1,3,8,3), (2,4,7,4), (1,5,7,5), (2,6,6,6), (1,7,6,7), (2,8,6,8), (1,9,6,9)")
-			tk.MustExec("flush stats_delta")
+			tk.MustExec("flush stats_delta *.*")
 
 			is := dom.InfoSchema()
 			tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -261,7 +261,7 @@ func TestAnalyzeColumnsWithDynamicPartitionTable(t *testing.T) {
 			tk.MustExec("create table t (a int, b int, c int, index idx(c)) partition by range (a) (partition p0 values less than (10), partition p1 values less than maxvalue)")
 			statstestutil.HandleNextDDLEventWithTxn(h)
 			tk.MustExec("insert into t values (1,2,1), (2,4,1), (3,6,1), (4,8,2), (4,8,2), (5,10,3), (5,10,4), (5,10,5), (null,null,6), (11,22,7), (12,24,8), (13,26,9), (14,28,10), (15,30,11), (16,32,12), (16,32,13), (16,32,13), (16,32,14), (17,34,14), (17,34,14)")
-			tk.MustExec("flush stats_delta")
+			tk.MustExec("flush stats_delta *.*")
 
 			is := dom.InfoSchema()
 			tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -387,7 +387,7 @@ func TestAnalyzeColumnsWithStaticPartitionTable(t *testing.T) {
 			tk.MustExec("create table t (a int, b int, c int, index idx(c)) partition by range (a) (partition p0 values less than (10), partition p1 values less than maxvalue)")
 			statstestutil.HandleNextDDLEventWithTxn(h)
 			tk.MustExec("insert into t values (1,2,1), (2,4,1), (3,6,1), (4,8,2), (4,8,2), (5,10,3), (5,10,4), (5,10,5), (null,null,6), (11,22,7), (12,24,8), (13,26,9), (14,28,10), (15,30,11), (16,32,12), (16,32,13), (16,32,13), (16,32,14), (17,34,14), (17,34,14)")
-			tk.MustExec("flush stats_delta")
+			tk.MustExec("flush stats_delta *.*")
 
 			is := dom.InfoSchema()
 			tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -497,7 +497,7 @@ func TestAnalyzeColumnsWithVirtualColumnIndex(t *testing.T) {
 			tk.MustExec("create table t (a int, b int, c int as (b+1), index idx(c))")
 			statstestutil.HandleNextDDLEventWithTxn(h)
 			tk.MustExec("insert into t (a,b) values (1,1), (2,2), (3,3), (4,4), (5,4), (6,5), (7,5), (8,5), (null,null)")
-			tk.MustExec("flush stats_delta")
+			tk.MustExec("flush stats_delta *.*")
 
 			is := dom.InfoSchema()
 			tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))

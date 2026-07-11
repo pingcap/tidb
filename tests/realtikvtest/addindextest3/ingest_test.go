@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	disttestutil "github.com/pingcap/tidb/pkg/dxf/framework/testutil"
 	"github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/lightning/backend/local"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -58,10 +58,10 @@ func TestAddIndexIngestMemoryUsage(t *testing.T) {
 		tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
 	}
 
-	oldRunInTest := local.RunInTest
-	local.RunInTest = true
+	oldRunInTest := ingestctrl.RunInTest
+	ingestctrl.RunInTest = true
 	t.Cleanup(func() {
-		local.RunInTest = oldRunInTest
+		ingestctrl.RunInTest = oldRunInTest
 	})
 
 	tk.MustExec("create table t (a int, b int, c int);")
@@ -81,7 +81,7 @@ func TestAddIndexIngestMemoryUsage(t *testing.T) {
 	tk.MustExec("alter table t add unique index idx1(b);")
 	tk.MustExec("admin check table t;")
 	require.Equal(t, int64(0), ingest.LitMemRoot.CurrentUsage())
-	require.NoError(t, local.LastAlloc.Load().CheckRefCnt())
+	require.NoError(t, ingestctrl.LastAlloc.Load().CheckRefCnt())
 }
 
 func TestAddIndexIngestLimitOneBackend(t *testing.T) {
@@ -134,7 +134,7 @@ func TestAddIndexIngestLimitOneBackend(t *testing.T) {
 	blockOnce := atomic.Bool{}
 	testfailpoint.EnableCall(
 		t,
-		"github.com/pingcap/tidb/pkg/lightning/backend/local/beforeExecuteRegionJob",
+		"github.com/pingcap/tidb/pkg/ingestor/ingestctrl/beforeExecuteRegionJob",
 		func(ctx context.Context) {
 			if !blockOnce.CompareAndSwap(false, true) {
 				return
@@ -505,7 +505,7 @@ func testAddIndexDiskQuotaTS(t *testing.T, tk *testkit.TestKit) {
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/wrapInBeginRollbackAfterFn", func() {
 		counter--
 	})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/ReadyForImportEngine", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/ReadyForImportEngine", func() {
 		assert.Equal(t, counter, 0)
 	})
 	tk.MustExec("alter table t add index idx_test2(b);")
@@ -547,7 +547,7 @@ func TestAddIndexAdvanceWatermarkFailed(t *testing.T) {
 	tk.MustGetErrCode("alter table t add unique index idx(b);", errno.ErrDupEntry)
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/ingest/mockAfterImportAllocTSFailed", "1*return")
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/afterSetTSBeforeImportEngine", "1*return")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/afterSetTSBeforeImportEngine", "1*return")
 	tk.MustGetErrCode("alter table t add unique index idx(b);", errno.ErrDupEntry)
 }
 
@@ -567,10 +567,10 @@ func TestAddIndexTempDirDataRemoved(t *testing.T) {
 	tk.MustExec("create table t (a int);")
 	tk.MustExec("insert into t values (1), (1), (1);")
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/mockErrInMergeSSTs", "1*return(true)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/mockErrInMergeSSTs", "1*return(true)")
 	removeOnce := sync.Once{}
 	removed := false
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/beforeMergeSSTs", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/beforeMergeSSTs", func() {
 		removeOnce.Do(func() {
 			var filesToRemove []string
 			filepath.WalkDir(tempDir, func(path string, d fs.DirEntry, err error) error {
@@ -738,10 +738,10 @@ func TestAddIndexImportFailed(t *testing.T) {
 		tk.MustExec(insertSQL)
 	}
 
-	err := failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/mockWritePeerErr", "1*return")
+	err := failpoint.Enable("github.com/pingcap/tidb/pkg/ingestor/ingestctrl/mockWritePeerErr", "1*return")
 	require.NoError(t, err)
 	tk.MustExec("alter table t add index idx(a);")
-	err = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/mockWritePeerErr")
+	err = failpoint.Disable("github.com/pingcap/tidb/pkg/ingestor/ingestctrl/mockWritePeerErr")
 	require.NoError(t, err)
 	tk.MustExec("admin check table t;")
 }
@@ -803,9 +803,9 @@ func TestFirstLitSlowStart(t *testing.T) {
 	t.Cleanup(func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/ownerResignAfterDispatchLoopCheck"))
 	})
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/slowCreateFS", "return()"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ingestor/ingestctrl/slowCreateFS", "return()"))
 	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/slowCreateFS"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ingestor/ingestctrl/slowCreateFS"))
 	})
 
 	var wg sync.WaitGroup
@@ -872,17 +872,17 @@ func TestIssue55808(t *testing.T) {
 		tk.MustExec("set global tidb_ddl_error_count_limit = default;")
 	}()
 
-	backup := local.MaxWriteAndIngestRetryTimes
-	local.MaxWriteAndIngestRetryTimes = 1
+	backup := ingestctrl.MaxWriteAndIngestRetryTimes
+	ingestctrl.MaxWriteAndIngestRetryTimes = 1
 	t.Cleanup(func() {
-		local.MaxWriteAndIngestRetryTimes = backup
+		ingestctrl.MaxWriteAndIngestRetryTimes = backup
 	})
 
 	tk.MustExec("create table t (a int primary key, b int);")
 	for i := range 4 {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i*10000, i*10000))
 	}
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/doIngestFailed", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/doIngestFailed", "return()")
 	err := tk.ExecToErr("alter table t add index idx(a);")
 	require.ErrorContains(t, err, "injected error")
 }

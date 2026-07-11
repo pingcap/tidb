@@ -36,6 +36,14 @@ var (
 	_ AggFunc = (*countOriginal4JSON)(nil)
 	_ AggFunc = (*countOriginal4VectorFloat32)(nil)
 	_ AggFunc = (*countOriginal4String)(nil)
+
+	_ AggFunc = (*countPartialWithDistinct4Int)(nil)
+	_ AggFunc = (*countPartialWithDistinct4Real)(nil)
+	_ AggFunc = (*countPartialWithDistinct4Decimal)(nil)
+	_ AggFunc = (*countPartialWithDistinct4Duration)(nil)
+	_ AggFunc = (*countPartialWithDistinct4String)(nil)
+	_ AggFunc = (*countPartialWithDistinct)(nil)
+
 	_ AggFunc = (*countOriginalWithDistinct4Int)(nil)
 	_ AggFunc = (*countOriginalWithDistinct4Real)(nil)
 	_ AggFunc = (*countOriginalWithDistinct4Decimal)(nil)
@@ -82,23 +90,32 @@ var (
 	_ AggFunc = (*maxMin4Set)(nil)
 
 	// All the AggFunc implementations for "AVG" are listed here.
-	_ AggFunc = (*avgOriginal4Decimal)(nil)
-	_ AggFunc = (*avgOriginal4DistinctDecimal)(nil)
 	_ AggFunc = (*avgPartial4Decimal)(nil)
+	_ AggFunc = (*avgOriginal4Decimal)(nil)
 
-	_ AggFunc = (*avgOriginal4Float64)(nil)
 	_ AggFunc = (*avgPartial4Float64)(nil)
+	_ AggFunc = (*avgOriginal4Float64)(nil)
+
+	_ AggFunc = (*avgPartial4DistinctDecimal)(nil)
+	_ AggFunc = (*avgPartial4DistinctFloat64)(nil)
+	_ AggFunc = (*avgOriginal4DistinctDecimal)(nil)
 	_ AggFunc = (*avgOriginal4DistinctFloat64)(nil)
 
 	// All the AggFunc implementations for "SUM" are listed here.
-	_ AggFunc = (*sum4DistinctFloat64)(nil)
-	_ AggFunc = (*sum4DistinctDecimal)(nil)
+	_ AggFunc = (*sum4PartialDistinctFloat64)(nil)
+	_ AggFunc = (*sum4PartialDistinct4Decimal)(nil)
+
+	_ AggFunc = (*sum4OriginalDistinct4Float64)(nil)
+	_ AggFunc = (*sum4OriginalDistinct4Decimal)(nil)
+
 	_ AggFunc = (*sum4Decimal)(nil)
 	_ AggFunc = (*sum4Float64)(nil)
 
 	// All the AggFunc implementations for "GROUP_CONCAT" are listed here.
-	_ AggFunc = (*groupConcatDistinct)(nil)
 	_ AggFunc = (*groupConcat)(nil)
+
+	_ AggFunc = (*groupPartialConcatDistinct)(nil)
+	_ AggFunc = (*groupOriginalConcatDistinct)(nil)
 
 	// All the AggFunc implementations for "BIT_OR" are listed here.
 	_ AggFunc = (*bitOrUint64)(nil)
@@ -223,15 +240,16 @@ type baseAggFunc struct {
 	retTp *types.FieldType
 }
 
-func (*baseAggFunc) MergePartialResult(AggFuncUpdateContext, PartialResult, PartialResult) (memDelta int64, err error) {
-	return 0, nil
+func (*baseAggFunc) MergePartialResult(AggFuncUpdateContext, PartialResult, PartialResult) (int64, error) {
+	panic("Not implemented")
 }
 
-func (*baseAggFunc) SerializePartialResult(_ PartialResult, _ *chunk.Chunk, _ *SerializeHelper) {
+func (*baseAggFunc) SerializePartialResult(PartialResult, *chunk.Chunk, *SerializeHelper) {
+	panic("Not implemented")
 }
 
-func (*baseAggFunc) DeserializePartialResult(_ *chunk.Chunk) ([]PartialResult, int64) {
-	return nil, 0
+func (*baseAggFunc) DeserializePartialResult(*chunk.Chunk) ([]PartialResult, int64) {
+	panic("Not implemented")
 }
 
 // SlidingWindowAggFunc is the interface to evaluate the aggregate functions using sliding window.

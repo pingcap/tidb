@@ -33,6 +33,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ddl/bdr"
+	"github.com/pingcap/tidb/pkg/ddl/jobsubmit"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/resourcegroup"
@@ -69,6 +71,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	plannererrors "github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/dbutil"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/filter"
@@ -129,6 +132,7 @@ type Executor interface {
 	CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequenceStmt) error
 	DropSequence(ctx sessionctx.Context, stmt *ast.DropSequenceStmt) (err error)
 	AlterSequence(ctx sessionctx.Context, stmt *ast.AlterSequenceStmt) error
+	CreateMaskingPolicy(ctx sessionctx.Context, stmt *ast.CreateMaskingPolicyStmt) error
 	CreatePlacementPolicy(ctx sessionctx.Context, stmt *ast.CreatePlacementPolicyStmt) error
 	DropPlacementPolicy(ctx sessionctx.Context, stmt *ast.DropPlacementPolicyStmt) error
 	AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.AlterPlacementPolicyStmt) error
@@ -1044,6 +1048,23 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 	if err = checkTableInfoValidWithStmt(metaBuildCtx, tbInfo, s); err != nil {
 		return err
 	}
+
+	// Process region split policies from CREATE TABLE
+	if len(s.SplitIndex) > 0 {
+		for _, splitOpt := range s.SplitIndex {
+			policy, indexName, err := normalizeSplitPolicy(metaBuildCtx.GetExprCtx(), splitOpt, tbInfo)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if indexName == "" {
+				tbInfo.TableSplitPolicy = policy
+			} else {
+				indexInfo := tbInfo.FindIndexByName(indexName)
+				indexInfo.RegionSplitPolicy = policy
+			}
+		}
+	}
+
 	if err = checkTableForeignKeysValid(ctx, is, schema.Name.L, tbInfo); err != nil {
 		return err
 	}
@@ -1706,6 +1727,9 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 			return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Alter Table")
 		}
 	}
+	if err := CheckStorageClassConflictInAlterTableSpecs(validSpecs); err != nil {
+		return err
+	}
 	if isMultiSchemaChanges(validSpecs) && (sctx.GetSessionVars().EnableRowLevelChecksum || vardef.EnableRowLevelChecksum.Load()) {
 		return dbterror.ErrRunMultiSchemaChanges.GenWithStack("Unsupported multi schema change when row level checksum is enabled")
 	}
@@ -1810,6 +1834,42 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 			}
 		case ast.AlterTableDropForeignKey:
 			err = e.DropForeignKey(sctx, ident, ast.NewCIStr(spec.Name))
+		case ast.AlterTableAddMaskingPolicy:
+			if sctx.GetSessionVars().StmtCtx.MultiSchemaInfo != nil {
+				err = dbterror.ErrRunMultiSchemaChanges.FastGenByArgs("masking policy")
+				break
+			}
+			err = e.AddMaskingPolicy(sctx, ident, spec)
+		case ast.AlterTableEnableMaskingPolicy:
+			if sctx.GetSessionVars().StmtCtx.MultiSchemaInfo != nil {
+				err = dbterror.ErrRunMultiSchemaChanges.FastGenByArgs("masking policy")
+				break
+			}
+			err = e.AlterTableMaskingPolicyState(sctx, ident, spec, true)
+		case ast.AlterTableDisableMaskingPolicy:
+			if sctx.GetSessionVars().StmtCtx.MultiSchemaInfo != nil {
+				err = dbterror.ErrRunMultiSchemaChanges.FastGenByArgs("masking policy")
+				break
+			}
+			err = e.AlterTableMaskingPolicyState(sctx, ident, spec, false)
+		case ast.AlterTableDropMaskingPolicy:
+			if sctx.GetSessionVars().StmtCtx.MultiSchemaInfo != nil {
+				err = dbterror.ErrRunMultiSchemaChanges.FastGenByArgs("masking policy")
+				break
+			}
+			err = e.DropMaskingPolicy(sctx, ident, spec)
+		case ast.AlterTableModifyMaskingPolicyExpression:
+			if sctx.GetSessionVars().StmtCtx.MultiSchemaInfo != nil {
+				err = dbterror.ErrRunMultiSchemaChanges.FastGenByArgs("masking policy")
+				break
+			}
+			err = e.ModifyMaskingPolicyExpression(sctx, ident, spec)
+		case ast.AlterTableModifyMaskingPolicyRestrictOn:
+			if sctx.GetSessionVars().StmtCtx.MultiSchemaInfo != nil {
+				err = dbterror.ErrRunMultiSchemaChanges.FastGenByArgs("masking policy")
+				break
+			}
+			err = e.ModifyMaskingPolicyRestrictOn(sctx, ident, spec)
 		case ast.AlterTableModifyColumn:
 			err = e.ModifyColumn(ctx, sctx, ident, spec)
 		case ast.AlterTableChangeColumn:
@@ -1825,6 +1885,10 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 		case ast.AlterTablePartition:
 			err = e.AlterTablePartitioning(sctx, ident, spec)
 		case ast.AlterTableOption:
+			engineAttribute, hasEngineAttribute, engineAttributeErr := GetEngineAttributeFromStorageClassTableOptions(spec.Options)
+			if engineAttributeErr != nil {
+				return engineAttributeErr
+			}
 			var placementPolicyRef *model.PolicyRefInfo
 			for i, opt := range spec.Options {
 				switch opt.Tp {
@@ -1865,8 +1929,7 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 						Name: ast.NewCIStr(opt.StrValue),
 					}
 				case ast.TableOptionEngine:
-				case ast.TableOptionEngineAttribute:
-					err = dbterror.ErrUnsupportedEngineAttribute
+				case ast.TableOptionEngineAttribute, ast.TableOptionStorageClass:
 				case ast.TableOptionRowFormat:
 				case ast.TableOptionTTL, ast.TableOptionTTLEnable, ast.TableOptionTTLJobInterval:
 					var ttlInfo *model.TTLInfo
@@ -1889,6 +1952,13 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 					err = dbterror.ErrUnsupportedAlterTableOption
 				}
 
+				if err != nil {
+					return errors.Trace(err)
+				}
+			}
+
+			if hasEngineAttribute {
+				err = e.AlterTableEngineAttribute(sctx, ident, engineAttribute)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -1932,6 +2002,8 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 		case ast.AlterTableDisableKeys, ast.AlterTableEnableKeys:
 			// Nothing to do now, see https://github.com/pingcap/tidb/issues/1051
 			// MyISAM specific
+		case ast.AlterTableSplitIndex:
+			err = e.AlterTableSetRegionSplitPolicy(sctx, ident, spec.SplitIndex)
 		case ast.AlterTableRemoveTTL:
 			// the parser makes sure we have only one `ast.AlterTableRemoveTTL` in an alter statement
 			err = e.AlterTableRemoveTTL(sctx, ident)
@@ -2172,7 +2244,7 @@ func (e *executor) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.Alt
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if bdrRole == string(ast.BDRRolePrimary) && deniedByBDRWhenAddColumn(specNewColumn.Options) && !filter.IsSystemSchema(schema.Name.L) {
+	if bdr.IsAddColumnDenied(ast.BDRRole(bdrRole), specNewColumn.Options) && !filter.IsSystemSchema(schema.Name.L) {
 		return dbterror.ErrBDRRestrictedDDL.FastGenByArgs(bdrRole)
 	}
 
@@ -2244,13 +2316,7 @@ func (e *executor) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, s
 		}
 	}
 
-	// partInfo contains only the new added partition, we have to combine it with the
-	// old partitions to check all partitions is strictly increasing.
-	clonedMeta := meta.Clone()
-	tmp := *partInfo
-	tmp.Definitions = append(pi.Definitions, tmp.Definitions...)
-	clonedMeta.Partition = &tmp
-	if err := checkPartitionDefinitionConstraints(ctx.GetExprCtx(), clonedMeta); err != nil {
+	if err := CheckAndUpdateAddedPartitionDefinitions(ctx.GetExprCtx(), meta, partInfo, len(pi.Definitions)); err != nil {
 		if dbterror.ErrSameNamePartition.Equal(err) && spec.IfNotExists {
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			return nil
@@ -2622,6 +2688,13 @@ func checkReorgPartitionDefs(ctx sessionctx.Context, action model.ActionType, tb
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("partition type")
 	}
 	if err := checkPartitionDefinitionConstraints(ctx.GetExprCtx(), clonedMeta); err != nil {
+		return errors.Trace(err)
+	}
+	definitionsOffset := 0
+	if action == model.ActionReorganizePartition {
+		definitionsOffset = firstPartIdx
+	}
+	if err := updatePartInfoDefinitionsFromFinalDefinitions(clonedMeta, partInfo, definitionsOffset); err != nil {
 		return errors.Trace(err)
 	}
 	if action == model.ActionReorganizePartition {
@@ -3350,6 +3423,12 @@ func (e *executor) ChangeColumn(ctx context.Context, sctx sessionctx.Context, id
 		}
 		return errors.Trace(err)
 	}
+
+	// Reject modify/change column to unsupported type if the column has a masking policy.
+	if err := checkMaskingPolicyOnModifyColumn(e.infoCache.GetLatest(), ident, spec.OldColumnName.Name, specNewColumn); err != nil {
+		return errors.Trace(err)
+	}
+
 	jobW.AddSystemVars(vardef.TiDBEnableDDLAnalyze, getEnableDDLAnalyze(sctx))
 	jobW.AddSystemVars(vardef.TiDBAnalyzeVersion, getAnalyzeVersion(sctx))
 
@@ -3360,6 +3439,38 @@ func (e *executor) ChangeColumn(ctx context.Context, sctx sessionctx.Context, id
 		return nil
 	}
 	return errors.Trace(err)
+}
+
+// checkMaskingPolicyOnModifyColumn rejects MODIFY/CHANGE COLUMN to an unsupported type
+// if the column currently has a masking policy. This check is done at the SQL layer
+// before the DDL job is submitted, so the error is returned immediately.
+func checkMaskingPolicyOnModifyColumn(
+	is infoschema.InfoSchema,
+	ident ast.Ident,
+	originalColName ast.CIStr,
+	specNewColumn *ast.ColumnDef,
+) error {
+	if specNewColumn == nil || specNewColumn.Tp == nil {
+		return nil
+	}
+	tbl, err := is.TableByName(context.Background(), ident.Schema, ident.Name)
+	if err != nil {
+		return nil // table not found, let later checks handle it
+	}
+	col := table.FindCol(tbl.VisibleCols(), originalColName.L)
+	if col == nil {
+		return nil // column not found, let later checks handle it
+	}
+	// Check if the column has a masking policy.
+	_, ok := is.MaskingPolicyByTableColumn(tbl.Meta().ID, col.ID)
+	if !ok {
+		return nil // no masking policy, allow any type change
+	}
+	// Build a temporary ColumnInfo for the new type and validate it.
+	newCol := &model.ColumnInfo{
+		FieldType: *specNewColumn.Tp,
+	}
+	return checkMaskingPolicyColumn(newCol)
 }
 
 // RenameColumn renames an existing column.
@@ -3452,6 +3563,12 @@ func (e *executor) ModifyColumn(ctx context.Context, sctx sessionctx.Context, id
 		}
 		return errors.Trace(err)
 	}
+
+	// Reject modify/change column to unsupported type if the column has a masking policy.
+	if err := checkMaskingPolicyOnModifyColumn(e.infoCache.GetLatest(), ident, originalColName, specNewColumn); err != nil {
+		return errors.Trace(err)
+	}
+
 	jobW.AddSystemVars(vardef.TiDBEnableDDLAnalyze, getEnableDDLAnalyze(sctx))
 	jobW.AddSystemVars(vardef.TiDBAnalyzeVersion, getAnalyzeVersion(sctx))
 
@@ -3695,14 +3812,17 @@ func (e *executor) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast
 	if !shouldModifyTiFlashReplica(tbReplicaInfo, replicaInfo) {
 		return nil
 	}
-
 	if replicaInfo.Hypo {
 		return e.setHypoTiFlashReplica(ctx, schema.Name, tb.Meta().Name, replicaInfo)
 	}
 
-	err = checkTiFlashReplicaCount(ctx, replicaInfo.Count)
-	if err != nil {
-		return errors.Trace(err)
+	checkTiFlash := config.GetGlobalConfig().CSE.IsTiFlashEnabled()
+
+	if checkTiFlash {
+		err = checkTiFlashReplicaCount(ctx, replicaInfo.Count)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	job := &model.Job{
@@ -3877,6 +3997,10 @@ func isTableTiFlashSupported(dbName ast.CIStr, tbl *model.TableInfo) error {
 }
 
 func checkTiFlashReplicaCount(ctx sessionctx.Context, replicaCount uint64) error {
+	tiflashEnabled := config.GetGlobalConfig().CSE.IsTiFlashEnabled()
+	if !tiflashEnabled {
+		return nil
+	}
 	// Check the tiflash replica count should be less than the total tiflash stores.
 	tiflashStoreCnt, err := infoschema.GetTiFlashStoreCount(ctx.GetStore())
 	if err != nil {
@@ -4190,7 +4314,7 @@ func (e *executor) dropTableObject(
 
 			tempTableType := tableInfo.Meta().TempTableType
 			if config.CheckTableBeforeDrop && tempTableType == model.TempTableNone {
-				err := adminCheckTableBeforeDrop(ctx, fullti)
+				err := adminCheckTableBeforeDrop(e.sessPool, fullti)
 				if err != nil {
 					return err
 				}
@@ -4265,35 +4389,44 @@ func (e *executor) dropTableObject(
 // adminCheckTableBeforeDrop runs `admin check table` for the table to be dropped.
 // Actually this function doesn't do anything specific for `DROP TABLE`, but to avoid
 // using it in other places by mistake, it's named like this.
-func adminCheckTableBeforeDrop(ctx sessionctx.Context, fullti ast.Ident) error {
+func adminCheckTableBeforeDrop(sessPool *sess.Pool, fullti ast.Ident) error {
 	logutil.DDLLogger().Warn("admin check table before drop",
 		zap.String("database", fullti.Schema.O),
 		zap.String("table", fullti.Name.O),
 	)
-	exec := ctx.GetRestrictedSQLExecutor()
 	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 
-	// `tidb_enable_fast_table_check` is already the default value, and some feature (e.g. partial index)
-	// doesn't support admin check with `tidb_enable_fast_table_check = OFF`, so we just set it to `ON` here.
-	// TODO: set the value of `tidb_enable_fast_table_check` to 'ON' for all internal sessions if it's OK.
-	originalFastTableCheck := ctx.GetSessionVars().FastCheckTable
-	_, _, err := exec.ExecRestrictedSQL(internalCtx, nil, "set tidb_enable_fast_table_check = 'ON';")
+	sctx, err := sessPool.Get()
 	if err != nil {
+		return err
+	}
+	var discardErr error
+	defer func() {
+		if discardErr == nil {
+			sessPool.Put(sctx)
+			return
+		}
+		logutil.DDLLogger().Warn("discard internal session because tidb_enable_fast_table_check change failed", zap.Error(discardErr))
+		sessPool.Destroy(sctx)
+	}()
+	s := sess.NewSession(sctx)
+
+	// Some features (e.g. partial index) doesn't support admin check with `tidb_enable_fast_table_check = OFF`,
+	// so we temporarily enable it in the internal DDL session and restore it afterward.
+	originalFastTableCheck := sctx.GetSessionVars().FastCheckTable
+	if err := sctx.GetSessionVars().SetSystemVar(vardef.TiDBFastCheckTable, vardef.On); err != nil {
+		discardErr = err
 		return err
 	}
 	if !originalFastTableCheck {
 		defer func() {
-			_, _, err = exec.ExecRestrictedSQL(internalCtx, nil, "set tidb_enable_fast_table_check = 'OFF';")
-			if err != nil {
-				logutil.DDLLogger().Warn("set tidb_enable_fast_table_check = 'OFF' failed", zap.Error(err))
+			if err := sctx.GetSessionVars().SetSystemVar(vardef.TiDBFastCheckTable, vardef.Off); err != nil {
+				discardErr = err
 			}
 		}()
 	}
-	_, _, err = exec.ExecRestrictedSQL(internalCtx, nil, "admin check table %n.%n", fullti.Schema.O, fullti.Name.O)
-	if err != nil {
-		return err
-	}
-	return nil
+	_, err = s.Execute(internalCtx, "admin check table %n.%n", "admin_check_table_before_drop", fullti.Schema.O, fullti.Name.O)
+	return err
 }
 
 // DropTable will proceed even if some table in the list does not exists.
@@ -4806,9 +4939,6 @@ func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, ind
 	}
 
 	tblInfo := t.Meta()
-	if err := checkTableTypeForColumnarIndex(tblInfo); err != nil {
-		return errors.Trace(err)
-	}
 
 	var columnarIndexType model.ColumnarIndexType
 	switch indexOption.Tp {
@@ -4820,6 +4950,15 @@ func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, ind
 		columnarIndexType = model.ColumnarIndexTypeFulltext
 	default:
 		return dbterror.ErrUnsupportedIndexType.GenWithStackByArgs(indexOption.Tp)
+	}
+	if columnarIndexType == model.ColumnarIndexTypeFulltext {
+		if err := checkFullTextSupportedInStarter(); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	if err := checkTableTypeForColumnarIndex(tblInfo); err != nil {
+		return errors.Trace(err)
 	}
 
 	metaBuildCtx := NewMetaBuildContextWithSctx(ctx)
@@ -5046,6 +5185,10 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		OpType: model.OpAddIndex,
 	}
 
+	// Check if we should warn about missing region split policy
+	// If other indexes already have region split policy, warn user to set policy for new index
+	checkAndWarnMissingRegionSplitPolicy(ctx, tblInfo, indexName)
+
 	err = e.doDDLJob2(ctx, job, args)
 	// key exists, but if_not_exists flags is true, so we ignore this error.
 	if dbterror.ErrDupKeyName.Equal(err) && ifNotExists {
@@ -5247,7 +5390,7 @@ func (e *executor) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName
 	if err != nil {
 		return err
 	}
-	if model.FindIndexByColumns(t.Meta(), t.Meta().Indices, fkInfo.Cols...) == nil {
+	if model.FindIndexByColumnsForForeignKey(t.Meta(), t.Meta().Indices, fkInfo.Cols...) == nil {
 		// Need to auto create index for fk cols
 		if ctx.GetSessionVars().StmtCtx.MultiSchemaInfo == nil {
 			ctx.GetSessionVars().StmtCtx.MultiSchemaInfo = model.NewMultiSchemaInfo()
@@ -5747,32 +5890,23 @@ func (e *executor) AlterTableMode(sctx sessionctx.Context, args *model.AlterTabl
 			schema.Name, fmt.Sprintf("TableID: %d", args.TableID))
 	}
 
-	ok = validateTableMode(table.Meta().Mode, args.TableMode)
-	if !ok {
-		return infoschema.ErrInvalidTableModeSet.GenWithStackByArgs(table.Meta().Mode, args.TableMode, table.Meta().Name.O)
+	job, jobArgs, noop, err := jobsubmit.BuildAlterTableModeJob(sctx, model.AlterTableModeTarget{
+		SchemaID:    args.SchemaID,
+		SchemaName:  schema.Name,
+		TableID:     args.TableID,
+		TableName:   table.Meta().Name,
+		CurrentMode: table.Meta().Mode,
+		TargetMode:  args.TableMode,
+	})
+	if err != nil {
+		return errors.Trace(err)
 	}
-	if table.Meta().Mode == args.TableMode {
+	if noop {
 		return nil
 	}
 
-	job := &model.Job{
-		Version:        model.JobVersion2,
-		SchemaID:       args.SchemaID,
-		TableID:        args.TableID,
-		SchemaName:     schema.Name.O,
-		Type:           model.ActionAlterTableMode,
-		BinlogInfo:     &model.HistoryInfo{},
-		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
-		SQLMode:        sctx.GetSessionVars().SQLMode,
-		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
-			{
-				Database: schema.Name.L,
-				Table:    table.Meta().Name.L,
-			},
-		},
-	}
 	sctx.SetValue(sessionctx.QueryString, "skip")
-	err := e.doDDLJob2(sctx, job, args)
+	err = e.doDDLJob2(sctx, job, jobArgs)
 	return errors.Trace(err)
 }
 
@@ -6068,7 +6202,7 @@ func (e *executor) AlterTableAttributes(ctx sessionctx.Context, ident ast.Ident,
 		return dbterror.ErrInvalidAttributesSpec.GenWithStackByArgs(err)
 	}
 	ids := getIDs([]*model.TableInfo{meta})
-	rule.Reset(schema.Name.L, meta.Name.L, "", ids...)
+	rule.Reset(e.store.GetCodec(), schema.Name.L, meta.Name.L, "", ids...)
 
 	job := &model.Job{
 		Version:        model.GetJobVerInUse(),
@@ -6113,7 +6247,7 @@ func (e *executor) AlterTablePartitionAttributes(ctx sessionctx.Context, ident a
 	if err != nil {
 		return dbterror.ErrInvalidAttributesSpec.GenWithStackByArgs(err)
 	}
-	rule.Reset(schema.Name.L, meta.Name.L, spec.PartitionNames[0].L, partitionID)
+	rule.Reset(e.store.GetCodec(), schema.Name.L, meta.Name.L, spec.PartitionNames[0].L, partitionID)
 
 	pdLabelRule := (*pdhttp.LabelRule)(rule)
 	job := &model.Job{
@@ -6351,6 +6485,318 @@ func (e *executor) AlterResourceGroup(ctx sessionctx.Context, stmt *ast.AlterRes
 	args := &model.ResourceGroupArgs{RGInfo: newGroupInfo}
 	err = e.doDDLJob2(ctx, job, args)
 	return err
+}
+
+func (e *executor) CreateMaskingPolicy(ctx sessionctx.Context, stmt *ast.CreateMaskingPolicyStmt) error {
+	if stmt.OrReplace && stmt.IfNotExists {
+		return dbterror.ErrWrongUsage.GenWithStackByArgs("OR REPLACE", "IF NOT EXISTS")
+	}
+
+	tableIdent := ast.Ident{Schema: stmt.Table.Schema, Name: stmt.Table.Name}
+	if tableIdent.Schema.L == "" {
+		schemaName := strings.ToLower(ctx.GetSessionVars().CurrentDB)
+		if schemaName == "" {
+			return errors.Trace(plannererrors.ErrNoDB)
+		}
+		tableIdent.Schema = ast.NewCIStr(schemaName)
+	}
+	schema, tbl, err := e.getSchemaAndTableByIdent(tableIdent)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	policyInfo, err := buildMaskingPolicyInfo(
+		ctx,
+		schema,
+		tbl,
+		stmt.PolicyName,
+		stmt.Column.Name,
+		stmt.Expr,
+		stmt.RestrictOps,
+		stmt.MaskingPolicyState,
+	)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	var onExist OnExist
+	switch {
+	case stmt.IfNotExists:
+		onExist = OnExistIgnore
+	case stmt.OrReplace:
+		onExist = OnExistReplace
+	default:
+		onExist = OnExistError
+	}
+	return e.createMaskingPolicyWithInfo(ctx, tbl.Meta().ID, tbl.Meta().Columns, policyInfo, onExist)
+}
+
+func (e *executor) AddMaskingPolicy(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	schema, tbl, err := e.getSchemaAndTableByIdent(ident)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	policyInfo, err := buildMaskingPolicyInfo(
+		ctx,
+		schema,
+		tbl,
+		spec.MaskingPolicyName,
+		spec.MaskingPolicyColumn.Name,
+		spec.MaskingPolicyExpr,
+		spec.MaskingPolicyRestrictOps,
+		spec.MaskingPolicyState,
+	)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return e.createMaskingPolicyWithInfo(ctx, tbl.Meta().ID, tbl.Meta().Columns, policyInfo, OnExistError)
+}
+
+func (e *executor) getMaskingPolicyByNameForTable(tableID int64, cols []*model.ColumnInfo, policyName ast.CIStr) (*model.MaskingPolicyInfo, bool) {
+	is := e.infoCache.GetLatest()
+	for _, col := range cols {
+		policy, ok := is.MaskingPolicyByTableColumn(tableID, col.ID)
+		if ok && policy != nil && policy.Name.L == policyName.L {
+			return policy, true
+		}
+	}
+	return nil, false
+}
+
+func (e *executor) AlterTableMaskingPolicyState(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec, enabled bool) error {
+	_, tbl, err := e.getSchemaAndTableByIdent(ident)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	policyName := spec.MaskingPolicyName
+	policy, ok := e.getMaskingPolicyByNameForTable(tbl.Meta().ID, tbl.Meta().Columns, policyName)
+	if !ok {
+		return errors.Errorf("masking policy %s doesn't exist", policyName.O)
+	}
+
+	status := model.MaskingPolicyStatusEnable
+	if !enabled {
+		status = model.MaskingPolicyStatusDisable
+	}
+	newPolicy := policy.Clone()
+	newPolicy.Status = status
+	newPolicy.UpdatedAt = time.Now()
+
+	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
+		SchemaID:       policy.ID,
+		SchemaName:     policy.DBName.L,
+		TableID:        policy.TableID,
+		TableName:      policy.TableName.L,
+		Type:           model.ActionAlterMaskingPolicy,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
+			{
+				Database: policy.DBName.L,
+				Table:    policy.TableName.L,
+			},
+			{
+				Policy: policy.Name.L,
+			},
+		},
+		SQLMode: ctx.GetSessionVars().SQLMode,
+	}
+	args := &model.MaskingPolicyArgs{
+		Policy:   newPolicy,
+		PolicyID: policy.ID,
+	}
+	return errors.Trace(e.doDDLJob2(ctx, job, args))
+}
+
+func (e *executor) DropMaskingPolicy(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	_, tbl, err := e.getSchemaAndTableByIdent(ident)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	policyName := spec.MaskingPolicyName
+	policy, ok := e.getMaskingPolicyByNameForTable(tbl.Meta().ID, tbl.Meta().Columns, policyName)
+	if !ok {
+		return errors.Errorf("masking policy %s doesn't exist", policyName.O)
+	}
+
+	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
+		SchemaID:       policy.ID,
+		SchemaName:     policy.DBName.L,
+		TableID:        policy.TableID,
+		TableName:      policy.TableName.L,
+		Type:           model.ActionDropMaskingPolicy,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
+			{
+				Database: policy.DBName.L,
+				Table:    policy.TableName.L,
+			},
+			{
+				Policy: policy.Name.L,
+			},
+		},
+		SQLMode: ctx.GetSessionVars().SQLMode,
+	}
+	args := &model.MaskingPolicyArgs{
+		PolicyName: policy.Name,
+		PolicyID:   policy.ID,
+	}
+	return errors.Trace(e.doDDLJob2(ctx, job, args))
+}
+
+// ModifyMaskingPolicyExpression modifies the expression of an existing masking policy.
+func (e *executor) ModifyMaskingPolicyExpression(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	schema, tbl, err := e.getSchemaAndTableByIdent(ident)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	policyName := spec.MaskingPolicyName
+	policy, ok := e.getMaskingPolicyByNameForTable(tbl.Meta().ID, tbl.Meta().Columns, policyName)
+	if !ok {
+		return errors.Errorf("masking policy %s doesn't exist", policyName.O)
+	}
+
+	// Validate and restore the new expression.
+	exprStr, err := restoreMaskingExpression(spec.MaskingPolicyExpr)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if err := validateMaskingPolicyExpression(ctx, tbl.Meta(), table.FindCol(tbl.Cols(), policy.ColumnName.L).ColumnInfo, exprStr); err != nil {
+		return errors.Trace(err)
+	}
+
+	newPolicy := policy.Clone()
+	newPolicy.Expression = exprStr
+	newPolicy.MaskingType = maskingPolicyTypeFromExpr(spec.MaskingPolicyExpr)
+	newPolicy.UpdatedAt = time.Now()
+
+	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
+		SchemaID:       policy.ID,
+		SchemaName:     schema.Name.L,
+		TableID:        policy.TableID,
+		TableName:      policy.TableName.L,
+		Type:           model.ActionAlterMaskingPolicy,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
+			{
+				Database: schema.Name.L,
+				Table:    policy.TableName.L,
+			},
+			{
+				Policy: policy.Name.L,
+			},
+		},
+		SQLMode: ctx.GetSessionVars().SQLMode,
+	}
+	args := &model.MaskingPolicyArgs{
+		Policy:   newPolicy,
+		PolicyID: policy.ID,
+	}
+	return errors.Trace(e.doDDLJob2(ctx, job, args))
+}
+
+// ModifyMaskingPolicyRestrictOn modifies the restrict-on settings of an existing masking policy.
+func (e *executor) ModifyMaskingPolicyRestrictOn(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	_, tbl, err := e.getSchemaAndTableByIdent(ident)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	policyName := spec.MaskingPolicyName
+	policy, ok := e.getMaskingPolicyByNameForTable(tbl.Meta().ID, tbl.Meta().Columns, policyName)
+	if !ok {
+		return errors.Errorf("masking policy %s doesn't exist", policyName.O)
+	}
+
+	newPolicy := policy.Clone()
+	newPolicy.RestrictOps = spec.MaskingPolicyRestrictOps
+	newPolicy.UpdatedAt = time.Now()
+
+	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
+		SchemaID:       policy.ID,
+		SchemaName:     policy.DBName.L,
+		TableID:        policy.TableID,
+		TableName:      policy.TableName.L,
+		Type:           model.ActionAlterMaskingPolicy,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
+			{
+				Database: policy.DBName.L,
+				Table:    policy.TableName.L,
+			},
+			{
+				Policy: policy.Name.L,
+			},
+		},
+		SQLMode: ctx.GetSessionVars().SQLMode,
+	}
+	args := &model.MaskingPolicyArgs{
+		Policy:   newPolicy,
+		PolicyID: policy.ID,
+	}
+	return errors.Trace(e.doDDLJob2(ctx, job, args))
+}
+
+func (e *executor) createMaskingPolicyWithInfo(
+	ctx sessionctx.Context,
+	tableID int64,
+	cols []*model.ColumnInfo,
+	policy *model.MaskingPolicyInfo,
+	onExist OnExist,
+) error {
+	is := e.infoCache.GetLatest()
+	if existPolicy, ok := e.getMaskingPolicyByNameForTable(tableID, cols, policy.Name); ok {
+		if existPolicy.ColumnID != policy.ColumnID {
+			return errors.Errorf("masking policy %s already exists on another column", existPolicy.Name.O)
+		}
+		err := errors.Errorf("masking policy %s already exists", policy.Name.O)
+		switch onExist {
+		case OnExistIgnore:
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			return nil
+		case OnExistError:
+			return err
+		}
+	}
+	if existPolicy, ok := is.MaskingPolicyByTableColumn(policy.TableID, policy.ColumnID); ok && existPolicy.Name.L != policy.Name.L {
+		return errors.Errorf("masking policy already exists on column %s", existPolicy.ColumnName.O)
+	}
+
+	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
+		SchemaName:     policy.DBName.L,
+		TableID:        policy.TableID,
+		TableName:      policy.TableName.L,
+		Type:           model.ActionCreateMaskingPolicy,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
+			{
+				Database: policy.DBName.L,
+				Table:    policy.TableName.L,
+			},
+			{
+				Policy: policy.Name.L,
+			},
+		},
+		SQLMode: ctx.GetSessionVars().SQLMode,
+	}
+	args := &model.MaskingPolicyArgs{
+		Policy:         policy,
+		ReplaceOnExist: onExist == OnExistReplace,
+	}
+	err := e.doDDLJob2(ctx, job, args)
+	if onExist == OnExistIgnore && meta.ErrMaskingPolicyExists.Equal(err) {
+		ctx.GetSessionVars().StmtCtx.AppendNote(err)
+		return nil
+	}
+	return errors.Trace(err)
 }
 
 func (e *executor) CreatePlacementPolicy(ctx sessionctx.Context, stmt *ast.CreatePlacementPolicyStmt) (err error) {
@@ -6917,6 +7363,24 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 			continue
 		}
 		if historyJob == nil {
+			currentJob, getCurrentJobErr := e.getCurrentDDLJobByID(jobID)
+			if getCurrentJobErr != nil {
+				logutil.DDLLogger().Warn("get current DDL job failed, check again", zap.Error(getCurrentJobErr))
+				continue
+			}
+			if currentJob != nil && currentJob.IsPausedBySystemForKVDiskFull() {
+				logutil.DDLLogger().Info("DDL job is auto-paused because a storage node disk is full", zap.Int64("jobID", jobID))
+				if currentJob.Error != nil {
+					err = errors.Trace(currentJob.Error)
+					return err
+				}
+				message := ""
+				if currentJob.PauseReason != nil {
+					message = currentJob.PauseReason.Message
+				}
+				err = dbterror.ErrDDLAutoPausedByKVDiskFull.GenWithStackByArgs(jobID, message)
+				return err
+			}
 			logutil.DDLLogger().Debug("DDL job is not in history, maybe not run", zap.Int64("jobID", jobID))
 			continue
 		}
@@ -6954,6 +7418,22 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 		}
 		panic("When the state is JobStateRollbackDone or JobStateCancelled, historyJob.Error should never be nil")
 	}
+}
+
+func (e *executor) getCurrentDDLJobByID(jobID int64) (*model.Job, error) {
+	se, err := e.sessPool.Get()
+	if err != nil {
+		return nil, err
+	}
+	defer e.sessPool.Put(se)
+	jobs, err := getJobsBySQL(context.Background(), sess.NewSession(se), fmt.Sprintf("job_id = %d", jobID))
+	if err != nil {
+		return nil, err
+	}
+	if len(jobs) == 0 {
+		return nil, nil
+	}
+	return jobs[0], nil
 }
 
 // HandleLockTablesOnSuccessSubmit handles the table lock for the job which is submitted
@@ -7068,6 +7548,7 @@ func getJobCheckInterval(action model.ActionType, i int) (time.Duration, bool) {
 // NewDDLReorgMeta create a DDL ReorgMeta.
 func NewDDLReorgMeta(ctx sessionctx.Context) *model.DDLReorgMeta {
 	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
+	useNewCollate := collate.NewCollationEnabled()
 	return &model.DDLReorgMeta{
 		SQLMode:           ctx.GetSessionVars().SQLMode,
 		Warnings:          make(map[errors.ErrorID]*terror.Error),
@@ -7075,6 +7556,7 @@ func NewDDLReorgMeta(ctx sessionctx.Context) *model.DDLReorgMeta {
 		Location:          &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
 		ResourceGroupName: ctx.GetSessionVars().StmtCtx.ResourceGroupName,
 		Version:           model.CurrentReorgMetaVersion,
+		UseNewCollate:     &useNewCollate,
 	}
 }
 
@@ -7146,4 +7628,58 @@ func isReservedSchemaObjInNextGen(id int64) bool {
 		failpoint.Return(false)
 	})
 	return kerneltype.IsNextGen() && metadef.IsReservedID(id)
+}
+
+// AlterTableSetRegionSplitPolicy sets persistent region split policy for table
+func (e *executor) AlterTableSetRegionSplitPolicy(ctx sessionctx.Context, ident ast.Ident, splitOpt *ast.SplitIndexOption) error {
+	schema, tb, err := e.getSchemaAndTableByIdent(ident)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	meta := tb.Meta()
+
+	policy, indexName, err := normalizeSplitPolicy(ctx.GetExprCtx(), splitOpt, tb.Meta())
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
+		SchemaID:       schema.ID,
+		TableID:        meta.ID,
+		SchemaName:     schema.Name.L,
+		TableName:      meta.Name.L,
+		Type:           model.ActionAlterTableSetRegionSplitPolicy,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
+		SessionVars:    make(map[string]string),
+	}
+	job.AddSystemVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
+
+	args := &model.AlterTableSetRegionSplitPolicyArgs{
+		IndexName: indexName,
+		Policy:    policy,
+	}
+	return e.doDDLJob2(ctx, job, args)
+}
+
+// checkAndWarnMissingRegionSplitPolicy checks if table has other indexes with region split policy,
+// and warns user to set policy for newly created index.
+func checkAndWarnMissingRegionSplitPolicy(ctx sessionctx.Context, tblInfo *model.TableInfo, newIndexName ast.CIStr) {
+	// Check if any existing index has RegionSplitPolicy
+	hasExistingPolicy := false
+	for _, idx := range tblInfo.Indices {
+		if idx.RegionSplitPolicy != nil {
+			hasExistingPolicy = true
+			break
+		}
+	}
+
+	// If existing indexes have region split policy, warn about new index
+	if hasExistingPolicy {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError(
+			"It is recommended to add a region split strategy to the new index '" + newIndexName.O + "' to avoid write hotspots"))
+	}
 }

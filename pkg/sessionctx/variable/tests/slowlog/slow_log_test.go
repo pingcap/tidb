@@ -155,6 +155,21 @@ func TestMatchSpecialTypeConditions(t *testing.T) {
 		accessor.Setter(childCtx, nil, items)
 		checkRet(true, slowlogrule.SlowLogCondition{Field: variable.SlowLogKVTotal, Threshold: 0.00000001})
 		checkRet(true, slowlogrule.SlowLogCondition{Field: variable.SlowLogKVTotal, Threshold: 0.0})
+
+		t.Run("setter snapshots kv exec details", func(t *testing.T) {
+			items := &variable.SlowQueryLogItems{}
+			tikvExecDetail := util.ExecDetails{
+				WaitKVRespDuration: (10 * time.Second).Nanoseconds(),
+			}
+			accessor := variable.SlowLogRuleFieldAccessors[strings.ToLower(variable.SlowLogKVTotal)]
+			accessor.Setter(context.WithValue(context.Background(), util.ExecDetailsKey, &tikvExecDetail), nil, items)
+			tikvExecDetail.WaitKVRespDuration = (20 * time.Second).Nanoseconds()
+
+			require.NotNil(t, items.KVExecDetail)
+			require.Equal(t, (10 * time.Second).Nanoseconds(), items.KVExecDetail.WaitKVRespDuration)
+			require.True(t, accessor.Match(nil, items, 9.0))
+			require.False(t, accessor.Match(nil, items, 11.0))
+		})
 	})
 
 	t.Run("execdetails.ExecDetails type", func(t *testing.T) {

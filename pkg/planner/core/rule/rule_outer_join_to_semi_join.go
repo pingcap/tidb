@@ -385,7 +385,12 @@ func generateProjectForConvertAntiJoin(p *logicalop.LogicalJoin, innerSchSet *in
 	projExprs := make([]expression.Expression, 0, len(parentNodeSchema.Columns))
 	for _, c := range parentNodeSchema.Columns {
 		if innerSchSet.Has(int(c.UniqueID)) {
-			projExprs = append(projExprs, expression.NewNull())
+			// Keep null-extended inner columns aligned with the parent schema type.
+			// NewNull() defaults to TINYINT, while the original column can have
+			// another type and must become nullable after the outer join rewrite.
+			retType := c.RetType.Clone()
+			retType.DelFlag(mysql.NotNullFlag)
+			projExprs = append(projExprs, expression.NewNullWithFieldType(retType))
 		} else {
 			projExprs = append(projExprs, c.Clone())
 		}

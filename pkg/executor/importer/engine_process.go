@@ -19,7 +19,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"go.uber.org/zap"
@@ -28,7 +27,7 @@ import (
 // ProcessChunk processes a chunk, and write kv pairs to dataEngine and indexEngine.
 func ProcessChunk(
 	ctx context.Context,
-	chunk *checkpoints.ChunkCheckpoint,
+	chunk *Chunk,
 	tableImporter *TableImporter,
 	dataEngine, indexEngine *backend.OpenedEngine,
 	logger *zap.Logger,
@@ -72,7 +71,7 @@ func ProcessChunk(
 // ProcessChunkWithWriter processes a chunk, and write kv pairs to dataWriter and indexWriter.
 func ProcessChunkWithWriter(
 	ctx context.Context,
-	chunk *checkpoints.ChunkCheckpoint,
+	chunk *Chunk,
 	tableImporter *TableImporter,
 	dataWriter, indexWriter backend.EngineWriter,
 	logger *zap.Logger,

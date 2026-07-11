@@ -54,7 +54,7 @@ import (
 func (w *worker) onAddColumn(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	// Handle the rolling back job.
 	if job.IsRollingback() {
-		ver, err = onDropColumn(jobCtx, job)
+		ver, err = w.onDropColumn(jobCtx, job)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}

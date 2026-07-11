@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"math"
 	"net/http"
@@ -43,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/operation"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/registry"
 	"github.com/pingcap/tidb/br/pkg/restore"
@@ -51,11 +53,13 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/stream"
+	"github.com/pingcap/tidb/br/pkg/stream/crr/service"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	advancercfg "github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/daemon"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -87,6 +91,8 @@ const (
 	flagStreamEndTS        = "end-ts"
 	flagGCSafePointTTS     = "gc-ttl"
 	flagMessage            = "message"
+
+	resumeStateFileName = "crr-checkpoint/resume-state.json"
 
 	truncateLockPath   = "truncating.lock"
 	hintOnTruncateLock = "There might be another truncate task running, or a truncate task that didn't exit properly. " +
@@ -342,7 +348,7 @@ type streamMgr struct {
 }
 
 func NewStreamMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue, isStreamStart bool) (*streamMgr, error) {
-	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
+	mgr, err := NewMgr(ctx, g, cfg.KeyspaceName, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
 		cfg.CheckRequirements, false, conn.StreamVersionChecker)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -966,7 +972,7 @@ func RunStreamAdvancer(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	defer cancel()
 	log.Info("starting", zap.String("cmd", cmdName))
 
-	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
+	mgr, err := NewMgr(ctx, g, cfg.KeyspaceName, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
 		cfg.CheckRequirements, false, conn.StreamVersionChecker)
 	if err != nil {
 		return err
@@ -1053,7 +1059,7 @@ func makeStatusController(ctx context.Context, cfg *StreamConfig, g glue.Glue) (
 	} else {
 		printer = stream.PrintTaskWithJSON(console)
 	}
-	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
+	mgr, err := NewMgr(ctx, g, cfg.KeyspaceName, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
 		cfg.CheckRequirements, false, conn.StreamVersionChecker)
 	if err != nil {
 		return nil, err
@@ -1108,6 +1114,9 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	formatTS := func(ts uint64) string {
 		return oracle.GetTimeFromTS(ts).Format("2006-01-02 15:04:05.0000")
 	}
+	if err := cfg.EnsureOperationContext(cmdName); err != nil {
+		return errors.Trace(err)
+	}
 	if cfg.Until == 0 {
 		return errors.Annotatef(berrors.ErrInvalidArgument, "please provide the `--until` ts")
 	}
@@ -1119,8 +1128,15 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	if err != nil {
 		return err
 	}
-	lock, err := objstore.TryLockRemote(ctx, extStorage, truncateLockPath, hintOnTruncateLock)
+	truncateLockMeta, err := cfg.OperationContext.LockMeta(
+		operation.LockResourceLogTruncateExclusive, hintOnTruncateLock)
 	if err != nil {
+		return errors.Annotate(err, "failed to build log truncate lock metadata")
+	}
+	lock, err := objstore.TryLockRemote(ctx, extStorage, truncateLockPath, truncateLockMeta)
+	if err != nil {
+		log.Warn("Failed to acquire log truncate lock",
+			objstore.LockConflictLogFields(truncateLockPath, truncateLockMeta, err)...)
 		return err
 	}
 	defer utils.WithCleanUp(&err, 10*time.Second, func(ctx context.Context) error {
@@ -1140,7 +1156,7 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	}
 
 	if cfg.CleanUpCompactions {
-		est := stream.MigrationExtension(extStorage)
+		est := stream.MigrationExtension(extStorage).WithOperationContext(cfg.OperationContext)
 		est.Hooks = stream.NewProgressBarHooks(console)
 		newSN := math.MaxInt
 		optPrompt := stream.MMOptInteractiveCheck(func(ctx context.Context, m *backuppb.Migration) bool {
@@ -1153,12 +1169,16 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 		optAppend := stream.MMOptAppendPhantomMigration(backuppb.Migration{TruncatedTo: cfg.Until})
 		opts := []stream.MergeAndMigrateToOpt{optPrompt, optAppend, stream.MMOptAlwaysRunTruncate()}
 		var res stream.MergeAndMigratedTo
+		var mergeErr error
 		if cfg.DryRun {
 			est.DryRun(func(me stream.MigrationExt) {
-				res = me.MergeAndMigrateTo(ctx, newSN, opts...)
+				res, mergeErr = me.MergeAndMigrateTo(ctx, newSN, opts...)
 			})
 		} else {
-			res = est.MergeAndMigrateTo(ctx, newSN, opts...)
+			res, mergeErr = est.MergeAndMigrateTo(ctx, newSN, opts...)
+		}
+		if mergeErr != nil {
+			return errors.Trace(mergeErr)
 		}
 		if len(res.Warnings) > 0 {
 			glue.PrintList(console, "the following errors happened", res.Warnings, 10)
@@ -1305,7 +1325,7 @@ func checkTaskCompat(cfg *RestoreConfig, task streamhelper.Task) error {
 func checkIncompatibleChangefeed(ctx context.Context, backupTS uint64, etcdCLI *clientv3.Client) error {
 	nameSet, err := cdcutil.GetIncompatibleChangefeedsWithSafeTS(ctx, etcdCLI, backupTS)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	if !nameSet.Empty() {
 		return errors.Errorf("%splease remove changefeed(s) before restore", nameSet.MessageToUser())
@@ -1329,13 +1349,24 @@ func RunStreamRestore(
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
+	if err := cfg.EnsureOperationContext("log-restore"); err != nil {
+		return errors.Trace(err)
+	}
 	_, s, err := GetStorage(ctx, cfg.Config.Storage, &cfg.Config)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	logInfo, err := getLogInfoFromStorage(ctx, s)
+	logInfo, err := getLogInfoFromStorage(ctx, s, cfg.CheckRequirements)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	// index ingestion is not captured by regular log backup, so we need to manually ingest again
+	var addIndexSQLStorage storeapi.Storage
+	if shouldOpenPiTRAddIndexSQLStorage(cfg) {
+		_, addIndexSQLStorage, err = GetStorage(ctx, cfg.PiTRAddIndexSQLStorage, &cfg.Config)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	// if not set by user, restore to the max TS available
@@ -1412,7 +1443,7 @@ func RunStreamRestore(
 		// we restore additional tables at full snapshot phase when it is renamed into the filter range
 		// later in log backup.
 		// we also ignore the tables that currently in filter range but later renamed out of the filter.
-		log.Info("reading meta kv files to collect table info and id mapping information")
+		log.Info("reading meta kv files to collect table info and id mapping information", zap.Int("ddl files count", len(ddlFiles)))
 		err = metaInfoProcessor.ReadMetaKVFilesAndBuildInfo(ctx, ddlFiles)
 		if err != nil {
 			return errors.Trace(err)
@@ -1433,8 +1464,17 @@ func RunStreamRestore(
 	log.Info("captured restore start timestamp for blocklist",
 		zap.Uint64("restoreStartTS", restoreStartTS))
 
+	if cfg.CheckRequirements {
+		if err := checkIncompatibleChangefeed(ctx, cfg.RestoreTS, mgr.GetDomain().GetEtcdClient()); err != nil {
+			return err
+		}
+	}
+
 	// restore full snapshot.
 	if taskInfo.NeedFullRestore {
+		if cfg.RestorePhase == 2 {
+			return errors.Errorf("invalid phase for full restore because full restore is not finished, please specify 1 for full restore")
+		}
 		logStorage := cfg.Config.Storage
 		cfg.Config.Storage = cfg.FullBackupStorage
 
@@ -1465,6 +1505,7 @@ func RunStreamRestore(
 		tableMappingManager: metaInfoProcessor.GetTableMappingManager(),
 		logClient:           logClient,
 		ddlFiles:            ddlFiles,
+		addIndexSQLStorage:  addIndexSQLStorage,
 	}
 	if err := restoreStream(ctx, mgr, g, logRestoreConfig); err != nil {
 		return errors.Trace(err)
@@ -1478,6 +1519,11 @@ type LogRestoreConfig struct {
 	tableMappingManager *stream.TableMappingManager
 	logClient           *logclient.LogClient
 	ddlFiles            []logclient.Log
+	addIndexSQLStorage  storeapi.Storage
+}
+
+func shouldOpenPiTRAddIndexSQLStorage(cfg *RestoreConfig) bool {
+	return len(cfg.PiTRAddIndexSQLStorage) > 0 && cfg.RestorePhase != 1
 }
 
 // restoreStream starts the log restore
@@ -1536,27 +1582,7 @@ func restoreStream(
 	}
 
 	client := cfg.logClient
-	migs, err := client.GetLockedMigrations(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	client.BuildMigrations(migs.Migs)
-
-	skipCleanup := false
-	failpoint.Inject("skip-migration-read-lock-cleanup", func(_ failpoint.Value) {
-		// Skip the cleanup - this keeps the read lock held
-		// and will cause lock conflicts for other restore operations
-		log.Info("Skipping migration read lock cleanup due to failpoint")
-		skipCleanup = true
-	})
-
-	if !skipCleanup {
-		defer cleanUpWithRetErr(&err, migs.ReadLock.Unlock)
-	}
-
 	defer client.RestoreSSTStatisticFields(&extraFields)
-
-	ddlFiles := cfg.ddlFiles
 
 	currentTS, err = getCurrentTSFromCheckpointOrPD(ctx, mgr, cfg)
 	if err != nil {
@@ -1621,6 +1647,13 @@ func restoreStream(
 	if err := buildAndSaveIDMapIfNeeded(ctx, client, cfg); err != nil {
 		return errors.Trace(err)
 	}
+	if cfg.RestorePhase == 1 {
+		log.Info("full restore phase completed and id map persisted, stop before log restore in restore phase 1")
+		if err := WriteStringToConsole(g, "full restore phase completed, stop before log restore (restore-phase=1)\n"); err != nil {
+			return errors.Trace(err)
+		}
+		return nil
+	}
 
 	// build schema replace
 	schemasReplace, err := buildSchemaReplace(client, cfg)
@@ -1640,7 +1673,7 @@ func restoreStream(
 			log.Info("using fine-grained scheduler pausing for log restore",
 				zap.Int("key-ranges-count", len(keyRanges)))
 			restoreSchedulersFunc, _, err = restore.FineGrainedRestorePreWork(ctx, mgr,
-				importModeSwitcher, keyRanges, cfg.Online, false)
+				importModeSwitcher, keyRanges, false)
 		} else {
 			log.Info("no key ranges to pause, skipping scheduler pausing")
 			restoreSchedulersFunc = func(context.Context) error { return nil }
@@ -1659,8 +1692,30 @@ func restoreStream(
 
 	// Always run the post-work even on error, so we don't stuck in the import
 	// mode or emptied schedulers
-	defer restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulersFunc, cfg.Online)
+	defer restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulersFunc)
 
+	migs, err := client.GetLockedMigrations(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	skipCleanup := false
+	failpoint.Inject("skip-migration-read-lock-cleanup", func(_ failpoint.Value) {
+		// Skip the cleanup - this keeps the read lock held
+		// and will cause lock conflicts for other restore operations
+		log.Info("Skipping migration read lock cleanup due to failpoint")
+		skipCleanup = true
+	})
+	if !skipCleanup {
+		defer cleanUpWithRetErr(&err, migs.ReadLock.Unlock)
+	}
+	if cfg.RetainLatestMVCCVersion {
+		if err := client.ValidateRetainLatestMVCCCompactionCoverage(migs.Migs); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	client.BuildMigrations(migs.Migs)
+
+	ddlFiles := cfg.ddlFiles
 	updateStats := func(kvCount uint64, size uint64) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -1683,22 +1738,28 @@ func restoreStream(
 		return errors.Trace(err)
 	}
 
-	logFilesIter, err := client.LoadDMLFiles(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	numberOfKVsInSST, err := client.LogFileManager.CountExtraSSTTotalKVs(ctx)
-	if err != nil {
-		return err
-	}
-
 	se, err := g.CreateSession(mgr.GetStorage())
 	if err != nil {
 		return errors.Trace(err)
 	}
 	execCtx := se.GetSessionCtx().GetRestrictedSQLExecutor()
 	splitSize, splitKeys := utils.GetRegionSplitInfo(execCtx)
+	log.Info("[Log Restore] get split threshold from tikv config", zap.Uint64("split-size", splitSize), zap.Int64("split-keys", splitKeys))
+
+	// Pre-split regions based on total data volume across ALL files.
+	// On success the pipeline-level per-batch split is skipped to avoid
+	// redundant split+scatter work (see WrapLogFilesIterWithSplitHelper below).
+	preSplitDone, preSplitErr := client.PreSplitRegions(ctx, rewriteRules, splitSize, splitKeys)
+	if preSplitErr != nil {
+		log.Warn("pre-split regions failed, continuing with per-batch splitting",
+			zap.Error(preSplitErr))
+	}
+
+	logFilesIter, err := client.LoadDMLFiles(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	log.Info("[Log Restore] get split threshold from tikv config", zap.Uint64("split-size", splitSize), zap.Int64("split-keys", splitKeys))
 
 	// TODO: need keep the order of ssts for compatible of rewrite rules
@@ -1708,8 +1769,48 @@ func restoreStream(
 	compactionIter := client.LogFileManager.GetCompactionIter(ctx)
 	sstsIter := iter.ConcatAll(addedSSTsIter, compactionIter)
 
-	totalWorkUnits := numberOfKVsInSST + client.Stats.NumEntries
+	var checkpointSSTProgress int64
+	updateSSTStatsWithCheckpoint := func(kvCount, size uint64) {
+		mu.Lock()
+		defer mu.Unlock()
+		totalKVCount += kvCount
+		totalSize += size
+		checkpointTotalKVCount += kvCount
+		checkpointTotalSize += size
+		checkpointSSTProgress += int64(kvCount)
+	}
+	compactedSplitIter, err := client.WrapCompactedFilesIterWithSplitHelper(
+		ctx, sstsIter, rewriteRules, sstCheckpointSets,
+		updateSSTStatsWithCheckpoint, splitSize, splitKeys,
+	)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	sstFileSets, numberOfKVsInSST, err := client.CollectSSTFileSets(ctx, compactedSplitIter, rewriteRules)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	type hasWriteCFLogFileResult struct {
+		file *logclient.LogDataFileInfo
+		err  error
+	}
+	var hasWriteCFLogFileResultCh <-chan hasWriteCFLogFileResult
+	if cfg.RetainLatestMVCCVersion {
+		ch := make(chan hasWriteCFLogFileResult, 1)
+		hasWriteCFLogFileResultCh = ch
+		go func() {
+			writeCFLogFile, err := hasAnyWriteCFLogFile(ctx, logFilesIter)
+			ch <- hasWriteCFLogFileResult{file: writeCFLogFile, err: err}
+		}()
+	}
+
+	totalWorkUnits := checkpointSSTProgress + numberOfKVsInSST + client.Stats.NumEntries
 	err = glue.WithProgress(ctx, g, "Restore Files(SST + Log)", totalWorkUnits, !cfg.LogProgress, func(p glue.Progress) (pErr error) {
+		if checkpointSSTProgress > 0 {
+			p.IncBy(checkpointSSTProgress)
+		}
 		updateStatsWithCheckpoint := func(kvCount, size uint64) {
 			mu.Lock()
 			defer mu.Unlock()
@@ -1720,23 +1821,49 @@ func restoreStream(
 			// increase the progress
 			p.IncBy(int64(kvCount))
 		}
-		compactedSplitIter, err := client.WrapCompactedFilesIterWithSplitHelper(
-			ctx, sstsIter, rewriteRules, sstCheckpointSets,
-			updateStatsWithCheckpoint, splitSize, splitKeys,
-		)
+
+		err = client.RestoreSSTFileSets(ctx, sstFileSets, importModeSwitcher, p.IncBy)
 		if err != nil {
 			return errors.Trace(err)
 		}
 
-		err = client.RestoreSSTFiles(ctx, compactedSplitIter, rewriteRules, importModeSwitcher, p.IncBy)
-		if err != nil {
-			return errors.Trace(err)
+		if hasWriteCFLogFileResultCh != nil {
+			result := <-hasWriteCFLogFileResultCh
+			if result.err != nil {
+				return errors.Trace(result.err)
+			}
+			if result.file != nil {
+				logutil.CL(ctx).Warn("found write CF log files when retain-latest-mvcc-version is enabled; skip log restore because compacted SST coverage has been validated",
+					zap.Uint64("start-ts", cfg.StartTS),
+					zap.Uint64("restore-ts", cfg.RestoreTS),
+					zap.String("path", result.file.GetPath()),
+					zap.String("cf", result.file.GetCf()),
+					zap.Uint64("min-ts", result.file.GetMinTs()),
+					zap.Uint64("max-ts", result.file.GetMaxTs()),
+					zap.String("metadata-group", result.file.MetaDataGroupName),
+					zap.Int("offset-in-meta-group", result.file.OffsetInMetaGroup),
+					zap.Int("offset-in-merged-group", result.file.OffsetInMergedGroup))
+			}
+			log.Info("enabled restoring compacted SSTs with newest MVCC versions only; skip user DML log restore",
+				zap.String("flag", FlagRetainLatestMVCCVersion))
+			logFilesIter = iter.FromSlice([]*logclient.LogDataFileInfo{})
 		}
 
 		logFilesIter = iter.WithEmitSizeTrace(logFilesIter, metrics.KVLogFileEmittedMemory.WithLabelValues("0-loaded"))
-		logFilesIterWithSplit, err := client.WrapLogFilesIterWithSplitHelper(ctx, logFilesIter, cfg.logCheckpointMetaManager, rewriteRules, updateStatsWithCheckpoint, splitSize, splitKeys)
-		if err != nil {
-			return errors.Trace(err)
+		// Skip per-batch splitting when pre-split already covered all files;
+		// doing both passes would produce redundant split+scatter calls.
+		// Checkpoint filtering must still be applied on the pre-split path.
+		var logFilesIterWithSplit logclient.LogIter
+		if preSplitDone {
+			logFilesIterWithSplit, err = client.WrapLogFilesIterWithCheckpointFilter(ctx, logFilesIter, cfg.logCheckpointMetaManager, rewriteRules, updateStatsWithCheckpoint)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		} else {
+			logFilesIterWithSplit, err = client.WrapLogFilesIterWithSplitHelper(ctx, logFilesIter, cfg.logCheckpointMetaManager, rewriteRules, updateStatsWithCheckpoint, splitSize, splitKeys)
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 		logFilesIterWithSplit = iter.WithEmitSizeTrace(logFilesIterWithSplit, metrics.KVLogFileEmittedMemory.WithLabelValues("1-split"))
 
@@ -1781,6 +1908,15 @@ func restoreStream(
 		return errors.Trace(err)
 	}
 
+	// PiTR log replay writes auto-increment counters straight to TiKV without
+	// notifying the autoid service, leaving its in-memory cache stale for
+	// AUTO_ID_CACHE=1 tables. Now that the schema is reloaded and the persisted
+	// counters are final, sync the service to avoid duplicate-key errors on the
+	// first post-restore insert (issue #69485).
+	if err = client.RebaseAutoIncrementIDForSepAutoIncTables(ctx, schemasReplace); err != nil {
+		return errors.Trace(err)
+	}
+
 	if err = client.CleanUpKVFiles(ctx); err != nil {
 		return errors.Annotate(err, "failed to clean up")
 	}
@@ -1790,8 +1926,7 @@ func restoreStream(
 		return errors.Annotate(err, "failed to insert rows into gc_delete_range")
 	}
 
-	// index ingestion is not captured by regular log backup, so we need to manually ingest again
-	if err = client.RepairIngestIndex(ctx, ingestRecorder, cfg.logCheckpointMetaManager, g); err != nil {
+	if err = client.RepairIngestIndex(ctx, ingestRecorder, cfg.logCheckpointMetaManager, g, cfg.addIndexSQLStorage); err != nil {
 		return errors.Annotate(err, "failed to repair ingest index")
 	}
 
@@ -1820,6 +1955,7 @@ func createLogClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, mgr *
 	keepaliveCfg := GetKeepalive(&cfg.Config)
 	keepaliveCfg.PermitWithoutStream = true
 	client := logclient.NewLogClient(mgr.GetPDClient(), mgr.GetPDHTTPClient(), mgr.GetTLSConfig(), keepaliveCfg)
+	client.SetCheckRequirements(cfg.CheckRequirements)
 
 	err = client.Init(ctx, g, mgr.GetStorage())
 	if err != nil {
@@ -1840,10 +1976,15 @@ func createLogClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, mgr *
 	if err = client.SetStorage(ctx, u, &opts); err != nil {
 		return nil, errors.Trace(err)
 	}
+	client.SetRateLimit(cfg.RateLimit)
 	client.SetCrypter(&cfg.CipherInfo)
+	client.SetRegionScanConcurrency(cfg.RegionScanConcurrency)
 	client.SetUpstreamClusterID(cfg.UpstreamClusterID)
 
-	err = client.InitClients(ctx, u, cfg.logCheckpointMetaManager, cfg.sstCheckpointMetaManager, uint(cfg.PitrConcurrency), cfg.ConcurrencyPerStore.Value)
+	err = client.InitClients(
+		ctx, u, cfg.logCheckpointMetaManager, cfg.sstCheckpointMetaManager, uint(cfg.PitrConcurrency),
+		cfg.ConcurrencyPerStore.Value, cfg.RetainLatestMVCCVersion,
+	)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1861,6 +2002,7 @@ func createLogClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, mgr *
 		return nil, errors.Trace(err)
 	}
 
+	client.SetOperationContext(cfg.OperationContext)
 	client.SetRestoreID(cfg.RestoreID)
 
 	return client, nil
@@ -1927,12 +2069,13 @@ func getLogInfo(
 	if err != nil {
 		return backupLogInfo{}, errors.Trace(err)
 	}
-	return getLogInfoFromStorage(ctx, s)
+	return getLogInfoFromStorage(ctx, s, cfg.CheckRequirements)
 }
 
 func getLogInfoFromStorage(
 	ctx context.Context,
 	s storeapi.Storage,
+	checkRequirements bool,
 ) (backupLogInfo, error) {
 	// logStartTS: Get log start ts from backupmeta file.
 	metaData, err := s.ReadFile(ctx, metautil.MetaFile)
@@ -1942,6 +2085,12 @@ func getLogInfoFromStorage(
 	backupMeta := &backuppb.BackupMeta{}
 	if err = backupMeta.Unmarshal(metaData); err != nil {
 		return backupLogInfo{}, errors.Trace(err)
+	}
+	if err = metautil.CheckBackupMetaCompatibilityFromBytes(metaData, backupMeta); err != nil {
+		if checkRequirements {
+			return backupLogInfo{}, errors.Trace(err)
+		}
+		log.Warn("skip backupmeta compatibility check error", logutil.ShortError(err))
 	}
 	// endVersion > 0 represents that the storage has been used for `br backup`
 	if backupMeta.GetEndVersion() > 0 {
@@ -1959,7 +2108,7 @@ func getLogInfoFromStorage(
 	logMinTS := max(logStartTS, truncateTS)
 
 	// get max global resolved ts from metas.
-	logMaxTS, err := getGlobalCheckpointFromStorage(ctx, s)
+	logMaxTS, err := getMaxRecoverableCheckpointFromStorage(ctx, s)
 	if err != nil {
 		return backupLogInfo{}, errors.Trace(err)
 	}
@@ -1991,6 +2140,41 @@ func getGlobalCheckpointFromStorage(ctx context.Context, s storeapi.Storage) (ui
 	return globalCheckPointTS, errors.Trace(err)
 }
 
+func getMaxRecoverableCheckpointFromStorage(ctx context.Context, s storeapi.Storage) (uint64, error) {
+	ts, exists, err := getCheckpointFromResumeState(ctx, s)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if exists {
+		return ts, nil
+	}
+	return getGlobalCheckpointFromStorage(ctx, s)
+}
+
+// PersistentState captures the calculator progress needed to resume after restart.
+type PersistentState struct {
+	LastCheckpoint uint64 `json:"last_checkpoint"`
+}
+
+func getCheckpointFromResumeState(ctx context.Context, s storeapi.Storage) (uint64, bool, error) {
+	exists, err := s.FileExists(ctx, resumeStateFileName)
+	if err != nil {
+		return 0, false, errors.Trace(err)
+	}
+	if !exists {
+		return 0, false, nil
+	}
+	statusContent, err := s.ReadFile(ctx, resumeStateFileName)
+	if err != nil {
+		return 0, true, errors.Trace(err)
+	}
+	var state service.PersistentState
+	if err := json.Unmarshal(statusContent, &state); err != nil {
+		return 0, true, fmt.Errorf("decode persisted resume state %s: %w", resumeStateFileName, err)
+	}
+	return state.LastCheckpoint, true, nil
+}
+
 // getFullBackupTS gets the snapshot-ts of full backup
 func getFullBackupTS(
 	ctx context.Context,
@@ -2014,6 +2198,12 @@ func getFullBackupTS(
 	backupmeta := &backuppb.BackupMeta{}
 	if err = backupmeta.Unmarshal(decryptedMetaData); err != nil {
 		return 0, 0, errors.Trace(err)
+	}
+	if err = metautil.CheckBackupMetaCompatibilityFromBytes(decryptedMetaData, backupmeta); err != nil {
+		if cfg.CheckRequirements {
+			return 0, 0, errors.Trace(err)
+		}
+		log.Warn("skip backupmeta compatibility check error", logutil.ShortError(err))
 	}
 
 	// start and end are identical in full backup, pick random one
@@ -2088,7 +2278,7 @@ func (p *PiTRTaskInfo) hasTiFlashItemsInCheckpoint() bool {
 }
 
 func (p *PiTRTaskInfo) getRestoreStartTS(ctx context.Context, pdClient pd.Client) (uint64, error) {
-	if p.CheckpointInfo != nil && p.CheckpointInfo.Metadata != nil {
+	if p.CheckpointInfo != nil && p.CheckpointInfo.Metadata != nil && p.CheckpointInfo.Metadata.RestoreStartTS > 0 {
 		return p.CheckpointInfo.Metadata.RestoreStartTS, nil
 	}
 	return restore.GetTSWithRetry(ctx, pdClient)
@@ -2260,9 +2450,28 @@ func getCurrentTSFromCheckpointOrPD(ctx context.Context, mgr *conn.Mgr, cfg *Log
 	return currentTS, nil
 }
 
+func hasAnyWriteCFLogFile(ctx context.Context, fileIter logclient.LogIter) (*logclient.LogDataFileInfo, error) {
+	for {
+		r := fileIter.TryNext(ctx)
+		if r.Err != nil {
+			return nil, errors.Trace(r.Err)
+		}
+		if r.Finished {
+			return nil, nil
+		}
+		if r.Item == nil || r.Item.DataFileInfo == nil {
+			continue
+		}
+		if r.Item.GetCf() == consts.WriteCF {
+			return r.Item, nil
+		}
+	}
+}
+
 func RegisterRestoreIfNeeded(ctx context.Context, cfg *RestoreConfig, cmdName string, domain *domain.Domain) error {
 	// already registered previously
 	if cfg.RestoreID != 0 {
+		setOperationContextRestoreID(&cfg.OperationContext, cfg.RestoreID)
 		log.Info("restore task already registered, skipping re-registration",
 			zap.Uint64("restoreID", cfg.RestoreID),
 			zap.String("cmdName", cmdName))
@@ -2292,6 +2501,7 @@ func RegisterRestoreIfNeeded(ctx context.Context, cfg *RestoreConfig, cmdName st
 		return errors.Trace(err)
 	}
 	cfg.RestoreID = restoreID
+	setOperationContextRestoreID(&cfg.OperationContext, restoreID)
 
 	// the registry may have resolved a different RestoreTS from existing tasks
 	// if so, we need to apply it to the config for consistency

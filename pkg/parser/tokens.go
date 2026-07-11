@@ -932,6 +932,19 @@ const (
 	yearMonth                  = 57593
 	yearType                   = 57991
 	zerofill                   = 57594
+
+	// Tokens introduced after the hand-written parser diverged from goyacc.
+	// Numbers continue after the highest previously assigned value (58241).
+	lateral       = 58242
+	monitor       = 58243
+	old           = 58244
+	raw           = 58245
+	retain        = 58246
+	returning     = 58247
+	ndvRate       = 58248
+	storageClass  = 58249
+	uuid          = 58250
+	builtinSumInt = 58251
 )
 
 // Lexer is the interface that the Scanner must implement.

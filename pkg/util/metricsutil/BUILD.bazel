@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "metricsutil",
@@ -29,9 +29,21 @@ go_library(
         "//pkg/util",
         "//pkg/util/topsql/reporter/metrics",
         "@com_github_pingcap_kvproto//pkg/keyspacepb",
-        "@com_github_tikv_client_go_v2//config",
         "@com_github_tikv_pd_client//:client",
         "@com_github_tikv_pd_client//opt",
         "@com_github_tikv_pd_client//pkg/caller",
+    ],
+)
+
+go_test(
+    name = "metricsutil_test",
+    timeout = "short",
+    srcs = ["common_test.go"],
+    embed = [":metricsutil"],
+    flaky = True,
+    deps = [
+        "//pkg/config",
+        "//pkg/metrics/common",
+        "@com_github_stretchr_testify//require",
     ],
 )

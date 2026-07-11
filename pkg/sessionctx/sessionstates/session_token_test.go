@@ -23,6 +23,8 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
@@ -156,6 +158,37 @@ func TestVerifyToken(t *testing.T) {
 	require.NoError(t, err)
 	err = ValidateSessionToken(tokenBytes2, "test_user")
 	require.ErrorContains(t, err, "verification error")
+}
+
+func TestStarterSessionTokenLifetime(t *testing.T) {
+	if !kerneltype.IsNextGen() {
+		t.Skip("starter deploy mode is only available for nextgen TiDB")
+	}
+
+	original := deploymode.Get()
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+	t.Cleanup(func() {
+		require.NoError(t, deploymode.Set(original))
+	})
+
+	require.Equal(t, starterTokenLifetime, currentTokenLifetime())
+	require.Equal(t, starterLoadCertInterval, GetLoadCertInterval())
+	require.Equal(t, starterOldCertValidTime, currentOldCertValidTime())
+
+	SetupSigningCertForTest(t)
+	_, tokenBytes := createNewToken(t, "test_user")
+
+	timeOffset := uint64(tokenLifetime + time.Minute)
+	require.NoError(t, failpoint.Enable(mockNowOffset, fmt.Sprintf(`return(%d)`, timeOffset)))
+	err := ValidateSessionToken(tokenBytes, "test_user")
+	require.NoError(t, failpoint.Disable(mockNowOffset))
+	require.NoError(t, err)
+
+	timeOffset = uint64(starterTokenLifetime + time.Minute)
+	require.NoError(t, failpoint.Enable(mockNowOffset, fmt.Sprintf(`return(%d)`, timeOffset)))
+	err = ValidateSessionToken(tokenBytes, "test_user")
+	require.NoError(t, failpoint.Disable(mockNowOffset))
+	require.ErrorContains(t, err, "token expired")
 }
 
 func TestCertExpire(t *testing.T) {

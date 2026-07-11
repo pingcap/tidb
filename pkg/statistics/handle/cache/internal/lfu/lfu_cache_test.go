@@ -36,12 +36,12 @@ func TestLFUPutGetDel(t *testing.T) {
 	mockTable := testutil.NewMockStatisticsTable(1, 1, true, false, false)
 	mockTableID := int64(1)
 	lfu.Put(mockTableID, mockTable)
-	lfu.wait()
+	lfu.WaitForAsyncUpdates()
 	lfu.Del(mockTableID)
 	v, ok := lfu.Get(mockTableID)
 	require.False(t, ok)
 	require.Nil(t, v)
-	lfu.wait()
+	lfu.WaitForAsyncUpdates()
 	require.Equal(t, uint64(lfu.Cost()), lfu.metrics().CostAdded()-lfu.metrics().CostEvicted())
 	require.Equal(t, 0, len(lfu.Values()))
 }
@@ -58,15 +58,15 @@ func TestLFUFreshMemUsage(t *testing.T) {
 	lfu.Put(int64(1), t1)
 	lfu.Put(int64(2), t2)
 	lfu.Put(int64(3), t3)
-	lfu.wait()
+	lfu.WaitForAsyncUpdates()
 	require.Equal(t, lfu.Cost(), 6*mockCMSMemoryUsage+6*mockCMSMemoryUsage)
 	t4 := testutil.NewMockStatisticsTable(2, 1, true, false, false)
 	lfu.Put(int64(1), t4)
-	lfu.wait()
+	lfu.WaitForAsyncUpdates()
 	require.Equal(t, lfu.Cost(), 7*mockCMSMemoryUsage+6*mockCMSMemoryUsage)
 	t5 := testutil.NewMockStatisticsTable(2, 2, true, false, false)
 	lfu.Put(int64(1), t5)
-	lfu.wait()
+	lfu.WaitForAsyncUpdates()
 	require.Equal(t, lfu.Cost(), 7*mockCMSMemoryUsage+7*mockCMSMemoryUsage)
 
 	t6 := testutil.NewMockStatisticsTable(1, 2, true, false, false)
@@ -76,7 +76,7 @@ func TestLFUFreshMemUsage(t *testing.T) {
 	t7 := testutil.NewMockStatisticsTable(1, 1, true, false, false)
 	lfu.Put(int64(1), t7)
 	require.Equal(t, lfu.Cost(), 6*mockCMSMemoryUsage+6*mockCMSMemoryUsage)
-	lfu.wait()
+	lfu.WaitForAsyncUpdates()
 	require.Equal(t, uint64(lfu.Cost()), lfu.metrics().CostAdded()-lfu.metrics().CostEvicted())
 }
 
@@ -88,7 +88,7 @@ func TestLFUPutTooBig(t *testing.T) {
 	lfu.Put(int64(1), mockTable)
 	_, ok := lfu.Get(int64(1))
 	require.True(t, ok)
-	lfu.wait()
+	lfu.WaitForAsyncUpdates()
 	require.Equal(t, uint64(lfu.Cost()), lfu.metrics().CostAdded()-lfu.metrics().CostEvicted())
 }
 
@@ -102,14 +102,14 @@ func TestCacheLen(t *testing.T) {
 	t2 := testutil.NewMockStatisticsTable(1, 1, true, false, false)
 	// put t2, t1 should be evicted 2 items and still exists in the list
 	lfu.Put(int64(2), t2)
-	lfu.wait()
+	lfu.WaitForAsyncUpdates()
 	require.Equal(t, lfu.Len(), 2)
 	require.Equal(t, uint64(8), lfu.metrics().CostAdded()-lfu.metrics().CostEvicted())
 
 	// put t3, t1/t2 should be evicted all items. but t1/t2 still exists in the list
 	t3 := testutil.NewMockStatisticsTable(2, 1, true, false, false)
 	lfu.Put(int64(3), t3)
-	lfu.wait()
+	lfu.WaitForAsyncUpdates()
 	require.Equal(t, lfu.Len(), 3)
 	require.Equal(t, uint64(12), lfu.metrics().CostAdded()-lfu.metrics().CostEvicted())
 }
@@ -133,7 +133,7 @@ func TestLFUCachePutGetWithManyConcurrency(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
-	lfu.wait()
+	lfu.WaitForAsyncUpdates()
 	require.Equal(t, lfu.Len(), 1000)
 	require.Equal(t, uint64(lfu.Cost()), lfu.metrics().CostAdded()-lfu.metrics().CostEvicted())
 	require.Equal(t, 1000, len(lfu.Values()))
@@ -164,7 +164,7 @@ func TestLFUCachePutGetWithManyConcurrency2(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	lfu.wait()
+	lfu.WaitForAsyncUpdates()
 	require.Equal(t, uint64(lfu.Cost()), lfu.metrics().CostAdded()-lfu.metrics().CostEvicted())
 	require.Equal(t, 1000, len(lfu.Values()))
 }
@@ -202,7 +202,7 @@ func TestLFUCachePutGetWithManyConcurrencyAndSmallConcurrency(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	lfu.wait()
+	lfu.WaitForAsyncUpdates()
 	v, ok := lfu.Get(rand.Int63n(50))
 	require.True(t, ok)
 	v.ForEachColumnImmutable(func(_ int64, c *statistics.Column) bool {
@@ -245,14 +245,14 @@ func TestLFUReject(t *testing.T) {
 	t1 := testutil.NewMockStatisticsTable(2, 1, true, false, false)
 	require.Equal(t, 2*mockCMSMemoryUsage+mockCMSMemoryUsage, t1.MemoryUsage().TotalTrackingMemUsage())
 	lfu.Put(1, t1)
-	lfu.wait()
+	lfu.WaitForAsyncUpdates()
 	require.Equal(t, lfu.Cost(), 2*mockCMSMemoryUsage+mockCMSMemoryUsage)
 
 	lfu.SetCapacity(2*mockCMSMemoryUsage + mockCMSMemoryUsage - 1)
 
 	t2 := testutil.NewMockStatisticsTable(2, 1, true, false, false)
 	require.True(t, lfu.Put(2, t2))
-	lfu.wait()
+	lfu.WaitForAsyncUpdates()
 	time.Sleep(3 * time.Second)
 	require.Equal(t, int64(0), lfu.Cost())
 	require.Len(t, lfu.Values(), 2)
@@ -275,7 +275,7 @@ func TestMemoryControl(t *testing.T) {
 	t1 := testutil.NewMockStatisticsTable(2, 1, true, false, false)
 	require.Equal(t, 2*mockCMSMemoryUsage+mockCMSMemoryUsage, t1.MemoryUsage().TotalTrackingMemUsage())
 	lfu.Put(1, t1)
-	lfu.wait()
+	lfu.WaitForAsyncUpdates()
 
 	for i := 2; i <= 1000; i++ {
 		t1 := testutil.NewMockStatisticsTable(2, 1, true, false, false)
@@ -286,19 +286,19 @@ func TestMemoryControl(t *testing.T) {
 
 	for i := 1000; i > 990; i-- {
 		lfu.SetCapacity(int64(i-1) * (2*mockCMSMemoryUsage + mockCMSMemoryUsage))
-		lfu.wait()
+		lfu.WaitForAsyncUpdates()
 		require.Equal(t, int64(i-1)*(2*mockCMSMemoryUsage+mockCMSMemoryUsage), lfu.Cost())
 	}
 	for i := 990; i > 100; i = i - 100 {
 		lfu.SetCapacity(int64(i-1) * (2*mockCMSMemoryUsage + mockCMSMemoryUsage))
-		lfu.wait()
+		lfu.WaitForAsyncUpdates()
 		require.Equal(t, int64(i-1)*(2*mockCMSMemoryUsage+mockCMSMemoryUsage), lfu.Cost())
 	}
 	lfu.SetCapacity(int64(10) * (2*mockCMSMemoryUsage + mockCMSMemoryUsage))
-	lfu.wait()
+	lfu.WaitForAsyncUpdates()
 	require.Equal(t, int64(10)*(2*mockCMSMemoryUsage+mockCMSMemoryUsage), lfu.Cost())
 	lfu.SetCapacity(0)
-	lfu.wait()
+	lfu.WaitForAsyncUpdates()
 	require.Equal(t, int64(10)*(2*mockCMSMemoryUsage+mockCMSMemoryUsage), lfu.Cost())
 }
 

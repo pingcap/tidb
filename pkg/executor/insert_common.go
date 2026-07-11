@@ -55,10 +55,12 @@ import (
 type InsertValues struct {
 	exec.BaseExecutor
 
-	rowCount       uint64
-	curBatchCnt    uint64
-	maxRowsInBatch uint64
-	lastInsertID   uint64
+	rowCount                    uint64
+	curBatchCnt                 uint64
+	maxRowsInBatch              uint64
+	lastInsertID                uint64
+	recordRUV2RowsColMultiply   bool
+	ruv2RecordedRowsColMultiply int64
 
 	SelectExec exec.Executor
 
@@ -97,6 +99,32 @@ type InsertValues struct {
 	fkCascades []*FKCascadeExec
 
 	ignoreErr bool
+}
+
+func (e *InsertValues) rowsColMultiply() int64 {
+	colCount := len(e.insertColumns)
+	if e.rowCount == 0 || colCount == 0 {
+		return 0
+	}
+
+	const maxInt64 = uint64(1<<63 - 1)
+	if e.rowCount > maxInt64/uint64(colCount) {
+		return int64(maxInt64)
+	}
+	return int64(e.rowCount * uint64(colCount))
+}
+
+func (e *InsertValues) recordRowsColMultiply2RUV2Metrics() {
+	if !e.recordRUV2RowsColMultiply {
+		return
+	}
+	current := e.rowsColMultiply()
+	delta := current - e.ruv2RecordedRowsColMultiply
+	if delta <= 0 {
+		return
+	}
+	recordInsertRowsColMultiply2Metrics(e.Ctx().GetSessionVars(), delta)
+	e.ruv2RecordedRowsColMultiply = current
 }
 
 type defaultVal struct {
@@ -234,6 +262,7 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 			if err = base.exec(ctx, rows); err != nil {
 				return err
 			}
+			e.recordRowsColMultiply2RUV2Metrics()
 			rows = rows[:0]
 			memTracker.Consume(-memUsageOfRows)
 			memUsageOfRows = 0
@@ -255,6 +284,7 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 	if err != nil {
 		return err
 	}
+	e.recordRowsColMultiply2RUV2Metrics()
 	memTracker.Consume(-memUsageOfRows)
 	return nil
 }
@@ -505,6 +535,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 				if err = base.exec(ctx, rows); err != nil {
 					return err
 				}
+				e.recordRowsColMultiply2RUV2Metrics()
 				rows = rows[:0]
 				extraColsInSel = extraColsInSel[:0]
 				totalMemDelta += -memUsageOfRows - memUsageOfExtraCols
@@ -526,6 +557,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 		if err != nil {
 			return err
 		}
+		e.recordRowsColMultiply2RUV2Metrics()
 		rows = rows[:0]
 		extraColsInSel = extraColsInSel[:0]
 		memTracker.Consume(-memUsageOfRows - memUsageOfExtraCols - chkMemUsage)
@@ -673,7 +705,7 @@ func (e *InsertValues) fillColValue(
 func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue []bool, rowIdx int) (
 	[]types.Datum, error,
 ) {
-	gCols := make([]*table.Column, 0)
+	var gCols []*table.Column
 	tCols := e.Table.Cols()
 	if e.hasExtraHandle {
 		col := &table.Column{}
@@ -712,13 +744,22 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 		}
 	}
 
+	// Fast path: no generated columns, nothing more to do.
+	if len(gCols) == 0 {
+		return row, nil
+	}
+
 	sctx := e.Ctx()
 	evalCtx := sctx.GetExprCtx().GetEvalCtx()
 	sc := sctx.GetSessionVars().StmtCtx
 	warnCnt := int(sc.WarningCount())
+	// Build the MutRow once and update it in-place after each generated column is
+	// evaluated. Previously MutRowFromDatums was called inside the loop, causing a
+	// full row copy O(columns) allocation for every generated column — O(G*C) total.
+	mutRow := chunk.MutRowFromDatums(row)
 	for i, gCol := range gCols {
 		colIdx := gCol.ColumnInfo.Offset
-		val, err := e.GenExprs[i].Eval(evalCtx, chunk.MutRowFromDatums(row).ToRow())
+		val, err := e.GenExprs[i].Eval(evalCtx, mutRow.ToRow())
 		if err != nil && gCol.FieldType.IsArray() {
 			return nil, completeError(tbl, gCol.Offset, rowIdx, err)
 		}
@@ -740,6 +781,9 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 		if err = gCol.HandleBadNull(sc.ErrCtx(), &row[colIdx], rowCntInLoadData); err != nil {
 			return nil, err
 		}
+		// Keep mutRow in sync so subsequent generated columns that reference
+		// already-computed generated columns see the updated value.
+		mutRow.SetDatum(colIdx, row[colIdx])
 	}
 	return row, nil
 }

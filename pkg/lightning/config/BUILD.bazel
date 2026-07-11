@@ -19,6 +19,7 @@ go_library(
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
         "//pkg/util",
+        "//pkg/util/cpu",
         "//pkg/util/table-filter",
         "//pkg/util/table-router",
         "@com_github_burntsushi_toml//:toml",
@@ -46,6 +47,7 @@ go_test(
     shard_count = 50,
     deps = [
         "@com_github_burntsushi_toml//:toml",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
     ],
 )

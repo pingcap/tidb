@@ -479,7 +479,7 @@ func TestSimplifiedCreateBinding(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
-	tk.MustExec(`create table t (a int, b int, key(a))`)
+	tk.MustExec(`create table t (a int, b int, key(a), key(b))`)
 
 	check := func(scope, sql, binding string) {
 		r := tk.MustQuery(fmt.Sprintf("show %s bindings", scope)).Rows()
@@ -500,6 +500,42 @@ func TestSimplifiedCreateBinding(t *testing.T) {
 	tk.MustExec(`create global binding using select /*+ use_index(t, a) */ * from t where a in (1,2,3)`)
 	check("global", "select * from `test` . `t` where `a` in ( ... )", "SELECT /*+ use_index(`t` `a`)*/ * FROM `test`.`t` WHERE `a` IN (1,2,3)")
 	tk.MustExec(`drop global binding for select * from t where a in (1,2,3)`)
+	tk.MustExec(`create global binding using select /*+ use_index(t, a) */ * from t where a = 1 and b = 1`)
+	tk.MustQuery(`select * from t where (a = 1) and b = 1`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+	tk.MustExec(`drop global binding for select * from t where a = 1 and b = 1`)
+	tk.MustExec(`create binding for select * from t where abs((a + 1)) = 2 and (b = 1) using select /*+ use_index(t, b) */ * from t where abs((a + 1)) = 2 and (b = 1)`)
+	check("", "select * from `test` . `t` where `abs` ( `a` + ? ) = ? and `b` = ?", "SELECT /*+ use_index(`t` `b`)*/ * FROM `test`.`t` WHERE abs(`a` + 1) = 2 AND `b` = 1")
+	tk.MustQuery(`select * from t where abs(a + 1) = 2 and b = 1`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+	tk.MustExec(`drop binding for select * from t where abs(a + 1) = 2 and b = 1`)
+	tk.MustExec(`create binding for select * from t where a + (b + 1) > 0 using select /*+ use_index(t, b) */ * from t where a + (b + 1) > 0`)
+	tk.MustQuery(`select * from t where a + (b + 1) > 0`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select * from t where (a + b) + 1 > 0`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("0"))
+	tk.MustExec(`drop binding for select * from t where a + (b + 1) > 0`)
+}
+
+func TestBindingStillWorksAfterReloadingBrokenStorageSQLDigest(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t_broken_digest`)
+	tk.MustExec(`create table t_broken_digest(a int, b int, key ia(a), key ib(b))`)
+	tk.MustExec(`create global binding for select * from t_broken_digest where a = 1 using select /*+ use_index(t_broken_digest, ia) */ * from t_broken_digest where a = 1`)
+	tk.MustQuery(`select * from t_broken_digest where a = 1`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+
+	sqlDigest := tk.MustQuery(`select sql_digest from mysql.bind_info where bind_sql like "%t_broken_digest%"`).Rows()[0][0].(string)
+	tk.MustExec(`update mysql.bind_info set sql_digest = ? where bind_sql like "%t_broken_digest%"`, "broken-sql-digest-for-test")
+	// Drop the old cache key so the next hit must come from reloading the broken storage digest.
+	dom.BindingHandle().RemoveBinding(sqlDigest)
+	tk.MustQuery(`select * from t_broken_digest where a = 1`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("0"))
+	tk.MustExec(`admin reload bindings`)
+	tk.MustQuery(`select * from t_broken_digest where a = 1`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
 }
 
 func TestDropBindBySQLDigest(t *testing.T) {

@@ -446,6 +446,24 @@ func (*Checker) AlterSequence(_ sessionctx.Context, _ *ast.AlterSequenceStmt) er
 	panic("implement me")
 }
 
+// CreateMaskingPolicy implements the DDL interface.
+func (d *Checker) CreateMaskingPolicy(ctx sessionctx.Context, stmt *ast.CreateMaskingPolicyStmt) error {
+	err := d.realExecutor.CreateMaskingPolicy(ctx, stmt)
+	if err != nil {
+		return err
+	}
+	err = d.tracker.CreateMaskingPolicy(ctx, stmt)
+	if err != nil {
+		panic(err)
+	}
+	tableSchema := stmt.Table.Schema
+	if tableSchema.L == "" {
+		tableSchema = ast.NewCIStr(ctx.GetSessionVars().CurrentDB)
+	}
+	d.checkTableInfo(ctx, tableSchema, stmt.Table.Name)
+	return nil
+}
+
 // CreatePlacementPolicy implements the DDL interface.
 func (*Checker) CreatePlacementPolicy(_ sessionctx.Context, _ *ast.CreatePlacementPolicyStmt) error {
 	//TODO implement me

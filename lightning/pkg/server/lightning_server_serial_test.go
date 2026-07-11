@@ -29,7 +29,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/lightning/pkg/web"
+	"github.com/pingcap/tidb/lightning/pkg/progress"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/stretchr/testify/require"
 )
@@ -44,7 +44,7 @@ type lightningServerSuite struct {
 }
 
 func createSuite(t *testing.T) *lightningServerSuite {
-	initProgressOnce.Do(web.EnableCurrentProgress)
+	initProgressOnce.Do(progress.EnableCurrentProgress)
 
 	cfg := config.NewGlobalConfig()
 	cfg.TiDB.Host = "test.invalid"

@@ -51,6 +51,25 @@ func TestFilter(t *testing.T) {
 
 	logger.Warn("the message", zap.String("stack", "github.com/pingcap/tidb/br/"))
 	require.Len(t, buffer.Stripped(), 0)
+
+	entry := zapcore.Entry{
+		Level:   zap.WarnLevel,
+		Message: "retryable write",
+		Caller: zapcore.EntryCaller{
+			Defined:  true,
+			Function: "github.com/pingcap/tidb/pkg/ingestor/ingestctrl.(*regionJobBaseWorker).runJob",
+		},
+	}
+
+	logger, buffer = log.MakeTestLogger()
+	core := log.NewFilterCore(logger.Logger.Core(), "/ingestor/ingestctrl")
+	require.NoError(t, core.Write(entry, nil))
+	require.Contains(t, buffer.Stripped(), `"retryable write"`)
+
+	logger, buffer = log.MakeTestLogger()
+	core = log.NewFilterCore(logger.Logger.Core(), "/ingestor/ingestctrl/")
+	require.NoError(t, core.Write(entry, nil))
+	require.Len(t, buffer.Stripped(), 0)
 }
 
 // BenchmarkFilterStringsContains-16     	16693887	        66.68 ns/op

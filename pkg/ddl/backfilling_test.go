@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/deeptest"
@@ -64,6 +66,12 @@ func TestDoneTaskKeeper(t *testing.T) {
 	require.True(t, bytes.Equal(n.nextKey, kv.Key("h")))
 }
 
+func TestIndexInfoNotFoundIsNonRetryable(t *testing.T) {
+	err := errors.Annotatef(errIndexInfoNotFound, "index info not found: %d", 1)
+	require.True(t, isIndexInfoNotFoundErr(err))
+	require.False(t, (&backfillDistExecutor{}).IsRetryableError(err))
+}
+
 func TestPickBackfillType(t *testing.T) {
 	ingest.LitDiskRoot = ingest.NewDiskRootImpl(t.TempDir())
 	ingest.LitMemRoot = ingest.NewMemRootImpl(math.MaxInt64)
@@ -90,6 +98,39 @@ func TestPickBackfillType(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, tp, model.ReorgTypeIngest)
 	ingest.LitInitialized = false
+
+	t.Run("cloud storage skips local disk precheck", func(t *testing.T) {
+		oldLitInitialized := ingest.LitInitialized
+		oldLitDiskRoot := ingest.LitDiskRoot
+		oldCloudStorageURI := vardef.CloudStorageURI.Load()
+		t.Cleanup(func() {
+			ingest.LitInitialized = oldLitInitialized
+			ingest.LitDiskRoot = oldLitDiskRoot
+			vardef.CloudStorageURI.Store(oldCloudStorageURI)
+		})
+
+		ingest.LitInitialized = true
+		ingest.LitDiskRoot = ingest.NewDiskRootImpl(t.TempDir())
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/ingest/mockIngestCheckEnvFailed", "return(true)")
+		vardef.CloudStorageURI.Store("s3://bucket")
+
+		job := &model.Job{
+			ID: 2,
+			ReorgMeta: &model.DDLReorgMeta{
+				IsFastReorg: true,
+				IsDistReorg: true,
+			},
+		}
+		w := &worker{
+			workCtx: context.Background(),
+			ddlCtx:  &ddlCtx{},
+		}
+
+		err := initForReorgIndexes(w, job, []*model.IndexInfo{{}})
+		require.NoError(t, err)
+		require.True(t, job.ReorgMeta.UseCloudStorage)
+		require.Equal(t, model.ReorgTypeIngest, job.ReorgMeta.ReorgTp)
+	})
 }
 
 func assertStaticExprContextEqual(t *testing.T, sctx sessionctx.Context, exprCtx *exprstatic.ExprContext, warnHandler contextutil.WarnHandler) {

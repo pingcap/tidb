@@ -92,6 +92,19 @@ type Parser struct {
 
 	explicitCharset       bool
 	strictDoubleFieldType bool
+	enableMariaDB         bool
+}
+
+// setNodeText sets the raw text on a parsed AST node and propagates the
+// NO_BACKSLASH_ESCAPES SQL mode so that Text() can correctly handle
+// backslash escapes when converting binary string literals to hex.
+func (parser *Parser) setNodeText(n interface {
+	SetText(charset.Encoding, string)
+}, text string) {
+	n.SetText(parser.lexer.client, text)
+	if setter, ok := n.(interface{ SetNoBackslashEscapes(bool) }); ok {
+		setter.SetNoBackslashEscapes(parser.lexer.sqlMode.HasNoBackslashEscapesMode())
+	}
 }
 
 // New returns a Parser object with default SQL mode.
@@ -123,6 +136,11 @@ func (parser *Parser) reset() {
 	mode, _ := mysql.GetSQLMode(mysql.DefaultSQLMode)
 	parser.SetSQLMode(mode)
 	parser.handParser.Reset() // Ensure clean state for hand parser
+}
+
+// SetMariaDB is setting the parser mode for extended MariaDB syntax
+func (parser *Parser) SetMariaDB(b bool) {
+	parser.enableMariaDB = b
 }
 
 // SetStrictDoubleTypeCheck enables/disables strict double type check.
@@ -169,6 +187,7 @@ func (parser *Parser) ParseSQL(sql string, params ...ParseParam) (stmt []ast.Stm
 
 	// Sync parser state to hand parser AFTER reset.
 	parser.handParser.SetStrictDoubleFieldTypeCheck(parser.strictDoubleFieldType)
+	parser.handParser.SetMariaDB(parser.enableMariaDB)
 
 	hStmts, hWarns, hErr := parser.handParser.ParseSQL()
 

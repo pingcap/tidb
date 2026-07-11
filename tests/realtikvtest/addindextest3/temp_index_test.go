@@ -201,6 +201,16 @@ func TestMergeTempIndexStuck(t *testing.T) {
 	chPkFinish := make(chan int, workerNum)
 	done := make(chan struct{})
 	var wg util.WaitGroupWrapper
+	workloadStopped := false
+	stopWorkload := func() {
+		if workloadStopped {
+			return
+		}
+		workloadStopped = true
+		close(done)
+		wg.Wait()
+	}
+	defer stopWorkload()
 	for i := 0; i < workerNum; i++ {
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
@@ -233,7 +243,11 @@ func TestMergeTempIndexStuck(t *testing.T) {
 		for {
 			select {
 			case pk := <-chPkFinish:
-				chPk <- pk
+				select {
+				case chPk <- pk:
+				case <-done:
+					return
+				}
 			case <-done:
 				return
 			}
@@ -245,7 +259,6 @@ func TestMergeTempIndexStuck(t *testing.T) {
 	}, 30*time.Second, 300*time.Millisecond)
 	tk.MustExec("alter table t add index idx_a(a);")
 	tk.MustExec("admin check index t idx_a;")
-	close(done)
-	wg.Wait()
+	stopWorkload()
 	tk.MustExec("drop table t")
 }

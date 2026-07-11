@@ -465,6 +465,15 @@ func (p *HandParser) tryParsePrivilege() *ast.PrivElem {
 		} else {
 			return nil // yacc requires REPLICATION CLIENT or REPLICATION SLAVE
 		}
+	case binlog:
+		// MariaDB alias: BINLOG MONITOR = REPLICATION CLIENT.
+		// Only accepted in MariaDB mode (yacc appends ErrSyntax otherwise).
+		if !p.enableMariaDB || p.peekN(1).Tp != monitor {
+			return nil
+		}
+		p.next() // consume BINLOG
+		p.next() // consume MONITOR
+		priv.Priv = mysql.ReplicationClientPriv
 	case create:
 		p.next()
 		switch p.peek().Tp {

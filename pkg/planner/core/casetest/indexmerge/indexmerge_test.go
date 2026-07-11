@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/stretchr/testify/require"
 )
@@ -115,6 +116,7 @@ func TestIndexMergePathGeneration(t *testing.T) {
 			}
 		}
 		ds.SCtx().GetSessionVars().SetEnableIndexMerge(true)
+		ds.SCtx().GetSessionVars().RUV2Metrics = execdetails.NewRUV2Metrics()
 		idxMergeStartIndex := len(ds.PossibleAccessPaths)
 		_, _, err = lp.RecursiveDeriveStats(nil)
 		require.NoError(t, err)
@@ -123,6 +125,9 @@ func TestIndexMergePathGeneration(t *testing.T) {
 			output[i] = result
 		})
 		require.Equalf(t, output[i], result, "case:%v sql:%s", i, tc)
+		if result != "[]" {
+			require.Equalf(t, int64(len(ds.PossibleAccessPaths)), ds.SCtx().GetSessionVars().RUV2Metrics.PlanDeriveStatsPaths(), "case:%v sql:%s", i, tc)
+		}
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}
 }

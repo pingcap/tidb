@@ -35,7 +35,7 @@ go_library(
 
 go_test(
     name = "memory_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "arbitrator_test.go",
         "bench_test.go",

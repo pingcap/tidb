@@ -28,16 +28,20 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
+	"github.com/pingcap/tidb/pkg/statistics"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
+	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -314,9 +318,9 @@ func TestMPPHintsScope(t *testing.T) {
 		tk.MustExec("use test")
 		tk.MustExec("create table t (a int, b int, c int, index idx_a(a), index idx_b(b))")
 		tk.MustExec("select /*+ MPP_1PHASE_AGG() */ a, sum(b) from t group by a, c")
-		tk.MustQuery("show warnings").Check(testkit.Rows())
+		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 The agg can not push down to the MPP side, the MPP_1PHASE_AGG() hint is invalid"))
 		tk.MustExec("select /*+ MPP_2PHASE_AGG() */ a, sum(b) from t group by a, c")
-		tk.MustQuery("show warnings").Check(testkit.Rows())
+		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 The agg can not push down to the MPP side, the MPP_2PHASE_AGG() hint is invalid"))
 		tk.MustExec("select /*+ shuffle_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a")
 		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 The join can not push down to the MPP side, the shuffle_join() hint is invalid"))
 		tk.MustExec("select /*+ broadcast_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a")
@@ -974,6 +978,25 @@ func TestIndexHint(t *testing.T) {
 
 			require.Equal(t, output[i].Hints, hint.RestoreOptimizerHints(hints), comment)
 		}
+
+		t.Run("ignore long prefix-sharing index keeps shorter sibling", func(t *testing.T) {
+			tk.MustExec("drop table if exists t_issue66875")
+			tk.MustExec(`create table t_issue66875 (
+				id bigint primary key,
+				contract_sys_no bigint,
+				delete_flag tinyint,
+				key idx_contract_sys_no (contract_sys_no),
+				key idx_contract_sys_no_delete_flag (contract_sys_no, delete_flag)
+			)`)
+
+			rs := tk.MustQuery(`explain format = 'plan_tree'
+select /*+ FORCE_INDEX(t_issue66875, idx_contract_sys_no, idx_contract_sys_no_delete_flag), IGNORE_INDEX(t_issue66875, idx_contract_sys_no_delete_flag) */ *
+from t_issue66875
+where contract_sys_no = 1`)
+			rs.CheckContain("idx_contract_sys_no")
+			rs.CheckNotContain("idx_contract_sys_no_delete_flag")
+			rs.CheckNotContain("TableFullScan")
+		})
 	})
 }
 
@@ -1329,7 +1352,6 @@ func TestCountStarForTiFlash(t *testing.T) {
 		planSuiteData := GetPlanSuiteData()
 		planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
 		tk.MustExec("use test")
-		tk.MustExec("set tidb_cost_model_version=1")
 		tk.MustExec("create table t (a int(11) not null, b varchar(10) not null, c date not null, d char(1) not null, e bigint not null, f datetime not null, g bool not null, h bool )")
 		tk.MustExec("create table t_pick_row_id (a char(20) not null)")
 
@@ -1581,9 +1603,45 @@ func TestLimitPushdown(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1(c1 int, c2 int, key(c1));")
-	tk.MustExec("set @@cte_max_recursion_depth = 10000;")
-	tk.MustExec("insert into t1 with recursive cte1 as (select 1 cola, 1 colb union all select cola+1 as cola, colb+1 as colb from cte1 limit 5000) select * from cte1;")
-	tk.MustExec("analyze table t1;")
+
+	// Inject mock statistics to avoid flakiness from analyze sampling variance.
+	dom := domain.GetDomain(tk.Session())
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	const rowCount = 5000
+	histColl := *statistics.NewHistColl(tblInfo.ID, rowCount, 0, len(tblInfo.Columns), len(tblInfo.Indices))
+	statsTbl := &statistics.Table{
+		HistColl:              histColl,
+		ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMap(len(tblInfo.Columns), len(tblInfo.Indices)),
+		Version:               1,
+	}
+	for _, col := range tblInfo.Columns {
+		hist := statistics.NewHistogram(col.ID, rowCount, 0, 0, &col.FieldType, 0, 0)
+		statsTbl.SetCol(col.ID, &statistics.Column{
+			Histogram:         *hist,
+			Info:              col,
+			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+			PhysicalID:        tblInfo.ID,
+			StatsVer:          2,
+		})
+		statsTbl.ColAndIdxExistenceMap.InsertCol(col.ID, true)
+	}
+	for _, idx := range tblInfo.Indices {
+		hist := statistics.NewHistogram(idx.ID, rowCount, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0)
+		statsTbl.SetIdx(idx.ID, &statistics.Index{
+			Histogram:         *hist,
+			Info:              idx,
+			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+			PhysicalID:        tblInfo.ID,
+			StatsVer:          2,
+		})
+		statsTbl.ColAndIdxExistenceMap.InsertIndex(idx.ID, true)
+	}
+	dom.StatsHandle().UpdateStatsCache(statstypes.CacheUpdate{
+		Updated: []*statistics.Table{statsTbl},
+	})
 
 	var input []string
 	var output []struct {
@@ -1642,6 +1700,11 @@ func TestSemiJoinRewriter(t *testing.T) {
 func TestDisableReuseChunk(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, _, _ string) {
 		tk.MustExec("use test")
+		originMaxMemoryLimitForOverlongType := core.MaxMemoryLimitForOverlongType
+		defer func() {
+			core.MaxMemoryLimitForOverlongType = originMaxMemoryLimitForOverlongType
+		}()
+
 		tk.MustExec("drop table if exists t1;")
 		tk.MustExec("create table t1(c1 int primary key, c2 mediumtext);")
 		tk.MustExec(`insert into t1 values (1, "abc"), (2, "def");`)

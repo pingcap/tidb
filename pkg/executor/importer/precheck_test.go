@@ -28,6 +28,9 @@ import (
 	"github.com/johannesboyne/gofakes3"
 	"github.com/johannesboyne/gofakes3/backend/s3mem"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/keyspace"
@@ -136,9 +139,16 @@ func TestCheckRequirements(t *testing.T) {
 	err = c.CheckRequirements(ctx, tk.Session())
 	require.ErrorIs(t, err, exeerrors.ErrLoadDataPreCheckFailed)
 	require.ErrorContains(t, err, "there is active job on the target table already")
+	err = c.CheckRequirementsBeforeInitDataFiles(ctx, tk.Session())
+	require.ErrorIs(t, err, exeerrors.ErrLoadDataPreCheckFailed)
+	require.ErrorContains(t, err, "there is active job on the target table already")
 	// cancel the job
 	require.NoError(t, importer.CancelJob(ctx, conn, jobID))
 
+	// async-prepare submit path skips file-size check before InitDataFiles.
+	c.DisablePrecheck = true
+	require.NoError(t, c.CheckRequirementsBeforeInitDataFiles(ctx, tk.Session()))
+	c.DisablePrecheck = false
 	// source data file size = 0
 	require.ErrorIs(t, c.CheckRequirements(ctx, tk.Session()), exeerrors.ErrLoadDataPreCheckFailed)
 
@@ -146,6 +156,27 @@ func TestCheckRequirements(t *testing.T) {
 	c.TotalFileSize = 1
 	c.ThreadCnt = 1
 	c.CloudStorageURI = ""
+
+	if kerneltype.IsNextGen() {
+		func() {
+			originDeployMode := deploymode.Get()
+			originGlobalConfig := config.GetGlobalConfig()
+			defer func() {
+				c.TotalRealSize = 0
+				config.StoreGlobalConfig(originGlobalConfig)
+				require.NoError(t, deploymode.Set(originDeployMode))
+			}()
+			require.NoError(t, deploymode.Set(deploymode.Starter))
+			config.UpdateGlobal(func(conf *config.Config) {
+				conf.DeployMode = deploymode.Starter
+				conf.StarterParams.MaxImportDataSize = 1
+			})
+			c.TotalRealSize = 2
+			err = c.CheckRequirements(ctx, tk.Session())
+			require.ErrorIs(t, err, exeerrors.ErrLoadDataPreCheckFailed)
+			require.ErrorContains(t, err, "total real import data size 2B exceeds maximum import size limit 1B (total file size 1B)")
+		}()
+	}
 
 	// non-empty table
 	_, err = conn.Execute(ctx, "insert into test.t values(1)")
@@ -225,6 +256,12 @@ func TestCheckRequirements(t *testing.T) {
 	require.ErrorIs(t, c.CheckRequirements(ctx, tk.Session()), exeerrors.ErrLoadDataInvalidURI)
 	c.Plan.CloudStorageURI = "local:///tmp"
 	require.ErrorContains(t, c.CheckRequirements(ctx, tk.Session()), "unsupported cloud storage uri scheme: local")
+	c.Plan.CloudStorageURI = "azblob://test-bucket/path?account-name=test-account&sas-token=xxxxxx&endpoint=http://127.0.0.1:1/devstoreaccount1"
+	// Azure SDK retries unreachable endpoints aggressively; bound this negative check
+	// so the test still verifies the same failure path without dominating runtime.
+	azblobCtx, cancel := context.WithTimeout(ctx, time.Second)
+	require.ErrorContains(t, c.CheckRequirements(azblobCtx, tk.Session()), "check cloud storage uri access")
+	cancel()
 	// this mock cannot mock credential check, so we just skip it.
 	backend := s3mem.New()
 	faker := gofakes3.New(backend)

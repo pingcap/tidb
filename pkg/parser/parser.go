@@ -45,6 +45,17 @@ type HandParser struct {
 	// strictDoubleFieldType controls if DOUBLE(len) is allowed (it should be rejected if strict).
 	strictDoubleFieldType bool
 
+	// enableMariaDB controls whether extended MariaDB-only syntax is accepted.
+	enableMariaDB bool
+
+	// disallowReturningAlias is a one-shot flag set while parsing the table
+	// clause of a single-table DELETE. When set, a RETURNING token after the
+	// table name starts a RETURNING clause instead of being an implicit table
+	// alias, mirroring the goyacc TableAsNameOptDelete production
+	// (%prec higherThanReturning). It is consumed (cleared) by the first
+	// parseTableSource call.
+	disallowReturningAlias bool
+
 	// hintParser parses optimizer hint comments (/*+ ... */) directly.
 	hintParser *hintParser
 
@@ -72,6 +83,7 @@ func (p *HandParser) Reset() {
 
 	p.lexer = nil
 	p.src = ""
+	p.disallowReturningAlias = false
 	p.errs = p.errs[:0]
 	p.warns = p.warns[:0]
 	p.result = p.result[:0]
@@ -104,6 +116,11 @@ func (p *HandParser) EnableWindowFunc(val bool) {
 // SetStrictDoubleFieldTypeCheck sets strict double type check.
 func (p *HandParser) SetStrictDoubleFieldTypeCheck(val bool) {
 	p.strictDoubleFieldType = val
+}
+
+// SetMariaDB sets whether extended MariaDB-only syntax is accepted.
+func (p *HandParser) SetMariaDB(val bool) {
+	p.enableMariaDB = val
 }
 
 // Init initializes the parser with a lexer and source SQL.

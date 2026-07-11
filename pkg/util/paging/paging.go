@@ -22,21 +22,23 @@ import "math"
 // if it's not drained, then the paging size grows, the new range is calculated like (r100, r200), then send a request again.
 // Compare with the common unary request, paging request allows early access of data, it offers a streaming-like way processing data.
 const (
-	MinPagingSize      uint64 = 128
-	maxPagingSizeShift        = 7
-	pagingSizeGrow            = 2
-	MaxPagingSize             = 50000
-	pagingGrowingSum          = ((2 << maxPagingSizeShift) - 1) * MinPagingSize
-	Threshold          uint64 = 960
+	MinPagingSize           uint64 = 128
+	maxPagingSizeShift             = 7
+	pagingSizeGrow                 = 2
+	MinAllowedMaxPagingSize        = 50000
+	pagingGrowingSum               = ((2 << maxPagingSizeShift) - 1) * MinPagingSize
+	Threshold               uint64 = 960
 )
 
-// GrowPagingSize grows the paging size and ensures it does not exceed MaxPagingSize
+// GrowPagingSize grows the paging size and ensures it does not exceed
+// max(maxv, MinAllowedMaxPagingSize).
 func GrowPagingSize(size uint64, maxv uint64) uint64 {
-	if maxv < MaxPagingSize {
+	if maxv < MinAllowedMaxPagingSize {
 		// Defensive programing, for example, call with max = 0.
-		// max should never less than MaxPagingSize.
-		// Otherwise the session variable maybe wrong, or the distsql request does not obey the session variable setting.
-		maxv = MaxPagingSize
+		// max should never less than MinAllowedMaxPagingSize.
+		// Otherwise, the session variable maybe wrong, or the distsql request
+		// does not obey the session variable setting.
+		maxv = MinAllowedMaxPagingSize
 	}
 
 	size <<= 1
@@ -53,7 +55,7 @@ func CalculateSeekCnt(expectCnt uint64) float64 {
 	}
 	if expectCnt > pagingGrowingSum {
 		// if the expectCnt is larger than pagingGrowingSum, calculate the seekCnt for the excess.
-		return float64(8 + (expectCnt-pagingGrowingSum+MaxPagingSize-1)/MaxPagingSize)
+		return float64(8 + (expectCnt-pagingGrowingSum+MinAllowedMaxPagingSize-1)/MinAllowedMaxPagingSize)
 	}
 	if expectCnt > MinPagingSize {
 		// if the expectCnt is less than pagingGrowingSum,

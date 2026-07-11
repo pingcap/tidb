@@ -27,7 +27,10 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
 	"github.com/pingcap/tidb/br/pkg/stream"
+	"github.com/pingcap/tidb/br/pkg/utils/consts"
+	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -40,6 +43,49 @@ func TestShiftTS(t *testing.T) {
 
 	delta := oracle.GetTimeFromTS(startTS).Sub(oracle.GetTimeFromTS(shiftTS))
 	require.Equal(t, delta, streamShiftDuration)
+}
+
+func TestShouldOpenPiTRAddIndexSQLStorage(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  RestoreConfig
+		want bool
+	}{
+		{
+			name: "empty storage",
+			cfg:  RestoreConfig{},
+			want: false,
+		},
+		{
+			name: "full flow opens storage",
+			cfg: RestoreConfig{
+				PiTRAddIndexSQLStorage: "local:///tmp/pitr-add-index",
+			},
+			want: true,
+		},
+		{
+			name: "phase 1 does not open storage",
+			cfg: RestoreConfig{
+				PiTRAddIndexSQLStorage: "local:///tmp/pitr-add-index",
+				RestorePhase:           1,
+			},
+			want: false,
+		},
+		{
+			name: "phase 2 opens storage",
+			cfg: RestoreConfig{
+				PiTRAddIndexSQLStorage: "local:///tmp/pitr-add-index",
+				RestorePhase:           2,
+			},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, shouldOpenPiTRAddIndexSQLStorage(&tt.cfg))
+		})
+	}
 }
 
 func TestCheckLogRange(t *testing.T) {
@@ -175,6 +221,103 @@ func TestGetGlobalCheckpointFromStorage(t *testing.T) {
 	require.Equal(t, ts, uint64(99))
 }
 
+func TestHasAnyWriteCFLogFile(t *testing.T) {
+	makeLogFile := func(cf string) *logclient.LogDataFileInfo {
+		return &logclient.LogDataFileInfo{
+			DataFileInfo: &backuppb.DataFileInfo{
+				Cf: cf,
+			},
+		}
+	}
+	defaultFile := makeLogFile(consts.DefaultCF)
+	writeFile := makeLogFile(consts.WriteCF)
+
+	cases := []struct {
+		name  string
+		files []*logclient.LogDataFileInfo
+		want  *logclient.LogDataFileInfo
+	}{
+		{
+			name: "empty",
+		},
+		{
+			name:  "default only",
+			files: []*logclient.LogDataFileInfo{defaultFile},
+		},
+		{
+			name: "ignore default before write",
+			files: []*logclient.LogDataFileInfo{
+				defaultFile,
+				writeFile,
+			},
+			want: writeFile,
+		},
+		{
+			name: "write only",
+			files: []*logclient.LogDataFileInfo{
+				writeFile,
+			},
+			want: writeFile,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			file, err := hasAnyWriteCFLogFile(context.Background(), iter.FromSlice(c.files))
+			require.NoError(t, err)
+			require.Same(t, c.want, file)
+		})
+	}
+
+	_, err := hasAnyWriteCFLogFile(context.Background(), iter.Fail[*logclient.LogDataFileInfo](errors.New("failed to read log file")))
+	require.Error(t, err)
+}
+
+func TestGetMaxRecoverableCheckpointFromStoragePrefersResumeState(t *testing.T) {
+	ctx := context.Background()
+	tmpdir := t.TempDir()
+	s, err := objstore.NewLocalStorage(tmpdir)
+	require.Nil(t, err)
+
+	err = fakeCheckpointFiles(ctx, tmpdir, []fakeGlobalCheckPoint{
+		{
+			storeID:          1,
+			globalCheckpoint: 99,
+		},
+	})
+	require.Nil(t, err)
+
+	err = s.WriteFile(ctx, resumeStateFileName, []byte(`{"last_checkpoint":88}`))
+	require.Nil(t, err)
+
+	ts, err := getMaxRecoverableCheckpointFromStorage(ctx, s)
+	require.Nil(t, err)
+	require.Equal(t, uint64(88), ts)
+}
+
+func TestGetMaxRecoverableCheckpointFromStorageFallbackToGlobalCheckpoint(t *testing.T) {
+	ctx := context.Background()
+	tmpdir := t.TempDir()
+	s, err := objstore.NewLocalStorage(tmpdir)
+	require.Nil(t, err)
+
+	err = fakeCheckpointFiles(ctx, tmpdir, []fakeGlobalCheckPoint{
+		{
+			storeID:          1,
+			globalCheckpoint: 98,
+		},
+		{
+			storeID:          2,
+			globalCheckpoint: 99,
+		},
+	})
+	require.Nil(t, err)
+
+	ts, err := getMaxRecoverableCheckpointFromStorage(ctx, s)
+	require.Nil(t, err)
+	require.Equal(t, uint64(99), ts)
+}
+
 func TestGetLogRangeWithFullBackupDir(t *testing.T) {
 	var fullBackupTS uint64 = 123456
 	testDir := t.TempDir()
@@ -196,6 +339,40 @@ func TestGetLogRangeWithFullBackupDir(t *testing.T) {
 	_, err = getLogInfo(context.TODO(), &cfg)
 	require.ErrorIs(t, err, berrors.ErrStorageUnknown)
 	require.ErrorContains(t, err, "the storage has been used for full backup")
+
+	t.Run("full backup ts checks backupmeta compatibility", func(t *testing.T) {
+		testDir := t.TempDir()
+		storage, err := objstore.NewLocalStorage(testDir)
+		require.NoError(t, err)
+
+		const fullBackupTS uint64 = 223344
+		const fullClusterID uint64 = 556677
+		m := backuppb.BackupMeta{
+			BackupSchemaVersion: backuppb.BackupSchemaVersion + 1,
+			ClusterVersion:      "8.5.6",
+			BrVersion:           "v8.5.6",
+			EndVersion:          fullBackupTS,
+			ClusterId:           fullClusterID,
+		}
+		data, err := proto.Marshal(&m)
+		require.NoError(t, err)
+		require.NoError(t, storage.WriteFile(context.TODO(), metautil.MetaFile, data))
+
+		restoreCfg := &RestoreConfig{
+			Config: Config{
+				CheckRequirements: true,
+			},
+			FullBackupStorage: testDir,
+		}
+		_, _, err = getFullBackupTS(context.TODO(), restoreCfg)
+		require.ErrorContains(t, err, "requires schema version")
+
+		restoreCfg.CheckRequirements = false
+		startTS, clusterID, err := getFullBackupTS(context.TODO(), restoreCfg)
+		require.NoError(t, err)
+		require.Equal(t, fullBackupTS, startTS)
+		require.Equal(t, fullClusterID, clusterID)
+	})
 }
 
 func TestGetLogRangeWithLogBackupDir(t *testing.T) {
@@ -219,6 +396,34 @@ func TestGetLogRangeWithLogBackupDir(t *testing.T) {
 	logInfo, err := getLogInfo(context.TODO(), &cfg)
 	require.Nil(t, err)
 	require.Equal(t, logInfo.logMinTS, startLogBackupTS)
+
+	t.Run("log info checks backupmeta compatibility", func(t *testing.T) {
+		testDir := t.TempDir()
+		storage, err := objstore.NewLocalStorage(testDir)
+		require.NoError(t, err)
+
+		m := backuppb.BackupMeta{
+			BackupSchemaVersion: backuppb.BackupSchemaVersion + 1,
+			ClusterVersion:      "8.5.6",
+			BrVersion:           "v8.5.6",
+			StartVersion:        startLogBackupTS,
+		}
+		data, err := proto.Marshal(&m)
+		require.NoError(t, err)
+		require.NoError(t, storage.WriteFile(context.TODO(), metautil.MetaFile, data))
+
+		cfg := Config{
+			Storage:           testDir,
+			CheckRequirements: true,
+		}
+		_, err = getLogInfo(context.TODO(), &cfg)
+		require.ErrorContains(t, err, "requires schema version")
+
+		cfg.CheckRequirements = false
+		logInfo, err := getLogInfo(context.TODO(), &cfg)
+		require.NoError(t, err)
+		require.Equal(t, startLogBackupTS, logInfo.logMinTS)
+	})
 }
 
 func TestGetExternalStorageOptions(t *testing.T) {

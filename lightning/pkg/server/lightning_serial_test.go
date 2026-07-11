@@ -24,7 +24,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
+	"github.com/pingcap/tidb/lightning/pkg/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
@@ -164,24 +164,24 @@ func TestCheckSystemRequirement(t *testing.T) {
 		},
 	}
 
-	err := failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/GetRlimitValue", "return(139415)")
+	err := failpoint.Enable("github.com/pingcap/tidb/pkg/ingestor/ingestctrl/GetRlimitValue", "return(139415)")
 	require.NoError(t, err)
-	err = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/SetRlimitError", "return(true)")
+	err = failpoint.Enable("github.com/pingcap/tidb/pkg/ingestor/ingestctrl/SetRlimitError", "return(true)")
 	require.NoError(t, err)
 	defer func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/SetRlimitError")
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ingestor/ingestctrl/SetRlimitError")
 	}()
 	// with this dbMetas, the estimated fds will be 139416, so should return error
 	err = checkSystemRequirement(cfg, dbMetas)
 	require.Error(t, err)
 
-	err = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/GetRlimitValue")
+	err = failpoint.Disable("github.com/pingcap/tidb/pkg/ingestor/ingestctrl/GetRlimitValue")
 	require.NoError(t, err)
 
 	// the min rlimit should be not smaller than the default min value (139416)
-	err = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/GetRlimitValue", "return(139416)")
+	err = failpoint.Enable("github.com/pingcap/tidb/pkg/ingestor/ingestctrl/GetRlimitValue", "return(139416)")
 	defer func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/GetRlimitValue")
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ingestor/ingestctrl/GetRlimitValue")
 	}()
 	require.NoError(t, err)
 	err = checkSystemRequirement(cfg, dbMetas)

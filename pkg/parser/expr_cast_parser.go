@@ -763,12 +763,12 @@ func (p *HandParser) parseTimeUnit() *ast.TimeUnitExpr {
 		unit = ast.TimeUnitYearMonth
 	case identifier:
 		// Handle any remaining identifier-based time unit aliases
-		if u, ok := sqlTsiTimeUnits[strings.ToUpper(tok.Lit)]; ok {
-			unit = u
-		} else {
+		u, ok := sqlTsiTimeUnits[strings.ToUpper(tok.Lit)]
+		if !ok {
 			p.syntaxErrorAt(tok)
 			return nil
 		}
+		unit = u
 	default:
 		p.syntaxErrorAt(tok)
 		return nil

@@ -766,6 +766,95 @@ local TokenRequestCountPanel = graphPanel.new(
   )
 );
 
+//*  ==============Panel (Paging Pre-charge)==================
+//*  Row Title: Paging Pre-charge
+//*  Description: The metrics about resource control paging pre-charge
+//*  Panels: 3
+//*  ==============Panel (Paging Pre-charge)==================
+
+local pagingPrechargeRow = row.new(collapse=true, title="Paging Pre-charge");
+
+local PagingRequestCountPanel = graphPanel.new(
+  title="Cop Read Pre-charge Coverage",
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_current=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  format="short",
+  description="Rate of read coprocessor RPCs split by whether they carried a positive PredictedReadBytes hint and triggered request-side read-byte pre-charge.",
+).addTarget(
+  prometheus.target(
+    'sum(rate(resource_manager_client_request_cop_read_precharge_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance", resource_group=~"$resource_group"}[1m])) by (instance, resource_group)',
+    legendFormat="{{instance}}-{{resource_group}}-precharged",
+  )
+).addTarget(
+  prometheus.target(
+    'sum(rate(resource_manager_client_request_cop_read_no_precharge_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance", resource_group=~"$resource_group"}[1m])) by (instance, resource_group)',
+    legendFormat="{{instance}}-{{resource_group}}-no-precharge",
+  )
+);
+
+local PagingBytesPanel = graphPanel.new(
+  title="Paging Bytes",
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_current=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  format="Bps",
+  description="Bytes rate over pre-charged coprocessor reads: predicted pre-charge basis and actual bytes read.",
+).addTarget(
+  prometheus.target(
+    'sum(rate(resource_manager_client_request_paging_precharge_bytes_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance", resource_group=~"$resource_group"}[1m])) by (instance, resource_group)',
+    legendFormat="{{instance}}-{{resource_group}}-precharge-predicted",
+  )
+).addTarget(
+  prometheus.target(
+    'sum(rate(resource_manager_client_request_paging_actual_bytes_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance", resource_group=~"$resource_group"}[1m])) by (instance, resource_group)',
+    legendFormat="{{instance}}-{{resource_group}}-precharge-actual",
+  )
+);
+
+local PagingPredictionResidualBytesPanel = graphPanel.new(
+  title="Paging Prediction Residual Bytes",
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_min=true,
+  legend_max=true,
+  legend_avg=true,
+  legend_current=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  format="bytes",
+  description="Quantiles of signed prediction residual (actual - predicted read bytes) for pre-charged coprocessor RPCs. Positive = under-prediction (extra debit), negative = over-prediction (refund).",
+).addTarget(
+  prometheus.target(
+    'histogram_quantile(0.99, sum(rate(resource_manager_client_request_paging_prediction_residual_bytes_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance", resource_group=~"$resource_group"}[1m])) by (instance, resource_group, le))',
+    legendFormat="{{instance}}-{{resource_group}}-99",
+  )
+).addTarget(
+  prometheus.target(
+    'histogram_quantile(0.9, sum(rate(resource_manager_client_request_paging_prediction_residual_bytes_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance", resource_group=~"$resource_group"}[1m])) by (instance, resource_group, le))',
+    legendFormat="{{instance}}-{{resource_group}}-90",
+  )
+).addTarget(
+  prometheus.target(
+    'histogram_quantile(0.5, sum(rate(resource_manager_client_request_paging_prediction_residual_bytes_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance", resource_group=~"$resource_group"}[1m])) by (instance, resource_group, le))',
+    legendFormat="{{instance}}-{{resource_group}}-50",
+  )
+).addTarget(
+  prometheus.target(
+    'histogram_quantile(0.1, sum(rate(resource_manager_client_request_paging_prediction_residual_bytes_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance", resource_group=~"$resource_group"}[1m])) by (instance, resource_group, le))',
+    legendFormat="{{instance}}-{{resource_group}}-10",
+  )
+).addTarget(
+  prometheus.target(
+    'histogram_quantile(0.01, sum(rate(resource_manager_client_request_paging_prediction_residual_bytes_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance", resource_group=~"$resource_group"}[1m])) by (instance, resource_group, le))',
+    legendFormat="{{instance}}-{{resource_group}}-01",
+  )
+);
+
 //*  ==============Panel (Runaway)==================
 //*  Row Title: Runaway
 //*  Description: The metrics about runaway resource control
@@ -1210,6 +1299,12 @@ local rowPos = { x: 0, y: 0, w: rowW, h: rowH };
 local leftPanelPos = { x: 0, y: 0, w: panelW, h: panelH };
 local rightPanelPos = { x: panelW, y: 0, w: panelW, h: panelH };
 local fullPanelPos = { x: 0, y: 0, w: rowW, h: panelH };
+local pagingLeftPanelPos = { x: 0, y: panelH, w: panelW, h: panelH };
+local pagingRightPanelPos = { x: panelW, y: panelH, w: panelW, h: panelH };
+local pagingPanelRow = pagingPrechargeRow/* Paging Pre-charge */
+  .addPanel(PagingRequestCountPanel, gridPos=fullPanelPos)
+  .addPanel(PagingBytesPanel, gridPos=pagingLeftPanelPos)
+  .addPanel(PagingPredictionResidualBytesPanel, gridPos=pagingRightPanelPos);
 
 TiDBResourceControlDash
 .addPanel(
@@ -1247,7 +1342,17 @@ TiDBResourceControlDash
   .addPanel(TokenRequestCountPanel, gridPos=rightPanelPos)
   ,
   gridPos=rowPos
-).addPanel(
+){
+  // Keep the paging row IDs at 50-53 so generating the dashboard does not
+  // renumber the existing Runaway and later panels.
+  panels+::: [
+    pagingPanelRow {
+      gridPos: rowPos,
+      id: 50,
+      panels: std.mapWithIndex(function(i, panel) panel { id: 51 + i }, pagingPanelRow.panels),
+    },
+  ],
+}.addPanel(
   runawayRow/* Runaway */
   .addPanel(QueryMaxDurationPanel, gridPos=leftPanelPos)
   .addPanel(RunawayEventPanel, gridPos=rightPanelPos)

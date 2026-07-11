@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"path"
 	"testing"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -146,6 +147,9 @@ func TestIntegration(t *testing.T) {
 	t.Run("TestStreamCheckpoint", func(t *testing.T) { testStreamCheckpoint(t, streamhelper.AdvancerExt{MetaDataClient: metaCli}) })
 	t.Run("testStoptask", func(t *testing.T) { testStoptask(t, streamhelper.AdvancerExt{MetaDataClient: metaCli}) })
 	t.Run("TestStreamClose", func(t *testing.T) { testStreamClose(t, streamhelper.AdvancerExt{MetaDataClient: metaCli}) })
+	t.Run("TestCheckpointWatchProgressTimeout", func(t *testing.T) {
+		testCheckpointWatchProgressTimeout(t, streamhelper.AdvancerExt{MetaDataClient: metaCli})
+	})
 	t.Run("TestPauseTaskWithErr", func(t *testing.T) { testPauseTaskWithErr(t, streamhelper.AdvancerExt{MetaDataClient: metaCli}) })
 }
 
@@ -353,6 +357,23 @@ func testStreamClose(t *testing.T, metaCli streamhelper.AdvancerExt) {
 	require.ErrorIs(t, third.Err, io.EOF)
 	item, ok := <-ch
 	require.False(t, ok, "%#v", item)
+}
+
+func testCheckpointWatchProgressTimeout(t *testing.T, metaCli streamhelper.AdvancerExt) {
+	restore := streamhelper.SetMetadataWatchProgressForTest(10*time.Millisecond, 50*time.Millisecond)
+	defer restore()
+	require.NoError(t, failpoint.Enable(
+		"github.com/pingcap/tidb/br/pkg/streamhelper/advancer_skip_watch_progress_request",
+		"return"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(
+			"github.com/pingcap/tidb/br/pkg/streamhelper/advancer_skip_watch_progress_request"))
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	err := metaCli.WaitGlobalCheckpointAdvance(ctx, "checkpoint_watch_timeout", 100)
+	require.ErrorContains(t, err, "watching global checkpoint timed out")
 }
 
 func testStreamCheckpoint(t *testing.T, metaCli streamhelper.AdvancerExt) {

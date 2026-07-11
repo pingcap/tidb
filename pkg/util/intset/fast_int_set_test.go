@@ -481,6 +481,36 @@ func TestFastIntSetAddRange(t *testing.T) {
 	}
 }
 
+func TestGetSmallUInt64(t *testing.T) {
+	// Empty set returns 0.
+	var s FastIntSet
+	v, err := s.GetSmallUInt64()
+	require.NoError(t, err)
+	require.Equal(t, uint64(0), v)
+
+	// Small-only values: bits 0, 1, 3 set → 0b1011 = 11.
+	s = NewFastIntSet(0, 1, 3)
+	v, err = s.GetSmallUInt64()
+	require.NoError(t, err)
+	require.Equal(t, uint64(0b1011), v)
+
+	// All small values up to bit 5 → 0b111111 = 63.
+	s = NewFastIntSet(0, 1, 2, 3, 4, 5)
+	v, err = s.GetSmallUInt64()
+	require.NoError(t, err)
+	require.Equal(t, uint64(63), v)
+
+	// A set with a value >= smallCutOff (64) triggers an error.
+	s = NewFastIntSet(64)
+	_, err = s.GetSmallUInt64()
+	require.Error(t, err)
+
+	// Mixed: small + large value also triggers an error.
+	s = NewFastIntSet(1, 64)
+	_, err = s.GetSmallUInt64()
+	require.Error(t, err)
+}
+
 func TestFastIntSetString(t *testing.T) {
 	testCases := []struct {
 		vals []int

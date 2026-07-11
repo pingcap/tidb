@@ -39,7 +39,6 @@ const (
 	fieldTypeTupleIndexFlagNull
 	fieldTypeTupleIndexFlagAntiKeys
 	fieldTypeTupleIndexFlagDefVal
-	fieldTypeTupleIndexCharset
 	fieldTypeTupleIndexCollate
 	fieldTypeTupleIndexElems
 
@@ -86,8 +85,7 @@ func encodeFieldTypeToLattice(ft *types.FieldType) Tuple {
 		Byte(encodeAntiKeys(ft.GetFlag())),
 		defVal,
 
-		Singleton(ft.GetCharset()),
-		Singleton(ft.GetCollate()),
+		Collation(ft.GetCollate()),
 		StringList(ft.GetElems()),
 	}
 }
@@ -106,7 +104,14 @@ func decodeFieldTypeFromLattice(tup Tuple) *types.FieldType {
 		flags |= mysql.NoDefaultValueFlag
 	}
 
-	return types.NewFieldTypeBuilder().SetType(lst[fieldTypeTupleIndexTp].(byte)).SetFlen(lst[fieldTypeTupleIndexFlen].(int)).SetDecimal(lst[fieldTypeTupleIndexDec].(int)).SetFlag(flags).SetCharset(lst[fieldTypeTupleIndexCharset].(string)).SetCollate(lst[fieldTypeTupleIndexCollate].(string)).SetElems(lst[fieldTypeTupleIndexElems].([]string)).BuildP()
+	collate := lst[fieldTypeTupleIndexCollate].(string)
+	charsetName, _, _ := strings.Cut(collate, "_")
+	if charsetName == "" {
+		charsetName = collate
+	}
+	charsetName = Charset(charsetName).Unwrap().(string)
+
+	return types.NewFieldTypeBuilder().SetType(lst[fieldTypeTupleIndexTp].(byte)).SetFlen(lst[fieldTypeTupleIndexFlen].(int)).SetDecimal(lst[fieldTypeTupleIndexDec].(int)).SetFlag(flags).SetCharset(charsetName).SetCollate(collate).SetElems(lst[fieldTypeTupleIndexElems].([]string)).BuildP()
 }
 
 type typ struct{ Tuple }

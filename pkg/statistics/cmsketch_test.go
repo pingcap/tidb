@@ -202,6 +202,60 @@ func TestCMSketchTopN(t *testing.T) {
 	}
 }
 
+func TestEstimateNDVByGEE(t *testing.T) {
+	tests := []struct {
+		name           string
+		sampleNDV      uint64
+		singletonItems uint64
+		sampleSize     uint64
+		rowCount       uint64
+		expected       uint64
+	}{
+		{
+			name:           "applies singleton correction",
+			sampleNDV:      10,
+			singletonItems: 3,
+			sampleSize:     20,
+			rowCount:       80,
+			expected:       13,
+		},
+		{
+			name:           "rounds half up",
+			sampleNDV:      10,
+			singletonItems: 7,
+			sampleSize:     20,
+			rowCount:       45,
+			expected:       14,
+		},
+		{
+			name:           "keeps sample ndv as lower bound",
+			sampleNDV:      10,
+			singletonItems: 7,
+			sampleSize:     20,
+			rowCount:       10,
+			expected:       10,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.expected, EstimateNDVByGEE(tt.sampleNDV, tt.singletonItems, tt.sampleSize, tt.rowCount))
+		})
+	}
+
+	t.Run("invalid input", func(t *testing.T) {
+		require.PanicsWithValue(t, "assert failed, sampleSize should be greater than 0", func() {
+			EstimateNDVByGEE(1, 1, 0, 1)
+		})
+		require.PanicsWithValue(t, "assert failed, sampleNDV should be greater than 0", func() {
+			EstimateNDVByGEE(0, 0, 1, 1)
+		})
+		require.PanicsWithValue(t, "assert failed, rowCount should be greater than or equal to sampleNDV", func() {
+			EstimateNDVByGEE(10, 3, 20, 9)
+		})
+	})
+}
+
 func TestCMSketchTopNUniqueData(t *testing.T) {
 	d, w := int32(5), int32(2048)
 	total := uint64(1000000)

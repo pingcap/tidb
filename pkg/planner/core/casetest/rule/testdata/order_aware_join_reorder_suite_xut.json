@@ -1,0 +1,265 @@
+[
+  {
+    "Name": "TestOrderAwareCDCJoinReorder",
+    "Cases": [
+      {
+        "SQL": "SELECT t6.id, t7.payload, t8.payload FROM t7 JOIN t8 ON t7.id = t8.id JOIN t6 ON t6.id = t7.id WHERE t6.category = 'hot' ORDER BY t6.id LIMIT 2",
+        "Plan": [
+          "Projection root  test.t6.id, test.t7.payload, test.t8.payload",
+          "└─TopN root  test.t6.id, offset:0, count:2",
+          "  └─Projection root  test.t7.payload, test.t8.payload, test.t6.id",
+          "    └─MergeJoin root  inner join, left key:test.t7.id, right key:test.t8.id",
+          "      ├─TableReader(Build) root  data:TableFullScan",
+          "      │ └─TableFullScan cop[tikv] table:t8 keep order:true",
+          "      └─MergeJoin(Probe) root  inner join, left key:test.t6.id, right key:test.t7.id",
+          "        ├─TableReader(Build) root  data:TableFullScan",
+          "        │ └─TableFullScan cop[tikv] table:t7 keep order:true",
+          "        └─IndexReader(Probe) root  index:IndexRangeScan",
+          "          └─IndexRangeScan cop[tikv] table:t6, index:idx_category_id_payload(category, id, payload) range:[\"hot\",\"hot\"], keep order:true"
+        ],
+        "Result": [
+          "1 100 1000",
+          "2 200 2000"
+        ]
+      },
+      {
+        "SQL": "SELECT /*+ LEADING(t7, t8, t6) */ t6.id, t7.payload, t8.payload FROM t7 JOIN t8 ON t7.id = t8.id JOIN t6 ON t6.id = t7.id WHERE t6.category = 'hot' ORDER BY t6.id LIMIT 2",
+        "Plan": [
+          "Projection root  test.t6.id, test.t7.payload, test.t8.payload",
+          "└─Limit root  offset:0, count:2",
+          "  └─MergeJoin root  inner join, left key:test.t7.id, right key:test.t6.id",
+          "    ├─IndexReader(Build) root  index:IndexRangeScan",
+          "    │ └─IndexRangeScan cop[tikv] table:t6, index:idx_category_id_payload(category, id, payload) range:[\"hot\",\"hot\"], keep order:true",
+          "    └─MergeJoin(Probe) root  inner join, left key:test.t7.id, right key:test.t8.id",
+          "      ├─TableReader(Build) root  data:TableFullScan",
+          "      │ └─TableFullScan cop[tikv] table:t8 keep order:true",
+          "      └─TableReader(Probe) root  data:TableFullScan",
+          "        └─TableFullScan cop[tikv] table:t7 keep order:true"
+        ],
+        "Result": [
+          "1 100 1000",
+          "2 200 2000"
+        ]
+      },
+      {
+        "SQL": "SELECT /*+ TIDB_INLJ(t7, t8, t9) */ t6.id, t7.payload, t8.payload, t9.payload FROM t7 JOIN t8 ON t7.id = t8.id JOIN t9 ON t8.id = t9.id JOIN t6 ON t6.id = t7.id WHERE t6.category = 'hot' ORDER BY t6.id LIMIT 2",
+        "Plan": [
+          "Projection root  test.t6.id, test.t7.payload, test.t8.payload, test.t9.payload",
+          "└─Limit root  offset:0, count:2",
+          "  └─Projection root  test.t7.payload, test.t8.payload, test.t9.payload, test.t6.id",
+          "    └─IndexJoin root  inner join, inner:TableReader, outer key:test.t8.id, inner key:test.t9.id, equal cond:eq(test.t8.id, test.t9.id)",
+          "      ├─IndexJoin(Build) root  inner join, inner:TableReader, outer key:test.t7.id, inner key:test.t8.id, equal cond:eq(test.t7.id, test.t8.id)",
+          "      │ ├─IndexJoin(Build) root  inner join, inner:TableReader, outer key:test.t6.id, inner key:test.t7.id, equal cond:eq(test.t6.id, test.t7.id)",
+          "      │ │ ├─IndexReader(Build) root  index:IndexRangeScan",
+          "      │ │ │ └─IndexRangeScan cop[tikv] table:t6, index:idx_category_id_payload(category, id, payload) range:[\"hot\",\"hot\"], keep order:true",
+          "      │ │ └─TableReader(Probe) root  data:TableRangeScan",
+          "      │ │   └─TableRangeScan cop[tikv] table:t7 range: decided by [test.t6.id], keep order:false",
+          "      │ └─TableReader(Probe) root  data:TableRangeScan",
+          "      │   └─TableRangeScan cop[tikv] table:t8 range: decided by [test.t7.id], keep order:false",
+          "      └─TableReader(Probe) root  data:TableRangeScan",
+          "        └─TableRangeScan cop[tikv] table:t9 range: decided by [test.t8.id], keep order:false"
+        ],
+        "Result": [
+          "1 100 1000 10000",
+          "2 200 2000 20000"
+        ]
+      },
+      {
+        "SQL": "SELECT /*+ TIDB_INLJ(t7, t8, t9) LEADING(t7, t8, t9, t6) */ t6.id, t7.payload, t8.payload, t9.payload FROM t7 JOIN t8 ON t7.id = t8.id JOIN t9 ON t8.id = t9.id JOIN t6 ON t6.id = t7.id WHERE t6.category = 'hot' ORDER BY t6.id LIMIT 2",
+        "Plan": [
+          "Projection root  test.t6.id, test.t7.payload, test.t8.payload, test.t9.payload",
+          "└─Limit root  offset:0, count:2",
+          "  └─MergeJoin root  inner join, left key:test.t7.id, right key:test.t6.id",
+          "    ├─IndexReader(Build) root  index:IndexRangeScan",
+          "    │ └─IndexRangeScan cop[tikv] table:t6, index:idx_category_id_payload(category, id, payload) range:[\"hot\",\"hot\"], keep order:true",
+          "    └─IndexJoin(Probe) root  inner join, inner:TableReader, outer key:test.t8.id, inner key:test.t9.id, equal cond:eq(test.t8.id, test.t9.id)",
+          "      ├─IndexJoin(Build) root  inner join, inner:TableReader, outer key:test.t7.id, inner key:test.t8.id, equal cond:eq(test.t7.id, test.t8.id)",
+          "      │ ├─TableReader(Build) root  data:TableFullScan",
+          "      │ │ └─TableFullScan cop[tikv] table:t7 keep order:true",
+          "      │ └─TableReader(Probe) root  data:TableRangeScan",
+          "      │   └─TableRangeScan cop[tikv] table:t8 range: decided by [test.t7.id], keep order:false",
+          "      └─TableReader(Probe) root  data:TableRangeScan",
+          "        └─TableRangeScan cop[tikv] table:t9 range: decided by [test.t8.id], keep order:false"
+        ],
+        "Result": [
+          "1 100 1000 10000",
+          "2 200 2000 20000"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestOrderAwareJoinReorderPushSelection",
+    "Cases": [
+      {
+        "SQL": "set @@tidb_opt_enable_alternative_logical_plans = 0",
+        "Plan": null
+      },
+      {
+        "SQL": "explain format = 'plan_tree' select t6.id, t7.payload, t8.payload, t9.payload from t7 join t8 on t7.id = t8.id join t9 on t8.id = t9.id join t6 on t6.id = t7.id where t6.category = 'hot' and t9.payload = 1 order by t6.id limit 2",
+        "Plan": [
+          "Projection root  test.t6.id, test.t7.payload, test.t8.payload, test.t9.payload",
+          "└─TopN root  test.t6.id, offset:0, count:2",
+          "  └─Projection root  test.t7.payload, test.t8.payload, test.t9.payload, test.t6.id",
+          "    └─IndexJoin root  inner join, inner:IndexReader, outer key:test.t7.id, inner key:test.t6.id, equal cond:eq(test.t7.id, test.t6.id)",
+          "      ├─IndexHashJoin(Build) root  inner join, inner:IndexLookUp, outer key:test.t8.id, inner key:test.t7.id, equal cond:eq(test.t8.id, test.t7.id)",
+          "      │ ├─IndexJoin(Build) root  inner join, inner:IndexLookUp, outer key:test.t9.id, inner key:test.t8.id, equal cond:eq(test.t9.id, test.t8.id)",
+          "      │ │ ├─IndexReader(Build) root  index:IndexRangeScan",
+          "      │ │ │ └─IndexRangeScan cop[tikv] table:t9, index:idx_payload_id(payload, id) range:[1,1], keep order:false",
+          "      │ │ └─IndexLookUp(Probe) root  ",
+          "      │ │   ├─IndexRangeScan(Build) cop[tikv] table:t8, index:idx_id(id) range: decided by [eq(test.t8.id, test.t9.id)], keep order:false",
+          "      │ │   └─TableRowIDScan(Probe) cop[tikv] table:t8 keep order:false",
+          "      │ └─IndexLookUp(Probe) root  ",
+          "      │   ├─IndexRangeScan(Build) cop[tikv] table:t7, index:idx_id(id) range: decided by [eq(test.t7.id, test.t8.id)], keep order:false",
+          "      │   └─TableRowIDScan(Probe) cop[tikv] table:t7 keep order:false",
+          "      └─IndexReader(Probe) root  index:IndexRangeScan",
+          "        └─IndexRangeScan cop[tikv] table:t6, index:idx_category_id_payload(category, id, payload) range: decided by [eq(test.t6.id, test.t7.id) eq(test.t6.category, hot)], keep order:false"
+        ]
+      },
+      {
+        "SQL": "set @@tidb_opt_enable_alternative_logical_plans = 1",
+        "Plan": null
+      },
+      {
+        "SQL": "explain format = 'plan_tree' select t6.id, t7.payload, t8.payload, t9.payload from t7 join t8 on t7.id = t8.id join t9 on t8.id = t9.id join t6 on t6.id = t7.id where t6.category = 'hot' and t9.payload = 1 order by t6.id limit 2",
+        "Plan": [
+          "Projection root  test.t6.id, test.t7.payload, test.t8.payload, test.t9.payload",
+          "└─Limit root  offset:0, count:2",
+          "  └─Projection root  test.t7.payload, test.t8.payload, test.t9.payload, test.t6.id",
+          "    └─IndexJoin root  inner join, inner:IndexReader, outer key:test.t8.id, inner key:test.t9.id, equal cond:eq(test.t8.id, test.t9.id)",
+          "      ├─IndexHashJoin(Build) root  inner join, inner:IndexLookUp, outer key:test.t7.id, inner key:test.t8.id, equal cond:eq(test.t7.id, test.t8.id)",
+          "      │ ├─IndexHashJoin(Build) root  inner join, inner:IndexLookUp, outer key:test.t6.id, inner key:test.t7.id, equal cond:eq(test.t6.id, test.t7.id)",
+          "      │ │ ├─IndexReader(Build) root  index:IndexRangeScan",
+          "      │ │ │ └─IndexRangeScan cop[tikv] table:t6, index:idx_category_id_payload(category, id, payload) range:[\"hot\",\"hot\"], keep order:true",
+          "      │ │ └─IndexLookUp(Probe) root  ",
+          "      │ │   ├─IndexRangeScan(Build) cop[tikv] table:t7, index:idx_id(id) range: decided by [eq(test.t7.id, test.t6.id)], keep order:false",
+          "      │ │   └─TableRowIDScan(Probe) cop[tikv] table:t7 keep order:false",
+          "      │ └─IndexLookUp(Probe) root  ",
+          "      │   ├─IndexRangeScan(Build) cop[tikv] table:t8, index:idx_id(id) range: decided by [eq(test.t8.id, test.t7.id)], keep order:false",
+          "      │   └─TableRowIDScan(Probe) cop[tikv] table:t8 keep order:false",
+          "      └─IndexReader(Probe) root  index:IndexRangeScan",
+          "        └─IndexRangeScan cop[tikv] table:t9, index:idx_payload_id(payload, id) range: decided by [eq(test.t9.id, test.t8.id) eq(test.t9.payload, 1)], keep order:false"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestOrderAwareJoinReorderAlternativeRound",
+    "Cases": [
+      {
+        "SQL": "set @@tidb_opt_join_reorder_through_sel = 1",
+        "Plan": null
+      },
+      {
+        "SQL": "set @@tidb_opt_enable_alternative_logical_plans = 1",
+        "Plan": null
+      },
+      {
+        "SQL": "explain format = 'plan_tree' select oa_order_t1.created_at, oa_order_t4.payload from oa_order_t2 join oa_order_t3 on oa_order_t3.t2_id = oa_order_t2.id join oa_order_t1 on oa_order_t1.id = oa_order_t2.t1_id join oa_order_t4 on oa_order_t4.t3_id = oa_order_t3.id where oa_order_t1.category = 'hot' and oa_order_t4.payload = 1 order by oa_order_t1.created_at limit 2",
+        "Plan": [
+          "Limit root  offset:0, count:2",
+          "└─IndexJoin root  inner join, inner:IndexReader, outer key:test.oa_order_t3.id, inner key:test.oa_order_t4.t3_id, equal cond:eq(test.oa_order_t3.id, test.oa_order_t4.t3_id)",
+          "  ├─IndexHashJoin(Build) root  inner join, inner:IndexReader, outer key:test.oa_order_t2.id, inner key:test.oa_order_t3.t2_id, equal cond:eq(test.oa_order_t2.id, test.oa_order_t3.t2_id)",
+          "  │ ├─IndexJoin(Build) root  inner join, inner:IndexReader, outer key:test.oa_order_t1.id, inner key:test.oa_order_t2.t1_id, equal cond:eq(test.oa_order_t1.id, test.oa_order_t2.t1_id)",
+          "  │ │ ├─IndexReader(Build) root  index:IndexRangeScan",
+          "  │ │ │ └─IndexRangeScan cop[tikv] table:oa_order_t1, index:idx_category_created(category, created_at, id) range:[\"hot\",\"hot\"], keep order:true",
+          "  │ │ └─IndexReader(Probe) root  index:IndexRangeScan",
+          "  │ │   └─IndexRangeScan cop[tikv] table:oa_order_t2, index:idx_t1_id(t1_id) range: decided by [eq(test.oa_order_t2.t1_id, test.oa_order_t1.id)], keep order:false",
+          "  │ └─IndexReader(Probe) root  index:IndexRangeScan",
+          "  │   └─IndexRangeScan cop[tikv] table:oa_order_t3, index:idx_t2_id(t2_id) range: decided by [eq(test.oa_order_t3.t2_id, test.oa_order_t2.id)], keep order:false",
+          "  └─IndexReader(Probe) root  index:IndexRangeScan",
+          "    └─IndexRangeScan cop[tikv] table:oa_order_t4, index:idx_payload_t3(payload, t3_id) range: decided by [eq(test.oa_order_t4.t3_id, test.oa_order_t3.id) eq(test.oa_order_t4.payload, 1)], keep order:false"
+        ]
+      },
+      {
+        "SQL": "set @@tidb_opt_enable_alternative_logical_plans = 0",
+        "Plan": null
+      },
+      {
+        "SQL": "explain format = 'plan_tree' select oa_order_t1.created_at, oa_order_t4.payload from oa_order_t2 join oa_order_t3 on oa_order_t3.t2_id = oa_order_t2.id join oa_order_t1 on oa_order_t1.id = oa_order_t2.t1_id join oa_order_t4 on oa_order_t4.t3_id = oa_order_t3.id where oa_order_t1.category = 'hot' and oa_order_t4.payload = 1 order by oa_order_t1.created_at limit 2",
+        "Plan": [
+          "Limit root  offset:0, count:2",
+          "└─Projection root  test.oa_order_t1.created_at, test.oa_order_t4.payload",
+          "  └─IndexHashJoin root  inner join, inner:HashJoin, outer key:test.oa_order_t1.id, inner key:test.oa_order_t2.t1_id, equal cond:eq(test.oa_order_t1.id, test.oa_order_t2.t1_id)",
+          "    ├─IndexReader(Build) root  index:IndexRangeScan",
+          "    │ └─IndexRangeScan cop[tikv] table:oa_order_t1, index:idx_category_created(category, created_at, id) range:[\"hot\",\"hot\"], keep order:true",
+          "    └─HashJoin(Probe) root  inner join, equal:[eq(test.oa_order_t3.t2_id, test.oa_order_t2.id)]",
+          "      ├─IndexReader(Build) root  index:IndexRangeScan",
+          "      │ └─IndexRangeScan cop[tikv] table:oa_order_t2, index:idx_t1_id(t1_id) range: decided by [eq(test.oa_order_t2.t1_id, test.oa_order_t1.id)], keep order:false",
+          "      └─MergeJoin(Probe) root  inner join, left key:test.oa_order_t4.t3_id, right key:test.oa_order_t3.id",
+          "        ├─TableReader(Build) root  data:TableFullScan",
+          "        │ └─TableFullScan cop[tikv] table:oa_order_t3 keep order:true",
+          "        └─IndexReader(Probe) root  index:IndexRangeScan",
+          "          └─IndexRangeScan cop[tikv] table:oa_order_t4, index:idx_payload_t3(payload, t3_id) range:[1,1], keep order:true"
+        ]
+      },
+      {
+        "SQL": "set @@tidb_opt_enable_alternative_logical_plans = 1",
+        "Plan": null
+      },
+      {
+        "SQL": "explain format = 'plan_tree' select /*+ LEADING(oa_order_t1, oa_order_t2, oa_order_t3, oa_order_t4) TIDB_INLJ(oa_order_t2, oa_order_t3, oa_order_t4) */ oa_order_t1.created_at, oa_order_t4.payload from oa_order_t2 join oa_order_t3 on oa_order_t3.t2_id = oa_order_t2.id join oa_order_t1 on oa_order_t1.id = oa_order_t2.t1_id join oa_order_t4 on oa_order_t4.t3_id = oa_order_t3.id where oa_order_t1.category = 'hot' and oa_order_t4.payload = 1 order by oa_order_t1.created_at limit 2",
+        "Plan": [
+          "Limit root  offset:0, count:2",
+          "└─IndexJoin root  inner join, inner:IndexReader, outer key:test.oa_order_t3.id, inner key:test.oa_order_t4.t3_id, equal cond:eq(test.oa_order_t3.id, test.oa_order_t4.t3_id)",
+          "  ├─IndexJoin(Build) root  inner join, inner:IndexReader, outer key:test.oa_order_t2.id, inner key:test.oa_order_t3.t2_id, equal cond:eq(test.oa_order_t2.id, test.oa_order_t3.t2_id)",
+          "  │ ├─IndexJoin(Build) root  inner join, inner:IndexReader, outer key:test.oa_order_t1.id, inner key:test.oa_order_t2.t1_id, equal cond:eq(test.oa_order_t1.id, test.oa_order_t2.t1_id)",
+          "  │ │ ├─IndexReader(Build) root  index:IndexRangeScan",
+          "  │ │ │ └─IndexRangeScan cop[tikv] table:oa_order_t1, index:idx_category_created(category, created_at, id) range:[\"hot\",\"hot\"], keep order:true",
+          "  │ │ └─IndexReader(Probe) root  index:IndexRangeScan",
+          "  │ │   └─IndexRangeScan cop[tikv] table:oa_order_t2, index:idx_t1_id(t1_id) range: decided by [eq(test.oa_order_t2.t1_id, test.oa_order_t1.id)], keep order:false",
+          "  │ └─IndexReader(Probe) root  index:IndexRangeScan",
+          "  │   └─IndexRangeScan cop[tikv] table:oa_order_t3, index:idx_t2_id(t2_id) range: decided by [eq(test.oa_order_t3.t2_id, test.oa_order_t2.id)], keep order:false",
+          "  └─IndexReader(Probe) root  index:IndexRangeScan",
+          "    └─IndexRangeScan cop[tikv] table:oa_order_t4, index:idx_payload_t3(payload, t3_id) range: decided by [eq(test.oa_order_t4.t3_id, test.oa_order_t3.id) eq(test.oa_order_t4.payload, 1)], keep order:false"
+        ]
+      },
+      {
+        "SQL": "set @@tidb_opt_enable_alternative_logical_plans = 0",
+        "Plan": null
+      },
+      {
+        "SQL": "explain format = 'plan_tree' select o.txt_val, o.label from obj o join relationship r on o.id = r.ref_ojb_id join obj o1 on o1.id = r.obj_id where o1.type_id = 1 order by o.label limit 1",
+        "Plan": [
+          "Projection root  test.obj.txt_val, test.obj.label",
+          "└─TopN root  test.obj.label, offset:0, count:1",
+          "  └─IndexHashJoin root  inner join, inner:IndexLookUp, outer key:test.relationship.ref_ojb_id, inner key:test.obj.id, equal cond:eq(test.relationship.ref_ojb_id, test.obj.id)",
+          "    ├─HashJoin(Build) root  inner join, equal:[eq(test.relationship.obj_id, test.obj.id)]",
+          "    │ ├─IndexReader(Build) root  index:Selection",
+          "    │ │ └─Selection cop[tikv]  not(isnull(test.relationship.ref_ojb_id))",
+          "    │ │   └─IndexFullScan cop[tikv] table:r, index:idx_obj_id(obj_id, ref_ojb_id) keep order:false",
+          "    │ └─TableReader(Probe) root  data:Selection",
+          "    │   └─Selection cop[tikv]  eq(test.obj.type_id, 1)",
+          "    │     └─TableFullScan cop[tikv] table:o1 keep order:false",
+          "    └─IndexLookUp(Probe) root  ",
+          "      ├─IndexRangeScan(Build) cop[tikv] table:o, index:idx_id(id) range: decided by [eq(test.obj.id, test.relationship.ref_ojb_id)], keep order:false",
+          "      └─TableRowIDScan(Probe) cop[tikv] table:o keep order:false"
+        ]
+      },
+      {
+        "SQL": "set @@tidb_opt_enable_alternative_logical_plans = 1",
+        "Plan": null
+      },
+      {
+        "SQL": "explain format = 'plan_tree' select o.txt_val, o.label from obj o join relationship r on o.id = r.ref_ojb_id join obj o1 on o1.id = r.obj_id where o1.type_id = 1 order by o.label limit 1",
+        "Plan": [
+          "Projection root  test.obj.txt_val, test.obj.label",
+          "└─Limit root  offset:0, count:1",
+          "  └─IndexJoin root  inner join, inner:IndexLookUp, outer key:test.relationship.obj_id, inner key:test.obj.id, equal cond:eq(test.relationship.obj_id, test.obj.id)",
+          "    ├─IndexJoin(Build) root  inner join, inner:IndexReader, outer key:test.obj.id, inner key:test.relationship.ref_ojb_id, equal cond:eq(test.obj.id, test.relationship.ref_ojb_id)",
+          "    │ ├─Projection(Build) root  test.obj.id, test.obj.label, test.obj.txt_val",
+          "    │ │ └─IndexLookUp root  ",
+          "    │ │   ├─IndexFullScan(Build) cop[tikv] table:o, index:idx_label(label) keep order:true",
+          "    │ │   └─TableRowIDScan(Probe) cop[tikv] table:o keep order:false",
+          "    │ └─IndexReader(Probe) root  index:Selection",
+          "    │   └─Selection cop[tikv]  not(isnull(test.relationship.ref_ojb_id))",
+          "    │     └─IndexRangeScan cop[tikv] table:r, index:idx_ref_obj_id(ref_ojb_id, obj_id) range: decided by [eq(test.relationship.ref_ojb_id, test.obj.id) not(isnull(test.relationship.obj_id))], keep order:false",
+          "    └─IndexLookUp(Probe) root  ",
+          "      ├─IndexRangeScan(Build) cop[tikv] table:o1, index:idx_id(id) range: decided by [eq(test.obj.id, test.relationship.obj_id)], keep order:false",
+          "      └─Selection(Probe) cop[tikv]  eq(test.obj.type_id, 1)",
+          "        └─TableRowIDScan cop[tikv] table:o1 keep order:false"
+        ]
+      }
+    ]
+  }
+]

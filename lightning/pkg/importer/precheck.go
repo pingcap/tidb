@@ -19,9 +19,9 @@ import (
 	"database/sql"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/lightning/pkg/checkpoints"
 	ropts "github.com/pingcap/tidb/lightning/pkg/importer/opts"
 	"github.com/pingcap/tidb/lightning/pkg/precheck"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	pdhttp "github.com/tikv/pd/client/http"

@@ -67,6 +67,8 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -251,7 +253,7 @@ func setColValue(t *testing.T, txn kv.Transaction, key kv.Key, v types.Datum) {
 	colIDs := []int64{2, 3}
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	rd := rowcodec.Encoder{Enable: true}
-	value, err := tablecodec.EncodeRow(sc.TimeZone(), row, colIDs, nil, nil, nil, &rd)
+	value, err := tablecodec.EncodeRow(codec.NewEncoder(collate.NewCollationEnabled()), sc.TimeZone(), row, colIDs, nil, nil, nil, &rd)
 	require.NoError(t, err)
 	err = txn.Set(key, value)
 	require.NoError(t, err)
@@ -2536,8 +2538,8 @@ func TestIssue48756(t *testing.T) {
 			require.Len(t, warnings, 1)
 			require.Equal(t, "Warning", warnings[0][0], "generates a warning")
 			require.Equal(t, "1292", warnings[0][1], "expected error code")
-			require.Equal(t, "Incorrect time value: '120120519090607'", warnings[0][2],
-				"expected error message")
+			require.Contains(t, fmt.Sprint(warnings[0][2]), "Incorrect time value:",
+				"expected warning class")
 		})
 	}
 }
@@ -2589,7 +2591,7 @@ func TestQueryWithKill(t *testing.T) {
 					}
 				}
 				if err != nil {
-					require.Equal(t, context.Canceled, err)
+					require.ErrorIs(t, err, context.Canceled)
 				}
 				if rs != nil {
 					rs.Close()

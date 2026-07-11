@@ -16,14 +16,27 @@ package session
 
 import (
 	"cmp"
+	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
+	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/keyspace"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
+	kvstore "github.com/pingcap/tidb/pkg/store"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 func TestGetStartMode(t *testing.T) {
@@ -31,6 +44,80 @@ func TestGetStartMode(t *testing.T) {
 	require.Equal(t, ddl.Normal, getStartMode(currentBootstrapVersion+1))
 	require.Equal(t, ddl.Upgrade, getStartMode(currentBootstrapVersion-1))
 	require.Equal(t, ddl.Bootstrap, getStartMode(0))
+}
+
+func TestBootstrapSessionImplUserKSVersionGuard(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("keyspace guard only applies to next-gen kernel")
+	}
+
+	const (
+		systemKeyspaceID uint32 = 0xFFFFFF - 1
+		userKeyspaceID   uint32 = 0xFFFFFF - 2
+	)
+
+	newKSStore := func(t *testing.T, keyspaceID uint32, keyspaceName string) kv.Storage {
+		t.Helper()
+		store, err := mockstore.NewMockStore(
+			mockstore.WithStoreType(mockstore.EmbedUnistore),
+			mockstore.WithCurrentKeyspaceMeta(&keyspacepb.KeyspaceMeta{
+				Id:   keyspaceID,
+				Name: keyspaceName,
+			}),
+		)
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			require.NoError(t, store.Close())
+		})
+		return store
+	}
+
+	setBootstrapVersion := func(t *testing.T, store kv.Storage, ver int64) {
+		t.Helper()
+		txn, err := store.Begin()
+		require.NoError(t, err)
+		err = meta.NewMutator(txn).FinishBootstrap(ver)
+		require.NoError(t, err)
+		require.NoError(t, txn.Commit(context.Background()))
+		store.SetOption(StoreBootstrappedKey, nil)
+	}
+
+	t.Run("fatal when user target version is ahead of system version", func(t *testing.T) {
+		systemStore := newKSStore(t, systemKeyspaceID, keyspace.System)
+		userStore := newKSStore(t, userKeyspaceID, "user_keyspace_guard_fatal")
+		setBootstrapVersion(t, systemStore, currentBootstrapVersion-1)
+		setBootstrapVersion(t, userStore, currentBootstrapVersion-1)
+
+		originSystemStore := kvstore.GetSystemStorage()
+		kvstore.SetSystemStorage(systemStore)
+		t.Cleanup(func() {
+			kvstore.SetSystemStorage(originSystemStore)
+		})
+
+		createSessionCalled := false
+		createSessionStub := func(_ kv.Storage, _ int) ([]*session, error) {
+			createSessionCalled = true
+			return nil, errors.New("must-not-be-called")
+		}
+
+		conf := new(log.Config)
+		lg, p, err := log.InitLogger(conf, zap.WithFatalHook(zapcore.WriteThenPanic))
+		require.NoError(t, err)
+		restoreLog := log.ReplaceGlobals(lg, p)
+		defer restoreLog()
+
+		var panicVal any
+		_, _ = func() (_ *domain.Domain, err error) {
+			defer func() {
+				panicVal = recover()
+			}()
+			return bootstrapSessionImpl(context.Background(), userStore, createSessionStub)
+		}()
+		require.NotNil(t, panicVal)
+		panicMsg := fmt.Sprint(panicVal)
+		require.True(t, strings.HasPrefix(panicMsg, "bootstrap version of user keyspace must be smaller or equal"))
+		require.False(t, createSessionCalled)
+	})
 }
 
 func TestDDLTableVersionTables(t *testing.T) {

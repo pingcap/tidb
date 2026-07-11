@@ -372,19 +372,36 @@ func (p *HandParser) parseAnalyzeWithOpts(stmt *ast.AnalyzeTableStmt) {
 			sub := p.next()
 			if sub.IsKeyword("WIDTH") {
 				opt.Type = ast.AnalyzeOptCMSketchWidth
-			} else {
+			} else if sub.IsKeyword("DEPTH") {
 				opt.Type = ast.AnalyzeOptCMSketchDepth
+			} else {
+				p.syntaxErrorAt(sub)
+				return
 			}
 		case "SAMPLES":
 			opt.Type = ast.AnalyzeOptNumSamples
 		case "SAMPLERATE":
 			opt.Type = ast.AnalyzeOptSampleRate
+		case "NDVRATE":
+			opt.Type = ast.AnalyzeOptNDVRate
+		default:
+			p.syntaxErrorAt(next)
+			return
 		}
 		stmt.AnalyzeOpts = append(stmt.AnalyzeOpts, opt)
 
-		if _, ok := p.accept(','); !ok {
-			break
+		if _, ok := p.accept(','); ok {
+			continue
 		}
+		// yacc also allows options separated by whitespace only
+		// (AnalyzeOptionList: AnalyzeOptionList AnalyzeOption), e.g.
+		// WITH 0.05 NDVRATE 0.00001 SAMPLERATE. A numeric literal starts
+		// the next option.
+		switch p.peek().Tp {
+		case intLit, floatLit, decLit:
+			continue
+		}
+		break
 	}
 }
 

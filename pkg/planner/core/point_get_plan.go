@@ -321,6 +321,13 @@ func newBatchPointGetPlan(
 			for index, inner := range x.Values {
 				// permutations is used to match column and value.
 				permIndex := permutations[index]
+				// Record the column type for every position, not just the ones
+				// that are parameter markers in this (the first) row. A later
+				// row may hold a marker where this row holds a literal, and the
+				// plan-cache range rebuild needs a non-nil type for that column.
+				if initTypes {
+					indexTypes[permIndex] = &colInfos[index].FieldType
+				}
 				switch innerX := inner.(type) {
 				case *driver.ValueExpr:
 					dval := getPointGetValue(stmtCtx, colInfos[index], &innerX.Datum)
@@ -343,9 +350,6 @@ func newBatchPointGetPlan(
 					}
 					values[permIndex] = *dval
 					valuesParams[permIndex] = con
-					if initTypes {
-						indexTypes[permIndex] = &colInfos[index].FieldType
-					}
 				default:
 					return nil
 				}
@@ -1277,10 +1281,27 @@ func buildOrderedList(ctx base.PlanContext, plan base.Plan, list []*ast.Assignme
 			return nil, true
 		}
 		castToTP := col.GetStaticType()
-		if castToTP.GetType() == mysql.TypeEnum && assign.Expr.GetType().EvalType() == types.ETInt {
+		if (castToTP.GetType() == mysql.TypeEnum || castToTP.GetType() == mysql.TypeSet) &&
+			assign.Expr.GetType().EvalType() == types.ETInt {
 			castToTP.AddFlag(mysql.EnumSetAsIntFlag)
 		}
-		expr = expression.BuildCastFunction(ctx.GetExprCtx(), expr, castToTP)
+		// Point-update builds assignment expressions directly in the planner.
+		// Keep the implicit CAST for most target column types so the fast path stays
+		// aligned with normal UPDATE typing, but do not CAST unsigned numeric targets:
+		// CAST(-1 AS UNSIGNED) wraps to MAX_UINT64, while UPDATE assignment conversion
+		// must be decided by executor-side table.CastValue under the current statement
+		// context and sql_mode.
+		//
+		// This applies to more than integer columns. Unsigned decimal/real also uses the
+		// CAST path which treats negative inputs as uint64 (e.g. -1 -> 1844...),
+		// diverging from assignment semantics.
+		isUnsignedNumericTarget := mysql.HasUnsignedFlag(castToTP.GetFlag()) &&
+			(castToTP.EvalType() == types.ETInt ||
+				castToTP.EvalType() == types.ETDecimal ||
+				castToTP.EvalType() == types.ETReal)
+		if !isUnsignedNumericTarget {
+			expr = expression.BuildCastFunction(ctx.GetExprCtx(), expr, castToTP)
+		}
 		if allAssignmentsAreConstant {
 			_, isConst := expr.(*expression.Constant)
 			allAssignmentsAreConstant = isConst

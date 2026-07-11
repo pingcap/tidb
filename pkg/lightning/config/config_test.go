@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/pingcap/failpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -911,6 +912,22 @@ func TestDefaultImporterBackendValue(t *testing.T) {
 	require.Equal(t, 2, cfg.App.IndexConcurrency)
 	require.Equal(t, 6, cfg.App.TableConcurrency)
 	require.Equal(t, 4096, cfg.TikvImporter.RegionSplitBatchSize)
+}
+
+func TestRegionConcurrencyUsesUsableCPUCount(t *testing.T) {
+	const usableCPUCount = 2
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(2)"))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu"))
+	})
+
+	cfg := NewConfig()
+	require.Equal(t, usableCPUCount, cfg.App.RegionConcurrency)
+
+	cfg.App.RegionConcurrency = usableCPUCount + 1
+	cfg.TikvImporter.Backend = BackendLocal
+	cfg.App.adjust(&cfg.TikvImporter)
+	require.Equal(t, usableCPUCount, cfg.App.RegionConcurrency)
 }
 
 func TestDefaultTidbBackendValue(t *testing.T) {

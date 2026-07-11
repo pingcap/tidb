@@ -107,6 +107,13 @@ func (p *HandParser) parseSetStmt() ast.StmtNode {
 		} else if tok, ok := p.expect(stringLit); ok {
 			pwdStmt.Password = tok.Lit
 		}
+		// yacc: "SET" "PASSWORD" [FOR Username] EqOrAssignmentEq PasswordOpt
+		// "RETAIN" "CURRENT" "PASSWORD" (MySQL 8.0 dual passwords).
+		if _, ok := p.accept(retain); ok {
+			p.expect(current)
+			p.expect(password)
+			pwdStmt.RetainCurrentPassword = true
+		}
 		return pwdStmt
 	}
 
@@ -629,6 +636,13 @@ func (p *HandParser) parseExplainStmt() ast.StmtNode {
 		stmt.Format = "" // Format is empty for EXPLORE
 		if tok, ok := p.accept(stringLit); ok {
 			stmt.SQLDigest = tok.Lit
+			return stmt
+		}
+		// EXPLAIN EXPLORE REPLAYER 'file'
+		if _, ok := p.accept(replayer); ok {
+			if tok, ok := p.expect(stringLit); ok {
+				stmt.ReplayerFile = tok.Lit
+			}
 			return stmt
 		}
 	}

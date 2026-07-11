@@ -700,7 +700,7 @@ aa
 44
 explain format="plan_tree" select a, b, lag(a,1) over (order by b) from t order by b;
 id	task	access object	operator info
-Window	root		lag(planner__cascades__integration.t.a, 1)->Column#5 over(order by planner__cascades__integration.t.b)
+Window	root		lag(planner__cascades__integration.t.a, 1)->Column over(order by planner__cascades__integration.t.b)
 └─Sort	root		planner__cascades__integration.t.b
   └─TableReader	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
@@ -847,26 +847,26 @@ a = (select a from t2 where t1.b = t2.b order by a limit 1)
 1
 1
 NULL
-explain format="plan_tree" select sum(a), (select t1.a from t1 where t1.a = t2.a limit 1), (select t1.b from t1 where t1.b = t2.b limit 1) from t2;
+explain format="plan_tree" select sum(a), (select t1.a from t1 where t1.a = min(t2.a) limit 1), (select t1.b from t1 where t1.b = min(t2.b) limit 1) from t2;
 id	task	access object	operator info
 Projection	root		Column, planner__cascades__integration.t1.a, planner__cascades__integration.t1.b
 └─Apply	root		CARTESIAN left outer join, left side:Apply
   ├─Apply(Build)	root		CARTESIAN left outer join, left side:StreamAgg
-  │ ├─StreamAgg(Build)	root		funcs:sum(Column)->Column, funcs:firstrow(Column)->planner__cascades__integration.t2.a, funcs:firstrow(Column)->planner__cascades__integration.t2.b
+  │ ├─StreamAgg(Build)	root		funcs:sum(Column)->Column, funcs:min(Column)->Column, funcs:min(Column)->Column
   │ │ └─Projection	root		cast(planner__cascades__integration.t2.a, decimal(10,0) BINARY)->Column, planner__cascades__integration.t2.a->Column, planner__cascades__integration.t2.b->Column
   │ │   └─TableReader	root		data:TableFullScan
   │ │     └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
   │ └─Limit(Probe)	root		offset:0, count:1
   │   └─TableReader	root		data:Limit
   │     └─Limit	cop[tikv]		offset:0, count:1
-  │       └─TableRangeScan	cop[tikv]	table:t1	range: decided by [eq(planner__cascades__integration.t1.a, planner__cascades__integration.t2.a)], keep order:false, stats:pseudo
+  │       └─TableRangeScan	cop[tikv]	table:t1	range: decided by [eq(planner__cascades__integration.t1.a, Column)], keep order:false, stats:pseudo
   └─Limit(Probe)	root		offset:0, count:1
     └─TableReader	root		data:Limit
       └─Limit	cop[tikv]		offset:0, count:1
-        └─Selection	cop[tikv]		eq(planner__cascades__integration.t1.b, planner__cascades__integration.t2.b)
+        └─Selection	cop[tikv]		eq(planner__cascades__integration.t1.b, Column)
           └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
-select sum(a), (select t1.a from t1 where t1.a = t2.a limit 1), (select t1.b from t1 where t1.b = t2.b limit 1) from t2;
-sum(a)	(select t1.a from t1 where t1.a = t2.a limit 1)	(select t1.b from t1 where t1.b = t2.b limit 1)
+select sum(a), (select t1.a from t1 where t1.a = min(t2.a) limit 1), (select t1.b from t1 where t1.b = min(t2.b) limit 1) from t2;
+sum(a)	(select t1.a from t1 where t1.a = min(t2.a) limit 1)	(select t1.b from t1 where t1.b = min(t2.b) limit 1)
 6	1	11
 explain format="plan_tree" select /*+ set_var(tidb_hash_join_version=legacy) */ a from t1 where exists(select 1 from t2 where t1.a = t2.a);
 id	task	access object	operator info

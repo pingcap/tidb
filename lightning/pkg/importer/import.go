@@ -36,18 +36,19 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/br/pkg/version/build"
-	"github.com/pingcap/tidb/lightning/pkg/web"
+	"github.com/pingcap/tidb/lightning/pkg/checkpoints"
+	"github.com/pingcap/tidb/lightning/pkg/errormanager"
+	"github.com/pingcap/tidb/lightning/pkg/progress"
 	tidbconfig "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
-	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/backend/tidb"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
-	"github.com/pingcap/tidb/pkg/lightning/errormanager"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
@@ -70,6 +71,7 @@ import (
 	kvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
+	"github.com/tikv/pd/client/opt"
 	"github.com/tikv/pd/client/pkg/caller"
 	"github.com/tikv/pd/client/pkg/retry"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -198,7 +200,7 @@ type Controller struct {
 	taskCtx       context.Context
 	cfg           *config.Config
 	dbMetas       []*mydump.MDDatabaseMeta
-	dbInfos       map[string]*checkpoints.TidbDBInfo
+	dbInfos       map[string]*importdef.DBInfo
 	tableWorkers  *worker.Pool
 	indexWorkers  *worker.Pool
 	regionWorkers *worker.Pool
@@ -239,9 +241,10 @@ type Controller struct {
 	preInfoGetter       PreImportInfoGetter
 	precheckItemBuilder *PrecheckItemBuilder
 	encBuilder          encode.EncodingBuilder
-	tikvModeSwitcher    local.TiKVModeSwitcher
+	tikvModeSwitcher    ingestctrl.TiKVModeSwitcher
 
 	keyspaceName      string
+	apiContext        pd.APIContext
 	resourceGroupName string
 	taskType          string
 }
@@ -304,7 +307,7 @@ func NewImportControllerWithPauser(
 	ctx context.Context,
 	cfg *config.Config,
 	p *ControllerParam,
-) (*Controller, error) {
+) (_ *Controller, err error) {
 	tls, err := cfg.ToTLS()
 	if err != nil {
 		return nil, err
@@ -349,24 +352,41 @@ func NewImportControllerWithPauser(
 	var backendObj backend.Backend
 	var pdCli pd.Client
 	var pdHTTPCli pdhttp.Client
+	apiContext := keyspace.BuildAPIContext(p.KeyspaceName)
+	defer func() {
+		if err == nil {
+			return
+		}
+		if backendObj != nil {
+			backendObj.Close()
+		}
+		if pdHTTPCli != nil {
+			pdHTTPCli.Close()
+		}
+		if pdCli != nil {
+			pdCli.Close()
+		}
+	}()
 	switch cfg.TikvImporter.Backend {
 	case config.BackendTiDB:
 		encodingBuilder = tidb.NewEncodingBuilder()
 		backendObj = tidb.NewTiDBBackend(ctx, db, cfg, errorMgr)
 	case config.BackendLocal:
-		var rLimit local.RlimT
-		rLimit, err = local.GetSystemRLimit()
+		var rLimit ingestctrl.RlimT
+		rLimit, err = ingestctrl.GetSystemRLimit()
 		if err != nil {
 			return nil, err
 		}
-		maxOpenFiles := int(rLimit / local.RlimT(cfg.App.TableConcurrency))
+		maxOpenFiles := int(rLimit / ingestctrl.RlimT(cfg.App.TableConcurrency))
 		// check overflow
 		if maxOpenFiles < 0 {
 			maxOpenFiles = math.MaxInt32
 		}
 
 		addrs := strings.Split(cfg.TiDB.PdAddr, ",")
-		pdCli, err = pd.NewClientWithContext(ctx, componentName, addrs, tls.ToPDSecurityOption())
+		// Disable router QueryRegion streams so newer Lightning can import into older PD clusters.
+		pdClientOptions := append(ingestctrl.PDClientOptions(), opt.WithEnableRouterClient(false))
+		pdCli, err = pd.NewClientWithAPIContext(ctx, apiContext, componentName, addrs, tls.ToPDSecurityOption(), pdClientOptions...)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -386,9 +406,15 @@ func NewImportControllerWithPauser(
 			}
 		}
 
+		// simple wraps PD client, so no need to close it separately.
+		pdCliForTiKV, err := ingestctrl.NewCodecPDClient(pdCli, p.KeyspaceName)
+		if err != nil {
+			return nil, common.ErrCreatePDClient.Wrap(err).GenWithStackByArgs()
+		}
+
 		initGlobalConfig(tls.ToTiKVSecurityConfig())
 
-		encodingBuilder = local.NewEncodingBuilder(ctx)
+		encodingBuilder = ingestctrl.NewEncodingBuilder(ctx)
 
 		// get resource group name.
 		exec := common.SQLWithRetry{
@@ -424,8 +450,10 @@ func NewImportControllerWithPauser(
 		if isRaftKV2 {
 			raftKV2SwitchModeDuration = cfg.Cron.SwitchMode.Duration
 		}
-		backendConfig := local.NewBackendConfig(cfg, maxOpenFiles, p.KeyspaceName, p.ResourceGroupName, p.TaskType, raftKV2SwitchModeDuration)
-		backendObj, err = local.NewBackend(ctx, tls, backendConfig, pdCli.GetServiceDiscovery())
+		backendConfig := ingestctrl.NewBackendConfig(cfg, maxOpenFiles, p.KeyspaceName, p.ResourceGroupName, p.TaskType, raftKV2SwitchModeDuration)
+		// Use legacy PD region RPCs so newer Lightning can import into older clusters.
+		backendConfig.DisablePDClientRouterClient = true
+		backendObj, err = ingestctrl.NewBackend(ctx, tls, backendConfig, pdCliForTiKV)
 		if err != nil {
 			return nil, common.NormalizeOrWrapErr(common.ErrUnknown, err)
 		}
@@ -458,7 +486,7 @@ func NewImportControllerWithPauser(
 
 	var wrapper backend.TargetInfoGetter
 	if cfg.TikvImporter.Backend == config.BackendLocal {
-		wrapper = local.NewTargetInfoGetter(tls, db, pdHTTPCli)
+		wrapper = ingestctrl.NewTargetInfoGetter(tls, db, pdHTTPCli)
 	} else {
 		wrapper = tidb.NewTargetInfoGetter(db)
 	}
@@ -523,9 +551,10 @@ func NewImportControllerWithPauser(
 		preInfoGetter:       preInfoGetter,
 		precheckItemBuilder: preCheckBuilder,
 		encBuilder:          encodingBuilder,
-		tikvModeSwitcher:    local.NewTiKVModeSwitcher(tls.TLSConfig(), pdHTTPCli, logutil.Logger(ctx)),
+		tikvModeSwitcher:    ingestctrl.NewTiKVModeSwitcher(tls.TLSConfig(), pdHTTPCli, logutil.Logger(ctx)),
 
 		keyspaceName:      p.KeyspaceName,
+		apiContext:        apiContext,
 		resourceGroupName: p.ResourceGroupName,
 		taskType:          p.TaskType,
 	}
@@ -537,6 +566,9 @@ func NewImportControllerWithPauser(
 func (rc *Controller) Close() {
 	rc.backend.Close()
 	_ = rc.db.Close()
+	if rc.pdHTTPCli != nil {
+		rc.pdHTTPCli.Close()
+	}
 	if rc.pdCli != nil {
 		rc.pdCli.Close()
 	}
@@ -736,7 +768,7 @@ func verifyLocalFile(ctx context.Context, cpdb checkpoints.DB, dir string) error
 	for tableName, engineIDs := range targetTables {
 		for _, engineID := range engineIDs {
 			_, eID := backend.MakeUUID(tableName, int64(engineID))
-			file := local.Engine{UUID: eID}
+			file := ingestctrl.Engine{UUID: eID}
 			err := file.Exist(dir)
 			if err != nil {
 				logutil.Logger(ctx).Error("can't find local file",
@@ -890,7 +922,7 @@ func (rc *Controller) listenCheckpointUpdates(logger log.Logger) {
 				for _, w := range ws {
 					w <- common.NormalizeOrWrapErr(common.ErrUpdateCheckpoint, err)
 				}
-				web.BroadcastCheckpointDiff(cpd)
+				progress.BroadcastCheckpointDiff(cpd)
 			}
 			rc.checkpointsWg.Done()
 		}
@@ -1181,7 +1213,10 @@ const (
 func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{}, error) {
 	tlsOpt := rc.tls.ToPDSecurityOption()
 	addrs := strings.Split(rc.cfg.TiDB.PdAddr, ",")
-	pdCli, err := pd.NewClientWithContext(ctx, componentName, addrs, tlsOpt)
+	// Disable router QueryRegion streams for older PD clusters during duplicate resolution.
+	pdCli, err := pd.NewClientWithAPIContext(
+		ctx, rc.apiContext, componentName, addrs, tlsOpt, opt.WithEnableRouterClient(false),
+	)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1361,6 +1396,15 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 		if err != nil {
 			return errors.Trace(err)
 		}
+		// Older PD servers do not support the router client's QueryRegion RPC.
+		// Disable it for the post-process store used by auto-increment rebase.
+		kvStoreWithPD, ok := kvStore.(tidbkv.StorageWithPD)
+		if !ok {
+			return errors.Errorf("TiKV store does not expose PD client")
+		}
+		if err = kvStoreWithPD.GetPDClient().UpdateOption(opt.EnableRouterClient, false); err != nil {
+			return errors.Trace(err)
+		}
 		etcdCli, err = clientv3.New(clientv3.Config{
 			Endpoints:        urlsWithScheme,
 			AutoSyncInterval: 30 * time.Second,
@@ -1449,7 +1493,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 		go func() {
 			for task := range taskCh {
 				tableLogTask := task.tr.logger.Begin(zap.InfoLevel, "restore table")
-				web.BroadcastTableCheckpoint(task.tr.tableName, task.cp)
+				progress.BroadcastTableCheckpoint(task.tr.tableName, task.cp)
 
 				needPostProcess, err := task.tr.importTable(ctx, rc, task.cp)
 				if err != nil && !common.IsContextCanceledError(err) {
@@ -1458,7 +1502,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 
 				err = common.NormalizeOrWrapErr(common.ErrRestoreTable, err, task.tr.tableName)
 				tableLogTask.End(zap.ErrorLevel, err)
-				web.BroadcastError(task.tr.tableName, err)
+				progress.BroadcastError(task.tr.tableName, err)
 				if m, ok := metric.FromContext(ctx); ok {
 					m.RecordTableCount(metric.TableStateCompleted, err)
 				}
@@ -1681,7 +1725,7 @@ func (rc *Controller) enforceDiskQuota(ctx context.Context) {
 		return
 	}
 
-	localBackend := rc.backend.(*local.Backend)
+	localBackend := rc.backend.(*ingestctrl.Backend)
 	go func() {
 		// locker is assigned when we detect the disk quota is exceeded.
 		// before the disk quota is confirmed exceeded, we keep the diskQuotaLock
@@ -1709,7 +1753,7 @@ func (rc *Controller) enforceDiskQuota(ctx context.Context) {
 			}
 
 			quota := int64(rc.cfg.TikvImporter.DiskQuota)
-			largeEngines, inProgressLargeEngines, totalDiskSize, totalMemSize := local.CheckDiskQuota(localBackend, quota)
+			largeEngines, inProgressLargeEngines, totalDiskSize, totalMemSize := ingestctrl.CheckDiskQuota(localBackend, quota)
 			if m, ok := metric.FromContext(ctx); ok {
 				m.LocalStorageUsageBytesGauge.WithLabelValues("disk").Set(float64(totalDiskSize))
 				m.LocalStorageUsageBytesGauge.WithLabelValues("mem").Set(float64(totalMemSize))
@@ -1871,7 +1915,7 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 	if isLocalBackend(rc.cfg) {
 		pdAddrs := rc.pdCli.GetServiceDiscovery().GetServiceURLs()
 		pdController, err := pdutil.NewPdController(
-			ctx, pdAddrs, rc.tls.TLSConfig(), rc.tls.ToPDSecurityOption(),
+			ctx, rc.keyspaceName, pdAddrs, rc.tls.TLSConfig(), rc.tls.ToPDSecurityOption(),
 		)
 		if err != nil {
 			return common.NormalizeOrWrapErr(common.ErrCreatePDClient, err)

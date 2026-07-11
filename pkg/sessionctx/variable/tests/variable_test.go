@@ -25,11 +25,14 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
+	tidbtls "github.com/pingcap/tidb/pkg/util/tls"
 	"github.com/stretchr/testify/require"
 )
 
@@ -66,6 +69,44 @@ func TestSysVar(t *testing.T) {
 	// default enable vectorized_expression
 	f = variable.GetSysVar("tidb_enable_vectorized_expression")
 	require.Equal(t, "ON", f.Value)
+
+	autoBuildStats := variable.GetSysVar(vardef.TiDBAutoBuildStatsConcurrency)
+	require.NotNil(t, autoBuildStats)
+	buildStats := variable.GetSysVar(vardef.TiDBBuildStatsConcurrency)
+	require.NotNil(t, buildStats)
+	require.Equal(t, buildStats.Value, autoBuildStats.Value)
+
+	sysProcScan := variable.GetSysVar(vardef.TiDBSysProcScanConcurrency)
+	require.NotNil(t, sysProcScan)
+	analyzeScan := variable.GetSysVar(vardef.TiDBAnalyzeDistSQLScanConcurrency)
+	require.NotNil(t, analyzeScan)
+	require.Equal(t, analyzeScan.Value, sysProcScan.Value)
+}
+
+func TestIndexJoinBuildV2SysVarCompatibility(t *testing.T) {
+	sv := variable.GetSysVar(vardef.TiDBOptIndexJoinBuild)
+	require.NotNil(t, sv)
+	require.Equal(t, vardef.On, sv.Value)
+
+	vars := variable.NewSessionVars(nil)
+
+	val, err := sv.Validate(vars, vardef.On, vardef.ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, vardef.On, val)
+
+	val, err = sv.Validate(vars, vardef.Off, vardef.ScopeSession)
+	require.EqualError(t, err, "tidb_opt_index_join_build_v2 is now always enabled and cannot be turned off")
+	require.Equal(t, vardef.On, val)
+
+	require.Equal(t, vardef.On, sv.ValidateWithRelaxedValidation(vars, vardef.Off, vardef.ScopeSession))
+
+	val, err = sv.GetSessionFromHook(vars)
+	require.NoError(t, err)
+	require.Equal(t, vardef.On, val)
+
+	val, err = sv.GetGlobalFromHook(context.Background(), vars)
+	require.NoError(t, err)
+	require.Equal(t, vardef.On, val)
 }
 
 func TestError(t *testing.T) {
@@ -138,9 +179,38 @@ func TestIntValidation(t *testing.T) {
 	val, err = sv.Validate(vars, "300", vardef.ScopeSession)
 	require.NoError(t, err)
 	require.Equal(t, "300", val)
-
 	// out of range but permitted due to auto value
 	val, err = sv.Validate(vars, "-1", vardef.ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "-1", val)
+}
+
+func TestPerformanceSchemaSessionConnectAttrsSizeValidation(t *testing.T) {
+	sv := variable.GetSysVar(vardef.PerformanceSchemaSessionConnectAttrsSize)
+	require.NotNil(t, sv)
+	require.True(t, sv.HasGlobalScope())
+	require.False(t, sv.HasSessionScope())
+
+	vars := variable.NewSessionVars(nil)
+
+	val, err := sv.Validate(vars, "-1", vardef.ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "-1", val)
+
+	val, err = sv.Validate(vars, "0", vardef.ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "0", val)
+
+	val, err = sv.Validate(vars, "65536", vardef.ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "65536", val)
+
+	// Out-of-range values should be clamped by int sysvar validation.
+	val, err = sv.Validate(vars, "65537", vardef.ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "65536", val)
+
+	val, err = sv.Validate(vars, "-2", vardef.ScopeGlobal)
 	require.NoError(t, err)
 	require.Equal(t, "-1", val)
 }
@@ -443,6 +513,12 @@ func TestValidateWithRelaxedValidation(t *testing.T) {
 	val := sv.ValidateWithRelaxedValidation(vars, "1", vardef.ScopeGlobal)
 	require.Equal(t, "ON", val)
 
+	sv = variable.GetSysVar(vardef.TiDBAnalyzeVersion)
+	_, err := sv.Validate(vars, "1", vardef.ScopeSession)
+	require.ErrorContains(t, err, "tidb_analyze_version=1 is no longer supported")
+	val = sv.ValidateWithRelaxedValidation(vars, "1", vardef.ScopeSession)
+	require.Equal(t, "1", val)
+
 	// Relaxed validation catches the error and squashes it.
 	// The incorrect value is returned as-is.
 	// I am not sure this is the correct behavior, we might need to
@@ -554,6 +630,45 @@ func TestSetSysVar(t *testing.T) {
 	require.Equal(t, "America/New_York", val)
 	variable.SetSysVar(vardef.SystemTimeZone, originalVal) // restore
 	require.Equal(t, originalVal, variable.GetSysVar(vardef.SystemTimeZone).Value)
+
+	originalCfg := *config.GetGlobalConfig()
+	originalDeployMode := deploymode.Get()
+	originalRequireSecureTransport := tidbtls.RequireSecureTransport.Load()
+	t.Cleanup(func() {
+		config.StoreGlobalConfig(&originalCfg)
+		if kerneltype.IsNextGen() {
+			require.NoError(t, deploymode.Set(originalDeployMode))
+		}
+		tidbtls.RequireSecureTransport.Store(originalRequireSecureTransport)
+	})
+
+	mock := variable.NewMockGlobalAccessor4Tests()
+	mock.SessionVars.GlobalVarsAccessor = mock
+	require.NoError(t, mock.SetGlobalSysVar(context.Background(), vardef.RequireSecureTransport, vardef.On))
+	require.True(t, tidbtls.RequireSecureTransport.Load())
+
+	val, err = variable.GetSysVar(vardef.RequireSecureTransport).GetGlobalFromHook(context.Background(), mock.SessionVars)
+	require.NoError(t, err)
+	require.Equal(t, vardef.On, val)
+
+	if kerneltype.IsNextGen() {
+		require.NoError(t, deploymode.Set(deploymode.Starter))
+		require.NoError(t, variable.GetSysVar(vardef.RequireSecureTransport).SetGlobalFromHook(context.Background(), mock.SessionVars, vardef.On, false))
+		require.False(t, tidbtls.RequireSecureTransport.Load())
+
+		val, err = variable.GetSysVar(vardef.RequireSecureTransport).GetGlobalFromHook(context.Background(), mock.SessionVars)
+		require.NoError(t, err)
+		require.Equal(t, vardef.On, val)
+
+		require.NoError(t, deploymode.Set(originalDeployMode))
+	}
+
+	config.StoreGlobalConfig(&originalCfg)
+	require.NoError(t, variable.GetSysVar(vardef.RequireSecureTransport).SetGlobalFromHook(context.Background(), mock.SessionVars, vardef.Off, false))
+	require.False(t, tidbtls.RequireSecureTransport.Load())
+
+	require.NoError(t, variable.GetSysVar(vardef.RequireSecureTransport).SetGlobalFromHook(context.Background(), mock.SessionVars, vardef.On, false))
+	require.True(t, tidbtls.RequireSecureTransport.Load())
 }
 
 func TestSkipSysvarCache(t *testing.T) {
@@ -562,6 +677,7 @@ func TestSkipSysvarCache(t *testing.T) {
 	require.True(t, variable.GetSysVar(vardef.TiDBGCLifetime).SkipSysvarCache())
 	require.True(t, variable.GetSysVar(vardef.TiDBGCConcurrency).SkipSysvarCache())
 	require.True(t, variable.GetSysVar(vardef.TiDBGCScanLockMode).SkipSysvarCache())
+	require.False(t, variable.GetSysVar(vardef.RequireSecureTransport).SkipSysvarCache())
 	require.False(t, variable.GetSysVar(vardef.TiDBEnableAsyncCommit).SkipSysvarCache())
 }
 

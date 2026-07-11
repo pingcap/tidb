@@ -24,6 +24,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
@@ -46,6 +47,52 @@ func drainEvents(eventCh <-chan []traceevent.Event) {
 			return
 		}
 	}
+}
+
+func eventsBelongToTrace(events []tracing.Event, traceID []byte) bool {
+	if len(events) == 0 || len(traceID) == 0 {
+		return false
+	}
+	matched := false
+	for _, event := range events {
+		if len(event.TraceID) == 0 {
+			continue
+		}
+		if !bytes.Equal(event.TraceID, traceID) {
+			return false
+		}
+		matched = true
+	}
+	return matched
+}
+
+func waitTraceEvents(t *testing.T, eventCh <-chan []tracing.Event, traceID []byte) []tracing.Event {
+	t.Helper()
+	deadline := time.After(3 * time.Second)
+	for {
+		select {
+		case events := <-eventCh:
+			if eventsBelongToTrace(events, traceID) {
+				return events
+			}
+		case <-deadline:
+			require.FailNowf(t, "failed to find trace events", "trace_id=%s", hex.EncodeToString(traceID))
+		}
+	}
+}
+
+func eventsBelongToAnyTrace(events []tracing.Event, traceIDs map[string]struct{}) bool {
+	if len(events) == 0 || len(traceIDs) == 0 {
+		return false
+	}
+	for _, event := range events {
+		if len(event.TraceID) == 0 {
+			continue
+		}
+		_, ok := traceIDs[string(event.TraceID)]
+		return ok
+	}
+	return false
 }
 
 func TestPrevTraceIDPersistence(t *testing.T) {
@@ -254,10 +301,12 @@ func TestFlightRecorder(t *testing.T) {
 		}
 		flightRecorder, err := traceevent.StartHTTPFlightRecorder(eventCh, &config)
 		require.NoError(t, err)
+		drainEvents(eventCh)
 		tk.MustQueryWithContext(ctx, "select * from t").Check(testkit.Rows())
+		traceID := bytes.Clone(tk.Session().GetSessionVars().PrevTraceID)
+		require.NotEmpty(t, traceID)
 		sink.DiscardOrFlush(ctx)
-		require.NotEmpty(t, eventCh)
-		events := <-eventCh
+		events := waitTraceEvents(t, eventCh, traceID)
 		for _, event := range events {
 			require.Equal(t, event.Category, traceevent.KvRequest)
 		}
@@ -275,11 +324,28 @@ func TestFlightRecorder(t *testing.T) {
 		}
 		flightRecorder, err := traceevent.StartHTTPFlightRecorder(eventCh, &config)
 		require.NoError(t, err)
+		drainEvents(eventCh)
+		traceIDs := make(map[string]struct{}, 10)
 		for i := 0; i < 10; i++ {
 			tk.MustQueryWithContext(ctx, "select * from t").Check(testkit.Rows())
+			traceID := bytes.Clone(tk.Session().GetSessionVars().PrevTraceID)
+			require.NotEmpty(t, traceID)
+			traceIDs[string(traceID)] = struct{}{}
 			sink.DiscardOrFlush(ctx)
 		}
-		require.Len(t, eventCh, 2)
+		matchedEvents := make([][]tracing.Event, 0, 2)
+		draining := true
+		for draining {
+			select {
+			case events := <-eventCh:
+				if eventsBelongToAnyTrace(events, traceIDs) {
+					matchedEvents = append(matchedEvents, events)
+				}
+			default:
+				draining = false
+			}
+		}
+		require.Len(t, matchedEvents, 2)
 		flightRecorder.Close()
 		drainEvents(eventCh)
 	}

@@ -1,4 +1,3 @@
-set tidb_cost_model_version=1;
 show tables like '%xx';
 Tables_in_show (%xx)
 show databases like '%xx';

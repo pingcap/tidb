@@ -1,5 +1,4 @@
 # TestHintInWrongPos
-set tidb_cost_model_version=2;
 drop table if exists t;
 create table t(a int, b int);
 --enable_warnings
@@ -9,7 +8,6 @@ select count(*) from (select count(*) as a /*+ stream_agg() */ from t where b > 
 --disable_warnings
 
 # TestKeepOrderHint
-set tidb_cost_model_version=2;
 drop table if exists t, t1, th;
 drop view if exists v, v1;
 create table t(a int, b int, primary key(a));
@@ -75,7 +73,6 @@ explain format='plan_tree' select /*+ order_index(thh, a) */ * from thh where a<
 --disable_warnings
 
 # TestViewHint
-set tidb_cost_model_version=2;
 drop view if exists v, v1, v2;
 drop table if exists t, t1, t2;
 create table t(a int, b int);
@@ -100,7 +97,6 @@ explain format='plan_tree' select /*+ qb_name(qb_v2_2, v2@sel_1 .@sel_2), merge_
 --disable_warnings
 
 # TestViewHintScope
-set tidb_cost_model_version=2;
 drop view if exists v, v1, v2, v3, v4;
 drop table if exists t, t1, t2, t3, t4;
 create table t(a int, b int);
@@ -201,7 +197,6 @@ CREATE VIEW v1 AS SELECT c1, c2 FROM t1;
 SELECT * FROM v1 USE INDEX (PRIMARY) WHERE c1=2;
 
 # TestHintWithRequiredProperty
-set tidb_cost_model_version=2;
 set @@session.tidb_executor_concurrency = 4;
 set @@session.tidb_hash_join_concurrency = 5;
 set @@session.tidb_distsql_scan_concurrency = 15;

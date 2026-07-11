@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -641,6 +642,213 @@ func TestRecoverTableByJobID(t *testing.T) {
 	gcEnable, err := gcutil.CheckGCEnable(tk.Session())
 	require.NoError(t, err)
 	require.Equal(t, false, gcEnable)
+}
+
+func TestRecoverTableUsesRealStartTSForQueuedDropTable(t *testing.T) {
+	store := createMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database if not exists test_recover")
+	tk.MustExec("use test_recover")
+	tk.MustExec("drop table if exists t_recover_snapshot")
+	tk.MustExec("create table t_recover_snapshot (id int primary key, col_a int, col_b int)")
+	tk.MustExec("insert into t_recover_snapshot values (1, 11, 21)")
+
+	defer func(originGC bool) {
+		if originGC {
+			util.EmulatorGCEnable()
+		} else {
+			util.EmulatorGCDisable()
+		}
+	}(util.IsEmulatorGCEnable())
+	util.EmulatorGCDisable()
+
+	var pauseSchedule atomic.Bool
+	waitSchCh := make(chan struct{})
+	var closeSchedule sync.Once
+	releaseSchedule := func() {
+		pauseSchedule.Store(false)
+		closeSchedule.Do(func() { close(waitSchCh) })
+	}
+	t.Cleanup(releaseSchedule)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeLoadAndDeliverJobs", func() {
+		if pauseSchedule.Load() {
+			<-waitSchCh
+		}
+	})
+	pauseSchedule.Store(true)
+
+	submittedCh := make(chan struct{}, 2)
+	submitGate := make(chan struct{})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/waitJobSubmitted", func() {
+		submittedCh <- struct{}{}
+		<-submitGate
+	})
+	waitSubmitted := func() {
+		select {
+		case <-submittedCh:
+			submitGate <- struct{}{}
+		case <-time.After(5 * time.Second):
+			require.FailNow(t, "DDL job was not submitted")
+		}
+	}
+
+	// Two independent sessions are needed so the drop-table job can be queued
+	// after drop-column is submitted but before drop-column has changed metadata.
+	tkAlter := testkit.NewTestKit(t, store)
+	tkAlter.MustExec("use test_recover")
+	alterDoneCh := make(chan error, 1)
+	go func() {
+		_, err := tkAlter.Exec("alter table t_recover_snapshot drop column col_a")
+		alterDoneCh <- err
+	}()
+	waitSubmitted()
+
+	tkDrop := testkit.NewTestKit(t, store)
+	tkDrop.MustExec("use test_recover")
+	dropDoneCh := make(chan error, 1)
+	go func() {
+		_, err := tkDrop.Exec("drop table t_recover_snapshot")
+		dropDoneCh <- err
+	}()
+	waitSubmitted()
+
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/waitJobSubmitted")
+	releaseSchedule()
+	require.NoError(t, <-alterDoneCh)
+	require.NoError(t, <-dropDoneCh)
+
+	getHistoryJobID := func(jobType string) int64 {
+		rows := tk.MustQuery(fmt.Sprintf(
+			"admin show ddl jobs where db_name = 'test_recover' and table_name = 't_recover_snapshot' and job_type = '%s'",
+			jobType,
+		)).Rows()
+		require.NotEmpty(t, rows)
+		jobID, err := strconv.ParseInt(rows[0][0].(string), 10, 64)
+		require.NoError(t, err)
+		return jobID
+	}
+
+	dropJobID := getHistoryJobID("drop table")
+	dropJob, err := ddl.GetHistoryJobByID(tk.Session(), dropJobID)
+	require.NoError(t, err)
+	require.NotNil(t, dropJob)
+	require.Greater(t, dropJob.RealStartTS, dropJob.StartTS)
+
+	gcTimeFormat := "20060102-15:04:05 -0700 MST"
+	timeBeforeDrop := time.Now().Add(-48 * time.Hour).Format(gcTimeFormat)
+	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
+			       ON DUPLICATE KEY
+			       UPDATE variable_value = '%[1]s'`
+	tk.MustExec("delete from mysql.tidb where variable_name in ('tikv_gc_safe_point','tikv_gc_enable')")
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+	require.NoError(t, gcutil.EnableGC(tk.Session()))
+
+	tk.MustExec(fmt.Sprintf("recover table by job %d", dropJobID))
+	tk.MustQuery("select column_name from information_schema.columns where table_schema = 'test_recover' and table_name = 't_recover_snapshot' order by ordinal_position").Check(testkit.Rows("id", "col_b"))
+	tk.MustQuery("select id, col_b from t_recover_snapshot").Check(testkit.Rows("1 21"))
+
+	recoverJobID := getHistoryJobID("recover table")
+	recoverJob, err := ddl.GetHistoryJobByID(tk.Session(), recoverJobID)
+	require.NoError(t, err)
+	require.NotNil(t, recoverJob)
+	require.NotNil(t, recoverJob.BinlogInfo.TableInfo)
+	colNames := make([]string, 0, len(recoverJob.BinlogInfo.TableInfo.Columns))
+	for _, col := range recoverJob.BinlogInfo.TableInfo.Columns {
+		colNames = append(colNames, col.Name.L)
+	}
+	require.Equal(t, []string{"id", "col_b"}, colNames)
+}
+
+func TestFlashbackDatabaseUsesRealStartTSForQueuedDropSchema(t *testing.T) {
+	store := createMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists test_recover_schema_snapshot")
+	tk.MustExec("create database test_recover_schema_snapshot")
+	tk.MustExec("create table test_recover_schema_snapshot.t (id int primary key, col_a int, col_b int)")
+	tk.MustExec("insert into test_recover_schema_snapshot.t values (1, 11, 21)")
+
+	defer func(originGC bool) {
+		if originGC {
+			util.EmulatorGCEnable()
+		} else {
+			util.EmulatorGCDisable()
+		}
+	}(util.IsEmulatorGCEnable())
+	util.EmulatorGCDisable()
+
+	var pauseSchedule atomic.Bool
+	waitSchCh := make(chan struct{})
+	var closeSchedule sync.Once
+	releaseSchedule := func() {
+		pauseSchedule.Store(false)
+		closeSchedule.Do(func() { close(waitSchCh) })
+	}
+	t.Cleanup(releaseSchedule)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeLoadAndDeliverJobs", func() {
+		if pauseSchedule.Load() {
+			<-waitSchCh
+		}
+	})
+	pauseSchedule.Store(true)
+
+	submittedCh := make(chan struct{}, 2)
+	submitGate := make(chan struct{})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/waitJobSubmitted", func() {
+		submittedCh <- struct{}{}
+		<-submitGate
+	})
+	waitSubmitted := func() {
+		select {
+		case <-submittedCh:
+			submitGate <- struct{}{}
+		case <-time.After(5 * time.Second):
+			require.FailNow(t, "DDL job was not submitted")
+		}
+	}
+
+	tkAlter := testkit.NewTestKit(t, store)
+	tkAlter.MustExec("use test_recover_schema_snapshot")
+	alterDoneCh := make(chan error, 1)
+	go func() {
+		_, err := tkAlter.Exec("alter table t drop column col_a")
+		alterDoneCh <- err
+	}()
+	waitSubmitted()
+
+	tkDrop := testkit.NewTestKit(t, store)
+	dropDoneCh := make(chan error, 1)
+	go func() {
+		_, err := tkDrop.Exec("drop database test_recover_schema_snapshot")
+		dropDoneCh <- err
+	}()
+	waitSubmitted()
+
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/waitJobSubmitted")
+	releaseSchedule()
+	require.NoError(t, <-alterDoneCh)
+	require.NoError(t, <-dropDoneCh)
+
+	rows := tk.MustQuery("admin show ddl jobs where db_name = 'test_recover_schema_snapshot' and job_type = 'drop schema'").Rows()
+	require.NotEmpty(t, rows)
+	dropJobID, err := strconv.ParseInt(rows[0][0].(string), 10, 64)
+	require.NoError(t, err)
+	dropJob, err := ddl.GetHistoryJobByID(tk.Session(), dropJobID)
+	require.NoError(t, err)
+	require.NotNil(t, dropJob)
+	require.Greater(t, dropJob.RealStartTS, dropJob.StartTS)
+
+	gcTimeFormat := "20060102-15:04:05 -0700 MST"
+	timeBeforeDrop := time.Now().Add(-48 * time.Hour).Format(gcTimeFormat)
+	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
+			       ON DUPLICATE KEY
+			       UPDATE variable_value = '%[1]s'`
+	tk.MustExec("delete from mysql.tidb where variable_name in ('tikv_gc_safe_point','tikv_gc_enable')")
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+	require.NoError(t, gcutil.EnableGC(tk.Session()))
+
+	tk.MustExec("flashback database test_recover_schema_snapshot")
+	tk.MustQuery("select column_name from information_schema.columns where table_schema = 'test_recover_schema_snapshot' and table_name = 't' order by ordinal_position").Check(testkit.Rows("id", "col_b"))
+	tk.MustQuery("select id, col_b from test_recover_schema_snapshot.t").Check(testkit.Rows("1 21"))
 }
 
 func TestRecoverTableByJobIDFail(t *testing.T) {

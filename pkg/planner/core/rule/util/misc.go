@@ -25,7 +25,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/zeropool"
 )
 
-// ResolveExprAndReplace replaces columns fields of expressions by children logical plans.
+// ResolveExprAndReplace replaces column fields in an expression by child logical-plan columns.
+// Callers must use the returned expression because shared scalar-function trees are rewritten
+// with copy-on-write instead of being mutated in place.
 func ResolveExprAndReplace(origin expression.Expression, replace map[string]*expression.Column) expression.Expression {
 	switch expr := origin.(type) {
 	case *expression.Column:
@@ -40,8 +42,22 @@ func ResolveExprAndReplace(origin expression.Expression, replace map[string]*exp
 		newExpr.Column = *newCol
 		return newExpr
 	case *expression.ScalarFunction:
+		var cloned *expression.ScalarFunction
+		// Planner expressions may already be hashed or shared across operators.
+		// Rewrite scalar-function args with copy-on-write so column replacement
+		// does not mutate an existing expression tree in place.
 		for i, arg := range expr.GetArgs() {
-			expr.GetArgs()[i] = ResolveExprAndReplace(arg, replace)
+			newArg := ResolveExprAndReplace(arg, replace)
+			if newArg == arg {
+				continue
+			}
+			if cloned == nil {
+				cloned = expr.Clone().(*expression.ScalarFunction)
+			}
+			cloned.GetArgs()[i] = newArg
+		}
+		if cloned != nil {
+			return cloned
 		}
 		return expr
 	}
@@ -66,7 +82,9 @@ func resolveColumnAndReplace(origin *expression.Column, replace map[string]*expr
 	return origin, false
 }
 
-// ReplaceColumnOfExpr replaces column of expression by another LogicalProjection.
+// ReplaceColumnOfExpr replaces columns in an expression by another LogicalProjection.
+// Callers must use the returned expression because shared scalar-function trees are rewritten
+// with copy-on-write instead of being mutated in place.
 func ReplaceColumnOfExpr(expr expression.Expression, exprs []expression.Expression, schema *expression.Schema) expression.Expression {
 	switch v := expr.(type) {
 	case *expression.Column:
@@ -75,8 +93,21 @@ func ReplaceColumnOfExpr(expr expression.Expression, exprs []expression.Expressi
 			return exprs[idx]
 		}
 	case *expression.ScalarFunction:
-		for i := range v.GetArgs() {
-			v.GetArgs()[i] = ReplaceColumnOfExpr(v.GetArgs()[i], exprs, schema)
+		var cloned *expression.ScalarFunction
+		// Projection elimination may rewrite expressions that are still shared or
+		// already hashed, so keep the same copy-on-write rule as ResolveExprAndReplace.
+		for i, arg := range v.GetArgs() {
+			newArg := ReplaceColumnOfExpr(arg, exprs, schema)
+			if newArg == arg {
+				continue
+			}
+			if cloned == nil {
+				cloned = v.Clone().(*expression.ScalarFunction)
+			}
+			cloned.GetArgs()[i] = newArg
+		}
+		if cloned != nil {
+			return cloned
 		}
 	}
 	return expr

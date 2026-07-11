@@ -205,7 +205,7 @@
 ## pkg/planner/core/casetest/correlated
 
 ### Tests
-- `pkg/planner/core/casetest/correlated/correlated_test.go` - planner/core/casetest/correlated: Tests correlated subqueries and decorrelation regressions.
+- `pkg/planner/core/casetest/correlated/correlated_test.go` - planner/core/casetest/correlated: Tests correlated subqueries, NATURAL JOIN resolution through Apply, and decorrelation regressions.
 - `pkg/planner/core/casetest/correlated/main_test.go` - Configures default goleak settings and registers testdata.
 
 ## pkg/planner/core/casetest/dag

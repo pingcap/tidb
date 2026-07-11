@@ -213,6 +213,9 @@ func (mgr *TaskManager) WithNewSession(fn func(se sessionctx.Context) error) err
 func (mgr *TaskManager) WithNewTxn(ctx context.Context, fn func(se sessionctx.Context) error) error {
 	ctx = clitutil.WithInternalSourceType(ctx, kv.InternalDistTask)
 	return mgr.WithNewSession(func(se sessionctx.Context) (err error) {
+		// Keep BEGIN on the SQL path so the session enters transaction mode with the usual statement semantics.
+		// Commit / rollback use session methods instead, because cleanup still has to finish after caller
+		// cancellation and issuing SQL text there can leave the pooled internal session with a live txn.
 		_, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), "begin")
 		if err != nil {
 			return err
@@ -220,14 +223,15 @@ func (mgr *TaskManager) WithNewTxn(ctx context.Context, fn func(se sessionctx.Co
 
 		success := false
 		defer func() {
-			sql := "rollback"
 			if success {
-				sql = "commit"
+				commitErr := se.CommitTxn(ctx)
+				if err == nil && commitErr != nil {
+					err = commitErr
+				}
+				return
 			}
-			_, commitErr := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), sql)
-			if err == nil && commitErr != nil {
-				err = commitErr
-			}
+
+			se.RollbackTxn(clitutil.WithInternalSourceType(context.Background(), kv.InternalDistTask))
 		}()
 
 		if err = fn(se); err != nil {
@@ -360,7 +364,7 @@ func (mgr *TaskManager) getTopTasks(ctx context.Context, states ...proto.TaskSta
 	for _, s := range states {
 		args = append(args, s)
 	}
-	args = append(args, proto.MaxConcurrentTask*2)
+	args = append(args, proto.GetMaxConcurrentTask()*2)
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx, sql, args...)
 	if err != nil {
 		return nil, err
@@ -763,6 +767,41 @@ func (mgr *TaskManager) GetSubtaskCntGroupByStates(ctx context.Context, taskID i
 	return res, nil
 }
 
+// GetSubtaskStateCntAndErrorsByStep gets the subtask count by state and failed/canceled errors in one step-scoped read.
+func (mgr *TaskManager) GetSubtaskStateCntAndErrorsByStep(ctx context.Context, taskID int64, step proto.Step) (map[proto.SubtaskState]int64, []error, error) {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return nil, nil, err
+	}
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
+		`select state, error
+			from mysql.tidb_background_subtask
+			where task_key = %? and step = %?`,
+		taskID, step)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	cntByStates := make(map[proto.SubtaskState]int64, len(rs))
+	subTaskErrors := make([]error, 0)
+	for _, row := range rs {
+		state := proto.SubtaskState(row.GetString(0))
+		cntByStates[state]++
+		if state != proto.SubtaskStateFailed && state != proto.SubtaskStateCanceled {
+			continue
+		}
+		subTaskErr, err := unmarshalSubtaskError(row.GetBytes(1), row.IsNull(1))
+		if err != nil {
+			return nil, nil, err
+		}
+		if subTaskErr == nil {
+			continue
+		}
+		subTaskErrors = append(subTaskErrors, subTaskErr)
+	}
+
+	return cntByStates, subTaskErrors, nil
+}
+
 // GetSubtaskErrors gets subtasks' errors.
 func (mgr *TaskManager) GetSubtaskErrors(ctx context.Context, taskID int64) ([]error, error) {
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
@@ -776,24 +815,26 @@ func (mgr *TaskManager) GetSubtaskErrors(ctx context.Context, taskID int64) ([]e
 	}
 	subTaskErrors := make([]error, 0, len(rs))
 	for _, row := range rs {
-		if row.IsNull(0) {
-			subTaskErrors = append(subTaskErrors, nil)
-			continue
-		}
-		errBytes := row.GetBytes(0)
-		if len(errBytes) == 0 {
-			subTaskErrors = append(subTaskErrors, nil)
-			continue
-		}
-		stdErr := errors.Normalize("")
-		err := stdErr.UnmarshalJSON(errBytes)
+		subTaskErr, err := unmarshalSubtaskError(row.GetBytes(0), row.IsNull(0))
 		if err != nil {
 			return nil, err
 		}
-		subTaskErrors = append(subTaskErrors, stdErr)
+		subTaskErrors = append(subTaskErrors, subTaskErr)
 	}
 
 	return subTaskErrors, nil
+}
+
+func unmarshalSubtaskError(errBytes []byte, isNull bool) (subtaskErr error, err error) {
+	if isNull || len(errBytes) == 0 {
+		return nil, nil
+	}
+	stdErr := errors.Normalize("")
+	err = stdErr.UnmarshalJSON(errBytes)
+	if err != nil {
+		return nil, err
+	}
+	return stdErr, nil
 }
 
 // UpdateSubtasksExecIDs update subtasks' execID.
@@ -857,6 +898,33 @@ func (mgr *TaskManager) SwitchTaskStep(
 		}
 		return mgr.insertSubtasks(ctx, se, subtasks)
 	})
+}
+
+// SwitchTaskStepAfterPrepare atomically persists prepare completion from
+// pending+init to pending+prepared.
+func (mgr *TaskManager) SwitchTaskStepAfterPrepare(ctx context.Context, task *proto.Task) (bool, error) {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return false, err
+	}
+	switched := false
+	err := mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
+		_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
+			update mysql.tidb_global_task
+			set step = %?,
+				state_update_time = CURRENT_TIMESTAMP(),
+				meta = %?,
+				concurrency = %?,
+				max_node_count = %?
+			where id = %? and state = %? and step = %?`,
+			proto.StepPrepared, task.Meta, task.RequiredSlots, task.MaxNodeCount,
+			task.ID, proto.TaskStatePending, proto.StepInit)
+		if err != nil {
+			return err
+		}
+		switched = se.GetSessionVars().StmtCtx.AffectedRows() > 0
+		return nil
+	})
+	return switched, err
 }
 
 func (*TaskManager) updateTaskStateStep(ctx context.Context, se sessionctx.Context,
@@ -1152,7 +1220,7 @@ func (mgr *TaskManager) GetSubtaskCheckpoint(ctx context.Context, subtaskID int6
 	return rs[0].GetString(0), nil
 }
 
-// UpdateTaskExtraParams update the extra params of a task.
+// UpdateTaskExtraParams updates the extra params of a task.
 func (mgr *TaskManager) UpdateTaskExtraParams(ctx context.Context, taskID int64, extraParams proto.ExtraParams) error {
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err

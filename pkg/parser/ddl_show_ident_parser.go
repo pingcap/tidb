@@ -135,6 +135,9 @@ func (p *HandParser) parseShowIdentBased(stmt *ast.ShowStmt) ast.StmtNode {
 			return stmt
 		}
 		return nil
+	case "PROFILE":
+		p.next()
+		return p.parseShowProfile(stmt)
 	case "BACKUP":
 		p.next()
 		return p.parseShowBackupLogsStmt()
@@ -167,6 +170,86 @@ func (p *HandParser) parseShowIdentBased(stmt *ast.ShowStmt) ast.StmtNode {
 		return nil
 	}
 	return nil
+}
+
+// parseShowProfile parses: SHOW PROFILE [type [, type]...] [FOR QUERY n] [LIMIT ...]
+// yacc: "SHOW" "PROFILE" ShowProfileTypesOpt ShowProfileArgsOpt SelectStmtLimitOpt
+// Caller already consumed SHOW and PROFILE tokens.
+func (p *HandParser) parseShowProfile(stmt *ast.ShowStmt) ast.StmtNode {
+	stmt.Tp = ast.ShowProfile
+
+	// ShowProfileTypesOpt: [type [, type]...]
+	if tp, ok := p.parseShowProfileType(); ok {
+		stmt.ShowProfileTypes = []int{tp}
+		for {
+			if _, ok := p.accept(','); !ok {
+				break
+			}
+			tp, ok := p.parseShowProfileType()
+			if !ok {
+				p.syntaxErrorAt(p.peek())
+				return nil
+			}
+			stmt.ShowProfileTypes = append(stmt.ShowProfileTypes, tp)
+		}
+	}
+
+	// ShowProfileArgsOpt: [FOR QUERY n]
+	if _, ok := p.accept(forKwd); ok {
+		p.expect(query)
+		v, ok := p.parseInt64()
+		if !ok {
+			return nil
+		}
+		stmt.ShowProfileArgs = &v
+	}
+
+	// SelectStmtLimitOpt
+	if p.peek().Tp == limit {
+		stmt.ShowProfileLimit = p.parseLimitClause()
+		if stmt.ShowProfileLimit == nil {
+			return nil
+		}
+	}
+	return stmt
+}
+
+// parseShowProfileType parses one yacc ShowProfileType alternative.
+// Returns (type, true) if a profile type was consumed.
+func (p *HandParser) parseShowProfileType() (int, bool) {
+	switch p.peek().Tp {
+	case cpu:
+		p.next()
+		return ast.ProfileTypeCPU, true
+	case memory:
+		p.next()
+		return ast.ProfileTypeMemory, true
+	case block:
+		p.next()
+		p.expect(io)
+		return ast.ProfileTypeBlockIo, true
+	case context:
+		p.next()
+		p.expect(switchesSym)
+		return ast.ProfileTypeContextSwitch, true
+	case pageSym:
+		p.next()
+		p.expect(faultsSym)
+		return ast.ProfileTypePageFaults, true
+	case ipc:
+		p.next()
+		return ast.ProfileTypeIpc, true
+	case swaps:
+		p.next()
+		return ast.ProfileTypeSwaps, true
+	case source:
+		p.next()
+		return ast.ProfileTypeSource, true
+	case all:
+		p.next()
+		return ast.ProfileTypeAll, true
+	}
+	return 0, false
 }
 
 // parseShowCreate parses: SHOW CREATE TABLE|VIEW|DATABASE ...

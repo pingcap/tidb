@@ -11,9 +11,12 @@ go_library(
     deps = [
         "//pkg/parser/terror",
         "//pkg/planner/core",
+        "//pkg/resourcegroup",
         "//pkg/server/internal/column",
         "//pkg/types",
         "//pkg/util/chunk",
+        "//pkg/util/execdetails",
         "//pkg/util/sqlexec",
+        "@com_github_tikv_client_go_v2//util",
     ],
 )

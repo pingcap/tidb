@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -410,6 +411,7 @@ func addUnchangedKeysForLockByRow(
 				}
 			}
 			unchangedUniqueKey, _, err := tablecodec.GenIndexKey(
+				codec.NewEncoder(collate.NewCollationEnabled()),
 				stmtCtx.TimeZone(),
 				idx.TableMeta(),
 				meta,

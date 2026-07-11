@@ -361,6 +361,10 @@ func TestCollectHistNeededColumns(t *testing.T) {
 			res: []string{"t.a full", "t.b full"},
 		},
 		{
+			sql: "select * from t3 where _tidb_rowid > 1",
+			res: []string{},
+		},
+		{
 			sql: "select b, count(a) from t where b > 1 group by b having count(a) > 2",
 			res: []string{"t.a meta", "t.b full"},
 		},

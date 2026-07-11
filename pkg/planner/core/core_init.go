@@ -22,11 +22,15 @@ import (
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/util/hint"
+	semv2 "github.com/pingcap/tidb/pkg/util/sem/v2"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"go.uber.org/atomic"
 )
 
 func init() {
+	hint.RegisterRestrictedHintChecker(semv2.IsRestrictedHint)
+
 	// For code refactor init.
 	utilfuncp.FindBestTask4BaseLogicalPlan = findBestTask
 	utilfuncp.FindBestTask4LogicalDataSource = findBestTask4LogicalDataSource

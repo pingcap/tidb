@@ -175,9 +175,9 @@ func TestStmtSummaryTable(t *testing.T) {
 		"from information_schema.statements_summary " +
 		"where digest_text like 'select * from `t`%'"
 	tk.MustQuery(sql).Check(testkit.Rows("Select test test.t t:k 1 0 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                       \ttask     \testRows\toperator info\n" +
-		"\tIndexLookUp_8            \troot     \t100    \t\n" +
-		"\t├─IndexRangeScan_6(Build)\tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
-		"\t└─TableRowIDScan_7(Probe)\tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
+		"\tIndexLookUp_7            \troot     \t100    \t\n" +
+		"\t├─IndexRangeScan_5(Build)\tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
+		"\t└─TableRowIDScan_6(Probe)\tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
 
 	// select ... order by
 	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys,
@@ -197,9 +197,9 @@ func TestStmtSummaryTable(t *testing.T) {
 		"where digest_text like 'select * from `t`%'"
 	tk.MustQuery(sql).Check(testkit.Rows(
 		"Select test test.t t:k 2 0 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                       \ttask     \testRows\toperator info\n" +
-			"\tIndexLookUp_8            \troot     \t100    \t\n" +
-			"\t├─IndexRangeScan_6(Build)\tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
-			"\t└─TableRowIDScan_7(Probe)\tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
+			"\tIndexLookUp_7            \troot     \t100    \t\n" +
+			"\t├─IndexRangeScan_5(Build)\tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
+			"\t└─TableRowIDScan_6(Probe)\tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
 
 	// Disable it again.
 	tk.MustExec("set global tidb_enable_stmt_summary = false")
@@ -245,9 +245,9 @@ func TestStmtSummaryTable(t *testing.T) {
 		"from information_schema.statements_summary " +
 		"where digest_text like 'select * from `t`%'"
 	tk.MustQuery(sql).Check(testkit.Rows("Select test test.t t:k 1 0 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                       \ttask     \testRows\toperator info\n" +
-		"\tIndexLookUp_8            \troot     \t1000   \t\n" +
-		"\t├─IndexRangeScan_6(Build)\tcop[tikv]\t1000   \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
-		"\t└─TableRowIDScan_7(Probe)\tcop[tikv]\t1000   \ttable:t, keep order:false, stats:pseudo"))
+		"\tIndexLookUp_7            \troot     \t1000   \t\n" +
+		"\t├─IndexRangeScan_5(Build)\tcop[tikv]\t1000   \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
+		"\t└─TableRowIDScan_6(Probe)\tcop[tikv]\t1000   \ttable:t, keep order:false, stats:pseudo"))
 
 	// Disable it in global scope.
 	tk.MustExec("set global tidb_enable_stmt_summary = false")
@@ -368,6 +368,30 @@ func TestStmtSummaryPreparedStatements(t *testing.T) {
 	tk.MustQuery(`select exec_count
 		from information_schema.statements_summary
 		where digest_text like "select ?"`).Check(testkit.Rows("1"))
+}
+
+func TestStmtSummaryBinaryValues(t *testing.T) {
+	setupStmtSummary()
+	defer closeStmtSummary()
+
+	store := testkit.CreateMockStore(t)
+	tk := newTestKitWithRoot(t, store)
+
+	tk.MustExec("set global tidb_enable_stmt_summary = 0")
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (c1 binary(16) not null primary key)")
+	tk.MustExec("insert into t1 values (0xd2e4a6b8c1f3e5d7a9b2c4d6e8f1a3b5)")
+
+	tk.MustQuery("select count(*) from t1 where c1 = '\xd2\xe4\xa6\xb8\xc1\xf3\xe5\xd7\xa9\xb2\xc4\xd6\xe8\xf1\xa3\xb5'").Check(testkit.Rows("1"))
+
+	rows := tk.MustQuery("select query_sample_text from information_schema.statements_summary " +
+		"where digest_text like 'select count%from `t1` where%'").Rows()
+	require.Len(t, rows, 1)
+	sampleText := rows[0][0].(string)
+	// Verify the binary value is converted to a replayable 0x hex literal
+	require.Equal(t, "select count(*) from t1 where c1 = 0xd2e4a6b8c1f3e5d7a9b2c4d6e8f1a3b5", sampleText)
 }
 
 func TestStmtSummarySensitiveQuery(t *testing.T) {

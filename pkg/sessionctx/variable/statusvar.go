@@ -127,6 +127,9 @@ var defaultStatus = map[string]*StatusVal{
 	"Ssl_cipher_list": {vardef.ScopeGlobal | vardef.ScopeSession, ""},
 	"Ssl_verify_mode": {vardef.ScopeGlobal | vardef.ScopeSession, 0},
 	"Ssl_version":     {vardef.ScopeGlobal | vardef.ScopeSession, ""},
+	"Performance_schema_session_connect_attrs_longest_seen": {vardef.ScopeGlobal, int64(0)},
+	"Performance_schema_session_connect_attrs_lost":         {vardef.ScopeGlobal, int64(0)},
+	"tidb_keys_examined": {vardef.ScopeSession, uint64(0)},
 }
 
 type defaultStatusStat struct {
@@ -143,13 +146,20 @@ func (s defaultStatusStat) Stats(vars *SessionVars) (map[string]any, error) {
 		statusVars[name] = v.Value
 	}
 
+	// Read live values from atomic counters for connect attrs status variables.
+	statusVars["Performance_schema_session_connect_attrs_longest_seen"] = vardef.ConnectAttrsLongestSeen.Load()
+	statusVars["Performance_schema_session_connect_attrs_lost"] = vardef.ConnectAttrsLost.Load()
+
 	// `vars` may be nil in unit tests.
-	if vars != nil && vars.TLSConnectionState != nil {
-		statusVars["Ssl_cipher"] = tlsutil.CipherSuiteName(vars.TLSConnectionState.CipherSuite)
-		statusVars["Ssl_cipher_list"] = tlsSupportedCiphers
-		// tls.VerifyClientCertIfGiven == SSL_VERIFY_PEER | SSL_VERIFY_CLIENT_ONCE
-		statusVars["Ssl_verify_mode"] = 0x01 | 0x04
-		statusVars["Ssl_version"] = tlsutil.VersionName(vars.TLSConnectionState.Version)
+	if vars != nil {
+		statusVars["tidb_keys_examined"] = vars.KeysExamined
+		if vars.TLSConnectionState != nil {
+			statusVars["Ssl_cipher"] = tlsutil.CipherSuiteName(vars.TLSConnectionState.CipherSuite)
+			statusVars["Ssl_cipher_list"] = tlsSupportedCiphers
+			// tls.VerifyClientCertIfGiven == SSL_VERIFY_PEER | SSL_VERIFY_CLIENT_ONCE
+			statusVars["Ssl_verify_mode"] = 0x01 | 0x04
+			statusVars["Ssl_version"] = tlsutil.VersionName(vars.TLSConnectionState.Version)
+		}
 	}
 
 	return statusVars, nil

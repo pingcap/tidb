@@ -31,6 +31,7 @@ const (
 	builtinFnPosition    = builtinPosition
 	builtinFnSubstring   = builtinSubstring
 	builtinFnSum         = builtinSum
+	builtinFnSumInt      = builtinSumInt
 	builtinFnTrim        = builtinTrim
 
 	// Additional common function tokens.

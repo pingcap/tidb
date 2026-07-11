@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/etcd"
@@ -56,6 +57,12 @@ type Syncer struct {
 	serverInfoPath  string
 	session         *concurrency.Session
 	topologySession *concurrency.Session
+}
+
+// serverInfoKeyPath returns the etcd key path for the given server ID under
+// ServerInformationPath.
+func serverInfoKeyPath(id string) string {
+	return fmt.Sprintf("%s/%s", ServerInformationPath, id)
 }
 
 // NewSyncer creates a new Syncer instance.
@@ -89,7 +96,7 @@ func newSyncer(
 	is := &Syncer{
 		etcdCli:        etcdCli,
 		reporter:       reporter,
-		serverInfoPath: fmt.Sprintf("%s/%s", ServerInformationPath, uuid),
+		serverInfoPath: serverInfoKeyPath(uuid),
 	}
 	is.info.Store(getServerInfo(uuid, serverIDGetter, assumedKS))
 	return is
@@ -100,6 +107,7 @@ func (s *Syncer) NewSessionAndStoreServerInfo(ctx context.Context) error {
 	if s.etcdCli == nil {
 		return nil
 	}
+	s.cleanupStaleServerAndOwnerInfo(ctx)
 	logPrefix := fmt.Sprintf("[Info-syncer] %s", s.serverInfoPath)
 	session, err := tidbutil.NewSession(ctx, logPrefix, s.etcdCli, tidbutil.NewSessionDefaultRetryCnt, util.SessionTTL)
 	if err != nil {
@@ -135,7 +143,7 @@ func (s *Syncer) GetServerInfoByID(ctx context.Context, id string) (*ServerInfo,
 	if s.etcdCli == nil || id == localInfo.ID {
 		return localInfo, nil
 	}
-	key := fmt.Sprintf("%s/%s", ServerInformationPath, id)
+	key := serverInfoKeyPath(id)
 	infoMap, err := getInfo(ctx, s.etcdCli, key, KeyOpDefaultRetryCnt, KeyOpDefaultTimeout)
 	if err != nil {
 		return nil, err
@@ -226,6 +234,41 @@ func (s *Syncer) Done() <-chan struct{} {
 // Restart the info syncer with new session leaseID and store server info to etcd again.
 func (s *Syncer) Restart(ctx context.Context) error {
 	return s.NewSessionAndStoreServerInfo(ctx)
+}
+
+// cleanupStaleServerAndOwnerInfo removes stale server info and corresponding
+// DDL owner election key left behind by a previous instance of this server
+// that shared the same IP+Port but exited without proper cleanup (e.g. OOM,
+// kill -9). This is best-effort: any error is logged and startup continues.
+func (s *Syncer) cleanupStaleServerAndOwnerInfo(ctx context.Context) {
+	info := s.info.Load()
+	allInfo, err := getInfo(ctx, s.etcdCli, ServerInformationPath, KeyOpDefaultRetryCnt, KeyOpDefaultTimeout, clientv3.WithPrefix())
+	if err != nil {
+		logutil.BgLogger().Warn("failed to get all server info for stale cleanup", zap.Error(err))
+		return
+	}
+
+	for id, si := range allInfo {
+		if id == info.ID {
+			continue
+		}
+		if si.IP != info.IP || si.Port != info.Port {
+			continue
+		}
+		logutil.BgLogger().Info("found stale server info with same IP+Port, cleaning up",
+			zap.String("staleID", id),
+			zap.String("ip", si.IP),
+			zap.Uint("port", si.Port))
+
+		// Delete the stale DDL owner election key whose value matches the stale UUID.
+		owner.DeleteOwnerKeyByID(ctx, s.etcdCli, util.DDLOwnerKey, id)
+
+		// Delete the stale server info.
+		staleInfoPath := serverInfoKeyPath(id)
+		if err := etcd.DeleteKeyFromEtcd(staleInfoPath, s.etcdCli, KeyOpDefaultRetryCnt, KeyOpDefaultTimeout); err != nil {
+			logutil.BgLogger().Warn("failed to delete stale server info", zap.String("path", staleInfoPath), zap.Error(err))
+		}
+	}
 }
 
 // RemoveServerInfo remove self server static information from etcd.

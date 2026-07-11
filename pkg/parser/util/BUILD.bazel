@@ -1,8 +1,20 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "util",
-    srcs = ["hash64.go"],
+    srcs = [
+        "escape.go",
+        "hash64.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/parser/util",
     visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "util_test",
+    timeout = "short",
+    srcs = ["escape_test.go"],
+    embed = [":util"],
+    flaky = True,
+    deps = ["@com_github_stretchr_testify//require"],
 )

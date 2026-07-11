@@ -128,7 +128,6 @@ var noopSysVars = []*SysVar{
 	{Scope: vardef.ScopeGlobal, Name: vardef.BinlogOrderCommits, Value: vardef.On, Type: vardef.TypeBool},
 	{Scope: vardef.ScopeGlobal, Name: "key_cache_division_limit", Value: "100"},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: "max_insert_delayed_threads", Value: "20"},
-	{Scope: vardef.ScopeNone, Name: "performance_schema_session_connect_attrs_size", Value: "512"},
 	{Scope: vardef.ScopeGlobal, Name: "innodb_max_dirty_pages_pct", Value: "75"},
 	{Scope: vardef.ScopeGlobal, Name: vardef.InnodbFilePerTable, Value: vardef.On, Type: vardef.TypeBool, AutoConvertNegativeBool: true},
 	{Scope: vardef.ScopeGlobal, Name: vardef.InnodbLogCompressedPages, Value: "1"},

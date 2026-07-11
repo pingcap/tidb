@@ -209,6 +209,13 @@ func resolveIndices4PhysicalTopN(pp base.PhysicalPlan) (err error) {
 	if err := resolveIndexForInlineProjection(&p.PhysicalSchemaProducer); err != nil {
 		return err
 	}
+	if p.PrefixCol != nil {
+		newCol, err := p.PrefixCol.ResolveIndices(p.Children()[0].Schema())
+		if err != nil {
+			return err
+		}
+		p.PrefixCol = newCol.(*expression.Column)
+	}
 	return
 }
 
@@ -228,6 +235,13 @@ func resolveIndices4PhysicalLimit(pp base.PhysicalPlan) (err error) {
 	}
 	if err := resolveIndexForInlineProjection(&p.PhysicalSchemaProducer); err != nil {
 		return err
+	}
+	if p.PrefixCol != nil {
+		newCol, err := p.PrefixCol.ResolveIndices(p.Children()[0].Schema())
+		if err != nil {
+			return err
+		}
+		p.PrefixCol = newCol.(*expression.Column)
 	}
 	return
 }

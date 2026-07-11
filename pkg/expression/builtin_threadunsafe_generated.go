@@ -82,6 +82,11 @@ func (s *builtinValidatePasswordStrengthSig) SafeToShareAcrossSession() bool {
 }
 
 // SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinFtsMysqlMatchAgainstSig) SafeToShareAcrossSession() bool {
+	return false
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
 func (s *builtinIlikeSig) SafeToShareAcrossSession() bool {
 	return false
 }
@@ -363,6 +368,11 @@ func (s *builtinRpadSig) SafeToShareAcrossSession() bool {
 
 // SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
 func (s *builtinRpadUTF8Sig) SafeToShareAcrossSession() bool {
+	return false
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinFindInSetSig) SafeToShareAcrossSession() bool {
 	return false
 }
 

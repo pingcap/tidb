@@ -18,7 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/stretchr/testify/require"
 )
 
@@ -33,7 +33,7 @@ func TestKVGroupConflictInfosAddConflictInfo(t *testing.T) {
 	gci.addDataConflictInfo(info1)
 	require.NotNil(t, gci.ConflictInfos)
 	require.Len(t, gci.ConflictInfos, 1)
-	require.EqualValues(t, 10, gci.ConflictInfos[external.DataKVGroup].Count)
+	require.EqualValues(t, 10, gci.ConflictInfos[globalsort.DataKVGroup].Count)
 
 	// Test adding a new group.
 	info2 := &engineapi.ConflictInfo{Count: 20}
@@ -45,9 +45,9 @@ func TestKVGroupConflictInfosAddConflictInfo(t *testing.T) {
 	info3 := &engineapi.ConflictInfo{Count: 5}
 	gci.addDataConflictInfo(info3)
 	require.Len(t, gci.ConflictInfos, 2)
-	require.EqualValues(t, 15, gci.ConflictInfos[external.DataKVGroup].Count)
+	require.EqualValues(t, 15, gci.ConflictInfos[globalsort.DataKVGroup].Count)
 
 	// Test merging with zero count, should not change anything.
 	gci.addDataConflictInfo(&engineapi.ConflictInfo{Count: 0})
-	require.EqualValues(t, 15, gci.ConflictInfos[external.DataKVGroup].Count)
+	require.EqualValues(t, 15, gci.ConflictInfos[globalsort.DataKVGroup].Count)
 }

@@ -230,6 +230,12 @@ func (p *HandParser) parseFlushStmt() ast.StmtNode {
 		case "STATS_DELTA":
 			p.next()
 			stmt.Tp = ast.FlushStatsDelta
+			// yacc: "STATS_DELTA" StatsObjectList ClusterOpt — the scoped
+			// object list (db.tbl, db.*, *.*) is mandatory.
+			stmt.FlushObjects = p.parseStatsObjectList()
+			if stmt.FlushObjects == nil {
+				return nil
+			}
 			// Optional CLUSTER
 			if p.peek().IsKeyword("CLUSTER") {
 				p.next()

@@ -54,6 +54,7 @@ func TestQ1(t *testing.T) {
 func TestQ2(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		tk.MustExec("use test")
+		tk.MustExec("set @@tidb_default_string_match_selectivity = 0.8;")
 		createPart(t, tk, dom)
 		createSupplier(t, tk, dom)
 		createPartsupp(t, tk, dom)
@@ -216,6 +217,7 @@ func TestQ5(t *testing.T) {
 func TestQ14(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		tk.MustExec("use test")
+		tk.MustExec("set @@tidb_default_string_match_selectivity = 0.8;")
 		createLineItem(t, tk, dom)
 		createPart(t, tk, dom)
 		testkit.LoadTableStats("test.lineitem.json", dom)
@@ -267,6 +269,7 @@ func TestQ9(t *testing.T) {
 		createSupplier(t, tk, dom)
 		tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
 		tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 0")
+		tk.MustExec("set @@tidb_default_string_match_selectivity = 0.8;")
 
 		integrationSuiteData := GetTPCHSuiteData()
 		var (
@@ -294,6 +297,7 @@ func TestQ13(t *testing.T) {
 		tk.MustExec("use test")
 		createCustomer(t, tk, dom)
 		createOrders(t, tk, dom)
+		tk.MustExec("set @@tidb_default_string_match_selectivity = 0.8;")
 		tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
 		tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 0")
 		integrationSuiteData := GetTPCHSuiteData()
@@ -349,6 +353,7 @@ func TestQ18(t *testing.T) {
 func TestQ21(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		tk.MustExec(`use test`)
+		tk.MustExec("set @@tidb_default_string_match_selectivity = 0.8;")
 		createSupplier(t, tk, dom)
 		createLineItem(t, tk, dom)
 		createOrders(t, tk, dom)
@@ -383,6 +388,7 @@ func TestQ21(t *testing.T) {
 func TestQ22(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		tk.MustExec(`use test`)
+		tk.MustExec("set @@tidb_default_string_match_selectivity = 0.8;")
 		createCustomer(t, tk, dom)
 		createOrders(t, tk, dom)
 		tk.MustExec("set @@tidb_opt_enable_non_eval_scalar_subquery=true")

@@ -30,7 +30,7 @@ func RunRestoreTxn(c context.Context, g glue.Glue, cmdName string, cfg *Config) 
 	defer cancel()
 
 	// Restore raw does not need domain.
-	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(cfg), cfg.CheckRequirements, false, conn.NormalVersionChecker)
+	mgr, err := NewMgr(ctx, g, cfg.KeyspaceName, cfg.PD, cfg.TLS, GetKeepalive(cfg), cfg.CheckRequirements, false, conn.NormalVersionChecker)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -101,7 +101,7 @@ func RunRestoreTxn(c context.Context, g glue.Glue, cmdName string, cfg *Config) 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulers, false)
+	defer restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulers)
 
 	err = client.GetRestorer(nil).GoRestore(onProgress, restore.CreateUniqueFileSets(files))
 	if err != nil {

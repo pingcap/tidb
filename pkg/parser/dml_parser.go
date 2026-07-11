@@ -154,6 +154,10 @@ func (p *HandParser) parseInsertStmt(isReplace bool) *ast.InsertStmt {
 	switch p.peek().Tp {
 	case values, value: // VALUES
 		stmt.Lists = p.parseValueList(isReplace, false)
+		// Optional row alias (MySQL 8.0.19+): VALUES (...) AS new [(m, n)].
+		if !p.parseInsertRowAlias(stmt) {
+			return nil
+		}
 	case selectKwd: // SELECT
 		sel := p.parseSelectStmt()
 		stmt.Select = p.maybeParseUnion(sel)
@@ -213,6 +217,17 @@ func (p *HandParser) parseInsertStmt(isReplace bool) *ast.InsertStmt {
 			}
 		}
 		stmt.Lists = append(stmt.Lists, row)
+		// Optional row alias (MySQL 8.0.19+): SET c1=v1 AS new [(m, n)].
+		if !p.parseInsertRowAlias(stmt) {
+			return nil
+		}
+	}
+
+	// The REPLACE grammar accepts the row alias syntactically but rejects it
+	// (yacc: ReplaceIntoStmt appends ErrSyntax).
+	if isReplace && (stmt.RowAlias.O != "" || len(stmt.ColumnAliases) > 0) {
+		p.errs = append(p.errs, ErrSyntax)
+		return nil
 	}
 
 	// ON DUPLICATE KEY UPDATE (INSERT only, not REPLACE — matching MySQL grammar).
@@ -227,9 +242,60 @@ func (p *HandParser) parseInsertStmt(isReplace bool) *ast.InsertStmt {
 				return nil
 			}
 		}
+
+		// RETURNING clause (INSERT only; the REPLACE grammar has none).
+		var ok bool
+		stmt.Returning, ok = p.parseReturningClause()
+		if !ok {
+			return nil
+		}
 	}
 
 	return stmt
+}
+
+// parseReturningClause parses an optional RETURNING FieldList clause on DML
+// statements (yacc: ReturningClause). It returns the parsed fields (nil when
+// the clause is absent) and whether parsing succeeded.
+func (p *HandParser) parseReturningClause() ([]*ast.SelectField, bool) {
+	if _, ok := p.accept(returning); !ok {
+		return nil, true
+	}
+	fl := p.parseFieldList()
+	if fl == nil {
+		return nil, false
+	}
+	return fl.Fields, true
+}
+
+// parseInsertRowAlias parses the optional MySQL 8.0.19+ row alias following
+// INSERT ... VALUES/SET: AS row_alias [(col_alias, ...)]
+// (yacc: InsertRowAliasOpt). Returns false on syntax error.
+func (p *HandParser) parseInsertRowAlias(stmt *ast.InsertStmt) bool {
+	if _, ok := p.accept(as); !ok {
+		return true
+	}
+	aliasTok := p.next()
+	if !isIdentLike(aliasTok.Tp) || aliasTok.Tp == stringLit {
+		p.syntaxErrorAt(aliasTok)
+		return false
+	}
+	stmt.RowAlias = ast.NewCIStr(aliasTok.Lit)
+	if _, ok := p.accept('('); ok {
+		for {
+			tok := p.next()
+			if !isIdentLike(tok.Tp) || tok.Tp == stringLit {
+				p.syntaxErrorAt(tok)
+				return false
+			}
+			stmt.ColumnAliases = append(stmt.ColumnAliases, ast.NewCIStr(tok.Lit))
+			if _, ok := p.accept(','); !ok {
+				break
+			}
+		}
+		p.expect(')')
+	}
+	return true
 }
 
 // parseValueList parses VALUES (v1, v2), (v3, v4), ...
@@ -359,6 +425,12 @@ func (p *HandParser) parseUpdateStmt() ast.StmtNode {
 		stmt.Limit = p.parseLimitClauseSimple()
 	}
 
+	// [RETURNING] — valid for both single- and multi-table UPDATE.
+	stmt.Returning, ok = p.parseReturningClause()
+	if !ok {
+		return nil
+	}
+
 	return stmt
 }
 
@@ -401,6 +473,13 @@ func (p *HandParser) parseDeleteStmt() ast.StmtNode {
 	}
 
 	p.expect(from)
+
+	// In the single-table form, RETURNING after the table name always starts
+	// a RETURNING clause and is never an implicit table alias
+	// (yacc: TableAsNameOptDelete %prec higherThanReturning).
+	if !stmt.BeforeFrom {
+		p.disallowReturningAlias = true
+	}
 
 	// Table refs
 	tableRefStartTok := p.peek()
@@ -515,7 +594,7 @@ func (p *HandParser) parseDeleteStmt() ast.StmtNode {
 		stmt.Where = p.parseExpression(precNone)
 	}
 
-	// [ORDER BY] and [LIMIT] are only valid for single-table DELETE.
+	// [ORDER BY], [LIMIT] and [RETURNING] are only valid for single-table DELETE.
 	if !stmt.IsMultiTable {
 		if p.peek().Tp == order {
 			stmt.Order = p.parseOrderByClause()
@@ -523,6 +602,12 @@ func (p *HandParser) parseDeleteStmt() ast.StmtNode {
 
 		if p.peek().Tp == limit {
 			stmt.Limit = p.parseLimitClauseSimple()
+		}
+
+		var ok bool
+		stmt.Returning, ok = p.parseReturningClause()
+		if !ok {
+			return nil
 		}
 	}
 

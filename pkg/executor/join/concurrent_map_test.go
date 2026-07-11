@@ -71,7 +71,6 @@ func TestConcurrentMapMemoryUsage(t *testing.T) {
 	m := newConcurrentMap()
 	memUsage := int64(0)
 	for _, s := range m {
-		s.items.MockSeedForTest(4992862800126241206)
 		memUsage += int64(s.items.Bytes)
 	}
 	var iterations = 1024 * 10

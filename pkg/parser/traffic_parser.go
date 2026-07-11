@@ -151,42 +151,9 @@ func (p *HandParser) parseRefreshStmt() ast.StmtNode {
 
 	stmt := &ast.RefreshStatsStmt{}
 
-	// Parse object list: *.*  |  db.*  |  db.table  |  table
-	for {
-		obj := &ast.RefreshObject{}
-
-		firstTok := p.next()
-		if firstTok.Tp == '*' || firstTok.Lit == "*" {
-			// *.* (global)
-			p.expect('.')
-			p.expect('*')
-			obj.RefreshObjectScope = ast.RefreshObjectScopeGlobal
-		} else {
-			// Could be db.* or db.table or table
-			name := firstTok.Lit
-			if _, ok := p.accept('.'); ok {
-				// db.* or db.table
-				if _, ok := p.accept('*'); ok {
-					obj.RefreshObjectScope = ast.RefreshObjectScopeDatabase
-					obj.DBName = ast.NewCIStr(name)
-				} else {
-					tblTok := p.next()
-					obj.RefreshObjectScope = ast.RefreshObjectScopeTable
-					obj.DBName = ast.NewCIStr(name)
-					obj.TableName = ast.NewCIStr(tblTok.Lit)
-				}
-			} else {
-				// Just table name.
-				obj.RefreshObjectScope = ast.RefreshObjectScopeTable
-				obj.TableName = ast.NewCIStr(name)
-			}
-		}
-
-		stmt.RefreshObjects = append(stmt.RefreshObjects, obj)
-
-		if _, ok := p.accept(','); !ok {
-			break
-		}
+	stmt.RefreshObjects = p.parseStatsObjectList()
+	if stmt.RefreshObjects == nil {
+		return nil
 	}
 
 	// Optional FULL | LITE mode.
@@ -207,6 +174,57 @@ func (p *HandParser) parseRefreshStmt() ast.StmtNode {
 	}
 
 	return stmt
+}
+
+// parseStatsObjectList parses a non-empty comma-separated list of stats
+// objects (yacc StatsObjectList): *.* | db.* | db.table | table.
+// It is shared by REFRESH STATS and FLUSH STATS_DELTA.
+// Returns nil after reporting a syntax error.
+func (p *HandParser) parseStatsObjectList() []*ast.StatsObject {
+	var objects []*ast.StatsObject
+	for {
+		obj := &ast.StatsObject{}
+
+		firstTok := p.next()
+		if firstTok.Tp == '*' || firstTok.Lit == "*" {
+			// *.* (global)
+			p.expect('.')
+			p.expect('*')
+			obj.StatsObjectScope = ast.StatsObjectScopeGlobal
+		} else if isIdentLike(firstTok.Tp) && firstTok.Tp != stringLit {
+			// Could be db.* or db.table or table
+			name := firstTok.Lit
+			if _, ok := p.accept('.'); ok {
+				// db.* or db.table
+				if _, ok := p.accept('*'); ok {
+					obj.StatsObjectScope = ast.StatsObjectScopeDatabase
+					obj.DBName = ast.NewCIStr(name)
+				} else {
+					tblTok := p.next()
+					if !isIdentLike(tblTok.Tp) || tblTok.Tp == stringLit {
+						p.syntaxErrorAt(tblTok)
+						return nil
+					}
+					obj.StatsObjectScope = ast.StatsObjectScopeTable
+					obj.DBName = ast.NewCIStr(name)
+					obj.TableName = ast.NewCIStr(tblTok.Lit)
+				}
+			} else {
+				// Just table name.
+				obj.StatsObjectScope = ast.StatsObjectScopeTable
+				obj.TableName = ast.NewCIStr(name)
+			}
+		} else {
+			p.syntaxErrorAt(firstTok)
+			return nil
+		}
+
+		objects = append(objects, obj)
+
+		if _, ok := p.accept(','); !ok {
+			return objects
+		}
+	}
 }
 
 // parseShowTrafficStmt parses SHOW TRAFFIC JOBS.

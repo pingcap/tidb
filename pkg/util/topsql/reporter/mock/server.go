@@ -38,6 +38,7 @@ type mockAgentServer struct {
 	planMetas  map[string]string
 	addr       string
 	records    [][]*tipb.TopSQLRecord
+	ruRecords  [][]*tipb.TopRURecord // RU records storage for tests
 	sync.Mutex
 }
 
@@ -102,6 +103,26 @@ func (svr *mockAgentServer) ReportTopSQLRecords(stream tipb.TopSQLAgent_ReportTo
 	}
 	svr.Lock()
 	svr.records = append(svr.records, records)
+	svr.Unlock()
+	return stream.SendAndClose(&tipb.EmptyResponse{})
+}
+
+// ReportTopRURecords implements tipb.TopSQLAgentServer for TopRU records.
+// Stores RU records for test verification.
+func (svr *mockAgentServer) ReportTopRURecords(stream tipb.TopSQLAgent_ReportTopRURecordsServer) error {
+	ruRecords := make([]*tipb.TopRURecord, 0, 10)
+	for {
+		svr.mayHang()
+		req, err := stream.Recv()
+		if err == io.EOF {
+			break
+		} else if err != nil {
+			return err
+		}
+		ruRecords = append(ruRecords, req)
+	}
+	svr.Lock()
+	svr.ruRecords = append(svr.ruRecords, ruRecords)
 	svr.Unlock()
 	return stream.SendAndClose(&tipb.EmptyResponse{})
 }
@@ -218,6 +239,27 @@ func (svr *mockAgentServer) GetLatestRecords() []*tipb.TopSQLRecord {
 		return nil
 	}
 	return records[len(records)-1]
+}
+
+// GetLatestRURecords returns the latest batch of RU records and clears storage.
+// Used for test verification of TopRU data flow.
+func (svr *mockAgentServer) GetLatestRURecords() []*tipb.TopRURecord {
+	svr.Lock()
+	ruRecords := svr.ruRecords
+	svr.ruRecords = [][]*tipb.TopRURecord{}
+	svr.Unlock()
+
+	if len(ruRecords) == 0 {
+		return nil
+	}
+	return ruRecords[len(ruRecords)-1]
+}
+
+// RURecordsCnt returns the count of RU record batches received.
+func (svr *mockAgentServer) RURecordsCnt() int {
+	svr.Lock()
+	defer svr.Unlock()
+	return len(svr.ruRecords)
 }
 
 func (svr *mockAgentServer) GetTotalSQLMetas() []tipb.SQLMeta {

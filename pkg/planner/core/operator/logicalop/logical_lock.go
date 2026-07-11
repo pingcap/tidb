@@ -26,6 +26,8 @@ import (
 type LogicalLock struct {
 	BaseLogicalPlan `hash64-equals:"true"`
 
+	// Lock points to AST lock metadata. Preprocess may normalize the AST before planning,
+	// but after LogicalLock is built this field is treated as read-only.
 	Lock         *ast.SelectLockInfo `hash64-equals:"true"`
 	TblID2Handle map[int64][]util.HandleCols
 

@@ -341,6 +341,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 		require.NotEmpty(t, c.stmt, c.name)
 		for _, stmt := range c.stmt {
 			msg := fmt.Sprintf("%d: %s, stmt: %T", i, c.name, stmt)
+			ctx.GetSessionVars().EnableStrictNotNullCheck = true
 			ctx.GetSessionVars().SQLMode = c.sqlMode
 			require.NoError(t, ResetContextOfStmt(ctx, stmt), msg)
 			ec := ctx.GetSessionVars().StmtCtx.ErrCtx()
@@ -456,4 +457,99 @@ func TestAddUnchangedKeysForLockByRow_GlobalIndexNewTableID(t *testing.T) {
 	gotKeys := sctx.GetSessionVars().TxnCtx.CollectUnchangedKeysForXLock(nil)
 	require.Len(t, gotKeys, 1)
 	require.Equal(t, expectedKey, []byte(gotKeys[0]))
+}
+
+func TestStrictNotNullCheckForInsert(t *testing.T) {
+	ctx := mock.NewContext()
+	ctx.BindDomainAndSchValidator(&domain.Domain{}, nil)
+
+	cases := []struct {
+		name                     string
+		sqlMode                  mysql.SQLMode
+		enableStrictNotNullCheck bool
+		isSingleInsert           bool
+		expectBadNullLevel       errctx.Level
+		expectNoDefaultLevel     errctx.Level
+	}{
+		{
+			name:                     "non-strict,single-row,disable",
+			sqlMode:                  mysql.ModeErrorForDivisionByZero,
+			enableStrictNotNullCheck: false,
+			isSingleInsert:           true,
+			expectBadNullLevel:       errctx.LevelWarn,
+			expectNoDefaultLevel:     errctx.LevelWarn,
+		},
+		{
+			name:                     "strict,single-row,disable",
+			sqlMode:                  mysql.ModeStrictAllTables | mysql.ModeErrorForDivisionByZero,
+			enableStrictNotNullCheck: false,
+			isSingleInsert:           true,
+			expectBadNullLevel:       errctx.LevelWarn,
+			expectNoDefaultLevel:     errctx.LevelError,
+		},
+		{
+			name:                     "non-strict,single-row,enable",
+			sqlMode:                  mysql.ModeErrorForDivisionByZero,
+			enableStrictNotNullCheck: true,
+			isSingleInsert:           true,
+			expectBadNullLevel:       errctx.LevelError,
+			expectNoDefaultLevel:     errctx.LevelWarn,
+		},
+		{
+			name:                     "strict,single-row,enable",
+			sqlMode:                  mysql.ModeStrictAllTables | mysql.ModeErrorForDivisionByZero,
+			enableStrictNotNullCheck: true,
+			isSingleInsert:           true,
+			expectBadNullLevel:       errctx.LevelError,
+			expectNoDefaultLevel:     errctx.LevelError,
+		},
+		{
+			name:                     "non-strict,multi-row,disable",
+			sqlMode:                  mysql.ModeErrorForDivisionByZero,
+			enableStrictNotNullCheck: false,
+			isSingleInsert:           false,
+			expectBadNullLevel:       errctx.LevelWarn,
+			expectNoDefaultLevel:     errctx.LevelWarn,
+		},
+		{
+			name:                     "strict,multi-row,disable",
+			sqlMode:                  mysql.ModeStrictAllTables | mysql.ModeErrorForDivisionByZero,
+			enableStrictNotNullCheck: false,
+			isSingleInsert:           false,
+			expectBadNullLevel:       errctx.LevelWarn,
+			expectNoDefaultLevel:     errctx.LevelError,
+		},
+		{
+			name:                     "non-strict,multi-row,enable",
+			sqlMode:                  mysql.ModeErrorForDivisionByZero,
+			enableStrictNotNullCheck: true,
+			isSingleInsert:           false,
+			expectBadNullLevel:       errctx.LevelWarn,
+			expectNoDefaultLevel:     errctx.LevelWarn,
+		},
+		{
+			name:                     "strict,multi-row,enable",
+			sqlMode:                  mysql.ModeStrictAllTables | mysql.ModeErrorForDivisionByZero,
+			enableStrictNotNullCheck: true,
+			isSingleInsert:           false,
+			expectBadNullLevel:       errctx.LevelError,
+			expectNoDefaultLevel:     errctx.LevelError,
+		},
+	}
+
+	for _, c := range cases {
+		ctx.GetSessionVars().EnableStrictNotNullCheck = true
+		ctx.GetSessionVars().SQLMode = c.sqlMode
+		ctx.GetSessionVars().EnableStrictNotNullCheck = c.enableStrictNotNullCheck
+		stmt := &ast.InsertStmt{Lists: [][]ast.ExprNode{{}}}
+		if c.isSingleInsert {
+			stmt.Lists = make([][]ast.ExprNode, 1)
+		} else {
+			stmt.Lists = make([][]ast.ExprNode, 2)
+		}
+		require.NoError(t, ResetContextOfStmt(ctx, stmt), c.name)
+		ec := ctx.GetSessionVars().StmtCtx.ErrCtx()
+		require.Equal(t, c.expectBadNullLevel, ec.LevelMap()[errctx.ErrGroupBadNull], "%s: BadNull level", c.name)
+		require.Equal(t, c.expectNoDefaultLevel, ec.LevelMap()[errctx.ErrGroupNoDefault], "%s: NoDefault level", c.name)
+	}
 }

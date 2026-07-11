@@ -316,23 +316,37 @@ func (p *HandParser) parseAlterUserStmt() ast.StmtNode {
 
 	stmt.IfExists = p.acceptIfExists()
 
-	// Handle ALTER USER USER() IDENTIFIED BY ... (CurrentAuth form)
+	// Handle ALTER USER USER() ... (CurrentAuth form)
 	if p.peek().Tp == user && p.peekN(1).Tp == '(' {
 		p.next() // consume USER
 		p.next() // consume (
 		p.expect(')')
 
-		// yacc: ALTER USER USER() IDENTIFIED BY AuthString — IDENTIFIED BY is required
-		p.expect(identified)
-		stmt.CurrentAuth = Alloc[ast.AuthOption](p.arena)
-		p.expect(by)
-		if tok, ok := p.expect(stringLit); ok {
-			stmt.CurrentAuth.ByAuthString = true
-			stmt.CurrentAuth.AuthString = tok.Lit
+		if _, ok := p.accept(discard); ok {
+			// yacc: ALTER USER IfExists USER() DISCARD OLD PASSWORD —
+			// standalone clause on the current-user form (no IDENTIFIED BY).
+			p.expect(old)
+			p.expect(password)
+			stmt.CurrentDualPasswordOption = ast.DualPasswordDiscardOld
+		} else {
+			// yacc: ALTER USER USER() IDENTIFIED BY AuthString — IDENTIFIED BY is required
+			p.expect(identified)
+			stmt.CurrentAuth = Alloc[ast.AuthOption](p.arena)
+			p.expect(by)
+			if tok, ok := p.expect(stringLit); ok {
+				stmt.CurrentAuth.ByAuthString = true
+				stmt.CurrentAuth.AuthString = tok.Lit
+			}
+			// yacc: ... "IDENTIFIED" "BY" AuthString "RETAIN" "CURRENT" "PASSWORD"
+			if _, ok := p.accept(retain); ok {
+				p.expect(current)
+				p.expect(password)
+				stmt.CurrentDualPasswordOption = ast.DualPasswordRetainCurrent
+			}
 		}
 	} else {
 		var ok bool
-		stmt.Specs, ok = parseCommaListPtr(p, p.parseUserSpec)
+		stmt.Specs, ok = parseCommaListPtr(p, p.parseAlterUserSpec)
 		if !ok {
 			p.syntaxErrorAt(p.peek())
 			return nil
@@ -404,6 +418,45 @@ func (p *HandParser) parseRoleSpec() *ast.UserSpec {
 	spec.User.Username = role.Username
 	spec.User.Hostname = role.Hostname
 	spec.IsRole = true
+	return spec
+}
+
+// parseAlterUserSpec parses the per-user spec for ALTER USER (yacc
+// AlterUserSpec). It permits MySQL 8.0 dual-password clauses (RETAIN CURRENT
+// PASSWORD / DISCARD OLD PASSWORD) alongside an auth-option, with MySQL's
+// restrictions:
+//   - RETAIN attaches only to BY-form auth options (IDENTIFIED BY 'plain'
+//     or IDENTIFIED WITH plugin BY 'plain'). The hashed AS-form and the
+//     bare-plugin form are NOT accepted with RETAIN.
+//   - DISCARD OLD PASSWORD is a standalone clause; no auth option may
+//     accompany it on the same spec.
+//   - RETAIN / DISCARD are NOT accepted by parseUserSpec, so CREATE USER
+//     continues to reject them at parse time (matching MySQL).
+func (p *HandParser) parseAlterUserSpec() *ast.UserSpec {
+	spec := p.parseUserSpec()
+	if spec == nil {
+		return nil
+	}
+	switch p.peek().Tp {
+	case retain:
+		if spec.AuthOpt == nil || !spec.AuthOpt.ByAuthString {
+			p.syntaxErrorAt(p.peek())
+			return nil
+		}
+		p.next() // consume RETAIN
+		p.expect(current)
+		p.expect(password)
+		spec.DualPasswordOption = ast.DualPasswordRetainCurrent
+	case discard:
+		if spec.AuthOpt != nil {
+			p.syntaxErrorAt(p.peek())
+			return nil
+		}
+		p.next() // consume DISCARD
+		p.expect(old)
+		p.expect(password)
+		spec.DualPasswordOption = ast.DualPasswordDiscardOld
+	}
 	return spec
 }
 

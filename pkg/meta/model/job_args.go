@@ -1860,6 +1860,24 @@ func GetRefreshMetaArgs(job *Job) (*RefreshMetaArgs, error) {
 	return getOrDecodeArgs[*RefreshMetaArgs](&RefreshMetaArgs{}, job)
 }
 
+// ModifyTableEngineAttributeArgs is the arguments for ActionModifyTableEngineAttribute ddl.
+type ModifyTableEngineAttributeArgs struct {
+	EngineAttribute string `json:"engine_attribute,omitempty"`
+}
+
+func (a *ModifyTableEngineAttributeArgs) getArgsV1(*Job) []any {
+	return []any{a.EngineAttribute}
+}
+
+func (a *ModifyTableEngineAttributeArgs) decodeV1(job *Job) error {
+	return errors.Trace(job.decodeArgs(&a.EngineAttribute))
+}
+
+// GetModifyTableEngineAttributeArgs gets the args for ActionModifyTableEngineAttribute.
+func GetModifyTableEngineAttributeArgs(job *Job) (*ModifyTableEngineAttributeArgs, error) {
+	return getOrDecodeArgs[*ModifyTableEngineAttributeArgs](&ModifyTableEngineAttributeArgs{}, job)
+}
+
 // AlterTableAffinityArgs is the argument for AlterTableAffinity
 type AlterTableAffinityArgs struct {
 	Affinity *TableAffinityInfo `json:"affinity,omitempty"`
@@ -1876,4 +1894,24 @@ func (a *AlterTableAffinityArgs) decodeV1(job *Job) error {
 // GetAlterTableAffinityArgs get the alter table affinity argument.
 func GetAlterTableAffinityArgs(job *Job) (*AlterTableAffinityArgs, error) {
 	return getOrDecodeArgs[*AlterTableAffinityArgs](&AlterTableAffinityArgs{}, job)
+}
+
+// AlterTableSetRegionSplitPolicyArgs is the arguments for ActionAlterTableSetRegionSplitPolicy
+type AlterTableSetRegionSplitPolicyArgs struct {
+	// IndexName is the index name, empty string means table policy.
+	IndexName string
+	Policy    *RegionSplitPolicy
+}
+
+func (a *AlterTableSetRegionSplitPolicyArgs) getArgsV1(*Job) []any {
+	return []any{a.IndexName, a.Policy}
+}
+
+func (a *AlterTableSetRegionSplitPolicyArgs) decodeV1(job *Job) error {
+	return errors.Trace(job.decodeArgs(&a.IndexName, &a.Policy))
+}
+
+// GetAlterTableSetRegionSplitPolicyArgs gets the args for alter table set region split policy job
+func GetAlterTableSetRegionSplitPolicyArgs(job *Job) (*AlterTableSetRegionSplitPolicyArgs, error) {
+	return getOrDecodeArgs[*AlterTableSetRegionSplitPolicyArgs](&AlterTableSetRegionSplitPolicyArgs{}, job)
 }

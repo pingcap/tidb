@@ -46,20 +46,10 @@ import (
 
 // Chunk schema in this test file: | column0: string | column1: float64 |
 
-const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-
-func getRandString() string {
-	b := make([]byte, 5)
-	for i := range b {
-		b[i] = letterBytes[rand.Intn(len(letterBytes))]
-	}
-	return string(b)
-}
-
 func generateData(rowNum int, ndv int) ([]string, []float64) {
 	keys := make([]string, 0)
 	for range ndv {
-		keys = append(keys, getRandString())
+		keys = append(keys, util.GenerateRandomString(5))
 	}
 
 	col0Data := make([]string, 0)

@@ -64,6 +64,16 @@ func (p *HandParser) parseShowStmt() ast.StmtNode {
 		}
 		return p.showSyntaxError()
 
+	case master:
+		// SHOW MASTER STATUS (deprecated in MySQL 8.2.0 in favor of SHOW BINARY LOG STATUS)
+		p.next()
+		if p.peekKeyword(status, "STATUS") {
+			p.next()
+			stmt.Tp = ast.ShowMasterStatus
+			return stmt
+		}
+		return p.showSyntaxError()
+
 	case tables:
 		p.next()
 		stmt.Tp = ast.ShowTables
@@ -178,7 +188,7 @@ func (p *HandParser) parseShowStmt() ast.StmtNode {
 		stmt.Tp = ast.ShowProcessList
 		return stmt
 
-	case index, keys:
+	case index, indexes, keys:
 		// SHOW {INDEX|KEYS|INDEXES} {FROM|IN} tbl [{FROM|IN} db] [WHERE expr]
 		p.next()
 		p.parseShowIndexStmt(stmt)
@@ -217,7 +227,7 @@ func (p *HandParser) parseShowStmt() ast.StmtNode {
 	case traffic:
 		return p.parseShowTrafficStmt()
 
-	case importKwd:
+	case importKwd, raw:
 		return p.parseShowImportStmt()
 
 	case databases:

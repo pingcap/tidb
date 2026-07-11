@@ -377,7 +377,17 @@ func (p *HandParser) parseJoinType() (joinType ast.JoinType, isNatural bool, str
 func (p *HandParser) parseTableSource() ast.ResultSetNode {
 	var res ast.ResultSetNode
 
+	// Consume the one-shot flag set by single-table DELETE: it only applies to
+	// the first (and, in valid statements, only) table factor of the clause.
+	disallowReturningAlias := p.disallowReturningAlias
+	p.disallowReturningAlias = false
+
 	switch p.peek().Tp {
+	case lateral:
+		// LATERAL derived table (MySQL 8.0.14+, WL#8652).
+		// yacc: "LATERAL" SubSelect TableAsName IdentListWithParenOpt
+		// The alias is mandatory; an optional column alias list may follow.
+		return p.parseLateralTableSource()
 	case '{':
 		// ODBC escaped table reference: { OJ table_ref }
 		// The braces are stripped and the identifier after '{' must be "OJ".
@@ -551,8 +561,11 @@ func (p *HandParser) parseTableSource() ast.ResultSetNode {
 			return nil
 		}
 		asName = ast.NewCIStr(aliasTok.Lit)
-	} else if p.CanBeImplicitAlias(p.peek()) {
+	} else if p.CanBeImplicitAlias(p.peek()) &&
+		!(disallowReturningAlias && p.peek().Tp == returning) {
 		// Implicit alias — can be an identifier or an unreserved keyword.
+		// In single-table DELETE, RETURNING starts a RETURNING clause and is
+		// never an implicit alias (yacc: TableAsNameOptDelete).
 		aliasTok := p.next()
 		asName = ast.NewCIStr(aliasTok.Lit)
 	}
@@ -630,6 +643,75 @@ func (p *HandParser) parseTableSource() ast.ResultSetNode {
 	}
 
 	return res
+}
+
+// parseLateralTableSource parses a LATERAL derived table:
+//
+//	LATERAL (subquery) [AS] alias [(col_name_list)]
+//
+// yacc: "LATERAL" SubSelect TableAsName IdentListWithParenOpt — the derived
+// table may reference columns of tables that precede it in the FROM clause.
+func (p *HandParser) parseLateralTableSource() ast.ResultSetNode {
+	p.next() // consume LATERAL
+	if _, ok := p.expect('('); !ok {
+		return nil
+	}
+	switch p.peek().Tp {
+	case selectKwd, with, tableKwd, values, '(':
+	default:
+		p.syntaxErrorAt(p.peek())
+		return nil
+	}
+	innerStartOff := p.peek().Offset
+	inner := p.parseSubquery()
+	if inner == nil {
+		return nil
+	}
+	// Set text on the inner statement to match yacc SubSelect behavior.
+	innerEndOff := p.peek().Offset
+	if innerEndOff > innerStartOff {
+		inner.(ast.Node).SetText(p.connectionEncoding, p.src[innerStartOff:innerEndOff])
+	}
+	p.expect(')')
+	// Clear IsInBraces for nested parens like LATERAL ((SELECT ...)) AS dt:
+	// TableSource.Restore() already wraps subquery sources in (...), so
+	// keeping IsInBraces=true would produce double parens (the yacc SubSelect
+	// production collapses redundant parens the same way).
+	if s, ok := inner.(*ast.SelectStmt); ok {
+		s.IsInBraces = false
+	} else if s, ok := inner.(*ast.SetOprStmt); ok {
+		s.IsInBraces = false
+	}
+
+	ts := Alloc[ast.TableSource](p.arena)
+	ts.Source = inner
+	ts.Lateral = true
+
+	// Mandatory alias: [AS] Identifier (yacc: TableAsName).
+	p.accept(as)
+	aliasTok := p.next()
+	if !isIdentLike(aliasTok.Tp) || aliasTok.Tp == stringLit {
+		p.syntaxErrorAt(aliasTok)
+		return nil
+	}
+	ts.AsName = ast.NewCIStr(aliasTok.Lit)
+
+	// Optional column alias list (yacc: IdentListWithParenOpt).
+	if _, ok := p.accept('('); ok {
+		for {
+			tok := p.next()
+			if !isIdentLike(tok.Tp) || tok.Tp == stringLit {
+				p.syntaxErrorAt(tok)
+				return nil
+			}
+			ts.ColumnNames = append(ts.ColumnNames, ast.NewCIStr(tok.Lit))
+			if _, ok := p.accept(','); !ok {
+				break
+			}
+		}
+		p.expect(')')
+	}
+	return ts
 }
 
 // wrapAsTableSource takes a parsed subquery ResultSetNode and wraps it

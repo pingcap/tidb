@@ -17,6 +17,7 @@ package stringutil
 import (
 	"bytes"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 	"unicode/utf8"
@@ -259,18 +260,21 @@ func matchRune(a, b rune) bool {
 // CompileLike2Regexp convert a like `lhs` to a regular expression
 func CompileLike2Regexp(str string) string {
 	patChars, patTypes := CompilePattern(str, '\\')
-	var result []rune
+	var result strings.Builder
+	result.Grow(len(patChars)*2 + 2)
+	result.WriteByte('^')
 	for i := range patChars {
 		switch patTypes[i] {
 		case PatMatch:
-			result = append(result, patChars[i])
+			result.WriteString(regexp.QuoteMeta(string(patChars[i])))
 		case PatOne:
-			result = append(result, '.')
+			result.WriteByte('.')
 		case PatAny:
-			result = append(result, '.', '*')
+			result.WriteString(".*")
 		}
 	}
-	return "^" + string(result) + "$"
+	result.WriteByte('$')
+	return result.String()
 }
 
 // DoMatchBinary is an adapter for `DoMatchInner`, `str` is binary strings or ascii string.

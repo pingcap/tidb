@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 )
 
 // TableKVEncoder encodes a row of data into a KV pair.
@@ -42,6 +43,10 @@ type TableKVEncoder struct {
 	insertColumnRowCache []types.Datum
 	rowCache             []types.Datum
 	hasValueCache        []bool
+}
+
+type simpleColAssignExprCreator interface {
+	CreateColAssignSimpleExprs(expression.BuildContext) ([]expression.Expression, []contextutil.SQLWarn, error)
 }
 
 // NewTableKVEncoder creates a new TableKVEncoder.
@@ -58,13 +63,13 @@ func NewTableKVEncoderForDupResolve(
 	config *encode.EncodingConfig,
 	ctrl *LoadDataController,
 ) (*TableKVEncoder, error) {
-	mappings, _ := ctrl.tableVisCols2FieldMappings()
+	mappings, _ := tableVisCols2FieldMappings(ctrl.Table)
 	return newTableKVEncoderInner(config, ctrl, mappings, ctrl.Table.VisibleCols())
 }
 
 func newTableKVEncoderInner(
 	config *encode.EncodingConfig,
-	ctrl *LoadDataController,
+	exprCreator simpleColAssignExprCreator,
 	fieldMappings []*FieldMapping,
 	insertColumns []*table.Column,
 ) (*TableKVEncoder, error) {
@@ -72,7 +77,7 @@ func newTableKVEncoderInner(
 	if err != nil {
 		return nil, err
 	}
-	colAssignExprs, _, err := ctrl.CreateColAssignSimpleExprs(baseKVEncoder.SessionCtx.GetExprCtx())
+	colAssignExprs, _, err := exprCreator.CreateColAssignSimpleExprs(baseKVEncoder.SessionCtx.GetExprCtx())
 	if err != nil {
 		return nil, err
 	}
@@ -188,7 +193,7 @@ func (en *TableKVEncoder) getRow(vals []types.Datum, hasValue []bool, rowID int6
 	for i := range en.insertColumns {
 		casted, err := table.CastColumnValue(en.SessionCtx.GetExprCtx(), vals[i], en.insertColumns[i].ToInfo(), false, false)
 		if err != nil {
-			return nil, err
+			return nil, en.LogKVConvertFailed(vals, i, en.insertColumns[i].ToInfo(), err)
 		}
 
 		offset := en.insertColumns[i].Offset

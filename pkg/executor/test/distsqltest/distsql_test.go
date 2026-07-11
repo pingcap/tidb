@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -128,10 +129,14 @@ func TestDistSQLSharedKVRequestRace(t *testing.T) {
 
 	replicaReadModes := []string{
 		"leader",
-		"follower",
-		"leader-and-follower",
-		"closest-adaptive",
-		"closest-replicas",
+	}
+	if !kerneltype.IsNextGen() {
+		replicaReadModes = append(replicaReadModes,
+			"follower",
+			"leader-and-follower",
+			"closest-adaptive",
+			"closest-replicas",
+		)
 	}
 	for _, mode := range replicaReadModes {
 		tk.MustExec(fmt.Sprintf("set session tidb_replica_read = '%s'", mode))

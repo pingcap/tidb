@@ -14,7 +14,6 @@ TableReader	3333.33	root		data:TableRangeScan
 └─TableRangeScan	3333.33	cop[tikv]	table:t	range:(1,+inf], keep order:false, stats:pseudo
 set tidb_enable_clustered_index = DEFAULT;
 drop table t;
-set tidb_cost_model_version=2;
 set tidb_analyze_version=2;
 drop table if exists tint;
 create table tint(a int, b int, c int, index singular(a), index multi(b, c));

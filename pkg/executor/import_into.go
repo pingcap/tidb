@@ -106,13 +106,16 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		return e.importFromSelect(ctx)
 	}
 
-	if err2 := e.controller.InitDataFiles(ctx); err2 != nil {
-		return err2
-	}
-	if kerneltype.IsNextGen() {
-		ksCodec := e.userSctx.GetStore().GetCodec().GetKeyspace()
-		if err2 := e.controller.CalResourceParams(ctx, ksCodec); err2 != nil {
+	useAsyncPrepare := importinto.ShouldUseAsyncPrepare(e.controller.Plan)
+	if !useAsyncPrepare {
+		if err2 := e.controller.InitDataFiles(ctx); err2 != nil {
 			return err2
+		}
+		if kerneltype.IsNextGen() {
+			ksCodec := e.userSctx.GetStore().GetCodec().GetKeyspace()
+			if err2 := e.controller.CalResourceParams(ctx, ksCodec); err2 != nil {
+				return err2
+			}
 		}
 	}
 
@@ -122,7 +125,11 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		return err2
 	}
 	defer CloseSession(newSCtx)
-	if err2 = e.controller.CheckRequirements(ctx, newSCtx); err2 != nil {
+	if useAsyncPrepare {
+		if err2 = e.controller.CheckRequirementsBeforeInitDataFiles(ctx, newSCtx); err2 != nil {
+			return err2
+		}
+	} else if err2 = e.controller.CheckRequirements(ctx, newSCtx); err2 != nil {
 		return err2
 	}
 

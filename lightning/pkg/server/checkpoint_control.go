@@ -20,11 +20,11 @@ import (
 	"path/filepath"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/lightning/pkg/checkpoints"
 	"github.com/pingcap/tidb/lightning/pkg/importer"
 	"github.com/pingcap/tidb/lightning/pkg/importinto"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
-	"github.com/pingcap/tidb/pkg/lightning/backend/local"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -128,7 +128,7 @@ func (c *LegacyCheckpointControl) DestroyError(ctx context.Context, tableName st
 				for engineID := table.MinEngineID; engineID <= table.MaxEngineID; engineID++ {
 					log.L().Info("Closing and cleaning up engine", zap.String("table", table.TableName), zap.Int32("engineID", engineID))
 					_, eID := backend.MakeUUID(table.TableName, int64(engineID))
-					engine := local.Engine{UUID: eID}
+					engine := ingestctrl.Engine{UUID: eID}
 					err := engine.Cleanup(c.cfg.TikvImporter.SortedKVDir)
 					if err != nil {
 						log.L().Error("Encountered error while cleanup engine", zap.Error(err))

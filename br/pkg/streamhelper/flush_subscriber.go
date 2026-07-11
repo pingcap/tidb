@@ -6,6 +6,7 @@ import (
 	"context"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -27,6 +28,11 @@ import (
 const (
 	// clearSubscriberTimeOut is the timeout for clearing the subscriber.
 	clearSubscriberTimeOut = 1 * time.Minute
+	// subscriptionIdleTimeout is the max duration a flush subscription can stay
+	// open without receiving any event. The gRPC keepalive only proves the
+	// transport is alive; this timeout makes sure the application-level
+	// subscription is still making progress.
+	subscriptionIdleTimeout = 10 * time.Minute
 )
 
 // FlushSubscriber maintains the state of subscribing to the cluster.
@@ -40,6 +46,8 @@ type FlushSubscriber struct {
 	eventsTunnel chan spans.Valued
 	// The background context for subscribes.
 	masterCtx context.Context
+	// The max duration a subscription can stay open without receiving any event.
+	subscriptionIdleTimeout time.Duration
 }
 
 // SubscriberConfig is a config which cloud be applied into the subscriber.
@@ -51,15 +59,22 @@ func WithMasterContext(ctx context.Context) SubscriberConfig {
 	return func(fs *FlushSubscriber) { fs.masterCtx = ctx }
 }
 
+// WithSubscriptionIdleTimeout sets the max duration a subscription can stay open
+// without receiving any event. A non-positive timeout disables the idle check.
+func WithSubscriptionIdleTimeout(timeout time.Duration) SubscriberConfig {
+	return func(fs *FlushSubscriber) { fs.subscriptionIdleTimeout = timeout }
+}
+
 // NewSubscriber creates a new subscriber via the environment and optional configs.
 func NewSubscriber(dialer LogBackupService, cluster TiKVClusterMeta, config ...SubscriberConfig) *FlushSubscriber {
 	subs := &FlushSubscriber{
 		dialer:  dialer,
 		cluster: cluster,
 
-		subscriptions: map[uint64]*subscription{},
-		eventsTunnel:  make(chan spans.Valued, 1024),
-		masterCtx:     context.Background(),
+		subscriptions:           map[uint64]*subscription{},
+		eventsTunnel:            make(chan spans.Valued, 1024),
+		masterCtx:               context.Background(),
+		subscriptionIdleTimeout: subscriptionIdleTimeout,
 	}
 
 	for _, c := range config {
@@ -133,6 +148,11 @@ func (f *FlushSubscriber) HandleErrors() {
 			log.Warn("Meet error.", zap.String("category", "log backup flush subscriber"),
 				logutil.ShortError(err), zap.Uint64("store", id))
 			if retry {
+				if err := f.dialer.ClearCache(f.masterCtx, id); err != nil {
+					log.Warn("failed to clear cached store connection before retrying subscription",
+						zap.String("category", "log backup flush subscriber"),
+						zap.Uint64("store", id), logutil.ShortError(err))
+				}
 				log.Info("retry connecting to store to add subscription",
 					zap.String("category", "log backup flush subscriber"),
 					zap.Uint64("store", id))
@@ -185,6 +205,7 @@ type subscription struct {
 	// We record start bootstrap time and once a store restarts
 	// we need to try reconnect even there is a error cannot be retry.
 	storeBootAt uint64
+	idleTimeout time.Duration
 	output      chan<- spans.Valued
 
 	onDaemonExit func()
@@ -211,10 +232,11 @@ func (s *subscription) clearError() {
 	s.err = nil
 }
 
-func newSubscription(toStore Store, output chan<- spans.Valued) *subscription {
+func newSubscription(toStore Store, output chan<- spans.Valued, idleTimeout time.Duration) *subscription {
 	return &subscription{
 		storeID:     toStore.ID,
 		storeBootAt: toStore.BootAt,
+		idleTimeout: idleTimeout,
 		output:      output,
 	}
 }
@@ -227,8 +249,9 @@ func (s *subscription) connect(ctx context.Context, dialer LogBackupService) {
 }
 
 func (s *subscription) doConnect(ctx context.Context, dialer LogBackupService) error {
+	clientID := uuid.NewString()
 	log.Info("Adding subscription.", zap.String("category", "log backup subscription manager"),
-		zap.Uint64("store", s.storeID), zap.Uint64("boot", s.storeBootAt))
+		zap.Uint64("store", s.storeID), zap.Uint64("boot", s.storeBootAt), zap.String("client-id", clientID))
 	// We should shutdown the background task firstly.
 	// Once it yields some error during shuting down, the error won't be brought to next run.
 	s.close(ctx)
@@ -240,7 +263,7 @@ func (s *subscription) doConnect(ctx context.Context, dialer LogBackupService) e
 	}
 	cx, cancel := context.WithCancel(ctx)
 	cli, err := c.SubscribeFlushEvent(cx, &logbackup.SubscribeFlushEventRequest{
-		ClientId: uuid.NewString(),
+		ClientId: clientID,
 	})
 	if err != nil {
 		cancel()
@@ -248,9 +271,10 @@ func (s *subscription) doConnect(ctx context.Context, dialer LogBackupService) e
 		return errors.Annotate(err, "failed to subscribe events")
 	}
 	lcx := logutil.ContextWithField(cx, zap.Uint64("store-id", s.storeID),
-		zap.String("category", "log backup flush subscriber"))
+		zap.String("category", "log backup flush subscriber"),
+		zap.String("client-id", clientID))
 	s.cancel = cancel
-	s.background = spawnJoinable(func() { s.listenOver(lcx, cli) })
+	s.background = spawnJoinable(func() { s.listenOver(lcx, cli, cancel) })
 	return nil
 }
 
@@ -263,10 +287,55 @@ func (s *subscription) close(ctx context.Context) {
 	// because it is a ever-sharing channel.
 }
 
-func (s *subscription) listenOver(ctx context.Context, cli eventStream) {
+func (s *subscription) startTimeoutWatcher(
+	ctx context.Context,
+	watcherDone, activityCh chan struct{},
+	cancel context.CancelFunc,
+	idleTimedOut *atomic.Bool,
+) {
+	timer := time.NewTimer(s.idleTimeout)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-watcherDone:
+			return
+		case <-activityCh:
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer.Reset(s.idleTimeout)
+		case <-timer.C:
+			idleTimedOut.Store(true)
+			logutil.CL(ctx).Warn("Listen idle timeout.",
+				zap.Uint64("store", s.storeID), zap.Duration("idle-timeout", s.idleTimeout))
+			cancel()
+			return
+		}
+	}
+}
+
+func (s *subscription) listenOver(ctx context.Context, cli eventStream, cancel context.CancelFunc) {
 	storeID := s.storeID
-	logutil.CL(ctx).Info("Listen starting.", zap.Uint64("store", storeID))
+	logutil.CL(ctx).Info("Listen starting.", zap.Uint64("store", storeID), zap.Duration("idle-timeout", s.idleTimeout))
+	activityCh := make(chan struct{}, 1)
+	watcherDone := make(chan struct{})
+	var wg sync.WaitGroup
+	var idleTimedOut atomic.Bool
+	if s.idleTimeout > 0 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.startTimeoutWatcher(ctx, watcherDone, activityCh, cancel, &idleTimedOut)
+		}()
+	}
 	defer func() {
+		close(watcherDone)
+		wg.Wait()
 		if s.onDaemonExit != nil {
 			s.onDaemonExit()
 		}
@@ -286,6 +355,10 @@ func (s *subscription) listenOver(ctx context.Context, cli eventStream) {
 				zap.Uint64("store", storeID), logutil.ShortError(err))
 			s.emitError(errors.Annotatef(err, "while receiving from store id %d", storeID))
 			return
+		}
+		select {
+		case activityCh <- struct{}{}:
+		default:
 		}
 
 		log.Debug("Sending events.", zap.Int("size", len(msg.Events)))
@@ -316,6 +389,10 @@ func (s *subscription) listenOver(ctx context.Context, cli eventStream) {
 			case <-ctx.Done():
 				logutil.CL(ctx).Warn("Context canceled while sending events.",
 					zap.Uint64("store", storeID))
+				if idleTimedOut.Load() {
+					s.emitError(errors.Annotatef(context.DeadlineExceeded,
+						"flush subscription from store id %d has no activity for %s", s.storeID, s.idleTimeout))
+				}
 				return
 			}
 		}
@@ -325,7 +402,7 @@ func (s *subscription) listenOver(ctx context.Context, cli eventStream) {
 }
 
 func (f *FlushSubscriber) addSubscription(ctx context.Context, toStore Store) {
-	f.subscriptions[toStore.ID] = newSubscription(toStore, f.eventsTunnel)
+	f.subscriptions[toStore.ID] = newSubscription(toStore, f.eventsTunnel, f.subscriptionIdleTimeout)
 }
 
 func (f *FlushSubscriber) removeSubscription(ctx context.Context, toStore uint64) {

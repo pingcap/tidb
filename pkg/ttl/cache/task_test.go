@@ -46,6 +46,7 @@ func (tg *taskGetter) mustGetTestTask() *cache.TTLTask {
 	require.NoError(tg.t, err)
 	rows, err := session.GetRows4Test(context.Background(), tg.tk.Session(), rs)
 	require.NoError(tg.t, err)
+	require.Len(tg.t, rows, 1)
 	task, err := cache.RowToTTLTask(tg.tk.Session().GetSessionVars().Location(), rows[0])
 	require.NoError(tg.t, err)
 	return task
@@ -61,6 +62,18 @@ func TestRowToTTLTask(t *testing.T) {
 
 	now := time.Now()
 	now = now.Round(time.Second)
+
+	// Keep a matching running TTL job status to prevent task GC from removing
+	// this test row during the test.
+	_, err := tk.Session().ExecuteInternal(
+		ctx,
+		`INSERT INTO mysql.tidb_ttl_table_status (
+			table_id, parent_table_id, current_job_id,
+			current_job_owner_id, current_job_owner_hb_time, current_job_status
+		) VALUES (%?, %?, %?, %?, %?, %?)`,
+		1, 1, "test-job", "test-owner", now.Add(time.Hour), "running",
+	)
+	require.NoError(t, err)
 
 	sql, args, err := cache.InsertIntoTTLTask(tk.Session().GetSessionVars().Location(), "test-job", 1, 1, nil, nil, now, now)
 	require.NoError(t, err)

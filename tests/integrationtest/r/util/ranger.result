@@ -507,7 +507,6 @@ TableDual	root		rows:0
 select * from t where a = 1 and b is null and b = 1 and c > 1;
 a	b	c
 set @@session.tidb_regard_null_as_point=default;
-set tidb_cost_model_version=2;
 drop table if exists t0;
 CREATE TABLE t0(c0 TEXT(10));
 INSERT INTO t0(c0) VALUES (1);
@@ -548,8 +547,6 @@ id	task	access object	operator info
 IndexReader	root		index:Selection
 └─Selection	cop[tikv]		util__ranger.t0.c0
   └─IndexRangeScan	cop[tikv]	table:t0, index:i0(c0)	range:[-inf,"a"), ("a",+inf], keep order:false
-set tidb_cost_model_version=default;
-set tidb_cost_model_version=2;
 drop table if exists t;
 create table t(a int primary key, b int, c int, d int, e int, index idx(b,c,d));
 insert into t values(1,1,1,1,2),(2,1,2,1,0);
@@ -570,7 +567,6 @@ select t.e in (select count(*) from t s use index(idx), t t1 where s.b = 1 and s
 t.e in (select count(*) from t s use index(idx), t t1 where s.b = 1 and s.c in (1, 2) and s.d = t.a and s.a = t1.a)
 1
 1
-set tidb_cost_model_version=default;
 drop table if exists t;
 create table t(a int not null, b int not null, primary key(a,b));
 insert into t values(1,2);

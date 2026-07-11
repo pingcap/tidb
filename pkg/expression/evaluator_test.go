@@ -172,6 +172,19 @@ func TestSleep(t *testing.T) {
 	require.Equal(t, int64(1), res.GetInt64())
 	require.LessOrEqual(t, sub.Nanoseconds(), int64(2*1e9))
 	require.GreaterOrEqual(t, sub.Nanoseconds(), int64(1*1e9))
+
+	sessVars.SQLKiller.Reset()
+	sessVars.StmtCtx.InInsertStmt = true
+	sessVars.SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+	d[0].SetFloat64(0.01)
+	f, err = fc.getFunction(ctx, datumsToConstants(d))
+	require.NoError(t, err)
+	res, err = evalBuiltinFunc(f, ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), res.GetInt64())
+	require.NotZero(t, sessVars.SQLKiller.GetKillSignal())
+	sessVars.SQLKiller.Reset()
+	sessVars.StmtCtx.InInsertStmt = false
 }
 
 func TestBinopComparison(t *testing.T) {

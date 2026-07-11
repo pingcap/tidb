@@ -23,4 +23,4 @@ BUCKET="test"
 curl -XPOST http://$GCS_HOST:$GCS_PORT/storage/v1/b -d '{"name":"test"}'
 
 # backup cluster data
-run_sql_in_container "backup database test to 'gcs://$BUCKET/bk${TAG}?endpoint=http://$GCS_HOST:$GCS_PORT/storage/v1/';"
+run_sql_in_container "backup database test to 'gcs://$BUCKET/bk${TAG}?endpoint=http://$GCS_HOST:$GCS_PORT';"

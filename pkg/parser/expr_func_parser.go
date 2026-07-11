@@ -421,12 +421,12 @@ func (p *HandParser) parseAggregateFuncCall(name string) ast.ExprNode {
 			// SEPARATOR followed by a string literal (yacc only accepts stringLit).
 			tok, ok := p.expect(stringLit)
 			if ok {
-				node.Args = append(node.Args, ast.NewValueExpr(tok.Lit, "", ""))
+				node.Args = append(node.Args, ast.NewValueExpr(tok.Lit, p.charset, p.collation))
 			} else {
-				node.Args = append(node.Args, ast.NewValueExpr(",", "", ""))
+				node.Args = append(node.Args, ast.NewValueExpr(",", p.charset, p.collation))
 			}
 		} else {
-			node.Args = append(node.Args, ast.NewValueExpr(",", "", ""))
+			node.Args = append(node.Args, ast.NewValueExpr(",", p.charset, p.collation))
 		}
 	}
 

@@ -87,6 +87,7 @@ const (
 	hintNoSkipScan            = bigIntType
 	hintNoSwapJoinInputs      = cursor
 	hintNthPlan               = elseKwd
+	hintNumericLit            = decLit
 	hintOLAP                  = explain
 	hintOLTP                  = falseKwd
 	hintOrderIndex            = desc
@@ -536,57 +537,56 @@ func (hp *hintParser) parseBooleanHint(name string) []*ast.TableOptimizerHint {
 
 // ─── SET_VAR ──────────────────────────────────────────────────────
 
-// parseHintValue parses a single hint value: identifier, integer, negative number,
-// float (decimal), or string literal. Returns (value, true) on success.
+// parseHintValue parses a single SET_VAR hint value, mirroring the Value rule
+// of the goyacc hint grammar:
 //
-// The hint lexer tokenizes "-1" as '-' + int, "0.01" as a single decLit token
-// (converted to hintIdentifier). This method handles all these forms.
+//	Value: hintStringLit | Identifier | hintIntLit | hintNumericLit
+//	     | ('+' | '-') hintIntLit | ('+' | '-') hintNumericLit
+//
+// Decimal/float literals (hintNumericLit) are produced by the lexer only in
+// this position (see hintScanner.allowDecimal). Returns (value, true) on success.
 func (hp *hintParser) parseHintValue() (string, bool) {
-	tok := hp.peek()
-	if tok.tp == hintInvalid || tok.tp == 0 {
-		hp.next()
-		hp.parseError()
-		return "", false
-	}
+	tok := hp.next()
 	switch tok.tp {
 	case hintStringLit:
-		hp.next()
 		return tok.ident, true // can be "" for empty strings like sql_mode=""
-	case '-':
-		// Negative number: - followed by int or float identifier
-		hp.next() // consume '-'
+	case hintNumericLit:
+		return tok.ident, true
+	case hintIntLit:
+		return strconv.FormatUint(tok.num, 10), true
+	case '+', '-':
+		// Signed value: only numeric literals may follow the sign.
 		numTok := hp.next()
-		var value string
-		if numTok.tp == hintIntLit {
-			value = "-" + strconv.FormatUint(numTok.num, 10)
-		} else {
-			value = "-" + numTok.ident
-		}
-		// Check for float: -N.M
-		if hp.peek().tp == '.' {
-			hp.next() // consume '.'
-			fracTok := hp.next()
-			if fracTok.tp == hintIntLit {
-				value += "." + strconv.FormatUint(fracTok.num, 10)
+		switch numTok.tp {
+		case hintNumericLit:
+			if tok.tp == '-' {
+				return "-" + numTok.ident, true
 			}
-		}
-		return value, true
-	default:
-		hp.next()
-		value := hp.identOrNumber(tok)
-		if value == "" {
+			return numTok.ident, true
+		case hintIntLit:
+			if tok.tp == '+' {
+				return strconv.FormatUint(numTok.num, 10), true
+			}
+			if numTok.num > 1<<63 {
+				hp.lexer.AppendError(hp.lexer.Errorf(
+					"the Signed Value should be at the range of [-9223372036854775808, 9223372036854775807]."))
+				return "", false
+			}
+			// For numTok.num == 1<<63, -int64(numTok.num) wraps to exactly
+			// math.MinInt64, which is the desired value.
+			return strconv.FormatInt(-int64(numTok.num), 10), true
+		default:
 			hp.parseError()
 			return "", false
 		}
-		// Check for float: N.M (when lexer didn't merge into a single decLit)
-		if hp.peek().tp == '.' {
-			hp.next() // consume '.'
-			fracTok := hp.next()
-			if fracTok.tp == hintIntLit {
-				value += "." + strconv.FormatUint(fracTok.num, 10)
-			}
+	default:
+		// Identifier: hint keywords, quoted identifiers, suffixed numbers
+		// like 16M, and 0x/0b literals all carry their text in tok.ident.
+		if tok.ident == "" {
+			hp.parseError()
+			return "", false
 		}
-		return value, true
+		return tok.ident, true
 	}
 }
 
@@ -599,7 +599,9 @@ func (hp *hintParser) parseSetVarHint(name string) []*ast.TableOptimizerHint {
 		hp.skipToCloseParen()
 		return nil
 	}
+	hp.lexer.allowDecimal = true
 	value, ok := hp.parseHintValue()
+	hp.lexer.allowDecimal = false
 	if !ok {
 		hp.skipToCloseParen()
 		return nil
@@ -1047,18 +1049,6 @@ func (hp *hintParser) parseIdentifier() string {
 	return ""
 }
 
-// identOrNumber converts a token to a string value, handling both identifiers
-// and integer literals.
-func (*hintParser) identOrNumber(tok hintToken) string {
-	if tok.ident != "" {
-		return tok.ident
-	}
-	if tok.tp == hintIntLit {
-		return strconv.FormatUint(tok.num, 10)
-	}
-	return ""
-}
-
 // isHintKeyword returns true if the token type is a hint keyword
 // (e.g., TRUE, FALSE, TIKV, TIFLASH, PARTITION, etc.) that can be
 // used as an identifier in contexts like QB_NAME.
@@ -1092,6 +1082,11 @@ type hintLexVal struct {
 // hintScanner implements the hint lexer interface.
 type hintScanner struct {
 	Scanner
+	// allowDecimal is set by the parser exactly while lexing a SET_VAR value,
+	// the only position where decimal/float literals are valid. Everywhere
+	// else (e.g. QB_NAME(1.5)) they must be rejected with a
+	// "Cannot use decimal number" error.
+	allowDecimal bool
 }
 
 func (hs *hintScanner) Errorf(format string, args ...interface{}) error {
@@ -1153,10 +1148,19 @@ func (hs *hintScanner) Lex(lval *hintLexVal) int {
 	case eq:
 		return '='
 
-	case floatLit, decLit:
-		// Accept floating-point/decimal numbers as identifiers for set_var values.
-		lval.ident = lit
-		return hintIdentifier
+	case floatLit:
+		if hs.allowDecimal {
+			lval.ident = lit
+			return hintNumericLit
+		}
+		errorTokenType = "floating point number"
+
+	case decLit:
+		if hs.allowDecimal {
+			lval.ident = lit
+			return hintNumericLit
+		}
+		errorTokenType = "decimal number"
 
 	default:
 		if tok <= 0x7f {
@@ -1185,6 +1189,7 @@ func (hp *hintParser) parse(input string, sqlMode mysql.SQLMode, initPos Pos) ([
 	hp.result = nil
 	hp.hasPeeked = false
 	hp.lexer.reset(input[3:])
+	hp.lexer.allowDecimal = false
 	hp.lexer.SetSQLMode(sqlMode)
 	hp.lexer.r.updatePos(Pos{
 		Line:   initPos.Line,

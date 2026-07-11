@@ -154,9 +154,10 @@ func (a *AggFuncDesc) Clone() *AggFuncDesc {
 // ordinal indicates the column ordinal of the intermediate result.
 func (a *AggFuncDesc) Split(ordinal []int) (partialAggDesc, finalAggDesc *AggFuncDesc) {
 	partialAggDesc = a.Clone()
-	if a.Mode == CompleteMode {
+	switch a.Mode {
+	case CompleteMode:
 		partialAggDesc.Mode = Partial1Mode
-	} else if a.Mode == FinalMode {
+	case FinalMode:
 		partialAggDesc.Mode = Partial2Mode
 	}
 	finalAggDesc = &AggFuncDesc{
@@ -183,6 +184,20 @@ func (a *AggFuncDesc) Split(ordinal []int) (partialAggDesc, finalAggDesc *AggFun
 			Index:   ordinal[0],
 			RetType: types.NewFieldType(mysql.TypeString),
 		})
+		finalAggDesc.Args = args
+	case ast.AggFuncCount:
+		args := make([]expression.Expression, 0, 1)
+		if a.HasDistinct {
+			// This is hack. Actually, the input type is not a.Args for final agg,
+			// but the return type of partial agg.
+			// `args = a.Args` is just for getting correct final agg func.
+			args = a.Args
+		} else {
+			args = append(args, &expression.Column{
+				Index:   ordinal[0],
+				RetType: a.RetTp,
+			})
+		}
 		finalAggDesc.Args = args
 	default:
 		args := make([]expression.Expression, 0, 1)
@@ -235,7 +250,7 @@ func (a *AggFuncDesc) EvalNullValueInOuterJoin(ctx expression.BuildContext, sche
 	switch a.Name {
 	case ast.AggFuncCount:
 		return a.evalNullValueInOuterJoin4Count(ctx, schema)
-	case ast.AggFuncSum, ast.AggFuncMax, ast.AggFuncMin,
+	case ast.AggFuncSum, ast.AggFuncSumInt, ast.AggFuncMax, ast.AggFuncMin,
 		ast.AggFuncFirstRow:
 		return a.evalNullValueInOuterJoin4Sum(ctx, schema)
 	case ast.AggFuncAvg, ast.AggFuncGroupConcat:
@@ -255,6 +270,8 @@ func (a *AggFuncDesc) GetAggFunc(ctx expression.AggFuncBuildContext) Aggregation
 	switch a.Name {
 	case ast.AggFuncSum:
 		return &sumFunction{aggFunction: aggFunc}
+	case ast.AggFuncSumInt:
+		return &sumIntFunction{aggFunction: aggFunc}
 	case ast.AggFuncCount:
 		return &countFunction{aggFunction: aggFunc}
 	case ast.AggFuncAvg:
@@ -339,7 +356,7 @@ func (a *AggFuncDesc) UpdateNotNullFlag4RetType(hasGroupBy, allAggsFirstRow bool
 		ast.WindowFuncLead, ast.WindowFuncLag, ast.AggFuncJsonObjectAgg, ast.AggFuncJsonArrayagg,
 		ast.AggFuncVarSamp, ast.AggFuncVarPop, ast.AggFuncStddevPop, ast.AggFuncStddevSamp:
 		removeNotNull = false
-	case ast.AggFuncSum, ast.AggFuncAvg, ast.AggFuncGroupConcat:
+	case ast.AggFuncSum, ast.AggFuncSumInt, ast.AggFuncAvg, ast.AggFuncGroupConcat:
 		if !hasGroupBy {
 			removeNotNull = true
 		}

@@ -61,11 +61,15 @@ func (pdss *PushDownSequenceSolver) recursiveOptimize(pushedSequence *logicalop.
 		pushedSequence = logicalop.LogicalSequence{}.Init(lp.SCtx(), lp.QueryBlockOffset())
 		pushedSequence.SetChildren(append(allCTEs, mainQuery)...)
 		return pdss.recursiveOptimize(pushedSequence, mainQuery)
-	case *logicalop.DataSource, *logicalop.LogicalAggregation, *logicalop.LogicalCTE:
+	case *logicalop.DataSource, *logicalop.LogicalCTE:
 		pushedSequence.SetChild(pushedSequence.ChildLen()-1, pdss.recursiveOptimize(nil, lp))
 		return pushedSequence
 	default:
-		if len(lp.Children()) > 1 {
+		if len(lp.Children()) != 1 {
+			// Operators without exactly one child cannot have the sequence pushed
+			// through them: a multi-child operator (e.g. a join), or a childless
+			// leaf such as a LogicalTableDual produced by a constant-false
+			// predicate. Attach the sequence above and stop descending.
 			pushedSequence.SetChild(pushedSequence.ChildLen()-1, lp)
 			return pushedSequence
 		}

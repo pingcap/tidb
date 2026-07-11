@@ -383,8 +383,26 @@ func (p *HandParser) parseColumnOptions(_ *types.FieldType) []*ast.ColumnOption 
 				p.expect(always)
 				p.expect(as)
 			}
-			option.Tp = ast.ColumnOptionGenerated
-			p.parseGeneratedColumnBody(option)
+			if p.enableMariaDB && p.peek().Tp == row {
+				// MariaDB system-versioned period marker: [GENERATED ALWAYS]
+				// AS ROW START|END. Marker only; no engine semantics. Bare
+				// AS ROW START/END restores to the canonical GENERATED
+				// ALWAYS form.
+				p.next() // consume ROW
+				tok := p.next()
+				switch tok.Tp {
+				case start:
+					option.Tp = ast.ColumnOptionMariaDBRowStart
+				case end:
+					option.Tp = ast.ColumnOptionMariaDBRowEnd
+				default:
+					p.syntaxErrorAt(tok)
+					return nil
+				}
+			} else {
+				option.Tp = ast.ColumnOptionGenerated
+				p.parseGeneratedColumnBody(option)
+			}
 		case constraint:
 			// CONSTRAINT [name] CHECK (expr) — only valid at column level
 			// Peek ahead to verify it's followed by CHECK (with optional name in between)

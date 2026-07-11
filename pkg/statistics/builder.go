@@ -23,11 +23,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/generic"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
 
@@ -266,7 +266,7 @@ func buildHist(
 	// In extreme cases, it could be that this value only appears once, and that one row happens to be sampled.
 	// Therefore, if the sample count of this value is only once, we use a more conservative ndvFactor.
 	// However, if the calculated ndvFactor is larger than the sampleFactor, we still use the sampleFactor.
-	hg.AppendBucket(samples[firstSampleIdx].Value, samples[firstSampleIdx].Value, int64(sampleFactor), int64(ndvFactor))
+	hg.AppendBucket(&samples[firstSampleIdx].Value, &samples[firstSampleIdx].Value, int64(sampleFactor), int64(ndvFactor))
 	bufferedMemSize := int64(0)
 	bufferedReleaseSize := int64(0)
 	defer func() {
@@ -296,7 +296,7 @@ func buildHist(
 			memTracker.BufferedConsume(&bufferedMemSize, deltaSize)
 			memTracker.BufferedRelease(&bufferedReleaseSize, deltaSize)
 		}
-		cmp, err := upper.Compare(sc.TypeCtx(), samples[i].Value, collate.GetBinaryCollator())
+		cmp, err := upper.Compare(sc.TypeCtx(), &samples[i].Value, collate.GetBinaryCollator())
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -321,13 +321,13 @@ func buildHist(
 			}
 		} else if totalCount-float64(lastCount) <= valuesPerBucket {
 			// The bucket still has room to store a new item, update the bucket.
-			hg.updateLastBucket(samples[i].Value, int64(totalCount), int64(ndvFactor), false)
+			hg.updateLastBucket(&samples[i].Value, int64(totalCount), int64(ndvFactor), false)
 		} else {
 			lastCount = hg.Buckets[bucketIdx].Count
 			// The bucket is full, store the item in the next bucket.
 			bucketIdx++
 			// Refer to the comments for the first bucket for the reason why we use ndvFactor here.
-			hg.AppendBucket(samples[i].Value, samples[i].Value, int64(totalCount), int64(ndvFactor))
+			hg.AppendBucket(&samples[i].Value, &samples[i].Value, int64(totalCount), int64(ndvFactor))
 		}
 	}
 	return corrXYSum, nil
@@ -416,22 +416,15 @@ func BuildHistAndTopN(
 	sampleNum := int64(len(samples))
 	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
 	sampleFactor := float64(count) / float64(sampleNum)
-	// If a numTopn value other than default is passed in, we assume it's a value that the user wants us to honor
-	allowPruning := true
-	if numTopN != DefaultTopNValue {
-		allowPruning = false
-	}
+	// If a numTopN value other than the active analyze default is passed in, we assume it's a value that the user wants us to honor.
+	allowPruning := isAnalyzeDefaultValue(numTopN, vardef.AnalyzeDefaultNumTopN.Load())
 
 	// Step1: collect topn from samples using bounded min-heap and track their index ranges
 	boundedMinHeap := generic.NewBoundedMinHeap(numTopN, func(a, b TopNWithRange) int {
 		return cmp.Compare(a.Count, b.Count) // min-heap: smaller counts at root
 	})
 
-	intest.Assert(samples[0].Value != nil, "sample item value should not be nil")
-	if samples[0].Value == nil {
-		return nil, nil, errors.Errorf("sample item value is nil")
-	}
-	cur, err := getComparedBytes(*samples[0].Value)
+	cur, err := getComparedBytes(samples[0].Value)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -451,11 +444,7 @@ func BuildHistAndTopN(
 		if numTopN == 0 {
 			continue
 		}
-		intest.Assert(samples[i].Value != nil, "sample item value should not be nil")
-		if samples[i].Value == nil {
-			return nil, nil, errors.Errorf("sample item value is nil")
-		}
-		sampleBytes, err := getComparedBytes(*samples[i].Value)
+		sampleBytes, err := getComparedBytes(samples[i].Value)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -538,7 +527,7 @@ func BuildHistAndTopN(
 	if samplesExcludingTopN > 0 {
 		remainingNDV := ndv - lenTopN
 		// if we pruned the topN, it means that there are no remaining skewed values in the samples
-		if lenTopN < int64(numTopN) && numBuckets == DefaultHistogramBuckets {
+		if lenTopN < int64(numTopN) && isAnalyzeDefaultValue(numBuckets, vardef.AnalyzeDefaultNumBuckets.Load()) {
 			// set the number of buckets to be the number of remaining distinct values divided by bucketNDVDivisor
 			// but no less than 1 and no more than the original number of buckets
 			numBuckets = int(min(max(1, remainingNDV/bucketNDVDivisor), int64(numBuckets)))
@@ -555,6 +544,10 @@ func BuildHistAndTopN(
 	}
 
 	return hg, topn, nil
+}
+
+func isAnalyzeDefaultValue(value int, defaultValue uint64) bool {
+	return value >= 0 && uint64(value) == defaultValue
 }
 
 // pruneTopNItem tries to prune the least common values in the top-n list if it is not significantly more common than the values not in the list.

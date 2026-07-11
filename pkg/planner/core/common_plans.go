@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
@@ -47,6 +48,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/texttree"
 	"github.com/pingcap/tipb/go-tipb"
 )
+
+// LoadPlanReplayerForExplainExplore loads a plan replayer file and returns the target SQL for EXPLAIN EXPLORE.
+var LoadPlanReplayerForExplainExplore func(sessionctx.Context, string) (string, error)
 
 // ShowDDL is for showing DDL information.
 type ShowDDL struct {
@@ -643,6 +647,7 @@ type Explain struct {
 	Analyze          bool
 	Explore          bool   // EXPLAIN EXPLORE statement
 	SQLDigest        string // "EXPLAIN EXPLORE <sql_digest>"
+	ReplayerFile     string // "EXPLAIN EXPLORE REPLAYER <replayer_file_path>"
 	ExecStmt         ast.StmtNode
 	RuntimeStatsColl *execdetails.RuntimeStatsColl
 
@@ -755,11 +760,26 @@ func (e *Explain) prepareSchema() error {
 }
 
 func (e *Explain) renderResultForExplore() error {
-	bindingHandle := domain.GetDomain(e.SCtx()).BindingHandle()
 	sqlOrDigest := e.SQLDigest
-	if sqlOrDigest == "" {
+	if e.ReplayerFile != "" {
+		if LoadPlanReplayerForExplainExplore == nil {
+			return errors.NewNoStackError("EXPLAIN EXPLORE REPLAYER is not available")
+		}
+		sctx, err := AsSctx(e.SCtx())
+		if err != nil {
+			return err
+		}
+		sqlOrDigest, err = LoadPlanReplayerForExplainExplore(sctx, e.ReplayerFile)
+		if err != nil {
+			return err
+		}
+	} else if sqlOrDigest == "" {
+		if e.ExecStmt == nil {
+			return errors.NewNoStackError("EXPLAIN EXPLORE target SQL is empty")
+		}
 		sqlOrDigest = e.ExecStmt.Text()
 	}
+	bindingHandle := domain.GetDomain(e.SCtx()).BindingHandle()
 	plans, err := bindingHandle.ExplorePlansForSQL(e.SCtx(), sqlOrDigest, e.Analyze)
 	if err != nil {
 		return err
@@ -787,6 +807,19 @@ func (e *Explain) renderResultForExplore() error {
 			fmt.Sprintf("CREATE GLOBAL BINDING USING %v", p.BindSQL)})
 	}
 	return nil
+}
+
+func (e *Explain) shouldDecodeBriefBinaryPlan() bool {
+	if e.BriefBinaryPlan == "" {
+		return false
+	}
+	if e.RuntimeStatsColl == nil {
+		return true
+	}
+	// Prepared Execute plans can keep ParamMarker or DeferredExpr nodes whose values
+	// belong to the original execution context, so live rendering may evaluate missing params.
+	_, isExecute := e.TargetPlan.(*Execute)
+	return isExecute
 }
 
 // RenderResult renders the explain result as specified format.
@@ -838,8 +871,9 @@ func (e *Explain) RenderResult() error {
 			e.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("'explain format=true_card_cost' cannot support this plan"))
 		}
 	}
-	// For explain for connection, we can directly decode the binary plan to get the explain rows.
-	if e.BriefBinaryPlan != "" {
+	// EXPLAIN FOR CONNECTION should prefer the live runtime stats collector because
+	// BriefBinaryPlan is only a snapshot taken when ProcessInfo was recorded.
+	if e.shouldDecodeBriefBinaryPlan() {
 		if strings.ToLower(e.Format) != types.ExplainFormatBrief && strings.ToLower(e.Format) != types.ExplainFormatROW && strings.ToLower(e.Format) != types.ExplainFormatVerbose {
 			return errors.Errorf("explain format '%s' for connection is not supported now", e.Format)
 		}

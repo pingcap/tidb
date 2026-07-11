@@ -1,0 +1,30 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "jobhistory",
+    srcs = ["history.go"],
+    importpath = "github.com/pingcap/tidb/pkg/dxf/importinto/jobhistory",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/dxf/framework/proto",
+        "//pkg/dxf/framework/storage",
+        "//pkg/dxf/importinto/taskkey",
+        "//pkg/util/injectfailpoint",
+        "@com_github_docker_go_units//:go-units",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "jobhistory_test",
+    timeout = "short",
+    srcs = ["history_test.go"],
+    flaky = True,
+    deps = [
+        ":jobhistory",
+        "//pkg/dxf/framework/proto",
+        "//pkg/dxf/framework/testutil",
+        "//pkg/dxf/importinto/taskkey",
+        "@com_github_stretchr_testify//require",
+    ],
+)
