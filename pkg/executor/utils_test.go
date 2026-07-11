@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
@@ -276,6 +277,23 @@ func TestMLogPurgeAdaptiveBatchSizeReplannedAfterNoWait(t *testing.T) {
 	require.Equal(t, int64(2000), plan.effectiveBatchSize)
 	require.Zero(t, plan.noWaitStreak)
 	require.Less(t, plan.targetRate, float64(50000))
+}
+
+func TestApplyMLogPurgeDeleteTiFlashThreads(t *testing.T) {
+	sessVars := variable.NewSessionVars(nil)
+	require.NoError(t, sessVars.SetSystemVar(variable.TiDBMaxTiFlashThreads, "9"))
+
+	restore, err := applyMLogPurgeDeleteTiFlashThreads(sessVars, 2, false)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), sessVars.TiFlashMaxThreads)
+	restore()
+	require.Equal(t, int64(9), sessVars.TiFlashMaxThreads)
+
+	restore, err = applyMLogPurgeDeleteTiFlashThreads(sessVars, 0, false)
+	require.NoError(t, err)
+	require.Equal(t, int64(9), sessVars.TiFlashMaxThreads)
+	restore()
+	require.Equal(t, int64(9), sessVars.TiFlashMaxThreads)
 }
 
 func TestMVTaskCancelControllerIsManualCancelRequested(t *testing.T) {

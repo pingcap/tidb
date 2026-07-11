@@ -145,6 +145,9 @@ const (
 	TiDBMLogPurgeMinRate = "tidb_mlog_purge_min_rate"
 	// TiDBMLogPurgeRateBudgetRatio controls the fraction of the current scheduling window that purge may spend deleting.
 	TiDBMLogPurgeRateBudgetRatio = "tidb_mlog_purge_rate_budget_ratio"
+	// TiDBMLogPurgeDeleteTiFlashThreads controls tidb_max_tiflash_threads for MV log purge DELETE SQLs.
+	// The default value 0 means inherit the current tidb_max_tiflash_threads value.
+	TiDBMLogPurgeDeleteTiFlashThreads = "tidb_mlog_purge_delete_tiflash_threads"
 
 	// The following session variables controls the memory quota during query execution.
 
@@ -1375,6 +1378,7 @@ const (
 	DefTiDBMLogPurgeBatchSize               = 10000
 	DefTiDBMLogPurgeMinRate                 = 2000
 	DefTiDBMLogPurgeRateBudgetRatio         = 0.5
+	DefTiDBMLogPurgeDeleteTiFlashThreads    = 0
 	DefTiDBMLogLogSlowPurge                 = false
 	DefMaxPreparedStmtCount                 = -1
 	DefWaitTimeout                          = 28800

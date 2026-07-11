@@ -1402,6 +1402,36 @@ func TestPurgeMaterializedViewLogDefaultMVMaintainIsolationReadEnginesDoesNotInh
 	tk.MustQuery(fmt.Sprintf("select @@session.%s", variable.TiDBIsolationReadEngines)).Check(testkit.Rows(currentIsolationReadEngines))
 }
 
+func TestPurgeMaterializedViewLogUsesDeleteTiFlashThreadsOnlyOnDeleteSession(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_purge_tiflash_threads (id int primary key, v int)")
+	tk.MustExec("create materialized view log on t_purge_tiflash_threads (id, v) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("insert into t_purge_tiflash_threads values (1, 10), (2, 20), (3, 30)")
+	tk.MustExec(fmt.Sprintf("set @@session.%s = 9", variable.TiDBMaxTiFlashThreads))
+	tk.MustExec(fmt.Sprintf("set @@session.%s = 2", variable.TiDBMLogPurgeDeleteTiFlashThreads))
+
+	applied := false
+	gotTiFlashThreads := int64(0)
+	gotTargetTiFlashThreads := int64(0)
+	failpointName := "github.com/pingcap/tidb/pkg/executor/mvMLogPurgeDeleteTiFlashThreadsAppliedOnPurgeDeleteSession"
+	require.NoError(t, failpoint.EnableCall(failpointName, func(currentTiFlashThreads int64, targetTiFlashThreads int64) {
+		applied = true
+		gotTiFlashThreads = currentTiFlashThreads
+		gotTargetTiFlashThreads = targetTiFlashThreads
+	}))
+	defer func() {
+		require.NoError(t, failpoint.Disable(failpointName))
+	}()
+
+	tk.MustExec("purge materialized view log on t_purge_tiflash_threads")
+	require.True(t, applied)
+	require.Equal(t, int64(2), gotTargetTiFlashThreads)
+	require.Equal(t, gotTargetTiFlashThreads, gotTiFlashThreads)
+	tk.MustQuery(fmt.Sprintf("select @@session.%s", variable.TiDBMaxTiFlashThreads)).Check(testkit.Rows("9"))
+}
+
 func TestPurgeMaterializedViewLogPrivilege(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

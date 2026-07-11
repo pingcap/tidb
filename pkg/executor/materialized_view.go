@@ -2397,11 +2397,25 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 		return err
 	}
 	defer restoreDeleteMaintenanceVars()
+	restoreDeleteTiFlashThreads, err := applyMLogPurgeDeleteTiFlashThreads(
+		deleteSessVars,
+		e.Ctx().GetSessionVars().MLogPurgeDeleteTiFlashThreads,
+		isInternalSQL,
+	)
+	if err != nil {
+		return err
+	}
+	defer restoreDeleteTiFlashThreads()
 	failpoint.InjectCall("mvMaintainMemQuotaAppliedOnPurgeDeleteSession", deleteSessVars.MemQuotaQuery, targetMaintainMemQuota)
 	failpoint.InjectCall(
 		"mvMaintainIsolationReadEnginesAppliedOnPurgeDeleteSession",
 		variable.GetIsolationReadEnginesString(deleteSessVars),
 		targetMaintainIsolationReadEngines,
+	)
+	failpoint.InjectCall(
+		"mvMLogPurgeDeleteTiFlashThreadsAppliedOnPurgeDeleteSession",
+		deleteSessVars.TiFlashMaxThreads,
+		e.Ctx().GetSessionVars().MLogPurgeDeleteTiFlashThreads,
 	)
 	deleteSQLExec := deleteSctx.GetSQLExecutor()
 
@@ -4734,6 +4748,49 @@ func applyMVMaintenanceSessionVars(
 	return func() {
 		restoreIsolationReadEngines()
 		restoreMemQuota()
+	}, nil
+}
+
+func applyMLogPurgeDeleteTiFlashThreads(
+	sessVars *variable.SessionVars,
+	targetTiFlashThreads int64,
+	bestEffort bool,
+) (func(), error) {
+	if sessVars == nil {
+		return nil, errors.New("mv maintenance: session vars is nil")
+	}
+	if targetTiFlashThreads <= 0 {
+		return func() {}, nil
+	}
+	originTiFlashThreads := sessVars.TiFlashMaxThreads
+	if originTiFlashThreads == targetTiFlashThreads {
+		return func() {}, nil
+	}
+	targetValue := strconv.FormatInt(targetTiFlashThreads, 10)
+	if err := sessVars.SetSystemVar(variable.TiDBMaxTiFlashThreads, targetValue); err != nil {
+		if !bestEffort {
+			return nil, errors.Annotate(
+				err,
+				"mv maintenance: failed to apply tidb_mlog_purge_delete_tiflash_threads to tidb_max_tiflash_threads",
+			)
+		}
+		logutil.BgLogger().Warn(
+			"mv maintenance: failed to apply tidb_mlog_purge_delete_tiflash_threads to tidb_max_tiflash_threads, fallback to current session value",
+			zap.Int64("originTiFlashThreads", originTiFlashThreads),
+			zap.Int64("targetTiFlashThreads", targetTiFlashThreads),
+			zap.Error(err),
+		)
+		return func() {}, nil
+	}
+	return func() {
+		if err := sessVars.SetSystemVar(variable.TiDBMaxTiFlashThreads, strconv.FormatInt(originTiFlashThreads, 10)); err != nil {
+			logutil.BgLogger().Warn(
+				"mv maintenance: failed to restore tidb_max_tiflash_threads after mlog purge delete",
+				zap.Int64("originTiFlashThreads", originTiFlashThreads),
+				zap.Int64("currentTiFlashThreads", targetTiFlashThreads),
+				zap.Error(err),
+			)
+		}
 	}, nil
 }
 
