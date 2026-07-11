@@ -153,7 +153,7 @@ const (
 	mvTaskMonitorSQLTimeout         = 5 * time.Second
 	mlogPurgeAdaptiveCountTimeout   = 30 * time.Second
 	mlogPurgeAdaptiveBatchWindow    = 200 * time.Millisecond
-	mlogPurgeAdaptiveMinBatchSize   = int64(2000)
+	mlogPurgeAdaptiveMinBatchSize   = int64(8000)
 	mlogPurgeAdaptiveMaxRangeCount  = int64(16)
 	mlogPurgeAdaptiveDeadlineBuffer = 10 * time.Second
 	mlogPurgeAdaptiveMaxBudget      = mvservice.DefaultMVPurgeTaskTimeout - mlogPurgeAdaptiveDeadlineBuffer

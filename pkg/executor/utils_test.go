@@ -255,7 +255,7 @@ func TestUpdateMaterializedViewLogPurgeInfoOnSuccessMonotonicCheckpoint(t *testi
 func TestMLogPurgeAdaptiveBatchSizeComputed(t *testing.T) {
 	plan := &mlogPurgeThrottlePlan{targetRate: 2000}
 	batch := plan.effectiveDeleteBatchSize(10000)
-	require.Equal(t, int64(2000), batch)
+	require.Equal(t, int64(8000), batch)
 
 	plan = &mlogPurgeThrottlePlan{targetRate: 100000}
 	batch = plan.effectiveDeleteBatchSize(10000)
@@ -274,24 +274,24 @@ func TestMLogPurgeAdaptiveBatchSizeReplannedAfterNoWait(t *testing.T) {
 
 	err := plan.maybeSleep(context.Background(), time.Now().Add(-3*time.Second), 98000)
 	require.NoError(t, err)
-	require.Equal(t, int64(2000), plan.effectiveBatchSize)
+	require.Equal(t, int64(8000), plan.effectiveBatchSize)
 	require.Zero(t, plan.noWaitStreak)
 	require.Less(t, plan.targetRate, float64(50000))
 }
 
 func TestBuildMLogPurgeDeleteRowIDRanges(t *testing.T) {
 	stats := mlogPurgePendingRowStats{
-		pendingRows:    10000,
+		pendingRows:    40000,
 		minRowID:       1,
-		maxRowID:       10000,
+		maxRowID:       40000,
 		hasRowIDBounds: true,
 	}
 	require.Equal(t, []mlogPurgeDeleteRowIDRange{
-		{startRowID: 1, endRowID: 2000},
-		{startRowID: 2001, endRowID: 4000},
-		{startRowID: 4001, endRowID: 6000},
-		{startRowID: 6001, endRowID: 8000},
-		{startRowID: 8001, endRowID: 10000},
+		{startRowID: 1, endRowID: 8000},
+		{startRowID: 8001, endRowID: 16000},
+		{startRowID: 16001, endRowID: 24000},
+		{startRowID: 24001, endRowID: 32000},
+		{startRowID: 32001, endRowID: 40000},
 	}, buildMLogPurgeDeleteRowIDRanges(stats, 0))
 
 	stats.pendingRows = 3500
@@ -300,7 +300,7 @@ func TestBuildMLogPurgeDeleteRowIDRanges(t *testing.T) {
 		{startRowID: 1, endRowID: 3500},
 	}, buildMLogPurgeDeleteRowIDRanges(stats, 0))
 
-	stats.pendingRows = 12000
+	stats.pendingRows = 32000
 	stats.maxRowID = int64(1<<63 - 1)
 	shardBucketSize := int64(1) << 59 // 63 - SHARD_ROW_ID_BITS(4)
 	require.Equal(t, []mlogPurgeDeleteRowIDRange{
