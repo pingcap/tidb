@@ -473,11 +473,7 @@ func pruneEstimateRange(rctx *rangerctx.RangerContext, ranges []*ranger.Range, k
 		}
 		estimateRanges = append(estimateRanges, newRange)
 	}
-merged, err := ranger.UnionRanges(rctx, estimateRanges, false)
-if err != nil {
-	return nil, err
-}
-return ([]*ranger.Range)(merged), nil
+	return ranger.UnionRanges(rctx, estimateRanges, false)
 }
 
 func getGeneralAttributesFromPaths(paths []*util.AccessPath, totalRowCount float64) (float64, bool) {
