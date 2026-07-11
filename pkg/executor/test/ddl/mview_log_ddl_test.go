@@ -1842,6 +1842,30 @@ func TestPurgeMaterializedViewLogBatchDelete(t *testing.T) {
 		Check(testkit.Rows("1 1"))
 }
 
+func TestPurgeMaterializedViewLogUsesRowIDRangeDeleteSQL(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 100*time.Millisecond, mockstore.WithMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t_purge_rowid_range (id int primary key, v int)")
+	tk.MustExec("create materialized view log on t_purge_rowid_range (id, v) purge next date_add(now(), interval 1 hour)")
+	testkit.SetTiFlashReplica(t, dom, "test", "$mlog$t_purge_rowid_range")
+	tk.MustExec("insert into t_purge_rowid_range values (1, 10), (2, 20), (3, 30), (4, 40), (5, 50)")
+	tk.MustExec("set @@session.tidb_mlog_purge_batch_size = 2")
+
+	var seenSQL []string
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/purgeMaterializedViewLogDeleteSQL", func(sql string) {
+		seenSQL = append(seenSQL, sql)
+	})
+
+	tk.MustExec("purge materialized view log on t_purge_rowid_range")
+	require.NotEmpty(t, seenSQL)
+	require.Contains(t, seenSQL[0], "_tidb_rowid >=")
+	require.Contains(t, seenSQL[0], "_tidb_rowid <=")
+	require.Contains(t, seenSQL[0], "_tidb_commit_ts <= ")
+	require.Contains(t, seenSQL[0], "LIMIT 2")
+}
+
 func TestPurgeMaterializedViewLogLastPurgedTSOShortCircuit(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

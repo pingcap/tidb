@@ -279,6 +279,58 @@ func TestMLogPurgeAdaptiveBatchSizeReplannedAfterNoWait(t *testing.T) {
 	require.Less(t, plan.targetRate, float64(50000))
 }
 
+func TestBuildMLogPurgeDeleteRowIDRanges(t *testing.T) {
+	stats := mlogPurgePendingRowStats{
+		pendingRows:    10000,
+		minRowID:       1,
+		maxRowID:       10000,
+		hasRowIDBounds: true,
+	}
+	require.Equal(t, []mlogPurgeDeleteRowIDRange{
+		{startRowID: 1, endRowID: 2000},
+		{startRowID: 2001, endRowID: 4000},
+		{startRowID: 4001, endRowID: 6000},
+		{startRowID: 6001, endRowID: 8000},
+		{startRowID: 8001, endRowID: 10000},
+	}, buildMLogPurgeDeleteRowIDRanges(stats, 0))
+
+	stats.pendingRows = 3500
+	stats.maxRowID = 3500
+	require.Equal(t, []mlogPurgeDeleteRowIDRange{
+		{startRowID: 1, endRowID: 3500},
+	}, buildMLogPurgeDeleteRowIDRanges(stats, 0))
+
+	stats.pendingRows = 12000
+	stats.maxRowID = int64(1<<63 - 1)
+	shardBucketSize := int64(1) << 59 // 63 - SHARD_ROW_ID_BITS(4)
+	require.Equal(t, []mlogPurgeDeleteRowIDRange{
+		{startRowID: 1, endRowID: 4*shardBucketSize - 1},
+		{startRowID: 4 * shardBucketSize, endRowID: 8*shardBucketSize - 1},
+		{startRowID: 8 * shardBucketSize, endRowID: 12*shardBucketSize - 1},
+		{startRowID: 12 * shardBucketSize, endRowID: int64(1<<63 - 1)},
+	}, buildMLogPurgeDeleteRowIDRanges(stats, 4))
+
+	stats.hasRowIDBounds = false
+	require.Nil(t, buildMLogPurgeDeleteRowIDRanges(stats, 0))
+}
+
+func TestBuildPurgeMaterializedViewLogDeleteSQL(t *testing.T) {
+	rowIDRange := &mlogPurgeDeleteRowIDRange{startRowID: 10, endRowID: 20}
+	sql := buildPurgeMaterializedViewLogDeleteSQL("test", "$mlog$t", 100, true, 200, rowIDRange, 1000)
+	require.Contains(t, sql, "_tidb_rowid >= 10 AND _tidb_rowid <= 20")
+	require.Contains(t, sql, "_tidb_commit_ts > 100 AND _tidb_commit_ts <= 200")
+	require.Contains(t, sql, "LIMIT 1000")
+
+	sql = buildPurgeMaterializedViewLogDeleteSQL("test", "$mlog$t", 0, false, 200, rowIDRange, 1000)
+	require.Contains(t, sql, "_tidb_rowid >= 10 AND _tidb_rowid <= 20")
+	require.Contains(t, sql, "_tidb_commit_ts <= 200")
+	require.NotContains(t, sql, "_tidb_commit_ts >")
+
+	sql = buildPurgeMaterializedViewLogDeleteSQL("test", "$mlog$t", 100, true, 200, nil, 1000)
+	require.NotContains(t, sql, "_tidb_rowid")
+	require.Contains(t, sql, "_tidb_commit_ts > 100 AND _tidb_commit_ts <= 200")
+}
+
 func TestApplyMLogPurgeDeleteTiFlashThreads(t *testing.T) {
 	sessVars := variable.NewSessionVars(nil)
 	require.NoError(t, sessVars.SetSystemVar(variable.TiDBMaxTiFlashThreads, "9"))
