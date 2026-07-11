@@ -15,12 +15,26 @@
 package main
 
 import (
+	"log"
 	"net/http"
+	"os"
 )
 
 func main() {
+	if os.Getenv("FAKE_OAUTH_ALLOW_INSECURE") != "true" {
+		log.Fatal("fake-oauth: this tool issues tokens without authentication and must NOT be used in production. " +
+			"Set FAKE_OAUTH_ALLOW_INSECURE=true to explicitly enable it in local development environments only.")
+	}
+	log.Println("WARNING: fake-oauth is running. This service issues tokens without authentication. FOR LOCAL DEVELOPMENT USE ONLY.")
 	http.HandleFunc("/oauth/token", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"access_token": "ok", "token_type":"service_account", "expires_in":3600}`))
 	})
-	_ = http.ListenAndServe(":5000", nil)
+	certFile := os.Getenv("FAKE_OAUTH_TLS_CERT")
+	keyFile := os.Getenv("FAKE_OAUTH_TLS_KEY")
+	if certFile == "" || keyFile == "" {
+		log.Fatal("fake-oauth: FAKE_OAUTH_TLS_CERT and FAKE_OAUTH_TLS_KEY must be set to provide TLS certificate and key files.")
+	}
+	if err := http.ListenAndServeTLS("127.0.0.1:5000", certFile, keyFile, nil); err != nil {
+		log.Fatalf("fake-oauth: server failed (cert=%s, key=%s): %v", certFile, keyFile, err)
+	}
 }
