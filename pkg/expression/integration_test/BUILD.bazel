@@ -4,6 +4,7 @@ go_test(
     name = "integration_test_test",
     timeout = "short",
     srcs = [
+        "auto_embed_compatibility_test.go",
         "integration_test.go",
         "main_test.go",
     ],

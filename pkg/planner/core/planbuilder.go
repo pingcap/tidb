@@ -342,9 +342,6 @@ type PlanBuilder struct {
 	// uses this to enable the fts-like-fallback round even when round 1's
 	// native plan is executable, so the LIKE-based plan can compete on cost.
 	predicateMatchSeen bool
-
-	autoEmbedColumnTracker *autoEmbedColumnTracker
-	autoEmbedLineageOracle *autoEmbedLineageOracle
 }
 
 // HasNonViableFTSMatch reports whether the most recent build round saw a
@@ -504,14 +501,10 @@ func (PlanBuilderOptAllowCastArray) Apply(builder *PlanBuilder) {
 // NewPlanBuilder creates a new PlanBuilder.
 func NewPlanBuilder(opts ...PlanBuilderOpt) *PlanBuilder {
 	builder := &PlanBuilder{
-		outerCTEs:              make([]*cteInfo, 0),
-		colMapper:              make(map[*ast.ColumnNameExpr]int),
-		handleHelper:           &handleColHelper{id2HandleMapStack: make([]map[int64][]util.HandleCols, 0)},
-		correlatedAggMapper:    make(map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn),
-		autoEmbedColumnTracker: newAutoEmbedColumnTracker(),
-	}
-	if intest.InTest {
-		builder.autoEmbedLineageOracle = newAutoEmbedLineageOracle()
+		outerCTEs:           make([]*cteInfo, 0),
+		colMapper:           make(map[*ast.ColumnNameExpr]int),
+		handleHelper:        &handleColHelper{id2HandleMapStack: make([]map[int64][]util.HandleCols, 0)},
+		correlatedAggMapper: make(map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn),
 	}
 	for _, opt := range opts {
 		opt.Apply(builder)
@@ -536,10 +529,6 @@ func (b *PlanBuilder) Init(sctx base.PlanContext, is infoschema.InfoSchema, proc
 	b.ctx = sctx
 	b.is = is
 	b.hintProcessor = processor
-	b.autoEmbedTracker().Reset()
-	if intest.InTest {
-		b.autoEmbedOracle().reset()
-	}
 	if processor != nil {
 		b.hintState = processor.NewBuildState()
 	}
@@ -567,14 +556,6 @@ func (b *PlanBuilder) ResetForReuse() *PlanBuilder {
 	for k := range saveCorrelateAggMapper {
 		delete(saveCorrelateAggMapper, k)
 	}
-	saveAutoEmbedColumnTracker := b.autoEmbedColumnTracker
-	if saveAutoEmbedColumnTracker != nil {
-		saveAutoEmbedColumnTracker.Reset()
-	}
-	saveAutoEmbedLineageOracle := b.autoEmbedLineageOracle
-	if saveAutoEmbedLineageOracle != nil {
-		saveAutoEmbedLineageOracle.reset()
-	}
 
 	// Reset ALL the fields.
 	*b = PlanBuilder{}
@@ -585,8 +566,6 @@ func (b *PlanBuilder) ResetForReuse() *PlanBuilder {
 	b.colMapper = saveColMapper
 	b.handleHelper = saveHandleHelper
 	b.correlatedAggMapper = saveCorrelateAggMapper
-	b.autoEmbedColumnTracker = saveAutoEmbedColumnTracker
-	b.autoEmbedLineageOracle = saveAutoEmbedLineageOracle
 	b.noDecorrelate = false
 
 	// Add more fields if they are safe to be reused.
@@ -611,15 +590,8 @@ func (b *PlanBuilder) recordPlanBuilderMetric() {
 }
 
 // Build builds the ast node to a Plan.
-func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (ret base.Plan, err error) {
-	if intest.InTest {
-		oracleMark := b.autoEmbedOracle().beginBuild()
-		defer func() {
-			err = b.autoEmbedOracle().finishBuild(oracleMark, ret, err)
-		}()
-	}
-
-	err = b.checkSEMStmt(node.Node)
+func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan, error) {
+	err := b.checkSEMStmt(node.Node)
 	if err != nil {
 		return nil, err
 	}
@@ -4176,9 +4148,6 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		IsReplace:     insert.IsReplace,
 		IgnoreErr:     insert.IgnoreErr,
 	}.Init(b.ctx)
-	if err := b.recordAutoEmbedColumnsFromTableColumns(insertPlan.Table.Cols(), insertPlan.TableSchema); err != nil {
-		return nil, err
-	}
 
 	if tableInfo.GetPartitionInfo() != nil && len(insert.PartitionNames) != 0 {
 		givenPartitionSets := make(map[int64]struct{}, len(insert.PartitionNames))
@@ -4236,6 +4205,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		return n
 	}
 
+	var insertSource *autoEmbedSourceSnapshot
 	if len(insert.Lists) > 0 {
 		// Branch for `INSERT ... VALUES ...`.
 		// Branch for `INSERT ... SET ...`.
@@ -4245,7 +4215,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		}
 	} else {
 		// Branch for `INSERT ... SELECT ...`.
-		err := b.buildSelectPlanOfInsert(ctx, insert, insertPlan)
+		insertSource, err = b.buildSelectPlanOfInsert(ctx, insert, insertPlan)
 		if err != nil {
 			return nil, err
 		}
@@ -4255,7 +4225,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	mockTablePlan.SetOutputNames(insertPlan.Names4OnDuplicate)
 
 	onDupColSet, err := insertPlan.ResolveOnDuplicate(insert.OnDuplicate, tableInfo, func(node ast.ExprNode) (expression.Expression, error) {
-		return b.rewriteInsertOnDuplicateUpdate(ctx, node, mockTablePlan, insertPlan)
+		return b.rewriteInsertOnDuplicateUpdate(ctx, node, mockTablePlan, insertPlan, insertSource)
 	})
 	if err != nil {
 		return nil, err
@@ -4340,7 +4310,7 @@ func (b PlanBuilder) getInsertColExpr(ctx context.Context, insertPlan *physicalo
 			usingPlan = logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 		}
 		var np base.LogicalPlan
-		outExpr, np, err = b.rewriteWithPreprocess(ctx, expr, usingPlan, nil, nil, true, checkRefColumn)
+		outExpr, np, err = b.rewriteInsertExpression(ctx, expr, usingPlan, insertPlan, nil, checkRefColumn)
 		if np != nil {
 			if _, ok := np.(*logicalop.LogicalTableDual); !ok {
 				// See issue#30626 and the related tests in function TestInsertValuesWithSubQuery for more details.
@@ -4433,11 +4403,11 @@ func (*colNameInOnDupExtractor) Leave(node ast.Node) (ast.Node, bool) {
 	return node, true
 }
 
-func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.InsertStmt, insertPlan *physicalop.Insert) error {
+func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.InsertStmt, insertPlan *physicalop.Insert) (*autoEmbedSourceSnapshot, error) {
 	b.isForUpdateRead = true
 	affectedValuesCols, err := b.getAffectCols(insert, insertPlan)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	actualColLen := -1
 	// For MYSQL, it handles the case that the columns in ON DUPLICATE UPDATE is not the project column of the SELECT clause
@@ -4494,12 +4464,12 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 	nodeW := resolve.NewNodeWWithCtx(insert.Select, b.resolveCtx)
 	selectPlan, err := b.Build(ctx, nodeW)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Check to guarantee that the length of the row returned by select is equal to that of affectedValuesCols.
 	if (actualColLen == -1 && selectPlan.Schema().Len() != len(affectedValuesCols)) || (actualColLen != -1 && actualColLen != len(affectedValuesCols)) {
-		return plannererrors.ErrWrongValueCountOnRow.GenWithStackByArgs(1)
+		return nil, plannererrors.ErrWrongValueCountOnRow.GenWithStackByArgs(1)
 	}
 
 	// Check to guarantee that there's no generated column.
@@ -4511,15 +4481,20 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 	// that there's a generated column in the column list.
 	for _, col := range affectedValuesCols {
 		if col.IsGenerated() {
-			return plannererrors.ErrBadGeneratedColumn.GenWithStackByArgs(col.Name.O, insertPlan.Table.Meta().Name.O)
+			return nil, plannererrors.ErrBadGeneratedColumn.GenWithStackByArgs(col.Name.O, insertPlan.Table.Meta().Name.O)
 		}
 	}
 
 	names := selectPlan.OutputNames()
-	insertPlan.SelectPlan, _, err = DoOptimize(ctx, b.ctx, b.optFlag, selectPlan.(base.LogicalPlan))
+	selectLogicalPlan := selectPlan.(base.LogicalPlan)
+	// The snapshot is taken before optimization; schema4NewRow below must keep
+	// the corresponding SELECT output UniqueIDs so ON DUPLICATE can rebind them.
+	insertSource := snapshotAutoEmbedSource(selectLogicalPlan)
+	optimizedPhysicalPlan, _, err := DoOptimize(ctx, b.ctx, b.optFlag, selectLogicalPlan)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	insertPlan.SelectPlan = optimizedPhysicalPlan
 
 	if actualColLen == -1 {
 		actualColLen = selectPlan.Schema().Len()
@@ -4538,8 +4513,6 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 
 		schema4NewRow.Columns[ordinal].RetType = &types.FieldType{}
 		*schema4NewRow.Columns[ordinal].RetType = affectedValuesCols[i].FieldType
-		schema4NewRow.Columns[ordinal].UniqueID = insertPlan.SCtx().GetSessionVars().AllocPlanColumnID()
-		schema4NewRow.Columns[ordinal].CleanHashCode()
 
 		names4NewRow[ordinal] = names[i]
 	}
@@ -4549,12 +4522,16 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 			names4NewRow[i] = types.EmptyName
 		}
 	}
+	// Schema4OnDuplicate contains target columns, SELECT extras at
+	// [actualColLen:], then new-row columns. The original SELECT outputs at
+	// [0, actualColLen) stay excluded while schema4NewRow retains their
+	// UniqueIDs; Schema.ColumnIndex depends on this order for its first match.
 	insertPlan.Schema4OnDuplicate = expression.NewSchema(insertPlan.TableSchema.Columns...)
 	insertPlan.Schema4OnDuplicate.Append(insertPlan.SelectPlan.Schema().Columns[actualColLen:]...)
 	insertPlan.Schema4OnDuplicate.Append(schema4NewRow.Columns...)
 	insertPlan.Names4OnDuplicate = append(insertPlan.TableColNames.Shallow(), names[actualColLen:]...)
 	insertPlan.Names4OnDuplicate = append(insertPlan.Names4OnDuplicate, names4NewRow...)
-	return nil
+	return insertSource, nil
 }
 
 func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (base.Plan, error) {

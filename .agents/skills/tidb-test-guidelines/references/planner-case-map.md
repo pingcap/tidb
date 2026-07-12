@@ -80,6 +80,7 @@
 ## pkg/planner/core
 
 ### Tests
+- `pkg/planner/core/auto_embed_resolver_test.go` - planner/core: Tests fail-closed auto-embedding provenance across projections, aggregates, joins, set operations, cycles, and INSERT source snapshots.
 - `pkg/planner/core/binary_plan_test.go` - planner/core: Tests binary plan generation and size limits.
 - `pkg/planner/core/cbo_test.go` - planner/core: Benchmarks optimizer plan selection.
 - `pkg/planner/core/common_plans_test.go` - planner/core: Tests LOAD DATA line/field defaults.

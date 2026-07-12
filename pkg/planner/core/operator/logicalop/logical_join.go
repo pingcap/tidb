@@ -113,6 +113,9 @@ type LogicalJoin struct {
 	// first logical round. It is only used to decide whether an equivalent same-order
 	// PhysicalIndexJoin candidate has already been generated.
 	FromDecorrelatedApply bool
+
+	// FromSetOperator marks the semi/anti-semi joins that implement INTERSECT or EXCEPT.
+	FromSetOperator bool `hash64-equals:"true"`
 }
 
 // Init initializes LogicalJoin.

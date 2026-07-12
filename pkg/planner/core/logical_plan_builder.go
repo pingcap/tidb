@@ -372,7 +372,6 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p base.LogicalPlan, 
 		plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, newFunc)
 		newCol, _ := col.Clone().(*expression.Column)
 		newCol.RetType = newFunc.RetTp
-		b.autoEmbedTracker().onDerivedColumns(newCol)
 		schema4Agg.Append(newCol)
 		names = append(names, p.OutputNames()[i])
 	}
@@ -391,7 +390,6 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p base.LogicalPlan, 
 			plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, newFunc)
 			newCol, _ := col.Clone().(*expression.Column)
 			newCol.RetType = newFunc.RetTp
-			b.autoEmbedTracker().onDerivedColumns(newCol)
 			schema4Agg.Append(newCol)
 			names = append(names, fullNames[i])
 		}
@@ -1312,7 +1310,6 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 			return err
 		}
 		conds = append(conds, cond)
-		b.autoEmbedTracker().onUsingCoalesce(lc, lc, rc)
 		if p.FullSchema != nil {
 			// since FullSchema is derived from left and right schema in upper layer, so rc/lc must be in FullSchema.
 			if joinTp == ast.RightJoin {
@@ -1390,6 +1387,12 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, wh
 					return nil, errors.Trace(err)
 				}
 				if ret {
+					continue
+				}
+				// Preserve proven auto-embedding provenance until SELECT expressions
+				// are rewritten. Logical optimization can fold the selection later.
+				if autoEmbedPlanHasProvenance(p) {
+					cnfExpres = append(cnfExpres, item)
 					continue
 				}
 				// If there is condition which is always false, return dual plan directly.
@@ -1991,7 +1994,6 @@ func (b *PlanBuilder) buildDistinct(child base.LogicalPlan, length int) (*logica
 	plan4Agg.SetChildren(child)
 	plan4Agg.SetSchema(child.Schema().Clone())
 	plan4Agg.SetOutputNames(child.OutputNames())
-	b.autoEmbedTracker().onDerivedColumns(plan4Agg.Schema().Columns...)
 	// Distinct will be rewritten as first_row, we reset the type here since the return type
 	// of first_row is not always the same as the column arg of first_row.
 	for i, col := range plan4Agg.Schema().Columns {
@@ -2083,13 +2085,6 @@ func (b *PlanBuilder) buildProjection4Union(_ context.Context, u *logicalop.Logi
 	}
 	u.SetSchema(expression.NewSchema(unionCols...))
 	u.SetOutputNames(names)
-	for i, unionCol := range unionCols {
-		srcCols := make([]*expression.Column, 0, len(u.Children()))
-		for _, child := range u.Children() {
-			srcCols = append(srcCols, child.Schema().Columns[i])
-		}
-		b.autoEmbedTracker().onCoalescedColumn(unionCol, srcCols...)
-	}
 	// Process each child and add a projection above original child.
 	// So the schema of `UnionAll` can be the same with its children's.
 	for childID, child := range u.Children() {
@@ -2198,7 +2193,10 @@ func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (
 	if oldLen != setOprPlan.Schema().Len() {
 		proj := logicalop.LogicalProjection{Exprs: expression.Column2Exprs(setOprPlan.Schema().Columns[:oldLen])}.Init(b.ctx, b.getSelectOffset())
 		proj.SetChildren(setOprPlan)
-		schema := b.cloneSchemaReallocIDs(expression.NewSchema(setOprPlan.Schema().Columns[:oldLen]...))
+		schema := expression.NewSchema(setOprPlan.Schema().Clone().Columns[:oldLen]...)
+		for _, col := range schema.Columns {
+			col.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
+		}
 		proj.SetOutputNames(setOprPlan.OutputNames()[:oldLen])
 		proj.SetSchema(schema)
 		return b.tryToBuildSequence(currentLayerCTEs, proj), nil
@@ -2215,7 +2213,7 @@ func (b *PlanBuilder) buildSemiJoinForSetOperator(
 		return nil, err
 	}
 
-	joinPlan := logicalop.LogicalJoin{JoinType: joinType}.Init(b.ctx, b.getSelectOffset())
+	joinPlan := logicalop.LogicalJoin{JoinType: joinType, FromSetOperator: true}.Init(b.ctx, b.getSelectOffset())
 	joinPlan.SetChildren(leftPlan, rightPlan)
 	joinPlan.SetSchema(leftPlan.Schema())
 	joinPlan.SetOutputNames(make([]*types.FieldName, leftPlan.Schema().Len()))
@@ -4614,7 +4612,10 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 	if oldLen != p.Schema().Len() {
 		proj := logicalop.LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldLen])}.Init(b.ctx, b.getSelectOffset())
 		proj.SetChildren(p)
-		schema := b.cloneSchemaReallocIDs(expression.NewSchema(p.Schema().Columns[:oldLen]...))
+		schema := expression.NewSchema(p.Schema().Clone().Columns[:oldLen]...)
+		for _, col := range schema.Columns {
+			col.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
+		}
 		proj.SetOutputNames(p.OutputNames()[:oldLen])
 		proj.SetSchema(schema)
 		return b.tryToBuildSequence(currentLayerCTEs, proj), nil
@@ -5214,9 +5215,6 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			OrigName: names[i].String(),
 			IsHidden: col.Hidden,
 		}
-		if err := b.recordAutoEmbedColumnFromTableColumn(col, newCol); err != nil {
-			return nil, err
-		}
 		if col.IsPKHandleColumn(tableInfo) {
 			handleCols = util.NewIntHandleCols(newCol)
 		}
@@ -5690,7 +5688,6 @@ func (b *PlanBuilder) buildProjUponView(_ context.Context, dbName ast.CIStr, tab
 		})
 		projExprs = append(projExprs, cols[i])
 	}
-	b.onAutoEmbedOpaqueBoundary(projSchema)
 	projUponView := logicalop.LogicalProjection{Exprs: projExprs}.Init(b.ctx, b.getSelectOffset())
 	projUponView.SetOutputNames(projNames)
 	projUponView.SetChildren(selectLogicalPlan.(base.LogicalPlan))

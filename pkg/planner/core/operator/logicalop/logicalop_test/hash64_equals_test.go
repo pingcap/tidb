@@ -729,6 +729,7 @@ func TestLogicalApplyHash64Equals(t *testing.T) {
 	la2.Hash64(hasher2)
 	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
 	require.True(t, la1.Equals(la2))
+
 }
 
 func TestLogicalJoinHash64Equals(t *testing.T) {
@@ -799,6 +800,12 @@ func TestLogicalJoinHash64Equals(t *testing.T) {
 	la2.Hash64(hasher2)
 	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
 	require.True(t, la1.Equals(la2))
+
+	la2.FromSetOperator = true
+	hasher2.Reset()
+	la2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, la1.Equals(la2))
 }
 
 func TestLogicalAggregationHash64Equals(t *testing.T) {

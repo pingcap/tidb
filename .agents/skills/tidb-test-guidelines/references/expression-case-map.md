@@ -97,7 +97,8 @@
 ## pkg/expression/integration_test
 
 ### Tests
-- `pkg/expression/integration_test/integration_test.go` - expression/integration_test: Tests FTS parser.
+- `pkg/expression/integration_test/auto_embed_compatibility_test.go` - expression/integration_test: Tests auto-embedding rewrite compatibility and fail-closed planner boundaries under NextGen.
+- `pkg/expression/integration_test/integration_test.go` - expression/integration_test: Tests FTS parser and auto-embedding vector-search rewrites.
 - `pkg/expression/integration_test/main_test.go` - Configures default goleak settings and registers testdata.
 
 ## pkg/expression/sessionexpr
