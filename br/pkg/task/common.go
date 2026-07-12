@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
-	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/conn/util"
@@ -31,12 +30,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/operation"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/metaservice"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/util/etcd"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -201,33 +198,8 @@ func dialEtcdWithCfg(ctx context.Context, cfg Config) (*clientv3.Client, error) 
 		}
 	}
 
-	pdCli, err := newPDClientWithAPIContext(
-		ctx, keyspace.BuildAPIContext(cfg.KeyspaceName), caller.GetComponent(1), cfg.PD, cfg.TLS.ToPDSecurityOption(),
-	)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	defer pdCli.Close()
-
-	var keyspaceMeta *keyspacepb.KeyspaceMeta
-	if cfg.KeyspaceName != "" {
-		keyspaceMeta, err = pdCli.LoadKeyspace(ctx, cfg.KeyspaceName)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if keyspaceMeta == nil {
-			return nil, errors.Errorf("keyspace %q not found", cfg.KeyspaceName)
-		}
-	}
-
-	dialInfo, err := metaservice.ResolveEtcdDialInfo(ctx, pdCli, keyspaceMeta)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	log.Info("trying to connect to etcd", zap.Strings("addr", dialInfo.Endpoints))
-	etcdCLI, err := clientv3.New(clientv3.Config{
+	etcdCfg := clientv3.Config{
 		TLS:              tlsConfig,
-		Endpoints:        dialInfo.Endpoints,
 		AutoSyncInterval: 30 * time.Second,
 		DialTimeout:      5 * time.Second,
 		DialOptions: []grpc.DialOption{
@@ -239,14 +211,15 @@ func dialEtcdWithCfg(ctx context.Context, cfg Config) (*clientv3.Client, error) 
 			grpc.WithBlock(),
 			grpc.WithReturnConnectionError(),
 		},
-		Context: ctx,
-	})
+	}
+	etcdCLI, err := metaservice.DialEtcdClient(
+		ctx, cfg.KeyspaceName, cfg.PD, cfg.TLS.ToPDSecurityOption(),
+		newPDClientWithAPIContext, caller.GetComponent(1), nil, etcdCfg,
+	)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
-	if dialInfo.Namespace != "" {
-		etcd.SetEtcdCliByNamespace(etcdCLI, dialInfo.Namespace)
-	}
+	log.Info("trying to connect to etcd", zap.Strings("addr", etcdCLI.Endpoints()))
 	return etcdCLI, nil
 }
 

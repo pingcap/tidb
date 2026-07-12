@@ -23,12 +23,25 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/keyspace"
+	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 const getAllMembersBackoffMs = 5000
+
+// PDClientFactory constructs a PD client for one keyspace-aware etcd dial attempt.
+type PDClientFactory func(
+	ctx context.Context,
+	apiCtx pd.APIContext,
+	callerComponent caller.Component,
+	svrAddrs []string,
+	security pd.SecurityOption,
+	opts ...opt.ClientOption,
+) (pd.Client, error)
 
 // NewEtcdMetaServiceClient creates a ServiceClient backed by etcd and PD clients.
 // When etcdCli is nil but pdCli is not, it returns a PD-only client that still
@@ -59,6 +72,57 @@ func ResolveEtcdDialInfo(ctx context.Context, pdCli pd.Client, keyspaceMeta *key
 		info.Namespace = keyspace.MakeKeyspaceEtcdNamespace(codec)
 	}
 	return info, nil
+}
+
+// DialEtcdClient resolves the target meta service group and returns a namespaced etcd client.
+func DialEtcdClient(
+	ctx context.Context,
+	keyspaceName string,
+	pdAddrs []string,
+	security pd.SecurityOption,
+	pdClientFactory PDClientFactory,
+	callerComponent caller.Component,
+	pdClientOpts []opt.ClientOption,
+	etcdCfg clientv3.Config,
+) (*clientv3.Client, error) {
+	if pdClientFactory == nil {
+		pdClientFactory = pd.NewClientWithAPIContext
+	}
+
+	pdCli, err := pdClientFactory(
+		ctx, keyspace.BuildAPIContext(keyspaceName), callerComponent, pdAddrs, security, pdClientOpts...,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer pdCli.Close()
+
+	var keyspaceMeta *keyspacepb.KeyspaceMeta
+	if keyspaceName != "" {
+		keyspaceMeta, err = pdCli.LoadKeyspace(ctx, keyspaceName)
+		if err != nil {
+			return nil, err
+		}
+		if keyspaceMeta == nil {
+			return nil, errors.New("keyspace meta not found")
+		}
+	}
+
+	dialInfo, err := ResolveEtcdDialInfo(ctx, pdCli, keyspaceMeta)
+	if err != nil {
+		return nil, err
+	}
+
+	etcdCfg.Context = ctx
+	etcdCfg.Endpoints = dialInfo.Endpoints
+	etcdCli, err := clientv3.New(etcdCfg)
+	if err != nil {
+		return nil, err
+	}
+	if dialInfo.Namespace != "" {
+		etcd.SetEtcdCliByNamespace(etcdCli, dialInfo.Namespace)
+	}
+	return etcdCli, nil
 }
 
 // client is used to implement etcd meta service.

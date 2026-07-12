@@ -30,12 +30,10 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/lightning/pkg/checkpoints"
 	"github.com/pingcap/tidb/lightning/pkg/precheck"
-	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -53,7 +51,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/cdcutil"
 	"github.com/pingcap/tidb/pkg/util/engine"
-	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/set"
 	pd "github.com/tikv/pd/client"
@@ -805,35 +802,8 @@ func dialEtcdWithCfg(
 	if err != nil {
 		return nil, err
 	}
-	tlsConfig := tlsCfg.TLSConfig()
-
-	pdCli, err := newPDClientWithAPIContext(
-		ctx, keyspace.BuildAPIContext(cfg.TikvImporter.KeyspaceName), componentName, addrs, tlsCfg.ToPDSecurityOption(),
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer pdCli.Close()
-
-	var keyspaceMeta *keyspacepb.KeyspaceMeta
-	if cfg.TikvImporter.KeyspaceName != "" {
-		keyspaceMeta, err = pdCli.LoadKeyspace(ctx, cfg.TikvImporter.KeyspaceName)
-		if err != nil {
-			return nil, err
-		}
-		if keyspaceMeta == nil {
-			return nil, errors.Errorf("keyspace %q not found", cfg.TikvImporter.KeyspaceName)
-		}
-	}
-
-	dialInfo, err := metaservice.ResolveEtcdDialInfo(ctx, pdCli, keyspaceMeta)
-	if err != nil {
-		return nil, err
-	}
-
-	etcdCli, err := clientv3.New(clientv3.Config{
-		TLS:              tlsConfig,
-		Endpoints:        dialInfo.Endpoints,
+	etcdCfg := clientv3.Config{
+		TLS:              tlsCfg.TLSConfig(),
 		AutoSyncInterval: 30 * time.Second,
 		DialTimeout:      5 * time.Second,
 		DialOptions: []grpc.DialOption{
@@ -841,15 +811,11 @@ func dialEtcdWithCfg(
 			grpc.WithBlock(),
 			grpc.WithReturnConnectionError(),
 		},
-		Context: ctx,
-	})
-	if err != nil {
-		return nil, err
 	}
-	if dialInfo.Namespace != "" {
-		etcd.SetEtcdCliByNamespace(etcdCli, dialInfo.Namespace)
-	}
-	return etcdCli, nil
+	return metaservice.DialEtcdClient(
+		ctx, cfg.TikvImporter.KeyspaceName, addrs, tlsCfg.ToPDSecurityOption(),
+		newPDClientWithAPIContext, componentName, nil, etcdCfg,
+	)
 }
 
 // Check implements Checker interface.
