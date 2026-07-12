@@ -114,6 +114,19 @@ together with `allow_lock_with_conflict`/`WakeUpModeForceLock` is rejected. Unli
 nor abandon the request, each key's disposition is independent (the same key-by-key
 model as `AcquirePessimisticLockResumed`).
 
+Two contract details implementations must uphold:
+
+- **Request-order mapping**: `results[i]` corresponds to `mutations[i]` of the request,
+  so implementations must not reorder mutations while processing skip-locked requests
+  (TiKV processes keys in request order; the unistore mockstore disables its
+  `sortMutations` optimization in skip-locked mode). Multi-key requests with unsorted
+  keys and mixed skipped/acquired dispositions are covered by tests.
+- **Errors dominate partial results**: if a non-skip error (e.g. `WriteConflict`,
+  `AlreadyExist`) is hit for any key, the whole request fails: the response carries
+  `errors`, no lock of this request is written, and the `results` field must be left
+  empty and ignored by the client. client-go processes `errors` before looking at
+  `results`, and validates `len(results) == len(mutations)` otherwise.
+
 ### TiKV
 
 In `AcquirePessimisticLock::process_write`:
@@ -181,11 +194,17 @@ Planner:
 
 Executor:
 
-- `SelectLockExec` in skip-locked mode buffers child rows (memory-tracked), issues one
-  `LockKeys` with `LockCtx.SkipLocked`, then emits only rows whose keys were acquired.
-  (Today it streams rows up before locking at end-of-stream, which cannot filter.)
+- `SelectLockExec` in skip-locked mode buffers child rows, issues one `LockKeys` with
+  `LockCtx.SkipLocked`, then emits only rows whose keys were acquired. (Today it
+  streams rows up before locking at end-of-stream, which cannot filter.)
   `runPessimisticSelectForUpdate` already drains the executor before returning results
-  to the client, so no skipped row can escape before locks resolve.
+  to the client, so no skipped row can escape before locks resolve. The buffer is not
+  unbounded: it is attached to the statement's memory tracker, so it counts against
+  `tidb_mem_quota_query` and exceeding the quota triggers the configured OOM action
+  (by default the query is cancelled) — i.e. explicit rejection rather than unbounded
+  growth. This matches the bound that `runPessimisticSelectForUpdate`'s own row
+  buffering already has. Disk spilling for the buffer is possible follow-up work, but
+  note the target workload is `LIMIT n` queue pops with small buffered sets.
 - `PointGet`/`BatchPointGet`: a skipped row/index key produces no output row and does
   not enter the pessimistic lock cache. For unique-index access, the executor forms
   (index key → row key) pairs: if the index key locks but the row key skips,
@@ -204,15 +223,22 @@ Three defense layers, because an old TiKV silently ignores the unknown proto fie
 1. Sysvar `tidb_enable_select_skip_locked` (SESSION | GLOBAL), default `OFF` in the
    first release. When OFF, SKIP LOCKED returns `ErrNotSupportedYet` — the same
    deterministic behavior as PR 0, never a silent no-op.
-2. When enabled and a skip-locked statement executes, TiDB verifies the minimum TiKV
-   store version in the cluster supports skip-locked (via the store-info path used by
-   `TIKV_STORE_STATUS`, cached with a TTL); otherwise `ErrNotSupportedYet` with a
+2. When enabled and a skip-locked statement executes, TiDB verifies that **every** TiKV
+   store in the cluster (i.e. the minimum store version, so any store the request may
+   route to is covered) supports skip-locked, via the store-info path used by
+   `TIKV_STORE_STATUS`, cached with a TTL; otherwise `ErrNotSupportedYet` with a
    version hint.
 3. client-go backstop: a skip-locked response without per-key `results` fails hard
    with "TiKV does not support skip locked".
 
-Upgrade order is the usual TiKV-before-TiDB; no downgrade concern (the field is
-ignored by old TiKV and simply not sent by old TiDB).
+Upgrade order is the usual TiKV-before-TiDB. **Downgrading** a TiKV below the minimum
+skip-locked version while the feature is in use is not safe to leave to the backstop
+alone (an incompatible store would wait before responding), so it must be prevented:
+the version check in layer 2 re-validates per statement against the store list (the
+TTL cache bounds the window after a downgraded store joins), and the operational
+guidance is to turn `tidb_enable_select_skip_locked` OFF before any TiKV downgrade
+below the minimum version — consistent with the general rule that in-place component
+downgrades below a feature's minimum version require disabling the feature first.
 
 Statement-based replication caveats do not apply (TiDB Binlog is deprecated; TiCDC is
 row-based), but the nondeterminism note is added to the docs, mirroring MySQL's
