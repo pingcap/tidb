@@ -789,7 +789,46 @@ func applyMVMaintenanceSessionVarsFromGlobal(ctx context.Context, sessVars *vari
 		restoreMaintainMemQuota()
 		return nil, err
 	}
+	originPurgeDeleteTiFlashThreads := sessVars.MLogPurgeDeleteTiFlashThreads
+	targetPurgeDeleteTiFlashThreads := originPurgeDeleteTiFlashThreads
+	if val, ok := getGlobalSystemVarBestEffort(ctx, sessVars, variable.TiDBMLogPurgeDeleteTiFlashThreads); ok {
+		targetPurgeDeleteTiFlashThreads = variable.TidbOptInt64(val, originPurgeDeleteTiFlashThreads)
+	}
+	restorePurgeDeleteTiFlashThreads, err := applyMVMaintenanceSessionVarBestEffort(
+		sessVars,
+		mvMaintenanceSessionVarApplySpec{
+			varName:     variable.TiDBMLogPurgeDeleteTiFlashThreads,
+			originValue: strconv.FormatInt(originPurgeDeleteTiFlashThreads, 10),
+			targetValue: strconv.FormatInt(targetPurgeDeleteTiFlashThreads, 10),
+			onApplyError: func(err error) {
+				logutil.BgLogger().Warn(
+					"mv service: failed to apply purge delete TiFlash threads from global setting, fallback to current session value",
+					zap.String("var", variable.TiDBMLogPurgeDeleteTiFlashThreads),
+					zap.Int64("origin", originPurgeDeleteTiFlashThreads),
+					zap.Int64("target", targetPurgeDeleteTiFlashThreads),
+					zap.Error(err),
+				)
+			},
+			onRestoreError: func(err error) {
+				logutil.BgLogger().Warn(
+					"mv service: failed to restore tidb_mlog_purge_delete_tiflash_threads after maintenance",
+					zap.Int64("originPurgeDeleteTiFlashThreads", originPurgeDeleteTiFlashThreads),
+					zap.Int64("currentPurgeDeleteTiFlashThreads", targetPurgeDeleteTiFlashThreads),
+					zap.Error(err),
+				)
+			},
+		},
+	)
+	if err != nil {
+		restorePurgeRateBudgetRatio()
+		restorePurgeMinRate()
+		restorePurgeBatchSize()
+		restoreIsolationReadEngines()
+		restoreMaintainMemQuota()
+		return nil, err
+	}
 	return func() {
+		restorePurgeDeleteTiFlashThreads()
 		restorePurgeRateBudgetRatio()
 		restorePurgeMinRate()
 		restorePurgeBatchSize()

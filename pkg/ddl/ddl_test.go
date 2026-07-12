@@ -147,17 +147,24 @@ func TestBuildCreateMaterializedViewRefreshInfoUpsertSQL(t *testing.T) {
 		return strings.Join(strings.Fields(sql), " ")
 	}
 
-	sqlNoUpdate := compactSQL(buildCreateMaterializedViewRefreshInfoUpsertSQL(1, 2, nil, false))
+	lastSuccessEndTime := "2026-01-02 03:04:05.123456"
+	sqlNoUpdate := compactSQL(buildCreateMaterializedViewRefreshInfoUpsertSQL(1, 2, &lastSuccessEndTime, nil, false))
 	require.NotContains(t, sqlNoUpdate, "NEXT_TIME")
 	require.NotContains(t, sqlNoUpdate, "VALUES(NEXT_TIME)")
+	require.Contains(t, sqlNoUpdate, "LAST_SUCCESS_ENDTIME")
+	require.Contains(t, sqlNoUpdate, lastSuccessEndTime)
+
+	sqlPrewrite := compactSQL(buildCreateMaterializedViewRefreshInfoUpsertSQL(1, 2, nil, nil, false))
+	require.NotContains(t, sqlPrewrite, lastSuccessEndTime)
+	require.Contains(t, sqlPrewrite, "NULL")
 
 	next := "2026-01-02 03:04:05"
-	sqlWithValue := compactSQL(buildCreateMaterializedViewRefreshInfoUpsertSQL(1, 2, &next, true))
+	sqlWithValue := compactSQL(buildCreateMaterializedViewRefreshInfoUpsertSQL(1, 2, &lastSuccessEndTime, &next, true))
 	require.Contains(t, sqlWithValue, "NEXT_TIME")
 	require.Contains(t, sqlWithValue, "VALUES(NEXT_TIME)")
 	require.Contains(t, sqlWithValue, "2026-01-02 03:04:05")
 
-	sqlWithNull := compactSQL(buildCreateMaterializedViewRefreshInfoUpsertSQL(1, 2, nil, true))
+	sqlWithNull := compactSQL(buildCreateMaterializedViewRefreshInfoUpsertSQL(1, 2, &lastSuccessEndTime, nil, true))
 	require.Contains(t, sqlWithNull, "NEXT_TIME")
 	require.Contains(t, sqlWithNull, "VALUES(NEXT_TIME)")
 	require.Contains(t, sqlWithNull, ", NULL)")

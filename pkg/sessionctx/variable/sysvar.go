@@ -2232,6 +2232,19 @@ var defaultSysVars = []*SysVar{
 		s.MLogPurgeRateBudgetRatio = tidbOptFloat64(val, DefTiDBMLogPurgeRateBudgetRatio)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMLogPurgeDeleteTiFlashThreads, Value: strconv.Itoa(DefTiDBMLogPurgeDeleteTiFlashThreads), Type: TypeInt, MinValue: math.MinInt64, MaxValue: MaxConfigurableConcurrency, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		v, err := strconv.ParseInt(originalValue, 10, 64)
+		if err != nil {
+			return "", err
+		}
+		if v < 0 {
+			return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(TiDBMLogPurgeDeleteTiFlashThreads, originalValue)
+		}
+		return normalizedValue, nil
+	}, SetSession: func(s *SessionVars, val string) error {
+		s.MLogPurgeDeleteTiFlashThreads = TidbOptInt64(val, DefTiDBMLogPurgeDeleteTiFlashThreads)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMaxChunkSize, Value: strconv.Itoa(DefMaxChunkSize), Type: TypeUnsigned, MinValue: maxChunkSizeLowerBound, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
 		s.MaxChunkSize = tidbOptPositiveInt32(val, DefMaxChunkSize)
 		return nil

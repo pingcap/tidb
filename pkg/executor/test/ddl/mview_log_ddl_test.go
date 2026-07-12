@@ -1402,6 +1402,36 @@ func TestPurgeMaterializedViewLogDefaultMVMaintainIsolationReadEnginesDoesNotInh
 	tk.MustQuery(fmt.Sprintf("select @@session.%s", variable.TiDBIsolationReadEngines)).Check(testkit.Rows(currentIsolationReadEngines))
 }
 
+func TestPurgeMaterializedViewLogUsesDeleteTiFlashThreadsOnlyOnDeleteSession(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_purge_tiflash_threads (id int primary key, v int)")
+	tk.MustExec("create materialized view log on t_purge_tiflash_threads (id, v) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("insert into t_purge_tiflash_threads values (1, 10), (2, 20), (3, 30)")
+	tk.MustExec(fmt.Sprintf("set @@session.%s = 9", variable.TiDBMaxTiFlashThreads))
+	tk.MustExec(fmt.Sprintf("set @@session.%s = 2", variable.TiDBMLogPurgeDeleteTiFlashThreads))
+
+	applied := false
+	gotTiFlashThreads := int64(0)
+	gotTargetTiFlashThreads := int64(0)
+	failpointName := "github.com/pingcap/tidb/pkg/executor/mvMLogPurgeDeleteTiFlashThreadsAppliedOnPurgeDeleteSession"
+	require.NoError(t, failpoint.EnableCall(failpointName, func(currentTiFlashThreads int64, targetTiFlashThreads int64) {
+		applied = true
+		gotTiFlashThreads = currentTiFlashThreads
+		gotTargetTiFlashThreads = targetTiFlashThreads
+	}))
+	defer func() {
+		require.NoError(t, failpoint.Disable(failpointName))
+	}()
+
+	tk.MustExec("purge materialized view log on t_purge_tiflash_threads")
+	require.True(t, applied)
+	require.Equal(t, int64(2), gotTargetTiFlashThreads)
+	require.Equal(t, gotTargetTiFlashThreads, gotTiFlashThreads)
+	tk.MustQuery(fmt.Sprintf("select @@session.%s", variable.TiDBMaxTiFlashThreads)).Check(testkit.Rows("9"))
+}
+
 func TestPurgeMaterializedViewLogPrivilege(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1810,6 +1840,30 @@ func TestPurgeMaterializedViewLogBatchDelete(t *testing.T) {
 		Check(testkit.Rows("1"))
 	tk.MustQuery(fmt.Sprintf("select LAST_PURGED_TSO is not null, LAST_PURGED_TSO >= %d from mysql.tidb_mlog_purge_info where MLOG_ID = %d", maxCommitTS, mlogID)).
 		Check(testkit.Rows("1 1"))
+}
+
+func TestPurgeMaterializedViewLogUsesRowIDRangeDeleteSQL(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 100*time.Millisecond, mockstore.WithMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t_purge_rowid_range (id int primary key, v int)")
+	tk.MustExec("create materialized view log on t_purge_rowid_range (id, v) purge next date_add(now(), interval 1 hour)")
+	testkit.SetTiFlashReplica(t, dom, "test", "$mlog$t_purge_rowid_range")
+	tk.MustExec("insert into t_purge_rowid_range values (1, 10), (2, 20), (3, 30), (4, 40), (5, 50)")
+	tk.MustExec("set @@session.tidb_mlog_purge_batch_size = 2")
+
+	var seenSQL []string
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/purgeMaterializedViewLogDeleteSQL", func(sql string) {
+		seenSQL = append(seenSQL, sql)
+	})
+
+	tk.MustExec("purge materialized view log on t_purge_rowid_range")
+	require.NotEmpty(t, seenSQL)
+	require.Contains(t, seenSQL[0], "_tidb_rowid >=")
+	require.Contains(t, seenSQL[0], "_tidb_rowid <=")
+	require.Contains(t, seenSQL[0], "_tidb_commit_ts <= ")
+	require.Contains(t, seenSQL[0], "LIMIT 2")
 }
 
 func TestPurgeMaterializedViewLogLastPurgedTSOShortCircuit(t *testing.T) {

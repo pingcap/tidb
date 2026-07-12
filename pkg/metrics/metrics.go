@@ -166,6 +166,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(MetaHistogram)
 	prometheus.MustRegister(MVServiceTaskStatusGaugeVec)
 	prometheus.MustRegister(MVServiceOperationDurationHistogramVec)
+	prometheus.MustRegister(MVServiceRefreshScheduleDurationHistogram)
 	prometheus.MustRegister(MVServiceRunEventCounterVec)
 	prometheus.MustRegister(NewSessionHistogram)
 	prometheus.MustRegister(OwnerHandleSyncerHistogram)

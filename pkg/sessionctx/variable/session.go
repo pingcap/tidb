@@ -772,8 +772,11 @@ type SessionVars struct {
 	MLogPurgeMinRate int
 	// MLogPurgeRateBudgetRatio indicates the fraction of the current scheduling window that purge may spend deleting.
 	MLogPurgeRateBudgetRatio float64
-	RetryLimit               int64
-	DisableTxnAutoRetry      bool
+	// MLogPurgeDeleteTiFlashThreads controls TiFlash threads only for MV log purge DELETE SQLs.
+	// 0 means inheriting the current tidb_max_tiflash_threads value.
+	MLogPurgeDeleteTiFlashThreads int64
+	RetryLimit                    int64
+	DisableTxnAutoRetry           bool
 	*UserVars
 	// systems variables, don't modify it directly, use GetSystemVar/SetSystemVar method.
 	systems map[string]string
@@ -2330,6 +2333,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.MLogPurgeBatchSize = DefTiDBMLogPurgeBatchSize
 	vars.MLogPurgeMinRate = DefTiDBMLogPurgeMinRate
 	vars.MLogPurgeRateBudgetRatio = DefTiDBMLogPurgeRateBudgetRatio
+	vars.MLogPurgeDeleteTiFlashThreads = DefTiDBMLogPurgeDeleteTiFlashThreads
 	vars.AllowBatchCop = DefTiDBAllowBatchCop
 	vars.allowMPPExecution = DefTiDBAllowMPPExecution
 	vars.HashExchangeWithNewCollation = DefTiDBHashExchangeWithNewCollation

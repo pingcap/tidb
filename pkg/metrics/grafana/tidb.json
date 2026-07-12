@@ -25114,7 +25114,7 @@
                         "format": "time_series",
                         "interval": "",
                         "intervalFactor": 2,
-                        "legendFormat": "{{type}}-success",
+                        "legendFormat": "{{type}}-success-p999",
                         "refId": "A"
                     },
                     {
@@ -25124,8 +25124,28 @@
                         "hide": false,
                         "interval": "",
                         "intervalFactor": 2,
-                        "legendFormat": "{{type}}-failed",
+                        "legendFormat": "{{type}}-failed-p999",
                         "refId": "B"
+                    },
+                    {
+                        "exemplar": true,
+                        "expr": "sum(rate(tidb_mv_service_operation_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", result=\"success\"}[1m])) by (type) / sum(rate(tidb_mv_service_operation_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", result=\"success\"}[1m])) by (type)",
+                        "format": "time_series",
+                        "hide": false,
+                        "interval": "",
+                        "intervalFactor": 2,
+                        "legendFormat": "{{type}}-success-avg",
+                        "refId": "C"
+                    },
+                    {
+                        "exemplar": true,
+                        "expr": "sum(rate(tidb_mv_service_operation_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", result=\"failed\"}[1m])) by (type) / sum(rate(tidb_mv_service_operation_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", result=\"failed\"}[1m])) by (type)",
+                        "format": "time_series",
+                        "hide": false,
+                        "interval": "",
+                        "intervalFactor": 2,
+                        "legendFormat": "{{type}}-failed-avg",
+                        "refId": "D"
                     }
                 ],
                 "thresholds": [],
@@ -25158,6 +25178,146 @@
                         "logBase": 1,
                         "show": false,
                         "$$hashKey": "object:622"
+                    }
+                ],
+                "yaxis": {
+                    "align": false
+                }
+            },
+            {
+                "aliasColors": {},
+                "bars": false,
+                "dashLength": 10,
+                "dashes": false,
+                "datasource": "${DS_TEST-CLUSTER}",
+                "description": "MV refresh duration, including successful and failed refresh execution duration and successful internal refresh schedule duration.",
+                "fill": 1,
+                "fillGradient": 0,
+                "gridPos": {
+                    "h": 6,
+                    "w": 12,
+                    "x": 12,
+                    "y": 6
+                },
+                "hiddenSeries": false,
+                "id": 23763573024,
+                "legend": {
+                    "alignAsTable": false,
+                    "avg": false,
+                    "current": false,
+                    "hideEmpty": true,
+                    "max": false,
+                    "min": false,
+                    "rightSide": false,
+                    "show": true,
+                    "total": false,
+                    "values": false
+                },
+                "lines": true,
+                "linewidth": 1,
+                "links": [],
+                "nullPointMode": "null",
+                "options": {
+                    "alertThreshold": false
+                },
+                "percentage": false,
+                "pointradius": 5,
+                "points": false,
+                "renderer": "flot",
+                "seriesOverrides": [],
+                "spaceLength": 10,
+                "stack": false,
+                "steppedLine": false,
+                "targets": [
+                    {
+                        "exemplar": true,
+                        "expr": "histogram_quantile(0.999, sum(rate(tidb_mv_service_operation_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", type=\"mv_refresh\", result=\"success\"}[1m])) by (le))",
+                        "format": "time_series",
+                        "interval": "",
+                        "intervalFactor": 2,
+                        "legendFormat": "refresh-success-duration-p999",
+                        "refId": "A"
+                    },
+                    {
+                        "exemplar": true,
+                        "expr": "histogram_quantile(0.999, sum(rate(tidb_mv_service_operation_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", type=\"mv_refresh\", result=\"failed\"}[1m])) by (le))",
+                        "format": "time_series",
+                        "hide": false,
+                        "interval": "",
+                        "intervalFactor": 2,
+                        "legendFormat": "refresh-failed-duration-p999",
+                        "refId": "B"
+                    },
+                    {
+                        "exemplar": true,
+                        "expr": "sum(rate(tidb_mv_service_operation_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", type=\"mv_refresh\", result=\"success\"}[1m])) / sum(rate(tidb_mv_service_operation_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", type=\"mv_refresh\", result=\"success\"}[1m]))",
+                        "format": "time_series",
+                        "hide": false,
+                        "interval": "",
+                        "intervalFactor": 2,
+                        "legendFormat": "refresh-success-duration-avg",
+                        "refId": "C"
+                    },
+                    {
+                        "exemplar": true,
+                        "expr": "sum(rate(tidb_mv_service_operation_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", type=\"mv_refresh\", result=\"failed\"}[1m])) / sum(rate(tidb_mv_service_operation_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", type=\"mv_refresh\", result=\"failed\"}[1m]))",
+                        "format": "time_series",
+                        "hide": false,
+                        "interval": "",
+                        "intervalFactor": 2,
+                        "legendFormat": "refresh-failed-duration-avg",
+                        "refId": "D"
+                    },
+                    {
+                        "exemplar": true,
+                        "expr": "histogram_quantile(0.999, sum(rate(tidb_mv_service_refresh_schedule_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+                        "format": "time_series",
+                        "interval": "",
+                        "intervalFactor": 2,
+                        "legendFormat": "schedule-duration-p999",
+                        "refId": "E"
+                    },
+                    {
+                        "exemplar": true,
+                        "expr": "sum(rate(tidb_mv_service_refresh_schedule_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) / sum(rate(tidb_mv_service_refresh_schedule_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m]))",
+                        "format": "time_series",
+                        "hide": false,
+                        "interval": "",
+                        "intervalFactor": 2,
+                        "legendFormat": "schedule-duration-avg",
+                        "refId": "F"
+                    }
+                ],
+                "thresholds": [],
+                "timeRegions": [],
+                "timeFrom": null,
+                "timeShift": null,
+                "title": "MV Refresh Duration",
+                "tooltip": {
+                    "shared": true,
+                    "sort": 0,
+                    "value_type": "individual"
+                },
+                "type": "graph",
+                "xaxis": {
+                    "buckets": null,
+                    "mode": "time",
+                    "name": null,
+                    "show": true,
+                    "values": []
+                },
+                "yaxes": [
+                    {
+                        "format": "s",
+                        "logBase": 2,
+                        "show": true,
+                        "$$hashKey": "object:623"
+                    },
+                    {
+                        "format": "s",
+                        "logBase": 1,
+                        "show": false,
+                        "$$hashKey": "object:624"
                     }
                 ],
                 "yaxis": {
