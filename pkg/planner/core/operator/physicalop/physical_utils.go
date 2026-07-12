@@ -250,7 +250,19 @@ func EncodeUniqueIndexValuesForKey(ctx sessionctx.Context, tblInfo *model.TableI
 		}
 	}
 
-	encodedIdxVals, err := codec.EncodeKey(sc.TimeZone(), nil, idxVals...)
+	// The probe key must match the stored encoding: descending index columns
+	// (pingcap/tidb#2519) are written bitwise-complemented, so an ASC-encoded
+	// probe would silently miss the row. Mirrors tablecodec.GenIndexKey.
+	var encodedIdxVals []byte
+	if idxInfo.HasDescColumn() {
+		desc := make([]bool, len(idxInfo.Columns))
+		for i, c := range idxInfo.Columns {
+			desc[i] = c.Desc
+		}
+		encodedIdxVals, err = codec.EncodeKeyWithDesc(sc.TimeZone(), nil, desc, idxVals...)
+	} else {
+		encodedIdxVals, err = codec.EncodeKey(sc.TimeZone(), nil, idxVals...)
+	}
 	err = sc.HandleError(err)
 	if err != nil {
 		return nil, err
