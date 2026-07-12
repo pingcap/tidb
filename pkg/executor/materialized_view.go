@@ -2375,6 +2375,8 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	}
 	defer e.ReleaseSysSession(releaseCtx, purgeSctx)
 	purgeSessVars := purgeSctx.GetSessionVars()
+	restorePurgeChunkRPC := purgeSessVars.DisableChunkRPCWithRestore()
+	defer restorePurgeChunkRPC()
 	targetMaintainMemQuota := e.Ctx().GetSessionVars().MVMaintainMemQuota
 	targetMaintainIsolationReadEngines := e.Ctx().GetSessionVars().MVMaintainIsolationReadEngines
 	restorePurgeMaintenanceVars, err := applyMVMaintenanceSessionVars(
@@ -2406,6 +2408,8 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 		defer collectorAware.AttachStatsCollectorForInternalSession()()
 	}
 	deleteSessVars := deleteSctx.GetSessionVars()
+	restoreDeleteChunkRPC := deleteSessVars.DisableChunkRPCWithRestore()
+	defer restoreDeleteChunkRPC()
 	restoreDeleteMaintenanceVars, err := applyMVMaintenanceSessionVars(
 		deleteSessVars,
 		targetMaintainMemQuota,
@@ -2444,6 +2448,8 @@ func (e *PurgeMaterializedViewLogExec) executePurgeMaterializedViewLog(
 	}
 	defer e.ReleaseSysSession(releaseCtx, countSctx)
 	countSessVars := countSctx.GetSessionVars()
+	restoreCountChunkRPC := countSessVars.DisableChunkRPCWithRestore()
+	defer restoreCountChunkRPC()
 	restoreCountMaintenanceVars, err := applyMVMaintenanceSessionVars(
 		countSessVars,
 		targetMaintainMemQuota,
@@ -4157,6 +4163,8 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	}
 	sqlExec := refreshSctx.GetSQLExecutor()
 	sessVars := refreshSctx.GetSessionVars()
+	restoreRefreshChunkRPC := sessVars.DisableChunkRPCWithRestore()
+	defer restoreRefreshChunkRPC()
 	refreshExecutionVars := captureRefreshExecutionSessionVars(e.Ctx().GetSessionVars())
 	restoreRefreshExecutionVars, err := applyRefreshExecutionSessionVars(sessVars, refreshExecutionVars, isInternalSQL)
 	if err != nil {
@@ -4704,6 +4712,8 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 	defer e.ReleaseSysSession(releaseCtx, buildSctx)
 
 	buildSessVars := buildSctx.GetSessionVars()
+	restoreBuildChunkRPC := buildSessVars.DisableChunkRPCWithRestore()
+	defer restoreBuildChunkRPC()
 	restoreBuildExecutionVars, err := applyRefreshExecutionSessionVars(buildSessVars, targetExecutionVars, isInternalSQL)
 	if err != nil {
 		return 0, err

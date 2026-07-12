@@ -1900,6 +1900,18 @@ func (s *SessionVars) IsTiFlashCopBanned() bool {
 	return !s.allowTiFlashCop
 }
 
+// DisableChunkRPCWithRestore disables Chunk RPC temporarily and returns a function to restore it.
+func (s *SessionVars) DisableChunkRPCWithRestore() func() {
+	if s == nil {
+		return func() {}
+	}
+	origin := s.EnableChunkRPC
+	s.EnableChunkRPC = false
+	return func() {
+		s.EnableChunkRPC = origin
+	}
+}
+
 // IsMPPEnforced returns whether mpp execution is enforced.
 func (s *SessionVars) IsMPPEnforced() bool {
 	return s.allowMPPExecution && s.enforceMPPExecution

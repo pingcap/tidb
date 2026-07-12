@@ -190,11 +190,7 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment) err
 	for i := range pf.ExchangeSender.Schema().Columns {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
-	if !pf.IsRoot {
-		dagReq.EncodeType = tipb.EncodeType_TypeCHBlock
-	} else {
-		dagReq.EncodeType = tipb.EncodeType_TypeChunk
-	}
+	setMPPEncodeType(c.sessionCtx, dagReq, pf.IsRoot)
 	for _, mppTask := range pf.ExchangeSender.Tasks {
 		if mppTask.PartitionTableIDs != nil {
 			err = util.UpdateExecutorTableID(context.Background(), dagReq.RootExecutor, true, mppTask.PartitionTableIDs)
@@ -350,6 +346,14 @@ func needReportExecutionSummary(plan base.PhysicalPlan) bool {
 		}
 	}
 	return false
+}
+
+func setMPPEncodeType(sctx sessionctx.Context, dagReq *tipb.DAGRequest, isRoot bool) {
+	if !isRoot {
+		dagReq.EncodeType = tipb.EncodeType_TypeCHBlock
+		return
+	}
+	distsql.SetEncodeType(sctx.GetDistSQLCtx(), dagReq)
 }
 
 func (c *localMppCoordinator) dispatchAll(ctx context.Context) {
