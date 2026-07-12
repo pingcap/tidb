@@ -30,10 +30,12 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/lightning/pkg/checkpoints"
 	"github.com/pingcap/tidb/lightning/pkg/precheck"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -42,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metaservice"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -50,8 +53,10 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/cdcutil"
 	"github.com/pingcap/tidb/pkg/util/engine"
+	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/set"
+	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
@@ -775,6 +780,8 @@ type CDCPITRCheckItem struct {
 	etcdCli *clientv3.Client
 }
 
+var newPDClientWithAPIContext = pd.NewClientWithAPIContext
+
 // NewCDCPITRCheckItem creates a checker to check downstream has enabled CDC or PiTR.
 func NewCDCPITRCheckItem(cfg *config.Config, pdAddrsGetter func(context.Context) []string) precheck.Checker {
 	return &CDCPITRCheckItem{
@@ -794,15 +801,39 @@ func dialEtcdWithCfg(
 	cfg *config.Config,
 	addrs []string,
 ) (*clientv3.Client, error) {
-	cfg2, err := cfg.ToTLS()
+	tlsCfg, err := cfg.ToTLS()
 	if err != nil {
 		return nil, err
 	}
-	tlsConfig := cfg2.TLSConfig()
+	tlsConfig := tlsCfg.TLSConfig()
 
-	return clientv3.New(clientv3.Config{
+	pdCli, err := newPDClientWithAPIContext(
+		ctx, keyspace.BuildAPIContext(cfg.TikvImporter.KeyspaceName), componentName, addrs, tlsCfg.ToPDSecurityOption(),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer pdCli.Close()
+
+	var keyspaceMeta *keyspacepb.KeyspaceMeta
+	if cfg.TikvImporter.KeyspaceName != "" {
+		keyspaceMeta, err = pdCli.LoadKeyspace(ctx, cfg.TikvImporter.KeyspaceName)
+		if err != nil {
+			return nil, err
+		}
+		if keyspaceMeta == nil {
+			return nil, errors.Errorf("keyspace %q not found", cfg.TikvImporter.KeyspaceName)
+		}
+	}
+
+	dialInfo, err := metaservice.ResolveEtcdDialInfo(ctx, pdCli, keyspaceMeta)
+	if err != nil {
+		return nil, err
+	}
+
+	etcdCli, err := clientv3.New(clientv3.Config{
 		TLS:              tlsConfig,
-		Endpoints:        addrs,
+		Endpoints:        dialInfo.Endpoints,
 		AutoSyncInterval: 30 * time.Second,
 		DialTimeout:      5 * time.Second,
 		DialOptions: []grpc.DialOption{
@@ -812,6 +843,13 @@ func dialEtcdWithCfg(
 		},
 		Context: ctx,
 	})
+	if err != nil {
+		return nil, err
+	}
+	if dialInfo.Namespace != "" {
+		etcd.SetEtcdCliByNamespace(etcdCli, dialInfo.Namespace)
+	}
+	return etcdCli, nil
 }
 
 // Check implements Checker interface.

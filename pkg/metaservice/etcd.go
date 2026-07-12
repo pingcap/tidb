@@ -21,6 +21,8 @@ import (
 	"net"
 	"net/url"
 
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -33,6 +35,30 @@ const getAllMembersBackoffMs = 5000
 // implements GetPDAddrs and GetPDHttpAddrs.
 func NewEtcdMetaServiceClient(etcdCli *clientv3.Client, pdCli pd.Client) ServiceClient {
 	return newClient(etcdCli, pdCli)
+}
+
+// EtcdDialInfo describes how a direct etcd client should connect for a keyspace.
+type EtcdDialInfo struct {
+	Endpoints []string
+	Namespace string
+}
+
+// ResolveEtcdDialInfo resolves the etcd endpoints and namespace for a keyspace.
+func ResolveEtcdDialInfo(ctx context.Context, pdCli pd.Client, keyspaceMeta *keyspacepb.KeyspaceMeta) (EtcdDialInfo, error) {
+	_, endpoints, err := GetInfoAndGroupAddrs(ctx, pdCli, keyspaceMeta)
+	if err != nil {
+		return EtcdDialInfo{}, err
+	}
+
+	info := EtcdDialInfo{Endpoints: endpoints}
+	if keyspaceMeta != nil {
+		codec, err := tikv.NewCodecV2(tikv.ModeTxn, keyspaceMeta)
+		if err != nil {
+			return EtcdDialInfo{}, err
+		}
+		info.Namespace = keyspace.MakeKeyspaceEtcdNamespace(codec)
+	}
+	return info, nil
 }
 
 // client is used to implement etcd meta service.
