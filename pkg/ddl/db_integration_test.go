@@ -3431,6 +3431,115 @@ func TestMixedDirectionCompositeIndex(t *testing.T) {
 	))
 }
 
+// TestDescendingIndexUniqueDupKeyAndAdminCheck verifies that uniqueness is
+// enforced through the complement-encoded key of a DESC unique index (the
+// duplicate probe reads the same encoding the writer produced) and that
+// `admin check table` / `admin check index` can verify row/index consistency
+// over DESC encodings after a mix of DML.
+func TestDescendingIndexUniqueDupKeyAndAdminCheck(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_enable_descending_index = on")
+	defer tk.MustExec("set @@global.tidb_enable_descending_index = default")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+
+	tk2.MustExec("drop table if exists t_desc_uniq")
+	tk2.MustExec("create table t_desc_uniq (a int, b int, c varchar(32), unique key uk_b (b desc), key idx_ac (a, c desc))")
+	tk2.MustExec("insert into t_desc_uniq values (1, 10, 'x'), (2, 20, 'y'), (3, 30, 'z')")
+
+	// Duplicate-key detection must fire through the DESC-encoded unique key.
+	tk2.MustGetErrCode("insert into t_desc_uniq values (4, 20, 'w')", errno.ErrDupEntry)
+	// INSERT ... ON DUPLICATE KEY UPDATE must locate the conflicting row via
+	// the same encoding.
+	tk2.MustExec("insert into t_desc_uniq values (5, 30, 'v') on duplicate key update a = 99")
+	tk2.MustQuery("select a from t_desc_uniq where b = 30").Check(testkit.Rows("99"))
+
+	// UPDATE / DELETE must maintain the DESC index entries consistently.
+	tk2.MustExec("update t_desc_uniq set b = 25 where b = 10")
+	tk2.MustExec("delete from t_desc_uniq where b = 20")
+	tk2.MustQuery("select b from t_desc_uniq use index(uk_b) order by b desc").Check(testkit.Rows("30", "25"))
+
+	tk2.MustExec("admin check table t_desc_uniq")
+	tk2.MustExec("admin check index t_desc_uniq uk_b")
+	tk2.MustExec("admin check index t_desc_uniq idx_ac")
+
+	// Point_Get and Batch_Point_Get probe the unique index with a directly
+	// encoded key (not a coprocessor range); the probe must use the DESC
+	// encoding or it silently misses the row.
+	tk2.MustHavePlan("select a from t_desc_uniq where b = 30", "Point_Get")
+	tk2.MustHavePlan("select a from t_desc_uniq where b in (25, 30)", "Batch_Point_Get")
+	tk2.MustQuery("select a from t_desc_uniq where b in (25, 30) order by a").Check(testkit.Rows("1", "99"))
+}
+
+// TestDescendingIndexAnalyze verifies that ANALYZE works on tables with DESC
+// indexes: the default sampling-based path builds index stats from row values
+// (which are never DESC-encoded), while the index-analyze pushdown — which
+// would read complement-encoded keys TiKV cannot build histogram bounds from
+// — is skipped with a warning for descending indexes.
+func TestDescendingIndexAnalyze(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_enable_descending_index = on")
+	defer tk.MustExec("set @@global.tidb_enable_descending_index = default")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+
+	tk2.MustExec("drop table if exists t_desc_stats")
+	tk2.MustExec("create table t_desc_stats (a int, b int, key idx_b (b desc))")
+	tk2.MustExec("insert into t_desc_stats values (1,10),(2,20),(3,30),(4,40),(5,50)")
+
+	// Sampling-based ANALYZE (the default) must succeed and produce index
+	// stats for the DESC index.
+	tk2.MustExec("analyze table t_desc_stats all columns")
+	tk2.MustQuery("show stats_histograms where table_name = 't_desc_stats' and column_name = 'idx_b'").
+		CheckAt([]int{4, 6}, testkit.Rows("1 5"))
+
+	// A DESC index that can only be analyzed via the index pushdown (a
+	// special global index — global + prefix column — on a partitioned
+	// table) must be skipped with a warning instead of pushing
+	// complement-encoded keys into the histogram builder.
+	tk2.MustExec("drop table if exists t_desc_global")
+	tk2.MustExec("create table t_desc_global (a int, b int, c varchar(32), primary key (a) nonclustered, " +
+		"unique key uk_bc (b desc, c(3)) global) partition by hash(a) partitions 4")
+	tk2.MustExec("insert into t_desc_global values (1,10,'xx'),(2,20,'yy'),(3,30,'zz'),(4,40,'ww')")
+	tk2.MustExec("analyze table t_desc_global all columns")
+	warnings := tk2.MustQuery("show warnings").Rows()
+	found := false
+	for _, w := range warnings {
+		if strings.Contains(w[2].(string), "descending columns is not supported, skip uk_bc") {
+			found = true
+		}
+	}
+	require.True(t, found, "expected a skip warning for the DESC global index, got: %v", warnings)
+	// The skipped pushdown must not fail the statement, and admin check
+	// still passes.
+	tk2.MustExec("admin check table t_desc_global")
+}
+
+// TestDescendingIndexIndexMerge verifies the IndexMerge read path over a DESC
+// index: partial ranges on the complement-encoded index must produce correct
+// rows when merged with an ASC index.
+func TestDescendingIndexIndexMerge(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_enable_descending_index = on")
+	defer tk.MustExec("set @@global.tidb_enable_descending_index = default")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+
+	tk2.MustExec("drop table if exists t_desc_im")
+	tk2.MustExec("create table t_desc_im (a int, b int, key idx_a (a), key idx_b (b desc))")
+	tk2.MustExec("insert into t_desc_im values (1, 10), (2, 20), (3, 30), (4, 40), (5, 50)")
+
+	query := "select /*+ use_index_merge(t_desc_im, idx_a, idx_b) */ a, b from t_desc_im where a = 1 or b > 35 order by a"
+	tk2.MustHavePlan(query, "IndexMerge")
+	tk2.MustQuery(query).Check(testkit.Rows("1 10", "4 40", "5 50"))
+}
+
 // TestDescendingIndexEndToEnd verifies INSERT + SELECT through a DESC index
 // end-to-end: writes go through the complement-encoded path, the mutation
 // consistency check tolerates them, and the unistore coprocessor emulation
@@ -3522,6 +3631,15 @@ func TestUnservableIndexRejectsQueries(t *testing.T) {
 		require.NoErrorf(t, err, "INSERT must pass when index is in %s (not writable, fence intentionally skips)", st)
 	}
 	tblInfo.Indices[0].State = model.StatePublic
+
+	// LOAD DATA and IMPORT INTO write through the same index-mutation paths
+	// and must hit the fence at plan-build time, before any file access.
+	err = tk.ExecToErr("load data local infile '/nonexistent' into table t_unservable")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "metadata version 99")
+	err = tk.ExecToErr("import into t_unservable from '/nonexistent.csv'")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "metadata version 99")
 }
 
 func TestCreateIndexWithChangeMaxIndexLength(t *testing.T) {
