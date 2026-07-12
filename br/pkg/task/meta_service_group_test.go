@@ -52,6 +52,8 @@ func (*metaServiceGroupPDClient) Close() {}
 
 func TestDialEtcdWithCfgUsesMetaServiceGroup(t *testing.T) {
 	integration.BeforeTestExternal(t)
+	// Use a dedicated embedded etcd cluster as the meta service group target and
+	// verify the direct BR register key lands there after namespacing.
 	metaCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer metaCluster.Terminate(t)
 
@@ -67,6 +69,8 @@ func TestDialEtcdWithCfgUsesMetaServiceGroup(t *testing.T) {
 	codec, err := tikv.NewCodecV2(tikv.ModeTxn, keyspaceMeta)
 	require.NoError(t, err)
 
+	// Stub PD only for keyspace metadata and member discovery so the test can
+	// exercise the real dial helper without depending on a full PD server.
 	mockPD := &metaServiceGroupPDClient{
 		members: []*pdpb.Member{{
 			ClientUrls: []string{"http://127.0.0.1:2379"},
@@ -92,6 +96,8 @@ func TestDialEtcdWithCfgUsesMetaServiceGroup(t *testing.T) {
 	register := utils.NewTaskRegisterWithTTL(etcdCli, time.Minute, utils.RegisterRestore, "restore-test")
 	require.NoError(t, register.RegisterTaskOnce(context.Background()))
 
+	// The visible key in raw etcd should carry both the keyspace namespace and
+	// the original BR register suffix.
 	prefix := keyspace.MakeKeyspaceEtcdNamespace(codec)
 	resp, err := metaCluster.Client(0).Get(context.Background(), prefix, clientv3.WithPrefix())
 	require.NoError(t, err)

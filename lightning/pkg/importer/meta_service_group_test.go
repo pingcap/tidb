@@ -53,6 +53,8 @@ func (*metaServiceGroupPDClient) Close() {}
 
 func TestDialEtcdWithCfgUsesMetaServiceGroup(t *testing.T) {
 	integration.BeforeTestExternal(t)
+	// Use one embedded etcd cluster as the meta service group target and assert
+	// Lightning's direct register key is written there.
 	metaCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer metaCluster.Terminate(t)
 
@@ -68,6 +70,8 @@ func TestDialEtcdWithCfgUsesMetaServiceGroup(t *testing.T) {
 	codec, err := tikv.NewCodecV2(tikv.ModeTxn, keyspaceMeta)
 	require.NoError(t, err)
 
+	// The helper only needs PD member addresses plus keyspace metadata, so a
+	// narrow stub is enough to drive the real code path.
 	mockPD := &metaServiceGroupPDClient{
 		members: []*pdpb.Member{{
 			ClientUrls: []string{"http://127.0.0.1:2379"},
@@ -92,6 +96,8 @@ func TestDialEtcdWithCfgUsesMetaServiceGroup(t *testing.T) {
 	register := utils.NewTaskRegisterWithTTL(etcdCli, time.Minute, utils.RegisterLightning, "lightning-test")
 	require.NoError(t, register.RegisterTaskOnce(context.Background()))
 
+	// The raw etcd key should be prefixed by the keyspace namespace while still
+	// retaining the original Lightning register path.
 	prefix := keyspace.MakeKeyspaceEtcdNamespace(codec)
 	resp, err := metaCluster.Client(0).Get(context.Background(), prefix, clientv3.WithPrefix())
 	require.NoError(t, err)

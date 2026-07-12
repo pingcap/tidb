@@ -72,6 +72,8 @@ func TestNewEtcdCliGetEtcdAddrs(t *testing.T) {
 
 func TestNewEtcdCliUsesMetaServiceGroupAndNamespace(t *testing.T) {
 	integration.BeforeTestExternal(t)
+	// The store path already selects meta service group addrs; this regression
+	// test locks that behavior in and also checks keyspace namespacing.
 	metaCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer metaCluster.Terminate(t)
 
@@ -100,6 +102,7 @@ func TestNewEtcdCliUsesMetaServiceGroupAndNamespace(t *testing.T) {
 	_, err = cli.Put(ctx, "direct-key", "meta-group")
 	require.NoError(t, err)
 
+	// A raw read from the embedded etcd cluster should observe the namespaced key.
 	namespacePrefix := keyspace.MakeKeyspaceEtcdNamespace(codec)
 	metaResp, err := metaCluster.Client(0).Get(ctx, namespacePrefix, clientv3.WithPrefix())
 	require.NoError(t, err)
