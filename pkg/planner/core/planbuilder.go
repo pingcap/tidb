@@ -2571,6 +2571,21 @@ func getModifiedIndexesInfoForAnalyze(
 	return idxsInfo, independentIdxsInfo, specialGlobalIdxsInfo
 }
 
+// skipDescIndexAnalyzeTask reports whether an index must be excluded from the
+// index-analyze pushdown because it has descending columns, appending a
+// warning when it is skipped. TiKV's index-analyze handler builds histogram
+// bucket bounds from raw index keys and would either fail on or mis-order the
+// bitwise-complemented bytes of descending columns, so such indexes rely on
+// the sampling-based stats built from row values instead.
+func (b *PlanBuilder) skipDescIndexAnalyzeTask(idx *model.IndexInfo) bool {
+	if !idx.HasDescColumn() {
+		return false
+	}
+	b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf(
+		"analyzing an index with descending columns is not supported, skip %s", idx.Name.L))
+	return true
+}
+
 // filterSkipColumnTypes filters out columns whose types are in the skipTypes list.
 func (b *PlanBuilder) filterSkipColumnTypes(origin []*model.ColumnInfo, tbl *resolve.TableNameW, mustAnalyzedCols *calcOnceMap) (result []*model.ColumnInfo, skipCol []*model.ColumnInfo) {
 	// For auto-analyze, it uses @@global.tidb_analyze_skip_column_types to obtain the skipTypes list.
@@ -2781,6 +2796,9 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 			}
 			analyzePlan.ColTasks = append(analyzePlan.ColTasks, newTask)
 			for _, indexInfo := range independentIndexes {
+				if b.skipDescIndexAnalyzeTask(indexInfo) {
+					continue
+				}
 				newIdxTask := AnalyzeIndexTask{
 					IndexInfo:   indexInfo,
 					TblInfo:     tbl.TableInfo,
@@ -2796,6 +2814,9 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 			// When `needAnalyzeCols == true`, non-global indexes already covered by previous loop,
 			// deal with global index here.
 			for _, indexInfo := range specialGlobalIndexes {
+				if b.skipDescIndexAnalyzeTask(indexInfo) {
+					continue
+				}
 				analyzePlan.IdxTasks = append(analyzePlan.IdxTasks, generateIndexTasks(indexInfo, as, tbl.TableInfo, nil, nil, version)...)
 			}
 		} else {
@@ -2803,6 +2824,9 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 			for _, idxName := range as.IndexNames {
 				idx := tbl.TableInfo.FindIndexByName(idxName.L)
 				if idx == nil || !handleutil.IsSpecialGlobalIndex(idx, tbl.TableInfo) {
+					continue
+				}
+				if b.skipDescIndexAnalyzeTask(idx) {
 					continue
 				}
 				analyzePlan.IdxTasks = append(analyzePlan.IdxTasks, generateIndexTasks(idx, as, tbl.TableInfo, nil, nil, version)...)
