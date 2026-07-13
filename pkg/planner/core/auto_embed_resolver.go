@@ -711,14 +711,14 @@ func autoEmbedJoinEqualConditions(p *logicalop.LogicalJoin) []*expression.Scalar
 	return conditions
 }
 
-func findAutoEmbedJoinColumn(p *logicalop.LogicalJoin, target *expression.Column) (*expression.Column, bool, bool) {
+func findAutoEmbedJoinColumn(p *logicalop.LogicalJoin, target *expression.Column) (matched *expression.Column, found bool, ambiguous bool) {
 	if p == nil {
 		return nil, false, false
 	}
-	if matched, _, found, ambiguous := findAutoEmbedColumn(p.Schema(), target); found || ambiguous {
+	if matched, _, found, ambiguous = findAutoEmbedColumn(p.Schema(), target); found || ambiguous {
 		return matched, found, ambiguous
 	}
-	matched, _, found, ambiguous := findAutoEmbedColumn(p.FullSchema, target)
+	matched, _, found, ambiguous = findAutoEmbedColumn(p.FullSchema, target)
 	return matched, found, ambiguous
 }
 
@@ -836,7 +836,7 @@ func autoEmbedPlanDirectNamespaceContains(plan base.LogicalPlan, target *express
 // findAutoEmbedColumn prefers exact object identity, then accepts one
 // type-compatible UniqueID match for cloning operators. Duplicate candidates
 // are ambiguity, not an arbitrary first match.
-func findAutoEmbedColumn(schema *expression.Schema, target *expression.Column) (*expression.Column, int, bool, bool) {
+func findAutoEmbedColumn(schema *expression.Schema, target *expression.Column) (matched *expression.Column, idx int, found bool, ambiguous bool) {
 	if schema == nil || target == nil {
 		return nil, -1, false, false
 	}
