@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/planner/core/autoembed"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
@@ -4208,7 +4209,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		return n
 	}
 
-	var insertSource *autoEmbedSourceSnapshot
+	var insertSource *autoembed.SourceSnapshot
 	if len(insert.Lists) > 0 {
 		// Branch for `INSERT ... VALUES ...`.
 		// Branch for `INSERT ... SET ...`.
@@ -4406,7 +4407,7 @@ func (*colNameInOnDupExtractor) Leave(node ast.Node) (ast.Node, bool) {
 	return node, true
 }
 
-func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.InsertStmt, insertPlan *physicalop.Insert) (*autoEmbedSourceSnapshot, error) {
+func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.InsertStmt, insertPlan *physicalop.Insert) (*autoembed.SourceSnapshot, error) {
 	b.isForUpdateRead = true
 	affectedValuesCols, err := b.getAffectCols(insert, insertPlan)
 	if err != nil {
@@ -4492,7 +4493,7 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 	selectLogicalPlan := selectPlan.(base.LogicalPlan)
 	// The snapshot is taken before optimization; schema4NewRow below must keep
 	// the corresponding SELECT output UniqueIDs so ON DUPLICATE can rebind them.
-	insertSource := snapshotAutoEmbedSource(selectLogicalPlan)
+	insertSource := autoembed.SnapshotSource(selectLogicalPlan)
 	optimizedPhysicalPlan, _, err := DoOptimize(ctx, b.ctx, b.optFlag, selectLogicalPlan)
 	if err != nil {
 		return nil, err

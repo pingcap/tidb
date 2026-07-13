@@ -12,59 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package autoembed
 
 import (
 	"reflect"
 
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
-	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 )
-
-// Auto-embedding provenance resolution
-//
-// VEC_EMBED_* needs the model and options from the first argument's generated
-// EMBED_TEXT definition. Carrying that definition on expression.Column made an
-// arbitrary Column.Clone look like valid provenance. The resolver therefore
-// starts at the VEC_EMBED_* consumer and proves the logical value path back to
-// one or more catalog columns.
-//
-// A transparent alias follows one path and can be rewritten:
-//
-//	CREATE TABLE docs (
-//	  text TEXT,
-//	  vec VECTOR(3) GENERATED ALWAYS AS
-//	    (EMBED_TEXT('mock/json', text, '{"plus":0.2}')) STORED
-//	);
-//	SELECT VEC_EMBED_L2_DISTANCE(v, 'hello')
-//	FROM (SELECT vec AS v FROM docs) AS p;
-//
-// The proof is Projection(v <- docs.vec) -> DataSource(docs.vec). The rewriter
-// produces VEC_L2_DISTANCE(v, EMBED_TEXT('mock/json', 'hello',
-// '{"plus":0.2}')).
-//
-// A coalesced value must prove every possible source. For example,
-//
-//	SELECT VEC_EMBED_L2_DISTANCE(vec, 'hello')
-//	FROM docs JOIN plain_vectors USING (vec);
-//
-// is rejected when plain_vectors.vec is not the same auto-embedding column.
-// The Join owns vec, but its sources do not reach consensus. This distinction
-// is represented by three result states: outside the current plan namespace,
-// inside without a proof, and inside with AutoEmbedInfo. The middle state stops
-// lookup from falling through to docs and incorrectly accepting one Join side.
-//
-// INSERT ... SELECT is resolved after its source has been optimized. Because
-// optimization may replace an empty source with TableDual, the resolver records
-// a statement-local snapshot before optimization and rebinds ON DUPLICATE
-// columns to that snapshot by UniqueID and compatible vector type.
 
 type autoEmbedResolveKey struct {
 	plan base.LogicalPlan
@@ -72,7 +30,7 @@ type autoEmbedResolveKey struct {
 }
 
 // autoEmbedResolveResult represents the three namespace/proof states described
-// in the architecture comment above.
+// in the package documentation.
 type autoEmbedResolveResult struct {
 	// found distinguishes "outside this plan's column namespace" from "the
 	// column is present, but its auto-embedding provenance is not provable".
@@ -100,130 +58,6 @@ const (
 type autoEmbedResolver struct {
 	state map[autoEmbedResolveKey]autoEmbedResolveState
 	memo  map[autoEmbedResolveKey]autoEmbedResolveResult
-}
-
-// autoEmbedSourceSnapshot preserves INSERT SELECT output provenance across
-// logical optimization, which may replace the source tree with TableDual. Its
-// cloned schema is immutable; lookup relies on corresponding SELECT outputs
-// retaining their UniqueIDs and compatible types across optimization.
-type autoEmbedSourceSnapshot struct {
-	schema  *expression.Schema
-	results []autoEmbedResolveResult
-}
-
-// snapshotAutoEmbedSource records INSERT SELECT output proofs before logical
-// optimization can discard their source plans.
-func snapshotAutoEmbedSource(root base.LogicalPlan) *autoEmbedSourceSnapshot {
-	if isNilAutoEmbedPlan(root) || root.Schema() == nil {
-		return nil
-	}
-	resolver := &autoEmbedResolver{
-		state: make(map[autoEmbedResolveKey]autoEmbedResolveState),
-		memo:  make(map[autoEmbedResolveKey]autoEmbedResolveResult),
-	}
-	snapshot := &autoEmbedSourceSnapshot{
-		schema:  root.Schema().Clone(),
-		results: make([]autoEmbedResolveResult, root.Schema().Len()),
-	}
-	for idx, col := range root.Schema().Columns {
-		result := resolver.resolve(root, col)
-		result.found = true
-		snapshot.results[idx] = result
-	}
-	return snapshot
-}
-
-// resolve uses the same pointer-first, then UniqueID-and-type identity rules as
-// logical traversal. Ambiguous snapshot matches claim the namespace without
-// returning metadata, so INSERT cannot fall back to its target table by chance.
-func (s *autoEmbedSourceSnapshot) resolve(target *expression.Column) autoEmbedResolveResult {
-	if s == nil {
-		return autoEmbedResolveResult{}
-	}
-	_, idx, found, ambiguous := findAutoEmbedColumn(s.schema, target)
-	if ambiguous {
-		return autoEmbedResolveResult{found: true}
-	}
-	if !found || idx >= len(s.results) {
-		return autoEmbedResolveResult{}
-	}
-	return s.results[idx]
-}
-
-// autoEmbedPlanHasProvenance is used only before buildSelection replaces a
-// constant-false source with TableDual. Keeping that source until expression
-// rewrite preserves provenance; normal logical optimization can still produce
-// the same empty physical plan afterwards.
-func autoEmbedPlanHasProvenance(root base.LogicalPlan) bool {
-	if isNilAutoEmbedPlan(root) {
-		return false
-	}
-	resolver := &autoEmbedResolver{
-		state: make(map[autoEmbedResolveKey]autoEmbedResolveState),
-		memo:  make(map[autoEmbedResolveKey]autoEmbedResolveResult),
-	}
-	schemas := []*expression.Schema{root.Schema()}
-	switch p := root.(type) {
-	case *logicalop.LogicalJoin:
-		schemas = append(schemas, p.FullSchema)
-	case *logicalop.LogicalApply:
-		schemas = append(schemas, p.FullSchema)
-	}
-	for _, schema := range schemas {
-		if schema == nil {
-			continue
-		}
-		for _, col := range schema.Columns {
-			if result := resolver.resolve(root, col); result.info != nil {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// resolveAutoEmbedInfo selects exactly one provenance namespace. INSERT target
-// columns take precedence only when the SELECT snapshot does not also claim the
-// column; source/target ambiguity and an unprovable source both fail closed.
-// Ordinary expressions resolve solely from the current logical root.
-func resolveAutoEmbedInfo(
-	root base.LogicalPlan,
-	insert *physicalop.Insert,
-	insertSource *autoEmbedSourceSnapshot,
-	vector *expression.Column,
-) (*expression.AutoEmbedInfo, bool) {
-	if vector == nil || vector.RetType == nil || !vector.RetType.EvalType().IsVectorKind() {
-		return nil, false
-	}
-
-	resolver := &autoEmbedResolver{
-		state: make(map[autoEmbedResolveKey]autoEmbedResolveState),
-		memo:  make(map[autoEmbedResolveKey]autoEmbedResolveResult),
-	}
-	if insert != nil {
-		if targetInfo, matched := resolveInsertTargetAutoEmbedInfo(insert, vector); matched {
-			if insertSource != nil && insertSource.resolve(vector).found {
-				return nil, false
-			}
-			if targetInfo == nil {
-				return nil, false
-			}
-			return copyAutoEmbedInfo(targetInfo), true
-		}
-		if insertSource != nil {
-			result := insertSource.resolve(vector)
-			if result.found && result.info != nil {
-				return copyAutoEmbedInfo(result.info), true
-			}
-			return nil, false
-		}
-	}
-
-	result := resolver.resolve(root, vector)
-	if !result.found || result.info == nil {
-		return nil, false
-	}
-	return copyAutoEmbedInfo(result.info), true
 }
 
 // resolve memoizes (plan, column) pairs for one consumer lookup. Encountering
@@ -552,80 +386,6 @@ func (r *autoEmbedResolver) resolveCTE(p *logicalop.LogicalCTE, target *expressi
 	return result
 }
 
-// resolveDataSourceAutoEmbedInfo proves a provenance root from one public,
-// visible, stored generated table column whose parsed expression is a direct
-// supported EMBED_TEXT call. Catalog SQL text is never copied to plan columns.
-func resolveDataSourceAutoEmbedInfo(ds *logicalop.DataSource, target *expression.Column) autoEmbedResolveResult {
-	if ds == nil || ds.Schema() == nil || ds.Table == nil {
-		return autoEmbedResolveResult{}
-	}
-	planCol, _, found, ambiguous := findAutoEmbedColumn(ds.Schema(), target)
-	if ambiguous {
-		return autoEmbedResolveResult{found: true}
-	}
-	if !found {
-		return autoEmbedResolveResult{}
-	}
-	var matched *table.Column
-	for _, tblCol := range ds.Table.Cols() {
-		if tblCol == nil || tblCol.ColumnInfo == nil || tblCol.ID != planCol.ID {
-			continue
-		}
-		if matched != nil {
-			return autoEmbedResolveResult{found: true}
-		}
-		matched = tblCol
-	}
-	return autoEmbedInfoFromTableColumn(matched, planCol)
-}
-
-// resolveInsertTargetAutoEmbedInfo requires pointer identity in TableSchema.
-// UniqueID matching is reserved for the SELECT snapshot, preventing a cloned
-// source output from being reinterpreted as the destination table column.
-func resolveInsertTargetAutoEmbedInfo(insert *physicalop.Insert, target *expression.Column) (*expression.AutoEmbedInfo, bool) {
-	if insert == nil || insert.TableSchema == nil || insert.Table == nil || target == nil {
-		return nil, false
-	}
-	matchedIdx := -1
-	for idx, col := range insert.TableSchema.Columns {
-		if col != target {
-			continue
-		}
-		if matchedIdx >= 0 {
-			return nil, true
-		}
-		matchedIdx = idx
-	}
-	if matchedIdx < 0 {
-		return nil, false
-	}
-	cols := insert.Table.Cols()
-	if matchedIdx >= len(cols) {
-		return nil, true
-	}
-	result := autoEmbedInfoFromTableColumn(cols[matchedIdx], target)
-	return result.info, true
-}
-
-// autoEmbedInfoFromTableColumn validates the catalog constraints shared by
-// DataSource and INSERT target roots, then extracts immutable metadata.
-func autoEmbedInfoFromTableColumn(tblCol *table.Column, planCol *expression.Column) autoEmbedResolveResult {
-	result := autoEmbedResolveResult{found: true}
-	if tblCol == nil || tblCol.ColumnInfo == nil || planCol == nil || planCol.RetType == nil ||
-		tblCol.State != model.StatePublic || tblCol.Hidden || !tblCol.IsGenerated() || !tblCol.GeneratedStored ||
-		!planCol.RetType.EvalType().IsVectorKind() || !autoEmbedFieldTypesCompatible(planCol.RetType, &tblCol.FieldType) ||
-		tblCol.GeneratedExpr == nil || tblCol.GeneratedExpr.Internal() == nil ||
-		!expression.IsAutoEmbedFnCallAST(tblCol.GeneratedExpr.Internal()) {
-		return result
-	}
-	info, err := expression.ExtractAutoEmbedInfoFromAST(tblCol.GeneratedExpr.Internal())
-	if err != nil {
-		return result
-	}
-	result.info = copyAutoEmbedInfo(info)
-	return result
-}
-
 // collectAutoEmbedJoinPairs reconstructs USING/NATURAL equivalence groups in
 // two passes. The registered redundant-column map is authoritative when it is
 // complete. UPDATE/DELETE can omit that map, so the fallback accepts only a
@@ -833,81 +593,6 @@ func autoEmbedPlanDirectNamespaceContains(plan base.LogicalPlan, target *express
 	}
 }
 
-// findAutoEmbedColumn prefers exact object identity, then accepts one
-// type-compatible UniqueID match for cloning operators. Duplicate candidates
-// are ambiguity, not an arbitrary first match.
-func findAutoEmbedColumn(schema *expression.Schema, target *expression.Column) (matched *expression.Column, idx int, found bool, ambiguous bool) {
-	if schema == nil || target == nil {
-		return nil, -1, false, false
-	}
-	pointerIdx := -1
-	for idx, col := range schema.Columns {
-		if col != target {
-			continue
-		}
-		if pointerIdx >= 0 {
-			return nil, -1, false, true
-		}
-		pointerIdx = idx
-	}
-	if pointerIdx >= 0 {
-		return schema.Columns[pointerIdx], pointerIdx, true, false
-	}
-	matchIdx := -1
-	for idx, col := range schema.Columns {
-		if !autoEmbedColumnsMatch(col, target) {
-			continue
-		}
-		if matchIdx >= 0 {
-			return nil, -1, false, true
-		}
-		matchIdx = idx
-	}
-	if matchIdx < 0 {
-		return nil, -1, false, false
-	}
-	return schema.Columns[matchIdx], matchIdx, true, false
-}
-
-func findAutoEmbedColumnByID(schema *expression.Schema, id int64) *expression.Column {
-	if schema == nil {
-		return nil
-	}
-	var matched *expression.Column
-	for _, col := range schema.Columns {
-		if col == nil || col.UniqueID != id {
-			continue
-		}
-		if matched != nil {
-			return nil
-		}
-		matched = col
-	}
-	return matched
-}
-
-func autoEmbedColumnsMatch(left, right *expression.Column) bool {
-	return left != nil && right != nil && left.UniqueID == right.UniqueID && autoEmbedVectorTypesCompatible(left, right)
-}
-
-func autoEmbedVectorTypesCompatible(left, right *expression.Column) bool {
-	return left != nil && right != nil && autoEmbedFieldTypesCompatible(left.RetType, right.RetType)
-}
-
-// autoEmbedFieldTypesCompatible tolerates only NotNull drift because MaxOneRow
-// clears that flag while keeping the same value. Dimensions and every other
-// FieldType property remain part of the proof.
-func autoEmbedFieldTypesCompatible(left, right *types.FieldType) bool {
-	if left == nil || right == nil || !left.EvalType().IsVectorKind() || !right.EvalType().IsVectorKind() {
-		return false
-	}
-	leftCopy := left.Clone()
-	rightCopy := right.Clone()
-	leftCopy.DelFlag(mysql.NotNullFlag)
-	rightCopy.DelFlag(mysql.NotNullFlag)
-	return leftCopy.Equals(rightCopy)
-}
-
 func appendAutoEmbedColumnOnce(columns []*expression.Column, col *expression.Column) []*expression.Column {
 	for _, existing := range columns {
 		if autoEmbedColumnsMatch(existing, col) {
@@ -934,14 +619,6 @@ func autoEmbedPairContainsColumn(pairs [][2]*expression.Column, col *expression.
 		}
 	}
 	return false
-}
-
-func copyAutoEmbedInfo(info *expression.AutoEmbedInfo) *expression.AutoEmbedInfo {
-	if info == nil {
-		return nil
-	}
-	cloned := *info
-	return &cloned
 }
 
 // isNilAutoEmbedPlan handles typed nil pointers stored in LogicalPlan

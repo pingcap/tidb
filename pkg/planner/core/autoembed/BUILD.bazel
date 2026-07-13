@@ -1,0 +1,46 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "autoembed",
+    srcs = [
+        "catalog.go",
+        "doc.go",
+        "resolver.go",
+        "snapshot.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/planner/core/autoembed",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/expression",
+        "//pkg/meta/model",
+        "//pkg/parser/ast",
+        "//pkg/parser/mysql",
+        "//pkg/planner/core/base",
+        "//pkg/planner/core/operator/logicalop",
+        "//pkg/planner/core/operator/physicalop",
+        "//pkg/table",
+        "//pkg/types",
+    ],
+)
+
+go_test(
+    name = "autoembed_test",
+    timeout = "short",
+    srcs = ["resolver_test.go"],
+    embed = [":autoembed"],
+    flaky = True,
+    deps = [
+        "//pkg/expression",
+        "//pkg/expression/aggregation",
+        "//pkg/meta/autoid",
+        "//pkg/meta/model",
+        "//pkg/parser/ast",
+        "//pkg/parser/mysql",
+        "//pkg/planner/core/base",
+        "//pkg/planner/core/operator/logicalop",
+        "//pkg/table/tables",
+        "//pkg/types",
+        "//pkg/util/mock",
+        "@com_github_stretchr_testify//require",
+    ],
+)

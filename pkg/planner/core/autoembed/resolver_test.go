@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package autoembed
 
 import (
 	"testing"
@@ -87,21 +87,21 @@ func TestResolveAutoEmbedInfo(t *testing.T) {
 
 	assertModel := func(plan base.LogicalPlan, col *expression.Column, expected string) {
 		t.Helper()
-		info, ok := resolveAutoEmbedInfo(plan, nil, nil, col)
+		info, ok := Resolve(plan, nil, nil, col)
 		require.True(t, ok)
 		require.Equal(t, expected, info.ModelNameWithProvider)
 		require.Equal(t, `{"plus":0.2}`, info.OptsInJSON)
 	}
 	assertRejected := func(plan base.LogicalPlan, col *expression.Column) {
 		t.Helper()
-		info, ok := resolveAutoEmbedInfo(plan, nil, nil, col)
+		info, ok := Resolve(plan, nil, nil, col)
 		require.False(t, ok)
 		require.Nil(t, info)
 	}
 
 	source, sourceCol := newSource("mock/json")
 	assertModel(source, sourceCol, "mock/json")
-	require.True(t, autoEmbedPlanHasProvenance(source))
+	require.True(t, PlanHasProvenance(source))
 	require.False(t, autoEmbedFieldTypesCompatible(sourceCol.RetType, types.NewFieldType(mysql.TypeLonglong)))
 	nullableClone := sourceCol.RetType.Clone()
 	nullableClone.DelFlag(mysql.NotNullFlag)
@@ -115,7 +115,7 @@ func TestResolveAutoEmbedInfo(t *testing.T) {
 	projection.SetSchema(expression.NewSchema(projectedCol))
 	projection.SetChildren(source)
 	assertModel(projection, projectedCol, "mock/json")
-	snapshot := snapshotAutoEmbedSource(projection)
+	snapshot := SnapshotSource(projection)
 	projection.SetChildren(logicalop.LogicalTableDual{}.Init(ctx, 0))
 	snapshotResult := snapshot.resolve(projectedCol)
 	require.True(t, snapshotResult.found)
@@ -129,7 +129,7 @@ func TestResolveAutoEmbedInfo(t *testing.T) {
 	derivedProjection.SetSchema(expression.NewSchema(projectedCol.Clone().(*expression.Column)))
 	derivedProjection.SetChildren(source)
 	assertRejected(derivedProjection, derivedProjection.Schema().Columns[0])
-	require.False(t, autoEmbedPlanHasProvenance(derivedProjection))
+	require.False(t, PlanHasProvenance(derivedProjection))
 
 	selection := logicalop.LogicalSelection{}.Init(ctx, 0)
 	selection.SetChildren(projection)

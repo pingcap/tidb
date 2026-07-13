@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
+	"github.com/pingcap/tidb/pkg/planner/core/autoembed"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
@@ -186,7 +187,7 @@ func (b *PlanBuilder) rewriteInsertExpression(
 	exprNode ast.ExprNode,
 	mockPlan base.LogicalPlan,
 	insertPlan *physicalop.Insert,
-	insertSource *autoEmbedSourceSnapshot,
+	insertSource *autoembed.SourceSnapshot,
 	preprocess func(ast.Node) ast.Node,
 ) (expression.Expression, base.LogicalPlan, error) {
 	b.rewriterCounter++
@@ -216,7 +217,7 @@ func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(
 	exprNode ast.ExprNode,
 	mockPlan base.LogicalPlan,
 	insertPlan *physicalop.Insert,
-	insertSource *autoEmbedSourceSnapshot,
+	insertSource *autoembed.SourceSnapshot,
 ) (expression.Expression, error) {
 	b.curClause = fieldList
 	expr, _, err := b.rewriteInsertExpression(ctx, exprNode, mockPlan, insertPlan, insertSource, nil)
@@ -366,7 +367,7 @@ type exprRewriterPlanCtx struct {
 	// insertPlan is only used to rewrite the expressions inside the assignment
 	// of the "INSERT" statement.
 	insertPlan   *physicalop.Insert
-	insertSource *autoEmbedSourceSnapshot
+	insertSource *autoembed.SourceSnapshot
 
 	rollExpand *logicalop.LogicalExpand
 }
@@ -3046,7 +3047,7 @@ func (er *expressionRewriter) autoEmbedVectorSearchArg(fnName string, arg expres
 		}
 	}
 	if ok && er.planCtx != nil {
-		embedInfo, found := resolveAutoEmbedInfo(er.planCtx.plan, er.planCtx.insertPlan, er.planCtx.insertSource, vecArg)
+		embedInfo, found := autoembed.Resolve(er.planCtx.plan, er.planCtx.insertPlan, er.planCtx.insertSource, vecArg)
 		if found {
 			return vecArg, embedInfo, nil
 		}

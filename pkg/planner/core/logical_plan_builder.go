@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/planner/core/autoembed"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
@@ -1391,7 +1392,7 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, wh
 				}
 				// Preserve proven auto-embedding provenance until SELECT expressions
 				// are rewritten. Logical optimization can fold the selection later.
-				if autoEmbedPlanHasProvenance(p) {
+				if autoembed.PlanHasProvenance(p) {
 					cnfExpres = append(cnfExpres, item)
 					continue
 				}
