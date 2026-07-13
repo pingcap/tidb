@@ -1027,6 +1027,15 @@ func TestMVServiceBuildMVRefreshTasksDoesNotDeleteAlertsOnTemporaryMetadataMiss(
 	svc.maybeLogRefreshAlertTasks(now)
 	require.Equal(t, int32(0), helper.syncRefreshAlertCalls.Load())
 	require.Equal(t, int32(1), helper.cleanupStaleRefreshAlertCalls.Load())
+
+	svc.mvRefreshAlertMu.Lock()
+	preserved, ok := svc.mvRefreshAlertMu.pending[existing.ID]
+	svc.mvRefreshAlertMu.Unlock()
+	require.True(t, ok)
+	require.NotNil(t, preserved)
+	require.True(t, preserved.alertStateInitialized)
+	require.Equal(t, mvRefreshAlertLevelWarning, preserved.lastSyncedAlertLevel)
+	require.Equal(t, uint64(12345), preserved.lastSyncedAlertReadTSO)
 }
 
 func TestMVServiceMaybeLogRefreshAlertTasksSkipsCleanupWhenNotOwner(t *testing.T) {
