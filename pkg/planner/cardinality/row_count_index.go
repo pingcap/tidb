@@ -581,21 +581,26 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 // independence between the index columns and the primary key. The full ranges must not
 // reach the index statistics directly: bounds encoded from the appended dimensions sort
 // past the truncated statistics keys and would collapse the estimate.
+//
+// idxColsWithHandle must be the declared index columns followed by the complete handle:
+// fillIndexPath only appends the handle when the table's primary key is the single
+// integer handle column, so the dimensions past declaredColCnt always identify a row
+// exactly. A partial handle suffix would break the full-point cap below.
 func AdjustRowCountForAppendedHandleColumns(
 	sctx planctx.PlanContext,
 	coll *statistics.HistColl,
 	ranges []*ranger.Range,
-	idxCols []*expression.Column,
+	idxColsWithHandle []*expression.Column,
 	declaredColCnt int,
 	prefixCount statistics.RowEstimate,
 ) statistics.RowEstimate {
 	realtimeCount := float64(coll.RealtimeCount)
-	if realtimeCount <= 0 || len(ranges) == 0 || len(idxCols) <= declaredColCnt {
+	if realtimeCount <= 0 || len(ranges) == 0 || len(idxColsWithHandle) <= declaredColCnt {
 		return prefixCount
 	}
-	sels := make([]float64, 0, len(idxCols)-declaredColCnt)
-	for dim := declaredColCnt; dim < len(idxCols); dim++ {
-		col := idxCols[dim]
+	sels := make([]float64, 0, len(idxColsWithHandle)-declaredColCnt)
+	for dim := declaredColCnt; dim < len(idxColsWithHandle); dim++ {
+		col := idxColsWithHandle[dim]
 		if col == nil || statistics.ColumnStatsIsInvalid(coll.GetCol(col.UniqueID), sctx, coll, col.UniqueID) {
 			continue
 		}
@@ -658,10 +663,11 @@ func AdjustRowCountForAppendedHandleColumns(
 	}
 	// A point range over the declared columns plus the full handle identifies at most
 	// one row, because the physical key of a non-unique index ends with the complete
-	// handle and is therefore unique.
+	// handle and is therefore unique. This relies on the contract above: the appended
+	// dimensions cover the complete handle, not a prefix of a multi-column primary key.
 	fullPoints := true
 	for _, ran := range ranges {
-		if len(ran.LowVal) != len(idxCols) || len(ran.HighVal) != len(idxCols) ||
+		if len(ran.LowVal) != len(idxColsWithHandle) || len(ran.HighVal) != len(idxColsWithHandle) ||
 			!ran.IsPoint(sctx.GetRangerCtx()) {
 			fullPoints = false
 			break
