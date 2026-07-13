@@ -88,6 +88,10 @@ type IndexLookUpJoin struct {
 	stats    *indexLookUpJoinRuntimeStats
 	Finished *atomic.Value
 	prepared bool
+
+	// AdaptiveLimitEligible is set when the outer physical property must keep order.
+	AdaptiveLimitEligible   bool
+	AdaptiveLimitController *exec.AdaptiveLimitController
 }
 
 // OuterCtx is the outer ctx used in index lookup join
@@ -290,13 +294,32 @@ func (e *IndexLookUpJoin) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	req.Reset()
 	e.JoinResult.Reset()
+	adaptiveController := e.AdaptiveLimitController
+	pendingConsumedRows, pendingOutputRows := 0, 0
+	flushAdaptiveProgress := func() {
+		if pendingConsumedRows == 0 && pendingOutputRows == 0 {
+			return
+		}
+		adaptiveController.ObserveJoinProgress(pendingConsumedRows, pendingOutputRows)
+		pendingConsumedRows, pendingOutputRows = 0, 0
+	}
+	if adaptiveController != nil {
+		defer flushAdaptiveProgress()
+	}
 	for {
+		if adaptiveController != nil && e.task != nil && int(e.task.cursor.ChkIdx) >= e.task.outerResult.NumChunks() {
+			flushAdaptiveProgress()
+		}
 		task, err := e.getFinishedTask(ctx)
 		if err != nil {
 			return err
 		}
 		if task == nil {
 			return nil
+		}
+		outputRowsBeforeProbe := 0
+		if adaptiveController != nil {
+			outputRowsBeforeProbe = req.NumRows()
 		}
 		startTime := time.Now()
 		if e.innerIter == nil || e.innerIter.Current() == e.innerIter.End() {
@@ -322,6 +345,9 @@ func (e *IndexLookUpJoin) Next(ctx context.Context, req *chunk.Chunk) error {
 				e.Joiner.OnMissMatch(task.hasNull, outerRow, req)
 			}
 			task.cursor.RowIdx++
+			if adaptiveController != nil {
+				pendingConsumedRows++
+			}
 			if int(task.cursor.RowIdx) == task.outerResult.GetChunk(int(task.cursor.ChkIdx)).NumRows() {
 				task.cursor.ChkIdx++
 				task.cursor.RowIdx = 0
@@ -332,7 +358,13 @@ func (e *IndexLookUpJoin) Next(ctx context.Context, req *chunk.Chunk) error {
 		if e.stats != nil {
 			atomic.AddInt64(&e.stats.probe, int64(time.Since(startTime)))
 		}
+		if adaptiveController != nil {
+			pendingOutputRows += req.NumRows() - outputRowsBeforeProbe
+		}
 		if req.IsFull() {
+			if adaptiveController != nil {
+				flushAdaptiveProgress()
+			}
 			return nil
 		}
 	}
@@ -437,27 +469,47 @@ func newList(e exec.Executor) *chunk.List {
 // buildTask builds a lookUpJoinTask and read Outer rows.
 // When err is not nil, task must not be nil to send the error to the main thread via task.
 func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
-	task := &lookUpJoinTask{
-		doneCh:      make(chan error, 1),
-		outerResult: newList(ow.executor),
-		lookupMap:   mvmap.NewMVMap(),
-	}
-	task.memTracker = memory.NewTracker(-1, -1)
-	task.outerResult.GetMemTracker().AttachTo(task.memTracker)
-	task.memTracker.AttachTo(ow.parentMemTracker)
-	failpoint.Inject("ConsumeRandomPanic", nil)
-
-	ow.increaseBatchSize()
 	requiredRows := ow.batchSize
+	reservedRows := 0
+	if ow.lookup.AdaptiveLimitController != nil {
+		var ok bool
+		reservedRows, ok = ow.lookup.AdaptiveLimitController.ReserveOuter(ctx, ow.maxBatchSize)
+		if !ok {
+			return nil, nil
+		}
+		requiredRows = reservedRows
+	} else {
+		ow.increaseBatchSize()
+		requiredRows = ow.batchSize
+	}
 	if ow.lookup.IsOuterJoin {
 		// If it is outerJoin, push the requiredRows down.
 		// Note: buildTask is triggered when `Open` is called, but
 		// ow.lookup.requiredRows is set when `Next` is called. Thus we check
 		// whether it's 0 here.
 		if parentRequired := int(atomic.LoadInt64(&ow.lookup.requiredRows)); parentRequired != 0 {
-			requiredRows = parentRequired
+			if ow.lookup.AdaptiveLimitController != nil {
+				requiredRows = min(requiredRows, parentRequired)
+			} else {
+				requiredRows = parentRequired
+			}
 		}
 	}
+
+	task := &lookUpJoinTask{
+		doneCh:      make(chan error, 1),
+		outerResult: newList(ow.executor),
+		lookupMap:   mvmap.NewMVMap(),
+	}
+	if ow.lookup.AdaptiveLimitController != nil {
+		defer func() {
+			ow.lookup.AdaptiveLimitController.CommitOuter(reservedRows, task.outerResult.Len())
+		}()
+	}
+	task.memTracker = memory.NewTracker(-1, -1)
+	task.outerResult.GetMemTracker().AttachTo(task.memTracker)
+	task.memTracker.AttachTo(ow.parentMemTracker)
+	failpoint.Inject("ConsumeRandomPanic", nil)
 	nextChunkCap, maxChunkSize := ow.executor.InitCap(), ow.executor.MaxChunkSize()
 	if nextChunkCap <= 0 {
 		nextChunkCap = chunk.InitialCapacity
@@ -844,7 +896,13 @@ func (iw *innerWorker) hasNullInJoinKey(row chunk.Row) bool {
 // Close implements the Executor interface.
 func (e *IndexLookUpJoin) Close() error {
 	if e.stats != nil {
-		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
+		defer func() {
+			if e.AdaptiveLimitController != nil {
+				snapshot := e.AdaptiveLimitController.Snapshot()
+				e.stats.adaptiveLimitSnapshot = &snapshot
+			}
+			e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
+		}()
 	}
 	if e.cancelFunc != nil {
 		e.cancelFunc()
@@ -858,9 +916,10 @@ func (e *IndexLookUpJoin) Close() error {
 }
 
 type indexLookUpJoinRuntimeStats struct {
-	concurrency int
-	probe       int64
-	innerWorker innerWorkerRuntimeStats
+	concurrency           int
+	probe                 int64
+	innerWorker           innerWorkerRuntimeStats
+	adaptiveLimitSnapshot *exec.AdaptiveLimitSnapshot
 }
 
 type innerWorkerRuntimeStats struct {
@@ -898,17 +957,47 @@ func (e *indexLookUpJoinRuntimeStats) String() string {
 		buf.WriteString("}")
 	}
 	if e.probe > 0 {
-		buf.WriteString(", probe:")
+		if buf.Len() > 0 {
+			buf.WriteString(", ")
+		}
+		buf.WriteString("probe:")
 		buf.WriteString(execdetails.FormatDuration(time.Duration(e.probe)))
+	}
+	if e.adaptiveLimitSnapshot != nil {
+		snapshot := e.adaptiveLimitSnapshot
+		if buf.Len() > 0 {
+			buf.WriteString(", ")
+		}
+		buf.WriteString("adaptive:{demand:")
+		buf.WriteString(strconv.FormatUint(snapshot.DemandRows, 10))
+		buf.WriteString(", output:")
+		buf.WriteString(strconv.FormatUint(snapshot.OutputRows, 10))
+		buf.WriteString(", outer_fetched:")
+		buf.WriteString(strconv.FormatUint(snapshot.OuterFetched, 10))
+		buf.WriteString(", outer_consumed:")
+		buf.WriteString(strconv.FormatUint(snapshot.OuterConsumed, 10))
+		buf.WriteString(", lookup_inflight:")
+		buf.WriteString(strconv.FormatUint(snapshot.LookupReserved, 10))
+		buf.WriteString(", lookup_discarded:")
+		buf.WriteString(strconv.FormatUint(snapshot.LookupDiscarded, 10))
+		buf.WriteString(", window:")
+		buf.WriteString(strconv.FormatUint(snapshot.DesiredWindow, 10))
+		buf.WriteString("}")
 	}
 	return buf.String()
 }
 
 func (e *indexLookUpJoinRuntimeStats) Clone() execdetails.RuntimeStats {
+	var adaptiveLimitSnapshot *exec.AdaptiveLimitSnapshot
+	if e.adaptiveLimitSnapshot != nil {
+		snapshot := *e.adaptiveLimitSnapshot
+		adaptiveLimitSnapshot = &snapshot
+	}
 	return &indexLookUpJoinRuntimeStats{
-		concurrency: e.concurrency,
-		probe:       e.probe,
-		innerWorker: e.innerWorker,
+		concurrency:           e.concurrency,
+		probe:                 e.probe,
+		innerWorker:           e.innerWorker,
+		adaptiveLimitSnapshot: adaptiveLimitSnapshot,
 	}
 }
 
@@ -924,6 +1013,10 @@ func (e *indexLookUpJoinRuntimeStats) Merge(rs execdetails.RuntimeStats) {
 	e.innerWorker.fetch += tmp.innerWorker.fetch
 	e.innerWorker.build += tmp.innerWorker.build
 	e.innerWorker.join += tmp.innerWorker.join
+	if e.adaptiveLimitSnapshot == nil && tmp.adaptiveLimitSnapshot != nil {
+		snapshot := *tmp.adaptiveLimitSnapshot
+		e.adaptiveLimitSnapshot = &snapshot
+	}
 }
 
 // Tp implements the RuntimeStats interface.

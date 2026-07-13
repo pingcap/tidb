@@ -97,6 +97,41 @@ func TestNestedLoopApply(t *testing.T) {
 	}
 }
 
+func TestAdaptiveLimitEligibility(t *testing.T) {
+	sctx := mock.NewContext()
+	indexJoin := &join.IndexLookUpJoin{
+		BaseExecutor: exec.NewBaseExecutor(sctx, nil, 1),
+	}
+	projection := &ProjectionExec{
+		BaseExecutorV2: exec.NewBaseExecutorV2(sctx.GetSessionVars(), nil, 2, indexJoin),
+	}
+	selection := &SelectionExec{
+		BaseExecutorV2: exec.NewBaseExecutorV2(sctx.GetSessionVars(), nil, 3, indexJoin),
+	}
+
+	require.Same(t, indexJoin, findAdaptiveLimitIndexJoin(indexJoin))
+	require.Same(t, indexJoin, findAdaptiveLimitIndexJoin(projection))
+	require.Nil(t, findAdaptiveLimitIndexJoin(selection))
+
+	controller := exec.NewAdaptiveLimitController(100, 32, 128)
+	indexLookup := &IndexLookUpExecutor{
+		BaseExecutorV2: exec.NewBaseExecutorV2(sctx.GetSessionVars(), nil, 4),
+		indexLookUpExecutorContext: indexLookUpExecutorContext{
+			indexLookupConcurrency: 2,
+		},
+		keepOrder: true,
+	}
+	require.True(t, attachAdaptiveLimitIndexLookup(indexLookup, controller))
+	require.Same(t, controller, indexLookup.adaptiveLimitController)
+
+	indexLookup.adaptiveLimitController = nil
+	indexLookup.indexLookupConcurrency = 1
+	require.False(t, attachAdaptiveLimitIndexLookup(indexLookup, controller))
+	indexLookup.indexLookupConcurrency = 2
+	indexLookup.partitionTableMode = true
+	require.False(t, attachAdaptiveLimitIndexLookup(indexLookup, controller))
+}
+
 func TestMoveInfoSchemaToFront(t *testing.T) {
 	dbss := [][]string{
 		{},

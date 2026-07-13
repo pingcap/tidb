@@ -88,6 +88,8 @@ type lookupTableTask struct {
 	idxRows *chunk.Chunk
 	cursor  int
 
+	adaptiveLimitReservation int
+
 	// after the cop task is built, buildDone will be set to the current instant, for Next wait duration statistic.
 	buildDoneTime time.Time
 	doneCh        chan error
@@ -513,6 +515,8 @@ type IndexLookUpExecutor struct {
 	resultCh   chan *lookupTableTask
 	resultCurr *lookupTableTask
 
+	adaptiveLimitController *exec.AdaptiveLimitController
+
 	// memTracker is used to track the memory usage of this executor.
 	memTracker *memory.Tracker
 
@@ -746,6 +750,9 @@ func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize in
 	e.workerCtx, e.cancelFunc = context.WithCancel(ctx)
 	e.pool = &workerPool{
 		needSpawn: func(workers, tasks uint32) bool {
+			if e.adaptiveLimitController != nil {
+				return workers < uint32(e.indexLookupConcurrency) && tasks > 0
+			}
 			return workers < uint32(e.indexLookupConcurrency) && tasks > 1
 		},
 	}
@@ -878,7 +885,16 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 			maxChunkSize:    e.MaxChunkSize(),
 			PushedLimit:     e.PushedLimit,
 		}
-		worker.batchSize = e.calculateBatchSize(initBatchSize, worker.maxBatchSize)
+		if e.indexLookupConcurrency <= 1 {
+			worker.adaptiveLimitController = nil
+		} else {
+			worker.adaptiveLimitController = e.adaptiveLimitController
+		}
+		if worker.adaptiveLimitController != nil {
+			worker.batchSize = worker.adaptiveLimitController.SuggestedBatchSize(worker.maxBatchSize)
+		} else {
+			worker.batchSize = e.calculateBatchSize(initBatchSize, worker.maxBatchSize)
+		}
 		indexTypes := e.getRetTpsForIndexReader()
 
 		if !needMerge {
@@ -1271,6 +1287,10 @@ func (e *IndexLookUpExecutor) getResultTask() (*lookupTableTask, error) {
 	if e.resultCurr != nil && e.resultCurr.cursor < len(e.resultCurr.rows) {
 		return e.resultCurr, nil
 	}
+	if e.resultCurr != nil && e.adaptiveLimitController != nil {
+		e.adaptiveLimitController.ReleaseLookup(e.resultCurr.adaptiveLimitReservation)
+		e.resultCurr.adaptiveLimitReservation = 0
+	}
 	var (
 		enableStats         = e.stats != nil
 		start               time.Time
@@ -1287,6 +1307,10 @@ func (e *IndexLookUpExecutor) getResultTask() (*lookupTableTask, error) {
 		indexFetchedInstant = time.Now()
 	}
 	if err := <-task.doneCh; err != nil {
+		if e.adaptiveLimitController != nil {
+			e.adaptiveLimitController.ReleaseLookup(task.adaptiveLimitReservation)
+			task.adaptiveLimitReservation = 0
+		}
 		return nil, err
 	}
 	if enableStats {
@@ -1335,6 +1359,8 @@ type indexWorker struct {
 	finished  <-chan struct{}
 	resultCh  chan<- *lookupTableTask
 	keepOrder bool
+
+	adaptiveLimitController *exec.AdaptiveLimitController
 
 	// batchSize is for lightweight startup. It will be increased exponentially until reaches the max batch size value.
 	batchSize    int
@@ -1427,6 +1453,9 @@ type extractedLookupTaskData struct {
 	handles       []kv.Handle
 	retChunk      *chunk.Chunk
 	exhausted     bool
+
+	adaptiveLimitReservation int
+	adaptiveLimitStopped     bool
 }
 
 // fetchHandles fetches a batch of handles from index data and builds the index lookup tasks.
@@ -1456,6 +1485,9 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results selectResultList
 		data, err := w.extractLookupTaskData(ctx, result.Result, result.RowIter, chk, handleOffsets)
 		if err != nil {
 			return err
+		}
+		if data.adaptiveLimitStopped {
+			return nil
 		}
 
 		if data.exhausted {
@@ -1503,7 +1535,11 @@ func (w *indexWorker) fetchHandlesRolling(ctx context.Context, maxInFlight int, 
 	}
 
 	fillNewResults := func() error {
-		for inFlight < maxInFlight {
+		currentMaxInFlight := maxInFlight
+		if w.adaptiveLimitController != nil {
+			currentMaxInFlight = w.adaptiveLimitController.ScanConcurrencyLimit(maxInFlight, w.batchSize)
+		}
+		for inFlight < currentMaxInFlight {
 			entry, ok, err := buildNext(ctx)
 			if err != nil {
 				return err
@@ -1531,6 +1567,9 @@ func (w *indexWorker) fetchHandlesRolling(ctx context.Context, maxInFlight int, 
 		data, err := w.extractLookupTaskData(ctx, result.Result, result.RowIter, chk, handleOffsets)
 		if err != nil {
 			return err
+		}
+		if data.adaptiveLimitStopped {
+			return nil
 		}
 
 		if data.exhausted {
@@ -1576,6 +1615,18 @@ func (w *indexWorker) extractLookupTaskData(
 	handleOffsets []int,
 ) (data extractedLookupTaskData, err error) {
 	data.startTime = time.Now()
+	if w.adaptiveLimitController != nil {
+		reserved, ok := w.adaptiveLimitController.ReserveLookup(ctx, w.batchSize)
+		if !ok {
+			data.adaptiveLimitStopped = true
+			return data, nil
+		}
+		data.adaptiveLimitReservation = reserved
+		w.batchSize = reserved
+		defer func() {
+			w.batchSize = w.adaptiveLimitController.SuggestedBatchSize(w.maxBatchSize)
+		}()
+	}
 	if w.idxLookup.indexLookUpPushDown {
 		data.completedRows, data.handles, data.exhausted, err = w.extractLookUpPushDownRowsOrHandles(ctx, rowIter, handleOffsets)
 	} else {
@@ -1583,11 +1634,23 @@ func (w *indexWorker) extractLookupTaskData(
 		data.exhausted = len(data.handles) == 0
 	}
 	data.finishFetch = time.Now()
+	if err != nil && data.adaptiveLimitReservation > 0 {
+		w.adaptiveLimitController.ReleaseLookup(data.adaptiveLimitReservation)
+		data.adaptiveLimitReservation = 0
+	}
+	if data.adaptiveLimitReservation > len(data.handles) {
+		w.adaptiveLimitController.ReleaseLookup(data.adaptiveLimitReservation - len(data.handles))
+		data.adaptiveLimitReservation = len(data.handles)
+	}
 	return data, err
 }
 
 func (w *indexWorker) buildAndDispatchLookupTasks(ctx context.Context, curResultIdx int, taskID *int, data *extractedLookupTaskData) (stopped bool) {
 	if len(data.handles) == 0 && len(data.completedRows) == 0 {
+		if data.adaptiveLimitReservation > 0 {
+			w.adaptiveLimitController.ReleaseLookup(data.adaptiveLimitReservation)
+			data.adaptiveLimitReservation = 0
+		}
 		return false
 	}
 
@@ -1608,6 +1671,7 @@ func (w *indexWorker) buildAndDispatchLookupTasks(ctx context.Context, curResult
 			metrics.IndexLookUpNormalRowsCounter.Add(float64(rowCnt))
 		}
 		tableLookUpTask = w.buildTableTask(*taskID, data.handles, data.retChunk)
+		tableLookUpTask.adaptiveLimitReservation = data.adaptiveLimitReservation
 		if w.idxLookup.partitionTableMode {
 			tableLookUpTask.partitionTable = w.idxLookup.prunedPartitions[curResultIdx]
 		}
@@ -1617,8 +1681,14 @@ func (w *indexWorker) buildAndDispatchLookupTasks(ctx context.Context, curResult
 	finishBuild := time.Now()
 	select {
 	case <-ctx.Done():
+		if data.adaptiveLimitReservation > 0 {
+			w.adaptiveLimitController.ReleaseLookup(data.adaptiveLimitReservation)
+		}
 		return true
 	case <-w.finished:
+		if data.adaptiveLimitReservation > 0 {
+			w.adaptiveLimitController.ReleaseLookup(data.adaptiveLimitReservation)
+		}
 		return true
 	default:
 		if completedTask != nil {

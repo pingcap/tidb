@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "exec",
     srcs = [
+        "adaptive_limit_controller.go",
         "executor.go",
         "indexusage.go",
     ],
@@ -37,12 +38,13 @@ go_test(
     name = "exec_test",
     timeout = "short",
     srcs = [
+        "adaptive_limit_controller_test.go",
         "executor_test.go",
         "indexusage_test.go",
     ],
     embed = [":exec"],
     flaky = True,
-    shard_count = 8,
+    shard_count = 12,
     deps = [
         "//pkg/domain",
         "//pkg/kv",

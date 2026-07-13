@@ -2442,6 +2442,10 @@ var defaultSysVars = []*SysVar{
 		s.IndexJoinBatchSize = tidbOptPositiveInt32(val, vardef.DefIndexJoinBatchSize)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableAdaptiveLimitScan, Value: BoolToOnOff(vardef.DefTiDBEnableAdaptiveLimitScan), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableAdaptiveLimitScan = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBIndexLookupSize, Value: strconv.Itoa(vardef.DefIndexLookupSize), Type: vardef.TypeUnsigned, MinValue: 1, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
 		s.IndexLookupSize = tidbOptPositiveInt32(val, vardef.DefIndexLookupSize)
 		return nil
