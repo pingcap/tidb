@@ -318,3 +318,65 @@ func TestCorrelateWithCostFactors(tt *testing.T) {
 		}
 	})
 }
+
+// TestCorrelateAlternativeAggInSubqueryNoTableDual is a regression test for the
+// silent-wrong-result issue where cloneDataSource cloned AllPossibleAccessPaths
+// and PossibleAccessPaths independently. That broke the invariant that entries
+// of PossibleAccessPaths are the same *AccessPath objects as the corresponding
+// entries of AllPossibleAccessPaths. As a result, stats derivation filled
+// ranges through the canonical AllPossibleAccessPaths objects while physical
+// planning consumed different (empty-range) clones from PossibleAccessPaths.
+//
+// In the aggregate/IN-subquery shape below, the correlated predicate remains
+// above HashAgg, so resetStatsForCorrelatedDS does not rebuild the leaf
+// DataSource paths, and the active clones retain empty ranges - the inner
+// DataSource is then converted to TableDual(rows:0), silently returning
+// an empty result.
+//
+// The fix clones the canonical paths once and maps every active path to the
+// corresponding canonical clone, restoring the real table/index scan.
+func TestCorrelateAlternativeAggInSubqueryNoTableDual(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists o, i")
+	tk.MustExec("create table o(id int primary key, a int not null)")
+	tk.MustExec("create table i(a int not null, b int not null, key ia(a))")
+	tk.MustExec("insert into o values (1,1),(2,2),(3,3)")
+	tk.MustExec("insert into i values (1,10),(1,11),(2,20),(3,30),(5,50)")
+	tk.MustExec("analyze table o, i")
+
+	// Penalize hash/merge joins so the correlate alternative round wins the
+	// cost comparison, mirroring the reproduction in the bug report.
+	tk.MustExec("set tidb_opt_hash_join_cost_factor = 1")
+	tk.MustExec("set tidb_opt_merge_join_cost_factor = 1")
+
+	sql := "select id from o where id <= 3 and a in (select max(a) from i group by b) order by id"
+
+	// Baseline: without alternative plans, the query returns 1,2,3.
+	tk.MustExec("set tidb_opt_enable_alternative_logical_plans = OFF")
+	tk.MustQuery(sql).Check(testkit.Rows("1", "2", "3"))
+
+	// With alternative plans ON: result must be identical (not empty).
+	tk.MustExec("set tidb_opt_enable_alternative_logical_plans = ON")
+	tk.MustQuery(sql).Check(testkit.Rows("1", "2", "3"))
+
+	// Additionally verify that the inner DataSource in the correlate Apply
+	// alternative is NOT collapsed to TableDual. In the buggy plan the probe
+	// side of the Apply reads:
+	//     Selection -> HashAgg -> TableDual(rows:0)
+	// After the fix, the inner leaf must be a real table/index scan.
+	rows := tk.MustQuery("explain format = 'brief' " + sql).Rows()
+	require.False(t, explainContains(rows, "TableDual"),
+		"inner side of Apply must not be TableDual in plan:\n%s", joinExplainRows(rows))
+
+	// As an adjacent control, the aggregation-less variant must also return
+	// 1,2,3 in both modes (this path already worked before the fix and uses
+	// the correlated IndexRangeScan directly).
+	sql2 := "select id from o where id <= 3 and a in (select a from i) order by id"
+	tk.MustExec("set tidb_opt_enable_alternative_logical_plans = OFF")
+	tk.MustQuery(sql2).Check(testkit.Rows("1", "2", "3"))
+	tk.MustExec("set tidb_opt_enable_alternative_logical_plans = ON")
+	tk.MustQuery(sql2).Check(testkit.Rows("1", "2", "3"))
+}
