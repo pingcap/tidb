@@ -65,6 +65,20 @@ func setRefreshAlertCleanupOwnerForTest(svc *MVService, ownerHash uint32) {
 	})
 }
 
+func addMVRefreshAlertTasksForTest(svc *MVService, tasks ...*mv) {
+	pending := make(map[int64]*mv, len(tasks))
+	for _, task := range tasks {
+		if task == nil {
+			continue
+		}
+		if task.orderTs == 0 && !task.nextRefresh.IsZero() {
+			task.orderTs = task.nextRefresh.UnixMilli()
+		}
+		pending[task.ID] = task
+	}
+	svc.buildMVRefreshAlertTasks(pending)
+}
+
 func setTaskOwnersForTest(svc *MVService, taskHashes map[int64]uint32) {
 	overrides := make(map[string]uint32, len(taskHashes))
 	for id, hash := range taskHashes {
@@ -85,6 +99,7 @@ func setServiceHashOverridesForTest(svc *MVService, overrides map[string]uint32)
 		"nodeA#0":                     10,
 		"nodeB#0":                     30,
 		mvHistoryGCOwnerKey:           10,
+		mvRefreshAlertCheckerOwnerKey: 10,
 		mvRefreshAlertCleanupOwnerKey: 10,
 	}
 	for key, hash := range overrides {
@@ -94,6 +109,26 @@ func setServiceHashOverridesForTest(svc *MVService, overrides map[string]uint32)
 	svc.sch.servers = map[string]serverInfo{
 		"nodeA": {ID: "nodeA"},
 		"nodeB": {ID: "nodeB"},
+	}
+	svc.sch.chash.Rebuild(svc.sch.servers)
+	svc.sch.mu.Unlock()
+}
+
+func setThreeNodeRefreshAlertCheckerRingForTest(svc *MVService, selfID string) {
+	svc.sch.mu.Lock()
+	svc.sch.ID = selfID
+	svc.sch.chash.replicas = 1
+	svc.sch.chash.hashFunc = mustHash(map[string]uint32{
+		"nodeA#0":                     10,
+		"nodeB#0":                     20,
+		"nodeC#0":                     30,
+		mvRefreshAlertCheckerOwnerKey: 15, // top-2 owners: nodeB, nodeC.
+		mvRefreshAlertCleanupOwnerKey: 25,
+	})
+	svc.sch.servers = map[string]serverInfo{
+		"nodeA": {ID: "nodeA"},
+		"nodeB": {ID: "nodeB"},
+		"nodeC": {ID: "nodeC"},
 	}
 	svc.sch.chash.Rebuild(svc.sch.servers)
 	svc.sch.mu.Unlock()

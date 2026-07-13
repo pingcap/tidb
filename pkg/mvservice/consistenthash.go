@@ -142,6 +142,36 @@ func (c *ConsistentHash) GetNode(key []byte) string {
 	return c.ring[idx].node
 }
 
+// GetNodesForKey returns up to limit distinct real nodes clockwise from the key.
+func (c *ConsistentHash) GetNodesForKey(key []byte, limit int) []string {
+	if len(c.ring) == 0 || limit <= 0 {
+		return nil
+	}
+	if limit > len(c.data) {
+		limit = len(c.data)
+	}
+
+	hash := c.hashFunc(key)
+	idx := sort.Search(len(c.ring), func(i int) bool {
+		return c.ring[i].hash >= hash
+	})
+	if idx == len(c.ring) {
+		idx = 0
+	}
+
+	nodes := make([]string, 0, limit)
+	seen := make(map[string]struct{}, limit)
+	for i := 0; i < len(c.ring) && len(nodes) < limit; i++ {
+		node := c.ring[(idx+i)%len(c.ring)].node
+		if _, ok := seen[node]; ok {
+			continue
+		}
+		seen[node] = struct{}{}
+		nodes = append(nodes, node)
+	}
+	return nodes
+}
+
 // GetNodes returns all real nodes.
 func (c *ConsistentHash) GetNodes() []string {
 	nodes := make([]string, 0, len(c.data))
