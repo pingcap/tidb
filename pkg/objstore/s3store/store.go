@@ -242,6 +242,13 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opti
 			if qs.Endpoint != "" {
 				o.UsePathStyle = client.Options().UsePathStyle
 			}
+			// When GetBucketRegion probes AWS S3 using the configured/default region,
+			// an expected redirect can carry the actual bucket region. AWS SDK v2 passes
+			// that redirect to the retryer, which would otherwise log a noisy warning
+			// even though region detection succeeds.
+			// we won't use the user provided retryer which is for operations
+			// after creation.
+			o.Retryer = newBucketRegionDetectionRetryer()
 		})
 		if err != nil {
 			return nil, errors.Annotatef(err, "failed to get region of bucket %s", qs.Bucket)
