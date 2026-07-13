@@ -143,7 +143,6 @@ type recordingSessionContext struct {
 	restrictedMLogPurgeMinRate              []int
 	restrictedMLogPurgeRateBudgetRatio      []float64
 	restrictedMLogPurgeDeleteTiFlashThreads []int64
-	restrictedEnableChunkRPC                []bool
 	restrictedAnalyzePartitionConcurrency   []int
 	restrictedRows                          map[string][]chunk.Row
 	restrictedErrs                          map[string]error
@@ -243,7 +242,6 @@ func (s *recordingSessionContext) ExecRestrictedSQL(_ context.Context, _ []sqlex
 	s.restrictedMLogPurgeMinRate = append(s.restrictedMLogPurgeMinRate, s.GetSessionVars().MLogPurgeMinRate)
 	s.restrictedMLogPurgeRateBudgetRatio = append(s.restrictedMLogPurgeRateBudgetRatio, s.GetSessionVars().MLogPurgeRateBudgetRatio)
 	s.restrictedMLogPurgeDeleteTiFlashThreads = append(s.restrictedMLogPurgeDeleteTiFlashThreads, s.GetSessionVars().MLogPurgeDeleteTiFlashThreads)
-	s.restrictedEnableChunkRPC = append(s.restrictedEnableChunkRPC, s.GetSessionVars().EnableChunkRPC)
 	s.restrictedAnalyzePartitionConcurrency = append(s.restrictedAnalyzePartitionConcurrency, s.GetSessionVars().AnalyzePartitionConcurrency)
 	if seq, ok := s.restrictedAffectedRows[sql]; ok {
 		pos := s.restrictedAffectedPos[sql]
@@ -2722,7 +2720,6 @@ func TestServerHelperPurgeMVLogUsesGlobalMaintainMemQuota(t *testing.T) {
 	require.Equal(t, []int{8765, 8765}, se.restrictedMLogPurgeMinRate)
 	require.Equal(t, []float64{0.75, 0.75}, se.restrictedMLogPurgeRateBudgetRatio)
 	require.Equal(t, []int64{3, 3}, se.restrictedMLogPurgeDeleteTiFlashThreads)
-	require.Equal(t, []bool{false, false}, se.restrictedEnableChunkRPC)
 	require.Equal(t, int64(268435456), vars.MVMaintainMemQuota)
 	require.Equal(t, "tidb", variable.GetIsolationReadEnginesString(vars))
 	require.Equal(t, "tidb", vars.MVMaintainIsolationReadEngines)

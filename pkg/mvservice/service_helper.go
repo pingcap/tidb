@@ -1691,8 +1691,6 @@ func (h *serviceHelper) AnalyzeMVLog(ctx context.Context, sysSessionPool basic.S
 	defer sysSessionPool.Put(se)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMVMaintenance)
 	sctx := se.(sessionctx.Context)
-	restoreChunkRPC := sctx.GetSessionVars().DisableChunkRPCWithRestore()
-	defer restoreChunkRPC()
 	restoreStatsVars, err := statsutil.UpdateSCtxVarsForStats(sctx)
 	if err != nil {
 		return err
@@ -1811,8 +1809,6 @@ func execRCRestrictedSQLWithSession(ctx context.Context, sctx sessionctx.Context
 }
 
 func execRestrictedSQLWithSession(ctx context.Context, sctx sessionctx.Context, sql string, params []any) ([]chunk.Row, error) {
-	restoreChunkRPC := sctx.GetSessionVars().DisableChunkRPCWithRestore()
-	defer restoreChunkRPC()
 	r, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(
 		ctx,
 		[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},

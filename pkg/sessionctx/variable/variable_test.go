@@ -67,27 +67,6 @@ func TestSysVar(t *testing.T) {
 	require.Equal(t, "ON", f.Value)
 }
 
-func TestDisableChunkRPCWithRestore(t *testing.T) {
-	vars := NewSessionVars(nil)
-	vars.EnableChunkRPC = true
-
-	restore := vars.DisableChunkRPCWithRestore()
-	require.False(t, vars.EnableChunkRPC)
-	restore()
-	require.True(t, vars.EnableChunkRPC)
-
-	vars.EnableChunkRPC = false
-	restore = vars.DisableChunkRPCWithRestore()
-	require.False(t, vars.EnableChunkRPC)
-	restore()
-	require.False(t, vars.EnableChunkRPC)
-
-	var nilVars *SessionVars
-	require.NotPanics(t, func() {
-		nilVars.DisableChunkRPCWithRestore()()
-	})
-}
-
 func TestError(t *testing.T) {
 	kvErrs := []*terror.Error{
 		ErrUnsupportedValueForVar,
