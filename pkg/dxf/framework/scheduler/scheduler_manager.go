@@ -426,36 +426,30 @@ func (sm *Manager) cleanupTaskLoop() {
 //	tasks with global sort should clean up tmp files stored on S3.
 func (sm *Manager) doCleanupTask() {
 	failpoint.InjectCall("doCleanupTask")
-	for {
-		cleanupBatchSize := proto.GetTaskCleanupBatchSize()
-		tasks, err := sm.taskMgr.GetTasksInStates(
-			sm.ctx,
-			proto.TaskStateFailed,
-			proto.TaskStateReverted,
-			proto.TaskStateSucceed,
-		)
-		if err != nil {
-			sm.logger.Warn("get task in states failed", zap.Error(err))
-			return
-		}
-		if len(tasks) == 0 {
-			return
-		}
-		sm.logger.Info("cleanup routine start")
-		allCleaned, err := sm.cleanupFinishedTasks(tasks)
-		if err != nil {
-			sm.logger.Warn("cleanup routine failed", zap.Error(err))
-			return
-		}
-		failpoint.InjectCall("WaitCleanUpFinished")
-		sm.logger.Info("cleanup routine success")
-		if !allCleaned || len(tasks) < cleanupBatchSize {
-			return
-		}
+	tasks, err := sm.taskMgr.GetTasksInStates(
+		sm.ctx,
+		proto.TaskStateFailed,
+		proto.TaskStateReverted,
+		proto.TaskStateSucceed,
+	)
+	if err != nil {
+		sm.logger.Warn("get task in states failed", zap.Error(err))
+		return
 	}
+	if len(tasks) == 0 {
+		return
+	}
+	sm.logger.Info("cleanup routine start")
+	err = sm.cleanupFinishedTasks(tasks)
+	if err != nil {
+		sm.logger.Warn("cleanup routine failed", zap.Error(err))
+		return
+	}
+	failpoint.InjectCall("WaitCleanUpFinished")
+	sm.logger.Info("cleanup routine success")
 }
 
-func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) (bool, error) {
+func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) error {
 	cleanedTasks := make([]*proto.Task, 0)
 	var firstErr error
 	for _, task := range tasks {
@@ -483,11 +477,10 @@ func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) (bool, error) {
 	}
 
 	failpoint.Inject("mockTransferErr", func() {
-		failpoint.Return(false, errors.New("transfer err"))
+		failpoint.Return(errors.New("transfer err"))
 	})
 
-	err := sm.taskMgr.TransferTasks2History(sm.ctx, cleanedTasks)
-	return firstErr == nil, err
+	return sm.taskMgr.TransferTasks2History(sm.ctx, cleanedTasks)
 }
 
 func (sm *Manager) collectLoop() {
