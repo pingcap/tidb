@@ -21,14 +21,12 @@ import (
 	"strings"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/types"
-	"go.uber.org/zap"
 )
 
 const (
@@ -86,31 +84,6 @@ func getAutoSplitHotRegionConfig() autoSplitHotRegionConfig {
 			cfg.minStatsHealthy = 0
 		}
 	})
-	return cfg.normalize()
-}
-
-func (cfg autoSplitHotRegionConfig) normalize() autoSplitHotRegionConfig {
-	if cfg.minTableRows < 1 {
-		cfg.minTableRows = 1
-	}
-	if cfg.rowsPerRegion < 1 {
-		cfg.rowsPerRegion = cfg.minTableRows
-	}
-	if cfg.maxFullRangeRegionsPerPhysical < 2 {
-		cfg.maxFullRangeRegionsPerPhysical = 2
-	}
-	if cfg.maxTopNKeysPerPhysical < 0 {
-		cfg.maxTopNKeysPerPhysical = 0
-	}
-	if cfg.regionCandidateBudget < 1 {
-		cfg.regionCandidateBudget = 1
-	}
-	if cfg.topNMinRatio < 0 {
-		cfg.topNMinRatio = 0
-	}
-	if cfg.minStatsHealthy < 0 {
-		cfg.minStatsHealthy = 0
-	}
 	return cfg
 }
 
@@ -128,7 +101,6 @@ func planAutoSplitIndexRegions(
 		return nil, "index has no columns", nil
 	}
 
-	cfg = cfg.normalize()
 	physicalIDs := getAutoSplitPhysicalTableIDs(tblInfo, idxInfo)
 	statsTables := make([]*statistics.Table, len(physicalIDs))
 	var totalRows int64
@@ -157,8 +129,6 @@ func planAutoSplitIndexRegions(
 		physicalCfg := cfg.withRegionCandidateRatio(rowsRatio)
 		keys, reason, err := planAutoSplitPhysicalIndexRegions(
 			sctx, statsTables[i], tblInfo, idxInfo, physicalID, physicalCfg)
-		logAutoSplitPhysicalIndexRegionDecision(
-			tblInfo, idxInfo, physicalID, statsTables[i], len(keys), reason, err)
 		if err != nil {
 			return nil, reason, err
 		}
@@ -177,42 +147,6 @@ func planAutoSplitIndexRegions(
 		return nil, strings.Join(skipReasons, ","), nil
 	}
 	return splitKeys, "auto split keys generated", nil
-}
-
-func logAutoSplitPhysicalIndexRegionDecision(
-	tblInfo *model.TableInfo,
-	idxInfo *model.IndexInfo,
-	physicalID int64,
-	statsTbl *statistics.Table,
-	splitKeyCount int,
-	reason string,
-	err error,
-) {
-	decision := "planned"
-	if err != nil {
-		decision = "failed"
-	} else if splitKeyCount == 0 {
-		decision = "skipped"
-	}
-	fields := []zap.Field{
-		zap.String("table", tblInfo.Name.L),
-		zap.String("index", idxInfo.Name.L),
-		zap.Int64("physicalTableID", physicalID),
-		zap.Bool("statsAvailable", statsTbl != nil),
-		zap.String("decision", decision),
-		zap.String("reason", reason),
-		zap.Int("splitKeys", splitKeyCount),
-	}
-	if statsTbl != nil {
-		fields = append(fields,
-			zap.Int("statsVersion", statsTbl.StatsVer),
-			zap.Int64("realtimeCount", statsTbl.RealtimeCount))
-	}
-	if err != nil {
-		logutil.DDLLogger().Warn("plan auto split hot index region for physical table", append(fields, zap.Error(err))...)
-		return
-	}
-	logutil.DDLLogger().Info("plan auto split hot index region for physical table", fields...)
 }
 
 func (cfg autoSplitHotRegionConfig) withRegionCandidateRatio(rowsRatio float64) autoSplitHotRegionConfig {
@@ -262,20 +196,24 @@ func planAutoSplitPhysicalIndexRegions(
 		return nil, fmt.Sprintf("row count %d below threshold %d", statsTbl.RealtimeCount, cfg.minTableRows), nil
 	}
 
-	leadingCol, ok := getAutoSplitLeadingColumn(tblInfo, idxInfo)
-	if !ok {
+	offset := idxInfo.Columns[0].Offset
+	if offset < 0 || offset >= len(tblInfo.Columns) {
 		return nil, "leading column not found", nil
 	}
-	colStats := statsTbl.GetCol(leadingCol.ID)
-	if colStats == nil || !colStats.IsAnalyzed() || !colStats.IsFullLoad() {
-		loadedColStats, err := storage.LoadColumnStatsFromStorage(sctx, physicalID, leadingCol, tblInfo.PKIsHandle, true, kv.PriorityNormal)
+	leadingCol := tblInfo.Columns[offset]
+	colStats, loadNeeded, hasAnalyzed := statsTbl.ColumnIsLoadNeeded(leadingCol.ID, true)
+	if !hasAnalyzed {
+		return nil, "leading column stats missing or not analyzed", nil
+	}
+	var topN *statistics.TopN
+	if loadNeeded {
+		var err error
+		topN, err = storage.TopNFromStorageWithPriority(sctx, physicalID, 0, leadingCol.ID, kv.PriorityNormal)
 		if err != nil {
-			return nil, "failed to load leading column stats from storage", err
+			return nil, "failed to load leading column TopN from storage", err
 		}
-		colStats = loadedColStats
-		if colStats == nil || !colStats.IsAnalyzed() || !colStats.IsFullLoad() {
-			return nil, "leading column stats missing or not fully loaded", nil
-		}
+	} else {
+		topN = colStats.TopN
 	}
 
 	splitKeys := make([][]byte, 0)
@@ -290,7 +228,7 @@ func planAutoSplitPhysicalIndexRegions(
 		}
 	}
 
-	topNRows, err := buildAutoSplitTopNRows(sctx, statsTbl, colStats, leadingCol, cfg)
+	topNRows, err := buildAutoSplitTopNRows(sctx, statsTbl, topN, leadingCol, cfg)
 	if err != nil {
 		return nil, "failed to build TopN split keys", err
 	}
@@ -308,17 +246,6 @@ func planAutoSplitPhysicalIndexRegions(
 	return splitKeys, "split keys generated", nil
 }
 
-func getAutoSplitLeadingColumn(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) (*model.ColumnInfo, bool) {
-	if len(idxInfo.Columns) == 0 {
-		return nil, false
-	}
-	offset := idxInfo.Columns[0].Offset
-	if offset < 0 || offset >= len(tblInfo.Columns) {
-		return nil, false
-	}
-	return tblInfo.Columns[offset], true
-}
-
 func calcAutoSplitRegionCount(rowCount int64, cfg autoSplitHotRegionConfig) int {
 	regionsCnt := int((rowCount + cfg.rowsPerRegion - 1) / cfg.rowsPerRegion)
 	if regionsCnt > cfg.maxFullRangeRegionsPerPhysical {
@@ -333,23 +260,16 @@ func calcAutoSplitRegionCount(rowCount int64, cfg autoSplitHotRegionConfig) int 
 func buildAutoSplitTopNRows(
 	sctx sessionctx.Context,
 	statsTbl *statistics.Table,
-	colStats *statistics.Column,
+	topN *statistics.TopN,
 	colInfo *model.ColumnInfo,
 	cfg autoSplitHotRegionConfig,
 ) ([][]types.Datum, error) {
-	if cfg.maxTopNKeysPerPhysical == 0 {
-		return nil, nil
-	}
-	if colStats.TopN == nil {
-		return nil, nil
-	}
-	topNNum := colStats.TopN.Num()
-	if topNNum == 0 {
+	if cfg.maxTopNKeysPerPhysical == 0 || topN == nil || topN.Num() == 0 {
 		return nil, nil
 	}
 
-	topNCandidates := make([]statistics.TopNMeta, 0, topNNum)
-	for _, topNItem := range colStats.TopN.TopN {
+	topNCandidates := make([]statistics.TopNMeta, 0, topN.Num())
+	for _, topNItem := range topN.TopN {
 		if topNItem.Count < cfg.topNMinCount {
 			continue
 		}
@@ -384,18 +304,7 @@ func buildAutoSplitTopNRows(
 }
 
 func sortAndDedupeAutoSplitKeys(keys [][]byte) [][]byte {
-	if len(keys) == 0 {
-		return nil
-	}
+	keys = slices.DeleteFunc(keys, func(key []byte) bool { return len(key) == 0 })
 	slices.SortFunc(keys, bytes.Compare)
-	deduped := keys[:0]
-	for _, key := range keys {
-		if len(key) == 0 {
-			continue
-		}
-		if len(deduped) == 0 || !bytes.Equal(deduped[len(deduped)-1], key) {
-			deduped = append(deduped, key)
-		}
-	}
-	return deduped
+	return slices.CompactFunc(keys, bytes.Equal)
 }

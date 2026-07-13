@@ -316,8 +316,12 @@ func showCommentsFromJob(job *model.Job) string {
 	}
 	isAddingIndex := job.Type == model.ActionAddIndex ||
 		job.Type == model.ActionAddPrimaryKey
-	hideAddIndexParams := isAddingIndex && kerneltype.IsNextGen()
-	if isAddingIndex && !hideAddIndexParams {
+	if isAddingIndex && kerneltype.IsNextGen() {
+		// The parameters are determined automatically in next-gen.
+		labels = append(labels, formatAutoSplitHotRegionResults(m.AutoSplitHotRegionResults)...)
+		return strings.Join(labels, ", ")
+	}
+	if isAddingIndex {
 		switch m.ReorgTp {
 		case model.ReorgTypeTxn:
 			labels = append(labels, model.ReorgTypeTxn.String())
@@ -333,7 +337,7 @@ func showCommentsFromJob(job *model.Job) string {
 			labels = append(labels, model.ReorgTypeTxnMerge.String())
 		}
 	}
-	if job.MayNeedReorg() && !hideAddIndexParams {
+	if job.MayNeedReorg() {
 		concurrency := m.GetConcurrency()
 		batchSize := m.GetBatchSize()
 		maxWriteSpeed := m.GetMaxWriteSpeed()
@@ -358,19 +362,23 @@ func showCommentsFromJob(job *model.Job) string {
 }
 
 func showCommentsFromSubjob(sub *model.SubJob, useDXF, useCloud bool) string {
-	var labels []string
-	if !kerneltype.IsNextGen() {
-		if sub.ReorgTp != model.ReorgTypeNone {
-			labels = append(labels, sub.ReorgTp.String())
-			if useDXF {
-				labels = append(labels, "DXF")
-			}
-			if useDXF && useCloud {
-				labels = append(labels, "cloud")
-			}
-		}
+	autoSplitLabels := formatAutoSplitHotRegionResults(sub.AutoSplitHotRegionResults)
+	if kerneltype.IsNextGen() {
+		// The parameters are determined automatically in next-gen.
+		return strings.Join(autoSplitLabels, ", ")
 	}
-	labels = append(labels, formatAutoSplitHotRegionResults(sub.AutoSplitHotRegionResults)...)
+	var labels []string
+	if sub.ReorgTp == model.ReorgTypeNone {
+		return strings.Join(autoSplitLabels, ", ")
+	}
+	labels = append(labels, sub.ReorgTp.String())
+	if useDXF {
+		labels = append(labels, "DXF")
+	}
+	if useDXF && useCloud {
+		labels = append(labels, "cloud")
+	}
+	labels = append(labels, autoSplitLabels...)
 	return strings.Join(labels, ", ")
 }
 
@@ -380,10 +388,6 @@ func formatAutoSplitHotRegionResults(results []model.AutoSplitHotRegionResult) [
 	}
 	labels := make([]string, 0, len(results))
 	for _, result := range results {
-		indexName := result.IndexName
-		if indexName == "" {
-			indexName = fmt.Sprintf("#%d", result.IndexID)
-		}
 		parts := []string{string(result.Status)}
 		if result.SplitKeyCount > 0 {
 			parts = append(parts, fmt.Sprintf("split_keys=%d", result.SplitKeyCount))
@@ -397,7 +401,7 @@ func formatAutoSplitHotRegionResults(results []model.AutoSplitHotRegionResult) [
 		if result.Reason != "" {
 			parts = append(parts, fmt.Sprintf("reason=%q", result.Reason))
 		}
-		labels = append(labels, fmt.Sprintf("auto_split_hot_region=%s(%s)", indexName, strings.Join(parts, ", ")))
+		labels = append(labels, fmt.Sprintf("auto_split_hot_region=%s(%s)", result.IndexName, strings.Join(parts, ", ")))
 	}
 	return labels
 }

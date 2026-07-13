@@ -136,7 +136,6 @@ const (
 // AutoSplitHotRegionResult records a compact result for one index auto split attempt.
 type AutoSplitHotRegionResult struct {
 	IndexName            string                   `json:"index_name,omitempty"`
-	IndexID              int64                    `json:"index_id,omitempty"`
 	Status               AutoSplitHotRegionStatus `json:"status,omitempty"`
 	SplitKeyCount        int                      `json:"split_key_count,omitempty"`
 	SplitRegionCount     int                      `json:"split_region_count,omitempty"`

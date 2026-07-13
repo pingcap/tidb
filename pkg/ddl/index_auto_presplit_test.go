@@ -169,7 +169,7 @@ func TestPlanAutoSplitIndexRegionsTopN(t *testing.T) {
 		topN.Sort()
 		statsTbl := buildAutoSplitTestStats(tblInfo.ID, 120_000_000, 0, tblInfo.Columns[1], true, topN)
 		topNRows, err := buildAutoSplitTopNRows(
-			sctx, statsTbl, statsTbl.GetCol(tblInfo.Columns[1].ID), tblInfo.Columns[1], defaultCfg)
+			sctx, statsTbl, statsTbl.GetCol(tblInfo.Columns[1].ID).TopN, tblInfo.Columns[1], defaultCfg)
 		require.NoError(t, err)
 		require.Len(t, topNRows, 1)
 		require.Equal(t, int64(40), topNRows[0][0].GetInt64())
@@ -181,7 +181,7 @@ func TestPlanAutoSplitIndexRegionsTopN(t *testing.T) {
 		topN.Sort()
 		statsTbl := buildAutoSplitTestStats(tblInfo.ID, 10_000_000, 0, tblInfo.Columns[1], true, topN)
 		topNRows, err := buildAutoSplitTopNRows(
-			sctx, statsTbl, statsTbl.GetCol(tblInfo.Columns[1].ID), tblInfo.Columns[1], defaultCfg)
+			sctx, statsTbl, statsTbl.GetCol(tblInfo.Columns[1].ID).TopN, tblInfo.Columns[1], defaultCfg)
 		require.NoError(t, err)
 		require.Len(t, topNRows, 1)
 		require.Equal(t, int64(60), topNRows[0][0].GetInt64())
@@ -258,7 +258,6 @@ func TestPreSplitIndexRegionsAutoGateAndManualOverride(t *testing.T) {
 	require.Equal(t, 3, countSplitKeysForIndex(t, capturedKeys, idxInfo.ID))
 	require.Equal(t, []model.AutoSplitHotRegionResult{{
 		IndexName:            "idx",
-		IndexID:              idxInfo.ID,
 		Status:               model.AutoSplitHotRegionStatusSplit,
 		SplitKeyCount:        4,
 		SplitRegionCount:     3,
@@ -274,7 +273,6 @@ func TestPreSplitIndexRegionsAutoGateAndManualOverride(t *testing.T) {
 	require.Equal(t, 3, countSplitKeysForIndex(t, capturedKeys, idxInfo.ID))
 	require.Equal(t, []model.AutoSplitHotRegionResult{{
 		IndexName:        "idx",
-		IndexID:          idxInfo.ID,
 		Status:           model.AutoSplitHotRegionStatusFailed,
 		SplitKeyCount:    4,
 		SplitRegionCount: 1,
@@ -289,7 +287,6 @@ func TestPreSplitIndexRegionsAutoGateAndManualOverride(t *testing.T) {
 	require.Equal(t, 3, countSplitKeysForIndex(t, capturedKeys, idxInfo.ID))
 	require.Equal(t, []model.AutoSplitHotRegionResult{{
 		IndexName:     "idx",
-		IndexID:       idxInfo.ID,
 		Status:        model.AutoSplitHotRegionStatusUnsupported,
 		SplitKeyCount: 4,
 		Reason:        "storage does not support split regions",
@@ -367,10 +364,13 @@ func buildAutoSplitTestStats(
 		colStats.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
 	}
 	histColl.SetCol(colInfo.ID, colStats)
+	existenceMap := statistics.NewColAndIndexExistenceMap(1, 0)
+	existenceMap.InsertCol(colInfo.ID, true)
 	return &statistics.Table{
-		HistColl:           *histColl,
-		Version:            1,
-		LastAnalyzeVersion: 1,
+		HistColl:              *histColl,
+		Version:               1,
+		LastAnalyzeVersion:    1,
+		ColAndIdxExistenceMap: existenceMap,
 	}
 }
 
