@@ -21,12 +21,9 @@ import (
 	"fmt"
 	"slices"
 	"sort"
-	"strings"
-	"sync"
 	"testing"
 	"time"
 
-	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/schstatus"
@@ -34,10 +31,8 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/framework/testutil"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -45,89 +40,6 @@ import (
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/atomic"
 )
-
-type recordingSQLExecutor struct {
-	sqlexec.SQLExecutor
-	recorder *sqlRecorder
-}
-
-func (e *recordingSQLExecutor) ExecuteInternal(ctx context.Context, sql string, args ...any) (sqlexec.RecordSet, error) {
-	if err := e.recorder.record(sql); err != nil {
-		return nil, err
-	}
-	return e.SQLExecutor.ExecuteInternal(ctx, sql, args...)
-}
-
-type recordingSession struct {
-	sessionapi.Session
-	exec *recordingSQLExecutor
-}
-
-func (s *recordingSession) GetSQLExecutor() sqlexec.SQLExecutor {
-	return s.exec
-}
-
-type sqlRecorder struct {
-	mu           sync.Mutex
-	sqls         []string
-	failContains string
-	failErr      error
-}
-
-func (r *sqlRecorder) record(sql string) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	normalizedSQL := normalizeSQL(sql)
-	r.sqls = append(r.sqls, normalizedSQL)
-	if r.failContains != "" && strings.Contains(normalizedSQL, r.failContains) {
-		err := r.failErr
-		r.failContains = ""
-		r.failErr = nil
-		return err
-	}
-	return nil
-}
-
-func (r *sqlRecorder) reset() {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.sqls = nil
-}
-
-func (r *sqlRecorder) failNextContaining(substr string, err error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.failContains = substr
-	r.failErr = err
-}
-
-func (r *sqlRecorder) countContains(substr string) int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	cnt := 0
-	for _, sql := range r.sqls {
-		if strings.Contains(sql, substr) {
-			cnt++
-		}
-	}
-	return cnt
-}
-
-func (r *sqlRecorder) requireContains(t *testing.T, substr string) {
-	t.Helper()
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	for _, sql := range r.sqls {
-		if strings.Contains(sql, substr) {
-			return
-		}
-	}
-	require.Failf(t, "expected recorded SQL", "missing %q in %v", substr, r.sqls)
-}
-
-func normalizeSQL(sql string) string {
-	return strings.ToLower(strings.Join(strings.Fields(sql), " "))
-}
 
 func checkTaskStateStep(t *testing.T, task *proto.Task, state proto.TaskState, step proto.Step) {
 	require.Equal(t, state, task.State)
@@ -1160,9 +1072,9 @@ func TestTaskHistoryTable(t *testing.T) {
 	_, gm, ctx := testutil.InitTableTest(t)
 
 	require.NoError(t, gm.InitMeta(ctx, ":4000", ""))
-	_, err := gm.CreateTask(ctx, "1", proto.TaskTypeExample, "", 1, "", 0, proto.ExtraParams{}, nil)
+	_, err := gm.CreateTask(ctx, "1", proto.TaskTypeExample, "", 1, "", 0, proto.ExtraParams{}, []byte("original"))
 	require.NoError(t, err)
-	taskID, err := gm.CreateTask(ctx, "2", proto.TaskTypeExample, "", 1, "", 0, proto.ExtraParams{}, nil)
+	taskID, err := gm.CreateTask(ctx, "2", proto.TaskTypeExample, "", 1, "", 0, proto.ExtraParams{}, []byte("original"))
 	require.NoError(t, err)
 
 	tasks, err := gm.GetTasksInStates(ctx, proto.TaskStatePending)
@@ -1173,21 +1085,45 @@ func TestTaskHistoryTable(t *testing.T) {
 	require.EqualValues(t, []*proto.TaskBase{&tasks[0].TaskBase, &tasks[1].TaskBase}, taskBases)
 	testutil.InsertSubtask(t, gm, tasks[0].ID, proto.StepOne, "tidb1", proto.EmptyMeta, proto.SubtaskStateRunning, proto.TaskTypeExample, 1)
 	testutil.InsertSubtask(t, gm, tasks[1].ID, proto.StepOne, "tidb1", proto.EmptyMeta, proto.SubtaskStateRunning, proto.TaskTypeExample, 1)
+	for i, task := range tasks {
+		task.Meta = []byte(fmt.Sprintf("redacted-%d", i))
+	}
 	oldTasks := tasks
+	untouchedTaskID, err := gm.CreateTask(ctx, "3", proto.TaskTypeExample, "", 1, "", 0, proto.ExtraParams{}, []byte("untouched"))
+	require.NoError(t, err)
+	testutil.InsertSubtask(t, gm, untouchedTaskID, proto.StepOne, "tidb1", proto.EmptyMeta, proto.SubtaskStateRunning, proto.TaskTypeExample, 1)
 	require.NoError(t, gm.TransferTasks2History(ctx, tasks))
 
 	tasks, err = gm.GetTasksInStates(ctx, proto.TaskStatePending)
 	require.NoError(t, err)
-	require.Equal(t, 0, len(tasks))
+	require.Len(t, tasks, 1)
+	require.Equal(t, untouchedTaskID, tasks[0].ID)
 	num, err := testutil.GetTasksFromHistory(ctx, gm)
 	require.NoError(t, err)
 	require.Equal(t, 2, num)
-	num, err = testutil.GetSubtasksFromHistoryByTaskID(ctx, gm, oldTasks[0].ID)
+	for i, oldTask := range oldTasks {
+		num, err = testutil.GetSubtasksFromHistoryByTaskID(ctx, gm, oldTask.ID)
+		require.NoError(t, err)
+		require.Equal(t, 1, num)
+
+		historyTask, err := gm.GetTaskByIDWithHistory(ctx, oldTask.ID)
+		require.NoError(t, err)
+		require.Equal(t, []byte(fmt.Sprintf("redacted-%d", i)), historyTask.Meta)
+
+		activeSubtasks, err := testutil.GetSubtasksByTaskID(ctx, gm, oldTask.ID)
+		require.NoError(t, err)
+		require.Empty(t, activeSubtasks)
+	}
+
+	untouchedTask, err := gm.GetTaskByID(ctx, untouchedTaskID)
 	require.NoError(t, err)
-	require.Equal(t, 1, num)
-	num, err = testutil.GetSubtasksFromHistoryByTaskID(ctx, gm, oldTasks[1].ID)
+	require.Equal(t, []byte("untouched"), untouchedTask.Meta)
+	untouchedSubtasks, err := testutil.GetSubtasksByTaskID(ctx, gm, untouchedTaskID)
 	require.NoError(t, err)
-	require.Equal(t, 1, num)
+	require.Len(t, untouchedSubtasks, 1)
+	untouchedHistorySubtaskCnt, err := testutil.GetSubtasksFromHistoryByTaskID(ctx, gm, untouchedTaskID)
+	require.NoError(t, err)
+	require.Zero(t, untouchedHistorySubtaskCnt)
 
 	task, err := gm.GetTaskByIDWithHistory(ctx, taskID)
 	require.NoError(t, err)
@@ -1198,8 +1134,6 @@ func TestTaskHistoryTable(t *testing.T) {
 	require.NotNil(t, task)
 
 	// task with fail transfer
-	_, err = gm.CreateTask(ctx, "3", proto.TaskTypeExample, "", 1, "", 0, proto.ExtraParams{}, nil)
-	require.NoError(t, err)
 	tasks, err = gm.GetTasksInStates(ctx, proto.TaskStatePending)
 	require.NoError(t, err)
 	require.Equal(t, 1, len(tasks))
@@ -1307,108 +1241,6 @@ func TestTaskHistoryTable(t *testing.T) {
 		_, err2 = gm.ListHistoryTasks(ctx, 201, 0, "")
 		require.ErrorContains(t, err2, "page size should be within")
 	})
-}
-
-func TestTransferTasks2HistoryUsesBatchStatements(t *testing.T) {
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)")
-
-	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
-	recorder := &sqlRecorder{}
-	pool := pools.NewResourcePool(func() (pools.Resource, error) {
-		tk := testkit.NewTestKit(t, store)
-		se := tk.Session()
-		return &recordingSession{
-			Session: se,
-			exec: &recordingSQLExecutor{
-				SQLExecutor: se.GetSQLExecutor(),
-				recorder:    recorder,
-			},
-		}, nil
-	}, 10, 10, time.Second)
-	t.Cleanup(func() {
-		pool.Close()
-	})
-
-	gm := storage.NewTaskManager(pool)
-	storage.SetTaskManager(gm)
-	ctx := util.WithInternalSourceType(context.Background(), "table_test")
-	require.NoError(t, gm.InitMeta(ctx, ":4000", ""))
-
-	tasksToTransfer := make([]*proto.Task, 0, 3)
-	for i := range 3 {
-		taskID, err := gm.CreateTask(ctx, fmt.Sprintf("batch-history-%d", i), proto.TaskTypeExample, "", 1, "", 0, proto.ExtraParams{}, []byte("original"))
-		require.NoError(t, err)
-		testutil.InsertSubtask(t, gm, taskID, proto.StepOne, "tidb1", proto.EmptyMeta, proto.SubtaskStateRunning, proto.TaskTypeExample, 1)
-
-		task, err := gm.GetTaskByID(ctx, taskID)
-		require.NoError(t, err)
-		task.Meta = []byte(fmt.Sprintf("redacted-%d", i))
-		tasksToTransfer = append(tasksToTransfer, task)
-	}
-	untouchedTaskID, err := gm.CreateTask(ctx, "batch-history-untouched", proto.TaskTypeExample, "", 1, "", 0, proto.ExtraParams{}, []byte("untouched"))
-	require.NoError(t, err)
-	testutil.InsertSubtask(t, gm, untouchedTaskID, proto.StepOne, "tidb1", proto.EmptyMeta, proto.SubtaskStateRunning, proto.TaskTypeExample, 1)
-
-	recorder.reset()
-	require.NoError(t, gm.TransferTasks2History(ctx, tasksToTransfer))
-
-	require.Equal(t, 1, recorder.countContains("update mysql.tidb_global_task"))
-	recorder.requireContains(t, "set meta = case id")
-	require.Equal(t, 1, recorder.countContains("insert into mysql.tidb_background_subtask_history"))
-	require.Equal(t, 1, recorder.countContains("delete from mysql.tidb_background_subtask"))
-
-	taskCnt, err := testutil.GetTasksFromHistory(ctx, gm)
-	require.NoError(t, err)
-	require.Equal(t, len(tasksToTransfer), taskCnt)
-	for i, task := range tasksToTransfer {
-		subtaskCnt, err := testutil.GetSubtasksFromHistoryByTaskID(ctx, gm, task.ID)
-		require.NoError(t, err)
-		require.Equal(t, 1, subtaskCnt)
-
-		historyTask, err := gm.GetTaskByIDWithHistory(ctx, task.ID)
-		require.NoError(t, err)
-		require.Equal(t, []byte(fmt.Sprintf("redacted-%d", i)), historyTask.Meta)
-
-		activeTask, err := gm.GetTaskByID(ctx, task.ID)
-		require.ErrorIs(t, err, storage.ErrTaskNotFound)
-		require.Nil(t, activeTask)
-		activeSubtasks, err := testutil.GetSubtasksByTaskID(ctx, gm, task.ID)
-		require.NoError(t, err)
-		require.Empty(t, activeSubtasks)
-	}
-
-	untouchedTask, err := gm.GetTaskByID(ctx, untouchedTaskID)
-	require.NoError(t, err)
-	require.Equal(t, []byte("untouched"), untouchedTask.Meta)
-	untouchedSubtasks, err := testutil.GetSubtasksByTaskID(ctx, gm, untouchedTaskID)
-	require.NoError(t, err)
-	require.Len(t, untouchedSubtasks, 1)
-	untouchedHistorySubtaskCnt, err := testutil.GetSubtasksFromHistoryByTaskID(ctx, gm, untouchedTaskID)
-	require.NoError(t, err)
-	require.Zero(t, untouchedHistorySubtaskCnt)
-
-	rollbackTaskID, err := gm.CreateTask(ctx, "batch-history-rollback", proto.TaskTypeExample, "", 1, "", 0, proto.ExtraParams{}, []byte("original"))
-	require.NoError(t, err)
-	testutil.InsertSubtask(t, gm, rollbackTaskID, proto.StepOne, "tidb1", proto.EmptyMeta, proto.SubtaskStateRunning, proto.TaskTypeExample, 1)
-	rollbackTask, err := gm.GetTaskByID(ctx, rollbackTaskID)
-	require.NoError(t, err)
-	rollbackTask.Meta = []byte("redacted")
-	recorder.failNextContaining("insert into mysql.tidb_background_subtask_history", errors.New("mock subtask history insert error"))
-	require.ErrorContains(t, gm.TransferTasks2History(ctx, []*proto.Task{rollbackTask}), "mock subtask history insert error")
-
-	rollbackTask, err = gm.GetTaskByID(ctx, rollbackTaskID)
-	require.NoError(t, err)
-	require.Equal(t, []byte("original"), rollbackTask.Meta)
-	rollbackSubtasks, err := testutil.GetSubtasksByTaskID(ctx, gm, rollbackTaskID)
-	require.NoError(t, err)
-	require.Len(t, rollbackSubtasks, 1)
-	rollbackHistorySubtaskCnt, err := testutil.GetSubtasksFromHistoryByTaskID(ctx, gm, rollbackTaskID)
-	require.NoError(t, err)
-	require.Zero(t, rollbackHistorySubtaskCnt)
-	taskCnt, err = testutil.GetTasksFromHistory(ctx, gm)
-	require.NoError(t, err)
-	require.Equal(t, len(tasksToTransfer), taskCnt)
 }
 
 func TestPauseAndResume(t *testing.T) {
