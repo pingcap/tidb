@@ -240,7 +240,11 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opti
 
 	// Perform region detection and validation
 	var detectedRegion string
-	officialS3 := !gcsS3Compatible && (len(qs.Provider) == 0 || qs.Provider == "aws")
+	awsProvider := len(qs.Provider) == 0 || qs.Provider == "aws"
+	// GCS S3-compatible endpoints must skip AWS bucket-region discovery:
+	// GCS interoperability can reject the HeadBucket request before normal
+	// object access starts, and the configured region is only used for signing.
+	officialS3 := awsProvider && !gcsS3Compatible
 	if officialS3 {
 		// For AWS provider, detect the actual bucket region
 		// In AWS SDK v2, GetBucketRegion has a simpler signature
@@ -324,7 +328,8 @@ func isGCSS3Compatible(qs *backuppb.S3) bool {
 	if err != nil {
 		return false
 	}
-	return strings.EqualFold(u.Hostname(), gcsEndpoint)
+	host := strings.ToLower(u.Hostname())
+	return host == gcsEndpoint || strings.HasSuffix(host, "."+gcsEndpoint)
 }
 
 // IsObjectLockEnabled checks whether the S3 bucket has Object Lock enabled.
