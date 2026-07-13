@@ -110,7 +110,7 @@ func TestPlanAutoSplitIndexRegionsTopN(t *testing.T) {
 		require.Equal(t, 100, defaultCfg.maxRegionsPerPhysical)
 		require.Equal(t, 100, defaultCfg.maxTopNKeysPerPhysical)
 		require.Equal(t, 2560, defaultCfg.maxSplitKeys)
-		require.Equal(t, uint64(1_000_000), defaultCfg.topNMinCount)
+		require.Equal(t, uint64(500_000), defaultCfg.topNMinCount)
 	})
 	t.Run("default ratio threshold", func(t *testing.T) {
 		topN := statistics.NewTopN(2)
@@ -125,14 +125,16 @@ func TestPlanAutoSplitIndexRegionsTopN(t *testing.T) {
 		require.Equal(t, int64(40), topNRows[0][0].GetInt64())
 	})
 	t.Run("default min count threshold", func(t *testing.T) {
-		topN := statistics.NewTopN(1)
-		topN.AppendTopN(encodeAutoSplitIntDatum(t, sctx.GetSessionVars().StmtCtx.TimeZone(), 60), 900_000)
+		topN := statistics.NewTopN(2)
+		topN.AppendTopN(encodeAutoSplitIntDatum(t, sctx.GetSessionVars().StmtCtx.TimeZone(), 60), 500_000)
+		topN.AppendTopN(encodeAutoSplitIntDatum(t, sctx.GetSessionVars().StmtCtx.TimeZone(), 70), 400_000)
 		topN.Sort()
 		statsTbl := buildAutoSplitTestStats(tblInfo.ID, 10_000_000, 0, tblInfo.Columns[1], true, topN)
 		topNRows, err := buildAutoSplitTopNRows(
 			sctx, statsTbl, statsTbl.GetCol(tblInfo.Columns[1].ID), tblInfo.Columns[1], defaultCfg)
 		require.NoError(t, err)
-		require.Empty(t, topNRows)
+		require.Len(t, topNRows, 1)
+		require.Equal(t, int64(60), topNRows[0][0].GetInt64())
 	})
 }
 
