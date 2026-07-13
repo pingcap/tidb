@@ -167,6 +167,31 @@ func TestSubmitTaskNextgen(t *testing.T) {
 		userKSTK.MustQuery("select count(1) from mysql.tidb_global_task where id = ?", task.ID).Check(testkit.Rows("0"))
 	})
 
+	t.Run("cancel dangling user keyspace job without DXF task", func(t *testing.T) {
+		sysKSTK.MustExec("delete from mysql.tidb_import_jobs")
+		sysKSTK.MustExec("delete from mysql.tidb_global_task")
+		userKSTK.MustExec("delete from mysql.tidb_import_jobs")
+		userKSTK.MustExec("delete from mysql.tidb_global_task")
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.KeyspaceName = "ks"
+		})
+		manuallyInitFn(t, userKSStore, sysKSStore)
+
+		conn := userKSTK.Session().GetSQLExecutor()
+		jobID, err := importer.CreateJob(ctx, conn, "test", "t", 1,
+			userKSTK.Session().GetSessionVars().User.String(), "", &importer.ImportParameters{}, 123)
+		require.NoError(t, err)
+		sysKSTK.MustQuery("select count(1) from mysql.tidb_global_task where task_key = ?", importinto.TaskKey(jobID)).
+			Check(testkit.Rows("0"))
+
+		userKSTK.MustExec(fmt.Sprintf("cancel import job %d", jobID))
+
+		userKSTK.MustQuery("select status, error_message from mysql.tidb_import_jobs where id = ?", jobID).
+			Check(testkit.Rows("cancelled cancelled by user"))
+		sysKSTK.MustQuery("select count(1) from mysql.tidb_global_task where task_key = ?", importinto.TaskKey(jobID)).
+			Check(testkit.Rows("0"))
+	})
+
 	t.Run("submit global-sort task uses async prepare mode", func(t *testing.T) {
 		sysKSTK.MustExec("delete from mysql.tidb_import_jobs")
 		sysKSTK.MustExec("delete from mysql.tidb_global_task")
