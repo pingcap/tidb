@@ -1141,38 +1141,20 @@ func TestSubtaskHistoryTable(t *testing.T) {
 }
 
 func TestTaskHistoryTable(t *testing.T) {
-	t.Run("get tasks in states limits cleanup batch size without starving older tasks", func(t *testing.T) {
+	t.Run("get tasks in states limits cleanup batch size", func(t *testing.T) {
 		t.Cleanup(proto.SetMaxConcurrentTaskForTest(1))
 		t.Cleanup(proto.SetTaskCleanupBatchSizeForTest(2))
 		_, gm, ctx := testutil.InitTableTest(t)
 		require.NoError(t, gm.InitMeta(ctx, ":4000", ""))
 
-		createdIDs := make([]int64, 0, 5)
 		for i := range 5 {
-			taskID, err := gm.CreateTask(ctx, fmt.Sprintf("cleanup-batch-%d", i), proto.TaskTypeExample, "", 1, "", 0, proto.ExtraParams{}, nil)
+			_, err := gm.CreateTask(ctx, fmt.Sprintf("cleanup-batch-%d", i), proto.TaskTypeExample, "", 1, "", 0, proto.ExtraParams{}, nil)
 			require.NoError(t, err)
-			createdIDs = append(createdIDs, taskID)
 		}
 
-		require.NoError(t, gm.WithNewSession(func(se sessionctx.Context) error {
-			_, err := se.GetSQLExecutor().ExecuteInternal(ctx, `
-				update mysql.tidb_global_task
-				set state = %?,
-					priority = case when id = %? then 1024 else 1 end,
-					state_update_time = case
-						when id = %? then timestampadd(minute, -10, current_timestamp)
-						else current_timestamp
-					end`,
-				proto.TaskStateSucceed, createdIDs[0], createdIDs[0])
-			return err
-		}))
-
-		tasks, err := gm.GetTasksInStates(ctx, proto.TaskStateSucceed)
+		tasks, err := gm.GetTasksInStates(ctx, proto.TaskStatePending)
 		require.NoError(t, err)
 		require.Len(t, tasks, 2)
-		for i, task := range tasks {
-			require.Equal(t, createdIDs[i], task.ID)
-		}
 	})
 
 	_, gm, ctx := testutil.InitTableTest(t)

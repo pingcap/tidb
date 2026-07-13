@@ -74,7 +74,7 @@
 ## pkg/dxf/framework/storage
 
 ### Tests
-- `pkg/dxf/framework/storage/table_test.go` - dxf/framework/storage: Tests task/subtask tables, history transfer, and fair cleanup batch bounds.
+- `pkg/dxf/framework/storage/table_test.go` - dxf/framework/storage: Tests task/subtask tables, history transfer, and cleanup batch bounds.
 - `pkg/dxf/framework/storage/task_state_test.go` - dxf/framework/storage: Tests task state.
 - `pkg/dxf/framework/storage/task_table_test.go` - dxf/framework/storage: Tests task table.
 
