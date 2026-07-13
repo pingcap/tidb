@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
@@ -43,6 +44,17 @@ func TestMaskingPolicyOperationsRequireSysTable(t *testing.T) {
 			name: "column",
 			run: func() error {
 				return w.dropMaskingPoliciesOnColumn(jobCtx, 1, 1)
+			},
+		},
+		{
+			name: "modify_column",
+			run: func() error {
+				return w.syncMaskingPolicyForModifiedColumn(
+					jobCtx,
+					&model.TableInfo{ID: 1},
+					&model.ColumnInfo{},
+					&model.ColumnInfo{},
+				)
 			},
 		},
 		{
