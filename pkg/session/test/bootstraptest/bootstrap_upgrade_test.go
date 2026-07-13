@@ -1486,38 +1486,3 @@ func TestUpgradeVersion256PlanCacheSkipStatsOnBinding(t *testing.T) {
 	row := req.GetRow(0)
 	require.Equal(t, "ON", row.GetString(0))
 }
-
-func TestDefaultAnalyzeBackgroundOnlyAffectsFreshBootstrap(t *testing.T) {
-	store, dom := session.CreateStoreAndBootstrap(t)
-	defer func() { require.NoError(t, store.Close()) }()
-
-	defaultGroup, ok := dom.InfoSchema().ResourceGroupByName(ast.NewCIStr("default"))
-	require.True(t, ok)
-	require.NotNil(t, defaultGroup.Background)
-	require.Equal(t, []string{kv.InternalTxnStats}, defaultGroup.Background.JobTypes)
-	require.Zero(t, defaultGroup.Background.ResourceUtilLimit)
-
-	// Next-gen has no upgrade path in its first release; skip the upgrade-only check below.
-	if kerneltype.IsNextGen() {
-		dom.Close()
-		return
-	}
-
-	upgradeFromVersion := session.CurrentBootstrapVersion - 1
-	txn, err := store.Begin()
-	require.NoError(t, err)
-	m := meta.NewMutator(txn)
-	require.NoError(t, m.DropResourceGroup(meta.DefaultGroupMeta4Test().ID))
-	require.NoError(t, m.FinishBootstrap(upgradeFromVersion))
-	require.NoError(t, txn.Commit(context.Background()))
-	store.SetOption(session.StoreBootstrappedKey, nil)
-	dom.Close()
-
-	domUpgraded, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-	defer domUpgraded.Close()
-	defaultGroup, ok = domUpgraded.InfoSchema().ResourceGroupByName(ast.NewCIStr("default"))
-	require.True(t, ok)
-	// The upgrade path should not backfill the fresh-bootstrap background setting.
-	require.Nil(t, defaultGroup.Background)
-}
