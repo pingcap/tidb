@@ -1162,25 +1162,50 @@ func TestUpgradeVersion260MaskingPolicy(t *testing.T) {
 		})
 	}
 
-	t.Run("normal_restart_after_system_table_rename", func(t *testing.T) {
-		store, dom := session.CreateStoreAndBootstrap(t)
-		defer func() { require.NoError(t, store.Close()) }()
+	for _, tc := range []struct {
+		name                      string
+		simulateConcurrentUpgrade bool
+	}{
+		{name: "normal_restart_after_system_table_rename"},
+		{name: "upgrade_completed_after_initial_version_read", simulateConcurrentUpgrade: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, dom := session.CreateStoreAndBootstrap(t)
+			defer func() { require.NoError(t, store.Close()) }()
 
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("RENAME TABLE mysql.tidb_masking_policy TO mysql.tidb_masking_policy_bak")
-		dom.Close()
-		store.SetOption(session.StoreBootstrappedKey, nil)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("RENAME TABLE mysql.tidb_masking_policy TO mysql.tidb_masking_policy_bak")
+			dom.Close()
 
-		restartedDom, err := session.BootstrapSession(store)
-		require.NoError(t, err)
-		defer restartedDom.Close()
+			if tc.simulateConcurrentUpgrade {
+				txn, err := store.Begin()
+				require.NoError(t, err)
+				require.NoError(t, meta.NewMutator(txn).FinishBootstrap(189))
+				require.NoError(t, txn.Commit(context.Background()))
 
-		tk = testkit.NewTestKit(t, store)
-		tk.MustQuery("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='mysql' AND table_name='tidb_masking_policy'").
-			Check(testkit.Rows("0"))
-		tk.MustQuery("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='mysql' AND table_name='tidb_masking_policy_bak'").
-			Check(testkit.Rows("1"))
-	})
+				// Simulate another TiDB completing the upgrade after this TiDB reads
+				// the old bootstrap version but before it acquires the upgrade lock.
+				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/session/afterGetStoreBootstrapVersion", func(ver int64) {
+					require.Equal(t, int64(189), ver)
+					txn, err := store.Begin()
+					require.NoError(t, err)
+					require.NoError(t, meta.NewMutator(txn).FinishBootstrap(session.CurrentBootstrapVersion))
+					require.NoError(t, txn.Commit(context.Background()))
+				})
+			}
+			store.SetOption(session.StoreBootstrappedKey, nil)
+
+			restartedDom, err := session.BootstrapSession(store)
+			require.NoError(t, err)
+			defer restartedDom.Close()
+
+			tk = testkit.NewTestKit(t, store)
+			tk.MustQuery("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='mysql' AND table_name='tidb_masking_policy'").
+				Check(testkit.Rows("0"))
+			tk.MustQuery("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='mysql' AND table_name='tidb_masking_policy_bak'").
+				Check(testkit.Rows("1"))
+		})
+	}
 }
 
 func TestUpgradeWithAnalyzeColumnOptions(t *testing.T) {

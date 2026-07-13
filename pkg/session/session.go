@@ -4375,6 +4375,7 @@ func BootstrapSession4DistExecution(store kv.Storage) (*domain.Domain, error) {
 // - start domain and other routines.
 func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsImpl func(store kv.Storage, cnt int) ([]*session, error)) (*domain.Domain, error) {
 	ver := getStoreBootstrapVersionWithCache(store)
+	failpoint.InjectCall("afterGetStoreBootstrapVersion", ver)
 	if kv.IsUserKS(store) {
 		targetVer := currentBootstrapVersion
 		systemKSVer := mustGetStoreBootstrapVersion(kvstore.GetSystemStorage())
@@ -4407,16 +4408,15 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	if err != nil {
 		return nil, err
 	}
-	err = initBootstrapDependentTables(store, ver)
-	if err != nil {
-		return nil, err
-	}
 	err = InitTiDBSchemaCacheSize(store)
 	if err != nil {
 		return nil, err
 	}
 	if ver < currentBootstrapVersion {
-		runInBootstrapSession(store, ver)
+		err = runInBootstrapSession(store, ver)
+		if err != nil {
+			return nil, err
+		}
 	} else {
 		logutil.BgLogger().Info("cluster already bootstrapped", zap.Int64("version", ver))
 		err = InitMDLVariable(store)
@@ -4655,7 +4655,7 @@ func getStartMode(ver int64) ddl.StartMode {
 // If no bootstrap and storage is remote, we must use a little lease time to
 // bootstrap quickly, after bootstrapped, we will reset the lease time.
 // TODO: Using a bootstrap tool for doing this may be better later.
-func runInBootstrapSession(store kv.Storage, ver int64) {
+func runInBootstrapSession(store kv.Storage, ver int64) error {
 	startMode := getStartMode(ver)
 	startTime := time.Now()
 	defer func() {
@@ -4681,17 +4681,22 @@ func runInBootstrapSession(store kv.Storage, ver int64) {
 			// TODO remove this after we can refactor below code out in this case.
 			logutil.BgLogger().Info("[upgrade] already upgraded by other nodes, switch to normal mode")
 			startMode = ddl.Normal
-		} else if deploymode.IsStarter() {
-			shouldTerminate, err := extworkload.AbortGCV2ForUpgrade(context.Background(), extworkload.GetManagerFromStore(store))
-			if err != nil {
-				logutil.BgLogger().Fatal("abort GCV2 worker failed", zap.Error(err))
-			}
-			if shouldTerminate {
-				if intest.InTest {
-					return
+		} else {
+			if deploymode.IsStarter() {
+				shouldTerminate, err := extworkload.AbortGCV2ForUpgrade(context.Background(), extworkload.GetManagerFromStore(store))
+				if err != nil {
+					logutil.BgLogger().Fatal("abort GCV2 worker failed", zap.Error(err))
 				}
-				releaseFn()
-				logutil.BgLogger().Fatal("GCV2 worker aborted before bootstrap upgrade")
+				if shouldTerminate {
+					if intest.InTest {
+						return nil
+					}
+					releaseFn()
+					logutil.BgLogger().Fatal("GCV2 worker aborted before bootstrap upgrade")
+				}
+			}
+			if err := initBootstrapDependentTables(store, currVer); err != nil {
+				return errors.Trace(err)
 			}
 		}
 	}
@@ -4735,6 +4740,7 @@ func runInBootstrapSession(store kv.Storage, ver int64) {
 		infosync.MockGlobalServerInfoManagerEntry.Close()
 	}
 	domap.Delete(store)
+	return nil
 }
 
 func createSessions(store kv.Storage, cnt int) ([]*session, error) {
