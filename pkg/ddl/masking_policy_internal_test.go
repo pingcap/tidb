@@ -19,11 +19,12 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
-func TestDropMaskingPoliciesRequiresSysTable(t *testing.T) {
+func TestMaskingPolicyOperationsRequireSysTable(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockMissingMaskingPolicySysTable", "return(true)")
 
 	w := &worker{}
@@ -42,6 +43,23 @@ func TestDropMaskingPoliciesRequiresSysTable(t *testing.T) {
 			name: "column",
 			run: func() error {
 				return w.dropMaskingPoliciesOnColumn(jobCtx, 1, 1)
+			},
+		},
+		{
+			name: "truncate",
+			run: func() error {
+				return w.updateMaskingPolicyTableIDAfterTruncate(jobCtx, 1, 2)
+			},
+		},
+		{
+			name: "rename",
+			run: func() error {
+				return w.updateMaskingPolicyNamesAfterRename(
+					jobCtx.stepCtx,
+					1,
+					ast.NewCIStr("old_db"), ast.NewCIStr("new_db"),
+					ast.NewCIStr("old_table"), ast.NewCIStr("new_table"),
+				)
 			},
 		},
 	}
