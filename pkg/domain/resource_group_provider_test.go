@@ -24,8 +24,6 @@ import (
 )
 
 func TestShouldUseDegradedResourceGroupFallback(t *testing.T) {
-	t.Parallel()
-
 	ctx := context.Background()
 	canceledCtx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -85,7 +83,6 @@ func TestShouldUseDegradedResourceGroupFallback(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
 			require.Equal(t, tt.want, shouldUseDegradedResourceGroupFallback(tt.ctx, tt.err))
 		})
 	}
