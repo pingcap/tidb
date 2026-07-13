@@ -74,6 +74,31 @@ func ResolveEtcdDialInfo(ctx context.Context, pdCli pd.Client, keyspaceMeta *key
 	return info, nil
 }
 
+// NewEtcdClientFromPDClient resolves the meta service group from an existing PD
+// client and returns a namespaced etcd client.
+func NewEtcdClientFromPDClient(
+	ctx context.Context,
+	pdCli pd.Client,
+	keyspaceMeta *keyspacepb.KeyspaceMeta,
+	etcdCfg clientv3.Config,
+) (*clientv3.Client, error) {
+	dialInfo, err := ResolveEtcdDialInfo(ctx, pdCli, keyspaceMeta)
+	if err != nil {
+		return nil, err
+	}
+
+	etcdCfg.Context = ctx
+	etcdCfg.Endpoints = dialInfo.Endpoints
+	etcdCli, err := clientv3.New(etcdCfg)
+	if err != nil {
+		return nil, err
+	}
+	if dialInfo.Namespace != "" {
+		etcd.SetEtcdCliByNamespace(etcdCli, dialInfo.Namespace)
+	}
+	return etcdCli, nil
+}
+
 // DialEtcdClient resolves the target meta service group and returns a namespaced etcd client.
 func DialEtcdClient(
 	ctx context.Context,
@@ -108,21 +133,7 @@ func DialEtcdClient(
 		}
 	}
 
-	dialInfo, err := ResolveEtcdDialInfo(ctx, pdCli, keyspaceMeta)
-	if err != nil {
-		return nil, err
-	}
-
-	etcdCfg.Context = ctx
-	etcdCfg.Endpoints = dialInfo.Endpoints
-	etcdCli, err := clientv3.New(etcdCfg)
-	if err != nil {
-		return nil, err
-	}
-	if dialInfo.Namespace != "" {
-		etcd.SetEtcdCliByNamespace(etcdCli, dialInfo.Namespace)
-	}
-	return etcdCli, nil
+	return NewEtcdClientFromPDClient(ctx, pdCli, keyspaceMeta, etcdCfg)
 }
 
 // client is used to implement etcd meta service.

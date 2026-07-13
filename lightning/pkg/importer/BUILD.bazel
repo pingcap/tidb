@@ -77,7 +77,6 @@ go_library(
         "//pkg/util/collate",
         "//pkg/util/dbterror",
         "//pkg/util/engine",
-        "//pkg/util/etcd",
         "//pkg/util/extsort",
         "//pkg/util/logutil",
         "//pkg/util/redact",
