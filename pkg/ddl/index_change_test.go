@@ -126,7 +126,7 @@ func TestIndexChange(t *testing.T) {
 	checkJobWithHistory(t, tk.Session(), jobID.Load(), nil, noneTable.Meta())
 }
 
-func TestAddIndexAutoSplitLoadsLeadingColumnStatsFromStorage(t *testing.T) {
+func TestAddIndexAutoSplitLoadsLeadingColumnTopNFromStorage(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

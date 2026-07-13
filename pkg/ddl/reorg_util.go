@@ -49,11 +49,13 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 
 	var setReorgParam bool
 	var setDistTaskParam bool
+	var captureAutoSplitHotRegion bool
 
 	switch job.Type {
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
 		setReorgParam = true
 		setDistTaskParam = true
+		captureAutoSplitHotRegion = true
 	case model.ActionModifyColumn:
 		setReorgParam = true
 		setDistTaskParam = job.NeedReorg
@@ -67,6 +69,7 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 			case model.ActionAddIndex, model.ActionAddPrimaryKey:
 				setReorgParam = true
 				setDistTaskParam = true
+				captureAutoSplitHotRegion = true
 			case model.ActionReorganizePartition,
 				model.ActionRemovePartitioning,
 				model.ActionAlterTablePartitioning:
@@ -80,6 +83,16 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 		}
 	default:
 		return nil
+	}
+	if captureAutoSplitHotRegion {
+		if job.SessionVars == nil {
+			job.SessionVars = make(map[string]string, 1)
+		}
+		value := variable.BoolToOnOff(vardef.DefTiDBDDLEnableAutoSplitHotRegion)
+		if sessionValue, ok := sessVars.GetSystemVar(vardef.TiDBDDLEnableAutoSplitHotRegion); ok {
+			value = sessionValue
+		}
+		job.AddSystemVars(vardef.TiDBDDLEnableAutoSplitHotRegion, value)
 	}
 	var tableSizeInBytes int64
 	var cpuNum int

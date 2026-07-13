@@ -155,7 +155,6 @@ func appendAutoSplitHotRegionResult(
 	}
 	reorgMeta.AutoSplitHotRegionResults = append(reorgMeta.AutoSplitHotRegionResults, model.AutoSplitHotRegionResult{
 		IndexName:            idxInfo.Name.L,
-		IndexID:              idxInfo.ID,
 		Status:               status,
 		SplitKeyCount:        splitKeyCount,
 		SplitRegionCount:     splitRegionCount,
@@ -192,11 +191,11 @@ type splitArgs struct {
 }
 
 func getSplitIdxFullRangeDatums(columnCount int) (lowerVals, upperVals []types.Datum) {
-	lowerVals = make([]types.Datum, 0, columnCount)
-	upperVals = make([]types.Datum, 0, columnCount)
-	for range columnCount {
-		lowerVals = append(lowerVals, types.MinNotNullDatum())
-		upperVals = append(upperVals, types.MaxValueDatum())
+	lowerVals = make([]types.Datum, columnCount)
+	upperVals = make([]types.Datum, columnCount)
+	for i := range columnCount {
+		lowerVals[i] = types.MinNotNullDatum()
+		upperVals[i] = types.MaxValueDatum()
 	}
 	return lowerVals, upperVals
 }
