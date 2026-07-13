@@ -201,7 +201,6 @@ func TestSubJobToProxyJobWithResumeReason(t *testing.T) {
 		ReorgTp: ReorgTypeTxn,
 		AutoSplitHotRegionResults: []AutoSplitHotRegionResult{{
 			IndexName:     "idx",
-			IndexID:       1,
 			Status:        AutoSplitHotRegionStatusSplit,
 			SplitKeyCount: 3,
 		}},
