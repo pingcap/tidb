@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -30,6 +31,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 type fakeAutoSplitStatsProvider map[int64]*statistics.Table
@@ -231,11 +234,21 @@ func TestPreSplitIndexRegionsAutoGateAndManualOverride(t *testing.T) {
 
 	capturedKeys = nil
 	store = &fakeAutoSplitStore{regionIDs: []uint64{1}, splitErr: context.DeadlineExceeded}
-	err = preSplitIndexRegions(
-		context.Background(), sctx, store, tblInfo, []*model.IndexInfo{idxInfo},
-		reorgMeta, args, statsProvider, true)
+	core, logs := observer.New(zap.ErrorLevel)
+	func() {
+		restoreLogger := log.ReplaceGlobals(
+			zap.New(core), &log.ZapProperties{Level: zap.NewAtomicLevelAt(zap.ErrorLevel)})
+		defer restoreLogger()
+		err = preSplitIndexRegions(
+			context.Background(), sctx, store, tblInfo, []*model.IndexInfo{idxInfo},
+			reorgMeta, args, statsProvider, true)
+	}()
 	require.NoError(t, err)
 	require.Equal(t, 3, countSplitKeysForIndex(t, capturedKeys, idxInfo.ID))
+	splitFailureLogs := logs.FilterMessage("split table index region failed").All()
+	require.Len(t, splitFailureLogs, 1)
+	require.Equal(t, "t", splitFailureLogs[0].ContextMap()["table"])
+	require.Equal(t, "idx", splitFailureLogs[0].ContextMap()["index"])
 	require.Equal(t, []model.AutoSplitHotRegionResult{{
 		IndexName:        "idx",
 		IndexID:          idxInfo.ID,

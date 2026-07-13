@@ -818,9 +818,10 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 		return nil
 	}
 
-	hg, statsVer, err := HistMetaFromStorageWithHighPriority(sctx, &col, colInfo)
-	if hg == nil || err != nil {
-		if hg == nil {
+	colHist, err := LoadColumnStatsFromStorage(
+		sctx, col.TableID, colInfo, tblInfo.PKIsHandle, fullLoad, kv.PriorityHigh)
+	if colHist == nil || err != nil {
+		if colHist == nil {
 			statslogutil.StatsSampleLogger().Warn(
 				"Histogram not found, possibly due to DDL event is not handled, please consider analyze the table",
 				zap.Int64("tableID", col.TableID),
@@ -829,30 +830,7 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 		}
 		return err
 	}
-	var (
-		cms  *statistics.CMSketch
-		topN *statistics.TopN
-	)
-	if fullLoad {
-		hg, err = HistogramFromStorageWithPriority(sctx, col.TableID, col.ID, &colInfo.FieldType, hg.NDV, 0, hg.LastUpdateVersion, hg.NullCount, hg.TotColSize, hg.Correlation, kv.PriorityHigh)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		cms, topN, err = CMSketchAndTopNFromStorageWithHighPriority(sctx, col.TableID, 0, col.ID, statsVer)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-
-	colHist := &statistics.Column{
-		PhysicalID: col.TableID,
-		Histogram:  *hg,
-		Info:       colInfo,
-		CMSketch:   cms,
-		TopN:       topN,
-		IsHandle:   tblInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
-		StatsVer:   statsVer,
-	}
+	statsVer := colHist.StatsVer
 	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
 	// like `GetPartitionStats` called in `fmSketchFromStorage` would have modified the stats cache already.
 	statsTbl, ok = statsHandle.Get(col.TableID)
@@ -867,11 +845,6 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 	}
 	statsTbl = statsTbl.CopyAs(statistics.ColumnMapWritable)
 	if colHist.StatsAvailable() {
-		if fullLoad {
-			colHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
-		} else {
-			colHist.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
-		}
 		if statsVer != statistics.Version0 {
 			statsTbl.LastAnalyzeVersion = max(statsTbl.LastAnalyzeVersion, colHist.LastUpdateVersion)
 			statsTbl.StatsVer = int(statsVer)
@@ -911,17 +884,6 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 	if !loadNeeded {
 		return nil
 	}
-	hgMeta, statsVer, err := HistMetaFromStorageWithHighPriority(sctx, &idx, nil)
-	if hgMeta == nil || err != nil {
-		if hgMeta == nil {
-			statslogutil.StatsLogger().Warn(
-				"Histogram not found, possibly due to DDL event is not handled, please consider analyze the table",
-				zap.Int64("tableID", idx.TableID),
-				zap.Int64("indexID", idx.ID),
-			)
-		}
-		return err
-	}
 	tblInfo, ok := statsHandle.TableInfoByID(is, idx.TableID)
 	if !ok {
 		// This could happen when the table is dropped after the async load is triggered.
@@ -942,23 +904,19 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 		)
 		return nil
 	}
-	hg, err := HistogramFromStorageWithPriority(sctx, idx.TableID, idx.ID, types.NewFieldType(mysql.TypeBlob), hgMeta.NDV, 1, hgMeta.LastUpdateVersion, hgMeta.NullCount, hgMeta.TotColSize, hgMeta.Correlation, kv.PriorityHigh)
-	if err != nil {
-		return errors.Trace(err)
+	idxHist, err := LoadIndexStatsFromStorage(sctx, idx.TableID, idxInfo, true, kv.PriorityHigh)
+	if idxHist == nil || err != nil {
+		if idxHist == nil {
+			statslogutil.StatsLogger().Warn(
+				"Histogram not found, possibly due to DDL event is not handled, please consider analyze the table",
+				zap.Int64("tableID", idx.TableID),
+				zap.Int64("indexID", idx.ID),
+			)
+		}
+		return err
 	}
-	cms, topN, err := CMSketchAndTopNFromStorageWithHighPriority(sctx, idx.TableID, 1, idx.ID, statsVer)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	idxHist := &statistics.Index{
-		Histogram:         *hg,
-		CMSketch:          cms,
-		TopN:              topN,
-		Info:              idxInfo,
-		StatsVer:          statsVer,
-		PhysicalID:        idx.TableID,
-		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
-	}
+	// Keep the existing async-load behavior for Version0 index statistics.
+	idxHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
 
 	tbl, ok = statsHandle.Get(idx.TableID)
 	if !ok {

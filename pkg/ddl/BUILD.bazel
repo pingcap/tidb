@@ -421,6 +421,7 @@ go_test(
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/keyspacepb",
+        "@com_github_pingcap_log//:log",
         "@com_github_prometheus_client_golang//prometheus",
         "@com_github_prometheus_client_model//go",
         "@com_github_stretchr_testify//assert",
@@ -438,5 +439,6 @@ go_test(
         "@org_uber_go_goleak//:goleak",
         "@org_uber_go_mock//gomock",
         "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zaptest/observer",
     ],
 )

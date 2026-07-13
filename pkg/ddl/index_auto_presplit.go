@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/codec"
 	"go.uber.org/zap"
 )
 
@@ -152,15 +151,10 @@ func planAutoSplitIndexRegions(
 }
 
 func getAutoSplitPhysicalTableIDs(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) []int64 {
-	pi := tblInfo.GetPartitionInfo()
-	if pi == nil || idxInfo.Global {
+	if tblInfo.GetPartitionInfo() == nil || idxInfo.Global {
 		return []int64{tblInfo.ID}
 	}
-	physicalIDs := make([]int64, 0, len(pi.Definitions))
-	for _, def := range pi.Definitions {
-		physicalIDs = append(physicalIDs, def.ID)
-	}
-	return physicalIDs
+	return getPartitionIDs(tblInfo)
 }
 
 func planAutoSplitPhysicalIndexRegions(
@@ -211,7 +205,7 @@ func planAutoSplitPhysicalIndexRegions(
 	splitKeys := make([][]byte, 0)
 	regionsCnt := calcAutoSplitRegionCount(statsTbl.RealtimeCount, cfg)
 	if regionsCnt > 1 {
-		lower, upper := getAutoSplitIndexBoundDatums(idxInfo)
+		lower, upper := getSplitIdxFullRangeDatums(len(idxInfo.Columns))
 		var err error
 		splitKeys, err = getSplitIdxPhysicalKeysFromBound(
 			sctx, tblInfo, idxInfo, physicalID, lower, upper, regionsCnt, splitKeys)
@@ -258,16 +252,6 @@ func calcAutoSplitRegionCount(rowCount int64, cfg autoSplitHotRegionConfig) int 
 		return 0
 	}
 	return regionsCnt
-}
-
-func getAutoSplitIndexBoundDatums(idxInfo *model.IndexInfo) (lowerVals []types.Datum, upperVals []types.Datum) {
-	lowerVals = make([]types.Datum, 0, len(idxInfo.Columns))
-	upperVals = make([]types.Datum, 0, len(idxInfo.Columns))
-	for range idxInfo.Columns {
-		lowerVals = append(lowerVals, types.MinNotNullDatum())
-		upperVals = append(upperVals, types.MaxValueDatum())
-	}
-	return lowerVals, upperVals
 }
 
 func buildAutoSplitTopNRows(
@@ -361,7 +345,8 @@ func buildAutoSplitTopNRows(
 
 	topNRows := make([][]types.Datum, 0, min(cfg.maxTopNKeysPerPhysical, len(topNCandidates)))
 	for _, topNItem := range topNCandidates {
-		datum, err := decodeAutoSplitTopNDatum(sctx, topNItem, colInfo)
+		datum, err := statistics.TopNMetaToDatum(
+			topNItem, colInfo.GetType(), false, sctx.GetSessionVars().Location())
 		if err != nil {
 			logutil.DDLLogger().Warn("failed to build auto split hot index TopN split key",
 				zap.String("reason", "failed to decode TopN datum"),
@@ -406,24 +391,6 @@ func buildAutoSplitTopNRows(
 		zap.Uint64("maxTopNCount", maxTopNCount),
 		zap.Float64("maxTopNRatio", maxTopNRatio))
 	return topNRows, nil
-}
-
-func decodeAutoSplitTopNDatum(
-	sctx sessionctx.Context,
-	topNItem statistics.TopNMeta,
-	colInfo *model.ColumnInfo,
-) (types.Datum, error) {
-	tp := colInfo.GetType()
-	if types.IsTypeTime(tp) {
-		_, datum, err := codec.DecodeAsDateTime(topNItem.Encoded, tp, sctx.GetSessionVars().Location())
-		return datum, err
-	}
-	if types.IsTypeFloat(tp) {
-		_, datum, err := codec.DecodeAsFloat32(topNItem.Encoded, tp)
-		return datum, err
-	}
-	_, datum, err := codec.DecodeOne(topNItem.Encoded)
-	return datum, err
 }
 
 func dedupeAutoSplitKeys(keys [][]byte, limit int) [][]byte {
