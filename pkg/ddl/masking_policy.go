@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -248,6 +249,9 @@ const (
 )
 
 func (w *worker) queryMaskingPoliciesFromSysTable(ctx context.Context, query string, args ...any) ([]*model.MaskingPolicyInfo, error) {
+	failpoint.Inject("mockMissingMaskingPolicySysTable", func() {
+		failpoint.Return(nil, infoschema.ErrTableNotExists.GenWithStackByArgs("mysql", "tidb_masking_policy"))
+	})
 	rows, err := w.sess.Execute(ctx, query, "query-masking-policy", args...)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -535,7 +539,7 @@ func (w *worker) dropMaskingPoliciesOnTable(jobCtx *jobContext, tableID int64) e
 	if err != nil {
 		// If the masking policy system table itself doesn't exist (e.g., during
 		// bootstrap upgrade that drops and recreates it), there's nothing to clean up.
-		if infoschema.ErrTableNotExists.Equal(err) {
+		if allowMissingMaskingPolicyTableDuringBootstrap(jobCtx, err) {
 			return nil
 		}
 		return errors.Trace(err)
@@ -564,12 +568,24 @@ func (w *worker) dropMaskingPoliciesByDBName(jobCtx *jobContext, dbName string) 
 	return nil
 }
 
+func allowMissingMaskingPolicyTableDuringBootstrap(jobCtx *jobContext, err error) bool {
+	if !infoschema.ErrTableNotExists.Equal(err) || jobCtx == nil || jobCtx.oldDDLCtx == nil {
+		return false
+	}
+	return jobCtx.oldDDLCtx.startMode == Bootstrap || jobCtx.oldDDLCtx.startMode == Upgrade
+}
+
 // updateMaskingPolicyTableIDAfterTruncate updates the table_id in
 // mysql.tidb_masking_policy from the old table ID to the new one after TRUNCATE TABLE.
 // Column IDs remain the same across truncate, so column bindings are preserved.
 func (w *worker) updateMaskingPolicyTableIDAfterTruncate(jobCtx *jobContext, oldTableID, newTableID int64) error {
 	policies, err := w.getMaskingPoliciesByTableIDFromSysTable(jobCtx.stepCtx, oldTableID)
 	if err != nil {
+		// If the masking policy system table itself doesn't exist during bootstrap
+		// upgrade, there are no policies to migrate.
+		if allowMissingMaskingPolicyTableDuringBootstrap(jobCtx, err) {
+			return nil
+		}
 		return errors.Trace(err)
 	}
 	const updateSQL = `UPDATE mysql.tidb_masking_policy
@@ -592,7 +608,7 @@ func (w *worker) dropMaskingPoliciesOnColumn(jobCtx *jobContext, tableID, column
 	if err != nil {
 		// If the masking policy system table itself doesn't exist (e.g., during
 		// bootstrap upgrade that drops and recreates it), there's nothing to clean up.
-		if infoschema.ErrTableNotExists.Equal(err) {
+		if allowMissingMaskingPolicyTableDuringBootstrap(jobCtx, err) {
 			return nil
 		}
 		return errors.Trace(err)
@@ -608,13 +624,19 @@ func (w *worker) dropMaskingPoliciesOnColumn(jobCtx *jobContext, tableID, column
 // updateMaskingPolicyNamesAfterRename updates the db_name and table_name in
 // mysql.tidb_masking_policy after a table is renamed.
 func (w *worker) updateMaskingPolicyNamesAfterRename(
-	ctx context.Context,
+	jobCtx *jobContext,
 	tableID int64,
 	_ /* oldDBName */, newDBName ast.CIStr,
 	_ /* oldTableName */, newTableName ast.CIStr,
 ) error {
+	ctx := jobCtx.stepCtx
 	policies, err := w.getMaskingPoliciesByTableIDFromSysTable(ctx, tableID)
 	if err != nil {
+		// If the masking policy system table itself doesn't exist during bootstrap
+		// upgrade, there are no policies to update.
+		if allowMissingMaskingPolicyTableDuringBootstrap(jobCtx, err) {
+			return nil
+		}
 		return errors.Trace(err)
 	}
 	for _, policy := range policies {
@@ -662,6 +684,11 @@ func (w *worker) syncMaskingPolicyForModifiedColumn(
 
 	policies, err := w.getMaskingPoliciesByTableIDFromSysTable(jobCtx.stepCtx, tblInfo.ID)
 	if err != nil {
+		// If the masking policy system table itself doesn't exist during bootstrap
+		// upgrade, there are no policies to sync.
+		if allowMissingMaskingPolicyTableDuringBootstrap(jobCtx, err) {
+			return nil
+		}
 		return errors.Trace(err)
 	}
 	for _, policy := range policies {

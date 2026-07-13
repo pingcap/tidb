@@ -1208,6 +1208,40 @@ var defaultSysVars = []*SysVar{
 		},
 	},
 	{
+		Scope:    vardef.ScopeGlobal,
+		Name:     vardef.TiDBAnalyzeDefaultNumBuckets,
+		Value:    strconv.FormatUint(vardef.DefTiDBAnalyzeDefaultNumBuckets, 10),
+		Type:     vardef.TypeUnsigned,
+		MinValue: vardef.MinTiDBAnalyzeDefaultNumBuckets, MaxValue: vardef.MaxTiDBAnalyzeDefaultNumBuckets,
+		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return strconv.FormatUint(vardef.AnalyzeDefaultNumBuckets.Load(), 10), nil
+		},
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			num, err := strconv.ParseUint(val, 10, 64)
+			if err == nil {
+				vardef.AnalyzeDefaultNumBuckets.Store(num)
+			}
+			return err
+		},
+	},
+	{
+		Scope:    vardef.ScopeGlobal,
+		Name:     vardef.TiDBAnalyzeDefaultNumTopN,
+		Value:    strconv.FormatUint(vardef.DefTiDBAnalyzeDefaultNumTopN, 10),
+		Type:     vardef.TypeUnsigned,
+		MinValue: vardef.MinTiDBAnalyzeDefaultNumTopN, MaxValue: vardef.MaxTiDBAnalyzeDefaultNumTopN,
+		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return strconv.FormatUint(vardef.AnalyzeDefaultNumTopN.Load(), 10), nil
+		},
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			num, err := strconv.ParseUint(val, 10, 64)
+			if err == nil {
+				vardef.AnalyzeDefaultNumTopN.Store(num)
+			}
+			return err
+		},
+	},
+	{
 		Scope: vardef.ScopeGlobal,
 		Name:  vardef.TiDBEnableAutoAnalyzePriorityQueue,
 		Value: BoolToOnOff(vardef.DefTiDBEnableAutoAnalyzePriorityQueue),
@@ -3034,6 +3068,10 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBMaxPagingSize, Value: strconv.Itoa(vardef.DefMaxPagingSize), Type: vardef.TypeUnsigned, MinValue: 1, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
 		s.MaxPagingSize = tidbOptPositiveInt32(val, vardef.DefMaxPagingSize)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBPagingSizeBytes, Value: strconv.Itoa(vardef.DefPagingSizeBytes), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
+		s.PagingSizeBytes = int(TidbOptInt64(val, int64(vardef.DefPagingSizeBytes)))
 		return nil
 	}},
 	{Scope: vardef.ScopeSession, Name: vardef.TiDBMemoryDebugModeMinHeapInUse, Value: strconv.Itoa(0), Type: vardef.TypeInt, MinValue: math.MinInt64, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {

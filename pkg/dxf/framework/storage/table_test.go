@@ -485,11 +485,7 @@ func TestSwitchTaskStepInBatch(t *testing.T) {
 func TestGetTopUnfinishedTasks(t *testing.T) {
 	_, gm, ctx := testutil.InitTableTest(t)
 
-	bak := proto.MaxConcurrentTask
-	t.Cleanup(func() {
-		proto.MaxConcurrentTask = bak
-	})
-	proto.MaxConcurrentTask = 4
+	t.Cleanup(proto.SetMaxConcurrentTaskForTest(4))
 	require.NoError(t, gm.InitMeta(ctx, ":4000", ""))
 	taskStates := []proto.TaskState{
 		proto.TaskStateSucceed,
@@ -554,21 +550,24 @@ func TestGetTopUnfinishedTasks(t *testing.T) {
 	require.Len(t, tasks, 8)
 	require.Equal(t, []string{"key/6", "key/5", "key/1", "key/2", "key/3", "key/4", "key/8", "key/9"}, getTaskKeys(tasks))
 
-	proto.MaxConcurrentTask = 6
+	restoreMaxConcurrentTask := proto.SetMaxConcurrentTaskForTest(6)
 	tasks, err = gm.GetTopUnfinishedTasks(ctx)
 	require.NoError(t, err)
 	require.Len(t, tasks, 11)
 	require.Equal(t, []string{"key/6", "key/5", "key/1", "key/2", "key/3", "key/4", "key/8", "key/9", "key/10", "key/11", "key/12"}, getTaskKeys(tasks))
+	restoreMaxConcurrentTask()
 
-	proto.MaxConcurrentTask = 3
+	restoreMaxConcurrentTask = proto.SetMaxConcurrentTaskForTest(3)
 	tasks, err = gm.GetTopNoNeedResourceTasks(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []string{"key/5", "key/3", "key/4", "key/12"}, getTaskKeys(tasks))
+	restoreMaxConcurrentTask()
 
-	proto.MaxConcurrentTask = 1
+	restoreMaxConcurrentTask = proto.SetMaxConcurrentTaskForTest(1)
 	tasks, err = gm.GetTopNoNeedResourceTasks(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []string{"key/5", "key/3"}, getTaskKeys(tasks))
+	restoreMaxConcurrentTask()
 }
 
 func TestGetUsedSlotsOnNodesAndBusyNodes(t *testing.T) {
@@ -845,6 +844,21 @@ func TestGetSubtaskCntByStates(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, cntByStates, 1)
 	require.Equal(t, int64(1), cntByStates[proto.SubtaskStateFailed])
+
+	taskID := int64(2)
+	failedWithErr := testutil.CreateSubTask(t, sm, taskID, proto.StepOne, "tidb1", nil, proto.TaskTypeExample, 1)
+	require.NoError(t, sm.UpdateSubtaskStateAndError(ctx, "tidb1", failedWithErr, proto.SubtaskStateFailed, errors.New("subtask failed")))
+	failedWithoutErr := testutil.CreateSubTask(t, sm, taskID, proto.StepOne, "tidb2", nil, proto.TaskTypeExample, 1)
+	require.NoError(t, sm.UpdateSubtaskStateAndError(ctx, "tidb2", failedWithoutErr, proto.SubtaskStateFailed, nil))
+	canceledWithoutErr := testutil.CreateSubTask(t, sm, taskID, proto.StepOne, "tidb3", nil, proto.TaskTypeExample, 1)
+	require.NoError(t, sm.UpdateSubtaskStateAndError(ctx, "tidb3", canceledWithoutErr, proto.SubtaskStateCanceled, nil))
+
+	cntByStates, subTaskErrs, err := sm.GetSubtaskStateCntAndErrorsByStep(ctx, taskID, proto.StepOne)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), cntByStates[proto.SubtaskStateFailed])
+	require.Equal(t, int64(1), cntByStates[proto.SubtaskStateCanceled])
+	require.Len(t, subTaskErrs, 1)
+	require.ErrorContains(t, subTaskErrs[0], "subtask failed")
 }
 
 func TestDistFrameworkMeta(t *testing.T) {
@@ -1105,12 +1119,13 @@ func TestTaskHistoryTable(t *testing.T) {
 		taskSpecs := []struct {
 			key      string
 			keyspace string
+			taskErr  error
 		}{
 			{key: "history-task-1", keyspace: "ks1"},
 			{key: "history-task-2", keyspace: "ks2"},
 			{key: "history-task-3", keyspace: "ks1"},
 			{key: "history-task-4", keyspace: "ks3"},
-			{key: "history-task-5", keyspace: "ks1"},
+			{key: "history-task-5", keyspace: "ks1", taskErr: errors.New("history task failed")},
 		}
 		allIDs := make([]int64, 0, len(taskSpecs))
 		tasksToTransfer := make([]*proto.Task, 0, len(taskSpecs))
@@ -1120,7 +1135,11 @@ func TestTaskHistoryTable(t *testing.T) {
 			task, err2 := gm.GetTaskByID(ctx, id)
 			require.NoError(t, err2)
 			require.NoError(t, gm.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.StepOne, nil))
-			require.NoError(t, gm.SucceedTask(ctx, id))
+			if spec.taskErr != nil {
+				require.NoError(t, gm.FailTask(ctx, id, proto.TaskStateRunning, spec.taskErr))
+			} else {
+				require.NoError(t, gm.SucceedTask(ctx, id))
+			}
 			task, err2 = gm.GetTaskByID(ctx, id)
 			require.NoError(t, err2)
 			allIDs = append(allIDs, id)
@@ -1139,6 +1158,9 @@ func TestTaskHistoryTable(t *testing.T) {
 		require.Equal(t, allIDs[1], firstPage.NextPageToken)
 		require.Equal(t, "history-task-5", firstPage.Items[0].Key)
 		require.Equal(t, "ks1", firstPage.Items[0].Keyspace)
+		require.Equal(t, proto.TaskStateFailed, firstPage.Items[0].State)
+		require.Contains(t, firstPage.Items[0].Error, "history task failed")
+		require.Empty(t, firstPage.Items[1].Error)
 		require.NotZero(t, firstPage.Items[0].CreateTime)
 		require.NotZero(t, firstPage.Items[0].StartTime)
 		require.NotZero(t, firstPage.Items[0].StateUpdateTime)

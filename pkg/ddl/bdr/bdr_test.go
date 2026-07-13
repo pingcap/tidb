@@ -1,4 +1,4 @@
-// Copyright 2024 PingCAP, Inc.
+// Copyright 2026 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ddl
+package bdr
 
 import (
 	"fmt"
@@ -26,65 +26,87 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestDeniedByBDRWhenAddColumn(t *testing.T) {
+func TestIsAddColumnDenied(t *testing.T) {
 	tests := []struct {
 		name     string
+		role     ast.BDRRole
 		options  []*ast.ColumnOption
 		expected bool
 	}{
 		{
 			name:     "Test with no options(implicit nullable)",
+			role:     ast.BDRRolePrimary,
 			options:  []*ast.ColumnOption{},
 			expected: false,
 		},
 		{
 			name:     "Test with nullable option",
+			role:     ast.BDRRolePrimary,
 			options:  []*ast.ColumnOption{{Tp: ast.ColumnOptionNull}},
 			expected: false,
 		},
 		{
 			name:     "Test with implicit nullable and defaultValue options",
+			role:     ast.BDRRolePrimary,
 			options:  []*ast.ColumnOption{{Tp: ast.ColumnOptionDefaultValue}},
 			expected: false,
 		},
 		{
 			name:     "Test with nullable and defaultValue options",
+			role:     ast.BDRRolePrimary,
 			options:  []*ast.ColumnOption{{Tp: ast.ColumnOptionNotNull}, {Tp: ast.ColumnOptionDefaultValue}},
 			expected: false,
 		},
 		{
 			name:     "Test with comment options",
+			role:     ast.BDRRolePrimary,
 			options:  []*ast.ColumnOption{{Tp: ast.ColumnOptionComment}},
 			expected: false,
 		},
 		{
 			name:     "Test with generated options",
+			role:     ast.BDRRolePrimary,
 			options:  []*ast.ColumnOption{{Tp: ast.ColumnOptionGenerated}},
 			expected: false,
 		},
 		{
 			name:     "Test with comment and generated options",
+			role:     ast.BDRRolePrimary,
 			options:  []*ast.ColumnOption{{Tp: ast.ColumnOptionComment}, {Tp: ast.ColumnOptionGenerated}},
 			expected: false,
 		},
 		{
 			name:     "Test with other options",
+			role:     ast.BDRRolePrimary,
 			options:  []*ast.ColumnOption{{Tp: ast.ColumnOptionCheck}},
 			expected: true,
+		},
+		{
+			name:     "Test with secondary role",
+			role:     ast.BDRRoleSecondary,
+			options:  []*ast.ColumnOption{{Tp: ast.ColumnOptionCheck}},
+			expected: false,
+		},
+		{
+			name:     "Test with none role",
+			role:     ast.BDRRoleNone,
+			options:  []*ast.ColumnOption{{Tp: ast.ColumnOptionCheck}},
+			expected: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := deniedByBDRWhenAddColumn(tt.options)
+			result := IsAddColumnDenied(tt.role, tt.options)
 			require.Equal(t, tt.expected, result)
 		})
 	}
 }
 
-func TestDeniedByBDRWhenModifyColumn(t *testing.T) {
+func TestIsModifyColumnDenied(t *testing.T) {
 	tests := []struct {
 		name         string
+		role         ast.BDRRole
 		newFieldType types.FieldType
 		oldFieldType types.FieldType
 		options      []*ast.ColumnOption
@@ -92,6 +114,7 @@ func TestDeniedByBDRWhenModifyColumn(t *testing.T) {
 	}{
 		{
 			name:         "Test when newFieldType and oldFieldType are not equal",
+			role:         ast.BDRRolePrimary,
 			newFieldType: *types.NewFieldType(mysql.TypeLong),
 			oldFieldType: *types.NewFieldType(mysql.TypeVarchar),
 			options:      []*ast.ColumnOption{},
@@ -99,6 +122,7 @@ func TestDeniedByBDRWhenModifyColumn(t *testing.T) {
 		},
 		{
 			name:         "Test when only defaultValue option is provided",
+			role:         ast.BDRRolePrimary,
 			newFieldType: *types.NewFieldType(mysql.TypeLong),
 			oldFieldType: *types.NewFieldType(mysql.TypeLong),
 			options:      []*ast.ColumnOption{{Tp: ast.ColumnOptionDefaultValue}},
@@ -106,6 +130,7 @@ func TestDeniedByBDRWhenModifyColumn(t *testing.T) {
 		},
 		{
 			name:         "Test when defaultValue and comment options are provided",
+			role:         ast.BDRRolePrimary,
 			newFieldType: *types.NewFieldType(mysql.TypeLong),
 			oldFieldType: *types.NewFieldType(mysql.TypeLong),
 			options:      []*ast.ColumnOption{{Tp: ast.ColumnOptionDefaultValue}, {Tp: ast.ColumnOptionComment}},
@@ -113,22 +138,39 @@ func TestDeniedByBDRWhenModifyColumn(t *testing.T) {
 		},
 		{
 			name:         "Test when other options are provided",
+			role:         ast.BDRRolePrimary,
 			newFieldType: *types.NewFieldType(mysql.TypeLong),
 			oldFieldType: *types.NewFieldType(mysql.TypeLong),
 			options:      []*ast.ColumnOption{{Tp: ast.ColumnOptionComment}},
 			expected:     true,
 		},
+		{
+			name:         "Test with secondary role",
+			role:         ast.BDRRoleSecondary,
+			newFieldType: *types.NewFieldType(mysql.TypeLong),
+			oldFieldType: *types.NewFieldType(mysql.TypeVarchar),
+			options:      []*ast.ColumnOption{},
+			expected:     false,
+		},
+		{
+			name:         "Test with none role",
+			role:         ast.BDRRoleNone,
+			newFieldType: *types.NewFieldType(mysql.TypeLong),
+			oldFieldType: *types.NewFieldType(mysql.TypeVarchar),
+			options:      []*ast.ColumnOption{},
+			expected:     false,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := deniedByBDRWhenModifyColumn(tt.newFieldType, tt.oldFieldType, tt.options)
+			result := IsModifyColumnDenied(tt.role, tt.newFieldType, tt.oldFieldType, tt.options)
 			require.Equal(t, tt.expected, result)
 		})
 	}
 }
 
-func TestDeniedByBDR(t *testing.T) {
+func TestIsDenied(t *testing.T) {
 	testCases := []struct {
 		role     ast.BDRRole
 		action   model.ActionType
@@ -471,7 +513,8 @@ func TestDeniedByBDR(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		assert.Equal(t, tc.expected, DeniedByBDR(tc.role, tc.action, nil), fmt.Sprintf("role: %v, action: %v", tc.role, tc.action))
+		assert.Equal(t, tc.expected, IsDenied(tc.role, tc.action, nil),
+			fmt.Sprintf("role: %v, action: %v", tc.role, tc.action))
 	}
 
 	// test special cases
@@ -528,7 +571,8 @@ func TestDeniedByBDR(t *testing.T) {
 			job.Encode(true)
 			args, err := model.GetModifyIndexArgs(job)
 			require.NoError(t, err)
-			assert.Equal(t, tc.expected, DeniedByBDR(tc.role, tc.action, args), fmt.Sprintf("role: %v, action: %v", tc.role, tc.action))
+			assert.Equal(t, tc.expected, IsDenied(tc.role, tc.action, args),
+				fmt.Sprintf("role: %v, action: %v", tc.role, tc.action))
 		}
 	}
 }

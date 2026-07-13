@@ -74,8 +74,9 @@ func (p *taskSessionProvider) WithNewSession(fn func(se sessionctx.Context) erro
 	return fn(p.se)
 }
 
-func newTaskSessionProvider(server *sqlsvrapimock.MockServer) *taskSessionProvider {
+func newTaskSessionProvider(server *sqlsvrapimock.MockServer, currentKS string) *taskSessionProvider {
 	se := utilmock.NewContext()
+	se.Store = &storeWithKeyspace{keyspace: currentKS}
 	se.BindDomainAndSchValidator(server, nil)
 	return &taskSessionProvider{se: se}
 }
@@ -91,8 +92,7 @@ func TestAcquireTaskRuntime(t *testing.T) {
 		server.EXPECT().GetRuntime().Return(runtime)
 
 		gotRuntime, releaseRuntime, err := AcquireTaskRuntime(
-			newTaskSessionProvider(server),
-			"task_ks",
+			newTaskSessionProvider(server, "task_ks"),
 			"task_ks",
 			"holder",
 		)
@@ -112,8 +112,7 @@ func TestAcquireTaskRuntime(t *testing.T) {
 		server.EXPECT().AcquireKSRuntime("task_ks", "holder").Return(runtimeHandle, nil)
 
 		gotRuntime, releaseRuntime, err := AcquireTaskRuntime(
-			newTaskSessionProvider(server),
-			"current_ks",
+			newTaskSessionProvider(server, "current_ks"),
 			"task_ks",
 			"holder",
 		)
@@ -132,8 +131,7 @@ func TestAcquireTaskRuntime(t *testing.T) {
 		server.EXPECT().AcquireKSRuntime("task_ks", "holder").Return(nil, runtimeErr)
 
 		gotRuntime, releaseRuntime, err := AcquireTaskRuntime(
-			newTaskSessionProvider(server),
-			"current_ks",
+			newTaskSessionProvider(server, "current_ks"),
 			"task_ks",
 			"holder",
 		)
@@ -147,7 +145,6 @@ func TestAcquireTaskRuntime(t *testing.T) {
 
 		gotRuntime, releaseRuntime, err := AcquireTaskRuntime(
 			&taskSessionProvider{err: sessionErr},
-			"current_ks",
 			"task_ks",
 			"holder",
 		)

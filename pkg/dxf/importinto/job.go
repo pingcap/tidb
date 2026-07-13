@@ -145,6 +145,7 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 	// TODO: we need to cleanup the job, if we failed to submit the task to DXF service.
 	dxfTaskMgr := taskManager
 	if runningOnUserKS {
+		failpoint.InjectCall("afterUserImportJobCreatedBeforeDXFTask", jobID)
 		var err2 error
 		dxfTaskMgr, err2 = storage.GetDXFSvcTaskMgr()
 		if err2 != nil {

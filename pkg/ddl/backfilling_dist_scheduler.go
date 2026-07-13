@@ -47,7 +47,9 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/backoff"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
@@ -200,7 +202,17 @@ func getUserTableFromTaskStore(
 		return nil, err
 	}
 	// we don't touch table data during add-index, a fake Allocators is enough.
-	tbl, err := table.TableFromMeta(autoid.NewAllocators(tblInfo.SepAutoInc()), tblInfo)
+	defaultUseNewCollate := collate.NewCollationEnabled()
+	failpoint.Inject("overrideDefaultUseNewCollateForBackfillStep", func(val failpoint.Value) {
+		defaultUseNewCollate = val.(bool)
+	})
+	useNewCollate := job.ReorgMeta.GetUseNewCollateOrDefault(defaultUseNewCollate)
+	failpoint.InjectCall("afterResolveUserTableNewCollateForBackfillStep", job, defaultUseNewCollate, useNewCollate)
+	tbl, err := tables.TableFromMetaWithCollate(
+		useNewCollate,
+		autoid.NewAllocators(tblInfo.SepAutoInc()),
+		tblInfo,
+	)
 	if err != nil {
 		return nil, err
 	}

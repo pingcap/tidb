@@ -335,6 +335,8 @@ type Config struct {
 
 	// HostedEmbedding controls the TiDB Cloud hosted embedding provider.
 	HostedEmbedding HostedEmbedding `toml:"hosted-embedding" json:"hosted-embedding"`
+	// ExternalWorkload configures Starter-only external workload coordination.
+	ExternalWorkload ExternalWorkload `toml:"external-workload" json:"external-workload"`
 
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
@@ -1165,6 +1167,7 @@ var defaultConf = Config{
 	DeployMode:                   deploymode.Premium,
 	DXFResourceLimit:             DefDXFResourceLimit,
 	RUV2:                         DefaultRUV2Config(),
+	ExternalWorkload:             defaultExternalWorkload(),
 	Log: Log{
 		Level:               "info",
 		Format:              "text",
@@ -1605,6 +1608,9 @@ func (c *Config) Load(confFile string) error {
 	if isHostedEmbeddingDefined(metaData) && c.DeployMode != deploymode.Starter {
 		return fmt.Errorf("hosted-embedding can only be configured for starter deploy mode")
 	}
+	if metaData.IsDefined("external-workload") && c.DeployMode != deploymode.Starter {
+		return fmt.Errorf("external-workload can only be configured when deploy-mode is starter")
+	}
 	if c.DeployMode == deploymode.Starter && !metaData.IsDefined("standby", "enable-zero-backend") {
 		c.Standby.EnableZeroBackend = true
 	}
@@ -1795,6 +1801,15 @@ func (c *Config) Valid() error {
 	}
 	if err := c.TrxSummary.Valid(); err != nil {
 		return err
+	}
+	if c.DeployMode != deploymode.Starter {
+		if c.ExternalWorkload.isConfigured() {
+			return fmt.Errorf("external-workload can only be configured when deploy-mode is starter")
+		}
+	} else {
+		if err := c.ExternalWorkload.Valid(); err != nil {
+			return err
+		}
 	}
 
 	if c.Performance.TxnTotalSizeLimit > 1<<40 {

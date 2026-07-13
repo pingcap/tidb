@@ -16,7 +16,6 @@ package scheduler
 
 import (
 	"context"
-	"fmt"
 	"slices"
 	"time"
 
@@ -155,8 +154,11 @@ func NewManager(ctx context.Context, store kv.Storage, taskMgr TaskManager, serv
 			slotMgr:  slotMgr,
 			serverID: serverID,
 		}),
-		logger:   logger,
-		finishCh: make(chan struct{}, proto.MaxConcurrentTask),
+		logger: logger,
+		// finishCh must be able to buffer finish signals for the largest runtime
+		// value of maxConcurrentTask. Otherwise, raising the limit after startup
+		// can make non-blocking sends drop signals until the periodic cleanup loop runs.
+		finishCh: make(chan struct{}, proto.MaxConcurrentTaskUpperBound),
 		nodeRes:  nodeRes,
 	}
 	schedulerManager.mu.schedulerMap = make(map[int64]Scheduler)
@@ -245,7 +247,8 @@ func (sm *Manager) getSchedulableTasks(ctx context.Context) ([]*proto.TaskBase, 
 	defer r.End()
 	getTasksFn := sm.taskMgr.GetTopUnfinishedTasks
 	taskCnt := sm.getSchedulerCount()
-	if taskCnt >= proto.MaxConcurrentTask {
+	maxConcurrentTask := proto.GetMaxConcurrentTask()
+	if taskCnt >= maxConcurrentTask {
 		// when we have reached the limit of concurrent tasks, we only handle
 		// tasks in states that don't need resources, e.g. reverting/cancelling/
 		// pausing/modifying.
@@ -292,7 +295,7 @@ func (sm *Manager) startSchedulers(schedulableTasks []*proto.TaskBase) error {
 		switch task.State {
 		case proto.TaskStatePending, proto.TaskStateRunning, proto.TaskStateResuming:
 			taskCnt := sm.getSchedulerCount()
-			if taskCnt >= proto.MaxConcurrentTask {
+			if taskCnt >= proto.GetMaxConcurrentTask() {
 				continue
 			}
 			reservedExecID, ok = sm.slotMgr.canReserve(task)
@@ -352,8 +355,8 @@ func (sm *Manager) startScheduler(basicTask *proto.TaskBase, allocateSlots bool,
 		return
 	}
 
-	holderID := fmt.Sprintf("DXF/scheduler/%d", task.ID)
-	taskRuntime, releaseFn, err := dxfutil.AcquireTaskRuntime(sm.taskMgr, sm.store.GetKeyspace(), task.Keyspace, holderID)
+	holderID := dxfutil.GenHolderID("scheduler", task.ID)
+	taskRuntime, releaseFn, err := dxfutil.AcquireTaskRuntime(sm.taskMgr, task.Keyspace, holderID)
 	if err != nil {
 		sm.logger.Warn("acquire task runtime failed", zap.Int64("task-id", basicTask.ID),
 			zap.String("task-key", basicTask.Key), zap.Error(err))

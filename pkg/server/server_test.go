@@ -53,6 +53,8 @@ func (*testStandbyController) Handler(*Server) (string, *http.ServeMux) {
 
 func (*testStandbyController) OnConnActive() {}
 
+func (*testStandbyController) PrepareForActivation(StandbyReadyServer) error { return nil }
+
 func (*testStandbyController) OnServerCreated(*Server) {}
 
 func (*testStandbyController) OnServerShutdown(StandbyShutdownServer) {}
@@ -209,6 +211,30 @@ func TestSeverHealth(t *testing.T) {
 	require.True(t, server.health.Load(), "server should be healthy")
 }
 
+func TestInitTiDBListenerIsIdempotent(t *testing.T) {
+	originalRunInGoTest := RunInGoTest
+	RunInGoTest = true
+	t.Cleanup(func() {
+		RunInGoTest = originalRunInGoTest
+	})
+
+	cfg := util.NewTestConfig()
+	cfg.Port = 0
+	cfg.Status.ReportStatus = false
+	cfg.Socket = filepath.Join(t.TempDir(), "tidb.sock")
+	svr := NewTestServer(cfg)
+	t.Cleanup(svr.Close)
+
+	require.NoError(t, svr.initTiDBListener())
+	require.NotNil(t, svr.Listener())
+	require.NotNil(t, svr.Socket())
+	listenAddr := svr.Listener().Addr().String()
+
+	require.NoError(t, svr.initTiDBListener())
+	require.Equal(t, listenAddr, svr.Listener().Addr().String())
+	require.NotNil(t, svr.Socket())
+}
+
 func TestServerShutdownFlags(t *testing.T) {
 	svr := NewTestServer(util.NewTestConfig())
 	require.False(t, svr.GetForceShutdown())
@@ -235,6 +261,8 @@ func (c *mockStandbyController) Handler(_ *Server) (string, *http.ServeMux) {
 }
 
 func (c *mockStandbyController) OnConnActive() {}
+
+func (c *mockStandbyController) PrepareForActivation(StandbyReadyServer) error { return nil }
 
 func (c *mockStandbyController) OnServerCreated(_ *Server) {}
 

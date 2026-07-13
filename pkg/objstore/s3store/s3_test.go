@@ -18,6 +18,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"math/rand"
@@ -1466,9 +1467,11 @@ func TestTryLockRemoteRootPathPrefix(t *testing.T) {
 			return nil, errors.New("no such key")
 		})
 
-	_, err := TryLockRemote(context.Background(), storage, "truncating.lock", "hint")
+	_, err := TryLockRemote(context.Background(), storage, "truncating.lock", LockMetaInput{Hint: "hint"})
 	require.Error(t, err)
 	require.ErrorContains(t, err, "during initial check")
+	var locked ErrLocked
+	require.False(t, stderrors.As(err, &locked))
 }
 
 func TestSendCreds(t *testing.T) {

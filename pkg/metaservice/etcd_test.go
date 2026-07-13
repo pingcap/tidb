@@ -47,6 +47,30 @@ func unixSocketAvailable() bool {
 	return false
 }
 
+func TestGetPDAddrsPDOnlyClient(t *testing.T) {
+	expectAddrs := []string{"127.0.0.1:1111"}
+	pdCli := &mockPDClient{
+		members: []*pdpb.Member{{
+			ClientUrls: []string{"http://127.0.0.1:1111"},
+		}},
+	}
+
+	serviceClient := newClient(nil, pdCli)
+	require.NotNil(t, serviceClient)
+
+	addrs, err := serviceClient.GetPDAddrs(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, expectAddrs, addrs)
+
+	httpAddrs, err := serviceClient.GetPDHttpAddrs(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []string{"http://127.0.0.1:1111"}, httpAddrs)
+}
+
+func TestNewClientReturnsNilWithoutClients(t *testing.T) {
+	require.Nil(t, newClient(nil, nil))
+}
+
 // TestGetPDAddrsWithRealClient tests the GetPDAddrs method with a real etcd client
 func TestGetPDAddrsWithRealClient(t *testing.T) {
 	integration.BeforeTestExternal(t)

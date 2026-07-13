@@ -987,7 +987,7 @@ var funcs = map[string]functionClass{
 	ast.VecEmbedCosineDistance: &vecCosineDistanceFunctionClass{baseFunctionClass{ast.VecEmbedCosineDistance, 2, 2}},
 
 	// fts functions
-	ast.FTSMatchWord:         &ftsMatchWordFunctionClass{baseFunctionClass{ast.FTSMatchWord, 2, 2}},
+	ast.FTSMatchWord:         &ftsMatchWordFunctionClass{baseFunctionClass: baseFunctionClass{ast.FTSMatchWord, 2, 2}},
 	ast.FTSMysqlMatchAgainst: &ftsMysqlMatchAgainstFunctionClass{baseFunctionClass{ast.FTSMysqlMatchAgainst, 2, -1}},
 
 	// TiDB internal function.

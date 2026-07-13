@@ -135,7 +135,15 @@ import (
 // 	tk.MustContainErrMsg("explain select * from t where fts_match_word('hello', title)", "Full text search can be only executed in a columnar storage")
 // }
 
+func skipIfNotStarterForFTS(t *testing.T) {
+	if !deploymode.IsStarter() {
+		t.Skip("full text search is only supported in starter deployment mode")
+	}
+}
+
 func TestFTSParser(t *testing.T) {
+	skipIfNotStarterForFTS(t)
+
 	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second, mockstore.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -184,6 +192,8 @@ func TestFTSParser(t *testing.T) {
 }
 
 func TestFTSSyntax(t *testing.T) {
+	skipIfNotStarterForFTS(t)
+
 	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second, mockstore.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -223,6 +233,8 @@ func TestFTSSyntax(t *testing.T) {
 }
 
 func TestFTSIndexSyntax(t *testing.T) {
+	skipIfNotStarterForFTS(t)
+
 	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second, mockstore.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
