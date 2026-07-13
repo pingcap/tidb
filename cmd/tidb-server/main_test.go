@@ -89,8 +89,10 @@ func TestOverrideConfigKeyspaceActivateMode(t *testing.T) {
 	}))
 
 	cfg := config.NewConfig()
+	cfg.DeployMode = deploymode.Starter
 	overrideConfig(cfg, fset)
 	require.True(t, cfg.KeyspaceActivateMode)
+	require.Equal(t, "ns-1", cfg.StarterParams.PodNamespace)
 	require.Equal(t, "pod-name=pod-1,pod-ip=10.0.0.1,pod-namespace=ns-1", *starterAdditionalParams)
 }
 

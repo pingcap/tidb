@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/meta_storagepb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
@@ -257,4 +258,24 @@ func TestStarterSwitchGroupRejectsMissingGroup(t *testing.T) {
 	req := &tikvrpc.Request{}
 	require.NoError(t, checker.BeforeCopRequest(req))
 	require.Empty(t, req.ResourceControlContext.ResourceGroupName)
+}
+
+func TestResourceGroupsControllerOptionsUseStarterPodNamespaceForVIPWaitRetry(t *testing.T) {
+	restoreConfig := config.RestoreFunc()
+	t.Cleanup(restoreConfig)
+	originalDeployMode := deploymode.Get()
+	t.Cleanup(func() {
+		require.NoError(t, deploymode.Set(originalDeployMode))
+	})
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.StarterParams.PodNamespace = "starter-vip-ns"
+	})
+	require.Len(t, newResourceGroupsControllerOptions(), 4)
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.StarterParams.PodNamespace = "starter-standard-ns"
+	})
+	require.Len(t, newResourceGroupsControllerOptions(), 2)
 }

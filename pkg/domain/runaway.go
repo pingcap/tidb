@@ -17,12 +17,12 @@ package domain
 import (
 	"context"
 	"net"
-	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
@@ -61,7 +61,7 @@ func newResourceGroupsControllerOptions() []rmclient.ResourceControlCreateOption
 			rmclient.WithDegradedModeWaitDuration(defaultDegradedModeWaitTimeout),
 		)
 	}
-	if strings.Contains(os.Getenv("NAMESPACE"), "vip") {
+	if strings.Contains(config.GetGlobalConfig().StarterParams.PodNamespace, "vip") {
 		opts = append(opts,
 			rmclient.WithWaitRetryInterval(tokenWaitRetryInterval),
 			rmclient.WithWaitRetryTimes(tokenWaitRetryTimes),

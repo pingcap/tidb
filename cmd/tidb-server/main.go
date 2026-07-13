@@ -710,6 +710,11 @@ func overrideConfig(cfg *config.Config, fset *flag.FlagSet) {
 	fset.Visit(func(f *flag.Flag) {
 		actualFlags[f.Name] = true
 	})
+	if actualFlags[nmStarterParams] && cfg.DeployMode == deploymode.Starter {
+		params, err := parseStarterAdditionalParams(getStarterAdditionalParams())
+		terror.MustNil(err)
+		cfg.StarterParams.PodNamespace = params.podNamespace
+	}
 
 	// Base
 	if actualFlags[nmHost] {

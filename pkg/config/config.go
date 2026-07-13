@@ -1094,6 +1094,9 @@ type StarterParams struct {
 	// ManagerAddr is the TiDB manager address used by the shutdown notifier.
 	// When empty and EnableManagerNotifier is true, the Starter path derives the service address from starter additional params.
 	ManagerAddr string `toml:"manager-addr" json:"manager-addr,omitempty"`
+	// PodNamespace captures the runtime pod namespace from --starter-additional-params.
+	// It is command-line derived runtime metadata rather than file-backed config.
+	PodNamespace string `toml:"-" json:"-"`
 	// MaxImportDataSize is the maximum total real source data size allowed for IMPORT INTO.
 	// Zero means unlimited.
 	MaxImportDataSize configtypes.ByteSize `toml:"max-import-data-size" json:"max-import-data-size,omitempty"`

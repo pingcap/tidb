@@ -20,7 +20,6 @@ import (
 	"strings"
 
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
-	"github.com/pingcap/errors"
 	pd "github.com/tikv/pd/client"
 	pderr "github.com/tikv/pd/client/errs"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
@@ -37,7 +36,7 @@ type starterResourceGroupProvider struct {
 func newStarterResourceGroupProvider(provider rmclient.ResourceGroupProvider) *starterResourceGroupProvider {
 	return &starterResourceGroupProvider{
 		ResourceGroupProvider: provider,
-		degradedRUSettings:      newDefaultDegradedRUSettings(),
+		degradedRUSettings:    newDefaultDegradedRUSettings(),
 	}
 }
 
@@ -78,11 +77,11 @@ func shouldUseDegradedResourceGroupFallback(ctx context.Context, err error) bool
 	if isResourceGroupNotExistError(err) {
 		return false
 	}
-	if errors.Is(err, pderr.ErrClientResourceGroupConfigUnavailable) {
+	if stderrors.Is(err, pderr.ErrClientResourceGroupConfigUnavailable) {
 		return true
 	}
 	var getRGErr *pderr.ErrClientGetResourceGroup
-	if errors.As(err, &getRGErr) {
+	if stderrors.As(err, &getRGErr) {
 		return isResourceManagerUnavailableCause(getRGErr.Cause)
 	}
 	return isResourceManagerUnavailableCause(err.Error())
@@ -90,7 +89,7 @@ func shouldUseDegradedResourceGroupFallback(ctx context.Context, err error) bool
 
 func isResourceGroupNotExistError(err error) bool {
 	var getRGErr *pderr.ErrClientGetResourceGroup
-	if !errors.As(err, &getRGErr) {
+	if !stderrors.As(err, &getRGErr) {
 		return false
 	}
 	return isResourceGroupNotExistCause(getRGErr.Cause)
