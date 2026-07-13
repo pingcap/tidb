@@ -16,6 +16,8 @@ go_library(
 
 go_test(
     name = "sqlkiller_test",
+    timeout = "short",
     srcs = ["sqlkiller_test.go"],
     embed = [":sqlkiller"],
+    flaky = True,
 )
