@@ -60,6 +60,8 @@ func isBucketRegionRedirectError(err error) bool {
 	if !errors.As(err, &apiErr) {
 		return false
 	}
+	// HeadBucket responses can have an empty body, so the AWS SDK derives
+	// "MovedPermanently" from HTTP 301; body-bearing responses use "PermanentRedirect".
 	switch apiErr.ErrorCode() {
 	case "MovedPermanently", "PermanentRedirect":
 	default:
