@@ -263,7 +263,7 @@ func TestAddIndexPresplitIndexRegions(t *testing.T) {
 
 func TestAddIndexPresplitFunctional(t *testing.T) {
 	testutil.ReduceCheckInterval(t)
-	store := realtikvtest.CreateMockStoreAndSetup(t)
+	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int primary key, b int);")
@@ -281,16 +281,11 @@ func TestAddIndexPresplitFunctional(t *testing.T) {
 	tk.MustExec("insert into t values (1, 1), (10, 1);")
 	tk.MustExec("alter table t add index idx(b) pre_split_regions = (between (1) and (2) regions 3);")
 	tk.MustExec("drop table t;")
-}
 
-func TestAddIndexAutoPresplitRealTiKV(t *testing.T) {
+	// Auto split uses the local reorg path, while DXF and fast reorg are always enabled on NextGen.
 	if kerneltype.IsNextGen() {
-		t.Skip("DXF and fast reorg are always enabled on nextgen")
+		return
 	}
-	testutil.ReduceCheckInterval(t)
-	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
 
 	originalFastReorg := tk.MustQuery("select @@global.tidb_ddl_enable_fast_reorg").Rows()[0][0]
 	originalDistTask := tk.MustQuery("select @@global.tidb_enable_dist_task").Rows()[0][0]

@@ -157,6 +157,8 @@ func planAutoSplitIndexRegions(
 		physicalCfg := cfg.withRegionCandidateRatio(rowsRatio)
 		keys, reason, err := planAutoSplitPhysicalIndexRegions(
 			sctx, statsTables[i], tblInfo, idxInfo, physicalID, physicalCfg)
+		logAutoSplitPhysicalIndexRegionDecision(
+			tblInfo, idxInfo, physicalID, statsTables[i], len(keys), reason, err)
 		if err != nil {
 			return nil, reason, err
 		}
@@ -175,6 +177,42 @@ func planAutoSplitIndexRegions(
 		return nil, strings.Join(skipReasons, ","), nil
 	}
 	return splitKeys, "auto split keys generated", nil
+}
+
+func logAutoSplitPhysicalIndexRegionDecision(
+	tblInfo *model.TableInfo,
+	idxInfo *model.IndexInfo,
+	physicalID int64,
+	statsTbl *statistics.Table,
+	splitKeyCount int,
+	reason string,
+	err error,
+) {
+	decision := "planned"
+	if err != nil {
+		decision = "failed"
+	} else if splitKeyCount == 0 {
+		decision = "skipped"
+	}
+	fields := []zap.Field{
+		zap.String("table", tblInfo.Name.L),
+		zap.String("index", idxInfo.Name.L),
+		zap.Int64("physicalTableID", physicalID),
+		zap.Bool("statsAvailable", statsTbl != nil),
+		zap.String("decision", decision),
+		zap.String("reason", reason),
+		zap.Int("splitKeys", splitKeyCount),
+	}
+	if statsTbl != nil {
+		fields = append(fields,
+			zap.Int("statsVersion", statsTbl.StatsVer),
+			zap.Int64("realtimeCount", statsTbl.RealtimeCount))
+	}
+	if err != nil {
+		logutil.DDLLogger().Warn("plan auto split hot index region for physical table", append(fields, zap.Error(err))...)
+		return
+	}
+	logutil.DDLLogger().Info("plan auto split hot index region for physical table", fields...)
 }
 
 func (cfg autoSplitHotRegionConfig) withRegionCandidateRatio(rowsRatio float64) autoSplitHotRegionConfig {
@@ -300,112 +338,41 @@ func buildAutoSplitTopNRows(
 	cfg autoSplitHotRegionConfig,
 ) ([][]types.Datum, error) {
 	if cfg.maxTopNKeysPerPhysical == 0 {
-		logutil.DDLLogger().Info("skip auto split hot index TopN split keys",
-			zap.String("reason", "max TopN split keys is 0"),
-			zap.Int64("physicalTableID", statsTbl.PhysicalID),
-			zap.Int64("columnID", colInfo.ID),
-			zap.String("column", colInfo.Name.L),
-			zap.Int64("realtimeCount", statsTbl.RealtimeCount))
 		return nil, nil
 	}
 	if colStats.TopN == nil {
-		logutil.DDLLogger().Info("skip auto split hot index TopN split keys",
-			zap.String("reason", "TopN is nil"),
-			zap.Int64("physicalTableID", statsTbl.PhysicalID),
-			zap.Int64("columnID", colInfo.ID),
-			zap.String("column", colInfo.Name.L),
-			zap.Int64("realtimeCount", statsTbl.RealtimeCount),
-			zap.Bool("columnStatsAnalyzed", colStats.IsAnalyzed()),
-			zap.Bool("columnStatsFullLoaded", colStats.IsFullLoad()))
 		return nil, nil
 	}
 	topNNum := colStats.TopN.Num()
 	if topNNum == 0 {
-		logutil.DDLLogger().Info("skip auto split hot index TopN split keys",
-			zap.String("reason", "TopN is empty"),
-			zap.Int64("physicalTableID", statsTbl.PhysicalID),
-			zap.Int64("columnID", colInfo.ID),
-			zap.String("column", colInfo.Name.L),
-			zap.Int64("realtimeCount", statsTbl.RealtimeCount),
-			zap.Bool("columnStatsAnalyzed", colStats.IsAnalyzed()),
-			zap.Bool("columnStatsFullLoaded", colStats.IsFullLoad()))
 		return nil, nil
 	}
 
 	topNCandidates := make([]statistics.TopNMeta, 0, topNNum)
-	filteredByCount := 0
-	filteredByRatio := 0
-	var maxTopNCount uint64
-	var maxTopNRatio float64
 	for _, topNItem := range colStats.TopN.TopN {
-		if topNItem.Count > maxTopNCount {
-			maxTopNCount = topNItem.Count
-		}
-		if statsTbl.RealtimeCount > 0 {
-			maxTopNRatio = max(maxTopNRatio, float64(topNItem.Count)/float64(statsTbl.RealtimeCount))
-		}
 		if topNItem.Count < cfg.topNMinCount {
-			filteredByCount++
 			continue
 		}
 		if cfg.topNMinRatio > 0 && statsTbl.RealtimeCount > 0 &&
 			float64(topNItem.Count)/float64(statsTbl.RealtimeCount) < cfg.topNMinRatio {
-			filteredByRatio++
 			continue
 		}
 		topNCandidates = append(topNCandidates, topNItem)
 	}
 	if len(topNCandidates) == 0 {
-		logutil.DDLLogger().Info("skip auto split hot index TopN split keys",
-			zap.String("reason", "no TopN item reaches threshold"),
-			zap.Int64("physicalTableID", statsTbl.PhysicalID),
-			zap.Int64("columnID", colInfo.ID),
-			zap.String("column", colInfo.Name.L),
-			zap.Int64("realtimeCount", statsTbl.RealtimeCount),
-			zap.Int("topNItems", topNNum),
-			zap.Uint64("topNMinCount", cfg.topNMinCount),
-			zap.Float64("topNMinRatio", cfg.topNMinRatio),
-			zap.Int("filteredByCount", filteredByCount),
-			zap.Int("filteredByRatio", filteredByRatio),
-			zap.Uint64("maxTopNCount", maxTopNCount),
-			zap.Float64("maxTopNRatio", maxTopNRatio))
 		return nil, nil
 	}
-	slices.SortFunc(topNCandidates, func(a, b statistics.TopNMeta) int {
-		if a.Count > b.Count {
-			return -1
-		}
-		if a.Count < b.Count {
-			return 1
-		}
-		return bytes.Compare(a.Encoded, b.Encoded)
-	})
+	statistics.SortTopnMeta(topNCandidates)
 
 	topNRows := make([][]types.Datum, 0, min(cfg.maxTopNKeysPerPhysical, len(topNCandidates)))
 	for _, topNItem := range topNCandidates {
 		datum, err := statistics.TopNMetaToDatum(
 			topNItem, colInfo.GetType(), false, sctx.GetSessionVars().Location())
 		if err != nil {
-			logutil.DDLLogger().Warn("failed to build auto split hot index TopN split key",
-				zap.String("reason", "failed to decode TopN datum"),
-				zap.Int64("physicalTableID", statsTbl.PhysicalID),
-				zap.Int64("columnID", colInfo.ID),
-				zap.String("column", colInfo.Name.L),
-				zap.Int64("realtimeCount", statsTbl.RealtimeCount),
-				zap.Uint64("topNCount", topNItem.Count),
-				zap.Error(err))
 			return nil, err
 		}
 		convertedDatum, err := datum.ConvertTo(sctx.GetSessionVars().StmtCtx.TypeCtx(), &colInfo.FieldType)
 		if err != nil {
-			logutil.DDLLogger().Warn("failed to build auto split hot index TopN split key",
-				zap.String("reason", "failed to convert TopN datum"),
-				zap.Int64("physicalTableID", statsTbl.PhysicalID),
-				zap.Int64("columnID", colInfo.ID),
-				zap.String("column", colInfo.Name.L),
-				zap.Int64("realtimeCount", statsTbl.RealtimeCount),
-				zap.Uint64("topNCount", topNItem.Count),
-				zap.Error(err))
 			return nil, err
 		}
 		topNRows = append(topNRows, []types.Datum{convertedDatum})
@@ -413,21 +380,6 @@ func buildAutoSplitTopNRows(
 			break
 		}
 	}
-	logutil.DDLLogger().Info("build auto split hot index TopN split keys",
-		zap.Int64("physicalTableID", statsTbl.PhysicalID),
-		zap.Int64("columnID", colInfo.ID),
-		zap.String("column", colInfo.Name.L),
-		zap.Int64("realtimeCount", statsTbl.RealtimeCount),
-		zap.Int("topNItems", topNNum),
-		zap.Uint64("topNMinCount", cfg.topNMinCount),
-		zap.Float64("topNMinRatio", cfg.topNMinRatio),
-		zap.Int("filteredByCount", filteredByCount),
-		zap.Int("filteredByRatio", filteredByRatio),
-		zap.Int("topNCandidates", len(topNCandidates)),
-		zap.Int("selectedTopNKeys", len(topNRows)),
-		zap.Bool("truncatedByLimit", len(topNCandidates) > len(topNRows)),
-		zap.Uint64("maxTopNCount", maxTopNCount),
-		zap.Float64("maxTopNRatio", maxTopNRatio))
 	return topNRows, nil
 }
 
