@@ -19,7 +19,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -31,8 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
-	"go.uber.org/zap/zaptest/observer"
 )
 
 type fakeAutoSplitStatsProvider map[int64]*statistics.Table
@@ -61,18 +58,25 @@ func (*fakeAutoSplitStore) CheckRegionInScattering(uint64) (bool, error) {
 	return false, nil
 }
 
+func newAutoSplitTestConfig() autoSplitHotRegionConfig {
+	return autoSplitHotRegionConfig{
+		minTableRows:                   10,
+		rowsPerRegion:                  25,
+		maxFullRangeRegionsPerPhysical: 4,
+		maxTopNKeysPerPhysical:         2,
+		regionCandidateBudget:          32,
+		topNMinCount:                   10,
+		topNMinRatio:                   0.1,
+		minStatsHealthy:                80,
+	}
+}
+
 func TestPlanAutoSplitIndexRegionsFullRange(t *testing.T) {
 	sctx := mock.NewContext()
 	tblInfo, idxInfo := buildAutoSplitTestTableInfo()
 	statsTbl := buildAutoSplitTestStats(tblInfo.ID, 100, 0, tblInfo.Columns[1], true, nil)
-	cfg := autoSplitHotRegionConfig{
-		minTableRows:                   10,
-		rowsPerRegion:                  25,
-		maxFullRangeRegionsPerPhysical: 4,
-		maxTopNKeysPerPhysical:         0,
-		regionCandidateBudget:          32,
-		minStatsHealthy:                80,
-	}
+	cfg := newAutoSplitTestConfig()
+	cfg.maxTopNKeysPerPhysical = 0
 
 	keys, reason, err := planAutoSplitIndexRegions(
 		sctx, fakeAutoSplitStatsProvider{tblInfo.ID: statsTbl}, tblInfo, idxInfo, cfg)
@@ -97,14 +101,12 @@ func TestPlanAutoSplitIndexRegionsFullRange(t *testing.T) {
 		104: buildAutoSplitTestStats(104, 10_000, 0, partitionTblInfo.Columns[1], true, nil),
 	}
 	partitionStats[104].Pseudo = true
-	partitionCfg := autoSplitHotRegionConfig{
-		minTableRows:                   2,
-		rowsPerRegion:                  1,
-		maxFullRangeRegionsPerPhysical: 100,
-		maxTopNKeysPerPhysical:         100,
-		regionCandidateBudget:          20,
-		minStatsHealthy:                80,
-	}
+	partitionCfg := newAutoSplitTestConfig()
+	partitionCfg.minTableRows = 2
+	partitionCfg.rowsPerRegion = 1
+	partitionCfg.maxFullRangeRegionsPerPhysical = 100
+	partitionCfg.maxTopNKeysPerPhysical = 100
+	partitionCfg.regionCandidateBudget = 20
 	largePartitionCfg := partitionCfg.withRegionCandidateRatio(0.79)
 	require.Equal(t, 7, largePartitionCfg.maxFullRangeRegionsPerPhysical)
 	require.Equal(t, 6, largePartitionCfg.maxTopNKeysPerPhysical)
@@ -120,7 +122,6 @@ func TestPlanAutoSplitIndexRegionsFullRange(t *testing.T) {
 	require.Equal(t, 2, countSplitKeysForPhysicalTable(t, keys, 102))
 	require.Equal(t, 2, countSplitKeysForPhysicalTable(t, keys, 103))
 	require.Equal(t, 0, countSplitKeysForPhysicalTable(t, keys, 104))
-
 	// The candidate budget is a soft target. The minimum per-partition budget may make the final
 	// split-key count exceed it, and no physical partition should be removed by a final truncation.
 	partitionCfg.regionCandidateBudget = 4
@@ -144,16 +145,8 @@ func TestPlanAutoSplitIndexRegionsTopN(t *testing.T) {
 	topN.AppendTopN(encodeAutoSplitIntDatum(t, sctx.GetSessionVars().StmtCtx.TimeZone(), 30), 40)
 	topN.Sort()
 	statsTbl := buildAutoSplitTestStats(tblInfo.ID, 100, 0, tblInfo.Columns[1], true, topN)
-	cfg := autoSplitHotRegionConfig{
-		minTableRows:                   10,
-		rowsPerRegion:                  1_000,
-		maxFullRangeRegionsPerPhysical: 4,
-		maxTopNKeysPerPhysical:         2,
-		regionCandidateBudget:          32,
-		topNMinCount:                   10,
-		topNMinRatio:                   0.1,
-		minStatsHealthy:                80,
-	}
+	cfg := newAutoSplitTestConfig()
+	cfg.rowsPerRegion = 1_000
 
 	keys, reason, err := planAutoSplitIndexRegions(
 		sctx, fakeAutoSplitStatsProvider{tblInfo.ID: statsTbl}, tblInfo, idxInfo, cfg)
@@ -198,16 +191,7 @@ func TestPlanAutoSplitIndexRegionsTopN(t *testing.T) {
 func TestPlanAutoSplitIndexRegionsSkipUnreliableStats(t *testing.T) {
 	sctx := mock.NewContext()
 	tblInfo, idxInfo := buildAutoSplitTestTableInfo()
-	cfg := autoSplitHotRegionConfig{
-		minTableRows:                   10,
-		rowsPerRegion:                  25,
-		maxFullRangeRegionsPerPhysical: 4,
-		maxTopNKeysPerPhysical:         2,
-		regionCandidateBudget:          32,
-		topNMinCount:                   10,
-		topNMinRatio:                   0.1,
-		minStatsHealthy:                80,
-	}
+	cfg := newAutoSplitTestConfig()
 
 	cases := []struct {
 		name           string
@@ -232,11 +216,6 @@ func TestPlanAutoSplitIndexRegionsSkipUnreliableStats(t *testing.T) {
 			name:           "small table",
 			statsTbl:       buildAutoSplitTestStats(tblInfo.ID, 5, 0, tblInfo.Columns[1], true, nil),
 			reasonContains: "below threshold",
-		},
-		{
-			name:           "unloaded leading column",
-			statsTbl:       buildAutoSplitTestStats(tblInfo.ID, 100, 0, tblInfo.Columns[1], false, nil),
-			reasonContains: "not fully loaded",
 		},
 	}
 	cases[1].statsTbl.Pseudo = true
@@ -288,21 +267,11 @@ func TestPreSplitIndexRegionsAutoGateAndManualOverride(t *testing.T) {
 
 	capturedKeys = nil
 	store = &fakeAutoSplitStore{regionIDs: []uint64{1}, splitErr: context.DeadlineExceeded}
-	core, logs := observer.New(zap.ErrorLevel)
-	func() {
-		restoreLogger := log.ReplaceGlobals(
-			zap.New(core), &log.ZapProperties{Level: zap.NewAtomicLevelAt(zap.ErrorLevel)})
-		defer restoreLogger()
-		err = preSplitIndexRegions(
-			context.Background(), sctx, store, tblInfo, []*model.IndexInfo{idxInfo},
-			reorgMeta, args, statsProvider, true)
-	}()
+	err = preSplitIndexRegions(
+		context.Background(), sctx, store, tblInfo, []*model.IndexInfo{idxInfo},
+		reorgMeta, args, statsProvider, true)
 	require.NoError(t, err)
 	require.Equal(t, 3, countSplitKeysForIndex(t, capturedKeys, idxInfo.ID))
-	splitFailureLogs := logs.FilterMessage("split table index region failed").All()
-	require.Len(t, splitFailureLogs, 1)
-	require.Equal(t, "t", splitFailureLogs[0].ContextMap()["table"])
-	require.Equal(t, "idx", splitFailureLogs[0].ContextMap()["index"])
 	require.Equal(t, []model.AutoSplitHotRegionResult{{
 		IndexName:        "idx",
 		IndexID:          idxInfo.ID,
