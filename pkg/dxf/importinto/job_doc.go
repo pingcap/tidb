@@ -193,16 +193,6 @@ package importinto
 //     still advance the import job status or step before the DXF cancellation
 //     is processed.
 //
-//   - In async prepare, the order is:
-//
-//         S0 -> S1(preparing) -> prepare work -> prepared-info read/update
-//            -> SwitchTaskStepAfterPrepare
-//
-//     If C1 changes the DXF task to cancelling before the final task-step
-//     compare-and-set, the task-step update no-ops and the next scheduler
-//     refresh sees cancelling. The import job can still temporarily show
-//     running/preparing or prepared metadata.
-//
 //   - During business-step planning, the order is:
 //
 //         S0 -> S1 or S2 -> generate subtask metadata -> SwitchTaskStep

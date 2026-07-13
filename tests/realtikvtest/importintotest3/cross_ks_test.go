@@ -804,12 +804,10 @@ func requireTaskRunningBizStep(t *testing.T, tk *testkit.TestKit, taskKey string
 		}
 		taskStep = proto.Step(step)
 		return taskState == proto.TaskStateRunning.String() &&
-			taskStep != proto.StepInit &&
-			taskStep != proto.StepPrepared
+			taskStep != proto.StepInit
 	}, 30*time.Second, 500*time.Millisecond)
 	require.Equal(t, proto.TaskStateRunning.String(), taskState)
 	require.NotEqual(t, proto.StepInit, taskStep)
-	require.NotEqual(t, proto.StepPrepared, taskStep)
 }
 
 func waitTerminalState(t *testing.T, tk *testkit.TestKit, taskKey string, expected proto.TaskState) {
