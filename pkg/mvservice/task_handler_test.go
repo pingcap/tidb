@@ -2708,6 +2708,7 @@ func TestServerHelperPurgeMVLogUsesGlobalMaintainMemQuota(t *testing.T) {
 	require.NoError(t, vars.SetSystemVar(variable.TiDBMLogPurgeMinRate, "2345"))
 	require.NoError(t, vars.SetSystemVar(variable.TiDBMLogPurgeRateBudgetRatio, "0.25"))
 	require.NoError(t, vars.SetSystemVar(variable.TiDBMLogPurgeDeleteTiFlashThreads, "5"))
+	vars.EnableChunkRPC = true
 
 	nextPurge, err := (&serviceHelper{}).PurgeMVLog(context.Background(), pool, 201)
 	require.NoError(t, err)
@@ -2726,6 +2727,7 @@ func TestServerHelperPurgeMVLogUsesGlobalMaintainMemQuota(t *testing.T) {
 	require.Equal(t, 2345, vars.MLogPurgeMinRate)
 	require.Equal(t, 0.25, vars.MLogPurgeRateBudgetRatio)
 	require.Equal(t, int64(5), vars.MLogPurgeDeleteTiFlashThreads)
+	require.True(t, vars.EnableChunkRPC)
 }
 
 func TestServerHelperPurgeMVLogBestEffortWhenGlobalMaintainMemQuotaUnavailable(t *testing.T) {

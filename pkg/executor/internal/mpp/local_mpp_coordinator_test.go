@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
@@ -35,4 +36,17 @@ func TestNeedReportExecutionSummary(t *testing.T) {
 
 	passSender.SetChildren(tableScan)
 	require.False(t, needReportExecutionSummary(passSender))
+}
+
+func TestSetMPPEncodeTypeRespectsChunkRPCSetting(t *testing.T) {
+	sctx := mock.NewContext()
+	sctx.GetSessionVars().EnableChunkRPC = false
+
+	dagReq := &tipb.DAGRequest{}
+	setMPPEncodeType(sctx, dagReq, true)
+	require.Equal(t, tipb.EncodeType_TypeDefault, dagReq.EncodeType)
+
+	dagReq = &tipb.DAGRequest{}
+	setMPPEncodeType(sctx, dagReq, false)
+	require.Equal(t, tipb.EncodeType_TypeCHBlock, dagReq.EncodeType)
 }
