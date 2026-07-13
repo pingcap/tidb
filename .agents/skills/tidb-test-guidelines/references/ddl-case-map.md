@@ -51,6 +51,7 @@
 - `pkg/ddl/job_submitter_test.go` - ddl: Tests gen ID and insert jobs with retry.
 - `pkg/ddl/job_worker_test.go` - ddl: Tests check owner.
 - `pkg/ddl/main_test.go` - Configures default goleak settings and registers testdata.
+- `pkg/ddl/masking_policy_internal_test.go` - ddl: Tests missing masking-policy system table errors during cleanup.
 - `pkg/ddl/metabuild_test.go` - ddl: Tests new meta build context with session ctx.
 - `pkg/ddl/modify_column_test.go` - ddl: Tests modify column reorg info.
 - `pkg/ddl/multi_schema_change_test.go` - ddl: Tests multi schema change add columns cancelled.

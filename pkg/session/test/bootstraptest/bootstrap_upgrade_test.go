@@ -1121,6 +1121,7 @@ func TestUpgradeVersion260MaskingPolicy(t *testing.T) {
 			require.NoError(t, err)
 			policyDBID := policyTbl.Meta().DBID
 			policyTblID := policyTbl.Meta().ID
+			require.False(t, metadef.IsReservedID(policyTblID), "classic bootstrap should allocate a global table ID")
 
 			txn, err = store.Begin()
 			require.NoError(t, err)
@@ -1148,10 +1149,38 @@ func TestUpgradeVersion260MaskingPolicy(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, session.CurrentBootstrapVersion, ver)
 
+			upgradedPolicyTbl, err := newVer.InfoSchema().TableByName(
+				context.Background(), ast.NewCIStr("mysql"), ast.NewCIStr("tidb_masking_policy"))
+			require.NoError(t, err)
+			require.False(t, metadef.IsReservedID(upgradedPolicyTbl.Meta().ID),
+				"classic upgrade should allocate a global table ID")
+			require.NotEqual(t, policyTblID, upgradedPolicyTbl.Meta().ID,
+				"recreating the table must not reuse a dropped physical table ID")
+
 			tk := testkit.NewTestKit(t, store)
 			checkTiDBMaskingPolicyTableSchema(t, tk)
 		})
 	}
+
+	t.Run("normal_restart_after_system_table_rename", func(t *testing.T) {
+		store, dom := session.CreateStoreAndBootstrap(t)
+		defer func() { require.NoError(t, store.Close()) }()
+
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("RENAME TABLE mysql.tidb_masking_policy TO mysql.tidb_masking_policy_bak")
+		dom.Close()
+		store.SetOption(session.StoreBootstrappedKey, nil)
+
+		restartedDom, err := session.BootstrapSession(store)
+		require.NoError(t, err)
+		defer restartedDom.Close()
+
+		tk = testkit.NewTestKit(t, store)
+		tk.MustQuery("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='mysql' AND table_name='tidb_masking_policy'").
+			Check(testkit.Rows("0"))
+		tk.MustQuery("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='mysql' AND table_name='tidb_masking_policy_bak'").
+			Check(testkit.Rows("1"))
+	})
 }
 
 func TestUpgradeWithAnalyzeColumnOptions(t *testing.T) {

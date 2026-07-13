@@ -4189,9 +4189,13 @@ func InitDDLTables(store kv.Storage) error {
 	})
 }
 
-// initBootstrapDependentTables creates system tables that bootstrap and upgrade
-// DDL may consult before the ordinary bootstrap DDL reaches their creation step.
-func initBootstrapDependentTables(store kv.Storage) error {
+// initBootstrapDependentTables creates system tables that classic kernel upgrade
+// DDL may consult before the ordinary upgrade DDL reaches their creation step.
+func initBootstrapDependentTables(store kv.Storage, ver int64) error {
+	if !kerneltype.IsClassic() || ver <= notBootstrapped || ver >= version260 || currentBootstrapVersion < version260 {
+		return nil
+	}
+
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	return kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMutator(txn)
@@ -4228,6 +4232,13 @@ func createAndSplitTablesIfNotExists(
 	}
 	if len(missingTables) == 0 {
 		return nil
+	}
+	tableIDs, err := t.GenGlobalIDs(len(missingTables))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for i, id := range tableIDs {
+		missingTables[i].ID = id
 	}
 	return createAndSplitTables(store, t, dbID, missingTables)
 }
@@ -4396,7 +4407,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	if err != nil {
 		return nil, err
 	}
-	err = initBootstrapDependentTables(store)
+	err = initBootstrapDependentTables(store, ver)
 	if err != nil {
 		return nil, err
 	}
