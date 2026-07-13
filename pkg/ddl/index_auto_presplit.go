@@ -32,16 +32,17 @@ import (
 )
 
 const (
-	defaultAutoSplitHotRegionMinTableRows            = int64(1_000_000)
-	defaultAutoSplitHotRegionRowsPerRegion           = int64(500_000)
-	defaultAutoSplitHotRegionMaxRegionsPerPhysical   = 100
-	defaultAutoSplitHotRegionMaxTopNKeysPerPhysical  = 100
-	defaultAutoSplitHotRegionMaxSplitKeys            = 2560
-	defaultAutoSplitHotRegionTopNMinCount            = uint64(500_000)
-	defaultAutoSplitHotRegionTopNMinRatio            = 0.01
-	defaultAutoSplitHotRegionMinStatsHealthy         = int64(80)
-	defaultAutoSplitHotRegionMockMaxRegionsForTest   = 4
-	defaultAutoSplitHotRegionMockMaxSplitKeysForTest = 32
+	defaultAutoSplitHotRegionMinTableRows                     = int64(1_000_000)
+	defaultAutoSplitHotRegionRowsPerRegion                    = int64(500_000)
+	defaultAutoSplitHotRegionMaxFullRangeRegionsPerPhysical   = 100
+	defaultAutoSplitHotRegionMaxTopNKeysPerPhysical           = 100
+	defaultAutoSplitHotRegionCandidateBudget                  = 2560
+	defaultAutoSplitHotRegionTopNMinCount                     = uint64(500_000)
+	defaultAutoSplitHotRegionTopNMinRatio                     = 0.01
+	defaultAutoSplitHotRegionMinStatsHealthy                  = int64(80)
+	defaultAutoSplitHotRegionMockMaxFullRangeRegionsForTest   = 4
+	defaultAutoSplitHotRegionMockMaxTopNKeysForTest           = 4
+	defaultAutoSplitHotRegionMockRegionCandidateBudgetForTest = 32
 )
 
 type autoSplitStatsProvider interface {
@@ -49,34 +50,37 @@ type autoSplitStatsProvider interface {
 }
 
 type autoSplitHotRegionConfig struct {
-	minTableRows           int64
-	rowsPerRegion          int64
-	maxRegionsPerPhysical  int
-	maxTopNKeysPerPhysical int
-	maxSplitKeys           int
-	topNMinCount           uint64
-	topNMinRatio           float64
-	minStatsHealthy        int64
+	minTableRows                   int64
+	rowsPerRegion                  int64
+	maxFullRangeRegionsPerPhysical int
+	maxTopNKeysPerPhysical         int
+	// regionCandidateBudget is a soft table-level target shared by full-range and TopN splitting.
+	// The final split-key count may exceed it because each eligible partition gets a minimum budget
+	// and index boundary keys are added separately.
+	regionCandidateBudget int
+	topNMinCount          uint64
+	topNMinRatio          float64
+	minStatsHealthy       int64
 }
 
 func getAutoSplitHotRegionConfig() autoSplitHotRegionConfig {
 	cfg := autoSplitHotRegionConfig{
-		minTableRows:           defaultAutoSplitHotRegionMinTableRows,
-		rowsPerRegion:          defaultAutoSplitHotRegionRowsPerRegion,
-		maxRegionsPerPhysical:  defaultAutoSplitHotRegionMaxRegionsPerPhysical,
-		maxTopNKeysPerPhysical: defaultAutoSplitHotRegionMaxTopNKeysPerPhysical,
-		maxSplitKeys:           defaultAutoSplitHotRegionMaxSplitKeys,
-		topNMinCount:           defaultAutoSplitHotRegionTopNMinCount,
-		topNMinRatio:           defaultAutoSplitHotRegionTopNMinRatio,
-		minStatsHealthy:        defaultAutoSplitHotRegionMinStatsHealthy,
+		minTableRows:                   defaultAutoSplitHotRegionMinTableRows,
+		rowsPerRegion:                  defaultAutoSplitHotRegionRowsPerRegion,
+		maxFullRangeRegionsPerPhysical: defaultAutoSplitHotRegionMaxFullRangeRegionsPerPhysical,
+		maxTopNKeysPerPhysical:         defaultAutoSplitHotRegionMaxTopNKeysPerPhysical,
+		regionCandidateBudget:          defaultAutoSplitHotRegionCandidateBudget,
+		topNMinCount:                   defaultAutoSplitHotRegionTopNMinCount,
+		topNMinRatio:                   defaultAutoSplitHotRegionTopNMinRatio,
+		minStatsHealthy:                defaultAutoSplitHotRegionMinStatsHealthy,
 	}
 	failpoint.Inject("mockAutoSplitHotRegionConfig", func(val failpoint.Value) {
 		if minRows, ok := val.(int); ok && minRows > 0 {
 			cfg.minTableRows = int64(minRows)
 			cfg.rowsPerRegion = int64(minRows)
-			cfg.maxRegionsPerPhysical = defaultAutoSplitHotRegionMockMaxRegionsForTest
-			cfg.maxTopNKeysPerPhysical = defaultAutoSplitHotRegionMockMaxRegionsForTest
-			cfg.maxSplitKeys = defaultAutoSplitHotRegionMockMaxSplitKeysForTest
+			cfg.maxFullRangeRegionsPerPhysical = defaultAutoSplitHotRegionMockMaxFullRangeRegionsForTest
+			cfg.maxTopNKeysPerPhysical = defaultAutoSplitHotRegionMockMaxTopNKeysForTest
+			cfg.regionCandidateBudget = defaultAutoSplitHotRegionMockRegionCandidateBudgetForTest
 			cfg.topNMinCount = uint64(minRows)
 			cfg.topNMinRatio = 0
 			cfg.minStatsHealthy = 0
@@ -92,14 +96,14 @@ func (cfg autoSplitHotRegionConfig) normalize() autoSplitHotRegionConfig {
 	if cfg.rowsPerRegion < 1 {
 		cfg.rowsPerRegion = cfg.minTableRows
 	}
-	if cfg.maxRegionsPerPhysical < 2 {
-		cfg.maxRegionsPerPhysical = 2
+	if cfg.maxFullRangeRegionsPerPhysical < 2 {
+		cfg.maxFullRangeRegionsPerPhysical = 2
 	}
 	if cfg.maxTopNKeysPerPhysical < 0 {
 		cfg.maxTopNKeysPerPhysical = 0
 	}
-	if cfg.maxSplitKeys < 1 {
-		cfg.maxSplitKeys = 1
+	if cfg.regionCandidateBudget < 1 {
+		cfg.regionCandidateBudget = 1
 	}
 	if cfg.topNMinRatio < 0 {
 		cfg.topNMinRatio = 0
@@ -126,10 +130,33 @@ func planAutoSplitIndexRegions(
 
 	cfg = cfg.normalize()
 	physicalIDs := getAutoSplitPhysicalTableIDs(tblInfo, idxInfo)
+	statsTables := make([]*statistics.Table, len(physicalIDs))
+	var totalRows int64
+	for i, physicalID := range physicalIDs {
+		statsTbl := statsProvider.GetPhysicalTableStats(physicalID, tblInfo)
+		statsTables[i] = statsTbl
+		if statsTbl != nil && !statsTbl.Pseudo && statsTbl.RealtimeCount > 0 {
+			totalRows += statsTbl.RealtimeCount
+		}
+	}
+
 	splitKeys := make([][]byte, 0)
 	skipReasons := make([]string, 0, len(physicalIDs))
-	for _, physicalID := range physicalIDs {
-		keys, reason, err := planAutoSplitPhysicalIndexRegions(sctx, statsProvider, tblInfo, idxInfo, physicalID, cfg)
+	for i, physicalID := range physicalIDs {
+		rowsRatio := 1.0
+		if len(physicalIDs) > 1 {
+			rowsRatio = 1 / float64(len(physicalIDs))
+			statsTbl := statsTables[i]
+			if totalRows > 0 {
+				rowsRatio = 0
+				if statsTbl != nil && !statsTbl.Pseudo && statsTbl.RealtimeCount > 0 {
+					rowsRatio = float64(statsTbl.RealtimeCount) / float64(totalRows)
+				}
+			}
+		}
+		physicalCfg := cfg.withRegionCandidateRatio(rowsRatio)
+		keys, reason, err := planAutoSplitPhysicalIndexRegions(
+			sctx, statsTables[i], tblInfo, idxInfo, physicalID, physicalCfg)
 		if err != nil {
 			return nil, reason, err
 		}
@@ -140,7 +167,7 @@ func planAutoSplitIndexRegions(
 		splitKeys = append(splitKeys, keys...)
 	}
 
-	splitKeys = dedupeAutoSplitKeys(splitKeys, cfg.maxSplitKeys)
+	splitKeys = sortAndDedupeAutoSplitKeys(splitKeys)
 	if len(splitKeys) == 0 {
 		if len(skipReasons) == 0 {
 			return nil, "no split keys generated", nil
@@ -148,6 +175,18 @@ func planAutoSplitIndexRegions(
 		return nil, strings.Join(skipReasons, ","), nil
 	}
 	return splitKeys, "auto split keys generated", nil
+}
+
+func (cfg autoSplitHotRegionConfig) withRegionCandidateRatio(rowsRatio float64) autoSplitHotRegionConfig {
+	// Split each physical table's candidate budget evenly between full-range and TopN splitting.
+	maxCandidatesPerMethod := int(float64(cfg.regionCandidateBudget) * rowsRatio * 0.5)
+	if maxCandidatesPerMethod < 2 {
+		maxCandidatesPerMethod = 2
+	}
+	cfg.maxFullRangeRegionsPerPhysical = min(cfg.maxFullRangeRegionsPerPhysical, maxCandidatesPerMethod)
+	// N target regions need N-1 split keys, so TopN gets the same N-1 key budget as full-range.
+	cfg.maxTopNKeysPerPhysical = min(cfg.maxTopNKeysPerPhysical, maxCandidatesPerMethod-1)
+	return cfg
 }
 
 func getAutoSplitPhysicalTableIDs(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) []int64 {
@@ -159,13 +198,12 @@ func getAutoSplitPhysicalTableIDs(tblInfo *model.TableInfo, idxInfo *model.Index
 
 func planAutoSplitPhysicalIndexRegions(
 	sctx sessionctx.Context,
-	statsProvider autoSplitStatsProvider,
+	statsTbl *statistics.Table,
 	tblInfo *model.TableInfo,
 	idxInfo *model.IndexInfo,
 	physicalID int64,
 	cfg autoSplitHotRegionConfig,
 ) ([][]byte, string, error) {
-	statsTbl := statsProvider.GetPhysicalTableStats(physicalID, tblInfo)
 	if statsTbl == nil {
 		return nil, "stats missing", nil
 	}
@@ -225,7 +263,7 @@ func planAutoSplitPhysicalIndexRegions(
 		}
 	}
 
-	splitKeys = dedupeAutoSplitKeys(splitKeys, cfg.maxSplitKeys)
+	splitKeys = sortAndDedupeAutoSplitKeys(splitKeys)
 	if len(splitKeys) == 0 {
 		return nil, "no split strategy matched", nil
 	}
@@ -245,8 +283,8 @@ func getAutoSplitLeadingColumn(tblInfo *model.TableInfo, idxInfo *model.IndexInf
 
 func calcAutoSplitRegionCount(rowCount int64, cfg autoSplitHotRegionConfig) int {
 	regionsCnt := int((rowCount + cfg.rowsPerRegion - 1) / cfg.rowsPerRegion)
-	if regionsCnt > cfg.maxRegionsPerPhysical {
-		regionsCnt = cfg.maxRegionsPerPhysical
+	if regionsCnt > cfg.maxFullRangeRegionsPerPhysical {
+		regionsCnt = cfg.maxFullRangeRegionsPerPhysical
 	}
 	if regionsCnt < 2 {
 		return 0
@@ -393,7 +431,7 @@ func buildAutoSplitTopNRows(
 	return topNRows, nil
 }
 
-func dedupeAutoSplitKeys(keys [][]byte, limit int) [][]byte {
+func sortAndDedupeAutoSplitKeys(keys [][]byte) [][]byte {
 	if len(keys) == 0 {
 		return nil
 	}
@@ -406,9 +444,6 @@ func dedupeAutoSplitKeys(keys [][]byte, limit int) [][]byte {
 		if len(deduped) == 0 || !bytes.Equal(deduped[len(deduped)-1], key) {
 			deduped = append(deduped, key)
 		}
-	}
-	if limit > 0 && len(deduped) > limit {
-		return deduped[:limit]
 	}
 	return deduped
 }
