@@ -170,6 +170,10 @@ const (
 	historyGCRetryMaxAttempts  = 8
 	mvRefreshAlertLevelWarning = "warning"
 	mvRefreshAlertLevelOverdue = "overdue"
+
+	mvRefreshAlertTaskStateRunning = "running"
+	mvRefreshAlertTaskStateQueued  = "queued"
+	mvRefreshAlertTaskStateUnknown = "unknown"
 )
 
 type mv struct {
@@ -447,21 +451,14 @@ func (t *MVService) snapshotMVRefreshExecutionStates() map[int64]refreshAlertExe
 func getRefreshAlertExecutionState(
 	execStates map[int64]refreshAlertExecutionState,
 	mviewID int64,
-	task *mv,
 ) (string, int64) {
 	if state, ok := execStates[mviewID]; ok {
 		if state.running {
-			return "running", state.retryCount
+			return mvRefreshAlertTaskStateRunning, state.retryCount
 		}
-		return "queued", state.retryCount
+		return mvRefreshAlertTaskStateQueued, state.retryCount
 	}
-	if task != nil {
-		if task.orderTs == maxNextScheduleTs {
-			return "running", task.retryCount.Load()
-		}
-		return "queued", task.retryCount.Load()
-	}
-	return "queued", 0
+	return mvRefreshAlertTaskStateUnknown, 0
 }
 
 func (t *MVService) maybeScanMVLogAccumulationAlerts(now time.Time) {
@@ -547,7 +544,7 @@ func (t *MVService) collectRefreshAlertStates(now time.Time) ([]refreshAlertTask
 			task.lastSyncedAlertReadTSO == task.lastSuccessReadTSO {
 			continue
 		}
-		taskState, retryCount := getRefreshAlertExecutionState(execStates, mviewID, task)
+		taskState, retryCount := getRefreshAlertExecutionState(execStates, mviewID)
 		alertStates = append(alertStates, refreshAlertTask{
 			mviewID:            mviewID,
 			schemaName:         task.schemaName,
@@ -621,7 +618,7 @@ func (t *MVService) collectRefreshAlertTasks(now time.Time) ([]refreshAlertTask,
 				task.lastLoggedWarningTSO = tso
 			}
 		}
-		taskState, retryCount := getRefreshAlertExecutionState(execStates, mviewID, task)
+		taskState, retryCount := getRefreshAlertExecutionState(execStates, mviewID)
 		alertTasks = append(alertTasks, refreshAlertTask{
 			mviewID:            mviewID,
 			schemaName:         task.schemaName,

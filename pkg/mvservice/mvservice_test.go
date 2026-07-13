@@ -681,6 +681,7 @@ func TestMVServiceCollectRefreshAlertTasksByAlertLevel(t *testing.T) {
 		lastSuccessTime: now.Add(-5 * time.Minute),
 	}
 	addMVRefreshAlertTasksForTest(svc, warnTask, overdueTask, disabledTask)
+	addMVRefreshExecutionTasksForTest(svc, warnTask, overdueTask, disabledTask)
 
 	got, warningCount, overdueCount := svc.collectRefreshAlertTasks(now)
 	require.Len(t, got, 2)
@@ -1064,6 +1065,7 @@ func TestMVServiceRefreshAlertCheckerKeysScanGlobalTasks(t *testing.T) {
 		fetchCalls   int32
 		syncCalls    int32
 		overdueCount int64
+		taskState    string
 	}{
 		{
 			name:   "not_checker_owner",
@@ -1077,6 +1079,7 @@ func TestMVServiceRefreshAlertCheckerKeysScanGlobalTasks(t *testing.T) {
 			fetchCalls:   1,
 			syncCalls:    1,
 			overdueCount: 1,
+			taskState:    mvRefreshAlertTaskStateUnknown,
 		},
 		{
 			name:         "checker_key2_owner_does_not_report_metrics",
@@ -1084,6 +1087,7 @@ func TestMVServiceRefreshAlertCheckerKeysScanGlobalTasks(t *testing.T) {
 			checkerOwner: true,
 			fetchCalls:   1,
 			syncCalls:    1,
+			taskState:    mvRefreshAlertTaskStateUnknown,
 		},
 	}
 
@@ -1124,7 +1128,7 @@ func TestMVServiceRefreshAlertCheckerKeysScanGlobalTasks(t *testing.T) {
 			require.Len(t, synced, 1)
 			require.Equal(t, task.ID, synced[0].mviewID)
 			require.Equal(t, mvRefreshAlertLevelOverdue, synced[0].alertLevel)
-			require.Equal(t, "queued", synced[0].taskState)
+			require.Equal(t, tc.taskState, synced[0].taskState)
 		})
 	}
 }
