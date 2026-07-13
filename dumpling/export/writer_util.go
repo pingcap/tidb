@@ -338,22 +338,28 @@ func WriteInsertInCsv(
 		return 0, fileRowIter.Error()
 	}
 
-	csvCfg := &csvfile.Config{
-		NullValue:       []byte(cfg.CsvNullValue),
-		Separator:       []byte(cfg.CsvSeparator),
-		Delimiter:       []byte(cfg.CsvDelimiter),
-		LineTerminator:  []byte(cfg.CsvLineTerminator),
-		BinaryFormat:    toCSVBinaryFormat(DialectBinaryFormatMap[cfg.CsvOutputDialect]),
-		EscapeBackslash: cfg.EscapeBackslash,
+	// EscapeBackslash selects escape-character escaping; otherwise the enclosure
+	// is doubled. csvfile keys that on a non-empty FieldsEscapedBy.
+	escapedBy := ""
+	if cfg.EscapeBackslash {
+		escapedBy = "\\"
 	}
-	// CSVWriter writes directly into the object store writer, whose concurrent
+	csvCfg := &csvfile.Config{
+		FieldsTerminatedBy: cfg.CsvSeparator,
+		FieldsEnclosedBy:   cfg.CsvDelimiter,
+		FieldsEscapedBy:    escapedBy,
+		LinesTerminatedBy:  cfg.CsvLineTerminator,
+		NullValue:          []byte(cfg.CsvNullValue),
+		BinaryFormat:       toCSVBinaryFormat(DialectBinaryFormatMap[cfg.CsvOutputDialect]),
+	}
+	// Writer writes directly into the object store writer, whose concurrent
 	// multipart upload replaces the writerPipe.
 	selectedFields := meta.SelectedField()
 	var kinds []csvfile.FieldKind
 	if selectedFields != "" {
 		kinds = columnKinds(meta.ColumnTypes())
 	}
-	cw := csvfile.NewCSVWriter(&wrappedWriter{ctx: pCtx.Context, w: w}, kinds, csvCfg)
+	cw := csvfile.NewWriter(&wrappedWriter{ctx: pCtx.Context, w: w}, kinds, csvCfg)
 
 	var (
 		row          = MakeRowReceiver(meta.ColumnTypes())

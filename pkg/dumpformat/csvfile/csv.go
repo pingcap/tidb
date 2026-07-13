@@ -30,7 +30,7 @@ func appendField(dst, val []byte, isNull bool, kind FieldKind, cfg *Config) []by
 	case KindNumber:
 		return append(dst, val...)
 	case KindBytes:
-		dst = append(dst, cfg.Delimiter...)
+		dst = append(dst, cfg.FieldsEnclosedBy...)
 		switch cfg.BinaryFormat {
 		case BinaryFormatHEX:
 			dst = fmt.Appendf(dst, "%x", val)
@@ -39,23 +39,23 @@ func appendField(dst, val []byte, isNull bool, kind FieldKind, cfg *Config) []by
 		default:
 			dst = appendEscaped(dst, val, cfg)
 		}
-		return append(dst, cfg.Delimiter...)
+		return append(dst, cfg.FieldsEnclosedBy...)
 	default:
-		dst = append(dst, cfg.Delimiter...)
+		dst = append(dst, cfg.FieldsEnclosedBy...)
 		dst = appendEscaped(dst, val, cfg)
-		return append(dst, cfg.Delimiter...)
+		return append(dst, cfg.FieldsEnclosedBy...)
 	}
 }
 
 // appendEscaped writes s to dst, escaping per cfg.
 func appendEscaped(dst, s []byte, cfg *Config) []byte {
 	switch {
-	case cfg.EscapeBackslash:
+	case len(cfg.FieldsEscapedBy) > 0:
 		return appendEscapedBackslash(dst, s, cfg)
-	case len(cfg.Delimiter) > 0:
-		// Double each delimiter occurrence (e.g. " -> ""), writing straight into
+	case len(cfg.FieldsEnclosedBy) > 0:
+		// Double each enclosure occurrence (e.g. " -> ""), writing straight into
 		// dst to avoid the intermediate copy that bytes.ReplaceAll would make.
-		d := cfg.Delimiter
+		d := []byte(cfg.FieldsEnclosedBy)
 		for {
 			j := bytes.Index(s, d)
 			if j < 0 {
@@ -71,14 +71,16 @@ func appendEscaped(dst, s []byte, cfg *Config) []byte {
 	}
 }
 
-// appendEscapedBackslash writes s to dst with backslash escaping.
+// appendEscapedBackslash writes s to dst, escaping with cfg.FieldsEscapedBy
+// (guaranteed non-empty by the caller). The escape byte and the enclosure (or,
+// unquoted, the field separator) are escaped alongside NUL/CR/LF.
 func appendEscapedBackslash(dst, s []byte, cfg *Config) []byte {
-	// With a delimiter, comment the delimiter byte; otherwise the separator byte.
+	esc := cfg.FieldsEscapedBy[0]
 	var specCmt byte
-	if len(cfg.Delimiter) > 0 {
-		specCmt = cfg.Delimiter[0]
-	} else if len(cfg.Separator) > 0 {
-		specCmt = cfg.Separator[0]
+	if len(cfg.FieldsEnclosedBy) > 0 {
+		specCmt = cfg.FieldsEnclosedBy[0]
+	} else if len(cfg.FieldsTerminatedBy) > 0 {
+		specCmt = cfg.FieldsTerminatedBy[0]
 	}
 	last := 0
 	for i := range s {
@@ -90,14 +92,14 @@ func appendEscapedBackslash(dst, s []byte, cfg *Config) []byte {
 			escape = 'r'
 		case '\n':
 			escape = 'n'
-		case '\\':
-			escape = '\\'
-		case specCmt:
-			escape = specCmt
+		default:
+			if s[i] == esc || s[i] == specCmt {
+				escape = s[i]
+			}
 		}
 		if escape != 0 {
 			dst = append(dst, s[last:i]...)
-			dst = append(dst, '\\', escape)
+			dst = append(dst, esc, escape)
 			last = i + 1
 		}
 	}

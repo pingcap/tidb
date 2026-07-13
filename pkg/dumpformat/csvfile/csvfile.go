@@ -38,19 +38,20 @@ const (
 	BinaryFormatBase64
 )
 
-// Config holds the CSV framing knobs. NewCSVWriter applies no defaults, so the
+// Config holds the CSV framing knobs. NewWriter applies no defaults, so the
 // caller must set every field.
 type Config struct {
-	// Separator is written between fields.
-	Separator []byte
-	// Delimiter quotes string/bytes fields; empty means unquoted.
-	Delimiter []byte
+	// FieldsTerminatedBy separates fields.
+	FieldsTerminatedBy string
+	// FieldsEnclosedBy quotes string/bytes fields; empty means unquoted.
+	FieldsEnclosedBy string
+	// FieldsEscapedBy is the escape character (length <= 1); empty selects
+	// enclosure-doubling instead.
+	FieldsEscapedBy string
+	// LinesTerminatedBy is written after each row.
+	LinesTerminatedBy string
 	// NullValue is written for NULL fields.
 	NullValue []byte
-	// LineTerminator is written after each row.
-	LineTerminator []byte
 	// BinaryFormat selects how KindBytes is rendered.
 	BinaryFormat BinaryFormat
-	// EscapeBackslash selects backslash escaping instead of delimiter doubling.
-	EscapeBackslash bool
 }

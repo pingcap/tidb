@@ -20,9 +20,9 @@ import (
 	"io"
 )
 
-// CSVWriter is a single-stream CSV encoder that writes framed/escaped rows to an
+// Writer is a single-stream CSV encoder that writes framed/escaped rows to an
 // io.Writer. The caller owns buffering and file rotation.
-type CSVWriter struct {
+type Writer struct {
 	w       io.Writer
 	cfg     *Config
 	kinds   []FieldKind
@@ -30,34 +30,34 @@ type CSVWriter struct {
 	written int64
 }
 
-// NewCSVWriter creates a CSVWriter over w.
-func NewCSVWriter(w io.Writer, kinds []FieldKind, cfg *Config) *CSVWriter {
-	return &CSVWriter{w: w, cfg: cfg, kinds: kinds}
+// NewWriter creates a Writer over w.
+func NewWriter(w io.Writer, kinds []FieldKind, cfg *Config) *Writer {
+	return &Writer{w: w, cfg: cfg, kinds: kinds}
 }
 
 // Write encodes one row and writes it, with the line terminator, to the
 // underlying writer.
-func (cw *CSVWriter) Write(row []sql.RawBytes) error {
+func (cw *Writer) Write(row []sql.RawBytes) error {
 	if len(row) != len(cw.kinds) {
 		return fmt.Errorf("csvfile: row has %d fields, want %d", len(row), len(cw.kinds))
 	}
 	cw.buf = cw.buf[:0]
 	for i, val := range row {
 		if i > 0 {
-			cw.buf = append(cw.buf, cw.cfg.Separator...)
+			cw.buf = append(cw.buf, cw.cfg.FieldsTerminatedBy...)
 		}
 		cw.buf = appendField(cw.buf, val, val == nil, cw.kinds[i], cw.cfg)
 	}
 	return cw.flush()
 }
 
-// WriteHeader writes a header row: each name as a string field (delimiter-quoted
-// when a Delimiter is set), separated and terminated like a data row.
-func (cw *CSVWriter) WriteHeader(names [][]byte) error {
+// WriteHeader writes a header row: each name as a string field (enclosed when
+// FieldsEnclosedBy is set), separated and terminated like a data row.
+func (cw *Writer) WriteHeader(names [][]byte) error {
 	cw.buf = cw.buf[:0]
 	for i, name := range names {
 		if i > 0 {
-			cw.buf = append(cw.buf, cw.cfg.Separator...)
+			cw.buf = append(cw.buf, cw.cfg.FieldsTerminatedBy...)
 		}
 		cw.buf = appendField(cw.buf, name, false, KindString, cw.cfg)
 	}
@@ -65,19 +65,19 @@ func (cw *CSVWriter) WriteHeader(names [][]byte) error {
 }
 
 // flush appends the line terminator to the scratch and writes it to the file.
-func (cw *CSVWriter) flush() error {
-	cw.buf = append(cw.buf, cw.cfg.LineTerminator...)
+func (cw *Writer) flush() error {
+	cw.buf = append(cw.buf, cw.cfg.LinesTerminatedBy...)
 	n, err := cw.w.Write(cw.buf)
 	cw.written += int64(n)
 	return err
 }
 
 // EstimateFileSize returns the bytes written to the current file.
-func (cw *CSVWriter) EstimateFileSize() uint64 {
+func (cw *Writer) EstimateFileSize() uint64 {
 	return uint64(cw.written)
 }
 
 // Close finalizes the writer. Currently it's a no-op.
-func (cw *CSVWriter) Close() error {
+func (cw *Writer) Close() error {
 	return nil
 }

@@ -23,6 +23,14 @@ const (
 	// multipart upload of CSV data files.
 	csvUploadConcurrency = 8
 	csvUploadPartSize    = 8 * units.MiB
+	// csvMaxUploadParts stays below the common 10000-part cap of object-store
+	// multipart uploads, leaving a margin.
+	csvMaxUploadParts = 9000
+	// maxCSVFileSize bounds a single CSV file to what the multipart uploader can
+	// produce (part size × part budget). When --filesize is unspecified a whole
+	// large table would target one object and overflow the part cap, so CSV falls
+	// back to this bound and rotates into multiple files instead.
+	maxCSVFileSize = csvUploadPartSize * csvMaxUploadParts
 )
 
 // Writer is the abstraction that keep pulling data from database and write to files.
@@ -242,6 +250,16 @@ func (w *Writer) WriteTableData(meta TableMeta, ir TableDataIR, currentChunk int
 
 func (w *Writer) tryToWriteTableData(tctx *tcontext.Context, meta TableMeta, ir TableDataIR, curChkIdx int) error {
 	conf, format := w.conf, w.fileFmt
+	// CSV uploads via multipart, which caps a single object at a fixed number of
+	// parts. With no --filesize a large table would target one object and
+	// overflow that cap, so bound the per-file size and let the loop below rotate
+	// into multiple files. Cap through conf so the namer indexes the files and the
+	// loop does not stop after the first one.
+	if format == FileFormatCSV && conf.FileSize == UnspecifiedSize {
+		capped := *conf
+		capped.FileSize = maxCSVFileSize
+		conf = &capped
+	}
 	namer := newOutputFileNamer(meta, curChkIdx, conf.Rows != UnspecifiedSize, conf.FileSize != UnspecifiedSize)
 	fileFmtExtension := format.Extension()
 	if format == FileFormatParquet && conf.ParquetCompressType != compressedio.NoCompression {
