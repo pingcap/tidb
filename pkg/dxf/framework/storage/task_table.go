@@ -435,7 +435,7 @@ func (mgr *TaskManager) GetTaskExecInfoByExecID(ctx context.Context, execID stri
 	return res, err
 }
 
-// GetTasksInStates gets the tasks in the states(order by priority asc, create_time acs, id asc).
+// GetTasksInStates gets tasks in the states, oldest state transition first.
 func (mgr *TaskManager) GetTasksInStates(ctx context.Context, states ...any) (task []*proto.Task, err error) {
 	if len(states) == 0 {
 		return task, nil
@@ -450,7 +450,7 @@ func (mgr *TaskManager) GetTasksInStates(ctx context.Context, states ...any) (ta
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
 		"select "+TaskColumns+" from mysql.tidb_global_task t "+
 			"where state in ("+strings.Repeat("%?,", len(states)-1)+"%?)"+
-			" order by priority asc, create_time asc, id asc limit %?", args...)
+			" order by state_update_time asc, create_time asc, id asc limit %?", args...)
 	if err != nil {
 		return task, err
 	}

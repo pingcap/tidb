@@ -1141,7 +1141,7 @@ func TestSubtaskHistoryTable(t *testing.T) {
 }
 
 func TestTaskHistoryTable(t *testing.T) {
-	t.Run("get tasks in states limits cleanup batch size", func(t *testing.T) {
+	t.Run("get tasks in states limits cleanup batch size without starving older tasks", func(t *testing.T) {
 		t.Cleanup(proto.SetMaxConcurrentTaskForTest(1))
 		t.Cleanup(proto.SetTaskCleanupBatchSizeForTest(2))
 		_, gm, ctx := testutil.InitTableTest(t)
@@ -1154,7 +1154,20 @@ func TestTaskHistoryTable(t *testing.T) {
 			createdIDs = append(createdIDs, taskID)
 		}
 
-		tasks, err := gm.GetTasksInStates(ctx, proto.TaskStatePending)
+		require.NoError(t, gm.WithNewSession(func(se sessionctx.Context) error {
+			_, err := se.GetSQLExecutor().ExecuteInternal(ctx, `
+				update mysql.tidb_global_task
+				set state = %?,
+					priority = case when id = %? then 1024 else 1 end,
+					state_update_time = case
+						when id = %? then timestampadd(minute, -10, current_timestamp)
+						else current_timestamp
+					end`,
+				proto.TaskStateSucceed, createdIDs[0], createdIDs[0])
+			return err
+		}))
+
+		tasks, err := gm.GetTasksInStates(ctx, proto.TaskStateSucceed)
 		require.NoError(t, err)
 		require.Len(t, tasks, 2)
 		for i, task := range tasks {

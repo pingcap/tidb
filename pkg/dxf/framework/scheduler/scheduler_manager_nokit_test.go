@@ -188,6 +188,36 @@ func TestSchedulerCleanupTask(t *testing.T) {
 	taskMgr.EXPECT().TransferTasks2History(mgr.ctx, tasks).Return(nil)
 	mgr.doCleanupTask()
 	require.True(t, ctrl.Satisfied())
+
+	t.Run("drains full cleanup batches", func(t *testing.T) {
+		t.Cleanup(proto.SetTaskCleanupBatchSizeForTest(2))
+		ctrl := gomock.NewController(t)
+		taskMgr := mock.NewMockTaskManager(ctrl)
+		mgr := NewManager(context.Background(), nil, taskMgr, "1", proto.NodeResourceForTest)
+		firstBatch := []*proto.Task{
+			{TaskBase: proto.TaskBase{ID: 1}},
+			{TaskBase: proto.TaskBase{ID: 2}},
+		}
+		secondBatch := []*proto.Task{
+			{TaskBase: proto.TaskBase{ID: 3}},
+		}
+
+		first := taskMgr.EXPECT().GetTasksInStates(
+			mgr.ctx,
+			proto.TaskStateFailed,
+			proto.TaskStateReverted,
+			proto.TaskStateSucceed).Return(firstBatch, nil)
+		firstTransfer := taskMgr.EXPECT().TransferTasks2History(mgr.ctx, firstBatch).Return(nil).After(first)
+		second := taskMgr.EXPECT().GetTasksInStates(
+			mgr.ctx,
+			proto.TaskStateFailed,
+			proto.TaskStateReverted,
+			proto.TaskStateSucceed).Return(secondBatch, nil).After(firstTransfer)
+		taskMgr.EXPECT().TransferTasks2History(mgr.ctx, secondBatch).Return(nil).After(second)
+
+		mgr.doCleanupTask()
+		require.True(t, ctrl.Satisfied())
+	})
 }
 
 func TestManagerSchedulerNotAllocateSlots(t *testing.T) {
