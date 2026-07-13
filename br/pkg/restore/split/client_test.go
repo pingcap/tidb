@@ -8,8 +8,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/store/pdtypes"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -320,4 +322,89 @@ func TestPDErrorCanRetry(t *testing.T) {
 
 	e4 := status.Error(codes.Unknown, "should be false")
 	require.False(t, PdErrorCanRetry(e4))
+}
+
+func TestHasHealthyRegionWithDebugVerification(t *testing.T) {
+	mockPDClient := NewMockPDClientForSplit()
+
+	// Create regions with Peers populated so the debug verification path is triggered.
+	mockPDClient.mu.Lock()
+	mockPDClient.lastRegionID++
+	regionID := mockPDClient.lastRegionID
+	leaderPeer := &metapb.Peer{Id: regionID, StoreId: 1}
+	followerPeer := &metapb.Peer{Id: regionID + 100, StoreId: 2}
+	region := &metapb.Region{
+		Id:       regionID,
+		StartKey: []byte("a"),
+		EndKey:   []byte("b"),
+		Peers:    []*metapb.Peer{leaderPeer, followerPeer},
+	}
+	mockPDClient.Regions.SetRegion(&pdtypes.Region{
+		Meta:   region,
+		Leader: leaderPeer,
+	})
+	mockPDClient.mu.Unlock()
+
+	ctx := context.Background()
+
+	// Test 1: debug verification passes → hasHealthyRegion returns true
+	debugVerifyCalled := false
+	mockClient := &pdClient{
+		client: mockPDClient,
+		debugVerifyFn: func(_ context.Context, rid uint64, peers []*metapb.Peer, leaderStore uint64) bool {
+			debugVerifyCalled = true
+			require.Equal(t, regionID, rid)
+			require.Len(t, peers, 2)
+			require.Equal(t, uint64(1), leaderStore)
+			return true
+		},
+	}
+	ok, err := mockClient.hasHealthyRegion(ctx, regionID)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.True(t, debugVerifyCalled, "debug verify should have been called")
+
+	// Test 2: debug verification fails → hasHealthyRegion returns false
+	mockClient.debugVerifyFn = func(_ context.Context, _ uint64, _ []*metapb.Peer, _ uint64) bool {
+		return false
+	}
+	ok, err = mockClient.hasHealthyRegion(ctx, regionID)
+	require.NoError(t, err)
+	require.False(t, ok, "region should be unhealthy when debug verification fails")
+
+	// Test 3: debug verification skipped when no leader
+	mockPDClient.mu.Lock()
+	mockPDClient.Regions.SetRegion(&pdtypes.Region{
+		Meta:   region,
+		Leader: nil, // no leader
+	})
+	mockPDClient.mu.Unlock()
+
+	debugVerifyCalled = false
+	mockClient.debugVerifyFn = func(_ context.Context, _ uint64, _ []*metapb.Peer, _ uint64) bool {
+		debugVerifyCalled = true
+		return true
+	}
+	ok, err = mockClient.hasHealthyRegion(ctx, regionID)
+	require.NoError(t, err)
+	// When there's no leader, hasHealthyRegion returns true (PendingPeers is empty)
+	// and the debug check is skipped.
+	require.True(t, ok)
+	require.False(t, debugVerifyCalled, "debug verify should be skipped when no leader")
+
+	// Restore leader for next test
+	mockPDClient.mu.Lock()
+	mockPDClient.Regions.SetRegion(&pdtypes.Region{
+		Meta:   region,
+		Leader: leaderPeer,
+	})
+	mockPDClient.mu.Unlock()
+
+	// Test 4: debug service disabled (UNIMPLEMENTED) → skipped
+	mockClient.debugServiceDisabled = 1
+	mockClient.debugVerifyFn = nil // use real path to test atomic flag
+	// With debugVerifyFn=nil and debugServiceDisabled=1, verifyRegionViaDebug returns true immediately
+	ok, err = mockClient.hasHealthyRegion(ctx, regionID)
+	require.NoError(t, err)
+	require.True(t, ok)
 }
