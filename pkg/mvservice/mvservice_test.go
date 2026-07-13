@@ -658,10 +658,6 @@ func TestMVServiceCollectRefreshAlertTasksByAlertLevel(t *testing.T) {
 
 	now := mvsNow()
 
-	svc.mvRefreshMu.Lock()
-	if svc.mvRefreshMu.pending == nil {
-		svc.mvRefreshMu.pending = make(map[int64]mvItem)
-	}
 	warnTask := &mv{
 		ID:              101,
 		nextRefresh:     now.Add(-2 * time.Minute),
@@ -669,8 +665,6 @@ func TestMVServiceCollectRefreshAlertTasksByAlertLevel(t *testing.T) {
 		alertWarningSec: 30,
 		alertOverdueSec: 120,
 	}
-	warnTask.orderTs = warnTask.nextRefresh.UnixMilli()
-	svc.mvRefreshMu.pending[warnTask.ID] = svc.mvRefreshMu.prio.Push(warnTask)
 
 	overdueTask := &mv{
 		ID:              102,
@@ -680,16 +674,14 @@ func TestMVServiceCollectRefreshAlertTasksByAlertLevel(t *testing.T) {
 		alertOverdueSec: 60,
 	}
 	overdueTask.orderTs = maxNextScheduleTs // simulate running task
-	svc.mvRefreshMu.pending[overdueTask.ID] = svc.mvRefreshMu.prio.Push(overdueTask)
 
 	disabledTask := &mv{
 		ID:              103,
 		nextRefresh:     now.Add(-2 * time.Minute),
 		lastSuccessTime: now.Add(-5 * time.Minute),
 	}
-	disabledTask.orderTs = disabledTask.nextRefresh.UnixMilli()
-	svc.mvRefreshMu.pending[disabledTask.ID] = svc.mvRefreshMu.prio.Push(disabledTask)
-	svc.mvRefreshMu.Unlock()
+	addMVRefreshAlertTasksForTest(svc, warnTask, overdueTask, disabledTask)
+	addMVRefreshExecutionTasksForTest(svc, warnTask, overdueTask, disabledTask)
 
 	got, warningCount, overdueCount := svc.collectRefreshAlertTasks(now)
 	require.Len(t, got, 2)
@@ -809,19 +801,12 @@ func TestMVServiceCollectRefreshAlertTasksDedupByLastSuccessReadTSO(t *testing.T
 
 			task := tc.task
 			task.orderTs = task.nextRefresh.UnixMilli()
-			svc.mvRefreshMu.Lock()
-			if svc.mvRefreshMu.pending == nil {
-				svc.mvRefreshMu.pending = make(map[int64]mvItem)
-			}
-			svc.mvRefreshMu.pending[task.ID] = svc.mvRefreshMu.prio.Push(task)
-			svc.mvRefreshMu.Unlock()
+			addMVRefreshAlertTasksForTest(svc, task)
 
 			for _, s := range tc.steps {
 				at := now.Add(s.atOffset)
 				if s.beforeCollect != nil {
-					svc.mvRefreshMu.Lock()
 					s.beforeCollect(task, at)
-					svc.mvRefreshMu.Unlock()
 				}
 				got, warningCount, overdueCount := svc.collectRefreshAlertTasks(at)
 				require.Len(t, got, s.expectedCount)
@@ -837,16 +822,13 @@ func TestMVServiceCollectRefreshAlertTasksDedupByLastSuccessReadTSO(t *testing.T
 }
 
 func TestMVServiceMaybeLogRefreshAlertTasksSyncsAlertStates(t *testing.T) {
-	svc := NewMVService(context.Background(), mockSessionPool{}, &mockMVServiceHelper{}, DefaultMVServiceConfig())
+	helper := &mockMVServiceHelper{}
+	svc := NewMVService(context.Background(), mockSessionPool{}, helper, DefaultMVServiceConfig())
 	defer svc.closeTaskExecutors()
 	setRefreshAlertCleanupOwnerForTest(svc, 10)
 
 	now := mvsNow()
 
-	svc.mvRefreshMu.Lock()
-	if svc.mvRefreshMu.pending == nil {
-		svc.mvRefreshMu.pending = make(map[int64]mvItem)
-	}
 	warnTask := &mv{
 		ID:                 301,
 		schemaName:         "test",
@@ -857,8 +839,6 @@ func TestMVServiceMaybeLogRefreshAlertTasksSyncsAlertStates(t *testing.T) {
 		alertWarningSec:    30,
 		alertOverdueSec:    120,
 	}
-	warnTask.orderTs = warnTask.nextRefresh.UnixMilli()
-	svc.mvRefreshMu.pending[warnTask.ID] = svc.mvRefreshMu.prio.Push(warnTask)
 
 	overdueTask := &mv{
 		ID:                 302,
@@ -870,8 +850,6 @@ func TestMVServiceMaybeLogRefreshAlertTasksSyncsAlertStates(t *testing.T) {
 		alertWarningSec:    30,
 		alertOverdueSec:    60,
 	}
-	overdueTask.orderTs = overdueTask.nextRefresh.UnixMilli()
-	svc.mvRefreshMu.pending[overdueTask.ID] = svc.mvRefreshMu.prio.Push(overdueTask)
 
 	healthyTask := &mv{
 		ID:                 303,
@@ -883,14 +861,15 @@ func TestMVServiceMaybeLogRefreshAlertTasksSyncsAlertStates(t *testing.T) {
 		alertWarningSec:    30,
 		alertOverdueSec:    60,
 	}
-	healthyTask.orderTs = healthyTask.nextRefresh.UnixMilli()
-	svc.mvRefreshMu.pending[healthyTask.ID] = svc.mvRefreshMu.prio.Push(healthyTask)
-	svc.mvRefreshMu.Unlock()
+	helper.fetchViews = map[int64]*mv{
+		warnTask.ID:    warnTask,
+		overdueTask.ID: overdueTask,
+		healthyTask.ID: healthyTask,
+	}
 
 	svc.nextRefreshAlertScanMillis.Store(0)
 	svc.maybeLogRefreshAlertTasks(now)
 
-	helper := svc.mh.(*mockMVServiceHelper)
 	require.Equal(t, int32(1), helper.syncRefreshAlertCalls.Load())
 	require.Equal(t, int64(1), svc.metrics.alertWarningCount.Load())
 	require.Equal(t, int64(1), svc.metrics.alertOverdueCount.Load())
@@ -960,6 +939,7 @@ func TestMVServiceMaybeLogRefreshAlertTasksResyncsWhenLastSuccessReadTSOChanges(
 	helper := &mockMVServiceHelper{}
 	svc := NewMVService(context.Background(), mockSessionPool{}, helper, DefaultMVServiceConfig())
 	defer svc.closeTaskExecutors()
+	setRefreshAlertCleanupOwnerForTest(svc, 10)
 
 	now := mvsNow()
 	task := &mv{
@@ -972,22 +952,14 @@ func TestMVServiceMaybeLogRefreshAlertTasksResyncsWhenLastSuccessReadTSOChanges(
 		alertWarningSec:    30,
 	}
 	task.orderTs = task.nextRefresh.UnixMilli()
-
-	svc.mvRefreshMu.Lock()
-	if svc.mvRefreshMu.pending == nil {
-		svc.mvRefreshMu.pending = make(map[int64]mvItem)
-	}
-	svc.mvRefreshMu.pending[task.ID] = svc.mvRefreshMu.prio.Push(task)
-	svc.mvRefreshMu.Unlock()
+	helper.fetchViews = map[int64]*mv{task.ID: task}
 
 	svc.nextRefreshAlertScanMillis.Store(0)
 	svc.maybeLogRefreshAlertTasks(now)
 	require.Equal(t, int32(1), helper.syncRefreshAlertCalls.Load())
 
-	svc.mvRefreshMu.Lock()
 	task.lastSuccessReadTSO = 22345
 	task.lastSuccessTime = now.Add(-35 * time.Second)
-	svc.mvRefreshMu.Unlock()
 
 	svc.nextRefreshAlertScanMillis.Store(0)
 	svc.maybeLogRefreshAlertTasks(now)
@@ -1010,13 +982,7 @@ func TestMVServiceMaybeLogRefreshAlertTasksSkipsUnresolvedMetadata(t *testing.T)
 		metadataUnresolved: true,
 	}
 	task.orderTs = task.nextRefresh.UnixMilli()
-
-	svc.mvRefreshMu.Lock()
-	if svc.mvRefreshMu.pending == nil {
-		svc.mvRefreshMu.pending = make(map[int64]mvItem)
-	}
-	svc.mvRefreshMu.pending[task.ID] = svc.mvRefreshMu.prio.Push(task)
-	svc.mvRefreshMu.Unlock()
+	helper.fetchViews = map[int64]*mv{task.ID: task}
 
 	svc.nextRefreshAlertScanMillis.Store(0)
 	svc.maybeLogRefreshAlertTasks(now)
@@ -1046,15 +1012,8 @@ func TestMVServiceBuildMVRefreshTasksDoesNotDeleteAlertsOnTemporaryMetadataMiss(
 		alertStateInitialized:  true,
 	}
 	existing.orderTs = existing.nextRefresh.UnixMilli()
-
-	svc.mvRefreshMu.Lock()
-	if svc.mvRefreshMu.pending == nil {
-		svc.mvRefreshMu.pending = make(map[int64]mvItem)
-	}
-	svc.mvRefreshMu.pending[existing.ID] = svc.mvRefreshMu.prio.Push(existing)
-	svc.mvRefreshMu.Unlock()
-
-	svc.buildMVRefreshTasks(map[int64]*mv{
+	addMVRefreshAlertTasksForTest(svc, existing)
+	helper.fetchViews = map[int64]*mv{
 		existing.ID: {
 			ID:                 existing.ID,
 			nextRefresh:        existing.nextRefresh,
@@ -1062,12 +1021,21 @@ func TestMVServiceBuildMVRefreshTasksDoesNotDeleteAlertsOnTemporaryMetadataMiss(
 			lastSuccessTime:    existing.lastSuccessTime,
 			metadataUnresolved: true,
 		},
-	})
+	}
 
 	svc.nextRefreshAlertScanMillis.Store(0)
 	svc.maybeLogRefreshAlertTasks(now)
 	require.Equal(t, int32(0), helper.syncRefreshAlertCalls.Load())
 	require.Equal(t, int32(1), helper.cleanupStaleRefreshAlertCalls.Load())
+
+	svc.mvRefreshAlertMu.Lock()
+	preserved, ok := svc.mvRefreshAlertMu.pending[existing.ID]
+	svc.mvRefreshAlertMu.Unlock()
+	require.True(t, ok)
+	require.NotNil(t, preserved)
+	require.True(t, preserved.alertStateInitialized)
+	require.Equal(t, mvRefreshAlertLevelWarning, preserved.lastSyncedAlertLevel)
+	require.Equal(t, uint64(12345), preserved.lastSyncedAlertReadTSO)
 }
 
 func TestMVServiceMaybeLogRefreshAlertTasksSkipsCleanupWhenNotOwner(t *testing.T) {
@@ -1082,6 +1050,96 @@ func TestMVServiceMaybeLogRefreshAlertTasksSkipsCleanupWhenNotOwner(t *testing.T
 	svc.maybeLogRefreshAlertTasks(now)
 	require.Equal(t, int32(0), helper.cleanupStaleRefreshAlertCalls.Load())
 	require.Equal(t, int32(0), helper.syncRefreshAlertCalls.Load())
+}
+
+func TestMVServiceRefreshAlertCheckerKeysScanGlobalTasks(t *testing.T) {
+	now := mvsNow()
+	newTask := func() *mv {
+		return &mv{
+			ID:                 701,
+			schemaName:         "test",
+			mviewName:          "mv_overdue",
+			nextRefresh:        now.Add(-2 * time.Minute),
+			lastSuccessReadTSO: 12345,
+			lastSuccessTime:    now.Add(-90 * time.Second),
+			alertWarningSec:    30,
+			alertOverdueSec:    60,
+		}
+	}
+	testCases := []struct {
+		name         string
+		selfID       string
+		checkerOwner bool
+		metricsOwner bool
+		fetchCalls   int32
+		syncCalls    int32
+		overdueCount int64
+		taskState    string
+	}{
+		{
+			name:   "not_checker_owner",
+			selfID: "nodeA",
+		},
+		{
+			name:         "checker_key1_owner_reports_metrics",
+			selfID:       "nodeB",
+			checkerOwner: true,
+			metricsOwner: true,
+			fetchCalls:   1,
+			syncCalls:    1,
+			overdueCount: 1,
+			taskState:    mvRefreshAlertTaskStateUnknown,
+		},
+		{
+			name:         "checker_key2_owner_does_not_report_metrics",
+			selfID:       "nodeC",
+			checkerOwner: true,
+			fetchCalls:   1,
+			syncCalls:    1,
+			taskState:    mvRefreshAlertTaskStateUnknown,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			task := newTask()
+			helper := &mockMVServiceHelper{
+				fetchViews: map[int64]*mv{task.ID: task},
+			}
+			svc := NewMVService(context.Background(), mockSessionPool{}, helper, DefaultMVServiceConfig())
+			defer svc.closeTaskExecutors()
+
+			setThreeNodeRefreshAlertCheckerRingForTest(svc, tc.selfID)
+			require.Equal(t, tc.checkerOwner, svc.isRefreshAlertCheckerOwner())
+			require.Equal(t, tc.metricsOwner, svc.isRefreshAlertMetricsOwner())
+			svc.metrics.alertWarningCount.Store(7)
+			svc.metrics.alertOverdueCount.Store(7)
+			reportedWarning, reportedOverdue := svc.refreshAlertMetricCounts()
+			if tc.metricsOwner {
+				require.Equal(t, int64(7), reportedWarning)
+				require.Equal(t, int64(7), reportedOverdue)
+			} else {
+				require.Equal(t, int64(0), reportedWarning)
+				require.Equal(t, int64(0), reportedOverdue)
+			}
+			svc.nextRefreshAlertScanMillis.Store(0)
+			svc.maybeLogRefreshAlertTasks(now)
+			require.Equal(t, tc.fetchCalls, helper.fetchViewCalls.Load())
+			require.Equal(t, tc.syncCalls, helper.syncRefreshAlertCalls.Load())
+			require.Equal(t, int64(0), svc.metrics.alertWarningCount.Load())
+			require.Equal(t, tc.overdueCount, svc.metrics.alertOverdueCount.Load())
+			if tc.syncCalls == 0 {
+				return
+			}
+			helper.syncRefreshAlertMu.Lock()
+			synced := append([]refreshAlertTask(nil), helper.lastRefreshAlertSync...)
+			helper.syncRefreshAlertMu.Unlock()
+			require.Len(t, synced, 1)
+			require.Equal(t, task.ID, synced[0].mviewID)
+			require.Equal(t, mvRefreshAlertLevelOverdue, synced[0].alertLevel)
+			require.Equal(t, tc.taskState, synced[0].taskState)
+		})
+	}
 }
 
 func TestMVServiceMaybeScanMVLogAccumulationAlertsFiltersUnownedTasks(t *testing.T) {
