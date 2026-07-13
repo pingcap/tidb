@@ -204,30 +204,6 @@ func TestConsistentHash_Rebuild(t *testing.T) {
 	}
 }
 
-func TestConsistentHash_GetNodesForKey(t *testing.T) {
-	mapping := map[string]uint32{
-		"nodeA#0": 10,
-		"nodeA#1": 30,
-		"nodeB#0": 20,
-		"nodeB#1": 40,
-		"nodeC#0": 50,
-		"nodeC#1": 60,
-		"key":     15,
-	}
-
-	c := NewConsistentHash(2)
-	c.hashFunc = mustHash(mapping)
-	c.Rebuild(map[string]serverInfo{
-		"nodeA": {ID: "nodeA"},
-		"nodeB": {ID: "nodeB"},
-		"nodeC": {ID: "nodeC"},
-	})
-
-	require.Equal(t, []string{"nodeB", "nodeA"}, c.GetNodesForKey([]byte("key"), 2))
-	require.Equal(t, []string{"nodeB", "nodeA", "nodeC"}, c.GetNodesForKey([]byte("key"), 10))
-	require.Empty(t, c.GetNodesForKey([]byte("key"), 0))
-}
-
 type node struct {
 	v  string
 	ts int64

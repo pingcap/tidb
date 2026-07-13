@@ -1042,46 +1042,91 @@ func TestMVServiceMaybeLogRefreshAlertTasksSkipsCleanupWhenNotOwner(t *testing.T
 	require.Equal(t, int32(0), helper.syncRefreshAlertCalls.Load())
 }
 
-func TestMVServiceRefreshAlertCheckerTopTwoOwnersScanGlobalTasks(t *testing.T) {
+func TestMVServiceRefreshAlertCheckerKeysScanGlobalTasks(t *testing.T) {
 	now := mvsNow()
-	task := &mv{
-		ID:                 701,
-		schemaName:         "test",
-		mviewName:          "mv_overdue",
-		nextRefresh:        now.Add(-2 * time.Minute),
-		lastSuccessReadTSO: 12345,
-		lastSuccessTime:    now.Add(-90 * time.Second),
-		alertWarningSec:    30,
-		alertOverdueSec:    60,
+	newTask := func() *mv {
+		return &mv{
+			ID:                 701,
+			schemaName:         "test",
+			mviewName:          "mv_overdue",
+			nextRefresh:        now.Add(-2 * time.Minute),
+			lastSuccessReadTSO: 12345,
+			lastSuccessTime:    now.Add(-90 * time.Second),
+			alertWarningSec:    30,
+			alertOverdueSec:    60,
+		}
 	}
-	helper := &mockMVServiceHelper{
-		fetchViews: map[int64]*mv{task.ID: task},
+	testCases := []struct {
+		name         string
+		selfID       string
+		checkerOwner bool
+		metricsOwner bool
+		fetchCalls   int32
+		syncCalls    int32
+		overdueCount int64
+	}{
+		{
+			name:   "not_checker_owner",
+			selfID: "nodeA",
+		},
+		{
+			name:         "checker_key1_owner_reports_metrics",
+			selfID:       "nodeB",
+			checkerOwner: true,
+			metricsOwner: true,
+			fetchCalls:   1,
+			syncCalls:    1,
+			overdueCount: 1,
+		},
+		{
+			name:         "checker_key2_owner_does_not_report_metrics",
+			selfID:       "nodeC",
+			checkerOwner: true,
+			fetchCalls:   1,
+			syncCalls:    1,
+		},
 	}
-	svc := NewMVService(context.Background(), mockSessionPool{}, helper, DefaultMVServiceConfig())
-	defer svc.closeTaskExecutors()
 
-	setThreeNodeRefreshAlertCheckerRingForTest(svc, "nodeA")
-	require.False(t, svc.isRefreshAlertCheckerOwner())
-	svc.nextRefreshAlertScanMillis.Store(0)
-	svc.maybeLogRefreshAlertTasks(now)
-	require.Equal(t, int32(0), helper.fetchViewCalls.Load())
-	require.Equal(t, int32(0), helper.syncRefreshAlertCalls.Load())
-	require.Equal(t, int64(0), svc.metrics.alertOverdueCount.Load())
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			task := newTask()
+			helper := &mockMVServiceHelper{
+				fetchViews: map[int64]*mv{task.ID: task},
+			}
+			svc := NewMVService(context.Background(), mockSessionPool{}, helper, DefaultMVServiceConfig())
+			defer svc.closeTaskExecutors()
 
-	setThreeNodeRefreshAlertCheckerRingForTest(svc, "nodeB")
-	require.True(t, svc.isRefreshAlertCheckerOwner())
-	svc.nextRefreshAlertScanMillis.Store(0)
-	svc.maybeLogRefreshAlertTasks(now)
-	require.Equal(t, int32(1), helper.fetchViewCalls.Load())
-	require.Equal(t, int32(1), helper.syncRefreshAlertCalls.Load())
-	require.Equal(t, int64(1), svc.metrics.alertOverdueCount.Load())
-	helper.syncRefreshAlertMu.Lock()
-	synced := append([]refreshAlertTask(nil), helper.lastRefreshAlertSync...)
-	helper.syncRefreshAlertMu.Unlock()
-	require.Len(t, synced, 1)
-	require.Equal(t, task.ID, synced[0].mviewID)
-	require.Equal(t, mvRefreshAlertLevelOverdue, synced[0].alertLevel)
-	require.Equal(t, "queued", synced[0].taskState)
+			setThreeNodeRefreshAlertCheckerRingForTest(svc, tc.selfID)
+			require.Equal(t, tc.checkerOwner, svc.isRefreshAlertCheckerOwner())
+			require.Equal(t, tc.metricsOwner, svc.isRefreshAlertMetricsOwner())
+			svc.metrics.alertWarningCount.Store(7)
+			svc.metrics.alertOverdueCount.Store(7)
+			reportedWarning, reportedOverdue := svc.refreshAlertMetricCounts()
+			if tc.metricsOwner {
+				require.Equal(t, int64(7), reportedWarning)
+				require.Equal(t, int64(7), reportedOverdue)
+			} else {
+				require.Equal(t, int64(0), reportedWarning)
+				require.Equal(t, int64(0), reportedOverdue)
+			}
+			svc.nextRefreshAlertScanMillis.Store(0)
+			svc.maybeLogRefreshAlertTasks(now)
+			require.Equal(t, tc.fetchCalls, helper.fetchViewCalls.Load())
+			require.Equal(t, tc.syncCalls, helper.syncRefreshAlertCalls.Load())
+			require.Equal(t, int64(0), svc.metrics.alertWarningCount.Load())
+			require.Equal(t, tc.overdueCount, svc.metrics.alertOverdueCount.Load())
+			if tc.syncCalls == 0 {
+				return
+			}
+			helper.syncRefreshAlertMu.Lock()
+			synced := append([]refreshAlertTask(nil), helper.lastRefreshAlertSync...)
+			helper.syncRefreshAlertMu.Unlock()
+			require.Len(t, synced, 1)
+			require.Equal(t, task.ID, synced[0].mviewID)
+			require.Equal(t, mvRefreshAlertLevelOverdue, synced[0].alertLevel)
+			require.Equal(t, "queued", synced[0].taskState)
+		})
+	}
 }
 
 func TestMVServiceMaybeScanMVLogAccumulationAlertsFiltersUnownedTasks(t *testing.T) {

@@ -207,26 +207,6 @@ func (sch *ServerConsistentHash) AvailableBytes(key []byte) bool {
 	return sch.chash.GetNode(key) == sch.ID
 }
 
-// AvailableBytesInTopN checks if the current server is among the first n owners for the byte key.
-func (sch *ServerConsistentHash) AvailableBytesInTopN(key []byte, n int) bool {
-	sch.mu.RLock()
-	defer sch.mu.RUnlock()
-	if sch.ID == "" || len(sch.servers) == 0 {
-		return false
-	}
-	for _, node := range sch.chash.GetNodesForKey(key, n) {
-		if node == sch.ID {
-			return true
-		}
-	}
-	return false
-}
-
-// AvailableStringInTopN checks if the current server is among the first n owners for the string key.
-func (sch *ServerConsistentHash) AvailableStringInTopN(key string, n int) bool {
-	return sch.AvailableBytesInTopN([]byte(key), n)
-}
-
 // AvailableInt64 checks if the owner of the int64 key is the current server.
 func (sch *ServerConsistentHash) AvailableInt64(key int64) bool {
 	sch.mu.RLock()

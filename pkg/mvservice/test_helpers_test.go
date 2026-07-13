@@ -96,11 +96,12 @@ func setServiceHashOverridesForTest(svc *MVService, overrides map[string]uint32)
 	svc.sch.ID = "nodeA"
 	svc.sch.chash.replicas = 1
 	mapping := map[string]uint32{
-		"nodeA#0":                     10,
-		"nodeB#0":                     30,
-		mvHistoryGCOwnerKey:           10,
-		mvRefreshAlertCheckerOwnerKey: 10,
-		mvRefreshAlertCleanupOwnerKey: 10,
+		"nodeA#0":                      10,
+		"nodeB#0":                      30,
+		mvHistoryGCOwnerKey:            10,
+		mvRefreshAlertCheckerOwnerKey1: 10,
+		mvRefreshAlertCheckerOwnerKey2: 10,
+		mvRefreshAlertCleanupOwnerKey:  10,
 	}
 	for key, hash := range overrides {
 		mapping[key] = hash
@@ -119,11 +120,12 @@ func setThreeNodeRefreshAlertCheckerRingForTest(svc *MVService, selfID string) {
 	svc.sch.ID = selfID
 	svc.sch.chash.replicas = 1
 	svc.sch.chash.hashFunc = mustHash(map[string]uint32{
-		"nodeA#0":                     10,
-		"nodeB#0":                     20,
-		"nodeC#0":                     30,
-		mvRefreshAlertCheckerOwnerKey: 15, // top-2 owners: nodeB, nodeC.
-		mvRefreshAlertCleanupOwnerKey: 25,
+		"nodeA#0":                      10,
+		"nodeB#0":                      20,
+		"nodeC#0":                      30,
+		mvRefreshAlertCheckerOwnerKey1: 15, // owner: nodeB.
+		mvRefreshAlertCheckerOwnerKey2: 25, // owner: nodeC.
+		mvRefreshAlertCleanupOwnerKey:  25,
 	})
 	svc.sch.servers = map[string]serverInfo{
 		"nodeA": {ID: "nodeA"},

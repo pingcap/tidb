@@ -159,10 +159,10 @@ const (
 	mvRunEventGetTSOErr          = "get_tso_error"
 
 	mvHistoryGCOwnerKey = "gc-mv-op-hist"
-	// Two hash-ring owners perform global refresh-alert checks, so one unhealthy
-	// TiDB does not fully suppress warning/overdue alerts for its owned MV tasks.
-	mvRefreshAlertCheckerOwnerKey   = "check-mv-refresh-alert"
-	mvRefreshAlertCheckerOwnerCount = 2
+	// Two independent hash-ring keys perform global refresh-alert checks, so one
+	// unhealthy TiDB does not fully suppress warning/overdue alerts.
+	mvRefreshAlertCheckerOwnerKey1 = "check-mv-refresh-alert1"
+	mvRefreshAlertCheckerOwnerKey2 = "check-mv-refresh-alert2"
 	// A single hash-ring owner performs stale refresh-alert cleanup to avoid
 	// repeating the same global delete on every TiDB node.
 	mvRefreshAlertCleanupOwnerKey = "gc-mv-refresh-alert"
@@ -388,10 +388,12 @@ func (t *MVService) maybeLogRefreshAlertTasks(now time.Time) {
 
 	if !t.isRefreshAlertCheckerOwner() {
 		t.clearRefreshAlertTasks()
-		t.metrics.alertWarningCount.Store(0)
-		t.metrics.alertOverdueCount.Store(0)
+		t.clearRefreshAlertMetrics()
 		t.cleanupStaleRefreshAlerts()
 		return
+	}
+	if !t.isRefreshAlertMetricsOwner() {
+		t.clearRefreshAlertMetrics()
 	}
 	if err := t.refreshAllMVRefreshAlertTasks(); err != nil {
 		t.cleanupStaleRefreshAlerts()
@@ -399,8 +401,7 @@ func (t *MVService) maybeLogRefreshAlertTasks(now time.Time) {
 	}
 
 	alertStates, warningCount, overdueCount := t.collectRefreshAlertStates(now)
-	t.metrics.alertWarningCount.Store(warningCount)
-	t.metrics.alertOverdueCount.Store(overdueCount)
+	t.updateRefreshAlertMetrics(warningCount, overdueCount)
 	if t.syncRefreshAlertStates(now, alertStates) {
 		t.markRefreshAlertStatesSynced(alertStates)
 	}
@@ -673,6 +674,27 @@ func (t *MVService) syncRefreshAlertStates(updatedAt time.Time, states []refresh
 	return true
 }
 
+func (t *MVService) updateRefreshAlertMetrics(warningCount, overdueCount int64) {
+	if !t.isRefreshAlertMetricsOwner() {
+		t.clearRefreshAlertMetrics()
+		return
+	}
+	t.metrics.alertWarningCount.Store(warningCount)
+	t.metrics.alertOverdueCount.Store(overdueCount)
+}
+
+func (t *MVService) refreshAlertMetricCounts() (int64, int64) {
+	if !t.isRefreshAlertMetricsOwner() {
+		return 0, 0
+	}
+	return t.metrics.alertWarningCount.Load(), t.metrics.alertOverdueCount.Load()
+}
+
+func (t *MVService) clearRefreshAlertMetrics() {
+	t.metrics.alertWarningCount.Store(0)
+	t.metrics.alertOverdueCount.Store(0)
+}
+
 func (t *MVService) cleanupStaleRefreshAlerts() {
 	if !t.isRefreshAlertCleanupOwner() {
 		return
@@ -687,7 +709,21 @@ func (t *MVService) cleanupStaleRefreshAlerts() {
 }
 
 func (t *MVService) isRefreshAlertCheckerOwner() bool {
-	return t.sch.AvailableStringInTopN(mvRefreshAlertCheckerOwnerKey, mvRefreshAlertCheckerOwnerCount)
+	return t.ownsRefreshAlertKey(mvRefreshAlertCheckerOwnerKey1) ||
+		t.ownsRefreshAlertKey(mvRefreshAlertCheckerOwnerKey2)
+}
+
+func (t *MVService) isRefreshAlertMetricsOwner() bool {
+	return t.ownsRefreshAlertKey(mvRefreshAlertCheckerOwnerKey1)
+}
+
+func (t *MVService) ownsRefreshAlertKey(key string) bool {
+	t.sch.mu.RLock()
+	defer t.sch.mu.RUnlock()
+	if t.sch.ID == "" || len(t.sch.servers) == 0 {
+		return false
+	}
+	return t.sch.chash.GetNode([]byte(key)) == t.sch.ID
 }
 
 func (t *MVService) isRefreshAlertCleanupOwner() bool {
