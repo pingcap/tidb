@@ -187,7 +187,7 @@ func (b *PlanBuilder) rewriteInsertExpression(
 	exprNode ast.ExprNode,
 	mockPlan base.LogicalPlan,
 	insertPlan *physicalop.Insert,
-	insertSource *autoembed.SourceSnapshot,
+	autoEmbedSourceSnapshot *autoembed.SourceSnapshot,
 	preprocess func(ast.Node) ast.Node,
 ) (expression.Expression, base.LogicalPlan, error) {
 	b.rewriterCounter++
@@ -203,7 +203,7 @@ func (b *PlanBuilder) rewriteInsertExpression(
 	}
 
 	rewriter.planCtx.insertPlan = insertPlan
-	rewriter.planCtx.insertSource = insertSource
+	rewriter.planCtx.autoEmbedSourceSnapshot = autoEmbedSourceSnapshot
 	rewriter.asScalar = true
 	rewriter.allowBuildCastArray = b.allowBuildCastArray
 	rewriter.preprocess = preprocess
@@ -217,10 +217,10 @@ func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(
 	exprNode ast.ExprNode,
 	mockPlan base.LogicalPlan,
 	insertPlan *physicalop.Insert,
-	insertSource *autoembed.SourceSnapshot,
+	autoEmbedSourceSnapshot *autoembed.SourceSnapshot,
 ) (expression.Expression, error) {
 	b.curClause = fieldList
-	expr, _, err := b.rewriteInsertExpression(ctx, exprNode, mockPlan, insertPlan, insertSource, nil)
+	expr, _, err := b.rewriteInsertExpression(ctx, exprNode, mockPlan, insertPlan, autoEmbedSourceSnapshot, nil)
 	return expr, err
 }
 
@@ -302,7 +302,7 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p base.LogicalP
 	rewriter.planCtx.curClause = b.curClause
 	rewriter.planCtx.aggrMap = nil
 	rewriter.planCtx.insertPlan = nil
-	rewriter.planCtx.insertSource = nil
+	rewriter.planCtx.autoEmbedSourceSnapshot = nil
 	rewriter.planCtx.rollExpand = b.currentBlockExpand
 	return
 }
@@ -366,8 +366,8 @@ type exprRewriterPlanCtx struct {
 
 	// insertPlan is only used to rewrite the expressions inside the assignment
 	// of the "INSERT" statement.
-	insertPlan   *physicalop.Insert
-	insertSource *autoembed.SourceSnapshot
+	insertPlan              *physicalop.Insert
+	autoEmbedSourceSnapshot *autoembed.SourceSnapshot
 
 	rollExpand *logicalop.LogicalExpand
 }
@@ -3047,7 +3047,7 @@ func (er *expressionRewriter) autoEmbedVectorSearchArg(fnName string, arg expres
 		}
 	}
 	if ok && er.planCtx != nil {
-		embedInfo, found := autoembed.Resolve(er.planCtx.plan, er.planCtx.insertPlan, er.planCtx.insertSource, vecArg)
+		embedInfo, found := autoembed.Resolve(er.planCtx.plan, er.planCtx.insertPlan, er.planCtx.autoEmbedSourceSnapshot, vecArg)
 		if found {
 			return vecArg, embedInfo, nil
 		}

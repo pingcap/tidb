@@ -4209,7 +4209,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		return n
 	}
 
-	var insertSource *autoembed.SourceSnapshot
+	var autoEmbedSourceSnapshot *autoembed.SourceSnapshot
 	if len(insert.Lists) > 0 {
 		// Branch for `INSERT ... VALUES ...`.
 		// Branch for `INSERT ... SET ...`.
@@ -4219,7 +4219,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		}
 	} else {
 		// Branch for `INSERT ... SELECT ...`.
-		insertSource, err = b.buildSelectPlanOfInsert(ctx, insert, insertPlan)
+		autoEmbedSourceSnapshot, err = b.buildSelectPlanOfInsert(ctx, insert, insertPlan)
 		if err != nil {
 			return nil, err
 		}
@@ -4229,7 +4229,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	mockTablePlan.SetOutputNames(insertPlan.Names4OnDuplicate)
 
 	onDupColSet, err := insertPlan.ResolveOnDuplicate(insert.OnDuplicate, tableInfo, func(node ast.ExprNode) (expression.Expression, error) {
-		return b.rewriteInsertOnDuplicateUpdate(ctx, node, mockTablePlan, insertPlan, insertSource)
+		return b.rewriteInsertOnDuplicateUpdate(ctx, node, mockTablePlan, insertPlan, autoEmbedSourceSnapshot)
 	})
 	if err != nil {
 		return nil, err
@@ -4493,7 +4493,7 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 	selectLogicalPlan := selectPlan.(base.LogicalPlan)
 	// The snapshot is taken before optimization; schema4NewRow below must keep
 	// the corresponding SELECT output UniqueIDs so ON DUPLICATE can rebind them.
-	insertSource := autoembed.SnapshotSource(selectLogicalPlan)
+	autoEmbedSourceSnapshot := autoembed.SnapshotSource(selectLogicalPlan)
 	optimizedPhysicalPlan, _, err := DoOptimize(ctx, b.ctx, b.optFlag, selectLogicalPlan)
 	if err != nil {
 		return nil, err
@@ -4535,7 +4535,7 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 	insertPlan.Schema4OnDuplicate.Append(schema4NewRow.Columns...)
 	insertPlan.Names4OnDuplicate = append(insertPlan.TableColNames.Shallow(), names[actualColLen:]...)
 	insertPlan.Names4OnDuplicate = append(insertPlan.Names4OnDuplicate, names4NewRow...)
-	return insertSource, nil
+	return autoEmbedSourceSnapshot, nil
 }
 
 func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (base.Plan, error) {
