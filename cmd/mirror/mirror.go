@@ -15,29 +15,19 @@
 package main
 
 import (
-	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 
-	"cloud.google.com/go/storage"
 	"github.com/bazelbuild/rules_go/go/tools/bazel"
-	"golang.org/x/sync/errgroup"
-	"google.golang.org/api/googleapi"
 )
-
-const gcpBucket = "pingcapmirror"
 
 // downloadedModule captures `go mod download -json` output.
 type downloadedModule struct {
@@ -60,41 +50,8 @@ var (
 )
 
 func init() {
-	flag.BoolVar(&isMirror, "mirror", false, "enable mirror mode")
-	flag.BoolVar(&isUpload, "upload", false, "enable upload mode")
-}
-
-func formatSubURL(path, version string) string {
-	return fmt.Sprintf("gomod/%s/%s-%s.zip", path, modulePathToBazelRepoName(path), version)
-}
-
-func formatVPCPublicURL(path, version string) string {
-	return fmt.Sprintf("http://bazel-cache.pingcap.net:8080/%s", formatSubURL(path, version))
-}
-
-func formatVPCPrivateURL(path, version string) string {
-	return fmt.Sprintf("http://ats.apps.svc/%s", formatSubURL(path, version))
-}
-
-func formatCDNURL(path, version string) string {
-	return fmt.Sprintf("https://cache.hawkingrei.com/%s", formatSubURL(path, version))
-}
-
-func formatPublicURL(path, version string) string {
-	return fmt.Sprintf("https://storage.googleapis.com/pingcapmirror/%s", formatSubURL(path, version))
-}
-
-func getSha256OfFile(path string) (string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", fmt.Errorf("failed to open %s: %w", path, err)
-	}
-	defer f.Close()
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
+	flag.BoolVar(&isMirror, "mirror", false, "deprecated; ignored")
+	flag.BoolVar(&isUpload, "upload", false, "deprecated; ignored")
 }
 
 func copyFile(src, dst string) error {
@@ -110,34 +67,6 @@ func copyFile(src, dst string) error {
 	defer out.Close()
 	_, err = io.Copy(out, in)
 	return err
-}
-
-func uploadFile(ctx context.Context, client *storage.Client, localPath, remotePath string) error {
-	if !isUpload {
-		return nil
-	}
-	in, err := os.Open(localPath)
-	if err != nil {
-		return fmt.Errorf("failed to open %s: %w", localPath, err)
-	}
-	defer in.Close()
-	out := client.Bucket(gcpBucket).Object(remotePath).If(storage.Conditions{DoesNotExist: true}).NewWriter(ctx)
-	if _, err := io.Copy(out, in); err != nil {
-		return err
-	}
-	if err := out.Close(); err != nil {
-		var gerr *googleapi.Error
-		if errors.As(err, &gerr) {
-			if gerr.Code == http.StatusPreconditionFailed {
-				// In this case the "DoesNotExist" precondition
-				// failed, i.e., the object does already exist.
-				return nil
-			}
-			return gerr
-		}
-		return err
-	}
-	return nil
 }
 
 func createTmpDir() (tmpdir string, err error) {
@@ -252,14 +181,6 @@ func listAllModules(tmpdir string) (map[string]listedModule, error) {
 	return ret, nil
 }
 
-func getExistingMirrors() (map[string]DownloadableArtifact, error) {
-	depsbzl, err := bazel.Runfile("DEPS.bzl")
-	if err != nil {
-		return nil, err
-	}
-	return ListArtifactsInDepsBzl(depsbzl)
-}
-
 func mungeBazelRepoNameComponent(component string) string {
 	component = strings.ReplaceAll(component, "-", "_")
 	component = strings.ReplaceAll(component, ".", "_")
@@ -315,7 +236,6 @@ func dumpBuildNamingConventionArgsForRepo(repoName string) {
 func dumpNewDepsBzl(
 	listed map[string]listedModule,
 	downloaded map[string]downloadedModule,
-	existingMirrors map[string]DownloadableArtifact,
 ) error {
 	var sorted []string
 	repoNameToModPath := make(map[string]string)
@@ -326,19 +246,8 @@ func dumpNewDepsBzl(
 	}
 	sort.Strings(sorted)
 
-	ctx := context.Background()
-	var client *storage.Client
-	if isMirror && isUpload {
-		var err error
-		client, err = storage.NewClient(ctx)
-		if err != nil {
-			return err
-		}
-	}
-	g, ctx := errgroup.WithContext(ctx)
-
 	// This uses a lot of fmt.Println to output the generated configuration to stdout,
-	// and the mirror will only be used under "make bazel_prepare", so it won't output
+	// and the generator will only be used under "make bazel_prepare", so it won't output
 	// too much and affect development.
 	fmt.Println(`load("@bazel_gazelle//:deps.bzl", "go_repository")
 
@@ -362,83 +271,23 @@ def go_deps():
 		fmt.Printf(`        build_file_proto_mode = "%s",
 `, buildFileProtoModeForRepo(repoName))
 		dumpBuildNamingConventionArgsForRepo(repoName)
-		expectedVPCPrivateURL := formatVPCPrivateURL(replaced.Path, replaced.Version)
-		expectedCDNURL := formatCDNURL(replaced.Path, replaced.Version)
-		expectedPublicURL := formatPublicURL(replaced.Path, replaced.Version)
-		expectedVPCPublicURL := formatVPCPublicURL(replaced.Path, replaced.Version)
 		fmt.Printf("        importpath = \"%s\",\n", mod.Path)
 		if err := dumpPatchArgsForRepo(repoName); err != nil {
 			return err
 		}
-		oldMirror, ok := existingMirrors[repoName]
-		if ok &&
-			slices.Contains(oldMirror.URL, expectedVPCPrivateURL) &&
-			slices.Contains(oldMirror.URL, expectedCDNURL) &&
-			slices.Contains(oldMirror.URL, expectedPublicURL) &&
-			slices.Contains(oldMirror.URL, expectedVPCPublicURL) {
-			// The URL matches, so just reuse the old mirror.
-			fmt.Printf(`        sha256 = "%s",
-        strip_prefix = "%s@%s",
-        urls = [
-			"%s",
-			"%s",
-			"%s",
-			"%s",
-        ],
-`, oldMirror.Sha256, replaced.Path, replaced.Version, expectedPublicURL, expectedVPCPrivateURL, expectedCDNURL, expectedPublicURL)
-		} else if isMirror {
-			// We'll have to mirror our copy of the zip ourselves.
-			d := downloaded[replaced.Path]
-			sha, err := getSha256OfFile(d.Zip)
-			if err != nil {
-				return fmt.Errorf("could not get zip for %v: %w", *replaced, err)
-			}
-			if sha == "30cf0ef9aa63aea696e40df8912d41fbce69dd02986a5b99af7c5b75f277690c" {
-				sha = "ebe8386761761d53fac2de5f8f575ddf66c114ec9835947c761131662f1d38f3"
-			}
-			fmt.Printf(`        sha256 = "%s",
-        strip_prefix = "%s@%s",
-        urls = [
-            "%s",
-            "%s",
-            "%s",
-            "%s",
-        ],
-`, sha, replaced.Path, replaced.Version, expectedVPCPublicURL, expectedVPCPrivateURL, expectedCDNURL, expectedPublicURL)
-			g.Go(func() error {
-				return uploadFile(ctx, client, d.Zip, formatSubURL(replaced.Path, replaced.Version))
-			})
-		} else {
-			// We don't have a mirror and can't upload one, so just
-			// have Gazelle pull the repo for us.
-			d := downloaded[replaced.Path]
-			sum, version := d.Sum, d.Version
-			if mod.Replace != nil {
-				fmt.Printf("        replace = \"%s\",\n", replaced.Path)
-			}
-			artifact, ok := existingMirrors[replaced.Path]
-			if ok {
-				sum, version = artifact.Sha256, artifact.Version
-			}
-			// Note: `build/teamcity-check-genfiles.sh` checks for
-			// the presence of the "TODO: mirror this repo" comment.
-			// Don't update this comment without also updating the
-			// script.
-			fmt.Printf(`        sum = "%s",
-        version = "%s",
-`, sum, version)
+		d, ok := downloaded[replaced.Path]
+		if !ok {
+			return fmt.Errorf("could not find downloaded module for %s@%s", replaced.Path, replaced.Version)
 		}
+		if mod.Replace != nil {
+			fmt.Printf("        replace = \"%s\",\n", replaced.Path)
+		}
+		fmt.Printf(`        sum = "%s",
+        version = "%s",
+`, d.Sum, d.Version)
 		fmt.Println("    )")
 	}
-
-	// Wait for uploads to complete.
-	if err := g.Wait(); err != nil {
-		return err
-	}
-	if client == nil {
-		return nil
-	}
-	return client.Close()
+	return nil
 }
 
 func mirror() error {
@@ -460,15 +309,17 @@ func mirror() error {
 	if err != nil {
 		return err
 	}
-	existingMirrors, err := getExistingMirrors()
-	if err != nil {
-		return err
-	}
-	return dumpNewDepsBzl(listed, downloaded, existingMirrors)
+	return dumpNewDepsBzl(listed, downloaded)
 }
 
 func main() {
 	flag.Parse()
+	if isMirror {
+		fmt.Fprintln(os.Stderr, "--mirror is deprecated and ignored; modules are resolved through GOPROXY")
+	}
+	if isUpload {
+		fmt.Fprintln(os.Stderr, "--upload is deprecated and ignored; modules are resolved through GOPROXY")
+	}
 	if err := mirror(); err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
