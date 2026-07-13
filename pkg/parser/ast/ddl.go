@@ -2655,6 +2655,10 @@ const (
 	TableOptionCharsetWithConvertTo    uint64 = 1
 )
 
+// TableOptionCompressionNone is the string value of TableOptionCompression
+// which means the table is not compressed.
+const TableOptionCompressionNone = "NONE"
+
 // TableOption is used for parsing table option from SQL.
 type TableOption struct {
 	node

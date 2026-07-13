@@ -1895,7 +1895,7 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 				case ast.TableOptionRowFormat:
 				case ast.TableOptionCompression:
 					// Only allow COMPRESSION='NONE', reject others like 'ZLIB', 'LZ4'
-					if strings.ToUpper(opt.StrValue) != "NONE" {
+					if strings.ToUpper(opt.StrValue) != ast.TableOptionCompressionNone {
 						return dbterror.ErrUnsupportedAlterTableOption.GenWithStackByArgs()
 					}
 					// COMPRESSION='NONE' is supported but currently no-op
