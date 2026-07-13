@@ -193,6 +193,35 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
 	require.NoError(t, err)
 	require.Equal(t, "cancelled", gotJobInfo.Status)
+
+	jobID, err = importer.CreateJob(ctx, conn, "test", "t", 1,
+		"root", "", &importer.ImportParameters{}, 123)
+	require.NoError(t, err)
+	require.NoError(t, importer.CancelJob(ctx, conn, jobID))
+	logicalPlan.JobID = jobID
+	bs, err = logicalPlan.ToTaskMeta()
+	require.NoError(t, err)
+	task.Meta = bs
+	task.Step = proto.StepInit
+	task.State = proto.TaskStatePending
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
+	if kerneltype.IsNextGen() {
+		// This release predates async scheduler preparation, so the first planning
+		// hook is the scheduler admission point for a cancelled dangling job.
+		require.Error(t, err)
+		require.True(t, scheduler.IsCancelledErr(err), err)
+		require.Nil(t, subtaskMetas)
+	} else {
+		// Classic has no dangling import job window: CANCEL IMPORT JOB changes the
+		// DXF task to cancelling, so this import-job status check must not reject
+		// scheduler planning if a test calls the hook directly.
+		require.NoError(t, err)
+		require.NotNil(t, subtaskMetas)
+	}
+	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
+	require.NoError(t, err)
+	require.Equal(t, "cancelled", gotJobInfo.Status)
+	require.Equal(t, "", gotJobInfo.Step)
 }
 
 func TestSchedulerOnDoneCancelResetsTableMode(t *testing.T) {

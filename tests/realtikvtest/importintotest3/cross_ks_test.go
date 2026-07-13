@@ -20,10 +20,12 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
@@ -619,4 +621,227 @@ func checkImportTableAndIndexes(tk *testkit.TestKit, tableName string, indexes [
 		tk.MustQuery(fmt.Sprintf("select count(*) from %s force index(%s)", tableName, indexName)).
 			Check(testkit.Rows(expectedCount))
 	}
+}
+
+func TestCancelDanglingImportJobOnUserKeyspace(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("only runs in nextgen kernel")
+	}
+	server, gcsEndpoint := newFakeGCSServer(t)
+	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "dangling-cancel-source"})
+	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "dangling-cancel-sort"})
+	server.CreateObject(fakestorage.Object{
+		ObjectAttrs: fakestorage.ObjectAttrs{
+			BucketName: "dangling-cancel-source",
+			Name:       "data.csv",
+		},
+		Content: []byte("1,a\n2,b\n"),
+	})
+
+	const keyspaceName = "keyspace_cancel"
+	runtimes := realtikvtest.PrepareForCrossKSTest(t, keyspaceName)
+	userStore := runtimes[keyspaceName].Store
+	userTK := testkit.NewTestKit(t, userStore)
+	cancelTK := testkit.NewTestKit(t, userStore)
+	sysKSTK := testkit.NewTestKit(t, kvstore.GetSystemStorage())
+	prepareAndUseDB("cross_ks_cancel", userTK)
+	cancelTK.MustExec("use cross_ks_cancel")
+
+	sourceURI := fmt.Sprintf("gs://dangling-cancel-source/data.csv?endpoint=%s", gcsEndpoint)
+
+	t.Run("cancel before dxf task submit", func(t *testing.T) {
+		tableName := "t_cancel_before_task_submit"
+		createImportTable(userTK, tableName)
+
+		jobIDCh := make(chan int64, 1)
+		cancelErrCh := make(chan error, 1)
+		var cancelOnce sync.Once
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/importinto/afterUserImportJobCreatedBeforeDXFTask",
+			func(jobID int64) {
+				cancelOnce.Do(func() {
+					jobIDCh <- jobID
+					cancelErrCh <- cancelTK.ExecToErr(fmt.Sprintf("cancel import job %d", jobID))
+				})
+			},
+		)
+
+		jobID := submitDetachedJob(t, userTK, tableName, sourceURI,
+			fmt.Sprintf("gs://dangling-cancel-sort/before-submit?endpoint=%s", gcsEndpoint))
+
+		var cancelJobID int64
+		select {
+		case cancelJobID = <-jobIDCh:
+		case <-time.After(30 * time.Second):
+			t.Fatal("timeout waiting for dangling cancel failpoint")
+		}
+		require.EqualValues(t, jobID, cancelJobID)
+		select {
+		case err := <-cancelErrCh:
+			require.NoError(t, err)
+		case <-time.After(30 * time.Second):
+			t.Fatal("timeout waiting for cancel import job")
+		}
+
+		taskKey := importinto.TaskKey(jobID)
+		userTK.MustQuery("select status, error_message from mysql.tidb_import_jobs where id = ?", jobID).
+			Check(testkit.Rows("cancelled cancelled by user"))
+		waitTerminalState(t, sysKSTK, taskKey, proto.TaskStateReverted)
+		userTK.MustQuery("select count(*) from " + tableName).Check(testkit.Rows("0"))
+	})
+
+	t.Run("cancel dangling fallback after dxf task starts next step", func(t *testing.T) {
+		tableName := "t_cancel_after_task_started"
+		createImportTable(userTK, tableName)
+
+		cancelAtFallbackCh := make(chan struct{})
+		releaseCancelFallbackCh := make(chan struct{})
+		var (
+			cancelAtFallbackOnce sync.Once
+			cancelJobID          atomic.Int64
+		)
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/beforeCancelDanglingImportJob",
+			func(jobID int64) {
+				cancelJobID.Store(jobID)
+				cancelAtFallbackOnce.Do(func() {
+					close(cancelAtFallbackCh)
+				})
+				<-releaseCancelFallbackCh
+			},
+		)
+
+		sortStartedCh := make(chan struct{})
+		releaseSortCh := make(chan struct{})
+		var sortStartedOnce sync.Once
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/importinto/syncBeforeSortChunk",
+			func() {
+				sortStartedOnce.Do(func() {
+					close(sortStartedCh)
+				})
+				<-releaseSortCh
+			},
+		)
+
+		cancelErrCh := make(chan error, 1)
+		var cancelOnce sync.Once
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/importinto/afterUserImportJobCreatedBeforeDXFTask",
+			func(jobID int64) {
+				cancelOnce.Do(func() {
+					go func() {
+						cancelErrCh <- cancelTK.ExecToErr(fmt.Sprintf("cancel import job %d", jobID))
+					}()
+					waitForCancelTestSignal(t, cancelAtFallbackCh, "timeout waiting for cancel to reach dangling fallback")
+				})
+			},
+		)
+
+		jobID := submitDetachedJob(t, userTK, tableName, sourceURI,
+			fmt.Sprintf("gs://dangling-cancel-sort/after-task-started?endpoint=%s", gcsEndpoint))
+		require.EqualValues(t, jobID, cancelJobID.Load())
+
+		taskKey := importinto.TaskKey(jobID)
+		waitForCancelTestSignal(t, sortStartedCh, "timeout waiting for import subtask to start")
+		requireTaskRunningBizStep(t, sysKSTK, taskKey)
+
+		close(releaseCancelFallbackCh)
+		select {
+		case err := <-cancelErrCh:
+			require.ErrorContains(t, err, "job state changed during cancel, please try again later")
+		case <-time.After(30 * time.Second):
+			t.Fatal("timeout waiting for cancel import job")
+		}
+		userTK.MustQuery("select status from mysql.tidb_import_jobs where id = ?", jobID).
+			Check(testkit.Rows(importer.JobStatusRunning))
+
+		close(releaseSortCh)
+		waitTerminalState(t, sysKSTK, taskKey, proto.TaskStateSucceed)
+		userTK.MustQuery("select count(*) from " + tableName).Check(testkit.Rows("2"))
+	})
+}
+
+func createImportTable(tk *testkit.TestKit, tableName string) {
+	tk.MustExec("drop table if exists " + tableName)
+	tk.MustExec(fmt.Sprintf("create table %s (a bigint primary key, b varchar(100));", tableName))
+}
+
+func submitDetachedJob(t *testing.T, tk *testkit.TestKit, tableName, sourceURI, sortURI string) int64 {
+	t.Helper()
+	result := tk.MustQuery(fmt.Sprintf(
+		"IMPORT INTO %s FROM '%s' WITH DETACHED, cloud_storage_uri='%s'",
+		tableName,
+		sourceURI,
+		sortURI,
+	)).Rows()
+	require.Len(t, result, 1)
+	jobID, err := strconv.ParseInt(result[0][fmap["JobID"]].(string), 10, 64)
+	require.NoError(t, err)
+	return jobID
+}
+
+func waitForCancelTestSignal(t *testing.T, ch <-chan struct{}, timeoutMsg string) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(30 * time.Second):
+		t.Fatal(timeoutMsg)
+	}
+}
+
+func requireTaskRunningBizStep(t *testing.T, tk *testkit.TestKit, taskKey string) {
+	t.Helper()
+	var (
+		taskState string
+		taskStep  proto.Step
+	)
+	require.Eventually(t, func() bool {
+		rows := tk.MustQuery("select state, step from mysql.tidb_global_task where task_key = ?", taskKey).Rows()
+		if len(rows) != 1 {
+			return false
+		}
+		taskState = rows[0][0].(string)
+		step, err := strconv.Atoi(rows[0][1].(string))
+		if err != nil {
+			return false
+		}
+		taskStep = proto.Step(step)
+		return taskState == proto.TaskStateRunning.String() &&
+			taskStep != proto.StepInit
+	}, 30*time.Second, 500*time.Millisecond)
+	require.Equal(t, proto.TaskStateRunning.String(), taskState)
+	require.NotEqual(t, proto.StepInit, taskStep)
+}
+
+func waitTerminalState(t *testing.T, tk *testkit.TestKit, taskKey string, expected proto.TaskState) {
+	t.Helper()
+	var taskState string
+	require.Eventually(t, func() bool {
+		rows := tk.MustQuery(`
+			select state from mysql.tidb_global_task where task_key = ?
+			union all
+			select state from mysql.tidb_global_task_history where task_key = ?`,
+			taskKey,
+			taskKey,
+		).Rows()
+		if len(rows) != 1 {
+			return false
+		}
+		taskState = rows[0][0].(string)
+		return taskState == proto.TaskStateReverted.String() ||
+			taskState == proto.TaskStateSucceed.String() ||
+			taskState == proto.TaskStateFailed.String()
+	}, 30*time.Second, 500*time.Millisecond)
+	require.Equal(t, expected.String(), taskState)
+}
+
+func newFakeGCSServer(t *testing.T) (*fakestorage.Server, string) {
+	t.Helper()
+	host := "127.0.0.1"
+	server, err := fakestorage.NewServerWithOptions(fakestorage.Options{
+		Scheme:     "http",
+		Host:       host,
+		Port:       0,
+		PublicHost: host,
+	})
+	require.NoError(t, err)
+	t.Cleanup(server.Stop)
+	return server, fmt.Sprintf("%s/storage/v1/", server.URL())
 }
