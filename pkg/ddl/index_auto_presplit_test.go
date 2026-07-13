@@ -66,12 +66,12 @@ func TestPlanAutoSplitIndexRegionsFullRange(t *testing.T) {
 	tblInfo, idxInfo := buildAutoSplitTestTableInfo()
 	statsTbl := buildAutoSplitTestStats(tblInfo.ID, 100, 0, tblInfo.Columns[1], true, nil)
 	cfg := autoSplitHotRegionConfig{
-		minTableRows:           10,
-		rowsPerRegion:          25,
-		maxRegionsPerPhysical:  4,
-		maxTopNKeysPerPhysical: 0,
-		maxSplitKeys:           32,
-		minStatsHealthy:        80,
+		minTableRows:                   10,
+		rowsPerRegion:                  25,
+		maxFullRangeRegionsPerPhysical: 4,
+		maxTopNKeysPerPhysical:         0,
+		regionCandidateBudget:          32,
+		minStatsHealthy:                80,
 	}
 
 	keys, reason, err := planAutoSplitIndexRegions(
@@ -79,6 +79,60 @@ func TestPlanAutoSplitIndexRegionsFullRange(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "auto split keys generated", reason)
 	require.Equal(t, 3, countSplitKeysForIndex(t, keys, idxInfo.ID))
+
+	partitionTblInfo, partitionIdxInfo := buildAutoSplitTestTableInfo()
+	partitionTblInfo.Partition = &model.PartitionInfo{
+		Enable: true,
+		Definitions: []model.PartitionDefinition{
+			{ID: 101, Name: ast.NewCIStr("p0")},
+			{ID: 102, Name: ast.NewCIStr("p1")},
+			{ID: 103, Name: ast.NewCIStr("p2")},
+			{ID: 104, Name: ast.NewCIStr("p3")},
+		},
+	}
+	partitionStats := fakeAutoSplitStatsProvider{
+		101: buildAutoSplitTestStats(101, 79, 0, partitionTblInfo.Columns[1], true, nil),
+		102: buildAutoSplitTestStats(102, 19, 0, partitionTblInfo.Columns[1], true, nil),
+		103: buildAutoSplitTestStats(103, 2, 0, partitionTblInfo.Columns[1], true, nil),
+		104: buildAutoSplitTestStats(104, 10_000, 0, partitionTblInfo.Columns[1], true, nil),
+	}
+	partitionStats[104].Pseudo = true
+	partitionCfg := autoSplitHotRegionConfig{
+		minTableRows:                   2,
+		rowsPerRegion:                  1,
+		maxFullRangeRegionsPerPhysical: 100,
+		maxTopNKeysPerPhysical:         100,
+		regionCandidateBudget:          20,
+		minStatsHealthy:                80,
+	}
+	largePartitionCfg := partitionCfg.withRegionCandidateRatio(0.79)
+	require.Equal(t, 7, largePartitionCfg.maxFullRangeRegionsPerPhysical)
+	require.Equal(t, 6, largePartitionCfg.maxTopNKeysPerPhysical)
+	smallPartitionCfg := partitionCfg.withRegionCandidateRatio(0.19)
+	require.Equal(t, 2, smallPartitionCfg.maxFullRangeRegionsPerPhysical)
+	require.Equal(t, 1, smallPartitionCfg.maxTopNKeysPerPhysical)
+
+	keys, reason, err = planAutoSplitIndexRegions(
+		sctx, partitionStats, partitionTblInfo, partitionIdxInfo, partitionCfg)
+	require.NoError(t, err)
+	require.Equal(t, "auto split keys generated", reason)
+	require.Equal(t, 7, countSplitKeysForPhysicalTable(t, keys, 101))
+	require.Equal(t, 2, countSplitKeysForPhysicalTable(t, keys, 102))
+	require.Equal(t, 2, countSplitKeysForPhysicalTable(t, keys, 103))
+	require.Equal(t, 0, countSplitKeysForPhysicalTable(t, keys, 104))
+
+	// The candidate budget is a soft target. The minimum per-partition budget may make the final
+	// split-key count exceed it, and no physical partition should be removed by a final truncation.
+	partitionCfg.regionCandidateBudget = 4
+	keys, reason, err = planAutoSplitIndexRegions(
+		sctx, partitionStats, partitionTblInfo, partitionIdxInfo, partitionCfg)
+	require.NoError(t, err)
+	require.Equal(t, "auto split keys generated", reason)
+	require.Greater(t, len(keys), partitionCfg.regionCandidateBudget)
+	for _, physicalID := range []int64{101, 102, 103} {
+		require.Equal(t, 2, countSplitKeysForPhysicalTable(t, keys, physicalID))
+	}
+	require.Equal(t, 0, countSplitKeysForPhysicalTable(t, keys, 104))
 }
 
 func TestPlanAutoSplitIndexRegionsTopN(t *testing.T) {
@@ -91,14 +145,14 @@ func TestPlanAutoSplitIndexRegionsTopN(t *testing.T) {
 	topN.Sort()
 	statsTbl := buildAutoSplitTestStats(tblInfo.ID, 100, 0, tblInfo.Columns[1], true, topN)
 	cfg := autoSplitHotRegionConfig{
-		minTableRows:           10,
-		rowsPerRegion:          1_000,
-		maxRegionsPerPhysical:  4,
-		maxTopNKeysPerPhysical: 2,
-		maxSplitKeys:           32,
-		topNMinCount:           10,
-		topNMinRatio:           0.1,
-		minStatsHealthy:        80,
+		minTableRows:                   10,
+		rowsPerRegion:                  1_000,
+		maxFullRangeRegionsPerPhysical: 4,
+		maxTopNKeysPerPhysical:         2,
+		regionCandidateBudget:          32,
+		topNMinCount:                   10,
+		topNMinRatio:                   0.1,
+		minStatsHealthy:                80,
 	}
 
 	keys, reason, err := planAutoSplitIndexRegions(
@@ -110,9 +164,9 @@ func TestPlanAutoSplitIndexRegionsTopN(t *testing.T) {
 
 	defaultCfg := getAutoSplitHotRegionConfig()
 	t.Run("default limits", func(t *testing.T) {
-		require.Equal(t, 100, defaultCfg.maxRegionsPerPhysical)
+		require.Equal(t, 100, defaultCfg.maxFullRangeRegionsPerPhysical)
 		require.Equal(t, 100, defaultCfg.maxTopNKeysPerPhysical)
-		require.Equal(t, 2560, defaultCfg.maxSplitKeys)
+		require.Equal(t, 2560, defaultCfg.regionCandidateBudget)
 		require.Equal(t, uint64(500_000), defaultCfg.topNMinCount)
 	})
 	t.Run("default ratio threshold", func(t *testing.T) {
@@ -145,14 +199,14 @@ func TestPlanAutoSplitIndexRegionsSkipUnreliableStats(t *testing.T) {
 	sctx := mock.NewContext()
 	tblInfo, idxInfo := buildAutoSplitTestTableInfo()
 	cfg := autoSplitHotRegionConfig{
-		minTableRows:           10,
-		rowsPerRegion:          25,
-		maxRegionsPerPhysical:  4,
-		maxTopNKeysPerPhysical: 2,
-		maxSplitKeys:           32,
-		topNMinCount:           10,
-		topNMinRatio:           0.1,
-		minStatsHealthy:        80,
+		minTableRows:                   10,
+		rowsPerRegion:                  25,
+		maxFullRangeRegionsPerPhysical: 4,
+		maxTopNKeysPerPhysical:         2,
+		regionCandidateBudget:          32,
+		topNMinCount:                   10,
+		topNMinRatio:                   0.1,
+		minStatsHealthy:                80,
 	}
 
 	cases := []struct {
@@ -363,6 +417,17 @@ func countSplitKeysForIndex(t *testing.T, keys [][]byte, indexID int64) int {
 	for _, key := range keys {
 		decodedIndexID, err := tablecodec.DecodeIndexID(key)
 		if err == nil && decodedIndexID == indexID {
+			count++
+		}
+	}
+	return count
+}
+
+func countSplitKeysForPhysicalTable(t *testing.T, keys [][]byte, physicalID int64) int {
+	t.Helper()
+	count := 0
+	for _, key := range keys {
+		if tablecodec.DecodeTableID(key) == physicalID {
 			count++
 		}
 	}
