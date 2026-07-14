@@ -240,7 +240,7 @@ var _ SlidingWindowAggFunc = &maxMinCount4IntSliding{}
 
 func (e *maxMinCount4IntSliding) Slide(sctx AggFuncUpdateContext, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
 	p := (*partialResult4MaxMinCountSliding)(pr)
-	for i := uint64(0); i < shiftEnd; i++ {
+	for i := range shiftEnd {
 		input, isNull, err := e.args[0].EvalInt(sctx, getRow(lastEnd+i))
 		if err != nil {
 			return err
@@ -305,7 +305,7 @@ var _ SlidingWindowAggFunc = &maxMinCount4UintSliding{}
 
 func (e *maxMinCount4UintSliding) Slide(sctx AggFuncUpdateContext, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
 	p := (*partialResult4MaxMinCountSliding)(pr)
-	for i := uint64(0); i < shiftEnd; i++ {
+	for i := range shiftEnd {
 		input, isNull, err := e.args[0].EvalInt(sctx, getRow(lastEnd+i))
 		if err != nil {
 			return err
@@ -370,7 +370,7 @@ var _ SlidingWindowAggFunc = &maxMinCount4Float32Sliding{}
 
 func (e *maxMinCount4Float32Sliding) Slide(sctx AggFuncUpdateContext, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
 	p := (*partialResult4MaxMinCountSliding)(pr)
-	for i := uint64(0); i < shiftEnd; i++ {
+	for i := range shiftEnd {
 		input, isNull, err := e.args[0].EvalReal(sctx, getRow(lastEnd+i))
 		if err != nil {
 			return err
@@ -435,7 +435,7 @@ var _ SlidingWindowAggFunc = &maxMinCount4Float64Sliding{}
 
 func (e *maxMinCount4Float64Sliding) Slide(sctx AggFuncUpdateContext, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
 	p := (*partialResult4MaxMinCountSliding)(pr)
-	for i := uint64(0); i < shiftEnd; i++ {
+	for i := range shiftEnd {
 		input, isNull, err := e.args[0].EvalReal(sctx, getRow(lastEnd+i))
 		if err != nil {
 			return err
@@ -494,7 +494,7 @@ var _ SlidingWindowAggFunc = &maxMinCount4DecimalSliding{}
 
 func (e *maxMinCount4DecimalSliding) Slide(sctx AggFuncUpdateContext, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
 	p := (*partialResult4MaxMinCountSliding)(pr)
-	for i := uint64(0); i < shiftEnd; i++ {
+	for i := range shiftEnd {
 		input, isNull, err := e.args[0].EvalDecimal(sctx, getRow(lastEnd+i))
 		if err != nil {
 			return err
@@ -553,7 +553,7 @@ var _ SlidingWindowAggFunc = &maxMinCount4StringSliding{}
 
 func (e *maxMinCount4StringSliding) Slide(sctx AggFuncUpdateContext, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
 	p := (*partialResult4MaxMinCountSliding)(pr)
-	for i := uint64(0); i < shiftEnd; i++ {
+	for i := range shiftEnd {
 		input, isNull, err := e.args[0].EvalString(sctx, getRow(lastEnd+i))
 		if err != nil {
 			return err
@@ -611,7 +611,7 @@ var _ SlidingWindowAggFunc = &maxMinCount4TimeSliding{}
 
 func (e *maxMinCount4TimeSliding) Slide(sctx AggFuncUpdateContext, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
 	p := (*partialResult4MaxMinCountSliding)(pr)
-	for i := uint64(0); i < shiftEnd; i++ {
+	for i := range shiftEnd {
 		input, isNull, err := e.args[0].EvalTime(sctx, getRow(lastEnd+i))
 		if err != nil {
 			return err
@@ -669,7 +669,7 @@ var _ SlidingWindowAggFunc = &maxMinCount4DurationSliding{}
 
 func (e *maxMinCount4DurationSliding) Slide(sctx AggFuncUpdateContext, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
 	p := (*partialResult4MaxMinCountSliding)(pr)
-	for i := uint64(0); i < shiftEnd; i++ {
+	for i := range shiftEnd {
 		input, isNull, err := e.args[0].EvalDuration(sctx, getRow(lastEnd+i))
 		if err != nil {
 			return err
