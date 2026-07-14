@@ -58,19 +58,23 @@ func getAutoSplitHotRegionConfig() autoSplitHotRegionConfig {
 		topNMinRatio:                   0.01,
 		minStatsHealthy:                80,
 	}
-	failpoint.Inject("mockAutoSplitHotRegionConfig", func(val failpoint.Value) {
-		if minRows, ok := val.(int); ok && minRows > 0 {
-			cfg.minTableRows = int64(minRows)
-			cfg.rowsPerRegion = int64(minRows)
-			cfg.maxFullRangeRegionsPerPhysical = 4
-			cfg.maxTopNKeysPerPhysical = 4
-			cfg.regionCandidateBudget = 32
-			cfg.topNMinCount = uint64(minRows)
-			cfg.topNMinRatio = 0
-			cfg.minStatsHealthy = 0
+	failpoint.InjectCall("mockAutoSplitHotRegionConfig", &cfg, func(minRows int) {
+		if minRows > 0 {
+			cfg.applyTestMinRows(minRows)
 		}
 	})
 	return cfg
+}
+
+func (cfg *autoSplitHotRegionConfig) applyTestMinRows(minRows int) {
+	cfg.minTableRows = int64(minRows)
+	cfg.rowsPerRegion = int64(minRows)
+	cfg.maxFullRangeRegionsPerPhysical = 4
+	cfg.maxTopNKeysPerPhysical = 4
+	cfg.regionCandidateBudget = 32
+	cfg.topNMinCount = uint64(minRows)
+	cfg.topNMinRatio = 0
+	cfg.minStatsHealthy = 0
 }
 
 func planAutoSplitIndexRegions(
