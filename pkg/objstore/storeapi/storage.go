@@ -201,7 +201,7 @@ type Options struct {
 	// make sure we can access the storage correctly before execute tasks.
 	CheckPermissions []Permission
 
-	// S3Retryer is the retryer for create s3 storage, if it is nil,
+	// S3Retryer is the retryer for the created s3 storage, if it is nil,
 	// defaultS3Retryer() will be used.
 	S3Retryer aws.Retryer
 

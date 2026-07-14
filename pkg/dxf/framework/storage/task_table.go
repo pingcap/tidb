@@ -364,7 +364,7 @@ func (mgr *TaskManager) getTopTasks(ctx context.Context, states ...proto.TaskSta
 	for _, s := range states {
 		args = append(args, s)
 	}
-	args = append(args, proto.MaxConcurrentTask*2)
+	args = append(args, proto.GetMaxConcurrentTask()*2)
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx, sql, args...)
 	if err != nil {
 		return nil, err

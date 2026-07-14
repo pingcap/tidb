@@ -50,6 +50,7 @@ go_library(
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/chunk",
+        "//pkg/util/collate",
         "//pkg/util/dbterror",
         "//pkg/util/deadlockhistory",
         "//pkg/util/domainutil",

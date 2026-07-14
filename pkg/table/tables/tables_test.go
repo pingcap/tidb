@@ -408,6 +408,29 @@ func TestTableFromMeta(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestTableFromMetaWithCollateUsesFixedMode(t *testing.T) {
+	tblInfo := &model.TableInfo{
+		ID:    1,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			{
+				ID:        1,
+				Name:      ast.NewCIStr("a"),
+				Offset:    0,
+				State:     model.StatePublic,
+				FieldType: *types.NewFieldType(mysql.TypeVarchar),
+			},
+		},
+	}
+
+	for _, useNewCollate := range []bool{false, true} {
+		tbl, err := tables.TableFromMetaWithCollate(useNewCollate, autoid.NewAllocators(false), tblInfo)
+		require.NoError(t, err)
+		require.Equal(t, useNewCollate, tbl.UseNewCollate())
+	}
+}
+
 func TestHiddenColumn(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

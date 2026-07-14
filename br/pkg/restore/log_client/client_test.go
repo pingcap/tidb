@@ -50,6 +50,8 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
@@ -1741,6 +1743,73 @@ func TestPITRIDMapOnCheckpointStorage(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestRebaseAutoIncrementIDForSepAutoIncTables is a regression test for
+// https://github.com/pingcap/tidb/issues/69485: after PiTR log replay bumps the
+// persisted auto-increment counter of an AUTO_ID_CACHE=1 table directly in TiKV,
+// the autoid service's in-memory cache is stale and would hand out already-used
+// IDs. RebaseAutoIncrementIDForSepAutoIncTables must sync the service back to the
+// persisted value so the next allocation is persistedBase+1.
+func TestRebaseAutoIncrementIDForSepAutoIncTables(t *testing.T) {
+	ctx := context.Background()
+	s := utiltest.CreateRestoreSchemaSuite(t)
+	tk := testkit.NewTestKit(t, s.Mock.Storage)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id bigint primary key auto_increment, data bigint) auto_id_cache=1")
+	// The first insert primes the autoid service's in-memory cache (a non-zero
+	// base with a reserved range) exactly like a snapshot restore would.
+	tk.MustExec("insert into t (data) values (0)")
+
+	tbl, err := s.Mock.Domain.InfoSchema().TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	require.True(t, tbl.Meta().SepAutoInc())
+	dbID := tbl.Meta().DBID
+	tableID := tbl.Meta().ID
+
+	alloc := tbl.Allocators(nil).Get(autoid.AutoIncrementType)
+	require.NotNil(t, alloc)
+
+	// Simulate PiTR log replay writing a higher auto-increment counter straight
+	// to TiKV, bypassing the autoid service. Choose a target well above the
+	// service's reserved range so the in-memory cache is guaranteed to be stale.
+	var target int64
+	require.NoError(t, kv.RunInNewTxn(ctx, s.Mock.Storage, false, func(_ context.Context, txn kv.Transaction) error {
+		acc := meta.NewMutator(txn).GetAutoIDAccessors(dbID, tableID).IncrementID(model.TableInfoVersion5)
+		cur, err1 := acc.Get()
+		if err1 != nil {
+			return err1
+		}
+		target = cur + 1000000
+		_, err1 = acc.Inc(target - cur)
+		return err1
+	}))
+
+	// Before the fix: the service still allocates from its stale cache, not from
+	// the persisted value, which is the bug that causes duplicate-key errors.
+	staleNext, err := alloc.NextGlobalAutoID()
+	require.NoError(t, err)
+	require.Less(t, staleNext, target, "expected stale in-memory allocation before rebase")
+
+	client := logclient.TEST_NewLogClient(123, 1, 2, 3, s.Mock.Domain, nil)
+	schemasReplace := &stream.SchemasReplace{
+		DbReplaceMap: map[stream.UpstreamID]*stream.DBReplace{
+			dbID: {
+				Name: "test",
+				DbID: dbID,
+				TableMap: map[stream.UpstreamID]*stream.TableReplace{
+					tableID: {Name: "t", TableID: tableID},
+				},
+			},
+		},
+	}
+	require.NoError(t, client.RebaseAutoIncrementIDForSepAutoIncTables(ctx, schemasReplace))
+
+	// After the fix: the service is synced to the persisted value, so the next
+	// allocation is target+1 and no longer collides with restored rows.
+	fixedNext, err := alloc.NextGlobalAutoID()
+	require.NoError(t, err)
+	require.Equal(t, target+1, fixedNext)
 }
 
 type mockLogStrategy struct {

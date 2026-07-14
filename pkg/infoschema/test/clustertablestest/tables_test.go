@@ -450,6 +450,9 @@ func TestSlowQuery(t *testing.T) {
 			"10",
 			"10",
 			"100",
+			"0",
+			"0",
+			"0",
 			"test",
 			"",
 			"0",
@@ -532,6 +535,9 @@ func TestSlowQuery(t *testing.T) {
 			"624",
 			"172064",
 			"60",
+			"0",
+			"0",
+			"0",
 			"0",
 			"0",
 			"0",
@@ -810,6 +816,44 @@ func TestStmtSummaryTable(t *testing.T) {
 	tk.MustQuery("select column_comment from information_schema.columns " +
 		"where table_name='STATEMENTS_SUMMARY' and column_name='STMT_TYPE'",
 	).Check(testkit.Rows("Statement type"))
+	tk.MustQuery(`
+		SELECT table_name, column_name
+		FROM information_schema.columns
+		WHERE table_name IN (
+			'STATEMENTS_SUMMARY',
+			'STATEMENTS_SUMMARY_HISTORY',
+			'CLUSTER_STATEMENTS_SUMMARY',
+			'CLUSTER_STATEMENTS_SUMMARY_HISTORY'
+		)
+		AND column_name IN (
+			'AVG_IA_REMOTE_READ_SEGMENT_COUNT',
+			'MAX_IA_REMOTE_READ_SEGMENT_COUNT'
+		)
+		ORDER BY table_name, column_name
+	`).Check(testkit.Rows(
+		"CLUSTER_STATEMENTS_SUMMARY AVG_IA_REMOTE_READ_SEGMENT_COUNT",
+		"CLUSTER_STATEMENTS_SUMMARY MAX_IA_REMOTE_READ_SEGMENT_COUNT",
+		"CLUSTER_STATEMENTS_SUMMARY_HISTORY AVG_IA_REMOTE_READ_SEGMENT_COUNT",
+		"CLUSTER_STATEMENTS_SUMMARY_HISTORY MAX_IA_REMOTE_READ_SEGMENT_COUNT",
+		"STATEMENTS_SUMMARY AVG_IA_REMOTE_READ_SEGMENT_COUNT",
+		"STATEMENTS_SUMMARY MAX_IA_REMOTE_READ_SEGMENT_COUNT",
+		"STATEMENTS_SUMMARY_HISTORY AVG_IA_REMOTE_READ_SEGMENT_COUNT",
+		"STATEMENTS_SUMMARY_HISTORY MAX_IA_REMOTE_READ_SEGMENT_COUNT",
+	))
+	tk.MustQuery(`
+		SELECT COUNT(*)
+		FROM information_schema.columns
+		WHERE table_name IN (
+			'STATEMENTS_SUMMARY',
+			'STATEMENTS_SUMMARY_HISTORY',
+			'CLUSTER_STATEMENTS_SUMMARY',
+			'CLUSTER_STATEMENTS_SUMMARY_HISTORY'
+		)
+		AND column_name IN (
+			'AVG_IA_READ_SEGMENT_COUNT',
+			'MAX_IA_READ_SEGMENT_COUNT'
+		)
+	`).Check(testkit.Rows("0"))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b varchar(10), key k(a))")
