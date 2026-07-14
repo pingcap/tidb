@@ -230,7 +230,10 @@ func TestPreSplitIndexRegionsAutoGateAndManualOverride(t *testing.T) {
 	require.Empty(t, capturedKeys)
 	require.Empty(t, reorgMeta.AutoSplitHotRegionResults)
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockAutoSplitHotRegionConfig", "return(25)")
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mockAutoSplitHotRegionConfig",
+		func(_ *autoSplitHotRegionConfig, setMinRows func(int)) {
+			setMinRows(25)
+		})
 	for _, tc := range []struct {
 		name   string
 		store  kv.Storage

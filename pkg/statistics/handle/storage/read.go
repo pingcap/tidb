@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -209,6 +210,7 @@ func TopNFromStorage(sctx sessionctx.Context, tblID int64, isIndex int, histID i
 
 // TopNFromStorageWithPriority reads TopN from storage with the given priority.
 func TopNFromStorageWithPriority(sctx sessionctx.Context, tblID int64, isIndex int, histID int64, priority int) (_ *statistics.TopN, err error) {
+	failpoint.InjectCall("beforeTopNFromStorageWithPriority", tblID, isIndex, histID, priority)
 	selectPrefix := "select "
 	switch priority {
 	case kv.PriorityHigh:
