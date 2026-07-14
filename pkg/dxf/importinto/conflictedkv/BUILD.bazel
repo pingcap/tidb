@@ -44,13 +44,14 @@ go_test(
     timeout = "short",
     srcs = [
         "collector_test.go",
+        "deleter_internal_test.go",
         "deleter_test.go",
         "handler_test.go",
         "row_handle_test.go",
     ],
     embed = [":conflictedkv"],
     flaky = True,
-    shard_count = 8,
+    shard_count = 9,
     deps = [
         "//pkg/config/kerneltype",
         "//pkg/executor/importer",
@@ -63,6 +64,7 @@ go_test(
         "//pkg/objstore",
         "//pkg/parser/ast",
         "//pkg/session",
+        "//pkg/store/mockstore",
         "//pkg/table",
         "//pkg/tablecodec",
         "//pkg/testkit",
