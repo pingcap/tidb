@@ -29,20 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 )
 
-const (
-	defaultAutoSplitHotRegionMinTableRows                     = int64(1_000_000)
-	defaultAutoSplitHotRegionRowsPerRegion                    = int64(500_000)
-	defaultAutoSplitHotRegionMaxFullRangeRegionsPerPhysical   = 100
-	defaultAutoSplitHotRegionMaxTopNKeysPerPhysical           = 100
-	defaultAutoSplitHotRegionCandidateBudget                  = 2560
-	defaultAutoSplitHotRegionTopNMinCount                     = uint64(500_000)
-	defaultAutoSplitHotRegionTopNMinRatio                     = 0.01
-	defaultAutoSplitHotRegionMinStatsHealthy                  = int64(80)
-	defaultAutoSplitHotRegionMockMaxFullRangeRegionsForTest   = 4
-	defaultAutoSplitHotRegionMockMaxTopNKeysForTest           = 4
-	defaultAutoSplitHotRegionMockRegionCandidateBudgetForTest = 32
-)
-
 type autoSplitStatsProvider interface {
 	GetPhysicalTableStats(physicalTableID int64, tblInfo *model.TableInfo) *statistics.Table
 }
@@ -63,22 +49,22 @@ type autoSplitHotRegionConfig struct {
 
 func getAutoSplitHotRegionConfig() autoSplitHotRegionConfig {
 	cfg := autoSplitHotRegionConfig{
-		minTableRows:                   defaultAutoSplitHotRegionMinTableRows,
-		rowsPerRegion:                  defaultAutoSplitHotRegionRowsPerRegion,
-		maxFullRangeRegionsPerPhysical: defaultAutoSplitHotRegionMaxFullRangeRegionsPerPhysical,
-		maxTopNKeysPerPhysical:         defaultAutoSplitHotRegionMaxTopNKeysPerPhysical,
-		regionCandidateBudget:          defaultAutoSplitHotRegionCandidateBudget,
-		topNMinCount:                   defaultAutoSplitHotRegionTopNMinCount,
-		topNMinRatio:                   defaultAutoSplitHotRegionTopNMinRatio,
-		minStatsHealthy:                defaultAutoSplitHotRegionMinStatsHealthy,
+		minTableRows:                   1_000_000,
+		rowsPerRegion:                  500_000,
+		maxFullRangeRegionsPerPhysical: 100,
+		maxTopNKeysPerPhysical:         100,
+		regionCandidateBudget:          2560,
+		topNMinCount:                   500_000,
+		topNMinRatio:                   0.01,
+		minStatsHealthy:                80,
 	}
 	failpoint.Inject("mockAutoSplitHotRegionConfig", func(val failpoint.Value) {
 		if minRows, ok := val.(int); ok && minRows > 0 {
 			cfg.minTableRows = int64(minRows)
 			cfg.rowsPerRegion = int64(minRows)
-			cfg.maxFullRangeRegionsPerPhysical = defaultAutoSplitHotRegionMockMaxFullRangeRegionsForTest
-			cfg.maxTopNKeysPerPhysical = defaultAutoSplitHotRegionMockMaxTopNKeysForTest
-			cfg.regionCandidateBudget = defaultAutoSplitHotRegionMockRegionCandidateBudgetForTest
+			cfg.maxFullRangeRegionsPerPhysical = 4
+			cfg.maxTopNKeysPerPhysical = 4
+			cfg.regionCandidateBudget = 32
 			cfg.topNMinCount = uint64(minRows)
 			cfg.topNMinRatio = 0
 			cfg.minStatsHealthy = 0
@@ -146,7 +132,7 @@ func planAutoSplitIndexRegions(
 		}
 		return nil, strings.Join(skipReasons, ","), nil
 	}
-	return splitKeys, "auto split keys generated", nil
+	return splitKeys, "", nil
 }
 
 func (cfg autoSplitHotRegionConfig) withRegionCandidateRatio(rowsRatio float64) autoSplitHotRegionConfig {
@@ -217,7 +203,9 @@ func planAutoSplitPhysicalIndexRegions(
 	}
 
 	splitKeys := make([][]byte, 0)
-	regionsCnt := calcAutoSplitRegionCount(statsTbl.RealtimeCount, cfg)
+	regionsCnt := min(
+		int((statsTbl.RealtimeCount+cfg.rowsPerRegion-1)/cfg.rowsPerRegion),
+		cfg.maxFullRangeRegionsPerPhysical)
 	if regionsCnt > 1 {
 		lower, upper := getSplitIdxFullRangeDatums(len(idxInfo.Columns))
 		var err error
@@ -243,20 +231,8 @@ func planAutoSplitPhysicalIndexRegions(
 	if len(splitKeys) == 0 {
 		return nil, "no split strategy matched", nil
 	}
-	return splitKeys, "split keys generated", nil
+	return splitKeys, "", nil
 }
-
-func calcAutoSplitRegionCount(rowCount int64, cfg autoSplitHotRegionConfig) int {
-	regionsCnt := int((rowCount + cfg.rowsPerRegion - 1) / cfg.rowsPerRegion)
-	if regionsCnt > cfg.maxFullRangeRegionsPerPhysical {
-		regionsCnt = cfg.maxFullRangeRegionsPerPhysical
-	}
-	if regionsCnt < 2 {
-		return 0
-	}
-	return regionsCnt
-}
-
 func buildAutoSplitTopNRows(
 	sctx sessionctx.Context,
 	statsTbl *statistics.Table,
