@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"fmt"
 	"slices"
-	"strings"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -38,13 +37,9 @@ type autoSplitHotRegionConfig struct {
 	rowsPerRegion                  int64
 	maxFullRangeRegionsPerPhysical int
 	maxTopNKeysPerPhysical         int
-	// regionCandidateBudget is a soft table-level target shared by full-range and TopN splitting.
-	// The final split-key count may exceed it because each eligible partition gets a minimum budget
-	// and index boundary keys are added separately.
-	regionCandidateBudget int
-	topNMinCount          uint64
-	topNMinRatio          float64
-	minStatsHealthy       int64
+	topNMinCount                   uint64
+	topNMinRatio                   float64
+	minStatsHealthy                int64
 }
 
 func getAutoSplitHotRegionConfig() autoSplitHotRegionConfig {
@@ -53,7 +48,6 @@ func getAutoSplitHotRegionConfig() autoSplitHotRegionConfig {
 		rowsPerRegion:                  500_000,
 		maxFullRangeRegionsPerPhysical: 100,
 		maxTopNKeysPerPhysical:         100,
-		regionCandidateBudget:          2560,
 		topNMinCount:                   500_000,
 		topNMinRatio:                   0.01,
 		minStatsHealthy:                80,
@@ -71,7 +65,6 @@ func (cfg *autoSplitHotRegionConfig) applyTestMinRows(minRows int) {
 	cfg.rowsPerRegion = int64(minRows)
 	cfg.maxFullRangeRegionsPerPhysical = 4
 	cfg.maxTopNKeysPerPhysical = 4
-	cfg.regionCandidateBudget = 32
 	cfg.topNMinCount = uint64(minRows)
 	cfg.topNMinRatio = 0
 	cfg.minStatsHealthy = 0
@@ -84,6 +77,9 @@ func planAutoSplitIndexRegions(
 	idxInfo *model.IndexInfo,
 	cfg autoSplitHotRegionConfig,
 ) ([][]byte, string, error) {
+	if tblInfo.GetPartitionInfo() != nil {
+		return nil, "partitioned table", nil
+	}
 	if statsProvider == nil {
 		return nil, "stats handle is nil", nil
 	}
@@ -91,71 +87,8 @@ func planAutoSplitIndexRegions(
 		return nil, "index has no columns", nil
 	}
 
-	physicalIDs := getAutoSplitPhysicalTableIDs(tblInfo, idxInfo)
-	statsTables := make([]*statistics.Table, len(physicalIDs))
-	var totalRows int64
-	for i, physicalID := range physicalIDs {
-		statsTbl := statsProvider.GetPhysicalTableStats(physicalID, tblInfo)
-		statsTables[i] = statsTbl
-		if statsTbl != nil && !statsTbl.Pseudo && statsTbl.RealtimeCount > 0 {
-			totalRows += statsTbl.RealtimeCount
-		}
-	}
-
-	splitKeys := make([][]byte, 0)
-	skipReasons := make([]string, 0, len(physicalIDs))
-	for i, physicalID := range physicalIDs {
-		rowsRatio := 1.0
-		if len(physicalIDs) > 1 {
-			rowsRatio = 1 / float64(len(physicalIDs))
-			statsTbl := statsTables[i]
-			if totalRows > 0 {
-				rowsRatio = 0
-				if statsTbl != nil && !statsTbl.Pseudo && statsTbl.RealtimeCount > 0 {
-					rowsRatio = float64(statsTbl.RealtimeCount) / float64(totalRows)
-				}
-			}
-		}
-		physicalCfg := cfg.withRegionCandidateRatio(rowsRatio)
-		keys, reason, err := planAutoSplitPhysicalIndexRegions(
-			sctx, statsTables[i], tblInfo, idxInfo, physicalID, physicalCfg)
-		if err != nil {
-			return nil, reason, err
-		}
-		if len(keys) == 0 {
-			skipReasons = append(skipReasons, fmt.Sprintf("%d:%s", physicalID, reason))
-			continue
-		}
-		splitKeys = append(splitKeys, keys...)
-	}
-
-	splitKeys = sortAndDedupeAutoSplitKeys(splitKeys)
-	if len(splitKeys) == 0 {
-		if len(skipReasons) == 0 {
-			return nil, "no split keys generated", nil
-		}
-		return nil, strings.Join(skipReasons, ","), nil
-	}
-	return splitKeys, "", nil
-}
-
-func (cfg autoSplitHotRegionConfig) withRegionCandidateRatio(rowsRatio float64) autoSplitHotRegionConfig {
-	// Split each physical table's candidate budget evenly between full-range and TopN splitting.
-	maxCandidatesPerMethod := int(float64(cfg.regionCandidateBudget) * rowsRatio * 0.5)
-	if maxCandidatesPerMethod < 2 {
-		maxCandidatesPerMethod = 2
-	}
-	cfg.maxFullRangeRegionsPerPhysical = min(cfg.maxFullRangeRegionsPerPhysical, maxCandidatesPerMethod)
-	// N target regions need N-1 split keys, so TopN gets the same N-1 key budget as full-range.
-	cfg.maxTopNKeysPerPhysical = min(cfg.maxTopNKeysPerPhysical, maxCandidatesPerMethod-1)
-	return cfg
-}
-
-func getAutoSplitPhysicalTableIDs(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) []int64 {
-	if tblInfo.GetPartitionInfo() == nil || idxInfo.Global {
-		return []int64{tblInfo.ID}
-	}
-	return getPartitionIDs(tblInfo)
+	statsTbl := statsProvider.GetPhysicalTableStats(tblInfo.ID, tblInfo)
+	return planAutoSplitPhysicalIndexRegions(sctx, statsTbl, tblInfo, idxInfo, tblInfo.ID, cfg)
 }
 
 func planAutoSplitPhysicalIndexRegions(
