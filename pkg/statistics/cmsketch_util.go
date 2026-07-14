@@ -44,7 +44,7 @@ func (d *DatumMapCache) Get(key hack.MutableString) (val types.Datum, ok bool) {
 // Put puts the datum into the cache.
 func (d *DatumMapCache) Put(val TopNMeta, encodedVal hack.MutableString,
 	tp byte, isIndex bool, loc *time.Location) (dat types.Datum, err error) {
-	dat, err = TopNMetaToDatum(val, tp, isIndex, loc)
+	dat, err = topNMetaToDatum(val, tp, isIndex, loc)
 	if err != nil {
 		return dat, err
 	}
@@ -52,8 +52,7 @@ func (d *DatumMapCache) Put(val TopNMeta, encodedVal hack.MutableString,
 	return dat, nil
 }
 
-// TopNMetaToDatum decodes a TopN value into a datum of the specified type.
-func TopNMetaToDatum(val TopNMeta,
+func topNMetaToDatum(val TopNMeta,
 	tp byte, isIndex bool, loc *time.Location) (dat types.Datum, err error) {
 	if isIndex {
 		dat.SetBytes(val.Encoded)
@@ -72,4 +71,9 @@ func TopNMetaToDatum(val TopNMeta,
 		}
 	}
 	return dat, err
+}
+
+// TopNMetaToDatum decodes a TopN value into a datum of the specified type.
+func TopNMetaToDatum(val TopNMeta, tp byte, isIndex bool, loc *time.Location) (types.Datum, error) {
+	return topNMetaToDatum(val, tp, isIndex, loc)
 }

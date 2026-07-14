@@ -77,9 +77,14 @@ func preSplitIndexRegions(
 			splitKeys, reason, err = planAutoSplitIndexRegions(
 				sctx, statsProvider, tblInfo, idxInfo, getAutoSplitHotRegionConfig())
 			if err != nil {
+				if reason == "" {
+					reason = err.Error()
+				} else {
+					reason += ": " + err.Error()
+				}
 				appendAutoSplitHotRegionResult(
 					reorgMeta, idxInfo, model.AutoSplitHotRegionStatusSkipped, 0, 0, 0,
-					autoSplitHotRegionReason(reason, err))
+					reason)
 				logutil.DDLLogger().Warn("skip auto split hot index region",
 					zap.String("table", tblInfo.Name.L),
 					zap.String("index", idxInfo.Name.L),
@@ -170,16 +175,6 @@ func truncateAutoSplitHotRegionReason(reason string) string {
 		return reason
 	}
 	return reason[:maxAutoSplitHotRegionReasonLen] + "..."
-}
-
-func autoSplitHotRegionReason(reason string, err error) string {
-	if err == nil {
-		return reason
-	}
-	if reason == "" {
-		return err.Error()
-	}
-	return fmt.Sprintf("%s: %s", reason, err.Error())
 }
 
 type splitArgs struct {
