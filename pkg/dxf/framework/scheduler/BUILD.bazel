@@ -84,6 +84,7 @@ go_test(
         "//pkg/dxf/framework/testutil",
         "//pkg/keyspace",
         "//pkg/kv",
+        "//pkg/lightning/common",
         "//pkg/sessionctx",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",

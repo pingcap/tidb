@@ -798,7 +798,9 @@ func isDataErrorForMetric(taskErr error) bool {
 	errMsg := taskErr.Error()
 	// Keep these checks string-based to avoid depending on Lightning error definitions
 	// from the DXF scheduler. We can replace this when those error definitions are
-	// split out of the Lightning package.
+	// split out of the Lightning package. DXF error serialization keeps only the
+	// outer error code, so nested data errors must be identified by their canonical
+	// messages.
 	//
 	// import-into examples:
 	// [Lightning:Restore:ErrEncodeKV]when encoding 1-th data row in this chunk:
@@ -808,8 +810,13 @@ func isDataErrorForMetric(taskErr error) bool {
 	//
 	// add-index examples:
 	// [kv:1062]Duplicate entry '1' for key 't.idx'
-	isImportDataErr := strings.Contains(errMsg, "ErrEncodeKV") && (strings.Contains(errMsg, "Truncated incorrect") ||
-		strings.Contains(errMsg, "Incorrect datetime value"))
+	isImportDataErr := strings.Contains(errMsg, "ErrEncodeKV") &&
+		(strings.Contains(errMsg, "Value conversion failed for column") ||
+			(strings.Contains(errMsg, "Check constraint '") && strings.Contains(errMsg, "' is violated")) ||
+			strings.Contains(errMsg, "Table has no partition for value"))
+	isImportConflictErr := (strings.Contains(errMsg, "[executor:8167]") && strings.Contains(errMsg, "Duplicate key conflict found")) ||
+		(strings.Contains(errMsg, "ErrFoundDataConflictRecords") && strings.Contains(errMsg, "found data conflict records")) ||
+		(strings.Contains(errMsg, "ErrFoundIndexConflictRecords") && strings.Contains(errMsg, "found index conflict records"))
 	isUKDupEntryErr := strings.Contains(errMsg, "[kv:1062]") && strings.Contains(errMsg, "Duplicate entry")
-	return isImportDataErr || isUKDupEntryErr
+	return isImportDataErr || isImportConflictErr || isUKDupEntryErr
 }
