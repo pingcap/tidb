@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -98,8 +99,33 @@ func upgradeStarterBootstrap(store kv.Storage) error {
 	if bootstrapFile == nil {
 		return nil
 	}
+	return upgradeStarterBootstrapWithFile(store, bootstrapFile)
+}
+
+func upgradeStarterBootstrapWithFile(store kv.Storage, bootstrapFile *starterBootstrapFileSpec) error {
+	completedVersion, err := getStoreStarterBootstrapVersion(store)
+	if err != nil {
+		return err
+	}
+	if !needStarterBootstrapUpgrade(completedVersion, bootstrapFile) {
+		return nil
+	}
 
 	startTime := time.Now()
+	releaseFn, err := acquireLock(store)
+	if err != nil {
+		return errors.Annotate(err, "acquire starter bootstrap file upgrade lock")
+	}
+	defer releaseFn()
+
+	completedVersion, err = getStoreStarterBootstrapVersion(store)
+	if err != nil {
+		return err
+	}
+	if !needStarterBootstrapUpgrade(completedVersion, bootstrapFile) {
+		return nil
+	}
+
 	s, err := createSession(store)
 	if err != nil {
 		return errors.Trace(err)
@@ -126,23 +152,14 @@ func upgradeStarterBootstrap(store kv.Storage) error {
 		return err
 	}
 	if !needStarterBootstrapUpgrade(storedVersion, bootstrapFile) {
-		return nil
-	}
-
-	releaseFn, err := acquireLock(store)
-	if err != nil {
-		return errors.Annotate(err, "acquire starter bootstrap file upgrade lock")
-	}
-	defer releaseFn()
-	storedVersion, err = getStarterBootstrapVersion(s)
-	if err != nil {
-		return err
-	}
-	if !needStarterBootstrapUpgrade(storedVersion, bootstrapFile) {
-		return nil
+		// The SQL version can be ahead after a crash before the completion key is written.
+		return finishStarterBootstrap(store, storedVersion)
 	}
 	if storedVersion == 0 {
 		if err = runStarterBootstrapLocked(s, bootstrapFile); err != nil {
+			return err
+		}
+		if err = finishStarterBootstrap(store, bootstrapFile.Version); err != nil {
 			return err
 		}
 		logutil.BgLogger().Info("starter bootstrap file initialization finished",
@@ -154,10 +171,32 @@ func upgradeStarterBootstrap(store kv.Storage) error {
 	if err = upgradeStarterBootstrapFromVersion(s, bootstrapFile, storedVersion); err != nil {
 		return err
 	}
+	if err = finishStarterBootstrap(store, bootstrapFile.Version); err != nil {
+		return err
+	}
 	logutil.BgLogger().Info("starter bootstrap file upgrade finished",
 		zap.Int64("version", bootstrapFile.Version),
 		zap.Duration("cost", time.Since(startTime)))
 	return nil
+}
+
+func getStoreStarterBootstrapVersion(store kv.Storage) (int64, error) {
+	var version int64
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	err := kv.RunInNewTxn(ctx, store, false, func(_ context.Context, txn kv.Transaction) error {
+		var err error
+		version, err = meta.NewReader(txn).GetStarterBootstrapVersion()
+		return err
+	})
+	return version, errors.Annotate(err, "get starter bootstrap version from store")
+}
+
+func finishStarterBootstrap(store kv.Storage, version int64) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+		return meta.NewMutator(txn).FinishStarterBootstrap(version)
+	})
+	return errors.Annotate(err, "finish starter bootstrap in store")
 }
 
 func loadStarterBootstrapFile() (*starterBootstrapFileSpec, error) {

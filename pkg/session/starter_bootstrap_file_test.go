@@ -333,6 +333,59 @@ func TestStarterBootstrapFileUpgradeSkipsOlderFile(t *testing.T) {
 	require.Equal(t, "5", mustGetTiDBVarForStarterFile(t, se, starterBootstrapVersionVar))
 }
 
+func TestStarterBootstrapStoreVersionGate(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("classic mock store is sufficient for starter bootstrap reconciliation")
+	}
+
+	store, dom := CreateStoreAndBootstrap(t)
+	t.Cleanup(func() {
+		if dom != nil {
+			dom.Close()
+		}
+		require.NoError(t, store.Close())
+	})
+	bootstrapFile, err := parseStarterBootstrapFile([]byte(`{
+		"version": 3,
+		"bootstrap": [
+			"INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('starter_file_store_version', 'initialized', 'test')"
+		]
+	}`))
+	require.NoError(t, err)
+
+	dom.Close()
+	dom = nil
+	require.NoError(t, upgradeStarterBootstrapWithFile(store, bootstrapFile))
+	completedVersion, err := getStoreStarterBootstrapVersion(store)
+	require.NoError(t, err)
+	require.Equal(t, int64(3), completedVersion)
+
+	dom, err = BootstrapSession(store)
+	require.NoError(t, err)
+	se := CreateSessionAndSetID(t, store)
+	t.Cleanup(func() {
+		se.Close()
+	})
+	require.Equal(t, "3", mustGetTiDBVarForStarterFile(t, se, starterBootstrapVersionVar))
+	require.Equal(t, "initialized", mustGetTiDBVarForStarterFile(t, se, "starter_file_store_version"))
+
+	mappedDomain, err := domap.Get(store)
+	require.NoError(t, err)
+	require.Same(t, dom, mappedDomain)
+	require.NoError(t, upgradeStarterBootstrapWithFile(store, bootstrapFile))
+	mappedDomain, err = domap.Get(store)
+	require.NoError(t, err)
+	require.Same(t, dom, mappedDomain)
+
+	require.NoError(t, finishStarterBootstrap(store, 0))
+	dom.Close()
+	dom = nil
+	require.NoError(t, upgradeStarterBootstrapWithFile(store, bootstrapFile))
+	completedVersion, err = getStoreStarterBootstrapVersion(store)
+	require.NoError(t, err)
+	require.Equal(t, int64(3), completedVersion)
+}
+
 func mustGetTiDBVarForStarterFile(t *testing.T, se sessionapi.Session, name string) string {
 	t.Helper()
 	rs := MustExecToRecodeSet(t, se, "SELECT variable_value FROM mysql.tidb WHERE variable_name = ?", name)
