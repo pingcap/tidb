@@ -24,9 +24,6 @@ import (
 )
 
 const (
-	// DefPartialResult4MaxMinCountSize is kept for compatibility.
-	DefPartialResult4MaxMinCountSize = int64(unsafe.Sizeof(partialResult4MaxMinCountInt{}))
-
 	// DefPartialResult4MaxMinCountIntSize is the size of partialResult4MaxMinCountInt.
 	DefPartialResult4MaxMinCountIntSize = int64(unsafe.Sizeof(partialResult4MaxMinCountInt{}))
 	// DefPartialResult4MaxMinCountUintSize is the size of partialResult4MaxMinCountUint.
