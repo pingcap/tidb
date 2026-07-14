@@ -1776,6 +1776,22 @@ func TestIndexRangeEstimationWithTruncatedHandleRange(t *testing.T) {
 	estRows, opInfo = indexScanRow("select * from t use index(ia) where a = 5 and id = 7")
 	require.Contains(t, opInfo, "range:[5 7,5 7]", "execution range must keep the handle dimension")
 	require.Equal(t, "1.00", estRows)
+
+	// An unsigned int handle is stored in the index key suffix in signed-encoded order,
+	// which wraps at the int64 boundary: values in [MaxInt64+1, MaxUint64] sort before
+	// [0, MaxInt64]. fillIndexPath therefore never appends an unsigned handle to the
+	// index columns, so unsigned handle predicates must stay out of the index ranges and
+	// receive no appended-handle credit: the estimate remains the prefix row count.
+	tk.MustExec("create table tu(id bigint unsigned primary key clustered, a int, key ia(a))")
+	tk.MustExec("insert into tu values " + strings.Join(vals, ","))
+	tk.MustExec("analyze table tu all columns")
+	estRows, opInfo = indexScanRow("select * from tu use index(ia) where a = 5 and id in (11, 22)")
+	require.Contains(t, opInfo, "range:[5,5]", "unsigned handle must not extend the execution range")
+	require.NotContains(t, opInfo, "5 11", "unsigned handle must not extend the execution range")
+	require.Equal(t, "10.00", estRows)
+	estRows, opInfo = indexScanRow("select * from tu use index(ia) where a = 5 and id > 10")
+	require.Contains(t, opInfo, "range:[5,5]", "unsigned handle must not extend the execution range")
+	require.Equal(t, "10.00", estRows)
 }
 
 func TestDeriveTablePathStatsNoAccessConds(t *testing.T) {
