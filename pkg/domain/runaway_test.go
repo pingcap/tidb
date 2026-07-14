@@ -226,19 +226,25 @@ func TestStarterSwitchGroupRejectsMissingGroup(t *testing.T) {
 func TestResourceGroupsControllerOptionsUseStarterPodNamespaceForVIPWaitRetry(t *testing.T) {
 	restoreConfig := config.RestoreFunc()
 	t.Cleanup(restoreConfig)
-	originalDeployMode := deploymode.Get()
-	t.Cleanup(func() {
-		require.NoError(t, deploymode.Set(originalDeployMode))
-	})
-	require.NoError(t, deploymode.Set(deploymode.Starter))
+	vipOptionCount := 3
+	standardOptionCount := 1
+	if kerneltype.IsNextGen() {
+		originalDeployMode := deploymode.Get()
+		t.Cleanup(func() {
+			require.NoError(t, deploymode.Set(originalDeployMode))
+		})
+		require.NoError(t, deploymode.Set(deploymode.Starter))
+		vipOptionCount = 4
+		standardOptionCount = 2
+	}
 
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.StarterParams.PodNamespace = "starter-vip-ns"
 	})
-	require.Len(t, newResourceGroupsControllerOptions(), 4)
+	require.Len(t, newResourceGroupsControllerOptions(), vipOptionCount)
 
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.StarterParams.PodNamespace = "starter-standard-ns"
 	})
-	require.Len(t, newResourceGroupsControllerOptions(), 2)
+	require.Len(t, newResourceGroupsControllerOptions(), standardOptionCount)
 }
