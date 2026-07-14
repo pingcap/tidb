@@ -467,9 +467,6 @@ func (u *multipartUploader) Upload(ctx context.Context, rd io.Reader) error {
 		Body:   rd,
 	}
 	_, err := u.uploader.Upload(ctx, upParams)
-	// The SDK uploader has no typed error for exceeding its part budget; it
-	// returns a message mentioning MaxUploadParts. Translate it to a typed error
-	// so callers can errors.As it without matching strings themselves.
 	if err != nil && strings.Contains(err.Error(), "MaxUploadParts") {
 		return errors.Trace(storeapi.ErrExceedMaxUploadParts)
 	}

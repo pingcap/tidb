@@ -120,11 +120,9 @@ type WriterOption struct {
 // object may have. S3, GCS and OSS all cap this at 10000.
 const MaxUploadParts = 10000
 
-// ErrExceedMaxUploadParts is returned by a writer created via Create when the
-// data would need more than MaxUploadParts parts for a single object. Callers
-// can match it with .Equal to advise splitting the output (for example
-// dumpling's --filesize).
-var ErrExceedMaxUploadParts = errors.Normalize("data exceeds the object store's per-object multipart upload part limit")
+// ErrExceedMaxUploadParts is returned by a Create'd writer when a single object
+// would need more than MaxUploadParts parts.
+var ErrExceedMaxUploadParts = errors.New("data exceeds the object store's per-object multipart upload part limit")
 
 // ReaderOption reader option.
 type ReaderOption struct {

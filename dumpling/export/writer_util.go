@@ -472,11 +472,8 @@ func writeBytes(tctx *tcontext.Context, writer objectio.Writer, p []byte) error 
 	return errors.Trace(err)
 }
 
-// annotatePartLimit turns a storage part-limit error into an actionable hint:
-// the single output object needs more multipart parts than the object store
-// allows, so the user should split the output with --filesize.
 func annotatePartLimit(err error) error {
-	if err != nil && storeapi.ErrExceedMaxUploadParts.Equal(err) {
+	if err != nil && errors.ErrorEqual(err, storeapi.ErrExceedMaxUploadParts) {
 		limit := units.BytesSize(float64(csvUploadPartSize) * float64(storeapi.MaxUploadParts))
 		return errors.Annotatef(err, "a single output file exceeds the object store's per-object limit of ~%s; specify --filesize (-F) to split the output into multiple files", limit)
 	}
