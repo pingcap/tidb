@@ -305,9 +305,6 @@ func TestAddIndexPresplitFunctional(t *testing.T) {
 	tk.MustExec("analyze table t all columns")
 	h := dom.StatsHandle()
 	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
-	tk.MustExec("select count(*) from t where b = 0")
-	tk.MustExec("explain select * from t where b = 0")
-	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 
 	tk.MustExec("alter table t add index idx(b)")
 	rows := tk.MustQuery("show table t index idx regions").Rows()
