@@ -40,6 +40,8 @@ type resourceGroupProviderStub struct {
 	resourceErr   error
 }
 
+var _ metastorage.Client = (*resourceGroupProviderStub)(nil)
+
 // GetResourceGroup returns both the mocked resource group and the mocked error.
 // This lets the test verify whether the controller uses the degraded fallback
 // only for the editions that enable it.
@@ -73,8 +75,8 @@ func (s *resourceGroupProviderStub) LoadResourceGroups(context.Context) ([]*rmpb
 	return nil, 0, nil
 }
 
-func (s *resourceGroupProviderStub) Watch(context.Context, []byte, ...opt.MetaStorageOption) (chan *metastorage.WatchResponse, error) {
-	return make(chan *metastorage.WatchResponse), nil
+func (s *resourceGroupProviderStub) Watch(context.Context, []byte, ...opt.MetaStorageOption) (chan []*meta_storagepb.Event, error) {
+	return make(chan []*meta_storagepb.Event), nil
 }
 
 func (s *resourceGroupProviderStub) Get(context.Context, []byte, ...opt.MetaStorageOption) (*meta_storagepb.GetResponse, error) {
@@ -241,6 +243,7 @@ func TestStarterSwitchGroupRejectsMissingGroup(t *testing.T) {
 	}
 	controller := newStarterControllerForTest(t, provider)
 	manager := runaway.NewRunawayManager(controller, "127.0.0.1:4000", nil, make(chan struct{}), nil, nil)
+	t.Cleanup(manager.Stop)
 	checker := runaway.NewChecker(
 		manager,
 		"source-group",
@@ -258,7 +261,7 @@ func TestStarterSwitchGroupRejectsMissingGroup(t *testing.T) {
 	require.NoError(t, checker.CheckThresholds(nil, 10, nil))
 	req := &tikvrpc.Request{}
 	require.NoError(t, checker.BeforeCopRequest(req))
-	require.Empty(t, req.ResourceControlContext.ResourceGroupName)
+	require.Empty(t, req.GetResourceControlContext().GetResourceGroupName())
 }
 
 func TestResourceGroupsControllerOptionsUseStarterPodNamespaceForVIPWaitRetry(t *testing.T) {
