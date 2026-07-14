@@ -15,29 +15,19 @@
 package main
 
 import (
-	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 
-	"cloud.google.com/go/storage"
 	"github.com/bazelbuild/rules_go/go/tools/bazel"
-	"golang.org/x/sync/errgroup"
-	"google.golang.org/api/googleapi"
 )
-
-const gcpBucket = "pingcapmirror"
 
 // downloadedModule captures `go mod download -json` output.
 type downloadedModule struct {
@@ -60,6 +50,7 @@ var (
 )
 
 func init() {
+<<<<<<< HEAD
 	flag.BoolVar(&isMirror, "mirror", false, "enable mirror mode")
 	flag.BoolVar(&isUpload, "upload", false, "enable upload mode")
 }
@@ -95,6 +86,10 @@ func getSha256OfFile(path string) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+=======
+	flag.BoolVar(&isMirror, "mirror", false, "deprecated; ignored")
+	flag.BoolVar(&isUpload, "upload", false, "deprecated; ignored")
+>>>>>>> 6c90f90bea7 (build: resolve Bazel Go deps through GOPROXY (#69503))
 }
 
 func copyFile(src, dst string) error {
@@ -110,34 +105,6 @@ func copyFile(src, dst string) error {
 	defer out.Close()
 	_, err = io.Copy(out, in)
 	return err
-}
-
-func uploadFile(ctx context.Context, client *storage.Client, localPath, remotePath string) error {
-	if !isUpload {
-		return nil
-	}
-	in, err := os.Open(localPath)
-	if err != nil {
-		return fmt.Errorf("failed to open %s: %w", localPath, err)
-	}
-	defer in.Close()
-	out := client.Bucket(gcpBucket).Object(remotePath).If(storage.Conditions{DoesNotExist: true}).NewWriter(ctx)
-	if _, err := io.Copy(out, in); err != nil {
-		return err
-	}
-	if err := out.Close(); err != nil {
-		var gerr *googleapi.Error
-		if errors.As(err, &gerr) {
-			if gerr.Code == http.StatusPreconditionFailed {
-				// In this case the "DoesNotExist" precondition
-				// failed, i.e., the object does already exist.
-				return nil
-			}
-			return gerr
-		}
-		return err
-	}
-	return nil
 }
 
 func createTmpDir() (tmpdir string, err error) {
@@ -252,14 +219,6 @@ func listAllModules(tmpdir string) (map[string]listedModule, error) {
 	return ret, nil
 }
 
-func getExistingMirrors() (map[string]DownloadableArtifact, error) {
-	depsbzl, err := bazel.Runfile("DEPS.bzl")
-	if err != nil {
-		return nil, err
-	}
-	return ListArtifactsInDepsBzl(depsbzl)
-}
-
 func mungeBazelRepoNameComponent(component string) string {
 	component = strings.ReplaceAll(component, "-", "_")
 	component = strings.ReplaceAll(component, ".", "_")
@@ -315,7 +274,6 @@ func dumpBuildNamingConventionArgsForRepo(repoName string) {
 func dumpNewDepsBzl(
 	listed map[string]listedModule,
 	downloaded map[string]downloadedModule,
-	existingMirrors map[string]DownloadableArtifact,
 ) error {
 	var sorted []string
 	repoNameToModPath := make(map[string]string)
@@ -326,19 +284,8 @@ func dumpNewDepsBzl(
 	}
 	sort.Strings(sorted)
 
-	ctx := context.Background()
-	var client *storage.Client
-	if isMirror && isUpload {
-		var err error
-		client, err = storage.NewClient(ctx)
-		if err != nil {
-			return err
-		}
-	}
-	g, ctx := errgroup.WithContext(ctx)
-
 	// This uses a lot of fmt.Println to output the generated configuration to stdout,
-	// and the mirror will only be used under "make bazel_prepare", so it won't output
+	// and the generator will only be used under "make bazel_prepare", so it won't output
 	// too much and affect development.
 	fmt.Println(`load("@bazel_gazelle//:deps.bzl", "go_repository")
 
@@ -366,14 +313,18 @@ def go_deps():
 		fmt.Printf(`        build_file_proto_mode = "%s",
 `, buildFileProtoModeForRepo(repoName))
 		dumpBuildNamingConventionArgsForRepo(repoName)
+<<<<<<< HEAD
 		expectedVPCPrivateURL := formatVPCPrivateURL(replaced.Path, replaced.Version)
 		expectedCDNURL := formatCDNURL(replaced.Path, replaced.Version)
 		expectedPublicURL := formatPublicURL(replaced.Path, replaced.Version)
 		expectedVPCPublicURL := formatVPCPublicURL(replaced.Path, replaced.Version)
+=======
+>>>>>>> 6c90f90bea7 (build: resolve Bazel Go deps through GOPROXY (#69503))
 		fmt.Printf("        importpath = \"%s\",\n", mod.Path)
 		if err := dumpPatchArgsForRepo(repoName); err != nil {
 			return err
 		}
+<<<<<<< HEAD
 		oldMirror, ok := existingMirrors[repoName]
 		if ok &&
 			slices.Contains(oldMirror.URL, expectedVPCPrivateURL) &&
@@ -431,18 +382,21 @@ def go_deps():
 			fmt.Printf(`        sum = "%s",
         version = "%s",
 `, sum, version)
+=======
+		d, ok := downloaded[replaced.Path]
+		if !ok {
+			return fmt.Errorf("could not find downloaded module for %s@%s", replaced.Path, replaced.Version)
+>>>>>>> 6c90f90bea7 (build: resolve Bazel Go deps through GOPROXY (#69503))
 		}
+		if mod.Replace != nil {
+			fmt.Printf("        replace = \"%s\",\n", replaced.Path)
+		}
+		fmt.Printf(`        sum = "%s",
+        version = "%s",
+`, d.Sum, d.Version)
 		fmt.Println("    )")
 	}
-
-	// Wait for uploads to complete.
-	if err := g.Wait(); err != nil {
-		return err
-	}
-	if client == nil {
-		return nil
-	}
-	return client.Close()
+	return nil
 }
 
 func mirror() error {
@@ -464,15 +418,17 @@ func mirror() error {
 	if err != nil {
 		return err
 	}
-	existingMirrors, err := getExistingMirrors()
-	if err != nil {
-		return err
-	}
-	return dumpNewDepsBzl(listed, downloaded, existingMirrors)
+	return dumpNewDepsBzl(listed, downloaded)
 }
 
 func main() {
 	flag.Parse()
+	if isMirror {
+		fmt.Fprintln(os.Stderr, "--mirror is deprecated and ignored; modules are resolved through GOPROXY")
+	}
+	if isUpload {
+		fmt.Fprintln(os.Stderr, "--upload is deprecated and ignored; modules are resolved through GOPROXY")
+	}
 	if err := mirror(); err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
