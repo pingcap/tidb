@@ -20,71 +20,41 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/kvproto/pkg/meta_storagepb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	pd "github.com/tikv/pd/client"
-	"github.com/tikv/pd/client/clients/metastorage"
 	pderr "github.com/tikv/pd/client/errs"
-	"github.com/tikv/pd/client/opt"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
 
 type resourceGroupProviderStub struct {
+	rmclient.ResourceGroupProvider
 	resourceGroup *rmpb.ResourceGroup
 	resourceErr   error
 }
 
-var _ metastorage.Client = (*resourceGroupProviderStub)(nil)
+func newResourceGroupProviderStub(t *testing.T, resourceGroup *rmpb.ResourceGroup, resourceErr error) *resourceGroupProviderStub {
+	t.Helper()
+	baseProvider, ok := infosync.NewMockResourceManagerClient(0).(rmclient.ResourceGroupProvider)
+	require.True(t, ok)
+	return &resourceGroupProviderStub{
+		ResourceGroupProvider: baseProvider,
+		resourceGroup:         resourceGroup,
+		resourceErr:           resourceErr,
+	}
+}
 
 // GetResourceGroup returns both the mocked resource group and the mocked error.
 // This lets the test verify whether the controller uses the degraded fallback
 // only for the editions that enable it.
 func (s *resourceGroupProviderStub) GetResourceGroup(context.Context, string, ...pd.GetResourceGroupOption) (*rmpb.ResourceGroup, error) {
 	return s.resourceGroup, s.resourceErr
-}
-
-// The remaining methods only satisfy the controller's provider dependencies.
-// The fallback test does not exercise their behavior.
-func (s *resourceGroupProviderStub) ListResourceGroups(context.Context, ...pd.GetResourceGroupOption) ([]*rmpb.ResourceGroup, error) {
-	return nil, nil
-}
-
-func (s *resourceGroupProviderStub) AddResourceGroup(context.Context, *rmpb.ResourceGroup) (string, error) {
-	return "", nil
-}
-
-func (s *resourceGroupProviderStub) ModifyResourceGroup(context.Context, *rmpb.ResourceGroup) (string, error) {
-	return "", nil
-}
-
-func (s *resourceGroupProviderStub) DeleteResourceGroup(context.Context, string) (string, error) {
-	return "", nil
-}
-
-func (s *resourceGroupProviderStub) AcquireTokenBuckets(context.Context, *rmpb.TokenBucketsRequest) ([]*rmpb.TokenBucketResponse, error) {
-	return nil, nil
-}
-
-func (s *resourceGroupProviderStub) LoadResourceGroups(context.Context) ([]*rmpb.ResourceGroup, int64, error) {
-	return nil, 0, nil
-}
-
-func (s *resourceGroupProviderStub) Watch(context.Context, []byte, ...opt.MetaStorageOption) (chan []*meta_storagepb.Event, error) {
-	return make(chan []*meta_storagepb.Event), nil
-}
-
-func (s *resourceGroupProviderStub) Get(context.Context, []byte, ...opt.MetaStorageOption) (*meta_storagepb.GetResponse, error) {
-	return &meta_storagepb.GetResponse{Header: &meta_storagepb.ResponseHeader{}}, nil
-}
-
-func (s *resourceGroupProviderStub) Put(context.Context, []byte, []byte, ...opt.MetaStorageOption) (*meta_storagepb.PutResponse, error) {
-	return &meta_storagepb.PutResponse{Header: &meta_storagepb.ResponseHeader{}}, nil
 }
 
 func newStarterControllerForTest(t *testing.T, provider rmclient.ResourceGroupProvider) *rmclient.ResourceGroupsController {
@@ -122,21 +92,18 @@ func TestResourceGroupsControllerOptionsProvideDegradedFallback(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	provider := &resourceGroupProviderStub{
-		resourceGroup: &rmpb.ResourceGroup{
-			Name: "test-group",
-			Mode: rmpb.GroupMode_RUMode,
-			RUSettings: &rmpb.GroupRequestUnitSettings{
-				RU: &rmpb.TokenBucket{
-					Settings: &rmpb.TokenLimitSettings{FillRate: 1},
-				},
+	provider := newResourceGroupProviderStub(t, &rmpb.ResourceGroup{
+		Name: "test-group",
+		Mode: rmpb.GroupMode_RUMode,
+		RUSettings: &rmpb.GroupRequestUnitSettings{
+			RU: &rmpb.TokenBucket{
+				Settings: &rmpb.TokenLimitSettings{FillRate: 1},
 			},
 		},
-		resourceErr: &pderr.ErrClientGetResourceGroup{
-			ResourceGroupName: "test-group",
-			Cause:             "resource group unavailable",
-		},
-	}
+	}, &pderr.ErrClientGetResourceGroup{
+		ResourceGroupName: "test-group",
+		Cause:             "resource group unavailable",
+	})
 
 	if !kerneltype.IsNextGen() {
 		controller, err := rmclient.NewResourceGroupController(
@@ -194,9 +161,7 @@ func TestStarterResourceGroupProviderNonRetryableErrors(t *testing.T) {
 	})
 
 	t.Run("NotFound", func(t *testing.T) {
-		provider := &resourceGroupProviderStub{
-			resourceErr: rmclient.NewResourceGroupNotExistErr("missing-group"),
-		}
+		provider := newResourceGroupProviderStub(t, nil, rmclient.NewResourceGroupNotExistErr("missing-group"))
 		controller := newStarterControllerForTest(t, provider)
 
 		group, err := controller.GetResourceGroup("missing-group")
@@ -208,9 +173,7 @@ func TestStarterResourceGroupProviderNonRetryableErrors(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
-		provider := &resourceGroupProviderStub{
-			resourceErr: context.Canceled,
-		}
+		provider := newResourceGroupProviderStub(t, nil, context.Canceled)
 		wrapped := newStarterResourceGroupProvider(provider)
 		group, err := wrapped.GetResourceGroup(ctx, "test-group")
 		require.ErrorIs(t, err, context.Canceled)
@@ -218,9 +181,7 @@ func TestStarterResourceGroupProviderNonRetryableErrors(t *testing.T) {
 	})
 
 	t.Run("GenericNonRetryableError", func(t *testing.T) {
-		provider := &resourceGroupProviderStub{
-			resourceErr: errors.New("invalid resource group lookup"),
-		}
+		provider := newResourceGroupProviderStub(t, nil, errors.New("invalid resource group lookup"))
 		controller := newStarterControllerForTest(t, provider)
 
 		group, err := controller.GetResourceGroup("test-group")
@@ -238,9 +199,7 @@ func TestStarterSwitchGroupRejectsMissingGroup(t *testing.T) {
 		require.NoError(t, deploymode.Set(originalDeployMode))
 	})
 
-	provider := &resourceGroupProviderStub{
-		resourceErr: rmclient.NewResourceGroupNotExistErr("missing-switch-group"),
-	}
+	provider := newResourceGroupProviderStub(t, nil, rmclient.NewResourceGroupNotExistErr("missing-switch-group"))
 	controller := newStarterControllerForTest(t, provider)
 	manager := runaway.NewRunawayManager(controller, "127.0.0.1:4000", nil, make(chan struct{}), nil, nil)
 	t.Cleanup(manager.Stop)

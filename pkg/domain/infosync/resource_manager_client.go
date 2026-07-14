@@ -147,6 +147,14 @@ func (*mockResourceManagerClient) LoadResourceGroups(context.Context) ([]*rmpb.R
 	return nil, 0, nil
 }
 
+func (*mockResourceManagerClient) Get(context.Context, []byte, ...opt.MetaStorageOption) (*meta_storagepb.GetResponse, error) {
+	return &meta_storagepb.GetResponse{Header: &meta_storagepb.ResponseHeader{}}, nil
+}
+
+func (*mockResourceManagerClient) Put(context.Context, []byte, []byte, ...opt.MetaStorageOption) (*meta_storagepb.PutResponse, error) {
+	return &meta_storagepb.PutResponse{Header: &meta_storagepb.ResponseHeader{}}, nil
+}
+
 func (m *mockResourceManagerClient) Watch(_ context.Context, key []byte, _ ...opt.MetaStorageOption) (chan []*meta_storagepb.Event, error) {
 	if bytes.Equal(pd.GroupSettingsPathPrefixBytes(m.keyspaceID), key) {
 		return m.eventCh, nil
