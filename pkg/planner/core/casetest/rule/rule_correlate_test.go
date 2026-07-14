@@ -347,8 +347,7 @@ func TestCorrelateAlternativeAggInSubqueryNoTableDual(t *testing.T) {
 	tk.MustExec("insert into i values (1,10),(1,11),(2,20),(3,30),(5,50)")
 	tk.MustExec("analyze table o, i")
 
-	// Penalize hash/merge joins so the correlate alternative round wins the
-	// cost comparison, mirroring the reproduction in the bug report.
+	// Match the bug reproduction's cost-factor settings (these default to 1).
 	tk.MustExec("set tidb_opt_hash_join_cost_factor = 1")
 	tk.MustExec("set tidb_opt_merge_join_cost_factor = 1")
 
