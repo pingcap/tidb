@@ -30,6 +30,7 @@ import (
 	"maps"
 	"math"
 	"math/rand"
+	"os"
 	"regexp"
 	"runtime/pprof"
 	"slices"
@@ -4598,7 +4599,6 @@ func runInBootstrapSession(store kv.Storage, ver int64) {
 			zap.Duration("cost", time.Since(startTime)))
 	}()
 	if startMode == ddl.Upgrade {
-		extworkload.AbortGCV2ForUpgrade(store)
 		// TODO at this time domain must not be created, else it will register server
 		// info, and cause deadlock, we need to make sure this in a clear way
 		logutil.BgLogger().Info("[upgrade] get owner lock to upgrade")
@@ -4616,6 +4616,19 @@ func runInBootstrapSession(store kv.Storage, ver int64) {
 			// TODO remove this after we can refactor below code out in this case.
 			logutil.BgLogger().Info("[upgrade] already upgraded by other nodes, switch to normal mode")
 			startMode = ddl.Normal
+		} else if deploymode.IsStarter() {
+			shouldTerminate, err := extworkload.AbortGCV2ForUpgrade(context.Background(), extworkload.GetManagerFromStore(store))
+			if err != nil {
+				logutil.BgLogger().Fatal("abort GCV2 worker failed", zap.Error(err))
+			}
+			if shouldTerminate {
+				logutil.BgLogger().Info("GCV2 worker aborted before bootstrap upgrade")
+				if intest.InTest {
+					return
+				}
+				releaseFn()
+				os.Exit(0)
+			}
 		}
 	}
 	s, err := createSession(store)

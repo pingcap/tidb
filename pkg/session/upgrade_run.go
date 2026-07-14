@@ -18,7 +18,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -44,8 +43,6 @@ func upgrade(s sessionapi.Session) {
 		// It is already bootstrapped/upgraded by a higher version TiDB server.
 		return
 	}
-
-	extworkload.AbortGCV2ForUpgrade(s.GetStore())
 
 	printClusterState(s, ver)
 

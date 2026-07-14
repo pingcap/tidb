@@ -193,26 +193,7 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		}
 		logutil.BgLogger().Info(logstr, zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", showValStr))
 		if v.IsGlobal && name == vardef.TiDBGCLifetime {
-			mgr := extworkload.GetManagerFromStore(e.Ctx().GetStore())
-			if extworkload.IsMaster(mgr) && pd.IsKeyspaceUsingKeyspaceLevelGC(mgr.Meta()) {
-				gcLifeTimeVal, err := sessionVars.GlobalVarsAccessor.GetGlobalSysVar(name)
-				if err != nil {
-					logutil.BgLogger().Warn("failed to load effective external workload GC life time",
-						zap.String("name", name),
-						zap.String("val", showValStr),
-						zap.Error(err))
-				} else if gcLifeTime, err := time.ParseDuration(gcLifeTimeVal); err != nil {
-					logutil.BgLogger().Warn("failed to parse effective external workload GC life time",
-						zap.String("name", name),
-						zap.String("val", gcLifeTimeVal),
-						zap.Error(err))
-				} else if err = mgr.UpdateGCLifeTime(ctx, int64(gcLifeTime/time.Second)); err != nil {
-					logutil.BgLogger().Warn("failed to update external workload GC life time",
-						zap.String("name", name),
-						zap.String("val", gcLifeTimeVal),
-						zap.Error(err))
-				}
-			}
+			notifyExternalWorkloadGCLifeTime(ctx, e.Ctx(), showValStr)
 		}
 		if name == vardef.TiDBServiceScope {
 			dom := domain.GetDomain(e.Ctx())
@@ -298,6 +279,36 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 	// autocommit, timezone, etc
 	logutil.BgLogger().Debug("set session var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
 	return nil
+}
+
+func notifyExternalWorkloadGCLifeTime(ctx context.Context, sctx sessionctx.Context, setValue string) {
+	mgr := extworkload.GetManagerFromStore(sctx.GetStore())
+	if !extworkload.IsEnabled(mgr) || !pd.IsKeyspaceUsingKeyspaceLevelGC(mgr.Meta()) {
+		return
+	}
+
+	gcLifeTimeVal, err := variable.GetSysVar(vardef.TiDBGCLifetime).GetGlobalFromHook(ctx, sctx.GetSessionVars())
+	if err != nil {
+		logutil.BgLogger().Warn("failed to load effective external workload GC life time",
+			zap.String("name", vardef.TiDBGCLifetime),
+			zap.String("val", setValue),
+			zap.Error(err))
+		return
+	}
+	gcLifeTime, err := time.ParseDuration(gcLifeTimeVal)
+	if err != nil {
+		logutil.BgLogger().Warn("failed to parse effective external workload GC life time",
+			zap.String("name", vardef.TiDBGCLifetime),
+			zap.String("val", gcLifeTimeVal),
+			zap.Error(err))
+		return
+	}
+	if err := mgr.UpdateGCLifeTime(ctx, gcLifeTime); err != nil {
+		logutil.BgLogger().Warn("failed to update external workload GC life time",
+			zap.String("name", vardef.TiDBGCLifetime),
+			zap.String("val", gcLifeTimeVal),
+			zap.Error(err))
+	}
 }
 
 func (e *SetExecutor) setCharset(cs, co string, isSetName bool) error {

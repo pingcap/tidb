@@ -20,6 +20,7 @@ package extworkload
 
 import (
 	"context"
+	"time"
 
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config"
@@ -35,15 +36,15 @@ type Manager interface {
 	Meta() *keyspacepb.KeyspaceMeta
 
 	// InitializeGCV2 seeds the controller with an initial keyspace-level GC task.
-	InitializeGCV2(ctx context.Context, gcLifeTime int64) error
+	InitializeGCV2(ctx context.Context, gcLifeTime time.Duration) error
 	// AbortGCV2 asks the controller to abort all outstanding keyspace-level GC tasks.
 	AbortGCV2(ctx context.Context) error
 	// RegisterGCV2 reports that a keyspace-level GC round at safePoint has completed.
-	RegisterGCV2(ctx context.Context, safePoint uint64, gcLifeTime int64) error
+	RegisterGCV2(ctx context.Context, safePoint uint64, gcLifeTime time.Duration) error
 	// RecycleGCV2 reports that keyspace-level GC up to safePoint has been processed.
 	RecycleGCV2(ctx context.Context, safePoint uint64) error
 	// UpdateGCLifeTime reports that the user's gc_life_time has changed.
-	UpdateGCLifeTime(ctx context.Context, gcLifeTime int64) error
+	UpdateGCLifeTime(ctx context.Context, gcLifeTime time.Duration) error
 
 	// RegisterTTLTask reports that a table with TTL has been created or altered.
 	RegisterTTLTask(ctx context.Context, tableID int64, ttlJobEnable bool) error

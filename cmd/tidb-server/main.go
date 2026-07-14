@@ -391,7 +391,7 @@ func initializeExternalWorkloadGCV2(ctx context.Context, storage kv.Storage, mgr
 		closeExternalWorkloadManager(storage, mgr)
 		return
 	}
-	if err := mgr.InitializeGCV2(ctx, int64(gcLifeTime/time.Second)); err != nil {
+	if err := mgr.InitializeGCV2(ctx, gcLifeTime); err != nil {
 		logutil.BgLogger().Warn("failed to initialize external workload GCV2 task; TiDB will continue without external workload coordination", zap.Error(err))
 		closeExternalWorkloadManager(storage, mgr)
 	}

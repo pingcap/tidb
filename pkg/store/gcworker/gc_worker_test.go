@@ -83,7 +83,7 @@ type stubGCV2Manager struct {
 func (m *stubGCV2Manager) Role() config.ExternalWorkloadRole { return m.role }
 func (m *stubGCV2Manager) Meta() *keyspacepb.KeyspaceMeta    { return m.meta }
 
-func (m *stubGCV2Manager) RegisterGCV2(_ context.Context, _ uint64, _ int64) error {
+func (m *stubGCV2Manager) RegisterGCV2(_ context.Context, _ uint64, _ time.Duration) error {
 	m.registerCount++
 	return m.err
 }

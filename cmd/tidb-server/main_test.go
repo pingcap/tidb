@@ -19,6 +19,7 @@ import (
 	"os"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config"
@@ -189,7 +190,7 @@ func TestInitDeployMode(t *testing.T) {
 
 type gcv2InitManager struct {
 	extworkload.Manager
-	gcLifeTime int64
+	gcLifeTime time.Duration
 	initCnt    int
 }
 
@@ -205,7 +206,7 @@ func (*gcv2InitManager) Meta() *keyspacepb.KeyspaceMeta {
 	}
 }
 
-func (m *gcv2InitManager) InitializeGCV2(_ context.Context, gcLifeTime int64) error {
+func (m *gcv2InitManager) InitializeGCV2(_ context.Context, gcLifeTime time.Duration) error {
 	m.initCnt++
 	m.gcLifeTime = gcLifeTime
 	return nil
@@ -220,7 +221,7 @@ func TestInitializeExternalWorkloadGCV2UsesEffectiveGCLifeTime(t *testing.T) {
 	initializeExternalWorkloadGCV2(context.Background(), store, mgr)
 
 	require.Equal(t, 1, mgr.initCnt)
-	require.Equal(t, int64(24*60*60), mgr.gcLifeTime)
+	require.Equal(t, 24*time.Hour, mgr.gcLifeTime)
 }
 
 func TestCreateMgrClientRequiresPodIdentityInStarter(t *testing.T) {

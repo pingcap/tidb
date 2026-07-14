@@ -15,6 +15,8 @@
 package extworkload
 
 import (
+	"context"
+	"errors"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
@@ -23,10 +25,17 @@ import (
 
 type stubManager struct {
 	Manager
-	role config.ExternalWorkloadRole
+	role       config.ExternalWorkloadRole
+	abortCount int
+	abortErr   error
 }
 
 func (s *stubManager) Role() config.ExternalWorkloadRole { return s.role }
+
+func (s *stubManager) AbortGCV2(context.Context) error {
+	s.abortCount++
+	return s.abortErr
+}
 
 func TestRolePredicatesWhenDisabled(t *testing.T) {
 	require.False(t, IsEnabled(nil))
@@ -55,4 +64,31 @@ func TestRolePredicatesDedicated(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAbortGCV2ForUpgrade(t *testing.T) {
+	t.Run("other role", func(t *testing.T) {
+		mgr := &stubManager{role: config.RoleMaster}
+		shouldTerminate, err := AbortGCV2ForUpgrade(context.Background(), mgr)
+		require.NoError(t, err)
+		require.False(t, shouldTerminate)
+		require.Zero(t, mgr.abortCount)
+	})
+
+	t.Run("GCV2 worker", func(t *testing.T) {
+		mgr := &stubManager{role: config.RoleGCV2Worker}
+		shouldTerminate, err := AbortGCV2ForUpgrade(context.Background(), mgr)
+		require.NoError(t, err)
+		require.True(t, shouldTerminate)
+		require.Equal(t, 1, mgr.abortCount)
+	})
+
+	t.Run("abort error", func(t *testing.T) {
+		abortErr := errors.New("abort failed")
+		mgr := &stubManager{role: config.RoleGCV2Worker, abortErr: abortErr}
+		shouldTerminate, err := AbortGCV2ForUpgrade(context.Background(), mgr)
+		require.ErrorIs(t, err, abortErr)
+		require.False(t, shouldTerminate)
+		require.Equal(t, 1, mgr.abortCount)
+	})
 }
