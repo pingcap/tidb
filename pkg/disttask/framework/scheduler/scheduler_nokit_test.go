@@ -28,6 +28,7 @@ import (
 	schmock "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
@@ -629,6 +630,44 @@ func TestOnTaskFinished(t *testing.T) {
 	require.EqualValues(t, map[string]int{
 		metricStateAll: 7, "succeed": 1, "failed": 3, metricStateCancelled: 1, metricStateDataError: 2,
 	}, collectMetricsFn())
+	roundTripImportCastErr := func(column, columnType, value, reason string) error {
+		castErr := common.ErrCastValue.FastGenByArgs(column, columnType, value, reason)
+		encodeErr := common.ErrEncodeKV.Wrap(castErr).FastGenByArgs("data.csv", 0)
+		serializedErr := errors.Normalize(errors.GetErrStackMsg(encodeErr),
+			errors.RFCCodeText(string(common.ErrEncodeKV.RFCCode())),
+			errors.MySQLErrorCode(int(common.ErrEncodeKV.Code())))
+		errBytes, err := serializedErr.MarshalJSON()
+		require.NoError(t, err)
+		restoredErr := errors.Normalize("")
+		require.NoError(t, restoredErr.UnmarshalJSON(errBytes))
+		return restoredErr
+	}
+	dataTooLongErr := roundTripImportCastErr("name", "varchar(3)", "abcd",
+		"[types:1406]Data Too Long, field len 3, data len 4")
+	require.NotContains(t, dataTooLongErr.Error(), "ErrCastValue")
+	require.Equal(t, metricStateDataError, getMetricState(proto.TaskStateReverted, dataTooLongErr))
+	notNullErr := roundTripImportCastErr("name", "varchar(10)", "NULL",
+		"[table:1048]Column 'name' cannot be null")
+	require.Equal(t, metricStateDataError, getMetricState(proto.TaskStateReverted, notNullErr))
+	checkConstraintErr := "[Lightning:Restore:ErrEncodeKV]when encoding 1-th data row in this chunk: " +
+		"encode kv error in file data.csv:0 at offset 0: " +
+		"Check constraint 'positive_id' is violated."
+	require.Equal(t, metricStateDataError, getMetricState(proto.TaskStateReverted, errors.New(checkConstraintErr)))
+	noPartitionErr := "[Lightning:Restore:ErrEncodeKV]when encoding 1-th data row in this chunk: " +
+		"encode kv error in file data.csv:0 at offset 0: " +
+		"Table has no partition for value 42"
+	require.Equal(t, metricStateDataError, getMetricState(proto.TaskStateReverted, errors.New(noPartitionErr)))
+	require.Equal(t, metricStateDataError, getMetricState(proto.TaskStateReverted,
+		errors.New("[executor:8167]Duplicate key conflict found. Please resolve conflicts in the input dataset")))
+	require.Equal(t, metricStateDataError, getMetricState(proto.TaskStateReverted,
+		errors.New("[Lightning:Restore:ErrFoundDataConflictRecords]found data conflict records in table t")))
+	require.Equal(t, metricStateDataError, getMetricState(proto.TaskStateReverted,
+		errors.New("[Lightning:Restore:ErrFoundIndexConflictRecords]found index conflict records in table t")))
+	parseErr := "[Lightning:Restore:ErrEncodeKV]encode kv error in file data.csv:0 at offset 0: " +
+		"column count mismatch, expected 3, got 2"
+	require.Equal(t, proto.TaskStateFailed.String(), getMetricState(proto.TaskStateReverted, errors.New(parseErr)))
+	require.Equal(t, proto.TaskStateFailed.String(), getMetricState(proto.TaskStateReverted,
+		errors.New("Value conversion failed for column 'name'")))
 	onTaskFinished(proto.TaskStateReverted, errors.New("[kv:1062]Duplicate entry '1' for key 't.idx'"))
 	require.EqualValues(t, map[string]int{
 		metricStateAll: 8, "succeed": 1, "failed": 3, metricStateCancelled: 1, metricStateDataError: 3,

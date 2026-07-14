@@ -78,6 +78,7 @@ go_test(
         "//pkg/disttask/framework/testutil",
         "//pkg/domain/infosync",
         "//pkg/kv",
+        "//pkg/lightning/common",
         "//pkg/sessionctx",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",
