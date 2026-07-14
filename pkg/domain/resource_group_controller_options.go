@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
@@ -25,10 +26,23 @@ import (
 )
 
 const (
+	defaultDegradedRUFillRate      = 2_000_000
+	defaultDegradedRUBurstLimit    = 50_000_000_000
 	defaultDegradedModeWaitTimeout = 3 * time.Second / 2
 	tokenWaitRetryInterval         = 100 * time.Millisecond
 	tokenWaitRetryTimes            = 20
 )
+
+func newDefaultDegradedRUSettings() *rmpb.GroupRequestUnitSettings {
+	return &rmpb.GroupRequestUnitSettings{
+		RU: &rmpb.TokenBucket{
+			Settings: &rmpb.TokenLimitSettings{
+				FillRate:   defaultDegradedRUFillRate,
+				BurstLimit: defaultDegradedRUBurstLimit,
+			},
+		},
+	}
+}
 
 func newResourceGroupsControllerOptions() []rmclient.ResourceControlCreateOption {
 	opts := []rmclient.ResourceControlCreateOption{
@@ -36,6 +50,9 @@ func newResourceGroupsControllerOptions() []rmclient.ResourceControlCreateOption
 	}
 	if deploymode.IsStarter() {
 		opts = append(opts,
+			// Keep degraded-group synthesis inside the controller so degraded
+			// resource groups are not inserted into the controller cache.
+			rmclient.WithDegradedRUSettings(newDefaultDegradedRUSettings()),
 			rmclient.WithDegradedModeWaitDuration(defaultDegradedModeWaitTimeout),
 		)
 	}

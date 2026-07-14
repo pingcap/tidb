@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
@@ -66,7 +67,7 @@ func newStarterControllerForTest(t *testing.T, provider rmclient.ResourceGroupPr
 	controller, err := rmclient.NewResourceGroupController(
 		ctx,
 		1,
-		newStarterResourceGroupProvider(provider),
+		provider,
 		nil,
 		0,
 		newResourceGroupsControllerOptions()...,
@@ -129,9 +130,33 @@ func TestResourceGroupsControllerOptionsProvideDegradedFallback(t *testing.T) {
 	controllerWithFallback := newStarterControllerForTest(t, provider)
 	group, err := controllerWithFallback.GetResourceGroup("test-group")
 	require.NoError(t, err)
-	require.Equal(t, newDegradedResourceGroup("test-group", newDefaultDegradedRUSettings()), group)
+	require.Equal(t, &rmpb.ResourceGroup{
+		Name:       "test-group",
+		Mode:       rmpb.GroupMode_RUMode,
+		RUSettings: newDefaultDegradedRUSettings(),
+	}, group)
+
+	// The degraded group should not be cached. Once the provider recovers, the
+	// next lookup should observe the real resource-group metadata.
+	provider.resourceGroup = &rmpb.ResourceGroup{
+		Name: "test-group",
+		Mode: rmpb.GroupMode_RUMode,
+		RUSettings: &rmpb.GroupRequestUnitSettings{
+			RU: &rmpb.TokenBucket{
+				Settings: &rmpb.TokenLimitSettings{FillRate: 1},
+			},
+		},
+	}
+	provider.resourceErr = nil
+	group, err = controllerWithFallback.GetResourceGroup("test-group")
+	require.NoError(t, err)
+	require.Equal(t, provider.resourceGroup, group)
 
 	require.NoError(t, deploymode.Set(deploymode.Premium))
+	provider = newResourceGroupProviderStub(t, nil, &pderr.ErrClientGetResourceGroup{
+		ResourceGroupName: "test-group",
+		Cause:             "resource group unavailable",
+	})
 	controllerWithoutFallback, err := rmclient.NewResourceGroupController(
 		ctx,
 		2,
@@ -151,7 +176,7 @@ func TestResourceGroupsControllerOptionsProvideDegradedFallback(t *testing.T) {
 	require.Nil(t, group)
 }
 
-func TestStarterResourceGroupProviderNonRetryableErrors(t *testing.T) {
+func TestStarterControllerGetResourceGroupUsesDegradedSettingsOnErrors(t *testing.T) {
 	if !kerneltype.IsNextGen() {
 		t.Skip("Starter deploy mode is only available in NextGen builds")
 	}
@@ -160,24 +185,30 @@ func TestStarterResourceGroupProviderNonRetryableErrors(t *testing.T) {
 		require.NoError(t, deploymode.Set(originalDeployMode))
 	})
 
+	expectedGroup := func(name string) *rmpb.ResourceGroup {
+		return &rmpb.ResourceGroup{
+			Name:       name,
+			Mode:       rmpb.GroupMode_RUMode,
+			RUSettings: newDefaultDegradedRUSettings(),
+		}
+	}
+
 	t.Run("NotFound", func(t *testing.T) {
 		provider := newResourceGroupProviderStub(t, nil, rmclient.NewResourceGroupNotExistErr("missing-group"))
 		controller := newStarterControllerForTest(t, provider)
 
 		group, err := controller.GetResourceGroup("missing-group")
-		require.Error(t, err)
-		require.Nil(t, group)
+		require.NoError(t, err)
+		require.Equal(t, expectedGroup("missing-group"), group)
 	})
 
 	t.Run("ContextCanceled", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
-
 		provider := newResourceGroupProviderStub(t, nil, context.Canceled)
-		wrapped := newStarterResourceGroupProvider(provider)
-		group, err := wrapped.GetResourceGroup(ctx, "test-group")
-		require.ErrorIs(t, err, context.Canceled)
-		require.Nil(t, group)
+		controller := newStarterControllerForTest(t, provider)
+
+		group, err := controller.GetResourceGroup("test-group")
+		require.NoError(t, err)
+		require.Equal(t, expectedGroup("test-group"), group)
 	})
 
 	t.Run("GenericNonRetryableError", func(t *testing.T) {
@@ -185,12 +216,12 @@ func TestStarterResourceGroupProviderNonRetryableErrors(t *testing.T) {
 		controller := newStarterControllerForTest(t, provider)
 
 		group, err := controller.GetResourceGroup("test-group")
-		require.Error(t, err)
-		require.Nil(t, group)
+		require.NoError(t, err)
+		require.Equal(t, expectedGroup("test-group"), group)
 	})
 }
 
-func TestStarterSwitchGroupRejectsMissingGroup(t *testing.T) {
+func TestStarterSwitchGroupUsesDegradedGroupOnLookupError(t *testing.T) {
 	if !kerneltype.IsNextGen() {
 		t.Skip("Starter deploy mode is only available in NextGen builds")
 	}
@@ -218,9 +249,13 @@ func TestStarterSwitchGroupRejectsMissingGroup(t *testing.T) {
 	)
 
 	require.NoError(t, checker.CheckThresholds(nil, 10, nil))
-	req := &tikvrpc.Request{}
+	req := &tikvrpc.Request{
+		Context: kvrpcpb.Context{
+			ResourceControlContext: &kvrpcpb.ResourceControlContext{},
+		},
+	}
 	require.NoError(t, checker.BeforeCopRequest(req))
-	require.Empty(t, req.GetResourceControlContext().GetResourceGroupName())
+	require.Equal(t, "missing-switch-group", req.GetResourceControlContext().GetResourceGroupName())
 }
 
 func TestResourceGroupsControllerOptionsUseStarterPodNamespaceForVIPWaitRetry(t *testing.T) {
@@ -234,8 +269,8 @@ func TestResourceGroupsControllerOptionsUseStarterPodNamespaceForVIPWaitRetry(t 
 			require.NoError(t, deploymode.Set(originalDeployMode))
 		})
 		require.NoError(t, deploymode.Set(deploymode.Starter))
-		vipOptionCount = 4
-		standardOptionCount = 2
+		vipOptionCount = 5
+		standardOptionCount = 3
 	}
 
 	config.UpdateGlobal(func(conf *config.Config) {

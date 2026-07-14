@@ -19,7 +19,6 @@ import (
 	"net"
 	"strconv"
 
-	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -40,11 +39,7 @@ func (do *Domain) initResourceGroupsController(ctx context.Context, pdClient pd.
 	if codec := do.Store().GetCodec(); codec != nil {
 		keyspaceID = uint32(codec.GetKeyspaceID())
 	}
-	var provider rmclient.ResourceGroupProvider = pdClient
-	if deploymode.IsStarter() {
-		provider = newStarterResourceGroupProvider(pdClient)
-	}
-	control, err := rmclient.NewResourceGroupController(ctx, uniqueID, provider, nil, keyspaceID, newResourceGroupsControllerOptions()...)
+	control, err := rmclient.NewResourceGroupController(ctx, uniqueID, pdClient, nil, keyspaceID, newResourceGroupsControllerOptions()...)
 	if err != nil {
 		return err
 	}
