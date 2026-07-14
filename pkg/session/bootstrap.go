@@ -528,10 +528,6 @@ func doDMLWorks(s sessionapi.Session) {
 
 	writeClusterID(s)
 
-	if shouldMarkStarterBootstrapPending() {
-		markStarterBootstrapPending(s)
-	}
-
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	_, err := s.ExecuteInternal(ctx, "COMMIT")
 	if err != nil {

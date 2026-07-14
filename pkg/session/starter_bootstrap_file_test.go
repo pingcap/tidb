@@ -149,28 +149,6 @@ func TestStarterBootstrapFileLoadInStarter(t *testing.T) {
 	require.Equal(t, []string{"SELECT 1"}, bootstrapFile.BootstrapSQLBlocks)
 }
 
-func TestShouldMarkStarterBootstrapPending(t *testing.T) {
-	if kerneltype.IsClassic() {
-		t.Skip("starter deploy mode is only available in nextgen")
-	}
-
-	originMode := deploymode.Get()
-	originConfig := config.GetGlobalConfig()
-	t.Cleanup(func() {
-		require.NoError(t, deploymode.Set(originMode))
-		config.StoreGlobalConfig(originConfig)
-	})
-
-	require.NoError(t, deploymode.Set(deploymode.Starter))
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.StarterParams.BootstrapFile = "/etc/tidb/starter-bootstrap.json"
-	})
-	require.True(t, shouldMarkStarterBootstrapPending())
-
-	require.NoError(t, deploymode.Set(deploymode.Premium))
-	require.False(t, shouldMarkStarterBootstrapPending())
-}
-
 func TestStarterBootstrapFileBootstrapBlocks(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("classic mock store is sufficient for bootstrap file SQL execution")
@@ -206,7 +184,7 @@ func TestStarterBootstrapFileBootstrapBlocks(t *testing.T) {
 	require.Equal(t, "test_keyspace.boot", mustGetTiDBVarForStarterFile(t, se, "starter_file_bootstrap_test"))
 }
 
-func TestStarterBootstrapFileInitialBootstrapState(t *testing.T) {
+func TestStarterBootstrapFileInitialBootstrap(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("classic mock store is sufficient for bootstrap file SQL execution")
 	}
@@ -241,21 +219,9 @@ func TestStarterBootstrapFileInitialBootstrapState(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, runStarterBootstrapLocked(se, bootstrapFile))
-	_, hasState, err := getStarterBootstrapState(se)
-	require.NoError(t, err)
-	require.False(t, hasState)
-	_, isNull, err := getTiDBVar(se, "starter_file_initial_bootstrap")
-	require.NoError(t, err)
-	require.True(t, isNull)
-
-	markStarterBootstrapPending(se)
-	require.NoError(t, runStarterBootstrapLocked(se, bootstrapFile))
 	require.Equal(t, "3", mustGetTiDBVarForStarterFile(t, se, starterBootstrapVersionVar))
 	require.Equal(t, "test_keyspace.boot", mustGetTiDBVarForStarterFile(t, se, "starter_file_initial_bootstrap"))
-	_, hasState, err = getStarterBootstrapState(se)
-	require.NoError(t, err)
-	require.False(t, hasState)
-	_, isNull, err = getTiDBVar(se, "starter_file_initial_upgrade")
+	_, isNull, err := getTiDBVar(se, "starter_file_initial_upgrade")
 	require.NoError(t, err)
 	require.True(t, isNull)
 }
