@@ -17,6 +17,7 @@ package mvservice
 import (
 	"context"
 	"encoding/binary"
+	"sort"
 	"sync"
 	"time"
 
@@ -46,12 +47,13 @@ type ServerDiscovery interface {
 
 // ServerConsistentHash maintains TiDB membership and ownership mapping by exec ID.
 type ServerConsistentHash struct {
-	ctx     context.Context
-	servers map[string]serverInfo
-	chash   ConsistentHash // use consistent hash to reduce task movements after nodes changed
-	mu      sync.RWMutex
-	ID      string // current server exec ID
-	helper  ServerDiscovery
+	ctx       context.Context
+	servers   map[string]serverInfo
+	serverIDs []string
+	chash     ConsistentHash // use consistent hash to reduce task movements after nodes changed
+	mu        sync.RWMutex
+	ID        string // current server exec ID
+	helper    ServerDiscovery
 }
 
 // NewServerConsistentHash creates a server ownership helper backed by consistent hash.
@@ -65,6 +67,18 @@ func NewServerConsistentHash(ctx context.Context, replicas int, helper ServerDis
 		chash:   *NewConsistentHash(replicas),
 		helper:  helper,
 	}
+}
+
+func (sch *ServerConsistentHash) rebuildLocked(servers map[string]serverInfo) {
+	sch.servers = servers
+	sch.serverIDs = make([]string, 0, len(servers))
+	for id := range servers {
+		if id != "" {
+			sch.serverIDs = append(sch.serverIDs, id)
+		}
+	}
+	sort.Strings(sch.serverIDs)
+	sch.chash.Rebuild(sch.servers)
 }
 
 // init loads local server info with retry and initializes local exec ID.
@@ -104,22 +118,6 @@ func (sch *ServerConsistentHash) init() bool {
 			backoff = waitDur * 2
 		}
 	}
-}
-
-// AddServer inserts one server into the member map and hash ring.
-func (sch *ServerConsistentHash) AddServer(srv serverInfo) {
-	sch.mu.Lock()
-	defer sch.mu.Unlock()
-	sch.servers[srv.ID] = srv
-	sch.chash.AddNode(srv.ID)
-}
-
-// RemoveServer removes one server from the member map and hash ring.
-func (sch *ServerConsistentHash) RemoveServer(srvID string) {
-	sch.mu.Lock()
-	defer sch.mu.Unlock()
-	delete(sch.servers, srvID)
-	sch.chash.RemoveNode(srvID)
 }
 
 // refresh reloads server membership and rebuilds the hash ring when changed.
@@ -168,8 +166,7 @@ func (sch *ServerConsistentHash) refresh() (bool, error) {
 	{
 		sch.mu.Lock() // Guard server map and hash-ring rebuild.
 
-		sch.servers = newInfos
-		sch.chash.Rebuild(sch.servers)
+		sch.rebuildLocked(newInfos)
 
 		sch.mu.Unlock() // Release guard after rebuild.
 	}
