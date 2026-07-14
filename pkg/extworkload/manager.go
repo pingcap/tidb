@@ -138,7 +138,7 @@ func (m *manager) InitializeGCV2(ctx context.Context, gcLifeTime time.Duration) 
 	ctx, cancel := withRequestTimeout(ctx)
 	defer cancel()
 	ctx = withMetric(ctx, string(config.RoleGCV2Worker), metrics.WorkerActionInit)
-	return m.cli.RegisterGCV2(ctx, 0, int64(gcLifeTime/time.Second))
+	return m.cli.RegisterGCV2(ctx, 0, int64(gcLifeTime.Seconds()))
 }
 
 func (m *manager) AbortGCV2(ctx context.Context) error {
@@ -153,7 +153,7 @@ func (m *manager) RegisterGCV2(ctx context.Context, safePoint uint64, gcLifeTime
 	ctx, cancel := withRequestTimeout(ctx)
 	defer cancel()
 	ctx = withMetric(ctx, string(config.RoleGCV2Worker), metrics.WorkerActionRegister)
-	return m.cli.RegisterGCV2(ctx, safePoint, int64(gcLifeTime/time.Second))
+	return m.cli.RegisterGCV2(ctx, safePoint, int64(gcLifeTime.Seconds()))
 }
 
 func (m *manager) RecycleGCV2(ctx context.Context, safePoint uint64) error {
@@ -166,7 +166,7 @@ func (m *manager) RecycleGCV2(ctx context.Context, safePoint uint64) error {
 func (m *manager) UpdateGCLifeTime(ctx context.Context, gcLifeTime time.Duration) error {
 	ctx, cancel := withRequestTimeout(ctx)
 	defer cancel()
-	return m.cli.UpdateGCLifeTime(ctx, int64(gcLifeTime/time.Second))
+	return m.cli.UpdateGCLifeTime(ctx, int64(gcLifeTime.Seconds()))
 }
 
 func (m *manager) RegisterTTLTask(ctx context.Context, tableID int64, ttlJobEnable bool) error {

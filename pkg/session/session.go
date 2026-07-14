@@ -30,7 +30,6 @@ import (
 	"maps"
 	"math"
 	"math/rand"
-	"os"
 	"regexp"
 	"runtime/pprof"
 	"slices"
@@ -4622,12 +4621,11 @@ func runInBootstrapSession(store kv.Storage, ver int64) {
 				logutil.BgLogger().Fatal("abort GCV2 worker failed", zap.Error(err))
 			}
 			if shouldTerminate {
-				logutil.BgLogger().Info("GCV2 worker aborted before bootstrap upgrade")
 				if intest.InTest {
 					return
 				}
 				releaseFn()
-				os.Exit(0)
+				logutil.BgLogger().Fatal("GCV2 worker aborted before bootstrap upgrade")
 			}
 		}
 	}
