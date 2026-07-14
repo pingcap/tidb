@@ -120,7 +120,17 @@ const defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |
 	mysql.ClientConnectAtts | mysql.ClientPluginAuth | mysql.ClientInteractive |
 	mysql.ClientDeprecateEOF | mysql.ClientCompress | mysql.ClientZstdCompressionAlgorithm
 
-const normalClosedConnsCapacity = 1000
+const (
+	normalClosedConnsCapacity = 1000
+
+	connectionEventLogMessage  = "CONNECTION EVENT"
+	connectionEventLogin       = "login_success"
+	connectionEventRejected    = "connection_rejected"
+	connectionEventTerminated  = "connection_terminated"
+	connectionStateEstablished = "established"
+	terminationTypeDisconnect  = "disconnect"
+	terminationTypeLogout      = "logout"
+)
 
 // Server is the MySQL protocol server
 type Server struct {
@@ -579,6 +589,7 @@ func (s *Server) startNetworkListener(listener net.Listener, isUnixSocket bool, 
 		logutil.BgLogger().Debug("accept new connection success")
 
 		clientConn := s.newConn(conn)
+		connectionID := clientConn.connectionID
 		if isUnixSocket {
 			var (
 				uc *net.UnixConn
@@ -613,10 +624,17 @@ func (s *Server) startNetworkListener(listener net.Listener, isUnixSocket bool, 
 			err = s.checkAuditPlugin(clientConn)
 		}
 		if err != nil {
+			clientConn.logConnectionEvent(logutil.WithConnID(context.Background(), connectionID), connectionEventRejected,
+				zap.String("phase", "pre_auth"),
+				zap.String("reason", "pre_auth_check_failed"),
+				zap.Error(err))
 			continue
 		}
 
 		if s.dom != nil && s.dom.IsLostConnectionToPD() {
+			clientConn.logConnectionEvent(logutil.WithConnID(context.Background(), connectionID), connectionEventRejected,
+				zap.String("phase", "pre_auth"),
+				zap.String("reason", "lost_connection_to_pd"))
 			logutil.BgLogger().Warn("reject connection due to lost connection to PD")
 			terror.Log(clientConn.Close())
 			continue
@@ -783,35 +801,41 @@ func (s *Server) onConn(conn *clientConn) {
 
 	ctx := logutil.WithConnID(context.Background(), conn.connectionID)
 
-	if err := conn.handshake(ctx); err != nil {
-		conn.onExtensionConnEvent(extension.ConnHandshakeRejected, err)
+	if handshakeErr := conn.handshake(ctx); handshakeErr != nil {
+		conn.onExtensionConnEvent(extension.ConnHandshakeRejected, handshakeErr)
 		if plugin.IsEnable(plugin.Audit) && conn.getCtx() != nil {
 			conn.getCtx().GetSessionVars().ConnectionInfo = conn.connectInfo()
-			err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
+			pluginErr := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 				authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 				if authPlugin.OnConnectionEvent != nil {
-					pluginCtx := context.WithValue(context.Background(), plugin.RejectReasonCtxValue{}, err.Error())
+					pluginCtx := context.WithValue(context.Background(), plugin.RejectReasonCtxValue{}, handshakeErr.Error())
 					return authPlugin.OnConnectionEvent(pluginCtx, plugin.Reject, conn.ctx.GetSessionVars().ConnectionInfo)
 				}
 				return nil
 			})
-			terror.Log(err)
+			terror.Log(pluginErr)
 		}
-		switch errors.Cause(err) {
+		if errors.Cause(handshakeErr) != io.EOF {
+			conn.logConnectionEvent(ctx, connectionEventRejected,
+				zap.String("phase", "handshake"),
+				zap.String("reason", "handshake_failed"),
+				zap.Error(handshakeErr))
+		}
+		switch errors.Cause(handshakeErr) {
 		case io.EOF:
 			// `EOF` means the connection is closed normally, we do not treat it as a noticeable error and log it in 'DEBUG' level.
 			logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
 				Debug("EOF", zap.String("remote addr", conn.bufReadConn.RemoteAddr().String()))
 		case servererr.ErrConCount:
-			if err := conn.writeError(ctx, err); err != nil {
+			if writeErr := conn.writeError(ctx, handshakeErr); writeErr != nil {
 				logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
-					Warn("error in writing errConCount", zap.Error(err),
+					Warn("error in writing errConCount", zap.Error(writeErr),
 						zap.String("remote addr", conn.bufReadConn.RemoteAddr().String()))
 			}
 		default:
 			metrics.HandShakeErrorCounter.Inc()
 			logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
-				Warn("Server.onConn handshake", zap.Error(err),
+				Warn("Server.onConn handshake", zap.Error(handshakeErr),
 					zap.String("remote addr", conn.bufReadConn.RemoteAddr().String()))
 		}
 		terror.Log(conn.Close())
@@ -826,6 +850,10 @@ func (s *Server) onConn(conn *clientConn) {
 	}()
 
 	if err := conn.increaseUserConnectionsCount(); err != nil {
+		conn.logConnectionEvent(ctx, connectionEventRejected,
+			zap.String("phase", "post_auth"),
+			zap.String("reason", "connection_limit_check_failed"),
+			zap.Error(err))
 		logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
 			Warn("failed to increase the count of connections", zap.Error(err),
 				zap.String("remote addr", conn.bufReadConn.RemoteAddr().String()))
@@ -834,6 +862,9 @@ func (s *Server) onConn(conn *clientConn) {
 	defer conn.decreaseUserConnectionCount()
 
 	if !s.registerConn(conn) {
+		conn.logConnectionEvent(ctx, connectionEventRejected,
+			zap.String("phase", "post_auth"),
+			zap.String("reason", "server_shutdown"))
 		return
 	}
 
@@ -848,11 +879,25 @@ func (s *Server) onConn(conn *clientConn) {
 		return nil
 	})
 	if err != nil {
+		conn.logConnectionEvent(ctx, connectionEventRejected,
+			zap.String("phase", "post_auth"),
+			zap.String("reason", "audit_plugin_rejected"),
+			zap.Error(err))
 		return
 	}
 
 	connectedTime := time.Now()
-	conn.Run(ctx)
+	conn.logConnectionEvent(ctx, connectionEventLogin,
+		zap.String("connection_state", connectionStateEstablished))
+	terminationReason := conn.Run(ctx)
+	terminationType := terminationTypeDisconnect
+	if terminationReason == connectionTerminationClientQuit {
+		terminationType = terminationTypeLogout
+	}
+	conn.logConnectionEvent(ctx, connectionEventTerminated,
+		zap.String("termination_type", terminationType),
+		zap.String("reason", string(terminationReason)),
+		zap.Duration("duration", time.Since(connectedTime)))
 
 	err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
@@ -868,6 +913,52 @@ func (s *Server) onConn(conn *clientConn) {
 	if err != nil {
 		return
 	}
+}
+
+func (cc *clientConn) logConnectionEvent(ctx context.Context, event string, extraFields ...zap.Field) {
+	user := cc.user
+	db := cc.dbname
+	clientIP := cc.peerHost
+	clientPort := cc.peerPort
+	if clientIP == "" && cc.bufReadConn != nil && cc.bufReadConn.RemoteAddr() != nil {
+		if host, port, err := net.SplitHostPort(cc.bufReadConn.RemoteAddr().String()); err == nil {
+			clientIP = host
+			clientPort = port
+		}
+	}
+	if tidbCtx := cc.getCtx(); tidbCtx != nil {
+		sessionVars := tidbCtx.GetSessionVars()
+		if sessionVars.User != nil {
+			user = sessionVars.User.String()
+		}
+		if sessionVars.CurrentDB != "" {
+			db = sessionVars.CurrentDB
+		}
+	}
+
+	connectionType := variable.ConnTypeSocket
+	if cc.isUnixSocket {
+		connectionType = variable.ConnTypeUnixSocket
+	} else if cc.getTLSState() != nil {
+		connectionType = variable.ConnTypeTLS
+	}
+	authMethod := ""
+	if cc.capability != 0 {
+		authMethod = cc.authPlugin
+	}
+
+	fields := make([]zap.Field, 0, 8+len(extraFields))
+	fields = append(fields,
+		zap.String("event", event),
+		zap.String("user", user),
+		zap.String("client_ip", clientIP),
+		zap.String("client_port", clientPort),
+		zap.String("db", db),
+		zap.String("auth_method", authMethod),
+		zap.String("connection_type", connectionType),
+	)
+	fields = append(fields, extraFields...)
+	logutil.Logger(ctx).Info(connectionEventLogMessage, fields...)
 }
 
 func (cc *clientConn) connectInfo() *variable.ConnectionInfo {

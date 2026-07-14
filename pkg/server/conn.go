@@ -131,6 +131,21 @@ const (
 	tidbGatewayAttrsConnKey = "TiDB-Gateway-ConnID"
 )
 
+type connectionTerminationReason string
+
+const (
+	connectionTerminationUnknown            connectionTerminationReason = "unknown"
+	connectionTerminationClientQuit         connectionTerminationReason = "client_quit"
+	connectionTerminationClientEOF          connectionTerminationReason = "client_eof"
+	connectionTerminationIdleTimeout        connectionTerminationReason = "idle_timeout"
+	connectionTerminationKilled             connectionTerminationReason = "killed"
+	connectionTerminationServerShutdown     connectionTerminationReason = "server_shutdown"
+	connectionTerminationNetworkError       connectionTerminationReason = "network_error"
+	connectionTerminationPacketTooLarge     connectionTerminationReason = "packet_too_large"
+	connectionTerminationResultUndetermined connectionTerminationReason = "result_undetermined"
+	connectionTerminationPanic              connectionTerminationReason = "panic"
+)
+
 var (
 	statusCompression          = "Compression"
 	statusCompressionAlgorithm = "Compression_algorithm"
@@ -1151,13 +1166,25 @@ func (cc *clientConn) initConnect(ctx context.Context) error {
 	return nil
 }
 
-// Run reads client query and writes query result to client in for loop, if there is a panic during query handling,
-// it will be recovered and log the panic error.
-// This function returns and the connection is closed if there is an IO error or there is a panic.
-func (cc *clientConn) Run(ctx context.Context) {
+func (cc *clientConn) terminationReasonFromStatus() connectionTerminationReason {
+	switch cc.getStatus() {
+	case connStatusWaitShutdown:
+		return connectionTerminationKilled
+	case connStatusShutdown:
+		return connectionTerminationServerShutdown
+	default:
+		return connectionTerminationUnknown
+	}
+}
+
+// Run reads client query and writes query result to client in a loop. It returns why the connection ended.
+// If query handling panics, Run recovers, logs the panic, and returns connectionTerminationPanic.
+func (cc *clientConn) Run(ctx context.Context) (reason connectionTerminationReason) {
+	reason = connectionTerminationUnknown
 	defer func() {
 		r := recover()
 		if r != nil {
+			reason = connectionTerminationPanic
 			logutil.Logger(ctx).Error("connection running loop panic",
 				zap.Stringer("lastSQL", getLastStmtInConn{cc}),
 				zap.String("err", fmt.Sprintf("%v", r)),
@@ -1207,7 +1234,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 		// consider provider a way to close the connection directly after sometime if we can not read any data.
 		if cc.server.inShutdownMode.Load() {
 			if !sessVars.InTxn() {
-				return
+				return connectionTerminationServerShutdown
 			}
 		}
 
@@ -1215,7 +1242,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 			// The judge below will not be hit by all means,
 			// But keep it stayed as a reminder and for the code reference for connStatusWaitShutdown.
 			cc.getStatus() == connStatusWaitShutdown {
-			return
+			return cc.terminationReasonFromStatus()
 		}
 
 		cc.alloc.Reset()
@@ -1226,11 +1253,23 @@ func (cc *clientConn) Run(ctx context.Context) {
 		start := time.Now()
 		data, err := cc.readPacket()
 		if err != nil {
+			reason = connectionTerminationNetworkError
+			if terror.ErrorEqual(err, io.EOF) {
+				reason = connectionTerminationClientEOF
+			}
+			if statusReason := cc.terminationReasonFromStatus(); statusReason != connectionTerminationUnknown {
+				reason = statusReason
+			}
 			if terror.ErrorNotEqual(err, io.EOF) {
 				if netErr, isNetErr := errors.Cause(err).(net.Error); isNetErr && netErr.Timeout() {
-					if cc.getStatus() == connStatusWaitShutdown {
+					switch cc.getStatus() {
+					case connStatusWaitShutdown:
+						reason = connectionTerminationKilled
 						logutil.Logger(ctx).Info("read packet timeout because of killed connection")
-					} else {
+					case connStatusShutdown:
+						reason = connectionTerminationServerShutdown
+					default:
+						reason = connectionTerminationIdleTimeout
 						idleTime := time.Since(start)
 						tidbGatewayConnID := cc.attrs[tidbGatewayAttrsConnKey]
 						cc.server.SetNormalClosedConn(keyspace.GetKeyspaceNameBySettings(), tidbGatewayConnID, "read packet timeout")
@@ -1241,11 +1280,15 @@ func (cc *clientConn) Run(ctx context.Context) {
 						)
 					}
 				} else if errors.ErrorEqual(err, servererr.ErrNetPacketTooLarge) {
+					reason = connectionTerminationPacketTooLarge
 					err := cc.writeError(ctx, err)
 					if err != nil {
 						terror.Log(err)
 					}
 				} else {
+					if statusReason := cc.terminationReasonFromStatus(); statusReason != connectionTerminationUnknown {
+						reason = statusReason
+					}
 					errStack := errors.ErrorStack(err)
 					if !strings.Contains(errStack, "use of closed network connection") {
 						logutil.Logger(ctx).Warn("read packet failed, close this connection",
@@ -1254,7 +1297,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 				}
 			}
 			server_metrics.DisconnectByClientWithError.Inc()
-			return
+			return reason
 		}
 
 		// It should be CAS before checking the `inShutdownMode` to avoid the following scenario:
@@ -1263,13 +1306,13 @@ func (cc *clientConn) Run(ctx context.Context) {
 		//   because the connection is in the `connStatusReading` status.
 		// 3. The connection changes its status to `connStatusDispatching` and starts to execute the command.
 		if !cc.CompareAndSwapStatus(connStatusReading, connStatusDispatching) {
-			return
+			return cc.terminationReasonFromStatus()
 		}
 
 		// Should check InTxn() to avoid execute `begin` stmt and allow executing statements in the not committed txn.
 		if cc.server.inShutdownMode.Load() {
 			if !cc.ctx.GetSessionVars().InTxn() {
-				return
+				return connectionTerminationServerShutdown
 			}
 		}
 
@@ -1284,11 +1327,14 @@ func (cc *clientConn) Run(ctx context.Context) {
 			if terror.ErrorEqual(err, io.EOF) {
 				cc.addQueryMetrics(data[0], startTime, nil)
 				server_metrics.DisconnectNormal.Inc()
-				return
+				if data[0] == mysql.ComQuit {
+					return connectionTerminationClientQuit
+				}
+				return connectionTerminationClientEOF
 			} else if terror.ErrResultUndetermined.Equal(err) {
 				logutil.Logger(ctx).Warn("result undetermined, close this connection", zap.Error(err))
 				server_metrics.DisconnectErrorUndetermined.Inc()
-				return
+				return connectionTerminationResultUndetermined
 			} else if terror.ErrCritical.Equal(err) {
 				metrics.CriticalErrorCounter.Add(1)
 				logutil.Logger(ctx).Fatal("critical error, stop the server", zap.Error(err))
