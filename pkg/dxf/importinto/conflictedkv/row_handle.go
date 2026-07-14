@@ -84,6 +84,10 @@ func (s *BoundedHandleSet) Add(handle tidbkv.Handle) {
 	}
 
 	hdlStr := handle.String()
+	if _, ok := s.handles[hdlStr]; ok {
+		// the handle is already in the set, do not charge the shared size again.
+		return
+	}
 	delta := int64(len(hdlStr)) + handleMapEntryShallowSize
 	newSize := s.sharedSize.Add(delta)
 	s.handles[hdlStr] = true

@@ -68,3 +68,17 @@ func TestBoundedHandleSet(t *testing.T) {
 	set2.Merge(set)
 	require.EqualValues(t, set.handles, set2.handles)
 }
+
+func TestBoundedHandleSetDuplicateDoesNotConsumeBudget(t *testing.T) {
+	var sharedSize atomic.Int64
+	handle := tidbkv.IntHandle(1)
+	delta := int64(len(handle.String())) + handleMapEntryShallowSize
+	set := NewBoundedHandleSet(zap.NewNop(), &sharedSize, 2*delta)
+
+	set.Add(handle)
+	set.Add(handle)
+
+	require.Len(t, set.handles, 1)
+	require.Equal(t, delta, sharedSize.Load())
+	require.False(t, set.BoundExceeded())
+}
