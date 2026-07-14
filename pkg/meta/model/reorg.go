@@ -127,7 +127,7 @@ const (
 	AutoSplitHotRegionStatusSplit AutoSplitHotRegionStatus = "split"
 	// AutoSplitHotRegionStatusSkipped means auto split was enabled but no split was attempted.
 	AutoSplitHotRegionStatusSkipped AutoSplitHotRegionStatus = "skipped"
-	// AutoSplitHotRegionStatusFailed means split keys were generated but the split attempt failed.
+	// AutoSplitHotRegionStatusFailed means planning or splitting failed.
 	AutoSplitHotRegionStatusFailed AutoSplitHotRegionStatus = "failed"
 	// AutoSplitHotRegionStatusUnsupported means the storage does not support region split.
 	AutoSplitHotRegionStatusUnsupported AutoSplitHotRegionStatus = "unsupported"

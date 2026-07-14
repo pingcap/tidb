@@ -83,9 +83,9 @@ func preSplitIndexRegions(
 					reason += ": " + err.Error()
 				}
 				appendAutoSplitHotRegionResult(
-					reorgMeta, idxInfo, model.AutoSplitHotRegionStatusSkipped, 0, 0, 0,
+					reorgMeta, idxInfo, model.AutoSplitHotRegionStatusFailed, 0, 0, 0,
 					reason)
-				logutil.DDLLogger().Warn("skip auto split hot index region",
+				logutil.DDLLogger().Warn("auto split hot index region planning failed, continue add-index",
 					zap.String("table", tblInfo.Name.L),
 					zap.String("index", idxInfo.Name.L),
 					zap.String("reason", reason),
