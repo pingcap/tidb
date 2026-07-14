@@ -45,7 +45,7 @@ import (
 )
 
 const (
-	starterBootstrapVersionVar          = "starter_version"
+	starterBootstrapVersionVar          = "starter_bootstrap_version"
 	starterBootstrapStateVar            = "starter_bootstrap_state"
 	starterBootstrapKeyspacePlaceholder = "<keyspace>"
 	starterBootstrapVersionComment      = "Starter bootstrap file version. Do not delete."
@@ -55,35 +55,18 @@ const (
 
 var starterBootstrapPlaceholderRe = regexp.MustCompile(`<[A-Za-z0-9_-]+>`)
 
-type starterBootstrapFile struct {
-	Version   int64                         `json:"version"`
-	Bootstrap []string                      `json:"bootstrap,omitempty"`
-	Upgrades  []starterBootstrapFileUpgrade `json:"upgrades,omitempty"`
+type starterBootstrapFileSpec struct {
+	Version            int64                         `json:"version"`
+	BootstrapSQLBlocks []string                      `json:"bootstrap,omitempty"`
+	Upgrades           []starterBootstrapUpgradeSpec `json:"upgrades,omitempty"`
 }
 
-type starterBootstrapFileUpgrade struct {
-	Version int64    `json:"version"`
-	SQL     []string `json:"sql,omitempty"`
+type starterBootstrapUpgradeSpec struct {
+	Version   int64    `json:"version"`
+	SQLBlocks []string `json:"sql,omitempty"`
 }
 
-func runStarterBootstrap(s sessionapi.Session) error {
-	bootstrapFile, err := loadStarterBootstrapFile()
-	if err != nil {
-		return err
-	}
-	if bootstrapFile == nil {
-		return nil
-	}
-
-	releaseFn, err := acquireLock(s.GetStore())
-	if err != nil {
-		return errors.Annotate(err, "acquire starter bootstrap file lock")
-	}
-	defer releaseFn()
-	return runStarterBootstrapLocked(s, bootstrapFile)
-}
-
-func runStarterBootstrapLocked(s sessionapi.Session, bootstrapFile *starterBootstrapFile) error {
+func runStarterBootstrapLocked(s sessionapi.Session, bootstrapFile *starterBootstrapFileSpec) error {
 	state, hasState, err := getStarterBootstrapState(s)
 	if err != nil {
 		return err
@@ -114,7 +97,7 @@ func runStarterBootstrapLocked(s sessionapi.Session, bootstrapFile *starterBoots
 			logutil.BgLogger().Warn("rollback starter bootstrap file failed", zap.Error(err))
 		}
 	}()
-	if err := executeStarterBootstrapSQLBlocks(s, bootstrapFile.Bootstrap); err != nil {
+	if err := executeStarterBootstrapSQLBlocks(s, bootstrapFile.BootstrapSQLBlocks); err != nil {
 		return err
 	}
 	if err := updateStarterBootstrapVersion(s, bootstrapFile.Version); err != nil {
@@ -153,6 +136,7 @@ func upgradeStarterBootstrap(store kv.Storage) error {
 		domap.Delete(store)
 	}()
 
+	// Starter bootstrap SQL may access regular schemas and needs a fully initialized domain.
 	if err = dom.Start(ddl.Normal); err != nil {
 		return errors.Trace(err)
 	}
@@ -217,7 +201,7 @@ func markStarterBootstrapPending(s sessionapi.Session) {
 		mysql.SystemDB, mysql.TiDBTable, starterBootstrapStateVar, starterBootstrapStatePending, starterBootstrapStateComment, starterBootstrapStatePending)
 }
 
-func loadStarterBootstrapFile() (*starterBootstrapFile, error) {
+func loadStarterBootstrapFile() (*starterBootstrapFileSpec, error) {
 	if !deploymode.IsStarter() {
 		return nil, nil
 	}
@@ -236,15 +220,15 @@ func loadStarterBootstrapFile() (*starterBootstrapFile, error) {
 	logutil.BgLogger().Info("loaded starter bootstrap file",
 		zap.String("file", bootstrapFilePath),
 		zap.Int64("version", bootstrapFile.Version),
-		zap.Int("bootstrapBlocks", len(bootstrapFile.Bootstrap)),
+		zap.Int("bootstrapBlocks", len(bootstrapFile.BootstrapSQLBlocks)),
 		zap.Int("upgradeEntries", len(bootstrapFile.Upgrades)))
 	return bootstrapFile, nil
 }
 
-func parseStarterBootstrapFile(data []byte) (*starterBootstrapFile, error) {
+func parseStarterBootstrapFile(data []byte) (*starterBootstrapFileSpec, error) {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
-	var bootstrapFile starterBootstrapFile
+	var bootstrapFile starterBootstrapFileSpec
 	if err := decoder.Decode(&bootstrapFile); err != nil {
 		return nil, err
 	}
@@ -261,11 +245,11 @@ func parseStarterBootstrapFile(data []byte) (*starterBootstrapFile, error) {
 	return &bootstrapFile, nil
 }
 
-func (m *starterBootstrapFile) validate() error {
+func (m *starterBootstrapFileSpec) validate() error {
 	if m.Version <= 0 {
 		return errors.New("bootstrap file version must be greater than 0")
 	}
-	if err := validateStarterBootstrapSQLBlocks("bootstrap", m.Bootstrap); err != nil {
+	if err := validateStarterBootstrapSQLBlocks("bootstrap", m.BootstrapSQLBlocks); err != nil {
 		return err
 	}
 	seenUpgradeVersions := make(map[int64]struct{}, len(m.Upgrades))
@@ -281,7 +265,7 @@ func (m *starterBootstrapFile) validate() error {
 			return errors.Errorf("duplicated upgrade version %d", upgrade.Version)
 		}
 		seenUpgradeVersions[upgrade.Version] = struct{}{}
-		if err := validateStarterBootstrapSQLBlocks(fmt.Sprintf("upgrades[%d].sql", i), upgrade.SQL); err != nil {
+		if err := validateStarterBootstrapSQLBlocks(fmt.Sprintf("upgrades[%d].sql", i), upgrade.SQLBlocks); err != nil {
 			return err
 		}
 	}
@@ -306,7 +290,7 @@ func validateStarterBootstrapSQLBlocks(field string, blocks []string) error {
 	return nil
 }
 
-func needStarterBootstrapUpgrade(storedVersion int64, bootstrapFile *starterBootstrapFile) bool {
+func needStarterBootstrapUpgrade(storedVersion int64, bootstrapFile *starterBootstrapFileSpec) bool {
 	if storedVersion > bootstrapFile.Version {
 		logutil.BgLogger().Warn("starter bootstrap file is older than cluster state",
 			zap.Int64("storedVersion", storedVersion),
@@ -316,44 +300,25 @@ func needStarterBootstrapUpgrade(storedVersion int64, bootstrapFile *starterBoot
 	return storedVersion < bootstrapFile.Version
 }
 
-func upgradeStarterBootstrapFromVersion(s sessionapi.Session, bootstrapFile *starterBootstrapFile, storedVersion int64) error {
+func upgradeStarterBootstrapFromVersion(s sessionapi.Session, bootstrapFile *starterBootstrapFileSpec, storedVersion int64) error {
 	if !needStarterBootstrapUpgrade(storedVersion, bootstrapFile) {
 		return nil
 	}
 
+	// Upgrade SQL is committed statement by statement and must be idempotent for startup retries.
 	for _, upgrade := range bootstrapFile.pendingUpgrades(storedVersion) {
 		logutil.BgLogger().Info("running starter bootstrap file upgrade",
 			zap.Int64("storedVersion", storedVersion),
 			zap.Int64("upgradeVersion", upgrade.Version),
 			zap.Int64("targetVersion", bootstrapFile.Version))
-		if err := executeStarterBootstrapSQLBlocks(s, upgrade.SQL); err != nil {
+		if err := executeStarterBootstrapSQLBlocks(s, upgrade.SQLBlocks); err != nil {
 			return errors.Annotatef(err, "upgrade starter bootstrap file to version %d", upgrade.Version)
 		}
 	}
-	if err := updateStarterBootstrapVersion(s, bootstrapFile.Version); err != nil {
-		return err
-	}
-
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
-	_, err := s.ExecuteInternal(ctx, "COMMIT")
-	if err == nil {
-		return nil
-	}
-	sleepTime := time.Second
-	logutil.BgLogger().Info("update starter bootstrap file version failed",
-		zap.Error(err), zap.Duration("sleeping time", sleepTime))
-	time.Sleep(sleepTime)
-	latestVersion, err1 := getStarterBootstrapVersion(s)
-	if err1 != nil {
-		return errors.Annotate(err1, "check starter bootstrap file version after commit failure")
-	}
-	if latestVersion >= bootstrapFile.Version {
-		return nil
-	}
-	return errors.Annotatef(err, "upgrade starter bootstrap file from version %d to %d", storedVersion, bootstrapFile.Version)
+	return updateStarterBootstrapVersion(s, bootstrapFile.Version)
 }
 
-func (m *starterBootstrapFile) pendingUpgrades(storedVersion int64) []starterBootstrapFileUpgrade {
+func (m *starterBootstrapFileSpec) pendingUpgrades(storedVersion int64) []starterBootstrapUpgradeSpec {
 	idx := sort.Search(len(m.Upgrades), func(i int) bool {
 		return m.Upgrades[i].Version > storedVersion
 	})
@@ -428,15 +393,16 @@ func executeStarterBootstrapSQLBlocks(s sessionapi.Session, blocks []string) err
 		if err != nil {
 			return errors.Annotatef(err, "parse SQL block %d", blockIdx)
 		}
-		for stmtIdx, stmt := range stmts {
-			rs, err := s.ExecuteStmt(ctx, stmt)
-			if err != nil {
-				return errors.Annotatef(err, "execute SQL block %d statement %d", blockIdx, stmtIdx)
-			}
-			if rs != nil {
-				if err := rs.Close(); err != nil {
-					return errors.Annotate(err, "close SQL result")
-				}
+		if len(stmts) != 1 {
+			return errors.Errorf("SQL block %d must contain exactly one statement", blockIdx)
+		}
+		rs, err := s.ExecuteStmt(ctx, stmts[0])
+		if err != nil {
+			return errors.Annotatef(err, "execute SQL block %d", blockIdx)
+		}
+		if rs != nil {
+			if err := rs.Close(); err != nil {
+				return errors.Annotate(err, "close SQL result")
 			}
 		}
 	}

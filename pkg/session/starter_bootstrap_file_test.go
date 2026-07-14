@@ -50,6 +50,8 @@ func TestStarterBootstrapFileValidationAndRendering(t *testing.T) {
 	require.Len(t, bootstrapFile.Upgrades, 2)
 	require.Equal(t, int64(2), bootstrapFile.Upgrades[0].Version)
 	require.Equal(t, int64(3), bootstrapFile.Upgrades[1].Version)
+	require.Len(t, bootstrapFile.BootstrapSQLBlocks, 1)
+	require.Len(t, bootstrapFile.Upgrades[1].SQLBlocks, 1)
 	require.Equal(t, `SELECT 'ks\'name.root'`, renderStarterBootstrapSQL(`SELECT '<keyspace>.root'`))
 }
 
@@ -144,7 +146,7 @@ func TestStarterBootstrapFileLoadInStarter(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, bootstrapFile)
 	require.Equal(t, int64(1), bootstrapFile.Version)
-	require.Equal(t, []string{"SELECT 1"}, bootstrapFile.Bootstrap)
+	require.Equal(t, []string{"SELECT 1"}, bootstrapFile.BootstrapSQLBlocks)
 }
 
 func TestShouldMarkStarterBootstrapPending(t *testing.T) {
@@ -195,6 +197,8 @@ func TestStarterBootstrapFileBootstrapBlocks(t *testing.T) {
 		"INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('starter_file_bootstrap_test', '<keyspace>.boot', 'test')",
 	})
 	require.NoError(t, err)
+	err = executeStarterBootstrapSQLBlocks(se, []string{"SELECT 1; SELECT 2"})
+	require.ErrorContains(t, err, "SQL block 0 must contain exactly one statement")
 	require.NoError(t, updateStarterBootstrapVersion(se, 2))
 	MustExec(t, se, "COMMIT")
 
@@ -299,6 +303,45 @@ func TestStarterBootstrapFileUpgrade(t *testing.T) {
 	require.Equal(t, "3", mustGetTiDBVarForStarterFile(t, se, starterBootstrapVersionVar))
 	require.Equal(t, "test_keyspace.v2", mustGetTiDBVarForStarterFile(t, se, "starter_file_upgrade_v2"))
 	require.Equal(t, "test_keyspace.v3", mustGetTiDBVarForStarterFile(t, se, "starter_file_upgrade_v3"))
+}
+
+func TestStarterBootstrapFileUpgradePartialFailure(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("classic mock store is sufficient for bootstrap file upgrade execution")
+	}
+
+	store, dom := CreateStoreAndBootstrap(t)
+	t.Cleanup(func() {
+		dom.Close()
+		require.NoError(t, store.Close())
+	})
+	se := CreateSessionAndSetID(t, store)
+	t.Cleanup(func() {
+		se.Close()
+	})
+	require.NoError(t, updateStarterBootstrapVersion(se, 1))
+	MustExec(t, se, "COMMIT")
+
+	bootstrapFile, err := parseStarterBootstrapFile([]byte(`{
+		"version": 2,
+		"upgrades": [{
+			"version": 2,
+			"sql": [
+				"INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('starter_file_upgrade_partial_failure', 'first', 'test')",
+				"INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('starter_file_upgrade_partial_failure', 'second', 'test')"
+			]
+		}]
+	}`))
+	require.NoError(t, err)
+	err = upgradeStarterBootstrapFromVersion(se, bootstrapFile, 1)
+	require.Error(t, err)
+
+	checkSe := CreateSessionAndSetID(t, store)
+	t.Cleanup(func() {
+		checkSe.Close()
+	})
+	require.Equal(t, "1", mustGetTiDBVarForStarterFile(t, checkSe, starterBootstrapVersionVar))
+	require.Equal(t, "first", mustGetTiDBVarForStarterFile(t, checkSe, "starter_file_upgrade_partial_failure"))
 }
 
 func TestStarterBootstrapFileUpgradeSkipsOlderFile(t *testing.T) {
