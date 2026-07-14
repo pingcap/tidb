@@ -711,9 +711,7 @@ func overrideConfig(cfg *config.Config, fset *flag.FlagSet) {
 		actualFlags[f.Name] = true
 	})
 	if actualFlags[nmStarterParams] && cfg.DeployMode == deploymode.Starter {
-		params, err := parseStarterAdditionalParams(getStarterAdditionalParams())
-		terror.MustNil(err)
-		cfg.StarterParams.PodNamespace = params.podNamespace
+		terror.MustNil(applyStarterAdditionalParams(cfg, getStarterAdditionalParams()))
 	}
 
 	// Base
@@ -1406,6 +1404,18 @@ func parseStarterAdditionalParams(raw string) (starterParams, error) {
 	return params, nil
 }
 
+func applyStarterAdditionalParams(cfg *config.Config, raw string) error {
+	params, err := parseStarterAdditionalParams(raw)
+	if err != nil {
+		return err
+	}
+	cfg.StarterParams.ManagerNamespace = params.managerNamespace
+	cfg.StarterParams.PodName = params.podName
+	cfg.StarterParams.PodIP = params.podIP
+	cfg.StarterParams.PodNamespace = params.podNamespace
+	return nil
+}
+
 func getStarterAdditionalParams() string {
 	if starterAdditionalParams == nil {
 		return ""
@@ -1429,23 +1439,18 @@ func createMgrClientForStarter() (tidbmanager.Client, error) {
 		return nil, err
 	}
 
-	params, err := parseStarterAdditionalParams(getStarterAdditionalParams())
-	if err != nil {
-		return nil, err
-	}
-
 	managerAddr := cfg.StarterParams.ManagerAddr
 	if managerAddr == "" {
-		managerNs := params.managerNamespace
+		managerNs := cfg.StarterParams.ManagerNamespace
 		if managerNs == "" {
 			return nil, fmt.Errorf("manager notifier requires manager-addr config or manager-namespace in --starter-additional-params")
 		}
 		managerAddr = fmt.Sprintf("manager-server.%s.svc:8000", managerNs)
 	}
 
-	podName := params.podName
-	podIP := params.podIP
-	namespace := params.podNamespace
+	podName := cfg.StarterParams.PodName
+	podIP := cfg.StarterParams.PodIP
+	namespace := cfg.StarterParams.PodNamespace
 	if podName == "" || podIP == "" || namespace == "" {
 		return nil, fmt.Errorf("manager notifier requires --starter-additional-params with pod-name, pod-ip and pod-namespace: pod-name=%q, pod-ip=%q, pod-namespace=%q",
 			podName, podIP, namespace)
