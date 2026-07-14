@@ -1101,55 +1101,57 @@ func TestUpgradeVersion260MaskingPolicy(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
-	const fromVersion = 254
+	for _, fromVersion := range []int{189, 254} {
+		t.Run(fmt.Sprintf("from_version_%d", fromVersion), func(t *testing.T) {
+			store, dom := session.CreateStoreAndBootstrap(t)
+			defer func() { require.NoError(t, store.Close()) }()
 
-	store, dom := session.CreateStoreAndBootstrap(t)
-	defer func() { require.NoError(t, store.Close()) }()
+			se := session.CreateSessionAndSetID(t, store)
+			txn, err := store.Begin()
+			require.NoError(t, err)
+			m := meta.NewMutator(txn)
+			err = m.FinishBootstrap(int64(fromVersion))
+			require.NoError(t, err)
+			err = txn.Commit(context.Background())
+			require.NoError(t, err)
+			revertVersionAndVariables(t, se, fromVersion)
 
-	seV254 := session.CreateSessionAndSetID(t, store)
-	txn, err := store.Begin()
-	require.NoError(t, err)
-	m := meta.NewMutator(txn)
-	err = m.FinishBootstrap(int64(fromVersion))
-	require.NoError(t, err)
-	err = txn.Commit(context.Background())
-	require.NoError(t, err)
-	revertVersionAndVariables(t, seV254, fromVersion)
+			is := dom.InfoSchema()
+			policyTbl, err := is.TableByName(context.Background(), ast.NewCIStr("mysql"), ast.NewCIStr("tidb_masking_policy"))
+			require.NoError(t, err)
+			policyDBID := policyTbl.Meta().DBID
+			policyTblID := policyTbl.Meta().ID
 
-	is := dom.InfoSchema()
-	policyTbl, err := is.TableByName(context.Background(), ast.NewCIStr("mysql"), ast.NewCIStr("tidb_masking_policy"))
-	require.NoError(t, err)
-	policyDBID := policyTbl.Meta().DBID
-	policyTblID := policyTbl.Meta().ID
+			txn, err = store.Begin()
+			require.NoError(t, err)
+			m = meta.NewMutator(txn)
+			err = m.DropTableOrView(policyDBID, policyTblID)
+			require.NoError(t, err)
+			exists, err := m.CheckTableExists(policyDBID, policyTblID)
+			require.NoError(t, err)
+			require.False(t, exists)
+			err = txn.Commit(context.Background())
+			require.NoError(t, err)
 
-	txn, err = store.Begin()
-	require.NoError(t, err)
-	m = meta.NewMutator(txn)
-	err = m.DropTableOrView(policyDBID, policyTblID)
-	require.NoError(t, err)
-	exists, err := m.CheckTableExists(policyDBID, policyTblID)
-	require.NoError(t, err)
-	require.False(t, exists)
-	err = txn.Commit(context.Background())
-	require.NoError(t, err)
+			store.SetOption(session.StoreBootstrappedKey, nil)
+			ver, err := session.GetBootstrapVersion(se)
+			require.NoError(t, err)
+			require.Equal(t, int64(fromVersion), ver)
+			dom.Close()
 
-	store.SetOption(session.StoreBootstrappedKey, nil)
-	ver, err := session.GetBootstrapVersion(seV254)
-	require.NoError(t, err)
-	require.Equal(t, int64(fromVersion), ver)
-	dom.Close()
+			newVer, err := session.BootstrapSession(store)
+			require.NoError(t, err)
+			defer newVer.Close()
 
-	newVer, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-	defer newVer.Close()
+			seLatestV := session.CreateSessionAndSetID(t, store)
+			ver, err = session.GetBootstrapVersion(seLatestV)
+			require.NoError(t, err)
+			require.Equal(t, session.CurrentBootstrapVersion, ver)
 
-	seLatestV := session.CreateSessionAndSetID(t, store)
-	ver, err = session.GetBootstrapVersion(seLatestV)
-	require.NoError(t, err)
-	require.Equal(t, session.CurrentBootstrapVersion, ver)
-
-	tk := testkit.NewTestKit(t, store)
-	checkTiDBMaskingPolicyTableSchema(t, tk)
+			tk := testkit.NewTestKit(t, store)
+			checkTiDBMaskingPolicyTableSchema(t, tk)
+		})
+	}
 }
 
 func TestUpgradeWithAnalyzeColumnOptions(t *testing.T) {
@@ -1483,39 +1485,4 @@ func TestUpgradeVersion256PlanCacheSkipStatsOnBinding(t *testing.T) {
 	require.Equal(t, 1, req.NumRows())
 	row := req.GetRow(0)
 	require.Equal(t, "ON", row.GetString(0))
-}
-
-func TestDefaultAnalyzeBackgroundOnlyAffectsFreshBootstrap(t *testing.T) {
-	store, dom := session.CreateStoreAndBootstrap(t)
-	defer func() { require.NoError(t, store.Close()) }()
-
-	defaultGroup, ok := dom.InfoSchema().ResourceGroupByName(ast.NewCIStr("default"))
-	require.True(t, ok)
-	require.NotNil(t, defaultGroup.Background)
-	require.Equal(t, []string{kv.InternalTxnStats}, defaultGroup.Background.JobTypes)
-	require.Zero(t, defaultGroup.Background.ResourceUtilLimit)
-
-	// Next-gen has no upgrade path in its first release; skip the upgrade-only check below.
-	if kerneltype.IsNextGen() {
-		dom.Close()
-		return
-	}
-
-	upgradeFromVersion := session.CurrentBootstrapVersion - 1
-	txn, err := store.Begin()
-	require.NoError(t, err)
-	m := meta.NewMutator(txn)
-	require.NoError(t, m.DropResourceGroup(meta.DefaultGroupMeta4Test().ID))
-	require.NoError(t, m.FinishBootstrap(upgradeFromVersion))
-	require.NoError(t, txn.Commit(context.Background()))
-	store.SetOption(session.StoreBootstrappedKey, nil)
-	dom.Close()
-
-	domUpgraded, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-	defer domUpgraded.Close()
-	defaultGroup, ok = domUpgraded.InfoSchema().ResourceGroupByName(ast.NewCIStr("default"))
-	require.True(t, ok)
-	// The upgrade path should not backfill the fresh-bootstrap background setting.
-	require.Nil(t, defaultGroup.Background)
 }

@@ -35,7 +35,7 @@ const (
 	MinHistoryTaskPageSize = 1
 	// MaxHistoryTaskPageSize is the maximum page size for history task listing.
 	MaxHistoryTaskPageSize    = 200
-	historyTaskSummaryColumns = basicTaskColumns + `, t.start_time, t.state_update_time, t.end_time`
+	historyTaskSummaryColumns = basicTaskColumns + `, t.error, t.start_time, t.state_update_time, t.end_time`
 )
 
 // TransferSubtasks2HistoryWithSession transfer the selected subtasks into tidb_background_subtask_history table by taskID.
@@ -99,6 +99,7 @@ func (mgr *TaskManager) TransferTasks2History(ctx context.Context, tasks []*prot
 // HistoryTaskSummary contains summary fields for one history task.
 type HistoryTaskSummary struct {
 	*proto.TaskBase
+	Error           string
 	StartTime       time.Time
 	StateUpdateTime time.Time
 	EndTime         time.Time
@@ -190,14 +191,17 @@ func row2HistoryTaskSummary(r chunk.Row) *HistoryTaskSummary {
 	item := &HistoryTaskSummary{
 		TaskBase: row2TaskBasic(r),
 	}
-	if !r.IsNull(12) {
-		item.StartTime, _ = r.GetTime(12).GoTime(time.Local)
+	if taskErr := row2TaskError(r, 12); taskErr != nil {
+		item.Error = taskErr.Error()
 	}
 	if !r.IsNull(13) {
-		item.StateUpdateTime, _ = r.GetTime(13).GoTime(time.Local)
+		item.StartTime, _ = r.GetTime(13).GoTime(time.Local)
 	}
 	if !r.IsNull(14) {
-		item.EndTime, _ = r.GetTime(14).GoTime(time.Local)
+		item.StateUpdateTime, _ = r.GetTime(14).GoTime(time.Local)
+	}
+	if !r.IsNull(15) {
+		item.EndTime, _ = r.GetTime(15).GoTime(time.Local)
 	}
 	return item
 }

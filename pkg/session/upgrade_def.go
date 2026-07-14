@@ -512,6 +512,9 @@ const (
 	// normalization starts skipping redundant parentheses for
 	// https://github.com/pingcap/tidb/issues/67363.
 	version262 = 262
+
+	// version263 backfills analyze default bucket and TopN global variables.
+	version263 = 263
 )
 
 // versionedUpgradeFunction is a struct that holds the upgrade function related
@@ -525,7 +528,7 @@ type versionedUpgradeFunction struct {
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version262
+var currentBootstrapVersion int64 = version263
 
 var (
 	// this list must be ordered by version in ascending order, and the function
@@ -712,6 +715,7 @@ var (
 		{version: version260, fn: upgradeToVer260},
 		{version: version261, fn: upgradeToVer261},
 		{version: version262, fn: upgradeToVer262},
+		{version: version263, fn: upgradeToVer263},
 	}
 )
 
@@ -2258,4 +2262,11 @@ func upgradeToVer262(s sessionapi.Session, _ int64) {
 		mustExecute(s, "UPDATE HIGH_PRIORITY mysql.bind_info SET original_sql=%?, sql_digest=%? WHERE _tidb_rowid=%?",
 			update.originalSQL, update.sqlDigest, update.rowID)
 	}
+}
+
+func upgradeToVer263(s sessionapi.Session, _ int64) {
+	// Fresh clusters materialize these rows during bootstrap, but upgraded clusters can miss them.
+	// Backfill only absent rows so @@global reads use defaults while preserving user-set values.
+	initGlobalVariableIfNotExists(s, vardef.TiDBAnalyzeDefaultNumBuckets, vardef.DefTiDBAnalyzeDefaultNumBuckets)
+	initGlobalVariableIfNotExists(s, vardef.TiDBAnalyzeDefaultNumTopN, vardef.DefTiDBAnalyzeDefaultNumTopN)
 }

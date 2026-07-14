@@ -309,6 +309,83 @@ func TestUpgradeToVer261BackfillsDefaultStringMatchSelectivity(t *testing.T) {
 	require.NoError(t, res.Close())
 }
 
+func TestUpgradeToVer263BackfillsAnalyzeDefaultOptions(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
+
+	analyzeDefaults := []struct {
+		name  string
+		value string
+	}{
+		{vardef.TiDBAnalyzeDefaultNumBuckets, fmt.Sprint(vardef.DefTiDBAnalyzeDefaultNumBuckets)},
+		{vardef.TiDBAnalyzeDefaultNumTopN, fmt.Sprint(vardef.DefTiDBAnalyzeDefaultNumTopN)},
+	}
+
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	ver262 := version262
+	seV262 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(ver262))
+	require.NoError(t, err)
+	RevertVersionAndVariables(t, seV262, ver262)
+
+	for _, variable := range analyzeDefaults {
+		MustExec(t, seV262, fmt.Sprintf(
+			"delete from mysql.GLOBAL_VARIABLES where variable_name='%s'",
+			variable.name,
+		))
+	}
+	err = txn.Commit(ctx)
+	require.NoError(t, err)
+	store.SetOption(StoreBootstrappedKey, nil)
+
+	for _, variable := range analyzeDefaults {
+		res := MustExecToRecodeSet(t, seV262, fmt.Sprintf(
+			"select * from mysql.GLOBAL_VARIABLES where variable_name='%s'",
+			variable.name,
+		))
+		chk := res.NewChunk(nil)
+		require.NoError(t, res.Next(ctx, chk))
+		require.Equal(t, 0, chk.NumRows())
+		require.NoError(t, res.Close())
+	}
+
+	dom.Close()
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err := GetBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+
+	for _, variable := range analyzeDefaults {
+		res := MustExecToRecodeSet(t, seCurVer, fmt.Sprintf(
+			"select * from mysql.GLOBAL_VARIABLES where variable_name='%s'",
+			variable.name,
+		))
+		chk := res.NewChunk(nil)
+		require.NoError(t, res.Next(ctx, chk))
+		require.Equal(t, 1, chk.NumRows())
+		require.Equal(t, variable.value, chk.GetRow(0).GetString(1))
+		require.NoError(t, res.Close())
+
+		res = MustExecToRecodeSet(t, seCurVer, fmt.Sprintf("select cast(@@global.%s as char)", variable.name))
+		chk = res.NewChunk(nil)
+		require.NoError(t, res.Next(ctx, chk))
+		require.Equal(t, 1, chk.NumRows())
+		require.Equal(t, variable.value, chk.GetRow(0).GetString(0))
+		require.NoError(t, res.Close())
+	}
+}
+
 func insertBindingWithOldDigest(t *testing.T, se sessionapi.Session, bindSQL, createTime, updateTime, planDigest string) string {
 	originalSQL, sqlDigest := normalizeBindingDigestBeforeVer262(t, bindSQL, "test")
 	MustExec(t, se, `insert into mysql.bind_info

@@ -254,6 +254,17 @@ func (svr *Server) KvPessimisticLock(ctx context.Context, req *kvrpcpb.Pessimist
 			failpoint.Return(&kvrpcpb.PessimisticLockResponse{Errors: []*kvrpcpb.KeyError{convertToKeyError(err)}}, nil)
 		}
 	})
+	failpoint.Inject("pessimisticLockReturnDeadlock", func(val failpoint.Value) {
+		if val.(bool) && len(req.Mutations) > 0 {
+			key := req.Mutations[0].Key
+			err := &kverrors.ErrDeadlock{
+				LockKey:         key,
+				LockTS:          req.StartVersion + 1,
+				DeadlockKeyHash: keysToHashVals(key)[0],
+			}
+			failpoint.Return(&kvrpcpb.PessimisticLockResponse{Errors: []*kvrpcpb.KeyError{convertToKeyError(err)}}, nil)
+		}
+	})
 
 	reqCtx, err := newRequestCtx(svr, req.Context, "PessimisticLock")
 	if err != nil {

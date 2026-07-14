@@ -8,6 +8,7 @@ go_library(
         "conflict_resolution.go",
         "encode_and_sort_operator.go",
         "job.go",
+        "job_doc.go",
         "metrics.go",
         "planner.go",
         "proto.go",

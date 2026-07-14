@@ -1414,12 +1414,19 @@ func (cc *clientConn) addQueryMetrics(cmd byte, startTime time.Time, err error) 
 	if stmtType != "" {
 		sqlType = stmtType
 	}
+	execDetails := vars.StmtCtx.GetExecDetails()
 
 	for _, dbName := range session.GetDBNames(vars) {
 		metrics.QueryDurationHistogram.WithLabelValues(sqlType, dbName, vars.StmtCtx.ResourceGroupName).Observe(cost.Seconds())
-		metrics.QueryRPCHistogram.WithLabelValues(sqlType, dbName).Observe(float64(vars.StmtCtx.GetExecDetails().RequestCount))
-		if vars.StmtCtx.GetExecDetails().ScanDetail != nil {
-			metrics.QueryProcessedKeyHistogram.WithLabelValues(sqlType, dbName).Observe(float64(vars.StmtCtx.GetExecDetails().ScanDetail.ProcessedKeys))
+		metrics.QueryRPCHistogram.WithLabelValues(sqlType, dbName).Observe(float64(execDetails.RequestCount))
+		if execDetails.ScanDetail != nil {
+			metrics.QueryProcessedKeyHistogram.WithLabelValues(sqlType, dbName).Observe(float64(execDetails.ScanDetail.ProcessedKeys))
+			iaStats := execdetails.GetIARemoteReadSegmentStats(execDetails.ScanDetail)
+			metrics.IARemoteReadSegmentCount.WithLabelValues(sqlType, dbName).Add(float64(iaStats.Count))
+			metrics.IARemoteReadSegmentSize.WithLabelValues(sqlType, dbName).Add(float64(iaStats.Bytes))
+			if iaStats.WaitTime > 0 {
+				metrics.IARemoteReadSegmentWaitDuration.WithLabelValues(sqlType, dbName).Observe(iaStats.WaitTime.Seconds())
+			}
 		}
 	}
 }
@@ -1627,18 +1634,11 @@ func (cc *clientConn) useDB(ctx context.Context, db string) (node ast.StmtNode, 
 
 func (cc *clientConn) flush(ctx context.Context) error {
 	var (
-		stmtDetail *execdetails.StmtExecDetails
-		startTime  time.Time
+		stmtDetail = stmtExecDetailsFromContext(ctx)
+		startTime  = beginWriteSQLRespDuration(stmtDetail)
 	)
-	if stmtDetailRaw := ctx.Value(execdetails.StmtExecDetailKey); stmtDetailRaw != nil {
-		//nolint:forcetypeassert
-		stmtDetail = stmtDetailRaw.(*execdetails.StmtExecDetails)
-		startTime = time.Now()
-	}
 	defer func() {
-		if stmtDetail != nil {
-			stmtDetail.WriteSQLRespDuration += time.Since(startTime)
-		}
+		finishWriteSQLRespDuration(stmtDetail, &startTime)
 		trace.StartRegion(ctx, "FlushClientConn").End()
 		if ctx := cc.getCtx(); ctx != nil && ctx.WarningCount() > 0 {
 			for _, err := range ctx.GetWarnings() {
@@ -1656,6 +1656,29 @@ func (cc *clientConn) flush(ctx context.Context) error {
 		}
 	})
 	return cc.pkt.Flush()
+}
+
+func stmtExecDetailsFromContext(ctx context.Context) *execdetails.StmtExecDetails {
+	stmtDetailRaw := ctx.Value(execdetails.StmtExecDetailKey)
+	if stmtDetailRaw == nil {
+		return nil
+	}
+	//nolint:forcetypeassert
+	return stmtDetailRaw.(*execdetails.StmtExecDetails)
+}
+
+func beginWriteSQLRespDuration(stmtDetail *execdetails.StmtExecDetails) time.Time {
+	if stmtDetail == nil {
+		return time.Time{}
+	}
+	return time.Now()
+}
+
+func finishWriteSQLRespDuration(stmtDetail *execdetails.StmtExecDetails, startTime *time.Time) {
+	if stmtDetail != nil && !startTime.IsZero() {
+		stmtDetail.WriteSQLRespDuration += time.Since(*startTime)
+		*startTime = time.Time{}
+	}
 }
 
 func (cc *clientConn) writeOK(ctx context.Context) error {
@@ -2513,12 +2536,7 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 	firstNext := true
 	validNextCount := 0
 	var start time.Time
-	var stmtDetail *execdetails.StmtExecDetails
-	stmtDetailRaw := ctx.Value(execdetails.StmtExecDetailKey)
-	if stmtDetailRaw != nil {
-		//nolint:forcetypeassert
-		stmtDetail = stmtDetailRaw.(*execdetails.StmtExecDetails)
-	}
+	stmtDetail := stmtExecDetailsFromContext(ctx)
 	totalRows := 0
 	defer func() {
 		cells := int64(totalRows) * int64(columnCount)
@@ -2532,6 +2550,9 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 		if ruv2Metrics != nil {
 			ruv2Metrics.AddResultChunkCells(cells)
 		}
+	}()
+	defer func() {
+		finishWriteSQLRespDuration(stmtDetail, &start)
 	}()
 	for {
 		failpoint.Inject("fetchNextErr", func(value failpoint.Value) {
@@ -2559,9 +2580,7 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 			// Otherwise, we will get incorrect columns info.
 			columns = rs.Columns()
 			columnCount = len(columns)
-			if stmtDetail != nil {
-				start = time.Now()
-			}
+			start = beginWriteSQLRespDuration(stmtDetail)
 			if err = cc.writeColumnInfo(columns); err != nil {
 				return false, err
 			}
@@ -2571,9 +2590,7 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 					return false, err
 				}
 			}
-			if stmtDetail != nil {
-				stmtDetail.WriteSQLRespDuration += time.Since(start)
-			}
+			finishWriteSQLRespDuration(stmtDetail, &start)
 			gotColumnInfo = true
 		}
 		rowCount := req.NumRows()
@@ -2584,9 +2601,7 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 		validNextCount++
 		firstNext = false
 		reg := trace.StartRegion(ctx, "WriteClientConn")
-		if stmtDetail != nil {
-			start = time.Now()
-		}
+		start = beginWriteSQLRespDuration(stmtDetail)
 		for i := range rowCount {
 			data = data[0:4]
 			if binary {
@@ -2604,22 +2619,16 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 			}
 		}
 		reg.End()
-		if stmtDetail != nil {
-			stmtDetail.WriteSQLRespDuration += time.Since(start)
-		}
+		finishWriteSQLRespDuration(stmtDetail, &start)
 	}
 	if err := rs.Finish(); err != nil {
 		return false, err
 	}
 
-	if stmtDetail != nil {
-		start = time.Now()
-	}
+	start = beginWriteSQLRespDuration(stmtDetail)
 
 	err := cc.writeEOF(ctx, serverStatus)
-	if stmtDetail != nil {
-		stmtDetail.WriteSQLRespDuration += time.Since(start)
-	}
+	finishWriteSQLRespDuration(stmtDetail, &start)
 	return false, err
 }
 
@@ -2635,18 +2644,15 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs resultset
 	)
 	data := cc.alloc.AllocWithLen(4, 1024)
 	writtenRows := 0
-	stmtDetailRaw := ctx.Value(execdetails.StmtExecDetailKey)
-	if stmtDetailRaw != nil {
-		//nolint:forcetypeassert
-		stmtDetail = stmtDetailRaw.(*execdetails.StmtExecDetails)
-	}
+	stmtDetail = stmtExecDetailsFromContext(ctx)
 	defer func() {
 		cells := int64(writtenRows) * int64(len(rs.Columns()))
 		resultset.ReportCursorRUV2Delta(rs, cells)
 	}()
-	if stmtDetail != nil {
-		start = time.Now()
-	}
+	defer func() {
+		finishWriteSQLRespDuration(stmtDetail, &start)
+	}()
+	start = beginWriteSQLRespDuration(stmtDetail)
 
 	iter := rs.GetRowIterator()
 	// send the rows to the client according to fetchSize.
@@ -2677,19 +2683,15 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs resultset
 	}
 
 	// don't include the time consumed by `cl.OnFetchReturned()` in the `WriteSQLRespDuration`
-	if stmtDetail != nil {
-		stmtDetail.WriteSQLRespDuration += time.Since(start)
-	}
+	finishWriteSQLRespDuration(stmtDetail, &start)
 
 	if cl, ok := rs.(resultset.FetchNotifier); ok {
 		cl.OnFetchReturned()
 	}
 
-	start = time.Now()
+	start = beginWriteSQLRespDuration(stmtDetail)
 	err = cc.writeEOF(ctx, serverStatus)
-	if stmtDetail != nil {
-		stmtDetail.WriteSQLRespDuration += time.Since(start)
-	}
+	finishWriteSQLRespDuration(stmtDetail, &start)
 	return err
 }
 
