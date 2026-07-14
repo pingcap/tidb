@@ -4192,6 +4192,8 @@ func InitDDLTables(store kv.Storage) error {
 // initBootstrapDependentTables creates system tables that classic kernel upgrade
 // DDL may consult before the ordinary upgrade DDL reaches their creation step.
 func initBootstrapDependentTables(store kv.Storage, ver int64) error {
+	// This is only for classic upgrades from below version260. Fresh bootstrap and
+	// next-gen create the table elsewhere. After version260, the table may have been renamed.
 	if !kerneltype.IsClassic() || ver <= notBootstrapped || ver >= version260 || currentBootstrapVersion < version260 {
 		return nil
 	}
@@ -4214,6 +4216,8 @@ func createAndSplitTablesIfNotExists(
 	dbID int64,
 	tables []TableBasicInfo,
 ) error {
+	// InitDDLTables creates tables and updates its version in the same transaction.
+	// This helper has no such version, so a retry must skip tables created earlier.
 	existingTables, err := t.ListTables(ctx, dbID)
 	if err != nil {
 		return errors.Trace(err)
@@ -4672,6 +4676,8 @@ func runInBootstrapSession(store kv.Storage, ver int64) error {
 			logutil.BgLogger().Fatal("[upgrade] get owner lock failed", zap.Error(err))
 		}
 		defer releaseFn()
+		// Recheck the version and create the table under the upgrade lock so that only
+		// one TiDB can do this at a time.
 		currVer := mustGetStoreBootstrapVersion(store)
 		if currVer >= currentBootstrapVersion {
 			// It is already bootstrapped/upgraded by another TiDB instance, but
