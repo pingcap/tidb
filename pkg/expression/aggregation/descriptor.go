@@ -203,7 +203,14 @@ func (a *AggFuncDesc) Split(ordinal []int) (partialAggDesc, finalAggDesc *AggFun
 		args := make([]expression.Expression, 0, 1)
 		argRetTp := a.RetTp
 		if a.Name == ast.AggFuncMaxCount || a.Name == ast.AggFuncMinCount {
-			// max_count/min_count final phase compares partial extrema, so keep the original arg type.
+			// AggFuncDesc.Split is used by executor-internal parallel HashAgg.
+			// Its final worker merges internal PartialResult objects, so this
+			// descriptor keeps one slot with the original value type for building
+			// the final AggFunc and for spill/restore.
+			//
+			// This is not the row-based two-phase shape of max_count/min_count.
+			// A row-based final/partial2 max_count/min_count must consume
+			// [count, extrema value], which is currently rejected by the executor.
 			argRetTp = a.Args[0].GetType(nil).Clone()
 		}
 		args = append(args, &expression.Column{
