@@ -817,9 +817,8 @@ func (s *Server) onConn(conn *clientConn) {
 		terror.Log(conn.Close())
 		return
 	}
-	conn.logConnectionEvent(ctx, "login_success")
 
-	logutil.Logger(ctx).Debug("new connection", zap.String("remoteAddr", conn.bufReadConn.RemoteAddr().String()))
+	conn.logConnectionEvent(ctx, "login_success")
 
 	defer func() {
 		terror.Log(conn.Close())
@@ -853,7 +852,6 @@ func (s *Server) onConn(conn *clientConn) {
 	}
 
 	connectedTime := time.Now()
-	conn.logConnectionEvent(ctx, "connection_established")
 	conn.Run(ctx)
 	conn.logConnectionEvent(ctx, "connection_terminated")
 
@@ -877,8 +875,7 @@ func (cc *clientConn) logConnectionEvent(ctx context.Context, event string) {
 	logutil.Logger(ctx).Info("CONNECTION EVENT",
 		zap.String("event", event),
 		zap.Stringer("user", cc.getCtx().GetSessionVars().User),
-		zap.String("client_ip", cc.peerHost),
-		zap.String("client_port", cc.peerPort))
+		zap.String("remoteAddr", cc.bufReadConn.RemoteAddr().String()))
 }
 
 func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
