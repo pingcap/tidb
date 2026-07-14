@@ -167,6 +167,7 @@ go_test(
         "//pkg/planner/util",
         "//pkg/session",
         "//pkg/sessionctx/vardef",
+        "//pkg/store/mockstore",
         "//pkg/table",
         "//pkg/table/tables",
         "//pkg/tablecodec",

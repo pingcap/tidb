@@ -100,9 +100,9 @@ func (s *GlobalConfigTestSuite) TearDownSuite() {
 
 func TestMockPDServiceDiscovery(t *testing.T) {
 	re := require.New(t)
-	pdAddrs := []string{"invalid_pd_address", "127.0.0.1:2379", "http://172.32.21.32:2379"}
+	pdAddrs := []string{"invalid_pd_address", "127.0.0.1:2379", "http://172.32.21.32:2379", "unix://localhost:m0"}
 	for i, addr := range pdAddrs {
-		check := govalidator.IsURL(addr)
+		check := govalidator.IsURL(addr) || addr == "unix://localhost:m0"
 		if i > 0 {
 			re.True(check)
 		} else {
@@ -111,9 +111,21 @@ func TestMockPDServiceDiscovery(t *testing.T) {
 	}
 	sd := NewMockPDServiceDiscovery(pdAddrs)
 	clis := sd.GetAllServiceClients()
-	re.Len(clis, 2)
+	re.Len(clis, 3)
 	re.Equal(clis[0].GetURL(), "http://127.0.0.1:2379")
 	re.Equal(clis[1].GetURL(), "http://172.32.21.32:2379")
+	re.Equal(clis[2].GetURL(), "unix://localhost:m0")
+}
+
+func TestGetAllMembersUsesInjectedPDAddrs(t *testing.T) {
+	client := &pdClient{addrs: []string{"http://127.0.0.1:2379", "unix://localhost:m0"}}
+
+	resp, err := client.GetAllMembers(context.Background())
+	require.NoError(t, err)
+	require.Len(t, resp.GetMembers(), 2)
+	require.Equal(t, []string{"http://127.0.0.1:2379"}, resp.GetMembers()[0].GetClientUrls())
+	require.Equal(t, []string{"unix://localhost:m0"}, resp.GetMembers()[1].GetClientUrls())
+	require.Equal(t, resp.GetMembers()[0], resp.GetLeader())
 }
 
 func TestMockKeyspaceManager(t *testing.T) {

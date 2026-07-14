@@ -136,7 +136,7 @@ type mockPDServiceClient struct {
 }
 
 func newMockPDServiceClient(addr string) sd.ServiceClient {
-	if !strings.HasPrefix(addr, "http") {
+	if !strings.HasPrefix(addr, "http://") && !strings.HasPrefix(addr, "https://") && !strings.HasPrefix(addr, "unix://") {
 		addr = fmt.Sprintf("%s://%s", "http", addr)
 	}
 	return &mockPDServiceClient{addr: addr}
@@ -180,7 +180,7 @@ func NewMockPDServiceDiscovery(addrs []string) sd.ServiceDiscovery {
 	addresses := make([]string, 0)
 	clis := make([]sd.ServiceClient, 0)
 	for _, addr := range addrs {
-		if check := govalidator.IsURL(addr); !check {
+		if check := govalidator.IsURL(addr) || strings.HasPrefix(addr, "unix://"); !check {
 			continue
 		}
 		addresses = append(addresses, addr)
@@ -277,7 +277,18 @@ func (c *pdClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetO
 }
 
 func (c *pdClient) GetAllMembers(ctx context.Context) (*pdpb.GetMembersResponse, error) {
-	return nil, nil
+	resp := &pdpb.GetMembersResponse{}
+	for i, addr := range c.addrs {
+		member := &pdpb.Member{
+			MemberId:   uint64(i + 1),
+			ClientUrls: []string{addr},
+		}
+		resp.Members = append(resp.Members, member)
+		if resp.Leader == nil {
+			resp.Leader = member
+		}
+	}
+	return resp, nil
 }
 
 func (c *pdClient) ScatterRegions(ctx context.Context, regionsID []uint64, opts ...opt.RegionsOption) (*pdpb.ScatterRegionResponse, error) {

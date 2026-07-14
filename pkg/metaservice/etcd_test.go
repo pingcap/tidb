@@ -65,6 +65,21 @@ func TestGetPDAddrsPDOnlyClient(t *testing.T) {
 	httpAddrs, err := serviceClient.GetPDHttpAddrs(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, []string{"http://127.0.0.1:1111"}, httpAddrs)
+
+	unixPdCli := &mockPDClient{
+		members: []*pdpb.Member{{
+			ClientUrls: []string{"unix://localhost:m0"},
+		}},
+	}
+	unixServiceClient := newClient(nil, unixPdCli)
+
+	unixAddrs, err := unixServiceClient.GetPDAddrs(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []string{"unix://localhost:m0"}, unixAddrs)
+
+	unixHTTPAddrs, err := unixServiceClient.GetPDHttpAddrs(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []string{"unix://localhost:m0"}, unixHTTPAddrs)
 }
 
 func TestNewClientReturnsNilWithoutClients(t *testing.T) {
@@ -126,9 +141,10 @@ func TestParseURL(t *testing.T) {
 		{"https://[2001:db8::1]:443", "https://", "[2001:db8::1]:443", false},
 
 		// Unsuccessful test cases
-		{"ftp://example.com", "ftp://", "", true},              // Invalid prefix
-		{"unix://localhost:m0", "unix://", "", true},           // Unix schema is unsupported
-		{"unix://localhost", "unix://", "", true},              // Unix schema is unsupported
+		{"ftp://example.com", "ftp://", "", true}, // Invalid prefix
+		{"unix://localhost:m0", "unix://", "localhost:m0", false},
+		{"unix:///tmp/etcd.sock", "unix://", "/tmp/etcd.sock", false},
+		{"unix://", "unix://", "", true},
 		{"http://example.com:8080:extra", "http://", "", true}, // Extra part after port
 		{"https://:8080", "https://", "", true},                // Missing host
 		{"http://", "http://", "", true},                       // Incomplete URL

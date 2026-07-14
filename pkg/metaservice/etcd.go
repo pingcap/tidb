@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"strings"
 
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/keyspace"
@@ -172,7 +173,10 @@ func (n *client) GetPDAddrs(ctx context.Context) ([]string, error) {
 	return addrs, err
 }
 
-// GetPDAddrs returns the PD addresses from PD client.
+// GetPDAddrs returns dialable PD endpoints from PD members.
+// For http/https members, it returns host:port unless withSchema is true.
+// For unix members, it keeps the unix:// scheme because embedded etcd tests
+// publish unix:// endpoints and stripping the scheme would make them undialable.
 func GetPDAddrs(ctx context.Context, pdClient pd.Client, withSchema bool) ([]string, error) {
 	if pdClient == nil {
 		return nil, errors.New("PD client not found")
@@ -196,7 +200,7 @@ func GetPDAddrs(ctx context.Context, pdClient pd.Client, withSchema bool) ([]str
 					return nil, fmt.Errorf("parse client url from pd members %q: %w", member.ClientUrls[0], err)
 				}
 				var pdAddr string
-				if withSchema {
+				if withSchema || prefix == "unix://" {
 					pdAddr = prefix + hostPort // http://ip:port
 				} else {
 					pdAddr = hostPort // ip:port
@@ -212,8 +216,17 @@ func GetPDAddrs(ctx context.Context, pdClient pd.Client, withSchema bool) ([]str
 	}
 }
 
-// ParseURL parses the given URL to get the host:port.
+// ParseURL parses the given URL to get a dialable endpoint.
 func ParseURL(rawURL string) (prefix string, hostPort string, err error) {
+	if strings.HasPrefix(rawURL, "unix://") {
+		prefix = "unix://"
+		endpoint := strings.TrimPrefix(rawURL, prefix)
+		if endpoint == "" {
+			return "", "", invalidURLHostPortErr()
+		}
+		return prefix, endpoint, nil
+	}
+
 	u, parseErr := url.Parse(rawURL)
 	if parseErr != nil {
 		return "", "", invalidURLHostPortErr()
@@ -237,7 +250,7 @@ func ParseURL(rawURL string) (prefix string, hostPort string, err error) {
 }
 
 func invalidURLHostPortErr() error {
-	return fmt.Errorf("invalid URL format, expect host:port")
+	return fmt.Errorf("invalid URL format, expect host:port or unix:// endpoint")
 }
 
 // GetPDHttpAddrs is used to get PD http addrs.
