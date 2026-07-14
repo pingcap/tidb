@@ -871,7 +871,7 @@ func (s *Server) onConn(conn *clientConn) {
 }
 
 func (cc *clientConn) logConnectionEvent(ctx context.Context, event string) {
-	logutil.Logger(ctx).Info("CONNECTION EVENT",
+	logutil.Logger(ctx).Info("connection event",
 		zap.String("event", event),
 		zap.Stringer("user", cc.getCtx().GetSessionVars().User),
 		zap.String("remoteAddr", cc.bufReadConn.RemoteAddr().String()))
