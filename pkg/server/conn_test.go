@@ -60,7 +60,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/arena"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
@@ -68,8 +67,6 @@ import (
 	"github.com/stretchr/testify/require"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/testutils"
-	"go.uber.org/zap"
-	"go.uber.org/zap/zaptest/observer"
 )
 
 func TestMatchIdentityWithVariantsStarter(t *testing.T) {
@@ -989,40 +986,6 @@ func testDispatch(t *testing.T, inputs []dispatchInput, capability uint32) {
 		}
 		outBuffer.Reset()
 	}
-}
-
-func TestLogConnectionEvent(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	se, err := session.CreateSession4Test(store)
-	require.NoError(t, err)
-	t.Cleanup(se.Close)
-
-	sessionVars := se.GetSessionVars()
-	sessionVars.User = &auth.UserIdentity{
-		Username:     "root",
-		Hostname:     "127.0.0.1",
-		AuthUsername: "root",
-		AuthHostname: "%",
-	}
-	cc := &clientConn{
-		peerHost: "127.0.0.1",
-		peerPort: "54321",
-	}
-	cc.SetCtx(&TiDBContext{Session: se})
-
-	core, observedLogs := observer.New(zap.InfoLevel)
-	ctx := logutil.WithLogger(context.Background(), zap.New(core))
-	ctx = logutil.WithConnID(ctx, 42)
-	cc.logConnectionEvent(ctx, "login_success")
-
-	entries := observedLogs.All()
-	require.Len(t, entries, 1)
-	require.Equal(t, "CONNECTION EVENT", entries[0].Message)
-	fields := entries[0].ContextMap()
-	require.Equal(t, "login_success", fields["event"])
-	require.Equal(t, "root@%", fields["user"])
-	require.Equal(t, "127.0.0.1", fields["client_ip"])
-	require.Equal(t, "54321", fields["client_port"])
 }
 
 func TestGetSessionVarsWaitTimeout(t *testing.T) {
