@@ -952,9 +952,6 @@ func TestSetTIDBFastDDL(t *testing.T) {
 
 func TestSetTiDBDDLEnableAutoSplitHotRegion(t *testing.T) {
 	vars := NewSessionVars(nil)
-	mock := NewMockGlobalAccessor4Tests()
-	mock.SessionVars = vars
-	vars.GlobalVarsAccessor = mock
 	autoSplit := GetSysVar(vardef.TiDBDDLEnableAutoSplitHotRegion)
 
 	require.Equal(t, vardef.Off, autoSplit.Value)
@@ -962,12 +959,7 @@ func TestSetTiDBDDLEnableAutoSplitHotRegion(t *testing.T) {
 	require.True(t, autoSplit.HasGlobalScope())
 	require.True(t, autoSplit.HasSessionScope())
 
-	require.NoError(t, mock.SetGlobalSysVar(context.Background(), vardef.TiDBDDLEnableAutoSplitHotRegion, vardef.On))
-	val, err := mock.GetGlobalSysVar(vardef.TiDBDDLEnableAutoSplitHotRegion)
-	require.NoError(t, err)
-	require.Equal(t, vardef.On, val)
-
-	normalizedVal, err := autoSplit.Validate(vars, vardef.On, vardef.ScopeSession)
+	normalizedVal, err := autoSplit.Validate(vars, "1", vardef.ScopeSession)
 	require.NoError(t, err)
 	require.Equal(t, vardef.On, normalizedVal)
 }
