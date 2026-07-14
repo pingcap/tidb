@@ -18,12 +18,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
-	"net/url"
-	"strings"
 
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/keyspace"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
@@ -195,18 +193,11 @@ func GetPDAddrs(ctx context.Context, pdClient pd.Client, withSchema bool) ([]str
 		}
 		for _, member := range members.GetMembers() {
 			if len(member.ClientUrls) > 0 {
-				prefix, hostPort, err := ParseURL(member.ClientUrls[0])
+				endpoint, err := util.ParseServiceURL(member.ClientUrls[0])
 				if err != nil {
 					return nil, fmt.Errorf("parse client url from pd members %q: %w", member.ClientUrls[0], err)
 				}
-				var pdAddr string
-				if withSchema || prefix == "unix://" {
-					pdAddr = prefix + hostPort // http://ip:port
-				} else {
-					pdAddr = hostPort // ip:port
-				}
-
-				pdAddrs = append(pdAddrs, pdAddr)
+				pdAddrs = append(pdAddrs, endpoint.Endpoint(withSchema))
 			}
 		}
 		if len(pdAddrs) == 0 {
@@ -218,39 +209,11 @@ func GetPDAddrs(ctx context.Context, pdClient pd.Client, withSchema bool) ([]str
 
 // ParseURL parses the given URL to get a dialable endpoint.
 func ParseURL(rawURL string) (prefix string, hostPort string, err error) {
-	if strings.HasPrefix(rawURL, "unix://") {
-		prefix = "unix://"
-		endpoint := strings.TrimPrefix(rawURL, prefix)
-		if endpoint == "" {
-			return "", "", invalidURLHostPortErr()
-		}
-		return prefix, endpoint, nil
+	endpoint, err := util.ParseServiceURL(rawURL)
+	if err != nil {
+		return "", "", err
 	}
-
-	u, parseErr := url.Parse(rawURL)
-	if parseErr != nil {
-		return "", "", invalidURLHostPortErr()
-	}
-
-	switch u.Scheme {
-	case "http":
-		prefix = "http://"
-	case "https":
-		prefix = "https://"
-	default:
-		return "", "", fmt.Errorf("invalid URL prefix")
-	}
-
-	host, port, splitErr := net.SplitHostPort(u.Host)
-	if splitErr != nil || host == "" || port == "" {
-		return "", "", invalidURLHostPortErr()
-	}
-
-	return prefix, u.Host, nil
-}
-
-func invalidURLHostPortErr() error {
-	return fmt.Errorf("invalid URL format, expect host:port or unix:// endpoint")
+	return endpoint.SchemePrefix(), endpoint.Address(), nil
 }
 
 // GetPDHttpAddrs is used to get PD http addrs.

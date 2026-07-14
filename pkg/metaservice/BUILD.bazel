@@ -10,6 +10,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/keyspace",
+        "//pkg/util",
         "//pkg/util/etcd",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/keyspacepb",
