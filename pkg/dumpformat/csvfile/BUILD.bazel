@@ -17,6 +17,6 @@ go_test(
     srcs = ["csv_test.go"],
     embed = [":csvfile"],
     flaky = True,
-    shard_count = 5,
+    shard_count = 11,
     deps = ["@com_github_stretchr_testify//require"],
 )
