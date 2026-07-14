@@ -29,6 +29,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/clients/metastorage"
 	pderr "github.com/tikv/pd/client/errs"
 	"github.com/tikv/pd/client/opt"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
@@ -72,8 +73,8 @@ func (s *resourceGroupProviderStub) LoadResourceGroups(context.Context) ([]*rmpb
 	return nil, 0, nil
 }
 
-func (s *resourceGroupProviderStub) Watch(context.Context, []byte, ...opt.MetaStorageOption) (chan []*meta_storagepb.Event, error) {
-	return make(chan []*meta_storagepb.Event), nil
+func (s *resourceGroupProviderStub) Watch(context.Context, []byte, ...opt.MetaStorageOption) (chan *metastorage.WatchResponse, error) {
+	return make(chan *metastorage.WatchResponse), nil
 }
 
 func (s *resourceGroupProviderStub) Get(context.Context, []byte, ...opt.MetaStorageOption) (*meta_storagepb.GetResponse, error) {
