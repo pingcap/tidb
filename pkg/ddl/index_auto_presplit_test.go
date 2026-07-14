@@ -81,33 +81,12 @@ func TestPlanAutoSplitIndexRegionsFullRange(t *testing.T) {
 		sctx, fakeAutoSplitStatsProvider{tblInfo.ID: statsTbl}, tblInfo, idxInfo, cfg)
 	require.NoError(t, err)
 	require.Equal(t, 3, countSplitKeysForIndex(t, keys, idxInfo.ID))
-
-	partitionTblInfo, partitionIdxInfo := buildAutoSplitTestTableInfo()
-	partitionTblInfo.Partition = &model.PartitionInfo{
-		Enable: true,
-		Definitions: []model.PartitionDefinition{
-			{ID: 101, Name: ast.NewCIStr("p0")},
-			{ID: 102, Name: ast.NewCIStr("p1")},
-		},
-	}
-	for _, global := range []bool{false, true} {
-		partitionIdxInfo.Global = global
-		keys, reason, err := planAutoSplitIndexRegions(
-			sctx, nil, partitionTblInfo, partitionIdxInfo, cfg)
-		require.NoError(t, err)
-		require.Empty(t, keys)
-		require.Equal(t, "partitioned table", reason)
-	}
 }
 
 func TestPlanAutoSplitIndexRegionsTopN(t *testing.T) {
 	sctx := mock.NewContext()
 	tblInfo, idxInfo := buildAutoSplitTestTableInfo()
-	topN := statistics.NewTopN(3)
-	topN.AppendTopN(encodeAutoSplitIntDatum(t, sctx.GetSessionVars().StmtCtx.TimeZone(), 10), 11)
-	topN.AppendTopN(encodeAutoSplitIntDatum(t, sctx.GetSessionVars().StmtCtx.TimeZone(), 20), 50)
-	topN.AppendTopN(encodeAutoSplitIntDatum(t, sctx.GetSessionVars().StmtCtx.TimeZone(), 30), 40)
-	topN.Sort()
+	topN := buildAutoSplitTopN(t, sctx.GetSessionVars().StmtCtx.TimeZone(), []int64{10, 20, 30}, []uint64{11, 50, 40})
 	statsTbl := buildAutoSplitTestStats(tblInfo.ID, 100, 0, tblInfo.Columns[1], topN)
 	cfg := newAutoSplitTestConfig()
 	cfg.rowsPerRegion = 1_000
@@ -134,11 +113,7 @@ func TestPlanAutoSplitIndexRegionsTopN(t *testing.T) {
 		{"min count threshold", 10_000_000, []int64{60, 70}, []uint64{500_000, 400_000}, 60},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			topN := statistics.NewTopN(len(tc.values))
-			for i, value := range tc.values {
-				topN.AppendTopN(encodeAutoSplitIntDatum(t, sctx.GetSessionVars().StmtCtx.TimeZone(), value), tc.counts[i])
-			}
-			topN.Sort()
+			topN := buildAutoSplitTopN(t, sctx.GetSessionVars().StmtCtx.TimeZone(), tc.values, tc.counts)
 			statsTbl := buildAutoSplitTestStats(tblInfo.ID, tc.rowCount, 0, tblInfo.Columns[1], topN)
 			topNRows, err := buildAutoSplitTopNRows(sctx, statsTbl, topN, tblInfo.Columns[1], defaultCfg)
 			require.NoError(t, err)
@@ -152,6 +127,8 @@ func TestPlanAutoSplitIndexRegionsSkipUnreliableStats(t *testing.T) {
 	sctx := mock.NewContext()
 	tblInfo, idxInfo := buildAutoSplitTestTableInfo()
 	cfg := newAutoSplitTestConfig()
+	pseudoStats := buildAutoSplitTestStats(tblInfo.ID, 100, 0, tblInfo.Columns[1], nil)
+	pseudoStats.Pseudo = true
 
 	cases := []struct {
 		name     string
@@ -159,11 +136,10 @@ func TestPlanAutoSplitIndexRegionsSkipUnreliableStats(t *testing.T) {
 		reason   string
 	}{
 		{"missing stats", nil, "stats missing"},
-		{"pseudo stats", buildAutoSplitTestStats(tblInfo.ID, 100, 0, tblInfo.Columns[1], nil), "stats pseudo"},
+		{"pseudo stats", pseudoStats, "stats pseudo"},
 		{"outdated stats", buildAutoSplitTestStats(tblInfo.ID, 100, 80, tblInfo.Columns[1], nil), "stats outdated"},
 		{"small table", buildAutoSplitTestStats(tblInfo.ID, 5, 0, tblInfo.Columns[1], nil), "row count 5 below threshold 10"},
 	}
-	cases[1].statsTbl.Pseudo = true
 
 	for _, tc := range cases {
 		keys, reason, err := planAutoSplitIndexRegions(
@@ -171,6 +147,21 @@ func TestPlanAutoSplitIndexRegionsSkipUnreliableStats(t *testing.T) {
 		require.NoError(t, err, tc.name)
 		require.Empty(t, keys, tc.name)
 		require.Equal(t, tc.reason, reason, tc.name)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		global bool
+	}{
+		{"partitioned local index", false},
+		{"partitioned global index", true},
+	} {
+		partitionTblInfo, partitionIdxInfo := buildPartitionedAutoSplitTestTableInfo()
+		partitionIdxInfo.Global = tc.global
+		keys, reason, err := planAutoSplitIndexRegions(sctx, nil, partitionTblInfo, partitionIdxInfo, cfg)
+		require.NoError(t, err, tc.name)
+		require.Empty(t, keys, tc.name)
+		require.Equal(t, "partitioned table", reason, tc.name)
 	}
 }
 
@@ -198,6 +189,21 @@ func TestPreSplitIndexRegionsAutoGateAndManualOverride(t *testing.T) {
 		func(_ *autoSplitHotRegionConfig, setMinRows func(int)) {
 			setMinRows(25)
 		})
+	badTopN := statistics.NewTopN(1)
+	badTopN.AppendTopN([]byte{0xff}, 50)
+	badStatsTbl := buildAutoSplitTestStats(tblInfo.ID, 100, 0, tblInfo.Columns[1], badTopN)
+	capturedKeys = nil
+	err = preSplitIndexRegions(
+		context.Background(), sctx, nil, tblInfo, []*model.IndexInfo{idxInfo},
+		reorgMeta, args, fakeAutoSplitStatsProvider{tblInfo.ID: badStatsTbl}, true)
+	require.NoError(t, err)
+	require.Empty(t, capturedKeys)
+	require.Len(t, reorgMeta.AutoSplitHotRegionResults, 1)
+	result := reorgMeta.AutoSplitHotRegionResults[0]
+	require.Equal(t, "idx", result.IndexName)
+	require.Equal(t, model.AutoSplitHotRegionStatusFailed, result.Status)
+	require.Contains(t, result.Reason, "failed to build TopN split keys")
+
 	for _, tc := range []struct {
 		name   string
 		store  kv.Storage
@@ -242,13 +248,7 @@ func TestPreSplitIndexRegionsAutoGateAndManualOverride(t *testing.T) {
 	require.Equal(t, 3, countSplitKeysForIndex(t, capturedKeys, idxInfo.ID))
 	require.Empty(t, reorgMeta.AutoSplitHotRegionResults)
 
-	tblInfo.Partition = &model.PartitionInfo{
-		Enable: true,
-		Definitions: []model.PartitionDefinition{
-			{ID: 101, Name: ast.NewCIStr("p0")},
-			{ID: 102, Name: ast.NewCIStr("p1")},
-		},
-	}
+	tblInfo, idxInfo = buildPartitionedAutoSplitTestTableInfo()
 	capturedKeys = nil
 	err = preSplitIndexRegions(
 		context.Background(), sctx, nil, tblInfo, []*model.IndexInfo{idxInfo},
@@ -302,6 +302,15 @@ func buildAutoSplitTestTableInfo() (*model.TableInfo, *model.IndexInfo) {
 	return tblInfo, idxInfo
 }
 
+func buildPartitionedAutoSplitTestTableInfo() (*model.TableInfo, *model.IndexInfo) {
+	tblInfo, idxInfo := buildAutoSplitTestTableInfo()
+	tblInfo.Partition = &model.PartitionInfo{
+		Enable:      true,
+		Definitions: []model.PartitionDefinition{{ID: 101, Name: ast.NewCIStr("p0")}, {ID: 102, Name: ast.NewCIStr("p1")}},
+	}
+	return tblInfo, idxInfo
+}
+
 func buildAutoSplitTestStats(
 	physicalID int64,
 	rowCount int64,
@@ -331,6 +340,17 @@ func buildAutoSplitTestStats(
 		LastAnalyzeVersion:    1,
 		ColAndIdxExistenceMap: existenceMap,
 	}
+}
+
+func buildAutoSplitTopN(t *testing.T, loc *time.Location, values []int64, counts []uint64) *statistics.TopN {
+	t.Helper()
+	require.Len(t, counts, len(values))
+	topN := statistics.NewTopN(len(values))
+	for i, value := range values {
+		topN.AppendTopN(encodeAutoSplitIntDatum(t, loc, value), counts[i])
+	}
+	topN.Sort()
+	return topN
 }
 
 func encodeAutoSplitIntDatum(t *testing.T, loc *time.Location, val int64) []byte {
