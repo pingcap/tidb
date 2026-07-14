@@ -82,38 +82,26 @@ func TestTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, task, task2)
 
-	task3, err := gm.GetTasksInStates(ctx, proto.TaskStatePending)
-	require.NoError(t, err)
-	require.Len(t, task3, 1)
-	require.Equal(t, task, task3[0])
 	tasksBase3, err := gm.GetTaskBasesInStates(ctx, proto.TaskStatePending)
 	require.NoError(t, err)
 	require.Len(t, tasksBase3, 1)
-	require.EqualValues(t, &task3[0].TaskBase, tasksBase3[0])
+	require.EqualValues(t, &task.TaskBase, tasksBase3[0])
 
-	task4, err := gm.GetTasksInStates(ctx, proto.TaskStatePending, proto.TaskStateRunning)
-	require.NoError(t, err)
-	require.Len(t, task4, 1)
-	require.Equal(t, task, task4[0])
-	require.GreaterOrEqual(t, task4[0].StateUpdateTime, task.StateUpdateTime)
 	tasksBase4, err := gm.GetTaskBasesInStates(ctx, proto.TaskStatePending, proto.TaskStateRunning)
 	require.NoError(t, err)
 	require.Len(t, tasksBase4, 1)
-	require.EqualValues(t, &task4[0].TaskBase, tasksBase4[0])
+	require.EqualValues(t, &task.TaskBase, tasksBase4[0])
 
 	err = gm.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.StepOne, nil)
 	require.NoError(t, err)
 
-	task.State = proto.TaskStateRunning
-	task5, err := gm.GetTasksInStates(ctx, proto.TaskStateRunning)
+	task5, err := gm.GetTaskByID(ctx, id)
 	require.NoError(t, err)
-	require.Len(t, task5, 1)
-	require.Equal(t, task.State, task5[0].State)
+	require.Equal(t, proto.TaskStateRunning, task5.State)
 
 	task6, err := gm.GetTaskByKey(ctx, "key1")
 	require.NoError(t, err)
-	require.Len(t, task5, 1)
-	require.Equal(t, task.State, task6.State)
+	require.Equal(t, task5.State, task6.State)
 
 	// test cannot insert task with dup key
 	_, err = gm.CreateTask(ctx, "key1", "test2", "", 4, "", 0, proto.ExtraParams{}, []byte("test2"))
@@ -1053,33 +1041,75 @@ func TestSubtaskHistoryTable(t *testing.T) {
 }
 
 func TestTaskHistoryTable(t *testing.T) {
-	t.Run("get tasks in states limits cleanup batch size", func(t *testing.T) {
-		t.Cleanup(proto.SetMaxConcurrentTaskForTest(1))
+	t.Run("cleanup tasks are batch limited", func(t *testing.T) {
 		t.Cleanup(proto.SetTaskCleanupBatchSizeForTest(2))
 		_, gm, ctx := testutil.InitTableTest(t)
 		require.NoError(t, gm.InitMeta(ctx, ":4000", ""))
 
+		taskIDs := make([]int64, 0, 5)
 		for i := range 5 {
-			_, err := gm.CreateTask(ctx, fmt.Sprintf("cleanup-batch-%d", i), proto.TaskTypeExample, "", 1, "", 0, proto.ExtraParams{}, nil)
+			taskID, err := gm.CreateTask(ctx, fmt.Sprintf("cleanup-batch-%d", i), proto.TaskTypeExample, "", 1, "", 0, proto.ExtraParams{}, nil)
 			require.NoError(t, err)
+			taskIDs = append(taskIDs, taskID)
 		}
 
-		tasks, err := gm.GetTasksInStates(ctx, proto.TaskStatePending)
+		tasks := make([]*proto.Task, 0, len(taskIDs))
+		for _, taskID := range taskIDs {
+			task, err := gm.GetTaskByID(ctx, taskID)
+			require.NoError(t, err)
+			tasks = append(tasks, task)
+		}
+		for i, task := range tasks {
+			switch i % 3 {
+			case 0:
+				require.NoError(t, gm.FailTask(ctx, task.ID, proto.TaskStatePending, errors.New("cleanup test")))
+			case 1:
+				require.NoError(t, gm.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.StepOne, nil))
+				require.NoError(t, gm.SucceedTask(ctx, task.ID))
+			case 2:
+				require.NoError(t, gm.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.StepOne, nil))
+				require.NoError(t, gm.RevertTask(ctx, task.ID, proto.TaskStateRunning, nil))
+				require.NoError(t, gm.RevertedTask(ctx, task.ID))
+			}
+		}
+		pendingTaskID, err := gm.CreateTask(ctx, "not-ready-for-cleanup", proto.TaskTypeExample, "", 1, "", 0, proto.ExtraParams{}, nil)
 		require.NoError(t, err)
-		require.Len(t, tasks, 2)
+
+		cleanupTasks, err := gm.GetCleanupTasks(ctx)
+		require.NoError(t, err)
+		require.Len(t, cleanupTasks, 2)
+		cleanedStates := make([]proto.TaskState, 0, len(tasks))
+		for len(cleanupTasks) > 0 {
+			for _, task := range cleanupTasks {
+				cleanedStates = append(cleanedStates, task.State)
+			}
+			require.NoError(t, gm.TransferTasks2History(ctx, cleanupTasks))
+			cleanupTasks, err = gm.GetCleanupTasks(ctx)
+			require.NoError(t, err)
+		}
+		require.ElementsMatch(t, []proto.TaskState{
+			proto.TaskStateFailed, proto.TaskStateSucceed, proto.TaskStateReverted,
+			proto.TaskStateFailed, proto.TaskStateSucceed,
+		}, cleanedStates)
+		pendingTask, err := gm.GetTaskByID(ctx, pendingTaskID)
+		require.NoError(t, err)
+		require.Equal(t, proto.TaskStatePending, pendingTask.State)
 	})
 
 	_, gm, ctx := testutil.InitTableTest(t)
 
 	require.NoError(t, gm.InitMeta(ctx, ":4000", ""))
-	_, err := gm.CreateTask(ctx, "1", proto.TaskTypeExample, "", 1, "", 0, proto.ExtraParams{}, []byte("original"))
+	firstTaskID, err := gm.CreateTask(ctx, "1", proto.TaskTypeExample, "", 1, "", 0, proto.ExtraParams{}, []byte("original"))
 	require.NoError(t, err)
 	taskID, err := gm.CreateTask(ctx, "2", proto.TaskTypeExample, "", 1, "", 0, proto.ExtraParams{}, []byte("original"))
 	require.NoError(t, err)
 
-	tasks, err := gm.GetTasksInStates(ctx, proto.TaskStatePending)
-	require.NoError(t, err)
-	require.Equal(t, 2, len(tasks))
+	tasks := make([]*proto.Task, 0, 2)
+	for _, id := range []int64{firstTaskID, taskID} {
+		task, err := gm.GetTaskByID(ctx, id)
+		require.NoError(t, err)
+		tasks = append(tasks, task)
+	}
 	taskBases, err := gm.GetTaskBasesInStates(ctx, proto.TaskStatePending)
 	require.NoError(t, err)
 	require.EqualValues(t, []*proto.TaskBase{&tasks[0].TaskBase, &tasks[1].TaskBase}, taskBases)
@@ -1094,10 +1124,9 @@ func TestTaskHistoryTable(t *testing.T) {
 	testutil.InsertSubtask(t, gm, untouchedTaskID, proto.StepOne, "tidb1", proto.EmptyMeta, proto.SubtaskStateRunning, proto.TaskTypeExample, 1)
 	require.NoError(t, gm.TransferTasks2History(ctx, tasks))
 
-	tasks, err = gm.GetTasksInStates(ctx, proto.TaskStatePending)
+	untouchedTask, err := gm.GetTaskByID(ctx, untouchedTaskID)
 	require.NoError(t, err)
-	require.Len(t, tasks, 1)
-	require.Equal(t, untouchedTaskID, tasks[0].ID)
+	require.Equal(t, proto.TaskStatePending, untouchedTask.State)
 	num, err := testutil.GetTasksFromHistory(ctx, gm)
 	require.NoError(t, err)
 	require.Equal(t, 2, num)
@@ -1115,8 +1144,6 @@ func TestTaskHistoryTable(t *testing.T) {
 		require.Empty(t, activeSubtasks)
 	}
 
-	untouchedTask, err := gm.GetTaskByID(ctx, untouchedTaskID)
-	require.NoError(t, err)
 	require.Equal(t, []byte("untouched"), untouchedTask.Meta)
 	untouchedSubtasks, err := testutil.GetSubtasksByTaskID(ctx, gm, untouchedTaskID)
 	require.NoError(t, err)
@@ -1134,11 +1161,8 @@ func TestTaskHistoryTable(t *testing.T) {
 	require.NotNil(t, task)
 
 	// task with fail transfer
-	tasks, err = gm.GetTasksInStates(ctx, proto.TaskStatePending)
-	require.NoError(t, err)
-	require.Equal(t, 1, len(tasks))
-	tasks[0].Error = errors.New("mock err")
-	require.NoError(t, gm.TransferTasks2History(ctx, tasks))
+	untouchedTask.Error = errors.New("mock err")
+	require.NoError(t, gm.TransferTasks2History(ctx, []*proto.Task{untouchedTask}))
 	num, err = testutil.GetTasksFromHistory(ctx, gm)
 	require.NoError(t, err)
 	require.Equal(t, 3, num)
