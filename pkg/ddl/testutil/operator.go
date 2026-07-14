@@ -15,7 +15,7 @@
 package testutil
 
 import (
-	"github.com/pingcap/tidb/pkg/disttask/operator"
+	"github.com/pingcap/tidb/pkg/dxf/operator"
 	"golang.org/x/sync/errgroup"
 )
 

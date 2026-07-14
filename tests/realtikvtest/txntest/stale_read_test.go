@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
@@ -58,20 +59,22 @@ func TestTxnScopeAndValidateReadTs(t *testing.T) {
 	tk.MustQuery("select * from t1 AS OF TIMESTAMP NOW() where id = 1;").Check(testkit.Rows())
 
 	// replica read
-	tk.MustExec("set @@tidb_replica_read = 'closest-replicas';")
-	tk.MustExec("begin")
-	tk.MustQuery("select * from t1 where id = 1;").Check(testkit.Rows())
-	tk.MustExec("commit")
+	if !kerneltype.IsNextGen() {
+		tk.MustExec("set @@tidb_replica_read = 'closest-replicas';")
+		tk.MustExec("begin")
+		tk.MustQuery("select * from t1 where id = 1;").Check(testkit.Rows())
+		tk.MustExec("commit")
 
-	tk.MustExec("set @@tidb_replica_read = 'follower';")
-	tk.MustExec("begin")
-	tk.MustQuery("select * from t1 where id = 1;").Check(testkit.Rows())
-	tk.MustExec("commit")
+		tk.MustExec("set @@tidb_replica_read = 'follower';")
+		tk.MustExec("begin")
+		tk.MustQuery("select * from t1 where id = 1;").Check(testkit.Rows())
+		tk.MustExec("commit")
 
-	tk.MustExec("set @@tidb_replica_read = 'closest-adaptive';")
-	tk.MustExec("begin")
-	tk.MustQuery("select * from t1 where id = 1;").Check(testkit.Rows())
-	tk.MustExec("commit")
+		tk.MustExec("set @@tidb_replica_read = 'closest-adaptive';")
+		tk.MustExec("begin")
+		tk.MustQuery("select * from t1 where id = 1;").Check(testkit.Rows())
+		tk.MustExec("commit")
+	}
 }
 
 func TestExactStalenessTransaction(t *testing.T) {
@@ -157,6 +160,17 @@ func TestSelectAsOf(t *testing.T) {
 	}()
 	time.Sleep(3 * time.Second)
 	now := time.Now()
+
+	// Ensure the current ts is advanced over `now` so that the future-read error ("cannot set read timestamp to a
+	// future time") won't happen.
+	for {
+		ts, err := store.GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+		require.NoError(t, err)
+		if oracle.GetTimeFromTS(ts).After(now) {
+			break
+		}
+		time.Sleep(time.Millisecond * 10)
+	}
 
 	// test setSQL with extract timestamp
 	testcases1 := []struct {
@@ -305,7 +319,7 @@ func TestStaleReadKVRequest(t *testing.T) {
 	tk.MustExec(`drop table if exists t2`)
 	tk.MustExec("create table t (id int primary key);")
 	tk.MustExec(`create table t1 (c int primary key, d int,e int,index idx_d(d),index idx_e(e))`)
-	time.Sleep(1000 * time.Millisecond)
+	time.Sleep(2000 * time.Millisecond)
 	defer tk.MustExec(`drop table if exists t`)
 	defer tk.MustExec(`drop table if exists t1`)
 	conf := *config.GetGlobalConfig()
@@ -336,27 +350,29 @@ func TestStaleReadKVRequest(t *testing.T) {
 			assert: "github.com/pingcap/tidb/pkg/executor/assertBatchPointReplicaOption",
 		},
 	}
-	tk.MustExec("set @@tidb_replica_read='closest-replicas'")
-	for _, testcase := range testcases {
-		require.NoError(t, failpoint.Enable(testcase.assert, `return("sh")`))
-		tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP NOW()`)
-		tk.MustQuery(testcase.sql)
-		tk.MustExec(`commit`)
-		require.NoError(t, failpoint.Disable(testcase.assert))
-	}
-	for _, testcase := range testcases {
-		require.NoError(t, failpoint.Enable(testcase.assert, `return("sh")`))
-		tk.MustExec(`SET TRANSACTION READ ONLY AS OF TIMESTAMP NOW()`)
-		tk.MustExec(`begin;`)
-		tk.MustQuery(testcase.sql)
-		tk.MustExec(`commit`)
-		require.NoError(t, failpoint.Disable(testcase.assert))
-	}
-	// assert follower read closest read
-	for _, testcase := range testcases {
-		require.NoError(t, failpoint.Enable(testcase.assert, `return("sh")`))
-		tk.MustQuery(testcase.sql)
-		require.NoError(t, failpoint.Disable(testcase.assert))
+	if !kerneltype.IsNextGen() {
+		tk.MustExec("set @@tidb_replica_read='closest-replicas'")
+		for _, testcase := range testcases {
+			require.NoError(t, failpoint.Enable(testcase.assert, `return("sh")`))
+			tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP NOW() - INTERVAL 1 SECOND`)
+			tk.MustQuery(testcase.sql)
+			tk.MustExec(`commit`)
+			require.NoError(t, failpoint.Disable(testcase.assert))
+		}
+		for _, testcase := range testcases {
+			require.NoError(t, failpoint.Enable(testcase.assert, `return("sh")`))
+			tk.MustExec(`SET TRANSACTION READ ONLY AS OF TIMESTAMP NOW() - INTERVAL 1 SECOND`)
+			tk.MustExec(`begin;`)
+			tk.MustQuery(testcase.sql)
+			tk.MustExec(`commit`)
+			require.NoError(t, failpoint.Disable(testcase.assert))
+		}
+		// assert follower read closest read
+		for _, testcase := range testcases {
+			require.NoError(t, failpoint.Enable(testcase.assert, `return("sh")`))
+			tk.MustQuery(testcase.sql)
+			require.NoError(t, failpoint.Disable(testcase.assert))
+		}
 	}
 	tk.MustExec(`insert into t1 (c,d,e) values (1,1,1);`)
 	tk.MustExec(`insert into t1 (c,d,e) values (2,3,5);`)
@@ -395,14 +411,34 @@ func TestStalenessAndHistoryRead(t *testing.T) {
 	ON DUPLICATE KEY
 	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
 	tk.MustExec(updateSafePoint)
-	time1 := time.Now()
+	getCurrentTS := func() uint64 {
+		tk.MustExec("begin")
+		tsStr := tk.MustQuery("select @@tidb_current_ts").Rows()[0][0].(string)
+		tk.MustExec("rollback")
+		ts, err := strconv.ParseUint(tsStr, 10, 64)
+		require.NoError(t, err)
+		return ts
+	}
+	waitTSAfter := func(after time.Time) time.Time {
+		for {
+			ts := getCurrentTS()
+			tsTime := oracle.GetTimeFromTS(ts)
+			if tsTime.After(after) {
+				return tsTime
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	time1 := oracle.GetTimeFromTS(getCurrentTS())
 	time1TS := oracle.GoTimeToTS(time1)
 	schemaVer1 := tk.Session().GetInfoSchema().SchemaMetaVersion()
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int primary key);")
 	tk.MustExec(`drop table if exists t`)
-	time.Sleep(1000 * time.Millisecond)
-	time2 := time.Now().Add(-500 * time.Millisecond)
+	lastCommitTSStr := tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.commit_ts')").Rows()[0][0].(string)
+	lastCommitTS, err := strconv.ParseUint(lastCommitTSStr, 10, 64)
+	require.NoError(t, err)
+	time2 := waitTSAfter(oracle.GetTimeFromTS(lastCommitTS))
 	time2TS := oracle.GoTimeToTS(time2)
 	schemaVer2 := tk.Session().GetInfoSchema().SchemaMetaVersion()
 
@@ -450,7 +486,7 @@ func TestStalenessAndHistoryRead(t *testing.T) {
 	require.Equal(t, time2TS, tk.Session().GetSessionVars().TxnCtx.StartTS)
 	require.Nil(t, tk.Session().GetSessionVars().SnapshotInfoschema)
 	require.Equal(t, schemaVer2, tk.Session().GetInfoSchema().SchemaMetaVersion())
-	err := tk.ExecToErr(`set @@tidb_snapshot="2020-10-08 16:45:26";`)
+	err = tk.ExecToErr(`set @@tidb_snapshot="2020-10-08 16:45:26";`)
 	require.Regexp(t, ".*Transaction characteristics can't be changed while a transaction is in progress", err.Error())
 	require.Equal(t, uint64(0), tk.Session().GetSessionVars().SnapshotTS)
 	require.Nil(t, tk.Session().GetSessionVars().SnapshotInfoschema)
@@ -623,6 +659,7 @@ func TestSetTransactionReadOnlyAsOf(t *testing.T) {
 }
 
 func TestValidateReadOnlyInStalenessTransaction(t *testing.T) {
+	const stalenessTSExpr = "NOW(3) - INTERVAL 5 SECOND"
 	errMsg1 := ".*only support read-only statement during read-only staleness transactions.*"
 	errMsg2 := ".*select lock hasn't been supported in stale read yet.*"
 	errMsg3 := "GetForUpdateTS not supported for stalenessTxnProvider"
@@ -786,7 +823,7 @@ func TestValidateReadOnlyInStalenessTransaction(t *testing.T) {
 	tk.MustExec(`set @@tidb_enable_noop_functions=1;`)
 	for _, testcase := range testcases {
 		t.Log(testcase.name)
-		tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP NOW();`)
+		tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP ` + stalenessTSExpr + `;`)
 		if testcase.isValidate {
 			tk.MustExec(testcase.sql)
 		} else {
@@ -795,7 +832,7 @@ func TestValidateReadOnlyInStalenessTransaction(t *testing.T) {
 			require.Regexp(t, testcase.errMsg, err.Error(), "name: %s stmt: %s", testcase.name, testcase.sql)
 		}
 		tk.MustExec("commit")
-		tk.MustExec("set transaction read only as of timestamp NOW();")
+		tk.MustExec(`set transaction read only as of timestamp ` + stalenessTSExpr + `;`)
 		if testcase.isValidate || testcase.isValidateWithoutStart {
 			tk.MustExec(testcase.sql)
 		} else {
@@ -1125,7 +1162,9 @@ func TestStmtCtxStaleFlag(t *testing.T) {
 	defer tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int)")
 	time.Sleep(2 * time.Second)
-	time1 := time.Now().Format("2006-1-2 15:04:05")
+	ts, err := store.GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+	require.NoError(t, err)
+	time1 := oracle.GetTimeFromTS(ts).Format("2006-1-2 15:04:05")
 	testcases := []struct {
 		sql          string
 		hasStaleFlag bool
@@ -1252,20 +1291,30 @@ func TestStaleSessionQuery(t *testing.T) {
 func TestStaleReadCompatibility(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	getCurrentTime := func() time.Time {
+		tk.MustExec("begin")
+		tsStr := tk.MustQuery("select @@tidb_current_ts").Rows()[0][0].(string)
+		tk.MustExec("rollback")
+		ts, err := strconv.ParseUint(tsStr, 10, 64)
+		require.NoError(t, err)
+		return oracle.GetTimeFromTS(ts)
+	}
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	defer tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int)")
 	tk.MustExec("insert into t(id) values (1)")
 	time.Sleep(2 * time.Second)
-	t1 := time.Now()
+	t1 := getCurrentTime()
 	tk.MustExec("insert into t(id) values (2)")
 	time.Sleep(2 * time.Second)
-	t2 := time.Now()
+	t2 := getCurrentTime()
 	tk.MustExec("insert into t(id) values (3)")
+	t1Str := t1.Format("2006-1-2 15:04:05")
+	t2Str := t2.Format("2006-1-2 15:04:05")
 	// assert select as of timestamp won't work after set transaction read only as of timestamp
-	tk.MustExec(fmt.Sprintf("set transaction read only as of timestamp '%s';", t1.Format("2006-1-2 15:04:05")))
-	err := tk.ExecToErr(fmt.Sprintf("select * from t as of timestamp '%s';", t1.Format("2006-1-2 15:04:05")))
+	tk.MustExec(fmt.Sprintf("set transaction read only as of timestamp '%s';", t1Str))
+	err := tk.ExecToErr(fmt.Sprintf("select * from t as of timestamp '%s';", t1Str))
 	require.Error(t, err)
 	require.Regexp(t, ".*invalid as of timestamp: can't use select as of while already set transaction as of.*", err.Error())
 	// assert set transaction read only as of timestamp is consumed
@@ -1273,25 +1322,27 @@ func TestStaleReadCompatibility(t *testing.T) {
 	// enable tidb_read_staleness
 	tk.MustExec("set @@tidb_read_staleness='-1'")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/expression/injectNow", fmt.Sprintf(`return(%d)`, t1.Unix())))
-	require.Len(t, tk.MustQuery("select * from t;").Rows(), 1)
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/expression/injectNow"))
+	}()
+	tk.MustQuery("select * from t order by id;").Check(testkit.Rows("1"))
 	// assert select as of timestamp during tidb_read_staleness
-	require.Len(t, tk.MustQuery(fmt.Sprintf("select * from t as of timestamp '%s'", t2.Format("2006-1-2 15:04:05"))).Rows(), 2)
+	require.Len(t, tk.MustQuery(fmt.Sprintf("select * from t as of timestamp '%s'", t2Str)).Rows(), 2)
 	// assert set transaction as of timestamp during tidb_read_staleness
-	tk.MustExec(fmt.Sprintf("set transaction read only as of timestamp '%s';", t2.Format("2006-1-2 15:04:05")))
+	tk.MustExec(fmt.Sprintf("set transaction read only as of timestamp '%s';", t2Str))
 	require.Len(t, tk.MustQuery("select * from t;").Rows(), 2)
 
 	// assert begin stale transaction during tidb_read_staleness
-	tk.MustExec(fmt.Sprintf("start transaction read only as of timestamp '%v'", t2.Format("2006-1-2 15:04:05")))
+	tk.MustExec(fmt.Sprintf("start transaction read only as of timestamp '%v'", t2Str))
 	require.Len(t, tk.MustQuery("select * from t;").Rows(), 2)
 	tk.MustExec("commit")
 
 	// assert session query still is affected by tidb_read_staleness
-	require.Len(t, tk.MustQuery("select * from t;").Rows(), 1)
+	tk.MustQuery("select * from t order by id;").Check(testkit.Rows("1"))
 
 	// disable tidb_read_staleness
 	tk.MustExec("set @@tidb_read_staleness=''")
 	require.Len(t, tk.MustQuery("select * from t;").Rows(), 3)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/expression/injectNow"))
 }
 
 func TestStaleReadNoExtraTSORequest(t *testing.T) {
@@ -1446,6 +1497,9 @@ func TestStaleTSO(t *testing.T) {
 }
 
 func TestStaleReadNoBackoff(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("tidb_replica_read closest-replicas is not supported in next generation")
+	}
 	cfg := config.GetGlobalConfig()
 	cfg.Labels = map[string]string{"zone": "us-east-1a"}
 	config.StoreGlobalConfig(cfg)
@@ -1493,6 +1547,7 @@ func TestStaleReadAllCombinations(t *testing.T) {
 	defer config.RestoreFunc()()
 
 	tk := testkit.NewTestKit(t, store)
+	oracleClient := tk.Session().GetStore().GetOracle()
 
 	safePointName := "tikv_gc_safe_point"
 	safePointValue := "20160102-15:04:05 -0700"
@@ -1508,20 +1563,24 @@ func TestStaleReadAllCombinations(t *testing.T) {
 
 	// Insert row #1
 	tk.MustExec("insert into t values (1, 10)")
-	time.Sleep(1000 * time.Millisecond)
-	firstTime := time.Now().Add(-500 * time.Millisecond)
-	// Retrieve current TSO from store's Oracle instead of @@tidb_current_ts.
-	externalTS, err := store.GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
-	if err != nil {
-		t.Fatalf("failed to get TSO: %v", err)
-	}
+	time.Sleep(3000 * time.Millisecond) // Increased from 1s to 3s for better timing separation
+	ts, err := oracleClient.GetTimestamp(context.Background(), &oracle.Option{})
+	require.NoError(t, err)
+	firstTime := oracle.GetTimeFromTS(ts).Add(-1500 * time.Millisecond)
 
-	time.Sleep(1000 * time.Millisecond)
+	externalTS, err := oracleClient.GetTimestamp(context.Background(), &oracle.Option{})
+	require.NoError(t, err)
+
+	time.Sleep(3000 * time.Millisecond) // Increased from 1s to 3s
 	// Insert row #2
 	tk.MustExec("insert into t values (2, 20)")
-	row2CreatedTime := time.Now()
-	time.Sleep(1000 * time.Millisecond)
-	secondTime := time.Now().Add(-500 * time.Millisecond)
+	row2CreatedTS, err := oracleClient.GetTimestamp(context.Background(), &oracle.Option{})
+	require.NoError(t, err)
+	row2CreatedTime := oracle.GetTimeFromTS(row2CreatedTS)
+	time.Sleep(3000 * time.Millisecond) // Increased from 1s to 3s
+	ts, err = oracleClient.GetTimestamp(context.Background(), &oracle.Option{})
+	require.NoError(t, err)
+	secondTime := oracle.GetTimeFromTS(ts).Add(-1500 * time.Millisecond)
 
 	staleReadMethods := []struct {
 		name   string
@@ -1533,8 +1592,13 @@ func TestStaleReadAllCombinations(t *testing.T) {
 		{
 			name: "tidb_read_staleness",
 			setup: func() {
-				row2CreatedElapsed := int(time.Since(row2CreatedTime).Seconds())
-				staleness := row2CreatedElapsed + 1 // The time `now - staleness(second)` is between row1 and row2.
+				ts, err := oracleClient.GetTimestamp(context.Background(), &oracle.Option{})
+				require.NoError(t, err)
+				elapsed := oracle.GetTimeFromTS(ts).Sub(row2CreatedTime)
+				row2CreatedElapsed := int(elapsed.Seconds())
+				// Ensure sufficient buffer: with 3s sleep intervals, elapsed should be ~3s
+				// Adding 2s buffer ensures stale read is safely before row2 insertion
+				staleness := row2CreatedElapsed + 2
 				tk.MustExec(fmt.Sprintf("set @@tidb_read_staleness='-%d'", staleness))
 			},
 			query: "select * from t",
@@ -1641,11 +1705,18 @@ func TestStaleReadAllCombinations(t *testing.T) {
 		},
 	}
 
+	tidbReadStalenessMethod := staleReadMethods[0]
+	otherStaleReadMethods := staleReadMethods[1:]
+
 	replicaReadSettings := []string{
 		"leader",
-		"follower",
-		"closest-replicas",
-		"closest-adaptive",
+	}
+	if !kerneltype.IsNextGen() {
+		replicaReadSettings = append(replicaReadSettings,
+			"follower",
+			"closest-replicas",
+			"closest-adaptive",
+		)
 	}
 
 	transactionModes := []struct {
@@ -1693,30 +1764,45 @@ func TestStaleReadAllCombinations(t *testing.T) {
 		*/
 	}
 
-	// Test all combinations
+	// Run tidb_read_staleness combinations first to minimize elapsed time from setup.
 	for _, label := range labelSettings {
-		t.Run(label.name, func(t *testing.T) {
-			// Update global config with current label setting
+		t.Run(label.name+"/tidb_read_staleness", func(t *testing.T) {
 			conf := *config.GetGlobalConfig()
 			conf.Labels = label.labels
 			config.StoreGlobalConfig(&conf)
 
 			for _, replicaRead := range replicaReadSettings {
 				t.Run(replicaRead, func(t *testing.T) {
-					// Set replica read mode
+					tk.MustExec(fmt.Sprintf("set @@tidb_replica_read='%s'", replicaRead))
+					method := tidbReadStalenessMethod
+					t.Run(method.name, func(t *testing.T) {
+						defer method.clean()
+						method.setup()
+						result := tk.MustQuery(method.query)
+						result.Check(testkit.Rows(method.expect...))
+					})
+				})
+			}
+		})
+	}
+
+	// Run remaining stale read methods and transaction mode combinations afterwards.
+	for _, label := range labelSettings {
+		t.Run(label.name+"/others", func(t *testing.T) {
+			conf := *config.GetGlobalConfig()
+			conf.Labels = label.labels
+			config.StoreGlobalConfig(&conf)
+
+			for _, replicaRead := range replicaReadSettings {
+				t.Run(replicaRead, func(t *testing.T) {
 					tk.MustExec(fmt.Sprintf("set @@tidb_replica_read='%s'", replicaRead))
 
-					for _, method := range staleReadMethods {
+					for _, method := range otherStaleReadMethods {
 						t.Run(method.name, func(t *testing.T) {
-							// Setup stale read method
 							defer method.clean()
 							method.setup()
-
-							// Execute query and verify results
 							result := tk.MustQuery(method.query)
 							result.Check(testkit.Rows(method.expect...))
-
-							// Cleanup
 						})
 					}
 

@@ -459,6 +459,14 @@ type Table interface {
 	// Meta returns TableInfo.
 	Meta() *model.TableInfo
 
+	// UseNewCollate returns whether the new collation implementation should be used
+	// when encoding persisted keys or expressions for this table.
+	//
+	// For persisted user tables, this value must come from the table snapshot used
+	// to build the task. Virtual or non-persisted table implementations may use the
+	// current process default.
+	UseNewCollate() bool
+
 	// Type returns the type of table
 	Type() Type
 
@@ -556,9 +564,15 @@ type CachedTable interface {
 }
 
 // CheckRowConstraint verify row check constraints.
-func CheckRowConstraint(ctx exprctx.EvalContext, constraints []*Constraint, rowToCheck chunk.Row) error {
+func CheckRowConstraint(expCtx exprctx.BuildContext, constraints []*Constraint,
+	rowToCheck chunk.Row, tbl *model.TableInfo) error {
+	evalCtx := expCtx.GetEvalCtx()
 	for _, constraint := range constraints {
-		ok, isNull, err := constraint.ConstraintExpr.EvalInt(ctx, rowToCheck)
+		c, err := BuildConstraintExprWithCtx(expCtx, constraint.ConstraintInfo, tbl, evalCtx.CurrentDB())
+		if err != nil {
+			return err
+		}
+		ok, isNull, err := c.EvalInt(evalCtx, rowToCheck)
 		if err != nil {
 			return err
 		}
@@ -571,9 +585,10 @@ func CheckRowConstraint(ctx exprctx.EvalContext, constraints []*Constraint, rowT
 
 // CheckRowConstraintWithDatum verify row check constraints.
 // It is the same with `CheckRowConstraint` but receives a slice of `types.Datum` instead of `chunk.Row`.
-func CheckRowConstraintWithDatum(ctx exprctx.EvalContext, constraints []*Constraint, row []types.Datum) error {
+func CheckRowConstraintWithDatum(exprCtx exprctx.BuildContext, constraints []*Constraint,
+	row []types.Datum, tbl *model.TableInfo) error {
 	if len(constraints) == 0 {
 		return nil
 	}
-	return CheckRowConstraint(ctx, constraints, chunk.MutRowFromDatums(row).ToRow())
+	return CheckRowConstraint(exprCtx, constraints, chunk.MutRowFromDatums(row).ToRow(), tbl)
 }

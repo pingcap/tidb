@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -340,8 +341,7 @@ func FilterSQLAccessingSystemTables(sqls s.Set[Query], ignoreErr bool) (s.Set[Qu
 		}
 		for _, name := range names {
 			schemaName := strings.ToLower(strings.Split(name, ".")[0])
-			if schemaName == "information_schema" || schemaName == "metrics_schema" ||
-				schemaName == "performance_schema" || schemaName == "mysql" {
+			if metadef.IsMemDB(schemaName) || metadef.IsSystemDB(schemaName) {
 				accessSystemTable = true
 				break
 			}
@@ -532,7 +532,7 @@ func evaluateIndexSetCost(
 
 func exec(sctx sessionctx.Context, sql string, args ...any) (ret []chunk.Row, err error) {
 	executor := sctx.(sqlexec.SQLExecutor)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsForegroundPriority)
 	result, err := executor.ExecuteInternal(ctx, sql, args...)
 	if err != nil {
 		return nil, fmt.Errorf("execute %v failed: %v", sql, err)

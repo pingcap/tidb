@@ -478,13 +478,6 @@ func getAllTsoCounter(sctx sessionctx.Context) (any, any, any) {
 	return countTsoRequest, countTsoUseConstant, countWaitTsoOracle
 }
 
-func assertAllTsoCounter(t *testing.T,
-	assertPair []uint64) {
-	for i := 0; i < len(assertPair); i += 2 {
-		require.Equal(t, assertPair[i], assertPair[i+1])
-	}
-}
-
 func TestRcTSOCmdCountForTextSQLExecuteExtra(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/sessiontxn/isolation/requestTsoFromPD", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/sessiontxn/isolation/tsoUseConstantFuture", "return"))

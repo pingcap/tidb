@@ -17,8 +17,8 @@ package core
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"strings"
-	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -27,17 +27,15 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
-	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
-	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
 )
 
@@ -89,13 +87,14 @@ func (mr *mutableIndexJoinRange) Rebuild(sctx planctx.PlanContext) error {
 // indexJoinPathResult records necessary information if we build IndexJoin on this chosen access path (or index).
 type indexJoinPathResult struct {
 	chosenPath     *util.AccessPath        // the chosen access path (or index)
+	candidate      *candidatePath          // the candidate representation of the chosen path, used for SkylinePruning
 	chosenAccess   []expression.Expression // expressions used to access this index
 	chosenRemained []expression.Expression // remaining expressions after accessing this index
 	chosenRanges   ranger.MutableRanges    // the ranges used to access this index
 	usedColsLen    int                     // the number of columns used on this index, `t1.a=t2.a and t1.b=t2.b` can use 2 columns of index t1(a, b, c)
-	usedColsNDV    float64                 // the estimated NDV of the used columns on this index, the NDV of `t1(a, b)`
+	eqUsedColsNDV  float64                 // the estimated NDV of the EQ used columns on this index, the NDV of `t1(a, b)`, a,b are in EQ constraint.
 	idxOff2KeyOff  []int
-	lastColManager *ColWithCmpFuncManager
+	lastColManager *physicalop.ColWithCmpFuncManager
 }
 
 // indexJoinPathInfo records necessary information to build IndexJoin.
@@ -105,7 +104,7 @@ type indexJoinPathInfo struct {
 	innerJoinKeys         []*expression.Column
 	innerSchema           *expression.Schema
 	innerPushedConditions []expression.Expression
-	innerStats            *property.StatsInfo
+	innerTableStats       *property.StatsInfo // the original table's stats
 }
 
 // indexJoinPathTmp records temporary information when building IndexJoin.
@@ -213,14 +212,14 @@ func indexJoinPathBuild(sctx planctx.PlanContext,
 		}
 		lastColPos, accesses, remained = indexJoinPathUpdateTmpRange(sctx, buildTmp, tempRangeRes, accesses, remained)
 		mutableRange := indexJoinPathNewMutableRange(sctx, indexJoinInfo, accesses, tempRangeRes.ranges, path)
-		ret := indexJoinPathConstructResult(indexJoinInfo, buildTmp, mutableRange, path, accesses, remained, nil, lastColPos)
+		ret := indexJoinPathConstructResult(sctx, indexJoinInfo, buildTmp, mutableRange, path, accesses, remained, nil, false, lastColPos)
 		return ret, false, nil
 	}
 	lastPossibleCol := path.IdxCols[lastColPos]
-	lastColManager := &ColWithCmpFuncManager{
+	lastColManager := &physicalop.ColWithCmpFuncManager{
 		TargetCol:         lastPossibleCol,
-		colLength:         path.IdxColLens[lastColPos],
-		affectedColSchema: expression.NewSchema(),
+		ColLength:         path.IdxColLens[lastColPos],
+		AffectedColSchema: expression.NewSchema(),
 	}
 	lastColAccess := indexJoinPathBuildColManager(indexJoinInfo, lastPossibleCol, lastColManager)
 	// If the column manager holds no expression, then we fallback to find whether there're useful normal filters
@@ -252,17 +251,19 @@ func indexJoinPathBuild(sctx planctx.PlanContext,
 		lastColPos, accesses, remained = indexJoinPathUpdateTmpRange(sctx, buildTmp, tempRangeRes, accesses, remained)
 		// update accesses and remained by colAccesses and colRemained.
 		remained = append(remained, colRemained...)
+		lastColIsRange := false
 		if tempRangeRes.nextColInRange {
 			if path.IdxColLens[lastColPos] != types.UnspecifiedLength {
 				remained = append(remained, colAccesses...)
 			}
 			accesses = append(accesses, colAccesses...)
 			lastColPos = lastColPos + 1
+			lastColIsRange = true
 		} else {
 			remained = append(remained, colAccesses...)
 		}
 		mutableRange := indexJoinPathNewMutableRange(sctx, indexJoinInfo, accesses, tempRangeRes.ranges, path)
-		ret := indexJoinPathConstructResult(indexJoinInfo, buildTmp, mutableRange, path, accesses, remained, nil, lastColPos)
+		ret := indexJoinPathConstructResult(sctx, indexJoinInfo, buildTmp, mutableRange, path, accesses, remained, nil, lastColIsRange, lastColPos)
 		return ret, false, nil
 	}
 	tempRangeRes := indexJoinPathBuildTmpRange(sctx, buildTmp, matchedKeyCnt, notKeyEqAndIn, nil, true, rangeMaxSize)
@@ -272,9 +273,11 @@ func indexJoinPathBuild(sctx planctx.PlanContext,
 	lastColPos, accesses, remained = indexJoinPathUpdateTmpRange(sctx, buildTmp, tempRangeRes, accesses, remained)
 
 	remained = append(remained, rangeFilterCandidates...)
+	lastColIsRange := false
 	if tempRangeRes.extraColInRange {
 		accesses = append(accesses, lastColAccess...)
 		lastColPos = lastColPos + 1
+		lastColIsRange = true
 	} else {
 		if tempRangeRes.keyCntInRange <= 0 {
 			return nil, false, nil
@@ -282,12 +285,12 @@ func indexJoinPathBuild(sctx planctx.PlanContext,
 		lastColManager = nil
 	}
 	mutableRange := indexJoinPathNewMutableRange(sctx, indexJoinInfo, accesses, tempRangeRes.ranges, path)
-	ret := indexJoinPathConstructResult(indexJoinInfo, buildTmp, mutableRange, path, accesses, remained, lastColManager, lastColPos)
+	ret := indexJoinPathConstructResult(sctx, indexJoinInfo, buildTmp, mutableRange, path, accesses, remained, lastColManager, lastColIsRange, lastColPos)
 	return ret, false, nil
 }
 
 // indexJoinPathCompare compares these 2 index join paths and returns whether the current is better than the base.
-func indexJoinPathCompare(best, current *indexJoinPathResult) (curIsBetter bool) {
+func indexJoinPathCompare(ds *logicalop.DataSource, best, current *indexJoinPathResult) (curIsBetter bool) {
 	// Notice that there may be the cases like `t1.a = t2.a and b > 2 and b < 1`, so ranges can be nil though the conditions are valid.
 	// Obviously when the range is nil, we don't need index join.
 	if current == nil || len(current.chosenRanges.Range()) == 0 {
@@ -296,37 +299,134 @@ func indexJoinPathCompare(best, current *indexJoinPathResult) (curIsBetter bool)
 	if best == nil {
 		return true
 	}
-	// We choose the index by the NDV of the used columns, the larger the better.
-	// If NDVs are same, we choose index which uses more columns.
-	// Note that these 2 heuristic rules are too simple to cover all cases,
-	// since the NDV of outer join keys are not considered, and the detached access conditions
-	// may contain expressions like `t1.a > t2.a`. It's pretty hard to evaluate the join selectivity
-	// of these non-column-equal conditions, so I prefer to keep these heuristic rules simple at least for now.
-	if current.usedColsNDV < best.usedColsNDV || (current.usedColsNDV == best.usedColsNDV && current.usedColsLen <= best.usedColsLen) {
+
+	// reuse Skyline pruning to compare the index join paths.
+	prop := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64} // default property without any requirement
+	preferRange := ds.SCtx().GetSessionVars().GetAllowPreferRangeScan()
+
+	cmpResult, _ := compareCandidates(ds.SCtx(), ds.StatisticTable, prop, current.candidate, best.candidate, preferRange)
+	if cmpResult == 1 {
+		return true
+	} else if cmpResult == -1 {
 		return false
 	}
-	return true
+	return indexJoinPathCmp4UnComparableOnes(best, current)
+}
+
+func indexJoinPathCmp4UnComparableOnes(best, current *indexJoinPathResult) (currentIsBetter bool) {
+	// indexJoinCoverNumResult: in the index join case, if you can tell from index A is better than B by normal rules
+	// like accessResult, eqOrInResult, then do it. But if two indexes is not comparable, we can take one more condition
+	// into consideration here: if A's access col cover more index join keys, it has high potential to be better.
+	//     for example: index(id, mem, scode, ctime) vs index(uname, scode, ntime)
+	//                         ^   ^     ^                       ^     ^
+	// static EQ predicates <--+---+     +-----------------------+-----+-----> dynamic join join EQ predicates.
+	// since they two covers different index columns group, it's un-comparable and hard to see which one is better. Instead
+	// of returning "no winner" and return cmpResult == 0 and letting ndv division outside to make the decision, we could
+	// be a little more bias to index join keys here. (heuristic)
+	//
+	// 1: only care for the eq condition related group ndv, it's more accurate than range condition appended.
+	// 2: when eqUsedColsNDV is in the same level, consider more about usedColsLen and indexJoinKeyCoverDiff.
+	if !isNDVClose(current.eqUsedColsNDV, best.eqUsedColsNDV) {
+		return current.eqUsedColsNDV > best.eqUsedColsNDV // if two NDV are NOT close, return the bigger, meaning the smaller of EQ rows. (the better)
+	}
+	if current.usedColsLen != best.usedColsLen { // if two NDV are quite close, and usedColsLen are different, return the longer one.
+		return current.usedColsLen > best.usedColsLen
+	}
+	indexJoinKeyCoverDiff := 0
+	if current.idxOff2KeyOff != nil && best.idxOff2KeyOff != nil {
+		var curCover, bestCover int
+		for _, off := range current.idxOff2KeyOff {
+			if off != -1 {
+				curCover++
+			}
+		}
+		for _, off := range best.idxOff2KeyOff {
+			if off != -1 {
+				bestCover++
+			}
+		}
+		indexJoinKeyCoverDiff = curCover - bestCover
+	}
+	if indexJoinKeyCoverDiff != 0 { // if two NDV are quite close, and indexJoinKeyCoverDiff do exist. return the one covers more.
+		return indexJoinKeyCoverDiff > 0
+	}
+	return current.eqUsedColsNDV > best.eqUsedColsNDV // if two NDV are quite close, no other things need to care about, return bigger NDV one.
+}
+
+/*
+Simple NDV closeness rule:
+
+	close if:
+	  1) max(a,b) <= 20, OR
+	  2) |a-b| < 200 AND min(a,b) >= 20, OR
+	  3) |a-b|/max(a,b) < 0.2
+
+Examples:
+  - (1, 2)       → close
+  - (10, 15)     → close
+  - (100, 200)   → close
+  - (100001, 100020) → close
+  - (150, 10)    → not close
+  - (19, 40)     → not close
+  - (20, 40)     → close
+  - (1000, 2000) → not close
+  - (1e6, 2e6)   → not close
+  - (100, 500)   → not close
+  - (1000, 5000) → not close
+  - (1000, 1249) → close (diff/max≈0.199, both 0.5 and 0.2)
+  - (1000, 1300) → close with 0.5, not close with 0.2 (diff/max≈0.231)
+*/
+func isNDVClose(lhs, rhs float64) bool {
+	if lhs == 0 || rhs == 0 {
+		return lhs == rhs
+	}
+	const (
+		ndvFloor         = 20  // lower bound where absolute-difference heuristics start to make sense
+		ndvDiffThreshold = 200 // for medium NDVs, an absolute diff < 200 is treated as "close" before falling back to relative diff
+	)
+	minVal := math.Min(lhs, rhs)
+	diff := math.Abs(lhs - rhs)
+	maxVal := math.Max(lhs, rhs)
+	if maxVal <= ndvFloor {
+		return true
+	}
+	if diff < ndvDiffThreshold && minVal >= ndvFloor {
+		return true
+	}
+	return diff/maxVal < 0.2
 }
 
 // indexJoinPathConstructResult constructs the index join path result.
 func indexJoinPathConstructResult(
+	sctx planctx.PlanContext,
 	indexJoinInfo *indexJoinPathInfo,
 	buildTmp *indexJoinPathTmp,
 	ranges ranger.MutableRanges,
 	path *util.AccessPath, accesses,
 	remained []expression.Expression,
-	lastColManager *ColWithCmpFuncManager,
+	lastColManager *physicalop.ColWithCmpFuncManager,
+	lastColIsRange bool,
 	usedColsLen int) *indexJoinPathResult {
 	var innerNDV float64
-	if stats := indexJoinInfo.innerStats; stats != nil && stats.StatsVersion != statistics.PseudoVersion {
-		innerNDV, _ = cardinality.EstimateColsNDVWithMatchedLen(path.IdxCols[:usedColsLen], indexJoinInfo.innerSchema, stats)
+	if stats := indexJoinInfo.innerTableStats; stats != nil && stats.StatsVersion != statistics.PseudoVersion {
+		// NOTE: use the original table's stats (DataSource.TableStats) to estimate NDV instead of stats
+		// AFTER APPLYING ALL FILTERS (DataSource.stats). Because here we'll use the NDV to measure how many
+		// rows we need to scan in double-read, and these filters will be applied after the scanning, so we need to
+		// ignore these filters to avoid underestimation. See #63869.
+		eqUsedColsLen := usedColsLen
+		if lastColIsRange {
+			eqUsedColsLen--
+		}
+		innerNDV, _ = cardinality.EstimateColsNDVWithMatchedLen(
+			sctx, path.IdxCols[:eqUsedColsLen], indexJoinInfo.innerSchema, stats)
 	}
 	idxOff2KeyOff := make([]int, len(buildTmp.curIdxOff2KeyOff))
 	copy(idxOff2KeyOff, buildTmp.curIdxOff2KeyOff)
 	return &indexJoinPathResult{
 		chosenPath:     path,
+		candidate:      getIndexCandidateForIndexJoin(sctx, path, usedColsLen),
 		usedColsLen:    len(ranges.Range()[0].LowVal),
-		usedColsNDV:    innerNDV,
+		eqUsedColsNDV:  innerNDV,
 		chosenRanges:   ranges,
 		chosenAccess:   accesses,
 		chosenRemained: remained,
@@ -444,6 +544,8 @@ func indexJoinPathRangeInfo(sctx planctx.PlanContext,
 	indexJoinResult *indexJoinPathResult) string {
 	buffer := bytes.NewBufferString("[")
 	isFirst := true
+	ectx := sctx.GetExprCtx().GetEvalCtx()
+	redact := ectx.GetTiDBRedactLog()
 	for idxOff, keyOff := range indexJoinResult.idxOff2KeyOff {
 		if keyOff == -1 {
 			continue
@@ -453,11 +555,9 @@ func indexJoinPathRangeInfo(sctx planctx.PlanContext,
 		} else {
 			isFirst = false
 		}
-		fmt.Fprintf(buffer, "eq(%v, %v)", indexJoinResult.chosenPath.IdxCols[idxOff], outerJoinKeys[keyOff])
+		fmt.Fprintf(buffer, "eq(%v, %v)", indexJoinResult.chosenPath.IdxCols[idxOff].StringWithCtx(ectx, redact), outerJoinKeys[keyOff].StringWithCtx(ectx, redact))
 	}
-	ectx := sctx.GetExprCtx().GetEvalCtx()
 	// It is to build the range info which is used in explain. It is necessary to redact the range info.
-	redact := ectx.GetTiDBRedactLog()
 	for _, access := range indexJoinResult.chosenAccess {
 		if !isFirst {
 			buffer.WriteString(" ")
@@ -468,6 +568,39 @@ func indexJoinPathRangeInfo(sctx planctx.PlanContext,
 	}
 	buffer.WriteString("]")
 	return buffer.String()
+}
+
+// indexJoinPathGetRangeInfoAndMaxOneRow computes the range information string and determines
+// whether the index join can guarantee at most one row will be returned per probe.
+// This happens when:
+// 1. The chosen index is unique AND
+// 2. All index columns are used for the join (usedColsLen == len(FullIdxCols)) AND
+// 3. Either there are no access conditions, or the last access condition is an equality condition
+//
+// Parameters:
+//   - sctx: the plan context
+//   - outerJoinKeys: the outer join keys used to generate range info string
+//   - indexJoinResult: the index join path result containing the chosen path and access conditions
+//
+// Returns:
+//   - rangeInfo: a string representation of the range information for explain output
+//   - maxOneRow: true if the index join guarantees at most one row per probe
+func indexJoinPathGetRangeInfoAndMaxOneRow(
+	sctx planctx.PlanContext,
+	outerJoinKeys []*expression.Column,
+	indexJoinResult *indexJoinPathResult) (rangeInfo string, maxOneRow bool) {
+	rangeInfo = indexJoinPathRangeInfo(sctx, outerJoinKeys, indexJoinResult)
+	maxOneRow = false
+	if indexJoinResult.chosenPath.Index.Unique && indexJoinResult.usedColsLen == len(indexJoinResult.chosenPath.FullIdxCols) {
+		l := len(indexJoinResult.chosenAccess)
+		if l == 0 {
+			maxOneRow = true
+		} else {
+			sf, ok := indexJoinResult.chosenAccess[l-1].(*expression.ScalarFunction)
+			maxOneRow = ok && (sf.FuncName.L == ast.EQ)
+		}
+	}
+	return rangeInfo, maxOneRow
 }
 
 // Reset the 'curIdxOff2KeyOff', 'curNotUsedIndexCols' and 'curNotUsedColLens' by innerKeys and idxCols
@@ -531,7 +664,7 @@ func indexJoinPathFindUsefulEQIn(sctx planctx.PlanContext, indexJoinInfo *indexJ
 // indexJoinPathBuildColManager analyze the `OtherConditions` of join to see whether there're some filters can be used in manager.
 // The returned value is just for outputting explain information
 func indexJoinPathBuildColManager(indexJoinInfo *indexJoinPathInfo,
-	nextCol *expression.Column, cwc *ColWithCmpFuncManager) []expression.Expression {
+	nextCol *expression.Column, cwc *physicalop.ColWithCmpFuncManager) []expression.Expression {
 	var lastColAccesses []expression.Expression
 loopOtherConds:
 	for _, filter := range indexJoinInfo.joinOtherConditions {
@@ -562,7 +695,7 @@ loopOtherConds:
 			}
 		}
 		lastColAccesses = append(lastColAccesses, sf)
-		cwc.appendNewExpr(funcName, anotherArg, affectedCols)
+		cwc.AppendNewExpr(funcName, anotherArg, affectedCols)
 	}
 	return lastColAccesses
 }
@@ -632,7 +765,7 @@ func getIndexJoinIntPKPathInfo(ds *logicalop.DataSource, innerJoinKeys, outerJoi
 }
 
 // getBestIndexJoinInnerTaskByProp tries to build the best inner child task from ds for index join by the given property.
-func getBestIndexJoinInnerTaskByProp(ds *logicalop.DataSource, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp) (base.Task, int64, error) {
+func getBestIndexJoinInnerTaskByProp(ds *logicalop.DataSource, prop *property.PhysicalProperty) (base.Task, error) {
 	// the below code is quite similar from the original logic
 	// reason1: we need to leverage original indexPathInfo down related logic to build constant range for index plan.
 	// reason2: the ranges from TS and IS couldn't be directly used to derive the stats' estimation, it's not real.
@@ -649,13 +782,12 @@ func getBestIndexJoinInnerTaskByProp(ds *logicalop.DataSource, prop *property.Ph
 		innerCopTask = buildDataSource2IndexScanByIndexJoinProp(ds, prop)
 	}
 	if innerCopTask.Invalid() {
-		return base.InvalidTask, 0, nil
+		return base.InvalidTask, nil
 	}
-	planCounter.Dec(1)
 	if prop.TaskTp == property.RootTaskType {
-		return innerCopTask.ConvertToRootTask(ds.SCtx()), 1, nil
+		return innerCopTask.ConvertToRootTask(ds.SCtx()), nil
 	}
-	return innerCopTask, 1, nil
+	return innerCopTask, nil
 }
 
 // getBestIndexJoinPathResultByProp tries to iterate all possible access paths of the inner child and builds
@@ -670,7 +802,7 @@ func getBestIndexJoinPathResultByProp(
 		innerJoinKeys:         indexJoinProp.InnerJoinKeys,
 		innerPushedConditions: innerDS.PushedDownConds,
 		innerSchema:           innerDS.Schema(),
-		innerStats:            innerDS.StatsInfo(),
+		innerTableStats:       innerDS.TableStats,
 	}
 	var bestResult *indexJoinPathResult
 	for _, path := range innerDS.PossibleAccessPaths {
@@ -684,7 +816,7 @@ func getBestIndexJoinPathResultByProp(
 				logutil.BgLogger().Warn("build index join failed", zap.Error(err))
 				continue
 			}
-			if indexJoinPathCompare(bestResult, result) {
+			if indexJoinPathCompare(innerDS, bestResult, result) {
 				bestResult = result
 			}
 		}
@@ -692,6 +824,7 @@ func getBestIndexJoinPathResultByProp(
 	if bestResult == nil || bestResult.chosenPath == nil {
 		return nil, nil
 	}
+
 	keyOff2IdxOff := make([]int, len(indexJoinProp.InnerJoinKeys))
 	for i := range keyOff2IdxOff {
 		keyOff2IdxOff[i] = -1
@@ -703,186 +836,6 @@ func getBestIndexJoinPathResultByProp(
 		}
 	}
 	return bestResult, keyOff2IdxOff
-}
-
-// getBestIndexJoinPathResult tries to iterate all possible access paths of the inner child and builds
-// index join path for each access path. It returns the best index join path result and the mapping.
-func getBestIndexJoinPathResult(
-	join *logicalop.LogicalJoin,
-	innerChild *logicalop.DataSource,
-	innerJoinKeys, outerJoinKeys []*expression.Column,
-	checkPathValid func(path *util.AccessPath) bool) (*indexJoinPathResult, []int) {
-	indexJoinInfo := &indexJoinPathInfo{
-		joinOtherConditions:   join.OtherConditions,
-		outerJoinKeys:         outerJoinKeys,
-		innerJoinKeys:         innerJoinKeys,
-		innerPushedConditions: innerChild.PushedDownConds,
-		innerSchema:           innerChild.Schema(),
-		innerStats:            innerChild.StatsInfo(),
-	}
-	var bestResult *indexJoinPathResult
-	for _, path := range innerChild.PossibleAccessPaths {
-		if checkPathValid(path) {
-			result, emptyRange, err := indexJoinPathBuild(join.SCtx(), path, indexJoinInfo, false)
-			if emptyRange {
-				return nil, nil
-			}
-			if err != nil {
-				logutil.BgLogger().Warn("build index join failed", zap.Error(err))
-				continue
-			}
-			if indexJoinPathCompare(bestResult, result) {
-				bestResult = result
-			}
-		}
-	}
-	if bestResult == nil || bestResult.chosenPath == nil {
-		return nil, nil
-	}
-	keyOff2IdxOff := make([]int, len(innerJoinKeys))
-	for i := range keyOff2IdxOff {
-		keyOff2IdxOff[i] = -1
-	}
-	// reverse idxOff2KeyOff as keyOff2IdxOff, from the perspective of inner join key, we could easily get the offset of index col.
-	for idxOff, keyOff := range bestResult.idxOff2KeyOff {
-		if keyOff != -1 {
-			keyOff2IdxOff[keyOff] = idxOff
-		}
-	}
-	return bestResult, keyOff2IdxOff
-}
-
-// ColWithCmpFuncManager is used in index join to handle the column with compare functions(>=, >, <, <=).
-// It stores the compare functions and build ranges in execution phase.
-type ColWithCmpFuncManager struct {
-	TargetCol         *expression.Column
-	colLength         int
-	OpType            []string
-	opArg             []expression.Expression
-	TmpConstant       []*expression.Constant
-	affectedColSchema *expression.Schema  `plan-cache-clone:"shallow"`
-	compareFuncs      []chunk.CompareFunc `plan-cache-clone:"shallow"`
-}
-
-func (cwc *ColWithCmpFuncManager) cloneForPlanCache() *ColWithCmpFuncManager {
-	if cwc == nil {
-		return nil
-	}
-	cloned := new(ColWithCmpFuncManager)
-	if cwc.TargetCol != nil {
-		if cwc.TargetCol.SafeToShareAcrossSession() {
-			cloned.TargetCol = cwc.TargetCol
-		} else {
-			cloned.TargetCol = cwc.TargetCol.Clone().(*expression.Column)
-		}
-	}
-	cloned.colLength = cwc.colLength
-	cloned.OpType = make([]string, len(cwc.OpType))
-	copy(cloned.OpType, cwc.OpType)
-	cloned.opArg = cloneExpressionsForPlanCache(cwc.opArg, nil)
-	cloned.TmpConstant = cloneConstantsForPlanCache(cwc.TmpConstant, nil)
-	cloned.affectedColSchema = cwc.affectedColSchema
-	cloned.compareFuncs = cwc.compareFuncs
-	return cloned
-}
-
-func (cwc *ColWithCmpFuncManager) appendNewExpr(opName string, arg expression.Expression, affectedCols []*expression.Column) {
-	cwc.OpType = append(cwc.OpType, opName)
-	cwc.opArg = append(cwc.opArg, arg)
-	cwc.TmpConstant = append(cwc.TmpConstant, &expression.Constant{RetType: cwc.TargetCol.RetType})
-	for _, col := range affectedCols {
-		if cwc.affectedColSchema.Contains(col) {
-			continue
-		}
-		cwc.compareFuncs = append(cwc.compareFuncs, chunk.GetCompareFunc(col.RetType))
-		cwc.affectedColSchema.Append(col)
-	}
-}
-
-// CompareRow compares the rows for deduplicate.
-func (cwc *ColWithCmpFuncManager) CompareRow(lhs, rhs chunk.Row) int {
-	for i, col := range cwc.affectedColSchema.Columns {
-		ret := cwc.compareFuncs[i](lhs, col.Index, rhs, col.Index)
-		if ret != 0 {
-			return ret
-		}
-	}
-	return 0
-}
-
-// BuildRangesByRow will build range of the given row. It will eval each function's arg then call BuildRange.
-func (cwc *ColWithCmpFuncManager) BuildRangesByRow(ctx *rangerctx.RangerContext, row chunk.Row) ([]*ranger.Range, error) {
-	exprs := make([]expression.Expression, len(cwc.OpType))
-	exprCtx := ctx.ExprCtx
-	for i, opType := range cwc.OpType {
-		constantArg, err := cwc.opArg[i].Eval(exprCtx.GetEvalCtx(), row)
-		if err != nil {
-			return nil, err
-		}
-		cwc.TmpConstant[i].Value = constantArg
-		newExpr, err := expression.NewFunction(exprCtx, opType, types.NewFieldType(mysql.TypeTiny), cwc.TargetCol, cwc.TmpConstant[i])
-		if err != nil {
-			return nil, err
-		}
-		exprs = append(exprs, newExpr) // nozero
-	}
-	// We already limit range mem usage when buildTemplateRange for inner table of IndexJoin in optimizer phase, so we
-	// don't need and shouldn't limit range mem usage when we refill inner ranges during the execution phase.
-	ranges, _, _, err := ranger.BuildColumnRange(exprs, ctx, cwc.TargetCol.RetType, cwc.colLength, 0)
-	if err != nil {
-		return nil, err
-	}
-	return ranges, nil
-}
-
-func (cwc *ColWithCmpFuncManager) resolveIndices(schema *expression.Schema) (err error) {
-	for i := range cwc.opArg {
-		cwc.opArg[i], err = cwc.opArg[i].ResolveIndices(schema)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// String implements Stringer interface.
-func (cwc *ColWithCmpFuncManager) String() string {
-	buffer := bytes.NewBufferString("")
-	for i := range cwc.OpType {
-		fmt.Fprintf(buffer, "%v(%v, %v)", cwc.OpType[i], cwc.TargetCol, cwc.opArg[i])
-		if i < len(cwc.OpType)-1 {
-			buffer.WriteString(" ")
-		}
-	}
-	return buffer.String()
-}
-
-const emptyColWithCmpFuncManagerSize = int64(unsafe.Sizeof(ColWithCmpFuncManager{}))
-
-// MemoryUsage return the memory usage of ColWithCmpFuncManager
-func (cwc *ColWithCmpFuncManager) MemoryUsage() (sum int64) {
-	if cwc == nil {
-		return
-	}
-
-	sum = emptyColWithCmpFuncManagerSize + int64(cap(cwc.compareFuncs))*size.SizeOfFunc
-	if cwc.TargetCol != nil {
-		sum += cwc.TargetCol.MemoryUsage()
-	}
-	if cwc.affectedColSchema != nil {
-		sum += cwc.affectedColSchema.MemoryUsage()
-	}
-
-	for _, str := range cwc.OpType {
-		sum += int64(len(str))
-	}
-	for _, expr := range cwc.opArg {
-		sum += expr.MemoryUsage()
-	}
-	for _, cst := range cwc.TmpConstant {
-		sum += cst.MemoryUsage()
-	}
-	return
 }
 
 // appendTailTemplateRange appends empty datum for each range in originRanges.

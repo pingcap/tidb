@@ -26,7 +26,7 @@ func TestPlanClone(t *testing.T) {
 		t.Errorf("Generate CloneForPlanCache code error: %v", err)
 		return
 	}
-	currentCode, err := os.ReadFile("../../plan_clone_generated.go")
+	currentCode, err := os.ReadFile("../../operator/physicalop/plan_clone_generated.go")
 	if err != nil {
 		t.Errorf("Read current plan_clone_generated.go code error: %v", err)
 		return

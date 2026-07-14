@@ -81,7 +81,7 @@ function start_tidb_fixed_version() {
 
 function build_mysql_tester() {
   echo "+ Installing mysql-tester"
-  GOBIN=$PWD go install github.com/pingcap/mysql-tester/src@0d83955ea569706e5296cd3e2f54efb7f1206d0b
+  GOBIN=$PWD go install github.com/pingcap/mysql-tester/src@f2d90ea9522d30c9a8e8d70cc31c7f016ca2801f
   mv src mysql-tester
 }
 

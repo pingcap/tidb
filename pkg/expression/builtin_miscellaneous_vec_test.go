@@ -39,7 +39,15 @@ var vecBuiltinMiscellaneousCases = map[string][]vecExprBenchCase{
 			newSelectRealGener([]float64{0, 0.000001}),
 		}},
 	},
-	ast.UUID: {},
+	ast.UUID:   {},
+	ast.UUIDv4: {},
+	ast.UUIDv7: {},
+	ast.UUIDTimestamp: {
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&uuidStrGener{newDefaultRandGen()}}},
+	},
+	ast.UUIDVersion: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&uuidStrGener{newDefaultRandGen()}}},
+	},
 	ast.Inet6Ntoa: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{
 			newSelectStringGener(
@@ -147,6 +155,7 @@ func TestSleepVectorized(t *testing.T) {
 	col0 := &Column{RetType: ft, Index: 0}
 	f, err := fc.getFunction(ctx, []Expression{col0})
 	require.NoError(t, err)
+	require.True(t, f.vectorized() && f.isChildrenVectorized())
 	input := chunk.NewChunkWithCapacity([]*types.FieldType{ft}, 1024)
 	result := chunk.NewColumn(ft, 1024)
 	warnCnt := counter{}

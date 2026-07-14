@@ -12,7 +12,6 @@ go_library(
     deps = [
         "//pkg/infoschema",
         "//pkg/kv",
-        "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
         "//pkg/sessionctx",

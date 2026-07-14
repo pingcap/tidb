@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/store/mockstore/teststore"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
@@ -61,7 +62,7 @@ func NewCluster() (*Cluster, error) {
 		}()
 	})
 
-	storage, err := mockstore.NewMockStore(
+	storage, err := teststore.NewMockStoreWithoutBootstrap(
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithSingleStore(c)
 			cluster.Cluster = c

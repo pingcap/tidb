@@ -99,10 +99,19 @@ func (b *builtinDateSig) vecEvalTime(ctx EvalContext, input *chunk.Chunk, result
 				return err
 			}
 			result.SetNull(i, true)
-		} else {
-			times[i].SetCoreTime(types.FromDate(times[i].Year(), times[i].Month(), times[i].Day(), 0, 0, 0, 0))
-			times[i].SetType(mysql.TypeDate)
+			continue
 		}
+		// for issue 59417, should return NULL when month or day is zero and sql_mode contains NO_ZERO_IN_DATE
+		if !times[i].IsZero() && times[i].InvalidZero() && sqlMode(ctx).HasNoZeroInDateMode() {
+			if err := handleInvalidTimeError(ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, times[i].String())); err != nil {
+				return err
+			}
+			result.SetNull(i, true)
+			continue
+		}
+
+		times[i].SetCoreTime(types.FromDate(times[i].Year(), times[i].Month(), times[i].Day(), 0, 0, 0, 0))
+		times[i].SetType(mysql.TypeDate)
 	}
 	return nil
 }
@@ -365,6 +374,10 @@ func (b *builtinTimeFormatSig) vecEvalString(ctx EvalContext, input *chunk.Chunk
 			result.AppendNull()
 			continue
 		}
+		if len(buf1.GetString(i)) == 0 {
+			result.AppendNull()
+			continue
+		}
 		res, err := b.formatTime(buf.GetDuration(i, 0), buf1.GetString(i))
 		if err != nil {
 			return err
@@ -609,6 +622,9 @@ func (b *builtinGetFormatSig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 }
 
 func (b *builtinGetFormatSig) getFormat(format, location string) string {
+	// for Issue 59420, location should be case insensitive
+	location = strings.ToUpper(location)
+
 	res := ""
 	switch format {
 	case dateFormat:
@@ -1011,11 +1027,11 @@ func (b *builtinWeekWithModeSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk,
 			result.SetNull(i, true)
 			continue
 		}
-		if buf2.IsNull(i) {
-			result.SetNull(i, true)
-			continue
-		}
 		mode := int(ms[i])
+		if buf2.IsNull(i) {
+			// MySQL treats a NULL week mode as mode 0 for WEEK(date, mode).
+			mode = 0
+		}
 		week := date.Week(mode)
 		i64s[i] = int64(week)
 	}

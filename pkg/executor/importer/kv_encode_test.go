@@ -18,40 +18,41 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
+	lightningkv "github.com/pingcap/tidb/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
+	utilmock "github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
 func TestKVEncoderForDupResolve(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a bigint primary key nonclustered) SHARD_ROW_ID_BITS = 6")
-	do, err := session.GetDomain(store)
-	require.NoError(t, err)
-	table, err := do.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
-	require.NoError(t, err)
+	table := newKVEncoderTestTable(t, "create table t(a bigint primary key nonclustered) SHARD_ROW_ID_BITS = 6")
 
 	doTestFn := func(t *testing.T, useIdentityAutoRowID bool, checkerFn func(handleVal int64)) {
 		encodeCfg := &encode.EncodingConfig{
 			Table:                table,
 			UseIdentityAutoRowID: useIdentityAutoRowID,
 		}
-		tableImporter := &importer.TableImporter{
-			LoadDataController: &importer.LoadDataController{
-				ASTArgs: &importer.ASTArgs{},
-				Plan:    &importer.Plan{},
-				Table:   table,
-			},
+		controller := &importer.LoadDataController{
+			ASTArgs: &importer.ASTArgs{},
+			Plan:    &importer.Plan{},
+			Table:   table,
 		}
-		encoder, err := importer.NewTableKVEncoderForDupResolve(encodeCfg, tableImporter)
+		encoder, err := importer.NewTableKVEncoderForDupResolve(encodeCfg, controller)
 		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, encoder.Close()) })
 		for range 10 {
 			pairs, err := encoder.Encode([]types.Datum{types.NewDatum(1)}, 1)
 			require.NoError(t, err)
@@ -86,4 +87,84 @@ func TestKVEncoderForDupResolve(t *testing.T) {
 		})
 		require.Greater(t, handleLargerThanOneCount, 1)
 	})
+}
+
+func newKVEncoderTestTable(t *testing.T, createSQL string) table.Table {
+	t.Helper()
+
+	stmt, err := parser.New().ParseOneStmt(createSQL, "", "")
+	require.NoError(t, err)
+	tblInfo, err := ddl.MockTableInfo(utilmock.NewContext(), stmt.(*ast.CreateTableStmt), 1)
+	require.NoError(t, err)
+	tblInfo.State = model.StatePublic
+	tbl, err := tables.TableFromMeta(lightningkv.NewPanickingAllocators(tblInfo.SepAutoInc()), tblInfo)
+	require.NoError(t, err)
+	return tbl
+}
+
+func TestKVEncoderCastErrorMessage(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(c1 tinyint)")
+
+	do, err := session.GetDomain(store)
+	require.NoError(t, err)
+	table, err := do.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+
+	encodeCfg := &encode.EncodingConfig{
+		Table:  table,
+		Logger: log.L(),
+		SessionOptions: encode.SessionOptions{
+			SQLMode:   mysql.ModeStrictAllTables,
+			Timestamp: 1234567890,
+		},
+	}
+	controller := &importer.LoadDataController{
+		ASTArgs: &importer.ASTArgs{},
+		Plan:    &importer.Plan{},
+		Table:   table,
+	}
+	encoder, err := importer.NewTableKVEncoderForDupResolve(encodeCfg, controller)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, encoder.Close()) })
+
+	_, err = encoder.Encode([]types.Datum{types.NewIntDatum(10000000)}, 1)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "[Import:ErrCastValue]Value conversion failed for column 'c1'. Expected type: tinyint(4), received value: 10000000. Reason: [types:1690]constant 10000000 overflows tinyint")
+}
+
+func TestKVEncoderCastEnumErrorMessage(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(c1 enum('a','b'))")
+
+	do, err := session.GetDomain(store)
+	require.NoError(t, err)
+	table, err := do.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+
+	encodeCfg := &encode.EncodingConfig{
+		Table:  table,
+		Logger: log.L(),
+		SessionOptions: encode.SessionOptions{
+			SQLMode:   mysql.ModeStrictAllTables,
+			Timestamp: 1234567890,
+		},
+	}
+	controller := &importer.LoadDataController{
+		ASTArgs: &importer.ASTArgs{},
+		Plan:    &importer.Plan{},
+		Table:   table,
+	}
+	encoder, err := importer.NewTableKVEncoderForDupResolve(encodeCfg, controller)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, encoder.Close()) })
+
+	_, err = encoder.Encode([]types.Datum{types.NewStringDatum("c")}, 1)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "[Import:ErrCastValue]Value conversion failed for column 'c1'. Expected type: enum('a','b'), received value: \"c\". Reason:")
+	require.Contains(t, err.Error(), "Data truncated")
 }

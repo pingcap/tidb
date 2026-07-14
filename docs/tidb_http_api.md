@@ -2,7 +2,7 @@
 
 `TiDBIP` is the ip of the TiDB server. `10080` is the default status port, and you can edit it in tidb.toml when starting the TiDB server.
 
-1. Get the current status of TiDB, including the connections, version and git_hash
+1. Get the current status of TiDB, including the connections, version, and `git_hash`.
 
     ```shell
     curl http://{TiDBIP}:10080/status
@@ -571,7 +571,7 @@ timezone.*
      curl http://{TiDBIP}:10080/ddl/history
      ```
 
-     **Note**: When the DDL history is very very long, system table may containg too many jobs. This interface will get a maximum of 2048 history ddl jobs by default. If you want get more jobs, consider adding `start_job_id` and `limit`.
+     **Note**: When the DDL history is very very long, system table may containing too many jobs. This interface will get a maximum of 2048 history ddl jobs by default. If you want get more jobs, consider adding `start_job_id` and `limit`.
 
 26. Get count {number} TiDB DDL job history information.
 
@@ -709,6 +709,401 @@ timezone.*
     ```
 
     ```shell
-    $curl -X POST http://127.0.0.1:10080/upgrade/start
+    $curl -X POST http://{TiDBIP}:10080/upgrade/start
     "success!"
     ```
+
+41. Set split & scatter regions concurrency before ingest, and ingest request concurrency. Value ranges:
+    - `max-batch-split-ranges`: `[1, 9223372036854775807]`, default `2048`
+    - `max-split-ranges-per-sec`: `[0, 9223372036854775807]`, default `0` (no limit)
+    - `max-ingest-per-sec`: `[0, 9223372036854775807]`, default `0` (no limit)
+    - `max-ingest-inflight`: `[0, 9223372036854775807]`, default `0` (no limit)
+
+    ```shell
+    curl http://{TiDBIP}:10080/ingest/max-batch-split-ranges
+    curl http://{TiDBIP}:10080/ingest/max-split-ranges-per-sec
+    curl http://{TiDBIP}:10080/ingest/max-ingest-per-sec
+    curl http://{TiDBIP}:10080/ingest/max-ingest-inflight
+    ```
+
+    ```shell
+    curl http://{TiDBIP}:10080/ingest/max-batch-split-ranges -X POST -d "{\"value\": 1024}"
+    curl http://{TiDBIP}:10080/ingest/max-split-ranges-per-sec -X POST -d "{\"value\": 16}"
+    curl http://{TiDBIP}:10080/ingest/max-ingest-per-sec -X POST -d "{\"value\": 0.5}"
+    curl http://{TiDBIP}:10080/ingest/max-ingest-inflight -X POST -d "{\"value\": 2}"
+    ```
+
+42. Get TiDB transaction GC states:
+
+     ```shell
+     curl http://{TiDBIP}:10080/txn-gc-states
+     ```
+
+## Test-only APIs (enableTestAPI failpoint)
+
+These APIs are only registered when the `enableTestAPI` failpoint is enabled.
+
+### Enable
+
+Build `tidb-server` with the failpoint enabled, then run with:
+
+```shell
+GO_FAILPOINTS="github.com/pingcap/tidb/pkg/server/enableTestAPI=return" ./bin/tidb-server
+```
+
+### Delete row key or index key
+
+You can use those APIs to mock dangling row or index keys case for test.
+
+Row key:
+```shell
+curl -X POST "http://{TiDBIP}:10080/test/delete/rowkey/{db}/{table}?handle={intHandle}"
+# For clustered common handle tables:
+curl -X POST "http://{TiDBIP}:10080/test/delete/rowkey/{db}/{table}?{pkCol}={pkVal}[&{pkCol2}={pkVal2}...]"
+```
+
+Index key:
+```shell
+curl -X POST "http://{TiDBIP}:10080/test/delete/indexkey/{db}/{table}/{index}?handle={intHandle}&{idxCol}={idxVal}[&{idxCol2}={idxVal2}...]"
+# For clustered common handle tables:
+curl -X POST "http://{TiDBIP}:10080/test/delete/indexkey/{db}/{table}/{index}?{idxCol}={idxVal}[&{idxCol2}={idxVal2}...]"
+```
+
+## APIs unique to TiDB-X
+
+### Run ADMIN CHECK for an index
+```shell
+# curl -XPOST "http://{TiDBIP}:10080/ddl/check/{db}/{table}/{index}"
+{
+ "check_sql": "admin check index `test`.`t` `primary`",
+ "db": "test",
+ "index": "primary",
+ "result": "success",
+ "table": "t"
+}
+```
+
+## APIs unique to TiDB-X SYSTEM keyspace
+
+These APIs are registered only on TiDB instances running in the TiDB-X SYSTEM keyspace. All examples in this section assume `{TiDBIP}:10080` belongs to a TiDB process in that SYSTEM keyspace.
+
+The `/dxf/...` APIs are for DXF (Distributed eXecution Framework) operator observability and emergency runtime tuning. In TiDB-X, DXF runs as a shared SYSTEM-keyspace service for resource-intensive work such as IMPORT INTO and distributed add index, so some APIs are called on a SYSTEM-keyspace TiDB process but target a user keyspace parameter.
+
+### Get the DXF schedule status
+
+This API returns the scheduler view used by cluster controllers to decide how many DXF worker nodes are needed. It includes the number of scheduled tasks, current and required TiDB/TiKV worker counts, busy DXF nodes, and temporary scheduler flags such as `pause_scale_in`.
+
+Usage:
+
+```shell
+curl http://{TiDBIP}:10080/dxf/schedule/status
+```
+
+Parameters: none.
+
+Example response:
+
+```json
+{
+ "version": 1,
+ "task_queue": {
+  "scheduled_count": 2
+ },
+ "tidb_worker": {
+  "cpu_count": 10,
+  "required_count": 2,
+  "current_count": 3,
+  "busy_nodes": [
+   {
+    "id": "192.168.1.10:5000",
+    "is_owner": true
+   }
+  ]
+ },
+ "tikv_worker": {
+  "required_count": 2
+ },
+ "flags": {
+  "pause_scale_in": {
+   "enabled": true,
+   "ttl": 3600000000000,
+   "expire_time": "2025-08-22T16:58:23.092864+08:00"
+  }
+ }
+}
+```
+
+### Pause or resume DXF worker scale-in
+
+This API writes a temporary DXF schedule flag. Use it when scale-in conflicts with DXF subtask scheduling, for example when subtasks keep being moved away from nodes selected for scale-in and task completion becomes slower. `pause_scale_in` asks the cluster controller to stop scaling in DXF workers for a limited time. `resume_scale_in` clears that request.
+
+Usage:
+
+```shell
+curl -X POST "http://{TiDBIP}:10080/dxf/schedule?action=pause_scale_in"
+curl -X POST "http://{TiDBIP}:10080/dxf/schedule?action=pause_scale_in&ttl=5h"
+curl -X POST "http://{TiDBIP}:10080/dxf/schedule?action=resume_scale_in"
+```
+
+Parameters:
+
+- `action`: Required. Valid values are `pause_scale_in` and `resume_scale_in`.
+- `ttl`: Optional for `pause_scale_in`. Uses Go duration syntax such as `10m`, `1h`, or `2h45m`. The default is `1h`. Ignored by `resume_scale_in`.
+
+Example response for `pause_scale_in`:
+
+```json
+{
+ "enabled": true,
+ "ttl": 18000000000000,
+ "expire_time": "2025-08-22T21:13:01.276282+08:00"
+}
+```
+
+Example response for `resume_scale_in`:
+
+```json
+{
+ "expire_time": "0001-01-01T00:00:00Z"
+}
+```
+
+### Get or update DXF schedule tuning factors
+
+This API gets or updates the resource tuning factors for a target keyspace. The scheduler uses these factors when calculating resource-related parameters for new DXF tasks such as IMPORT INTO and distributed add index tasks. Updating `amplify_factor` can make the scheduler reserve more resources for newly planned work in that keyspace.
+
+Usage:
+
+```shell
+curl "http://{TiDBIP}:10080/dxf/schedule/tune?keyspace={keyspace}"
+curl -X POST "http://{TiDBIP}:10080/dxf/schedule/tune?keyspace={keyspace}&amplify_factor={number}&ttl={duration}"
+```
+
+Parameters:
+
+- `keyspace`: Required for both `GET` and `POST`. The target keyspace whose DXF resource calculation should be read or tuned.
+- `amplify_factor`: Required for `POST`. A floating-point number in the range `[1.0, 10.0]`.
+- `ttl`: Optional for `POST`. Uses Go duration syntax such as `10m`, `1h`, or `2h45m`. The default is `1h`. After the TTL expires, `GET` returns the default tuning factor.
+
+Example `GET` response:
+
+```json
+{
+ "amplify_factor": 1
+}
+```
+
+Example `POST` response:
+
+```json
+{
+ "ttl": 7200000000000,
+ "expire_time": "2025-09-15T22:36:24.591155+08:00",
+ "amplify_factor": 2
+}
+```
+
+### Get active DXF task counts
+
+This API returns the number of active DXF tasks in `mysql.tidb_global_task`, grouped by keyspace. It is useful before maintenance or upgrades because it shows tasks that have not yet finished or moved to history. This differs from `/dxf/schedule/status`, which only counts tasks currently considered schedulable by the scheduler.
+
+Usage:
+
+```shell
+curl http://{TiDBIP}:10080/dxf/task/active
+```
+
+Parameters: none.
+
+Example response:
+
+```json
+{
+ "total": 3,
+ "per_keyspace": {
+  "SYSTEM": 1,
+  "keyspace1": 2
+ }
+}
+```
+
+### List DXF history tasks
+
+This API lists rows from `mysql.tidb_global_task_history` in descending task ID order. Use it to inspect completed, reverted, or failed DXF tasks across keyspaces. The API uses keyset pagination: pass the previous response's `NextPageToken` as the next request's `page_token`.
+
+Usage:
+
+```shell
+curl "http://{TiDBIP}:10080/dxf/task/history"
+curl "http://{TiDBIP}:10080/dxf/task/history?keyspace={keyspace}&page_size=50"
+curl "http://{TiDBIP}:10080/dxf/task/history?keyspace={keyspace}&page_size=50&page_token={NextPageToken}"
+```
+
+Parameters:
+
+- `keyspace`: Optional. If set, only returns history tasks from that keyspace.
+- `page_size`: Optional. Default is `20`. Valid range is `[1, 200]`.
+- `page_token`: Optional. Must be a positive task ID returned as `NextPageToken` by the previous page.
+
+Example response:
+
+```json
+{
+ "Items": [
+  {
+   "ID": 30001,
+   "Key": "keyspace1/ddl/backfill/9",
+   "Type": "backfill",
+   "State": "succeed",
+   "Step": -2,
+   "Priority": 512,
+   "RequiredSlots": 1,
+   "TargetScope": "dxf_service",
+   "CreateTime": "2026-04-13T11:30:10+08:00",
+   "MaxNodeCount": 1,
+   "ExtraParams": {},
+   "Keyspace": "keyspace1",
+   "StartTime": "2026-04-13T11:30:13+08:00",
+   "StateUpdateTime": "2026-04-13T11:30:17+08:00",
+   "EndTime": "2026-04-13T11:30:16+08:00"
+  }
+ ],
+ "HasMore": false,
+ "NextPageToken": 0,
+ "ApproxTotalCount": 1
+}
+```
+
+### Get IMPORT INTO history job details
+
+This API returns detailed history for one completed IMPORT INTO job in a target keyspace. It reads DXF history tables and returns task status, resource settings, file and KV sizes, speeds, row counts, and per-step durations. It returns `404 Not Found` if the matching history task is not found.
+
+Usage:
+
+```shell
+curl http://{TiDBIP}:10080/dxf/import-into/history/job/{keyspace}/{job_id}
+```
+
+Parameters:
+
+- `keyspace`: Required path parameter. The keyspace where the IMPORT INTO job ran.
+- `job_id`: Required path parameter. The positive integer IMPORT INTO job ID.
+
+Example response:
+
+```json
+{
+ "job_id": 2,
+ "keyspace": "SYSTEM",
+ "task_id": 2,
+ "state": "succeed",
+ "concurrency": 1,
+ "max_node_count": 1,
+ "distsql_scan_concurrency": 15,
+ "index_count": 4,
+ "column_count": 12,
+ "file_size": "241.4MiB",
+ "data_kv_size": "249.4MiB",
+ "index_kv_size": "40.05MiB",
+ "per_core_speed": "24.97GiB/core/hour",
+ "overall_speed": "24.97GiB/hour",
+ "row_count": 250000,
+ "row_length": 1013,
+ "duration": {
+  "total": "34s",
+  "encode": "2s",
+  "merge_sort": "",
+  "ingest": "25s",
+  "collect_conflicts": "",
+  "resolve_conflicts": "",
+  "post_process": "4s"
+ }
+}
+```
+
+### Get or update the DXF max concurrent task limit
+
+This API gets or updates the process-local maximum number of DXF tasks that can be scheduled concurrently. The value is kept in memory only, is not persisted to TiKV, and is reset when the TiDB process restarts. When updating the value, send the request to the current DXF owner.
+
+Get the current value:
+
+```shell
+curl http://{TiDBIP}:10080/dxf/schedule/max_concurrent_task
+```
+
+Example response:
+
+```json
+{
+ "max_concurrent_task": 16,
+ "persistence": "memory_only"
+}
+```
+
+Update the value:
+
+```shell
+curl -X POST "http://{TiDBIP}:10080/dxf/schedule/max_concurrent_task?value={number}"
+```
+
+`value` must be an integer in the range `[16, 1000]`. The response uses the same format as the `GET` request:
+
+```json
+{
+ "max_concurrent_task": 128,
+ "persistence": "memory_only"
+}
+```
+
+### Update a DXF task's max runtime slots
+
+This API updates the `MaxRuntimeSlots` extra parameter for one DXF task. Use it as an emergency task-level throttle, for example when a task step causes TiDB memory pressure or repeated restarts. The new value takes effect when the task executor reads the updated task metadata, commonly after the related TiDB node restarts or the task step is retried.
+
+Usage:
+
+```shell
+curl -X POST "http://{TiDBIP}:10080/dxf/task/{taskID}/max_runtime_slots?value={number}"
+curl -X POST "http://{TiDBIP}:10080/dxf/task/{taskID}/max_runtime_slots?value={number}&target_step={step}&target_step={step}"
+```
+
+Parameters:
+
+- `taskID`: Required path parameter. The positive integer DXF task ID.
+- `value`: Required. A positive integer lower than the task's `required_slots`.
+- `target_step`: Optional and repeatable. A numeric business step for the task type. If omitted, the limit applies to all business steps of the task.
+
+For IMPORT INTO tasks, common `target_step` values are:
+
+| Value | Step |
+| --- | --- |
+| `1` | `import` |
+| `2` | `post-process` |
+| `3` | `encode` |
+| `4` | `merge-sort` |
+| `5` | `ingest` |
+| `6` | `collect-conflicts` |
+| `7` | `conflict-resolution` |
+
+For distributed add index backfill tasks, common `target_step` values are:
+
+| Value | Step |
+| --- | --- |
+| `1` | `read-index` |
+| `2` | `merge-sort` |
+| `3` | `ingest` |
+| `4` | `merge-temp-index` |
+
+Example response:
+
+```json
+{
+ "task_id": 2,
+ "task_key": "SYSTEM/ImportInto/2",
+ "required_slots": 7,
+ "max_runtime_slots": 5,
+ "target_steps": [
+  "post-process",
+  "encode"
+ ]
+}
+```

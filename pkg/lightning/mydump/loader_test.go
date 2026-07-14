@@ -18,26 +18,34 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"errors"
 	"fmt"
 	"math/rand"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/apache/arrow-go/v18/parquet"
+	"github.com/apache/arrow-go/v18/parquet/schema"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
+	"github.com/pingcap/tidb/pkg/dumpformat/testutils"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	md "github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	router "github.com/pingcap/tidb/pkg/util/table-router"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/xitongsys/parquet-go/parquet"
-	"github.com/xitongsys/parquet-go/writer"
+	"go.uber.org/atomic"
 )
 
 type testMydumpLoaderSuite struct {
@@ -72,6 +80,12 @@ func (s *testMydumpLoaderSuite) touch(t *testing.T, filename ...string) {
 	path := filepath.Join(components...)
 	err := os.WriteFile(path, nil, 0o644)
 	require.Nil(t, err)
+}
+
+func (s *testMydumpLoaderSuite) writeFile(t *testing.T, filename, content string) {
+	path := filepath.Join(s.sourceDir, filename)
+	err := os.WriteFile(path, []byte(content), 0o644)
+	require.NoError(t, err)
 }
 
 func (s *testMydumpLoaderSuite) mkdir(t *testing.T, dirname string) {
@@ -186,14 +200,14 @@ func TestTableInfoNotFound(t *testing.T) {
 	s.touch(t, "db.tbl-schema.sql")
 
 	ctx := context.Background()
-	store, err := storage.NewLocalStorage(s.sourceDir)
+	store, err := objstore.NewLocalStorage(s.sourceDir)
 	require.NoError(t, err)
 
 	loader, err := md.NewLoader(ctx, md.NewLoaderCfg(s.cfg))
 	require.NoError(t, err)
 	for _, dbMeta := range loader.GetDatabases() {
 		logger, buffer := log.MakeTestLogger()
-		logCtx := log.NewContext(ctx, logger)
+		logCtx := logutil.WithLogger(ctx, logger.Logger)
 		dbSQL := dbMeta.GetSchema(logCtx, store)
 		require.Equal(t, "CREATE DATABASE IF NOT EXISTS `db`", dbSQL)
 		for _, tblMeta := range dbMeta.Tables {
@@ -211,7 +225,7 @@ func TestTableUnexpectedError(t *testing.T) {
 	s.touch(t, "db.tbl-schema.sql")
 
 	ctx := context.Background()
-	store, err := storage.NewLocalStorage(s.sourceDir)
+	store, err := objstore.NewLocalStorage(s.sourceDir)
 	require.NoError(t, err)
 
 	loader, err := md.NewLoader(ctx, md.NewLoaderCfg(s.cfg))
@@ -233,7 +247,7 @@ func TestMissingTableSchema(t *testing.T) {
 	s.touch(t, "db.tbl.csv")
 
 	ctx := context.Background()
-	store, err := storage.NewLocalStorage(s.sourceDir)
+	store, err := objstore.NewLocalStorage(s.sourceDir)
 	require.NoError(t, err)
 
 	loader, err := md.NewLoader(ctx, md.NewLoaderCfg(s.cfg))
@@ -278,7 +292,7 @@ func TestDataNoHostTable(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestViewNoHostDB(t *testing.T) {
+func TestViewWithoutHostDBIsAccepted(t *testing.T) {
 	/*
 		Path/
 			notdb-schema-create.sql
@@ -287,13 +301,37 @@ func TestViewNoHostDB(t *testing.T) {
 	s := newTestMydumpLoaderSuite(t)
 
 	s.touch(t, "notdb-schema-create.sql")
-	s.touch(t, "db.tbl-schema-view.sql")
+	viewSQL := "CREATE VIEW tbl AS SELECT 1;"
+	s.writeFile(t, "db.tbl-schema-view.sql", viewSQL)
 
-	_, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
-	require.Contains(t, err.Error(), `invalid view schema file, miss host table schema for view 'tbl'`)
+	mdl, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
+	require.NoError(t, err)
+	require.Equal(t, []*md.MDDatabaseMeta{
+		{
+			Name:       "notdb",
+			SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "notdb", Name: ""}, FileMeta: md.SourceFileMeta{Path: "notdb-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
+		},
+		{
+			Name: "db",
+			SchemaFile: md.FileInfo{
+				TableName: filter.Table{
+					Schema: "db",
+					Name:   "",
+				},
+				FileMeta: md.SourceFileMeta{Type: md.SourceTypeSchemaSchema},
+			},
+			Views: []*md.MDTableMeta{{
+				DB:           "db",
+				Name:         "tbl",
+				SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "db", Name: "tbl"}, FileMeta: md.SourceFileMeta{Path: "db.tbl-schema-view.sql", Type: md.SourceTypeViewSchema, FileSize: int64(len(viewSQL)), RealSize: int64(len(viewSQL))}},
+				IndexRatio:   0.0,
+				IsRowOrdered: true,
+			}},
+		},
+	}, mdl.GetDatabases())
 }
 
-func TestViewNoHostTable(t *testing.T) {
+func TestViewWithoutHostTableIsAccepted(t *testing.T) {
 	/*
 		Path/
 			db-schema-create.sql
@@ -302,10 +340,22 @@ func TestViewNoHostTable(t *testing.T) {
 	s := newTestMydumpLoaderSuite(t)
 
 	s.touch(t, "db-schema-create.sql")
-	s.touch(t, "db.tbl-schema-view.sql")
+	viewSQL := "CREATE VIEW tbl AS SELECT 1;"
+	s.writeFile(t, "db.tbl-schema-view.sql", viewSQL)
 
-	_, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
-	require.Contains(t, err.Error(), `invalid view schema file, miss host table schema for view 'tbl'`)
+	mdl, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
+	require.NoError(t, err)
+	require.Equal(t, []*md.MDDatabaseMeta{{
+		Name:       "db",
+		SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "db", Name: ""}, FileMeta: md.SourceFileMeta{Path: "db-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
+		Views: []*md.MDTableMeta{{
+			DB:           "db",
+			Name:         "tbl",
+			SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "db", Name: "tbl"}, FileMeta: md.SourceFileMeta{Path: "db.tbl-schema-view.sql", Type: md.SourceTypeViewSchema, FileSize: int64(len(viewSQL)), RealSize: int64(len(viewSQL))}},
+			IndexRatio:   0.0,
+			IsRowOrdered: true,
+		}},
+	}}, mdl.GetDatabases())
 }
 
 func TestDataWithoutSchema(t *testing.T) {
@@ -405,13 +455,20 @@ func TestRouter(t *testing.T) {
 		s.touch(t, "a1.t2.1.sql")
 
 		s.touch(t, "a1.v1-schema.sql")
-		s.touch(t, "a1.v1-schema-view.sql")
+		viewSQL := "CREATE VIEW v1 AS SELECT 1;"
+		s.writeFile(t, "a1.v1-schema-view.sql", viewSQL)
 
 		mdl, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 		require.NoError(t, err)
 		dbs := mdl.GetDatabases()
+		require.Len(t, dbs, 3)
+		require.Equal(t, "a1", dbs[1].Name)
+		require.Len(t, dbs[1].Tables, 1)
+		require.Equal(t, "s1", dbs[1].Tables[0].Name)
+		require.Len(t, dbs[1].Views, 1)
+		require.Equal(t, "v1", dbs[1].Views[0].Name)
 		// hit rules: a0.t0 -> b.u, a0.t1 -> b.0, a1.t2 -> b.u
-		// not hit: a1.s1, a1.v1
+		// not hit: a1.s1, a1.v1 (view placeholder is pruned from Tables)
 		expectedDBS := []*md.MDDatabaseMeta{
 			{
 				Name:       "a0",
@@ -429,20 +486,12 @@ func TestRouter(t *testing.T) {
 						IndexRatio:   0.0,
 						IsRowOrdered: true,
 					},
-					{
-						DB:           "a1",
-						Name:         "v1",
-						SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "a1", Name: "v1"}, FileMeta: md.SourceFileMeta{Path: "a1.v1-schema.sql", Type: md.SourceTypeTableSchema}},
-						DataFiles:    []md.FileInfo{},
-						IndexRatio:   0.0,
-						IsRowOrdered: true,
-					},
 				},
 				Views: []*md.MDTableMeta{
 					{
 						DB:           "a1",
 						Name:         "v1",
-						SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "a1", Name: "v1"}, FileMeta: md.SourceFileMeta{Path: "a1.v1-schema-view.sql", Type: md.SourceTypeViewSchema}},
+						SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "a1", Name: "v1"}, FileMeta: md.SourceFileMeta{Path: "a1.v1-schema-view.sql", Type: md.SourceTypeViewSchema, FileSize: int64(len(viewSQL)), RealSize: int64(len(viewSQL))}},
 						IndexRatio:   0.0,
 						IsRowOrdered: true,
 					},
@@ -525,7 +574,8 @@ func TestRouter(t *testing.T) {
 		}
 		s.touch(t, "e0-schema-create.sql")
 		s.touch(t, "e0.f0-schema.sql")
-		s.touch(t, "e0.f0-schema-view.sql")
+		viewSQL := "CREATE VIEW f0 AS SELECT 1;"
+		s.writeFile(t, "e0.f0-schema-view.sql", viewSQL)
 
 		mdl, err := md.NewLoader(context.Background(), md.NewLoaderCfg(s.cfg))
 		require.NoError(t, err)
@@ -539,21 +589,12 @@ func TestRouter(t *testing.T) {
 			{
 				Name:       "v",
 				SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "v", Name: ""}, FileMeta: md.SourceFileMeta{Path: "e0-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
-				Tables: []*md.MDTableMeta{
-					{
-						DB:           "v",
-						Name:         "vv",
-						SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "v", Name: "vv"}, FileMeta: md.SourceFileMeta{Path: "e0.f0-schema.sql", Type: md.SourceTypeTableSchema}},
-						DataFiles:    []md.FileInfo{},
-						IndexRatio:   0.0,
-						IsRowOrdered: true,
-					},
-				},
+				Tables:     []*md.MDTableMeta{},
 				Views: []*md.MDTableMeta{
 					{
 						DB:           "v",
 						Name:         "vv",
-						SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "v", Name: "vv"}, FileMeta: md.SourceFileMeta{Path: "e0.f0-schema-view.sql", Type: md.SourceTypeViewSchema}},
+						SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "v", Name: "vv"}, FileMeta: md.SourceFileMeta{Path: "e0.f0-schema-view.sql", Type: md.SourceTypeViewSchema, FileSize: int64(len(viewSQL)), RealSize: int64(len(viewSQL))}},
 						IndexRatio:   0.0,
 						IsRowOrdered: true,
 					},
@@ -769,7 +810,8 @@ func TestFileRouting(t *testing.T) {
 	s.touch(t, "d1/test1.sql")
 	s.touch(t, "d1/test2.001.sql")
 	s.touch(t, "d1/v1-table.sql")
-	s.touch(t, "d1/v1-view.sql")
+	viewSQL := "CREATE VIEW v1 AS SELECT 1;"
+	s.writeFile(t, "d1/v1-view.sql", viewSQL)
 	s.touch(t, "d1/t1-schema-create.sql")
 	s.touch(t, "d2/schema.sql")
 	s.touch(t, "d2/abc-table.sql")
@@ -806,17 +848,6 @@ func TestFileRouting(t *testing.T) {
 					IndexRatio:   0.0,
 					IsRowOrdered: true,
 				},
-				{
-					DB:   "d1",
-					Name: "v1",
-					SchemaFile: md.FileInfo{
-						TableName: filter.Table{Schema: "d1", Name: "v1"},
-						FileMeta:  md.SourceFileMeta{Path: filepath.FromSlash("d1/v1-table.sql"), Type: md.SourceTypeTableSchema},
-					},
-					DataFiles:    []md.FileInfo{},
-					IndexRatio:   0.0,
-					IsRowOrdered: true,
-				},
 			},
 			Views: []*md.MDTableMeta{
 				{
@@ -824,7 +855,12 @@ func TestFileRouting(t *testing.T) {
 					Name: "v1",
 					SchemaFile: md.FileInfo{
 						TableName: filter.Table{Schema: "d1", Name: "v1"},
-						FileMeta:  md.SourceFileMeta{Path: filepath.FromSlash("d1/v1-view.sql"), Type: md.SourceTypeViewSchema},
+						FileMeta: md.SourceFileMeta{
+							Path:     filepath.FromSlash("d1/v1-view.sql"),
+							Type:     md.SourceTypeViewSchema,
+							FileSize: int64(len(viewSQL)),
+							RealSize: int64(len(viewSQL)),
+						},
 					},
 					IndexRatio:   0.0,
 					IsRowOrdered: true,
@@ -964,7 +1000,7 @@ func TestInputWithSpecialChars(t *testing.T) {
 func TestMDLoaderSetupOption(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	memStore := storage.NewMemStorage()
+	memStore := objstore.NewMemStorage()
 	require.NoError(t, memStore.WriteFile(ctx, "/test-src/db1.tbl1-schema.sql",
 		[]byte("CREATE TABLE db1.tbl1 ( id INTEGER, val VARCHAR(255) );"),
 	))
@@ -1083,7 +1119,7 @@ func TestExternalDataRoutes(t *testing.T) {
 
 func TestSampleFileCompressRatio(t *testing.T) {
 	s := newTestMydumpLoaderSuite(t)
-	store, err := storage.NewLocalStorage(s.sourceDir)
+	store, err := objstore.NewLocalStorage(s.sourceDir)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1127,64 +1163,155 @@ func TestEstimateFileSize(t *testing.T) {
 	require.Equal(t, int64(100), md.EstimateRealSizeForFile(context.Background(), fileMeta, nil))
 }
 
+type openCounterStorage struct {
+	storeapi.Storage
+	openCount atomic.Int64
+}
+
+func (s *openCounterStorage) Open(ctx context.Context, path string, option *storeapi.ReaderOption) (objectio.Reader, error) {
+	s.openCount.Add(1)
+	return s.Storage.Open(ctx, path, option)
+}
+
+type openErrorStorage struct {
+	storeapi.Storage
+}
+
+func (s openErrorStorage) Open(context.Context, string, *storeapi.ReaderOption) (objectio.Reader, error) {
+	return nil, errors.New("open disabled")
+}
+
+func TestMDLoaderSkipRealSizeEstimation(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("compressed", func(t *testing.T) {
+		dir := t.TempDir()
+		baseStore, err := objstore.NewLocalStorage(dir)
+		require.NoError(t, err)
+
+		var buf bytes.Buffer
+		gz := gzip.NewWriter(&buf)
+		for range 1000 {
+			_, err = gz.Write([]byte("aaaa\n"))
+			require.NoError(t, err)
+		}
+		require.NoError(t, gz.Close())
+		require.NoError(t, baseStore.WriteFile(ctx, "db1.t1.001.csv.gz", buf.Bytes()))
+
+		loaderCfg := md.LoaderConfig{
+			SourceURL:        "file://" + dir,
+			Filter:           []string{"*.*"},
+			DefaultFileRules: true,
+		}
+
+		store1 := &openCounterStorage{Storage: baseStore}
+		_, err = md.NewLoaderWithStore(ctx, loaderCfg, store1)
+		require.NoError(t, err)
+		require.Greater(t, store1.openCount.Load(), int64(0))
+
+		store2 := &openCounterStorage{Storage: baseStore}
+		mdl, err := md.NewLoaderWithStore(ctx, loaderCfg, store2, md.WithSkipRealSizeEstimation(true))
+		require.NoError(t, err)
+		require.Equal(t, int64(0), store2.openCount.Load())
+
+		allFiles := mdl.GetAllFiles()
+		fi, ok := allFiles["db1.t1.001.csv.gz"]
+		require.True(t, ok)
+		require.Equal(t, fi.FileMeta.FileSize, fi.FileMeta.RealSize)
+	})
+
+	t.Run("parquet", func(t *testing.T) {
+		dir := t.TempDir()
+		baseStore, err := objstore.NewLocalStorage(dir)
+		require.NoError(t, err)
+		require.NoError(t, baseStore.WriteFile(ctx, "db1.t1.001.parquet", []byte("not a parquet file")))
+
+		loaderCfg := md.LoaderConfig{
+			SourceURL:        "file://" + dir,
+			Filter:           []string{"*.*"},
+			DefaultFileRules: true,
+		}
+
+		_, err = md.NewLoaderWithStore(ctx, loaderCfg, openErrorStorage{Storage: baseStore})
+		require.Error(t, err)
+
+		mdl, err := md.NewLoaderWithStore(ctx, loaderCfg, openErrorStorage{Storage: baseStore}, md.WithSkipRealSizeEstimation(true))
+		require.NoError(t, err)
+
+		allFiles := mdl.GetAllFiles()
+		fi, ok := allFiles["db1.t1.001.parquet"]
+		require.True(t, ok)
+		require.Equal(t, fi.FileMeta.FileSize, fi.FileMeta.RealSize)
+		require.Zero(t, fi.FileMeta.Rows)
+	})
+}
+
 func testSampleParquetDataSize(t *testing.T, count int) {
 	s := newTestMydumpLoaderSuite(t)
-	store, err := storage.NewLocalStorage(s.sourceDir)
+	store, err := objstore.NewLocalStorage(s.sourceDir)
 	require.NoError(t, err)
-
-	type row struct {
-		ID    int64  `parquet:"name=id, type=INT64"`
-		Key   string `parquet:"name=key, type=BYTE_ARRAY, encoding=PLAIN_DICTIONARY"`
-		Value string `parquet:"name=value, type=BYTE_ARRAY, encoding=PLAIN_DICTIONARY"`
-	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	byteArray := make([]byte, 0, 40*1024)
-	bf := bytes.NewBuffer(byteArray)
-	pwriter, err := writer.NewParquetWriterFromWriter(bf, new(row), 4)
-	require.NoError(t, err)
-	pwriter.RowGroupSize = 128 * 1024 * 1024 //128M
-	pwriter.PageSize = 8 * 1024              //8K
-	pwriter.CompressionType = parquet.CompressionCodec_SNAPPY
+	fileName := "test_1.t1.parquet"
+
+	totalRowSize := int64(0)
 	seed := time.Now().Unix()
 	t.Logf("seed: %d. To reproduce the random behaviour, manually set `rand.New(rand.NewSource(seed))`", seed)
 	rnd := rand.New(rand.NewSource(seed))
-	totalRowSize := 0
-	for i := range count {
-		kl := rnd.Intn(20) + 1
-		key := make([]byte, kl)
-		kl, err = rnd.Read(key)
-		require.NoError(t, err)
-		vl := rnd.Intn(20) + 1
-		value := make([]byte, vl)
-		vl, err = rnd.Read(value)
-		require.NoError(t, err)
-
-		totalRowSize += kl + vl + 8
-		row := row{
-			ID:    int64(i),
-			Key:   string(key[:kl]),
-			Value: string(value[:vl]),
-		}
-		err = pwriter.Write(row)
-		require.NoError(t, err)
+	pc := []testutils.ParquetColumn{
+		{
+			Name:      "id",
+			Type:      parquet.Types.Int64,
+			Converted: schema.ConvertedTypes.None,
+			Gen: func(numRows int) (any, []int16) {
+				data := make([]int64, numRows)
+				defLevels := make([]int16, numRows)
+				for i := range numRows {
+					data[i] = int64(i)
+					defLevels[i] = 1
+				}
+				totalRowSize += int64(8 * numRows)
+				return data, defLevels
+			},
+		},
+		{
+			Name:      "key",
+			Type:      parquet.Types.ByteArray,
+			Converted: schema.ConvertedTypes.UTF8,
+			Gen: func(numRows int) (any, []int16) {
+				data := make([]parquet.ByteArray, numRows)
+				defLevels := make([]int16, numRows)
+				for i := range numRows {
+					s := strconv.Itoa(rnd.Intn(100) + 1)
+					data[i] = parquet.ByteArray(s)
+					defLevels[i] = 1
+					totalRowSize += int64(len(s))
+				}
+				return data, defLevels
+			},
+		},
+		{
+			Name:      "value",
+			Type:      parquet.Types.ByteArray,
+			Converted: schema.ConvertedTypes.UTF8,
+			Gen: func(numRows int) (any, []int16) {
+				data := make([]parquet.ByteArray, numRows)
+				defLevels := make([]int16, numRows)
+				for i := range numRows {
+					s := strconv.Itoa(rnd.Intn(100) + 1)
+					data[i] = parquet.ByteArray(s)
+					defLevels[i] = 1
+					totalRowSize += int64(len(s))
+				}
+				return data, defLevels
+			},
+		},
 	}
-	err = pwriter.WriteStop()
-	require.NoError(t, err)
+	testutils.WriteParquetFile(s.sourceDir, fileName, pc, count)
 
-	fileName := "test_1.t1.parquet"
-	err = store.WriteFile(ctx, fileName, bf.Bytes())
-	require.NoError(t, err)
-
-	rowSize, err := md.SampleParquetRowSize(ctx, md.SourceFileMeta{
-		Path: fileName,
-	}, store)
-	require.NoError(t, err)
-	rowCount, err := md.ReadParquetFileRowCountByFile(ctx, store, md.SourceFileMeta{
-		Path: fileName,
-	})
+	rowCount, rowSize, err := parquetfile.SampleStatisticsFromParquet(ctx, fileName, store)
 	require.NoError(t, err)
 	// expected error within 10%, so delta = totalRowSize / 10
 	require.InDelta(t, totalRowSize, int64(rowSize*float64(rowCount)), float64(totalRowSize)/10)
@@ -1204,7 +1331,9 @@ func TestSetupOptions(t *testing.T) {
 }
 
 func TestParallelProcess(t *testing.T) {
+	var totalSize atomic.Int64
 	hdl := func(ctx context.Context, f md.RawFile) (string, error) {
+		totalSize.Add(f.Size)
 		return strings.ToLower(f.Path), nil
 	}
 
@@ -1219,16 +1348,20 @@ func TestParallelProcess(t *testing.T) {
 
 	oneTest := func(length int, concurrency int) {
 		original := make([]md.RawFile, length)
+		totalSize = *atomic.NewInt64(0)
 		for i := range length {
-			original[i] = md.RawFile{Path: randomString()}
+			original[i] = md.RawFile{Path: randomString(), Size: int64(rand.Intn(1000))}
 		}
 
 		res, err := md.ParallelProcess(context.Background(), original, concurrency, hdl)
 		require.NoError(t, err)
 
+		oneTotalSize := int64(0)
 		for i, s := range original {
 			require.Equal(t, strings.ToLower(s.Path), res[i])
+			oneTotalSize += s.Size
 		}
+		require.Equal(t, oneTotalSize, totalSize.Load())
 	}
 
 	oneTest(10, 0)

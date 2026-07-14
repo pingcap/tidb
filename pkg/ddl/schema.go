@@ -16,16 +16,17 @@ package ddl
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/label"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"go.uber.org/zap"
 )
 
 func onCreateSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
@@ -186,7 +187,7 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 		}
 		var ruleIDs []string
 		for _, tblInfo := range tables {
-			rules := append(getPartitionRuleIDs(job.SchemaName, tblInfo), fmt.Sprintf(label.TableIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L))
+			rules := append(getPartitionRuleIDs(jobCtx.store.GetCodec(), job.SchemaName, tblInfo), label.NewRuleID(jobCtx.store.GetCodec(), job.SchemaName, tblInfo.Name.L, ""))
 			ruleIDs = append(ruleIDs, rules...)
 		}
 		patch := label.NewRulePatch([]*label.Rule{}, ruleIDs)
@@ -208,6 +209,20 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 		tables, err = metaMut.ListTables(jobCtx.stepCtx, job.SchemaID)
 		if err != nil {
 			return ver, errors.Trace(err)
+		}
+
+		// Best-effort cleanup - log errors but continue with DROP DATABASE
+		if err := batchDeleteTableAffinityGroups(jobCtx, tables); err != nil {
+			logutil.DDLLogger().Warn("failed to delete affinity groups for batch tables, but operation will continue",
+				zap.Error(err),
+				zap.Int64("databaseID", dbInfo.ID))
+		}
+
+		// Clean up masking policies for all tables in the dropped database.
+		if err := w.dropMaskingPoliciesByDBName(jobCtx, job.SchemaName); err != nil {
+			logutil.DDLLogger().Warn("failed to delete masking policies for database, but operation will continue",
+				zap.Error(err),
+				zap.String("dbName", job.SchemaName))
 		}
 
 		err = metaMut.UpdateDatabase(dbInfo)

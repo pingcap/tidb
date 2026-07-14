@@ -12,7 +12,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
-	"github.com/pingcap/tidb/br/pkg/httputil"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
@@ -20,6 +19,7 @@ import (
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/summary"
+	"github.com/pingcap/tidb/pkg/util/httputil"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
@@ -74,7 +74,7 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 
 	// Restore raw does not need domain.
 	needDomain := false
-	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config), cfg.CheckRequirements, needDomain, conn.NormalVersionChecker)
+	mgr, err := NewMgr(ctx, g, cfg.KeyspaceName, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config), cfg.CheckRequirements, needDomain, conn.NormalVersionChecker)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -161,7 +161,7 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulers, cfg.Online)
+	defer restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulers)
 
 	start := time.Now()
 	err = client.GetRestorer(nil).GoRestore(onProgress, restore.CreateUniqueFileSets(files))

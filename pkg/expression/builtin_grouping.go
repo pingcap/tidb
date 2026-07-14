@@ -91,7 +91,8 @@ func (b *BuiltinGroupingImplSig) setMetaGroupingMarks(groupingMarks []map[uint64
 	b.groupingMarks = groupingMarks
 }
 
-func (b *BuiltinGroupingImplSig) getGroupingMode() tipb.GroupingMode {
+// GetGroupingMode returns the grouping mode of the grouping function.
+func (b *BuiltinGroupingImplSig) GetGroupingMode() tipb.GroupingMode {
 	return b.mode
 }
 
@@ -128,7 +129,8 @@ func (b *BuiltinGroupingImplSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *BuiltinGroupingImplSig) getMetaGroupingMarks() []map[uint64]struct{} {
+// GetMetaGroupingMarks returns the grouping marks of the grouping function.
+func (b *BuiltinGroupingImplSig) GetMetaGroupingMarks() []map[uint64]struct{} {
 	return b.groupingMarks
 }
 
@@ -136,8 +138,8 @@ func (b *BuiltinGroupingImplSig) checkMetadata() error {
 	if !b.isMetaInited {
 		return errors.Errorf("Meta data hasn't been initialized")
 	}
-	mode := b.getGroupingMode()
-	groupingMarks := b.getMetaGroupingMarks()
+	mode := b.GetGroupingMode()
+	groupingMarks := b.GetMetaGroupingMarks()
 	if mode != tipb.GroupingMode_ModeBitAnd && mode != tipb.GroupingMode_ModeNumericCmp && mode != tipb.GroupingMode_ModeNumericSet {
 		return errors.Errorf("Mode of meta data in grouping function is invalid. input mode: %d", mode)
 	} else if mode == tipb.GroupingMode_ModeBitAnd || mode == tipb.GroupingMode_ModeNumericCmp {
@@ -151,7 +153,7 @@ func (b *BuiltinGroupingImplSig) checkMetadata() error {
 }
 
 func (b *BuiltinGroupingImplSig) groupingImplBitAnd(groupingID uint64) int64 {
-	groupingMarks := b.getMetaGroupingMarks()
+	groupingMarks := b.GetMetaGroupingMarks()
 	res := uint64(0)
 	for _, groupingMark := range groupingMarks {
 		// for Bit-And mode, there is only one element in groupingMark.
@@ -168,7 +170,7 @@ func (b *BuiltinGroupingImplSig) groupingImplBitAnd(groupingID uint64) int64 {
 }
 
 func (b *BuiltinGroupingImplSig) groupingImplNumericCmp(groupingID uint64) int64 {
-	groupingMarks := b.getMetaGroupingMarks()
+	groupingMarks := b.GetMetaGroupingMarks()
 	res := uint64(0)
 	for _, groupingMark := range groupingMarks {
 		// for Num-Cmp mode, there is only one element in groupingMark.
@@ -185,7 +187,7 @@ func (b *BuiltinGroupingImplSig) groupingImplNumericCmp(groupingID uint64) int64
 }
 
 func (b *BuiltinGroupingImplSig) groupingImplNumericSet(groupingID uint64) int64 {
-	groupingMarks := b.getMetaGroupingMarks()
+	groupingMarks := b.GetMetaGroupingMarks()
 	res := uint64(0)
 	for _, groupingMark := range groupingMarks {
 		res <<= 1

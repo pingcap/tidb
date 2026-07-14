@@ -161,7 +161,7 @@ func (c *RowContainer) spillToDisk(preSpillError error) {
 		if r := recover(); r != nil {
 			err := fmt.Errorf("%v", r)
 			c.m.records.spillError = err
-			logutil.BgLogger().Error("spill to disk failed", zap.Stack("stack"), zap.Error(err))
+			logutil.BgLogger().Warn("spill to disk failed", zap.Stack("stack"), zap.Error(err))
 		}
 	}()
 	failpoint.Inject("spillToDiskOutOfDiskQuota", func(val failpoint.Value) {
@@ -267,7 +267,7 @@ func (c *RowContainer) Add(chk *Chunk) (err error) {
 
 // AllocChunk allocates a new chunk from RowContainer.
 func (c *RowContainer) AllocChunk() (chk *Chunk) {
-	return c.m.records.inMemory.allocChunk()
+	return c.m.records.inMemory.AllocChunk()
 }
 
 // GetChunk returns chkIdx th chunk of in memory records.

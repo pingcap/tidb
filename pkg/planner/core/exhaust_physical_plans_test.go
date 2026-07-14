@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
@@ -58,7 +59,7 @@ type indexJoinContext struct {
 }
 
 func prepareForAnalyzeLookUpFilters() *indexJoinContext {
-	ctx := MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		do := domain.GetDomain(ctx)
 		do.StatsHandle().Close()
@@ -199,7 +200,7 @@ func testAnalyzeLookUpFilters(t *testing.T, testCtx *indexJoinContext, testCase 
 		joinOtherConditions:   others,
 		outerJoinKeys:         testCase.innerKeys,
 		innerJoinKeys:         testCase.innerKeys,
-		innerStats:            dataSourceNode.StatsInfo(),
+		innerTableStats:       dataSourceNode.TableStats,
 		innerSchema:           dataSourceNode.Schema(),
 		innerPushedConditions: dataSourceNode.PushedDownConds}
 	result, _, err := indexJoinPathBuild(ctx, testCtx.path, indexJoinInfo, testCase.rebuildMode)

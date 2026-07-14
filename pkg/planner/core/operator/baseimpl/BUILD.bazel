@@ -12,6 +12,5 @@ go_library(
         "//pkg/planner/property",
         "//pkg/types",
         "//pkg/util/stringutil",
-        "//pkg/util/tracing",
     ],
 )

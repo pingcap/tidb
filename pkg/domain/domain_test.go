@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -156,7 +157,7 @@ func TestInfo(t *testing.T) {
 	require.Equal(t, int64(1), dom.InfoSchema().SchemaMetaVersion())
 
 	// Test for RemoveServerInfo.
-	dom.info.RemoveServerInfo()
+	dom.info.ServerInfoSyncer().RemoveServerInfo()
 	infos, err = infosync.GetAllServerInfo(goCtx)
 	require.NoError(t, err)
 	require.Len(t, infos, 0)
@@ -244,6 +245,10 @@ func (mebd *mockEtcdBackend) EtcdAddrs() ([]string, error) {
 	return mebd.pdAddrs, nil
 }
 
+func (mebd *mockEtcdBackend) GetPDAddrs() ([]string, error) {
+	return mebd.pdAddrs, nil
+}
+
 func (mebd *mockEtcdBackend) TLSConfig() *tls.Config { return nil }
 
 func (mebd *mockEtcdBackend) StartGCWorker() error {
@@ -265,6 +270,8 @@ func TestClosestReplicaReadChecker(t *testing.T) {
 		vardef.TiDBReplicaRead: "closest-adaptive",
 	}
 	dom.sysVarCache.Unlock()
+	_, err = infosync.GlobalInfoSyncerInit(context.Background(), "", nil, nil, nil, nil, nil, nil, false, nil)
+	require.NoError(t, err)
 
 	makeFailpointRes := func(v any) string {
 		bytes, err := json.Marshal(v)
@@ -272,22 +279,22 @@ func TestClosestReplicaReadChecker(t *testing.T) {
 		return fmt.Sprintf("return(`%s`)", string(bytes))
 	}
 
-	mockedAllServerInfos := map[string]*infosync.ServerInfo{
+	mockedAllServerInfos := map[string]*serverinfo.ServerInfo{
 		"s1": {
-			StaticServerInfo: infosync.StaticServerInfo{
+			StaticInfo: serverinfo.StaticInfo{
 				ID: "s1",
 			},
-			DynamicServerInfo: infosync.DynamicServerInfo{
+			DynamicInfo: serverinfo.DynamicInfo{
 				Labels: map[string]string{
 					"zone": "zone1",
 				},
 			},
 		},
 		"s2": {
-			StaticServerInfo: infosync.StaticServerInfo{
+			StaticInfo: serverinfo.StaticInfo{
 				ID: "s2",
 			},
-			DynamicServerInfo: infosync.DynamicServerInfo{
+			DynamicInfo: serverinfo.DynamicInfo{
 				Labels: map[string]string{
 					"zone": "zone2",
 				},
@@ -295,7 +302,7 @@ func TestClosestReplicaReadChecker(t *testing.T) {
 		},
 	}
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/infosync/mockGetServerInfo", makeFailpointRes(mockedAllServerInfos["s2"])))
 
 	stores := []*metapb.Store{
@@ -354,52 +361,52 @@ func TestClosestReplicaReadChecker(t *testing.T) {
 	}
 
 	// partial matches
-	mockedAllServerInfos = map[string]*infosync.ServerInfo{
+	mockedAllServerInfos = map[string]*serverinfo.ServerInfo{
 		"s1": {
-			StaticServerInfo: infosync.StaticServerInfo{
+			StaticInfo: serverinfo.StaticInfo{
 				ID: "s1",
 			},
-			DynamicServerInfo: infosync.DynamicServerInfo{
+			DynamicInfo: serverinfo.DynamicInfo{
 				Labels: map[string]string{
 					"zone": "zone1",
 				},
 			},
 		},
 		"s2": {
-			StaticServerInfo: infosync.StaticServerInfo{
+			StaticInfo: serverinfo.StaticInfo{
 				ID: "s2",
 			},
-			DynamicServerInfo: infosync.DynamicServerInfo{
+			DynamicInfo: serverinfo.DynamicInfo{
 				Labels: map[string]string{
 					"zone": "zone2",
 				},
 			},
 		},
 		"s22": {
-			StaticServerInfo: infosync.StaticServerInfo{
+			StaticInfo: serverinfo.StaticInfo{
 				ID: "s22",
 			},
-			DynamicServerInfo: infosync.DynamicServerInfo{
+			DynamicInfo: serverinfo.DynamicInfo{
 				Labels: map[string]string{
 					"zone": "zone2",
 				},
 			},
 		},
 		"s3": {
-			StaticServerInfo: infosync.StaticServerInfo{
+			StaticInfo: serverinfo.StaticInfo{
 				ID: "s3",
 			},
-			DynamicServerInfo: infosync.DynamicServerInfo{
+			DynamicInfo: serverinfo.DynamicInfo{
 				Labels: map[string]string{
 					"zone": "zone3",
 				},
 			},
 		},
 		"s4": {
-			StaticServerInfo: infosync.StaticServerInfo{
+			StaticInfo: serverinfo.StaticInfo{
 				ID: "s4",
 			},
-			DynamicServerInfo: infosync.DynamicServerInfo{
+			DynamicInfo: serverinfo.DynamicInfo{
 				Labels: map[string]string{
 					"zone": "zone4",
 				},
@@ -407,7 +414,7 @@ func TestClosestReplicaReadChecker(t *testing.T) {
 		},
 	}
 	pdClient.stores = stores
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
 	cases := []struct {
 		id      string
 		matches bool
@@ -442,7 +449,7 @@ func TestClosestReplicaReadChecker(t *testing.T) {
 	}
 
 	variable.SetEnableAdaptiveReplicaRead(true)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/infosync/mockGetServerInfo"))
 }
 

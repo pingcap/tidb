@@ -94,7 +94,7 @@ func adviseIndexesWithOption(ctx context.Context, sctx sessionctx.Context,
 	// start the advisor
 	indexes, allCandidates, err := adviseIndexes(querySet, indexableColSet, opt, option)
 	if err != nil {
-		advisorLogger().Error("advise indexes failed", zap.Error(err))
+		advisorLogger().Warn("advise indexes failed", zap.Error(err))
 		return nil, err
 	}
 

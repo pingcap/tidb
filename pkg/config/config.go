@@ -24,6 +24,8 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -33,7 +35,11 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/config/configtypes"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/naming"
 	"github.com/pingcap/tidb/pkg/util/tikvutil"
@@ -49,6 +55,10 @@ const (
 	MaxLogFileSize = 4096 // MB
 	// MaxTxnEntrySize is the max value of TxnEntrySizeLimit.
 	MaxTxnEntrySizeLimit = 120 * 1024 * 1024 // 120MB
+	// MaxPluginAuditLogBufferSize is the max buffer size for plugin audit log.
+	MaxPluginAuditLogBufferSize = 100 * 1024 * 1024
+	// MaxPluginAuditLogFlushInterval is the max time interval to flush plugin audit log.
+	MaxPluginAuditLogFlushInterval = 3600
 	// DefTxnEntrySizeLimit is the default value of TxnEntrySizeLimit.
 	DefTxnEntrySizeLimit = 6 * 1024 * 1024
 	// DefTxnTotalSizeLimit is the default value of TxnTxnTotalSizeLimit.
@@ -90,16 +100,46 @@ const (
 	DefExpensiveTxnTimeThreshold = 600
 	// DefMemoryUsageAlarmRatio is the threshold triggering an alarm which the memory usage of tidb-server instance exceeds.
 	DefMemoryUsageAlarmRatio = 0.8
+	// DefDXFResourceLimit is the default resource percentage available for DXF.
+	DefDXFResourceLimit = 100
+	// MinDXFResourceLimit is the minimum resource percentage available for DXF.
+	// Keep it at 10 while mysql.dist_framework_meta.cpu_count changes from total
+	// node CPU to usable DXF CPU, so the stored value stays non-zero.
+	MinDXFResourceLimit = 10
+	// MaxDXFResourceLimit is the maximum resource percentage available for DXF.
+	MaxDXFResourceLimit = 100
 	// DefTempDir is the default temporary directory path for TiDB.
 	DefTempDir = "/tmp/tidb"
+	// DefPluginAuditLogBufferSize is the default buffer size for plugin audit log.
+	DefPluginAuditLogBufferSize = 0
+	// DefPluginAuditLogFlushInterval is the default time interval to flush plugin audit log.
+	DefPluginAuditLogFlushInterval = 30
 	// DefAuthTokenRefreshInterval is the default time interval to refresh tidb auth token.
 	DefAuthTokenRefreshInterval = time.Hour
 	// EnvVarKeyspaceName is the system env name for keyspace name.
 	EnvVarKeyspaceName = "KEYSPACE_NAME"
+	// EnvClusterCA is the system env name for cluster CA path.
+	EnvClusterCA = "CLUSTER_CA"
+	// EnvClusterCert is the system env name for cluster cert path.
+	EnvClusterCert = "CLUSTER_CERT"
+	// EnvClusterKey is the system env name for cluster key path.
+	EnvClusterKey = "CLUSTER_KEY"
+	// EnvSQLCA is the system env name for SQL CA path.
+	EnvSQLCA = "SQL_CA"
+	// EnvSQLCert is the system env name for SQL cert path.
+	EnvSQLCert = "SQL_CERT"
+	// EnvSQLKey is the system env name for SQL key path.
+	EnvSQLKey = "SQL_KEY"
 	// MaxTokenLimit is the max token limit value.
 	MaxTokenLimit  = 1024 * 1024
 	DefSchemaLease = 45 * time.Second
-	UnavailableIP  = "<nil>"
+	// max_allowed_packet must be in [1024, 1073741824] and a multiple of 1024.
+	maxAllowedPacketUnit  = 1024
+	minMaxAllowedPacket   = maxAllowedPacketUnit
+	maxOfMaxAllowedPacket = 1 << 30
+	// DefMaxAllowedPacket is the default value of max_allowed_packet.
+	DefMaxAllowedPacket = 64 << 20
+	UnavailableIP       = "<nil>"
 )
 
 // Valid config maps
@@ -179,8 +219,10 @@ type Config struct {
 	Lease            string    `toml:"lease" json:"lease"`
 	SplitTable       bool      `toml:"split-table" json:"split-table"`
 	TokenLimit       uint      `toml:"token-limit" json:"token-limit"`
-	TempDir          string    `toml:"temp-dir" json:"temp-dir"`
-	TempStoragePath  string    `toml:"tmp-storage-path" json:"tmp-storage-path"`
+	// MaxAllowedPacket is the configured default for max_allowed_packet in starter deployment mode.
+	MaxAllowedPacket uint64 `toml:"max-allowed-packet" json:"max-allowed-packet"`
+	TempDir          string `toml:"temp-dir" json:"temp-dir"`
+	TempStoragePath  string `toml:"tmp-storage-path" json:"tmp-storage-path"`
 	// TempStorageQuota describe the temporary storage Quota during query exector when TiDBEnableTmpStorageOnOOM is enabled
 	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error
 	TempStorageQuota           int64                   `toml:"tmp-storage-quota" json:"tmp-storage-quota"` // Bytes
@@ -189,6 +231,8 @@ type Config struct {
 	VersionComment             string                  `toml:"version-comment" json:"version-comment"`
 	TiDBEdition                string                  `toml:"tidb-edition" json:"tidb-edition"`
 	TiDBReleaseVersion         string                  `toml:"tidb-release-version" json:"tidb-release-version"`
+	DeployMode                 deploymode.Mode         `toml:"deploy-mode" json:"deploy-mode"`
+	DXFResourceLimit           int                     `toml:"dxf-resource-limit" json:"dxf-resource-limit"`
 	KeyspaceName               string                  `toml:"keyspace-name" json:"keyspace-name"`
 	TiKVWorkerURL              string                  `toml:"tikv-worker-url" json:"tikv-worker-url"`
 	Log                        Log                     `toml:"log" json:"log"`
@@ -201,6 +245,7 @@ type Config struct {
 	ProxyProtocol              ProxyProtocol           `toml:"proxy-protocol" json:"proxy-protocol"`
 	PDClient                   tikvcfg.PDClient        `toml:"pd-client" json:"pd-client"`
 	TiKVClient                 tikvcfg.TiKVClient      `toml:"tikv-client" json:"tikv-client"`
+	RUV2                       RUV2Config              `toml:"ru-v2" json:"ru-v2"`
 	CompatibleKillQuery        bool                    `toml:"compatible-kill-query" json:"compatible-kill-query"`
 	PessimisticTxn             PessimisticTxn          `toml:"pessimistic-txn" json:"pessimistic-txn"`
 	MaxIndexLength             int                     `toml:"max-index-length" json:"max-index-length"`
@@ -229,7 +274,7 @@ type Config struct {
 	Experimental Experimental `toml:"experimental" json:"experimental"`
 	// SkipRegisterToDashboard tells TiDB don't register itself to the dashboard.
 	SkipRegisterToDashboard bool `toml:"skip-register-to-dashboard" json:"skip-register-to-dashboard"`
-	// EnableTelemetry enables the usage data report to PingCAP. Deprecated: Telemetry has been removed.
+	// EnableTelemetry enables the usage data print to log.
 	EnableTelemetry bool `toml:"enable-telemetry" json:"enable-telemetry"`
 	// Labels indicates the labels set for the tidb server. The labels describe some specific properties for the tidb
 	// server like `zone`/`rack`/`host`. Currently, labels won't affect the tidb server except for some special
@@ -239,6 +284,12 @@ type Config struct {
 	// 2. 'zone' is a special key that indicates the DC location of this tidb-server. If it is set, the value for this
 	// key will be the default value of the session variable `txn_scope` for this tidb-server.
 	Labels map[string]string `toml:"labels" json:"labels"`
+	// ErrorMessageExtensions appends configured suffixes to selected user-facing errors.
+	// Patterns should be anchored and specific because they are matched against every SQL error sent to clients.
+	ErrorMessageExtensions []ErrorMessageExtension `toml:"error-msg-extension" json:"error-msg-extension"`
+
+	KeyspaceObservability       KeyspaceObservability       `toml:"keyspace-observability" json:"keyspace-observability"`
+	KeyspaceObservabilityValues KeyspaceObservabilityValues `toml:"-" json:"-"`
 
 	// EnableGlobalIndex is deprecated.
 	EnableGlobalIndex bool `toml:"enable-global-index" json:"enable-global-index"`
@@ -275,6 +326,15 @@ type Config struct {
 	// InitializeSQLFile is a file that will be executed after first bootstrap only.
 	// It can be used to set GLOBAL system variable values
 	InitializeSQLFile string `toml:"initialize-sql-file" json:"initialize-sql-file"`
+	// KeyspaceActivateMode indicates whether TiDB should exit after activating the keyspace.
+	KeyspaceActivateMode bool `toml:"keyspace-activate" json:"keyspace-activate"`
+	// Standby is the config for standby mode.
+	Standby Standby `toml:"standby" json:"standby"`
+	// StarterParams contains Starter-only extension parameters.
+	StarterParams StarterParams `toml:"starter-params" json:"starter-params"`
+
+	// ExternalWorkload configures Starter-only external workload coordination.
+	ExternalWorkload ExternalWorkload `toml:"external-workload" json:"external-workload"`
 
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
@@ -313,6 +373,97 @@ type Config struct {
 	InMemSlowQueryTopNNum int `toml:"in-mem-slow-query-topn-num" json:"in-mem-slow-query-topn-num"`
 	// InMemSlowQueryRecentNum indicates the number of recent slow queries stored in memory.
 	InMemSlowQueryRecentNum int `toml:"in-mem-slow-query-recent-num" json:"in-mem-slow-query-recent-num"`
+
+	// MeteringConfigURI is the URI for metering configuration.
+	MeteringStorageURI string `toml:"metering-storage-uri" json:"metering-storage-uri"`
+
+	// CSE contains columnar-store related configuration.
+	CSE CSE `toml:"cse" json:"cse"`
+}
+
+// ErrorMessageExtension configures a suffix for SQL errors matching Pattern.
+type ErrorMessageExtension struct {
+	Pattern string `toml:"pattern" json:"pattern"`
+	Suffix  string `toml:"suffix" json:"suffix"`
+	// Regexp is populated internally when the global config is published. Do not set it manually.
+	Regexp *regexp.Regexp `toml:"-" json:"-"`
+}
+
+// RUV2Config is the configuration for RU v2 weight calculation.
+// The default values are experimentally fitted so they stay stable under the
+// same workload while remaining numerically aligned with RU v1.
+type RUV2Config struct {
+	// RUScale is the scale factor used to convert RU v2 float values into scaled integer values.
+	// It is intentionally chosen to match legacy RU values for compatibility.
+	RUScale float64 `toml:"ru-scale" json:"ru-scale"`
+
+	// ResultChunkCells is the weight for cells materialized into result chunks.
+	ResultChunkCells float64 `toml:"result-chunk-cells" json:"result-chunk-cells"`
+	// ExecutorL1 is the weight for fast-path executors that scale by cells:
+	// BatchPointGet, PointGet, and Limit.
+	ExecutorL1 float64 `toml:"executor-l1" json:"executor-l1"`
+	// ExecutorL2 is the weight for general executors, including Expand, HashAgg,
+	// HashJoin, IndexLookUpJoin, IndexLookUpExecutor, IndexReaderExecutor,
+	// MemTableReaderExec, MergeJoin, Projection, SelectionExec, SelectLockExec,
+	// TableDualExec, TableReaderExecutor, TopN, UnionScanExec, and Window.
+	ExecutorL2 float64 `toml:"executor-l2" json:"executor-l2"`
+	// ExecutorL3 is the weight for heavier operators: Sort and StreamAgg.
+	ExecutorL3 float64 `toml:"executor-l3" json:"executor-l3"`
+	// ExecutorL5InsertRows is the weight for insert rows multiplied by inserted
+	// column count. Level 4 is intentionally unused today because only L1/L2/L3
+	// executor groups and this insert-specific tier are currently modeled.
+	ExecutorL5InsertRows    float64 `toml:"executor-l5-insert-rows" json:"executor-l5-insert-rows"`
+	PlanCnt                 float64 `toml:"plan-cnt" json:"plan-cnt"`
+	PlanDeriveStatsPaths    float64 `toml:"plan-derive-stats-paths" json:"plan-derive-stats-paths"`
+	ResourceManagerReadCnt  float64 `toml:"resource-manager-read-cnt" json:"resource-manager-read-cnt"`
+	ResourceManagerWriteCnt float64 `toml:"resource-manager-write-cnt" json:"resource-manager-write-cnt"`
+	WriteKeys               float64 `toml:"write-keys" json:"write-keys"`
+	SessionParserTotal      float64 `toml:"session-parser-total" json:"session-parser-total"`
+	TxnCnt                  float64 `toml:"txn-cnt" json:"txn-cnt"`
+}
+
+// DefaultRUV2Config returns the default RU v2 configuration.
+func DefaultRUV2Config() RUV2Config {
+	return RUV2Config{
+		RUScale: 2.01,
+
+		ResultChunkCells:        0.00010000,
+		ExecutorL1:              0.00013278,
+		ExecutorL2:              0.00000383,
+		ExecutorL3:              0.00141739,
+		ExecutorL5InsertRows:    0.00472572,
+		PlanCnt:                 0.15392217,
+		PlanDeriveStatsPaths:    0.24968182,
+		ResourceManagerReadCnt:  0.02072003,
+		ResourceManagerWriteCnt: 0.07179779,
+		WriteKeys:               0.330760861554226,
+		SessionParserTotal:      0.19230499,
+		TxnCnt:                  0.03013709,
+	}
+}
+
+// CSE is the config collection for the cloud storage engine.
+type CSE struct {
+	ColumnarStoreType      string        `toml:"columnar-store-type" json:"columnar-store-type"`
+	ColumnarCollectTimeout time.Duration `toml:"columnar-collect-timeout" json:"columnar-collect-timeout"`
+}
+
+// IsTiFlashEnabled checks if TiFlash is enabled
+func (c *CSE) IsTiFlashEnabled() bool {
+	return c.ColumnarStoreType == "tiflash" || c.ColumnarStoreType == "both"
+}
+
+// IsColumnarStoreEnabled checks if Columnar store is enabled
+func (c *CSE) IsColumnarStoreEnabled() bool {
+	return c.ColumnarStoreType == "columnar" || c.ColumnarStoreType == "both"
+}
+
+// Valid checks if the Columnar store type is valid
+func (c *CSE) Valid() bool {
+	if c.ColumnarStoreType != "tiflash" && c.ColumnarStoreType != "columnar" && c.ColumnarStoreType != "both" {
+		return false
+	}
+	return true
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -340,6 +491,8 @@ func (c *Config) GetTiKVConfig() *tikvcfg.Config {
 		Path:                  c.Path,
 		EnableForwarding:      c.EnableForwarding,
 		TxnScope:              c.Labels["zone"],
+		ZoneLabel:             c.Labels["zone"],
+		EnableAsyncBatchGet:   c.Performance.EnableAsyncBatchGet,
 	}
 }
 
@@ -525,6 +678,24 @@ type Instance struct {
 	// StmtSummaryFileMaxBackups indicates the maximum number of files written
 	// by stmtsummary when StmtSummaryEnablePersistent is true.
 	StmtSummaryFileMaxBackups int `toml:"tidb_stmt_summary_file_max_backups" json:"tidb_stmt_summary_file_max_backups"`
+	// StmtSummaryMaxStmtCount indicates the max number of statements kept in memory.
+	StmtSummaryMaxStmtCount uint64 `toml:"tidb_stmt_summary_max_stmt_count" json:"tidb_stmt_summary_max_stmt_count"`
+	// ServerMemoryLimit indicates the memory limit of the tidb-server instance.
+	ServerMemoryLimit string `toml:"tidb_server_memory_limit" json:"tidb_server_memory_limit"`
+	// MemArbitratorMode indicates the work mode of the global memory arbitrator of the tidb-server instance.
+	MemArbitratorMode string `toml:"tidb_mem_arbitrator_mode" json:"tidb_mem_arbitrator_mode"`
+	// MemArbitratorSoftLimit indicates the memory resource soft limit of the tidb-server instance.
+	MemArbitratorSoftLimit string `toml:"tidb_mem_arbitrator_soft_limit" json:"tidb_mem_arbitrator_soft_limit"`
+	// ServerMemoryLimitGCTrigger indicates the gc percentage of the ServerMemoryLimit.
+	ServerMemoryLimitGCTrigger string `toml:"tidb_server_memory_limit_gc_trigger" json:"tidb_server_memory_limit_gc_trigger"`
+	// InstancePlanCacheMaxMemSize indicates the maximum memory size of instance plan cache.
+	InstancePlanCacheMaxMemSize string `toml:"tidb_instance_plan_cache_max_size" json:"tidb_instance_plan_cache_max_size"`
+	// StatsCacheMemQuota records stats cache quota.
+	StatsCacheMemQuota uint64 `toml:"tidb_stats_cache_mem_quota" json:"tidb_stats_cache_mem_quota"`
+	// MemQuotaBindingCache indicates the memory quota for the bind cache.
+	MemQuotaBindingCache uint64 `toml:"tidb_mem_quota_binding_cache" json:"tidb_mem_quota_binding_cache"`
+	// SchemaCacheSize indicates the size of infoschema meta data which are cached in V2 implementation.
+	SchemaCacheSize string `toml:"tidb_schema_cache_size" json:"tidb_schema_cache_size"`
 
 	// These variables exist in both 'instance' section and another place.
 	// The configuration in 'instance' section takes precedence.
@@ -539,6 +710,10 @@ type Instance struct {
 	EnableCollectExecutionInfo AtomicBool `toml:"tidb_enable_collect_execution_info" json:"tidb_enable_collect_execution_info"`
 	PluginDir                  string     `toml:"plugin_dir" json:"plugin_dir"`
 	PluginLoad                 string     `toml:"plugin_load" json:"plugin_load"`
+	// PluginAuditLogBufferSize is the buffer size (in bytes) of plugin audit log, default is 0(buffer disabled)
+	PluginAuditLogBufferSize int `toml:"plugin_audit_log_buffer_size" json:"plugin_audit_log_buffer_size"`
+	// PluginAuditLogFlushInterval is the flush interval (in seconds) of plugin audit log, it works only when PluginAuditLogBufferSize is greater than 0.
+	PluginAuditLogFlushInterval int `toml:"plugin_audit_log_flush_interval" json:"plugin_audit_log_flush_interval"`
 	// MaxConnections is the maximum permitted number of simultaneous client connections.
 	MaxConnections       uint32     `toml:"max_connections" json:"max_connections"`
 	TiDBEnableDDL        AtomicBool `toml:"tidb_enable_ddl" json:"tidb_enable_ddl"`
@@ -595,6 +770,8 @@ type Security struct {
 	SpilledFileEncryptionMethod string `toml:"spilled-file-encryption-method" json:"spilled-file-encryption-method"`
 	// EnableSEM prevents SUPER users from having full access.
 	EnableSEM bool `toml:"enable-sem" json:"enable-sem"`
+	// SEMConfig represents the path to the SEM configuration file.
+	SEMConfig string `toml:"sem-config" json:"sem-config"`
 	// Allow automatic TLS certificate generation
 	AutoTLS         bool   `toml:"auto-tls" json:"auto-tls"`
 	MinTLSVersion   string `toml:"tls-version" json:"tls-version"`
@@ -727,7 +904,13 @@ type Performance struct {
 	ForcePriority         string  `toml:"force-priority" json:"force-priority"`
 	MemoryUsageAlarmRatio float64 `toml:"memory-usage-alarm-ratio" json:"memory-usage-alarm-ratio"`
 
+	// Deprecated: this config has been deprecated. It has no effect.
 	EnableLoadFMSketch bool `toml:"enable-load-fmsketch" json:"enable-load-fmsketch"`
+
+	// SkipInitStats determines whether to skip initializing statistics when TiDB starts.
+	// It is primarily intended for internal use cases in TiDB Cloud and may cause issues if enabled on a standard cluster.
+	// See: https://github.com/pingcap/tidb/issues/63103
+	SkipInitStats bool `toml:"skip-init-stats" json:"skip-init-stats"`
 
 	// LiteInitStats indicates whether to use the lite version of stats.
 	// 1. Basic stats meta data is loaded.(count, modify count, etc.)
@@ -747,6 +930,9 @@ type Performance struct {
 
 	// Deprecated: this config will not have any effect
 	ProjectionPushDown bool `toml:"projection-push-down" json:"projection-push-down"`
+
+	// EnableAsyncBatchGet indicates whether to use async API when sending batch-get requests.
+	EnableAsyncBatchGet bool `toml:"enable-async-batch-get" json:"enable-async-batch-get"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -835,11 +1021,15 @@ func (config *TrxSummary) Valid() error {
 
 // DefaultPessimisticTxn returns the default configuration for PessimisticTxn
 func DefaultPessimisticTxn() PessimisticTxn {
+	pessimisticAutoCommit := false
+	if kerneltype.IsNextGen() {
+		pessimisticAutoCommit = true
+	}
 	return PessimisticTxn{
 		MaxRetryCount:                     256,
 		DeadlockHistoryCapacity:           10,
 		DeadlockHistoryCollectRetryable:   false,
-		PessimisticAutoCommit:             *NewAtomicBool(false),
+		PessimisticAutoCommit:             *NewAtomicBool(pessimisticAutoCommit),
 		ConstraintCheckInPlacePessimistic: true,
 	}
 }
@@ -880,6 +1070,35 @@ type Experimental struct {
 	EnableNewCharset bool `toml:"enable-new-charset" json:"-"`
 }
 
+// Standby is the config for standby mode.
+type Standby struct {
+	// StandByMode indicates whether to enable the standby mode.
+	StandByMode bool `toml:"standby-mode" json:"standby-mode"`
+	// MaxIdleSeconds specifies the maximum idle time in seconds before tidb exits.
+	MaxIdleSeconds uint `toml:"max-idle-seconds" json:"max-idle-seconds"`
+	// ActivationTimeout specifies the maximum allowed time for tidb to activate from standby mode.
+	ActivationTimeout uint `toml:"activation-timeout" json:"activation-timeout"`
+	// EnableZeroBackend is used to control the behavior of standby idle watcher.
+	// When it is enabled, the idle watcher will not wait for session migration
+	// and will not consider client interactive connections.
+	EnableZeroBackend bool `toml:"enable-zero-backend" json:"enable-zero-backend"`
+}
+
+// StarterParams contains Starter-only extension parameters.
+type StarterParams struct {
+	// ExportID is the export identifier supplied by standby activation.
+	ExportID string `toml:"export-id" json:"export-id,omitempty"`
+	// EnableManagerNotifier indicates whether Starter graceful shutdown should notify TiDB manager.
+	// It is only used in NextGen Starter deployments.
+	EnableManagerNotifier bool `toml:"enable-manager-notifier" json:"enable-manager-notifier,omitempty"`
+	// ManagerAddr is the TiDB manager address used by the shutdown notifier.
+	// When empty and EnableManagerNotifier is true, the Starter path derives the service address from starter additional params.
+	ManagerAddr string `toml:"manager-addr" json:"manager-addr,omitempty"`
+	// MaxImportDataSize is the maximum total real source data size allowed for IMPORT INTO.
+	// Zero means unlimited.
+	MaxImportDataSize configtypes.ByteSize `toml:"max-import-data-size" json:"max-import-data-size,omitempty"`
+}
+
 var defTiKVCfg = tikvcfg.DefaultConfig()
 var defaultConf = Config{
 	Host:                         DefHost,
@@ -893,6 +1112,7 @@ var defaultConf = Config{
 	SplitTable:                   true,
 	Lease:                        DefSchemaLease.String(),
 	TokenLimit:                   1000,
+	MaxAllowedPacket:             DefMaxAllowedPacket,
 	OOMUseTmpStorage:             true,
 	TempDir:                      DefTempDir,
 	TempStorageQuota:             -1,
@@ -918,6 +1138,10 @@ var defaultConf = Config{
 	TiDBEdition:                  "",
 	VersionComment:               "",
 	TiDBReleaseVersion:           "",
+	DeployMode:                   deploymode.Premium,
+	DXFResourceLimit:             DefDXFResourceLimit,
+	RUV2:                         DefaultRUV2Config(),
+	ExternalWorkload:             defaultExternalWorkload(),
 	Log: Log{
 		Level:               "info",
 		Format:              "text",
@@ -953,6 +1177,8 @@ var defaultConf = Config{
 		EnableCollectExecutionInfo:  *NewAtomicBool(true),
 		PluginDir:                   "/data/deploy/plugin",
 		PluginLoad:                  "",
+		PluginAuditLogBufferSize:    0,
+		PluginAuditLogFlushInterval: 30,
 		MaxConnections:              0,
 		TiDBEnableDDL:               *NewAtomicBool(true),
 		TiDBEnableStatsOwner:        *NewAtomicBool(true),
@@ -1000,10 +1226,12 @@ var defaultConf = Config{
 		EnableStatsCacheMemQuota:          true,
 		RunAutoAnalyze:                    true,
 		EnableLoadFMSketch:                false,
+		SkipInitStats:                     false,
 		LiteInitStats:                     true,
 		ForceInitStats:                    true,
 		// Deprecated: Stats are always initialized concurrently.
 		ConcurrentlyInitStats: true,
+		EnableAsyncBatchGet:   true,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
@@ -1041,6 +1269,7 @@ var defaultConf = Config{
 	Security: Security{
 		SpilledFileEncryptionMethod: SpilledFileEncryptionMethodPlaintext,
 		EnableSEM:                   false,
+		SEMConfig:                   "",
 		AutoTLS:                     false,
 		RSAKeySize:                  4096,
 		AuthTokenJWKS:               "",
@@ -1066,10 +1295,15 @@ var defaultConf = Config{
 	TiDBEnableExitCheck:                  false,
 	InMemSlowQueryTopNNum:                30,
 	InMemSlowQueryRecentNum:              500,
+	CSE: CSE{
+		ColumnarStoreType:      "tiflash",
+		ColumnarCollectTimeout: 5 * time.Second,
+	},
 }
 
 var (
-	globalConf atomic.Pointer[Config]
+	globalConf                     atomic.Pointer[Config]
+	preparedErrorMessageExtensions atomic.Pointer[[]ErrorMessageExtension]
 )
 
 // NewConfig creates a new config instance with default value.
@@ -1085,8 +1319,22 @@ func GetGlobalConfig() *Config {
 	return globalConf.Load()
 }
 
+// GetErrorMessageExtensions returns a copy of the prepared error message extension matchers.
+func GetErrorMessageExtensions() []ErrorMessageExtension {
+	extensions := preparedErrorMessageExtensions.Load()
+	if extensions == nil {
+		return nil
+	}
+	return slices.Clone(*extensions)
+}
+
 // StoreGlobalConfig stores a new config to the globalConf. It mostly uses in the test to avoid some data races.
 func StoreGlobalConfig(config *Config) {
+	extensions, err := prepareErrorMessageExtensions(config.ErrorMessageExtensions, true)
+	if err != nil {
+		logutil.BgLogger().Warn("skip invalid error message extension config", zap.Error(err))
+	}
+	preparedErrorMessageExtensions.Store(&extensions)
 	globalConf.Store(config)
 	TikvConfigLock.Lock()
 	defer TikvConfigLock.Unlock()
@@ -1215,11 +1463,75 @@ func InitializeConfig(confPath string, configCheck, configStrict bool, enforceCm
 		fmt.Fprintln(os.Stderr, "invalid config", err)
 		os.Exit(1)
 	}
+	if err := cfg.AdjustStarterConfig(cfg.DeployMode == deploymode.Starter); err != nil {
+		fmt.Fprintln(os.Stderr, "invalid security env vars", err)
+		os.Exit(1)
+	}
 	if configCheck {
 		fmt.Println("config check successful")
 		os.Exit(0)
 	}
 	StoreGlobalConfig(cfg)
+}
+
+// AdjustStarterConfig applies starter-only security overrides.
+func (c *Config) AdjustStarterConfig(isStarter bool) error {
+	if !isStarter {
+		return nil
+	}
+	return c.adjustSecurityConfig()
+}
+
+func (c *Config) adjustSecurityConfig() error {
+	clusterCAPath := os.Getenv(EnvClusterCA)
+	clusterCertPath := os.Getenv(EnvClusterCert)
+	clusterKeyPath := os.Getenv(EnvClusterKey)
+	clusterCAOverridden := len(clusterCAPath) > 0
+	clusterCertOverridden := len(clusterCertPath) > 0
+	clusterKeyOverridden := len(clusterKeyPath) > 0
+	if len(clusterCAPath) > 0 {
+		c.Security.ClusterSSLCA = clusterCAPath
+	}
+	if len(clusterCertPath) > 0 {
+		c.Security.ClusterSSLCert = clusterCertPath
+	}
+	if len(clusterKeyPath) > 0 {
+		c.Security.ClusterSSLKey = clusterKeyPath
+	}
+	if clusterCAOverridden || clusterCertOverridden || clusterKeyOverridden {
+		if clusterCertOverridden != clusterKeyOverridden {
+			return errors.New("CLUSTER_CERT and CLUSTER_KEY must be set together")
+		}
+		if len(c.Security.ClusterSSLCA) > 0 && (len(c.Security.ClusterSSLCert) == 0 || len(c.Security.ClusterSSLKey) == 0) {
+			return errors.New("both CLUSTER_CERT and CLUSTER_KEY must be set when CLUSTER_CA is set")
+		}
+	}
+
+	sqlCAPath := os.Getenv(EnvSQLCA)
+	sqlCertPath := os.Getenv(EnvSQLCert)
+	sqlKeyPath := os.Getenv(EnvSQLKey)
+	sqlCAOverridden := len(sqlCAPath) > 0
+	sqlCertOverridden := len(sqlCertPath) > 0
+	sqlKeyOverridden := len(sqlKeyPath) > 0
+	if len(sqlCAPath) > 0 {
+		c.Security.SSLCA = sqlCAPath
+	}
+	if len(sqlCertPath) > 0 {
+		c.Security.SSLCert = sqlCertPath
+	}
+	if len(sqlKeyPath) > 0 {
+		c.Security.SSLKey = sqlKeyPath
+	}
+	if sqlCAOverridden || sqlCertOverridden || sqlKeyOverridden {
+		if sqlCertOverridden != sqlKeyOverridden {
+			return errors.New("SQL_CERT and SQL_KEY must be set together")
+		}
+		if len(c.Security.SSLCA) > 0 && (len(c.Security.SSLCert) == 0 || len(c.Security.SSLKey) == 0) {
+			return errors.New("both SQL_CERT and SQL_KEY must be set when SQL_CA is set")
+		}
+	}
+
+	return nil
 }
 
 // RemovedVariableCheck checks if the config file contains any items
@@ -1252,6 +1564,25 @@ func (c *Config) Load(confFile string) error {
 	metaData, err := toml.DecodeFile(confFile, c)
 	if err != nil {
 		return err
+	}
+	if !kerneltype.IsNextGen() && metaData.IsDefined("deploy-mode") {
+		return fmt.Errorf("deploy-mode can only be configured for nextgen TiDB")
+	}
+	dxfResourceLimitDefined := metaData.IsDefined("dxf-resource-limit")
+	if !dxfResourceLimitDefined && c.DXFResourceLimit == 0 {
+		c.DXFResourceLimit = DefDXFResourceLimit
+	}
+	if dxfResourceLimitDefined && c.DeployMode != deploymode.PremiumReserved {
+		return fmt.Errorf("dxf-resource-limit can only be configured when deploy-mode is premium_reserved")
+	}
+	if metaData.IsDefined("error-msg-extension") && c.DeployMode != deploymode.Starter {
+		return fmt.Errorf("error-msg-extension can only be configured when deploy-mode is starter")
+	}
+	if metaData.IsDefined("external-workload") && c.DeployMode != deploymode.Starter {
+		return fmt.Errorf("external-workload can only be configured when deploy-mode is starter")
+	}
+	if c.DeployMode == deploymode.Starter && !metaData.IsDefined("standby", "enable-zero-backend") {
+		c.Standby.EnableZeroBackend = true
 	}
 	if c.TokenLimit == 0 {
 		c.TokenLimit = 1000
@@ -1297,9 +1628,52 @@ func (c *Config) Load(confFile string) error {
 	return err
 }
 
+func prepareErrorMessageExtensions(extensions []ErrorMessageExtension, ignoreInvalid bool) ([]ErrorMessageExtension, error) {
+	preparedExtensions := make([]ErrorMessageExtension, 0, len(extensions))
+	var firstErr error
+	for _, extension := range extensions {
+		extension.Regexp = nil
+		if strings.TrimSpace(extension.Pattern) == "" {
+			if ignoreInvalid {
+				if firstErr == nil {
+					firstErr = fmt.Errorf("empty error-msg-extension pattern")
+				}
+				continue
+			}
+			return nil, fmt.Errorf("empty error-msg-extension pattern")
+		}
+		// Go's regexp package uses the RE2 engine, so operator-configured
+		// patterns cannot trigger catastrophic backtracking in the error path.
+		compiledRegexp, err := regexp.Compile(extension.Pattern)
+		if err != nil {
+			if ignoreInvalid {
+				if firstErr == nil {
+					firstErr = fmt.Errorf("invalid error-msg-extension regexp %q: %w", extension.Pattern, err)
+				}
+				continue
+			}
+			return nil, fmt.Errorf("invalid error-msg-extension regexp %q: %w", extension.Pattern, err)
+		}
+		extension.Regexp = compiledRegexp
+		preparedExtensions = append(preparedExtensions, extension)
+	}
+	sort.Slice(preparedExtensions, func(i, j int) bool {
+		left := preparedExtensions[i]
+		right := preparedExtensions[j]
+		if len(left.Pattern) != len(right.Pattern) {
+			return len(left.Pattern) > len(right.Pattern)
+		}
+		if left.Pattern != right.Pattern {
+			return left.Pattern < right.Pattern
+		}
+		return left.Suffix < right.Suffix
+	})
+	return preparedExtensions, firstErr
+}
+
 // Valid checks if this config is valid.
 func (c *Config) Valid() error {
-	if err := naming.Check(c.KeyspaceName); err != nil {
+	if err := naming.CheckKeyspaceName(c.KeyspaceName); err != nil {
 		return errors.Annotate(err, "invalid keyspace name")
 	}
 	if c.Log.EnableErrorStack == c.Log.DisableErrorStack && c.Log.EnableErrorStack != nbUnset {
@@ -1315,8 +1689,47 @@ func (c *Config) Valid() error {
 	if c.Security.SkipGrantTable && !hasRootPrivilege() {
 		return fmt.Errorf("TiDB run with skip-grant-table need root privilege")
 	}
+	if len(c.ErrorMessageExtensions) > 0 && c.DeployMode != deploymode.Starter {
+		return fmt.Errorf("error-msg-extension can only be configured when deploy-mode is starter")
+	}
+	if _, err := prepareErrorMessageExtensions(c.ErrorMessageExtensions, false); err != nil {
+		return err
+	}
 	if !c.Store.Valid() {
 		return fmt.Errorf("invalid store=%s, valid storages=%v", c.Store, StoreTypeList())
+	}
+	if !c.DeployMode.Valid() {
+		return fmt.Errorf("invalid deploy-mode=%s, valid deploy modes=%v", c.DeployMode, deploymode.ModeList())
+	}
+	if !kerneltype.IsNextGen() && c.DeployMode != deploymode.Premium {
+		return fmt.Errorf("deploy-mode can only be configured for nextgen TiDB")
+	}
+	if c.Standby.StandByMode && c.KeyspaceActivateMode {
+		return fmt.Errorf("can't set standby and keyspace-activate mode at the same time")
+	}
+	if c.KeyspaceActivateMode && c.DeployMode != deploymode.Starter {
+		return fmt.Errorf("keyspace-activate can only be configured for starter deploy mode")
+	}
+	if c.StarterParams.EnableManagerNotifier && c.DeployMode != deploymode.Starter {
+		return fmt.Errorf("starter-params.enable-manager-notifier can only be configured for starter deploy mode")
+	}
+	if c.StarterParams.MaxImportDataSize > 0 && c.DeployMode != deploymode.Starter {
+		return fmt.Errorf("starter-params.max-import-data-size can only be configured for starter deploy mode")
+	}
+	if len(c.KeyspaceObservability.Fields) > 0 && c.DeployMode != deploymode.Starter {
+		return fmt.Errorf("keyspace-observability.fields can only be configured when deploy-mode is starter")
+	}
+	if c.DXFResourceLimit < MinDXFResourceLimit || c.DXFResourceLimit > MaxDXFResourceLimit {
+		return fmt.Errorf("dxf-resource-limit should be between %d and %d", MinDXFResourceLimit, MaxDXFResourceLimit)
+	}
+	if c.DXFResourceLimit != DefDXFResourceLimit && c.DeployMode != deploymode.PremiumReserved {
+		return fmt.Errorf("dxf-resource-limit can only be configured when deploy-mode is premium_reserved")
+	}
+	if c.DeployMode == deploymode.Starter && !validMaxAllowedPacket(c.MaxAllowedPacket) {
+		return fmt.Errorf("max-allowed-packet should be [%d, %d] and a multiple of %d", minMaxAllowedPacket, maxOfMaxAllowedPacket, maxAllowedPacketUnit)
+	}
+	if err := c.KeyspaceObservability.Valid(); err != nil {
+		return err
 	}
 	if c.Store == StoreTypeMockTiKV && !c.Instance.TiDBEnableDDL.Load() {
 		return fmt.Errorf("can't disable DDL on mocktikv")
@@ -1333,9 +1746,19 @@ func (c *Config) Valid() error {
 	if c.TableColumnCountLimit < DefTableColumnCountLimit || c.TableColumnCountLimit > DefMaxOfTableColumnCountLimit {
 		return fmt.Errorf("table-column-limit should be [%d, %d]", DefIndexLimit, DefMaxOfTableColumnCountLimit)
 	}
-
+	if c.Instance.PluginAuditLogBufferSize < 0 || c.Instance.PluginAuditLogBufferSize > MaxPluginAuditLogBufferSize {
+		return fmt.Errorf("plugin-audit-log-buffer-size should be [%d, %d]", 0, MaxPluginAuditLogBufferSize)
+	}
+	if c.Instance.PluginAuditLogFlushInterval <= 0 || c.Instance.PluginAuditLogFlushInterval > MaxPluginAuditLogFlushInterval {
+		return fmt.Errorf("plugin-audit-log-flush-interval should be [%d, %d]", 1, MaxPluginAuditLogFlushInterval)
+	}
 	// txn-local-latches
 	if err := c.TxnLocalLatches.Valid(); err != nil {
+		return err
+	}
+
+	// pd-client
+	if err := c.PDClient.Valid(); err != nil {
 		return err
 	}
 
@@ -1345,6 +1768,15 @@ func (c *Config) Valid() error {
 	}
 	if err := c.TrxSummary.Valid(); err != nil {
 		return err
+	}
+	if c.DeployMode != deploymode.Starter {
+		if c.ExternalWorkload.isConfigured() {
+			return fmt.Errorf("external-workload can only be configured when deploy-mode is starter")
+		}
+	} else {
+		if err := c.ExternalWorkload.Valid(); err != nil {
+			return err
+		}
 	}
 
 	if c.Performance.TxnTotalSizeLimit > 1<<40 {
@@ -1392,6 +1824,9 @@ func (c *Config) Valid() error {
 		}
 	}
 
+	if !c.CSE.Valid() {
+		return fmt.Errorf("invalid columnar-store-type=%s, valid types=%v", c.CSE.ColumnarStoreType, []string{"tiflash", "columnar", "both"})
+	}
 	// test log level
 	l := zap.NewAtomicLevel()
 	return l.UnmarshalText([]byte(c.Log.Level))
@@ -1462,6 +1897,14 @@ func init() {
 
 func initByLDFlags(edition, checkBeforeDropLDFlag string) {
 	conf := defaultConf
+	if intest.InTest && kerneltype.IsNextGen() {
+		// In test mode, without reading a config file, we still assume the `GetGlobalConfig()` returns
+		// a valid config file. However, the "valid" nextgen config file should always have a keyspace name.
+		// So we set the keyspace name to "SYSTEM" here for test.
+		//
+		// Didn't use `keyspace.SYSTEM` to avoid cyclic dependency.
+		conf.KeyspaceName = "SYSTEM"
+	}
 	StoreGlobalConfig(&conf)
 	if checkBeforeDropLDFlag == "1" {
 		CheckTableBeforeDrop = true
@@ -1544,4 +1987,19 @@ func ContainHiddenConfig(s string) bool {
 // from config file or command line.
 func GetGlobalKeyspaceName() string {
 	return GetGlobalConfig().KeyspaceName
+}
+
+// GetMaxAllowedPacket returns the max_allowed_packet value used to initialize sessions.
+// The config value is honored only for starter deployment mode.
+func GetMaxAllowedPacket() uint64 {
+	if deploymode.IsStarter() {
+		if v := GetGlobalConfig().MaxAllowedPacket; validMaxAllowedPacket(v) {
+			return v
+		}
+	}
+	return DefMaxAllowedPacket
+}
+
+func validMaxAllowedPacket(v uint64) bool {
+	return v >= minMaxAllowedPacket && v <= maxOfMaxAllowedPacket && v%maxAllowedPacketUnit == 0
 }

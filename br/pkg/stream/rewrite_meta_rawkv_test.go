@@ -30,6 +30,7 @@ func MockEmptySchemasReplace(midr *mockInsertDeleteRange, dbMap map[UpstreamID]*
 	}
 	return NewSchemasReplace(
 		dbMap,
+		false,
 		nil,
 		9527,
 		midr.mockRecordDeleteRange,
@@ -123,6 +124,18 @@ func TestRewriteDBInfo(t *testing.T) {
 	require.Nil(t, err)
 	require.Equal(t, DBInfo.ID, sr.DbReplaceMap[dbID].DbID)
 	require.Equal(t, newId, sr.DbReplaceMap[dbID].DbID)
+
+	writeValue := RawWriteCFValue{
+		t:          WriteTypePut,
+		startTs:    1,
+		shortValue: value,
+		txnSource:  7,
+	}
+	result, err := sr.rewriteValue(writeValue.EncodeTo(), consts.WriteCF, sr.rewriteDBInfo)
+	require.Nil(t, err)
+	rewrittenWriteValue := new(RawWriteCFValue)
+	require.Nil(t, rewrittenWriteValue.ParseFrom(result.NewValue))
+	require.Equal(t, rewrittenWriteValue.txnSource, uint64(7)|kv.LightningPhysicalImportTxnSource)
 }
 
 func TestRewriteKeyForTable(t *testing.T) {
@@ -292,6 +305,7 @@ func TestRewriteTableInfoForPartitionTable(t *testing.T) {
 
 	sr := NewSchemasReplace(
 		dbMap,
+		false,
 		nil,
 		0,
 		nil,
@@ -445,6 +459,7 @@ func TestRewriteTableInfoForExchangePartition(t *testing.T) {
 
 	sr := NewSchemasReplace(
 		tm.DBReplaceMap,
+		false,
 		nil,
 		0,
 		nil,
@@ -548,6 +563,41 @@ func TestRewriteTableInfoForTTLTable(t *testing.T) {
 	require.Equal(t, "1", tableInfo.TTLInfo.IntervalExprStr)
 	require.Equal(t, int(ast.TimeUnitDay), tableInfo.TTLInfo.IntervalTimeUnit)
 	require.False(t, tableInfo.TTLInfo.Enable)
+}
+
+func TestFromPitrIdMap(t *testing.T) {
+	dbReplace := map[int64]*DBReplace{
+		1: {
+			DbID: 1,
+			Name: "test_db",
+			TableMap: map[int64]*TableReplace{
+				100: {
+					TableID: 100,
+					Name:    "test_table",
+				},
+			},
+		},
+	}
+	dbInfo := &model.DBInfo{
+		ID:   2,
+		Name: ast.NewCIStr("test_db2"),
+	}
+	dbInfoValue, err := json.Marshal(dbInfo)
+	require.Nil(t, err)
+	tableInfo := &model.TableInfo{
+		ID:   101,
+		Name: ast.NewCIStr("test_table2"),
+	}
+	tableInfoValue, err := json.Marshal(tableInfo)
+	require.Nil(t, err)
+
+	sr := NewSchemasReplace(dbReplace, true, nil, 0, nil, false)
+	_, err = sr.rewriteDBInfo(dbInfoValue)
+	require.Nil(t, err)
+	_, err = sr.rewriteTableInfo(tableInfoValue, 1)
+	require.Nil(t, err)
+	_, err = sr.rewriteTableInfo(tableInfoValue, 2)
+	require.Nil(t, err)
 }
 
 // db:70->80 -

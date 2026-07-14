@@ -26,10 +26,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	util2 "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.etcd.io/etcd/api/v3/mvccpb"
 	"go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
@@ -466,14 +466,14 @@ func getOwnerInfo(ctx context.Context, etcdCli *clientv3.Client, ownerPath strin
 			return "", nil, op, 0, 0, errors.Trace(err)
 		}
 
-		childCtx, cancel := context.WithTimeout(ctx, util.KeyOpDefaultTimeout)
+		childCtx, cancel := context.WithTimeout(ctx, etcd.KeyOpDefaultTimeout)
 		resp, err = etcdCli.Get(childCtx, ownerPath, clientv3.WithFirstCreate()...)
 		cancel()
 		if err == nil {
 			break
 		}
 		logger.Info("etcd-cli get owner info failed", zap.Int("retryCnt", i), zap.Error(err))
-		time.Sleep(util.KeyOpRetryInterval)
+		time.Sleep(etcd.KeyOpRetryInterval)
 	}
 	if err != nil {
 		logger.Warn("etcd-cli get owner info failed", zap.Error(err))
@@ -483,9 +483,35 @@ func getOwnerInfo(ctx context.Context, etcdCli *clientv3.Client, ownerPath strin
 		return "", nil, op, 0, 0, concurrency.ErrElectionNoLeader
 	}
 	ownerID, op = splitOwnerValues(resp.Kvs[0].Value)
-	logger.Info("get owner", zap.ByteString("owner key", resp.Kvs[0].Key),
-		zap.ByteString("ownerID", ownerID), zap.Stringer("op", op))
 	return string(resp.Kvs[0].Key), ownerID, op, resp.Header.Revision, resp.Kvs[0].ModRevision, nil
+}
+
+// DeleteOwnerKeyByID scans the election keys under ownerPath and deletes the
+// one whose value (UUID) matches the given id.
+func DeleteOwnerKeyByID(ctx context.Context, etcdCli *clientv3.Client, ownerPath, id string) {
+	childCtx, cancel := context.WithTimeout(ctx, etcd.KeyOpDefaultTimeout)
+	defer cancel()
+	resp, err := etcdCli.Get(childCtx, ownerPath+"/", clientv3.WithPrefix())
+	if err != nil {
+		logutil.BgLogger().Warn("failed to get owner keys for stale cleanup", zap.String("ownerPath", ownerPath), zap.Error(err))
+		return
+	}
+	for _, kv := range resp.Kvs {
+		ownerUUID, _ := splitOwnerValues(kv.Value)
+		if string(ownerUUID) == id {
+			logutil.BgLogger().Info("deleting stale owner key",
+				zap.String("key", string(kv.Key)),
+				zap.String("staleID", id))
+			delCtx, delCancel := context.WithTimeout(ctx, etcd.KeyOpDefaultTimeout)
+			_, err := etcdCli.Delete(delCtx, string(kv.Key))
+			delCancel()
+			if err != nil {
+				logutil.BgLogger().Warn("failed to delete stale owner key",
+					zap.String("key", string(kv.Key)), zap.Error(err))
+			}
+			return
+		}
+	}
 }
 
 // GetOwnerKeyInfo gets the owner key and current revision.
@@ -498,6 +524,10 @@ func GetOwnerKeyInfo(
 	if err != nil {
 		return "", 0, errors.Trace(err)
 	}
+	logutil.BgLogger().Info("get owner",
+		zap.String("key", etcdKey),
+		zap.String("owner key", ownerKey),
+		zap.ByteString("ownerID", ownerID))
 	if string(ownerID) != id {
 		logutil.BgLogger().Warn("is not the owner", zap.String("key", etcdKey),
 			zap.String("id", id), zap.String("ownerID", string(ownerID)))
@@ -566,6 +596,9 @@ func GetOwnerOpValue(ctx context.Context, etcdCli *clientv3.Client, ownerPath st
 	}
 
 	_, _, op, _, _, err := getOwnerInfo(ctx, etcdCli, ownerPath)
+	logutil.BgLogger().Info("get owner op value",
+		zap.String("key", ownerPath),
+		zap.Stringer("owner op", op))
 	return op, errors.Trace(err)
 }
 
@@ -641,9 +674,7 @@ func AcquireDistributedLock(
 		}
 		return false, nil
 	})
-	failpoint.Inject("mockAcquireDistLockFailed", func() {
-		err = errors.Errorf("requested lease not found")
-	})
+	failpoint.InjectCall("mockAcquireDistLockFailed", &err)
 	if err != nil {
 		err1 := se.Close()
 		if err1 != nil {

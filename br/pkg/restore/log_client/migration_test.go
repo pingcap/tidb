@@ -24,8 +24,9 @@ import (
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/require"
 )
 
@@ -445,6 +446,107 @@ func TestFilterOut(t *testing.T) {
 	}
 }
 
+func TestRetainLatestMVCCCompactionCoverage(t *testing.T) {
+	comment := func(from, until, shardIndex, shardTotal, minimalCompactionSize uint64, calculateShiftTS bool) string {
+		shard := `,"shard":null`
+		if shardTotal > 1 {
+			shard = fmt.Sprintf(`,"shard":{"index":%d,"total":%d}`, shardIndex, shardTotal)
+		}
+		return fmt.Sprintf(
+			`{"config":{"from-ts":%d,"until-ts":%d,"cal-shift-ts":%t,"minimal-compaction-size":%d%s}}`,
+			from,
+			until,
+			calculateShiftTS,
+			minimalCompactionSize,
+			shard,
+		)
+	}
+	compaction := func(from, until, shardIndex, shardTotal, minimalCompactionSize uint64, calculateShiftTS bool) *backuppb.LogFileCompaction {
+		return &backuppb.LogFileCompaction{
+			CompactionFromTs:  from,
+			CompactionUntilTs: until,
+			Comments:          comment(from, until, shardIndex, shardTotal, minimalCompactionSize, calculateShiftTS),
+		}
+	}
+	makeMig := func(cs ...*backuppb.LogFileCompaction) *backuppb.Migration {
+		return &backuppb.Migration{Compactions: cs}
+	}
+
+	cases := []struct {
+		name    string
+		migs    []*backuppb.Migration
+		wantErr bool
+	}{
+		{
+			name: "unsharded complete",
+			migs: pack(
+				makeMig(compaction(100, 200, 1, 1, 0, true)),
+			),
+		},
+		{
+			name: "sharded complete",
+			migs: pack(
+				makeMig(
+					compaction(100, 200, 1, 2, 0, true),
+					compaction(100, 200, 2, 2, 0, true),
+				),
+			),
+		},
+		{
+			name: "segmented complete",
+			migs: pack(
+				makeMig(compaction(100, 150, 1, 1, 0, true)),
+				makeMig(
+					compaction(150, 200, 1, 2, 0, true),
+					compaction(150, 200, 2, 2, 0, true),
+				),
+			),
+		},
+		{
+			name: "ts gap",
+			migs: pack(
+				makeMig(compaction(100, 150, 1, 1, 0, true)),
+				makeMig(compaction(151, 200, 1, 1, 0, true)),
+			),
+			wantErr: true,
+		},
+		{
+			name: "incomplete shard",
+			migs: pack(
+				makeMig(compaction(100, 200, 1, 2, 0, true)),
+			),
+			wantErr: true,
+		},
+		{
+			name: "minimal compaction size is not zero",
+			migs: pack(
+				makeMig(compaction(100, 200, 1, 1, 1, true)),
+			),
+			wantErr: true,
+		},
+		{
+			name: "cal shift ts is not enabled",
+			migs: pack(
+				makeMig(compaction(100, 200, 1, 1, 0, false)),
+			),
+			wantErr: true,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			builder := logclient.NewMigrationBuilder(100, 100, 200)
+			err := builder.ValidateRetainLatestMVCCCompactionCoverage(c.migs)
+			if c.wantErr {
+				require.Error(t, err)
+				require.ErrorContains(t, err, "retain-latest-mvcc-version")
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
 type efOP func(*backuppb.IngestedSSTs)
 
 func extFullBkup(ops ...efOP) *backuppb.IngestedSSTs {
@@ -480,7 +582,7 @@ func asIfTS(ts uint64) efOP {
 	}
 }
 
-func pef(t *testing.T, fb *backuppb.IngestedSSTs, sn int, s storage.ExternalStorage) string {
+func pef(t *testing.T, fb *backuppb.IngestedSSTs, sn int, s storeapi.Storage) string {
 	path := fmt.Sprintf("extbackupmeta_%08d", sn)
 	bs, err := fb.Marshal()
 	if err != nil {
@@ -493,9 +595,9 @@ func pef(t *testing.T, fb *backuppb.IngestedSSTs, sn int, s storage.ExternalStor
 }
 
 // tmp creates a temporary storage.
-func tmp(t *testing.T) *storage.LocalStorage {
+func tmp(t *testing.T) *objstore.LocalStorage {
 	tmpDir := t.TempDir()
-	s, err := storage.NewLocalStorage(tmpDir)
+	s, err := objstore.NewLocalStorage(tmpDir)
 	require.NoError(t, err)
 	s.IgnoreEnoentForDelete = true
 	return s

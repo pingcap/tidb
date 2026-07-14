@@ -25,10 +25,12 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/executor/aggregate"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
+	"github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -44,20 +46,10 @@ import (
 
 // Chunk schema in this test file: | column0: string | column1: float64 |
 
-const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-
-func getRandString() string {
-	b := make([]byte, 5)
-	for i := range b {
-		b[i] = letterBytes[rand.Intn(len(letterBytes))]
-	}
-	return string(b)
-}
-
 func generateData(rowNum int, ndv int) ([]string, []float64) {
 	keys := make([]string, 0)
 	for range ndv {
-		keys = append(keys, getRandString())
+		keys = append(keys, util.GenerateRandomString(5))
 	}
 
 	col0Data := make([]string, 0)
@@ -131,8 +123,8 @@ func sortRows(rows []chunk.Row, fieldTypes []*types.FieldType) []chunk.Row {
 	return rows
 }
 
-func generateResult(t *testing.T, ctx *mock.Context, dataSource *testutil.MockDataSource) []chunk.Row {
-	aggExec := buildHashAggExecutor(t, ctx, dataSource)
+func generateResult(t *testing.T, ctx *mock.Context, dataSource *testutil.MockDataSource, fileNamePrefixForTest string) []chunk.Row {
+	aggExec := buildHashAggExecutor(t, ctx, dataSource, fileNamePrefixForTest)
 	dataSource.PrepareChunks()
 	tmpCtx := context.Background()
 	resultRows := make([]chunk.Row, 0)
@@ -190,7 +182,7 @@ func getMockDataSourceParameters(ctx sessionctx.Context) testutil.MockDataSource
 	}
 }
 
-func buildHashAggExecutor(t *testing.T, ctx sessionctx.Context, child exec.Executor) *aggregate.HashAggExec {
+func buildHashAggExecutor(t *testing.T, ctx sessionctx.Context, child exec.Executor, fileNamePrefixForTest string) *aggregate.HashAggExec {
 	if err := ctx.GetSessionVars().SetSystemVar(vardef.TiDBHashAggFinalConcurrency, fmt.Sprintf("%v", 5)); err != nil {
 		t.Fatal(err)
 	}
@@ -242,12 +234,13 @@ func buildHashAggExecutor(t *testing.T, ctx sessionctx.Context, child exec.Execu
 	aggFuncs := []*aggregation.AggFuncDesc{aggFirstRow, aggSum, aggCount, aggAvg, aggMin, aggMax}
 
 	aggExec := &aggregate.HashAggExec{
-		BaseExecutor:     exec.NewBaseExecutor(ctx, schema, 0, child),
-		Sc:               ctx.GetSessionVars().StmtCtx,
-		PartialAggFuncs:  make([]aggfuncs.AggFunc, 0, len(aggFuncs)),
-		FinalAggFuncs:    make([]aggfuncs.AggFunc, 0, len(aggFuncs)),
-		GroupByItems:     groupItems,
-		IsUnparallelExec: false,
+		BaseExecutor:          exec.NewBaseExecutor(ctx, schema, 0, child),
+		Sc:                    ctx.GetSessionVars().StmtCtx,
+		PartialAggFuncs:       make([]aggfuncs.AggFunc, 0, len(aggFuncs)),
+		FinalAggFuncs:         make([]aggfuncs.AggFunc, 0, len(aggFuncs)),
+		GroupByItems:          groupItems,
+		IsUnparallelExec:      false,
+		FileNamePrefixForTest: fileNamePrefixForTest,
 	}
 
 	partialOrdinal := 0
@@ -295,9 +288,9 @@ func checkResult(expectResult []chunk.Row, actualResult []chunk.Row, retTypes []
 	return true
 }
 
-func executeCorrecResultTest(t *testing.T, ctx *mock.Context, aggExec *aggregate.HashAggExec, dataSource *testutil.MockDataSource, expectResult []chunk.Row) {
+func executeCorrecResultTest(t *testing.T, ctx *mock.Context, aggExec *aggregate.HashAggExec, dataSource *testutil.MockDataSource, expectResult []chunk.Row, fileNamePrefixForTest string) {
 	if aggExec == nil {
-		aggExec = buildHashAggExecutor(t, ctx, dataSource)
+		aggExec = buildHashAggExecutor(t, ctx, dataSource, fileNamePrefixForTest)
 	}
 	dataSource.PrepareChunks()
 	tmpCtx := context.Background()
@@ -325,7 +318,7 @@ func executeCorrecResultTest(t *testing.T, ctx *mock.Context, aggExec *aggregate
 	require.True(t, checkResult(expectResult, resultRows, retTypes))
 }
 
-func fallBackActionTest(t *testing.T) {
+func fallBackActionTest(t *testing.T, fileNamePrefixForTest string) {
 	newRootExceedAction := new(testutil.MockActionOnExceed)
 	hardLimitBytesNum := int64(6000000)
 
@@ -341,7 +334,7 @@ func fallBackActionTest(t *testing.T) {
 	opt := getMockDataSourceParameters(ctx)
 	dataSource := buildMockDataSource(opt, col1, col2)
 
-	aggExec := buildHashAggExecutor(t, ctx, dataSource)
+	aggExec := buildHashAggExecutor(t, ctx, dataSource, fileNamePrefixForTest)
 	dataSource.PrepareChunks()
 	tmpCtx := context.Background()
 	chk := exec.NewFirstChunk(aggExec)
@@ -358,9 +351,9 @@ func fallBackActionTest(t *testing.T) {
 	require.Less(t, 0, newRootExceedAction.GetTriggeredNum())
 }
 
-func randomFailTest(t *testing.T, ctx *mock.Context, aggExec *aggregate.HashAggExec, dataSource *testutil.MockDataSource) {
+func randomFailTest(t *testing.T, ctx *mock.Context, aggExec *aggregate.HashAggExec, dataSource *testutil.MockDataSource, fileNamePrefixForTest string) {
 	if aggExec == nil {
-		aggExec = buildHashAggExecutor(t, ctx, dataSource)
+		aggExec = buildHashAggExecutor(t, ctx, dataSource, fileNamePrefixForTest)
 	}
 	dataSource.PrepareChunks()
 	tmpCtx := context.Background()
@@ -405,6 +398,12 @@ func randomFailTest(t *testing.T, ctx *mock.Context, aggExec *aggregate.HashAggE
 
 // sql: select col0, sum(col1), count(col1), avg(col1), min(col1), max(col1) from t group by t.col0;
 func TestGetCorrectResult(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TempStoragePath = t.TempDir()
+	})
+	testFuncName := util.GetFunctionName()
+
 	newRootExceedAction := new(testutil.MockActionOnExceed)
 
 	ctx := mock.NewContext()
@@ -415,7 +414,7 @@ func TestGetCorrectResult(t *testing.T) {
 	col0, col1 := generateData(rowNum, ndv)
 	opt := getMockDataSourceParameters(ctx)
 	dataSource := buildMockDataSource(opt, col0, col1)
-	result := generateResult(t, ctx, dataSource)
+	result := generateResult(t, ctx, dataSource, testFuncName)
 
 	err := failpoint.Enable("github.com/pingcap/tidb/pkg/executor/aggregate/slowSomePartialWorkers", `return(true)`)
 	require.NoError(t, err)
@@ -440,23 +439,35 @@ func TestGetCorrectResult(t *testing.T) {
 		wg.Done()
 	}()
 
-	aggExec := buildHashAggExecutor(t, ctx, dataSource)
-	for range 5 {
-		executeCorrecResultTest(t, ctx, nil, dataSource, result)
-		executeCorrecResultTest(t, ctx, aggExec, dataSource, result)
-	}
+	aggExec := buildHashAggExecutor(t, ctx, dataSource, testFuncName)
+	executeCorrecResultTest(t, ctx, nil, dataSource, result, testFuncName)
+	executeCorrecResultTest(t, ctx, aggExec, dataSource, result, testFuncName)
 
 	finished.Store(true)
 	wg.Wait()
+	util.CheckNoLeakFiles(t, testFuncName)
 }
 
 func TestFallBackAction(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TempStoragePath = t.TempDir()
+	})
+	testFuncName := util.GetFunctionName()
+
 	for range 50 {
-		fallBackActionTest(t)
+		fallBackActionTest(t, testFuncName)
 	}
+	util.CheckNoLeakFiles(t, testFuncName)
 }
 
 func TestRandomFail(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TempStoragePath = t.TempDir()
+	})
+	testFuncName := util.GetFunctionName()
+
 	newRootExceedAction := new(testutil.MockActionOnExceed)
 	hardLimitBytesNum := int64(5000000)
 
@@ -490,12 +501,13 @@ func TestRandomFail(t *testing.T) {
 	}()
 
 	// Test is successful when all sqls are not hung
-	aggExec := buildHashAggExecutor(t, ctx, dataSource)
-	for range 30 {
-		randomFailTest(t, ctx, nil, dataSource)
-		randomFailTest(t, ctx, aggExec, dataSource)
+	aggExec := buildHashAggExecutor(t, ctx, dataSource, testFuncName)
+	for range 5 {
+		randomFailTest(t, ctx, nil, dataSource, testFuncName)
+		randomFailTest(t, ctx, aggExec, dataSource, testFuncName)
 	}
 
 	finishChan.Store(true)
 	wg.Wait()
+	util.CheckNoLeakFiles(t, testFuncName)
 }

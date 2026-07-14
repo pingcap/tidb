@@ -7,7 +7,9 @@ go_test(
         "db_partition_test.go",
         "error_injection_test.go",
         "exchange_partition_test.go",
+        "global_index_version_test.go",
         "main_test.go",
+        "modify_column_test.go",
         "multi_domain_test.go",
         "placement_test.go",
         "reorg_partition_test.go",
@@ -16,6 +18,7 @@ go_test(
     shard_count = 50,
     deps = [
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/ddl",
         "//pkg/ddl/logutil",
         "//pkg/ddl/testutil",

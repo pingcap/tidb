@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/log"
+	meter_config "github.com/pingcap/metering_sdk/config"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/daemon"
 	"github.com/pingcap/tidb/pkg/bindinfo"
@@ -45,26 +46,30 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
-	disthandle "github.com/pingcap/tidb/pkg/disttask/framework/handle"
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
-	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
-	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/domain/crossks"
 	"github.com/pingcap/tidb/pkg/domain/globalconfigsync"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
+	"github.com/pingcap/tidb/pkg/dxf/framework/metering"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
+	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
+	"github.com/pingcap/tidb/pkg/infoschema/isvalidator"
 	infoschema_metrics "github.com/pingcap/tidb/pkg/infoschema/metrics"
 	"github.com/pingcap/tidb/pkg/infoschema/perfschema"
 	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	lcom "github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -74,6 +79,7 @@ import (
 	metrics2 "github.com/pingcap/tidb/pkg/planner/core/metrics"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
@@ -82,14 +88,13 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
-	"github.com/pingcap/tidb/pkg/statistics/handle/initstats"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	kvstore "github.com/pingcap/tidb/pkg/store"
+	"github.com/pingcap/tidb/pkg/telemetry"
 	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/cgroup"
 	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
@@ -111,6 +116,7 @@ import (
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
 	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
@@ -124,7 +130,9 @@ var (
 )
 
 const (
-	indexUsageGCDuration = 30 * time.Minute
+	indexUsageGCDuration  = 30 * time.Minute
+	systemSessionPoolSize = 200
+	dxfSessionPoolSize    = 100
 )
 
 // NewMockDomain is only used for test
@@ -159,6 +167,7 @@ type Domain struct {
 	// Otherwise, the session will be leaked. Because there is a strong reference from the domain to the session.
 	// Deprecated: Use `advancedSysSessionPool` instead.
 	sysSessionPool util.DestroyableSessionPool
+	dxfSessionPool util.DestroyableSessionPool
 	exit           chan struct{}
 	// `etcdClient` must be used when keyspace is not set, or when the logic to each etcd path needs to be separated by keyspace.
 	etcdClient *clientv3.Client
@@ -196,12 +205,14 @@ type Domain struct {
 		expiredTimeStamp types.Time
 	}
 
-	brOwnerMgr               owner.Manager
-	logBackupAdvancer        *daemon.OwnerDaemon
-	historicalStatsWorker    *HistoricalStatsWorker
-	ttlJobManager            atomic.Pointer[ttlworker.JobManager]
-	runawayManager           *runaway.Manager
-	resourceGroupsController *rmclient.ResourceGroupsController
+	brOwnerMgr            owner.Manager
+	logBackupAdvancer     *daemon.OwnerDaemon
+	historicalStatsWorker *HistoricalStatsWorker
+	ttlJobManager         atomic.Pointer[ttlworker.JobManager]
+	runawayManager        *runaway.Manager
+	// resourceGroupsController can be changed via `SetResourceGroupsController`
+	// in unit test.
+	resourceGroupsController atomic.Pointer[rmclient.ResourceGroupsController]
 
 	serverID             uint64
 	serverIDSession      *concurrency.Session
@@ -222,7 +233,7 @@ type Domain struct {
 
 	// only used for nextgen
 	crossKSSessMgr           *crossks.Manager
-	crossKSSessFactoryGetter func(targetKS string) pools.Factory
+	crossKSSessFactoryGetter func(string, validatorapi.Validator) pools.Factory
 }
 
 var _ sqlsvrapi.Server = (*Domain)(nil)
@@ -230,11 +241,6 @@ var _ sqlsvrapi.Server = (*Domain)(nil)
 // InfoCache export for test.
 func (do *Domain) InfoCache() *infoschema.InfoCache {
 	return do.infoCache
-}
-
-// EtcdClient export for test.
-func (do *Domain) EtcdClient() *clientv3.Client {
-	return do.etcdClient
 }
 
 // UnprefixedEtcdCli export for test.
@@ -288,6 +294,25 @@ func (do *Domain) DDL() ddl.DDL {
 // DDLExecutor gets the ddl executor from domain.
 func (do *Domain) DDLExecutor() ddl.Executor {
 	return do.ddlExecutor
+}
+
+// GetDDLOwnerMgr implements the sqlsvrapi.Server interface.
+func (do *Domain) GetDDLOwnerMgr() owner.Manager {
+	return do.DDL().OwnerManager()
+}
+
+// GetRuntime implements sqlsvrapi.Server.
+func (do *Domain) GetRuntime() sqlsvrapi.Runtime {
+	return do
+}
+
+// AcquireKSRuntime implements the sqlsvrapi.Server interface.
+func (do *Domain) AcquireKSRuntime(targetKS string, holderID string) (sqlsvrapi.KSRuntimeHandle, error) {
+	hdl, err := do.crossKSSessMgr.Acquire(targetKS, holderID, do.crossKSSessFactoryGetter)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return hdl, nil
 }
 
 // SetDDL sets DDL to domain, it's only used in tests.
@@ -389,32 +414,6 @@ func (do *Domain) topNSlowQueryLoop() {
 	}
 }
 
-func (do *Domain) infoSyncerKeeper() {
-	defer func() {
-		logutil.BgLogger().Info("infoSyncerKeeper exited.")
-	}()
-
-	defer util.Recover(metrics.LabelDomain, "infoSyncerKeeper", nil, false)
-
-	ticker := time.NewTicker(infosync.ReportInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			do.info.ReportMinStartTS(do.Store())
-		case <-do.info.Done():
-			logutil.BgLogger().Info("server info syncer need to restart")
-			if err := do.info.Restart(context.Background()); err != nil {
-				logutil.BgLogger().Error("server info syncer restart failed", zap.Error(err))
-			} else {
-				logutil.BgLogger().Info("server info syncer restarted")
-			}
-		case <-do.exit:
-			return
-		}
-	}
-}
-
 func (do *Domain) globalConfigSyncerKeeper() {
 	defer func() {
 		logutil.BgLogger().Info("globalConfigSyncerKeeper exited.")
@@ -436,34 +435,6 @@ func (do *Domain) globalConfigSyncerKeeper() {
 	}
 }
 
-func (do *Domain) topologySyncerKeeper() {
-	defer util.Recover(metrics.LabelDomain, "topologySyncerKeeper", nil, false)
-	ticker := time.NewTicker(infosync.TopologyTimeToRefresh)
-	defer func() {
-		ticker.Stop()
-		logutil.BgLogger().Info("topologySyncerKeeper exited.")
-	}()
-
-	for {
-		select {
-		case <-ticker.C:
-			err := do.info.StoreTopologyInfo(context.Background())
-			if err != nil {
-				logutil.BgLogger().Warn("refresh topology in loop failed", zap.Error(err))
-			}
-		case <-do.info.TopologyDone():
-			logutil.BgLogger().Info("server topology syncer need to restart")
-			if err := do.info.RestartTopology(context.Background()); err != nil {
-				logutil.BgLogger().Warn("server topology syncer restart failed", zap.Error(err))
-			} else {
-				logutil.BgLogger().Info("server topology syncer restarted")
-			}
-		case <-do.exit:
-			return
-		}
-	}
-}
-
 // CheckAutoAnalyzeWindows checks the auto analyze windows and kill the auto analyze process if it is not in the window.
 func (do *Domain) CheckAutoAnalyzeWindows() {
 	se, err := do.sysSessionPool.Get()
@@ -475,8 +446,15 @@ func (do *Domain) CheckAutoAnalyzeWindows() {
 	// Make sure the session is new.
 	sctx := se.(sessionctx.Context)
 	defer do.sysSessionPool.Put(se)
-	if !autoanalyze.CheckAutoAnalyzeWindow(sctx) {
+	start, end, ok := autoanalyze.CheckAutoAnalyzeWindow(sctx)
+	if !ok {
 		for _, id := range handleutil.GlobalAutoAnalyzeProcessList.All() {
+			statslogutil.StatsLogger().Warn("Kill auto analyze process because it exceeded the window",
+				zap.Uint64("processID", id),
+				zap.Time("now", time.Now()),
+				zap.String("start", start),
+				zap.String("end", end),
+			)
 			do.SysProcTracker().KillSysProcess(id)
 		}
 	}
@@ -538,9 +516,9 @@ func (do *Domain) Close() {
 	// in case the keeper rewrite the key after the cleaning.
 	do.wg.Wait()
 	if do.info != nil {
-		do.info.RemoveServerInfo()
+		do.info.ServerInfoSyncer().RemoveServerInfo()
 		do.info.RemoveMinStartTS()
-		do.info.RemoveTopologyInfo()
+		do.info.ServerInfoSyncer().RemoveTopologyInfo()
 	}
 	if do.unprefixedEtcdCli != nil {
 		terror.Log(errors.Trace(do.unprefixedEtcdCli.Close()))
@@ -550,7 +528,7 @@ func (do *Domain) Close() {
 	}
 
 	do.sysSessionPool.Close()
-	do.advancedSysSessionPool.Close()
+	do.dxfSessionPool.Close()
 	variable.UnregisterStatistics(do.BindingHandle())
 	if do.onClose != nil {
 		do.onClose()
@@ -565,6 +543,8 @@ func (do *Domain) Close() {
 		handle.Close()
 	}
 
+	do.advancedSysSessionPool.Close()
+
 	do.crossKSSessMgr.Close()
 
 	logutil.BgLogger().Info("domain closed", zap.Duration("take time", time.Since(startTime)))
@@ -574,7 +554,7 @@ const resourceIdleTimeout = 3 * time.Minute // resources in the ResourcePool wil
 
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
 func NewDomain(store kv.Storage, schemaLease time.Duration, statsLease time.Duration, dumpFileGcLease time.Duration, factory pools.Factory) *Domain {
-	return NewDomainWithEtcdClient(store, schemaLease, statsLease, dumpFileGcLease, factory, nil, nil)
+	return NewDomainWithEtcdClient(store, schemaLease, statsLease, dumpFileGcLease, factory, nil, nil, nil)
 }
 
 // NewDomainWithEtcdClient creates a new domain with etcd client. Should not create multiple domains for the same store.
@@ -584,35 +564,16 @@ func NewDomainWithEtcdClient(
 	statsLease time.Duration,
 	dumpFileGcLease time.Duration,
 	factory pools.Factory,
-	crossKSSessFactoryGetter func(targetKS string) pools.Factory,
+	crossKSSessFactoryGetter func(targetKS string, validator validatorapi.Validator) pools.Factory,
 	etcdClient *clientv3.Client,
+	schemaFilter issyncer.Filter,
 ) *Domain {
 	intest.Assert(schemaLease > 0, "schema lease should be a positive duration")
-	capacity := 200 // capacity of the sysSessionPool size
 	do := &Domain{
-		store: store,
-		exit:  make(chan struct{}),
-		sysSessionPool: util.NewSessionPool(
-			capacity, factory,
-			func(r pools.Resource) {
-				_, ok := r.(sessionctx.Context)
-				intest.Assert(ok)
-				infosync.StoreInternalSession(r)
-			},
-			func(r pools.Resource) {
-				sctx, ok := r.(sessionctx.Context)
-				intest.Assert(ok)
-				intest.AssertFunc(func() bool {
-					txn, _ := sctx.Txn(false)
-					return txn == nil || !txn.Valid()
-				})
-				infosync.DeleteInternalSession(r)
-			},
-			func(r pools.Resource) {
-				intest.Assert(r != nil)
-				infosync.DeleteInternalSession(r)
-			},
-		),
+		store:             store,
+		exit:              make(chan struct{}),
+		sysSessionPool:    createInternalSessionPool(systemSessionPoolSize, factory),
+		dxfSessionPool:    createInternalSessionPool(dxfSessionPoolSize, factory),
 		statsLease:        statsLease,
 		schemaLease:       schemaLease,
 		slowQuery:         newTopNSlowQueries(config.GetGlobalConfig().InMemSlowQueryTopNNum, time.Hour*24*7, config.GetGlobalConfig().InMemSlowQueryRecentNum),
@@ -621,7 +582,7 @@ func NewDomainWithEtcdClient(
 		crossKSSessFactoryGetter: crossKSSessFactoryGetter,
 	}
 
-	do.advancedSysSessionPool = syssession.NewAdvancedSessionPool(capacity, func() (syssession.SessionContext, error) {
+	do.advancedSysSessionPool = syssession.NewAdvancedSessionPool(systemSessionPoolSize, func() (syssession.SessionContext, error) {
 		r, err := factory()
 		if err != nil {
 			return nil, err
@@ -648,11 +609,37 @@ func NewDomainWithEtcdClient(
 		do.infoCache,
 		do.schemaLease,
 		do.sysSessionPool,
+		isvalidator.New(do.schemaLease),
+		schemaFilter,
 	)
 	do.initDomainSysVars()
 
-	do.crossKSSessMgr = crossks.NewManager()
+	do.crossKSSessMgr = crossks.NewManager(do.store)
 	return do
+}
+
+func createInternalSessionPool(capacity int, factory pools.Factory) util.DestroyableSessionPool {
+	return util.NewSessionPool(
+		capacity, factory,
+		func(r pools.Resource) {
+			_, ok := r.(sessionctx.Context)
+			intest.Assert(ok)
+			infosync.StoreInternalSession(r)
+		},
+		func(r pools.Resource) {
+			sctx, ok := r.(sessionctx.Context)
+			intest.Assert(ok)
+			intest.AssertFunc(func() bool {
+				txn, _ := sctx.Txn(false)
+				return txn == nil || !txn.Valid()
+			})
+			infosync.DeleteInternalSession(r)
+		},
+		func(r pools.Resource) {
+			intest.Assert(r != nil)
+			infosync.DeleteInternalSession(r)
+		},
+	)
 }
 
 const serverIDForStandalone = 1 // serverID for standalone deployment.
@@ -693,7 +680,7 @@ func (do *Domain) Init(
 	do.cancelFns.fns = append(do.cancelFns.fns, cancelFunc)
 	do.cancelFns.mu.Unlock()
 
-	ddlNotifierStore := notifier.OpenTableStore("mysql", ddl.NotifierTableName)
+	ddlNotifierStore := notifier.OpenTableStore("mysql", metadef.NotifierTableName)
 	do.ddlNotifier = notifier.NewDDLNotifier(
 		do.sysSessionPool,
 		ddlNotifierStore,
@@ -721,8 +708,9 @@ func (do *Domain) Init(
 			do.ddlExecutor = eBak
 		}
 	})
+	var checker *schematracker.Checker
 	if ddlInjector != nil {
-		checker := ddlInjector(do.ddl, do.ddlExecutor, do.infoCache)
+		checker = ddlInjector(do.ddl, do.ddlExecutor, do.infoCache)
 		checker.CreateTestDB(nil)
 		do.ddl = checker
 		do.ddlExecutor = checker
@@ -738,10 +726,12 @@ func (do *Domain) Init(
 		return err
 	}
 	do.globalCfgSyncer = globalconfigsync.NewGlobalConfigSyncer(pdCli)
-	err = do.ddl.SchemaSyncer().Init(ctx)
+	schemaVerSyncer := do.ddl.SchemaSyncer()
+	err = schemaVerSyncer.Init(ctx)
 	if err != nil {
 		return err
 	}
+	schemaVerSyncer.SetServerInfoSyncer(do.info.ServerInfoSyncer())
 
 	// step 2: initialize the global kill, which depends on `globalInfoSyncer`.`
 	if config.GetGlobalConfig().EnableGlobalKill {
@@ -753,7 +743,7 @@ func (do *Domain) Init(
 				logutil.BgLogger().Error("acquire serverID failed", zap.Error(err))
 				do.isLostConnectionToPD.Store(1) // will retry in `do.serverIDKeeper`
 			} else {
-				if err := do.info.StoreServerInfo(context.Background()); err != nil {
+				if err := do.info.ServerInfoSyncer().StoreServerInfo(context.Background()); err != nil {
 					return errors.Trace(err)
 				}
 				do.isLostConnectionToPD.Store(0)
@@ -773,13 +763,26 @@ func (do *Domain) Init(
 	}
 
 	do.isSyncer.InitRequiredFields(
-		do.info, do.ddl.SchemaSyncer(), do.autoidClient,
+		func() sessmgr.InfoSchemaCoordinator {
+			if do.info == nil {
+				return nil
+			}
+			return do.info.GetSessionManager()
+		},
+		schemaVerSyncer,
+		do.autoidClient,
 		func() (pools.Resource, error) {
 			return do.sysExecutorFactory(do)
 		},
 	)
 	// step 3: domain reload the infoSchema.
-	return do.isSyncer.Reload()
+	if err = do.isSyncer.Reload(); err != nil {
+		return err
+	}
+	if checker != nil {
+		checker.InitFromIS(do.InfoSchema())
+	}
+	return nil
 }
 
 // Start starts the domain. After start, DDLs can be executed using session, see
@@ -818,13 +821,18 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 		do.isSyncer.MDLCheckLoop(do.ctx)
 	}, "mdlCheckLoop")
 	do.wg.Run(do.topNSlowQueryLoop, "topNSlowQueryLoop")
-	do.wg.Run(do.infoSyncerKeeper, "infoSyncerKeeper")
+	do.wg.Run(func() {
+		do.info.ServerInfoSyncer().ServerInfoSyncLoop(do.store, do.exit)
+	}, "infoSyncerKeeper")
 	do.wg.Run(do.globalConfigSyncerKeeper, "globalConfigSyncerKeeper")
-	do.wg.Run(do.runawayStartLoop, "runawayStartLoop")
+	do.wg.Run(do.runawayManager.RunawayRecordFlushLoop, "runawayRecordFlushLoop")
+	do.wg.Run(do.runawayManager.RunawayWatchSyncLoop, "runawayWatchSyncLoop")
 	do.wg.Run(do.requestUnitsWriterLoop, "requestUnitsWriterLoop")
 	skipRegisterToDashboard := gCfg.SkipRegisterToDashboard
 	if !skipRegisterToDashboard {
-		do.wg.Run(do.topologySyncerKeeper, "topologySyncerKeeper")
+		do.wg.Run(func() {
+			do.info.ServerInfoSyncer().TopologySyncLoop(do.exit)
+		}, "topologySyncerKeeper")
 	}
 	pdCli := do.GetPDClient()
 	if pdCli != nil {
@@ -833,33 +841,49 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 		}, "closestReplicaReadCheckLoop")
 	}
 
-	err = do.initLogBackup(do.ctx, pdCli)
-	if err != nil {
-		return err
+	if startMode != ddl.BR {
+		err = do.initLogBackup(do.ctx, pdCli)
+		if err != nil {
+			return err
+		}
 	}
 
 	// right now we only allow access system keyspace info schema after fully bootstrap.
-	if keyspace.IsRunningOnUser() && startMode == ddl.Normal {
+	if kv.IsUserKS(do.store) && startMode == ddl.Normal {
 		if err = do.loadSysKSInfoSchema(); err != nil {
 			return err
 		}
+	}
+	// Only the SYSTEM keyspace domain runs this GC loop: user-keyspace domains
+	// only access the long-lived SYSTEM keyspace runtime, which is never evicted
+	// here.
+	// there are still calls to GetKSInfoCache/GetKSStore without holder ID, but
+	// they are only used in the path of creating session when the runtime is
+	// Acquired with a holder ID, so it's ok. we cannot remove those calls now
+	// as explained in the comments of GetKSStore.
+	if kv.IsSystemKS(do.store) {
+		do.wg.Run(func() {
+			do.crossKSSessMgr.RunSystemKSGCLoop(do.ctx)
+		}, "crossKSSessMgrGCLoop")
 	}
 
 	return nil
 }
 
-// TODO: we should sync the system keyspace info schema, not just load it,
-// currently, we assume there is no upgrade, so we only load the info schema of
-// system keyspace once, and it will not change during the lifetime of the domain,
-// it's not right, but it's enough to push subtasks which depends on it forward,
-// we will fix it in the future.
 func (do *Domain) loadSysKSInfoSchema() error {
 	logutil.BgLogger().Info("loading system keyspace info schema")
+	// it will trigger the creation of system keyspace session manager,
+	// which will load the info schema cache.
 	_, err := do.GetKSStore(keyspace.System)
 	return err
 }
 
 // GetKSStore returns the kv.Storage for the given keyspace.
+// we should forbid direct access cross KS component through Domain. we should
+// use AcquireKSRuntime to manage their lifecycle.
+// but Session dependents on Domain, to create a session pool we need to access the
+// GetKSStore/GetKSInfoCache inside Session where we don't know the runtime holder.
+// and trying to refactor that part can cause import cycle easily.
 func (do *Domain) GetKSStore(targetKS string) (store kv.Storage, err error) {
 	mgr, err := do.crossKSSessMgr.GetOrCreate(targetKS, do.crossKSSessFactoryGetter)
 	if err != nil {
@@ -869,6 +893,7 @@ func (do *Domain) GetKSStore(targetKS string) (store kv.Storage, err error) {
 }
 
 // GetKSInfoCache returns the system keyspace info cache.
+// see comments of GetKSStore too.
 func (do *Domain) GetKSInfoCache(targetKS string) (*infoschema.InfoCache, error) {
 	mgr, err := do.crossKSSessMgr.GetOrCreate(targetKS, do.crossKSSessFactoryGetter)
 	if err != nil {
@@ -883,7 +908,13 @@ func (do *Domain) GetKSSessPool(targetKS string) (util.DestroyableSessionPool, e
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return mgr.SessPool(), nil
+	return mgr.SysSessionPool(), nil
+}
+
+// GetCrossKSMgr returns the cross keyspace session manager.
+// it's exported for test only.
+func (do *Domain) GetCrossKSMgr() *crossks.Manager {
+	return do.crossKSSessMgr
 }
 
 // GetSchemaLease return the schema lease.
@@ -921,9 +952,9 @@ func (do *Domain) initLogBackup(ctx context.Context, pdClient pd.Client) error {
 	if err != nil {
 		return err
 	}
-	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv := streamhelper.NewTiDBCheckpointAdvancer(env)
 	do.brOwnerMgr = streamhelper.OwnerManagerForLogBackup(ctx, do.etcdClient)
-	do.logBackupAdvancer = daemon.New(adv, do.brOwnerMgr, adv.Config().TickDuration)
+	do.logBackupAdvancer = daemon.New(adv, do.brOwnerMgr, adv.Config().TickTimeout())
 	loop, err := do.logBackupAdvancer.Begin(ctx)
 	if err != nil {
 		return err
@@ -1058,14 +1089,48 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 
 // InitDistTaskLoop initializes the distributed task framework.
 func (do *Domain) InitDistTaskLoop() error {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalDistTask)
-	failpoint.Inject("MockDisableDistTask", func(val failpoint.Value) {
-		if val.(bool) {
-			failpoint.Return(nil)
-		}
+	taskManager := storage.NewTaskManager(do.dxfSessionPool)
+	storage.SetTaskManager(taskManager)
+	failpoint.Inject("MockDisableDistTask", func() {
+		failpoint.Return(nil)
 	})
 
-	taskManager := storage.NewTaskManager(do.sysSessionPool)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalDistTask)
+	if kv.IsUserKS(do.store) {
+		sp, err := do.GetKSSessPool(keyspace.System)
+		if err != nil {
+			return err
+		}
+		storage.SetDXFSvcTaskMgr(storage.NewTaskManager(sp))
+
+		// in nextgen, DXF runs as a service on SYSTEM ks and are shared by all
+		// user keyspace
+		logutil.BgLogger().Info("skip running DXF in user keyspace")
+		return nil
+	}
+	if kv.IsSystemKS(do.store) {
+		tidbCfg := config.GetGlobalConfig()
+		if tidbCfg.MeteringStorageURI == "" {
+			logutil.BgLogger().Warn("metering storage uri is empty, metering will be disabled")
+		} else {
+			mCfg, err := meter_config.NewFromURI(tidbCfg.MeteringStorageURI)
+			if err != nil {
+				return errors.Wrap(err, "failed to parse metering storage uri")
+			}
+			m, err := metering.NewMeter(mCfg)
+			if err != nil {
+				return errors.Wrap(err, "failed to create metering")
+			}
+			metering.SetMetering(m)
+			do.wg.Run(func() {
+				defer func() {
+					metering.SetMetering(nil)
+				}()
+				m.StartFlushLoop(do.ctx)
+			}, "dxfMeteringFlushLoop")
+		}
+	}
+
 	var serverID string
 	if intest.InTest {
 		do.InitInfo4Test()
@@ -1086,13 +1151,12 @@ func (do *Domain) InitDistTaskLoop() error {
 	if err != nil {
 		return err
 	}
-	disthandle.SetNodeResource(nodeRes)
-	executorManager, err := taskexecutor.NewManager(managerCtx, serverID, taskManager, nodeRes)
+	storage.SetNodeResource(nodeRes)
+	executorManager, err := taskexecutor.NewManager(managerCtx, do.store, serverID, taskManager, nodeRes)
 	if err != nil {
 		return err
 	}
 
-	storage.SetTaskManager(taskManager)
 	if err = executorManager.InitMeta(); err != nil {
 		// executor manager loop will try to recover meta repeatedly, so we can
 		// just log the error here.
@@ -1104,6 +1168,13 @@ func (do *Domain) InitDistTaskLoop() error {
 		}()
 		do.distTaskFrameworkLoop(ctx, taskManager, executorManager, serverID, nodeRes)
 	}, "distTaskFrameworkLoop")
+	if err := kv.RunInNewTxn(ctx, do.store, true, func(_ context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		logger := logutil.BgLogger()
+		return ingestctrl.InitializeRateLimiterParam(m, logger)
+	}); err != nil {
+		logutil.BgLogger().Error("initialize global max batch split ranges failed", zap.Error(err))
+	}
 	return nil
 }
 
@@ -1119,22 +1190,6 @@ func calculateNodeResource() (*proto.NodeResource, error) {
 	if totalCPU <= 0 || totalMem <= 0 {
 		return nil, errors.Errorf("invalid cpu or memory, cpu: %d, memory: %d", totalCPU, totalMem)
 	}
-	cgroupLimit, version, err := cgroup.GetCgroupMemLimit()
-	// ignore the error of cgroup.GetCgroupMemLimit, as it's not a must-success step.
-	if err == nil && version == cgroup.V2 {
-		// see cgroup.detectMemLimitInV2 for more details.
-		// below are some real memory limits tested on GCP:
-		// node-spec  real-limit  percent
-		// 16c32g        27.83Gi    87%
-		// 32c64g        57.36Gi    89.6%
-		// we use 'limit', not totalMem for adjust, as totalMem = min(physical-mem, 'limit')
-		// content of 'memory.max' might be 'max', so we use the min of them.
-		adjustedMem := min(totalMem, uint64(float64(cgroupLimit)*0.88))
-		logger.Info("adjust memory limit for cgroup v2",
-			zap.String("before", units.BytesSize(float64(totalMem))),
-			zap.String("after", units.BytesSize(float64(adjustedMem))))
-		totalMem = adjustedMem
-	}
 	var totalDisk uint64
 	cfg := config.GetGlobalConfig()
 	sz, err := lcom.GetStorageSize(cfg.TempDir)
@@ -1144,11 +1199,16 @@ func calculateNodeResource() (*proto.NodeResource, error) {
 	} else {
 		totalDisk = sz.Capacity
 	}
+	nodeRes := proto.NewNodeResource(totalCPU, int64(totalMem), totalDisk)
+	dxfNodeRes := nodeRes.LimitDXFResource(cfg.DXFResourceLimit)
 	logger.Info("initialize node resource",
 		zap.Int("total-cpu", totalCPU),
 		zap.String("total-mem", units.BytesSize(float64(totalMem))),
+		zap.Int("dxf-resource-limit", cfg.DXFResourceLimit),
+		zap.Int("dxf-usable-cpu", dxfNodeRes.TotalCPU),
+		zap.String("dxf-usable-mem", units.BytesSize(float64(dxfNodeRes.TotalMem))),
 		zap.String("total-disk", units.BytesSize(float64(totalDisk))))
-	return proto.NewNodeResource(totalCPU, int64(totalMem), totalDisk), nil
+	return dxfNodeRes, nil
 }
 
 func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storage.TaskManager, executorManager *taskexecutor.Manager, serverID string, nodeRes *proto.NodeResource) {
@@ -1169,7 +1229,7 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 		if schedulerManager != nil && schedulerManager.Initialized() {
 			return
 		}
-		schedulerManager = scheduler.NewManager(ctx, taskManager, serverID, nodeRes)
+		schedulerManager = scheduler.NewManager(ctx, do.store, taskManager, serverID, nodeRes)
 		schedulerManager.Start()
 	}
 	stopSchedulerMgrIfNeeded := func() {
@@ -1202,6 +1262,16 @@ func (do *Domain) SysSessionPool() util.DestroyableSessionPool {
 	return do.sysSessionPool
 }
 
+// AlterTableMode implements sqlsvrapi.Runtime.
+func (do *Domain) AlterTableMode(_ context.Context, target model.AlterTableModeTarget) error {
+	se, err := do.sysSessionPool.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer do.sysSessionPool.Put(se)
+	return ddl.AlterTableMode(do.ddlExecutor, se.(sessionctx.Context), target.TargetMode, target.SchemaID, target.TableID)
+}
+
 // AdvancedSysSessionPool is a more powerful session pool that returns a wrapped session which can detect
 // some misuse of the session to avoid potential bugs.
 // It is recommended to use this pool instead of `sysSessionPool`.
@@ -1232,7 +1302,7 @@ func (do *Domain) AutoIDClient() *autoid.ClientDiscover {
 // GetPDClient returns the PD client.
 func (do *Domain) GetPDClient() pd.Client {
 	if store, ok := do.store.(kv.StorageWithPD); ok {
-		return store.GetPDClient()
+		return store.GetPDClient().WithCallerComponent(caller.GetComponent(1))
 	}
 	return nil
 }
@@ -1525,7 +1595,7 @@ func (do *Domain) BindingHandle() bindinfo.BindingHandle {
 // be called only once in BootstrapSession.
 func (do *Domain) InitBindingHandle() error {
 	do.bindHandle.Store(bindinfo.NewBindingHandle(do.sysSessionPool))
-	err := do.BindingHandle().LoadFromStorageToCache(true)
+	err := do.BindingHandle().LoadFromStorageToCache(true, false)
 	if err != nil || bindinfo.Lease == 0 {
 		return err
 	}
@@ -1549,9 +1619,11 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 
 		bindWorkerTicker := time.NewTicker(bindinfo.Lease)
 		gcBindTicker := time.NewTicker(100 * bindinfo.Lease)
+		writeBindingUsageTicker := time.NewTicker(100 * bindinfo.Lease)
 		defer func() {
 			bindWorkerTicker.Stop()
 			gcBindTicker.Stop()
+			writeBindingUsageTicker.Stop()
 		}()
 		for {
 			select {
@@ -1561,7 +1633,7 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 				return
 			case <-bindWorkerTicker.C:
 				bindHandle := do.BindingHandle()
-				err := bindHandle.LoadFromStorageToCache(false)
+				err := bindHandle.LoadFromStorageToCache(false, false)
 				if err != nil {
 					logutil.BgLogger().Error("update bindinfo failed", zap.Error(err))
 				}
@@ -1573,14 +1645,68 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 				if err != nil {
 					logutil.BgLogger().Error("GC bind record failed", zap.Error(err))
 				}
+			case <-writeBindingUsageTicker.C:
+				bindHandle := do.BindingHandle()
+				err := bindHandle.UpdateBindingUsageInfoToStorage()
+				if err != nil {
+					logutil.BgLogger().Warn("BindingHandle.UpdateBindingUsageInfoToStorage", zap.Error(err))
+				}
+				// randomize the next write interval to avoid thundering herd problem
+				// if there are many tidb servers. The next write interval is [3h, 6h].
+				writeBindingUsageTicker.Reset(
+					randomDuration(
+						3*60*60, // 3h
+						6*60*60, // 6h
+					),
+				)
 			}
 		}
 	}, "globalBindHandleWorkerLoop")
 }
 
+func randomDuration(minSeconds, maxSeconds int) time.Duration {
+	randomIntervalSeconds := rand.Intn(maxSeconds-minSeconds+1) + minSeconds
+	newDuration := time.Duration(randomIntervalSeconds) * time.Second
+	return newDuration
+}
+
+// TelemetryLoop create a goroutine that reports usage data in a loop, it should be called only once
+// in BootstrapSession.
+func (do *Domain) TelemetryLoop(ctx sessionctx.Context) {
+	ctx.GetSessionVars().InRestrictedSQL = true
+	err := telemetry.InitialRun(ctx)
+	if err != nil {
+		logutil.BgLogger().Warn("Initial telemetry run failed", zap.Error(err))
+	}
+
+	reportTicker := time.NewTicker(telemetry.ReportInterval)
+	subWindowTicker := time.NewTicker(telemetry.SubWindowSize)
+
+	do.wg.Run(func() {
+		defer func() {
+			logutil.BgLogger().Info("TelemetryReportLoop exited.")
+		}()
+		defer util.Recover(metrics.LabelDomain, "TelemetryReportLoop", nil, false)
+
+		for {
+			select {
+			case <-do.exit:
+				return
+			case <-reportTicker.C:
+				err := telemetry.ReportUsageData(ctx)
+				if err != nil {
+					logutil.BgLogger().Warn("TelemetryLoop retports usaged data failed", zap.Error(err))
+				}
+			case <-subWindowTicker.C:
+				telemetry.RotateSubWindow()
+			}
+		}
+	}, "TelemetryLoop")
+}
+
 // SetupPlanReplayerHandle setup plan replayer handle
 func (do *Domain) SetupPlanReplayerHandle(collectorSctx sessionctx.Context, workersSctxs []sessionctx.Context) {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsForegroundPriority)
 	do.planReplayerHandle = &planReplayerHandle{}
 	do.planReplayerHandle.planReplayerTaskCollectorHandle = &planReplayerTaskCollectorHandle{
 		ctx:  ctx,
@@ -1614,12 +1740,21 @@ func (do *Domain) RunawayManager() *runaway.Manager {
 
 // ResourceGroupsController returns the resource groups controller.
 func (do *Domain) ResourceGroupsController() *rmclient.ResourceGroupsController {
-	return do.resourceGroupsController
+	return do.resourceGroupsController.Load()
 }
 
 // SetResourceGroupsController is only used in test.
 func (do *Domain) SetResourceGroupsController(controller *rmclient.ResourceGroupsController) {
-	do.resourceGroupsController = controller
+	do.resourceGroupsController.Store(controller)
+}
+
+// GetRUVersion returns the current RU calculation version for this keyspace.
+// Returns DefaultRUVersion (v1) if the resource groups controller is not available.
+func (do *Domain) GetRUVersion() rmclient.RUVersion {
+	if rgCtl := do.ResourceGroupsController(); rgCtl != nil {
+		return rgCtl.GetRUVersion()
+	}
+	return rmclient.DefaultRUVersion
 }
 
 // SetupHistoricalStatsWorker setups worker
@@ -1732,7 +1867,7 @@ func (do *Domain) DumpFileGcCheckerLoop() {
 			case <-do.exit:
 				return
 			case <-gcTicker.C:
-				do.dumpFileGcChecker.GCDumpFiles(time.Hour, time.Hour*24*7)
+				do.dumpFileGcChecker.GCDumpFiles(do.ctx, time.Hour, time.Hour*24*7)
 			}
 		}
 	}, "dumpFileGcChecker")
@@ -1782,12 +1917,11 @@ func (do *Domain) StatsHandle() *handle.Handle {
 }
 
 // CreateStatsHandle is used only for test.
-func (do *Domain) CreateStatsHandle(ctx context.Context, initStatsCtx sessionctx.Context) error {
+func (do *Domain) CreateStatsHandle(ctx context.Context) error {
 	h, err := handle.NewHandle(
 		ctx,
-		initStatsCtx,
 		do.statsLease,
-		do.sysSessionPool,
+		do.advancedSysSessionPool,
 		&do.sysProcesses,
 		do.ddlNotifier,
 		do.NextConnID,
@@ -1816,8 +1950,8 @@ func (do *Domain) SetStatsUpdating(val bool) {
 }
 
 // LoadAndUpdateStatsLoop loads and updates stats info.
-func (do *Domain) LoadAndUpdateStatsLoop(concurrency int, initStatsCtx sessionctx.Context) error {
-	if err := do.UpdateTableStatsLoop(initStatsCtx); err != nil {
+func (do *Domain) LoadAndUpdateStatsLoop(concurrency int) error {
+	if err := do.UpdateTableStatsLoop(); err != nil {
 		return err
 	}
 	do.StartLoadStatsSubWorkers(concurrency)
@@ -1827,12 +1961,11 @@ func (do *Domain) LoadAndUpdateStatsLoop(concurrency int, initStatsCtx sessionct
 // UpdateTableStatsLoop creates a goroutine loads stats info and updates stats info in a loop.
 // It will also start a goroutine to analyze tables automatically.
 // It should be called only once in BootstrapSession.
-func (do *Domain) UpdateTableStatsLoop(initStatsCtx sessionctx.Context) error {
+func (do *Domain) UpdateTableStatsLoop() error {
 	statsHandle, err := handle.NewHandle(
 		do.ctx,
-		initStatsCtx,
 		do.statsLease,
-		do.sysSessionPool,
+		do.advancedSysSessionPool,
 		&do.sysProcesses,
 		do.ddlNotifier,
 		do.NextConnID,
@@ -1851,7 +1984,7 @@ func (do *Domain) UpdateTableStatsLoop(initStatsCtx sessionctx.Context) error {
 	variable.EnableStatsOwner = do.enableStatsOwner
 	variable.DisableStatsOwner = do.disableStatsOwner
 	do.statsOwner = do.NewOwnerManager(handle.StatsPrompt, handle.StatsOwnerKey)
-	do.statsOwner.SetListener(owner.NewListenersWrapper(statsHandle, do.ddlNotifier))
+	do.statsOwner.SetListener(owner.NewListenersWrapper(do.ddlNotifier))
 	if config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Load() {
 		err := do.statsOwner.CampaignOwner()
 		if err != nil {
@@ -1888,29 +2021,6 @@ func (do *Domain) UpdateTableStatsLoop(initStatsCtx sessionctx.Context) error {
 	// Otherwise, we may start the auto analyze worker before the stats cache is initialized.
 	do.wg.Run(func() { waitStartTask(do, do.autoAnalyzeWorker) }, "autoAnalyzeWorker")
 	do.wg.Run(func() { waitStartTask(do, do.analyzeJobsCleanupWorker) }, "analyzeJobsCleanupWorker")
-	do.wg.Run(
-		func() {
-			// The initStatsCtx is used to store the internal session for initializing stats,
-			// so we need the gc min start ts calculation to track it as an internal session.
-			// Since the session manager may not be ready at this moment, `infosync.StoreInternalSession` can fail.
-			// we need to retry until the session manager is ready or the init stats completes.
-			for !infosync.StoreInternalSession(initStatsCtx) {
-				waitRetry := time.After(time.Second)
-				select {
-				case <-do.StatsHandle().InitStatsDone:
-					return
-				case <-waitRetry:
-				}
-			}
-			select {
-			case <-do.StatsHandle().InitStatsDone:
-			case <-do.exit: // It may happen that before initStatsDone, tidb receive Ctrl+C
-				return
-			}
-			infosync.DeleteInternalSession(initStatsCtx)
-		},
-		"RemoveInitStatsFromInternalSessions",
-	)
 	return nil
 }
 
@@ -1962,6 +2072,14 @@ func (do *Domain) NewOwnerManager(prompt, ownerKey string) owner.Manager {
 
 func (do *Domain) initStats(ctx context.Context) {
 	statsHandle := do.StatsHandle()
+	// If skip-init-stats is configured, skip the heavy initial stats loading as well.
+	// Still close InitStatsDone to unblock waiters that may depend on it.
+	if config.GetGlobalConfig().Performance.SkipInitStats {
+		close(statsHandle.InitStatsDone)
+		statslogutil.StatsLogger().Info("Skipping initial stats due to skip-grant-table being set")
+		return
+	}
+
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.BgLogger().Error("panic when initiating stats", zap.Any("r", r),
@@ -1971,14 +2089,12 @@ func (do *Domain) initStats(ctx context.Context) {
 	}()
 	t := time.Now()
 	liteInitStats := config.GetGlobalConfig().Performance.LiteInitStats
-	initstats.InitStatsPercentage.Store(0)
 	var err error
 	if liteInitStats {
-		err = statsHandle.InitStatsLite(ctx)
+		err = statsHandle.InitStatsLite(ctx, do.InfoSchema())
 	} else {
 		err = statsHandle.InitStats(ctx, do.InfoSchema())
 	}
-	initstats.InitStatsPercentage.Store(100)
 	if err != nil {
 		statslogutil.StatsLogger().Error("Init stats failed", zap.Bool("isLiteInitStats", liteInitStats), zap.Duration("duration", time.Since(t)), zap.Error(err))
 	} else {
@@ -2078,6 +2194,13 @@ func (do *Domain) gcStatsWorkerExitPreprocessing() {
 		do.statsOwner.Close()
 		ch <- struct{}{}
 	}()
+	if intest.InTest {
+		// We should wait for statistics owner to close on exit.
+		// Otherwise, the goroutine leak detection may fail.
+		<-ch
+		logutil.BgLogger().Info("gcStatsWorker exit preprocessing finished")
+		return
+	}
 	select {
 	case <-ch:
 		logutil.BgLogger().Info("gcStatsWorker exit preprocessing finished")
@@ -2149,8 +2272,10 @@ func (do *Domain) gcStatsWorker() {
 
 func (do *Domain) dumpColStatsUsageWorker() {
 	logutil.BgLogger().Info("dumpColStatsUsageWorker started.")
-	lease := do.statsLease
-	dumpColStatsUsageTicker := time.NewTicker(100 * lease)
+	// We need to have different nodes trigger tasks at different times to avoid the herd effect.
+	randDuration := time.Duration(rand.Int63n(int64(time.Minute)))
+	dumpDuration := 100*do.statsLease + randDuration
+	dumpColStatsUsageTicker := time.NewTicker(dumpDuration)
 	statsHandle := do.StatsHandle()
 	defer func() {
 		dumpColStatsUsageTicker.Stop()
@@ -2227,6 +2352,12 @@ func (do *Domain) autoAnalyzeWorker() {
 			// This causes the auto analyze task to be triggered all the time and block the shutdown of tidb.
 			if vardef.RunAutoAnalyze.Load() && !do.stopAutoAnalyze.Load() && do.statsOwner.IsOwner() {
 				statsHandle.HandleAutoAnalyze()
+			} else if !vardef.RunAutoAnalyze.Load() || !do.statsOwner.IsOwner() {
+				// Once the auto analyze is disabled or this instance is not the owner,
+				// we close the priority queue to release resources.
+				// This would guarantee that when auto analyze is re-enabled or this instance becomes the owner again,
+				// the priority queue would be re-initialized.
+				statsHandle.ClosePriorityQueue()
 			}
 		case <-do.exit:
 			return
@@ -2365,7 +2496,7 @@ func (do *Domain) notifyUpdatePrivilege(event PrivilegeEvent) error {
 		if uint64(len(data)) > size.MB {
 			logutil.BgLogger().Warn("notify update privilege message too large", zap.ByteString("value", data))
 		}
-		err = ddlutil.PutKVToEtcd(do.ctx, do.etcdClient, ddlutil.KeyOpDefaultRetryCnt, privilegeKey, string(data))
+		err = ddlutil.PutKVToEtcd(do.ctx, do.etcdClient, etcd.KeyOpDefaultRetryCnt, privilegeKey, string(data))
 		if err != nil {
 			logutil.BgLogger().Warn("notify update privilege failed", zap.Error(err))
 		}
@@ -2386,7 +2517,7 @@ func (do *Domain) notifyUpdatePrivilege(event PrivilegeEvent) error {
 // synchronously so that the effect is immediate.
 func (do *Domain) NotifyUpdateSysVarCache(updateLocal bool) {
 	if do.etcdClient != nil {
-		err := ddlutil.PutKVToEtcd(context.Background(), do.etcdClient, ddlutil.KeyOpDefaultRetryCnt, sysVarCacheKey, "")
+		err := ddlutil.PutKVToEtcd(context.Background(), do.etcdClient, etcd.KeyOpDefaultRetryCnt, sysVarCacheKey, "")
 		if err != nil {
 			logutil.BgLogger().Warn("notify update sysvar cache failed", zap.Error(err))
 		}
@@ -2412,7 +2543,7 @@ func (do *Domain) LoadSigningCertLoop(signingCert, signingKey string) {
 
 		for {
 			select {
-			case <-time.After(sessionstates.LoadCertInterval):
+			case <-time.After(sessionstates.GetLoadCertInterval()):
 				sessionstates.ReloadSigningCert()
 			case <-do.exit:
 				return
@@ -2590,12 +2721,19 @@ func (do *Domain) releaseServerID(context.Context) {
 	if do.etcdClient == nil {
 		return
 	}
-	key := fmt.Sprintf("%s/%v", serverIDEtcdPath, serverID)
-	err := ddlutil.DeleteKeyFromEtcd(key, do.etcdClient, refreshServerIDRetryCnt, acquireServerIDTimeout)
-	if err != nil {
-		logutil.BgLogger().Error("releaseServerID fail", zap.Uint64("serverID", serverID), zap.Error(err))
+
+	// closing session releases attached server id and etcd lease.
+	leaseID := int64(do.serverIDSession.Lease())
+	if err := do.serverIDSession.Close(); err != nil {
+		logutil.BgLogger().Error("releaseServerID fail",
+			zap.Uint64("serverID", serverID),
+			zap.Int64("leaseID", leaseID),
+			zap.Error(err))
 	} else {
-		logutil.BgLogger().Info("releaseServerID succeed", zap.Uint64("serverID", serverID))
+		logutil.BgLogger().Info("releaseServerID succeed",
+			zap.Uint64("serverID", serverID),
+			zap.Int64("leaseID", leaseID),
+		)
 	}
 }
 
@@ -2690,7 +2828,7 @@ func (do *Domain) serverIDKeeper() {
 		do.isLostConnectionToPD.Store(0)
 		lastSucceedTimestamp = time.Now()
 
-		if err := do.info.StoreServerInfo(context.Background()); err != nil {
+		if err := do.info.ServerInfoSyncer().StoreServerInfo(context.Background()); err != nil {
 			logutil.BgLogger().Error("StoreServerInfo failed", zap.Error(err))
 		}
 	}
@@ -2865,6 +3003,9 @@ func (do *Domain) readTableCostWorker(wbLearningHandle *workloadlearning.Handle,
 
 func init() {
 	initByLDFlagsForGlobalKill()
+	telemetry.GetDomainInfoSchema = func(ctx sessionctx.Context) infoschema.InfoSchema {
+		return GetDomain(ctx).InfoSchema()
+	}
 }
 
 var (
@@ -2906,10 +3047,10 @@ func (s *SysProcesses) UnTrack(id uint64) {
 }
 
 // GetSysProcessList gets list of system ProcessInfo
-func (s *SysProcesses) GetSysProcessList() map[uint64]*util.ProcessInfo {
+func (s *SysProcesses) GetSysProcessList() map[uint64]*sessmgr.ProcessInfo {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	rs := make(map[uint64]*util.ProcessInfo)
+	rs := make(map[uint64]*sessmgr.ProcessInfo)
 	for connID, proc := range s.procMap {
 		// if session is still tracked in this map, it's not returned to sysSessionPool yet
 		if pi := proc.ShowProcess(); pi != nil && pi.ID == connID {

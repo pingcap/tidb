@@ -25,8 +25,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
@@ -69,7 +69,7 @@ func getCheckpointIngestIndexPathByName(taskName string) string {
 
 type externalCheckpointStorage struct {
 	flushPath
-	storage storage.ExternalStorage
+	storage storeapi.Storage
 
 	lockId uint64
 	timer  GlobalTimer
@@ -77,7 +77,7 @@ type externalCheckpointStorage struct {
 
 func newExternalCheckpointStorage(
 	ctx context.Context,
-	s storage.ExternalStorage,
+	s storeapi.Storage,
 	timer GlobalTimer,
 	flushPath flushPath,
 ) (*externalCheckpointStorage, error) {
@@ -138,7 +138,7 @@ func (s *externalCheckpointStorage) flushLock(ctx context.Context, p int64) erro
 		LockId:   s.lockId,
 		ExpireAt: p + lockTimeToLive.Milliseconds(),
 	}
-	log.Info("start to flush the checkpoint lock", zap.Int64("lock-at", p),
+	log.Debug("start to flush the checkpoint lock", zap.Int64("lock-at", p),
 		zap.Int64("expire-at", lock.ExpireAt))
 	data, err := json.Marshal(lock)
 	if err != nil {

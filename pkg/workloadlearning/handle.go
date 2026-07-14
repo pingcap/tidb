@@ -30,7 +30,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -110,12 +109,6 @@ func (handle *Handle) HandleTableReadCost(infoSchema infoschema.InfoSchema) {
 	}
 	// step5: save the table cost metrics to table "mysql.tidb_workload_values"
 	handle.SaveTableReadCostMetrics(tableIDToMetrics, startTime, endTime)
-}
-
-func (*Handle) analyzeBasedOnStatementSummary() []*TableReadCostMetrics {
-	// step1: get all record from statement_summary
-	// step2: abstract table cost metrics from each record
-	return nil
 }
 
 // analyzeBasedOnStatementStats Analyze table cost metrics based on the
@@ -335,29 +328,6 @@ func (handle *Handle) SaveTableReadCostMetrics(metrics map[int64]*TableReadCostM
 	// TODO: saving the workload job info such as start end time into workload_jobs table
 }
 
-func checkCrossDB(sql string) (bool, error) {
-	// TODO check duplicate alias name
-	p := parser.New()
-	// notes: this is only use for check whether query cross db, so the charset and collation doesn't matter in here.
-	stmtNodes, _, err := p.Parse(sql, "", "")
-	if err != nil {
-		return false, err
-	}
-
-	extractor := &DBNameExtractor{}
-	if len(stmtNodes) != 1 {
-		// TODO: support multi-statement in one single statement_record
-		return false, nil
-	}
-	for _, stmt := range stmtNodes {
-		stmt.Accept(extractor)
-		if len(extractor.DBs) > 1 {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
 // extractScanAndMemoryFromBinaryPlan abstract the scan time and memory usage from one plan string
 // The input is the field BINARY_PLAN in **one row** of table mysql.CLUSTER_TIDB_STATEMENTS_STATS
 // The result should be **list** because every query maybe related to multiple tables such as: select * from t1, t2
@@ -390,6 +360,13 @@ func extractScanAndMemoryFromBinaryPlan(binaryPlan string) ([]*TableReadCostMetr
 	// extract scan and memory from CTES part plan
 	for _, cte := range explainData.Ctes {
 		operatorExtractMetrics, err = extractMetricsFromOperatorTree(cte, operatorExtractMetrics)
+		if err != nil {
+			return nil, err
+		}
+	}
+	// extract scan and memory from SubQueries part plan
+	for _, subQ := range explainData.Subqueries {
+		operatorExtractMetrics, err = extractMetricsFromOperatorTree(subQ, operatorExtractMetrics)
 		if err != nil {
 			return nil, err
 		}
@@ -466,7 +443,7 @@ func extractMetricsFromOperatorTree(op *tipb.ExplainOperator, operatorMetrics []
 			})
 	case plancodec.TypePointGet, plancodec.TypeBatchPointGet:
 		if len(op.AccessObjects) == 0 {
-			return operatorMetrics, fmt.Errorf("faile to get table name while access object is empty, operator name: %s", op.Name)
+			return operatorMetrics, fmt.Errorf("failed to get table name while access object is empty, operator name: %s", op.Name)
 		}
 		// Attention: cannot handle the multi access objects from one operator
 		dbName, tableName := extractTableNameFromAccessObject(op.AccessObjects[0])

@@ -2,22 +2,26 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "analyze_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "analyze_test.go",
         "main_test.go",
     ],
     flaky = True,
     race = "on",
-    shard_count = 5,
+    shard_count = 6,
     deps = [
         "//pkg/domain",
+        "//pkg/metrics",
         "//pkg/parser/ast",
         "//pkg/sessionctx/variable",
         "//pkg/statistics",
+        "//pkg/statistics/handle/ddl/testutil",
         "//pkg/testkit",
         "//pkg/testkit/analyzehelper",
         "//pkg/testkit/testsetup",
+        "@com_github_prometheus_client_golang//prometheus",
+        "@com_github_prometheus_client_model//go",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],

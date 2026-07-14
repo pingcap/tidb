@@ -22,13 +22,12 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
 
 func TestLoadColumnStatisticsAfterTableDrop(t *testing.T) {
 	// Use real tikv to enable the sync and async load.
-	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	// Turn off the sync load.
 	testKit.MustExec("SET @@tidb_stats_load_sync_wait = 0;")
@@ -37,7 +36,7 @@ func TestLoadColumnStatisticsAfterTableDrop(t *testing.T) {
 	testKit.MustExec("CREATE TABLE t1 (a INT, b INT, c INT);")
 	testKit.MustExec("INSERT INTO t1 VALUES (1,3,0), (2,2,0), (3,2,0);")
 	handle := dom.StatsHandle()
-	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	testKit.MustExec("flush stats_delta *.*")
 	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
 	testKit.MustExec("ANALYZE TABLE t1 ALL COLUMNS;")
 	// This will add the table to the AsyncLoadHistogramNeededItems.
@@ -76,7 +75,7 @@ func TestLoadColumnStatisticsAfterTableDrop(t *testing.T) {
 
 func TestLoadStatisticsAfterColumnDrop(t *testing.T) {
 	// Use real tikv to enable the sync and async load.
-	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	// Turn off the sync load.
 	testKit.MustExec("SET @@tidb_stats_load_sync_wait = 0;")
@@ -85,7 +84,7 @@ func TestLoadStatisticsAfterColumnDrop(t *testing.T) {
 	testKit.MustExec("CREATE TABLE t1 (a INT, b INT, c INT);")
 	testKit.MustExec("INSERT INTO t1 VALUES (1,3,0), (2,2,0), (3,2,0);")
 	handle := dom.StatsHandle()
-	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	testKit.MustExec("flush stats_delta *.*")
 	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
 	testKit.MustExec("ANALYZE TABLE t1 ALL COLUMNS;")
 	// This will add the table to the AsyncLoadHistogramNeededItems.
@@ -124,7 +123,7 @@ func TestLoadStatisticsAfterColumnDrop(t *testing.T) {
 
 func TestLoadIndexStatisticsAfterTableDrop(t *testing.T) {
 	// Use real tikv to enable the sync and async load.
-	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	// Turn off the sync load.
 	testKit.MustExec("SET @@tidb_stats_load_sync_wait = 0;")
@@ -133,7 +132,7 @@ func TestLoadIndexStatisticsAfterTableDrop(t *testing.T) {
 	testKit.MustExec("CREATE TABLE t1 (a INT, b INT, c INT, INDEX idx_b (b));")
 	testKit.MustExec("INSERT INTO t1 VALUES (1,3,0), (2,2,0), (3,2,0);")
 	handle := dom.StatsHandle()
-	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	testKit.MustExec("flush stats_delta *.*")
 	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
 	testKit.MustExec("ANALYZE TABLE t1 ALL COLUMNS;")
 	// This will add the table to the AsyncLoadHistogramNeededItems.
@@ -172,7 +171,7 @@ func TestLoadIndexStatisticsAfterTableDrop(t *testing.T) {
 
 func TestLoadStatisticsAfterIndexDrop(t *testing.T) {
 	// Use real tikv to enable the sync and async load.
-	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	// Turn off the sync load.
 	testKit.MustExec("SET @@tidb_stats_load_sync_wait = 0;")
@@ -181,7 +180,7 @@ func TestLoadStatisticsAfterIndexDrop(t *testing.T) {
 	testKit.MustExec("CREATE TABLE t1 (a INT, b INT, c INT, INDEX idx_b (b));")
 	testKit.MustExec("INSERT INTO t1 VALUES (1,3,0), (2,2,0), (3,2,0);")
 	handle := dom.StatsHandle()
-	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	testKit.MustExec("flush stats_delta *.*")
 	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
 	testKit.MustExec("ANALYZE TABLE t1 ALL COLUMNS;")
 	// This will add the table to the AsyncLoadHistogramNeededItems.
@@ -220,7 +219,7 @@ func TestLoadStatisticsAfterIndexDrop(t *testing.T) {
 
 func TestLoadCorruptedStatistics(t *testing.T) {
 	// Use real tikv to enable the sync and async load.
-	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	// Turn off the sync load.
 	testKit.MustExec("SET @@tidb_stats_load_sync_wait = 0;")
@@ -229,7 +228,7 @@ func TestLoadCorruptedStatistics(t *testing.T) {
 	testKit.MustExec("CREATE TABLE t1 (a INT, b INT, c INT, INDEX idx_b (b));")
 	testKit.MustExec("INSERT INTO t1 VALUES (1,3,0), (2,2,0), (3,2,0);")
 	handle := dom.StatsHandle()
-	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	testKit.MustExec("flush stats_delta *.*")
 	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
 	// Only collect the histogram buckets.
 	testKit.MustExec("ANALYZE TABLE t1 ALL COLUMNS WITH 0 TOPN;")

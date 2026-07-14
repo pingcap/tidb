@@ -50,6 +50,7 @@ var perfSchemaTables = []string{
 	tablePDProfileAllocs,
 	tablePDProfileBlock,
 	tablePDProfileGoroutines,
+	tableStatusByConnection,
 }
 
 // tableGlobalStatus contains the column name definitions for table global_status, same as MySQL.
@@ -571,3 +572,10 @@ const tableSessionAccountConnectAttrs = "CREATE TABLE IF NOT EXISTS " + tableNam
 	"ATTR_NAME varchar(32) COLLATE utf8mb4_bin NOT NULL," +
 	"ATTR_VALUE varchar(1024) COLLATE utf8mb4_bin DEFAULT NULL," +
 	"ORDINAL_POSITION int DEFAULT NULL);"
+
+// tableStatusByConnection contains the column name definitions for the table status_by_connection
+const tableStatusByConnection = "CREATE TABLE IF NOT EXISTS " + tableNameStatusByConnection + " (" +
+	"CONNECTION_ID bigint unsigned NOT NULL," +
+	"VARIABLE_NAME varchar(64) NOT NULL," +
+	"VARIABLE_VALUE varchar(1024) DEFAULT NULL," +
+	"PRIMARY KEY (CONNECTION_ID,VARIABLE_NAME));"

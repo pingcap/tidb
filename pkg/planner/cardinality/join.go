@@ -35,11 +35,11 @@ func EstimateFullJoinRowCount(sctx planctx.PlanContext,
 	var leftKeyNDV, rightKeyNDV float64
 	var leftColCnt, rightColCnt int
 	if len(leftJoinKeys) > 0 || len(rightJoinKeys) > 0 {
-		leftKeyNDV, leftColCnt = EstimateColsNDVWithMatchedLen(leftJoinKeys, leftSchema, leftProfile)
-		rightKeyNDV, rightColCnt = EstimateColsNDVWithMatchedLen(rightJoinKeys, rightSchema, rightProfile)
+		leftKeyNDV, leftColCnt = EstimateColsNDVWithMatchedLen(sctx, leftJoinKeys, leftSchema, leftProfile)
+		rightKeyNDV, rightColCnt = EstimateColsNDVWithMatchedLen(sctx, rightJoinKeys, rightSchema, rightProfile)
 	} else {
-		leftKeyNDV, leftColCnt = EstimateColsNDVWithMatchedLen(leftNAJoinKeys, leftSchema, leftProfile)
-		rightKeyNDV, rightColCnt = EstimateColsNDVWithMatchedLen(rightNAJoinKeys, rightSchema, rightProfile)
+		leftKeyNDV, leftColCnt = EstimateColsNDVWithMatchedLen(sctx, leftNAJoinKeys, leftSchema, leftProfile)
+		rightKeyNDV, rightColCnt = EstimateColsNDVWithMatchedLen(sctx, rightNAJoinKeys, rightSchema, rightProfile)
 	}
 	count := leftProfile.RowCount * rightProfile.RowCount / max(leftKeyNDV, rightKeyNDV)
 	if sctx.GetSessionVars().TiDBOptJoinReorderThreshold <= 0 {

@@ -14,8 +14,10 @@ go_library(
         "//pkg/session/cursor",
         "//pkg/util",
         "//pkg/util/chunk",
+        "//pkg/util/execdetails",
         "//pkg/util/logutil",
         "//pkg/util/sqlexec",
+        "@com_github_tikv_client_go_v2//util",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -25,8 +27,9 @@ go_test(
     timeout = "short",
     srcs = ["integration_test.go"],
     flaky = True,
-    shard_count = 7,
+    shard_count = 8,
     deps = [
+        "//pkg/ddl",
         "//pkg/parser/mysql",
         "//pkg/session/cursor",
         "//pkg/testkit",

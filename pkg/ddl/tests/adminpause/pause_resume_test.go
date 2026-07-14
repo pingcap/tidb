@@ -395,7 +395,7 @@ func TestPauseJobDependency(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		// Will stuck because the job is paused.
-		errModCol = tk.ExecToErr("alter table t modify column b tinyint;")
+		errModCol = tk.ExecToErr("alter table t modify column b varchar(16);")
 	}()
 	go func() {
 		defer wg.Done()

@@ -30,15 +30,20 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
 
@@ -59,13 +64,14 @@ func parseLog(retriever *slowQueryRetriever, sctx sessionctx.Context, reader *bu
 
 func newSlowQueryRetriever() (*slowQueryRetriever, error) {
 	data := infoschema.NewData()
-	newISBuilder := infoschema.NewBuilder(nil, nil, data, vardef.SchemaCacheSize.Load() > 0)
-	err := newISBuilder.InitWithDBInfos(nil, nil, nil, 0)
+	schemaCacheSize := vardef.SchemaCacheSize.Load()
+	newISBuilder := infoschema.NewBuilder(nil, schemaCacheSize, nil, data, schemaCacheSize > 0)
+	err := newISBuilder.InitWithDBInfos(nil, nil, nil, nil, 0)
 	if err != nil {
 		return nil, err
 	}
 	is := newISBuilder.Build(math.MaxUint64)
-	tbl, err := is.TableByName(context.Background(), util.InformationSchemaName, ast.NewCIStr(infoschema.TableSlowQuery))
+	tbl, err := is.TableByName(context.Background(), metadef.InformationSchemaName, ast.NewCIStr(infoschema.TableSlowQuery))
 	if err != nil {
 		return nil, err
 	}
@@ -129,6 +135,9 @@ func TestParseSlowLogFile(t *testing.T) {
 # Query_time: 0.216905
 # Cop_time: 0.38 Process_time: 0.021 Request_count: 1 Total_keys: 637 Processed_keys: 436
 # Rocksdb_delete_skipped_count: 10 Rocksdb_key_skipped_count: 10 Rocksdb_block_cache_hit_count: 10 Rocksdb_block_read_count: 10 Rocksdb_block_read_byte: 100
+# IA_remote_read_segment_count: 4
+# IA_remote_read_segment_size: 4096
+# IA_remote_read_segment_wait_time: 0.015
 # Is_internal: true
 # Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
 # Stats: t1:1,t2:2
@@ -138,6 +147,7 @@ func TestParseSlowLogFile(t *testing.T) {
 # Cop_backoff_rpcPD_total_times: 200 Cop_backoff_rpcPD_total_time: 0.2 Cop_backoff_rpcPD_max_time: 0.2 Cop_backoff_rpcPD_max_addr: 127.0.0.1 Cop_backoff_rpcPD_avg_time: 0.2 Cop_backoff_rpcPD_p90_time: 0.2
 # Cop_backoff_rpcTiKV_total_times: 200 Cop_backoff_rpcTiKV_total_time: 0.2 Cop_backoff_rpcTiKV_max_time: 0.2 Cop_backoff_rpcTiKV_max_addr: 127.0.0.1 Cop_backoff_rpcTiKV_avg_time: 0.2 Cop_backoff_rpcTiKV_p90_time: 0.2
 # Mem_max: 70724
+# Mem_arbitration: 23333
 # Disk_max: 65536
 # Plan_from_cache: true
 # Plan_from_binding: true
@@ -157,6 +167,10 @@ func TestParseSlowLogFile(t *testing.T) {
 # Time_queued_by_rc: 0.05
 # Tidb_cpu_time: 0.01
 # Tikv_cpu_time: 0.021
+# Storage_from_kv: true
+# Storage_from_mpp: true
+# Request_unit_v2: 150.00
+# Request_unit_v2_detail: total_ru:150.00, tidb_ru:0.00, tikv_ru:100.00, tiflash_ru:50.00
 # Plan_digest: 60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4
 # Prev_stmt: update t set i = 1;
 use test;
@@ -180,11 +194,11 @@ select * from t;`
 	}
 	expectRecordString := `2019-04-28 15:24:04.309074,` +
 		`405888132465033227,root,localhost,0,alias123,57,0.12,0.216905,` +
-		`0,0,0,0,0,0,0,0,0,0,0,0,,0,0,0,0,0,0,0.38,0.021,0,0,0,1,637,0,10,10,10,10,100,,,1,42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772,t1:1,t2:2,` +
-		`0.1,0.2,0.03,127.0.0.1:20160,0.05,0.6,0.8,0.0.0.0:20160,70724,65536,0,0,0,30000,3000,10000,1000,500000,500005,300000,300005,0,0,,` +
+		`0,0,0,0,0,0,0,0,0,0,0,0,,0,0,0,0,0,0,0.38,0.021,0,0,0,1,637,0,10,10,10,10,100,4,4096,0.015,,,1,42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772,t1:1,t2:2,` +
+		`0.1,0.2,0.03,127.0.0.1:20160,0.05,0.6,0.8,0.0.0.0:20160,70724,23333,65536,0,0,0,30000,3000,10000,1000,500000,500005,300000,300005,0,0,,` +
 		`Cop_backoff_regionMiss_total_times: 200 Cop_backoff_regionMiss_total_time: 0.2 Cop_backoff_regionMiss_max_time: 0.2 Cop_backoff_regionMiss_max_addr: 127.0.0.1 Cop_backoff_regionMiss_avg_time: 0.2 Cop_backoff_regionMiss_p90_time: 0.2 Cop_backoff_rpcPD_total_times: 200 Cop_backoff_rpcPD_total_time: 0.2 Cop_backoff_rpcPD_max_time: 0.2 Cop_backoff_rpcPD_max_addr: 127.0.0.1 Cop_backoff_rpcPD_avg_time: 0.2 Cop_backoff_rpcPD_p90_time: 0.2 Cop_backoff_rpcTiKV_total_times: 200 Cop_backoff_rpcTiKV_total_time: 0.2 Cop_backoff_rpcTiKV_max_time: 0.2 Cop_backoff_rpcTiKV_max_addr: 127.0.0.1 Cop_backoff_rpcTiKV_avg_time: 0.2 Cop_backoff_rpcTiKV_p90_time: 0.2,` +
-		`0,0,1,0,1,1,0,default,2.158,2.123,0.05,0.01,0.021,,60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4,` +
-		`,update t set i = 1;,select * from t;`
+		`0,0,1,0,1,1,0,default,2.158,2.123,0.05,0.01,0.021,1,1,150,total_ru:150.00, tidb_ru:0.00, tikv_ru:100.00, tiflash_ru:50.00,,60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4,` +
+		`,update t set i = 1;,null,select * from t;`
 	require.Equal(t, expectRecordString, recordString)
 
 	// Issue 20928
@@ -203,11 +217,11 @@ select * from t;`
 	}
 	expectRecordString = `2019-04-28 15:24:04.309074,` +
 		`405888132465033227,root,localhost,0,alias123,57,0.12,0.216905,` +
-		`0,0,0,0,0,0,0,0,0,0,0,0,,0,0,0,0,0,0,0.38,0.021,0,0,0,1,637,0,10,10,10,10,100,,,1,42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772,t1:1,t2:2,` +
-		`0.1,0.2,0.03,127.0.0.1:20160,0.05,0.6,0.8,0.0.0.0:20160,70724,65536,0,0,0,30000,3000,10000,1000,500000,500005,300000,300005,0,0,,` +
+		`0,0,0,0,0,0,0,0,0,0,0,0,,0,0,0,0,0,0,0.38,0.021,0,0,0,1,637,0,10,10,10,10,100,4,4096,0.015,,,1,42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772,t1:1,t2:2,` +
+		`0.1,0.2,0.03,127.0.0.1:20160,0.05,0.6,0.8,0.0.0.0:20160,70724,23333,65536,0,0,0,30000,3000,10000,1000,500000,500005,300000,300005,0,0,,` +
 		`Cop_backoff_regionMiss_total_times: 200 Cop_backoff_regionMiss_total_time: 0.2 Cop_backoff_regionMiss_max_time: 0.2 Cop_backoff_regionMiss_max_addr: 127.0.0.1 Cop_backoff_regionMiss_avg_time: 0.2 Cop_backoff_regionMiss_p90_time: 0.2 Cop_backoff_rpcPD_total_times: 200 Cop_backoff_rpcPD_total_time: 0.2 Cop_backoff_rpcPD_max_time: 0.2 Cop_backoff_rpcPD_max_addr: 127.0.0.1 Cop_backoff_rpcPD_avg_time: 0.2 Cop_backoff_rpcPD_p90_time: 0.2 Cop_backoff_rpcTiKV_total_times: 200 Cop_backoff_rpcTiKV_total_time: 0.2 Cop_backoff_rpcTiKV_max_time: 0.2 Cop_backoff_rpcTiKV_max_addr: 127.0.0.1 Cop_backoff_rpcTiKV_avg_time: 0.2 Cop_backoff_rpcTiKV_p90_time: 0.2,` +
-		`0,0,1,0,1,1,0,default,2.158,2.123,0.05,0.01,0.021,,60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4,` +
-		`,update t set i = 1;,select * from t;`
+		`0,0,1,0,1,1,0,default,2.158,2.123,0.05,0.01,0.021,1,1,150,total_ru:150.00, tidb_ru:0.00, tikv_ru:100.00, tiflash_ru:50.00,,60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4,` +
+		`,update t set i = 1;,null,select * from t;`
 	require.Equal(t, expectRecordString, recordString)
 
 	// fix sql contain '# ' bug
@@ -271,10 +285,61 @@ select * from t;
 	rows, err = parseSlowLog(ctx, reader)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
-	value, _ := rows[0][41].ToString()
+	value, _ := rows[0][44].ToString()
 	require.Equal(t, value, "a: b")
-	value, _ = rows[0][42].ToString()
+	value, _ = rows[0][45].ToString()
 	require.Equal(t, value, "[t:i: a]")
+}
+
+func TestParseSlowLogSessionConnectAttrs(t *testing.T) {
+	// Slow log entry that includes Session_connect_attrs JSON.
+	slowLogStr := `# Time: 2019-04-28T15:24:04.309074+08:00
+# Txn_start_ts: 405888132465033227
+# User@Host: root[root] @ localhost [127.0.0.1]
+# Query_time: 0.216905
+# Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
+# Is_internal: false
+# Succ: true
+` + testutil.DefaultSessionConnectAttrsSlowLogLine() + `
+# Prev_stmt: begin;
+select * from t;
+`
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	require.NoError(t, err)
+	ctx := mock.NewContext()
+	ctx.ResetSessionAndStmtTimeZone(loc)
+
+	// Use the retriever directly (without initialize) to avoid reading
+	// from actual slow log files on disk, which can produce extra rows.
+	retriever, err := newSlowQueryRetriever()
+	require.NoError(t, err)
+	retriever.columnValueFactoryMap = make(map[string]slowQueryColumnValueFactory, len(retriever.outputCols))
+	for idx, col := range retriever.outputCols {
+		factory, err := getColumnValueFactoryByName(col.Name.O, idx)
+		require.NoError(t, err)
+		require.NotNil(t, factory, "column %s should have a factory", col.Name.O)
+		retriever.columnValueFactoryMap[col.Name.O] = factory
+	}
+
+	reader := bufio.NewReader(bytes.NewBufferString(slowLogStr))
+	rows, err := parseLog(retriever, ctx, reader)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+
+	// Find the Session_connect_attrs column.
+	colIdx := -1
+	for i, col := range retriever.outputCols {
+		if col.Name.L == strings.ToLower(variable.SlowLogSessionConnectAttrs) {
+			colIdx = i
+			break
+		}
+	}
+	require.NotEqual(t, -1, colIdx, "Session_connect_attrs column should exist")
+
+	// Verify the parsed JSON contains the expected keys.
+	bj := rows[0][colIdx].GetMysqlJSON()
+	bjStr := bj.String()
+	testutil.RequireContainsDefaultSessionConnectAttrs(t, bjStr)
 }
 
 // It changes variable.MaxOfMaxAllowedPacket, so must be stayed in SerialSuite.
@@ -551,7 +616,7 @@ select 7;`
 	}
 }
 
-func TestSplitbyColon(t *testing.T) {
+func TestSplitByColon(t *testing.T) {
 	cases := []struct {
 		line   string
 		fields []string
@@ -702,7 +767,7 @@ select 9;`
 					"select 5;",
 					"# Time: 2020-02-16T18:00:01.000000+08:00",
 					"select 4;",
-					"# Time: 2020-02-16T18:00:01.000000+08:00",
+					"# Time: 2020-02-15T20:00:05.000000+08:00",
 					"select 3;"},
 			},
 		},
@@ -713,7 +778,7 @@ select 9;`
 			logs: [][]string{
 				{"# Time: 2020-04-15T19:00:05.299063744+08:00",
 					"select 9;",
-					"Time: 2020-04-15T18:00:05.299063744+08:00",
+					"# Time: 2020-04-15T18:00:05.299063744+08:00",
 					"select 8;",
 					"# Time: 2020-02-17T18:00:05.000000+08:00",
 					"select 7;",
@@ -744,25 +809,239 @@ select 9;`
 		err = retriever.initialize(context.Background(), sctx)
 		require.NoError(t, err)
 		comment := fmt.Sprintf("case id: %v", i)
-		if len(retriever.files) > 0 {
-			reader := bufio.NewReader(retriever.files[0].file)
-			offset := &offset{length: 0, offset: 0}
-			rows, err := retriever.getBatchLogForReversedScan(context.Background(), reader, offset, 3)
-			require.NoError(t, err)
-			for _, row := range rows {
-				for j, log := range row {
-					require.Equal(t, log, cas.logs[0][j], comment)
-				}
-			}
-		}
+		scanner := newSlowLogReverseScanner(retriever, sctx)
+		maxBlocks := len(cas.logs[0]) / 2
+		got, err := scanner.nextBatch(context.Background(), uint64(maxBlocks))
+		require.NoError(t, err)
+		require.Equal(t, cas.logs[0], got, comment)
 		require.NoError(t, retriever.close())
 	}
+}
+
+func getTimeColIdxFromRetrieverOutput(t *testing.T, outputCol []*model.ColumnInfo) int {
+	for idx, col := range outputCol {
+		if col.Name.O == variable.SlowLogTimeStr {
+			return idx
+		}
+	}
+	t.Fatalf("cannot find Time column in retriever output, %v", outputCol)
+	return -1
+}
+
+func TestSlowQueryRetrieverReversedScanWithLimit(t *testing.T) {
+	fileName := "tidb-slow-limit-reverse-scan.log"
+	slowLog := `# Time: 2020-02-15T18:00:01.000000+08:00
+select 1;
+# Time: 2020-02-15T19:00:05.000000+08:00
+select 2;
+# Time: 2020-02-15T20:00:05.000000+08:00
+select 3;
+# Time: 2020-02-15T21:00:05.000000+08:00
+select 4;
+# Time: 2020-02-15T22:00:05.000000+08:00
+select 5;`
+	prepareLogs(t, []string{slowLog}, []string{fileName})
+	defer removeFiles([]string{fileName})
+
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	require.NoError(t, err)
+	sctx := mock.NewContext()
+	sctx.ResetSessionAndStmtTimeZone(loc)
+	sctx.GetSessionVars().SlowQueryFile = fileName
+
+	retriever, err := newSlowQueryRetriever()
+	require.NoError(t, err)
+	retriever.extractor = &plannercore.SlowQueryExtractor{Desc: true}
+	retriever.limit = 2
+
+	timeColIdx := getTimeColIdxFromRetrieverOutput(t, retriever.outputCols)
+
+	DashboardSlowLogReadBlockCnt4Test = 0
+	ctx := context.Background()
+	allRows := make([][]types.Datum, 0, retriever.limit)
+	for {
+		rows, err := retriever.retrieve(ctx, sctx)
+		require.NoError(t, err)
+		if len(rows) == 0 {
+			break
+		}
+		allRows = append(allRows, rows...)
+	}
+	require.Len(t, allRows, 2)
+	require.EqualValues(t, 2, DashboardSlowLogReadBlockCnt4Test)
+
+	t0, err := allRows[0][timeColIdx].ToString()
+	require.NoError(t, err)
+	t1, err := allRows[1][timeColIdx].ToString()
+	require.NoError(t, err)
+	require.Equal(t, "2020-02-15 22:00:05.000000", t0)
+	require.Equal(t, "2020-02-15 21:00:05.000000", t1)
+	require.NoError(t, retriever.close())
+
+	// The long DB line makes the middle slow-log block cross readLastLines chunks.
+	// Forward scan can parse it; reverse scan should not synthesize blank lines and
+	// drop it. Previous there's a bug when in the execution path of LIMIT.
+	crossChunkFileName := "tidb-slow-limit-reverse-scan-cross-chunk.log"
+	crossChunkSlowLog := fmt.Sprintf(`# Time: 2020-02-15T18:00:01.000000+08:00
+select 1;
+# Time: 2020-02-15T19:00:05.000000+08:00
+# DB: %s
+select 2;
+# Time: 2020-02-15T20:00:05.000000+08:00
+select 3;`, strings.Repeat("x", 5000))
+	prepareLogs(t, []string{crossChunkSlowLog}, []string{crossChunkFileName})
+	defer removeFiles([]string{crossChunkFileName})
+	sctx.GetSessionVars().SlowQueryFile = crossChunkFileName
+
+	forwardRetriever, err := newSlowQueryRetriever()
+	require.NoError(t, err)
+	require.NoError(t, forwardRetriever.initialize(context.Background(), sctx))
+	reader, err := forwardRetriever.getNextReader()
+	require.NoError(t, err)
+	forwardRows, err := parseLog(forwardRetriever, sctx, reader)
+	require.NoError(t, err)
+	require.Len(t, forwardRows, 3)
+	require.NoError(t, forwardRetriever.close())
+
+	reverseRetriever, err := newSlowQueryRetriever()
+	require.NoError(t, err)
+	reverseRetriever.extractor = &plannercore.SlowQueryExtractor{Desc: true}
+	reverseRetriever.limit = 3
+	reverseRows := make([][]types.Datum, 0, reverseRetriever.limit)
+	for {
+		rows, err := reverseRetriever.retrieve(context.Background(), sctx)
+		require.NoError(t, err)
+		if len(rows) == 0 {
+			break
+		}
+		reverseRows = append(reverseRows, rows...)
+	}
+	require.Len(t, reverseRows, 3)
+	require.NoError(t, reverseRetriever.close())
+}
+
+func TestSlowQueryRetrieverReversedScanWithTimeJitter(t *testing.T) {
+	fileName := "tidb-slow-limit-reverse-scan-time-jitter.log"
+	slowLog := `# Time: 2020-02-15T18:00:00.000500+08:00
+select in-window-1;
+# Time: 2020-02-15T18:00:00.001000+08:00
+select in-window-2;
+# Time: 2020-02-15T17:59:59.999700+08:00
+select just-before-window;
+# Time: 2020-02-15T18:00:00.001500+08:00
+select in-window-3;`
+	prepareLogs(t, []string{slowLog}, []string{fileName})
+	defer removeFiles([]string{fileName})
+
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	require.NoError(t, err)
+	sctx := mock.NewContext()
+	sctx.ResetSessionAndStmtTimeZone(loc)
+	sctx.GetSessionVars().SlowQueryFile = fileName
+	startTime, err := ParseTime("2020-02-15T18:00:00.000000+08:00")
+	require.NoError(t, err)
+	endTime, err := ParseTime("2020-02-15T18:00:00.002000+08:00")
+	require.NoError(t, err)
+	timeRange := []*plannercore.TimeRange{{StartTime: startTime, EndTime: endTime}}
+
+	forwardRetriever, err := newSlowQueryRetriever()
+	require.NoError(t, err)
+	forwardRetriever.extractor = &plannercore.SlowQueryExtractor{Enable: true, TimeRanges: timeRange}
+	require.NoError(t, forwardRetriever.initialize(context.Background(), sctx))
+	reader, err := forwardRetriever.getNextReader()
+	require.NoError(t, err)
+	forwardRows, err := parseLog(forwardRetriever, sctx, reader)
+	require.NoError(t, err)
+	require.Len(t, forwardRows, 3)
+	timeColIdx := getTimeColIdxFromRetrieverOutput(t, forwardRetriever.outputCols)
+	t0, err := forwardRows[0][timeColIdx].ToString()
+	require.NoError(t, err)
+	t1, err := forwardRows[1][timeColIdx].ToString()
+	require.NoError(t, err)
+	t2, err := forwardRows[2][timeColIdx].ToString()
+	require.NoError(t, err)
+	require.Equal(t, "2020-02-15 18:00:00.000500", t0)
+	require.Equal(t, "2020-02-15 18:00:00.001000", t1)
+	require.Equal(t, "2020-02-15 18:00:00.001500", t2)
+
+	require.NoError(t, forwardRetriever.close())
+
+	// This mirrors real slow logs where adjacent # Time values can move backwards
+	// by a few milliseconds. A block just before the lower bound should not make
+	// reverse scan stop before earlier in-range blocks are read.
+	reverseRetriever, err := newSlowQueryRetriever()
+	require.NoError(t, err)
+	reverseRetriever.extractor = &plannercore.SlowQueryExtractor{Enable: true, Desc: true, TimeRanges: timeRange}
+	reverseRetriever.limit = 3
+	reverseRows := make([][]types.Datum, 0, reverseRetriever.limit)
+	for {
+		rows, err := reverseRetriever.retrieve(context.Background(), sctx)
+		require.NoError(t, err)
+		if len(rows) == 0 {
+			break
+		}
+		reverseRows = append(reverseRows, rows...)
+	}
+	require.Len(t, reverseRows, 3)
+	t0, err = reverseRows[0][timeColIdx].ToString()
+	require.NoError(t, err)
+	t1, err = reverseRows[1][timeColIdx].ToString()
+	require.NoError(t, err)
+	t2, err = reverseRows[2][timeColIdx].ToString()
+	require.NoError(t, err)
+	require.Equal(t, "2020-02-15 18:00:00.000500", t2)
+	require.Equal(t, "2020-02-15 18:00:00.001000", t1)
+	require.Equal(t, "2020-02-15 18:00:00.001500", t0)
+	require.NoError(t, reverseRetriever.close())
+}
+
+func TestPBPlanBuilderPushDownLimitToSlowQueryRetriever(t *testing.T) {
+	data := infoschema.NewData()
+	schemaCacheSize := vardef.SchemaCacheSize.Load()
+	newISBuilder := infoschema.NewBuilder(nil, schemaCacheSize, nil, data, schemaCacheSize > 0)
+	err := newISBuilder.InitWithDBInfos(nil, nil, nil, nil, 0)
+	require.NoError(t, err)
+	is := newISBuilder.Build(math.MaxUint64)
+	tbl, err := is.TableByName(context.Background(), metadef.InformationSchemaName, ast.NewCIStr(infoschema.ClusterTableSlowLog))
+	require.NoError(t, err)
+
+	pbCols := util.ColumnsToProto(tbl.Meta().Columns, tbl.Meta().PKIsHandle, false, false)
+	executors := []*tipb.Executor{
+		{
+			Tp: tipb.ExecType_TypeTableScan,
+			TblScan: &tipb.TableScan{
+				TableId: tbl.Meta().ID,
+				Columns: pbCols,
+				Desc:    true,
+			},
+		},
+		{
+			Tp: tipb.ExecType_TypeLimit,
+			Limit: &tipb.Limit{
+				Limit: 2,
+			},
+		},
+	}
+
+	sctx := mock.NewContext()
+	physicalPlan, err := plannercore.NewPBPlanBuilder(sctx, is, nil).Build(executors)
+	require.NoError(t, err)
+
+	execBuilder := NewMockExecutorBuilderForTest(sctx, is, nil)
+	executor := execBuilder.Build(physicalPlan)
+	limitExec, ok := executor.(*LimitExec)
+	require.True(t, ok)
+	memTableReader, ok := limitExec.AllChildren()[0].(*MemTableReaderExec)
+	require.True(t, ok)
+	retriever, ok := memTableReader.retriever.(*slowQueryRetriever)
+	require.True(t, ok)
+	require.Equal(t, uint64(2), retriever.limit)
 }
 
 func TestCancelParseSlowLog(t *testing.T) {
 	fileName := "tidb-slow-2020-02-14T19-04-05.01.log"
 	slowLog := `# Time: 2019-04-28T15:24:04.309074+08:00
-select * from t;`
+	select * from t;`
 	prepareLogs(t, []string{slowLog}, []string{fileName})
 	defer func() {
 		removeFiles([]string{fileName})

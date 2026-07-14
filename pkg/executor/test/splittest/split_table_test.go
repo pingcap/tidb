@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -49,20 +50,30 @@ func TestClusterIndexShowTableRegion(t *testing.T) {
 	tk.MustExec("create table t (a int, b int, c int, primary key(a, b));")
 	tk.MustExec("insert t values (1, 1, 1), (2, 2, 2);")
 	tk.MustQuery("split table t between (1, 0) and (2, 3) regions 2;").Check(testkit.Rows("1 1"))
-	rows := tk.MustQuery("show table t regions").Rows()
 	tbl := external.GetTableByName(t, tk, "cluster_index_regions", "t")
-	// Check the region start key.
-	require.Regexp(t, fmt.Sprintf("t_%d_", tbl.Meta().ID), rows[0][1])
-	require.Regexp(t, fmt.Sprintf("t_%d_r_03800000000000000183800000000000", tbl.Meta().ID), rows[1][1])
+
+	require.Eventually(t, func() bool {
+		rows := tk.MustQuery("show table t regions").Rows()
+		// Check the region start key.
+		if rows[0][1].(string) != fmt.Sprintf("t_%d_", tbl.Meta().ID) {
+			return false
+		}
+		return rows[1][1].(string) == fmt.Sprintf("t_%d_r_03800000000000000183800000000000", tbl.Meta().ID)
+	}, 5*time.Second, 50*time.Millisecond)
 
 	tk.MustExec("drop table t;")
 	tk.MustExec("create table t (a int, b int);")
 	tk.MustQuery("split table t between (0) and (100000) regions 2;").Check(testkit.Rows("1 1"))
-	rows = tk.MustQuery("show table t regions").Rows()
 	tbl = external.GetTableByName(t, tk, "cluster_index_regions", "t")
-	// Check the region start key is int64.
-	require.Regexp(t, fmt.Sprintf("t_%d_", tbl.Meta().ID), rows[0][1])
-	require.Regexp(t, fmt.Sprintf("t_%d_r_50000", tbl.Meta().ID), rows[1][1])
+
+	require.Eventually(t, func() bool {
+		rows := tk.MustQuery("show table t regions").Rows()
+		// Check the region start key is int64.
+		if rows[0][1].(string) != fmt.Sprintf("t_%d_", tbl.Meta().ID) {
+			return false
+		}
+		return rows[1][1].(string) == fmt.Sprintf("t_%d_r_50000", tbl.Meta().ID)
+	}, 5*time.Second, 50*time.Millisecond)
 
 	// test split regions boundary, it's too slow in TiKV env, move it here.
 	tk.MustExec("drop table if exists t")
@@ -75,7 +86,8 @@ func TestShowTableRegion(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t_regions")
-	tk.MustExec("set global tidb_scatter_region = 'table'")
+	tk.MustExec("set @@tidb_scatter_region = 'table'")
+	tk.MustExec("set @@session.tidb_wait_split_region_finish = 1")
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	tk.MustExec("create table t_regions (a int key, b int, c int, index idx(b), index idx2(c))")
 	tk.MustGetErrMsg(
@@ -187,7 +199,6 @@ func TestShowTableRegion(t *testing.T) {
 	tk.MustExec("create table t_regions (a int unsigned key, b int, index idx(b))")
 
 	// Test show table regions.
-	tk.MustExec(`set @@session.tidb_wait_split_region_finish=1;`)
 	tk.MustQuery(`split table t_regions by (2500),(5000),(7500);`).Check(testkit.Rows("3 1"))
 	re = tk.MustQuery("show table t_regions regions")
 	rows = re.Rows()
@@ -206,7 +217,6 @@ func TestShowTableRegion(t *testing.T) {
 	rows = re.Rows()
 	// The index `idx` of table t_regions should have 4 regions now.
 	require.Len(t, rows, 4)
-	// Check the region start key.
 	require.Equal(t, fmt.Sprintf("t_%d_", tbl.Meta().ID), rows[0][1])
 	require.Regexp(t, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID), rows[1][1])
 	require.Regexp(t, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID), rows[2][1])

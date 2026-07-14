@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"slices"
 	"sync/atomic"
+	"unicode/utf8"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -60,12 +61,17 @@ type Collator interface {
 	Compare(a, b string) int
 	// Key returns the collate key for str. If the collation is padding, make sure the PadLen >= len(rune[]str) in opt.
 	Key(str string) []byte
+	// ImmutableKey is the same as Key except that the returned key should not be changed by future calls.
+	// It can avoid memory allocation and copy in some collations. The caller should not modify the returned value.
+	ImmutableKey(str string) []byte
 	// KeyWithoutTrimRightSpace returns the collate key for str. The difference with Key is str will not be trimed.
 	KeyWithoutTrimRightSpace(str string) []byte
 	// Pattern get a collation-aware WildcardPattern.
 	Pattern() WildcardPattern
 	// Clone returns a copy of the collator.
 	Clone() Collator
+	// MaxKeyLen returns the max length of the collate key for str
+	MaxKeyLen(string) int
 }
 
 // WildcardPattern is the interface used for wildcard pattern match.
@@ -110,7 +116,7 @@ func CompatibleCollate(collate1, collate2 string) bool {
 // the protocol definition.
 // When new collations are not enabled, collation id remains the same.
 func RewriteNewCollationIDIfNeeded(id int32) int32 {
-	if atomic.LoadInt32(&newCollationEnabled) == 1 {
+	if NewCollationEnabled() {
 		if id >= 0 {
 			return -id
 		}
@@ -121,7 +127,7 @@ func RewriteNewCollationIDIfNeeded(id int32) int32 {
 
 // RestoreCollationIDIfNeeded restores a collation id if the new collations are enabled.
 func RestoreCollationIDIfNeeded(id int32) int32 {
-	if atomic.LoadInt32(&newCollationEnabled) == 1 {
+	if NewCollationEnabled() {
 		if id <= 0 {
 			return -id
 		}
@@ -130,9 +136,15 @@ func RestoreCollationIDIfNeeded(id int32) int32 {
 	return id
 }
 
-// GetCollator get the collator according to collate, it will return the binary collator if the corresponding collator doesn't exist.
+// GetCollator get the collator according to collate, it will return the binary
+// collator if the corresponding collator doesn't exist.
 func GetCollator(collate string) Collator {
-	if atomic.LoadInt32(&newCollationEnabled) == 1 {
+	return GetCollatorWithCollate(NewCollationEnabled(), collate)
+}
+
+// GetCollatorWithCollate is similar with GetCollator but allow explicit useNewCollate.
+func GetCollatorWithCollate(useNewCollate bool, collate string) Collator {
+	if useNewCollate {
 		ctor, ok := newCollatorMap[collate]
 		if !ok {
 			if collate != "" {
@@ -167,7 +179,7 @@ func GetBinaryCollatorSlice(n int) []Collator {
 
 // GetCollatorByID get the collator according to id, it will return the binary collator if the corresponding collator doesn't exist.
 func GetCollatorByID(id int) Collator {
-	if atomic.LoadInt32(&newCollationEnabled) == 1 {
+	if NewCollationEnabled() {
 		ctor, ok := newCollatorIDMap[id]
 		if !ok {
 			logutil.BgLogger().Warn(
@@ -225,7 +237,7 @@ func GetCollationByName(name string) (coll *charset.Collation, err error) {
 	if coll, err = charset.GetCollationByName(name); err != nil {
 		return nil, errors.Trace(err)
 	}
-	if atomic.LoadInt32(&newCollationEnabled) == 1 {
+	if NewCollationEnabled() {
 		if _, ok := newCollatorIDMap[coll.ID]; !ok {
 			return nil, ErrUnsupportedCollation.GenWithStackByArgs(name)
 		}
@@ -235,7 +247,7 @@ func GetCollationByName(name string) (coll *charset.Collation, err error) {
 
 // GetSupportedCollations gets information for all collations supported so far.
 func GetSupportedCollations() []*charset.Collation {
-	if atomic.LoadInt32(&newCollationEnabled) == 1 {
+	if NewCollationEnabled() {
 		newSupportedCollations := make([]*charset.Collation, 0, len(newCollatorMap))
 		for name := range newCollatorMap {
 			// utf8mb4_zh_pinyin_tidb_as_cs is under developing, should not be shown to user.
@@ -329,14 +341,22 @@ func ConvertAndGetBinCollator(collate string) Collator {
 	return GetCollator(ConvertAndGetBinCollation(collate))
 }
 
-// IsBinCollation returns if the collation is 'xx_bin' or 'bin'.
-// The function is to determine whether the sortkey of a char type of data under the collation is equal to the data itself,
-// and both xx_bin and collationBin are satisfied.
+// IsBinCollation returns whether the sortkey of a char/varchar under this collation
+// equals the raw data itself. This is a STORAGE-LEVEL property used by:
+//   - tablecodec: deciding whether restore-data is needed
+//   - NeedRestoredData: padding optimization
+//   - ranger/selectivity: assuming sortkey == data for fast paths
+//
+// DO NOT use this for coercibility derivation (use expression.isBinCollation instead).
+// The two concepts diverge on GBK: gbk_bin's Key() does UTF-8→GBK encoding conversion
+// (sortkey ≠ data), but it IS still a _bin collation for coercibility purposes.
+//
+// Included: ascii_bin, latin1_bin, utf8_bin, utf8mb4_bin, binary, utf8mb4_0900_bin
+// NOT included: gbk_bin (its Key() transforms data via encoding)
 func IsBinCollation(collate string) bool {
 	return collate == charset.CollationASCII || collate == charset.CollationLatin1 ||
 		collate == charset.CollationUTF8 || collate == charset.CollationUTF8MB4 ||
-		collate == charset.CollationBin || collate == "utf8mb4_0900_bin"
-	// TODO: define a constant to reference collations
+		collate == charset.CollationBin || collate == charset.CollationUTF8MB40900Bin
 }
 
 // IsPadSpaceCollation returns whether the collation is a PAD SPACE collation.
@@ -357,6 +377,36 @@ func CollationToProto(c string) int32 {
 		zap.String("default collation", mysql.DefaultCollationName),
 	)
 	return v
+}
+
+func compareCommon(a, b string, keyFunc func(rune) uint32) int {
+	a = truncateTailingSpace(a)
+	b = truncateTailingSpace(b)
+
+	r1, r2 := rune(0), rune(0)
+	ai, bi := 0, 0
+	r1Len, r2Len := 0, 0
+	for ai < len(a) && bi < len(b) {
+		r1, r1Len = utf8.DecodeRuneInString(a[ai:])
+		r2, r2Len = utf8.DecodeRuneInString(b[bi:])
+		// When the byte sequence is not a valid UTF-8 encoding of a rune, Golang returns RuneError('�') and size 1.
+		// See https://pkg.go.dev/unicode/utf8#DecodeRune for more details.
+		// Here we check both the size and rune to distinguish between invalid byte sequence and valid '�'.
+		invalid1 := r1 == utf8.RuneError && r1Len == 1
+		invalid2 := r2 == utf8.RuneError && r2Len == 1
+		if invalid1 || invalid2 {
+			return 0
+		}
+
+		ai += r1Len
+		bi += r2Len
+
+		cmp := cmp.Compare(keyFunc(r1), keyFunc(r2))
+		if cmp != 0 {
+			return cmp
+		}
+	}
+	return cmp.Compare(len(a)-ai, len(b)-bi)
 }
 
 // CanUseRawMemAsKey returns true if current collator can use the original raw memory as the key

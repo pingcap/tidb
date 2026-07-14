@@ -15,6 +15,7 @@
 package exprstatic
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -87,7 +88,7 @@ type evalCtxOptionsTestState struct {
 }
 
 func getEvalCtxOptionsForTest(t *testing.T) ([]EvalCtxOption, *evalCtxOptionsTestState) {
-	loc, err := time.LoadLocation("US/Eastern")
+	loc, err := time.LoadLocation("America/New_York")
 	require.NoError(t, err)
 	s := &evalCtxOptionsTestState{
 		now:         time.Now(),
@@ -170,7 +171,7 @@ func checkOptionsStaticEvalCtx(t *testing.T, ctx *EvalContext, s *evalCtxOptions
 }
 
 func TestStaticEvalCtxCurrentTime(t *testing.T) {
-	loc1, err := time.LoadLocation("US/Eastern")
+	loc1, err := time.LoadLocation("America/New_York")
 	require.NoError(t, err)
 
 	tm := time.UnixMicro(123456789).In(loc1)
@@ -559,7 +560,7 @@ func TestEvalCtxLoadSystemVars(t *testing.T) {
 		},
 		{
 			name:  strings.ToUpper("tidb_redact_log"), // test for settings an upper case variable
-			val:   "on",
+			val:   "ON",
 			field: "$.enableRedactLog",
 			assert: func(ctx *EvalContext, vars *variable.SessionVars) {
 				require.Equal(t, "ON", ctx.GetTiDBRedactLog())
@@ -611,7 +612,13 @@ func TestEvalCtxLoadSystemVars(t *testing.T) {
 		if sysVar.field != "" {
 			varsRelatedFields = append(varsRelatedFields, sysVar.field)
 		}
-		require.NoError(t, sessionVars.SetSystemVar(sysVar.name, sysVar.val))
+		sv := variable.GetSysVar(sysVar.name)
+		require.NotNil(t, sv)
+		if sv.HasSessionScope() && !sv.InternalSessionVariable {
+			require.NoError(t, sessionVars.SetSystemVar(sysVar.name, sysVar.val))
+		} else if sv.HasGlobalScope() {
+			require.NoError(t, sv.SetGlobalFromHook(context.TODO(), sessionVars, sysVar.val, false))
+		}
 	}
 
 	defaultEvalCtx := NewEvalContext()

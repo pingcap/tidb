@@ -24,15 +24,14 @@ Any questions? Discord, Slack and other contact options can be found [here](http
 Building
 --------
 
-0. Under directory `tidb`
-1. Install Go 1.23.10 or above
+1. Under directory `tidb`
 2. Run `make build_dumpling` to compile. The output is in `bin/dumpling`.
 3. Run `make dumpling_unit_test` to run the unit tests.
 4. Run `make dumpling_integration_test` to run integration tests. For integration test:
   - The following executables must be copied or generated or linked into these locations:
-    * `bin/sync_diff_inspector` (download from [tidb-enterprise-tools-latest-linux-amd64](http://download.pingcap.org/tidb-enterprise-tools-latest-linux-amd64.tar.gz))
-    * `bin/tidb-server` (download from [tidb-master-linux-amd64](https://download.pingcap.org/tidb-master-linux-amd64.tar.gz))
-    * `bin/tidb-lightning` (download from [tidb-toolkit-latest-linux-amd64](https://download.pingcap.org/tidb-toolkit-latest-linux-amd64.tar.gz))
+    * `bin/sync_diff_inspector` (download from [tidb-enterprise-tools-latest-linux-amd64](https://download.pingcap.com/tidb-enterprise-tools-latest-linux-amd64.tar.gz))
+    * `bin/tidb-server` (download from [tidb-master-linux-amd64](https://download.pingcap.com/tidb-master-linux-amd64.tar.gz))
+    * `bin/tidb-lightning` (download from [tidb-toolkit-latest-linux-amd64](https://download.pingcap.com/tidb-toolkit-latest-linux-amd64.tar.gz))
     * `bin/minio` (download from <https://min.io/download>)
     * Now, you can run `sh ./dumpling/install.sh` to get the above binary files.
   - The following programs must be installed:

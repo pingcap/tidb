@@ -17,12 +17,14 @@ package showtest
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
 	_ "github.com/pingcap/tidb/pkg/autoid_service"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -278,7 +280,6 @@ func TestShowWarningsForExprPushdown(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec(`set tidb_cost_model_version=2`)
 	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
 
 	testSQL := `create table if not exists show_warnings_expr_pushdown (a int, value date)`
@@ -295,19 +296,20 @@ func TestShowWarningsForExprPushdown(t *testing.T) {
 		}
 	}
 	tk.MustExec("set tidb_allow_mpp=0")
-	tk.MustExec("explain select * from show_warnings_expr_pushdown t where md5(value) = '2020-01-01'")
+	tk.MustExec("explain format = 'brief' select * from show_warnings_expr_pushdown t where md5(value) = '2020-01-01'")
 	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1105|Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now."))
-	tk.MustExec("explain select /*+ read_from_storage(tiflash[show_warnings_expr_pushdown]) */ max(md5(value)) from show_warnings_expr_pushdown group by a")
+	tk.MustExec("explain format = 'brief' select /*+ read_from_storage(tiflash[show_warnings_expr_pushdown]) */ max(md5(value)) from show_warnings_expr_pushdown group by a")
 	require.Equal(t, uint16(2), tk.Session().GetSessionVars().StmtCtx.WarningCount())
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1105|Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now.", "Warning|1105|Aggregation can not be pushed to tiflash because arguments of AggFunc `max` contains unsupported exprs"))
-	tk.MustExec("explain select /*+ read_from_storage(tiflash[show_warnings_expr_pushdown]) */ max(a) from show_warnings_expr_pushdown group by md5(value)")
+	tk.MustExec("explain format = 'brief' select /*+ read_from_storage(tiflash[show_warnings_expr_pushdown]) */ max(a) from show_warnings_expr_pushdown group by md5(value)")
 	require.Equal(t, uint16(2), tk.Session().GetSessionVars().StmtCtx.WarningCount())
-	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1105|Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now.", "Warning|1105|Aggregation can not be pushed to tiflash because groupByItems contain unsupported exprs"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|",
+		"Warning|1105|Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now.",
+		"Warning|1105|Aggregation can not be pushed to tiflash because groupByItems contain unsupported exprs"))
 	tk.MustExec("set tidb_opt_distinct_agg_push_down=0")
-	tk.MustExec("explain select max(distinct a) from show_warnings_expr_pushdown group by value")
+	tk.MustExec("explain format = 'brief' select max(distinct a) from show_warnings_expr_pushdown group by value")
 	require.Equal(t, uint16(0), tk.Session().GetSessionVars().StmtCtx.WarningCount())
-	// tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1105|Aggregation can not be pushed to storage layer in non-mpp mode because it contains agg function with distinct"))
 }
 
 func TestShowGrantsPrivilege(t *testing.T) {
@@ -357,6 +359,13 @@ func TestShowStatsPrivilege(t *testing.T) {
 	tk1.MustExec("show stats_meta")
 	tk1.MustExec("SHOW STATS_BUCKETS")
 	tk1.MustExec("SHOW STATS_HISTOGRAMS")
+}
+
+func TestShowStatsExtendedRemoved(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	err := tk.QueryToErr("SHOW STATS_EXTENDED")
+	require.EqualError(t, err, "Extended statistics feature has been removed")
 }
 
 func TestIssue18878(t *testing.T) {
@@ -413,6 +422,7 @@ func TestIssue11165(t *testing.T) {
 	tk.MustExec("CREATE ROLE 'r_manager';")
 	tk.MustExec("CREATE USER 'manager'@'localhost';")
 	tk.MustExec("GRANT 'r_manager' TO 'manager'@'localhost';")
+	tk.MustExec("SET DEFAULT ROLE NONE TO 'missing_manager'@'localhost';")
 
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "manager", Hostname: "localhost", AuthUsername: "manager", AuthHostname: "localhost"}, nil, nil, nil))
 	tk.MustExec("SET DEFAULT ROLE ALL TO 'manager'@'localhost';")
@@ -473,41 +483,40 @@ func TestShow2(t *testing.T) {
 				);`)
 
 	tk.MustQuery(`show full columns from test_full_column`).Check(testkit.Rows(
-		"" +
-			"c_int int(11) <nil> YES  <nil>  select,insert,update,references ]\n" +
-			"[c_float float <nil> YES  <nil>  select,insert,update,references ]\n" +
-			"[c_bit bit(1) <nil> YES  <nil>  select,insert,update,references ]\n" +
-			"[c_bool tinyint(1) <nil> YES  <nil>  select,insert,update,references ]\n" +
-			"[c_char char(1) ascii_bin YES  <nil>  select,insert,update,references ]\n" +
-			"[c_nchar char(1) ascii_bin YES  <nil>  select,insert,update,references ]\n" +
-			"[c_binary binary(1) <nil> YES  <nil>  select,insert,update,references ]\n" +
-			"[c_varchar varchar(1) ascii_bin YES  <nil>  select,insert,update,references ]\n" +
-			"[c_varchar_default varchar(20) ascii_bin YES  cUrrent_tImestamp  select,insert,update,references ]\n" +
-			"[c_nvarchar varchar(1) ascii_bin YES  <nil>  select,insert,update,references ]\n" +
-			"[c_varbinary varbinary(1) <nil> YES  <nil>  select,insert,update,references ]\n" +
-			"[c_year year(4) <nil> YES  <nil>  select,insert,update,references ]\n" +
-			"[c_date date <nil> YES  <nil>  select,insert,update,references ]\n" +
-			"[c_time time <nil> YES  <nil>  select,insert,update,references ]\n" +
-			"[c_datetime datetime <nil> YES  <nil>  select,insert,update,references ]\n" +
-			"[c_datetime_default datetime <nil> YES  CURRENT_TIMESTAMP  select,insert,update,references ]\n" +
-			"[c_datetime_default_2 datetime(2) <nil> YES  CURRENT_TIMESTAMP(2)  select,insert,update,references ]\n" +
-			"[c_timestamp timestamp <nil> YES  <nil>  select,insert,update,references ]\n" +
-			"[c_timestamp_default timestamp <nil> YES  CURRENT_TIMESTAMP  select,insert,update,references ]\n" +
-			"[c_timestamp_default_3 timestamp(3) <nil> YES  CURRENT_TIMESTAMP(3)  select,insert,update,references ]\n" +
-			"[c_timestamp_default_4 timestamp(3) <nil> YES  CURRENT_TIMESTAMP(3) DEFAULT_GENERATED on update CURRENT_TIMESTAMP(3) select,insert,update,references ]\n" +
-			"[c_date_default date <nil> YES  CURRENT_DATE  select,insert,update,references ]\n" +
-			"[c_date_default_2 date <nil> YES  CURRENT_DATE  select,insert,update,references ]\n" +
-			"[c_blob blob <nil> YES  <nil>  select,insert,update,references ]\n" +
-			"[c_tinyblob tinyblob <nil> YES  <nil>  select,insert,update,references ]\n" +
-			"[c_mediumblob mediumblob <nil> YES  <nil>  select,insert,update,references ]\n" +
-			"[c_longblob longblob <nil> YES  <nil>  select,insert,update,references ]\n" +
-			"[c_text text ascii_bin YES  <nil>  select,insert,update,references ]\n" +
-			"[c_tinytext tinytext ascii_bin YES  <nil>  select,insert,update,references ]\n" +
-			"[c_mediumtext mediumtext ascii_bin YES  <nil>  select,insert,update,references ]\n" +
-			"[c_longtext longtext ascii_bin YES  <nil>  select,insert,update,references ]\n" +
-			"[c_json json <nil> YES  <nil>  select,insert,update,references ]\n" +
-			"[c_enum enum('1') ascii_bin YES  <nil>  select,insert,update,references ]\n" +
-			"[c_set set('1') ascii_bin YES  <nil>  select,insert,update,references "))
+		"c_int int(11) <nil> YES  <nil>  select,insert,update,references ",
+		"c_float float <nil> YES  <nil>  select,insert,update,references ",
+		"c_bit bit(1) <nil> YES  <nil>  select,insert,update,references ",
+		"c_bool tinyint(1) <nil> YES  <nil>  select,insert,update,references ",
+		"c_char char(1) ascii_bin YES  <nil>  select,insert,update,references ",
+		"c_nchar char(1) ascii_bin YES  <nil>  select,insert,update,references ",
+		"c_binary binary(1) <nil> YES  <nil>  select,insert,update,references ",
+		"c_varchar varchar(1) ascii_bin YES  <nil>  select,insert,update,references ",
+		"c_varchar_default varchar(20) ascii_bin YES  cUrrent_tImestamp  select,insert,update,references ",
+		"c_nvarchar varchar(1) ascii_bin YES  <nil>  select,insert,update,references ",
+		"c_varbinary varbinary(1) <nil> YES  <nil>  select,insert,update,references ",
+		"c_year year(4) <nil> YES  <nil>  select,insert,update,references ",
+		"c_date date <nil> YES  <nil>  select,insert,update,references ",
+		"c_time time <nil> YES  <nil>  select,insert,update,references ",
+		"c_datetime datetime <nil> YES  <nil>  select,insert,update,references ",
+		"c_datetime_default datetime <nil> YES  CURRENT_TIMESTAMP  select,insert,update,references ",
+		"c_datetime_default_2 datetime(2) <nil> YES  CURRENT_TIMESTAMP(2)  select,insert,update,references ",
+		"c_timestamp timestamp <nil> YES  <nil>  select,insert,update,references ",
+		"c_timestamp_default timestamp <nil> YES  CURRENT_TIMESTAMP  select,insert,update,references ",
+		"c_timestamp_default_3 timestamp(3) <nil> YES  CURRENT_TIMESTAMP(3)  select,insert,update,references ",
+		"c_timestamp_default_4 timestamp(3) <nil> YES  CURRENT_TIMESTAMP(3) DEFAULT_GENERATED on update CURRENT_TIMESTAMP(3) select,insert,update,references ",
+		"c_date_default date <nil> YES  CURRENT_DATE  select,insert,update,references ",
+		"c_date_default_2 date <nil> YES  CURRENT_DATE  select,insert,update,references ",
+		"c_blob blob <nil> YES  <nil>  select,insert,update,references ",
+		"c_tinyblob tinyblob <nil> YES  <nil>  select,insert,update,references ",
+		"c_mediumblob mediumblob <nil> YES  <nil>  select,insert,update,references ",
+		"c_longblob longblob <nil> YES  <nil>  select,insert,update,references ",
+		"c_text text ascii_bin YES  <nil>  select,insert,update,references ",
+		"c_tinytext tinytext ascii_bin YES  <nil>  select,insert,update,references ",
+		"c_mediumtext mediumtext ascii_bin YES  <nil>  select,insert,update,references ",
+		"c_longtext longtext ascii_bin YES  <nil>  select,insert,update,references ",
+		"c_json json <nil> YES  <nil>  select,insert,update,references ",
+		"c_enum enum('1') ascii_bin YES  <nil>  select,insert,update,references ",
+		"c_set set('1') ascii_bin YES  <nil>  select,insert,update,references "))
 
 	tk.MustExec("drop table if exists test_full_column")
 
@@ -993,10 +1002,13 @@ func TestShowVar(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	var showSQL string
+	sessionOnlyVars := make([]string, 0, len(variable.GetSysVars()))
 	sessionVars := make([]string, 0, len(variable.GetSysVars()))
 	globalVars := make([]string, 0, len(variable.GetSysVars()))
 	for _, v := range variable.GetSysVars() {
 		if v.Scope == vardef.ScopeSession {
+			sessionOnlyVars = append(sessionOnlyVars, v.Name)
+		} else if !v.HasSessionScope() && !v.InternalSessionVariable {
 			sessionVars = append(sessionVars, v.Name)
 		} else {
 			globalVars = append(globalVars, v.Name)
@@ -1004,18 +1016,20 @@ func TestShowVar(t *testing.T) {
 	}
 
 	// When ScopeSession only. `show global variables` must return empty.
-	sessionVarsStr := strings.Join(sessionVars, "','")
-	showSQL = "show variables where variable_name in('" + sessionVarsStr + "')"
+	sessionOnlyVarsStr := strings.Join(sessionOnlyVars, "','")
+	showSQL = "show variables where variable_name in('" + sessionOnlyVarsStr + "')"
 	res := tk.MustQuery(showSQL)
-	require.Len(t, res.Rows(), len(sessionVars))
-	showSQL = "show global variables where variable_name in('" + sessionVarsStr + "')"
+	require.Len(t, res.Rows(), len(sessionOnlyVars))
+	showSQL = "show global variables where variable_name in('" + sessionOnlyVarsStr + "')"
 	res = tk.MustQuery(showSQL)
 	require.Len(t, res.Rows(), 0)
 
-	globalVarsStr := strings.Join(globalVars, "','")
-	showSQL = "show variables where variable_name in('" + globalVarsStr + "')"
+	sessionVarsStr := strings.Join(sessionVars, "','")
+	showSQL = "show variables where variable_name in('" + sessionVarsStr + "')"
 	res = tk.MustQuery(showSQL)
-	require.Len(t, res.Rows(), len(globalVars))
+	require.Len(t, res.Rows(), len(sessionVars))
+
+	globalVarsStr := strings.Join(globalVars, "','")
 	showSQL = "show global variables where variable_name in('" + globalVarsStr + "')"
 	res = tk.MustQuery(showSQL)
 	require.Len(t, res.Rows(), len(globalVars))
@@ -1099,7 +1113,7 @@ func TestShowLimitReturnRow(t *testing.T) {
 		"gbk Chinese Internal Code Specification gbk_chinese_ci 2"))
 
 	tk.MustQuery("Show Variables where variable_name ='max_allowed_packet'").Check(testkit.RowsWithSep("|", ""+
-		"max_allowed_packet 67108864"))
+		"max_allowed_packet "+strconv.FormatUint(config.GetMaxAllowedPacket(), 10)))
 
 	result = tk.MustQuery("SHOW status where variable_name ='server_id'")
 	rows = result.Rows()

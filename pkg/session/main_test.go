@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit/testmain"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"github.com/pingcap/tidb/pkg/types"
@@ -36,7 +37,7 @@ func TestMain(m *testing.M) {
 
 	flag.Parse()
 
-	SetSchemaLease(20 * time.Millisecond)
+	vardef.SetSchemaLease(20 * time.Millisecond)
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0

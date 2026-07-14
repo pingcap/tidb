@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/stretchr/testify/require"
 )
@@ -194,6 +195,12 @@ func TestTableOptimizerHintRestore(t *testing.T) {
 		{"NO_ORDER_INDEX(t1@sel_1 c1)", "NO_ORDER_INDEX(`t1`@`sel_1` `c1`)"},
 		{"NO_ORDER_INDEX(test.t1@sel_1 c1)", "NO_ORDER_INDEX(`test`.`t1`@`sel_1` `c1`)"},
 		{"NO_ORDER_INDEX(test.t1@sel_1 partition(p0) c1)", "NO_ORDER_INDEX(`test`.`t1`@`sel_1` PARTITION(`p0`) `c1`)"},
+		{"INDEX_LOOKUP_PUSHDOWN(t1 c1)", "INDEX_LOOKUP_PUSHDOWN(`t1` `c1`)"},
+		{"INDEX_LOOKUP_PUSHDOWN(test.t1 c1)", "INDEX_LOOKUP_PUSHDOWN(`test`.`t1` `c1`)"},
+		{"INDEX_LOOKUP_PUSHDOWN(@sel_1 t1 c1)", "INDEX_LOOKUP_PUSHDOWN(@`sel_1` `t1` `c1`)"},
+		{"INDEX_LOOKUP_PUSHDOWN(t1@sel_1 c1)", "INDEX_LOOKUP_PUSHDOWN(`t1`@`sel_1` `c1`)"},
+		{"INDEX_LOOKUP_PUSHDOWN(test.t1@sel_1 c1)", "INDEX_LOOKUP_PUSHDOWN(`test`.`t1`@`sel_1` `c1`)"},
+		{"INDEX_LOOKUP_PUSHDOWN(test.t1@sel_1 partition(p0) c1)", "INDEX_LOOKUP_PUSHDOWN(`test`.`t1`@`sel_1` PARTITION(`p0`) `c1`)"},
 		{"TIDB_SMJ(`t1`)", "TIDB_SMJ(`t1`)"},
 		{"TIDB_SMJ(t1)", "TIDB_SMJ(`t1`)"},
 		{"TIDB_SMJ(t1,t2)", "TIDB_SMJ(`t1`, `t2`)"},
@@ -215,13 +222,23 @@ func TestTableOptimizerHintRestore(t *testing.T) {
 		{"HASH_JOIN_PROBE(t1)", "HASH_JOIN_PROBE(`t1`)"},
 		{"LEADING(t1)", "LEADING(`t1`)"},
 		{"LEADING(t1, c1)", "LEADING(`t1`, `c1`)"},
+		{"LEADING((t1, c1), t2)", "LEADING((`t1`, `c1`), `t2`)"},
+		{"LEADING(t1, (c1, t2))", "LEADING(`t1`, (`c1`, `t2`))"},
+		{"LEADING(((t1, c1), t2), t3)", "LEADING(((`t1`, `c1`), `t2`), `t3`)"},
+		{"LEADING(t1, (c1, (t2, t3)))", "LEADING(`t1`, (`c1`, (`t2`, `t3`)))"},
 		{"LEADING(t1, c1, t2)", "LEADING(`t1`, `c1`, `t2`)"},
 		{"LEADING(@sel1 t1, c1)", "LEADING(@`sel1` `t1`, `c1`)"},
 		{"LEADING(@sel1 t1)", "LEADING(@`sel1` `t1`)"},
 		{"LEADING(@sel1 t1, c1, t2)", "LEADING(@`sel1` `t1`, `c1`, `t2`)"},
+		{"LEADING(@sel1 t1, (c1, t2))", "LEADING(@`sel1` `t1`, (`c1`, `t2`))"},
+		{"LEADING(@sel1 t1, (c1, t2), d3)", "LEADING(@`sel1` `t1`, (`c1`, `t2`), `d3`)"},
 		{"LEADING(t1@sel1)", "LEADING(`t1`@`sel1`)"},
 		{"LEADING(t1@sel1, c1)", "LEADING(`t1`@`sel1`, `c1`)"},
 		{"LEADING(t1@sel1, c1, t2)", "LEADING(`t1`@`sel1`, `c1`, `t2`)"},
+		{"LEADING((t1@sel1, c1), t2)", "LEADING((`t1`@`sel1`, `c1`), `t2`)"},
+		{"LEADING(t1@sel1, (c1, t2))", "LEADING(`t1`@`sel1`, (`c1`, `t2`))"},
+		{"LEADING(t1@sel1, c1, t2, d3)", "LEADING(`t1`@`sel1`, `c1`, `t2`, `d3`)"},
+		{"LEADING(t1@sel1, (c1, t2), d3)", "LEADING(`t1`@`sel1`, (`c1`, `t2`), `d3`)"},
 		{"MAX_EXECUTION_TIME(3000)", "MAX_EXECUTION_TIME(3000)"},
 		{"MAX_EXECUTION_TIME(@sel1 3000)", "MAX_EXECUTION_TIME(@`sel1` 3000)"},
 		{"USE_INDEX_MERGE(t1 c1)", "USE_INDEX_MERGE(`t1` `c1`)"},
@@ -327,6 +344,10 @@ func TestPlanReplayerStmtRestore(t *testing.T) {
 			"PLAN REPLAYER DUMP EXPLAIN ANALYZE 'test'"},
 		{"plan replayer dump with stats as of timestamp '12345' explain analyze 'test2'",
 			"PLAN REPLAYER DUMP WITH STATS AS OF TIMESTAMP _UTF8MB4'12345' EXPLAIN ANALYZE 'test2'"},
+		{"plan replayer dump explain ('SELECT * FROM t1', 'SELECT * FROM t2')",
+			"PLAN REPLAYER DUMP EXPLAIN ('SELECT * FROM t1', 'SELECT * FROM t2')"},
+		{"plan replayer dump explain analyze ('SELECT * FROM t1')",
+			"PLAN REPLAYER DUMP EXPLAIN ANALYZE ('SELECT * FROM t1')"},
 	}
 	extractNodeFunc := func(node ast.Node) ast.Node {
 		return node.(*ast.PlanReplayerStmt)
@@ -353,9 +374,19 @@ func TestRedactURL(t *testing.T) {
 		{args{"s3://bucket/file?other-key=123"}, "s3://bucket/file?other-key=123"},
 		{args{"s3://bucket/file?access-key=123"}, "s3://bucket/file?access-key=xxxxxx"},
 		{args{"s3://bucket/file?secret-access-key=123"}, "s3://bucket/file?secret-access-key=xxxxxx"},
+		{args{"ks3://bucket/file?access-key=123"}, "ks3://bucket/file?access-key=xxxxxx"},
+		{args{"ks3://bucket/file?secret-access-key=123"}, "ks3://bucket/file?secret-access-key=xxxxxx"},
+		{args{"oss://bucket/file?access-key=123"}, "oss://bucket/file?access-key=xxxxxx"},
+		{args{"oss://bucket/file?secret-access-key=123"}, "oss://bucket/file?secret-access-key=xxxxxx"},
 		// underline
 		{args{"s3://bucket/file?access_key=123"}, "s3://bucket/file?access_key=xxxxxx"},
 		{args{"s3://bucket/file?secret_access_key=123"}, "s3://bucket/file?secret_access_key=xxxxxx"},
+		{args{"azure://bucket/file?sas-token=123"}, "azure://bucket/file?sas-token=xxxxxx"},
+		{args{"azblob://container/file?sas-token=123"}, "azblob://container/file?sas-token=xxxxxx"},
+		{args{"azure://container/file?account-name=test&sas_token=123"}, "azure://container/file?account-name=test&sas_token=xxxxxx"},
+		{args{"azure://container/file?account-name=test&account-key=123"}, "azure://container/file?account-key=xxxxxx&account-name=test"},
+		{args{"azblob://container/file?encryption-key=123"}, "azblob://container/file?encryption-key=xxxxxx"},
+		{args{"azure://container/file?account_key=123&encryption_key=456"}, "azure://container/file?account_key=xxxxxx&encryption_key=xxxxxx"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.args.str, func(t *testing.T) {
@@ -414,5 +445,48 @@ func TestRedactTrafficStmt(t *testing.T) {
 		n, ok := node.(ast.SensitiveStmtNode)
 		require.True(t, ok, tc.input)
 		require.Equal(t, tc.secured, n.SecureText(), tc.input)
+	}
+}
+
+func TestSetPwdStmtSecureText(t *testing.T) {
+	// Direct construction: SetPwdStmt.User can be nil (current-user form),
+	// matching what Restore handles. SecureText must not leak "<nil>".
+	cases := []struct {
+		name string
+		stmt *ast.SetPwdStmt
+		want string
+	}{
+		{
+			name: "nil user",
+			stmt: &ast.SetPwdStmt{Password: "x"},
+			want: "set password",
+		},
+		{
+			name: "nil user with retain",
+			stmt: &ast.SetPwdStmt{Password: "x", RetainCurrentPassword: true},
+			want: "set password RETAIN CURRENT PASSWORD",
+		},
+		{
+			name: "named user",
+			stmt: &ast.SetPwdStmt{
+				User:     &auth.UserIdentity{Username: "u", Hostname: "%"},
+				Password: "x",
+			},
+			want: "set password for user u@%",
+		},
+		{
+			name: "named user with retain",
+			stmt: &ast.SetPwdStmt{
+				User:                  &auth.UserIdentity{Username: "u", Hostname: "%"},
+				Password:              "x",
+				RetainCurrentPassword: true,
+			},
+			want: "set password for user u@% RETAIN CURRENT PASSWORD",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			require.Equal(t, c.want, c.stmt.SecureText())
+		})
 	}
 }

@@ -4,15 +4,41 @@ package stream_test
 
 import (
 	"context"
+	"fmt"
 	"slices"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/require"
 )
+
+type gatedReadStorage struct {
+	storeapi.Storage
+	readGate  <-chan struct{}
+	active    atomic.Int32
+	maxActive atomic.Int32
+}
+
+func (s *gatedReadStorage) ReadFile(ctx context.Context, name string) ([]byte, error) {
+	active := s.active.Add(1)
+	for {
+		maxActive := s.maxActive.Load()
+		if active <= maxActive || s.maxActive.CompareAndSwap(maxActive, active) {
+			break
+		}
+	}
+	defer s.active.Add(-1)
+	if s.readGate != nil {
+		<-s.readGate
+	}
+	return s.Storage.ReadFile(ctx, name)
+}
 
 func TestGetCheckpointOfTask(t *testing.T) {
 	task := stream.TaskStatus{
@@ -47,7 +73,7 @@ func TestGetCheckpointOfTask(t *testing.T) {
 func TestMetadataHelperReadFile(t *testing.T) {
 	ctx := context.Background()
 	tmpdir := t.TempDir()
-	s, err := storage.NewLocalStorage(tmpdir)
+	s, err := objstore.NewLocalStorage(tmpdir)
 	require.Nil(t, err)
 	helper := stream.NewMetadataHelper()
 	filename1 := "full_data"
@@ -67,16 +93,82 @@ func TestMetadataHelperReadFile(t *testing.T) {
 	require.NoError(t, err)
 
 	helper.InitCacheEntry(filename2, 2)
-	get_data, err := helper.ReadFile(ctx, filename1, 0, 0, backuppb.CompressionType_UNKNOWN, s, nil)
+	get_data, err := helper.ReadFile(ctx, filename1, 0, 0, uint64(len(data1)), backuppb.CompressionType_UNKNOWN, s, nil)
 	require.NoError(t, err)
 	require.Equal(t, data1, get_data)
-	get_data, err = helper.ReadFile(ctx, filename2, 0, uint64(len(data1)), backuppb.CompressionType_UNKNOWN, s, nil)
+	get_data, err = helper.ReadFile(ctx, filename2, 0, uint64(len(data1)), uint64(len(data1)), backuppb.CompressionType_UNKNOWN, s, nil)
 	require.NoError(t, err)
 	require.Equal(t, data1, get_data)
-	get_data, err = helper.ReadFile(ctx, filename2, uint64(len(data1)), uint64(len(data2)),
+	get_data, err = helper.ReadFile(ctx, filename2, uint64(len(data1)), uint64(len(data2)), uint64(len(data1)),
 		backuppb.CompressionType_ZSTD, s, nil)
 	require.NoError(t, err)
 	require.Equal(t, data1, get_data)
+
+	filename3 := "cached_data_1"
+	filename4 := "cached_data_2"
+	require.NoError(t, s.WriteFile(ctx, filename3, data1))
+	require.NoError(t, s.WriteFile(ctx, filename4, data1))
+	helper.InitCacheEntry(filename3, 1)
+	helper.InitCacheEntry(filename4, 1)
+	readGate := make(chan struct{})
+	gatedStorage := &gatedReadStorage{Storage: s, readGate: readGate}
+	errCh := make(chan error, 2)
+	for _, filename := range []string{filename3, filename4} {
+		go func() {
+			data, err := helper.ReadFile(ctx, filename, 0, uint64(len(data1)), uint64(len(data1)), backuppb.CompressionType_UNKNOWN, gatedStorage, nil)
+			if err != nil {
+				errCh <- err
+				return
+			}
+			if string(data) != string(data1) {
+				errCh <- fmt.Errorf("unexpected data for %s", filename)
+				return
+			}
+			errCh <- nil
+		}()
+	}
+	require.Eventually(t, func() bool {
+		return gatedStorage.active.Load() == 2
+	}, time.Second, 10*time.Millisecond)
+	require.Equal(t, int32(2), gatedStorage.maxActive.Load())
+	close(readGate)
+	require.NoError(t, <-errCh)
+	require.NoError(t, <-errCh)
+	require.Equal(t, int32(2), gatedStorage.maxActive.Load())
+}
+
+func TestMetadataHelperParseToMetadataPreservesExistingFileGroupsForV1(t *testing.T) {
+	helper := stream.NewMetadataHelper()
+	original := &backuppb.Metadata{
+		MetaVersion: backuppb.MetaVersion_V1,
+		FileGroups: []*backuppb.DataFileGroup{
+			{
+				Path: "v1/log/store-1/flush-00000001-region-1.log",
+				DataFilesInfo: []*backuppb.DataFileInfo{
+					{
+						Path: "v1/log/store-1/flush-00000001-region-1.log",
+					},
+				},
+			},
+		},
+	}
+
+	raw, err := original.Marshal()
+	require.NoError(t, err)
+
+	meta, err := helper.ParseToMetadata(raw)
+	require.NoError(t, err)
+	require.Len(t, meta.FileGroups, 1)
+	require.Equal(t, original.FileGroups[0].Path, meta.FileGroups[0].Path)
+	require.Len(t, meta.FileGroups[0].DataFilesInfo, 1)
+	require.Equal(t, original.FileGroups[0].DataFilesInfo[0].Path, meta.FileGroups[0].DataFilesInfo[0].Path)
+
+	hardMeta, err := helper.ParseToMetadataHard(raw)
+	require.NoError(t, err)
+	require.Len(t, hardMeta.FileGroups, 1)
+	require.Equal(t, original.FileGroups[0].Path, hardMeta.FileGroups[0].Path)
+	require.Len(t, hardMeta.FileGroups[0].DataFilesInfo, 1)
+	require.Equal(t, original.FileGroups[0].DataFilesInfo[0].Path, hardMeta.FileGroups[0].DataFilesInfo[0].Path)
 }
 
 func TestFilterPath(t *testing.T) {
@@ -118,22 +210,22 @@ func TestFilterPath(t *testing.T) {
 			expected: "v1/backupmeta/000000000000000a-0000000000000000-000000000000000a-000000000000001e.meta",
 		},
 		{
-			name: "fallback: minDefaultTs > minTs, should fallback to minTs",
+			name: "fallback: minBeginTsInDefaultCf > minTs, file preserved",
 			args: args{
 				path:         "v1/backupmeta/000000000000000a-0000000000000014-000000000000000a-000000000000001e.meta", // minDefault=20, min=10
 				shiftStartTS: 5,
-				restoreTS:    11, // fallback to 10, 11>10
+				restoreTS:    11,
 			},
 			expected: "v1/backupmeta/000000000000000a-0000000000000014-000000000000000a-000000000000001e.meta",
 		},
 		{
-			name: "restoreTS < fallback minTs, should be filtered",
+			name: "fallback: minBeginTsInDefaultCf > minTs, file preserved (not filtered)",
 			args: args{
-				path:         "v1/backupmeta/000000000000000a-0000000000000014-000000000000000a-000000000000001e.meta", // fallback to min=10
+				path:         "v1/backupmeta/000000000000000a-0000000000000014-000000000000000a-000000000000001e.meta", // minDefault=20, min=10
 				shiftStartTS: 5,
-				restoreTS:    9, // 9 < 10, should be filtered
+				restoreTS:    9, // even though 9 < minTs(10), file is preserved when minBeginTsInDefaultCf is invalid
 			},
-			expected: "",
+			expected: "v1/backupmeta/000000000000000a-0000000000000014-000000000000000a-000000000000001e.meta",
 		},
 		{
 			name: "maxTs < shiftStartTS, should be filtered",
@@ -145,13 +237,49 @@ func TestFilterPath(t *testing.T) {
 			expected: "",
 		},
 		{
-			name: "invalid: minDefaultTs > minTs, fallback, but restoreTS < fallback",
+			name: "fallback: minBeginTsInDefaultCf > minTs, file preserved even with small restoreTS",
 			args: args{
 				path:         "v1/backupmeta/000000000000000a-0000000000000014-000000000000000a-000000000000001e.meta",
 				shiftStartTS: 5,
-				restoreTS:    8, // fallback to 10, 8 < 10
+				restoreTS:    8, // even though 8 < minTs(10), file is preserved when minBeginTsInDefaultCf is invalid
+			},
+			expected: "v1/backupmeta/000000000000000a-0000000000000014-000000000000000a-000000000000001e.meta",
+		},
+		{
+			name: "new format: normal",
+			args: args{
+				path:         "v1/backupmeta/000000000000000A000000000000000B-d0000000000000005l000000000000000Au000000000000001E.meta",
+				shiftStartTS: 5,
+				restoreTS:    10,
+			},
+			expected: "v1/backupmeta/000000000000000A000000000000000B-d0000000000000005l000000000000000Au000000000000001E.meta",
+		},
+		{
+			name: "new format: accepts reordered tags and extra tags",
+			args: args{
+				path:         "v1/backupmeta/000000000000000A000000000000000B-u0000000000000004x0000000000000009d0000000000000002l0000000000000003.meta",
+				shiftStartTS: 3,
+				restoreTS:    4,
+			},
+			expected: "v1/backupmeta/000000000000000A000000000000000B-u0000000000000004x0000000000000009d0000000000000002l0000000000000003.meta",
+		},
+		{
+			name: "new format: out of range should be filtered",
+			args: args{
+				path:         "v1/backupmeta/000000000000000A000000000000000B-d0000000000000002l0000000000000003u0000000000000004.meta",
+				shiftStartTS: 5,
+				restoreTS:    10,
 			},
 			expected: "",
+		},
+		{
+			name: "new format: invalid name should be preserved for compatibility",
+			args: args{
+				path:         "v1/backupmeta/000000000000000A000000000000000B-d0000000000000002l0000000000000003.meta",
+				shiftStartTS: 10,
+				restoreTS:    10,
+			},
+			expected: "v1/backupmeta/000000000000000A000000000000000B-d0000000000000002l0000000000000003.meta",
 		},
 		{
 			name: "non-matching file name format, preserved for compatibility",

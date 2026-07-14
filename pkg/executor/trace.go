@@ -15,16 +15,14 @@
 package executor
 
 import (
-	"archive/zip"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"os"
+	"io"
 	"path/filepath"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/opentracing/basictracer-go"
@@ -32,17 +30,18 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
-	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/extstore"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -84,14 +83,7 @@ func (e *TraceExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}()
 
 	if e.optimizerTrace {
-		switch e.optimizerTraceTarget {
-		case core.TracePlanTargetEstimation:
-			return e.nextOptimizerCEPlanTrace(ctx, e.Ctx(), req)
-		case core.TracePlanTargetDebug:
-			return e.nextOptimizerDebugPlanTrace(ctx, e.Ctx(), req)
-		default:
-			return e.nextOptimizerPlanTrace(ctx, e.Ctx(), req)
-		}
+		return errors.New("this feature has been deprecated")
 	}
 
 	ctx = util.ContextWithTraceExecDetails(ctx)
@@ -101,115 +93,6 @@ func (e *TraceExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	default:
 		return e.nextRowJSON(ctx, se, req)
 	}
-}
-
-func (e *TraceExec) nextOptimizerCEPlanTrace(ctx context.Context, se sessionctx.Context, req *chunk.Chunk) error {
-	stmtCtx := se.GetSessionVars().StmtCtx
-	origin := stmtCtx.EnableOptimizerCETrace
-	stmtCtx.EnableOptimizerCETrace = true
-	defer func() {
-		stmtCtx.EnableOptimizerCETrace = origin
-	}()
-
-	nodeW := resolve.NewNodeWWithCtx(e.stmtNode, e.resolveCtx)
-	_, _, err := core.OptimizeAstNodeNoCache(ctx, se, nodeW, se.GetInfoSchema().(infoschema.InfoSchema))
-	if err != nil {
-		return err
-	}
-
-	writer := strings.Builder{}
-	jsonEncoder := json.NewEncoder(&writer)
-	// If we do not set this to false, ">", "<", "&"... will be escaped to "\u003c","\u003e", "\u0026"...
-	jsonEncoder.SetEscapeHTML(false)
-	err = jsonEncoder.Encode(stmtCtx.OptimizerCETrace)
-	if err != nil {
-		return errors.AddStack(err)
-	}
-	res := []byte(writer.String())
-
-	req.AppendBytes(0, res)
-	e.exhausted = true
-	return nil
-}
-
-func (e *TraceExec) nextOptimizerDebugPlanTrace(ctx context.Context, se sessionctx.Context, req *chunk.Chunk) error {
-	stmtCtx := se.GetSessionVars().StmtCtx
-	origin := stmtCtx.EnableOptimizerDebugTrace
-	stmtCtx.EnableOptimizerDebugTrace = true
-	defer func() {
-		stmtCtx.EnableOptimizerDebugTrace = origin
-	}()
-
-	nodeW := resolve.NewNodeWWithCtx(e.stmtNode, e.resolveCtx)
-	_, _, err := core.OptimizeAstNodeNoCache(ctx, se, nodeW, se.GetInfoSchema().(infoschema.InfoSchema))
-	if err != nil {
-		return err
-	}
-
-	writer := strings.Builder{}
-	jsonEncoder := json.NewEncoder(&writer)
-	// If we do not set this to false, ">", "<", "&"... will be escaped to "\u003c","\u003e", "\u0026"...
-	jsonEncoder.SetEscapeHTML(false)
-	err = jsonEncoder.Encode(stmtCtx.OptimizerDebugTrace)
-	if err != nil {
-		return errors.AddStack(err)
-	}
-	res := []byte(writer.String())
-
-	req.AppendBytes(0, res)
-	e.exhausted = true
-	return nil
-}
-
-func (e *TraceExec) nextOptimizerPlanTrace(ctx context.Context, se sessionctx.Context, req *chunk.Chunk) error {
-	zf, fileName, err := generateOptimizerTraceFile()
-	if err != nil {
-		return err
-	}
-	zw := zip.NewWriter(zf)
-	defer func() {
-		err := zw.Close()
-		if err != nil {
-			logutil.BgLogger().Warn("Closing zip writer failed", zap.Error(err))
-		}
-		err = zf.Close()
-		if err != nil {
-			logutil.BgLogger().Warn("Closing zip file failed", zap.Error(err))
-		}
-	}()
-	traceZW, err := zw.Create("trace.json")
-	if err != nil {
-		return errors.AddStack(err)
-	}
-	stmtCtx := se.GetSessionVars().StmtCtx
-	origin := stmtCtx.EnableOptimizeTrace
-	stmtCtx.EnableOptimizeTrace = true
-	defer func() {
-		stmtCtx.EnableOptimizeTrace = origin
-	}()
-	nodeW := resolve.NewNodeWWithCtx(e.stmtNode, e.resolveCtx)
-	_, _, err = core.OptimizeAstNodeNoCache(ctx, se, nodeW, se.GetInfoSchema().(infoschema.InfoSchema))
-	if err != nil {
-		return err
-	}
-
-	writer := strings.Builder{}
-	jsonEncoder := json.NewEncoder(&writer)
-	// If we do not set this to false, ">", "<", "&"... will be escaped to "\u003c","\u003e", "\u0026"...
-	jsonEncoder.SetEscapeHTML(false)
-	err = jsonEncoder.Encode(se.GetSessionVars().StmtCtx.OptimizeTracer)
-	if err != nil {
-		return errors.AddStack(err)
-	}
-	res := []byte(writer.String())
-
-	_, err = traceZW.Write(res)
-	if err != nil {
-		return errors.AddStack(err)
-	}
-	req.AppendString(0, fileName)
-	e.exhausted = true
-	return nil
 }
 
 func (e *TraceExec) nextTraceLog(ctx context.Context, se sqlexec.SQLExecutor, req *chunk.Chunk) error {
@@ -387,26 +270,26 @@ func generateLogResult(allSpans []basictracer.RawSpan, chk *chunk.Chunk) {
 	}
 }
 
-func generateOptimizerTraceFile() (*os.File, string, error) {
+func generateOptimizerTraceFile(ctx context.Context) (io.WriteCloser, string, error) {
 	dirPath := domain.GetOptimizerTraceDirName()
-	// Create path
-	err := os.MkdirAll(dirPath, os.ModePerm)
-	if err != nil {
-		return nil, "", errors.AddStack(err)
-	}
 	// Generate key and create zip file
 	time := time.Now().UnixNano()
 	b := make([]byte, 16)
 	//nolint: gosec
-	_, err = rand.Read(b)
+	_, err := rand.Read(b)
 	if err != nil {
 		return nil, "", errors.AddStack(err)
 	}
 	key := base64.URLEncoding.EncodeToString(b)
 	fileName := fmt.Sprintf("optimizer_trace_%v_%v.zip", key, time)
-	zf, err := os.Create(filepath.Join(dirPath, fileName))
+	storage, err := extstore.GetGlobalExtStorage(ctx)
 	if err != nil {
 		return nil, "", errors.AddStack(err)
 	}
+	writer, err := storage.Create(ctx, filepath.Join(dirPath, fileName), nil)
+	if err != nil {
+		return nil, "", errors.AddStack(err)
+	}
+	zf := replayer.NewFileWriter(ctx, writer)
 	return zf, fileName, nil
 }

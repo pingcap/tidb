@@ -139,7 +139,7 @@ drop table if exists t1;
 create table t1 (a int, b int as (a+1), index idx(b));
 insert into t1 set a=1;
 alter table t1 modify column b int as (a+2);
-Error 3106 (HY000): 'modifying an indexed column' is not supported for generated columns.
+Error 3106 (HY000): Unsupported modification for generated columns covered by an index
 drop index idx on t1;
 alter table t1 modify b int as (a+2);
 select * from t1;
@@ -149,7 +149,7 @@ drop table t1;
 create table t1 (a int, b int as (a+1), index idx(a, b));
 insert into t1 set a=1;
 alter table t1 modify column b int as (a+2);
-Error 3106 (HY000): 'modifying an indexed column' is not supported for generated columns.
+Error 3106 (HY000): Unsupported modification for generated columns covered by an index
 drop index idx on t1;
 alter table t1 modify b int as (a+2);
 select * from t1;
@@ -172,7 +172,9 @@ drop table t1;
 create table t1 (a int, b int as (a+1), index idx(b));
 insert into t1 set a=1;
 alter table t1 modify column b bigint as (a+1);
+Error 3106 (HY000): Unsupported modification for generated columns covered by an index
 alter table t1 modify column b bigint as (a + 1);
+Error 3106 (HY000): Unsupported modification for generated columns covered by an index
 select * from t1;
 a	b
 1	2

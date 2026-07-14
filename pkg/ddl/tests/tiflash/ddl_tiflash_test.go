@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/store/gcworker"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/store/mockstore/teststore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -55,6 +56,7 @@ import (
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/pd/client/clients/router"
+	"github.com/tikv/pd/client/constants"
 	"go.uber.org/zap"
 )
 
@@ -77,7 +79,7 @@ func createTiFlashContext(t *testing.T) (*tiflashContext, func()) {
 	ddl.PollTiFlashInterval = 1000 * time.Millisecond
 	ddl.PullTiFlashPdTick.Store(60)
 	s.tiflash = infosync.NewMockTiFlash()
-	s.store, err = mockstore.NewMockStore(
+	s.store, err = teststore.NewMockStoreWithoutBootstrap(
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockCluster := c.(*unistore.Cluster)
 			_, _, region1 := mockstore.BootstrapWithSingleStore(c)
@@ -104,10 +106,12 @@ func createTiFlashContext(t *testing.T) (*tiflashContext, func()) {
 	s.dom.SetStatsUpdating(true)
 
 	tearDown := func() {
-		s.tiflash.Lock()
-		s.tiflash.StatusServer.Close()
-		s.tiflash.Unlock()
 		s.dom.Close()
+		s.tiflash.Lock()
+		if s.tiflash.StatusServer != nil {
+			s.tiflash.StatusServer.Close()
+		}
+		s.tiflash.Unlock()
 		require.NoError(t, s.store.Close())
 		ddl.PollTiFlashInterval = 2 * time.Second
 	}
@@ -189,7 +193,7 @@ func TestTiFlashNoRedundantPDRules(t *testing.T) {
 	s, teardown := createTiFlashContext(t)
 	defer teardown()
 
-	rpcClient, pdClient, cluster, err := unistore.New("", nil, nil)
+	rpcClient, pdClient, cluster, err := unistore.New("", nil, constants.NullKeyspaceID, nil)
 	require.NoError(t, err)
 	defer func() {
 		rpcClient.Close()
@@ -329,9 +333,9 @@ func TestTiFlashReplicaPartitionTableBlock(t *testing.T) {
 
 	lessThan := "40"
 	// Stop loop
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/BeforeRefreshTiFlashTickeLoop", `return`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/BeforeRefreshTiFlashTickerLoop", `return`))
 	defer func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/BeforeRefreshTiFlashTickeLoop")
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/BeforeRefreshTiFlashTickerLoop")
 	}()
 
 	tk.MustExec(fmt.Sprintf("ALTER TABLE ddltiflash ADD PARTITION (PARTITION pn VALUES LESS THAN (%v))", lessThan))
@@ -492,8 +496,47 @@ func CheckTableAvailableWithTableName(dom *domain.Domain, t *testing.T, count ui
 	require.ElementsMatch(t, labels, replica.LocationLabels)
 }
 
+func WaitTablesAvailableWithTableName(dom *domain.Domain, t *testing.T, count uint64, labels []string, db string, tables []string, timeout time.Duration) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		for _, tableName := range tables {
+			tb, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr(db), ast.NewCIStr(tableName))
+			if err != nil {
+				return false
+			}
+			replica := tb.Meta().TiFlashReplica
+			if replica == nil || !replica.Available {
+				return false
+			}
+		}
+		return true
+	}, timeout, ddl.PollTiFlashInterval/2)
+	for _, tableName := range tables {
+		CheckTableAvailableWithTableName(dom, t, count, labels, db, tableName)
+	}
+}
+
 func CheckTableAvailable(dom *domain.Domain, t *testing.T, count uint64, labels []string) {
 	CheckTableAvailableWithTableName(dom, t, count, labels, "test", "ddltiflash")
+}
+
+func tableReplicaWithTableName(dom *domain.Domain, db string, table string) *model.TiFlashReplicaInfo {
+	tb, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr(db), ast.NewCIStr(table))
+	if err != nil || tb == nil {
+		return nil
+	}
+	return tb.Meta().TiFlashReplica
+}
+
+func waitTableReplicaStateWithTableName(dom *domain.Domain, t *testing.T, db string, table string, available bool, timeout time.Duration) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		replica := tableReplicaWithTableName(dom, db, table)
+		return replica != nil && replica.Available == available
+	}, timeout, ddl.PollTiFlashInterval/2)
+	replica := tableReplicaWithTableName(dom, db, table)
+	require.NotNil(t, replica)
+	require.Equal(t, available, replica.Available)
 }
 
 func CheckTableNoReplica(dom *domain.Domain, t *testing.T, db string, table string) {
@@ -536,18 +579,16 @@ func TestTiFlashMassiveReplicaAvailable(t *testing.T) {
 	defer teardown()
 	tk := testkit.NewTestKit(t, s.store)
 
+	tableNames := make([]string, 100)
 	tk.MustExec("use test")
 	for i := range 100 {
-		tk.MustExec(fmt.Sprintf("drop table if exists ddltiflash%v", i))
-		tk.MustExec(fmt.Sprintf("create table ddltiflash%v(z int)", i))
-		tk.MustExec(fmt.Sprintf("alter table ddltiflash%v set tiflash replica 1", i))
+		tableNames[i] = fmt.Sprintf("ddltiflash%v", i)
+		tk.MustExec(fmt.Sprintf("drop table if exists %s", tableNames[i]))
+		tk.MustExec(fmt.Sprintf("create table %s(z int)", tableNames[i]))
+		tk.MustExec(fmt.Sprintf("alter table %s set tiflash replica 1", tableNames[i]))
 	}
 
-	time.Sleep(ddl.PollTiFlashInterval * 10)
-	// Should get schema right now
-	for i := range 100 {
-		CheckTableAvailableWithTableName(s.dom, t, 1, []string{}, "test", fmt.Sprintf("ddltiflash%v", i))
-	}
+	WaitTablesAvailableWithTableName(s.dom, t, 1, []string{}, "test", tableNames, 30*time.Second)
 }
 
 // When set TiFlash replica, tidb shall add one Pd Rule for this table.
@@ -586,7 +627,7 @@ func TestSetPlacementRuleWithGCWorker(t *testing.T) {
 	s, teardown := createTiFlashContext(t)
 	defer teardown()
 
-	rpcClient, pdClient, cluster, err := unistore.New("", nil, nil)
+	rpcClient, pdClient, cluster, err := unistore.New("", nil, constants.NullKeyspaceID, nil)
 	defer func() {
 		rpcClient.Close()
 		pdClient.Close()
@@ -739,35 +780,49 @@ func TestTiFlashBackoffer(t *testing.T) {
 func TestTiFlashBackoff(t *testing.T) {
 	s, teardown := createTiFlashContext(t)
 	defer teardown()
-	tk := testkit.NewTestKit(t, s.store)
+	se := session.CreateSessionAndSetID(t, s.store)
+	defer se.Close()
 
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists ddltiflash")
-	tk.MustExec("create table ddltiflash(z int)")
+	session.MustExec(t, se, "use test")
+	session.MustExec(t, se, "drop table if exists ddltiflash")
+	session.MustExec(t, se, "create table ddltiflash(z int)")
 
-	// Not available for all tables
+	// Hold the mocked TiFlash sync status unavailable while polling is paused so the
+	// backoff path is exercised without relying on failpoint instrumentation.
 	ddl.DisableTiFlashPoll(s.dom.DDL())
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/PollTiFlashReplicaStatusReplacePrevAvailableValue", `return(false)`))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/PollTiFlashReplicaStatusReplaceCurAvailableValue", `return(false)`))
+	session.MustExec(t, se, "alter table ddltiflash set tiflash replica 1")
+	tb, err := s.dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("ddltiflash"))
+	require.NoError(t, err)
+	require.NotNil(t, tb)
+	s.tiflash.ResetSyncStatus(int(tb.Meta().ID), false)
 	ddl.EnableTiFlashPoll(s.dom.DDL())
-	tk.MustExec("alter table ddltiflash set tiflash replica 1")
 
 	// 1, 1.5, 2.25, 3.375, 5.5625
 	// (1), 1, 1, 2, 3, 5
 	time.Sleep(ddl.PollTiFlashInterval * 5)
-	tb, err := s.dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("ddltiflash"))
+	tb, err = s.dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("ddltiflash"))
 	require.NoError(t, err)
 	require.NotNil(t, tb)
 	require.False(t, tb.Meta().TiFlashReplica.Available)
 
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/PollTiFlashReplicaStatusReplacePrevAvailableValue"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/PollTiFlashReplicaStatusReplaceCurAvailableValue"))
-
-	time.Sleep(ddl.PollTiFlashInterval * 3)
-	tb, err = s.dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("ddltiflash"))
-	require.NoError(t, err)
-	require.NotNil(t, tb)
-	require.True(t, tb.Meta().TiFlashReplica.Available)
+	s.tiflash.ResetSyncStatus(int(tb.Meta().ID), true)
+	WaitTablesAvailableWithTableName(s.dom, t, 1, []string{}, "test", []string{"ddltiflash"}, ddl.PollTiFlashInterval*RoundToBeAvailable*10)
+	// Availability alone is not enough here: the poller keeps scheduling available
+	// tables for post-availability progress refreshes on later ticks. First prove one
+	// such refresh still happens after the table becomes available.
+	require.NoError(t, infosync.UpdateTiFlashProgressCache(tb.Meta().ID, 0))
+	require.Eventually(t, func() bool {
+		progress, isExist := infosync.GetTiFlashProgressFromCache(tb.Meta().ID)
+		return isExist && progress == 1
+	}, ddl.PollTiFlashInterval*RoundToBeAvailable*10, ddl.PollTiFlashInterval/2)
+	// Then stop future polling and prove no in-flight or later refresh can still
+	// reach the progress cache before teardown closes the mock status server.
+	ddl.DisableTiFlashPoll(s.dom.DDL())
+	require.NoError(t, infosync.UpdateTiFlashProgressCache(tb.Meta().ID, 0))
+	require.Never(t, func() bool {
+		progress, isExist := infosync.GetTiFlashProgressFromCache(tb.Meta().ID)
+		return isExist && progress == 1
+	}, ddl.PollTiFlashInterval*2, ddl.PollTiFlashInterval/5)
 }
 
 func TestAlterDatabaseBasic(t *testing.T) {
@@ -1124,12 +1179,13 @@ func TestTiFlashFailureProgressAfterAvailable(t *testing.T) {
 func TestTiFlashProgressAfterAvailable(t *testing.T) {
 	s, teardown := createTiFlashContext(t)
 	defer teardown()
-	tk := testkit.NewTestKit(t, s.store)
+	se := session.CreateSessionAndSetID(t, s.store)
+	defer se.Close()
 
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists ddltiflash")
-	tk.MustExec("create table ddltiflash(z int)")
-	tk.MustExec("alter table ddltiflash set tiflash replica 1")
+	session.MustExec(t, se, "use test")
+	session.MustExec(t, se, "drop table if exists ddltiflash")
+	session.MustExec(t, se, "create table ddltiflash(z int)")
+	session.MustExec(t, se, "alter table ddltiflash set tiflash replica 1")
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
 	CheckTableAvailable(s.dom, t, 1, []string{})
 
@@ -1182,24 +1238,27 @@ func TestTiFlashProgressAfterAvailableForPartitionTable(t *testing.T) {
 func TestTiFlashProgressCache(t *testing.T) {
 	s, teardown := createTiFlashContext(t)
 	defer teardown()
-	tk := testkit.NewTestKit(t, s.store)
+	se := session.CreateSessionAndSetID(t, s.store)
+	defer se.Close()
 
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists ddltiflash")
-	tk.MustExec("create table ddltiflash(z int)")
-	tk.MustExec("alter table ddltiflash set tiflash replica 1")
-	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
-	CheckTableAvailable(s.dom, t, 1, []string{})
+	session.MustExec(t, se, "use test")
+	session.MustExec(t, se, "drop table if exists ddltiflash")
+	session.MustExec(t, se, "create table ddltiflash(z int)")
+	session.MustExec(t, se, "alter table ddltiflash set tiflash replica 1")
+	WaitTablesAvailableWithTableName(s.dom, t, 1, []string{}, "test", []string{"ddltiflash"}, ddl.PollTiFlashInterval*RoundToBeAvailable*10)
 
 	tb, err := s.dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("ddltiflash"))
 	require.NoError(t, err)
 	require.NotNil(t, tb)
 	infosync.UpdateTiFlashProgressCache(tb.Meta().ID, 0)
 	// after available, it will still update progress cache.
-	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
+	require.Eventually(t, func() bool {
+		progress, isExist := infosync.GetTiFlashProgressFromCache(tb.Meta().ID)
+		return isExist && progress == 1
+	}, ddl.PollTiFlashInterval*RoundToBeAvailable*10, ddl.PollTiFlashInterval/2)
 	progress, isExist := infosync.GetTiFlashProgressFromCache(tb.Meta().ID)
 	require.True(t, isExist)
-	require.True(t, progress == 1)
+	require.Equal(t, 1.0, progress)
 }
 
 func TestTiFlashProgressAvailableList(t *testing.T) {
@@ -1293,44 +1352,31 @@ func TestTiFlashAvailableAfterResetReplica(t *testing.T) {
 func TestTiFlashPartitionNotAvailable(t *testing.T) {
 	s, teardown := createTiFlashContext(t)
 	defer teardown()
-	tk := testkit.NewTestKit(t, s.store)
+	se := session.CreateSessionAndSetID(t, s.store)
+	defer se.Close()
+	transitionTimeout := ddl.PollTiFlashInterval * RoundToBeAvailable * 6
 
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists ddltiflash")
-	tk.MustExec("create table ddltiflash(z int) PARTITION BY RANGE(z) (PARTITION p0 VALUES LESS THAN (10))")
+	session.MustExec(t, se, "use test")
+	session.MustExec(t, se, "drop table if exists ddltiflash")
+	session.MustExec(t, se, "create table ddltiflash(z int) PARTITION BY RANGE(z) (PARTITION p0 VALUES LESS THAN (10))")
 
 	tb, err := s.dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("ddltiflash"))
 	require.NoError(t, err)
 	require.NotNil(t, tb)
 
-	tk.MustExec("alter table ddltiflash set tiflash replica 1")
+	session.MustExec(t, se, "alter table ddltiflash set tiflash replica 1")
 	s.tiflash.ResetSyncStatus(int(tb.Meta().Partition.Definitions[0].ID), false)
-	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
-
-	tb, err = s.dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("ddltiflash"))
-	require.NoError(t, err)
-	require.NotNil(t, tb)
-	replica := tb.Meta().TiFlashReplica
-	require.NotNil(t, replica)
-	require.False(t, replica.Available)
+	waitTableReplicaStateWithTableName(s.dom, t, "test", "ddltiflash", false, transitionTimeout)
 
 	s.tiflash.ResetSyncStatus(int(tb.Meta().Partition.Definitions[0].ID), true)
-	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
-
-	tb, err = s.dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("ddltiflash"))
-	require.NoError(t, err)
-	require.NotNil(t, tb)
-	replica = tb.Meta().TiFlashReplica
-	require.NotNil(t, replica)
-	require.True(t, replica.Available)
+	waitTableReplicaStateWithTableName(s.dom, t, "test", "ddltiflash", true, transitionTimeout)
 
 	s.tiflash.ResetSyncStatus(int(tb.Meta().Partition.Definitions[0].ID), false)
-	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
-	require.NoError(t, err)
-	require.NotNil(t, tb)
-	replica = tb.Meta().TiFlashReplica
-	require.NotNil(t, replica)
-	require.True(t, replica.Available)
+	require.Never(t, func() bool {
+		replica := tableReplicaWithTableName(s.dom, "test", "ddltiflash")
+		return replica == nil || !replica.Available
+	}, ddl.PollTiFlashInterval*RoundToBeAvailable*3, ddl.PollTiFlashInterval/2)
+	CheckTableAvailable(s.dom, t, 1, []string{})
 }
 
 func TestTiFlashAvailableAfterAddPartition(t *testing.T) {
@@ -1371,7 +1417,7 @@ func TestTiFlashAvailableAfterAddPartition(t *testing.T) {
 func TestTiFlashAvailableAfterDownOneStore(t *testing.T) {
 	s, teardown := createTiFlashContext(t)
 	defer teardown()
-	tk := testkit.NewTestKit(t, s.store)
+	tk := testkit.NewTestKitWithSession(t, s.store, testkit.NewSession(t, s.store))
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists ddltiflash")

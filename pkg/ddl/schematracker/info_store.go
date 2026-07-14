@@ -41,6 +41,24 @@ func NewInfoStore(lowerCaseTableNames int) *InfoStore {
 	}
 }
 
+// InitFromIS initializes InfoStore from an InfoSchema.
+func (i *InfoStore) InitFromIS(is infoschema.InfoSchema) error {
+	ctx := context.Background()
+	for _, db := range is.AllSchemas() {
+		i.PutSchema(db)
+		tbls, err := is.SchemaTableInfos(ctx, db.Name)
+		if err != nil {
+			return err
+		}
+		for _, tbl := range tbls {
+			if err = i.PutTable(db.Name, tbl); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func (i *InfoStore) ciStr2Key(name ast.CIStr) string {
 	if i.lowerCaseTableNames == 0 {
 		return name.O

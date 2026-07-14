@@ -14,11 +14,14 @@
 
 package issyncer
 
-import "sync"
+import (
+	"sync"
+
+	"github.com/pingcap/tidb/pkg/infoschema/issyncer/mdldef"
+)
 
 type mdlCheckTableInfo struct {
-	mu         sync.Mutex
-	newestVer  int64
-	jobsVerMap map[int64]int64
-	jobsIDsMap map[int64]string
+	mu        sync.Mutex
+	newestVer int64
+	jobs      map[int64]*mdldef.JobMDL
 }

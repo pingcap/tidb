@@ -51,16 +51,6 @@ type SampleItem struct {
 // EmptySampleItemSize is the size of empty SampleItem, 96 = 72 (datum) + 8 (int) + 16.
 const EmptySampleItemSize = int64(unsafe.Sizeof(SampleItem{}))
 
-// CopySampleItems returns a deep copy of SampleItem slice.
-func CopySampleItems(items []*SampleItem) []*SampleItem {
-	n := make([]*SampleItem, len(items))
-	for i, item := range items {
-		ni := *item
-		n[i] = &ni
-	}
-	return n
-}
-
 func sortSampleItems(sc *stmtctx.StatementContext, items []*SampleItem) error {
 	var err error
 	slices.SortStableFunc(items, func(i, j *SampleItem) int {
@@ -87,6 +77,21 @@ type SampleCollector struct {
 	TotalSize     int64 // TotalSize is the total size of column.
 	MemSize       int64 // major memory size of this sample collector.
 	IsMerger      bool
+}
+
+// Destroy releases references held by the sample collector so the sampled data can be reclaimed eagerly.
+func (c *SampleCollector) Destroy() {
+	c.FMSketch = nil
+	c.CMSketch = nil
+	c.TopN = nil
+	c.Samples = nil
+	c.seenValues = 0
+	c.NullCount = 0
+	c.Count = 0
+	c.MaxSampleSize = 0
+	c.TotalSize = 0
+	c.MemSize = 0
+	c.IsMerger = false
 }
 
 // MergeSampleCollector merges two sample collectors.

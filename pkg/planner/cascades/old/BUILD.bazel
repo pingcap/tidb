@@ -64,6 +64,7 @@ go_test(
         "//pkg/planner/core/resolve",
         "//pkg/planner/memo",
         "//pkg/planner/property",
+        "//pkg/planner/util/coretestsdk",
         "//pkg/testkit/testdata",
         "//pkg/testkit/testsetup",
         "@com_github_stretchr_testify//require",

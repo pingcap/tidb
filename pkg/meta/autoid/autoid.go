@@ -55,7 +55,16 @@ const (
 	PerformanceSchemaDBID int64 = SystemSchemaIDFlag | 10000
 	// MetricSchemaDBID is the metrics_schema schema id, it's exported for test.
 	MetricSchemaDBID int64 = SystemSchemaIDFlag | 20000
+	// ReservedTablesBaseID is the base id for downstream fork edition system tables.
+	// We want to add this variable in TiDB to avoid TiDB uses these table IDs
+	// unintentionally.
+	ReservedTablesBaseID int64 = SystemSchemaIDFlag | 5000
 )
+
+// IsMemSchemaID checks whether schemaID is memory schema ID.
+func IsMemSchemaID(schemaID int64) bool {
+	return schemaID&SystemSchemaIDFlag != 0
+}
 
 const (
 	minStep            = 30000

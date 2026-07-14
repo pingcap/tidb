@@ -380,7 +380,7 @@ func TestNewScanSession(t *testing.T) {
 			called := false
 			require.NoError(t, ttlworker.WithSessionForTest(pool, func(se session.Session) error {
 				require.False(t, called)
-				tblSe, restore, err := ttlworker.NewScanSession(se, &cache.PhysicalTable{}, time.Now())
+				tblSe, restore, err := ttlworker.NewScanSession(context.Background(), se, &cache.PhysicalTable{}, time.Now())
 				called = true
 				if errSQL == "" {
 					// success case
@@ -391,6 +391,7 @@ func TestNewScanSession(t *testing.T) {
 					// NewScanSession should override @@dist_sql_scan_concurrency and @@tidb_enable_paging
 					require.Equal(t, 1, se.GetSessionVars().DistSQLScanConcurrency())
 					require.False(t, se.GetSessionVars().EnablePaging)
+					require.True(t, se.GetSessionVars().InternalSQLScanUserTable)
 					// restore should restore the session variables
 					restore()
 				} else {
@@ -402,6 +403,7 @@ func TestNewScanSession(t *testing.T) {
 				// Not matter returns an error or not, the session should be closed
 				require.Equal(t, 123, se.GetSessionVars().DistSQLScanConcurrency())
 				require.True(t, se.GetSessionVars().EnablePaging)
+				require.False(t, se.GetSessionVars().InternalSQLScanUserTable)
 				return nil
 			}))
 			require.True(t, called)
@@ -422,7 +424,7 @@ func TestNewScanSession(t *testing.T) {
 		}, newFaultAfterCount(0)))
 		require.NoError(t, ttlworker.WithSessionForTest(pool, func(se session.Session) error {
 			require.False(t, called)
-			tblSe, restore, err := ttlworker.NewScanSession(se, &cache.PhysicalTable{}, time.Now())
+			tblSe, restore, err := ttlworker.NewScanSession(context.Background(), se, &cache.PhysicalTable{}, time.Now())
 			called = true
 			require.NoError(t, err)
 			require.NotNil(t, tblSe)

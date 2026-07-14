@@ -41,7 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 )
 
-// MockDataSourceParameters mpcks data source parameters
+// MockDataSourceParameters mocks data source parameters
 type MockDataSourceParameters struct {
 	Ctx         sessionctx.Context
 	DataSchema  *expression.Schema
@@ -235,6 +235,11 @@ func (*MockDataPhysicalPlan) ExplainID(_ ...bool) fmt.Stringer {
 // ID returns 0
 func (*MockDataPhysicalPlan) ID() int {
 	return 0
+}
+
+// SetID implements Plan interface
+func (*MockDataPhysicalPlan) SetID(_ int) {
+	panic("not implement")
 }
 
 // Stats returns nil

@@ -53,6 +53,7 @@ func TestContextDetach(t *testing.T) {
 		OriginalSQL:            "a",
 		KVVars:                 kvVars,
 		KvExecCounter:          &stmtstats.KvExecCounter{},
+		RUV2Metrics:            execdetails.NewRUV2Metrics(),
 		SessionMemTracker:      &memory.Tracker{},
 
 		Location:         time.Local,
@@ -81,6 +82,7 @@ func TestContextDetach(t *testing.T) {
 		EnablePaging:                  true,
 		MinPagingSize:                 1,
 		MaxPagingSize:                 1,
+		PagingSizeBytes:               1,
 		RequestSourceType:             "a",
 		ExplicitRequestSourceType:     "b",
 		StoreBatchSize:                1,
@@ -88,6 +90,8 @@ func TestContextDetach(t *testing.T) {
 		LoadBasedReplicaReadThreshold: time.Second,
 		TiKVClientReadTimeout:         1,
 		MaxExecutionTime:              1,
+		MaxKeysRead:                   1,
+		MaxKeysReadCounter:            new(atomic.Uint64),
 
 		ReplicaClosestReadThreshold: 1,
 		ConnectionID:                1,
@@ -106,6 +110,7 @@ func TestContextDetach(t *testing.T) {
 			"$.ResourceGroupTagger",
 			// The following fields are on stmtctx and will be recreated before the new statement
 			"$.RunawayChecker",
+			"$.RUConsumptionReporter",
 			"$.ExecDetails",
 		}))
 
@@ -120,7 +125,9 @@ func TestContextDetach(t *testing.T) {
 			// The following fields are on stmtctx and will be recreated before the new statement,
 			// so keep the same pointer is fine
 			"$.RunawayChecker",
+			"$.RUConsumptionReporter",
 			"$.ExecDetails",
+			"$.RUV2Metrics",
 			"$.KVVars.Killed",
 			"$.KvExecCounter",
 			"$.SessionMemTracker",

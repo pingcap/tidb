@@ -33,7 +33,6 @@ var UnCacheableFunctions = map[string]struct{}{
 	ast.Like:                 {},
 
 	// functions below are incompatible with (non-prep) plan cache, we'll fix them one by one later.
-	ast.JSONExtract:      {}, // cannot pass TestFuncJSON
 	ast.JSONObject:       {},
 	ast.JSONArray:        {},
 	ast.Coalesce:         {},
@@ -51,6 +50,8 @@ var unFoldableFunctions = map[string]struct{}{
 	ast.FoundRows: {},
 	ast.Rand:      {},
 	ast.UUID:      {},
+	ast.UUIDv4:    {},
+	ast.UUIDv7:    {},
 	ast.Sleep:     {},
 	ast.RowFunc:   {},
 	ast.Values:    {},
@@ -134,6 +135,8 @@ var IllegalFunctions4GeneratedColumns = map[string]struct{}{
 	ast.UTCTime:              {},
 	ast.UTCTimestamp:         {},
 	ast.UUID:                 {},
+	ast.UUIDv4:               {},
+	ast.UUIDv7:               {},
 	ast.UUIDShort:            {},
 	ast.Values:               {},
 	ast.Version:              {},
@@ -250,6 +253,8 @@ var mutableEffectsFunctions = map[string]struct{}{
 	ast.Rand:        {},
 	ast.RandomBytes: {},
 	ast.UUID:        {},
+	ast.UUIDv4:      {},
+	ast.UUIDv7:      {},
 	ast.UUIDShort:   {},
 	ast.Sleep:       {},
 	ast.SetVar:      {},

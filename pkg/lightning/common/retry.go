@@ -19,8 +19,10 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	goerrors "errors"
+	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"strings"
@@ -31,6 +33,8 @@ import (
 	tmysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	drivererr "github.com/pingcap/tidb/pkg/store/driver/error"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -68,6 +72,14 @@ func isRetryableFromErrorMessage(err error) bool {
 func IsRetryableError(err error) bool {
 	for _, singleError := range errors.Errors(err) {
 		if !isSingleRetryableError(singleError) {
+			// the caller might call IsRetryableError on nil, or the task is cancelled,
+			// no need to log more info in this case.
+			if singleError != nil && !goerrors.Is(singleError, context.Canceled) {
+				// we want to log its type and other info for better diagnosing and
+				// direct us to determine how to add to the retryable error list.
+				logutil.BgLogger().Info("meet un-retryable error", zap.Error(singleError),
+					zap.String("info", fmt.Sprintf("type: %T, value: %#v", singleError, singleError)))
+			}
 			return false
 		}
 	}
@@ -77,7 +89,7 @@ func IsRetryableError(err error) bool {
 var retryableErrorIDs = map[errors.ErrorID]struct{}{
 	errdef.ErrKVEpochNotMatch.ID():  {},
 	errdef.ErrKVNotLeader.ID():      {},
-	ErrNoLeader.ID():                {},
+	errdef.ErrNoLeader.ID():         {},
 	errdef.ErrKVRegionNotFound.ID(): {},
 	// common.ErrKVServerIsBusy is a little duplication with tmysql.ErrTiKVServerBusy
 	// it's because the response of sst.ingest gives us a sst.IngestResponse which doesn't contain error code,
@@ -88,12 +100,17 @@ var retryableErrorIDs = map[errors.ErrorID]struct{}{
 	errdef.ErrKVRaftProposalDropped.ID(): {},
 	// litBackendCtxMgr.Register may return the error.
 	ErrCreatePDClient.ID(): {},
-	// during checksum coprocessor will transform error into driver error in handleCopResponse using ToTiDBErr
-	// met ErrRegionUnavailable on free-tier import during checksum, others hasn't met yet
+	// during checksum coprocessor, either through ADMIN CHECKSUM TABLE or by calling
+	// distsql directly, we will transform error into driver error in handleCopResponse
+	// using ToTiDBErr. we ever met ErrRegionUnavailable on free-tier import during
+	// checksum, and meet: "[tikv:9001]PD server timeout: start timestamp may fall
+	// behind safe point" when the TiDB doing checksum and network partitioned
+	// with the cluster, others hasn't met yet
 	drivererr.ErrRegionUnavailable.ID(): {},
 	drivererr.ErrTiKVStaleCommand.ID():  {},
 	drivererr.ErrTiKVServerTimeout.ID(): {},
 	drivererr.ErrTiKVServerBusy.ID():    {},
+	drivererr.ErrPDServerTimeout.ID():   {},
 	drivererr.ErrUnknown.ID():           {},
 }
 
@@ -103,11 +120,34 @@ var retryableErrorIDs = map[errors.ErrorID]struct{}{
 // https://github.com/pingcap/tidb/issues/46321 and I don't know why 😭
 var ErrWriteTooSlow = errors.New("write too slow, maybe gRPC is blocked forever")
 
+// see https://github.com/golang/go/blob/b3251514531123d7fd007682389bce7428d159a0/src/net/http/transport.go#L1541-L1544
+var nonRetryableURLInnerErrorMsg = []string{
+	"net/http: request canceled",
+	"net/http: request canceled while waiting for connection",
+}
+
+func isRetryableURLInnerError(err error) bool {
+	if err == nil || err == io.EOF {
+		// we retry when urlErr.Err is nil, the EOF error is a workaround
+		// for https://github.com/golang/go/issues/53472
+		return true
+	}
+	errMsg := err.Error()
+	for _, msg := range nonRetryableURLInnerErrorMsg {
+		if strings.Contains(errMsg, msg) {
+			return false
+		}
+	}
+	// such as:
+	// Put "http://localhost:19000/write_sst?......": write tcp ......: use of closed network connection
+	return true
+}
+
 func isSingleRetryableError(err error) bool {
 	err = errors.Cause(err)
 
 	switch err {
-	case nil, context.Canceled, context.DeadlineExceeded, io.EOF, sql.ErrNoRows:
+	case nil, context.Canceled, io.EOF, sql.ErrNoRows:
 		return false
 	case mysql.ErrInvalidConn, driver.ErrBadConn, ErrWriteTooSlow:
 		return true
@@ -121,16 +161,12 @@ func isSingleRetryableError(err error) bool {
 		// the error might be nested, such as *url.Error -> *net.OpError -> *os.SyscallError
 		var syscallErr *os.SyscallError
 		if goerrors.As(nerr, &syscallErr) {
-			return syscallErr.Err == syscall.ECONNREFUSED || syscallErr.Err == syscall.ECONNRESET
+			return syscallErr.Err == syscall.ECONNREFUSED || syscallErr.Err == syscall.ECONNRESET ||
+				syscallErr.Err == syscall.EPIPE
 		}
 		var urlErr *url.Error
 		if goerrors.As(nerr, &urlErr) {
-			if urlErr.Err == nil || urlErr.Err == io.EOF {
-				// we retry when urlErr.Err is nil, the EOF error is a workaround
-				// for https://github.com/golang/go/issues/53472
-				return true
-			}
-			return isSingleRetryableError(urlErr.Err)
+			return isRetryableURLInnerError(urlErr.Err)
 		}
 		return false
 	case *mysql.MySQLError:
@@ -148,6 +184,12 @@ func isSingleRetryableError(err error) bool {
 			return true
 		}
 		return false
+	case *errdef.HTTPStatusError:
+		// all are retryable except 400 and 404
+		if nerr.StatusCode == http.StatusBadRequest || nerr.StatusCode == http.StatusNotFound {
+			return false
+		}
+		return true
 	default:
 		rpcStatus, ok := status.FromError(err)
 		if !ok {

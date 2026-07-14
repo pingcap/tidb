@@ -24,6 +24,8 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/failpoint"
+	_ "github.com/pingcap/tidb/pkg/autoid_service" // Init MockForTest
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	ddltestutil "github.com/pingcap/tidb/pkg/ddl/testutil"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
@@ -768,119 +770,37 @@ func TestAutoRandomTableOption(t *testing.T) {
 	require.Contains(t, err.Error(), autoid.AutoRandomRebaseNotApplicable)
 }
 
-func TestSetDDLReorgWorkerCnt(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	err := ddlutil.LoadDDLReorgVars(context.Background(), tk.Session())
-	require.NoError(t, err)
-	require.Equal(t, int32(vardef.DefTiDBDDLReorgWorkerCount), vardef.GetDDLReorgWorkerCounter())
-	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 1")
-	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Session())
-	require.NoError(t, err)
-	require.Equal(t, int32(1), vardef.GetDDLReorgWorkerCounter())
-	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 100")
-	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Session())
-	require.NoError(t, err)
-	require.Equal(t, int32(100), vardef.GetDDLReorgWorkerCounter())
-	tk.MustGetDBError("set @@global.tidb_ddl_reorg_worker_cnt = invalid_val", variable.ErrWrongTypeForVar)
-	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 100")
-	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Session())
-	require.NoError(t, err)
-	require.Equal(t, int32(100), vardef.GetDDLReorgWorkerCounter())
-	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = -1")
-	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_ddl_reorg_worker_cnt value: '-1'"))
-	tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt").Check(testkit.Rows("1"))
-
-	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 100")
-	res := tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt")
-	res.Check(testkit.Rows("100"))
-
-	res = tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt")
-	res.Check(testkit.Rows("100"))
-	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 100")
-	res = tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt")
-	res.Check(testkit.Rows("100"))
-
-	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 257")
-	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_ddl_reorg_worker_cnt value: '257'"))
-	tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt").Check(testkit.Rows("256"))
-
-	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 10;")
-	tk.MustQuery("select @@tidb_ddl_reorg_worker_cnt;").Check(testkit.Rows("10"))
-	tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt;").Check(testkit.Rows("256"))
-	require.Equal(t, int32(256), vardef.GetDDLReorgWorkerCounter())
-}
-
-func TestSetDDLReorgBatchSize(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	err := ddlutil.LoadDDLReorgVars(context.Background(), tk.Session())
-	require.NoError(t, err)
-	require.Equal(t, int32(vardef.DefTiDBDDLReorgBatchSize), vardef.GetDDLReorgBatchSize())
-
-	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 1")
-	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_ddl_reorg_batch_size value: '1'"))
-	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Session())
-	require.NoError(t, err)
-	require.Equal(t, vardef.MinDDLReorgBatchSize, vardef.GetDDLReorgBatchSize())
-	tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_batch_size = %v", vardef.MaxDDLReorgBatchSize+1))
-	tk.MustQuery("show warnings;").Check(testkit.Rows(fmt.Sprintf("Warning 1292 Truncated incorrect tidb_ddl_reorg_batch_size value: '%d'", vardef.MaxDDLReorgBatchSize+1)))
-	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Session())
-	require.NoError(t, err)
-	require.Equal(t, vardef.MaxDDLReorgBatchSize, vardef.GetDDLReorgBatchSize())
-	tk.MustGetDBError("set @@global.tidb_ddl_reorg_batch_size = invalid_val", variable.ErrWrongTypeForVar)
-	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 100")
-	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Session())
-	require.NoError(t, err)
-	require.Equal(t, int32(100), vardef.GetDDLReorgBatchSize())
-	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = -1")
-	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_ddl_reorg_batch_size value: '-1'"))
-
-	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 100")
-	res := tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size")
-	res.Check(testkit.Rows("100"))
-
-	res = tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size")
-	res.Check(testkit.Rows(fmt.Sprintf("%v", 100)))
-	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 1000")
-	res = tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size")
-	res.Check(testkit.Rows("1000"))
-
-	tk.MustExec("set @@tidb_ddl_reorg_batch_size = 256;")
-	tk.MustQuery("select @@tidb_ddl_reorg_batch_size").Check(testkit.Rows("256"))
-	tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size").Check(testkit.Rows("1000"))
-}
-
 func TestSetDDLErrorCountLimit(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	err := ddlutil.LoadDDLVars(tk.Session())
-	require.NoError(t, err)
-	require.Equal(t, int64(vardef.DefTiDBDDLErrorCountLimit), vardef.GetDDLErrorCountLimit())
 
+	reloadFunc := func() {
+		require.NoError(t, ddlutil.LoadGlobalVars(tk.Session(), vardef.TiDBDDLErrorCountLimit))
+	}
+
+	reloadFunc()
+	require.Equal(t, int64(vardef.DefTiDBDDLErrorCountLimit), vardef.GetDDLErrorCountLimit())
 	tk.MustExec("set @@global.tidb_ddl_error_count_limit = -1")
 	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_ddl_error_count_limit value: '-1'"))
-	err = ddlutil.LoadDDLVars(tk.Session())
-	require.NoError(t, err)
+	reloadFunc()
 	require.Equal(t, int64(0), vardef.GetDDLErrorCountLimit())
 	tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %v", uint64(math.MaxInt64)+1))
 	tk.MustQuery("show warnings;").Check(testkit.Rows(fmt.Sprintf("Warning 1292 Truncated incorrect tidb_ddl_error_count_limit value: '%d'", uint64(math.MaxInt64)+1)))
-	err = ddlutil.LoadDDLVars(tk.Session())
-	require.NoError(t, err)
+	reloadFunc()
 	require.Equal(t, int64(math.MaxInt64), vardef.GetDDLErrorCountLimit())
 	tk.MustGetDBError("set @@global.tidb_ddl_error_count_limit = invalid_val", variable.ErrWrongTypeForVar)
 	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 100")
-	err = ddlutil.LoadDDLVars(tk.Session())
-	require.NoError(t, err)
+	reloadFunc()
 	require.Equal(t, int64(100), vardef.GetDDLErrorCountLimit())
 	res := tk.MustQuery("select @@global.tidb_ddl_error_count_limit")
 	res.Check(testkit.Rows("100"))
 }
 
 func TestSetDDLReorgMaxWriteSpeed(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Setting tidb_ddl_reorg_max_write_speed is not supported in the next generation of TiDB")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	require.Equal(t, int64(vardef.DefTiDBDDLReorgMaxWriteSpeed), vardef.DDLReorgMaxWriteSpeed.Load())
@@ -906,6 +826,9 @@ func TestSetDDLReorgMaxWriteSpeed(t *testing.T) {
 }
 
 func TestLoadDDLDistributeVars(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("DXF is always enabled in nextgen")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -972,10 +895,28 @@ func TestRenameTableWithReload(t *testing.T) {
 	tk.MustExec("drop database if exists rename1")
 	tk.MustExec("drop database if exists rename2")
 	tk.MustExec("drop database if exists rename3")
-
 	tk.MustExec("create database rename1")
 	tk.MustExec("create database rename2")
 	tk.MustExec("create database rename3")
+
+	// Issue #64561
+	tk.MustExec("create table rename1.t(id int primary key auto_increment) AUTO_ID_CACHE=1")
+	tk.MustExec("insert into rename1.t values ()")
+	tk.MustExec("rename table rename1.t to rename2.t")
+	forceFullReload(t, store, dom)
+	tk.MustExec("insert into rename2.t values ()")
+	tk.MustQuery("select * from rename2.t").Check(testkit.Rows("1", "2"))
+	tk.MustExec("drop table rename2.t")
+
+	tk.MustExec("create table rename1.t(id int primary key auto_increment) AUTO_ID_CACHE=1")
+	tk.MustExec("insert into rename1.t values (), ()")
+	tk.MustExec("rename table rename1.t to rename2.t")
+	tk.MustExec("insert into rename2.t values (100)")
+	forceFullReload(t, store, dom)
+	tk.MustExec("insert into rename2.t values ()")
+	tk.MustQuery("select * from rename2.t").Check(testkit.Rows("1", "2", "100", "101"))
+	tk.MustExec("drop table rename2.t")
+
 	tk.MustExec("create table rename1.t (a int primary key auto_increment)")
 	tk.MustExec("insert rename1.t values ()")
 	tk.MustExec("rename table rename1.t to rename2.t")

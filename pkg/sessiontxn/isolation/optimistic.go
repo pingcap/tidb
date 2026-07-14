@@ -17,6 +17,7 @@ package isolation
 import (
 	"math"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -52,6 +53,9 @@ func (p *OptimisticTxnContextProvider) onTxnActive(
 ) {
 	sessVars := p.sctx.GetSessionVars()
 	sessVars.TxnCtx.CouldRetry = isOptimisticTxnRetryable(sessVars, tp, txn.IsPipelined())
+	failpoint.Inject("injectOptimisticTxnRetryable", func(val failpoint.Value) {
+		sessVars.TxnCtx.CouldRetry = val.(bool)
+	})
 }
 
 // isOptimisticTxnRetryable (if returns true) means the transaction could retry.

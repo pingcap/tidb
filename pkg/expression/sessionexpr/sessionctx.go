@@ -75,7 +75,10 @@ func (ctx *ExprContext) GetDefaultCollationForUTF8MB4() string {
 
 // GetBlockEncryptionMode returns the variable block_encryption_mode
 func (ctx *ExprContext) GetBlockEncryptionMode() string {
-	blockMode, _ := ctx.sctx.GetSessionVars().GetSystemVar(vardef.BlockEncryptionMode)
+	blockMode, ok := ctx.sctx.GetSessionVars().GetSystemVar(vardef.BlockEncryptionMode)
+	if !ok {
+		return vardef.DefBlockEncryptionMode
+	}
 	return blockMode
 }
 
@@ -130,6 +133,11 @@ func (ctx *ExprContext) GetWindowingUseHighPrecision() bool {
 // GetGroupConcatMaxLen returns the value of the 'group_concat_max_len' system variable.
 func (ctx *ExprContext) GetGroupConcatMaxLen() uint64 {
 	return ctx.sctx.GetSessionVars().GroupConcatMaxLen
+}
+
+// SetGroupConcatMaxLenForTest sets the `GroupConcatMaxLen` only for test
+func (ctx *ExprContext) SetGroupConcatMaxLenForTest(val uint64) {
+	ctx.sctx.GetSessionVars().GroupConcatMaxLen = val
 }
 
 // ConnectionID indicates the connection ID of the current session.

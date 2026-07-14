@@ -168,8 +168,9 @@ func TestMisc(t *testing.T) {
 		r.Store().Close()
 	}()
 
-	builder := NewBuilder(r, nil, NewData(), vardef.SchemaCacheSize.Load() > 0)
-	err := builder.InitWithDBInfos(nil, nil, nil, 1)
+	schemaCacheSize := vardef.SchemaCacheSize.Load()
+	builder := NewBuilder(r, schemaCacheSize, nil, NewData(), schemaCacheSize > 0)
+	err := builder.InitWithDBInfos(nil, nil, nil, nil, 1)
 	require.NoError(t, err)
 	is := builder.Build(math.MaxUint64)
 	require.Len(t, is.AllResourceGroups(), 0)
@@ -291,8 +292,9 @@ func TestBundles(t *testing.T) {
 
 	schemaName := ast.NewCIStr("testDB")
 	tableName := ast.NewCIStr("test")
-	builder := NewBuilder(r, nil, NewData(), vardef.SchemaCacheSize.Load() > 0)
-	err := builder.InitWithDBInfos(nil, nil, nil, 1)
+	schemaCacheSize := vardef.SchemaCacheSize.Load()
+	builder := NewBuilder(r, schemaCacheSize, nil, NewData(), schemaCacheSize > 0)
+	err := builder.InitWithDBInfos(nil, nil, nil, nil, 1)
 	require.NoError(t, err)
 	is := builder.Build(math.MaxUint64)
 	require.Equal(t, 2, len(is.AllSchemas()))
@@ -412,8 +414,9 @@ func TestReferredFKInfo(t *testing.T) {
 
 	schemaName := ast.NewCIStr("testDB")
 	tableName := ast.NewCIStr("testTable")
-	builder := NewBuilder(r, nil, NewData(), vardef.SchemaCacheSize.Load() > 0)
-	err := builder.InitWithDBInfos(nil, nil, nil, 1)
+	schemaCacheSize := vardef.SchemaCacheSize.Load()
+	builder := NewBuilder(r, schemaCacheSize, nil, NewData(), schemaCacheSize > 0)
+	err := builder.InitWithDBInfos(nil, nil, nil, nil, 1)
 	require.NoError(t, err)
 	is := builder.Build(math.MaxUint64)
 	v2, ok := is.(*infoschemaV2)
@@ -514,8 +517,9 @@ func TestSpecialAttributeCorrectnessInSchemaChange(t *testing.T) {
 
 	schemaName := ast.NewCIStr("testDB")
 	tableName := ast.NewCIStr("testTable")
-	builder := NewBuilder(r, nil, NewData(), vardef.SchemaCacheSize.Load() > 0)
-	err := builder.InitWithDBInfos(nil, nil, nil, 1)
+	schemaCacheSize := vardef.SchemaCacheSize.Load()
+	builder := NewBuilder(r, schemaCacheSize, nil, NewData(), schemaCacheSize > 0)
+	err := builder.InitWithDBInfos(nil, nil, nil, nil, 1)
 	require.NoError(t, err)
 	is := builder.Build(math.MaxUint64)
 	require.Equal(t, 2, len(is.AllSchemas()))
@@ -606,8 +610,9 @@ func TestDataStructFieldsCorrectnessInSchemaChange(t *testing.T) {
 
 	schemaName := ast.NewCIStr("testDB")
 	tableName := ast.NewCIStr("testTable")
-	builder := NewBuilder(r, nil, NewData(), vardef.SchemaCacheSize.Load() > 0)
-	err := builder.InitWithDBInfos(nil, nil, nil, 1)
+	schemaCacheSize := vardef.SchemaCacheSize.Load()
+	builder := NewBuilder(r, schemaCacheSize, nil, NewData(), schemaCacheSize > 0)
+	err := builder.InitWithDBInfos(nil, nil, nil, nil, 1)
 	require.NoError(t, err)
 	is := builder.Build(math.MaxUint64)
 	v2, ok := is.(*infoschemaV2)
@@ -810,9 +815,9 @@ func TestGCOldFKVersion(t *testing.T) {
 
 	// GC entries older than version 4
 	deleted := data.gcOldFKVersion(4)
-	require.Equal(t, 3, deleted) // versions 3,2,1 for group1
+	require.Equal(t, 2, deleted) // versions 2,1 for group1; keep pivot version 3
 	after := data.referredForeignKeys.Load().Len()
-	require.Equal(t, 3, after) // kept version 5 & 4 for group1, and the single group2
+	require.Equal(t, 4, after) // kept versions 5,4,3 for group1, and the single group2
 
 	// verify surviving versions
 	var vers []int64
@@ -820,9 +825,11 @@ func TestGCOldFKVersion(t *testing.T) {
 		vers = append(vers, item.schemaVersion)
 		return true
 	})
-	require.Equal(t, []int64{4, 5, 1}, vers)
+	require.Equal(t, []int64{3, 4, 5, 1}, vers)
 
 	// ensure getTableReferredForeignKeys respects GC boundary
+	require.NotEmpty(t, data.getTableReferredForeignKeys("db1", "table1", 3))
+	require.Empty(t, data.getTableReferredForeignKeys("db1", "table1", 4))
 	got := data.getTableReferredForeignKeys("db1", "table1", 5)
 	require.Equal(t, &model.ReferredFKInfo{
 		ChildSchema: ast.NewCIStr("s"),

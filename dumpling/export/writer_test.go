@@ -7,13 +7,15 @@ import (
 	"database/sql/driver"
 	"os"
 	"path"
+	"strings"
 	"sync"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
+	"github.com/pingcap/tidb/pkg/objstore/compressedio"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/promutil"
 	"github.com/stretchr/testify/require"
 )
@@ -73,8 +75,7 @@ func TestWriteTableMeta(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "/*!40014 SET FOREIGN_KEY_CHECKS=0*/;\n/*!40101 SET NAMES binary*/;\nCREATE TABLE t (a INT);\n", string(bytes))
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/dumpling/export/FailToCloseMetaFile", "return(true)"))
-	defer failpoint.Disable("github.com/pingcap/tidb/dumpling/export/FailToCloseMetaFile=return(true)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/dumpling/export/FailToCloseMetaFile", "return(true)")
 
 	err = writer.WriteTableMeta("test", "t", "CREATE TABLE t (a INT)")
 	require.ErrorContains(t, err, "injected error: fail to close meta file")
@@ -145,8 +146,7 @@ func TestWriteTableData(t *testing.T) {
 		"(4,'female','sarah@mail.com','020-1235','healthy');\n"
 	require.Equal(t, expected, string(bytes))
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/dumpling/export/FailToCloseDataFile", "return(true)"))
-	defer failpoint.Disable("github.com/pingcap/tidb/dumpling/export/FailToCloseDataFile=return(true)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/dumpling/export/FailToCloseDataFile", "return(true)")
 
 	tableIR = newMockTableIR("test", "employee", data, specCmts, colTypes)
 	err = writer.WriteTableData(tableIR, tableIR, 0)
@@ -200,6 +200,33 @@ func TestWriteTableDataWithFileSize(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, expected, string(bytes))
 	}
+
+	t.Run("parquet split files should keep parquet codec suffix", func(t *testing.T) {
+		parquetDir := t.TempDir()
+		parquetConfig := defaultConfigForTest(t)
+		parquetConfig.OutputDirPath = parquetDir
+		parquetConfig.FileType = FileFormatParquetString
+		parquetConfig.FileSize = 1
+		parquetConfig.ParquetCompressType = compressedio.Gzip
+
+		parquetWriter := createTestWriter(parquetConfig, t)
+		parquetData := [][]driver.Value{
+			{"1"},
+			{"2"},
+			{"3"},
+		}
+		colInfos := []*ColumnInfo{{Name: "id", DatabaseTypeName: "INT"}}
+		parquetTableIR := newMockTableIRWithColumnInfo("test", "employee", parquetData, nil, colInfos)
+
+		require.NoError(t, parquetWriter.WriteTableData(parquetTableIR, parquetTableIR, 0))
+
+		entries, err := os.ReadDir(parquetDir)
+		require.NoError(t, err)
+		require.Greater(t, len(entries), 1)
+		for _, entry := range entries {
+			require.Truef(t, strings.HasSuffix(entry.Name(), ".gz.parquet"), "unexpected file name: %s", entry.Name())
+		}
+	})
 }
 
 func TestWriteTableDataWithFileSizeAndRows(t *testing.T) {

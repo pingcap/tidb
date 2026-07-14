@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/testutil"
@@ -77,6 +78,7 @@ func checkGlobalIndexCleanUpDone(t *testing.T, ctx sessionctx.Context, tblInfo *
 		segs := tablecodec.SplitIndexValue(it.Value())
 		require.NotNil(t, segs.PartitionID)
 		_, pi, err := codec.DecodeInt(segs.PartitionID)
+		logutil.DDLLogger().Info("checkGlobalIndexCleanUpDone jobs", zap.String("key", it.Key().String()), zap.Int64("PartID", pi))
 		require.NoError(t, err)
 		require.NotEqual(t, pid, pi)
 		cnt++
@@ -1405,7 +1407,7 @@ func TestGlobalIndexUpdateInDropPartition(t *testing.T) {
 }
 
 func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists test_global")
@@ -1415,71 +1417,56 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 		partition p2 values less than (20)
 	);`)
 	tt := external.GetTableByName(t, tk, "test", "test_global")
+	tableID := tt.Meta().ID
 	pid := tt.Meta().Partition.Definitions[1].ID
 
 	tk.MustExec("Alter Table test_global Add Unique Index idx_b (b) global")
 	tk.MustExec("Alter Table test_global Add Unique Index idx_c (c) global")
 	tk.MustExec(`INSERT INTO test_global VALUES (1, 1, 1), (2, 2, 2), (11, 3, 3), (12, 4, 4), (15, 15, 15)`)
 
-	tk2 := testkit.NewTestKit(t, store)
-	tk4 := testkit.NewTestKit(t, store)
-	tk2.MustExec(`use test`)
-	tk4.MustExec(`use test`)
-	tk2.MustExec(`begin`)
-	tk2.MustExec(`insert into test_global values (5,5,5)`)
-
-	v1 := dom.InfoSchema().SchemaMetaVersion()
-	syncChan := make(chan bool)
-	go func() {
-		tk.MustExec("alter table test_global truncate partition p2;")
-		syncChan <- true
-	}()
-	waitFor := func(i int, s string) {
-		for {
-			tk4 := testkit.NewTestKit(t, store)
-			tk4.MustExec(`use test`)
-			res := tk4.MustQuery(`admin show ddl jobs where db_name = 'test' and table_name = 'test_global' and job_type = 'truncate partition'`).Rows()
-			if len(res) == 1 && res[0][i] == s {
-				v2 := dom.InfoSchema().SchemaMetaVersion()
-				if v2 > v1 {
-					// Also wait for the new infoschema loading
-					v1 = v2
-					break
-				}
-			}
-			time.Sleep(10 * time.Millisecond)
+	doneMap := make(map[model.SchemaState]struct{})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.Type != model.ActionTruncateTablePartition || job.TableID != tableID {
+			return
 		}
+		switch job.SchemaState {
+		case model.StateWriteOnly, model.StateDeleteOnly, model.StateDeleteReorganization:
+		default:
+			return
+		}
+		if _, ok := doneMap[job.SchemaState]; ok {
+			return
+		}
+		doneMap[job.SchemaState] = struct{}{}
+
+		tk1 := testkit.NewTestKit(t, store)
+		tk1.MustExec("use test")
+		switch job.SchemaState {
+		case model.StateWriteOnly:
+			tk1.MustQuery(`select count(*) from test_global`).Check(testkit.Rows("5"))
+			tk1.MustExec(`insert into test_global values (5,5,5)`)
+		case model.StateDeleteOnly:
+			tk1.MustQuery(`explain format='brief' select b from test_global use index(idx_b) where b = 15`).CheckContain("Point_Get")
+			tk1.MustQuery(`explain format='brief' select c from test_global use index(idx_c) where c = 15`).CheckContain("Point_Get")
+			tk1.MustQuery(`select b from test_global use index(idx_b) where b = 15`).Check(testkit.Rows())
+			tk1.MustQuery(`select c from test_global use index(idx_c) where c = 15`).Check(testkit.Rows())
+			err := tk1.ExecToErr(`insert into test_global values (15,15,15)`)
+			assert.Error(t, err)
+			assert.ErrorContains(t, err, "Duplicate entry '15'")
+		case model.StateDeleteReorganization:
+			tk1.MustQuery(`select b from test_global use index(idx_b) where b = 15`).Check(testkit.Rows())
+			tk1.MustQuery(`select c from test_global use index(idx_c) where c = 15`).Check(testkit.Rows())
+			err := tk1.ExecToErr(`insert into test_global values (15,15,15)`)
+			assert.NoError(t, err)
+		}
+	})
+
+	tk.MustExec("alter table test_global truncate partition p2")
+	for _, state := range []model.SchemaState{model.StateWriteOnly, model.StateDeleteOnly, model.StateDeleteReorganization} {
+		_, ok := doneMap[state]
+		require.Truef(t, ok, "schema state %s was not observed", state)
 	}
-	waitFor(4, "write only")
-	tkTmp := testkit.NewTestKit(t, store)
-	tkTmp.MustExec(`begin`)
-	tkTmp.MustExec("use test")
-	tkTmp.MustQuery(`select count(*) from test_global`).Check(testkit.Rows("5"))
-	// Begin txn before tx2 rollbcak to let mdl block ddl job state.
-	tk4.MustExec(`begin`)
-	tk2.MustExec(`rollback`)
-	tk4.MustExec(`insert into test_global values (5,5,5)`)
-	tkTmp.MustExec(`rollback`)
-	waitFor(4, "delete only")
-	tk3 := testkit.NewTestKit(t, store)
-	tk3.MustExec(`begin`)
-	tk3.MustExec(`use test`)
-	tk3.MustQuery(`explain format='brief' select b from test_global use index(idx_b) where b = 15`).CheckContain("Point_Get")
-	tk3.MustQuery(`explain format='brief' select c from test_global use index(idx_c) where c = 15`).CheckContain("Point_Get")
-	tk3.MustQuery(`select b from test_global use index(idx_b) where b = 15`).Check(testkit.Rows())
-	tk3.MustQuery(`select c from test_global use index(idx_c) where c = 15`).Check(testkit.Rows())
-	err := tk3.ExecToErr(`insert into test_global values (15,15,15)`)
-	require.Error(t, err)
-	require.ErrorContains(t, err, "[kv:1062]Duplicate entry '15' for key 'test_global.idx_b'")
-	tk4.MustExec(`commit`)
-	waitFor(4, "delete reorganization")
-	tk2.MustQuery(`select b from test_global use index(idx_b) where b = 15`).Check(testkit.Rows())
-	tk2.MustQuery(`select c from test_global use index(idx_c) where c = 15`).Check(testkit.Rows())
-	err = tk2.ExecToErr(`insert into test_global values (15,15,15)`)
-	require.NoError(t, err)
-	tk3.MustExec(`commit`)
-	tk.MustExec(`commit`)
-	<-syncChan
+
 	result := tk.MustQuery("select * from test_global;")
 	result.Sort().Check(testkit.Rows(`1 1 1`, `15 15 15`, `2 2 2`, `5 5 5`))
 
@@ -1487,16 +1474,16 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 	idxInfo := tt.Meta().FindIndexByName("idx_b")
 	require.NotNil(t, idxInfo)
 	cnt := checkGlobalIndexCleanUpDone(t, tk.Session(), tt.Meta(), idxInfo, pid)
-	require.Equal(t, 3, cnt)
+	require.Equal(t, 4, cnt)
 
 	idxInfo = tt.Meta().FindIndexByName("idx_c")
 	require.NotNil(t, idxInfo)
 	cnt = checkGlobalIndexCleanUpDone(t, tk.Session(), tt.Meta(), idxInfo, pid)
-	require.Equal(t, 3, cnt)
-	tk.MustQuery(`select b from test_global use index(idx_b) where b = 15`).Check(testkit.Rows())
-	tk.MustQuery(`select c from test_global use index(idx_c) where c = 15`).Check(testkit.Rows())
-	tk3.MustQuery(`explain format='brief' select b from test_global use index(idx_b) where b = 15`).CheckContain("Point_Get")
-	tk3.MustQuery(`explain format='brief' select c from test_global use index(idx_c) where c = 15`).CheckContain("Point_Get")
+	require.Equal(t, 4, cnt)
+	tk.MustQuery(`select b from test_global use index(idx_b) where b = 15`).Check(testkit.Rows("15"))
+	tk.MustQuery(`select c from test_global use index(idx_c) where c = 15`).Check(testkit.Rows("15"))
+	tk.MustQuery(`explain format='brief' select b from test_global use index(idx_b) where b = 15`).CheckContain("Point_Get")
+	tk.MustQuery(`explain format='brief' select c from test_global use index(idx_c) where c = 15`).CheckContain("Point_Get")
 }
 
 func TestGlobalIndexUpdateInTruncatePartition(t *testing.T) {
@@ -2616,6 +2603,10 @@ func TestPartitionErrorCode(t *testing.T) {
 	tk.MustGetErrCode("alter table t_part rebuild partition p0,p1;", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t_part repair partition p1;", errno.ErrUnsupportedDDLOperation)
 
+	if kerneltype.IsNextGen() {
+		// MDL is always enabled and read only in nextgen
+		return
+	}
 	// Reduce the impact on DML when executing partition DDL
 	tk1.MustExec("use test")
 	tk1.MustExec("set global tidb_enable_metadata_lock=0")
@@ -2632,6 +2623,9 @@ func TestPartitionErrorCode(t *testing.T) {
 }
 
 func TestCommitWhenSchemaChange(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("MDL is always enabled and read only in nextgen")
+	}
 	store := testkit.CreateMockStoreWithSchemaLease(t, time.Second)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_metadata_lock=0")
@@ -2898,8 +2892,8 @@ func TestIssue40135Ver2(t *testing.T) {
 	tk3 := testkit.NewTestKit(t, store)
 	tk3.MustExec("use test")
 
-	tk.MustExec("CREATE TABLE t40135 ( a int DEFAULT NULL, b varchar(32) DEFAULT 'md', index(a)) PARTITION BY HASH (a) PARTITIONS 6")
-	tk.MustExec("insert into t40135 values (1, 'md'), (2, 'ma'), (3, 'md'), (4, 'ma'), (5, 'md'), (6, 'ma')")
+	tk.MustExec("CREATE TABLE t40135 ( a int DEFAULT NULL, b varchar(32) DEFAULT 'md', c varchar(255), index(a)) PARTITION BY HASH (a) PARTITIONS 6")
+	tk.MustExec("insert into t40135 values (1, 'md', '1-md'), (2, 'ma','2-ma'), (3, 'md','3-md'), (4, 'ma','4-ma'), (5, 'md','5-md'), (6, 'ma','6-ma')")
 	one := true
 	var checkErr error
 	var wg sync.WaitGroup
@@ -2918,12 +2912,20 @@ func TestIssue40135Ver2(t *testing.T) {
 	})
 	tk.MustExec("alter table t40135 modify column a bigint NULL DEFAULT '6243108' FIRST")
 	wg.Wait()
-	require.ErrorContains(t, checkErr, "[ddl:8200]Unsupported modify column: table is partition table")
+	require.ErrorContains(t, checkErr, "can't change the partitioning column, since it would require reorganize all partitions")
+	tk.MustQuery("show create table t40135").Check(testkit.Rows("" +
+		"t40135 CREATE TABLE `t40135` (\n" +
+		"  `a` bigint(20) DEFAULT '6243108',\n" +
+		"  `b` varchar(32) DEFAULT 'md',\n" +
+		"  `c` varchar(255) DEFAULT NULL,\n" +
+		"  KEY `a` (`a`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY HASH (`a`) PARTITIONS 6"))
+	tk.MustExec(`set session tidb_enable_fast_table_check = off`)
 	tk.MustExec("admin check table t40135")
 }
 
 func TestAlterModifyPartitionColTruncateWarning(t *testing.T) {
-	t.Skip("waiting for supporting Modify Partition Column again")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	schemaName := "truncWarn"
@@ -2932,14 +2934,146 @@ func TestAlterModifyPartitionColTruncateWarning(t *testing.T) {
 	tk.MustExec(`set sql_mode = default`)
 	tk.MustExec(`create table t (a varchar(255)) partition by range columns (a) (partition p1 values less than ("0"), partition p2 values less than ("zzzz"))`)
 	tk.MustExec(`insert into t values ("123456"),(" 654321")`)
-	tk.MustContainErrMsg(`alter table t modify a varchar(5)`, "[types:1265]Data truncated for column 'a', value is '")
+	// The partition-column allowlist now rejects shrink changes before sql_mode-based
+	// truncation handling can apply.
+	tk.MustGetErrCode(`alter table t modify a varchar(5)`, errno.ErrUnsupportedDDLOperation)
 	tk.MustExec(`set sql_mode = ''`)
-	tk.MustExec(`alter table t modify a varchar(5)`)
-	// Fix the duplicate warning, see https://github.com/pingcap/tidb/issues/38699
-	tk.MustQuery(`show warnings`).Check(testkit.Rows(""+
-		"Warning 1265 Data truncated for column 'a', value is ' 654321'",
-		"Warning 1265 Data truncated for column 'a', value is ' 654321'"))
+	tk.MustGetErrCode(`alter table t modify a varchar(5)`, errno.ErrUnsupportedDDLOperation)
 	tk.MustExec(`admin check table t`)
+	tk.MustQuery(`select count(*) from t`).Check(testkit.Rows("2"))
+}
+
+func TestAlterModifyColumnOnPartitionedTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database AlterPartTable")
+	tk.MustExec("use AlterPartTable")
+	tk.MustExec(`create table t (a int unsigned PRIMARY KEY, b varchar(255), key (b))`)
+	tk.MustExec(`insert into t values (7, "07"), (8, "08"),(23,"23"),(34,"34💥"),(46,"46"),(57,"57")`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `a` int(10) unsigned NOT NULL,\n" +
+			"  `b` varchar(255) DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+			"  KEY `b` (`b`)\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	// TODO: Why does it allow 💥 as a latin1 character?
+	tk.MustQuery(`select hex(b) from t where a = 34`).Check(testkit.Rows("3334F09F92A5"))
+	tk.MustExec(`alter table t modify b varchar(200) charset latin1`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `a` int(10) unsigned NOT NULL,\n" +
+			"  `b` varchar(200) CHARACTER SET latin1 COLLATE latin1_bin DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+			"  KEY `b` (`b`)\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery(`select hex(b) from t where a = 34`).Check(testkit.Rows("3334F09F92A5"))
+	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows(""+
+		"23 23",
+		"34 34💥",
+		"46 46",
+		"57 57",
+		"7 07",
+		"8 08"))
+	tk.MustQuery(`select * from t order by b`).Check(testkit.Rows(""+
+		"7 07",
+		"8 08",
+		"23 23",
+		"34 34💥",
+		"46 46",
+		"57 57"))
+	tk.MustExec(`alter table t change b c varchar(200) charset utf8mb4`)
+	tk.MustExec(`drop table t`)
+	tk.MustExec(`create table t (a int unsigned PRIMARY KEY, b varchar(255), key (b)) partition by range (a) ` +
+		`(partition p0 values less than (10),` +
+		` partition p1 values less than (20),` +
+		` partition p2 values less than (30),` +
+		` partition pMax values less than (MAXVALUE))`)
+	tk.MustExec(`insert into t values (7, "07"), (8, "08"),(23,"23"),(34,"34💥"),(46,"46"),(57,"57")`)
+	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows(""+
+		"23 23",
+		"34 34💥",
+		"46 46",
+		"57 57",
+		"7 07",
+		"8 08"))
+	tk.MustQuery(`select * from t order by b`).Check(testkit.Rows(""+
+		"7 07",
+		"8 08",
+		"23 23",
+		"34 34💥",
+		"46 46",
+		"57 57"))
+	tk.MustQuery(`show create table t`).Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `a` int(10) unsigned NOT NULL,\n" +
+			"  `b` varchar(255) DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+			"  KEY `b` (`b`)\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE (`a`)\n" +
+			"(PARTITION `p0` VALUES LESS THAN (10),\n" +
+			" PARTITION `p1` VALUES LESS THAN (20),\n" +
+			" PARTITION `p2` VALUES LESS THAN (30),\n" +
+			" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
+	tk.MustExec(`set session tidb_enable_fast_table_check = off`)
+	tk.MustExec(`admin check table t`)
+	tk.MustExec(`alter table t modify b varchar(200) charset latin1`)
+	tk.MustExec(`admin check table t`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `a` int(10) unsigned NOT NULL,\n" +
+			"  `b` varchar(200) CHARACTER SET latin1 COLLATE latin1_bin DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+			"  KEY `b` (`b`)\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE (`a`)\n" +
+			"(PARTITION `p0` VALUES LESS THAN (10),\n" +
+			" PARTITION `p1` VALUES LESS THAN (20),\n" +
+			" PARTITION `p2` VALUES LESS THAN (30),\n" +
+			" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
+	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows(""+
+		"23 23",
+		"34 34💥",
+		"46 46",
+		"57 57",
+		"7 07",
+		"8 08"))
+	tk.MustQuery(`select * from t order by b`).Check(testkit.Rows(""+
+		"7 07",
+		"8 08",
+		"23 23",
+		"34 34💥",
+		"46 46",
+		"57 57"))
+	tk.MustExec(`alter table t change b c varchar(150) charset utf8mb4`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `a` int(10) unsigned NOT NULL,\n" +
+			"  `c` varchar(150) DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+			"  KEY `b` (`c`)\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE (`a`)\n" +
+			"(PARTITION `p0` VALUES LESS THAN (10),\n" +
+			" PARTITION `p1` VALUES LESS THAN (20),\n" +
+			" PARTITION `p2` VALUES LESS THAN (30),\n" +
+			" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
+	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows(""+
+		"23 23",
+		"34 34💥",
+		"46 46",
+		"57 57",
+		"7 07",
+		"8 08"))
+	tk.MustQuery(`select * from t order by c`).Check(testkit.Rows(""+
+		"7 07",
+		"8 08",
+		"23 23",
+		"34 34💥",
+		"46 46",
+		"57 57"))
+	tk.MustGetErrCode(`alter table t modify a varchar(20)`, errno.ErrUnsupportedDDLOperation)
 }
 
 func TestRemoveKeyPartitioning(t *testing.T) {
@@ -3757,4 +3891,126 @@ func TestTruncateNumberOfPhases(t *testing.T) {
 	tk.MustExec(`alter table t truncate partition p1`)
 	dom.Reload()
 	require.Equal(t, int64(4), dom.InfoSchema().SchemaMetaVersion()-schemaVersion)
+}
+
+func TestIssue57780(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE `cis_assay_report_detail` (\n" +
+		"  `org_code` varchar(9) NOT NULL ,\n" +
+		"  `branch_code` varchar(2) NOT NULL DEFAULT '00' ,\n" +
+		"  `report_no` varchar(20) NOT NULL ,\n" +
+		"  `report_seqno` varchar(22) NOT NULL ,\n" +
+		"  `report_seq` varchar(22) NOT NULL ,\n" +
+		"  `reg_id` varchar(22) DEFAULT NULL ,\n" +
+		"  report_time datetime,\n" +
+		"  `modify_empid` varchar(10) DEFAULT NULL ,\n" +
+		"  `modify_empid_code_org` varchar(64) DEFAULT NULL ,\n" +
+		"  `modify_empid_name_org` varchar(256) DEFAULT NULL ,\n" +
+		"  `create_time_sys` timestamp(6) DEFAULT CURRENT_TIMESTAMP(6) ,\n" +
+		"  `create_empid` varchar(10) DEFAULT NULL ,\n" +
+		"  `create_empid_code_org` varchar(64) DEFAULT NULL ,\n" +
+		"  `create_empid_name_org` varchar(256) DEFAULT NULL ,\n" +
+		"  `modify_time_mfs` datetime DEFAULT NULL ,\n" +
+		"  `create_time_mfs` datetime DEFAULT NULL ,\n" +
+		"  `batch_version` varchar(40) DEFAULT NULL ,\n" +
+		"  `batch_type` varchar(10) DEFAULT NULL ,\n" +
+		"  `time_correlation_mark` varchar(2) NOT NULL DEFAULT '0' ,\n" +
+		"  `modify_time_center` timestamp(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6) ,\n" +
+		"  `create_time_center` timestamp(6) DEFAULT CURRENT_TIMESTAMP(6) ,\n" +
+		"  PRIMARY KEY (`report_time`,`org_code`,`branch_code`,`report_no`,`report_seqno`,`report_seq`) /*T![clustered_index] NONCLUSTERED */\n" +
+		"  \n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin \n" +
+		"PARTITION BY RANGE COLUMNS(`report_time`)\n" +
+		"(PARTITION `p201001` VALUES LESS THAN ('2010-02-01 00:00:00'),\n" +
+		" PARTITION `p201002` VALUES LESS THAN ('2010-03-01 00:00:00'),\n" +
+		" PARTITION `p201003` VALUES LESS THAN ('2010-04-01 00:00:00'),\n" +
+		" PARTITION `p201004` VALUES LESS THAN ('2010-05-01 00:00:00'),\n" +
+		" PARTITION `p201005` VALUES LESS THAN ('2010-06-01 00:00:00'),\n" +
+		" PARTITION `pmax` VALUES LESS THAN (MAXVALUE))")
+	tk.MustExec(`alter table cis_assay_report_detail add column test_decimal decimal(9,2)`)
+	tk.MustExec(`alter table cis_assay_report_detail change column test_decimal test_decimal decimal(11,2)`)
+}
+
+// Test for issue 64176.
+func TestExchangeTiDBRowID(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int, primary key (a) nonclustered)`)
+	tk.MustExec(`create table tp (a int, b int, primary key (a) nonclustered) partition by hash (a) partitions 2`)
+
+	tk.MustExec(`insert into t values (2,2),(4,4),(6,6)`)
+	tk.MustExec(`insert into tp values (2,2),(4,4),(6,6)`)
+	tk.MustExec(`insert into t select a + 8, b + 8 from t`)
+
+	tk.MustQuery(`select *, _tidb_rowid from t`).Sort().Check(testkit.Rows(""+
+		"10 10 4",
+		"12 12 5",
+		"14 14 6",
+		"2 2 1",
+		"4 4 2",
+		"6 6 3"))
+	tk.MustQuery(`select *, _tidb_rowid from tp`).Sort().Check(testkit.Rows(""+
+		"2 2 1",
+		"4 4 2",
+		"6 6 3"))
+
+	tk.MustExec(`alter table tp exchange partition p0 with table t`)
+	tk.MustExec(`insert into t values (8,8)`)
+	// This failed before, since it will use _tidb_rowid = 4
+	tk.MustExec(`insert into tp values (8,8)`)
+
+	tk.MustQuery(`select *, _tidb_rowid from tp`).Sort().Check(testkit.Rows(""+
+		"10 10 4",
+		"12 12 5",
+		"14 14 6",
+		"2 2 1",
+		"4 4 2",
+		"6 6 3",
+		"8 8 30001"))
+	tk.MustQuery(`select *, _tidb_rowid from t`).Sort().Check(testkit.Rows(""+
+		"2 2 1",
+		"4 4 2",
+		"6 6 3",
+		"8 8 30001"))
+}
+
+func TestIssue66077ExchangePartitionDifferentDefinitionsWithShardRowIDBits(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@session.tidb_enable_clustered_index = off")
+	tk.MustExec("set @@session.tidb_shard_row_id_bits = 4")
+	tk.MustExec("create database sbtest")
+	tk.MustExec("use sbtest")
+
+	tk.MustExec(`CREATE TABLE sbtest1 (
+	  id int NOT NULL,
+	  k int NOT NULL DEFAULT '0',
+	  c char(120) NOT NULL DEFAULT '',
+	  pad char(60) NOT NULL DEFAULT '',
+	  PRIMARY KEY (id) /*T![clustered_index] NONCLUSTERED */,
+	  KEY k_1 (k)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
+
+	tblInfo, err := tk.Session().GetInfoSchema().TableInfoByName(ast.NewCIStr("sbtest"), ast.NewCIStr("sbtest1"))
+	require.NoError(t, err)
+	require.Equal(t, uint64(4), tblInfo.ShardRowIDBits)
+	require.Equal(t, uint64(4), tblInfo.MaxShardRowIDBits)
+
+	tk.MustExec(`CREATE TABLE sbtest1_partition (
+	  id int NOT NULL,
+	  k int NOT NULL DEFAULT '0',
+	  c char(120) NOT NULL DEFAULT '',
+	  pad char(60) NOT NULL DEFAULT '',
+	  PRIMARY KEY (id) /*T![clustered_index] NONCLUSTERED */,
+	  KEY k_1 (k)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T! SHARD_ROW_ID_BITS=4 */
+	PARTITION BY RANGE (id)
+	(PARTITION 1M VALUES LESS THAN (1000000),
+	 PARTITION 5M VALUES LESS THAN (5000000),
+	 PARTITION 10M VALUES LESS THAN (10000000),
+	 PARTITION 100M VALUES LESS THAN (100000000))`)
+	tk.MustExec("alter table sbtest1_partition exchange partition 1M with table sbtest1")
 }

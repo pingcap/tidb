@@ -1075,7 +1075,17 @@ func (c *unaryMinusFunctionClass) getFunction(ctx BuildContext, args []Expressio
 			sig.setPbCode(tipb.ScalarFuncSig_UnaryMinusReal)
 		}
 	}
-	bf.tp.SetFlenUnderLimit(argExprTp.GetFlen() + 1)
+	_, isColumn := argExpr.(*Column)
+	if _, ok := argExpr.(*CorrelatedColumn); ok {
+		isColumn = true
+	}
+	if isColumn && (evalType == types.ETDecimal ||
+		(evalType == types.ETInt && !intOverflow && !mysql.HasUnsignedFlag(argExprTp.GetFlag()))) {
+		// Column types already reserve their signed display width, so unary minus does not widen them.
+		bf.tp.SetFlenUnderLimit(argExprTp.GetFlen())
+	} else {
+		bf.tp.SetFlenUnderLimit(argExprTp.GetFlen() + 1)
+	}
 	return sig, err
 }
 

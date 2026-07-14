@@ -144,7 +144,7 @@ func (e *PrepareExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
-	if topsqlstate.TopSQLEnabled() {
+	if topsqlstate.TopProfilingEnabled() {
 		e.Ctx().GetSessionVars().StmtCtx.IsSQLRegistered.Store(true)
 		topsql.AttachAndRegisterSQLInfo(ctx, stmt.NormalizedSQL, stmt.SQLDigest, vars.InRestrictedSQL)
 	}

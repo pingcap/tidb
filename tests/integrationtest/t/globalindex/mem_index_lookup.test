@@ -13,35 +13,35 @@ insert into t values (1, 2), (2, 3), (3, 4), (4, 5);
 begin;
 insert into t values (5, 1);
 
-explain select * from t use index(idx1) where b > 2;
+explain format='plan_tree' select * from t use index(idx1) where b > 2;
 --sorted_result
 select * from t use index(idx1) where b > 2;
 
 --replace_regex /_tidb_tid, [0-9]+\)/_tidb_tid, tid0)/
-explain select * from t partition(p0) use index(idx1) where b <= 2;
+explain format='plan_tree' select * from t partition(p0) use index(idx1) where b <= 2;
 --sorted_result
 select * from t partition(p0) use index(idx1) where b <= 2;
 
-explain select * from t partition(p1) use index(idx1) where b <= 2 and a = 10;
+explain format='plan_tree' select * from t partition(p1) use index(idx1) where b <= 2 and a = 10;
 --sorted_result
 select * from t partition(p1) use index(idx1) where b <= 2 and a = 10;
 
 --replace_regex /_tidb_tid, [0-9]+, [0-9]+\)/_tidb_tid, tid0, tid1)/
-explain select * from t partition(p0, p1) use index(idx1) where b <= 2;
+explain format='plan_tree' select * from t partition(p0, p1) use index(idx1) where b <= 2;
 --sorted_result
 select * from t partition(p0, p1) use index(idx1) where b <= 2;
 
-explain select * from t use index(idx) where a > 2;
+explain format='plan_tree' select * from t use index(idx) where a > 2;
 --sorted_result
 select * from t use index(idx) where a > 2;
 
 --replace_regex /_tidb_tid, [0-9]+\)/_tidb_tid, tid0)/
-explain select * from t partition(p0) use index(idx) where a <= 2;
+explain format='plan_tree' select * from t partition(p0) use index(idx) where a <= 2;
 --sorted_result
 select * from t partition(p0) use index(idx) where a <= 2;
 
 --replace_regex /_tidb_tid, [0-9]+, [0-9]+\)/_tidb_tid, tid0, tid1)/
-explain select * from t partition(p0, p1) use index(idx) where a <= 2;
+explain format='plan_tree' select * from t partition(p0, p1) use index(idx) where a <= 2;
 --sorted_result
 select * from t partition(p0, p1) use index(idx) where a <= 2;
 
@@ -62,35 +62,35 @@ insert into t(a, b) values (2001, 2), (2002, 3), (2003, 4), (2004, 5);
 begin;
 insert into t(a, b) values (2005, 1);
 
-explain select * from t use index(idx1) where b > 2;
+explain format='plan_tree' select * from t use index(idx1) where b > 2;
 --sorted_result
 select * from t use index(idx1) where b > 2;
 
 --replace_regex /_tidb_tid, [0-9]+\)/_tidb_tid, tid0)/
-explain select * from t partition(p0) use index(idx1) where b <= 2;
+explain format='plan_tree' select * from t partition(p0) use index(idx1) where b <= 2;
 --sorted_result
 select * from t partition(p0) use index(idx1) where b <= 2;
 
-explain select * from t partition(p1) use index(idx1) where b <= 2 and a = 2010;
+explain format='plan_tree' select * from t partition(p1) use index(idx1) where b <= 2 and a = 2010;
 --sorted_result
 select * from t partition(p1) use index(idx1) where b <= 2 and a = 2010;
 
 --replace_regex /_tidb_tid, [0-9]+, [0-9]+\)/_tidb_tid, tid0, tid1)/
-explain select * from t partition(p0, p1) use index(idx1) where b <= 2;
+explain format='plan_tree' select * from t partition(p0, p1) use index(idx1) where b <= 2;
 --sorted_result
 select * from t partition(p0, p1) use index(idx1) where b <= 2;
 
-explain select * from t use index(idx) where a > 2002;
+explain format='plan_tree' select * from t use index(idx) where a > 2002;
 --sorted_result
 select * from t use index(idx) where a > 2002;
 
 --replace_regex /_tidb_tid, [0-9]+\)/_tidb_tid, tid0)/
-explain select * from t partition(p0) use index(idx) where a <= 2002;
+explain format='plan_tree' select * from t partition(p0) use index(idx) where a <= 2002;
 --sorted_result
 select * from t partition(p0) use index(idx) where a <= 2002;
 
 --replace_regex /_tidb_tid, [0-9]+, [0-9]+\)/_tidb_tid, tid0, tid1)/
-explain select * from t partition(p0, p1) use index(idx) where a <= 2002;
+explain format='plan_tree' select * from t partition(p0, p1) use index(idx) where a <= 2002;
 --sorted_result
 select * from t partition(p0, p1) use index(idx) where a <= 2002;
 

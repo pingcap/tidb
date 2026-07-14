@@ -4,20 +4,27 @@ package streamhelper
 
 import (
 	"context"
+	"encoding/json"
 	"math"
 	"time"
 
 	"github.com/pingcap/errors"
 	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
+	"github.com/pingcap/log"
+	connutil "github.com/pingcap/tidb/br/pkg/conn/util"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/configtypes"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/engine"
-	"github.com/tikv/client-go/v2/oracle"
+	"github.com/pingcap/tidb/pkg/util/httputil"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
 )
@@ -25,6 +32,11 @@ import (
 const (
 	logBackupServiceID    = "log-backup-coordinator"
 	logBackupSafePointTTL = 24 * time.Hour
+
+	// dialTimeOut is the timeout for establishing the connection to a TiKV.
+	// when TiKV was disconnected, the request may not be positive rejected but get stuck,
+	// which may make the remaining task in a tick fail.
+	dialTimeOut = 8 * time.Second
 )
 
 // Env is the interface required by the advancer.
@@ -37,6 +49,13 @@ type Env interface {
 	StreamMeta
 	// GCLockResolver try to resolve locks when region checkpoint stopped.
 	tikv.RegionLockResolver
+	// LogBackupFlushIntervalGetter fetches TiKV log-backup.max-flush-interval for resolving locks.
+	LogBackupFlushIntervalGetter
+}
+
+// LogBackupFlushIntervalGetter fetches TiKV log-backup.max-flush-interval.
+type LogBackupFlushIntervalGetter interface {
+	GetLogBackupFlushInterval(ctx context.Context) (time.Duration, error)
 }
 
 // PDRegionScanner is a simple wrapper over PD
@@ -66,9 +85,8 @@ func (c PDRegionScanner) UnblockGC(ctx context.Context) error {
 	return err
 }
 
-// TODO: It should be able to synchoronize the current TS with the PD.
 func (c PDRegionScanner) FetchCurrentTS(ctx context.Context) (uint64, error) {
-	return oracle.ComposeTS(time.Now().UnixMilli(), 0), nil
+	return connutil.GetCurrentTsFromPDWithRetry(ctx, c.Client)
 }
 
 // RegionScan gets a list of regions, starts from the region that contains key.
@@ -112,6 +130,8 @@ type clusterEnv struct {
 	*AdvancerExt
 	PDRegionScanner
 	*AdvancerLockResolver
+
+	fetchTiKVConfigs func(context.Context, func([]byte) error) error
 }
 
 var _ Env = &clusterEnv{}
@@ -133,13 +153,30 @@ func (t clusterEnv) ClearCache(ctx context.Context, storeID uint64) error {
 	return t.clis.RemoveConn(ctx, storeID)
 }
 
+func (t clusterEnv) GetLogBackupFlushInterval(ctx context.Context) (time.Duration, error) {
+	return GetLogBackupFlushIntervalFromTiKVConfig(ctx, t.fetchTiKVConfigs)
+}
+
 // CliEnv creates the Env for CLI usage.
 func CliEnv(cli *utils.StoreManager, tikvStore tikv.Storage, etcdCli *clientv3.Client) Env {
+	cli.ResetPDClientCallerComponent(caller.Pitr)
+	configHTTPPrefix := "http://"
+	if cli.TLSConfig() != nil {
+		configHTTPPrefix = "https://"
+	}
+	configHTTPClient := httputil.NewClient(cli.TLSConfig())
 	return clusterEnv{
 		clis:                 cli,
 		AdvancerExt:          &AdvancerExt{MetaDataClient: *NewMetaDataClient(etcdCli)},
 		PDRegionScanner:      PDRegionScanner{cli.PDClient()},
 		AdvancerLockResolver: newAdvancerLockResolver(tikvStore),
+		fetchTiKVConfigs: func(ctx context.Context, collect func([]byte) error) error {
+			stores, err := connutil.GetAllTiKVStoresWithRetry(ctx, cli.PDClient(), connutil.SkipTiFlash)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			return connutil.GetConfigBytesFromTiKVStores(ctx, stores, configHTTPClient, configHTTPPrefix, collect)
+		},
 	}
 }
 
@@ -149,15 +186,87 @@ func TiDBEnv(tikvStore tikv.Storage, pdCli pd.Client, etcdCli *clientv3.Client, 
 	if err != nil {
 		return nil, err
 	}
-	return clusterEnv{
-		clis: utils.NewStoreManager(pdCli, keepalive.ClientParameters{
+	pitrPDClient := pdCli.WithCallerComponent(caller.Pitr)
+	configHTTPClient := tidbutil.InternalHTTPClient()
+	configHTTPPrefix := tidbutil.InternalHTTPSchema() + "://"
+	env := clusterEnv{
+		clis: utils.NewStoreManager(pitrPDClient, keepalive.ClientParameters{
 			Time:    time.Duration(conf.TiKVClient.GrpcKeepAliveTime) * time.Second,
 			Timeout: time.Duration(conf.TiKVClient.GrpcKeepAliveTimeout) * time.Second,
 		}, tconf),
 		AdvancerExt:          &AdvancerExt{MetaDataClient: *NewMetaDataClient(etcdCli)},
-		PDRegionScanner:      PDRegionScanner{Client: pdCli},
+		PDRegionScanner:      PDRegionScanner{Client: pitrPDClient},
 		AdvancerLockResolver: newAdvancerLockResolver(tikvStore),
-	}, nil
+		fetchTiKVConfigs: func(ctx context.Context, collect func([]byte) error) error {
+			stores, err := connutil.GetAllTiKVStores(ctx, pitrPDClient, connutil.SkipTiFlash)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			return connutil.GetConfigBytesFromTiKVStores(ctx, stores, configHTTPClient, configHTTPPrefix, collect)
+		},
+	}
+
+	env.clis.DialTimeout = dialTimeOut
+	return env, nil
+}
+
+func GetLogBackupFlushIntervalFromTiKVConfig(
+	ctx context.Context,
+	fetchTiKVConfigs func(context.Context, func([]byte) error) error,
+) (time.Duration, error) {
+	var maxFlushInterval time.Duration
+	var minFlushInterval time.Duration
+	storeCount := 0
+	err := fetchTiKVConfigs(ctx, func(resp []byte) error {
+		flushInterval, err := parseLogBackupFlushIntervalFromConfig(resp)
+		if err != nil {
+			log.Warn("failed to parse log-backup.max-flush-interval from TiKV config", zap.Error(err))
+			return err
+		}
+		if storeCount == 0 || flushInterval < minFlushInterval {
+			minFlushInterval = flushInterval
+		}
+		if flushInterval > maxFlushInterval {
+			maxFlushInterval = flushInterval
+		}
+		storeCount++
+		return nil
+	})
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if storeCount == 0 {
+		return 0, errors.New("no TiKV config found for log-backup.max-flush-interval")
+	}
+	if minFlushInterval != maxFlushInterval {
+		log.Warn("TiKV log-backup.max-flush-interval is not consistent; use the max value for resolve lock",
+			zap.Int("stores", storeCount),
+			zap.Duration("min-flush-interval", minFlushInterval),
+			zap.Duration("max-flush-interval", maxFlushInterval))
+	}
+	return maxFlushInterval, nil
+}
+
+func parseLogBackupFlushIntervalFromConfig(resp []byte) (time.Duration, error) {
+	type logbackup struct {
+		MaxFlushInterval *configtypes.Duration `json:"max-flush-interval"`
+	}
+
+	type config struct {
+		LogBackup logbackup `json:"log-backup"`
+	}
+	var c config
+	e := json.Unmarshal(resp, &c)
+	if e != nil {
+		return 0, e
+	}
+	if c.LogBackup.MaxFlushInterval == nil {
+		return 0, errors.New("log-backup.max-flush-interval is not found in TiKV config")
+	}
+	if c.LogBackup.MaxFlushInterval.Duration <= 0 {
+		return 0, errors.Errorf("invalid log-backup.max-flush-interval %s", c.LogBackup.MaxFlushInterval)
+	}
+	return c.LogBackup.MaxFlushInterval.Duration, nil
 }
 
 type LogBackupService interface {

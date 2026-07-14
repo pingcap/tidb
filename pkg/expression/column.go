@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
+	"github.com/pingcap/tidb/pkg/expression/sessionexpr"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -448,17 +449,45 @@ func (col *Column) VecEvalVectorFloat32(ctx EvalContext, input *chunk.Chunk, res
 
 const columnPrefix = "Column#"
 
+// shouldRemoveColumnNumbers checks if column numbers should be removed based on the explain format.
+// This is used for plan_tree format to show "Column" instead of "Column#<number>".
+// Note: ExplainFormat is normalized to lowercase when set, but we use strings.ToLower as a defensive measure
+// in case the format wasn't normalized in some code path.
+func shouldRemoveColumnNumbers(ctx ParamValues) bool {
+	if evalCtx, ok := ctx.(EvalContext); ok {
+		if sessionCtx, ok := evalCtx.(*sessionexpr.EvalContext); ok {
+			stmtCtx := sessionCtx.Sctx().GetSessionVars().StmtCtx
+			// Only check format if we're actually in an explain statement
+			if !stmtCtx.InExplainStmt {
+				return false
+			}
+			format := stmtCtx.ExplainFormat
+			// Use ToLower defensively in case format wasn't normalized in some code path
+			formatLower := strings.ToLower(strings.TrimSpace(format))
+			if formatLower == types.ExplainFormatPlanTree {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // StringWithCtx implements Expression interface.
-func (col *Column) StringWithCtx(_ ParamValues, redact string) string {
-	return col.string(redact)
+func (col *Column) StringWithCtx(ctx ParamValues, redact string) string {
+	return col.string(redact, shouldRemoveColumnNumbers(ctx))
+}
+
+// StringWithCtxForExplain implements Expression interface with option to remove column numbers for plan_tree format.
+func (col *Column) StringWithCtxForExplain(_ ParamValues, redact string, removeColumnNumbers bool) string {
+	return col.string(redact, removeColumnNumbers)
 }
 
 // String implements Stringer interface.
 func (col *Column) String() string {
-	return col.string(errors.RedactLogDisable)
+	return col.string(errors.RedactLogDisable, false)
 }
 
-func (col *Column) string(redact string) string {
+func (col *Column) string(redact string, removeColumnNumbers bool) string {
 	if col.IsHidden && col.VirtualExpr != nil {
 		// A hidden column without virtual expression indicates it's a stored type.
 		// a virtual column should be able to be stringified without context.
@@ -468,7 +497,12 @@ func (col *Column) string(redact string) string {
 		return col.OrigName
 	}
 	var builder strings.Builder
-	fmt.Fprintf(&builder, "%s%d", columnPrefix, col.UniqueID)
+	if removeColumnNumbers {
+		// For plan_tree format, return "Column" instead of "Column#<number>"
+		builder.WriteString("Column")
+	} else {
+		fmt.Fprintf(&builder, "%s%d", columnPrefix, col.UniqueID)
+	}
 	return builder.String()
 }
 
@@ -638,8 +672,7 @@ func (col *Column) EvalVectorFloat32(ctx EvalContext, row chunk.Row) (types.Vect
 func (col *Column) Clone() Expression {
 	newCol := *col
 	if col.hashcode != nil {
-		newCol.hashcode = make([]byte, len(col.hashcode))
-		copy(newCol.hashcode, col.hashcode)
+		newCol.hashcode = slices.Clone(col.hashcode)
 	}
 	return &newCol
 }
@@ -703,11 +736,22 @@ func (col *Column) ResolveIndicesByVirtualExpr(ctx EvalContext, schema *Schema) 
 }
 
 func (col *Column) resolveIndicesByVirtualExpr(ctx EvalContext, schema *Schema) bool {
+	fallbackIdx := -1
 	for i, c := range schema.Columns {
-		if c.EqualByExprAndID(ctx, col) {
+		if c.EqualColumn(col) {
 			col.Index = i
 			return true
 		}
+		// Different expression indexes may create hidden generated columns with the same
+		// virtual expression. Prefer the exact column ID when it exists; only fall back
+		// to expression equality when the selected schema has no exact column match.
+		if fallbackIdx == -1 && c.EqualByExprAndID(ctx, col) {
+			fallbackIdx = i
+		}
+	}
+	if fallbackIdx != -1 {
+		col.Index = fallbackIdx
+		return true
 	}
 	return false
 }
@@ -754,86 +798,6 @@ func ColInfo2Col(cols []*Column, col *model.ColumnInfo) *Column {
 	return nil
 }
 
-// IndexCol2Col finds the corresponding column of the IndexColumn in a column slice.
-func IndexCol2Col(colInfos []*model.ColumnInfo, cols []*Column, col *model.IndexColumn) *Column {
-	for i, info := range colInfos {
-		if info.Name.L == col.Name.L {
-			if col.Length > 0 && info.FieldType.GetFlen() > col.Length {
-				c := *cols[i]
-				c.IsPrefix = true
-				return &c
-			}
-			return cols[i]
-		}
-	}
-	return nil
-}
-
-// IndexInfo2PrefixCols gets the corresponding []*Column of the indexInfo's []*IndexColumn,
-// together with a []int containing their lengths.
-// If this index has three IndexColumn that the 1st and 3rd IndexColumn has corresponding *Column,
-// the return value will be only the 1st corresponding *Column and its length.
-// TODO: Use a struct to represent {*Column, int}. And merge IndexInfo2PrefixCols and IndexInfo2Cols.
-func IndexInfo2PrefixCols(colInfos []*model.ColumnInfo, cols []*Column, index *model.IndexInfo) ([]*Column, []int) {
-	retCols := make([]*Column, 0, len(index.Columns))
-	lengths := make([]int, 0, len(index.Columns))
-	for _, c := range index.Columns {
-		col := IndexCol2Col(colInfos, cols, c)
-		if col == nil {
-			return retCols, lengths
-		}
-		retCols = append(retCols, col)
-		if c.Length != types.UnspecifiedLength && c.Length == col.RetType.GetFlen() {
-			lengths = append(lengths, types.UnspecifiedLength)
-		} else {
-			lengths = append(lengths, c.Length)
-		}
-	}
-	return retCols, lengths
-}
-
-// IndexInfo2Cols gets the corresponding []*Column of the indexInfo's []*IndexColumn,
-// together with a []int containing their lengths.
-// If this index has three IndexColumn that the 1st and 3rd IndexColumn has corresponding *Column,
-// the return value will be [col1, nil, col2].
-func IndexInfo2Cols(colInfos []*model.ColumnInfo, cols []*Column, index *model.IndexInfo) ([]*Column, []int) {
-	retCols := make([]*Column, 0, len(index.Columns))
-	lens := make([]int, 0, len(index.Columns))
-	for _, c := range index.Columns {
-		col := IndexCol2Col(colInfos, cols, c)
-		if col == nil {
-			retCols = append(retCols, col)
-			lens = append(lens, types.UnspecifiedLength)
-			continue
-		}
-		retCols = append(retCols, col)
-		if c.Length != types.UnspecifiedLength && c.Length == col.RetType.GetFlen() {
-			lens = append(lens, types.UnspecifiedLength)
-		} else {
-			lens = append(lens, c.Length)
-		}
-	}
-	return retCols, lens
-}
-
-// FindPrefixOfIndex will find columns in index by checking the unique id.
-// So it will return at once no matching column is found.
-func FindPrefixOfIndex(cols []*Column, idxColIDs []int64) []*Column {
-	retCols := make([]*Column, 0, len(idxColIDs))
-idLoop:
-	for _, id := range idxColIDs {
-		for _, col := range cols {
-			if col.UniqueID == id {
-				retCols = append(retCols, col)
-				continue idLoop
-			}
-		}
-		// If no matching column is found, just return.
-		return retCols
-	}
-	return retCols
-}
-
 // EvalVirtualColumn evals the virtual column
 func (col *Column) EvalVirtualColumn(ctx EvalContext, row chunk.Row) (types.Datum, error) {
 	return col.VirtualExpr.Eval(ctx, row)
@@ -867,8 +831,7 @@ func (col *Column) Repertoire() Repertoire {
 
 // SortColumns sort columns based on UniqueID.
 func SortColumns(cols []*Column) []*Column {
-	sorted := make([]*Column, len(cols))
-	copy(sorted, cols)
+	sorted := slices.Clone(cols)
 	slices.SortFunc(sorted, func(i, j *Column) int {
 		return cmp.Compare(i.UniqueID, j.UniqueID)
 	})
@@ -877,12 +840,9 @@ func SortColumns(cols []*Column) []*Column {
 
 // InColumnArray check whether the col is in the cols array
 func (col *Column) InColumnArray(cols []*Column) bool {
-	for _, c := range cols {
-		if col.EqualColumn(c) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(cols, func(c *Column) bool {
+		return col.EqualColumn(c)
+	})
 }
 
 // GcColumnExprIsTidbShard check whether the expression is tidb_shard()

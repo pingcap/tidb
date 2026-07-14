@@ -100,6 +100,20 @@ select * from t;
 a	b
 1	1
 1	1
+explain format = 'brief' delete from t where (select min(t2.a) * 2 from t2 where t2.a < t.a) > 1;
+id	estRows	task	access object	operator info
+Delete	N/A	root		N/A
+└─Projection	10000.00	root		executor__parallel_apply.t._tidb_rowid
+  └─Apply	10000.00	root		CARTESIAN inner join
+    ├─TableReader(Build)	10000.00	root		data:TableFullScan
+    │ └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+    └─Selection(Probe)	8000.00	root		gt(mul(Column#9, 2), 1)
+      └─StreamAgg	10000.00	root		funcs:min(executor__parallel_apply.t2.a)->Column#9
+        └─TopN	10000.00	root		executor__parallel_apply.t2.a, offset:0, count:1
+          └─TableReader	10000.00	root		data:TopN
+            └─TopN	10000.00	cop[tikv]		executor__parallel_apply.t2.a, offset:0, count:1
+              └─Selection	79920000.00	cop[tikv]		lt(executor__parallel_apply.t2.a, executor__parallel_apply.t.a), not(isnull(executor__parallel_apply.t2.a))
+                └─TableFullScan	100000000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a int, b int, c int);
 insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3), (1, 1, 1), (2, 2, 2), (3, 3, 3);

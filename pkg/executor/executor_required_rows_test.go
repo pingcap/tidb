@@ -31,8 +31,8 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -209,6 +209,34 @@ func buildLimitExec(ctx sessionctx.Context, src exec.Executor, offset, count int
 	return limitExec
 }
 
+func TestDMLChildChunkInitCapByRowWidth(t *testing.T) {
+	sctx := defaultCtx()
+	child := buildLimitExec(sctx, newRequiredRowsDataSource(sctx, 10, nil), 0, 1000)
+	require.Equal(t, 1000, child.InitCap())
+
+	base := exec.NewBaseExecutor(sctx, nil, 0, child)
+	base.SetInitCap(chunk.ZeroCapacity)
+	dmlExec := &DeleteExec{BaseExecutor: base}
+
+	chk := newDMLChildChunk(dmlExec, exec.RetTypes(child), child.InitCap())
+	require.Equal(t, 1000, chk.Capacity())
+	require.Equal(t, sctx.GetSessionVars().MaxChunkSize, chk.RequiredRows())
+
+	fields := make([]*types.FieldType, 1024)
+	cols := make([]*expression.Column, len(fields))
+	for i := range fields {
+		fields[i] = types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).SetFlen(1000).BuildP()
+		cols[i] = &expression.Column{Index: i, RetType: fields[i]}
+	}
+	wideChild := buildLimitExec(sctx, &requiredRowsDataSource{
+		BaseExecutor: exec.NewBaseExecutor(sctx, expression.NewSchema(cols...), 0),
+	}, 0, 1000)
+
+	chk = newDMLChildChunk(dmlExec, exec.RetTypes(wideChild), wideChild.InitCap())
+	require.Equal(t, 1, chk.Capacity())
+	require.Equal(t, sctx.GetSessionVars().MaxChunkSize, chk.RequiredRows())
+}
+
 func defaultCtx() sessionctx.Context {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = vardef.DefInitChunkSize
@@ -317,7 +345,7 @@ func TestTopNRequiredRows(t *testing.T) {
 			groupBy:        []int{0},
 			requiredRows:   []int{1, 1, 1, 1, 10},
 			expectedRows:   []int{1, 1, 1, 1, 7},
-			expectedRowsDS: []int{26, 100 - 26, 0},
+			expectedRowsDS: []int{100, 0},
 		},
 		{
 			totalRows:      100,
@@ -335,7 +363,7 @@ func TestTopNRequiredRows(t *testing.T) {
 			groupBy:        []int{0, 1},
 			requiredRows:   []int{1, 3, 7, 10},
 			expectedRows:   []int{1, 3, 1, 0},
-			expectedRowsDS: []int{6, maxChunkSize, 14, 0},
+			expectedRowsDS: []int{maxChunkSize, 20, 0},
 		},
 		{
 			totalRows:      maxChunkSize + maxChunkSize + 20,
@@ -344,7 +372,7 @@ func TestTopNRequiredRows(t *testing.T) {
 			groupBy:        []int{0, 1},
 			requiredRows:   []int{1, 2, 3, 5, 7},
 			expectedRows:   []int{1, 2, 3, 2, 0},
-			expectedRowsDS: []int{maxChunkSize, 18, maxChunkSize, 2, 0},
+			expectedRowsDS: []int{maxChunkSize, maxChunkSize, 20, 0},
 		},
 		{
 			totalRows:      maxChunkSize*5 + 10,
@@ -396,7 +424,7 @@ func buildTopNExec(ctx sessionctx.Context, offset, count int, byItems []*util.By
 	}
 	return &sortexec.TopNExec{
 		SortExec:    sortExec,
-		Limit:       &plannercore.PhysicalLimit{Count: uint64(count), Offset: uint64(offset)},
+		Limit:       &physicalop.PhysicalLimit{Count: uint64(count), Offset: uint64(offset)},
 		Concurrency: 5,
 	}
 }
@@ -699,8 +727,8 @@ func TestMergeJoinRequiredRows(t *testing.T) {
 			panic("not support")
 		}
 	}
-	joinTypes := []logicalop.JoinType{logicalop.RightOuterJoin, logicalop.LeftOuterJoin,
-		logicalop.LeftOuterSemiJoin, logicalop.AntiLeftOuterSemiJoin}
+	joinTypes := []base.JoinType{base.RightOuterJoin, base.LeftOuterJoin,
+		base.LeftOuterSemiJoin, base.AntiLeftOuterSemiJoin}
 	for _, joinType := range joinTypes {
 		ctx := defaultCtx()
 		required := make([]int, 100)
@@ -722,14 +750,14 @@ func TestMergeJoinRequiredRows(t *testing.T) {
 	}
 }
 
-func buildMergeJoinExec(ctx sessionctx.Context, joinType logicalop.JoinType, innerSrc, outerSrc exec.Executor) exec.Executor {
-	if joinType == logicalop.RightOuterJoin {
+func buildMergeJoinExec(ctx sessionctx.Context, joinType base.JoinType, innerSrc, outerSrc exec.Executor) exec.Executor {
+	if joinType == base.RightOuterJoin {
 		innerSrc, outerSrc = outerSrc, innerSrc
 	}
 
 	innerCols := innerSrc.Schema().Columns
 	outerCols := outerSrc.Schema().Columns
-	j := plannercore.BuildMergeJoinPlan(ctx.GetPlanCtx(), joinType, outerCols, innerCols)
+	j := physicalop.BuildMergeJoinPlan(ctx.GetPlanCtx(), joinType, outerCols, innerCols)
 
 	j.SetChildren(&mockPlan{exec: outerSrc}, &mockPlan{exec: innerSrc})
 	cols := slices.Concat(outerCols, innerCols)
@@ -741,7 +769,7 @@ func buildMergeJoinExec(ctx sessionctx.Context, joinType logicalop.JoinType, inn
 		j.CompareFuncs = append(j.CompareFuncs, expression.GetCmpFunction(ctx.GetExprCtx(), j.LeftJoinKeys[i], j.RightJoinKeys[i]))
 	}
 
-	b := newExecutorBuilder(ctx, nil)
+	b := newExecutorBuilder(context.Background(), ctx, nil, nil)
 	return b.build(j)
 }
 

@@ -181,15 +181,36 @@
                      "expr": "sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|tp\", resource_group=~\"$resource_group\"}[1m])) by (resource_group) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|tp\", resource_group=~\"$resource_group\"}[1m])) by (resource_group)",
                      "format": "time_series",
                      "intervalFactor": 2,
-                     "legendFormat": "{{resource_group}}",
+                     "legendFormat": "tp-{{resource_group}}",
                      "refId": "A"
                   },
                   {
                      "expr": "sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|tp\"}[1m])) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|tp\"}[1m]))",
                      "format": "time_series",
                      "intervalFactor": 2,
-                     "legendFormat": "total",
+                     "legendFormat": "tp-total",
                      "refId": "B"
+                  },
+                  {
+                     "expr": "sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|ap\", resource_group=~\"$resource_group\"}[1m])) by (resource_group) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|ap\", resource_group=~\"$resource_group\"}[1m])) by (resource_group)",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "ap-{{resource_group}}",
+                     "refId": "C"
+                  },
+                  {
+                     "expr": "sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|ap\"}[1m])) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|ap\"}[1m]))",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "ap-total",
+                     "refId": "D"
+                  },
+                  {
+                     "expr": "sum(rate(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|ap|tp\"}[1m])) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=~\"|ap|tp\"}[1m]))",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "total",
+                     "refId": "E"
                   }
                ],
                "thresholds": [ ],
@@ -1563,6 +1584,192 @@
                      "show": true
                   }
                ]
+            },
+            {
+               "aliasColors": { },
+               "bars": false,
+               "dashLength": 10,
+               "dashes": false,
+               "datasource": "${DS_TEST-CLUSTER}",
+               "description": "The metrics about cross AZ network traffic involved in queries for all resource groups.",
+               "fill": 1,
+               "fillGradient": 0,
+               "gridPos": {
+                  "h": 7,
+                  "w": 12,
+                  "x": 0,
+                  "y": 0
+               },
+               "id": 20,
+               "legend": {
+                  "alignAsTable": true,
+                  "avg": false,
+                  "current": false,
+                  "max": true,
+                  "min": false,
+                  "rightSide": true,
+                  "show": true,
+                  "sideWidth": null,
+                  "total": false,
+                  "values": true
+               },
+               "lines": true,
+               "linewidth": 1,
+               "links": [ ],
+               "nullPointMode": "null",
+               "percentage": false,
+               "pointradius": 5,
+               "points": false,
+               "renderer": "flot",
+               "repeat": null,
+               "seriesOverrides": [ ],
+               "spaceLength": 10,
+               "stack": false,
+               "steppedLine": false,
+               "targets": [
+                  {
+                     "expr": "sum(rate(resource_manager_resource_cross_az_traffic_byte_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", resource_group=~\"$resource_group\", type=\"read\"}[1m])) by (resource_group)",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{resource_group}}",
+                     "refId": "A"
+                  },
+                  {
+                     "expr": "sum(rate(resource_manager_resource_cross_az_traffic_byte_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=\"read\"}[1m]))",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "total",
+                     "refId": "B"
+                  }
+               ],
+               "thresholds": [ ],
+               "timeFrom": null,
+               "timeShift": null,
+               "title": "Cross AZ Traffic Bytes(Read)",
+               "tooltip": {
+                  "shared": true,
+                  "sort": 0,
+                  "value_type": "individual"
+               },
+               "type": "graph",
+               "xaxis": {
+                  "buckets": null,
+                  "mode": "time",
+                  "name": null,
+                  "show": true,
+                  "values": [ ]
+               },
+               "yaxes": [
+                  {
+                     "format": "bytes",
+                     "label": null,
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  },
+                  {
+                     "format": "bytes",
+                     "label": null,
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  }
+               ]
+            },
+            {
+               "aliasColors": { },
+               "bars": false,
+               "dashLength": 10,
+               "dashes": false,
+               "datasource": "${DS_TEST-CLUSTER}",
+               "description": "The metrics about cross AZ network traffic involved in write for all resource groups.",
+               "fill": 1,
+               "fillGradient": 0,
+               "gridPos": {
+                  "h": 7,
+                  "w": 12,
+                  "x": 12,
+                  "y": 0
+               },
+               "id": 21,
+               "legend": {
+                  "alignAsTable": true,
+                  "avg": false,
+                  "current": false,
+                  "max": true,
+                  "min": false,
+                  "rightSide": true,
+                  "show": true,
+                  "sideWidth": null,
+                  "total": false,
+                  "values": true
+               },
+               "lines": true,
+               "linewidth": 1,
+               "links": [ ],
+               "nullPointMode": "null",
+               "percentage": false,
+               "pointradius": 5,
+               "points": false,
+               "renderer": "flot",
+               "repeat": null,
+               "seriesOverrides": [ ],
+               "spaceLength": 10,
+               "stack": false,
+               "steppedLine": false,
+               "targets": [
+                  {
+                     "expr": "sum(rate(resource_manager_resource_cross_az_traffic_byte_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", resource_group=~\"$resource_group\", type=\"write\"}[1m])) by (resource_group)",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{resource_group}}",
+                     "refId": "A"
+                  },
+                  {
+                     "expr": "sum(rate(resource_manager_resource_cross_az_traffic_byte_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=\"write\"}[1m]))",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "total",
+                     "refId": "B"
+                  }
+               ],
+               "thresholds": [ ],
+               "timeFrom": null,
+               "timeShift": null,
+               "title": "Cross AZ Traffic Bytes(Write)",
+               "tooltip": {
+                  "shared": true,
+                  "sort": 0,
+                  "value_type": "individual"
+               },
+               "type": "graph",
+               "xaxis": {
+                  "buckets": null,
+                  "mode": "time",
+                  "name": null,
+                  "show": true,
+                  "values": [ ]
+               },
+               "yaxes": [
+                  {
+                     "format": "bytes",
+                     "label": null,
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  },
+                  {
+                     "format": "bytes",
+                     "label": null,
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  }
+               ]
             }
          ],
          "repeat": null,
@@ -1582,7 +1789,7 @@
             "x": 0,
             "y": 0
          },
-         "id": 20,
+         "id": 22,
          "panels": [
             {
                "aliasColors": { },
@@ -1599,7 +1806,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 21,
+               "id": 23,
                "legend": {
                   "alignAsTable": true,
                   "avg": false,
@@ -1685,7 +1892,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 22,
+               "id": 24,
                "legend": {
                   "alignAsTable": true,
                   "avg": false,
@@ -1778,7 +1985,7 @@
                   "x": 12,
                   "y": 0
                },
-               "id": 23,
+               "id": 25,
                "legend": {
                   "alignAsTable": true,
                   "avg": false,
@@ -1872,7 +2079,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 24,
+               "id": 26,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -1965,7 +2172,7 @@
                   "x": 12,
                   "y": 0
                },
-               "id": 25,
+               "id": 27,
                "legend": {
                   "alignAsTable": true,
                   "avg": false,
@@ -2058,7 +2265,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 26,
+               "id": 28,
                "legend": {
                   "alignAsTable": true,
                   "avg": false,
@@ -2151,7 +2358,7 @@
                   "x": 12,
                   "y": 0
                },
-               "id": 27,
+               "id": 29,
                "legend": {
                   "alignAsTable": true,
                   "avg": false,
@@ -2261,7 +2468,327 @@
             "x": 0,
             "y": 0
          },
-         "id": 28,
+         "id": 61,
+         "panels": [
+            {
+               "aliasColors": { },
+               "bars": false,
+               "dashLength": 10,
+               "dashes": false,
+               "datasource": "${DS_TEST-CLUSTER}",
+               "description": "Rate of read coprocessor RPCs split by whether they carried a positive PredictedReadBytes hint and triggered request-side read-byte pre-charge.",
+               "fill": 1,
+               "fillGradient": 0,
+               "gridPos": {
+                  "h": 7,
+                  "w": 24,
+                  "x": 0,
+                  "y": 0
+               },
+               "id": 62,
+               "legend": {
+                  "alignAsTable": true,
+                  "avg": false,
+                  "current": true,
+                  "max": false,
+                  "min": false,
+                  "rightSide": true,
+                  "show": true,
+                  "sideWidth": null,
+                  "total": false,
+                  "values": true
+               },
+               "lines": true,
+               "linewidth": 1,
+               "links": [ ],
+               "nullPointMode": "null",
+               "percentage": false,
+               "pointradius": 5,
+               "points": false,
+               "renderer": "flot",
+               "repeat": null,
+               "seriesOverrides": [ ],
+               "spaceLength": 10,
+               "stack": false,
+               "steppedLine": false,
+               "targets": [
+                  {
+                     "expr": "sum(rate(resource_manager_client_request_cop_read_precharge_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\"}[1m])) by (instance, resource_group)",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{instance}}-{{resource_group}}-precharged",
+                     "refId": "A"
+                  },
+                  {
+                     "expr": "sum(rate(resource_manager_client_request_cop_read_no_precharge_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\"}[1m])) by (instance, resource_group)",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{instance}}-{{resource_group}}-no-precharge",
+                     "refId": "B"
+                  }
+               ],
+               "thresholds": [ ],
+               "timeFrom": null,
+               "timeShift": null,
+               "title": "Cop Read Pre-charge Coverage",
+               "tooltip": {
+                  "shared": true,
+                  "sort": 0,
+                  "value_type": "individual"
+               },
+               "type": "graph",
+               "xaxis": {
+                  "buckets": null,
+                  "mode": "time",
+                  "name": null,
+                  "show": true,
+                  "values": [ ]
+               },
+               "yaxes": [
+                  {
+                     "format": "short",
+                     "label": null,
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  },
+                  {
+                     "format": "short",
+                     "label": null,
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  }
+               ]
+            },
+            {
+               "aliasColors": { },
+               "bars": false,
+               "dashLength": 10,
+               "dashes": false,
+               "datasource": "${DS_TEST-CLUSTER}",
+               "description": "Bytes rate over pre-charged coprocessor reads: predicted pre-charge basis and actual bytes read.",
+               "fill": 1,
+               "fillGradient": 0,
+               "gridPos": {
+                  "h": 7,
+                  "w": 12,
+                  "x": 0,
+                  "y": 7
+               },
+               "id": 63,
+               "legend": {
+                  "alignAsTable": true,
+                  "avg": false,
+                  "current": true,
+                  "max": false,
+                  "min": false,
+                  "rightSide": true,
+                  "show": true,
+                  "sideWidth": null,
+                  "total": false,
+                  "values": true
+               },
+               "lines": true,
+               "linewidth": 1,
+               "links": [ ],
+               "nullPointMode": "null",
+               "percentage": false,
+               "pointradius": 5,
+               "points": false,
+               "renderer": "flot",
+               "repeat": null,
+               "seriesOverrides": [ ],
+               "spaceLength": 10,
+               "stack": false,
+               "steppedLine": false,
+               "targets": [
+                  {
+                     "expr": "sum(rate(resource_manager_client_request_paging_precharge_bytes_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\"}[1m])) by (instance, resource_group)",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{instance}}-{{resource_group}}-precharge-predicted",
+                     "refId": "A"
+                  },
+                  {
+                     "expr": "sum(rate(resource_manager_client_request_paging_actual_bytes_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\"}[1m])) by (instance, resource_group)",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{instance}}-{{resource_group}}-precharge-actual",
+                     "refId": "B"
+                  }
+               ],
+               "thresholds": [ ],
+               "timeFrom": null,
+               "timeShift": null,
+               "title": "Paging Bytes",
+               "tooltip": {
+                  "shared": true,
+                  "sort": 0,
+                  "value_type": "individual"
+               },
+               "type": "graph",
+               "xaxis": {
+                  "buckets": null,
+                  "mode": "time",
+                  "name": null,
+                  "show": true,
+                  "values": [ ]
+               },
+               "yaxes": [
+                  {
+                     "format": "Bps",
+                     "label": null,
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  },
+                  {
+                     "format": "Bps",
+                     "label": null,
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  }
+               ]
+            },
+            {
+               "aliasColors": { },
+               "bars": false,
+               "dashLength": 10,
+               "dashes": false,
+               "datasource": "${DS_TEST-CLUSTER}",
+               "description": "Quantiles of signed prediction residual (actual - predicted read bytes) for pre-charged coprocessor RPCs. Positive = under-prediction (extra debit), negative = over-prediction (refund).",
+               "fill": 1,
+               "fillGradient": 0,
+               "gridPos": {
+                  "h": 7,
+                  "w": 12,
+                  "x": 12,
+                  "y": 7
+               },
+               "id": 64,
+               "legend": {
+                  "alignAsTable": true,
+                  "avg": true,
+                  "current": true,
+                  "max": true,
+                  "min": true,
+                  "rightSide": true,
+                  "show": true,
+                  "sideWidth": null,
+                  "total": false,
+                  "values": true
+               },
+               "lines": true,
+               "linewidth": 1,
+               "links": [ ],
+               "nullPointMode": "null",
+               "percentage": false,
+               "pointradius": 5,
+               "points": false,
+               "renderer": "flot",
+               "repeat": null,
+               "seriesOverrides": [ ],
+               "spaceLength": 10,
+               "stack": false,
+               "steppedLine": false,
+               "targets": [
+                  {
+                     "expr": "histogram_quantile(0.99, sum(rate(resource_manager_client_request_paging_prediction_residual_bytes_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\"}[1m])) by (instance, resource_group, le))",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{instance}}-{{resource_group}}-99",
+                     "refId": "A"
+                  },
+                  {
+                     "expr": "histogram_quantile(0.9, sum(rate(resource_manager_client_request_paging_prediction_residual_bytes_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\"}[1m])) by (instance, resource_group, le))",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{instance}}-{{resource_group}}-90",
+                     "refId": "B"
+                  },
+                  {
+                     "expr": "histogram_quantile(0.5, sum(rate(resource_manager_client_request_paging_prediction_residual_bytes_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\"}[1m])) by (instance, resource_group, le))",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{instance}}-{{resource_group}}-50",
+                     "refId": "C"
+                  },
+                  {
+                     "expr": "histogram_quantile(0.1, sum(rate(resource_manager_client_request_paging_prediction_residual_bytes_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\"}[1m])) by (instance, resource_group, le))",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{instance}}-{{resource_group}}-10",
+                     "refId": "D"
+                  },
+                  {
+                     "expr": "histogram_quantile(0.01, sum(rate(resource_manager_client_request_paging_prediction_residual_bytes_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\", resource_group=~\"$resource_group\"}[1m])) by (instance, resource_group, le))",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{instance}}-{{resource_group}}-01",
+                     "refId": "E"
+                  }
+               ],
+               "thresholds": [ ],
+               "timeFrom": null,
+               "timeShift": null,
+               "title": "Paging Prediction Residual Bytes",
+               "tooltip": {
+                  "shared": true,
+                  "sort": 0,
+                  "value_type": "individual"
+               },
+               "type": "graph",
+               "xaxis": {
+                  "buckets": null,
+                  "mode": "time",
+                  "name": null,
+                  "show": true,
+                  "values": [ ]
+               },
+               "yaxes": [
+                  {
+                     "format": "bytes",
+                     "label": null,
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  },
+                  {
+                     "format": "bytes",
+                     "label": null,
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  }
+               ]
+            }
+         ],
+         "repeat": null,
+         "repeatIteration": null,
+         "repeatRowId": null,
+         "showTitle": true,
+         "title": "Paging Pre-charge",
+         "titleSize": "h6",
+         "type": "row"
+      },
+      {
+         "collapse": true,
+         "collapsed": true,
+         "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 0
+         },
+         "id": 30,
          "panels": [
             {
                "aliasColors": { },
@@ -2278,7 +2805,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 29,
+               "id": 31,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -2364,7 +2891,7 @@
                   "x": 12,
                   "y": 0
                },
-               "id": 30,
+               "id": 32,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -2441,6 +2968,853 @@
                      "show": true
                   }
                ]
+            },
+            {
+               "aliasColors": { },
+               "bars": false,
+               "dashLength": 10,
+               "dashes": false,
+               "datasource": "${DS_TEST-CLUSTER}",
+               "description": "The rate of runaway flusher flush operations per second, by flusher name and result.",
+               "fill": 1,
+               "fillGradient": 0,
+               "gridPos": {
+                  "h": 7,
+                  "w": 12,
+                  "x": 0,
+                  "y": 0
+               },
+               "id": 33,
+               "legend": {
+                  "alignAsTable": true,
+                  "avg": true,
+                  "current": true,
+                  "max": true,
+                  "min": false,
+                  "rightSide": true,
+                  "show": true,
+                  "sideWidth": null,
+                  "total": false,
+                  "values": true
+               },
+               "lines": true,
+               "linewidth": 1,
+               "links": [ ],
+               "nullPointMode": "null",
+               "percentage": false,
+               "pointradius": 5,
+               "points": false,
+               "renderer": "flot",
+               "repeat": null,
+               "seriesOverrides": [ ],
+               "spaceLength": 10,
+               "stack": false,
+               "steppedLine": false,
+               "targets": [
+                  {
+                     "expr": "sum(rate(tidb_server_runaway_flusher_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m])) by (name, result)",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{name}}-{{result}}",
+                     "refId": "A"
+                  }
+               ],
+               "thresholds": [ ],
+               "timeFrom": null,
+               "timeShift": null,
+               "title": "Runaway Flusher Flush OPS",
+               "tooltip": {
+                  "shared": true,
+                  "sort": 0,
+                  "value_type": "individual"
+               },
+               "type": "graph",
+               "xaxis": {
+                  "buckets": null,
+                  "mode": "time",
+                  "name": null,
+                  "show": true,
+                  "values": [ ]
+               },
+               "yaxes": [
+                  {
+                     "format": "short",
+                     "label": null,
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  },
+                  {
+                     "format": "short",
+                     "label": null,
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  }
+               ]
+            },
+            {
+               "aliasColors": { },
+               "bars": false,
+               "dashLength": 10,
+               "dashes": false,
+               "datasource": "${DS_TEST-CLUSTER}",
+               "description": "The rate of records added to runaway flusher per second, by flusher name.",
+               "fill": 1,
+               "fillGradient": 0,
+               "gridPos": {
+                  "h": 7,
+                  "w": 12,
+                  "x": 12,
+                  "y": 0
+               },
+               "id": 34,
+               "legend": {
+                  "alignAsTable": true,
+                  "avg": true,
+                  "current": true,
+                  "max": true,
+                  "min": false,
+                  "rightSide": true,
+                  "show": true,
+                  "sideWidth": null,
+                  "total": false,
+                  "values": true
+               },
+               "lines": true,
+               "linewidth": 1,
+               "links": [ ],
+               "nullPointMode": "null",
+               "percentage": false,
+               "pointradius": 5,
+               "points": false,
+               "renderer": "flot",
+               "repeat": null,
+               "seriesOverrides": [ ],
+               "spaceLength": 10,
+               "stack": false,
+               "steppedLine": false,
+               "targets": [
+                  {
+                     "expr": "sum(rate(tidb_server_runaway_flusher_add_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m])) by (name)",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{name}}",
+                     "refId": "A"
+                  }
+               ],
+               "thresholds": [ ],
+               "timeFrom": null,
+               "timeShift": null,
+               "title": "Runaway Flusher Add OPS",
+               "tooltip": {
+                  "shared": true,
+                  "sort": 0,
+                  "value_type": "individual"
+               },
+               "type": "graph",
+               "xaxis": {
+                  "buckets": null,
+                  "mode": "time",
+                  "name": null,
+                  "show": true,
+                  "values": [ ]
+               },
+               "yaxes": [
+                  {
+                     "format": "short",
+                     "label": null,
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  },
+                  {
+                     "format": "short",
+                     "label": null,
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  }
+               ]
+            },
+            {
+               "aliasColors": { },
+               "bars": false,
+               "dashLength": 10,
+               "dashes": false,
+               "datasource": "${DS_TEST-CLUSTER}",
+               "description": "The batch size distribution of runaway flusher flush operations.",
+               "fill": 1,
+               "fillGradient": 0,
+               "gridPos": {
+                  "h": 7,
+                  "w": 12,
+                  "x": 0,
+                  "y": 0
+               },
+               "id": 35,
+               "legend": {
+                  "alignAsTable": true,
+                  "avg": true,
+                  "current": true,
+                  "max": true,
+                  "min": false,
+                  "rightSide": true,
+                  "show": true,
+                  "sideWidth": null,
+                  "total": false,
+                  "values": true
+               },
+               "lines": true,
+               "linewidth": 1,
+               "links": [ ],
+               "nullPointMode": "null",
+               "percentage": false,
+               "pointradius": 5,
+               "points": false,
+               "renderer": "flot",
+               "repeat": null,
+               "seriesOverrides": [ ],
+               "spaceLength": 10,
+               "stack": false,
+               "steppedLine": false,
+               "targets": [
+                  {
+                     "expr": "histogram_quantile(0.99, sum(rate(tidb_server_runaway_flusher_batch_size_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m])) by (name, le))",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{name}}-P99",
+                     "refId": "A"
+                  },
+                  {
+                     "expr": "histogram_quantile(0.9, sum(rate(tidb_server_runaway_flusher_batch_size_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m])) by (name, le))",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{name}}-P90",
+                     "refId": "B"
+                  },
+                  {
+                     "expr": "sum(rate(tidb_server_runaway_flusher_batch_size_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m])) by (name) / sum(rate(tidb_server_runaway_flusher_batch_size_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m])) by (name)",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{name}}-avg",
+                     "refId": "C"
+                  }
+               ],
+               "thresholds": [ ],
+               "timeFrom": null,
+               "timeShift": null,
+               "title": "Runaway Flusher Batch Size",
+               "tooltip": {
+                  "shared": true,
+                  "sort": 0,
+                  "value_type": "individual"
+               },
+               "type": "graph",
+               "xaxis": {
+                  "buckets": null,
+                  "mode": "time",
+                  "name": null,
+                  "show": true,
+                  "values": [ ]
+               },
+               "yaxes": [
+                  {
+                     "format": "short",
+                     "label": null,
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  },
+                  {
+                     "format": "short",
+                     "label": null,
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  }
+               ]
+            },
+            {
+               "aliasColors": { },
+               "bars": false,
+               "dashLength": 10,
+               "dashes": false,
+               "datasource": "${DS_TEST-CLUSTER}",
+               "description": "The duration of runaway flusher flush operations in seconds.",
+               "fill": 1,
+               "fillGradient": 0,
+               "gridPos": {
+                  "h": 7,
+                  "w": 12,
+                  "x": 12,
+                  "y": 0
+               },
+               "id": 36,
+               "legend": {
+                  "alignAsTable": true,
+                  "avg": true,
+                  "current": true,
+                  "max": true,
+                  "min": false,
+                  "rightSide": true,
+                  "show": true,
+                  "sideWidth": null,
+                  "total": false,
+                  "values": true
+               },
+               "lines": true,
+               "linewidth": 1,
+               "links": [ ],
+               "nullPointMode": "null",
+               "percentage": false,
+               "pointradius": 5,
+               "points": false,
+               "renderer": "flot",
+               "repeat": null,
+               "seriesOverrides": [ ],
+               "spaceLength": 10,
+               "stack": false,
+               "steppedLine": false,
+               "targets": [
+                  {
+                     "expr": "histogram_quantile(0.99, sum(rate(tidb_server_runaway_flusher_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m])) by (name, le))",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{name}}-P99",
+                     "refId": "A"
+                  },
+                  {
+                     "expr": "histogram_quantile(0.9, sum(rate(tidb_server_runaway_flusher_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m])) by (name, le))",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{name}}-P90",
+                     "refId": "B"
+                  },
+                  {
+                     "expr": "sum(rate(tidb_server_runaway_flusher_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m])) by (name) / sum(rate(tidb_server_runaway_flusher_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m])) by (name)",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{name}}-avg",
+                     "refId": "C"
+                  }
+               ],
+               "thresholds": [ ],
+               "timeFrom": null,
+               "timeShift": null,
+               "title": "Runaway Flusher Duration",
+               "tooltip": {
+                  "shared": true,
+                  "sort": 0,
+                  "value_type": "individual"
+               },
+               "type": "graph",
+               "xaxis": {
+                  "buckets": null,
+                  "mode": "time",
+                  "name": null,
+                  "show": true,
+                  "values": [ ]
+               },
+               "yaxes": [
+                  {
+                     "format": "s",
+                     "label": null,
+                     "logBase": 2,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  },
+                  {
+                     "format": "s",
+                     "label": null,
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  }
+               ]
+            },
+            {
+               "aliasColors": { },
+               "bars": false,
+               "dashLength": 10,
+               "dashes": false,
+               "datasource": "${DS_TEST-CLUSTER}",
+               "description": "The interval between consecutive runaway flusher flush operations in seconds.",
+               "fill": 1,
+               "fillGradient": 0,
+               "gridPos": {
+                  "h": 7,
+                  "w": 12,
+                  "x": 0,
+                  "y": 0
+               },
+               "id": 37,
+               "legend": {
+                  "alignAsTable": true,
+                  "avg": true,
+                  "current": true,
+                  "max": true,
+                  "min": false,
+                  "rightSide": true,
+                  "show": true,
+                  "sideWidth": null,
+                  "total": false,
+                  "values": true
+               },
+               "lines": true,
+               "linewidth": 1,
+               "links": [ ],
+               "nullPointMode": "null",
+               "percentage": false,
+               "pointradius": 5,
+               "points": false,
+               "renderer": "flot",
+               "repeat": null,
+               "seriesOverrides": [ ],
+               "spaceLength": 10,
+               "stack": false,
+               "steppedLine": false,
+               "targets": [
+                  {
+                     "expr": "histogram_quantile(0.99, sum(rate(tidb_server_runaway_flusher_interval_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m])) by (name, le))",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{name}}-P99",
+                     "refId": "A"
+                  },
+                  {
+                     "expr": "histogram_quantile(0.9, sum(rate(tidb_server_runaway_flusher_interval_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m])) by (name, le))",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{name}}-P90",
+                     "refId": "B"
+                  },
+                  {
+                     "expr": "sum(rate(tidb_server_runaway_flusher_interval_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m])) by (name) / sum(rate(tidb_server_runaway_flusher_interval_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m])) by (name)",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{name}}-avg",
+                     "refId": "C"
+                  }
+               ],
+               "thresholds": [ ],
+               "timeFrom": null,
+               "timeShift": null,
+               "title": "Runaway Flusher Interval",
+               "tooltip": {
+                  "shared": true,
+                  "sort": 0,
+                  "value_type": "individual"
+               },
+               "type": "graph",
+               "xaxis": {
+                  "buckets": null,
+                  "mode": "time",
+                  "name": null,
+                  "show": true,
+                  "values": [ ]
+               },
+               "yaxes": [
+                  {
+                     "format": "s",
+                     "label": null,
+                     "logBase": 2,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  },
+                  {
+                     "format": "s",
+                     "label": null,
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  }
+               ]
+            },
+            {
+               "aliasColors": { },
+               "bars": false,
+               "dashLength": 10,
+               "dashes": false,
+               "datasource": "${DS_TEST-CLUSTER}",
+               "description": "The rate of runaway syncer operations per second, by instance and result.",
+               "fill": 1,
+               "fillGradient": 0,
+               "gridPos": {
+                  "h": 7,
+                  "w": 12,
+                  "x": 12,
+                  "y": 0
+               },
+               "id": 38,
+               "legend": {
+                  "alignAsTable": true,
+                  "avg": true,
+                  "current": true,
+                  "max": true,
+                  "min": false,
+                  "rightSide": true,
+                  "show": true,
+                  "sideWidth": null,
+                  "total": false,
+                  "values": true
+               },
+               "lines": true,
+               "linewidth": 1,
+               "links": [ ],
+               "nullPointMode": "null",
+               "percentage": false,
+               "pointradius": 5,
+               "points": false,
+               "renderer": "flot",
+               "repeat": null,
+               "seriesOverrides": [ ],
+               "spaceLength": 10,
+               "stack": false,
+               "steppedLine": false,
+               "targets": [
+                  {
+                     "expr": "sum(rate(tidb_server_runaway_syncer_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m])) by (instance, result)",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{instance}}-{{result}}",
+                     "refId": "A"
+                  }
+               ],
+               "thresholds": [ ],
+               "timeFrom": null,
+               "timeShift": null,
+               "title": "Runaway Syncer OPS",
+               "tooltip": {
+                  "shared": true,
+                  "sort": 0,
+                  "value_type": "individual"
+               },
+               "type": "graph",
+               "xaxis": {
+                  "buckets": null,
+                  "mode": "time",
+                  "name": null,
+                  "show": true,
+                  "values": [ ]
+               },
+               "yaxes": [
+                  {
+                     "format": "short",
+                     "label": null,
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  },
+                  {
+                     "format": "short",
+                     "label": null,
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  }
+               ]
+            },
+            {
+               "aliasColors": { },
+               "bars": false,
+               "dashLength": 10,
+               "dashes": false,
+               "datasource": "${DS_TEST-CLUSTER}",
+               "description": "The duration of runaway syncer read operations in seconds.",
+               "fill": 1,
+               "fillGradient": 0,
+               "gridPos": {
+                  "h": 7,
+                  "w": 12,
+                  "x": 0,
+                  "y": 0
+               },
+               "id": 39,
+               "legend": {
+                  "alignAsTable": true,
+                  "avg": true,
+                  "current": true,
+                  "max": true,
+                  "min": false,
+                  "rightSide": true,
+                  "show": true,
+                  "sideWidth": null,
+                  "total": false,
+                  "values": true
+               },
+               "lines": true,
+               "linewidth": 1,
+               "links": [ ],
+               "nullPointMode": "null",
+               "percentage": false,
+               "pointradius": 5,
+               "points": false,
+               "renderer": "flot",
+               "repeat": null,
+               "seriesOverrides": [ ],
+               "spaceLength": 10,
+               "stack": false,
+               "steppedLine": false,
+               "targets": [
+                  {
+                     "expr": "histogram_quantile(0.99, sum(rate(tidb_server_runaway_syncer_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m])) by (instance, le))",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{instance}}-P99",
+                     "refId": "A"
+                  },
+                  {
+                     "expr": "histogram_quantile(0.9, sum(rate(tidb_server_runaway_syncer_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m])) by (instance, le))",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{instance}}-P90",
+                     "refId": "B"
+                  },
+                  {
+                     "expr": "sum(rate(tidb_server_runaway_syncer_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m])) by (instance) / sum(rate(tidb_server_runaway_syncer_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m])) by (instance)",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{instance}}-avg",
+                     "refId": "C"
+                  }
+               ],
+               "thresholds": [ ],
+               "timeFrom": null,
+               "timeShift": null,
+               "title": "Runaway Syncer Duration",
+               "tooltip": {
+                  "shared": true,
+                  "sort": 0,
+                  "value_type": "individual"
+               },
+               "type": "graph",
+               "xaxis": {
+                  "buckets": null,
+                  "mode": "time",
+                  "name": null,
+                  "show": true,
+                  "values": [ ]
+               },
+               "yaxes": [
+                  {
+                     "format": "s",
+                     "label": null,
+                     "logBase": 2,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  },
+                  {
+                     "format": "s",
+                     "label": null,
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  }
+               ]
+            },
+            {
+               "aliasColors": { },
+               "bars": false,
+               "dashLength": 10,
+               "dashes": false,
+               "datasource": "${DS_TEST-CLUSTER}",
+               "description": "The interval between consecutive runaway syncer operations in seconds.",
+               "fill": 1,
+               "fillGradient": 0,
+               "gridPos": {
+                  "h": 7,
+                  "w": 12,
+                  "x": 12,
+                  "y": 0
+               },
+               "id": 40,
+               "legend": {
+                  "alignAsTable": true,
+                  "avg": true,
+                  "current": true,
+                  "max": true,
+                  "min": false,
+                  "rightSide": true,
+                  "show": true,
+                  "sideWidth": null,
+                  "total": false,
+                  "values": true
+               },
+               "lines": true,
+               "linewidth": 1,
+               "links": [ ],
+               "nullPointMode": "null",
+               "percentage": false,
+               "pointradius": 5,
+               "points": false,
+               "renderer": "flot",
+               "repeat": null,
+               "seriesOverrides": [ ],
+               "spaceLength": 10,
+               "stack": false,
+               "steppedLine": false,
+               "targets": [
+                  {
+                     "expr": "histogram_quantile(0.99, sum(rate(tidb_server_runaway_syncer_interval_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m])) by (instance, le))",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{instance}}-P99",
+                     "refId": "A"
+                  },
+                  {
+                     "expr": "histogram_quantile(0.9, sum(rate(tidb_server_runaway_syncer_interval_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m])) by (instance, le))",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{instance}}-P90",
+                     "refId": "B"
+                  },
+                  {
+                     "expr": "sum(rate(tidb_server_runaway_syncer_interval_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m])) by (instance) / sum(rate(tidb_server_runaway_syncer_interval_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}[1m])) by (instance)",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{instance}}-avg",
+                     "refId": "C"
+                  }
+               ],
+               "thresholds": [ ],
+               "timeFrom": null,
+               "timeShift": null,
+               "title": "Runaway Syncer Interval",
+               "tooltip": {
+                  "shared": true,
+                  "sort": 0,
+                  "value_type": "individual"
+               },
+               "type": "graph",
+               "xaxis": {
+                  "buckets": null,
+                  "mode": "time",
+                  "name": null,
+                  "show": true,
+                  "values": [ ]
+               },
+               "yaxes": [
+                  {
+                     "format": "s",
+                     "label": null,
+                     "logBase": 2,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  },
+                  {
+                     "format": "s",
+                     "label": null,
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  }
+               ]
+            },
+            {
+               "aliasColors": { },
+               "bars": false,
+               "dashLength": 10,
+               "dashes": false,
+               "datasource": "${DS_TEST-CLUSTER}",
+               "decimals": 0,
+               "description": "The current lower-bound checkpoint of runaway syncer, expressed as Unix milliseconds of the next scan window for start_time (watch) or done_time (watch_done). A value of 0 means no checkpoint has been established yet.",
+               "fill": 1,
+               "fillGradient": 0,
+               "gridPos": {
+                  "h": 7,
+                  "w": 12,
+                  "x": 0,
+                  "y": 0
+               },
+               "id": 41,
+               "legend": {
+                  "alignAsTable": true,
+                  "avg": false,
+                  "current": true,
+                  "max": false,
+                  "min": false,
+                  "rightSide": true,
+                  "show": true,
+                  "sideWidth": null,
+                  "total": false,
+                  "values": true
+               },
+               "lines": true,
+               "linewidth": 1,
+               "links": [ ],
+               "nullPointMode": "null",
+               "percentage": false,
+               "pointradius": 5,
+               "points": false,
+               "renderer": "flot",
+               "repeat": null,
+               "seriesOverrides": [ ],
+               "spaceLength": 10,
+               "stack": false,
+               "steppedLine": false,
+               "targets": [
+                  {
+                     "expr": "tidb_server_runaway_syncer_checkpoint{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$tidb_instance\"}",
+                     "format": "time_series",
+                     "intervalFactor": 2,
+                     "legendFormat": "{{instance}}-{{type}}",
+                     "refId": "A"
+                  }
+               ],
+               "thresholds": [ ],
+               "timeFrom": null,
+               "timeShift": null,
+               "title": "Runaway Syncer Checkpoint",
+               "tooltip": {
+                  "shared": true,
+                  "sort": 0,
+                  "value_type": "individual"
+               },
+               "type": "graph",
+               "xaxis": {
+                  "buckets": null,
+                  "mode": "time",
+                  "name": null,
+                  "show": true,
+                  "values": [ ]
+               },
+               "yaxes": [
+                  {
+                     "decimals": 0,
+                     "format": "none",
+                     "label": "Unix ms",
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  },
+                  {
+                     "decimals": 0,
+                     "format": "none",
+                     "label": null,
+                     "logBase": 1,
+                     "max": null,
+                     "min": null,
+                     "show": true
+                  }
+               ]
             }
          ],
          "repeat": null,
@@ -2460,7 +3834,7 @@
             "x": 0,
             "y": 0
          },
-         "id": 31,
+         "id": 42,
          "panels": [
             {
                "aliasColors": { },
@@ -2477,7 +3851,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 32,
+               "id": 43,
                "legend": {
                   "alignAsTable": true,
                   "avg": false,
@@ -2563,7 +3937,7 @@
                   "x": 12,
                   "y": 0
                },
-               "id": 33,
+               "id": 44,
                "legend": {
                   "alignAsTable": true,
                   "avg": false,
@@ -2649,7 +4023,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 34,
+               "id": 45,
                "legend": {
                   "alignAsTable": true,
                   "avg": false,
@@ -2735,7 +4109,7 @@
                   "x": 12,
                   "y": 0
                },
-               "id": 35,
+               "id": 46,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -2831,7 +4205,7 @@
             "x": 0,
             "y": 0
          },
-         "id": 36,
+         "id": 47,
          "panels": [
             {
                "aliasColors": { },
@@ -2848,7 +4222,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 37,
+               "id": 48,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -2941,7 +4315,7 @@
                   "x": 12,
                   "y": 0
                },
-               "id": 38,
+               "id": 49,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -3027,7 +4401,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 39,
+               "id": 50,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -3113,7 +4487,7 @@
                   "x": 12,
                   "y": 0
                },
-               "id": 40,
+               "id": 51,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -3199,7 +4573,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 41,
+               "id": 52,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -3285,7 +4659,7 @@
                   "x": 12,
                   "y": 0
                },
-               "id": 42,
+               "id": 53,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -3371,7 +4745,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 43,
+               "id": 54,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -3460,7 +4834,7 @@
             "x": 0,
             "y": 0
          },
-         "id": 44,
+         "id": 55,
          "panels": [
             {
                "aliasColors": { },
@@ -3477,7 +4851,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 45,
+               "id": 56,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -3584,7 +4958,7 @@
                   "x": 12,
                   "y": 0
                },
-               "id": 46,
+               "id": 57,
                "legend": {
                   "alignAsTable": true,
                   "avg": false,
@@ -3678,7 +5052,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 47,
+               "id": 58,
                "legend": {
                   "alignAsTable": true,
                   "avg": true,
@@ -3771,7 +5145,7 @@
                   "x": 12,
                   "y": 0
                },
-               "id": 48,
+               "id": 59,
                "legend": {
                   "alignAsTable": true,
                   "avg": false,
@@ -3864,7 +5238,7 @@
                   "x": 0,
                   "y": 0
                },
-               "id": 49,
+               "id": 60,
                "legend": {
                   "alignAsTable": true,
                   "avg": false,

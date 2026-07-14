@@ -282,6 +282,40 @@ func TestParseExecArgs(t *testing.T) {
 	}
 }
 
+func TestParseExecArgsMalformedLengthEncodedParam(t *testing.T) {
+	tests := []struct {
+		name        string
+		paramValues []byte
+	}{
+		{
+			name:        "truncated length-encoded uint64 header",
+			paramValues: []byte{0xfe},
+		},
+		{
+			name: "overflowing length-encoded uint64",
+			// length = 1<<63, which previously could slip past `pos + int(length)` checks and panic on slicing.
+			paramValues: []byte{0xfe, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.NotPanics(t, func() {
+				args := expression.Args2Expressions4Test(1)
+				err := decodeAndParse(
+					types.DefaultStmtNoWarningContext,
+					args,
+					[][]byte{nil},
+					[]byte{0x0},
+					[]byte{mysql.TypeVarString, 0},
+					tt.paramValues,
+					nil,
+				)
+				require.Truef(t, terror.ErrorEqual(err, mysql.ErrMalformPacket), "err %v", err)
+			})
+		})
+	}
+}
+
 func TestParseExecArgsAndEncode(t *testing.T) {
 	dt := expression.Args2Expressions4Test(1)
 	err := decodeAndParse(types.DefaultStmtNoWarningContext,
@@ -303,6 +337,77 @@ func TestParseExecArgsAndEncode(t *testing.T) {
 		util.NewInputDecoder("gbk"))
 	require.NoError(t, err)
 	require.Equal(t, "测试", dt[0].(*expression.Constant).Value.GetString())
+}
+
+func TestParseExecArgsForDecimal(t *testing.T) {
+	// "1" -> 1
+	dt := expression.Args2Expressions4Test(1)
+	err := decodeAndParse(types.DefaultStmtNoWarningContext,
+		dt,
+		[][]byte{nil},
+		[]byte{0x0},
+		[]byte{0xf6, 0},
+		[]byte{0x1, '1'},
+		nil)
+	require.NoError(t, err)
+	require.Equal(t, types.NewDecFromStringForTest("1"), dt[0].(*expression.Constant).Value.GetValue())
+
+	// Maximum supported range of decimal, 81 digitsInt
+	err = decodeAndParse(types.DefaultStmtNoWarningContext,
+		dt,
+		[][]byte{nil},
+		[]byte{0x0},
+		[]byte{0xf6, 0},
+		[]byte{81, '1', '2', '3', '4', '5', '6', '7', '8', '9',
+			'1', '2', '3', '4', '5', '6', '7', '8', '9', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+			'1', '2', '3', '4', '5', '6', '7', '8', '9', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+			'1', '2', '3', '4', '5', '6', '7', '8', '9', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+			'1', '2', '3', '4', '5', '6', '7', '8', '9', '1', '2', '3', '4', '5', '6', '7', '8', '9'},
+		nil)
+	require.NoError(t, err)
+	require.Equal(t, types.NewDecFromStringForTest("123456789"+
+		"123456789123456789"+
+		"123456789123456789"+
+		"123456789123456789"+
+		"123456789123456789"), dt[0].(*expression.Constant).Value.GetValue())
+
+	// Maximum supported range of decimal, 9 digitsInt and 72 digitsFrac
+	err = decodeAndParse(types.DefaultStmtNoWarningContext,
+		dt,
+		[][]byte{nil},
+		[]byte{0x0},
+		[]byte{0xf6, 0},
+		[]byte{82, '1', '2', '3', '4', '5', '6', '7', '8', '9', '.',
+			'1', '2', '3', '4', '5', '6', '7', '8', '9', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+			'1', '2', '3', '4', '5', '6', '7', '8', '9', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+			'1', '2', '3', '4', '5', '6', '7', '8', '9', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+			'1', '2', '3', '4', '5', '6', '7', '8', '9', '1', '2', '3', '4', '5', '6', '7', '8', '9'},
+		nil)
+	require.NoError(t, err)
+	require.Equal(t, types.NewDecFromStringForTest("123456789."+
+		"123456789123456789"+
+		"123456789123456789"+
+		"123456789123456789"+
+		"123456789123456789"), dt[0].(*expression.Constant).Value.GetValue())
+
+	// Truncate 81-digit decimal string to 72-digit length
+	err = decodeAndParse(types.DefaultStmtNoWarningContext,
+		dt,
+		[][]byte{nil},
+		[]byte{0x0},
+		[]byte{0xf6, 0},
+		[]byte{83, '0', '.', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+			'1', '2', '3', '4', '5', '6', '7', '8', '9', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+			'1', '2', '3', '4', '5', '6', '7', '8', '9', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+			'1', '2', '3', '4', '5', '6', '7', '8', '9', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+			'1', '2', '3', '4', '5', '6', '7', '8', '9', '1', '2', '3', '4', '5', '6', '7', '8', '9'},
+		nil)
+	require.NoError(t, err)
+	require.Equal(t, types.NewDecFromStringForTest("0.123456789"+
+		"123456789123456789"+
+		"123456789123456789"+
+		"123456789123456789"+
+		"123456789"), dt[0].(*expression.Constant).Value.GetValue())
 }
 
 func buildDatetimeParam(year uint16, month uint8, day uint8, hour uint8, minute uint8, sec uint8, msec uint32) []byte {

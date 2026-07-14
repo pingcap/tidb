@@ -16,8 +16,6 @@ package base
 
 import (
 	"context"
-
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 )
 
 // LogicalOptRule means a logical optimizing rule, which contains de-correlate, ppd, column pruning, etc.
@@ -28,6 +26,6 @@ type LogicalOptRule interface {
 	//	 If the plan is changed, it will return true.
 	//	 The default value is false. It means that no interaction rule will be triggered.
 	// 3. error: If there is error during the rule optimizer, it will be thrown
-	Optimize(context.Context, LogicalPlan, *optimizetrace.LogicalOptimizeOp) (LogicalPlan, bool, error)
+	Optimize(context.Context, LogicalPlan) (LogicalPlan, bool, error)
 	Name() string
 }

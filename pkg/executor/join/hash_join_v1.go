@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/unionexec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
@@ -42,8 +42,13 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"go.uber.org/zap"
 )
+
+// IsChildCloseCalledForTest is used for test
+var IsChildCloseCalledForTest atomic.Bool
 
 var (
 	_ exec.Executor = &HashJoinV1Exec{}
@@ -138,7 +143,14 @@ func (e *HashJoinV1Exec) Close() error {
 			channel.Clear(e.ProbeWorkers[i].joinChkResourceCh)
 		}
 		e.ProbeSideTupleFetcher.probeChkResourceCh = nil
-		terror.Call(e.RowContainer.Close)
+		util.WithRecovery(func() {
+			err := e.RowContainer.Close()
+			if err != nil {
+				logutil.BgLogger().Warn("RowContainer encounters error",
+					zap.Error(err),
+					zap.Stack("stack trace"))
+			}
+		}, nil)
 		e.HashJoinCtxV1.SessCtx.GetSessionVars().MemTracker.UnbindActionFromHardLimit(e.RowContainer.ActionSpill())
 		e.waiterWg.Wait()
 	}
@@ -159,8 +171,9 @@ func (e *HashJoinV1Exec) Close() error {
 	if e.stats != nil {
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 	}
-	err := e.BaseExecutor.Close()
-	return err
+
+	IsChildCloseCalledForTest.Store(true)
+	return e.BaseExecutor.Close()
 }
 
 // Open implements the Executor Open interface.
@@ -226,7 +239,7 @@ func (e *HashJoinV1Exec) fetchAndProbeHashTable(ctx context.Context) {
 				return e.ProbeSideTupleFetcher.RowContainer.Len() == uint64(0)
 			},
 			func() bool { return false },
-			e.ProbeSideTupleFetcher.JoinType == logicalop.InnerJoin || e.ProbeSideTupleFetcher.JoinType == logicalop.SemiJoin,
+			e.ProbeSideTupleFetcher.JoinType == base.InnerJoin || e.ProbeSideTupleFetcher.JoinType == base.SemiJoin,
 			false,
 			e.ProbeSideTupleFetcher.IsOuterJoin,
 			&e.ProbeSideTupleFetcher.hashJoinCtxBase)
@@ -405,7 +418,7 @@ func (w *ProbeWorkerV1) joinMatchedProbeSideRow2ChunkForOuterHashJoin(probeKey u
 		}
 		rowIdx += len(outerMatchStatus)
 		if joinResult.chk.IsFull() {
-			ok, oneWaitTime, joinResult = w.sendingResult(joinResult)
+			ok, oneWaitTime, joinResult = w.sendingResultAndCheckSignal(joinResult)
 			waitTime += oneWaitTime
 			if !ok {
 				return false, waitTime, joinResult
@@ -449,7 +462,7 @@ func (w *ProbeWorkerV1) joinNAALOSJMatchProbeSideRow2Chunk(probeKey uint64, prob
 					return true, waitTime, joinResult
 				}
 				if joinResult.chk.IsFull() {
-					ok, oneWaitTime, joinResult = w.sendingResult(joinResult)
+					ok, oneWaitTime, joinResult = w.sendingResultAndCheckSignal(joinResult)
 					waitTime += oneWaitTime
 					if !ok {
 						return false, waitTime, joinResult
@@ -484,7 +497,7 @@ func (w *ProbeWorkerV1) joinNAALOSJMatchProbeSideRow2Chunk(probeKey uint64, prob
 				return true, waitTime, joinResult
 			}
 			if joinResult.chk.IsFull() {
-				ok, oneWaitTime, joinResult = w.sendingResult(joinResult)
+				ok, oneWaitTime, joinResult = w.sendingResultAndCheckSignal(joinResult)
 				waitTime += oneWaitTime
 				if !ok {
 					return false, waitTime, joinResult
@@ -524,7 +537,7 @@ func (w *ProbeWorkerV1) joinNAALOSJMatchProbeSideRow2Chunk(probeKey uint64, prob
 				return true, waitTime, joinResult
 			}
 			if joinResult.chk.IsFull() {
-				ok, oneWaitTime, joinResult = w.sendingResult(joinResult)
+				ok, oneWaitTime, joinResult = w.sendingResultAndCheckSignal(joinResult)
 				waitTime += oneWaitTime
 				if !ok {
 					return false, waitTime, joinResult
@@ -559,7 +572,7 @@ func (w *ProbeWorkerV1) joinNAALOSJMatchProbeSideRow2Chunk(probeKey uint64, prob
 			return true, waitTime, joinResult
 		}
 		if joinResult.chk.IsFull() {
-			ok, oneWaitTime, joinResult = w.sendingResult(joinResult)
+			ok, oneWaitTime, joinResult = w.sendingResultAndCheckSignal(joinResult)
 			waitTime += oneWaitTime
 			if !ok {
 				return false, waitTime, joinResult
@@ -605,7 +618,7 @@ func (w *ProbeWorkerV1) joinNAASJMatchProbeSideRow2Chunk(probeKey uint64, probeK
 					return true, waitTime, joinResult
 				}
 				if joinResult.chk.IsFull() {
-					ok, oneWaitTime, joinResult = w.sendingResult(joinResult)
+					ok, oneWaitTime, joinResult = w.sendingResultAndCheckSignal(joinResult)
 					waitTime += oneWaitTime
 					if !ok {
 						return false, waitTime, joinResult
@@ -640,7 +653,7 @@ func (w *ProbeWorkerV1) joinNAASJMatchProbeSideRow2Chunk(probeKey uint64, probeK
 				return true, waitTime, joinResult
 			}
 			if joinResult.chk.IsFull() {
-				ok, oneWaitTime, joinResult = w.sendingResult(joinResult)
+				ok, oneWaitTime, joinResult = w.sendingResultAndCheckSignal(joinResult)
 				waitTime += oneWaitTime
 				if !ok {
 					return false, waitTime, joinResult
@@ -680,7 +693,7 @@ func (w *ProbeWorkerV1) joinNAASJMatchProbeSideRow2Chunk(probeKey uint64, probeK
 				return true, waitTime, joinResult
 			}
 			if joinResult.chk.IsFull() {
-				ok, oneWaitTime, joinResult = w.sendingResult(joinResult)
+				ok, oneWaitTime, joinResult = w.sendingResultAndCheckSignal(joinResult)
 				waitTime += oneWaitTime
 				if !ok {
 					return false, waitTime, joinResult
@@ -715,7 +728,7 @@ func (w *ProbeWorkerV1) joinNAASJMatchProbeSideRow2Chunk(probeKey uint64, probeK
 			return true, waitTime, joinResult
 		}
 		if joinResult.chk.IsFull() {
-			ok, oneWaitTime, joinResult = w.sendingResult(joinResult)
+			ok, oneWaitTime, joinResult = w.sendingResultAndCheckSignal(joinResult)
 			waitTime += oneWaitTime
 			if !ok {
 				return false, waitTime, joinResult
@@ -749,8 +762,8 @@ func (w *ProbeWorkerV1) joinNAASJMatchProbeSideRow2Chunk(probeKey uint64, probeK
 //	       For NA-AntiLeftOuterSemiJoin, we couldn't match null-bucket first, because once y set has a same key x and null
 //	       key, we should return the result as left side row appended with a scalar value 0 which is from same key matching failure.
 func (w *ProbeWorkerV1) joinNAAJMatchProbeSideRow2Chunk(probeKey uint64, probeKeyNullBits *bitmap.ConcurrentBitmap, probeSideRow chunk.Row, hCtx *HashContext, joinResult *hashjoinWorkerResult) (bool, int64, *hashjoinWorkerResult) {
-	naAntiSemiJoin := w.HashJoinCtx.JoinType == logicalop.AntiSemiJoin && w.HashJoinCtx.IsNullAware
-	naAntiLeftOuterSemiJoin := w.HashJoinCtx.JoinType == logicalop.AntiLeftOuterSemiJoin && w.HashJoinCtx.IsNullAware
+	naAntiSemiJoin := w.HashJoinCtx.JoinType == base.AntiSemiJoin && w.HashJoinCtx.IsNullAware
+	naAntiLeftOuterSemiJoin := w.HashJoinCtx.JoinType == base.AntiLeftOuterSemiJoin && w.HashJoinCtx.IsNullAware
 	if naAntiSemiJoin {
 		return w.joinNAASJMatchProbeSideRow2Chunk(probeKey, probeKeyNullBits, probeSideRow, hCtx, joinResult)
 	}
@@ -799,7 +812,7 @@ func (w *ProbeWorkerV1) joinMatchedProbeSideRow2Chunk(probeKey uint64, probeSide
 		hasNull = hasNull || isNull
 
 		if joinResult.chk.IsFull() {
-			ok, oneWaitTime, joinResult = w.sendingResult(joinResult)
+			ok, oneWaitTime, joinResult = w.sendingResultAndCheckSignal(joinResult)
 			waitTime += oneWaitTime
 			if !ok {
 				return false, waitTime, joinResult
@@ -869,17 +882,18 @@ func (w *ProbeWorkerV1) join2Chunk(probeSideChk *chunk.Chunk, hCtx *HashContext,
 		}
 	}
 
-	for i := range selected {
-		err := w.HashJoinCtx.SessCtx.GetSessionVars().SQLKiller.HandleSignal()
-		failpoint.Inject("killedInJoin2Chunk", func(val failpoint.Value) {
-			if val.(bool) {
-				err = exeerrors.ErrQueryInterrupted
-			}
-		})
-		if err != nil {
-			joinResult.err = err
-			return false, waitTime, joinResult
+	err = w.HashJoinCtx.SessCtx.GetSessionVars().SQLKiller.HandleSignal()
+	failpoint.Inject("killedInJoin2Chunk", func(val failpoint.Value) {
+		if val.(bool) {
+			err = exeerrors.ErrQueryInterrupted
 		}
+	})
+	if err != nil {
+		joinResult.err = err
+		return false, waitTime, joinResult
+	}
+
+	for i := range selected {
 		if isNAAJ {
 			if !selected[i] {
 				// since this is the case of using inner to build, so for an outer row unselected, we should fill the result when it's outer join.
@@ -917,7 +931,7 @@ func (w *ProbeWorkerV1) join2Chunk(probeSideChk *chunk.Chunk, hCtx *HashContext,
 			}
 		}
 		if joinResult.chk.IsFull() {
-			ok, oneWaitTime, joinResult = w.sendingResult(joinResult)
+			ok, oneWaitTime, joinResult = w.sendingResultAndCheckSignal(joinResult)
 			waitTime += oneWaitTime
 			if !ok {
 				return false, waitTime, joinResult
@@ -935,6 +949,18 @@ func (w *ProbeWorkerV1) sendingResult(joinResult *hashjoinWorkerResult) (ok bool
 	return ok, cost, newJoinResult
 }
 
+func (w *ProbeWorkerV1) sendingResultAndCheckSignal(joinResult *hashjoinWorkerResult) (ok bool, waitTime int64, newJoinResult *hashjoinWorkerResult) {
+	ok, waitTime, newJoinResult = w.sendingResult(joinResult)
+	if !ok {
+		return false, waitTime, newJoinResult
+	}
+	if err := w.HashJoinCtx.SessCtx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
+		newJoinResult.err = err
+		return false, waitTime, newJoinResult
+	}
+	return true, waitTime, newJoinResult
+}
+
 // join2ChunkForOuterHashJoin joins chunks when using the outer to build a hash table (refer to outer hash join)
 func (w *ProbeWorkerV1) join2ChunkForOuterHashJoin(probeSideChk *chunk.Chunk, hCtx *HashContext, joinResult *hashjoinWorkerResult) (ok bool, waitTime int64, _ *hashjoinWorkerResult) {
 	waitTime = 0
@@ -947,17 +973,19 @@ func (w *ProbeWorkerV1) join2ChunkForOuterHashJoin(probeSideChk *chunk.Chunk, hC
 			return false, waitTime, joinResult
 		}
 	}
-	for i := range probeSideChk.NumRows() {
-		err := w.HashJoinCtx.SessCtx.GetSessionVars().SQLKiller.HandleSignal()
-		failpoint.Inject("killedInJoin2ChunkForOuterHashJoin", func(val failpoint.Value) {
-			if val.(bool) {
-				err = exeerrors.ErrQueryInterrupted
-			}
-		})
-		if err != nil {
-			joinResult.err = err
-			return false, waitTime, joinResult
+
+	err := w.HashJoinCtx.SessCtx.GetSessionVars().SQLKiller.HandleSignal()
+	failpoint.Inject("killedInJoin2ChunkForOuterHashJoin", func(val failpoint.Value) {
+		if val.(bool) {
+			err = exeerrors.ErrQueryInterrupted
 		}
+	})
+	if err != nil {
+		joinResult.err = err
+		return false, waitTime, joinResult
+	}
+
+	for i := range probeSideChk.NumRows() {
 		probeKey, probeRow := hCtx.HashVals[i].Sum64(), probeSideChk.GetRow(i)
 		ok, oneWaitTime, joinResult = w.joinMatchedProbeSideRow2ChunkForOuterHashJoin(probeKey, probeRow, hCtx, joinResult)
 		waitTime += oneWaitTime
@@ -965,7 +993,7 @@ func (w *ProbeWorkerV1) join2ChunkForOuterHashJoin(probeSideChk *chunk.Chunk, hC
 			return false, waitTime, joinResult
 		}
 		if joinResult.chk.IsFull() {
-			ok, oneWaitTime, joinResult = w.sendingResult(joinResult)
+			ok, oneWaitTime, joinResult = w.sendingResultAndCheckSignal(joinResult)
 			waitTime += oneWaitTime
 			if !ok {
 				return false, waitTime, joinResult

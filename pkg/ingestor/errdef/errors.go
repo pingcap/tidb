@@ -14,10 +14,16 @@
 
 package errdef
 
-import "github.com/pingcap/errors"
+import (
+	goerrors "errors"
+	"fmt"
+
+	"github.com/pingcap/errors"
+)
 
 // errors of ingest API
 var (
+	ErrNoLeader              = errors.Normalize("region has no leader, region '%d'", errors.RFCCodeText("KV:ErrNoLeader"))
 	ErrKVEpochNotMatch       = errors.Normalize("epoch not match", errors.RFCCodeText("Ingest:EpochNotMatch"))
 	ErrKVNotLeader           = errors.Normalize("not leader", errors.RFCCodeText("Ingest:NotLeader"))
 	ErrKVServerIsBusy        = errors.Normalize("server is busy", errors.RFCCodeText("Ingest:ServerIsBusy"))
@@ -27,3 +33,34 @@ var (
 	ErrKVIngestFailed        = errors.Normalize("ingest tikv failed", errors.RFCCodeText("Ingest:ErrKVIngestFailed"))
 	ErrKVRaftProposalDropped = errors.Normalize("raft proposal dropped", errors.RFCCodeText("Ingest:ErrKVRaftProposalDropped"))
 )
+
+// IsKVDiskFullError returns whether err is caused by TiKV reporting disk full.
+func IsKVDiskFullError(err error) bool {
+	if goerrors.Is(err, ErrKVDiskFull) {
+		return true
+	}
+	var tErr *errors.Error
+	if goerrors.As(err, &tErr) {
+		return tErr.RFCCode() == ErrKVDiskFull.RFCCode()
+	}
+	if cause, ok := errors.Cause(err).(*errors.Error); ok {
+		return cause.RFCCode() == ErrKVDiskFull.RFCCode()
+	}
+	return false
+}
+
+// HTTPStatusError is used in nextgen write and ingest API to indicate that the
+// request failed with a non 200 status code, and there is no response body to
+// indicate what the error detail is, we use this to help determine whether it
+// can be retried or not.
+type HTTPStatusError struct {
+	StatusCode int
+	Message    string
+}
+
+var _ error = (*HTTPStatusError)(nil)
+
+// Error implements the error interface.
+func (e *HTTPStatusError) Error() string {
+	return fmt.Sprintf("request failed with status code %d: %s", e.StatusCode, e.Message)
+}

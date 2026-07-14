@@ -60,6 +60,7 @@ func PrepareSlowLogfile(t *testing.T, slowLogFileName string) {
 # Cop_proc_avg: 0.1 Cop_proc_p90: 0.2 Cop_proc_max: 0.03 Cop_proc_addr: 127.0.0.1:20160
 # Cop_wait_avg: 0.05 Cop_wait_p90: 0.6 Cop_wait_max: 0.8 Cop_wait_addr: 0.0.0.0:20160
 # Mem_max: 70724
+# Mem_arbitration: 23333
 # Disk_max: 65536
 # Plan_from_cache: true
 # Result_rows: 10
@@ -86,6 +87,7 @@ select * from t_slim;
 # Digest: 124acb3a0bec903176baca5f9da00b4e7512a41c93b417923f26502edeb324cc
 # Num_cop_tasks: 0
 # Mem_max: 856544
+# Mem_arbitration: 856547
 # Prepared: false
 # Plan_from_cache: false
 # Plan_from_binding: false
@@ -108,6 +110,8 @@ select * from t_slim;
 # Request_unit_write: 3182.424414062492
 # Tidb_cpu_time: 0.01
 # Tikv_cpu_time: 0.021
+# Storage_from_kv: true
+# Storage_from_mpp: true
 INSERT INTO ...;
 `)
 	require.NoError(t, f.Close())

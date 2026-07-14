@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/internal"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
-	"github.com/pingcap/tidb/pkg/store/driver/txn"
+	drivertxn "github.com/pingcap/tidb/pkg/store/driver/txn"
 	"github.com/pingcap/tidb/pkg/table/temptable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -133,7 +133,7 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 	sessVars.TxnCtxMu.Lock()
 	sessVars.TxnCtx = txnCtx
 	sessVars.TxnCtxMu.Unlock()
-	if vardef.EnableMDL.Load() {
+	if vardef.IsMDLEnabled() {
 		sessVars.TxnCtx.EnableMDL = true
 	}
 
@@ -296,6 +296,14 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	}
 
 	txnFuture := p.sctx.GetPreparedTxnFuture()
+
+	// Inject delay before TSO wait for testing maxExecutionTime
+	failpoint.Inject("injectTSOWaitDelay", func(val failpoint.Value) {
+		if delayMs, ok := val.(int); ok {
+			time.Sleep(time.Duration(delayMs) * time.Millisecond)
+		}
+	})
+
 	txn, err := txnFuture.Wait(p.ctx, p.sctx)
 	if err != nil {
 		return nil, err
@@ -441,29 +449,25 @@ func (p *baseTxnContextProvider) GetSnapshotWithStmtForUpdateTS() (kv.Snapshot, 
 // getSnapshotByTS get snapshot from store according to the snapshotTS and set the transaction related
 // options before return
 func (p *baseTxnContextProvider) getSnapshotByTS(snapshotTS uint64) (kv.Snapshot, error) {
-	txn, err := p.sctx.Txn(false)
+	kvTxn, err := p.sctx.Txn(false)
 	if err != nil {
 		return nil, err
 	}
 
-	txnCtx := p.sctx.GetSessionVars().TxnCtx
-	if txn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() && txnCtx.StartTS == snapshotTS {
-		return txn.GetSnapshot(), nil
-	}
-
 	sessVars := p.sctx.GetSessionVars()
-	snapshot := internal.GetSnapshotWithTS(
-		p.sctx,
-		snapshotTS,
-		temptable.SessionSnapshotInterceptor(p.sctx, p.infoSchema),
-	)
+	txnCtx := sessVars.TxnCtx
 
-	replicaReadType := sessVars.GetReplicaRead()
-	if replicaReadType.IsFollowerRead() &&
-		!sessVars.StmtCtx.RCCheckTS &&
-		!sessVars.RcWriteCheckTS {
-		snapshot.SetOption(kv.ReplicaRead, replicaReadType)
+	var snapshot kv.Snapshot
+	if kvTxn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() && txnCtx.StartTS == snapshotTS {
+		snapshot = kvTxn.GetSnapshot()
+	} else {
+		snapshot = internal.GetSnapshotWithTS(
+			p.sctx,
+			snapshotTS,
+			temptable.SessionSnapshotInterceptor(p.sctx, p.infoSchema),
+		)
 	}
+	snapshot.SetOption(kv.ReplicaRead, p.sctx.GetSessionVars().GetReplicaRead())
 
 	return snapshot, nil
 }
@@ -590,10 +594,10 @@ func (p *baseTxnContextProvider) SetOptionsBeforeCommit(
 		}
 		physicalTableIDs = append(physicalTableIDs, id)
 	}
-	needCheckSchema := true
+	needCheckSchemaByDelta := true
 	// Set this option for 2 phase commit to validate schema lease.
 	if sessVars.TxnCtx != nil {
-		needCheckSchema = !sessVars.TxnCtx.EnableMDL
+		needCheckSchemaByDelta = !sessVars.TxnCtx.EnableMDL
 	}
 
 	// TODO: refactor SetOption usage to avoid race risk, should detect it in test.
@@ -605,7 +609,7 @@ func (p *baseTxnContextProvider) SetOptionsBeforeCommit(
 			p.sctx.GetSchemaValidator(),
 			p.GetTxnInfoSchema().SchemaMetaVersion(),
 			physicalTableIDs,
-			needCheckSchema,
+			needCheckSchemaByDelta,
 		),
 	)
 
@@ -770,6 +774,6 @@ func (m temporaryTableKVFilter) IsUnnecessaryKeyValue(
 	}
 
 	// This is the default filter for all tables.
-	defaultFilter := txn.TiDBKVFilter{}
+	defaultFilter := drivertxn.TiDBKVFilter{}
 	return defaultFilter.IsUnnecessaryKeyValue(key, value, flags)
 }

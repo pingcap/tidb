@@ -24,11 +24,14 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestmetric"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/redact"
@@ -76,6 +79,7 @@ type writeClient struct {
 	clusterID     uint64
 	httpClient    *http.Client
 	commitTS      uint64
+	initTime      time.Time
 
 	wg         util.WaitGroupWrapper
 	sendReqErr atomic.Error
@@ -108,6 +112,7 @@ func (w *writeClient) init(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	req.Header.Set("Content-Type", "application/octet-stream")
+	w.initTime = time.Now()
 	w.startChunkedHTTPRequest(req)
 	w.reader = pr // PipeReader will be closed by the httpClient.Do automatically
 	w.writer = pw
@@ -116,6 +121,10 @@ func (w *writeClient) init(ctx context.Context) error {
 
 func (w *writeClient) startChunkedHTTPRequest(req *http.Request) {
 	w.wg.RunWithLog(func() {
+		defer func() {
+			ingestmetric.WriteAPIDuration.Observe(time.Since(w.initTime).Seconds())
+		}()
+
 		resp, err := w.httpClient.Do(req)
 		if err != nil {
 			w.sendReqErr.Store(errors.Trace(err))
@@ -126,9 +135,15 @@ func (w *writeClient) startChunkedHTTPRequest(req *http.Request) {
 		if resp.StatusCode != http.StatusOK {
 			body, err1 := io.ReadAll(resp.Body)
 			if err1 != nil {
-				w.sendReqErr.Store(errors.Annotate(err1, "failed to readAll response"))
+				w.sendReqErr.Store(errors.Trace(&errdef.HTTPStatusError{
+					StatusCode: resp.StatusCode,
+					Message:    fmt.Sprintf("failed to read response body: %s", err1.Error()),
+				}))
 			} else {
-				w.sendReqErr.Store(errors.Errorf("failed to send chunked request: %s", string(body)))
+				w.sendReqErr.Store(errors.Trace(&errdef.HTTPStatusError{
+					StatusCode: resp.StatusCode,
+					Message:    fmt.Sprintf("failed to send chunked request: %s", string(body)),
+				}))
 			}
 			return
 		}
@@ -253,6 +268,11 @@ func (c *client) Ingest(ctx context.Context, in *IngestRequest) error {
 		return errors.Trace(err)
 	}
 
+	startTime := time.Now()
+	defer func() {
+		ingestmetric.IngestAPIDuration.Observe(time.Since(startTime).Seconds())
+	}()
+
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return errors.Trace(err)
@@ -262,11 +282,17 @@ func (c *client) Ingest(ctx context.Context, in *IngestRequest) error {
 	if resp.StatusCode != http.StatusOK {
 		body, err1 := io.ReadAll(resp.Body)
 		if err1 != nil {
-			return errors.Annotate(err1, "failed to readAll response")
+			return errors.Trace(&errdef.HTTPStatusError{
+				StatusCode: resp.StatusCode,
+				Message:    fmt.Sprintf("failed to read response body: %s", err1.Error()),
+			})
 		}
 		var pbErr errorpb.Error
 		if err := proto.Unmarshal(body, &pbErr); err != nil {
-			return errors.Annotatef(err, "failed to unmarshal error(%s)", string(body))
+			return errors.Trace(&errdef.HTTPStatusError{
+				StatusCode: resp.StatusCode,
+				Message:    fmt.Sprintf("failed to unmarshal error response: %s", err.Error()),
+			})
 		}
 		// we annotate the SST ID to help diagnose.
 		pbErr.Message = fmt.Sprintf("%s(ingest SST ID %d)", pbErr.Message, sstMeta.ID)

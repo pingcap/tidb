@@ -15,11 +15,13 @@
 package expression
 
 import (
+	"fmt"
 	"math"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -112,6 +114,10 @@ func TestIsUUID(t *testing.T) {
 		{"{6ccd780c-baba-1026-9564-5b8c656024db}", 1},
 		{"6ccd780c-baba-1026-9564-5b8c6560", 0},
 		{"6CCD780C-BABA-1026-9564-5B8C656024DQ", 0},
+		// Test leading/trailing spaces should return 0 to match MySQL behavior
+		{" 6ccd780c-baba-1026-9564-5b8c656024db", 0},
+		{"6ccd780c-baba-1026-9564-5b8c656024db ", 0},
+		{" 6ccd780c-baba-1026-9564-5b8c656024db ", 0},
 		// This is a bug in google/uuid#60
 		{"{99a9ad03-5298-11ec-8f5c-00ff90147ac3*", 1},
 		// This is a format google/uuid support, while mysql doesn't
@@ -136,29 +142,99 @@ func TestIsUUID(t *testing.T) {
 }
 
 func TestUUID(t *testing.T) {
+	uuidGenFuncs := []struct {
+		funcName      string
+		expectVersion uuid.Version
+	}{
+		{ast.UUID, uuid.Version(1)},
+		{ast.UUIDv4, uuid.Version(4)},
+		{ast.UUIDv7, uuid.Version(7)},
+	}
+	for _, tf := range uuidGenFuncs {
+		t.Run(tf.funcName, func(t *testing.T) {
+			ctx := createContext(t)
+			f, err := newFunctionForTest(ctx, tf.funcName)
+			require.NoError(t, err)
+			d, err := f.Eval(ctx, chunk.Row{})
+			require.NoError(t, err)
+			u, err := uuid.Parse(d.GetString())
+			require.NoError(t, err)
+			require.Equal(t, tf.expectVersion, u.Version(), "Must generate a UUIDv%d", u.Version())
+			parts := strings.Split(d.GetString(), "-")
+			require.Equal(t, 5, len(parts))
+			for i, p := range parts {
+				switch i {
+				case 0:
+					require.Equal(t, 8, len(p))
+				case 1:
+					require.Equal(t, 4, len(p))
+				case 2:
+					require.Equal(t, 4, len(p))
+				case 3:
+					require.Equal(t, 4, len(p))
+				case 4:
+					require.Equal(t, 12, len(p))
+				}
+			}
+			_, err = funcs[tf.funcName].getFunction(ctx, datumsToConstants(nil))
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestUUIDVersion(t *testing.T) {
 	ctx := createContext(t)
-	f, err := newFunctionForTest(ctx, ast.UUID)
-	require.NoError(t, err)
-	d, err := f.Eval(ctx, chunk.Row{})
-	require.NoError(t, err)
-	parts := strings.Split(d.GetString(), "-")
-	require.Equal(t, 5, len(parts))
-	for i, p := range parts {
-		switch i {
-		case 0:
-			require.Equal(t, 8, len(p))
-		case 1:
-			require.Equal(t, 4, len(p))
-		case 2:
-			require.Equal(t, 4, len(p))
-		case 3:
-			require.Equal(t, 4, len(p))
-		case 4:
-			require.Equal(t, 12, len(p))
+	tbl := []struct {
+		arg string
+		ret int
+	}{
+		{"5f13f854-d74a-11f0-9b7a-0ae0156bd76b", 1},
+		{"c6437ef1-5b86-3a4e-a071-c2d4ad414e65", 3},
+		{"a3e3b4a1-ea6d-471e-9860-8303a8b261f6", 4},
+		{"271a8175-dadd-5df9-b0bd-20a4a0b441e6", 5},
+		{"1f0e48c1-7860-69cc-9b3f-35f89c103d4d", 6},
+		{"019b1440-87b7-7380-ab00-ce413e795004", 7},
+	}
+	for _, tt := range tbl {
+		fc := funcs[ast.UUIDVersion]
+		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.arg)))
+		require.NoError(t, err)
+		r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		require.NoError(t, err)
+		testutil.DatumEqual(t, types.NewDatum(tt.ret), r,
+			fmt.Sprintf("UUID_VERSION('%s') = %d (got %v)", tt.arg, tt.ret, r))
+	}
+}
+
+func TestUUIDTimestamp(t *testing.T) {
+	ctx := createContext(t)
+	tbl := []struct {
+		arg  string
+		ret  float64
+		null bool
+	}{
+		{"5f13f854-d74a-11f0-9b7a-0ae0156bd76b", 1765537487.118139, false}, // v1
+		{"c6437ef1-5b86-3a4e-a071-c2d4ad414e65", 0, true},                  // v3
+		{"a3e3b4a1-ea6d-471e-9860-8303a8b261f6", 0, true},                  // v4
+		{"271a8175-dadd-5df9-b0bd-20a4a0b441e6", 0, true},                  // v5
+		{"1f0e48c1-7860-69cc-9b3f-35f89c103d4d", 1766995078.970004, false}, // v6
+		{"019b1440-87b7-7380-ab00-ce413e795004", 1765571332.023000, false}, // v7
+		{"00000000-0000-0000-0000-000000000000", 0, true},                  // Nil UUID
+		{"ffffffff-ffff-ffff-ffff-ffffffffffff", 0, true},                  // Max UUID
+	}
+	for _, tt := range tbl {
+		fc := funcs[ast.UUIDTimestamp]
+		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.arg)))
+		require.NoError(t, err)
+		r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		require.NoError(t, err)
+		if tt.null {
+			require.True(t, r.IsNull())
+		} else {
+			testutil.DatumEqual(t, types.NewDatum(types.NewDecFromFloatForTest(tt.ret)), r,
+				fmt.Sprintf("UUID_TIMESTAMP('%s') = %v (got %v)", tt.arg, tt.ret, r))
 		}
 	}
-	_, err = funcs[ast.UUID].getFunction(ctx, datumsToConstants(nil))
-	require.NoError(t, err)
 }
 
 func TestAnyValue(t *testing.T) {
@@ -180,6 +256,70 @@ func TestAnyValue(t *testing.T) {
 		r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, types.NewDatum(tt.ret), r)
+	}
+}
+
+func TestAnyValueHybridStringEvalWithIntSig(t *testing.T) {
+	ctx := createContext(t)
+	enumTp := types.NewFieldType(mysql.TypeEnum)
+	enumTp.SetElems([]string{"a", "b"})
+	enumTp.AddFlag(mysql.EnumSetAsIntFlag)
+	setTp := types.NewFieldType(mysql.TypeSet)
+	setTp.SetElems([]string{"a", "b"})
+	setTp.AddFlag(mysql.EnumSetAsIntFlag)
+	bitTp := types.NewFieldType(mysql.TypeBit)
+
+	tests := []struct {
+		name     string
+		tp       *types.FieldType
+		appendFn func(*chunk.Chunk)
+		expected string
+	}{
+		{
+			name: "enum",
+			tp:   enumTp,
+			appendFn: func(chk *chunk.Chunk) {
+				chk.AppendEnum(0, types.Enum{Name: "b", Value: 2})
+			},
+			expected: "b",
+		},
+		{
+			name: "set",
+			tp:   setTp,
+			appendFn: func(chk *chunk.Chunk) {
+				chk.AppendSet(0, types.Set{Name: "a,b", Value: 3})
+			},
+			expected: "a,b",
+		},
+		{
+			name: "bit",
+			tp:   bitTp,
+			appendFn: func(chk *chunk.Chunk) {
+				chk.AppendBytes(0, []byte{0x01})
+			},
+			expected: "\x01",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			col := &Column{Index: 0, RetType: tt.tp}
+			f, err := funcs[ast.AnyValue].getFunction(ctx, []Expression{col})
+			require.NoError(t, err)
+			require.IsType(t, &builtinIntAnyValueSig{}, f)
+
+			input := chunk.New([]*types.FieldType{tt.tp}, 1, 1)
+			tt.appendFn(input)
+			got, isNull, err := f.evalString(ctx, input.GetRow(0))
+			require.NoError(t, err)
+			require.False(t, isNull)
+			require.Equal(t, tt.expected, got)
+
+			result := chunk.NewColumn(types.NewFieldType(mysql.TypeString), 1)
+			require.NoError(t, f.vecEvalString(ctx, input, result))
+			require.False(t, result.IsNull(0))
+			require.Equal(t, tt.expected, result.GetString(0))
+		})
 	}
 }
 
@@ -480,6 +620,28 @@ func TestUUIDToBin(t *testing.T) {
 		},
 		{
 			[]any{"6ccd780c-baba-1026-9564-5b8c6560"},
+			[]byte{},
+			false,
+			false,
+			true,
+		},
+		{
+			// Test leading/trailing spaces should cause error to match MySQL behavior
+			[]any{" 6ccd780c-baba-1026-9564-5b8c656024db"},
+			[]byte{},
+			false,
+			false,
+			true,
+		},
+		{
+			[]any{"6ccd780c-baba-1026-9564-5b8c656024db "},
+			[]byte{},
+			false,
+			false,
+			true,
+		},
+		{
+			[]any{" 6ccd780c-baba-1026-9564-5b8c656024db "},
 			[]byte{},
 			false,
 			false,

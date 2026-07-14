@@ -13,3 +13,53 @@
 // limitations under the License.
 
 package util
+
+import (
+	"fmt"
+	"io/fs"
+	"math/rand"
+	"path"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+
+	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/stretchr/testify/require"
+)
+
+const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
+// GenerateRandomString returns a random string with specified length
+func GenerateRandomString(length int) string {
+	b := make([]byte, length)
+	for i := range b {
+		b[i] = letterBytes[rand.Intn(len(letterBytes))]
+	}
+	return string(b)
+}
+
+// GetFunctionName returns the function name
+func GetFunctionName() string {
+	pc, _, _, _ := runtime.Caller(1)
+	return path.Base(runtime.FuncForPC(pc).Name())
+}
+
+// CheckNoLeakFiles checks if there are file leaks
+func CheckNoLeakFiles(t *testing.T, fileNamePrefixForTest string) {
+	path := config.GetGlobalConfig().TempStoragePath
+	log.Info(fmt.Sprintf("path: %s", path))
+	require.Equal(t, filepath.Dir(t.TempDir()), filepath.Dir(path))
+	err := filepath.WalkDir(path, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if !d.IsDir() {
+			require.False(t, strings.HasPrefix(d.Name(), fileNamePrefixForTest))
+		}
+		return nil
+	})
+	require.NoError(t, err)
+}

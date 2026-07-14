@@ -244,7 +244,7 @@ drop table if exists t;
 create table t(a bigint, b bigint);
 insert into t values(1, 1);
 --enable_warnings
-desc format='brief' select ifnull("aaaa", a) from t;
+explain format='plan_tree' select ifnull("aaaa", a) from t;
 select ifnull("aaaa", a) from t;
 --disable_warnings
 
@@ -419,6 +419,7 @@ update tdm set c12 = 0 where id = 1;
 select c12+0 from tdm;
 update tdm set c12 = '0' where id = 1;
 select c12+0 from tdm;
+set @@sql_mode = default;
 
 # TestCTEInvalidUsage
 drop table if exists t;

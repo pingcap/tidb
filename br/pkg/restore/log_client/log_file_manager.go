@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -18,12 +19,15 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/encryption"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
+	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/stream"
+	"github.com/pingcap/tidb/br/pkg/stream/backupmetas"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"go.uber.org/zap"
@@ -80,8 +84,9 @@ type streamMetadataHelper interface {
 		path string,
 		offset uint64,
 		length uint64,
+		rawLength uint64,
 		compressionType backuppb.CompressionType,
-		storage storage.ExternalStorage,
+		storage storeapi.Storage,
 		encryptionInfo *encryptionpb.FileEncryptionInfo,
 	) ([]byte, error)
 	ParseToMetadata(rawMetaData []byte) (*backuppb.Metadata, error)
@@ -108,7 +113,7 @@ type LogFileManager struct {
 	// (the startTS in these entries belong to [shiftStartTS, startTS]).
 	shiftStartTS uint64
 
-	storage storage.ExternalStorage
+	storage storeapi.Storage
 	helper  streamMetadataHelper
 
 	withMigrationBuilder *WithMigrationsBuilder
@@ -125,7 +130,7 @@ type LogFileManager struct {
 type LogFileManagerInit struct {
 	StartTS   uint64
 	RestoreTS uint64
-	Storage   storage.ExternalStorage
+	Storage   storeapi.Storage
 
 	MigrationsBuilder         *WithMigrationsBuilder
 	Migrations                *WithMigrations
@@ -179,15 +184,37 @@ func (lm *LogFileManager) loadShiftTS(ctx context.Context) error {
 		// use start ts to calculate shift start ts
 		lm.startTS,
 		lm.restoreTS,
-		lm.metadataDownloadBatchSize, func(path string, raw []byte) error {
+		lm.metadataDownloadBatchSize,
+		func(filename string) bool {
+			parsedName, err := stream.TryParseTaggedBackupMetaFileNameWrapper(filename)
+			if err != nil {
+				return false
+			}
+			ts, status := parsedName.CalculateShiftTS(lm.startTS, lm.restoreTS)
+			switch status {
+			case backupmetas.ShiftTSFound:
+			case backupmetas.ShiftTSNotFound:
+				return true
+			default:
+				return false
+			}
+			shiftTS.Lock()
+			if !shiftTS.exists || shiftTS.value > ts {
+				shiftTS.value = ts
+				shiftTS.exists = true
+			}
+			shiftTS.Unlock()
+			return true
+		},
+		func(filename string, raw []byte) error {
 			m, err := lm.helper.ParseToMetadata(raw)
 			if err != nil {
 				return err
 			}
-			log.Info("read meta from storage and parse", zap.String("path", path), zap.Uint64("min-ts", m.MinTs),
+			log.Info("read meta from storage and parse", zap.String("path", filename), zap.Uint64("min-ts", m.MinTs),
 				zap.Uint64("max-ts", m.MaxTs), zap.Int32("meta-version", int32(m.MetaVersion)))
 
-			ts, ok := stream.UpdateShiftTS(m, lm.startTS, lm.restoreTS)
+			ts, ok := stream.UpdateShiftTSFromMetadata(m, lm.startTS, lm.restoreTS)
 			shiftTS.Lock()
 			if ok && (!shiftTS.exists || shiftTS.value > ts) {
 				shiftTS.value = ts
@@ -205,17 +232,17 @@ func (lm *LogFileManager) loadShiftTS(ctx context.Context) error {
 		lm.withMigrationBuilder.SetShiftStartTS(lm.shiftStartTS)
 		return nil
 	}
-	lm.shiftStartTS = shiftTS.value
+	lm.shiftStartTS = min(lm.startTS, shiftTS.value)
 	lm.withMigrationBuilder.SetShiftStartTS(lm.shiftStartTS)
 	return nil
 }
 
 func (lm *LogFileManager) streamingMeta(ctx context.Context) (MetaNameIter, error) {
-	return lm.streamingMetaByTS(ctx)
+	return lm.streamingMetaByTS(ctx, func(_ string) bool { return true })
 }
 
-func (lm *LogFileManager) streamingMetaByTS(ctx context.Context) (MetaNameIter, error) {
-	it, err := lm.createMetaIterOver(ctx, lm.storage)
+func (lm *LogFileManager) streamingMetaByTS(ctx context.Context, cond func(path string) bool) (MetaNameIter, error) {
+	it, err := lm.createMetaIterOver(ctx, lm.storage, cond)
 	if err != nil {
 		return nil, err
 	}
@@ -225,15 +252,15 @@ func (lm *LogFileManager) streamingMetaByTS(ctx context.Context) (MetaNameIter, 
 	return filtered, nil
 }
 
-func (lm *LogFileManager) createMetaIterOver(ctx context.Context, s storage.ExternalStorage) (MetaNameIter, error) {
-	opt := &storage.WalkOption{SubDir: stream.GetStreamBackupMetaPrefix()}
+func (lm *LogFileManager) createMetaIterOver(ctx context.Context, s storeapi.Storage, cond func(path string) bool) (MetaNameIter, error) {
+	opt := &storeapi.WalkOption{SubDir: stream.GetStreamBackupMetaPrefix()}
 	names := []string{}
 	err := s.WalkDir(ctx, opt, func(path string, size int64) error {
 		if !strings.HasSuffix(path, ".meta") {
 			return nil
 		}
 		newPath := stream.FilterPathByTs(path, lm.shiftStartTS, lm.restoreTS)
-		if len(newPath) > 0 {
+		if len(newPath) > 0 && cond(newPath) {
 			names = append(names, newPath)
 		}
 		return nil
@@ -256,7 +283,7 @@ func (lm *LogFileManager) createMetaIterOver(ctx context.Context, s storage.Exte
 	// TODO: maybe we need to be able to adjust the concurrency to download files,
 	// which currently is the same as the chunk size
 	reader := iter.Transform(namesIter, readMeta,
-		iter.WithChunkSize(lm.metadataDownloadBatchSize), iter.WithConcurrency(lm.metadataDownloadBatchSize))
+		iter.WithBufferSize(lm.metadataDownloadBatchSize), iter.WithConcurrency(lm.metadataDownloadBatchSize))
 	return reader, nil
 }
 
@@ -312,7 +339,7 @@ func (lm *LogFileManager) collectDDLFilesAndPrepareCache(
 
 	dataFileInfos := make([]*backuppb.DataFileInfo, 0)
 	for _, g := range fs.Item {
-		lm.helper.InitCacheEntry(g.Path, len(g.FileMetas))
+		lm.helper.InitCacheEntry(g.Path, countReadableMetaKVFiles(g.FileMetas))
 		dataFileInfos = append(dataFileInfos, g.FileMetas...)
 	}
 
@@ -322,25 +349,19 @@ func (lm *LogFileManager) collectDDLFilesAndPrepareCache(
 // LoadDDLFiles loads all DDL files needs to be restored in the restoration.
 // This function returns all DDL files needing directly because we need sort all of them.
 func (lm *LogFileManager) LoadDDLFiles(ctx context.Context) ([]Log, error) {
-	m, err := lm.streamingMeta(ctx)
+	m, err := lm.streamingMetaByTS(ctx, func(path string) bool {
+		parsedName, err := stream.TryParseTaggedBackupMetaFileNameWrapper(path)
+		if err != nil {
+			return true
+		}
+		return parsedName.HasDDLFiles()
+	})
 	if err != nil {
 		return nil, err
 	}
 	mg := lm.FilterMetaFiles(m)
 
 	return lm.collectDDLFilesAndPrepareCache(ctx, mg)
-}
-
-type loadDMLFilesConfig struct {
-	Statistic *logFilesStatistic
-}
-
-type loadDMLFilesOption func(*loadDMLFilesConfig)
-
-func lDOptWithStatistics(s *logFilesStatistic) loadDMLFilesOption {
-	return func(c *loadDMLFilesConfig) {
-		c.Statistic = s
-	}
 }
 
 // LoadDMLFiles loads all DML files needs to be restored in the restoration.
@@ -440,15 +461,17 @@ func getKeyTS(key []byte) (uint64, error) {
 }
 
 // ReadFilteredEntriesFromFiles loads content of a log file from external storage, and filter out entries based on TS.
+//
+// To prevent decompressed buffers from being pinned in memory by carry-forward entries,
+// all surviving entries have their key/value bytes copied before returning. For entries
+// with many MVCC versions of the same logical key (e.g. auto-increment counters), only
+// the highest-timestamp version is kept, reducing downstream entry counts dramatically.
 func (lm *LogFileManager) ReadFilteredEntriesFromFiles(
 	ctx context.Context,
 	file Log,
 	filterTS uint64,
 ) ([]*KvEntryWithTS, []*KvEntryWithTS, error) {
-	kvEntries := make([]*KvEntryWithTS, 0)
-	filteredOutKvEntries := make([]*KvEntryWithTS, 0)
-
-	buff, err := lm.helper.ReadFile(ctx, file.Path, file.RangeOffset, file.RangeLength, file.CompressionType,
+	buff, err := lm.helper.ReadFile(ctx, file.Path, file.RangeOffset, file.RangeLength, file.Length, file.CompressionType,
 		lm.storage, file.FileEncryptionInfo)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
@@ -459,14 +482,41 @@ func (lm *LogFileManager) ReadFilteredEntriesFromFiles(
 			"checksum mismatch expect %x, got %x", file.GetSha256(), checksum[:]))
 	}
 
-	iter := stream.NewEventIterator(buff)
-	for iter.Valid() {
-		iter.Next()
-		if iter.GetError() != nil {
-			return nil, nil, errors.Trace(iter.GetError())
+	// kvEntries and filteredOutKvEntries are pre-populated with DDL job history entries
+	// (copied immediately, no dedup benefit). Non-DDL entries are deduplicated in
+	// dedupMap and appended after iteration ends.
+	kvEntries := make([]*KvEntryWithTS, 0)
+	filteredOutKvEntries := make([]*KvEntryWithTS, 0)
+
+	// dedupMap maps logical-key (key with TS suffix stripped) to the highest-TS entry
+	// seen so far. Entries are stored as sub-slices of buff during iteration; copies
+	// happen only for the winning entry after all entries have been scanned.
+	dedupMap := make(map[string]*KvEntryWithTS)
+	// dedupOrder tracks insertion order so output is deterministic.
+	dedupOrder := make([]string, 0)
+
+	// copyAndAppend copies key/value bytes and appends to the appropriate slice
+	// based on filterTS. This ensures the decompressed buffer can be GC'd promptly.
+	copyAndAppend := func(key, value []byte, entryTS uint64) {
+		copied := &KvEntryWithTS{
+			E:  kv.Entry{Key: slices.Clone(key), Value: slices.Clone(value)},
+			Ts: entryTS,
+		}
+		if entryTS < filterTS {
+			kvEntries = append(kvEntries, copied)
+		} else {
+			filteredOutKvEntries = append(filteredOutKvEntries, copied)
+		}
+	}
+
+	eventIter := stream.NewEventIterator(buff)
+	for eventIter.Valid() {
+		eventIter.Next()
+		if eventIter.GetError() != nil {
+			return nil, nil, errors.Trace(eventIter.GetError())
 		}
 
-		txnEntry := kv.Entry{Key: iter.Key(), Value: iter.Value()}
+		txnEntry := kv.Entry{Key: eventIter.Key(), Value: eventIter.Value()}
 
 		if !utils.IsDBOrDDLJobHistoryKey(txnEntry.Key) {
 			// only restore mDB and mDDLHistory
@@ -497,11 +547,62 @@ func (lm *LogFileManager) ReadFilteredEntriesFromFiles(
 			continue
 		}
 
-		if ts < filterTS {
-			kvEntries = append(kvEntries, &KvEntryWithTS{E: txnEntry, Ts: ts})
-		} else {
-			filteredOutKvEntries = append(filteredOutKvEntries, &KvEntryWithTS{E: txnEntry, Ts: ts})
+		// For WriteCF entries, skip Lock and Rollback records. These are not
+		// committed writes and must not participate in dedup — a higher-TS
+		// Rollback/Lock would otherwise evict a lower-TS committed Put/Delete,
+		// causing data loss for the restored MVCC state.
+		if file.Cf == consts.WriteCF {
+			var rawWrite stream.RawWriteCFValue
+			if err := rawWrite.ParseFrom(txnEntry.Value); err != nil {
+				return nil, nil, errors.Annotatef(err,
+					"failed to parse WriteCF value for key %s", redact.Key(txnEntry.Key))
+			}
+			wt := rawWrite.GetWriteType()
+			if wt == stream.WriteTypeLock || wt == stream.WriteTypeRollback {
+				continue
+			}
 		}
+
+		if utils.IsMetaDDLJobHistoryKey(txnEntry.Key) {
+			// WriteCF DDL job history entries are not used downstream —
+			// RewriteMetaKvEntry only processes them for DefaultCF.
+			if file.Cf == consts.WriteCF {
+				continue
+			}
+			// DDL job history keys are unique per job ID; copy immediately.
+			copyAndAppend(txnEntry.Key, txnEntry.Value, ts)
+			continue
+		}
+
+		// Deduplicate auto-ID meta keys (IID/TID/TARID/SID) by logical key, keeping
+		// only the highest-TS version. These keys hold a single int64 counter that
+		// fits entirely in the WriteCF shortValue payload and have no DefaultCF
+		// cross-reference, so per-CF TS-based dedup is safe.
+		//
+		// All other mDB:* keys (DBInfo, TableInfo, etc.) are copied verbatim:
+		// their volume is negligible (DDL-rate writes only) and they may carry
+		// DefaultCF cross-references that cross-CF dedup could break.
+		if utils.IsMetaAutoIDKey(txnEntry.Key) {
+			logicalKey := string(restoreutils.TruncateTS(txnEntry.Key))
+			if existing, ok := dedupMap[logicalKey]; ok {
+				if ts > existing.Ts {
+					// Replace with higher-ts version; position in dedupOrder is unchanged.
+					dedupMap[logicalKey] = &KvEntryWithTS{E: txnEntry, Ts: ts}
+				}
+			} else {
+				dedupMap[logicalKey] = &KvEntryWithTS{E: txnEntry, Ts: ts}
+				dedupOrder = append(dedupOrder, logicalKey)
+			}
+			continue
+		}
+		copyAndAppend(txnEntry.Key, txnEntry.Value, ts)
+	}
+
+	// Copy surviving dedup entries (buff is still live here, but after return the
+	// copies are the only references, allowing buff to be GC'd promptly).
+	for _, logicalKey := range dedupOrder {
+		e := dedupMap[logicalKey]
+		copyAndAppend(e.E.Key, e.E.Value, e.Ts)
 	}
 
 	return kvEntries, filteredOutKvEntries, nil
@@ -513,10 +614,10 @@ func (lm *LogFileManager) Close() {
 	}
 }
 
-func Subcompactions(ctx context.Context, prefix string, s storage.ExternalStorage, shiftStartTS, restoredTS uint64) SubCompactionIter {
-	return iter.FlatMap(storage.UnmarshalDir(
+func Subcompactions(ctx context.Context, prefix string, s storeapi.Storage, shiftStartTS, restoredTS uint64) SubCompactionIter {
+	return iter.FlatMap(objstore.UnmarshalDir(
 		ctx,
-		&storage.WalkOption{SubDir: prefix},
+		&storeapi.WalkOption{SubDir: prefix},
 		s,
 		func(t *backuppb.LogFileSubcompactions, name string, b []byte) error { return t.Unmarshal(b) },
 	), func(subcs *backuppb.LogFileSubcompactions) iter.TryNextor[*backuppb.LogFileSubcompaction] {
@@ -529,6 +630,6 @@ func Subcompactions(ctx context.Context, prefix string, s storage.ExternalStorag
 	})
 }
 
-func LoadMigrations(ctx context.Context, s storage.ExternalStorage) iter.TryNextor[*backuppb.Migration] {
-	return storage.UnmarshalDir(ctx, &storage.WalkOption{SubDir: "v1/migrations/"}, s, func(t *backuppb.Migration, name string, b []byte) error { return t.Unmarshal(b) })
+func LoadMigrations(ctx context.Context, s storeapi.Storage) iter.TryNextor[*backuppb.Migration] {
+	return objstore.UnmarshalDir(ctx, &storeapi.WalkOption{SubDir: "v1/migrations/"}, s, func(t *backuppb.Migration, name string, b []byte) error { return t.Unmarshal(b) })
 }

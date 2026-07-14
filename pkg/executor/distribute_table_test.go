@@ -40,10 +40,16 @@ var schedulerName = "balance-range-scheduler"
 type MockDistributePDCli struct {
 	pdhttp.Client
 	mock.Mock
-	jobs []map[string]any
+	jobs  []map[string]any
+	skip  int
+	count int
 }
 
 func (cli *MockDistributePDCli) GetSchedulerConfig(ctx context.Context, schedulerName string) (any, error) {
+	if cli.count < cli.skip {
+		cli.count++
+		return nil, nil
+	}
 	args := cli.Called(ctx, schedulerName)
 	data, _ := json.Marshal(cli.jobs)
 	var jobList any
@@ -122,7 +128,7 @@ func TestDistributeTable(t *testing.T) {
 	database := "test"
 	tk.MustExec(fmt.Sprintf("use %s", database))
 
-	cli := &MockDistributePDCli{}
+	cli := &MockDistributePDCli{skip: 1}
 	recoverCli := infosync.SetPDHttpCliForTest(cli)
 	defer recoverCli()
 	mockCreateSchedulerWithInput := func(tblName string, config map[string]any, partitions []string) *mock.Call {

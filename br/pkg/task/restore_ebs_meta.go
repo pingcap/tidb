@@ -130,7 +130,7 @@ func (h *restoreEBSMetaHelper) preRestore(ctx context.Context) error {
 		}
 	}
 
-	controller, err := pdutil.NewPdController(ctx, h.cfg.PD, tlsConf, securityOption)
+	controller, err := pdutil.NewPdController(ctx, h.cfg.KeyspaceName, h.cfg.PD, tlsConf, securityOption)
 	if err != nil {
 		log.Error("fail to create pd controller", zap.Error(err))
 		return errors.Trace(err)
@@ -228,7 +228,7 @@ func (h *restoreEBSMetaHelper) restoreVolumes(progress glue.Progress) (map[strin
 		err         error
 		totalSize   int64
 		// a map whose key is available zone, and value is the snapshot id array
-		snapshotsIDsMap = make(map[string][]*string)
+		snapshotsIDsMap = make(map[string][]string)
 	)
 	ec2Session, err = aws.NewEC2Session(h.cfg.CloudAPIConcurrency, h.cfg.S3.Region)
 	if err != nil {

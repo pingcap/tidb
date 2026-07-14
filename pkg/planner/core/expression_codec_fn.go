@@ -112,7 +112,7 @@ func (tidbCodecFuncHelper) extractTablePartition(str string) (table, partition s
 		return str, ""
 	}
 	end := strings.IndexByte(str, ')')
-	if end == -1 {
+	if end == -1 || end < start {
 		return str, ""
 	}
 	return str[:start], str[start+1 : end]
@@ -228,7 +228,10 @@ func (h tidbCodecFuncHelper) encodeIndexKeyFromRow(
 	}
 	tablecodec.TruncateIndexValues(tblInfo, idxInfo, idxDts)
 	// Use physicalID instead of tblInfo.ID here to handle the partition case.
-	idx := tables.NewIndex(physicalID, tblInfo, idxInfo)
+	idx, err := tables.NewIndex(physicalID, tblInfo, idxInfo)
+	if err != nil {
+		return nil, false, err
+	}
 
 	idxKey, _, err := idx.GenIndexKey(ctx.ErrCtx(), ctx.Location(), idxDts, handle, nil)
 	return idxKey, false, err

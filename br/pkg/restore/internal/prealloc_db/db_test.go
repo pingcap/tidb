@@ -81,14 +81,16 @@ func TestRestoreAutoIncID(t *testing.T) {
 	// Test empty collate value
 	table.DB.Charset = "utf8mb4"
 	table.DB.Collate = ""
-	err = db.CreateDatabase(context.Background(), table.DB, false, nil)
+	exists, err = db.CreateDatabase(context.Background(), table.DB, false, nil)
 	require.NoErrorf(t, err, "Error create empty collate db: %s %s", err, s.Mock.DSN)
+	require.False(t, exists)
 	tk.MustExec("drop database if exists test;")
 	// Test empty charset value
 	table.DB.Charset = ""
 	table.DB.Collate = "utf8mb4_bin"
-	err = db.CreateDatabase(context.Background(), table.DB, false, nil)
+	exists, err = db.CreateDatabase(context.Background(), table.DB, false, nil)
 	require.NoErrorf(t, err, "Error create empty charset db: %s %s", err, s.Mock.DSN)
+	require.False(t, exists)
 	uniqueMap := make(map[restore.UniqueTableName]bool)
 
 	preallocId := func(tables []*metautil.Table) {
@@ -345,7 +347,7 @@ func TestPolicyMode(t *testing.T) {
 	policyMap = &sync.Map{}
 	fakepolicy1 = fakePolicyInfo(1)
 	policyMap.Store(fakepolicy1.Name.L, fakepolicy1)
-	err = db.CreateDatabase(ctx, &model.DBInfo{
+	exists, err := db.CreateDatabase(ctx, &model.DBInfo{
 		ID:      20000,
 		Name:    ast.NewCIStr("test_db"),
 		Charset: "utf8mb4",
@@ -357,6 +359,7 @@ func TestPolicyMode(t *testing.T) {
 		},
 	}, true, policyMap)
 	require.NoError(t, err)
+	require.False(t, exists)
 }
 
 func TestCreateTablesInDb(t *testing.T) {

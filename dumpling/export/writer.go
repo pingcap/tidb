@@ -10,9 +10,10 @@ import (
 	"text/template"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
+	"github.com/pingcap/tidb/pkg/objstore/compressedio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"go.uber.org/zap"
 )
 
@@ -23,7 +24,7 @@ type Writer struct {
 	tctx       *tcontext.Context
 	conf       *Config
 	conn       *sql.Conn
-	extStorage storage.ExternalStorage
+	extStorage storeapi.Storage
 	fileFmt    FileFormat
 	metrics    *metrics
 
@@ -40,7 +41,7 @@ func NewWriter(
 	id int64,
 	config *Config,
 	conn *sql.Conn,
-	externalStore storage.ExternalStorage,
+	externalStore storeapi.Storage,
 	metrics *metrics,
 ) *Writer {
 	sw := &Writer{
@@ -58,6 +59,8 @@ func NewWriter(
 		sw.fileFmt = FileFormatSQLText
 	case FileFormatCSVString:
 		sw.fileFmt = FileFormatCSV
+	case FileFormatParquetString:
+		sw.fileFmt = FileFormatParquet
 	}
 	return sw
 }
@@ -232,7 +235,12 @@ func (w *Writer) WriteTableData(meta TableMeta, ir TableDataIR, currentChunk int
 func (w *Writer) tryToWriteTableData(tctx *tcontext.Context, meta TableMeta, ir TableDataIR, curChkIdx int) error {
 	conf, format := w.conf, w.fileFmt
 	namer := newOutputFileNamer(meta, curChkIdx, conf.Rows != UnspecifiedSize, conf.FileSize != UnspecifiedSize)
-	fileName, err := namer.NextName(conf.OutputFileTemplate, w.fileFmt.Extension())
+	fileFmtExtension := format.Extension()
+	if format == FileFormatParquet && conf.ParquetCompressType != compressedio.NoCompression {
+		compressSuffix := strings.TrimPrefix(conf.ParquetCompressType.FileSuffix(), ".")
+		fileFmtExtension = fmt.Sprintf("%s.%s", compressSuffix, fileFmtExtension)
+	}
+	fileName, err := namer.NextName(conf.OutputFileTemplate, fileFmtExtension)
 	if err != nil {
 		return err
 	}
@@ -263,7 +271,7 @@ func (w *Writer) tryToWriteTableData(tctx *tcontext.Context, meta TableMeta, ir 
 		if conf.FileSize == UnspecifiedSize {
 			break
 		}
-		fileName, err = namer.NextName(conf.OutputFileTemplate, w.fileFmt.Extension())
+		fileName, err = namer.NextName(conf.OutputFileTemplate, fileFmtExtension)
 		if err != nil {
 			return err
 		}

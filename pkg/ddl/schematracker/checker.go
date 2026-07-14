@@ -40,6 +40,8 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 )
 
 var (
@@ -444,6 +446,24 @@ func (*Checker) AlterSequence(_ sessionctx.Context, _ *ast.AlterSequenceStmt) er
 	panic("implement me")
 }
 
+// CreateMaskingPolicy implements the DDL interface.
+func (d *Checker) CreateMaskingPolicy(ctx sessionctx.Context, stmt *ast.CreateMaskingPolicyStmt) error {
+	err := d.realExecutor.CreateMaskingPolicy(ctx, stmt)
+	if err != nil {
+		return err
+	}
+	err = d.tracker.CreateMaskingPolicy(ctx, stmt)
+	if err != nil {
+		panic(err)
+	}
+	tableSchema := stmt.Table.Schema
+	if tableSchema.L == "" {
+		tableSchema = ast.NewCIStr(ctx.GetSessionVars().CurrentDB)
+	}
+	d.checkTableInfo(ctx, tableSchema, stmt.Table.Name)
+	return nil
+}
+
 // CreatePlacementPolicy implements the DDL interface.
 func (*Checker) CreatePlacementPolicy(_ sessionctx.Context, _ *ast.CreatePlacementPolicyStmt) error {
 	//TODO implement me
@@ -571,6 +591,13 @@ func (d *Checker) GetMinJobIDRefresher() *systable.MinJobIDRefresher {
 func (d *Checker) DoDDLJobWrapper(ctx sessionctx.Context, jobW *ddl.JobWrapper) error {
 	de := d.realExecutor.(ddl.ExecutorForTest)
 	return de.DoDDLJobWrapper(ctx, jobW)
+}
+
+// InitFromIS initializes the schema tracker from an InfoSchema.
+func (d *Checker) InitFromIS(is infoschema.InfoSchema) {
+	if err := d.tracker.InitFromIS(is); err != nil {
+		logutil.BgLogger().Warn("failed to init schema tracker from info schema", zap.Error(err))
+	}
 }
 
 type storageAndMore interface {

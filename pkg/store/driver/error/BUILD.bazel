@@ -24,6 +24,7 @@ go_test(
     srcs = ["error_test.go"],
     embed = [":error"],
     flaky = True,
+    shard_count = 2,
     deps = [
         "//pkg/parser/terror",
         "//pkg/testkit/testsetup",

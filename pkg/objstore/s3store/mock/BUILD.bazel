@@ -1,0 +1,12 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "mock",
+    srcs = ["s3api_mock.go"],
+    importpath = "github.com/pingcap/tidb/pkg/objstore/s3store/mock",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@com_github_aws_aws_sdk_go_v2_service_s3//:s3",
+        "@org_uber_go_mock//gomock",
+    ],
+)

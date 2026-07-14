@@ -93,6 +93,24 @@ func TestColumn(t *testing.T) {
 	require.Zero(t, timeVal.Compare(tm))
 	require.False(t, isNull)
 	require.NoError(t, err)
+
+	t.Run("resolve virtual expression prefers exact column ID", func(t *testing.T) {
+		strTp := types.NewFieldType(mysql.TypeVarchar)
+		baseCol := &Column{UniqueID: 10, RetType: strTp}
+		virtualExpr := NewFunctionInternal(ctx, ast.Lower, strTp, baseCol)
+		exprOnlyMatchedCol := &Column{UniqueID: 12, RetType: strTp, VirtualExpr: virtualExpr.Clone()}
+		exactMatchedCol := &Column{UniqueID: 11, RetType: strTp, VirtualExpr: virtualExpr.Clone()}
+		targetCol := &Column{UniqueID: exactMatchedCol.UniqueID, RetType: strTp, VirtualExpr: virtualExpr.Clone()}
+
+		resolvedExpr, ok := targetCol.ResolveIndicesByVirtualExpr(ctx.GetEvalCtx(), NewSchema(exprOnlyMatchedCol, exactMatchedCol))
+		require.True(t, ok)
+		require.Equal(t, 1, resolvedExpr.(*Column).Index)
+
+		ambiguousTargetCol := &Column{UniqueID: 13, RetType: strTp, VirtualExpr: virtualExpr.Clone()}
+		resolvedExpr, ok = ambiguousTargetCol.ResolveIndicesByVirtualExpr(ctx.GetEvalCtx(), NewSchema(exprOnlyMatchedCol, exactMatchedCol))
+		require.True(t, ok)
+		require.Equal(t, 0, resolvedExpr.(*Column).Index)
+	})
 }
 
 func TestColumnHashCode(t *testing.T) {
@@ -129,36 +147,6 @@ func TestColInfo2Col(t *testing.T) {
 	colInfo.ID = 3
 	res = ColInfo2Col(cols, colInfo)
 	require.Nil(t, res)
-}
-
-func TestIndexInfo2Cols(t *testing.T) {
-	col0 := &Column{UniqueID: 0, ID: 0, RetType: types.NewFieldType(mysql.TypeLonglong)}
-	col1 := &Column{UniqueID: 1, ID: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
-	colInfo0 := &model.ColumnInfo{ID: 0, Name: ast.NewCIStr("0")}
-	colInfo1 := &model.ColumnInfo{ID: 1, Name: ast.NewCIStr("1")}
-	indexCol0, indexCol1 := &model.IndexColumn{Name: ast.NewCIStr("0")}, &model.IndexColumn{Name: ast.NewCIStr("1")}
-	indexInfo := &model.IndexInfo{Columns: []*model.IndexColumn{indexCol0, indexCol1}}
-
-	cols := []*Column{col0}
-	colInfos := []*model.ColumnInfo{colInfo0}
-	resCols, lengths := IndexInfo2PrefixCols(colInfos, cols, indexInfo)
-	require.Len(t, resCols, 1)
-	require.Len(t, lengths, 1)
-	require.True(t, resCols[0].EqualColumn(col0))
-
-	cols = []*Column{col1}
-	colInfos = []*model.ColumnInfo{colInfo1}
-	resCols, lengths = IndexInfo2PrefixCols(colInfos, cols, indexInfo)
-	require.Len(t, resCols, 0)
-	require.Len(t, lengths, 0)
-
-	cols = []*Column{col0, col1}
-	colInfos = []*model.ColumnInfo{colInfo0, colInfo1}
-	resCols, lengths = IndexInfo2PrefixCols(colInfos, cols, indexInfo)
-	require.Len(t, resCols, 2)
-	require.Len(t, lengths, 2)
-	require.True(t, resCols[0].EqualColumn(col0))
-	require.True(t, resCols[1].EqualColumn(col1))
 }
 
 func TestColHybird(t *testing.T) {

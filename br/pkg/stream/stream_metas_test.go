@@ -5,6 +5,7 @@ package stream
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"math/rand"
@@ -15,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/google/uuid"
@@ -22,8 +24,10 @@ import (
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/operation"
 	. "github.com/pingcap/tidb/br/pkg/utils/consts"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/multierr"
@@ -37,25 +41,108 @@ func requireMigrationsEqual(t *testing.T, miga, migb *backuppb.Migration) {
 	require.Equal(t, hashMigration(miga), hashMigration(migb), "\n%s\n%s", miga, migb)
 }
 
+func testOperationContext(t *testing.T) operation.Context {
+	t.Helper()
+	ctx, err := operation.NewContext("test")
+	require.NoError(t, err)
+	ctx.SetHintField("restore_id", "123")
+	return ctx
+}
+
+type capturedLockWrite struct {
+	path string
+	meta objstore.LockMeta
+}
+
+type lockCaptureStorage struct {
+	storeapi.Storage
+	mu     sync.Mutex
+	writes []capturedLockWrite
+}
+
+func (s *lockCaptureStorage) WriteFile(ctx context.Context, name string, data []byte) error {
+	s.captureLockWrite(name, data)
+	return s.Storage.WriteFile(ctx, name, data)
+}
+
+func (s *lockCaptureStorage) captureLockWrite(name string, data []byte) {
+	if !strings.HasPrefix(name, lockPrefix) && !strings.HasPrefix(name, appendLockPrefix) {
+		return
+	}
+
+	var meta objstore.LockMeta
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return
+	}
+	if meta.OwnerID == "" || meta.LockType == "" || len(meta.TxnID) == 0 {
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.writes = append(s.writes, capturedLockWrite{path: name, meta: meta})
+}
+
+func (s *lockCaptureStorage) capturedLockWrites() []capturedLockWrite {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.writes)
+}
+
+func requireCapturedLockMeta(
+	t *testing.T,
+	writes []capturedLockWrite,
+	opCtx operation.Context,
+	resource operation.LockResourceType,
+) capturedLockWrite {
+	t.Helper()
+
+	var matches []capturedLockWrite
+	for _, write := range writes {
+		if write.meta.LockType == string(resource) {
+			matches = append(matches, write)
+		}
+	}
+	require.Len(t, matches, 1)
+
+	meta := matches[0].meta
+	require.Equal(t, opCtx.OperationID, meta.OwnerID)
+	require.Contains(t, meta.Hint, "operation_started_at="+opCtx.StartedAt.Format(time.RFC3339))
+	require.Contains(t, meta.Hint, "restore_id=123")
+	return matches[0]
+}
+
+func requireReadLockPath(t *testing.T, p string) {
+	t.Helper()
+	require.True(t, strings.HasPrefix(p, lockPrefix), p)
+	require.Contains(t, p, ".READ.")
+}
+
+func requireWriteLockPath(t *testing.T, p string, prefix string) {
+	t.Helper()
+	require.True(t, strings.HasPrefix(p, prefix), p)
+	require.True(t, strings.HasSuffix(p, ".WRIT"), p)
+}
+
 type effects struct {
 	Renames   map[string]string
 	Deletions map[string]struct{}
 	Edits     map[string][]byte
 }
 
-func effectsOf(efs []storage.Effect) effects {
+func effectsOf(efs []objstore.Effect) effects {
 	out := effects{Renames: map[string]string{}, Deletions: map[string]struct{}{}, Edits: map[string][]byte{}}
 	for _, ef := range efs {
 		switch e := ef.(type) {
-		case storage.EffDeleteFile:
+		case objstore.EffDeleteFile:
 			out.Deletions[string(e)] = struct{}{}
-		case storage.EffDeleteFiles:
+		case objstore.EffDeleteFiles:
 			for _, f := range e.Files {
 				out.Deletions[f] = struct{}{}
 			}
-		case storage.EffPut:
+		case objstore.EffPut:
 			out.Edits[e.File] = e.Content
-		case storage.EffRename:
+		case objstore.EffRename:
 			out.Renames[e.From] = e.To
 		default:
 			panic(fmt.Sprintf("unknown effect %T", ef))
@@ -64,7 +151,7 @@ func effectsOf(efs []storage.Effect) effects {
 	return out
 }
 
-func fakeDataFiles(s storage.ExternalStorage, base, item int) (result []*backuppb.DataFileInfo) {
+func fakeDataFiles(s storeapi.Storage, base, item int) (result []*backuppb.DataFileInfo) {
 	ctx := context.Background()
 	for i := base; i < base+item; i++ {
 		path := fmt.Sprintf("%04d_to_%04d.log", i, i+2)
@@ -79,7 +166,7 @@ func fakeDataFiles(s storage.ExternalStorage, base, item int) (result []*backupp
 	return
 }
 
-func fakeDataFilesV2(s storage.ExternalStorage, base, item int) (result []*backuppb.DataFileGroup) {
+func fakeDataFilesV2(s storeapi.Storage, base, item int) (result []*backuppb.DataFileGroup) {
 	ctx := context.Background()
 	for i := base; i < base+item; i++ {
 		path := fmt.Sprintf("%04d_to_%04d.log", i, i+2)
@@ -130,7 +217,7 @@ func tsOfFileGroup(dfs []*backuppb.DataFileGroup) (uint64, uint64) {
 	return minTS, maxTS
 }
 
-func fakeStreamBackup(s storage.ExternalStorage) error {
+func fakeStreamBackup(s storeapi.Storage) error {
 	ctx := context.Background()
 	base := 0
 	for i := range 6 {
@@ -157,7 +244,7 @@ func fakeStreamBackup(s storage.ExternalStorage) error {
 	return nil
 }
 
-func fakeStreamBackupV2(s storage.ExternalStorage) error {
+func fakeStreamBackupV2(s storeapi.Storage) error {
 	ctx := context.Background()
 	base := 0
 	for i := range 6 {
@@ -189,10 +276,10 @@ func TestTruncateLog(t *testing.T) {
 	ctx := context.Background()
 	tmpdir := t.TempDir()
 	backupMetaDir := filepath.Join(tmpdir, GetStreamBackupMetaPrefix())
-	_, err := storage.NewLocalStorage(backupMetaDir)
+	_, err := objstore.NewLocalStorage(backupMetaDir)
 	require.NoError(t, err)
 
-	l, err := storage.NewLocalStorage(tmpdir)
+	l, err := objstore.NewLocalStorage(tmpdir)
 	require.NoError(t, err)
 
 	require.NoError(t, fakeStreamBackup(l))
@@ -249,7 +336,7 @@ func TestTruncateLog(t *testing.T) {
 		return true
 	})
 
-	err = l.WalkDir(ctx, &storage.WalkOption{
+	err = l.WalkDir(ctx, &storeapi.WalkOption{
 		SubDir: GetStreamBackupMetaPrefix(),
 	}, func(s string, i int64) error {
 		require.NotContains(t, removedMetaFiles, s)
@@ -262,10 +349,10 @@ func TestTruncateLogV2(t *testing.T) {
 	ctx := context.Background()
 	tmpdir := t.TempDir()
 	backupMetaDir := filepath.Join(tmpdir, GetStreamBackupMetaPrefix())
-	_, err := storage.NewLocalStorage(backupMetaDir)
+	_, err := objstore.NewLocalStorage(backupMetaDir)
 	require.NoError(t, err)
 
-	l, err := storage.NewLocalStorage(tmpdir)
+	l, err := objstore.NewLocalStorage(tmpdir)
 	require.NoError(t, err)
 
 	require.NoError(t, fakeStreamBackupV2(l))
@@ -322,7 +409,7 @@ func TestTruncateLogV2(t *testing.T) {
 		return true
 	})
 
-	err = l.WalkDir(ctx, &storage.WalkOption{
+	err = l.WalkDir(ctx, &storeapi.WalkOption{
 		SubDir: GetStreamBackupMetaPrefix(),
 	}, func(s string, i int64) error {
 		require.NotContains(t, removedMetaFiles, s)
@@ -333,7 +420,7 @@ func TestTruncateLogV2(t *testing.T) {
 
 func TestTruncateSafepoint(t *testing.T) {
 	ctx := context.Background()
-	l, err := storage.NewLocalStorage(t.TempDir())
+	l, err := objstore.NewLocalStorage(t.TempDir())
 	require.NoError(t, err)
 
 	ts, err := GetTSFromFile(ctx, l, TruncateSafePointFileName)
@@ -369,9 +456,9 @@ func TestTruncateSafepointForGCS(t *testing.T) {
 		CredentialsBlob: "Fake Credentials",
 	}
 
-	l, err := storage.NewGCSStorage(ctx, gcs, &storage.ExternalStorageOptions{
+	l, err := objstore.NewGCSStorage(ctx, gcs, &storeapi.Options{
 		SendCredentials:  false,
-		CheckPermissions: []storage.Permission{storage.AccessBuckets},
+		CheckPermissions: []storeapi.Permission{storeapi.AccessBuckets},
 		HTTPClient:       server.HTTPClient(),
 	})
 	require.NoError(t, err)
@@ -437,7 +524,7 @@ func TestReplaceMetadataTs(t *testing.T) {
 	require.Equal(t, m.MaxTs, uint64(4))
 }
 
-func pef(t *testing.T, fb *backuppb.IngestedSSTs, sn int, s storage.ExternalStorage) string {
+func pef(t *testing.T, fb *backuppb.IngestedSSTs, sn int, s storeapi.Storage) string {
 	path := fmt.Sprintf("extbackupmeta_%08d", sn)
 	bs, err := fb.Marshal()
 	if err != nil {
@@ -613,7 +700,7 @@ func mt(ops ...metaOp) *backuppb.Metadata {
 }
 
 // pmt is abbrev. of persisted meta.
-func pmt(s storage.ExternalStorage, path string, mt *backuppb.Metadata) {
+func pmt(s storeapi.Storage, path string, mt *backuppb.Metadata) {
 	data, err := mt.Marshal()
 	if err != nil {
 		panic(err)
@@ -624,7 +711,7 @@ func pmt(s storage.ExternalStorage, path string, mt *backuppb.Metadata) {
 	}
 }
 
-func pmlt(s storage.ExternalStorage, path string, mt *backuppb.Metadata, logPath func(i int) string) {
+func pmlt(s storeapi.Storage, path string, mt *backuppb.Metadata, logPath func(i int) string) {
 	for i, g := range mt.FileGroups {
 		g.Path = logPath(i)
 		maxLen := uint64(0)
@@ -638,7 +725,7 @@ func pmlt(s storage.ExternalStorage, path string, mt *backuppb.Metadata, logPath
 	pmt(s, path, mt)
 }
 
-func pmig(s storage.ExternalStorage, num uint64, mt *backuppb.Migration) string {
+func pmig(s storeapi.Storage, num uint64, mt *backuppb.Migration) string {
 	numS := fmt.Sprintf("%08d", num)
 	name := fmt.Sprintf("%s_%08X.mgrt", numS, hashMigration(mt))
 	if num == baseMigrationSN {
@@ -670,9 +757,9 @@ func mVersion(ver backuppb.MigrationVersion) migOP {
 }
 
 // tmp creates a temporary storage.
-func tmp(t *testing.T) *storage.LocalStorage {
+func tmp(t *testing.T) *objstore.LocalStorage {
 	tmpDir := t.TempDir()
-	s, err := storage.NewLocalStorage(tmpDir)
+	s, err := objstore.NewLocalStorage(tmpDir)
 	require.NoError(t, os.MkdirAll(path.Join(tmpDir, migrationPrefix), 0744))
 	require.NoError(t, err)
 	s.IgnoreEnoentForDelete = true
@@ -728,9 +815,9 @@ func m_2(
 }
 
 // clean the files in the external storage
-func cleanFiles(ctx context.Context, s storage.ExternalStorage) error {
+func cleanFiles(ctx context.Context, s storeapi.Storage) error {
 	names := make([]string, 0)
-	err := s.WalkDir(ctx, &storage.WalkOption{}, func(path string, size int64) error {
+	err := s.WalkDir(ctx, &storeapi.WalkOption{}, func(path string, size int64) error {
 		names = append(names, path)
 		return nil
 	})
@@ -755,7 +842,7 @@ func logName(storeId int64, minTS, maxTS uint64) string {
 }
 
 // generate the files to the external storage
-func generateFiles(ctx context.Context, s storage.ExternalStorage, metas []*backuppb.Metadata, tmpDir string) error {
+func generateFiles(ctx context.Context, s storeapi.Storage, metas []*backuppb.Metadata, tmpDir string) error {
 	if err := cleanFiles(ctx, s); err != nil {
 		return err
 	}
@@ -786,7 +873,7 @@ func generateFiles(ctx context.Context, s storage.ExternalStorage, metas []*back
 }
 
 // check the files in the external storage
-func checkFiles(ctx context.Context, s storage.ExternalStorage, metas []*backuppb.Metadata, t *testing.T) {
+func checkFiles(ctx context.Context, s storeapi.Storage, metas []*backuppb.Metadata, t *testing.T) {
 	pathSet := make(map[string]struct{})
 	for _, meta := range metas {
 		metaPath := metaName(meta.StoreId)
@@ -812,7 +899,7 @@ func checkFiles(ctx context.Context, s storage.ExternalStorage, metas []*backupp
 		}
 	}
 
-	err := s.WalkDir(ctx, &storage.WalkOption{}, func(path string, size int64) error {
+	err := s.WalkDir(ctx, &storeapi.WalkOption{}, func(path string, size int64) error {
 		_, exists := pathSet[path]
 		require.True(t, exists, path)
 		return nil
@@ -829,7 +916,7 @@ type testParam struct {
 func TestTruncate1(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()
-	s, err := storage.NewLocalStorage(tmpDir)
+	s, err := objstore.NewLocalStorage(tmpDir)
 	require.NoError(t, err)
 
 	cases := []struct {
@@ -1383,7 +1470,7 @@ func returnSelf() func(uint64) uint64 {
 func TestTruncate2(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()
-	s, err := storage.NewLocalStorage(tmpDir)
+	s, err := objstore.NewLocalStorage(tmpDir)
 	require.NoError(t, err)
 
 	cases := []struct {
@@ -1881,7 +1968,7 @@ func TestTruncate2(t *testing.T) {
 func TestTruncate3(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()
-	s, err := storage.NewLocalStorage(tmpDir)
+	s, err := objstore.NewLocalStorage(tmpDir)
 	require.NoError(t, err)
 
 	cases := []struct {
@@ -2321,7 +2408,7 @@ func mf(id int64, filess [][]*backuppb.DataFileInfo) *backuppb.Metadata {
 func TestCalculateShiftTS(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()
-	s, err := storage.NewLocalStorage(tmpDir)
+	s, err := objstore.NewLocalStorage(tmpDir)
 	require.NoError(t, err)
 
 	cases := []struct {
@@ -2496,7 +2583,7 @@ func TestBasicMigration(t *testing.T) {
 		mLogDel("00003.meta", spans("3.log", 50, sp(0, 50))),
 	)
 
-	bs := storage.Batch(s)
+	bs := objstore.Batch(s)
 	est := MigrationExtension(bs)
 	res := MergeMigrations(mig1, mig2)
 
@@ -2536,7 +2623,99 @@ func TestBasicMigration(t *testing.T) {
 	requireMigrationsEqual(t, mg.NewBase, mig())
 }
 
+func testMigrationLockOperationMetadata(t *testing.T) {
+	ctx := context.Background()
+
+	cases := []struct {
+		name     string
+		run      func(context.Context, MigrationExt) error
+		validate func(*testing.T, []capturedLockWrite, operation.Context)
+	}{
+		{
+			name: "read lock",
+			run: func(ctx context.Context, est MigrationExt) error {
+				lock, err := est.GetReadLock(ctx, "read lock test")
+				if err != nil {
+					return err
+				}
+				lock.UnlockOnCleanUp(ctx)
+				return nil
+			},
+			validate: func(t *testing.T, writes []capturedLockWrite, opCtx operation.Context) {
+				require.Len(t, writes, 1)
+				write := requireCapturedLockMeta(t, writes, opCtx, operation.LockResourceMigrationRead)
+				requireReadLockPath(t, write.path)
+			},
+		},
+		{
+			name: "append migration",
+			run: func(ctx context.Context, est MigrationExt) error {
+				_, err := est.AppendMigration(ctx, mig())
+				return err
+			},
+			validate: func(t *testing.T, writes []capturedLockWrite, opCtx operation.Context) {
+				require.Len(t, writes, 2)
+
+				readWrite := requireCapturedLockMeta(t, writes, opCtx, operation.LockResourceMigrationRead)
+				requireReadLockPath(t, readWrite.path)
+				appendWrite := requireCapturedLockMeta(t, writes, opCtx, operation.LockResourceMigrationAppend)
+				requireWriteLockPath(t, appendWrite.path, appendLockPrefix)
+				require.Equal(t, readWrite.meta.OwnerID, appendWrite.meta.OwnerID)
+			},
+		},
+		{
+			name: "merge and migrate write lock",
+			run: func(ctx context.Context, est MigrationExt) error {
+				result, err := est.MergeAndMigrateTo(ctx, 0)
+				if err != nil {
+					return err
+				}
+				return multierr.Combine(result.Warnings...)
+			},
+			validate: func(t *testing.T, writes []capturedLockWrite, opCtx operation.Context) {
+				require.Len(t, writes, 1)
+				write := requireCapturedLockMeta(t, writes, opCtx, operation.LockResourceMigrationWrite)
+				requireWriteLockPath(t, write.path, lockPrefix)
+			},
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			opCtx := testOperationContext(t)
+			capturingStorage := &lockCaptureStorage{Storage: tmp(t)}
+			est := MigrationExtension(capturingStorage).WithOperationContext(opCtx)
+
+			require.NoError(t, c.run(ctx, est))
+
+			writes := capturingStorage.capturedLockWrites()
+			c.validate(t, writes, opCtx)
+		})
+	}
+
+	t.Run("dry run keeps operation context", func(t *testing.T) {
+		opCtx := testOperationContext(t)
+		est := MigrationExtension(tmp(t)).WithOperationContext(opCtx)
+
+		est.DryRun(func(me MigrationExt) {
+			require.Equal(t, opCtx.OperationID, me.operationContext.OperationID)
+			require.Equal(t, opCtx.HintFields(), me.operationContext.HintFields())
+			require.True(t, me.operationContext.StartedAt.Equal(opCtx.StartedAt))
+		})
+	})
+
+	t.Run("missing operation context returns error", func(t *testing.T) {
+		result, err := MigrationExtension(tmp(t)).MergeAndMigrateTo(context.Background(), 0)
+
+		require.Error(t, err)
+		require.ErrorContains(t, err, "operation ID")
+		require.Empty(t, result.Warnings)
+	})
+}
+
 func TestMergeAndMigrateTo(t *testing.T) {
+	t.Run("operation metadata", testMigrationLockOperationMetadata)
+
 	s := tmp(t)
 	dfi := func(o, l uint64) *backuppb.DataFileInfo { return dFile(sp(o, l)) }
 	lN := func(n uint64) string { return fmt.Sprintf("%05d.log", n) }
@@ -2562,7 +2741,7 @@ func TestMergeAndMigrateTo(t *testing.T) {
 	)
 	mig3p := pmig(s, 3, mig3)
 
-	bs := storage.Batch(s)
+	bs := objstore.Batch(s)
 	est := MigrationExtension(bs)
 
 	ctx := context.Background()
@@ -2575,7 +2754,8 @@ func TestMergeAndMigrateTo(t *testing.T) {
 			spans(lN(3), 100, sp(0, 42), sp(42, 18), sp(60, 40))),
 	))
 
-	mg := est.MergeAndMigrateTo(ctx, 2, MMOptSkipLockingInTest())
+	mg, err := est.MergeAndMigrateTo(ctx, 2, MMOptSkipLockingInTest())
+	require.NoError(t, err)
 
 	require.Len(t, mg.Source, 2)
 	require.Empty(t, mg.Warnings)
@@ -2593,7 +2773,8 @@ func TestMergeAndMigrateTo(t *testing.T) {
 	requireMigrationsEqual(t, &migs.Layers[0].Content, mig3)
 	require.EqualValues(t, migs.Layers[0].SeqNum, 3)
 
-	mg = est.MergeAndMigrateTo(ctx, 3, MMOptSkipLockingInTest())
+	mg, err = est.MergeAndMigrateTo(ctx, 3, MMOptSkipLockingInTest())
+	require.NoError(t, err)
 	require.Empty(t, mg.Warnings)
 	requireMigrationsEqual(t, mg.NewBase, mig())
 	effs = effectsOf(bs.ReadOnlyEffects())
@@ -2630,7 +2811,7 @@ func TestRemoveCompaction(t *testing.T) {
 		mCompaction(cDir(3), aDir(3), 5, 29),
 		mTruncatedTo(20),
 	)
-	bs := storage.Batch(s)
+	bs := objstore.Batch(s)
 	est := MigrationExtension(bs)
 
 	merged := MergeMigrations(mig1, mig2)
@@ -2668,15 +2849,17 @@ func TestRetry(t *testing.T) {
 	pmig(s, 2, mig2)
 
 	require.NoError(t,
-		failpoint.Enable("github.com/pingcap/tidb/br/pkg/storage/local_write_file_err", `1*return("this disk remembers nothing")`))
+		failpoint.Enable("github.com/pingcap/tidb/pkg/objstore/local_write_file_err", `1*return("this disk remembers nothing")`))
 	ctx := context.Background()
 	est := MigrationExtension(s)
-	mg := est.MergeAndMigrateTo(ctx, 2, MMOptSkipLockingInTest())
+	mg, err := est.MergeAndMigrateTo(ctx, 2, MMOptSkipLockingInTest())
+	require.NoError(t, err)
 	require.Len(t, mg.Warnings, 1)
 	require.ErrorContains(t, mg.Warnings[0], "this disk remembers nothing")
 	requireMigrationsEqual(t, mg.NewBase, mig(mDel(mN(1), lN(1), lN(2))))
 
-	mg = est.MergeAndMigrateTo(ctx, 2, MMOptSkipLockingInTest())
+	mg, err = est.MergeAndMigrateTo(ctx, 2, MMOptSkipLockingInTest())
+	require.NoError(t, err)
 	require.Empty(t, slices.DeleteFunc(mg.Warnings, func(err error) bool {
 		return strings.Contains(err.Error(), "failed to delete file")
 	}))
@@ -2700,7 +2883,7 @@ func TestRetryRemoveCompaction(t *testing.T) {
 		mTruncatedTo(27),
 	)
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/storage/local_delete_file_err", `1*return("this disk will never forget")`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/objstore/local_delete_file_err", `1*return("this disk will never forget")`))
 	est := MigrationExtension(s)
 	mg := est.migrateTo(ctx, mig1)
 	require.Len(t, mg.Warnings, 1)
@@ -2753,9 +2936,9 @@ func TestWithSimpleTruncate(t *testing.T) {
 	require.Empty(t, res.Warnings)
 	for _, eff := range effs {
 		switch e := eff.(type) {
-		case *storage.EffDeleteFile:
+		case *objstore.EffDeleteFile:
 			require.Equal(t, e, mN(1))
-		case *storage.EffPut:
+		case *objstore.EffPut:
 			var m backuppb.Metadata
 			require.NoError(t, m.Unmarshal(e.Content))
 			require.Equal(t, e.File, mN(2))
@@ -2803,8 +2986,6 @@ func TestAppendingMigs(t *testing.T) {
 			asp(fi(80, 85, WriteCF, 72), sp(34, 5)),
 		},
 	}), lN(2))
-	est := MigrationExtension(s)
-
 	cDir := func(n uint64) string { return fmt.Sprintf("%05d/output", n) }
 	aDir := func(n uint64) string { return fmt.Sprintf("%05d/metas", n) }
 	compaction := mCompaction(placeholder(cDir(1)), placeholder(aDir(1)), 15, 66)
@@ -2815,14 +2996,18 @@ func TestAppendingMigs(t *testing.T) {
 	pmig(s, 1, m)
 	pmig(s, 2, mig(del12))
 
-	res := est.MergeAndMigrateTo(ctx, math.MaxInt, MMOptAlwaysRunTruncate(), MMOptAppendPhantomMigration(*mig(mTruncatedTo(65))))
+	est := MigrationExtension(s).WithOperationContext(testOperationContext(t))
+
+	res, err := est.MergeAndMigrateTo(ctx, math.MaxInt, MMOptAlwaysRunTruncate(), MMOptAppendPhantomMigration(*mig(mTruncatedTo(65))))
+	require.NoError(t, err)
 	require.NoError(t, multierr.Combine(res.Warnings...))
 	requireMigrationsEqual(t, res.NewBase, mig(mTruncatedTo(65), compaction, del2))
 	require.FileExists(t, filepath.Join(s.Base(), cDir(1), "monolith"))
 
-	res = est.MergeAndMigrateTo(ctx, math.MaxInt, MMOptInteractiveCheck(func(ctx context.Context, m *backuppb.Migration) bool {
+	res, err = est.MergeAndMigrateTo(ctx, math.MaxInt, MMOptInteractiveCheck(func(ctx context.Context, m *backuppb.Migration) bool {
 		return true
 	}), MMOptAlwaysRunTruncate(), MMOptAppendPhantomMigration(*mig(mTruncatedTo(100))))
+	require.NoError(t, err)
 	require.NoError(t, multierr.Combine(res.Warnings...))
 	requireMigrationsEqual(t, res.NewBase, mig(mTruncatedTo(100)))
 	require.NoFileExists(t, filepath.Join(s.Base(), cDir(1), "monolith"))
@@ -2839,9 +3024,11 @@ func TestUserAbort(t *testing.T) {
 	est := MigrationExtension(s)
 	var res MergeAndMigratedTo
 	effs := est.DryRun(func(me MigrationExt) {
-		res = me.MergeAndMigrateTo(ctx, 1, MMOptSkipLockingInTest(), MMOptInteractiveCheck(func(ctx context.Context, m *backuppb.Migration) bool {
+		var err error
+		res, err = me.MergeAndMigrateTo(ctx, 1, MMOptSkipLockingInTest(), MMOptInteractiveCheck(func(ctx context.Context, m *backuppb.Migration) bool {
 			return false
 		}))
+		require.NoError(t, err)
 	})
 	require.Len(t, res.Warnings, 1)
 	require.ErrorContains(t, res.Warnings[0], "aborted")
@@ -2989,5 +3176,61 @@ func TestGroupedExtFullBackup(t *testing.T) {
 				require.NoFileExists(t, path.Join(s.Base(), p.FilesPrefixHint, "monolith"))
 			}
 		})
+	}
+}
+
+func TestMergeMigrationsPreservesIngestedSstPaths(t *testing.T) {
+	m1 := mig(mExtFullBackup("base/a", "base/b"))
+	m2 := mig(mExtFullBackup("layer/c", "layer/d"))
+
+	merged := MergeMigrations(m1, m2)
+
+	require.ElementsMatch(t,
+		[]string{"base/a", "base/b", "layer/c", "layer/d"},
+		merged.IngestedSstPaths,
+	)
+}
+
+func TestMergeAndMigrateToBoundsIngestedSstPathsOverTruncates(t *testing.T) {
+	ctx := context.Background()
+	s := tmp(t)
+	est := MigrationExtension(s)
+
+	placeholder := func(pfx string) {
+		require.NoError(t, s.WriteFile(ctx, path.Join(pfx, "monolith"), []byte("sst")))
+	}
+
+	// Simulate N rounds of: AppendMigration (one finished ingested-SST group at
+	// ascending AsIfTs) followed by truncate advancing TruncatedTo to that same
+	// ts. Each round the previous round's group becomes eligible for cleanup
+	// (Finished=true, GroupTS < TruncatedTo), while the current round's group
+	// stays (GroupTS == TruncatedTo >= TruncatedTo).
+	const rounds = 10
+	prefixOf := func(i int) string { return fmt.Sprintf("ext_backups/%06d", i) }
+
+	for i := 1; i <= rounds; i++ {
+		ts := uint64(i * 10)
+		pfx := prefixOf(i)
+		placeholder(pfx)
+		ingMeta := extFullBkup(prefix(pfx), asIfTS(ts), makeID(), finished())
+		ingMetaPath := pef(t, ingMeta, i, s)
+		pmig(s, uint64(i), mig(mExtFullBackup(ingMetaPath), mTruncatedTo(ts)))
+
+		res, err := est.MergeAndMigrateTo(ctx, math.MaxInt,
+			MMOptSkipLockingInTest(), MMOptAlwaysRunTruncate())
+		require.NoError(t, err)
+		require.NoError(t, multierr.Combine(res.Warnings...),
+			"round %d warnings: %v", i, res.Warnings)
+
+		require.LessOrEqualf(t, len(res.NewBase.IngestedSstPaths), 1,
+			"round %d: expected at most 1 surviving IngestedSstPath, got %d (%v)",
+			i, len(res.NewBase.IngestedSstPaths), res.NewBase.IngestedSstPaths)
+
+		if i > 1 {
+			require.NoFileExistsf(t,
+				path.Join(s.Base(), prefixOf(i-1), "monolith"),
+				"round %d: previous round's ext_backups directory should have been cleaned",
+				i)
+		}
 	}
 }

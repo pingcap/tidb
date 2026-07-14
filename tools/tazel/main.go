@@ -60,7 +60,7 @@ func main() {
 					return err
 				}
 				if cnt, ok := testMap[filepath.Dir(abspath)]; ok {
-					if cnt > 2 {
+					if cnt > 1 {
 						gotest[0].SetAttr("shard_count",
 							&build.LiteralExpr{Token: strconv.FormatUint(uint64(min(cnt, maxShardCount)), 10)})
 					} else {

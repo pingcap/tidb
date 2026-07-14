@@ -26,6 +26,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -41,11 +42,13 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/stretchr/testify/require"
@@ -139,13 +142,14 @@ func TestInfoSchemaFieldValue(t *testing.T) {
 	tk1.MustQuery("select distinct(table_schema) from information_schema.tables").Check(testkit.Rows("INFORMATION_SCHEMA"))
 
 	// Fix issue 9836
-	sm := &testkit.MockSessionManager{PS: make([]*util.ProcessInfo, 0)}
-	sm.PS = append(sm.PS, &util.ProcessInfo{
-		ID:      1,
-		User:    "root",
-		Host:    "127.0.0.1",
-		Command: mysql.ComQuery,
-		StmtCtx: tk.Session().GetSessionVars().StmtCtx,
+	sm := &testkit.MockSessionManager{PS: make([]*sessmgr.ProcessInfo, 0)}
+	sm.PS = append(sm.PS, &sessmgr.ProcessInfo{
+		ID:                1,
+		User:              "root",
+		Host:              "127.0.0.1",
+		Command:           mysql.ComQuery,
+		StmtCtx:           tk.Session().GetSessionVars().StmtCtx,
+		RefCountOfStmtCtx: &tk.Session().GetSessionVars().RefCountOfStmtCtx,
 	})
 	tk.Session().SetSessionManager(sm)
 	tk.MustQuery("SELECT user,host,command FROM information_schema.processlist;").Check(testkit.Rows("root 127.0.0.1 Query"))
@@ -168,6 +172,9 @@ func TestInfoSchemaFieldValue(t *testing.T) {
 			"  `INFO` longtext DEFAULT NULL,\n" +
 			"  `DIGEST` varchar(64) DEFAULT '',\n" +
 			"  `MEM` bigint(21) unsigned DEFAULT NULL,\n" +
+			"  `MEM_ARBITRATION` double DEFAULT NULL,\n" +
+			"  `MEM_WAIT_ARBITRATE_START` varchar(32) DEFAULT NULL,\n" +
+			"  `MEM_WAIT_ARBITRATE_BYTES` bigint(21) DEFAULT NULL,\n" +
 			"  `DISK` bigint(21) unsigned DEFAULT NULL,\n" +
 			"  `TxnStart` varchar(64) NOT NULL DEFAULT '',\n" +
 			"  `RESOURCE_GROUP` varchar(32) NOT NULL DEFAULT '',\n" +
@@ -194,8 +201,26 @@ func TestSomeTables(t *testing.T) {
 	require.NoError(t, err)
 	tk := testkit.NewTestKit(t, store)
 	tk.SetSession(se)
-	sm := &testkit.MockSessionManager{PS: make([]*util.ProcessInfo, 0)}
-	sm.PS = append(sm.PS, &util.ProcessInfo{
+
+	se2, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.SetSession(se2)
+
+	{
+		memory.SetupGlobalMemArbitratorForTest(t.TempDir())
+		defer memory.CleanupGlobalMemArbitratorForTest()
+		require.True(t, memory.SetGlobalMemArbitratorWorkMode(memory.ArbitratorModeStandardName))
+		memTracker := se2.GetSessionVars().StmtCtx.MemTracker
+		require.True(t, memTracker.InitMemArbitratorForTest())
+		memTracker.MemArbitrator.AwaitAlloc.TotalDur.Add(2e9 + 1e8)
+		memTracker.MemArbitrator.AwaitAlloc.Size = 123456789123
+		memTracker.MemArbitrator.AwaitAlloc.StartUtime = 123456789123456
+		require.True(t, memory.SetGlobalMemArbitratorWorkMode(memory.ArbitratorModeDisableName))
+	}
+	sm := &testkit.MockSessionManager{PS: make([]*sessmgr.ProcessInfo, 0)}
+
+	sm.PS = append(sm.PS, &sessmgr.ProcessInfo{
 		ID:                1,
 		User:              "user-1",
 		Host:              "localhost",
@@ -208,8 +233,9 @@ func TestSomeTables(t *testing.T) {
 		StmtCtx:           tk.Session().GetSessionVars().StmtCtx,
 		ResourceGroupName: "rg1",
 		SessionAlias:      "alias1",
+		RefCountOfStmtCtx: &tk.Session().GetSessionVars().RefCountOfStmtCtx,
 	})
-	sm.PS = append(sm.PS, &util.ProcessInfo{
+	sm.PS = append(sm.PS, &sessmgr.ProcessInfo{
 		ID:                2,
 		User:              "user-2",
 		Host:              "localhost",
@@ -221,8 +247,9 @@ func TestSomeTables(t *testing.T) {
 		Info:              strings.Repeat("x", 101),
 		StmtCtx:           tk.Session().GetSessionVars().StmtCtx,
 		ResourceGroupName: "rg2",
+		RefCountOfStmtCtx: &tk.Session().GetSessionVars().RefCountOfStmtCtx,
 	})
-	sm.PS = append(sm.PS, &util.ProcessInfo{
+	sm.PS = append(sm.PS, &sessmgr.ProcessInfo{
 		ID:                3,
 		User:              "user-3",
 		Host:              "127.0.0.1",
@@ -232,18 +259,20 @@ func TestSomeTables(t *testing.T) {
 		Digest:            "abc3",
 		State:             1,
 		Info:              "check port",
-		StmtCtx:           tk.Session().GetSessionVars().StmtCtx,
+		StmtCtx:           se2.GetSessionVars().StmtCtx,
 		ResourceGroupName: "rg3",
 		SessionAlias:      "中文alias",
+		RefCountOfStmtCtx: &se2.GetSessionVars().RefCountOfStmtCtx,
 	})
 	tk.Session().SetSessionManager(sm)
+	tk.Session().GetSessionVars().TimeZone = time.UTC
 	tk.MustQuery("select * from information_schema.PROCESSLIST order by ID;").Sort().Check(
 		testkit.Rows(
-			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 0"+
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 <nil> <nil> <nil> 0"+
 				"  rg1 alias1 0 0 0", "in transaction", "do something"),
-			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 %s %s abc2 0 0  rg2  0 0 0",
+			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 %s %s abc2 0 <nil> <nil> <nil> 0  rg2  0 0 0",
 				"autocommit", strings.Repeat("x", 101)),
-			fmt.Sprintf("3 user-3 127.0.0.1:12345 test Init DB 9223372036 %s %s abc3 0 0  rg3"+
+			fmt.Sprintf("3 user-3 127.0.0.1:12345 test Init DB 9223372036 %s %s abc3 0 2.1 1970-01-02 10:17:36.789 123456789123 0  rg3"+
 				" 中文alias 0 0 0", "in transaction", "check port"),
 		))
 	tk.MustQuery("SHOW PROCESSLIST;").Sort().Check(
@@ -259,8 +288,8 @@ func TestSomeTables(t *testing.T) {
 			fmt.Sprintf("3 user-3 127.0.0.1:12345 test Init DB 9223372036 %s %s", "in transaction", "check port"),
 		))
 
-	sm = &testkit.MockSessionManager{PS: make([]*util.ProcessInfo, 0)}
-	sm.PS = append(sm.PS, &util.ProcessInfo{
+	sm = &testkit.MockSessionManager{PS: make([]*sessmgr.ProcessInfo, 0)}
+	sm.PS = append(sm.PS, &sessmgr.ProcessInfo{
 		ID:                1,
 		User:              "user-1",
 		Host:              "localhost",
@@ -270,7 +299,7 @@ func TestSomeTables(t *testing.T) {
 		State:             1,
 		ResourceGroupName: "rg1",
 	})
-	sm.PS = append(sm.PS, &util.ProcessInfo{
+	sm.PS = append(sm.PS, &sessmgr.ProcessInfo{
 		ID:                2,
 		User:              "user-2",
 		Host:              "localhost",
@@ -281,15 +310,16 @@ func TestSomeTables(t *testing.T) {
 		CurTxnStartTS:     410090409861578752,
 		ResourceGroupName: "rg2",
 		SessionAlias:      "alias3",
-		StmtCtx:           tk.Session().GetSessionVars().StmtCtx,
+		StmtCtx:           se2.GetSessionVars().StmtCtx,
+		RefCountOfStmtCtx: &se2.GetSessionVars().RefCountOfStmtCtx,
 	})
 	tk.Session().SetSessionManager(sm)
 	tk.Session().GetSessionVars().TimeZone = time.UTC
 	tk.MustQuery("select * from information_schema.PROCESSLIST order by ID;").Check(
 		testkit.Rows(
-			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 0"+
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 <nil> <nil> <nil> 0"+
 				"  rg1  <nil> 0 0", "in transaction", "<nil>"),
-			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 %s %s abc2 0 0 07-29 03:26"+
+			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 %s %s abc2 0 2.1 1970-01-02 10:17:36.789 123456789123 0 07-29 03:26"+
 				":05.158(410090409861578752) rg2 alias3 0 0 0", "autocommit", strings.Repeat("x", 101)),
 		))
 	tk.MustQuery("SHOW PROCESSLIST;").Sort().Check(
@@ -304,13 +334,13 @@ func TestSomeTables(t *testing.T) {
 		))
 	tk.MustQuery("select * from information_schema.PROCESSLIST where db is null;").Check(
 		testkit.Rows(
-			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 %s %s abc2 0 0 07-29 03:26"+
+			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 %s %s abc2 0 2.1 1970-01-02 10:17:36.789 123456789123 0 07-29 03:26"+
 				":05.158(410090409861578752) rg2 alias3 0 0 0", "autocommit", strings.Repeat("x",
 				101)),
 		))
 	tk.MustQuery("select * from information_schema.PROCESSLIST where Info is null;").Check(
 		testkit.Rows(
-			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 0"+
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s abc1 0 <nil> <nil> <nil> 0"+
 				"  rg1  <nil> 0 0", "in transaction", "<nil>"),
 		))
 }
@@ -420,6 +450,9 @@ func TestSlowQuery(t *testing.T) {
 			"10",
 			"10",
 			"100",
+			"0",
+			"0",
+			"0",
 			"test",
 			"",
 			"0",
@@ -434,6 +467,7 @@ func TestSlowQuery(t *testing.T) {
 			"0.8",
 			"0.0.0.0:20160",
 			"70724",
+			"23333",
 			"65536",
 			"0",
 			"0",
@@ -463,10 +497,15 @@ func TestSlowQuery(t *testing.T) {
 			"0",
 			"0",
 			"0",
+			"0",
+			"0",
+			"0",
+			"",
 			"abcd",
 			"60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4",
 			"",
 			"update t set i = 2;",
+			"null",
 			"select * from t_slim;",
 		},
 		{"2021-09-08 14:39:54.506967",
@@ -510,6 +549,9 @@ func TestSlowQuery(t *testing.T) {
 			"0",
 			"0",
 			"0",
+			"0",
+			"0",
+			"0",
 			"rtdb",
 			"",
 			"0",
@@ -524,6 +566,7 @@ func TestSlowQuery(t *testing.T) {
 			"0",
 			"",
 			"856544",
+			"856547",
 			"0",
 			"86.635049185",
 			"0.015486658",
@@ -553,10 +596,15 @@ func TestSlowQuery(t *testing.T) {
 			"0",
 			"0.01",
 			"0.021",
+			"1",
+			"1",
+			"0",
 			"",
 			"",
 			"",
 			"",
+			"",
+			"null",
 			"INSERT INTO ...;",
 		},
 	}
@@ -647,7 +695,8 @@ func TestSystemSchemaID(t *testing.T) {
 	_, dom := testkit.CreateMockStoreAndDomain(t)
 
 	uniqueIDMap := make(map[int64]string)
-	checkSystemSchemaTableID(t, dom, "information_schema", autoid.InformationSchemaDBID, 1, 10000, uniqueIDMap)
+	// [5000, 10000) of information_schema is reserved for downstream forks
+	checkSystemSchemaTableID(t, dom, "information_schema", autoid.InformationSchemaDBID, 1, 5000, uniqueIDMap)
 	checkSystemSchemaTableID(t, dom, "performance_schema", autoid.PerformanceSchemaDBID, 10000, 20000, uniqueIDMap)
 	checkSystemSchemaTableID(t, dom, "metrics_schema", autoid.MetricSchemaDBID, 20000, 30000, uniqueIDMap)
 }
@@ -767,6 +816,44 @@ func TestStmtSummaryTable(t *testing.T) {
 	tk.MustQuery("select column_comment from information_schema.columns " +
 		"where table_name='STATEMENTS_SUMMARY' and column_name='STMT_TYPE'",
 	).Check(testkit.Rows("Statement type"))
+	tk.MustQuery(`
+		SELECT table_name, column_name
+		FROM information_schema.columns
+		WHERE table_name IN (
+			'STATEMENTS_SUMMARY',
+			'STATEMENTS_SUMMARY_HISTORY',
+			'CLUSTER_STATEMENTS_SUMMARY',
+			'CLUSTER_STATEMENTS_SUMMARY_HISTORY'
+		)
+		AND column_name IN (
+			'AVG_IA_REMOTE_READ_SEGMENT_COUNT',
+			'MAX_IA_REMOTE_READ_SEGMENT_COUNT'
+		)
+		ORDER BY table_name, column_name
+	`).Check(testkit.Rows(
+		"CLUSTER_STATEMENTS_SUMMARY AVG_IA_REMOTE_READ_SEGMENT_COUNT",
+		"CLUSTER_STATEMENTS_SUMMARY MAX_IA_REMOTE_READ_SEGMENT_COUNT",
+		"CLUSTER_STATEMENTS_SUMMARY_HISTORY AVG_IA_REMOTE_READ_SEGMENT_COUNT",
+		"CLUSTER_STATEMENTS_SUMMARY_HISTORY MAX_IA_REMOTE_READ_SEGMENT_COUNT",
+		"STATEMENTS_SUMMARY AVG_IA_REMOTE_READ_SEGMENT_COUNT",
+		"STATEMENTS_SUMMARY MAX_IA_REMOTE_READ_SEGMENT_COUNT",
+		"STATEMENTS_SUMMARY_HISTORY AVG_IA_REMOTE_READ_SEGMENT_COUNT",
+		"STATEMENTS_SUMMARY_HISTORY MAX_IA_REMOTE_READ_SEGMENT_COUNT",
+	))
+	tk.MustQuery(`
+		SELECT COUNT(*)
+		FROM information_schema.columns
+		WHERE table_name IN (
+			'STATEMENTS_SUMMARY',
+			'STATEMENTS_SUMMARY_HISTORY',
+			'CLUSTER_STATEMENTS_SUMMARY',
+			'CLUSTER_STATEMENTS_SUMMARY_HISTORY'
+		)
+		AND column_name IN (
+			'AVG_IA_READ_SEGMENT_COUNT',
+			'MAX_IA_READ_SEGMENT_COUNT'
+		)
+	`).Check(testkit.Rows("0"))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b varchar(10), key k(a))")
@@ -817,7 +904,12 @@ func TestStmtSummaryTable(t *testing.T) {
 	rows := tk.MustQuery("select tidb_decode_plan('" + p1 + "');").Rows()
 	require.Equal(t, 1, len(rows))
 	require.Equal(t, 1, len(rows[0]))
-	require.Regexp(t, "\n.*Point_Get.*table.tidb, index.PRIMARY.VARIABLE_NAME", rows[0][0])
+	if kerneltype.IsNextGen() {
+		// next-gen system tables use clustered index.
+		require.Regexp(t, "\n.*Point_Get.*table.tidb, clustered index.PRIMARY.VARIABLE_NAME", rows[0][0])
+	} else {
+		require.Regexp(t, "\n.*Point_Get.*table.tidb, index.PRIMARY.VARIABLE_NAME", rows[0][0])
+	}
 
 	sql = "select table_names from information_schema.statements_summary " +
 		"where digest_text like 'select `variable_value`%' and `schema_name`='test'"
@@ -846,9 +938,9 @@ func TestStmtSummaryTable(t *testing.T) {
 		"from information_schema.statements_summary " +
 		"where digest_text like 'select * from `t`%'"
 	tk.MustQuery(sql).Check(testkit.Rows("Select test test.t t:k 1 0 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                       \ttask     \testRows\toperator info\n" +
-		"\tIndexLookUp_8            \troot     \t100    \t\n" +
-		"\t├─IndexRangeScan_6(Build)\tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
-		"\t└─TableRowIDScan_7(Probe)\tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
+		"\tIndexLookUp_7            \troot     \t100    \t\n" +
+		"\t├─IndexRangeScan_5(Build)\tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
+		"\t└─TableRowIDScan_6(Probe)\tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
 
 	// select ... order by
 	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys,
@@ -868,9 +960,9 @@ func TestStmtSummaryTable(t *testing.T) {
 		"where digest_text like 'select * from `t`%'"
 	tk.MustQuery(sql).Check(testkit.Rows(
 		"Select test test.t t:k 2 0 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                       \ttask     \testRows\toperator info\n" +
-			"\tIndexLookUp_8            \troot     \t100    \t\n" +
-			"\t├─IndexRangeScan_6(Build)\tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
-			"\t└─TableRowIDScan_7(Probe)\tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
+			"\tIndexLookUp_7            \troot     \t100    \t\n" +
+			"\t├─IndexRangeScan_5(Build)\tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
+			"\t└─TableRowIDScan_6(Probe)\tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
 
 	// Disable it again.
 	tk.MustExec("set global tidb_enable_stmt_summary = false")
@@ -916,9 +1008,9 @@ func TestStmtSummaryTable(t *testing.T) {
 		"from information_schema.statements_summary " +
 		"where digest_text like 'select * from `t`%'"
 	tk.MustQuery(sql).Check(testkit.Rows("Select test test.t t:k 1 0 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid                       \ttask     \testRows\toperator info\n" +
-		"\tIndexLookUp_8            \troot     \t1000   \t\n" +
-		"\t├─IndexRangeScan_6(Build)\tcop[tikv]\t1000   \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
-		"\t└─TableRowIDScan_7(Probe)\tcop[tikv]\t1000   \ttable:t, keep order:false, stats:pseudo"))
+		"\tIndexLookUp_7            \troot     \t1000   \t\n" +
+		"\t├─IndexRangeScan_5(Build)\tcop[tikv]\t1000   \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
+		"\t└─TableRowIDScan_6(Probe)\tcop[tikv]\t1000   \ttable:t, keep order:false, stats:pseudo"))
 
 	// Disable it in global scope.
 	tk.MustExec("set global tidb_enable_stmt_summary = false")
@@ -1129,6 +1221,81 @@ func TestStmtSummaryEvictedPointGet(t *testing.T) {
 	tk.MustExec("set @@global.tidb_enable_stmt_summary=1;")
 }
 
+func TestStorageEnginesInStmtSummary(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithMockTiFlash(2))
+	tk := newTestKitWithRoot(t, store)
+	tk.MustExec("use test")
+
+	// Query that doesn't read from any storage engines
+	tk.MustExec("select 1")
+	tk.MustQuery("select storage_kv, storage_mpp from information_schema.statements_summary where query_sample_text = 'select 1'").
+		Check(testkit.Rows("0 0"))
+
+	// Query that only reads from TiKV
+	tk.MustExec("create table t_tikv (a int)")
+	tk.MustExec("select /*+ read_from_storage(tikv[t_tikv]) */ a from t_tikv")
+	tk.MustQuery("select storage_kv, storage_mpp from information_schema.statements_summary where query_sample_text like 'select%t_tikv'").
+		Check(testkit.Rows("1 0"))
+
+	// Query that only reads from TiFlash
+	tk.MustExec("create table t_tiflash (a int)")
+	tk.MustExec("alter table t_tiflash set tiflash replica 1")
+	tb := external.GetTableByName(t, tk, "test", "t_tiflash")
+	require.NoError(t, dom.DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true))
+	tk.MustExec("select /*+ read_from_storage(tiflash[t_tiflash]) */ a from t_tiflash")
+	tk.MustQuery("select storage_kv, storage_mpp from information_schema.statements_summary " +
+		"where query_sample_text like 'select%t_tiflash'").
+		Check(testkit.Rows("0 1"))
+
+	// Query that reads from both TiKV and TiFlash
+	tk.MustExec("select /*+ read_from_storage(tikv[t_tikv]) */ t_tikv.a, /*+ read_from_storage(tiflash[t_tiflash]) */ t_tiflash.a from t_tikv, t_tiflash")
+	tk.MustQuery("select storage_kv, storage_mpp from information_schema.statements_summary " +
+		"where query_sample_text like 'select%t_tikv, t_tiflash'").
+		Check(testkit.Rows("1 1"))
+
+	// Point get queries should register as reading from TiKV
+	tk.MustExec("create table t_pointget (a int primary key)")
+	query := "select a from t_pointget where a = 1"
+	tk.MustHavePlan(query, "Point_Get")
+	tk.MustExec(query)
+	tk.MustQuery("select storage_kv, storage_mpp from information_schema.statements_summary " +
+		"where query_sample_text like 'select%t_pointget%'").
+		Check(testkit.Rows("1 0"))
+
+	// Index readers should register as reading from TiKV
+	tk.MustExec("create table t_index_reader (a int, key (a))")
+	query = "select a from t_index_reader where a = 1"
+	tk.MustHavePlan(query, "IndexReader")
+	tk.MustExec(query)
+	tk.MustQuery("select storage_kv, storage_mpp from information_schema.statements_summary " +
+		"where query_sample_text like 'select%t_index_reader%'").
+		Check(testkit.Rows("1 0"))
+
+	// Index lookups should register as reading from TiKV
+	tk.MustExec("create table t_index_lookup (a int, b int, index (a))")
+	tk.MustIndexLookup("select a, b from t_index_lookup where a = 1")
+	tk.MustQuery("select storage_kv, storage_mpp from information_schema.statements_summary " +
+		"where query_sample_text like 'select%t_index_lookup%'").
+		Check(testkit.Rows("1 0"))
+
+	// Index merge readers should register as reading from TiKV
+	tk.MustExec("create table t_index_merge(a int, b int, primary key (a), unique key (b))")
+	query = "select /*+ use_index_merge(t_index_merge, a, b) */ * from t_index_merge where a = 1 or b = 1"
+	tk.MustHavePlan(query, "IndexMerge")
+	tk.MustExec(query)
+	tk.MustQuery("select storage_kv, storage_mpp from information_schema.statements_summary " +
+		"where query_sample_text like 'select%t_index_merge%'").
+		Check(testkit.Rows("1 0"))
+
+	// TABLESAMPLE queries should register as reading from TiKV
+	query = "select * from t_tikv tablesample regions();"
+	tk.MustHavePlan(query, "TableSample")
+	tk.MustExec(query)
+	tk.MustQuery("select storage_kv, storage_mpp from information_schema.statements_summary " +
+		"where query_sample_text like 'select%tablesample%'").
+		Check(testkit.Rows("1 0"))
+}
+
 func TestServerInfoResolveLoopBackAddr(t *testing.T) {
 	nodes := []infoschema.ServerInfo{
 		{Address: "127.0.0.1:4000", StatusAddr: "192.168.130.22:10080"},
@@ -1327,8 +1494,10 @@ func TestMemoryUsageAndOpsHistory(t *testing.T) {
 
 	var tmp string
 	var ok bool
+	const expectedSQLDigest = "e3237ec256015a3566757e0c2742507cd30ae04e4cac2fbc14d269eafe7b067b"
+	const expectedSQLText = "explain analyze select * from t t1 join t t2 join t t3 on t1.a=t2.a and t1.a=t3.a order by t1.a"
 	var beginTime = time.Now().Format(types.TimeFormat)
-	err = tk.QueryToErr("explain analyze select * from t t1 join t t2 join t t3 on t1.a=t2.a and t1.a=t3.a order by t1.a")
+	err = tk.QueryToErr(expectedSQLText)
 	var endTime = time.Now().Format(types.TimeFormat)
 	require.NotNil(t, err)
 	// Check Memory Table
@@ -1361,7 +1530,13 @@ func TestMemoryUsageAndOpsHistory(t *testing.T) {
 
 	rows = tk.MustQuery("select * from INFORMATION_SCHEMA.MEMORY_USAGE_OPS_HISTORY").Rows()
 	require.Greater(t, len(rows), 0)
-	row = rows[len(rows)-1]
+	row = nil
+	for _, historyRow := range rows {
+		if historyRow[10] == expectedSQLDigest && historyRow[11] == expectedSQLText {
+			row = historyRow
+		}
+	}
+	require.NotNil(t, row)
 	require.Len(t, row, 12)
 	require.GreaterOrEqual(t, row[0], beginTime) // TIME
 	require.LessOrEqual(t, row[0], endTime)
@@ -1373,14 +1548,14 @@ func TestMemoryUsageAndOpsHistory(t *testing.T) {
 	require.Nil(t, err)
 	require.Greater(t, val, uint64(536870912))
 
-	require.Greater(t, row[4], "0")                                                                                              // PROCESSID
-	require.Greater(t, row[5], "0")                                                                                              // MEM
-	require.Equal(t, row[6], "0")                                                                                                // DISK
-	require.Equal(t, row[7], "")                                                                                                 // CLIENT
-	require.Equal(t, row[8], "test")                                                                                             // DB
-	require.Equal(t, row[9], "")                                                                                                 // USER
-	require.Equal(t, row[10], "e3237ec256015a3566757e0c2742507cd30ae04e4cac2fbc14d269eafe7b067b")                                // SQL_DIGEST
-	require.Equal(t, row[11], "explain analyze select * from t t1 join t t2 join t t3 on t1.a=t2.a and t1.a=t3.a order by t1.a") // SQL_TEXT
+	require.Greater(t, row[4], "0")              // PROCESSID
+	require.Greater(t, row[5], "0")              // MEM
+	require.Equal(t, row[6], "0")                // DISK
+	require.Equal(t, row[7], "")                 // CLIENT
+	require.Equal(t, row[8], "test")             // DB
+	require.Equal(t, row[9], "")                 // USER
+	require.Equal(t, row[10], expectedSQLDigest) // SQL_DIGEST
+	require.Equal(t, row[11], expectedSQLText)   // SQL_TEXT
 }
 
 func TestAddFieldsForBinding(t *testing.T) {

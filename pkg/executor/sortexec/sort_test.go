@@ -23,17 +23,20 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
 
 // TODO remove spill as it should be tested in sort_spill_test.go
 // TODO add some new fail points, as some fail point may be aborted after the refine
 func TestSortInDisk(t *testing.T) {
-	testSortInDisk(t, false)
-	testSortInDisk(t, true)
+	for i, v := range []bool{false, true} {
+		t.Run(fmt.Sprint(i), func(t *testing.T) {
+			testSortInDisk(t, v)
+		})
+	}
 }
 
 // TODO remove failpoint
@@ -55,7 +58,7 @@ func testSortInDisk(t *testing.T, removeDir bool) {
 	tk.MustExec("use test")
 
 	sm := &testkit.MockSessionManager{
-		PS: make([]*util.ProcessInfo, 0),
+		PS: make([]*sessmgr.ProcessInfo, 0),
 	}
 	tk.Session().SetSessionManager(sm)
 	dom.ExpensiveQueryHandle().SetSessionManager(sm)

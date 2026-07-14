@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
@@ -41,14 +42,15 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	"github.com/pingcap/tidb/pkg/ddl/testargsv1"
 	"github.com/pingcap/tidb/pkg/ddl/util"
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
-	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/owner"
@@ -69,8 +71,6 @@ import (
 )
 
 const (
-	// DDLOwnerKey is the ddl owner path that is saved to etcd, and it's exported for testing.
-	DDLOwnerKey             = "/tidb/ddl/fg/owner"
 	ddlSchemaVersionKeyLock = "/tidb/ddl/schema_version_lock"
 	// addingDDLJobPrefix is the path prefix used to record the newly added DDL job, and it's saved to etcd.
 	addingDDLJobPrefix = "/tidb/ddl/add_ddl_job_"
@@ -92,6 +92,7 @@ const (
 
 var (
 	jobV2FirstVer        = *semver.New("8.4.0")
+	globalIdxV1FirstVer  = *semver.New("8.5.6")
 	detectJobVerInterval = 10 * time.Second
 )
 
@@ -107,6 +108,8 @@ const (
 	// the DDL owner, to make sure all upgrade related DDLs are run on new version
 	// TiDB instance.
 	Upgrade StartMode = "upgrade"
+	// BR mode, Start DDL from br, with this mode can skip loadSystemStore in next-gen and initLogBackup.
+	BR StartMode = "br"
 )
 
 // OnExist specifies what to do when a new object has a name collision.
@@ -219,7 +222,6 @@ type JobWrapper struct {
 	// when fast create table enabled, we might combine multiple jobs into one, and
 	// append the channel to this slice.
 	ResultCh []chan jobSubmitResult
-	cacheErr error
 }
 
 // NewJobWrapper creates a new JobWrapper.
@@ -241,17 +243,6 @@ func NewJobWrapperWithArgs(job *model.Job, args model.JobArgs, idAllocated bool)
 		IDAllocated: idAllocated,
 		JobArgs:     args,
 		ResultCh:    []chan jobSubmitResult{make(chan jobSubmitResult)},
-	}
-}
-
-// FillArgsWithSubJobs fill args for job and its sub jobs
-func (jobW *JobWrapper) FillArgsWithSubJobs() {
-	if jobW.Type != model.ActionMultiSchemaChange {
-		jobW.FillArgs(jobW.JobArgs)
-	} else {
-		for _, sub := range jobW.MultiSchemaInfo.SubJobs {
-			sub.FillArgs(jobW.Version)
-		}
 	}
 }
 
@@ -344,6 +335,7 @@ type ddlCtx struct {
 	ctx               context.Context
 	cancel            context.CancelFunc
 	uuid              string
+	startMode         StartMode
 	store             kv.Storage
 	ownerManager      owner.Manager
 	schemaVerSyncer   schemaver.Syncer
@@ -449,7 +441,7 @@ func (dc *ddlCtx) isOwner() bool {
 	return isOwner
 }
 
-func (dc *ddlCtx) setDDLLabelForTopSQL(jobID int64, jobQuery string) {
+func (dc *ddlCtx) attachTopProfilingInfo(jobID int64, jobQuery string) {
 	dc.jobCtx.Lock()
 	defer dc.jobCtx.Unlock()
 	ctx, exists := dc.jobCtx.jobCtxMap[jobID]
@@ -457,7 +449,7 @@ func (dc *ddlCtx) setDDLLabelForTopSQL(jobID int64, jobQuery string) {
 		ctx = NewReorgContext()
 		dc.jobCtx.jobCtxMap[jobID] = ctx
 	}
-	ctx.setDDLLabelForTopSQL(jobQuery)
+	ctx.attachTopProfilingInfo(jobQuery)
 }
 
 func (dc *ddlCtx) setDDLSourceForDiagnosis(jobID int64, jobType model.ActionType) {
@@ -479,6 +471,95 @@ func (dc *ddlCtx) getResourceGroupTaggerForTopSQL(jobID int64) *kv.ResourceGroup
 		return nil
 	}
 	return ctx.getResourceGroupTaggerForTopSQL()
+}
+
+func (dc *ddlCtx) setAnalyzeDoneCh(jobID int64, ch chan error) {
+	dc.jobCtx.Lock()
+	defer dc.jobCtx.Unlock()
+	ctx, exists := dc.jobCtx.jobCtxMap[jobID]
+	if !exists {
+		ctx = NewReorgContext()
+		dc.jobCtx.jobCtxMap[jobID] = ctx
+	}
+	ctx.analyzeDone = ch
+}
+
+func (dc *ddlCtx) getAnalyzeDoneCh(jobID int64) chan error {
+	dc.jobCtx.RLock()
+	defer dc.jobCtx.RUnlock()
+	ctx, exists := dc.jobCtx.jobCtxMap[jobID]
+	if !exists {
+		return nil
+	}
+	return ctx.analyzeDone
+}
+
+// setAnalyzeStartTime sets the analyze start time for a given job ID.
+func (dc *ddlCtx) setAnalyzeStartTime(jobID int64, t time.Time) {
+	dc.jobCtx.Lock()
+	defer dc.jobCtx.Unlock()
+	ctx, exists := dc.jobCtx.jobCtxMap[jobID]
+	if !exists {
+		ctx = NewReorgContext()
+		dc.jobCtx.jobCtxMap[jobID] = ctx
+	}
+	ctx.analyzeStartTime = t
+}
+
+// getAnalyzeStartTime returns the analyze start time for a given job ID. If not set, returns zero time and false.
+func (dc *ddlCtx) getAnalyzeStartTime(jobID int64) (time.Time, bool) {
+	dc.jobCtx.RLock()
+	defer dc.jobCtx.RUnlock()
+	ctx, exists := dc.jobCtx.jobCtxMap[jobID]
+	if !exists {
+		return time.Time{}, false
+	}
+	t := ctx.analyzeStartTime
+	return t, !t.IsZero()
+}
+
+// clearAnalyzeStartTime clears the analyze start time for a given job ID.
+func (dc *ddlCtx) clearAnalyzeStartTime(jobID int64) {
+	dc.jobCtx.Lock()
+	defer dc.jobCtx.Unlock()
+	if ctx, exists := dc.jobCtx.jobCtxMap[jobID]; exists {
+		ctx.analyzeStartTime = time.Time{}
+	}
+}
+
+// setAnalyzeCumulativeTimeout sets the computed cumulative timeout for analyze for a given job ID.
+func (dc *ddlCtx) setAnalyzeCumulativeTimeout(jobID int64, dur time.Duration) {
+	dc.jobCtx.Lock()
+	defer dc.jobCtx.Unlock()
+	ctx, exists := dc.jobCtx.jobCtxMap[jobID]
+	if !exists {
+		ctx = NewReorgContext()
+		dc.jobCtx.jobCtxMap[jobID] = ctx
+	}
+	ctx.analyzeCumulativeTimeout = dur
+}
+
+// getAnalyzeCumulativeTimeout returns the stored analyze cumulative timeout and true if set.
+func (dc *ddlCtx) getAnalyzeCumulativeTimeout(jobID int64) (time.Duration, bool) {
+	dc.jobCtx.RLock()
+	defer dc.jobCtx.RUnlock()
+	ctx, exists := dc.jobCtx.jobCtxMap[jobID]
+	if !exists {
+		return 0, false
+	}
+	if ctx.analyzeCumulativeTimeout == 0 {
+		return 0, false
+	}
+	return ctx.analyzeCumulativeTimeout, true
+}
+
+// clearAnalyzeCumulativeTimeout clears the stored analyze cumulative timeout for a given job ID.
+func (dc *ddlCtx) clearAnalyzeCumulativeTimeout(jobID int64) {
+	dc.jobCtx.Lock()
+	defer dc.jobCtx.Unlock()
+	if ctx, exists := dc.jobCtx.jobCtxMap[jobID]; exists {
+		ctx.analyzeCumulativeTimeout = 0
+	}
 }
 
 func (dc *ddlCtx) removeJobCtx(job *model.Job) {
@@ -595,7 +676,7 @@ func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *mo
 	// skip notify for system databases, system databases are expected to change at
 	// bootstrap and other nodes can also handle the changing in its bootstrap rather
 	// than be notified.
-	if tidbutil.IsMemOrSysDB(job.SchemaName) {
+	if metadef.IsMemOrSysDB(job.SchemaName) {
 		return nil
 	}
 
@@ -609,12 +690,12 @@ func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *mo
 			// Try sending the event to the channel with a backoff strategy to avoid blocking indefinitely.
 			// Since most unit tests don't consume events, we make a few attempts and then give up rather
 			// than blocking the DDL job forever on a full channel.
-			for range 10 {
+			for range 3 {
 				select {
 				case ch <- e:
 					break forLoop
 				default:
-					time.Sleep(time.Microsecond * 10)
+					time.Sleep(time.Microsecond * 2)
 				}
 			}
 			logutil.DDLLogger().Warn("fail to notify DDL event", zap.Stringer("event", e))
@@ -667,12 +748,13 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		id = uuid.New().String()
 		// The etcdCli is nil if the store is localstore which is only used for testing.
 		// So we use mockOwnerManager and memSyncer.
-		manager = owner.NewMockManager(ctx, id, opt.Store, DDLOwnerKey)
+		manager = owner.NewMockManager(ctx, id, opt.Store, util.DDLOwnerKey)
 		schemaVerSyncer = schemaver.NewMemSyncer()
 		serverStateSyncer = serverstate.NewMemSyncer()
 	} else {
-		id = globalOwnerManager.ID()
-		manager = globalOwnerManager.OwnerManager()
+		ownerMgr := getOwnerManager(opt.Store)
+		id = ownerMgr.ID()
+		manager = ownerMgr.OwnerManager()
 		schemaVerSyncer = schemaver.NewEtcdSyncer(etcdCli, id)
 		serverStateSyncer = serverstate.NewEtcdSyncer(etcdCli, util.ServerGlobalState)
 		deadLockCkr = util.NewDeadTableLockChecker(etcdCli)
@@ -783,7 +865,9 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 
 // Start implements DDL.Start interface.
 func (d *ddl) Start(startMode StartMode, ctxPool *pools.ResourcePool) error {
-	d.detectAndUpdateJobVersion()
+	if kerneltype.IsClassic() {
+		d.detectAndUpdateJobVersion()
+	}
 	campaignOwner := config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()
 	if startMode == Upgrade {
 		if !campaignOwner {
@@ -800,6 +884,12 @@ func (d *ddl) Start(startMode StartMode, ctxPool *pools.ResourcePool) error {
 		zap.Stringer("jobVersion", model.GetJobVerInUse()),
 		zap.String("startMode", string(startMode)),
 	)
+
+	d.executor.startMode = startMode
+	failpoint.Inject("mockBRStartMode", func() {
+		d.executor.startMode = BR
+	})
+	d.ddlCtx.startMode = d.executor.startMode
 
 	d.sessPool = sess.NewSessionPool(ctxPool)
 	d.executor.sessPool, d.jobSubmitter.sessPool = d.sessPool, d.sessPool
@@ -862,6 +952,9 @@ func (d *ddl) Start(startMode StartMode, ctxPool *pools.ResourcePool) error {
 	return nil
 }
 
+// this detection is only used for Classic kernel. for NextGen(TiDB-X), the job
+// version is always started with V2, no need to detect kernel version.
+//
 // detect versions of all TiDB instances and choose a job version to use, rules:
 //   - if it's in test or run in uni-store, use V2 directly if ForceDDLJobVersionToV1InTest
 //     is not set, else use V1, we use this rule to run unit-tests using V1.
@@ -882,9 +975,10 @@ func (d *ddl) detectAndUpdateJobVersion() {
 	if d.etcdCli == nil {
 		if testargsv1.ForceV1 {
 			model.SetJobVerInUse(model.JobVersion1)
-			return
+		} else {
+			model.SetJobVerInUse(model.JobVersion2)
 		}
-		model.SetJobVerInUse(model.JobVersion2)
+		model.SetGlobalIndexV1Supported(true)
 		return
 	}
 
@@ -893,12 +987,13 @@ func (d *ddl) detectAndUpdateJobVersion() {
 		logutil.DDLLogger().Warn("detect job version failed", zap.String("err", err.Error()))
 	}
 
-	if model.GetJobVerInUse() == model.JobVersion2 {
+	if model.GetJobVerInUse() == model.JobVersion2 && model.GetGlobalIndexV1Supported() {
 		return
 	}
 
-	logutil.DDLLogger().Info("job version in use is not v2, maybe in upgrade, start detecting",
-		zap.Stringer("current", model.GetJobVerInUse()))
+	logutil.DDLLogger().Info("job version in use is not v2 or global index v1 not supported, maybe in upgrade, start detecting",
+		zap.Stringer("current", model.GetJobVerInUse()),
+		zap.Bool("globalIndexV1Supported", model.GetGlobalIndexV1Supported()))
 	d.wg.RunWithLog(func() {
 		ticker := time.NewTicker(detectJobVerInterval)
 		defer ticker.Stop()
@@ -913,8 +1008,8 @@ func (d *ddl) detectAndUpdateJobVersion() {
 				logutil.SampleLogger().Warn("detect job version failed", zap.String("err", err.Error()))
 			}
 			failpoint.InjectCall("afterDetectAndUpdateJobVersionOnce")
-			if model.GetJobVerInUse() == model.JobVersion2 {
-				logutil.DDLLogger().Info("job version in use is v2 now, stop detecting")
+			if model.GetJobVerInUse() == model.JobVersion2 && model.GetGlobalIndexV1Supported() {
+				logutil.DDLLogger().Info("job version in use is v2 and global index v1 supported now, stop detecting")
 				return
 			}
 		}
@@ -923,12 +1018,14 @@ func (d *ddl) detectAndUpdateJobVersion() {
 
 // when all TiDB instances have version >= 8.4.0, we can use job version 2, otherwise
 // we should use job version 1 to keep compatibility.
+// Also checks whether all instances support global index V1 key format (>= 8.5.6).
 func (d *ddl) detectAndUpdateJobVersionOnce() error {
 	infos, err := infosync.GetAllServerInfo(d.ctx)
 	if err != nil {
 		return err
 	}
 	allSupportV2 := true
+	allSupportGlobalIdxV1 := true
 	for _, info := range infos {
 		// we don't store TiDB version directly, but concatenated with a MySQL version,
 		// separated by mysql.VersionSeparator.
@@ -936,6 +1033,7 @@ func (d *ddl) detectAndUpdateJobVersionOnce() error {
 		idx := strings.Index(tidbVer, mysql.VersionSeparator)
 		if idx < 0 {
 			allSupportV2 = false
+			allSupportGlobalIdxV1 = false
 			// see https://github.com/pingcap/tidb/issues/31823
 			logutil.SampleLogger().Warn("unknown server version, might be changed directly in config",
 				zap.String("version", tidbVer))
@@ -946,6 +1044,7 @@ func (d *ddl) detectAndUpdateJobVersionOnce() error {
 		ver, err2 := semver.NewVersion(tidbVer)
 		if err2 != nil {
 			allSupportV2 = false
+			allSupportGlobalIdxV1 = false
 			logutil.SampleLogger().Warn("parse server version failed", zap.String("version", info.Version),
 				zap.String("err", err2.Error()))
 			break
@@ -955,6 +1054,11 @@ func (d *ddl) detectAndUpdateJobVersionOnce() error {
 		ver.PreRelease = ""
 		if ver.LessThan(jobV2FirstVer) {
 			allSupportV2 = false
+		}
+		if ver.LessThan(globalIdxV1FirstVer) {
+			allSupportGlobalIdxV1 = false
+		}
+		if !allSupportV2 && !allSupportGlobalIdxV1 {
 			break
 		}
 	}
@@ -967,6 +1071,12 @@ func (d *ddl) detectAndUpdateJobVersionOnce() error {
 			zap.Stringer("old", model.GetJobVerInUse()),
 			zap.Stringer("new", targetVer))
 		model.SetJobVerInUse(targetVer)
+	}
+	if model.GetGlobalIndexV1Supported() != allSupportGlobalIdxV1 {
+		logutil.DDLLogger().Info("change global index V1 support",
+			zap.Bool("old", model.GetGlobalIndexV1Supported()),
+			zap.Bool("new", allSupportGlobalIdxV1))
+		model.SetGlobalIndexV1Supported(allSupportGlobalIdxV1)
 	}
 	return nil
 }
@@ -1133,7 +1243,7 @@ func (d *ddl) cleanDeadTableLock(unlockTables []model.TableLockTpInfo, se model.
 
 // SwitchMDL enables MDL or disable MDL.
 func (d *ddl) SwitchMDL(enable bool) error {
-	isEnableBefore := vardef.EnableMDL.Load()
+	isEnableBefore := vardef.IsMDLEnabled()
 	if isEnableBefore == enable {
 		return nil
 	}
@@ -1157,7 +1267,7 @@ func (d *ddl) SwitchMDL(enable bool) error {
 		return errors.New("please wait for all jobs done")
 	}
 
-	vardef.EnableMDL.Store(enable)
+	vardef.SetEnableMDL(enable)
 	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), d.store, true, func(_ context.Context, txn kv.Transaction) error {
 		m := meta.NewMutator(txn)
 		oldEnable, _, err := m.GetMetadataLock()
@@ -1181,7 +1291,7 @@ func (d *ddl) SwitchMDL(enable bool) error {
 // It should be called before any DDL that could break data consistency.
 // This provides a safe window for async commit and 1PC to commit with an old schema.
 func delayForAsyncCommit() {
-	if vardef.EnableMDL.Load() {
+	if vardef.IsMDLEnabled() {
 		// If metadata lock is enabled. The transaction of DDL must begin after
 		// pre-write of the async commit transaction, then the commit ts of DDL
 		// must be greater than the async commit transaction. In this case, the
@@ -1209,19 +1319,30 @@ var (
 	RunInGoTest bool
 )
 
+// GetRecoverSnapshotTS returns the snapshot timestamp for reconstructing
+// metadata from a finished drop/truncate table or drop schema job.
+func GetRecoverSnapshotTS(job *model.Job) uint64 {
+	if job.RealStartTS != 0 {
+		return job.RealStartTS
+	}
+	return job.StartTS
+}
+
 // GetDropOrTruncateTableInfoFromJobsByStore implements GetDropOrTruncateTableInfoFromJobs
 func GetDropOrTruncateTableInfoFromJobsByStore(jobs []*model.Job, gcSafePoint uint64, getTable func(uint64, int64, int64) (*model.TableInfo, error), fn func(*model.Job, *model.TableInfo) (bool, error)) (bool, error) {
 	for _, job := range jobs {
-		// Check GC safe point for getting snapshot infoSchema.
-		err := gcutil.ValidateSnapshotWithGCSafePoint(job.StartTS, gcSafePoint)
-		if err != nil {
-			return false, err
-		}
 		if job.Type != model.ActionDropTable && job.Type != model.ActionTruncateTable {
 			continue
 		}
 
-		tbl, err := getTable(job.StartTS, job.SchemaID, job.TableID)
+		snapshotTS := GetRecoverSnapshotTS(job)
+		// Check GC safe point for getting snapshot infoSchema.
+		err := gcutil.ValidateSnapshotWithGCSafePoint(snapshotTS, gcSafePoint)
+		if err != nil {
+			return false, err
+		}
+
+		tbl, err := getTable(snapshotTS, job.SchemaID, job.TableID)
 		if err != nil {
 			if meta.ErrDBNotExists.Equal(err) {
 				// The dropped/truncated DDL maybe execute failed that caused by the parallel DDL execution,
@@ -1310,7 +1431,7 @@ func GetDDLInfo(s sessionctx.Context) (*Info, error) {
 
 func get2JobsFromTable(sess *sess.Session) (generalJob, reorgJob *model.Job, err error) {
 	ctx := context.Background()
-	jobs, err := getJobsBySQL(ctx, sess, JobTable, "not reorg order by job_id limit 1")
+	jobs, err := getJobsBySQL(ctx, sess, "not reorg order by job_id limit 1")
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -1318,7 +1439,7 @@ func get2JobsFromTable(sess *sess.Session) (generalJob, reorgJob *model.Job, err
 	if len(jobs) != 0 {
 		generalJob = jobs[0]
 	}
-	jobs, err = getJobsBySQL(ctx, sess, JobTable, "reorg order by job_id limit 1")
+	jobs, err = getJobsBySQL(ctx, sess, "reorg order by job_id limit 1")
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -1349,25 +1470,6 @@ func cancelRunningJob(job *model.Job,
 	return nil
 }
 
-// pauseRunningJob check and pause the running Job
-func pauseRunningJob(job *model.Job,
-	byWho model.AdminCommandOperator) (err error) {
-	if job.IsPausing() || job.IsPaused() {
-		return dbterror.ErrPausedDDLJob.GenWithStackByArgs(job.ID)
-	}
-	if !job.IsPausable() {
-		errMsg := fmt.Sprintf("state [%s] or schema state [%s]", job.State.String(), job.SchemaState.String())
-		err = dbterror.ErrCannotPauseDDLJob.GenWithStackByArgs(job.ID, errMsg)
-		if err != nil {
-			return err
-		}
-	}
-
-	job.State = model.JobStatePausing
-	job.AdminOperator = byWho
-	return nil
-}
-
 // resumePausedJob check and resume the Paused Job
 func resumePausedJob(job *model.Job,
 	byWho model.AdminCommandOperator) (err error) {
@@ -1376,16 +1478,39 @@ func resumePausedJob(job *model.Job,
 			job.State, job.SchemaState)
 		return dbterror.ErrCannotResumeDDLJob.GenWithStackByArgs(job.ID, errMsg)
 	}
-	// The Paused job should only be resumed by who paused it
-	if job.AdminOperator != byWho {
+	// The Paused job should only be resumed by who paused it, except system
+	// pauses with a reason that explicitly allows end-user recovery.
+	if job.AdminOperator != byWho && !canEndUserResumeSystemPausedJob(job, byWho) {
 		errMsg := fmt.Sprintf("job has been paused by [%s], should not resumed by [%s]",
 			job.AdminOperator.String(), byWho.String())
 		return dbterror.ErrCannotResumeDDLJob.GenWithStackByArgs(job.ID, errMsg)
 	}
 
+	resumeFromKVDiskFullByEndUser := byWho == model.AdminCommandByEndUser && job.IsPausedBySystemForKVDiskFull()
 	job.State = model.JobStateQueueing
+	job.ClearPauseReason()
+	job.Error = nil
+	if resumeFromKVDiskFullByEndUser {
+		job.SetResumeReason(model.JobResumeReasonKVDiskFull)
+	} else {
+		job.ClearResumeReason()
+	}
 
 	return nil
+}
+
+// resumePausedJobForUpgradeFinish resumes jobs paused for upgrade, but leaves
+// resource-protection pauses for explicit user recovery.
+func resumePausedJobForUpgradeFinish(job *model.Job,
+	byWho model.AdminCommandOperator) error {
+	if job.IsPausedBySystemForKVDiskFull() {
+		return nil
+	}
+	return resumePausedJob(job, byWho)
+}
+
+func canEndUserResumeSystemPausedJob(job *model.Job, byWho model.AdminCommandOperator) bool {
+	return byWho == model.AdminCommandByEndUser && job.IsPausedBySystemForKVDiskFull()
 }
 
 // processJobs command on the Job according to the process
@@ -1422,7 +1547,7 @@ func processJobs(
 		if err != nil {
 			return nil, err
 		}
-		jobs, err := getJobsBySQL(ctx, ns, JobTable, fmt.Sprintf("job_id in (%s) order by job_id", strings.Join(idsStr, ", ")))
+		jobs, err := getJobsBySQL(ctx, ns, fmt.Sprintf("job_id in (%s) order by job_id", strings.Join(idsStr, ", ")))
 		if err != nil {
 			ns.Rollback()
 			return nil, err
@@ -1481,7 +1606,7 @@ func CancelJobs(ctx context.Context, se sessionctx.Context, ids []int64) (errs [
 
 // PauseJobs pause all the DDL jobs according to user command.
 func PauseJobs(ctx context.Context, se sessionctx.Context, ids []int64) ([]error, error) {
-	return processJobs(ctx, pauseRunningJob, se, ids, model.AdminCommandByEndUser)
+	return processJobs(ctx, util.PauseRunningJob, se, ids, model.AdminCommandByEndUser)
 }
 
 // ResumeJobs resume all the DDL jobs according to user command.
@@ -1498,7 +1623,7 @@ func CancelJobsBySystem(se sessionctx.Context, ids []int64) (errs []error, err e
 // PauseJobsBySystem pauses Jobs because of internal reasons.
 func PauseJobsBySystem(se sessionctx.Context, ids []int64) (errs []error, err error) {
 	ctx := context.Background()
-	return processJobs(ctx, pauseRunningJob, se, ids, model.AdminCommandBySystem)
+	return processJobs(ctx, util.PauseRunningJob, se, ids, model.AdminCommandBySystem)
 }
 
 // ResumeJobsBySystem resumes Jobs that are paused by TiDB itself.
@@ -1528,10 +1653,9 @@ func processAllJobs(
 	var limit = 100
 	for {
 		var jobs []*model.Job
-		jobs, err = getJobsBySQL(ctx, ns, JobTable,
-			fmt.Sprintf("job_id >= %s order by job_id asc limit %s",
-				strconv.FormatInt(jobID, 10),
-				strconv.FormatInt(int64(limit), 10)))
+		jobs, err = getJobsBySQL(ctx, ns, fmt.Sprintf("job_id >= %s order by job_id asc limit %s",
+			strconv.FormatInt(jobID, 10),
+			strconv.FormatInt(int64(limit), 10)))
 		if err != nil {
 			ns.Rollback()
 			return nil, err
@@ -1573,17 +1697,17 @@ func processAllJobs(
 
 // PauseAllJobsBySystem pauses all running Jobs because of internal reasons.
 func PauseAllJobsBySystem(se sessionctx.Context) (map[int64]error, error) {
-	return processAllJobs(context.Background(), pauseRunningJob, se, model.AdminCommandBySystem)
+	return processAllJobs(context.Background(), util.PauseRunningJob, se, model.AdminCommandBySystem)
 }
 
 // ResumeAllJobsBySystem resumes all paused Jobs because of internal reasons.
 func ResumeAllJobsBySystem(se sessionctx.Context) (map[int64]error, error) {
-	return processAllJobs(context.Background(), resumePausedJob, se, model.AdminCommandBySystem)
+	return processAllJobs(context.Background(), resumePausedJobForUpgradeFinish, se, model.AdminCommandBySystem)
 }
 
 // GetAllDDLJobs get all DDL jobs and sorts jobs by job.ID.
 func GetAllDDLJobs(ctx context.Context, se sessionctx.Context) ([]*model.Job, error) {
-	return getJobsBySQL(ctx, sess.NewSession(se), JobTable, "1 order by job_id")
+	return getJobsBySQL(ctx, sess.NewSession(se), "1 order by job_id")
 }
 
 // IterAllDDLJobs will iterates running DDL jobs first, return directly if `finishFn` return true or error,

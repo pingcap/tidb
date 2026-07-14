@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/stretchr/testify/require"
 )
@@ -43,8 +44,16 @@ func _miss(t *testing.T, pc sessionctx.InstancePlanCache, testKey, statsHash int
 	require.False(t, ok)
 }
 
-func TestInstancePlanCacheBasic(t *testing.T) {
-	sctx := MockContext()
+func TestInstancePlanCacheSuite(t *testing.T) {
+	t.Run("TestInstancePlanCacheBasic", testInstancePlanCacheBasic)
+	t.Run("TestInstancePlanCacheWithMatchOpts", testInstancePlanCacheWithMatchOpts)
+	t.Run("TestInstancePlanCacheEvictAll", testInstancePlanCacheEvictAll)
+	t.Run("TestInstancePlanCacheConcurrentRead", testInstancePlanCacheConcurrentRead)
+	t.Run("TestInstancePlanCacheConcurrentWriteRead", testInstancePlanCacheConcurrentWriteRead)
+}
+
+func testInstancePlanCacheBasic(t *testing.T) {
+	sctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}()
@@ -123,8 +132,8 @@ func TestInstancePlanCacheBasic(t *testing.T) {
 	require.Equal(t, numHeads, 0)
 }
 
-func TestInstancePlanCacheWithMatchOpts(t *testing.T) {
-	sctx := MockContext()
+func testInstancePlanCacheWithMatchOpts(t *testing.T) {
+	sctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}()
@@ -187,8 +196,8 @@ func TestInstancePlanCacheWithMatchOpts(t *testing.T) {
 	_miss(t, pc, 1, 5)
 }
 
-func TestInstancePlanCacheEvictAll(t *testing.T) {
-	sctx := MockContext()
+func testInstancePlanCacheEvictAll(t *testing.T) {
+	sctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}()
@@ -208,8 +217,8 @@ func TestInstancePlanCacheEvictAll(t *testing.T) {
 	require.Equal(t, pc.Size(), int64(0))
 }
 
-func TestInstancePlanCacheConcurrentRead(t *testing.T) {
-	sctx := MockContext()
+func testInstancePlanCacheConcurrentRead(t *testing.T) {
+	sctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}()
@@ -245,8 +254,8 @@ func TestInstancePlanCacheConcurrentRead(t *testing.T) {
 	wg.Wait()
 }
 
-func TestInstancePlanCacheConcurrentWriteRead(t *testing.T) {
-	sctx := MockContext()
+func testInstancePlanCacheConcurrentWriteRead(t *testing.T) {
+	sctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}()

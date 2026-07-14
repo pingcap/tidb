@@ -215,7 +215,7 @@ func (dr *delRange) doTask(sctx sessionctx.Context, r util.DelRangeTask) error {
 		dr.keys = dr.keys[:0]
 		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 		err := kv.RunInNewTxn(ctx, dr.store, false, func(_ context.Context, txn kv.Transaction) error {
-			if topsqlstate.TopSQLEnabled() {
+			if topsqlstate.TopProfilingEnabled() {
 				// Only when TiDB run without PD(use unistore as storage for test) will run into here, so just set a mock internal resource tagger.
 				txn.SetOption(kv.ResourceGroupTagger, util.GetInternalResourceGroupTaggerForTopSQL())
 			}
@@ -549,11 +549,7 @@ func (sdr *sessionDelRangeExecWrapper) AppendParamsList(jobID, elemID int64, sta
 }
 
 func (sdr *sessionDelRangeExecWrapper) ConsumeDeleteRange(ctx context.Context, sql string) error {
-	// set session disk full opt
-	sdr.sctx.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	_, err := sdr.sctx.GetSQLExecutor().ExecuteInternal(ctx, sql, sdr.paramsList...)
-	// clear session disk full opt
-	sdr.sctx.GetSessionVars().ClearDiskFullOpt()
 	sdr.paramsList = nil
 	return errors.Trace(err)
 }

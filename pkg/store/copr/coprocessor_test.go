@@ -16,10 +16,12 @@ package copr
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/driver/backoff"
 	"github.com/pingcap/tidb/pkg/util/paging"
@@ -36,6 +38,26 @@ func buildTestCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req
 		eventCb:  eventCb,
 		respChan: true,
 	})
+}
+
+func TestEnsureMonotonicKeyRanges(t *testing.T) {
+	ctx := context.Background()
+	ranges := NewKeyRanges([]kv.KeyRange{
+		{StartKey: []byte("b"), EndKey: []byte("d")},
+		{StartKey: []byte("a"), EndKey: []byte("b")},
+	})
+	reordered := ensureMonotonicKeyRanges(ctx, ranges)
+	require.True(t, reordered)
+	require.Equal(t, "a", string(ranges.At(0).StartKey))
+	require.Equal(t, "b", string(ranges.At(0).EndKey))
+	require.Equal(t, "b", string(ranges.At(1).StartKey))
+
+	sortedRanges := NewKeyRanges([]kv.KeyRange{
+		{StartKey: []byte("a"), EndKey: []byte("b")},
+		{StartKey: []byte("b"), EndKey: []byte("c")},
+	})
+	reordered = ensureMonotonicKeyRanges(ctx, sortedRanges)
+	require.False(t, reordered)
 }
 
 func TestBuildTasksWithoutBuckets(t *testing.T) {
@@ -614,6 +636,41 @@ func TestBuildPagingTasks(t *testing.T) {
 	require.Equal(t, tasks[0].pagingSize, paging.MinPagingSize)
 }
 
+func TestBuildCopTaskDoesNotCancelBoCtx(t *testing.T) {
+	// nil --- 'g' --- 'n' --- 't' --- nil
+	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
+	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	defer func() {
+		pdClient.Close()
+		err = mockClient.Close()
+		require.NoError(t, err)
+	}()
+
+	testutils.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
+	pdCli := tikv.NewCodecPDClient(tikv.ModeTxn, pdClient)
+	defer pdCli.Close()
+
+	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
+	defer cache.Close()
+
+	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
+
+	req := &kv.Request{}
+	req.Paging.Enable = true
+	req.Paging.MinPagingSize = paging.MinPagingSize
+	req.MaxExecutionTime = 10000
+	_, err = buildTestCopTasks(bo, cache, buildCopRanges("a", "c"), req, nil)
+	require.NoError(t, err)
+	contextDone := false
+	select {
+	case <-bo.GetCtx().Done():
+		contextDone = true
+	default:
+	}
+	require.False(t, contextDone, "buildCopTasks should not cancel bo context")
+}
+
 func TestBuildPagingTasksDisablePagingForSmallLimit(t *testing.T) {
 	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
 	require.NoError(t, err)
@@ -643,6 +700,68 @@ func TestBuildPagingTasksDisablePagingForSmallLimit(t *testing.T) {
 	taskEqual(t, tasks[0], regionIDs[0], 0, "a", "c")
 	require.False(t, tasks[0].paging)
 	require.Equal(t, tasks[0].pagingSize, uint64(0))
+
+	ema := newRUEMA(0)
+	ema.Observe(1_048_576, time.Now())
+	worker := &copIteratorWorker{req: req, ema: ema}
+	require.Zero(t, worker.predictedReadBytesForTask(tasks[0]))
+}
+
+func TestBuildCopTasksWithPagingSizeBytes(t *testing.T) {
+	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	defer func() {
+		pdClient.Close()
+		err = mockClient.Close()
+		require.NoError(t, err)
+	}()
+	_, regionIDs, _ := testutils.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
+
+	pdCli := tikv.NewCodecPDClient(tikv.ModeTxn, pdClient)
+	defer pdCli.Close()
+	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
+	defer cache.Close()
+	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
+
+	// A byte budget lives on the request and is the single source of truth.
+	req := &kv.Request{KeepOrder: true}
+	req.Paging.PagingSizeBytes = uint64(4 * 1024 * 1024)
+	tasks, err := buildCopTasks(bo, buildCopRanges("a", "c"), &buildCopTaskOpt{
+		req:      req,
+		cache:    cache,
+		respChan: true,
+	})
+	require.NoError(t, err)
+	require.Len(t, tasks, 1)
+	taskEqual(t, tasks[0], regionIDs[0], 0, "a", "c")
+	// A byte budget alone must not turn on row-count paging at the task level,
+	// but it still enlarges the response channel like row-count paging does.
+	require.False(t, tasks[0].paging)
+	require.Equal(t, uint64(0), tasks[0].pagingSize)
+	require.Equal(t, 18, cap(tasks[0].respChan))
+
+	ema := newRUEMA(req.Paging.PagingSizeBytes)
+	worker := &copIteratorWorker{req: req, ema: ema}
+	require.Equal(t, uint64(4*1024*1024), worker.predictedReadBytesForTask(tasks[0]))
+
+	// Row-count paging with a tiny limit downgrades independently; the byte
+	// budget on the request is untouched by that downgrade.
+	req.Paging.Enable = true
+	req.Paging.MinPagingSize = paging.MinPagingSize
+	req.LimitSize = 1
+	tasks, err = buildCopTasks(bo, buildCopRanges("a", "c"), &buildCopTaskOpt{
+		req:      req,
+		cache:    cache,
+		respChan: true,
+	})
+	require.NoError(t, err)
+	require.Len(t, tasks, 1)
+	require.False(t, tasks[0].paging)
+	require.Equal(t, uint64(0), tasks[0].pagingSize)
+	require.Equal(t, uint64(4*1024*1024), req.Paging.PagingSizeBytes)
+	require.Equal(t, 18, cap(tasks[0].respChan))
+	worker = &copIteratorWorker{req: req, ema: newRUEMA(req.Paging.PagingSizeBytes)}
+	require.Equal(t, uint64(4*1024*1024), worker.predictedReadBytesForTask(tasks[0]))
 }
 
 func toCopRange(r kv.KeyRange) *coprocessor.KeyRange {
@@ -931,4 +1050,123 @@ func TestBatchStoreCoprOnlySendToLeader(t *testing.T) {
 	for _, task := range tasks {
 		require.Equal(t, task.busyThreshold, time.Second)
 	}
+}
+
+func TestStoreBatchTasksPreserveChildBucketsVersion(t *testing.T) {
+	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	defer func() {
+		pdClient.Close()
+		err = mockClient.Close()
+		require.NoError(t, err)
+	}()
+
+	_, regionIDs, _ := testutils.BootstrapWithMultiRegions(cluster, []byte("n"), []byte("x"))
+	cluster.SplitRegionBuckets(regionIDs[0], [][]byte{{}, {'n'}}, 101)
+	cluster.SplitRegionBuckets(regionIDs[1], [][]byte{{'n'}, {'x'}}, 202)
+	cluster.SplitRegionBuckets(regionIDs[2], [][]byte{{'x'}, {}}, 303)
+	pdCli := tikv.NewCodecPDClient(tikv.ModeTxn, pdClient)
+	defer pdCli.Close()
+
+	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
+	defer cache.Close()
+	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
+
+	req := &kv.Request{StoreBatchSize: 3}
+	tasks, err := buildCopTasks(bo, buildCopRanges("a", "b", "o", "p", "y", "z"), &buildCopTaskOpt{
+		req:      req,
+		cache:    cache,
+		rowHints: []int{1, 1, 1},
+	})
+	require.NoError(t, err)
+	require.Len(t, tasks, 1)
+
+	pbTasks := tasks[0].ToPBBatchTasks()
+	require.Len(t, pbTasks, 2)
+	versionByRegion := make(map[uint64]uint64, len(pbTasks))
+	for _, pbTask := range pbTasks {
+		versionByRegion[pbTask.GetRegionId()] = pbTask.GetBucketsVersion()
+	}
+	require.Equal(t, map[uint64]uint64{
+		regionIDs[1]: 202,
+		regionIDs[2]: 303,
+	}, versionByRegion)
+}
+
+func TestHandleBatchCopResponseUpdatesChildBucketsOnVersionNotMatch(t *testing.T) {
+	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	_, regionIDs, _ := testutils.BootstrapWithMultiRegions(cluster, []byte("m"))
+	cluster.SplitRegionBuckets(regionIDs[0], [][]byte{{}, {'m'}}, 7)
+	cluster.SplitRegionBuckets(regionIDs[1], [][]byte{{'m'}, {'n'}, {}}, 11)
+
+	tikvStore, err := tikv.NewTestTiKVStore(mockClient, pdClient, nil, nil, 0)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, tikvStore.Close())
+	}()
+	copStore, err := NewStore(tikvStore, nil)
+	require.NoError(t, err)
+	defer copStore.Close()
+
+	cache := copStore.GetRegionCache()
+	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
+	req := &kv.Request{}
+
+	parentTasks, err := buildCopTasks(bo, buildCopRanges("a", "b"), &buildCopTaskOpt{
+		req:   req,
+		cache: cache,
+	})
+	require.NoError(t, err)
+	require.Len(t, parentTasks, 1)
+	childTasks, err := buildCopTasks(bo, buildCopRanges("n", "o"), &buildCopTaskOpt{
+		req:   req,
+		cache: cache,
+	})
+	require.NoError(t, err)
+	require.Len(t, childTasks, 1)
+	parentTask := parentTasks[0]
+	childTask := childTasks[0]
+	require.Equal(t, uint64(7), parentTask.bucketsVer)
+	require.Equal(t, uint64(11), childTask.bucketsVer)
+
+	childTask.taskID = 1
+	var storeBatchedNum atomic.Uint64
+	var storeBatchedFallbackNum atomic.Uint64
+	worker := &copIteratorWorker{
+		store:                   copStore,
+		req:                     req,
+		storeBatchedNum:         &storeBatchedNum,
+		storeBatchedFallbackNum: &storeBatchedFallbackNum,
+	}
+	parentRPCCtx := &tikv.RPCContext{
+		Region:        parentTask.region,
+		BucketVersion: parentTask.bucketsVer,
+	}
+	bucketKeys := [][]byte{[]byte("m"), []byte("n"), {}}
+	resp := &coprocessor.Response{
+		BatchResponses: []*coprocessor.StoreBatchTaskResponse{
+			{
+				TaskId: childTask.taskID,
+				RegionError: &errorpb.Error{
+					BucketVersionNotMatch: &errorpb.BucketVersionNotMatch{
+						Version: 99,
+						Keys:    bucketKeys,
+					},
+				},
+			},
+		},
+	}
+
+	_, remains, err := worker.handleBatchCopResponse(bo, parentRPCCtx, resp, map[uint64]*batchedCopTask{
+		childTask.taskID: {task: childTask},
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, remains)
+
+	loc, err := cache.LocateKey(bo.TiKVBackoffer(), []byte("n"))
+	require.NoError(t, err)
+	require.Equal(t, regionIDs[1], loc.Region.GetID())
+	require.Equal(t, uint64(99), loc.Buckets.GetVersion())
+	require.Equal(t, bucketKeys, loc.Buckets.GetKeys())
 }

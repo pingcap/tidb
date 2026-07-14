@@ -65,7 +65,7 @@ REFRESH STATS db1.tbl1, tbl2, db2.*, *.* FULL CLUSTER;
   - Explicit `LITE` refers to `lite-init-stats=true`
 - If `CLUSTER` is set, refreshing statistics happens for all TiDB instances. Otherwise, refreshing statistics happens to the TiDB instance connected only.
 
-Users with SELECT privilege on the target tables, including the BR tool, can use this command to refresh the statistics for the specified tables.
+Users with the SELECT privilege on the target tables, as well as the BR tool with the ADMIN_RESTORE privilege, can use this command to refresh the statistics for the specified tables.
 
 ### Reference-level explanation
 
@@ -201,8 +201,14 @@ func broadcast(ctx context.Context, sctx sessionctx.Context, sql string) error {
 	}
 	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars, &kv.ClientSendOption{})
 	...
-	if _, err := resp.Next(ctx); err != nil {
-		return errors.Trace(err)
+	for {
+		subset, err := resp.Next(ctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if subset == nil {
+			break // all remote tasks finished cleanly
+		}
 	}
 
 	logutil.BgLogger().Info("Broadcast query", zap.String("sql", sql))
@@ -252,7 +258,8 @@ Specifically, we can reuse the [tidb_distsql_scan_concurrency](https://docs.ping
 ##### Timeout
 
 We can also leverage the timeout capabilities provided by the coprocessor framework. By overriding [MaxExecutionTime](https://github.com/pingcap/tidb/blob/24817eb4e3d284825402c75dfe5e65d6a23c35de/pkg/distsql/context/context.go#L83), we can set a custom timeout for the task.
-The timeout for a batch of tasks is calculated using the following formula:
+The default timeout is 0, which means there is no timeout.
+If you want to specify a timeout, you can use the following formula as a reference:
 
 ```sql
 Timeout = min(
@@ -260,7 +267,7 @@ Timeout = min(
    15 minutes
 )
 ```
-
+The timeout for a batch of tasks is calculated based on the number of tables and nodes.
 In this formula, we assume that initializing statistics for 1 million tables takes approximately 1 minute. **This estimate should be validated through testing.** And we add a buffer of 1 minute to account for minor delays. However, to prevent excessively long waits, the maximum timeout is capped at 15 minutes, as anything beyond that would be considered unacceptable.
 
 #### FAQ

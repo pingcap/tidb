@@ -8,12 +8,15 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/gluetikv"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/trace"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -77,6 +80,15 @@ func runRestoreCommand(command *cobra.Command, cmdName string) error {
 	gctuner.GlobalMemoryLimitTuner.DisableAdjustMemoryLimit()
 	defer gctuner.GlobalMemoryLimitTuner.EnableAdjustMemoryLimit()
 
+	if len(cfg.Schemas) > 0 {
+		extraDBNames := make([]string, 0, len(cfg.Schemas))
+		for schema := range cfg.Schemas {
+			extraDBNames = append(extraDBNames, utils.UnquoteName(schema))
+		}
+		filter := gluetidb.FilterLoadSpecifiedDBAndSysDBs(extraDBNames)
+		restore := setTiDBGlueDBFilter(filter)
+		defer restore()
+	}
 	if err := task.RunRestore(GetDefaultContext(), tidbGlue, cmdName, &cfg); err != nil {
 		log.Error("failed to restore", zap.Error(err))
 		printWorkaroundOnFullRestoreError(err)
@@ -159,6 +171,7 @@ func NewRestoreCommand() *cobra.Command {
 			logutil.LogEnvVariables()
 			task.LogArguments(c)
 			session.DisableStats4Test()
+			kv.TxnTotalSizeLimit.Store(config.SuperLargeTxnSize)
 
 			summary.SetUnit(summary.RestoreUnit)
 			return nil

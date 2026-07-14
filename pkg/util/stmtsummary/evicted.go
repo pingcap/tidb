@@ -302,6 +302,18 @@ func addInfo(addTo *stmtSummaryByDigestElement, addWith *stmtSummaryByDigestElem
 	if addTo.maxRocksdbBlockReadByte < addWith.maxRocksdbBlockReadByte {
 		addTo.maxRocksdbBlockReadByte = addWith.maxRocksdbBlockReadByte
 	}
+	addTo.sumIARemoteReadSegmentCount += addWith.sumIARemoteReadSegmentCount
+	if addTo.maxIARemoteReadSegmentCount < addWith.maxIARemoteReadSegmentCount {
+		addTo.maxIARemoteReadSegmentCount = addWith.maxIARemoteReadSegmentCount
+	}
+	addTo.sumIARemoteReadSegmentSize += addWith.sumIARemoteReadSegmentSize
+	if addTo.maxIARemoteReadSegmentSize < addWith.maxIARemoteReadSegmentSize {
+		addTo.maxIARemoteReadSegmentSize = addWith.maxIARemoteReadSegmentSize
+	}
+	addTo.sumIARemoteReadSegmentWaitTime += addWith.sumIARemoteReadSegmentWaitTime
+	if addTo.maxIARemoteReadSegmentWaitTime < addWith.maxIARemoteReadSegmentWaitTime {
+		addTo.maxIARemoteReadSegmentWaitTime = addWith.maxIARemoteReadSegmentWaitTime
+	}
 
 	// txn
 	addTo.commitCount += addWith.commitCount
@@ -363,6 +375,10 @@ func addInfo(addTo *stmtSummaryByDigestElement, addWith *stmtSummaryByDigestElem
 	addTo.sumMem += addWith.sumMem
 	if addTo.maxMem < addWith.maxMem {
 		addTo.maxMem = addWith.maxMem
+	}
+	addTo.sumMemArbitration += addWith.sumMemArbitration
+	if addTo.maxMemArbitration < addWith.maxMemArbitration {
+		addTo.maxMemArbitration = addWith.maxMemArbitration
 	}
 	addTo.sumDisk += addWith.sumDisk
 	if addTo.maxDisk < addWith.maxDisk {

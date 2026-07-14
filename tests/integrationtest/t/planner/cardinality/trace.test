@@ -8,5 +8,4 @@ insert into t values(1, 1, "aaa"),
 		(2, 2, "aaa"),
 		(2, 3, "bbb");
 analyze table t;
-trace plan target='estimation' select * from t where a >=1;
 

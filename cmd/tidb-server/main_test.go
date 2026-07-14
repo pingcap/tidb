@@ -16,9 +16,12 @@ package main
 
 import (
 	"os"
+	"syscall"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -50,11 +53,61 @@ func TestRunMain(t *testing.T) {
 	}
 }
 
+func TestExitCodeForSignal(t *testing.T) {
+	tests := []struct {
+		name string
+		sig  os.Signal
+		want int
+	}{
+		{name: "SIGINT", sig: syscall.SIGINT, want: exitCodeInt},
+		{name: "SIGTERM", sig: syscall.SIGTERM, want: exitCodeOK},
+		{name: "SIGHUP", sig: syscall.SIGHUP, want: exitCodeOK},
+		{name: "SIGQUIT", sig: syscall.SIGQUIT, want: exitCodeOK},
+		{name: "nil", sig: nil, want: exitCodeOK},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, exitCodeForSignal(tt.sig))
+		})
+	}
+}
+
+func TestOverrideConfigKeyspaceActivateMode(t *testing.T) {
+	originalArgs := os.Args
+	originalStarterAdditionalParams := starterAdditionalParams
+	os.Args = []string{"tidb-server"}
+	t.Cleanup(func() {
+		os.Args = originalArgs
+		starterAdditionalParams = originalStarterAdditionalParams
+	})
+
+	fset := initFlagSet()
+	require.NoError(t, fset.Parse([]string{
+		"--keyspace-activate=true",
+		"--starter-additional-params=pod-name=pod-1,pod-ip=10.0.0.1,pod-namespace=ns-1",
+	}))
+
+	cfg := config.NewConfig()
+	overrideConfig(cfg, fset)
+	require.True(t, cfg.KeyspaceActivateMode)
+	require.Equal(t, "pod-name=pod-1,pod-ip=10.0.0.1,pod-namespace=ns-1", *starterAdditionalParams)
+}
+
 func TestSetGlobalVars(t *testing.T) {
 	defer view.Stop()
 	require.Equal(t, "tikv,tiflash,tidb", variable.GetSysVar(vardef.TiDBIsolationReadEngines).Value)
 	require.Equal(t, "1073741824", variable.GetSysVar(vardef.TiDBMemQuotaQuery).Value)
 	require.NotEqual(t, "test", variable.GetSysVar(vardef.Version).Value)
+
+	// test setInstanceVar
+	require.False(t, variable.GetSysVar(vardef.TiDBInstancePlanCacheMaxMemSize).HasInstanceScope())
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Instance.InstancePlanCacheMaxMemSize = "444"
+	})
+	setGlobalVars()
+	require.Equal(t, variable.GetSysVar(vardef.TiDBInstancePlanCacheMaxMemSize).Value, "444")
+	require.True(t, variable.GetSysVar(vardef.TiDBInstancePlanCacheMaxMemSize).HasInstanceScope())
 
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.IsolationRead.Engines = []string{"tikv", "tidb"}
@@ -81,4 +134,210 @@ func TestSetGlobalVars(t *testing.T) {
 	if hostname, err := os.Hostname(); err == nil {
 		require.Equal(t, variable.GetSysVar(vardef.Hostname).Value, hostname)
 	}
+}
+
+func TestInitDeployMode(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("only for nextgen kernel")
+	}
+
+	original := deploymode.Get()
+	t.Cleanup(func() {
+		require.NoError(t, deploymode.Set(original))
+	})
+
+	cfg := config.NewConfig()
+	cfg.DeployMode = deploymode.PremiumReserved
+	require.NoError(t, initDeployMode(cfg))
+	require.Equal(t, deploymode.PremiumReserved, deploymode.Get())
+
+	cfg.DeployMode = deploymode.Mode(100)
+	require.ErrorContains(t, initDeployMode(cfg), "invalid deploy mode")
+
+	t.Run("starter TLS flags can override cert and key only", func(t *testing.T) {
+		fset := initFlagSet()
+		require.NoError(t, fset.Parse([]string{
+			"--cluster-cert=/tmp/flag-cluster-cert.pem",
+			"--cluster-key=/tmp/flag-cluster-key.pem",
+			"--sql-cert=/tmp/flag-sql-cert.pem",
+			"--sql-key=/tmp/flag-sql-key.pem",
+		}))
+
+		cfg := config.NewConfig()
+		cfg.DeployMode = deploymode.Starter
+		cfg.Security.ClusterSSLCA = "/tmp/config-cluster-ca.pem"
+		cfg.Security.ClusterSSLCert = "/tmp/config-cluster-cert.pem"
+		cfg.Security.ClusterSSLKey = "/tmp/config-cluster-key.pem"
+		cfg.Security.SSLCA = "/tmp/config-sql-ca.pem"
+		cfg.Security.SSLCert = "/tmp/config-sql-cert.pem"
+		cfg.Security.SSLKey = "/tmp/config-sql-key.pem"
+
+		overrideConfig(cfg, fset)
+		require.Equal(t, "/tmp/config-cluster-ca.pem", cfg.Security.ClusterSSLCA)
+		require.Equal(t, "/tmp/flag-cluster-cert.pem", cfg.Security.ClusterSSLCert)
+		require.Equal(t, "/tmp/flag-cluster-key.pem", cfg.Security.ClusterSSLKey)
+		require.Equal(t, "/tmp/config-sql-ca.pem", cfg.Security.SSLCA)
+		require.Equal(t, "/tmp/flag-sql-cert.pem", cfg.Security.SSLCert)
+		require.Equal(t, "/tmp/flag-sql-key.pem", cfg.Security.SSLKey)
+	})
+}
+
+func TestCreateMgrClientRequiresPodIdentityInStarter(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("only for nextgen kernel")
+	}
+
+	restoreConfig := config.RestoreFunc()
+	t.Cleanup(restoreConfig)
+	originalMode := deploymode.Get()
+	t.Cleanup(func() {
+		require.NoError(t, deploymode.Set(originalMode))
+	})
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.StarterParams.EnableManagerNotifier = true
+		conf.StarterParams.ManagerAddr = "manager.example.com:8000"
+	})
+
+	originalStarterAdditionalParams := starterAdditionalParams
+	t.Cleanup(func() {
+		starterAdditionalParams = originalStarterAdditionalParams
+	})
+
+	_, err := createMgrClientForStarter()
+	require.ErrorContains(t, err, "manager notifier requires --starter-additional-params")
+
+	duplicatedParam := "pod-name=pod-1,pod-name=pod-2,pod-ip=10.0.0.1,pod-namespace=ns-1"
+	starterAdditionalParams = &duplicatedParam
+	_, err = createMgrClientForStarter()
+	require.ErrorContains(t, err, `starter additional param "pod-name" is duplicated`)
+
+	unknownParam := "pod-name=pod-1,pod-ip=10.0.0.1,pod-namespace=ns-1,unknown=value"
+	starterAdditionalParams = &unknownParam
+	_, err = createMgrClientForStarter()
+	require.ErrorContains(t, err, `unknown starter additional param "unknown"`)
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.StarterParams.ManagerAddr = ""
+	})
+	missingManagerNamespace := "pod-name=pod-1,pod-ip=10.0.0.1,pod-namespace=ns-1"
+	starterAdditionalParams = &missingManagerNamespace
+	_, err = createMgrClientForStarter()
+	require.ErrorContains(t, err, "manager notifier requires manager-addr config or manager-namespace in --starter-additional-params")
+
+	validParams := "manager-namespace=manager-ns,pod-name=pod-1,pod-ip=10.0.0.1,pod-namespace=ns-1"
+	starterAdditionalParams = &validParams
+	cli, err := createMgrClientForStarter()
+	require.NoError(t, err)
+	require.NotNil(t, cli)
+}
+
+func TestSetVersionByConfigInNextGen(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("only for nextgen kernel")
+	}
+	cfg := config.GetGlobalConfig()
+	originCfgEdition := cfg.TiDBEdition
+	t.Cleanup(func() {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.TiDBEdition = originCfgEdition
+		})
+	})
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiDBEdition = "Starter"
+	})
+	require.ErrorContains(t, initVersions(config.GetGlobalConfig()), "are not allowed to set in nextgen kernel")
+}
+
+func TestSetVersionByConfigInvalidNextGenReleaseVersion(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("only for nextgen kernel")
+	}
+	originReleaseVersion := mysql.TiDBReleaseVersion
+	t.Cleanup(func() {
+		mysql.TiDBReleaseVersion = originReleaseVersion
+	})
+
+	mysql.TiDBReleaseVersion = "v26.13.1"
+	err := initVersions(config.GetGlobalConfig())
+	require.ErrorContains(t, err, "invalid tidb release version for nextgen kernel")
+}
+
+func TestSetVersionByConfigNormalizeLegacyPlaceholderForNextGen(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("only for nextgen kernel")
+	}
+
+	require.NoError(t, initVersions(config.GetGlobalConfig()))
+	require.Equal(t, "v26.3.0", mysql.TiDBReleaseVersion)
+	require.Equal(t, "8.0.11-TiDB-CLOUD.202603.0", mysql.ServerVersion)
+}
+
+func TestSetupKeyspaceObservabilityForStarter(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("only for nextgen kernel")
+	}
+	restore := config.RestoreFunc()
+	defer restore()
+
+	originalMode := deploymode.Get()
+	t.Cleanup(func() {
+		require.NoError(t, deploymode.Set(originalMode))
+	})
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Store = config.StoreTypeTiKV
+		conf.KeyspaceName = "ks"
+	})
+	err := prepareKeyspaceObservabilityForStarter(nil)
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"keyspace_name": "ks"}, config.GetGlobalConfig().GetKeyspaceObservabilityMetricLabels())
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceObservability = config.KeyspaceObservability{
+			Fields: []config.KeyspaceObservabilityField{{
+				Source:       "meta_a",
+				MetricLabel:  "keyspace_meta_label_a",
+				SlowLogField: "Keyspace_meta_slow_a",
+				StmtLogField: "stmt_meta_a",
+				Required:     true,
+			}},
+		}
+	})
+
+	err = prepareKeyspaceObservabilityForStarter(map[string]string{
+		"meta_a": "value_a",
+	})
+	require.NoError(t, err)
+
+	cfg := config.GetGlobalConfig()
+	require.Equal(t, map[string]string{"keyspace_name": "ks", "keyspace_meta_label_a": "value_a"}, cfg.GetKeyspaceObservabilityMetricLabels())
+	require.Equal(t, []config.KeyspaceObservabilityLogField{
+		{Name: "Keyspace_meta_slow_a", Value: "value_a"},
+	}, cfg.GetKeyspaceObservabilitySlowLogFields())
+	require.Equal(t, map[string]string{"stmt_meta_a": "value_a"}, cfg.GetKeyspaceObservabilityStmtLogFields())
+}
+
+func TestSetupKeyspaceObservabilityForStarterSkipsNonTiKV(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("only for nextgen kernel")
+	}
+	restore := config.RestoreFunc()
+	defer restore()
+	originalMode := deploymode.Get()
+	t.Cleanup(func() {
+		require.NoError(t, deploymode.Set(originalMode))
+	})
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Store = config.StoreTypeUniStore
+		conf.Path = "invalid-pd-path"
+		conf.KeyspaceName = "test_keyspace"
+	})
+
+	require.NoError(t, prepareKeyspaceObservabilityForStarter(nil))
+	require.Empty(t, config.GetGlobalConfig().GetKeyspaceObservabilityMetricLabels())
 }

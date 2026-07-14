@@ -17,6 +17,7 @@ package collate
 import (
 	"strings"
 
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 )
 
@@ -34,9 +35,19 @@ func (*binCollator) Key(str string) []byte {
 	return []byte(str)
 }
 
+// ImmutableKey implement Collator interface.
+func (*binCollator) ImmutableKey(str string) []byte {
+	return hack.Slice(str)
+}
+
 // KeyWithoutTrimRightSpace implement Collator interface.
 func (*binCollator) KeyWithoutTrimRightSpace(str string) []byte {
 	return []byte(str)
+}
+
+// MaxKeyLen implements Collator interface.
+func (*binCollator) MaxKeyLen(s string) int {
+	return len(s)
 }
 
 // Pattern implements Collator interface.
@@ -69,9 +80,19 @@ func (*binPaddingCollator) Key(str string) []byte {
 	return []byte(truncateTailingSpace(str))
 }
 
+// ImmutableKey implement Collator interface.
+func (*binPaddingCollator) ImmutableKey(str string) []byte {
+	return hack.Slice(truncateTailingSpace(str))
+}
+
 // KeyWithoutTrimRightSpace implement Collator interface.
 func (*binPaddingCollator) KeyWithoutTrimRightSpace(str string) []byte {
 	return []byte(str)
+}
+
+// MaxKeyLen implements Collator interface.
+func (*binPaddingCollator) MaxKeyLen(s string) int {
+	return len(s)
 }
 
 // Pattern implements Collator interface.

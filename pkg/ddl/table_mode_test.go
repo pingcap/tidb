@@ -101,6 +101,8 @@ func TestTableModeBasic(t *testing.T) {
 	tk.MustExec("create view t1_restore_import_view as select * from t1_restore_import")
 	tk.MustExec("create table foreign_key_child(id int, pid INT, INDEX idx_pid (pid),FOREIGN KEY (pid) REFERENCES t1_restore_import(c1) ON DELETE CASCADE)")
 	tk.MustExec("drop table foreign_key_child")
+	// special case allow admin checksum table for import into
+	tk.MustExec("admin checksum table t1_restore_import;")
 
 	// For testing below stmt is not allowed when table is in ModeImport/ModeRestore
 	// DMLs
@@ -331,7 +333,7 @@ func TestTableModeWithRefreshMeta(t *testing.T) {
 	// set table mode failure before refresh meta
 	err := testutil.SetTableMode(sctx, t, store, de, dbInfo, ntInfo, model.TableModeImport)
 	require.ErrorContains(t, err, "doesn't exist")
-	testutil.RefreshMeta(sctx, t, de, dbInfo.ID, ntInfo.ID)
+	testutil.RefreshMeta(sctx, t, de, dbInfo.ID, ntInfo.ID, dbInfo.Name.O, ntInfo.Name.O)
 	// set table mode success after refresh meta
 	err = testutil.SetTableMode(sctx, t, store, de, dbInfo, ntInfo, model.TableModeImport)
 	require.NoError(t, err)

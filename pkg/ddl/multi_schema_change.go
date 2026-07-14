@@ -15,14 +15,18 @@
 package ddl
 
 import (
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"go.uber.org/zap"
 )
 
 func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int64, err error) {
@@ -47,6 +51,7 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 					return ver, err
 				}
 				sub.FromProxyJob(&proxyJob, ver)
+				job.ResumeReason = proxyJob.ResumeReason
 				return ver, nil
 			}
 			// The last rollback/cancelling sub-job is done.
@@ -63,19 +68,30 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 				// If a sub job is finished here, it should be a noop job.
 				continue
 			}
+			prevSubState := sub.State
 			proxyJob := sub.ToProxyJob(job, i)
 			ver, _, err = w.runOneJobStep(jobCtx, &proxyJob)
 			sub.FromProxyJob(&proxyJob, ver)
+			job.ResumeReason = proxyJob.ResumeReason
+			if promoteProxyKVDiskFullPause(job, sub, prevSubState, &proxyJob) {
+				return ver, nil
+			}
 			handleRevertibleException(job, sub, proxyJob.Error)
 			return ver, err
 		}
 
 		// Save table info and sub-jobs for rolling back.
 		var tblInfo *model.TableInfo
-		tblInfo, err = metaMut.GetTable(job.SchemaID, job.TableID)
+		tblInfo, err = GetTableInfoAndCancelFaultJob(metaMut, job, job.SchemaID)
 		if err != nil {
 			return ver, err
 		}
+
+		finished := w.doAnalyzeWithoutReorg(job, tblInfo)
+		if !finished {
+			return updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+		}
+
 		var schemaVersionGenerated = false
 		subJobs := make([]model.SubJob, len(job.MultiSchemaInfo.SubJobs))
 		// Step the sub-jobs to the non-revertible states all at once.
@@ -86,6 +102,7 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 				continue
 			}
 			subJobs[i] = *sub
+			prevSubState := sub.State
 			proxyJob := sub.ToProxyJob(job, i)
 			if schemaVersionGenerated {
 				proxyJob.MultiSchemaInfo.SkipVersion = true
@@ -96,6 +113,10 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 				ver = proxyJobVer
 			}
 			sub.FromProxyJob(&proxyJob, proxyJobVer)
+			job.ResumeReason = proxyJob.ResumeReason
+			if promoteProxyKVDiskFullPause(job, sub, prevSubState, &proxyJob) {
+				return ver, nil
+			}
 			if err != nil || proxyJob.Error != nil {
 				for j := i - 1; j >= 0; j-- {
 					// TODO if some sub-job is finished, this will empty them
@@ -138,12 +159,46 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 		if sub.IsFinished() {
 			continue
 		}
+		prevSubState := sub.State
 		proxyJob := sub.ToProxyJob(job, i)
 		ver, _, err = w.runOneJobStep(jobCtx, &proxyJob)
 		sub.FromProxyJob(&proxyJob, ver)
+		job.ResumeReason = proxyJob.ResumeReason
+		if promoteProxyKVDiskFullPause(job, sub, prevSubState, &proxyJob) {
+			return ver, nil
+		}
 		return ver, err
 	}
 	return finishMultiSchemaJob(job, metaMut)
+}
+
+func promoteProxyKVDiskFullPause(parentJob *model.Job, subJob *model.SubJob, prevSubState model.JobState, proxyJob *model.Job) bool {
+	if !proxyJob.IsPausingOrPausedBySystemForKVDiskFull() {
+		return false
+	}
+
+	// Persist the durable pause on the parent multi-schema job so the resume
+	// path can use the same state machine as a single add-index job. Keep the
+	// sub-job on its pre-pause state, otherwise the resumed proxy job would be
+	// recreated as paused/pausing and get stuck in processJobPausingRequest.
+	subJob.State = prevSubState
+	parentJob.State = proxyJob.State
+	parentJob.AdminOperator = proxyJob.AdminOperator
+	parentJob.ClearResumeReason()
+	if proxyJob.PauseReason != nil {
+		parentJob.SetPauseReason(proxyJob.PauseReason.Type, proxyJob.PauseReason.Message)
+	} else {
+		parentJob.ClearPauseReason()
+	}
+	parentJob.Error = proxyJob.Error
+	if parentJob.Error == nil {
+		message := ""
+		if parentJob.PauseReason != nil {
+			message = parentJob.PauseReason.Message
+		}
+		parentJob.Error = toTError(dbterror.ErrDDLAutoPausedByKVDiskFull.FastGenByArgs(parentJob.ID, message))
+	}
+	return true
 }
 
 func handleRevertibleException(job *model.Job, subJob *model.SubJob, err *terror.Error) {
@@ -195,7 +250,7 @@ func appendToSubJobs(m *model.MultiSchemaInfo, jobW *JobWrapper) error {
 		SchemaState: jobW.SchemaState,
 		SnapshotVer: jobW.SnapshotVer,
 		Revertible:  true,
-		CtxVars:     jobW.CtxVars,
+		NeedReorg:   jobW.NeedReorg,
 		ReorgTp:     reorgTp,
 	})
 	return nil
@@ -257,7 +312,7 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *JobWrapper) error {
 	case model.ActionAlterIndexVisibility:
 		idxName := job.JobArgs.(*model.AlterIndexVisibilityArgs).IndexName
 		info.AlterIndexes = append(info.AlterIndexes, idxName)
-	case model.ActionRebaseAutoID, model.ActionModifyTableComment, model.ActionModifyTableCharsetAndCollate:
+	case model.ActionRebaseAutoID, model.ActionModifyTableComment, model.ActionModifyTableCharsetAndCollate, model.ActionModifyEngineAttribute:
 	case model.ActionAddForeignKey:
 		fkInfo := job.JobArgs.(*model.AddForeignKeyArgs).FkInfo
 		info.AddForeignKeys = append(info.AddForeignKeys, model.AddForeignKeyInfo{
@@ -367,6 +422,36 @@ func mergeAddIndex(info *model.MultiSchemaInfo) {
 	info.SubJobs = newSubJobs
 }
 
+// checkNeedAnalyze check if the job need analyze.
+func checkNeedAnalyze(job *model.Job, tblInfo *model.TableInfo) bool {
+	analyzeVer := vardef.DefTiDBAnalyzeVersion
+	if val, ok := job.GetSystemVars(vardef.TiDBAnalyzeVersion); ok {
+		analyzeVer = variable.TidbOptInt(val, analyzeVer)
+	}
+	enableDDLAnalyze := vardef.DefTiDBEnableDDLAnalyze
+	if val, ok := job.GetSystemVars(vardef.TiDBEnableDDLAnalyze); ok {
+		enableDDLAnalyze = variable.TiDBOptOn(val)
+	}
+	hasPartition := tblInfo.GetPartitionInfo() != nil
+	if !enableDDLAnalyze || hasPartition || analyzeVer != 2 {
+		logutil.DDLLogger().Info("skip analyze",
+			zap.Bool("tidb_stats_update_during_ddl", enableDDLAnalyze),
+			zap.Bool("is partitioned table", hasPartition),
+			zap.Int("tidb_analyze_version", analyzeVer))
+		return false
+	}
+
+	// If we reach here, it means all the reorg work has been done, either after
+	// MODIFY COLUMN or ADD INDEX. So we can just check the index state to decide
+	// whether there are new indexes added.
+	for _, idx := range tblInfo.Indices {
+		if idx.State == model.StateWriteReorganization {
+			return true
+		}
+	}
+	return false
+}
+
 func checkOperateDropIndexUseByForeignKey(info *model.MultiSchemaInfo, t table.Table) error {
 	var remainIndexes, droppingIndexes []*model.IndexInfo
 	tbInfo := t.Meta()
@@ -386,7 +471,7 @@ func checkOperateDropIndexUseByForeignKey(info *model.MultiSchemaInfo, t table.T
 	}
 
 	for _, fk := range info.AddForeignKeys {
-		if droppingIdx := model.FindIndexByColumns(tbInfo, droppingIndexes, fk.Cols...); droppingIdx != nil && model.FindIndexByColumns(tbInfo, remainIndexes, fk.Cols...) == nil {
+		if droppingIdx := model.FindIndexByColumnsForForeignKey(tbInfo, droppingIndexes, fk.Cols...); droppingIdx != nil && model.FindIndexByColumnsForForeignKey(tbInfo, remainIndexes, fk.Cols...) == nil {
 			return dbterror.ErrDropIndexNeededInForeignKey.GenWithStackByArgs(droppingIdx.Name)
 		}
 	}

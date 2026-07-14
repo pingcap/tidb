@@ -52,7 +52,7 @@ func newInduceSsbde(beginTime int64, endTime int64) *stmtSummaryByDigestElement 
 // generate new StmtDigestKey and stmtSummaryByDigest
 func generateStmtSummaryByDigestKeyValue(schema string, beginTime int64, endTime int64) (*StmtDigestKey, *stmtSummaryByDigest) {
 	key := &StmtDigestKey{}
-	key.Init(schema, "", "", "", "")
+	key.Init(schema, "", "", "", "", "")
 	value := newInduceSsbd(beginTime, endTime)
 	return key, value
 }
@@ -191,7 +191,7 @@ func TestSimpleStmtSummaryByDigestEvicted(t *testing.T) {
 	require.Equal(t, "{begin: 8, end: 9, count: 1}, {begin: 5, end: 6, count: 1}, {begin: 2, end: 3, count: 1}", getAllEvicted(ssbde))
 
 	evictedKey = &StmtDigestKey{}
-	evictedKey.Init("b", "", "", "", "")
+	evictedKey.Init("b", "", "", "", "", "")
 	ssbde.AddEvicted(evictedKey, evictedValue, 4)
 	require.Equal(t, "{begin: 8, end: 9, count: 2}, {begin: 5, end: 6, count: 2}, {begin: 2, end: 3, count: 2}, {begin: 1, end: 2, count: 1}", getAllEvicted(ssbde))
 
@@ -376,6 +376,8 @@ func TestAddInfo(t *testing.T) {
 			maxRocksdbBlockReadCount:     3,
 			sumRocksdbBlockReadByte:      4,
 			maxRocksdbBlockReadByte:      4,
+			sumIARemoteReadSegmentCount:  8,
+			maxIARemoteReadSegmentCount:  3,
 
 			// txn
 			commitCount:          8,
@@ -410,6 +412,8 @@ func TestAddInfo(t *testing.T) {
 			sumAffectedRows:      8,
 			sumMem:               8,
 			maxMem:               8,
+			sumMemArbitration:    11,
+			maxMemArbitration:    11,
 			sumDisk:              8,
 			maxDisk:              8,
 			firstSeen:            time.Unix(now-10, 0),
@@ -472,6 +476,8 @@ func TestAddInfo(t *testing.T) {
 			maxRocksdbBlockReadCount:     3,
 			sumRocksdbBlockReadByte:      4,
 			maxRocksdbBlockReadByte:      4,
+			sumIARemoteReadSegmentCount:  8,
+			maxIARemoteReadSegmentCount:  5,
 
 			// txn
 			commitCount:          8,
@@ -508,6 +514,8 @@ func TestAddInfo(t *testing.T) {
 			maxMem:               8,
 			sumDisk:              8,
 			maxDisk:              8,
+			sumMemArbitration:    13,
+			maxMemArbitration:    17,
 			firstSeen:            time.Unix(now-10, 0),
 			lastSeen:             time.Unix(now-8, 0),
 			execRetryCount:       8,
@@ -575,6 +583,8 @@ func TestAddInfo(t *testing.T) {
 			maxRocksdbBlockReadCount:     3,
 			sumRocksdbBlockReadByte:      8,
 			maxRocksdbBlockReadByte:      4,
+			sumIARemoteReadSegmentCount:  16,
+			maxIARemoteReadSegmentCount:  5,
 
 			// txn
 			commitCount:          16,
@@ -611,6 +621,8 @@ func TestAddInfo(t *testing.T) {
 			maxMem:               8,
 			sumDisk:              16,
 			maxDisk:              8,
+			sumMemArbitration:    24,
+			maxMemArbitration:    17,
 			firstSeen:            time.Unix(now-20, 0),
 			lastSeen:             time.Unix(now, 0),
 			execRetryCount:       16,

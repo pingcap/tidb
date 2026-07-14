@@ -18,11 +18,10 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/tests/realtikvtest"
-	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 )
 
 func init() {
-	testutils.UpdateTiDBConfig()
+	realtikvtest.UpdateTiDBConfig()
 }
 
 func TestMain(m *testing.M) {

@@ -20,11 +20,9 @@ import (
 	"crypto/tls"
 	"database/sql"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net"
-	"net/http"
 	"os"
 	"runtime"
 	"strconv"
@@ -414,42 +412,6 @@ func SchemaExists(ctx context.Context, db dbutil.QueryExecutor, schema string) (
 	}
 }
 
-// GetJSON fetches a page and parses it as JSON. The parsed result will be
-// stored into the `v`. The variable `v` must be a pointer to a type that can be
-// unmarshalled from JSON.
-//
-// Example:
-//
-//	client := &http.Client{}
-//	var resp struct { IP string }
-//	if err := util.GetJSON(client, "http://api.ipify.org/?format=json", &resp); err != nil {
-//		return errors.Trace(err)
-//	}
-//	fmt.Println(resp.IP)
-func GetJSON(ctx context.Context, client *http.Client, url string, v any) error {
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		return errors.Errorf("get %s http status code != 200, message %s", url, string(body))
-	}
-
-	return errors.Trace(json.NewDecoder(resp.Body).Decode(v))
-}
-
 // KillMySelf sends sigint to current process, used in integration test only
 //
 // Only works on Unix. Signaling on Windows is not supported.
@@ -717,4 +679,44 @@ func IsRaftKV2(ctx context.Context, db *sql.DB) (bool, error) {
 func IsAccessDeniedNeedConfigPrivilegeError(err error) bool {
 	e, ok := err.(*mysql.MySQLError)
 	return ok && e.Number == errno.ErrSpecificAccessDenied && strings.Contains(e.Message, "CONFIG")
+}
+
+// SkipReadRowCount determines whether the target table requires a precise row count.
+// If any unique index/clustered primary contains columns with auto_random/auto_increment,
+// we must read the actual row count to prevent generating duplicate keys. Otherwise,
+// we can skip reading it to improve performance.
+func SkipReadRowCount(tblInfo *model.TableInfo) bool {
+	// Some tests may not set the table info.
+	if tblInfo == nil {
+		return false
+	}
+
+	if TableHasAutoRowID(tblInfo) || tblInfo.ContainsAutoRandomBits() {
+		return false
+	}
+
+	for _, idx := range tblInfo.Indices {
+		if !idx.Unique || !idx.Primary {
+			continue
+		}
+		for _, col := range idx.Columns {
+			colInfo := tblInfo.Columns[col.Offset]
+			if tmysql.HasAutoIncrementFlag(colInfo.GetFlag()) {
+				return false
+			}
+		}
+	}
+
+	for _, col := range tblInfo.Columns {
+		if tmysql.HasPriKeyFlag(col.GetFlag()) && tmysql.HasAutoIncrementFlag(col.GetFlag()) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// ChunkFlushStatus is the status of a chunk flush.
+type ChunkFlushStatus interface {
+	Flushed() bool
 }

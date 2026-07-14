@@ -16,10 +16,12 @@ package staticrecordset_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session/cursor"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -213,7 +215,7 @@ func TestCursorWillBlockMinStartTS(t *testing.T) {
 
 	infoSyncer := dom.InfoSyncer()
 	require.Eventually(t, func() bool {
-		infoSyncer.ReportMinStartTS(store)
+		infoSyncer.ReportMinStartTS(store, nil)
 		return infoSyncer.GetMinStartTS() == initialStartTS
 	}, time.Second*5, time.Millisecond*100)
 
@@ -221,7 +223,7 @@ func TestCursorWillBlockMinStartTS(t *testing.T) {
 	require.NoError(t, srs.Close())
 
 	require.Eventually(t, func() bool {
-		infoSyncer.ReportMinStartTS(store)
+		infoSyncer.ReportMinStartTS(store, nil)
 		return infoSyncer.GetMinStartTS() == secondStartTS
 	}, time.Second*5, time.Millisecond*100)
 }
@@ -240,10 +242,56 @@ func TestFinishStmtError(t *testing.T) {
 	require.NoError(t, err)
 	drs := rs.(sqlexec.DetachableRecordSet)
 
-	failpoint.Enable("github.com/pingcap/tidb/pkg/session/finishStmtError", "return")
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/session/finishStmtError")
+	const finishStmtErrFpName = "github.com/pingcap/tidb/pkg/session/finishStmtError"
+	connID := tk.Session().GetSessionVars().ConnectionID
+	if err := failpoint.Enable(finishStmtErrFpName, fmt.Sprintf("return(%d)", connID)); err != nil {
+		t.Skipf("skip because failpoint is not enabled: %v", err)
+	}
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable(finishStmtErrFpName))
+	})
 	// Then `TryDetach` should return `true`, because the original record set is detached and cannot be used anymore.
 	_, ok, err := drs.TryDetach()
 	require.True(t, ok)
 	require.Error(t, err)
+
+	// The cursor created for the detached record set should also be cleaned up on the error path.
+	tk.Session().GetCursorTracker().RangeCursor(func(_ cursor.Handle) bool {
+		require.Fail(t, "cursor should be closed when TryDetach fails after creating it")
+		return false
+	})
+}
+
+func TestDDLInsideTXNNotBlockMinStartTS(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int)")
+	tk.MustExec("insert into t values (1), (2), (3)")
+
+	ch := make(chan struct{})
+	ddl.MockDMLExecution = func() {
+		<-ch
+	}
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecution", "1*return(true)->return(false)"))
+
+	tk2.MustExec("begin")
+	ddlTs := tk2.Session().GetSessionVars().TxnCtx.StartTS
+	go func() {
+		tk2.Exec("alter table test.t add index idx(id)")
+	}()
+
+	tk.Exec("begin")
+	tk.MustExec("insert into t values (1), (2), (3)")
+	tkTs := tk.Session().GetSessionVars().TxnCtx.StartTS
+	require.Greater(t, tkTs, ddlTs)
+
+	infoSyncer := dom.InfoSyncer()
+	require.Eventually(t, func() bool {
+		infoSyncer.ReportMinStartTS(store, nil)
+		return infoSyncer.GetMinStartTS() == tkTs
+	}, time.Second*5, time.Millisecond*100)
+	close(ch)
 }

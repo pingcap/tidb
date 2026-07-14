@@ -3,8 +3,8 @@
     "name": "TestCollationColumnEstimate",
     "cases": [
       "show stats_topn",
-      "explain select * from t where a='aÄa'",
-      "explain select * from t where a > 'aÄa'"
+      "explain format = 'brief' select * from t where a='aÄa'",
+      "explain format = 'brief' select * from t where a > 'aÄa'"
     ]
   },
   {
@@ -97,47 +97,105 @@
     ]
   },
   {
-    "name": "TestOutOfRangeEstimationAfterDelete",
-    "cases": [
-      "explain format = 'brief' select * from t where a <= 300",
-      "explain format = 'brief' select * from t where a < 300",
-      "explain format = 'brief' select * from t where a <= 500",
-      "explain format = 'brief' select * from t where a >= 300 and a <= 900",
-      "explain format = 'brief' select * from t where a >= 900",
-      "explain format = 'brief' select * from t where a > 900",
-      "explain format = 'brief' select * from t where a >= 300",
-      "explain format = 'brief' select * from t where a <= 900",
-      "explain format = 'brief' select * from t where a > 800 and a < 1000",
-      "explain format = 'brief' select * from t where a > 900 and a < 1000",
-      "explain format = 'brief' select * from t where a > 900 and a < 1100",
-      "explain format = 'brief' select * from t where a > 200 and a < 300",
-      "explain format = 'brief' select * from t where a > 100 and a < 300",
-      "set @@tidb_opt_objective = 'determinate'",
-      "explain format = 'brief' select * from t where a <= 300",
-      "explain format = 'brief' select * from t where a <= 500",
-      "explain format = 'brief' select * from t where a > 900",
-      "explain format = 'brief' select * from t where a <= 900"
+    "Name": "TestOutOfRangeEstimationAfterDelete",
+    "Cases": [
+      {
+        "Start": 300,
+        "End": 500
+      },
+      {
+        "Start": 500,
+        "End": 700
+      },
+      {
+        "Start": 700,
+        "End": 900
+      },
+      {
+        "Start": 900,
+        "End": 1100
+      },
+      {
+        "Start": 200,
+        "End": 400
+      },
+      {
+        "Start": 400,
+        "End": 600
+      },
+      {
+        "Start": 600,
+        "End": 800
+      },
+      {
+        "Start": 800,
+        "End": 1000
+      },
+      {
+        "Start": 100,
+        "End": 300
+      },
+      {
+        "Start": 300,
+        "End": 500
+      },
+      {
+        "Start": 500,
+        "End": 700
+      },
+      {
+        "Start": 700,
+        "End": 900
+      },
+      {
+        "Start": 900,
+        "End": 1100
+      },
+      {
+        "Start": 0,
+        "End": 200
+      },
+      {
+        "Start": 200,
+        "End": 400
+      },
+      {
+        "Start": 400,
+        "End": 600
+      },
+      {
+        "Start": 600,
+        "End": 800
+      },
+      {
+        "Start": 800,
+        "End": 1000
+      },
+      {
+        "Start": 1000,
+        "End": 1200
+      }
     ]
   },
   {
     "name": "TestColumnIndexNullEstimation",
     "cases": [
-      "explain select b from t where b is null",
-      "explain select b from t where b is not null",
-      "explain select b from t where b is null or b > 3",
-      "explain select b from t use index(idx_b)",
-      "explain select b from t where b < 4",
-      "explain select * from t where a is null",
-      "explain select * from t where a is not null",
-      "explain select * from t where a is null or a > 3",
-      "explain select * from t",
-      "explain select * from t where a < 4"
+      "explain format = 'brief' select b from t where b is null",
+      "explain format = 'brief' select b from t where b is not null",
+      "explain format = 'brief' select b from t where b is null or b > 3",
+      "explain format = 'brief' select b from t use index(idx_b)",
+      "explain format = 'brief' select b from t where b < 4",
+      "explain format = 'brief' select * from t where a is null",
+      "explain format = 'brief' select * from t where a is not null",
+      "explain format = 'brief' select * from t where a is null or a > 3",
+      "explain format = 'brief' select * from t",
+      "explain format = 'brief' select * from t where a < 4"
     ]
   },
   {
     "name": "TestUniqCompEqualEst",
     "cases": [
-      "explain select * from t where a = 1 and b = 5 and 1 = 1"
+      "explain format = 'brief' select * from t where a = 1 and b = 5 and 1 = 1"
     ]
   },
   {

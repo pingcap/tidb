@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -91,10 +92,19 @@ func (b *PBPlanBuilder) pbToPhysicalPlan(e *tipb.Executor, subPlan base.Physical
 	}
 	// The limit missed its output cols via the protobuf.
 	// We need to add it back and do a ResolveIndicies for the later inline projection.
-	if limit, ok := p.(*PhysicalLimit); ok {
+	if limit, ok := p.(*physicalop.PhysicalLimit); ok {
 		limit.SetSchema(p.Children()[0].Schema().Clone())
 		for i, col := range limit.Schema().Columns {
 			col.Index = i
+		}
+		if memTable, ok := p.Children()[0].(*physicalop.PhysicalMemTable); ok {
+			if extractor, ok := memTable.Extractor.(*SlowQueryExtractor); ok {
+				end := limit.Offset + limit.Count
+				if end < limit.Offset {
+					end = ^uint64(0)
+				}
+				extractor.SetRowLimitHint(end)
+			}
 		}
 	}
 	return p, err
@@ -119,7 +129,7 @@ func (b *PBPlanBuilder) pbToTableScan(e *tipb.Executor) (base.PhysicalPlan, erro
 		return nil, err
 	}
 	schema := b.buildTableScanSchema(tbl.Meta(), columns)
-	p := PhysicalMemTable{
+	p := physicalop.PhysicalMemTable{
 		DBName:  dbInfo.Name,
 		Table:   tbl.Meta(),
 		Columns: columns,
@@ -167,7 +177,7 @@ func (b *PBPlanBuilder) pbToProjection(e *tipb.Executor) (base.PhysicalPlan, err
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	p := PhysicalProjection{
+	p := physicalop.PhysicalProjection{
 		Exprs: exprs,
 	}.Init(b.sctx, &property.StatsInfo{}, 0, &property.PhysicalProperty{})
 	return p, nil
@@ -178,7 +188,7 @@ func (b *PBPlanBuilder) pbToSelection(e *tipb.Executor) (base.PhysicalPlan, erro
 	if err != nil {
 		return nil, err
 	}
-	p := PhysicalSelection{
+	p := physicalop.PhysicalSelection{
 		Conditions: conds,
 	}.Init(b.sctx, &property.StatsInfo{}, 0, &property.PhysicalProperty{})
 	return p, nil
@@ -195,7 +205,7 @@ func (b *PBPlanBuilder) pbToTopN(e *tipb.Executor) (base.PhysicalPlan, error) {
 		}
 		byItems = append(byItems, &util.ByItems{Expr: expr, Desc: item.Desc})
 	}
-	p := PhysicalTopN{
+	p := physicalop.PhysicalTopN{
 		ByItems: byItems,
 		Count:   topN.Limit,
 	}.Init(b.sctx, &property.StatsInfo{}, 0, &property.PhysicalProperty{})
@@ -203,7 +213,7 @@ func (b *PBPlanBuilder) pbToTopN(e *tipb.Executor) (base.PhysicalPlan, error) {
 }
 
 func (b *PBPlanBuilder) pbToLimit(e *tipb.Executor) (base.PhysicalPlan, error) {
-	p := PhysicalLimit{
+	p := physicalop.PhysicalLimit{
 		Count: e.Limit.Limit,
 	}.Init(b.sctx, &property.StatsInfo{}, 0, &property.PhysicalProperty{})
 	return p, nil
@@ -215,16 +225,15 @@ func (b *PBPlanBuilder) pbToAgg(e *tipb.Executor, isStreamAgg bool) (base.Physic
 		return nil, errors.Trace(err)
 	}
 	schema := b.buildAggSchema(aggFuncs, groupBys)
-	baseAgg := basePhysicalAgg{
+	baseAgg := physicalop.BasePhysicalAgg{
 		AggFuncs:     aggFuncs,
 		GroupByItems: groupBys,
 	}
-	baseAgg.SetSchema(schema)
 	var partialAgg base.PhysicalPlan
 	if isStreamAgg {
-		partialAgg = baseAgg.initForStream(b.sctx, &property.StatsInfo{}, 0, &property.PhysicalProperty{})
+		partialAgg = baseAgg.InitForStream(b.sctx, &property.StatsInfo{}, 0, schema, &property.PhysicalProperty{})
 	} else {
-		partialAgg = baseAgg.initForHash(b.sctx, &property.StatsInfo{}, 0, &property.PhysicalProperty{})
+		partialAgg = baseAgg.InitForHash(b.sctx, &property.StatsInfo{}, 0, schema, &property.PhysicalProperty{})
 	}
 	return partialAgg, nil
 }
@@ -285,8 +294,8 @@ func (*PBPlanBuilder) pbToKill(e *tipb.Executor) (base.PhysicalPlan, error) {
 		ConnectionID: e.Kill.ConnID,
 		Query:        e.Kill.Query,
 	}
-	simple := Simple{Statement: node, IsFromRemote: true, ResolveCtx: resolve.NewContext()}
-	return &PhysicalSimpleWrapper{Inner: simple}, nil
+	simple := &Simple{Statement: node, IsFromRemote: true, ResolveCtx: resolve.NewContext()}
+	return &PhysicalPlanWrapper{Inner: simple}, nil
 }
 
 func (b *PBPlanBuilder) pbToBroadcastQuery(e *tipb.Executor) (base.PhysicalPlan, error) {
@@ -297,8 +306,25 @@ func (b *PBPlanBuilder) pbToBroadcastQuery(e *tipb.Executor) (base.PhysicalPlan,
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	simple := Simple{Statement: stmt, IsFromRemote: true, ResolveCtx: resolve.NewContext()}
-	return &PhysicalSimpleWrapper{Inner: simple}, nil
+
+	var innerPlan base.Plan
+	switch x := stmt.(type) {
+	case *ast.AdminStmt:
+		if x.Tp != ast.AdminReloadBindings {
+			return nil, errors.Errorf("unexpected admin statement %s in broadcast query", *e.BroadcastQuery.Query)
+		}
+		innerPlan = &SQLBindPlan{SQLBindOp: OpReloadBindings, IsFromRemote: true}
+	case *ast.FlushStmt:
+		if x.Tp != ast.FlushStatsDelta {
+			return nil, errors.Errorf("unexpected flush statement %s in broadcast query", *e.BroadcastQuery.Query)
+		}
+		innerPlan = &Simple{Statement: stmt, IsFromRemote: true, ResolveCtx: resolve.NewContext()}
+	case *ast.RefreshStatsStmt:
+		innerPlan = &Simple{Statement: stmt, IsFromRemote: true, ResolveCtx: resolve.NewContext()}
+	default:
+		return nil, errors.Errorf("unexpected statement %s in broadcast query", *e.BroadcastQuery.Query)
+	}
+	return &PhysicalPlanWrapper{Inner: innerPlan}, nil
 }
 
 func (b *PBPlanBuilder) predicatePushDown(physicalPlan base.PhysicalPlan, predicates []expression.Expression) ([]expression.Expression, base.PhysicalPlan) {
@@ -306,7 +332,7 @@ func (b *PBPlanBuilder) predicatePushDown(physicalPlan base.PhysicalPlan, predic
 		return predicates, physicalPlan
 	}
 	switch plan := physicalPlan.(type) {
-	case *PhysicalMemTable:
+	case *physicalop.PhysicalMemTable:
 		memTable := plan
 		if memTable.Extractor == nil {
 			return predicates, plan
@@ -323,13 +349,13 @@ func (b *PBPlanBuilder) predicatePushDown(physicalPlan base.PhysicalPlan, predic
 		// Set the expression column unique ID.
 		// Since the expression is build from PB, It has not set the expression column ID yet.
 		schemaCols := memTable.Schema().Columns
-		cols := expression.ExtractColumnsFromExpressions([]*expression.Column{}, predicates, nil)
-		for i := range cols {
-			cols[i].UniqueID = schemaCols[cols[i].Index].UniqueID
+		cols := expression.ExtractAllColumnsFromExpressions(predicates, nil)
+		for _, col := range cols {
+			col.UniqueID = schemaCols[col.Index].UniqueID
 		}
 		predicates = memTable.Extractor.Extract(b.sctx, memTable.Schema(), names, predicates)
 		return predicates, memTable
-	case *PhysicalSelection:
+	case *physicalop.PhysicalSelection:
 		selection := plan
 		conditions, child := b.predicatePushDown(plan.Children()[0], selection.Conditions)
 		if len(conditions) > 0 {

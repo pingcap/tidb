@@ -53,9 +53,12 @@ import (
 	"github.com/pingcap/log"
 	autoid "github.com/pingcap/tidb/pkg/autoid_service"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/pkg/extension"
+	"github.com/pingcap/tidb/pkg/infoschema/issyncer/mdldef"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -67,15 +70,18 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	servererr "github.com/pingcap/tidb/pkg/server/err"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/fastrand"
+	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/sys/linux"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
+	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
 	uatomic "go.uber.org/atomic"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -114,6 +120,8 @@ const defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |
 	mysql.ClientConnectAtts | mysql.ClientPluginAuth | mysql.ClientInteractive |
 	mysql.ClientDeprecateEOF | mysql.ClientCompress | mysql.ClientZstdCompressionAlgorithm
 
+const normalClosedConnsCapacity = 1000
+
 // Server is the MySQL protocol server
 type Server struct {
 	cfg               *config.Config
@@ -125,6 +133,11 @@ type Server struct {
 
 	rwlock  sync.RWMutex
 	clients map[uint64]*clientConn
+	// gracefulShutdownCond is used by Starter graceful shutdown to wait until all connections are closed.
+	gracefulShutdownCond *sync.Cond
+
+	normalClosedConnsMutex sync.Mutex
+	normalClosedConns      *kvcache.SimpleLRUCache
 
 	userResLock  sync.RWMutex // userResLock used to protect userResource
 	userResource map[string]*userResourceLimits
@@ -134,10 +147,11 @@ type Server struct {
 
 	statusAddr     string
 	statusListener net.Listener
-	statusServer   *http.Server
+	statusServer   atomic.Pointer[http.Server]
 	grpcServer     *grpc.Server
 	inShutdownMode *uatomic.Bool
 	health         *uatomic.Bool
+	forceShutdown  *uatomic.Bool
 
 	sessionMapMutex     sync.Mutex
 	internalSessions    map[any]struct{}
@@ -145,13 +159,23 @@ type Server struct {
 	authTokenCancelFunc context.CancelFunc
 	wg                  sync.WaitGroup
 	printMDLLogTime     time.Time
+	needRequestMgrFree  *uatomic.Bool
+
+	StandbyController
 }
 
 // NewTestServer creates a new Server for test.
 func NewTestServer(cfg *config.Config) *Server {
-	return &Server{
-		cfg: cfg,
+	s := &Server{
+		cfg:                cfg,
+		clients:            make(map[uint64]*clientConn),
+		health:             uatomic.NewBool(false),
+		inShutdownMode:     uatomic.NewBool(false),
+		forceShutdown:      uatomic.NewBool(false),
+		needRequestMgrFree: uatomic.NewBool(false),
 	}
+	s.gracefulShutdownCond = sync.NewCond(&s.rwlock)
+	return s
 }
 
 // Socket returns the server's socket file.
@@ -196,6 +220,41 @@ func (s *Server) GetStatusServerAddr() (on bool, addr string) {
 		return false, ""
 	}
 	return true, s.statusAddr
+}
+
+type normalCloseConnKey struct {
+	keyspaceName string
+	connID       string
+}
+
+func (k normalCloseConnKey) Hash() []byte {
+	return []byte(fmt.Sprintf("%s-%s", k.keyspaceName, k.connID))
+}
+
+// SetNormalClosedConn sets the normal closed connection message by specified connID.
+func (s *Server) SetNormalClosedConn(keyspaceName, connID, msg string) {
+	if connID == "" {
+		return
+	}
+
+	s.normalClosedConnsMutex.Lock()
+	defer s.normalClosedConnsMutex.Unlock()
+	s.normalClosedConns.Put(normalCloseConnKey{keyspaceName: keyspaceName, connID: connID}, msg)
+}
+
+// GetNormalClosedConn gets the normal closed connection message.
+func (s *Server) GetNormalClosedConn(keyspaceName, connID string) string {
+	if connID == "" {
+		return ""
+	}
+
+	s.normalClosedConnsMutex.Lock()
+	defer s.normalClosedConnsMutex.Unlock()
+	v, ok := s.normalClosedConns.Get(normalCloseConnKey{keyspaceName: keyspaceName, connID: connID})
+	if !ok {
+		return ""
+	}
+	return v.(string)
 }
 
 // ConnectionCount gets current connection count.
@@ -246,16 +305,20 @@ func (s *Server) newConn(conn net.Conn) *clientConn {
 // NewServer creates a new Server.
 func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	s := &Server{
-		cfg:               cfg,
-		driver:            driver,
-		concurrentLimiter: util.NewTokenLimiter(cfg.TokenLimit),
-		clients:           make(map[uint64]*clientConn),
-		userResource:      make(map[string]*userResourceLimits),
-		internalSessions:  make(map[any]struct{}, 100),
-		health:            uatomic.NewBool(false),
-		inShutdownMode:    uatomic.NewBool(false),
-		printMDLLogTime:   time.Now(),
+		cfg:                cfg,
+		driver:             driver,
+		concurrentLimiter:  util.NewTokenLimiter(cfg.TokenLimit),
+		clients:            make(map[uint64]*clientConn),
+		normalClosedConns:  kvcache.NewSimpleLRUCache(normalClosedConnsCapacity, 0, 0),
+		userResource:       make(map[string]*userResourceLimits),
+		internalSessions:   make(map[any]struct{}, 100),
+		health:             uatomic.NewBool(false),
+		inShutdownMode:     uatomic.NewBool(false),
+		forceShutdown:      uatomic.NewBool(false),
+		printMDLLogTime:    time.Now(),
+		needRequestMgrFree: uatomic.NewBool(false),
 	}
+	s.gracefulShutdownCond = sync.NewCond(&s.rwlock)
 	s.capability = defaultCapability
 	setSystemTimeZoneVariable()
 
@@ -301,8 +364,19 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	return s, nil
 }
 
+// InitTiDBListener prepares the MySQL protocol listener before activation succeeds.
+func (s *Server) InitTiDBListener() error {
+	return s.initTiDBListener()
+}
+
 func (s *Server) initTiDBListener() (err error) {
-	if s.cfg.Host != "" && (s.cfg.Port != 0 || RunInGoTest) {
+	needTCPListener := s.cfg.Host != "" && (s.cfg.Port != 0 || RunInGoTest)
+	needUnixSocket := s.cfg.Socket != ""
+	if (!needTCPListener || s.listener != nil) && (!needUnixSocket || s.socket != nil) &&
+		(s.listener != nil || s.socket != nil) {
+		return nil
+	}
+	if needTCPListener && s.listener == nil {
 		addr := net.JoinHostPort(s.cfg.Host, strconv.Itoa(int(s.cfg.Port)))
 		tcpProto := "tcp"
 		if s.cfg.EnableTCP4Only {
@@ -317,7 +391,7 @@ func (s *Server) initTiDBListener() (err error) {
 		}
 	}
 
-	if s.cfg.Socket != "" {
+	if needUnixSocket && s.socket == nil {
 		if err := cleanupStaleSocket(s.cfg.Socket); err != nil {
 			return errors.Trace(err)
 		}
@@ -584,6 +658,17 @@ func (s *Server) startShutdown() {
 		logutil.BgLogger().Info("waiting for stray connections before starting shutdown process", zap.Duration("waitTime", waitTime))
 		time.Sleep(waitTime)
 	}
+	if deploymode.IsStarter() && s.StandbyController != nil {
+		s.enterShutdownMode()
+		s.OnServerShutdown(s)
+	}
+}
+
+func (s *Server) enterShutdownMode() {
+	if s.inShutdownMode == nil {
+		s.inShutdownMode = uatomic.NewBool(false)
+	}
+	s.inShutdownMode.Store(true)
 }
 
 func (s *Server) closeListener() {
@@ -597,17 +682,17 @@ func (s *Server) closeListener() {
 		terror.Log(errors.Trace(err))
 		s.socket = nil
 	}
-	if s.statusServer != nil {
-		err := s.statusServer.Close()
+	if statusServer := s.statusServer.Load(); statusServer != nil {
+		err := statusServer.Close()
 		terror.Log(errors.Trace(err))
-		s.statusServer = nil
+		s.statusServer.Store(nil)
 	}
 	if s.grpcServer != nil {
 		s.grpcServer.Stop()
 		s.grpcServer = nil
 	}
-	if s.autoIDService != nil {
-		s.autoIDService.Close()
+	if !deploymode.IsStarter() || s.StandbyController == nil {
+		s.AutoIDServiceClose()
 	}
 	if s.authTokenCancelFunc != nil {
 		s.authTokenCancelFunc()
@@ -616,12 +701,32 @@ func (s *Server) closeListener() {
 	metrics.ServerEventCounter.WithLabelValues(metrics.ServerStop).Inc()
 }
 
+// SetForceShutdown sets the force shutdown flag.
+func (s *Server) SetForceShutdown() {
+	s.forceShutdown.Store(true)
+}
+
+// GetForceShutdown gets the force shutdown flag.
+func (s *Server) GetForceShutdown() bool {
+	return s.forceShutdown.Load()
+}
+
+// SetNeedRequestMgrFree sets the need request manager free flag.
+func (s *Server) SetNeedRequestMgrFree() {
+	s.needRequestMgrFree.Store(true)
+}
+
+// GetNeedRequestMgrFree gets the need request manager free flag.
+func (s *Server) GetNeedRequestMgrFree() bool {
+	return s.needRequestMgrFree.Load()
+}
+
 // Close closes the server.
 func (s *Server) Close() {
 	s.startShutdown()
 	s.rwlock.Lock() // // prevent new connections
 	defer s.rwlock.Unlock()
-	s.inShutdownMode.Store(true)
+	s.enterShutdownMode()
 	s.closeListener()
 }
 
@@ -639,8 +744,18 @@ func (s *Server) registerConn(conn *clientConn) bool {
 	return true
 }
 
+func (s *Server) notifyGracefulShutdownCondIfNeededLocked() {
+	if deploymode.IsStarter() && len(s.clients) == 0 && s.gracefulShutdownCond != nil && s.StandbyController != nil {
+		s.gracefulShutdownCond.Broadcast()
+	}
+}
+
 // onConn runs in its own goroutine, handles queries from this connection.
 func (s *Server) onConn(conn *clientConn) {
+	if s.StandbyController != nil {
+		s.StandbyController.OnConnActive()
+	}
+
 	// init the connInfo
 	_, _, err := conn.PeerHost("", false)
 	if err != nil {
@@ -760,9 +875,9 @@ func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
 	sslVersion := ""
 	if cc.isUnixSocket {
 		connType = variable.ConnTypeUnixSocket
-	} else if cc.tlsConn != nil {
+	} else if tlsState := cc.getTLSState(); tlsState != nil {
 		connType = variable.ConnTypeTLS
-		sslVersionNum := cc.tlsConn.ConnectionState().Version
+		sslVersionNum := tlsState.Version
 		switch sslVersionNum {
 		case tls.VersionTLS12:
 			sslVersion = "TLSv1.2"
@@ -811,22 +926,36 @@ func (s *Server) checkConnectionCount() error {
 }
 
 // ShowProcessList implements the SessionManager interface.
-func (s *Server) ShowProcessList() map[uint64]*util.ProcessInfo {
-	rs := make(map[uint64]*util.ProcessInfo)
-	maps.Copy(rs, s.getUserProcessList())
+func (s *Server) ShowProcessList() map[uint64]*sessmgr.ProcessInfo {
+	rs := make(map[uint64]*sessmgr.ProcessInfo)
+	maps.Copy(rs, s.GetUserProcessList())
 	if s.dom != nil {
 		maps.Copy(rs, s.dom.SysProcTracker().GetSysProcessList())
 	}
 	return rs
 }
 
-func (s *Server) getUserProcessList() map[uint64]*util.ProcessInfo {
+// GetUserProcessList returns all process info that are created by user.
+func (s *Server) GetUserProcessList() map[uint64]*sessmgr.ProcessInfo {
 	s.rwlock.RLock()
 	defer s.rwlock.RUnlock()
-	rs := make(map[uint64]*util.ProcessInfo)
+	rs := make(map[uint64]*sessmgr.ProcessInfo)
 	for _, client := range s.clients {
 		if pi := client.ctx.ShowProcess(); pi != nil {
 			rs[pi.ID] = pi
+		}
+	}
+	return rs
+}
+
+// GetClientCapabilityList returns all client capability.
+func (s *Server) GetClientCapabilityList() map[uint64]uint32 {
+	s.rwlock.RLock()
+	defer s.rwlock.RUnlock()
+	rs := make(map[uint64]uint32)
+	for id, client := range s.clients {
+		if client.ctx.Session != nil {
+			rs[id] = client.capability
 		}
 	}
 	return rs
@@ -865,7 +994,7 @@ func (s *Server) UpdateProcessCPUTime(connID uint64, sqlID uint64, cpuTime time.
 }
 
 // GetProcessInfo implements the SessionManager interface.
-func (s *Server) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
+func (s *Server) GetProcessInfo(id uint64) (*sessmgr.ProcessInfo, bool) {
 	s.rwlock.RLock()
 	conn, ok := s.clients[id]
 	s.rwlock.RUnlock()
@@ -875,7 +1004,7 @@ func (s *Server) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
 				return pinfo, true
 			}
 		}
-		return &util.ProcessInfo{}, false
+		return &sessmgr.ProcessInfo{}, false
 	}
 	return conn.ctx.ShowProcess(), ok
 }
@@ -903,6 +1032,15 @@ func (s *Server) GetConAttrs(user *auth.UserIdentity) map[uint64]map[string]stri
 
 // Kill implements the SessionManager interface.
 func (s *Server) Kill(connectionID uint64, query bool, maxExecutionTime bool, runaway bool) {
+	s.kill(connectionID, query, maxExecutionTime, runaway, "")
+}
+
+// KillWithNormalCloseMsg implements the sessmgr.NormalCloseKiller interface.
+func (s *Server) KillWithNormalCloseMsg(connectionID uint64, query bool, maxExecutionTime bool, runaway bool, normalCloseMsg string) {
+	s.kill(connectionID, query, maxExecutionTime, runaway, normalCloseMsg)
+}
+
+func (s *Server) kill(connectionID uint64, query bool, maxExecutionTime bool, runaway bool, normalCloseMsg string) {
 	logutil.BgLogger().Info("kill", zap.Uint64("conn", connectionID),
 		zap.Bool("query", query), zap.Bool("maxExecutionTime", maxExecutionTime), zap.Bool("runawayExceed", runaway))
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventKill).Inc()
@@ -925,6 +1063,13 @@ func (s *Server) Kill(connectionID uint64, query bool, maxExecutionTime bool, ru
 			if err := conn.bufReadConn.SetWriteDeadline(time.Now()); err != nil {
 				logutil.BgLogger().Warn("error setting write deadline for kill.", zap.Error(err))
 			}
+			if err := conn.bufReadConn.SetReadDeadline(time.Now()); err != nil {
+				logutil.BgLogger().Warn("error setting read deadline for kill.", zap.Error(err))
+			}
+		}
+		if normalCloseMsg != "" && s.StandbyController != nil {
+			tidbGatewayConnID := conn.attrs[tidbGatewayAttrsConnKey]
+			s.SetNormalClosedConn(keyspace.GetKeyspaceNameBySettings(), tidbGatewayConnID, normalCloseMsg)
 		}
 	}
 	killQuery(conn, maxExecutionTime, runaway)
@@ -949,18 +1094,7 @@ func killQuery(conn *clientConn, maxExecutionTime, runaway bool) {
 	} else {
 		sessVars.SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
 	}
-	conn.mu.RLock()
-	cancelFunc := conn.mu.cancelFunc
-	conn.mu.RUnlock()
-
-	if cancelFunc != nil {
-		cancelFunc()
-	}
-	if conn.bufReadConn != nil {
-		if err := conn.bufReadConn.SetReadDeadline(time.Now()); err != nil {
-			logutil.BgLogger().Warn("error setting read deadline for kill.", zap.Error(err))
-		}
-	}
+	conn.cancelDispatch()
 	sessVars.SQLKiller.FinishResultSet()
 }
 
@@ -980,12 +1114,17 @@ func (s *Server) KillSysProcesses() {
 func (s *Server) KillAllConnections() {
 	logutil.BgLogger().Info("kill all connections.", zap.String("category", "server"))
 
-	s.rwlock.RLock()
-	defer s.rwlock.RUnlock()
+	s.rwlock.Lock()
+	defer s.rwlock.Unlock()
 	for _, conn := range s.clients {
 		conn.setStatus(connStatusShutdown)
 		if err := conn.closeWithoutLock(); err != nil {
 			terror.Log(err)
+		}
+		if conn.bufReadConn != nil {
+			if err := conn.bufReadConn.SetReadDeadline(time.Now()); err != nil {
+				logutil.BgLogger().Warn("error setting read deadline for kill.", zap.Error(err))
+			}
 		}
 		killQuery(conn, false, false)
 	}
@@ -1077,6 +1216,13 @@ func (s *Server) ContainsInternalSession(se any) bool {
 	return ok
 }
 
+// InternalSessionCount implements sessionmgr.InfoSchemaCoordinator interface.
+func (s *Server) InternalSessionCount() int {
+	s.sessionMapMutex.Lock()
+	defer s.sessionMapMutex.Unlock()
+	return len(s.internalSessions)
+}
+
 // DeleteInternalSession implements SessionManager interface.
 // @param addr	The address of a session.session struct variable
 func (s *Server) DeleteInternalSession(se any) {
@@ -1129,7 +1275,7 @@ func setSystemTimeZoneVariable() {
 }
 
 // CheckOldRunningTxn implements SessionManager interface.
-func (s *Server) CheckOldRunningTxn(job2ver map[int64]int64, job2ids map[int64]string) {
+func (s *Server) CheckOldRunningTxn(jobs map[int64]*mdldef.JobMDL) {
 	s.rwlock.RLock()
 	defer s.rwlock.RUnlock()
 
@@ -1139,8 +1285,9 @@ func (s *Server) CheckOldRunningTxn(job2ver map[int64]int64, job2ids map[int64]s
 		s.printMDLLogTime = time.Now()
 	}
 	for _, client := range s.clients {
-		if client.ctx.Session != nil {
-			session.RemoveLockDDLJobs(client.ctx.Session, job2ver, job2ids, printLog)
+		se := client.ctx.Session
+		if se != nil {
+			variable.RemoveLockDDLJobs(se.GetSessionVars(), jobs, printLog)
 		}
 	}
 }
@@ -1167,5 +1314,52 @@ func (s *Server) KillNonFlashbackClusterConn() {
 	s.rwlock.RUnlock()
 	for _, id := range connIDs {
 		s.Kill(id, false, false, false)
+	}
+}
+
+// GetStatusVars is getting the per process status variables from the server
+func (s *Server) GetStatusVars() map[uint64]map[string]string {
+	s.rwlock.RLock()
+	defer s.rwlock.RUnlock()
+	rs := make(map[uint64]map[string]string)
+	for _, client := range s.clients {
+		if pi := client.ctx.ShowProcess(); pi != nil {
+			if connState := client.getTLSState(); connState != nil {
+				rs[pi.ID] = map[string]string{
+					"Ssl_cipher":  tlsutil.CipherSuiteName(connState.CipherSuite),
+					"Ssl_version": tlsutil.VersionName(connState.Version),
+				}
+			}
+		}
+	}
+	return rs
+}
+
+// Health returns if the server is healthy (begin to shut down)
+func (s *Server) Health() bool {
+	return s.health.Load()
+}
+
+// AutoIDServiceClose closes the auto ID service.
+func (s *Server) AutoIDServiceClose() {
+	if s.autoIDService != nil {
+		s.autoIDService.Close()
+	}
+}
+
+// IsAutoIDOwner checks if the auto ID service is the owner.
+func (s *Server) IsAutoIDOwner() bool {
+	return s.autoIDService != nil && s.autoIDService.IsOwner()
+}
+
+// WaitZeroConn waits until all client connections are closed.
+func (s *Server) WaitZeroConn() {
+	if s.gracefulShutdownCond == nil {
+		return
+	}
+	s.rwlock.Lock()
+	defer s.rwlock.Unlock()
+	for len(s.clients) > 0 {
+		s.gracefulShutdownCond.Wait()
 	}
 }

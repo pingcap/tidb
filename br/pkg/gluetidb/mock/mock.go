@@ -24,14 +24,14 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	pd "github.com/tikv/pd/client"
 )
 
 // mockSession is used for test.
 type mockSession struct {
-	se         sessiontypes.Session
+	se         sessionapi.Session
 	globalVars map[string]string
 }
 
@@ -66,8 +66,8 @@ func (s *mockSession) ExecuteInternal(ctx context.Context, sql string, args ...a
 	return nil
 }
 
-// CreateDatabase implements glue.Session.
-func (*mockSession) CreateDatabase(_ context.Context, _ *model.DBInfo) error {
+// CreateDatabaseOnExistError implements glue.Session.
+func (*mockSession) CreateDatabaseOnExistError(_ context.Context, _ *model.DBInfo) error {
 	log.Fatal("unimplemented CreateDatabase for mock session")
 	return nil
 }
@@ -124,11 +124,11 @@ func (*mockSession) RefreshMeta(_ context.Context, _ *model.RefreshMetaArgs) err
 
 // MockGlue only used for test
 type MockGlue struct {
-	se         sessiontypes.Session
+	se         sessionapi.Session
 	GlobalVars map[string]string
 }
 
-func (m *MockGlue) SetSession(se sessiontypes.Session) {
+func (m *MockGlue) SetSession(se sessionapi.Session) {
 	m.se = se
 }
 

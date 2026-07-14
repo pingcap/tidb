@@ -1,8 +1,9 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "vardef",
     srcs = [
+        "runtime.go",
         "sysvar.go",
         "tidb_vars.go",
     ],
@@ -10,12 +11,32 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/executor/join/joinversion",
         "//pkg/parser/mysql",
+        "//pkg/sessionctx/slowlogrule",
         "//pkg/util/memory",
         "//pkg/util/paging",
         "//pkg/util/size",
         "@com_github_pingcap_tipb//go-tipb",
+        "@org_golang_x_time//rate",
         "@org_uber_go_atomic//:atomic",
+    ],
+)
+
+go_test(
+    name = "vardef_test",
+    timeout = "short",
+    srcs = [
+        "runtime_test.go",
+        "tidb_vars_test.go",
+    ],
+    embed = [":vardef"],
+    flaky = True,
+    shard_count = 2,
+    deps = [
+        "//pkg/config/kerneltype",
+        "@com_github_stretchr_testify//require",
+        "@org_golang_x_time//rate",
     ],
 )

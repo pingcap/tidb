@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	pderr "github.com/tikv/pd/client/errs"
 	"go.uber.org/zap"
 )
 
@@ -120,11 +121,12 @@ func loadDriver(tp config.StoreType) (kv.Driver, bool) {
 //	Transaction conflict and is retryable (kv.IsTxnRetryableError)
 //	PD is not bootstrapped at the time of request
 //	Keyspace requested does not exist (request prior to PD keyspace pre-split)
+//	Generate timestamp failed because requested TSO server is not leader
 func isNewStoreRetryableError(err error) bool {
 	if err == nil {
 		return false
 	}
-	return kv.IsTxnRetryableError(err) || IsNotBootstrappedError(err) || IsKeyspaceNotExistError(err)
+	return kv.IsTxnRetryableError(err) || IsNotBootstrappedError(err) || IsKeyspaceNotExistError(err) || IsNotTSOLeaderError(err)
 }
 
 // IsNotBootstrappedError returns true if the error is pd not bootstrapped error.
@@ -143,11 +145,29 @@ func IsKeyspaceNotExistError(err error) bool {
 	return strings.Contains(err.Error(), pdpb.ErrorType_ENTRY_NOT_FOUND.String())
 }
 
+// IsNotTSOLeaderError returns true if the error is caused by not a TSO leader.
+func IsNotTSOLeaderError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if !strings.Contains(err.Error(), pderr.NotLeaderErr) {
+		return false
+	}
+	return errors.Find(err, func(inner error) bool {
+		pdErr, ok := inner.(*errors.Error)
+		if !ok {
+			return false
+		}
+		return pdErr.RFCCode() == pderr.ErrClientGetTSO.RFCCode() ||
+			pdErr.RFCCode() == pderr.ErrClientGetLeader.RFCCode()
+	}) != nil
+}
+
 // MustInitStorage initializes the kv.Storage for this instance.
 func MustInitStorage(keyspaceName string) kv.Storage {
 	defaultStore := mustInitStorage(keyspaceName)
 	if kerneltype.IsNextGen() {
-		if keyspace.IsRunningOnUser() {
+		if kv.IsUserKS(defaultStore) {
 			systemStore = mustInitStorage(keyspace.System)
 		} else {
 			systemStore = defaultStore
@@ -165,7 +185,6 @@ func GetSystemStorage() kv.Storage {
 // it's only used in test.
 func SetSystemStorage(s kv.Storage) {
 	if s != nil {
-		intest.Assert(systemStore == nil, "systemStore should not be set twice")
 		intest.Assert(s.GetKeyspace() == keyspace.System, "systemStore should be set with SYSTEM keyspace")
 	}
 	systemStore = s

@@ -23,12 +23,14 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/duration"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
+	"github.com/pingcap/tidb/pkg/types"
 )
 
 // ExtraHandleID is the column ID of column which we need to append to schema to occupy the handle's position
@@ -45,6 +47,9 @@ const ExtraPhysTblID = -3
 
 // ExtraRowChecksumID is the column ID of column which holds the row checksum info.
 const ExtraRowChecksumID = -4
+
+// ExtraCommitTSID is the column ID of column which holds the commit timestamp.
+const ExtraCommitTSID = -5
 
 const (
 	// TableInfoVersion0 means the table info version is 0.
@@ -89,10 +94,17 @@ var ExtraHandleName = ast.NewCIStr("_tidb_rowid")
 // ExtraPhysTblIDName is the name of ExtraPhysTblID Column.
 var ExtraPhysTblIDName = ast.NewCIStr("_tidb_tid")
 
+// ExtraCommitTSName is the name of ExtraCommitTSID Column.
+var ExtraCommitTSName = ast.NewCIStr("_tidb_commit_ts")
+
 // VirtualColVecSearchDistanceID is the ID of the column who holds the vector search distance.
 // When read column by vector index, sometimes there is no need to read vector column just need distance,
 // so a distance column will be added to table_scan. this field is used in the action.
 const VirtualColVecSearchDistanceID int64 = -2000
+
+// VirtualColFTSScoreID is the ID of the column that holds the score of a
+// TiFlash full-text search scan.
+const VirtualColFTSScoreID int64 = -2050
 
 // Deprecated: Use ExtraPhysTblIDName instead.
 // var ExtraPartitionIdName = NewCIStr("_tidb_pid") //nolint:revive
@@ -198,10 +210,30 @@ type TableInfo struct {
 
 	TTLInfo *TTLInfo `json:"ttl_info"`
 
+	// IsActiveActive means the table is active-active table.
+	IsActiveActive bool `json:"is_active_active,omitempty"`
+	// SoftdeleteInfo is softdelete TTL. It is required if IsActiveActive == true.
+	SoftdeleteInfo *SoftdeleteInfo `json:"softdelete_info,omitempty"`
+
+	// Affinity stores the affinity info for the table
+	// If it is nil, it means no affinity
+	Affinity *TableAffinityInfo `json:"affinity,omitempty"`
+
+	// TableSplitPolicy stores region split policy.
+	TableSplitPolicy *RegionSplitPolicy `json:"table_split_policy,omitempty"`
+
 	// Revision is per table schema's version, it will be increased when the schema changed.
 	Revision uint64 `json:"revision"`
 
 	DBID int64 `json:"-"`
+
+	// EngineAttribute is the ENGINE_ATTRIBUTE for the table.
+	EngineAttribute string `json:"engine_attribute,omitempty"`
+
+	// StorageClassTier is the storage class tier of the table level.
+	StorageClassTier string `json:"storage_class_tier,omitempty"`
+	// StorageClassTransitions is the storage class transition rules of the table level.
+	StorageClassTransitions []StorageClassTransitRule `json:"storage_class_transitions,omitempty"`
 
 	Mode TableMode `json:"mode,omitempty"`
 }
@@ -272,6 +304,13 @@ func (t *TableInfo) Clone() *TableInfo {
 	}
 	if t.TTLInfo != nil {
 		nt.TTLInfo = t.TTLInfo.Clone()
+	}
+	if t.TableSplitPolicy != nil {
+		nt.TableSplitPolicy = t.TableSplitPolicy.Clone()
+	}
+
+	if t.Affinity != nil {
+		nt.Affinity = t.Affinity.Clone()
 	}
 
 	return &nt
@@ -396,6 +435,8 @@ func (t *TableInfo) MoveColumnInfo(from, to int) {
 	if from == to {
 		return
 	}
+
+	// Update column offsets.
 	updatedOffsets := make(map[int]int)
 	src := t.Columns[from]
 	if from < to {
@@ -413,12 +454,31 @@ func (t *TableInfo) MoveColumnInfo(from, to int) {
 	}
 	t.Columns[to] = src
 	t.Columns[to].Offset = to
+
+	// Update index column offsets.
 	updatedOffsets[from] = to
 	for _, idx := range t.Indices {
 		for _, idxCol := range idx.Columns {
 			newOffset, ok := updatedOffsets[idxCol.Offset]
 			if ok {
 				idxCol.Offset = newOffset
+			}
+		}
+
+		for _, affectedCol := range idx.AffectColumn {
+			newOffset, ok := updatedOffsets[affectedCol.Offset]
+			if ok {
+				affectedCol.Offset = newOffset
+			}
+		}
+	}
+
+	// Reconstruct the dependency column offsets.
+	for _, col := range t.Columns {
+		if col.ChangeStateInfo != nil {
+			newOffset, ok := updatedOffsets[col.ChangeStateInfo.DependencyColumnOffset]
+			if ok {
+				col.ChangeStateInfo.DependencyColumnOffset = newOffset
 			}
 		}
 	}
@@ -495,6 +555,11 @@ func (t *TableInfo) ColumnIsInIndex(c *ColumnInfo) bool {
 	return false
 }
 
+// StorageClassString returns a string representation of the storage class tier and transitions.
+func (t *TableInfo) StorageClassString() string {
+	return buildStorageClassString(t.StorageClassTier, t.StorageClassTransitions)
+}
+
 // HasClusteredIndex checks whether the table has a clustered index.
 func (t *TableInfo) HasClusteredIndex() bool {
 	return t.PKIsHandle || t.IsCommonHandle
@@ -557,6 +622,30 @@ func (t *TableInfo) GetColumnByID(id int64) *ColumnInfo {
 	return nil
 }
 
+// GetNonTempColumns get columns without temporary columns generated by modify column.
+func (t *TableInfo) GetNonTempColumns() []*ColumnInfo {
+	colMap := make(map[string]*ColumnInfo)
+	for _, col := range t.Columns {
+		if col.IsRemoving() {
+			continue
+		}
+		colMap[col.Name.L] = col
+	}
+	for _, col := range t.Columns {
+		if col.IsRemoving() {
+			continue
+		}
+		if col.IsChanging() {
+			delete(colMap, col.GetChangingOriginName())
+		}
+	}
+	result := make([]*ColumnInfo, 0, len(colMap))
+	for _, col := range colMap {
+		result = append(result, col)
+	}
+	return result
+}
+
 // FindFKInfoByName finds FKInfo in fks by lowercase name.
 func FindFKInfoByName(fks []*FKInfo, name string) *FKInfo {
 	for _, fk := range fks {
@@ -565,6 +654,16 @@ func FindFKInfoByName(fks []*FKInfo, name string) *FKInfo {
 		}
 	}
 	return nil
+}
+
+// GetIdxChangingFieldType gets the field type of index column.
+// Since both old/new type may coexist in one column during modify column,
+// we need to get the correct type for index column.
+func GetIdxChangingFieldType(idxCol *IndexColumn, col *ColumnInfo) *types.FieldType {
+	if idxCol.UseChangingType && col.ChangingFieldType != nil {
+		return col.ChangingFieldType
+	}
+	return &col.FieldType
 }
 
 // TableNameInfo provides meta data describing a table name info.
@@ -668,38 +767,6 @@ func (t TableLockState) String() string {
 		return "public"
 	default:
 		return "none"
-	}
-}
-
-// TableMode is the state for table mode, it's a table level metadata for prevent
-// table read/write during importing(import into) or BR restoring.
-// when table mode isn't TableModeNormal, DMLs or DDLs that change the table will
-// return error.
-// To modify table mode, only internal DDL operations(AlterTableMode) are permitted.
-// Now allow switching between the same table modes, and not allow convert between
-// TableModeImport and TableModeRestore
-type TableMode byte
-
-const (
-	// TableModeNormal means the table is in normal mode.
-	TableModeNormal TableMode = iota
-	// TableModeImport means the table is in import mode.
-	TableModeImport
-	// TableModeRestore means the table is in restore mode.
-	TableModeRestore
-)
-
-// String implements fmt.Stringer interface.
-func (t TableMode) String() string {
-	switch t {
-	case TableModeNormal:
-		return "Normal"
-	case TableModeImport:
-		return "Import"
-	case TableModeRestore:
-		return "Restore"
-	default:
-		return ""
 	}
 }
 
@@ -823,8 +890,7 @@ type PartitionInfo struct {
 // Clone clones itself.
 func (pi *PartitionInfo) Clone() *PartitionInfo {
 	newPi := *pi
-	newPi.Columns = make([]ast.CIStr, len(pi.Columns))
-	copy(newPi.Columns, pi.Columns)
+	newPi.Columns = slices.Clone(pi.Columns)
 
 	newPi.Definitions = make([]PartitionDefinition, len(pi.Definitions))
 	for i := range pi.Definitions {
@@ -1132,19 +1198,21 @@ type PartitionState struct {
 
 // PartitionDefinition defines a single partition.
 type PartitionDefinition struct {
-	ID                 int64          `json:"id"`
-	Name               ast.CIStr      `json:"name"`
-	LessThan           []string       `json:"less_than"`
-	InValues           [][]string     `json:"in_values"`
-	PlacementPolicyRef *PolicyRefInfo `json:"policy_ref_info"`
-	Comment            string         `json:"comment,omitempty"`
+	ID                      int64                     `json:"id"`
+	Name                    ast.CIStr                 `json:"name"`
+	LessThan                []string                  `json:"less_than"`
+	InValues                [][]string                `json:"in_values"`
+	PlacementPolicyRef      *PolicyRefInfo            `json:"policy_ref_info"`
+	Comment                 string                    `json:"comment,omitempty"`
+	StorageClassTier        string                    `json:"storage_class_tier,omitempty"`
+	StorageClassTransitions []StorageClassTransitRule `json:"storage_class_transitions,omitempty"`
 }
 
 // Clone clones PartitionDefinition.
 func (ci *PartitionDefinition) Clone() PartitionDefinition {
 	nci := *ci
-	nci.LessThan = make([]string, len(ci.LessThan))
-	copy(nci.LessThan, ci.LessThan)
+	nci.LessThan = slices.Clone(ci.LessThan)
+	nci.StorageClassTransitions = slices.Clone(ci.StorageClassTransitions)
 	return nci
 }
 
@@ -1172,6 +1240,11 @@ func (ci *PartitionDefinition) MemoryUsage() (sum int64) {
 	return
 }
 
+// StorageClassString returns a string representation of the storage class tier and transitions.
+func (ci *PartitionDefinition) StorageClassString() string {
+	return buildStorageClassString(ci.StorageClassTier, ci.StorageClassTransitions)
+}
+
 // ConstraintInfo provides meta data describing check-expression constraint.
 type ConstraintInfo struct {
 	ID             int64       `json:"id"`
@@ -1188,8 +1261,7 @@ type ConstraintInfo struct {
 func (ci *ConstraintInfo) Clone() *ConstraintInfo {
 	nci := *ci
 
-	nci.ConstraintCols = make([]ast.CIStr, len(ci.ConstraintCols))
-	copy(nci.ConstraintCols, ci.ConstraintCols)
+	nci.ConstraintCols = slices.Clone(ci.ConstraintCols)
 	return &nci
 }
 
@@ -1248,10 +1320,8 @@ func (fk *FKInfo) String(db, tb string) string {
 func (fk *FKInfo) Clone() *FKInfo {
 	nfk := *fk
 
-	nfk.RefCols = make([]ast.CIStr, len(fk.RefCols))
-	nfk.Cols = make([]ast.CIStr, len(fk.Cols))
-	copy(nfk.RefCols, fk.RefCols)
-	copy(nfk.Cols, fk.Cols)
+	nfk.RefCols = slices.Clone(fk.RefCols)
+	nfk.Cols = slices.Clone(fk.Cols)
 
 	return &nfk
 }
@@ -1402,4 +1472,47 @@ func (t *TTLInfo) GetJobInterval() (time.Duration, error) {
 	}
 
 	return duration.ParseDuration(t.JobInterval)
+}
+
+// SoftdeleteInfo records the Softdelete config.
+type SoftdeleteInfo struct {
+	Retention string `json:"retention,omitempty"`
+	// JobEnable is used to control the cleanup JobEnable
+	JobEnable   bool   `json:"job_enable,omitempty"`
+	JobInterval string `json:"job_interval,omitempty"`
+}
+
+// Clone clones TTLInfo
+func (t *SoftdeleteInfo) Clone() *SoftdeleteInfo {
+	cloned := *t
+	return &cloned
+}
+
+// TableAffinityInfo indicates the data affinity information of the table.
+type TableAffinityInfo struct {
+	// Level indicates the affinity level of the table.
+	Level string `json:"level"`
+}
+
+// NewTableAffinityInfoWithLevel creates a new TableAffinityInfo with level
+// If level is "none" or "", a nil value will be returned
+func NewTableAffinityInfoWithLevel(level string) (*TableAffinityInfo, error) {
+	normalized, ok := ast.NormalizeTableAffinityLevel(level)
+	if !ok {
+		return nil, errors.Errorf("invalid table affinity level: '%s'", level)
+	}
+
+	if normalized == ast.TableAffinityLevelNone {
+		return nil, nil
+	}
+
+	return &TableAffinityInfo{
+		Level: normalized,
+	}, nil
+}
+
+// Clone clones TableAffinityInfo
+func (t *TableAffinityInfo) Clone() *TableAffinityInfo {
+	cloned := *t
+	return &cloned
 }

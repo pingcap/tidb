@@ -26,6 +26,7 @@ go_test(
     ],
     embed = [":systable"],
     flaky = True,
+    shard_count = 2,
     deps = [
         "//pkg/ddl/mock",
         "//pkg/ddl/session",

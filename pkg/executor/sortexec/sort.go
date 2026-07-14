@@ -69,6 +69,8 @@ type SortExec struct {
 	// The multi-way merge algorithm can refer to https://en.wikipedia.org/wiki/K-way_merge_algorithm
 	multiWayMerge *multiWayMerger
 
+	FileNamePrefixForTest string
+
 	Unparallel struct {
 		Idx int
 
@@ -176,7 +178,7 @@ func (e *SortExec) Open(ctx context.Context) error {
 		e.Parallel.sortedRowsIters = make([]*chunk.Iterator4Slice, len(e.Parallel.workers))
 		e.Parallel.resultChannel = make(chan rowWithError, ResultChannelCapacity)
 		e.Parallel.merger = newMultiWayMerger(&memorySource{sortedRowsIters: e.Parallel.sortedRowsIters}, e.lessRow)
-		e.Parallel.spillHelper = newParallelSortSpillHelper(e, exec.RetTypes(e), e.finishCh, e.lessRow, e.Parallel.resultChannel)
+		e.Parallel.spillHelper = newParallelSortSpillHelper(e, exec.RetTypes(e), e.finishCh, e.lessRow, e.Parallel.resultChannel, e.FileNamePrefixForTest)
 		e.Parallel.spillAction = newParallelSortSpillDiskAction(e.Parallel.spillHelper)
 		for i := range e.Parallel.sortedRowsIters {
 			e.Parallel.sortedRowsIters[i] = chunk.NewIterator4Slice(nil)
@@ -541,7 +543,7 @@ func (e *SortExec) switchToNewSortPartition(fields []*types.FieldType, byItemsDe
 		}
 	}
 
-	e.curPartition = newSortPartition(fields, byItemsDesc, e.keyColumns, e.keyCmpFuncs, e.spillLimit)
+	e.curPartition = newSortPartition(fields, byItemsDesc, e.keyColumns, e.keyCmpFuncs, e.spillLimit, e.FileNamePrefixForTest)
 	e.curPartition.getMemTracker().AttachTo(e.memTracker)
 	e.curPartition.getMemTracker().SetLabel(memory.LabelForRowChunks)
 	e.Unparallel.spillAction = e.curPartition.actionSpill()

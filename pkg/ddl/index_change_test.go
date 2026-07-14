@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -60,7 +61,7 @@ func TestIndexChange(t *testing.T) {
 			return
 		}
 		jobID.Store(job.ID)
-		ctx1 := testNewContext(t, store)
+		ctx1 := testkit.NewSession(t, store)
 		prevState = job.SchemaState
 		require.NoError(t, dom.Reload())
 		tbl, exist := dom.InfoSchema().TableByID(context.Background(), job.TableID)
@@ -92,8 +93,7 @@ func TestIndexChange(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	v := getSchemaVer(t, tk.Session())
-	checkHistoryJobArgs(t, tk.Session(), jobID.Load(), &historyJobArgs{ver: v, tbl: publicTable.Meta()})
+	checkJobWithHistory(t, tk.Session(), jobID.Load(), nil, publicTable.Meta())
 
 	prevState = model.StateNone
 	var noneTable table.Table
@@ -107,7 +107,7 @@ func TestIndexChange(t *testing.T) {
 		require.NoError(t, dom.Reload())
 		tbl, exist := dom.InfoSchema().TableByID(context.Background(), job.TableID)
 		require.True(t, exist)
-		ctx1 := testNewContext(t, store)
+		ctx1 := testkit.NewSession(t, store)
 		switch job.SchemaState {
 		case model.StateWriteOnly:
 			writeOnlyTable = tbl
@@ -123,8 +123,7 @@ func TestIndexChange(t *testing.T) {
 		}
 	})
 	tk.MustExec("alter table t drop index c2")
-	v = getSchemaVer(t, tk.Session())
-	checkHistoryJobArgs(t, tk.Session(), jobID.Load(), &historyJobArgs{ver: v, tbl: noneTable.Meta()})
+	checkJobWithHistory(t, tk.Session(), jobID.Load(), nil, noneTable.Meta())
 }
 
 func checkIndexExists(ctx sessionctx.Context, tbl table.Table, indexValue any, handle int64, exists bool) error {
@@ -393,6 +392,9 @@ func checkDropDeleteOnly(ctx sessionctx.Context, writeTbl, delTbl table.Table) e
 }
 
 func TestAddIndexRowCountUpdate(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("add-index always runs on DXF with ingest mode in nextgen")
+	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -431,4 +433,29 @@ func TestAddIndexRowCountUpdate(t *testing.T) {
 		}, 2*time.Minute, 60*time.Millisecond)
 	}()
 	tk.MustExec("alter table t add index idx(c2);")
+}
+
+func TestFastReOrgAlwaysEnabledOnNextGen(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("This test is only for next-gen TiDB")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("select @@global.tidb_ddl_enable_fast_reorg").Equal(testkit.Rows("1"))
+	require.ErrorContains(t, tk.ExecToErr("set global tidb_ddl_enable_fast_reorg=0"),
+		"setting tidb_ddl_enable_fast_reorg is not supported in the next generation of TiDB")
+}
+
+func TestReadOnlyVarsInNextGen(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("This test is only for next-gen TiDB")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	require.ErrorContains(t, tk.ExecToErr("set global tidb_max_dist_task_nodes=5"),
+		"setting tidb_max_dist_task_nodes is not supported in the next generation of TiDB")
+	require.ErrorContains(t, tk.ExecToErr("set global tidb_ddl_reorg_max_write_speed=5"),
+		"setting tidb_ddl_reorg_max_write_speed is not supported in the next generation of TiDB")
+	require.ErrorContains(t, tk.ExecToErr("set global tidb_ddl_disk_quota=5"),
+		"setting tidb_ddl_disk_quota is not supported in the next generation of TiDB")
 }

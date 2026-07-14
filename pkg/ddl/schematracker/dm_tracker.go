@@ -417,7 +417,9 @@ func (d *SchemaTracker) createIndex(
 		return err
 	}
 	for _, hiddenCol := range hiddenCols {
-		ddl.InitAndAddColumnToTable(tblInfo, hiddenCol)
+		colInfo := ddl.InitAndAddColumnToTable(tblInfo, hiddenCol)
+		// Mark the hidden column public to match the metadata produced by executing ADD INDEX.
+		colInfo.State = model.StatePublic
 	}
 
 	indexInfo, err := ddl.BuildIndexInfo(
@@ -724,7 +726,7 @@ func (d *SchemaTracker) handleModifyColumn(
 	tblInfo.Columns[oldCol.Offset] = newColInfo
 	indexesToChange := ddl.FindRelatedIndexesToChange(tblInfo, oldCol.Name)
 	for _, info := range indexesToChange {
-		ddl.SetIdxColNameOffset(info.IndexInfo.Columns[info.Offset], newColInfo)
+		ddl.UpdateIndexCol(info.IndexInfo.Columns[info.Offset], newColInfo)
 	}
 
 	destOffset, err := ddl.LocateOffsetToMove(newColInfo.Offset, spec.Position, tblInfo)
@@ -753,6 +755,7 @@ func (d *SchemaTracker) renameIndex(_ sessionctx.Context, ident ast.Ident, spec 
 	if err != nil {
 		return err
 	}
+	ddl.RenameExpressionIndexColumns(tblInfo, spec.FromKey, spec.ToKey)
 	idx := tblInfo.FindIndexByName(spec.FromKey.L)
 	idx.Name = spec.ToKey
 	return nil
@@ -774,6 +777,10 @@ func (d *SchemaTracker) addTablePartitions(ctx sessionctx.Context, ident ast.Ide
 
 	partInfo, err := ddl.BuildAddedPartitionInfo(ctx.GetExprCtx(), tblInfo, spec)
 	if err != nil {
+		return errors.Trace(err)
+	}
+	oldDefCount := len(tblInfo.Partition.Definitions)
+	if err := ddl.CheckAndUpdateAddedPartitionDefinitions(ctx.GetExprCtx(), tblInfo, partInfo, oldDefCount); err != nil {
 		return errors.Trace(err)
 	}
 	tblInfo.Partition.Definitions = append(tblInfo.Partition.Definitions, partInfo.Definitions...)
@@ -890,6 +897,9 @@ func (d *SchemaTracker) AlterTable(ctx context.Context, sctx sessionctx.Context,
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if err := ddl.CheckStorageClassConflictInAlterTableSpecs(validSpecs); err != nil {
+		return err
+	}
 
 	// atomicity for multi-schema change
 	oldTblInfo := tblInfo.Clone()
@@ -945,6 +955,10 @@ func (d *SchemaTracker) AlterTable(ctx context.Context, sctx sessionctx.Context,
 			newIdent := ast.Ident{Schema: spec.NewTable.Schema, Name: spec.NewTable.Name}
 			err = d.renameTable(sctx, []ast.Ident{ident}, []ast.Ident{newIdent}, true)
 		case ast.AlterTableOption:
+			engineAttribute, hasEngineAttribute, engineAttributeErr := ddl.GetEngineAttributeFromStorageClassTableOptions(spec.Options)
+			if engineAttributeErr != nil {
+				return engineAttributeErr
+			}
 			for i, opt := range spec.Options {
 				switch opt.Tp {
 				case ast.TableOptionShardRowID:
@@ -992,6 +1006,7 @@ func (d *SchemaTracker) AlterTable(ctx context.Context, sctx sessionctx.Context,
 					handledCharsetOrCollate = true
 				case ast.TableOptionPlacementPolicy:
 				case ast.TableOptionEngine:
+				case ast.TableOptionEngineAttribute, ast.TableOptionStorageClass:
 				default:
 					err = dbterror.ErrUnsupportedAlterTableOption
 				}
@@ -999,6 +1014,11 @@ func (d *SchemaTracker) AlterTable(ctx context.Context, sctx sessionctx.Context,
 				if err != nil {
 					return errors.Trace(err)
 				}
+			}
+			if hasEngineAttribute {
+				tblInfo = tblInfo.Clone()
+				tblInfo.EngineAttribute = engineAttribute
+				_ = d.PutTable(ident.Schema, tblInfo)
 			}
 		case ast.AlterTableIndexInvisible:
 			tblInfo = tblInfo.Clone()
@@ -1137,6 +1157,11 @@ func (*SchemaTracker) DropSequence(_ sessionctx.Context, _ *ast.DropSequenceStmt
 
 // AlterSequence implements the DDL interface, it's no-op in DM's case.
 func (*SchemaTracker) AlterSequence(_ sessionctx.Context, _ *ast.AlterSequenceStmt) error {
+	return nil
+}
+
+// CreateMaskingPolicy implements the DDL interface, it's no-op in DM's case.
+func (*SchemaTracker) CreateMaskingPolicy(_ sessionctx.Context, _ *ast.CreateMaskingPolicyStmt) error {
 	return nil
 }
 

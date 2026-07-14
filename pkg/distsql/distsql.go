@@ -16,10 +16,12 @@ package distsql
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
@@ -84,6 +86,20 @@ func Select(ctx context.Context, dctx *distsqlctx.DistSQLContext, kvReq *kv.Requ
 		TryCopLiteWorker:           &dctx.TryCopLiteWorker,
 	}
 
+	// Force the CopLiteWorker to be used or not used for testing purposes
+	failpoint.Inject("TryCopLiteWorker", func(val failpoint.Value) {
+		n, ok := val.(int)
+		if !ok {
+			panic(fmt.Sprintf("TryCopLiteWorker: expected int, got %T (%v)", val, val))
+		}
+
+		option.TryCopLiteWorker.Store(uint32(n))
+
+		logutil.Logger(ctx).Info("setting TryCopLiteWorker for test",
+			zap.String("value", option.TryCopLiteWorker.String()),
+		)
+	})
+
 	if kvReq.StoreType == kv.TiFlash {
 		ctx = SetTiFlashConfVarsInContext(ctx, dctx)
 		option.TiFlashReplicaRead = dctx.TiFlashReplicaRead
@@ -112,7 +128,7 @@ func Select(ctx context.Context, dctx *distsqlctx.DistSQLContext, kvReq *kv.Requ
 		sqlType:            label,
 		memTracker:         kvReq.MemTracker,
 		storeType:          kvReq.StoreType,
-		paging:             kvReq.Paging.Enable,
+		paging:             kvReq.Paging.Enable || kvReq.Paging.PagingSizeBytes > 0,
 		distSQLConcurrency: kvReq.Concurrency,
 	}, nil
 }
@@ -161,6 +177,16 @@ func SelectWithRuntimeStats(ctx context.Context, dctx *distsqlctx.DistSQLContext
 func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars any,
 	isRestrict bool, dctx *distsqlctx.DistSQLContext) (SelectResult, error) {
 	ctx = WithSQLKvExecCounterInterceptor(ctx, dctx.KvExecCounter)
+	failpoint.Inject("mockAnalyzeRequestWaitForCancel", func(val failpoint.Value) {
+		if val.(bool) {
+			<-ctx.Done()
+			err := context.Cause(ctx)
+			if err == nil {
+				err = ctx.Err()
+			}
+			failpoint.Return(nil, err)
+		}
+	})
 	kvReq.RequestSource.RequestSourceInternal = true
 	kvReq.RequestSource.RequestSourceType = kv.InternalTxnStats
 	resp := client.Send(ctx, kvReq, vars, &kv.ClientSendOption{})

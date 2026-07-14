@@ -75,7 +75,7 @@ func (p *pool) Get() (resource pools.Resource, err error) {
 		resource, err = p.factory()
 	}
 
-	// Put the internal session to the map of SessionManager
+	// Put the internal session to the map of Manager
 	failpoint.Inject("mockSessionPoolReturnError", func() {
 		err = errors.New("mockSessionPoolReturnError")
 	})

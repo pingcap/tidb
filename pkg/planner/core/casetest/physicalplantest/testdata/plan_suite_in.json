@@ -103,26 +103,26 @@
     "name": "TestMPPHintsScope",
     "cases": [
       "set @@session.tidb_allow_mpp=true",
-      "explain format='brief' select /*+ MPP_1PHASE_AGG() */ a, sum(b) from t group by a, c",
-      "explain format='brief' select /*+ MPP_2PHASE_AGG() */ a, sum(b) from t group by a, c",
-      "explain format='brief' select /*+ shuffle_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
-      "explain format='brief' select /*+ broadcast_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+      "explain format = 'plan_tree' select /*+ MPP_1PHASE_AGG() */ a, sum(b) from t group by a, c",
+      "explain format = 'plan_tree' select /*+ MPP_2PHASE_AGG() */ a, sum(b) from t group by a, c",
+      "explain format = 'plan_tree' select /*+ shuffle_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+      "explain format = 'plan_tree' select /*+ broadcast_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
 
       "set @@session.tidb_enforce_mpp=true",
-      "explain format='brief' select /*+ hash_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
-      "explain format='brief' select /*+ merge_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+      "explain format = 'plan_tree' select /*+ hash_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+      "explain format = 'plan_tree' select /*+ merge_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
 
       "set @@session.tidb_enforce_mpp=false",
-      "explain format='brief' select /*+ hash_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
-      "explain format='brief' select /*+ merge_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
-      "explain format='brief' select /*+ read_from_storage(tiflash[t1, t2]) hash_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
-      "explain format='brief' select /*+ read_from_storage(tiflash[t1, t2]) merge_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+      "explain format = 'plan_tree' select /*+ hash_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+      "explain format = 'plan_tree' select /*+ merge_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+      "explain format = 'plan_tree' select /*+ read_from_storage(tiflash[t1, t2]) hash_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+      "explain format = 'plan_tree' select /*+ read_from_storage(tiflash[t1, t2]) merge_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
 
       "set @@session.tidb_allow_mpp=false",
-      "explain format='brief' select /*+ MPP_1PHASE_AGG() */ a, sum(b) from t group by a, c",
-      "explain format='brief' select /*+ MPP_2PHASE_AGG() */ a, sum(b) from t group by a, c",
-      "explain format='brief' select /*+ shuffle_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
-      "explain format='brief' select /*+ broadcast_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a"
+      "explain format = 'plan_tree' select /*+ MPP_1PHASE_AGG() */ a, sum(b) from t group by a, c",
+      "explain format = 'plan_tree' select /*+ MPP_2PHASE_AGG() */ a, sum(b) from t group by a, c",
+      "explain format = 'plan_tree' select /*+ shuffle_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a",
+      "explain format = 'plan_tree' select /*+ broadcast_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a"
     ]
   },
   {
@@ -130,19 +130,19 @@
     "cases": [
       "set @@session.tidb_allow_mpp=true",
       "set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=0",
-      "explain format='brief' select * from t t1, t t2 where t1.a=t2.a",
+      "explain format = 'plan_tree' select * from t t1, t t2 where t1.a=t2.a",
       "set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=1",
-      "explain format='brief' select * from t t1, t t2 where t1.a=t2.a"
+      "explain format = 'plan_tree' select * from t t1, t t2 where t1.a=t2.a"
     ]
   },
   {
     "name": "TestMPPPreferBCJ",
     "cases": [
-      "explain format='brief' select * from t1, t2 where t1.a=t2.b",
+      "explain format = 'plan_tree' select * from t1, t2 where t1.a=t2.b",
       "set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=1",
-      "explain format='brief' select * from t1, t2 where t1.a=t2.b",
+      "explain format = 'plan_tree' select * from t1, t2 where t1.a=t2.b",
       "insert into t2 values (9); analyze table t2;",
-      "explain format='brief' select * from t1, t2 where t1.a=t2.b"
+      "explain format = 'plan_tree' select * from t1, t2 where t1.a=t2.b"
     ]
   },
   {
@@ -150,31 +150,31 @@
     "cases": [
       "set @@session.tidb_allow_mpp=true",
       "set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=0",
-      "explain format='brief' select * from t t1, t t2 where t1.a=t2.a",
+      "explain format = 'plan_tree' select * from t t1, t t2 where t1.a=t2.a",
       "set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=1",
-      "explain format='brief' select * from t t1, t t2 where t1.a=t2.a"
+      "explain format = 'plan_tree' select * from t t1, t t2 where t1.a=t2.a"
     ]
   },
   {
     "name": "TestMPPRightSemiJoin",
     "cases": [
       "set @@session.tidb_allow_mpp=true",
-      "explain format='brief' select * from t1 where exists (select * from t2 where t1.a=t2.b)",
+      "explain format = 'plan_tree' select * from t1 where exists (select * from t2 where t1.a=t2.b)",
       "set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=0",
       "set @@session.tidb_broadcast_join_threshold_size=0",
       "set @@session.tidb_broadcast_join_threshold_count=0",
-      "explain format='brief' select * from t1 where exists (select * from t2 where t1.a=t2.b)"
+      "explain format = 'plan_tree' select * from t1 where exists (select * from t2 where t1.a=t2.b)"
     ]
   },
   {
     "name": "TestMPPRightOuterJoin",
     "cases": [
       "set @@session.tidb_allow_mpp=true",
-      "explain format='brief' select * from t1 right join t2 on t1.a=t2.b and t1.c < t2.d",
+      "explain format = 'plan_tree' select * from t1 right join t2 on t1.a=t2.b and t1.c < t2.d",
       "set @@session.tidb_prefer_broadcast_join_by_exchange_data_size=0",
       "set @@session.tidb_broadcast_join_threshold_size=0",
       "set @@session.tidb_broadcast_join_threshold_count=0",
-      "explain format='brief' select * from t1 right join t2 on t1.a=t2.b and t1.c < t2.d"
+      "explain format = 'plan_tree' select * from t1 right join t2 on t1.a=t2.b and t1.c < t2.d"
     ]
   },
   {
@@ -616,29 +616,35 @@
     "name": "TestAlwaysTruePredicateWithSubquery",
     "cases" : [
       "SHOW ERRORS WHERE TRUE = ALL ( SELECT TRUE GROUP BY 1 LIMIT 1 ) IS NULL IS NOT NULL;",
-      "explain format='brief' select * from t WHERE TRUE = ALL ( SELECT TRUE GROUP BY 1 LIMIT 1 ) IS NULL IS NOT NULL;",
-      "explain format='brief' select * from t WHERE TRUE = ALL ( SELECT TRUE from t GROUP BY 1 LIMIT 1 ) is null is not null;"
+      "explain format = 'plan_tree' select * from t WHERE TRUE = ALL ( SELECT TRUE GROUP BY 1 LIMIT 1 ) IS NULL IS NOT NULL;",
+      "explain format = 'plan_tree' select * from t WHERE TRUE = ALL ( SELECT TRUE from t GROUP BY 1 LIMIT 1 ) is null is not null;"
     ]
   },
   {
     "name": "TestExplainExpand",
     "cases": [
-      "explain format = 'brief' select count(1) from t group by a, b with rollup; -- 1. simple agg",
-      "explain format = 'brief' select sum(c), count(1) from t group by a, b with rollup; -- 2. non-grouping set col c",
-      "explain format = 'brief' select count(a) from t group by a, b with rollup; -- 3. should keep the original col a",
-      "explain format = 'brief' select grouping(a) from t group by a, b with rollup; -- 4. contain grouping function ref to grouping set column a",
-      "explain format = 'brief' select grouping(a,b) from t group by a, b with rollup; -- 5. grouping function contains grouping set column a,c",
-      "explain format = 'brief' select a, grouping(b,a) from t group by a,b with rollup; -- 6. resolve normal column a to grouping set column a'",
-      "explain format = 'brief' select a+1, grouping(b) from t group by a+1, b with rollup; -- 7. resolve field list a+1 to grouping set column a+1",
-      "explain format = 'brief' SELECT SUM(profit) AS profit FROM sales GROUP BY year+2, year+profit WITH ROLLUP order by year+2; -- 8. order by item year+2 resolve to gby grouping expression",
-      "explain format = 'brief' SELECT year+2, SUM(profit) AS profit FROM sales GROUP BY year+2, year+profit WITH ROLLUP order by year+2; -- 9. order by item year+2 resolve to select field",
-      "explain format = 'brief' SELECT year+2 as y, SUM(profit) as profit FROM sales GROUP BY year+2, year+profit WITH ROLLUP having y > 2002 order by year+2, profit; -- 10. having (year+2) shouldn't be pushed down",
-      "explain format = 'brief' SELECT year+2 as y, SUM(profit) AS profit, grouping(year+2) FROM sales GROUP BY year+2, year+profit WITH ROLLUP having y > 2002 order by year+2, profit; -- 11. grouping function validation",
-      "explain format = 'brief' SELECT year, country, product, SUM(profit) AS profit FROM sales GROUP BY year, country, product with rollup order by grouping(year); -- 12. grouping function in order by clause",
-      "explain format = 'brief' SELECT country, product, SUM(profit) AS profit FROM sales GROUP BY country, country, product with rollup order by grouping(country); -- 13. 12 under gpos case",
-      "explain format = 'brief' SELECT year, country, product, SUM(profit) AS profit FROM sales GROUP BY year, country, product with rollup having grouping(year) > 0 order by grouping(year); -- 14. grouping function in having clause",
-      "explain format = 'brief' SELECT country, product, SUM(profit) AS profit FROM sales GROUP BY country, country, product with rollup having grouping(country) > 0 order by grouping(country); -- 15. 14 under gpos case",
-      "explain format = 'brief' SELECT year, country, product, grouping(year, country, product) from sales group by year, country, product with rollup having grouping(year, country, product) <> 0; -- 16. grouping function recreating fix"
+      "explain format = 'plan_tree' select count(1) from t group by a, b with rollup; -- 1. simple agg",
+      "explain format = 'plan_tree' select sum(c), count(1) from t group by a, b with rollup; -- 2. non-grouping set col c",
+      "explain format = 'plan_tree' select count(a) from t group by a, b with rollup; -- 3. should keep the original col a",
+      "explain format = 'plan_tree' select grouping(a) from t group by a, b with rollup; -- 4. contain grouping function ref to grouping set column a",
+      "explain format = 'plan_tree' select grouping(a,b) from t group by a, b with rollup; -- 5. grouping function contains grouping set column a,c",
+      "explain format = 'plan_tree' select a, grouping(b,a) from t group by a,b with rollup; -- 6. resolve normal column a to grouping set column a'",
+      "explain format = 'plan_tree' select a+1, grouping(b) from t group by a+1, b with rollup; -- 7. resolve field list a+1 to grouping set column a+1",
+      "explain format = 'plan_tree' SELECT SUM(profit) AS profit FROM sales GROUP BY year+2, year+profit WITH ROLLUP order by year+2; -- 8. order by item year+2 resolve to gby grouping expression",
+      "explain format = 'plan_tree' SELECT year+2, SUM(profit) AS profit FROM sales GROUP BY year+2, year+profit WITH ROLLUP order by year+2; -- 9. order by item year+2 resolve to select field",
+      "explain format = 'plan_tree' SELECT year+2 as y, SUM(profit) as profit FROM sales GROUP BY year+2, year+profit WITH ROLLUP having y > 2002 order by year+2, profit; -- 10. having (year+2) shouldn't be pushed down",
+      "explain format = 'plan_tree' SELECT year+2 as y, SUM(profit) AS profit, grouping(year+2) FROM sales GROUP BY year+2, year+profit WITH ROLLUP having y > 2002 order by year+2, profit; -- 11. grouping function validation",
+      "explain format = 'plan_tree' SELECT year, country, product, SUM(profit) AS profit FROM sales GROUP BY year, country, product with rollup order by grouping(year); -- 12. grouping function in order by clause",
+      "explain format = 'plan_tree' SELECT country, product, SUM(profit) AS profit FROM sales GROUP BY country, country, product with rollup order by grouping(country); -- 13. 12 under gpos case",
+      "explain format = 'plan_tree' SELECT year, country, product, SUM(profit) AS profit FROM sales GROUP BY year, country, product with rollup having grouping(year) > 0 order by grouping(year); -- 14. grouping function in having clause",
+      "explain format = 'plan_tree' SELECT country, product, SUM(profit) AS profit FROM sales GROUP BY country, country, product with rollup having grouping(country) > 0 order by grouping(country); -- 15. 14 under gpos case",
+      "explain format = 'plan_tree' SELECT year, country, product, grouping(year, country, product) from sales group by year, country, product with rollup having grouping(year, country, product) <> 0; -- 16. grouping function recreating fix"
     ]
+  },
+  {
+      "name": "TestLimitPushdown",
+      "cases": [
+          "select /*+ use_index(t1, c1) */ * from t1 order by c1 limit 200;"
+      ]
   }
 ]

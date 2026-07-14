@@ -21,6 +21,7 @@ go_test(
     timeout = "short",
     srcs = ["alloc_test.go"],
     flaky = True,
+    shard_count = 2,
     deps = [
         ":prealloc_table_id",
         "//br/pkg/metautil",

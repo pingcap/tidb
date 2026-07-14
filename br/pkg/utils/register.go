@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
+	"go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
@@ -115,6 +116,9 @@ func (tr *taskRegister) Close(ctx context.Context) (err error) {
 	if tr.curLeaseID != clientv3.NoLease {
 		_, err = tr.client.Lease.Revoke(ctx, tr.curLeaseID)
 		if err != nil {
+			if rpctypes.Error(err) == rpctypes.ErrLeaseNotFound {
+				return nil
+			}
 			log.Warn("failed to revoke the lease", zap.Error(err), zap.Int64("lease-id", int64(tr.curLeaseID)))
 		}
 	}
@@ -222,18 +226,24 @@ func (tr *taskRegister) keepaliveLoop(ctx context.Context, ch <-chan *clientv3.L
 		for {
 			timeGap := time.Since(lastUpdateTime)
 			if tr.ttl-timeGap <= timeLeftThreshold {
-				lease, err := tr.grant(ctx)
+				var (
+					lease    *clientv3.LeaseGrantResponse
+					grantErr error
+				)
 				failpoint.Inject("brie-task-register-failed-to-grant", func(_ failpoint.Value) {
-					err = errors.New("failpoint-error")
+					grantErr = errors.New("failpoint-error")
 				})
-				if err != nil {
+				if grantErr == nil {
+					lease, grantErr = tr.grant(ctx)
+				}
+				if grantErr != nil {
 					select {
 					case <-ctx.Done():
 						return
 					default:
 					}
-					log.Warn("failed to grant lease", zap.Error(err))
-					time.Sleep(RegisterRetryInternal)
+					log.Warn("failed to grant lease", zap.Error(grantErr))
+					tr.sleepRetryInterval()
 					continue
 				}
 				tr.curLeaseID = lease.ID
@@ -241,19 +251,22 @@ func (tr *taskRegister) keepaliveLoop(ctx context.Context, ch <-chan *clientv3.L
 				needReputKV = true
 			}
 			if needReputKV {
-				// if the lease has expired, need to put the key again
-				_, err := tr.client.KV.Put(ctx, tr.key, "", clientv3.WithLease(tr.curLeaseID))
+				var reputErr error
 				failpoint.Inject("brie-task-register-failed-to-reput", func(_ failpoint.Value) {
-					err = errors.New("failpoint-error")
+					reputErr = errors.New("failpoint-error")
 				})
-				if err != nil {
+				if reputErr == nil {
+					// If the lease has expired, need to put the key again.
+					_, reputErr = tr.client.KV.Put(ctx, tr.key, "", clientv3.WithLease(tr.curLeaseID))
+				}
+				if reputErr != nil {
 					select {
 					case <-ctx.Done():
 						return
 					default:
 					}
-					log.Warn("failed to put new kv", zap.Error(err))
-					time.Sleep(RegisterRetryInternal)
+					log.Warn("failed to put new kv", zap.Error(reputErr))
+					tr.sleepRetryInterval()
 					continue
 				}
 				needReputKV = false
@@ -267,13 +280,24 @@ func (tr *taskRegister) keepaliveLoop(ctx context.Context, ch <-chan *clientv3.L
 				default:
 				}
 				log.Warn("failed to create new kv", zap.Error(err))
-				time.Sleep(RegisterRetryInternal)
+				tr.sleepRetryInterval()
 				continue
 			}
 
 			break RECREATE
 		}
 	}
+}
+
+func (tr *taskRegister) sleepRetryInterval() {
+	interval := RegisterRetryInternal
+	failpoint.Inject("brie-task-register-retry-interval", func(val failpoint.Value) {
+		v, ok := val.(int)
+		if ok && v > 0 {
+			interval = time.Duration(v) * time.Millisecond
+		}
+	})
+	time.Sleep(interval)
 }
 
 // RegisterTask saves the task's information
@@ -318,6 +342,10 @@ func GetImportTasksFrom(ctx context.Context, client *clientv3.Client) (RegisterT
 	for _, kv := range resp.Kvs {
 		leaseResp, err := client.Lease.TimeToLive(ctx, clientv3.LeaseID(kv.Lease))
 		if err != nil {
+			// The lease might be revoked between KV.Get and TimeToLive.
+			if rpctypes.Error(err) == rpctypes.ErrLeaseNotFound {
+				continue
+			}
 			return list, errors.Annotatef(err, "failed to get time-to-live of lease: %x", kv.Lease)
 		}
 		// the lease has expired
