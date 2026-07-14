@@ -1890,6 +1890,14 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 			if engineAttributeErr != nil {
 				return engineAttributeErr
 			}
+			// Only allow COMPRESSION='NONE', reject others like 'ZLIB', 'LZ4'.
+			// Validate it before handling any other option, so that no option
+			// takes effect for a statement with an invalid COMPRESSION value.
+			for _, opt := range spec.Options {
+				if opt.Tp == ast.TableOptionCompression && strings.ToUpper(opt.StrValue) != ast.TableOptionCompressionNone {
+					return dbterror.ErrUnsupportedAlterTableOption.GenWithStackByArgs()
+				}
+			}
 			var placementPolicyRef *model.PolicyRefInfo
 			for i, opt := range spec.Options {
 				switch opt.Tp {
@@ -1933,11 +1941,8 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 				case ast.TableOptionEngineAttribute, ast.TableOptionStorageClass:
 				case ast.TableOptionRowFormat:
 				case ast.TableOptionCompression:
-					// Only allow COMPRESSION='NONE', reject others like 'ZLIB', 'LZ4'
-					if strings.ToUpper(opt.StrValue) != ast.TableOptionCompressionNone {
-						return dbterror.ErrUnsupportedAlterTableOption.GenWithStackByArgs()
-					}
-					// COMPRESSION='NONE' is supported but currently no-op
+					// COMPRESSION='NONE' is supported but currently no-op.
+					// Other values are rejected before this loop.
 				case ast.TableOptionTTL, ast.TableOptionTTLEnable, ast.TableOptionTTLJobInterval:
 					var ttlInfo *model.TTLInfo
 					var ttlEnable *bool

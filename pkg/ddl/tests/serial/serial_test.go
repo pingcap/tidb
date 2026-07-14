@@ -1504,6 +1504,14 @@ func TestAlterTableCompression(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "unsupported")
 
+	// Test an invalid COMPRESSION following another option should fail
+	// without applying the preceding option.
+	err = tk.ExecToErr("alter table t comment='should not apply', compression='ZLIB'")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unsupported")
+	createTable := tk.MustQuery("show create table t").Rows()[0][1].(string)
+	require.NotContains(t, createTable, "should not apply")
+
 	tk.MustExec("drop table t")
 }
 
