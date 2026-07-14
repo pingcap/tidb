@@ -19,18 +19,50 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/executor/join"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
+
+type oversizedChunkSelectResult struct {
+	rows     []int64
+	returned bool
+}
+
+func (*oversizedChunkSelectResult) NextRaw(context.Context) ([]byte, error) { return nil, nil }
+func (*oversizedChunkSelectResult) Close() error                            { return nil }
+
+func (r *oversizedChunkSelectResult) Next(_ context.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	if r.returned {
+		return nil
+	}
+	for _, value := range r.rows {
+		row := chunk.MutRowFromTypes([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)})
+		row.SetValue(0, value)
+		chk.AppendRow(row.ToRow())
+	}
+	r.returned = true
+	return nil
+}
+
+func (*oversizedChunkSelectResult) IntoIter([][]*types.FieldType) (distsql.SelectResultIter, error) {
+	return nil, nil
+}
 
 func TestNestedLoopApply(t *testing.T) {
 	ctx := context.Background()
@@ -98,6 +130,9 @@ func TestNestedLoopApply(t *testing.T) {
 }
 
 func TestAdaptiveLimitEligibility(t *testing.T) {
+	require.Equal(t, uint64(7), adaptiveLimitInitialWindow(7, 1024))
+	require.Equal(t, uint64(1024), adaptiveLimitInitialWindow(100001, 1024))
+
 	sctx := mock.NewContext()
 	indexJoin := &join.IndexLookUpJoin{
 		BaseExecutor: exec.NewBaseExecutor(sctx, nil, 1),
@@ -113,7 +148,7 @@ func TestAdaptiveLimitEligibility(t *testing.T) {
 	require.Same(t, indexJoin, findAdaptiveLimitIndexJoin(projection))
 	require.Nil(t, findAdaptiveLimitIndexJoin(selection))
 
-	controller := exec.NewAdaptiveLimitController(100, 32, 128)
+	controller := exec.NewAdaptiveLimitController(100, 32, 128, 32, 128)
 	indexLookup := &IndexLookUpExecutor{
 		BaseExecutorV2: exec.NewBaseExecutorV2(sctx.GetSessionVars(), nil, 4),
 		indexLookUpExecutorContext: indexLookUpExecutorContext{
@@ -123,6 +158,72 @@ func TestAdaptiveLimitEligibility(t *testing.T) {
 	}
 	require.True(t, attachAdaptiveLimitIndexLookup(indexLookup, controller))
 	require.Same(t, controller, indexLookup.adaptiveLimitController)
+	reserved, ok := controller.ReserveLookup(context.Background(), 32)
+	require.True(t, ok)
+	task := &lookupTableTask{
+		handles:                  make([]kv.Handle, reserved),
+		rows:                     make([]chunk.Row, 1),
+		cursor:                   1,
+		adaptiveLimitReservation: reserved,
+	}
+	indexLookup.completeAdaptiveLookupTask(task)
+	require.Zero(t, task.adaptiveLimitReservation)
+	require.Equal(t, uint64(32), controller.Snapshot().LookupHandles)
+	require.Equal(t, uint64(1), controller.Snapshot().LookupRows)
+	require.Equal(t, 2, controller.SuggestedScanConcurrency(15, 32))
+
+	worker := &indexWorker{adaptiveLimitController: controller, batchSize: 2}
+	handles := make([]kv.Handle, 0, 2)
+	for i := range 5 {
+		handles = worker.appendExtractedHandle(handles, kv.IntHandle(i))
+	}
+	require.Len(t, handles, 2)
+	require.Len(t, worker.pendingHandles, 3)
+	handles = handles[:0]
+	handles = worker.takePendingHandles(handles)
+	require.Len(t, handles, 2)
+	require.Len(t, worker.pendingHandles, 1)
+	handles = handles[:0]
+	handles = worker.takePendingHandles(handles)
+	require.Len(t, handles, 1)
+	require.Empty(t, worker.pendingHandles)
+	worker.PushedLimit = &physicalop.PushedDownLimit{Count: 5}
+	worker.scannedKeys = 5
+	worker.pendingHandles = []kv.Handle{kv.IntHandle(5)}
+	require.False(t, worker.reachedPushedLimit())
+	worker.pendingHandles = nil
+	require.True(t, worker.reachedPushedLimit())
+
+	indexLookup.table = tables.MockTableFromMeta(&model.TableInfo{})
+	indexLookup.index = &model.IndexInfo{}
+	handleColumn := &expression.Column{ID: model.ExtraHandleID, Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)}
+	indexScan := physicalop.PhysicalIndexScan{}.Init(sctx, 0)
+	indexScan.SetSchema(expression.NewSchema(handleColumn))
+	indexLookup.idxPlans = []base.PhysicalPlan{indexScan}
+	indexLookup.dagPB = &tipb.DAGRequest{OutputOffsets: []uint32{0}}
+	indexLookup.handleCols = []*expression.Column{handleColumn}
+	worker = &indexWorker{
+		idxLookup:               indexLookup,
+		adaptiveLimitController: controller,
+		batchSize:               2,
+		maxBatchSize:            2,
+		maxChunkSize:            32,
+		PushedLimit:             &physicalop.PushedDownLimit{Count: 5},
+	}
+	result := &oversizedChunkSelectResult{rows: []int64{1, 2, 3, 4, 5}}
+	chk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 32)
+	for _, expected := range [][]int64{{1, 2}, {3, 4}, {5}} {
+		handles, _, err := worker.extractTaskHandles(context.Background(), chk, result, []int{0})
+		require.NoError(t, err)
+		extracted := make([]int64, 0, len(handles))
+		for _, handle := range handles {
+			extracted = append(extracted, handle.IntValue())
+		}
+		require.Equal(t, expected, extracted)
+	}
+	require.True(t, worker.reachedPushedLimit())
+	require.Empty(t, worker.pendingHandles)
+	require.Equal(t, uint64(5), worker.scannedKeys)
 
 	indexLookup.adaptiveLimitController = nil
 	indexLookup.indexLookupConcurrency = 1

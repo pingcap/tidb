@@ -251,6 +251,50 @@ func TestPartitionTableRandomlyIndexLookUpReader(t *testing.T) {
 	}
 }
 
+func TestAdaptiveLimitExecution(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table adaptive_outer (
+		id int primary key, order_key int not null, join_key int not null,
+		filter_col int not null, payload varchar(32), key idx_order_key(order_key))`)
+	tk.MustExec(`create table adaptive_inner (
+		id int primary key, join_key int not null, v int not null,
+		key idx_join_key(join_key))`)
+	tk.MustExec("insert into adaptive_outer values (1,1,1,1,'a'),(2,2,2,1,'b'),(3,3,3,1,'c'),(4,4,4,1,'d')")
+	innerValues := make([]string, 0, 64)
+	for i := 1; i <= 64; i++ {
+		innerValues = append(innerValues, fmt.Sprintf("(%d,1,%d)", i, i))
+	}
+	tk.MustExec("insert into adaptive_inner values " + strings.Join(innerValues, ","))
+	tk.MustExec("set tidb_enable_adaptive_limit_scan = on")
+	tk.MustExec("set tidb_index_join_batch_size = 32")
+	tk.MustExec("set tidb_index_lookup_size = 32")
+	tk.MustExec("set tidb_index_lookup_join_concurrency = 2")
+	tk.MustExec("set tidb_index_lookup_concurrency = 2")
+	tk.MustExec("set tidb_init_chunk_size = 32")
+	tk.MustExec("set tidb_max_chunk_size = 32")
+
+	sql := `select /*+ inl_join(i) */ o.payload, i.v
+		from adaptive_outer o use index(idx_order_key)
+		join adaptive_inner i use index(idx_join_key) on o.join_key = i.join_key
+		where o.order_key between 1 and 4 and o.filter_col > 0
+		order by o.order_key limit 40`
+	plan := fmt.Sprint(tk.MustQuery("explain " + sql).Rows())
+	require.Contains(t, plan, "IndexJoin")
+	require.Contains(t, plan, "keep order:true")
+	require.Len(t, tk.MustQuery(sql).Rows(), 40)
+
+	analyze := fmt.Sprint(tk.MustQuery("explain analyze " + sql).Rows())
+	require.Contains(t, analyze, "adaptive:{")
+	require.Contains(t, analyze, "output:40")
+	require.Contains(t, analyze, "outer_consumed:0")
+
+	tk.MustExec("set tidb_enable_adaptive_limit_scan = off")
+	require.Len(t, tk.MustQuery(sql).Rows(), 40)
+	require.NotContains(t, fmt.Sprint(tk.MustQuery("explain analyze "+sql).Rows()), "adaptive:{")
+}
+
 func TestIndexLookUpStats(t *testing.T) {
 	stats := &executor.IndexLookUpRunTimeStats{
 		FetchHandleTotal:         int64(5 * time.Second),

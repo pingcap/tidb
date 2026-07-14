@@ -898,10 +898,9 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 		indexTypes := e.getRetTpsForIndexReader()
 
 		if !needMerge {
-			maxInFlight := getIndexScanMaxInFlight(e.dctx.DistSQLConcurrency)
 			nextRange := 0
 			pushDownIntermediateTypes := [][]*types.FieldType{indexTypes}
-			buildNext := func(ctx context.Context) (selectResultWithMeta, bool, error) {
+			buildNext := func(ctx context.Context, scanConcurrency int) (selectResultWithMeta, bool, error) {
 				if nextRange >= len(kvRanges) {
 					return selectResultWithMeta{}, false, nil
 				}
@@ -920,7 +919,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 					tracker,
 					len(kvRanges),
 					worker.batchSize,
-					0,
+					scanConcurrency,
 					nil,
 				)
 				if err != nil {
@@ -943,7 +942,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 				return entry, true, nil
 			}
 			ctx1, cancel := context.WithCancel(ctx)
-			err := worker.fetchHandlesRolling(ctx1, maxInFlight, len(kvRanges), indexTypes, buildNext)
+			err := worker.fetchHandlesRolling(ctx1, e.dctx.DistSQLConcurrency, len(kvRanges), indexTypes, buildNext)
 			cancel()
 			if err != nil {
 				worker.syncErr(err)
@@ -1276,6 +1275,7 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 			numToAppend := min(len(resultTask.rows)-resultTask.cursor, req.RequiredRows()-req.NumRows())
 			req.AppendRows(resultTask.rows[resultTask.cursor : resultTask.cursor+numToAppend])
 			resultTask.cursor += numToAppend
+			e.completeAdaptiveLookupTask(resultTask)
 			if req.IsFull() {
 				return nil
 			}
@@ -1288,8 +1288,7 @@ func (e *IndexLookUpExecutor) getResultTask() (*lookupTableTask, error) {
 		return e.resultCurr, nil
 	}
 	if e.resultCurr != nil && e.adaptiveLimitController != nil {
-		e.adaptiveLimitController.ReleaseLookup(e.resultCurr.adaptiveLimitReservation)
-		e.resultCurr.adaptiveLimitReservation = 0
+		e.completeAdaptiveLookupTask(e.resultCurr)
 	}
 	var (
 		enableStats         = e.stats != nil
@@ -1308,7 +1307,7 @@ func (e *IndexLookUpExecutor) getResultTask() (*lookupTableTask, error) {
 	}
 	if err := <-task.doneCh; err != nil {
 		if e.adaptiveLimitController != nil {
-			e.adaptiveLimitController.ReleaseLookup(task.adaptiveLimitReservation)
+			e.adaptiveLimitController.AbortLookup(task.adaptiveLimitReservation)
 			task.adaptiveLimitReservation = 0
 		}
 		return nil, err
@@ -1327,7 +1326,16 @@ func (e *IndexLookUpExecutor) getResultTask() (*lookupTableTask, error) {
 		e.resultCurr.memTracker.Consume(-e.resultCurr.memUsage)
 	}
 	e.resultCurr = task
+	e.completeAdaptiveLookupTask(e.resultCurr)
 	return e.resultCurr, nil
+}
+
+func (e *IndexLookUpExecutor) completeAdaptiveLookupTask(task *lookupTableTask) {
+	if e.adaptiveLimitController == nil || task == nil || task.adaptiveLimitReservation == 0 || task.cursor < len(task.rows) {
+		return
+	}
+	e.adaptiveLimitController.CompleteLookup(task.adaptiveLimitReservation, len(task.handles), len(task.rows))
+	task.adaptiveLimitReservation = 0
 }
 
 func (e *IndexLookUpExecutor) initRuntimeStats() {
@@ -1373,6 +1381,10 @@ type indexWorker struct {
 	PushedLimit *physicalop.PushedDownLimit
 	// scannedKeys indicates how many keys be scanned
 	scannedKeys uint64
+
+	// pendingHandles keeps handles returned beyond the current adaptive
+	// reservation. DistSQL may return more rows than Chunk.RequiredRows.
+	pendingHandles []kv.Handle
 }
 
 func (w *indexWorker) syncErr(err error) {
@@ -1443,7 +1455,7 @@ func (r *selectResultWithMeta) Close() {
 	}
 }
 
-type nextSelectResultBuilder func(context.Context) (selectResultWithMeta, bool, error)
+type nextSelectResultBuilder func(context.Context, int) (selectResultWithMeta, bool, error)
 
 type extractedLookupTaskData struct {
 	startTime   time.Time
@@ -1479,7 +1491,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results selectResultList
 	for i := 0; i < len(results); {
 		curResultIdx := i
 		result := results[curResultIdx]
-		if w.PushedLimit != nil && w.scannedKeys >= w.PushedLimit.Count+w.PushedLimit.Offset {
+		if w.reachedPushedLimit() {
 			break
 		}
 		data, err := w.extractLookupTaskData(ctx, result.Result, result.RowIter, chk, handleOffsets)
@@ -1503,9 +1515,9 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results selectResultList
 }
 
 // fetchHandlesRolling fetches handles from index data and builds index lookup tasks.
-// SelectResults are taken lazily via buildNext, and aggregate in-flight index scan
-// concurrency is limited by maxInFlight (sum of InFlightCost).
-func (w *indexWorker) fetchHandlesRolling(ctx context.Context, maxInFlight int, kvRangesCount int, indexTypes []*types.FieldType, buildNext nextSelectResultBuilder) (err error) {
+// Both the concurrency of future DistSQL requests and their aggregate in-flight
+// cost follow the current scan concurrency, with the session value as a ceiling.
+func (w *indexWorker) fetchHandlesRolling(ctx context.Context, scanConcurrencyCeiling int, kvRangesCount int, indexTypes []*types.FieldType, buildNext nextSelectResultBuilder) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.Logger(ctx).Warn("indexWorker in IndexLookupExecutor panicked", zap.Any("recover", r), zap.Stack("stack"))
@@ -1516,8 +1528,8 @@ func (w *indexWorker) fetchHandlesRolling(ctx context.Context, maxInFlight int, 
 	if kvRangesCount <= 0 {
 		return nil
 	}
-	if maxInFlight < 1 {
-		maxInFlight = 1
+	if scanConcurrencyCeiling < 1 {
+		scanConcurrencyCeiling = 1
 	}
 	results := make([]selectResultWithMeta, 0, kvRangesCount)
 	inFlight := 0
@@ -1535,12 +1547,22 @@ func (w *indexWorker) fetchHandlesRolling(ctx context.Context, maxInFlight int, 
 	}
 
 	fillNewResults := func() error {
-		currentMaxInFlight := maxInFlight
-		if w.adaptiveLimitController != nil {
-			currentMaxInFlight = w.adaptiveLimitController.ScanConcurrencyLimit(maxInFlight, w.batchSize)
+		currentScanConcurrency := scanConcurrencyCeiling
+		adaptive := w.adaptiveLimitController != nil
+		if adaptive {
+			currentScanConcurrency = w.adaptiveLimitController.SuggestedScanConcurrency(scanConcurrencyCeiling, w.batchSize)
+			if currentScanConcurrency == 0 {
+				return nil
+			}
 		}
+		currentMaxInFlight := getIndexScanMaxInFlight(currentScanConcurrency)
 		for inFlight < currentMaxInFlight {
-			entry, ok, err := buildNext(ctx)
+			requestConcurrency := 0
+			if adaptive {
+				available := currentMaxInFlight - inFlight
+				requestConcurrency = min(currentScanConcurrency, max(available/2, 1))
+			}
+			entry, ok, err := buildNext(ctx, requestConcurrency)
 			if err != nil {
 				return err
 			}
@@ -1561,7 +1583,7 @@ func (w *indexWorker) fetchHandlesRolling(ctx context.Context, maxInFlight int, 
 	for i := 0; i < len(results); {
 		curResultIdx := i
 		result := &results[curResultIdx]
-		if w.PushedLimit != nil && w.scannedKeys >= w.PushedLimit.Count+w.PushedLimit.Offset {
+		if w.reachedPushedLimit() {
 			break
 		}
 		data, err := w.extractLookupTaskData(ctx, result.Result, result.RowIter, chk, handleOffsets)
@@ -1635,11 +1657,11 @@ func (w *indexWorker) extractLookupTaskData(
 	}
 	data.finishFetch = time.Now()
 	if err != nil && data.adaptiveLimitReservation > 0 {
-		w.adaptiveLimitController.ReleaseLookup(data.adaptiveLimitReservation)
+		w.adaptiveLimitController.AbortLookup(data.adaptiveLimitReservation)
 		data.adaptiveLimitReservation = 0
 	}
 	if data.adaptiveLimitReservation > len(data.handles) {
-		w.adaptiveLimitController.ReleaseLookup(data.adaptiveLimitReservation - len(data.handles))
+		w.adaptiveLimitController.AbortLookup(data.adaptiveLimitReservation - len(data.handles))
 		data.adaptiveLimitReservation = len(data.handles)
 	}
 	return data, err
@@ -1648,7 +1670,7 @@ func (w *indexWorker) extractLookupTaskData(
 func (w *indexWorker) buildAndDispatchLookupTasks(ctx context.Context, curResultIdx int, taskID *int, data *extractedLookupTaskData) (stopped bool) {
 	if len(data.handles) == 0 && len(data.completedRows) == 0 {
 		if data.adaptiveLimitReservation > 0 {
-			w.adaptiveLimitController.ReleaseLookup(data.adaptiveLimitReservation)
+			w.adaptiveLimitController.AbortLookup(data.adaptiveLimitReservation)
 			data.adaptiveLimitReservation = 0
 		}
 		return false
@@ -1682,12 +1704,12 @@ func (w *indexWorker) buildAndDispatchLookupTasks(ctx context.Context, curResult
 	select {
 	case <-ctx.Done():
 		if data.adaptiveLimitReservation > 0 {
-			w.adaptiveLimitController.ReleaseLookup(data.adaptiveLimitReservation)
+			w.adaptiveLimitController.AbortLookup(data.adaptiveLimitReservation)
 		}
 		return true
 	case <-w.finished:
 		if data.adaptiveLimitReservation > 0 {
-			w.adaptiveLimitController.ReleaseLookup(data.adaptiveLimitReservation)
+			w.adaptiveLimitController.AbortLookup(data.adaptiveLimitReservation)
 		}
 		return true
 	default:
@@ -1800,6 +1822,7 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 	handles []kv.Handle, retChk *chunk.Chunk, err error) {
 	// PushedLimit would always be nil for CheckIndex or CheckTable, we add this check just for insurance.
 	checkLimit := (w.PushedLimit != nil) && (w.checkIndexValue == nil)
+	handles = w.takePendingHandles(handles)
 	for len(handles) < w.batchSize {
 		requiredRows := w.batchSize - len(handles)
 		if checkLimit {
@@ -1841,7 +1864,7 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 			if err != nil {
 				return handles, retChk, err
 			}
-			handles = append(handles, h)
+			handles = w.appendExtractedHandle(handles, h)
 		}
 		if w.checkIndexValue != nil {
 			if retChk == nil {
@@ -1855,6 +1878,36 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 		w.batchSize = w.maxBatchSize
 	}
 	return handles, retChk, nil
+}
+
+func (w *indexWorker) takePendingHandles(handles []kv.Handle) []kv.Handle {
+	if w.adaptiveLimitController == nil || len(w.pendingHandles) == 0 {
+		return handles
+	}
+	available := w.batchSize - len(handles)
+	if available <= 0 {
+		return handles
+	}
+	count := min(available, len(w.pendingHandles))
+	handles = append(handles, w.pendingHandles[:count]...)
+	w.pendingHandles = w.pendingHandles[count:]
+	if len(w.pendingHandles) == 0 {
+		w.pendingHandles = nil
+	}
+	return handles
+}
+
+func (w *indexWorker) reachedPushedLimit() bool {
+	return w.PushedLimit != nil && len(w.pendingHandles) == 0 &&
+		w.scannedKeys >= w.PushedLimit.Count+w.PushedLimit.Offset
+}
+
+func (w *indexWorker) appendExtractedHandle(handles []kv.Handle, handle kv.Handle) []kv.Handle {
+	if w.adaptiveLimitController != nil && len(handles) >= w.batchSize {
+		w.pendingHandles = append(w.pendingHandles, handle)
+		return handles
+	}
+	return append(handles, handle)
 }
 
 func (*indexWorker) buildCompletedTask(taskID int, rows []chunk.Row) *lookupTableTask {
