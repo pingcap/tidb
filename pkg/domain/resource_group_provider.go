@@ -25,6 +25,22 @@ import (
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
 
+const (
+	defaultDegradedRUFillRate   = 2_000_000
+	defaultDegradedRUBurstLimit = 50_000_000_000
+)
+
+func newDefaultDegradedRUSettings() *rmpb.GroupRequestUnitSettings {
+	return &rmpb.GroupRequestUnitSettings{
+		RU: &rmpb.TokenBucket{
+			Settings: &rmpb.TokenLimitSettings{
+				FillRate:   defaultDegradedRUFillRate,
+				BurstLimit: defaultDegradedRUBurstLimit,
+			},
+		},
+	}
+}
+
 // starterResourceGroupProvider wraps a resource group provider and synthesizes
 // degraded resource groups only when resource-manager lookup fails due to
 // unavailability.

@@ -18,11 +18,7 @@ import (
 	"context"
 	"net"
 	"strconv"
-	"strings"
-	"time"
 
-	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
@@ -32,43 +28,6 @@ import (
 	"github.com/tikv/pd/client/constants"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
-
-const (
-	defaultDegradedRUFillRate      = 2_000_000
-	defaultDegradedRUBurstLimit    = 50_000_000_000
-	defaultDegradedModeWaitTimeout = 3 * time.Second / 2
-	tokenWaitRetryInterval         = 100 * time.Millisecond
-	tokenWaitRetryTimes            = 20
-)
-
-func newDefaultDegradedRUSettings() *rmpb.GroupRequestUnitSettings {
-	return &rmpb.GroupRequestUnitSettings{
-		RU: &rmpb.TokenBucket{
-			Settings: &rmpb.TokenLimitSettings{
-				FillRate:   defaultDegradedRUFillRate,
-				BurstLimit: defaultDegradedRUBurstLimit,
-			},
-		},
-	}
-}
-
-func newResourceGroupsControllerOptions() []rmclient.ResourceControlCreateOption {
-	opts := []rmclient.ResourceControlCreateOption{
-		rmclient.WithMaxWaitDuration(runaway.MaxWaitDuration),
-	}
-	if deploymode.IsStarter() {
-		opts = append(opts,
-			rmclient.WithDegradedModeWaitDuration(defaultDegradedModeWaitTimeout),
-		)
-	}
-	if strings.Contains(config.GetGlobalConfig().StarterParams.PodNamespace, "vip") {
-		opts = append(opts,
-			rmclient.WithWaitRetryInterval(tokenWaitRetryInterval),
-			rmclient.WithWaitRetryTimes(tokenWaitRetryTimes),
-		)
-	}
-	return opts
-}
 
 func (do *Domain) initResourceGroupsController(ctx context.Context, pdClient pd.Client, uniqueID uint64) error {
 	if pdClient == nil {

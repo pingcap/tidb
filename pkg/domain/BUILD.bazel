@@ -11,6 +11,7 @@ go_library(
         "optimize_trace.go",
         "plan_replayer.go",
         "plan_replayer_dump.go",
+        "resource_group_controller_options.go",
         "resource_group_provider.go",
         "ru_stats.go",
         "runaway.go",
