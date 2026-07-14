@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/summary"
@@ -466,11 +467,20 @@ func writeBytes(tctx *tcontext.Context, writer objectio.Writer, p []byte) error 
 		tctx.L().Warn("fail to write",
 			zap.ByteString("heading 200 characters", p[:outputLength]),
 			zap.Error(err))
-		if strings.Contains(err.Error(), "Part number must be an integer between 1 and 10000") {
-			err = errors.Annotate(err, "workaround: dump file exceeding 50GB, please specify -F=256MB -r=200000 to avoid this problem")
-		}
+		err = annotatePartLimit(err)
 	}
 	return errors.Trace(err)
+}
+
+// annotatePartLimit turns a storage part-limit error into an actionable hint:
+// the single output object needs more multipart parts than the object store
+// allows, so the user should split the output with --filesize.
+func annotatePartLimit(err error) error {
+	if err != nil && storeapi.ErrExceedMaxUploadParts.Equal(err) {
+		limit := units.BytesSize(float64(csvUploadPartSize) * float64(storeapi.MaxUploadParts))
+		return errors.Annotatef(err, "a single output file exceeds the object store's per-object limit of ~%s; specify --filesize (-F) to split the output into multiple files", limit)
+	}
+	return err
 }
 
 func buildFileWriter(tctx *tcontext.Context, s storeapi.Storage, fileName string, compressType compressedio.CompressType) (objectio.Writer, func(ctx context.Context) error, error) {
@@ -621,7 +631,8 @@ type wrappedWriter struct {
 }
 
 func (w *wrappedWriter) Write(p []byte) (n int, err error) {
-	return w.w.Write(w.ctx, p)
+	n, err = w.w.Write(w.ctx, p)
+	return n, annotatePartLimit(err)
 }
 
 // WriteInsertInParquet writes table rows to parquet format.

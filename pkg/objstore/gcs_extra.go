@@ -32,6 +32,7 @@ import (
 
 	"cloud.google.com/go/storage"
 	"github.com/go-resty/resty/v2"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"go.uber.org/atomic"
 )
 
@@ -173,7 +174,7 @@ func (w *GCSWriter) readChunk(ch chan chunk) {
 // concurrent safe.
 func (w *GCSWriter) Write(p []byte) (n int, err error) {
 	if w.curPart > gcsMaximumParts {
-		err = fmt.Errorf("exceed maximum parts %d", gcsMaximumParts)
+		err = storeapi.ErrExceedMaxUploadParts
 		if w.err.Load() == nil {
 			w.err.Store(err)
 		}

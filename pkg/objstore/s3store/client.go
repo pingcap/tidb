@@ -20,6 +20,7 @@ import (
 	goerrors "errors"
 	"io"
 	"path"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -412,6 +413,9 @@ type multipartWriter struct {
 // UploadPart update partial data to s3, we should call CreateMultipartUpload to start it,
 // and call CompleteMultipartUpload to finish it.
 func (u *multipartWriter) Write(ctx context.Context, data []byte) (int, error) {
+	if len(u.completeParts)+1 > storeapi.MaxUploadParts {
+		return 0, errors.Trace(storeapi.ErrExceedMaxUploadParts)
+	}
 	partInput := &s3.UploadPartInput{
 		Body:          bytes.NewReader(data),
 		Bucket:        u.createOutput.Bucket,
@@ -463,5 +467,11 @@ func (u *multipartUploader) Upload(ctx context.Context, rd io.Reader) error {
 		Body:   rd,
 	}
 	_, err := u.uploader.Upload(ctx, upParams)
+	// The SDK uploader has no typed error for exceeding its part budget; it
+	// returns a message mentioning MaxUploadParts. Translate it to a typed error
+	// so callers can errors.As it without matching strings themselves.
+	if err != nil && strings.Contains(err.Error(), "MaxUploadParts") {
+		return errors.Trace(storeapi.ErrExceedMaxUploadParts)
+	}
 	return errors.Trace(err)
 }
