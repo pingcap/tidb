@@ -164,7 +164,25 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 		require.Equal(t, expected.RowEnd, actual.RowEnd)
 	}
 
-	// 2.2.4 BackfillStepReadIndex
+	// 2.2.4 transient region discontinuity should also be retried when planning the merge-temp-index step.
+	tk.MustExec("create table t4(id bigint primary key, v bigint, key idx(v))")
+	mergeTask, server := createAddIndexTask(t, dom, "test", "t4", proto.Backfill, false)
+	require.Nil(t, server)
+	mergeTable, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t4"))
+	require.NoError(t, err)
+	var mergeTaskMeta ddl.BackfillTaskMeta
+	require.NoError(t, json.Unmarshal(mergeTask.Meta, &mergeTaskMeta))
+	mergeTaskMeta.EleIDs = []int64{mergeTable.Meta().Indices[0].ID}
+	mergeTaskMeta.MergeTempIndex = true
+	mergeTask.Meta, err = json.Marshal(&mergeTaskMeta)
+	require.NoError(t, err)
+	mergeTask.Step = proto.BackfillStepMergeTempIndex
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockMergeTempIndexRegionDiscontinuity", "1*return()")
+	metas, err = sch.OnNextSubtasksBatch(ctx, nil, mergeTask, execIDs, mergeTask.Step)
+	require.NoError(t, err)
+	require.Len(t, metas, 1)
+
+	// 2.2.5 BackfillStepReadIndex
 	task.State = proto.TaskStateRunning
 	task.Step = sch.GetNextStep(&task.TaskBase)
 	require.Equal(t, proto.StepDone, task.Step)

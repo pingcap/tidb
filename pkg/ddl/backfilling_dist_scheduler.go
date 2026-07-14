@@ -364,7 +364,8 @@ func generatePlanForPhysicalTable(
 			return bytes.Compare(recordRegionMetas[i].StartKey(), recordRegionMetas[j].StartKey()) < 0
 		})
 
-		// Check if regions are continuous.
+		// LoadRegionsInKeyRange can combine multiple PD scans. A concurrent region
+		// split or merge can make those scans discontinuous, so retry the full scan.
 		shouldRetry := false
 		cur := recordRegionMetas[0]
 		for _, m := range recordRegionMetas[1:] {
@@ -900,7 +901,7 @@ func genMergeTempPlanForOneIndex(
 	pid := tbl.GetPhysicalID()
 	start, end := encodeTempIndexRange(pid, idxInfo.ID, idxInfo.ID)
 
-	subTaskMetas := make([][]byte, 0, 4)
+	var subTaskMetas [][]byte
 	backoffer := backoff.NewExponential(scanRegionBackoffBase, 2, scanRegionBackoffMax)
 	err := handle.RunWithRetry(ctx, 8, backoffer, logutil.DDLLogger(), func(_ context.Context) (bool, error) {
 		regionCache := store.(helper.Storage).GetRegionCache()
@@ -912,7 +913,8 @@ func genMergeTempPlanForOneIndex(
 			return bytes.Compare(regionMetas[i].StartKey(), regionMetas[j].StartKey()) < 0
 		})
 
-		// Check if regions are continuous.
+		// LoadRegionsInKeyRange can combine multiple PD scans. A concurrent region
+		// split or merge can make those scans discontinuous, so retry the full scan.
 		shouldRetry := false
 		cur := regionMetas[0]
 		for _, m := range regionMetas[1:] {
@@ -922,11 +924,15 @@ func genMergeTempPlanForOneIndex(
 			}
 			cur = m
 		}
+		failpoint.Inject("mockMergeTempIndexRegionDiscontinuity", func() {
+			shouldRetry = true
+		})
 
 		if shouldRetry {
-			return true, nil
+			return true, errors.New("regions are not continuous")
 		}
 
+		attemptMetas := make([][]byte, 0, 4)
 		regionBatch := calculateTempIndexRegionBatch(len(regionMetas), nodeCnt)
 		logger.Info("calculate temp index region batch",
 			zap.Int64("physicalTableID", pid),
@@ -955,8 +961,9 @@ func genMergeTempPlanForOneIndex(
 			if err != nil {
 				return false, err
 			}
-			subTaskMetas = append(subTaskMetas, metaBytes)
+			attemptMetas = append(attemptMetas, metaBytes)
 		}
+		subTaskMetas = attemptMetas
 		return false, nil
 	})
 	if err != nil {
