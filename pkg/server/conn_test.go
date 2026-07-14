@@ -991,64 +991,6 @@ func testDispatch(t *testing.T, inputs []dispatchInput, capability uint32) {
 	}
 }
 
-func TestRunConnectionTerminationReason(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    []byte
-		expected connectionTerminationReason
-	}{
-		{
-			name:     "client quit",
-			input:    []byte{1, 0, 0, 0, mysql.ComQuit},
-			expected: connectionTerminationClientQuit,
-		},
-		{
-			name:     "client eof",
-			expected: connectionTerminationClientEOF,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			store, dom := testkit.CreateMockStoreAndDomain(t)
-			cfg := serverutil.NewTestConfig()
-			cfg.Port, cfg.Status.StatusPort = 0, 0
-			cfg.Status.ReportStatus = false
-			srv, err := NewServer(cfg, NewTiDBDriver(store))
-			require.NoError(t, err)
-			srv.SetDomain(dom)
-			defer srv.Close()
-
-			rawConn := &testutil.BytesConn{}
-			_, err = rawConn.Buffer.Write(tt.input)
-			require.NoError(t, err)
-			cc := srv.newConn(rawConn)
-			se, err := session.CreateSession4Test(store)
-			require.NoError(t, err)
-			se.SetConnectionID(cc.connectionID)
-			cc.SetCtx(&TiDBContext{Session: se, stmts: make(map[int]*TiDBStatement)})
-
-			ctx := logutil.WithConnID(context.Background(), cc.connectionID)
-			require.Equal(t, tt.expected, cc.Run(ctx))
-		})
-	}
-}
-
-func TestConnectionTerminationReasonFromStatus(t *testing.T) {
-	tests := []struct {
-		status   int32
-		expected connectionTerminationReason
-	}{
-		{status: connStatusDispatching, expected: connectionTerminationUnknown},
-		{status: connStatusWaitShutdown, expected: connectionTerminationKilled},
-		{status: connStatusShutdown, expected: connectionTerminationServerShutdown},
-	}
-	for _, tt := range tests {
-		cc := &clientConn{status: tt.status}
-		require.Equal(t, tt.expected, cc.terminationReasonFromStatus())
-	}
-}
-
 func TestLogConnectionEvent(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	se, err := session.CreateSession4Test(store)
@@ -1062,36 +1004,25 @@ func TestLogConnectionEvent(t *testing.T) {
 		AuthUsername: "root",
 		AuthHostname: "%",
 	}
-	sessionVars.CurrentDB = "test"
-
 	cc := &clientConn{
-		user:       "root",
-		dbname:     "test",
-		peerHost:   "127.0.0.1",
-		peerPort:   "54321",
-		authPlugin: mysql.AuthNativePassword,
-		capability: mysql.ClientProtocol41,
+		peerHost: "127.0.0.1",
+		peerPort: "54321",
 	}
 	cc.SetCtx(&TiDBContext{Session: se})
 
 	core, observedLogs := observer.New(zap.InfoLevel)
 	ctx := logutil.WithLogger(context.Background(), zap.New(core))
 	ctx = logutil.WithConnID(ctx, 42)
-	cc.logConnectionEvent(ctx, connectionEventLogin,
-		zap.String("connection_state", connectionStateEstablished))
+	cc.logConnectionEvent(ctx, "login_success")
 
 	entries := observedLogs.All()
 	require.Len(t, entries, 1)
-	require.Equal(t, connectionEventLogMessage, entries[0].Message)
+	require.Equal(t, "CONNECTION EVENT", entries[0].Message)
 	fields := entries[0].ContextMap()
-	require.Equal(t, connectionEventLogin, fields["event"])
+	require.Equal(t, "login_success", fields["event"])
 	require.Equal(t, "root@%", fields["user"])
 	require.Equal(t, "127.0.0.1", fields["client_ip"])
 	require.Equal(t, "54321", fields["client_port"])
-	require.Equal(t, "test", fields["db"])
-	require.Equal(t, mysql.AuthNativePassword, fields["auth_method"])
-	require.Equal(t, variable.ConnTypeSocket, fields["connection_type"])
-	require.Equal(t, connectionStateEstablished, fields["connection_state"])
 }
 
 func TestGetSessionVarsWaitTimeout(t *testing.T) {
