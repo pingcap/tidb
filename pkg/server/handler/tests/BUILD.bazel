@@ -10,11 +10,7 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 45,
-=======
-    shard_count = 47,
->>>>>>> 7ab6def534c (dxf, server: batch history transfer and bound task cleanup (#69811))
+    shard_count = 46,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
@@ -52,6 +48,7 @@ go_test(
         "//pkg/statistics/handle/ddl/testutil",
         "//pkg/store",
         "//pkg/store/helper",
+        "//pkg/store/mockstore",
         "//pkg/store/mockstore/teststore",
         "//pkg/store/mockstore/unistore",
         "//pkg/table",
