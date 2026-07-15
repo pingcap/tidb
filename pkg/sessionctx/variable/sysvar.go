@@ -1610,6 +1610,12 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: ScopeGlobal, Name: TiDBEnableConnectionEventLog, Value: BoolToOnOff(DefTiDBEnableConnectionEventLog), Type: TypeBool, SetGlobal: func(_ context.Context, _ *SessionVars, val string) error {
+		EnableConnectionEventLog.Store(TiDBOptOn(val))
+		return nil
+	}, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
+		return BoolToOnOff(EnableConnectionEventLog.Load()), nil
+	}},
 
 	/* The system variables below have GLOBAL and SESSION scope  */
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnablePlanReplayerContinuousCapture, Value: BoolToOnOff(false), Type: TypeBool,
@@ -3728,12 +3734,6 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableCachePrepareStmt, Value: BoolToOnOff(DefEnableCachePrepareStmt), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableCachePrepareStmt = TiDBOptOn(val)
 		return nil
-	}},
-	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableConnectionEventLog, Value: BoolToOnOff(vardef.DefTiDBEnableConnectionEventLog), Type: vardef.TypeBool, SetGlobal: func(_ context.Context, _ *SessionVars, val string) error {
-		vardef.EnableConnectionEventLog.Store(TiDBOptOn(val))
-		return nil
-	}, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
-		return BoolToOnOff(vardef.EnableConnectionEventLog.Load()), nil
 	}},
 }
 

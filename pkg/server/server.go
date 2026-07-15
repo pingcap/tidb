@@ -68,7 +68,6 @@ import (
 	servererr "github.com/pingcap/tidb/pkg/server/err"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util"
@@ -770,7 +769,7 @@ func (s *Server) onConn(conn *clientConn) {
 }
 
 func (cc *clientConn) logConnectionEvent(ctx context.Context, event string) {
-	if !vardef.EnableConnectionEventLog.Load() {
+	if !variable.EnableConnectionEventLog.Load() {
 		return
 	}
 	logutil.Logger(ctx).Info("connection event",
