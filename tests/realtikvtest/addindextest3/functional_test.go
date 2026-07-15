@@ -303,7 +303,13 @@ func TestAddIndexPresplitFunctional(t *testing.T) {
 	tk.MustExec("set @@session.tidb_ddl_enable_auto_split_hot_region = on")
 	tk.MustExec("create table t (a int primary key, b int)")
 	for i := range 40 {
-		tk.MustExec(fmt.Sprintf("insert into t values (%[1]d, %[1]d)", i))
+		b := i
+		if i < 20 {
+			b = 1
+		} else if i < 30 {
+			b = 2
+		}
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, b))
 	}
 	tk.MustExec("analyze table t all columns")
 	h := dom.StatsHandle()

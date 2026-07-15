@@ -60,27 +60,12 @@ func (*fakeAutoSplitStore) CheckRegionInScattering(uint64) (bool, error) {
 
 func newAutoSplitTestConfig() autoSplitHotRegionConfig {
 	return autoSplitHotRegionConfig{
-		minTableRows:                   10,
-		rowsPerRegion:                  25,
-		maxFullRangeRegionsPerPhysical: 4,
-		maxTopNKeysPerPhysical:         2,
-		topNMinCount:                   10,
-		topNMinRatio:                   0.1,
-		minStatsHealthy:                80,
+		minTableRows:           10,
+		maxTopNKeysPerPhysical: 2,
+		topNMinCount:           10,
+		topNMinRatio:           0.1,
+		minStatsHealthy:        80,
 	}
-}
-
-func TestPlanAutoSplitIndexRegionsFullRange(t *testing.T) {
-	sctx := mock.NewContext()
-	tblInfo, idxInfo := buildAutoSplitTestTableInfo()
-	statsTbl := buildAutoSplitTestStats(tblInfo.ID, 100, 0, tblInfo.Columns[1], nil)
-	cfg := newAutoSplitTestConfig()
-	cfg.maxTopNKeysPerPhysical = 0
-
-	keys, _, err := planAutoSplitIndexRegions(
-		sctx, fakeAutoSplitStatsProvider{tblInfo.ID: statsTbl}, tblInfo, idxInfo, cfg)
-	require.NoError(t, err)
-	require.Equal(t, 3, countSplitKeysForIndex(t, keys, idxInfo.ID))
 }
 
 func TestPlanAutoSplitIndexRegionsTopN(t *testing.T) {
@@ -89,7 +74,6 @@ func TestPlanAutoSplitIndexRegionsTopN(t *testing.T) {
 	topN := buildAutoSplitTopN(t, sctx.GetSessionVars().StmtCtx.TimeZone(), []int64{10, 20, 30}, []uint64{11, 50, 40})
 	statsTbl := buildAutoSplitTestStats(tblInfo.ID, 100, 0, tblInfo.Columns[1], topN)
 	cfg := newAutoSplitTestConfig()
-	cfg.rowsPerRegion = 1_000
 
 	keys, _, err := planAutoSplitIndexRegions(
 		sctx, fakeAutoSplitStatsProvider{tblInfo.ID: statsTbl}, tblInfo, idxInfo, cfg)
@@ -98,7 +82,6 @@ func TestPlanAutoSplitIndexRegionsTopN(t *testing.T) {
 	require.ElementsMatch(t, []string{"20", "30"}, splitKeyFirstValuesForIndex(t, keys, idxInfo.ID))
 
 	defaultCfg := getAutoSplitHotRegionConfig()
-	require.Equal(t, 100, defaultCfg.maxFullRangeRegionsPerPhysical)
 	require.Equal(t, 100, defaultCfg.maxTopNKeysPerPhysical)
 	require.Equal(t, uint64(500_000), defaultCfg.topNMinCount)
 
@@ -204,6 +187,9 @@ func TestPreSplitIndexRegionsAutoGateAndManualOverride(t *testing.T) {
 	require.Equal(t, model.AutoSplitHotRegionStatusFailed, result.Status)
 	require.Contains(t, result.Reason, "failed to build TopN split keys")
 
+	hotTopN := buildAutoSplitTopN(t, sctx.GetSessionVars().StmtCtx.TimeZone(), []int64{20, 30}, []uint64{50, 40})
+	hotStatsTbl := buildAutoSplitTestStats(tblInfo.ID, 100, 0, tblInfo.Columns[1], hotTopN)
+	hotStatsProvider := fakeAutoSplitStatsProvider{tblInfo.ID: hotStatsTbl}
 	for _, tc := range []struct {
 		name   string
 		store  kv.Storage
@@ -228,11 +214,11 @@ func TestPreSplitIndexRegionsAutoGateAndManualOverride(t *testing.T) {
 			capturedKeys = nil
 			err := preSplitIndexRegions(
 				context.Background(), sctx, tc.store, tblInfo, []*model.IndexInfo{idxInfo},
-				reorgMeta, args, statsProvider, true)
+				reorgMeta, args, hotStatsProvider, true)
 			require.NoError(t, err)
-			require.Equal(t, 3, countSplitKeysForIndex(t, capturedKeys, idxInfo.ID))
+			require.Equal(t, 2, countSplitKeysForIndex(t, capturedKeys, idxInfo.ID))
 			tc.result.IndexName = "idx"
-			tc.result.SplitKeyCount = 4
+			tc.result.SplitKeyCount = 3
 			require.Equal(t, []model.AutoSplitHotRegionResult{tc.result}, reorgMeta.AutoSplitHotRegionResults)
 		})
 	}
