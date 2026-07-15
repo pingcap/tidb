@@ -291,7 +291,7 @@ func generateNonPartitionPlan(
 		return nil, errors.Trace(err)
 	}
 
-	subTaskMetas := make([][]byte, 0, 4)
+	var subTaskMetas [][]byte
 	backoffer := backoff.NewExponential(scanRegionBackoffBase, 2, scanRegionBackoffMax)
 	err = handle.RunWithRetry(ctx, 8, backoffer, logutil.DDLLogger(), func(_ context.Context) (bool, error) {
 		regionCache := d.store.(helper.Storage).GetRegionCache()
@@ -303,7 +303,8 @@ func generateNonPartitionPlan(
 			return bytes.Compare(recordRegionMetas[i].StartKey(), recordRegionMetas[j].StartKey()) < 0
 		})
 
-		// Check if regions are continuous.
+		// LoadRegionsInKeyRange can combine multiple PD scans. A concurrent region
+		// split or merge can make those scans discontinuous, so retry the full scan.
 		shouldRetry := false
 		cur := recordRegionMetas[0]
 		for _, m := range recordRegionMetas[1:] {
@@ -313,11 +314,15 @@ func generateNonPartitionPlan(
 			}
 			cur = m
 		}
+		failpoint.Inject("mockPhysicalTableRegionDiscontinuity", func() {
+			shouldRetry = true
+		})
 
 		if shouldRetry {
-			return true, nil
+			return true, errors.New("regions are not continuous")
 		}
 
+		attemptMetas := make([][]byte, 0, 4)
 		regionBatch := CalculateRegionBatch(len(recordRegionMetas), nodeCnt, !useCloud)
 		logger.Info("calculate region batch",
 			zap.Int("totalRegionCnt", len(recordRegionMetas)),
@@ -330,7 +335,7 @@ func generateNonPartitionPlan(
 			// It should be different for each subtask to determine if there are duplicate entries.
 			importTS, err := allocNewTS(ctx, d.store.(kv.StorageWithPD))
 			if err != nil {
-				return true, nil
+				return true, err
 			}
 			end := i + regionBatch
 			if end > len(recordRegionMetas) {
@@ -352,8 +357,9 @@ func generateNonPartitionPlan(
 			if err != nil {
 				return false, err
 			}
-			subTaskMetas = append(subTaskMetas, metaBytes)
+			attemptMetas = append(attemptMetas, metaBytes)
 		}
+		subTaskMetas = attemptMetas
 		return false, nil
 	})
 	if err != nil {
@@ -471,6 +477,11 @@ func generateGlobalSortIngestPlan(
 }
 
 func allocNewTS(ctx context.Context, store kv.StorageWithPD) (uint64, error) {
+	failpoint.Inject("mockAllocNewTSError", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(0, errors.New("mock alloc new TS error"))
+		}
+	})
 	pdCli := store.GetPDClient()
 	p, l, err := pdCli.GetTS(ctx)
 	if err != nil {
@@ -736,3 +747,162 @@ func forEachBackfillSubtaskMeta(
 	}
 	return nil
 }
+<<<<<<< HEAD
+=======
+
+func generateMergeTempIndexPlan(
+	ctx context.Context,
+	store kv.Storage,
+	tbl table.Table,
+	nodeCnt int,
+	idxIDs []int64,
+	logger *zap.Logger,
+) ([][]byte, error) {
+	tblInfo := tbl.Meta()
+	idxInfos, err := findIndexInfosByIDs(tblInfo, idxIDs)
+	if err != nil {
+		return nil, err
+	}
+	physicalTbl := tbl.(table.PhysicalTable)
+	if tblInfo.Partition == nil {
+		allMeta := make([][]byte, 0, 16)
+		for _, idxInfo := range idxInfos {
+			meta, err := genMergeTempPlanForOneIndex(ctx, store, physicalTbl, idxInfo, nodeCnt, logger)
+			if err != nil {
+				return nil, err
+			}
+			allMeta = append(allMeta, meta...)
+		}
+		return allMeta, nil
+	}
+
+	allMeta := make([][]byte, 0, 16)
+	for _, idxInfo := range idxInfos {
+		if idxInfo.Global {
+			meta, err := genMergeTempPlanForOneIndex(ctx, store, physicalTbl, idxInfo, nodeCnt, logger)
+			if err != nil {
+				return nil, err
+			}
+			allMeta = append(allMeta, meta...)
+			continue
+		}
+		defs := tblInfo.Partition.Definitions
+		for _, def := range defs {
+			partTbl := tbl.GetPartitionedTable().GetPartition(def.ID)
+			partMeta, err := genMergeTempPlanForOneIndex(ctx, store, partTbl, idxInfo, nodeCnt, logger)
+			if err != nil {
+				return nil, err
+			}
+			allMeta = append(allMeta, partMeta...)
+		}
+	}
+	return allMeta, nil
+}
+
+func findIndexInfosByIDs(
+	tblInfo *model.TableInfo,
+	idxIDs []int64,
+) ([]*model.IndexInfo, error) {
+	idxInfos := make([]*model.IndexInfo, 0, len(idxIDs))
+	for _, id := range idxIDs {
+		idx := model.FindIndexInfoByID(tblInfo.Indices, id)
+		if idx == nil {
+			return nil, errors.Errorf("index ID %d not found", id)
+		}
+		idxInfos = append(idxInfos, idx)
+	}
+	return idxInfos, nil
+}
+
+func genMergeTempPlanForOneIndex(
+	ctx context.Context,
+	store kv.Storage,
+	tbl table.PhysicalTable,
+	idxInfo *model.IndexInfo,
+	nodeCnt int,
+	logger *zap.Logger,
+) ([][]byte, error) {
+	pid := tbl.GetPhysicalID()
+	start, end := encodeTempIndexRange(pid, idxInfo.ID, idxInfo.ID)
+
+	var subTaskMetas [][]byte
+	backoffer := backoff.NewExponential(scanRegionBackoffBase, 2, scanRegionBackoffMax)
+	err := handle.RunWithRetry(ctx, 8, backoffer, logutil.DDLLogger(), func(_ context.Context) (bool, error) {
+		regionCache := store.(helper.Storage).GetRegionCache()
+		regionMetas, err := regionCache.LoadRegionsInKeyRange(tikv.NewBackofferWithVars(context.Background(), 20000, nil), start, end)
+		if err != nil {
+			return false, err
+		}
+		sort.Slice(regionMetas, func(i, j int) bool {
+			return bytes.Compare(regionMetas[i].StartKey(), regionMetas[j].StartKey()) < 0
+		})
+
+		// LoadRegionsInKeyRange can combine multiple PD scans. A concurrent region
+		// split or merge can make those scans discontinuous, so retry the full scan.
+		shouldRetry := false
+		cur := regionMetas[0]
+		for _, m := range regionMetas[1:] {
+			if !bytes.Equal(cur.EndKey(), m.StartKey()) {
+				shouldRetry = true
+				break
+			}
+			cur = m
+		}
+		failpoint.Inject("mockMergeTempIndexRegionDiscontinuity", func() {
+			shouldRetry = true
+		})
+
+		if shouldRetry {
+			return true, errors.New("regions are not continuous")
+		}
+
+		attemptMetas := make([][]byte, 0, 4)
+		regionBatch := calculateTempIndexRegionBatch(len(regionMetas), nodeCnt)
+		logger.Info("calculate temp index region batch",
+			zap.Int64("physicalTableID", pid),
+			zap.Int("totalRegionCnt", len(regionMetas)),
+			zap.Int("regionBatch", regionBatch),
+			zap.Int("instanceCnt", nodeCnt),
+		)
+
+		for i := 0; i < len(regionMetas); i += regionBatch {
+			endIdx := min(i+regionBatch, len(regionMetas))
+			batch := regionMetas[i:endIdx]
+			subTaskMeta := &BackfillSubTaskMeta{
+				PhysicalTableID: pid,
+				SortedKVMeta: globalsort.SortedKVMeta{
+					StartKey: batch[0].StartKey(),
+					EndKey:   batch[len(batch)-1].EndKey(),
+				},
+			}
+			if i == 0 {
+				subTaskMeta.StartKey = start
+			}
+			if endIdx == len(regionMetas) {
+				subTaskMeta.EndKey = end
+			}
+			metaBytes, err := subTaskMeta.Marshal()
+			if err != nil {
+				return false, err
+			}
+			attemptMetas = append(attemptMetas, metaBytes)
+		}
+		subTaskMetas = attemptMetas
+		return false, nil
+	})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(subTaskMetas) == 0 {
+		return nil, errors.Errorf("regions are not continuous")
+	}
+	return subTaskMetas, nil
+}
+
+func calculateTempIndexRegionBatch(totalRegionCnt int, nodeCnt int) int {
+	var regionBatch int
+	avgTasksPerInstance := (totalRegionCnt + nodeCnt - 1) / nodeCnt // ceiling
+	regionBatch = max(avgTasksPerInstance, 1)
+	return regionBatch
+}
+>>>>>>> 92fc143fe36 (ddl: prevent partial ADD INDEX plans after transient TSO errors (#69834))
