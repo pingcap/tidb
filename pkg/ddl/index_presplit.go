@@ -164,17 +164,8 @@ func appendAutoSplitHotRegionResult(
 		SplitKeyCount:        splitKeyCount,
 		SplitRegionCount:     splitRegionCount,
 		ScatteredRegionCount: scatteredRegionCount,
-		Reason:               truncateAutoSplitHotRegionReason(reason),
+		Reason:               reason,
 	})
-}
-
-const maxAutoSplitHotRegionReasonLen = 512
-
-func truncateAutoSplitHotRegionReason(reason string) string {
-	if len(reason) <= maxAutoSplitHotRegionReasonLen {
-		return reason
-	}
-	return reason[:maxAutoSplitHotRegionReasonLen] + "..."
 }
 
 type splitArgs struct {
