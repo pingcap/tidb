@@ -1560,12 +1560,11 @@ func (h RegionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	regionIDInt, err := strconv.ParseInt(params[handler.RegionID], 0, 64)
+	regionID, err := strconv.ParseUint(params[handler.RegionID], 0, 64)
 	if err != nil {
 		handler.WriteError(w, err)
 		return
 	}
-	regionID := uint64(regionIDInt)
 
 	// locate region
 	region, err := h.RegionCache.LocateRegionByID(tikv.NewBackofferWithVars(context.Background(), 500, nil), regionID)
@@ -1800,7 +1799,7 @@ func (MvccTxnHandler) decodeMvccData(bs []byte, colMap map[int64]*types.FieldTyp
 }
 
 func (h *MvccTxnHandler) handleMvccGetByTxn(params map[string]string) (any, error) {
-	startTS, err := strconv.ParseInt(params[handler.StartTS], 0, 64)
+	startTS, err := strconv.ParseUint(params[handler.StartTS], 0, 64)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1810,7 +1809,7 @@ func (h *MvccTxnHandler) handleMvccGetByTxn(params map[string]string) (any, erro
 	}
 	startKey := tablecodec.EncodeTablePrefix(tableID)
 	endKey := tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(math.MaxInt64))
-	return h.GetMvccByStartTs(uint64(startTS), startKey, endKey)
+	return h.GetMvccByStartTs(startTS, startKey, endKey)
 }
 
 // ServerInfo is used to report the servers info when do http request.
