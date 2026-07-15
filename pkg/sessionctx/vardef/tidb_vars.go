@@ -540,6 +540,8 @@ const (
 	TiDBMaxPagingSize = "tidb_max_paging_size"
 
 	// TiDBPagingSizeBytes is the byte budget per coprocessor page.
+	// A non-zero value takes effect only when Resource Control is enabled and the active Resource Group
+	// is non-burstable (has limited burst).
 	// 0 means disabled (no byte-budget paging).
 	TiDBPagingSizeBytes = "tidb_paging_size_bytes"
 
@@ -1517,7 +1519,8 @@ const (
 	DefInitChunkSize                    = 32
 	DefMinPagingSize                    = int(paging.MinPagingSize)
 	DefMaxPagingSize                    = int(paging.MinAllowedMaxPagingSize)
-	// DefPagingSizeBytes defaults byte-budget paging to 4 MiB for resource groups with limited burst.
+	// DefPagingSizeBytes defaults byte-budget paging to 4 MiB. It takes effect only when Resource Control
+	// is enabled and the active Resource Group is non-burstable (has limited burst).
 	// Regression tests across cap-bound and under-cap TPC-C, FullScan, and Join workloads found no
 	// material performance regression. Among the tested 1, 2, 4, 8, and 16 MiB candidates, 4 MiB
 	// provided the best overall balance of throughput, tail latency, RU stability, RPC overhead, CPU,
