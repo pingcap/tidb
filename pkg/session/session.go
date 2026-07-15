@@ -66,6 +66,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/sessionexpr"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/extension/extensionimpl"
+	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
@@ -4613,6 +4614,18 @@ func runInBootstrapSession(store kv.Storage, ver int64) {
 			// TODO remove this after we can refactor below code out in this case.
 			logutil.BgLogger().Info("[upgrade] already upgraded by other nodes, switch to normal mode")
 			startMode = ddl.Normal
+		} else if deploymode.IsStarter() {
+			shouldTerminate, err := extworkload.AbortGCV2ForUpgrade(context.Background(), extworkload.GetManagerFromStore(store))
+			if err != nil {
+				logutil.BgLogger().Fatal("abort GCV2 worker failed", zap.Error(err))
+			}
+			if shouldTerminate {
+				if intest.InTest {
+					return
+				}
+				releaseFn()
+				logutil.BgLogger().Fatal("GCV2 worker aborted before bootstrap upgrade")
+			}
 		}
 	}
 	s, err := createSession(store)
