@@ -286,7 +286,7 @@ func (s *BaseScheduler) onCancelling() error {
 	s.logger.Info("on cancelling state", zap.Stringer("state", task.State),
 		zap.String("step", proto.Step2Str(task.Type, task.Step)))
 
-	return s.revertTask(errors.New(dxfutil.TaskCancelMessage))
+	return s.revertTask(errors.New(storage.TaskCancelMessage))
 }
 
 // handle task in pausing state, cancel all running subtasks.
@@ -834,7 +834,7 @@ func getMetricState(state proto.TaskState, taskErr error) string {
 	case proto.TaskStateFailed:
 		return state.String()
 	case proto.TaskStateReverted:
-		if classification := dxfutil.ClassifyTaskError(state, taskErr); classification != "" {
+		if classification := storage.ClassifyTaskError(state, taskErr); classification != "" {
 			return classification
 		}
 		return proto.TaskStateFailed.String()

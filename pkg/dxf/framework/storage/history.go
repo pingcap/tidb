@@ -23,7 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/dxf/framework/dxfutil"
+	"github.com/pingcap/tidb/pkg/dxf/bizutil"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -37,8 +37,10 @@ const (
 	// MinHistoryTaskPageSize is the minimum page size for history task listing.
 	MinHistoryTaskPageSize = 1
 	// MaxHistoryTaskPageSize is the maximum page size for history task listing.
-	MaxHistoryTaskPageSize    = 200
-	historyTaskSummaryColumns = basicTaskColumns + `, t.error, t.start_time, t.state_update_time, t.end_time`
+	MaxHistoryTaskPageSize     = 200
+	historyTaskSummaryColumns  = basicTaskColumns + `, t.error, t.start_time, t.state_update_time, t.end_time`
+	taskErrorCategoryCancelled = "cancelled"
+	taskErrorCategoryDataError = "data-error"
 )
 
 // TransferSubtasks2HistoryWithSession transfer the selected subtasks into tidb_background_subtask_history table by taskID.
@@ -197,7 +199,7 @@ func row2HistoryTaskSummary(r chunk.Row) *HistoryTaskSummary {
 	}
 	if taskErr := row2TaskError(r, 12); taskErr != nil {
 		item.ErrorCode = taskErrorCode(taskErr)
-		item.ErrorCategory = dxfutil.ClassifyTaskError(item.State, taskErr)
+		item.ErrorCategory = ClassifyTaskError(item.State, taskErr)
 	}
 	if !r.IsNull(13) {
 		item.StartTime, _ = r.GetTime(13).GoTime(time.Local)
@@ -209,6 +211,27 @@ func row2HistoryTaskSummary(r chunk.Row) *HistoryTaskSummary {
 		item.EndTime, _ = r.GetTime(15).GoTime(time.Local)
 	}
 	return item
+}
+
+// ClassifyTaskError returns a safe, coarse classification for a terminal task error.
+func ClassifyTaskError(state proto.TaskState, taskErr error) string {
+	if taskErr == nil {
+		return ""
+	}
+	switch state {
+	case proto.TaskStateFailed:
+		return proto.TaskStateFailed.String()
+	case proto.TaskStateReverted:
+		if IsCancelledErr(taskErr) {
+			return taskErrorCategoryCancelled
+		}
+		if bizutil.IsDataError(taskErr) {
+			return taskErrorCategoryDataError
+		}
+		return proto.TaskStateFailed.String()
+	default:
+		return ""
+	}
 }
 
 func taskErrorCode(taskErr error) string {

@@ -16,22 +16,11 @@ package dxfutil
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
-	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
-)
-
-const (
-	// TaskCancelMessage marks a task reverted because of user cancellation.
-	TaskCancelMessage = "cancelled by user"
-	taskDataError     = "data-error"
-	taskCancelled     = "cancelled"
 )
 
 // sessionProvider provides a session used to access the SQL server runtime.
@@ -73,26 +62,6 @@ func releaseTaskRuntime(runtime sqlsvrapi.Runtime) {
 	}
 }
 
-func withNewSession(pool util.SessionPool, fn func(se sessionctx.Context) error) error {
-	if err := injectfailpoint.DXFRandomErrorWithOnePerThousand(); err != nil {
-		return err
-	}
-	v, err := pool.Get()
-	if err != nil {
-		return err
-	}
-	// When using global sort, the subtask meta might be quite large because it
-	// includes the filenames of all generated KV and statistics files.
-	se := v.(sessionctx.Context)
-	limitBak := se.GetSessionVars().TxnEntrySizeLimit
-	defer func() {
-		se.GetSessionVars().TxnEntrySizeLimit = limitBak
-		pool.Put(v)
-	}()
-	se.GetSessionVars().TxnEntrySizeLimit = vardef.TxnEntrySizeLimit.Load()
-	return fn(se)
-}
-
 // CheckTaskRuntime checks if the runtime is valid for the task with the target keyspace.
 func CheckTaskRuntime(runtime sqlsvrapi.Runtime, taskKS string) error {
 	storeKS := runtime.Store().GetKeyspace()
@@ -102,7 +71,8 @@ func CheckTaskRuntime(runtime sqlsvrapi.Runtime, taskKS string) error {
 		return errors.Trace(fmt.Errorf("store keyspace mismatch with task: %s vs %s",
 			storeKS, taskKS))
 	}
-	if err := withNewSession(runtime.SysSessionPool(), func(se sessionctx.Context) error {
+	taskMgr := storage.NewTaskManager(runtime.SysSessionPool())
+	if err := taskMgr.WithNewSession(func(se sessionctx.Context) error {
 		sessKs := se.GetStore().GetKeyspace()
 		if storeKS != sessKs {
 			// shouldn't happen normally. we do it for the same reason as above.
@@ -119,61 +89,4 @@ func CheckTaskRuntime(runtime sqlsvrapi.Runtime, taskKS string) error {
 // GenHolderID generates a holder ID for the given DXF component and task ID.
 func GenHolderID(component string, taskID int64) string {
 	return fmt.Sprintf("DXF/%s/%d", component, taskID)
-}
-
-// IsCancelledErr checks whether an error marks a user-cancelled task.
-func IsCancelledErr(err error) bool {
-	return err != nil && strings.Contains(err.Error(), TaskCancelMessage)
-}
-
-// IsDataError checks whether an error is caused by invalid or conflicting input data.
-func IsDataError(taskErr error) bool {
-	if taskErr == nil {
-		return false
-	}
-	errMsg := taskErr.Error()
-	// Keep these checks string-based to avoid depending on Lightning error definitions
-	// from the DXF framework. We can replace this when those error definitions are
-	// split out of the Lightning package. DXF error serialization keeps only the
-	// outer error code, so nested data errors must be identified by their canonical
-	// messages.
-	//
-	// import-into examples:
-	// [Lightning:Restore:ErrEncodeKV]when encoding 1-th data row in this chunk:
-	// encode kv error in file orderlab/orderlab.shipment_events.000000000.csv.gz:0
-	// at offset 0: Value conversion failed for column 'event_id'. Expected type:
-	// bigint, received value: ?. Reason: [types:1292]Truncated incorrect DOUBLE value: '?'.
-	//
-	// add-index examples:
-	// [kv:1062]Duplicate entry '1' for key 't.idx'
-	isImportDataErr := strings.Contains(errMsg, "ErrEncodeKV") &&
-		(strings.Contains(errMsg, "Value conversion failed for column") ||
-			(strings.Contains(errMsg, "Check constraint '") && strings.Contains(errMsg, "' is violated")) ||
-			strings.Contains(errMsg, "Table has no partition for value"))
-	isImportConflictErr := (strings.Contains(errMsg, "[executor:8167]") && strings.Contains(errMsg, "Duplicate key conflict found")) ||
-		(strings.Contains(errMsg, "ErrFoundDataConflictRecords") && strings.Contains(errMsg, "found data conflict records")) ||
-		(strings.Contains(errMsg, "ErrFoundIndexConflictRecords") && strings.Contains(errMsg, "found index conflict records"))
-	isUKDupEntryErr := strings.Contains(errMsg, "[kv:1062]") && strings.Contains(errMsg, "Duplicate entry")
-	return isImportDataErr || isImportConflictErr || isUKDupEntryErr
-}
-
-// ClassifyTaskError returns a safe, coarse classification for a terminal task error.
-func ClassifyTaskError(state proto.TaskState, taskErr error) string {
-	if taskErr == nil {
-		return ""
-	}
-	switch state {
-	case proto.TaskStateFailed:
-		return proto.TaskStateFailed.String()
-	case proto.TaskStateReverted:
-		if IsCancelledErr(taskErr) {
-			return taskCancelled
-		}
-		if IsDataError(taskErr) {
-			return taskDataError
-		}
-		return proto.TaskStateFailed.String()
-	default:
-		return ""
-	}
 }

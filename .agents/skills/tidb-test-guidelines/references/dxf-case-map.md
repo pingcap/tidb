@@ -6,6 +6,11 @@
 - Each test file has a one-line description based on its primary test/benchmark name.
 - Testdata lists files under `testdata/` mapped to their owning package directory.
 
+## pkg/dxf/bizutil
+
+### Tests
+- `pkg/dxf/bizutil/error_test.go` - dxf/bizutil: Tests classification of task errors caused by invalid or conflicting input data.
+
 ## pkg/dxf/example
 
 ### Tests
@@ -14,7 +19,7 @@
 ## pkg/dxf/framework/dxfutil
 
 ### Tests
-- `pkg/dxf/framework/dxfutil/util_test.go` - dxf/framework/dxfutil: Tests task runtime acquisition, validation, and error categorization.
+- `pkg/dxf/framework/dxfutil/util_test.go` - dxf/framework/dxfutil: Tests task runtime acquisition and validation.
 
 ## pkg/dxf/framework/handle
 
@@ -79,8 +84,9 @@
 ## pkg/dxf/framework/storage
 
 ### Tests
+- `pkg/dxf/framework/storage/history_test.go` - dxf/framework/storage: Tests history task error categorization.
 - `pkg/dxf/framework/storage/table_test.go` - dxf/framework/storage: Tests task table.
-- `pkg/dxf/framework/storage/task_state_test.go` - dxf/framework/storage: Tests task state.
+- `pkg/dxf/framework/storage/task_state_test.go` - dxf/framework/storage: Tests task state and cancellation error detection.
 - `pkg/dxf/framework/storage/task_table_test.go` - dxf/framework/storage: Tests task table.
 
 ## pkg/dxf/framework/taskexecutor

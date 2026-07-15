@@ -20,7 +20,6 @@ import (
 
 	"github.com/ngaut/pools"
 	sqlsvrapimock "github.com/pingcap/tidb/pkg/domain/sqlsvrapi/mock"
-	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -187,23 +186,4 @@ func TestCheckTaskRuntime(t *testing.T) {
 		require.ErrorContains(t, CheckTaskRuntime(runtime, "task_ks"),
 			"invalid task runtime with mismatched keyspace: task_ks vs session_ks")
 	})
-}
-
-func TestTaskErrorCategory(t *testing.T) {
-	require.False(t, IsCancelledErr(nil))
-	require.False(t, IsCancelledErr(goerrors.New("some err")))
-	require.False(t, IsCancelledErr(goerrors.New("context canceled")))
-	require.True(t, IsCancelledErr(goerrors.New("cancelled by user")))
-
-	dataErr := goerrors.New("[Lightning:Restore:ErrEncodeKV]Value conversion failed for column 'a'")
-	require.True(t, IsDataError(dataErr))
-	require.False(t, IsDataError(goerrors.New("Value conversion failed for column 'a'")))
-
-	require.Empty(t, ClassifyTaskError(proto.TaskStateSucceed, nil))
-	require.Empty(t, ClassifyTaskError(proto.TaskStateFailed, nil))
-	require.Equal(t, proto.TaskStateFailed.String(), ClassifyTaskError(proto.TaskStateFailed, goerrors.New("fatal")))
-	require.Equal(t, "cancelled", ClassifyTaskError(proto.TaskStateReverted, goerrors.New("cancelled by user")))
-	require.Equal(t, "data-error", ClassifyTaskError(proto.TaskStateReverted, dataErr))
-	require.Equal(t, proto.TaskStateFailed.String(), ClassifyTaskError(proto.TaskStateReverted, goerrors.New("fatal")))
-	require.Empty(t, ClassifyTaskError(proto.TaskStateRunning, goerrors.New("fatal")))
 }
