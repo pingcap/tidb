@@ -1393,10 +1393,6 @@ func TestParquetParserLargePagePeakMemory(t *testing.T) {
 	require.NoError(t, err)
 	require.Greater(t, columnChunk.TotalUncompressedSize(), int64(20<<20))
 
-	readAheadBytes, err := estimateReadAheadBufferBytes(reader.fileMeta)
-	require.NoError(t, err)
-	require.Equal(t, int64(readBufferSize), readAheadBytes)
-
 	for i := range rows {
 		require.NoError(t, reader.ReadRow())
 		require.Equal(t, makeValue(i), reader.lastRow.Row[0].GetBytes())

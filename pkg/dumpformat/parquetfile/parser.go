@@ -73,10 +73,6 @@ type FileMeta struct {
 	Loc       *time.Location
 }
 
-// readBufferSize is the per-column read-ahead buffer. Page streaming bounds the
-// memory used for large pages, so keep read-ahead small for wide Parquet files.
-const readBufferSize = 1024
-
 func estimateRowSize(row []types.Datum) int {
 	length := 0
 	for _, v := range row {
@@ -637,7 +633,7 @@ func NewParser(
 	prop := parquet.NewReaderProperties(allocator)
 	prop.BufferedStreamEnabled = true
 	prop.PageStreamingEnabled = true
-	prop.BufferSize = readBufferSize
+	prop.BufferSize = 1024
 
 	reader, err := file.NewParquetReader(wrapper, file.WithReadProps(prop))
 	if err != nil {
@@ -896,28 +892,6 @@ func estimateInMemoryRowGroupBufferBytes(fileMeta *metadata.FileMetaData) (int64
 	return preloadBytes, nil
 }
 
-// estimateReadAheadBufferBytes covers the per-column read-ahead buffers, which
-// bypass the tracking allocator. A row group opens all its columns at once, so
-// take the max sum across row groups.
-func estimateReadAheadBufferBytes(fileMeta *metadata.FileMetaData) (int64, error) {
-	if fileMeta == nil || fileMeta.NumRowGroups() == 0 {
-		return 0, nil
-	}
-	var maxBytes int64
-	for g := range fileMeta.NumRowGroups() {
-		rgRange, err := rowGroupRangeFromMeta(fileMeta, g)
-		if err != nil {
-			return 0, err
-		}
-		var total int64
-		for i := range rgRange.columnStarts {
-			total += min(int64(readBufferSize), rgRange.columnEnds[i]-rgRange.columnStarts[i])
-		}
-		maxBytes = max(maxBytes, total)
-	}
-	return maxBytes, nil
-}
-
 // EstimateParquetReaderMemory estimates the peak memory usage for parsing a
 // single parquet file by reading through the first row group with a tracking
 // allocator. Returns the peak memory in bytes.
@@ -951,11 +925,6 @@ func EstimateParquetReaderMemory(
 		return 0, err
 	}
 
-	readAheadBufferBytes, err := estimateReadAheadBufferBytes(meta)
-	if err != nil {
-		return 0, err
-	}
-
 	for range meta.RowGroups[0].NumRows {
 		if err = ctx.Err(); err != nil {
 			return 0, err
@@ -969,11 +938,10 @@ func EstimateParquetReaderMemory(
 		parser.RecycleRow(parser.LastRow())
 	}
 
-	peak := allocator.peakAllocation.Load() + preloadBufferBytes + readAheadBufferBytes
+	peak := allocator.peakAllocation.Load() + preloadBufferBytes
 	logutil.Logger(ctx).Info("estimated parquet reader memory",
 		zap.String("path", path),
 		zap.Int64("in-memory-preload-bytes", preloadBufferBytes),
-		zap.Int64("read-ahead-buffer-bytes", readAheadBufferBytes),
 		zap.Int64("peak-memory-bytes", peak),
 	)
 	return peak, nil
