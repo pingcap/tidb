@@ -36,11 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit"
-<<<<<<< HEAD
-=======
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
-	tidbutil "github.com/pingcap/tidb/pkg/util"
->>>>>>> 92fc143fe36 (ddl: prevent partial ADD INDEX plans after transient TSO errors (#69834))
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
