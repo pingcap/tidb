@@ -1575,6 +1575,9 @@ var TestShowClusterConfigKey stringutil.StringerStr = "TestShowClusterConfigKey"
 type TestShowClusterConfigFunc func() ([][]types.Datum, error)
 
 func (e *ShowExec) fetchShowClusterConfigs() error {
+	if err := checkConfigReadPriv(e.Ctx()); err != nil {
+		return err
+	}
 	emptySet := set.NewStringSet()
 	var confItems [][]types.Datum
 	var err error

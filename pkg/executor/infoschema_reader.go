@@ -351,6 +351,18 @@ func hasPriv(ctx sessionctx.Context, priv mysql.PrivilegeType) bool {
 	return pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, "", "", "", priv)
 }
 
+func checkConfigReadPriv(sctx sessionctx.Context) error {
+	if hasPriv(sctx, mysql.ConfigPriv) {
+		return nil
+	}
+
+	pm := privilege.GetPrivilegeManager(sctx)
+	if pm == nil || pm.HasExplicitlyGrantedDynamicPrivilege(sctx.GetSessionVars().ActiveRoles, "CONFIG_VIEW", false) {
+		return nil
+	}
+	return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CONFIG or CONFIG_VIEW")
+}
+
 func (e *memtableRetriever) setDataForVariablesInfo(ctx sessionctx.Context) error {
 	sysVars := variable.GetSysVars()
 	rows := make([][]types.Datum, 0, len(sysVars))

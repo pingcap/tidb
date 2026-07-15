@@ -696,16 +696,21 @@ DROP USER 'ru1'@'localhost';
 disconnect ru1;
 
 # TestClusterConfigInfoschema
-CREATE USER ccnobody, ccconfig, ccprocess;
+CREATE USER ccnobody, ccconfig, ccconfigview, ccprocess;
 GRANT CONFIG ON *.* TO ccconfig;
+GRANT CONFIG_VIEW ON *.* TO ccconfigview;
 GRANT Process ON *.* TO ccprocess;
 connect (ccnobody,localhost,ccnobody,,);
 connection ccnobody;
 SHOW GRANTS;
 -- error 1227
+SHOW CONFIG WHERE type='__no_such_type__';
+-- error 1227
 SELECT * FROM information_schema.cluster_config;
 -- error 1227
 SELECT * FROM information_schema.cluster_hardware;
+-- error 1227
+SET CONFIG xxx log.level='info';
 -- error 1227
 SELECT * FROM information_schema.cluster_info;
 -- error 1227
@@ -716,11 +721,32 @@ SELECT * FROM information_schema.cluster_systeminfo;
 SELECT * FROM information_schema.cluster_log WHERE time BETWEEN '2021-07-13 00:00:00' AND '2021-07-13 02:00:00' AND message like '%';
 disconnect ccnobody;
 
+connect (ccconfigview,localhost,ccconfigview,,);
+connection ccconfigview;
+SHOW GRANTS;
+SHOW CONFIG WHERE type='__no_such_type__';
+SELECT * FROM information_schema.cluster_config limit 0;
+SELECT * FROM information_schema.cluster_hardware limit 0;
+-- error 1227
+SET CONFIG xxx log.level='info';
+-- error 1227
+SELECT * FROM information_schema.cluster_info;
+-- error 1227
+SELECT * FROM information_schema.cluster_load;
+-- error 1227
+SELECT * FROM information_schema.cluster_systeminfo;
+-- error 1227
+SELECT * FROM information_schema.cluster_log WHERE time BETWEEN '2021-07-13 00:00:00' AND '2021-07-13 02:00:00' AND message like '%';
+disconnect ccconfigview;
+
 connect (ccconfig,localhost,ccconfig,,);
 connection ccconfig;
 SHOW GRANTS;
+SHOW CONFIG WHERE type='__no_such_type__';
 SELECT * FROM information_schema.cluster_config limit 0;
 SELECT * FROM information_schema.cluster_HARDWARE limit 0;
+-- error 1105
+SET CONFIG xxx log.level='info';
 -- error 1227
 SELECT * FROM information_schema.cluster_INFO;
 -- error 1227
@@ -744,6 +770,7 @@ SELECT * FROM information_schema.CLUSTER_config;
 SELECT * FROM information_schema.CLUSTER_hardware;
 disconnect ccprocess;
 connection default;
+DROP USER ccnobody, ccconfig, ccconfigview, ccprocess;
 
 
 # TestSetPasswdStmt

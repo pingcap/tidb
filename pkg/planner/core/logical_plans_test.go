@@ -1505,12 +1505,6 @@ func testNormalVisitInfo(t *testing.T) {
 				{mysql.CreateUserPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, nil, false},
 			},
 		},
-		{
-			sql: "SHOW CONFIG",
-			ans: []visitInfo{
-				{mysql.ConfigPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, nil, false},
-			},
-		},
 	}
 	for _, tt := range tests {
 		s := createPlannerSuite()

@@ -182,8 +182,8 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 		rows [][]types.Datum
 		err  error
 	}
-	if !hasPriv(sctx, mysql.ConfigPriv) {
-		return nil, plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CONFIG")
+	if err := checkConfigReadPriv(sctx); err != nil {
+		return nil, err
 	}
 	serversInfo, err := infoschema.GetClusterServerInfo(sctx)
 	failpoint.Inject("mockClusterConfigServerInfo", func(val failpoint.Value) {
@@ -330,8 +330,8 @@ func (e *clusterServerInfoRetriever) retrieve(ctx context.Context, sctx sessionc
 			return nil, plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 		}
 	case diagnosticspb.ServerInfoType_HardwareInfo:
-		if !hasPriv(sctx, mysql.ConfigPriv) {
-			return nil, plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CONFIG")
+		if err := checkConfigReadPriv(sctx); err != nil {
+			return nil, err
 		}
 	}
 	if e.extractor.SkipRequest || e.retrieved {

@@ -727,26 +727,37 @@ func TestUseDB(t *testing.T) {
 func TestConfigPrivilege(t *testing.T) {
 	store := createStoreAndPrepareDB(t)
 
+	rootTk := testkit.NewTestKit(t, store)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`DROP USER IF EXISTS tcd1`)
-	tk.MustExec(`CREATE USER tcd1`)
-	tk.MustExec(`GRANT ALL ON *.* to tcd1`)
-	tk.MustExec(`DROP USER IF EXISTS tcd2`)
-	tk.MustExec(`CREATE USER tcd2`)
-	tk.MustExec(`GRANT ALL ON *.* to tcd2`)
-	tk.MustExec(`REVOKE CONFIG ON *.* FROM tcd2`)
+	rootTk.MustExec(`DROP USER IF EXISTS tcd1`)
+	rootTk.MustExec(`CREATE USER tcd1`)
+	rootTk.MustExec(`GRANT ALL ON *.* to tcd1`)
+	rootTk.MustExec(`DROP USER IF EXISTS tcd2`)
+	rootTk.MustExec(`CREATE USER tcd2`)
+	rootTk.MustExec(`DROP USER IF EXISTS tcd3`)
+	rootTk.MustExec(`CREATE USER tcd3`)
+	rootTk.MustExec(`GRANT CONFIG_VIEW ON *.* TO tcd3`)
 
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "tcd1", Hostname: "localhost", AuthHostname: "tcd1", AuthUsername: "%"}, nil, nil, nil))
-	tk.MustExec(`SHOW CONFIG`)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "tcd1", Hostname: "localhost", AuthUsername: "tcd1", AuthHostname: "%"}, nil, nil, nil))
+	tk.MustQuery(`SHOW CONFIG`)
 	tk.MustExec(`SET CONFIG TIKV testkey="testval"`)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "tcd2", Hostname: "localhost", AuthHostname: "tcd2", AuthUsername: "%"}, nil, nil, nil))
-	err := tk.ExecToErr(`SHOW CONFIG`)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "tcd2", Hostname: "localhost", AuthUsername: "tcd2", AuthHostname: "%"}, nil, nil, nil))
+	err := tk.QueryToErr(`SHOW CONFIG`)
 	require.Error(t, err)
-	require.Regexp(t, "you need \\(at least one of\\) the CONFIG privilege\\(s\\) for this operation$", err.Error())
+	require.Regexp(t, "you need \\(at least one of\\) the CONFIG or CONFIG_VIEW privilege\\(s\\) for this operation$", err.Error())
 	err = tk.ExecToErr(`SET CONFIG TIKV testkey="testval"`)
 	require.Error(t, err)
 	require.Regexp(t, "you need \\(at least one of\\) the CONFIG privilege\\(s\\) for this operation$", err.Error())
-	tk.MustExec(`DROP USER tcd1, tcd2`)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "tcd3", Hostname: "localhost", AuthUsername: "tcd3", AuthHostname: "%"}, nil, nil, nil))
+	tk.MustQuery(`SHOW CONFIG`)
+	err = tk.ExecToErr(`SET CONFIG TIKV testkey="testval"`)
+	require.Error(t, err)
+	require.Regexp(t, "you need \\(at least one of\\) the CONFIG privilege\\(s\\) for this operation$", err.Error())
+	tk.MustQuery(`SHOW GRANTS`).Check(testkit.Rows(
+		"GRANT USAGE ON *.* TO 'tcd3'@'%'",
+		"GRANT CONFIG_VIEW ON *.* TO 'tcd3'@'%'",
+	))
+	rootTk.MustExec(`DROP USER tcd1, tcd2, tcd3`)
 }
 
 func TestShowCreateTable(t *testing.T) {

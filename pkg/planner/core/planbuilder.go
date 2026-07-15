@@ -3937,8 +3937,8 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AllPrivMask, show.Table.Schema.L, show.Table.Name.L, "", err)
 		}
 	case ast.ShowConfig:
-		privErr := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CONFIG")
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ConfigPriv, "", "", "", privErr)
+		// SHOW CONFIG accepts static CONFIG or dynamic CONFIG_VIEW, so it no longer
+		// uses planner-side visitInfo privilege checks and is verified in executor.
 	case ast.ShowCreateView:
 		var err error
 		user := b.ctx.GetSessionVars().User

@@ -4,10 +4,26 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/stretchr/testify/require"
 )
+
+func TestShowConfigUsesExecutorPrivilegeCheck(t *testing.T) {
+	p := parser.New()
+	sctx := MockContext()
+	builder, _ := NewPlanBuilder().Init(sctx, nil, hint.NewQBHintHandler(nil))
+
+	stmt, err := p.ParseOneStmt("show config", "", "")
+	require.NoError(t, err)
+
+	_, err = builder.Build(context.Background(), resolve.NewNodeW(stmt))
+	require.NoError(t, err)
+	require.Empty(t, builder.visitInfo)
+}
 
 func TestGetLogReplOptsMap(t *testing.T) {
 	ret, err := getLogReplOptsMap([]*ast.LogReplicationOpt{})
