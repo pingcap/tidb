@@ -82,14 +82,6 @@ import (
 
 const requestDefaultTimeout = 10 * time.Second
 
-func parseRegionID(params map[string]string) (uint64, error) {
-	return strconv.ParseUint(params[handler.RegionID], 10, 64)
-}
-
-func parseStartTS(params map[string]string) (uint64, error) {
-	return strconv.ParseUint(params[handler.StartTS], 10, 64)
-}
-
 // SettingsHandler is the handler for list tidb server settings.
 type SettingsHandler struct {
 	*handler.TikvHandlerTool
@@ -1568,7 +1560,7 @@ func (h RegionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	regionID, err := parseRegionID(params)
+	regionID, err := strconv.ParseUint(params[handler.RegionID], 10, 64)
 	if err != nil {
 		handler.WriteError(w, err)
 		return
@@ -1807,7 +1799,7 @@ func (MvccTxnHandler) decodeMvccData(bs []byte, colMap map[int64]*types.FieldTyp
 }
 
 func (h *MvccTxnHandler) handleMvccGetByTxn(params map[string]string) (any, error) {
-	startTS, err := parseStartTS(params)
+	startTS, err := strconv.ParseUint(params[handler.StartTS], 10, 64)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

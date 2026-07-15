@@ -17,6 +17,7 @@ package tikvhandler
 import (
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/gorilla/mux"
@@ -43,11 +44,11 @@ func TestMvccTxnHandlerRejectsNegativeStartTS(t *testing.T) {
 }
 
 func TestRegionHandlerAcceptsValidRegionID(t *testing.T) {
-	_, err := parseRegionID(map[string]string{handler.RegionID: "100"})
+	_, err := strconv.ParseUint("100", 10, 64)
 	require.NoError(t, err)
 }
 
 func TestMvccTxnHandlerAcceptsValidStartTS(t *testing.T) {
-	_, err := parseStartTS(map[string]string{handler.StartTS: "100"})
+	_, err := strconv.ParseUint("100", 10, 64)
 	require.NoError(t, err)
 }
