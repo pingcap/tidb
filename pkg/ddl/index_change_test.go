@@ -134,8 +134,8 @@ func TestAddIndexAutoSplitLoadsLeadingColumnTopNFromStorage(t *testing.T) {
 	tk.MustExec("set @@session.tidb_ddl_enable_auto_split_hot_region = 1")
 	tk.MustExec("create table t_auto_split(a int primary key, b int)")
 	tk.MustExec("insert into t_auto_split values " +
-		"(1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8),(9,9),(10,10)," +
-		"(11,11),(12,12),(13,13),(14,14),(15,15),(16,16),(17,17),(18,18),(19,19),(20,20)")
+		"(1,1),(2,1),(3,1),(4,1),(5,1),(6,1),(7,1),(8,1),(9,1),(10,1)," +
+		"(11,2),(12,2),(13,2),(14,2),(15,2),(16,3),(17,4),(18,5),(19,6),(20,7)")
 
 	h := dom.StatsHandle()
 	originLease := h.Lease()

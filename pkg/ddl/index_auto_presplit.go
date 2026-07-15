@@ -33,24 +33,20 @@ type autoSplitStatsProvider interface {
 }
 
 type autoSplitHotRegionConfig struct {
-	minTableRows                   int64
-	rowsPerRegion                  int64
-	maxFullRangeRegionsPerPhysical int
-	maxTopNKeysPerPhysical         int
-	topNMinCount                   uint64
-	topNMinRatio                   float64
-	minStatsHealthy                int64
+	minTableRows           int64
+	maxTopNKeysPerPhysical int
+	topNMinCount           uint64
+	topNMinRatio           float64
+	minStatsHealthy        int64
 }
 
 func getAutoSplitHotRegionConfig() autoSplitHotRegionConfig {
 	cfg := autoSplitHotRegionConfig{
-		minTableRows:                   1_000_000,
-		rowsPerRegion:                  500_000,
-		maxFullRangeRegionsPerPhysical: 100,
-		maxTopNKeysPerPhysical:         100,
-		topNMinCount:                   500_000,
-		topNMinRatio:                   0.01,
-		minStatsHealthy:                80,
+		minTableRows:           1_000_000,
+		maxTopNKeysPerPhysical: 100,
+		topNMinCount:           500_000,
+		topNMinRatio:           0.01,
+		minStatsHealthy:        80,
 	}
 	failpoint.InjectCall("mockAutoSplitHotRegionConfig", &cfg, func(minRows int) {
 		if minRows > 0 {
@@ -62,8 +58,6 @@ func getAutoSplitHotRegionConfig() autoSplitHotRegionConfig {
 
 func (cfg *autoSplitHotRegionConfig) applyTestMinRows(minRows int) {
 	cfg.minTableRows = int64(minRows)
-	cfg.rowsPerRegion = int64(minRows)
-	cfg.maxFullRangeRegionsPerPhysical = 4
 	cfg.maxTopNKeysPerPhysical = 4
 	cfg.topNMinCount = uint64(minRows)
 	cfg.topNMinRatio = 0
@@ -139,24 +133,11 @@ func planAutoSplitPhysicalIndexRegions(
 		topN = colStats.TopN
 	}
 
-	splitKeys := make([][]byte, 0)
-	regionsCnt := min(
-		int((statsTbl.RealtimeCount+cfg.rowsPerRegion-1)/cfg.rowsPerRegion),
-		cfg.maxFullRangeRegionsPerPhysical)
-	if regionsCnt > 1 {
-		lower, upper := getSplitIdxFullRangeDatums(len(idxInfo.Columns))
-		var err error
-		splitKeys, err = getSplitIdxPhysicalKeysFromBound(
-			sctx, tblInfo, idxInfo, physicalID, lower, upper, regionsCnt, splitKeys)
-		if err != nil {
-			return nil, "failed to build full-range split keys", err
-		}
-	}
-
 	topNRows, err := buildAutoSplitTopNRows(sctx, statsTbl, topN, leadingCol, cfg)
 	if err != nil {
 		return nil, "failed to build TopN split keys", err
 	}
+	splitKeys := make([][]byte, 0)
 	if len(topNRows) > 0 {
 		splitKeys, err = getSplitIdxPhysicalKeysFromValueList(sctx, tblInfo, idxInfo, physicalID, topNRows, splitKeys)
 		if err != nil {
