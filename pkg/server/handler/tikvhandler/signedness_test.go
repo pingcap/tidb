@@ -15,35 +15,47 @@
 package tikvhandler
 
 import (
-	"strconv"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
+	"github.com/gorilla/mux"
+	"github.com/pingcap/tidb/pkg/server/handler"
 	"github.com/stretchr/testify/require"
 )
 
-func TestParseUintRejectsNegative(t *testing.T) {
-	// strconv.ParseUint should reject negative values
-	_, err := strconv.ParseUint("-1", 0, 64)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "sign")
+func TestRegionHandlerRejectsNegativeRegionID(t *testing.T) {
+	h := &RegionHandler{TikvHandlerTool: nil}
+	req := httptest.NewRequest(http.MethodGet, "/regions/region_id/-1", nil)
+	req = mux.SetURLVars(req, map[string]string{handler.RegionID: "-1"})
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	require.Equal(t, http.StatusBadRequest, w.Code)
+}
 
-	// strconv.ParseUint should accept normal values
-	v, err := strconv.ParseUint("0", 0, 64)
-	require.NoError(t, err)
-	require.Equal(t, uint64(0), v)
+func TestMvccTxnHandlerRejectsNegativeStartTS(t *testing.T) {
+	h := &MvccTxnHandler{TikvHandlerTool: nil, op: OpMvccGetByTxn}
+	req := httptest.NewRequest(http.MethodGet, "/mvcc/transaction/-1", nil)
+	req = mux.SetURLVars(req, map[string]string{handler.StartTS: "-1"})
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	require.Equal(t, http.StatusBadRequest, w.Code)
+}
 
-	v, err = strconv.ParseUint("12345", 0, 64)
-	require.NoError(t, err)
-	require.Equal(t, uint64(12345), v)
+func TestRegionHandlerAcceptsValidRegionID(t *testing.T) {
+	h := &RegionHandler{TikvHandlerTool: nil}
+	req := httptest.NewRequest(http.MethodGet, "/regions/region_id/100", nil)
+	req = mux.SetURLVars(req, map[string]string{handler.RegionID: "100"})
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	require.NotEqual(t, http.StatusBadRequest, w.Code)
+}
 
-	// strconv.ParseUint should accept max valid value
-	v, err = strconv.ParseUint("18446744073709551615", 0, 64)
-	require.NoError(t, err)
-	require.Equal(t, uint64(18446744073709551615), v)
-
-	// strconv.ParseInt with negative - uint64 cast produces huge number (old behavior)
-	oldVal, err := strconv.ParseInt("-1", 0, 64)
-	require.NoError(t, err)
-	require.Equal(t, int64(-1), oldVal)
-	require.Equal(t, uint64(18446744073709551615), uint64(oldVal))
+func TestMvccTxnHandlerAcceptsValidStartTS(t *testing.T) {
+	h := &MvccTxnHandler{TikvHandlerTool: nil, op: OpMvccGetByTxn}
+	req := httptest.NewRequest(http.MethodGet, "/mvcc/transaction/100", nil)
+	req = mux.SetURLVars(req, map[string]string{handler.StartTS: "100"})
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	require.NotEqual(t, http.StatusBadRequest, w.Code)
 }
