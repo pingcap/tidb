@@ -73,15 +73,9 @@ type FileMeta struct {
 	Loc       *time.Location
 }
 
-const (
-	// streamReadBufferSize is the per-column read-ahead when a row group is read
-	// from storage. 8 MiB balances S3 throughput against memory.
-	streamReadBufferSize = 8 << 20
-	// preloadReadBufferSize is used once a row group is already in memory: reads
-	// hit that buffer, not storage, so a tiny read-ahead avoids wasting
-	// streamReadBufferSize per column.
-	preloadReadBufferSize = 1024
-)
+// readBufferSize is the per-column read-ahead buffer. Page streaming bounds the
+// memory used for large pages, so keep read-ahead small for wide Parquet files.
+const readBufferSize = 1024
 
 func estimateRowSize(row []types.Datum) int {
 	length := 0
@@ -327,12 +321,11 @@ type Parser struct {
 	colTypes []convertedType
 	colNames []string
 
-	ctx         context.Context
-	store       storeapi.Storage
-	path        string
-	propStream  *parquet.ReaderProperties
-	propPreload *parquet.ReaderProperties
-	loc         *time.Location
+	ctx   context.Context
+	store storeapi.Storage
+	path  string
+	prop  *parquet.ReaderProperties
+	loc   *time.Location
 
 	alloc memory.Allocator
 
@@ -370,7 +363,7 @@ func (pp *Parser) Init(loc *time.Location) error {
 }
 
 func (pp *Parser) buildRowGroupParser() (err error) {
-	builder, prop, err := pp.getBuilder()
+	builder, err := pp.getBuilder()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -404,7 +397,7 @@ func (pp *Parser) buildRowGroupParser() (err error) {
 
 			reader, err := file.NewParquetReader(
 				wrapper,
-				file.WithReadProps(prop),
+				file.WithReadProps(pp.prop),
 				file.WithMetadata(pp.fileMeta),
 			)
 			if err != nil {
@@ -431,16 +424,16 @@ func (pp *Parser) buildRowGroupParser() (err error) {
 	return nil
 }
 
-func (pp *Parser) getBuilder() (func(int) (readerAtSeekerCloser, error), *parquet.ReaderProperties, error) {
+func (pp *Parser) getBuilder() (func(int) (readerAtSeekerCloser, error), error) {
 	ranges, err := rowGroupRangeFromMeta(pp.fileMeta, pp.curRowGroup)
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
 	if ranges.end-ranges.start <= int64(rowGroupInMemoryThreshold) {
 		base, err := newInMemoryReaderBase(pp.ctx, pp.store, pp.path, ranges)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		pp.logger.Debug("use in memory reader for parquet file", zap.String("path", pp.path))
 		return func(c int) (readerAtSeekerCloser, error) {
@@ -449,7 +442,7 @@ func (pp *Parser) getBuilder() (func(int) (readerAtSeekerCloser, error), *parque
 				pos:      ranges.columnStarts[c],
 				fileSize: pp.fileMeta.GetSourceFileSize(),
 			}, nil
-		}, pp.propPreload, nil
+		}, nil
 	}
 
 	return func(c int) (readerAtSeekerCloser, error) {
@@ -458,7 +451,7 @@ func (pp *Parser) getBuilder() (func(int) (readerAtSeekerCloser, error), *parque
 				StartOffset: &ranges.columnStarts[c],
 				EndOffset:   &ranges.columnEnds[c],
 			})
-	}, pp.propStream, nil
+	}, nil
 }
 
 func (pp *Parser) moveToNextRowGroup() error {
@@ -641,17 +634,12 @@ func NewParser(
 	if allocator == nil {
 		allocator = memory.NewGoAllocator()
 	}
-	newProp := func(bufSize int64) *parquet.ReaderProperties {
-		p := parquet.NewReaderProperties(allocator)
-		p.BufferedStreamEnabled = true
-		p.PageStreamingEnabled = true
-		p.BufferSize = bufSize
-		return p
-	}
-	streamProp := newProp(streamReadBufferSize)
-	preloadProp := newProp(preloadReadBufferSize)
+	prop := parquet.NewReaderProperties(allocator)
+	prop.BufferedStreamEnabled = true
+	prop.PageStreamingEnabled = true
+	prop.BufferSize = readBufferSize
 
-	reader, err := file.NewParquetReader(wrapper, file.WithReadProps(streamProp))
+	reader, err := file.NewParquetReader(wrapper, file.WithReadProps(prop))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -742,17 +730,16 @@ func NewParser(
 	})
 
 	parser := &Parser{
-		fileMeta:    fileMeta,
-		colTypes:    colTypes,
-		colNames:    colNames,
-		ctx:         ctx,
-		store:       store,
-		path:        path,
-		propStream:  streamProp,
-		propPreload: preloadProp,
-		alloc:       allocator,
-		logger:      logger,
-		rowPool:     &pool,
+		fileMeta: fileMeta,
+		colTypes: colTypes,
+		colNames: colNames,
+		ctx:      ctx,
+		store:    store,
+		path:     path,
+		prop:     prop,
+		alloc:    allocator,
+		logger:   logger,
+		rowPool:  &pool,
 	}
 	if err := parser.Init(effectiveLoc); err != nil {
 		return nil, errors.Trace(err)
@@ -910,9 +897,8 @@ func estimateInMemoryRowGroupBufferBytes(fileMeta *metadata.FileMetaData) (int64
 }
 
 // estimateReadAheadBufferBytes covers the per-column read-ahead buffers, which
-// bypass the tracking allocator. Each is capped at the row group's read-ahead
-// size (preload vs stream, matching getBuilder); a row group opens all its
-// columns at once, so take the max sum across row groups.
+// bypass the tracking allocator. A row group opens all its columns at once, so
+// take the max sum across row groups.
 func estimateReadAheadBufferBytes(fileMeta *metadata.FileMetaData) (int64, error) {
 	if fileMeta == nil || fileMeta.NumRowGroups() == 0 {
 		return 0, nil
@@ -923,13 +909,9 @@ func estimateReadAheadBufferBytes(fileMeta *metadata.FileMetaData) (int64, error
 		if err != nil {
 			return 0, err
 		}
-		bufCap := int64(streamReadBufferSize)
-		if rgRange.end-rgRange.start <= int64(rowGroupInMemoryThreshold) {
-			bufCap = preloadReadBufferSize
-		}
 		var total int64
 		for i := range rgRange.columnStarts {
-			total += min(bufCap, rgRange.columnEnds[i]-rgRange.columnStarts[i])
+			total += min(int64(readBufferSize), rgRange.columnEnds[i]-rgRange.columnStarts[i])
 		}
 		maxBytes = max(maxBytes, total)
 	}
