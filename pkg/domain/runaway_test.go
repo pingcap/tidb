@@ -80,6 +80,18 @@ func newStarterControllerForTest(t *testing.T, provider rmclient.ResourceGroupPr
 	return controller
 }
 
+func requireDegradedResourceGroup(t *testing.T, group *rmpb.ResourceGroup, name string) {
+	t.Helper()
+	require.NotNil(t, group)
+	require.Equal(t, name, group.Name)
+	require.Equal(t, rmpb.GroupMode_RUMode, group.Mode)
+	require.NotNil(t, group.RUSettings)
+	require.NotNil(t, group.RUSettings.RU)
+	require.NotNil(t, group.RUSettings.RU.Settings)
+	require.EqualValues(t, 2_000_000, group.RUSettings.RU.Settings.FillRate)
+	require.EqualValues(t, 50_000_000_000, group.RUSettings.RU.Settings.BurstLimit)
+}
+
 func TestResourceGroupsControllerOptionsProvideDegradedFallback(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		// Preserve the process-wide deploy mode because deploymode.IsStarter reads
@@ -130,11 +142,7 @@ func TestResourceGroupsControllerOptionsProvideDegradedFallback(t *testing.T) {
 	controllerWithFallback := newStarterControllerForTest(t, provider)
 	group, err := controllerWithFallback.GetResourceGroup("test-group")
 	require.NoError(t, err)
-	require.Equal(t, &rmpb.ResourceGroup{
-		Name:       "test-group",
-		Mode:       rmpb.GroupMode_RUMode,
-		RUSettings: newDefaultDegradedRUSettings(),
-	}, group)
+	requireDegradedResourceGroup(t, group, "test-group")
 
 	// The degraded group should not be cached. Once the provider recovers, the
 	// next lookup should observe the real resource-group metadata.
@@ -185,21 +193,13 @@ func TestStarterControllerGetResourceGroupUsesDegradedSettingsOnErrors(t *testin
 		require.NoError(t, deploymode.Set(originalDeployMode))
 	})
 
-	expectedGroup := func(name string) *rmpb.ResourceGroup {
-		return &rmpb.ResourceGroup{
-			Name:       name,
-			Mode:       rmpb.GroupMode_RUMode,
-			RUSettings: newDefaultDegradedRUSettings(),
-		}
-	}
-
 	t.Run("NotFound", func(t *testing.T) {
 		provider := newResourceGroupProviderStub(t, nil, rmclient.NewResourceGroupNotExistErr("missing-group"))
 		controller := newStarterControllerForTest(t, provider)
 
 		group, err := controller.GetResourceGroup("missing-group")
 		require.NoError(t, err)
-		require.Equal(t, expectedGroup("missing-group"), group)
+		requireDegradedResourceGroup(t, group, "missing-group")
 	})
 
 	t.Run("ContextCanceled", func(t *testing.T) {
@@ -208,7 +208,7 @@ func TestStarterControllerGetResourceGroupUsesDegradedSettingsOnErrors(t *testin
 
 		group, err := controller.GetResourceGroup("test-group")
 		require.NoError(t, err)
-		require.Equal(t, expectedGroup("test-group"), group)
+		requireDegradedResourceGroup(t, group, "test-group")
 	})
 
 	t.Run("GenericNonRetryableError", func(t *testing.T) {
@@ -217,7 +217,7 @@ func TestStarterControllerGetResourceGroupUsesDegradedSettingsOnErrors(t *testin
 
 		group, err := controller.GetResourceGroup("test-group")
 		require.NoError(t, err)
-		require.Equal(t, expectedGroup("test-group"), group)
+		requireDegradedResourceGroup(t, group, "test-group")
 	})
 }
 
