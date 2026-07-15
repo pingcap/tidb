@@ -1083,62 +1083,62 @@ func TestTransferTasks2HistoryWithAdjacentLargeTaskIDs(t *testing.T) {
 		Check(testkit.Rows("0"))
 }
 
+func TestCleanupTasksAreBatchLimited(t *testing.T) {
+	t.Cleanup(proto.SetTaskCleanupBatchSizeForTest(2))
+	_, gm, ctx := testutil.InitTableTest(t)
+	require.NoError(t, gm.InitMeta(ctx, ":4000", ""))
+
+	taskIDs := make([]int64, 0, 5)
+	for i := range 5 {
+		taskID, err := gm.CreateTask(ctx, fmt.Sprintf("cleanup-batch-%d", i), proto.TaskTypeExample, "", 1, "", 0, proto.ExtraParams{}, nil)
+		require.NoError(t, err)
+		taskIDs = append(taskIDs, taskID)
+	}
+
+	tasks := make([]*proto.Task, 0, len(taskIDs))
+	for _, taskID := range taskIDs {
+		task, err := gm.GetTaskByID(ctx, taskID)
+		require.NoError(t, err)
+		tasks = append(tasks, task)
+	}
+	for i, task := range tasks {
+		switch i % 3 {
+		case 0:
+			require.NoError(t, gm.FailTask(ctx, task.ID, proto.TaskStatePending, errors.New("cleanup test")))
+		case 1:
+			require.NoError(t, gm.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.StepOne, nil))
+			require.NoError(t, gm.SucceedTask(ctx, task.ID))
+		case 2:
+			require.NoError(t, gm.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.StepOne, nil))
+			require.NoError(t, gm.RevertTask(ctx, task.ID, proto.TaskStateRunning, nil))
+			require.NoError(t, gm.RevertedTask(ctx, task.ID))
+		}
+	}
+	pendingTaskID, err := gm.CreateTask(ctx, "not-ready-for-cleanup", proto.TaskTypeExample, "", 1, "", 0, proto.ExtraParams{}, nil)
+	require.NoError(t, err)
+
+	cleanupTasks, err := gm.GetCleanupTasks(ctx)
+	require.NoError(t, err)
+	require.Len(t, cleanupTasks, 2)
+	cleanedStates := make([]proto.TaskState, 0, len(tasks))
+	for len(cleanupTasks) > 0 {
+		for _, task := range cleanupTasks {
+			cleanedStates = append(cleanedStates, task.State)
+		}
+		require.NoError(t, gm.TransferTasks2History(ctx, cleanupTasks))
+		cleanupTasks, err = gm.GetCleanupTasks(ctx)
+		require.NoError(t, err)
+	}
+	require.ElementsMatch(t, []proto.TaskState{
+		proto.TaskStateFailed, proto.TaskStateSucceed, proto.TaskStateReverted,
+		proto.TaskStateFailed, proto.TaskStateSucceed,
+	}, cleanedStates)
+	pendingTask, err := gm.GetTaskByID(ctx, pendingTaskID)
+	require.NoError(t, err)
+	require.Equal(t, proto.TaskStatePending, pendingTask.State)
+}
+
 func TestTaskHistoryTable(t *testing.T) {
-	t.Run("cleanup tasks are batch limited", func(t *testing.T) {
-		t.Cleanup(proto.SetTaskCleanupBatchSizeForTest(2))
-		_, gm, ctx := testutil.InitTableTest(t)
-		require.NoError(t, gm.InitMeta(ctx, ":4000", ""))
-
-		taskIDs := make([]int64, 0, 5)
-		for i := range 5 {
-			taskID, err := gm.CreateTask(ctx, fmt.Sprintf("cleanup-batch-%d", i), proto.TaskTypeExample, "", 1, "", 0, proto.ExtraParams{}, nil)
-			require.NoError(t, err)
-			taskIDs = append(taskIDs, taskID)
-		}
-
-		tasks := make([]*proto.Task, 0, len(taskIDs))
-		for _, taskID := range taskIDs {
-			task, err := gm.GetTaskByID(ctx, taskID)
-			require.NoError(t, err)
-			tasks = append(tasks, task)
-		}
-		for i, task := range tasks {
-			switch i % 3 {
-			case 0:
-				require.NoError(t, gm.FailTask(ctx, task.ID, proto.TaskStatePending, errors.New("cleanup test")))
-			case 1:
-				require.NoError(t, gm.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.StepOne, nil))
-				require.NoError(t, gm.SucceedTask(ctx, task.ID))
-			case 2:
-				require.NoError(t, gm.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.StepOne, nil))
-				require.NoError(t, gm.RevertTask(ctx, task.ID, proto.TaskStateRunning, nil))
-				require.NoError(t, gm.RevertedTask(ctx, task.ID))
-			}
-		}
-		pendingTaskID, err := gm.CreateTask(ctx, "not-ready-for-cleanup", proto.TaskTypeExample, "", 1, "", 0, proto.ExtraParams{}, nil)
-		require.NoError(t, err)
-
-		cleanupTasks, err := gm.GetCleanupTasks(ctx)
-		require.NoError(t, err)
-		require.Len(t, cleanupTasks, 2)
-		cleanedStates := make([]proto.TaskState, 0, len(tasks))
-		for len(cleanupTasks) > 0 {
-			for _, task := range cleanupTasks {
-				cleanedStates = append(cleanedStates, task.State)
-			}
-			require.NoError(t, gm.TransferTasks2History(ctx, cleanupTasks))
-			cleanupTasks, err = gm.GetCleanupTasks(ctx)
-			require.NoError(t, err)
-		}
-		require.ElementsMatch(t, []proto.TaskState{
-			proto.TaskStateFailed, proto.TaskStateSucceed, proto.TaskStateReverted,
-			proto.TaskStateFailed, proto.TaskStateSucceed,
-		}, cleanedStates)
-		pendingTask, err := gm.GetTaskByID(ctx, pendingTaskID)
-		require.NoError(t, err)
-		require.Equal(t, proto.TaskStatePending, pendingTask.State)
-	})
-
 	_, gm, ctx := testutil.InitTableTest(t)
 
 	require.NoError(t, gm.InitMeta(ctx, ":4000", ""))
