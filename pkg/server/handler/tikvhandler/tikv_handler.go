@@ -1560,7 +1560,7 @@ func (h RegionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	regionID, err := strconv.ParseUint(params[handler.RegionID], 0, 64)
+	regionID, err := strconv.ParseUint(params[handler.RegionID], 10, 64)
 	if err != nil {
 		handler.WriteError(w, err)
 		return
@@ -1799,7 +1799,7 @@ func (MvccTxnHandler) decodeMvccData(bs []byte, colMap map[int64]*types.FieldTyp
 }
 
 func (h *MvccTxnHandler) handleMvccGetByTxn(params map[string]string) (any, error) {
-	startTS, err := strconv.ParseUint(params[handler.StartTS], 0, 64)
+	startTS, err := strconv.ParseUint(params[handler.StartTS], 10, 64)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
