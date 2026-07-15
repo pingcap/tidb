@@ -23,7 +23,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/dxf/bizutil"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -230,7 +229,8 @@ func row2HistoryTaskSummary(r chunk.Row) *HistoryTaskSummary {
 	return item
 }
 
-// ClassifyTaskError returns a safe, coarse classification for a terminal task error.
+// ClassifyTaskError returns a coarse category for a terminal task error.
+// The category is exposed by the history API and must never contain the raw error text.
 func ClassifyTaskError(state proto.TaskState, taskErr error) string {
 	if taskErr == nil {
 		return ""
@@ -242,7 +242,7 @@ func ClassifyTaskError(state proto.TaskState, taskErr error) string {
 		if IsCancelledErr(taskErr) {
 			return taskErrorCategoryCancelled
 		}
-		if bizutil.IsDataError(taskErr) {
+		if isDataError(taskErr) {
 			return taskErrorCategoryDataError
 		}
 		return proto.TaskStateFailed.String()
@@ -251,12 +251,43 @@ func ClassifyTaskError(state proto.TaskState, taskErr error) string {
 	}
 }
 
+func isDataError(taskErr error) bool {
+	if taskErr == nil {
+		return false
+	}
+	errMsg := taskErr.Error()
+	// Keep these checks string-based to avoid depending on Lightning error definitions.
+	// We can replace this when those error definitions are split out of the Lightning
+	// package. DXF error serialization keeps only the outer error code, so nested data
+	// errors must be identified by their canonical messages.
+	//
+	// import-into examples:
+	// [Lightning:Restore:ErrEncodeKV]when encoding 1-th data row in this chunk:
+	// encode kv error in file orderlab/orderlab.shipment_events.000000000.csv.gz:0
+	// at offset 0: Value conversion failed for column 'event_id'. Expected type:
+	// bigint, received value: ?. Reason: [types:1292]Truncated incorrect DOUBLE value: '?'.
+	//
+	// add-index examples:
+	// [kv:1062]Duplicate entry '1' for key 't.idx'
+	isImportDataErr := strings.Contains(errMsg, "ErrEncodeKV") &&
+		(strings.Contains(errMsg, "Value conversion failed for column") ||
+			(strings.Contains(errMsg, "Check constraint '") && strings.Contains(errMsg, "' is violated")) ||
+			strings.Contains(errMsg, "Table has no partition for value"))
+	isImportConflictErr := (strings.Contains(errMsg, "[executor:8167]") && strings.Contains(errMsg, "Duplicate key conflict found")) ||
+		(strings.Contains(errMsg, "ErrFoundDataConflictRecords") && strings.Contains(errMsg, "found data conflict records")) ||
+		(strings.Contains(errMsg, "ErrFoundIndexConflictRecords") && strings.Contains(errMsg, "found index conflict records"))
+	isUKDupEntryErr := strings.Contains(errMsg, "[kv:1062]") && strings.Contains(errMsg, "Duplicate entry")
+	return isImportDataErr || isImportConflictErr || isUKDupEntryErr
+}
+
 func taskErrorCode(taskErr error) string {
 	var normalizedErr *errors.Error
 	if !goerrors.As(taskErr, &normalizedErr) {
 		return ""
 	}
 	code := string(normalizedErr.RFCCode())
+	// errors.Normalize without RFCCodeText or MySQLErrorCode leaves a zero-value
+	// numeric code, which RFCCode returns as "0".
 	if code == "0" {
 		return ""
 	}

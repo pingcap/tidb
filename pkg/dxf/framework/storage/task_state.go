@@ -27,10 +27,12 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
-// TaskCancelMessage marks a task reverted because of user cancellation.
+// TaskCancelMessage identifies user cancellation because cancelled tasks finish in
+// TaskStateReverted rather than a distinct cancelled terminal state.
 const TaskCancelMessage = "cancelled by user"
 
-// IsCancelledErr checks whether an error marks a user-cancelled task.
+// IsCancelledErr reports whether err's message contains TaskCancelMessage.
+// The substring match keeps wrapped or annotated cancellation errors recognizable.
 func IsCancelledErr(err error) bool {
 	return err != nil && strings.Contains(err.Error(), TaskCancelMessage)
 }

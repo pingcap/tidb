@@ -43,11 +43,7 @@ import (
 	"go.uber.org/zap"
 )
 
-const (
-	metricStateAll       = "all"
-	metricStateCancelled = "cancelled"
-	metricStateDataError = "data-error"
-)
+const metricStateAll = "all"
 
 var (
 	// CheckTaskFinishedInterval is the interval for scheduler.

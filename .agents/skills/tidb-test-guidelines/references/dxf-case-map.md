@@ -6,11 +6,6 @@
 - Each test file has a one-line description based on its primary test/benchmark name.
 - Testdata lists files under `testdata/` mapped to their owning package directory.
 
-## pkg/dxf/bizutil
-
-### Tests
-- `pkg/dxf/bizutil/error_test.go` - dxf/bizutil: Tests classification of task errors caused by invalid or conflicting input data.
-
 ## pkg/dxf/example
 
 ### Tests
