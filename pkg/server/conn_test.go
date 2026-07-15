@@ -980,6 +980,10 @@ func testDispatch(t *testing.T, inputs []dispatchInput, capability uint32) {
 		capability:   capability,
 	}
 	cc.SetCtx(tc)
+	originalEnableConnectionEventLog := vardef.EnableConnectionEventLog.Swap(true)
+	t.Cleanup(func() {
+		vardef.EnableConnectionEventLog.Store(originalEnableConnectionEventLog)
+	})
 	for _, cs := range inputs {
 		inBytes := append([]byte{cs.com}, cs.in...)
 		err := cc.dispatch(context.Background(), inBytes)
