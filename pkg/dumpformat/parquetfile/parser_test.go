@@ -1344,8 +1344,9 @@ func TestEstimateParquetReaderMemoryCtxLifetime(t *testing.T) {
 
 func TestParquetParserLargePagePeakMemory(t *testing.T) {
 	const (
-		rows      = 64
-		valueSize = 512 << 10 // One plain page holds 32 MiB of values.
+		rows                      = 64
+		valueSize                 = 512 << 10 // One plain page holds 32 MiB of values.
+		maxStreamingAllocatorPeak = 4 << 20
 	)
 
 	origThreshold := rowGroupInMemoryThreshold
@@ -1401,7 +1402,9 @@ func TestParquetParserLargePagePeakMemory(t *testing.T) {
 		require.Equal(t, makeValue(i), reader.lastRow.Row[0].GetBytes())
 	}
 	require.ErrorIs(t, reader.ReadRow(), io.EOF)
-	require.Less(t, allocator.peakAllocation.Load(), int64(readBufferSize+(4<<20)))
+	// Allow a few streaming chunks and decoder bookkeeping, while ensuring the
+	// 32 MiB page is never materialized in the tracking allocator.
+	require.Less(t, allocator.peakAllocation.Load(), int64(maxStreamingAllocatorPeak))
 }
 
 // getStringFromParquetByteOld is the previous implementation used to convert
