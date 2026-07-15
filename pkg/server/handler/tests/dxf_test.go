@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/schstatus"
@@ -196,6 +197,10 @@ func TestDXFAPI(t *testing.T) {
 	})
 
 	t.Run("task history api", func(t *testing.T) {
+		const (
+			sensitiveHistoryMessage = "sensitive history task failure"
+			historyErrorCode        = "DXF:History:Named"
+		)
 		seedHistoryTasks := func(t *testing.T) []int64 {
 			t.Helper()
 			tm, ctx := setupTaskManager(t)
@@ -208,7 +213,11 @@ func TestDXFAPI(t *testing.T) {
 				{key: "history-key-2", keyspace: "ks2"},
 				{key: "history-key-3", keyspace: "ks1"},
 				{key: "history-key-4", keyspace: "ks3"},
-				{key: "history-key-5", keyspace: "ks1", taskErr: fmt.Errorf("history task failed")},
+				{
+					key:      "history-key-5",
+					keyspace: "ks1",
+					taskErr:  errors.Normalize(sensitiveHistoryMessage, errors.RFCCodeText(historyErrorCode)),
+				},
 			}
 			ids := make([]int64, 0, len(taskSpecs))
 			tasksToTransfer := make([]*proto.Task, 0, len(taskSpecs))
@@ -238,7 +247,8 @@ func TestDXFAPI(t *testing.T) {
 				Key             string
 				Keyspace        string
 				State           string
-				Error           string
+				ErrorCode       string
+				ErrorCategory   string
 				StartTime       string
 				StateUpdateTime string
 				EndTime         string
@@ -254,7 +264,8 @@ func TestDXFAPI(t *testing.T) {
 					Key             string
 					Keyspace        string
 					State           string
-					Error           string
+					ErrorCode       string
+					ErrorCategory   string
 					StartTime       string
 					StateUpdateTime string
 					EndTime         string
@@ -297,6 +308,8 @@ func TestDXFAPI(t *testing.T) {
 			body := runAndCheckReqFn(t, http.StatusOK, "", func() (*http.Response, error) {
 				return ts.FetchStatus("/dxf/task/history?page_size=2")
 			})
+			require.NotContains(t, string(body), `"Error":`)
+			require.NotContains(t, string(body), sensitiveHistoryMessage)
 			firstPage := parseTaskHistoryResp(t, body)
 			require.Len(t, firstPage.Items, 2)
 			require.EqualValues(t, 5, firstPage.ApproxTotalCount)
@@ -306,8 +319,10 @@ func TestDXFAPI(t *testing.T) {
 			require.Equal(t, ids[3], firstPage.Items[1].ID)
 			require.Equal(t, "history-key-5", firstPage.Items[0].Key)
 			require.Equal(t, "failed", firstPage.Items[0].State)
-			require.Contains(t, firstPage.Items[0].Error, "history task failed")
-			require.Empty(t, firstPage.Items[1].Error)
+			require.Equal(t, historyErrorCode, firstPage.Items[0].ErrorCode)
+			require.Equal(t, "failed", firstPage.Items[0].ErrorCategory)
+			require.Empty(t, firstPage.Items[1].ErrorCode)
+			require.Empty(t, firstPage.Items[1].ErrorCategory)
 			require.NotEmpty(t, firstPage.Items[0].StartTime)
 			require.NotEmpty(t, firstPage.Items[0].StateUpdateTime)
 			require.NotEmpty(t, firstPage.Items[0].EndTime)

@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	sqlsvrapimock "github.com/pingcap/tidb/pkg/domain/sqlsvrapi/mock"
+	"github.com/pingcap/tidb/pkg/dxf/framework/dxfutil"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
@@ -239,7 +240,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 		// without planning work or generating subtasks.
 		err = ext.OnPrepare(ctx, d, task)
 		require.Error(t, err)
-		require.True(t, scheduler.IsCancelledErr(err), err)
+		require.True(t, dxfutil.IsCancelledErr(err), err)
 		gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
 		require.NoError(t, err)
 		require.Equal(t, "cancelled", gotJobInfo.Status)
@@ -247,7 +248,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 
 		subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
 		require.Error(t, err)
-		require.True(t, scheduler.IsCancelledErr(err), err)
+		require.True(t, dxfutil.IsCancelledErr(err), err)
 		require.Nil(t, subtaskMetas)
 	} else {
 		// Classic has no dangling import job window: CANCEL IMPORT JOB changes the
@@ -420,7 +421,7 @@ func TestSchedulerPrepareEnabledJobTransitionsFromPreparingToFirstBusinessPhase(
 
 		err := ext.OnPrepare(ctx, d, task)
 		require.Error(t, err)
-		require.True(t, scheduler.IsCancelledErr(err), err)
+		require.True(t, dxfutil.IsCancelledErr(err), err)
 		info, err := importer.GetJob(ctx, conn, jobID, "root", true)
 		require.NoError(t, err)
 		require.Equal(t, "cancelled", info.Status)
@@ -446,7 +447,7 @@ func TestSchedulerPrepareEnabledJobTransitionsFromPreparingToFirstBusinessPhase(
 		require.Equal(t, proto.ImportStepEncodeAndSort, nextStep)
 		metas, err := ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, nextStep)
 		require.Error(t, err)
-		require.True(t, scheduler.IsCancelledErr(err), err)
+		require.True(t, dxfutil.IsCancelledErr(err), err)
 		require.Nil(t, metas)
 		info, err = importer.GetJob(ctx, conn, jobID, "root", true)
 		require.NoError(t, err)

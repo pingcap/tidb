@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	sqlsvrapimock "github.com/pingcap/tidb/pkg/domain/sqlsvrapi/mock"
 	"github.com/pingcap/tidb/pkg/dxf/framework/dxfmetric"
+	"github.com/pingcap/tidb/pkg/dxf/framework/dxfutil"
 	"github.com/pingcap/tidb/pkg/dxf/framework/mock"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	schmock "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/mock"
@@ -877,7 +878,7 @@ func TestOnTaskFinished(t *testing.T) {
 	require.EqualValues(t, map[string]int{metricStateAll: 2, "succeed": 1, "failed": 1}, collectMetricsFn())
 	onTaskFinished(proto.TaskStateReverted, errors.New("some err"))
 	require.EqualValues(t, map[string]int{metricStateAll: 3, "succeed": 1, "failed": 2}, collectMetricsFn())
-	onTaskFinished(proto.TaskStateReverted, errors.New(taskCancelMsg))
+	onTaskFinished(proto.TaskStateReverted, errors.New(dxfutil.TaskCancelMessage))
 	require.EqualValues(t, map[string]int{metricStateAll: 4, "succeed": 1, "failed": 2, metricStateCancelled: 1}, collectMetricsFn())
 	onTaskFinished(proto.TaskStateFailed, errors.New("some err"))
 	require.EqualValues(t, map[string]int{metricStateAll: 5, "succeed": 1, "failed": 3, metricStateCancelled: 1}, collectMetricsFn())

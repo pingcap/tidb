@@ -15,6 +15,7 @@ go_library(
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
+        "//pkg/dxf/framework/dxfutil",
         "//pkg/dxf/framework/proto",
         "//pkg/dxf/framework/schstatus",
         "//pkg/dxf/framework/taskexecutor/execute",

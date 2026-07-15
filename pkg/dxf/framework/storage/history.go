@@ -16,11 +16,14 @@ package storage
 
 import (
 	"context"
+	goerrors "errors"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/dxf/framework/dxfutil"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -99,7 +102,8 @@ func (mgr *TaskManager) TransferTasks2History(ctx context.Context, tasks []*prot
 // HistoryTaskSummary contains summary fields for one history task.
 type HistoryTaskSummary struct {
 	*proto.TaskBase
-	Error           string
+	ErrorCode       string
+	ErrorCategory   string
 	StartTime       time.Time
 	StateUpdateTime time.Time
 	EndTime         time.Time
@@ -192,7 +196,8 @@ func row2HistoryTaskSummary(r chunk.Row) *HistoryTaskSummary {
 		TaskBase: row2TaskBasic(r),
 	}
 	if taskErr := row2TaskError(r, 12); taskErr != nil {
-		item.Error = taskErr.Error()
+		item.ErrorCode = taskErrorCode(taskErr)
+		item.ErrorCategory = dxfutil.ClassifyTaskError(item.State, taskErr)
 	}
 	if !r.IsNull(13) {
 		item.StartTime, _ = r.GetTime(13).GoTime(time.Local)
@@ -204,6 +209,18 @@ func row2HistoryTaskSummary(r chunk.Row) *HistoryTaskSummary {
 		item.EndTime, _ = r.GetTime(15).GoTime(time.Local)
 	}
 	return item
+}
+
+func taskErrorCode(taskErr error) string {
+	var normalizedErr *errors.Error
+	if !goerrors.As(taskErr, &normalizedErr) {
+		return ""
+	}
+	code := string(normalizedErr.RFCCode())
+	if code == "0" {
+		return ""
+	}
+	return code
 }
 
 // GCSubtasks deletes the history subtask which is older than the given days.

@@ -402,13 +402,6 @@ func TestVerifyTaskStateTransform(t *testing.T) {
 	}
 }
 
-func TestIsCancelledErr(t *testing.T) {
-	require.False(t, scheduler.IsCancelledErr(nil))
-	require.False(t, scheduler.IsCancelledErr(errors.New("some err")))
-	require.False(t, scheduler.IsCancelledErr(context.Canceled))
-	require.True(t, scheduler.IsCancelledErr(errors.New("cancelled by user")))
-}
-
 func TestManagerScheduleLoop(t *testing.T) {
 	// Mock 16 cpu node.
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(16)")
