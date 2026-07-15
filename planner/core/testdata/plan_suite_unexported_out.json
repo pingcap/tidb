@@ -768,16 +768,17 @@
       },
       {
         "1": [
-          "test.t.a"
+          "test.t.b"
         ]
       },
       {
         "1": [
-          "test.t.a"
+          "test.t.b"
         ]
       },
       {
         "1": [
+          "test.t.b",
           "test.t.c"
         ]
       },

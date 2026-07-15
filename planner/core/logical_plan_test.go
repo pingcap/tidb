@@ -21,6 +21,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -617,6 +618,10 @@ func TestColumnPruning(t *testing.T) {
 		output []map[int][]string
 	)
 	planSuiteUnexportedData.LoadTestCases(t, &input, &output)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/planner/core/assertNoZeroColumnLayoutAfterColumnPruning", "return"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/planner/core/assertNoZeroColumnLayoutAfterColumnPruning"))
+	}()
 
 	s := createPlannerSuite()
 	ctx := context.Background()

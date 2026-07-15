@@ -19,6 +19,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
@@ -33,7 +35,33 @@ type columnPruner struct {
 
 func (*columnPruner) optimize(_ context.Context, lp LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
 	err := lp.PruneColumns(append([]*expression.Column{}, lp.Schema().Columns...), opt)
-	return lp, err
+	if err != nil {
+		return lp, err
+	}
+	failpoint.Inject("assertNoZeroColumnLayoutAfterColumnPruning", func() {
+		if err := noZeroColumnLayOut(lp); err != nil {
+			panic(err)
+		}
+	})
+	return lp, nil
+}
+
+func noZeroColumnLayOut(p LogicalPlan) error {
+	for _, child := range p.Children() {
+		if err := noZeroColumnLayOut(child); err != nil {
+			return err
+		}
+	}
+	if p.Schema().Len() == 0 {
+		// Some operators do not hold a schema and directly expose their child's schema.
+		if len(p.Children()) > 0 && p.Schema() == p.Children()[0].Schema() {
+			return nil
+		}
+		if _, ok := p.(*LogicalTableDual); !ok {
+			return errors.Errorf("operator %s has zero row output", p.ExplainID().String())
+		}
+	}
+	return nil
 }
 
 // ExprsHasSideEffects checks if any of the expressions has side effects.
