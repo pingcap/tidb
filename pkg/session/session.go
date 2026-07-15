@@ -2511,43 +2511,27 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 	s.setRequestSource(ctx, stmtLabel, stmtNode)
 
 	globalMemArbitrator := memory.GlobalMemArbitrator()
-	arbitratorMode := globalMemArbitrator.WorkMode()
-	enableWaitAverse := sessVars.MemArbitrator.WaitAverse == variable.MemArbitratorWaitAverseEnable
 	execUseArbitrator := globalMemArbitrator != nil && sessVars.ConnectionID != 0 &&
 		sessVars.MemArbitrator.WaitAverse != variable.MemArbitratorNolimit &&
 		sessVars.StmtCtx.MemSensitive
 	compilePlanMemQuota := int64(0) // mem quota for compiler & optimizer
+	quotaReserved := int64(0)
 	if execUseArbitrator {
 		compilePlanMemQuota = approxCompilePlanMemQuota(normalizedSQL, sessVars.StmtCtx.InSelectStmt)
 		execUseArbitrator = compilePlanMemQuota > 0
 	}
 
 	releaseCommonQuota := func() { // release common quota
-		if compilePlanMemQuota > 0 {
-			_ = globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(sessVars.ConnectionID, -compilePlanMemQuota)
-			compilePlanMemQuota = 0
+		if quotaReserved > 0 {
+			_ = globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(sessVars.ConnectionID, -quotaReserved)
+			quotaReserved = 0
 		}
 	}
 
 	if execUseArbitrator {
-		intoErrBeforeExec := func() error {
-			if enableWaitAverse {
-				metrics.GlobalMemArbitratorSubTasks.CancelWaitAversePlan.Inc()
-				return exeerrors.ErrQueryExecStopped.GenWithStackByArgs(memory.ArbitratorWaitAverseCancel.String()+defSuffixCompilePlan, sessVars.ConnectionID)
-			}
-			if arbitratorMode == memory.ArbitratorModeStandard {
-				metrics.GlobalMemArbitratorSubTasks.CancelStandardModePlan.Inc()
-				return exeerrors.ErrQueryExecStopped.GenWithStackByArgs(memory.ArbitratorStandardCancel.String()+defSuffixCompilePlan, sessVars.ConnectionID)
-			}
-			return nil
-		}
-
 		if globalMemArbitrator.AtMemRisk() {
 			if s.sessionPlanCache != nil {
 				s.sessionPlanCache.DeleteAll()
-			}
-			if err := intoErrBeforeExec(); err != nil {
-				return nil, err
 			}
 			for globalMemArbitrator.AtMemRisk() {
 				if globalMemArbitrator.AtOOMRisk() {
@@ -2558,15 +2542,13 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 			}
 		}
 
-		arbitratorOutOfQuota := !globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(sessVars.ConnectionID, compilePlanMemQuota)
+		ok := globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(sessVars.ConnectionID, compilePlanMemQuota)
+		quotaReserved += compilePlanMemQuota
 		defer releaseCommonQuota()
 
-		if arbitratorOutOfQuota { // for SQL which needs to be controlled by mem-arbitrator
+		if !ok { // for SQL which needs to be controlled by mem-arbitrator
 			if s.sessionPlanCache != nil && s.sessionPlanCache.Size() > 0 {
 				s.sessionPlanCache.DeleteAll()
-				// one more chance to get quota after clearing plan cache
-			} else if err := intoErrBeforeExec(); err != nil {
-				return nil, err
 			}
 		}
 	}
@@ -2663,7 +2645,7 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 			sessVars.MemTracker.Killer,
 			digestKey,
 			memPriority,
-			enableWaitAverse,
+			sessVars.MemArbitrator.WaitAverse == variable.MemArbitratorWaitAverseEnable,
 			reserveSize,
 			s.isInternal(),
 		) {

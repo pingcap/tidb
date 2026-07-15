@@ -369,6 +369,10 @@ func setGlobalMemArbitratorWorkModeText(str string) {
 
 // SetGlobalMemArbitratorWorkMode sets the work mode of the global memory arbitrator.
 func SetGlobalMemArbitratorWorkMode(str string) bool {
+	if intest.InTest && mockinitGlobalMemArbitrator == nil {
+		return false
+	}
+
 	if !globalArbitrator.metrics.init.Load() {
 		globalArbitrator.metrics.Lock()
 
@@ -527,8 +531,7 @@ func RemovePoolFromGlobalMemArbitrator(uid uint64) bool {
 }
 
 func init() {
-	workMode := ArbitratorModeDisable
-	setGlobalMemArbitratorWorkModeText(workMode.String())
+	setGlobalMemArbitratorWorkModeText(ArbitratorModeDisable.String())
 	globalArbitrator.softLimit.originText.Store(ArbitratorSoftLimitModDisableName)
 	globalArbitrator.enable.callbacks = make([]func(), 0, 1)
 }
