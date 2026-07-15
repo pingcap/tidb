@@ -4189,6 +4189,64 @@ func InitDDLTables(store kv.Storage) error {
 	})
 }
 
+// initBootstrapDependentTables creates system tables that classic kernel upgrade
+// DDL may consult before the ordinary upgrade DDL reaches their creation step.
+func initBootstrapDependentTables(store kv.Storage, ver int64) error {
+	// This is only for classic upgrades from below version260. Fresh bootstrap and
+	// next-gen create the table elsewhere. After version260, the table may have been renamed.
+	if !kerneltype.IsClassic() || ver <= notBootstrapped || ver >= version260 || currentBootstrapVersion < version260 {
+		return nil
+	}
+
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	return kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMutator(txn)
+		dbID, err := t.CreateMySQLDatabaseIfNotExists()
+		if err != nil {
+			return err
+		}
+		return createAndSplitTablesIfNotExists(ctx, store, t, dbID, systemTablesOfMaskingPolicyNextGenVersion)
+	})
+}
+
+func createAndSplitTablesIfNotExists(
+	ctx context.Context,
+	store kv.Storage,
+	t *meta.Mutator,
+	dbID int64,
+	tables []TableBasicInfo,
+) error {
+	// InitDDLTables creates tables and updates its version in the same transaction.
+	// This helper has no such version, so a retry must skip tables created earlier.
+	existingTables, err := t.ListTables(ctx, dbID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	existingNames := make(map[string]struct{}, len(existingTables))
+	for _, tblInfo := range existingTables {
+		existingNames[tblInfo.Name.L] = struct{}{}
+	}
+
+	missingTables := make([]TableBasicInfo, 0, len(tables))
+	for _, tbl := range tables {
+		if _, ok := existingNames[tbl.Name]; ok {
+			continue
+		}
+		missingTables = append(missingTables, tbl)
+	}
+	if len(missingTables) == 0 {
+		return nil
+	}
+	tableIDs, err := t.GenGlobalIDs(len(missingTables))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for i, id := range tableIDs {
+		missingTables[i].ID = id
+	}
+	return createAndSplitTables(store, t, dbID, missingTables)
+}
+
 func createAndSplitTables(store kv.Storage, t *meta.Mutator, dbID int64, tables []TableBasicInfo) error {
 	var (
 		tableIDs = make([]int64, 0, len(tables))
@@ -4321,6 +4379,7 @@ func BootstrapSession4DistExecution(store kv.Storage) (*domain.Domain, error) {
 // - start domain and other routines.
 func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsImpl func(store kv.Storage, cnt int) ([]*session, error)) (*domain.Domain, error) {
 	ver := getStoreBootstrapVersionWithCache(store)
+	failpoint.InjectCall("afterGetStoreBootstrapVersion", ver)
 	if kv.IsUserKS(store) {
 		targetVer := currentBootstrapVersion
 		systemKSVer := mustGetStoreBootstrapVersion(kvstore.GetSystemStorage())
@@ -4358,7 +4417,10 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 		return nil, err
 	}
 	if ver < currentBootstrapVersion {
-		runInBootstrapSession(store, ver)
+		err = runInBootstrapSession(store, ver)
+		if err != nil {
+			return nil, err
+		}
 	} else {
 		logutil.BgLogger().Info("cluster already bootstrapped", zap.Int64("version", ver))
 		err = InitMDLVariable(store)
@@ -4597,7 +4659,7 @@ func getStartMode(ver int64) ddl.StartMode {
 // If no bootstrap and storage is remote, we must use a little lease time to
 // bootstrap quickly, after bootstrapped, we will reset the lease time.
 // TODO: Using a bootstrap tool for doing this may be better later.
-func runInBootstrapSession(store kv.Storage, ver int64) {
+func runInBootstrapSession(store kv.Storage, ver int64) error {
 	startMode := getStartMode(ver)
 	startTime := time.Now()
 	defer func() {
@@ -4614,6 +4676,8 @@ func runInBootstrapSession(store kv.Storage, ver int64) {
 			logutil.BgLogger().Fatal("[upgrade] get owner lock failed", zap.Error(err))
 		}
 		defer releaseFn()
+		// Recheck the version and create the table under the upgrade lock so that only
+		// one TiDB can do this at a time.
 		currVer := mustGetStoreBootstrapVersion(store)
 		if currVer >= currentBootstrapVersion {
 			// It is already bootstrapped/upgraded by another TiDB instance, but
@@ -4623,17 +4687,22 @@ func runInBootstrapSession(store kv.Storage, ver int64) {
 			// TODO remove this after we can refactor below code out in this case.
 			logutil.BgLogger().Info("[upgrade] already upgraded by other nodes, switch to normal mode")
 			startMode = ddl.Normal
-		} else if deploymode.IsStarter() {
-			shouldTerminate, err := extworkload.AbortGCV2ForUpgrade(context.Background(), extworkload.GetManagerFromStore(store))
-			if err != nil {
-				logutil.BgLogger().Fatal("abort GCV2 worker failed", zap.Error(err))
-			}
-			if shouldTerminate {
-				if intest.InTest {
-					return
+		} else {
+			if deploymode.IsStarter() {
+				shouldTerminate, err := extworkload.AbortGCV2ForUpgrade(context.Background(), extworkload.GetManagerFromStore(store))
+				if err != nil {
+					logutil.BgLogger().Fatal("abort GCV2 worker failed", zap.Error(err))
 				}
-				releaseFn()
-				logutil.BgLogger().Fatal("GCV2 worker aborted before bootstrap upgrade")
+				if shouldTerminate {
+					if intest.InTest {
+						return nil
+					}
+					releaseFn()
+					logutil.BgLogger().Fatal("GCV2 worker aborted before bootstrap upgrade")
+				}
+			}
+			if err := initBootstrapDependentTables(store, currVer); err != nil {
+				return errors.Trace(err)
 			}
 		}
 	}
@@ -4677,6 +4746,7 @@ func runInBootstrapSession(store kv.Storage, ver int64) {
 		infosync.MockGlobalServerInfoManagerEntry.Close()
 	}
 	domap.Delete(store)
+	return nil
 }
 
 func createSessions(store kv.Storage, cnt int) ([]*session, error) {

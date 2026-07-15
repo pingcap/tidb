@@ -45,7 +45,7 @@
 
 ### Tests
 - `pkg/session/test/bootstraptest/boot_test.go` - session/test: Tests write DDL table version to MySQL TiDB.
-- `pkg/session/test/bootstraptest/bootstrap_upgrade_test.go` - session/test: Tests upgrade version83 and version84.
+- `pkg/session/test/bootstraptest/bootstrap_upgrade_test.go` - session/test: Tests bootstrap upgrades, including masking-policy table initialization.
 - `pkg/session/test/bootstraptest/main_test.go` - Configures default goleak settings and registers testdata.
 
 ## pkg/session/test/bootstraptest2
