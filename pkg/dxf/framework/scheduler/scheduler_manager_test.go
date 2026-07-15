@@ -32,6 +32,50 @@ import (
 )
 
 func TestCleanUpRoutine(t *testing.T) {
+	t.Run("drains bounded batches", func(t *testing.T) {
+		t.Cleanup(proto.SetTaskCleanupBatchSizeForTest(2))
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
+		store := testkit.CreateMockStore(t)
+		gtk := testkit.NewTestKit(t, store)
+		pool := pools.NewResourcePool(func() (pools.Resource, error) {
+			return gtk.Session(), nil
+		}, 1, 1, time.Second)
+		defer pool.Close()
+		ctrl := gomock.NewController(t)
+		ctx := util.WithInternalSourceType(context.Background(), "scheduler_manager")
+		mockCleanupRoutine := mock.NewMockCleanUpRoutine(ctrl)
+
+		sch, mgr := MockSchedulerManager(store, pool, nil, mockCleanupRoutine)
+		defer sch.Stop()
+		require.NoError(t, mgr.InitMeta(ctx, ":4000", handle.GetTargetScope()))
+		mockCleanupRoutine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).Times(3)
+		for _, taskKey := range []string{"cleanup-batch-0", "cleanup-batch-1", "cleanup-batch-2"} {
+			taskID, err := mgr.CreateTask(ctx, taskKey, proto.TaskTypeExample,
+				store.GetKeyspace(), 1, handle.GetTargetScope(), 1, proto.ExtraParams{}, nil)
+			require.NoError(t, err)
+			task, err := mgr.GetTaskByID(ctx, taskID)
+			require.NoError(t, err)
+			require.NoError(t, mgr.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.StepOne, nil))
+			require.NoError(t, mgr.SucceedTask(ctx, taskID))
+		}
+
+		sch.DoCleanupRoutine()
+		historyTasks, err := testutil.GetTasksFromHistoryInStates(ctx, mgr, proto.TaskStateSucceed)
+		require.NoError(t, err)
+		require.Len(t, historyTasks, 2)
+		activeTasks, err := mgr.GetTaskBasesInStates(ctx, proto.TaskStateSucceed)
+		require.NoError(t, err)
+		require.Len(t, activeTasks, 1)
+
+		sch.DoCleanupRoutine()
+		historyTasks, err = testutil.GetTasksFromHistoryInStates(ctx, mgr, proto.TaskStateSucceed)
+		require.NoError(t, err)
+		require.Len(t, historyTasks, 3)
+		activeTasks, err = mgr.GetTaskBasesInStates(ctx, proto.TaskStateSucceed)
+		require.NoError(t, err)
+		require.Empty(t, activeTasks)
+	})
+
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
 	store := testkit.CreateMockStore(t)
 	gtk := testkit.NewTestKit(t, store)
@@ -54,18 +98,15 @@ func TestCleanUpRoutine(t *testing.T) {
 	taskID, err := mgr.CreateTask(ctx, "test", proto.TaskTypeExample, store.GetKeyspace(), 1, targetScope, 1, proto.ExtraParams{}, nil)
 	require.NoError(t, err)
 
-	checkTaskRunningCnt := func() []*proto.Task {
-		var tasks []*proto.Task
+	checkTaskRunning := func() {
 		require.Eventually(t, func() bool {
-			var err error
-			tasks, err = mgr.GetTasksInStates(ctx, proto.TaskStateRunning)
+			task, err := mgr.GetTaskBaseByID(ctx, taskID)
 			require.NoError(t, err)
-			return len(tasks) == 1
+			return task != nil && task.State == proto.TaskStateRunning
 		}, 5*time.Second, 50*time.Millisecond)
-		return tasks
 	}
 
-	checkSubtaskCnt := func(tasks []*proto.Task, taskID int64) {
+	checkSubtaskCnt := func(taskID int64) {
 		require.Eventually(t, func() bool {
 			cntByStates, err := mgr.GetSubtaskCntGroupByStates(ctx, taskID, proto.StepOne)
 			require.NoError(t, err)
@@ -73,8 +114,8 @@ func TestCleanUpRoutine(t *testing.T) {
 		}, 5*time.Second, 50*time.Millisecond)
 	}
 
-	tasks := checkTaskRunningCnt()
-	checkSubtaskCnt(tasks, taskID)
+	checkTaskRunning()
+	checkSubtaskCnt(taskID)
 	for i := 1; i <= subtaskCnt; i++ {
 		err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.SubtaskStateSucceed, nil)
 		require.NoError(t, err)
