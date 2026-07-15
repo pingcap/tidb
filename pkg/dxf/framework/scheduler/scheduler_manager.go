@@ -429,14 +429,9 @@ func (sm *Manager) cleanupTaskLoop() {
 //	tasks with global sort should clean up tmp files stored on S3.
 func (sm *Manager) doCleanupTask() {
 	failpoint.InjectCall("doCleanupTask")
-	tasks, err := sm.taskMgr.GetTasksInStates(
-		sm.ctx,
-		proto.TaskStateFailed,
-		proto.TaskStateReverted,
-		proto.TaskStateSucceed,
-	)
+	tasks, err := sm.taskMgr.GetCleanupTasks(sm.ctx)
 	if err != nil {
-		sm.logger.Warn("get task in states failed", zap.Error(err))
+		sm.logger.Warn("get cleanup tasks failed", zap.Error(err))
 		return
 	}
 	if len(tasks) == 0 {

@@ -64,6 +64,29 @@ func TestMaxConcurrentTask(t *testing.T) {
 	require.Equal(t, MaxConcurrentTaskUpperBound, GetMaxConcurrentTask())
 }
 
+func TestTaskCleanupBatchSize(t *testing.T) {
+	require.Equal(t, 20, DefaultTaskCleanupBatchSize)
+	require.Equal(t, DefaultTaskCleanupBatchSize, GetTaskCleanupBatchSize())
+	require.Equal(t, 1000, TaskCleanupBatchSizeUpperBound)
+
+	restore := SetTaskCleanupBatchSizeForTest(DefaultTaskCleanupBatchSize)
+	defer restore()
+	for _, value := range []int{0, TaskCleanupBatchSizeUpperBound + 1} {
+		require.ErrorContains(t, SetTaskCleanupBatchSize(value), "task_cleanup_batch_size")
+		require.Equal(t, DefaultTaskCleanupBatchSize, GetTaskCleanupBatchSize())
+	}
+
+	require.NoError(t, SetTaskCleanupBatchSize(taskCleanupBatchSizeLowerBound))
+	require.Equal(t, taskCleanupBatchSizeLowerBound, GetTaskCleanupBatchSize())
+	require.NoError(t, SetTaskCleanupBatchSize(TaskCleanupBatchSizeUpperBound))
+	require.Equal(t, TaskCleanupBatchSizeUpperBound, GetTaskCleanupBatchSize())
+
+	restoreUpperBound := SetTaskCleanupBatchSizeForTest(32)
+	require.Equal(t, 32, GetTaskCleanupBatchSize())
+	restoreUpperBound()
+	require.Equal(t, TaskCleanupBatchSizeUpperBound, GetTaskCleanupBatchSize())
+}
+
 func TestTaskCompare(t *testing.T) {
 	taskA := Task{TaskBase: TaskBase{
 		ID:         100,

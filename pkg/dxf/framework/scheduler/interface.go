@@ -40,7 +40,8 @@ type TaskManager interface {
 	GetAllTasks(ctx context.Context) ([]*proto.TaskBase, error)
 	// GetAllSubtasks gets all subtasks with basic columns.
 	GetAllSubtasks(ctx context.Context) ([]*proto.SubtaskBase, error)
-	GetTasksInStates(ctx context.Context, states ...any) (task []*proto.Task, err error)
+	// GetCleanupTasks gets finished tasks, limited by the configured cleanup batch size.
+	GetCleanupTasks(ctx context.Context) (task []*proto.Task, err error)
 	GetTaskByID(ctx context.Context, taskID int64) (task *proto.Task, err error)
 	GetTaskBaseByID(ctx context.Context, taskID int64) (task *proto.TaskBase, err error)
 	GCSubtasks(ctx context.Context) error

@@ -10,7 +10,11 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 45,
+=======
+    shard_count = 47,
+>>>>>>> 7ab6def534c (dxf, server: batch history transfer and bound task cleanup (#69811))
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
@@ -26,6 +30,7 @@ go_test(
         "//pkg/dxf/importinto/taskkey",
         "//pkg/executor/mppcoordmanager",
         "//pkg/infoschema",
+        "//pkg/keyspace",
         "//pkg/kv",
         "//pkg/meta",
         "//pkg/meta/model",
@@ -45,6 +50,7 @@ go_test(
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/vardef",
         "//pkg/statistics/handle/ddl/testutil",
+        "//pkg/store",
         "//pkg/store/helper",
         "//pkg/store/mockstore/teststore",
         "//pkg/store/mockstore/unistore",
@@ -63,6 +69,7 @@ go_test(
         "//pkg/util/versioninfo",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_kvproto//pkg/keyspacepb",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@com_github_pingcap_log//:log",
         "@com_github_stretchr_testify//require",
