@@ -17,7 +17,6 @@ package metaservice
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/keyspace"
@@ -195,7 +194,7 @@ func GetPDAddrs(ctx context.Context, pdClient pd.Client, withSchema bool) ([]str
 			if len(member.ClientUrls) > 0 {
 				endpoint, err := util.ParseServiceURL(member.ClientUrls[0])
 				if err != nil {
-					return nil, fmt.Errorf("parse client url from pd members %q: %w", member.ClientUrls[0], err)
+					continue
 				}
 				pdAddrs = append(pdAddrs, endpoint.Endpoint(withSchema))
 			}

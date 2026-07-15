@@ -124,6 +124,20 @@ func TestGetPDAddrsWithRealClient(t *testing.T) {
 		require.Nil(t, addrs)
 		require.EqualError(t, err, "no usable PD client URL found in PD members")
 	})
+
+	t.Run("malformed client urls are skipped when usable ones remain", func(t *testing.T) {
+		pdCli := &mockPDClient{
+			members: []*pdpb.Member{
+				{ClientUrls: []string{"http://127.0.0.1"}},
+				{ClientUrls: []string{"http://127.0.0.1:1111"}},
+			},
+		}
+
+		serviceClient := newClient(etcdCli, pdCli)
+		addrs, err := serviceClient.GetPDAddrs(context.Background())
+		require.NoError(t, err)
+		require.Equal(t, []string{"127.0.0.1:1111"}, addrs)
+	})
 }
 
 // TestParseURL tests the ParseURL function with various inputs.
