@@ -73,6 +73,16 @@ type FileMeta struct {
 	Loc       *time.Location
 }
 
+const (
+	// streamReadBufferSize is the per-column read-ahead when a row group is read
+	// from storage. 8 MiB balances S3 throughput against memory.
+	streamReadBufferSize = 8 << 20
+	// preloadReadBufferSize is used once a row group is already in memory: reads
+	// hit that buffer, not storage, so a tiny read-ahead avoids wasting
+	// streamReadBufferSize per column.
+	preloadReadBufferSize = 1024
+)
+
 func estimateRowSize(row []types.Datum) int {
 	length := 0
 	for _, v := range row {
@@ -317,11 +327,12 @@ type Parser struct {
 	colTypes []convertedType
 	colNames []string
 
-	ctx   context.Context
-	store storeapi.Storage
-	path  string
-	prop  *parquet.ReaderProperties
-	loc   *time.Location
+	ctx         context.Context
+	store       storeapi.Storage
+	path        string
+	propStream  *parquet.ReaderProperties
+	propPreload *parquet.ReaderProperties
+	loc         *time.Location
 
 	alloc memory.Allocator
 
@@ -359,7 +370,7 @@ func (pp *Parser) Init(loc *time.Location) error {
 }
 
 func (pp *Parser) buildRowGroupParser() (err error) {
-	builder, err := pp.getBuilder()
+	builder, prop, err := pp.getBuilder()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -393,7 +404,7 @@ func (pp *Parser) buildRowGroupParser() (err error) {
 
 			reader, err := file.NewParquetReader(
 				wrapper,
-				file.WithReadProps(pp.prop),
+				file.WithReadProps(prop),
 				file.WithMetadata(pp.fileMeta),
 			)
 			if err != nil {
@@ -420,16 +431,16 @@ func (pp *Parser) buildRowGroupParser() (err error) {
 	return nil
 }
 
-func (pp *Parser) getBuilder() (func(int) (readerAtSeekerCloser, error), error) {
+func (pp *Parser) getBuilder() (func(int) (readerAtSeekerCloser, error), *parquet.ReaderProperties, error) {
 	ranges, err := rowGroupRangeFromMeta(pp.fileMeta, pp.curRowGroup)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, nil, errors.Trace(err)
 	}
 
 	if ranges.end-ranges.start <= int64(rowGroupInMemoryThreshold) {
 		base, err := newInMemoryReaderBase(pp.ctx, pp.store, pp.path, ranges)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, nil, errors.Trace(err)
 		}
 		pp.logger.Debug("use in memory reader for parquet file", zap.String("path", pp.path))
 		return func(c int) (readerAtSeekerCloser, error) {
@@ -438,7 +449,7 @@ func (pp *Parser) getBuilder() (func(int) (readerAtSeekerCloser, error), error) 
 				pos:      ranges.columnStarts[c],
 				fileSize: pp.fileMeta.GetSourceFileSize(),
 			}, nil
-		}, nil
+		}, pp.propPreload, nil
 	}
 
 	return func(c int) (readerAtSeekerCloser, error) {
@@ -447,7 +458,7 @@ func (pp *Parser) getBuilder() (func(int) (readerAtSeekerCloser, error), error) 
 				StartOffset: &ranges.columnStarts[c],
 				EndOffset:   &ranges.columnEnds[c],
 			})
-	}, nil
+	}, pp.propStream, nil
 }
 
 func (pp *Parser) moveToNextRowGroup() error {
@@ -630,11 +641,17 @@ func NewParser(
 	if allocator == nil {
 		allocator = memory.NewGoAllocator()
 	}
-	prop := parquet.NewReaderProperties(allocator)
-	prop.BufferedStreamEnabled = true
-	prop.BufferSize = 1024
+	newProp := func(bufSize int64) *parquet.ReaderProperties {
+		p := parquet.NewReaderProperties(allocator)
+		p.BufferedStreamEnabled = true
+		p.PageStreamingEnabled = true
+		p.BufferSize = bufSize
+		return p
+	}
+	streamProp := newProp(streamReadBufferSize)
+	preloadProp := newProp(preloadReadBufferSize)
 
-	reader, err := file.NewParquetReader(wrapper, file.WithReadProps(prop))
+	reader, err := file.NewParquetReader(wrapper, file.WithReadProps(streamProp))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -725,16 +742,17 @@ func NewParser(
 	})
 
 	parser := &Parser{
-		fileMeta: fileMeta,
-		colTypes: colTypes,
-		colNames: colNames,
-		ctx:      ctx,
-		store:    store,
-		path:     path,
-		prop:     prop,
-		alloc:    allocator,
-		logger:   logger,
-		rowPool:  &pool,
+		fileMeta:    fileMeta,
+		colTypes:    colTypes,
+		colNames:    colNames,
+		ctx:         ctx,
+		store:       store,
+		path:        path,
+		propStream:  streamProp,
+		propPreload: preloadProp,
+		alloc:       allocator,
+		logger:      logger,
+		rowPool:     &pool,
 	}
 	if err := parser.Init(effectiveLoc); err != nil {
 		return nil, errors.Trace(err)
@@ -891,6 +909,33 @@ func estimateInMemoryRowGroupBufferBytes(fileMeta *metadata.FileMetaData) (int64
 	return preloadBytes, nil
 }
 
+// estimateReadAheadBufferBytes covers the per-column read-ahead buffers, which
+// bypass the tracking allocator. Each is capped at the row group's read-ahead
+// size (preload vs stream, matching getBuilder); a row group opens all its
+// columns at once, so take the max sum across row groups.
+func estimateReadAheadBufferBytes(fileMeta *metadata.FileMetaData) (int64, error) {
+	if fileMeta == nil || fileMeta.NumRowGroups() == 0 {
+		return 0, nil
+	}
+	var maxBytes int64
+	for g := range fileMeta.NumRowGroups() {
+		rgRange, err := rowGroupRangeFromMeta(fileMeta, g)
+		if err != nil {
+			return 0, err
+		}
+		bufCap := int64(streamReadBufferSize)
+		if rgRange.end-rgRange.start <= int64(rowGroupInMemoryThreshold) {
+			bufCap = preloadReadBufferSize
+		}
+		var total int64
+		for i := range rgRange.columnStarts {
+			total += min(bufCap, rgRange.columnEnds[i]-rgRange.columnStarts[i])
+		}
+		maxBytes = max(maxBytes, total)
+	}
+	return maxBytes, nil
+}
+
 // EstimateParquetReaderMemory estimates the peak memory usage for parsing a
 // single parquet file by reading through the first row group with a tracking
 // allocator. Returns the peak memory in bytes.
@@ -924,6 +969,11 @@ func EstimateParquetReaderMemory(
 		return 0, err
 	}
 
+	readAheadBufferBytes, err := estimateReadAheadBufferBytes(meta)
+	if err != nil {
+		return 0, err
+	}
+
 	for range meta.RowGroups[0].NumRows {
 		if err = ctx.Err(); err != nil {
 			return 0, err
@@ -937,10 +987,11 @@ func EstimateParquetReaderMemory(
 		parser.RecycleRow(parser.LastRow())
 	}
 
-	peak := allocator.peakAllocation.Load() + preloadBufferBytes
+	peak := allocator.peakAllocation.Load() + preloadBufferBytes + readAheadBufferBytes
 	logutil.Logger(ctx).Info("estimated parquet reader memory",
 		zap.String("path", path),
 		zap.Int64("in-memory-preload-bytes", preloadBufferBytes),
+		zap.Int64("read-ahead-buffer-bytes", readAheadBufferBytes),
 		zap.Int64("peak-memory-bytes", peak),
 	)
 	return peak, nil
