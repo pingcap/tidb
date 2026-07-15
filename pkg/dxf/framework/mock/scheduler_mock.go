@@ -429,6 +429,21 @@ func (mr *MockTaskManagerMockRecorder) GetAllTasks(arg0 any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAllTasks", reflect.TypeOf((*MockTaskManager)(nil).GetAllTasks), arg0)
 }
 
+// GetCleanupTasks mocks base method.
+func (m *MockTaskManager) GetCleanupTasks(arg0 context.Context) ([]*proto.Task, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetCleanupTasks", arg0)
+	ret0, _ := ret[0].([]*proto.Task)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetCleanupTasks indicates an expected call of GetCleanupTasks.
+func (mr *MockTaskManagerMockRecorder) GetCleanupTasks(arg0 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetCleanupTasks", reflect.TypeOf((*MockTaskManager)(nil).GetCleanupTasks), arg0)
+}
+
 // GetSubtaskCntGroupByStates mocks base method.
 func (m *MockTaskManager) GetSubtaskCntGroupByStates(arg0 context.Context, arg1 int64, arg2 proto.Step) (map[proto.SubtaskState]int64, error) {
 	m.ctrl.T.Helper()
@@ -442,6 +457,21 @@ func (m *MockTaskManager) GetSubtaskCntGroupByStates(arg0 context.Context, arg1 
 func (mr *MockTaskManagerMockRecorder) GetSubtaskCntGroupByStates(arg0, arg1, arg2 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSubtaskCntGroupByStates", reflect.TypeOf((*MockTaskManager)(nil).GetSubtaskCntGroupByStates), arg0, arg1, arg2)
+}
+
+// GetSubtaskErrors mocks base method.
+func (m *MockTaskManager) GetSubtaskErrors(arg0 context.Context, arg1 int64) ([]error, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetSubtaskErrors", arg0, arg1)
+	ret0, _ := ret[0].([]error)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetSubtaskErrors indicates an expected call of GetSubtaskErrors.
+func (mr *MockTaskManagerMockRecorder) GetSubtaskErrors(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSubtaskErrors", reflect.TypeOf((*MockTaskManager)(nil).GetSubtaskErrors), arg0, arg1)
 }
 
 // GetSubtaskStateCntAndErrorsByStep mocks base method.
@@ -458,21 +488,6 @@ func (m *MockTaskManager) GetSubtaskStateCntAndErrorsByStep(arg0 context.Context
 func (mr *MockTaskManagerMockRecorder) GetSubtaskStateCntAndErrorsByStep(arg0, arg1, arg2 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSubtaskStateCntAndErrorsByStep", reflect.TypeOf((*MockTaskManager)(nil).GetSubtaskStateCntAndErrorsByStep), arg0, arg1, arg2)
-}
-
-// GetSubtaskErrors mocks base method.
-func (m *MockTaskManager) GetSubtaskErrors(arg0 context.Context, arg1 int64) ([]error, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetSubtaskErrors", arg0, arg1)
-	ret0, _ := ret[0].([]error)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetSubtaskErrors indicates an expected call of GetSubtaskErrors.
-func (mr *MockTaskManagerMockRecorder) GetSubtaskErrors(arg0, arg1 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSubtaskErrors", reflect.TypeOf((*MockTaskManager)(nil).GetSubtaskErrors), arg0, arg1)
 }
 
 // GetTaskBaseByID mocks base method.
@@ -503,26 +518,6 @@ func (m *MockTaskManager) GetTaskByID(arg0 context.Context, arg1 int64) (*proto.
 func (mr *MockTaskManagerMockRecorder) GetTaskByID(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTaskByID", reflect.TypeOf((*MockTaskManager)(nil).GetTaskByID), arg0, arg1)
-}
-
-// GetTasksInStates mocks base method.
-func (m *MockTaskManager) GetTasksInStates(arg0 context.Context, arg1 ...any) ([]*proto.Task, error) {
-	m.ctrl.T.Helper()
-	varargs := []any{arg0}
-	for _, a := range arg1 {
-		varargs = append(varargs, a)
-	}
-	ret := m.ctrl.Call(m, "GetTasksInStates", varargs...)
-	ret0, _ := ret[0].([]*proto.Task)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetTasksInStates indicates an expected call of GetTasksInStates.
-func (mr *MockTaskManagerMockRecorder) GetTasksInStates(arg0 any, arg1 ...any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	varargs := append([]any{arg0}, arg1...)
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTasksInStates", reflect.TypeOf((*MockTaskManager)(nil).GetTasksInStates), varargs...)
 }
 
 // GetTopNoNeedResourceTasks mocks base method.

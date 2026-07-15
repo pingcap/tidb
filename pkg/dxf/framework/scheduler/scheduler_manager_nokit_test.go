@@ -118,11 +118,7 @@ func TestSchedulerCleanupTask(t *testing.T) {
 	tasks := []*proto.Task{
 		{TaskBase: proto.TaskBase{ID: 1}},
 	}
-	taskMgr.EXPECT().GetTasksInStates(
-		mgr.ctx,
-		proto.TaskStateFailed,
-		proto.TaskStateReverted,
-		proto.TaskStateSucceed).Return(tasks, nil)
+	taskMgr.EXPECT().GetCleanupTasks(mgr.ctx).Return(tasks, nil)
 
 	taskMgr.EXPECT().TransferTasks2History(mgr.ctx, tasks).Return(nil)
 	mgr.doCleanupTask()
@@ -130,20 +126,12 @@ func TestSchedulerCleanupTask(t *testing.T) {
 
 	// fail in transfer
 	mockErr := errors.New("transfer err")
-	taskMgr.EXPECT().GetTasksInStates(
-		mgr.ctx,
-		proto.TaskStateFailed,
-		proto.TaskStateReverted,
-		proto.TaskStateSucceed).Return(tasks, nil)
+	taskMgr.EXPECT().GetCleanupTasks(mgr.ctx).Return(tasks, nil)
 	taskMgr.EXPECT().TransferTasks2History(mgr.ctx, tasks).Return(mockErr)
 	mgr.doCleanupTask()
 	require.True(t, ctrl.Satisfied())
 
-	taskMgr.EXPECT().GetTasksInStates(
-		mgr.ctx,
-		proto.TaskStateFailed,
-		proto.TaskStateReverted,
-		proto.TaskStateSucceed).Return(tasks, nil)
+	taskMgr.EXPECT().GetCleanupTasks(mgr.ctx).Return(tasks, nil)
 	taskMgr.EXPECT().TransferTasks2History(mgr.ctx, tasks).Return(nil)
 	mgr.doCleanupTask()
 	require.True(t, ctrl.Satisfied())
