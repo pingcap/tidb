@@ -90,6 +90,11 @@ func Row2Task(r chunk.Row) *proto.Task {
 	return task
 }
 
+// TaskIDToKey returns the canonical decimal key stored in background-subtask tables.
+func TaskIDToKey(taskID int64) string {
+	return strconv.FormatInt(taskID, 10)
+}
+
 // row2BasicSubTask converts a row to a subtask with basic info
 func row2BasicSubTask(r chunk.Row) *proto.SubtaskBase {
 	taskIDStr := r.GetString(2)

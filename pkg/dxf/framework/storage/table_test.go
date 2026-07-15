@@ -329,7 +329,7 @@ func TestSwitchTaskStep(t *testing.T) {
 		require.Equal(t, proto.ExtraParams{}, persistedTask.ExtraParams)
 		require.Zero(t, persistedTask.StartTime)
 		require.GreaterOrEqual(t, persistedTask.StateUpdateTime, switchTime)
-		tk.MustQuery(fmt.Sprintf("select count(1) from mysql.tidb_background_subtask where task_key = %d", prepareTaskID)).
+		tk.MustQuery(fmt.Sprintf("select count(1) from mysql.tidb_background_subtask where task_key = '%d'", prepareTaskID)).
 			Check(testkit.Rows("0"))
 
 		prepareTask.Meta = []byte(`{"prepare":"stale-owner"}`)
@@ -376,7 +376,7 @@ func TestGetSubtaskSummaries(t *testing.T) {
 	bytes, err := json.Marshal(summary)
 	require.NoError(t, err)
 
-	tk.MustExec(fmt.Sprintf("update mysql.tidb_background_subtask set summary = '%s' where task_key = %d", string(bytes), task.ID))
+	tk.MustExec(fmt.Sprintf("update mysql.tidb_background_subtask set summary = '%s' where task_key = '%d'", string(bytes), task.ID))
 	summaries, err := tm.GetAllSubtaskSummaryByStep(ctx, subtasks[0].TaskID, proto.StepOne)
 	require.NoError(t, err)
 	require.Len(t, summaries, len(subtasks))
@@ -388,7 +388,7 @@ func TestGetSubtaskSummaries(t *testing.T) {
 	// If the JSON value is wrong, we still get an empty summary.
 	// This can only happen if the summary field is manually updated.
 	// It's acceptable, as the correct summary will be set by the executor later.
-	tk.MustExec(fmt.Sprintf(`update mysql.tidb_background_subtask set summary = '{"wrong_key": 123}' where task_key = %d`, task.ID))
+	tk.MustExec(fmt.Sprintf(`update mysql.tidb_background_subtask set summary = '{"wrong_key": 123}' where task_key = '%d'`, task.ID))
 	summaries, err = tm.GetAllSubtaskSummaryByStep(ctx, subtasks[0].TaskID, proto.StepOne)
 	require.NoError(t, err)
 	for _, summary := range summaries {
@@ -613,6 +613,26 @@ func TestGetActiveSubtasks(t *testing.T) {
 	require.Equal(t, proto.SubtaskStateRunning, activeSubtasks[0].State)
 	require.Equal(t, int64(3), activeSubtasks[1].ID)
 	require.Equal(t, proto.SubtaskStatePending, activeSubtasks[1].State)
+
+	const (
+		adjacentTaskID = int64(9007199254740992)
+		targetTaskID   = int64(9007199254740993)
+		largeIDExec    = "large-id-exec"
+	)
+	testutil.InsertSubtask(t, tm, adjacentTaskID, proto.StepOne, largeIDExec, nil, proto.SubtaskStatePending, proto.TaskTypeExample, 8)
+	testutil.InsertSubtask(t, tm, targetTaskID, proto.StepOne, largeIDExec, nil, proto.SubtaskStatePending, proto.TaskTypeExample, 8)
+
+	activeSubtasks, err = tm.GetActiveSubtasks(ctx, targetTaskID)
+	require.NoError(t, err)
+	require.Len(t, activeSubtasks, 1)
+	require.Equal(t, targetTaskID, activeSubtasks[0].TaskID)
+
+	filteredSubtasks, err := tm.GetSubtasksByExecIDAndStepAndStates(
+		ctx, largeIDExec, targetTaskID, proto.StepOne, proto.SubtaskStatePending,
+	)
+	require.NoError(t, err)
+	require.Len(t, filteredSubtasks, 1)
+	require.Equal(t, targetTaskID, filteredSubtasks[0].TaskID)
 }
 
 func TestSubTaskTable(t *testing.T) {
