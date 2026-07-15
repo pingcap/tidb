@@ -25,13 +25,22 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/schstatus"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/jobhistory"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/taskkey"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
+	server2 "github.com/pingcap/tidb/pkg/server"
+	"github.com/pingcap/tidb/pkg/server/internal/testutil"
+	serverutil "github.com/pingcap/tidb/pkg/server/internal/util"
+	"github.com/pingcap/tidb/pkg/session"
+	kvstore "github.com/pingcap/tidb/pkg/store"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
@@ -194,6 +203,55 @@ func TestDXFAPI(t *testing.T) {
 			return ts.FetchStatus(maxConcurrentTaskPath)
 		})
 		checkMaxConcurrentTaskOutput(body, 128)
+	})
+
+	t.Run("task cleanup batch size api", func(t *testing.T) {
+		t.Cleanup(proto.SetTaskCleanupBatchSizeForTest(proto.DefaultTaskCleanupBatchSize))
+		const taskCleanupBatchSizePath = "/dxf/schedule/task_cleanup_batch_size"
+		checkTaskCleanupBatchSizeOutput := func(body []byte, expected int) {
+			out := struct {
+				TaskCleanupBatchSize int    `json:"task_cleanup_batch_size"`
+				Persistence          string `json:"persistence"`
+			}{}
+			require.NoError(t, json.Unmarshal(body, &out))
+			require.Equal(t, expected, out.TaskCleanupBatchSize)
+			require.Equal(t, "memory_only", out.Persistence)
+			require.NotContains(t, string(body), "scope")
+		}
+
+		runAndCheckReqFn(t, http.StatusBadRequest, "This api only support GET and POST method", func() (*http.Response, error) {
+			req, err := http.NewRequest(http.MethodDelete, ts.StatusURL(taskCleanupBatchSizePath), nil)
+			require.NoError(t, err)
+			return http.DefaultClient.Do(req)
+		})
+		for _, c := range [][2]string{
+			{taskCleanupBatchSizePath, "invalid value "},
+			{taskCleanupBatchSizePath + "?value=aa", "invalid value "},
+			{taskCleanupBatchSizePath + "?value=0", "out of range"},
+			{fmt.Sprintf("%s?value=%d", taskCleanupBatchSizePath, proto.TaskCleanupBatchSizeUpperBound+1), "out of range"},
+		} {
+			path, errMsg := c[0], c[1]
+			runAndCheckReqFn(t, http.StatusBadRequest, errMsg, func() (*http.Response, error) {
+				return ts.PostStatus(path, "", bytes.NewBuffer([]byte("")))
+			})
+			require.Equal(t, proto.DefaultTaskCleanupBatchSize, proto.GetTaskCleanupBatchSize())
+		}
+
+		body := runAndCheckReqFn(t, http.StatusOK, "", func() (*http.Response, error) {
+			return ts.FetchStatus(taskCleanupBatchSizePath)
+		})
+		checkTaskCleanupBatchSizeOutput(body, proto.DefaultTaskCleanupBatchSize)
+
+		body = runAndCheckReqFn(t, http.StatusOK, "", func() (*http.Response, error) {
+			return ts.PostStatus(taskCleanupBatchSizePath+"?value=128", "", bytes.NewBuffer([]byte("")))
+		})
+		checkTaskCleanupBatchSizeOutput(body, 128)
+		require.Equal(t, 128, proto.GetTaskCleanupBatchSize())
+
+		body = runAndCheckReqFn(t, http.StatusOK, "", func() (*http.Response, error) {
+			return ts.FetchStatus(taskCleanupBatchSizePath)
+		})
+		checkTaskCleanupBatchSizeOutput(body, 128)
 	})
 
 	t.Run("task history api", func(t *testing.T) {
@@ -514,6 +572,65 @@ func TestDXFAPI(t *testing.T) {
 		require.Equal(t, 6, task.ExtraParams.MaxRuntimeSlots)
 		require.Empty(t, task.ExtraParams.TargetSteps)
 	})
+}
+
+func TestDXFMaintenanceAPINotAvailableInUserKeyspace(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("DXF maintenance APIs are only supported in the SYSTEM keyspace of the nextgen kernel")
+	}
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
+	const (
+		systemKeyspaceID = 1
+		userKeyspaceID   = 2
+	)
+	keyspaces := []*keyspacepb.KeyspaceMeta{
+		{Id: systemKeyspaceID, Name: keyspace.System},
+		{Id: userKeyspaceID, Name: "user_keyspace"},
+	}
+	oldSystemStore := kvstore.GetSystemStorage()
+	systemStore, err := mockstore.NewMockStore(mockstore.WithKeyspacesAndCurrentKeyspaceID(keyspaces, systemKeyspaceID))
+	require.NoError(t, err)
+	kvstore.SetSystemStorage(systemStore)
+	t.Cleanup(func() {
+		kvstore.SetSystemStorage(oldSystemStore)
+		require.NoError(t, systemStore.Close())
+	})
+	systemDomain, err := session.BootstrapSession(systemStore)
+	require.NoError(t, err)
+	t.Cleanup(systemDomain.Close)
+
+	ts := createBasicHTTPHandlerTestSuite()
+	ts.store, err = mockstore.NewMockStore(mockstore.WithKeyspacesAndCurrentKeyspaceID(keyspaces, userKeyspaceID))
+	require.NoError(t, err)
+	t.Cleanup(func() { ts.stopServer(t) })
+	ts.tidbdrv = server2.NewTiDBDriver(ts.store)
+	cfg := serverutil.NewTestConfig()
+	cfg.Store = config.StoreTypeTiKV
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+	cfg.Status.ReportStatus = true
+	server2.RunInGoTestChan = make(chan struct{})
+	ts.server, err = server2.NewServer(cfg, ts.tidbdrv)
+	require.NoError(t, err)
+	ts.server.SetDomain(systemDomain)
+	go func() {
+		require.NoError(t, ts.server.Run(systemDomain))
+	}()
+	<-server2.RunInGoTestChan
+	ts.domain, err = session.GetDomain(ts.store)
+	require.NoError(t, err)
+	ts.Port = testutil.GetPortFromTCPAddr(ts.server.ListenAddr())
+	ts.StatusPort = testutil.GetPortFromTCPAddr(ts.server.StatusListenerAddr())
+
+	for _, path := range []string{
+		"/dxf/schedule/task_cleanup_batch_size",
+		"/dxf/schedule/max_concurrent_task",
+	} {
+		resp, err := ts.FetchStatus(path)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusNotFound, resp.StatusCode)
+		require.NoError(t, resp.Body.Close())
+	}
 }
 
 func TestDXFScheduleTuneAPI(t *testing.T) {

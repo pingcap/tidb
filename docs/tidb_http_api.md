@@ -1059,6 +1059,40 @@ curl -X POST "http://{TiDBIP}:10080/dxf/schedule/max_concurrent_task?value={numb
 }
 ```
 
+### Get or update the DXF task cleanup batch size
+
+This API gets or updates the maximum number of finished DXF tasks returned by each cleanup query, independently of the scheduler concurrency limit. It is available only on a TiDB server that uses the `SYSTEM` keyspace. The value applies only to the TiDB process that handles the request, is kept in memory only, and is reset when that process restarts. Send requests to the current DXF owner to inspect or update the effective value.
+
+Get the current value, which defaults to `20`:
+
+```shell
+curl http://{TiDBIP}:10080/dxf/schedule/task_cleanup_batch_size
+```
+
+Example response:
+
+```json
+{
+ "task_cleanup_batch_size": 20,
+ "persistence": "memory_only"
+}
+```
+
+Update the value:
+
+```shell
+curl -X POST "http://{TiDBIP}:10080/dxf/schedule/task_cleanup_batch_size?value={number}"
+```
+
+The `value` parameter is required and must be an integer in the range `[1, 1000]`. The response uses the same format as the `GET` request:
+
+```json
+{
+ "task_cleanup_batch_size": 128,
+ "persistence": "memory_only"
+}
+```
+
 ### Update a DXF task's max runtime slots
 
 This API updates the `MaxRuntimeSlots` extra parameter for one DXF task. Use it as an emergency task-level throttle, for example when a task step causes TiDB memory pressure or repeated restarts. The new value takes effect when the task executor reads the updated task metadata, commonly after the related TiDB node restarts or the task step is retried.

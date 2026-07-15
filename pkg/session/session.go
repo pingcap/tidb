@@ -3466,12 +3466,8 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 			}
 		}
 		pagingSizeBytes := vars.PagingSizeBytes
-		if pagingSizeBytes > 0 {
-			if !vardef.EnableResourceControl.Load() || dom == nil || sc.ResourceGroupName == "" {
-				pagingSizeBytes = 0
-			} else if rg, ok := dom.InfoSchema().ResourceGroupByName(ast.NewCIStr(sc.ResourceGroupName)); !ok || rg.GetBurstLimitAdjusted() < 0 {
-				pagingSizeBytes = 0
-			}
+		if pagingSizeBytes > 0 && (!vardef.EnableResourceControl.Load() || !resourceGroupAllowsPagingSizeBytes(dom, sc.ResourceGroupName)) {
+			pagingSizeBytes = 0
 		}
 		ret := &distsqlctx.DistSQLContext{
 			WarnHandler:     sc.WarnHandler,
@@ -3548,6 +3544,19 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 	}
 
 	return dctx
+}
+
+func resourceGroupAllowsPagingSizeBytes(dom *domain.Domain, resourceGroupName string) bool {
+	if dom == nil || resourceGroupName == "" {
+		return false
+	}
+	if rgCtl := dom.ResourceGroupsController(); rgCtl != nil {
+		if state, ok := rgCtl.GetResourceGroupRuntimeState(resourceGroupName); ok {
+			return state.HasLimitedBurst
+		}
+	}
+	rg, ok := dom.InfoSchema().ResourceGroupByName(ast.NewCIStr(resourceGroupName))
+	return ok && rg.GetBurstLimitAdjusted() >= 0
 }
 
 // GetRangerCtx returns the context used in `ranger` related functions
@@ -5097,7 +5106,7 @@ func logStmt(execStmt *executor.ExecStmt, s *session) {
 			isCrucial = false
 		}
 	case *ast.CreateUserStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.SetPwdStmt, *ast.GrantStmt,
-		*ast.RevokeStmt, *ast.AlterTableStmt, *ast.CreateDatabaseStmt, *ast.CreateTableStmt,
+		*ast.RevokeStmt, *ast.AlterTableStmt, *ast.AlterDatabaseStmt, *ast.CreateDatabaseStmt, *ast.CreateTableStmt,
 		*ast.DropDatabaseStmt, *ast.DropTableStmt, *ast.RenameTableStmt, *ast.TruncateTableStmt,
 		*ast.RenameUserStmt, *ast.CreateBindingStmt, *ast.DropBindingStmt, *ast.SetBindingStmt, *ast.BRIEStmt:
 		isCrucial = true

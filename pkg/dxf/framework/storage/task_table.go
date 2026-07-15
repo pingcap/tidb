@@ -435,19 +435,16 @@ func (mgr *TaskManager) GetTaskExecInfoByExecID(ctx context.Context, execID stri
 	return res, err
 }
 
-// GetTasksInStates gets the tasks in the states(order by priority asc, create_time acs, id asc).
-func (mgr *TaskManager) GetTasksInStates(ctx context.Context, states ...any) (task []*proto.Task, err error) {
-	if len(states) == 0 {
-		return task, nil
-	}
-
+// GetCleanupTasks gets finished tasks, limited by the configured cleanup batch size.
+func (mgr *TaskManager) GetCleanupTasks(ctx context.Context) (task []*proto.Task, err error) {
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return nil, err
 	}
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
 		"select "+TaskColumns+" from mysql.tidb_global_task t "+
-			"where state in ("+strings.Repeat("%?,", len(states)-1)+"%?)"+
-			" order by priority asc, create_time asc, id asc", states...)
+			"where state in (%?, %?, %?) limit %?",
+		proto.TaskStateFailed, proto.TaskStateReverted, proto.TaskStateSucceed,
+		proto.GetTaskCleanupBatchSize())
 	if err != nil {
 		return task, err
 	}

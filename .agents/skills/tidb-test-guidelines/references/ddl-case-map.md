@@ -11,7 +11,7 @@
 ### Tests
 - `pkg/ddl/affinity_test.go` - ddl: Tests affinity build group definitions table.
 - `pkg/ddl/attributes_sql_test.go` - ddl: Tests alter table partition attributes.
-- `pkg/ddl/backfilling_dist_scheduler_test.go` - ddl: Tests backfilling scheduler local mode.
+- `pkg/ddl/backfilling_dist_scheduler_test.go` - ddl: Tests backfilling scheduler local mode and backfilling plan retries.
 - `pkg/ddl/backfilling_test.go` - ddl: Tests done task keeper.
 - `pkg/ddl/backfilling_txn_executor_test.go` - ddl: Tests expected ingest worker count.
 - `pkg/ddl/bdr_test.go` - ddl: Tests denied by BDR when add column.
