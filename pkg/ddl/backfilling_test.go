@@ -404,6 +404,17 @@ func assertDistSQLCtxEqual(t *testing.T, expected *distsqlctx.DistSQLContext, ac
 	require.Equal(t, errctx.NewContextWithLevels(expected.ErrCtx.LevelMap(), expected.WarnHandler), actual.ErrCtx)
 }
 
+func TestReorgDistSQLCtxNotFillCache(t *testing.T) {
+	// Reorg coprocessor scans are single-pass bulk reads and must not pollute the TiKV
+	// block cache, so NotFillCache is always set on the reorg DistSQLContext.
+	ctx := newDefaultReorgDistSQLCtx(&mock.Client{}, contextutil.NewStaticWarnHandler(0))
+	require.True(t, ctx.NotFillCache)
+
+	withMeta, err := newReorgDistSQLCtxWithReorgMeta(&mock.Client{}, &model.DDLReorgMeta{}, contextutil.NewStaticWarnHandler(0))
+	require.NoError(t, err)
+	require.True(t, withMeta.NotFillCache)
+}
+
 func TestValidateAndFillRanges(t *testing.T) {
 	mkRange := func(start, end string) kv.KeyRange {
 		return kv.KeyRange{StartKey: []byte(start), EndKey: []byte(end)}
