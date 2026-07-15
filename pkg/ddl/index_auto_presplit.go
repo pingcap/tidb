@@ -82,17 +82,6 @@ func planAutoSplitIndexRegions(
 	}
 
 	statsTbl := statsProvider.GetPhysicalTableStats(tblInfo.ID, tblInfo)
-	return planAutoSplitPhysicalIndexRegions(sctx, statsTbl, tblInfo, idxInfo, tblInfo.ID, cfg)
-}
-
-func planAutoSplitPhysicalIndexRegions(
-	sctx sessionctx.Context,
-	statsTbl *statistics.Table,
-	tblInfo *model.TableInfo,
-	idxInfo *model.IndexInfo,
-	physicalID int64,
-	cfg autoSplitHotRegionConfig,
-) ([][]byte, string, error) {
 	if statsTbl == nil {
 		return nil, "stats missing", nil
 	}
@@ -125,7 +114,7 @@ func planAutoSplitPhysicalIndexRegions(
 	var topN *statistics.TopN
 	if loadNeeded {
 		var err error
-		topN, err = storage.TopNFromStorageWithPriority(sctx, physicalID, 0, leadingCol.ID, kv.PriorityNormal)
+		topN, err = storage.TopNFromStorageWithPriority(sctx, tblInfo.ID, 0, leadingCol.ID, kv.PriorityNormal)
 		if err != nil {
 			return nil, "failed to load leading column TopN from storage", err
 		}
@@ -137,20 +126,18 @@ func planAutoSplitPhysicalIndexRegions(
 	if err != nil {
 		return nil, "failed to build TopN split keys", err
 	}
-	splitKeys := make([][]byte, 0)
-	if len(topNRows) > 0 {
-		splitKeys, err = getSplitIdxPhysicalKeysFromValueList(sctx, tblInfo, idxInfo, physicalID, topNRows, splitKeys)
-		if err != nil {
-			return nil, "failed to build TopN split keys", err
-		}
+	if len(topNRows) == 0 {
+		return nil, "no split strategy matched", nil
+	}
+	splitKeys, err := getSplitIdxKeysFromValueList(sctx, tblInfo, idxInfo, topNRows)
+	if err != nil {
+		return nil, "failed to build TopN split keys", err
 	}
 
 	splitKeys = sortAndDedupeAutoSplitKeys(splitKeys)
-	if len(splitKeys) == 0 {
-		return nil, "no split strategy matched", nil
-	}
 	return splitKeys, "", nil
 }
+
 func buildAutoSplitTopNRows(
 	sctx sessionctx.Context,
 	statsTbl *statistics.Table,

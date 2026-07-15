@@ -176,16 +176,6 @@ type splitArgs struct {
 	regionsCnt   int
 }
 
-func getSplitIdxFullRangeDatums(columnCount int) (lowerVals, upperVals []types.Datum) {
-	lowerVals = make([]types.Datum, columnCount)
-	upperVals = make([]types.Datum, columnCount)
-	for i := range columnCount {
-		lowerVals[i] = types.MinNotNullDatum()
-		upperVals[i] = types.MaxValueDatum()
-	}
-	return lowerVals, upperVals
-}
-
 func getSplitIdxKeys(
 	sctx sessionctx.Context,
 	tblInfo *model.TableInfo,
@@ -418,7 +408,12 @@ func evalSplitDatumFromArgs(
 	}
 
 	if len(opt.Lower) == 0 && len(opt.Upper) == 0 && opt.Num > 0 {
-		lowerVals, upperVals := getSplitIdxFullRangeDatums(len(idxInfo.Columns))
+		lowerVals := make([]types.Datum, 0, len(idxInfo.Columns))
+		upperVals := make([]types.Datum, 0, len(idxInfo.Columns))
+		for range idxInfo.Columns {
+			lowerVals = append(lowerVals, types.MinNotNullDatum())
+			upperVals = append(upperVals, types.MaxValueDatum())
+		}
 		return &splitArgs{
 			betweenLower: lowerVals,
 			betweenUpper: upperVals,

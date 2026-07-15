@@ -363,15 +363,10 @@ func showCommentsFromJob(job *model.Job) string {
 
 func showCommentsFromSubjob(sub *model.SubJob, useDXF, useCloud bool) string {
 	autoSplitLabels := formatAutoSplitHotRegionResults(sub.AutoSplitHotRegionResults)
-	if kerneltype.IsNextGen() {
-		// The parameters are determined automatically in next-gen.
+	if kerneltype.IsNextGen() || sub.ReorgTp == model.ReorgTypeNone {
 		return strings.Join(autoSplitLabels, ", ")
 	}
-	var labels []string
-	if sub.ReorgTp == model.ReorgTypeNone {
-		return strings.Join(autoSplitLabels, ", ")
-	}
-	labels = append(labels, sub.ReorgTp.String())
+	labels := []string{sub.ReorgTp.String()}
 	if useDXF {
 		labels = append(labels, "DXF")
 	}
@@ -383,9 +378,6 @@ func showCommentsFromSubjob(sub *model.SubJob, useDXF, useCloud bool) string {
 }
 
 func formatAutoSplitHotRegionResults(results []model.AutoSplitHotRegionResult) []string {
-	if len(results) == 0 {
-		return nil
-	}
 	labels := make([]string, 0, len(results))
 	for _, result := range results {
 		parts := []string{string(result.Status)}
