@@ -6272,9 +6272,13 @@ func (b *PlanBuilder) buildExplainFor(explainFor *ast.ExplainForStmt) (base.Plan
 	}
 	if b.ctx.GetSessionVars() != nil && b.ctx.GetSessionVars().User != nil {
 		if b.ctx.GetSessionVars().User.Username != processInfo.User {
-			err := plannererrors.ErrAccessDenied.GenWithStackByArgs(b.ctx.GetSessionVars().User.Username, b.ctx.GetSessionVars().User.Hostname)
-			// Different from MySQL's behavior and document.
-			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", err)
+			checker := privilege.GetPrivilegeManager(b.ctx)
+			activeRoles := b.ctx.GetSessionVars().ActiveRoles
+			if checker != nil &&
+				!checker.RequestVerification(activeRoles, "", "", "", mysql.ProcessPriv) &&
+				!checker.RequestVerification(activeRoles, "", "", "", mysql.SuperPriv) {
+				return nil, plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or PROCESS")
+			}
 		}
 	}
 
