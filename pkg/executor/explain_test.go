@@ -545,7 +545,7 @@ func TestExplainAnalyzeFormatRUOutput(t *testing.T) {
 	_, err := queryExplainRURowsOrErr(t, tk, "explain analyze format='ru' select * from explain_ru_t where a > 0")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "status=unknown_input")
-	require.Contains(t, err.Error(), "reason=missing_scan_detail")
+	require.Contains(t, err.Error(), "reason=missing_scan_width_evidence")
 	require.Contains(t, err.Error(), "operator=tikv/kv_range_scan")
 
 	rows = tk.MustQuery("explain analyze format='ru' select * from explain_ru_t where a = 1").Rows()
@@ -593,7 +593,7 @@ func TestExplainAnalyzeFormatRUTiKVCopOperatorClasses(t *testing.T) {
 		rows, err := queryExplainRURowsOrErr(t, tk, tc.sql)
 		if err != nil {
 			require.Contains(t, err.Error(), "status=unknown_input", tc.sql)
-			require.Contains(t, err.Error(), "reason=missing_runtime_bytes", tc.sql)
+			require.Contains(t, err.Error(), "reason=missing_scan_width_evidence", tc.sql)
 			require.Contains(t, err.Error(), "operator="+tc.nonScanOpClass, tc.sql)
 			continue
 		}
@@ -656,7 +656,7 @@ func requireExplainRUPlanRow(t *testing.T, rows [][]any) {
 		require.NotEmpty(t, row[13])
 		require.NotEmpty(t, row[14])
 		require.NotEmpty(t, row[15])
-		require.Contains(t, fmt.Sprint(row[16]), "weight_version=v1")
+		require.Contains(t, fmt.Sprint(row[16]), "weight_version=v2")
 		return
 	}
 	require.Fail(t, "missing FORMAT='RU' plan row")
@@ -681,7 +681,7 @@ func requireExplainRUWeightedOperatorClass(t *testing.T, rows [][]any, operatorC
 		}
 		require.NotEmpty(t, row[13], "missing weight for %s row %v", operatorClass, row)
 		require.NotEmpty(t, row[14], "missing preview RU for %s row %v", operatorClass, row)
-		require.Contains(t, fmt.Sprint(row[16]), "weight_version=v1")
+		require.Contains(t, fmt.Sprint(row[16]), "weight_version=v2")
 		return
 	}
 	require.Failf(t, "missing weighted FORMAT='RU' operator class", "operatorClass=%s rows=%v", operatorClass, rows)
@@ -693,7 +693,7 @@ func requireExplainRUDMLRows(t *testing.T, rows [][]any, dmlKind string, require
 	require.Len(t, rows[0], 17)
 	require.Equal(t, "summary", rows[0][0])
 	require.Equal(t, "total_preview_ru", rows[0][2])
-	require.Contains(t, fmt.Sprint(rows[0][16]), "weight_version=v1")
+	require.Contains(t, fmt.Sprint(rows[0][16]), "weight_version=v2")
 	require.Contains(t, fmt.Sprint(rows[0][16]), "mutation_weights_uncalibrated=true")
 	require.Contains(t, fmt.Sprint(rows[0][16]), "partial_dml_ancillary_work_partial")
 	summaryPreviewRU, err := strconv.ParseFloat(fmt.Sprint(rows[0][14]), 64)
@@ -952,7 +952,7 @@ func TestExplainAnalyzeFormatRUWriteDML(t *testing.T) {
 		note := fmt.Sprint(row[16])
 		hasPartialIndexMerge = hasPartialIndexMerge || strings.Contains(note, "reason=unsupported_index_merge")
 		hasPartialScan = hasPartialScan ||
-			(strings.Contains(strings.ToLower(fmt.Sprint(row[2])), "scan") && strings.Contains(note, "reason=missing_scan_detail"))
+			(strings.Contains(strings.ToLower(fmt.Sprint(row[2])), "scan") && strings.Contains(note, "reason=missing_scan_width_evidence"))
 	}
 	require.True(t, hasPartialIndexMerge, rows)
 	require.True(t, hasPartialScan, rows)
@@ -1077,15 +1077,15 @@ func TestReadBillingDemoMetricsHook(t *testing.T) {
 	tk.MustExec("create table read_billing_demo(a int primary key)")
 	tk.MustExec("insert into read_billing_demo values (1), (2)")
 
-	success := metrics.ReadBillingDemoStatementsCounter.WithLabelValues("success", "v2")
-	unsupported := metrics.ReadBillingDemoStatementsCounter.WithLabelValues("unsupported", "v2")
-	unknownInput := metrics.ReadBillingDemoStatementsCounter.WithLabelValues("unknown_input", "v2")
-	errorStatus := metrics.ReadBillingDemoStatementsCounter.WithLabelValues("error", "v2")
-	projectionFixedEvents := metrics.ReadBillingDemoBaseUnitsCounter.WithLabelValues("tidb", "projection_eval", "projection", "fixed_events", "runtime_chunk_bytes", "all", "v2")
-	mutationCount := metrics.ReadBillingDemoBaseUnitsCounter.WithLabelValues("tidb", "kv_mutation", "memdb_mutation", "encoded_mutation_count", "stmt_memdb_mutation_calls", "all", "v2")
-	mutationBytes := metrics.ReadBillingDemoBaseUnitsCounter.WithLabelValues("tidb", "kv_mutation", "memdb_mutation", "encoded_mutation_bytes", "stmt_memdb_mutation_calls", "all", "v2")
-	writeKeys := metrics.ReadBillingDemoBaseUnitsCounter.WithLabelValues("tikv", "kv_write", "txn_prewrite", "write_keys", "commit_detail", "all", "v2")
-	writeByte := metrics.ReadBillingDemoBaseUnitsCounter.WithLabelValues("tikv", "kv_write", "txn_prewrite", "write_byte", "commit_detail", "all", "v2")
+	success := metrics.ReadBillingDemoStatementsCounter.WithLabelValues("success", "v3")
+	unsupported := metrics.ReadBillingDemoStatementsCounter.WithLabelValues("unsupported", "v3")
+	unknownInput := metrics.ReadBillingDemoStatementsCounter.WithLabelValues("unknown_input", "v3")
+	errorStatus := metrics.ReadBillingDemoStatementsCounter.WithLabelValues("error", "v3")
+	projectionFixedEvents := metrics.ReadBillingDemoBaseUnitsCounter.WithLabelValues("tidb", "projection_eval", "projection", "fixed_events", "runtime_chunk_bytes", "all", "v3")
+	mutationCount := metrics.ReadBillingDemoBaseUnitsCounter.WithLabelValues("tidb", "kv_mutation", "memdb_mutation", "encoded_mutation_count", "stmt_memdb_mutation_calls", "all", "v3")
+	mutationBytes := metrics.ReadBillingDemoBaseUnitsCounter.WithLabelValues("tidb", "kv_mutation", "memdb_mutation", "encoded_mutation_bytes", "stmt_memdb_mutation_calls", "all", "v3")
+	writeKeys := metrics.ReadBillingDemoBaseUnitsCounter.WithLabelValues("tikv", "kv_write", "txn_prewrite", "write_keys", "commit_detail", "all", "v3")
+	writeByte := metrics.ReadBillingDemoBaseUnitsCounter.WithLabelValues("tikv", "kv_write", "txn_prewrite", "write_byte", "commit_detail", "all", "v3")
 
 	tk.MustQuery("select 1 + 1").Check(testkit.Rows("2"))
 	require.Equal(t, 0.0, readExecutorCounterValue(t, success))
@@ -1096,7 +1096,7 @@ func TestReadBillingDemoMetricsHook(t *testing.T) {
 	require.Equal(t, 1.0, readExecutorCounterValue(t, projectionFixedEvents))
 	tk.MustExec("set tidb_enable_read_billing_demo=off")
 	tk.MustQuery(`select exec_count, sum_read_billing_demo_fixed_events > 0, sum_read_billing_demo_input_rows > 0, sum_read_billing_demo_input_bytes = 0 from information_schema.statements_summary where digest_text = 'select ? + ?'`).Check(testkit.Rows("2 1 1 1"))
-	tk.MustQuery(`select site, op_class, operator_kind, unit, input_source, input_side, model_version, weight_version, sample_count, value > 0, avg_row_width = 0 from information_schema.statements_summary_read_billing_demo_base_units where digest_text = 'select ? + ?' and site = 'tidb' and op_class = 'projection_eval' and operator_kind = 'projection' and unit = 'fixed_events'`).Check(testkit.Rows("tidb projection_eval projection fixed_events runtime_chunk_bytes all v2 v1 1 1 1"))
+	tk.MustQuery(`select site, op_class, operator_kind, unit, input_source, input_side, model_version, weight_version, sample_count, value > 0, avg_row_width = 0 from information_schema.statements_summary_read_billing_demo_base_units where digest_text = 'select ? + ?' and site = 'tidb' and op_class = 'projection_eval' and operator_kind = 'projection' and unit = 'fixed_events'`).Check(testkit.Rows("tidb projection_eval projection fixed_events runtime_chunk_bytes all v3 v2 1 1 1"))
 	tk.MustQuery(`select site, op_class, operator_kind, status, reason, count from information_schema.statements_summary_read_billing_demo_status where digest_text = 'select ? + ?' and site = 'statement'`).Check(testkit.Rows("statement statement statement success none 1"))
 	tk.MustQuery(`select column_name from information_schema.columns where table_schema = 'INFORMATION_SCHEMA' and table_name = 'CLUSTER_STATEMENTS_SUMMARY_READ_BILLING_DEMO_BASE_UNITS' and ordinal_position = 1`).Check(testkit.Rows("INSTANCE"))
 	// Append the diagnostic dimension so consumers that depend on the existing
@@ -1222,7 +1222,7 @@ func TestReadBillingDemoMetricsHook(t *testing.T) {
 	tk.MustQuery("select * from read_billing_demo where a > 0").Sort().Check(testkit.Rows("1", "2", "3"))
 	require.Equal(t, beforeUnknownInput+1, readExecutorCounterValue(t, unknownInput))
 	require.Equal(t, beforeBaseUnitsTotal, readExecutorCounterVecTotal(t, metrics.ReadBillingDemoBaseUnitsCounter))
-	tk.MustQuery(`select status, reason, sum(count) from information_schema.statements_summary_read_billing_demo_status where digest_text = 'select * from ` + "`read_billing_demo`" + ` where ` + "`a`" + ` > ?' and site = 'statement' group by status, reason`).Check(testkit.Rows("unknown_input missing_scan_detail 1"))
+	tk.MustQuery(`select status, reason, sum(count) from information_schema.statements_summary_read_billing_demo_status where digest_text = 'select * from ` + "`read_billing_demo`" + ` where ` + "`a`" + ` > ?' and site = 'statement' group by status, reason`).Check(testkit.Rows("unknown_input missing_scan_width_evidence 1"))
 	tk.MustQuery(`select count(*) from information_schema.statements_summary_read_billing_demo_base_units where digest_text = 'select * from ` + "`read_billing_demo`" + ` where ` + "`a`" + ` > ?'`).Check(testkit.Rows("0"))
 
 	// Inject an error after AddRecord has emitted its MemDB mutation. Statement

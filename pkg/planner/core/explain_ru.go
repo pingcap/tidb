@@ -15,6 +15,7 @@
 package core
 
 import (
+	"math"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
@@ -53,95 +55,109 @@ const (
 	explainRUSectionPlan                                                     = "plan"
 	explainRUSourceSummaryTotal                                              = "summary_total"
 
-	explainRUWidthSourceRuntimeChunkAvg          = "runtime_chunk_avg"
-	explainRUWidthSourceScanDetailProcessedAvg   = "scan_detail_processed_key_avg"
-	explainRUWidthSourceNotApplicable            = "not_applicable"
-	readBillingDemoModelVersion                  = "v2"
-	readBillingDemoWeightVersion                 = "v1"
-	readBillingDemoStatusSuccess                 = "success"
-	readBillingDemoStatusUnsupported             = "unsupported"
-	readBillingDemoStatusUnknownInput            = "unknown_input"
-	readBillingDemoStatusError                   = "error"
-	readBillingDemoStatusOperatorOK              = "ok"
-	readBillingDemoStatusPartial                 = "partial"
-	readBillingDemoReasonNone                    = "none"
-	readBillingDemoReasonStatementError          = "statement_error"
-	readBillingDemoReasonMissingPlan             = "missing_plan"
-	readBillingDemoReasonMissingRuntimeStats     = "missing_runtime_stats"
-	readBillingDemoReasonMissingRuntimeRows      = "missing_runtime_rows"
-	readBillingDemoReasonMissingRuntimeBytes     = "missing_runtime_bytes"
-	readBillingDemoReasonMissingInputBytes       = "missing_input_bytes"
-	readBillingDemoReasonMissingScanDetail       = "missing_scan_detail"
-	readBillingDemoReasonUnsupportedOperator     = "unsupported_operator"
-	readBillingDemoReasonUnsupportedTiFlash      = "unsupported_tiflash"
-	readBillingDemoReasonUnsupportedMPP          = "unsupported_mpp"
-	readBillingDemoReasonUnsupportedIndexMerge   = "unsupported_index_merge"
-	readBillingDemoReasonUnsupportedLock         = "unsupported_lock"
-	readBillingDemoReasonNonBillable             = "non_billable"
-	readBillingDemoReasonMissingCommitDetail     = "missing_commit_detail"
-	readBillingDemoReasonMissingWriteKeys        = "missing_write_keys"
-	readBillingDemoReasonMissingWriteByte        = "missing_write_byte"
-	readBillingDemoReasonZeroMutation            = "zero_mutation"
-	readBillingDemoReasonMissingPrewriteRegion   = "missing_prewrite_region_num"
-	readBillingDemoReasonMissingWriteRPCCount    = "missing_write_rpc_count"
-	readBillingDemoReasonMissingMutationRecorder = "missing_mutation_recorder"
-	readBillingDemoReasonUncalibratedMutation    = "uncalibrated_mutation_weights"
-	readBillingDemoReasonDMLAncillaryPartial     = "dml_ancillary_work_partial"
-	readBillingDemoReasonPipelinedWritePartial   = "pipelined_tikv_payload_unsupported"
-	readBillingDemoReasonOptimisticReplayPartial = "optimistic_replay_attribution_unsupported"
-	readBillingDemoSiteStatement                 = "statement"
-	readBillingDemoSiteTiDB                      = "tidb"
-	readBillingDemoSiteTiKV                      = "tikv"
-	readBillingDemoOpClassStatement              = "statement"
-	readBillingDemoOpClassFilter                 = "filter_eval"
-	readBillingDemoOpClassProjection             = "projection_eval"
-	readBillingDemoOpClassLimit                  = "row_limit"
-	readBillingDemoOpClassTopN                   = "bounded_topn"
-	readBillingDemoOpClassSort                   = "full_ordering"
-	readBillingDemoOpClassWindow                 = "window_eval"
-	readBillingDemoOpClassHashAgg                = "agg_hash"
-	readBillingDemoOpClassStreamAgg              = "agg_stream"
-	readBillingDemoOpClassHashJoin               = "join_hash"
-	readBillingDemoOpClassMergeJoin              = "join_merge"
-	readBillingDemoOpClassLookupJoin             = "join_lookup"
-	readBillingDemoOpClassReaderReceive          = "reader_receive"
-	readBillingDemoOpClassLookupReader           = "lookup_reader"
-	readBillingDemoOpClassOverlayReader          = "overlay_reader"
-	readBillingDemoOpClassMetadataReader         = "metadata_reader"
-	readBillingDemoOpClassPointLookup            = "kv_point_lookup"
-	readBillingDemoOpClassRangeScan              = "kv_range_scan"
-	readBillingDemoOpClassKVMutation             = "kv_mutation"
-	readBillingDemoOpClassKVWrite                = "kv_write"
-	readBillingDemoOpClassWrapper                = "wrapper"
-	readBillingDemoOpClassSynthetic              = "synthetic_source"
-	readBillingDemoOperatorStatement             = "statement"
-	readBillingDemoOperatorMemDBMutation         = "memdb_mutation"
-	readBillingDemoOperatorTxnPrewrite           = "txn_prewrite"
-	readBillingDemoUnitFixedEvents               = "fixed_events"
-	readBillingDemoUnitInputRows                 = "input_rows"
-	readBillingDemoUnitInputBytes                = "input_bytes"
-	readBillingDemoUnitEncodedMutationCount      = "encoded_mutation_count"
-	readBillingDemoUnitEncodedMutationBytes      = "encoded_mutation_bytes"
-	readBillingDemoUnitSetCount                  = "set_count"
-	readBillingDemoUnitDeleteCount               = "delete_count"
-	readBillingDemoUnitKeyBytes                  = "key_bytes"
-	readBillingDemoUnitValueBytes                = "value_bytes"
-	readBillingDemoUnitWriteKeys                 = "write_keys"
-	readBillingDemoUnitWriteByte                 = "write_byte"
-	readBillingDemoUnitPrewriteRegionNum         = "prewrite_region_num"
-	readBillingDemoUnitTiKVWriteRPCCount         = "tikv_write_rpc_count"
-	readBillingDemoInputSourceRuntimeChunkBytes  = "runtime_chunk_bytes"
-	readBillingDemoInputSourceScanDetail         = "scan_detail"
-	readBillingDemoInputSourceStmtMemDBMutation  = "stmt_memdb_mutation_calls"
-	readBillingDemoInputSourceCommitDetail       = "commit_detail"
-	readBillingDemoInputSourceRUV2Metrics        = "ruv2_metrics"
-	readBillingDemoInputSideAll                  = "all"
-	readBillingDemoInputSideBuild                = "build"
-	readBillingDemoInputSideProbe                = "probe"
-	readBillingDemoInputSideLeft                 = "left"
-	readBillingDemoInputSideRight                = "right"
-	readBillingDemoScopeStatementAttempted       = "statement_attempted"
-	readBillingDemoScopeTxnPrewritePayload       = "txn_prewrite_payload"
+	explainRUWidthSourceRuntimeChunkAvg               = "runtime_chunk_avg"
+	explainRUWidthSourceScanDetailProcessedAvg        = "scan_detail_processed_key_avg"
+	explainRUWidthSourceScanDetailProcessedEstimate   = "scan_detail_processed_key_avg_estimate"
+	explainRUWidthSourceNotApplicable                 = "not_applicable"
+	readBillingDemoModelVersion                       = "v3"
+	readBillingDemoWeightVersion                      = "v2"
+	readBillingDemoStatusSuccess                      = "success"
+	readBillingDemoStatusUnsupported                  = "unsupported"
+	readBillingDemoStatusUnknownInput                 = "unknown_input"
+	readBillingDemoStatusError                        = "error"
+	readBillingDemoStatusOperatorOK                   = "ok"
+	readBillingDemoStatusPartial                      = "partial"
+	readBillingDemoReasonNone                         = "none"
+	readBillingDemoReasonStatementError               = "statement_error"
+	readBillingDemoReasonMissingPlan                  = "missing_plan"
+	readBillingDemoReasonMissingRuntimeStats          = "missing_runtime_stats"
+	readBillingDemoReasonMissingRuntimeRows           = "missing_runtime_rows"
+	readBillingDemoReasonMissingRuntimeBytes          = "missing_runtime_bytes"
+	readBillingDemoReasonMissingInputBytes            = "missing_input_bytes"
+	readBillingDemoReasonMissingScanDetail            = "missing_scan_detail"
+	readBillingDemoReasonUnsupportedOperator          = "unsupported_operator"
+	readBillingDemoReasonUnsupportedTiFlash           = "unsupported_tiflash"
+	readBillingDemoReasonUnsupportedMPP               = "unsupported_mpp"
+	readBillingDemoReasonUnsupportedIndexMerge        = "unsupported_index_merge"
+	readBillingDemoReasonUnsupportedLock              = "unsupported_lock"
+	readBillingDemoReasonNonBillable                  = "non_billable"
+	readBillingDemoReasonMissingCommitDetail          = "missing_commit_detail"
+	readBillingDemoReasonMissingWriteKeys             = "missing_write_keys"
+	readBillingDemoReasonMissingWriteByte             = "missing_write_byte"
+	readBillingDemoReasonZeroMutation                 = "zero_mutation"
+	readBillingDemoReasonMissingPrewriteRegion        = "missing_prewrite_region_num"
+	readBillingDemoReasonMissingWriteRPCCount         = "missing_write_rpc_count"
+	readBillingDemoReasonMissingMutationRecorder      = "missing_mutation_recorder"
+	readBillingDemoReasonUncalibratedMutation         = "uncalibrated_mutation_weights"
+	readBillingDemoReasonDMLAncillaryPartial          = "dml_ancillary_work_partial"
+	readBillingDemoReasonPipelinedWritePartial        = "pipelined_tikv_payload_unsupported"
+	readBillingDemoReasonOptimisticReplayPartial      = "optimistic_replay_attribution_unsupported"
+	readBillingDemoReasonMissingCopChildRuntimeRows   = "missing_cop_child_runtime_rows"
+	readBillingDemoReasonMissingScanWidthEvidence     = "missing_scan_width_evidence"
+	readBillingDemoReasonAmbiguousCopScanWidth        = "ambiguous_cop_scan_width"
+	readBillingDemoReasonUnsupportedCopMultiChild     = "unsupported_cop_multi_child"
+	readBillingDemoReasonUnsupportedCopWidthTransform = "unsupported_cop_width_transform"
+	readBillingDemoReasonUnsupportedCopStructure      = "unsupported_cop_structure"
+	readBillingDemoReasonInvalidCopRuntimeRows        = "invalid_cop_runtime_rows"
+	readBillingDemoReasonIncompleteCopRuntimeRows     = "incomplete_cop_runtime_rows"
+	readBillingDemoReasonDependentCopInputUnavailable = "dependent_cop_input_unavailable"
+	readBillingDemoReasonInvalidOrderingWork          = "invalid_ordering_work"
+	readBillingDemoSiteStatement                      = "statement"
+	readBillingDemoSiteTiDB                           = "tidb"
+	readBillingDemoSiteTiKV                           = "tikv"
+	readBillingDemoOpClassStatement                   = "statement"
+	readBillingDemoOpClassFilter                      = "filter_eval"
+	readBillingDemoOpClassProjection                  = "projection_eval"
+	readBillingDemoOpClassLimit                       = "row_limit"
+	readBillingDemoOpClassTopN                        = "bounded_topn"
+	readBillingDemoOpClassSort                        = "full_ordering"
+	readBillingDemoOpClassWindow                      = "window_eval"
+	readBillingDemoOpClassHashAgg                     = "agg_hash"
+	readBillingDemoOpClassStreamAgg                   = "agg_stream"
+	readBillingDemoOpClassHashJoin                    = "join_hash"
+	readBillingDemoOpClassMergeJoin                   = "join_merge"
+	readBillingDemoOpClassLookupJoin                  = "join_lookup"
+	readBillingDemoOpClassReaderReceive               = "reader_receive"
+	readBillingDemoOpClassLookupReader                = "lookup_reader"
+	readBillingDemoOpClassOverlayReader               = "overlay_reader"
+	readBillingDemoOpClassMetadataReader              = "metadata_reader"
+	readBillingDemoOpClassPointLookup                 = "kv_point_lookup"
+	readBillingDemoOpClassRangeScan                   = "kv_range_scan"
+	readBillingDemoOpClassKVMutation                  = "kv_mutation"
+	readBillingDemoOpClassKVWrite                     = "kv_write"
+	readBillingDemoOpClassWrapper                     = "wrapper"
+	readBillingDemoOpClassSynthetic                   = "synthetic_source"
+	readBillingDemoOperatorStatement                  = "statement"
+	readBillingDemoOperatorMemDBMutation              = "memdb_mutation"
+	readBillingDemoOperatorTxnPrewrite                = "txn_prewrite"
+	readBillingDemoUnitFixedEvents                    = "fixed_events"
+	readBillingDemoUnitInputRows                      = "input_rows"
+	readBillingDemoUnitInputBytes                     = "input_bytes"
+	readBillingDemoUnitOrderWork                      = "order_work"
+	readBillingDemoUnitEncodedMutationCount           = "encoded_mutation_count"
+	readBillingDemoUnitEncodedMutationBytes           = "encoded_mutation_bytes"
+	readBillingDemoUnitSetCount                       = "set_count"
+	readBillingDemoUnitDeleteCount                    = "delete_count"
+	readBillingDemoUnitKeyBytes                       = "key_bytes"
+	readBillingDemoUnitValueBytes                     = "value_bytes"
+	readBillingDemoUnitWriteKeys                      = "write_keys"
+	readBillingDemoUnitWriteByte                      = "write_byte"
+	readBillingDemoUnitPrewriteRegionNum              = "prewrite_region_num"
+	readBillingDemoUnitTiKVWriteRPCCount              = "tikv_write_rpc_count"
+	readBillingDemoInputSourceRuntimeChunkBytes       = "runtime_chunk_bytes"
+	readBillingDemoInputSourceScanDetail              = "scan_detail"
+	readBillingDemoInputSourceRuntimeChildActRows     = "runtime_child_act_rows"
+	readBillingDemoInputSourceRuntimeOrderingWork     = "runtime_ordering_work"
+	readBillingDemoInputSourceStmtMemDBMutation       = "stmt_memdb_mutation_calls"
+	readBillingDemoInputSourceCommitDetail            = "commit_detail"
+	readBillingDemoInputSourceRUV2Metrics             = "ruv2_metrics"
+	readBillingDemoInputSideAll                       = "all"
+	readBillingDemoInputSideBuild                     = "build"
+	readBillingDemoInputSideProbe                     = "probe"
+	readBillingDemoInputSideLeft                      = "left"
+	readBillingDemoInputSideRight                     = "right"
+	readBillingDemoScopeStatementAttempted            = "statement_attempted"
+	readBillingDemoScopeTxnPrewritePayload            = "txn_prewrite_payload"
 
 	// The first write-side preview formula intentionally has no fixed/RPC/region
 	// terms: write keys use the current scaled RUv2 write-key coefficient, and
@@ -192,10 +208,106 @@ type readBillingDemoResult struct {
 	operators []readBillingDemoOperatorResult
 }
 
+type readBillingDemoCopWidthState uint8
+
+const (
+	readBillingDemoCopWidthMissing readBillingDemoCopWidthState = iota
+	readBillingDemoCopWidthKnown
+	readBillingDemoCopWidthBarrier
+	readBillingDemoCopWidthAmbiguous
+)
+
+type readBillingDemoCopFailureKind uint8
+
+const (
+	readBillingDemoCopFailureCurrent readBillingDemoCopFailureKind = iota
+	readBillingDemoCopFailureIntrinsicCause
+)
+
+type readBillingDemoCopRowsState uint8
+
+const (
+	readBillingDemoCopRowsMissing readBillingDemoCopRowsState = iota
+	readBillingDemoCopRowsObserved
+	readBillingDemoCopRowsInvalid
+)
+
+type readBillingDemoCopFailure struct {
+	present    bool
+	kind       readBillingDemoCopFailureKind
+	status     string
+	reason     string
+	failingIdx int
+}
+
+type readBillingDemoCopRowsEvidence struct {
+	state readBillingDemoCopRowsState
+	rows  int64
+	tasks int32
+}
+
+type readBillingDemoCopOutputEstimate struct {
+	widthState  readBillingDemoCopWidthState
+	avgRowWidth float64
+	widthSource string
+	scanPlanID  int
+	failure     readBillingDemoCopFailure
+}
+
+type readBillingDemoCopInputEstimate struct {
+	rows        int64
+	inputBytes  float64
+	avgRowWidth float64
+	inputSource string
+	widthSource string
+	failure     readBillingDemoCopFailure
+}
+
+type readBillingDemoCopComponentEvidence struct {
+	scanCount         int
+	scanIdx           int
+	detailHolderCount int
+	scanDetail        tikvutil.ScanDetail
+	maxSummaryTasks   int32
+}
+
+type readBillingDemoCopEstimator struct {
+	tree             FlatPlanTree
+	runtimeStats     *execdetails.RuntimeStatsColl
+	parentIdx        []int
+	componentID      []int
+	components       []readBillingDemoCopComponentEvidence
+	nodeFailures     map[int]readBillingDemoCopFailure
+	treeFailures     []readBillingDemoCopFailure
+	treeFailureSeen  map[int]struct{}
+	inputMemo        map[int]readBillingDemoCopInputEstimate
+	inputMemoSet     map[int]struct{}
+	outputMemo       map[int]readBillingDemoCopOutputEstimate
+	outputMemoSet    map[int]struct{}
+	visiting         map[int]bool
+	nodeVisits       int
+	edgeVisits       int
+	auxiliaryEntries int
+}
+
+type readBillingDemoCopUnitOutcome struct {
+	success bool
+	units   []readBillingDemoUnit
+	failure readBillingDemoCopFailure
+}
+
+type readBillingDemoAppendOutcome struct {
+	success bool
+	status  string
+	current readBillingDemoOperatorResult
+	cause   readBillingDemoCopFailure
+}
+
 type readBillingDemoOperatorWeights struct {
 	fixedEvent    float64
 	row           float64
 	byte          float64
+	orderWork     float64
 	mutationCount float64
 	mutationByte  float64
 	setCount      float64
@@ -220,7 +332,7 @@ var readBillingDemoWeights = map[readBillingDemoWeightKey]readBillingDemoOperato
 	{readBillingDemoSiteTiKV, readBillingDemoOpClassFilter, readBillingDemoWeightVersion}:      {fixedEvent: 0.020, row: 0.000040, byte: 0.000006},
 	{readBillingDemoSiteTiKV, readBillingDemoOpClassProjection, readBillingDemoWeightVersion}:  {fixedEvent: 0.020, row: 0.000030, byte: 0.000006},
 	{readBillingDemoSiteTiKV, readBillingDemoOpClassLimit, readBillingDemoWeightVersion}:       {fixedEvent: 0.010, row: 0.000008, byte: 0.000002},
-	{readBillingDemoSiteTiKV, readBillingDemoOpClassTopN, readBillingDemoWeightVersion}:        {fixedEvent: 0.060, row: 0.000075, byte: 0.000012},
+	{readBillingDemoSiteTiKV, readBillingDemoOpClassTopN, readBillingDemoWeightVersion}:        {fixedEvent: 0.060, byte: 0.000012, orderWork: 0.000075},
 	{readBillingDemoSiteTiKV, readBillingDemoOpClassHashAgg, readBillingDemoWeightVersion}:     {fixedEvent: 0.080, row: 0.000100, byte: 0.000014},
 	{readBillingDemoSiteTiKV, readBillingDemoOpClassStreamAgg, readBillingDemoWeightVersion}:   {fixedEvent: 0.060, row: 0.000065, byte: 0.000010},
 	{readBillingDemoSiteTiKV, readBillingDemoOpClassPointLookup, readBillingDemoWeightVersion}: {fixedEvent: 0.045, row: 0.000030, byte: 0.000012},
@@ -235,8 +347,8 @@ var readBillingDemoWeights = map[readBillingDemoWeightKey]readBillingDemoOperato
 	{readBillingDemoSiteTiDB, readBillingDemoOpClassFilter, readBillingDemoWeightVersion}:        {fixedEvent: 0.020, row: 0.000030, byte: 0.000005},
 	{readBillingDemoSiteTiDB, readBillingDemoOpClassProjection, readBillingDemoWeightVersion}:    {fixedEvent: 0.020, row: 0.000020, byte: 0.000004},
 	{readBillingDemoSiteTiDB, readBillingDemoOpClassLimit, readBillingDemoWeightVersion}:         {fixedEvent: 0.010, row: 0.000006, byte: 0.000001},
-	{readBillingDemoSiteTiDB, readBillingDemoOpClassTopN, readBillingDemoWeightVersion}:          {fixedEvent: 0.060, row: 0.000060, byte: 0.000010},
-	{readBillingDemoSiteTiDB, readBillingDemoOpClassSort, readBillingDemoWeightVersion}:          {fixedEvent: 0.080, row: 0.000070, byte: 0.000012},
+	{readBillingDemoSiteTiDB, readBillingDemoOpClassTopN, readBillingDemoWeightVersion}:          {fixedEvent: 0.060, byte: 0.000010, orderWork: 0.000060},
+	{readBillingDemoSiteTiDB, readBillingDemoOpClassSort, readBillingDemoWeightVersion}:          {fixedEvent: 0.080, byte: 0.000012, orderWork: 0.000070},
 	{readBillingDemoSiteTiDB, readBillingDemoOpClassWindow, readBillingDemoWeightVersion}:        {fixedEvent: 0.070, row: 0.000070, byte: 0.000010},
 	{readBillingDemoSiteTiDB, readBillingDemoOpClassHashAgg, readBillingDemoWeightVersion}:       {fixedEvent: 0.070, row: 0.000085, byte: 0.000012},
 	{readBillingDemoSiteTiDB, readBillingDemoOpClassStreamAgg, readBillingDemoWeightVersion}:     {fixedEvent: 0.050, row: 0.000055, byte: 0.000008},
@@ -267,7 +379,7 @@ type explainRURow struct {
 	rowWidth       float64
 	hasRowWidth    bool
 	rowWidthSource string
-	workRows       int64
+	workRows       float64
 	hasWorkRows    bool
 	workBytes      float64
 	hasWorkBytes   bool
@@ -636,6 +748,8 @@ func readBillingDemoUnitWeight(weights readBillingDemoOperatorWeights, unit stri
 		return weights.row, true
 	case readBillingDemoUnitInputBytes:
 		return weights.byte, true
+	case readBillingDemoUnitOrderWork:
+		return weights.orderWork, true
 	case readBillingDemoUnitEncodedMutationCount:
 		return weights.mutationCount, true
 	case readBillingDemoUnitEncodedMutationBytes:
@@ -796,12 +910,496 @@ func buildReadBillingDemoStatementStats(result readBillingDemoResult) stmtsummar
 	return stats
 }
 
-func appendReadBillingDemoTree(result *readBillingDemoResult, sctx base.PlanContext, runtimeStats *execdetails.RuntimeStatsColl, tree FlatPlanTree) (string, readBillingDemoOperatorResult) {
+func readBillingDemoCopFailureAt(idx int, kind readBillingDemoCopFailureKind, status, reason string) readBillingDemoCopFailure {
+	return readBillingDemoCopFailure{
+		present:    true,
+		kind:       kind,
+		status:     status,
+		reason:     reason,
+		failingIdx: idx,
+	}
+}
+
+func readBillingDemoPromoteCopFailure(failure readBillingDemoCopFailure) readBillingDemoCopFailure {
+	if failure.present {
+		failure.kind = readBillingDemoCopFailureIntrinsicCause
+	}
+	return failure
+}
+
+func readBillingDemoExactCopRowsEvidence(runtimeStats *execdetails.RuntimeStatsColl, planID int) readBillingDemoCopRowsEvidence {
+	if runtimeStats == nil {
+		return readBillingDemoCopRowsEvidence{state: readBillingDemoCopRowsMissing}
+	}
+	stats := runtimeStats.GetCopStats(planID)
+	if stats == nil || stats.GetTasks() <= 0 {
+		return readBillingDemoCopRowsEvidence{state: readBillingDemoCopRowsMissing}
+	}
+	rows := stats.GetActRows()
+	if rows < 0 {
+		return readBillingDemoCopRowsEvidence{state: readBillingDemoCopRowsInvalid, rows: rows, tasks: stats.GetTasks()}
+	}
+	return readBillingDemoCopRowsEvidence{state: readBillingDemoCopRowsObserved, rows: rows, tasks: stats.GetTasks()}
+}
+
+func newReadBillingDemoCopEstimator(tree FlatPlanTree, runtimeStats *execdetails.RuntimeStatsColl) *readBillingDemoCopEstimator {
+	estimator := &readBillingDemoCopEstimator{
+		tree:            tree,
+		runtimeStats:    runtimeStats,
+		parentIdx:       make([]int, len(tree)),
+		componentID:     make([]int, len(tree)),
+		nodeFailures:    make(map[int]readBillingDemoCopFailure),
+		treeFailureSeen: make(map[int]struct{}),
+		inputMemo:       make(map[int]readBillingDemoCopInputEstimate),
+		inputMemoSet:    make(map[int]struct{}),
+		outputMemo:      make(map[int]readBillingDemoCopOutputEstimate),
+		outputMemoSet:   make(map[int]struct{}),
+		visiting:        make(map[int]bool),
+	}
 	for i := range tree {
-		status, operator := appendReadBillingDemoOperator(result, runtimeStats, tree, i)
-		if status != readBillingDemoStatusSuccess {
-			return status, operator
+		estimator.parentIdx[i] = -1
+		estimator.componentID[i] = -1
+	}
+	addStructuralFailure := func(idx int) {
+		if idx < 0 || idx >= len(tree) {
+			return
 		}
+		failure := readBillingDemoCopFailureAt(idx, readBillingDemoCopFailureIntrinsicCause, readBillingDemoStatusUnsupported, readBillingDemoReasonUnsupportedCopStructure)
+		estimator.nodeFailures[idx] = failure
+		if _, ok := estimator.treeFailureSeen[idx]; !ok {
+			estimator.treeFailureSeen[idx] = struct{}{}
+			estimator.treeFailures = append(estimator.treeFailures, failure)
+		}
+	}
+
+	// Build the reverse direct-edge index and reject malformed references. This
+	// pass is O(n+m), where m is the number of explicit ChildrenIdx entries.
+	for idx, node := range tree {
+		estimator.nodeVisits++
+		if node == nil || node.Origin == nil {
+			continue
+		}
+		previousChild := idx
+		for _, childIdx := range node.ChildrenIdx {
+			estimator.edgeVisits++
+			if childIdx <= previousChild || childIdx <= idx || childIdx >= len(tree) {
+				addStructuralFailure(idx)
+				continue
+			}
+			previousChild = childIdx
+			if tree[childIdx] == nil || tree[childIdx].Origin == nil {
+				addStructuralFailure(idx)
+				continue
+			}
+			if previousParent := estimator.parentIdx[childIdx]; previousParent >= 0 {
+				addStructuralFailure(previousParent)
+				addStructuralFailure(idx)
+				addStructuralFailure(childIdx)
+				continue
+			}
+			estimator.parentIdx[childIdx] = idx
+		}
+	}
+
+	componentRoots := make([]int, 0)
+	for idx, node := range tree {
+		estimator.nodeVisits++
+		if !readBillingDemoIsTiKVCopNode(node) {
+			continue
+		}
+		parentIdx := estimator.parentIdx[idx]
+		if parentIdx < 0 || parentIdx >= len(tree) || tree[parentIdx] == nil || tree[parentIdx].Origin == nil {
+			addStructuralFailure(idx)
+			continue
+		}
+		parent := tree[parentIdx]
+		if parent.IsRoot {
+			componentRoots = append(componentRoots, idx)
+			continue
+		}
+		if !readBillingDemoIsTiKVCopNode(parent) {
+			addStructuralFailure(idx)
+			addStructuralFailure(parentIdx)
+		}
+	}
+
+	lastComponentRoot := -1
+	lastComponentEnd := -1
+	for _, rootIdx := range componentRoots {
+		rootEnd := tree[rootIdx].ChildrenEndIdx
+		if rootEnd < rootIdx || rootEnd >= len(tree) {
+			addStructuralFailure(rootIdx)
+			continue
+		}
+		// Component roots are discovered in preorder. Validate their intervals
+		// with one ordered sweep so malformed, overlapping roots cannot make us
+		// rescan the same suffix once per sibling component.
+		if rootIdx <= lastComponentEnd {
+			addStructuralFailure(lastComponentRoot)
+			addStructuralFailure(rootIdx)
+			continue
+		}
+		lastComponentRoot = rootIdx
+		lastComponentEnd = rootEnd
+		estimator.validateReadBillingDemoCopComponent(rootIdx, addStructuralFailure)
+	}
+	for idx, node := range tree {
+		estimator.nodeVisits++
+		if readBillingDemoIsTiKVCopNode(node) && estimator.componentID[idx] < 0 {
+			addStructuralFailure(idx)
+		}
+	}
+
+	// Gather component evidence and intrinsic invalid-row failures in one
+	// exact-plan-ID pass. Detail ownership and row ownership intentionally stay
+	// separate because distsql attaches response ScanDetail to the last plan ID.
+	for idx, node := range tree {
+		estimator.nodeVisits++
+		if !readBillingDemoIsTiKVCopNode(node) {
+			continue
+		}
+		if evidence := readBillingDemoExactCopRowsEvidence(runtimeStats, node.Origin.ID()); evidence.state == readBillingDemoCopRowsInvalid {
+			if _, structural := estimator.nodeFailures[idx]; !structural {
+				estimator.nodeFailures[idx] = readBillingDemoCopFailureAt(idx, readBillingDemoCopFailureIntrinsicCause, readBillingDemoStatusUnknownInput, readBillingDemoReasonInvalidCopRuntimeRows)
+			}
+		}
+		componentID := estimator.componentID[idx]
+		if componentID < 0 || componentID >= len(estimator.components) {
+			continue
+		}
+		component := &estimator.components[componentID]
+		operator, supported, _ := readBillingDemoClassifyOperator(node)
+		if supported && operator.opClass == readBillingDemoOpClassRangeScan {
+			component.scanCount++
+			component.scanIdx = idx
+		}
+		if runtimeStats == nil {
+			continue
+		}
+		stats := runtimeStats.GetCopStats(node.Origin.ID())
+		if stats == nil {
+			continue
+		}
+		if tasks := stats.GetTasks(); tasks > component.maxSummaryTasks {
+			component.maxSummaryTasks = tasks
+		}
+		detail := stats.GetScanDetail()
+		if detail.ProcessedKeys > 0 && detail.ProcessedKeysSize > 0 {
+			component.detailHolderCount++
+			component.scanDetail = detail
+		}
+	}
+	estimator.auxiliaryEntries = len(estimator.parentIdx) + len(estimator.componentID) + len(estimator.components) + len(estimator.nodeFailures) + len(estimator.treeFailures)
+	return estimator
+}
+
+func readBillingDemoIsTiKVCopNode(node *FlatOperator) bool {
+	return node != nil && node.Origin != nil && !node.IsRoot && node.StoreType == kv.TiKV
+}
+
+func (e *readBillingDemoCopEstimator) validateReadBillingDemoCopComponent(rootIdx int, addStructuralFailure func(int)) {
+	if rootIdx < 0 || rootIdx >= len(e.tree) || !readBillingDemoIsTiKVCopNode(e.tree[rootIdx]) {
+		addStructuralFailure(rootIdx)
+		return
+	}
+	rootEnd := e.tree[rootIdx].ChildrenEndIdx
+	if rootEnd < rootIdx || rootEnd >= len(e.tree) {
+		addStructuralFailure(rootIdx)
+		return
+	}
+	componentID := len(e.components)
+	e.components = append(e.components, readBillingDemoCopComponentEvidence{scanIdx: -1})
+	visited := make(map[int]struct{})
+
+	var visit func(int, int) int
+	visit = func(idx, expectedParent int) int {
+		e.nodeVisits++
+		if idx < rootIdx || idx > rootEnd || idx >= len(e.tree) {
+			addStructuralFailure(rootIdx)
+			return idx
+		}
+		node := e.tree[idx]
+		if !readBillingDemoIsTiKVCopNode(node) {
+			addStructuralFailure(idx)
+			return idx
+		}
+		if _, duplicate := visited[idx]; duplicate {
+			addStructuralFailure(idx)
+			return node.ChildrenEndIdx
+		}
+		visited[idx] = struct{}{}
+		if expectedParent >= 0 && e.parentIdx[idx] != expectedParent {
+			addStructuralFailure(expectedParent)
+			addStructuralFailure(idx)
+		}
+		if previousComponent := e.componentID[idx]; previousComponent >= 0 && previousComponent != componentID {
+			addStructuralFailure(idx)
+			return idx
+		}
+		e.componentID[idx] = componentID
+		nodeEnd := node.ChildrenEndIdx
+		if nodeEnd < idx || nodeEnd > rootEnd {
+			addStructuralFailure(idx)
+			return idx
+		}
+		if len(node.ChildrenIdx) == 0 {
+			if nodeEnd != idx {
+				addStructuralFailure(idx)
+			}
+			return nodeEnd
+		}
+		expectedChild := idx + 1
+		for _, childIdx := range node.ChildrenIdx {
+			e.edgeVisits++
+			if childIdx != expectedChild {
+				addStructuralFailure(idx)
+			}
+			childEnd := visit(childIdx, idx)
+			if childEnd < childIdx {
+				addStructuralFailure(childIdx)
+				childEnd = childIdx
+			}
+			expectedChild = childEnd + 1
+		}
+		if expectedChild-1 != nodeEnd {
+			addStructuralFailure(idx)
+		}
+		return nodeEnd
+	}
+
+	if visit(rootIdx, e.parentIdx[rootIdx]) != rootEnd {
+		addStructuralFailure(rootIdx)
+	}
+	for idx := rootIdx; idx <= rootEnd; idx++ {
+		e.nodeVisits++
+		if e.componentID[idx] != componentID {
+			addStructuralFailure(idx)
+		}
+	}
+}
+
+func (e *readBillingDemoCopEstimator) firstTreeFailure() (readBillingDemoCopFailure, bool) {
+	if len(e.treeFailures) == 0 {
+		return readBillingDemoCopFailure{}, false
+	}
+	failure := e.treeFailures[0]
+	for _, candidate := range e.treeFailures[1:] {
+		if candidate.failingIdx < failure.failingIdx {
+			failure = candidate
+		}
+	}
+	return failure, true
+}
+
+func (e *readBillingDemoCopEstimator) componentOutputWidth(idx int) readBillingDemoCopOutputEstimate {
+	if idx < 0 || idx >= len(e.componentID) {
+		return readBillingDemoCopOutputEstimate{failure: readBillingDemoCopFailureAt(idx, readBillingDemoCopFailureIntrinsicCause, readBillingDemoStatusUnsupported, readBillingDemoReasonUnsupportedCopStructure)}
+	}
+	componentID := e.componentID[idx]
+	if componentID < 0 || componentID >= len(e.components) {
+		return readBillingDemoCopOutputEstimate{failure: readBillingDemoCopFailureAt(idx, readBillingDemoCopFailureIntrinsicCause, readBillingDemoStatusUnsupported, readBillingDemoReasonUnsupportedCopStructure)}
+	}
+	component := e.components[componentID]
+	if component.scanCount > 1 || component.detailHolderCount > 1 {
+		return readBillingDemoCopOutputEstimate{widthState: readBillingDemoCopWidthAmbiguous}
+	}
+	if component.scanCount != 1 || component.detailHolderCount != 1 {
+		return readBillingDemoCopOutputEstimate{widthState: readBillingDemoCopWidthMissing}
+	}
+	rowWidth := float64(component.scanDetail.ProcessedKeysSize) / float64(component.scanDetail.ProcessedKeys)
+	if rowWidth <= 0 || math.IsNaN(rowWidth) || math.IsInf(rowWidth, 0) {
+		return readBillingDemoCopOutputEstimate{widthState: readBillingDemoCopWidthMissing}
+	}
+	return readBillingDemoCopOutputEstimate{
+		widthState:  readBillingDemoCopWidthKnown,
+		avgRowWidth: rowWidth,
+		widthSource: explainRUWidthSourceScanDetailProcessedEstimate,
+		scanPlanID:  e.tree[component.scanIdx].Origin.ID(),
+	}
+}
+
+func (e *readBillingDemoCopEstimator) directCopChild(idx int) (int, readBillingDemoCopFailure, bool) {
+	if idx < 0 || idx >= len(e.tree) || !readBillingDemoIsTiKVCopNode(e.tree[idx]) {
+		return 0, readBillingDemoCopFailureAt(idx, readBillingDemoCopFailureCurrent, readBillingDemoStatusUnsupported, readBillingDemoReasonUnsupportedCopStructure), false
+	}
+	children := e.tree[idx].ChildrenIdx
+	if len(children) == 0 {
+		return 0, readBillingDemoCopFailureAt(idx, readBillingDemoCopFailureCurrent, readBillingDemoStatusUnsupported, readBillingDemoReasonUnsupportedCopStructure), false
+	}
+	if len(children) > 1 {
+		return 0, readBillingDemoCopFailureAt(idx, readBillingDemoCopFailureCurrent, readBillingDemoStatusUnsupported, readBillingDemoReasonUnsupportedCopMultiChild), false
+	}
+	childIdx := children[0]
+	if childIdx < 0 || childIdx >= len(e.tree) || !readBillingDemoIsTiKVCopNode(e.tree[childIdx]) || e.componentID[childIdx] != e.componentID[idx] {
+		return 0, readBillingDemoCopFailureAt(idx, readBillingDemoCopFailureCurrent, readBillingDemoStatusUnsupported, readBillingDemoReasonUnsupportedCopStructure), false
+	}
+	return childIdx, readBillingDemoCopFailure{}, true
+}
+
+func readBillingDemoCopOperatorPreservesWidth(opClass string) bool {
+	switch opClass {
+	case readBillingDemoOpClassFilter, readBillingDemoOpClassLimit, readBillingDemoOpClassTopN:
+		return true
+	default:
+		return false
+	}
+}
+
+func (e *readBillingDemoCopEstimator) inputEstimate(idx int) readBillingDemoCopInputEstimate {
+	if _, ok := e.inputMemoSet[idx]; ok {
+		return e.inputMemo[idx]
+	}
+	estimate := readBillingDemoCopInputEstimate{}
+	defer func() {
+		e.inputMemo[idx] = estimate
+		e.inputMemoSet[idx] = struct{}{}
+	}()
+	if failure, ok := e.nodeFailures[idx]; ok {
+		estimate.failure = failure
+		return estimate
+	}
+	if idx < 0 || idx >= len(e.tree) || !readBillingDemoIsTiKVCopNode(e.tree[idx]) {
+		estimate.failure = readBillingDemoCopFailureAt(idx, readBillingDemoCopFailureCurrent, readBillingDemoStatusUnsupported, readBillingDemoReasonUnsupportedCopStructure)
+		return estimate
+	}
+	operator, supported, reason := readBillingDemoClassifyOperator(e.tree[idx])
+	if !supported {
+		estimate.failure = readBillingDemoCopFailureAt(idx, readBillingDemoCopFailureCurrent, readBillingDemoStatusUnsupported, reason)
+		return estimate
+	}
+	if operator.opClass == readBillingDemoOpClassRangeScan {
+		estimate.failure = readBillingDemoCopFailureAt(idx, readBillingDemoCopFailureCurrent, readBillingDemoStatusUnsupported, readBillingDemoReasonUnsupportedCopStructure)
+		return estimate
+	}
+	childIdx, failure, ok := e.directCopChild(idx)
+	if !ok {
+		estimate.failure = failure
+		return estimate
+	}
+	childOutput := e.outputEstimate(childIdx)
+	if childOutput.failure.present {
+		estimate.failure = readBillingDemoPromoteCopFailure(childOutput.failure)
+		return estimate
+	}
+	rowsEvidence := readBillingDemoExactCopRowsEvidence(e.runtimeStats, e.tree[childIdx].Origin.ID())
+	switch rowsEvidence.state {
+	case readBillingDemoCopRowsInvalid:
+		estimate.failure = readBillingDemoCopFailureAt(childIdx, readBillingDemoCopFailureIntrinsicCause, readBillingDemoStatusUnknownInput, readBillingDemoReasonInvalidCopRuntimeRows)
+		return estimate
+	case readBillingDemoCopRowsMissing:
+		estimate.failure = readBillingDemoCopFailureAt(idx, readBillingDemoCopFailureCurrent, readBillingDemoStatusUnknownInput, readBillingDemoReasonMissingCopChildRuntimeRows)
+		return estimate
+	}
+	componentID := e.componentID[idx]
+	if componentID < 0 || componentID >= len(e.components) {
+		estimate.failure = readBillingDemoCopFailureAt(idx, readBillingDemoCopFailureCurrent, readBillingDemoStatusUnsupported, readBillingDemoReasonUnsupportedCopStructure)
+		return estimate
+	}
+	if maxTasks := e.components[componentID].maxSummaryTasks; maxTasks > 0 && rowsEvidence.tasks < maxTasks {
+		estimate.failure = readBillingDemoCopFailureAt(idx, readBillingDemoCopFailureCurrent, readBillingDemoStatusUnknownInput, readBillingDemoReasonIncompleteCopRuntimeRows)
+		return estimate
+	}
+	switch childOutput.widthState {
+	case readBillingDemoCopWidthBarrier:
+		estimate.failure = readBillingDemoCopFailureAt(idx, readBillingDemoCopFailureCurrent, readBillingDemoStatusUnknownInput, readBillingDemoReasonUnsupportedCopWidthTransform)
+		return estimate
+	case readBillingDemoCopWidthAmbiguous:
+		estimate.failure = readBillingDemoCopFailureAt(idx, readBillingDemoCopFailureCurrent, readBillingDemoStatusUnknownInput, readBillingDemoReasonAmbiguousCopScanWidth)
+		return estimate
+	case readBillingDemoCopWidthMissing:
+		estimate.failure = readBillingDemoCopFailureAt(idx, readBillingDemoCopFailureCurrent, readBillingDemoStatusUnknownInput, readBillingDemoReasonMissingScanWidthEvidence)
+		return estimate
+	case readBillingDemoCopWidthKnown:
+	default:
+		estimate.failure = readBillingDemoCopFailureAt(idx, readBillingDemoCopFailureCurrent, readBillingDemoStatusUnknownInput, readBillingDemoReasonMissingScanWidthEvidence)
+		return estimate
+	}
+	inputBytes := float64(rowsEvidence.rows) * childOutput.avgRowWidth
+	if inputBytes < 0 || math.IsNaN(inputBytes) || math.IsInf(inputBytes, 0) {
+		estimate.failure = readBillingDemoCopFailureAt(idx, readBillingDemoCopFailureCurrent, readBillingDemoStatusUnknownInput, readBillingDemoReasonMissingScanWidthEvidence)
+		return estimate
+	}
+	estimate.rows = rowsEvidence.rows
+	estimate.inputBytes = inputBytes
+	estimate.avgRowWidth = childOutput.avgRowWidth
+	estimate.inputSource = readBillingDemoInputSourceRuntimeChildActRows
+	estimate.widthSource = childOutput.widthSource
+	return estimate
+}
+
+func (e *readBillingDemoCopEstimator) outputEstimate(idx int) readBillingDemoCopOutputEstimate {
+	if _, ok := e.outputMemoSet[idx]; ok {
+		return e.outputMemo[idx]
+	}
+	estimate := readBillingDemoCopOutputEstimate{}
+	defer func() {
+		e.outputMemo[idx] = estimate
+		e.outputMemoSet[idx] = struct{}{}
+	}()
+	if e.visiting[idx] {
+		estimate.failure = readBillingDemoCopFailureAt(idx, readBillingDemoCopFailureIntrinsicCause, readBillingDemoStatusUnsupported, readBillingDemoReasonUnsupportedCopStructure)
+		return estimate
+	}
+	e.visiting[idx] = true
+	defer delete(e.visiting, idx)
+	if failure, ok := e.nodeFailures[idx]; ok {
+		estimate.failure = failure
+		return estimate
+	}
+	if idx < 0 || idx >= len(e.tree) || !readBillingDemoIsTiKVCopNode(e.tree[idx]) {
+		estimate.failure = readBillingDemoCopFailureAt(idx, readBillingDemoCopFailureIntrinsicCause, readBillingDemoStatusUnsupported, readBillingDemoReasonUnsupportedCopStructure)
+		return estimate
+	}
+	operator, supported, reason := readBillingDemoClassifyOperator(e.tree[idx])
+	if !supported {
+		estimate.failure = readBillingDemoCopFailureAt(idx, readBillingDemoCopFailureIntrinsicCause, readBillingDemoStatusUnsupported, reason)
+		return estimate
+	}
+	if operator.opClass == readBillingDemoOpClassRangeScan {
+		if len(e.tree[idx].ChildrenIdx) != 0 {
+			estimate.failure = readBillingDemoCopFailureAt(idx, readBillingDemoCopFailureIntrinsicCause, readBillingDemoStatusUnsupported, readBillingDemoReasonUnsupportedCopStructure)
+			return estimate
+		}
+		estimate = e.componentOutputWidth(idx)
+		return estimate
+	}
+	input := e.inputEstimate(idx)
+	if input.failure.present {
+		estimate.failure = readBillingDemoPromoteCopFailure(input.failure)
+		return estimate
+	}
+	if readBillingDemoCopOperatorPreservesWidth(operator.opClass) {
+		estimate.widthState = readBillingDemoCopWidthKnown
+		estimate.avgRowWidth = input.avgRowWidth
+		estimate.widthSource = input.widthSource
+		childIdx, _, ok := e.directCopChild(idx)
+		if ok {
+			estimate.scanPlanID = e.outputEstimate(childIdx).scanPlanID
+		}
+		return estimate
+	}
+	estimate.widthState = readBillingDemoCopWidthBarrier
+	return estimate
+}
+
+func (e *readBillingDemoCopEstimator) auxiliaryEntryCount() int {
+	return e.auxiliaryEntries + len(e.inputMemo) + len(e.inputMemoSet) + len(e.outputMemo) + len(e.outputMemoSet) + len(e.visiting)
+}
+
+func appendReadBillingDemoTree(result *readBillingDemoResult, sctx base.PlanContext, runtimeStats *execdetails.RuntimeStatsColl, tree FlatPlanTree) (string, readBillingDemoOperatorResult) {
+	estimator := newReadBillingDemoCopEstimator(tree, runtimeStats)
+	if failure, ok := estimator.firstTreeFailure(); ok {
+		return failure.status, readBillingDemoMaterializeCopFailure(runtimeStats, tree, failure)
+	}
+	for i := range tree {
+		outcome := appendReadBillingDemoOperator(result, runtimeStats, tree, estimator, i)
+		if outcome.success {
+			continue
+		}
+		if outcome.cause.present {
+			return outcome.cause.status, readBillingDemoMaterializeCopFailure(runtimeStats, tree, outcome.cause)
+		}
+		return outcome.status, outcome.current
 	}
 	return readBillingDemoStatusSuccess, readBillingDemoOperatorResult{}
 }
@@ -810,35 +1408,66 @@ func appendReadBillingDemoTree(result *readBillingDemoResult, sctx base.PlanCont
 // A missing or unsupported node makes only that node partial; it must not hide
 // supported descendants from the DML read/compute tree.
 func appendReadBillingDemoDMLTree(result *readBillingDemoResult, runtimeStats *execdetails.RuntimeStatsColl, tree FlatPlanTree) {
-	for i := range tree {
-		status, operator := appendReadBillingDemoOperator(result, runtimeStats, tree, i)
-		if status == readBillingDemoStatusSuccess {
-			continue
+	estimator := newReadBillingDemoCopEstimator(tree, runtimeStats)
+	type diagnosticKey struct {
+		idx    int
+		reason string
+	}
+	reported := make(map[diagnosticKey]struct{})
+	appendDiagnostic := func(idx int, operator readBillingDemoOperatorResult, reason string) {
+		key := diagnosticKey{idx: idx, reason: reason}
+		if _, ok := reported[key]; ok {
+			return
 		}
+		reported[key] = struct{}{}
 		operator.emitStatusRow = true
 		operator.status = readBillingDemoStatusPartial
+		operator.reason = reason
 		result.operators = append(result.operators, operator)
+	}
+	for _, failure := range estimator.treeFailures {
+		appendDiagnostic(failure.failingIdx, readBillingDemoMaterializeCopFailure(runtimeStats, tree, failure), failure.reason)
+	}
+	for i := range tree {
+		outcome := appendReadBillingDemoOperator(result, runtimeStats, tree, estimator, i)
+		if outcome.success {
+			continue
+		}
+		if outcome.cause.present && outcome.cause.failingIdx != i {
+			appendDiagnostic(i, outcome.current, readBillingDemoReasonDependentCopInputUnavailable)
+			appendDiagnostic(
+				outcome.cause.failingIdx,
+				readBillingDemoMaterializeCopFailure(runtimeStats, tree, outcome.cause),
+				outcome.cause.reason,
+			)
+			continue
+		}
+		appendDiagnostic(i, outcome.current, outcome.current.reason)
 	}
 }
 
-func appendReadBillingDemoOperator(result *readBillingDemoResult, runtimeStats *execdetails.RuntimeStatsColl, tree FlatPlanTree, idx int) (string, readBillingDemoOperatorResult) {
+func appendReadBillingDemoOperator(result *readBillingDemoResult, runtimeStats *execdetails.RuntimeStatsColl, tree FlatPlanTree, estimator *readBillingDemoCopEstimator, idx int) readBillingDemoAppendOutcome {
 	op := tree[idx]
 	if op == nil || op.Origin == nil || op.Origin.ExplainID().String() == "_0" {
-		return readBillingDemoStatusSuccess, readBillingDemoOperatorResult{}
+		return readBillingDemoAppendOutcome{success: true, status: readBillingDemoStatusSuccess}
+	}
+	if failure, ok := estimator.nodeFailures[idx]; ok {
+		operator := readBillingDemoMaterializeCopFailure(runtimeStats, tree, failure)
+		return readBillingDemoAppendOutcome{status: failure.status, current: operator, cause: failure}
 	}
 	operator, supported, reason := readBillingDemoClassifyOperator(op)
 	operator.id = op.ExplainID().String()
-	if actRows, ok := readBillingDemoOperatorActRows(runtimeStats, tree, idx, op, operator); ok {
+	if actRows, ok := readBillingDemoOperatorActRows(runtimeStats, op); ok {
 		operator.actRows = actRows
 		operator.hasActRows = true
 	}
 	if !supported {
-		return readBillingDemoStatusUnsupported, operator.withReason(reason)
+		return readBillingDemoAppendOutcome{status: readBillingDemoStatusUnsupported, current: operator.withReason(reason)}
 	}
 	if !readBillingDemoOperatorBillable(operator) {
 		operator.status = readBillingDemoStatusOperatorOK
 		result.operators = append(result.operators, operator.withReason(readBillingDemoReasonNonBillable))
-		return readBillingDemoStatusSuccess, readBillingDemoOperatorResult{}
+		return readBillingDemoAppendOutcome{success: true, status: readBillingDemoStatusSuccess}
 	}
 	var units []readBillingDemoUnit
 	var missingReason string
@@ -846,7 +1475,23 @@ func appendReadBillingDemoOperator(result *readBillingDemoResult, runtimeStats *
 	if op.IsRoot {
 		units, missingReason, ok = readBillingDemoRootUnits(runtimeStats, tree, idx, op, operator)
 	} else {
-		units, missingReason, ok = readBillingDemoCopUnits(runtimeStats, tree, idx, operator)
+		outcome := readBillingDemoCopUnits(estimator, idx, operator)
+		if outcome.success {
+			units, ok = outcome.units, true
+		} else {
+			failure := outcome.failure
+			currentReason := failure.reason
+			cause := readBillingDemoCopFailure{}
+			if failure.kind == readBillingDemoCopFailureIntrinsicCause && failure.failingIdx != idx {
+				currentReason = readBillingDemoReasonDependentCopInputUnavailable
+				cause = failure
+			}
+			return readBillingDemoAppendOutcome{
+				status:  failure.status,
+				current: operator.withReason(currentReason),
+				cause:   cause,
+			}
+		}
 	}
 	if !ok {
 		if missingReason == "" {
@@ -856,13 +1501,34 @@ func appendReadBillingDemoOperator(result *readBillingDemoResult, runtimeStats *
 				missingReason = readBillingDemoReasonMissingScanDetail
 			}
 		}
-		return readBillingDemoStatusUnknownInput, operator.withReason(missingReason)
+		return readBillingDemoAppendOutcome{status: readBillingDemoStatusUnknownInput, current: operator.withReason(missingReason)}
 	}
 	operator.status = readBillingDemoStatusOperatorOK
 	operator.reason = readBillingDemoReasonNone
 	operator.units = units
 	result.operators = append(result.operators, operator)
-	return readBillingDemoStatusSuccess, readBillingDemoOperatorResult{}
+	return readBillingDemoAppendOutcome{success: true, status: readBillingDemoStatusSuccess}
+}
+
+func readBillingDemoMaterializeCopFailure(runtimeStats *execdetails.RuntimeStatsColl, tree FlatPlanTree, failure readBillingDemoCopFailure) readBillingDemoOperatorResult {
+	if failure.failingIdx < 0 || failure.failingIdx >= len(tree) || tree[failure.failingIdx] == nil || tree[failure.failingIdx].Origin == nil {
+		return readBillingDemoOperatorResult{
+			id:           "cop_structure",
+			site:         readBillingDemoSiteTiKV,
+			opClass:      readBillingDemoOpClassRangeScan,
+			operatorKind: "cop_structure",
+			reason:       failure.reason,
+		}
+	}
+	op := tree[failure.failingIdx]
+	operator, _, _ := readBillingDemoClassifyOperator(op)
+	operator.id = op.ExplainID().String()
+	operator.reason = failure.reason
+	if actRows, ok := readBillingDemoOperatorActRows(runtimeStats, op); ok {
+		operator.actRows = actRows
+		operator.hasActRows = true
+	}
+	return operator
 }
 
 func (op readBillingDemoOperatorResult) withReason(reason string) readBillingDemoOperatorResult {
@@ -874,15 +1540,16 @@ func readBillingDemoOperatorBillable(op readBillingDemoOperatorResult) bool {
 	return op.opClass != readBillingDemoOpClassWrapper && op.opClass != readBillingDemoOpClassSynthetic
 }
 
-func readBillingDemoOperatorActRows(runtimeStats *execdetails.RuntimeStatsColl, tree FlatPlanTree, idx int, op *FlatOperator, operator readBillingDemoOperatorResult) (int64, bool) {
+func readBillingDemoOperatorActRows(runtimeStats *execdetails.RuntimeStatsColl, op *FlatOperator) (int64, bool) {
 	if op == nil {
 		return 0, false
 	}
 	if op.IsRoot {
 		return readBillingDemoPlanActRows(runtimeStats, op.Origin.ID())
 	}
-	if copStats := readBillingDemoCopStats(runtimeStats, tree, idx, operator.opClass); copStats != nil {
-		return copStats.GetActRows(), true
+	evidence := readBillingDemoExactCopRowsEvidence(runtimeStats, op.Origin.ID())
+	if evidence.state == readBillingDemoCopRowsObserved {
+		return evidence.rows, true
 	}
 	return 0, false
 }
@@ -986,6 +1653,13 @@ func readBillingDemoRootUnits(runtimeStats *execdetails.RuntimeStatsColl, tree F
 			return nil, reason, false
 		}
 		units = append(units, readBillingDemoRuntimeChunkInputUnits(inputRows, inputBytes, readBillingDemoInputSideAll)...)
+		orderWork, ok := readBillingDemoOrderingWorkUnit(op, operator.opClass, inputRows)
+		if !ok {
+			return nil, readBillingDemoReasonInvalidOrderingWork, false
+		}
+		if orderWork.unit != "" {
+			units = append(units, orderWork)
+		}
 		return units, "", true
 	}
 }
@@ -1013,6 +1687,46 @@ func readBillingDemoAverageRowWidth(rows int64, bytes float64) float64 {
 		return 0
 	}
 	return bytes / float64(rows)
+}
+
+func readBillingDemoOrderingWorkUnit(op *FlatOperator, opClass string, inputRows int64) (readBillingDemoUnit, bool) {
+	if opClass != readBillingDemoOpClassTopN && opClass != readBillingDemoOpClassSort {
+		return readBillingDemoUnit{}, true
+	}
+	if op == nil || op.Origin == nil || inputRows < 0 {
+		return readBillingDemoUnit{}, false
+	}
+
+	logWidth := max(float64(inputRows), 2)
+	if opClass == readBillingDemoOpClassTopN {
+		topN, ok := op.Origin.(*physicalop.PhysicalTopN)
+		if !ok {
+			return readBillingDemoUnit{}, false
+		}
+		if op.IsRoot {
+			// Add after conversion so an extreme OFFSET + COUNT cannot wrap uint64.
+			logWidth = max(float64(topN.Offset)+float64(topN.Count), 2)
+		} else {
+			// Pushdown folds the original OFFSET + COUNT into Count. TiKV's TopN
+			// protobuf has only Limit, so a non-zero cop Offset is not executable
+			// evidence for the heap bound used here.
+			if topN.Offset != 0 {
+				return readBillingDemoUnit{}, false
+			}
+			logWidth = max(float64(topN.Count), 2)
+		}
+	}
+	work := float64(inputRows) * math.Log2(logWidth)
+	if work < 0 || math.IsNaN(work) || math.IsInf(work, 0) {
+		return readBillingDemoUnit{}, false
+	}
+	return readBillingDemoUnit{
+		unit:        readBillingDemoUnitOrderWork,
+		source:      readBillingDemoInputSourceRuntimeOrderingWork,
+		side:        readBillingDemoInputSideAll,
+		value:       work,
+		widthSource: explainRUWidthSourceNotApplicable,
+	}, true
 }
 
 func readBillingDemoUseOutputRowsAsInput(opClass string) bool {
@@ -1101,26 +1815,58 @@ func readBillingDemoRootOutputRowsAndBytes(runtimeStats *execdetails.RuntimeStat
 	return basic.GetActRows(), basic.GetOutputBytes(), true
 }
 
-func readBillingDemoCopUnits(runtimeStats *execdetails.RuntimeStatsColl, tree FlatPlanTree, idx int, operator readBillingDemoOperatorResult) ([]readBillingDemoUnit, string, bool) {
-	if operator.opClass != readBillingDemoOpClassRangeScan {
-		return nil, readBillingDemoReasonMissingRuntimeBytes, false
+func readBillingDemoCopUnits(estimator *readBillingDemoCopEstimator, idx int, operator readBillingDemoOperatorResult) readBillingDemoCopUnitOutcome {
+	if failure, ok := estimator.nodeFailures[idx]; ok {
+		return readBillingDemoCopUnitOutcome{failure: failure}
 	}
-	copStats := readBillingDemoCopStats(runtimeStats, tree, idx, operator.opClass)
-	if copStats == nil {
-		return nil, readBillingDemoReasonMissingScanDetail, false
+	if operator.opClass == readBillingDemoOpClassRangeScan {
+		if idx < 0 || idx >= len(estimator.tree) || len(estimator.tree[idx].ChildrenIdx) != 0 {
+			return readBillingDemoCopUnitOutcome{failure: readBillingDemoCopFailureAt(idx, readBillingDemoCopFailureCurrent, readBillingDemoStatusUnsupported, readBillingDemoReasonUnsupportedCopStructure)}
+		}
+		width := estimator.componentOutputWidth(idx)
+		if width.failure.present {
+			return readBillingDemoCopUnitOutcome{failure: width.failure}
+		}
+		switch width.widthState {
+		case readBillingDemoCopWidthAmbiguous:
+			return readBillingDemoCopUnitOutcome{failure: readBillingDemoCopFailureAt(idx, readBillingDemoCopFailureCurrent, readBillingDemoStatusUnknownInput, readBillingDemoReasonAmbiguousCopScanWidth)}
+		case readBillingDemoCopWidthMissing:
+			return readBillingDemoCopUnitOutcome{failure: readBillingDemoCopFailureAt(idx, readBillingDemoCopFailureCurrent, readBillingDemoStatusUnknownInput, readBillingDemoReasonMissingScanWidthEvidence)}
+		case readBillingDemoCopWidthKnown:
+		default:
+			return readBillingDemoCopUnitOutcome{failure: readBillingDemoCopFailureAt(idx, readBillingDemoCopFailureCurrent, readBillingDemoStatusUnknownInput, readBillingDemoReasonMissingScanWidthEvidence)}
+		}
+		component := estimator.components[estimator.componentID[idx]]
+		scanDetail := component.scanDetail
+		scanInputRows, scanInputBytes, ok := readBillingDemoRangeScanInput(scanDetail.TotalKeys, scanDetail.ProcessedKeys, scanDetail.ProcessedKeysSize)
+		if !ok {
+			return readBillingDemoCopUnitOutcome{failure: readBillingDemoCopFailureAt(idx, readBillingDemoCopFailureCurrent, readBillingDemoStatusUnknownInput, readBillingDemoReasonMissingScanWidthEvidence)}
+		}
+		units := []readBillingDemoUnit{readBillingDemoFixedEventUnit(readBillingDemoInputSourceScanDetail)}
+		units = append(units,
+			readBillingDemoUnit{unit: readBillingDemoUnitInputRows, source: readBillingDemoInputSourceScanDetail, side: readBillingDemoInputSideAll, value: float64(scanInputRows), rowWidth: width.avgRowWidth, widthSource: explainRUWidthSourceScanDetailProcessedAvg},
+			readBillingDemoUnit{unit: readBillingDemoUnitInputBytes, source: readBillingDemoInputSourceScanDetail, side: readBillingDemoInputSideAll, value: scanInputBytes, rowWidth: width.avgRowWidth, widthSource: explainRUWidthSourceScanDetailProcessedAvg},
+		)
+		return readBillingDemoCopUnitOutcome{success: true, units: units}
 	}
-	scanDetail := copStats.GetScanDetail()
-	scanInputRows, scanInputBytes, ok := readBillingDemoRangeScanInput(scanDetail.TotalKeys, scanDetail.ProcessedKeys, scanDetail.ProcessedKeysSize)
-	if !ok {
-		return nil, readBillingDemoReasonMissingScanDetail, false
+
+	input := estimator.inputEstimate(idx)
+	if input.failure.present {
+		return readBillingDemoCopUnitOutcome{failure: input.failure}
 	}
-	rowWidth := readBillingDemoAverageRowWidth(scanInputRows, scanInputBytes)
-	units := []readBillingDemoUnit{readBillingDemoFixedEventUnit(readBillingDemoInputSourceScanDetail)}
+	units := []readBillingDemoUnit{readBillingDemoFixedEventUnit(readBillingDemoInputSourceRuntimeChildActRows)}
 	units = append(units,
-		readBillingDemoUnit{unit: readBillingDemoUnitInputRows, source: readBillingDemoInputSourceScanDetail, side: readBillingDemoInputSideAll, value: float64(scanInputRows), rowWidth: rowWidth, widthSource: explainRUWidthSourceScanDetailProcessedAvg},
-		readBillingDemoUnit{unit: readBillingDemoUnitInputBytes, source: readBillingDemoInputSourceScanDetail, side: readBillingDemoInputSideAll, value: scanInputBytes, rowWidth: rowWidth, widthSource: explainRUWidthSourceScanDetailProcessedAvg},
+		readBillingDemoUnit{unit: readBillingDemoUnitInputRows, source: input.inputSource, side: readBillingDemoInputSideAll, value: float64(input.rows), rowWidth: input.avgRowWidth, widthSource: input.widthSource},
+		readBillingDemoUnit{unit: readBillingDemoUnitInputBytes, source: input.inputSource, side: readBillingDemoInputSideAll, value: input.inputBytes, rowWidth: input.avgRowWidth, widthSource: input.widthSource},
 	)
-	return units, "", true
+	orderWork, ok := readBillingDemoOrderingWorkUnit(estimator.tree[idx], operator.opClass, input.rows)
+	if !ok {
+		return readBillingDemoCopUnitOutcome{failure: readBillingDemoCopFailureAt(idx, readBillingDemoCopFailureCurrent, readBillingDemoStatusUnknownInput, readBillingDemoReasonInvalidOrderingWork)}
+	}
+	if orderWork.unit != "" {
+		units = append(units, orderWork)
+	}
+	return readBillingDemoCopUnitOutcome{success: true, units: units}
 }
 
 func readBillingDemoRangeScanInput(totalKeys, processedKeys, processedKeysSize int64) (int64, float64, bool) {
@@ -1128,52 +1874,10 @@ func readBillingDemoRangeScanInput(totalKeys, processedKeys, processedKeysSize i
 		return 0, 0, false
 	}
 	inputBytes := float64(processedKeysSize) / float64(processedKeys) * float64(totalKeys)
+	if inputBytes < 0 || math.IsNaN(inputBytes) || math.IsInf(inputBytes, 0) {
+		return 0, 0, false
+	}
 	return totalKeys, inputBytes, true
-}
-
-func readBillingDemoCopStats(runtimeStats *execdetails.RuntimeStatsColl, tree FlatPlanTree, idx int, opClass string) *execdetails.CopRuntimeStats {
-	if runtimeStats == nil || idx < 0 || idx >= len(tree) || tree[idx] == nil || tree[idx].Origin == nil {
-		return nil
-	}
-	exact := runtimeStats.GetCopStats(tree[idx].Origin.ID())
-	if readBillingDemoCopStatsUsable(exact, opClass) {
-		return exact
-	}
-	// distsql may attach scan detail to the last cop plan ID in a task, not
-	// necessarily to the scan node. Search the same cop subtree before failing.
-	if end := tree[idx].ChildrenEndIdx; end > idx {
-		if end >= len(tree) {
-			end = len(tree) - 1
-		}
-		for i := end; i > idx; i-- {
-			if tree[i] == nil || tree[i].IsRoot || tree[i].Origin == nil || tree[i].StoreType != tree[idx].StoreType {
-				continue
-			}
-			if stats := runtimeStats.GetCopStats(tree[i].Origin.ID()); readBillingDemoCopStatsUsable(stats, opClass) {
-				return stats
-			}
-		}
-	}
-	for i := idx - 1; i >= 0; i-- {
-		if tree[i] == nil || tree[i].IsRoot || tree[i].Origin == nil || tree[i].StoreType != tree[idx].StoreType || tree[i].ChildrenEndIdx < idx {
-			continue
-		}
-		if stats := runtimeStats.GetCopStats(tree[i].Origin.ID()); readBillingDemoCopStatsUsable(stats, opClass) {
-			return stats
-		}
-	}
-	return exact
-}
-
-func readBillingDemoCopStatsUsable(copStats *execdetails.CopRuntimeStats, opClass string) bool {
-	if copStats == nil {
-		return false
-	}
-	if opClass != readBillingDemoOpClassRangeScan {
-		return true
-	}
-	scanDetail := copStats.GetScanDetail()
-	return scanDetail.TotalKeys > 0 && scanDetail.ProcessedKeys > 0 && scanDetail.ProcessedKeysSize > 0
 }
 
 func recordReadBillingDemoResult(result readBillingDemoResult) {
@@ -1556,13 +2260,16 @@ func explainRUReadBillingUnitRow(op readBillingDemoOperatorResult, unit readBill
 	case readBillingDemoUnitInputRows:
 		row.inputRows = int64(unit.value)
 		row.hasInputRows = true
-		row.workRows = int64(unit.value)
+		row.workRows = unit.value
 		row.hasWorkRows = true
 		row.count = int64(unit.value)
 		row.hasCount = true
 	case readBillingDemoUnitInputBytes:
 		row.workBytes = unit.value
 		row.hasWorkBytes = true
+	case readBillingDemoUnitOrderWork:
+		row.workRows = unit.value
+		row.hasWorkRows = true
 	case readBillingDemoUnitEncodedMutationCount, readBillingDemoUnitSetCount, readBillingDemoUnitDeleteCount,
 		readBillingDemoUnitWriteKeys, readBillingDemoUnitPrewriteRegionNum, readBillingDemoUnitTiKVWriteRPCCount:
 		row.count = int64(unit.value)
@@ -1632,7 +2339,7 @@ func (row explainRURow) toStrings() []string {
 		formatOptionalInt(row.outputRows, row.hasOutputRows),
 		formatOptionalFloat(row.rowWidth, row.hasRowWidth),
 		row.rowWidthSource,
-		formatOptionalInt(row.workRows, row.hasWorkRows),
+		formatOptionalCompactFloat(row.workRows, row.hasWorkRows),
 		formatOptionalFloat(row.workBytes, row.hasWorkBytes),
 		row.unit,
 		formatOptionalInt(row.count, row.hasCount),
@@ -1657,6 +2364,13 @@ func formatOptionalFloat(v float64, ok bool) string {
 	return strconv.FormatFloat(v, 'f', 6, 64)
 }
 
+func formatOptionalCompactFloat(v float64, ok bool) string {
+	if !ok {
+		return ""
+	}
+	return strconv.FormatFloat(v, 'f', -1, 64)
+}
+
 func explainRUObserveRow(row explainRURow) {
 	// Metrics are emitted from rendered rows so the Prometheus view matches the
 	// SQL output and avoids reading live counters after render-side accounting.
@@ -1666,7 +2380,7 @@ func explainRUObserveRow(row explainRURow) {
 	}
 	workRows := -1.0
 	if row.hasWorkRows {
-		workRows = float64(row.workRows)
+		workRows = row.workRows
 	}
 	workBytes := -1.0
 	if row.hasWorkBytes {
@@ -1677,7 +2391,7 @@ func explainRUObserveRow(row explainRURow) {
 		rowWidth = row.rowWidth
 	}
 	component, operator := explainRUMetricComponentOperator(row)
-	metrics.ObserveExplainRURow(row.section, component, operator, row.source, row.rowWidthSource, previewRU, workRows, workBytes, rowWidth)
+	metrics.ObserveExplainRURow(row.section, component, operator, row.source, row.rowWidthSource, readBillingDemoWeightVersion, previewRU, workRows, workBytes, rowWidth)
 }
 
 func explainRUMetricComponentOperator(row explainRURow) (component, operator string) {

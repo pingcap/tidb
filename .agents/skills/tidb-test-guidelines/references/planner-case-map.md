@@ -82,7 +82,7 @@
 ### Tests
 - `pkg/planner/core/binary_plan_test.go` - planner/core: Tests binary plan generation and size limits.
 - `pkg/planner/core/cbo_test.go` - planner/core: Benchmarks optimizer plan selection.
-- `pkg/planner/core/common_plans_test.go` - planner/core: Tests common plans plus preview RU gating, weights, DML mutation/write and explicit-COMMIT payload construction, pipelined payload suppression, and ancillary-work partial diagnostics.
+- `pkg/planner/core/common_plans_test.go` - planner/core: Tests common plans plus preview RU gating, weights, Sort/TopN algorithmic `order_work`, TiKV component/child-row/scan-width input estimation and width barriers, DML mutation/write and explicit-COMMIT payload construction, pipelined payload suppression, and ancillary-work partial diagnostics.
 - `pkg/planner/core/enforce_mpp_test.go` - planner/core: Tests row-size impact on TiFlash MPP cost.
 - `pkg/planner/core/exhaust_physical_plans_test.go` - planner/core: Tests index join lookup filter analysis and range building.
 - `pkg/planner/core/expression_test.go` - planner/core: Tests AST expression eval (between/case/cast).

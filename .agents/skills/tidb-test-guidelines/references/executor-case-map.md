@@ -29,7 +29,7 @@
 - `pkg/executor/executor_failpoint_test.go` - executor: Tests TiDB last txn info commit mode.
 - `pkg/executor/executor_pkg_test.go` - executor: Tests build KV ranges for index join without CWC.
 - `pkg/executor/executor_required_rows_test.go` - executor: Tests limit required rows.
-- `pkg/executor/explain_test.go` - executor: Tests EXPLAIN ANALYZE formats, including preview RU DML mutation/write operators, exact index and optimistic-retry mutation counts, join/sort/read-tree preservation, operator-level unavailable-TiKV status rows, restricted/feature-off isolation, RUv2 A/B equivalence, explicit-COMMIT ownership, and diagnostic compatibility.
+- `pkg/executor/explain_test.go` - executor: Tests EXPLAIN ANALYZE formats, including preview RU v3 TiKV cop diagnostics, DML mutation/write operators, exact index and optimistic-retry mutation counts, join/sort/read-tree preservation, operator-level unavailable-TiKV status rows, restricted/feature-off isolation, RUv2 A/B equivalence, explicit-COMMIT ownership, and diagnostic compatibility.
 - `pkg/executor/explain_unit_test.go` - executor: Tests explain analyze invoke next and close.
 - `pkg/executor/explainfor_test.go` - executor: Tests explain for.
 - `pkg/executor/grant_test.go` - executor: Tests grant global.

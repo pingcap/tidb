@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
+	tikvutil "github.com/tikv/client-go/v2/util"
 )
 
 func TestUpdateCopRuntimeStats(t *testing.T) {
@@ -72,6 +73,68 @@ func TestUpdateCopRuntimeStats(t *testing.T) {
 	sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{CopExecDetails: execdetails.CopExecDetails{CalleeAddress: "callee", BackoffSleep: backOffSleep}}, 0, false)
 	require.Equal(t, "tikv_task:{time:1ns, loops:1}", ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopStats(1234).String())
 	require.Equal(t, sr.stats.backoffSleep["RegionMiss"], time.Duration(500))
+
+	newSummary := func(rows uint64) *tipb.ExecutorExecutionSummary {
+		one := uint64(1)
+		return &tipb.ExecutorExecutionSummary{TimeProcessedNs: &one, NumProducedRows: &rows, NumIterations: &one}
+	}
+	update := func(scanRows, parentRows uint64, detail *tikvutil.ScanDetail) {
+		sr.selectResp = &tipb.SelectResponse{ExecutionSummaries: []*tipb.ExecutorExecutionSummary{
+			newSummary(scanRows),
+			newSummary(parentRows),
+		}}
+		require.NoError(t, sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{
+			CopExecDetails: execdetails.CopExecDetails{CalleeAddress: "callee", ScanDetail: detail},
+		}, 0, false))
+	}
+
+	const scanPlanID = 2001
+	const parentPlanID = 2002
+	ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
+	sr.ctx = ctx.GetDistSQLCtx()
+	sr.copPlanIDs = []int{scanPlanID, parentPlanID}
+	update(4, 2, &tikvutil.ScanDetail{TotalKeys: 5, ProcessedKeys: 5, ProcessedKeysSize: 100})
+	scanStats := ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopStats(scanPlanID)
+	parentStats := ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopStats(parentPlanID)
+	require.Equal(t, int64(4), scanStats.GetActRows())
+	require.Equal(t, int32(1), scanStats.GetTasks())
+	require.Zero(t, scanStats.GetScanDetail().ProcessedKeys)
+	require.Equal(t, int64(2), parentStats.GetActRows())
+	require.Equal(t, int32(1), parentStats.GetTasks())
+	require.Equal(t, int64(5), parentStats.GetScanDetail().ProcessedKeys)
+	require.Equal(t, int64(100), parentStats.GetScanDetail().ProcessedKeysSize)
+
+	update(3, 1, &tikvutil.ScanDetail{TotalKeys: 2, ProcessedKeys: 2, ProcessedKeysSize: 40})
+	require.Equal(t, int64(7), scanStats.GetActRows())
+	require.Equal(t, int32(2), scanStats.GetTasks())
+	require.Equal(t, int64(3), parentStats.GetActRows())
+	require.Equal(t, int32(2), parentStats.GetTasks())
+	require.Equal(t, int64(7), parentStats.GetScanDetail().ProcessedKeys)
+	require.Equal(t, int64(140), parentStats.GetScanDetail().ProcessedKeysSize)
+
+	ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
+	sr.ctx = ctx.GetDistSQLCtx()
+	sr.selectResp = &tipb.SelectResponse{ExecutionSummaries: []*tipb.ExecutorExecutionSummary{newSummary(4), nil}}
+	require.NoError(t, sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{
+		CopExecDetails: execdetails.CopExecDetails{CalleeAddress: "callee", ScanDetail: &tikvutil.ScanDetail{TotalKeys: 5, ProcessedKeys: 5, ProcessedKeysSize: 100}},
+	}, 0, false))
+	scanStats = ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopStats(scanPlanID)
+	parentStats = ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopStats(parentPlanID)
+	require.Equal(t, int32(1), scanStats.GetTasks())
+	require.Equal(t, int32(0), parentStats.GetTasks())
+	require.Equal(t, int64(5), parentStats.GetScanDetail().ProcessedKeys)
+
+	ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
+	sr.ctx = ctx.GetDistSQLCtx()
+	update(4, 2, &tikvutil.ScanDetail{TotalKeys: 5, ProcessedKeys: 5, ProcessedKeysSize: 100})
+	sr.selectResp = &tipb.SelectResponse{ExecutionSummaries: []*tipb.ExecutorExecutionSummary{nil, newSummary(1)}}
+	require.NoError(t, sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{
+		CopExecDetails: execdetails.CopExecDetails{CalleeAddress: "callee", ScanDetail: &tikvutil.ScanDetail{TotalKeys: 2, ProcessedKeys: 2, ProcessedKeysSize: 40}},
+	}, 0, false))
+	scanStats = ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopStats(scanPlanID)
+	parentStats = ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopStats(parentPlanID)
+	require.Equal(t, int32(1), scanStats.GetTasks())
+	require.Equal(t, int32(2), parentStats.GetTasks())
 }
 
 func TestNewSelRespChannelIter(t *testing.T) {
