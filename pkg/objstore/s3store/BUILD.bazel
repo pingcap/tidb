@@ -59,7 +59,7 @@ go_test(
     timeout = "short",
     srcs = [
         "client_test.go",
-        "gcs_test.go",
+        "gcs_s3_test.go",
         "main_test.go",
         "retry_test.go",
         "s3_flags_test.go",
