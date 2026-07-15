@@ -173,7 +173,7 @@ func (w *GCSWriter) readChunk(ch chan chunk) {
 // Write uploads given bytes as a part to Google Cloud Storage. Write is not
 // concurrent safe.
 func (w *GCSWriter) Write(p []byte) (n int, err error) {
-	if w.curPart > gcsMaximumParts {
+	if w.curPart > storeapi.MaxUploadParts {
 		err = storeapi.ErrExceedMaxUploadParts
 		if w.err.Load() == nil {
 			w.err.Store(err)
@@ -235,7 +235,6 @@ const (
 
 	gcsMinimumChunkSize = 5 * 1024 * 1024        // 5 MB
 	gcsMaximumChunkSize = 5 * 1024 * 1024 * 1024 // 5 GB
-	gcsMaximumParts     = 10000
 )
 
 // InitiateMultipartUploadResult initiate multipart upload result structure.
