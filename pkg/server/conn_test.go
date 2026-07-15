@@ -23,11 +23,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-<<<<<<< HEAD
-=======
 	"net"
-	"os"
->>>>>>> a37e3590516 (server, session: add connection lifecycle and ALTER DATABASE logs (#69848))
 	"path/filepath"
 	"strings"
 	"sync"
@@ -776,9 +772,9 @@ func testDispatch(t *testing.T, inputs []dispatchInput, capability uint32) {
 		capability:   capability,
 	}
 	cc.SetCtx(tc)
-	originalEnableConnectionEventLog := vardef.EnableConnectionEventLog.Swap(true)
+	originalEnableConnectionEventLog := variable.EnableConnectionEventLog.Swap(true)
 	t.Cleanup(func() {
-		vardef.EnableConnectionEventLog.Store(originalEnableConnectionEventLog)
+		variable.EnableConnectionEventLog.Store(originalEnableConnectionEventLog)
 	})
 	for _, cs := range inputs {
 		inBytes := append([]byte{cs.com}, cs.in...)
