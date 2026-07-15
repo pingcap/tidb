@@ -56,6 +56,7 @@ func (mgr *TaskManager) TransferTasks2History(ctx context.Context, tasks []*prot
 		return nil
 	}
 	taskIDStrs := make([]string, 0, len(tasks))
+	taskKeyStrs := make([]string, 0, len(tasks))
 	updateMetaArgs := make([]any, 0, len(tasks)*2)
 	var updateMetaSQL strings.Builder
 	updateMetaSQL.WriteString(`
@@ -63,10 +64,12 @@ func (mgr *TaskManager) TransferTasks2History(ctx context.Context, tasks []*prot
 		set meta = case id`)
 	for _, task := range tasks {
 		taskIDStrs = append(taskIDStrs, fmt.Sprintf("%d", task.ID))
+		taskKeyStrs = append(taskKeyStrs, fmt.Sprintf("'%d'", task.ID))
 		updateMetaSQL.WriteString(" when %? then %?")
 		updateMetaArgs = append(updateMetaArgs, task.ID, task.Meta)
 	}
 	taskIDList := strings.Join(taskIDStrs, `, `)
+	taskKeyList := strings.Join(taskKeyStrs, `, `)
 	updateMetaSQL.WriteString(`
 			end, state_update_time = CURRENT_TIMESTAMP()
 		where id in(` + taskIDList + `)`)
@@ -98,14 +101,14 @@ func (mgr *TaskManager) TransferTasks2History(ctx context.Context, tasks []*prot
 		_, err = sqlexec.ExecSQL(ctx, exec, `
 			insert into mysql.tidb_background_subtask_history
 			select * from mysql.tidb_background_subtask
-			where task_key in(`+taskIDList+`)`)
+			where task_key in(`+taskKeyList+`)`)
 		if err != nil {
 			return err
 		}
 
 		_, err = sqlexec.ExecSQL(ctx, exec, `
 			delete from mysql.tidb_background_subtask
-			where task_key in(`+taskIDList+`)`)
+			where task_key in(`+taskKeyList+`)`)
 		return err
 	})
 }

@@ -1040,6 +1040,49 @@ func TestSubtaskHistoryTable(t *testing.T) {
 	require.Equal(t, 1, historySubTasksCnt)
 }
 
+func TestTransferTasks2HistoryWithAdjacentLargeTaskIDs(t *testing.T) {
+	store, tm, ctx := testutil.InitTableTest(t)
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tm.InitMeta(ctx, ":4000", ""))
+
+	// task_key is VARCHAR, so formatting task IDs as unquoted SQL integers makes TiDB
+	// use a numeric comparison and cast task_key to DOUBLE. DOUBLE has 53 bits of
+	// integer precision: 2^53 is exact, but 2^53+1 rounds to the same value. As a
+	// result, task_key IN (9007199254740992) can also match the string
+	// "9007199254740993", causing the adjacent task's subtask to be moved and deleted.
+	// Quoting the IDs keeps the comparison in the string domain and avoids this collision.
+	const firstExpectedTaskID int64 = 1 << 53
+	tk.MustExec(fmt.Sprintf("alter table mysql.tidb_global_task auto_increment = %d", firstExpectedTaskID))
+	firstTaskID, err := tm.CreateTask(ctx, "first-large-id", proto.TaskTypeExample, "", 1, "", 0, proto.ExtraParams{}, []byte("first-original"))
+	require.NoError(t, err)
+	require.Equal(t, firstExpectedTaskID, firstTaskID)
+	secondTaskID, err := tm.CreateTask(ctx, "second-large-id", proto.TaskTypeExample, "", 1, "", 0, proto.ExtraParams{}, []byte("second-original"))
+	require.NoError(t, err)
+	require.Equal(t, firstTaskID+1, secondTaskID)
+
+	firstSubtaskID := testutil.InsertSubtask(t, tm, firstTaskID, proto.StepOne, "tidb1", proto.EmptyMeta, proto.SubtaskStateRunning, proto.TaskTypeExample, 1)
+	secondSubtaskID := testutil.InsertSubtask(t, tm, secondTaskID, proto.StepOne, "tidb1", proto.EmptyMeta, proto.SubtaskStateRunning, proto.TaskTypeExample, 1)
+	firstTask, err := tm.GetTaskByID(ctx, firstTaskID)
+	require.NoError(t, err)
+	firstTask.Meta = []byte("first-redacted")
+	require.NoError(t, tm.TransferTasks2History(ctx, []*proto.Task{firstTask}))
+
+	tk.MustQuery("select id, meta from mysql.tidb_global_task_history order by id").
+		Check(testkit.Rows(fmt.Sprintf("%d first-redacted", firstTaskID)))
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_global_task where id = %d", firstTaskID)).
+		Check(testkit.Rows("0"))
+	tk.MustQuery(fmt.Sprintf("select meta from mysql.tidb_global_task where id = %d", secondTaskID)).
+		Check(testkit.Rows("second-original"))
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_global_task_history where id = %d", secondTaskID)).
+		Check(testkit.Rows("0"))
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_background_subtask_history where id = %d", firstSubtaskID)).
+		Check(testkit.Rows("1"))
+	tk.MustQuery(fmt.Sprintf("select task_key from mysql.tidb_background_subtask where id = %d", secondSubtaskID)).
+		Check(testkit.Rows(fmt.Sprint(secondTaskID)))
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_background_subtask_history where id = %d", secondSubtaskID)).
+		Check(testkit.Rows("0"))
+}
+
 func TestTaskHistoryTable(t *testing.T) {
 	t.Run("cleanup tasks are batch limited", func(t *testing.T) {
 		t.Cleanup(proto.SetTaskCleanupBatchSizeForTest(2))
