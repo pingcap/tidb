@@ -102,6 +102,9 @@ func planAutoSplitIndexRegions(
 		return nil, fmt.Sprintf("row count %d below threshold %d", statsTbl.RealtimeCount, cfg.minTableRows), nil
 	}
 
+	// Auto-splitting intentionally uses only the leading index column. The available
+	// per-column statistics cannot describe later-column distributions under a hot
+	// leading-column value, and deriving such split keys would require reading table data.
 	offset := idxInfo.Columns[0].Offset
 	if offset < 0 || offset >= len(tblInfo.Columns) {
 		return nil, "leading column not found", nil
