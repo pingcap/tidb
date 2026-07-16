@@ -431,7 +431,7 @@ func TestSaveMetaToStorage(t *testing.T) {
 		tableIDs = append(tableIDs, fmt.Sprintf("%d", tableInfo.ID))
 	}
 	statsHandler := dom.StatsHandle()
-	err := statsHandler.SaveMetaToStorage("test", false, metaUpdates...)
+	err := statsHandler.SaveMetaToStorage(false, metaUpdates...)
 	require.NoError(t, err)
 	rows := tk.MustQuery(
 		fmt.Sprintf(
@@ -465,7 +465,7 @@ func TestSaveMetaToStorage(t *testing.T) {
 		metaUpdates[i].ModifyCount = metaUpdates[i].Count
 		metaUpdates[i].Count += metaUpdates[i].ModifyCount
 	}
-	err = statsHandler.SaveMetaToStorage("test", true, metaUpdates...)
+	err = statsHandler.SaveMetaToStorage(true, metaUpdates...)
 	require.NoError(t, err)
 	rows = tk.MustQuery(
 		fmt.Sprintf(

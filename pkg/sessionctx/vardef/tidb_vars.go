@@ -1286,7 +1286,9 @@ const (
 	PasswordReuseHistory = "password_history"
 	// PasswordReuseTime limit how long passwords can be reused.
 	PasswordReuseTime = "password_reuse_interval"
-	// TiDBHistoricalStatsDuration keeps compatibility for the removed historical statistics feature.
+	// TiDBHistoricalStatsDuration is still load-bearing after the historical stats feature removal:
+	// it controls the retention window that stats GC uses to drain legacy rows from
+	// mysql.stats_history/mysql.stats_meta_history on upgraded clusters.
 	TiDBHistoricalStatsDuration = "tidb_historical_stats_duration"
 	// TiDBEnableHistoricalStatsForCapture keeps compatibility for the removed historical statistics feature.
 	TiDBEnableHistoricalStatsForCapture = "tidb_enable_historical_stats_for_capture"
@@ -1770,7 +1772,6 @@ const (
 	DefMaxUserConnections                             = 0
 	DefTiDBStoreBatchSize                             = 4
 	DefTiDBHistoricalStatsDuration                    = 7 * 24 * time.Hour
-	DefTiDBEnableHistoricalStatsForCapture            = false
 	DefTiDBTTLJobScheduleWindowStartTime              = "00:00 +0000"
 	DefTiDBTTLJobScheduleWindowEndTime                = "23:59 +0000"
 	DefTiDBTTLScanWorkerCount                         = 4
@@ -1964,16 +1965,15 @@ var (
 			DefTiDBTTLJobScheduleWindowEndTime,
 		),
 	)
-	TTLScanWorkerCount              = atomic.NewInt32(DefTiDBTTLScanWorkerCount)
-	TTLDeleteWorkerCount            = atomic.NewInt32(DefTiDBTTLDeleteWorkerCount)
-	PasswordHistory                 = atomic.NewInt64(DefPasswordReuseHistory)
-	PasswordReuseInterval           = atomic.NewInt64(DefPasswordReuseTime)
-	IsSandBoxModeEnabled            = atomic.NewBool(false)
-	MaxUserConnectionsValue         = atomic.NewUint32(DefMaxUserConnections)
-	MaxPreparedStmtCountValue       = atomic.NewInt64(DefMaxPreparedStmtCount)
-	HistoricalStatsDuration         = atomic.NewDuration(DefTiDBHistoricalStatsDuration)
-	EnableHistoricalStatsForCapture = atomic.NewBool(DefTiDBEnableHistoricalStatsForCapture)
-	TTLRunningTasks                 = atomic.NewInt32(DefTiDBTTLRunningTasks)
+	TTLScanWorkerCount        = atomic.NewInt32(DefTiDBTTLScanWorkerCount)
+	TTLDeleteWorkerCount      = atomic.NewInt32(DefTiDBTTLDeleteWorkerCount)
+	PasswordHistory           = atomic.NewInt64(DefPasswordReuseHistory)
+	PasswordReuseInterval     = atomic.NewInt64(DefPasswordReuseTime)
+	IsSandBoxModeEnabled      = atomic.NewBool(false)
+	MaxUserConnectionsValue   = atomic.NewUint32(DefMaxUserConnections)
+	MaxPreparedStmtCountValue = atomic.NewInt64(DefMaxPreparedStmtCount)
+	HistoricalStatsDuration   = atomic.NewDuration(DefTiDBHistoricalStatsDuration)
+	TTLRunningTasks           = atomic.NewInt32(DefTiDBTTLRunningTasks)
 	// always set the default value to false because the resource control in kv-client is not inited
 	// It will be initialized to the right value after the first call of `rebuildSysVarCache`
 	EnableResourceControl           = atomic.NewBool(false)

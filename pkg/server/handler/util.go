@@ -38,7 +38,6 @@ const (
 	ColumnFlag         = "colFlag"
 	ColumnLen          = "colLen"
 	RowBin             = "rowBin"
-	Snapshot           = "snapshot"
 	FileName           = "filename"
 	DumpPartitionStats = "dumpPartitionStats"
 	Begin              = "begin"

@@ -342,15 +342,15 @@ type StatsReadWriter interface {
 
 	// SaveColOrIdxStatsToStorage save the column or index stats to storage.
 	SaveColOrIdxStatsToStorage(tableID int64, count, modifyCount int64, isIndex int, hg *statistics.Histogram,
-		cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int, updateAnalyzeTime bool, source string) (err error)
+		cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int, updateAnalyzeTime bool) (err error)
 
 	// SaveAnalyzeResultToStorage saves the analyze result to the storage.
-	SaveAnalyzeResultToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool, source string) (err error)
+	SaveAnalyzeResultToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool) (err error)
 
 	// SaveMetaToStorage saves the stats meta of a table to storage.
 	// Use the param `refreshLastHistVer` to indicate whether we need to update the last_histograms_versions in stats_meta table.
 	// Set it to true if the column/index stats is updated.
-	SaveMetaToStorage(source string, needRefreshLastHistVer bool, metaUpdates ...MetaUpdate) (err error)
+	SaveMetaToStorage(needRefreshLastHistVer bool, metaUpdates ...MetaUpdate) (err error)
 
 	// UpdateStatsMetaVersionForGC updates the version of mysql.stats_meta,
 	// ensuring it is greater than the last garbage collection (GC) time.

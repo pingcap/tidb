@@ -157,7 +157,7 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(forceDump bool, tableIDs ...int64) e
 
 			// Process all updates in the batch with a single transaction.
 			// Note: batchUpdates may be modified in dumpStatsDeltaToKV. (e.g. sorting, updating IsLocked)
-			_, updated, err := s.dumpStatsDeltaToKV(is, sctx, batchUpdates)
+			updated, err := s.dumpStatsDeltaToKV(is, sctx, batchUpdates)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -235,14 +235,14 @@ func (s *statsUsageImpl) dumpStatsDeltaToKV(
 	is infoschema.InfoSchema,
 	sctx sessionctx.Context,
 	updates []*storage.DeltaUpdate,
-) (statsVersion uint64, updated []*storage.DeltaUpdate, err error) {
+) (updated []*storage.DeltaUpdate, err error) {
 	if len(updates) == 0 {
-		return 0, nil, nil
+		return nil, nil
 	}
 	beforeLen := len(updates)
-	statsVersion, err = utilstats.GetStartTS(sctx)
+	statsVersion, err := utilstats.GetStartTS(sctx)
 	if err != nil {
-		return 0, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
 	// Collect all table IDs that need lock checking.
@@ -263,7 +263,7 @@ func (s *statsUsageImpl) dumpStatsDeltaToKV(
 	// Batch get lock status for all tables.
 	lockedTables, err := s.statsHandle.GetLockedTables(allTableIDs...)
 	if err != nil {
-		return 0, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
 	// Prepare batch updates
@@ -320,12 +320,12 @@ func (s *statsUsageImpl) dumpStatsDeltaToKV(
 
 	// Batch update stats meta.
 	if err = storage.UpdateStatsMeta(utilstats.StatsCtx, sctx, statsVersion, updates...); err != nil {
-		return 0, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
 	// Because we may sort the updates, we need to return the updated slice.
 	// Otherwise the caller may use the original slice and get wrong results.
-	return statsVersion, updates, nil
+	return updates, nil
 }
 
 // DumpColStatsUsageToKV sweeps the whole list, updates the column stats usage map and dumps it to KV.

@@ -18,7 +18,6 @@ import (
 	"archive/zip"
 	"bytes"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -28,7 +27,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/BurntSushi/toml"
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
@@ -40,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/session"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
-	util2 "github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/stretchr/testify/require"
@@ -87,16 +84,6 @@ func requirePlanReplayerFileTokenFromRows(t *testing.T, rows *sql.Rows) string {
 	require.Equal(t, "File token", item)
 	require.NotEmpty(t, filename)
 	require.NoError(t, rows.Close())
-	return filename
-}
-
-func requirePlanReplayerFileTokenFromResult(t *testing.T, rows [][]any) string {
-	require.Len(t, rows, 1)
-	require.Len(t, rows[0], 2)
-	require.Equal(t, "File token", rows[0][0])
-	filename, ok := rows[0][1].(string)
-	require.True(t, ok)
-	require.NotEmpty(t, filename)
 	return filename
 }
 
@@ -862,69 +849,4 @@ func forEachFileInZipBytes(t *testing.T, b []byte, fn func(file *zip.File)) {
 	for _, f := range z.File {
 		fn(f)
 	}
-}
-
-func fetchZipFromPlanReplayerAPI(t *testing.T, client *testserverclient.TestServerClient, filename string) *zip.Reader {
-	resp0, err := client.FetchStatus(filepath.Join("/plan_replayer/dump/", filename))
-	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, resp0.Body.Close())
-	}()
-	body, err := io.ReadAll(resp0.Body)
-	require.NoError(t, err)
-	b := bytes.NewReader(body)
-	z, err := zip.NewReader(b, int64(len(body)))
-	require.NoError(t, err)
-	return z
-}
-
-func getInfoFromPlanReplayerZip(
-	t *testing.T,
-	z *zip.Reader,
-) (
-	jsonTbls []*util2.JSONTable,
-	metas []map[string]string,
-	errMsgs []string,
-) {
-	for _, zipFile := range z.File {
-		if strings.HasPrefix(zipFile.Name, "stats/") {
-			jsonTbl := &util2.JSONTable{}
-			r, err := zipFile.Open()
-			require.NoError(t, err)
-			//nolint: all_revive
-			defer func() {
-				require.NoError(t, r.Close())
-			}()
-			buf := new(bytes.Buffer)
-			_, err = buf.ReadFrom(r)
-			require.NoError(t, err)
-			err = json.Unmarshal(buf.Bytes(), jsonTbl)
-			require.NoError(t, err)
-
-			jsonTbls = append(jsonTbls, jsonTbl)
-		} else if zipFile.Name == "sql_meta.toml" {
-			meta := make(map[string]string)
-			r, err := zipFile.Open()
-			require.NoError(t, err)
-			//nolint: all_revive
-			defer func() {
-				require.NoError(t, r.Close())
-			}()
-			_, err = toml.NewDecoder(r).Decode(&meta)
-			require.NoError(t, err)
-
-			metas = append(metas, meta)
-		} else if zipFile.Name == "errors.txt" {
-			r, err := zipFile.Open()
-			require.NoError(t, err)
-			//nolint: all_revive
-			defer func() {
-				require.NoError(t, r.Close())
-			}()
-			content, err := io.ReadAll(r)
-			require.NoError(t, err)
-			errMsgs = strings.Split(string(content), "\n")
-		}
-	}
-	return
 }

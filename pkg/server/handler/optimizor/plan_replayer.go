@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -52,6 +53,15 @@ func NewPlanReplayerHandler(infoGetter *infosync.InfoSyncer, address string, sta
 func (prh PlanReplayerHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	params := mux.Vars(req)
 	name := params[handler.FileName]
+	if strings.HasPrefix(name, "capture_replayer_") {
+		// Files with this prefix were dumped by older TiDB versions with
+		// tidb_enable_historical_stats_for_capture enabled and contain no
+		// stats/*.json entries: they relied on historical stats being injected
+		// at download time, which was removed together with the historical
+		// stats feature. Serve them as-is, but leave a trace for diagnosis.
+		logutil.BgLogger().Warn("serving a plan replayer capture file created by an older version with historical stats for capture enabled; the bundle contains no statistics",
+			zap.String("filename", name))
+	}
 	handler := downloadFileHandler{
 		filePath:           filepath.Join(replayer.GetPlanReplayerDirName(), name),
 		infoGetter:         prh.infoGetter,

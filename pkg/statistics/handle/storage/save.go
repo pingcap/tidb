@@ -378,10 +378,10 @@ func SaveMetaToStorage(
 	sctx sessionctx.Context,
 	refreshLastHistVer bool,
 	metaUpdates []statstypes.MetaUpdate,
-) (uint64, error) {
+) error {
 	version, err := util.GetStartTS(sctx)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return errors.Trace(err)
 	}
 	var sql string
 	values := make([]string, 0, len(metaUpdates))
@@ -399,7 +399,7 @@ func SaveMetaToStorage(
 			"on duplicate key update version = values(version), modify_count = values(modify_count), count = values(count)", strings.Join(values, ","))
 	}
 	_, err = util.Exec(sctx, sql)
-	return version, errors.Trace(err)
+	return errors.Trace(err)
 }
 
 // InsertColStats2KV insert a record to stats_histograms with distinct_count 1
@@ -410,10 +410,10 @@ func InsertColStats2KV(
 	sctx sessionctx.Context,
 	physicalID int64,
 	colInfos []*model.ColumnInfo,
-) (uint64, error) {
+) error {
 	startTS, err := util.GetStartTS(sctx)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return errors.Trace(err)
 	}
 
 	// By this step we can get the count of this table, then we can sure the count and repeats of bucket.
@@ -424,17 +424,17 @@ func InsertColStats2KV(
 		physicalID,
 	)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return errors.Trace(err)
 	}
 	defer terror.Call(rs.Close)
 	req := rs.NewChunk(nil)
 	err = rs.Next(ctx, req)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return errors.Trace(err)
 	}
 	// If no row is returned, it means the stats of this table does not exist.
 	if req.NumRows() == 0 {
-		return startTS, nil
+		return nil
 	}
 	count := req.GetRow(0).GetInt64(0)
 	hasStatsUpdate := false
@@ -452,7 +452,7 @@ func InsertColStats2KV(
 				values (%?, %?, 0, %?, 0, 0)`,
 				startTS, physicalID, colInfo.ID,
 			); err != nil {
-				return 0, errors.Trace(err)
+				return errors.Trace(err)
 			}
 			if sctx.GetSessionVars().StmtCtx.AffectedRows() > 0 {
 				hasStatsUpdate = true
@@ -462,7 +462,7 @@ func InsertColStats2KV(
 
 		value, err := table.GetColOriginDefaultValue(sctx.GetExprCtx(), colInfo)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return errors.Trace(err)
 		}
 		if value.IsNull() {
 			// If the adding column has default value null, all the existing rows have null value on the newly added column.
@@ -473,7 +473,7 @@ func InsertColStats2KV(
 				values (%?, %?, 0, %?, 0, %?)`,
 				startTS, physicalID, colInfo.ID, count,
 			); err != nil {
-				return 0, errors.Trace(err)
+				return errors.Trace(err)
 			}
 			if sctx.GetSessionVars().StmtCtx.AffectedRows() > 0 {
 				hasStatsUpdate = true
@@ -489,7 +489,7 @@ func InsertColStats2KV(
 			values (%?, %?, 0, %?, 1, GREATEST(%?, 0))`,
 			startTS, physicalID, colInfo.ID, int64(len(value.GetBytes()))*count,
 		); err != nil {
-			return 0, errors.Trace(err)
+			return errors.Trace(err)
 		}
 		// The histogram may have been created by ANALYZE TABLE ... ALL COLUMNS before the add-column DDL event is handled.
 		// Skip inserting the default-value bucket in that case.
@@ -499,7 +499,7 @@ func InsertColStats2KV(
 		hasStatsUpdate = true
 		value, err = value.ConvertTo(sctx.GetSessionVars().StmtCtx.TypeCtx(), types.NewFieldType(mysql.TypeBlob))
 		if err != nil {
-			return 0, errors.Trace(err)
+			return errors.Trace(err)
 		}
 		// There must be only one bucket for this new column and the value is the default value.
 		if _, err = util.ExecWithCtx(
@@ -509,11 +509,11 @@ func InsertColStats2KV(
 			values (%?, 0, %?, 0, %?, %?, %?, %?)`,
 			physicalID, colInfo.ID, count, count, value.GetBytes(), value.GetBytes(),
 		); err != nil {
-			return 0, errors.Trace(err)
+			return errors.Trace(err)
 		}
 	}
 	if !hasStatsUpdate {
-		return startTS, nil
+		return nil
 	}
 	_, err = util.ExecWithCtx(
 		ctx, sctx,
@@ -521,9 +521,9 @@ func InsertColStats2KV(
 		startTS, startTS, physicalID,
 	)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return errors.Trace(err)
 	}
-	return startTS, nil
+	return nil
 }
 
 // InsertTableStats2KV inserts a record standing for a new table to stats_meta
@@ -534,17 +534,17 @@ func InsertTableStats2KV(
 	sctx sessionctx.Context,
 	info *model.TableInfo,
 	physicalID int64,
-) (uint64, error) {
+) error {
 	startTS, err := util.GetStartTS(sctx)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return errors.Trace(err)
 	}
 	if _, err = util.ExecWithCtx(
 		ctx, sctx,
 		"insert ignore into mysql.stats_meta (version, table_id, last_stats_histograms_version) values(%?, %?, %?)",
 		startTS, physicalID, startTS,
 	); err != nil {
-		return 0, errors.Trace(err)
+		return errors.Trace(err)
 	}
 	for _, col := range info.Columns {
 		if _, err = util.ExecWithCtx(
@@ -554,7 +554,7 @@ func InsertTableStats2KV(
 			values (%?, 0, %?, 0, %?)`,
 			physicalID, col.ID, startTS,
 		); err != nil {
-			return 0, errors.Trace(err)
+			return errors.Trace(err)
 		}
 	}
 	for _, idx := range info.Indices {
@@ -565,10 +565,10 @@ func InsertTableStats2KV(
 			values(%?, 1, %?, 0, %?)`,
 			physicalID, idx.ID, startTS,
 		); err != nil {
-			return 0, errors.Trace(err)
+			return errors.Trace(err)
 		}
 	}
-	return startTS, nil
+	return nil
 }
 
 // convertBoundToBlob converts the bound to blob. The `blob` will be used to store in the `mysql.stats_buckets` table.
