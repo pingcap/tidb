@@ -91,6 +91,9 @@ func Row2Task(r chunk.Row) *proto.Task {
 }
 
 // TaskIDToKey returns the canonical decimal key stored in background-subtask tables.
+// due to history reason, the task_key column inside subtask tables are defined
+// as varchar, but it actually stores the ID of the task which is integer. to
+// make sure TiDB query can correct handle this, we need to convert it to string.
 func TaskIDToKey(taskID int64) string {
 	return strconv.FormatInt(taskID, 10)
 }
