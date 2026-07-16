@@ -1713,13 +1713,12 @@ func TestIndexRangeEstimationWithAppendedHandleColumn(t *testing.T) {
 	})
 }
 
-// TestIndexRangeEstimationWithTruncatedHandleRange verifies the row count estimation of
-// index ranges extended with appended handle columns. The prefix over the declared index
-// columns is estimated from pruned ranges that keep valid bounds (an exclusive bound from
-// a dropped dimension becomes inclusive, and ranges collapsing to the same prefix merge
-// instead of each contributing the full prefix row count), then the handle predicates
-// receive exponential-backoff credit from their column statistics, capped at one row per
-// range when the full handle is point-bound.
+// TestIndexRangeEstimationWithTruncatedHandleRange verifies that estimation ranges pruned
+// back to the declared index columns keep valid bounds. Truncating the appended handle
+// dimensions widens a bound to the whole prefix, so an exclusive bound from a dropped
+// dimension must become inclusive (otherwise (5 10, 5 +inf] collapses to the empty (5, 5]
+// and estimates ~0 rows), and ranges collapsing to the same prefix must be merged instead
+// of each contributing the full prefix row count.
 func TestIndexRangeEstimationWithTruncatedHandleRange(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
