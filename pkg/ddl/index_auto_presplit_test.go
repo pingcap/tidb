@@ -104,6 +104,65 @@ func TestPlanAutoSplitIndexRegionsTopN(t *testing.T) {
 			require.Equal(t, tc.expected, topNRows[0][0].GetInt64())
 		})
 	}
+
+	for _, tc := range []struct {
+		name      string
+		createSQL string
+		collation string
+	}{
+		{
+			name:      "general ci string",
+			createSQL: "create table t(a bigint, b varchar(32) collate utf8mb4_general_ci, index idx(b))",
+			collation: "utf8mb4_general_ci",
+		},
+		{
+			name:      "binary string",
+			createSQL: "create table t(a bigint, b varchar(32) collate utf8mb4_bin, index idx(b))",
+			collation: "utf8mb4_bin",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tblInfo, idxInfo := buildAutoSplitTestTableInfoFromSQL(t, tc.createSQL)
+			values := []string{"A", "B"}
+			topN := buildAutoSplitStringTopN(
+				t, sctx.GetSessionVars().StmtCtx.TimeZone(), &tblInfo.Columns[1].FieldType,
+				values, []uint64{50, 40})
+			statsTbl := buildAutoSplitTestStats(tblInfo.ID, 100, 0, tblInfo.Columns[1], topN)
+
+			topNRows, err := buildAutoSplitTopNRows(sctx, statsTbl, topN, tblInfo.Columns[1], cfg)
+			require.NoError(t, err)
+			require.Equal(t, types.KindBytes, topNRows[0][0].Kind())
+
+			keys, _, err := planAutoSplitIndexRegions(
+				sctx, fakeAutoSplitStatsProvider{tblInfo.ID: statsTbl}, tblInfo, idxInfo, cfg)
+			require.NoError(t, err)
+
+			expectedRows := make([][]types.Datum, 0, len(values))
+			for _, value := range values {
+				expectedRows = append(expectedRows, []types.Datum{
+					types.NewCollationStringDatum(value, tc.collation),
+				})
+			}
+			expectedKeys, err := getSplitIdxKeysFromValueList(sctx, tblInfo, idxInfo, expectedRows)
+			require.NoError(t, err)
+			require.Equal(t, sortAndDedupeAutoSplitKeys(expectedKeys), keys)
+		})
+	}
+
+	t.Run("string prefix index", func(t *testing.T) {
+		tblInfo, idxInfo := buildAutoSplitTestTableInfoFromSQL(t,
+			"create table t(a bigint, b varchar(32) collate utf8mb4_general_ci, index idx(b(3)))")
+		topN := buildAutoSplitStringTopN(
+			t, sctx.GetSessionVars().StmtCtx.TimeZone(), &tblInfo.Columns[1].FieldType,
+			[]string{"abcdef"}, []uint64{50})
+		statsTbl := buildAutoSplitTestStats(tblInfo.ID, 100, 0, tblInfo.Columns[1], topN)
+
+		keys, reason, err := planAutoSplitIndexRegions(
+			sctx, fakeAutoSplitStatsProvider{tblInfo.ID: statsTbl}, tblInfo, idxInfo, cfg)
+		require.NoError(t, err)
+		require.Empty(t, keys)
+		require.Equal(t, "leading string column uses prefix index", reason)
+	})
 }
 
 func TestPlanAutoSplitIndexRegionsSkipUnreliableStats(t *testing.T) {
@@ -259,8 +318,12 @@ func TestPreSplitIndexRegionsAutoGateAndManualOverride(t *testing.T) {
 }
 
 func buildAutoSplitTestTableInfo(t *testing.T) (*model.TableInfo, *model.IndexInfo) {
+	return buildAutoSplitTestTableInfoFromSQL(t, "create table t(a bigint, b bigint, index idx(b))")
+}
+
+func buildAutoSplitTestTableInfoFromSQL(t *testing.T, createSQL string) (*model.TableInfo, *model.IndexInfo) {
 	t.Helper()
-	stmt, err := parser.New().ParseOneStmt("create table t(a bigint, b bigint, index idx(b))", "", "")
+	stmt, err := parser.New().ParseOneStmt(createSQL, "", "")
 	require.NoError(t, err)
 	tblInfo, err := BuildTableInfoFromAST(metabuild.NewContext(), stmt.(*ast.CreateTableStmt))
 	require.NoError(t, err)
@@ -286,8 +349,10 @@ func buildAutoSplitTestStats(
 ) *statistics.Table {
 	histColl := statistics.NewHistColl(physicalID, rowCount, modifyCount, 1, 0)
 	histogram := statistics.NewHistogram(colInfo.ID, 1, 0, 0, &colInfo.FieldType, 1, 0)
-	lower := types.NewIntDatum(0)
-	upper := types.NewIntDatum(rowCount)
+	lower, upper := types.NewIntDatum(0), types.NewIntDatum(rowCount)
+	if types.IsString(colInfo.GetType()) {
+		lower, upper = types.NewBytesDatum(nil), types.NewBytesDatum([]byte{0xff})
+	}
 	histogram.AppendBucket(&lower, &upper, rowCount, 1)
 	colStats := &statistics.Column{
 		PhysicalID:        physicalID,
@@ -314,6 +379,26 @@ func buildAutoSplitTopN(t *testing.T, loc *time.Location, values []int64, counts
 	topN := statistics.NewTopN(len(values))
 	for i, value := range values {
 		encoded, err := codec.EncodeKey(loc, nil, types.NewIntDatum(value))
+		require.NoError(t, err)
+		topN.AppendTopN(encoded, counts[i])
+	}
+	topN.Sort()
+	return topN
+}
+
+func buildAutoSplitStringTopN(
+	t *testing.T,
+	loc *time.Location,
+	fieldType *types.FieldType,
+	values []string,
+	counts []uint64,
+) *statistics.TopN {
+	t.Helper()
+	require.Len(t, counts, len(values))
+	topN := statistics.NewTopN(len(values))
+	for i, value := range values {
+		collationKey := codec.ConvertByCollation([]byte(value), fieldType)
+		encoded, err := codec.EncodeKey(loc, nil, types.NewBytesDatum(collationKey))
 		require.NoError(t, err)
 		topN.AppendTopN(encoded, counts[i])
 	}
