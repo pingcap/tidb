@@ -21,7 +21,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
-	stderrors "errors"
 	"fmt"
 	"io"
 	"net"
@@ -47,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -75,21 +75,21 @@ import (
 )
 
 const (
-	defaultStatusPort                              = 10080
-	advertisedStatusEndpointCheckTimeout           = 5 * time.Second
-	advertisedStatusEndpointResponseBodyLimit      = 1 << 20
-	advertisedStatusEndpointWarningMessage         = "advertised status endpoint does not identify this TiDB instance"
-	advertisedStatusEndpointWarningSuggestedAction = "check that advertise-address and status-port route directly to this TiDB instance and that no TiDB exists outside the intended topology"
+	defaultStatusPort                         = 10080
+	advertisedStatusEndpointCheckTimeout      = 5 * time.Second
+	advertisedStatusEndpointResponseBodyLimit = 1 << 20
+	advertisedStatusEndpointWarningMessage    = "failed to verify advertised status endpoint identity"
 )
 
 type advertisedStatusEndpointCheckReason string
 
 const (
-	advertisedStatusEndpointRequestFailed    advertisedStatusEndpointCheckReason = "request-failed"
-	advertisedStatusEndpointUnexpectedStatus advertisedStatusEndpointCheckReason = "unexpected-status"
-	advertisedStatusEndpointInvalidResponse  advertisedStatusEndpointCheckReason = "invalid-response"
-	advertisedStatusEndpointMissingIdentity  advertisedStatusEndpointCheckReason = "missing-identity"
-	advertisedStatusEndpointIdentityMismatch advertisedStatusEndpointCheckReason = "identity-mismatch"
+	advertisedStatusEndpointClientSetupFailed advertisedStatusEndpointCheckReason = "client-setup-failed"
+	advertisedStatusEndpointRequestFailed     advertisedStatusEndpointCheckReason = "request-failed"
+	advertisedStatusEndpointUnexpectedStatus  advertisedStatusEndpointCheckReason = "unexpected-status"
+	advertisedStatusEndpointInvalidResponse   advertisedStatusEndpointCheckReason = "invalid-response"
+	advertisedStatusEndpointMissingIdentity   advertisedStatusEndpointCheckReason = "missing-identity"
+	advertisedStatusEndpointIdentityMismatch  advertisedStatusEndpointCheckReason = "identity-mismatch"
 )
 
 type advertisedStatusEndpointCheckInput struct {
@@ -174,6 +174,7 @@ func newAdvertisedStatusEndpointHTTPClient(baseClient *http.Client, timeout time
 		}
 	}
 	directTransport := baseTransport.Clone()
+	// Do not let a forward proxy or redirect make a different endpoint pass the identity check.
 	directTransport.Proxy = nil
 	return &http.Client{
 		Transport: directTransport,
@@ -208,11 +209,7 @@ func checkAdvertisedStatusEndpoint(
 
 	body, err := io.ReadAll(io.LimitReader(response.Body, advertisedStatusEndpointResponseBodyLimit+1))
 	if err != nil {
-		result.reason = advertisedStatusEndpointInvalidResponse
-		var networkError net.Error
-		if ctx.Err() != nil || (stderrors.As(err, &networkError) && networkError.Timeout()) {
-			result.reason = advertisedStatusEndpointRequestFailed
-		}
+		result.reason = advertisedStatusEndpointRequestFailed
 		result.err = err
 		return result
 	}
@@ -221,24 +218,40 @@ func checkAdvertisedStatusEndpoint(
 		result.err = errors.Errorf("response body exceeds %d-byte limit", advertisedStatusEndpointResponseBodyLimit)
 		return result
 	}
-	var responseInfo struct {
-		DDLID string `json:"ddl_id"`
-	}
+	// Reuse the type embedded in the /info response so the ddl_id field stays aligned with the handler.
+	var responseInfo serverinfo.StaticInfo
 	if err := json.Unmarshal(body, &responseInfo); err != nil {
 		result.reason = advertisedStatusEndpointInvalidResponse
 		result.err = err
 		return result
 	}
-	if responseInfo.DDLID == "" {
+	if responseInfo.ID == "" {
 		result.reason = advertisedStatusEndpointMissingIdentity
 		result.err = errors.New("response does not contain ddl_id")
 		return result
 	}
-	result.remoteID = responseInfo.DDLID
-	if responseInfo.DDLID != expectedID {
+	result.remoteID = responseInfo.ID
+	if responseInfo.ID != expectedID {
 		result.reason = advertisedStatusEndpointIdentityMismatch
 	}
 	return result
+}
+
+func advertisedStatusEndpointWarningAction(reason advertisedStatusEndpointCheckReason) string {
+	switch reason {
+	case advertisedStatusEndpointClientSetupFailed:
+		return "check the internal HTTP client transport setup"
+	case advertisedStatusEndpointRequestFailed:
+		return "check DNS, network, TLS, and whether this TiDB instance can complete a request to the advertised status endpoint"
+	case advertisedStatusEndpointUnexpectedStatus,
+		advertisedStatusEndpointInvalidResponse,
+		advertisedStatusEndpointMissingIdentity:
+		return "check that advertise-address and status-port serve a valid TiDB /info response"
+	case advertisedStatusEndpointIdentityMismatch:
+		return "check that advertise-address and status-port route directly to this TiDB instance and that no TiDB exists outside the intended topology"
+	default:
+		return "inspect the error and advertised status endpoint"
+	}
 }
 
 func logAdvertisedStatusEndpointCheckWarning(
@@ -249,7 +262,7 @@ func logAdvertisedStatusEndpointCheckWarning(
 		zap.String("advertised-status-endpoint", input.endpoint),
 		zap.String("local-tidb-id", input.localID),
 		zap.String("reason", string(result.reason)),
-		zap.String("action", advertisedStatusEndpointWarningSuggestedAction),
+		zap.String("action", advertisedStatusEndpointWarningAction(result.reason)),
 	}
 	if result.remoteID != "" {
 		fields = append(fields, zap.String("remote-tidb-id", result.remoteID))
@@ -302,7 +315,7 @@ func (s *Server) startAdvertisedStatusEndpointCheck(ctx context.Context) {
 	client, err := newAdvertisedStatusEndpointHTTPClient(util.InternalHTTPClient(), advertisedStatusEndpointCheckTimeout)
 	if err != nil {
 		logAdvertisedStatusEndpointCheckWarning(input, advertisedStatusEndpointCheckResult{
-			reason: advertisedStatusEndpointRequestFailed,
+			reason: advertisedStatusEndpointClientSetupFailed,
 			err:    err,
 		})
 		return

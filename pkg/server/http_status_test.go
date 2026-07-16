@@ -210,6 +210,20 @@ func TestAdvertisedStatusEndpointCheckRequestFailures(t *testing.T) {
 		require.Error(t, result.err)
 	})
 
+	t.Run("response body read failure", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Length", "100")
+			_, _ = io.WriteString(w, `{"ddl_id":"local-id"}`)
+		}))
+		t.Cleanup(server.Close)
+
+		client, err := newAdvertisedStatusEndpointHTTPClient(&http.Client{}, time.Second)
+		require.NoError(t, err)
+		result := checkAdvertisedStatusEndpoint(t.Context(), client, server.URL+"/info", "local-id")
+		require.Equal(t, advertisedStatusEndpointRequestFailed, result.reason)
+		require.ErrorIs(t, result.err, io.ErrUnexpectedEOF)
+	})
+
 	t.Run("lifecycle cancellation", func(t *testing.T) {
 		requestStarted := make(chan struct{})
 		handlerExited := make(chan struct{})

@@ -28,6 +28,7 @@ go_library(
         "//pkg/config/kerneltype",
         "//pkg/domain",
         "//pkg/domain/infosync",
+        "//pkg/domain/serverinfo",
         "//pkg/errno",
         "//pkg/executor",
         "//pkg/executor/mppcoordmanager",
