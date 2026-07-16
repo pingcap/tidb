@@ -1188,3 +1188,19 @@ func TestRURuntimeStatsMergeKeepsExistingRUVersion(t *testing.T) {
 	dst.Merge(src)
 	require.Equal(t, rmclient.RUVersionV1, dst.RUVersion)
 }
+
+func TestGetIARemoteReadSegmentStats(t *testing.T) {
+	stats := GetIARemoteReadSegmentStats(&util.ScanDetail{
+		IaRemoteReadSegmentCount:    3,
+		IaRemoteReadSegmentBytes:    4096,
+		IaRemoteReadSegmentDuration: 5 * time.Millisecond,
+	})
+	require.Equal(t, IARemoteReadSegmentStats{
+		Count:    3,
+		Bytes:    4096,
+		WaitTime: 5 * time.Millisecond,
+	}, stats)
+
+	require.Equal(t, IARemoteReadSegmentStats{}, GetIARemoteReadSegmentStats(&util.ScanDetail{}))
+	require.Equal(t, IARemoteReadSegmentStats{}, GetIARemoteReadSegmentStats(nil))
+}

@@ -56,42 +56,59 @@ func (mgr *TaskManager) TransferTasks2History(ctx context.Context, tasks []*prot
 		return nil
 	}
 	taskIDStrs := make([]string, 0, len(tasks))
+	taskKeyStrs := make([]string, 0, len(tasks))
+	updateMetaArgs := make([]any, 0, len(tasks)*2)
+	var updateMetaSQL strings.Builder
+	updateMetaSQL.WriteString(`
+		update mysql.tidb_global_task
+		set meta = case id`)
 	for _, task := range tasks {
 		taskIDStrs = append(taskIDStrs, fmt.Sprintf("%d", task.ID))
+		taskKeyStrs = append(taskKeyStrs, fmt.Sprintf("'%d'", task.ID))
+		updateMetaSQL.WriteString(" when %? then %?")
+		updateMetaArgs = append(updateMetaArgs, task.ID, task.Meta)
 	}
+	taskIDList := strings.Join(taskIDStrs, `, `)
+	taskKeyList := strings.Join(taskKeyStrs, `, `)
+	updateMetaSQL.WriteString(`
+			end, state_update_time = CURRENT_TIMESTAMP()
+		where id in(` + taskIDList + `)`)
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}
 	return mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		// sensitive data in meta might be redacted, need update first.
 		exec := se.GetSQLExecutor()
-		for _, t := range tasks {
-			_, err := sqlexec.ExecSQL(ctx, exec, `
-				update mysql.tidb_global_task
-				set meta= %?, state_update_time = CURRENT_TIMESTAMP()
-				where id = %?`, t.Meta, t.ID)
-			if err != nil {
-				return err
-			}
+		_, err := sqlexec.ExecSQL(ctx, exec, updateMetaSQL.String(), updateMetaArgs...)
+		if err != nil {
+			return err
 		}
-		_, err := sqlexec.ExecSQL(ctx, exec, `
+		_, err = sqlexec.ExecSQL(ctx, exec, `
 			insert into mysql.tidb_global_task_history
 			select * from mysql.tidb_global_task
-			where id in(`+strings.Join(taskIDStrs, `, `)+`)`)
+			where id in(`+taskIDList+`)`)
 		if err != nil {
 			return err
 		}
 
 		_, err = sqlexec.ExecSQL(ctx, exec, `
 			delete from mysql.tidb_global_task
-			where id in(`+strings.Join(taskIDStrs, `, `)+`)`)
-
-		for _, t := range tasks {
-			err = mgr.TransferSubtasks2HistoryWithSession(ctx, se, t.ID)
-			if err != nil {
-				return err
-			}
+			where id in(`+taskIDList+`)`)
+		if err != nil {
+			return err
 		}
+
+		_, err = sqlexec.ExecSQL(ctx, exec, `
+			insert into mysql.tidb_background_subtask_history
+			select * from mysql.tidb_background_subtask
+			where task_key in(`+taskKeyList+`)`)
+		if err != nil {
+			return err
+		}
+
+		_, err = sqlexec.ExecSQL(ctx, exec, `
+			delete from mysql.tidb_background_subtask
+			where task_key in(`+taskKeyList+`)`)
 		return err
 	})
 }

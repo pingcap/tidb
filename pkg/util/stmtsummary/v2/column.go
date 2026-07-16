@@ -78,6 +78,12 @@ const (
 	MaxRocksdbBlockReadCountStr                = "MAX_ROCKSDB_BLOCK_READ_COUNT"
 	AvgRocksdbBlockReadByteStr                 = "AVG_ROCKSDB_BLOCK_READ_BYTE"
 	MaxRocksdbBlockReadByteStr                 = "MAX_ROCKSDB_BLOCK_READ_BYTE"
+	AvgIARemoteReadSegmentCountStr             = "AVG_IA_REMOTE_READ_SEGMENT_COUNT"
+	MaxIARemoteReadSegmentCountStr             = "MAX_IA_REMOTE_READ_SEGMENT_COUNT"
+	AvgIARemoteReadSegmentSizeStr              = "AVG_IA_REMOTE_READ_SEGMENT_SIZE"
+	MaxIARemoteReadSegmentSizeStr              = "MAX_IA_REMOTE_READ_SEGMENT_SIZE"
+	AvgIARemoteReadSegmentWaitTimeStr          = "AVG_IA_REMOTE_READ_SEGMENT_WAIT_TIME"
+	MaxIARemoteReadSegmentWaitTimeStr          = "MAX_IA_REMOTE_READ_SEGMENT_WAIT_TIME"
 	AvgPrewriteTimeStr                         = "AVG_PREWRITE_TIME"
 	MaxPrewriteTimeStr                         = "MAX_PREWRITE_TIME"
 	AvgCommitTimeStr                           = "AVG_COMMIT_TIME"
@@ -293,34 +299,52 @@ var columnFactoryMap = map[string]columnFactory{
 		return record.MaxProcessedKeys
 	},
 	AvgRocksdbDeleteSkippedCountStr: func(_ columnInfo, record *StmtRecord) any {
-		return avgInt(int64(record.SumRocksdbDeleteSkippedCount), record.ExecCount)
+		return avgFloat4Uint(record.SumRocksdbDeleteSkippedCount, record.ExecCount)
 	},
 	MaxRocksdbDeleteSkippedCountStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.MaxRocksdbDeleteSkippedCount
 	},
 	AvgRocksdbKeySkippedCountStr: func(_ columnInfo, record *StmtRecord) any {
-		return avgInt(int64(record.SumRocksdbKeySkippedCount), record.ExecCount)
+		return avgFloat4Uint(record.SumRocksdbKeySkippedCount, record.ExecCount)
 	},
 	MaxRocksdbKeySkippedCountStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.MaxRocksdbKeySkippedCount
 	},
 	AvgRocksdbBlockCacheHitCountStr: func(_ columnInfo, record *StmtRecord) any {
-		return avgInt(int64(record.SumRocksdbBlockCacheHitCount), record.ExecCount)
+		return avgFloat4Uint(record.SumRocksdbBlockCacheHitCount, record.ExecCount)
 	},
 	MaxRocksdbBlockCacheHitCountStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.MaxRocksdbBlockCacheHitCount
 	},
 	AvgRocksdbBlockReadCountStr: func(_ columnInfo, record *StmtRecord) any {
-		return avgInt(int64(record.SumRocksdbBlockReadCount), record.ExecCount)
+		return avgFloat4Uint(record.SumRocksdbBlockReadCount, record.ExecCount)
 	},
 	MaxRocksdbBlockReadCountStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.MaxRocksdbBlockReadCount
 	},
 	AvgRocksdbBlockReadByteStr: func(_ columnInfo, record *StmtRecord) any {
-		return avgInt(int64(record.SumRocksdbBlockReadByte), record.ExecCount)
+		return avgFloat4Uint(record.SumRocksdbBlockReadByte, record.ExecCount)
 	},
 	MaxRocksdbBlockReadByteStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.MaxRocksdbBlockReadByte
+	},
+	AvgIARemoteReadSegmentCountStr: func(_ columnInfo, record *StmtRecord) any {
+		return avgFloat4Uint(record.SumIARemoteReadSegmentCount, record.ExecCount)
+	},
+	MaxIARemoteReadSegmentCountStr: func(_ columnInfo, record *StmtRecord) any {
+		return record.MaxIARemoteReadSegmentCount
+	},
+	AvgIARemoteReadSegmentSizeStr: func(_ columnInfo, record *StmtRecord) any {
+		return avgFloat4Uint(record.SumIARemoteReadSegmentSize, record.ExecCount)
+	},
+	MaxIARemoteReadSegmentSizeStr: func(_ columnInfo, record *StmtRecord) any {
+		return record.MaxIARemoteReadSegmentSize
+	},
+	AvgIARemoteReadSegmentWaitTimeStr: func(_ columnInfo, record *StmtRecord) any {
+		return avgInt(int64(record.SumIARemoteReadSegmentWaitTime), record.ExecCount)
+	},
+	MaxIARemoteReadSegmentWaitTimeStr: func(_ columnInfo, record *StmtRecord) any {
+		return int64(record.MaxIARemoteReadSegmentWaitTime)
 	},
 	AvgPrewriteTimeStr: func(_ columnInfo, record *StmtRecord) any {
 		return avgInt(int64(record.SumPrewriteTime), record.CommitCount)
@@ -443,7 +467,7 @@ var columnFactoryMap = map[string]columnFactory{
 		return record.Prepared
 	},
 	AvgAffectedRowsStr: func(_ columnInfo, record *StmtRecord) any {
-		return avgFloat(int64(record.SumAffectedRows), record.ExecCount)
+		return avgFloat4Uint(record.SumAffectedRows, record.ExecCount)
 	},
 	FirstSeenStr: func(info columnInfo, record *StmtRecord) any {
 		firstSeen := record.FirstSeen
@@ -616,6 +640,13 @@ func avgInt(sum int64, count int64) int64 {
 }
 
 func avgFloat(sum int64, count int64) float64 {
+	if count > 0 {
+		return float64(sum) / float64(count)
+	}
+	return 0
+}
+
+func avgFloat4Uint(sum uint64, count int64) float64 {
 	if count > 0 {
 		return float64(sum) / float64(count)
 	}
