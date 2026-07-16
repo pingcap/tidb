@@ -21,6 +21,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"net"
@@ -73,7 +74,247 @@ import (
 	static "sourcegraph.com/sourcegraph/appdash-data"
 )
 
-const defaultStatusPort = 10080
+const (
+	defaultStatusPort                              = 10080
+	advertisedStatusEndpointCheckTimeout           = 5 * time.Second
+	advertisedStatusEndpointResponseBodyLimit      = 1 << 20
+	advertisedStatusEndpointWarningMessage         = "advertised status endpoint does not identify this TiDB instance"
+	advertisedStatusEndpointWarningSuggestedAction = "check that advertise-address and status-port route directly to this TiDB instance and that no TiDB exists outside the intended topology"
+)
+
+type advertisedStatusEndpointCheckReason string
+
+const (
+	advertisedStatusEndpointRequestFailed    advertisedStatusEndpointCheckReason = "request-failed"
+	advertisedStatusEndpointUnexpectedStatus advertisedStatusEndpointCheckReason = "unexpected-status"
+	advertisedStatusEndpointInvalidResponse  advertisedStatusEndpointCheckReason = "invalid-response"
+	advertisedStatusEndpointMissingIdentity  advertisedStatusEndpointCheckReason = "missing-identity"
+	advertisedStatusEndpointIdentityMismatch advertisedStatusEndpointCheckReason = "identity-mismatch"
+)
+
+type advertisedStatusEndpointCheckInput struct {
+	endpoint string
+	localID  string
+}
+
+type advertisedStatusEndpointCheckResult struct {
+	remoteID string
+	reason   advertisedStatusEndpointCheckReason
+	status   string
+	err      error
+}
+
+type advertisedStatusEndpointCheckFunc func(
+	context.Context,
+	*http.Client,
+	string,
+	string,
+) advertisedStatusEndpointCheckResult
+
+func buildAdvertisedStatusEndpointURL(scheme, advertiseAddress string, effectivePort int) (string, error) {
+	if scheme != "http" && scheme != "https" {
+		return "", errors.Errorf("unsupported advertised status endpoint scheme %q", scheme)
+	}
+	if advertiseAddress == "" {
+		return "", errors.New("advertise address is empty")
+	}
+	if effectivePort <= 0 || effectivePort > 65535 {
+		return "", errors.Errorf("invalid effective status port %d", effectivePort)
+	}
+	endpoint := &url.URL{
+		Scheme: scheme,
+		Host:   net.JoinHostPort(advertiseAddress, strconv.Itoa(effectivePort)),
+		Path:   "/info",
+	}
+	return endpoint.String(), nil
+}
+
+func newAdvertisedStatusEndpointCheckInput(
+	reportStatus bool,
+	statusListener net.Listener,
+	advertiseAddress string,
+	localID string,
+	scheme string,
+) (advertisedStatusEndpointCheckInput, bool) {
+	if !reportStatus || statusListener == nil || advertiseAddress == "" || localID == "" {
+		return advertisedStatusEndpointCheckInput{}, false
+	}
+	listenerAddr := statusListener.Addr()
+	if listenerAddr == nil {
+		return advertisedStatusEndpointCheckInput{}, false
+	}
+	_, portString, err := net.SplitHostPort(listenerAddr.String())
+	if err != nil {
+		return advertisedStatusEndpointCheckInput{}, false
+	}
+	effectivePort, err := strconv.Atoi(portString)
+	if err != nil || effectivePort == 0 {
+		return advertisedStatusEndpointCheckInput{}, false
+	}
+	endpoint, err := buildAdvertisedStatusEndpointURL(scheme, advertiseAddress, effectivePort)
+	if err != nil {
+		return advertisedStatusEndpointCheckInput{}, false
+	}
+	return advertisedStatusEndpointCheckInput{endpoint: endpoint, localID: localID}, true
+}
+
+func newAdvertisedStatusEndpointHTTPClient(baseClient *http.Client, timeout time.Duration) (*http.Client, error) {
+	var baseTransport *http.Transport
+	if baseClient == nil || baseClient.Transport == nil {
+		var ok bool
+		baseTransport, ok = http.DefaultTransport.(*http.Transport)
+		if !ok {
+			return nil, errors.New("default HTTP transport is not cloneable")
+		}
+	} else {
+		var ok bool
+		baseTransport, ok = baseClient.Transport.(*http.Transport)
+		if !ok {
+			return nil, errors.Errorf("internal HTTP transport has unsupported type %T", baseClient.Transport)
+		}
+	}
+	directTransport := baseTransport.Clone()
+	directTransport.Proxy = nil
+	return &http.Client{
+		Transport: directTransport,
+		Timeout:   timeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}, nil
+}
+
+func checkAdvertisedStatusEndpoint(
+	ctx context.Context,
+	client *http.Client,
+	endpoint string,
+	expectedID string,
+) advertisedStatusEndpointCheckResult {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return advertisedStatusEndpointCheckResult{reason: advertisedStatusEndpointRequestFailed, err: err}
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return advertisedStatusEndpointCheckResult{reason: advertisedStatusEndpointRequestFailed, err: err}
+	}
+	defer response.Body.Close()
+
+	result := advertisedStatusEndpointCheckResult{status: response.Status}
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		result.reason = advertisedStatusEndpointUnexpectedStatus
+		return result
+	}
+
+	body, err := io.ReadAll(io.LimitReader(response.Body, advertisedStatusEndpointResponseBodyLimit+1))
+	if err != nil {
+		result.reason = advertisedStatusEndpointInvalidResponse
+		var networkError net.Error
+		if ctx.Err() != nil || (stderrors.As(err, &networkError) && networkError.Timeout()) {
+			result.reason = advertisedStatusEndpointRequestFailed
+		}
+		result.err = err
+		return result
+	}
+	if len(body) > advertisedStatusEndpointResponseBodyLimit {
+		result.reason = advertisedStatusEndpointInvalidResponse
+		result.err = errors.Errorf("response body exceeds %d-byte limit", advertisedStatusEndpointResponseBodyLimit)
+		return result
+	}
+	var responseInfo struct {
+		DDLID string `json:"ddl_id"`
+	}
+	if err := json.Unmarshal(body, &responseInfo); err != nil {
+		result.reason = advertisedStatusEndpointInvalidResponse
+		result.err = err
+		return result
+	}
+	if responseInfo.DDLID == "" {
+		result.reason = advertisedStatusEndpointMissingIdentity
+		result.err = errors.New("response does not contain ddl_id")
+		return result
+	}
+	result.remoteID = responseInfo.DDLID
+	if responseInfo.DDLID != expectedID {
+		result.reason = advertisedStatusEndpointIdentityMismatch
+	}
+	return result
+}
+
+func logAdvertisedStatusEndpointCheckWarning(
+	input advertisedStatusEndpointCheckInput,
+	result advertisedStatusEndpointCheckResult,
+) {
+	fields := []zap.Field{
+		zap.String("advertised-status-endpoint", input.endpoint),
+		zap.String("local-tidb-id", input.localID),
+		zap.String("reason", string(result.reason)),
+		zap.String("action", advertisedStatusEndpointWarningSuggestedAction),
+	}
+	if result.remoteID != "" {
+		fields = append(fields, zap.String("remote-tidb-id", result.remoteID))
+	}
+	if result.status != "" {
+		fields = append(fields, zap.String("http-status", result.status))
+	}
+	if result.err != nil {
+		fields = append(fields, zap.Error(result.err))
+	}
+	logutil.BgLogger().Warn(advertisedStatusEndpointWarningMessage, fields...)
+}
+
+func scheduleAdvertisedStatusEndpointCheck(
+	ctx context.Context,
+	input advertisedStatusEndpointCheckInput,
+	client *http.Client,
+	checker advertisedStatusEndpointCheckFunc,
+	reporter func(advertisedStatusEndpointCheckInput, advertisedStatusEndpointCheckResult),
+) {
+	go util.WithRecovery(func() {
+		defer client.CloseIdleConnections()
+		result := checker(ctx, client, input.endpoint, input.localID)
+		// Cancellation means this Server.Run invocation is ending, not that the endpoint failed verification.
+		if ctx.Err() != nil || result.reason == "" {
+			return
+		}
+		reporter(input, result)
+	}, nil)
+}
+
+func (s *Server) startAdvertisedStatusEndpointCheck(ctx context.Context) {
+	if s.dom == nil {
+		return
+	}
+	ddl := s.dom.DDL()
+	if ddl == nil {
+		return
+	}
+	input, ok := newAdvertisedStatusEndpointCheckInput(
+		s.cfg.Status.ReportStatus,
+		s.statusListener,
+		s.cfg.AdvertiseAddress,
+		ddl.GetID(),
+		util.InternalHTTPSchema(),
+	)
+	if !ok {
+		return
+	}
+	client, err := newAdvertisedStatusEndpointHTTPClient(util.InternalHTTPClient(), advertisedStatusEndpointCheckTimeout)
+	if err != nil {
+		logAdvertisedStatusEndpointCheckWarning(input, advertisedStatusEndpointCheckResult{
+			reason: advertisedStatusEndpointRequestFailed,
+			err:    err,
+		})
+		return
+	}
+	scheduleAdvertisedStatusEndpointCheck(
+		ctx,
+		input,
+		client,
+		checkAdvertisedStatusEndpoint,
+		logAdvertisedStatusEndpointCheckWarning,
+	)
+}
 
 func (s *Server) startStatusHTTP() error {
 	err := s.initHTTPListener()

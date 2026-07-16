@@ -525,6 +525,9 @@ func (s *Server) Run(dom *domain.Domain) error {
 	terror.RegisterFinish()
 	go s.startNetworkListener(s.listener, false, errChan)
 	go s.startNetworkListener(s.socket, true, errChan)
+	advertisedStatusEndpointCheckCtx, cancelAdvertisedStatusEndpointCheck := context.WithCancel(context.Background())
+	defer cancelAdvertisedStatusEndpointCheck()
+	s.startAdvertisedStatusEndpointCheck(advertisedStatusEndpointCheckCtx)
 	if RunInGoTest && !isClosed(RunInGoTestChan) {
 		close(RunInGoTestChan)
 	}
