@@ -75,7 +75,11 @@ type PlanReplayerDumpInfo struct {
 	Path      string
 	File      io.WriteCloser
 	FileName  string
-	ctx       sessionctx.Context
+	// HistoricalStatsIgnored is set when the statement carries the legacy
+	// WITH STATS AS OF TIMESTAMP clause, which is accepted only for
+	// compatibility since the historical stats feature was removed.
+	HistoricalStatsIgnored bool
+	ctx                    sessionctx.Context
 }
 
 // Next implements the Executor Next interface.
@@ -240,6 +244,13 @@ func (e *PlanReplayerDumpInfo) dump(ctx context.Context) (err error) {
 		token = task.PresignedURL
 	}
 	e.ctx.GetSessionVars().LastPlanReplayerToken = token
+	if e.HistoricalStatsIgnored {
+		// Append the warning after the dump: the internal SQL executed while
+		// dumping resets the session's statement context, so a warning added
+		// at plan-building time would no longer be visible to SHOW WARNINGS.
+		e.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError(
+			"the historical stats feature has been removed, WITH STATS AS OF TIMESTAMP is ignored and the dump contains current statistics"))
+	}
 	return nil
 }
 

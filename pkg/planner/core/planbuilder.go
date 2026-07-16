@@ -6141,6 +6141,11 @@ func (b *PlanBuilder) buildPlanReplayer(pc *ast.PlanReplayerStmt) base.Plan {
 	p := &PlanReplayer{ExecStmt: pc.Stmt, StmtList: pc.StmtList, Analyze: pc.Analyze, Load: pc.Load, File: pc.File,
 		Capture: pc.Capture, Remove: pc.Remove, SQLDigest: pc.SQLDigest, PlanDigest: pc.PlanDigest}
 
+	// The historical stats feature has been removed; the WITH STATS AS OF
+	// TIMESTAMP syntax is accepted only for compatibility. The executor
+	// reports a warning when the clause is present.
+	p.HistoricalStatsIgnored = pc.HistoricalStatsInfo != nil
+
 	schema := newColumnsWithNames(2)
 	schema.Append(buildColumnWithName("", "Item", mysql.TypeVarchar, 32))
 	schema.Append(buildColumnWithName("", "Value", mysql.TypeVarchar, mysql.MaxBlobWidth))
