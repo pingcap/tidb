@@ -277,7 +277,7 @@ func (h subscriber) handle(
 	return nil
 }
 
-func (h subscriber) insertStats4PhysicalID(
+func (subscriber) insertStats4PhysicalID(
 	ctx context.Context,
 	sctx sessionctx.Context,
 	info *model.TableInfo,
@@ -286,7 +286,7 @@ func (h subscriber) insertStats4PhysicalID(
 	return errors.Trace(storage.InsertTableStats2KV(ctx, sctx, info, id))
 }
 
-func (h subscriber) delayedDeleteStats4PhysicalID(
+func (subscriber) delayedDeleteStats4PhysicalID(
 	ctx context.Context,
 	sctx sessionctx.Context,
 	id int64,
@@ -295,7 +295,7 @@ func (h subscriber) delayedDeleteStats4PhysicalID(
 	return errors.Trace(err)
 }
 
-func (h subscriber) insertStats4Col(
+func (subscriber) insertStats4Col(
 	ctx context.Context,
 	sctx sessionctx.Context,
 	physicalID int64,

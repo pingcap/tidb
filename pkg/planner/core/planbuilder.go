@@ -6137,7 +6137,7 @@ func convert2OutputSchemasAndNames(names []string, ftypes []byte, flags []uint) 
 	return
 }
 
-func (b *PlanBuilder) buildPlanReplayer(pc *ast.PlanReplayerStmt) base.Plan {
+func (*PlanBuilder) buildPlanReplayer(pc *ast.PlanReplayerStmt) base.Plan {
 	p := &PlanReplayer{ExecStmt: pc.Stmt, StmtList: pc.StmtList, Analyze: pc.Analyze, Load: pc.Load, File: pc.File,
 		Capture: pc.Capture, Remove: pc.Remove, SQLDigest: pc.SQLDigest, PlanDigest: pc.PlanDigest}
 
