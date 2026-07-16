@@ -2445,9 +2445,13 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (r
 	// work before this statement receives a fresh StatementContext.
 	s.txn.setPreviewKVMutationCollection(nil, false)
 	readBillingDemoHandledByStmt := false
+	readBillingDemoLegacyGeneralLogRegistered := false
 	defer func() {
 		if err != nil && !readBillingDemoHandledByStmt {
-			s.recordReadBillingDemoEarlyError(stmtNode, err)
+			readBillingDemoStats := s.recordReadBillingDemoEarlyError(stmtNode, err)
+			if readBillingDemoLegacyGeneralLogRegistered {
+				executor.LogReadBillingDemoGeneralLog(s, readBillingDemoStats)
+			}
 		}
 	}()
 
@@ -2661,6 +2665,7 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (r
 
 	// Execute the physical plan.
 	defer logStmt(stmt, s) // defer until txnStartTS is set
+	readBillingDemoLegacyGeneralLogRegistered = true
 
 	if sessVars.MemArbitrator.WaitAverse == variable.MemArbitratorNolimit {
 		metrics.GlobalMemArbitratorSubTasks.NoLimit.Inc()
@@ -2795,9 +2800,9 @@ func resolvePreparedStmt(stmt ast.StmtNode, vars *variable.SessionVars) (ast.Stm
 	return prepareStmt.PreparedAst.Stmt, nil
 }
 
-func (s *session) recordReadBillingDemoEarlyError(stmtNode ast.StmtNode, err error) {
+func (s *session) recordReadBillingDemoEarlyError(stmtNode ast.StmtNode, err error) stmtsummary.ReadBillingDemoStatementStats {
 	if err == nil {
-		return
+		return stmtsummary.ReadBillingDemoStatementStats{}
 	}
 	metricsStmt := stmtNode
 	if resolvedStmt, resolveErr := resolvePreparedStmt(stmtNode, s.sessionVars); resolveErr == nil && resolvedStmt != nil {
@@ -2805,7 +2810,7 @@ func (s *session) recordReadBillingDemoEarlyError(stmtNode ast.StmtNode, err err
 	}
 	readBillingDemoStats := plannercore.RecordReadBillingDemoForStatement(s, nil, metricsStmt, err)
 	if readBillingDemoStats.IsEmpty() || s.sessionVars == nil || s.sessionVars.StmtCtx == nil {
-		return
+		return stmtsummary.ReadBillingDemoStatementStats{}
 	}
 	userString := ""
 	if s.sessionVars.User != nil {
@@ -2833,6 +2838,7 @@ func (s *session) recordReadBillingDemoEarlyError(stmtNode ast.StmtNode, err err
 		ResourceGroupName:    stmtCtx.ResourceGroupName,
 		ReadBillingDemoStats: readBillingDemoStats,
 	})
+	return readBillingDemoStats
 }
 
 func shouldBypass(ctx context.Context, stmtNode ast.StmtNode, sessVars *variable.SessionVars) bool {
@@ -3061,7 +3067,8 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	origTxnCtx := sessVars.TxnCtx
 	err = se.checkTxnAborted(s)
 	if err != nil {
-		se.recordReadBillingDemoEarlyError(s.GetStmtNode(), err)
+		readBillingDemoStats := se.recordReadBillingDemoEarlyError(s.GetStmtNode(), err)
+		executor.LogReadBillingDemoGeneralLog(se, readBillingDemoStats)
 		return nil, err
 	}
 	if sessVars.TxnCtx.CouldRetry && !s.IsReadOnly(sessVars) {
@@ -3069,7 +3076,8 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 		// otherwise, the stmt won't be add into stmt history, and also don't need check.
 		// About `stmt-count-limit`, see more in https://docs.pingcap.com/tidb/stable/tidb-configuration-file#stmt-count-limit
 		if err := checkStmtLimit(ctx, se, false); err != nil {
-			se.recordReadBillingDemoEarlyError(s.GetStmtNode(), err)
+			readBillingDemoStats := se.recordReadBillingDemoEarlyError(s.GetStmtNode(), err)
+			executor.LogReadBillingDemoGeneralLog(se, readBillingDemoStats)
 			return nil, err
 		}
 	}
@@ -3095,6 +3103,10 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 			if !sessVars.InTxn() {
 				se.StmtCommit(ctx)
 				if err := se.CommitTxn(ctx); err != nil {
+					if closeErr := executor.CloseRecordSetWithError(rs, err); closeErr != nil {
+						logutil.Logger(ctx).Error("close EXPLAIN ANALYZE DML record set after commit error failed",
+							zap.Error(closeErr), zap.NamedError("commitError", err))
+					}
 					return nil, err
 				}
 			}

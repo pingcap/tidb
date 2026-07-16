@@ -29,11 +29,14 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/stmtsummary"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlmock "github.com/pingcap/tidb/pkg/util/topsql/collector/mock"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
@@ -44,6 +47,8 @@ import (
 	metastorage "github.com/tikv/pd/client/clients/metastorage"
 	"github.com/tikv/pd/client/opt"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 type stmtStatsTestContext struct {
@@ -95,6 +100,131 @@ func resetTopProfilingStateForTest(t *testing.T) {
 			topsqlstate.DisableTopRU()
 		}
 	})
+}
+
+func TestReadBillingDemoGeneralLogUnits(t *testing.T) {
+	core, recorded := observer.New(zap.InfoLevel)
+	oldLogger := logutil.GeneralLogger
+	logutil.GeneralLogger = zap.New(core)
+	oldGeneralLog := vardef.ProcessGeneralLog.Swap(false)
+	t.Cleanup(func() {
+		logutil.GeneralLogger = oldLogger
+		vardef.ProcessGeneralLog.Store(oldGeneralLog)
+	})
+
+	sctx := mock.NewContext()
+	sessVars := sctx.GetSessionVars()
+	sessVars.ConnectionID = 42
+	sessVars.StmtCtx.OriginalSQL = "select 12345, 'secret_literal'"
+	expectedNormalizedSQL, expectedDigest := parser.NormalizeDigest(sessVars.StmtCtx.OriginalSQL)
+	stats := stmtsummary.ReadBillingDemoStatementStats{
+		ModelVersion:  "v3",
+		WeightVersion: "v2",
+		BaseUnits: []stmtsummary.ReadBillingDemoBaseUnitSample{
+			{
+				Site: "tikv", OpClass: "join_hash", OperatorKind: "hashjoin", Unit: "input_rows", Value: 2,
+				DMLKind: "insert", InputSource: "child", InputSide: "left", RowWidthSource: "scan", RowWidth: 4,
+			},
+			{
+				Site: "tikv", OpClass: "join_hash", OperatorKind: "hashjoin", Unit: "input_rows", Value: 3,
+				DMLKind: "update", InputSource: "runtime", InputSide: "right", RowWidthSource: "schema", RowWidth: 8,
+			},
+			{Site: "tidb", OpClass: "agg_hash", OperatorKind: "hashagg", Unit: "output_rows", Value: 1},
+			{Site: "tidb", OpClass: "agg_hash", OperatorKind: "hashagg", Unit: "input_bytes", Value: 8},
+		},
+	}
+
+	// Neither individual gate is sufficient.
+	sessVars.EnableReadBillingDemo = true
+	LogReadBillingDemoGeneralLog(sctx, stats)
+	require.Zero(t, recorded.Len())
+	vardef.ProcessGeneralLog.Store(true)
+	sessVars.EnableReadBillingDemo = false
+	LogReadBillingDemoGeneralLog(sctx, stats)
+	require.Zero(t, recorded.Len())
+
+	// Internal SQL is excluded whether marked at session or statement scope.
+	sessVars.EnableReadBillingDemo = true
+	sessVars.InRestrictedSQL = true
+	LogReadBillingDemoGeneralLog(sctx, stats)
+	require.Zero(t, recorded.Len())
+	sessVars.InRestrictedSQL = false
+	sessVars.StmtCtx.InRestrictedSQL = true
+	LogReadBillingDemoGeneralLog(sctx, stats)
+	require.Zero(t, recorded.Len())
+	sessVars.StmtCtx.InRestrictedSQL = false
+
+	LogReadBillingDemoGeneralLog(sctx, stats)
+	entries := recorded.TakeAll()
+	require.Len(t, entries, 1)
+	require.Equal(t, readBillingDemoGeneralLogMessage, entries[0].Message)
+	fields := entries[0].ContextMap()
+	require.Len(t, fields, 6)
+	require.Equal(t, uint64(42), fields["conn"])
+	require.Equal(t, "v3", fields["model_version"])
+	require.Equal(t, "v2", fields["weight_version"])
+	require.Equal(t, expectedNormalizedSQL, fields["normalized_sql"])
+	require.Equal(t, expectedDigest.String(), fields["sql_digest"])
+	require.NotContains(t, fields["normalized_sql"], "12345")
+	require.NotContains(t, fields["normalized_sql"], "secret_literal")
+	require.NotContains(t, fields, "sql")
+	rawUnits, ok := fields["units"].([]any)
+	require.True(t, ok)
+	require.Len(t, rawUnits, 3)
+
+	units := make([]map[string]any, 0, len(rawUnits))
+	for _, rawUnit := range rawUnits {
+		unit, ok := rawUnit.(map[string]any)
+		require.True(t, ok)
+		require.Len(t, unit, 5)
+		for _, field := range []string{"site", "op_class", "operator_kind", "unit", "value"} {
+			require.Contains(t, unit, field)
+		}
+		for _, internalField := range []string{"dml_kind", "input_source", "input_side", "row_width_source", "row_width", "operator_id"} {
+			require.NotContains(t, unit, internalField)
+		}
+		units = append(units, unit)
+	}
+	require.Equal(t, map[string]any{
+		"site": "tidb", "op_class": "agg_hash", "operator_kind": "hashagg", "unit": "input_bytes", "value": float64(8),
+	}, units[0])
+	require.Equal(t, map[string]any{
+		"site": "tidb", "op_class": "agg_hash", "operator_kind": "hashagg", "unit": "output_rows", "value": float64(1),
+	}, units[1])
+	require.Equal(t, map[string]any{
+		"site": "tikv", "op_class": "join_hash", "operator_kind": "hashjoin", "unit": "input_rows", "value": float64(5),
+	}, units[2])
+
+	// A valid completed snapshot with no unit samples stays structured and does
+	// not invent one statement status from the snapshot's multi-status model.
+	LogReadBillingDemoGeneralLog(sctx, stmtsummary.ReadBillingDemoStatementStats{
+		ModelVersion:  "v3",
+		WeightVersion: "v2",
+	})
+	entries = recorded.TakeAll()
+	require.Len(t, entries, 1)
+	fields = entries[0].ContextMap()
+	require.Len(t, fields, 6)
+	require.NotContains(t, fields, "status")
+	require.NotContains(t, fields, "reason")
+	rawUnits, ok = fields["units"].([]any)
+	require.True(t, ok)
+	require.Empty(t, rawUnits)
+
+	// Explicitly initialized empty identity is safe and does not require a
+	// digest object to be present.
+	emptyIdentityCtx := mock.NewContext()
+	emptyIdentityCtx.GetSessionVars().EnableReadBillingDemo = true
+	emptyIdentityCtx.GetSessionVars().StmtCtx.InitSQLDigest("", nil)
+	LogReadBillingDemoGeneralLog(emptyIdentityCtx, stmtsummary.ReadBillingDemoStatementStats{
+		ModelVersion:  "v3",
+		WeightVersion: "v2",
+	})
+	entries = recorded.TakeAll()
+	require.Len(t, entries, 1)
+	fields = entries[0].ContextMap()
+	require.Equal(t, "", fields["normalized_sql"])
+	require.Equal(t, "", fields["sql_digest"])
 }
 
 func newExecStmtWithStmtStatsForTest(goCtx context.Context, t *testing.T) (*ExecStmt, *stmtstats.StatementStats) {

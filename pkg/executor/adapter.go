@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"runtime/trace"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -283,12 +284,31 @@ func (a *recordSet) Finish() error {
 }
 
 func (a *recordSet) Close() error {
+	return a.close(nil)
+}
+
+func (a *recordSet) close(lastErr error) error {
 	err := a.Finish()
 	if err != nil {
 		logutil.BgLogger().Error("close recordSet error", zap.Error(err))
 	}
-	a.stmt.CloseRecordSet(a.txnStartTS, errors.Join(a.lastErrs...))
+	a.stmt.CloseRecordSet(a.txnStartTS, errors.Join(errors.Join(a.lastErrs...), lastErr))
 	return err
+}
+
+// CloseRecordSetWithError closes an executor-owned record set and forwards an
+// execution error to its single statement-completion path.
+func CloseRecordSetWithError(rs sqlexec.RecordSet, lastErr error) error {
+	switch recordSet := rs.(type) {
+	case *recordSet:
+		return recordSet.close(lastErr)
+	case *chunkRowRecordSet:
+		recordSet.execStmt.CloseRecordSet(recordSet.execStmt.Ctx.GetSessionVars().TxnCtx.StartTS, lastErr)
+		return nil
+	default:
+		closeErr := rs.Close()
+		return errors.Join(closeErr, errors.New("record set does not support closing with an execution error"))
+	}
 }
 
 // OnFetchReturned implements commandLifeCycle#OnFetchReturned
@@ -298,6 +318,11 @@ func (a *recordSet) OnFetchReturned() {
 
 // TryDetach creates a new `RecordSet` which doesn't depend on the current session context.
 func (a *recordSet) TryDetach() (sqlexec.RecordSet, bool, error) {
+	// A detached static record set no longer reaches ExecStmt completion. Keep
+	// the live record set only when the preview RU completion event is enabled.
+	if a.stmt != nil && readBillingDemoGeneralLogEnabled(a.stmt.Ctx) {
+		return nil, false, nil
+	}
 	e, ok := Detach(a.executor)
 	if !ok {
 		return nil, false, nil
@@ -366,12 +391,13 @@ type ExecStmt struct {
 	Ctx sessionctx.Context
 
 	// LowerPriority represents whether to lower the execution priority of a query.
-	LowerPriority        bool
-	isPreparedStmt       bool
-	isSelectForUpdate    bool
-	resolvedPreparedStmt ast.StmtNode
-	retryCount           uint
-	retryStartTime       time.Time
+	LowerPriority                    bool
+	isPreparedStmt                   bool
+	isSelectForUpdate                bool
+	resolvedPreparedStmt             ast.StmtNode
+	retryCount                       uint
+	retryStartTime                   time.Time
+	readBillingDemoGeneralLogEmitted atomic.Bool
 
 	// Phase durations are splited into two parts: 1. trying to lock keys (but
 	// failed); 2. the final iteration of the retry loop. Here we use
@@ -1702,6 +1728,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	// client abandons a result without closing/draining it, this first demo can
 	// miss that statement instead of guessing an incomplete status.
 	readBillingDemoStats := plannercore.RecordReadBillingDemoForStatement(a.Ctx, a.Plan, a.readBillingDemoStmtNode(), err)
+	a.logReadBillingDemoGeneralLog(readBillingDemoStats)
 	a.updateNetworkTrafficStatsAndMetrics()
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
@@ -1762,6 +1789,118 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	}
 
 	a.Ctx.ReportUsageStats()
+}
+
+const readBillingDemoGeneralLogMessage = "GENERAL_LOG_RU_UNITS"
+
+type readBillingDemoGeneralLogUnit struct {
+	site         string
+	opClass      string
+	operatorKind string
+	unit         string
+	value        float64
+}
+
+func (u readBillingDemoGeneralLogUnit) MarshalLogObject(enc zapcore.ObjectEncoder) error {
+	enc.AddString("site", u.site)
+	enc.AddString("op_class", u.opClass)
+	enc.AddString("operator_kind", u.operatorKind)
+	enc.AddString("unit", u.unit)
+	enc.AddFloat64("value", u.value)
+	return nil
+}
+
+type readBillingDemoGeneralLogUnits []readBillingDemoGeneralLogUnit
+
+func (units readBillingDemoGeneralLogUnits) MarshalLogArray(enc zapcore.ArrayEncoder) error {
+	for _, unit := range units {
+		if err := enc.AppendObject(unit); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func buildReadBillingDemoGeneralLogUnits(stats stmtsummary.ReadBillingDemoStatementStats) readBillingDemoGeneralLogUnits {
+	totals := make(map[readBillingDemoGeneralLogUnit]float64, len(stats.BaseUnits))
+	for _, sample := range stats.BaseUnits {
+		key := readBillingDemoGeneralLogUnit{
+			site:         sample.Site,
+			opClass:      sample.OpClass,
+			operatorKind: sample.OperatorKind,
+			unit:         sample.Unit,
+		}
+		totals[key] += sample.Value
+	}
+
+	units := make(readBillingDemoGeneralLogUnits, 0, len(totals))
+	for unit, value := range totals {
+		unit.value = value
+		units = append(units, unit)
+	}
+	slices.SortFunc(units, func(left, right readBillingDemoGeneralLogUnit) int {
+		if cmp := strings.Compare(left.site, right.site); cmp != 0 {
+			return cmp
+		}
+		if cmp := strings.Compare(left.opClass, right.opClass); cmp != 0 {
+			return cmp
+		}
+		if cmp := strings.Compare(left.operatorKind, right.operatorKind); cmp != 0 {
+			return cmp
+		}
+		return strings.Compare(left.unit, right.unit)
+	})
+	return units
+}
+
+func readBillingDemoGeneralLogEnabled(sctx sessionctx.Context) bool {
+	if sctx == nil || !vardef.ProcessGeneralLog.Load() {
+		return false
+	}
+	sessVars := sctx.GetSessionVars()
+	if sessVars == nil || !sessVars.EnableReadBillingDemo || sessVars.InRestrictedSQL ||
+		sessVars.StmtCtx == nil || sessVars.StmtCtx.InRestrictedSQL {
+		return false
+	}
+	return true
+}
+
+func canLogReadBillingDemoGeneralLog(sctx sessionctx.Context, stats stmtsummary.ReadBillingDemoStatementStats) bool {
+	return readBillingDemoGeneralLogEnabled(sctx) && stats.ModelVersion != "" && stats.WeightVersion != ""
+}
+
+// LogReadBillingDemoGeneralLog emits a preview RU completion event for paths
+// that finish before an ExecStmt reaches FinishExecuteStmt.
+func LogReadBillingDemoGeneralLog(sctx sessionctx.Context, stats stmtsummary.ReadBillingDemoStatementStats) {
+	if !canLogReadBillingDemoGeneralLog(sctx, stats) {
+		return
+	}
+	emitReadBillingDemoGeneralLog(sctx, stats)
+}
+
+func emitReadBillingDemoGeneralLog(sctx sessionctx.Context, stats stmtsummary.ReadBillingDemoStatementStats) {
+	sessVars := sctx.GetSessionVars()
+	normalizedSQL, digest := sessVars.StmtCtx.SQLDigest()
+	digestString := ""
+	if digest != nil {
+		digestString = digest.String()
+	}
+	logutil.GeneralLogger.Info(readBillingDemoGeneralLogMessage,
+		zap.Uint64("conn", sessVars.ConnectionID),
+		zap.String("model_version", stats.ModelVersion),
+		zap.String("weight_version", stats.WeightVersion),
+		zap.String("normalized_sql", normalizedSQL),
+		zap.String("sql_digest", digestString),
+		zap.Array("units", buildReadBillingDemoGeneralLogUnits(stats)),
+	)
+}
+
+func (a *ExecStmt) logReadBillingDemoGeneralLog(stats stmtsummary.ReadBillingDemoStatementStats) {
+	if !canLogReadBillingDemoGeneralLog(a.Ctx, stats) ||
+		!a.readBillingDemoGeneralLogEmitted.CompareAndSwap(false, true) {
+		return
+	}
+	emitReadBillingDemoGeneralLog(a.Ctx, stats)
 }
 
 func (a *ExecStmt) recordAffectedRows2Metrics() {

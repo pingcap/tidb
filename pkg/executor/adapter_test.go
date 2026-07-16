@@ -30,10 +30,12 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/slowlogrule"
@@ -43,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -56,6 +59,15 @@ type mockRUV2ConsumptionReporter struct {
 	tikvRUV2  float64
 	tidbRUV2  float64
 	tiflashRU float64
+}
+
+func requireReadBillingDemoGeneralLogIdentity(t *testing.T, entry observer.LoggedEntry, sql string) {
+	t.Helper()
+	normalizedSQL, digest := parser.NormalizeDigest(sql)
+	fields := entry.ContextMap()
+	require.Equal(t, normalizedSQL, fields["normalized_sql"])
+	require.Equal(t, digest.String(), fields["sql_digest"])
+	require.NotContains(t, fields, "sql")
 }
 
 func (*mockRUV2ConsumptionReporter) ReportConsumption(_ string, _ *rmpb.Consumption) {}
@@ -643,6 +655,332 @@ func TestFinishExecuteStmtSyncsTiDBRUV2FromRUDetails(t *testing.T) {
 
 		close(done)
 		wg.Wait()
+	})
+
+	t.Run("preview RU general log waits for SELECT close", func(t *testing.T) {
+		core, recorded := observer.New(zap.InfoLevel)
+		oldLogger := logutil.GeneralLogger
+		logutil.GeneralLogger = zap.New(core)
+		oldGeneralLog := vardef.ProcessGeneralLog.Swap(false)
+		t.Cleanup(func() {
+			logutil.GeneralLogger = oldLogger
+			vardef.ProcessGeneralLog.Store(oldGeneralLog)
+		})
+
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("set tidb_enable_read_billing_demo = on")
+		vardef.ProcessGeneralLog.Store(true)
+		recorded.TakeAll()
+
+		selectSQL := "select 12345, 'secret_literal'"
+		rs, err := tk.Exec(selectSQL)
+		require.NoError(t, err)
+		require.NotNil(t, rs)
+		beforeClose := recorded.TakeAll()
+		require.Len(t, beforeClose, 1)
+		require.Equal(t, "GENERAL_LOG", beforeClose[0].Message)
+		startFields := beforeClose[0].ContextMap()
+		// Keep the existing start record's field contract unchanged; preview
+		// units belong only to the separate completion record.
+		require.Len(t, startFields, 11)
+		require.Equal(t, selectSQL, startFields["sql"])
+		require.NotContains(t, startFields, "model_version")
+		require.NotContains(t, startFields, "weight_version")
+		require.NotContains(t, startFields, "units")
+
+		require.NoError(t, rs.Close())
+		afterClose := recorded.TakeAll()
+		require.Len(t, afterClose, 1)
+		require.Equal(t, "GENERAL_LOG_RU_UNITS", afterClose[0].Message)
+		completionFields := afterClose[0].ContextMap()
+		require.Len(t, completionFields, 6)
+		require.Contains(t, completionFields, "conn")
+		require.Contains(t, completionFields, "model_version")
+		require.Contains(t, completionFields, "weight_version")
+		require.Contains(t, completionFields, "normalized_sql")
+		require.Contains(t, completionFields, "sql_digest")
+		require.Contains(t, completionFields, "units")
+		require.NotContains(t, completionFields, "sql")
+		requireReadBillingDemoGeneralLogIdentity(t, afterClose[0], selectSQL)
+		require.NotContains(t, completionFields["normalized_sql"], "12345")
+		require.NotContains(t, completionFields["normalized_sql"], "secret_literal")
+	})
+
+	t.Run("preview RU general log DML completion is self describing", func(t *testing.T) {
+		core, recorded := observer.New(zap.InfoLevel)
+		oldLogger := logutil.GeneralLogger
+		logutil.GeneralLogger = zap.New(core)
+		oldGeneralLog := vardef.ProcessGeneralLog.Swap(false)
+		t.Cleanup(func() {
+			logutil.GeneralLogger = oldLogger
+			vardef.ProcessGeneralLog.Store(oldGeneralLog)
+		})
+
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table dml_ru_units_identity (id int primary key, v int)")
+		tk.MustExec("insert into dml_ru_units_identity values (12345, 1)")
+		tk.MustExec("set tidb_enable_read_billing_demo = on")
+		vardef.ProcessGeneralLog.Store(true)
+		recorded.TakeAll()
+
+		updateSQL := "update dml_ru_units_identity set v = 98765 where id = 12345"
+		tk.MustExec(updateSQL)
+		entries := recorded.TakeAll()
+		require.Len(t, entries, 2)
+		// DML currently completes inside runStmt before its deferred legacy
+		// GENERAL_LOG. Identity makes the completion independent of this order.
+		require.Equal(t, "GENERAL_LOG_RU_UNITS", entries[0].Message)
+		require.Equal(t, "GENERAL_LOG", entries[1].Message)
+		requireReadBillingDemoGeneralLogIdentity(t, entries[0], updateSQL)
+		normalizedSQL := entries[0].ContextMap()["normalized_sql"]
+		require.NotContains(t, normalizedSQL, "98765")
+		require.NotContains(t, normalizedSQL, "12345")
+	})
+
+	t.Run("preview RU general log skips pre-defer compile error", func(t *testing.T) {
+		core, recorded := observer.New(zap.InfoLevel)
+		oldLogger := logutil.GeneralLogger
+		logutil.GeneralLogger = zap.New(core)
+		oldGeneralLog := vardef.ProcessGeneralLog.Swap(false)
+		t.Cleanup(func() {
+			logutil.GeneralLogger = oldLogger
+			vardef.ProcessGeneralLog.Store(oldGeneralLog)
+		})
+
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("set tidb_enable_read_billing_demo = on")
+		vardef.ProcessGeneralLog.Store(true)
+		recorded.TakeAll()
+
+		_, err := tk.Exec("select * from missing_ru_units_identity")
+		require.Error(t, err)
+		// Compile fails before legacy GENERAL_LOG is registered. Do not emit an
+		// orphan completion that has no corresponding executed statement.
+		require.Empty(t, recorded.TakeAll())
+	})
+
+	t.Run("preview RU general log covers prepared point get setup error", func(t *testing.T) {
+		core, recorded := observer.New(zap.InfoLevel)
+		oldLogger := logutil.GeneralLogger
+		logutil.GeneralLogger = zap.New(core)
+		oldGeneralLog := vardef.ProcessGeneralLog.Swap(false)
+		t.Cleanup(func() {
+			logutil.GeneralLogger = oldLogger
+			vardef.ProcessGeneralLog.Store(oldGeneralLog)
+		})
+
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table point_get_setup_error_ru_units (id int primary key, v int)")
+		tk.MustExec("insert into point_get_setup_error_ru_units values (12345, 1)")
+		tk.MustExec("set tidb_enable_read_billing_demo = on")
+		vardef.ProcessGeneralLog.Store(true)
+		recorded.TakeAll()
+
+		querySQL := "select v from point_get_setup_error_ru_units where id = ?"
+		failpointName := "github.com/pingcap/tidb/pkg/session/mockGetTSFail"
+		require.NoError(t, failpoint.Enable(failpointName, "return"))
+		failpointEnabled := true
+		t.Cleanup(func() {
+			if failpointEnabled {
+				require.NoError(t, failpoint.Disable(failpointName))
+			}
+		})
+		ctx := failpoint.WithHook(context.Background(), func(_ context.Context, name string) bool {
+			return name == failpointName
+		})
+		_, err := tk.ExecWithContext(ctx, querySQL, 12345)
+		require.NoError(t, failpoint.Disable(failpointName))
+		failpointEnabled = false
+		require.Error(t, err)
+
+		entries := recorded.TakeAll()
+		require.Len(t, entries, 2)
+		require.Equal(t, "GENERAL_LOG", entries[0].Message)
+		require.Equal(t, "GENERAL_LOG_RU_UNITS", entries[1].Message)
+		requireReadBillingDemoGeneralLogIdentity(t, entries[1], querySQL)
+		rawUnits, ok := entries[1].ContextMap()["units"].([]any)
+		require.True(t, ok)
+		require.Empty(t, rawUnits)
+	})
+
+	t.Run("preview RU general log disables cursor detach only when needed", func(t *testing.T) {
+		core, recorded := observer.New(zap.InfoLevel)
+		oldLogger := logutil.GeneralLogger
+		logutil.GeneralLogger = zap.New(core)
+		oldGeneralLog := vardef.ProcessGeneralLog.Swap(false)
+		t.Cleanup(func() {
+			logutil.GeneralLogger = oldLogger
+			vardef.ProcessGeneralLog.Store(oldGeneralLog)
+		})
+
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table detach_ru_units (a int)")
+		tk.MustExec("insert into detach_ru_units values (1), (2)")
+		tk.Session().GetSessionVars().SetStatusFlag(mysql.ServerStatusCursorExists, true)
+
+		// General Log alone preserves the existing detach behavior.
+		vardef.ProcessGeneralLog.Store(true)
+		rs, err := tk.Exec("select * from detach_ru_units where a > ?", 0)
+		require.NoError(t, err)
+		detachable := rs.(sqlexec.DetachableRecordSet)
+		detached, ok, err := detachable.TryDetach()
+		require.NoError(t, err)
+		require.True(t, ok)
+		require.NotNil(t, detached)
+		require.NoError(t, detached.Close())
+
+		// With both gates enabled, keep the live record set so Close can freeze
+		// runtime evidence and emit exactly one completion event.
+		vardef.ProcessGeneralLog.Store(false)
+		tk.MustExec("set tidb_enable_read_billing_demo = on")
+		vardef.ProcessGeneralLog.Store(true)
+		recorded.TakeAll()
+		rs, err = tk.Exec("select * from detach_ru_units where a > ?", 0)
+		require.NoError(t, err)
+		detachable = rs.(sqlexec.DetachableRecordSet)
+		detached, ok, err = detachable.TryDetach()
+		require.NoError(t, err)
+		require.False(t, ok)
+		require.Nil(t, detached)
+		beforeClose := recorded.TakeAll()
+		require.Len(t, beforeClose, 1)
+		require.Equal(t, "GENERAL_LOG", beforeClose[0].Message)
+		require.NoError(t, rs.Close())
+		afterClose := recorded.TakeAll()
+		require.Len(t, afterClose, 1)
+		require.Equal(t, "GENERAL_LOG_RU_UNITS", afterClose[0].Message)
+	})
+
+	t.Run("preview RU general log covers early statement error", func(t *testing.T) {
+		core, recorded := observer.New(zap.InfoLevel)
+		oldLogger := logutil.GeneralLogger
+		logutil.GeneralLogger = zap.New(core)
+		oldGeneralLog := vardef.ProcessGeneralLog.Swap(false)
+		t.Cleanup(func() {
+			logutil.GeneralLogger = oldLogger
+			vardef.ProcessGeneralLog.Store(oldGeneralLog)
+		})
+
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table early_error_ru_units (a int primary key)")
+		tk.MustExec("insert into early_error_ru_units values (1)")
+		tk.MustExec("set tidb_enable_read_billing_demo = on")
+		tk.MustExec("begin pessimistic")
+		tk.MustQuery("select * from early_error_ru_units where a = 1 for update").Check(testkit.Rows("1"))
+		vardef.ProcessGeneralLog.Store(true)
+		recorded.TakeAll()
+		atomic.StoreUint32(&tk.Session().GetSessionVars().TxnCtx.LockExpire, 1)
+		t.Cleanup(func() {
+			atomic.StoreUint32(&tk.Session().GetSessionVars().TxnCtx.LockExpire, 0)
+		})
+
+		_, err := tk.Exec("select 1")
+		atomic.StoreUint32(&tk.Session().GetSessionVars().TxnCtx.LockExpire, 0)
+		require.Error(t, err)
+		entries := recorded.TakeAll()
+		require.Len(t, entries, 2)
+		require.Equal(t, "GENERAL_LOG_RU_UNITS", entries[0].Message)
+		require.Equal(t, "GENERAL_LOG", entries[1].Message)
+		require.Equal(t, "select 1", entries[1].ContextMap()["sql"])
+		requireReadBillingDemoGeneralLogIdentity(t, entries[0], "select 1")
+		rawUnits, ok := entries[0].ContextMap()["units"].([]any)
+		require.True(t, ok)
+		require.Empty(t, rawUnits)
+	})
+
+	t.Run("preview RU general log covers explain analyze DML commit error", func(t *testing.T) {
+		core, recorded := observer.New(zap.InfoLevel)
+		oldLogger := logutil.GeneralLogger
+		logutil.GeneralLogger = zap.New(core)
+		oldGeneralLog := vardef.ProcessGeneralLog.Swap(false)
+		t.Cleanup(func() {
+			logutil.GeneralLogger = oldLogger
+			vardef.ProcessGeneralLog.Store(oldGeneralLog)
+		})
+
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+		tk.MustExec("use test")
+		tk.MustExec("set tidb_retry_limit = 0")
+		tk.MustExec("create table explain_commit_error_ru_units (id int primary key, v int)")
+		tk.MustExec("insert into explain_commit_error_ru_units values (1, 1)")
+		tk.MustExec("set tidb_enable_read_billing_demo = on")
+		vardef.ProcessGeneralLog.Store(true)
+		recorded.TakeAll()
+
+		explainSQL := "explain analyze update explain_commit_error_ru_units set v = v + 1 where id = 1"
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/mockCommitError8942", `return(true)`))
+		failpointEnabled := true
+		t.Cleanup(func() {
+			if failpointEnabled {
+				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/mockCommitError8942"))
+			}
+		})
+		rs, err := tk.Exec(explainSQL)
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/mockCommitError8942"))
+		failpointEnabled = false
+		require.Nil(t, rs)
+		require.Error(t, err)
+		require.True(t, kv.ErrTxnRetryable.Equal(err), err)
+		entries := recorded.TakeAll()
+		require.Len(t, entries, 2)
+		require.Equal(t, "GENERAL_LOG_RU_UNITS", entries[0].Message)
+		require.Equal(t, "GENERAL_LOG", entries[1].Message)
+		requireReadBillingDemoGeneralLogIdentity(t, entries[0], explainSQL)
+		digest := entries[0].ContextMap()["sql_digest"]
+
+		vardef.ProcessGeneralLog.Store(false)
+		tk.MustQuery("select v from explain_commit_error_ru_units where id = 1").Check(testkit.Rows("1"))
+		tk.MustQuery("select status, reason, count from information_schema.statements_summary_read_billing_demo_status where digest = ? and site = 'statement'", digest).
+			Check(testkit.Rows("error statement_error 1"))
+	})
+
+	t.Run("preview RU general log emits once across repeated finish", func(t *testing.T) {
+		core, recorded := observer.New(zap.InfoLevel)
+		oldLogger := logutil.GeneralLogger
+		logutil.GeneralLogger = zap.New(core)
+		oldGeneralLog := vardef.ProcessGeneralLog.Swap(true)
+		t.Cleanup(func() {
+			logutil.GeneralLogger = oldLogger
+			vardef.ProcessGeneralLog.Store(oldGeneralLog)
+		})
+
+		ctx := mock.NewContext()
+		sessVars := ctx.GetSessionVars()
+		sessVars.EnableReadBillingDemo = true
+		sessVars.StartTime = time.Now()
+		sessVars.StmtCtx.StmtType = "Select"
+		sessVars.StmtCtx.OriginalSQL = "select 1"
+		sessVars.StmtCtx.ResetSQLDigest(sessVars.StmtCtx.OriginalSQL)
+		goCtx := execdetails.ContextWithInitializedExecDetails(context.Background())
+		sessVars.RUV2Metrics = execdetails.RUV2MetricsFromContext(goCtx)
+		execStmt := &executor.ExecStmt{
+			Ctx:      ctx,
+			GoCtx:    goCtx,
+			StmtNode: &ast.SelectStmt{},
+		}
+
+		execStmt.FinishExecuteStmt(0, nil, false)
+		execStmt.FinishExecuteStmt(0, nil, false)
+		entries := recorded.TakeAll()
+		completionCount := 0
+		for _, entry := range entries {
+			if entry.Message == "GENERAL_LOG_RU_UNITS" {
+				completionCount++
+			}
+		}
+		require.Equal(t, 1, completionCount)
 	})
 }
 

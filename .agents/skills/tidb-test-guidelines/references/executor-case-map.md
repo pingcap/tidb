@@ -9,7 +9,8 @@
 ## pkg/executor
 
 ### Tests
-- `pkg/executor/adapter_test.go` - executor: Tests format SQL.
+- `pkg/executor/adapter_internal_test.go` - executor: Tests private adapter runtime accounting, including preview RU General Log gates, reduced unit schema, aggregation, and deterministic ordering.
+- `pkg/executor/adapter_test.go` - executor: Tests statement adapter behavior, including RU v2 finalization and self-describing preview RU General Log completion after lazy SELECT close, DML/early errors, compile-error suppression, cursor-detach gating, repeated finish calls, and EXPLAIN ANALYZE DML commit errors.
 - `pkg/executor/analyze_test.go` - executor: Tests analyze index extract top n.
 - `pkg/executor/analyze_utils_test.go` - executor: Tests get analyze panic err.
 - `pkg/executor/batch_point_get_test.go` - executor: Tests batch point get lock exist key.
