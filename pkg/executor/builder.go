@@ -914,10 +914,11 @@ func findAdaptiveLimitIndexJoin(executor exec.Executor) *join.IndexLookUpJoin {
 func attachAdaptiveLimitIndexLookup(executor exec.Executor, controller *exec.AdaptiveLimitController) bool {
 	if indexLookup, ok := executor.(*IndexLookUpExecutor); ok {
 		// Merge-sort double reads create all SelectResults before rolling handle
-		// admission. Concurrency 1 cannot run the index and table workers at the
-		// same time in the shared pool. Keep both paths unchanged in v1.
+		// admission, and pushed-down lookup does not preserve order. Concurrency 1
+		// cannot run the index and table workers at the same time in the shared
+		// pool. Keep these paths unchanged in v1.
 		if !indexLookup.keepOrder || indexLookup.indexLookupConcurrency <= 1 ||
-			indexLookup.partitionTableMode || len(indexLookup.groupedRanges) > 0 {
+			adaptiveLimitIndexLookupMayNeedMergeSort(indexLookup) || indexLookup.indexLookUpPushDown {
 			return false
 		}
 		indexLookup.adaptiveLimitController = controller
@@ -931,6 +932,21 @@ func attachAdaptiveLimitIndexLookup(executor exec.Executor, controller *exec.Ada
 		return false
 	}
 	return attachAdaptiveLimitIndexLookup(children[0], controller)
+}
+
+func adaptiveLimitIndexLookupMayNeedMergeSort(indexLookup *IndexLookUpExecutor) bool {
+	if indexLookup.partitionTableMode || len(indexLookup.groupedRanges) > 0 {
+		return true
+	}
+	if len(indexLookup.byItems) == 0 {
+		return false
+	}
+	if len(indexLookup.idxPlans) == 0 {
+		return true
+	}
+	// Correlated access can rebuild groupedRanges from GroupByColIdxs in Open.
+	indexScan, ok := indexLookup.idxPlans[0].(*physicalop.PhysicalIndexScan)
+	return !ok || len(indexScan.GroupByColIdxs) > 0
 }
 
 func (b *executorBuilder) buildPrepare(v *plannercore.Prepare) exec.Executor {

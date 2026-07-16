@@ -49,6 +49,7 @@ type AdaptiveLimitSnapshot struct {
 	OuterConsumed           uint64
 	OuterReserved           uint64
 	OuterWindow             uint64
+	OuterOutstandingAtStop  uint64
 	LookupReserved          uint64
 	LookupHandles           uint64
 	LookupRows              uint64
@@ -62,13 +63,14 @@ type AdaptiveLimitSnapshot struct {
 type AdaptiveLimitController struct {
 	mu sync.Mutex
 
-	demandRows         uint64
-	outputRows         uint64
-	outerFetched       uint64
-	outerConsumed      uint64
-	outerReserved      uint64
-	pendingOuterOutput uint64
-	recentOuterYield   adaptiveYieldWindow
+	demandRows             uint64
+	outputRows             uint64
+	outerFetched           uint64
+	outerConsumed          uint64
+	outerReserved          uint64
+	outerOutstandingAtStop uint64
+	pendingOuterOutput     uint64
+	recentOuterYield       adaptiveYieldWindow
 
 	lookupReserved          uint64
 	lookupHandles           uint64
@@ -131,7 +133,7 @@ func (c *AdaptiveLimitController) Reset() {
 	c.mu.Lock()
 	if !c.stopped && c.outputRows == 0 && c.outerFetched == 0 && c.outerConsumed == 0 &&
 		c.outerReserved == 0 && c.lookupReserved == 0 && c.lookupHandles == 0 && c.lookupRows == 0 &&
-		c.lookupOutstandingAtStop == 0 && c.outerWindow == c.initialOuterWindow &&
+		c.outerOutstandingAtStop == 0 && c.lookupOutstandingAtStop == 0 && c.outerWindow == c.initialOuterWindow &&
 		c.lookupWindow == c.initialLookupWindow {
 		c.mu.Unlock()
 		return
@@ -140,6 +142,7 @@ func (c *AdaptiveLimitController) Reset() {
 	c.outerFetched = 0
 	c.outerConsumed = 0
 	c.outerReserved = 0
+	c.outerOutstandingAtStop = 0
 	c.pendingOuterOutput = 0
 	c.recentOuterYield = adaptiveYieldWindow{}
 	c.outerNoOutputRows = 0
@@ -165,25 +168,35 @@ func (c *AdaptiveLimitController) Reset() {
 }
 
 // ReserveOuter waits until up to maxRows can be admitted to the join outer
-// pipeline. The bool is false after LIMIT completion or context cancellation.
-func (c *AdaptiveLimitController) ReserveOuter(ctx context.Context, maxRows int) (int, bool) {
+// pipeline. The bool is false after LIMIT completion; context cancellation is
+// returned as an error.
+func (c *AdaptiveLimitController) ReserveOuter(ctx context.Context, maxRows int) (int, bool, error) {
 	return c.reserve(ctx, maxRows, true)
 }
 
 // ReserveLookup bounds handles admitted to the double-read table lookup stage.
-func (c *AdaptiveLimitController) ReserveLookup(ctx context.Context, maxRows int) (int, bool) {
+// The bool is false after LIMIT completion; context cancellation is returned as
+// an error.
+func (c *AdaptiveLimitController) ReserveLookup(ctx context.Context, maxRows int) (int, bool, error) {
 	return c.reserve(ctx, maxRows, false)
 }
 
-func (c *AdaptiveLimitController) reserve(ctx context.Context, maxRows int, outer bool) (int, bool) {
+func (c *AdaptiveLimitController) reserve(ctx context.Context, maxRows int, outer bool) (int, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, false, err
+	}
 	if maxRows <= 0 {
-		return 0, true
+		return 0, true, nil
 	}
 	for {
 		c.mu.Lock()
+		if err := ctx.Err(); err != nil {
+			c.mu.Unlock()
+			return 0, false, err
+		}
 		if c.stopped {
 			c.mu.Unlock()
-			return 0, false
+			return 0, false, nil
 		}
 		window := c.lookupWindow
 		outstanding := c.lookupReserved
@@ -201,16 +214,19 @@ func (c *AdaptiveLimitController) reserve(ctx context.Context, maxRows int, oute
 				c.lookupReserved += rows
 			}
 			c.mu.Unlock()
-			return int(rows), true
+			return int(rows), true, nil
 		}
 		stopCh := c.stopCh
 		c.mu.Unlock()
 
 		select {
 		case <-ctx.Done():
-			return 0, false
+			return 0, false, ctx.Err()
 		case <-stopCh:
-			return 0, false
+			if err := ctx.Err(); err != nil {
+				return 0, false, err
+			}
+			return 0, false, nil
 		case <-changed:
 		}
 	}
@@ -322,14 +338,13 @@ func (c *AdaptiveLimitController) AbortLookup(handles int) {
 	c.mu.Unlock()
 }
 
-// SuggestedScanConcurrency returns the concurrency for future DistSQL index
-// requests. The caller's configured value remains the hard ceiling.
-func (c *AdaptiveLimitController) SuggestedScanConcurrency(ceiling, batchRows int) int {
+// SuggestedScanConcurrency returns the scan concurrency justified by the
+// current lookup window. The caller's configured value remains the hard
+// ceiling. The initial lookup window represents one unit of scan concurrency;
+// unlike the task batch size, it stays stable as the controller adapts.
+func (c *AdaptiveLimitController) SuggestedScanConcurrency(ceiling int) int {
 	if ceiling < 1 {
 		return 1
-	}
-	if batchRows < 1 {
-		batchRows = 1
 	}
 	c.mu.Lock()
 	if c.stopped {
@@ -337,8 +352,9 @@ func (c *AdaptiveLimitController) SuggestedScanConcurrency(ceiling, batchRows in
 		return 0
 	}
 	window := c.lookupWindow
+	initialWindow := c.initialLookupWindow
 	c.mu.Unlock()
-	concurrency := divideAndRoundUp(window, uint64(batchRows))
+	concurrency := divideAndRoundUp(window, initialWindow)
 	return min(max(int(min(concurrency, uint64(ceiling))), 1), ceiling)
 }
 
@@ -374,6 +390,7 @@ func (c *AdaptiveLimitController) Snapshot() AdaptiveLimitSnapshot {
 		OuterConsumed:           c.outerConsumed,
 		OuterReserved:           c.outerReserved,
 		OuterWindow:             c.outerWindow,
+		OuterOutstandingAtStop:  c.outerOutstandingAtStop,
 		LookupReserved:          c.lookupReserved,
 		LookupHandles:           c.lookupHandles,
 		LookupRows:              c.lookupRows,
@@ -475,6 +492,10 @@ func (c *AdaptiveLimitController) stopLocked() {
 		return
 	}
 	c.stopped = true
+	c.outerOutstandingAtStop = saturatingAdd(
+		c.outerFetched-min(c.outerFetched, c.outerConsumed),
+		c.outerReserved,
+	)
 	c.lookupOutstandingAtStop = c.lookupReserved
 	c.lookupReserved = 0
 	c.outerReserved = 0

@@ -884,7 +884,9 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 			maxBatchSize:    e.indexLookupSize,
 			maxChunkSize:    e.MaxChunkSize(),
 			PushedLimit:     e.PushedLimit,
+			memTracker:      tracker,
 		}
+		defer worker.releasePendingHandles()
 		if e.indexLookupConcurrency <= 1 {
 			worker.adaptiveLimitController = nil
 		} else {
@@ -892,6 +894,12 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 		}
 		if worker.adaptiveLimitController != nil {
 			worker.batchSize = worker.adaptiveLimitController.SuggestedBatchSize(worker.maxBatchSize)
+			scanConcurrencyCeiling := max(e.dctx.DistSQLConcurrency, 1)
+			worker.adaptiveCoprRequestLimiter = newAdaptiveCoprRequestLimiter(
+				scanConcurrencyCeiling,
+				worker.adaptiveLimitController.SuggestedScanConcurrency(scanConcurrencyCeiling),
+			)
+			defer worker.adaptiveCoprRequestLimiter.release()
 		} else {
 			worker.batchSize = e.calculateBatchSize(initBatchSize, worker.maxBatchSize)
 		}
@@ -920,7 +928,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 					len(kvRanges),
 					worker.batchSize,
 					scanConcurrency,
-					nil,
+					worker.adaptiveRequestRateLimit(),
 				)
 				if err != nil {
 					return selectResultWithMeta{}, false, err
@@ -1024,6 +1032,67 @@ func getIndexScanMaxInFlight(distSQLConcurrency int) int {
 		return 1
 	}
 	return 2 * distSQLConcurrency
+}
+
+// adaptiveCoprRequestLimiter leaves enough workers in a long-lived
+// SelectResult to grow scan concurrency without rebuilding the request. It
+// initially occupies all tokens above the justified concurrency and only
+// releases them as current-execution feedback grows the lookup window.
+type adaptiveCoprRequestLimiter struct {
+	mu sync.Mutex
+
+	rateLimit   *tikvutil.RateLimit
+	ceiling     int
+	concurrency int
+	heldTokens  int
+	released    bool
+}
+
+func newAdaptiveCoprRequestLimiter(ceiling, initialConcurrency int) *adaptiveCoprRequestLimiter {
+	ceiling = max(ceiling, 1)
+	initialConcurrency = min(max(initialConcurrency, 1), ceiling)
+	limiter := &adaptiveCoprRequestLimiter{
+		rateLimit:   tikvutil.NewRateLimit(ceiling),
+		ceiling:     ceiling,
+		concurrency: initialConcurrency,
+		heldTokens:  ceiling - initialConcurrency,
+	}
+	for range limiter.heldTokens {
+		intest.Assert(!limiter.rateLimit.GetToken(nil))
+	}
+	return limiter
+}
+
+func (l *adaptiveCoprRequestLimiter) growTo(concurrency int) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.released {
+		return
+	}
+	concurrency = min(max(concurrency, 1), l.ceiling)
+	toRelease := min(concurrency-l.concurrency, l.heldTokens)
+	if toRelease <= 0 {
+		return
+	}
+	l.concurrency += toRelease
+	l.heldTokens -= toRelease
+	for range toRelease {
+		l.rateLimit.PutToken()
+	}
+}
+
+// release must run after every SelectResult using the limiter has closed.
+func (l *adaptiveCoprRequestLimiter) release() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.released {
+		return
+	}
+	for range l.heldTokens {
+		l.rateLimit.PutToken()
+	}
+	l.heldTokens = 0
+	l.released = true
 }
 
 func getSelectResultInFlightCost(result distsql.SelectResult) int {
@@ -1133,6 +1202,12 @@ func (e *IndexLookUpExecutor) buildIndexSelectResultForRange(
 	kvReq, err := builder.SetKeyRanges(kvRange).Build()
 	if err != nil {
 		return nil, err
+	}
+	if e.adaptiveLimitController != nil && sharedCoprRequestRateLimit != nil && indexScanConcurrency > 0 {
+		// Build normally reduces a simple keep-order scan at the default session
+		// setting to two workers. Adaptive execution needs the configured workers
+		// to exist so its shared limiter can grow effective concurrency online.
+		kvReq.Concurrency = min(indexScanConcurrency, max(e.dctx.DistSQLConcurrency, 1))
 	}
 	return distsql.SelectWithRuntimeStats(ctx, e.dctx, kvReq, tps, getPhysicalPlanIDs(e.idxPlans), idxID)
 }
@@ -1368,7 +1443,8 @@ type indexWorker struct {
 	resultCh  chan<- *lookupTableTask
 	keepOrder bool
 
-	adaptiveLimitController *exec.AdaptiveLimitController
+	adaptiveLimitController    *exec.AdaptiveLimitController
+	adaptiveCoprRequestLimiter *adaptiveCoprRequestLimiter
 
 	// batchSize is for lightweight startup. It will be increased exponentially until reaches the max batch size value.
 	batchSize    int
@@ -1384,7 +1460,16 @@ type indexWorker struct {
 
 	// pendingHandles keeps handles returned beyond the current adaptive
 	// reservation. DistSQL may return more rows than Chunk.RequiredRows.
-	pendingHandles []kv.Handle
+	pendingHandles         []kv.Handle
+	pendingHandlesMemUsage int64
+	memTracker             *memory.Tracker
+}
+
+func (w *indexWorker) adaptiveRequestRateLimit() *tikvutil.RateLimit {
+	if w.adaptiveCoprRequestLimiter == nil {
+		return nil
+	}
+	return w.adaptiveCoprRequestLimiter.rateLimit
 }
 
 func (w *indexWorker) syncErr(err error) {
@@ -1515,8 +1600,9 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results selectResultList
 }
 
 // fetchHandlesRolling fetches handles from index data and builds index lookup tasks.
-// Both the concurrency of future DistSQL requests and their aggregate in-flight
-// cost follow the current scan concurrency, with the session value as a ceiling.
+// Adaptive requests keep the session worker count as a hard ceiling and use a
+// shared limiter to grow effective cop-request concurrency with execution
+// feedback. Non-adaptive requests retain the original rolling behavior.
 func (w *indexWorker) fetchHandlesRolling(ctx context.Context, scanConcurrencyCeiling int, kvRangesCount int, indexTypes []*types.FieldType, buildNext nextSelectResultBuilder) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -1548,19 +1634,25 @@ func (w *indexWorker) fetchHandlesRolling(ctx context.Context, scanConcurrencyCe
 
 	fillNewResults := func() error {
 		currentScanConcurrency := scanConcurrencyCeiling
+		currentMaxInFlight := getIndexScanMaxInFlight(currentScanConcurrency)
+		justifiedConcurrency := currentScanConcurrency
 		adaptive := w.adaptiveLimitController != nil
 		if adaptive {
-			currentScanConcurrency = w.adaptiveLimitController.SuggestedScanConcurrency(scanConcurrencyCeiling, w.batchSize)
-			if currentScanConcurrency == 0 {
+			justifiedConcurrency = w.adaptiveLimitController.SuggestedScanConcurrency(scanConcurrencyCeiling)
+			if justifiedConcurrency == 0 {
 				return nil
 			}
+			currentMaxInFlight = getIndexScanMaxInFlight(justifiedConcurrency)
+			if w.adaptiveCoprRequestLimiter != nil {
+				w.adaptiveCoprRequestLimiter.growTo(justifiedConcurrency)
+			}
 		}
-		currentMaxInFlight := getIndexScanMaxInFlight(currentScanConcurrency)
 		for inFlight < currentMaxInFlight {
 			requestConcurrency := 0
-			if adaptive {
-				available := currentMaxInFlight - inFlight
-				requestConcurrency = min(currentScanConcurrency, max(available/2, 1))
+			if adaptive && w.adaptiveCoprRequestLimiter != nil {
+				requestConcurrency = scanConcurrencyCeiling
+			} else if adaptive {
+				requestConcurrency = justifiedConcurrency
 			}
 			entry, ok, err := buildNext(ctx, requestConcurrency)
 			if err != nil {
@@ -1638,10 +1730,18 @@ func (w *indexWorker) extractLookupTaskData(
 ) (data extractedLookupTaskData, err error) {
 	data.startTime = time.Now()
 	if w.adaptiveLimitController != nil {
-		reserved, ok := w.adaptiveLimitController.ReserveLookup(ctx, w.batchSize)
+		reserved, ok, err := w.adaptiveLimitController.ReserveLookup(ctx, w.batchSize)
+		if err != nil {
+			return data, err
+		}
 		if !ok {
 			data.adaptiveLimitStopped = true
 			return data, nil
+		}
+		if w.adaptiveCoprRequestLimiter != nil {
+			w.adaptiveCoprRequestLimiter.growTo(
+				w.adaptiveLimitController.SuggestedScanConcurrency(w.adaptiveCoprRequestLimiter.ceiling),
+			)
 		}
 		data.adaptiveLimitReservation = reserved
 		w.batchSize = reserved
@@ -1889,7 +1989,10 @@ func (w *indexWorker) takePendingHandles(handles []kv.Handle) []kv.Handle {
 		return handles
 	}
 	count := min(available, len(w.pendingHandles))
-	handles = append(handles, w.pendingHandles[:count]...)
+	moved := w.pendingHandles[:count]
+	handles = append(handles, moved...)
+	w.releasePendingHandlesMemory(moved)
+	clear(moved)
 	w.pendingHandles = w.pendingHandles[count:]
 	if len(w.pendingHandles) == 0 {
 		w.pendingHandles = nil
@@ -1905,9 +2008,41 @@ func (w *indexWorker) reachedPushedLimit() bool {
 func (w *indexWorker) appendExtractedHandle(handles []kv.Handle, handle kv.Handle) []kv.Handle {
 	if w.adaptiveLimitController != nil && len(handles) >= w.batchSize {
 		w.pendingHandles = append(w.pendingHandles, handle)
+		w.consumePendingHandleMemory(handle)
 		return handles
 	}
 	return append(handles, handle)
+}
+
+func (w *indexWorker) consumePendingHandleMemory(handle kv.Handle) {
+	if w.memTracker == nil {
+		return
+	}
+	usage := size.SizeOfInterface + int64(handle.MemUsage())
+	w.pendingHandlesMemUsage += usage
+	w.memTracker.Consume(usage)
+}
+
+func (w *indexWorker) releasePendingHandlesMemory(handles []kv.Handle) {
+	if w.memTracker == nil || w.pendingHandlesMemUsage == 0 {
+		return
+	}
+	var usage int64
+	for _, handle := range handles {
+		usage += size.SizeOfInterface + int64(handle.MemUsage())
+	}
+	usage = min(usage, w.pendingHandlesMemUsage)
+	w.pendingHandlesMemUsage -= usage
+	w.memTracker.Consume(-usage)
+}
+
+func (w *indexWorker) releasePendingHandles() {
+	if w.memTracker != nil && w.pendingHandlesMemUsage > 0 {
+		w.memTracker.Consume(-w.pendingHandlesMemUsage)
+	}
+	clear(w.pendingHandles)
+	w.pendingHandles = nil
+	w.pendingHandlesMemUsage = 0
 }
 
 func (*indexWorker) buildCompletedTask(taskID int, rows []chunk.Row) *lookupTableTask {

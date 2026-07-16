@@ -472,8 +472,14 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 	requiredRows := ow.batchSize
 	reservedRows := 0
 	if ow.lookup.AdaptiveLimitController != nil {
-		var ok bool
-		reservedRows, ok = ow.lookup.AdaptiveLimitController.ReserveOuter(ctx, ow.maxBatchSize)
+		var (
+			ok  bool
+			err error
+		)
+		reservedRows, ok, err = ow.lookup.AdaptiveLimitController.ReserveOuter(ctx, ow.maxBatchSize)
+		if err != nil {
+			return &lookUpJoinTask{doneCh: make(chan error, 1)}, err
+		}
 		if !ok {
 			return nil, nil
 		}
@@ -968,26 +974,18 @@ func (e *indexLookUpJoinRuntimeStats) String() string {
 		if buf.Len() > 0 {
 			buf.WriteString(", ")
 		}
-		buf.WriteString("adaptive:{demand:")
-		buf.WriteString(strconv.FormatUint(snapshot.DemandRows, 10))
-		buf.WriteString(", output:")
-		buf.WriteString(strconv.FormatUint(snapshot.OutputRows, 10))
-		buf.WriteString(", outer_fetched:")
+		buf.WriteString("adaptive:{outer:")
 		buf.WriteString(strconv.FormatUint(snapshot.OuterFetched, 10))
-		buf.WriteString(", outer_consumed:")
+		buf.WriteString("/")
 		buf.WriteString(strconv.FormatUint(snapshot.OuterConsumed, 10))
-		buf.WriteString(", lookup_inflight:")
-		buf.WriteString(strconv.FormatUint(snapshot.LookupReserved, 10))
-		buf.WriteString(", lookup_handles:")
+		buf.WriteString(", lookup:")
 		buf.WriteString(strconv.FormatUint(snapshot.LookupHandles, 10))
-		buf.WriteString(", lookup_rows:")
+		buf.WriteString("/")
 		buf.WriteString(strconv.FormatUint(snapshot.LookupRows, 10))
-		buf.WriteString(", lookup_outstanding_at_stop:")
+		buf.WriteString(", outstanding:")
+		buf.WriteString(strconv.FormatUint(snapshot.OuterOutstandingAtStop, 10))
+		buf.WriteString("/")
 		buf.WriteString(strconv.FormatUint(snapshot.LookupOutstandingAtStop, 10))
-		buf.WriteString(", outer_window:")
-		buf.WriteString(strconv.FormatUint(snapshot.OuterWindow, 10))
-		buf.WriteString(", lookup_window:")
-		buf.WriteString(strconv.FormatUint(snapshot.LookupWindow, 10))
 		buf.WriteString("}")
 	}
 	return buf.String()

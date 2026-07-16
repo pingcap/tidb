@@ -63,13 +63,14 @@ func TestIndexJoinRuntimeStats(t *testing.T) {
 		OutputRows:              1000,
 		OuterFetched:            1413,
 		OuterConsumed:           1000,
+		OuterOutstandingAtStop:  413,
 		LookupHandles:           1256,
 		LookupRows:              1000,
 		LookupOutstandingAtStop: 256,
 		Stopped:                 true,
 	}
 	cloned := stats.Clone()
-	require.Contains(t, cloned.String(), "adaptive:{demand:1000, output:1000, outer_fetched:1413")
-	stats.adaptiveLimitSnapshot.OutputRows = 999
-	require.Contains(t, cloned.String(), "output:1000")
+	require.Contains(t, cloned.String(), "adaptive:{outer:1413/1000, lookup:1256/1000, outstanding:413/256}")
+	stats.adaptiveLimitSnapshot.OuterFetched = 999
+	require.Contains(t, cloned.String(), "outer:1413/1000")
 }

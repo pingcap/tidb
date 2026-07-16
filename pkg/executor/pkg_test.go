@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -30,10 +31,13 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
@@ -158,7 +162,8 @@ func TestAdaptiveLimitEligibility(t *testing.T) {
 	}
 	require.True(t, attachAdaptiveLimitIndexLookup(indexLookup, controller))
 	require.Same(t, controller, indexLookup.adaptiveLimitController)
-	reserved, ok := controller.ReserveLookup(context.Background(), 32)
+	reserved, ok, err := controller.ReserveLookup(context.Background(), 32)
+	require.NoError(t, err)
 	require.True(t, ok)
 	task := &lookupTableTask{
 		handles:                  make([]kv.Handle, reserved),
@@ -170,23 +175,60 @@ func TestAdaptiveLimitEligibility(t *testing.T) {
 	require.Zero(t, task.adaptiveLimitReservation)
 	require.Equal(t, uint64(32), controller.Snapshot().LookupHandles)
 	require.Equal(t, uint64(1), controller.Snapshot().LookupRows)
-	require.Equal(t, 2, controller.SuggestedScanConcurrency(15, 32))
+	require.Equal(t, 2, controller.SuggestedScanConcurrency(15))
 
-	worker := &indexWorker{adaptiveLimitController: controller, batchSize: 2}
+	scanLimiter := newAdaptiveCoprRequestLimiter(4, 1)
+	require.Equal(t, 4, scanLimiter.rateLimit.GetCapacity())
+	require.False(t, scanLimiter.rateLimit.GetToken(nil))
+	secondToken := make(chan bool, 1)
+	go func() {
+		secondToken <- !scanLimiter.rateLimit.GetToken(nil)
+	}()
+	select {
+	case <-secondToken:
+		require.Fail(t, "second cop request must wait at initial concurrency one")
+	case <-time.After(20 * time.Millisecond):
+	}
+	scanLimiter.growTo(2)
+	select {
+	case acquired := <-secondToken:
+		require.True(t, acquired)
+	case <-time.After(time.Second):
+		require.Fail(t, "growing scan concurrency did not release a request token")
+	}
+	scanLimiter.rateLimit.PutToken()
+	scanLimiter.rateLimit.PutToken()
+	scanLimiter.release()
+
+	pendingTracker := memory.NewTracker(-1, -1)
+	worker := &indexWorker{adaptiveLimitController: controller, batchSize: 2, memTracker: pendingTracker}
 	handles := make([]kv.Handle, 0, 2)
 	for i := range 5 {
 		handles = worker.appendExtractedHandle(handles, kv.IntHandle(i))
 	}
 	require.Len(t, handles, 2)
 	require.Len(t, worker.pendingHandles, 3)
+	require.Positive(t, pendingTracker.BytesConsumed())
 	handles = handles[:0]
 	handles = worker.takePendingHandles(handles)
 	require.Len(t, handles, 2)
 	require.Len(t, worker.pendingHandles, 1)
+	require.Positive(t, pendingTracker.BytesConsumed())
 	handles = handles[:0]
 	handles = worker.takePendingHandles(handles)
 	require.Len(t, handles, 1)
 	require.Empty(t, worker.pendingHandles)
+	require.Zero(t, pendingTracker.BytesConsumed())
+	handles = handles[:0]
+	for i := range 4 {
+		handles = worker.appendExtractedHandle(handles, kv.IntHandle(i))
+	}
+	require.Len(t, worker.pendingHandles, 2)
+	require.Positive(t, pendingTracker.BytesConsumed())
+	worker.releasePendingHandles()
+	require.Empty(t, worker.pendingHandles)
+	require.Zero(t, worker.pendingHandlesMemUsage)
+	require.Zero(t, pendingTracker.BytesConsumed())
 	worker.PushedLimit = &physicalop.PushedDownLimit{Count: 5}
 	worker.scannedKeys = 5
 	worker.pendingHandles = []kv.Handle{kv.IntHandle(5)}
@@ -225,12 +267,54 @@ func TestAdaptiveLimitEligibility(t *testing.T) {
 	require.Empty(t, worker.pendingHandles)
 	require.Equal(t, uint64(5), worker.scannedKeys)
 
-	indexLookup.adaptiveLimitController = nil
+	canceledController := exec.NewAdaptiveLimitController(100, 2, 128, 2, 128)
+	worker.adaptiveLimitController = canceledController
+	worker.batchSize = 2
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = worker.extractLookupTaskData(
+		canceledCtx,
+		&oversizedChunkSelectResult{rows: []int64{1}},
+		nil,
+		chk,
+		[]int{0},
+	)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Zero(t, canceledController.Snapshot().LookupReserved)
+
+	assertIneligible := func() {
+		indexLookup.adaptiveLimitController = nil
+		require.False(t, attachAdaptiveLimitIndexLookup(indexLookup, controller))
+		require.Nil(t, indexLookup.adaptiveLimitController)
+	}
+
 	indexLookup.indexLookupConcurrency = 1
-	require.False(t, attachAdaptiveLimitIndexLookup(indexLookup, controller))
+	assertIneligible()
 	indexLookup.indexLookupConcurrency = 2
+	indexLookup.keepOrder = false
+	assertIneligible()
+	indexLookup.keepOrder = true
 	indexLookup.partitionTableMode = true
-	require.False(t, attachAdaptiveLimitIndexLookup(indexLookup, controller))
+	assertIneligible()
+	indexLookup.partitionTableMode = false
+	indexLookup.groupedRanges = [][]*ranger.Range{{}}
+	assertIneligible()
+	indexLookup.groupedRanges = nil
+	indexLookup.idxPlans = nil
+	indexLookup.byItems = []*plannerutil.ByItems{{}}
+	assertIneligible()
+	indexLookup.idxPlans = []base.PhysicalPlan{indexScan}
+	indexLookup.adaptiveLimitController = nil
+	require.True(t, attachAdaptiveLimitIndexLookup(indexLookup, controller))
+	require.Same(t, controller, indexLookup.adaptiveLimitController)
+	indexLookup.idxPlans = []base.PhysicalPlan{
+		&physicalop.PhysicalIndexScan{GroupByColIdxs: []int{0}},
+	}
+	assertIneligible()
+	indexLookup.byItems = nil
+	indexLookup.idxPlans = nil
+	indexLookup.indexLookUpPushDown = true
+	assertIneligible()
 }
 
 func TestMoveInfoSchemaToFront(t *testing.T) {
