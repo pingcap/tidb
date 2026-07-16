@@ -475,7 +475,35 @@ engines = ["tikv", "tiflash", "tidb"]
 
 # Starter-only extension parameters.
 [starter-params]
-# JSON file with bootstrap and upgrade SQL blocks. Empty means disabled.
+# Path to a starter-only JSON manifest of versioned SQL. Empty means disabled.
+# Unlike initialize-sql-file, which runs only after TiDB first creates the cluster,
+# this manifest also initializes starter state in an existing cluster and applies
+# upgrades on startup when its version increases.
+#
+# "bootstrap" defines the complete state for a cluster without a starter bootstrap
+# version. "upgrades" contains migrations for clusters with older versions. A cluster
+# without a starter version runs "bootstrap" directly at the top-level "version" and
+# does not replay the upgrade entries.
+# Each SQL array element must contain exactly one retry-safe statement. `<keyspace>`
+# is the only supported placeholder and is replaced with the current keyspace name.
+#
+# Example /etc/tidb/starter-bootstrap.json:
+# {
+#   "version": 2,
+#   "bootstrap": [
+#     "CREATE USER IF NOT EXISTS '<keyspace>.starter_admin'@'%'",
+#     "GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO '<keyspace>.starter_admin'@'%'"
+#   ],
+#   "upgrades": [
+#     {
+#       "version": 2,
+#       "sql": [
+#         "GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO '<keyspace>.starter_admin'@'%'"
+#       ]
+#     }
+#   ]
+# }
+# bootstrap-file = "/etc/tidb/starter-bootstrap.json"
 bootstrap-file = ""
 # The maximum total real source data size allowed for IMPORT INTO. 0B means unlimited.
 max-import-data-size = "0B"

@@ -1088,7 +1088,11 @@ type Standby struct {
 type StarterParams struct {
 	// ExportID is the export identifier supplied by standby activation.
 	ExportID string `toml:"export-id" json:"export-id,omitempty"`
-	// BootstrapFile is a starter-only JSON file with bootstrap and upgrade SQL blocks.
+	// BootstrapFile is the path to a starter-only JSON manifest of versioned SQL.
+	// Its bootstrap blocks define the complete starter state for a cluster without
+	// a starter bootstrap version, and its upgrade entries migrate older versions.
+	// Unlike InitializeSQLFile, which runs only after the core cluster bootstrap,
+	// this manifest also initializes existing clusters and applies later upgrades.
 	BootstrapFile string `toml:"bootstrap-file" json:"bootstrap-file,omitempty"`
 	// EnableManagerNotifier indicates whether Starter graceful shutdown should notify TiDB manager.
 	// It is only used in NextGen Starter deployments.

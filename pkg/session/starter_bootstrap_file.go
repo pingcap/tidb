@@ -91,6 +91,7 @@ func runStarterBootstrapLocked(s sessionapi.Session, bootstrapFile *starterBoots
 	return nil
 }
 
+// upgradeStarterBootstrap reconciles starter SQL independently of TiDB's core bootstrap lifecycle.
 func upgradeStarterBootstrap(store kv.Storage) error {
 	bootstrapFile, err := loadStarterBootstrapFile()
 	if err != nil {
