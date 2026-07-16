@@ -105,11 +105,17 @@ func planAutoSplitIndexRegions(
 	// Auto-splitting intentionally uses only the leading index column. The available
 	// per-column statistics cannot describe later-column distributions under a hot
 	// leading-column value, and deriving such split keys would require reading table data.
-	offset := idxInfo.Columns[0].Offset
+	leadingIdxCol := idxInfo.Columns[0]
+	offset := leadingIdxCol.Offset
 	if offset < 0 || offset >= len(tblInfo.Columns) {
 		return nil, "leading column not found", nil
 	}
 	leadingCol := tblInfo.Columns[offset]
+	// A column TopN only keeps the full value's collation key, which cannot be
+	// truncated by characters for a prefix index.
+	if types.IsString(leadingCol.GetType()) && leadingIdxCol.Length != types.UnspecifiedLength {
+		return nil, "leading string column uses prefix index", nil
+	}
 	colStats, loadNeeded, hasAnalyzed := statsTbl.ColumnIsLoadNeeded(leadingCol.ID, true)
 	if !hasAnalyzed {
 		return nil, "leading column stats missing or not analyzed", nil
@@ -175,11 +181,23 @@ func buildAutoSplitTopNRows(
 		if err != nil {
 			return nil, err
 		}
-		convertedDatum, err := datum.ConvertTo(sctx.GetSessionVars().StmtCtx.TypeCtx(), &colInfo.FieldType)
-		if err != nil {
-			return nil, err
+		var splitDatum types.Datum
+		if types.IsString(colInfo.GetType()) {
+			if datum.Kind() != types.KindBytes {
+				return nil, fmt.Errorf("unexpected string TopN datum kind %d", datum.Kind())
+			}
+			// ANALYZE stores string-column TopN values as comparison bytes. ConvertTo is
+			// redundant when the column charset is binary; otherwise it changes the datum
+			// to KindString and can make index encoding apply the column collation again.
+			topNComparisonBytes := datum.GetBytes()
+			splitDatum = types.NewBytesDatum(topNComparisonBytes)
+		} else {
+			splitDatum, err = datum.ConvertTo(sctx.GetSessionVars().StmtCtx.TypeCtx(), &colInfo.FieldType)
+			if err != nil {
+				return nil, err
+			}
 		}
-		topNRows = append(topNRows, []types.Datum{convertedDatum})
+		topNRows = append(topNRows, []types.Datum{splitDatum})
 		if len(topNRows) >= cfg.maxTopNKeysPerPhysical {
 			break
 		}
