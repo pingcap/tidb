@@ -20,7 +20,7 @@ import (
 	"slices"
 	"strings"
 
-		"github.com/pingcap/errors"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
@@ -161,20 +161,25 @@ func (e *ShowExec) fetchShowStatsMeta(ctx context.Context) error {
 			if ok {
 				// For dynamic partitioned table, we need to display the global table as well.
 				if e.Ctx().GetSessionVars().IsDynamicPartitionPruneEnabled() {
-					if stats, found := h.GetNonPseudoPhysicalTableStats(partitionedTable.ID); found {
+					stats := h.GetPartitionStats(partitionedTable, partitionedTable.ID)
+					if !stats.Pseudo {
 						e.appendTableForStatsMeta(db.O, partitionedTable.Name.O, "global", stats)
 					}
 				}
 				pi := partitionedTable.GetPartitionInfo()
 				for _, def := range pi.Definitions {
-					if stats, found := h.GetNonPseudoPhysicalTableStats(def.ID); found {
+					stats := h.GetPartitionStats(partitionedTable, def.ID)
+					if !stats.Pseudo {
 						e.appendTableForStatsMeta(db.O, partitionedTable.Name.O, def.Name.O, stats)
 					}
 				}
 			} else {
 				// Non-partitioned table:
-				if stats, found := h.GetNonPseudoPhysicalTableStats(nameInfo.ID); found {
-					e.appendTableForStatsMeta(db.O, nameInfo.Name.O, "", stats)
+				if tblInfo, ok := is.TableInfoByID(nameInfo.ID); ok {
+					stats := h.GetTableStats(tblInfo)
+					if !stats.Pseudo {
+						e.appendTableForStatsMeta(db.O, nameInfo.Name.O, "", stats)
+					}
 				}
 			}
 		}
@@ -547,7 +552,7 @@ func (e *ShowExec) fetchShowStatsHealthy(ctx context.Context) {
 	dbs := do.InfoSchema().AllSchemaNames()
 	var (
 		fieldPatternsLike collate.WildcardPattern
-			fieldFilter       string
+		fieldFilter       string
 	)
 	if e.Extractor != nil {
 		fieldFilter = e.Extractor.Field()
@@ -590,20 +595,25 @@ func (e *ShowExec) fetchShowStatsHealthy(ctx context.Context) {
 			if ok {
 				// For dynamic partitioned table, we need to display the global table as well.
 				if e.Ctx().GetSessionVars().IsDynamicPartitionPruneEnabled() {
-					if stats, found := h.GetNonPseudoPhysicalTableStats(partitionedTable.ID); found {
+					stats := h.GetPartitionStats(partitionedTable, partitionedTable.ID)
+					if !stats.Pseudo {
 						e.appendTableForStatsHealthy(db.O, partitionedTable.Name.O, "global", stats)
 					}
 				}
 				pi := partitionedTable.GetPartitionInfo()
 				for _, def := range pi.Definitions {
-					if stats, found := h.GetNonPseudoPhysicalTableStats(def.ID); found {
+					stats := h.GetPartitionStats(partitionedTable, def.ID)
+					if !stats.Pseudo {
 						e.appendTableForStatsHealthy(db.O, partitionedTable.Name.O, def.Name.O, stats)
 					}
 				}
 			} else {
 				// Non-partitioned table:
-				if stats, found := h.GetNonPseudoPhysicalTableStats(nameInfo.ID); found {
-					e.appendTableForStatsHealthy(db.O, nameInfo.Name.O, "", stats)
+				if tblInfo, ok := is.TableInfoByID(nameInfo.ID); ok {
+					stats := h.GetTableStats(tblInfo)
+					if !stats.Pseudo {
+						e.appendTableForStatsHealthy(db.O, nameInfo.Name.O, "", stats)
+					}
 				}
 			}
 		}

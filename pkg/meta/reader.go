@@ -31,7 +31,7 @@ type Reader interface {
 	ListSimpleTables(dbID int64) ([]*model.TableNameInfo, error)
 	IterTables(dbID int64, fn func(info *model.TableInfo) error) error
 	GetAutoIDAccessors(dbID, tableID int64) AutoIDAccessors
-	GetAllNameToIDAndTheMustLoadedTableInfo(dbID int64) (map[string]int64, []*model.TableInfo, map[int64]int64, error)
+	GetAllNameToIDAndTheMustLoadedTableInfo(dbID int64) (map[string]int64, []*model.TableInfo, error)
 
 	GetMetadataLock() (enable bool, isNull bool, err error)
 	GetAllDDLJobsInQueue(jobListKeys ...JobListKeyType) ([]*model.Job, error)

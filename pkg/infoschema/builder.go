@@ -56,7 +56,7 @@ type Builder struct {
 
 	factory func() (pools.Resource, error)
 	bundleInfoBuilder
-		infoData *Data
+	infoData *Data
 	store    kv.Storage
 	crossKS  bool
 
@@ -72,7 +72,7 @@ type Builder struct {
 
 // SetSchemaVersion sets the schema version of the InfoSchema.
 func (b *Builder) SetSchemaVersion(ver int64) {
-		b.schemaMetaVersion = ver
+	b.schemaMetaVersion = ver
 }
 
 // ApplyDiff applies SchemaDiff to the new InfoSchema.
@@ -1109,7 +1109,7 @@ func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error), in
 
 // WithStore attaches the given store to builder.
 func (b *Builder) WithStore(s kv.Storage) *Builder {
-		b.store = s
+	b.store = s
 	return b
 }
 
