@@ -62,9 +62,8 @@ type Dumper struct {
 	conf      *Config
 	metrics   *metrics
 
-	extStore   storeapi.Storage
-	dbHandle   *sql.DB
-	packedPool *cseDumperPool
+	extStore storeapi.Storage
+	dbHandle *sql.DB
 
 	tidbPDClientForGC             pd.Client
 	tidbUseKeyspaceGC             bool
@@ -134,8 +133,7 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 		err = runSteps(d,
 			initLogger,
 			createExternalStore,
-			startHTTPService,
-			openPackedBackup)
+			startHTTPService)
 		return d, err
 	}
 
@@ -1535,9 +1533,6 @@ func canRebuildConn(consistency string, trxConsistencyOnly bool) bool {
 func (d *Dumper) Close() error {
 	d.cancelCtx()
 	d.metrics.unregisterFrom(d.conf.PromRegistry)
-	if d.packedPool != nil {
-		d.packedPool.close()
-	}
 	if d.dbHandle != nil {
 		return d.dbHandle.Close()
 	}
