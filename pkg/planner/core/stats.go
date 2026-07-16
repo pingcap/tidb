@@ -40,6 +40,7 @@ import (
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
+	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 	"go.uber.org/zap"
 )
 
@@ -485,28 +486,35 @@ func detachCondAndBuildRangeForPath(
 			}
 		}
 	}
-	var estimateRanges []*ranger.Range
+	estimateRanges := path.Ranges
 	if needPruneEstimateRange {
 		// Non-unique index paths may append handle columns in `path.IdxCols` for execution ranges.
 		// Rebuild estimation ranges with the same column set used in row-count estimation.
-		estimateRanges = pruneEstimateRange(path.Ranges, len(indexCols))
-	} else {
-		estimateRanges = path.Ranges
+		estimateRanges, err = pruneEstimateRange(sctx.GetRangerCtx(), path.Ranges, len(indexCols))
+		if err != nil {
+			return err
+		}
 	}
 	count, err := cardinality.GetRowCountByIndexRanges(sctx, histColl, path.Index.ID, estimateRanges, indexCols)
 	path.CountAfterAccess, path.MinCountAfterAccess, path.MaxCountAfterAccess = count.Est, count.MinEst, count.MaxEst
 	return err
 }
 
-func pruneEstimateRange(ranges []*ranger.Range, keepColCnt int) []*ranger.Range {
-	estimateRanges := make([]*ranger.Range, 0, len(ranges))
+// pruneEstimateRange truncates ranges built over the index columns plus the appended handle
+// columns down to keepColCnt columns, so that they align with the index statistics, which
+// only cover the declared index columns. Truncating a bound widens it to the whole prefix:
+// a bound that lost values must become inclusive (otherwise a range like (10 1, 10 +inf]
+// would collapse to the empty (10, 10]), and ranges that collapse to the same prefix must
+// be merged so the prefix rows are not counted once per pruned range.
+func pruneEstimateRange(rctx *rangerctx.RangerContext, ranges []*ranger.Range, keepColCnt int) ([]*ranger.Range, error) {
+	estimateRanges := make(ranger.Ranges, 0, len(ranges))
 	for _, ran := range ranges {
 		newRange := &ranger.Range{
 			LowVal:      make([]types.Datum, 0, keepColCnt),
 			HighVal:     make([]types.Datum, 0, keepColCnt),
 			Collators:   make([]collate.Collator, 0, keepColCnt),
-			LowExclude:  ran.LowExclude,
-			HighExclude: ran.HighExclude,
+			LowExclude:  ran.LowExclude && len(ran.LowVal) <= keepColCnt,
+			HighExclude: ran.HighExclude && len(ran.HighVal) <= keepColCnt,
 		}
 		for idx := range min(keepColCnt, len(ran.LowVal)) {
 			newRange.LowVal = append(newRange.LowVal, ran.LowVal[idx])
@@ -515,7 +523,7 @@ func pruneEstimateRange(ranges []*ranger.Range, keepColCnt int) []*ranger.Range 
 		}
 		estimateRanges = append(estimateRanges, newRange)
 	}
-	return estimateRanges
+	return ranger.UnionRanges(rctx, estimateRanges, false)
 }
 
 func getGeneralAttributesFromPaths(paths []*util.AccessPath, totalRowCount float64) (float64, bool) {
