@@ -33,8 +33,6 @@ import (
 )
 
 func TestAdvertisedStatusEndpointURL(t *testing.T) {
-	t.Parallel()
-
 	testCases := []struct {
 		name     string
 		host     string
@@ -46,7 +44,6 @@ func TestAdvertisedStatusEndpointURL(t *testing.T) {
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
-			t.Parallel()
 			endpoint, err := buildAdvertisedStatusEndpointURL("http", testCase.host, testCase.port)
 			require.NoError(t, err)
 			require.Equal(t, testCase.expected, endpoint)
@@ -55,8 +52,6 @@ func TestAdvertisedStatusEndpointURL(t *testing.T) {
 }
 
 func TestAdvertisedStatusEndpointCheckInput(t *testing.T) {
-	t.Parallel()
-
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, listener.Close()) })
@@ -83,7 +78,6 @@ func TestAdvertisedStatusEndpointCheckInput(t *testing.T) {
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
-			t.Parallel()
 			_, ok := newAdvertisedStatusEndpointCheckInput(
 				testCase.reportStatus,
 				testCase.listener,
@@ -97,8 +91,6 @@ func TestAdvertisedStatusEndpointCheckInput(t *testing.T) {
 }
 
 func TestAdvertisedStatusEndpointCheckResponses(t *testing.T) {
-	t.Parallel()
-
 	testCases := []struct {
 		name             string
 		statusCode       int
@@ -147,7 +139,6 @@ func TestAdvertisedStatusEndpointCheckResponses(t *testing.T) {
 
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
-			t.Parallel()
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method != http.MethodGet || r.URL.Path != "/info" {
 					http.NotFound(w, r)
@@ -171,8 +162,6 @@ func TestAdvertisedStatusEndpointCheckResponses(t *testing.T) {
 }
 
 func TestAdvertisedStatusEndpointCheckRedirect(t *testing.T) {
-	t.Parallel()
-
 	var targetRequests atomic.Int32
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		targetRequests.Add(1)
@@ -272,8 +261,6 @@ func TestAdvertisedStatusEndpointCheckRequestFailures(t *testing.T) {
 }
 
 func TestAdvertisedStatusEndpointCheckPreservesTLS(t *testing.T) {
-	t.Parallel()
-
 	var clientCertificateSeen atomic.Bool
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		clientCertificateSeen.Store(r.TLS != nil && len(r.TLS.PeerCertificates) == 1)
@@ -329,8 +316,6 @@ func TestAdvertisedStatusEndpointCheckBypassesProxy(t *testing.T) {
 }
 
 func TestAdvertisedStatusEndpointCheckLifecycle(t *testing.T) {
-	t.Parallel()
-
 	input := advertisedStatusEndpointCheckInput{
 		endpoint: "http://127.0.0.1:10080/info",
 		localID:  "local-id",
