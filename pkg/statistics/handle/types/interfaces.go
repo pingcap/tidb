@@ -470,11 +470,12 @@ type GlobalStatsInfo struct {
 // StatsGlobal is used to manage partition table global stats.
 type StatsGlobal interface {
 	// MergePartitionStats2GlobalStatsByTableID merges partition stats to global stats by table ID.
+	// The returned boolean reports whether at least one global stats record was persisted.
 	MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context,
 		opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema,
 		info *GlobalStatsInfo,
 		physicalID int64,
-	) (err error)
+	) (updated bool, err error)
 }
 
 // DDL is used to handle ddl events.

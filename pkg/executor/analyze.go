@@ -324,13 +324,12 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	if len(tasks) == 0 {
 		return nil
 	}
-	tableAndPartitionIDs := make([]int64, 0, len(tasks))
+	// Analyze results are persisted under physical statistics IDs. The logical
+	// table ID is added later only when global stats are actually persisted.
+	statsIDsToRefresh := make([]int64, 0, len(tasks))
 	for _, task := range tasks {
 		tableID := getTableIDFromTask(task)
-		tableAndPartitionIDs = append(tableAndPartitionIDs, tableID.TableID)
-		if tableID.IsPartitionTable() {
-			tableAndPartitionIDs = append(tableAndPartitionIDs, tableID.PartitionID)
-		}
+		statsIDsToRefresh = append(statsIDsToRefresh, tableID.GetStatisticsID())
 	}
 
 	// Get the min number of goroutines for parallel execution.
@@ -423,10 +422,7 @@ TASKLOOP:
 	})
 	// If we enabled dynamic prune mode, then we need to generate global stats here for partition tables.
 	if needGlobalStats {
-		err = e.handleGlobalStats(statsHandle, globalStatsMap)
-		if err != nil {
-			return err
-		}
+		statsIDsToRefresh = append(statsIDsToRefresh, e.handleGlobalStats(statsHandle, globalStatsMap)...)
 	}
 
 	if intest.EnableInternalCheck {
@@ -446,7 +442,7 @@ TASKLOOP:
 	if err != nil {
 		sessionVars.StmtCtx.AppendWarning(err)
 	}
-	return statsHandle.Update(ctx, infoSchema, tableAndPartitionIDs...)
+	return statsHandle.Update(ctx, infoSchema, statsIDsToRefresh...)
 }
 
 func (e *AnalyzeExec) waitFinish(ctx context.Context, g *errgroup.Group, resultsCh chan *statistics.AnalyzeResults) error {

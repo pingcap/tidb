@@ -129,6 +129,112 @@ PARTITION BY RANGE ( a ) (
 	})
 }
 
+// TestAnalyzeRefreshesOnlyPersistedStats verifies that partition ANALYZE only
+// refreshes physical or global stats IDs whose persistence path wrote data.
+// Each case caches a pseudo global entry behind a higher cache-wide version,
+// analyzes one partition, and checks the global entry against the merge result.
+func TestAnalyzeRefreshesOnlyPersistedStats(t *testing.T) {
+	testCases := []struct {
+		name                     string
+		partitionPruneMode       string
+		makeGlobalStatsMergeFail bool
+		expectGlobalStatsRefresh bool
+	}{
+		{
+			name:               "static partition analyze",
+			partitionPruneMode: "static",
+		},
+		{
+			name:                     "successful dynamic global stats merge",
+			partitionPruneMode:       "dynamic",
+			expectGlobalStatsRefresh: true,
+		},
+		{
+			name:                     "failed dynamic global stats merge",
+			partitionPruneMode:       "dynamic",
+			makeGlobalStatsMergeFail: true,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			// Set up partition stats and a persisted global row, then arrange
+			// either no global merge, a successful merge, or a pre-write failure.
+			store, dom := testkit.CreateMockStoreAndDomain(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("set @@session.tidb_analyze_version = 2")
+			tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
+			tk.MustExec("set @@session.tidb_enable_async_merge_global_stats = ON")
+			tk.MustExec(`create table t(a int) partition by range(a) (
+				partition p0 values less than (10),
+				partition p1 values less than (20)
+			)`)
+			tk.MustExec("insert into t values (1), (11)")
+			analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a")
+			tk.MustExec("analyze table t")
+			if testCase.makeGlobalStatsMergeFail {
+				// p1 has no stats for the newly added predicate column, so
+				// merging p0 with missing-partition skipping disabled fails
+				// before any global row is written.
+				tk.MustExec("alter table t add column b int")
+				analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a", "b")
+				tk.MustExec("set @@session.tidb_skip_missing_partition_stats = 0")
+				tk.MustExec("insert into t values (2, 2), (3, 3)")
+			} else {
+				tk.MustExec("insert into t values (2), (3)")
+			}
+			// Upstream flushes pending deltas before building ANALYZE tasks.
+			// Flush first, then lower the global row version so that pre-flush
+			// cannot accidentally remove the intended stale-row setup.
+			tk.MustExec("flush stats_delta *.*")
+
+			table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+			require.NoError(t, err)
+			tableInfo := table.Meta()
+			partitionInfo := tableInfo.GetPartitionInfo()
+			require.NotNil(t, partitionInfo)
+			p0ID := partitionInfo.Definitions[0].ID
+
+			const (
+				staleGlobalVersion  uint64 = 100
+				cacheWideMaxVersion uint64 = 200
+			)
+			tk.MustExec("update mysql.stats_meta set version = ? where table_id = ?", staleGlobalVersion, tableInfo.ID)
+			handle := dom.StatsHandle()
+			handle.Clear()
+			globalStats := handle.GetPhysicalTableStats(tableInfo.ID, tableInfo)
+			require.True(t, globalStats.Pseudo)
+			handle.Put(tableInfo.ID+1000, &statistics.Table{
+				HistColl:              statistics.HistColl{PhysicalID: tableInfo.ID + 1000},
+				Version:               cacheWideMaxVersion,
+				ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMapWithoutSize(),
+			})
+			handle.WaitForAsyncUpdates()
+			require.Equal(t, cacheWideMaxVersion, handle.MaxTableStatsVersion())
+
+			tk.MustExec("set @@session.tidb_partition_prune_mode = ?", testCase.partitionPruneMode)
+			tk.MustExec("analyze table t partition p0")
+			if testCase.makeGlobalStatsMergeFail {
+				// Global merge errors are warnings rather than fatal ANALYZE
+				// errors; assert the failure path ran before checking the cache.
+				warnings := fmt.Sprint(tk.MustQuery("show warnings").Rows())
+				require.Contains(t, warnings, "Build global-level stats failed")
+			}
+
+			partitionStats := handle.GetPhysicalTableStats(p0ID, tableInfo)
+			require.False(t, partitionStats.Pseudo)
+			globalStats = handle.GetPhysicalTableStats(tableInfo.ID, tableInfo)
+			if testCase.expectGlobalStatsRefresh {
+				require.False(t, globalStats.Pseudo)
+			} else {
+				require.True(t, globalStats.Pseudo)
+			}
+			require.Equal(t, cacheWideMaxVersion, handle.MaxTableStatsVersion())
+		})
+	}
+}
+
 func TestAnalyzeReplicaReadFollower(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
