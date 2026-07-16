@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/internal"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
 	"github.com/stretchr/testify/require"
@@ -62,6 +63,55 @@ func TestStatsCacheProcess(t *testing.T) {
 	require.NoError(t, do.StatsHandle().Update(context.Background(), is))
 	newVersion = do.StatsHandle().MaxTableStatsVersion()
 	require.NotEqual(t, currentVersion, newVersion, "update with no table should move forward the stats cache version")
+}
+
+func TestSpecificStatsUpdateIgnoresCacheWideMaxVersion(t *testing.T) {
+	// Regression test for ANALYZE-style targeted stats refresh: even when another stats update
+	// has advanced the cache-wide max version, updating a requested table ID should still
+	// reload that table from mysql.stats_meta instead of leaving the cached pseudo stats behind.
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (c1 int, c2 int, key idx(c2))")
+	testKit.MustExec("insert into t values (1, 1), (2, 2), (3, 3)")
+	analyzehelper.TriggerPredicateColumnsCollection(t, testKit, store, "t", "c1", "c2")
+	testKit.MustExec("analyze table t")
+
+	handle := dom.StatsHandle()
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+
+	// Clear the analyzed table from memory, then cache a pseudo entry to mimic the planner
+	// reading the table before ANALYZE refreshes its stats cache entry.
+	handle.Clear()
+	statsTbl := handle.GetPhysicalTableStats(tableInfo.ID, tableInfo)
+	require.True(t, statsTbl.Pseudo)
+	require.Zero(t, statsTbl.Version)
+
+	const (
+		analyzedTableVersion uint64 = 100
+		cacheWideMaxVersion  uint64 = 200
+	)
+	testKit.MustExec("update mysql.stats_meta set version = ? where table_id = ?", analyzedTableVersion, tableInfo.ID)
+	handle.UpdateStatsCache(statstypes.CacheUpdate{
+		Updated: []*statistics.Table{
+			{
+				HistColl: statistics.HistColl{
+					PhysicalID: tableInfo.ID + 1000,
+				},
+				Version: cacheWideMaxVersion,
+			},
+		},
+	})
+	require.Equal(t, cacheWideMaxVersion, handle.MaxTableStatsVersion())
+
+	require.NoError(t, handle.Update(context.Background(), is, tableInfo.ID))
+	statsTbl = handle.GetPhysicalTableStats(tableInfo.ID, tableInfo)
+	require.False(t, statsTbl.Pseudo)
+	require.Equal(t, analyzedTableVersion, statsTbl.Version)
+	require.Equal(t, cacheWideMaxVersion, handle.MaxTableStatsVersion())
 }
 
 func TestStatsCache(t *testing.T) {
