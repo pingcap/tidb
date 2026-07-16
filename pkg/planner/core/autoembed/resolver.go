@@ -15,8 +15,6 @@
 package autoembed
 
 import (
-	"reflect"
-
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -56,15 +54,16 @@ const (
 
 // autoEmbedResolver owns the memo and cycle state for one consumer lookup.
 type autoEmbedResolver struct {
-	state map[autoEmbedResolveKey]autoEmbedResolveState
-	memo  map[autoEmbedResolveKey]autoEmbedResolveResult
+	state   map[autoEmbedResolveKey]autoEmbedResolveState
+	memo    map[autoEmbedResolveKey]autoEmbedResolveResult
+	sidecar DualSourceLookup
 }
 
 // resolve memoizes (plan, column) pairs for one consumer lookup. Encountering
 // an active pair means malformed or recursive lineage; it claims the namespace
 // without metadata to stop both recursion and fallback.
 func (r *autoEmbedResolver) resolve(plan base.LogicalPlan, target *expression.Column) autoEmbedResolveResult {
-	if isNilAutoEmbedPlan(plan) || target == nil || target.RetType == nil {
+	if plan == nil || target == nil || target.RetType == nil {
 		return autoEmbedResolveResult{}
 	}
 	key := autoEmbedResolveKey{plan: plan, col: target}
@@ -125,7 +124,9 @@ func (r *autoEmbedResolver) resolvePlan(plan base.LogicalPlan, target *expressio
 		return r.resolve(children[len(children)-1], target)
 	case *logicalop.LogicalCTE:
 		return r.resolveCTE(p, target)
-	case *logicalop.LogicalTableDual, *logicalop.LogicalExpand:
+	case *logicalop.LogicalTableDual:
+		return r.resolveTableDual(p, target)
+	case *logicalop.LogicalExpand:
 		return autoEmbedResolveResult{found: autoEmbedPlanSchemaContains(plan, target)}
 	default:
 		// GeneratedExprString used to survive arbitrary Column.Clone calls.
@@ -133,6 +134,30 @@ func (r *autoEmbedResolver) resolvePlan(plan base.LogicalPlan, target *expressio
 		// incidental clone as proof of auto-embedding provenance.
 		return autoEmbedResolveResult{found: autoEmbedPlanSchemaContains(plan, target)}
 	}
+}
+
+// resolveTableDual first claims only the Dual's own namespace, then consults
+// an exact-pointer builder sidecar for a discarded build-time input. Once the
+// Dual claims the column, source failure must not fall through to another
+// namespace such as an INSERT target or join sibling.
+func (r *autoEmbedResolver) resolveTableDual(p *logicalop.LogicalTableDual, target *expression.Column) autoEmbedResolveResult {
+	matched, _, found, ambiguous := findAutoEmbedColumn(p.Schema(), target)
+	if ambiguous {
+		return autoEmbedResolveResult{found: true}
+	}
+	if !found {
+		return autoEmbedResolveResult{}
+	}
+	if p.RowCount != 0 || r.sidecar == nil {
+		return autoEmbedResolveResult{found: true}
+	}
+	source, ok := r.sidecar.SourceOfEmptyDual(p)
+	if !ok || source == nil {
+		return autoEmbedResolveResult{found: true}
+	}
+	result := r.resolve(source, matched)
+	result.found = true
+	return result
 }
 
 // resolveProjection accepts only a bare Column expression at the matching
@@ -237,7 +262,7 @@ func (r *autoEmbedResolver) resolveUnion(plan base.LogicalPlan, target *expressi
 	}
 	var merged *expression.AutoEmbedInfo
 	for _, child := range children {
-		if isNilAutoEmbedPlan(child) || child.Schema() == nil || idx >= child.Schema().Len() {
+		if child == nil || child.Schema() == nil || idx >= child.Schema().Len() {
 			return autoEmbedResolveResult{found: true}
 		}
 		source := child.Schema().Columns[idx]
@@ -363,7 +388,7 @@ func (r *autoEmbedResolver) resolveJoinConsensus(
 // Recursive CTEs can combine values across iterations and are unprovable.
 func (r *autoEmbedResolver) resolveCTE(p *logicalop.LogicalCTE, target *expression.Column) autoEmbedResolveResult {
 	if p == nil || p.Schema() == nil || p.Cte == nil ||
-		p.Cte.RecursivePartLogicalPlan != nil || isNilAutoEmbedPlan(p.Cte.SeedPartLogicalPlan) {
+		p.Cte.RecursivePartLogicalPlan != nil || p.Cte.SeedPartLogicalPlan == nil {
 		return autoEmbedResolveResult{found: p != nil && autoEmbedPlanSchemaContains(p, target)}
 	}
 	_, idx, found, ambiguous := findAutoEmbedColumn(p.Schema(), target)
@@ -568,14 +593,14 @@ func autoEmbedJoinColumnIsRedundant(p *logicalop.LogicalJoin, col *expression.Co
 }
 
 func autoEmbedPlanSchemaContains(plan base.LogicalPlan, target *expression.Column) bool {
-	if isNilAutoEmbedPlan(plan) {
+	if plan == nil {
 		return false
 	}
 	return autoEmbedPlanDirectNamespaceContains(plan, target)
 }
 
 func autoEmbedPlanDirectNamespaceContains(plan base.LogicalPlan, target *expression.Column) bool {
-	if isNilAutoEmbedPlan(plan) || target == nil {
+	if plan == nil || target == nil {
 		return false
 	}
 	if _, _, found, ambiguous := findAutoEmbedColumn(plan.Schema(), target); found || ambiguous {
@@ -619,14 +644,4 @@ func autoEmbedPairContainsColumn(pairs [][2]*expression.Column, col *expression.
 		}
 	}
 	return false
-}
-
-// isNilAutoEmbedPlan handles typed nil pointers stored in LogicalPlan
-// interfaces before they can reach type-specific methods and panic.
-func isNilAutoEmbedPlan(plan base.LogicalPlan) bool {
-	if plan == nil {
-		return true
-	}
-	value := reflect.ValueOf(plan)
-	return value.Kind() == reflect.Pointer && value.IsNil()
 }

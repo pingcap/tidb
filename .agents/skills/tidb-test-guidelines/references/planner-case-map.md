@@ -80,7 +80,6 @@
 ## pkg/planner/core
 
 ### Tests
-- `pkg/planner/core/auto_embed_resolver_test.go` - planner/core: Tests fail-closed auto-embedding provenance across projections, aggregates, joins, set operations, cycles, and INSERT source snapshots.
 - `pkg/planner/core/binary_plan_test.go` - planner/core: Tests binary plan generation and size limits.
 - `pkg/planner/core/cbo_test.go` - planner/core: Benchmarks optimizer plan selection.
 - `pkg/planner/core/common_plans_test.go` - planner/core: Tests LOAD DATA line/field defaults.
@@ -102,8 +101,8 @@
 - `pkg/planner/core/plan_replayer_capture_test.go` - planner/core: Tests plan replayer capture table stats.
 - `pkg/planner/core/plan_test.go` - planner/core: Tests plan encode/decode, normalization/digest, explain hints, cop paging, agg final mode build, and IMPORT INTO planning.
 - `pkg/planner/core/plan_to_pb_test.go` - planner/core: Tests ColumnToProto collation, flags, and elems.
-- `pkg/planner/core/planbuilder_test.go` - planner/core: Tests plan builder utilities (SHOW schema, access paths, rewriter pool, clone, analyze options, privileges, admin/traffic).
-- `pkg/planner/core/preprocess_test.go` - planner/core: Validates SQL/DDL preprocessing errors and constraints.
+- `pkg/planner/core/planbuilder_test.go` - planner/core: Tests plan builder utilities (SHOW schema, access paths, rewriter pool, clone, analyze options, privileges, admin/traffic) and auto-embedding BuildState nested/error/reuse lifecycle.
+- `pkg/planner/core/preprocess_test.go` - planner/core: Validates SQL/DDL preprocessing errors and constraints plus statement-wide auto-embedding consumer classification, reliable traversal, PREPARE, dynamic EXPLAIN, and error-path Unknown semantics.
 - `pkg/planner/core/rule_generate_column_substitute_test.go` - planner/core: Benchmarks generated column expression substitution.
 - `pkg/planner/core/rule_join_reorder_dp_test.go` - planner/core: Tests DP reorder TPCH Q5.
 - `pkg/planner/core/runtime_filter_generator_test.go` - planner/core: Tests runtime filter generation under MPP with testdata and failpoints.
@@ -117,6 +116,12 @@
 - `pkg/planner/core/testdata/plan_suite_unexported_out.json`
 - `pkg/planner/core/testdata/runtime_filter_generator_suite_in.json`
 - `pkg/planner/core/testdata/runtime_filter_generator_suite_out.json`
+
+## pkg/planner/core/autoembed
+
+### Tests
+
+- `pkg/planner/core/autoembed/resolver_test.go` - planner/core/autoembed: Tests fail-closed auto-embedding provenance and namespace isolation across logical operators, exact empty-Dual sidecar identity/lifecycle, unique consumer classification, INSERT source snapshots, cycles, and classifier/sidecar benchmarks.
 
 ## pkg/planner/core/casetest
 

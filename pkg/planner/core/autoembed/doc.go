@@ -50,8 +50,24 @@
 // types. If plain_vectors.vec is ordinary or incompatible, the result is
 // Unproven rather than Outside, and the rewrite is rejected.
 //
-// INSERT ... SELECT additionally uses a statement-local SourceSnapshot.
-// SnapshotSource records source-output proofs before optimization can replace
-// an empty source with TableDual. Resolve then applies source and target
-// namespace precedence while preserving ambiguity and fail-closed behavior.
+// Before planning, the existing Preprocess traversal classifies whether the
+// statement AST contains one of the four VEC_EMBED_* consumers. Only a
+// complete traversal with no consumer is Absent; bypassed, incomplete, or
+// dynamic ASTs are Unknown and preserve lineage conservatively. Runtime view
+// and plan-digest ASTs can monotonically upgrade the current build state.
+//
+// A constant-false selection or zero-row limit can discard its logical input
+// before an outer expression is rewritten. For Present and Unknown builds,
+// PlanBuilder records the exact empty-Dual pointer and discarded input in a
+// builder-local sidecar. Resolve first claims the Dual's public namespace and
+// may then consult that source only for provenance. The sidecar is cleared
+// when the outer Build returns and is never visible to optimization or
+// execution. Correlated inputs remain in the visible plan tree because
+// general correlated-column discovery cannot consult the sidecar.
+//
+// INSERT ... SELECT additionally uses a statement-local SourceSnapshot, but
+// only when an ON DUPLICATE assignment contains a consumer (or cannot be
+// classified reliably). SnapshotSource records source-output proofs before
+// optimization. Resolve then applies source and target namespace precedence
+// while preserving ambiguity and fail-closed behavior.
 package autoembed

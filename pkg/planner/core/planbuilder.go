@@ -327,6 +327,10 @@ type PlanBuilder struct {
 	allowBuildCastArray bool
 	// resolveCtx is set when calling Build, it's only effective in the current Build call.
 	resolveCtx *resolve.Context
+	// autoEmbedBuildState is shared by nested Build calls and cleared when the
+	// outermost Build returns. It never escapes into the logical plan.
+	autoEmbedBuildState autoembed.BuildState
+	autoEmbedBuildDepth int
 
 	// nonViableFTSMatch is set during build when the expression rewriter
 	// encounters a predicate-context MATCH...AGAINST whose native form
@@ -544,6 +548,7 @@ func (b *PlanBuilder) Init(sctx base.PlanContext, is infoschema.InfoSchema, proc
 // ResetForReuse reset the plan builder, put it into pool for reuse.
 // After reset for reuse, the object should be equal to a object returned by NewPlanBuilder().
 func (b *PlanBuilder) ResetForReuse() *PlanBuilder {
+	b.autoEmbedBuildState.ResetForReuse()
 	// Save some fields for reuse.
 	saveOuterCTEs := b.outerCTEs[:0]
 	saveColMapper := b.colMapper
@@ -574,6 +579,15 @@ func (b *PlanBuilder) ResetForReuse() *PlanBuilder {
 	return b
 }
 
+// activeAutoEmbedBuildState returns the embedded state only while a Build is
+// active. The build depth is the single source of truth for this scope.
+func (b *PlanBuilder) activeAutoEmbedBuildState() *autoembed.BuildState {
+	if b.autoEmbedBuildDepth == 0 {
+		return nil
+	}
+	return &b.autoEmbedBuildState
+}
+
 // HandleUnusedViewHints appends warnings for unused view hints in the current build.
 func (b *PlanBuilder) HandleUnusedViewHints() {
 	if b.hintProcessor == nil {
@@ -597,9 +611,20 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		return nil, err
 	}
 
-	// Build might be called recursively, right now they all share the same resolve
-	// context, so it's ok to override it.
+	outermostBuild := b.autoEmbedBuildDepth == 0
+	if outermostBuild {
+		b.autoEmbedBuildState.ResetForBuild(node.AutoEmbedConsumerPresence())
+	}
+	b.autoEmbedBuildDepth++
+	previousResolveCtx := b.resolveCtx
 	b.resolveCtx = node.GetResolveContext()
+	defer func() {
+		b.resolveCtx = previousResolveCtx
+		b.autoEmbedBuildDepth--
+		if outermostBuild {
+			b.autoEmbedBuildState.ResetForReuse()
+		}
+	}()
 	b.optFlag |= rule.FlagPruneColumns
 	// Count every recursive build invocation because RU v2 charges plan work per build step.
 	b.recordPlanBuilderMetric()
@@ -4491,9 +4516,12 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 
 	names := selectPlan.OutputNames()
 	selectLogicalPlan := selectPlan.(base.LogicalPlan)
-	// The snapshot is taken before optimization; schema4NewRow below must keep
-	// the corresponding SELECT output UniqueIDs so ON DUPLICATE can rebind them.
-	autoEmbedSourceSnapshot := autoembed.SnapshotSource(selectLogicalPlan)
+	var autoEmbedSourceSnapshot *autoembed.SourceSnapshot
+	if autoembed.ClassifyAssignmentExprs(insert.OnDuplicate).NeedsLineage() {
+		// The snapshot is taken before optimization; schema4NewRow below must keep
+		// the corresponding SELECT output UniqueIDs so ON DUPLICATE can rebind them.
+		autoEmbedSourceSnapshot = autoembed.SnapshotSource(selectLogicalPlan, b.activeAutoEmbedBuildState())
+	}
 	optimizedPhysicalPlan, _, err := DoOptimize(ctx, b.ctx, b.optFlag, selectLogicalPlan)
 	if err != nil {
 		return nil, err
@@ -5808,7 +5836,8 @@ func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt
 		return b.buildShow(ctx, show)
 	}
 
-	if explain.PlanDigest != "" { // explain [analyze] <SQLDigest>
+	dynamicPlanDigestStmt := explain.PlanDigest != ""
+	if dynamicPlanDigestStmt { // explain [analyze] <SQLDigest>
 		hintedStmt, err := getHintedStmtThroughPlanDigest(b.ctx, explain.PlanDigest)
 		if err != nil {
 			return nil, err
@@ -5825,6 +5854,14 @@ func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt
 	var targetPlan base.Plan
 	if explain.Stmt != nil && !explain.Explore {
 		nodeW := resolve.NewNodeWWithCtx(explain.Stmt, b.resolveCtx)
+		if dynamicPlanDigestStmt {
+			autoEmbedPresence := autoembed.ClassifyConsumerAST(explain.Stmt)
+			if autoEmbedBuildState := b.activeAutoEmbedBuildState(); autoEmbedBuildState != nil {
+				autoEmbedBuildState.UpgradePresence(autoEmbedPresence)
+				autoEmbedPresence = autoEmbedBuildState.Presence()
+			}
+			nodeW = nodeW.WithAutoEmbedConsumerPresence(autoEmbedPresence)
+		}
 		if stmtCtx.ExplainFormat == types.ExplainFormatPlanCache {
 			targetPlan, _, err = OptimizeAstNode(ctx, sctx, nodeW, b.is)
 		} else {

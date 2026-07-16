@@ -53,6 +53,12 @@ func TestAutoEmbeddingVectorSearchCompatibility(t *testing.T) {
 	createAutoEmbedTable("ae_same")
 	createAutoEmbedTable("ae_third")
 	tk.MustExec(`create view ae_view as select vec from ae_t`)
+	tk.MustExec(`create view ae_view_empty as select vec from ae_t where false`)
+	tk.MustExec(`create view ae_consumer_view_empty as
+		select vec_embed_l2_distance(vec, '[1,2,3]') as dist_from_query from ae_t where false`)
+	tk.MustExec(`create view ae_consumer_view_limit as
+		select vec_embed_l2_distance(vec, '[1,2,3]') as dist_from_query from (select vec from ae_t limit 0) x`)
+	tk.MustExec(`create view ae_consumer_nested as select * from ae_consumer_view_empty`)
 
 	checkRewrite := func(rewrittenSQL, explicitSQL string) {
 		t.Helper()
@@ -99,6 +105,14 @@ func TestAutoEmbeddingVectorSearchCompatibility(t *testing.T) {
 			explicitSQL:  `select vec_l2_distance(v, ` + explicitEmbedding + `) from (select vec as v from ae_t) x order by 1`,
 		},
 		{
+			rewrittenSQL: `select vec_embed_l2_distance(vec, '[1,2,3]') from (select vec from ae_t where false) x`,
+			explicitSQL:  `select vec_l2_distance(vec, ` + explicitEmbedding + `) from (select vec from ae_t where false) x`,
+		},
+		{
+			rewrittenSQL: `select vec_embed_l2_distance(vec, '[1,2,3]') from (select vec from ae_t limit 0) x`,
+			explicitSQL:  `select vec_l2_distance(vec, ` + explicitEmbedding + `) from (select vec from ae_t limit 0) x`,
+		},
+		{
 			rewrittenSQL: `select vec_embed_l2_distance(vec, '[1,2,3]') from (select vec from ae_t order by id limit 2) x order by 1`,
 			explicitSQL:  `select vec_l2_distance(vec, ` + explicitEmbedding + `) from (select vec from ae_t order by id limit 2) x order by 1`,
 		},
@@ -109,6 +123,14 @@ func TestAutoEmbeddingVectorSearchCompatibility(t *testing.T) {
 		{
 			rewrittenSQL: `select vec_embed_l2_distance(ae_t.vec, '[1,2,3]') from ae_t join ae_same on ae_t.id = ae_same.id order by ae_t.id`,
 			explicitSQL:  `select vec_l2_distance(ae_t.vec, ` + explicitEmbedding + `) from ae_t join ae_same on ae_t.id = ae_same.id order by ae_t.id`,
+		},
+		{
+			rewrittenSQL: `select vec_embed_l2_distance(ae_same.vec, '[1,2,3]') from ae_t join ae_same using(vec) where false`,
+			explicitSQL:  `select vec_l2_distance(ae_same.vec, ` + explicitEmbedding + `) from ae_t join ae_same using(vec) where false`,
+		},
+		{
+			rewrittenSQL: `select vec_embed_l2_distance(ae_same.vec, '[1,2,3]') from ae_t natural join ae_same where false`,
+			explicitSQL:  `select vec_l2_distance(ae_same.vec, ` + explicitEmbedding + `) from ae_t natural join ae_same where false`,
 		},
 		{
 			rewrittenSQL: `select vec_embed_l2_distance(vec, '[1,2,3]') from (select vec from ae_t union all select vec from ae_same) x order by 1`,
@@ -127,8 +149,20 @@ func TestAutoEmbeddingVectorSearchCompatibility(t *testing.T) {
 			explicitSQL:  `with x as (select vec from ae_t) select vec_l2_distance(vec, ` + explicitEmbedding + `) from x order by 1`,
 		},
 		{
+			rewrittenSQL: `with x as (select vec from ae_t where false) select vec_embed_l2_distance(vec, '[1,2,3]') from x`,
+			explicitSQL:  `with x as (select vec from ae_t where false) select vec_l2_distance(vec, ` + explicitEmbedding + `) from x`,
+		},
+		{
+			rewrittenSQL: `with x as (select vec from ae_t limit 0) select vec_embed_l2_distance(vec, '[1,2,3]') from x`,
+			explicitSQL:  `with x as (select vec from ae_t limit 0) select vec_l2_distance(vec, ` + explicitEmbedding + `) from x`,
+		},
+		{
 			rewrittenSQL: `select vec_embed_l2_distance(vec, '[1,2,3]') from ae_view order by 1`,
 			explicitSQL:  `select vec_l2_distance(vec, ` + explicitEmbedding + `) from ae_view order by 1`,
+		},
+		{
+			rewrittenSQL: `select vec_embed_l2_distance(vec, '[1,2,3]') from ae_view_empty`,
+			explicitSQL:  `select vec_l2_distance(vec, ` + explicitEmbedding + `) from ae_view_empty`,
 		},
 		{
 			rewrittenSQL: `select vec_embed_l2_distance(vec, (select '[1,2,3]' where ae_t.id = 1)) from ae_t where id = 1`,
@@ -137,6 +171,14 @@ func TestAutoEmbeddingVectorSearchCompatibility(t *testing.T) {
 		{
 			rewrittenSQL: `select vec_embed_l2_distance((select x.vec from ae_t x where x.id = ae_t.id), '[1,2,3]') from ae_t order by id`,
 			explicitSQL:  `select vec_l2_distance((select x.vec from ae_t x where x.id = ae_t.id), ` + explicitEmbedding + `) from ae_t order by id`,
+		},
+		{
+			rewrittenSQL: `select vec_embed_l2_distance((select x.vec from ae_t x where false and x.id = ae_t.id), '[1,2,3]') from ae_t order by id`,
+			explicitSQL:  `select vec_l2_distance((select x.vec from ae_t x where false and x.id = ae_t.id), ` + explicitEmbedding + `) from ae_t order by id`,
+		},
+		{
+			rewrittenSQL: `select vec_embed_l2_distance((select x.vec from ae_t x where x.id = ae_t.id limit 0), '[1,2,3]') from ae_t order by id`,
+			explicitSQL:  `select vec_l2_distance((select x.vec from ae_t x where x.id = ae_t.id limit 0), ` + explicitEmbedding + `) from ae_t order by id`,
 		},
 		{
 			rewrittenSQL: `select vec_embed_l2_distance(d.vec, '[1,2,3]') from (select distinct id, vec from ae_t) d where exists (select 1 from ae_same where ae_same.id = d.id) order by d.id`,
@@ -149,6 +191,9 @@ func TestAutoEmbeddingVectorSearchCompatibility(t *testing.T) {
 	} {
 		checkRewrite(tc.rewrittenSQL, tc.explicitSQL)
 	}
+	tk.MustQuery(`select * from ae_consumer_view_empty`).Check(testkit.Rows())
+	tk.MustQuery(`select * from ae_consumer_view_limit`).Check(testkit.Rows())
+	tk.MustQuery(`select * from ae_consumer_nested`).Check(testkit.Rows())
 
 	// NextGen does not execute vector-valued USING join keys yet, so these
 	// compatibility rows validate lowering at the planner boundary.
@@ -161,11 +206,31 @@ func TestAutoEmbeddingVectorSearchCompatibility(t *testing.T) {
 	tk.MustExec(`prepare ae_stmt from 'select id from ae_t where vec_embed_l2_distance(vec, ?) < 1 order by id'`)
 	tk.MustExec(`set @ae_query = '[1,2,3]'`)
 	tk.MustQuery(`execute ae_stmt using @ae_query`).Check(testkit.Rows("1"))
+	tk.MustQuery(`execute ae_stmt using @ae_query`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 	tk.MustExec(`deallocate prepare ae_stmt`)
+
+	tk.MustExec(`set @ae_id = 1`)
+	tk.MustExec(`prepare ae_empty_stmt from '
+		select id from (
+			select id, vec from ae_t where false
+			union all
+			select id, vec from ae_t where id = ?
+		) x order by vec_embed_l2_distance(vec, ''[1,2,3]'')'`)
+	tk.MustQuery(`execute ae_empty_stmt using @ae_id`).Check(testkit.Rows("1"))
+	tk.MustQuery(`execute ae_empty_stmt using @ae_id`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec(`alter table ae_t add column cache_epoch int`)
+	tk.MustQuery(`execute ae_empty_stmt using @ae_id`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery(`execute ae_empty_stmt using @ae_id`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec(`deallocate prepare ae_empty_stmt`)
 
 	createAutoEmbedTable("ae_dml")
 	tk.MustExec(`update ae_dml set dist = vec_embed_l2_distance(vec, '[1,2,3]') where id = 1`)
 	tk.MustQuery(`select dist = vec_l2_distance(vec, ` + explicitEmbedding + `) from ae_dml where id = 1`).Check(testkit.Rows("1"))
+	tk.MustExec(`update ae_dml set dist = vec_embed_l2_distance(vec, '[1,2,3]') where false`)
 	tk.MustExec(`delete from ae_dml where vec_embed_l2_distance(vec, '[1,2,3]') < 1`)
 	tk.MustQuery(`select id from ae_dml order by id`).Check(testkit.Rows("2"))
 
@@ -186,6 +251,9 @@ func TestAutoEmbeddingVectorSearchCompatibility(t *testing.T) {
 			Check(testkit.Rows("1"))
 		tk.MustExec(`insert into ` + target + `(id, vec, dist)
 			select id, src.vec, 0 from ae_t src where false
+			on duplicate key update dist = vec_embed_l2_distance(src.vec, '[1,2,3]')`)
+		tk.MustExec(`insert into ` + target + `(id, vec, dist)
+			select id, src.vec, 0 from ae_t src limit 0
 			on duplicate key update dist = vec_embed_l2_distance(src.vec, '[1,2,3]')`)
 	}
 }
@@ -228,6 +296,8 @@ func TestAutoEmbeddingVectorSearchRejects(t *testing.T) {
 	}{
 		{name: "ordinary vector", sql: `select vec_embed_l2_distance(vec, '[1,2,3]') from ae_r_normal`},
 		{name: "ordinary vector with false predicate", sql: `select vec_embed_l2_distance(vec, '[1,2,3]') from ae_r_normal where false`},
+		{name: "ordinary vector through false derived table", sql: `select vec_embed_l2_distance(vec, '[1,2,3]') from (select vec from ae_r_normal where false) x`},
+		{name: "ordinary vector through zero-limit derived table", sql: `select vec_embed_l2_distance(vec, '[1,2,3]') from (select vec from ae_r_normal limit 0) x`},
 		{name: "cast output", sql: `select vec_embed_l2_distance(cast(vec as vector(3)), '[1,2,3]') from ae_r`},
 		{name: "window output", sql: `select vec_embed_l2_distance(wv, '[1,2,3]') from (select first_value(vec) over(order by id) wv from ae_r) x`},
 		{name: "aggregate output", sql: `select vec_embed_l2_distance(v, '[1,2,3]') from (select any_value(vec) v from ae_r) x`},
@@ -266,6 +336,9 @@ func TestAutoEmbeddingVectorSearchRejects(t *testing.T) {
 		err := tk.ExecToErr(tc.sql)
 		require.ErrorContainsf(t, err, firstArgError, "case %q", tc.name)
 	}
+
+	err := tk.ExecToErr(`select vec_embed_l2_distance(vec) from (select vec from ae_r where false) x`)
+	require.ErrorContains(t, err, "Incorrect parameter count")
 
 	for _, cascades := range []string{"off", "on"} {
 		tk.MustExec(`set tidb_enable_cascades_planner = ` + cascades)

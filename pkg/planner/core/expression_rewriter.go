@@ -3022,22 +3022,10 @@ func (er *expressionRewriter) funcCallToExpressionWithPlanCtx(planCtx *exprRewri
 	}
 }
 
-func vectorDistanceFuncForAutoEmbed(fnName string) (string, bool) {
-	switch fnName {
-	case ast.VecEmbedL1Distance:
-		return ast.VecL1Distance, true
-	case ast.VecEmbedL2Distance:
-		return ast.VecL2Distance, true
-	case ast.VecEmbedNegativeInnerProduct:
-		return ast.VecNegativeInnerProduct, true
-	case ast.VecEmbedCosineDistance:
-		return ast.VecCosineDistance, true
-	default:
-		return "", false
-	}
-}
-
-func (er *expressionRewriter) autoEmbedVectorSearchArg(fnName string, arg expression.Expression) (*expression.Column, *expression.AutoEmbedInfo, error) {
+func (er *expressionRewriter) autoEmbedVectorSearchArg(
+	fnName string,
+	arg expression.Expression,
+) (*expression.Column, *expression.AutoEmbedInfo, error) {
 	vecArg, ok := arg.(*expression.Column)
 	argName := "<unknown column>"
 	if ok {
@@ -3047,7 +3035,13 @@ func (er *expressionRewriter) autoEmbedVectorSearchArg(fnName string, arg expres
 		}
 	}
 	if ok && er.planCtx != nil {
-		embedInfo, found := autoembed.Resolve(er.planCtx.plan, er.planCtx.insertPlan, er.planCtx.autoEmbedSourceSnapshot, vecArg)
+		embedInfo, found := autoembed.Resolve(
+			er.planCtx.plan,
+			er.planCtx.insertPlan,
+			er.planCtx.autoEmbedSourceSnapshot,
+			vecArg,
+			er.planCtx.builder.activeAutoEmbedBuildState(),
+		)
 		if found {
 			return vecArg, embedInfo, nil
 		}
@@ -3079,7 +3073,7 @@ func (er *expressionRewriter) buildEmbedTextForVectorSearch(embedInfo *expressio
 // rewriteVectorSearchFuncCallWithEmbedding rewrites VEC_EMBED_*_DISTANCE()
 // functions to VEC_*_DISTANCE() using planner-local EMBED_TEXT metadata.
 func (er *expressionRewriter) rewriteVectorSearchFuncCallWithEmbedding(v *ast.FuncCallExpr) bool {
-	distanceFn, ok := vectorDistanceFuncForAutoEmbed(v.FnName.L)
+	distanceFn, ok := autoembed.ConsumerDistanceFunction(v.FnName.L)
 	if !ok {
 		return false
 	}

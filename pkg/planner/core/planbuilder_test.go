@@ -193,6 +193,36 @@ func TestRewriterPool(t *testing.T) {
 	builder.rewriterCounter--
 }
 
+func TestAutoEmbedBuildStateLifecycle(t *testing.T) {
+	ctx := coretestsdk.MockContext()
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
+	builder, _ := NewPlanBuilder().Init(ctx, nil, hint.NewQBHintHandler(nil))
+
+	stmt, err := parser.New().ParseOneStmt("select 1 where false", "", "")
+	require.NoError(t, err)
+	nodeW := resolve.NewNodeW(stmt).WithAutoEmbedConsumerPresence(resolve.AutoEmbedConsumerPresent)
+	_, err = builder.Build(context.Background(), nodeW)
+	require.NoError(t, err)
+	require.Nil(t, builder.activeAutoEmbedBuildState())
+	require.Zero(t, builder.autoEmbedBuildDepth)
+	require.Nil(t, builder.resolveCtx)
+
+	_, err = builder.Build(context.Background(), resolve.NewNodeW(&ast.ColumnName{}))
+	require.Error(t, err)
+	require.Nil(t, builder.activeAutoEmbedBuildState())
+	require.Zero(t, builder.autoEmbedBuildDepth)
+	require.Nil(t, builder.resolveCtx)
+
+	builder.autoEmbedBuildState.ResetForBuild(resolve.AutoEmbedConsumerPresent)
+	builder.autoEmbedBuildDepth = 1
+	builder.ResetForReuse()
+	require.Nil(t, builder.activeAutoEmbedBuildState())
+	require.Equal(t, resolve.AutoEmbedConsumerUnknown, builder.autoEmbedBuildState.Presence())
+	require.Zero(t, builder.autoEmbedBuildDepth)
+}
+
 func TestGetInsertColExprDeepCopiesValueExprFieldType(t *testing.T) {
 	ctx := coretestsdk.MockContext()
 	defer func() {

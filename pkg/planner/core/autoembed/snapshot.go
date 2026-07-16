@@ -17,7 +17,6 @@ package autoembed
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 )
 
@@ -39,14 +38,16 @@ func Resolve(
 	insert *physicalop.Insert,
 	insertSource *SourceSnapshot,
 	vector *expression.Column,
+	sidecar DualSourceLookup,
 ) (*expression.AutoEmbedInfo, bool) {
 	if vector == nil || vector.RetType == nil || !vector.RetType.EvalType().IsVectorKind() {
 		return nil, false
 	}
 
 	resolver := &autoEmbedResolver{
-		state: make(map[autoEmbedResolveKey]autoEmbedResolveState),
-		memo:  make(map[autoEmbedResolveKey]autoEmbedResolveResult),
+		state:   make(map[autoEmbedResolveKey]autoEmbedResolveState),
+		memo:    make(map[autoEmbedResolveKey]autoEmbedResolveResult),
+		sidecar: sidecar,
 	}
 	if insert != nil {
 		if targetInfo, matched := resolveInsertTargetAutoEmbedInfo(insert, vector); matched {
@@ -75,14 +76,16 @@ func Resolve(
 }
 
 // SnapshotSource records INSERT SELECT output proofs before logical
-// optimization can discard their source plans.
-func SnapshotSource(root base.LogicalPlan) *SourceSnapshot {
-	if isNilAutoEmbedPlan(root) || root.Schema() == nil {
+// optimization can discard their source plans. sidecar is builder-local and
+// is consulted only for exact empty-Dual identities.
+func SnapshotSource(root base.LogicalPlan, sidecar DualSourceLookup) *SourceSnapshot {
+	if root == nil || root.Schema() == nil {
 		return nil
 	}
 	resolver := &autoEmbedResolver{
-		state: make(map[autoEmbedResolveKey]autoEmbedResolveState),
-		memo:  make(map[autoEmbedResolveKey]autoEmbedResolveResult),
+		state:   make(map[autoEmbedResolveKey]autoEmbedResolveState),
+		memo:    make(map[autoEmbedResolveKey]autoEmbedResolveResult),
+		sidecar: sidecar,
 	}
 	snapshot := &SourceSnapshot{
 		schema:  root.Schema().Clone(),
@@ -111,36 +114,4 @@ func (s *SourceSnapshot) resolve(target *expression.Column) autoEmbedResolveResu
 		return autoEmbedResolveResult{}
 	}
 	return s.results[idx]
-}
-
-// PlanHasProvenance reports whether root has at least one proven auto-embedding
-// output. Callers use it before replacing a constant-false source with
-// TableDual, because expression rewrite still needs the source proof; normal
-// logical optimization can produce the same empty physical plan afterwards.
-func PlanHasProvenance(root base.LogicalPlan) bool {
-	if isNilAutoEmbedPlan(root) {
-		return false
-	}
-	resolver := &autoEmbedResolver{
-		state: make(map[autoEmbedResolveKey]autoEmbedResolveState),
-		memo:  make(map[autoEmbedResolveKey]autoEmbedResolveResult),
-	}
-	schemas := []*expression.Schema{root.Schema()}
-	switch p := root.(type) {
-	case *logicalop.LogicalJoin:
-		schemas = append(schemas, p.FullSchema)
-	case *logicalop.LogicalApply:
-		schemas = append(schemas, p.FullSchema)
-	}
-	for _, schema := range schemas {
-		if schema == nil {
-			continue
-		}
-		for _, col := range schema.Columns {
-			if result := resolver.resolve(root, col); result.info != nil {
-				return true
-			}
-		}
-	}
-	return false
 }

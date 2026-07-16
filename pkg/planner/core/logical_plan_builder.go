@@ -671,6 +671,46 @@ func findJoinFullSchema(p base.LogicalPlan) (*expression.Schema, types.NameSlice
 	}
 }
 
+// foldToEmptyDual replaces a build-time empty input without exposing its
+// discarded child to the optimizer. When this build may contain an
+// auto-embedding consumer, the exact Dual-to-input relation is retained only
+// in the current builder's sidecar until expression rewriting finishes.
+func (b *PlanBuilder) foldToEmptyDual(
+	input base.LogicalPlan,
+	schema *expression.Schema,
+	names types.NameSlice,
+	offset int,
+) *logicalop.LogicalTableDual {
+	dual := logicalop.LogicalTableDual{RowCount: 0}.Init(b.ctx, offset)
+	dual.SetSchema(schema)
+	dual.SetOutputNames(names)
+	autoEmbedBuildState := b.activeAutoEmbedBuildState()
+	if autoEmbedBuildState != nil && autoEmbedBuildState.NeedsLineage() {
+		autoEmbedBuildState.RecordEmptyDual(dual, input)
+	}
+	return dual
+}
+
+// autoEmbedNeedsCorrelatedInput reports the narrow case where an invisible
+// Dual sidecar is insufficient: correlated-column discovery is a general plan
+// tree operation, so folding away the input would make a scalar or lateral
+// subquery look uncorrelated before its auto-embedding consumer is rewritten.
+func (b *PlanBuilder) autoEmbedNeedsCorrelatedInput(input base.LogicalPlan, exprs ...expression.Expression) bool {
+	autoEmbedBuildState := b.activeAutoEmbedBuildState()
+	if autoEmbedBuildState == nil || !autoEmbedBuildState.NeedsLineage() {
+		return false
+	}
+	if len(coreusage.ExtractCorrelatedCols4LogicalPlan(input)) > 0 {
+		return true
+	}
+	for _, expr := range exprs {
+		if len(expression.ExtractCorColumns(expr)) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // containsLateralTableSource checks if a ResultSetNode contains a LATERAL table source
 // anywhere in its subtree. Used only to decide whether to push outerSchemas before
 // building the right side, so nested LATERAL sources can resolve outer columns.
@@ -1390,23 +1430,17 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, wh
 				if ret {
 					continue
 				}
-				// Preserve proven auto-embedding provenance until SELECT expressions
-				// are rewritten. Logical optimization can fold the selection later.
-				if autoembed.PlanHasProvenance(p) {
+				if b.autoEmbedNeedsCorrelatedInput(p, expressions...) {
 					cnfExpres = append(cnfExpres, item)
 					continue
 				}
 				// If there is condition which is always false, return dual plan directly.
-				dual := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
-				if join, ok := p.(*logicalop.LogicalJoin); ok && join.FullSchema != nil {
-					dual.SetOutputNames(join.FullNames)
-					dual.SetSchema(join.FullSchema)
-				} else {
-					dual.SetOutputNames(p.OutputNames())
-					dual.SetSchema(p.Schema())
+				schema, names := findJoinFullSchema(p)
+				if schema == nil {
+					schema = p.Schema()
+					names = p.OutputNames()
 				}
-
-				return dual, nil
+				return b.foldToEmptyDual(p, schema, names, b.getSelectOffset()), nil
 			}
 			cnfExpres = append(cnfExpres, item)
 		}
@@ -2595,10 +2629,9 @@ func (b *PlanBuilder) buildLimit(src base.LogicalPlan, limit *ast.Limit, targetQ
 		targetQBOffset = targetQB[0]
 	}
 	if offset+count == 0 {
-		tableDual := logicalop.LogicalTableDual{RowCount: 0}.Init(b.ctx, targetQBOffset)
-		tableDual.SetSchema(src.Schema())
-		tableDual.SetOutputNames(src.OutputNames())
-		return tableDual, nil
+		if !b.autoEmbedNeedsCorrelatedInput(src) {
+			return b.foldToEmptyDual(src, src.Schema(), src.OutputNames(), targetQBOffset), nil
+		}
 	}
 	li := logicalop.LogicalLimit{
 		Offset: offset,
@@ -5526,6 +5559,11 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName ast.CI
 	if err != nil {
 		return nil, err
 	}
+	autoEmbedPresence := autoembed.ClassifyConsumerAST(selectNode)
+	if autoEmbedBuildState := b.activeAutoEmbedBuildState(); autoEmbedBuildState != nil {
+		autoEmbedBuildState.UpgradePresence(autoEmbedPresence)
+		autoEmbedPresence = autoEmbedBuildState.Presence()
+	}
 	originalVisitInfo := b.visitInfo
 	b.visitInfo = make([]visitInfo, 0)
 
@@ -5601,7 +5639,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName ast.CI
 	defer func() {
 		b.ignoreTruncateErrForViewPredicateFolding = originIgnoreTruncateErrForViewPredicateFolding
 	}()
-	nodeW := resolve.NewNodeWWithCtx(selectNode, b.resolveCtx)
+	nodeW := resolve.NewNodeWWithCtx(selectNode, b.resolveCtx).WithAutoEmbedConsumerPresence(autoEmbedPresence)
 	selectLogicalPlan, err := b.Build(ctx, nodeW)
 	if err != nil {
 		logutil.BgLogger().Warn("build plan for view failed", zap.Error(err))

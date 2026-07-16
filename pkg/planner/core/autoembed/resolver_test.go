@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -87,21 +88,20 @@ func TestResolveAutoEmbedInfo(t *testing.T) {
 
 	assertModel := func(plan base.LogicalPlan, col *expression.Column, expected string) {
 		t.Helper()
-		info, ok := Resolve(plan, nil, nil, col)
+		info, ok := Resolve(plan, nil, nil, col, nil)
 		require.True(t, ok)
 		require.Equal(t, expected, info.ModelNameWithProvider)
 		require.Equal(t, `{"plus":0.2}`, info.OptsInJSON)
 	}
 	assertRejected := func(plan base.LogicalPlan, col *expression.Column) {
 		t.Helper()
-		info, ok := Resolve(plan, nil, nil, col)
+		info, ok := Resolve(plan, nil, nil, col, nil)
 		require.False(t, ok)
 		require.Nil(t, info)
 	}
 
 	source, sourceCol := newSource("mock/json")
 	assertModel(source, sourceCol, "mock/json")
-	require.True(t, PlanHasProvenance(source))
 	require.False(t, autoEmbedFieldTypesCompatible(sourceCol.RetType, types.NewFieldType(mysql.TypeLonglong)))
 	nullableClone := sourceCol.RetType.Clone()
 	nullableClone.DelFlag(mysql.NotNullFlag)
@@ -115,7 +115,7 @@ func TestResolveAutoEmbedInfo(t *testing.T) {
 	projection.SetSchema(expression.NewSchema(projectedCol))
 	projection.SetChildren(source)
 	assertModel(projection, projectedCol, "mock/json")
-	snapshot := SnapshotSource(projection)
+	snapshot := SnapshotSource(projection, nil)
 	projection.SetChildren(logicalop.LogicalTableDual{}.Init(ctx, 0))
 	snapshotResult := snapshot.resolve(projectedCol)
 	require.True(t, snapshotResult.found)
@@ -129,7 +129,46 @@ func TestResolveAutoEmbedInfo(t *testing.T) {
 	derivedProjection.SetSchema(expression.NewSchema(projectedCol.Clone().(*expression.Column)))
 	derivedProjection.SetChildren(source)
 	assertRejected(derivedProjection, derivedProjection.Schema().Columns[0])
-	require.False(t, PlanHasProvenance(derivedProjection))
+
+	foldedDual := logicalop.LogicalTableDual{RowCount: 0}.Init(ctx, 0)
+	foldedDual.SetSchema(source.Schema())
+	state := NewBuildState(resolve.AutoEmbedConsumerPresent)
+	state.RecordEmptyDual(foldedDual, source)
+	info, ok := Resolve(foldedDual, nil, nil, sourceCol, state)
+	require.True(t, ok)
+	require.Equal(t, "mock/json", info.ModelNameWithProvider)
+
+	sameSchemaDual := logicalop.LogicalTableDual{RowCount: 0}.Init(ctx, 0)
+	sameSchemaDual.SetSchema(source.Schema())
+	assertRejected(sameSchemaDual, sourceCol)
+	info, ok = Resolve(sameSchemaDual, nil, nil, sourceCol, state)
+	require.False(t, ok)
+	require.Nil(t, info)
+
+	chainDual := logicalop.LogicalTableDual{RowCount: 0}.Init(ctx, 0)
+	chainDual.SetSchema(source.Schema())
+	state.RecordEmptyDual(chainDual, foldedDual)
+	info, ok = Resolve(chainDual, nil, nil, sourceCol, state)
+	require.True(t, ok)
+	require.Equal(t, "mock/json", info.ModelNameWithProvider)
+
+	cycleDual := logicalop.LogicalTableDual{RowCount: 0}.Init(ctx, 0)
+	cycleDual.SetSchema(source.Schema())
+	state.RecordEmptyDual(cycleDual, cycleDual)
+	info, ok = Resolve(cycleDual, nil, nil, sourceCol, state)
+	require.False(t, ok)
+	require.Nil(t, info)
+
+	rowDual := logicalop.LogicalTableDual{RowCount: 1}.Init(ctx, 0)
+	rowDual.SetSchema(source.Schema())
+	state.RecordEmptyDual(rowDual, source)
+	info, ok = Resolve(rowDual, nil, nil, sourceCol, state)
+	require.False(t, ok)
+	require.Nil(t, info)
+
+	foldedSnapshot := SnapshotSource(foldedDual, state)
+	require.NotNil(t, foldedSnapshot)
+	require.Equal(t, "mock/json", foldedSnapshot.resolve(sourceCol).info.ModelNameWithProvider)
 
 	selection := logicalop.LogicalSelection{}.Init(ctx, 0)
 	selection.SetChildren(projection)
@@ -235,4 +274,110 @@ func TestResolveAutoEmbedInfo(t *testing.T) {
 	cycle.SetChildren(cycle)
 	assertRejected(cycle, cycleCol)
 	assertRejected(nil, sourceCol)
+}
+
+func TestAutoEmbedConsumerClassificationAndBuildState(t *testing.T) {
+	for name, expected := range map[string]string{
+		ast.VecEmbedL1Distance:           ast.VecL1Distance,
+		ast.VecEmbedL2Distance:           ast.VecL2Distance,
+		ast.VecEmbedNegativeInnerProduct: ast.VecNegativeInnerProduct,
+		ast.VecEmbedCosineDistance:       ast.VecCosineDistance,
+	} {
+		distance, ok := ConsumerDistanceFunction(name)
+		require.True(t, ok)
+		require.Equal(t, expected, distance)
+		call := &ast.FuncCallExpr{FnName: ast.NewCIStr(name)}
+		require.Equal(t, resolve.AutoEmbedConsumerPresent, ClassifyConsumerAST(call))
+		require.Equal(t, resolve.AutoEmbedConsumerPresent, ClassifyAssignmentExprs([]*ast.Assignment{{Expr: call}}))
+	}
+
+	ordinary := &ast.FuncCallExpr{FnName: ast.NewCIStr(ast.VecL2Distance)}
+	_, ok := ConsumerDistanceFunction(ordinary.FnName.L)
+	require.False(t, ok)
+	require.Equal(t, resolve.AutoEmbedConsumerAbsent, ClassifyConsumerAST(ordinary))
+	require.Equal(t, resolve.AutoEmbedConsumerUnknown, ClassifyConsumerAST(nil))
+	require.Equal(t, resolve.AutoEmbedConsumerAbsent, ClassifyAssignmentExprs(nil))
+	require.Equal(t, resolve.AutoEmbedConsumerUnknown, ClassifyAssignmentExprs([]*ast.Assignment{nil}))
+
+	require.Equal(t, resolve.AutoEmbedConsumerPresent,
+		resolve.MergeAutoEmbedConsumerPresence(resolve.AutoEmbedConsumerUnknown, resolve.AutoEmbedConsumerPresent))
+	require.Equal(t, resolve.AutoEmbedConsumerUnknown,
+		resolve.MergeAutoEmbedConsumerPresence(resolve.AutoEmbedConsumerUnknown, resolve.AutoEmbedConsumerAbsent))
+	require.Equal(t, resolve.AutoEmbedConsumerAbsent,
+		resolve.MergeAutoEmbedConsumerPresence(resolve.AutoEmbedConsumerAbsent, resolve.AutoEmbedConsumerAbsent))
+	require.True(t, resolve.AutoEmbedConsumerUnknown.NeedsLineage())
+	require.True(t, resolve.AutoEmbedConsumerPresent.NeedsLineage())
+	require.False(t, resolve.AutoEmbedConsumerAbsent.NeedsLineage())
+
+	sctx := mock.NewContext()
+	ctx := sctx.GetPlanCtx()
+	source := logicalop.LogicalTableDual{RowCount: 1}.Init(ctx, 0)
+	empty := logicalop.LogicalTableDual{RowCount: 0}.Init(ctx, 0)
+	absent := NewBuildState(resolve.AutoEmbedConsumerAbsent)
+	absent.RecordEmptyDual(empty, source)
+	_, found := absent.SourceOfEmptyDual(empty)
+	require.False(t, found)
+	allocs := testing.AllocsPerRun(100, func() {
+		absent.ResetForBuild(resolve.AutoEmbedConsumerAbsent)
+		absent.RecordEmptyDual(empty, source)
+		absent.ResetForReuse()
+	})
+	require.Zero(t, allocs)
+
+	unknown := NewBuildState(resolve.AutoEmbedConsumerUnknown)
+	unknown.RecordEmptyDual(empty, source)
+	recorded, found := unknown.SourceOfEmptyDual(empty)
+	require.True(t, found)
+	require.Same(t, source, recorded)
+	unknown.ResetForReuse()
+	_, found = unknown.SourceOfEmptyDual(empty)
+	require.False(t, found)
+	require.Equal(t, resolve.AutoEmbedConsumerUnknown, unknown.Presence())
+}
+
+func BenchmarkAutoEmbedConsumerGateAndSidecar(b *testing.B) {
+	ordinary := &ast.FuncCallExpr{FnName: ast.NewCIStr(ast.VecL2Distance)}
+	consumer := &ast.FuncCallExpr{FnName: ast.NewCIStr(ast.VecEmbedL2Distance)}
+	b.Run("ClassifyAbsentAST", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			if ClassifyConsumerAST(ordinary) != resolve.AutoEmbedConsumerAbsent {
+				b.Fatal("unexpected classification")
+			}
+		}
+	})
+	b.Run("ClassifyPresentAST", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			if ClassifyConsumerAST(consumer) != resolve.AutoEmbedConsumerPresent {
+				b.Fatal("unexpected classification")
+			}
+		}
+	})
+
+	sctx := mock.NewContext()
+	ctx := sctx.GetPlanCtx()
+	source := logicalop.LogicalTableDual{RowCount: 1}.Init(ctx, 0)
+	empty := logicalop.LogicalTableDual{RowCount: 0}.Init(ctx, 0)
+	b.Run("AbsentRecord", func(b *testing.B) {
+		state := NewBuildState(resolve.AutoEmbedConsumerAbsent)
+		b.ReportAllocs()
+		b.ResetTimer()
+		for b.Loop() {
+			state.ResetForBuild(resolve.AutoEmbedConsumerAbsent)
+			state.RecordEmptyDual(empty, source)
+		}
+	})
+	b.Run("PresentRecordAndLookup", func(b *testing.B) {
+		state := NewBuildState(resolve.AutoEmbedConsumerPresent)
+		b.ReportAllocs()
+		b.ResetTimer()
+		for b.Loop() {
+			state.ResetForBuild(resolve.AutoEmbedConsumerPresent)
+			state.RecordEmptyDual(empty, source)
+			if _, ok := state.SourceOfEmptyDual(empty); !ok {
+				b.Fatal("missing sidecar source")
+			}
+		}
+	})
 }
