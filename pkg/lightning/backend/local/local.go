@@ -993,7 +993,7 @@ func getRegionSplitKeys(
 		return [][]byte{startKey, endKey}, nil
 	}
 
-	keys, err := engine.GetRegionSplitKeys()
+	keys, err := engine.GetRegionSplitKeysWithLimit(sizeLimit, keysLimit)
 	logger.Info("split engine key ranges",
 		zap.Int64("totalSize", engineFileTotalSize),
 		zap.Int64("totalCount", engineFileLength),

@@ -324,6 +324,11 @@ func (e *Engine) GetRegionSplitKeys() ([][]byte, error) {
 	return e.getRegionSplitKeys(e.regionSplitSize, e.regionSplitKeyCnt)
 }
 
+// GetRegionSplitKeysWithLimit implements common.Engine.
+func (e *Engine) GetRegionSplitKeysWithLimit(regionSplitSize, regionSplitKeyCnt int64) ([][]byte, error) {
+	return e.getRegionSplitKeys(regionSplitSize, regionSplitKeyCnt)
+}
+
 func (e *Engine) getRegionSplitKeys(regionSplitSize, regionSplitKeyCnt int64) ([][]byte, error) {
 	sizeProps, err := getSizePropertiesFn(e.logger, e.getDB(), e.keyAdapter)
 	if err != nil {
