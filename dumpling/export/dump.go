@@ -61,8 +61,9 @@ type Dumper struct {
 	conf      *Config
 	metrics   *metrics
 
-	extStore storeapi.Storage
-	dbHandle *sql.DB
+	extStore   storeapi.Storage
+	dbHandle   *sql.DB
+	packedPool *cseDumperPool
 
 	tidbPDClientForGC             pd.Client
 	tidbUseKeyspaceGC             bool
@@ -111,6 +112,7 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 
 	err = adjustConfig(conf,
 		buildTLSConfig,
+		validatePackedBackup,
 		validateSpecifiedSQL,
 		adjustFileFormat)
 	if err != nil {
@@ -126,6 +128,15 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 			}
 		}()
 	})
+
+	if conf.PackedBackup != "" {
+		err = runSteps(d,
+			initLogger,
+			createExternalStore,
+			startHTTPService,
+			openPackedBackup)
+		return d, err
+	}
 
 	err = runSteps(d,
 		initLogger,
@@ -149,6 +160,9 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 // nolint: gocyclo
 func (d *Dumper) Dump() (dumpErr error) {
 	initColTypeRowReceiverMap()
+	if d.conf.PackedBackup != "" {
+		return d.dumpPacked()
+	}
 	var (
 		conn    *sql.Conn
 		err     error
@@ -1295,6 +1309,9 @@ func canRebuildConn(consistency string, trxConsistencyOnly bool) bool {
 func (d *Dumper) Close() error {
 	d.cancelCtx()
 	d.metrics.unregisterFrom(d.conf.PromRegistry)
+	if d.packedPool != nil {
+		d.packedPool.close()
+	}
 	if d.dbHandle != nil {
 		return d.dbHandle.Close()
 	}

@@ -83,6 +83,8 @@ const (
 	flagClusterSSLCA             = "cluster-ssl-ca"
 	flagClusterSSLCert           = "cluster-ssl-cert"
 	flagClusterSSLKey            = "cluster-ssl-key"
+	flagPackedBackup             = "packed-backup"
+	flagCSEExecutable            = "cse-ctl-path"
 
 	// FlagHelp represents the help flag
 	FlagHelp = "help"
@@ -201,6 +203,10 @@ type Config struct {
 	// It's used for controlling GC in keyspace-level clusters where PD addresses
 	// may not be discoverable from TiDB.
 	PDAddr string
+	// PackedBackup is the exact CSE packed-backup metadata URL. It is omitted
+	// from config logging because object-store URLs can contain credentials.
+	PackedBackup  string `json:"-"`
+	CSEExecutable string
 	// ClusterSSLCA/ClusterSSLCert/ClusterSSLKey override Security.* when connecting
 	// to PD endpoints for GC control.
 	ClusterSSLCA   string
@@ -260,6 +266,7 @@ func DefaultConfig() *Config {
 		PromRegistry:             promutil.NewDefaultRegistry(),
 		TransactionalConsistency: true,
 		PDAddr:                   "",
+		CSEExecutable:            "cse-ctl",
 		ClusterSSLCA:             "",
 		ClusterSSLCert:           "",
 		ClusterSSLKey:            "",
@@ -384,6 +391,8 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.String(flagClusterSSLCA, "", "CA certificate path for TLS connections to PD endpoints used by GC control; if empty, reuse --ca")
 	flags.String(flagClusterSSLCert, "", "Client certificate path for TLS connections to PD endpoints used by GC control; if empty, reuse --cert")
 	flags.String(flagClusterSSLKey, "", "Client private key path for TLS connections to PD endpoints used by GC control; if empty, reuse --key")
+	flags.String(flagPackedBackup, "", "Exact CSE packed-backup metadata URL to export without TiDB or PD")
+	flags.String(flagCSEExecutable, "cse-ctl", "Path to the cse-ctl executable used for packed-backup export")
 }
 
 // ParseFromFlags parses dumpling's export.Config from flags
@@ -645,6 +654,14 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	conf.PackedBackup, err = flags.GetString(flagPackedBackup)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	conf.CSEExecutable, err = flags.GetString(flagCSEExecutable)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	for k, v := range params {
 		conf.SessionParams[k] = v
@@ -800,6 +817,25 @@ func buildTLSConfig(conf *Config) error {
 func validateSpecifiedSQL(conf *Config) error {
 	if conf.SQL != "" && conf.Where != "" {
 		return errors.New("can't specify both --sql and --where at the same time. Please try to combine them into --sql")
+	}
+	return nil
+}
+
+func validatePackedBackup(conf *Config) error {
+	if conf.PackedBackup == "" {
+		return nil
+	}
+	if conf.CSEExecutable == "" {
+		return errors.New("--cse-ctl-path must not be empty with --packed-backup")
+	}
+	if conf.SQL != "" || conf.Where != "" || conf.Snapshot != "" || conf.Rows != UnspecifiedSize {
+		return errors.New("--packed-backup cannot be combined with --sql, --where, --snapshot, or --rows")
+	}
+	if conf.FileType == "" {
+		conf.FileType = FileFormatCSVString
+	}
+	if !strings.EqualFold(conf.FileType, FileFormatCSVString) {
+		return errors.New("--packed-backup only supports CSV output")
 	}
 	return nil
 }

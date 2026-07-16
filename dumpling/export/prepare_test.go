@@ -295,6 +295,51 @@ func TestConfigValidation(t *testing.T) {
 
 	conf.FileType = "rand_str"
 	require.EqualError(t, adjustFileFormat(conf), "unknown config.FileType 'rand_str'")
+
+	packedCases := []struct {
+		name      string
+		configure func(*Config)
+		err       string
+	}{
+		{
+			name: "defaults to CSV",
+		},
+		{
+			name: "requires cse-ctl",
+			configure: func(conf *Config) {
+				conf.CSEExecutable = ""
+			},
+			err: "--cse-ctl-path must not be empty with --packed-backup",
+		},
+		{
+			name: "rejects SQL row selection",
+			configure: func(conf *Config) {
+				conf.Where = "id > 1"
+			},
+			err: "--packed-backup cannot be combined with --sql, --where, --snapshot, or --rows",
+		},
+		{
+			name: "rejects non-CSV output",
+			configure: func(conf *Config) {
+				conf.FileType = FileFormatSQLTextString
+			},
+			err: "--packed-backup only supports CSV output",
+		},
+	}
+	for _, testCase := range packedCases {
+		conf := DefaultConfig()
+		conf.PackedBackup = "s3://bucket/backup.meta"
+		if testCase.configure != nil {
+			testCase.configure(conf)
+		}
+		err := validatePackedBackup(conf)
+		if testCase.err == "" {
+			require.NoError(t, err, testCase.name)
+			require.Equal(t, FileFormatCSVString, conf.FileType, testCase.name)
+		} else {
+			require.EqualError(t, err, testCase.err, testCase.name)
+		}
+	}
 }
 
 func TestValidateResolveAutoConsistency(t *testing.T) {
