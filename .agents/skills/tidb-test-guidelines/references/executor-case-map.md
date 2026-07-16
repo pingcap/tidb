@@ -33,7 +33,6 @@
 - `pkg/executor/explain_unit_test.go` - executor: Tests explain analyze invoke next and close.
 - `pkg/executor/explainfor_test.go` - executor: Tests explain for.
 - `pkg/executor/grant_test.go` - executor: Tests grant global.
-- `pkg/executor/historical_stats_test.go` - executor: Tests record history stats after analyze.
 - `pkg/executor/hot_regions_history_table_test.go` - executor: Tests TiDB hot regions history.
 - `pkg/executor/import_into_test.go` - executor: Tests security enhanced mode.
 - `pkg/executor/infoschema_cluster_table_test.go` - executor: Tests skip empty IP nodes for TiDB-type coprocessor.

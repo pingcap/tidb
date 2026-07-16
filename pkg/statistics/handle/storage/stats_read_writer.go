@@ -116,7 +116,7 @@ func (s *statsReadWriter) handleSlowStatsSaving(tableID int64, start time.Time) 
 			zap.Int64("physicalID", tableID),
 			zap.Error(err),
 		)
-		return errors.Errorf("failed to update stats meta version during analyze result save. The system may be too busy. Please retry the operation later")
+		return errors.Annotate(err, "failed to update stats meta version while saving statistics; the system may be too busy; please retry the operation later")
 	}
 
 	statslogutil.StatsLogger().Info("Successfully updated stats meta version for slow saving",

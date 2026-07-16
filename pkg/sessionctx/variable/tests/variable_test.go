@@ -711,21 +711,17 @@ func TestOrderByDependency(t *testing.T) {
 	// Some other exceptions:
 	// - tidb_snapshot and tidb_read_staleness can not be set at the same time. It doesn't affect dependency.
 	vars := map[string]string{
-		"unknown":                                      "1",
-		vardef.TxReadOnly:                              "1",
-		vardef.SQLAutoIsNull:                           "1",
-		vardef.TiDBEnableNoopFuncs:                     "1",
-		vardef.TiDBEnforceMPPExecution:                 "1",
-		vardef.TiDBAllowMPPExecution:                   "1",
-		vardef.TiDBEnableLocalTxn:                      "1",
-		vardef.TiDBEnablePlanReplayerContinuousCapture: "1",
-		vardef.TiDBEnableHistoricalStats:               "1",
+		"unknown":                      "1",
+		vardef.TxReadOnly:              "1",
+		vardef.SQLAutoIsNull:           "1",
+		vardef.TiDBEnableNoopFuncs:     "1",
+		vardef.TiDBEnforceMPPExecution: "1",
+		vardef.TiDBAllowMPPExecution:   "1",
+		vardef.TiDBEnableLocalTxn:      "1",
 	}
 	names := variable.OrderByDependency(vars)
 	require.Greater(t, slices.Index(names, vardef.TxReadOnly), slices.Index(names, vardef.TiDBEnableNoopFuncs))
 	require.Greater(t, slices.Index(names, vardef.SQLAutoIsNull), slices.Index(names, vardef.TiDBEnableNoopFuncs))
 	require.Greater(t, slices.Index(names, vardef.TiDBEnforceMPPExecution), slices.Index(names, vardef.TiDBAllowMPPExecution))
-	// Depended variables below are global variables, so actually it doesn't matter.
-	require.Greater(t, slices.Index(names, vardef.TiDBEnablePlanReplayerContinuousCapture), slices.Index(names, vardef.TiDBEnableHistoricalStats))
 	require.Contains(t, names, "unknown")
 }

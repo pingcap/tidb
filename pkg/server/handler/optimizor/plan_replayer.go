@@ -54,12 +54,10 @@ func (prh PlanReplayerHandler) ServeHTTP(w http.ResponseWriter, req *http.Reques
 	params := mux.Vars(req)
 	name := params[handler.FileName]
 	if strings.HasPrefix(name, "capture_replayer_") {
-		// Files with this prefix were dumped by older TiDB versions with
-		// tidb_enable_historical_stats_for_capture enabled and contain no
-		// stats/*.json entries: they relied on historical stats being injected
-		// at download time, which was removed together with the historical
-		// stats feature. Serve them as-is, but leave a trace for diagnosis.
-		logutil.BgLogger().Warn("serving a plan replayer capture file created by an older version with historical stats for capture enabled; the bundle contains no statistics",
+		// Older TiDB versions used this prefix both for bundles with embedded
+		// statistics and for bundles that expected statistics to be injected at
+		// download time. The filename alone cannot distinguish the two cases.
+		logutil.BgLogger().Warn("serving a legacy plan replayer capture file; statistics may be missing because download-time historical statistics injection is no longer supported",
 			zap.String("filename", name))
 	}
 	handler := downloadFileHandler{
