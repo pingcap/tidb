@@ -31,10 +31,12 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/kv"
+	tidbmeta "github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/structure"
 	tidbtable "github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -131,17 +133,24 @@ func packedColumnType(column *model.ColumnInfo) string {
 }
 
 type packedTableData struct {
-	pool     *cseDumperPool
-	table    *model.TableInfo
-	tableIDs []int64
-	iter     *packedRowIter
+	executable  string
+	metadataURL string
+	table       *model.TableInfo
+	ranges      []packedRange
+	iter        *packedRowIter
 }
 
-func newPackedTableData(pool *cseDumperPool, table *model.TableInfo) *packedTableData {
+type packedRange struct {
+	start []byte
+	end   []byte
+}
+
+func newPackedTableData(executable, metadataURL string, table *model.TableInfo) *packedTableData {
 	return &packedTableData{
-		pool:     pool,
-		table:    table,
-		tableIDs: packedPhysicalTableIDs(table),
+		executable:  executable,
+		metadataURL: metadataURL,
+		table:       table,
+		ranges:      packedPhysicalTableRanges(table),
 	}
 }
 
@@ -150,21 +159,14 @@ func (d *packedTableData) Start(tctx *tcontext.Context, _ *sql.Conn) error {
 	if err != nil {
 		return err
 	}
-	client, err := d.pool.acquire(tctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if err := client.startScan(d.tableIDs); err != nil {
-		_ = d.pool.release(client, false)
-		return err
-	}
 	iter := &packedRowIter{
-		ctx:     tctx,
-		pool:    d.pool,
-		client:  client,
-		table:   d.table,
-		decoder: decoder,
-		args:    make([]any, len(decoder.columns)),
+		ctx:         tctx,
+		executable:  d.executable,
+		metadataURL: d.metadataURL,
+		ranges:      d.ranges,
+		table:       d.table,
+		decoder:     decoder,
+		args:        make([]any, len(decoder.columns)),
 	}
 	iter.readNext()
 	d.iter = iter
@@ -183,18 +185,20 @@ func (d *packedTableData) Close() error {
 func (*packedTableData) RawRows() *sql.Rows { return nil }
 
 type packedRowIter struct {
-	ctx      context.Context
-	pool     *cseDumperPool
-	client   *cseDumperClient
-	table    *model.TableInfo
-	decoder  *packedRowDecoder
-	key      []byte
-	value    []byte
-	args     []any
-	defaults expression.BuildContext
-	err      error
-	hasRow   bool
-	finished bool
+	ctx         context.Context
+	executable  string
+	metadataURL string
+	ranges      []packedRange
+	nextRange   int
+	scan        *cseDumperScan
+	table       *model.TableInfo
+	decoder     *packedRowDecoder
+	key         []byte
+	value       []byte
+	args        []any
+	defaults    expression.BuildContext
+	err         error
+	hasRow      bool
 }
 
 func (i *packedRowIter) HasNext() bool { return i.err == nil && i.hasRow }
@@ -251,43 +255,54 @@ func (i *packedRowIter) Next() {
 func (i *packedRowIter) Error() error { return i.err }
 
 func (i *packedRowIter) Close() error {
-	if i.client == nil {
+	if i.scan == nil {
 		return nil
 	}
-	client := i.client
-	i.client = nil
-	return i.pool.release(client, i.finished && i.err == nil)
+	scan := i.scan
+	i.scan = nil
+	return scan.close()
 }
 
 func (i *packedRowIter) readNext() {
-	if i.client == nil {
-		i.hasRow = false
-		return
-	}
-	key, value, end, err := i.client.readRow(i.key, i.value)
-	if err != nil {
-		i.err = err
-		i.hasRow = false
-		client := i.client
-		i.client = nil
-		if releaseErr := i.pool.release(client, false); releaseErr != nil {
-			i.err = errors.Annotatef(i.err, "replace failed CSE dumper: %v", releaseErr)
+	for {
+		if i.scan == nil {
+			if i.nextRange == len(i.ranges) {
+				i.hasRow = false
+				return
+			}
+			rangeToScan := i.ranges[i.nextRange]
+			i.nextRange++
+			scan, err := startCSEDumperScan(
+				i.ctx,
+				i.executable,
+				i.metadataURL,
+				rangeToScan.start,
+				rangeToScan.end,
+			)
+			if err != nil {
+				i.err = err
+				i.hasRow = false
+				return
+			}
+			i.scan = scan
 		}
-		return
-	}
-	if end {
-		i.hasRow = false
-		i.finished = true
-		client := i.client
-		i.client = nil
-		if err := i.pool.release(client, true); err != nil {
+
+		key, value, end, err := i.scan.readRow(i.key, i.value)
+		if err != nil {
 			i.err = err
+			i.hasRow = false
+			i.scan = nil
+			return
 		}
+		if end {
+			i.scan = nil
+			continue
+		}
+		i.key = key
+		i.value = value
+		i.hasRow = true
 		return
 	}
-	i.key = key
-	i.value = value
-	i.hasRow = true
 }
 
 type packedRowDecoder struct {
@@ -394,6 +409,16 @@ func packedPhysicalTableIDs(table *model.TableInfo) []int64 {
 	return tableIDs
 }
 
+func packedPhysicalTableRanges(table *model.TableInfo) []packedRange {
+	tableIDs := packedPhysicalTableIDs(table)
+	ranges := make([]packedRange, 0, len(tableIDs))
+	for _, tableID := range tableIDs {
+		start := tablecodec.GenTableRecordPrefix(tableID)
+		ranges = append(ranges, packedRange{start: start, end: start.PrefixNext()})
+	}
+	return ranges
+}
+
 func packedCommonHandleColumnOffsets(table *model.TableInfo) (map[int64]int, error) {
 	offsets := make(map[int64]int)
 	if !table.IsCommonHandle {
@@ -412,24 +437,87 @@ func packedCommonHandleColumnOffsets(table *model.TableInfo) (map[int64]int, err
 	return offsets, nil
 }
 
-func decodePackedManifest(manifest *packedManifest) ([]*model.DBInfo, error) {
-	databases := make([]*model.DBInfo, 0, len(manifest.Databases))
-	for _, encoded := range manifest.Databases {
-		database := &model.DBInfo{}
-		if err := json.Unmarshal(encoded.Database, database); err != nil {
-			return nil, errors.Annotate(err, "decode CSE database schema")
+type packedRangeScanner func(
+	ctx context.Context,
+	startKey, endKey []byte,
+	emit func(key, value []byte) error,
+) error
+
+func newCSEDumperRangeScanner(executable, metadataURL string) packedRangeScanner {
+	return func(
+		ctx context.Context,
+		startKey, endKey []byte,
+		emit func(key, value []byte) error,
+	) error {
+		return scanCSEDumperRange(ctx, executable, metadataURL, startKey, endKey, emit)
+	}
+}
+
+func packedHashDataPrefix(hashKey []byte) kv.Key {
+	prefix := []byte{'m'}
+	prefix = codec.EncodeBytes(prefix, hashKey)
+	return codec.EncodeUint(prefix, uint64(structure.HashData))
+}
+
+func scanPackedHash(
+	ctx context.Context,
+	scan packedRangeScanner,
+	hashKey []byte,
+	emit func(field, value []byte) error,
+) error {
+	prefix := packedHashDataPrefix(hashKey)
+	return scan(ctx, prefix, prefix.PrefixNext(), func(key, value []byte) error {
+		if !bytes.HasPrefix(key, prefix) {
+			return errors.Errorf("packed metadata key %x is outside hash prefix %x", key, prefix)
 		}
-		for _, encodedTable := range encoded.Tables {
-			table := &model.TableInfo{}
-			if err := json.Unmarshal(encodedTable, table); err != nil {
-				return nil, errors.Annotatef(err, "decode CSE table schema in database %q", database.Name.O)
+		remaining, field, err := codec.DecodeBytes(key[len(prefix):], nil)
+		if err != nil {
+			return errors.Annotatef(err, "decode packed metadata hash key %x", key)
+		}
+		if len(remaining) != 0 {
+			return errors.Errorf("packed metadata hash key %x has %d trailing bytes", key, len(remaining))
+		}
+		return emit(field, value)
+	})
+}
+
+func loadPackedDatabases(ctx context.Context, scan packedRangeScanner) ([]*model.DBInfo, error) {
+	var databases []*model.DBInfo
+	if err := scanPackedHash(ctx, scan, []byte("DBs"), func(field, value []byte) error {
+		if !tidbmeta.IsDBkey(field) {
+			return nil
+		}
+		database := &model.DBInfo{}
+		if err := json.Unmarshal(value, database); err != nil {
+			return errors.Annotatef(err, "decode packed database schema at field %q", field)
+		}
+		if database.State == model.StatePublic {
+			databases = append(databases, database)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+
+	for _, database := range databases {
+		if err := scanPackedHash(ctx, scan, tidbmeta.DBkey(database.ID), func(field, value []byte) error {
+			if !tidbmeta.IsTableKey(field) {
+				return nil
 			}
-			database.Deprecated.Tables = append(database.Deprecated.Tables, table)
+			table := &model.TableInfo{}
+			if err := json.Unmarshal(value, table); err != nil {
+				return errors.Annotatef(err, "decode packed table schema in database %q", database.Name.O)
+			}
+			if table.State == model.StatePublic {
+				database.Deprecated.Tables = append(database.Deprecated.Tables, table)
+			}
+			return nil
+		}); err != nil {
+			return nil, err
 		}
 		slices.SortFunc(database.Deprecated.Tables, func(left, right *model.TableInfo) int {
 			return strings.Compare(left.Name.L, right.Name.L)
 		})
-		databases = append(databases, database)
 	}
 	slices.SortFunc(databases, model.LessDBInfo)
 	return databases, nil
@@ -451,21 +539,11 @@ func packedCreateTableSQL(table *model.TableInfo) (string, error) {
 	return output.String(), nil
 }
 
-func openPackedBackup(d *Dumper) error {
-	pool, err := newCSEDumperPool(d.tctx, d.conf.Threads, d.conf.CSEExecutable, d.conf.PackedBackup)
-	if err != nil {
-		return err
-	}
-	d.packedPool = pool
-	return nil
-}
-
 func (d *Dumper) dumpPacked() error {
-	manifest, err := d.packedPool.schema(d.tctx)
-	if err != nil {
-		return err
-	}
-	databases, err := decodePackedManifest(manifest)
+	databases, err := loadPackedDatabases(
+		d.tctx,
+		newCSEDumperRangeScanner(d.conf.CSEExecutable, d.conf.PackedBackup),
+	)
 	if err != nil {
 		return err
 	}
@@ -527,7 +605,8 @@ func (d *Dumper) dumpPacked() error {
 			}
 			meta := newPackedTableMeta(database.Name.O, table, createSQL)
 			if !d.conf.NoData {
-				if err := send(NewTaskTableData(meta, newPackedTableData(d.packedPool, table), 0, 1)); err != nil {
+				data := newPackedTableData(d.conf.CSEExecutable, d.conf.PackedBackup, table)
+				if err := send(NewTaskTableData(meta, data, 0, 1)); err != nil {
 					close(taskIn)
 					_ = wg.Wait()
 					return err
@@ -541,9 +620,6 @@ func (d *Dumper) dumpPacked() error {
 		return errors.Trace(err)
 	}
 	d.tctx.L().Info("finished dumping packed backup",
-		zap.Uint64("cluster ID", manifest.ClusterID),
-		zap.Uint32("keyspace ID", manifest.KeyspaceID),
-		zap.Uint64("read timestamp", manifest.ReadTS),
 		zap.Int("tables", tableCount),
 		zap.Int("tasks", countTotalTask(writers)),
 		zap.Duration("duration", time.Since(start)))

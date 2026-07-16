@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -43,14 +42,18 @@ func TestPackedProtocolRows(t *testing.T) {
 			value:   []byte{'v', 0xff},
 		},
 		{
-			name:    "stream terminator",
-			encoded: []byte{0, 0, 0, 0, 0, 0, 0, 0},
-			end:     true,
+			name: "clean stream EOF",
+			end:  true,
 		},
 		{
-			name:      "invalid terminator",
-			encoded:   []byte{0, 0, 0, 0, 1, 0, 0, 0},
-			errorText: "invalid packed row terminator with value size 1",
+			name:      "empty key",
+			encoded:   []byte{0, 0, 0, 0, 0, 0, 0, 0},
+			errorText: "invalid packed row with empty key",
+		},
+		{
+			name:      "truncated key size",
+			encoded:   []byte{2, 0},
+			errorText: "read packed row key size: unexpected EOF",
 		},
 		{
 			name:      "truncated key",
@@ -77,7 +80,7 @@ func TestPackedProtocolRows(t *testing.T) {
 }
 
 func TestPackedRowsUseTiDBStorageEncoding(t *testing.T) {
-	store, domain := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table packed_int (
@@ -102,6 +105,39 @@ func TestPackedRowsUseTiDBStorageEncoding(t *testing.T) {
 	tk.MustExec("create table packed_partition (id int primary key, value varchar(16)) partition by range (id) (partition p0 values less than (10), partition p1 values less than maxvalue)")
 	tk.MustExec("insert into packed_partition values (1, 'first'), (11, 'second')")
 
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	databases, err := loadPackedDatabases(context.Background(), func(
+		_ context.Context,
+		startKey, endKey []byte,
+		emit func(key, value []byte) error,
+	) error {
+		iterator, err := txn.Iter(kv.Key(startKey), kv.Key(endKey))
+		if err != nil {
+			return err
+		}
+		defer iterator.Close()
+		for iterator.Valid() {
+			if err := emit(iterator.Key(), iterator.Value()); err != nil {
+				return err
+			}
+			if err := iterator.Next(); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	require.NoError(t, txn.Rollback())
+	var database *model.DBInfo
+	for _, candidate := range databases {
+		if candidate.Name.L == "test" {
+			database = candidate
+			break
+		}
+	}
+	require.NotNil(t, database)
+
 	initColTypeRowReceiverMap()
 	testCases := []struct {
 		table string
@@ -124,9 +160,15 @@ func TestPackedRowsUseTiDBStorageEncoding(t *testing.T) {
 		},
 	}
 	for _, testCase := range testCases {
-		table, err := domain.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(testCase.table))
-		require.NoError(t, err, testCase.table)
-		rows := readPackedTestRows(t, store, table.Meta())
+		var table *model.TableInfo
+		for _, candidate := range database.Deprecated.Tables {
+			if candidate.Name.L == testCase.table {
+				table = candidate
+				break
+			}
+		}
+		require.NotNil(t, table, testCase.table)
+		rows := readPackedTestRows(t, store, table)
 		require.Equal(t, testCase.rows, rows, testCase.table)
 	}
 }
