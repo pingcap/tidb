@@ -91,6 +91,8 @@ const (
 	flagParquetCompress          = "parquet-compress"
 	flagParquetPageSize          = "parquet-page-size"
 	flagParquetRowGroupSize      = "parquet-row-group-size"
+	flagPackedBackup             = "packed-backup"
+	flagCSEExecutable            = "cse-ctl-path"
 
 	// FlagHelp represents the help flag
 	FlagHelp = "help"
@@ -212,6 +214,10 @@ type Config struct {
 	// It's used for controlling GC in keyspace-level clusters where PD addresses
 	// may not be discoverable from TiDB.
 	PDAddr string
+	// PackedBackup is the exact CSE packed-backup metadata URL. It is omitted
+	// from config logging because object-store URLs can contain credentials.
+	PackedBackup  string `json:"-"`
+	CSEExecutable string
 	// ClusterSSLCA/ClusterSSLCert/ClusterSSLKey override Security.* when connecting
 	// to PD endpoints for GC control.
 	ClusterSSLCA   string
@@ -279,6 +285,7 @@ func DefaultConfig() *Config {
 		PromRegistry:             promutil.NewDefaultRegistry(),
 		TransactionalConsistency: true,
 		PDAddr:                   "",
+		CSEExecutable:            "cse-ctl",
 		ClusterSSLCA:             "",
 		ClusterSSLCert:           "",
 		ClusterSSLKey:            "",
@@ -420,6 +427,8 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 		units.BytesSize(float64(parquetfile.DefaultRowGroupMemoryLimitBytes)),
 		"Parquet row-group memory limit in bytes (flush threshold by accounted in-memory bytes), accepts human-readable units",
 	)
+	flags.String(flagPackedBackup, "", "Exact CSE packed-backup metadata URL to export without TiDB or PD")
+	flags.String(flagCSEExecutable, "cse-ctl", "Path to the cse-ctl executable used for packed-backup export")
 }
 
 // ParseFromFlags parses dumpling's export.Config from flags
@@ -735,6 +744,14 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	conf.PackedBackup, err = flags.GetString(flagPackedBackup)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	conf.CSEExecutable, err = flags.GetString(flagCSEExecutable)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	for k, v := range params {
 		conf.SessionParams[k] = v
@@ -1033,6 +1050,25 @@ func validateSpecifiedSQL(conf *Config) error {
 	}
 	if conf.SQL != "" && len(conf.Partitions) > 0 {
 		return errors.New("can't specify both --sql and --partitions at the same time")
+	}
+	return nil
+}
+
+func validatePackedBackup(conf *Config) error {
+	if conf.PackedBackup == "" {
+		return nil
+	}
+	if conf.CSEExecutable == "" {
+		return errors.New("--cse-ctl-path must not be empty with --packed-backup")
+	}
+	if conf.SQL != "" || conf.Where != "" || conf.Snapshot != "" || conf.Rows != UnspecifiedSize {
+		return errors.New("--packed-backup cannot be combined with --sql, --where, --snapshot, or --rows")
+	}
+	if conf.FileType == "" {
+		conf.FileType = FileFormatCSVString
+	}
+	if !strings.EqualFold(conf.FileType, FileFormatCSVString) {
+		return errors.New("--packed-backup only supports CSV output")
 	}
 	return nil
 }
