@@ -272,6 +272,21 @@ func TestExplainRUPlanFormulaAndOperatorClasses(t *testing.T) {
 
 	_, _, ok = readBillingDemoUnitPreviewRU(readBillingDemoUnit{unit: "scan_total_keys", value: 4}, tidbWeights)
 	require.False(t, ok)
+	for _, outputUnit := range []string{readBillingDemoUnitOutputRows, readBillingDemoUnitOutputBytes} {
+		_, _, ok = readBillingDemoUnitPreviewRU(readBillingDemoUnit{unit: outputUnit, value: 4}, tidbWeights)
+		require.False(t, ok)
+		require.True(t, readBillingDemoUnitDiagnosticOnly(outputUnit))
+	}
+	for _, outputClass := range []string{
+		readBillingDemoOpClassHashAgg,
+		readBillingDemoOpClassStreamAgg,
+		readBillingDemoOpClassHashJoin,
+		readBillingDemoOpClassMergeJoin,
+		readBillingDemoOpClassLookupJoin,
+	} {
+		require.True(t, readBillingDemoOperatorHasOutputShadows(outputClass))
+	}
+	require.False(t, readBillingDemoOperatorHasOutputShadows(readBillingDemoOpClassProjection))
 
 	writeWeights, ok := readBillingDemoResolveWeights(readBillingDemoSiteTiKV, readBillingDemoOpClassKVWrite, readBillingDemoWeightVersion)
 	require.True(t, ok)
@@ -463,6 +478,92 @@ func TestExplainRUPlanFormulaAndOperatorClasses(t *testing.T) {
 					}
 				}
 				require.Equal(t, 1, orderSamples)
+			})
+		}
+	})
+
+	t.Run("root aggregations expose diagnostic output units without changing formula", func(t *testing.T) {
+		child := physicalop.PhysicalProjection{}.Init(ctx, stats, 0)
+		child.SetSchema(schema)
+		for _, tc := range []struct {
+			name    string
+			opClass string
+			agg     func() *FlatOperator
+		}{
+			{name: "hash agg", opClass: readBillingDemoOpClassHashAgg, agg: func() *FlatOperator {
+				return &FlatOperator{Origin: (&physicalop.BasePhysicalAgg{}).InitForHash(ctx, stats, 0, schema), ChildrenIdx: []int{1}, ChildrenEndIdx: 1, IsRoot: true, StoreType: kv.TiDB}
+			}},
+			{name: "stream agg", opClass: readBillingDemoOpClassStreamAgg, agg: func() *FlatOperator {
+				return &FlatOperator{Origin: (&physicalop.BasePhysicalAgg{}).InitForStream(ctx, stats, 0, schema), ChildrenIdx: []int{1}, ChildrenEndIdx: 1, IsRoot: true, StoreType: kv.TiDB}
+			}},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				tree := FlatPlanTree{
+					tc.agg(),
+					{Origin: child, ChildrenEndIdx: 1, IsRoot: true, StoreType: kv.TiDB},
+				}
+				runtimeStats := execdetails.NewRuntimeStatsColl(nil)
+				aggStats := runtimeStats.GetBasicRuntimeStats(tree[0].Origin.ID(), true)
+				aggStats.Record(time.Millisecond, 2)
+				aggStats.RecordBytes(80, 30)
+				childStats := runtimeStats.GetBasicRuntimeStats(child.ID(), true)
+				childStats.Record(time.Millisecond, 8)
+				childStats.RecordBytes(0, 80)
+
+				operator, supported, reason := readBillingDemoClassifyOperator(tree[0])
+				require.True(t, supported)
+				require.Empty(t, reason)
+				require.Equal(t, tc.opClass, operator.opClass)
+				units, reason, ok := readBillingDemoRootUnits(runtimeStats, tree, 0, tree[0], operator)
+				require.True(t, ok)
+				require.Empty(t, reason)
+				require.Equal(t, 8.0, readBillingDemoUnitValue(units, readBillingDemoUnitInputRows, readBillingDemoInputSideAll))
+				require.Equal(t, 80.0, readBillingDemoUnitValue(units, readBillingDemoUnitInputBytes, readBillingDemoInputSideAll))
+				require.Equal(t, 2.0, readBillingDemoUnitValue(units, readBillingDemoUnitOutputRows, readBillingDemoInputSideAll))
+				require.Equal(t, 30.0, readBillingDemoUnitValue(units, readBillingDemoUnitOutputBytes, readBillingDemoInputSideAll))
+				require.Equal(t, readBillingDemoInputSourceRuntimeChunkBytes, readBillingDemoUnitSource(units, readBillingDemoUnitOutputBytes, readBillingDemoInputSideAll))
+				require.Equal(t, explainRUWidthSourceRuntimeChunkAvg, readBillingDemoUnitWidthSource(units, readBillingDemoUnitOutputBytes, readBillingDemoInputSideAll))
+
+				operator.id = tree[0].ExplainID().String()
+				operator.status = readBillingDemoStatusOperatorOK
+				operator.reason = readBillingDemoReasonNone
+				operator.actRows = 2
+				operator.hasActRows = true
+				operator.units = units
+				result := readBillingDemoResult{status: readBillingDemoStatusSuccess, reason: readBillingDemoReasonNone, operators: []readBillingDemoOperatorResult{operator}}
+				rows := explainRUBuildReadBillingRows(result, explainRUComponentSnapshotOK)
+				weights, ok := readBillingDemoResolveWeights(operator.site, operator.opClass, readBillingDemoWeightVersion)
+				require.True(t, ok)
+				require.InEpsilon(t, weights.fixedEvent+8*weights.row+80*weights.byte, rows[0].previewRU, 0.000001)
+				seenOutputUnits := make(map[string]bool)
+				for _, row := range rows {
+					if row.unit != readBillingDemoUnitOutputRows && row.unit != readBillingDemoUnitOutputBytes {
+						continue
+					}
+					seenOutputUnits[row.unit] = true
+					require.False(t, row.hasWeight)
+					require.False(t, row.hasPreviewRU)
+					require.Contains(t, row.note, "diagnostic_only=true")
+					if row.unit == readBillingDemoUnitOutputRows {
+						require.Equal(t, 2.0, row.workRows)
+						require.Equal(t, int64(2), row.count)
+					} else {
+						require.Equal(t, 30.0, row.workBytes)
+					}
+					rendered := row.toStrings()
+					require.Empty(t, rendered[13])
+					require.Empty(t, rendered[14])
+				}
+				require.Equal(t, map[string]bool{readBillingDemoUnitOutputRows: true, readBillingDemoUnitOutputBytes: true}, seenOutputUnits)
+
+				statementStats := buildReadBillingDemoStatementStats(result)
+				seenOutputUnits = make(map[string]bool)
+				for _, sample := range statementStats.BaseUnits {
+					if sample.Unit == readBillingDemoUnitOutputRows || sample.Unit == readBillingDemoUnitOutputBytes {
+						seenOutputUnits[sample.Unit] = true
+					}
+				}
+				require.Equal(t, map[string]bool{readBillingDemoUnitOutputRows: true, readBillingDemoUnitOutputBytes: true}, seenOutputUnits)
 			})
 		}
 	})
@@ -792,6 +893,7 @@ func TestReadBillingDemoCopInputEstimator(t *testing.T) {
 
 	recordSummary := func(runtimeStats *execdetails.RuntimeStatsColl, planID int, rows uint64, detail *tikvutil.ScanDetail) {
 		one := uint64(1)
+		runtimeStats.RecordExpectedCopTasks([]int{planID})
 		runtimeStats.RecordCopStats(planID, kv.TiKV, detail, tikvutil.TimeDetail{}, &tipb.ExecutorExecutionSummary{
 			TimeProcessedNs: &one,
 			NumProducedRows: &rows,
@@ -832,13 +934,14 @@ func TestReadBillingDemoCopInputEstimator(t *testing.T) {
 			node              *FlatOperator
 			widthState        readBillingDemoCopWidthState
 			expectedOrderWork float64
+			expectOutputUnits bool
 		}{
 			{name: "selection", node: &FlatOperator{Origin: selection, IsRoot: false, StoreType: kv.TiKV}, widthState: readBillingDemoCopWidthKnown, expectedOrderWork: -1},
 			{name: "limit", node: &FlatOperator{Origin: limit, IsRoot: false, StoreType: kv.TiKV}, widthState: readBillingDemoCopWidthKnown, expectedOrderWork: -1},
 			{name: "topn", node: &FlatOperator{Origin: topN, IsRoot: false, StoreType: kv.TiKV}, widthState: readBillingDemoCopWidthKnown, expectedOrderWork: 12},
 			{name: "projection", node: &FlatOperator{Origin: projection, IsRoot: false, StoreType: kv.TiKV}, widthState: readBillingDemoCopWidthBarrier, expectedOrderWork: -1},
-			{name: "hashagg", node: &FlatOperator{Origin: hashAgg, IsRoot: false, StoreType: kv.TiKV}, widthState: readBillingDemoCopWidthBarrier, expectedOrderWork: -1},
-			{name: "streamagg", node: &FlatOperator{Origin: streamAgg, IsRoot: false, StoreType: kv.TiKV}, widthState: readBillingDemoCopWidthBarrier, expectedOrderWork: -1},
+			{name: "hashagg", node: &FlatOperator{Origin: hashAgg, IsRoot: false, StoreType: kv.TiKV}, widthState: readBillingDemoCopWidthBarrier, expectedOrderWork: -1, expectOutputUnits: true},
+			{name: "streamagg", node: &FlatOperator{Origin: streamAgg, IsRoot: false, StoreType: kv.TiKV}, widthState: readBillingDemoCopWidthBarrier, expectedOrderWork: -1, expectOutputUnits: true},
 		}
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {
@@ -850,6 +953,9 @@ func TestReadBillingDemoCopInputEstimator(t *testing.T) {
 					{Origin: scan, ChildrenEndIdx: 2, IsRoot: false, StoreType: kv.TiKV},
 				}
 				runtimeStats := execdetails.NewRuntimeStatsColl(nil)
+				readerStats := runtimeStats.GetBasicRuntimeStats(reader.ID(), true)
+				readerStats.Record(time.Millisecond, 2)
+				readerStats.RecordBytes(0, 30)
 				recordSummary(runtimeStats, scan.ID(), 4, nil)
 				recordSummary(runtimeStats, tc.node.Origin.ID(), 2, &tikvutil.ScanDetail{TotalKeys: 5, ProcessedKeys: 5, ProcessedKeysSize: 100})
 				estimator := newReadBillingDemoCopEstimator(tree, runtimeStats)
@@ -861,8 +967,145 @@ func TestReadBillingDemoCopInputEstimator(t *testing.T) {
 				require.Equal(t, 80.0, readBillingDemoUnitValue(outcome.units, readBillingDemoUnitInputBytes, readBillingDemoInputSideAll))
 				require.Equal(t, tc.expectedOrderWork, readBillingDemoUnitValue(outcome.units, readBillingDemoUnitOrderWork, readBillingDemoInputSideAll))
 				require.Equal(t, tc.widthState, estimator.outputEstimate(1).widthState)
+				if tc.expectOutputUnits {
+					require.Equal(t, 2.0, readBillingDemoUnitValue(outcome.units, readBillingDemoUnitOutputRows, readBillingDemoInputSideAll))
+					require.Equal(t, 30.0, readBillingDemoUnitValue(outcome.units, readBillingDemoUnitOutputBytes, readBillingDemoInputSideAll))
+					require.Equal(t, readBillingDemoInputSourceRuntimeOperatorActRows, readBillingDemoUnitSource(outcome.units, readBillingDemoUnitOutputRows, readBillingDemoInputSideAll))
+					require.Equal(t, readBillingDemoInputSourceRuntimeReaderOutput, readBillingDemoUnitSource(outcome.units, readBillingDemoUnitOutputBytes, readBillingDemoInputSideAll))
+					require.Equal(t, explainRUWidthSourceRuntimeReaderOutputChunkAvg, readBillingDemoUnitWidthSource(outcome.units, readBillingDemoUnitOutputBytes, readBillingDemoInputSideAll))
+				} else {
+					require.False(t, readBillingDemoUnitExists(outcome.units, readBillingDemoUnitOutputRows, readBillingDemoInputSideAll))
+					require.False(t, readBillingDemoUnitExists(outcome.units, readBillingDemoUnitOutputBytes, readBillingDemoInputSideAll))
+				}
 			})
 		}
+	})
+
+	t.Run("aggregation output shadows fail open without attributable bytes", func(t *testing.T) {
+		newHashAgg := func() *FlatOperator {
+			agg := (&physicalop.BasePhysicalAgg{}).InitForHash(ctx, stats, 0, schema)
+			return &FlatOperator{Origin: agg, IsRoot: false, StoreType: kv.TiKV}
+		}
+		t.Run("reader row mismatch keeps exact output rows only", func(t *testing.T) {
+			agg := newHashAgg()
+			agg.ChildrenIdx = []int{2}
+			agg.ChildrenEndIdx = 2
+			tree := FlatPlanTree{
+				{Origin: reader, ChildrenIdx: []int{1}, ChildrenEndIdx: 2, IsRoot: true, StoreType: kv.TiDB},
+				agg,
+				{Origin: scan, ChildrenEndIdx: 2, IsRoot: false, StoreType: kv.TiKV},
+			}
+			runtimeStats := execdetails.NewRuntimeStatsColl(nil)
+			readerStats := runtimeStats.GetBasicRuntimeStats(reader.ID(), true)
+			readerStats.Record(time.Millisecond, 3)
+			readerStats.RecordBytes(0, 33)
+			recordSummary(runtimeStats, scan.ID(), 4, nil)
+			recordSummary(runtimeStats, agg.Origin.ID(), 2, &tikvutil.ScanDetail{TotalKeys: 5, ProcessedKeys: 5, ProcessedKeysSize: 100})
+			operator, _, _ := readBillingDemoClassifyOperator(agg)
+			outcome := readBillingDemoCopUnits(newReadBillingDemoCopEstimator(tree, runtimeStats), 1, operator)
+			require.True(t, outcome.success)
+			require.Equal(t, 4.0, readBillingDemoUnitValue(outcome.units, readBillingDemoUnitInputRows, readBillingDemoInputSideAll))
+			require.Equal(t, 2.0, readBillingDemoUnitValue(outcome.units, readBillingDemoUnitOutputRows, readBillingDemoInputSideAll))
+			require.False(t, readBillingDemoUnitExists(outcome.units, readBillingDemoUnitOutputBytes, readBillingDemoInputSideAll))
+		})
+
+		t.Run("zero rows and bytes remain observed evidence", func(t *testing.T) {
+			agg := newHashAgg()
+			agg.ChildrenIdx = []int{2}
+			agg.ChildrenEndIdx = 2
+			tree := FlatPlanTree{
+				{Origin: reader, ChildrenIdx: []int{1}, ChildrenEndIdx: 2, IsRoot: true, StoreType: kv.TiDB},
+				agg,
+				{Origin: scan, ChildrenEndIdx: 2, IsRoot: false, StoreType: kv.TiKV},
+			}
+			runtimeStats := execdetails.NewRuntimeStatsColl(nil)
+			readerStats := runtimeStats.GetBasicRuntimeStats(reader.ID(), true)
+			readerStats.Record(time.Millisecond, 0)
+			readerStats.RecordBytes(0, 0)
+			recordSummary(runtimeStats, scan.ID(), 4, nil)
+			recordSummary(runtimeStats, agg.Origin.ID(), 0, &tikvutil.ScanDetail{TotalKeys: 5, ProcessedKeys: 5, ProcessedKeysSize: 100})
+			operator, _, _ := readBillingDemoClassifyOperator(agg)
+			outcome := readBillingDemoCopUnits(newReadBillingDemoCopEstimator(tree, runtimeStats), 1, operator)
+			require.True(t, outcome.success)
+			require.True(t, readBillingDemoUnitExists(outcome.units, readBillingDemoUnitOutputRows, readBillingDemoInputSideAll))
+			require.True(t, readBillingDemoUnitExists(outcome.units, readBillingDemoUnitOutputBytes, readBillingDemoInputSideAll))
+			require.Zero(t, readBillingDemoUnitValue(outcome.units, readBillingDemoUnitOutputRows, readBillingDemoInputSideAll))
+			require.Zero(t, readBillingDemoUnitValue(outcome.units, readBillingDemoUnitOutputBytes, readBillingDemoInputSideAll))
+		})
+
+		t.Run("non top aggregation never borrows reader bytes", func(t *testing.T) {
+			agg := newHashAgg()
+			agg.ChildrenIdx = []int{3}
+			agg.ChildrenEndIdx = 3
+			tree := FlatPlanTree{
+				{Origin: reader, ChildrenIdx: []int{1}, ChildrenEndIdx: 3, IsRoot: true, StoreType: kv.TiDB},
+				{Origin: selection, ChildrenIdx: []int{2}, ChildrenEndIdx: 3, IsRoot: false, StoreType: kv.TiKV},
+				agg,
+				{Origin: scan, ChildrenEndIdx: 3, IsRoot: false, StoreType: kv.TiKV},
+			}
+			runtimeStats := execdetails.NewRuntimeStatsColl(nil)
+			readerStats := runtimeStats.GetBasicRuntimeStats(reader.ID(), true)
+			readerStats.Record(time.Millisecond, 2)
+			readerStats.RecordBytes(0, 30)
+			recordSummary(runtimeStats, scan.ID(), 4, nil)
+			recordSummary(runtimeStats, agg.Origin.ID(), 2, &tikvutil.ScanDetail{TotalKeys: 5, ProcessedKeys: 5, ProcessedKeysSize: 100})
+			recordSummary(runtimeStats, selection.ID(), 2, nil)
+			operator, _, _ := readBillingDemoClassifyOperator(agg)
+			outcome := readBillingDemoCopUnits(newReadBillingDemoCopEstimator(tree, runtimeStats), 2, operator)
+			require.True(t, outcome.success)
+			require.Equal(t, 2.0, readBillingDemoUnitValue(outcome.units, readBillingDemoUnitOutputRows, readBillingDemoInputSideAll))
+			require.False(t, readBillingDemoUnitExists(outcome.units, readBillingDemoUnitOutputBytes, readBillingDemoInputSideAll))
+		})
+
+		t.Run("incomplete own summary omits both output units", func(t *testing.T) {
+			agg := newHashAgg()
+			agg.ChildrenIdx = []int{2}
+			agg.ChildrenEndIdx = 2
+			tree := FlatPlanTree{
+				{Origin: reader, ChildrenIdx: []int{1}, ChildrenEndIdx: 2, IsRoot: true, StoreType: kv.TiDB},
+				agg,
+				{Origin: scan, ChildrenEndIdx: 2, IsRoot: false, StoreType: kv.TiKV},
+			}
+			runtimeStats := execdetails.NewRuntimeStatsColl(nil)
+			recordSummary(runtimeStats, scan.ID(), 2, nil)
+			recordSummary(runtimeStats, scan.ID(), 2, nil)
+			recordSummary(runtimeStats, agg.Origin.ID(), 2, &tikvutil.ScanDetail{TotalKeys: 5, ProcessedKeys: 5, ProcessedKeysSize: 100})
+			operator, _, _ := readBillingDemoClassifyOperator(agg)
+			outcome := readBillingDemoCopUnits(newReadBillingDemoCopEstimator(tree, runtimeStats), 1, operator)
+			require.True(t, outcome.success)
+			require.Equal(t, 4.0, readBillingDemoUnitValue(outcome.units, readBillingDemoUnitInputRows, readBillingDemoInputSideAll))
+			require.False(t, readBillingDemoUnitExists(outcome.units, readBillingDemoUnitOutputRows, readBillingDemoInputSideAll))
+			require.False(t, readBillingDemoUnitExists(outcome.units, readBillingDemoUnitOutputBytes, readBillingDemoInputSideAll))
+		})
+
+		t.Run("missing expected response summaries omit shadows without changing formula inputs", func(t *testing.T) {
+			agg := newHashAgg()
+			agg.ChildrenIdx = []int{3}
+			agg.ChildrenEndIdx = 3
+			tree := FlatPlanTree{
+				{Origin: limit, ChildrenIdx: []int{1}, ChildrenEndIdx: 3, IsRoot: true, StoreType: kv.TiDB},
+				{Origin: reader, ChildrenIdx: []int{2}, ChildrenEndIdx: 3, IsRoot: true, StoreType: kv.TiDB},
+				agg,
+				{Origin: scan, ChildrenEndIdx: 3, IsRoot: false, StoreType: kv.TiKV},
+			}
+			runtimeStats := execdetails.NewRuntimeStatsColl(nil)
+			readerStats := runtimeStats.GetBasicRuntimeStats(reader.ID(), true)
+			readerStats.Record(time.Millisecond, 2)
+			readerStats.RecordBytes(0, 30)
+			recordSummary(runtimeStats, scan.ID(), 4, nil)
+			recordSummary(runtimeStats, agg.Origin.ID(), 2, &tikvutil.ScanDetail{TotalKeys: 5, ProcessedKeys: 5, ProcessedKeysSize: 100})
+			// This is the state after either a consumed response omitted every
+			// summary or an unconsumed task contributed only its expectation. The
+			// expected count must not be inferred from visible summaries.
+			runtimeStats.RecordExpectedCopTasks([]int{scan.ID(), agg.Origin.ID()})
+			operator, _, _ := readBillingDemoClassifyOperator(agg)
+			outcome := readBillingDemoCopUnits(newReadBillingDemoCopEstimator(tree, runtimeStats), 2, operator)
+			require.True(t, outcome.success)
+			require.Equal(t, 4.0, readBillingDemoUnitValue(outcome.units, readBillingDemoUnitInputRows, readBillingDemoInputSideAll))
+			require.Equal(t, 80.0, readBillingDemoUnitValue(outcome.units, readBillingDemoUnitInputBytes, readBillingDemoInputSideAll))
+			require.False(t, readBillingDemoUnitExists(outcome.units, readBillingDemoUnitOutputRows, readBillingDemoInputSideAll))
+			require.False(t, readBillingDemoUnitExists(outcome.units, readBillingDemoUnitOutputBytes, readBillingDemoInputSideAll))
+		})
 	})
 
 	t.Run("selection output feeds projection input", func(t *testing.T) {
@@ -1226,6 +1469,49 @@ func TestReadBillingDemoCopInputEstimator(t *testing.T) {
 		}
 	})
 
+	t.Run("full builder preserves pushed aggregation output shadows", func(t *testing.T) {
+		aggScan := physicalop.PhysicalIndexScan{}.Init(ctx, 0)
+		aggScan.SetSchema(schema)
+		agg := (&physicalop.BasePhysicalAgg{}).InitForHash(ctx, stats, 0, schema)
+		agg.SetChildren(aggScan)
+		reader.TablePlan = agg
+		flat := FlattenPhysicalPlan(reader, true)
+		require.Len(t, flat.Main, 3)
+		require.Equal(t, agg.ID(), flat.Main[1].Origin.ID())
+		require.Equal(t, aggScan.ID(), flat.Main[2].Origin.ID())
+
+		runtimeStats := execdetails.NewRuntimeStatsColl(nil)
+		readerStats := runtimeStats.GetBasicRuntimeStats(reader.ID(), true)
+		readerStats.Record(time.Millisecond, 2)
+		readerStats.RecordBytes(0, 30)
+		recordSummary(runtimeStats, aggScan.ID(), 4, nil)
+		recordSummary(runtimeStats, agg.ID(), 2, &tikvutil.ScanDetail{TotalKeys: 5, ProcessedKeys: 5, ProcessedKeysSize: 100})
+		ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = runtimeStats
+
+		result := buildReadBillingDemoResult(ctx, reader, &ast.SelectStmt{}, nil, nil)
+		require.Equal(t, readBillingDemoStatusSuccess, result.status)
+		var aggResult readBillingDemoOperatorResult
+		for _, operator := range result.operators {
+			if operator.site == readBillingDemoSiteTiKV && operator.opClass == readBillingDemoOpClassHashAgg {
+				aggResult = operator
+				break
+			}
+		}
+		require.Equal(t, readBillingDemoStatusOperatorOK, aggResult.status)
+		require.Equal(t, 4.0, readBillingDemoUnitValue(aggResult.units, readBillingDemoUnitInputRows, readBillingDemoInputSideAll))
+		require.Equal(t, 2.0, readBillingDemoUnitValue(aggResult.units, readBillingDemoUnitOutputRows, readBillingDemoInputSideAll))
+		require.Equal(t, 30.0, readBillingDemoUnitValue(aggResult.units, readBillingDemoUnitOutputBytes, readBillingDemoInputSideAll))
+
+		seenStatementUnits := make(map[string]bool)
+		for _, sample := range buildReadBillingDemoStatementStats(result).BaseUnits {
+			if sample.Site == readBillingDemoSiteTiKV && sample.OpClass == readBillingDemoOpClassHashAgg &&
+				(sample.Unit == readBillingDemoUnitOutputRows || sample.Unit == readBillingDemoUnitOutputBytes) {
+				seenStatementUnits[sample.Unit] = true
+			}
+		}
+		require.Equal(t, map[string]bool{readBillingDemoUnitOutputRows: true, readBillingDemoUnitOutputBytes: true}, seenStatementUnits)
+	})
+
 	t.Run("full builder wires root sort order work", func(t *testing.T) {
 		rootSort := physicalop.PhysicalSort{}.Init(ctx, stats, 0, nil)
 		scan.SetStats(stats)
@@ -1384,8 +1670,12 @@ func TestReadBillingDemoHashJoinUnitsUseBuildProbeSides(t *testing.T) {
 	require.Equal(t, 6.0, readBillingDemoUnitValue(units, readBillingDemoUnitInputRows, readBillingDemoInputSideProbe))
 	require.Equal(t, 40.0, readBillingDemoUnitValue(units, readBillingDemoUnitInputBytes, readBillingDemoInputSideBuild))
 	require.Equal(t, 60.0, readBillingDemoUnitValue(units, readBillingDemoUnitInputBytes, readBillingDemoInputSideProbe))
+	require.Equal(t, 6.0, readBillingDemoUnitValue(units, readBillingDemoUnitOutputRows, readBillingDemoInputSideAll))
+	require.Equal(t, 60.0, readBillingDemoUnitValue(units, readBillingDemoUnitOutputBytes, readBillingDemoInputSideAll))
 	require.Equal(t, readBillingDemoInputSourceRuntimeChunkBytes, readBillingDemoUnitSource(units, readBillingDemoUnitInputBytes, readBillingDemoInputSideBuild))
 	require.Equal(t, explainRUWidthSourceRuntimeChunkAvg, readBillingDemoUnitWidthSource(units, readBillingDemoUnitInputBytes, readBillingDemoInputSideProbe))
+	require.Equal(t, readBillingDemoInputSourceRuntimeChunkBytes, readBillingDemoUnitSource(units, readBillingDemoUnitOutputBytes, readBillingDemoInputSideAll))
+	require.Equal(t, explainRUWidthSourceRuntimeChunkAvg, readBillingDemoUnitWidthSource(units, readBillingDemoUnitOutputBytes, readBillingDemoInputSideAll))
 }
 
 func readBillingDemoUnitValue(units []readBillingDemoUnit, unitName, side string) float64 {

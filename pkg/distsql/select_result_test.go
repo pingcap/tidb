@@ -32,8 +32,36 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	tikvutil "github.com/tikv/client-go/v2/util"
 )
+
+type closeAppendingRuntimeStatsResponse struct {
+	stats        []*copr.CopRuntimeStats
+	statsOnClose *copr.CopRuntimeStats
+	closeErr     error
+	closed       bool
+	collectCalls int
+}
+
+func (*closeAppendingRuntimeStatsResponse) Next(context.Context) (kv.ResultSubset, error) {
+	return nil, nil
+}
+
+func (r *closeAppendingRuntimeStatsResponse) Close() error {
+	r.closed = true
+	r.stats = append(r.stats, r.statsOnClose)
+	return r.closeErr
+}
+
+func (r *closeAppendingRuntimeStatsResponse) CollectUnconsumedCopRuntimeStats() []*copr.CopRuntimeStats {
+	r.collectCalls++
+	if !r.closed {
+		return nil
+	}
+	return r.stats
+}
 
 func TestUpdateCopRuntimeStats(t *testing.T) {
 	ctx := mock.NewContext()
@@ -103,6 +131,8 @@ func TestUpdateCopRuntimeStats(t *testing.T) {
 	require.Equal(t, int32(1), parentStats.GetTasks())
 	require.Equal(t, int64(5), parentStats.GetScanDetail().ProcessedKeys)
 	require.Equal(t, int64(100), parentStats.GetScanDetail().ProcessedKeysSize)
+	require.Equal(t, int32(1), ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetExpectedCopTasks(scanPlanID))
+	require.Equal(t, int32(1), ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetExpectedCopTasks(parentPlanID))
 
 	update(3, 1, &tikvutil.ScanDetail{TotalKeys: 2, ProcessedKeys: 2, ProcessedKeysSize: 40})
 	require.Equal(t, int64(7), scanStats.GetActRows())
@@ -111,6 +141,8 @@ func TestUpdateCopRuntimeStats(t *testing.T) {
 	require.Equal(t, int32(2), parentStats.GetTasks())
 	require.Equal(t, int64(7), parentStats.GetScanDetail().ProcessedKeys)
 	require.Equal(t, int64(140), parentStats.GetScanDetail().ProcessedKeysSize)
+	require.Equal(t, int32(2), ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetExpectedCopTasks(scanPlanID))
+	require.Equal(t, int32(2), ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetExpectedCopTasks(parentPlanID))
 
 	ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
 	sr.ctx = ctx.GetDistSQLCtx()
@@ -123,6 +155,8 @@ func TestUpdateCopRuntimeStats(t *testing.T) {
 	require.Equal(t, int32(1), scanStats.GetTasks())
 	require.Equal(t, int32(0), parentStats.GetTasks())
 	require.Equal(t, int64(5), parentStats.GetScanDetail().ProcessedKeys)
+	require.Equal(t, int32(1), ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetExpectedCopTasks(scanPlanID))
+	require.Equal(t, int32(1), ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetExpectedCopTasks(parentPlanID))
 
 	ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
 	sr.ctx = ctx.GetDistSQLCtx()
@@ -135,6 +169,61 @@ func TestUpdateCopRuntimeStats(t *testing.T) {
 	parentStats = ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopStats(parentPlanID)
 	require.Equal(t, int32(1), scanStats.GetTasks())
 	require.Equal(t, int32(2), parentStats.GetTasks())
+	require.Equal(t, int32(2), ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetExpectedCopTasks(scanPlanID))
+	require.Equal(t, int32(2), ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetExpectedCopTasks(parentPlanID))
+
+	sr.selectResp = &tipb.SelectResponse{ExecutionSummaries: []*tipb.ExecutorExecutionSummary{nil, nil}}
+	require.NoError(t, sr.updateCopRuntimeStats(context.Background(), &copr.CopRuntimeStats{
+		CopExecDetails: execdetails.CopExecDetails{CalleeAddress: "callee"},
+	}, 0, false))
+	require.Equal(t, int32(1), scanStats.GetTasks())
+	require.Equal(t, int32(2), parentStats.GetTasks())
+	require.Equal(t, int32(3), ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetExpectedCopTasks(scanPlanID))
+	require.Equal(t, int32(3), ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetExpectedCopTasks(parentPlanID))
+
+	ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
+	sr.ctx = ctx.GetDistSQLCtx()
+	sr.stats = &selectResultRuntimeStats{}
+	update(4, 2, &tikvutil.ScanDetail{TotalKeys: 5, ProcessedKeys: 5, ProcessedKeysSize: 100})
+	scanStats = ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopStats(scanPlanID)
+	parentStats = ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopStats(parentPlanID)
+	reqStats := tikv.NewRegionRequestRuntimeStats()
+	reqStats.RecordRPCRuntimeStats(tikvrpc.CmdCop, time.Millisecond)
+	closeErr := fmt.Errorf("close failed")
+	resp := &closeAppendingRuntimeStatsResponse{
+		statsOnClose: &copr.CopRuntimeStats{ReqStats: reqStats},
+		closeErr:     closeErr,
+	}
+	sr.resp = resp
+	require.Equal(t, closeErr, sr.close())
+	require.True(t, resp.closed)
+	require.Equal(t, 1, resp.collectCalls)
+	require.Equal(t, uint32(1), sr.stats.reqStat.GetCmdRPCCount(tikvrpc.CmdCop))
+	require.Equal(t, int64(4), scanStats.GetActRows())
+	require.Equal(t, int32(1), scanStats.GetTasks())
+	require.Equal(t, int64(2), parentStats.GetActRows())
+	require.Equal(t, int32(1), parentStats.GetTasks())
+	require.Equal(t, int32(2), ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetExpectedCopTasks(scanPlanID))
+	require.Equal(t, int32(2), ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetExpectedCopTasks(parentPlanID))
+
+	onlyReqStats := tikv.NewRegionRequestRuntimeStats()
+	onlyReqStats.RecordRPCRuntimeStats(tikvrpc.CmdCop, time.Millisecond)
+	onlyResp := &closeAppendingRuntimeStatsResponse{
+		statsOnClose: &copr.CopRuntimeStats{ReqStats: onlyReqStats},
+	}
+	const onlyUnconsumedRootID = 3001
+	const onlyUnconsumedCopID = 3002
+	onlyUnconsumed := selectResult{
+		ctx:        ctx.GetDistSQLCtx(),
+		rootPlanID: onlyUnconsumedRootID,
+		copPlanIDs: []int{onlyUnconsumedCopID},
+		storeType:  kv.TiKV,
+		resp:       onlyResp,
+	}
+	require.NoError(t, onlyUnconsumed.close())
+	require.NotNil(t, onlyUnconsumed.stats)
+	require.Equal(t, int32(1), ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetExpectedCopTasks(onlyUnconsumedCopID))
+	require.True(t, ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.ExistsRootStats(onlyUnconsumedRootID))
 }
 
 func TestNewSelRespChannelIter(t *testing.T) {

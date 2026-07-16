@@ -202,7 +202,7 @@ func RecordReadBillingDemoOperatorStatus(site, opClass, operatorKind, status, re
 func AddReadBillingDemoBaseUnits(site, opClass, operatorKind, unit, inputSource, inputSide, modelVersion string, value float64) {
 	if ReadBillingDemoBaseUnitsCounter == nil ||
 		site == "" || opClass == "" || operatorKind == "" || unit == "" || inputSource == "" || inputSide == "" || modelVersion == "" ||
-		value <= 0 {
+		value < 0 {
 		return
 	}
 	ReadBillingDemoBaseUnitsCounter.WithLabelValues(site, opClass, operatorKind, unit, inputSource, inputSide, modelVersion).Add(value)

@@ -105,6 +105,7 @@ func TestExplainRUMetrics(t *testing.T) {
 	RecordReadBillingDemoStatement("success", "v2")
 	RecordReadBillingDemoOperatorStatus("tidb", "projection_eval", "projection", "ok", "none", "v2")
 	AddReadBillingDemoBaseUnits("tidb", "projection_eval", "projection", "input_rows", "runtime_chunk_bytes", "all", "v2", 3)
+	AddReadBillingDemoBaseUnits("tikv", "agg_hash", "hashagg", "output_rows", "runtime_operator_act_rows", "all", "v3", 0)
 	ObserveReadBillingDemoRowWidth("tidb", "projection_eval", "projection", "runtime_chunk_avg", "v2", 8)
 
 	require.Equal(t, 1.0, readCounterValue(t, ExplainRUStatementsCounter.WithLabelValues("success")))
@@ -156,6 +157,15 @@ func TestExplainRUMetrics(t *testing.T) {
 	readBillingBaseUnitFamily := findMetricFamily(families, "tidb_read_billing_demo_base_units_total")
 	require.NotNil(t, readBillingBaseUnitFamily)
 	requireMetricFamilyHasLabels(t, readBillingBaseUnitFamily, "site", "op_class", "operator_kind", "unit", "input_source", "input_side", "model_version")
+	var zeroOutputRows *dto.Metric
+	for _, metric := range readBillingBaseUnitFamily.GetMetric() {
+		if metricHasLabelValue(metric, "unit", "output_rows") {
+			zeroOutputRows = metric
+			break
+		}
+	}
+	require.NotNil(t, zeroOutputRows)
+	require.Zero(t, zeroOutputRows.GetCounter().GetValue())
 	readBillingRowWidthFamily := findMetricFamily(families, "tidb_read_billing_demo_row_width_bytes")
 	require.NotNil(t, readBillingRowWidthFamily)
 	requireMetricFamilyHasLabels(t, readBillingRowWidthFamily, "site", "op_class", "operator_kind", "row_width_source", "model_version")
@@ -172,7 +182,7 @@ func TestExplainRUMetricsIgnoreEmptyLabelsAndMissingValues(t *testing.T) {
 	ObserveExplainRURow("plan", "", "", "read_billing_model", "runtime_chunk_avg", "v2", -1, -1, -1, 32)
 	RecordReadBillingDemoStatement("", "v2")
 	RecordReadBillingDemoOperatorStatus("tidb", "projection_eval", "projection", "", "none", "v2")
-	AddReadBillingDemoBaseUnits("tidb", "projection_eval", "projection", "input_rows", "runtime_chunk_bytes", "all", "v2", 0)
+	AddReadBillingDemoBaseUnits("tidb", "projection_eval", "projection", "input_rows", "runtime_chunk_bytes", "all", "v2", -1)
 	ObserveReadBillingDemoRowWidth("tidb", "projection_eval", "projection", "runtime_chunk_avg", "v2", 0)
 
 	require.Equal(t, 0, countCollectedMetrics(ExplainRUStatementsCounter))

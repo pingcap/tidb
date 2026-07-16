@@ -502,10 +502,11 @@ func (e *BasicRuntimeStats) GetTime() int64 {
 
 // RuntimeStatsColl collects executors's execution info.
 type RuntimeStatsColl struct {
-	rootStats    map[int]*RootRuntimeStats
-	copStats     map[int]*CopRuntimeStats
-	stmtCopStats StmtCopRuntimeStats
-	mu           sync.Mutex
+	rootStats        map[int]*RootRuntimeStats
+	copStats         map[int]*CopRuntimeStats
+	expectedCopTasks map[int]int32
+	stmtCopStats     StmtCopRuntimeStats
+	mu               sync.Mutex
 }
 
 // NewRuntimeStatsColl creates new executor collector.
@@ -522,11 +523,15 @@ func NewRuntimeStatsColl(reuse *RuntimeStatsColl) *RuntimeStatsColl {
 		for k := range reuse.copStats {
 			delete(reuse.copStats, k)
 		}
+		for k := range reuse.expectedCopTasks {
+			delete(reuse.expectedCopTasks, k)
+		}
 		return reuse
 	}
 	return &RuntimeStatsColl{
-		rootStats: make(map[int]*RootRuntimeStats),
-		copStats:  make(map[int]*CopRuntimeStats),
+		rootStats:        make(map[int]*RootRuntimeStats),
+		copStats:         make(map[int]*CopRuntimeStats),
+		expectedCopTasks: make(map[int]int32),
 	}
 }
 
@@ -626,6 +631,29 @@ func (e *RuntimeStatsColl) GetCopCountAndRows(planID int) (int32, int64) {
 		return 0, 0
 	}
 	return copStats.GetTasks(), copStats.GetActRows()
+}
+
+// RecordExpectedCopTasks records that one received TiKV cop response is expected
+// to carry an execution summary for every listed plan.
+func (e *RuntimeStatsColl) RecordExpectedCopTasks(planIDs []int) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.expectedCopTasks == nil {
+		e.expectedCopTasks = make(map[int]int32)
+	}
+	for _, planID := range planIDs {
+		if planID > 0 {
+			e.expectedCopTasks[planID]++
+		}
+	}
+}
+
+// GetExpectedCopTasks returns the number of received TiKV cop responses that
+// were expected to carry an execution summary for the specified plan.
+func (e *RuntimeStatsColl) GetExpectedCopTasks(planID int) int32 {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.expectedCopTasks[planID]
 }
 
 func getPlanIDFromExecutionSummary(summary *tipb.ExecutorExecutionSummary) (int, bool) {
