@@ -59,6 +59,10 @@ func preSplitIndexRegions(
 	if reorgMeta != nil {
 		reorgMeta.AutoSplitHotRegionResults = nil
 	}
+	// Preserve the target keyspace used by explicit PRE_SPLIT_REGIONS: txn reorg
+	// splits normal index keys, while ingest and txn-merge split temporary index
+	// keys used by concurrent DML. Fast reorg does not additionally split the
+	// normal index keyspace here.
 	splitOnTempIdx := reorgMeta.ReorgTp == model.ReorgTypeIngest ||
 		reorgMeta.ReorgTp == model.ReorgTypeTxnMerge
 	for i, idxInfo := range allIndexInfos {
