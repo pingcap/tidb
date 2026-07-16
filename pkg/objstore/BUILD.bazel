@@ -34,6 +34,7 @@ go_library(
         "//pkg/objstore/s3like",
         "//pkg/objstore/s3store",
         "//pkg/objstore/storeapi",
+        "//pkg/parser/ast",
         "//pkg/sessionctx/variable",
         "//pkg/util",
         "//pkg/util/intest",

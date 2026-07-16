@@ -221,6 +221,13 @@ func TestCheckRequirements(t *testing.T) {
 	c.Plan.ThreadCnt = 2
 	c.Plan.CloudStorageURI = ":"
 	require.ErrorIs(t, c.CheckRequirements(ctx, tk.Session()), exeerrors.ErrLoadDataInvalidURI)
+	c.Plan.CloudStorageURI = "s3:///path?access-key=secret-id&secret-access-key=secret-key&session-token=secret-token"
+	err = c.CheckRequirements(ctx, tk.Session())
+	require.ErrorIs(t, err, exeerrors.ErrLoadDataInvalidURI)
+	require.Contains(t, err.Error(), "please specify the bucket for s3 in s3:///path?access-key=xxxxxx&secret-access-key=xxxxxx&session-token=xxxxxx")
+	require.NotContains(t, err.Error(), "secret-id")
+	require.NotContains(t, err.Error(), "secret-key")
+	require.NotContains(t, err.Error(), "secret-token")
 	c.Plan.CloudStorageURI = "sdsdsdsd://sdsdsdsd"
 	require.ErrorIs(t, c.CheckRequirements(ctx, tk.Session()), exeerrors.ErrLoadDataInvalidURI)
 	c.Plan.CloudStorageURI = "local:///tmp"
