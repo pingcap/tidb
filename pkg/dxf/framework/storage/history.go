@@ -35,7 +35,7 @@ const (
 	MinHistoryTaskPageSize = 1
 	// MaxHistoryTaskPageSize is the maximum page size for history task listing.
 	MaxHistoryTaskPageSize    = 200
-	historyTaskSummaryColumns = basicTaskColumns + `, t.start_time, t.state_update_time, t.end_time`
+	historyTaskSummaryColumns = basicTaskColumns + `, t.error, t.start_time, t.state_update_time, t.end_time`
 )
 
 // TransferSubtasks2HistoryWithSession transfer the selected subtasks into tidb_background_subtask_history table by taskID.
@@ -56,42 +56,59 @@ func (mgr *TaskManager) TransferTasks2History(ctx context.Context, tasks []*prot
 		return nil
 	}
 	taskIDStrs := make([]string, 0, len(tasks))
+	taskKeyStrs := make([]string, 0, len(tasks))
+	updateMetaArgs := make([]any, 0, len(tasks)*2)
+	var updateMetaSQL strings.Builder
+	updateMetaSQL.WriteString(`
+		update mysql.tidb_global_task
+		set meta = case id`)
 	for _, task := range tasks {
 		taskIDStrs = append(taskIDStrs, fmt.Sprintf("%d", task.ID))
+		taskKeyStrs = append(taskKeyStrs, fmt.Sprintf("'%d'", task.ID))
+		updateMetaSQL.WriteString(" when %? then %?")
+		updateMetaArgs = append(updateMetaArgs, task.ID, task.Meta)
 	}
+	taskIDList := strings.Join(taskIDStrs, `, `)
+	taskKeyList := strings.Join(taskKeyStrs, `, `)
+	updateMetaSQL.WriteString(`
+			end, state_update_time = CURRENT_TIMESTAMP()
+		where id in(` + taskIDList + `)`)
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}
 	return mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		// sensitive data in meta might be redacted, need update first.
 		exec := se.GetSQLExecutor()
-		for _, t := range tasks {
-			_, err := sqlexec.ExecSQL(ctx, exec, `
-				update mysql.tidb_global_task
-				set meta= %?, state_update_time = CURRENT_TIMESTAMP()
-				where id = %?`, t.Meta, t.ID)
-			if err != nil {
-				return err
-			}
+		_, err := sqlexec.ExecSQL(ctx, exec, updateMetaSQL.String(), updateMetaArgs...)
+		if err != nil {
+			return err
 		}
-		_, err := sqlexec.ExecSQL(ctx, exec, `
+		_, err = sqlexec.ExecSQL(ctx, exec, `
 			insert into mysql.tidb_global_task_history
 			select * from mysql.tidb_global_task
-			where id in(`+strings.Join(taskIDStrs, `, `)+`)`)
+			where id in(`+taskIDList+`)`)
 		if err != nil {
 			return err
 		}
 
 		_, err = sqlexec.ExecSQL(ctx, exec, `
 			delete from mysql.tidb_global_task
-			where id in(`+strings.Join(taskIDStrs, `, `)+`)`)
-
-		for _, t := range tasks {
-			err = mgr.TransferSubtasks2HistoryWithSession(ctx, se, t.ID)
-			if err != nil {
-				return err
-			}
+			where id in(`+taskIDList+`)`)
+		if err != nil {
+			return err
 		}
+
+		_, err = sqlexec.ExecSQL(ctx, exec, `
+			insert into mysql.tidb_background_subtask_history
+			select * from mysql.tidb_background_subtask
+			where task_key in(`+taskKeyList+`)`)
+		if err != nil {
+			return err
+		}
+
+		_, err = sqlexec.ExecSQL(ctx, exec, `
+			delete from mysql.tidb_background_subtask
+			where task_key in(`+taskKeyList+`)`)
 		return err
 	})
 }
@@ -99,6 +116,7 @@ func (mgr *TaskManager) TransferTasks2History(ctx context.Context, tasks []*prot
 // HistoryTaskSummary contains summary fields for one history task.
 type HistoryTaskSummary struct {
 	*proto.TaskBase
+	Error           string
 	StartTime       time.Time
 	StateUpdateTime time.Time
 	EndTime         time.Time
@@ -190,14 +208,17 @@ func row2HistoryTaskSummary(r chunk.Row) *HistoryTaskSummary {
 	item := &HistoryTaskSummary{
 		TaskBase: row2TaskBasic(r),
 	}
-	if !r.IsNull(12) {
-		item.StartTime, _ = r.GetTime(12).GoTime(time.Local)
+	if taskErr := row2TaskError(r, 12); taskErr != nil {
+		item.Error = taskErr.Error()
 	}
 	if !r.IsNull(13) {
-		item.StateUpdateTime, _ = r.GetTime(13).GoTime(time.Local)
+		item.StartTime, _ = r.GetTime(13).GoTime(time.Local)
 	}
 	if !r.IsNull(14) {
-		item.EndTime, _ = r.GetTime(14).GoTime(time.Local)
+		item.StateUpdateTime, _ = r.GetTime(14).GoTime(time.Local)
+	}
+	if !r.IsNull(15) {
+		item.EndTime, _ = r.GetTime(15).GoTime(time.Local)
 	}
 	return item
 }

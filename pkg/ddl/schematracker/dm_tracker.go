@@ -779,6 +779,10 @@ func (d *SchemaTracker) addTablePartitions(ctx sessionctx.Context, ident ast.Ide
 	if err != nil {
 		return errors.Trace(err)
 	}
+	oldDefCount := len(tblInfo.Partition.Definitions)
+	if err := ddl.CheckAndUpdateAddedPartitionDefinitions(ctx.GetExprCtx(), tblInfo, partInfo, oldDefCount); err != nil {
+		return errors.Trace(err)
+	}
 	tblInfo.Partition.Definitions = append(tblInfo.Partition.Definitions, partInfo.Definitions...)
 	return nil
 }
@@ -893,6 +897,9 @@ func (d *SchemaTracker) AlterTable(ctx context.Context, sctx sessionctx.Context,
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if err := ddl.CheckStorageClassConflictInAlterTableSpecs(validSpecs); err != nil {
+		return err
+	}
 
 	// atomicity for multi-schema change
 	oldTblInfo := tblInfo.Clone()
@@ -948,6 +955,10 @@ func (d *SchemaTracker) AlterTable(ctx context.Context, sctx sessionctx.Context,
 			newIdent := ast.Ident{Schema: spec.NewTable.Schema, Name: spec.NewTable.Name}
 			err = d.renameTable(sctx, []ast.Ident{ident}, []ast.Ident{newIdent}, true)
 		case ast.AlterTableOption:
+			engineAttribute, hasEngineAttribute, engineAttributeErr := ddl.GetEngineAttributeFromStorageClassTableOptions(spec.Options)
+			if engineAttributeErr != nil {
+				return engineAttributeErr
+			}
 			for i, opt := range spec.Options {
 				switch opt.Tp {
 				case ast.TableOptionShardRowID:
@@ -995,6 +1006,7 @@ func (d *SchemaTracker) AlterTable(ctx context.Context, sctx sessionctx.Context,
 					handledCharsetOrCollate = true
 				case ast.TableOptionPlacementPolicy:
 				case ast.TableOptionEngine:
+				case ast.TableOptionEngineAttribute, ast.TableOptionStorageClass:
 				default:
 					err = dbterror.ErrUnsupportedAlterTableOption
 				}
@@ -1002,6 +1014,11 @@ func (d *SchemaTracker) AlterTable(ctx context.Context, sctx sessionctx.Context,
 				if err != nil {
 					return errors.Trace(err)
 				}
+			}
+			if hasEngineAttribute {
+				tblInfo = tblInfo.Clone()
+				tblInfo.EngineAttribute = engineAttribute
+				_ = d.PutTable(ident.Schema, tblInfo)
 			}
 		case ast.AlterTableIndexInvisible:
 			tblInfo = tblInfo.Clone()

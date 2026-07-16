@@ -50,7 +50,7 @@
 ### Tests
 - `pkg/dxf/framework/proto/step_test.go` - dxf/framework/proto: Tests step.
 - `pkg/dxf/framework/proto/subtask_test.go` - dxf/framework/proto: Tests subtask is done.
-- `pkg/dxf/framework/proto/task_test.go` - dxf/framework/proto: Tests task step.
+- `pkg/dxf/framework/proto/task_test.go` - dxf/framework/proto: Tests task step and runtime scheduling/cleanup limit validation.
 - `pkg/dxf/framework/proto/type_test.go` - dxf/framework/proto: Tests task type.
 
 ## pkg/dxf/framework/scheduler
@@ -61,7 +61,7 @@
 - `pkg/dxf/framework/scheduler/main_test.go` - Configures default goleak settings and registers testdata.
 - `pkg/dxf/framework/scheduler/nodes_test.go` - dxf/framework/scheduler: Tests maintain live nodes.
 - `pkg/dxf/framework/scheduler/scheduler_manager_nokit_test.go` - dxf/framework/scheduler: Tests manager schedulers ordered.
-- `pkg/dxf/framework/scheduler/scheduler_manager_test.go` - dxf/framework/scheduler: Tests clean up routine.
+- `pkg/dxf/framework/scheduler/scheduler_manager_test.go` - dxf/framework/scheduler: Tests cleanup routine and bounded cleanup-batch draining.
 - `pkg/dxf/framework/scheduler/scheduler_nokit_test.go` - dxf/framework/scheduler: Tests scheduler on next stage.
 - `pkg/dxf/framework/scheduler/scheduler_test.go` - dxf/framework/scheduler: Tests task fail in manager.
 - `pkg/dxf/framework/scheduler/slots_test.go` - dxf/framework/scheduler: Tests slot manager reserve next-gen.
@@ -74,7 +74,7 @@
 ## pkg/dxf/framework/storage
 
 ### Tests
-- `pkg/dxf/framework/storage/table_test.go` - dxf/framework/storage: Tests task table.
+- `pkg/dxf/framework/storage/table_test.go` - dxf/framework/storage: Tests task/subtask tables, history transfer, task-state queries, and cleanup batch bounds.
 - `pkg/dxf/framework/storage/task_state_test.go` - dxf/framework/storage: Tests task state.
 - `pkg/dxf/framework/storage/task_table_test.go` - dxf/framework/storage: Tests task table.
 
@@ -113,6 +113,7 @@
 
 ### Tests
 - `pkg/dxf/importinto/conflictedkv/collector_test.go` - dxf/importinto/conflictedkv: Tests collect result merge.
+- `pkg/dxf/importinto/conflictedkv/deleter_internal_test.go` - dxf/importinto/conflictedkv: Tests commit error propagation when deleting buffered keys.
 - `pkg/dxf/importinto/conflictedkv/deleter_test.go` - dxf/importinto/conflictedkv: Tests deleter.
 - `pkg/dxf/importinto/conflictedkv/handler_test.go` - dxf/importinto/conflictedkv: Tests handler.
 - `pkg/dxf/importinto/conflictedkv/row_handle_test.go` - dxf/importinto/conflictedkv: Tests handle filter.

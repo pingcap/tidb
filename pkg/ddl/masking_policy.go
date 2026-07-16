@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -248,6 +249,9 @@ const (
 )
 
 func (w *worker) queryMaskingPoliciesFromSysTable(ctx context.Context, query string, args ...any) ([]*model.MaskingPolicyInfo, error) {
+	failpoint.Inject("mockMissingMaskingPolicySysTable", func() {
+		failpoint.Return(nil, infoschema.ErrTableNotExists.GenWithStackByArgs("mysql", "tidb_masking_policy"))
+	})
 	rows, err := w.sess.Execute(ctx, query, "query-masking-policy", args...)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -533,11 +537,6 @@ func (w *worker) deleteMaskingPolicyFromSysTable(jobCtx *jobContext, policyID in
 func (w *worker) dropMaskingPoliciesOnTable(jobCtx *jobContext, tableID int64) error {
 	policies, err := w.getMaskingPoliciesByTableIDFromSysTable(jobCtx.stepCtx, tableID)
 	if err != nil {
-		// If the masking policy system table itself doesn't exist (e.g., during
-		// bootstrap upgrade that drops and recreates it), there's nothing to clean up.
-		if infoschema.ErrTableNotExists.Equal(err) {
-			return nil
-		}
 		return errors.Trace(err)
 	}
 	for _, policy := range policies {
@@ -554,8 +553,8 @@ func (w *worker) dropMaskingPoliciesByDBName(jobCtx *jobContext, dbName string) 
 	const deleteSQL = "DELETE FROM mysql.tidb_masking_policy WHERE db_name = %?"
 	_, err := w.sess.Execute(jobCtx.stepCtx, deleteSQL, "drop-masking-policies-by-db", dbName)
 	if err != nil {
-		// If the masking policy system table itself doesn't exist (e.g., during
-		// bootstrap upgrade that drops and recreates it), there's nothing to clean up.
+		// Masking-policy cleanup for DROP DATABASE is best-effort. If the policy
+		// system table does not exist, there are no policy rows to delete.
 		if infoschema.ErrTableNotExists.Equal(err) {
 			return nil
 		}
@@ -590,11 +589,6 @@ func (w *worker) updateMaskingPolicyTableIDAfterTruncate(jobCtx *jobContext, old
 func (w *worker) dropMaskingPoliciesOnColumn(jobCtx *jobContext, tableID, columnID int64) error {
 	policies, err := w.getMaskingPoliciesByTableColumnFromSysTable(jobCtx.stepCtx, tableID, columnID)
 	if err != nil {
-		// If the masking policy system table itself doesn't exist (e.g., during
-		// bootstrap upgrade that drops and recreates it), there's nothing to clean up.
-		if infoschema.ErrTableNotExists.Equal(err) {
-			return nil
-		}
 		return errors.Trace(err)
 	}
 	for _, policy := range policies {

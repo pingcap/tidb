@@ -1404,6 +1404,9 @@ const (
 
 	// TiDBIndexLookUpPushDownPolicy controls the push down policy of index lookup.
 	TiDBIndexLookUpPushDownPolicy = "tidb_index_lookup_pushdown_policy"
+
+	// TiDBEnableConnectionEventLog controls whether to log connection events.
+	TiDBEnableConnectionEventLog = "tidb_enable_connection_event_log"
 )
 
 // TiDB intentional limits, can be raised in the future.
@@ -1839,7 +1842,8 @@ const (
 	DefEnableCachePrepareStmt                         = false
 	// DefConnectAttrsSize is the default max aggregate byte size of connection attributes per connection.
 	// This corresponds to performance_schema_session_connect_attrs_size. In TiDB, -1 means no limit up to 64KB.
-	DefConnectAttrsSize int64 = 4096
+	DefConnectAttrsSize             int64 = 4096
+	DefTiDBEnableConnectionEventLog       = false
 )
 
 const (
@@ -1999,6 +2003,8 @@ var (
 	ConnectAttrsLongestSeen = atomic.NewInt64(0)
 	// ConnectAttrsLost counts the number of connections whose attributes were truncated.
 	ConnectAttrsLost = atomic.NewInt64(0)
+
+	EnableConnectionEventLog = atomic.NewBool(DefTiDBEnableConnectionEventLog)
 )
 
 func serverMemoryLimitDefaultValue() string {

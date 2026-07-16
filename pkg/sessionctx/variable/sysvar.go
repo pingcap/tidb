@@ -4041,6 +4041,12 @@ var defaultSysVars = []*SysVar{
 		s.EnableCachePrepareStmt = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableConnectionEventLog, Value: BoolToOnOff(vardef.DefTiDBEnableConnectionEventLog), Type: vardef.TypeBool, SetGlobal: func(_ context.Context, _ *SessionVars, val string) error {
+		vardef.EnableConnectionEventLog.Store(TiDBOptOn(val))
+		return nil
+	}, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
+		return BoolToOnOff(vardef.EnableConnectionEventLog.Load()), nil
+	}},
 }
 
 // GlobalSystemVariableInitialValue gets the default value for a system variable including ones that are dynamically set (e.g. based on the store)
