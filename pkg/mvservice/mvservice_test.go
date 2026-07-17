@@ -1052,7 +1052,7 @@ func TestMVServiceMaybeLogRefreshAlertTasksSkipsCleanupWhenNotOwner(t *testing.T
 	require.Equal(t, int32(0), helper.syncRefreshAlertCalls.Load())
 }
 
-func TestMVServiceRefreshAlertCheckerKeysScanGlobalTasks(t *testing.T) {
+func TestMVServiceRefreshAlertCheckerOwnersScanGlobalTasks(t *testing.T) {
 	now := mvsNow()
 	newTask := func() *mv {
 		return &mv{
@@ -1077,12 +1077,8 @@ func TestMVServiceRefreshAlertCheckerKeysScanGlobalTasks(t *testing.T) {
 		taskState    string
 	}{
 		{
-			name:   "not_checker_owner",
-			selfID: "nodeA",
-		},
-		{
-			name:         "checker_key1_owner_reports_metrics",
-			selfID:       "nodeB",
+			name:         "first_server_reports_metrics",
+			selfID:       "nodeA",
 			checkerOwner: true,
 			metricsOwner: true,
 			fetchCalls:   1,
@@ -1091,12 +1087,16 @@ func TestMVServiceRefreshAlertCheckerKeysScanGlobalTasks(t *testing.T) {
 			taskState:    mvRefreshAlertTaskStateUnknown,
 		},
 		{
-			name:         "checker_key2_owner_does_not_report_metrics",
-			selfID:       "nodeC",
+			name:         "second_server_does_not_report_metrics",
+			selfID:       "nodeB",
 			checkerOwner: true,
 			fetchCalls:   1,
 			syncCalls:    1,
 			taskState:    mvRefreshAlertTaskStateUnknown,
+		},
+		{
+			name:   "third_server_is_not_checker_owner",
+			selfID: "nodeC",
 		},
 	}
 
@@ -1109,7 +1109,7 @@ func TestMVServiceRefreshAlertCheckerKeysScanGlobalTasks(t *testing.T) {
 			svc := NewMVService(context.Background(), mockSessionPool{}, helper, DefaultMVServiceConfig())
 			defer svc.closeTaskExecutors()
 
-			setThreeNodeRefreshAlertCheckerRingForTest(svc, tc.selfID)
+			setThreeNodeRefreshAlertOwnersForTest(svc, tc.selfID)
 			require.Equal(t, tc.checkerOwner, svc.isRefreshAlertCheckerOwner())
 			require.Equal(t, tc.metricsOwner, svc.isRefreshAlertMetricsOwner())
 			svc.metrics.alertWarningCount.Store(7)
@@ -1140,6 +1140,28 @@ func TestMVServiceRefreshAlertCheckerKeysScanGlobalTasks(t *testing.T) {
 			require.Equal(t, tc.taskState, synced[0].taskState)
 		})
 	}
+}
+
+func TestMVServiceRefreshAlertCheckerOwnerSingleServer(t *testing.T) {
+	svc := NewMVService(context.Background(), mockSessionPool{}, &mockMVServiceHelper{}, DefaultMVServiceConfig())
+	defer svc.closeTaskExecutors()
+
+	svc.sch.mu.Lock()
+	svc.sch.ID = "nodeA"
+	svc.sch.rebuildLocked(map[string]serverInfo{
+		"nodeA": {ID: "nodeA"},
+	})
+	svc.sch.mu.Unlock()
+
+	require.True(t, svc.isRefreshAlertCheckerOwner())
+	require.True(t, svc.isRefreshAlertMetricsOwner())
+
+	svc.sch.mu.Lock()
+	svc.sch.ID = "nodeB"
+	svc.sch.mu.Unlock()
+
+	require.False(t, svc.isRefreshAlertCheckerOwner())
+	require.False(t, svc.isRefreshAlertMetricsOwner())
 }
 
 func TestMVServiceMaybeScanMVLogAccumulationAlertsFiltersUnownedTasks(t *testing.T) {

@@ -159,10 +159,6 @@ const (
 	mvRunEventGetTSOErr          = "get_tso_error"
 
 	mvHistoryGCOwnerKey = "gc-mv-op-hist"
-	// Two independent hash-ring keys perform global refresh-alert checks, so one
-	// unhealthy TiDB does not fully suppress warning/overdue alerts.
-	mvRefreshAlertCheckerOwnerKey1 = "check-mv-refresh-alert1"
-	mvRefreshAlertCheckerOwnerKey2 = "check-mv-refresh-alert2"
 	// A single hash-ring owner performs stale refresh-alert cleanup to avoid
 	// repeating the same global delete on every TiDB node.
 	mvRefreshAlertCleanupOwnerKey = "gc-mv-refresh-alert"
@@ -706,21 +702,26 @@ func (t *MVService) cleanupStaleRefreshAlerts() {
 }
 
 func (t *MVService) isRefreshAlertCheckerOwner() bool {
-	return t.ownsRefreshAlertKey(mvRefreshAlertCheckerOwnerKey1) ||
-		t.ownsRefreshAlertKey(mvRefreshAlertCheckerOwnerKey2)
+	t.sch.mu.RLock()
+	defer t.sch.mu.RUnlock()
+
+	n := min(2, len(t.sch.serverIDs))
+	for _, id := range t.sch.serverIDs[:n] {
+		if id == t.sch.ID {
+			return true
+		}
+	}
+	return false
 }
 
 func (t *MVService) isRefreshAlertMetricsOwner() bool {
-	return t.ownsRefreshAlertKey(mvRefreshAlertCheckerOwnerKey1)
-}
-
-func (t *MVService) ownsRefreshAlertKey(key string) bool {
 	t.sch.mu.RLock()
 	defer t.sch.mu.RUnlock()
-	if t.sch.ID == "" || len(t.sch.servers) == 0 {
+
+	if len(t.sch.serverIDs) == 0 {
 		return false
 	}
-	return t.sch.chash.GetNode([]byte(key)) == t.sch.ID
+	return t.sch.serverIDs[0] == t.sch.ID
 }
 
 func (t *MVService) isRefreshAlertCleanupOwner() bool {

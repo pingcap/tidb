@@ -19,6 +19,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"maps"
+	"slices"
 	"sync"
 	"testing"
 )
@@ -71,10 +72,14 @@ func (m *mockServerHelper) getAllServerInfo(_ context.Context) (map[string]serve
 func newServerConsistentHashForTest(mapping map[string]uint32, helper ServerDiscovery, selfID string, serverIDs ...string) *ServerConsistentHash {
 	sch := NewServerConsistentHash(context.Background(), 1, helper)
 	sch.chash.hashFunc = mustHash(mapping)
-	sch.ID = selfID
+	servers := make(map[string]serverInfo, len(serverIDs))
 	for _, id := range serverIDs {
-		sch.AddServer(serverInfo{ID: id})
+		servers[id] = serverInfo{ID: id}
 	}
+	sch.mu.Lock()
+	sch.ID = selfID
+	sch.rebuildLocked(servers)
+	sch.mu.Unlock()
 	return sch
 }
 
@@ -100,7 +105,7 @@ func assertAvailableForNode(t *testing.T, sch *ServerConsistentHash, nodeID stri
 	}
 }
 
-func TestServerConsistentHashAddRemoveAndAvailable(t *testing.T) {
+func TestServerConsistentHashRebuildMaintainsSortedServerIDsAndRing(t *testing.T) {
 	mapping := map[string]uint32{
 		"nodeA#0": 10,
 		"nodeB#0": 20,
@@ -113,20 +118,27 @@ func TestServerConsistentHashAddRemoveAndAvailable(t *testing.T) {
 	if len(sch.servers) != 2 {
 		t.Fatalf("expected 2 servers, got %d", len(sch.servers))
 	}
+	if got := sch.serverIDs; !slices.Equal(got, []string{"nodeA", "nodeB"}) {
+		t.Fatalf("expected sorted server IDs [nodeA nodeB], got %v", got)
+	}
 	assertRingNodeCount(t, sch, 2)
 	assertRingOwner(t, sch, []byte("key-low"), "nodeA")
 	assertRingOwner(t, sch, []byte("key-mid"), "nodeB")
-	assertAvailableForNode(t, sch, "nodeB", "key-low", false)
-	assertAvailableForNode(t, sch, "nodeB", "key-mid", true)
 
-	sch.RemoveServer("nodeB")
+	sch.mu.Lock()
+	sch.rebuildLocked(map[string]serverInfo{
+		"nodeA": {ID: "nodeA"},
+	})
+	sch.mu.Unlock()
 
 	if len(sch.servers) != 1 {
-		t.Fatalf("expected 1 server after remove, got %d", len(sch.servers))
+		t.Fatalf("expected 1 server after rebuild, got %d", len(sch.servers))
+	}
+	if got := sch.serverIDs; !slices.Equal(got, []string{"nodeA"}) {
+		t.Fatalf("expected sorted server IDs [nodeA], got %v", got)
 	}
 	assertRingNodeCount(t, sch, 1)
 	assertRingOwner(t, sch, []byte("key-mid"), "nodeA")
-	assertAvailableForNode(t, sch, "nodeB", "key-mid", false)
 }
 
 func TestServerConsistentHashAvailableSupportsDifferentKeyTypes(t *testing.T) {
@@ -186,8 +198,12 @@ func TestServerConsistentHashAvailableSupportsDifferentKeyTypes(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			sch := NewServerConsistentHash(context.Background(), 1, &mockServerHelper{})
 			sch.chash.hashFunc = tc.hashFunc(t)
-			sch.AddServer(serverInfo{ID: "nodeA"})
-			sch.AddServer(serverInfo{ID: "nodeB"})
+			sch.mu.Lock()
+			sch.rebuildLocked(map[string]serverInfo{
+				"nodeA": {ID: "nodeA"},
+				"nodeB": {ID: "nodeB"},
+			})
+			sch.mu.Unlock()
 
 			assertAvailableForNode(t, sch, "nodeB", tc.key, true)
 			assertAvailableForNode(t, sch, "nodeA", tc.key, false)
