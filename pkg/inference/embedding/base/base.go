@@ -60,13 +60,13 @@ func DecodeFloat32ArrayBytes(item []byte) ([]float32, error) {
 }
 
 // JSONFieldsWithOptions returns a JSON object map containing fixed request fields
-// plus provider-specific options. Options override fixed fields when keys collide.
+// plus provider-specific options. Fixed fields override options when keys collide.
 func JSONFieldsWithOptions(fields map[string]any, opts map[string]any) map[string]any {
 	merged := make(map[string]any, len(fields)+len(opts))
-	for key, value := range fields {
+	for key, value := range opts {
 		merged[key] = value
 	}
-	for key, value := range opts {
+	for key, value := range fields {
 		merged[key] = value
 	}
 	return merged

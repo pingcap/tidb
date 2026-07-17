@@ -20,11 +20,44 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 )
+
+type capturedHTTPRequest struct {
+	path          string
+	method        string
+	contentType   string
+	authorization string
+	body          []byte
+	bodyErr       error
+}
+
+func captureHTTPRequest(r *http.Request) capturedHTTPRequest {
+	body, err := io.ReadAll(r.Body)
+	return capturedHTTPRequest{
+		path:          r.URL.Path,
+		method:        r.Method,
+		contentType:   r.Header.Get("Content-Type"),
+		authorization: r.Header.Get("Authorization"),
+		body:          body,
+		bodyErr:       err,
+	}
+}
+
+func receiveRequestPath(t *testing.T, requestPathCh <-chan string) string {
+	t.Helper()
+	select {
+	case path := <-requestPathCh:
+		return path
+	case <-time.After(time.Second):
+		require.FailNow(t, "HTTP request was not captured")
+		return ""
+	}
+}
 
 func TestOpenAIEmbedder_Success(t *testing.T) {
 	// Mock successful response from real OpenAI API
@@ -65,26 +98,12 @@ func TestOpenAIEmbedder_Success(t *testing.T) {
       }
     }`
 
-	// Create mock server
+	requestCh := make(chan capturedHTTPRequest, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/embeddings", r.URL.Path)
-		// Verify request method and headers
-		require.Equal(t, "POST", r.Method)
-		require.Equal(t, "application/json", r.Header.Get("Content-Type"))
-		require.Equal(t, "Bearer test-api-key", r.Header.Get("Authorization"))
-
-		// Verify request body
-		body, err := io.ReadAll(r.Body)
-		require.NoError(t, err)
-		require.JSONEq(t, `{
-			"model": "text-embedding-3-small",
-			"input": ["hello world", "test text", "sample input", "more text", "last item"],
-			"encoding_format": "base64"
-		}`, string(body))
-
+		requestCh <- captureHTTPRequest(r)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(mockResponse))
+		_, _ = w.Write([]byte(mockResponse))
 	}))
 	defer server.Close()
 
@@ -98,6 +117,17 @@ func TestOpenAIEmbedder_Success(t *testing.T) {
 	embeddings, err := embedder.CreateEmbeddings(context.Background(), "text-embedding-3-small", texts, nil)
 
 	require.NoError(t, err)
+	request := <-requestCh
+	require.NoError(t, request.bodyErr)
+	require.Equal(t, "/embeddings", request.path)
+	require.Equal(t, "POST", request.method)
+	require.Equal(t, "application/json", request.contentType)
+	require.Equal(t, "Bearer test-api-key", request.authorization)
+	require.JSONEq(t, `{
+		"model": "text-embedding-3-small",
+		"input": ["hello world", "test text", "sample input", "more text", "last item"],
+		"encoding_format": "base64"
+	}`, string(request.body))
 	require.Len(t, embeddings, 5)
 	require.Equal(t, embeddings[0], []float32{
 		0.5165501, 0.16796638, 0.60452324, 0.2851341, -0.07298655, 0.26138917, 0.06126004, 0.24445628, -0.33593276, -0.09055198,
@@ -117,18 +147,9 @@ func TestOpenAIEmbedder_Success(t *testing.T) {
 }
 
 func TestOpenAIEmbedder_WithOptions(t *testing.T) {
+	requestCh := make(chan capturedHTTPRequest, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/embeddings", r.URL.Path)
-		// Verify request body
-		body, err := io.ReadAll(r.Body)
-		require.NoError(t, err)
-		require.JSONEq(t, `{
-			"model": "text-embedding-3-small",
-			"input": ["test"],
-			"encoding_format": "base64",
-			"my_opt": "abc"
-		}`, string(body))
-
+		requestCh <- captureHTTPRequest(r)
 		mockResponse := `
     {
       "object": "list",
@@ -148,7 +169,7 @@ func TestOpenAIEmbedder_WithOptions(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(mockResponse))
+		_, _ = w.Write([]byte(mockResponse))
 	}))
 	defer server.Close()
 
@@ -162,6 +183,15 @@ func TestOpenAIEmbedder_WithOptions(t *testing.T) {
 	})
 
 	require.NoError(t, err)
+	request := <-requestCh
+	require.NoError(t, request.bodyErr)
+	require.Equal(t, "/embeddings", request.path)
+	require.JSONEq(t, `{
+		"model": "text-embedding-3-small",
+		"input": ["test"],
+		"encoding_format": "base64",
+		"my_opt": "abc"
+	}`, string(request.body))
 	require.Len(t, embeddings, 1)
 	require.Equal(t, embeddings[0], []float32{
 		0.5165501, 0.16796638, 0.60452324, 0.2851341, -0.07298655, 0.26138917, 0.06126004, 0.24445628, -0.33593276, -0.09055198,
@@ -169,14 +199,14 @@ func TestOpenAIEmbedder_WithOptions(t *testing.T) {
 }
 
 func TestOpenAIEmbedderBaseURL(t *testing.T) {
+	requestPathCh := make(chan string, 4)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/embeddings", r.URL.Path)
+		requestPathCh <- r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
-		_, err := w.Write([]byte(`{
+		_, _ = w.Write([]byte(`{
 			"data":[{"index":0,"embedding":"AACAPw=="}],
 			"model":"text-embedding-3-small"
 		}`))
-		require.NoError(t, err)
 	}))
 	defer server.Close()
 
@@ -187,6 +217,7 @@ func TestOpenAIEmbedderBaseURL(t *testing.T) {
 		})
 		embeddings, err := embedder.CreateEmbeddings(context.Background(), "text-embedding-3-small", []string{"test"}, nil)
 		require.NoError(t, err)
+		require.Equal(t, "/embeddings", receiveRequestPath(t, requestPathCh))
 		require.Equal(t, [][]float32{{1}}, embeddings)
 	}
 }
@@ -209,6 +240,31 @@ func TestOpenAIEmbedderHTTPClientTimeout(t *testing.T) {
 	var netErr net.Error
 	require.ErrorAs(t, err, &netErr)
 	require.True(t, netErr.Timeout())
+}
+
+func TestOpenAIEmbedderResponseBodyLimit(t *testing.T) {
+	body, err := readResponseBody(strings.NewReader(strings.Repeat("x", 64)), 64)
+	require.NoError(t, err)
+	require.Len(t, body, 64)
+
+	for _, status := range []int{http.StatusOK, http.StatusBadRequest} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(status)
+				_, _ = w.Write([]byte(strings.Repeat("x", 65)))
+			}))
+			defer server.Close()
+
+			embedder := NewOpenAIEmbedder(EmbedderConfig{
+				GetAPIKey:            func() string { return "test-api-key" },
+				GetBaseURL:           func() string { return server.URL },
+				MaxResponseBodyBytes: 64,
+			})
+
+			_, err := embedder.CreateEmbeddings(context.Background(), "text-embedding-3-small", []string{"test"}, nil)
+			require.ErrorContains(t, err, "response body exceeds maximum size of 64 bytes")
+		})
+	}
 }
 
 func TestOpenAIEmbedder_ResponseIndexValidation(t *testing.T) {
@@ -240,6 +296,14 @@ func TestOpenAIEmbedder_ResponseIndexValidation(t *testing.T) {
 			]`,
 			errContains: "out of range",
 		},
+		{
+			name: "invalid decoded embedding length",
+			responseData: `[
+				{"object":"embedding","index":0,"embedding":"AAEC"},
+				{"object":"embedding","index":1,"embedding":"LhF9PkGwzzwFGLA+qFe+PlU42j5Fo4K+ExUAvwi7eD5pNLU9ucivPg=="}
+			]`,
+			errContains: "invalid embedding data",
+		},
 	}
 
 	for _, tt := range tests {
@@ -247,7 +311,7 @@ func TestOpenAIEmbedder_ResponseIndexValidation(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusOK)
-				w.Write([]byte(`{"object":"list","model":"text-embedding-3-small","data":` + tt.responseData + `}`))
+				_, _ = w.Write([]byte(`{"object":"list","model":"text-embedding-3-small","data":` + tt.responseData + `}`))
 			}))
 			defer server.Close()
 
@@ -284,11 +348,12 @@ func TestOpenAIEmbedder_UnauthorizedAPIKey(t *testing.T) {
     }
 }`
 
+	requestPathCh := make(chan string, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/embeddings", r.URL.Path)
+		requestPathCh <- r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(mockResponse))
+		_, _ = w.Write([]byte(mockResponse))
 	}))
 	defer server.Close()
 
@@ -300,6 +365,7 @@ func TestOpenAIEmbedder_UnauthorizedAPIKey(t *testing.T) {
 	texts := []string{"hello world"}
 	embeddings, err := embedder.CreateEmbeddings(context.Background(), "text-embedding-3-small", texts, nil)
 
+	require.Equal(t, "/embeddings", receiveRequestPath(t, requestPathCh))
 	require.Nil(t, embeddings)
 	require.Error(t, err)
 	require.ErrorContains(t, err, "check API key")
@@ -317,11 +383,12 @@ func TestOpenAIEmbedder_InvalidModel(t *testing.T) {
     }
 }`
 
+	requestPathCh := make(chan string, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/embeddings", r.URL.Path)
+		requestPathCh <- r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte(mockResponse))
+		_, _ = w.Write([]byte(mockResponse))
 	}))
 	defer server.Close()
 
@@ -333,6 +400,7 @@ func TestOpenAIEmbedder_InvalidModel(t *testing.T) {
 	texts := []string{"hello world"}
 	embeddings, err := embedder.CreateEmbeddings(context.Background(), "text-embedding-3x", texts, nil)
 
+	require.Equal(t, "/embeddings", receiveRequestPath(t, requestPathCh))
 	require.Nil(t, embeddings)
 	require.Error(t, err)
 	require.ErrorContains(t, err, "model 'text-embedding-3x' does not exist")

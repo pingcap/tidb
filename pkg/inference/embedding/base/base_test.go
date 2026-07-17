@@ -65,6 +65,35 @@ func TestDecodeBase64EmbeddingF32(t *testing.T) {
 	require.Contains(t, err.Error(), "invalid embedding data")
 }
 
+func TestJSONFieldsWithOptions(t *testing.T) {
+	fixed := map[string]any{
+		"model":           "fixed-model",
+		"input":           []string{"fixed-input"},
+		"encoding_format": "base64",
+	}
+	opts := map[string]any{
+		"model":           "overridden-model",
+		"input":           []string{"overridden-input"},
+		"encoding_format": "float",
+		"dimensions":      512,
+	}
+
+	merged := JSONFieldsWithOptions(fixed, opts)
+	require.Equal(t, "fixed-model", merged["model"])
+	require.Equal(t, []string{"fixed-input"}, merged["input"])
+	require.Equal(t, "base64", merged["encoding_format"])
+	require.Equal(t, 512, merged["dimensions"])
+
+	encoded, err := MarshalJSONWithOptions(fixed, opts)
+	require.NoError(t, err)
+	require.JSONEq(t, `{
+		"model":"fixed-model",
+		"input":["fixed-input"],
+		"encoding_format":"base64",
+		"dimensions":512
+	}`, string(encoded))
+}
+
 func TestSanitizeErrorBodyForLog(t *testing.T) {
 	body := []byte(`{"authorization":"Bearer secret-token","api_key":"plain-key","message":"Bearer another-secret"}`)
 	sanitized := SanitizeErrorBodyForLog(body)

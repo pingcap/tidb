@@ -19,6 +19,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -102,6 +103,7 @@ func NewBatchEmbedderWithConfig(batchWindow time.Duration, maxBatchSize int) *Ba
 // This is not concurrent-safe. It must be called before any CreateEmbeddings calls.
 func (b *BatchEmbedder) RegisterEmbedder(provider string, embedder base.Embedder) {
 	provider = normalizeProviderName(provider)
+	panicIfNilEmbedder(provider, embedder)
 	b.embedders[provider] = embedder
 }
 
@@ -114,7 +116,7 @@ func (b *BatchEmbedder) MustRegisterEmbedder(provider string, embedder base.Embe
 	if _, ok := b.embedders[provider]; ok {
 		panic(fmt.Sprintf("embedding provider %q is already registered", provider))
 	}
-	b.embedders[provider] = embedder
+	b.RegisterEmbedder(provider, embedder)
 }
 
 // HasEmbedder returns whether a provider is registered.
@@ -148,6 +150,19 @@ func (b *BatchEmbedder) parseModelWithProvider(modelWithProvider string) (string
 
 func normalizeProviderName(provider string) string {
 	return strings.ToLower(strings.TrimSpace(provider))
+}
+
+func panicIfNilEmbedder(provider string, embedder base.Embedder) {
+	if embedder == nil {
+		panic(fmt.Sprintf("embedding provider %q is nil", provider))
+	}
+	value := reflect.ValueOf(embedder)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice, reflect.UnsafePointer:
+		if value.IsNil() {
+			panic(fmt.Sprintf("embedding provider %q is nil", provider))
+		}
+	}
 }
 
 func newBatchKey(provider, model string, opts map[string]any) (batchKey, error) {
@@ -251,13 +266,22 @@ func (b *BatchEmbedder) processBatch(key batchKey, thisBatch *batchedCalls, embe
 
 	// Now we are the owner of the current batch, no synchronization is needed.
 
-	// Collect all texts and track start indices for each request
+	// Exclude calls that were canceled before provider dispatch. Their callers
+	// return independently through ctx.Done(), and sending their text would
+	// waste provider capacity and violate the cancellation expectation.
+	activeCalls := make([]*call, 0, len(thisBatch.calls))
 	allTexts := make([]string, 0, thisBatch.batchedTextsN)
-	startIndices := make([]int, len(thisBatch.calls))
-
-	for i, call := range thisBatch.calls {
-		startIndices[i] = len(allTexts)
+	startIndices := make([]int, 0, len(thisBatch.calls))
+	for _, call := range thisBatch.calls {
+		if call.ctx.Err() != nil {
+			continue
+		}
+		activeCalls = append(activeCalls, call)
+		startIndices = append(startIndices, len(allTexts))
 		allTexts = append(allTexts, call.texts...)
+	}
+	if len(activeCalls) == 0 {
+		return
 	}
 
 	// Make the actual embeddings call
@@ -267,7 +291,7 @@ func (b *BatchEmbedder) processBatch(key batchKey, thisBatch *batchedCalls, embe
 		// Waiting sequentially is intentional: the loop can finish only after
 		// every caller context is canceled. If the provider returns first,
 		// cancelReq below releases this watcher through reqCtx.Done().
-		for _, call := range thisBatch.calls {
+		for _, call := range activeCalls {
 			select {
 			case <-call.ctx.Done():
 			case <-reqCtx.Done():
@@ -284,7 +308,7 @@ func (b *BatchEmbedder) processBatch(key batchKey, thisBatch *batchedCalls, embe
 	// Send results back to all requests
 
 	if err != nil {
-		for _, call := range thisBatch.calls {
+		for _, call := range activeCalls {
 			select {
 			case call.resultCh <- &batchResult{err: err}:
 			case <-call.ctx.Done():
@@ -299,7 +323,7 @@ func (b *BatchEmbedder) processBatch(key batchKey, thisBatch *batchedCalls, embe
 		} else {
 			err = fmt.Errorf("embedding provider returned %d embeddings for %d texts", len(embeddings), len(allTexts))
 		}
-		for _, call := range thisBatch.calls {
+		for _, call := range activeCalls {
 			select {
 			case call.resultCh <- &batchResult{err: err}:
 			case <-call.ctx.Done():
@@ -308,7 +332,7 @@ func (b *BatchEmbedder) processBatch(key batchKey, thisBatch *batchedCalls, embe
 		}
 		return
 	}
-	for i, call := range thisBatch.calls {
+	for i, call := range activeCalls {
 		startIdx := startIndices[i]
 		result := &batchResult{
 			embeddings: embeddings[startIdx : startIdx+len(call.texts)],

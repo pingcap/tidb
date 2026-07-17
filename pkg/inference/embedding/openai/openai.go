@@ -31,6 +31,8 @@ import (
 const (
 	// DefaultAPIBaseURL is the default base URL (without the /embeddings suffix) for OpenAI embeddings API.
 	DefaultAPIBaseURL = "https://api.openai.com/v1"
+	// DefaultMaxResponseBodyBytes bounds memory used to read an OpenAI-compatible response.
+	DefaultMaxResponseBodyBytes int64 = 32 << 20
 )
 
 // Embedder is for OpenAI embeddings.
@@ -49,14 +51,35 @@ type EmbedderConfig struct {
 	GetBaseURL       func() string
 	ErrMissingAPIKey error // The error to return when API key is missing
 	ErrUnauthorized  error // The error to return when API key is invalid
+	// MaxResponseBodyBytes limits both successful and error response bodies.
+	// Non-positive values use DefaultMaxResponseBodyBytes.
+	MaxResponseBodyBytes int64
 }
 
 // NewOpenAIEmbedder creates a new OpenAIEmbedder instance with the provided configuration.
 func NewOpenAIEmbedder(cfg EmbedderConfig) *Embedder {
+	if cfg.MaxResponseBodyBytes <= 0 {
+		cfg.MaxResponseBodyBytes = DefaultMaxResponseBodyBytes
+	}
 	return &Embedder{
 		client: http.Client{Timeout: base.DefaultHTTPClientTimeout},
 		cfg:    cfg,
 	}
+}
+
+func readResponseBody(reader io.Reader, maxBytes int64) ([]byte, error) {
+	limited := &io.LimitedReader{R: reader, N: maxBytes}
+	body, err := io.ReadAll(limited)
+	if err != nil {
+		return nil, err
+	}
+	var extra [1]byte
+	if _, err := io.ReadFull(reader, extra[:]); err == nil {
+		return nil, fmt.Errorf("response body exceeds maximum size of %d bytes", maxBytes)
+	} else if err != io.EOF {
+		return nil, err
+	}
+	return body, nil
 }
 
 // CreateEmbeddings creates embeddings for the given texts using the specified model.
@@ -112,7 +135,7 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := readResponseBody(resp.Body, e.cfg.MaxResponseBodyBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +178,7 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 		// it is already base64 decoded by Golang from base64.
 		e, err := base.DecodeFloat32ArrayBytes(item.Embedding)
 		if err != nil {
-			return nil, fmt.Errorf("failed to decode embedding for index %d", item.Index)
+			return nil, fmt.Errorf("failed to decode embedding for index %d: %w", item.Index, err)
 		}
 		embeddings[item.Index] = e
 	}
