@@ -860,6 +860,27 @@ func TestPartialResult4DistinctAgg(t *testing.T) {
 		require.Equal(t, (*partialResult4SumDistinctFloat64)(pr).valSet.M, (*partialResult4SumDistinctFloat64)(restored).valSet.M)
 	})
 
+	t.Run("sum int64", func(t *testing.T) {
+		aggFunc := &sumDistinctInt64{}
+		pr := newDistinctAggPartialResult(t, aggFunc)
+		(*partialResult4SumDistinctInt64)(pr).valSet.Insert(100)
+		(*partialResult4SumDistinctInt64)(pr).valSet.Insert(-200)
+
+		restored := roundTripDistinctAggPartialResult(t, aggFunc, pr)
+		require.Equal(t, (*partialResult4SumDistinctInt64)(pr).valSet.M, (*partialResult4SumDistinctInt64)(restored).valSet.M)
+	})
+
+	t.Run("sum uint64", func(t *testing.T) {
+		aggFunc := &sumDistinctUint64{}
+		pr := newDistinctAggPartialResult(t, aggFunc)
+		(*partialResult4SumDistinctUint64)(pr).valSet.Insert(100)
+		// Unsigned values are stored as int64 bit-pattern keys.
+		(*partialResult4SumDistinctUint64)(pr).valSet.Insert(-1)
+
+		restored := roundTripDistinctAggPartialResult(t, aggFunc, pr)
+		require.Equal(t, (*partialResult4SumDistinctUint64)(pr).valSet.M, (*partialResult4SumDistinctUint64)(restored).valSet.M)
+	})
+
 	t.Run("variance float64", func(t *testing.T) {
 		aggFunc := &varPopOriginal4DistinctFloat64{}
 		pr := newDistinctAggPartialResult(t, aggFunc)
