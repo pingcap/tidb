@@ -105,7 +105,7 @@
 - `pkg/dxf/importinto/collect_conflicts_test.go` - dxf/importinto: Tests collect conflicts step executor.
 - `pkg/dxf/importinto/conflict_resolution_test.go` - dxf/importinto: Tests conflict resolution step executor.
 - `pkg/dxf/importinto/encode_and_sort_operator_test.go` - dxf/importinto: Tests encode and sort operator.
-- `pkg/dxf/importinto/job_testkit_test.go` - dxf/importinto: Tests submit task next-gen.
+- `pkg/dxf/importinto/job_testkit_test.go` - dxf/importinto: Tests task submission and exact GetJobLastUpdateTime lookups across active/history subtasks.
 - `pkg/dxf/importinto/metrics_test.go` - dxf/importinto: Tests metric manager.
 - `pkg/dxf/importinto/planner_test.go` - dxf/importinto: Tests logical plan.
 - `pkg/dxf/importinto/proto_test.go` - dxf/importinto: Tests KV conflict info aggregation.
@@ -114,6 +114,11 @@
 - `pkg/dxf/importinto/task_executor_test.go` - dxf/importinto: Tests import task executor.
 - `pkg/dxf/importinto/task_executor_testkit_test.go` - dxf/importinto: Tests post process step executor.
 - `pkg/dxf/importinto/wrapper_test.go` - dxf/importinto: Tests chunk convert.
+
+## pkg/dxf/importinto/jobhistory
+
+### Tests
+- `pkg/dxf/importinto/jobhistory/history_test.go` - dxf/importinto/jobhistory: Tests target-only history aggregation for adjacent task IDs around 2^53.
 
 ## pkg/dxf/importinto/conflictedkv
 

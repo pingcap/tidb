@@ -129,7 +129,7 @@ func (mgr *TaskManager) PauseTaskOnError(ctx context.Context, taskID int64, task
 				state_update_time = unix_timestamp(),
 				end_time = null
 			where task_key = %? and step = %? and state = %?`,
-			proto.SubtaskStatePaused, taskID, step, proto.SubtaskStateFailed,
+			proto.SubtaskStatePaused, TaskIDToKey(taskID), step, proto.SubtaskStateFailed,
 		)
 		return err
 	})
@@ -313,7 +313,7 @@ func (mgr *TaskManager) ModifiedTask(ctx context.Context, task *proto.Task) erro
 			update mysql.tidb_background_subtask
 			set concurrency = %?, state_update_time = unix_timestamp()
 			where task_key = %? and state in (%?, %?, %?)`,
-			task.RequiredSlots, task.ID,
+			task.RequiredSlots, TaskIDToKey(task.ID),
 			proto.SubtaskStatePending, proto.SubtaskStateRunning, proto.SubtaskStatePaused)
 		return err
 	})
