@@ -210,6 +210,18 @@ func TopNFromStorage(sctx sessionctx.Context, tblID int64, isIndex int, histID i
 
 // TopNFromStorageWithPriority reads TopN from storage with the given priority.
 func TopNFromStorageWithPriority(sctx sessionctx.Context, tblID int64, isIndex int, histID int64, priority int) (_ *statistics.TopN, err error) {
+	return topNFromStorageWithPriorityAndLimit(sctx, tblID, isIndex, histID, priority, 0)
+}
+
+// TopNFromStorageWithPriorityAndLimit reads at most limit TopN values with the highest counts from storage.
+func TopNFromStorageWithPriorityAndLimit(sctx sessionctx.Context, tblID int64, isIndex int, histID int64, priority, limit int) (_ *statistics.TopN, err error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	return topNFromStorageWithPriorityAndLimit(sctx, tblID, isIndex, histID, priority, limit)
+}
+
+func topNFromStorageWithPriorityAndLimit(sctx sessionctx.Context, tblID int64, isIndex int, histID int64, priority, limit int) (_ *statistics.TopN, err error) {
 	failpoint.InjectCall("beforeTopNFromStorageWithPriority", tblID, isIndex, histID, priority)
 	selectPrefix := "select "
 	switch priority {
@@ -218,7 +230,13 @@ func TopNFromStorageWithPriority(sctx sessionctx.Context, tblID int64, isIndex i
 	case kv.PriorityLow:
 		selectPrefix += "low_priority "
 	}
-	rows, _, err := util.ExecRows(sctx, selectPrefix+"value, count from mysql.stats_top_n where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
+	query := selectPrefix + "value, count from mysql.stats_top_n where table_id = %? and is_index = %? and hist_id = %?"
+	args := []any{tblID, isIndex, histID}
+	if limit > 0 {
+		query += " order by count desc, value limit %?"
+		args = append(args, limit)
+	}
+	rows, _, err := util.ExecRows(sctx, query, args...)
 	if err != nil || len(rows) == 0 {
 		return nil, err
 	}
