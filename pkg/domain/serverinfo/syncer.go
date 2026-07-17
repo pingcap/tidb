@@ -16,10 +16,12 @@ package serverinfo
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"maps"
 	"net"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -51,12 +53,40 @@ type MinStartTSReporter interface {
 
 // Syncer is used to sync server information.
 type Syncer struct {
-	etcdCli         *clientv3.Client
-	reporter        MinStartTSReporter
-	info            atomic.Pointer[ServerInfo]
-	serverInfoPath  string
-	session         *concurrency.Session
-	topologySession *concurrency.Session
+	etcdCli                   *clientv3.Client
+	reporter                  MinStartTSReporter
+	info                      atomic.Pointer[ServerInfo]
+	serverInfoPath            string
+	statusEndpoint            string
+	statusEndpointClaimKey    string
+	statusEndpointClaimReport func(statusEndpointClaimResult)
+	session                   *concurrency.Session
+	topologySession           *concurrency.Session
+}
+
+type statusEndpointClaimState int
+
+const (
+	statusEndpointClaimSkipped statusEndpointClaimState = iota
+	statusEndpointClaimAcquired
+	statusEndpointClaimConflict
+	statusEndpointClaimCheckFailed
+)
+
+type statusEndpointClaimResult struct {
+	state         statusEndpointClaimState
+	endpoint      string
+	claimKey      string
+	localID       string
+	existingID    string
+	existingLease clientv3.LeaseID
+	err           error
+}
+
+type observedStatusEndpointClaim struct {
+	id          string
+	lease       clientv3.LeaseID
+	modRevision int64
 }
 
 // serverInfoKeyPath returns the etcd key path for the given server ID under
@@ -93,13 +123,41 @@ func newSyncer(
 	reporter MinStartTSReporter,
 	assumedKS string,
 ) *Syncer {
+	info := getServerInfo(uuid, serverIDGetter, assumedKS)
+	statusEndpoint, claimKey := buildStatusEndpointClaim(info, config.GetGlobalConfig().Status.ReportStatus)
 	is := &Syncer{
-		etcdCli:        etcdCli,
-		reporter:       reporter,
-		serverInfoPath: serverInfoKeyPath(uuid),
+		etcdCli:                etcdCli,
+		reporter:               reporter,
+		serverInfoPath:         serverInfoKeyPath(uuid),
+		statusEndpoint:         statusEndpoint,
+		statusEndpointClaimKey: claimKey,
 	}
-	is.info.Store(getServerInfo(uuid, serverIDGetter, assumedKS))
+	is.statusEndpointClaimReport = is.reportStatusEndpointClaimResult
+	is.info.Store(info)
 	return is
+}
+
+func buildStatusEndpointClaim(info *ServerInfo, reportStatus bool) (string, string) {
+	if !reportStatus || info.IsAssumed() || info.StatusPort == 0 {
+		return "", ""
+	}
+
+	host := strings.TrimSpace(info.IP)
+	if host == "" {
+		return "", ""
+	}
+	if addr, err := netip.ParseAddr(host); err == nil {
+		host = addr.String()
+	} else {
+		host = strings.TrimSuffix(strings.ToLower(host), ".")
+	}
+	if host == "" {
+		return "", ""
+	}
+
+	endpoint := net.JoinHostPort(host, strconv.Itoa(int(info.StatusPort)))
+	segment := base64.RawURLEncoding.EncodeToString([]byte(endpoint))
+	return endpoint, fmt.Sprintf("%s/%s", serverStatusAddressPath, segment)
 }
 
 // NewSessionAndStoreServerInfo creates a new etcd session and stores server info to etcd.
@@ -114,7 +172,203 @@ func (s *Syncer) NewSessionAndStoreServerInfo(ctx context.Context) error {
 		return err
 	}
 	s.session = session
-	return s.StoreServerInfo(ctx)
+
+	// Endpoint claim checks are best-effort; conflicts and check errors must not block server info registration.
+	claimResult := s.claimStatusEndpoint(ctx)
+	if ctx.Err() == nil && s.statusEndpointClaimReport != nil {
+		s.statusEndpointClaimReport(claimResult)
+	}
+
+	storeErr := s.StoreServerInfo(ctx)
+	if storeErr == nil {
+		return nil
+	}
+
+	// Release any endpoint claim that may have been created by this failed registration.
+	s.cleanupFailedServerInfoRegistration(session)
+	return storeErr
+}
+
+func (s *Syncer) claimStatusEndpoint(ctx context.Context) statusEndpointClaimResult {
+	result := statusEndpointClaimResult{
+		state:    statusEndpointClaimSkipped,
+		endpoint: s.statusEndpoint,
+		claimKey: s.statusEndpointClaimKey,
+		localID:  s.info.Load().ID,
+	}
+	if s.etcdCli == nil || s.statusEndpointClaimKey == "" {
+		return result
+	}
+
+	claimCtx, cancel := context.WithTimeout(ctx, KeyOpDefaultTimeout)
+	defer cancel()
+
+	created, observed, err := s.tryCreateStatusEndpointClaim(claimCtx)
+	if err != nil {
+		result.state = statusEndpointClaimCheckFailed
+		result.err = err
+		return result
+	}
+	if created {
+		result.state = statusEndpointClaimAcquired
+		return result
+	}
+	result.existingID = observed.id
+	result.existingLease = observed.lease
+	if observed.id != result.localID {
+		result.state = statusEndpointClaimConflict
+		return result
+	}
+
+	reattached, err := s.reattachStatusEndpointClaim(claimCtx, observed)
+	if err != nil {
+		result.state = statusEndpointClaimCheckFailed
+		result.err = err
+		return result
+	}
+	if reattached {
+		result.state = statusEndpointClaimAcquired
+		return result
+	}
+
+	created, observed, err = s.tryCreateStatusEndpointClaim(claimCtx)
+	if err != nil {
+		result.state = statusEndpointClaimCheckFailed
+		result.err = err
+		return result
+	}
+	if created {
+		result.state = statusEndpointClaimAcquired
+		return result
+	}
+	result.existingID = observed.id
+	result.existingLease = observed.lease
+	if observed.id != result.localID {
+		result.state = statusEndpointClaimConflict
+		return result
+	}
+
+	result.state = statusEndpointClaimCheckFailed
+	result.err = errors.New("advertised status endpoint claim changed while reattaching the same server info ID")
+	return result
+}
+
+func (s *Syncer) tryCreateStatusEndpointClaim(ctx context.Context) (bool, observedStatusEndpointClaim, error) {
+	resp, err := s.etcdCli.Txn(ctx).
+		If(clientv3.Compare(clientv3.CreateRevision(s.statusEndpointClaimKey), "=", 0)).
+		Then(clientv3.OpPut(s.statusEndpointClaimKey, s.info.Load().ID, clientv3.WithLease(s.session.Lease()))).
+		Else(clientv3.OpGet(s.statusEndpointClaimKey)).
+		Commit()
+	if err != nil {
+		return false, observedStatusEndpointClaim{}, errors.Trace(err)
+	}
+	if resp.Succeeded {
+		return true, observedStatusEndpointClaim{}, nil
+	}
+	observed, err := observedStatusEndpointClaimFromTxn(resp)
+	return false, observed, err
+}
+
+func (s *Syncer) reattachStatusEndpointClaim(ctx context.Context, observed observedStatusEndpointClaim) (bool, error) {
+	resp, err := s.etcdCli.Txn(ctx).
+		If(
+			clientv3.Compare(clientv3.Value(s.statusEndpointClaimKey), "=", observed.id),
+			clientv3.Compare(clientv3.ModRevision(s.statusEndpointClaimKey), "=", observed.modRevision),
+		).
+		Then(clientv3.OpPut(s.statusEndpointClaimKey, observed.id, clientv3.WithLease(s.session.Lease()))).
+		Else(clientv3.OpGet(s.statusEndpointClaimKey)).
+		Commit()
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return resp.Succeeded, nil
+}
+
+func observedStatusEndpointClaimFromTxn(resp *clientv3.TxnResponse) (observedStatusEndpointClaim, error) {
+	if len(resp.Responses) != 1 {
+		return observedStatusEndpointClaim{}, errors.Errorf("unexpected advertised status endpoint claim response count %d", len(resp.Responses))
+	}
+	rangeResp := resp.Responses[0].GetResponseRange()
+	if rangeResp == nil || len(rangeResp.Kvs) != 1 {
+		return observedStatusEndpointClaim{}, errors.New("advertised status endpoint claim disappeared while reading its owner")
+	}
+	kv := rangeResp.Kvs[0]
+	return observedStatusEndpointClaim{
+		id:          string(kv.Value),
+		lease:       clientv3.LeaseID(kv.Lease),
+		modRevision: kv.ModRevision,
+	}, nil
+}
+
+func (s *Syncer) reportStatusEndpointClaimResult(result statusEndpointClaimResult) {
+	fields := []zap.Field{
+		zap.String("advertised-status-endpoint", result.endpoint),
+		zap.String("claim-key", result.claimKey),
+		zap.String("local-server-info-id", result.localID),
+	}
+	if keyspace := s.info.Load().Keyspace; keyspace != "" {
+		fields = append(fields, zap.String("keyspace", keyspace))
+	}
+
+	switch result.state {
+	case statusEndpointClaimConflict:
+		fields = append(fields,
+			zap.String("existing-server-info-id", result.existingID),
+			zap.String("existing-lease-id", tidbutil.FormatLeaseID(result.existingLease)),
+			zap.String("action", "check for duplicate advertise-address and status-port settings, copied startup configuration, or a TiDB instance outside the intended topology"),
+		)
+		logutil.BgLogger().Warn("advertised status endpoint already has an active claim", fields...)
+	case statusEndpointClaimCheckFailed:
+		fields = append(fields,
+			zap.String("action", "check etcd connectivity and whether the advertised status endpoint claim can be read or updated"),
+			zap.Error(result.err),
+		)
+		logutil.BgLogger().Warn("failed to check advertised status endpoint claim", fields...)
+	}
+}
+
+func (s *Syncer) cleanupFailedServerInfoRegistration(session *concurrency.Session) {
+	lease := session.Lease()
+	session.Orphan()
+
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), KeyOpDefaultTimeout)
+	defer cancel()
+	if err := s.removeStatusEndpointClaim(cleanupCtx, lease); err != nil {
+		fields := s.statusEndpointClaimCleanupFields(lease,
+			"check etcd connectivity and permission to delete the advertised status endpoint claim")
+		logutil.BgLogger().Warn("failed to remove advertised status endpoint claim after server info registration failed",
+			append(fields, zap.Error(err))...)
+	}
+	if _, err := s.etcdCli.Revoke(cleanupCtx, lease); err != nil {
+		fields := s.statusEndpointClaimCleanupFields(lease,
+			"check etcd connectivity and permission to revoke the failed server info session lease")
+		logutil.BgLogger().Warn("failed to revoke server info lease after registration failed",
+			append(fields, zap.Error(err))...)
+	}
+}
+
+func (s *Syncer) statusEndpointClaimCleanupFields(lease clientv3.LeaseID, action string) []zap.Field {
+	return []zap.Field{
+		zap.String("advertised-status-endpoint", s.statusEndpoint),
+		zap.String("claim-key", s.statusEndpointClaimKey),
+		zap.String("local-server-info-id", s.info.Load().ID),
+		zap.String("lease-id", tidbutil.FormatLeaseID(lease)),
+		zap.String("action", action),
+	}
+}
+
+func (s *Syncer) removeStatusEndpointClaim(ctx context.Context, lease clientv3.LeaseID) error {
+	if s.statusEndpointClaimKey == "" {
+		return nil
+	}
+	_, err := s.etcdCli.Txn(ctx).
+		If(
+			clientv3.Compare(clientv3.Value(s.statusEndpointClaimKey), "=", s.info.Load().ID),
+			clientv3.Compare(clientv3.LeaseValue(s.statusEndpointClaimKey), "=", lease),
+		).
+		Then(clientv3.OpDelete(s.statusEndpointClaimKey)).
+		Commit()
+	return errors.Trace(err)
 }
 
 // StoreServerInfo stores self server static information to etcd.
@@ -276,6 +530,17 @@ func (s *Syncer) RemoveServerInfo() {
 	if s.etcdCli == nil {
 		return
 	}
+	if s.session != nil {
+		lease := s.session.Lease()
+		ctx, cancel := context.WithTimeout(context.Background(), KeyOpDefaultTimeout)
+		if err := s.removeStatusEndpointClaim(ctx, lease); err != nil {
+			fields := s.statusEndpointClaimCleanupFields(lease,
+				"check etcd connectivity and permission to delete the advertised status endpoint claim")
+			logutil.BgLogger().Error("remove advertised status endpoint claim failed",
+				append(fields, zap.Error(err))...)
+		}
+		cancel()
+	}
 	err := etcd.DeleteKeyFromEtcd(s.serverInfoPath, s.etcdCli, KeyOpDefaultRetryCnt, KeyOpDefaultTimeout)
 	if err != nil {
 		logutil.BgLogger().Error("remove server info failed", zap.Error(err))
@@ -300,12 +565,26 @@ func (s *Syncer) ServerInfoSyncLoop(store tidbkv.Storage, exitCh chan struct{}) 
 			logutil.BgLogger().Info("server info syncer need to restart")
 			if err := s.Restart(context.Background()); err != nil {
 				logutil.BgLogger().Error("server info syncer restart failed", zap.Error(err))
+				if !waitForServerInfoRestart(exitCh) {
+					return
+				}
 			} else {
 				logutil.BgLogger().Info("server info syncer restarted")
 			}
 		case <-exitCh:
 			return
 		}
+	}
+}
+
+func waitForServerInfoRestart(exitCh <-chan struct{}) bool {
+	timer := time.NewTimer(time.Second)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return true
+	case <-exitCh:
+		return false
 	}
 }
 
