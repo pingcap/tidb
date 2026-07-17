@@ -49,7 +49,7 @@ func TestDomapHandleNil(t *testing.T) {
 	})
 }
 
-func TestTemporaryGlobalVariableDomainSkipsStatusEndpointClaim(t *testing.T) {
+func TestGlobalVariableInitDomainSkipsStatusEndpointClaim(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create a file containing a colon, which is not allowed on Windows")
 	}
@@ -62,8 +62,8 @@ func TestTemporaryGlobalVariableDomainSkipsStatusEndpointClaim(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { require.NoError(t, store.Close()) }()
 
-	// Bootstrap without etcd first so the second startup exercises only the temporary
-	// global-variable Domain and the final serving Domain.
+	// Bootstrap without etcd first so the second startup exercises only the
+	// global-variable initialization Domain and the final serving Domain.
 	initialDomain, err := BootstrapSession(store)
 	require.NoError(t, err)
 	initialDomain.Close()
@@ -128,7 +128,7 @@ func TestTemporaryGlobalVariableDomainSkipsStatusEndpointClaim(t *testing.T) {
 	require.Equal(t, util.FormatLeaseID(claimLease.ID), warningFields["existing-lease-id"])
 	require.NotEmpty(t, warningFields["action"])
 
-	// Start again without the external claim. The temporary Domain closes before
+	// Start again without the external claim. The initialization Domain closes before
 	// BootstrapSession returns, so only the serving Domain can leave this claim behind.
 	dom.Close()
 	dom = nil

@@ -28,8 +28,6 @@ import (
 const (
 	// ServerInformationPath store server information such as IP, port and so on.
 	ServerInformationPath = "/tidb/server/info"
-	// serverStatusAddressPath stores active advertised status endpoint claims.
-	serverStatusAddressPath = "/tidb/server/status_addr"
 	// KeyOpDefaultRetryCnt is the default retry count for etcd store.
 	KeyOpDefaultRetryCnt = 5
 	// KeyOpDefaultTimeout is the default time out for etcd store.

@@ -78,8 +78,8 @@ func (dm *domainMap) GetOrCreateWithFilter(store kv.Storage, filter issyncer.Fil
 	return dm.getWithEtcdClient(store, nil, filter)
 }
 
-func (dm *domainMap) getTemporaryWithFilter(store kv.Storage, filter issyncer.Filter) (d *domain.Domain, err error) {
-	return dm.getWithEtcdClient(store, nil, filter, infosync.WithoutStatusEndpointClaim())
+func (dm *domainMap) getDomainForGlobalVarInit(store kv.Storage) (d *domain.Domain, err error) {
+	return dm.getWithEtcdClient(store, nil, systemDBFilter{}, infosync.WithoutStatusEndpointClaim())
 }
 
 func (dm *domainMap) getWithEtcdClient(

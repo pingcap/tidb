@@ -4,6 +4,7 @@ go_library(
     name = "serverinfo",
     srcs = [
         "info.go",
+        "status_endpoint_claim.go",
         "syncer.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/domain/serverinfo",

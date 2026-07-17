@@ -152,8 +152,8 @@ type infoschemaMinTS interface {
 type ServerInfoSyncerOption = serverinfo.SyncerOption
 
 // WithoutStatusEndpointClaim prevents the InfoSyncer from claiming the configured status endpoint.
-// It is intended for temporary, non-serving registrations. A serving primary TiDB Domain must keep
-// the default endpoint-claim behavior.
+// It is intended only for the non-serving Domain created while initializing global variables.
+// A serving primary TiDB Domain must keep the default endpoint-claim behavior.
 func WithoutStatusEndpointClaim() ServerInfoSyncerOption {
 	return serverinfo.WithoutStatusEndpointClaim()
 }

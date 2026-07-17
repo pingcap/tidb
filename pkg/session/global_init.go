@@ -50,7 +50,7 @@ func initGlobalVarFromSystemDB(ctx context.Context, store kv.Storage) error {
 	//
 	// Note: collate.newCollationEnabled is set to 1 in init(), so if the
 	// new_collate=false during first bootstrap, they mismatch.
-	dom, err := domap.getTemporaryWithFilter(store, systemDBFilter{})
+	dom, err := domap.getDomainForGlobalVarInit(store)
 	if err != nil {
 		return err
 	}
