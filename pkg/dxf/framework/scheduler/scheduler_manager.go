@@ -459,14 +459,12 @@ func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) error {
 	}
 
 	singleCleanUpTasks := make([]singleCleanUpTask, 0)
-	batchCleanUpTaskGroups := make([]batchCleanUpTaskGroup, 0)
-	batchCleanUpTaskGroupIndexes := make(map[proto.TaskType]int)
+	batchCleanUpTaskGroups := make(map[proto.TaskType]*batchCleanUpTaskGroup)
 	cleanedTaskSet := make(map[*proto.Task]struct{}, len(tasks))
 	var firstErr error
 	for _, task := range tasks {
 		sm.logger.Info("cleanup task", zap.Int64("task-id", task.ID), zap.String("task-key", task.Key))
-		if groupIndex, ok := batchCleanUpTaskGroupIndexes[task.Type]; ok {
-			group := &batchCleanUpTaskGroups[groupIndex]
+		if group, ok := batchCleanUpTaskGroups[task.Type]; ok {
 			group.tasks = append(group.tasks, task)
 			continue
 		}
@@ -478,11 +476,10 @@ func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) error {
 		}
 		cleanUp := cleanUpFactory()
 		if batchCleanUp, ok := cleanUp.(batchCleanUpRoutine); ok {
-			batchCleanUpTaskGroupIndexes[task.Type] = len(batchCleanUpTaskGroups)
-			batchCleanUpTaskGroups = append(batchCleanUpTaskGroups, batchCleanUpTaskGroup{
+			batchCleanUpTaskGroups[task.Type] = &batchCleanUpTaskGroup{
 				cleanUp: batchCleanUp,
 				tasks:   []*proto.Task{task},
-			})
+			}
 			continue
 		}
 		singleCleanUpTasks = append(singleCleanUpTasks, singleCleanUpTask{
