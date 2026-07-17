@@ -62,13 +62,11 @@ type cseDumperScan struct {
 func startCSEDumperScan(
 	ctx context.Context,
 	executable, metadataURL string,
+	legacyEncryption bool,
 	startKey, endKey []byte,
 ) (*cseDumperScan, error) {
-	cmd := exec.CommandContext(ctx, executable,
-		"dumper",
-		"--metadata-url", metadataURL,
-		"--start-key-hex", hex.EncodeToString(startKey),
-		"--end-key-hex", hex.EncodeToString(endKey))
+	args := cseDumperArgs(metadataURL, legacyEncryption, startKey, endKey)
+	cmd := exec.CommandContext(ctx, executable, args...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, errors.Annotate(err, "open cse-ctl dumper stdout")
@@ -82,6 +80,23 @@ func startCSEDumperScan(
 		return nil, errors.Annotatef(err, "start %q dumper", executable)
 	}
 	return scan, nil
+}
+
+func cseDumperArgs(
+	metadataURL string,
+	legacyEncryption bool,
+	startKey, endKey []byte,
+) []string {
+	args := []string{
+		"dumper",
+		"--metadata-url", metadataURL,
+		"--start-key-hex", hex.EncodeToString(startKey),
+		"--end-key-hex", hex.EncodeToString(endKey),
+	}
+	if legacyEncryption {
+		args = append(args, "--legacy-encryption")
+	}
+	return args
 }
 
 func (s *cseDumperScan) readRow(keyBuffer, valueBuffer []byte) (key, value []byte, end bool, err error) {
@@ -176,10 +191,18 @@ func (s *cseDumperScan) close() error {
 func scanCSEDumperRange(
 	ctx context.Context,
 	executable, metadataURL string,
+	legacyEncryption bool,
 	startKey, endKey []byte,
 	emit func(key, value []byte) error,
 ) error {
-	scan, err := startCSEDumperScan(ctx, executable, metadataURL, startKey, endKey)
+	scan, err := startCSEDumperScan(
+		ctx,
+		executable,
+		metadataURL,
+		legacyEncryption,
+		startKey,
+		endKey,
+	)
 	if err != nil {
 		return err
 	}

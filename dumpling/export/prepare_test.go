@@ -326,6 +326,13 @@ func TestConfigValidation(t *testing.T) {
 			err: "--packed-backup only supports CSV output",
 		},
 	}
+	conf = DefaultConfig()
+	conf.CSELegacyEncryption = true
+	require.EqualError(
+		t,
+		validatePackedBackup(conf),
+		"--cse-legacy-encryption requires --packed-backup",
+	)
 	for _, testCase := range packedCases {
 		conf := DefaultConfig()
 		conf.PackedBackup = "s3://bucket/backup.meta"

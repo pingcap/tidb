@@ -133,11 +133,12 @@ func packedColumnType(column *model.ColumnInfo) string {
 }
 
 type packedTableData struct {
-	executable  string
-	metadataURL string
-	table       *model.TableInfo
-	ranges      []packedRange
-	iter        *packedRowIter
+	executable       string
+	metadataURL      string
+	legacyEncryption bool
+	table            *model.TableInfo
+	ranges           []packedRange
+	iter             *packedRowIter
 }
 
 type packedRange struct {
@@ -145,12 +146,17 @@ type packedRange struct {
 	end   []byte
 }
 
-func newPackedTableData(executable, metadataURL string, table *model.TableInfo) *packedTableData {
+func newPackedTableData(
+	executable, metadataURL string,
+	legacyEncryption bool,
+	table *model.TableInfo,
+) *packedTableData {
 	return &packedTableData{
-		executable:  executable,
-		metadataURL: metadataURL,
-		table:       table,
-		ranges:      packedPhysicalTableRanges(table),
+		executable:       executable,
+		metadataURL:      metadataURL,
+		legacyEncryption: legacyEncryption,
+		table:            table,
+		ranges:           packedPhysicalTableRanges(table),
 	}
 }
 
@@ -160,13 +166,14 @@ func (d *packedTableData) Start(tctx *tcontext.Context, _ *sql.Conn) error {
 		return err
 	}
 	iter := &packedRowIter{
-		ctx:         tctx,
-		executable:  d.executable,
-		metadataURL: d.metadataURL,
-		ranges:      d.ranges,
-		table:       d.table,
-		decoder:     decoder,
-		args:        make([]any, len(decoder.columns)),
+		ctx:              tctx,
+		executable:       d.executable,
+		metadataURL:      d.metadataURL,
+		legacyEncryption: d.legacyEncryption,
+		ranges:           d.ranges,
+		table:            d.table,
+		decoder:          decoder,
+		args:             make([]any, len(decoder.columns)),
 	}
 	iter.readNext()
 	d.iter = iter
@@ -185,20 +192,21 @@ func (d *packedTableData) Close() error {
 func (*packedTableData) RawRows() *sql.Rows { return nil }
 
 type packedRowIter struct {
-	ctx         context.Context
-	executable  string
-	metadataURL string
-	ranges      []packedRange
-	nextRange   int
-	scan        *cseDumperScan
-	table       *model.TableInfo
-	decoder     *packedRowDecoder
-	key         []byte
-	value       []byte
-	args        []any
-	defaults    expression.BuildContext
-	err         error
-	hasRow      bool
+	ctx              context.Context
+	executable       string
+	metadataURL      string
+	legacyEncryption bool
+	ranges           []packedRange
+	nextRange        int
+	scan             *cseDumperScan
+	table            *model.TableInfo
+	decoder          *packedRowDecoder
+	key              []byte
+	value            []byte
+	args             []any
+	defaults         expression.BuildContext
+	err              error
+	hasRow           bool
 }
 
 func (i *packedRowIter) HasNext() bool { return i.err == nil && i.hasRow }
@@ -276,6 +284,7 @@ func (i *packedRowIter) readNext() {
 				i.ctx,
 				i.executable,
 				i.metadataURL,
+				i.legacyEncryption,
 				rangeToScan.start,
 				rangeToScan.end,
 			)
@@ -443,13 +452,24 @@ type packedRangeScanner func(
 	emit func(key, value []byte) error,
 ) error
 
-func newCSEDumperRangeScanner(executable, metadataURL string) packedRangeScanner {
+func newCSEDumperRangeScanner(
+	executable, metadataURL string,
+	legacyEncryption bool,
+) packedRangeScanner {
 	return func(
 		ctx context.Context,
 		startKey, endKey []byte,
 		emit func(key, value []byte) error,
 	) error {
-		return scanCSEDumperRange(ctx, executable, metadataURL, startKey, endKey, emit)
+		return scanCSEDumperRange(
+			ctx,
+			executable,
+			metadataURL,
+			legacyEncryption,
+			startKey,
+			endKey,
+			emit,
+		)
 	}
 }
 
@@ -542,7 +562,11 @@ func packedCreateTableSQL(table *model.TableInfo) (string, error) {
 func (d *Dumper) dumpPacked() error {
 	databases, err := loadPackedDatabases(
 		d.tctx,
-		newCSEDumperRangeScanner(d.conf.CSEExecutable, d.conf.PackedBackup),
+		newCSEDumperRangeScanner(
+			d.conf.CSEExecutable,
+			d.conf.PackedBackup,
+			d.conf.CSELegacyEncryption,
+		),
 	)
 	if err != nil {
 		return err
@@ -605,7 +629,12 @@ func (d *Dumper) dumpPacked() error {
 			}
 			meta := newPackedTableMeta(database.Name.O, table, createSQL)
 			if !d.conf.NoData {
-				data := newPackedTableData(d.conf.CSEExecutable, d.conf.PackedBackup, table)
+				data := newPackedTableData(
+					d.conf.CSEExecutable,
+					d.conf.PackedBackup,
+					d.conf.CSELegacyEncryption,
+					table,
+				)
 				if err := send(NewTaskTableData(meta, data, 0, 1)); err != nil {
 					close(taskIn)
 					_ = wg.Wait()

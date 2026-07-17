@@ -21,6 +21,7 @@ The supplied MinIO fixture proves the result. Exporting `test.warehouse` while t
 - [x] (2026-07-16) Updated focused tests so real TiDB DDL/DML produces the metadata and row KVs consumed by the packed adapters.
 - [x] (2026-07-16) Passed CSE target tests, TiDB WIP target tests, and the real-fixture export with baseline hashes.
 - [x] (2026-07-16) Passed final CSE format/clippy gates, TiDB Ready validation, final fixture export, and the diff/test-quality audit.
+- [x] (2026-07-17) Added opt-in legacy encryption: Dumpling propagates `--cse-legacy-encryption`, and CSE resolves the existing `CSE_MASTER_KEY_*` KMS configuration for legacy shard properties.
 
 ## Surprises & Discoveries
 
@@ -68,6 +69,10 @@ The supplied MinIO fixture proves the result. Exporting `test.warehouse` while t
 - Decision: Reuse existing `TaskTableData`, `Writer.WriteTableData`, and `WriteInsertInCsv` behavior.
   Rationale: These source-neutral interfaces already own headers, quoting, nulls, dialects, splitting, compression, naming, and metrics.
   Date/Author: 2026-07-16, Codex.
+
+- Decision: Make legacy decryption explicit and reuse the existing `CSE_MASTER_KEY_*` environment contract.
+  Rationale: Opt-in behavior preserves unencrypted and CMEK reads, while keeping plaintext master-key material out of process arguments.
+  Date/Author: 2026-07-17, Codex.
 
 ## Outcomes & Retrospective
 
@@ -140,7 +145,7 @@ Expected output is 301 CSV lines and the hashes in `Artifacts and Notes`.
 
 Acceptance requires all of the following:
 
-`cse-ctl dumper --help` exposes one metadata URL and two range keys. The command does not read stdin, emit magic bytes or schema JSON, accept table IDs, or wait for a second request. stdout contains only repeated raw KV frames and ends at process EOF. Invalid hex, empty ranges, reversed ranges, partial output framing, uncovered backup ranges, missing objects, and a nonzero child exit produce errors.
+`cse-ctl dumper --help` exposes one metadata URL, two range keys, and optional `--legacy-encryption`. The command does not read stdin, emit magic bytes or schema JSON, accept table IDs, or wait for a second request. stdout contains only repeated raw KV frames and ends at process EOF. Invalid hex, empty ranges, reversed ranges, partial output framing, uncovered backup ranges, missing objects, an invalid legacy master-key configuration, and a nonzero child exit produce errors.
 
 CSE adds the manifest keyspace prefix before storage access, scans `WRITE_CF` with `Some(backup_ts)`, and strips the prefix from emitted keys. Existing checksums, compressed blocks, blob/file access, shard coverage, and snapshot file lifetimes remain delegated to `SnapAccess` and `PackedContentDfs`.
 
@@ -169,6 +174,14 @@ The WIP end-to-end run completed successfully with `tables=1`, `tasks=3`, and no
 
 The packed metadata identifies cluster `7628844331459966093`, keyspace ID `2`, keyspace name `beacon`, and 17 shards. The fixture references 922 SSTs and exercises LZ4 blocks and CRC32 checksums.
 
+The 2026-07-17 legacy-encryption extension passed the packed-reader and CLI
+unit tests, `make format`, CSE `make clippy`, the failpoint-safe focused
+Dumpling tests, and TiDB `make lint`. The unencrypted fixture was exported
+again both without the opt-in flag and with the flag plus the test KMS vendor;
+both runs retained the same 301 lines and hashes. The packed-reader test builds
+an actually encrypted L0 file and reads it through the injected legacy master
+key.
+
 ## Interfaces and Dependencies
 
 In CSE, `native_br::packed_reader::PackedBackupReader` has the public operation:
@@ -187,7 +200,13 @@ The process command is:
     cse-ctl dumper \
       --metadata-url <packed-backup-url> \
       --start-key-hex <inclusive-inner-key-hex> \
-      --end-key-hex <exclusive-inner-key-hex>
+      --end-key-hex <exclusive-inner-key-hex> \
+      [--legacy-encryption]
+
+Legacy mode resolves the encrypted process master key through
+`CSE_MASTER_KEY_ID`, `CSE_MASTER_KEY_CIPHER_TEXT`, `CSE_MASTER_KEY_VENDOR`,
+`CSE_MASTER_KEY_ENDPOINT`, and `AWS_REGION`. Dumpling exposes the matching
+`--cse-legacy-encryption` switch and passes it to every range process.
 
 stdout repeats `u32_le key_len`, `u32_le value_len`, `key`, and `value`. A clean EOF ends the stream. stderr plus a nonzero exit reports failure.
 
