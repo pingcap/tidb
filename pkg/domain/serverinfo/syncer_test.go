@@ -136,71 +136,17 @@ func TestBuildStatusEndpointClaim(t *testing.T) {
 		assumedKeyspace  string
 		expectedEndpoint string
 	}{
-		{
-			name:             "IPv4",
-			host:             " 127.0.0.1 ",
-			statusPort:       10080,
-			reportStatus:     true,
-			expectedEndpoint: "127.0.0.1:10080",
-		},
-		{
-			name:             "expanded IPv6",
-			host:             "2001:0db8:0000:0000:0000:0000:0000:0001",
-			statusPort:       10080,
-			reportStatus:     true,
-			expectedEndpoint: "[2001:db8::1]:10080",
-		},
-		{
-			name:             "compressed IPv6",
-			host:             "2001:db8::1",
-			statusPort:       10080,
-			reportStatus:     true,
-			expectedEndpoint: "[2001:db8::1]:10080",
-		},
-		{
-			name:             "DNS case and root dot",
-			host:             "DB.Example.COM.",
-			statusPort:       10080,
-			reportStatus:     true,
-			expectedEndpoint: "db.example.com:10080",
-		},
-		{
-			name:             "different port",
-			host:             "db.example.com",
-			statusPort:       10081,
-			reportStatus:     true,
-			expectedEndpoint: "db.example.com:10081",
-		},
-		{
-			name:             "special hostname text",
-			host:             "db/name",
-			statusPort:       10080,
-			reportStatus:     true,
-			expectedEndpoint: "db/name:10080",
-		},
-		{
-			name:         "status reporting disabled",
-			host:         "127.0.0.1",
-			statusPort:   10080,
-			reportStatus: false,
-		},
-		{
-			name:            "assumed keyspace",
-			host:            "127.0.0.1",
-			statusPort:      10080,
-			reportStatus:    true,
-			assumedKeyspace: "ks1",
-		},
-		{
-			name:         "empty host",
-			statusPort:   10080,
-			reportStatus: true,
-		},
-		{
-			name:         "zero status port",
-			host:         "127.0.0.1",
-			reportStatus: true,
-		},
+		{name: "IPv4", host: " 127.0.0.1 ", statusPort: 10080, reportStatus: true, expectedEndpoint: "127.0.0.1:10080"},
+		{name: "expanded IPv6", host: "2001:0db8:0000:0000:0000:0000:0000:0001", statusPort: 10080, reportStatus: true, expectedEndpoint: "[2001:db8::1]:10080"},
+		{name: "compressed IPv6", host: "2001:db8::1", statusPort: 10080, reportStatus: true, expectedEndpoint: "[2001:db8::1]:10080"},
+		{name: "DNS case and root dot", host: "DB.Example.COM.", statusPort: 10080, reportStatus: true, expectedEndpoint: "db.example.com:10080"},
+		{name: "different DNS name", host: "db-b.example.com", statusPort: 10080, reportStatus: true, expectedEndpoint: "db-b.example.com:10080"},
+		{name: "different port", host: "db.example.com", statusPort: 10081, reportStatus: true, expectedEndpoint: "db.example.com:10081"},
+		{name: "special hostname text", host: "db/name", statusPort: 10080, reportStatus: true, expectedEndpoint: "db/name:10080"},
+		{name: "status reporting disabled", host: "127.0.0.1", statusPort: 10080},
+		{name: "assumed keyspace", host: "127.0.0.1", statusPort: 10080, reportStatus: true, assumedKeyspace: "ks1"},
+		{name: "empty host", statusPort: 10080, reportStatus: true},
+		{name: "zero status port", host: "127.0.0.1", reportStatus: true},
 	}
 
 	keys := make(map[string]string)
@@ -230,13 +176,8 @@ func TestBuildStatusEndpointClaim(t *testing.T) {
 	}
 
 	require.Equal(t, keys["expanded IPv6"], keys["compressed IPv6"])
+	require.NotEqual(t, keys["DNS case and root dot"], keys["different DNS name"])
 	require.NotEqual(t, keys["DNS case and root dot"], keys["different port"])
-
-	firstAlias := &ServerInfo{StaticInfo: StaticInfo{IP: "db-a.example.com", StatusPort: 10080}}
-	secondAlias := &ServerInfo{StaticInfo: StaticInfo{IP: "db-b.example.com", StatusPort: 10080}}
-	_, firstAliasKey := buildStatusEndpointClaim(firstAlias, true)
-	_, secondAliasKey := buildStatusEndpointClaim(secondAlias, true)
-	require.NotEqual(t, firstAliasKey, secondAliasKey)
 }
 
 func TestStatusEndpointClaim(t *testing.T) {
@@ -257,27 +198,12 @@ func TestStatusEndpointClaim(t *testing.T) {
 		config.StoreGlobalConfig(bak)
 	})
 	t.Run("different ID conflict is warning-only", func(t *testing.T) {
-		setStatusEndpointTestConfig("127.0.0.1", 4000, 10080, true)
-		first := NewSyncer("server-r", func() uint64 { return 1 }, client, nil)
-		var firstResult statusEndpointClaimResult
-		firstCalls := 0
-		first.statusEndpointClaimReport = func(result statusEndpointClaimResult) {
-			firstCalls++
-			firstResult = result
-		}
-		require.NoError(t, first.NewSessionAndStoreServerInfo(ctx))
-		defer orphanSyncerSession(first)
-
-		setStatusEndpointTestConfig("127.0.0.1", 4001, 10080, true)
-		second := NewSyncer("server-o", func() uint64 { return 2 }, client, nil)
-		var secondResult statusEndpointClaimResult
-		secondCalls := 0
-		second.statusEndpointClaimReport = func(result statusEndpointClaimResult) {
-			secondCalls++
-			secondResult = result
-		}
-		require.NoError(t, second.NewSessionAndStoreServerInfo(ctx))
-		defer orphanSyncerSession(second)
+		first, firstRecorder := startStatusEndpointTestSyncer(
+			ctx, t, client, "server-r", "127.0.0.1", 4000, 10080, true,
+		)
+		second, secondRecorder := startStatusEndpointTestSyncer(
+			ctx, t, client, "server-o", "127.0.0.1", 4001, 10080, true,
+		)
 
 		claimKey := statusEndpointClaimTestKey("127.0.0.1:10080")
 		value, lease := requireStatusEndpointKV(ctx, t, client, claimKey)
@@ -286,10 +212,8 @@ func TestStatusEndpointClaim(t *testing.T) {
 		requireServerInfoKey(ctx, t, client, first.serverInfoPath)
 		requireServerInfoKey(ctx, t, client, second.serverInfoPath)
 
-		require.Equal(t, 1, firstCalls)
-		require.Equal(t, statusEndpointClaimAcquired, firstResult.state)
-		require.Equal(t, 1, secondCalls)
-		require.Equal(t, statusEndpointClaimConflict, secondResult.state)
+		firstRecorder.requireSingle(t, statusEndpointClaimAcquired)
+		secondResult := secondRecorder.requireSingle(t, statusEndpointClaimConflict)
 		require.Equal(t, "127.0.0.1:10080", secondResult.endpoint)
 		require.Equal(t, claimKey, secondResult.claimKey)
 		require.Equal(t, "server-o", secondResult.localID)
@@ -298,15 +222,14 @@ func TestStatusEndpointClaim(t *testing.T) {
 	})
 
 	t.Run("different endpoints acquire independent claims", func(t *testing.T) {
-		setStatusEndpointTestConfig("127.0.0.2", 4010, 10081, true)
-		first := NewSyncer("different-endpoint-a", func() uint64 { return 10 }, client, nil)
-		require.NoError(t, first.NewSessionAndStoreServerInfo(ctx))
-		defer orphanSyncerSession(first)
-
-		setStatusEndpointTestConfig("127.0.0.2", 4011, 10082, true)
-		second := NewSyncer("different-endpoint-b", func() uint64 { return 11 }, client, nil)
-		require.NoError(t, second.NewSessionAndStoreServerInfo(ctx))
-		defer orphanSyncerSession(second)
+		first, firstRecorder := startStatusEndpointTestSyncer(
+			ctx, t, client, "different-endpoint-a", "127.0.0.2", 4010, 10081, true,
+		)
+		second, secondRecorder := startStatusEndpointTestSyncer(
+			ctx, t, client, "different-endpoint-b", "127.0.0.2", 4011, 10082, true,
+		)
+		firstRecorder.requireSingle(t, statusEndpointClaimAcquired)
+		secondRecorder.requireSingle(t, statusEndpointClaimAcquired)
 
 		value, lease := requireStatusEndpointKV(ctx, t, client, statusEndpointClaimTestKey("127.0.0.2:10081"))
 		require.Equal(t, "different-endpoint-a", value)
@@ -317,21 +240,12 @@ func TestStatusEndpointClaim(t *testing.T) {
 	})
 
 	t.Run("concurrent registrations choose one claim holder", func(t *testing.T) {
-		setStatusEndpointTestConfig("127.0.0.3", 4020, 10083, true)
-		first := NewSyncer("concurrent-a", func() uint64 { return 20 }, client, nil)
-		setStatusEndpointTestConfig("127.0.0.3", 4021, 10083, true)
-		second := NewSyncer("concurrent-b", func() uint64 { return 21 }, client, nil)
-
-		var firstResult, secondResult statusEndpointClaimResult
-		firstCalls, secondCalls := 0, 0
-		first.statusEndpointClaimReport = func(result statusEndpointClaimResult) {
-			firstCalls++
-			firstResult = result
-		}
-		second.statusEndpointClaimReport = func(result statusEndpointClaimResult) {
-			secondCalls++
-			secondResult = result
-		}
+		first, firstRecorder := newStatusEndpointTestSyncer(
+			t, client, "concurrent-a", "127.0.0.3", 4020, 10083, true,
+		)
+		second, secondRecorder := newStatusEndpointTestSyncer(
+			t, client, "concurrent-b", "127.0.0.3", 4021, 10083, true,
+		)
 
 		start := make(chan struct{})
 		errCh := make(chan error, 2)
@@ -346,11 +260,9 @@ func TestStatusEndpointClaim(t *testing.T) {
 		close(start)
 		require.NoError(t, <-errCh)
 		require.NoError(t, <-errCh)
-		defer orphanSyncerSession(first)
-		defer orphanSyncerSession(second)
 
-		require.Equal(t, 1, firstCalls)
-		require.Equal(t, 1, secondCalls)
+		firstResult := firstRecorder.single(t)
+		secondResult := secondRecorder.single(t)
 		states := []statusEndpointClaimState{firstResult.state, secondResult.state}
 		require.ElementsMatch(t,
 			[]statusEndpointClaimState{statusEndpointClaimAcquired, statusEndpointClaimConflict},
@@ -376,28 +288,23 @@ func TestStatusEndpointClaim(t *testing.T) {
 	})
 
 	t.Run("same ID restart reattaches the claim to the new lease", func(t *testing.T) {
-		setStatusEndpointTestConfig("127.0.0.4", 4030, 10084, true)
-		syncer := NewSyncer("restart-same-id", func() uint64 { return 30 }, client, nil)
-		results := make([]statusEndpointClaimResult, 0, 2)
-		syncer.statusEndpointClaimReport = func(result statusEndpointClaimResult) {
-			results = append(results, result)
-		}
-		require.NoError(t, syncer.NewSessionAndStoreServerInfo(ctx))
+		syncer, recorder := startStatusEndpointTestSyncer(
+			ctx, t, client, "restart-same-id", "127.0.0.4", 4030, 10084, true,
+		)
 		oldSession := syncer.session
 		oldLease := oldSession.Lease()
 		defer oldSession.Orphan()
 
 		require.NoError(t, syncer.Restart(ctx))
 		newSession := syncer.session
-		defer newSession.Orphan()
 		require.NotEqual(t, oldLease, newSession.Lease())
 
 		value, lease := requireStatusEndpointKV(ctx, t, client, syncer.statusEndpointClaimKey)
 		require.Equal(t, "restart-same-id", value)
 		require.Equal(t, newSession.Lease(), lease)
-		require.Len(t, results, 2)
-		require.Equal(t, statusEndpointClaimAcquired, results[0].state)
-		require.Equal(t, statusEndpointClaimAcquired, results[1].state)
+		require.Len(t, recorder.results, 2)
+		require.Equal(t, statusEndpointClaimAcquired, recorder.results[0].state)
+		require.Equal(t, statusEndpointClaimAcquired, recorder.results[1].state)
 
 		serverInfoValue, serverInfoLease := requireStatusEndpointKV(ctx, t, client, syncer.serverInfoPath)
 		require.NotEmpty(t, serverInfoValue)
@@ -405,22 +312,22 @@ func TestStatusEndpointClaim(t *testing.T) {
 	})
 
 	t.Run("reattach race reports the current claim without blind overwrite", func(t *testing.T) {
-		setStatusEndpointTestConfig("127.0.0.5", 4040, 10085, true)
-		first := NewSyncer("reattach-race", func() uint64 { return 40 }, client, nil)
-		require.NoError(t, first.NewSessionAndStoreServerInfo(ctx))
-		defer orphanSyncerSession(first)
+		startStatusEndpointTestSyncer(
+			ctx, t, client, "reattach-race", "127.0.0.5", 4040, 10085, true,
+		)
 
 		faultClient, err := cluster.NewClientV3(0)
 		require.NoError(t, err)
-		defer func() { require.NoError(t, faultClient.Close()) }()
+		t.Cleanup(func() { require.NoError(t, faultClient.Close()) })
 		faultKV := &statusEndpointFaultKV{
 			KV:           faultClient.KV,
 			beforeCommit: make(map[int]func()),
 		}
 		faultClient.KV = faultKV
 
-		setStatusEndpointTestConfig("127.0.0.5", 4041, 10085, true)
-		second := NewSyncer("reattach-race", func() uint64 { return 41 }, faultClient, nil)
+		second, recorder := newStatusEndpointTestSyncer(
+			t, faultClient, "reattach-race", "127.0.0.5", 4041, 10085, true,
+		)
 		newGeneration, err := client.Grant(ctx, util.SessionTTL)
 		require.NoError(t, err)
 		defer func() {
@@ -432,17 +339,9 @@ func TestStatusEndpointClaim(t *testing.T) {
 				clientv3.WithLease(newGeneration.ID))
 			require.NoError(t, putErr)
 		}
-		var result statusEndpointClaimResult
-		calls := 0
-		second.statusEndpointClaimReport = func(got statusEndpointClaimResult) {
-			calls++
-			result = got
-		}
 		require.NoError(t, second.NewSessionAndStoreServerInfo(ctx))
-		defer orphanSyncerSession(second)
 
-		require.Equal(t, 1, calls)
-		require.Equal(t, statusEndpointClaimCheckFailed, result.state)
+		result := recorder.requireSingle(t, statusEndpointClaimCheckFailed)
 		require.Equal(t, "reattach-race", result.localID)
 		require.Equal(t, "reattach-race", result.existingID)
 		require.Equal(t, newGeneration.ID, result.existingLease)
@@ -455,40 +354,32 @@ func TestStatusEndpointClaim(t *testing.T) {
 	})
 
 	t.Run("graceful removal releases only the owner claim", func(t *testing.T) {
-		setStatusEndpointTestConfig("127.0.0.6", 4050, 10086, true)
-		holder := NewSyncer("graceful-holder", func() uint64 { return 50 }, client, nil)
-		require.NoError(t, holder.NewSessionAndStoreServerInfo(ctx))
-		defer orphanSyncerSession(holder)
+		holder, _ := startStatusEndpointTestSyncer(
+			ctx, t, client, "graceful-holder", "127.0.0.6", 4050, 10086, true,
+		)
 		claimKey := holder.statusEndpointClaimKey
 
 		holder.RemoveServerInfo()
 		requireEtcdKeyAbsent(ctx, t, client, claimKey)
 		requireEtcdKeyAbsent(ctx, t, client, holder.serverInfoPath)
 
-		setStatusEndpointTestConfig("127.0.0.6", 4051, 10086, true)
-		replacement := NewSyncer("graceful-replacement", func() uint64 { return 51 }, client, nil)
-		var result statusEndpointClaimResult
-		replacement.statusEndpointClaimReport = func(got statusEndpointClaimResult) {
-			result = got
-		}
-		require.NoError(t, replacement.NewSessionAndStoreServerInfo(ctx))
-		defer orphanSyncerSession(replacement)
-		require.Equal(t, statusEndpointClaimAcquired, result.state)
+		replacement, recorder := startStatusEndpointTestSyncer(
+			ctx, t, client, "graceful-replacement", "127.0.0.6", 4051, 10086, true,
+		)
+		recorder.requireSingle(t, statusEndpointClaimAcquired)
 		value, lease := requireStatusEndpointKV(ctx, t, client, claimKey)
 		require.Equal(t, "graceful-replacement", value)
 		require.Equal(t, replacement.session.Lease(), lease)
 	})
 
 	t.Run("loser removal leaves the winner claim", func(t *testing.T) {
-		setStatusEndpointTestConfig("127.0.0.7", 4060, 10087, true)
-		holder := NewSyncer("loser-cleanup-holder", func() uint64 { return 60 }, client, nil)
-		require.NoError(t, holder.NewSessionAndStoreServerInfo(ctx))
-		defer orphanSyncerSession(holder)
-
-		setStatusEndpointTestConfig("127.0.0.7", 4061, 10087, true)
-		loser := NewSyncer("loser-cleanup-loser", func() uint64 { return 61 }, client, nil)
-		require.NoError(t, loser.NewSessionAndStoreServerInfo(ctx))
-		defer orphanSyncerSession(loser)
+		holder, _ := startStatusEndpointTestSyncer(
+			ctx, t, client, "loser-cleanup-holder", "127.0.0.7", 4060, 10087, true,
+		)
+		loser, recorder := startStatusEndpointTestSyncer(
+			ctx, t, client, "loser-cleanup-loser", "127.0.0.7", 4061, 10087, true,
+		)
+		recorder.requireSingle(t, statusEndpointClaimConflict)
 
 		loser.RemoveServerInfo()
 		value, lease := requireStatusEndpointKV(ctx, t, client, holder.statusEndpointClaimKey)
@@ -498,16 +389,15 @@ func TestStatusEndpointClaim(t *testing.T) {
 	})
 
 	t.Run("old same-ID generation cannot remove the new claim", func(t *testing.T) {
-		setStatusEndpointTestConfig("127.0.0.8", 4070, 10088, true)
-		syncer := NewSyncer("same-id-cleanup", func() uint64 { return 70 }, client, nil)
-		require.NoError(t, syncer.NewSessionAndStoreServerInfo(ctx))
+		syncer, _ := startStatusEndpointTestSyncer(
+			ctx, t, client, "same-id-cleanup", "127.0.0.8", 4070, 10088, true,
+		)
 		oldSession := syncer.session
 		oldLease := oldSession.Lease()
 		defer oldSession.Orphan()
 
 		require.NoError(t, syncer.Restart(ctx))
 		newSession := syncer.session
-		defer newSession.Orphan()
 		require.NotEqual(t, oldLease, newSession.Lease())
 
 		require.NoError(t, syncer.removeStatusEndpointClaim(ctx, oldLease))
@@ -517,10 +407,9 @@ func TestStatusEndpointClaim(t *testing.T) {
 	})
 
 	t.Run("lease revoke removes the claim and server info together", func(t *testing.T) {
-		setStatusEndpointTestConfig("127.0.0.9", 4080, 10089, true)
-		syncer := NewSyncer("lease-revoke", func() uint64 { return 80 }, client, nil)
-		require.NoError(t, syncer.NewSessionAndStoreServerInfo(ctx))
-		defer orphanSyncerSession(syncer)
+		syncer, _ := startStatusEndpointTestSyncer(
+			ctx, t, client, "lease-revoke", "127.0.0.9", 4080, 10089, true,
+		)
 
 		lease := syncer.session.Lease()
 		ttl, err := client.TimeToLive(ctx, lease)
@@ -539,33 +428,22 @@ func TestStatusEndpointClaim(t *testing.T) {
 	t.Run("namespaced primary clients claim independently", func(t *testing.T) {
 		firstClient, err := cluster.NewClientV3(0)
 		require.NoError(t, err)
-		defer func() { require.NoError(t, firstClient.Close()) }()
+		t.Cleanup(func() { require.NoError(t, firstClient.Close()) })
 		secondClient, err := cluster.NewClientV3(0)
 		require.NoError(t, err)
-		defer func() { require.NoError(t, secondClient.Close()) }()
+		t.Cleanup(func() { require.NoError(t, secondClient.Close()) })
 		etcd.SetEtcdCliByNamespace(firstClient, "keyspace-a/")
 		etcd.SetEtcdCliByNamespace(secondClient, "keyspace-b/")
 
-		setStatusEndpointTestConfig("127.0.0.10", 4090, 10090, true)
-		first := NewSyncer("namespaced-a", func() uint64 { return 90 }, firstClient, nil)
-		var firstResult statusEndpointClaimResult
-		first.statusEndpointClaimReport = func(result statusEndpointClaimResult) {
-			firstResult = result
-		}
-		require.NoError(t, first.NewSessionAndStoreServerInfo(ctx))
-		defer orphanSyncerSession(first)
+		first, firstRecorder := startStatusEndpointTestSyncer(
+			ctx, t, firstClient, "namespaced-a", "127.0.0.10", 4090, 10090, true,
+		)
+		second, secondRecorder := startStatusEndpointTestSyncer(
+			ctx, t, secondClient, "namespaced-b", "127.0.0.10", 4091, 10090, true,
+		)
 
-		setStatusEndpointTestConfig("127.0.0.10", 4091, 10090, true)
-		second := NewSyncer("namespaced-b", func() uint64 { return 91 }, secondClient, nil)
-		var secondResult statusEndpointClaimResult
-		second.statusEndpointClaimReport = func(result statusEndpointClaimResult) {
-			secondResult = result
-		}
-		require.NoError(t, second.NewSessionAndStoreServerInfo(ctx))
-		defer orphanSyncerSession(second)
-
-		require.Equal(t, statusEndpointClaimAcquired, firstResult.state)
-		require.Equal(t, statusEndpointClaimAcquired, secondResult.state)
+		firstRecorder.requireSingle(t, statusEndpointClaimAcquired)
+		secondRecorder.requireSingle(t, statusEndpointClaimAcquired)
 		value, lease := requireStatusEndpointKV(ctx, t, firstClient, first.statusEndpointClaimKey)
 		require.Equal(t, "namespaced-a", value)
 		require.Equal(t, first.session.Lease(), lease)
@@ -577,25 +455,20 @@ func TestStatusEndpointClaim(t *testing.T) {
 	t.Run("CrossKS registration stores server info without a claim", func(t *testing.T) {
 		crossClient, err := cluster.NewClientV3(0)
 		require.NoError(t, err)
-		defer func() { require.NoError(t, crossClient.Close()) }()
+		t.Cleanup(func() { require.NoError(t, crossClient.Close()) })
 		etcd.SetEtcdCliByNamespace(crossClient, "cross-keyspace/")
 
 		setStatusEndpointTestConfig("127.0.0.11", 4100, 10091, true)
 		syncer := NewCrossKSSyncer("cross-virtual", func() uint64 { return 100 }, crossClient, nil, "target-ks")
-		var result statusEndpointClaimResult
-		calls := 0
-		syncer.statusEndpointClaimReport = func(got statusEndpointClaimResult) {
-			calls++
-			result = got
-		}
+		recorder := &statusEndpointClaimRecorder{}
+		syncer.statusEndpointClaimReport = recorder.record
+		t.Cleanup(func() { orphanSyncerSession(syncer) })
 		require.NoError(t, syncer.NewSessionAndStoreServerInfo(ctx))
-		defer orphanSyncerSession(syncer)
 
 		require.True(t, syncer.info.Load().IsAssumed())
 		require.Empty(t, syncer.statusEndpoint)
 		require.Empty(t, syncer.statusEndpointClaimKey)
-		require.Equal(t, 1, calls)
-		require.Equal(t, statusEndpointClaimSkipped, result.state)
+		recorder.requireSingle(t, statusEndpointClaimSkipped)
 		requireServerInfoKey(ctx, t, crossClient, syncer.serverInfoPath)
 		resp, err := crossClient.Get(ctx, serverStatusAddressPath, clientv3.WithPrefix())
 		require.NoError(t, err)
@@ -603,27 +476,14 @@ func TestStatusEndpointClaim(t *testing.T) {
 	})
 
 	t.Run("explicitly disabled claim keeps server registration", func(t *testing.T) {
-		setStatusEndpointTestConfig("127.0.0.20", 4200, 10100, true)
-		syncer := NewSyncer(
-			"claim-disabled",
-			func() uint64 { return 101 },
-			client,
-			nil,
+		syncer, recorder := startStatusEndpointTestSyncer(
+			ctx, t, client, "claim-disabled", "127.0.0.20", 4200, 10100, true,
 			WithoutStatusEndpointClaim(),
 		)
-		var result statusEndpointClaimResult
-		calls := 0
-		syncer.statusEndpointClaimReport = func(got statusEndpointClaimResult) {
-			calls++
-			result = got
-		}
-		require.NoError(t, syncer.NewSessionAndStoreServerInfo(ctx))
-		defer orphanSyncerSession(syncer)
 
 		require.Empty(t, syncer.statusEndpoint)
 		require.Empty(t, syncer.statusEndpointClaimKey)
-		require.Equal(t, 1, calls)
-		require.Equal(t, statusEndpointClaimSkipped, result.state)
+		recorder.requireSingle(t, statusEndpointClaimSkipped)
 		requireServerInfoKey(ctx, t, client, syncer.serverInfoPath)
 		requireEtcdKeyAbsent(ctx, t, client, statusEndpointClaimTestKey("127.0.0.20:10100"))
 
@@ -632,8 +492,8 @@ func TestStatusEndpointClaim(t *testing.T) {
 		defer oldSession.Orphan()
 		require.NoError(t, syncer.Restart(ctx))
 		require.NotEqual(t, oldLease, syncer.session.Lease())
-		require.Equal(t, 2, calls)
-		require.Equal(t, statusEndpointClaimSkipped, result.state)
+		require.Len(t, recorder.results, 2)
+		require.Equal(t, statusEndpointClaimSkipped, recorder.results[1].state)
 		_, serverInfoLease := requireStatusEndpointKV(ctx, t, client, syncer.serverInfoPath)
 		require.Equal(t, syncer.session.Lease(), serverInfoLease)
 		requireEtcdKeyAbsent(ctx, t, client, statusEndpointClaimTestKey("127.0.0.20:10100"))
@@ -653,60 +513,43 @@ func TestStatusEndpointClaim(t *testing.T) {
 		}
 		for i, test := range tests {
 			t.Run(test.name, func(t *testing.T) {
-				setStatusEndpointTestConfig(test.host, test.sqlPort, test.statusPort, test.reportStatus)
 				id := fmt.Sprintf("skip-claim-%d", i)
-				syncer := NewSyncer(id, func() uint64 { return uint64(110 + i) }, client, nil)
-				var result statusEndpointClaimResult
-				calls := 0
-				syncer.statusEndpointClaimReport = func(got statusEndpointClaimResult) {
-					calls++
-					result = got
-				}
-				require.NoError(t, syncer.NewSessionAndStoreServerInfo(ctx))
-				defer orphanSyncerSession(syncer)
+				syncer, recorder := startStatusEndpointTestSyncer(
+					ctx, t, client, id, test.host, test.sqlPort, test.statusPort, test.reportStatus,
+				)
 
 				require.Empty(t, syncer.statusEndpointClaimKey)
-				require.Equal(t, 1, calls)
-				require.Equal(t, statusEndpointClaimSkipped, result.state)
+				recorder.requireSingle(t, statusEndpointClaimSkipped)
 				requireServerInfoKey(ctx, t, client, syncer.serverInfoPath)
 			})
 		}
 	})
 
 	t.Run("nil etcd client keeps the existing no-op behavior", func(t *testing.T) {
-		setStatusEndpointTestConfig("127.0.0.14", 4120, 10094, true)
-		syncer := NewSyncer("nil-etcd", func() uint64 { return 120 }, nil, nil)
-		calls := 0
-		syncer.statusEndpointClaimReport = func(statusEndpointClaimResult) {
-			calls++
-		}
+		syncer, recorder := newStatusEndpointTestSyncer(
+			t, nil, "nil-etcd-client", "127.0.0.14", 4120, 10094, true,
+		)
+
 		require.NoError(t, syncer.NewSessionAndStoreServerInfo(ctx))
-		require.Equal(t, 0, calls)
+		require.Empty(t, recorder.results)
 		require.Nil(t, syncer.session)
 	})
 
 	t.Run("claim check error does not block server info registration", func(t *testing.T) {
 		faultClient, err := cluster.NewClientV3(0)
 		require.NoError(t, err)
-		defer func() { require.NoError(t, faultClient.Close()) }()
+		t.Cleanup(func() { require.NoError(t, faultClient.Close()) })
 		faultClient.KV = &statusEndpointFaultKV{
 			KV:        faultClient.KV,
 			txnFaults: []statusEndpointTxnFault{statusEndpointTxnFailBeforeCommit},
 		}
 
-		setStatusEndpointTestConfig("127.0.0.15", 4130, 10095, true)
-		syncer := NewSyncer("claim-check-error", func() uint64 { return 130 }, faultClient, nil)
-		var result statusEndpointClaimResult
-		calls := 0
-		syncer.statusEndpointClaimReport = func(got statusEndpointClaimResult) {
-			calls++
-			result = got
-		}
+		syncer, recorder := newStatusEndpointTestSyncer(
+			t, faultClient, "claim-check-error", "127.0.0.15", 4130, 10095, true,
+		)
 		require.NoError(t, syncer.NewSessionAndStoreServerInfo(ctx))
-		defer orphanSyncerSession(syncer)
 
-		require.Equal(t, 1, calls)
-		require.Equal(t, statusEndpointClaimCheckFailed, result.state)
+		result := recorder.requireSingle(t, statusEndpointClaimCheckFailed)
 		require.ErrorIs(t, result.err, errStatusEndpointTxnFault)
 		requireEtcdKeyAbsent(ctx, t, client, syncer.statusEndpointClaimKey)
 		requireServerInfoKey(ctx, t, client, syncer.serverInfoPath)
@@ -715,7 +558,7 @@ func TestStatusEndpointClaim(t *testing.T) {
 	t.Run("unknown claim outcome is cleaned after server info failure", func(t *testing.T) {
 		faultClient, err := cluster.NewClientV3(0)
 		require.NoError(t, err)
-		defer func() { require.NoError(t, faultClient.Close()) }()
+		t.Cleanup(func() { require.NoError(t, faultClient.Close()) })
 		storeErr := errors.New("injected server info put failure")
 		faultKV := &statusEndpointFaultKV{
 			KV:        faultClient.KV,
@@ -724,17 +567,14 @@ func TestStatusEndpointClaim(t *testing.T) {
 		}
 		faultClient.KV = faultKV
 
-		setStatusEndpointTestConfig("127.0.0.16", 4140, 10096, true)
-		syncer := NewSyncer("unknown-outcome", func() uint64 { return 140 }, faultClient, nil)
+		syncer, recorder := newStatusEndpointTestSyncer(
+			t, faultClient, "unknown-outcome", "127.0.0.16", 4140, 10096, true,
+		)
 		faultKV.failPutKey = syncer.serverInfoPath
-		var result statusEndpointClaimResult
-		syncer.statusEndpointClaimReport = func(got statusEndpointClaimResult) {
-			result = got
-		}
 
 		err = syncer.NewSessionAndStoreServerInfo(ctx)
 		require.ErrorIs(t, err, storeErr)
-		require.Equal(t, statusEndpointClaimCheckFailed, result.state)
+		result := recorder.requireSingle(t, statusEndpointClaimCheckFailed)
 		require.ErrorIs(t, result.err, errStatusEndpointTxnFault)
 		requireSessionDone(t, syncer)
 		require.Eventually(t, func() bool {
@@ -743,44 +583,35 @@ func TestStatusEndpointClaim(t *testing.T) {
 		}, 5*time.Second, 20*time.Millisecond)
 		requireEtcdKeyAbsent(ctx, t, client, syncer.serverInfoPath)
 
-		setStatusEndpointTestConfig("127.0.0.16", 4141, 10096, true)
-		replacement := NewSyncer("unknown-outcome-replacement", func() uint64 { return 141 }, client, nil)
-		var replacementResult statusEndpointClaimResult
-		replacement.statusEndpointClaimReport = func(got statusEndpointClaimResult) {
-			replacementResult = got
-		}
-		require.NoError(t, replacement.NewSessionAndStoreServerInfo(ctx))
-		defer orphanSyncerSession(replacement)
-		require.Equal(t, statusEndpointClaimAcquired, replacementResult.state)
+		replacement, replacementRecorder := startStatusEndpointTestSyncer(
+			ctx, t, client, "unknown-outcome-replacement", "127.0.0.16", 4141, 10096, true,
+		)
+		replacementRecorder.requireSingle(t, statusEndpointClaimAcquired)
 		value, lease := requireStatusEndpointKV(ctx, t, client, replacement.statusEndpointClaimKey)
 		require.Equal(t, "unknown-outcome-replacement", value)
 		require.Equal(t, replacement.session.Lease(), lease)
 	})
 
 	t.Run("failed conflict registration cannot remove the winner claim", func(t *testing.T) {
-		setStatusEndpointTestConfig("127.0.0.17", 4150, 10097, true)
-		holder := NewSyncer("failed-conflict-holder", func() uint64 { return 150 }, client, nil)
-		require.NoError(t, holder.NewSessionAndStoreServerInfo(ctx))
-		defer orphanSyncerSession(holder)
+		holder, _ := startStatusEndpointTestSyncer(
+			ctx, t, client, "failed-conflict-holder", "127.0.0.17", 4150, 10097, true,
+		)
 
 		faultClient, err := cluster.NewClientV3(0)
 		require.NoError(t, err)
-		defer func() { require.NoError(t, faultClient.Close()) }()
+		t.Cleanup(func() { require.NoError(t, faultClient.Close()) })
 		storeErr := errors.New("injected conflict server info put failure")
 		faultKV := &statusEndpointFaultKV{KV: faultClient.KV, putErr: storeErr}
 		faultClient.KV = faultKV
 
-		setStatusEndpointTestConfig("127.0.0.17", 4151, 10097, true)
-		loser := NewSyncer("failed-conflict-loser", func() uint64 { return 151 }, faultClient, nil)
+		loser, recorder := newStatusEndpointTestSyncer(
+			t, faultClient, "failed-conflict-loser", "127.0.0.17", 4151, 10097, true,
+		)
 		faultKV.failPutKey = loser.serverInfoPath
-		var result statusEndpointClaimResult
-		loser.statusEndpointClaimReport = func(got statusEndpointClaimResult) {
-			result = got
-		}
 
 		err = loser.NewSessionAndStoreServerInfo(ctx)
 		require.ErrorIs(t, err, storeErr)
-		require.Equal(t, statusEndpointClaimConflict, result.state)
+		recorder.requireSingle(t, statusEndpointClaimConflict)
 		requireSessionDone(t, loser)
 		value, lease := requireStatusEndpointKV(ctx, t, client, holder.statusEndpointClaimKey)
 		require.Equal(t, "failed-conflict-holder", value)
@@ -791,7 +622,7 @@ func TestStatusEndpointClaim(t *testing.T) {
 	t.Run("failed registration cleanup remains bounded when etcd operations fail", func(t *testing.T) {
 		faultClient, err := cluster.NewClientV3(0)
 		require.NoError(t, err)
-		defer func() { require.NoError(t, faultClient.Close()) }()
+		t.Cleanup(func() { require.NoError(t, faultClient.Close()) })
 		storeErr := errors.New("injected bounded cleanup store failure")
 		cleanupErr := errors.New("injected cleanup failure")
 		faultKV := &statusEndpointFaultKV{
@@ -809,13 +640,10 @@ func TestStatusEndpointClaim(t *testing.T) {
 		}
 		faultClient.Lease = faultLease
 
-		setStatusEndpointTestConfig("127.0.0.18", 4160, 10098, true)
-		syncer := NewSyncer("bounded-cleanup", func() uint64 { return 160 }, faultClient, nil)
+		syncer, recorder := newStatusEndpointTestSyncer(
+			t, faultClient, "bounded-cleanup", "127.0.0.18", 4160, 10098, true,
+		)
 		faultKV.failPutKey = syncer.serverInfoPath
-		var result statusEndpointClaimResult
-		syncer.statusEndpointClaimReport = func(got statusEndpointClaimResult) {
-			result = got
-		}
 
 		start := time.Now()
 		err = syncer.NewSessionAndStoreServerInfo(ctx)
@@ -824,7 +652,7 @@ func TestStatusEndpointClaim(t *testing.T) {
 		require.GreaterOrEqual(t, elapsed, 900*time.Millisecond)
 		require.Less(t, elapsed, 2*time.Second)
 		require.Equal(t, 2, faultKV.transactionCount())
-		require.Equal(t, statusEndpointClaimAcquired, result.state)
+		recorder.requireSingle(t, statusEndpointClaimAcquired)
 		requireSessionDone(t, syncer)
 		revokeCalls := faultLease.revokeCallsSnapshot()
 		require.Len(t, revokeCalls, 1)
@@ -848,7 +676,7 @@ func TestStatusEndpointClaim(t *testing.T) {
 	t.Run("parent cancellation produces no misleading claim warning", func(t *testing.T) {
 		faultClient, err := cluster.NewClientV3(0)
 		require.NoError(t, err)
-		defer func() { require.NoError(t, faultClient.Close()) }()
+		t.Cleanup(func() { require.NoError(t, faultClient.Close()) })
 		started := make(chan struct{})
 		faultClient.KV = &statusEndpointFaultKV{
 			KV:        faultClient.KV,
@@ -856,12 +684,9 @@ func TestStatusEndpointClaim(t *testing.T) {
 			started:   started,
 		}
 
-		setStatusEndpointTestConfig("127.0.0.19", 4170, 10099, true)
-		syncer := NewSyncer("parent-cancel", func() uint64 { return 170 }, faultClient, nil)
-		calls := 0
-		syncer.statusEndpointClaimReport = func(statusEndpointClaimResult) {
-			calls++
-		}
+		syncer, recorder := newStatusEndpointTestSyncer(
+			t, faultClient, "parent-cancel", "127.0.0.19", 4170, 10099, true,
+		)
 		cancelCtx, cancelClaim := context.WithCancel(context.Background())
 		errCh := make(chan error, 1)
 		go func() {
@@ -876,7 +701,7 @@ func TestStatusEndpointClaim(t *testing.T) {
 		err = <-errCh
 
 		require.ErrorIs(t, err, context.Canceled)
-		require.Equal(t, 0, calls)
+		require.Empty(t, recorder.results)
 		requireSessionDone(t, syncer)
 		requireEtcdKeyAbsent(ctx, t, client, syncer.statusEndpointClaimKey)
 		requireEtcdKeyAbsent(ctx, t, client, syncer.serverInfoPath)
@@ -885,16 +710,16 @@ func TestStatusEndpointClaim(t *testing.T) {
 	t.Run("server info sync loop backs off after restart failures and exits", func(t *testing.T) {
 		faultClient, err := cluster.NewClientV3(0)
 		require.NoError(t, err)
-		defer func() { require.NoError(t, faultClient.Close()) }()
+		t.Cleanup(func() { require.NoError(t, faultClient.Close()) })
 		faultLease := &statusEndpointFaultLease{
 			Lease:       faultClient.Lease,
 			grantEvents: make(chan time.Time, 8),
 		}
 		faultClient.Lease = faultLease
 
-		setStatusEndpointTestConfig("127.0.0.20", 4180, 10100, false)
-		syncer := NewSyncer("restart-backoff", func() uint64 { return 180 }, faultClient, nil)
-		require.NoError(t, syncer.NewSessionAndStoreServerInfo(ctx))
+		syncer, _ := startStatusEndpointTestSyncer(
+			ctx, t, faultClient, "restart-backoff", "127.0.0.20", 4180, 10100, false,
+		)
 		syncer.session.Orphan()
 		requireSessionDone(t, syncer)
 
@@ -938,6 +763,64 @@ func TestStatusEndpointClaim(t *testing.T) {
 		require.Less(t, restartGap, 2500*time.Millisecond)
 		require.Equal(t, 6, faultLease.grantFailureCount())
 	})
+}
+
+type statusEndpointClaimRecorder struct {
+	results []statusEndpointClaimResult
+}
+
+func (r *statusEndpointClaimRecorder) record(result statusEndpointClaimResult) {
+	r.results = append(r.results, result)
+}
+
+func (r *statusEndpointClaimRecorder) requireSingle(
+	t *testing.T,
+	state statusEndpointClaimState,
+) statusEndpointClaimResult {
+	t.Helper()
+	result := r.single(t)
+	require.Equal(t, state, result.state)
+	return result
+}
+
+func (r *statusEndpointClaimRecorder) single(t *testing.T) statusEndpointClaimResult {
+	t.Helper()
+	require.Len(t, r.results, 1)
+	return r.results[0]
+}
+
+func newStatusEndpointTestSyncer(
+	t *testing.T,
+	client *clientv3.Client,
+	id, host string,
+	sqlPort, statusPort uint,
+	reportStatus bool,
+	options ...SyncerOption,
+) (*Syncer, *statusEndpointClaimRecorder) {
+	t.Helper()
+	setStatusEndpointTestConfig(host, sqlPort, statusPort, reportStatus)
+	syncer := NewSyncer(id, func() uint64 { return uint64(sqlPort) }, client, nil, options...)
+	recorder := &statusEndpointClaimRecorder{}
+	syncer.statusEndpointClaimReport = recorder.record
+	t.Cleanup(func() { orphanSyncerSession(syncer) })
+	return syncer, recorder
+}
+
+func startStatusEndpointTestSyncer(
+	ctx context.Context,
+	t *testing.T,
+	client *clientv3.Client,
+	id, host string,
+	sqlPort, statusPort uint,
+	reportStatus bool,
+	options ...SyncerOption,
+) (*Syncer, *statusEndpointClaimRecorder) {
+	t.Helper()
+	syncer, recorder := newStatusEndpointTestSyncer(
+		t, client, id, host, sqlPort, statusPort, reportStatus, options...,
+	)
+	require.NoError(t, syncer.NewSessionAndStoreServerInfo(ctx))
+	return syncer, recorder
 }
 
 func statusEndpointClaimTestKey(endpoint string) string {
