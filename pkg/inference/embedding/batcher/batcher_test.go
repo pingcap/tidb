@@ -717,7 +717,6 @@ func TestBatchEmbedder_MaxBatchSize_ExactLimit(t *testing.T) {
 	calls := mockEmb.getCalls()
 	require.Len(t, calls, 1)
 	require.Equal(t, texts, calls[0].texts)
-
 }
 
 func TestBatchEmbedder_MaxBatchSize_ExceedsInSingleRequest(t *testing.T) {
@@ -744,5 +743,4 @@ func TestBatchEmbedder_MaxBatchSize_ExceedsInSingleRequest(t *testing.T) {
 	calls := mockEmb.getCalls()
 	require.Len(t, calls, 1)
 	require.Equal(t, texts, calls[0].texts)
-
 }
