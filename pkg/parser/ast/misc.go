@@ -2570,6 +2570,9 @@ const (
 	AdminSwitchOverPrimary
 	AdminSwitchOverAsPrimary
 	AdminActivateStandby
+	AdminCancelLogReplicationWorkflow
+	// adminTpCount is the total number of admin statement types.
+	adminTpCount
 )
 
 // HandleRange represents a range where handle value >= Begin and < End.
@@ -2697,14 +2700,15 @@ type AdminStmt struct {
 	AlterJobOptions []*AlterJobOption
 
 	// pkdb
-	CreateLogReplication *CreateLogReplication
-	AlterLogReplication  *AlterLogReplication
-	PauseLogReplication  *PauseLogReplication
-	ResumeLogReplication *ResumeLogReplication
-	DropLogReplication   *DropLogReplication
-	SwitchOverPrimary    *SwitchOverPrimary
-	SwitchOverAsPrimary  *SwitchOverAsPrimary
-	ActivateStandby      *ActivateStandby
+	CreateLogReplication         *CreateLogReplication
+	AlterLogReplication          *AlterLogReplication
+	PauseLogReplication          *PauseLogReplication
+	ResumeLogReplication         *ResumeLogReplication
+	DropLogReplication           *DropLogReplication
+	SwitchOverPrimary            *SwitchOverPrimary
+	SwitchOverAsPrimary          *SwitchOverAsPrimary
+	ActivateStandby              *ActivateStandby
+	CancelLogReplicationWorkflow *CancelLogReplicationWorkflow
 }
 
 // Restore implements Node interface.
@@ -2911,6 +2915,10 @@ func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 	case AdminActivateStandby:
 		if err := n.ActivateStandby.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore AdminStmt.ActivateStandby")
+		}
+	case AdminCancelLogReplicationWorkflow:
+		if err := n.CancelLogReplicationWorkflow.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore AdminStmt.CancelLogReplicationWorkflow")
 		}
 	default:
 		return errors.New("Unsupported AdminStmt type")

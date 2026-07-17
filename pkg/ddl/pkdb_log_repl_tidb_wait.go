@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
@@ -17,16 +18,24 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	tikvstore "github.com/tikv/client-go/v2/kv"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/rawkv"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/rangetask"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/constants"
 	"go.etcd.io/etcd/api/v3/mvccpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 )
+
+const pkdbDefaultReadStoreConcurrency = 16
 
 var (
 	// tidbWaitJobWatchRetryInterval is used when the etcd watch needs to be
@@ -48,6 +57,24 @@ func pkdbPDSecurityOption() pd.SecurityOption {
 		CertPath: cfg.Security.ClusterSSLCert,
 		KeyPath:  cfg.Security.ClusterSSLKey,
 	}
+}
+
+func pkdbTLSConfig() (*tls.Config, error) {
+	security := config.GetGlobalConfig().Security.ClusterSecurity()
+	return security.ToTLSConfig()
+}
+
+func pkdbDialOptions() ([]grpc.DialOption, error) {
+	tlsCfg, err := pkdbTLSConfig()
+	if err != nil {
+		return nil, err
+	}
+
+	var transportCreds credentials.TransportCredentials = insecure.NewCredentials()
+	if tlsCfg != nil {
+		transportCreds = credentials.NewTLS(tlsCfg)
+	}
+	return []grpc.DialOption{grpc.WithTransportCredentials(transportCreds)}, nil
 }
 
 // tidbWaitJob represents a log replication action that need to use tidb-server's
@@ -176,7 +203,7 @@ func (s saveRaftIndex) checkAndWait(
 ) (version uint64, err error) {
 	curr := &pdpb.ReplicaSaveRaftProgress{}
 	if err = curr.Unmarshal(newJobBytes); err != nil {
-		return 0, errors.Errorf("waitCleanupTiKV failed to unmarshal request: %v", err)
+		return 0, errors.Errorf("saveRaftIndex failed to unmarshal request: %v", err)
 	}
 	version = curr.GetVersion()
 	if version <= lastFinishedVersion {
@@ -192,31 +219,28 @@ func (s saveRaftIndex) checkAndWait(
 		return 0, errors.New("saveRaftIndex got nil pd client")
 	}
 
-	var tlsCfg *tls.Config
-	if backend, ok := store.(kv.EtcdBackend); ok {
-		tlsCfg = backend.TLSConfig()
+	physical, logical, err := pdCli.GetTS(ctx)
+	if err != nil {
+		return 0, err
 	}
-
-	collector := newPkdbRaftIndexCollector(pdCli, tlsCfg)
-	defer collector.Close()
+	maxTS := oracle.ComposeTS(physical, logical)
 
 	logutil.BgLogger().Info("start saveRaftIndex",
 		zap.Uint64("version", version),
-		zap.Int("pageSize", pkdbDefaultScanPageSize),
+		zap.Uint64("maxTS", maxTS),
 		zap.Int("storeConcurrency", pkdbDefaultReadStoreConcurrency),
 	)
 
-	err = collector.collectRaftLogIndexes(ctx, pkdbRaftIndexCollectOptions{
-		pageSize:             pkdbDefaultScanPageSize,
-		readStoreConcurrency: pkdbDefaultReadStoreConcurrency,
-		writePDConcurrency:   pkdbDefaultWritePDConcurrency,
-		retryWait:            pkdbDefaultRetryWaitDuration,
-	}, saveRaftAndRegionState2PD(pdCli))
+	savedStates, err := saveStoreRegionProgresses(ctx, pdCli, maxTS)
 	if err != nil {
 		return 0, err
 	}
 
-	logutil.BgLogger().Info("finish saveRaftIndex", zap.Uint64("version", version))
+	logutil.BgLogger().Info("finish saveRaftIndex",
+		zap.Uint64("version", version),
+		zap.Uint64("savedStates", savedStates),
+		zap.Uint64("maxTS", maxTS),
+	)
 	return version, nil
 }
 
@@ -273,65 +297,151 @@ func (l loadRaftIndex) checkAndWait(ctx context.Context, newJobBytes []byte, las
 
 	logutil.BgLogger().Info("start loadRaftIndex",
 		zap.Uint64("version", version),
-		zap.Uint64("pageSize", pkdbDefaultScanPageSize),
 		zap.Strings("newPrimaryPdAddrs", pdAddrs),
 	)
 
-	var (
-		startID      uint64
-		loadedStates uint64
-	)
-	for {
-		raftStates, _, regionStates, err := primaryPDCli.ScanRaftAndRegionState(ctx, startID, pkdbDefaultScanPageSize)
-		if err != nil {
-			return 0, err
-		}
-		if len(raftStates) == 0 || len(regionStates) == 0 {
-			break
-		}
+	states, err := loadStoreRegionProgresses(ctx, primaryPDCli)
+	if err != nil {
+		return 0, err
+	}
 
-		maxSeen := startID
-		for regionID, regionLocalState := range regionStates {
-			if regionID > maxSeen {
-				maxSeen = regionID
+	g, gCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
+	g.SetLimit(pkdbDefaultReadStoreConcurrency)
+	for _, state := range states {
+		state := state
+		g.Go(func() error {
+			if err := cli.UpdateLogReplState(gCtx, state); err != nil {
+				return errors.Annotatef(
+					err,
+					"update log replication state for range [%s, %s)",
+					redact.Key(state.GetStartKey()),
+					redact.Key(state.GetEndKey()),
+				)
 			}
-
-			if regionLocalState == nil {
-				return 0, errors.Errorf("loadRaftIndex got nil region local state, region id: %d", regionID)
-			}
-			raftLocalState := raftStates[regionID]
-			if raftLocalState == nil {
-				return 0, errors.Errorf("loadRaftIndex got nil raft apply state, region id: %d", regionID)
-			}
-			region := regionLocalState.GetRegion()
-			if region == nil {
-				return 0, errors.Errorf("loadRaftIndex got nil region meta, region id: %d", regionID)
-			}
-
-			state := &logreplicationpb.LogReplicationState{
-				Region:       region,
-				StartKey:     region.StartKey,
-				EndKey:       region.EndKey,
-				AppliedIndex: raftLocalState.GetHardState().GetCommit(),
-			}
-			err = cli.UpdateLogReplState(ctx, state)
-			if err != nil {
-				return 0, err
-			}
-			loadedStates++
-		}
-
-		if maxSeen == ^uint64(0) {
-			break
-		}
-		startID = maxSeen + 1
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return 0, err
 	}
 
 	logutil.BgLogger().Info("finish loadRaftIndex",
 		zap.Uint64("version", version),
-		zap.Uint64("loadedStates", loadedStates),
+		zap.Int("loadedStates", len(states)),
 	)
 	return version, nil
+}
+
+func saveStoreRegionProgresses(ctx context.Context, pdCli pd.Client, maxTS uint64) (uint64, error) {
+	stores, err := pdCli.GetAllStores(ctx, pd.WithExcludeTombstone())
+	if err != nil {
+		return 0, err
+	}
+	dialOptions, err := pkdbDialOptions()
+	if err != nil {
+		return 0, err
+	}
+
+	clusterID := pdCli.GetClusterID(ctx)
+	var savedStates atomic.Uint64
+
+	g, gCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
+	g.SetLimit(pkdbDefaultReadStoreConcurrency)
+	for _, store := range stores {
+		if tikvrpc.GetStoreTypeByMeta(store) != tikvrpc.TiKV {
+			continue
+		}
+		storeID, addr := store.GetId(), store.GetAddress()
+		g.Go(func() error {
+			conn, err := grpc.DialContext(gCtx, addr, dialOptions...)
+			if err != nil {
+				return errors.Annotatef(err, "dial store %d(%s)", storeID, addr)
+			}
+			defer func() { _ = conn.Close() }()
+
+			client := logreplicationpb.NewLogReplicationClient(conn)
+			resp, err := client.SaveStoreRegionProgresses(gCtx, &logreplicationpb.SaveStoreRegionProgressesRequest{
+				Header: &logreplicationpb.Header{ClusterId: clusterID},
+				MaxTs:  maxTS,
+			})
+			if err != nil {
+				return errors.Annotatef(err, "save store region progresses on store %d(%s)", storeID, addr)
+			}
+			savedStates.Add(resp.GetSavedCount())
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return 0, err
+	}
+	return savedStates.Load(), nil
+}
+
+func loadStoreRegionProgresses(ctx context.Context, pdCli pd.Client) ([]*logreplicationpb.LogReplicationState, error) {
+	stores, err := pdCli.GetAllStores(ctx, pd.WithExcludeTombstone())
+	if err != nil {
+		return nil, err
+	}
+	dialOptions, err := pkdbDialOptions()
+	if err != nil {
+		return nil, err
+	}
+
+	clusterID := pdCli.GetClusterID(ctx)
+	var states []*logreplicationpb.LogReplicationState
+	var mu sync.Mutex
+
+	g, gCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
+	g.SetLimit(pkdbDefaultReadStoreConcurrency)
+	for _, store := range stores {
+		if tikvrpc.GetStoreTypeByMeta(store) != tikvrpc.TiKV {
+			continue
+		}
+		storeID, addr := store.GetId(), store.GetAddress()
+		g.Go(func() error {
+			conn, err := grpc.DialContext(gCtx, addr, dialOptions...)
+			if err != nil {
+				return errors.Annotatef(err, "dial store %d(%s)", storeID, addr)
+			}
+			defer func() { _ = conn.Close() }()
+
+			client := logreplicationpb.NewLogReplicationClient(conn)
+			resp, err := client.LoadStoreRegionProgresses(gCtx, &logreplicationpb.LoadStoreRegionProgressesRequest{
+				Header: &logreplicationpb.Header{ClusterId: clusterID},
+			})
+			if err != nil {
+				return errors.Annotatef(err, "load store region progresses from store %d(%s)", storeID, addr)
+			}
+			mu.Lock()
+			states = append(states, resp.GetStates()...)
+			mu.Unlock()
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+
+	type regionKey struct {
+		regionID uint64
+		version  uint64
+	}
+	deduped := make(map[regionKey]*logreplicationpb.LogReplicationState, len(states))
+	for _, state := range states {
+		key := regionKey{
+			regionID: state.GetRegion().GetId(),
+			version:  state.GetRegion().GetRegionEpoch().GetVersion(),
+		}
+		if prev := deduped[key]; prev == nil || state.GetAppliedIndex() > prev.GetAppliedIndex() {
+			deduped[key] = state
+		}
+	}
+
+	merged := make([]*logreplicationpb.LogReplicationState, 0, len(deduped))
+	for _, state := range deduped {
+		merged = append(merged, state)
+	}
+	return merged, nil
 }
 
 // tidbWaitJobManager manages all supported tidbWaitJob.

@@ -59,6 +59,11 @@ func (b *executorBuilder) pkdbBuild(p base.Plan) exec.Executor {
 			BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
 			Mode:         v.Mode,
 		}
+	case *plannercore.CancelLogReplicationWorkflow:
+		return &CancelLogReplicationWorkflowExec{
+			BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
+			WorkflowID:   v.WorkflowID,
+		}
 	default:
 		return nil
 	}

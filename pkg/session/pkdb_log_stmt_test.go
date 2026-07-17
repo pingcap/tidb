@@ -31,6 +31,7 @@ func TestLogReplicationAdminStmtIsCrucial(t *testing.T) {
 		ast.AdminSwitchOverPrimary,
 		ast.AdminSwitchOverAsPrimary,
 		ast.AdminActivateStandby,
+		ast.AdminCancelLogReplicationWorkflow,
 	} {
 		require.True(t, isAdminLogReplStmt(tp), "admin type %v should be crucial", tp)
 	}

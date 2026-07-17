@@ -20,7 +20,8 @@ func isAdminLogReplStmt(tp ast.AdminStmtType) bool {
 	switch tp {
 	case ast.AdminCreateLogReplication, ast.AdminAlterLogReplication,
 		ast.AdminPauseLogReplication, ast.AdminResumeLogReplication, ast.AdminDropLogReplication,
-		ast.AdminSwitchOverPrimary, ast.AdminSwitchOverAsPrimary, ast.AdminActivateStandby:
+		ast.AdminSwitchOverPrimary, ast.AdminSwitchOverAsPrimary, ast.AdminActivateStandby,
+		ast.AdminCancelLogReplicationWorkflow:
 		return true
 	default:
 		return false

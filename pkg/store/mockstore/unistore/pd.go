@@ -115,6 +115,10 @@ func (c *pdClient) GetServiceDiscovery() pd.ServiceDiscovery {
 	return NewMockPDServiceDiscovery(c.addrs)
 }
 
+func (c *pdClient) GetGCSafePoint(ctx context.Context) (uint64, error) {
+	return c.MockPD.GetGCSafePoint(ctx)
+}
+
 var (
 	_ pd.ServiceDiscovery = (*mockPDServiceDiscovery)(nil)
 	_ pd.ServiceClient    = (*mockPDServiceClient)(nil)

@@ -304,11 +304,11 @@ func (e *ActivateStandbyExec) Open(ctx context.Context) error {
 	pdCli := do.GetPDClient()
 
 	opts := &pd.LogReplicationOptions{
-		ActivateMode: pdpb.ActivateStandbyMode_ACTIVATE_MODE_UNKNOWN,
+		ActivateMode: pdpb.ActivateStandbyMode_ACTIVATE_MODE_DEFAULT,
 	}
 	switch e.Mode {
-	case ast.ActivateStandbyModeUnknown:
-		opts.ActivateMode = pdpb.ActivateStandbyMode_ACTIVATE_MODE_UNKNOWN
+	case ast.ActivateStandbyModeDefault:
+		opts.ActivateMode = pdpb.ActivateStandbyMode_ACTIVATE_MODE_DEFAULT
 	case ast.ActivateStandbyModeFlashback:
 		opts.ActivateMode = pdpb.ActivateStandbyMode_ACTIVATE_MODE_FLASHBACK
 	case ast.ActivateStandbyModeForceCommit:
@@ -324,6 +324,21 @@ func (e *ActivateStandbyExec) Open(ctx context.Context) error {
 	}
 
 	return pollWorkflowComplete(ctx, pdCli, workflowID, &e.Ctx().GetSessionVars().SQLKiller)
+}
+
+// CancelLogReplicationWorkflowExec executes CANCEL LOG REPLICATION WORKFLOW statement.
+type CancelLogReplicationWorkflowExec struct {
+	exec.BaseExecutor
+
+	WorkflowID uint64
+}
+
+// Open implements the Executor Open interface.
+func (e *CancelLogReplicationWorkflowExec) Open(ctx context.Context) error {
+	do := domain.GetDomain(e.Ctx())
+	pdCli := do.GetPDClient()
+
+	return pdCli.CancelLogReplWorkflow(ctx, e.WorkflowID)
 }
 
 func fetchSourcePDAddrsFromTiDB(

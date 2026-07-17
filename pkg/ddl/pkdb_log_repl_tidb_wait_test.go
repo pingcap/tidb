@@ -104,6 +104,27 @@ func TestTiDBWaitJobManagerInitWatchIgnoresUnexpectedKey(t *testing.T) {
 	manager.close()
 }
 
+func TestInitJobMapStopsRetryOnContextDone(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("integration.NewClusterV3 creates path with colon which is not allowed on Windows")
+	}
+
+	integration.BeforeTestExternal(t)
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	etcdCli := cluster.RandClient()
+	cluster.Terminate(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	job := newTestWaitJob("context_done")
+	jobMap := initJobMap(ctx, etcdCli, job)
+	require.NotNil(t, jobMap)
+	require.Contains(t, jobMap, job.reqKey())
+	require.Less(t, time.Since(start), 3*time.Second)
+}
+
 func mustPutWaitJobReq(t *testing.T, cli *clientv3.Client, key string, value []byte) {
 	t.Helper()
 	_, err := cli.Put(context.Background(), key, string(value))

@@ -207,6 +207,20 @@ func TestBuildAdminAlterLogReplicationRename(t *testing.T) {
 	require.Equal(t, model.NewCIStr("test_renamed"), renamePlan.NewName)
 }
 
+func TestBuildAdminCancelLogReplicationWorkflow(t *testing.T) {
+	b := &PlanBuilder{}
+	ctx := context.Background()
+
+	p, err := b.buildAdminCancelLogReplicationWorkflow(ctx, &ast.CancelLogReplicationWorkflow{
+		WorkflowID: 123,
+	})
+	require.NoError(t, err)
+
+	cancelPlan, ok := p.(*CancelLogReplicationWorkflow)
+	require.True(t, ok)
+	require.Equal(t, uint64(123), cancelPlan.WorkflowID)
+}
+
 func TestIllegalCreateLogReplication(t *testing.T) {
 	b := &PlanBuilder{}
 	ctx := context.Background()

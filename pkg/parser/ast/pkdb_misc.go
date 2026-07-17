@@ -169,13 +169,15 @@ func (s *SwitchOverAsPrimary) Restore(ctx *format.RestoreCtx) error {
 type ActivateStandbyMode int
 
 const (
-	ActivateStandbyModeUnknown ActivateStandbyMode = iota
+	ActivateStandbyModeDefault ActivateStandbyMode = iota
 	ActivateStandbyModeFlashback
 	ActivateStandbyModeForceCommit
 )
 
 func (m ActivateStandbyMode) String() string {
 	switch m {
+	case ActivateStandbyModeDefault:
+		return "DEFAULT"
 	case ActivateStandbyModeFlashback:
 		return "FLASHBACK"
 	case ActivateStandbyModeForceCommit:
@@ -192,15 +194,23 @@ type ActivateStandby struct {
 func (a *ActivateStandby) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("ACTIVATE STANDBY")
 	switch a.Mode {
-	case ActivateStandbyModeUnknown:
-		return errors.New("unspecified ActivateStandby mode")
-	case ActivateStandbyModeFlashback, ActivateStandbyModeForceCommit:
+	case ActivateStandbyModeDefault, ActivateStandbyModeFlashback, ActivateStandbyModeForceCommit:
 		ctx.WriteKeyWord(" MODE = ")
 		ctx.WriteKeyWord(a.Mode.String())
 		return nil
 	default:
 		return errors.Errorf("unknown ActivateStandbyMode: %d", a.Mode)
 	}
+}
+
+type CancelLogReplicationWorkflow struct {
+	WorkflowID uint64
+}
+
+func (c *CancelLogReplicationWorkflow) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("CANCEL LOG REPLICATION WORKFLOW ")
+	ctx.WritePlainf("%d", c.WorkflowID)
+	return nil
 }
 
 type LogReplicationOptType int
