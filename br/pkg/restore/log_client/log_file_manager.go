@@ -423,20 +423,6 @@ func (lm *LogFileManager) GetIngestedSSTs(ctx context.Context) iter.TryNextor[SS
 	})
 }
 
-func (lm *LogFileManager) CountExtraSSTTotalKVs(ctx context.Context) (int64, error) {
-	count := int64(0)
-	ssts := iter.ConcatAll(lm.GetCompactionIter(ctx), lm.GetIngestedSSTs(ctx))
-	for err, ssts := range iter.AsSeq(ctx, ssts) {
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-		for _, sst := range ssts.GetSSTs() {
-			count += int64(sst.TotalKvs)
-		}
-	}
-	return count, nil
-}
-
 // KvEntryWithTS is kv entry with ts, the ts is decoded from entry.
 type KvEntryWithTS struct {
 	E  kv.Entry
