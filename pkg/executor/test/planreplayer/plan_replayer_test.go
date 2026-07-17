@@ -144,7 +144,7 @@ func TestPlanReplayer(t *testing.T) {
 	// Keep accepting the legacy syntax, but reject its execution because the
 	// historical stats feature has been removed.
 	tk.MustGetErrMsg("plan replayer dump with stats as of timestamp '2023-06-28 12:34:00' explain select * from t where a=10",
-		"the historical stats feature has been removed")
+		"WITH STATS AS OF TIMESTAMP is no longer supported because the historical stats feature has been removed")
 
 	// clear the status table and assert
 	tk.MustExec("delete from mysql.plan_replayer_status")

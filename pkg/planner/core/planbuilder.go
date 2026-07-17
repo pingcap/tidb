@@ -6139,7 +6139,7 @@ func convert2OutputSchemasAndNames(names []string, ftypes []byte, flags []uint) 
 
 func (*PlanBuilder) buildPlanReplayer(pc *ast.PlanReplayerStmt) (base.Plan, error) {
 	if pc.HistoricalStatsInfo != nil {
-		return nil, errors.New("the historical stats feature has been removed")
+		return nil, errors.New("WITH STATS AS OF TIMESTAMP is no longer supported because the historical stats feature has been removed")
 	}
 
 	p := &PlanReplayer{ExecStmt: pc.Stmt, StmtList: pc.StmtList, Analyze: pc.Analyze, Load: pc.Load, File: pc.File,
