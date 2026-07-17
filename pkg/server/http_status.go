@@ -214,6 +214,24 @@ func (b *Ballast) GenHTTPHandler() func(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
+func withPProfRequestLog(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		fields := []zap.Field{
+			zap.String("method", r.Method),
+			zap.String("path", r.URL.Path),
+			zap.String("remote-addr", r.RemoteAddr),
+		}
+		query := r.URL.Query()
+		for _, key := range []string{"seconds", "debug", "gc"} {
+			if value := query.Get(key); value != "" {
+				fields = append(fields, zap.String(key, value))
+			}
+		}
+		logutil.BgLogger().Info("pprof request received", fields...)
+		next(w, r)
+	}
+}
+
 func (s *Server) startHTTPServer() {
 	router := mux.NewRouter()
 
@@ -343,12 +361,12 @@ func (s *Server) startHTTPServer() {
 		router.PathPrefix(path).Handler(handler)
 	}
 
-	router.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-	router.HandleFunc("/debug/pprof/profile", cpuprofile.ProfileHTTPHandler)
-	router.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-	router.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	router.HandleFunc("/debug/pprof/cmdline", withPProfRequestLog(pprof.Cmdline))
+	router.HandleFunc("/debug/pprof/profile", withPProfRequestLog(cpuprofile.ProfileHTTPHandler))
+	router.HandleFunc("/debug/pprof/symbol", withPProfRequestLog(pprof.Symbol))
+	router.HandleFunc("/debug/pprof/trace", withPProfRequestLog(pprof.Trace))
 	// Other /debug/pprof paths not covered above are redirected to pprof.Index.
-	router.PathPrefix("/debug/pprof/").HandlerFunc(pprof.Index)
+	router.PathPrefix("/debug/pprof/").HandlerFunc(withPProfRequestLog(pprof.Index))
 	router.HandleFunc("/debug/traceevent", traceeventHandler)
 
 	router.HandleFunc("/covdata", func(writer http.ResponseWriter, _ *http.Request) {
