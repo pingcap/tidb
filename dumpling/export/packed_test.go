@@ -77,6 +77,23 @@ func TestPackedProtocolRows(t *testing.T) {
 		require.Equal(t, testCase.value, value, testCase.name)
 		require.Equal(t, testCase.end, end, testCase.name)
 	}
+
+	baseArgs := []string{
+		"dumper",
+		"--metadata-url", "s3://bucket/backup.meta",
+		"--start-key-hex", "00ff",
+		"--end-key-hex", "10",
+	}
+	require.Equal(
+		t,
+		baseArgs,
+		cseDumperArgs("s3://bucket/backup.meta", false, []byte{0, 0xff}, []byte{0x10}),
+	)
+	require.Equal(
+		t,
+		append(baseArgs, "--legacy-encryption"),
+		cseDumperArgs("s3://bucket/backup.meta", true, []byte{0, 0xff}, []byte{0x10}),
+	)
 }
 
 func TestPackedRowsUseTiDBStorageEncoding(t *testing.T) {

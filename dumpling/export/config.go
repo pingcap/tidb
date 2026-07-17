@@ -93,6 +93,7 @@ const (
 	flagParquetRowGroupSize      = "parquet-row-group-size"
 	flagPackedBackup             = "packed-backup"
 	flagCSEExecutable            = "cse-ctl-path"
+	flagCSELegacyEncryption      = "cse-legacy-encryption"
 
 	// FlagHelp represents the help flag
 	FlagHelp = "help"
@@ -218,6 +219,8 @@ type Config struct {
 	// from config logging because object-store URLs can contain credentials.
 	PackedBackup  string `json:"-"`
 	CSEExecutable string
+	// CSELegacyEncryption enables the legacy master key for packed-backup reads.
+	CSELegacyEncryption bool
 	// ClusterSSLCA/ClusterSSLCert/ClusterSSLKey override Security.* when connecting
 	// to PD endpoints for GC control.
 	ClusterSSLCA   string
@@ -429,6 +432,7 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	)
 	flags.String(flagPackedBackup, "", "Exact CSE packed-backup metadata URL to export without TiDB or PD")
 	flags.String(flagCSEExecutable, "cse-ctl", "Path to the cse-ctl executable used for packed-backup export")
+	flags.Bool(flagCSELegacyEncryption, false, "Decrypt legacy-encrypted CSE packed-backup content using CSE_MASTER_KEY_* environment configuration")
 }
 
 // ParseFromFlags parses dumpling's export.Config from flags
@@ -752,6 +756,10 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	conf.CSELegacyEncryption, err = flags.GetBool(flagCSELegacyEncryption)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	for k, v := range params {
 		conf.SessionParams[k] = v
@@ -1056,6 +1064,9 @@ func validateSpecifiedSQL(conf *Config) error {
 
 func validatePackedBackup(conf *Config) error {
 	if conf.PackedBackup == "" {
+		if conf.CSELegacyEncryption {
+			return errors.New("--cse-legacy-encryption requires --packed-backup")
+		}
 		return nil
 	}
 	if conf.CSEExecutable == "" {
