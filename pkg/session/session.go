@@ -4438,6 +4438,13 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 		}
 	}
 
+	// Initialize persisted collation and time zone before starter SQL starts a full domain.
+	if deploymode.IsStarter() {
+		if err = upgradeStarterBootstrap(store); err != nil {
+			return nil, err
+		}
+	}
+
 	// initiate disttask framework components which need a store
 	scheduler.RegisterSchedulerFactory(
 		proto.ImportInto,

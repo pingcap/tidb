@@ -10,6 +10,7 @@ go_library(
         "mock_bootstrap.go",
         "nontransactional.go",
         "session.go",
+        "starter_bootstrap_file.go",
         "sync_upgrade.go",
         "testutil.go",  #keep
         "tidb.go",
@@ -163,6 +164,7 @@ go_test(
         "bootstrap_test.go",
         "main_test.go",
         "session_test.go",
+        "starter_bootstrap_file_test.go",
         "tidb_test.go",
         "upgrade_backfill_test.go",
         "upgrade_test.go",
@@ -175,6 +177,7 @@ go_test(
         "//pkg/autoid_service",
         "//pkg/bindinfo",
         "//pkg/config",
+        "//pkg/config/deploymode",
         "//pkg/config/kerneltype",
         "//pkg/ddl",
         "//pkg/domain",
