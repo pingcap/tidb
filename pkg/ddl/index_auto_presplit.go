@@ -123,7 +123,8 @@ func planAutoSplitIndexRegions(
 	var topN *statistics.TopN
 	if loadNeeded {
 		var err error
-		topN, err = storage.TopNFromStorageWithPriority(sctx, tblInfo.ID, 0, leadingCol.ID, kv.PriorityNormal)
+		topN, err = storage.TopNFromStorageWithPriorityAndLimit(
+			sctx, tblInfo.ID, 0, leadingCol.ID, kv.PriorityNormal, cfg.maxTopNKeysPerPhysical)
 		if err != nil {
 			return nil, "failed to load leading column TopN from storage", err
 		}
