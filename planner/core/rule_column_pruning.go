@@ -38,12 +38,60 @@ func (*columnPruner) optimize(_ context.Context, lp LogicalPlan, opt *logicalOpt
 	if err != nil {
 		return lp, err
 	}
+	lp, _ = eliminateEmptyProjections(lp)
 	failpoint.Inject("assertNoZeroColumnLayoutAfterColumnPruning", func() {
 		if err := noZeroColumnLayOut(lp); err != nil {
 			panic(err)
 		}
 	})
 	return lp, nil
+}
+
+// eliminateEmptyProjections adapts the newer PruneColumns contract, which can return a
+// replacement child, to the old error-only contract used on this branch. It must run
+// before the next logical optimization rule so an all-pruned projection cannot block
+// decorrelation or remain below a window. The bool reports whether a projection was
+// replaced in this subtree, so materialized schemas above transparent operators can
+// be refreshed without overwriting schemas already narrowed by PruneColumns.
+func eliminateEmptyProjections(p LogicalPlan) (LogicalPlan, bool) {
+	childProjectionReplaced := false
+	for i, child := range p.Children() {
+		newChild, replaced := eliminateEmptyProjections(child)
+		if newChild != child {
+			p.Children()[i] = newChild
+		}
+		childProjectionReplaced = childProjectionReplaced || replaced
+	}
+
+	if proj, ok := p.(*LogicalProjection); ok && proj.Schema().Len() == 0 {
+		if _, isDual := proj.children[0].(*LogicalTableDual); !isDual {
+			return proj.children[0], true
+		}
+	}
+
+	// These operators materialize schemas from their children during column pruning,
+	// so refresh them after replacing an empty child projection. Do not refresh them
+	// otherwise: PruneColumns may already have narrowed their schema in place.
+	//
+	// LogicalJoin is intentionally excluded: its PruneColumns already calls
+	// mergeSchema + inlineProjection, which narrows the schema correctly. Re-calling
+	// mergeSchema would undo the narrowing and re-expose columns from a replaced
+	// child whose output the parent does not need.
+	if childProjectionReplaced {
+		switch x := p.(type) {
+		case *LogicalApply:
+			x.mergeSchema()
+		case *LogicalWindow:
+			windowColumns := x.GetWindowResultColumns()
+			x.SetSchema(x.children[0].Schema().Clone())
+			x.Schema().Append(windowColumns...)
+		case *LogicalLimit:
+			if x.Schema().Len() == 0 {
+				x.SetSchema(x.children[0].Schema().Clone())
+			}
+		}
+	}
+	return p, childProjectionReplaced
 }
 
 func noZeroColumnLayOut(p LogicalPlan) error {
@@ -108,7 +156,8 @@ func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column, op
 	}
 	if allPruned && len(p.Exprs) > 0 {
 		if _, ok := child.(*LogicalTableDual); ok {
-			// TableDual may legitimately have zero columns, so keep a safe dummy output here.
+			// A source-less SELECT uses a zero-column TableDual for row count and needs
+			// its Projection to produce an output column.
 			zero := expression.NewZero()
 			p.Exprs = p.Exprs[:1]
 			p.schema.Columns = p.schema.Columns[:1]
@@ -118,9 +167,6 @@ func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column, op
 				RetType:  zero.GetType(),
 			}
 			used = []bool{true}
-		} else {
-			// Keep one output so the projection does not expose a zero-column layout.
-			used[smallestColumnIndex(p.schema.Columns)] = true
 		}
 	}
 

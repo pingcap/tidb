@@ -85,3 +85,26 @@ func TestHF1045ApplyColumnPruningRegression(t *testing.T) {
 
 	tk.MustQuery(sql).Check(testkit.Rows("3"))
 }
+
+func TestHF1045ColumnPruningAvoidsUnusedProjectionExpr(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists hf1045_unused_projection")
+	tk.MustExec("create table hf1045_unused_projection(a int)")
+	tk.MustExec("insert into hf1045_unused_projection values (1)")
+
+	sql := `select count(*)
+		from (
+			select a / 0 as x
+			from hf1045_unused_projection
+			limit 10
+		) s`
+
+	tk.MustQuery(sql).Check(testkit.Rows("1"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+
+	plan := fmt.Sprint(tk.MustQuery("explain format = 'brief' " + sql).Rows())
+	require.NotContains(t, strings.ToLower(plan), "div(")
+}
