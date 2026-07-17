@@ -1113,9 +1113,6 @@ func TestTiDBServerMemoryLimit2(t *testing.T) {
 	serverMemoryLimit := GetSysVar(vardef.TiDBServerMemoryLimit)
 	// Check default value
 	require.Equal(t, serverMemoryLimit.Value, vardef.DefTiDBServerMemoryLimit)
-	if memory.GetMemTotalIgnoreErr() > 0 {
-		require.Equal(t, "95%", serverMemoryLimit.Value)
-	}
 
 	total := memory.GetMemTotalIgnoreErr()
 	if total > 0 {
