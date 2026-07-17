@@ -491,10 +491,6 @@ type PlanReplayer struct {
 	Analyze  bool
 	Load     bool
 	File     string
-	// HistoricalStatsIgnored is set when the statement carries the legacy
-	// WITH STATS AS OF TIMESTAMP clause, which is accepted only for
-	// compatibility since the historical stats feature was removed.
-	HistoricalStatsIgnored bool
 
 	Capture    bool
 	Remove     bool

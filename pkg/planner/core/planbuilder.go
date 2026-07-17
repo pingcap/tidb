@@ -631,7 +631,7 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 	case *ast.UnlockStatsStmt:
 		return b.buildUnlockStats(x), nil
 	case *ast.PlanReplayerStmt:
-		return b.buildPlanReplayer(x), nil
+		return b.buildPlanReplayer(x)
 	case *ast.TrafficStmt:
 		return b.buildTraffic(x), nil
 	case *ast.PrepareStmt:
@@ -6137,21 +6137,20 @@ func convert2OutputSchemasAndNames(names []string, ftypes []byte, flags []uint) 
 	return
 }
 
-func (*PlanBuilder) buildPlanReplayer(pc *ast.PlanReplayerStmt) base.Plan {
+func (*PlanBuilder) buildPlanReplayer(pc *ast.PlanReplayerStmt) (base.Plan, error) {
+	if pc.HistoricalStatsInfo != nil {
+		return nil, errors.New("the historical stats feature has been removed")
+	}
+
 	p := &PlanReplayer{ExecStmt: pc.Stmt, StmtList: pc.StmtList, Analyze: pc.Analyze, Load: pc.Load, File: pc.File,
 		Capture: pc.Capture, Remove: pc.Remove, SQLDigest: pc.SQLDigest, PlanDigest: pc.PlanDigest}
-
-	// The historical stats feature has been removed; the WITH STATS AS OF
-	// TIMESTAMP syntax is accepted only for compatibility. The executor
-	// reports a warning when the clause is present.
-	p.HistoricalStatsIgnored = pc.HistoricalStatsInfo != nil
 
 	schema := newColumnsWithNames(2)
 	schema.Append(buildColumnWithName("", "Item", mysql.TypeVarchar, 32))
 	schema.Append(buildColumnWithName("", "Value", mysql.TypeVarchar, mysql.MaxBlobWidth))
 	p.SetSchema(schema.col2Schema())
 	p.SetOutputNames(schema.names)
-	return p
+	return p, nil
 }
 
 func buildChecksumTableSchema() (*expression.Schema, []*types.FieldName) {

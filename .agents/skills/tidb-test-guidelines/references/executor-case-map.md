@@ -392,7 +392,7 @@
 
 ### Tests
 - `pkg/executor/test/planreplayer/main_test.go` - Configures default goleak settings and registers testdata.
-- `pkg/executor/test/planreplayer/plan_replayer_test.go` - executor/test/planreplayer: Tests plan replayer.
+- `pkg/executor/test/planreplayer/plan_replayer_test.go` - executor/test/planreplayer: Tests plan replayer dump, load, capture, and legacy syntax rejection.
 
 ## pkg/executor/test/seqtest
 
