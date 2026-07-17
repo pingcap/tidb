@@ -154,6 +154,12 @@ var udfDlclose = func(handle unsafe.Pointer) {
 	C.dlclose(handle)
 }
 
+// udfLoadSoHandle and udfLoadSymbols are wrappers around dlopen/dlsym helpers to allow mocking in tests.
+var (
+	udfLoadSoHandle = loadSoHandle
+	udfLoadSymbols  = loadSymbols
+)
+
 type loadUDFHookForTestFn func(soName, funcName string, funcRetType types.EvalType) (*LoadableFunctionDef, error)
 
 var loadUDFHookForTest atomic.Pointer[loadUDFHookForTestFn]
@@ -173,16 +179,24 @@ type soHandleRef struct {
 	refs   int
 }
 
+type soHandleBucket struct {
+	entries []*soHandleRef
+	// reusable points to the current handle for new LoadUDF calls. Older entries
+	// may coexist in entries so existing UDF definitions can still release them
+	// safely after invalidation.
+	reusable *soHandleRef
+}
+
 type soHandleCache struct {
 	mu      sync.Mutex
-	handles map[string]*soHandleRef
+	handles map[string]*soHandleBucket
 }
 
 // loadableFuncs stores the loadable functions created by CREATE FUNCTION ... SONAME ...
 // The key is the lowercase function name, and the value is *loadableFuncClass.
 var (
 	loadableFuncs    sync.Map
-	udfSoHandleCache = soHandleCache{handles: make(map[string]*soHandleRef)}
+	udfSoHandleCache = soHandleCache{handles: make(map[string]*soHandleBucket)}
 )
 
 // LoadableFunctionDef is the definition for a loadable function.
@@ -223,7 +237,7 @@ func LoadUDF(soName, funcName string, funcRetType types.EvalType) (def *Loadable
 		}
 	}()
 
-	fn, fnInit, fnDeinit, err := loadSymbols(handle, funcName)
+	fn, fnInit, fnDeinit, err := udfLoadSymbols(handle, funcName)
 	if err != nil {
 		return nil, err
 	}
@@ -301,23 +315,42 @@ func validateSoName(soName string) error {
 	return nil
 }
 
+// InvalidateSoHandleCache evicts the reusable dlopen handle for the SONAME so the
+// next LoadUDF reopens the shared object from disk. Existing references keep
+// their current handle until released, so stale entries remain in the bucket
+// but new loads must not reuse them.
+func InvalidateSoHandleCache(soName string) {
+	udfSoHandleCache.mu.Lock()
+	defer udfSoHandleCache.mu.Unlock()
+	if bucket := udfSoHandleCache.handles[soName]; bucket != nil {
+		bucket.reusable = nil
+	}
+}
+
 func acquireSoHandle(soName string) (handle unsafe.Pointer, errRet error) {
 	if err := validateSoName(soName); err != nil {
 		return nil, err
 	}
 	udfSoHandleCache.mu.Lock()
-	if entry, ok := udfSoHandleCache.handles[soName]; ok {
-		entry.refs++
-		handle = entry.handle
+	bucket := udfSoHandleCache.handles[soName]
+	if bucket != nil && bucket.reusable != nil {
+		bucket.reusable.refs++
+		handle = bucket.reusable.handle
 		udfSoHandleCache.mu.Unlock()
 		return handle, nil
 	}
-	handle, errRet = loadSoHandle(soName)
+	handle, errRet = udfLoadSoHandle(soName)
 	if errRet != nil {
 		udfSoHandleCache.mu.Unlock()
 		return nil, errRet
 	}
-	udfSoHandleCache.handles[soName] = &soHandleRef{handle: handle, refs: 1}
+	entry := &soHandleRef{handle: handle, refs: 1}
+	if bucket == nil {
+		bucket = &soHandleBucket{}
+		udfSoHandleCache.handles[soName] = bucket
+	}
+	bucket.entries = append(bucket.entries, entry)
+	bucket.reusable = entry
 	udfSoHandleCache.mu.Unlock()
 	return handle, nil
 }
@@ -328,21 +361,34 @@ func releaseSoHandle(soName string, handle unsafe.Pointer) {
 	}
 	var toClose unsafe.Pointer
 	udfSoHandleCache.mu.Lock()
-	entry, ok := udfSoHandleCache.handles[soName]
-	if !ok {
-		udfSoHandleCache.mu.Unlock()
-		logutil.BgLogger().Warn("UDF handle cache miss on release", zap.String("soName", soName))
-		return
-	}
-	entry.refs--
-	if entry.refs <= 0 {
-		delete(udfSoHandleCache.handles, soName)
-		toClose = entry.handle
+	bucket, ok := udfSoHandleCache.handles[soName]
+	if ok {
+		for i, entry := range bucket.entries {
+			if entry.handle != handle {
+				continue
+			}
+			entry.refs--
+			if entry.refs <= 0 {
+				toClose = entry.handle
+				if bucket.reusable == entry {
+					bucket.reusable = nil
+				}
+				bucket.entries = append(bucket.entries[:i], bucket.entries[i+1:]...)
+				if len(bucket.entries) == 0 {
+					delete(udfSoHandleCache.handles, soName)
+				}
+			}
+			udfSoHandleCache.mu.Unlock()
+			if toClose != nil {
+				udfDlclose(toClose)
+			}
+			return
+		}
 	}
 	udfSoHandleCache.mu.Unlock()
-	if toClose != nil {
-		udfDlclose(toClose)
-	}
+	logutil.BgLogger().Warn("UDF handle cache miss on release",
+		zap.String("soName", soName),
+		zap.Uintptr("handle", uintptr(handle)))
 }
 
 func loadSoHandle(soName string) (handle unsafe.Pointer, errRet error) {

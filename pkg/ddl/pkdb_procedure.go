@@ -950,6 +950,9 @@ func (w *worker) onCreateLoadableFunction(
 		return ver, exeerrors.ErrUdfExists.FastGenByArgs(funcInfo.Name.O)
 	}
 
+	// CREATE FUNCTION should validate the current shared object on disk, not a
+	// stale cached dlopen handle retained by earlier UDFs with the same SONAME.
+	expression.InvalidateSoHandleCache(funcInfo.SoName)
 	funcDef, err := expression.LoadUDF(funcInfo.SoName, funcInfo.Name.L, funcInfo.ReturnType)
 	if err != nil {
 		job.State = model.JobStateCancelled

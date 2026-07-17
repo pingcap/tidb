@@ -77,8 +77,14 @@ func LoadUDF(soName, funcName string, funcRetType types.EvalType) (*LoadableFunc
 	return nil, loadableFunctionUnsupportedErr()
 }
 
-// ValidateLoadableFunctionDef validates the loadable function definition.
-// Non-cgo builds do not support this feature.
+// InvalidateSoHandleCache is a no-op in non-cgo builds because loadable UDFs are unsupported.
+func InvalidateSoHandleCache(string) {}
+
+// ValidateLoadableFunctionDef validates whether the loadable function definition
+// can be registered as a UDF (for example, native name collision / return type).
+//
+// Non-cgo builds do not support loadable functions, so this always returns a
+// "not supported" error.
 func ValidateLoadableFunctionDef(def *LoadableFunctionDef) error {
 	logLoadableFunctionUnsupported()
 	_ = def
