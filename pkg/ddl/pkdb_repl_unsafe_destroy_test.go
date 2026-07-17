@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
@@ -52,6 +53,7 @@ func TestRunJobs(t *testing.T) {
 
 	collected := [][2][]byte{}
 	collectedMu := sync.Mutex{}
+	var gcPlacementRuleJobIDs []int64
 
 	DoUnsafeDestroyRangeRequest = func(ctx context.Context,
 		startKey []byte,
@@ -63,6 +65,10 @@ func TestRunJobs(t *testing.T) {
 		collectedMu.Lock()
 		collected = append(collected, [2][]byte{startKey, endKey})
 		collectedMu.Unlock()
+		return nil
+	}
+	DoGCPlacementRules = func(_ kv.Storage, ddlJobID int64) error {
+		gcPlacementRuleJobIDs = append(gcPlacementRuleJobIDs, ddlJobID)
 		return nil
 	}
 
@@ -85,4 +91,5 @@ func TestRunJobs(t *testing.T) {
 
 	require.Equal(t, unsafeDestroyNextDDLJobIDKey, mockCli.lastCalledKey)
 	require.Equal(t, "106", mockCli.lastCalledValue)
+	require.Equal(t, []int64{100, 101, 102, 103, 105}, gcPlacementRuleJobIDs)
 }

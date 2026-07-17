@@ -253,6 +253,10 @@ var DoUnsafeDestroyRangeRequest func(
 	uuid string,
 ) error
 
+// DoGCPlacementRules will be set by gcworker package to remove placement
+// rules after standby unsafe destroy.
+var DoGCPlacementRules func(store kv.Storage, ddlJobID int64) error
+
 func (s *unsafeDestroyWorker) runJobsOfOneDDL(jobs []UnsafeDestroyJob) error {
 	if len(jobs) == 0 {
 		return nil
@@ -281,6 +285,13 @@ func (s *unsafeDestroyWorker) runJobsOfOneDDL(jobs []UnsafeDestroyJob) error {
 	err := eg.Wait()
 	if err != nil {
 		return err
+	}
+	// A DDL can contain multiple ranges. Keep its placement rules until every
+	// range has been destroyed successfully.
+	if gcErr := DoGCPlacementRules(s.store, jobs[0].DDLJobID); gcErr != nil {
+		logutil.BgLogger().Error("failed to gc placement rules after standby unsafe destroy",
+			zap.Int64("DDLJobID", jobs[0].DDLJobID),
+			zap.Error(gcErr))
 	}
 	err = s.setNextJobID(jobs[0].DDLJobID + 1)
 	if err != nil {
