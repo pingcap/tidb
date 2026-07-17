@@ -145,24 +145,34 @@ func TestAddIndexAutoSplitLoadsLeadingColumnTopNFromStorage(t *testing.T) {
 	tk.MustExec("analyze table t_auto_split all columns with 2 topn, 2 buckets")
 
 	var capturedKeys [][]byte
-	var loadedTopNFromStorage atomic.Bool
+	type topNFromStorageArgs struct {
+		isIndex  int
+		histID   int64
+		priority int
+	}
+	var loadedTopNFromStorage atomic.Pointer[topNFromStorageArgs]
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mockAutoSplitHotRegionConfig",
 		func(_ any, setMinRows func(int)) {
 			setMinRows(5)
 		})
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/statistics/handle/storage/beforeTopNFromStorageWithPriority",
 		func(_ int64, isIndex int, histID int64, priority int) {
-			require.Equal(t, 0, isIndex)
-			require.Equal(t, int64(2), histID)
-			require.Equal(t, kv.PriorityNormal, priority)
-			loadedTopNFromStorage.Store(true)
+			loadedTopNFromStorage.Store(&topNFromStorageArgs{
+				isIndex:  isIndex,
+				histID:   histID,
+				priority: priority,
+			})
 		})
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforePresplitIndex", func(splitKeys [][]byte) {
 		capturedKeys = append(capturedKeys, splitKeys...)
 	})
 
 	tk.MustExec("alter table t_auto_split add index idx_b(b)")
-	require.True(t, loadedTopNFromStorage.Load())
+	loadedArgs := loadedTopNFromStorage.Load()
+	require.NotNil(t, loadedArgs)
+	require.Equal(t, 0, loadedArgs.isIndex)
+	require.Equal(t, int64(2), loadedArgs.histID)
+	require.Equal(t, kv.PriorityNormal, loadedArgs.priority)
 	require.NotEmpty(t, capturedKeys)
 	comments := tk.MustQuery("admin show ddl jobs 1").Rows()[0][12].(string)
 	require.Contains(t, comments, "auto_split_hot_region=idx_b(")
