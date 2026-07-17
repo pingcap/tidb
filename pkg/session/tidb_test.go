@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
+	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/tests/v3/integration"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
@@ -88,7 +90,13 @@ func TestTemporaryGlobalVariableDomainSkipsStatusEndpointClaim(t *testing.T) {
 	endpoint := "127.0.0.1:10080"
 	claimKey := "/tidb/server/status_addr/" + base64.RawURLEncoding.EncodeToString([]byte(endpoint))
 	etcdClient := cluster.RandClient()
-	_, err = etcdClient.Put(ctx, claimKey, "existing-server")
+	claimLease, err := etcdClient.Grant(ctx, ddlutil.SessionTTL)
+	require.NoError(t, err)
+	defer func() {
+		_, revokeErr := etcdClient.Revoke(ctx, claimLease.ID)
+		require.NoError(t, revokeErr)
+	}()
+	_, err = etcdClient.Put(ctx, claimKey, "existing-server", clientv3.WithLease(claimLease.ID))
 	require.NoError(t, err)
 
 	core, recorded := observer.New(zap.WarnLevel)
@@ -112,7 +120,13 @@ func TestTemporaryGlobalVariableDomainSkipsStatusEndpointClaim(t *testing.T) {
 	warnings := recorded.FilterMessage("advertised status endpoint already has an active claim").All()
 	require.Len(t, warnings, 1)
 	servingID := dom.DDL().GetID()
-	require.Equal(t, servingID, warnings[0].ContextMap()["local-server-info-id"])
+	warningFields := warnings[0].ContextMap()
+	require.Equal(t, endpoint, warningFields["advertised-status-endpoint"])
+	require.Equal(t, claimKey, warningFields["claim-key"])
+	require.Equal(t, servingID, warningFields["local-server-info-id"])
+	require.Equal(t, "existing-server", warningFields["existing-server-info-id"])
+	require.Equal(t, util.FormatLeaseID(claimLease.ID), warningFields["existing-lease-id"])
+	require.NotEmpty(t, warningFields["action"])
 
 	// Start again without the external claim. The temporary Domain closes before
 	// BootstrapSession returns, so only the serving Domain can leave this claim behind.

@@ -585,6 +585,9 @@ func (s *Syncer) ServerInfoSyncLoop(store tidbkv.Storage, exitCh chan struct{}) 
 		case <-ticker.C:
 			s.reporter.ReportMinStartTS(store, s.session)
 		case <-s.Done():
+			if serverInfoSyncLoopExitRequested(exitCh) {
+				return
+			}
 			logutil.BgLogger().Info("server info syncer need to restart")
 			if err := s.Restart(context.Background()); err != nil {
 				logutil.BgLogger().Error("server info syncer restart failed", zap.Error(err))
@@ -597,6 +600,15 @@ func (s *Syncer) ServerInfoSyncLoop(store tidbkv.Storage, exitCh chan struct{}) 
 		case <-exitCh:
 			return
 		}
+	}
+}
+
+func serverInfoSyncLoopExitRequested(exitCh <-chan struct{}) bool {
+	select {
+	case <-exitCh:
+		return true
+	default:
+		return false
 	}
 }
 
