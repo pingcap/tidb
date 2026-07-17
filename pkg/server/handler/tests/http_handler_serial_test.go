@@ -469,10 +469,10 @@ func TestDebugRoutes(t *testing.T) {
 		// "/debug/zip", // this creates unexpected goroutines which will make goleak complain, so we skip it for now
 		"/debug/ballast-object-sz",
 	}
-	expectedPProfLogs := 0
+	expectedProfilingLogs := 0
 	for _, route := range debugRoutes {
 		if strings.HasPrefix(route, "/debug/pprof/") {
-			expectedPProfLogs++
+			expectedProfilingLogs++
 		}
 		resp, err := ts.FetchStatus(route)
 		require.NoError(t, err, fmt.Sprintf("GET route %s failed", route))
@@ -480,13 +480,13 @@ func TestDebugRoutes(t *testing.T) {
 		require.NoError(t, resp.Body.Close())
 	}
 
-	pprofLogs := recorded.FilterMessage("pprof request received")
-	require.Len(t, pprofLogs.All(), expectedPProfLogs)
-	require.Len(t, pprofLogs.FilterField(zap.String("path", "/debug/pprof/goroutine")).
+	profilingLogs := recorded.FilterMessage("profiling request received")
+	require.Len(t, profilingLogs.All(), expectedProfilingLogs)
+	require.Len(t, profilingLogs.FilterField(zap.String("path", "/debug/pprof/goroutine")).
 		FilterField(zap.String("debug", "2")).All(), 1)
-	require.Len(t, pprofLogs.FilterField(zap.String("path", "/debug/pprof/profile")).
+	require.Len(t, profilingLogs.FilterField(zap.String("path", "/debug/pprof/profile")).
 		FilterField(zap.String("seconds", "5")).All(), 1)
-	for _, entry := range pprofLogs.All() {
+	for _, entry := range profilingLogs.All() {
 		fields := entry.ContextMap()
 		require.Equal(t, http.MethodGet, fields["method"])
 		require.NotEmpty(t, fields["path"])

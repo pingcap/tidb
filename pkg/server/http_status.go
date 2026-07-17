@@ -214,7 +214,7 @@ func (b *Ballast) GenHTTPHandler() func(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
-func withPProfRequestLog(next http.HandlerFunc) http.HandlerFunc {
+func withProfilingRequestLog(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		fields := []zap.Field{
 			zap.String("method", r.Method),
@@ -227,7 +227,7 @@ func withPProfRequestLog(next http.HandlerFunc) http.HandlerFunc {
 				fields = append(fields, zap.String(key, value))
 			}
 		}
-		logutil.BgLogger().Info("pprof request received", fields...)
+		logutil.BgLogger().Info("profiling request received", fields...)
 		next(w, r)
 	}
 }
@@ -361,12 +361,12 @@ func (s *Server) startHTTPServer() {
 		router.PathPrefix(path).Handler(handler)
 	}
 
-	router.HandleFunc("/debug/pprof/cmdline", withPProfRequestLog(pprof.Cmdline))
-	router.HandleFunc("/debug/pprof/profile", withPProfRequestLog(cpuprofile.ProfileHTTPHandler))
-	router.HandleFunc("/debug/pprof/symbol", withPProfRequestLog(pprof.Symbol))
-	router.HandleFunc("/debug/pprof/trace", withPProfRequestLog(pprof.Trace))
+	router.HandleFunc("/debug/pprof/cmdline", withProfilingRequestLog(pprof.Cmdline))
+	router.HandleFunc("/debug/pprof/profile", withProfilingRequestLog(cpuprofile.ProfileHTTPHandler))
+	router.HandleFunc("/debug/pprof/symbol", withProfilingRequestLog(pprof.Symbol))
+	router.HandleFunc("/debug/pprof/trace", withProfilingRequestLog(pprof.Trace))
 	// Other /debug/pprof paths not covered above are redirected to pprof.Index.
-	router.PathPrefix("/debug/pprof/").HandlerFunc(withPProfRequestLog(pprof.Index))
+	router.PathPrefix("/debug/pprof/").HandlerFunc(withProfilingRequestLog(pprof.Index))
 	router.HandleFunc("/debug/traceevent", traceeventHandler)
 
 	router.HandleFunc("/covdata", func(writer http.ResponseWriter, _ *http.Request) {
@@ -461,7 +461,7 @@ func (s *Server) startHTTPServer() {
 		}
 	})
 
-	router.HandleFunc("/debug/zip", func(w http.ResponseWriter, r *http.Request) {
+	router.HandleFunc("/debug/zip", withProfilingRequestLog(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Disposition", `attachment; filename="tidb_debug"`+time.Now().Format("20060102150405")+".zip")
 
 		// dump goroutine/heap/mutex
@@ -543,7 +543,7 @@ func (s *Server) startHTTPServer() {
 
 		err = zw.Close()
 		terror.Log(err)
-	})
+	}))
 
 	// failpoint is enabled only for tests so we can add some http APIs here for tests.
 	failpoint.Inject("enableTestAPI", func() {
