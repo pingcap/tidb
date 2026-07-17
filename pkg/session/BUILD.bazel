@@ -222,5 +222,6 @@ go_test(
         "@org_uber_go_goleak//:goleak",
         "@org_uber_go_zap//:zap",
         "@org_uber_go_zap//zapcore",
+        "@org_uber_go_zap//zaptest/observer",
     ],
 )

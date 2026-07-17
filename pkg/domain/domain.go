@@ -159,6 +159,8 @@ type Domain struct {
 	isSyncer        *issyncer.Syncer
 	globalCfgSyncer *globalconfigsync.GlobalConfigSyncer
 	schemaLease     time.Duration
+
+	infoSyncerOptions []infosync.ServerInfoSyncerOption
 	// advancedSysSessionPool is a more powerful session pool that returns a wrapped session which can detect
 	// some misuse of the session to avoid potential bugs.
 	// It is recommended to use this pool instead of `sysSessionPool`.
@@ -567,6 +569,7 @@ func NewDomainWithEtcdClient(
 	crossKSSessFactoryGetter func(targetKS string, validator validatorapi.Validator) pools.Factory,
 	etcdClient *clientv3.Client,
 	schemaFilter issyncer.Filter,
+	infoSyncerOptions ...infosync.ServerInfoSyncerOption,
 ) *Domain {
 	intest.Assert(schemaLease > 0, "schema lease should be a positive duration")
 	do := &Domain{
@@ -580,6 +583,7 @@ func NewDomainWithEtcdClient(
 		dumpFileGcChecker: &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{replayer.GetPlanReplayerDirName(), GetOptimizerTraceDirName(), GetExtractTaskDirName()}},
 
 		crossKSSessFactoryGetter: crossKSSessFactoryGetter,
+		infoSyncerOptions:        infoSyncerOptions,
 	}
 
 	do.advancedSysSessionPool = syssession.NewAdvancedSessionPool(systemSessionPoolSize, func() (syssession.SessionContext, error) {
@@ -721,7 +725,7 @@ func (do *Domain) Init(
 	skipRegisterToDashboard := config.GetGlobalConfig().SkipRegisterToDashboard
 	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID,
 		do.etcdClient, do.unprefixedEtcdCli, pdCli, pdHTTPCli,
-		do.Store().GetCodec(), skipRegisterToDashboard, do.infoCache)
+		do.Store().GetCodec(), skipRegisterToDashboard, do.infoCache, do.infoSyncerOptions...)
 	if err != nil {
 		return err
 	}

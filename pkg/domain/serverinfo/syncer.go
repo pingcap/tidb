@@ -95,14 +95,31 @@ func serverInfoKeyPath(id string) string {
 	return fmt.Sprintf("%s/%s", ServerInformationPath, id)
 }
 
+type syncerOptions struct {
+	skipStatusEndpointClaim bool
+}
+
+// SyncerOption configures a Syncer during construction.
+type SyncerOption func(*syncerOptions)
+
+// WithoutStatusEndpointClaim prevents the Syncer from claiming the configured status endpoint.
+// It is intended for temporary, non-serving registrations. A serving primary TiDB Domain must keep
+// the default endpoint-claim behavior.
+func WithoutStatusEndpointClaim() SyncerOption {
+	return func(options *syncerOptions) {
+		options.skipStatusEndpointClaim = true
+	}
+}
+
 // NewSyncer creates a new Syncer instance.
 func NewSyncer(
 	uuid string,
 	serverIDGetter func() uint64,
 	etcdCli *clientv3.Client,
 	reporter MinStartTSReporter,
+	options ...SyncerOption,
 ) *Syncer {
-	return newSyncer(uuid, serverIDGetter, etcdCli, reporter, "")
+	return newSyncer(uuid, serverIDGetter, etcdCli, reporter, "", options...)
 }
 
 // NewCrossKSSyncer creates a new Syncer instance for cross keyspace scenarios.
@@ -122,9 +139,15 @@ func newSyncer(
 	etcdCli *clientv3.Client,
 	reporter MinStartTSReporter,
 	assumedKS string,
+	options ...SyncerOption,
 ) *Syncer {
+	args := &syncerOptions{}
+	for _, option := range options {
+		option(args)
+	}
 	info := getServerInfo(uuid, serverIDGetter, assumedKS)
-	statusEndpoint, claimKey := buildStatusEndpointClaim(info, config.GetGlobalConfig().Status.ReportStatus)
+	reportStatus := config.GetGlobalConfig().Status.ReportStatus && !args.skipStatusEndpointClaim
+	statusEndpoint, claimKey := buildStatusEndpointClaim(info, reportStatus)
 	is := &Syncer{
 		etcdCli:                etcdCli,
 		reporter:               reporter,

@@ -602,6 +602,43 @@ func TestStatusEndpointClaim(t *testing.T) {
 		require.Empty(t, resp.Kvs)
 	})
 
+	t.Run("explicitly disabled claim keeps server registration", func(t *testing.T) {
+		setStatusEndpointTestConfig("127.0.0.20", 4200, 10100, true)
+		syncer := NewSyncer(
+			"claim-disabled",
+			func() uint64 { return 101 },
+			client,
+			nil,
+			WithoutStatusEndpointClaim(),
+		)
+		var result statusEndpointClaimResult
+		calls := 0
+		syncer.statusEndpointClaimReport = func(got statusEndpointClaimResult) {
+			calls++
+			result = got
+		}
+		require.NoError(t, syncer.NewSessionAndStoreServerInfo(ctx))
+		defer orphanSyncerSession(syncer)
+
+		require.Empty(t, syncer.statusEndpoint)
+		require.Empty(t, syncer.statusEndpointClaimKey)
+		require.Equal(t, 1, calls)
+		require.Equal(t, statusEndpointClaimSkipped, result.state)
+		requireServerInfoKey(ctx, t, client, syncer.serverInfoPath)
+		requireEtcdKeyAbsent(ctx, t, client, statusEndpointClaimTestKey("127.0.0.20:10100"))
+
+		oldSession := syncer.session
+		oldLease := oldSession.Lease()
+		defer oldSession.Orphan()
+		require.NoError(t, syncer.Restart(ctx))
+		require.NotEqual(t, oldLease, syncer.session.Lease())
+		require.Equal(t, 2, calls)
+		require.Equal(t, statusEndpointClaimSkipped, result.state)
+		_, serverInfoLease := requireStatusEndpointKV(ctx, t, client, syncer.serverInfoPath)
+		require.Equal(t, syncer.session.Lease(), serverInfoLease)
+		requireEtcdKeyAbsent(ctx, t, client, statusEndpointClaimTestKey("127.0.0.20:10100"))
+	})
+
 	t.Run("invalid status services skip the claim but keep registration", func(t *testing.T) {
 		tests := []struct {
 			name         string

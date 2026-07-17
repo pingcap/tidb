@@ -16,9 +16,15 @@ package session
 
 import (
 	"context"
+	"encoding/base64"
+	"runtime"
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -28,6 +34,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
+	"go.etcd.io/etcd/tests/v3/integration"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func TestDomapHandleNil(t *testing.T) {
@@ -36,6 +45,93 @@ func TestDomapHandleNil(t *testing.T) {
 	require.NotPanics(t, func() {
 		_, _ = domap.Get(nil)
 	})
+}
+
+func TestTemporaryGlobalVariableDomainSkipsStatusEndpointClaim(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("integration.NewClusterV3 will create a file containing a colon, which is not allowed on Windows")
+	}
+	if kerneltype.IsNextGen() {
+		t.Skip("this classic-kernel startup path uses a store without a system keyspace")
+	}
+	integration.BeforeTestExternal(t)
+
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
+	require.NoError(t, err)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	// Bootstrap without etcd first so the second startup exercises only the temporary
+	// global-variable Domain and the final serving Domain.
+	initialDomain, err := BootstrapSession(store)
+	require.NoError(t, err)
+	initialDomain.Close()
+
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	defer cluster.Terminate(t)
+	mockStore := &mockEtcdBackend{
+		Storage: store,
+		pdAddrs: []string{cluster.Members[0].GRPCURL()},
+	}
+	previousConfig := config.GetGlobalConfig()
+	defer config.StoreGlobalConfig(previousConfig)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Store = config.StoreTypeTiKV
+		conf.AdvertiseAddress = "127.0.0.1"
+		conf.Status.ReportStatus = true
+		conf.Status.StatusPort = 10080
+	})
+
+	ctx := context.Background()
+	require.NoError(t, ddl.StartOwnerManager(ctx, mockStore))
+	defer ddl.CloseOwnerManager(mockStore)
+
+	endpoint := "127.0.0.1:10080"
+	claimKey := "/tidb/server/status_addr/" + base64.RawURLEncoding.EncodeToString([]byte(endpoint))
+	etcdClient := cluster.RandClient()
+	_, err = etcdClient.Put(ctx, claimKey, "existing-server")
+	require.NoError(t, err)
+
+	core, recorded := observer.New(zap.WarnLevel)
+	restoreLogger := log.ReplaceGlobals(
+		zap.New(core),
+		&log.ZapProperties{
+			Core:  core,
+			Level: zap.NewAtomicLevelAt(zap.WarnLevel),
+		},
+	)
+	defer restoreLogger()
+
+	dom, err := BootstrapSession(mockStore)
+	require.NoError(t, err)
+	defer func() {
+		if dom != nil {
+			dom.Close()
+		}
+	}()
+
+	warnings := recorded.FilterMessage("advertised status endpoint already has an active claim").All()
+	require.Len(t, warnings, 1)
+	servingID := dom.DDL().GetID()
+	require.Equal(t, servingID, warnings[0].ContextMap()["local-server-info-id"])
+
+	// Start again without the external claim. The temporary Domain closes before
+	// BootstrapSession returns, so only the serving Domain can leave this claim behind.
+	dom.Close()
+	dom = nil
+	_, err = etcdClient.Delete(ctx, claimKey)
+	require.NoError(t, err)
+	dom, err = BootstrapSession(mockStore)
+	require.NoError(t, err)
+	servingID = dom.DDL().GetID()
+	claimResp, err := etcdClient.Get(ctx, claimKey)
+	require.NoError(t, err)
+	require.Len(t, claimResp.Kvs, 1)
+	require.Equal(t, servingID, string(claimResp.Kvs[0].Value))
+	serverInfoResp, err := etcdClient.Get(ctx, "/tidb/server/info/"+servingID)
+	require.NoError(t, err)
+	require.Len(t, serverInfoResp.Kvs, 1)
+	require.NotZero(t, claimResp.Kvs[0].Lease)
+	require.Equal(t, serverInfoResp.Kvs[0].Lease, claimResp.Kvs[0].Lease)
 }
 
 func TestSysSessionPoolGoroutineLeak(t *testing.T) {
