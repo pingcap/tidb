@@ -137,7 +137,7 @@ func GetFromHistory(
 		from mysql.tidb_background_subtask_history
 		where task_key = %?
 		group by step, kv_group`,
-		info.TaskID)
+		storage.TaskIDToKey(info.TaskID))
 	if err != nil {
 		return nil, err
 	}

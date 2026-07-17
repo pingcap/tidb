@@ -160,9 +160,9 @@ func TestMergeTempIndexBasic(t *testing.T) {
 		require.Len(t, taskIDRows, 2)
 		taskID := taskIDRows[0][0].(string)
 		mergeTaskID := taskIDRows[1][0].(string)
-		readIdxCntSQL := fmt.Sprintf("select json_extract(summary, '$.row_count') from all_subtasks where task_key = %s and step = 1", taskID)
+		readIdxCntSQL := fmt.Sprintf("select json_extract(summary, '$.row_count') from all_subtasks where task_key = '%s' and step = 1", taskID)
 		tk.MustQuery(readIdxCntSQL).Check(testkit.Rows(tc.readIdxRowCnt...))
-		mergeCntSQL := fmt.Sprintf("select json_extract(summary, '$.row_count') from all_subtasks where task_key = %s and step = 4", mergeTaskID)
+		mergeCntSQL := fmt.Sprintf("select json_extract(summary, '$.row_count') from all_subtasks where task_key = '%s' and step = 4", mergeTaskID)
 		tk.MustQuery(mergeCntSQL).Check(testkit.Rows(tc.mergeIdxCnt...))
 	}
 }
