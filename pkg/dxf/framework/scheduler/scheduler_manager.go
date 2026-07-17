@@ -449,36 +449,65 @@ func (sm *Manager) doCleanupTask() {
 }
 
 func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) error {
-	cleanedTasks := make([]*proto.Task, 0)
-	var firstErr error
-	importIntoTasks := make([]*proto.Task, 0)
-	cleanUpImportIntoTasks := func() error {
-		if len(importIntoTasks) == 0 {
-			return nil
-		}
-		cleanedImportIntoTasks, err := sm.cleanupImportIntoTasks(importIntoTasks)
-		cleanedTasks = append(cleanedTasks, cleanedImportIntoTasks...)
-		importIntoTasks = importIntoTasks[:0]
-		return err
+	type singleCleanUpTask struct {
+		task    *proto.Task
+		cleanUp CleanUpRoutine
 	}
+	type batchCleanUpTaskGroup struct {
+		cleanUp batchCleanUpRoutine
+		tasks   []*proto.Task
+	}
+
+	singleCleanUpTasks := make([]singleCleanUpTask, 0)
+	batchCleanUpTaskGroups := make([]batchCleanUpTaskGroup, 0)
+	batchCleanUpTaskGroupIndexes := make(map[proto.TaskType]int)
+	cleanedTaskSet := make(map[*proto.Task]struct{}, len(tasks))
+	var firstErr error
 	for _, task := range tasks {
 		sm.logger.Info("cleanup task", zap.Int64("task-id", task.ID), zap.String("task-key", task.Key))
-		if task.Type == proto.ImportInto {
-			importIntoTasks = append(importIntoTasks, task)
+		if groupIndex, ok := batchCleanUpTaskGroupIndexes[task.Type]; ok {
+			group := &batchCleanUpTaskGroups[groupIndex]
+			group.tasks = append(group.tasks, task)
 			continue
 		}
-		if err := cleanUpImportIntoTasks(); err != nil {
+
+		cleanUpFactory := getSchedulerCleanUpFactory(task.Type)
+		if cleanUpFactory == nil {
+			cleanedTaskSet[task] = struct{}{}
+			continue
+		}
+		cleanUp := cleanUpFactory()
+		if batchCleanUp, ok := cleanUp.(batchCleanUpRoutine); ok {
+			batchCleanUpTaskGroupIndexes[task.Type] = len(batchCleanUpTaskGroups)
+			batchCleanUpTaskGroups = append(batchCleanUpTaskGroups, batchCleanUpTaskGroup{
+				cleanUp: batchCleanUp,
+				tasks:   []*proto.Task{task},
+			})
+			continue
+		}
+		singleCleanUpTasks = append(singleCleanUpTasks, singleCleanUpTask{
+			task:    task,
+			cleanUp: cleanUp,
+		})
+	}
+
+	for _, cleanUpTask := range singleCleanUpTasks {
+		if err := cleanUpTask.cleanUp.CleanUp(sm.ctx, cleanUpTask.task); err != nil {
 			firstErr = err
 			break
 		}
-		if err := sm.cleanupSingleTask(task); err != nil {
-			firstErr = err
-			break
-		}
-		cleanedTasks = append(cleanedTasks, task)
+		cleanedTaskSet[cleanUpTask.task] = struct{}{}
 	}
 	if firstErr == nil {
-		firstErr = cleanUpImportIntoTasks()
+		for _, group := range batchCleanUpTaskGroups {
+			if err := group.cleanUp.CleanUpBatch(sm.ctx, group.tasks); err != nil {
+				firstErr = err
+				break
+			}
+			for _, task := range group.tasks {
+				cleanedTaskSet[task] = struct{}{}
+			}
+		}
 	}
 	if firstErr != nil {
 		// normally ScheduleEventCounter requires a task ID, but since scheduler
@@ -492,42 +521,11 @@ func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) error {
 		failpoint.Return(errors.New("transfer err"))
 	})
 
-	return sm.taskMgr.TransferTasks2History(sm.ctx, cleanedTasks)
-}
-
-func (sm *Manager) cleanupImportIntoTasks(tasks []*proto.Task) ([]*proto.Task, error) {
-	cleanupFactory := getSchedulerCleanUpFactory(proto.ImportInto)
-	if cleanupFactory == nil {
-		// if task doesn't register cleanup function, mark it as cleaned.
-		return tasks, nil
-	}
-	cleanup := cleanupFactory()
-	if batchCleanup, ok := cleanup.(batchCleanUpRoutine); ok {
-		if err := batchCleanup.CleanUpBatch(sm.ctx, tasks); err != nil {
-			return nil, err
-		}
-		return tasks, nil
-	}
-
-	cleanedTasks := make([]*proto.Task, 0, len(tasks))
-	for i, task := range tasks {
-		if i > 0 {
-			cleanup = cleanupFactory()
-		}
-		if err := cleanup.CleanUp(sm.ctx, task); err != nil {
-			return cleanedTasks, err
-		}
+	cleanedTasks := make([]*proto.Task, 0, len(cleanedTaskSet))
+	for task := range cleanedTaskSet {
 		cleanedTasks = append(cleanedTasks, task)
 	}
-	return cleanedTasks, nil
-}
-
-func (sm *Manager) cleanupSingleTask(task *proto.Task) error {
-	cleanupFactory := getSchedulerCleanUpFactory(task.Type)
-	if cleanupFactory == nil {
-		return nil
-	}
-	return cleanupFactory().CleanUp(sm.ctx, task)
+	return sm.taskMgr.TransferTasks2History(sm.ctx, cleanedTasks)
 }
 
 func (sm *Manager) collectLoop() {
