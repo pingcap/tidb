@@ -122,6 +122,7 @@ go_library(
         "//pkg/planner/cascades/base",
         "//pkg/planner/cascades/impl",
         "//pkg/planner/cascades/memo",
+        "//pkg/planner/core/autoembed",
         "//pkg/planner/core/base",
         "//pkg/planner/core/cost",
         "//pkg/planner/core/joinorder",

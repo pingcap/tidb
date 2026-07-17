@@ -60,8 +60,7 @@ func collectThreadSafeBuiltinFuncs(file string) (safeFuncNames, unsafeFuncNames 
 			return true
 		}
 		typeName := x.Name.Name
-		if !strings.HasPrefix(typeName, "builtin") ||
-			!strings.HasSuffix(typeName, "Sig") {
+		if !strings.HasPrefix(typeName, "builtin") || !strings.HasSuffix(typeName, "Sig") {
 			return true // the type name should be "builtin*Sig"
 		}
 		if x.Type == nil {

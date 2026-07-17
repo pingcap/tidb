@@ -21,11 +21,13 @@ import (
 	"encoding/hex"
 	"fmt"
 	"hash/crc32"
+	"io"
 	"math"
 	"math/rand"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -37,8 +39,11 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/inference"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -4507,4 +4512,570 @@ func TestDeepCopyRetType(t *testing.T) {
 	tk.MustExec("insert  into t0(c0) values (0);")
 	tk.MustExec("create view v0(c0) as select cast((t1.c0 div t1.c0) as decimal) from t1;")
 	tk.MustQuery("select * from v0 inner join t0 on (v0.c0 like cast(v0.c0 as char) <= t0.c0) and (not atan2(t0.c0, v0.c0));").Check(testkit.Rows())
+}
+
+func TestEmbedTextFunction(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	ensureMockEmbeddingProvider(t, tk)
+	t.Cleanup(func() {
+		tk.MustExec("set @@global.tidb_exp_embed_jina_ai_api_key = ''")
+	})
+
+	tk.MustQuery("select @@global.tidb_exp_embed_jina_ai_api_key").Check(testkit.Rows(""))
+	tk.MustExec("set @@global.tidb_exp_embed_jina_ai_api_key = 'test_key'")
+	tk.MustQuery("select @@global.tidb_exp_embed_jina_ai_api_key").Check(testkit.Rows("******_key"))
+	tk.MustExec("set @@global.tidb_exp_embed_jina_ai_api_key = 'abc'")
+	tk.MustQuery("select @@global.tidb_exp_embed_jina_ai_api_key").Check(testkit.Rows("******"))
+	tk.MustExec("set @@global.tidb_exp_embed_jina_ai_api_key = ''")
+
+	enableNonStarterDeployModeForTest(t)
+	err := tk.QueryToErr(`select embed_text('mock/json', '[1, 3, 4]')`)
+	require.ErrorContains(t, err, "EMBED_TEXT is only supported in starter deployment mode")
+	if !enableStarterDeployModeForTest(t) {
+		return
+	}
+
+	err = tk.QueryToErr("select embed_text('text-embedding-3', 'hello world')")
+	require.ErrorContains(t, err, "model name must be in format")
+	err = tk.QueryToErr("select embed_text('openai/text-embedding-3', 'hello world')")
+	require.ErrorContains(t, err, "OpenAI API key is not configured")
+	err = tk.QueryToErr("select embed_text('foo/text-embedding-3', 'hello world')")
+	require.ErrorContains(t, err, "unknown embedding provider")
+
+	tk.MustQuery(`select embed_text('mock/json', '[1, 3, 4]')`).Check(testkit.Rows("[1,3,4]"))
+	tk.MustQuery(`select embed_text('mock/json', '[1, 3, 4]', '{"plus":0.1}')`).Check(testkit.Rows("[1.1,3.1,4.1]"))
+	tk.MustQuery(`select embed_text('mock/json', '[1, 3, 4]', '')`).Check(testkit.Rows("[1,3,4]"))
+	tk.MustQuery(`select embed_text('mock/json', '[1, 3, 4]', NULL)`).Check(testkit.Rows("[1,3,4]"))
+	err = tk.QueryToErr(`select embed_text('mock/json', '[1, 3, 4]', '{invalid_json}')`)
+	require.ErrorContains(t, err, "EMBED_TEXT expects options in JSON format")
+}
+
+func TestAutoEmbeddingGeneratedColumnDML(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	if !enableStarterDeployModeForTest(t) {
+		t.Skip("EMBED_TEXT is only supported in starter deployment mode")
+	}
+	ensureMockEmbeddingProvider(t, tk)
+
+	tk.MustExec(`
+		CREATE TABLE t(
+			id INT PRIMARY KEY,
+			text TEXT,
+			vec VECTOR(3) GENERATED ALWAYS AS (embed_text('mock/json', text)) STORED
+		)
+	`)
+	tk.MustExec("insert into t values (1, '[1,2,3]', DEFAULT), (2, NULL, DEFAULT)")
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows(
+		"1 [1,2,3] [1,2,3]",
+		"2 <nil> <nil>",
+	))
+
+	tk.MustExec("update t set text = '[4,5,6]' where id = 1")
+	tk.MustQuery("select * from t where id = 1").Check(testkit.Rows("1 [4,5,6] [4,5,6]"))
+
+	err := tk.ExecToErr("update t set vec = '[1,2,3]' where id = 1")
+	require.ErrorContains(t, err, "The value specified for generated column 'vec' in table 't' is not allowed")
+
+	tk.MustExec(`
+		CREATE TABLE t_multi(
+			id INT PRIMARY KEY,
+			text_a TEXT,
+			text_b TEXT,
+			vec_a VECTOR(3) GENERATED ALWAYS AS (embed_text('mock/json', text_a)) STORED,
+			vec_b VECTOR(3) GENERATED ALWAYS AS (embed_text('mock/json', text_b, '{"plus":0.5}')) STORED
+		)
+	`)
+	tk.MustExec(`
+		INSERT INTO t_multi(id, text_a, text_b) VALUES
+			(1, '[1,2,3]', '[4,5,6]'),
+			(2, '[7,8,9]', '[10,11,12]')
+	`)
+	tk.MustQuery("select id, vec_a, vec_b from t_multi order by id").Check(testkit.Rows(
+		"1 [1,2,3] [4.5,5.5,6.5]",
+		"2 [7,8,9] [10.5,11.5,12.5]",
+	))
+}
+
+func TestAutoEmbeddingVectorSearchRewrite(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	if !enableStarterDeployModeForTest(t) {
+		t.Skip("EMBED_TEXT is only supported in starter deployment mode")
+	}
+	ensureMockEmbeddingProvider(t, tk)
+
+	tk.MustQuery(`select embed_text('mock/json', '[1,2,3]', '{"plus@search":1}')`).Check(testkit.Rows("[1,2,3]"))
+	tk.MustExec(`
+		CREATE TABLE t(
+			id INT PRIMARY KEY,
+			text TEXT,
+			vec VECTOR(3) GENERATED ALWAYS AS (embed_text('mock/json', text, '{"plus":0.1,"plus@search":0.2}')) STORED,
+			dist DOUBLE
+		)
+	`)
+	tk.MustExec("insert into t(id, text, dist) values (1, '[1,2,3]', 0), (2, '[4,5,6]', 0)")
+	tk.MustQuery("select id, text, vec from t order by id").Check(testkit.Rows(
+		"1 [1,2,3] [1.1,2.1,3.1]",
+		"2 [4,5,6] [4.1,5.1,6.1]",
+	))
+
+	const explicitEmbedding = `embed_text('mock/json', '[1,2,3]', '{"plus":0.2}')`
+	checkRewrite := func(rewrittenSQL, explicitSQL string) {
+		t.Helper()
+		tk.MustQuery(rewrittenSQL).Check(tk.MustQuery(explicitSQL).Rows())
+	}
+	checkRewritePlan := func(sql string) {
+		t.Helper()
+		tk.MustQuery(`explain format = 'plan_tree' ` + sql).MultiCheckContain([]string{"vec_l2_distance"})
+	}
+	checkFirstArgErr := func(sql string) {
+		t.Helper()
+		err := tk.ExecToErr(sql)
+		require.ErrorContains(t, err, "first argument must be a vector embedding column generated by EMBED_TEXT()")
+	}
+
+	vectorSearchCases := []struct {
+		embedFn    string
+		distanceFn string
+	}{
+		{embedFn: "vec_embed_l1_distance", distanceFn: "vec_l1_distance"},
+		{embedFn: "vec_embed_l2_distance", distanceFn: "vec_l2_distance"},
+		{embedFn: "vec_embed_cosine_distance", distanceFn: "vec_cosine_distance"},
+		{embedFn: "vec_embed_negative_inner_product", distanceFn: "vec_negative_inner_product"},
+	}
+	for _, tc := range vectorSearchCases {
+		checkRewrite(
+			`select `+tc.embedFn+`(vec, '[1,2,3]') from t order by id`,
+			`select `+tc.distanceFn+`(vec, `+explicitEmbedding+`) from t order by id`,
+		)
+	}
+	tk.MustQuery(`explain format = 'plan_tree' select id from t order by vec_embed_l2_distance(vec, '[1,2,3]') limit 1`).
+		MultiCheckContain([]string{"TopN", "vec_l2_distance"})
+
+	checkRewrite(
+		`select vec_embed_l2_distance(vec, '[1,2,3]') from t order by id`,
+		`select vec_l2_distance(vec, `+explicitEmbedding+`) from t order by id`,
+	)
+	checkRewrite(
+		`select id from t where vec_embed_l2_distance(vec, '[1,2,3]') < 1 order by id`,
+		`select id from t where vec_l2_distance(vec, `+explicitEmbedding+`) < 1 order by id`,
+	)
+	checkRewrite(
+		`select id from t order by vec_embed_l2_distance(vec, '[1,2,3]'), id`,
+		`select id from t order by vec_l2_distance(vec, `+explicitEmbedding+`), id`,
+	)
+	checkRewrite(
+		`select vec_embed_l2_distance(v, '[1,2,3]') from (select vec as v from t) dt order by 1`,
+		`select vec_l2_distance(v, `+explicitEmbedding+`) from (select vec as v from t) dt order by 1`,
+	)
+	checkRewrite(
+		`select vec_embed_l2_distance(vec, '[1,2,3]') from (select vec from t order by id limit 2) dt order by 1`,
+		`select vec_l2_distance(vec, `+explicitEmbedding+`) from (select vec from t order by id limit 2) dt order by 1`,
+	)
+	checkRewrite(
+		`select vec_embed_l2_distance(t.vec, '[1,2,3]') from t join (select 1 as id union all select 2) u on t.id = u.id order by t.id`,
+		`select vec_l2_distance(t.vec, `+explicitEmbedding+`) from t join (select 1 as id union all select 2) u on t.id = u.id order by t.id`,
+	)
+	checkRewrite(
+		`select vec_embed_l2_distance(vec, '[1,2,3]') from (select vec, row_number() over(order by id) as rn from t) dt order by 1`,
+		`select vec_l2_distance(vec, `+explicitEmbedding+`) from (select vec, row_number() over(order by id) as rn from t) dt order by 1`,
+	)
+	checkRewrite(
+		`select vec_embed_l2_distance(vec, '[1,2,3]') from (select vec from t union all select vec from t) u order by 1`,
+		`select vec_l2_distance(vec, `+explicitEmbedding+`) from (select vec from t union all select vec from t) u order by 1`,
+	)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache = ON`)
+	tk.MustExec(`prepare auto_embed_stmt from 'select id from t where vec_embed_l2_distance(vec, ?) < 1 order by id'`)
+	tk.MustExec(`set @auto_embed_query = '[1,2,3]'`)
+	tk.MustQuery(`execute auto_embed_stmt using @auto_embed_query`).Check(testkit.Rows("1"))
+	tk.MustExec(`set @auto_embed_query = '[4,5,6]'`)
+	tk.MustQuery(`execute auto_embed_stmt using @auto_embed_query`).Check(testkit.Rows("2"))
+	tk.MustExec(`deallocate prepare auto_embed_stmt`)
+
+	tk.MustExec(`update t set dist = 7 where vec_embed_l2_distance(vec, '[1,2,3]') < 1`)
+	tk.MustQuery(`select id, dist from t order by id`).Check(testkit.Rows("1 7", "2 0"))
+	tk.MustExec(`update t set dist = vec_embed_l2_distance(vec, '[1,2,3]') where id = 2`)
+	tk.MustQuery(`select dist = vec_l2_distance(vec, ` + explicitEmbedding + `) from t where id = 2`).Check(testkit.Rows("1"))
+
+	tk.MustExec(`
+		CREATE TABLE t_dup(
+			id INT PRIMARY KEY,
+			text TEXT,
+			vec VECTOR(3) GENERATED ALWAYS AS (embed_text('mock/json', text, '{"plus":0.1,"plus@search":0.2}')) STORED,
+			dist DOUBLE
+		)
+	`)
+	tk.MustExec(`insert into t_dup(id, text, dist) values (1, '[1,2,3]', 0)`)
+	tk.MustExec(`insert into t_dup(id, text, dist) values (1, '[1,2,3]', 0) on duplicate key update dist = vec_embed_l2_distance(vec, '[1,2,3]')`)
+	tk.MustQuery(`select dist = vec_l2_distance(vec, ` + explicitEmbedding + `) from t_dup where id = 1`).Check(testkit.Rows("1"))
+	tk.MustExec(`insert into t_dup(id, text, dist) select 1, text, 0 from t where id = 1 on duplicate key update dist = vec_embed_l2_distance(t_dup.vec, '[1,2,3]')`)
+	tk.MustQuery(`select dist = vec_l2_distance(vec, ` + explicitEmbedding + `) from t_dup where id = 1`).Check(testkit.Rows("1"))
+	tk.MustExec(`insert into t_dup(id, text, dist) select 1, text, 0 from t as src where src.id = 1 on duplicate key update dist = vec_embed_l2_distance(src.vec, '[1,2,3]')`)
+	tk.MustQuery(`select dist = vec_l2_distance(vec, ` + explicitEmbedding + `) from t_dup where id = 1`).Check(testkit.Rows("1"))
+	checkRewritePlan(`select vec_embed_l2_distance(vec, '[1,2,3]') from t join t_dup using(vec) order by 1`)
+	checkRewritePlan(`select vec_embed_l2_distance(t_dup.vec, '[1,2,3]') from t join t_dup using(vec) order by 1`)
+
+	tk.MustExec(`create table normal_vec(id int primary key, vec vector(3), dist double)`)
+	tk.MustExec(`insert into normal_vec values (1, '[1,2,3]', 0), (2, '[4,5,6]', 0)`)
+	// Build a normal vector query after successful auto-embedding rewrites to catch stale builder metadata.
+	checkFirstArgErr(`select vec_embed_l2_distance(vec, '[1,2,3]') from normal_vec`)
+	checkFirstArgErr(`update t join normal_vec using(vec) set t.dist = vec_embed_l2_distance(t.vec, '[1,2,3]') where t.id = 1`)
+	checkFirstArgErr(`delete t from t join normal_vec using(vec) where vec_embed_l2_distance(t.vec, '[1,2,3]') < 1`)
+	tk.MustExec(`create table normal_vec_nat(nid int primary key, vec vector(3))`)
+	tk.MustExec(`insert into normal_vec_nat values (1, '[1,2,3]')`)
+	checkFirstArgErr(`update t natural join normal_vec_nat set t.dist = vec_embed_l2_distance(t.vec, '[1,2,3]') where t.id = 1`)
+	tk.MustExec(`
+		CREATE TABLE t_nat_auto(
+			nid INT PRIMARY KEY,
+			body TEXT,
+			vec VECTOR(3) GENERATED ALWAYS AS (embed_text('mock/json', body, '{"plus":0.1,"plus@search":0.2}')) STORED
+		)
+	`)
+	tk.MustExec(`insert into t_nat_auto(nid, body) values (1, '[1,2,3]')`)
+
+	tk.MustExec(`
+		CREATE TABLE t_diff(
+			id INT PRIMARY KEY,
+			text TEXT,
+			vec VECTOR(3) GENERATED ALWAYS AS (embed_text('mock/json', text, '{"plus":0.2,"plus@search":0.2}')) STORED
+		)
+	`)
+	tk.MustExec(`insert into t_diff values (1, '[1,2,3]', DEFAULT), (2, '[4,5,6]', DEFAULT)`)
+
+	boundaryCases := []struct {
+		name        string
+		boundary    string
+		sql         string
+		explicitSQL string
+		wantErr     bool
+	}{
+		{
+			name:        "projected alias keeps metadata",
+			boundary:    "alias",
+			sql:         `select vec_embed_l2_distance(v, '[1,2,3]') from (select vec as v from t) dt order by 1`,
+			explicitSQL: `select vec_l2_distance(v, ` + explicitEmbedding + `) from (select vec as v from t) dt order by 1`,
+		},
+		{
+			name:        "projection trim keeps metadata",
+			boundary:    "alias",
+			sql:         `select id from t order by vec_embed_l2_distance(vec, '[1,2,3]'), id`,
+			explicitSQL: `select id from t order by vec_l2_distance(vec, ` + explicitEmbedding + `), id`,
+		},
+		{
+			name:     "cast result is derived",
+			boundary: "derived",
+			sql:      `select vec_embed_l2_distance(cast(vec as vector(3)), '[1,2,3]') from t`,
+			wantErr:  true,
+		},
+		{
+			name:     "rollup output is derived",
+			boundary: "derived",
+			sql:      `select vec_embed_l2_distance(vec, '[1,2,3]') from (select vec from t group by vec with rollup) dt`,
+			wantErr:  true,
+		},
+		{
+			name:     "window output is derived",
+			boundary: "derived",
+			sql:      `select vec_embed_l2_distance(wv, '[1,2,3]') from (select first_value(vec) over(order by id) as wv from t) dt`,
+			wantErr:  true,
+		},
+		{
+			name:        "union all identical metadata coalesces",
+			boundary:    "coalesced",
+			sql:         `select vec_embed_l2_distance(vec, '[1,2,3]') from (select vec from t union all select vec from t) u order by 1`,
+			explicitSQL: `select vec_l2_distance(vec, ` + explicitEmbedding + `) from (select vec from t union all select vec from t) u order by 1`,
+		},
+		{
+			name:        "set-op order-by trim keeps coalesced metadata",
+			boundary:    "coalesced",
+			sql:         `select vec_embed_l2_distance(vec, '[1,2,3]') from ((select vec from t union all select vec from t) order by vec_embed_l2_distance(vec, '[1,2,3]')) u order by 1`,
+			explicitSQL: `select vec_l2_distance(vec, ` + explicitEmbedding + `) from ((select vec from t union all select vec from t) order by vec_l2_distance(vec, ` + explicitEmbedding + `)) u order by 1`,
+		},
+		{
+			name:     "union all mixed normal source fails closed",
+			boundary: "coalesced",
+			sql:      `select vec_embed_l2_distance(vec, '[1,2,3]') from (select vec from t union all select vec from normal_vec) u`,
+			wantErr:  true,
+		},
+		{
+			name:     "union all different metadata fails closed",
+			boundary: "coalesced",
+			sql:      `select vec_embed_l2_distance(vec, '[1,2,3]') from (select vec from t union all select vec from t_diff) u`,
+			wantErr:  true,
+		},
+		{
+			name:     "union all derived source fails closed",
+			boundary: "coalesced",
+			sql:      `select vec_embed_l2_distance(vec, '[1,2,3]') from (select cast(vec as vector(3)) as vec from t union all select vec from t) u`,
+			wantErr:  true,
+		},
+		{
+			name:     "union distinct output fails closed",
+			boundary: "derived",
+			sql:      `select vec_embed_l2_distance(vec, '[1,2,3]') from (select vec from t union select vec from t) u`,
+			wantErr:  true,
+		},
+		{
+			name:     "intersect output fails closed",
+			boundary: "derived",
+			sql:      `select vec_embed_l2_distance(vec, '[1,2,3]') from (select vec from t intersect select vec from t) u`,
+			wantErr:  true,
+		},
+		{
+			name:     "except output fails closed",
+			boundary: "derived",
+			sql:      `select vec_embed_l2_distance(vec, '[1,2,3]') from (select vec from t except select vec from t where id = 2) u`,
+			wantErr:  true,
+		},
+		{
+			name:        "using identical metadata coalesces visible column",
+			boundary:    "using",
+			sql:         `select vec_embed_l2_distance(vec, '[1,2,3]') from t join t_dup using(vec) order by 1`,
+			explicitSQL: `select vec_l2_distance(vec, ` + explicitEmbedding + `) from t join t_dup using(vec) order by 1`,
+		},
+		{
+			name:        "using identical metadata preserves qualified column",
+			boundary:    "using",
+			sql:         `select vec_embed_l2_distance(t_dup.vec, '[1,2,3]') from t join t_dup using(vec) order by 1`,
+			explicitSQL: `select vec_l2_distance(t_dup.vec, ` + explicitEmbedding + `) from t join t_dup using(vec) order by 1`,
+		},
+		{
+			name:     "using mixed source fails closed",
+			boundary: "using",
+			sql:      `select vec_embed_l2_distance(vec, '[1,2,3]') from t join normal_vec using(vec)`,
+			wantErr:  true,
+		},
+		{
+			name:     "using mixed source rejects qualified redundant column",
+			boundary: "using",
+			sql:      `select vec_embed_l2_distance(normal_vec.vec, '[1,2,3]') from t join normal_vec using(vec)`,
+			wantErr:  true,
+		},
+		{
+			name:     "using mixed source rejects predicate rewrite",
+			boundary: "using",
+			sql:      `select t.id from t join normal_vec using(vec) where vec_embed_l2_distance(normal_vec.vec, '[1,2,3]') < 1`,
+			wantErr:  true,
+		},
+		{
+			name:     "using mixed source rejects order by rewrite",
+			boundary: "using",
+			sql:      `select t.id from t join normal_vec using(vec) order by vec_embed_cosine_distance(vec, '[1,2,3]')`,
+			wantErr:  true,
+		},
+		{
+			name:     "natural mixed source fails closed",
+			boundary: "using",
+			sql:      `select vec_embed_l2_distance(vec, '[1,2,3]') from t natural join normal_vec`,
+			wantErr:  true,
+		},
+		{
+			name:        "natural identical metadata coalesces",
+			boundary:    "using",
+			sql:         `select vec_embed_l2_distance(vec, '[1,2,3]') from t natural join t_nat_auto order by 1`,
+			explicitSQL: `select vec_l2_distance(vec, ` + explicitEmbedding + `) from t natural join t_nat_auto order by 1`,
+		},
+		{
+			name:     "using different metadata fails closed",
+			boundary: "using",
+			sql:      `select vec_embed_l2_distance(vec, '[1,2,3]') from t join t_diff using(vec)`,
+			wantErr:  true,
+		},
+		{
+			name:     "natural different metadata fails closed",
+			boundary: "using",
+			sql:      `select vec_embed_l2_distance(vec, '[1,2,3]') from t natural join t_diff`,
+			wantErr:  true,
+		},
+		{
+			name:     "using different metadata rejects qualified redundant column",
+			boundary: "using",
+			sql:      `select vec_embed_l2_distance(t_diff.vec, '[1,2,3]') from t join t_diff using(vec)`,
+			wantErr:  true,
+		},
+	}
+	for _, tc := range boundaryCases {
+		if tc.wantErr {
+			err := tk.ExecToErr(tc.sql)
+			require.ErrorContainsf(t, err, "first argument must be a vector embedding column generated by EMBED_TEXT()", "%s boundary case %q", tc.boundary, tc.name)
+			continue
+		}
+		if tc.boundary == "using" {
+			checkRewritePlan(tc.sql)
+			continue
+		}
+		tk.MustQuery(tc.sql).Check(tk.MustQuery(tc.explicitSQL).Rows())
+	}
+
+	checkFirstArgErr(`insert into t_dup(id, text, dist) select 1, text, 0 from t where id = 1 on duplicate key update dist = vec_embed_l2_distance(values(dist), '[1,2,3]')`)
+	tk.MustExec(`create table target_norm(id int primary key, vec vector(3), dist double)`)
+	tk.MustExec(`insert into target_norm values (1, '[0,0,0]', 0)`)
+	checkFirstArgErr(`insert into target_norm(id, vec, dist) select 1, src.vec, 0 from t as src where src.id = 1 on duplicate key update dist = vec_embed_l2_distance(values(vec), '[1,2,3]')`)
+}
+
+func TestAutoEmbeddingDDLValidation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	ensureMockEmbeddingProvider(t, tk)
+
+	enableNonStarterDeployModeForTest(t)
+	err := tk.ExecToErr(`
+		CREATE TABLE t_non_starter(
+			id INT PRIMARY KEY,
+			text TEXT,
+			vec VECTOR(3) GENERATED ALWAYS AS (embed_text('mock/json', text)) STORED
+		)
+	`)
+	require.ErrorContains(t, err, "EMBED_TEXT is only supported in starter deployment mode")
+	if !enableStarterDeployModeForTest(t) {
+		t.Skip("EMBED_TEXT is only supported in starter deployment mode")
+	}
+
+	err = tk.ExecToErr(`
+		CREATE TABLE t(
+			id INT PRIMARY KEY,
+			text TEXT,
+			vec VECTOR(3) GENERATED ALWAYS AS (embed_text('mock/json', text) + 1) STORED
+		)
+	`)
+	require.ErrorContains(t, err, "EMBED_TEXT() function must be the top-level function call in generated column expression")
+
+	err = tk.ExecToErr(`
+		CREATE TABLE t(
+			id INT PRIMARY KEY,
+			text TEXT,
+			vec VECTOR(3) GENERATED ALWAYS AS (embed_text('mock/json', text)) VIRTUAL
+		)
+	`)
+	require.ErrorContains(t, err, "EMBED_TEXT() can be only used as stored generated column")
+
+	err = tk.ExecToErr(`
+		CREATE TABLE t(
+			id INT PRIMARY KEY,
+			text TEXT,
+			vec VECTOR(3) GENERATED ALWAYS AS (embed_text(CONCAT('mock', '/json'), text)) STORED
+		)
+	`)
+	require.ErrorContains(t, err, "EMBED_TEXT() only accepts model name using string constant")
+
+	err = tk.ExecToErr(`
+		CREATE TABLE t(
+			id INT PRIMARY KEY,
+			text TEXT,
+			vec VECTOR(3) GENERATED ALWAYS AS (embed_text('mock/json', text, '{invalid_json}')) STORED
+		)
+	`)
+	require.ErrorContains(t, err, "EMBED_TEXT expects options in JSON format")
+
+	err = tk.ExecToErr(`
+		CREATE TABLE t(
+			id INT PRIMARY KEY,
+			text TEXT,
+			vec VECTOR(3) GENERATED ALWAYS AS (embed_text('mock/json', text)) STORED,
+			vec_text TEXT GENERATED ALWAYS AS (vec_as_text(vec)) STORED
+		)
+	`)
+	require.ErrorContains(t, err, "generated column on an auto-embedding column is not supported")
+
+	err = tk.ExecToErr(`
+		CREATE TABLE t(
+			id INT PRIMARY KEY,
+			vec VECTOR(3),
+			dist DOUBLE GENERATED ALWAYS AS (vec_embed_l2_distance(vec, '[1,2,3]')) STORED
+		)
+	`)
+	require.ErrorContains(t, err, "contains a disallowed function")
+
+	tk.MustExec("CREATE TABLE t_add(id INT PRIMARY KEY, text TEXT)")
+	err = tk.ExecToErr(`
+		ALTER TABLE t_add ADD COLUMN vec VECTOR(3)
+		GENERATED ALWAYS AS (embed_text('mock/json', text)) STORED
+	`)
+	require.ErrorContains(t, err, "Adding auto-embedding generated column through ALTER TABLE")
+
+	tk.MustExec(`
+		CREATE TABLE t_modify(
+			id INT PRIMARY KEY,
+			text TEXT,
+			vec VECTOR(3) GENERATED ALWAYS AS (embed_text('mock/json', text)) STORED,
+			vec_text TEXT GENERATED ALWAYS AS (text) VIRTUAL
+		)
+	`)
+	err = tk.ExecToErr("ALTER TABLE t_modify MODIFY COLUMN vec_text TEXT GENERATED ALWAYS AS (vec_as_text(vec)) VIRTUAL")
+	require.ErrorContains(t, err, "generated column on an auto-embedding column is not supported")
+}
+
+func TestAutoEmbeddingGeneratedColumnLoadData(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	if !enableStarterDeployModeForTest(t) {
+		t.Skip("EMBED_TEXT is only supported in starter deployment mode")
+	}
+	ensureMockEmbeddingProvider(t, tk)
+
+	tk.MustExec(`
+		CREATE TABLE t_load(
+			id INT PRIMARY KEY,
+			text TEXT,
+			vec VECTOR(3) GENERATED ALWAYS AS (embed_text('mock/json', text, '{"plus":1}')) STORED
+		)
+	`)
+	var reader io.ReadCloser = mydump.NewStringReader("1,\"[1,2,3]\"\n2,\"[4,5,6]\"\n")
+	tk.Session().SetValue(executor.LoadDataReaderBuilderKey, executor.LoadDataReaderBuilder{
+		Build: func(_ string) (io.ReadCloser, error) {
+			return reader, nil
+		},
+		Wg: &sync.WaitGroup{},
+	})
+	t.Cleanup(func() {
+		tk.Session().SetValue(executor.LoadDataReaderBuilderKey, nil)
+	})
+
+	tk.MustExec("LOAD DATA LOCAL INFILE 'auto_embedding.csv' INTO TABLE t_load FIELDS TERMINATED BY ',' ENCLOSED BY '\"' (id, text)")
+	tk.MustQuery("select id, text, vec from t_load order by id").Check(testkit.Rows(
+		"1 [1,2,3] [2,3,4]",
+		"2 [4,5,6] [5,6,7]",
+	))
+}
+
+func ensureMockEmbeddingProvider(t *testing.T, tk *testkit.TestKit) {
+	t.Helper()
+	do := domain.GetDomain(tk.Session())
+	require.NotNil(t, do)
+	require.NotNil(t, do.GetEmbedFn())
+	if !do.GetEmbedFn().HasEmbedder("mock") {
+		do.GetEmbedFn().MustRegisterEmbedder("mock", inference.NewMockEmbedder())
+	}
+}
+
+func enableStarterDeployModeForTest(t *testing.T) bool {
+	t.Helper()
+	if !kerneltype.IsNextGen() {
+		return false
+	}
+	originalMode := deploymode.Get()
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+	t.Cleanup(func() {
+		require.NoError(t, deploymode.Set(originalMode))
+	})
+	return true
+}
+
+func enableNonStarterDeployModeForTest(t *testing.T) {
+	t.Helper()
+	if !kerneltype.IsNextGen() {
+		return
+	}
+	originalMode := deploymode.Get()
+	require.NoError(t, deploymode.Set(deploymode.Premium))
+	t.Cleanup(func() {
+		require.NoError(t, deploymode.Set(originalMode))
+	})
 }

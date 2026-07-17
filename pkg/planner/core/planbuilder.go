@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/planner/core/autoembed"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
@@ -326,6 +327,10 @@ type PlanBuilder struct {
 	allowBuildCastArray bool
 	// resolveCtx is set when calling Build, it's only effective in the current Build call.
 	resolveCtx *resolve.Context
+	// autoEmbedBuildState is shared by nested Build calls and cleared when the
+	// outermost Build returns. It never escapes into the logical plan.
+	autoEmbedBuildState autoembed.BuildState
+	autoEmbedBuildDepth int
 
 	// nonViableFTSMatch is set during build when the expression rewriter
 	// encounters a predicate-context MATCH...AGAINST whose native form
@@ -543,6 +548,7 @@ func (b *PlanBuilder) Init(sctx base.PlanContext, is infoschema.InfoSchema, proc
 // ResetForReuse reset the plan builder, put it into pool for reuse.
 // After reset for reuse, the object should be equal to a object returned by NewPlanBuilder().
 func (b *PlanBuilder) ResetForReuse() *PlanBuilder {
+	b.autoEmbedBuildState.ResetForReuse()
 	// Save some fields for reuse.
 	saveOuterCTEs := b.outerCTEs[:0]
 	saveColMapper := b.colMapper
@@ -573,6 +579,15 @@ func (b *PlanBuilder) ResetForReuse() *PlanBuilder {
 	return b
 }
 
+// activeAutoEmbedBuildState returns the embedded state only while a Build is
+// active. The build depth is the single source of truth for this scope.
+func (b *PlanBuilder) activeAutoEmbedBuildState() *autoembed.BuildState {
+	if b.autoEmbedBuildDepth == 0 {
+		return nil
+	}
+	return &b.autoEmbedBuildState
+}
+
 // HandleUnusedViewHints appends warnings for unused view hints in the current build.
 func (b *PlanBuilder) HandleUnusedViewHints() {
 	if b.hintProcessor == nil {
@@ -596,9 +611,20 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		return nil, err
 	}
 
-	// Build might be called recursively, right now they all share the same resolve
-	// context, so it's ok to override it.
+	outermostBuild := b.autoEmbedBuildDepth == 0
+	if outermostBuild {
+		b.autoEmbedBuildState.ResetForBuild(node.AutoEmbedConsumerPresence())
+	}
+	b.autoEmbedBuildDepth++
+	previousResolveCtx := b.resolveCtx
 	b.resolveCtx = node.GetResolveContext()
+	defer func() {
+		b.resolveCtx = previousResolveCtx
+		b.autoEmbedBuildDepth--
+		if outermostBuild {
+			b.autoEmbedBuildState.ResetForReuse()
+		}
+	}()
 	b.optFlag |= rule.FlagPruneColumns
 	// Count every recursive build invocation because RU v2 charges plan work per build step.
 	b.recordPlanBuilderMetric()
@@ -4208,6 +4234,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		return n
 	}
 
+	var autoEmbedSourceSnapshot *autoembed.SourceSnapshot
 	if len(insert.Lists) > 0 {
 		// Branch for `INSERT ... VALUES ...`.
 		// Branch for `INSERT ... SET ...`.
@@ -4217,7 +4244,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		}
 	} else {
 		// Branch for `INSERT ... SELECT ...`.
-		err := b.buildSelectPlanOfInsert(ctx, insert, insertPlan)
+		autoEmbedSourceSnapshot, err = b.buildSelectPlanOfInsert(ctx, insert, insertPlan)
 		if err != nil {
 			return nil, err
 		}
@@ -4227,7 +4254,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	mockTablePlan.SetOutputNames(insertPlan.Names4OnDuplicate)
 
 	onDupColSet, err := insertPlan.ResolveOnDuplicate(insert.OnDuplicate, tableInfo, func(node ast.ExprNode) (expression.Expression, error) {
-		return b.rewriteInsertOnDuplicateUpdate(ctx, node, mockTablePlan, insertPlan)
+		return b.rewriteInsertOnDuplicateUpdate(ctx, node, mockTablePlan, insertPlan, autoEmbedSourceSnapshot)
 	})
 	if err != nil {
 		return nil, err
@@ -4312,7 +4339,7 @@ func (b PlanBuilder) getInsertColExpr(ctx context.Context, insertPlan *physicalo
 			usingPlan = logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 		}
 		var np base.LogicalPlan
-		outExpr, np, err = b.rewriteWithPreprocess(ctx, expr, usingPlan, nil, nil, true, checkRefColumn)
+		outExpr, np, err = b.rewriteInsertExpression(ctx, expr, usingPlan, insertPlan, nil, checkRefColumn)
 		if np != nil {
 			if _, ok := np.(*logicalop.LogicalTableDual); !ok {
 				// See issue#30626 and the related tests in function TestInsertValuesWithSubQuery for more details.
@@ -4405,11 +4432,11 @@ func (*colNameInOnDupExtractor) Leave(node ast.Node) (ast.Node, bool) {
 	return node, true
 }
 
-func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.InsertStmt, insertPlan *physicalop.Insert) error {
+func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.InsertStmt, insertPlan *physicalop.Insert) (*autoembed.SourceSnapshot, error) {
 	b.isForUpdateRead = true
 	affectedValuesCols, err := b.getAffectCols(insert, insertPlan)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	actualColLen := -1
 	// For MYSQL, it handles the case that the columns in ON DUPLICATE UPDATE is not the project column of the SELECT clause
@@ -4466,12 +4493,12 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 	nodeW := resolve.NewNodeWWithCtx(insert.Select, b.resolveCtx)
 	selectPlan, err := b.Build(ctx, nodeW)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Check to guarantee that the length of the row returned by select is equal to that of affectedValuesCols.
 	if (actualColLen == -1 && selectPlan.Schema().Len() != len(affectedValuesCols)) || (actualColLen != -1 && actualColLen != len(affectedValuesCols)) {
-		return plannererrors.ErrWrongValueCountOnRow.GenWithStackByArgs(1)
+		return nil, plannererrors.ErrWrongValueCountOnRow.GenWithStackByArgs(1)
 	}
 
 	// Check to guarantee that there's no generated column.
@@ -4483,15 +4510,23 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 	// that there's a generated column in the column list.
 	for _, col := range affectedValuesCols {
 		if col.IsGenerated() {
-			return plannererrors.ErrBadGeneratedColumn.GenWithStackByArgs(col.Name.O, insertPlan.Table.Meta().Name.O)
+			return nil, plannererrors.ErrBadGeneratedColumn.GenWithStackByArgs(col.Name.O, insertPlan.Table.Meta().Name.O)
 		}
 	}
 
 	names := selectPlan.OutputNames()
-	insertPlan.SelectPlan, _, err = DoOptimize(ctx, b.ctx, b.optFlag, selectPlan.(base.LogicalPlan))
-	if err != nil {
-		return err
+	selectLogicalPlan := selectPlan.(base.LogicalPlan)
+	var autoEmbedSourceSnapshot *autoembed.SourceSnapshot
+	if autoembed.ClassifyAssignmentExprs(insert.OnDuplicate).NeedsLineage() {
+		// The snapshot is taken before optimization; schema4NewRow below must keep
+		// the corresponding SELECT output UniqueIDs so ON DUPLICATE can rebind them.
+		autoEmbedSourceSnapshot = autoembed.SnapshotSource(selectLogicalPlan, b.activeAutoEmbedBuildState())
 	}
+	optimizedPhysicalPlan, _, err := DoOptimize(ctx, b.ctx, b.optFlag, selectLogicalPlan)
+	if err != nil {
+		return nil, err
+	}
+	insertPlan.SelectPlan = optimizedPhysicalPlan
 
 	if actualColLen == -1 {
 		actualColLen = selectPlan.Schema().Len()
@@ -4519,12 +4554,16 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 			names4NewRow[i] = types.EmptyName
 		}
 	}
+	// Schema4OnDuplicate contains target columns, SELECT extras at
+	// [actualColLen:], then new-row columns. The original SELECT outputs at
+	// [0, actualColLen) stay excluded while schema4NewRow retains their
+	// UniqueIDs; Schema.ColumnIndex depends on this order for its first match.
 	insertPlan.Schema4OnDuplicate = expression.NewSchema(insertPlan.TableSchema.Columns...)
 	insertPlan.Schema4OnDuplicate.Append(insertPlan.SelectPlan.Schema().Columns[actualColLen:]...)
 	insertPlan.Schema4OnDuplicate.Append(schema4NewRow.Columns...)
 	insertPlan.Names4OnDuplicate = append(insertPlan.TableColNames.Shallow(), names[actualColLen:]...)
 	insertPlan.Names4OnDuplicate = append(insertPlan.Names4OnDuplicate, names4NewRow...)
-	return nil
+	return autoEmbedSourceSnapshot, nil
 }
 
 func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (base.Plan, error) {
@@ -5797,7 +5836,8 @@ func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt
 		return b.buildShow(ctx, show)
 	}
 
-	if explain.PlanDigest != "" { // explain [analyze] <SQLDigest>
+	dynamicPlanDigestStmt := explain.PlanDigest != ""
+	if dynamicPlanDigestStmt { // explain [analyze] <SQLDigest>
 		hintedStmt, err := getHintedStmtThroughPlanDigest(b.ctx, explain.PlanDigest)
 		if err != nil {
 			return nil, err
@@ -5814,6 +5854,14 @@ func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt
 	var targetPlan base.Plan
 	if explain.Stmt != nil && !explain.Explore {
 		nodeW := resolve.NewNodeWWithCtx(explain.Stmt, b.resolveCtx)
+		if dynamicPlanDigestStmt {
+			autoEmbedPresence := autoembed.ClassifyConsumerAST(explain.Stmt)
+			if autoEmbedBuildState := b.activeAutoEmbedBuildState(); autoEmbedBuildState != nil {
+				autoEmbedBuildState.UpgradePresence(autoEmbedPresence)
+				autoEmbedPresence = autoEmbedBuildState.Presence()
+			}
+			nodeW = nodeW.WithAutoEmbedConsumerPresence(autoEmbedPresence)
+		}
 		if stmtCtx.ExplainFormat == types.ExplainFormatPlanCache {
 			targetPlan, _, err = OptimizeAstNode(ctx, sctx, nodeW, b.is)
 		} else {

@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -51,6 +52,77 @@ func runSQL(t *testing.T, ctx sessionctx.Context, is infoschema.InfoSchema, sql 
 	nodeW := resolve.NewNodeW(stmt)
 	err = core.Preprocess(context.Background(), ctx, nodeW, append(opts, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))...)
 	require.Truef(t, terror.ErrorEqual(err, terr), "sql: %s, err:%v, terr:%v", sql, err, terr)
+}
+
+func TestAutoEmbedConsumerPresenceFromPreprocess(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table auto_embed_presence_t(a int)")
+
+	classify := func(sql string) (resolve.AutoEmbedConsumerPresence, error) {
+		t.Helper()
+		stmts, err := session.Parse(tk.Session(), sql)
+		require.NoError(t, err)
+		require.Len(t, stmts, 1)
+		nodeW := resolve.NewNodeW(stmts[0])
+		err = core.Preprocess(context.Background(), tk.Session(), nodeW)
+		return nodeW.GetResolveContext().AutoEmbedConsumerPresence(), err
+	}
+
+	presence, err := classify("select 1")
+	require.NoError(t, err)
+	require.Equal(t, resolve.AutoEmbedConsumerAbsent, presence)
+
+	for _, sql := range []string{
+		"select vec_embed_l1_distance(1, 2)",
+		"with x as (select vec_embed_l2_distance(1, 2)) select * from x",
+		"select 1 where exists (select vec_embed_negative_inner_product(1, 2))",
+		"select count(*) from auto_embed_presence_t having vec_embed_l2_distance(1, 2) > 0",
+		"select vec_embed_l1_distance(1, 2) union all select 1",
+		"update auto_embed_presence_t set a = vec_embed_cosine_distance(1, 2)",
+		"delete from auto_embed_presence_t where vec_embed_l1_distance(1, 2) > 0",
+		"insert into auto_embed_presence_t values (1) on duplicate key update a = vec_embed_l2_distance(1, 2)",
+		"import into auto_embed_presence_t from select vec_embed_l2_distance(1, 2)",
+		"create view auto_embed_presence_v as select vec_embed_l2_distance(1, 2)",
+		"explain select vec_embed_l2_distance(1, 2)",
+	} {
+		presence, err = classify(sql)
+		require.NoError(t, err, sql)
+		require.Equal(t, resolve.AutoEmbedConsumerPresent, presence, sql)
+	}
+
+	presence, err = classify("select ?")
+	require.Error(t, err)
+	require.Equal(t, resolve.AutoEmbedConsumerUnknown, presence)
+	presence, err = classify("select vec_embed_l2_distance(1, 2) from auto_embed_presence_missing")
+	require.Error(t, err)
+	require.Equal(t, resolve.AutoEmbedConsumerUnknown, presence)
+
+	for _, sql := range []string{
+		"prepare auto_embed_presence_stmt from 'select vec_embed_l2_distance(1, 2)'",
+		"prepare auto_embed_presence_stmt from @auto_embed_presence_sql",
+	} {
+		presence, err = classify(sql)
+		require.NoError(t, err, sql)
+		require.Equal(t, resolve.AutoEmbedConsumerUnknown, presence, sql)
+	}
+
+	dynamicExplain := resolve.NewNodeW(&ast.ExplainStmt{PlanDigest: "dynamic", Format: types.ExplainFormatROW})
+	err = core.Preprocess(context.Background(), tk.Session(), dynamicExplain)
+	require.NoError(t, err)
+	require.Equal(t, resolve.AutoEmbedConsumerUnknown, dynamicExplain.AutoEmbedConsumerPresence())
+
+	fresh := resolve.NewNodeW(&ast.SelectStmt{})
+	require.Equal(t, resolve.AutoEmbedConsumerUnknown, fresh.AutoEmbedConsumerPresence())
+	var nilNodeW *resolve.NodeW
+	var nilResolveCtx *resolve.Context
+	require.Equal(t, resolve.AutoEmbedConsumerUnknown, nilNodeW.AutoEmbedConsumerPresence())
+	require.Equal(t, resolve.AutoEmbedConsumerUnknown, nilResolveCtx.AutoEmbedConsumerPresence())
+	overridden := fresh.WithAutoEmbedConsumerPresence(resolve.AutoEmbedConsumerPresent)
+	require.Equal(t, resolve.AutoEmbedConsumerPresent, overridden.AutoEmbedConsumerPresence())
+	require.Equal(t, resolve.AutoEmbedConsumerUnknown, fresh.AutoEmbedConsumerPresence())
+	require.Equal(t, resolve.AutoEmbedConsumerPresent, overridden.CloneWithNewNode(&ast.SelectStmt{}).AutoEmbedConsumerPresence())
 }
 
 func TestValidator(t *testing.T) {

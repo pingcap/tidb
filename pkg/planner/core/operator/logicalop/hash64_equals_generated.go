@@ -71,6 +71,7 @@ func (op *LogicalJoin) Hash64(h base.Hasher) {
 			one.Hash64(h)
 		}
 	}
+	h.HashBool(op.FromSetOperator)
 }
 
 // Equals implements the Hash64Equals interface, only receive *LogicalJoin pointer.
@@ -130,6 +131,9 @@ func (op *LogicalJoin) Equals(other any) bool {
 		if !one.Equals(op2.OtherConditions[i]) {
 			return false
 		}
+	}
+	if op.FromSetOperator != op2.FromSetOperator {
+		return false
 	}
 	return true
 }

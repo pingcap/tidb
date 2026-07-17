@@ -654,6 +654,7 @@ default_func
 degrees
 div
 elt
+embed_text
 encode
 eq
 exp
@@ -879,6 +880,10 @@ validate_password_strength
 vec_as_text
 vec_cosine_distance
 vec_dims
+vec_embed_cosine_distance
+vec_embed_l1_distance
+vec_embed_l2_distance
+vec_embed_negative_inner_product
 vec_from_text
 vec_l1_distance
 vec_l2_distance

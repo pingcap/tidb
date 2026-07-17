@@ -22,6 +22,38 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 )
 
+// AutoEmbedConsumerPresence classifies whether an AST contains a function that
+// consumes auto-embedding provenance. The zero value is deliberately Unknown
+// so callers that bypass or do not complete preprocessing preserve lineage.
+type AutoEmbedConsumerPresence uint8
+
+const (
+	// AutoEmbedConsumerUnknown means the AST could not be classified reliably.
+	AutoEmbedConsumerUnknown AutoEmbedConsumerPresence = iota
+	// AutoEmbedConsumerAbsent means a complete traversal found no consumer.
+	AutoEmbedConsumerAbsent
+	// AutoEmbedConsumerPresent means at least one consumer was found.
+	AutoEmbedConsumerPresent
+)
+
+// MergeAutoEmbedConsumerPresence conservatively combines classifications from
+// static and dynamically discovered ASTs. Present dominates; Absent is kept
+// only when both inputs are reliably Absent.
+func MergeAutoEmbedConsumerPresence(a, b AutoEmbedConsumerPresence) AutoEmbedConsumerPresence {
+	if a == AutoEmbedConsumerPresent || b == AutoEmbedConsumerPresent {
+		return AutoEmbedConsumerPresent
+	}
+	if a == AutoEmbedConsumerAbsent && b == AutoEmbedConsumerAbsent {
+		return AutoEmbedConsumerAbsent
+	}
+	return AutoEmbedConsumerUnknown
+}
+
+// NeedsLineage reports whether build-time provenance must be preserved.
+func (p AutoEmbedConsumerPresence) NeedsLineage() bool {
+	return p != AutoEmbedConsumerAbsent
+}
+
 // TableNameW is a wrapper around ast.TableName to store more information.
 type TableNameW struct {
 	*ast.TableName
@@ -31,8 +63,9 @@ type TableNameW struct {
 
 // NodeW is a wrapper around ast.Node to store resolve context.
 type NodeW struct {
-	Node       ast.Node
-	resolveCtx *Context
+	Node                      ast.Node
+	resolveCtx                *Context
+	autoEmbedConsumerPresence *AutoEmbedConsumerPresence
 }
 
 // NewNodeW creates a NodeW.
@@ -54,9 +87,38 @@ func NewNodeWWithCtx(node ast.Node, resolveCtx *Context) *NodeW {
 // CloneWithNewNode creates a new NodeW with the given ast.Node.
 func (n *NodeW) CloneWithNewNode(newNode ast.Node) *NodeW {
 	return &NodeW{
-		Node:       newNode,
-		resolveCtx: n.resolveCtx,
+		Node:                      newNode,
+		resolveCtx:                n.resolveCtx,
+		autoEmbedConsumerPresence: n.autoEmbedConsumerPresence,
 	}
+}
+
+// WithAutoEmbedConsumerPresence returns a shallow NodeW copy whose effective
+// classification is overridden for this build only. It does not mutate the
+// AST's resolve context and therefore cannot persist dynamic AST state in a
+// prepared-plan cache entry.
+func (n *NodeW) WithAutoEmbedConsumerPresence(p AutoEmbedConsumerPresence) *NodeW {
+	if n == nil {
+		return nil
+	}
+	clone := *n
+	clone.autoEmbedConsumerPresence = &p
+	return &clone
+}
+
+// AutoEmbedConsumerPresence returns the effective classification for this
+// build. A missing NodeW or resolve context is conservatively Unknown.
+func (n *NodeW) AutoEmbedConsumerPresence() AutoEmbedConsumerPresence {
+	if n == nil {
+		return AutoEmbedConsumerUnknown
+	}
+	if n.autoEmbedConsumerPresence != nil {
+		return *n.autoEmbedConsumerPresence
+	}
+	if n.resolveCtx == nil {
+		return AutoEmbedConsumerUnknown
+	}
+	return n.resolveCtx.AutoEmbedConsumerPresence()
 }
 
 // GetResolveContext returns the Context of the NodeW.
@@ -66,7 +128,25 @@ func (n *NodeW) GetResolveContext() *Context {
 
 // Context is used to store the context and result of resolving AST tree.
 type Context struct {
-	tableNames map[*ast.TableName]*TableNameW
+	tableNames                map[*ast.TableName]*TableNameW
+	autoEmbedConsumerPresence AutoEmbedConsumerPresence
+}
+
+// SetAutoEmbedConsumerPresence records the static classification for the AST
+// associated with this resolve context.
+func (c *Context) SetAutoEmbedConsumerPresence(p AutoEmbedConsumerPresence) {
+	if c != nil {
+		c.autoEmbedConsumerPresence = p
+	}
+}
+
+// AutoEmbedConsumerPresence returns the AST's static classification. A nil
+// context is conservatively Unknown.
+func (c *Context) AutoEmbedConsumerPresence() AutoEmbedConsumerPresence {
+	if c == nil {
+		return AutoEmbedConsumerUnknown
+	}
+	return c.autoEmbedConsumerPresence
 }
 
 // NewContext creates a Context.

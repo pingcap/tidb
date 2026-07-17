@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/planner/core/autoembed"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/privilege"
@@ -127,16 +128,18 @@ func TryAddExtraLimit(ctx sessionctx.Context, node ast.StmtNode) ast.StmtNode {
 // preprocessReturn used to extract the infoschema for the tableName and the timestamp from the asof clause.
 func Preprocess(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW, preprocessOpt ...PreprocessOpt) error {
 	defer tracing.StartRegion(ctx, "planner.Preprocess").End()
+	node.GetResolveContext().SetAutoEmbedConsumerPresence(resolve.AutoEmbedConsumerUnknown)
 	v := preprocessor{
-		ctx:                ctx,
-		sctx:               sctx,
-		tableAliasInJoin:   make([]map[tableAliasKey]string, 0),
-		preprocessWith:     &preprocessWith{cteCanUsed: make([]string, 0), cteBeforeOffset: make([]int, 0)},
-		lockSelectCtxStack: make([]lockSelectCtx, 0),
-		staleReadProcessor: staleread.NewStaleReadProcessor(ctx, sctx),
-		varsMutable:        make(map[string]struct{}),
-		varsReadonly:       make(map[string]struct{}),
-		resolveCtx:         node.GetResolveContext(),
+		ctx:                        ctx,
+		sctx:                       sctx,
+		tableAliasInJoin:           make([]map[tableAliasKey]string, 0),
+		preprocessWith:             &preprocessWith{cteCanUsed: make([]string, 0), cteBeforeOffset: make([]int, 0)},
+		lockSelectCtxStack:         make([]lockSelectCtx, 0),
+		staleReadProcessor:         staleread.NewStaleReadProcessor(ctx, sctx),
+		varsMutable:                make(map[string]struct{}),
+		varsReadonly:               make(map[string]struct{}),
+		resolveCtx:                 node.GetResolveContext(),
+		autoEmbedTraversalReliable: true,
 	}
 	for _, optFn := range preprocessOpt {
 		optFn(&v)
@@ -145,9 +148,18 @@ func Preprocess(ctx context.Context, sctx sessionctx.Context, node *resolve.Node
 	if v.PreprocessorReturn == nil {
 		v.PreprocessorReturn = &PreprocessorReturn{}
 	}
-	node.Node.Accept(&v)
+	_, complete := node.Node.Accept(&v)
 	// InfoSchema must be non-nil after preprocessing
 	v.ensureInfoSchema()
+	presence := resolve.AutoEmbedConsumerUnknown
+	if v.err == nil {
+		if v.autoEmbedConsumerFound {
+			presence = resolve.AutoEmbedConsumerPresent
+		} else if complete && v.autoEmbedTraversalReliable {
+			presence = resolve.AutoEmbedConsumerAbsent
+		}
+	}
+	v.resolveCtx.SetAutoEmbedConsumerPresence(presence)
 	sctx.GetPlanCtx().SetReadonlyUserVarMap(v.varsReadonly)
 	if len(v.varsReadonly) > 0 {
 		sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("read-only variables are used")
@@ -254,9 +266,17 @@ type preprocessor struct {
 	err error
 
 	resolveCtx *resolve.Context
+
+	autoEmbedConsumerFound     bool
+	autoEmbedTraversalReliable bool
 }
 
 func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	if call, ok := in.(*ast.FuncCallExpr); ok {
+		if _, found := autoembed.ConsumerDistanceFunction(call.FnName.L); found {
+			p.autoEmbedConsumerFound = true
+		}
+	}
 	switch node := in.(type) {
 	case *ast.AdminStmt:
 		p.checkAdminCheckTableGrammar(node)
@@ -284,7 +304,18 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.handleTableName(node.Table.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName))
 	case *ast.ExecuteStmt:
 		p.stmtTp = TypeExecute
+		// ExecuteStmt does not contain the prepared statement's AST.
+		p.autoEmbedTraversalReliable = false
 		p.resolveExecuteStmt(node)
+	case *ast.PrepareStmt:
+		// PrepareStmt stores SQL text or a user-variable reference, not the
+		// parsed statement AST that will be preprocessed when PREPARE executes.
+		p.autoEmbedTraversalReliable = false
+	case *ast.ExplainStmt:
+		if node.Stmt == nil {
+			// Plan-digest and related EXPLAIN forms materialize their AST while building.
+			p.autoEmbedTraversalReliable = false
+		}
 	case *ast.CreateTableStmt:
 		p.stmtTp = TypeCreate
 		p.flag |= inCreateOrDropTable
@@ -348,6 +379,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 			EraseLastSemicolon(node.HintedNode)
 			p.checkBindGrammar(node.OriginNode, node.HintedNode, p.sctx.GetSessionVars().CurrentDB)
 		}
+		p.autoEmbedTraversalReliable = false
 		return in, true
 	case *ast.DropBindingStmt:
 		p.stmtTp = TypeDrop
@@ -358,6 +390,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 				p.checkBindGrammar(node.OriginNode, node.HintedNode, p.sctx.GetSessionVars().CurrentDB)
 			}
 		}
+		p.autoEmbedTraversalReliable = false
 		return in, true
 	case *ast.RecoverTableStmt:
 		// The specified table in recover table statement maybe already been dropped.
