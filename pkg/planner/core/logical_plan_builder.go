@@ -1251,6 +1251,12 @@ type userVarTypeProcessor struct {
 }
 
 func (p *userVarTypeProcessor) Enter(in ast.Node) (ast.Node, bool) {
+	switch in.(type) {
+	case *ast.SubqueryExpr:
+		// Nested query blocks preprocess their own user-variable assignments
+		// during projection building with their own aggregate mapper.
+		return in, true
+	}
 	v, ok := in.(*ast.VariableExpr)
 	if !ok {
 		return in, false

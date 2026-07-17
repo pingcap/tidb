@@ -312,6 +312,14 @@ func TestJoinReorderWithAddSelection(t *testing.T) {
 		`      └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo`))
 }
 
+func TestUserVarAggregateRewriteInScalarSubquery(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustQuery("select (select sum(1))").Check(testkit.Rows("1"))
+	tk.MustQuery("select (select @a:=sum(1))").Check(testkit.Rows("1"))
+}
+
 func TestOnlyFullGroupCantFeelUnaryConstant(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
