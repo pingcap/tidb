@@ -65,11 +65,7 @@ go_test(
     embed = [":scheduler"],
     flaky = True,
     race = "off",
-<<<<<<< HEAD
-    shard_count = 44,
-=======
-    shard_count = 45,
->>>>>>> 57b5f226809 (dxf: avoid exposing sensitive task error messages in history API (#69863))
+    shard_count = 43,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
