@@ -110,11 +110,7 @@ go_test(
     ],
     embed = [":importinto"],
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 27,
-=======
-    shard_count = 30,
->>>>>>> 66be7a615be (dxf, importinto: compare subtask task IDs as strings (#69884))
+    shard_count = 28,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
