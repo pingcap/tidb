@@ -35,6 +35,7 @@ const (
 	memStateVer             = "v1"
 	memStateStoreNamePrefix = "mem-state."
 	memStateStoreNameSuffix = ".json"
+	memArbitratorDirName    = "mem_arbitrator"
 )
 
 var (
@@ -484,8 +485,13 @@ func initGlobalMemArbitrator() (m *MemArbitrator) {
 		return
 	}
 
-	cfg := config.GetGlobalConfig()
-	baseDir := filepath.Join(cfg.TempDir, fmt.Sprintf("mem_arbitrator-%d", cfg.Port))
+	baseDir := ""
+	if logDir, _ := filepath.Split(config.GetGlobalConfig().Log.File.Filename); logDir != "" {
+		baseDir = filepath.Join(logDir, memArbitratorDirName)
+	} else {
+		cfg := config.GetGlobalConfig()
+		baseDir = filepath.Join(cfg.TempDir, fmt.Sprintf(memArbitratorDirName+"-%d", cfg.Port))
+	}
 
 	limit := ServerMemoryLimit.Load()
 	if limit == 0 {
