@@ -209,7 +209,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 		// This release predates async scheduler preparation, so the first planning
 		// hook is the scheduler admission point for a cancelled dangling job.
 		require.Error(t, err)
-		require.True(t, scheduler.IsCancelledErr(err), err)
+		require.True(t, storage.IsCancelledErr(err), err)
 		require.Nil(t, subtaskMetas)
 	} else {
 		// Classic has no dangling import job window: CANCEL IMPORT JOB changes the

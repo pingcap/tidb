@@ -954,8 +954,8 @@ Example response:
    "ID": 30001,
    "Key": "keyspace1/ddl/backfill/9",
    "Type": "backfill",
-   "State": "succeed",
-   "Step": -2,
+   "State": "reverted",
+   "Step": 1,
    "Priority": 512,
    "RequiredSlots": 1,
    "TargetScope": "dxf_service",
@@ -963,6 +963,8 @@ Example response:
    "MaxNodeCount": 1,
    "ExtraParams": {},
    "Keyspace": "keyspace1",
+   "ErrorCode": "kv:1062",
+   "ErrorCategory": "data-error",
    "StartTime": "2026-04-13T11:30:13+08:00",
    "StateUpdateTime": "2026-04-13T11:30:17+08:00",
    "EndTime": "2026-04-13T11:30:16+08:00"
@@ -973,6 +975,8 @@ Example response:
  "ApproxTotalCount": 1
 }
 ```
+
+`ErrorCode` contains the effective RFC error code when the stored task error provides one, and is empty for a plain error. `ErrorCategory` is `failed`, `cancelled`, or `data-error` for a task with an error, and is empty when the task has no error. The response does not include the task error message.
 
 ### Get IMPORT INTO history job details
 

@@ -11,6 +11,11 @@
 ### Tests
 - `pkg/dxf/example/app_test.go` - dxf/example: Tests example application.
 
+## pkg/dxf/framework/dxfutil
+
+### Tests
+- `pkg/dxf/framework/dxfutil/util_test.go` - dxf/framework/dxfutil: Tests task runtime acquisition and validation.
+
 ## pkg/dxf/framework/handle
 
 ### Tests
@@ -74,8 +79,9 @@
 ## pkg/dxf/framework/storage
 
 ### Tests
+- `pkg/dxf/framework/storage/history_test.go` - dxf/framework/storage: Tests history task error categorization.
 - `pkg/dxf/framework/storage/table_test.go` - dxf/framework/storage: Tests task/subtask tables, history transfer, task-state queries, and cleanup batch bounds.
-- `pkg/dxf/framework/storage/task_state_test.go` - dxf/framework/storage: Tests task state.
+- `pkg/dxf/framework/storage/task_state_test.go` - dxf/framework/storage: Tests task state and cancellation error detection.
 - `pkg/dxf/framework/storage/task_table_test.go` - dxf/framework/storage: Tests task table.
 
 ## pkg/dxf/framework/taskexecutor
