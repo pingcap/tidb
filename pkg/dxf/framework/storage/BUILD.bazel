@@ -42,13 +42,14 @@ go_test(
     name = "storage_test",
     timeout = "moderate",
     srcs = [
+        "history_test.go",
         "table_test.go",
         "task_state_test.go",
         "task_table_test.go",
     ],
     embed = [":storage"],
     flaky = True,
-    shard_count = 32,
+    shard_count = 34,
     deps = [
         "//pkg/config",
         "//pkg/dxf/framework/proto",
