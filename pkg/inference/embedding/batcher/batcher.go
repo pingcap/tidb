@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/inference/embedding/base"
+	"github.com/pingcap/tidb/pkg/util"
 )
 
 const (
@@ -35,9 +36,9 @@ const (
 	DefaultMaxBatchSize = 16
 )
 
-// BatchEmbedder batches requests to underlying embedders within a time window
+// Batch batches requests to underlying embedders within a time window
 // to reduce the number of API calls.
-type BatchEmbedder struct {
+type Batch struct {
 	embedders map[string]base.Embedder // name (jina/openai/...) -> embedder
 
 	batchWindow  time.Duration
@@ -47,7 +48,7 @@ type BatchEmbedder struct {
 	m  map[batchKey]*batchedCalls // key -> call
 }
 
-var _ base.Embedder = (*BatchEmbedder)(nil)
+var _ base.Embedder = (*Batch)(nil)
 
 type batchKey struct {
 	provider   string
@@ -76,22 +77,22 @@ type batchResult struct {
 	err        error
 }
 
-// NewBatchEmbedder creates a new batch embedder with the given batch window.
-func NewBatchEmbedder() *BatchEmbedder {
-	return NewBatchEmbedderWithConfig(DefaultBatchWindow, DefaultMaxBatchSize)
+// New creates a batch embedder with the default configuration.
+func New() *Batch {
+	return NewWithConfig(DefaultBatchWindow, DefaultMaxBatchSize)
 }
 
-// NewBatchEmbedderWithConfig creates a new batch embedder with the given configuration.
+// NewWithConfig creates a batch embedder with the given configuration.
 // batchWindow: how long to wait for more requests before processing the batch
 // maxBatchSize: maximum number of requests to batch together
-func NewBatchEmbedderWithConfig(batchWindow time.Duration, maxBatchSize int) *BatchEmbedder {
+func NewWithConfig(batchWindow time.Duration, maxBatchSize int) *Batch {
 	if batchWindow <= 0 {
 		batchWindow = DefaultBatchWindow
 	}
 	if maxBatchSize <= 0 {
 		maxBatchSize = DefaultMaxBatchSize
 	}
-	return &BatchEmbedder{
+	return &Batch{
 		embedders:    make(map[string]base.Embedder),
 		m:            make(map[batchKey]*batchedCalls),
 		batchWindow:  batchWindow,
@@ -99,16 +100,16 @@ func NewBatchEmbedderWithConfig(batchWindow time.Duration, maxBatchSize int) *Ba
 	}
 }
 
-// RegisterEmbedder registers an embedder with the given provider name as the prefix.
+// Register registers an embedder with the given provider name as the prefix.
 // This is not concurrent-safe. It must be called before any CreateEmbeddings calls.
-func (b *BatchEmbedder) RegisterEmbedder(provider string, embedder base.Embedder) {
+func (b *Batch) Register(provider string, embedder base.Embedder) {
 	provider = normalizeProviderName(provider)
 	panicIfNilEmbedder(provider, embedder)
 	b.embedders[provider] = embedder
 }
 
-// MustRegisterEmbedder registers an embedder and panics if the provider is invalid or duplicated.
-func (b *BatchEmbedder) MustRegisterEmbedder(provider string, embedder base.Embedder) {
+// MustRegister registers an embedder and panics if the provider is invalid or duplicated.
+func (b *Batch) MustRegister(provider string, embedder base.Embedder) {
 	provider = normalizeProviderName(provider)
 	if provider == "" || strings.Contains(provider, "/") {
 		panic(fmt.Sprintf("invalid embedding provider: %q", provider))
@@ -116,17 +117,17 @@ func (b *BatchEmbedder) MustRegisterEmbedder(provider string, embedder base.Embe
 	if _, ok := b.embedders[provider]; ok {
 		panic(fmt.Sprintf("embedding provider %q is already registered", provider))
 	}
-	b.RegisterEmbedder(provider, embedder)
+	b.Register(provider, embedder)
 }
 
-// HasEmbedder returns whether a provider is registered.
-func (b *BatchEmbedder) HasEmbedder(provider string) bool {
+// Has returns whether a provider is registered.
+func (b *Batch) Has(provider string) bool {
 	provider = normalizeProviderName(provider)
 	_, ok := b.embedders[provider]
 	return ok
 }
 
-func (b *BatchEmbedder) parseModelWithProvider(modelWithProvider string) (string, string, error) {
+func (b *Batch) parseModelWithProvider(modelWithProvider string) (string, string, error) {
 	parts := strings.SplitN(modelWithProvider, "/", 2)
 	if len(parts) != 2 {
 		return "", "", fmt.Errorf("model name must be in format 'provider/model', got: %s", modelWithProvider)
@@ -178,7 +179,7 @@ func newBatchKey(provider, model string, opts map[string]any) (batchKey, error) 
 }
 
 // CreateEmbeddings batches requests with the same model/opts combination within the batch window.
-func (b *BatchEmbedder) CreateEmbeddings(ctx context.Context, modelWithProvider string, texts []string, opts map[string]any) ([][]float32, error) {
+func (b *Batch) CreateEmbeddings(ctx context.Context, modelWithProvider string, texts []string, opts map[string]any) ([][]float32, error) {
 	if len(texts) == 0 {
 		return [][]float32{}, nil
 	}
@@ -246,12 +247,12 @@ func (b *BatchEmbedder) CreateEmbeddings(ctx context.Context, modelWithProvider 
 		}
 		return result.embeddings, nil
 	case <-ctx.Done():
-		return nil, context.Cause(ctx)
+		return nil, ctx.Err()
 	}
 }
 
 // processBatch processes a batch of requests.
-func (b *BatchEmbedder) processBatch(key batchKey, thisBatch *batchedCalls, embedder base.Embedder, model string, opts map[string]any) {
+func (b *Batch) processBatch(key batchKey, thisBatch *batchedCalls, embedder base.Embedder, model string, opts map[string]any) {
 	// Take out the current batch from the map to gain ownership. After this point,
 	// no other goroutine can modify this batch.
 	// Note that the current batch may be already taken out if there are too many requests.
@@ -287,10 +288,11 @@ func (b *BatchEmbedder) processBatch(key batchKey, thisBatch *batchedCalls, embe
 	// Make the actual embeddings call
 	// The embedding call will be cancelled only if all calls in this batch are cancelled.
 	reqCtx, cancelReq := context.WithCancel(context.Background())
-	go func() {
+	var watcherWG util.WaitGroupWrapper
+	watcherWG.RunWithRecover(func() {
 		// Waiting sequentially is intentional: the loop can finish only after
 		// every caller context is canceled. If the provider returns first,
-		// cancelReq below releases this watcher through reqCtx.Done().
+		// cancelReq releases this watcher through reqCtx.Done().
 		for _, call := range activeCalls {
 			select {
 			case <-call.ctx.Done():
@@ -301,9 +303,18 @@ func (b *BatchEmbedder) processBatch(key batchKey, thisBatch *batchedCalls, embe
 			}
 		}
 		cancelReq()
+	}, func(r any) {
+		if r != nil {
+			cancelReq()
+		}
+	})
+	embeddings, err := func() ([][]float32, error) {
+		defer func() {
+			cancelReq()
+			watcherWG.Wait()
+		}()
+		return embedder.CreateEmbeddings(reqCtx, model, allTexts, opts)
 	}()
-	embeddings, err := embedder.CreateEmbeddings(reqCtx, model, allTexts, opts)
-	cancelReq()
 
 	// Send results back to all requests
 

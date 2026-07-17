@@ -17,8 +17,8 @@ package base
 import (
 	"context"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
+	"maps"
 	"math"
 	"regexp"
 	"time"
@@ -63,18 +63,9 @@ func DecodeFloat32ArrayBytes(item []byte) ([]float32, error) {
 // plus provider-specific options. Fixed fields override options when keys collide.
 func JSONFieldsWithOptions(fields map[string]any, opts map[string]any) map[string]any {
 	merged := make(map[string]any, len(fields)+len(opts))
-	for key, value := range opts {
-		merged[key] = value
-	}
-	for key, value := range fields {
-		merged[key] = value
-	}
+	maps.Copy(merged, opts)
+	maps.Copy(merged, fields)
 	return merged
-}
-
-// MarshalJSONWithOptions marshals fixed request fields plus provider-specific options.
-func MarshalJSONWithOptions(fields map[string]any, opts map[string]any) ([]byte, error) {
-	return json.Marshal(JSONFieldsWithOptions(fields, opts))
 }
 
 // SanitizeErrorBodyForLog redacts common credential fields from a provider error response body before logging.

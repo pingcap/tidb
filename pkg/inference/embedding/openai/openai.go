@@ -113,11 +113,11 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 		endpoint += "/embeddings"
 	}
 
-	jsonData, err := base.MarshalJSONWithOptions(map[string]any{
+	jsonData, err := json.Marshal(base.JSONFieldsWithOptions(map[string]any{
 		"model":           model,
 		"input":           texts,
 		"encoding_format": "base64",
-	}, opts)
+	}, opts))
 	if err != nil {
 		return nil, fmt.Errorf("unexpected marshal request error: %w", err)
 	}

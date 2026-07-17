@@ -5,7 +5,10 @@ go_library(
     srcs = ["batcher.go"],
     importpath = "github.com/pingcap/tidb/pkg/inference/embedding/batcher",
     visibility = ["//visibility:public"],
-    deps = ["//pkg/inference/embedding/base"],
+    deps = [
+        "//pkg/inference/embedding/base",
+        "//pkg/util",
+    ],
 )
 
 go_test(
