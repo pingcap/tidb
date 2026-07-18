@@ -8,6 +8,7 @@ mod channel_pool;
 mod error;
 mod liveness;
 mod tonic_coprocessor;
+mod unary;
 
 pub use error::{
     DirectUnaryClientError, DirectUnaryConnectionError, DirectUnaryGrpcCode,
@@ -15,3 +16,4 @@ pub use error::{
 };
 pub use liveness::DEFAULT_STORE_LIVENESS_TIMEOUT;
 pub use tonic_coprocessor::TonicCoprocessorClient;
+pub use unary::{UnaryCallContext, UnaryCancellation};

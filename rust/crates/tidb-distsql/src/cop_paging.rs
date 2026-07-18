@@ -24,9 +24,10 @@ pub use cop_read_task_runtime::{
     CopReadTaskResponse, CopReadTaskRuntime, FailedCopReadAttempt, PreparedCopReadTask,
 };
 pub use direct_unary_query_transport::{
-    DirectUnaryClient, DirectUnaryClientError, DirectUnaryQueryResponse, DirectUnaryQueryTransport,
-    DirectUnaryRequest, DirectUnaryResponse, DirectUnaryRuntimeConfig, DirectUnaryTransportError,
-    RegionRetryCancelled, RegionRetryControl,
+    ActiveUnaryCancellation, DirectUnaryClient, DirectUnaryClientError, DirectUnaryQueryResponse,
+    DirectUnaryQueryTransport, DirectUnaryRequest, DirectUnaryResponse, DirectUnaryRuntimeConfig,
+    DirectUnaryTransportError, LockedResponseAction, LockedResponseDelegate,
+    LockedResponseObservation, RegionRetryCancelled, RegionRetryControl,
 };
 pub use tikv_rpc_contract::{
     build_tikv_unary_request, build_tikv_unary_request_for_dispatch, decode_tikv_unary_response,

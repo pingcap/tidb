@@ -34,6 +34,7 @@ use crate::query_runtime::{
 use crate::{
     CoprCache, CoprCacheConfig, ResponseChannelEvent, TransportRequest, TransportRequestError,
 };
+use prost::Message;
 use tidb_txnkv::region::{
     KeyRange as RegionKeyRange, LeaderRequest, ReadPolicy, RegionAttempt, RegionBackoffBudget,
     RegionBackoffKind, RegionCache, RegionErrorDisposition, RegionLoader, RegionLocation,
@@ -42,7 +43,10 @@ use tidb_txnkv::region::{
 pub use tidb_txnkv::{
     DirectUnaryClient, DirectUnaryClientError, DirectUnaryRequest, DirectUnaryResponse,
 };
-use tidb_txnkv::{EndpointType, TraceInfo, DEFAULT_STORE_LIVENESS_TIMEOUT};
+use tidb_txnkv::{
+    EndpointType, SharedReadRuntime, TraceInfo, UnaryCallContext, UnaryCancellation,
+    DEFAULT_STORE_LIVENESS_TIMEOUT,
+};
 
 use super::{
     build_tikv_unary_request_for_dispatch, classify_transport_failure, decode_tikv_unary_response,
@@ -74,6 +78,8 @@ pub struct DirectUnaryRuntimeConfig {
     pub observation_time: fn() -> Duration,
     /// Cancellation and sleeping owner for region-recovery delays.
     pub region_retry_control: Rc<dyn RegionRetryControl>,
+    /// Owner that connects execution cancellation to each unary call.
+    pub active_unary_cancellation: Rc<dyn ActiveUnaryCancellation>,
     /// Effective sleep budget shared by both retry levels for one region ID.
     pub region_retry_max_sleep: Duration,
 }
@@ -89,6 +95,7 @@ impl std::fmt::Debug for DirectUnaryRuntimeConfig {
             .field("trace", &self.trace)
             .field("observation_time", &"fn() -> Duration")
             .field("region_retry_control", &self.region_retry_control)
+            .field("active_unary_cancellation", &self.active_unary_cancellation)
             .field("region_retry_max_sleep", &self.region_retry_max_sleep)
             .finish()
     }
@@ -104,8 +111,71 @@ impl Default for DirectUnaryRuntimeConfig {
             trace: None,
             observation_time: system_observation_time,
             region_retry_control: Rc::new(ThreadRegionRetryControl),
+            active_unary_cancellation: Rc::new(NoActiveUnaryCancellation),
             region_retry_max_sleep: Duration::from_secs(20),
         }
+    }
+}
+
+/// Supplies the cancellation carrier for one address-directed call.
+///
+/// The default preserves Campaign 12 behavior. The Campaign 13 cancellation
+/// leaf connects the execution owner by implementing this frozen seam; it
+/// does not own another worker, channel, deadline, or retry loop.
+pub trait ActiveUnaryCancellation: std::fmt::Debug {
+    /// Returns the carrier that may interrupt the next in-flight call.
+    fn cancellation_for_call(&self) -> UnaryCancellation;
+}
+
+#[derive(Debug)]
+struct NoActiveUnaryCancellation;
+
+impl ActiveUnaryCancellation for NoActiveUnaryCancellation {
+    fn cancellation_for_call(&self) -> UnaryCancellation {
+        UnaryCancellation::new()
+    }
+}
+
+/// Immutable locked-response fact passed before success-side mutation.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LockedResponseObservation {
+    /// Address that returned the valid locked response.
+    pub address: String,
+    /// Exact request context attached at the send boundary.
+    pub context: tidb_proto::KvrpcContext,
+    /// Exact optimistic lock fact returned by TiKV.
+    pub lock: tidb_proto::KvrpcLockInfo,
+    /// Unary deadline inherited by lock-status and resolve commands.
+    pub timeout: Duration,
+}
+
+/// Only continuation admitted after bounded lock handling succeeds.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LockedResponseAction {
+    /// Retry the same unconsumed logical task.
+    RetrySameTask,
+}
+
+/// Fail-closed locked-response policy boundary.
+pub trait LockedResponseDelegate<C, L>: std::fmt::Debug {
+    /// Handles one lock using the same client and region-cache authority.
+    fn handle_locked_response(
+        &self,
+        runtime: &SharedReadRuntime<C, L>,
+        observation: LockedResponseObservation,
+    ) -> Result<LockedResponseAction, String>;
+}
+
+#[derive(Debug)]
+struct FailClosedLockedResponse;
+
+impl<C, L> LockedResponseDelegate<C, L> for FailClosedLockedResponse {
+    fn handle_locked_response(
+        &self,
+        _runtime: &SharedReadRuntime<C, L>,
+        _observation: LockedResponseObservation,
+    ) -> Result<LockedResponseAction, String> {
+        Err("optimistic lock recovery is not installed".to_owned())
     }
 }
 
@@ -183,6 +253,8 @@ pub enum DirectUnaryTransportError {
     RegionTerminal(String),
     /// Cancellation won before retry-side mutation, sleep, PD, or dispatch.
     RetryCancelled,
+    /// A locked response could not be handled by the bounded lock delegate.
+    LockRecovery(String),
 }
 
 impl DirectUnaryTransportError {
@@ -203,6 +275,7 @@ impl DirectUnaryTransportError {
             Self::RegionRecovery(_) => "region_recovery",
             Self::RegionTerminal(_) => "region_terminal",
             Self::RetryCancelled => "retry_cancelled",
+            Self::LockRecovery(_) => "lock_recovery",
         }
     }
 }
@@ -234,6 +307,7 @@ impl std::fmt::Display for DirectUnaryTransportError {
             Self::RegionRecovery(message) => write!(formatter, "region recovery failed: {message}"),
             Self::RegionTerminal(message) => write!(formatter, "terminal region error: {message}"),
             Self::RetryCancelled => formatter.write_str("region retry cancelled"),
+            Self::LockRecovery(message) => write!(formatter, "lock recovery failed: {message}"),
         }
     }
 }
@@ -262,8 +336,8 @@ impl From<CopReadTaskError> for DirectUnaryTransportError {
 
 /// Injected transport that creates lazy, response-owned unary runtimes.
 pub struct DirectUnaryQueryTransport<C, L> {
-    client: Rc<RefCell<C>>,
-    region_cache: Rc<RefCell<RegionCache<L>>>,
+    shared_runtime: SharedReadRuntime<C, L>,
+    locked_response_delegate: Rc<dyn LockedResponseDelegate<C, L>>,
     config: DirectUnaryRuntimeConfig,
 }
 
@@ -274,12 +348,33 @@ impl<C, L: RegionLoader> DirectUnaryQueryTransport<C, L> {
         region_cache: RegionCache<L>,
         config: DirectUnaryRuntimeConfig,
     ) -> Result<Self, DirectUnaryTransportError> {
-        if region_cache.cluster_id() == 0 {
+        Self::with_shared_runtime(SharedReadRuntime::new(client, region_cache), config)
+    }
+
+    /// Retains already-shared client/cache handles without creating authority.
+    pub fn with_shared_runtime(
+        shared_runtime: SharedReadRuntime<C, L>,
+        config: DirectUnaryRuntimeConfig,
+    ) -> Result<Self, DirectUnaryTransportError> {
+        Self::with_locked_response_delegate(
+            shared_runtime,
+            config,
+            Rc::new(FailClosedLockedResponse),
+        )
+    }
+
+    /// Installs the bounded lock policy over the same shared read runtime.
+    pub fn with_locked_response_delegate(
+        shared_runtime: SharedReadRuntime<C, L>,
+        config: DirectUnaryRuntimeConfig,
+        locked_response_delegate: Rc<dyn LockedResponseDelegate<C, L>>,
+    ) -> Result<Self, DirectUnaryTransportError> {
+        if shared_runtime.cluster_id() == 0 {
             return Err(RegionRouteError::MissingClusterId.into());
         }
         Ok(Self {
-            client: Rc::new(RefCell::new(client)),
-            region_cache: Rc::new(RefCell::new(region_cache)),
+            shared_runtime,
+            locked_response_delegate,
             config,
         })
     }
@@ -315,7 +410,8 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
             metadata_region_ranges(metadata).map_err(|error| error.to_string())?;
         let (cluster_id, locations) = {
             let mut region_cache = self
-                .region_cache
+                .shared_runtime
+                .region_cache()
                 .try_borrow_mut()
                 .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle.to_string())?;
             let cluster_id = region_cache.cluster_id();
@@ -354,8 +450,8 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
         }
 
         Ok(Some(DirectUnaryQueryResponse {
-            client: Rc::clone(&self.client),
-            region_cache: Rc::clone(&self.region_cache),
+            shared_runtime: self.shared_runtime.clone(),
+            locked_response_delegate: Rc::clone(&self.locked_response_delegate),
             metadata: metadata.clone(),
             cluster_id,
             config: self.config.clone(),
@@ -432,8 +528,8 @@ fn task_region_ver_id(
 
 /// Lazy response owner returned by [`DirectUnaryQueryTransport`].
 pub struct DirectUnaryQueryResponse<C, L> {
-    client: Rc<RefCell<C>>,
-    region_cache: Rc<RefCell<RegionCache<L>>>,
+    shared_runtime: SharedReadRuntime<C, L>,
+    locked_response_delegate: Rc<dyn LockedResponseDelegate<C, L>>,
     metadata: crate::KvRequestMetadata,
     cluster_id: u64,
     config: DirectUnaryRuntimeConfig,
@@ -522,7 +618,8 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             .is_none_or(|selector| selector.region() != region);
         if replace_selector {
             let selector = self
-                .region_cache
+                .shared_runtime
+                .region_cache()
                 .try_borrow_mut()
                 .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle)?
                 .request_selector(region, ReadPolicy::default())?;
@@ -532,7 +629,8 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             let selector = self.request_selectors.get_mut(&logical_task_id).ok_or(
                 DirectUnaryTransportError::ResponseState("request selector was not installed"),
             )?;
-            self.region_cache
+            self.shared_runtime
+                .region_cache()
                 .try_borrow_mut()
                 .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle)?
                 .select_request(selector)?
@@ -581,33 +679,25 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             encoded_request: request.encoded_request,
         };
         let dispatch_started = Instant::now();
-        let send_result = try_borrow_client(self.client.as_ref())?.send_request(
-            &selected.attempt.address,
-            &client_request,
+        let call = UnaryCallContext::new(
             timeout,
+            self.config
+                .active_unary_cancellation
+                .cancellation_for_call(),
         );
+        let send_result = try_borrow_client(self.shared_runtime.client())?
+            .send_request_with_context(&selected.attempt.address, &client_request, &call);
         let dispatch_duration = dispatch_started.elapsed();
         if matches!(&send_result, Err(DirectUnaryClientError::CallerCancelled)) {
             let Err(error) = send_result else {
                 unreachable!("caller-cancelled match checked above")
             };
-            return self.recover_transport_failure(logical_task_id, attempt_id, selected, error);
-        }
-        if !self
-            .request_selectors
-            .get_mut(&logical_task_id)
-            .ok_or(DirectUnaryTransportError::ResponseState(
-                "request selector disappeared during dispatch",
-            ))?
-            .record_attempt_result(&selected.attempt, dispatch_duration)
-        {
-            return Err(DirectUnaryTransportError::RegionRecovery(
-                "RPC completion did not match the selector's pending attempt".to_owned(),
-            ));
+            return Err(DirectUnaryTransportError::Client(error));
         }
         let raw_response = match send_result {
             Ok(response) => response,
             Err(error) => {
+                self.record_attempt_result(logical_task_id, &selected, dispatch_duration)?;
                 return self.recover_transport_failure(
                     logical_task_id,
                     attempt_id,
@@ -616,9 +706,14 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                 );
             }
         };
+        let locked =
+            tidb_proto::CoprocessorResponse::decode(raw_response.encoded_response.as_slice())
+                .map_err(|error| DirectUnaryTransportError::Decode(error.to_string()))?
+                .locked;
         let response = decode_tikv_unary_response(&raw_response.encoded_response)
             .map_err(|error| DirectUnaryTransportError::Decode(error.to_string()))?;
         if let Some(region_error) = response.region_error_ref().cloned() {
+            self.record_attempt_result(logical_task_id, &selected, dispatch_duration)?;
             let failed = self.runtime.consume_region_error(attempt_id)?;
             return self.recover_region_error(
                 logical_task_id,
@@ -627,7 +722,32 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                 region_error,
             );
         }
-        self.region_cache
+        if let Some(lock) = locked {
+            let action = self
+                .locked_response_delegate
+                .handle_locked_response(
+                    &self.shared_runtime,
+                    LockedResponseObservation {
+                        address: selected.attempt.address.clone(),
+                        context: client_request.context.clone(),
+                        lock,
+                        timeout,
+                    },
+                )
+                .map_err(DirectUnaryTransportError::LockRecovery)?;
+            self.record_attempt_result(logical_task_id, &selected, dispatch_duration)?;
+            match action {
+                LockedResponseAction::RetrySameTask => {
+                    let failed = self.runtime.consume_failed_attempt(attempt_id)?;
+                    let replacement = self.runtime.retry_transport_attempt(failed)?;
+                    self.install_same_task_retry(replacement)?;
+                    return Ok(());
+                }
+            }
+        }
+        self.record_attempt_result(logical_task_id, &selected, dispatch_duration)?;
+        self.shared_runtime
+            .region_cache()
             .try_borrow_mut()
             .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle)?
             .promote_successful_request(&selected)
@@ -647,6 +767,27 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             None => {
                 self.active_attempts.remove(&logical_task_id);
             }
+        }
+        Ok(())
+    }
+
+    fn record_attempt_result(
+        &mut self,
+        logical_task_id: u64,
+        selected: &LeaderRequest,
+        dispatch_duration: Duration,
+    ) -> Result<(), DirectUnaryTransportError> {
+        if !self
+            .request_selectors
+            .get_mut(&logical_task_id)
+            .ok_or(DirectUnaryTransportError::ResponseState(
+                "request selector disappeared during dispatch",
+            ))?
+            .record_attempt_result(&selected.attempt, dispatch_duration)
+        {
+            return Err(DirectUnaryTransportError::RegionRecovery(
+                "RPC completion did not match the selector's pending attempt".to_owned(),
+            ));
         }
         Ok(())
     }
@@ -677,16 +818,17 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         let failed = self.runtime.consume_failed_attempt(attempt_id)?;
         if close_generation {
             self.check_retry_active()?;
-            try_borrow_client(self.client.as_ref())?
+            try_borrow_client(self.shared_runtime.client())?
                 .close_address_version(connection.address(), connection.version())
                 .map_err(DirectUnaryTransportError::Client)?;
         }
         self.check_retry_active()?;
-        let liveness = try_borrow_client(self.client.as_ref())?
+        let liveness = try_borrow_client(self.shared_runtime.client())?
             .liveness(connection.address(), DEFAULT_STORE_LIVENESS_TIMEOUT)
             .map_err(DirectUnaryTransportError::Client)?;
         self.check_retry_active()?;
-        self.region_cache
+        self.shared_runtime
+            .region_cache()
             .try_borrow_mut()
             .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle)?
             .on_send_failure(&selected.attempt, liveness)
@@ -713,7 +855,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
     ) -> Result<(), DirectUnaryTransportError> {
         self.check_retry_active()?;
         if region_error.store_not_match.is_some() {
-            try_borrow_client(self.client.as_ref())?
+            try_borrow_client(self.shared_runtime.client())?
                 .close_address(&observed_attempt.address)
                 .map_err(DirectUnaryTransportError::Client)?;
         }
@@ -724,7 +866,8 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                 .region_backoffs
                 .entry(region_id)
                 .or_insert_with(|| RegionBackoffBudget::new(region_retry_max_sleep));
-            self.region_cache
+            self.shared_runtime
+                .region_cache()
                 .try_borrow_mut()
                 .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle)?
                 .on_region_error(&region_error, observed_attempt, budget)
@@ -757,7 +900,8 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             RegionErrorDisposition::RebuildRanges { delay, action } => {
                 self.sleep_retry(delay)?;
                 self.check_retry_active()?;
-                self.region_cache
+                self.shared_runtime
+                    .region_cache()
                     .try_borrow_mut()
                     .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle)?
                     .apply_rebuild_action(action)
@@ -798,7 +942,8 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             .map(|range| RegionKeyRange::new(range.start_key.clone(), range.end_key.clone()))
             .collect();
         let locations = self
-            .region_cache
+            .shared_runtime
+            .region_cache()
             .try_borrow_mut()
             .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle)?
             .locate_ranges(&region_ranges)?;

@@ -55,10 +55,14 @@ pub use coprocessor::{
 pub use errorpb::Error as RegionError;
 
 pub use kvrpcpb::{
-    CommandPri as KvrpcCommandPriority, Context as KvrpcContext,
-    IsolationLevel as KvrpcIsolationLevel, LockInfo as KvrpcLockInfo, Peer as KvrpcPeer,
-    RegionEpoch as KvrpcRegionEpoch, RequestOrigin as KvrpcRequestOrigin,
+    Action as KvrpcTxnAction, CheckTxnStatusRequest as KvrpcCheckTxnStatusRequest,
+    CheckTxnStatusResponse as KvrpcCheckTxnStatusResponse, CommandPri as KvrpcCommandPriority,
+    Context as KvrpcContext, IsolationLevel as KvrpcIsolationLevel, KeyError as KvrpcKeyError,
+    LockInfo as KvrpcLockInfo, Peer as KvrpcPeer, RegionEpoch as KvrpcRegionEpoch,
+    RequestOrigin as KvrpcRequestOrigin, ResolveLockRequest as KvrpcResolveLockRequest,
+    ResolveLockResponse as KvrpcResolveLockResponse,
     ResourceControlContext as KvrpcResourceControlContext, SourceStmt as KvrpcSourceStmt,
+    TxnInfo as KvrpcTxnInfo,
 };
 
 pub use tipb::{

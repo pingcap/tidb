@@ -8,6 +8,8 @@ syntax = "proto3";
 
 package kvrpcpb;
 
+import "errorpb.proto";
+
 message RegionEpoch {
   uint64 conf_ver = 1;
   uint64 version = 2;
@@ -103,4 +105,83 @@ message LockInfo {
   uint64 duration_to_last_update_ms = 11;
   repeated LockInfo shared_lock_infos = 12;
   bool is_txn_file = 100;
+}
+
+// Bounded transaction error projection used by optimistic read-lock recovery.
+// Omitted variants remain unknown protobuf fields and any present KeyError is
+// still fail-closed by the recovery owner.
+message TxnNotFound {
+  uint64 start_ts = 1;
+  bytes primary_key = 2;
+}
+
+message PrimaryMismatch {
+  LockInfo lock_info = 1;
+}
+
+message TxnLockNotFound { bytes key = 1; }
+
+message KeyError {
+  LockInfo locked = 1;
+  string retryable = 2;
+  string abort = 3;
+  TxnNotFound txn_not_found = 8;
+  PrimaryMismatch primary_mismatch = 11;
+  TxnLockNotFound txn_lock_not_found = 12;
+}
+
+enum Action {
+  NoAction = 0;
+  TTLExpireRollback = 1;
+  LockNotExistRollback = 2;
+  MinCommitTSPushed = 3;
+  TTLExpirePessimisticRollback = 4;
+  LockNotExistDoNothing = 5;
+}
+
+// Exact pinned kvproto command shape used to query an optimistic primary.
+message CheckTxnStatusRequest {
+  Context context = 1;
+  bytes primary_key = 2;
+  uint64 lock_ts = 3;
+  uint64 caller_start_ts = 4;
+  uint64 current_ts = 5;
+  bool rollback_if_not_exist = 6;
+  bool force_sync_commit = 7;
+  bool resolving_pessimistic_lock = 8;
+  bool verify_is_primary = 9;
+  bool is_txn_file = 100;
+}
+
+message CheckTxnStatusResponse {
+  errorpb.Error region_error = 1;
+  KeyError error = 2;
+  uint64 lock_ttl = 3;
+  uint64 commit_version = 4;
+  Action action = 5;
+  LockInfo lock_info = 6;
+  // Upstream field 7 is ExecDetailsV2 and is outside this bounded owner.
+}
+
+message TxnInfo {
+  uint64 txn = 1;
+  uint64 status = 2;
+  bool is_txn_file = 100;
+}
+
+// Exact pinned kvproto command shape used for keyed optimistic lock cleanup.
+message ResolveLockRequest {
+  Context context = 1;
+  uint64 start_version = 2;
+  uint64 commit_version = 3;
+  repeated TxnInfo txn_infos = 4;
+  repeated bytes keys = 5;
+  bool is_async = 6;
+  bool is_txn_file = 100;
+}
+
+message ResolveLockResponse {
+  errorpb.Error region_error = 1;
+  KeyError error = 2;
+  // Upstream field 3 is ExecDetailsV2 and is outside this bounded owner.
 }

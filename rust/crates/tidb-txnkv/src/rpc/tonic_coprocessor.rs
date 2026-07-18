@@ -12,109 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::mpsc;
-use std::thread::JoinHandle;
 use std::time::Duration;
 
-use bytes::{Buf, BufMut};
 use prost::Message;
-use tidb_proto::KvrpcContext;
-use tonic::codec::{Codec, DecodeBuf, Decoder, EncodeBuf, Encoder};
+use tidb_proto::{
+    KvrpcCheckTxnStatusRequest, KvrpcCheckTxnStatusResponse, KvrpcContext, KvrpcResolveLockRequest,
+    KvrpcResolveLockResponse,
+};
 
 use crate::region::StoreLiveness;
 use crate::{DirectUnaryClient, DirectUnaryRequest, DirectUnaryResponse};
 
-use super::channel_pool::ChannelPool;
-use super::liveness::{check_liveness, DEFAULT_STORE_LIVENESS_TIMEOUT};
-use super::{DirectUnaryClientError, DirectUnaryConnectionError, DirectUnaryGrpcCode};
+use super::liveness::DEFAULT_STORE_LIVENESS_TIMEOUT;
+use super::unary::{RawUnaryClient, RawUnaryRequest, UnaryCallContext};
+use super::DirectUnaryClientError;
 
-// client-go internal/client sets MaxRecvMsgSize to math.MaxInt64-1. Tonic's
-// default is only 4 MiB, which is too small for valid Coprocessor responses.
-const MAX_RECV_MESSAGE_SIZE: usize = (i64::MAX as usize).saturating_sub(1);
+pub(super) use super::unary::RawProtobufCodec;
+
 const MAX_PROTOBUF_FIELD_NUMBER: u64 = (1 << 29) - 1;
 const COPROCESSOR_PATH: &str = "/tikvpb.Tikv/Coprocessor";
-
-#[derive(Clone, Copy, Debug, Default)]
-pub(super) struct RawProtobufCodec;
-
-#[derive(Clone, Copy, Debug, Default)]
-pub(super) struct RawProtobufEncoder;
-
-#[derive(Clone, Copy, Debug, Default)]
-pub(super) struct RawProtobufDecoder;
-
-impl Codec for RawProtobufCodec {
-    type Encode = Vec<u8>;
-    type Decode = Vec<u8>;
-    type Encoder = RawProtobufEncoder;
-    type Decoder = RawProtobufDecoder;
-
-    fn encoder(&mut self) -> Self::Encoder {
-        RawProtobufEncoder
-    }
-
-    fn decoder(&mut self) -> Self::Decoder {
-        RawProtobufDecoder
-    }
-}
-
-impl Encoder for RawProtobufEncoder {
-    type Item = Vec<u8>;
-    type Error = tonic::Status;
-
-    fn encode(
-        &mut self,
-        item: Self::Item,
-        destination: &mut EncodeBuf<'_>,
-    ) -> Result<(), Self::Error> {
-        destination.put_slice(&item);
-        Ok(())
-    }
-}
-
-impl Decoder for RawProtobufDecoder {
-    type Item = Vec<u8>;
-    type Error = tonic::Status;
-
-    fn decode(&mut self, source: &mut DecodeBuf<'_>) -> Result<Option<Self::Item>, Self::Error> {
-        Ok(Some(copy_remaining(source)))
-    }
-}
-
-enum WorkerCommand {
-    Send {
-        address: String,
-        request: Box<DirectUnaryRequest>,
-        timeout: Duration,
-        reply: mpsc::Sender<Result<DirectUnaryResponse, DirectUnaryClientError>>,
-    },
-    CloseAddress {
-        address: String,
-        reply: mpsc::Sender<()>,
-    },
-    CloseAddressVersion {
-        address: String,
-        version: u64,
-        reply: mpsc::Sender<()>,
-    },
-    Liveness {
-        address: String,
-        timeout: Duration,
-        reply: mpsc::Sender<StoreLiveness>,
-    },
-    Inspect {
-        address: String,
-        reply: mpsc::Sender<(Option<u64>, usize)>,
-    },
-    Close {
-        reply: mpsc::Sender<()>,
-    },
-}
-
-enum CoprocessorAttemptError {
-    Connection(String),
-    RemoteGrpc(tonic::Status),
-}
+const CHECK_TXN_STATUS_PATH: &str = "/tikvpb.Tikv/KvCheckTxnStatus";
+const RESOLVE_LOCK_PATH: &str = "/tikvpb.Tikv/KvResolveLock";
 
 /// Synchronous client-go-shaped unary capability backed by tonic.
 ///
@@ -123,45 +41,15 @@ enum CoprocessorAttemptError {
 /// already-async-hosted threads: it never nests `Runtime::block_on`. Channels
 /// are created lazily, reused by address, and versioned on recreation.
 pub struct TonicCoprocessorClient {
-    commands: Option<mpsc::Sender<WorkerCommand>>,
-    worker: Option<JoinHandle<()>>,
+    unary: RawUnaryClient,
 }
 
 impl TonicCoprocessorClient {
     /// Constructs a live client without opening a socket.
     pub fn new() -> Result<Self, DirectUnaryClientError> {
-        let (commands, receiver) = mpsc::channel();
-        let (ready_tx, ready_rx) = mpsc::channel();
-        let worker = std::thread::spawn(move || {
-            let runtime = match tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-            {
-                Ok(runtime) => runtime,
-                Err(error) => {
-                    let _ = ready_tx.send(Err(DirectUnaryClientError::Runtime(error.to_string())));
-                    return;
-                }
-            };
-            if ready_tx.send(Ok(())).is_err() {
-                return;
-            }
-            run_worker(runtime, receiver);
-        });
-        match ready_rx.recv() {
-            Ok(Ok(())) => Ok(Self {
-                commands: Some(commands),
-                worker: Some(worker),
-            }),
-            Ok(Err(error)) => {
-                let _ = worker.join();
-                Err(error)
-            }
-            Err(error) => {
-                let _ = worker.join();
-                Err(DirectUnaryClientError::Runtime(error.to_string()))
-            }
-        }
+        Ok(Self {
+            unary: RawUnaryClient::new()?,
+        })
     }
 
     /// Closes the current generation only when it is not newer than `version`.
@@ -170,18 +58,7 @@ impl TonicCoprocessorClient {
         address: &str,
         version: u64,
     ) -> Result<(), DirectUnaryClientError> {
-        let Some(commands) = &self.commands else {
-            return Ok(());
-        };
-        let (reply, response) = mpsc::channel();
-        commands
-            .send(WorkerCommand::CloseAddressVersion {
-                address: address.to_owned(),
-                version,
-                reply,
-            })
-            .map_err(|_| DirectUnaryClientError::Closed)?;
-        response.recv().map_err(|_| DirectUnaryClientError::Closed)
+        self.unary.close_address_version(address, version)
     }
 
     /// Runs one foreground health check with client-go's one-second default.
@@ -202,32 +79,59 @@ impl TonicCoprocessorClient {
     }
 
     fn inspect(&self, address: &str) -> (Option<u64>, usize) {
-        let Some(commands) = &self.commands else {
-            return (None, 0);
-        };
-        let (reply, response) = mpsc::channel();
-        if commands
-            .send(WorkerCommand::Inspect {
-                address: address.to_owned(),
-                reply,
-            })
-            .is_err()
-        {
-            return (None, 0);
-        }
-        response.recv().unwrap_or((None, 0))
+        self.unary.inspect(address)
     }
 
     fn shutdown(&mut self) {
-        if let Some(commands) = self.commands.take() {
-            let (reply, response) = mpsc::channel();
-            if commands.send(WorkerCommand::Close { reply }).is_ok() {
-                let _ = response.recv();
-            }
-        }
-        if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
-        }
+        self.unary.shutdown();
+    }
+
+    /// Sends the exact pinned CheckTxnStatus command through the shared core.
+    pub fn check_txn_status(
+        &mut self,
+        address: &str,
+        request: &KvrpcCheckTxnStatusRequest,
+        context: &KvrpcContext,
+        call: &UnaryCallContext,
+    ) -> Result<KvrpcCheckTxnStatusResponse, DirectUnaryClientError> {
+        let mut request = request.clone();
+        request.context = Some(context.clone());
+        let response = self.unary.send(
+            address,
+            RawUnaryRequest {
+                path: CHECK_TXN_STATUS_PATH,
+                encoded_request: request.encode_to_vec(),
+            },
+            call,
+        )?;
+        KvrpcCheckTxnStatusResponse::decode(response.encoded_response.as_slice()).map_err(|error| {
+            DirectUnaryClientError::InvalidRequest(format!(
+                "invalid CheckTxnStatus response: {error}"
+            ))
+        })
+    }
+
+    /// Sends the exact pinned keyed ResolveLock command through the shared core.
+    pub fn resolve_lock(
+        &mut self,
+        address: &str,
+        request: &KvrpcResolveLockRequest,
+        context: &KvrpcContext,
+        call: &UnaryCallContext,
+    ) -> Result<KvrpcResolveLockResponse, DirectUnaryClientError> {
+        let mut request = request.clone();
+        request.context = Some(context.clone());
+        let response = self.unary.send(
+            address,
+            RawUnaryRequest {
+                path: RESOLVE_LOCK_PATH,
+                encoded_request: request.encode_to_vec(),
+            },
+            call,
+        )?;
+        KvrpcResolveLockResponse::decode(response.encoded_response.as_slice()).map_err(|error| {
+            DirectUnaryClientError::InvalidRequest(format!("invalid ResolveLock response: {error}"))
+        })
     }
 }
 
@@ -238,35 +142,31 @@ impl DirectUnaryClient for TonicCoprocessorClient {
         request: &DirectUnaryRequest,
         timeout: Duration,
     ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
-        let Some(commands) = &self.commands else {
-            return Err(DirectUnaryClientError::Closed);
-        };
-        let (reply, response) = mpsc::channel();
-        commands
-            .send(WorkerCommand::Send {
-                address: address.to_owned(),
-                request: Box::new(request.clone()),
-                timeout,
-                reply,
-            })
-            .map_err(|_| DirectUnaryClientError::Closed)?;
-        response
-            .recv()
-            .unwrap_or(Err(DirectUnaryClientError::Closed))
+        self.send_request_with_context(address, request, &UnaryCallContext::with_timeout(timeout))
+    }
+
+    fn send_request_with_context(
+        &mut self,
+        address: &str,
+        request: &DirectUnaryRequest,
+        call: &UnaryCallContext,
+    ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
+        let body = replace_top_level_context(&request.encoded_request, &request.context)?;
+        let response = self.unary.send(
+            address,
+            RawUnaryRequest {
+                path: COPROCESSOR_PATH,
+                encoded_request: body,
+            },
+            call,
+        )?;
+        Ok(DirectUnaryResponse {
+            encoded_response: response.encoded_response,
+        })
     }
 
     fn close_address(&mut self, address: &str) -> Result<(), DirectUnaryClientError> {
-        let Some(commands) = &self.commands else {
-            return Ok(());
-        };
-        let (reply, response) = mpsc::channel();
-        commands
-            .send(WorkerCommand::CloseAddress {
-                address: address.to_owned(),
-                reply,
-            })
-            .map_err(|_| DirectUnaryClientError::Closed)?;
-        response.recv().map_err(|_| DirectUnaryClientError::Closed)
+        self.unary.close_address(address)
     }
 
     fn close_address_version(
@@ -282,18 +182,7 @@ impl DirectUnaryClient for TonicCoprocessorClient {
         address: &str,
         timeout: Duration,
     ) -> Result<StoreLiveness, DirectUnaryClientError> {
-        let Some(commands) = &self.commands else {
-            return Err(DirectUnaryClientError::Closed);
-        };
-        let (reply, response) = mpsc::channel();
-        commands
-            .send(WorkerCommand::Liveness {
-                address: address.to_owned(),
-                timeout,
-                reply,
-            })
-            .map_err(|_| DirectUnaryClientError::Closed)?;
-        response.recv().map_err(|_| DirectUnaryClientError::Closed)
+        self.unary.liveness(address, timeout)
     }
 
     fn close(&mut self) -> Result<(), DirectUnaryClientError> {
@@ -306,99 +195,6 @@ impl Drop for TonicCoprocessorClient {
     fn drop(&mut self) {
         self.shutdown();
     }
-}
-
-fn run_worker(runtime: tokio::runtime::Runtime, receiver: mpsc::Receiver<WorkerCommand>) {
-    let mut channels = ChannelPool::new();
-    while let Ok(command) = receiver.recv() {
-        match command {
-            WorkerCommand::Send {
-                address,
-                request,
-                timeout,
-                reply,
-            } => {
-                let result = send_coprocessor(&runtime, &mut channels, &address, &request, timeout);
-                let _ = reply.send(result);
-            }
-            WorkerCommand::CloseAddress { address, reply } => {
-                channels.close_address(&address);
-                let _ = reply.send(());
-            }
-            WorkerCommand::CloseAddressVersion {
-                address,
-                version,
-                reply,
-            } => {
-                channels.close_address_version(&address, version);
-                let _ = reply.send(());
-            }
-            WorkerCommand::Liveness {
-                address,
-                timeout,
-                reply,
-            } => {
-                let result = check_liveness(&runtime, &address, timeout);
-                let _ = reply.send(result);
-            }
-            WorkerCommand::Inspect { address, reply } => {
-                let _ = reply.send((channels.version(&address), channels.len()));
-            }
-            WorkerCommand::Close { reply } => {
-                channels.close();
-                let _ = reply.send(());
-                break;
-            }
-        }
-    }
-}
-
-fn send_coprocessor(
-    runtime: &tokio::runtime::Runtime,
-    channels: &mut ChannelPool,
-    address: &str,
-    request: &DirectUnaryRequest,
-    timeout: Duration,
-) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
-    let body = replace_top_level_context(&request.encoded_request, &request.context)?;
-
-    let selected = channels.get_or_create(address, runtime)?;
-    let mut client =
-        tonic::client::Grpc::new(selected.channel).max_decoding_message_size(MAX_RECV_MESSAGE_SIZE);
-    // Match client-go's context.WithTimeout: TiKV sees the request deadline,
-    // while the local timer remains the synchronous caller's safety boundary.
-    let mut rpc_request = tonic::Request::new(body);
-    rpc_request.set_timeout(timeout);
-    let path = tonic::codegen::http::uri::PathAndQuery::from_static(COPROCESSOR_PATH);
-    let result = runtime.block_on(async {
-        tokio::time::timeout(timeout, async {
-            client.ready().await.map_err(|error| {
-                CoprocessorAttemptError::Connection(format!(
-                    "TiKV gRPC service is not ready: {error}"
-                ))
-            })?;
-            client
-                .unary(rpc_request, path, RawProtobufCodec)
-                .await
-                .map_err(CoprocessorAttemptError::RemoteGrpc)
-        })
-        .await
-    });
-    let response = match result {
-        Ok(Ok(response)) => response.into_inner(),
-        Ok(Err(CoprocessorAttemptError::Connection(error))) => {
-            return Err(connection_error(address, selected.version, error));
-        }
-        Ok(Err(CoprocessorAttemptError::RemoteGrpc(error))) => {
-            return Err(remote_grpc_error(address, selected.version, timeout, error));
-        }
-        Err(error) => {
-            return Err(timeout_error(address, selected.version, timeout, error));
-        }
-    };
-    Ok(DirectUnaryResponse {
-        encoded_response: response,
-    })
 }
 
 /// Replaces every top-level context field while preserving every other wire
@@ -535,108 +331,16 @@ fn varint_len(mut value: u64) -> usize {
     length
 }
 
-fn copy_remaining(source: &mut impl Buf) -> Vec<u8> {
-    source.copy_to_bytes(source.remaining()).to_vec()
-}
-
 fn invalid_wire(message: &str) -> DirectUnaryClientError {
     DirectUnaryClientError::InvalidRequest(message.to_owned())
 }
 
-fn connection_error(
-    address: &str,
-    version: u64,
-    error: impl std::fmt::Display,
-) -> DirectUnaryClientError {
-    DirectUnaryClientError::Connection(DirectUnaryConnectionError::connection(
-        address,
-        version,
-        error.to_string(),
-    ))
-}
-
-fn remote_grpc_error(
-    address: &str,
-    version: u64,
-    timeout: Duration,
-    error: tonic::Status,
-) -> DirectUnaryClientError {
-    if error_chain_contains_timeout(&error) {
-        return timeout_error(address, version, timeout, error);
-    }
-    match grpc_error_code(error.code()) {
-        Some(code) => DirectUnaryClientError::Connection(DirectUnaryConnectionError::remote_grpc(
-            address,
-            version,
-            code,
-            error.to_string(),
-        )),
-        None => connection_error(address, version, error),
-    }
-}
-
-fn error_chain_contains_timeout(error: &(dyn std::error::Error + 'static)) -> bool {
-    let mut current = Some(error);
-    while let Some(candidate) = current {
-        if candidate.downcast_ref::<tonic::TimeoutExpired>().is_some() {
-            return true;
-        }
-        current = candidate.source();
-    }
-    false
-}
-
-fn timeout_error(
-    address: &str,
-    version: u64,
-    timeout: Duration,
-    error: impl std::fmt::Display,
-) -> DirectUnaryClientError {
-    DirectUnaryClientError::Timeout {
-        connection: DirectUnaryConnectionError::local_deadline(address, version, error.to_string()),
-        timeout_ms: u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX),
-    }
-}
-
-const fn grpc_error_code(code: tonic::Code) -> Option<DirectUnaryGrpcCode> {
-    match code {
-        tonic::Code::Ok => None,
-        tonic::Code::Cancelled => Some(DirectUnaryGrpcCode::Canceled),
-        tonic::Code::Unknown => Some(DirectUnaryGrpcCode::Unknown),
-        tonic::Code::InvalidArgument => Some(DirectUnaryGrpcCode::InvalidArgument),
-        tonic::Code::DeadlineExceeded => Some(DirectUnaryGrpcCode::DeadlineExceeded),
-        tonic::Code::NotFound => Some(DirectUnaryGrpcCode::NotFound),
-        tonic::Code::AlreadyExists => Some(DirectUnaryGrpcCode::AlreadyExists),
-        tonic::Code::PermissionDenied => Some(DirectUnaryGrpcCode::PermissionDenied),
-        tonic::Code::ResourceExhausted => Some(DirectUnaryGrpcCode::ResourceExhausted),
-        tonic::Code::FailedPrecondition => Some(DirectUnaryGrpcCode::FailedPrecondition),
-        tonic::Code::Aborted => Some(DirectUnaryGrpcCode::Aborted),
-        tonic::Code::OutOfRange => Some(DirectUnaryGrpcCode::OutOfRange),
-        tonic::Code::Unimplemented => Some(DirectUnaryGrpcCode::Unimplemented),
-        tonic::Code::Internal => Some(DirectUnaryGrpcCode::Internal),
-        tonic::Code::Unavailable => Some(DirectUnaryGrpcCode::Unavailable),
-        tonic::Code::DataLoss => Some(DirectUnaryGrpcCode::DataLoss),
-        tonic::Code::Unauthenticated => Some(DirectUnaryGrpcCode::Unauthenticated),
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use bytes::Bytes;
     use prost::Message;
     use tidb_proto::{CoprocessorRequest, KvrpcContext};
 
-    use super::{
-        copy_remaining, error_chain_contains_timeout, replace_top_level_context, write_varint,
-        MAX_PROTOBUF_FIELD_NUMBER,
-    };
-
-    #[test]
-    fn tonic_timeout_source_is_not_misclassified_as_remote_canceled() {
-        let status = tonic::Status::from_error(Box::new(tonic::TimeoutExpired(())));
-        assert_eq!(status.code(), tonic::Code::Cancelled);
-        assert!(error_chain_contains_timeout(&status));
-    }
+    use super::{replace_top_level_context, write_varint, MAX_PROTOBUF_FIELD_NUMBER};
 
     #[test]
     fn wire_context_replacement_preserves_unprojected_fields() {
@@ -674,13 +378,6 @@ mod tests {
         let decoded = CoprocessorRequest::decode(replaced.as_slice()).unwrap();
         assert_eq!(decoded.context.as_ref(), Some(&authoritative));
         assert_eq!(decoded.data, b"dag");
-    }
-
-    #[test]
-    fn raw_decoder_copy_preserves_every_response_byte() {
-        let expected = vec![0x0a, 0x01, 0x2a, 0xb2, 0x09, 0x02, 0xde, 0xad];
-        let mut source = Bytes::from(expected.clone());
-        assert_eq!(copy_remaining(&mut source), expected);
     }
 
     #[test]

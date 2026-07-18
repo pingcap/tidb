@@ -41,6 +41,7 @@ mod keyspace;
 mod mvcc_metadata;
 mod pd_loader;
 mod prefix_ops;
+mod read_runtime;
 pub mod region;
 mod resource_group;
 mod retry;
@@ -100,6 +101,7 @@ pub use mvcc_metadata::{
 };
 pub use pd_loader::PdRegionLoader;
 pub use prefix_ops::{del_key_with_prefix, scan_meta_with_prefix};
+pub use read_runtime::SharedReadRuntime;
 pub use resource_group::ResourceGroupTagBuilder;
 pub use retry::{
     retry_backoff_upper_bound_ms, should_retry_after_failure, RETRY_BACKOFF_BASE_MS,
@@ -107,7 +109,7 @@ pub use retry::{
 };
 pub use rpc::{
     DirectUnaryClientError, DirectUnaryConnectionError, DirectUnaryGrpcCode,
-    DirectUnaryTransportClass, DEFAULT_STORE_LIVENESS_TIMEOUT,
+    DirectUnaryTransportClass, UnaryCallContext, UnaryCancellation, DEFAULT_STORE_LIVENESS_TIMEOUT,
 };
 pub use txn_scope::{TxnScopeVar, GLOBAL_TXN_SCOPE, LOCAL_TXN_SCOPE};
 pub use txn_source::{
