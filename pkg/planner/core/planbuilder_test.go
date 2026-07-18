@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -325,6 +326,99 @@ func TestInsertOnDuplicateUpdateExpressionReuseComplexityGate(t *testing.T) {
 		parseAssignment("if(values(c1) is not null and (c1 <= values(c1) or c1 = '2100-01-01 00:00:00') and values(c2) != 1, values(c3), c3)"),
 		parseAssignment("if(values(c1) is not null and (c1 <= values(c1) or c1 = '2100-01-01 00:00:00') and values(c2) != 1, values(c4), c4)"),
 	}))
+}
+
+func TestInsertOnDuplicateUpdateExpressionReuseSetVarHint(t *testing.T) {
+	testCases := []struct {
+		name                string
+		sessionReuseEnabled bool
+		hintValue           string
+		expectedEnabled     bool
+	}{
+		{
+			name:                "disable_by_hint",
+			sessionReuseEnabled: true,
+			hintValue:           "off",
+			expectedEnabled:     false,
+		},
+		{
+			name:                "enable_by_hint",
+			sessionReuseEnabled: false,
+			hintValue:           "on",
+			expectedEnabled:     true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := MockContext()
+			defer func() {
+				domain.GetDomain(ctx).StatsHandle().Close()
+			}()
+			ctx.GetSessionVars().CurrentDB = "test"
+			err := ctx.GetSessionVars().SetSystemVar(variable.TiDBEnableODKUExpressionReuse, variable.BoolToOnOff(tc.sessionReuseEnabled))
+			require.NoError(t, err)
+
+			insertSQL := strings.Replace(
+				benchmarkODKUInsertSQL(),
+				"insert into",
+				fmt.Sprintf("insert /*+ SET_VAR(%s=%s) */ into", variable.TiDBEnableODKUExpressionReuse, tc.hintValue),
+				1,
+			)
+			insertPlan := buildInsertPlanWithSetVarHint(t, ctx, benchmarkODKUTableInfo(), insertSQL)
+			require.Equal(t, tc.expectedEnabled, insertPlan.odkuExpressionReuseEnabled)
+			require.Equal(t, tc.sessionReuseEnabled, ctx.GetSessionVars().EnableODKUExpressionReuse)
+		})
+	}
+}
+
+func buildInsertPlanWithSetVarHint(t *testing.T, ctx *mock.Context, tableInfo *model.TableInfo, insertSQL string) *Insert {
+	is := infoschema.MockInfoSchema([]*model.TableInfo{tableInfo})
+	stmt, err := parser.New().ParseOneStmt(insertSQL, "", "")
+	require.NoError(t, err)
+	nodeW := resolve.NewNodeW(stmt)
+	err = Preprocess(context.Background(), ctx, nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: is}))
+	require.NoError(t, err)
+
+	restoreSetVarHint := applySetVarHintForTest(t, ctx, stmt)
+	defer restoreSetVarHint()
+
+	plan, err := BuildLogicalPlanForTest(context.Background(), ctx, nodeW, is)
+	require.NoError(t, err)
+	insertPlan, ok := plan.(*Insert)
+	require.True(t, ok)
+	return insertPlan
+}
+
+func applySetVarHintForTest(t *testing.T, ctx *mock.Context, stmt ast.StmtNode) func() {
+	tableHints := hint.ExtractTableHintsFromStmtNode(stmt, ctx.GetSessionVars().StmtCtx)
+	stmtHints, _, warns := hint.ParseStmtHints(tableHints, func(varName, hintName string) (bool, error) {
+		sysVar := variable.GetSysVar(varName)
+		if sysVar == nil {
+			return false, errors.Errorf("unknown SET_VAR hint %s in %s", varName, hintName)
+		}
+		if !sysVar.IsHintUpdatableVerified {
+			return true, errors.Errorf("SET_VAR hint %s is not verified as hint-updatable", varName)
+		}
+		return true, nil
+	}, nil, ctx.GetSessionVars().CurrentDB, byte(kv.ReplicaReadFollower))
+	require.Empty(t, warns)
+	require.Len(t, stmtHints.SetVars, 1)
+	require.Contains(t, stmtHints.SetVars, variable.TiDBEnableODKUExpressionReuse)
+	ctx.GetSessionVars().StmtCtx.StmtHints = stmtHints
+
+	oldValues := make(map[string]string, len(stmtHints.SetVars))
+	for name, val := range stmtHints.SetVars {
+		oldVal, err := ctx.GetSessionVars().SetSystemVarWithOldValAsRet(name, val)
+		require.NoError(t, err)
+		oldValues[name] = oldVal
+	}
+
+	return func() {
+		for name, oldVal := range oldValues {
+			require.NoError(t, ctx.GetSessionVars().SetSystemVar(name, oldVal))
+		}
+	}
 }
 
 func mockBenchmarkODKUTableInfo(name string, colTypes []byte) *model.TableInfo {

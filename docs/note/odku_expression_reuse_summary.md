@@ -237,6 +237,14 @@ tidb_enable_odku_expression_reuse
 - 纯 `VALUES(col)` 赋值不会启用复用。
 - 带重复复杂条件的 ODKU assignment 会达到复杂度阈值并启用复用。
 
+4. `TestInsertOnDuplicateUpdateExpressionReuseSetVarHint`
+
+覆盖：
+
+- `INSERT /*+ SET_VAR(tidb_enable_odku_expression_reuse=off) */ ... ON DUPLICATE KEY UPDATE` 能对当前语句关闭复用。
+- `INSERT /*+ SET_VAR(tidb_enable_odku_expression_reuse=on) */ ... ON DUPLICATE KEY UPDATE` 能对当前语句开启复用。
+- `SET_VAR` hint 生效后会恢复原 session 变量值。
+
 ### Benchmark
 
 新增 benchmark：
