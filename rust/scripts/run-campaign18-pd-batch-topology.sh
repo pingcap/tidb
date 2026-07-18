@@ -282,8 +282,10 @@ PHYSICAL_ADDRESS=$(phase_values "${ROUTE_PHASE}" physical_address)
 PHYSICAL_STORE_ID=$(phase_values "${ROUTE_PHASE}" physical_store_id)
 LOGICAL_ADDRESS=$(phase_values "${ROUTE_PHASE}" logical_address)
 GENERATION_N=$(phase_values "${ROUTE_PHASE}" generation_n)
+DIRECT_GENERATION=$(phase_values "${ROUTE_PHASE}" direct_generation)
 if [[ -z "${PHYSICAL_ADDRESS}" || -z "${PHYSICAL_STORE_ID}" \
   || -z "${LOGICAL_ADDRESS}" || -z "${GENERATION_N}" \
+  || -z "${DIRECT_GENERATION}" \
   || "${PHYSICAL_ADDRESS}" == "${LOGICAL_ADDRESS}" ]]; then
   echo "Rust route phase did not prove a nonleader physical forwarding route" >&2
   cat "${ROUTE_PHASE}" >&2
@@ -322,15 +324,20 @@ if kill -0 "${STOPPED_PID}" 2>/dev/null \
   echo "frozen physical TiKV ${PHYSICAL_ADDRESS} did not stop" >&2
   exit 1
 fi
+STOPPED_PID=
 : >"${PHASE_DIR}/physical-stopped"
 
 wait_for_phase failure-observed
 FAILED_GENERATION=$(phase_values "${PHASE_DIR}/failure-observed" failed_generation)
 FAILURE_COUNT=$(phase_values "${PHASE_DIR}/failure-observed" failure_count)
-AUTO_RESEND_COUNT=$(phase_values "${PHASE_DIR}/failure-observed" auto_resend_count)
+TRANSPORT_SCHEDULED_RESENDS=$(phase_values "${PHASE_DIR}/failure-observed" transport_scheduled_resends)
+SURVIVING_DIRECT_GENERATION=$(phase_values "${PHASE_DIR}/failure-observed" direct_generation)
+DIRECT_SURVIVED=$(phase_values "${PHASE_DIR}/failure-observed" direct_survived)
 if [[ "${FAILED_GENERATION}" != "${GENERATION_N}" \
-  || "${FAILURE_COUNT}" != 1 || "${AUTO_RESEND_COUNT}" != 0 ]]; then
-  echo "generation N did not fail exactly once without transport auto-resend" >&2
+  || "${FAILURE_COUNT}" != 1 || "${TRANSPORT_SCHEDULED_RESENDS}" != 0 \
+  || "${DIRECT_SURVIVED}" != true \
+  || "${SURVIVING_DIRECT_GENERATION}" != "${DIRECT_GENERATION}" ]]; then
+  echo "generation N failure, no-resend, or direct/forwarded isolation proof failed" >&2
   cat "${PHASE_DIR}/failure-observed" >&2
   exit 1
 fi
@@ -352,8 +359,11 @@ for _ in $(seq 1 120); do
       2>/dev/null) || true
   if nc -z -w 1 127.0.0.1 "${PHYSICAL_PORT}" >/dev/null 2>&1 \
     && [[ "${STORE_STATE}" == $'Up\tServing\t'"${PHYSICAL_ADDRESS}" ]]; then
-    restarted=true
-    break
+    LISTENER_PID=$(lsof -nP -iTCP:"${PHYSICAL_PORT}" -sTCP:LISTEN -t | head -1 || true)
+    if [[ "${LISTENER_PID}" == "${RESTART_PID}" ]]; then
+      restarted=true
+      break
+    fi
   fi
   sleep 0.5
 done
@@ -382,8 +392,12 @@ RETRY_GENERATION=$(phase_values "${COMPLETED}" retry_generation)
 ADJACENT=$(phase_values "${COMPLETED}" adjacent)
 RETRY_USABLE=$(phase_values "${COMPLETED}" retry_usable)
 PLAINTEXT_ONLY=$(phase_values "${COMPLETED}" plaintext_only)
+COMPLETED_DIRECT_SURVIVED=$(phase_values "${COMPLETED}" direct_survived)
+COMPLETED_SCHEDULED_RESENDS=$(phase_values "${COMPLETED}" transport_scheduled_resends)
 if [[ "${ADJACENT}" != true || "${RETRY_USABLE}" != true \
-  || "${PLAINTEXT_ONLY}" != true || "${INITIAL_GENERATION}" != "${GENERATION_N}" \
+  || "${PLAINTEXT_ONLY}" != true || "${COMPLETED_DIRECT_SURVIVED}" != true \
+  || "${COMPLETED_SCHEDULED_RESENDS}" != 0 \
+  || "${INITIAL_GENERATION}" != "${GENERATION_N}" \
   || "${RETRY_GENERATION:-0}" -le "${INITIAL_GENERATION:-0}" ]]; then
   echo "Campaign 18 completion marker is incomplete" >&2
   cat "${COMPLETED}" >&2

@@ -693,6 +693,19 @@ fn live_pd_prev_region_and_forwarded_batch_survive_same_address_restart() {
     };
 
     let mut client = TonicCoprocessorClient::new().expect("construct production tonic client");
+    let direct_call = UnaryCallContext::with_timeout(Duration::from_secs(10));
+    let mut direct = client
+        .begin(&logical_store.address, None, &request, &direct_call)
+        .expect("begin production direct BatchCommands request");
+    let direct_raw = direct
+        .complete(&direct_call)
+        .expect("drive production direct BatchCommands completion")
+        .expect("direct BatchCommands request must succeed");
+    assert_usable_campaign18_response(&direct_raw);
+    let direct_generation = client
+        .batch_stream_generation(&logical_store.address, None)
+        .expect("successful direct request must retain its independent stream");
+
     let first_call = UnaryCallContext::with_timeout(Duration::from_secs(10));
     let mut first = client
         .begin(
@@ -712,7 +725,7 @@ fn live_pd_prev_region_and_forwarded_batch_survive_same_address_restart() {
         .expect("successful forwarded request must retain generation N");
 
     let mut route_phase = format!(
-        "left_region_id={}\nright_region_id={}\nboundary_hex={}\nphysical_store_id={}\nphysical_address={}\nlogical_store_id={}\nlogical_address={}\ngeneration_n={}\n",
+        "left_region_id={}\nright_region_id={}\nboundary_hex={}\nphysical_store_id={}\nphysical_address={}\nlogical_store_id={}\nlogical_address={}\ngeneration_n={}\ndirect_generation={}\n",
         left.region.id,
         right.region.id,
         hex_bytes(CAMPAIGN18_SPLIT_KEY),
@@ -721,6 +734,7 @@ fn live_pd_prev_region_and_forwarded_batch_survive_same_address_restart() {
         logical_store.id,
         logical_store.address,
         generation_n,
+        direct_generation,
     );
     for store in &left.stores {
         route_phase.push_str(&format!("store_address={}\n", store.address));
@@ -743,11 +757,19 @@ fn live_pd_prev_region_and_forwarded_batch_survive_same_address_restart() {
         client.batch_stream_generation(&physical_store.address, Some(&logical_store.address)),
         Some(generation_n),
     );
+    let failed_request_watermark = client.batch_request_id_watermark();
     write_campaign18_phase(&phase_dir, "request-published", "published=1\n");
-    let failure = failed
+    let mut failure_count = 0;
+    let failure = match failed
         .complete(&failed_call)
         .expect("generation failure must use the pending completion")
-        .expect_err("killed physical proxy must fail generation N exactly once");
+    {
+        Ok(_) => panic!("killed physical proxy must fail generation N"),
+        Err(error) => {
+            failure_count += 1;
+            error
+        }
+    };
     let connection = failure
         .connection()
         .expect("BatchCommands stream failure must retain address generation");
@@ -757,18 +779,46 @@ fn live_pd_prev_region_and_forwarded_batch_survive_same_address_restart() {
         .try_complete()
         .expect("duplicate completion probe")
         .is_none());
+    let post_failure_watermark = client.batch_request_id_watermark();
+    let transport_scheduled_resends =
+        post_failure_watermark.saturating_sub(failed_request_watermark);
+    assert_eq!(failure_count, 1);
+    assert_eq!(transport_scheduled_resends, 0);
+
+    let direct_survival_call = UnaryCallContext::with_timeout(Duration::from_secs(10));
+    let mut direct_survival = client
+        .begin(
+            &logical_store.address,
+            None,
+            &request,
+            &direct_survival_call,
+        )
+        .expect("forwarded failure must not retire the direct stream");
+    let direct_survival_raw = direct_survival
+        .complete(&direct_survival_call)
+        .expect("drive direct isolation completion")
+        .expect("direct stream must survive forwarded stream failure");
+    assert_usable_campaign18_response(&direct_survival_raw);
     assert_eq!(
+        client.batch_stream_generation(&logical_store.address, None),
+        Some(direct_generation),
+        "forwarded failure must preserve the direct route generation",
+    );
+    assert_ne!(
         client.batch_stream_generation(&physical_store.address, Some(&logical_store.address)),
-        None,
-        "transport must not auto-resend or recreate before caller retry",
+        Some(generation_n),
+        "failed forwarded generation must retire before caller retry",
     );
     write_campaign18_phase(
         &phase_dir,
         "failure-observed",
         &format!(
-            "failed_address={}\nfailed_generation={}\nfailure_count=1\nauto_resend_count=0\n",
+            "failed_address={}\nfailed_generation={}\nfailure_count={}\ntransport_scheduled_resends={}\ndirect_generation={}\ndirect_survived=true\n",
             connection.address(),
             connection.version(),
+            failure_count,
+            transport_scheduled_resends,
+            direct_generation,
         ),
     );
     wait_for_campaign18_phase(&phase_dir, "tikv-restarted");
@@ -797,7 +847,7 @@ fn live_pd_prev_region_and_forwarded_batch_survive_same_address_restart() {
         &phase_dir,
         "completed",
         &format!(
-            "left_region_id={}\nright_region_id={}\nadjacent=true\nphysical_address={}\nlogical_address={}\ninitial_generation={}\nfailed_generation={}\nretry_generation={}\nfailure_count=1\nauto_resend_count=0\nretry_usable=true\nplaintext_only=true\n",
+            "left_region_id={}\nright_region_id={}\nadjacent=true\nphysical_address={}\nlogical_address={}\ninitial_generation={}\nfailed_generation={}\nretry_generation={}\nfailure_count={}\ntransport_scheduled_resends={}\ndirect_generation={}\ndirect_survived=true\nretry_usable=true\nplaintext_only=true\n",
             left.region.id,
             right.region.id,
             physical_store.address,
@@ -805,6 +855,9 @@ fn live_pd_prev_region_and_forwarded_batch_survive_same_address_restart() {
             generation_n,
             generation_n,
             retry_generation,
+            failure_count,
+            transport_scheduled_resends,
+            direct_generation,
         ),
     );
 }
