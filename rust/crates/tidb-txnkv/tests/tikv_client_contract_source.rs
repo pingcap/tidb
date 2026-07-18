@@ -47,6 +47,23 @@ impl DirectUnaryClient for RecordingUnaryClient {
         })
     }
 
+    fn send_request_with_context(
+        &mut self,
+        address: &str,
+        request: &DirectUnaryRequest,
+        call: &tidb_txnkv::UnaryCallContext,
+    ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
+        if call.cancellation().is_cancelled() {
+            return Err(DirectUnaryClientError::CallerCancelled);
+        }
+        let result = self.send_request(address, request, call.timeout());
+        if call.cancellation().is_cancelled() {
+            Err(DirectUnaryClientError::CallerCancelled)
+        } else {
+            result
+        }
+    }
+
     fn close_address(&mut self, _address: &str) -> Result<(), DirectUnaryClientError> {
         Ok(())
     }

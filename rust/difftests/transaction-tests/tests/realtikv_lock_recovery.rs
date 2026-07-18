@@ -184,7 +184,7 @@ fn committed_primary_resolves_secondary_then_publishes_one_cop_response() {
             default_timeout: Duration::from_secs(5),
             ..DirectUnaryRuntimeConfig::default()
         },
-        FixedTimestampSource(current_ts),
+        FixedTimestampSource::new(current_ts),
     )
     .expect("install lock recovery over sole runtime");
     let mut runtime = InjectedQueryRuntime::new(transport);

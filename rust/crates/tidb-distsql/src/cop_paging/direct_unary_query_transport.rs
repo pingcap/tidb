@@ -205,6 +205,8 @@ pub enum DirectUnaryTransportError {
     RegionTerminal(String),
     /// Caller cancellation won before any further query mutation.
     CallerCancelled,
+    /// The bind-anchored query deadline cannot admit another retry wait.
+    DeadlineExceeded,
     /// A locked response could not be handled by the bounded lock delegate.
     LockRecovery(String),
 }
@@ -227,6 +229,7 @@ impl DirectUnaryTransportError {
             Self::RegionRecovery(_) => "region_recovery",
             Self::RegionTerminal(_) => "region_terminal",
             Self::CallerCancelled => "caller_cancelled",
+            Self::DeadlineExceeded => "deadline_exceeded",
             Self::LockRecovery(_) => "lock_recovery",
         }
     }
@@ -259,6 +262,7 @@ impl std::fmt::Display for DirectUnaryTransportError {
             Self::RegionRecovery(message) => write!(formatter, "region recovery failed: {message}"),
             Self::RegionTerminal(message) => write!(formatter, "terminal region error: {message}"),
             Self::CallerCancelled => formatter.write_str("query cancelled by caller"),
+            Self::DeadlineExceeded => formatter.write_str("query deadline exceeded"),
             Self::LockRecovery(message) => write!(formatter, "lock recovery failed: {message}"),
         }
     }
@@ -1081,6 +1085,9 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         if self.closed || self.cancellation.is_cancelled() {
             return Err(DirectUnaryTransportError::CallerCancelled);
         }
+        if self.call.timeout().is_zero() {
+            return Err(DirectUnaryTransportError::DeadlineExceeded);
+        }
         Ok(())
     }
 
@@ -1088,6 +1095,10 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         self.check_retry_active()?;
         if delay.is_zero() {
             return Ok(());
+        }
+        let remaining = self.call.timeout();
+        if remaining.is_zero() || delay >= remaining {
+            return Err(DirectUnaryTransportError::DeadlineExceeded);
         }
         if self
             .config

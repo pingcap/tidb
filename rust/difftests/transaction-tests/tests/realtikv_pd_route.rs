@@ -41,7 +41,7 @@ fn pd_only_input_discovers_route_and_reaches_tikv() {
             default_timeout: Duration::from_secs(5),
             ..DirectUnaryRuntimeConfig::default()
         },
-        tidb_distsql::FixedTimestampSource(1 << 18),
+        tidb_distsql::FixedTimestampSource::new(1 << 18),
     )
     .expect("construct PD-backed direct-unary transport");
     let mut runtime = InjectedQueryRuntime::new(transport);

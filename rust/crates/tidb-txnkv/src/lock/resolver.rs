@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::cell::Cell;
 use std::fmt;
 use std::time::Duration;
 
@@ -28,20 +29,39 @@ use super::{LockAdmissionError, OptimisticLock};
 
 /// Exact timestamp authority injected by the caller.
 pub trait TimestampSource: fmt::Debug {
-    /// Returns one real TSO value; wall-clock synthesis is not admitted.
+    /// Returns a fresh real TSO value on every call.
+    ///
+    /// Wall-clock synthesis and replaying a previously returned TSO are not
+    /// admitted. Callers may require a second value after a slow status RPC.
     fn current_ts(&self) -> Result<u64, String>;
 }
 
-/// Deterministic injected TSO, useful when a caller already obtained one.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct FixedTimestampSource(pub u64);
+/// One-shot injected TSO for paths that can prove they need only one value.
+#[derive(Debug)]
+pub struct FixedTimestampSource {
+    timestamp: Cell<Option<u64>>,
+}
+
+impl FixedTimestampSource {
+    /// Creates a source that returns `timestamp` exactly once.
+    #[must_use]
+    pub const fn new(timestamp: u64) -> Self {
+        Self {
+            timestamp: Cell::new(Some(timestamp)),
+        }
+    }
+}
 
 impl TimestampSource for FixedTimestampSource {
     fn current_ts(&self) -> Result<u64, String> {
-        if self.0 == 0 {
+        let timestamp = self
+            .timestamp
+            .take()
+            .ok_or_else(|| "one-shot timestamp source is exhausted".to_owned())?;
+        if timestamp == 0 {
             return Err("current timestamp must be a real nonzero TSO".to_owned());
         }
-        Ok(self.0)
+        Ok(timestamp)
     }
 }
 
@@ -213,7 +233,7 @@ where
             .try_borrow_mut()
             .map_err(|_| LockRecoveryError::ClientLifecycle)?
             .check_txn_status_for_lock(&primary_address, &check_request, &primary_context, call)
-            .map_err(|error| LockRecoveryError::Rpc(error.to_string()))?;
+            .map_err(map_rpc_error)?;
         // Match client-go's post-RPC ctx.Err precedence before interpreting or
         // acting on a simultaneous CheckTxnStatus result.
         check_cancelled(call)?;
@@ -321,7 +341,7 @@ where
         .try_borrow_mut()
         .map_err(|_| LockRecoveryError::ClientLifecycle)?
         .resolve_lock_for_read(&address, &request, &context, call)
-        .map_err(|error| LockRecoveryError::Rpc(error.to_string()))?;
+        .map_err(map_rpc_error)?;
     // Do not inspect or publish a ResolveLock result after caller cancellation.
     check_cancelled(call)?;
     if let Some(error) = response.region_error.as_ref() {
@@ -331,6 +351,14 @@ where
         return Err(LockRecoveryError::KeyError(format!("{error:?}")));
     }
     Ok(())
+}
+
+fn map_rpc_error(error: DirectUnaryClientError) -> LockRecoveryError {
+    if matches!(error, DirectUnaryClientError::CallerCancelled) {
+        LockRecoveryError::CallerCancelled
+    } else {
+        LockRecoveryError::Rpc(error.to_string())
+    }
 }
 
 fn check_cancelled(call: &UnaryCallContext) -> Result<(), LockRecoveryError> {

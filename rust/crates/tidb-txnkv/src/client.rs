@@ -139,20 +139,15 @@ pub trait DirectUnaryClient {
 
     /// Sends with an explicit active-cancellation carrier.
     ///
-    /// Existing injected clients retain the Campaign 12 timeout method. The
-    /// concrete shared tonic client overrides this method so cancellation can
-    /// race an already in-flight RPC inside the sole worker runtime.
+    /// Every implementation must preserve this carrier through the real
+    /// in-flight operation. Falling back to the timeout-only method would
+    /// silently discard caller cancellation after dispatch begins.
     fn send_request_with_context(
         &mut self,
         address: &str,
         request: &DirectUnaryRequest,
         call: &UnaryCallContext,
-    ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
-        if call.cancellation().is_cancelled() {
-            return Err(DirectUnaryClientError::CallerCancelled);
-        }
-        self.send_request(address, request, call.timeout())
-    }
+    ) -> Result<DirectUnaryResponse, DirectUnaryClientError>;
 
     /// Drops the active channel generation for one address.
     fn close_address(&mut self, address: &str) -> Result<(), DirectUnaryClientError>;

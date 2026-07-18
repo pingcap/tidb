@@ -82,6 +82,16 @@ impl DirectUnaryClient for RecordingClient {
         self.inner.send_request(address, request, timeout)
     }
 
+    fn send_request_with_context(
+        &mut self,
+        address: &str,
+        request: &DirectUnaryRequest,
+        call: &tidb_txnkv::UnaryCallContext,
+    ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
+        self.addresses.borrow_mut().push(address.to_owned());
+        self.inner.send_request_with_context(address, request, call)
+    }
+
     fn close_address(&mut self, address: &str) -> Result<(), DirectUnaryClientError> {
         self.inner.close_address(address)
     }
@@ -210,7 +220,7 @@ fn same_process_survives_pd_removal_and_region_leader_transfer() {
             default_timeout: Duration::from_secs(5),
             ..DirectUnaryRuntimeConfig::default()
         },
-        tidb_distsql::FixedTimestampSource(1 << 18),
+        tidb_distsql::FixedTimestampSource::new(1 << 18),
     )
     .expect("construct response over the pre-existing primed cache");
     let mut runtime = InjectedQueryRuntime::new(transport);

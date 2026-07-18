@@ -22,7 +22,8 @@ use std::time::Duration;
 pub use tidb_txnkv::region;
 pub use tidb_txnkv::rpc;
 pub use tidb_txnkv::{
-    DirectUnaryClientError, SharedReadRuntime, UnaryCallContext, UnaryCancellation,
+    DirectUnaryClientError, DirectUnaryConnectionError, DirectUnaryGrpcCode, SharedReadRuntime,
+    UnaryCallContext, UnaryCancellation,
 };
 
 #[allow(unused_imports)]
@@ -72,6 +73,8 @@ struct MockClient {
     recorded: Rc<RefCell<Recorded>>,
     cancel_after_check: bool,
     cancel_after_resolve: bool,
+    check_error: Option<DirectUnaryClientError>,
+    resolve_error: Option<DirectUnaryClientError>,
 }
 
 impl LockRecoveryClient for MockClient {
@@ -87,6 +90,9 @@ impl LockRecoveryClient for MockClient {
             request.clone(),
             context.clone(),
         ));
+        if let Some(error) = self.check_error.take() {
+            return Err(error);
+        }
         let response = self.checks.pop_front().expect("one queued status");
         if self.cancel_after_check {
             call.cancellation().cancel();
@@ -106,6 +112,9 @@ impl LockRecoveryClient for MockClient {
             request.clone(),
             context.clone(),
         ));
+        if let Some(error) = self.resolve_error.take() {
+            return Err(error);
+        }
         if self.cancel_after_resolve {
             call.cancellation().cancel();
         }
@@ -152,6 +161,8 @@ fn runtime(
         recorded: Rc::clone(&recorded),
         cancel_after_check: false,
         cancel_after_resolve: false,
+        check_error: None,
+        resolve_error: None,
     };
     let cache = RegionCache::new(StaticLoader {
         locations: vec![
@@ -229,7 +240,7 @@ fn committed_primary_resolves_exact_secondary_through_same_authorities() {
             ..KvrpcContext::default()
         },
         &call(),
-        &FixedTimestampSource(1_100 << 18),
+        &FixedTimestampSource::new(1_100 << 18),
     )
     .unwrap();
     assert_eq!(
@@ -280,7 +291,7 @@ fn rolled_back_status_uses_zero_commit_version() {
             1_300 << 18,
             &KvrpcContext::default(),
             &call(),
-            &FixedTimestampSource(1_100 << 18),
+            &FixedTimestampSource::new(1_100 << 18),
         )
         .unwrap();
         assert_eq!(
@@ -304,7 +315,7 @@ fn alive_status_returns_only_remaining_absolute_transaction_ttl() {
             1_300 << 18,
             &KvrpcContext::default(),
             &call(),
-            &FixedTimestampSource(current_physical_ms << 18),
+            &AdvancingTimestampSource::new([1_100 << 18, current_physical_ms << 18]),
         )
         .unwrap();
         assert_eq!(
@@ -312,7 +323,31 @@ fn alive_status_returns_only_remaining_absolute_transaction_ttl() {
             result
         );
         assert!(recorded.borrow().resolves.is_empty());
+        assert_eq!(recorded.borrow().checks[0].1.current_ts, 1_100 << 18);
     }
+}
+
+#[test]
+fn alive_status_rejects_an_exhausted_one_shot_timestamp_source() {
+    let (runtime, recorded) = runtime(vec![KvrpcCheckTxnStatusResponse {
+        lock_ttl: 500,
+        ..KvrpcCheckTxnStatusResponse::default()
+    }]);
+    assert_eq!(
+        resolve_optimistic_locks(
+            &runtime,
+            &[secondary()],
+            1_300 << 18,
+            &KvrpcContext::default(),
+            &call(),
+            &FixedTimestampSource::new(1_100 << 18),
+        ),
+        Err(LockRecoveryError::Timestamp(
+            "one-shot timestamp source is exhausted".to_owned()
+        ))
+    );
+    assert_eq!(recorded.borrow().checks[0].1.current_ts, 1_100 << 18);
+    assert!(recorded.borrow().resolves.is_empty());
 }
 
 #[test]
@@ -379,7 +414,7 @@ fn cancellation_after_check_or_resolve_wins_before_followup_mutation() {
             1_300 << 18,
             &KvrpcContext::default(),
             &UnaryCallContext::new(Duration::from_secs(2), cancellation),
-            &FixedTimestampSource(1_100 << 18),
+            &FixedTimestampSource::new(1_100 << 18),
         );
         assert_eq!(result, Err(LockRecoveryError::CallerCancelled));
         assert_eq!(
@@ -387,6 +422,63 @@ fn cancellation_after_check_or_resolve_wins_before_followup_mutation() {
             usize::from(cancel_after_resolve)
         );
     }
+}
+
+#[test]
+fn caller_cancelled_rpc_is_typed_at_both_lock_commands() {
+    let (check_runtime, _) = runtime(vec![KvrpcCheckTxnStatusResponse::default()]);
+    check_runtime.client().borrow_mut().check_error = Some(DirectUnaryClientError::CallerCancelled);
+    assert_eq!(
+        resolve_optimistic_locks(
+            &check_runtime,
+            &[secondary()],
+            1_300 << 18,
+            &KvrpcContext::default(),
+            &call(),
+            &FixedTimestampSource::new(1_100 << 18),
+        ),
+        Err(LockRecoveryError::CallerCancelled)
+    );
+
+    let (resolve_runtime, recorded) = runtime(vec![KvrpcCheckTxnStatusResponse {
+        commit_version: 1_200 << 18,
+        ..KvrpcCheckTxnStatusResponse::default()
+    }]);
+    resolve_runtime.client().borrow_mut().resolve_error =
+        Some(DirectUnaryClientError::CallerCancelled);
+    assert_eq!(
+        resolve_optimistic_locks(
+            &resolve_runtime,
+            &[secondary()],
+            1_300 << 18,
+            &KvrpcContext::default(),
+            &call(),
+            &FixedTimestampSource::new(1_100 << 18),
+        ),
+        Err(LockRecoveryError::CallerCancelled)
+    );
+    assert_eq!(recorded.borrow().resolves.len(), 1);
+
+    let (remote_runtime, _) = runtime(vec![KvrpcCheckTxnStatusResponse::default()]);
+    remote_runtime.client().borrow_mut().check_error = Some(DirectUnaryClientError::Connection(
+        DirectUnaryConnectionError::remote_grpc(
+            "primary:20160",
+            9,
+            DirectUnaryGrpcCode::Canceled,
+            "remote canceled".to_owned(),
+        ),
+    ));
+    assert!(matches!(
+        resolve_optimistic_locks(
+            &remote_runtime,
+            &[secondary()],
+            1_300 << 18,
+            &KvrpcContext::default(),
+            &call(),
+            &FixedTimestampSource::new(1_100 << 18),
+        ),
+        Err(LockRecoveryError::Rpc(_))
+    ));
 }
 
 #[test]
@@ -414,7 +506,7 @@ fn txn_not_found_primary_mismatch_and_undetermined_status_fail_closed() {
             1_300 << 18,
             &KvrpcContext::default(),
             &call(),
-            &FixedTimestampSource(1_100 << 18),
+            &FixedTimestampSource::new(1_100 << 18),
         );
         assert!(matches!(result, Err(LockRecoveryError::KeyError(_))));
         assert!(recorded.borrow().resolves.is_empty());
@@ -431,7 +523,7 @@ fn txn_not_found_primary_mismatch_and_undetermined_status_fail_closed() {
             1_300 << 18,
             &KvrpcContext::default(),
             &call(),
-            &FixedTimestampSource(1_100 << 18),
+            &FixedTimestampSource::new(1_100 << 18),
         ),
         Err(LockRecoveryError::UndeterminedStatus { .. })
     ));
@@ -448,7 +540,7 @@ fn txn_not_found_primary_mismatch_and_undetermined_status_fail_closed() {
             1_300 << 18,
             &KvrpcContext::default(),
             &call(),
-            &FixedTimestampSource(1_100 << 18),
+            &FixedTimestampSource::new(1_100 << 18),
         ),
         Err(LockRecoveryError::MinCommitTsPushed)
     );

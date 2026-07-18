@@ -62,6 +62,35 @@ struct RecordingClient {
     trace: Rc<RefCell<TransportTrace>>,
 }
 
+impl RecordingClient {
+    fn record_result(
+        &self,
+        address: &str,
+        request: &DirectUnaryRequest,
+        result: &Result<DirectUnaryResponse, DirectUnaryClientError>,
+    ) {
+        let usable_response = result.as_ref().ok().is_some_and(|response| {
+            CoprocessorResponse::decode(response.encoded_response.as_slice()).is_ok_and(|decoded| {
+                decoded.region_error.is_none() && decoded.other_error.is_empty()
+            })
+        });
+        self.trace.borrow_mut().dispatches.push(DispatchTrace {
+            region_id: request.context.region_id,
+            address: address.to_owned(),
+            usable_response,
+        });
+        if let Err(error) = result {
+            if let Some(connection) = error.connection() {
+                self.trace.borrow_mut().failures.push((
+                    request.context.region_id,
+                    connection.address().to_owned(),
+                    connection.version(),
+                ));
+            }
+        }
+    }
+}
+
 struct SharedPrimedLoader {
     shared: Rc<RefCell<PdRegionLoader>>,
     primed: Rc<RefCell<VecDeque<RegionLocation>>>,
@@ -108,25 +137,18 @@ impl DirectUnaryClient for RecordingClient {
         timeout: Duration,
     ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
         let result = self.inner.send_request(address, request, timeout);
-        let usable_response = result.as_ref().ok().is_some_and(|response| {
-            CoprocessorResponse::decode(response.encoded_response.as_slice()).is_ok_and(|decoded| {
-                decoded.region_error.is_none() && decoded.other_error.is_empty()
-            })
-        });
-        self.trace.borrow_mut().dispatches.push(DispatchTrace {
-            region_id: request.context.region_id,
-            address: address.to_owned(),
-            usable_response,
-        });
-        if let Err(error) = &result {
-            if let Some(connection) = error.connection() {
-                self.trace.borrow_mut().failures.push((
-                    request.context.region_id,
-                    connection.address().to_owned(),
-                    connection.version(),
-                ));
-            }
-        }
+        self.record_result(address, request, &result);
+        result
+    }
+
+    fn send_request_with_context(
+        &mut self,
+        address: &str,
+        request: &DirectUnaryRequest,
+        call: &tidb_txnkv::UnaryCallContext,
+    ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
+        let result = self.inner.send_request_with_context(address, request, call);
+        self.record_result(address, request, &result);
         result
     }
 
@@ -298,7 +320,7 @@ fn one_lazy_response_recovers_after_its_cached_tikv_leader_stops() {
             default_timeout: Duration::from_secs(5),
             ..DirectUnaryRuntimeConfig::default()
         },
-        tidb_distsql::FixedTimestampSource(1 << 18),
+        tidb_distsql::FixedTimestampSource::new(1 << 18),
     )
     .expect("construct direct unary transport");
     let mut runtime = InjectedQueryRuntime::new(transport);

@@ -178,6 +178,23 @@ impl DirectUnaryClient for ScriptedClient {
             .map(|encoded_response| DirectUnaryResponse { encoded_response })
     }
 
+    fn send_request_with_context(
+        &mut self,
+        address: &str,
+        request: &DirectUnaryRequest,
+        call: &tidb_txnkv::UnaryCallContext,
+    ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
+        if call.cancellation().is_cancelled() {
+            return Err(DirectUnaryClientError::CallerCancelled);
+        }
+        let result = self.send_request(address, request, call.timeout());
+        if call.cancellation().is_cancelled() {
+            Err(DirectUnaryClientError::CallerCancelled)
+        } else {
+            result
+        }
+    }
+
     fn close_address(&mut self, address: &str) -> Result<(), DirectUnaryClientError> {
         self.events
             .borrow_mut()
@@ -553,7 +570,7 @@ fn transport_with_loader_calls_and_config(
             regions: regions.into_iter().collect(),
         }),
         config,
-        tidb_txnkv::lock::FixedTimestampSource(1 << 18),
+        tidb_txnkv::lock::FixedTimestampSource::new(1 << 18),
     )
     .unwrap()
 }
@@ -579,7 +596,7 @@ fn transport_with_transport_failures(
             regions: regions.into_iter().collect(),
         }),
         config,
-        tidb_txnkv::lock::FixedTimestampSource(1 << 18),
+        tidb_txnkv::lock::FixedTimestampSource::new(1 << 18),
     )
     .unwrap()
 }
@@ -1152,6 +1169,85 @@ fn cancellation_during_nil_leader_sleep_keeps_cached_route_and_skips_pd_and_redi
 }
 
 #[test]
+fn retry_wait_never_crosses_the_bind_anchored_deadline() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let retry_control = Rc::new(RecordingRetryControl::default());
+    let transport = transport_with_transport_failures(
+        Rc::clone(&calls),
+        [Err(connection_failure(
+            "tikv-old:20160",
+            1,
+            DirectUnaryTransportClass::Connection,
+            None,
+        ))],
+        [Ok(StoreLiveness::Reachable)],
+        Rc::clone(&events),
+        [location(1, "a", "z", "tikv-old:20160")],
+        DirectUnaryRuntimeConfig {
+            region_retry_waiter: retry_control.clone(),
+            ..DirectUnaryRuntimeConfig::default()
+        },
+    );
+    let mut request_metadata = metadata("a", "z");
+    request_metadata.session.tikv_client_read_timeout_ms = 50;
+    let mut runtime = InjectedQueryRuntime::new(transport);
+    let mut result = select_result(&mut runtime, &transport_request(request_metadata));
+
+    let error = result.next_raw().unwrap_err().to_string();
+    assert!(error.contains("query deadline exceeded"), "{error}");
+    assert!(!error.contains("cancelled by caller"), "{error}");
+    assert!(retry_control.sleeps.borrow().is_empty());
+    assert_eq!(calls.borrow().len(), 1);
+    assert_eq!(
+        events
+            .borrow()
+            .iter()
+            .filter(|event| matches!(event, ClientEvent::Liveness { .. }))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn elapsed_deadline_blocks_zero_wait_dispatch_and_cancellation_wins() {
+    for cancel_execution in [false, true] {
+        let calls = Rc::new(RefCell::new(Vec::new()));
+        let retry_control = Rc::new(RecordingRetryControl::default());
+        let execution = std::sync::Arc::new(tidb_distsql::CancelHandle::default());
+        let mut request_metadata = metadata("a", "z");
+        request_metadata.session.tikv_client_read_timeout_ms = 1;
+        let request = TransportRequest::new(request_metadata, std::sync::Arc::clone(&execution));
+        let transport = transport_with_loader_calls_and_config(
+            Rc::clone(&calls),
+            [Ok(response(b"must-not-dispatch"))],
+            [location(1, "a", "z", "tikv-1:20160")],
+            9001,
+            Rc::new(RefCell::new(Vec::new())),
+            DirectUnaryRuntimeConfig {
+                region_retry_waiter: retry_control.clone(),
+                ..DirectUnaryRuntimeConfig::default()
+            },
+        );
+        let mut runtime = InjectedQueryRuntime::new(transport);
+        let mut result = select_result(&mut runtime, &request);
+        std::thread::sleep(Duration::from_millis(3));
+        if cancel_execution {
+            execution.cancel();
+        }
+
+        let error = result.next_raw().unwrap_err().to_string();
+        if cancel_execution {
+            assert!(error.contains("query cancelled by caller"), "{error}");
+        } else {
+            assert!(error.contains("query deadline exceeded"), "{error}");
+        }
+        assert!(calls.borrow().is_empty());
+        assert!(retry_control.sleeps.borrow().is_empty());
+    }
+}
+
+#[test]
 fn rebuild_splits_failed_task_in_place_and_keeps_future_task_order_and_attempt() {
     let calls = Rc::new(RefCell::new(Vec::new()));
     let loader_calls = Rc::new(RefCell::new(Vec::new()));
@@ -1692,7 +1788,9 @@ fn transport_attempt_exhaustion_rebuilds_through_region_miss_instead_of_returnin
             ..DirectUnaryRuntimeConfig::default()
         },
     ));
-    let mut result = select_result(&mut runtime, &transport_request(metadata("a", "z")));
+    let mut request_metadata = metadata("a", "z");
+    request_metadata.session.tikv_client_read_timeout_ms = 60_000;
+    let mut result = select_result(&mut runtime, &transport_request(request_metadata));
 
     assert_eq!(
         result.next_raw().unwrap(),
@@ -1809,7 +1907,7 @@ fn missing_cluster_loader_failure_and_empty_pd_address_fail_before_client_dispat
             regions: VecDeque::new(),
         }),
         DirectUnaryRuntimeConfig::default(),
-        tidb_txnkv::lock::FixedTimestampSource(1 << 18),
+        tidb_txnkv::lock::FixedTimestampSource::new(1 << 18),
     )
     .err()
     .unwrap();

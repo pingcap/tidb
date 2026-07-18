@@ -48,13 +48,8 @@ struct RecordingClient {
     dispatches: Rc<RefCell<Vec<ObservedDispatch>>>,
 }
 
-impl DirectUnaryClient for RecordingClient {
-    fn send_request(
-        &mut self,
-        address: &str,
-        request: &DirectUnaryRequest,
-        timeout: Duration,
-    ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
+impl RecordingClient {
+    fn record_dispatch(&self, address: &str, request: &DirectUnaryRequest) {
         let peer = request
             .context
             .peer
@@ -68,7 +63,28 @@ impl DirectUnaryClient for RecordingClient {
             replica_read: request.context.replica_read,
             stale_read: request.context.stale_read,
         });
+    }
+}
+
+impl DirectUnaryClient for RecordingClient {
+    fn send_request(
+        &mut self,
+        address: &str,
+        request: &DirectUnaryRequest,
+        timeout: Duration,
+    ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
+        self.record_dispatch(address, request);
         self.inner.send_request(address, request, timeout)
+    }
+
+    fn send_request_with_context(
+        &mut self,
+        address: &str,
+        request: &DirectUnaryRequest,
+        call: &tidb_txnkv::UnaryCallContext,
+    ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
+        self.record_dispatch(address, request);
+        self.inner.send_request_with_context(address, request, call)
     }
 
     fn close_address(&mut self, address: &str) -> Result<(), DirectUnaryClientError> {
@@ -160,7 +176,7 @@ fn follower_policy_reaches_a_live_nonleader_voter() {
             default_timeout: Duration::from_secs(5),
             ..DirectUnaryRuntimeConfig::default()
         },
-        tidb_distsql::FixedTimestampSource(1 << 18),
+        tidb_distsql::FixedTimestampSource::new(1 << 18),
     )
     .expect("construct production direct unary transport");
     let mut runtime = InjectedQueryRuntime::new(transport);

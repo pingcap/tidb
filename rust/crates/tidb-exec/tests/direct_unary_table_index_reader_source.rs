@@ -96,6 +96,23 @@ impl DirectUnaryClient for ReaderUnaryClient {
         })
     }
 
+    fn send_request_with_context(
+        &mut self,
+        address: &str,
+        request: &DirectUnaryRequest,
+        call: &tidb_distsql::UnaryCallContext,
+    ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
+        if call.cancellation().is_cancelled() {
+            return Err(DirectUnaryClientError::CallerCancelled);
+        }
+        let result = self.send_request(address, request, call.timeout());
+        if call.cancellation().is_cancelled() {
+            Err(DirectUnaryClientError::CallerCancelled)
+        } else {
+            result
+        }
+    }
+
     fn close_address(&mut self, _address: &str) -> Result<(), DirectUnaryClientError> {
         Ok(())
     }
@@ -209,7 +226,7 @@ fn transport_with_rows(
             default_timeout: Duration::from_secs(9),
             ..DirectUnaryRuntimeConfig::default()
         },
-        tidb_distsql::FixedTimestampSource(1 << 18),
+        tidb_distsql::FixedTimestampSource::new(1 << 18),
     )
     .unwrap()
 }
