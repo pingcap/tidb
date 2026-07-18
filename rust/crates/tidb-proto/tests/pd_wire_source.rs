@@ -37,6 +37,13 @@ fn pd_request_projection_keeps_source_field_numbers_and_presence() {
         region.encode_to_vec(),
         vec![0x0a, 0x02, 0x08, 0x2a, 0x12, 0x02, 0xaa, 0xbb, 0x18, 0x01]
     );
+    // GetRegion and GetPrevRegion intentionally share this exact request wire.
+    let previous_region = pdpb::GetRegionRequest {
+        header: Some(header.clone()),
+        region_key: vec![0xaa, 0xbb],
+        need_buckets: true,
+    };
+    assert_eq!(previous_region.encode_to_vec(), region.encode_to_vec());
     let store = pdpb::GetStoreRequest {
         header: Some(header),
         store_id: 7,

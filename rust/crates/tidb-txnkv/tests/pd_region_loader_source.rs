@@ -27,7 +27,8 @@ use tidb_proto::pdpb::{
 };
 use tidb_txnkv::region::{
     BatchLoadOptions, BatchRegionLoader, BatchScanBackoff, BatchScanRetryReason, KeyRange,
-    RegionCache, RegionLoader, RegionRouteError,
+    RegionCache, RegionLoader, RegionQuery, RegionQueryLoader, RegionQueryOptions,
+    RegionQueryRoute, RegionRouteError,
 };
 use tidb_txnkv::region::{
     PeerRole, RegionMetadata, RegionMetadataPeer, RegionRecoveryLoader, RegionVerId,
@@ -66,13 +67,18 @@ struct MockPd {
 }
 
 struct State {
+    members: Option<pdpb::GetMembersResponse>,
+    members_unavailable: bool,
     region: pdpb::GetRegionResponse,
+    region_unavailable: bool,
+    prev_region: pdpb::GetRegionResponse,
     region_by_id: pdpb::GetRegionResponse,
     scan_regions: pdpb::ScanRegionsResponse,
     batch_scan_regions: pdpb::BatchScanRegionsResponse,
     batch_scan_unimplemented: bool,
     stores: HashMap<u64, pdpb::GetStoreResponse>,
     region_requests: Vec<pdpb::GetRegionRequest>,
+    prev_region_requests: Vec<pdpb::GetRegionRequest>,
     region_by_id_requests: Vec<pdpb::GetRegionByIdRequest>,
     scan_region_requests: Vec<pdpb::ScanRegionsRequest>,
     batch_scan_region_requests: Vec<pdpb::BatchScanRegionsRequest>,
@@ -86,6 +92,13 @@ impl Pd for MockPd {
         request: tonic::Request<pdpb::GetMembersRequest>,
     ) -> Result<tonic::Response<pdpb::GetMembersResponse>, tonic::Status> {
         assert!(request.into_inner().header.is_none());
+        let state = self.state.lock().unwrap();
+        if state.members_unavailable {
+            return Err(tonic::Status::unavailable("removed member"));
+        }
+        if let Some(response) = &state.members {
+            return Ok(tonic::Response::new(response.clone()));
+        }
         let member = pdpb::Member {
             name: "pd-1".to_owned(),
             member_id: 1,
@@ -106,7 +119,19 @@ impl Pd for MockPd {
     ) -> Result<tonic::Response<pdpb::GetRegionResponse>, tonic::Status> {
         let mut state = self.state.lock().unwrap();
         state.region_requests.push(request.into_inner());
+        if state.region_unavailable {
+            return Err(tonic::Status::unavailable("removed member"));
+        }
         Ok(tonic::Response::new(state.region.clone()))
+    }
+
+    async fn get_prev_region(
+        &self,
+        request: tonic::Request<pdpb::GetRegionRequest>,
+    ) -> Result<tonic::Response<pdpb::GetRegionResponse>, tonic::Status> {
+        let mut state = self.state.lock().unwrap();
+        state.prev_region_requests.push(request.into_inner());
+        Ok(tonic::Response::new(state.prev_region.clone()))
     }
 
     async fn get_region_by_id(
@@ -324,6 +349,86 @@ fn loader_encodes_key_decodes_boundaries_and_filters_source_unusable_peers() {
             .collect::<Vec<_>>(),
         [101, 102, 103, 104]
     );
+}
+
+#[test]
+fn end_key_loader_uses_previous_region_only_at_an_exact_nonempty_start_boundary() {
+    // client-go/internal/locate/region_cache.go:2361-2418.
+    let leader = Server::start(valid_state());
+    let follower = Server::start(valid_state());
+    let leader_url = format!("http://{}", leader.address);
+    let follower_url = format!("http://{}", follower.address);
+    let members = membership_response(&leader_url, &follower_url);
+    leader.state.lock().unwrap().members = Some(members.clone());
+    follower.state.lock().unwrap().members = Some(members);
+    let mut loader = PdRegionLoader::connect(&leader.address, Duration::from_secs(2)).unwrap();
+
+    let previous = leader.state.lock().unwrap().region.clone();
+    leader.state.lock().unwrap().prev_region = previous;
+    let mut follower_state = follower.state.lock().unwrap();
+    let boundary_region = follower_state.region.region.as_mut().unwrap();
+    boundary_region.id = 8;
+    boundary_region.start_key = encoded(b"logical-end");
+    boundary_region.end_key = encoded(b"next-end");
+    boundary_region.region_epoch = Some(metapb::RegionEpoch {
+        conf_ver: 5,
+        version: 6,
+    });
+    drop(follower_state);
+    leader.state.lock().unwrap().region_unavailable = true;
+    leader.state.lock().unwrap().members_unavailable = true;
+
+    let location = loader.load_region_by_end_key(b"logical-end").unwrap();
+    assert_eq!(location.region.id, 7);
+    assert_eq!(location.start_key, b"logical-start");
+    assert_eq!(location.end_key, b"logical-end");
+    assert!(location.buckets.is_some());
+
+    assert_eq!(loader.active_endpoint(), follower_url);
+    let leader_state = leader.state.lock().unwrap();
+    let follower_state = follower.state.lock().unwrap();
+    assert_eq!(leader_state.region_requests.len(), 1);
+    assert_eq!(follower_state.region_requests.len(), 1);
+    assert_eq!(leader_state.prev_region_requests.len(), 1);
+    assert!(follower_state.prev_region_requests.is_empty());
+    assert_eq!(
+        leader_state.region_requests[0].region_key,
+        encoded(b"logical-end")
+    );
+    assert_eq!(
+        follower_state.region_requests[0].region_key,
+        encoded(b"logical-end")
+    );
+    assert_eq!(
+        leader_state.prev_region_requests[0].region_key,
+        encoded(b"logical-end")
+    );
+    assert!(leader_state.region_requests[0].need_buckets);
+    assert!(follower_state.region_requests[0].need_buckets);
+    assert!(leader_state.prev_region_requests[0].need_buckets);
+}
+
+#[test]
+fn end_key_query_preserves_bucket_flag_and_skips_previous_lookup_off_boundary() {
+    let server = Server::start(valid_state());
+    let mut loader = PdRegionLoader::connect(&server.address, Duration::from_secs(2)).unwrap();
+
+    let location = loader
+        .query_region(
+            RegionQuery::EndKey(b"inside-region"),
+            RegionQueryOptions {
+                need_buckets: false,
+                route: RegionQueryRoute::AllowFollowerOrRouter,
+            },
+        )
+        .unwrap();
+    assert_eq!(location.region.id, 7);
+    assert!(location.buckets.is_none());
+
+    let state = server.state.lock().unwrap();
+    assert_eq!(state.region_requests.len(), 1);
+    assert!(!state.region_requests[0].need_buckets);
+    assert!(state.prev_region_requests.is_empty());
 }
 
 #[test]
@@ -708,7 +813,11 @@ fn valid_state() -> State {
         )),
     };
     State {
+        members: None,
+        members_unavailable: false,
         region: region.clone(),
+        region_unavailable: false,
+        prev_region: region.clone(),
         region_by_id: region,
         scan_regions: pdpb::ScanRegionsResponse {
             header: Some(header()),
@@ -750,10 +859,32 @@ fn valid_state() -> State {
             ),
         ]),
         region_requests: Vec::new(),
+        prev_region_requests: Vec::new(),
         region_by_id_requests: Vec::new(),
         scan_region_requests: Vec::new(),
         batch_scan_region_requests: Vec::new(),
         store_requests: Vec::new(),
+    }
+}
+
+fn membership_response(leader_url: &str, follower_url: &str) -> pdpb::GetMembersResponse {
+    let leader = pdpb::Member {
+        name: "pd-leader".to_owned(),
+        member_id: 1,
+        client_urls: vec![leader_url.to_owned()],
+        ..pdpb::Member::default()
+    };
+    let follower = pdpb::Member {
+        name: "pd-follower".to_owned(),
+        member_id: 2,
+        client_urls: vec![follower_url.to_owned()],
+        ..pdpb::Member::default()
+    };
+    pdpb::GetMembersResponse {
+        header: Some(header()),
+        members: vec![leader.clone(), follower],
+        leader: Some(leader),
+        ..pdpb::GetMembersResponse::default()
     }
 }
 

@@ -11,8 +11,8 @@ mod error;
 mod model;
 
 pub use client::{
-    PdClient, BATCH_SCAN_REGIONS_PATH, GET_MEMBERS_PATH, GET_REGION_BY_ID_PATH, GET_REGION_PATH,
-    GET_STORE_PATH, SCAN_REGIONS_PATH,
+    PdClient, BATCH_SCAN_REGIONS_PATH, GET_MEMBERS_PATH, GET_PREV_REGION_PATH,
+    GET_REGION_BY_ID_PATH, GET_REGION_PATH, GET_STORE_PATH, SCAN_REGIONS_PATH,
 };
 pub use error::{PdClientError, PdOperation};
 pub use model::{

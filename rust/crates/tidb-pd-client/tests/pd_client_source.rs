@@ -22,7 +22,8 @@ use std::time::Duration;
 use prost::Message;
 use tidb_pd_client::{
     PdClient, PdKeyRange, PdNodeState, PdStoreState, BATCH_SCAN_REGIONS_PATH, GET_MEMBERS_PATH,
-    GET_REGION_BY_ID_PATH, GET_REGION_PATH, GET_STORE_PATH, SCAN_REGIONS_PATH,
+    GET_PREV_REGION_PATH, GET_REGION_BY_ID_PATH, GET_REGION_PATH, GET_STORE_PATH,
+    SCAN_REGIONS_PATH,
 };
 use tidb_proto::metapb;
 use tidb_proto::pdpb::{
@@ -78,12 +79,14 @@ impl<T> Reply<T> {
 struct State {
     members: Reply<pdpb::GetMembersResponse>,
     region: Reply<pdpb::GetRegionResponse>,
+    prev_region: Reply<pdpb::GetRegionResponse>,
     region_by_id: Reply<pdpb::GetRegionResponse>,
     scan_regions: Reply<pdpb::ScanRegionsResponse>,
     batch_scan_regions: Reply<pdpb::BatchScanRegionsResponse>,
     stores: HashMap<u64, Reply<pdpb::GetStoreResponse>>,
     member_requests: Vec<pdpb::GetMembersRequest>,
     region_requests: Vec<pdpb::GetRegionRequest>,
+    prev_region_requests: Vec<pdpb::GetRegionRequest>,
     region_by_id_requests: Vec<pdpb::GetRegionByIdRequest>,
     scan_region_requests: Vec<pdpb::ScanRegionsRequest>,
     batch_scan_region_requests: Vec<pdpb::BatchScanRegionsRequest>,
@@ -139,6 +142,18 @@ impl Pd for MockPd {
             let mut state = self.state.lock().unwrap();
             state.region_requests.push(request.into_inner());
             state.region.clone()
+        };
+        reply.send().await
+    }
+
+    async fn get_prev_region(
+        &self,
+        request: tonic::Request<pdpb::GetRegionRequest>,
+    ) -> Result<tonic::Response<pdpb::GetRegionResponse>, tonic::Status> {
+        let reply = {
+            let mut state = self.state.lock().unwrap();
+            state.prev_region_requests.push(request.into_inner());
+            state.prev_region.clone()
         };
         reply.send().await
     }
@@ -384,6 +399,7 @@ fn valid_state() -> State {
             ..pdpb::GetMembersResponse::default()
         }),
         region: Reply::Value(region_response()),
+        prev_region: Reply::Value(region_response()),
         region_by_id: Reply::Value(region_response()),
         scan_regions: Reply::Value(pdpb::ScanRegionsResponse {
             header: Some(header(CLUSTER_ID)),
@@ -421,6 +437,7 @@ fn valid_state() -> State {
         ]),
         member_requests: Vec::new(),
         region_requests: Vec::new(),
+        prev_region_requests: Vec::new(),
         region_by_id_requests: Vec::new(),
         scan_region_requests: Vec::new(),
         batch_scan_region_requests: Vec::new(),
@@ -480,6 +497,7 @@ fn exact_methods_headers_wire_key_roles_and_store_states_are_preserved_once() {
     // client.go:714-764 GetRegion; client.go:1034-1091 GetStore.
     assert_eq!(GET_MEMBERS_PATH, "/pdpb.PD/GetMembers");
     assert_eq!(GET_REGION_PATH, "/pdpb.PD/GetRegion");
+    assert_eq!(GET_PREV_REGION_PATH, "/pdpb.PD/GetPrevRegion");
     assert_eq!(GET_REGION_BY_ID_PATH, "/pdpb.PD/GetRegionByID");
     assert_eq!(SCAN_REGIONS_PATH, "/pdpb.PD/ScanRegions");
     assert_eq!(BATCH_SCAN_REGIONS_PATH, "/pdpb.PD/BatchScanRegions");
@@ -552,6 +570,12 @@ fn exact_methods_headers_wire_key_roles_and_store_states_are_preserved_once() {
     assert_eq!(buckets.stats.as_ref().unwrap().write_keys, [11, 12]);
     assert_eq!(buckets.period_in_ms, 1_000);
 
+    let previous = client
+        .get_prev_region_with_buckets(wire_key, false)
+        .unwrap();
+    assert_eq!(previous.id, 7);
+    assert!(previous.buckets.is_none());
+
     let up = client.get_store(101).unwrap().unwrap();
     assert_eq!(up.state, PdStoreState::Up);
     assert_eq!(up.node_state, PdNodeState::Serving);
@@ -574,6 +598,11 @@ fn exact_methods_headers_wire_key_roles_and_store_states_are_preserved_once() {
     assert_eq!(region_request.region_key, wire_key);
     assert!(region_request.need_buckets);
     assert_exact_header(region_request.header.as_ref().unwrap());
+    assert_eq!(state.prev_region_requests.len(), 1);
+    let previous_request = &state.prev_region_requests[0];
+    assert_eq!(previous_request.region_key, wire_key);
+    assert!(!previous_request.need_buckets);
+    assert_exact_header(previous_request.header.as_ref().unwrap());
     assert_eq!(state.store_requests.len(), 2);
     assert_eq!(state.store_requests[0].store_id, 101);
     assert_eq!(state.store_requests[1].store_id, 102);
@@ -897,6 +926,64 @@ fn failed_active_endpoint_refreshes_through_survivor_for_region() {
     let state = survivor.state.lock().unwrap();
     assert_eq!(state.member_requests.len(), 1);
     assert_eq!(state.region_requests.len(), 1);
+}
+
+#[test]
+fn failed_active_endpoint_refreshes_through_survivor_for_previous_region() {
+    let active = Server::start(valid_state());
+    let survivor = Server::start(valid_state());
+    let active_url = http_url(&active);
+    let survivor_url = http_url(&survivor);
+    active.state.lock().unwrap().members = Reply::Value(membership_response(
+        CLUSTER_ID,
+        &[(1, active_url), (2, survivor_url.clone())],
+        1,
+    ));
+    survivor.state.lock().unwrap().members = Reply::Value(membership_response(
+        CLUSTER_ID,
+        &[(2, survivor_url.clone())],
+        2,
+    ));
+    let mut client = PdClient::connect(&active.address, Duration::from_millis(50)).unwrap();
+    active.state.lock().unwrap().prev_region = Reply::Status(tonic::Code::Unavailable, "removed");
+    active.state.lock().unwrap().members = Reply::Status(tonic::Code::Unavailable, "removed");
+
+    let region = client.get_prev_region(b"wire").unwrap();
+    assert_eq!(region.id, 7);
+    assert_eq!(client.active_endpoint(), survivor_url);
+    assert_eq!(survivor.state.lock().unwrap().prev_region_requests.len(), 1);
+}
+
+#[test]
+fn leader_only_previous_region_bypasses_the_active_follower() {
+    let leader = Server::start(valid_state());
+    let follower = Server::start(valid_state());
+    let leader_url = http_url(&leader);
+    let follower_url = http_url(&follower);
+    let members = membership_response(
+        CLUSTER_ID,
+        &[(1, leader_url.clone()), (2, follower_url.clone())],
+        1,
+    );
+    leader.state.lock().unwrap().members = Reply::Value(members.clone());
+    follower.state.lock().unwrap().members = Reply::Value(members);
+    let mut client = PdClient::connect(&leader.address, Duration::from_millis(50)).unwrap();
+
+    leader.state.lock().unwrap().region =
+        Reply::Status(tonic::Code::Unavailable, "stale active endpoint");
+    leader.state.lock().unwrap().members =
+        Reply::Status(tonic::Code::Unavailable, "stale active endpoint");
+    client.get_region(b"wire").unwrap();
+    assert_eq!(client.active_endpoint(), follower_url);
+
+    client.get_prev_region_routed(b"wire", true, true).unwrap();
+    assert_eq!(leader.state.lock().unwrap().prev_region_requests.len(), 1);
+    assert!(follower
+        .state
+        .lock()
+        .unwrap()
+        .prev_region_requests
+        .is_empty());
 }
 
 #[test]
@@ -1252,6 +1339,45 @@ fn region_header_and_topology_errors_fail_after_exactly_one_attempt() {
         assert_eq!(error.kind(), expected, "unexpected error: {error}");
         assert_eq!(
             server.state.lock().unwrap().region_requests.len(),
+            before + 1
+        );
+    }
+}
+
+#[test]
+fn previous_region_reuses_header_and_topology_validation_without_retry() {
+    let server = Server::start(valid_state());
+    let mut client = PdClient::connect(&server.address, Duration::from_secs(2)).unwrap();
+    let cases = [
+        (
+            pdpb::GetRegionResponse {
+                header: None,
+                ..region_response()
+            },
+            "missing_header",
+        ),
+        (
+            pdpb::GetRegionResponse {
+                header: Some(header(CLUSTER_ID + 1)),
+                ..region_response()
+            },
+            "cluster_mismatch",
+        ),
+        (
+            pdpb::GetRegionResponse {
+                region: None,
+                ..region_response()
+            },
+            "missing_region",
+        ),
+    ];
+    for (response, expected) in cases {
+        let before = server.state.lock().unwrap().prev_region_requests.len();
+        server.state.lock().unwrap().prev_region = Reply::Value(response);
+        let error = client.get_prev_region(b"wire").unwrap_err();
+        assert_eq!(error.kind(), expected, "unexpected error: {error}");
+        assert_eq!(
+            server.state.lock().unwrap().prev_region_requests.len(),
             before + 1
         );
     }

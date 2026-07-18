@@ -106,6 +106,27 @@ impl PdRegionLoader {
             .collect()
     }
 
+    fn load_region_by_end_key_routed(
+        &mut self,
+        key: &[u8],
+        need_buckets: bool,
+        leader_only: bool,
+    ) -> Result<RegionLocation, RegionLoadError> {
+        let mut encoded_key = Vec::new();
+        encode_bytes(&mut encoded_key, key);
+        let mut region = self
+            .client
+            .get_region_routed(&encoded_key, need_buckets, leader_only)
+            .map_err(region_load_error)?;
+        if !region.start_key.is_empty() && region.start_key == encoded_key {
+            region = self
+                .client
+                .get_prev_region_routed(&encoded_key, need_buckets, true)
+                .map_err(region_load_error)?;
+        }
+        self.project_region(region)
+    }
+
     fn batch_scan_regions_fallback(
         &mut self,
         ranges: &[KeyRange],
@@ -264,6 +285,10 @@ impl RegionLoader for PdRegionLoader {
         self.project_region(region)
     }
 
+    fn load_region_by_end_key(&mut self, key: &[u8]) -> Result<RegionLocation, RegionLoadError> {
+        self.load_region_by_end_key_routed(key, true, false)
+    }
+
     fn store_labels(&self, store_id: u64) -> &[(String, String)] {
         self.store_labels
             .get(&store_id)
@@ -318,10 +343,9 @@ impl RegionQueryLoader for PdRegionLoader {
                     .map_err(region_load_error)?;
                 self.project_region(region)
             }
-            RegionQuery::EndKey(_) => Err(RegionLoadError::new(
-                "get-prev-region-unavailable",
-                "the checked PD wire projection does not expose GetPrevRegion",
-            )),
+            RegionQuery::EndKey(key) => {
+                self.load_region_by_end_key_routed(key, options.need_buckets, leader_only)
+            }
             RegionQuery::Id(region_id) => {
                 let region = self
                     .client

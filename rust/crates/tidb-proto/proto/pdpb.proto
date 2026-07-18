@@ -7,6 +7,7 @@ service PD {
   rpc GetMembers(GetMembersRequest) returns (GetMembersResponse) {}
   rpc GetStore(GetStoreRequest) returns (GetStoreResponse) {}
   rpc GetRegion(GetRegionRequest) returns (GetRegionResponse) {}
+  rpc GetPrevRegion(GetRegionRequest) returns (GetRegionResponse) {}
   rpc GetRegionByID(GetRegionByIDRequest) returns (GetRegionResponse) {}
   rpc ScanRegions(ScanRegionsRequest) returns (ScanRegionsResponse) {}
   rpc BatchScanRegions(BatchScanRegionsRequest) returns (BatchScanRegionsResponse) {}

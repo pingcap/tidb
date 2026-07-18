@@ -30,6 +30,8 @@ use crate::{
 pub const GET_MEMBERS_PATH: &str = "/pdpb.PD/GetMembers";
 /// Exact key lookup method path.
 pub const GET_REGION_PATH: &str = "/pdpb.PD/GetRegion";
+/// Exact previous-region lookup method path.
+pub const GET_PREV_REGION_PATH: &str = "/pdpb.PD/GetPrevRegion";
 /// Exact region-by-ID method path.
 pub const GET_REGION_BY_ID_PATH: &str = "/pdpb.PD/GetRegionByID";
 /// Exact deprecated contiguous scan method path.
@@ -44,6 +46,12 @@ enum WorkerCommand {
         reply: mpsc::Sender<Result<PdMemberSet, PdClientError>>,
     },
     GetRegion {
+        encoded_key: Vec<u8>,
+        need_buckets: bool,
+        leader_only: bool,
+        reply: mpsc::Sender<Result<PdRegion, PdClientError>>,
+    },
+    GetPrevRegion {
         encoded_key: Vec<u8>,
         need_buckets: bool,
         leader_only: bool,
@@ -265,6 +273,42 @@ impl PdClient {
         response.recv().unwrap_or(Err(PdClientError::Closed))
     }
 
+    /// Loads the region immediately before one already encoded PD wire key.
+    pub fn get_prev_region(&mut self, encoded_key: &[u8]) -> Result<PdRegion, PdClientError> {
+        self.get_prev_region_with_buckets(encoded_key, true)
+    }
+
+    /// Loads the previous region with the caller's exact bucket request flag.
+    pub fn get_prev_region_with_buckets(
+        &mut self,
+        encoded_key: &[u8],
+        need_buckets: bool,
+    ) -> Result<PdRegion, PdClientError> {
+        self.get_prev_region_routed(encoded_key, need_buckets, false)
+    }
+
+    /// Loads the previous region through the active endpoint or only the PD leader.
+    pub fn get_prev_region_routed(
+        &mut self,
+        encoded_key: &[u8],
+        need_buckets: bool,
+        leader_only: bool,
+    ) -> Result<PdRegion, PdClientError> {
+        let Some(commands) = &self.commands else {
+            return Err(PdClientError::Closed);
+        };
+        let (reply, response) = mpsc::channel();
+        commands
+            .send(WorkerCommand::GetPrevRegion {
+                encoded_key: encoded_key.to_vec(),
+                need_buckets,
+                leader_only,
+                reply,
+            })
+            .map_err(|_| PdClientError::Closed)?;
+        response.recv().unwrap_or(Err(PdClientError::Closed))
+    }
+
     /// Loads one region identity with the exact bucket request flag.
     pub fn get_region_by_id(
         &mut self,
@@ -451,6 +495,41 @@ fn run_worker(
                 };
                 let _ = reply.send(result);
             }
+            WorkerCommand::GetPrevRegion {
+                encoded_key,
+                need_buckets,
+                leader_only,
+                reply,
+            } => {
+                let result = if leader_only {
+                    foreground_leader_only(
+                        &runtime,
+                        &mut clients,
+                        &state,
+                        |runtime, clients, endpoint, cluster_id| {
+                            get_prev_region(
+                                runtime,
+                                clients,
+                                endpoint,
+                                timeout,
+                                cluster_id,
+                                &encoded_key,
+                                need_buckets,
+                            )
+                        },
+                    )
+                } else {
+                    get_prev_region_with_failover(
+                        &runtime,
+                        &mut clients,
+                        timeout,
+                        &state,
+                        &encoded_key,
+                        need_buckets,
+                    )
+                };
+                let _ = reply.send(result);
+            }
             WorkerCommand::GetRegionById {
                 region_id,
                 need_buckets,
@@ -623,6 +702,37 @@ fn get_region(
     let response =
         map_rpc_result(response, PdOperation::GetRegion, endpoint, timeout)?.into_inner();
     validate_response_header(PdOperation::GetRegion, response.header.as_ref(), cluster_id)?;
+    project_region(response, need_buckets)
+}
+
+fn get_prev_region(
+    runtime: &tokio::runtime::Runtime,
+    clients: &mut HashMap<String, TonicPdClient<Channel>>,
+    endpoint: &str,
+    timeout: Duration,
+    cluster_id: u64,
+    encoded_key: &[u8],
+    need_buckets: bool,
+) -> Result<PdRegion, PdClientError> {
+    let client = tonic_client(runtime, clients, endpoint)?;
+    let response = runtime.block_on(async {
+        tokio::time::timeout(
+            timeout,
+            client.get_prev_region(pdpb::GetRegionRequest {
+                header: Some(request_header(cluster_id)),
+                region_key: encoded_key.to_vec(),
+                need_buckets,
+            }),
+        )
+        .await
+    });
+    let response =
+        map_rpc_result(response, PdOperation::GetPrevRegion, endpoint, timeout)?.into_inner();
+    validate_response_header(
+        PdOperation::GetPrevRegion,
+        response.header.as_ref(),
+        cluster_id,
+    )?;
     project_region(response, need_buckets)
 }
 
@@ -803,6 +913,33 @@ fn get_region_with_failover(
         }
         Err(error) => Err(error),
     }
+}
+
+fn get_prev_region_with_failover(
+    runtime: &tokio::runtime::Runtime,
+    clients: &mut HashMap<String, TonicPdClient<Channel>>,
+    timeout: Duration,
+    state: &Arc<RwLock<PdSharedState>>,
+    encoded_key: &[u8],
+    need_buckets: bool,
+) -> Result<PdRegion, PdClientError> {
+    foreground_with_failover(
+        runtime,
+        clients,
+        timeout,
+        state,
+        |runtime, clients, endpoint, cluster_id| {
+            get_prev_region(
+                runtime,
+                clients,
+                endpoint,
+                timeout,
+                cluster_id,
+                encoded_key,
+                need_buckets,
+            )
+        },
+    )
 }
 
 fn get_region_by_id_with_failover(
