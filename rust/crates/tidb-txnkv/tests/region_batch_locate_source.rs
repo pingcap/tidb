@@ -441,8 +441,7 @@ fn overlapping_cached_and_loaded_regions_progress_to_complete_coverage() {
         ReplyLoader {
             replies: VecDeque::from([
                 vec![region(1, "a", "c")],
-                vec![region(2, "b", "d")],
-                vec![region(3, "d", "e")],
+                vec![region(2, "b", "d"), region(3, "d", "e")],
             ]),
             calls: Arc::clone(&calls),
         },
@@ -470,7 +469,7 @@ fn overlapping_cached_and_loaded_regions_progress_to_complete_coverage() {
             (b"d".to_vec(), b"e".to_vec()),
         ]
     );
-    assert_eq!(*calls.lock().unwrap(), 3);
+    assert_eq!(*calls.lock().unwrap(), 2);
 }
 
 #[test]
