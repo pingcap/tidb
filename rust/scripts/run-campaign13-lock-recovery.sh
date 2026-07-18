@@ -14,6 +14,7 @@ TAG_DIR="${TIUP_HOME:-${HOME}/.tiup}/data/${TAG}"
 PLAYGROUND_LOG="${TMPDIR:-/tmp}/${TAG}-playground.log"
 RUST_LOG="${TMPDIR:-/tmp}/${TAG}-rust.log"
 TIDB_SERVER=${C13_TIDB_SERVER:-}
+READINESS_ATTEMPTS=240
 PLAYGROUND_PID=
 STORE_ADDRESSES=
 
@@ -116,7 +117,7 @@ tiup playground v8.5.7 --without-monitor --tag "${TAG}" \
 PLAYGROUND_PID=$!
 
 ready=false
-for _ in $(seq 1 120); do
+for _ in $(seq 1 "${READINESS_ATTEMPTS}"); do
   if ! kill -0 "${PLAYGROUND_PID}" 2>/dev/null; then
     echo "TiUP playground exited before readiness" >&2
     tail -120 "${PLAYGROUND_LOG}" >&2
