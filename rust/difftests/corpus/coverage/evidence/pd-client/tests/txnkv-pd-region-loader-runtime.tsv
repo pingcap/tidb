@@ -1,2 +1,0 @@
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-Test	opt/option_test.go	115	TestOptions	PARTIAL	txnkv-pd-region-loader-runtime	rust/crates/tidb-pd-client/tests/pd_client_source.rs	Source-derived mock PD tests prove the explicit timeout, no retry, and no router/follower/forwarding behavior of this bounded client. Dynamic notifications and the full option matrix remain external.

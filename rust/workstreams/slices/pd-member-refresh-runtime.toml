@@ -1,0 +1,43 @@
+schema = "1"
+slice = "pd-member-refresh-runtime"
+status = "ready"
+target = "tidb-pd-client"
+ring = "transaction"
+consumer = "Campaign 11 retains the GetMembers topology already returned during bootstrap, refreshes that member set through any discovered plaintext endpoint, and performs foreground direct-endpoint failover for GetRegion and GetStore while preserving one nonzero cluster identity. Background health loops, router service, TLS, forwarding, generic retry budgets, and production concurrency remain open."
+test_target = "pd_client_source member discovery, URL replacement, direct endpoint failover, cluster mismatch, and one-seed bootstrap cases"
+go_sources = []
+go_tests = []
+module_sources = [
+  "pd-client::client.go",
+  "pd-client::clients/router/client.go",
+  "pd-client::clients/router/request.go",
+  "pd-client::opt/option.go",
+  "pd-client::servicediscovery/service_discovery.go",
+]
+module_tests = [
+  "pd-client::opt/option_test.go:115:TestOptions",
+  "pd-client::servicediscovery/service_discovery_test.go:138:TestServiceClientClientTestSuite",
+  "pd-client::servicediscovery/service_discovery_test.go:406:TestUpdateURLs",
+]
+depends_on = []
+evidence_prerequisites = []
+support_anchors = [
+  "pd-client/servicediscovery/service_discovery.go:496-530:bootstrap",
+  "pd-client/servicediscovery/service_discovery.go:840-864:same-cluster identity",
+  "pd-client/servicediscovery/service_discovery.go:891-922:try known URLs",
+  "pd-client/servicediscovery/service_discovery.go:960-994:GetMembers",
+  "pd-client/servicediscovery/service_discovery.go:996-1012:replace member URLs",
+  "pd-client/servicediscovery/service_discovery.go:1014-1107:switch leader and rebuild followers",
+  "pd-client/servicediscovery/service_discovery_test.go:294-328:service client balancer",
+  "pd-client/servicediscovery/service_discovery_test.go:406-434:membership URL replacement",
+]
+rust_paths = [
+  "rust/crates/tidb-pd-client/src/lib.rs",
+  "rust/crates/tidb-pd-client/src/client.rs",
+  "rust/crates/tidb-pd-client/src/error.rs",
+  "rust/crates/tidb-pd-client/src/model.rs",
+  "rust/crates/tidb-pd-client/tests/pd_client_source.rs",
+  "rust/difftests/corpus/coverage/evidence/pd-client/source/pd-member-refresh-runtime.tsv",
+  "rust/difftests/corpus/coverage/evidence/pd-client/tests/pd-member-refresh-runtime.tsv",
+  "rust/difftests/corpus/coverage/evidence/transfers/pd-member-refresh-runtime.tsv",
+]

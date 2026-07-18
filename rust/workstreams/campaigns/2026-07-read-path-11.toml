@@ -1,0 +1,8 @@
+schema = "1"
+campaign = "2026-07-read-path-11"
+status = "active"
+slices = [
+  "pd-member-refresh-runtime",
+  "txnkv-region-error-recovery-runtime",
+  "distsql-unary-region-retry-runtime",
+]
