@@ -395,7 +395,7 @@ impl<L: RegionRecoveryLoader> BackgroundRegionCache<L> {
         };
         let plan = match recovery {
             RegionErrorRecoveryPlan::Complete(disposition) => return Ok(Ok(disposition)),
-            RegionErrorRecoveryPlan::HydrateEpochNotMatch(plan) => plan,
+            RegionErrorRecoveryPlan::HydrateEpochNotMatch(plan) => *plan,
         };
         let replacements = match self
             .inner

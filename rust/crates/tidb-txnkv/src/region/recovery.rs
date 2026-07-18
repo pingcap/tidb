@@ -231,7 +231,7 @@ impl From<RegionRouteError> for RegionRecoveryError {
 
 pub(super) enum RegionErrorRecoveryPlan {
     Complete(RegionErrorDisposition),
-    HydrateEpochNotMatch(EpochNotMatchRecoveryPlan),
+    HydrateEpochNotMatch(Box<EpochNotMatchRecoveryPlan>),
 }
 
 pub(super) struct EpochNotMatchRecoveryPlan {
@@ -260,7 +260,7 @@ impl<L: RegionRecoveryLoader> RegionCache<L> {
                 let replacements = self
                     .loader_handle()
                     .hydrate_regions(&plan.metadata, plan.attempt.store_id)?;
-                self.publish_epoch_not_match(plan, replacements)
+                self.publish_epoch_not_match(*plan, replacements)
             }
         }
     }
@@ -275,7 +275,7 @@ impl<L: RegionRecoveryLoader> RegionCache<L> {
         let disposition =
             self.on_region_error_inner(error, attempt, backoff, &mut epoch_not_match)?;
         Ok(match epoch_not_match {
-            Some(plan) => RegionErrorRecoveryPlan::HydrateEpochNotMatch(plan),
+            Some(plan) => RegionErrorRecoveryPlan::HydrateEpochNotMatch(Box::new(plan)),
             None => RegionErrorRecoveryPlan::Complete(disposition),
         })
     }

@@ -109,6 +109,13 @@ struct PreparedBatch {
     pending: Vec<PendingBatchCommand>,
 }
 
+struct BatchSubmitContext<'a> {
+    channels: &'a mut ChannelPool,
+    runtime: &'a tokio::runtime::Runtime,
+    call: Option<&'a UnaryCallContext>,
+    commands: &'a std_mpsc::Sender<WorkerCommand>,
+}
+
 impl PreparedBatch {
     fn from_group(group: BatchGroup<OpaqueBatchCommand, BatchCommandCompletion>) -> Self {
         let mut commands = Vec::with_capacity(group.len());
@@ -169,27 +176,22 @@ impl BatchTransportState {
             self.scheduler.push(entry);
         }
         let groups = self.scheduler.build_with_limit(usize::MAX).into_parts();
+        let mut context = BatchSubmitContext {
+            channels,
+            runtime,
+            call,
+            commands,
+        };
         let mut receipts =
             Vec::with_capacity(groups.forwarded.len() + usize::from(groups.direct.is_some()));
         if let Some(group) = groups.direct {
-            if let Some(receipt) = self
-                .send_group(channels, runtime, address, None, group, call, commands)
-                .await
-            {
+            if let Some(receipt) = self.send_group(&mut context, address, None, group).await {
                 receipts.push(receipt);
             }
         }
         for (forwarded_host, group) in groups.forwarded {
             if let Some(receipt) = self
-                .send_group(
-                    channels,
-                    runtime,
-                    address,
-                    Some(forwarded_host.as_str()),
-                    group,
-                    call,
-                    commands,
-                )
+                .send_group(&mut context, address, Some(forwarded_host.as_str()), group)
                 .await
             {
                 receipts.push(receipt);
@@ -200,13 +202,10 @@ impl BatchTransportState {
 
     async fn send_group(
         &mut self,
-        channels: &mut ChannelPool,
-        runtime: &tokio::runtime::Runtime,
+        context: &mut BatchSubmitContext<'_>,
         address: &str,
         forwarded_host: Option<&str>,
         group: BatchGroup<OpaqueBatchCommand, BatchCommandCompletion>,
-        call: Option<&UnaryCallContext>,
-        commands: &std_mpsc::Sender<WorkerCommand>,
     ) -> Option<BatchPublicationReceipt> {
         let prepared = PreparedBatch::from_group(group);
         let key = StreamKey::new(address, forwarded_host);
@@ -225,7 +224,13 @@ impl BatchTransportState {
 
         if !self.streams.contains_key(&key) {
             if let Err(error) = self
-                .recreate_stream(channels, runtime, key.clone(), call, commands)
+                .recreate_stream(
+                    context.channels,
+                    context.runtime,
+                    key.clone(),
+                    context.call,
+                    context.commands,
+                )
                 .await
             {
                 prepared.fail(BatchInflightError::Transport(error));
