@@ -87,6 +87,14 @@ fn command_adapters_share_one_transport_authority_and_exact_paths() {
     assert_eq!(runtime.matches("Builder::new_multi_thread()").count(), 1);
     assert!(runtime.contains("WorkerCommand::UnarySend"));
     assert!(runtime.contains("WorkerCommand::BatchSubmit"));
+    let shutdown = runtime
+        .split("pub(super) fn shutdown(&mut self)")
+        .nth(1)
+        .unwrap();
+    assert!(
+        shutdown.find("self.cancellation.cancel()").unwrap()
+            < shutdown.find("commands.take()").unwrap()
+    );
 
     let batch = include_str!("../src/rpc/batch/transport.rs");
     assert!(batch.contains(".batch_commands(request)"));
@@ -96,6 +104,9 @@ fn command_adapters_share_one_transport_authority_and_exact_paths() {
     assert!(!batch.contains("ChannelPool::new()"));
     assert!(!batch.contains("Runtime::new()"));
     assert!(!batch.contains("Builder::new_"));
+    assert!(batch.contains("STREAM_OPEN_TIMEOUT: Duration = Duration::from_secs(5)"));
+    assert!(batch.contains("shutdown.changed()"));
+    assert!(batch.contains("reconnect_budget"));
 
     let send_group = batch
         .split("async fn send_group")
@@ -105,7 +116,7 @@ fn command_adapters_share_one_transport_authority_and_exact_paths() {
         .next()
         .unwrap();
     let stamp = send_group.find("client_send_time_ns()").unwrap();
-    let publish = send_group.find(".publish_or_fail").unwrap();
+    let publish = send_group.find("::publish_shared").unwrap();
     let send = send_group.find(".send(request.into_proto())").unwrap();
     assert!(stamp < publish && publish < send);
 }

@@ -18,6 +18,8 @@ use std::sync::mpsc;
 use std::thread::JoinHandle;
 use std::time::Duration;
 
+use tokio::sync::watch;
+
 use crate::region::StoreLiveness;
 
 use super::batch::transport::{
@@ -73,12 +75,28 @@ pub(super) enum WorkerCommand {
 pub(super) struct TransportRuntime {
     commands: Option<mpsc::Sender<WorkerCommand>>,
     worker: Option<JoinHandle<()>>,
+    cancellation: TransportShutdownCancellation,
+}
+
+/// Cloneable direct cancellation for interrupting a blocked transport open.
+#[derive(Clone)]
+pub struct TransportShutdownCancellation {
+    shutdown: watch::Sender<bool>,
+}
+
+impl TransportShutdownCancellation {
+    /// Interrupts runtime-owned operations before orderly close is queued.
+    pub fn cancel(&self) {
+        let _ = self.shutdown.send(true);
+    }
 }
 
 impl TransportRuntime {
     pub(super) fn new() -> Result<Self, DirectUnaryClientError> {
         let (commands, receiver) = mpsc::channel();
         let worker_commands = commands.clone();
+        let (shutdown, shutdown_rx) = watch::channel(false);
+        let cancellation = TransportShutdownCancellation { shutdown };
         let (ready_tx, ready_rx) = mpsc::channel();
         let worker = std::thread::spawn(move || {
             let runtime = match tokio::runtime::Builder::new_multi_thread()
@@ -95,12 +113,13 @@ impl TransportRuntime {
             if ready_tx.send(Ok(())).is_err() {
                 return;
             }
-            run_worker(runtime, receiver, worker_commands);
+            run_worker(runtime, receiver, worker_commands, shutdown_rx);
         });
         match ready_rx.recv() {
             Ok(Ok(())) => Ok(Self {
                 commands: Some(commands),
                 worker: Some(worker),
+                cancellation,
             }),
             Ok(Err(error)) => {
                 let _ = worker.join();
@@ -236,7 +255,12 @@ impl TransportRuntime {
         response.recv().unwrap_or(None)
     }
 
+    pub(super) fn shutdown_cancellation(&self) -> TransportShutdownCancellation {
+        self.cancellation.clone()
+    }
+
     pub(super) fn shutdown(&mut self) {
+        self.cancellation.cancel();
         if let Some(commands) = self.commands.take() {
             let (reply, response) = mpsc::channel();
             if commands.send(WorkerCommand::Close { reply }).is_ok() {
@@ -263,9 +287,10 @@ fn run_worker(
     runtime: tokio::runtime::Runtime,
     receiver: mpsc::Receiver<WorkerCommand>,
     commands: mpsc::Sender<WorkerCommand>,
+    shutdown: watch::Receiver<bool>,
 ) {
     let mut channels = ChannelPool::new();
-    let mut batch = BatchTransportState::new();
+    let mut batch = BatchTransportState::new(shutdown);
     while let Ok(command) = receiver.recv() {
         match command {
             WorkerCommand::UnarySend {

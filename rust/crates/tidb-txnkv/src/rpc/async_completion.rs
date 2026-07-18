@@ -640,6 +640,7 @@ where
 struct PullState<T, E> {
     cancelled: bool,
     result: Option<Result<T, E>>,
+    cancel_listeners: Vec<Box<dyn FnOnce() + Send + 'static>>,
 }
 
 /// Cloneable source-side authority for one asynchronous request.
@@ -711,6 +712,34 @@ where
         self.callback.schedule(Err(error));
     }
 
+    /// Runs `listener` exactly once when the pull side cancels this request.
+    ///
+    /// Registration after cancellation invokes it immediately, closing the
+    /// publication-versus-cancellation race without a second cancellation gate.
+    pub fn on_cancel<F>(&self, listener: F)
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        let mut listener = Some(Box::new(listener) as Box<dyn FnOnce() + Send + 'static>);
+        let run_now = {
+            let mut inner = self
+                .inner
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if inner.cancelled {
+                true
+            } else {
+                inner
+                    .cancel_listeners
+                    .push(listener.take().expect("listener is registered once"));
+                false
+            }
+        };
+        if run_now {
+            listener.expect("canceled registration retains listener")();
+        }
+    }
+
     /// Whether the pull-side caller cancelled this exact request.
     #[must_use]
     pub fn is_cancelled(&self) -> bool {
@@ -749,12 +778,20 @@ impl<T, E> CompletionPull<T, E> {
 
     /// Cancels this exact source attempt and suppresses later publication.
     pub fn cancel(&mut self) {
-        {
+        let listeners = {
             let mut inner = self
                 .inner
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            inner.cancelled = true;
+            if inner.cancelled {
+                Vec::new()
+            } else {
+                inner.cancelled = true;
+                std::mem::take(&mut inner.cancel_listeners)
+            }
+        };
+        for listener in listeners {
+            listener();
         }
         if let Some(cancel_hook) = self.cancel_hook.take() {
             cancel_hook();
@@ -784,6 +821,7 @@ where
     let inner = Arc::new(Mutex::new(PullState {
         cancelled: false,
         result: None,
+        cancel_listeners: Vec::new(),
     }));
     let terminal_inner = Arc::clone(&inner);
     let callback = CompletionCallback::new(run_loop.clone(), move |result| {

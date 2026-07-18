@@ -14,13 +14,13 @@
 
 //! Concrete tonic BatchCommands stream inside the retained transport runtime.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::mpsc as std_mpsc;
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tidb_proto::tikvpb::{tikv_client::TikvClient, BatchCommandsRequest};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
 use crate::rpc::channel_pool::{ChannelPool, VersionedChannel};
@@ -34,6 +34,9 @@ use super::{
 };
 
 const MAX_RECV_MESSAGE_SIZE: usize = (i64::MAX as usize).saturating_sub(1);
+// Pinned client-go internal/client/client.go uses dialTimeout = 5s for
+// waitConnReady before BatchCommands stream creation.
+const STREAM_OPEN_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The original once-only completion carried from admission through receive.
 pub type BatchCommandCompletion = CompletionRequest<OpaqueBatchCommand, BatchInflightError>;
@@ -134,16 +137,20 @@ pub(super) struct BatchTransportState {
     scheduler: BatchScheduler<OpaqueBatchCommand, BatchCommandCompletion>,
     streams: HashMap<StreamKey, ActiveStream>,
     generations: HashMap<StreamKey, u64>,
+    reconnect_budget: HashSet<StreamKey>,
     inflight: Arc<Mutex<BatchInflightTable>>,
+    shutdown: watch::Receiver<bool>,
 }
 
 impl BatchTransportState {
-    pub(super) fn new() -> Self {
+    pub(super) fn new(shutdown: watch::Receiver<bool>) -> Self {
         Self {
             scheduler: BatchScheduler::new(),
             streams: HashMap::new(),
             generations: HashMap::new(),
+            reconnect_budget: HashSet::new(),
             inflight: Arc::new(Mutex::new(BatchInflightTable::new())),
+            shutdown,
         }
     }
 
@@ -209,6 +216,7 @@ impl BatchTransportState {
             });
             if let Some(retired_route) = retired_route {
                 self.remove_stream_if_current(&key, &retired_route);
+                self.reconnect_budget.remove(&key);
             }
 
             if !self.streams.contains_key(&key) {
@@ -262,13 +270,7 @@ impl BatchTransportState {
                     return None;
                 }
             };
-            if self
-                .inflight
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .publish_or_fail(route.clone(), pending)
-                .is_err()
-            {
+            if BatchInflightTable::publish_shared(&self.inflight, route.clone(), pending).is_err() {
                 drop(terminal_guard);
                 return None;
             }
@@ -293,9 +295,12 @@ impl BatchTransportState {
             };
 
             if send_error.is_some() {
+                self.reconnect_budget.remove(&key);
                 if self.remove_stream_if_current(&key, &route) {
                     let _ = self.recreate_stream(channels, runtime, key, commands).await;
                 }
+            } else {
+                self.reconnect_budget.insert(key);
             }
             return Some(receipt);
         }
@@ -323,7 +328,9 @@ impl BatchTransportState {
         let BatchStreamEvent::Retired { route } = event;
         let key = StreamKey::new(route.physical_address(), route.forwarded_host());
         if self.remove_stream_if_current(&key, &route) {
-            let _ = self.recreate_stream(channels, runtime, key, commands).await;
+            if self.reconnect_budget.remove(&key) {
+                let _ = self.recreate_stream(channels, runtime, key, commands).await;
+            }
         }
     }
 
@@ -334,11 +341,8 @@ impl BatchTransportState {
         key: StreamKey,
         commands: &std_mpsc::Sender<WorkerCommand>,
     ) -> Result<(), DirectUnaryClientError> {
-        // PARTIAL: opening awaits tonic response headers on the sole owner
-        // worker. Receive tasks still retire completions immediately through
-        // the shared inflight authority, but unrelated owner bookkeeping can
-        // queue behind a prolonged outage handshake until the dispatcher
-        // itself becomes async/select-driven.
+        // PARTIAL: open is bounded and shutdown-cancelable, but prolonged
+        // outage retry/backoff policy remains above this transport slice.
         if self.streams.contains_key(&key) {
             return Ok(());
         }
@@ -350,6 +354,7 @@ impl BatchTransportState {
             selected,
             commands.clone(),
             Arc::clone(&self.inflight),
+            self.shutdown.clone(),
         )
         .await?;
         self.streams.insert(key, stream);
@@ -359,6 +364,8 @@ impl BatchTransportState {
     pub(super) fn close_address(&mut self, address: &str) {
         self.streams
             .retain(|key, _| key.physical_address != address);
+        self.reconnect_budget
+            .retain(|key| key.physical_address != address);
         self.inflight
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -373,6 +380,7 @@ impl BatchTransportState {
             DirectUnaryClientError::Closed,
         ));
         self.streams.clear();
+        self.reconnect_budget.clear();
         self.inflight
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -408,6 +416,7 @@ async fn open_stream(
     selected: VersionedChannel,
     commands: std_mpsc::Sender<WorkerCommand>,
     inflight: Arc<Mutex<BatchInflightTable>>,
+    mut shutdown: watch::Receiver<bool>,
 ) -> Result<ActiveStream, DirectUnaryClientError> {
     let (outbound, receiver) = mpsc::unbounded_channel();
     let mut request = tonic::Request::new(UnboundedReceiverStream::new(receiver));
@@ -415,10 +424,23 @@ async fn open_stream(
     let version = selected.version;
     let mut client =
         TikvClient::new(selected.channel).max_decoding_message_size(MAX_RECV_MESSAGE_SIZE);
-    let response = client
-        .batch_commands(request)
-        .await
-        .map_err(|error| stream_error(&key.physical_address, version, error))?;
+    if *shutdown.borrow() {
+        return Err(DirectUnaryClientError::Closed);
+    }
+    let response = tokio::select! {
+        _ = shutdown.changed() => return Err(DirectUnaryClientError::Closed),
+        result = tokio::time::timeout(STREAM_OPEN_TIMEOUT, client.batch_commands(request)) => {
+            match result {
+                Ok(Ok(response)) => response,
+                Ok(Err(error)) => {
+                    return Err(stream_error(&key.physical_address, version, error));
+                }
+                Err(_) => {
+                    return Err(stream_open_timeout(&key.physical_address, version));
+                }
+            }
+        }
+    };
     let mut inbound = response.into_inner();
     let receive_route = route.clone();
     let receive_address = key.physical_address.clone();
@@ -487,6 +509,17 @@ async fn open_stream(
         terminal,
         outbound,
     })
+}
+
+fn stream_open_timeout(address: &str, version: u64) -> DirectUnaryClientError {
+    DirectUnaryClientError::Timeout {
+        connection: DirectUnaryConnectionError::local_deadline(
+            address,
+            version,
+            "BatchCommands stream open timed out".to_owned(),
+        ),
+        timeout_ms: u64::try_from(STREAM_OPEN_TIMEOUT.as_millis()).unwrap_or(u64::MAX),
+    }
 }
 
 fn retire_stream(

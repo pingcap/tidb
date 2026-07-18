@@ -21,7 +21,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::rpc::{CompletionRequest, DirectUnaryClientError};
 
@@ -253,6 +253,49 @@ impl BatchInflightTable {
             state.pending.insert(request.request_id, request);
         }
         Ok(())
+    }
+
+    /// Publishes through the shared sole table and binds pull cancellation to
+    /// the exact route generation and request ID that became visible.
+    ///
+    /// Cancellation registered after publication observes prior cancellation
+    /// immediately, so no canceled entry can remain waiting for a response.
+    pub fn publish_shared(
+        table: &Arc<Mutex<Self>>,
+        route: BatchRoute,
+        pending: Vec<PendingBatchCommand>,
+    ) -> Result<(), BatchPublishError> {
+        let registrations = pending
+            .iter()
+            .map(|request| (request.request_id, request.completion.clone()))
+            .collect::<Vec<_>>();
+        table
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .publish_or_fail(route.clone(), pending)?;
+
+        let weak_table = Arc::downgrade(table);
+        for (request_id, completion) in registrations {
+            let route = route.clone();
+            let weak_table = weak_table.clone();
+            completion.on_cancel(move || {
+                let Some(table) = weak_table.upgrade() else {
+                    return;
+                };
+                table
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .cancel_request(&route, request_id);
+            });
+        }
+        Ok(())
+    }
+
+    fn cancel_request(&mut self, route: &BatchRoute, request_id: u64) -> bool {
+        self.routes
+            .get_mut(route)
+            .and_then(|state| state.pending.remove(&request_id))
+            .is_some()
     }
 
     fn publication_error(&self, pending: &[PendingBatchCommand]) -> Option<BatchPublishError> {

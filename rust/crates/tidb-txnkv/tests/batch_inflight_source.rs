@@ -14,7 +14,8 @@
 
 //! Source-shaped BatchCommands pending, failure, cancellation, and demux tests.
 
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tidb_txnkv::rpc::batch::{
@@ -140,6 +141,44 @@ fn canceled_response_is_retired_without_fabricating_a_terminal_result() {
     );
     assert_eq!(pull.try_complete(), Ok(None));
     assert!(inflight.is_empty());
+}
+
+#[test]
+fn pull_cancellation_retires_exact_published_route_before_late_response() {
+    let route = BatchRoute::direct("store-1:20160", 3);
+    let inflight = Arc::new(Mutex::new(BatchInflightTable::new()));
+    let hook_observed_retirement = Arc::new(AtomicBool::new(false));
+    let hook_inflight = Arc::clone(&inflight);
+    let hook_route = route.clone();
+    let hook_observed = Arc::clone(&hook_observed_retirement);
+    let (completion, mut pull) = completion_pair(CompletionRunLoop::new(), move || {
+        assert_eq!(hook_inflight.lock().unwrap().route_len(&hook_route), 0);
+        hook_observed.store(true, Ordering::Release);
+    });
+    let progress = Arc::new(BatchRequestProgress::new(None));
+    let batch_state = BatchRequestState::default();
+    batch_state.set_batch_size(1);
+    progress.record_batch_selected(31, Duration::from_millis(1), batch_state);
+    let request = PendingBatchCommand::new(31, completion, progress);
+    BatchInflightTable::publish_shared(&inflight, route.clone(), vec![request]).unwrap();
+    assert_eq!(inflight.lock().unwrap().route_len(&route), 1);
+
+    pull.cancel();
+    pull.cancel();
+    assert!(hook_observed_retirement.load(Ordering::Acquire));
+    assert_eq!(inflight.lock().unwrap().route_len(&route), 0);
+    assert_eq!(pull.try_complete(), Ok(None));
+
+    assert_eq!(
+        inflight.lock().unwrap().receive(&route, response(vec![31])),
+        BatchRetirementReport {
+            outdated: 1,
+            max_response_request_id: 31,
+            ..BatchRetirementReport::default()
+        }
+    );
+    assert_eq!(pull.try_complete(), Ok(None));
+    assert_eq!(inflight.lock().unwrap().close(), 0);
 }
 
 // client-go/internal/client/client_test.go:742 TestInspectPendingBatchRequests.

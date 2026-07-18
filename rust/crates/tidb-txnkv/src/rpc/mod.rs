@@ -26,6 +26,7 @@ pub use error::{
 };
 pub use liveness::DEFAULT_STORE_LIVENESS_TIMEOUT;
 pub use tonic_coprocessor::TonicCoprocessorClient;
+pub use transport_runtime::TransportShutdownCancellation;
 pub use unary::{UnaryCallContext, UnaryCancellation};
 
 impl<T, E> batch::BatchEntryCompletion for CompletionRequest<T, E>

@@ -14,10 +14,10 @@
 
 #![allow(missing_docs)]
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tidb_proto::tikvpb::batch_commands_request::request::Cmd as RequestCmd;
 use tidb_proto::tikvpb::batch_commands_response::response::Cmd as ResponseCmd;
@@ -40,6 +40,9 @@ struct StreamingTikv {
     metadata: Arc<Mutex<Vec<Option<String>>>>,
     received_bodies: Arc<Mutex<Vec<Vec<u8>>>>,
     hold_seen: Arc<Mutex<Option<mpsc::Sender<()>>>>,
+    withhold_headers: bool,
+    headers_started: Arc<Mutex<Option<mpsc::Sender<()>>>>,
+    release_headers: Arc<AtomicBool>,
 }
 
 #[tonic::async_trait]
@@ -66,6 +69,15 @@ impl Tikv for StreamingTikv {
             .map_err(|error| tonic::Status::invalid_argument(error.to_string()))?;
         self.metadata.lock().unwrap().push(forwarded_host.clone());
         self.streams.fetch_add(1, Ordering::AcqRel);
+        if self.withhold_headers {
+            if let Some(started) = self.headers_started.lock().unwrap().take() {
+                let _ = started.send(());
+            }
+            while !self.release_headers.load(Ordering::Acquire) {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            return Err(tonic::Status::cancelled("withheld header test released"));
+        }
         let received_bodies = Arc::clone(&self.received_bodies);
         let hold_seen = Arc::clone(&self.hold_seen);
         let mut inbound = request.into_inner();
@@ -224,6 +236,9 @@ fn duplex_stream_reuses_pool_isolates_forwarding_reconnects_and_drains_close() {
         metadata: Arc::clone(&metadata),
         received_bodies: Arc::clone(&received_bodies),
         hold_seen: Arc::new(Mutex::new(Some(hold_seen))),
+        withhold_headers: false,
+        headers_started: Arc::new(Mutex::new(None)),
+        release_headers: Arc::new(AtomicBool::new(false)),
     });
     let mut client = tidb_txnkv::rpc::TonicCoprocessorClient::new().unwrap();
 
@@ -328,4 +343,49 @@ fn duplex_stream_reuses_pool_isolates_forwarding_reconnects_and_drains_close() {
             "a packet must never be ambiguously resent"
         );
     }
+}
+
+#[test]
+fn shutdown_cancellation_interrupts_withheld_stream_headers_and_joins_promptly() {
+    let (headers_started, headers_wait) = mpsc::channel();
+    let release_headers = Arc::new(AtomicBool::new(false));
+    let server = TestServer::start(StreamingTikv {
+        streams: Arc::new(AtomicUsize::new(0)),
+        metadata: Arc::new(Mutex::new(Vec::new())),
+        received_bodies: Arc::new(Mutex::new(Vec::new())),
+        hold_seen: Arc::new(Mutex::new(None)),
+        withhold_headers: true,
+        headers_started: Arc::new(Mutex::new(Some(headers_started))),
+        release_headers: Arc::clone(&release_headers),
+    });
+    let mut client = tidb_txnkv::rpc::TonicCoprocessorClient::new().unwrap();
+    let cancellation = client.shutdown_cancellation();
+    let (request, mut pull) = entry(b"withheld-headers", None);
+    let address = server.address.clone();
+    let (finished, finished_wait) = mpsc::channel();
+    let thread = std::thread::spawn(move || {
+        let receipts = client.submit_batch_commands(&address, vec![request]);
+        let close_started = Instant::now();
+        let close = client.close();
+        let _ = finished.send((receipts, close, close_started.elapsed()));
+    });
+
+    headers_wait.recv_timeout(Duration::from_secs(1)).unwrap();
+    let cancel_started = Instant::now();
+    cancellation.cancel();
+    let outcome = finished_wait.recv_timeout(Duration::from_secs(1));
+    release_headers.store(true, Ordering::Release);
+    let (receipts, close, close_elapsed) = outcome.unwrap();
+    thread.join().unwrap();
+
+    assert!(receipts.unwrap().is_empty());
+    close.unwrap();
+    assert!(cancel_started.elapsed() < Duration::from_secs(1));
+    assert!(close_elapsed < Duration::from_secs(1));
+    assert_eq!(
+        wait_for_completion(&mut pull),
+        Err(BatchInflightError::Transport(
+            DirectUnaryClientError::Closed
+        ))
+    );
 }

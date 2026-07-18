@@ -31,7 +31,7 @@ use crate::region::StoreLiveness;
 use super::batch::transport::{BatchCommandEntry, BatchPublicationReceipt};
 use super::channel_pool::ChannelPool;
 use super::forwarding;
-use super::transport_runtime::TransportRuntime;
+use super::transport_runtime::{TransportRuntime, TransportShutdownCancellation};
 use super::{DirectUnaryClientError, DirectUnaryConnectionError, DirectUnaryGrpcCode};
 
 // client-go internal/client sets MaxRecvMsgSize to math.MaxInt64-1. Tonic's
@@ -249,6 +249,10 @@ impl RawTransportClient {
 
     pub(super) fn inspect_batch(&self, address: &str, forwarded_host: Option<&str>) -> Option<u64> {
         self.transport.inspect_batch(address, forwarded_host)
+    }
+
+    pub(super) fn shutdown_cancellation(&self) -> TransportShutdownCancellation {
+        self.transport.shutdown_cancellation()
     }
 
     pub(super) fn shutdown(&mut self) {

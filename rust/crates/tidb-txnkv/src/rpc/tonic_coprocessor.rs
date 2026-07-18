@@ -26,7 +26,7 @@ use crate::{DirectUnaryClient, DirectUnaryRequest, DirectUnaryResponse};
 use super::batch::{BatchCommandEntry, BatchPublicationReceipt};
 use super::liveness::DEFAULT_STORE_LIVENESS_TIMEOUT;
 use super::unary::{RawTransportClient, RawUnaryRequest, UnaryCallContext};
-use super::DirectUnaryClientError;
+use super::{DirectUnaryClientError, TransportShutdownCancellation};
 
 pub(super) use super::unary::RawProtobufCodec;
 
@@ -78,6 +78,15 @@ impl TonicCoprocessorClient {
         forwarded_host: Option<&str>,
     ) -> Option<u64> {
         self.transport.inspect_batch(address, forwarded_host)
+    }
+
+    /// Returns the runtime cancellation fired before orderly close is queued.
+    ///
+    /// Embedders coordinating a concurrent blocking call may fire this handle
+    /// before the owner thread invokes [`DirectUnaryClient::close`].
+    #[must_use]
+    pub fn shutdown_cancellation(&self) -> TransportShutdownCancellation {
+        self.transport.shutdown_cancellation()
     }
 
     /// Closes the current generation only when it is not newer than `version`.
