@@ -23,26 +23,31 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
 
-use crate::rpc::CompletionRequest;
+use crate::rpc::{CompletionRequest, DirectUnaryClientError};
 
-use super::{BatchRequestProgress, BatchStreamState};
+use super::{BatchRequestProgress, BatchStreamState, ScheduledEntry};
 
 use super::wire::{BatchWireError, BatchWireResponse, OpaqueBatchCommand};
 
-/// One physical connection and its optional forwarded TiKV target.
+/// One physical stream generation and its optional forwarded TiKV target.
+///
+/// Generation is part of identity so late receive/failure work from a retired
+/// stream cannot touch a replacement stream at the same address and target.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct BatchRoute {
     physical_address: String,
     forwarded_host: Option<String>,
+    generation: u64,
 }
 
 impl BatchRoute {
     /// Creates a direct route to one physical TiKV address.
     #[must_use]
-    pub fn direct(physical_address: impl Into<String>) -> Self {
+    pub fn direct(physical_address: impl Into<String>, generation: u64) -> Self {
         Self {
             physical_address: physical_address.into(),
             forwarded_host: None,
+            generation,
         }
     }
 
@@ -51,10 +56,12 @@ impl BatchRoute {
     pub fn forwarded(
         physical_address: impl Into<String>,
         forwarded_host: impl Into<String>,
+        generation: u64,
     ) -> Self {
         Self {
             physical_address: physical_address.into(),
             forwarded_host: Some(forwarded_host.into()),
+            generation,
         }
     }
 
@@ -69,6 +76,12 @@ impl BatchRoute {
     pub fn forwarded_host(&self) -> Option<&str> {
         self.forwarded_host.as_deref()
     }
+
+    /// Address-local stream generation owning this route handle.
+    #[must_use]
+    pub const fn generation(&self) -> u64 {
+        self.generation
+    }
 }
 
 /// Terminal failure published to one pending BatchCommands completion.
@@ -77,9 +90,7 @@ pub enum BatchInflightError {
     /// Malformed protobuf or command/ID cardinality from the stream.
     Protocol(BatchWireError),
     /// Send or receive failure supplied by the concrete stream owner.
-    Transport(String),
-    /// The owning batch client closed.
-    Closed,
+    Transport(DirectUnaryClientError),
 }
 
 impl fmt::Display for BatchInflightError {
@@ -87,7 +98,6 @@ impl fmt::Display for BatchInflightError {
         match self {
             Self::Protocol(error) => write!(formatter, "BatchCommands protocol error: {error}"),
             Self::Transport(error) => write!(formatter, "BatchCommands transport error: {error}"),
-            Self::Closed => formatter.write_str("batch client closed"),
         }
     }
 }
@@ -97,6 +107,8 @@ impl std::error::Error for BatchInflightError {}
 /// Publication rejected before any new ID became visible.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BatchPublishError {
+    /// Request ID zero is the scheduler's unassigned sentinel.
+    ZeroRequestId,
     /// A request ID appeared twice in the new group or was already pending.
     DuplicateRequestId(u64),
 }
@@ -104,6 +116,7 @@ pub enum BatchPublishError {
 impl fmt::Display for BatchPublishError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::ZeroRequestId => formatter.write_str("BatchCommands request ID is zero"),
             Self::DuplicateRequestId(request_id) => {
                 write!(formatter, "duplicate BatchCommands request ID {request_id}")
             }
@@ -140,6 +153,22 @@ impl PendingBatchCommand {
     #[must_use]
     pub const fn request_id(&self) -> u64 {
         self.request_id
+    }
+
+    /// Moves one scheduler-selected command into in-flight state.
+    ///
+    /// The returned wire body and pending record are split from the same
+    /// scheduled entry; no second completion pair or terminal authority exists.
+    #[must_use]
+    pub fn from_scheduled(
+        scheduled: ScheduledEntry<
+            OpaqueBatchCommand,
+            CompletionRequest<OpaqueBatchCommand, BatchInflightError>,
+        >,
+    ) -> (OpaqueBatchCommand, Self) {
+        let (request_id, entry) = scheduled.into_parts();
+        let (command, completion, progress) = entry.into_payload_completion();
+        (command, Self::new(request_id, completion, progress))
     }
 }
 
@@ -185,6 +214,9 @@ impl BatchInflightTable {
     ) -> Result<(), BatchPublishError> {
         let mut new_ids = HashSet::with_capacity(pending.len());
         for request in &pending {
+            if request.request_id == 0 {
+                return Err(BatchPublishError::ZeroRequestId);
+            }
             if !new_ids.insert(request.request_id)
                 || self
                     .routes
@@ -329,7 +361,9 @@ impl BatchInflightTable {
             for pending in state.pending.into_values() {
                 pending
                     .completion
-                    .schedule_error(BatchInflightError::Closed);
+                    .schedule_error(BatchInflightError::Transport(
+                        DirectUnaryClientError::Closed,
+                    ));
             }
         }
         failed

@@ -42,26 +42,50 @@ pub const DEFAULT_BATCH_POLICY: &str = BATCH_POLICY_STANDARD;
 /// The scheduler stores no parallel completion state. The later async adapter
 /// implements this trait with the same once-only handle returned to the pull
 /// caller, so queue cancellation and terminal failure share one authority.
-pub trait BatchEntryCompletion<E>: fmt::Debug + Send + Sync {
+pub trait BatchEntryCompletion: fmt::Debug + Send + Sync {
+    /// Typed terminal failure accepted by this completion authority.
+    type Error;
+
     /// Whether the caller canceled this exact request.
     fn is_canceled(&self) -> bool;
     /// Publishes one typed terminal failure through the caller's completion gate.
-    fn fail(&self, error: E);
+    fn fail(&self, error: Self::Error);
+}
+
+impl<C> BatchEntryCompletion for Arc<C>
+where
+    C: BatchEntryCompletion + ?Sized,
+{
+    type Error = C::Error;
+
+    fn is_canceled(&self) -> bool {
+        self.as_ref().is_canceled()
+    }
+
+    fn fail(&self, error: Self::Error) {
+        self.as_ref().fail(error);
+    }
 }
 
 /// One opaque request waiting to be assigned a BatchCommands request ID.
 #[derive(Debug)]
-pub struct BatchEntry<T, E> {
+pub struct BatchEntry<T, C>
+where
+    C: BatchEntryCompletion,
+{
     payload: T,
     forwarded_host: Option<String>,
     priority: u64,
-    completion: Arc<dyn BatchEntryCompletion<E>>,
+    completion: C,
     progress: Arc<BatchRequestProgress>,
 }
 
-impl<T, E> BatchEntry<T, E> {
+impl<T, C> BatchEntry<T, C>
+where
+    C: BatchEntryCompletion,
+{
     /// Creates a direct, normal-priority entry with caller-owned completion.
-    pub fn new(payload: T, completion: Arc<dyn BatchEntryCompletion<E>>) -> Self {
+    pub fn new(payload: T, completion: C) -> Self {
         Self {
             payload,
             forwarded_host: None,
@@ -86,8 +110,8 @@ impl<T, E> BatchEntry<T, E> {
     }
 
     /// Returns the caller-owned cancellation and completion authority.
-    pub fn completion(&self) -> &dyn BatchEntryCompletion<E> {
-        self.completion.as_ref()
+    pub const fn completion(&self) -> &C {
+        &self.completion
     }
 
     /// Returns the entry's shared request progress.
@@ -109,9 +133,20 @@ impl<T, E> BatchEntry<T, E> {
     pub const fn priority_value(&self) -> u64 {
         self.priority
     }
+
+    /// Consumes a scheduled entry and moves its payload, completion, and progress onward.
+    ///
+    /// Forwarding and priority have already served their scheduler purpose once
+    /// an entry reaches a concrete batch group.
+    pub fn into_payload_completion(self) -> (T, C, Arc<BatchRequestProgress>) {
+        (self.payload, self.completion, self.progress)
+    }
 }
 
-impl<T, E> PriorityItem for BatchEntry<T, E> {
+impl<T, C> PriorityItem for BatchEntry<T, C>
+where
+    C: BatchEntryCompletion,
+{
     fn priority(&self) -> u64 {
         self.priority
     }
@@ -123,31 +158,48 @@ impl<T, E> PriorityItem for BatchEntry<T, E> {
 
 /// One entry after the scheduler assigns its stream request ID.
 #[derive(Debug)]
-pub struct ScheduledEntry<T, E> {
+pub struct ScheduledEntry<T, C>
+where
+    C: BatchEntryCompletion,
+{
     request_id: u64,
-    entry: BatchEntry<T, E>,
+    entry: BatchEntry<T, C>,
 }
 
-impl<T, E> ScheduledEntry<T, E> {
+impl<T, C> ScheduledEntry<T, C>
+where
+    C: BatchEntryCompletion,
+{
     /// Returns the assigned request ID.
     pub fn request_id(&self) -> u64 {
         self.request_id
     }
 
     /// Returns the scheduled entry and its caller-owned state.
-    pub fn entry(&self) -> &BatchEntry<T, E> {
+    pub fn entry(&self) -> &BatchEntry<T, C> {
         &self.entry
+    }
+
+    /// Consumes this scheduled entry without replacing its completion authority.
+    pub fn into_parts(self) -> (u64, BatchEntry<T, C>) {
+        (self.request_id, self.entry)
     }
 }
 
 /// Entries assigned to one direct or forwarded BatchCommands request.
 #[derive(Debug)]
-pub struct BatchGroup<T, E> {
-    entries: Vec<ScheduledEntry<T, E>>,
+pub struct BatchGroup<T, C>
+where
+    C: BatchEntryCompletion,
+{
+    entries: Vec<ScheduledEntry<T, C>>,
     state: BatchRequestState,
 }
 
-impl<T, E> Default for BatchGroup<T, E> {
+impl<T, C> Default for BatchGroup<T, C>
+where
+    C: BatchEntryCompletion,
+{
     fn default() -> Self {
         Self {
             entries: Vec::new(),
@@ -156,7 +208,10 @@ impl<T, E> Default for BatchGroup<T, E> {
     }
 }
 
-impl<T, E> BatchGroup<T, E> {
+impl<T, C> BatchGroup<T, C>
+where
+    C: BatchEntryCompletion,
+{
     /// Returns the number of entries in this batch group.
     pub fn len(&self) -> usize {
         self.entries.len()
@@ -168,7 +223,7 @@ impl<T, E> BatchGroup<T, E> {
     }
 
     /// Returns entries in their scheduled request order.
-    pub fn entries(&self) -> &[ScheduledEntry<T, E>] {
+    pub fn entries(&self) -> &[ScheduledEntry<T, C>] {
         &self.entries
     }
 
@@ -177,7 +232,12 @@ impl<T, E> BatchGroup<T, E> {
         self.state.clone()
     }
 
-    fn push(&mut self, entry: ScheduledEntry<T, E>, selected_at: Instant) {
+    /// Consumes this group so the original completions can enter in-flight state.
+    pub fn into_entries(self) -> Vec<ScheduledEntry<T, C>> {
+        self.entries
+    }
+
+    fn push(&mut self, entry: ScheduledEntry<T, C>, selected_at: Instant) {
         entry.entry.progress.record_batch_selected_at(
             entry.request_id,
             selected_at,
@@ -190,12 +250,18 @@ impl<T, E> BatchGroup<T, E> {
 
 /// Direct and forwarding-specific groups built in one scheduling pass.
 #[derive(Debug)]
-pub struct BatchGroups<T, E> {
-    direct: Option<BatchGroup<T, E>>,
-    forwarded: BTreeMap<String, BatchGroup<T, E>>,
+pub struct BatchGroups<T, C>
+where
+    C: BatchEntryCompletion,
+{
+    direct: Option<BatchGroup<T, C>>,
+    forwarded: BTreeMap<String, BatchGroup<T, C>>,
 }
 
-impl<T, E> Default for BatchGroups<T, E> {
+impl<T, C> Default for BatchGroups<T, C>
+where
+    C: BatchEntryCompletion,
+{
     fn default() -> Self {
         Self {
             direct: None,
@@ -204,18 +270,26 @@ impl<T, E> Default for BatchGroups<T, E> {
     }
 }
 
-impl<T, E> BatchGroups<T, E> {
+impl<T, C> BatchGroups<T, C>
+where
+    C: BatchEntryCompletion,
+{
     /// Returns the direct request group, if one was built.
-    pub fn direct(&self) -> Option<&BatchGroup<T, E>> {
+    pub fn direct(&self) -> Option<&BatchGroup<T, C>> {
         self.direct.as_ref()
     }
 
     /// Returns request groups keyed by forwarding target.
-    pub fn forwarded(&self) -> &BTreeMap<String, BatchGroup<T, E>> {
+    pub fn forwarded(&self) -> &BTreeMap<String, BatchGroup<T, C>> {
         &self.forwarded
     }
 
-    fn push(&mut self, entry: ScheduledEntry<T, E>, selected_at: Instant) {
+    /// Consumes the groups so stream owners can move each original completion.
+    pub fn into_parts(self) -> (Option<BatchGroup<T, C>>, BTreeMap<String, BatchGroup<T, C>>) {
+        (self.direct, self.forwarded)
+    }
+
+    fn push(&mut self, entry: ScheduledEntry<T, C>, selected_at: Instant) {
         if let Some(host) = entry.entry.forwarded_host.clone() {
             self.forwarded
                 .entry(host)
@@ -231,12 +305,18 @@ impl<T, E> BatchGroups<T, E> {
 
 /// Pure request collector shared by future synchronous and asynchronous batch clients.
 #[derive(Debug)]
-pub struct BatchScheduler<T, E> {
+pub struct BatchScheduler<T, C>
+where
+    C: BatchEntryCompletion,
+{
     id_alloc: u64,
-    entries: PriorityQueue<BatchEntry<T, E>>,
+    entries: PriorityQueue<BatchEntry<T, C>>,
 }
 
-impl<T, E> Default for BatchScheduler<T, E> {
+impl<T, C> Default for BatchScheduler<T, C>
+where
+    C: BatchEntryCompletion,
+{
     fn default() -> Self {
         Self {
             id_alloc: 0,
@@ -245,7 +325,10 @@ impl<T, E> Default for BatchScheduler<T, E> {
     }
 }
 
-impl<T, E> BatchScheduler<T, E> {
+impl<T, C> BatchScheduler<T, C>
+where
+    C: BatchEntryCompletion,
+{
     /// Creates an empty scheduler with request IDs starting at one.
     pub fn new() -> Self {
         Self::default()
@@ -267,7 +350,7 @@ impl<T, E> BatchScheduler<T, E> {
     }
 
     /// Queues one request for a future scheduling pass.
-    pub fn push(&mut self, entry: BatchEntry<T, E>) {
+    pub fn push(&mut self, entry: BatchEntry<T, C>) {
         self.entries.push(entry);
     }
 
@@ -276,7 +359,7 @@ impl<T, E> BatchScheduler<T, E> {
     /// Normal requests consume `limit`; priorities at or above
     /// `HIGH_TASK_PRIORITY` bypass it. Canceled requests are discarded without
     /// receiving an ID and without consuming concurrency.
-    pub fn build_with_limit(&mut self, limit: usize) -> BatchGroups<T, E> {
+    pub fn build_with_limit(&mut self, limit: usize) -> BatchGroups<T, C> {
         let mut groups = BatchGroups::default();
         let mut normal_count = 0;
         let selected_at = Instant::now();
@@ -313,9 +396,9 @@ impl<T, E> BatchScheduler<T, E> {
     }
 
     /// Fails and drains every queued request through its sole completion handle.
-    pub fn cancel_all(&mut self, error: E) -> Vec<BatchEntry<T, E>>
+    pub fn cancel_all(&mut self, error: C::Error) -> Vec<BatchEntry<T, C>>
     where
-        E: Clone,
+        C::Error: Clone,
     {
         let entries = self.entries.drain();
         for entry in &entries {

@@ -46,7 +46,9 @@ impl TestCompletion {
     }
 }
 
-impl BatchEntryCompletion<TestBatchError> for TestCompletion {
+impl BatchEntryCompletion for TestCompletion {
+    type Error = TestBatchError;
+
     fn is_canceled(&self) -> bool {
         self.canceled.load(Ordering::Acquire)
     }
@@ -56,10 +58,9 @@ impl BatchEntryCompletion<TestBatchError> for TestCompletion {
     }
 }
 
-fn entry<T>(payload: T) -> (BatchEntry<T, TestBatchError>, Arc<TestCompletion>) {
+fn entry<T>(payload: T) -> (BatchEntry<T, Arc<TestCompletion>>, Arc<TestCompletion>) {
     let completion = Arc::new(TestCompletion::default());
-    let scheduler_completion: Arc<dyn BatchEntryCompletion<TestBatchError>> = completion.clone();
-    (BatchEntry::new(payload, scheduler_completion), completion)
+    (BatchEntry::new(payload, completion.clone()), completion)
 }
 
 #[test]
@@ -164,18 +165,15 @@ fn scheduler_and_pull_share_one_completion_authority() {
     let run_loop = CompletionRunLoop::new();
     let (cancelled_request, mut cancelled_pull) =
         completion_pair::<usize, TestBatchError, _>(run_loop.clone(), || {});
-    let cancelled_completion: Arc<dyn BatchEntryCompletion<TestBatchError>> =
-        Arc::new(cancelled_request);
     let mut scheduler = BatchScheduler::new();
-    scheduler.push(BatchEntry::new(1, cancelled_completion));
+    scheduler.push(BatchEntry::new(1, cancelled_request));
     cancelled_pull.cancel();
     scheduler.reset();
     assert!(scheduler.is_empty());
 
     let (failed_request, mut failed_pull) =
         completion_pair::<usize, TestBatchError, _>(run_loop, || {});
-    let failed_completion: Arc<dyn BatchEntryCompletion<TestBatchError>> = Arc::new(failed_request);
-    scheduler.push(BatchEntry::new(2, failed_completion));
+    scheduler.push(BatchEntry::new(2, failed_request));
     assert_eq!(scheduler.cancel_all(TestBatchError::Closed).len(), 1);
     assert_eq!(
         failed_pull.try_complete(),

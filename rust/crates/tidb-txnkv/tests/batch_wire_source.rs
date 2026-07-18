@@ -128,6 +128,45 @@ fn cardinality_is_rejected_before_any_dispatch_state_exists() {
     );
 }
 
+#[test]
+fn zero_and_duplicate_request_ids_are_rejected_at_wire_construction() {
+    let commands = || {
+        vec![
+            OpaqueBatchCommand::new(BatchCommandTag::Empty, Vec::new()),
+            OpaqueBatchCommand::new(BatchCommandTag::Empty, Vec::new()),
+        ]
+    };
+
+    assert_eq!(
+        BatchWireRequest::new(commands(), vec![1, 0], 0),
+        Err(BatchWireError::ZeroRequestId {
+            kind: BatchEnvelopeKind::Request,
+            index: 1,
+        })
+    );
+    assert_eq!(
+        BatchWireRequest::new(commands(), vec![7, 7], 0),
+        Err(BatchWireError::DuplicateRequestId {
+            kind: BatchEnvelopeKind::Request,
+            request_id: 7,
+        })
+    );
+    assert_eq!(
+        BatchWireResponse::new(commands(), vec![0, 2], 0, None, 0),
+        Err(BatchWireError::ZeroRequestId {
+            kind: BatchEnvelopeKind::Response,
+            index: 0,
+        })
+    );
+    assert_eq!(
+        BatchWireResponse::new(commands(), vec![8, 8], 0, None, 0),
+        Err(BatchWireError::DuplicateRequestId {
+            kind: BatchEnvelopeKind::Response,
+            request_id: 8,
+        })
+    );
+}
+
 // client-go/tikvrpc/tikvrpc_test.go:55 TestBatchResponse.
 #[test]
 fn nil_command_response_is_a_typed_error() {

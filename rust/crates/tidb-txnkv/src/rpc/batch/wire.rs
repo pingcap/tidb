@@ -18,6 +18,7 @@
 //! pinned oneof tags live here, while command interpretation stays with the
 //! transaction or coprocessor owner above this transport layer.
 
+use std::collections::HashSet;
 use std::fmt;
 
 use prost::Message;
@@ -187,6 +188,20 @@ pub enum BatchWireError {
         /// Zero-based command index.
         index: usize,
     },
+    /// Request ID zero is reserved as the scheduler's unassigned value.
+    ZeroRequestId {
+        /// Envelope direction.
+        kind: BatchEnvelopeKind,
+        /// Zero-based request-ID index.
+        index: usize,
+    },
+    /// A request ID appeared more than once in one envelope.
+    DuplicateRequestId {
+        /// Envelope direction.
+        kind: BatchEnvelopeKind,
+        /// Repeated request ID.
+        request_id: u64,
+    },
 }
 
 impl fmt::Display for BatchWireError {
@@ -204,8 +219,32 @@ impl fmt::Display for BatchWireError {
             Self::MissingCommand { kind, index } => {
                 write!(formatter, "BatchCommands {kind} command {index} is empty")
             }
+            Self::ZeroRequestId { kind, index } => write!(
+                formatter,
+                "BatchCommands {kind} request ID {index} is zero"
+            ),
+            Self::DuplicateRequestId { kind, request_id } => write!(
+                formatter,
+                "BatchCommands {kind} repeats request ID {request_id}"
+            ),
         }
     }
+}
+
+fn validate_request_ids(
+    kind: BatchEnvelopeKind,
+    request_ids: &[u64],
+) -> Result<(), BatchWireError> {
+    let mut unique = HashSet::with_capacity(request_ids.len());
+    for (index, request_id) in request_ids.iter().copied().enumerate() {
+        if request_id == 0 {
+            return Err(BatchWireError::ZeroRequestId { kind, index });
+        }
+        if !unique.insert(request_id) {
+            return Err(BatchWireError::DuplicateRequestId { kind, request_id });
+        }
+    }
+    Ok(())
 }
 
 impl std::error::Error for BatchWireError {}
@@ -246,6 +285,7 @@ impl BatchWireRequest {
             commands.len(),
             request_ids.len(),
         )?;
+        validate_request_ids(BatchEnvelopeKind::Request, &request_ids)?;
         Ok(Self {
             commands,
             request_ids,
@@ -340,6 +380,7 @@ impl BatchWireResponse {
             commands.len(),
             request_ids.len(),
         )?;
+        validate_request_ids(BatchEnvelopeKind::Response, &request_ids)?;
         Ok(Self {
             commands,
             request_ids,
