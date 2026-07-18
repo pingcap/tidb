@@ -797,21 +797,55 @@ fn labels_and_load_inputs_fail_closed_instead_of_silently_changing_selection() {
 }
 
 #[test]
-fn logical_tasks_rotate_seeds_but_region_reload_reuses_the_same_task_seed() {
+fn fresh_queries_advance_the_transport_seed_once_each() {
     let calls = Rc::new(RefCell::new(Vec::new()));
     let mut request_metadata = metadata("a", "z");
     request_metadata.session.replica_read = ReplicaReadType::Mixed;
     let mut runtime = InjectedQueryRuntime::new(transport(
         Rc::clone(&calls),
         [
-            Ok(response(b"left")),
-            Ok(region_not_found(100)),
-            Ok(response(b"right")),
+            Ok(response(b"second-dispatched-first")),
+            Ok(response(b"first-dispatched-second")),
         ],
+        [location_with_three_peers(1, "a", "z", "tikv")],
+    ));
+    let request = TransportRequest::new(request_metadata);
+    let mut first = select_result(&mut runtime, &request);
+    let mut second = select_result(&mut runtime, &request);
+    assert_eq!(
+        second.next_raw().unwrap(),
+        Some(b"second-dispatched-first".to_vec())
+    );
+    assert_eq!(second.next_raw().unwrap(), None);
+    assert_eq!(
+        first.next_raw().unwrap(),
+        Some(b"first-dispatched-second".to_vec())
+    );
+    assert_eq!(first.next_raw().unwrap(), None);
+
+    let addresses: Vec<_> = calls
+        .borrow()
+        .iter()
+        .map(|call| call.address.clone())
+        .collect();
+    assert_eq!(
+        addresses,
+        ["tikv-learner:20160", "tikv-follower:20160"],
+        "fresh query bindings must rotate before either response is pulled"
+    );
+}
+
+#[test]
+fn logical_tasks_in_one_query_share_the_bound_seed() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let mut request_metadata = metadata("a", "z");
+    request_metadata.session.replica_read = ReplicaReadType::Mixed;
+    let mut runtime = InjectedQueryRuntime::new(transport(
+        Rc::clone(&calls),
+        [Ok(response(b"left")), Ok(response(b"right"))],
         [
             location_with_three_peers(1, "a", "m", "left"),
-            location_with_three_peers(100, "m", "z", "right-old"),
-            location_with_three_peers(100, "m", "z", "right-new"),
+            location_with_three_peers(100, "m", "z", "right"),
         ],
     ));
     let mut result = select_result(&mut runtime, &TransportRequest::new(request_metadata));
@@ -826,12 +860,87 @@ fn logical_tasks_rotate_seeds_but_region_reload_reuses_the_same_task_seed() {
         .collect();
     assert_eq!(
         addresses,
+        ["left-follower:20160", "right-follower:20160"],
+        "all logical tasks in one query must use the same immutable seed"
+    );
+}
+
+#[test]
+fn region_reload_reuses_the_bound_query_seed() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let mut request_metadata = metadata("a", "z");
+    request_metadata.session.replica_read = ReplicaReadType::Mixed;
+    let mut runtime = InjectedQueryRuntime::new(transport(
+        Rc::clone(&calls),
+        [Ok(region_not_found(1)), Ok(response(b"fresh"))],
         [
-            "left-follower:20160",
-            "right-old-learner:20160",
-            "right-new-learner:20160",
+            location_with_three_peers(1, "a", "z", "old"),
+            location_with_three_peers(1, "a", "z", "new"),
         ],
-        "distinct logical tasks advance once, while a rebuilt selector reuses its task seed"
+    ));
+    let mut result = select_result(&mut runtime, &TransportRequest::new(request_metadata));
+    assert_eq!(result.next_raw().unwrap(), Some(b"fresh".to_vec()));
+    assert_eq!(result.next_raw().unwrap(), None);
+
+    let addresses: Vec<_> = calls
+        .borrow()
+        .iter()
+        .map(|call| call.address.clone())
+        .collect();
+    assert_eq!(
+        addresses,
+        ["old-follower:20160", "new-follower:20160"],
+        "a rebuilt selector must retain the response-bound seed"
+    );
+}
+
+#[test]
+fn cached_leader_data_is_not_ready_falls_through_without_reload_or_backoff() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let loader_calls = Rc::new(RefCell::new(Vec::new()));
+    let retry_control = Rc::new(RecordingRetryControl::default());
+    let mut initial =
+        location_with_second_peer(1, "a", "z", "tikv-leader:20160", "tikv-follower:20160");
+    initial.peers.swap(0, 1);
+    let transport = transport_with_loader_calls_and_config(
+        Rc::clone(&calls),
+        [Ok(data_is_not_ready()), Ok(response(b"fresh"))],
+        [initial],
+        9001,
+        Rc::clone(&loader_calls),
+        DirectUnaryRuntimeConfig {
+            seed_read_bytes: 4096,
+            observation_time,
+            region_retry_control: retry_control.clone(),
+            ..DirectUnaryRuntimeConfig::default()
+        },
+    );
+    let mut request_metadata = metadata("a", "z");
+    request_metadata.session.replica_read = ReplicaReadType::Leader;
+    request_metadata.is_staleness = true;
+    let mut runtime = InjectedQueryRuntime::new(transport);
+    let mut result = select_result(&mut runtime, &TransportRequest::new(request_metadata));
+    assert_eq!(result.next_raw().unwrap(), Some(b"fresh".to_vec()));
+    assert_eq!(result.next_raw().unwrap(), None);
+
+    let calls = calls.borrow();
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[0].address, "tikv-leader:20160");
+    assert_eq!(calls[0].replica_read_type, ClientReplicaReadType::Mixed);
+    assert!(!calls[0].replica_read);
+    assert!(calls[0].stale_read);
+    assert_eq!(calls[1].address, "tikv-follower:20160");
+    assert_eq!(calls[1].replica_read_type, ClientReplicaReadType::Mixed);
+    assert!(calls[1].replica_read);
+    assert!(!calls[1].stale_read);
+    assert_eq!(
+        loader_calls.borrow().as_slice(),
+        [b"a".to_vec()],
+        "leader DataIsNotReady must not invalidate or reload the region"
+    );
+    assert!(
+        retry_control.sleeps.borrow().is_empty(),
+        "DataIsNotReady fallthrough must not back off"
     );
 }
 

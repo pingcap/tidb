@@ -230,7 +230,7 @@ fn learner_policy_prefers_learner_then_falls_back_to_voter() {
 }
 
 #[test]
-fn stale_policy_forces_unattempted_leader_then_uses_ordinary_replica_reads() {
+fn stale_policy_marks_cached_leader_then_uses_ordinary_replica_reads() {
     let mut cache = cache();
     let region = location().region;
     let mut selector = cache
@@ -257,6 +257,7 @@ fn stale_policy_forces_unattempted_leader_then_uses_ordinary_replica_reads() {
     assert!(!leader.replica_read);
     assert!(!leader.stale_read);
     complete(&mut selector, &leader);
+    assert!(selector.record_data_not_ready(&leader.attempt));
     assert!(!selector.record_data_not_ready(&leader.attempt));
 
     let ordinary = select(&mut cache, &mut selector);

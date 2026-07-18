@@ -190,7 +190,7 @@ impl RequestSelector {
                 true
             }
             SelectorRecovery::DataIsNotReady => {
-                if !self.policy.stale_read || self.leader_peer_id == Some(attempt.peer_id) {
+                if !self.policy.stale_read {
                     return false;
                 }
                 self.completed_attempt = None;
@@ -222,11 +222,13 @@ impl RequestSelector {
         true
     }
 
-    /// Marks an exact completed stale-read attempt as `DataIsNotReady`.
+    /// Marks an exact completed attempt in a stale-read selector flow as
+    /// `DataIsNotReady`.
     ///
-    /// Pinned client-go permits that nonleader peer one later ordinary
-    /// replica-read attempt. Stale, duplicated, or still-pending observations
-    /// cannot change the access path.
+    /// Pinned client-go marks the exact target, including a cached leader. Only
+    /// a marked nonleader gains one later ordinary replica-read attempt. A
+    /// duplicated, unrelated, or still-pending observation cannot change the
+    /// access path.
     #[must_use]
     pub fn record_data_not_ready(&mut self, attempt: &RegionAttempt) -> bool {
         self.apply_recovery(attempt, SelectorRecovery::DataIsNotReady)

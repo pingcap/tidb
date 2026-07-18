@@ -142,4 +142,21 @@ if [[ -z "${MARKER}" ]] \
   exit 1
 fi
 
+LEADER_PEER_ID=$(printf '%s\n' "${MARKER}" | tr ' ' '\n' | sed -n 's/^leader_peer_id=//p' | tail -1)
+POST_LEADER_PEER_ID=$(printf '%s\n' "${MARKER}" | tr ' ' '\n' | sed -n 's/^post_leader_peer_id=//p' | tail -1)
+SELECTED_PEER_ID=$(printf '%s\n' "${MARKER}" | tr ' ' '\n' | sed -n 's/^selected_peer_id=//p' | tail -1)
+if [[ -z "${LEADER_PEER_ID}" ]] \
+  || [[ -z "${POST_LEADER_PEER_ID}" ]] \
+  || [[ -z "${SELECTED_PEER_ID}" ]] \
+  || [[ "${LEADER_PEER_ID}" != "${POST_LEADER_PEER_ID}" ]]; then
+  echo "Campaign 13 marker did not preserve the cached leader across follower success" >&2
+  tail -160 "${RUST_LOG}" >&2
+  exit 1
+fi
+if [[ "${SELECTED_PEER_ID}" == "${LEADER_PEER_ID}" ]]; then
+  echo "Campaign 13 marker selected the cached leader instead of a follower" >&2
+  tail -160 "${RUST_LOG}" >&2
+  exit 1
+fi
+
 echo "Campaign 13 replica read passed: ${MARKER}"

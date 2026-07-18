@@ -22,7 +22,7 @@
 //! backoff budgets, cancellation-aware sleep, and ordered replacement of
 //! unconsumed work.
 
-use std::cell::{Cell, RefCell, RefMut};
+use std::cell::{RefCell, RefMut};
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -343,32 +343,27 @@ impl From<CopReadTaskError> for DirectUnaryTransportError {
 pub struct DirectUnaryQueryTransport<C, L> {
     shared_runtime: SharedReadRuntime<C, L>,
     locked_response_delegate: Rc<dyn LockedResponseDelegate<C, L>>,
-    replica_read_seed: Rc<ReplicaReadSeed>,
+    replica_read_seed: ReplicaReadSeed,
     config: DirectUnaryRuntimeConfig,
 }
 
-/// One transport-owned rotating seed source shared by all lazy responses.
+/// One transport-owned rotating seed source sampled once per lazy response.
 ///
-/// Pinned client-go initializes `KVStore.replicaReadSeed` once and advances it
-/// for each logical request. Keeping this owner beside the shared read runtime
-/// prevents caller defaults and test-only injection from selecting production
-/// replicas.
+/// One `send` owns one immutable seed across all of its region tasks and region
+/// reloads. Only binding a fresh query advances the transport source.
 #[derive(Debug)]
 struct ReplicaReadSeed {
-    current: Cell<u32>,
+    current: u32,
 }
 
 impl ReplicaReadSeed {
     fn new() -> Self {
-        Self {
-            current: Cell::new(0),
-        }
+        Self { current: 0 }
     }
 
-    fn next(&self) -> u32 {
-        let next = self.current.get().wrapping_add(1);
-        self.current.set(next);
-        next
+    fn next(&mut self) -> u32 {
+        self.current = self.current.wrapping_add(1);
+        self.current
     }
 }
 
@@ -406,7 +401,7 @@ impl<C, L: RegionLoader> DirectUnaryQueryTransport<C, L> {
         Ok(Self {
             shared_runtime,
             locked_response_delegate,
-            replica_read_seed: Rc::new(ReplicaReadSeed::new()),
+            replica_read_seed: ReplicaReadSeed::new(),
             config,
         })
     }
@@ -475,11 +470,12 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
             )
             .to_string());
         }
+        let selection_seed = self.replica_read_seed.next();
 
         Ok(Some(DirectUnaryQueryResponse {
             shared_runtime: self.shared_runtime.clone(),
             locked_response_delegate: Rc::clone(&self.locked_response_delegate),
-            replica_read_seed: Rc::clone(&self.replica_read_seed),
+            selection_seed,
             read_policy,
             metadata: metadata.clone(),
             cluster_id,
@@ -491,7 +487,6 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
             closed: false,
             region_backoffs: BTreeMap::new(),
             request_selectors: BTreeMap::new(),
-            selection_seeds: BTreeMap::new(),
         }))
     }
 }
@@ -526,8 +521,8 @@ fn read_policy_from_metadata(
         },
         stale_read: metadata.is_staleness,
         forwarding: false,
-        // Assigned from the sole rotating source when a logical selector is
-        // created, then held stable across that selector's retries.
+        // Replaced by the query-scoped seed sampled once in `send` before any
+        // logical selector is created.
         selection_seed: 0,
     })
 }
@@ -596,7 +591,7 @@ fn task_region_ver_id(
 pub struct DirectUnaryQueryResponse<C, L> {
     shared_runtime: SharedReadRuntime<C, L>,
     locked_response_delegate: Rc<dyn LockedResponseDelegate<C, L>>,
-    replica_read_seed: Rc<ReplicaReadSeed>,
+    selection_seed: u32,
     read_policy: ReadPolicy,
     metadata: crate::KvRequestMetadata,
     cluster_id: u64,
@@ -608,7 +603,6 @@ pub struct DirectUnaryQueryResponse<C, L> {
     closed: bool,
     region_backoffs: BTreeMap<u64, RegionBackoffBudget>,
     request_selectors: BTreeMap<u64, RequestSelector>,
-    selection_seeds: BTreeMap<u64, u32>,
 }
 
 fn try_borrow_client<C>(client: &RefCell<C>) -> Result<RefMut<'_, C>, DirectUnaryTransportError> {
@@ -641,7 +635,6 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                 Some(ResponseChannelEvent::Closed) => {
                     self.active_attempts.remove(&logical_task_id);
                     self.request_selectors.remove(&logical_task_id);
-                    self.selection_seeds.remove(&logical_task_id);
                     self.logical_index += 1;
                     continue;
                 }
@@ -688,10 +681,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             .is_none_or(|selector| selector.region() != region);
         if replace_selector {
             let mut read_policy = self.read_policy;
-            read_policy.selection_seed = *self
-                .selection_seeds
-                .entry(logical_task_id)
-                .or_insert_with(|| self.replica_read_seed.next());
+            read_policy.selection_seed = self.selection_seed;
             let selector = self
                 .shared_runtime
                 .region_cache()

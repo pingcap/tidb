@@ -27,7 +27,7 @@ use tidb_distsql::{
 };
 use tidb_txnkv::region::{PeerRole, RegionCache, StoreLiveness};
 use tidb_txnkv::rpc::TonicCoprocessorClient;
-use tidb_txnkv::{ClientReplicaReadType, PdRegionLoader};
+use tidb_txnkv::{ClientReplicaReadType, PdRegionLoader, SharedReadRuntime};
 
 const TABLE_START: &[u8] = b"t\x80\0\0\0\0\0\0*_r";
 const TABLE_END: &[u8] = b"t\x80\0\0\0\0\0\0+";
@@ -124,12 +124,16 @@ fn follower_policy_reaches_a_live_nonleader_voter() {
     );
 
     let dispatches = Rc::new(RefCell::new(Vec::new()));
-    let transport = DirectUnaryQueryTransport::new(
+    let shared_runtime = SharedReadRuntime::new(
         RecordingClient {
             inner: TonicCoprocessorClient::new().expect("construct live unary client"),
             dispatches: Rc::clone(&dispatches),
         },
         cache,
+    );
+    let inspection_runtime = shared_runtime.clone();
+    let transport = DirectUnaryQueryTransport::with_shared_runtime(
+        shared_runtime,
         DirectUnaryRuntimeConfig {
             default_timeout: Duration::from_secs(5),
             ..DirectUnaryRuntimeConfig::default()
@@ -190,6 +194,21 @@ fn follower_policy_reaches_a_live_nonleader_voter() {
                 .is_empty()),
         "the known empty table-42 range must return no row payload"
     );
+    drop(result);
+
+    let post_location = inspection_runtime
+        .region_cache()
+        .borrow_mut()
+        .locate_key(TABLE_START)
+        .expect("inspect the retained live region after follower success")
+        .clone();
+    let post_leader_peer_id = post_location
+        .leader_peer_id
+        .expect("successful follower dispatch must retain a cached leader");
+    assert_eq!(
+        post_leader_peer_id, leader_peer_id,
+        "successful follower dispatch must not promote or replace the cached leader"
+    );
 
     let dispatches = dispatches.borrow();
     assert_eq!(dispatches.len(), 1, "one logical region dispatch expected");
@@ -211,9 +230,10 @@ fn follower_policy_reaches_a_live_nonleader_voter() {
     assert!(!selected.stale_read);
 
     println!(
-        "campaign13_replica_read region_id={} leader_peer_id={} selected_peer_id={} selected_store_id={} selected_address={} replica_read={} stale_read={} usable_response=true",
+        "campaign13_replica_read region_id={} leader_peer_id={} post_leader_peer_id={} selected_peer_id={} selected_store_id={} selected_address={} replica_read={} stale_read={} usable_response=true",
         location.region.id,
         leader_peer_id,
+        post_leader_peer_id,
         selected.peer_id,
         selected.store_id,
         selected.address,
