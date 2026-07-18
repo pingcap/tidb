@@ -46,15 +46,18 @@ enum WorkerCommand {
     GetRegion {
         encoded_key: Vec<u8>,
         need_buckets: bool,
+        leader_only: bool,
         reply: mpsc::Sender<Result<PdRegion, PdClientError>>,
     },
     GetRegionById {
         region_id: u64,
         need_buckets: bool,
+        leader_only: bool,
         reply: mpsc::Sender<Result<PdRegion, PdClientError>>,
     },
     ScanRegions {
         request: pdpb::ScanRegionsRequest,
+        leader_only: bool,
         reply: mpsc::Sender<Result<Vec<PdRegion>, PdClientError>>,
     },
     BatchScanRegions {
@@ -236,6 +239,17 @@ impl PdClient {
         encoded_key: &[u8],
         need_buckets: bool,
     ) -> Result<PdRegion, PdClientError> {
+        self.get_region_routed(encoded_key, need_buckets, false)
+    }
+
+    /// Loads a region through either the active endpoint or the discovered PD
+    /// leader. `leader_only` is per-attempt and never changes global routing.
+    pub fn get_region_routed(
+        &mut self,
+        encoded_key: &[u8],
+        need_buckets: bool,
+        leader_only: bool,
+    ) -> Result<PdRegion, PdClientError> {
         let Some(commands) = &self.commands else {
             return Err(PdClientError::Closed);
         };
@@ -244,6 +258,7 @@ impl PdClient {
             .send(WorkerCommand::GetRegion {
                 encoded_key: encoded_key.to_vec(),
                 need_buckets,
+                leader_only,
                 reply,
             })
             .map_err(|_| PdClientError::Closed)?;
@@ -256,6 +271,16 @@ impl PdClient {
         region_id: u64,
         need_buckets: bool,
     ) -> Result<PdRegion, PdClientError> {
+        self.get_region_by_id_routed(region_id, need_buckets, false)
+    }
+
+    /// Loads one region identity through the active endpoint or PD leader.
+    pub fn get_region_by_id_routed(
+        &mut self,
+        region_id: u64,
+        need_buckets: bool,
+        leader_only: bool,
+    ) -> Result<PdRegion, PdClientError> {
         let Some(commands) = &self.commands else {
             return Err(PdClientError::Closed);
         };
@@ -264,6 +289,7 @@ impl PdClient {
             .send(WorkerCommand::GetRegionById {
                 region_id,
                 need_buckets,
+                leader_only,
                 reply,
             })
             .map_err(|_| PdClientError::Closed)?;
@@ -277,6 +303,17 @@ impl PdClient {
         end_key: &[u8],
         limit: i32,
     ) -> Result<Vec<PdRegion>, PdClientError> {
+        self.scan_regions_routed(start_key, end_key, limit, false)
+    }
+
+    /// Scans one interval through the active endpoint or only the PD leader.
+    pub fn scan_regions_routed(
+        &mut self,
+        start_key: &[u8],
+        end_key: &[u8],
+        limit: i32,
+        leader_only: bool,
+    ) -> Result<Vec<PdRegion>, PdClientError> {
         let Some(commands) = &self.commands else {
             return Err(PdClientError::Closed);
         };
@@ -289,6 +326,7 @@ impl PdClient {
                     limit,
                     end_key: end_key.to_vec(),
                 },
+                leader_only,
                 reply,
             })
             .map_err(|_| PdClientError::Closed)?;
@@ -381,36 +419,90 @@ fn run_worker(
             WorkerCommand::GetRegion {
                 encoded_key,
                 need_buckets,
+                leader_only,
                 reply,
             } => {
-                let result = get_region_with_failover(
-                    &runtime,
-                    &mut clients,
-                    timeout,
-                    &state,
-                    &encoded_key,
-                    need_buckets,
-                );
+                let result = if leader_only {
+                    foreground_leader_only(
+                        &runtime,
+                        &mut clients,
+                        &state,
+                        |runtime, clients, endpoint, cluster_id| {
+                            get_region(
+                                runtime,
+                                clients,
+                                endpoint,
+                                timeout,
+                                cluster_id,
+                                &encoded_key,
+                                need_buckets,
+                            )
+                        },
+                    )
+                } else {
+                    get_region_with_failover(
+                        &runtime,
+                        &mut clients,
+                        timeout,
+                        &state,
+                        &encoded_key,
+                        need_buckets,
+                    )
+                };
                 let _ = reply.send(result);
             }
             WorkerCommand::GetRegionById {
                 region_id,
                 need_buckets,
+                leader_only,
                 reply,
             } => {
-                let result = get_region_by_id_with_failover(
-                    &runtime,
-                    &mut clients,
-                    timeout,
-                    &state,
-                    region_id,
-                    need_buckets,
-                );
+                let result = if leader_only {
+                    foreground_leader_only(
+                        &runtime,
+                        &mut clients,
+                        &state,
+                        |runtime, clients, endpoint, cluster_id| {
+                            get_region_by_id(
+                                runtime,
+                                clients,
+                                endpoint,
+                                timeout,
+                                cluster_id,
+                                region_id,
+                                need_buckets,
+                            )
+                        },
+                    )
+                } else {
+                    get_region_by_id_with_failover(
+                        &runtime,
+                        &mut clients,
+                        timeout,
+                        &state,
+                        region_id,
+                        need_buckets,
+                    )
+                };
                 let _ = reply.send(result);
             }
-            WorkerCommand::ScanRegions { request, reply } => {
-                let result =
-                    scan_regions_with_failover(&runtime, &mut clients, timeout, &state, &request);
+            WorkerCommand::ScanRegions {
+                request,
+                leader_only,
+                reply,
+            } => {
+                let result = if leader_only {
+                    foreground_leader_only(
+                        &runtime,
+                        &mut clients,
+                        &state,
+                        |runtime, clients, endpoint, cluster_id| {
+                            scan_regions(runtime, clients, endpoint, timeout, cluster_id, &request)
+                        },
+                    )
+                } else {
+                    scan_regions_with_failover(&runtime, &mut clients, timeout, &state, &request)
+                };
                 let _ = reply.send(result);
             }
             WorkerCommand::BatchScanRegions { request, reply } => {
@@ -838,6 +930,29 @@ where
         }
         Err(error) => Err(error),
     }
+}
+
+fn foreground_leader_only<T, F>(
+    runtime: &tokio::runtime::Runtime,
+    clients: &mut HashMap<String, TonicPdClient<Channel>>,
+    state: &Arc<RwLock<PdSharedState>>,
+    mut action: F,
+) -> Result<T, PdClientError>
+where
+    F: FnMut(
+        &tokio::runtime::Runtime,
+        &mut HashMap<String, TonicPdClient<Channel>>,
+        &str,
+        u64,
+    ) -> Result<T, PdClientError>,
+{
+    let snapshot = state.read().expect("PD state lock poisoned").clone();
+    action(
+        runtime,
+        clients,
+        &snapshot.members.leader_url,
+        snapshot.members.cluster_id,
+    )
 }
 
 fn get_store_with_failover(

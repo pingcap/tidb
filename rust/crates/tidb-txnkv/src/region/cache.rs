@@ -53,6 +53,93 @@ pub trait BatchScanBackoff {
     fn backoff(&mut self, reason: BatchScanRetryReason) -> Result<(), RegionRouteError>;
 }
 
+/// One source-shaped foreground region query.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RegionQuery<'a> {
+    /// Region containing an ordinary key.
+    Key(&'a [u8]),
+    /// Region containing an inclusive end key.
+    EndKey(&'a [u8]),
+    /// Region with one exact identity.
+    Id(u64),
+}
+
+/// Per-attempt PD routing options. Retry policy remains in RegionCache.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RegionQueryOptions {
+    /// Request bucket metadata.
+    pub need_buckets: bool,
+    /// Exact endpoint class permitted for this attempt.
+    pub route: RegionQueryRoute,
+}
+
+/// Mutually exclusive PD endpoint policy for one request attempt.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RegionQueryRoute {
+    /// Permit the active follower or router-service path.
+    AllowFollowerOrRouter,
+    /// Send only to the discovered PD leader.
+    LeaderOnly,
+}
+
+impl Default for RegionQueryOptions {
+    fn default() -> Self {
+        Self {
+            need_buckets: true,
+            route: RegionQueryRoute::LeaderOnly,
+        }
+    }
+}
+
+/// Why a unary/legacy scan retries through its caller-owned backoff.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RegionQueryRetryReason {
+    /// PD returned no metadata.
+    EmptyReply,
+    /// PD returned a prefix or interior gap.
+    CoverageGap,
+    /// Every returned region was leaderless.
+    MissingLeader,
+}
+
+/// Caller-owned cancellation, sleep, and retry budget.
+pub trait RegionQueryBackoff {
+    /// Applies one source-shaped PD-RPC backoff.
+    fn backoff(&mut self, reason: RegionQueryRetryReason) -> Result<(), RegionRouteError>;
+}
+
+/// One projected store metadata observation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StoreMetadata {
+    /// Store identity.
+    pub id: u64,
+    /// Current TiKV address.
+    pub address: String,
+    /// Current labels.
+    pub labels: Vec<(String, String)>,
+}
+
+/// Request-shaped control-plane capability above one-attempt transports.
+pub trait RegionQueryLoader: RegionLoader {
+    /// Executes exactly one key/end-key/ID query.
+    fn query_region(
+        &mut self,
+        query: RegionQuery<'_>,
+        options: RegionQueryOptions,
+    ) -> Result<RegionLocation, RegionLoadError>;
+
+    /// Executes exactly one deprecated contiguous scan.
+    fn scan_regions_once(
+        &mut self,
+        range: &KeyRange,
+        limit: usize,
+        options: RegionQueryOptions,
+    ) -> Result<Vec<RegionLocation>, RegionLoadError>;
+
+    /// Reloads one store. None means removed/tombstone.
+    fn load_store(&mut self, store_id: u64) -> Result<Option<StoreMetadata>, RegionLoadError>;
+}
+
 /// Injected PD-shaped region metadata loader.
 pub trait RegionLoader {
     /// Returns the cluster identity attached to requests routed by this loader.
@@ -189,6 +276,129 @@ where
             self.insert_loaded_at(region, now_seconds)?;
         }
         Ok(result)
+    }
+}
+
+impl<L> RegionCache<L>
+where
+    L: RegionQueryLoader,
+{
+    /// Loads one region identity directly from the control plane without
+    /// publishing it into the cache.
+    pub fn locate_region_by_id_from_source(
+        &mut self,
+        region_id: u64,
+    ) -> Result<RegionLocation, RegionRouteError> {
+        let loaded = self
+            .loader
+            .query_region(RegionQuery::Id(region_id), RegionQueryOptions::default())
+            .map_err(RegionRouteError::Loader)?;
+        ensure_region_id(region_id, &loaded)?;
+        Ok(loaded)
+    }
+
+    /// Finds one region identity in cache or loads and publishes it on a miss.
+    pub fn locate_region_by_id(
+        &mut self,
+        region_id: u64,
+    ) -> Result<RegionLocation, RegionRouteError> {
+        self.locate_region_by_id_at(region_id, cache_now_seconds())
+    }
+
+    /// Deterministic-clock form of [`Self::locate_region_by_id`].
+    pub fn locate_region_by_id_at(
+        &mut self,
+        region_id: u64,
+        now_seconds: u64,
+    ) -> Result<RegionLocation, RegionRouteError> {
+        if let Some(index) = self
+            .regions
+            .iter()
+            .position(|region| region.region.id == region_id)
+        {
+            let region = self.regions[index].region;
+            let next_expiry = self.next_expiry_at(now_seconds, region);
+            let valid = self.entry_states.get_mut(&region).is_some_and(|state| {
+                state.check_and_renew(now_seconds, self.base_ttl_seconds, next_expiry)
+            });
+            if valid {
+                return Ok(self.regions[index].clone());
+            }
+        }
+        let loaded = self
+            .loader
+            .query_region(RegionQuery::Id(region_id), RegionQueryOptions::default())
+            .map_err(RegionRouteError::Loader)?;
+        ensure_region_id(region_id, &loaded)?;
+        let index = self.insert_loaded_at(loaded, now_seconds)?;
+        Ok(self.regions[index].clone())
+    }
+
+    /// Executes the pinned contiguous ScanRegions contract without publishing.
+    pub fn scan_regions(
+        &mut self,
+        range: &KeyRange,
+        limit: usize,
+        backoff: &mut impl RegionQueryBackoff,
+    ) -> Result<Vec<RegionLocation>, RegionRouteError> {
+        if !range.is_valid() {
+            return Err(RegionRouteError::InvalidRange);
+        }
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let mut options = RegionQueryOptions {
+            need_buckets: false,
+            route: RegionQueryRoute::AllowFollowerOrRouter,
+        };
+        loop {
+            let loaded = self
+                .loader
+                .scan_regions_once(range, limit, options)
+                .map_err(RegionRouteError::Loader)?;
+            let retry = if loaded.is_empty() {
+                Some(RegionQueryRetryReason::EmptyReply)
+            } else if regions_have_gap(std::slice::from_ref(range), &loaded, limit) {
+                Some(RegionQueryRetryReason::CoverageGap)
+            } else {
+                None
+            };
+            if let Some(reason) = retry {
+                backoff.backoff(reason)?;
+                options.route = RegionQueryRoute::LeaderOnly;
+                continue;
+            }
+            let leaderful = loaded
+                .into_iter()
+                .filter(|region| region.leader_peer_id.is_some())
+                .collect::<Vec<_>>();
+            if leaderful.is_empty() {
+                backoff.backoff(RegionQueryRetryReason::MissingLeader)?;
+                options.route = RegionQueryRoute::LeaderOnly;
+                continue;
+            }
+            return Ok(leaderful);
+        }
+    }
+
+    /// Scans and atomically publishes the returned regions.
+    pub fn load_regions_with_range(
+        &mut self,
+        range: &KeyRange,
+        limit: usize,
+        backoff: &mut impl RegionQueryBackoff,
+    ) -> Result<Vec<RegionLocation>, RegionRouteError> {
+        let loaded = self.scan_regions(range, limit, backoff)?;
+        let mut preview = self.regions.clone();
+        for mut region in loaded.iter().cloned() {
+            preserve_newer_buckets(&preview, &mut region);
+            insert_loaded_into(&mut preview, region)?;
+        }
+        let now_seconds = cache_now_seconds();
+        for region in loaded.iter().cloned() {
+            self.insert_loaded_at(region, now_seconds)?;
+        }
+        Ok(loaded)
     }
 }
 
@@ -1521,6 +1731,19 @@ fn preserve_newer_buckets(cached: &[RegionLocation], loaded: &mut RegionLocation
     if current_version > 0 && (loaded_version == 0 || loaded_version < current_version) {
         loaded.buckets.clone_from(&current.buckets);
     }
+}
+
+fn ensure_region_id(expected: u64, loaded: &RegionLocation) -> Result<(), RegionRouteError> {
+    if loaded.region.id == expected {
+        return Ok(());
+    }
+    Err(RegionRouteError::Loader(RegionLoadError::new(
+        "region-id-mismatch",
+        format!(
+            "control plane returned region {}, expected {expected}",
+            loaded.region.id
+        ),
+    )))
 }
 
 fn apply_observed_buckets(current: Option<&super::BucketMetadata>, loaded: &mut RegionLocation) {

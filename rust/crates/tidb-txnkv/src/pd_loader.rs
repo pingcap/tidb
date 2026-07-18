@@ -20,8 +20,9 @@ use tidb_pd_client::{PdClient, PdClientError, PdKeyRange, PdMemberSet, PdRegion,
 
 use crate::region::{
     BatchLoadOptions, BatchRegionLoader, BucketMetadata, BucketStats, KeyRange, Peer, PeerRole,
-    RegionEpoch, RegionLoadError, RegionLoader, RegionLocation, RegionMetadata,
-    RegionRecoveryLoader, RegionVerId, Store,
+    RegionEpoch, RegionLoadError, RegionLoader, RegionLocation, RegionMetadata, RegionQuery,
+    RegionQueryLoader, RegionQueryOptions, RegionQueryRoute, RegionRecoveryLoader, RegionVerId,
+    Store, StoreMetadata,
 };
 
 /// Concrete API-v1 region loader backed by the bounded PD control plane.
@@ -297,6 +298,66 @@ impl BatchRegionLoader for PdRegionLoader {
             }
             Err(error) => Err(region_load_error(error)),
         }
+    }
+}
+
+impl RegionQueryLoader for PdRegionLoader {
+    fn query_region(
+        &mut self,
+        query: RegionQuery<'_>,
+        options: RegionQueryOptions,
+    ) -> Result<RegionLocation, RegionLoadError> {
+        let leader_only = options.route == RegionQueryRoute::LeaderOnly;
+        match query {
+            RegionQuery::Key(key) => {
+                let mut encoded_key = Vec::new();
+                encode_bytes(&mut encoded_key, key);
+                let region = self
+                    .client
+                    .get_region_routed(&encoded_key, options.need_buckets, leader_only)
+                    .map_err(region_load_error)?;
+                self.project_region(region)
+            }
+            RegionQuery::EndKey(_) => Err(RegionLoadError::new(
+                "get-prev-region-unavailable",
+                "the checked PD wire projection does not expose GetPrevRegion",
+            )),
+            RegionQuery::Id(region_id) => {
+                let region = self
+                    .client
+                    .get_region_by_id_routed(region_id, options.need_buckets, leader_only)
+                    .map_err(region_load_error)?;
+                self.project_region(region)
+            }
+        }
+    }
+
+    fn scan_regions_once(
+        &mut self,
+        range: &KeyRange,
+        limit: usize,
+        options: RegionQueryOptions,
+    ) -> Result<Vec<RegionLocation>, RegionLoadError> {
+        let leader_only = options.route == RegionQueryRoute::LeaderOnly;
+        let (start_key, end_key) = encode_region_range(&range.start, &range.end);
+        let regions = self
+            .client
+            .scan_regions_routed(&start_key, &end_key, pd_limit(limit)?, leader_only)
+            .map_err(region_load_error)?;
+        self.project_regions(regions)
+    }
+
+    fn load_store(&mut self, store_id: u64) -> Result<Option<StoreMetadata>, RegionLoadError> {
+        self.client
+            .get_store(store_id)
+            .map_err(region_load_error)
+            .map(|store| {
+                store.map(|store| StoreMetadata {
+                    id: store.id,
+                    address: store.address,
+                    labels: store.labels,
+                })
+            })
     }
 }
 

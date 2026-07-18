@@ -29,7 +29,8 @@ pub use batch_locate::{
 pub use bucket::{Bucket, BucketMetadata, BucketStats};
 pub use cache::{
     BatchLoadOptions, BatchRegionLoader, BatchScanBackoff, BatchScanRetryReason, RegionCache,
-    RegionLoader, RegionRecoveryLoader,
+    RegionLoader, RegionQuery, RegionQueryBackoff, RegionQueryLoader, RegionQueryOptions,
+    RegionQueryRetryReason, RegionQueryRoute, RegionRecoveryLoader, StoreMetadata,
 };
 pub use cache_entry::{CacheEntryState, CacheReloadState};
 pub use error::{RegionLoadError, RegionRouteError};
