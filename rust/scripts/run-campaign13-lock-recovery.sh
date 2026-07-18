@@ -115,7 +115,7 @@ if nc -z -w 1 127.0.0.1 "${PD_PORT}" >/dev/null 2>&1 \
   exit 1
 fi
 
-export GO_FAILPOINTS='github.com/tikv/client-go/v2/txnkv/transaction/beforeCommitSecondaries=return("skip")'
+export GO_FAILPOINTS='github.com/pingcap/tidb/pkg/server/enableTestAPI=return;tikvclient/beforeCommitSecondaries=return("skip")'
 tiup playground v8.5.7 --without-monitor --tag "${TAG}" \
   --db 1 --pd 1 --kv 1 --tiflash 0 --port-offset "${PORT_OFFSET}" \
   --db.binpath "${TIDB_SERVER}" >"${PLAYGROUND_LOG}" 2>&1 &
