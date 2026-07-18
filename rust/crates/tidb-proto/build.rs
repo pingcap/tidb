@@ -7,6 +7,8 @@ fn main() {
     println!("cargo:rerun-if-changed=proto/kvrpcpb.proto");
     println!("cargo:rerun-if-changed=proto/coprocessor.proto");
     println!("cargo:rerun-if-changed=proto/tikvpb.proto");
+    println!("cargo:rerun-if-changed=proto/metapb.proto");
+    println!("cargo:rerun-if-changed=proto/pdpb.proto");
 
     tonic_prost_build::configure()
         .build_client(true)
@@ -19,6 +21,8 @@ fn main() {
                 "proto/kvrpcpb.proto",
                 "proto/coprocessor.proto",
                 "proto/tikvpb.proto",
+                "proto/metapb.proto",
+                "proto/pdpb.proto",
             ],
             &["proto"],
         )

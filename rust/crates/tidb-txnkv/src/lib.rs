@@ -39,6 +39,7 @@ mod key_flags;
 mod key_ranges;
 mod keyspace;
 mod mvcc_metadata;
+mod pd_loader;
 mod prefix_ops;
 pub mod region;
 mod resource_group;
@@ -97,6 +98,7 @@ pub use mvcc_metadata::{
     WriteType, FOR_UPDATE_PREFIX, LOCK_USER_META_DELETE, LOCK_USER_META_NONE, MIN_COMMIT_TS_PREFIX,
     SHORT_VALUE_MAX_LEN, SHORT_VALUE_PREFIX,
 };
+pub use pd_loader::PdRegionLoader;
 pub use prefix_ops::{del_key_with_prefix, scan_meta_with_prefix};
 pub use resource_group::ResourceGroupTagBuilder;
 pub use retry::{

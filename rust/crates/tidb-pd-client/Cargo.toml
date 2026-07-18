@@ -1,0 +1,19 @@
+[package]
+name = "tidb-pd-client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Bounded source-backed PD control-plane client for the TiDB Rust rewrite."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-proto = { path = "../tidb-proto" }
+tokio.workspace = true
+tonic.workspace = true
+
+[dev-dependencies]
+prost.workspace = true

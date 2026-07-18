@@ -1054,6 +1054,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-pd-client"
+version = "0.0.0"
+dependencies = [
+ "prost",
+ "tidb-proto",
+ "tokio",
+ "tonic",
+]
+
+[[package]]
 name = "tidb-planner"
 version = "0.0.0"
 dependencies = [
@@ -1112,6 +1122,7 @@ dependencies = [
  "tidb-codec",
  "tidb-datatype",
  "tidb-error",
+ "tidb-pd-client",
  "tidb-proto",
  "tokio",
  "tonic",

@@ -11,6 +11,7 @@ members = [
     "crates/tidb-ast",
     "crates/tidb-parser",
     "crates/tidb-proto",
+    "crates/tidb-pd-client",
     "crates/tidb-protocol",
     "crates/tidb-distsql",
     "crates/tidb-planner",

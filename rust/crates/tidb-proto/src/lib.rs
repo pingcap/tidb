@@ -35,6 +35,16 @@ pub mod tikvpb {
     include!(concat!(env!("OUT_DIR"), "/tikvpb.rs"));
 }
 
+/// The generated dependency-closed region metadata package.
+pub mod metapb {
+    include!(concat!(env!("OUT_DIR"), "/metapb.rs"));
+}
+
+/// The generated dependency-closed PD control-plane package.
+pub mod pdpb {
+    include!(concat!(env!("OUT_DIR"), "/pdpb.rs"));
+}
+
 pub use coprocessor::{
     ExecDetailsV2 as CoprocessorExecDetailsV2, KeyRange as CoprocessorKeyRange,
     Peer as CoprocessorPeer, RegionEpoch as CoprocessorRegionEpoch, Request as CoprocessorRequest,

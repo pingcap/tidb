@@ -1,0 +1,97 @@
+syntax = "proto3";
+package pdpb;
+
+import "metapb.proto";
+
+service PD {
+  rpc GetMembers(GetMembersRequest) returns (GetMembersResponse) {}
+  rpc GetStore(GetStoreRequest) returns (GetStoreResponse) {}
+  rpc GetRegion(GetRegionRequest) returns (GetRegionResponse) {}
+}
+
+message RequestHeader {
+  uint64 cluster_id = 1;
+  uint64 sender_id = 2;
+  string caller_id = 3;
+  string caller_component = 4;
+}
+
+message ResponseHeader {
+  uint64 cluster_id = 1;
+  Error error = 2;
+}
+
+enum ErrorType {
+  OK = 0;
+  UNKNOWN = 1;
+  NOT_BOOTSTRAPPED = 2;
+  STORE_TOMBSTONE = 3;
+  ALREADY_BOOTSTRAPPED = 4;
+  INCOMPATIBLE_VERSION = 5;
+  REGION_NOT_FOUND = 6;
+  GLOBAL_CONFIG_NOT_FOUND = 7;
+  DUPLICATED_ENTRY = 8;
+  ENTRY_NOT_FOUND = 9;
+  INVALID_VALUE = 10;
+  DATA_COMPACTED = 11;
+  REGIONS_NOT_CONTAIN_ALL_KEY_RANGE = 12;
+}
+
+message Error {
+  ErrorType type = 1;
+  string message = 2;
+}
+
+message GetStoreRequest {
+  RequestHeader header = 1;
+  uint64 store_id = 2;
+}
+
+message GetStoreResponse {
+  ResponseHeader header = 1;
+  metapb.Store store = 2;
+}
+
+message GetRegionRequest {
+  RequestHeader header = 1;
+  bytes region_key = 2;
+  bool need_buckets = 3;
+}
+
+message GetRegionResponse {
+  reserved 4;
+  ResponseHeader header = 1;
+  metapb.Region region = 2;
+  metapb.Peer leader = 3;
+  repeated PeerStats down_peers = 5;
+  repeated metapb.Peer pending_peers = 6;
+}
+
+message Member {
+  string name = 1;
+  uint64 member_id = 2;
+  repeated string peer_urls = 3;
+  repeated string client_urls = 4;
+  int32 leader_priority = 5;
+  string deploy_path = 6;
+  string binary_version = 7;
+  string git_hash = 8;
+  string dc_location = 9;
+}
+
+message GetMembersRequest {
+  RequestHeader header = 1;
+}
+
+message GetMembersResponse {
+  ResponseHeader header = 1;
+  repeated Member members = 2;
+  Member leader = 3;
+  Member etcd_leader = 4;
+  map<string, Member> tso_allocator_leaders = 5;
+}
+
+message PeerStats {
+  metapb.Peer peer = 1;
+  uint64 down_seconds = 2;
+}

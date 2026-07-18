@@ -1,0 +1,49 @@
+syntax = "proto3";
+package metapb;
+
+enum StoreState {
+  Up = 0;
+  Offline = 1;
+  Tombstone = 2;
+}
+
+enum NodeState {
+  Preparing = 0;
+  Serving = 1;
+  Removing = 2;
+  Removed = 3;
+}
+
+message Store {
+  uint64 id = 1;
+  string address = 2;
+  StoreState state = 3;
+  NodeState node_state = 13;
+}
+
+message RegionEpoch {
+  uint64 conf_ver = 1;
+  uint64 version = 2;
+}
+
+message Region {
+  uint64 id = 1;
+  bytes start_key = 2;
+  bytes end_key = 3;
+  RegionEpoch region_epoch = 4;
+  repeated Peer peers = 5;
+}
+
+enum PeerRole {
+  Voter = 0;
+  Learner = 1;
+  IncomingVoter = 2;
+  DemotingVoter = 3;
+}
+
+message Peer {
+  uint64 id = 1;
+  uint64 store_id = 2;
+  PeerRole role = 3;
+  bool is_witness = 4;
+}

@@ -56,5 +56,5 @@ name = "mvcc_metadata"
 path = "tests/mvcc_metadata.rs"
 
 [[test]]
-name = "realtikv_tikv_unary"
-path = "tests/realtikv_tikv_unary.rs"
+name = "realtikv_pd_route"
+path = "tests/realtikv_pd_route.rs"
