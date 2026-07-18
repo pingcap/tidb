@@ -301,7 +301,9 @@ fn scheduler_moves_the_original_completion_into_inflight() {
     let (completion, mut pull) = completion_pair(CompletionRunLoop::new(), || {});
     let mut scheduler = BatchScheduler::new();
     scheduler.push(BatchEntry::new(command.clone(), completion));
-    let (direct, forwarded) = scheduler.build_with_limit(1).into_parts();
+    let groups = scheduler.build_with_limit(1).into_parts();
+    let direct = groups.direct;
+    let forwarded = groups.forwarded;
     assert!(forwarded.is_empty());
     let scheduled = direct
         .expect("direct group")

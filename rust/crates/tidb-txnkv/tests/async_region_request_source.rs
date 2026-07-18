@@ -82,18 +82,6 @@ fn cancellation_precedes_selector_cache_feedback() {
     assert!(SOURCE.contains("DirectUnaryClientError::CallerCancelled"));
 }
 
-// client-go/internal/locate/region_request_test.go:149 TestOnRegionError,
-// :226 TestOnSendFailedWithStoreRestartUsingAsyncAPI, and :270
-// TestOnSendFailedWithCloseKnownStoreThenUseNewOneUsingAsyncAPI.
-#[test]
-fn callback_policy_distinguishes_region_and_send_feedback_before_retry() {
-    assert!(SOURCE.contains("AsyncRegionRetryCause::RegionError"));
-    assert!(SOURCE.contains("AsyncRegionRetryCause::SendFailure"));
-    assert!(SOURCE.contains("self.policy.on_response"));
-    assert!(SOURCE.contains(".on_send_failure"));
-    assert!(SOURCE.contains("record `elapsed` against `route.target()` exactly"));
-}
-
 // client-go/internal/locate/region_request_state_test.go:267
 // TestRegionCacheStaleReadUsingAsyncAPI. The async layer copies the already
 // selected route flags; it does not reinterpret stale/replica policy.
@@ -272,6 +260,37 @@ fn response(value: u8) -> DirectUnaryResponse {
     DirectUnaryResponse {
         encoded_response: vec![value],
     }
+}
+
+// client-go/internal/locate/region_request_test.go:149 TestOnRegionError.
+// A response carrying a canonical region-error decision must transfer control
+// back to the synchronous loop without publishing the raw response.
+#[test]
+fn region_error_feedback_precedes_retry_and_suppresses_publication() {
+    let run_loop = CompletionRunLoop::new();
+    let (completion, mut pull) = completion_pair(run_loop.clone(), || {});
+    let raw = response(3);
+    let cause = AsyncRegionRetryCause::RegionError(raw.clone());
+    let mut dispatcher = FakeDispatcher::new(FakeBegin::Ready(Ok(raw)));
+    let policy = FakePolicy::new(AsyncRegionAttemptDecision::Retry(cause.clone()));
+    let mut attempt = AsyncRegionRequestAttempt::begin(
+        &mut dispatcher,
+        route(),
+        &request(),
+        UnaryCallContext::with_timeout(Duration::from_secs(1)),
+        completion,
+        policy,
+    );
+
+    assert_eq!(attempt.poll(), AsyncRegionAttemptPoll::Retry(cause.clone()));
+    assert_eq!(attempt.poll(), AsyncRegionAttemptPoll::Retry(cause));
+    assert_eq!(
+        attempt.state(),
+        AsyncRegionAttemptState::AwaitingSynchronousRetry
+    );
+    assert_eq!(run_loop.num_runnable(), 0);
+    assert_eq!(pull.try_complete(), Ok(None));
+    assert_eq!(attempt.into_policy().responses, 1);
 }
 
 // client-go/internal/locate/region_request_test.go:226 and :270. An

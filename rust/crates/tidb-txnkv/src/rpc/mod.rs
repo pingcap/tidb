@@ -27,11 +27,13 @@ pub use liveness::DEFAULT_STORE_LIVENESS_TIMEOUT;
 pub use tonic_coprocessor::TonicCoprocessorClient;
 pub use unary::{UnaryCallContext, UnaryCancellation};
 
-impl<T, E> batch::BatchEntryCompletion<E> for CompletionRequest<T, E>
+impl<T, E> batch::BatchEntryCompletion for CompletionRequest<T, E>
 where
     T: Send + 'static,
     E: Send + 'static,
 {
+    type Error = E;
+
     fn is_canceled(&self) -> bool {
         self.is_cancelled()
     }

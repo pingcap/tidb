@@ -258,6 +258,18 @@ where
     forwarded: BTreeMap<String, BatchGroup<T, C>>,
 }
 
+/// Direct and forwarded groups after consuming one scheduling pass.
+#[derive(Debug)]
+pub struct ConsumedBatchGroups<T, C>
+where
+    C: BatchEntryCompletion,
+{
+    /// Direct stream group, if any.
+    pub direct: Option<BatchGroup<T, C>>,
+    /// Forwarding-specific groups keyed by logical target.
+    pub forwarded: BTreeMap<String, BatchGroup<T, C>>,
+}
+
 impl<T, C> Default for BatchGroups<T, C>
 where
     C: BatchEntryCompletion,
@@ -285,8 +297,11 @@ where
     }
 
     /// Consumes the groups so stream owners can move each original completion.
-    pub fn into_parts(self) -> (Option<BatchGroup<T, C>>, BTreeMap<String, BatchGroup<T, C>>) {
-        (self.direct, self.forwarded)
+    pub fn into_parts(self) -> ConsumedBatchGroups<T, C> {
+        ConsumedBatchGroups {
+            direct: self.direct,
+            forwarded: self.forwarded,
+        }
     }
 
     fn push(&mut self, entry: ScheduledEntry<T, C>, selected_at: Instant) {

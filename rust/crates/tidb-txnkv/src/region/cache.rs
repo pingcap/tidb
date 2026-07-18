@@ -456,7 +456,9 @@ where
         let store = self
             .stores
             .get_mut(&store_id)
-            .ok_or_else(|| RegionRecoveryError::Route(RegionRouteError::MissingStore(store_id)))?;
+            .ok_or(RegionRecoveryError::Route(RegionRouteError::MissingStore(
+                store_id,
+            )))?;
         let previous_epoch = store.epoch;
         let outcome = match metadata {
             None => {

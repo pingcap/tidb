@@ -36,8 +36,8 @@ pub use observability::{
 pub use priority_queue::{PriorityItem, PriorityQueue};
 pub use scheduler::{
     BatchEntry, BatchEntryCompletion, BatchGroup, BatchGroups, BatchPolicyOptions, BatchScheduler,
-    BatchTrigger, ScheduledEntry, BATCH_POLICY_BASIC, BATCH_POLICY_CUSTOM, BATCH_POLICY_POSITIVE,
-    BATCH_POLICY_STANDARD, DEFAULT_BATCH_POLICY, HIGH_TASK_PRIORITY,
+    BatchTrigger, ConsumedBatchGroups, ScheduledEntry, BATCH_POLICY_BASIC, BATCH_POLICY_CUSTOM,
+    BATCH_POLICY_POSITIVE, BATCH_POLICY_STANDARD, DEFAULT_BATCH_POLICY, HIGH_TASK_PRIORITY,
 };
 pub use wire::{
     BatchCommandTag, BatchEnvelopeKind, BatchWireError, BatchWireRequest, BatchWireResponse,

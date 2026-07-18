@@ -27,6 +27,7 @@ pub use crate::retry::{RegionBackoffBudget, RegionBackoffExhausted, RegionBackof
 pub use async_request::{
     AsyncRegionAttemptDecision, AsyncRegionAttemptPolicy, AsyncRegionAttemptPoll,
     AsyncRegionAttemptState, AsyncRegionRequestAttempt, AsyncRegionRetryCause,
+    RoutedRegionResponse,
 };
 pub use background::{
     BackgroundMaintenanceRound, BackgroundRegionCache, BackgroundRegionCacheError,
