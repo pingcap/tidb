@@ -106,10 +106,11 @@ fn one_shared_runtime_carries_client_and_region_cache_handles() {
     assert_eq!(runtime.matches("    client: Rc<RefCell<C>>").count(), 1);
     assert_eq!(
         runtime
-            .matches("    region_cache: Rc<RefCell<RegionCache<L>>>")
+            .matches("    region_cache: BackgroundRegionCache<L>")
             .count(),
         1
     );
+    assert!(!runtime.contains("region_cache: Rc<RefCell<RegionCache<L>>>"));
 
     let direct = include_str!("../src/cop_paging/direct_unary_query_transport.rs");
     assert!(direct.contains("shared_runtime: SharedReadRuntime<C, L>"));
