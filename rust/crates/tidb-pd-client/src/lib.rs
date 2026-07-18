@@ -12,4 +12,4 @@ mod model;
 
 pub use client::{PdClient, GET_MEMBERS_PATH, GET_REGION_PATH, GET_STORE_PATH};
 pub use error::{PdClientError, PdOperation};
-pub use model::{PdNodeState, PdPeer, PdPeerRole, PdRegion, PdRegionEpoch, PdStore, PdStoreState};
+pub use model::{PdNodeState, PdPeer, PdRegion, PdRegionEpoch, PdStore, PdStoreState};

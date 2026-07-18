@@ -198,6 +198,16 @@ impl CopPagingState {
         CopReadTaskRuntime::prepare(metadata, topology, cache, generation, seed_read_bytes)
     }
 
+    /// Validates the request-owned invariants before region discovery begins.
+    ///
+    /// The full preparation path repeats this check before constructing tasks;
+    /// transports call this entry point first so an unsupported request cannot
+    /// perform PD I/O or mutate a region cache merely to discover that it is
+    /// unsendable.
+    pub fn validate_read_request(metadata: &KvRequestMetadata) -> Result<(), CopReadTaskError> {
+        cop_read_task_runtime::validate_request(metadata)
+    }
+
     pub(super) fn new_with_shared_ema(
         task: &RegionTaskEnvelope,
         descending: bool,

@@ -239,6 +239,8 @@ impl<C: DirectUnaryClient + 'static, L: RegionLoader + 'static> QueryTransport
                     .to_string(),
             );
         }
+        CopPagingState::validate_read_request(metadata)
+            .map_err(|error| DirectUnaryTransportError::from(error).to_string())?;
         let requested_ranges =
             metadata_region_ranges(metadata).map_err(|error| error.to_string())?;
         let (cluster_id, locations) = {
@@ -347,7 +349,7 @@ fn topology_from_locations(
         let peer = RegionTaskPeer {
             id: selected.peer.id,
             store_id: selected.peer.store_id,
-            role: selected.peer.role as i32,
+            role: selected.peer.role.as_i32(),
             is_witness: selected.peer.is_witness,
         };
         routes.insert(

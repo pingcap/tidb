@@ -377,7 +377,7 @@ pd-client	Test	keyspace_client_test.go	152	TestLoadKeyspaceByIDReturnsProtoClien
 pd-client	Test	keyspace_client_test.go	169	TestLoadKeyspaceByIDReturnsRPCError	transaction	bf79a4b3e9442b495154a086d019144861c3192c3c2a85eaa09f8a719276c5d7	UNTRIAGED	-	-	-
 pd-client	TestMain	opt/option_test.go	27	TestMain	transaction	c17d90178b6373fa6e7d2ddc15530ce30276aa032b1fbab75204e5798f9a794e	UNTRIAGED	-	-	-
 pd-client	Test	opt/option_test.go	31	TestDynamicOptionChange	transaction	c17d90178b6373fa6e7d2ddc15530ce30276aa032b1fbab75204e5798f9a794e	UNTRIAGED	-	-	-
-pd-client	Test	opt/option_test.go	115	TestOptions	transaction	c17d90178b6373fa6e7d2ddc15530ce30276aa032b1fbab75204e5798f9a794e	UNTRIAGED	-	-	-
+pd-client	Test	opt/option_test.go	115	TestOptions	transaction	c17d90178b6373fa6e7d2ddc15530ce30276aa032b1fbab75204e5798f9a794e	PARTIAL	txnkv-pd-region-loader-runtime	rust/crates/tidb-pd-client/tests/pd_client_source.rs	Source-derived mock PD tests prove the explicit timeout, no retry, and no router/follower/forwarding behavior of this bounded client. Dynamic notifications and the full option matrix remain external.
 pd-client	TestMain	pkg/batch/batch_controller_test.go	27	TestMain	transaction	ba3177c53e8624dd76ba91712cbb440a46f4d8814e597aeacd742992a4583939	UNTRIAGED	-	-	-
 pd-client	Test	pkg/batch/batch_controller_test.go	33	TestAdjustBestBatchSize	transaction	ba3177c53e8624dd76ba91712cbb440a46f4d8814e597aeacd742992a4583939	UNTRIAGED	-	-	-
 pd-client	Test	pkg/batch/batch_controller_test.go	62	TestFinishCollectedRequests	transaction	ba3177c53e8624dd76ba91712cbb440a46f4d8814e597aeacd742992a4583939	UNTRIAGED	-	-	-

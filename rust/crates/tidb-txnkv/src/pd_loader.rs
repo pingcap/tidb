@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use tidb_codec::{decode_bytes, encode_bytes};
-use tidb_pd_client::{PdClient, PdClientError, PdPeerRole, PdStore};
+use tidb_pd_client::{PdClient, PdClientError, PdStore};
 
 use crate::region::{
     Peer, PeerRole, RegionEpoch, RegionLoadError, RegionLoader, RegionLocation, RegionVerId, Store,
@@ -150,12 +150,13 @@ fn decode_region_boundary(encoded: &[u8]) -> Result<Vec<u8>, RegionLoadError> {
         .map_err(|error| RegionLoadError::new("invalid_region_key", error.to_string()))
 }
 
-const fn map_peer_role(role: PdPeerRole) -> PeerRole {
+const fn map_peer_role(role: i32) -> PeerRole {
     match role {
-        PdPeerRole::Voter => PeerRole::Voter,
-        PdPeerRole::Learner => PeerRole::Learner,
-        PdPeerRole::IncomingVoter => PeerRole::IncomingVoter,
-        PdPeerRole::DemotingVoter => PeerRole::DemotingVoter,
+        0 => PeerRole::Voter,
+        1 => PeerRole::Learner,
+        2 => PeerRole::IncomingVoter,
+        3 => PeerRole::DemotingVoter,
+        role => PeerRole::Unknown(role),
     }
 }
 

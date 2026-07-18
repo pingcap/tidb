@@ -39,18 +39,33 @@ impl KeyRange {
 }
 
 /// Source protobuf peer-role discriminants.
-#[repr(i32)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum PeerRole {
     /// Normal voting replica.
     #[default]
-    Voter = 0,
+    Voter,
     /// Learner replica.
-    Learner = 1,
+    Learner,
     /// Voting replica being added by joint consensus.
-    IncomingVoter = 2,
+    IncomingVoter,
     /// Voting replica being removed by joint consensus.
-    DemotingVoter = 3,
+    DemotingVoter,
+    /// A role added by a newer kvproto version.
+    Unknown(i32),
+}
+
+impl PeerRole {
+    /// Returns the original protobuf discriminant without narrowing it.
+    #[must_use]
+    pub const fn as_i32(self) -> i32 {
+        match self {
+            Self::Voter => 0,
+            Self::Learner => 1,
+            Self::IncomingVoter => 2,
+            Self::DemotingVoter => 3,
+            Self::Unknown(role) => role,
+        }
+    }
 }
 
 /// Immutable region peer metadata.

@@ -20,8 +20,7 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use tidb_pd_client::{
-    PdClient, PdNodeState, PdPeerRole, PdStoreState, GET_MEMBERS_PATH, GET_REGION_PATH,
-    GET_STORE_PATH,
+    PdClient, PdNodeState, PdStoreState, GET_MEMBERS_PATH, GET_REGION_PATH, GET_STORE_PATH,
 };
 use tidb_proto::metapb;
 use tidb_proto::pdpb::{
@@ -291,15 +290,10 @@ fn exact_methods_headers_wire_key_roles_and_store_states_are_preserved_once() {
             .iter()
             .map(|peer| peer.role)
             .collect::<Vec<_>>(),
-        [
-            PdPeerRole::Voter,
-            PdPeerRole::Learner,
-            PdPeerRole::IncomingVoter,
-            PdPeerRole::DemotingVoter,
-        ]
+        [0, 1, 2, 3]
     );
     assert!(region.peers[1].is_witness);
-    assert_eq!(region.leader.role, PdPeerRole::Voter);
+    assert_eq!(region.leader.role, 0);
     assert!(!region.leader.is_witness);
     assert_eq!(region.down_peer_ids, [14]);
 
@@ -500,19 +494,6 @@ fn region_header_and_topology_errors_fail_after_exactly_one_attempt() {
             },
             "leader_not_in_peers",
         ),
-        (
-            pdpb::GetRegionResponse {
-                region: Some(metapb::Region {
-                    peers: vec![metapb::Peer {
-                        role: 99,
-                        ..peer(11, 101, metapb::PeerRole::Voter, false)
-                    }],
-                    ..region_response().region.unwrap()
-                }),
-                ..region_response()
-            },
-            "invalid_peer_role",
-        ),
     ];
     for (response, expected) in cases {
         let before = server.state.lock().unwrap().region_requests.len();
@@ -527,9 +508,48 @@ fn region_header_and_topology_errors_fail_after_exactly_one_attempt() {
 }
 
 #[test]
+fn unknown_peer_role_is_preserved_for_forward_compatible_routing() {
+    let mut state = valid_state();
+    let response = match &mut state.region {
+        Reply::Value(response) => response,
+        _ => unreachable!(),
+    };
+    response.region.as_mut().unwrap().peers[0].role = 99;
+    response.leader.as_mut().unwrap().role = 99;
+    let server = Server::start(state);
+    let mut client = PdClient::connect(&server.address, Duration::from_secs(2)).unwrap();
+
+    let region = client.get_region(b"wire").unwrap();
+    assert_eq!(region.peers[0].role, 99);
+    assert_eq!(region.leader.role, 99);
+}
+
+#[test]
 fn store_mismatch_unusable_and_unknown_states_fail_closed_without_retry() {
     let server = Server::start(valid_state());
     let mut client = PdClient::connect(&server.address, Duration::from_secs(2)).unwrap();
+    for error in [
+        pdpb::Error {
+            r#type: pdpb::ErrorType::StoreTombstone as i32,
+            message: "gone".to_owned(),
+        },
+        pdpb::Error {
+            r#type: pdpb::ErrorType::Unknown as i32,
+            message: "invalid store ID 201, not found".to_owned(),
+        },
+    ] {
+        server.state.lock().unwrap().stores.insert(
+            201,
+            Reply::Value(pdpb::GetStoreResponse {
+                header: Some(pdpb::ResponseHeader {
+                    cluster_id: CLUSTER_ID,
+                    error: Some(error),
+                }),
+                store: None,
+            }),
+        );
+        assert_eq!(client.get_store(201).unwrap(), None);
+    }
     let cases = [
         (
             pdpb::GetStoreResponse {
@@ -538,19 +558,6 @@ fn store_mismatch_unusable_and_unknown_states_fail_closed_without_retry() {
                     .store,
             },
             "missing_header",
-        ),
-        (
-            pdpb::GetStoreResponse {
-                header: Some(pdpb::ResponseHeader {
-                    cluster_id: CLUSTER_ID,
-                    error: Some(pdpb::Error {
-                        r#type: pdpb::ErrorType::StoreTombstone as i32,
-                        message: "gone".to_owned(),
-                    }),
-                }),
-                store: None,
-            },
-            "header_error",
         ),
         (
             pdpb::GetStoreResponse {

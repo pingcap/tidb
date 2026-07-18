@@ -12,19 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-/// Source `metapb.PeerRole` discriminants.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum PdPeerRole {
-    /// Normal voting replica.
-    Voter,
-    /// Learner replica.
-    Learner,
-    /// Incoming voter in joint consensus.
-    IncomingVoter,
-    /// Demoting voter in joint consensus.
-    DemotingVoter,
-}
-
 /// One validated source peer.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PdPeer {
@@ -32,8 +19,8 @@ pub struct PdPeer {
     pub id: u64,
     /// Referenced store identity.
     pub store_id: u64,
-    /// Source role.
-    pub role: PdPeerRole,
+    /// Raw source role discriminant. Protobuf enums are forward-extensible.
+    pub role: i32,
     /// Source witness flag.
     pub is_witness: bool,
 }

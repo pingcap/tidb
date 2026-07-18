@@ -22,8 +22,7 @@ use tidb_proto::pdpb::{self, pd_client::PdClient as TonicPdClient};
 use tonic::transport::{Channel, Endpoint};
 
 use crate::{
-    PdClientError, PdNodeState, PdOperation, PdPeer, PdPeerRole, PdRegion, PdRegionEpoch, PdStore,
-    PdStoreState,
+    PdClientError, PdNodeState, PdOperation, PdPeer, PdRegion, PdRegionEpoch, PdStore, PdStoreState,
 };
 
 /// Exact method paths generated from the checked source projection.
@@ -303,8 +302,33 @@ fn get_store(
         .await
     });
     let response = map_rpc_result(response, PdOperation::GetStore, endpoint, timeout)?.into_inner();
-    validate_response_header(PdOperation::GetStore, response.header.as_ref(), cluster_id)?;
+    if store_is_removed(response.header.as_ref(), cluster_id)? {
+        return Ok(None);
+    }
     project_store(response.store, store_id)
+}
+
+fn store_is_removed(
+    header: Option<&pdpb::ResponseHeader>,
+    cluster_id: u64,
+) -> Result<bool, PdClientError> {
+    let header = header.ok_or(PdClientError::MissingHeader(PdOperation::GetStore))?;
+    if header.cluster_id != cluster_id {
+        return Err(PdClientError::ClusterMismatch {
+            operation: PdOperation::GetStore,
+            expected: cluster_id,
+            actual: header.cluster_id,
+        });
+    }
+    if let Some(error) = &header.error {
+        let store_not_found = error.r#type == pdpb::ErrorType::StoreTombstone as i32
+            || (error.message.contains("invalid store ID") && error.message.contains("not found"));
+        if store_not_found {
+            return Ok(true);
+        }
+        reject_header_error(PdOperation::GetStore, header)?;
+    }
+    Ok(false)
 }
 
 fn map_rpc_result<T>(
@@ -471,22 +495,10 @@ fn project_peer(peer: metapb::Peer) -> Result<PdPeer, PdClientError> {
             format!("peer {} references store zero", peer.id),
         ));
     }
-    let role = match metapb::PeerRole::try_from(peer.role) {
-        Ok(metapb::PeerRole::Voter) => PdPeerRole::Voter,
-        Ok(metapb::PeerRole::Learner) => PdPeerRole::Learner,
-        Ok(metapb::PeerRole::IncomingVoter) => PdPeerRole::IncomingVoter,
-        Ok(metapb::PeerRole::DemotingVoter) => PdPeerRole::DemotingVoter,
-        Err(_) => {
-            return Err(invalid_topology(
-                "invalid_peer_role",
-                format!("peer {} has role discriminant {}", peer.id, peer.role),
-            ))
-        }
-    };
     Ok(PdPeer {
         id: peer.id,
         store_id: peer.store_id,
-        role,
+        role: peer.role,
         is_witness: peer.is_witness,
     })
 }

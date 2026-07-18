@@ -643,3 +643,40 @@ fn unsupported_replica_policy_fails_before_pd_or_tikv() {
     assert!(calls.borrow().is_empty());
     assert!(loader_calls.borrow().is_empty());
 }
+
+#[test]
+fn unsupported_request_shape_fails_before_pd_or_tikv() {
+    let mut tiflash = metadata("a", "z");
+    tiflash.store_type = StoreType::TiFlash;
+    let mut analyze = metadata("a", "z");
+    analyze.request_type = RequestType::Analyze;
+    let mut unordered = metadata("a", "z");
+    unordered.keep_order = false;
+    let mut batched = metadata("a", "z");
+    batched.batch_cop = true;
+
+    for invalid in [tiflash, analyze, unordered, batched] {
+        let calls = Rc::new(RefCell::new(Vec::new()));
+        let loader_calls = Rc::new(RefCell::new(Vec::new()));
+        let mut runtime = InjectedQueryRuntime::new(transport_with_loader_calls(
+            Rc::clone(&calls),
+            std::iter::empty(),
+            [location(1, "a", "z", "one")],
+            9001,
+            Rc::clone(&loader_calls),
+        ));
+
+        assert!(runtime
+            .select_with_runtime_stats(
+                &TransportRequest::new(invalid),
+                SelectInput::default(),
+                QueryResultContext::new(Vec::new(), WarningCollector::new()),
+                Vec::new(),
+                0,
+                false,
+            )
+            .is_err());
+        assert!(calls.borrow().is_empty());
+        assert!(loader_calls.borrow().is_empty());
+    }
+}

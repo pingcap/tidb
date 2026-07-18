@@ -7,14 +7,32 @@ TAG="campaign10-realtikv-${$}"
 PORT_OFFSET=${C10_PORT_OFFSET:-21000}
 PD_PORT=$((2379 + PORT_OFFSET))
 PD_ADDR="127.0.0.1:${PD_PORT}"
+TIKV_PORT=$((20160 + PORT_OFFSET))
+TIKV_ADDR="127.0.0.1:${TIKV_PORT}"
 PLAYGROUND_PID=
 OWNED_PIDS=
 PLAYGROUND_LOG="${TMPDIR:-/tmp}/${TAG}.log"
 TAG_DIR="${TIUP_HOME:-${HOME}/.tiup}/data/${TAG}"
 
 tag_status_rows() {
-  tiup status 2>/dev/null | awk -v tag="${TAG}" \
+  tiup status | awk -v tag="${TAG}" \
     'NR > 2 && ($1 == tag || index($0, "/data/" tag "/")) { print }'
+}
+
+tag_owned_pids() {
+  pgrep -f "${TAG_DIR}" || true
+}
+
+merge_owned_pids() {
+  {
+    for pid in ${OWNED_PIDS}; do
+      printf '%s\n' "${pid}"
+    done
+    if [[ -n "${PLAYGROUND_PID}" ]]; then
+      collect_descendant_pids "${PLAYGROUND_PID}"
+    fi
+    tag_owned_pids
+  } | awk 'NF && !seen[$1]++ { print $1 }' | tr '\n' ' '
 }
 
 collect_descendant_pids() {
@@ -42,16 +60,21 @@ cleanup() {
   local original_status=$?
   local cleanup_failed=false
   trap - EXIT INT TERM
+  OWNED_PIDS=$(merge_owned_pids)
   if [[ -n "${PLAYGROUND_PID}" ]]; then
     if kill -0 "${PLAYGROUND_PID}" 2>/dev/null; then
       kill "${PLAYGROUND_PID}" 2>/dev/null || true
     fi
     wait "${PLAYGROUND_PID}" 2>/dev/null || true
   fi
-  tiup clean "${TAG}" --all >/dev/null 2>&1 || true
+  if ! tiup clean "${TAG}" --all >/dev/null 2>&1; then
+    echo "Campaign 10 cleanup failed: tiup clean failed for ${TAG}" >&2
+    cleanup_failed=true
+  fi
 
   local processes_cleaned=false
   for _ in $(seq 1 30); do
+    OWNED_PIDS=$(merge_owned_pids)
     local process_alive=false
     local pid
     for pid in ${OWNED_PIDS}; do
@@ -60,7 +83,12 @@ cleanup() {
         break
       fi
     done
-    if [[ "${process_alive}" == false ]] && [[ -z "$(tag_status_rows)" ]]; then
+    local status_rows
+    if ! status_rows=$(tag_status_rows 2>/dev/null); then
+      sleep 1
+      continue
+    fi
+    if [[ "${process_alive}" == false ]] && [[ -z "${status_rows}" ]]; then
       processes_cleaned=true
       break
     fi
@@ -69,16 +97,21 @@ cleanup() {
   if [[ "${processes_cleaned}" != true ]]; then
     echo "Campaign 10 cleanup failed: owned TiUP registry or process remains for ${TAG}" >&2
     cleanup_failed=true
-  else
+  fi
+  if curl -sf --max-time 1 "http://${PD_ADDR}/pd/api/v1/version" >/dev/null; then
+    echo "Campaign 10 cleanup failed: owned PD endpoint ${PD_ADDR} is still reachable" >&2
+    cleanup_failed=true
+  fi
+  if nc -z -w 1 127.0.0.1 "${TIKV_PORT}" >/dev/null 2>&1; then
+    echo "Campaign 10 cleanup failed: owned TiKV endpoint ${TIKV_ADDR} is still reachable" >&2
+    cleanup_failed=true
+  fi
+  if [[ "${cleanup_failed}" == false ]]; then
     rm -rf -- "${TAG_DIR}"
     if [[ -e "${TAG_DIR}" ]]; then
       echo "Campaign 10 cleanup failed: owned tag directory remains at ${TAG_DIR}" >&2
       cleanup_failed=true
     fi
-  fi
-  if curl -sf --max-time 1 "http://${PD_ADDR}/pd/api/v1/version" >/dev/null; then
-    echo "Campaign 10 cleanup failed: owned PD endpoint ${PD_ADDR} is still reachable" >&2
-    cleanup_failed=true
   fi
   rm -f "${PLAYGROUND_LOG}"
   if [[ "${cleanup_failed}" == true ]]; then
@@ -90,6 +123,10 @@ trap cleanup EXIT INT TERM
 
 if curl -sf --max-time 1 "http://${PD_ADDR}/pd/api/v1/version" >/dev/null; then
   echo "refusing to reuse occupied PD endpoint ${PD_ADDR}; set C10_PORT_OFFSET" >&2
+  exit 1
+fi
+if nc -z -w 1 127.0.0.1 "${TIKV_PORT}" >/dev/null 2>&1; then
+  echo "refusing to reuse occupied TiKV endpoint ${TIKV_ADDR}; set C10_PORT_OFFSET" >&2
   exit 1
 fi
 
@@ -117,6 +154,7 @@ if [[ "${ready}" != true ]]; then
 fi
 
 OWNED_PIDS=$(collect_descendant_pids "${PLAYGROUND_PID}")
+OWNED_PIDS=$(merge_owned_pids)
 if [[ -z "${OWNED_PIDS}" ]]; then
   echo "TiUP did not publish owned descendant processes for ${TAG}" >&2
   exit 1

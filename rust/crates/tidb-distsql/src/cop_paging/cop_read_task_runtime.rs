@@ -620,7 +620,7 @@ fn allocate_paging_task_index(counter: &mut u32, paging_active: bool) -> u32 {
     *counter
 }
 
-fn validate_request(metadata: &KvRequestMetadata) -> Result<(), CopReadTaskError> {
+pub(super) fn validate_request(metadata: &KvRequestMetadata) -> Result<(), CopReadTaskError> {
     if metadata.store_type != StoreType::TiKv {
         return Err(CopReadTaskError::UnsupportedStore);
     }

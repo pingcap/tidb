@@ -221,6 +221,50 @@ fn removed_leader_and_malformed_boundary_fail_with_loader_identity() {
     assert_eq!(error.identity(), "invalid_region_key");
 }
 
+#[test]
+fn removed_follower_is_filtered_without_hiding_a_healthy_leader() {
+    let mut state = valid_state();
+    state.stores.insert(
+        102,
+        pdpb::GetStoreResponse {
+            header: Some(pdpb::ResponseHeader {
+                cluster_id: CLUSTER_ID,
+                error: Some(pdpb::Error {
+                    r#type: pdpb::ErrorType::StoreTombstone as i32,
+                    message: "removed follower".to_owned(),
+                }),
+            }),
+            store: None,
+        },
+    );
+    let server = Server::start(state);
+    let mut loader = PdRegionLoader::connect(&server.address, Duration::from_secs(2)).unwrap();
+
+    let location = loader.load_region(b"logical-key").unwrap();
+    assert_eq!(location.leader_peer_id, Some(11));
+    assert!(location.peers.iter().any(|peer| peer.id == 11));
+    assert!(location.peers.iter().all(|peer| peer.store_id != 102));
+    assert!(location.stores.iter().all(|store| store.id != 102));
+}
+
+#[test]
+fn unknown_leader_role_reaches_the_raw_context_domain() {
+    let mut state = valid_state();
+    state.region.region.as_mut().unwrap().peers[0].role = 99;
+    state.region.leader.as_mut().unwrap().role = 99;
+    let server = Server::start(state);
+    let mut loader = PdRegionLoader::connect(&server.address, Duration::from_secs(2)).unwrap();
+
+    let location = loader.load_region(b"logical-key").unwrap();
+    let leader = location
+        .peers
+        .iter()
+        .find(|peer| Some(peer.id) == location.leader_peer_id)
+        .unwrap();
+    assert_eq!(leader.role, PeerRole::Unknown(99));
+    assert_eq!(leader.role.as_i32(), 99);
+}
+
 fn valid_state() -> State {
     let peers = vec![
         peer(11, 101, metapb::PeerRole::Voter, false),
