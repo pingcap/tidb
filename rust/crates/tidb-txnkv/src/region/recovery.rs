@@ -355,9 +355,8 @@ impl<L: RegionRecoveryLoader> RegionCache<L> {
         };
 
         if self.update_leader(attempt.region, leader.id, leader.store_id) {
-            let route = self.owned_leader_route(attempt.region)?;
-            Ok(RegionErrorDisposition::RetryRoute {
-                route,
+            Ok(RegionErrorDisposition::RetryPeers {
+                rejected_peer_id: attempt.peer_id,
                 delay: Duration::ZERO,
             })
         } else {

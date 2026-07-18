@@ -15,8 +15,6 @@
 #![allow(missing_docs)]
 
 use std::collections::VecDeque;
-use std::time::Duration;
-
 use tidb_txnkv::region::{
     Peer, PeerRole, ReadPolicy, RegionAttempt, RegionCache, RegionLoadError, RegionLoader,
     RegionLocation, RegionRecoveryError, RegionVerId, RequestSelection, Store, StoreFailureOutcome,
@@ -97,7 +95,7 @@ fn one_exact_failure_stales_every_region_snapshot_for_the_store() {
         .request_selector(right.region, ReadPolicy::default())
         .unwrap();
     assert_eq!(
-        cache.select_request(&mut selector, Duration::ZERO).unwrap(),
+        cache.select_request(&mut selector).unwrap(),
         RequestSelection::ReloadRegion {
             region: right.region
         }
@@ -147,6 +145,48 @@ fn loader_epoch_zero_re_resolves_without_rolling_back_failure_epoch() {
         StoreLiveness::Unreachable,
         "metadata resolution must not invent a successful health observation"
     );
+}
+
+#[test]
+fn existing_canonical_epoch_ignores_every_loader_supplied_epoch() {
+    let left = location(1, b"", b"m", "tikv", 7);
+    let supplied_ahead = location(2, b"m", b"", "tikv", 99);
+    let mut cache = RegionCache::new(Loader(VecDeque::from([left, supplied_ahead])));
+    cache.locate_key(b"a").unwrap();
+    let right = cache.locate_key(b"z").unwrap();
+
+    assert_eq!(right.peers[0].store_epoch, 7);
+    assert_eq!(right.stores[0].epoch, 7);
+    assert_eq!(cache.store_state(101).unwrap().epoch(), 7);
+}
+
+#[test]
+fn re_resolved_unknown_cached_leader_remains_a_candidate() {
+    let first = location(1, b"", b"", "tikv", 7);
+    let refreshed = location(1, b"", b"", "tikv", 0);
+    let mut cache = RegionCache::new(Loader(VecDeque::from([first.clone(), refreshed])));
+    cache.locate_key(b"a").unwrap();
+    cache
+        .on_send_failure(
+            &attempt(first.region, 10, "tikv", 7),
+            StoreLiveness::Unknown,
+        )
+        .unwrap();
+    cache.invalidate(first.region);
+    let region = cache.locate_key(b"a").unwrap().region;
+    assert_eq!(
+        cache.store_state(101).unwrap().liveness(),
+        StoreLiveness::Unknown
+    );
+
+    let mut selector = cache
+        .request_selector(region, ReadPolicy::default())
+        .unwrap();
+    let RequestSelection::Attempt(request) = cache.select_request(&mut selector).unwrap() else {
+        panic!("unknown liveness is not proof that the re-resolved leader is unreachable")
+    };
+    assert_eq!(request.attempt.peer_id, 10);
+    assert!(request.cached_leader);
 }
 
 #[test]

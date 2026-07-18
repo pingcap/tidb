@@ -17,6 +17,13 @@ use std::time::Duration;
 
 use super::{PeerRole, ReadPolicy, RegionAttempt, RegionVerId};
 
+/// Attempt count and completed RPC time for one peer.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct PeerAttemptState {
+    attempts: u8,
+    attempted_time: Duration,
+}
+
 /// Pinned client-go's maximum attempts against one leader generation.
 pub const MAX_REPLICA_ATTEMPTS: u8 = 10;
 
@@ -60,7 +67,8 @@ pub enum RequestSelection {
 pub struct RequestSelector {
     pub(crate) region: RegionVerId,
     pub(crate) policy: ReadPolicy,
-    pub(crate) attempts_by_peer: BTreeMap<u64, u8>,
+    pub(crate) attempts_by_peer: BTreeMap<u64, PeerAttemptState>,
+    pub(crate) pending_attempt: Option<RegionAttempt>,
 }
 
 impl RequestSelector {
@@ -69,6 +77,7 @@ impl RequestSelector {
             region,
             policy,
             attempts_by_peer: BTreeMap::new(),
+            pending_attempt: None,
         }
     }
 
@@ -80,15 +89,39 @@ impl RequestSelector {
 
     /// Excludes a peer which returned `NotLeader` without a known leader.
     pub fn reject_peer(&mut self, peer_id: u64) {
-        self.attempts_by_peer.insert(peer_id, MAX_REPLICA_ATTEMPTS);
+        self.attempts_by_peer.entry(peer_id).or_default().attempts = MAX_REPLICA_ATTEMPTS;
     }
 
     pub(crate) fn attempts_for(&self, peer_id: u64) -> u8 {
-        self.attempts_by_peer.get(&peer_id).copied().unwrap_or(0)
+        self.attempts_by_peer
+            .get(&peer_id)
+            .map_or(0, |state| state.attempts)
     }
 
-    pub(crate) fn record_attempt(&mut self, peer_id: u64) {
-        let attempts = self.attempts_by_peer.entry(peer_id).or_default();
-        *attempts = attempts.saturating_add(1);
+    pub(crate) fn attempted_time_for(&self, peer_id: u64) -> Duration {
+        self.attempts_by_peer
+            .get(&peer_id)
+            .map_or(Duration::ZERO, |state| state.attempted_time)
+    }
+
+    pub(crate) fn record_dispatch(&mut self, attempt: RegionAttempt) {
+        let state = self.attempts_by_peer.entry(attempt.peer_id).or_default();
+        state.attempts = state.attempts.saturating_add(1);
+        self.pending_attempt = Some(attempt);
+    }
+
+    /// Records the duration of the exact outstanding RPC attempt.
+    ///
+    /// A stale, duplicated, or unrelated completion returns `false` without
+    /// changing selector state.
+    #[must_use]
+    pub fn record_attempt_result(&mut self, attempt: &RegionAttempt, duration: Duration) -> bool {
+        if self.pending_attempt.as_ref() != Some(attempt) {
+            return false;
+        }
+        let state = self.attempts_by_peer.entry(attempt.peer_id).or_default();
+        state.attempted_time = state.attempted_time.saturating_add(duration);
+        self.pending_attempt = None;
+        true
     }
 }

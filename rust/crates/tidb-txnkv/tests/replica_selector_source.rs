@@ -14,8 +14,6 @@
 
 //! Source-shaped leader selector policy tests.
 
-use std::time::Duration;
-
 use tidb_txnkv::region::{
     Peer, PeerRole, ReadPolicy, RegionCache, RegionLoadError, RegionLoader, RegionLocation,
     RegionRouteError, RegionVerId, ReplicaReadMode, RequestSelection, Store,
@@ -85,9 +83,7 @@ fn leader_policy_selects_pd_leader_first_with_leader_flags() {
     let mut selector = cache
         .request_selector(region, ReadPolicy::default())
         .unwrap();
-    let RequestSelection::Attempt(selected) =
-        cache.select_request(&mut selector, Duration::ZERO).unwrap()
-    else {
+    let RequestSelection::Attempt(selected) = cache.select_request(&mut selector).unwrap() else {
         panic!("leader must be selected")
     };
     assert_eq!(selected.attempt.peer_id, 12);

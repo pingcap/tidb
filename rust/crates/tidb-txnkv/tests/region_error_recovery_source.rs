@@ -25,7 +25,7 @@ use tidb_txnkv::region::{
     Peer, PeerRole, RegionAttempt, RegionBackoffBudget, RegionBackoffKind, RegionCache,
     RegionErrorDisposition, RegionLoadError, RegionLoader, RegionLocation, RegionMetadata,
     RegionRebuildAction, RegionRecoveryError, RegionRecoveryLoader, RegionTerminalError,
-    RegionVerId, Store,
+    RegionVerId, Store, StoreLiveness,
 };
 
 type RecordedMetadata = Rc<RefCell<Vec<(RegionMetadata, u64)>>>;
@@ -212,7 +212,7 @@ fn pinned_handler_order_checks_undetermined_before_not_leader() {
 }
 
 #[test]
-fn known_leader_updates_exact_snapshot_and_retries_without_backoff() {
+fn known_leader_updates_snapshot_then_returns_through_reselection() {
     let (mut cache, _) = cache(location(7, 3, 4, b"", b""), []);
     let region = seed(&mut cache);
     let error = errorpb::Error {
@@ -233,18 +233,72 @@ fn known_leader_updates_exact_snapshot_and_retries_without_backoff() {
         cache
             .on_region_error(&error, attempt(region), &mut budget)
             .unwrap(),
-        RegionErrorDisposition::RetryRoute {
-            route: tidb_txnkv::region::OwnedLeaderRoute {
-                region,
-                peer_id: 12,
-                store_id: 102,
-                address: "store-102".to_owned(),
-                store_epoch: 9,
-            },
+        RegionErrorDisposition::RetryPeers {
+            rejected_peer_id: 11,
             delay: Duration::ZERO,
         }
     );
     assert_eq!(budget.total_sleep(), Duration::ZERO);
+    assert_eq!(cache.locate_key(b"k").unwrap().leader_peer_id, Some(12));
+}
+
+#[test]
+fn known_unreachable_leader_never_bypasses_reselection() {
+    let first = location(7, 3, 4, b"", b"");
+    let refreshed = first.clone();
+    let metadata = Rc::new(RefCell::new(Vec::new()));
+    let mut cache = RegionCache::new(Loader {
+        initial: VecDeque::from([first, refreshed]),
+        hydrated: VecDeque::new(),
+        metadata,
+    });
+    let region = seed(&mut cache);
+    let unreachable = RegionAttempt {
+        region,
+        peer_id: 12,
+        store_id: 102,
+        address: "store-102".to_owned(),
+        store_epoch: 9,
+    };
+    cache
+        .on_send_failure(&unreachable, StoreLiveness::Unreachable)
+        .unwrap();
+    cache.invalidate(region);
+    let region = seed(&mut cache);
+    let error = errorpb::Error {
+        not_leader: Some(errorpb::NotLeader {
+            region_id: 7,
+            leader: Some(metapb::Peer {
+                id: 12,
+                store_id: 102,
+                role: 0,
+                is_witness: false,
+            }),
+        }),
+        ..Default::default()
+    };
+
+    assert_eq!(
+        cache
+            .on_region_error(
+                &error,
+                attempt(region),
+                &mut RegionBackoffBudget::campaign_default(),
+            )
+            .unwrap(),
+        RegionErrorDisposition::RetryPeers {
+            rejected_peer_id: 11,
+            delay: Duration::ZERO,
+        }
+    );
+    let mut selector = cache
+        .request_selector(region, tidb_txnkv::region::ReadPolicy::default())
+        .unwrap();
+    selector.reject_peer(11);
+    assert_eq!(
+        cache.select_request(&mut selector).unwrap(),
+        tidb_txnkv::region::RequestSelection::ReloadRegion { region }
+    );
 }
 
 #[test]

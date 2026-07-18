@@ -168,13 +168,18 @@ impl<L> RegionCache<L> {
     pub fn select_request(
         &mut self,
         selector: &mut RequestSelector,
-        attempted_time: std::time::Duration,
     ) -> Result<RequestSelection, RegionRouteError> {
         if selector.policy.mode != ReplicaReadMode::Leader
             || selector.policy.stale_read
             || selector.policy.forwarding
         {
             return Err(RegionRouteError::UnsupportedReadPolicy);
+        }
+        if let Some(pending) = &selector.pending_attempt {
+            return Err(RegionRouteError::AttemptStillPending {
+                region: pending.region,
+                peer_id: pending.peer_id,
+            });
         }
         let Some(location) = self
             .regions
@@ -192,7 +197,7 @@ impl<L> RegionCache<L> {
         let selected = leader
             .filter(|peer| {
                 selector.attempts_for(peer.id) < MAX_REPLICA_ATTEMPTS
-                    && attempted_time < MAX_REPLICA_ATTEMPT_TIME
+                    && selector.attempted_time_for(peer.id) < MAX_REPLICA_ATTEMPT_TIME
                     && self.peer_is_candidate(peer, true)
             })
             .or_else(|| {
@@ -213,15 +218,16 @@ impl<L> RegionCache<L> {
             .stores
             .get(&peer.store_id)
             .ok_or(RegionRouteError::MissingStore(peer.store_id))?;
-        selector.record_attempt(peer.id);
+        let attempt = RegionAttempt {
+            region: selector.region,
+            peer_id: peer.id,
+            store_id: peer.store_id,
+            address: store.address.clone(),
+            store_epoch: store.epoch,
+        };
+        selector.record_dispatch(attempt.clone());
         Ok(RequestSelection::Attempt(LeaderRequest {
-            attempt: RegionAttempt {
-                region: selector.region,
-                peer_id: peer.id,
-                store_id: peer.store_id,
-                address: store.address.clone(),
-                store_epoch: store.epoch,
-            },
+            attempt,
             role: peer.role,
             is_witness: peer.is_witness,
             replica_read: false,
@@ -265,11 +271,7 @@ impl<L> RegionCache<L> {
             peer.store_epoch == store.epoch
                 && !store.address.is_empty()
                 && store.resolve_state == StoreResolveState::Resolved
-                && if cached_leader {
-                    store.liveness == StoreLiveness::Reachable
-                } else {
-                    store.liveness != StoreLiveness::Unreachable
-                }
+                && store.liveness != StoreLiveness::Unreachable
         })
     }
 
@@ -542,10 +544,7 @@ fn normalize_loaded(stores: &mut BTreeMap<u64, StoreState>, loaded: &mut RegionL
             }
             Some(canonical) => {
                 let address_changed = canonical.address != supplied.address;
-                if supplied.epoch > canonical.epoch {
-                    canonical.epoch = supplied.epoch;
-                } else if address_changed && canonical.resolve_state == StoreResolveState::Resolved
-                {
+                if address_changed && canonical.resolve_state == StoreResolveState::Resolved {
                     canonical.epoch = canonical.epoch.saturating_add(1);
                 }
                 canonical.address.clone_from(&supplied.address);

@@ -18,8 +18,8 @@ use std::time::Duration;
 
 use tidb_txnkv::region::{
     LeaderRequest, Peer, PeerRole, ReadPolicy, RegionCache, RegionLoadError, RegionLoader,
-    RegionLocation, RegionVerId, RequestSelection, Store, StoreLiveness, MAX_REPLICA_ATTEMPTS,
-    MAX_REPLICA_ATTEMPT_TIME,
+    RegionLocation, RegionRouteError, RegionVerId, RequestSelection, Store, StoreLiveness,
+    MAX_REPLICA_ATTEMPTS,
 };
 
 struct Loader(Option<RegionLocation>);
@@ -76,12 +76,11 @@ fn cache() -> RegionCache<Loader> {
     cache
 }
 
-fn next(cache: &mut RegionCache<Loader>, elapsed: Duration) -> LeaderRequest {
+fn next(cache: &mut RegionCache<Loader>) -> LeaderRequest {
     let mut selector = cache
         .request_selector(location().region, ReadPolicy::default())
         .unwrap();
-    let RequestSelection::Attempt(request) = cache.select_request(&mut selector, elapsed).unwrap()
-    else {
+    let RequestSelection::Attempt(request) = cache.select_request(&mut selector).unwrap() else {
         panic!("expected request")
     };
     request
@@ -93,20 +92,16 @@ fn dead_leader_rotates_to_voter_without_changing_leader_read_semantics() {
     let mut selector = cache
         .request_selector(location().region, ReadPolicy::default())
         .unwrap();
-    let RequestSelection::Attempt(leader) =
-        cache.select_request(&mut selector, Duration::ZERO).unwrap()
-    else {
+    let RequestSelection::Attempt(leader) = cache.select_request(&mut selector).unwrap() else {
         panic!("expected leader")
     };
     assert_eq!(leader.attempt.peer_id, 11);
+    assert!(selector.record_attempt_result(&leader.attempt, Duration::from_secs(1)));
     cache
         .on_send_failure(&leader.attempt, StoreLiveness::Unreachable)
         .unwrap();
 
-    let RequestSelection::Attempt(alternate) = cache
-        .select_request(&mut selector, Duration::from_secs(1))
-        .unwrap()
-    else {
+    let RequestSelection::Attempt(alternate) = cache.select_request(&mut selector).unwrap() else {
         panic!("expected alternate voter")
     };
     assert_eq!(alternate.attempt.peer_id, 12);
@@ -123,23 +118,20 @@ fn successful_alternate_is_promoted_to_the_next_request_leader() {
     let mut selector = cache
         .request_selector(location().region, ReadPolicy::default())
         .unwrap();
-    let RequestSelection::Attempt(leader) =
-        cache.select_request(&mut selector, Duration::ZERO).unwrap()
-    else {
+    let RequestSelection::Attempt(leader) = cache.select_request(&mut selector).unwrap() else {
         panic!("expected leader")
     };
+    assert!(selector.record_attempt_result(&leader.attempt, Duration::from_millis(1)));
     cache
         .on_send_failure(&leader.attempt, StoreLiveness::Unknown)
         .unwrap();
-    let RequestSelection::Attempt(alternate) = cache
-        .select_request(&mut selector, Duration::from_millis(1))
-        .unwrap()
-    else {
+    let RequestSelection::Attempt(alternate) = cache.select_request(&mut selector).unwrap() else {
         panic!("expected alternate")
     };
 
+    assert!(selector.record_attempt_result(&alternate.attempt, Duration::from_millis(1)));
     assert!(cache.promote_successful_request(&alternate).unwrap());
-    let promoted = next(&mut cache, Duration::ZERO);
+    let promoted = next(&mut cache);
     assert_eq!(promoted.attempt.peer_id, alternate.attempt.peer_id);
     assert!(promoted.cached_leader);
 }
@@ -150,16 +142,12 @@ fn missing_not_leader_rejects_observed_peer_and_probes_an_alternate() {
     let mut selector = cache
         .request_selector(location().region, ReadPolicy::default())
         .unwrap();
-    let RequestSelection::Attempt(leader) =
-        cache.select_request(&mut selector, Duration::ZERO).unwrap()
-    else {
+    let RequestSelection::Attempt(leader) = cache.select_request(&mut selector).unwrap() else {
         panic!("expected leader")
     };
+    assert!(selector.record_attempt_result(&leader.attempt, Duration::from_millis(2)));
     selector.reject_peer(leader.attempt.peer_id);
-    let RequestSelection::Attempt(alternate) = cache
-        .select_request(&mut selector, Duration::from_millis(2))
-        .unwrap()
-    else {
+    let RequestSelection::Attempt(alternate) = cache.select_request(&mut selector).unwrap() else {
         panic!("missing leader must probe another voter")
     };
     assert_eq!(alternate.attempt.peer_id, 12);
@@ -174,16 +162,14 @@ fn leader_attempt_and_time_limits_deterministically_fall_through() {
         .request_selector(location().region, ReadPolicy::default())
         .unwrap();
     for _ in 0..MAX_REPLICA_ATTEMPTS {
-        let RequestSelection::Attempt(request) =
-            cache.select_request(&mut selector, Duration::ZERO).unwrap()
+        let RequestSelection::Attempt(request) = cache.select_request(&mut selector).unwrap()
         else {
             panic!("leader has ten attempts")
         };
         assert_eq!(request.attempt.peer_id, 11);
+        assert!(selector.record_attempt_result(&request.attempt, Duration::ZERO));
     }
-    let RequestSelection::Attempt(alternate) =
-        cache.select_request(&mut selector, Duration::ZERO).unwrap()
-    else {
+    let RequestSelection::Attempt(alternate) = cache.select_request(&mut selector).unwrap() else {
         panic!("attempt exhaustion must fall through")
     };
     assert_eq!(alternate.attempt.peer_id, 12);
@@ -191,13 +177,42 @@ fn leader_attempt_and_time_limits_deterministically_fall_through() {
     let mut timed = cache
         .request_selector(location().region, ReadPolicy::default())
         .unwrap();
-    let RequestSelection::Attempt(alternate) = cache
-        .select_request(&mut timed, MAX_REPLICA_ATTEMPT_TIME)
-        .unwrap()
-    else {
+    for _ in 0..2 {
+        let RequestSelection::Attempt(leader) = cache.select_request(&mut timed).unwrap() else {
+            panic!("leader must be selected before cumulative timeout")
+        };
+        assert_eq!(leader.attempt.peer_id, 11);
+        assert!(timed.record_attempt_result(&leader.attempt, Duration::from_secs(30)));
+    }
+    let RequestSelection::Attempt(alternate) = cache.select_request(&mut timed).unwrap() else {
         panic!("time exhaustion must fall through")
     };
     assert_eq!(alternate.attempt.peer_id, 12);
+}
+
+#[test]
+fn attempt_result_must_exactly_match_the_pending_dispatch() {
+    let mut cache = cache();
+    let region = location().region;
+    let mut selector = cache
+        .request_selector(region, ReadPolicy::default())
+        .unwrap();
+    let RequestSelection::Attempt(request) = cache.select_request(&mut selector).unwrap() else {
+        panic!("expected leader")
+    };
+    assert_eq!(
+        cache.select_request(&mut selector),
+        Err(RegionRouteError::AttemptStillPending {
+            region,
+            peer_id: request.attempt.peer_id,
+        })
+    );
+
+    let mut stale = request.attempt.clone();
+    stale.address.push_str("-stale");
+    assert!(!selector.record_attempt_result(&stale, Duration::from_secs(60)));
+    assert!(selector.record_attempt_result(&request.attempt, Duration::from_secs(1)));
+    assert!(!selector.record_attempt_result(&request.attempt, Duration::from_secs(1)));
 }
 
 #[test]
@@ -209,19 +224,19 @@ fn stale_unreachable_learner_and_witness_peers_exhaust_to_reload() {
         .unwrap();
 
     for expected_peer in [11, 12, 13] {
-        let RequestSelection::Attempt(request) =
-            cache.select_request(&mut selector, Duration::ZERO).unwrap()
+        let RequestSelection::Attempt(request) = cache.select_request(&mut selector).unwrap()
         else {
             panic!("expected voter {expected_peer}")
         };
         assert_eq!(request.attempt.peer_id, expected_peer);
+        assert!(selector.record_attempt_result(&request.attempt, Duration::from_millis(1)));
         cache
             .on_send_failure(&request.attempt, StoreLiveness::Unreachable)
             .unwrap();
     }
 
     assert_eq!(
-        cache.select_request(&mut selector, Duration::ZERO).unwrap(),
+        cache.select_request(&mut selector).unwrap(),
         RequestSelection::ReloadRegion { region }
     );
     assert!(cache.is_empty());
@@ -230,7 +245,7 @@ fn stale_unreachable_learner_and_witness_peers_exhaust_to_reload() {
 #[test]
 fn stale_success_cannot_promote_a_replaced_store_generation() {
     let mut cache = cache();
-    let leader = next(&mut cache, Duration::ZERO);
+    let leader = next(&mut cache);
     cache
         .on_send_failure(&leader.attempt, StoreLiveness::Unknown)
         .unwrap();

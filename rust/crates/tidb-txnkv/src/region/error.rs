@@ -113,6 +113,13 @@ pub enum RegionRouteError {
     },
     /// Only an ordinary leader read is admitted.
     UnsupportedReadPolicy,
+    /// A selected RPC attempt has not recorded its completion yet.
+    AttemptStillPending {
+        /// Exact region bound to the selector.
+        region: RegionVerId,
+        /// Peer owning the outstanding attempt.
+        peer_id: u64,
+    },
     /// PD cluster identity was not configured on the sender.
     MissingClusterId,
 }
