@@ -1,6 +1,6 @@
 schema = "1"
 slice = "txnkv-region-cache-maintenance-runtime"
-status = "ready"
+status = "partial"
 target = "tidb-txnkv"
 ring = "transaction"
 consumer = "Campaign 16 closes the seven named RegionCache residuals and replaces borrowed foreground-only maintenance with one cancellable driver over the canonical cache, store registry, PD loader, and generation-aware channel pool. It must mutate stores in place, reject stale observations, coalesce wakeups, and run bounded cache GC without adding a second map, PD client, health pool, runtime, or per-store loop."
@@ -60,7 +60,7 @@ rust_paths = [
   "rust/crates/tidb-pd-client/src/client.rs",
   "rust/crates/tidb-pd-client/src/error.rs",
   "rust/crates/tidb-pd-client/src/model.rs",
-  "rust/crates/tidb-pd-client/tests/pd_region_query_residual_source.rs",
+  "rust/crates/tidb-pd-client/tests/pd_client_source.rs",
   "rust/crates/tidb-txnkv/src/lib.rs",
   "rust/crates/tidb-txnkv/src/read_runtime.rs",
   "rust/crates/tidb-txnkv/src/pd_loader.rs",
@@ -79,7 +79,7 @@ rust_paths = [
   "rust/crates/tidb-txnkv/tests/background_region_gc_source.rs",
   "rust/crates/tidb-txnkv/tests/background_runner_source.rs",
   "rust/crates/tidb-txnkv/tests/background_store_maintenance_source.rs",
-  "rust/crates/tidb-txnkv/tests/pooled_liveness_source.rs",
+  "rust/crates/tidb-txnkv/tests/tikv_tonic_coprocessor_source.rs",
   "rust/crates/tidb-txnkv/tests/region_cache_validity_source.rs",
   "rust/crates/tidb-txnkv/tests/region_scan_residual_source.rs",
   "rust/crates/tidb-txnkv/tests/region_topology_observation_source.rs",

@@ -1,6 +1,6 @@
 schema = "1"
 campaign = "2026-07-read-path-16"
-status = "active"
+status = "integrated"
 slices = [
   "txnkv-region-cache-maintenance-runtime",
   "txnkv-batchcommands-wire-inflight-core",

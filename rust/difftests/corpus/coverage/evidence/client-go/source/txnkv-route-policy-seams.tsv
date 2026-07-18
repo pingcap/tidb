@@ -1,4 +1,3 @@
 # client-go source evidence for the Campaign 14 immutable routing seam.
 # source_path	status	owner	evidence_artifact	note
 kv/store_vars.go	PARTIAL	txnkv-route-policy-seams	rust/crates/tidb-txnkv/src/region/route.rs	The request-owned policy inputs cross one immutable route seam with logical target and optional physical proxy. Global client configuration, async selection, and unrelated KV knobs remain external.
-internal/locate/accessmode.go	PARTIAL	txnkv-route-policy-seams	rust/crates/tidb-txnkv/src/region/replica_selector.rs	Leader, follower, mixed, prefer-leader, stale, and learner access modes feed the sole route decision without a duplicate mutable wrapper. TiFlash, flashback, and async access paths remain external.

@@ -1,2 +1,0 @@
-# source_path	status	owner	evidence_artifact	note
-internal/client/conn_pool.go	PARTIAL	txnkv-tonic-failure-generation-runtime	rust/crates/tidb-txnkv/src/rpc/channel_pool.rs	A lazy address-keyed tonic Channel is reused until close, carries an address-local version, ignores stale versioned closes, recreates at the next generation, and cannot recreate after terminal Close. Multi-connection round robin, eager dial, keepalive/window configuration, idle recycling, batch clients, TLS, monitoring, and background health feedback remain open.

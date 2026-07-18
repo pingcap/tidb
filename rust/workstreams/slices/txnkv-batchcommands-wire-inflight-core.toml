@@ -1,6 +1,6 @@
 schema = "1"
 slice = "txnkv-batchcommands-wire-inflight-core"
-status = "ready"
+status = "partial"
 target = "tidb-txnkv"
 ring = "transaction"
 consumer = "Campaign 16 directly transits pinned BatchCommands command tags, immutable pre-encoded body ownership, route-scoped pending-ID publication and retirement, cancellation, forwarded-route failure isolation, and exactly-once async terminal delivery. Tonic duplex stream creation and reconnect remain behind this sole in-flight authority."

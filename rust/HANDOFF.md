@@ -275,6 +275,34 @@ cache concurrency/background GC, and coalesced bucket refresh also remain.
 Campaign 15 used injected local protocol peers only and does not claim a live
 PD/TiKV proof.
 
+Campaign 16 directly transits the next three foundations across 16 pinned
+production sources and 54 exact original client-go obligations. The canonical
+cache now has request-shaped key/ID/scan paths, raw coverage before leader
+filtering, PD-leader-only retry, direct versus publishing region-ID lookup,
+cache-issued peer-vector observations, pointer-stable store refresh, tombstone
+expiry, bounded rotating GC, and one coalesced/joined maintenance worker. The
+BatchCommands core now owns exact opaque oneof tags, immutable bodies,
+generation-scoped pending IDs, typed failure fanout, forwarded-route isolation,
+and the original scheduler completion. The async RegionRequest seam owns one
+immutable selected attempt, request context, cancellation precedence, policy
+feedback, same-policy synchronous fallback, routed logical address, and one
+scheduled terminal completion.
+
+All pinned Go obligations passed with `-p 12`. Cross-review repaired erased
+batch completion ownership, stale-stream generation, untyped transport facts,
+zero/duplicate IDs, immediate async failure feedback, retry handoff, address
+identity, and cancellation races before the delayed Rust build. The final
+truthful manifest and evidence contract passed the frozen 12-job workspace
+gate and issued `integration_receipt 3`; all three claims are released as
+`partial`, membership is archived, and the queue is empty.
+
+Do not overread this result. `GetPrevRegion` is still unavailable. The
+maintenance driver and peer-vector guard are not yet wired into the production
+read runtime. There is no tonic BatchCommands duplex stream/reconnect loop and
+no concrete async RegionCache/RequestSelector adapter or response region-error
+decoder. Campaign 16 used source-shaped and injected tests, not a live PD/TiKV
+proof. Those connected runtime seams are the next campaign boundary.
+
 ## 4. The differential tools (how you verify)
 
 Two prebuilt Go binaries at the **repo root**, untracked:

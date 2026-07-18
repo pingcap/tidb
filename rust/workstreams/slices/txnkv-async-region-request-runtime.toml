@@ -1,6 +1,6 @@
 schema = "1"
 slice = "txnkv-async-region-request-runtime"
-status = "ready"
+status = "partial"
 target = "tidb-txnkv"
 ring = "transaction"
 consumer = "Campaign 16 directly transits asynchronous RegionRequest policy over the frozen one-attempt dispatcher contract: request validation and context attachment, selector state, cancellation precedence, send-failure feedback, synchronous retry after callback, and exactly one terminal completion. It must not create a second selector, retry budget, cache, or transport runtime."
@@ -38,7 +38,7 @@ support_anchors = [
 ]
 rust_paths = [
   "rust/crates/tidb-txnkv/src/region/async_request.rs",
-  "rust/crates/tidb-txnkv/src/rpc/async_dispatch.rs",
+  "rust/crates/tidb-txnkv/src/rpc/async_completion.rs",
   "rust/crates/tidb-txnkv/tests/async_region_request_source.rs",
-  "rust/crates/tidb-txnkv/tests/async_replica_selector_source.rs",
+  "rust/crates/tidb-txnkv/tests/replica_selector_source.rs",
 ]

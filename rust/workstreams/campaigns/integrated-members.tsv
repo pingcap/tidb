@@ -59,3 +59,6 @@
 2026-07-read-path-15	txnkv-region-cache-batch-bucket-core
 2026-07-read-path-15	txnkv-async-completion-core
 2026-07-read-path-15	txnkv-batch-scheduler-core
+2026-07-read-path-16	txnkv-region-cache-maintenance-runtime
+2026-07-read-path-16	txnkv-batchcommands-wire-inflight-core
+2026-07-read-path-16	txnkv-async-region-request-runtime

@@ -254,6 +254,39 @@ cold previous-region lookup, cache background concurrency/GC, and coalesced
 bucket refresh remain the next direct-transit boundaries. No Campaign 15 live
 PD/TiKV proof is claimed.
 
+### Campaign 16 cache maintenance, BatchCommands, and async request state
+
+Campaign `2026-07-read-path-16` integrates three direct-transit foundations
+without creating a second cache, selector, completion gate, scheduler, or
+runtime. The canonical cache now exposes request-shaped key, ID, and bounded
+scan queries; validates raw scan coverage before leader filtering; retries
+empty or all-leaderless scans against the PD leader; distinguishes direct
+nonpublishing ID lookup from public cache publication; rejects stale
+cache-issued peer-vector observations; refreshes store metadata in place;
+expires tombstoned dependents; and supports bounded rotating GC through one
+coalesced, joined maintenance worker.
+
+The transport-neutral BatchCommands authority preserves exact pinned opaque
+protobuf oneof tags and immutable bodies, rejects zero and duplicate request
+IDs, scopes pending IDs to route generation, isolates forwarded streams,
+retains typed transport facts, and moves the scheduler's original completion
+into the sole in-flight table. The async RegionRequest authority dispatches one
+immutable selected route, attaches exact context, applies cancellation before
+feedback, transfers retry to the caller-owned synchronous loop using the same
+policy, retains the final logical address, and schedules exactly one terminal
+completion.
+
+All 16 exact production sources and 54 exact original Go obligations passed.
+The frozen 12-job Rust gate passed workspace clippy/tests, 49 Python governance
+tests, all ledgers, and parser/plan checks, then issued `integration_receipt 3`.
+All three claims are released as `partial`, membership is archived, and the
+queue is empty. The status is deliberately not `COVERED`: real
+`GetPrevRegion`, production maintenance/observation wiring, tonic
+BatchCommands duplex send/receive/reconnect, a concrete async
+RegionCache/RequestSelector adapter and region-error decoder, TLS, production
+concurrency, and live PD/TiKV proof remain open. No Campaign 16 live parity is
+claimed.
+
 The checked source/test totals and campaign queue are generated into
 `rust/STATUS.md` from the authoritative ledgers and manifests. Do not copy
 those counters into this design again: they change after every integrated
