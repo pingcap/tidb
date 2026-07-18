@@ -1,0 +1,8 @@
+schema = "1"
+campaign = "2026-07-read-path-17"
+status = "planned"
+slices = [
+  "txnkv-pd-prev-region-wire-runtime",
+  "txnkv-shared-cache-maintenance-runtime",
+  "txnkv-batchcommands-tonic-stream-runtime",
+]
