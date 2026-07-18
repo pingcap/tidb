@@ -462,23 +462,54 @@ impl CompletionCancellation {
 type CompletionTransform<T, E> = Box<dyn FnOnce(Result<T, E>) -> Result<T, E> + Send + 'static>;
 type CompletionTerminal<T, E> = Box<dyn FnOnce(Result<T, E>) + Send + 'static>;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CallbackPhase {
+    Open,
+    Executing,
+    Complete,
+}
+
 struct CallbackInner<T, E> {
-    fulfilled: bool,
+    phase: CallbackPhase,
     transforms: Vec<CompletionTransform<T, E>>,
     terminal: Option<CompletionTerminal<T, E>>,
+}
+
+struct CallbackState<T, E> {
+    inner: Mutex<CallbackInner<T, E>>,
+    complete: Condvar,
+}
+
+struct OnceBodyGuard<T, E> {
+    state: Arc<CallbackState<T, E>>,
+}
+
+impl<T, E> Drop for OnceBodyGuard<T, E> {
+    fn drop(&mut self) {
+        {
+            let mut inner = self
+                .state
+                .inner
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            debug_assert_eq!(inner.phase, CallbackPhase::Executing);
+            inner.phase = CallbackPhase::Complete;
+        }
+        self.state.complete.notify_all();
+    }
 }
 
 /// Once-only callback whose scheduled form is driven by a completion queue.
 pub struct CompletionCallback<T, E> {
     run_loop: CompletionRunLoop,
-    inner: Arc<Mutex<CallbackInner<T, E>>>,
+    state: Arc<CallbackState<T, E>>,
 }
 
 impl<T, E> Clone for CompletionCallback<T, E> {
     fn clone(&self) -> Self {
         Self {
             run_loop: self.run_loop.clone(),
-            inner: Arc::clone(&self.inner),
+            state: Arc::clone(&self.state),
         }
     }
 }
@@ -495,11 +526,14 @@ where
     {
         Self {
             run_loop,
-            inner: Arc::new(Mutex::new(CallbackInner {
-                fulfilled: false,
-                transforms: Vec::new(),
-                terminal: Some(Box::new(terminal)),
-            })),
+            state: Arc::new(CallbackState {
+                inner: Mutex::new(CallbackInner {
+                    phase: CallbackPhase::Open,
+                    transforms: Vec::new(),
+                    terminal: Some(Box::new(terminal)),
+                }),
+                complete: Condvar::new(),
+            }),
         }
     }
 
@@ -518,10 +552,11 @@ where
         F: FnOnce(Result<T, E>) -> Result<T, E> + Send + 'static,
     {
         let mut inner = self
+            .state
             .inner
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if inner.fulfilled {
+        if inner.phase != CallbackPhase::Open {
             return Err(CompletionError::AlreadyCompleted);
         }
         inner.transforms.push(Box::new(transform));
@@ -529,18 +564,20 @@ where
     }
 
     /// Claims and invokes the callback immediately on the current thread.
-    /// Duplicate terminal attempts are silently ignored, matching `sync.Once`.
+    /// Concurrent duplicate attempts wait for this full delivery to finish and
+    /// then return silently, matching Go's `sync.Once.Do` ordering guarantee.
     pub fn invoke(&self, result: Result<T, E>) {
-        let Some((transforms, terminal)) = self.claim() else {
+        let Some((transforms, terminal, _once_body)) = self.begin_once_body() else {
             return;
         };
         Self::deliver(result, transforms, terminal);
     }
 
     /// Claims the callback and queues its terminal delivery for later driving.
-    /// Duplicate terminal attempts are silently ignored, matching `sync.Once`.
+    /// Concurrent duplicate attempts wait until the winning task is appended
+    /// and then return silently, matching Go's `sync.Once.Do` ordering guarantee.
     pub fn schedule(&self, result: Result<T, E>) {
-        let Some((transforms, terminal)) = self.claim() else {
+        let Some((transforms, terminal, _once_body)) = self.begin_once_body() else {
             return;
         };
         self.run_loop.append_task(Box::new(move || {
@@ -548,21 +585,44 @@ where
         }));
     }
 
-    fn claim(&self) -> Option<(Vec<CompletionTransform<T, E>>, CompletionTerminal<T, E>)> {
+    fn begin_once_body(
+        &self,
+    ) -> Option<(
+        Vec<CompletionTransform<T, E>>,
+        CompletionTerminal<T, E>,
+        OnceBodyGuard<T, E>,
+    )> {
         let mut inner = self
+            .state
             .inner
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if inner.fulfilled {
-            return None;
+        loop {
+            match inner.phase {
+                CallbackPhase::Open => break,
+                CallbackPhase::Executing => {
+                    inner = self
+                        .state
+                        .complete
+                        .wait(inner)
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                }
+                CallbackPhase::Complete => return None,
+            }
         }
-        inner.fulfilled = true;
+        inner.phase = CallbackPhase::Executing;
         let transforms = mem::take(&mut inner.transforms);
         let terminal = inner
             .terminal
             .take()
             .expect("unfulfilled callback must retain its terminal action");
-        Some((transforms, terminal))
+        Some((
+            transforms,
+            terminal,
+            OnceBodyGuard {
+                state: Arc::clone(&self.state),
+            },
+        ))
     }
 
     fn deliver(
@@ -580,6 +640,85 @@ where
 struct PullState<T, E> {
     cancelled: bool,
     result: Option<Result<T, E>>,
+}
+
+/// Cloneable source-side authority for one asynchronous request.
+///
+/// The request shares the pull side's cancellation state and the callback's
+/// once-only terminal gate. Scheduler adapters can therefore observe caller
+/// cancellation and schedule a typed failure without introducing parallel
+/// cancellation or completion state.
+pub struct CompletionRequest<T, E> {
+    callback: CompletionCallback<T, E>,
+    inner: Arc<Mutex<PullState<T, E>>>,
+}
+
+impl<T, E> Clone for CompletionRequest<T, E> {
+    fn clone(&self) -> Self {
+        Self {
+            callback: self.callback.clone(),
+            inner: Arc::clone(&self.inner),
+        }
+    }
+}
+
+impl<T, E> fmt::Debug for CompletionRequest<T, E> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let cancelled = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .cancelled;
+        formatter
+            .debug_struct("CompletionRequest")
+            .field("cancelled", &cancelled)
+            .field("run_loop_state", &self.callback.run_loop.state())
+            .finish_non_exhaustive()
+    }
+}
+
+impl<T, E> CompletionRequest<T, E>
+where
+    T: Send + 'static,
+    E: Send + 'static,
+{
+    /// Returns the shared caller-driven executor.
+    #[must_use]
+    pub fn run_loop(&self) -> CompletionRunLoop {
+        self.callback.run_loop()
+    }
+
+    /// Adds a deferred transform before this request is completed.
+    pub fn inject<F>(&self, transform: F) -> Result<(), CompletionError>
+    where
+        F: FnOnce(Result<T, E>) -> Result<T, E> + Send + 'static,
+    {
+        self.callback.inject(transform)
+    }
+
+    /// Completes this request immediately on the current thread.
+    pub fn invoke(&self, result: Result<T, E>) {
+        self.callback.invoke(result);
+    }
+
+    /// Schedules this request's completion on its shared run loop.
+    pub fn schedule(&self, result: Result<T, E>) {
+        self.callback.schedule(result);
+    }
+
+    /// Schedules one typed terminal failure through the same once-only gate.
+    pub fn schedule_error(&self, error: E) {
+        self.callback.schedule(Err(error));
+    }
+
+    /// Whether the pull-side caller cancelled this exact request.
+    #[must_use]
+    pub fn is_cancelled(&self) -> bool {
+        self.inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .cancelled
+    }
 }
 
 /// Pull-side owner of one scheduled completion result.
@@ -636,7 +775,7 @@ impl<T, E> CompletionPull<T, E> {
 pub fn completion_pair<T, E, F>(
     run_loop: CompletionRunLoop,
     cancel_hook: F,
-) -> (CompletionCallback<T, E>, CompletionPull<T, E>)
+) -> (CompletionRequest<T, E>, CompletionPull<T, E>)
 where
     T: Send + 'static,
     E: Send + 'static,
@@ -655,8 +794,12 @@ where
             inner.result = Some(result);
         }
     });
-    (
+    let request = CompletionRequest {
         callback,
+        inner: Arc::clone(&inner),
+    };
+    (
+        request,
         CompletionPull {
             run_loop,
             inner,

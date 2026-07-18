@@ -116,59 +116,49 @@ fn invoke_and_schedule_fulfill_exactly_once_in_every_order() {
     assert_eq!(*schedule_invoke.lock().unwrap(), vec![1]);
 }
 
-// A nested terminal attempt must observe the once claim made before transforms
-// or the final callback execute.
 #[test]
-fn nested_invoke_from_transform_cannot_fulfill_twice() {
-    type Callback = CompletionCallback<i32, ()>;
-
-    let slot = Arc::new(Mutex::new(None::<Callback>));
+fn concurrent_duplicate_waits_for_the_winning_once_body() {
+    let run_loop = CompletionRunLoop::new();
     let terminal = Arc::new(Mutex::new(Vec::new()));
     let terminal_result = Arc::clone(&terminal);
-    let callback = Callback::new(CompletionRunLoop::new(), move |result| {
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let callback = CompletionCallback::new(run_loop.clone(), move |result: Result<i32, ()>| {
+        entered_tx.send(()).unwrap();
+        release_rx.recv().unwrap();
         terminal_result.lock().unwrap().push(result.unwrap());
     });
 
-    let transform_slot = Arc::clone(&slot);
-    callback
-        .inject(move |result| {
-            transform_slot
-                .lock()
-                .unwrap()
-                .as_ref()
-                .unwrap()
-                .invoke(Ok(99));
-            result
-        })
+    let winner_callback = callback.clone();
+    let winner = thread::spawn(move || winner_callback.invoke(Ok(1)));
+    entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+
+    let (loser_started_tx, loser_started_rx) = mpsc::channel();
+    let (loser_done_tx, loser_done_rx) = mpsc::channel();
+    let loser_callback = callback.clone();
+    let loser = thread::spawn(move || {
+        loser_started_tx.send(()).unwrap();
+        loser_callback.schedule(Ok(2));
+        loser_done_tx.send(()).unwrap();
+    });
+    loser_started_rx
+        .recv_timeout(Duration::from_secs(1))
         .unwrap();
-    *slot.lock().unwrap() = Some(callback.clone());
+    assert_eq!(
+        loser_done_rx.recv_timeout(Duration::from_millis(50)),
+        Err(mpsc::RecvTimeoutError::Timeout)
+    );
 
-    callback.invoke(Ok(1));
+    release_tx.send(()).unwrap();
+    loser_done_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    // The losing Schedule returns only after the winning Invoke body. It must
+    // not leave a second terminal task for an immediate drive.
+    let outcome = run_loop.execute_ready();
+    assert_eq!(outcome.executed(), 0);
+    assert_eq!(outcome.error(), None);
+    winner.join().unwrap();
+    loser.join().unwrap();
     assert_eq!(*terminal.lock().unwrap(), vec![1]);
-}
-
-#[test]
-fn nested_schedule_from_terminal_cannot_fulfill_twice() {
-    type Callback = CompletionCallback<i32, ()>;
-
-    let slot = Arc::new(Mutex::new(None::<Callback>));
-    let terminal = Arc::new(Mutex::new(Vec::new()));
-    let terminal_slot = Arc::clone(&slot);
-    let terminal_result = Arc::clone(&terminal);
-    let callback = Callback::new(CompletionRunLoop::new(), move |result| {
-        terminal_result.lock().unwrap().push(result.unwrap());
-        terminal_slot
-            .lock()
-            .unwrap()
-            .as_ref()
-            .unwrap()
-            .schedule(Ok(99));
-    });
-    *slot.lock().unwrap() = Some(callback.clone());
-
-    callback.invoke(Ok(1));
-    assert_eq!(*terminal.lock().unwrap(), vec![1]);
-    assert_eq!(callback.run_loop().num_runnable(), 0);
 }
 
 #[test]
@@ -469,22 +459,43 @@ fn a_second_driver_is_rejected_while_the_first_runs() {
 #[test]
 fn pull_completion_drives_ready_delivery_and_cancellation_suppresses_it() {
     let run_loop = CompletionRunLoop::new();
-    let (callback, mut pending) = completion_pair::<i32, (), _>(run_loop.clone(), || {});
+    let (request, mut pending) = completion_pair::<i32, (), _>(run_loop.clone(), || {});
     assert_eq!(pending.try_complete(), Ok(None));
-    callback.schedule(Ok(7));
+    request.schedule(Ok(7));
     assert_eq!(pending.try_complete(), Ok(Some(Ok(7))));
     assert_eq!(pending.try_complete(), Ok(None));
 
     let cancel_calls = Arc::new(AtomicUsize::new(0));
     let hook_calls = Arc::clone(&cancel_calls);
-    let (cancelled_callback, mut cancelled_pending) =
+    let (cancelled_request, mut cancelled_pending) =
         completion_pair::<i32, (), _>(run_loop, move || {
             hook_calls.fetch_add(1, Ordering::AcqRel);
         });
-    cancelled_callback.schedule(Ok(9));
+    let cancellation_observer = cancelled_request.clone();
+    assert!(!cancelled_request.is_cancelled());
     cancelled_pending.cancel();
     cancelled_pending.cancel();
     assert!(cancelled_pending.is_cancelled());
+    assert!(cancelled_request.is_cancelled());
+    assert!(cancellation_observer.is_cancelled());
     assert_eq!(cancel_calls.load(Ordering::Acquire), 1);
+    cancelled_request.schedule(Ok(9));
     assert_eq!(cancelled_pending.try_complete(), Ok(None));
+}
+
+#[test]
+fn completion_request_schedules_one_typed_failure() {
+    let run_loop = CompletionRunLoop::new();
+    let (request, mut pending) = completion_pair::<i32, &'static str, _>(run_loop.clone(), || {});
+    let scheduler_request = request.clone();
+
+    scheduler_request.schedule_error("batch connection closed");
+    request.schedule(Ok(7));
+
+    assert_eq!(run_loop.num_runnable(), 1);
+    assert_eq!(
+        pending.try_complete(),
+        Ok(Some(Err("batch connection closed")))
+    );
+    assert_eq!(pending.try_complete(), Ok(None));
 }
