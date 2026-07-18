@@ -17,6 +17,7 @@
 mod active_cancellation;
 mod cop_read_task_runtime;
 mod direct_unary_query_transport;
+mod lock_recovery;
 mod tikv_rpc_contract;
 mod transport_failure;
 
@@ -31,6 +32,7 @@ pub use direct_unary_query_transport::{
     DirectUnaryTransportError, LockedResponseAction, LockedResponseDelegate,
     LockedResponseObservation, RegionRetryCancelled, RegionRetryControl,
 };
+pub use lock_recovery::OptimisticLockRecovery;
 pub use tikv_rpc_contract::{
     build_tikv_unary_request, build_tikv_unary_request_for_dispatch, decode_tikv_unary_response,
     TikvUnaryRequest,

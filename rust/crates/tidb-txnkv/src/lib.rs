@@ -38,6 +38,7 @@ mod key;
 mod key_flags;
 mod key_ranges;
 mod keyspace;
+pub mod lock;
 mod mvcc_metadata;
 mod pd_loader;
 mod prefix_ops;

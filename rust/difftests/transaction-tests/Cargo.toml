@@ -71,3 +71,7 @@ path = "tests/realtikv_transport_retry.rs"
 [[test]]
 name = "realtikv_replica_read"
 path = "tests/realtikv_replica_read.rs"
+
+[[test]]
+name = "realtikv_lock_recovery"
+path = "tests/realtikv_lock_recovery.rs"
