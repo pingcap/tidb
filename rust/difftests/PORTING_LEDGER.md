@@ -35,13 +35,15 @@ dropping all but one. The ledger verifier also rejects stale source anchors,
 nonexistent artifacts, and any status other than `PARTIAL`, `COVERED`, or
 `BLOCKED`.
 
-The pinned client-go universe follows the same conservative rule in separate
-checked files. `client_go_test_declaration_inventory.tsv` records all AST
-function declarations, including helpers and invalid runner signatures;
-`client_go_test_inventory.tsv` contains only structurally valid
+The pinned client-go and pd-client universes follow the same conservative rule
+in one module-qualified set of checked files.
+`external_go_test_declaration_inventory.tsv` records all AST function
+declarations, including helpers and invalid runner signatures;
+`external_go_test_inventory.tsv` contains only structurally valid
 Test/Benchmark/Fuzz/Example/TestMain obligations with file SHA-256 and an
-initial `UNTRIAGED` state. `client_go_ledger --check` runs offline and rejects
-direct-pin, replacement, Go-sum, file, declaration, and runner drift.
+initial `UNTRIAGED` state. `external_go_ledger --check` resolves only the
+offline module cache and rejects direct-pin, replacement, exact Go-sum, file,
+declaration, runner, and duplicate qualified-key drift.
 
 The invariant is simple: no upstream test may be invisible. Run this from the
 Rust workspace after Go tests change:

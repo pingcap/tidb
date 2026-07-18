@@ -17,21 +17,41 @@
 use std::collections::VecDeque;
 
 use tidb_txnkv::region::{
-    KeyRange, Peer, PeerRole, RegionCache, RegionLoader, RegionLocation, RegionRouteError,
-    RegionVerId, Store,
+    KeyRange, Peer, PeerRole, RegionCache, RegionLoadError, RegionLoader, RegionLocation,
+    RegionRouteError, RegionVerId, Store,
 };
 
 struct Loader {
+    cluster_id: u64,
     loads: usize,
     regions: VecDeque<RegionLocation>,
 }
 
 impl RegionLoader for Loader {
-    fn load_region(&mut self, _key: &[u8]) -> Result<RegionLocation, String> {
+    fn cluster_id(&self) -> u64 {
+        self.cluster_id
+    }
+
+    fn load_region(&mut self, _key: &[u8]) -> Result<RegionLocation, RegionLoadError> {
         self.loads += 1;
         self.regions
             .pop_front()
-            .ok_or_else(|| "no region".to_owned())
+            .ok_or_else(|| RegionLoadError::new("test-loader-empty", "no region"))
+    }
+}
+
+struct FailingLoader {
+    cluster_id: u64,
+    error: Option<RegionLoadError>,
+}
+
+impl RegionLoader for FailingLoader {
+    fn cluster_id(&self) -> u64 {
+        self.cluster_id
+    }
+
+    fn load_region(&mut self, _key: &[u8]) -> Result<RegionLocation, RegionLoadError> {
+        Err(self.error.take().expect("test loader called once"))
     }
 }
 
@@ -59,11 +79,13 @@ fn location(id: u64, conf_ver: u64, version: u64, start: &[u8], end: &[u8]) -> R
 #[test]
 fn cache_miss_loads_once_then_ordered_hits_reuse_snapshot() {
     let loader = Loader {
+        cluster_id: 42,
         loads: 0,
         regions: VecDeque::from([location(2, 1, 1, b"m", b""), location(1, 1, 1, b"", b"m")]),
     };
     let mut cache = RegionCache::new(loader);
 
+    assert_eq!(cache.cluster_id(), 42);
     assert_eq!(cache.locate_key(b"z").unwrap().region.id, 2);
     assert_eq!(cache.locate_key(b"y").unwrap().region.id, 2);
     assert_eq!(cache.locate_key(b"a").unwrap().region.id, 1);
@@ -76,6 +98,7 @@ fn exact_invalidation_refills_but_wrong_epoch_does_not_remove() {
     let first = location(1, 1, 1, b"", b"");
     let replacement = location(1, 2, 1, b"", b"");
     let loader = Loader {
+        cluster_id: 42,
         loads: 0,
         regions: VecDeque::from([first.clone(), replacement.clone()]),
     };
@@ -91,6 +114,7 @@ fn exact_invalidation_refills_but_wrong_epoch_does_not_remove() {
 #[test]
 fn one_region_range_is_admitted_and_cross_region_range_fails_closed() {
     let loader = Loader {
+        cluster_id: 42,
         loads: 0,
         regions: VecDeque::from([location(1, 1, 1, b"a", b"m")]),
     };
@@ -113,14 +137,41 @@ fn one_region_range_is_admitted_and_cross_region_range_fails_closed() {
 #[test]
 fn loader_must_return_a_containing_region() {
     let loader = Loader {
+        cluster_id: 42,
         loads: 0,
         regions: VecDeque::from([location(1, 1, 1, b"m", b"z")]),
     };
     let mut cache = RegionCache::new(loader);
     assert!(matches!(
         cache.locate_key(b"a"),
-        Err(RegionRouteError::Loader(_))
+        Err(RegionRouteError::LoadedRegionDoesNotContainKey {
+            region: RegionVerId { id: 1, .. }
+        })
     ));
+    assert!(cache.is_empty());
+}
+
+#[test]
+fn loader_failure_preserves_concrete_identity_and_message() {
+    let failure = RegionLoadError::new("mock-pd::missing-region", "no region for 6162");
+    assert_eq!(failure.identity(), "mock-pd::missing-region");
+    assert_eq!(failure.message(), "no region for 6162");
+    assert_eq!(
+        failure.to_string(),
+        "mock-pd::missing-region: no region for 6162"
+    );
+
+    let loader = FailingLoader {
+        cluster_id: 42,
+        error: Some(failure.clone()),
+    };
+    let mut cache = RegionCache::new(loader);
+    let route_error = cache.locate_key(b"ab").unwrap_err();
+    assert_eq!(route_error, RegionRouteError::Loader(failure));
+    assert_eq!(
+        route_error.to_string(),
+        "region loader failed: mock-pd::missing-region: no region for 6162"
+    );
     assert!(cache.is_empty());
 }
 
@@ -129,6 +180,7 @@ fn stale_merge_parent_does_not_evict_newer_split_child() {
     let child = location(2, 1, 3, b"m", b"z");
     let stale_parent = location(1, 1, 2, b"a", b"z");
     let loader = Loader {
+        cluster_id: 42,
         loads: 0,
         regions: VecDeque::from([child.clone(), stale_parent.clone()]),
     };
@@ -152,6 +204,7 @@ fn stale_same_region_loader_result_is_rejected_without_eviction() {
     let current = location(3, 4, 5, b"m", b"z");
     let stale = location(3, 4, 4, b"a", b"z");
     let loader = Loader {
+        cluster_id: 42,
         loads: 0,
         regions: VecDeque::from([current.clone(), stale.clone()]),
     };

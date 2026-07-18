@@ -28,8 +28,8 @@ ROOT = Path(__file__).resolve().parent.parent
 SOURCE_LEDGER = ROOT / "difftests/corpus/coverage/go_source_inventory.tsv"
 TEST_LEDGER = ROOT / "difftests/corpus/coverage/go_test_inventory.tsv"
 EXTERNAL_MODULE_LEDGER = ROOT / "difftests/corpus/coverage/external_go_modules.tsv"
-EXTERNAL_SOURCE_LEDGER = ROOT / "difftests/corpus/coverage/client_go_source_inventory.tsv"
-EXTERNAL_TEST_LEDGER = ROOT / "difftests/corpus/coverage/client_go_test_inventory.tsv"
+EXTERNAL_SOURCE_LEDGER = ROOT / "difftests/corpus/coverage/external_go_source_inventory.tsv"
+EXTERNAL_TEST_LEDGER = ROOT / "difftests/corpus/coverage/external_go_test_inventory.tsv"
 SLICE_DIR = ROOT / "workstreams/slices"
 CAMPAIGN_DIR = ROOT / "workstreams/campaigns"
 CLAIM_DIR = ROOT / "workstreams/claims"
@@ -91,6 +91,8 @@ def render() -> str:
     test_groups = grouped_status_counts(tests, 4, 5)
     external_source_counts = status_counts(external_sources, 4)
     external_test_counts = status_counts(external_tests, 7)
+    external_source_groups = grouped_status_counts(external_sources, 0, 4)
+    external_test_groups = grouped_status_counts(external_tests, 0, 7)
     slice_counts = Counter(str(item["status"]) for item in slices)
     active_claims = len(list(CLAIM_DIR.glob("*.claim.json"))) if CLAIM_DIR.exists() else 0
 
@@ -144,14 +146,28 @@ def render() -> str:
             ("Universe", "Untriaged", "Partial", "Covered", "Blocked"),
             [
                 (
-                    "Production sources",
+                    f"{universe} {kind}",
+                    counts["UNTRIAGED"],
+                    counts["PARTIAL"],
+                    counts["COVERED"],
+                    counts["BLOCKED"],
+                )
+                for kind, groups in (
+                    ("production sources", external_source_groups),
+                    ("runner obligations", external_test_groups),
+                )
+                for universe, counts in sorted(groups.items())
+            ]
+            + [
+                (
+                    "All external production sources",
                     external_source_counts["UNTRIAGED"],
                     external_source_counts["PARTIAL"],
                     external_source_counts["COVERED"],
                     external_source_counts["BLOCKED"],
                 ),
                 (
-                    "Runner obligations",
+                    "All external runner obligations",
                     external_test_counts["UNTRIAGED"],
                     external_test_counts["PARTIAL"],
                     external_test_counts["COVERED"],

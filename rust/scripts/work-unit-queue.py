@@ -35,8 +35,8 @@ RUST_ROOT = Path(
 )
 SOURCE_LEDGER = Path("difftests/corpus/coverage/go_source_inventory.tsv")
 TEST_LEDGER = Path("difftests/corpus/coverage/go_test_inventory.tsv")
-MODULE_SOURCE_LEDGER = Path("difftests/corpus/coverage/client_go_source_inventory.tsv")
-MODULE_TEST_LEDGER = Path("difftests/corpus/coverage/client_go_test_inventory.tsv")
+MODULE_SOURCE_LEDGER = Path("difftests/corpus/coverage/external_go_source_inventory.tsv")
+MODULE_TEST_LEDGER = Path("difftests/corpus/coverage/external_go_test_inventory.tsv")
 CLAIMS_DIR = Path("workstreams/claims")
 TRANSFERS_DIR = Path("difftests/corpus/coverage/evidence/transfers")
 SLICES_DIR = Path("workstreams/slices")
@@ -145,6 +145,8 @@ def load_module_source_rows(root: Path) -> dict[str, dict[str, str]]:
     rows = {}
     for universe, source, _lines, _sha, status, owner, artifact, note in read_tsv(path, 8):
         anchor = f"{universe}::{source}"
+        if anchor in rows:
+            raise ValueError(f"{path}: duplicate qualified module source anchor {anchor}")
         validate_evidence_artifact(root, MODULE_SOURCE_LEDGER, anchor, artifact)
         rows[anchor] = {"status": status, "owner": owner, "artifact": artifact, "note": note}
     return rows
@@ -161,6 +163,8 @@ def load_module_test_rows(root: Path) -> dict[str, dict[str, str]]:
     rows = {}
     for universe, _kind, source, line, name, _ring, _sha, status, owner, artifact, note in read_tsv(path, 11):
         anchor = f"{universe}::{source}:{int(line)}:{name}"
+        if anchor in rows:
+            raise ValueError(f"{path}: duplicate qualified module test anchor {anchor}")
         validate_evidence_artifact(root, MODULE_TEST_LEDGER, anchor, artifact)
         rows[anchor] = {"status": status, "owner": owner, "artifact": artifact, "note": note}
     return rows
@@ -812,8 +816,8 @@ def release_workspace_digest(root: Path) -> str:
         INTEGRATION_RECEIPT.as_posix(),
         "difftests/corpus/coverage/go_source_inventory.tsv",
         "difftests/corpus/coverage/go_test_inventory.tsv",
-        "difftests/corpus/coverage/client_go_source_inventory.tsv",
-        "difftests/corpus/coverage/client_go_test_inventory.tsv",
+        "difftests/corpus/coverage/external_go_source_inventory.tsv",
+        "difftests/corpus/coverage/external_go_test_inventory.tsv",
         "HANDOFF.md",
         "PARALLEL.md",
     }
@@ -1373,6 +1377,11 @@ def main() -> int:
         elif arguments.command == "gate-abort":
             abort_integration(RUST_ROOT)
         else:
+            # Validate consolidated external ledgers even when the fixture or
+            # repository currently has no module-owning slice. Qualified keys
+            # are an input invariant, not something callers may overwrite.
+            load_module_source_rows(RUST_ROOT)
+            load_module_test_rows(RUST_ROOT)
             slices = load_slices(RUST_ROOT)
             campaigns = load_campaigns(RUST_ROOT, slices)
             claims = validate_claims(RUST_ROOT)

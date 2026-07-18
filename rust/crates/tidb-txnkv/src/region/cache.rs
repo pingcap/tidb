@@ -12,12 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{KeyRange, RegionLocation, RegionRouteError, RegionVerId};
+use super::{KeyRange, RegionLoadError, RegionLocation, RegionRouteError, RegionVerId};
 
 /// Injected PD-shaped region metadata loader.
 pub trait RegionLoader {
+    /// Returns the cluster identity attached to requests routed by this loader.
+    fn cluster_id(&self) -> u64;
+
     /// Loads the region containing `key` without prescribing any network API.
-    fn load_region(&mut self, key: &[u8]) -> Result<RegionLocation, String>;
+    fn load_region(&mut self, key: &[u8]) -> Result<RegionLocation, RegionLoadError>;
 }
 
 /// Ordered cache for versioned region snapshots.
@@ -48,6 +51,14 @@ impl<L> RegionCache<L> {
         self.regions.is_empty()
     }
 
+    /// Returns the cluster identity supplied by the metadata loader.
+    pub fn cluster_id(&self) -> u64
+    where
+        L: RegionLoader,
+    {
+        self.loader.cluster_id()
+    }
+
     /// Invalidates only the exact versioned region identity.
     pub fn invalidate(&mut self, region: RegionVerId) -> bool {
         let original_len = self.regions.len();
@@ -68,9 +79,9 @@ impl<L> RegionCache<L> {
             .load_region(key)
             .map_err(RegionRouteError::Loader)?;
         if !loaded.contains_key(key) {
-            return Err(RegionRouteError::Loader(
-                "loader returned a region that does not contain the key".to_owned(),
-            ));
+            return Err(RegionRouteError::LoadedRegionDoesNotContainKey {
+                region: loaded.region,
+            });
         }
         let index = self.insert_loaded(loaded)?;
         Ok(&self.regions[index])

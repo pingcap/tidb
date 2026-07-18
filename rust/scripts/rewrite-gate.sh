@@ -66,7 +66,7 @@ static_gates() {
     for tool in \
         go_source_ledger \
         go_test_ledger \
-        client_go_ledger \
+        external_go_ledger \
         domain_queue \
         parser_translation_manifest \
         integration_parser_inventory \

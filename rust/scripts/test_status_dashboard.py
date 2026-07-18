@@ -63,6 +63,7 @@ class StatusDashboardTest(unittest.TestCase):
         self.assertIn("## Blocked slices", rendered)
         self.assertIn("## Pinned external Go universes", rendered)
         self.assertIn("github.com/tikv/client-go/v2", rendered)
+        self.assertIn("github.com/tikv/pd/client", rendered)
         self.assertIn("not included in TiDB product-parity totals", rendered)
 
     def test_external_ownership_counts_include_checked_promotions(self) -> None:
@@ -72,9 +73,11 @@ class StatusDashboardTest(unittest.TestCase):
         self.assertGreaterEqual(source_counts["PARTIAL"], 2)
         self.assertGreaterEqual(test_counts["PARTIAL"], 1)
         self.assertIn(
-            f"| Production sources | {source_counts['UNTRIAGED']} | {source_counts['PARTIAL']} |",
+            f"| All external production sources | {source_counts['UNTRIAGED']} | {source_counts['PARTIAL']} |",
             rendered,
         )
+        self.assertIn("| client-go production sources |", rendered)
+        self.assertIn("| pd-client production sources |", rendered)
 
 
 if __name__ == "__main__":

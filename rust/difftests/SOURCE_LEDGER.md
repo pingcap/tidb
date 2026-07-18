@@ -7,12 +7,13 @@ queue: every non-test Go source file in this repository, its size, its target
 Rust crate or explicit non-SQL boundary, generated-code status, and
 conservative porting evidence.
 
-TiDB's direct `github.com/tikv/client-go/v2` dependency is a second, qualified
-source universe. `corpus/coverage/external_go_modules.tsv` pins its exact
-version and Go sums, while `client_go_source_inventory.tsv` binds every
-production source to its SHA-256 and initial ownership state. These external
-rows are real porting obligations but do not alter TiDB repository parity
-totals.
+TiDB's direct `github.com/tikv/client-go/v2` and
+`github.com/tikv/pd/client` dependencies are separate qualified source
+universes in one consolidated ledger. `corpus/coverage/external_go_modules.tsv`
+pins each exact version and both Go sums, while
+`external_go_source_inventory.tsv` binds every production source to its
+SHA-256 and initial ownership state. These external rows are real porting
+obligations but do not alter TiDB repository parity totals.
 
 Generate or verify it from `rust/` with 12 Cargo jobs:
 
@@ -21,7 +22,7 @@ cargo run --locked -j 12 -p difftest --bin go_source_ledger -- --write
 cargo run --locked -j 12 -p difftest --bin go_source_ledger -- --check
 cargo run --locked -j 12 -p difftest --bin go_source_ledger -- --summary
 cargo run --locked -j 12 -p difftest --bin go_source_ledger -- --queue tidb-codec
-cargo run --offline --locked -j 12 -p difftest --bin client_go_ledger -- --check
+cargo run --offline --locked -j 12 -p difftest --bin external_go_ledger -- --check
 ```
 
 The checked inventory is generated; do not edit it. Reviewed evidence belongs

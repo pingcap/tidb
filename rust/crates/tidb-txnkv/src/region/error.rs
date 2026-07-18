@@ -14,6 +14,47 @@
 
 use super::RegionVerId;
 
+/// Concrete failure reported by an injected region metadata loader.
+///
+/// The identity is owned by the loader implementation. This boundary preserves
+/// it together with the original message without defining PD transport or RPC
+/// categories in `tidb-txnkv`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RegionLoadError {
+    identity: String,
+    message: String,
+}
+
+impl RegionLoadError {
+    /// Creates a loader failure with its implementation-defined identity.
+    pub fn new(identity: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            identity: identity.into(),
+            message: message.into(),
+        }
+    }
+
+    /// Returns the implementation-defined error identity.
+    #[must_use]
+    pub fn identity(&self) -> &str {
+        &self.identity
+    }
+
+    /// Returns the concrete loader error message.
+    #[must_use]
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+impl std::fmt::Display for RegionLoadError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{}: {}", self.identity, self.message)
+    }
+}
+
+impl std::error::Error for RegionLoadError {}
+
 /// Fail-closed errors from the bounded single-region route.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RegionRouteError {
@@ -22,7 +63,12 @@ pub enum RegionRouteError {
     /// One request crosses the selected region boundary.
     MultiRegion,
     /// The injected metadata loader failed.
-    Loader(String),
+    Loader(RegionLoadError),
+    /// Loaded metadata did not contain the key used to load it.
+    LoadedRegionDoesNotContainKey {
+        /// Identity returned by the loader.
+        region: RegionVerId,
+    },
     /// Loaded metadata is older than the cached version for the same region.
     StaleRegionEpoch {
         /// Loaded identity.
@@ -62,11 +108,21 @@ pub enum RegionRouteError {
 
 impl std::fmt::Display for RegionRouteError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(formatter, "{self:?}")
+        match self {
+            Self::Loader(error) => write!(formatter, "region loader failed: {error}"),
+            _ => write!(formatter, "{self:?}"),
+        }
     }
 }
 
-impl std::error::Error for RegionRouteError {}
+impl std::error::Error for RegionRouteError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Loader(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 /// One route-validation or typed direct-unary failure.
 #[derive(Clone, Debug, Eq, PartialEq)]

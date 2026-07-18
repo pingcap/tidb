@@ -48,7 +48,7 @@ class WorkUnitQueueTest(unittest.TestCase):
             "go_test\tpkg/planner/other_test.go\t20\tTestOther\tplan\tUNTRIAGED\t-\t-\t-\n",
             encoding="utf-8",
         )
-        (coverage / "client_go_source_inventory.tsv").write_text(
+        (coverage / "external_go_source_inventory.tsv").write_text(
             "# external sources\n"
             + "".join(
                 f"client-go\tinternal/client/client{index}.go\t100\tdeadbeef\tUNTRIAGED\t-\t-\t-\n"
@@ -56,7 +56,7 @@ class WorkUnitQueueTest(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        (coverage / "client_go_test_inventory.tsv").write_text(
+        (coverage / "external_go_test_inventory.tsv").write_text(
             "# external tests\n"
             + "".join(
                 f"client-go\tTest\tinternal/client/client_test.go\t{20 + index}\tTestSend{index}\ttransaction\tfeedface\tUNTRIAGED\t-\t-\t-\n"
@@ -125,6 +125,34 @@ class WorkUnitQueueTest(unittest.TestCase):
             "missing-test.rs",
             result.stderr,
         )
+
+    def test_check_rejects_duplicate_qualified_module_source_keys(self) -> None:
+        inventory = (
+            self.root
+            / "difftests/corpus/coverage/external_go_source_inventory.tsv"
+        )
+        first = next(
+            line for line in inventory.read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        )
+        with inventory.open("a", encoding="utf-8") as output:
+            output.write(first + "\n")
+        result = self.run_tool("check", success=False)
+        self.assertIn("duplicate qualified module source anchor", result.stderr)
+
+    def test_check_rejects_duplicate_qualified_module_test_keys(self) -> None:
+        inventory = (
+            self.root
+            / "difftests/corpus/coverage/external_go_test_inventory.tsv"
+        )
+        first = next(
+            line for line in inventory.read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        )
+        with inventory.open("a", encoding="utf-8") as output:
+            output.write(first + "\n")
+        result = self.run_tool("check", success=False)
+        self.assertIn("duplicate qualified module test anchor", result.stderr)
 
     def run_tool(self, *arguments: str, success: bool = True) -> subprocess.CompletedProcess[str]:
         environment = os.environ.copy()
@@ -295,8 +323,8 @@ class WorkUnitQueueTest(unittest.TestCase):
         failure = self.run_tool("release", "--owner", "client-runtime", "--integrated", success=False)
         self.assertIn("requires promoted module source", failure.stderr)
         for ledger in (
-            self.root / "difftests/corpus/coverage/client_go_source_inventory.tsv",
-            self.root / "difftests/corpus/coverage/client_go_test_inventory.tsv",
+            self.root / "difftests/corpus/coverage/external_go_source_inventory.tsv",
+            self.root / "difftests/corpus/coverage/external_go_test_inventory.tsv",
         ):
             ledger.write_text(
                 ledger.read_text(encoding="utf-8").replace(

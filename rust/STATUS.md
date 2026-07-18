@@ -35,13 +35,18 @@ the source or obligation still has explicit unported behavior.
 | Module | Version | Production sources | Test files | AST declarations | Runner obligations |
 | --- | --- | --- | --- | --- | --- |
 | github.com/tikv/client-go/v2 | v2.0.8-0.20260708122311-01bd8f99f4da | 151 | 75 | 809 | 337 |
+| github.com/tikv/pd/client | v0.0.0-20260708075407-4e05b9d2c2d3 | 58 | 28 | 319 | 156 |
 
 ### External ownership states
 
 | Universe | Untriaged | Partial | Covered | Blocked |
 | --- | --- | --- | --- | --- |
-| Production sources | 140 | 11 | 0 | 0 |
-| Runner obligations | 330 | 7 | 0 | 0 |
+| client-go production sources | 140 | 11 | 0 | 0 |
+| pd-client production sources | 58 | 0 | 0 | 0 |
+| client-go runner obligations | 330 | 7 | 0 | 0 |
+| pd-client runner obligations | 156 | 0 | 0 | 0 |
+| All external production sources | 198 | 11 | 0 | 0 |
+| All external runner obligations | 486 | 7 | 0 | 0 |
 
 External module counts are pinned porting obligations and are not included in TiDB product-parity totals.
 

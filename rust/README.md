@@ -95,6 +95,10 @@ are independent: `UNTRIAGED`, `PARTIAL`, parser acceptance, and `Unsupported`
 are all visible obligations. A source or test row moves to covered only when
 its complete cited contract has executable Rust evidence.
 
+The module-qualified `external_go_*_inventory.tsv` ledgers independently pin
+the direct client-go and pd-client source/test universes from the offline Go
+module cache. Their ownership states do not inflate TiDB product-parity totals.
+
 Executable corpus namespaces use paired `<topic>.txt` and
 `<topic>.golden.txt` files. Explanatory evidence belongs under
 `difftests/corpus/coverage/`; the validation gate rejects prose or orphan
