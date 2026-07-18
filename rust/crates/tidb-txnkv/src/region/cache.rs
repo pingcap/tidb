@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::collections::BTreeMap;
+
 use super::{KeyRange, RegionLoadError, RegionLocation, RegionRouteError, RegionVerId};
 
 /// Injected PD-shaped region metadata loader.
@@ -71,13 +73,39 @@ impl<L> RegionCache<L> {
     where
         L: RegionLoader,
     {
+        self.locate_key_with_boundary(key, false)
+    }
+
+    fn locate_key_with_boundary(
+        &mut self,
+        key: &[u8],
+        require_exact_start: bool,
+    ) -> Result<&RegionLocation, RegionRouteError>
+    where
+        L: RegionLoader,
+    {
         if let Some(index) = self.find_key(key) {
+            if require_exact_start && self.regions[index].start_key != key {
+                return Err(RegionRouteError::DiscontinuousRegion {
+                    region: self.regions[index].region,
+                });
+            }
             return Ok(&self.regions[index]);
         }
         let loaded = self
             .loader
             .load_region(key)
             .map_err(RegionRouteError::Loader)?;
+        if !loaded.end_key.is_empty() && loaded.start_key >= loaded.end_key {
+            return Err(RegionRouteError::InvalidRegionBounds {
+                region: loaded.region,
+            });
+        }
+        if require_exact_start && loaded.start_key != key {
+            return Err(RegionRouteError::DiscontinuousRegion {
+                region: loaded.region,
+            });
+        }
         if !loaded.contains_key(key) {
             return Err(RegionRouteError::LoadedRegionDoesNotContainKey {
                 region: loaded.region,
@@ -100,6 +128,54 @@ impl<L> RegionCache<L> {
             return Err(RegionRouteError::MultiRegion);
         }
         Ok(location)
+    }
+
+    /// Resolves every region intersecting the supplied half-open ranges.
+    ///
+    /// Returned snapshots are unique by exact versioned identity and sorted by
+    /// region start key. Overlapping caller ranges therefore reuse the cache
+    /// instead of loading or dispatching the same region twice.
+    pub fn locate_ranges(
+        &mut self,
+        ranges: &[KeyRange],
+    ) -> Result<Vec<RegionLocation>, RegionRouteError>
+    where
+        L: RegionLoader,
+    {
+        let mut located = BTreeMap::<RegionVerId, RegionLocation>::new();
+        for range in ranges {
+            if !range.is_valid() {
+                return Err(RegionRouteError::InvalidRange);
+            }
+            let mut cursor = range.start.clone();
+            let mut first_fragment = true;
+            loop {
+                let location = self
+                    .locate_key_with_boundary(&cursor, !first_fragment)?
+                    .clone();
+                let region = location.region;
+                let region_end = location.end_key.clone();
+                located.entry(region).or_insert(location);
+
+                let request_is_covered = if range.end.is_empty() {
+                    region_end.is_empty()
+                } else {
+                    region_end.is_empty() || range.end <= region_end
+                };
+                if request_is_covered {
+                    break;
+                }
+                if region_end <= cursor {
+                    return Err(RegionRouteError::NonProgressingRegion { region });
+                }
+                cursor = region_end;
+                first_fragment = false;
+            }
+        }
+
+        let mut regions: Vec<_> = located.into_values().collect();
+        regions.sort_by(|left, right| left.start_key.cmp(&right.start_key));
+        Ok(regions)
     }
 
     fn find_key(&self, key: &[u8]) -> Option<usize> {

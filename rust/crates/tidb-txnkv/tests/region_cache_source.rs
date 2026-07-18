@@ -14,7 +14,9 @@
 
 //! Source-shaped single-region cache tests.
 
+use std::cell::RefCell;
 use std::collections::VecDeque;
+use std::rc::Rc;
 
 use tidb_txnkv::region::{
     KeyRange, Peer, PeerRole, RegionCache, RegionLoadError, RegionLoader, RegionLocation,
@@ -43,6 +45,24 @@ impl RegionLoader for Loader {
 struct FailingLoader {
     cluster_id: u64,
     error: Option<RegionLoadError>,
+}
+
+struct RecordingLoader {
+    calls: Rc<RefCell<Vec<Vec<u8>>>>,
+    regions: VecDeque<RegionLocation>,
+}
+
+impl RegionLoader for RecordingLoader {
+    fn cluster_id(&self) -> u64 {
+        42
+    }
+
+    fn load_region(&mut self, key: &[u8]) -> Result<RegionLocation, RegionLoadError> {
+        self.calls.borrow_mut().push(key.to_vec());
+        self.regions
+            .pop_front()
+            .ok_or_else(|| RegionLoadError::new("test-loader-empty", "no region"))
+    }
 }
 
 impl RegionLoader for FailingLoader {
@@ -220,4 +240,141 @@ fn stale_same_region_loader_result_is_rejected_without_eviction() {
     );
     assert_eq!(cache.len(), 1);
     assert_eq!(cache.locate_key(b"n").unwrap(), &current);
+}
+
+#[test]
+fn range_walk_reuses_cache_and_preserves_contiguous_region_order() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let loader = RecordingLoader {
+        calls: Rc::clone(&calls),
+        regions: VecDeque::from([location(1, 1, 1, b"a", b"m"), location(2, 1, 1, b"m", b"z")]),
+    };
+    let mut cache = RegionCache::new(loader);
+    let left = KeyRange::new(b"a".to_vec(), b"m".to_vec());
+    let right = KeyRange::new(b"m".to_vec(), b"z".to_vec());
+
+    let regions = cache.locate_ranges(&[left, right]).unwrap();
+    assert_eq!(
+        regions
+            .iter()
+            .map(|region| region.region.id)
+            .collect::<Vec<_>>(),
+        [1, 2]
+    );
+    assert_eq!(calls.borrow().as_slice(), [b"a".to_vec(), b"m".to_vec()]);
+
+    assert_eq!(
+        cache
+            .locate_ranges(&[KeyRange::new(b"a".to_vec(), b"z".to_vec())])
+            .unwrap(),
+        regions
+    );
+    assert_eq!(calls.borrow().len(), 2, "cache hits must not reload PD");
+}
+
+#[test]
+fn overlapping_and_duplicate_inputs_do_not_duplicate_region_loads() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let loader = RecordingLoader {
+        calls: Rc::clone(&calls),
+        regions: VecDeque::from([location(1, 1, 1, b"a", b"m"), location(2, 1, 1, b"m", b"z")]),
+    };
+    let mut cache = RegionCache::new(loader);
+    let whole = KeyRange::new(b"a".to_vec(), b"z".to_vec());
+    let overlap = KeyRange::new(b"b".to_vec(), b"y".to_vec());
+
+    let regions = cache
+        .locate_ranges(&[whole.clone(), overlap, whole])
+        .unwrap();
+    assert_eq!(
+        regions
+            .iter()
+            .map(|region| region.region.id)
+            .collect::<Vec<_>>(),
+        [1, 2]
+    );
+    assert_eq!(calls.borrow().as_slice(), [b"a".to_vec(), b"m".to_vec()]);
+}
+
+#[test]
+fn unbounded_final_region_terminates_and_end_boundary_is_exclusive() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let loader = RecordingLoader {
+        calls: Rc::clone(&calls),
+        regions: VecDeque::from([location(1, 1, 1, b"a", b"m"), location(2, 1, 1, b"m", b"")]),
+    };
+    let mut cache = RegionCache::new(loader);
+
+    let first_only = cache
+        .locate_ranges(&[KeyRange::new(b"a".to_vec(), b"m".to_vec())])
+        .unwrap();
+    assert_eq!(first_only[0].region.id, 1);
+    assert_eq!(
+        calls.borrow().len(),
+        1,
+        "end equality must not load the next region"
+    );
+
+    let all = cache
+        .locate_ranges(&[KeyRange::new(b"a".to_vec(), Vec::new())])
+        .unwrap();
+    assert_eq!(
+        all.iter()
+            .map(|region| region.region.id)
+            .collect::<Vec<_>>(),
+        [1, 2]
+    );
+    assert_eq!(calls.borrow().as_slice(), [b"a".to_vec(), b"m".to_vec()]);
+}
+
+#[test]
+fn malformed_ranges_and_region_bounds_fail_before_cache_insertion() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let loader = RecordingLoader {
+        calls: Rc::clone(&calls),
+        regions: VecDeque::from([location(1, 1, 1, b"m", b"m")]),
+    };
+    let mut cache = RegionCache::new(loader);
+
+    for invalid in [
+        KeyRange::new(b"m".to_vec(), b"m".to_vec()),
+        KeyRange::new(b"z".to_vec(), b"a".to_vec()),
+    ] {
+        assert_eq!(
+            cache.locate_ranges(&[invalid]),
+            Err(RegionRouteError::InvalidRange)
+        );
+    }
+    assert!(calls.borrow().is_empty());
+
+    assert_eq!(
+        cache.locate_ranges(&[KeyRange::new(b"m".to_vec(), b"z".to_vec())]),
+        Err(RegionRouteError::InvalidRegionBounds {
+            region: RegionVerId::new(1, 1, 1),
+        })
+    );
+    assert!(cache.is_empty());
+}
+
+#[test]
+fn overlapping_or_gapped_successor_boundary_fails_without_replacing_cached_region() {
+    for successor_start in [b"a".as_slice(), b"l".as_slice(), b"n".as_slice()] {
+        let calls = Rc::new(RefCell::new(Vec::new()));
+        let first = location(1, 1, 1, b"a", b"m");
+        let successor = location(2, 1, 1, successor_start, b"z");
+        let loader = RecordingLoader {
+            calls,
+            regions: VecDeque::from([first.clone(), successor.clone()]),
+        };
+        let mut cache = RegionCache::new(loader);
+
+        assert_eq!(
+            cache.locate_ranges(&[KeyRange::new(b"a".to_vec(), b"z".to_vec())]),
+            Err(RegionRouteError::DiscontinuousRegion {
+                region: successor.region,
+            })
+        );
+        assert_eq!(cache.len(), 1);
+        assert_eq!(cache.locate_key(b"b").unwrap(), &first);
+    }
 }

@@ -69,19 +69,27 @@ pub enum RegionRouteError {
         /// Identity returned by the loader.
         region: RegionVerId,
     },
+    /// Loaded metadata has a finite end that is not after its start.
+    InvalidRegionBounds {
+        /// Identity returned by the loader.
+        region: RegionVerId,
+    },
+    /// A range walk could not advance beyond the current cursor.
+    NonProgressingRegion {
+        /// Exact region that returned the repeated or backward boundary.
+        region: RegionVerId,
+    },
+    /// A later fragment overlaps or leaves a gap before the walk cursor.
+    DiscontinuousRegion {
+        /// Exact region whose start did not equal the prior region end.
+        region: RegionVerId,
+    },
     /// Loaded metadata is older than the cached version for the same region.
     StaleRegionEpoch {
         /// Loaded identity.
         loaded: RegionVerId,
         /// Current cached identity.
         cached: RegionVerId,
-    },
-    /// The expected region version no longer matches the selected location.
-    StaleRequestEpoch {
-        /// Version carried by the request task.
-        expected: RegionVerId,
-        /// Version currently selected by the cache.
-        actual: RegionVerId,
     },
     /// The selected region has no declared leader.
     MissingLeader,
@@ -102,8 +110,6 @@ pub enum RegionRouteError {
     UnsupportedReadPolicy,
     /// PD cluster identity was not configured on the sender.
     MissingClusterId,
-    /// Request context was already attached by an earlier dispatch.
-    ContextAlreadyAttached,
 }
 
 impl std::fmt::Display for RegionRouteError {
@@ -120,39 +126,6 @@ impl std::error::Error for RegionRouteError {
         match self {
             Self::Loader(error) => Some(error),
             _ => None,
-        }
-    }
-}
-
-/// One route-validation or typed direct-unary failure.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum RegionSendError<E> {
-    /// Request dispatch stopped before the direct-unary boundary.
-    Route(RegionRouteError),
-    /// The direct-unary client returned its original typed error.
-    DirectUnary(E),
-}
-
-impl<E> From<RegionRouteError> for RegionSendError<E> {
-    fn from(error: RegionRouteError) -> Self {
-        Self::Route(error)
-    }
-}
-
-impl<E: std::fmt::Display> std::fmt::Display for RegionSendError<E> {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Route(error) => error.fmt(formatter),
-            Self::DirectUnary(error) => error.fmt(formatter),
-        }
-    }
-}
-
-impl<E: std::error::Error + 'static> std::error::Error for RegionSendError<E> {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Route(error) => Some(error),
-            Self::DirectUnary(error) => Some(error),
         }
     }
 }

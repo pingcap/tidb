@@ -21,11 +21,13 @@ use std::time::Duration;
 
 use prost::Message;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+use tidb_distsql::region::{
+    Peer, PeerRole, RegionCache, RegionLoadError, RegionLoader, RegionLocation, RegionVerId, Store,
+};
 use tidb_distsql::{
     DirectUnaryClient, DirectUnaryClientError, DirectUnaryQueryTransport, DirectUnaryRequest,
-    DirectUnaryResponse, DirectUnaryRuntimeConfig, KvRequestMetadata, RegionTaskEpoch,
-    RegionTaskPeer, RegionTaskTopology, RequestKeyRange, RequestKeyRanges, RequestType,
-    ResolvedRegionRoute, StoreType, TransportRequest,
+    DirectUnaryResponse, DirectUnaryRuntimeConfig, KvRequestMetadata, RequestKeyRange,
+    RequestKeyRanges, RequestType, StoreType, TransportRequest,
 };
 use tidb_exec::storage_reader::{ReaderKind, ReaderPlan, ReaderState, TableIndexReader};
 use tidb_proto::tipb::{Chunk, SelectResponse};
@@ -34,6 +36,22 @@ use tidb_proto::CoprocessorResponse;
 struct ReaderUnaryClient {
     sends: Rc<Cell<usize>>,
     responses: VecDeque<Vec<u8>>,
+}
+
+struct ReaderLoader {
+    region: Option<RegionLocation>,
+}
+
+impl RegionLoader for ReaderLoader {
+    fn cluster_id(&self) -> u64 {
+        9001
+    }
+
+    fn load_region(&mut self, _key: &[u8]) -> Result<RegionLocation, RegionLoadError> {
+        self.region
+            .take()
+            .ok_or_else(|| RegionLoadError::new("reader-loader-empty", "no region"))
+    }
 }
 
 impl DirectUnaryClient for ReaderUnaryClient {
@@ -83,7 +101,7 @@ fn request() -> TransportRequest {
     })
 }
 
-fn transport(sends: Rc<Cell<usize>>) -> DirectUnaryQueryTransport<ReaderUnaryClient> {
+fn transport(sends: Rc<Cell<usize>>) -> DirectUnaryQueryTransport<ReaderUnaryClient, ReaderLoader> {
     let response = CoprocessorResponse {
         data: encoded_rows(&[1, 2, 3]),
         ..CoprocessorResponse::default()
@@ -94,28 +112,28 @@ fn transport(sends: Rc<Cell<usize>>) -> DirectUnaryQueryTransport<ReaderUnaryCli
             sends,
             responses: [response].into_iter().collect(),
         },
-        [ResolvedRegionRoute {
-            topology: RegionTaskTopology {
-                region_id: 1,
-                region_epoch: Some(RegionTaskEpoch {
-                    conf_ver: 1,
-                    version: 1,
-                }),
-                peer: Some(RegionTaskPeer {
-                    id: 2,
-                    store_id: 3,
-                    role: 0,
-                    is_witness: false,
-                }),
+        RegionCache::new(ReaderLoader {
+            region: Some(RegionLocation {
+                region: RegionVerId::new(1, 1, 1),
                 start_key: b"a".to_vec(),
                 end_key: b"z".to_vec(),
-                ..RegionTaskTopology::default()
-            },
-            address: "tikv-1:20160".to_owned(),
-        }],
+                peers: vec![Peer {
+                    id: 2,
+                    store_id: 3,
+                    role: PeerRole::Voter,
+                    is_witness: false,
+                    store_epoch: 4,
+                }],
+                leader_peer_id: Some(2),
+                stores: vec![Store {
+                    id: 3,
+                    address: "tikv-1:20160".to_owned(),
+                    epoch: 4,
+                }],
+            }),
+        }),
         DirectUnaryRuntimeConfig {
             default_timeout: Duration::from_secs(9),
-            cluster_id: 9001,
             ..DirectUnaryRuntimeConfig::default()
         },
     )
