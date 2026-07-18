@@ -529,6 +529,8 @@ def validate_transfers(root: Path) -> None:
         return
     source_rows = {str(row["path"]): row for row in load_source_rows(root)}
     test_rows = {test_key(row): row for row in load_test_rows(root)}
+    module_source_rows = load_module_source_rows(root)
+    module_test_rows = load_module_test_rows(root)
     transfers: list[dict[str, object]] = []
     chains: dict[tuple[str, str], list[dict[str, object]]] = {}
     all_retired_artifacts: set[str] = set()
@@ -615,10 +617,29 @@ def validate_transfers(root: Path) -> None:
                 f"{records[0]['path']}: {kind} ownership transfers for {anchor} "
                 "must form one connected chain"
             )
-        ledger_row = source_rows.get(anchor) if kind == "source" else test_rows.get(anchor)
+        is_module_anchor = "::" in anchor
+        if kind == "source":
+            ledger_row = (
+                module_source_rows.get(anchor)
+                if is_module_anchor
+                else source_rows.get(anchor)
+            )
+        else:
+            ledger_row = (
+                module_test_rows.get(anchor)
+                if is_module_anchor
+                else test_rows.get(anchor)
+            )
+        display_kind = f"module {kind}" if is_module_anchor else kind
+        if ledger_row is None:
+            if is_module_anchor:
+                raise ValueError(
+                    f"{records[-1]['path']}: transferred {display_kind} {anchor} "
+                    f"is not present in the external {kind} ledger"
+                )
         if ledger_row is None or ledger_row["owner"] != owner:
             raise ValueError(
-                f"{records[-1]['path']}: transferred {kind} {anchor} is not owned by "
+                f"{records[-1]['path']}: transferred {display_kind} {anchor} is not owned by "
                 f"terminal owner {owner}"
             )
 

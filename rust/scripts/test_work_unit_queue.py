@@ -907,6 +907,94 @@ class WorkUnitQueueTest(unittest.TestCase):
         )
         self.run_tool("check")
 
+    def test_check_accepts_a_truthful_module_source_and_test_transfer(self) -> None:
+        source_inventory = (
+            self.root / "difftests/corpus/coverage/external_go_source_inventory.tsv"
+        )
+        source_inventory.write_text(
+            source_inventory.read_text().replace(
+                "UNTRIAGED\t-\t-\t-", "PARTIAL\tnew-owner\tnew.rs\tmoved", 1
+            ),
+            encoding="utf-8",
+        )
+        test_inventory = (
+            self.root / "difftests/corpus/coverage/external_go_test_inventory.tsv"
+        )
+        test_inventory.write_text(
+            test_inventory.read_text().replace(
+                "UNTRIAGED\t-\t-\t-", "PARTIAL\tnew-owner\tnew.rs\tmoved", 1
+            ),
+            encoding="utf-8",
+        )
+        transfers = self.root / "difftests/corpus/coverage/evidence/transfers"
+        transfers.mkdir(parents=True)
+        replacement = self.root.parent / "new.rs"
+        replacement.write_text("replacement", encoding="utf-8")
+        self.addCleanup(replacement.unlink, missing_ok=True)
+        (transfers / "module.tsv").write_text(
+            "old-owner\tnew-owner\tclient-go::internal/client/client0.go\t"
+            "client-go::internal/client/client_test.go\t20\tTestSend0\t"
+            "-\tnew.rs\tmodule source and test moved together\n",
+            encoding="utf-8",
+        )
+        self.run_tool("check")
+
+    def test_check_rejects_stale_module_transfer_anchors(self) -> None:
+        transfers = self.root / "difftests/corpus/coverage/evidence/transfers"
+        transfers.mkdir(parents=True)
+        for filename, fields, expected in (
+            (
+                "source.tsv",
+                "client-go::internal/client/missing.go\t-\t-\t-",
+                "transferred module source client-go::internal/client/missing.go "
+                "is not present in the external source ledger",
+            ),
+            (
+                "test.tsv",
+                "-\tclient-go::internal/client/client_test.go\t999\tTestMissing",
+                "transferred module test "
+                "client-go::internal/client/client_test.go:999:TestMissing "
+                "is not present in the external test ledger",
+            ),
+        ):
+            with self.subTest(filename=filename):
+                for existing in transfers.glob("*.tsv"):
+                    existing.unlink()
+                (transfers / filename).write_text(
+                    f"old-owner\tnew-owner\t{fields}\t-\t-\tstale\n",
+                    encoding="utf-8",
+                )
+                result = self.run_tool("check", success=False)
+                self.assertIn(expected, result.stderr)
+
+    def test_check_rejects_module_transfer_without_terminal_ledger_owner(self) -> None:
+        transfers = self.root / "difftests/corpus/coverage/evidence/transfers"
+        transfers.mkdir(parents=True)
+        (transfers / "module.tsv").write_text(
+            "old-owner\tnew-owner\tclient-go::internal/client/client0.go\t"
+            "-\t-\t-\t-\t-\twrong terminal owner\n",
+            encoding="utf-8",
+        )
+        result = self.run_tool("check", success=False)
+        self.assertIn(
+            "transferred module source client-go::internal/client/client0.go "
+            "is not owned by terminal owner new-owner",
+            result.stderr,
+        )
+
+    def test_check_rejects_a_branched_module_transfer_chain(self) -> None:
+        transfers = self.root / "difftests/corpus/coverage/evidence/transfers"
+        transfers.mkdir(parents=True)
+        (transfers / "module-branch.tsv").write_text(
+            "old-owner\tfirst-owner\tclient-go::internal/client/client0.go\t"
+            "-\t-\t-\t-\t-\tfirst\n"
+            "old-owner\tsecond-owner\tclient-go::internal/client/client0.go\t"
+            "-\t-\t-\t-\t-\tsecond\n",
+            encoding="utf-8",
+        )
+        result = self.run_tool("check", success=False)
+        self.assertIn("branched source ownership transfer", result.stderr)
+
     def test_check_rejects_a_transfer_without_any_anchor(self) -> None:
         transfers = self.root / "difftests/corpus/coverage/evidence/transfers"
         transfers.mkdir(parents=True)

@@ -101,8 +101,12 @@ go_tests = [
   "pkg/executor/temporary_table_test.go:53:TestLocalTemporaryTableNoNetworkWithCreateOutsideTxn",
   "pkg/executor/temporary_table_test.go:60:TestLocalTemporaryTableNoNetworkWithInsideTxn",
 ]
-module_sources = []
-module_tests = []
+module_sources = [
+  "client-go::internal/locate/region_request.go",
+]
+module_tests = [
+  "client-go::internal/locate/region_request_test.go:78:TestRegionRequestToSingleStore",
+]
 depends_on = []
 evidence_prerequisites = [
   { capability = "driver-error-conversion", evidence_owner = "txnkv-driver-error-complete-conversion", kind = "source", anchor = "pkg/store/driver/error/error.go", minimum_status = "PARTIAL" },
@@ -142,5 +146,7 @@ rust_paths = [
   "rust/crates/tidb-exec/tests/direct_unary_table_index_reader_source.rs",
   "rust/difftests/corpus/coverage/evidence/source/distsql-pd-route-runtime.tsv",
   "rust/difftests/corpus/coverage/evidence/tests/distsql-pd-route-runtime.tsv",
+  "rust/difftests/corpus/coverage/evidence/client-go/source/distsql-pd-route-runtime.tsv",
+  "rust/difftests/corpus/coverage/evidence/client-go/tests/distsql-pd-route-runtime.tsv",
   "rust/difftests/corpus/coverage/evidence/transfers/distsql-pd-route-runtime.tsv",
 ]
