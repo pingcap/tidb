@@ -137,3 +137,27 @@ fn stale_task_epoch_fails_before_context_mutation_or_rpc() {
     assert_eq!(request.context.task_id, 99);
     assert_eq!(request.context.region_id, 0);
 }
+
+#[test]
+fn missing_cluster_id_fails_before_context_mutation_or_rpc() {
+    let context = KvrpcContext {
+        task_id: 101,
+        request_source: "cluster-id-regression".to_owned(),
+        ..KvrpcContext::default()
+    };
+    let mut request =
+        PendingRegionRequest::new(location().region, ReadPolicy::default(), context.clone());
+    let calls = Cell::new(0);
+
+    let error = SingleRegionRequestSender::new(0)
+        .send(&location(), &mut request, |_, _| {
+            calls.set(calls.get() + 1);
+            Ok(())
+        })
+        .unwrap_err();
+
+    assert_eq!(error, RegionRouteError::MissingClusterId);
+    assert_eq!(calls.get(), 0);
+    assert!(!request.is_attached());
+    assert_eq!(request.context, context);
+}

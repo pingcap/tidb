@@ -54,6 +54,8 @@ pub enum RegionRouteError {
     },
     /// Only an ordinary leader read is admitted.
     UnsupportedReadPolicy,
+    /// PD cluster identity was not configured on the sender.
+    MissingClusterId,
     /// Request context was already attached by an earlier dispatch.
     ContextAlreadyAttached,
     /// The address-directed injected RPC returned an error.

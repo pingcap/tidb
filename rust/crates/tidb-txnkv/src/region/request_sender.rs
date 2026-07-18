@@ -74,6 +74,9 @@ impl SingleRegionRequestSender {
         request: &mut PendingRegionRequest,
         rpc: impl FnOnce(&str, &KvrpcContext) -> Result<T, String>,
     ) -> Result<T, RegionRouteError> {
+        if self.cluster_id == 0 {
+            return Err(RegionRouteError::MissingClusterId);
+        }
         if request.attached {
             return Err(RegionRouteError::ContextAlreadyAttached);
         }
