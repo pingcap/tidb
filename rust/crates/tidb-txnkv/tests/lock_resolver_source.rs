@@ -146,6 +146,7 @@ fn location(id: u64, start: &[u8], end: &[u8], address: &str) -> RegionLocation 
             address: address.to_owned(),
             epoch: 1,
         }],
+        ..RegionLocation::default()
     }
 }
 

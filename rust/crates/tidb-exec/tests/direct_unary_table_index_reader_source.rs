@@ -220,6 +220,7 @@ fn transport_with_rows(
                     address: "tikv-1:20160".to_owned(),
                     epoch: 4,
                 }],
+                ..RegionLocation::default()
             },
         }),
         DirectUnaryRuntimeConfig {

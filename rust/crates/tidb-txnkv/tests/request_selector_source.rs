@@ -99,6 +99,7 @@ fn location() -> RegionLocation {
                 epoch: 7,
             })
             .collect(),
+        ..RegionLocation::default()
     }
 }
 

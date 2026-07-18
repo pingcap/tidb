@@ -67,6 +67,7 @@ fn location() -> RegionLocation {
                 epoch: 8,
             },
         ],
+        ..RegionLocation::default()
     }
 }
 

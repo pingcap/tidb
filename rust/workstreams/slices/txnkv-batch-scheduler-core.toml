@@ -36,5 +36,6 @@ rust_paths = [
   "rust/crates/tidb-txnkv/src/rpc/batch/priority_queue.rs",
   "rust/crates/tidb-txnkv/src/rpc/batch/scheduler.rs",
   "rust/crates/tidb-txnkv/tests/batch_observability_source.rs",
+  "rust/crates/tidb-txnkv/tests/batch_priority_queue_source.rs",
   "rust/crates/tidb-txnkv/tests/batch_scheduler_source.rs",
 ]

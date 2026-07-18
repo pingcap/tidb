@@ -53,6 +53,7 @@ fn location(id: u64, start: &[u8], end: &[u8], address: &str, epoch: u64) -> Reg
             address: address.to_owned(),
             epoch,
         }],
+        ..RegionLocation::default()
     }
 }
 

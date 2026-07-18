@@ -307,6 +307,7 @@ fn location(region_id: u64, start: &str, end: &str, address: &str) -> RegionLoca
             address: address.to_owned(),
             epoch: 7,
         }],
+        ..RegionLocation::default()
     }
 }
 
@@ -1643,6 +1644,7 @@ fn one_store_failure_stales_later_bound_regions_without_reordering_them() {
                 epoch: 7,
             },
         ],
+        ..RegionLocation::default()
     };
     let second = RegionLocation {
         region: RegionVerId::new(2, 1, 2),
@@ -1673,6 +1675,7 @@ fn one_store_failure_stales_later_bound_regions_without_reordering_them() {
                 epoch: 7,
             },
         ],
+        ..RegionLocation::default()
     };
     let mut runtime = InjectedQueryRuntime::new(transport_with_transport_failures(
         Rc::clone(&calls),

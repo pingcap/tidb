@@ -68,6 +68,7 @@ fn region(id: u64, start: &[u8], end: &[u8], peers: &[(u64, u64, PeerRole)]) -> 
                 epoch: 0,
             })
             .collect(),
+        ..RegionLocation::default()
     }
 }
 

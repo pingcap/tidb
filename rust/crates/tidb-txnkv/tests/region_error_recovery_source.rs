@@ -110,6 +110,7 @@ fn location(id: u64, conf_ver: u64, version: u64, start: &[u8], end: &[u8]) -> R
                 epoch: 9,
             },
         ],
+        ..RegionLocation::default()
     }
 }
 

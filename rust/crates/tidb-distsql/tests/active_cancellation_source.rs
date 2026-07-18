@@ -279,6 +279,7 @@ fn location(region_id: u64, start: &str, end: &str) -> RegionLocation {
             address: format!("tikv-{region_id}:20160"),
             epoch: 7,
         }],
+        ..RegionLocation::default()
     }
 }
 

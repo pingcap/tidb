@@ -125,7 +125,7 @@ pub struct RegionMetadata {
 }
 
 /// One immutable region snapshot returned by the injected loader.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RegionLocation {
     /// Versioned region identity.
     pub region: RegionVerId,

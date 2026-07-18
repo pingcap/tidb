@@ -93,6 +93,7 @@ fn location(id: u64, conf_ver: u64, version: u64, start: &[u8], end: &[u8]) -> R
             address: format!("store-{id}"),
             epoch: 7,
         }],
+        ..RegionLocation::default()
     }
 }
 
