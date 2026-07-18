@@ -20,7 +20,7 @@
 //! region routing, retry, lock policy, and response interpretation stay above
 //! this transport authority.
 
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -45,6 +45,7 @@ const MAX_RECV_MESSAGE_SIZE: usize = (i64::MAX as usize).saturating_sub(1);
 #[derive(Clone, Debug)]
 pub struct UnaryCancellation {
     state: tokio::sync::watch::Sender<bool>,
+    blocking_wait: Arc<(Mutex<()>, Condvar)>,
 }
 
 impl Default for UnaryCancellation {
@@ -58,12 +59,19 @@ impl UnaryCancellation {
     #[must_use]
     pub fn new() -> Self {
         let (state, _) = tokio::sync::watch::channel(false);
-        Self { state }
+        Self {
+            state,
+            blocking_wait: Arc::new((Mutex::new(()), Condvar::new())),
+        }
     }
 
     /// Makes cancellation visible to current and future calls.
     pub fn cancel(&self) {
+        let (lock, changed) = self.blocking_wait.as_ref();
+        let guard = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         self.state.send_replace(true);
+        drop(guard);
+        changed.notify_all();
     }
 
     /// Whether the caller has already cancelled.
@@ -76,6 +84,25 @@ impl UnaryCancellation {
     #[must_use]
     pub fn shares_state_with(&self, other: &Self) -> bool {
         self.state.same_channel(&other.state)
+    }
+
+    /// Waits until this carrier is cancelled or `timeout` elapses.
+    ///
+    /// Returns `true` only for caller cancellation. A `false` result means the
+    /// full timeout elapsed. The condition variable is paired with the same
+    /// watch value used by in-flight tonic calls, so synchronous TTL waiting
+    /// neither polls nor creates another cancellation authority.
+    #[must_use]
+    pub fn wait_timeout(&self, timeout: Duration) -> bool {
+        let (lock, changed) = self.blocking_wait.as_ref();
+        let guard = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if self.is_cancelled() {
+            return true;
+        }
+        let _ = changed
+            .wait_timeout_while(guard, timeout, |_| !self.is_cancelled())
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        self.is_cancelled()
     }
 
     async fn cancelled(&self) {
@@ -564,12 +591,36 @@ const fn grpc_error_code(code: tonic::Code) -> Option<DirectUnaryGrpcCode> {
 
 #[cfg(test)]
 mod tests {
-    use super::error_chain_contains_timeout;
+    use std::time::{Duration, Instant};
+
+    use super::{error_chain_contains_timeout, UnaryCancellation};
 
     #[test]
     fn tonic_timeout_source_is_not_misclassified_as_remote_canceled() {
         let status = tonic::Status::from_error(Box::new(tonic::TimeoutExpired(())));
         assert_eq!(status.code(), tonic::Code::Cancelled);
         assert!(error_chain_contains_timeout(&status));
+    }
+
+    #[test]
+    fn blocking_wait_distinguishes_cancellation_from_elapsed_ttl() {
+        let already_cancelled = UnaryCancellation::new();
+        already_cancelled.cancel();
+        assert!(already_cancelled.wait_timeout(Duration::from_secs(2)));
+
+        let cancellation = UnaryCancellation::new();
+        let waiter = cancellation.clone();
+        let cancel = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(20));
+            waiter.cancel();
+        });
+        let started = Instant::now();
+        assert!(cancellation.wait_timeout(Duration::from_secs(2)));
+        assert!(started.elapsed() < Duration::from_secs(1));
+        cancel.join().unwrap();
+
+        let elapsed = UnaryCancellation::new();
+        assert!(!elapsed.wait_timeout(Duration::from_millis(10)));
+        assert!(!elapsed.is_cancelled());
     }
 }
