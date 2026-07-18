@@ -16,7 +16,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use super::{RegionCache, RegionGcRound, RegionQueryLoader, StoreMaintenanceRound};
+use super::{RegionCache, RegionGcRound, RegionLoader, RegionQueryLoader, StoreMaintenanceRound};
 
 /// One complete pass performed by the single maintenance driver.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -73,22 +73,76 @@ struct DriverState {
 }
 
 /// Sole synchronized owner and cancellable maintenance task for RegionCache.
-pub struct BackgroundRegionCache<L> {
+struct BackgroundRegionCacheInner<L> {
     cache: Arc<Mutex<RegionCache<L>>>,
     driver: Arc<(Mutex<DriverState>, Condvar)>,
-    worker: Option<JoinHandle<()>>,
+    worker: Mutex<Option<JoinHandle<()>>>,
 }
 
-impl<L> BackgroundRegionCache<L>
-where
-    L: RegionQueryLoader + Send + 'static,
-{
-    /// Moves the canonical cache under one lock and starts exactly one worker.
-    pub fn start(
+/// Cloneable handle to the sole synchronized cache and maintenance task.
+pub struct BackgroundRegionCache<L> {
+    inner: Arc<BackgroundRegionCacheInner<L>>,
+}
+
+impl<L> Clone for BackgroundRegionCache<L> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+        }
+    }
+}
+
+impl<L> BackgroundRegionCache<L> {
+    /// Wraps one canonical cache without starting a worker.
+    ///
+    /// This is the injection seam for non-Send test loaders. Production
+    /// runtimes use [`Self::start`] and therefore cannot bypass maintenance.
+    #[must_use]
+    pub(crate) fn without_worker(cache: RegionCache<L>) -> Self {
+        Self {
+            inner: Arc::new(BackgroundRegionCacheInner {
+                cache: Arc::new(Mutex::new(cache)),
+                driver: Arc::new((
+                    Mutex::new(DriverState {
+                        shutdown: true,
+                        closed: true,
+                        ..DriverState::default()
+                    }),
+                    Condvar::new(),
+                )),
+                worker: Mutex::new(None),
+            }),
+        }
+    }
+
+    /// Moves the canonical cache under one lock and starts bounded cache GC.
+    pub fn start_gc(
         cache: RegionCache<L>,
         interval: Duration,
         gc_limit: usize,
-    ) -> Result<Self, BackgroundRegionCacheError> {
+    ) -> Result<Self, BackgroundRegionCacheError>
+    where
+        L: RegionLoader + Send + 'static,
+    {
+        Self::start_with_round(cache, interval, gc_limit, |cache, triggered, gc_limit| {
+            BackgroundMaintenanceRound {
+                triggered,
+                regions: cache.maintain_entries_bounded(gc_limit),
+                stores: StoreMaintenanceRound::default(),
+            }
+        })
+    }
+
+    fn start_with_round<F>(
+        cache: RegionCache<L>,
+        interval: Duration,
+        gc_limit: usize,
+        round: F,
+    ) -> Result<Self, BackgroundRegionCacheError>
+    where
+        L: RegionLoader + Send + 'static,
+        F: FnMut(&mut RegionCache<L>, bool, usize) -> BackgroundMaintenanceRound + Send + 'static,
+    {
         if interval.is_zero() {
             return Err(BackgroundRegionCacheError::ZeroInterval);
         }
@@ -101,12 +155,14 @@ where
         let worker_driver = Arc::clone(&driver);
         let worker = std::thread::Builder::new()
             .name("tidb-region-maintenance".to_owned())
-            .spawn(move || maintenance_loop(worker_cache, worker_driver, interval, gc_limit))
+            .spawn(move || maintenance_loop(worker_cache, worker_driver, interval, gc_limit, round))
             .map_err(|error| BackgroundRegionCacheError::Spawn(error.to_string()))?;
         Ok(Self {
-            cache,
-            driver,
-            worker: Some(worker),
+            inner: Arc::new(BackgroundRegionCacheInner {
+                cache,
+                driver,
+                worker: Mutex::new(Some(worker)),
+            }),
         })
     }
 
@@ -116,6 +172,7 @@ where
         operation: impl FnOnce(&mut RegionCache<L>) -> R,
     ) -> Result<R, BackgroundRegionCacheError> {
         let mut cache = self
+            .inner
             .cache
             .lock()
             .map_err(|_| BackgroundRegionCacheError::CachePoisoned)?;
@@ -124,7 +181,7 @@ where
 
     /// Coalesces any number of pending store-check wakeups into one pass.
     pub fn trigger_store_check(&self) -> Result<bool, BackgroundRegionCacheError> {
-        let (state, wake) = &*self.driver;
+        let (state, wake) = &*self.inner.driver;
         let mut state = state
             .lock()
             .map_err(|_| BackgroundRegionCacheError::DriverPoisoned)?;
@@ -139,7 +196,7 @@ where
 
     /// Returns the number of fully completed maintenance passes.
     pub fn completed_rounds(&self) -> Result<u64, BackgroundRegionCacheError> {
-        let (state, _) = &*self.driver;
+        let (state, _) = &*self.inner.driver;
         state
             .lock()
             .map(|state| state.completed_rounds)
@@ -150,34 +207,21 @@ where
     pub fn last_round(
         &self,
     ) -> Result<Option<BackgroundMaintenanceRound>, BackgroundRegionCacheError> {
-        let (state, _) = &*self.driver;
+        let (state, _) = &*self.inner.driver;
         state
             .lock()
             .map(|state| state.last_round)
             .map_err(|_| BackgroundRegionCacheError::DriverPoisoned)
     }
 
-    /// Cancels the sole worker and waits for its termination.
-    pub fn shutdown(&mut self) -> Result<(), BackgroundRegionCacheError> {
-        let (state, wake) = &*self.driver;
-        {
-            let mut state = state
-                .lock()
-                .map_err(|_| BackgroundRegionCacheError::DriverPoisoned)?;
-            state.shutdown = true;
-            wake.notify_one();
-        }
-        if let Some(worker) = self.worker.take() {
-            worker
-                .join()
-                .map_err(|_| BackgroundRegionCacheError::WorkerPanicked)?;
-        }
-        Ok(())
+    /// Cancels the sole worker and waits for its termination exactly once.
+    pub fn shutdown(&self) -> Result<(), BackgroundRegionCacheError> {
+        shutdown_inner(&self.inner)
     }
 
     /// Whether shutdown has completed and no worker remains.
     pub fn is_closed(&self) -> Result<bool, BackgroundRegionCacheError> {
-        let (state, _) = &*self.driver;
+        let (state, _) = &*self.inner.driver;
         state
             .lock()
             .map(|state| state.closed)
@@ -185,26 +229,75 @@ where
     }
 }
 
-impl<L> Drop for BackgroundRegionCache<L> {
+impl<L> BackgroundRegionCache<L>
+where
+    L: RegionQueryLoader + Send + 'static,
+{
+    /// Starts full store refresh plus bounded cache GC over one cache allocation.
+    pub fn start(
+        cache: RegionCache<L>,
+        interval: Duration,
+        gc_limit: usize,
+    ) -> Result<Self, BackgroundRegionCacheError> {
+        Self::start_with_round(cache, interval, gc_limit, |cache, triggered, gc_limit| {
+            BackgroundMaintenanceRound {
+                triggered,
+                stores: cache.maintain_stores(triggered),
+                regions: cache.maintain_entries_bounded(gc_limit),
+            }
+        })
+    }
+}
+
+impl<L> Drop for BackgroundRegionCacheInner<L> {
     fn drop(&mut self) {
         let (state, wake) = &*self.driver;
         if let Ok(mut state) = state.lock() {
             state.shutdown = true;
             wake.notify_one();
         }
-        if let Some(worker) = self.worker.take() {
+        let worker = match self.worker.get_mut() {
+            Ok(worker) => worker,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if let Some(worker) = worker.take() {
             let _ = worker.join();
         }
     }
 }
 
-fn maintenance_loop<L>(
+fn shutdown_inner<L>(
+    inner: &BackgroundRegionCacheInner<L>,
+) -> Result<(), BackgroundRegionCacheError> {
+    let (state, wake) = &*inner.driver;
+    {
+        let mut state = state
+            .lock()
+            .map_err(|_| BackgroundRegionCacheError::DriverPoisoned)?;
+        state.shutdown = true;
+        wake.notify_one();
+    }
+    let mut worker = inner
+        .worker
+        .lock()
+        .map_err(|_| BackgroundRegionCacheError::DriverPoisoned)?;
+    if let Some(worker) = worker.take() {
+        worker
+            .join()
+            .map_err(|_| BackgroundRegionCacheError::WorkerPanicked)?;
+    }
+    Ok(())
+}
+
+fn maintenance_loop<L, F>(
     cache: Arc<Mutex<RegionCache<L>>>,
     driver: Arc<(Mutex<DriverState>, Condvar)>,
     interval: Duration,
     gc_limit: usize,
+    mut round: F,
 ) where
-    L: RegionQueryLoader + Send + 'static,
+    L: RegionLoader + Send + 'static,
+    F: FnMut(&mut RegionCache<L>, bool, usize) -> BackgroundMaintenanceRound,
 {
     loop {
         let (state, wake) = &*driver;
@@ -229,18 +322,13 @@ fn maintenance_loop<L>(
             }
             return;
         };
-        let stores = cache.maintain_stores(triggered);
-        let regions = cache.maintain_entries_bounded(gc_limit);
+        let completed = round(&mut cache, triggered, gc_limit);
         drop(cache);
 
         let Ok(mut state) = state.lock() else {
             return;
         };
         state.completed_rounds = state.completed_rounds.saturating_add(1);
-        state.last_round = Some(BackgroundMaintenanceRound {
-            triggered,
-            regions,
-            stores,
-        });
+        state.last_round = Some(completed);
     }
 }

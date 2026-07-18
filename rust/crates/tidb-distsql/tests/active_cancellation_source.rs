@@ -445,15 +445,17 @@ fn execution_cancellation_interrupts_dispatch_before_all_recovery_and_success_mu
     );
 
     drop(result);
-    let cache = shared.region_cache();
-    let mut cache = cache.borrow_mut();
-    for (key, store_id) in [(b"a".as_slice(), 201), (b"m".as_slice(), 202)] {
-        cache.locate_key(key).unwrap();
-        let store = cache.store_state(store_id).unwrap();
-        assert_eq!(store.epoch(), 7);
-        assert_eq!(store.resolve_state(), StoreResolveState::Resolved);
-        assert_eq!(store.liveness(), StoreLiveness::Reachable);
-    }
+    shared
+        .with_region_cache(|cache| {
+            for (key, store_id) in [(b"a".as_slice(), 201), (b"m".as_slice(), 202)] {
+                cache.locate_key(key).unwrap();
+                let store = cache.store_state(store_id).unwrap();
+                assert_eq!(store.epoch(), 7);
+                assert_eq!(store.resolve_state(), StoreResolveState::Resolved);
+                assert_eq!(store.liveness(), StoreLiveness::Reachable);
+            }
+        })
+        .unwrap();
     assert_eq!(
         loader_calls.borrow().as_slice(),
         [b"a".to_vec(), b"m".to_vec()]
@@ -495,4 +497,23 @@ fn caller_cancellation_branch_is_terminal_before_response_and_retry_mutation() {
             "unexpected mutation: {forbidden}"
         );
     }
+}
+
+#[test]
+fn production_failure_uses_selection_observation_without_holding_cache_during_io() {
+    let source = include_str!("../src/cop_paging/direct_unary_query_transport.rs");
+    let observation = source
+        .find(".observe_attempt(selected.dispatch_attempt())")
+        .expect("selection-time cache observation");
+    let send = source
+        .find(".send_request_with_route(")
+        .expect("unlocked client dispatch");
+    let guarded_failure = source
+        .find(".on_route_send_failure_observed(&selected, &observation, liveness)")
+        .expect("guarded production failure mutation");
+
+    assert!(observation < send);
+    assert!(send < guarded_failure);
+    assert!(!source.contains(".on_route_send_failure(&selected, liveness)"));
+    assert!(!source.contains(".region_cache().try_borrow"));
 }

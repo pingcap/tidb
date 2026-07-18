@@ -240,13 +240,14 @@ fn follower_policy_reaches_a_live_nonleader_voter() {
     );
 
     let dispatches = Rc::new(RefCell::new(Vec::new()));
-    let shared_runtime = SharedReadRuntime::new(
+    let shared_runtime = SharedReadRuntime::new_with_maintenance(
         RecordingClient {
             inner: TonicCoprocessorClient::new().expect("construct live unary client"),
             dispatches: Rc::clone(&dispatches),
         },
         cache,
-    );
+    )
+    .expect("start production region-cache maintenance");
     let inspection_runtime = shared_runtime.clone();
     let transport = DirectUnaryQueryTransport::with_shared_runtime(
         shared_runtime,
@@ -317,11 +318,13 @@ fn follower_policy_reaches_a_live_nonleader_voter() {
     drop(result);
 
     let post_location = inspection_runtime
-        .region_cache()
-        .borrow_mut()
-        .locate_key(TABLE_START)
-        .expect("inspect the retained live region after follower success")
-        .clone();
+        .with_region_cache(|cache| {
+            cache
+                .locate_key(TABLE_START)
+                .expect("inspect the retained live region after follower success")
+                .clone()
+        })
+        .expect("lock the maintained live cache");
     let post_leader_peer_id = post_location
         .leader_peer_id
         .expect("successful follower dispatch must retain a cached leader");
@@ -467,13 +470,14 @@ fn adaptive_forwarding_reuses_proxy_then_recovers_direct() {
     let target_address = direct.target().address.clone();
 
     let dispatches = Rc::new(RefCell::new(Vec::new()));
-    let shared_runtime = SharedReadRuntime::new(
+    let shared_runtime = SharedReadRuntime::new_with_maintenance(
         RecordingClient {
             inner: TonicCoprocessorClient::new().expect("construct live unary client"),
             dispatches: Rc::clone(&dispatches),
         },
         cache,
-    );
+    )
+    .expect("start production region-cache maintenance");
     let inspection_runtime = shared_runtime.clone();
     let transport = DirectUnaryQueryTransport::with_shared_runtime(
         shared_runtime,
@@ -489,35 +493,37 @@ fn adaptive_forwarding_reuses_proxy_then_recovers_direct() {
 
     execute_live_empty_query(&mut runtime, "campaign14-forwarded-first");
     let published_proxy = inspection_runtime
-        .region_cache()
-        .borrow()
-        .preferred_proxy(region)
-        .expect("usable forwarded response must publish its physical proxy")
-        .clone();
+        .with_region_cache(|cache| {
+            cache
+                .preferred_proxy(region)
+                .expect("usable forwarded response must publish its physical proxy")
+                .clone()
+        })
+        .expect("lock the maintained live cache");
     execute_live_empty_query(&mut runtime, "campaign14-forwarded-reuse");
-    assert_eq!(
-        inspection_runtime
-            .region_cache()
-            .borrow()
-            .preferred_proxy(region),
-        Some(&published_proxy),
-        "fresh selector must retain the proven proxy"
-    );
+    inspection_runtime
+        .with_region_cache(|cache| {
+            assert_eq!(
+                cache.preferred_proxy(region),
+                Some(&published_proxy),
+                "fresh selector must retain the proven proxy"
+            );
+        })
+        .expect("lock the maintained live cache");
 
     inspection_runtime
-        .region_cache()
-        .borrow_mut()
-        .on_send_failure(direct.target(), StoreLiveness::Reachable)
+        .with_region_cache(|cache| cache.on_send_failure(direct.target(), StoreLiveness::Reachable))
+        .expect("lock the maintained live cache")
         .expect("record foreground leader recovery");
     execute_live_empty_query(&mut runtime, "campaign14-direct-recovery");
-    assert!(
-        inspection_runtime
-            .region_cache()
-            .borrow()
-            .preferred_proxy(region)
-            .is_none(),
-        "usable direct recovery must clear the proxy preference"
-    );
+    inspection_runtime
+        .with_region_cache(|cache| {
+            assert!(
+                cache.preferred_proxy(region).is_none(),
+                "usable direct recovery must clear the proxy preference"
+            );
+        })
+        .expect("lock the maintained live cache");
 
     let dispatches = dispatches.borrow();
     assert_eq!(

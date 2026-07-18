@@ -20,6 +20,7 @@ use tidb_txnkv::region::{
     BackgroundRegionCache, KeyRange, RegionCache, RegionLoadError, RegionLoader, RegionLocation,
     RegionQuery, RegionQueryLoader, RegionQueryOptions, StoreMetadata,
 };
+use tidb_txnkv::SharedReadRuntime;
 
 struct Loader;
 
@@ -64,7 +65,7 @@ impl RegionQueryLoader for Loader {
 
 #[test]
 fn trigger_wakes_the_single_driver_and_shutdown_waits_for_close() {
-    let mut background =
+    let background =
         BackgroundRegionCache::start(RegionCache::new(Loader), Duration::from_secs(3600), 50)
             .unwrap();
     assert!(background.trigger_store_check().unwrap());
@@ -80,4 +81,22 @@ fn trigger_wakes_the_single_driver_and_shutdown_waits_for_close() {
     background.shutdown().unwrap();
     assert!(background.is_closed().unwrap());
     assert!(!background.trigger_store_check().unwrap());
+}
+
+#[test]
+fn shared_runtime_clones_one_maintained_cache_and_joins_once() {
+    let runtime = SharedReadRuntime::new_with_maintenance((), RegionCache::new(Loader)).unwrap();
+    let clone = runtime.clone();
+    let background = runtime.region_cache_handle();
+    let runtime_cache = runtime
+        .with_region_cache(|cache| std::ptr::from_mut(cache).addr())
+        .unwrap();
+    let background_cache = background
+        .with_cache(|cache| std::ptr::from_mut(cache).addr())
+        .unwrap();
+    assert_eq!(runtime_cache, background_cache);
+
+    clone.shutdown().unwrap();
+    assert!(background.is_closed().unwrap());
+    runtime.shutdown().unwrap();
 }

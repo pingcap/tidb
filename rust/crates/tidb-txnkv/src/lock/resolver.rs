@@ -377,25 +377,26 @@ fn route_key<C, L>(
 where
     L: RegionLoader,
 {
-    let mut cache = runtime
-        .region_cache()
-        .try_borrow_mut()
-        .map_err(|_| LockRecoveryError::RegionCacheLifecycle)?;
-    let region = cache
-        .locate_key(key)
-        .map_err(|error| LockRecoveryError::Route(error.to_string()))?
-        .region;
-    let mut selector = cache
-        .request_selector(region, ReadPolicy::default())
-        .map_err(|error| LockRecoveryError::Route(error.to_string()))?;
-    let RequestSelection::Attempt(selected) = cache
-        .select_request(&mut selector)
-        .map_err(|error| LockRecoveryError::Route(error.to_string()))?
-    else {
-        return Err(LockRecoveryError::Route(
-            "freshly located lock region unexpectedly requires reload".to_owned(),
-        ));
-    };
+    let selected = runtime
+        .with_region_cache(|cache| {
+            let region = cache
+                .locate_key(key)
+                .map_err(|error| LockRecoveryError::Route(error.to_string()))?
+                .region;
+            let mut selector = cache
+                .request_selector(region, ReadPolicy::default())
+                .map_err(|error| LockRecoveryError::Route(error.to_string()))?;
+            let RequestSelection::Attempt(selected) = cache
+                .select_request(&mut selector)
+                .map_err(|error| LockRecoveryError::Route(error.to_string()))?
+            else {
+                return Err(LockRecoveryError::Route(
+                    "freshly located lock region unexpectedly requires reload".to_owned(),
+                ));
+            };
+            Ok(selected)
+        })
+        .map_err(|_| LockRecoveryError::RegionCacheLifecycle)??;
     let mut context = base_context.clone();
     context.region_id = selected.attempt.region.id;
     context.region_epoch = Some(KvrpcRegionEpoch {

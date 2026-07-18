@@ -17,8 +17,8 @@
 use std::collections::VecDeque;
 
 use tidb_txnkv::region::{
-    Peer, PeerRole, RegionAttempt, RegionCache, RegionLoadError, RegionLoader, RegionLocation,
-    RegionRecoveryError, RegionVerId, Store, StoreLiveness,
+    Peer, PeerRole, ReadPolicy, RegionCache, RegionLoadError, RegionLoader, RegionLocation,
+    RegionRecoveryError, RegionVerId, RequestSelection, Store, StoreLiveness,
 };
 
 struct Loader(VecDeque<RegionLocation>);
@@ -80,19 +80,23 @@ fn cache_issued_observation_rejects_down_and_witness_transitions() {
         let before = location(false, false);
         let mut cache = RegionCache::new(Loader([before.clone(), after].into()));
         cache.locate_key(b"a").unwrap();
-        let attempt = RegionAttempt {
-            region: before.region,
-            peer_id: 12,
-            store_id: 102,
-            address: "tikv-2".to_owned(),
-            store_epoch: 4,
+        let mut selector = cache
+            .request_selector(before.region, ReadPolicy::default())
+            .unwrap();
+        let RequestSelection::Attempt(selected) = cache.select_request(&mut selector).unwrap()
+        else {
+            panic!("fresh region must select its leader");
         };
-        let observation = cache.observe_attempt(&attempt).unwrap();
+        let observation = cache.observe_attempt(selected.dispatch_attempt()).unwrap();
 
         cache.invalidate(before.region);
         cache.locate_key(b"a").unwrap();
         assert!(matches!(
-            cache.on_send_failure_observed(&observation, StoreLiveness::Unreachable),
+            cache.on_route_send_failure_observed(
+                &selected,
+                &observation,
+                StoreLiveness::Unreachable,
+            ),
             Err(RegionRecoveryError::StaleObservation(_))
         ));
         assert_eq!(cache.store_state(102).unwrap().epoch(), 4);

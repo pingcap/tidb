@@ -16,8 +16,14 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::time::Duration;
 
-use crate::region::{RegionCache, RegionLoader};
+use crate::region::{
+    BackgroundRegionCache, BackgroundRegionCacheError, RegionCache, RegionLoader, RegionQueryLoader,
+};
+
+const DEFAULT_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(1);
+const DEFAULT_GC_LIMIT: usize = 50;
 
 /// One client handle and one region-cache handle shared by read-path policies.
 ///
@@ -25,25 +31,29 @@ use crate::region::{RegionCache, RegionLoader};
 /// client, channel pool, region cache, topology map, or retry authority.
 pub struct SharedReadRuntime<C, L> {
     client: Rc<RefCell<C>>,
-    region_cache: Rc<RefCell<RegionCache<L>>>,
+    region_cache: BackgroundRegionCache<L>,
+    cluster_id: u64,
 }
 
 impl<C, L> Clone for SharedReadRuntime<C, L> {
     fn clone(&self) -> Self {
         Self {
             client: Rc::clone(&self.client),
-            region_cache: Rc::clone(&self.region_cache),
+            region_cache: self.region_cache.clone(),
+            cluster_id: self.cluster_id,
         }
     }
 }
 
 impl<C, L: RegionLoader> SharedReadRuntime<C, L> {
-    /// Creates the sole client and region-cache handles for a read runtime.
+    /// Creates the synchronized cache authority for an injected runtime.
     #[must_use]
     pub fn new(client: C, region_cache: RegionCache<L>) -> Self {
+        let cluster_id = region_cache.cluster_id();
         Self {
             client: Rc::new(RefCell::new(client)),
-            region_cache: Rc::new(RefCell::new(region_cache)),
+            region_cache: BackgroundRegionCache::without_worker(region_cache),
+            cluster_id,
         }
     }
 
@@ -61,19 +71,54 @@ impl<C, L: RegionLoader> SharedReadRuntime<C, L> {
 
     /// Returns a handle to the same region-cache authority.
     #[must_use]
-    pub fn region_cache_handle(&self) -> Rc<RefCell<RegionCache<L>>> {
-        Rc::clone(&self.region_cache)
+    pub fn region_cache_handle(&self) -> BackgroundRegionCache<L> {
+        self.region_cache.clone()
     }
 
-    /// Borrows the same region-cache cell without cloning a handle.
-    #[must_use]
-    pub fn region_cache(&self) -> &RefCell<RegionCache<L>> {
-        self.region_cache.as_ref()
+    /// Runs one bounded foreground cache operation under the canonical lock.
+    pub fn with_region_cache<R>(
+        &self,
+        operation: impl FnOnce(&mut RegionCache<L>) -> R,
+    ) -> Result<R, BackgroundRegionCacheError> {
+        self.region_cache.with_cache(operation)
+    }
+
+    /// Coalesces a store-check request into the sole maintenance worker.
+    pub fn trigger_store_check(&self) -> Result<bool, BackgroundRegionCacheError> {
+        self.region_cache.trigger_store_check()
+    }
+
+    /// Cancels and joins the sole maintenance worker exactly once.
+    pub fn shutdown(&self) -> Result<(), BackgroundRegionCacheError> {
+        self.region_cache.shutdown()
     }
 
     /// Cluster identity owned by the sole region cache.
     #[must_use]
-    pub fn cluster_id(&self) -> u64 {
-        self.region_cache.borrow().cluster_id()
+    pub const fn cluster_id(&self) -> u64 {
+        self.cluster_id
+    }
+}
+
+impl<C, L> SharedReadRuntime<C, L>
+where
+    L: RegionQueryLoader + Send + 'static,
+{
+    /// Creates the production cache authority with store refresh and cache GC.
+    pub fn new_with_maintenance(
+        client: C,
+        region_cache: RegionCache<L>,
+    ) -> Result<Self, BackgroundRegionCacheError> {
+        let cluster_id = region_cache.cluster_id();
+        let region_cache = BackgroundRegionCache::start(
+            region_cache,
+            DEFAULT_MAINTENANCE_INTERVAL,
+            DEFAULT_GC_LIMIT,
+        )?;
+        Ok(Self {
+            client: Rc::new(RefCell::new(client)),
+            region_cache,
+            cluster_id,
+        })
     }
 }

@@ -40,8 +40,9 @@ use prost::Message;
 use tidb_txnkv::region::{
     KeyRange as RegionKeyRange, LeaderRequest, ReadPolicy, RegionAttempt, RegionBackoffBudget,
     RegionBackoffKind, RegionCache, RegionErrorDisposition, RegionLoader, RegionLocation,
-    RegionRecoveryLoader, RegionRouteError, RegionVerId, ReplicaHealthPolicy, ReplicaReadMode,
-    RequestSelection, RequestSelector, StoreLabel as RoutingStoreLabel,
+    RegionQueryLoader, RegionRecoveryError, RegionRecoveryLoader, RegionRouteError, RegionVerId,
+    ReplicaHealthPolicy, ReplicaReadMode, RequestSelection, RequestSelector, StoreFailureOutcome,
+    StoreLabel as RoutingStoreLabel,
 };
 pub use tidb_txnkv::{
     DirectUnaryClient, DirectUnaryClientError, DirectUnaryRequest, DirectUnaryResponse,
@@ -330,8 +331,8 @@ impl ReplicaReadSeed {
 }
 
 impl<C, L: RegionLoader> DirectUnaryQueryTransport<C, L> {
-    /// Retains one client, one PD-backed cache, and a required timestamp
-    /// authority for production optimistic-lock recovery.
+    /// Compatibility constructor for injected and non-Send loader runtimes.
+    /// Production PD-backed callers use [`Self::new_production`].
     pub fn new<S>(
         client: C,
         region_cache: RegionCache<L>,
@@ -387,6 +388,28 @@ impl<C, L: RegionLoader> DirectUnaryQueryTransport<C, L> {
     }
 }
 
+impl<C, L> DirectUnaryQueryTransport<C, L>
+where
+    L: RegionQueryLoader + RegionRecoveryLoader + Send + 'static,
+{
+    /// Starts the sole store-maintenance and cache-GC worker over the same
+    /// cache authority consumed by foreground reads and lock recovery.
+    pub fn new_production<S>(
+        client: C,
+        region_cache: RegionCache<L>,
+        config: DirectUnaryRuntimeConfig,
+        timestamp_source: S,
+    ) -> Result<Self, DirectUnaryTransportError>
+    where
+        C: tidb_txnkv::lock::LockRecoveryClient,
+        S: tidb_txnkv::lock::TimestampSource + 'static,
+    {
+        let runtime = SharedReadRuntime::new_with_maintenance(client, region_cache)
+            .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle)?;
+        Self::with_shared_runtime(runtime, config, timestamp_source)
+    }
+}
+
 impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTransport
     for DirectUnaryQueryTransport<C, L>
 {
@@ -420,18 +443,14 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
             .map_err(|error| DirectUnaryTransportError::from(error).to_string())?;
         let requested_ranges =
             metadata_region_ranges(metadata).map_err(|error| error.to_string())?;
-        let (cluster_id, locations) = {
-            let mut region_cache = self
-                .shared_runtime
-                .region_cache()
-                .try_borrow_mut()
-                .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle.to_string())?;
+        let (cluster_id, locations) = cache_operation(&self.shared_runtime, |region_cache| {
             let cluster_id = region_cache.cluster_id();
             let locations = region_cache
                 .locate_ranges(&requested_ranges)
                 .map_err(|error| DirectUnaryTransportError::Route(error).to_string())?;
-            (cluster_id, locations)
-        };
+            Ok::<_, String>((cluster_id, locations))
+        })
+        .map_err(|error| error.to_string())??;
         let topology = topology_from_locations(locations);
         let cache = CoprCache::from_optional_config(self.config.cache.as_ref())
             .map_err(|error| DirectUnaryTransportError::Cache(error.to_string()).to_string())?;
@@ -610,6 +629,15 @@ fn try_borrow_client<C>(client: &RefCell<C>) -> Result<RefMut<'_, C>, DirectUnar
         .map_err(|_| DirectUnaryTransportError::ClientLifecycle)
 }
 
+fn cache_operation<C, L: RegionLoader, R>(
+    runtime: &SharedReadRuntime<C, L>,
+    operation: impl FnOnce(&mut RegionCache<L>) -> R,
+) -> Result<R, DirectUnaryTransportError> {
+    runtime
+        .with_region_cache(operation)
+        .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle)
+}
+
 impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, L> {
     /// Request-local network observations accumulated before publication.
     #[must_use]
@@ -687,12 +715,9 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         if replace_selector {
             let mut read_policy = self.read_policy;
             read_policy.selection_seed = self.selection_seed;
-            let mut selector = self
-                .shared_runtime
-                .region_cache()
-                .try_borrow_mut()
-                .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle)?
-                .request_selector(region, read_policy)?;
+            let mut selector = cache_operation(&self.shared_runtime, |region_cache| {
+                region_cache.request_selector(region, read_policy)
+            })??;
             selector.set_health_policy(ReplicaHealthPolicy {
                 try_leader: matches!(
                     read_policy.mode,
@@ -716,24 +741,40 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             });
             self.request_selectors.insert(logical_task_id, selector);
         }
-        let (selection, effective_busy_threshold) = {
+        let (selection, observation, effective_busy_threshold) = {
             let selector = self.request_selectors.get_mut(&logical_task_id).ok_or(
                 DirectUnaryTransportError::ResponseState("request selector was not installed"),
             )?;
-            let selection = self
-                .shared_runtime
-                .region_cache()
-                .try_borrow_mut()
-                .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle)?
-                .select_request(selector)?;
-            (selection, selector.busy_threshold())
+            let (selection, observation) =
+                cache_operation(&self.shared_runtime, |region_cache| {
+                    let selection = region_cache
+                        .select_request(selector)
+                        .map_err(DirectUnaryTransportError::Route)?;
+                    let observation = match &selection {
+                        RequestSelection::Attempt(selected) => Some(
+                            region_cache
+                                .observe_attempt(selected.dispatch_attempt())
+                                .map_err(|error| {
+                                    DirectUnaryTransportError::RegionRecovery(error.to_string())
+                                })?,
+                        ),
+                        RequestSelection::ReloadRegion { .. } => None,
+                    };
+                    Ok::<_, DirectUnaryTransportError>((selection, observation))
+                })??;
+            (selection, observation, selector.busy_threshold())
         };
-        let selected = match selection {
-            RequestSelection::Attempt(selected) => selected,
-            RequestSelection::ReloadRegion { region } => {
+        let (selected, observation) = match (selection, observation) {
+            (RequestSelection::Attempt(selected), Some(observation)) => (selected, observation),
+            (RequestSelection::ReloadRegion { region }, None) => {
                 let failed = self.runtime.consume_failed_attempt(attempt_id)?;
                 self.request_selectors.remove(&logical_task_id);
                 return self.rebuild_exhausted_region(failed, region.id);
+            }
+            _ => {
+                return Err(DirectUnaryTransportError::ResponseState(
+                    "selected route has no cache-issued observation",
+                ));
             }
         };
         let predicted_read_bytes = self
@@ -771,13 +812,11 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         };
         let dispatch = UnaryRouteDispatch::from_request(&selected);
         let request_bytes = client_request.encoded_request.len();
-        let target_zone = self
-            .shared_runtime
-            .region_cache()
-            .try_borrow()
-            .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle)?
-            .store_label(selected.target().store_id, "zone")
-            .map(str::to_owned);
+        let target_zone = cache_operation(&self.shared_runtime, |region_cache| {
+            region_cache
+                .store_label(selected.target().store_id, "zone")
+                .map(str::to_owned)
+        })?;
         let cross_zone = match (
             self.config.local_zone_label.as_deref(),
             target_zone.as_deref(),
@@ -816,6 +855,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                     logical_task_id,
                     attempt_id,
                     selected,
+                    observation,
                     feedback,
                     error,
                 );
@@ -851,19 +891,15 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             self.network_metrics.on_stale_read_result(true);
         }
         self.record_attempt_result(logical_task_id, &selected, dispatch_duration)?;
-        {
-            let mut region_cache = self
-                .shared_runtime
-                .region_cache()
-                .try_borrow_mut()
-                .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle)?;
+        cache_operation(&self.shared_runtime, |region_cache| {
             region_cache
                 .on_route_success(&selected)
                 .map_err(|error| DirectUnaryTransportError::RegionRecovery(error.to_string()))?;
             region_cache
                 .promote_successful_request(&selected)
                 .map_err(|error| DirectUnaryTransportError::RegionRecovery(error.to_string()))?;
-        }
+            Ok::<_, DirectUnaryTransportError>(())
+        })??;
         if let Some(lock) = locked {
             let action = self
                 .locked_response_delegate
@@ -939,6 +975,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         logical_task_id: u64,
         attempt_id: u64,
         selected: LeaderRequest,
+        observation: tidb_txnkv::region::RegionAttemptObservation,
         feedback: tidb_txnkv::region::RouteFeedback,
         error: DirectUnaryClientError,
     ) -> Result<(), DirectUnaryTransportError> {
@@ -970,12 +1007,24 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             .liveness(connection.address(), DEFAULT_STORE_LIVENESS_TIMEOUT)
             .map_err(DirectUnaryTransportError::Client)?;
         self.check_retry_active()?;
-        self.shared_runtime
-            .region_cache()
-            .try_borrow_mut()
-            .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle)?
-            .on_route_send_failure(&selected, liveness)
-            .map_err(|error| DirectUnaryTransportError::RegionRecovery(error.to_string()))?;
+        let failure_outcome = cache_operation(&self.shared_runtime, |region_cache| {
+            region_cache.on_route_send_failure_observed(&selected, &observation, liveness)
+        })?;
+        let failure_outcome = match failure_outcome {
+            Ok(outcome) => Some(outcome),
+            Err(RegionRecoveryError::StaleObservation(_)) => None,
+            Err(error) => {
+                return Err(DirectUnaryTransportError::RegionRecovery(error.to_string()));
+            }
+        };
+        if matches!(
+            failure_outcome,
+            Some(StoreFailureOutcome::Invalidated { .. })
+        ) {
+            self.shared_runtime
+                .trigger_store_check()
+                .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle)?;
+        }
         let delay = self
             .region_backoffs
             .entry(selected.attempt.region.id)
@@ -1006,19 +1055,15 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                 )?;
                 let fast_retry =
                     server_busy.estimated_wait_ms > 0 && !selector.busy_threshold().is_zero();
-                self.shared_runtime
-                    .region_cache()
-                    .try_borrow_mut()
-                    .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle)?
-                    .on_server_busy(
+                cache_operation(&self.shared_runtime, |region_cache| {
+                    region_cache.on_server_busy(
                         selector,
                         &observed_attempt,
                         server_busy.estimated_wait_ms,
                         (self.config.observation_time)(),
                     )
-                    .map_err(|error| {
-                        DirectUnaryTransportError::RegionRecovery(error.to_string())
-                    })?;
+                })?
+                .map_err(|error| DirectUnaryTransportError::RegionRecovery(error.to_string()))?;
                 if fast_retry && !selector.acknowledge_server_busy(&observed_attempt) {
                     return Err(DirectUnaryTransportError::RegionRecovery(
                         "ServerIsBusy did not match the completed selector attempt".to_owned(),
@@ -1043,12 +1088,10 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                 .region_backoffs
                 .entry(region_id)
                 .or_insert_with(|| RegionBackoffBudget::new(region_retry_max_sleep));
-            self.shared_runtime
-                .region_cache()
-                .try_borrow_mut()
-                .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle)?
-                .on_region_error(&region_error, observed_attempt, budget)
-                .map_err(|error| DirectUnaryTransportError::RegionRecovery(error.to_string()))?
+            cache_operation(&self.shared_runtime, |region_cache| {
+                region_cache.on_region_error(&region_error, observed_attempt, budget)
+            })?
+            .map_err(|error| DirectUnaryTransportError::RegionRecovery(error.to_string()))?
         };
 
         match disposition {
@@ -1084,14 +1127,10 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             RegionErrorDisposition::RebuildRanges { delay, action } => {
                 self.sleep_retry(delay)?;
                 self.check_retry_active()?;
-                self.shared_runtime
-                    .region_cache()
-                    .try_borrow_mut()
-                    .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle)?
-                    .apply_rebuild_action(action)
-                    .map_err(|error| {
-                        DirectUnaryTransportError::RegionRecovery(error.to_string())
-                    })?;
+                cache_operation(&self.shared_runtime, |region_cache| {
+                    region_cache.apply_rebuild_action(action)
+                })?
+                .map_err(|error| DirectUnaryTransportError::RegionRecovery(error.to_string()))?;
                 let outer_delay = self
                     .region_backoffs
                     .get_mut(&region_id)
@@ -1125,12 +1164,9 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             .iter()
             .map(|range| RegionKeyRange::new(range.start_key.clone(), range.end_key.clone()))
             .collect();
-        let locations = self
-            .shared_runtime
-            .region_cache()
-            .try_borrow_mut()
-            .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle)?
-            .locate_ranges(&region_ranges)?;
+        let locations = cache_operation(&self.shared_runtime, |region_cache| {
+            region_cache.locate_ranges(&region_ranges)
+        })??;
         Ok(topology_from_locations(locations))
     }
 

@@ -950,6 +950,14 @@ impl<L> RegionCache<L> {
         observation: &RegionAttemptObservation,
         liveness: StoreLiveness,
     ) -> Result<StoreFailureOutcome, RegionRecoveryError> {
+        self.validate_attempt_observation(observation)?;
+        self.on_send_failure(observation.attempt(), liveness)
+    }
+
+    fn validate_attempt_observation(
+        &self,
+        observation: &RegionAttemptObservation,
+    ) -> Result<(), RegionRecoveryError> {
         let attempt = observation.attempt();
         self.validate_attempt(attempt)?;
         let location = self
@@ -960,7 +968,7 @@ impl<L> RegionCache<L> {
         if selectable_peer_count(location) != observation.selectable_peer_count() {
             return Err(RegionRecoveryError::StaleObservation(attempt.clone()));
         }
-        self.on_send_failure(attempt, liveness)
+        Ok(())
     }
 
     /// Applies one request-scoped busy observation to the canonical store.
@@ -1016,6 +1024,24 @@ impl<L> RegionCache<L> {
             return Ok(StoreFailureOutcome::ForwardingRequired { epoch: store.epoch });
         }
         self.on_send_failure(feedback.dispatch_attempt(), liveness)
+    }
+
+    /// Applies one production route failure only when its selection-time peer
+    /// vector still describes the canonical region. Validation precedes proxy,
+    /// store, leader, reload, and liveness mutation.
+    pub fn on_route_send_failure_observed(
+        &mut self,
+        request: &LeaderRequest,
+        observation: &RegionAttemptObservation,
+        liveness: StoreLiveness,
+    ) -> Result<StoreFailureOutcome, RegionRecoveryError> {
+        if observation.attempt() != request.dispatch_attempt() {
+            return Err(RegionRecoveryError::StaleObservation(
+                observation.attempt().clone(),
+            ));
+        }
+        self.validate_attempt_observation(observation)?;
+        self.on_route_send_failure(request, liveness)
     }
 
     /// Publishes one usable route and marks its physical dispatch reachable.

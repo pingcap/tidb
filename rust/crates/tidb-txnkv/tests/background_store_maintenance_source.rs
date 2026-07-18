@@ -15,12 +15,15 @@
 //! Direct transition of in-place store re-resolution and tombstone expiry.
 
 use std::collections::VecDeque;
+use std::time::Duration;
 
 use tidb_txnkv::region::{
-    KeyRange, Peer, PeerRole, RegionAttempt, RegionCache, RegionLoadError, RegionLoader,
-    RegionLocation, RegionQuery, RegionQueryLoader, RegionQueryOptions, RegionVerId, Store,
-    StoreLiveness, StoreMetadata, StoreRefreshOutcome, StoreResolveState,
+    KeyRange, Peer, PeerRole, ReadPolicy, RegionAttempt, RegionCache, RegionLoadError,
+    RegionLoader, RegionLocation, RegionQuery, RegionQueryLoader, RegionQueryOptions, RegionVerId,
+    RequestSelection, Store, StoreFailureOutcome, StoreLiveness, StoreMetadata,
+    StoreRefreshOutcome, StoreResolveState,
 };
+use tidb_txnkv::SharedReadRuntime;
 
 struct Loader {
     location: Option<RegionLocation>,
@@ -150,4 +153,60 @@ fn refresh_mutates_one_store_record_and_tombstone_expires_dependents() {
         cache.is_empty(),
         "removed-store dependent expires at its existing TTL"
     );
+}
+
+#[test]
+fn production_failure_triggers_in_place_maintenance_on_the_shared_cache() {
+    let runtime = SharedReadRuntime::new_with_maintenance(
+        (),
+        RegionCache::with_ttl(
+            Loader {
+                location: Some(location()),
+                stores: [Some(StoreMetadata {
+                    id: 101,
+                    address: "tikv-new".to_owned(),
+                    labels: vec![("zone".to_owned(), "z2".to_owned())],
+                })]
+                .into(),
+            },
+            10,
+            0,
+        ),
+    )
+    .unwrap();
+    let background = runtime.region_cache_handle();
+    let outcome = runtime
+        .with_region_cache(|cache| {
+            let region = cache.locate_key_at(b"a", 0).unwrap().region;
+            let mut selector = cache
+                .request_selector(region, ReadPolicy::default())
+                .unwrap();
+            let RequestSelection::Attempt(selected) = cache.select_request(&mut selector).unwrap()
+            else {
+                panic!("fresh region must select its leader");
+            };
+            let observation = cache.observe_attempt(selected.dispatch_attempt()).unwrap();
+            cache
+                .on_route_send_failure_observed(&selected, &observation, StoreLiveness::Unreachable)
+                .unwrap()
+        })
+        .unwrap();
+    assert!(matches!(outcome, StoreFailureOutcome::Invalidated { .. }));
+    assert!(runtime.trigger_store_check().unwrap());
+    for _ in 0..100 {
+        if background.completed_rounds().unwrap() > 0 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(background.completed_rounds().unwrap(), 1);
+    runtime
+        .with_region_cache(|cache| {
+            let store = cache.store_state(101).unwrap();
+            assert_eq!(store.address(), "tikv-new");
+            assert_eq!(store.resolve_state(), StoreResolveState::Resolved);
+            assert_eq!(cache.store_label(101, "zone"), Some("z2"));
+        })
+        .unwrap();
+    runtime.shutdown().unwrap();
 }
