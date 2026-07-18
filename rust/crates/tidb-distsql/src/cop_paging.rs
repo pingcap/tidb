@@ -14,23 +14,20 @@
 
 //! Connected adaptive-paging continuation from the coprocessor worker.
 
-mod active_cancellation;
 mod cop_read_task_runtime;
 mod direct_unary_query_transport;
 mod lock_recovery;
 mod tikv_rpc_contract;
 mod transport_failure;
 
-pub use active_cancellation::ExecutionUnaryCancellation;
 pub use cop_read_task_runtime::{
     CopReadAcceptedResponse, CopReadResponseError, CopReadTaskError, CopReadTaskReplacement,
     CopReadTaskResponse, CopReadTaskRuntime, FailedCopReadAttempt, PreparedCopReadTask,
 };
 pub use direct_unary_query_transport::{
-    ActiveUnaryCancellation, DirectUnaryClient, DirectUnaryClientError, DirectUnaryQueryResponse,
-    DirectUnaryQueryTransport, DirectUnaryRequest, DirectUnaryResponse, DirectUnaryRuntimeConfig,
-    DirectUnaryTransportError, LockedResponseAction, LockedResponseDelegate,
-    LockedResponseObservation, RegionRetryCancelled, RegionRetryControl,
+    DirectUnaryClient, DirectUnaryClientError, DirectUnaryQueryResponse, DirectUnaryQueryTransport,
+    DirectUnaryRequest, DirectUnaryResponse, DirectUnaryRuntimeConfig, DirectUnaryTransportError,
+    LockedResponseAction, LockedResponseDelegate, LockedResponseObservation, RegionRetryWaiter,
 };
 pub use lock_recovery::OptimisticLockRecovery;
 pub use tikv_rpc_contract::{

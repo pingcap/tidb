@@ -66,8 +66,16 @@ where
         )
         .map_err(|error| error.to_string())?;
         if let LockRecoveryResult::Alive(ttl) = result {
-            if observation.call.cancellation().wait_timeout(ttl) {
+            let deadline_budget = observation.call.timeout();
+            if deadline_budget.is_zero() {
+                return Err("optimistic lock recovery exceeded the unary deadline".to_owned());
+            }
+            let wait = ttl.min(deadline_budget);
+            if observation.call.cancellation().wait_timeout(wait) {
                 return Err("optimistic lock TTL wait cancelled by caller".to_owned());
+            }
+            if wait < ttl {
+                return Err("optimistic lock recovery exceeded the unary deadline".to_owned());
             }
         }
         Ok(LockedResponseAction::RetrySameTask)

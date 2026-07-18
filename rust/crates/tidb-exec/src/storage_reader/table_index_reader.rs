@@ -143,6 +143,8 @@ pub enum StorageReaderError {
     Query(QueryRuntimeError),
     /// Pulling or decoding a response failed.
     Response(String),
+    /// The canonical query cancellation interrupted open or row production.
+    Cancelled,
 }
 
 impl std::fmt::Display for StorageReaderError {
@@ -159,6 +161,7 @@ impl std::fmt::Display for StorageReaderError {
             }
             Self::Query(error) => write!(formatter, "storage reader dispatch failed: {error}"),
             Self::Response(message) => formatter.write_str(message),
+            Self::Cancelled => formatter.write_str("query cancelled by caller"),
         }
     }
 }
@@ -167,7 +170,11 @@ impl std::error::Error for StorageReaderError {}
 
 impl From<QueryRuntimeError> for StorageReaderError {
     fn from(error: QueryRuntimeError) -> Self {
-        Self::Query(error)
+        if matches!(error, QueryRuntimeError::Cancelled) {
+            Self::Cancelled
+        } else {
+            Self::Query(error)
+        }
     }
 }
 
@@ -273,7 +280,10 @@ where
         while rows.len() < required_rows {
             let Some(row) = results
                 .next_row_with_required_rows(required_rows - rows.len())
-                .map_err(|error| StorageReaderError::Response(error.to_string()))?
+                .map_err(|error| match error {
+                    SelectResultError::Cancelled => StorageReaderError::Cancelled,
+                    other => StorageReaderError::Response(other.to_string()),
+                })?
             else {
                 break;
             };
@@ -324,9 +334,13 @@ impl SelectResultSource for DecodedSelectSource {
     type Row = Vec<Datum>;
 
     fn next_row(&mut self) -> Result<Option<SelectResultRow<Self::Row>>, SelectResultError> {
-        self.iter
-            .next_row()
-            .map_err(|error| SelectResultError::source(error.to_string()))
+        self.iter.next_row().map_err(|error| {
+            if matches!(error, tidb_distsql::ResponseChannelError::Cancelled) {
+                SelectResultError::Cancelled
+            } else {
+                SelectResultError::source(error.to_string())
+            }
+        })
     }
 
     fn next_row_with_required_rows(
@@ -335,7 +349,13 @@ impl SelectResultSource for DecodedSelectSource {
     ) -> Result<Option<SelectResultRow<Self::Row>>, SelectResultError> {
         self.iter
             .next_row_with_required_rows(required_rows)
-            .map_err(|error| SelectResultError::source(error.to_string()))
+            .map_err(|error| {
+                if matches!(error, tidb_distsql::ResponseChannelError::Cancelled) {
+                    SelectResultError::Cancelled
+                } else {
+                    SelectResultError::source(error.to_string())
+                }
+            })
     }
 
     fn close(&mut self) -> Result<(), SelectResultError> {

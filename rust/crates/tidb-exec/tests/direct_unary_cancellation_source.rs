@@ -5,41 +5,82 @@
 // You may obtain a copy of the License at
 //
 // http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
 
 #![allow(missing_docs)]
 
 use std::sync::Arc;
 
-use tidb_distsql::cop_paging::ActiveUnaryCancellation;
-use tidb_distsql::{CancelHandle, ExecutionState, ExecutionUnaryCancellation};
+use tidb_distsql::{ExecutionState, KvRequestMetadata, TransportBinding, TransportRequest};
 
 #[test]
-fn detached_executor_cancellation_reaches_the_exact_direct_unary_carrier() {
+fn detached_execution_fans_out_to_the_bound_request_authority() {
     let execution = ExecutionState::new();
     let detached = execution.detach();
-    let adapter = ExecutionUnaryCancellation::new(Arc::clone(&detached.cancel));
-    let in_flight = adapter.cancellation_for_call();
+    let request = TransportRequest::new(KvRequestMetadata::default(), Arc::clone(&detached.cancel));
+    let bound = request.bind(TransportBinding::new()).unwrap();
 
-    assert!(in_flight.shares_state_with(&execution.cancel.unary_cancellation()));
-    assert!(!in_flight.is_cancelled());
+    assert!(Arc::ptr_eq(
+        request.execution_cancellation(),
+        &execution.cancel
+    ));
+    assert!(Arc::ptr_eq(
+        bound.execution_cancellation(),
+        &execution.cancel
+    ));
+    assert!(!Arc::ptr_eq(
+        bound.request_cancellation().unwrap(),
+        &execution.cancel
+    ));
+    assert!(!bound.request_cancellation().unwrap().is_cancelled());
     execution.cancel.cancel();
     assert!(detached.cancel.is_cancelled());
-    assert!(in_flight.is_cancelled());
+    assert!(bound.request_cancellation().unwrap().is_cancelled());
 }
 
 #[test]
-fn already_cancelled_executor_yields_a_terminal_unary_carrier() {
-    let cancel = Arc::new(CancelHandle::default());
-    cancel.cancel();
-    let adapter = ExecutionUnaryCancellation::new(Arc::clone(&cancel));
+fn already_cancelled_execution_stays_cancelled_across_request_binding() {
+    let execution = ExecutionState::new();
+    execution.cancel.cancel();
+    let request =
+        TransportRequest::new(KvRequestMetadata::default(), Arc::clone(&execution.cancel));
 
-    let call = adapter.cancellation_for_call();
-    assert!(call.is_cancelled());
-    assert!(call.shares_state_with(&cancel.unary_cancellation()));
+    assert!(request
+        .bind(TransportBinding::new())
+        .unwrap()
+        .request_cancellation()
+        .unwrap()
+        .is_cancelled());
+}
+
+#[test]
+fn closing_one_bound_request_does_not_cancel_its_execution_or_sibling() {
+    let execution = ExecutionState::new();
+    let request =
+        TransportRequest::new(KvRequestMetadata::default(), Arc::clone(&execution.cancel));
+    let first = request.bind(TransportBinding::new()).unwrap();
+    let second = request.bind(TransportBinding::new()).unwrap();
+
+    first.request_cancellation().unwrap().cancel();
+
+    assert!(first.request_cancellation().unwrap().is_cancelled());
+    assert!(!second.request_cancellation().unwrap().is_cancelled());
+    assert!(!execution.cancel.is_cancelled());
+}
+
+#[test]
+fn concurrent_execution_cancel_cannot_miss_a_registering_request() {
+    for _ in 0..64 {
+        let execution = Arc::new(tidb_distsql::CancelHandle::default());
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let child_execution = Arc::clone(&execution);
+        let child_barrier = Arc::clone(&barrier);
+        let child = std::thread::spawn(move || {
+            child_barrier.wait();
+            child_execution.request_child()
+        });
+
+        barrier.wait();
+        execution.cancel();
+        assert!(child.join().unwrap().is_cancelled());
+    }
 }

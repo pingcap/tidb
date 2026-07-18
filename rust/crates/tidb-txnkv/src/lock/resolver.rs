@@ -124,9 +124,16 @@ pub enum LockRecoveryError {
     /// TxnNotFound, primary mismatch, and every other KeyError fail closed.
     KeyError(String),
     /// The CheckTxnStatus response is neither alive, committed, nor rolled back.
-    UndeterminedStatus { action: i32 },
+    UndeterminedStatus {
+        /// Lock action returned by TiKV when transaction status cannot be determined.
+        action: i32,
+    },
     /// The same client/core failed the typed unary command.
     Rpc(String),
+    /// The canonical read cancellation won before further lock recovery.
+    CallerCancelled,
+    /// MinCommitTSPushed requires resolved-lock propagation outside this slice.
+    MinCommitTsPushed,
 }
 
 impl fmt::Display for LockRecoveryError {
@@ -150,6 +157,9 @@ impl fmt::Display for LockRecoveryError {
                 )
             }
             Self::Rpc(error) => write!(formatter, "lock RPC failed: {error}"),
+            Self::CallerCancelled => formatter.write_str("lock recovery cancelled by caller"),
+            Self::MinCommitTsPushed => formatter
+                .write_str("MinCommitTSPushed lock requires deferred resolved-lock propagation"),
         }
     }
 }
@@ -179,10 +189,13 @@ where
     let mut statuses = Vec::with_capacity(locks.len());
     let mut minimum_wait = None::<Duration>;
     for lock in locks {
+        check_cancelled(call)?;
         let current_ts = timestamp_source
             .current_ts()
             .map_err(LockRecoveryError::Timestamp)?;
+        check_cancelled(call)?;
         let (primary_address, primary_context) = route_key(runtime, &lock.primary, base_context)?;
+        check_cancelled(call)?;
         let check_request = KvrpcCheckTxnStatusRequest {
             primary_key: lock.primary.clone(),
             lock_ts: lock.txn_id,
@@ -201,18 +214,33 @@ where
             .map_err(|_| LockRecoveryError::ClientLifecycle)?
             .check_txn_status_for_lock(&primary_address, &check_request, &primary_context, call)
             .map_err(|error| LockRecoveryError::Rpc(error.to_string()))?;
+        // Match client-go's post-RPC ctx.Err precedence before interpreting or
+        // acting on a simultaneous CheckTxnStatus result.
+        check_cancelled(call)?;
         reject_check_error(&check_response)?;
         if let Some(primary_lock) = check_response.lock_info.as_ref() {
             // The returned primary lock uses the same strict protocol gate.
             super::decode_lock_observation(primary_lock)?;
         }
         if check_response.lock_ttl > 0 {
-            let ttl = Duration::from_millis(check_response.lock_ttl);
+            if check_response.action == KvrpcTxnAction::MinCommitTsPushed as i32 {
+                return Err(LockRecoveryError::MinCommitTsPushed);
+            }
+            // client-go sends the pre-RPC TSO in CheckTxnStatus, then asks the
+            // oracle again when converting the returned absolute lock TTL to
+            // a remaining wait. A slow status RPC must consume its own time.
+            check_cancelled(call)?;
+            let post_check_ts = timestamp_source
+                .current_ts()
+                .map_err(LockRecoveryError::Timestamp)?;
+            check_cancelled(call)?;
+            let ttl = remaining_lock_ttl(lock.txn_id, check_response.lock_ttl, post_check_ts);
             minimum_wait = Some(minimum_wait.map_or(ttl, |wait| wait.min(ttl)));
             continue;
         }
         let status = classify_determined_status(&check_response)?;
         if lock.key != lock.primary {
+            check_cancelled(call)?;
             resolve_secondary(runtime, lock, status, base_context, call)?;
         }
         statuses.push(status);
@@ -221,6 +249,17 @@ where
         Some(wait) => LockRecoveryResult::Alive(wait),
         None => LockRecoveryResult::Resolved(statuses),
     })
+}
+
+fn remaining_lock_ttl(txn_id: u64, lock_ttl_ms: u64, current_ts: u64) -> Duration {
+    const TSO_LOGICAL_BITS: u32 = 18;
+    let lock_started_ms = txn_id >> TSO_LOGICAL_BITS;
+    let now_ms = current_ts >> TSO_LOGICAL_BITS;
+    Duration::from_millis(
+        lock_started_ms
+            .saturating_add(lock_ttl_ms)
+            .saturating_sub(now_ms),
+    )
 }
 
 fn reject_check_error(response: &KvrpcCheckTxnStatusResponse) -> Result<(), LockRecoveryError> {
@@ -263,7 +302,9 @@ where
     C: LockRecoveryClient,
     L: RegionLoader,
 {
+    check_cancelled(call)?;
     let (address, context) = route_key(runtime, &lock.key, base_context)?;
+    check_cancelled(call)?;
     let request = KvrpcResolveLockRequest {
         start_version: lock.txn_id,
         commit_version: match status {
@@ -281,6 +322,8 @@ where
         .map_err(|_| LockRecoveryError::ClientLifecycle)?
         .resolve_lock_for_read(&address, &request, &context, call)
         .map_err(|error| LockRecoveryError::Rpc(error.to_string()))?;
+    // Do not inspect or publish a ResolveLock result after caller cancellation.
+    check_cancelled(call)?;
     if let Some(error) = response.region_error.as_ref() {
         return Err(LockRecoveryError::RegionError(format!("{error:?}")));
     }
@@ -288,6 +331,14 @@ where
         return Err(LockRecoveryError::KeyError(format!("{error:?}")));
     }
     Ok(())
+}
+
+fn check_cancelled(call: &UnaryCallContext) -> Result<(), LockRecoveryError> {
+    if call.cancellation().is_cancelled() {
+        Err(LockRecoveryError::CallerCancelled)
+    } else {
+        Ok(())
+    }
 }
 
 fn route_key<C, L>(

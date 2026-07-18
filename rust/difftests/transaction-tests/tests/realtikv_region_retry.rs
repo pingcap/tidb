@@ -107,6 +107,28 @@ impl DirectUnaryClient for RecordingClient {
     }
 }
 
+impl tidb_distsql::LockRecoveryClient for RecordingClient {
+    fn check_txn_status_for_lock(
+        &mut self,
+        address: &str,
+        request: &tidb_proto::KvrpcCheckTxnStatusRequest,
+        context: &tidb_proto::KvrpcContext,
+        call: &tidb_txnkv::UnaryCallContext,
+    ) -> Result<tidb_proto::KvrpcCheckTxnStatusResponse, DirectUnaryClientError> {
+        self.inner.check_txn_status(address, request, context, call)
+    }
+
+    fn resolve_lock_for_read(
+        &mut self,
+        address: &str,
+        request: &tidb_proto::KvrpcResolveLockRequest,
+        context: &tidb_proto::KvrpcContext,
+        call: &tidb_txnkv::UnaryCallContext,
+    ) -> Result<tidb_proto::KvrpcResolveLockResponse, DirectUnaryClientError> {
+        self.inner.resolve_lock(address, request, context, call)
+    }
+}
+
 #[test]
 #[ignore = "requires the cleanup-safe Campaign 11 three-PD/three-TiKV runner"]
 fn same_process_survives_pd_removal_and_region_leader_transfer() {
@@ -188,6 +210,7 @@ fn same_process_survives_pd_removal_and_region_leader_transfer() {
             default_timeout: Duration::from_secs(5),
             ..DirectUnaryRuntimeConfig::default()
         },
+        tidb_distsql::FixedTimestampSource(1 << 18),
     )
     .expect("construct response over the pre-existing primed cache");
     let mut runtime = InjectedQueryRuntime::new(transport);
@@ -209,7 +232,10 @@ fn same_process_survives_pd_removal_and_region_leader_transfer() {
     };
     let mut result = runtime
         .select_with_runtime_stats(
-            &TransportRequest::new(metadata),
+            &TransportRequest::new(
+                metadata,
+                std::sync::Arc::new(tidb_distsql::CancelHandle::default()),
+            ),
             SelectInput::default(),
             QueryResultContext::new(Vec::new(), WarningCollector::new()),
             Vec::new(),

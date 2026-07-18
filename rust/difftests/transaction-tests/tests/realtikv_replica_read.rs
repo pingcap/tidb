@@ -96,6 +96,28 @@ impl DirectUnaryClient for RecordingClient {
     }
 }
 
+impl tidb_distsql::LockRecoveryClient for RecordingClient {
+    fn check_txn_status_for_lock(
+        &mut self,
+        address: &str,
+        request: &tidb_proto::KvrpcCheckTxnStatusRequest,
+        context: &tidb_proto::KvrpcContext,
+        call: &tidb_txnkv::UnaryCallContext,
+    ) -> Result<tidb_proto::KvrpcCheckTxnStatusResponse, DirectUnaryClientError> {
+        self.inner.check_txn_status(address, request, context, call)
+    }
+
+    fn resolve_lock_for_read(
+        &mut self,
+        address: &str,
+        request: &tidb_proto::KvrpcResolveLockRequest,
+        context: &tidb_proto::KvrpcContext,
+        call: &tidb_txnkv::UnaryCallContext,
+    ) -> Result<tidb_proto::KvrpcResolveLockResponse, DirectUnaryClientError> {
+        self.inner.resolve_lock(address, request, context, call)
+    }
+}
+
 #[test]
 #[ignore = "requires the cleanup-safe Campaign 13 three-TiKV runner"]
 fn follower_policy_reaches_a_live_nonleader_voter() {
@@ -138,6 +160,7 @@ fn follower_policy_reaches_a_live_nonleader_voter() {
             default_timeout: Duration::from_secs(5),
             ..DirectUnaryRuntimeConfig::default()
         },
+        tidb_distsql::FixedTimestampSource(1 << 18),
     )
     .expect("construct production direct unary transport");
     let mut runtime = InjectedQueryRuntime::new(transport);
@@ -159,7 +182,10 @@ fn follower_policy_reaches_a_live_nonleader_voter() {
     };
     metadata.session.replica_read = ReplicaReadType::Follower;
     metadata.session.request_source.explicit_source_type = "campaign13".to_owned();
-    let request = TransportRequest::new(metadata);
+    let request = TransportRequest::new(
+        metadata,
+        std::sync::Arc::new(tidb_distsql::CancelHandle::default()),
+    );
     let mut result = runtime
         .select_with_runtime_stats(
             &request,

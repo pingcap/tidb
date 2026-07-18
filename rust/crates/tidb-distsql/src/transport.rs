@@ -22,8 +22,10 @@
 //! transport owner can attach a [`TransportBinding`] without changing the
 //! request fields or inventing an endpoint/RPC representation here.
 
+use std::{sync::Arc, time::Instant};
+
 use crate::{
-    region_task::build_region_tasks, CoprocessorRequestEnvelope, KvRequestMetadata,
+    region_task::build_region_tasks, CancelHandle, CoprocessorRequestEnvelope, KvRequestMetadata,
     RegionTaskEnvelope, RegionTaskTopology, RequestKeyRange, RequestSource,
 };
 
@@ -74,17 +76,41 @@ pub enum TransportRequestError {
 #[derive(Clone, Debug)]
 pub struct TransportRequest {
     metadata: KvRequestMetadata,
+    execution_cancellation: Arc<CancelHandle>,
+    request_cancellation: Option<Arc<CancelHandle>>,
+    bound_at: Option<Instant>,
     binding: Option<TransportBinding>,
 }
 
 impl TransportRequest {
     /// Creates an unbound transport request from built request metadata.
     #[must_use]
-    pub fn new(metadata: KvRequestMetadata) -> Self {
+    pub fn new(metadata: KvRequestMetadata, execution_cancellation: Arc<CancelHandle>) -> Self {
         Self {
             metadata,
+            execution_cancellation,
+            request_cancellation: None,
+            bound_at: None,
             binding: None,
         }
+    }
+
+    /// Returns the mandatory outer execution cancellation owner.
+    #[must_use]
+    pub const fn execution_cancellation(&self) -> &Arc<CancelHandle> {
+        &self.execution_cancellation
+    }
+
+    /// Returns the one request-local authority minted at the send binding.
+    pub fn request_cancellation(&self) -> Result<&Arc<CancelHandle>, TransportRequestError> {
+        self.request_cancellation
+            .as_ref()
+            .ok_or(TransportRequestError::Unbound)
+    }
+
+    /// Returns the instant at which this request acquired its transport owner.
+    pub fn bound_at(&self) -> Result<Instant, TransportRequestError> {
+        self.bound_at.ok_or(TransportRequestError::Unbound)
     }
 
     /// Returns the immutable request metadata snapshot.
@@ -216,6 +242,9 @@ impl TransportRequest {
         }
         Ok(Self {
             metadata: self.metadata.clone(),
+            execution_cancellation: Arc::clone(&self.execution_cancellation),
+            request_cancellation: Some(self.execution_cancellation.request_child()),
+            bound_at: Some(Instant::now()),
             binding: Some(binding),
         })
     }
@@ -238,6 +267,9 @@ impl TransportRequest {
         metadata.session.request_source = request_source;
         Ok(Self {
             metadata,
+            execution_cancellation: Arc::clone(&self.execution_cancellation),
+            request_cancellation: Some(self.execution_cancellation.request_child()),
+            bound_at: Some(Instant::now()),
             binding: Some(binding),
         })
     }
@@ -255,7 +287,7 @@ mod tests {
         let metadata = builder.build().expect("request metadata");
         assert_eq!(metadata.read_replica_scope, GLOBAL_REPLICA_SCOPE);
 
-        let request = TransportRequest::new(metadata);
+        let request = TransportRequest::new(metadata, Arc::new(CancelHandle::default()));
         assert_eq!(request.state(), TransportRequestState::Unbound);
         assert!(!request.is_bound());
         assert!(matches!(
@@ -269,7 +301,10 @@ mod tests {
     fn binding_returns_an_immutable_bound_snapshot() {
         let mut builder = KvRequestBuilder::new();
         builder.set_start_ts(42);
-        let request = TransportRequest::new(builder.build().expect("request metadata"));
+        let request = TransportRequest::new(
+            builder.build().expect("request metadata"),
+            Arc::new(CancelHandle::default()),
+        );
 
         let bound = request
             .bind(TransportBinding::new())
@@ -289,7 +324,10 @@ mod tests {
 
     #[test]
     fn repeated_binding_is_an_explicit_error() {
-        let request = TransportRequest::new(KvRequestBuilder::new().build().expect("metadata"));
+        let request = TransportRequest::new(
+            KvRequestBuilder::new().build().expect("metadata"),
+            Arc::new(CancelHandle::default()),
+        );
         let bound = request
             .bind(TransportBinding::new())
             .expect("first binding");

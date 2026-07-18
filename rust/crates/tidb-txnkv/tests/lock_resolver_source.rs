@@ -14,7 +14,7 @@
 
 #![allow(missing_docs)]
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::rc::Rc;
 use std::time::Duration;
@@ -31,7 +31,7 @@ mod lock;
 
 use lock::{
     resolve_optimistic_locks, FixedTimestampSource, LockRecoveryClient, LockRecoveryError,
-    LockRecoveryResult, OptimisticLock, ResolvedTxnStatus,
+    LockRecoveryResult, OptimisticLock, ResolvedTxnStatus, TimestampSource,
 };
 use region::{
     Peer, PeerRole, RegionCache, RegionEpoch, RegionLoadError, RegionLoader, RegionLocation,
@@ -70,6 +70,8 @@ struct Recorded {
 struct MockClient {
     checks: VecDeque<KvrpcCheckTxnStatusResponse>,
     recorded: Rc<RefCell<Recorded>>,
+    cancel_after_check: bool,
+    cancel_after_resolve: bool,
 }
 
 impl LockRecoveryClient for MockClient {
@@ -78,14 +80,18 @@ impl LockRecoveryClient for MockClient {
         address: &str,
         request: &KvrpcCheckTxnStatusRequest,
         context: &KvrpcContext,
-        _call: &UnaryCallContext,
+        call: &UnaryCallContext,
     ) -> Result<KvrpcCheckTxnStatusResponse, DirectUnaryClientError> {
         self.recorded.borrow_mut().checks.push((
             address.to_owned(),
             request.clone(),
             context.clone(),
         ));
-        Ok(self.checks.pop_front().expect("one queued status"))
+        let response = self.checks.pop_front().expect("one queued status");
+        if self.cancel_after_check {
+            call.cancellation().cancel();
+        }
+        Ok(response)
     }
 
     fn resolve_lock_for_read(
@@ -93,13 +99,16 @@ impl LockRecoveryClient for MockClient {
         address: &str,
         request: &KvrpcResolveLockRequest,
         context: &KvrpcContext,
-        _call: &UnaryCallContext,
+        call: &UnaryCallContext,
     ) -> Result<KvrpcResolveLockResponse, DirectUnaryClientError> {
         self.recorded.borrow_mut().resolves.push((
             address.to_owned(),
             request.clone(),
             context.clone(),
         ));
+        if self.cancel_after_resolve {
+            call.cancellation().cancel();
+        }
         Ok(KvrpcResolveLockResponse::default())
     }
 }
@@ -141,6 +150,8 @@ fn runtime(
     let client = MockClient {
         checks: statuses.into(),
         recorded: Rc::clone(&recorded),
+        cancel_after_check: false,
+        cancel_after_resolve: false,
     };
     let cache = RegionCache::new(StaticLoader {
         locations: vec![
@@ -165,6 +176,41 @@ fn secondary() -> OptimisticLock {
 
 fn call() -> UnaryCallContext {
     UnaryCallContext::new(Duration::from_secs(2), UnaryCancellation::new())
+}
+
+#[derive(Debug)]
+struct AdvancingTimestampSource {
+    timestamps: RefCell<VecDeque<u64>>,
+    cancellation: Option<UnaryCancellation>,
+    calls: Cell<usize>,
+}
+
+impl AdvancingTimestampSource {
+    fn new(timestamps: impl IntoIterator<Item = u64>) -> Self {
+        Self {
+            timestamps: RefCell::new(timestamps.into_iter().collect()),
+            cancellation: None,
+            calls: Cell::new(0),
+        }
+    }
+}
+
+impl TimestampSource for AdvancingTimestampSource {
+    fn current_ts(&self) -> Result<u64, String> {
+        let call = self.calls.get() + 1;
+        self.calls.set(call);
+        let timestamp = self
+            .timestamps
+            .borrow_mut()
+            .pop_front()
+            .ok_or_else(|| "missing scripted timestamp".to_owned())?;
+        if call == 2 {
+            if let Some(cancellation) = &self.cancellation {
+                cancellation.cancel();
+            }
+        }
+        Ok(timestamp)
+    }
 }
 
 #[test]
@@ -246,27 +292,101 @@ fn rolled_back_status_uses_zero_commit_version() {
 }
 
 #[test]
-fn alive_status_returns_response_ttl_without_local_expiry_arithmetic() {
-    let (runtime, recorded) = runtime(vec![KvrpcCheckTxnStatusResponse {
+fn alive_status_returns_only_remaining_absolute_transaction_ttl() {
+    for (current_physical_ms, expected_remaining_ms) in [(1_300, 200), (9_000, 0)] {
+        let (runtime, recorded) = runtime(vec![KvrpcCheckTxnStatusResponse {
+            lock_ttl: 500,
+            ..KvrpcCheckTxnStatusResponse::default()
+        }]);
+        let result = resolve_optimistic_locks(
+            &runtime,
+            &[secondary()],
+            1_300 << 18,
+            &KvrpcContext::default(),
+            &call(),
+            &FixedTimestampSource(current_physical_ms << 18),
+        )
+        .unwrap();
+        assert_eq!(
+            LockRecoveryResult::Alive(Duration::from_millis(expected_remaining_ms)),
+            result
+        );
+        assert!(recorded.borrow().resolves.is_empty());
+    }
+}
+
+#[test]
+fn alive_status_uses_post_check_timestamp_and_rechecks_cancellation() {
+    let (first_runtime, recorded) = runtime(vec![KvrpcCheckTxnStatusResponse {
         lock_ttl: 500,
         ..KvrpcCheckTxnStatusResponse::default()
     }]);
-    let result = resolve_optimistic_locks(
-        &runtime,
-        &[secondary()],
-        1_300 << 18,
-        &KvrpcContext::default(),
-        &call(),
-        // This current TS is deliberately far beyond txn_id + response TTL.
-        // Any local expiry reconstruction would return zero instead of 500ms.
-        &FixedTimestampSource(9_000 << 18),
-    )
-    .unwrap();
+    let timestamps = AdvancingTimestampSource::new([1_100 << 18, 1_300 << 18]);
     assert_eq!(
-        LockRecoveryResult::Alive(Duration::from_millis(500)),
-        result
+        resolve_optimistic_locks(
+            &first_runtime,
+            &[secondary()],
+            1_300 << 18,
+            &KvrpcContext::default(),
+            &call(),
+            &timestamps,
+        )
+        .unwrap(),
+        LockRecoveryResult::Alive(Duration::from_millis(200))
     );
-    assert!(recorded.borrow().resolves.is_empty());
+    assert_eq!(recorded.borrow().checks[0].1.current_ts, 1_100 << 18);
+    assert_eq!(timestamps.calls.get(), 2);
+
+    let (second_runtime, _) = runtime(vec![KvrpcCheckTxnStatusResponse {
+        lock_ttl: 500,
+        ..KvrpcCheckTxnStatusResponse::default()
+    }]);
+    let cancellation = UnaryCancellation::new();
+    let timestamps = AdvancingTimestampSource {
+        timestamps: RefCell::new([1_100 << 18, 1_300 << 18].into_iter().collect()),
+        cancellation: Some(cancellation.clone()),
+        calls: Cell::new(0),
+    };
+    assert_eq!(
+        resolve_optimistic_locks(
+            &second_runtime,
+            &[secondary()],
+            1_300 << 18,
+            &KvrpcContext::default(),
+            &UnaryCallContext::new(Duration::from_secs(2), cancellation),
+            &timestamps,
+        ),
+        Err(LockRecoveryError::CallerCancelled)
+    );
+}
+
+#[test]
+fn cancellation_after_check_or_resolve_wins_before_followup_mutation() {
+    for cancel_after_resolve in [false, true] {
+        let (runtime, recorded) = runtime(vec![KvrpcCheckTxnStatusResponse {
+            commit_version: 1_200 << 18,
+            ..KvrpcCheckTxnStatusResponse::default()
+        }]);
+        {
+            let mut client = runtime.client().borrow_mut();
+            client.cancel_after_check = !cancel_after_resolve;
+            client.cancel_after_resolve = cancel_after_resolve;
+        }
+        let cancellation = UnaryCancellation::new();
+        let result = resolve_optimistic_locks(
+            &runtime,
+            &[secondary()],
+            1_300 << 18,
+            &KvrpcContext::default(),
+            &UnaryCallContext::new(Duration::from_secs(2), cancellation),
+            &FixedTimestampSource(1_100 << 18),
+        );
+        assert_eq!(result, Err(LockRecoveryError::CallerCancelled));
+        assert_eq!(
+            recorded.borrow().resolves.len(),
+            usize::from(cancel_after_resolve)
+        );
+    }
 }
 
 #[test]
@@ -300,13 +420,13 @@ fn txn_not_found_primary_mismatch_and_undetermined_status_fail_closed() {
         assert!(recorded.borrow().resolves.is_empty());
     }
 
-    let (runtime, _) = runtime(vec![KvrpcCheckTxnStatusResponse {
+    let (undetermined_runtime, _) = runtime(vec![KvrpcCheckTxnStatusResponse {
         action: KvrpcTxnAction::MinCommitTsPushed as i32,
         ..KvrpcCheckTxnStatusResponse::default()
     }]);
     assert!(matches!(
         resolve_optimistic_locks(
-            &runtime,
+            &undetermined_runtime,
             &[secondary()],
             1_300 << 18,
             &KvrpcContext::default(),
@@ -315,4 +435,22 @@ fn txn_not_found_primary_mismatch_and_undetermined_status_fail_closed() {
         ),
         Err(LockRecoveryError::UndeterminedStatus { .. })
     ));
+
+    let (runtime, recorded) = runtime(vec![KvrpcCheckTxnStatusResponse {
+        action: KvrpcTxnAction::MinCommitTsPushed as i32,
+        lock_ttl: 500,
+        ..KvrpcCheckTxnStatusResponse::default()
+    }]);
+    assert_eq!(
+        resolve_optimistic_locks(
+            &runtime,
+            &[secondary()],
+            1_300 << 18,
+            &KvrpcContext::default(),
+            &call(),
+            &FixedTimestampSource(1_100 << 18),
+        ),
+        Err(LockRecoveryError::MinCommitTsPushed)
+    );
+    assert!(recorded.borrow().resolves.is_empty());
 }

@@ -21,39 +21,42 @@ use std::sync::{mpsc, Arc};
 use std::time::Duration;
 
 use tidb_datatype::FieldType;
-use tidb_distsql::cop_paging::{ActiveUnaryCancellation, RegionRetryCancelled, RegionRetryControl};
+use tidb_distsql::cop_paging::RegionRetryWaiter;
 use tidb_distsql::{
     CancelHandle, DirectUnaryClient, DirectUnaryClientError, DirectUnaryQueryTransport,
     DirectUnaryRequest, DirectUnaryResponse, DirectUnaryRuntimeConfig, InjectedQueryRuntime,
-    KvRequestMetadata, QueryResultContext, RequestKeyRange, RequestKeyRanges, RequestType,
-    SelectInput, StoreType, TransportRequest, WarningCollector,
+    KvRequestMetadata, LockedResponseAction, LockedResponseDelegate, LockedResponseObservation,
+    QueryResultContext, RequestKeyRange, RequestKeyRanges, RequestType, SelectInput, StoreType,
+    TransportRequest, WarningCollector,
 };
 use tidb_txnkv::region::{
     Peer, PeerRole, RegionCache, RegionLoadError, RegionLoader, RegionLocation, RegionMetadata,
     RegionRecoveryLoader, RegionVerId, Store, StoreLiveness, StoreResolveState,
 };
-use tidb_txnkv::{SharedReadRuntime, UnaryCallContext};
-
-#[path = "../src/cop_paging/active_cancellation.rs"]
-mod active_cancellation;
-#[path = "../../tidb-exec/tests/direct_unary_cancellation_source.rs"]
-mod direct_unary_cancellation_source;
-
-use active_cancellation::ExecutionUnaryCancellation;
+use tidb_txnkv::{DirectUnaryConnectionError, SharedReadRuntime, UnaryCallContext};
 
 #[derive(Debug, Default)]
 struct NoRetryMutation {
     sleeps: RefCell<Vec<Duration>>,
 }
 
-impl RegionRetryControl for NoRetryMutation {
-    fn check_cancelled(&self) -> Result<(), RegionRetryCancelled> {
-        Ok(())
-    }
-
-    fn sleep(&self, delay: Duration) -> Result<(), RegionRetryCancelled> {
+impl RegionRetryWaiter for NoRetryMutation {
+    fn wait(&self, cancellation: &tidb_txnkv::UnaryCancellation, delay: Duration) -> bool {
         self.sleeps.borrow_mut().push(delay);
-        Ok(())
+        cancellation.is_cancelled()
+    }
+}
+
+#[derive(Debug)]
+struct RejectUnexpectedLock;
+
+impl<C, L> LockedResponseDelegate<C, L> for RejectUnexpectedLock {
+    fn handle_locked_response(
+        &self,
+        _runtime: &SharedReadRuntime<C, L>,
+        _observation: LockedResponseObservation,
+    ) -> Result<LockedResponseAction, String> {
+        Err("unexpected lock in cancellation test".to_owned())
     }
 }
 
@@ -174,6 +177,69 @@ impl DirectUnaryClient for CancellationBlockingClient {
     }
 }
 
+struct CancellationThenTransportErrorClient {
+    observations: Rc<ClientObservations>,
+}
+
+impl DirectUnaryClient for CancellationThenTransportErrorClient {
+    fn send_request(
+        &mut self,
+        _address: &str,
+        _request: &DirectUnaryRequest,
+        _timeout: Duration,
+    ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
+        panic!("test requires explicit call context")
+    }
+
+    fn send_request_with_context(
+        &mut self,
+        address: &str,
+        _request: &DirectUnaryRequest,
+        call: &UnaryCallContext,
+    ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
+        self.observations
+            .sends
+            .set(self.observations.sends.get() + 1);
+        call.cancellation().cancel();
+        Err(DirectUnaryClientError::Connection(
+            DirectUnaryConnectionError::connection(address, 9, "raced transport error".to_owned()),
+        ))
+    }
+
+    fn close_address(&mut self, _address: &str) -> Result<(), DirectUnaryClientError> {
+        self.observations
+            .closes
+            .set(self.observations.closes.get() + 1);
+        Ok(())
+    }
+
+    fn close_address_version(
+        &mut self,
+        _address: &str,
+        _version: u64,
+    ) -> Result<(), DirectUnaryClientError> {
+        self.observations
+            .closes
+            .set(self.observations.closes.get() + 1);
+        Ok(())
+    }
+
+    fn liveness(
+        &self,
+        _address: &str,
+        _timeout: Duration,
+    ) -> Result<StoreLiveness, DirectUnaryClientError> {
+        self.observations
+            .liveness
+            .set(self.observations.liveness.get() + 1);
+        Ok(StoreLiveness::Unreachable)
+    }
+
+    fn close(&mut self) -> Result<(), DirectUnaryClientError> {
+        Ok(())
+    }
+}
+
 fn range(start: &str, end: &str) -> RequestKeyRange {
     RequestKeyRange {
         start_key: start.as_bytes().to_vec(),
@@ -217,10 +283,97 @@ fn location(region_id: u64, start: &str, end: &str) -> RegionLocation {
 }
 
 #[test]
+fn pre_cancelled_query_never_reaches_pd_selector_cache_or_client() {
+    let cancel = Arc::new(CancelHandle::default());
+    cancel.cancel();
+    let observations = Rc::new(ClientObservations::default());
+    let loader_calls = Rc::new(RefCell::new(Vec::new()));
+    let shared = SharedReadRuntime::new(
+        CancellationBlockingClient {
+            observations: Rc::clone(&observations),
+            dispatch_started: None,
+        },
+        RegionCache::new(RecordingLoader {
+            calls: Rc::clone(&loader_calls),
+            regions: [location(1, "a", "z")].into_iter().collect(),
+        }),
+    );
+    let transport = DirectUnaryQueryTransport::with_locked_response_delegate(
+        shared,
+        DirectUnaryRuntimeConfig::default(),
+        Rc::new(RejectUnexpectedLock),
+    )
+    .unwrap();
+    let mut runtime = InjectedQueryRuntime::new(transport);
+    let error = runtime
+        .select_with_runtime_stats(
+            &TransportRequest::new(metadata(), Arc::clone(&cancel)),
+            SelectInput::default(),
+            QueryResultContext::new(Vec::<FieldType>::new(), WarningCollector::new()),
+            vec![1],
+            2,
+            true,
+        )
+        .err()
+        .expect("pre-cancel must be typed before a response exists");
+
+    assert_eq!(error, tidb_distsql::QueryRuntimeError::Cancelled);
+    assert!(loader_calls.borrow().is_empty());
+    assert_eq!(observations.sends.get(), 0);
+    assert_eq!(observations.closes.get(), 0);
+    assert_eq!(observations.liveness.get(), 0);
+}
+
+#[test]
+fn cancellation_after_rpc_wins_over_transport_error_before_recovery_mutation() {
+    let cancel = Arc::new(CancelHandle::default());
+    let observations = Rc::new(ClientObservations::default());
+    let loader_calls = Rc::new(RefCell::new(Vec::new()));
+    let shared = SharedReadRuntime::new(
+        CancellationThenTransportErrorClient {
+            observations: Rc::clone(&observations),
+        },
+        RegionCache::new(RecordingLoader {
+            calls: Rc::clone(&loader_calls),
+            regions: [location(1, "a", "z")].into_iter().collect(),
+        }),
+    );
+    let transport = DirectUnaryQueryTransport::with_locked_response_delegate(
+        shared,
+        DirectUnaryRuntimeConfig::default(),
+        Rc::new(RejectUnexpectedLock),
+    )
+    .unwrap();
+    let mut runtime = InjectedQueryRuntime::new(transport);
+    let mut result = runtime
+        .select_with_runtime_stats(
+            &TransportRequest::new(metadata(), Arc::clone(&cancel)),
+            SelectInput::default(),
+            QueryResultContext::new(Vec::<FieldType>::new(), WarningCollector::new()),
+            vec![1],
+            2,
+            true,
+        )
+        .unwrap();
+
+    assert_eq!(
+        result.next_raw(),
+        Err(tidb_distsql::QueryResponseError::Cancelled)
+    );
+    assert!(
+        !cancel.is_cancelled(),
+        "request-local cancellation must not poison the outer execution"
+    );
+    assert_eq!(observations.sends.get(), 1);
+    assert_eq!(observations.closes.get(), 0);
+    assert_eq!(observations.liveness.get(), 0);
+    assert_eq!(loader_calls.borrow().as_slice(), [b"a".to_vec()]);
+}
+
+#[test]
 fn execution_cancellation_interrupts_dispatch_before_all_recovery_and_success_mutation() {
     let cancel = Arc::new(CancelHandle::default());
-    let adapter = ExecutionUnaryCancellation::new(Arc::clone(&cancel));
-    let acquired_before_cancel = adapter.cancellation_for_call();
+    let acquired_before_cancel = cancel.unary_cancellation();
     assert!(acquired_before_cancel.shares_state_with(&cancel.unary_cancellation()));
 
     let observations = Rc::new(ClientObservations::default());
@@ -239,14 +392,14 @@ fn execution_cancellation_interrupts_dispatch_before_all_recovery_and_success_mu
                 .collect(),
         }),
     );
-    let transport = DirectUnaryQueryTransport::with_shared_runtime(
+    let transport = DirectUnaryQueryTransport::with_locked_response_delegate(
         shared.clone(),
         DirectUnaryRuntimeConfig {
             seed_read_bytes: 4096,
-            active_unary_cancellation: Rc::new(adapter),
-            region_retry_control: retry.clone(),
+            region_retry_waiter: retry.clone(),
             ..DirectUnaryRuntimeConfig::default()
         },
+        Rc::new(RejectUnexpectedLock),
     )
     .unwrap();
     let cancel_after_dispatch = Arc::clone(&cancel);
@@ -259,7 +412,7 @@ fn execution_cancellation_interrupts_dispatch_before_all_recovery_and_success_mu
     let mut runtime = InjectedQueryRuntime::new(transport);
     let mut result = runtime
         .select_with_runtime_stats(
-            &TransportRequest::new(metadata()),
+            &TransportRequest::new(metadata(), Arc::clone(&cancel)),
             SelectInput::default(),
             QueryResultContext::new(Vec::<FieldType>::new(), WarningCollector::new()),
             vec![1],
@@ -310,14 +463,14 @@ fn execution_cancellation_interrupts_dispatch_before_all_recovery_and_success_mu
 fn caller_cancellation_branch_is_terminal_before_response_and_retry_mutation() {
     let source = include_str!("../src/cop_paging/direct_unary_query_transport.rs");
     let branch = source
-        .find("if matches!(&send_result, Err(DirectUnaryClientError::CallerCancelled))")
+        .find("if self.cancellation.is_cancelled()")
         .expect("caller cancellation precedence branch");
     let raw_response = source[branch..]
         .find("let raw_response = match send_result")
         .map(|offset| branch + offset)
         .expect("response classification follows cancellation");
     let terminal = &source[branch..raw_response];
-    assert!(terminal.contains("return Err(DirectUnaryTransportError::Client(error))"));
+    assert!(terminal.contains("return Err(DirectUnaryTransportError::CallerCancelled)"));
     for forbidden in [
         "record_attempt_result",
         "recover_transport_failure",

@@ -47,7 +47,10 @@ fn injected_query_runtime_feeds_the_existing_recordset_consumer() {
     source.finish().unwrap();
 
     let mut builder = KvRequestBuilder::new();
-    let request = TransportRequest::new(builder.build().unwrap());
+    let request = TransportRequest::new(
+        builder.build().unwrap(),
+        std::sync::Arc::new(tidb_distsql::CancelHandle::default()),
+    );
     let mut runtime = InjectedQueryRuntime::new(OneResponse(Some(source)));
     let result = runtime
         .select(

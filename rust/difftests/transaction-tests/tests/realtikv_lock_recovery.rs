@@ -20,14 +20,11 @@ use std::time::Duration;
 
 use prost::Message;
 use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
-use tidb_distsql::cop_paging::{
-    LockedResponseAction, LockedResponseDelegate, LockedResponseObservation,
-};
 use tidb_distsql::{
     DirectUnaryClient, DirectUnaryClientError, DirectUnaryQueryTransport, DirectUnaryRequest,
-    DirectUnaryResponse, DirectUnaryRuntimeConfig, InjectedQueryRuntime, KvRequestMetadata,
-    QueryResultContext, RequestKeyRange, RequestKeyRanges, RequestType, SelectInput, StoreType,
-    TransportRequest, WarningCollector,
+    DirectUnaryResponse, DirectUnaryRuntimeConfig, FixedTimestampSource, InjectedQueryRuntime,
+    KvRequestMetadata, LockRecoveryClient, QueryResultContext, RequestKeyRange, RequestKeyRanges,
+    RequestType, SelectInput, StoreType, TransportRequest, UnaryCallContext, WarningCollector,
 };
 use tidb_proto::tipb::{DagRequest, EncodeType, EngineType, ExecType, Executor, TableScan};
 use tidb_proto::{
@@ -36,26 +33,11 @@ use tidb_proto::{
 };
 use tidb_txnkv::region::{RegionCache, StoreLiveness};
 use tidb_txnkv::rpc::TonicCoprocessorClient;
-use tidb_txnkv::{PdRegionLoader, SharedReadRuntime, UnaryCallContext};
-
-pub use tidb_txnkv::region;
-pub use tidb_txnkv::rpc;
-pub use tidb_txnkv::{SharedReadRuntime as HarnessSharedReadRuntime, UnaryCancellation};
-
-#[allow(unused_imports)]
-#[path = "../../../crates/tidb-txnkv/src/lock/mod.rs"]
-mod lock;
-
-use lock::{
-    decode_lock_observation, resolve_optimistic_locks, FixedTimestampSource, LockRecoveryClient,
-    LockRecoveryResult,
-};
+use tidb_txnkv::PdRegionLoader;
 
 #[derive(Debug, Default)]
 struct Evidence {
     cop_attempts: usize,
-    locked_key: Vec<u8>,
-    locked_primary: Vec<u8>,
     checks: Vec<KvrpcCheckTxnStatusRequest>,
     check_commit_ts: u64,
     resolves: Vec<KvrpcResolveLockRequest>,
@@ -140,45 +122,6 @@ impl LockRecoveryClient for RecordingClient {
     }
 }
 
-#[derive(Debug)]
-struct LiveRecovery {
-    current_ts: FixedTimestampSource,
-    evidence: Rc<RefCell<Evidence>>,
-}
-
-impl LockedResponseDelegate<RecordingClient, PdRegionLoader> for LiveRecovery {
-    fn handle_locked_response(
-        &self,
-        runtime: &SharedReadRuntime<RecordingClient, PdRegionLoader>,
-        observation: LockedResponseObservation,
-    ) -> Result<LockedResponseAction, String> {
-        {
-            let mut evidence = self.evidence.borrow_mut();
-            evidence.locked_key.clone_from(&observation.lock.key);
-            evidence
-                .locked_primary
-                .clone_from(&observation.lock.primary_lock);
-        }
-        let locks =
-            decode_lock_observation(&observation.lock).map_err(|error| error.to_string())?;
-        let result = resolve_optimistic_locks(
-            runtime,
-            &locks,
-            observation.caller_start_ts,
-            &observation.request_context,
-            &observation.call,
-            &self.current_ts,
-        )
-        .map_err(|error| error.to_string())?;
-        if let LockRecoveryResult::Alive(ttl) = result {
-            if observation.call.cancellation().wait_timeout(ttl) {
-                return Err("live lock TTL wait cancelled".to_owned());
-            }
-        }
-        Ok(LockedResponseAction::RetrySameTask)
-    }
-}
-
 #[test]
 #[ignore = "requires the cleanup-safe committed-primary locked-secondary runner"]
 fn committed_primary_resolves_secondary_then_publishes_one_cop_response() {
@@ -192,6 +135,7 @@ fn committed_primary_resolves_secondary_then_publishes_one_cop_response() {
         .parse()
         .expect("current TSO must be u64");
     let secondary_key = encode_row_key_with_handle(table_id, &RecordHandle::Int(2));
+    let expected_secondary_key = secondary_key.clone();
     let end_key = prefix_next(secondary_key.clone());
     let dag = DagRequest {
         executors: vec![Executor {
@@ -218,17 +162,14 @@ fn committed_primary_resolves_secondary_then_publishes_one_cop_response() {
         inner: TonicCoprocessorClient::new().expect("construct sole unary client"),
         evidence: Rc::clone(&evidence),
     };
-    let shared = SharedReadRuntime::new(client, RegionCache::new(loader));
-    let transport = DirectUnaryQueryTransport::with_locked_response_delegate(
-        shared,
+    let transport = DirectUnaryQueryTransport::new(
+        client,
+        RegionCache::new(loader),
         DirectUnaryRuntimeConfig {
             default_timeout: Duration::from_secs(5),
             ..DirectUnaryRuntimeConfig::default()
         },
-        Rc::new(LiveRecovery {
-            current_ts: FixedTimestampSource(current_ts),
-            evidence: Rc::clone(&evidence),
-        }),
+        FixedTimestampSource(current_ts),
     )
     .expect("install lock recovery over sole runtime");
     let mut runtime = InjectedQueryRuntime::new(transport);
@@ -250,7 +191,10 @@ fn committed_primary_resolves_secondary_then_publishes_one_cop_response() {
     };
     let mut result = runtime
         .select_with_runtime_stats(
-            &TransportRequest::new(metadata),
+            &TransportRequest::new(
+                metadata,
+                std::sync::Arc::new(tidb_distsql::CancelHandle::default()),
+            ),
             SelectInput::default(),
             QueryResultContext::new(Vec::new(), WarningCollector::new()),
             Vec::new(),
@@ -272,11 +216,13 @@ fn committed_primary_resolves_secondary_then_publishes_one_cop_response() {
     assert_eq!(evidence.cop_attempts, 2, "locked response plus exact retry");
     assert_eq!(evidence.checks.len(), 1);
     assert!(evidence.check_commit_ts > 0, "primary must be committed");
-    assert_eq!(evidence.checks[0].primary_key, evidence.locked_primary);
     assert_eq!(evidence.checks[0].caller_start_ts, current_ts);
     assert_eq!(evidence.checks[0].current_ts, current_ts);
     assert_eq!(evidence.resolves.len(), 1);
-    assert_eq!(evidence.resolves[0].keys, vec![evidence.locked_key.clone()]);
+    assert_eq!(
+        evidence.resolves[0].keys,
+        vec![expected_secondary_key.clone()]
+    );
     assert_eq!(
         evidence.resolves[0].commit_version,
         evidence.check_commit_ts
@@ -284,7 +230,7 @@ fn committed_primary_resolves_secondary_then_publishes_one_cop_response() {
     println!(
         "campaign13_lock_recovery status=committed commit_ts={} resolve_key_hex={} cop_attempts=2 publications=1",
         evidence.check_commit_ts,
-        hex(&evidence.locked_key),
+        hex(&expected_secondary_key),
     );
 }
 

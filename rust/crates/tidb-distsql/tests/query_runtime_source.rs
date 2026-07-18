@@ -28,6 +28,13 @@ use tidb_distsql::{
     INTERNAL_TXN_STATS_SOURCE,
 };
 
+fn transport_request(metadata: tidb_distsql::KvRequestMetadata) -> TransportRequest {
+    TransportRequest::new(
+        metadata,
+        std::sync::Arc::new(tidb_distsql::CancelHandle::default()),
+    )
+}
+
 #[derive(Default)]
 struct ScriptedTransport {
     responses: VecDeque<Result<Option<ResponseChannel<Vec<u8>>>, String>>,
@@ -117,7 +124,7 @@ fn field_types(count: usize) -> Vec<FieldType> {
 fn request(store_type: StoreType) -> TransportRequest {
     let mut builder = KvRequestBuilder::new();
     builder.set_store_type(store_type);
-    TransportRequest::new(builder.build().expect("built request"))
+    transport_request(builder.build().expect("built request"))
 }
 
 fn input() -> SelectInput {
@@ -142,7 +149,7 @@ fn select_sends_the_built_request_and_returns_the_transport_iterator() {
         .set_store_type(StoreType::TiFlash)
         .set_paging(true)
         .set_concurrency(7);
-    let request = TransportRequest::new(builder.build().expect("built request"));
+    let request = transport_request(builder.build().expect("built request"));
     let mut runtime = InjectedQueryRuntime::new(ScriptedTransport::returning(empty_response()));
     let result = runtime
         .select(
@@ -328,7 +335,7 @@ fn nil_transport_response_is_not_reinterpreted_as_empty_results() {
 #[test]
 fn already_bound_request_never_reaches_a_second_transport() {
     let mut builder = KvRequestBuilder::new();
-    let request = TransportRequest::new(builder.build().unwrap())
+    let request = transport_request(builder.build().unwrap())
         .bind(TransportBinding::new())
         .unwrap();
     let mut runtime = InjectedQueryRuntime::new(ScriptedTransport::default());

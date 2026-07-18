@@ -36,12 +36,14 @@ use tidb_proto::tipb::{Chunk, SelectResponse};
 struct SharedTransportState {
     sends: Cell<usize>,
     dispatches: RefCell<Vec<QueryDispatch>>,
+    request_cancellations: RefCell<Vec<std::sync::Arc<tidb_distsql::CancelHandle>>>,
 }
 
 struct TrackingResponse {
     rows: VecDeque<i64>,
     required_rows: Rc<RefCell<Vec<usize>>>,
     close_count: Rc<Cell<usize>>,
+    cancellation: Option<std::sync::Arc<tidb_distsql::CancelHandle>>,
 }
 
 impl QueryResponse for TrackingResponse {
@@ -66,6 +68,9 @@ impl QueryResponse for TrackingResponse {
     }
 
     fn close(&mut self) {
+        if let Some(cancellation) = &self.cancellation {
+            cancellation.cancel();
+        }
         self.close_count.set(self.close_count.get() + 1);
         self.rows.clear();
     }
@@ -87,9 +92,23 @@ impl QueryTransport for ScriptedTransport {
         assert!(request.is_bound());
         self.state.sends.set(self.state.sends.get() + 1);
         self.state.dispatches.borrow_mut().push(dispatch.clone());
-        self.responses
+        let mut response = self
+            .responses
             .pop_front()
-            .expect("one scripted response per send")
+            .expect("one scripted response per send");
+        if let Ok(Some(response)) = &mut response {
+            let cancellation = std::sync::Arc::clone(
+                request
+                    .request_cancellation()
+                    .expect("bound request has local cancellation"),
+            );
+            self.state
+                .request_cancellations
+                .borrow_mut()
+                .push(std::sync::Arc::clone(&cancellation));
+            response.cancellation = Some(cancellation);
+        }
+        response
     }
 }
 
@@ -98,9 +117,15 @@ fn field_types() -> Vec<FieldType> {
 }
 
 fn request() -> TransportRequest {
+    request_with_cancellation(std::sync::Arc::new(tidb_distsql::CancelHandle::default()))
+}
+
+fn request_with_cancellation(
+    cancellation: std::sync::Arc<tidb_distsql::CancelHandle>,
+) -> TransportRequest {
     let mut builder = KvRequestBuilder::new();
     builder.set_store_type(StoreType::TiKv);
-    TransportRequest::new(builder.build().expect("built request"))
+    TransportRequest::new(builder.build().expect("built request"), cancellation)
 }
 
 fn encoded_rows(values: &[i64]) -> Vec<u8> {
@@ -132,6 +157,7 @@ fn response_with_required_rows(
         rows: values.iter().copied().collect(),
         required_rows,
         close_count,
+        cancellation: None,
     }
 }
 
@@ -236,6 +262,44 @@ fn open_transfers_each_response_once_and_consumes_requests_serially() {
     reader.close();
     assert_eq!(first_closed.get(), 1);
     assert_eq!(second_closed.get(), 1);
+}
+
+#[test]
+fn explicit_reader_close_cancels_every_request_local_authority_only() {
+    let execution = std::sync::Arc::new(tidb_distsql::CancelHandle::default());
+    let state = Rc::new(SharedTransportState::default());
+    let plan = ReaderPlan::new(
+        ReaderKind::Table,
+        vec![
+            request_with_cancellation(std::sync::Arc::clone(&execution)),
+            request_with_cancellation(std::sync::Arc::clone(&execution)),
+        ],
+        field_types(),
+    );
+    let mut reader = TableIndexReader::new(
+        plan,
+        transport(
+            [
+                Ok(Some(response(&[1], Rc::new(Cell::new(0))))),
+                Ok(Some(response(&[2], Rc::new(Cell::new(0))))),
+            ],
+            Rc::clone(&state),
+        ),
+    );
+
+    reader.open().unwrap();
+    assert!(state
+        .request_cancellations
+        .borrow()
+        .iter()
+        .all(|cancellation| !cancellation.is_cancelled()));
+    reader.close();
+    assert!(state
+        .request_cancellations
+        .borrow()
+        .iter()
+        .all(|cancellation| cancellation.is_cancelled()));
+    assert!(!execution.is_cancelled());
 }
 
 #[test]

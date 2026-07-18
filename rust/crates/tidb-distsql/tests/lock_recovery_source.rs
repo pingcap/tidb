@@ -42,7 +42,10 @@ fn alive_ttl_uses_exact_cancellation_wait_without_polling() {
         .split("LockRecoveryResult::Alive(ttl)")
         .nth(1)
         .expect("alive branch");
-    assert!(alive.contains("observation.call.cancellation().wait_timeout(ttl)"));
+    assert!(alive.contains("let deadline_budget = observation.call.timeout()"));
+    assert!(alive.contains("let wait = ttl.min(deadline_budget)"));
+    assert!(alive.contains("observation.call.cancellation().wait_timeout(wait)"));
+    assert!(alive.contains("wait < ttl"));
     assert!(alive.contains("cancelled by caller"));
     assert!(!alive.contains("thread::sleep"));
     assert!(!alive.contains("is_cancelled"));

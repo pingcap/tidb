@@ -83,7 +83,10 @@ fn transport_request_rejects_unbound_serialization_and_allows_bound_snapshot() {
     builder
         .set_request_type(RequestType::Checksum)
         .set_data(vec![0xaa, 0xbb]);
-    let request = TransportRequest::new(builder.build().expect("metadata"));
+    let request = TransportRequest::new(
+        builder.build().expect("metadata"),
+        std::sync::Arc::new(tidb_distsql::CancelHandle::default()),
+    );
     let ranges = vec![RequestKeyRange {
         start_key: vec![4],
         end_key: vec![5],

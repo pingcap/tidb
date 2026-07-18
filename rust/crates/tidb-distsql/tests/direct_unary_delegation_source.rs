@@ -15,14 +15,22 @@
 #![allow(missing_docs)]
 
 #[test]
-fn direct_unary_call_uses_active_cancellation_context() {
+fn direct_unary_call_uses_request_owned_cancellation_context() {
     let source = include_str!("../src/cop_paging/direct_unary_query_transport.rs");
+    let send = source
+        .find("fn send(")
+        .expect("direct unary transport send owner");
+    let send = &source[send..];
+    assert!(send.contains(".request_cancellation()"));
+    assert!(send.contains("if cancellation.is_cancelled()"));
+    assert!(send.contains("UnaryCallContext::with_deadline"));
+    assert!(send.contains("bound_at + timeout"));
+
     let dispatch = source
         .find("fn dispatch_attempt(")
         .expect("direct unary dispatch owner");
     let dispatch = &source[dispatch..];
-    assert!(dispatch.contains("active_unary_cancellation"));
-    assert!(dispatch.contains("UnaryCallContext::new"));
+    assert!(dispatch.contains("self.check_retry_active()?"));
     assert!(dispatch.contains("send_request_with_context"));
     let caller_cancelled = dispatch
         .find("DirectUnaryClientError::CallerCancelled")
@@ -59,14 +67,15 @@ fn route_success_precedes_lock_delegation_but_paging_does_not() {
     assert!(promoted < delegated);
     assert!(delegated < accepted);
     assert!(tail[delegated..accepted].contains("return Ok(())"));
-    assert!(tail[delegated..accepted].contains("map_err(DirectUnaryTransportError::LockRecovery)"));
+    assert!(tail[delegated..accepted].contains("DirectUnaryTransportError::LockRecovery(error)"));
+    assert!(tail[delegated..accepted].contains("self.cancellation.is_cancelled()"));
 }
 
 #[test]
 fn locked_response_carries_the_exact_cop_call_context() {
     let source = include_str!("../src/cop_paging/direct_unary_query_transport.rs");
     let call = source
-        .find("let call = UnaryCallContext::new")
+        .find("UnaryCallContext::with_deadline")
         .expect("one Cop call context");
     let send = source[call..]
         .find("send_request_with_context(&selected.attempt.address, &client_request, &call)")

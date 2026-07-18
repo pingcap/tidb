@@ -344,7 +344,9 @@ fn complete_metadata_setters_and_read_consistency_reach_transport_snapshot() {
         .set_explicit_request_source_type("explicit")
         .set_paging(false)
         .set_replica_read(ReplicaReadType::Closest);
-    let transport = builder.build_transport_request().unwrap();
+    let transport = builder
+        .build_transport_request(std::sync::Arc::new(tidb_distsql::CancelHandle::default()))
+        .unwrap();
     let request = transport.metadata();
     assert_eq!(request.start_ts, 42);
     assert_eq!(request.store_type, StoreType::TiFlash);
@@ -436,7 +438,7 @@ fn transport_consumer_builds_resource_tag_from_first_table_range() {
         .set_dag_request(RequestEnvelope::new(Vec::new()), DAG_BYTES)
         .set_resource_group_tagger(ResourceGroupTagBuilder::new(None));
     let transport = builder
-        .build_transport_request()
+        .build_transport_request(std::sync::Arc::new(tidb_distsql::CancelHandle::default()))
         .expect("transport envelope");
     let encoded = transport.resource_group_tag().expect("resource tag");
     let tag = ResourceGroupTag::decode(encoded.as_slice()).expect("valid tag");

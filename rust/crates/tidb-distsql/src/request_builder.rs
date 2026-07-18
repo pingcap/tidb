@@ -474,8 +474,12 @@ impl RequestBuilder {
 
     /// Builds and hands the immutable snapshot to the real pre-transport
     /// consumer without fabricating a client or RPC.
-    pub fn build_transport_request(&mut self) -> Result<TransportRequest, KvRequestBuildError> {
-        self.build().map(TransportRequest::new)
+    pub fn build_transport_request(
+        &mut self,
+        execution_cancellation: std::sync::Arc<crate::CancelHandle>,
+    ) -> Result<TransportRequest, KvRequestBuildError> {
+        self.build()
+            .map(|metadata| TransportRequest::new(metadata, execution_cancellation))
     }
 
     fn remember_error(&mut self, error: KvRequestBuildError) {

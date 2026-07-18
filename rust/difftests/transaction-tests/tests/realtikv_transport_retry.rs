@@ -160,6 +160,28 @@ impl DirectUnaryClient for RecordingClient {
     }
 }
 
+impl tidb_distsql::LockRecoveryClient for RecordingClient {
+    fn check_txn_status_for_lock(
+        &mut self,
+        address: &str,
+        request: &tidb_proto::KvrpcCheckTxnStatusRequest,
+        context: &tidb_proto::KvrpcContext,
+        call: &tidb_txnkv::UnaryCallContext,
+    ) -> Result<tidb_proto::KvrpcCheckTxnStatusResponse, DirectUnaryClientError> {
+        self.inner.check_txn_status(address, request, context, call)
+    }
+
+    fn resolve_lock_for_read(
+        &mut self,
+        address: &str,
+        request: &tidb_proto::KvrpcResolveLockRequest,
+        context: &tidb_proto::KvrpcContext,
+        call: &tidb_txnkv::UnaryCallContext,
+    ) -> Result<tidb_proto::KvrpcResolveLockResponse, DirectUnaryClientError> {
+        self.inner.resolve_lock(address, request, context, call)
+    }
+}
+
 #[test]
 #[ignore = "requires the cleanup-safe Campaign 12 three-PD/three-TiKV runner"]
 fn one_lazy_response_recovers_after_its_cached_tikv_leader_stops() {
@@ -276,25 +298,29 @@ fn one_lazy_response_recovers_after_its_cached_tikv_leader_stops() {
             default_timeout: Duration::from_secs(5),
             ..DirectUnaryRuntimeConfig::default()
         },
+        tidb_distsql::FixedTimestampSource(1 << 18),
     )
     .expect("construct direct unary transport");
     let mut runtime = InjectedQueryRuntime::new(transport);
-    let request = TransportRequest::new(KvRequestMetadata {
-        request_type: RequestType::Dag,
-        data: Some(TABLE_SCAN_DAG.to_vec()),
-        key_ranges: Some(RequestKeyRanges::new_non_partitioned(vec![
-            RequestKeyRange {
-                start_key: TABLE_START.to_vec(),
-                end_key: TABLE_END.to_vec(),
-            },
-        ])),
-        keep_order: true,
-        store_type: StoreType::TiKv,
-        start_ts: 1,
-        read_replica_scope: "global".to_owned(),
-        txn_scope: "global".to_owned(),
-        ..KvRequestMetadata::default()
-    });
+    let request = TransportRequest::new(
+        KvRequestMetadata {
+            request_type: RequestType::Dag,
+            data: Some(TABLE_SCAN_DAG.to_vec()),
+            key_ranges: Some(RequestKeyRanges::new_non_partitioned(vec![
+                RequestKeyRange {
+                    start_key: TABLE_START.to_vec(),
+                    end_key: TABLE_END.to_vec(),
+                },
+            ])),
+            keep_order: true,
+            store_type: StoreType::TiKv,
+            start_ts: 1,
+            read_replica_scope: "global".to_owned(),
+            txn_scope: "global".to_owned(),
+            ..KvRequestMetadata::default()
+        },
+        std::sync::Arc::new(tidb_distsql::CancelHandle::default()),
+    );
     let mut result = runtime
         .select_with_runtime_stats(
             &request,

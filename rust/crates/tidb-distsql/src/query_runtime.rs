@@ -107,6 +107,8 @@ pub enum QueryRuntimeError {
     NilResponse,
     /// The injected transport failed before yielding a response iterator.
     Transport(String),
+    /// The canonical query cancellation won before a response was returned.
+    Cancelled,
 }
 
 impl std::fmt::Display for QueryRuntimeError {
@@ -115,6 +117,7 @@ impl std::fmt::Display for QueryRuntimeError {
             Self::Request(error) => write!(formatter, "DistSQL request is not sendable: {error:?}"),
             Self::NilResponse => formatter.write_str("client returns nil response"),
             Self::Transport(message) => formatter.write_str(message),
+            Self::Cancelled => formatter.write_str("query cancelled by caller"),
         }
     }
 }
@@ -238,9 +241,24 @@ impl<T: QueryTransport> InjectedQueryRuntime<T> {
                 .bind(TransportBinding::new())
                 .map_err(QueryRuntimeError::Request)?,
         };
-        let response = self
-            .transport
-            .send(&bound, &dispatch)
+        if bound
+            .request_cancellation()
+            .map_err(QueryRuntimeError::Request)?
+            .is_cancelled()
+        {
+            return Err(QueryRuntimeError::Cancelled);
+        }
+        let response = self.transport.send(&bound, &dispatch);
+        // The canonical carrier has Go's post-Send ctx.Err precedence over a
+        // simultaneous transport failure or response.
+        if bound
+            .request_cancellation()
+            .map_err(QueryRuntimeError::Request)?
+            .is_cancelled()
+        {
+            return Err(QueryRuntimeError::Cancelled);
+        }
+        let response = response
             .map_err(QueryRuntimeError::Transport)?
             .ok_or(QueryRuntimeError::NilResponse)?;
         Ok(QuerySelectResult::new(

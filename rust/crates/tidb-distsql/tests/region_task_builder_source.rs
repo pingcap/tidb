@@ -19,10 +19,17 @@ use std::collections::BTreeMap;
 
 use prost::Message;
 use tidb_distsql::{
-    KvRequestBuilder, PagingConfig, ReadBytesEma, RegionTaskEnvelope, RegionTaskPeer,
-    RegionTaskTopology, RequestKeyRange, RequestKeyRanges, StoreType, TransportBinding,
-    TransportRequest,
+    KvRequestBuilder, KvRequestMetadata, PagingConfig, ReadBytesEma, RegionTaskEnvelope,
+    RegionTaskPeer, RegionTaskTopology, RequestKeyRange, RequestKeyRanges, StoreType,
+    TransportBinding, TransportRequest,
 };
+
+fn transport_request(metadata: KvRequestMetadata) -> TransportRequest {
+    TransportRequest::new(
+        metadata,
+        std::sync::Arc::new(tidb_distsql::CancelHandle::default()),
+    )
+}
 use tidb_proto::{CoprocessorRequest, StoreBatchTask};
 
 const COP_SMALL_TASK_ROW: usize = 32;
@@ -54,7 +61,7 @@ fn request(keys: &[&str], hints: Option<Vec<usize>>) -> TransportRequest {
     );
     let mut builder = KvRequestBuilder::new();
     builder.set_key_ranges(key_ranges);
-    TransportRequest::new(builder.build().expect("built request"))
+    transport_request(builder.build().expect("built request"))
 }
 
 fn topology(boundaries: &[&str]) -> Vec<RegionTaskTopology> {
@@ -190,7 +197,7 @@ fn build_tasks_without_buckets_matches_every_original_range_case() {
         let mut tiflash_request = request(keys, None);
         let mut metadata = tiflash_request.metadata().clone();
         metadata.store_type = StoreType::TiFlash;
-        tiflash_request = TransportRequest::new(metadata);
+        tiflash_request = transport_request(metadata);
         let tiflash = tiflash_request.build_region_tasks(&topo).unwrap();
         assert_tasks(&tiflash, expected);
     }
@@ -436,7 +443,7 @@ fn rebuild_consumes_refreshed_topology_and_reverses_descending_tasks() {
 
     let mut metadata = request.metadata().clone();
     metadata.desc = true;
-    let rebuilt = TransportRequest::new(metadata)
+    let rebuilt = transport_request(metadata)
         .build_region_tasks(&topology(&["", "m", "q", ""]))
         .unwrap();
     assert_tasks(
@@ -452,7 +459,7 @@ fn build_paging_tasks_preserves_minimum_page_size() {
         enabled: true,
         ..PagingConfig::default()
     };
-    let tasks = TransportRequest::new(metadata)
+    let tasks = transport_request(metadata)
         .build_region_tasks(&topology(&["", "g", "n", "t", ""]))
         .unwrap();
     assert_eq!(tasks.len(), 1);
@@ -465,7 +472,7 @@ fn task_build_does_not_mutate_or_cancel_request_state() {
     let mut metadata = request(&["a", "c"], None).metadata().clone();
     metadata.session.paging.enabled = true;
     metadata.session.max_execution_time_ms = 10_000;
-    let request = TransportRequest::new(metadata.clone());
+    let request = transport_request(metadata.clone());
     let _ = request
         .build_region_tasks(&topology(&["", "g", "n", "t", ""]))
         .unwrap();
@@ -478,7 +485,7 @@ fn small_limit_disables_row_paging_without_byte_prediction() {
     let mut metadata = request(&["a", "c"], None).metadata().clone();
     metadata.session.paging.enabled = true;
     metadata.limit_size = 1;
-    let tasks = TransportRequest::new(metadata)
+    let tasks = transport_request(metadata)
         .build_region_tasks(&topology(&["", "g", "n", "t", ""]))
         .unwrap();
     assert!(!tasks[0].paging);
@@ -493,7 +500,7 @@ fn byte_paging_budget_enlarges_channel_and_survives_row_paging_downgrade() {
     let mut metadata = request(&["a", "c"], None).metadata().clone();
     metadata.keep_order = true;
     metadata.session.paging.size_bytes = 4 * 1024 * 1024;
-    let tasks = TransportRequest::new(metadata.clone())
+    let tasks = transport_request(metadata.clone())
         .build_region_tasks(&topology(&["", "g", "n", "t", ""]))
         .unwrap();
     assert!(!tasks[0].paging);
@@ -507,7 +514,7 @@ fn byte_paging_budget_enlarges_channel_and_survives_row_paging_downgrade() {
 
     metadata.session.paging.enabled = true;
     metadata.limit_size = 1;
-    let request = TransportRequest::new(metadata);
+    let request = transport_request(metadata);
     let tasks = request
         .build_region_tasks(&topology(&["", "g", "n", "t", ""]))
         .unwrap();
@@ -634,7 +641,7 @@ fn store_batching_requires_a_leader_selected_peer() {
     metadata.session.store_batch_size = 3;
     metadata.session.store_busy_threshold_ms = 1_000;
 
-    let batched = TransportRequest::new(metadata.clone())
+    let batched = transport_request(metadata.clone())
         .build_region_tasks(&topo)
         .unwrap();
     assert_eq!(batched.len(), 1);
@@ -648,7 +655,7 @@ fn store_batching_requires_a_leader_selected_peer() {
     for region in &mut topo {
         region.store_batch_eligible = false;
     }
-    let unbatched = TransportRequest::new(metadata)
+    let unbatched = transport_request(metadata)
         .build_region_tasks(&topo)
         .unwrap();
     assert_eq!(unbatched.len(), 4);
@@ -669,7 +676,7 @@ fn store_batch_children_preserve_each_region_bucket_version_on_wire() {
         .metadata()
         .clone();
     metadata.session.store_batch_size = 3;
-    let tasks = TransportRequest::new(metadata)
+    let tasks = transport_request(metadata)
         .build_region_tasks(&topo)
         .unwrap();
     assert_eq!(tasks.len(), 1);
@@ -692,7 +699,7 @@ fn store_batch_children_preserve_each_region_bucket_version_on_wire() {
         .clone();
     metadata.session.store_batch_size = 3;
     metadata.desc = true;
-    let tasks = TransportRequest::new(metadata)
+    let tasks = transport_request(metadata)
         .build_region_tasks(&sparse_stores)
         .unwrap();
     assert_eq!(tasks.len(), 2);

@@ -22,7 +22,7 @@
 
 use std::sync::{mpsc, Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use bytes::{Buf, BufMut};
 use tonic::codec::{Codec, DecodeBuf, Decoder, EncodeBuf, Encoder};
@@ -121,16 +121,22 @@ impl UnaryCancellation {
 /// Transport-neutral per-call deadline and cancellation authority.
 #[derive(Clone, Debug)]
 pub struct UnaryCallContext {
-    timeout: Duration,
+    deadline: Instant,
     cancellation: UnaryCancellation,
 }
 
 impl UnaryCallContext {
     /// Binds an exact timeout and caller-owned cancellation carrier.
     #[must_use]
-    pub const fn new(timeout: Duration, cancellation: UnaryCancellation) -> Self {
+    pub fn new(timeout: Duration, cancellation: UnaryCancellation) -> Self {
+        Self::with_deadline(Instant::now() + timeout, cancellation)
+    }
+
+    /// Binds an existing absolute deadline and caller-owned cancellation.
+    #[must_use]
+    pub const fn with_deadline(deadline: Instant, cancellation: UnaryCancellation) -> Self {
         Self {
-            timeout,
+            deadline,
             cancellation,
         }
     }
@@ -143,8 +149,14 @@ impl UnaryCallContext {
 
     /// Exact local and remote gRPC timeout.
     #[must_use]
-    pub const fn timeout(&self) -> Duration {
-        self.timeout
+    pub fn timeout(&self) -> Duration {
+        self.deadline.saturating_duration_since(Instant::now())
+    }
+
+    /// Returns the one absolute deadline shared by every command in this read.
+    #[must_use]
+    pub const fn deadline(&self) -> Instant {
+        self.deadline
     }
 
     /// Shared cancellation carrier for this call.
@@ -419,13 +431,21 @@ fn send_unary(
         return Err(DirectUnaryClientError::CallerCancelled);
     }
     let selected = channels.get_or_create(address, runtime)?;
+    let timeout = call.timeout();
+    if timeout.is_zero() {
+        return Err(timeout_error(
+            address,
+            selected.version,
+            timeout,
+            "absolute unary deadline elapsed",
+        ));
+    }
     let mut client =
         tonic::client::Grpc::new(selected.channel).max_decoding_message_size(MAX_RECV_MESSAGE_SIZE);
     let mut rpc_request = tonic::Request::new(request.encoded_request);
-    rpc_request.set_timeout(call.timeout());
+    rpc_request.set_timeout(timeout);
     let path = tonic::codegen::http::uri::PathAndQuery::from_static(request.path);
     let cancellation = call.cancellation().clone();
-    let timeout = call.timeout();
     let result = runtime.block_on(async {
         tokio::select! {
             biased;

@@ -93,6 +93,8 @@ pub enum SelectResultError {
     Unsupported(UnsupportedCapability),
     /// An underlying result source failed while producing or closing rows.
     Source(String),
+    /// The canonical query cancellation interrupted row production.
+    Cancelled,
 }
 
 impl SelectResultError {
@@ -116,6 +118,7 @@ impl fmt::Display for SelectResultError {
                 write!(f, "unsupported DistSQL result capability: {capability}")
             }
             Self::Source(message) => f.write_str(message),
+            Self::Cancelled => f.write_str("query cancelled by caller"),
         }
     }
 }

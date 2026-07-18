@@ -64,7 +64,8 @@ pub use cop_paging::{
     BatchBucketVersionUpdate, CopPagingError, CopPagingOutcome, CopPagingState, DirectUnaryClient,
     DirectUnaryClientError, DirectUnaryQueryResponse, DirectUnaryQueryTransport,
     DirectUnaryRequest, DirectUnaryResponse, DirectUnaryRuntimeConfig, DirectUnaryTransportError,
-    ExecutionUnaryCancellation, OptimisticLockRecovery, ReadEngineGeneration,
+    LockedResponseAction, LockedResponseDelegate, LockedResponseObservation,
+    OptimisticLockRecovery, ReadEngineGeneration, RegionRetryWaiter,
 };
 pub use copr_cache::{
     build_copr_cache_key, CoprCache, CoprCacheAdmission, CoprCacheConfig, CoprCacheError,
@@ -91,8 +92,8 @@ pub use paging::{
     PAGING_THRESHOLD,
 };
 pub use query_runtime::{
-    InjectedQueryRuntime, QueryDispatch, QueryOperation, QueryResultContext, QueryRuntimeError,
-    QueryTransport,
+    InjectedQueryRuntime, QueryDispatch, QueryOperation, QueryResponseError, QueryResultContext,
+    QueryRuntimeError, QueryTransport,
 };
 pub use read_bytes_ema::ReadBytesEma;
 pub use region_location::RegionTaskLocation;
@@ -119,7 +120,9 @@ pub use select_iter::{
 };
 pub use stream_decode::{decode_stream_response, RawStreamResponse};
 pub use table_handle_ranges::table_handles_to_kv_ranges;
+pub use tidb_txnkv::lock::{FixedTimestampSource, LockRecoveryClient, TimestampSource};
 pub use tidb_txnkv::region;
+pub use tidb_txnkv::UnaryCallContext;
 pub use tiflash_replica_read::{
     TiFlashReplicaRead, ALL_REPLICAS, CLOSEST_ADAPTIVE, CLOSEST_REPLICAS,
     MAX_REMOTE_READ_COUNT_PER_NODE_FOR_CLOSEST_REPLICAS,

@@ -21,13 +21,20 @@ use std::time::Duration;
 
 use prost::Message;
 use tidb_datatype::FieldType;
-use tidb_distsql::cop_paging::{RegionRetryCancelled, RegionRetryControl};
+use tidb_distsql::cop_paging::RegionRetryWaiter;
 use tidb_distsql::{
     DirectUnaryClient, DirectUnaryClientError, DirectUnaryQueryTransport, DirectUnaryRequest,
     DirectUnaryResponse, DirectUnaryRuntimeConfig, DirectUnaryTransportError, InjectedQueryRuntime,
     KvRequestMetadata, QueryResultContext, ReplicaReadType, RequestKeyRange, RequestKeyRanges,
     RequestType, SelectInput, StoreType, TransportRequest, WarningCollector,
 };
+
+fn transport_request(metadata: KvRequestMetadata) -> TransportRequest {
+    TransportRequest::new(
+        metadata,
+        std::sync::Arc::new(tidb_distsql::CancelHandle::default()),
+    )
+}
 use tidb_proto::{
     errorpb, metapb, CoprocessorExecDetailsV2, CoprocessorKeyRange, CoprocessorRequest,
     CoprocessorResponse, CoprocessorScanDetailV2,
@@ -53,17 +60,13 @@ struct RecordingRetryControl {
     fail_next_sleep: Cell<bool>,
 }
 
-impl RegionRetryControl for RecordingRetryControl {
-    fn check_cancelled(&self) -> Result<(), RegionRetryCancelled> {
-        Ok(())
-    }
-
-    fn sleep(&self, delay: Duration) -> Result<(), RegionRetryCancelled> {
+impl RegionRetryWaiter for RecordingRetryControl {
+    fn wait(&self, cancellation: &tidb_txnkv::UnaryCancellation, delay: Duration) -> bool {
         self.sleeps.borrow_mut().push(delay);
         if self.fail_next_sleep.replace(false) {
-            return Err(RegionRetryCancelled);
+            cancellation.cancel();
         }
-        Ok(())
+        cancellation.is_cancelled()
     }
 }
 
@@ -211,6 +214,32 @@ impl DirectUnaryClient for ScriptedClient {
 
     fn close(&mut self) -> Result<(), DirectUnaryClientError> {
         Ok(())
+    }
+}
+
+impl tidb_txnkv::lock::LockRecoveryClient for ScriptedClient {
+    fn check_txn_status_for_lock(
+        &mut self,
+        _address: &str,
+        _request: &tidb_proto::KvrpcCheckTxnStatusRequest,
+        _context: &tidb_proto::KvrpcContext,
+        _call: &tidb_txnkv::UnaryCallContext,
+    ) -> Result<tidb_proto::KvrpcCheckTxnStatusResponse, DirectUnaryClientError> {
+        Err(DirectUnaryClientError::InvalidRequest(
+            "unexpected lock in scripted read".to_owned(),
+        ))
+    }
+
+    fn resolve_lock_for_read(
+        &mut self,
+        _address: &str,
+        _request: &tidb_proto::KvrpcResolveLockRequest,
+        _context: &tidb_proto::KvrpcContext,
+        _call: &tidb_txnkv::UnaryCallContext,
+    ) -> Result<tidb_proto::KvrpcResolveLockResponse, DirectUnaryClientError> {
+        Err(DirectUnaryClientError::InvalidRequest(
+            "unexpected lock in scripted read".to_owned(),
+        ))
     }
 }
 
@@ -524,6 +553,7 @@ fn transport_with_loader_calls_and_config(
             regions: regions.into_iter().collect(),
         }),
         config,
+        tidb_txnkv::lock::FixedTimestampSource(1 << 18),
     )
     .unwrap()
 }
@@ -549,6 +579,7 @@ fn transport_with_transport_failures(
             regions: regions.into_iter().collect(),
         }),
         config,
+        tidb_txnkv::lock::FixedTimestampSource(1 << 18),
     )
     .unwrap()
 }
@@ -584,7 +615,7 @@ fn client_go_shaped_dispatch_is_lazy_address_directed_and_logically_ordered() {
             location(2, "m", "z", "tikv-2:20160"),
         ],
     ));
-    let request = TransportRequest::new(metadata("a", "z"));
+    let request = transport_request(metadata("a", "z"));
     let mut result = select_result(&mut runtime, &request);
 
     assert!(calls.borrow().is_empty(), "send must stay response-lazy");
@@ -593,8 +624,19 @@ fn client_go_shaped_dispatch_is_lazy_address_directed_and_logically_ordered() {
     assert_eq!(result.next_raw().unwrap(), Some(b"right".to_vec()));
     assert_eq!(result.next_raw().unwrap(), None);
 
+    let mut normalized_calls = calls.borrow().clone();
+    assert!(
+        normalized_calls[1].timeout <= normalized_calls[0].timeout,
+        "all RPCs in one query must consume one absolute deadline"
+    );
+    assert!(normalized_calls.iter().all(|call| {
+        call.timeout <= Duration::from_millis(777) && call.timeout > Duration::from_millis(700)
+    }));
+    for call in &mut normalized_calls {
+        call.timeout = Duration::from_millis(777);
+    }
     assert_eq!(
-        calls.borrow().as_slice(),
+        normalized_calls.as_slice(),
         [
             ObservedCall {
                 address: "tikv-1:20160".to_owned(),
@@ -657,7 +699,7 @@ fn pd_peer_role_witness_and_cluster_fields_have_one_context_authority() {
             [Ok(response(b"ok"))],
             [candidate],
         ));
-        let mut result = select_result(&mut runtime, &TransportRequest::new(metadata("a", "z")));
+        let mut result = select_result(&mut runtime, &transport_request(metadata("a", "z")));
         assert!(calls.borrow().is_empty());
         assert_eq!(result.next_raw().unwrap(), Some(b"ok".to_vec()));
 
@@ -739,7 +781,7 @@ fn production_metadata_drives_supported_replica_policies_and_exact_request_flags
             [Ok(response(b"ok"))],
             [location_with_three_peers(1, "a", "z", "tikv-policy")],
         ));
-        let mut result = select_result(&mut runtime, &TransportRequest::new(metadata));
+        let mut result = select_result(&mut runtime, &transport_request(metadata));
         assert_eq!(result.next_raw().unwrap(), Some(b"ok".to_vec()));
 
         let calls = calls.borrow();
@@ -779,7 +821,7 @@ fn labels_and_load_inputs_fail_closed_instead_of_silently_changing_selection() {
             [location_with_three_peers(1, "a", "z", "tikv-policy")],
         ));
         let error = match runtime.select_with_runtime_stats(
-            &TransportRequest::new(metadata),
+            &transport_request(metadata),
             SelectInput::default(),
             QueryResultContext::new(Vec::new(), WarningCollector::new()),
             vec![1],
@@ -809,7 +851,7 @@ fn fresh_queries_advance_the_transport_seed_once_each() {
         ],
         [location_with_three_peers(1, "a", "z", "tikv")],
     ));
-    let request = TransportRequest::new(request_metadata);
+    let request = transport_request(request_metadata);
     let mut first = select_result(&mut runtime, &request);
     let mut second = select_result(&mut runtime, &request);
     assert_eq!(
@@ -848,7 +890,7 @@ fn logical_tasks_in_one_query_share_the_bound_seed() {
             location_with_three_peers(100, "m", "z", "right"),
         ],
     ));
-    let mut result = select_result(&mut runtime, &TransportRequest::new(request_metadata));
+    let mut result = select_result(&mut runtime, &transport_request(request_metadata));
     assert_eq!(result.next_raw().unwrap(), Some(b"left".to_vec()));
     assert_eq!(result.next_raw().unwrap(), Some(b"right".to_vec()));
     assert_eq!(result.next_raw().unwrap(), None);
@@ -878,7 +920,7 @@ fn region_reload_reuses_the_bound_query_seed() {
             location_with_three_peers(1, "a", "z", "new"),
         ],
     ));
-    let mut result = select_result(&mut runtime, &TransportRequest::new(request_metadata));
+    let mut result = select_result(&mut runtime, &transport_request(request_metadata));
     assert_eq!(result.next_raw().unwrap(), Some(b"fresh".to_vec()));
     assert_eq!(result.next_raw().unwrap(), None);
 
@@ -911,7 +953,7 @@ fn cached_leader_data_is_not_ready_falls_through_without_reload_or_backoff() {
         DirectUnaryRuntimeConfig {
             seed_read_bytes: 4096,
             observation_time,
-            region_retry_control: retry_control.clone(),
+            region_retry_waiter: retry_control.clone(),
             ..DirectUnaryRuntimeConfig::default()
         },
     );
@@ -919,7 +961,7 @@ fn cached_leader_data_is_not_ready_falls_through_without_reload_or_backoff() {
     request_metadata.session.replica_read = ReplicaReadType::Leader;
     request_metadata.is_staleness = true;
     let mut runtime = InjectedQueryRuntime::new(transport);
-    let mut result = select_result(&mut runtime, &TransportRequest::new(request_metadata));
+    let mut result = select_result(&mut runtime, &transport_request(request_metadata));
     assert_eq!(result.next_raw().unwrap(), Some(b"fresh".to_vec()));
     assert_eq!(result.next_raw().unwrap(), None);
 
@@ -965,7 +1007,7 @@ fn stale_data_not_ready_then_known_leader_retries_one_selector_and_publishes_onc
             "tikv-follower:20160",
         )],
     ));
-    let mut result = select_result(&mut runtime, &TransportRequest::new(request_metadata));
+    let mut result = select_result(&mut runtime, &transport_request(request_metadata));
     assert_eq!(result.next_raw().unwrap(), Some(b"fresh".to_vec()));
     assert_eq!(result.next_raw().unwrap(), None);
 
@@ -1010,12 +1052,12 @@ fn known_leader_region_error_resends_immediately_in_the_same_query() {
             default_timeout: Duration::from_secs(60),
             seed_read_bytes: 4096,
             observation_time,
-            region_retry_control: retry_control.clone(),
+            region_retry_waiter: retry_control.clone(),
             ..DirectUnaryRuntimeConfig::default()
         },
     );
     let mut runtime = InjectedQueryRuntime::new(transport);
-    let request = TransportRequest::new(metadata("a", "z"));
+    let request = transport_request(metadata("a", "z"));
 
     let mut result = select_result(&mut runtime, &request);
     assert_eq!(result.next_raw().unwrap(), Some(b"fresh".to_vec()));
@@ -1049,12 +1091,12 @@ fn nil_leader_sleeps_then_invalidates_reloads_and_resends() {
         DirectUnaryRuntimeConfig {
             seed_read_bytes: 4096,
             observation_time,
-            region_retry_control: retry_control.clone(),
+            region_retry_waiter: retry_control.clone(),
             ..DirectUnaryRuntimeConfig::default()
         },
     );
     let mut runtime = InjectedQueryRuntime::new(transport);
-    let mut result = select_result(&mut runtime, &TransportRequest::new(metadata("a", "z")));
+    let mut result = select_result(&mut runtime, &transport_request(metadata("a", "z")));
 
     assert_eq!(result.next_raw().unwrap(), Some(b"reloaded".to_vec()));
     assert_eq!(calls.borrow()[0].address, "tikv-old:20160");
@@ -1087,20 +1129,20 @@ fn cancellation_during_nil_leader_sleep_keeps_cached_route_and_skips_pd_and_redi
         DirectUnaryRuntimeConfig {
             seed_read_bytes: 4096,
             observation_time,
-            region_retry_control: retry_control.clone(),
+            region_retry_waiter: retry_control.clone(),
             ..DirectUnaryRuntimeConfig::default()
         },
     );
     let mut runtime = InjectedQueryRuntime::new(transport);
-    let request = TransportRequest::new(metadata("a", "z"));
+    let request = transport_request(metadata("a", "z"));
 
     let mut cancelled = select_result(&mut runtime, &request);
     let error = cancelled.next_raw().unwrap_err().to_string();
-    assert!(error.contains("region retry cancelled"), "{error}");
+    assert!(error.contains("query cancelled by caller"), "{error}");
     assert_eq!(calls.borrow().len(), 1);
     assert_eq!(loader_calls.borrow().as_slice(), [b"a".to_vec()]);
 
-    let mut next_query = select_result(&mut runtime, &request);
+    let mut next_query = select_result(&mut runtime, &transport_request(metadata("a", "z")));
     assert_eq!(
         next_query.next_raw().unwrap(),
         Some(b"same-cached-route".to_vec())
@@ -1133,12 +1175,12 @@ fn rebuild_splits_failed_task_in_place_and_keeps_future_task_order_and_attempt()
         DirectUnaryRuntimeConfig {
             seed_read_bytes: 4096,
             observation_time,
-            region_retry_control: retry_control,
+            region_retry_waiter: retry_control,
             ..DirectUnaryRuntimeConfig::default()
         },
     );
     let mut runtime = InjectedQueryRuntime::new(transport);
-    let mut result = select_result(&mut runtime, &TransportRequest::new(metadata("a", "z")));
+    let mut result = select_result(&mut runtime, &transport_request(metadata("a", "z")));
 
     assert_eq!(result.next_raw().unwrap(), Some(b"split-left".to_vec()));
     assert_eq!(result.next_raw().unwrap(), Some(b"split-right".to_vec()));
@@ -1175,13 +1217,13 @@ fn one_region_budget_is_shared_by_sender_and_outer_rebuild_backoff() {
         9001,
         Rc::new(RefCell::new(Vec::new())),
         DirectUnaryRuntimeConfig {
-            region_retry_control: retry_control.clone(),
+            region_retry_waiter: retry_control.clone(),
             region_retry_max_sleep: Duration::from_millis(1),
             ..DirectUnaryRuntimeConfig::default()
         },
     );
     let mut runtime = InjectedQueryRuntime::new(transport);
-    let mut result = select_result(&mut runtime, &TransportRequest::new(metadata("a", "z")));
+    let mut result = select_result(&mut runtime, &transport_request(metadata("a", "z")));
 
     let error = result.next_raw().unwrap_err().to_string();
     assert!(error.contains("terminal region error"), "{error}");
@@ -1207,13 +1249,13 @@ fn split_child_region_gets_an_independent_budget() {
         9001,
         Rc::new(RefCell::new(Vec::new())),
         DirectUnaryRuntimeConfig {
-            region_retry_control: retry_control.clone(),
+            region_retry_waiter: retry_control.clone(),
             region_retry_max_sleep: Duration::from_millis(1),
             ..DirectUnaryRuntimeConfig::default()
         },
     );
     let mut runtime = InjectedQueryRuntime::new(transport);
-    let mut result = select_result(&mut runtime, &TransportRequest::new(metadata("a", "z")));
+    let mut result = select_result(&mut runtime, &transport_request(metadata("a", "z")));
 
     let error = result.next_raw().unwrap_err().to_string();
     assert!(error.contains("terminal region error"), "{error}");
@@ -1243,12 +1285,12 @@ fn unknown_region_error_invalidates_and_rebuilds_under_outer_region_miss() {
         9001,
         Rc::clone(&loader_calls),
         DirectUnaryRuntimeConfig {
-            region_retry_control: retry_control.clone(),
+            region_retry_waiter: retry_control.clone(),
             ..DirectUnaryRuntimeConfig::default()
         },
     );
     let mut runtime = InjectedQueryRuntime::new(transport);
-    let mut result = select_result(&mut runtime, &TransportRequest::new(metadata("a", "z")));
+    let mut result = select_result(&mut runtime, &transport_request(metadata("a", "z")));
 
     assert_eq!(result.next_raw().unwrap(), Some(b"rebuilt".to_vec()));
     assert_eq!(calls.borrow()[1].address, "tikv-reloaded:20160");
@@ -1283,7 +1325,7 @@ fn only_successful_paging_creates_a_continuation_attempt() {
         [Ok(first), Ok(response(b"page-two"))],
         [location(1, "a", "z", "tikv-1:20160")],
     ));
-    let mut result = select_result(&mut runtime, &TransportRequest::new(metadata));
+    let mut result = select_result(&mut runtime, &transport_request(metadata));
 
     assert_eq!(result.next_raw().unwrap(), Some(b"page-one".to_vec()));
     assert_eq!(calls.borrow().len(), 1);
@@ -1321,7 +1363,7 @@ fn first_real_unary_response_replaces_the_seed_before_continuation() {
         [Ok(first), Ok(response(b"page-two"))],
         [location(1, "a", "z", "tikv-1:20160")],
     ));
-    let mut result = select_result(&mut runtime, &TransportRequest::new(metadata));
+    let mut result = select_result(&mut runtime, &transport_request(metadata));
 
     assert_eq!(result.next_raw().unwrap(), Some(b"page-one".to_vec()));
     assert_eq!(result.next_raw().unwrap(), Some(b"page-two".to_vec()));
@@ -1333,15 +1375,21 @@ fn first_real_unary_response_replaces_the_seed_before_continuation() {
 
 #[test]
 fn close_before_pull_stops_every_unsent_attempt() {
+    let cancel = std::sync::Arc::new(tidb_distsql::CancelHandle::default());
     let calls = Rc::new(RefCell::new(Vec::new()));
     let mut runtime = InjectedQueryRuntime::new(transport(
         Rc::clone(&calls),
         [Ok(response(b"never"))],
         [location(1, "a", "z", "tikv-1:20160")],
     ));
-    let mut result = select_result(&mut runtime, &TransportRequest::new(metadata("a", "z")));
+    let request = TransportRequest::new(metadata("a", "z"), std::sync::Arc::clone(&cancel));
+    let mut result = select_result(&mut runtime, &request);
     result.close();
     result.close();
+    assert!(
+        !cancel.is_cancelled(),
+        "closing one response must not cancel the outer execution"
+    );
     assert_eq!(result.next_raw().unwrap(), None);
     assert!(calls.borrow().is_empty());
 }
@@ -1372,11 +1420,11 @@ fn remote_canceled_closes_exact_generation_before_resending_the_same_task() {
             "tikv-2:20160",
         )],
         DirectUnaryRuntimeConfig {
-            region_retry_control: retry_control.clone(),
+            region_retry_waiter: retry_control.clone(),
             ..DirectUnaryRuntimeConfig::default()
         },
     ));
-    let mut result = select_result(&mut runtime, &TransportRequest::new(metadata("a", "z")));
+    let mut result = select_result(&mut runtime, &transport_request(metadata("a", "z")));
 
     assert_eq!(result.next_raw().unwrap(), Some(b"retried".to_vec()));
     assert_eq!(result.next_raw().unwrap(), None);
@@ -1428,11 +1476,11 @@ fn unreachable_store_reselects_an_alternate_and_promotes_it_for_the_next_query()
             "tikv-new:20160",
         )],
         DirectUnaryRuntimeConfig {
-            region_retry_control: retry_control.clone(),
+            region_retry_waiter: retry_control.clone(),
             ..DirectUnaryRuntimeConfig::default()
         },
     ));
-    let request = TransportRequest::new(metadata("a", "z"));
+    let request = transport_request(metadata("a", "z"));
     let mut first = select_result(&mut runtime, &request);
 
     assert_eq!(first.next_raw().unwrap(), Some(b"alternate".to_vec()));
@@ -1548,11 +1596,11 @@ fn one_store_failure_stales_later_bound_regions_without_reordering_them() {
         Rc::clone(&events),
         [first, second],
         DirectUnaryRuntimeConfig {
-            region_retry_control: retry_control,
+            region_retry_waiter: retry_control,
             ..DirectUnaryRuntimeConfig::default()
         },
     ));
-    let mut result = select_result(&mut runtime, &TransportRequest::new(metadata("a", "z")));
+    let mut result = select_result(&mut runtime, &transport_request(metadata("a", "z")));
 
     assert_eq!(result.next_raw().unwrap(), Some(b"first".to_vec()));
     assert_eq!(result.next_raw().unwrap(), Some(b"second".to_vec()));
@@ -1597,7 +1645,7 @@ fn store_not_match_force_closes_the_address_before_region_miss_rebuild() {
         ],
         DirectUnaryRuntimeConfig::default(),
     ));
-    let mut result = select_result(&mut runtime, &TransportRequest::new(metadata("a", "z")));
+    let mut result = select_result(&mut runtime, &transport_request(metadata("a", "z")));
 
     assert_eq!(
         result.next_raw().unwrap(),
@@ -1639,12 +1687,12 @@ fn transport_attempt_exhaustion_rebuilds_through_region_miss_instead_of_returnin
             location(1, "a", "z", "tikv-reloaded:20160"),
         ],
         DirectUnaryRuntimeConfig {
-            region_retry_control: retry_control.clone(),
+            region_retry_waiter: retry_control.clone(),
             region_retry_max_sleep: Duration::from_secs(60),
             ..DirectUnaryRuntimeConfig::default()
         },
     ));
-    let mut result = select_result(&mut runtime, &TransportRequest::new(metadata("a", "z")));
+    let mut result = select_result(&mut runtime, &transport_request(metadata("a", "z")));
 
     assert_eq!(
         result.next_raw().unwrap(),
@@ -1683,17 +1731,17 @@ fn caller_cancellation_is_terminal_before_failure_consumption_or_retry_mutation(
         Rc::clone(&events),
         [location(1, "a", "z", "tikv-1:20160")],
         DirectUnaryRuntimeConfig {
-            region_retry_control: retry_control.clone(),
+            region_retry_waiter: retry_control.clone(),
             ..DirectUnaryRuntimeConfig::default()
         },
     ));
-    let mut result = select_result(&mut runtime, &TransportRequest::new(metadata("a", "z")));
+    let mut result = select_result(&mut runtime, &transport_request(metadata("a", "z")));
 
     let error = result.next_raw().unwrap_err().to_string();
     assert!(error.contains("cancelled by caller"), "{error}");
     assert_eq!(result.next_raw().unwrap(), None);
     drop(result);
-    let mut next = select_result(&mut runtime, &TransportRequest::new(metadata("a", "z")));
+    let mut next = select_result(&mut runtime, &transport_request(metadata("a", "z")));
     assert_eq!(
         next.next_raw().unwrap(),
         Some(b"same-cached-route-next-query".to_vec())
@@ -1735,7 +1783,7 @@ fn return_region_error_and_non_connection_failures_close_without_future_dispatch
                 location(2, "m", "z", "tikv-2:20160"),
             ],
         ));
-        let mut result = select_result(&mut runtime, &TransportRequest::new(metadata("a", "z")));
+        let mut result = select_result(&mut runtime, &transport_request(metadata("a", "z")));
         let error = result.next_raw().unwrap_err().to_string();
         assert!(error.contains(expected), "{error}");
         assert_eq!(result.next_raw().unwrap(), None);
@@ -1761,6 +1809,7 @@ fn missing_cluster_loader_failure_and_empty_pd_address_fail_before_client_dispat
             regions: VecDeque::new(),
         }),
         DirectUnaryRuntimeConfig::default(),
+        tidb_txnkv::lock::FixedTimestampSource(1 << 18),
     )
     .err()
     .unwrap();
@@ -1773,7 +1822,7 @@ fn missing_cluster_loader_failure_and_empty_pd_address_fail_before_client_dispat
     empty.stores[0].address.clear();
     let mut runtime =
         InjectedQueryRuntime::new(transport(Rc::clone(&calls), std::iter::empty(), [empty]));
-    let mut result = select_result(&mut runtime, &TransportRequest::new(metadata("a", "z")));
+    let mut result = select_result(&mut runtime, &transport_request(metadata("a", "z")));
     let error = result.next_raw().unwrap_err().to_string();
     assert!(error.contains("MissingAddress(202)"), "{error}");
     assert!(calls.borrow().is_empty());
@@ -1785,7 +1834,7 @@ fn missing_cluster_loader_failure_and_empty_pd_address_fail_before_client_dispat
     ));
     let error = runtime
         .select_with_runtime_stats(
-            &TransportRequest::new(metadata("a", "z")),
+            &transport_request(metadata("a", "z")),
             SelectInput::default(),
             QueryResultContext::new(Vec::new(), WarningCollector::new()),
             Vec::new(),
@@ -1812,7 +1861,7 @@ fn unsupported_operation_fails_before_preparing_or_sending() {
     ));
     let error = runtime
         .select(
-            &TransportRequest::new(metadata("a", "z")),
+            &transport_request(metadata("a", "z")),
             SelectInput::default(),
             QueryResultContext::new(Vec::new(), WarningCollector::new()),
         )
@@ -1846,7 +1895,7 @@ fn unsupported_replica_policy_fails_before_pd_or_tikv() {
 
     let error = runtime
         .select_with_runtime_stats(
-            &TransportRequest::new(closest_with_labels),
+            &transport_request(closest_with_labels),
             SelectInput::default(),
             QueryResultContext::new(Vec::new(), WarningCollector::new()),
             Vec::new(),
@@ -1885,7 +1934,7 @@ fn unsupported_request_shape_fails_before_pd_or_tikv() {
 
         assert!(runtime
             .select_with_runtime_stats(
-                &TransportRequest::new(invalid),
+                &transport_request(invalid),
                 SelectInput::default(),
                 QueryResultContext::new(Vec::new(), WarningCollector::new()),
                 Vec::new(),

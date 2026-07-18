@@ -16,7 +16,7 @@
 
 use std::sync::{
     atomic::{AtomicU32, AtomicU64, Ordering},
-    Arc,
+    Arc, Mutex, Weak,
 };
 use tidb_txnkv::UnaryCancellation;
 
@@ -48,12 +48,45 @@ impl KillHandle {
 #[derive(Debug, Default)]
 pub struct CancelHandle {
     cancellation: UnaryCancellation,
+    children: Mutex<Vec<Weak<Self>>>,
 }
 
 impl CancelHandle {
-    /// Marks this request as cancelled.
+    /// Marks this scope and every live child request as cancelled.
     pub fn cancel(&self) {
         self.cancellation.cancel();
+        let mut children = self
+            .children
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        children.retain(|child| {
+            let Some(child) = child.upgrade() else {
+                return false;
+            };
+            child.cancel();
+            true
+        });
+    }
+
+    /// Creates one request-local cancellation authority linked to this scope.
+    ///
+    /// Registration and the parent cancellation check share one mutex. A
+    /// concurrent parent cancellation therefore either observes this child
+    /// in the registry or completes before the child checks the parent state.
+    #[must_use]
+    pub fn request_child(self: &Arc<Self>) -> Arc<Self> {
+        let child = Arc::new(Self::default());
+        let mut children = self
+            .children
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        children.retain(|child| child.strong_count() > 0);
+        if self.is_cancelled() {
+            child.cancel();
+        } else {
+            children.push(Arc::downgrade(&child));
+        }
+        child
     }
 
     /// Returns whether cancellation has been requested.

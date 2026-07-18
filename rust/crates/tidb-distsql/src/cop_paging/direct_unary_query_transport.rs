@@ -25,6 +25,7 @@
 use std::cell::{RefCell, RefMut};
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::query_runtime::{
@@ -32,7 +33,8 @@ use crate::query_runtime::{
     QueryTransport,
 };
 use crate::{
-    CoprCache, CoprCacheConfig, ResponseChannelEvent, TransportRequest, TransportRequestError,
+    CancelHandle, CoprCache, CoprCacheConfig, ResponseChannelEvent, TransportRequest,
+    TransportRequestError,
 };
 use prost::Message;
 use tidb_txnkv::region::{
@@ -77,10 +79,9 @@ pub struct DirectUnaryRuntimeConfig {
     /// zero `time.Time`, so the first real response replaces the seed. A
     /// function pointer keeps that contract deterministic in focused tests.
     pub observation_time: fn() -> Duration,
-    /// Cancellation and sleeping owner for region-recovery delays.
-    pub region_retry_control: Rc<dyn RegionRetryControl>,
-    /// Owner that connects execution cancellation to each unary call.
-    pub active_unary_cancellation: Rc<dyn ActiveUnaryCancellation>,
+    /// Injectable wait implementation for deterministic retry tests.
+    /// Cancellation always comes from the request-owned carrier passed here.
+    pub region_retry_waiter: Rc<dyn RegionRetryWaiter>,
     /// Effective sleep budget shared by both retry levels for one region ID.
     pub region_retry_max_sleep: Duration,
 }
@@ -95,8 +96,7 @@ impl std::fmt::Debug for DirectUnaryRuntimeConfig {
             .field("cache", &self.cache)
             .field("trace", &self.trace)
             .field("observation_time", &"fn() -> Duration")
-            .field("region_retry_control", &self.region_retry_control)
-            .field("active_unary_cancellation", &self.active_unary_cancellation)
+            .field("region_retry_waiter", &self.region_retry_waiter)
             .field("region_retry_max_sleep", &self.region_retry_max_sleep)
             .finish()
     }
@@ -111,29 +111,9 @@ impl Default for DirectUnaryRuntimeConfig {
             cache: None,
             trace: None,
             observation_time: system_observation_time,
-            region_retry_control: Rc::new(ThreadRegionRetryControl),
-            active_unary_cancellation: Rc::new(NoActiveUnaryCancellation),
+            region_retry_waiter: Rc::new(ExactRegionRetryWaiter),
             region_retry_max_sleep: Duration::from_secs(20),
         }
-    }
-}
-
-/// Supplies the cancellation carrier for one address-directed call.
-///
-/// The default preserves Campaign 12 behavior. The Campaign 13 cancellation
-/// leaf connects the execution owner by implementing this frozen seam; it
-/// does not own another worker, channel, deadline, or retry loop.
-pub trait ActiveUnaryCancellation: std::fmt::Debug {
-    /// Returns the carrier that may interrupt the next in-flight call.
-    fn cancellation_for_call(&self) -> UnaryCancellation;
-}
-
-#[derive(Debug)]
-struct NoActiveUnaryCancellation;
-
-impl ActiveUnaryCancellation for NoActiveUnaryCancellation {
-    fn cancellation_for_call(&self) -> UnaryCancellation {
-        UnaryCancellation::new()
     }
 }
 
@@ -171,54 +151,21 @@ pub trait LockedResponseDelegate<C, L>: std::fmt::Debug {
     ) -> Result<LockedResponseAction, String>;
 }
 
-#[derive(Debug)]
-struct FailClosedLockedResponse;
-
-impl<C, L> LockedResponseDelegate<C, L> for FailClosedLockedResponse {
-    fn handle_locked_response(
-        &self,
-        _runtime: &SharedReadRuntime<C, L>,
-        _observation: LockedResponseObservation,
-    ) -> Result<LockedResponseAction, String> {
-        Err("optimistic lock recovery is not installed".to_owned())
-    }
-}
-
-/// Cancellation result returned before retry-side mutation or dispatch.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct RegionRetryCancelled;
-
-impl std::fmt::Display for RegionRetryCancelled {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("region retry cancelled")
-    }
-}
-
-impl std::error::Error for RegionRetryCancelled {}
-
-/// Injected cancellation-aware sleeper for response-owned region recovery.
+/// Injectable wait mechanism for response-owned region recovery.
 ///
-/// This seam deliberately does not claim cancellation of an active blocking
-/// `DirectUnaryClient::send_request` call.
-pub trait RegionRetryControl: std::fmt::Debug {
-    /// Rejects work before cache mutation, PD lookup, or TiKV dispatch.
-    fn check_cancelled(&self) -> Result<(), RegionRetryCancelled>;
-
-    /// Sleeps one already-reserved delay, returning early on cancellation.
-    fn sleep(&self, delay: Duration) -> Result<(), RegionRetryCancelled>;
+/// The request-owned carrier remains the sole cancellation authority. Test
+/// waiters may avoid wall-clock delay, but cannot substitute another token.
+pub trait RegionRetryWaiter: std::fmt::Debug {
+    /// Returns `true` when the supplied canonical carrier was cancelled.
+    fn wait(&self, cancellation: &UnaryCancellation, delay: Duration) -> bool;
 }
 
 #[derive(Debug)]
-struct ThreadRegionRetryControl;
+struct ExactRegionRetryWaiter;
 
-impl RegionRetryControl for ThreadRegionRetryControl {
-    fn check_cancelled(&self) -> Result<(), RegionRetryCancelled> {
-        Ok(())
-    }
-
-    fn sleep(&self, delay: Duration) -> Result<(), RegionRetryCancelled> {
-        std::thread::sleep(delay);
-        Ok(())
+impl RegionRetryWaiter for ExactRegionRetryWaiter {
+    fn wait(&self, cancellation: &UnaryCancellation, delay: Duration) -> bool {
+        cancellation.wait_timeout(delay)
     }
 }
 
@@ -256,8 +203,8 @@ pub enum DirectUnaryTransportError {
     RegionRecovery(String),
     /// Pinned client-go classified the region error as terminal.
     RegionTerminal(String),
-    /// Cancellation won before retry-side mutation, sleep, PD, or dispatch.
-    RetryCancelled,
+    /// Caller cancellation won before any further query mutation.
+    CallerCancelled,
     /// A locked response could not be handled by the bounded lock delegate.
     LockRecovery(String),
 }
@@ -279,7 +226,7 @@ impl DirectUnaryTransportError {
             Self::ResponseState(_) => "response_state",
             Self::RegionRecovery(_) => "region_recovery",
             Self::RegionTerminal(_) => "region_terminal",
-            Self::RetryCancelled => "retry_cancelled",
+            Self::CallerCancelled => "caller_cancelled",
             Self::LockRecovery(_) => "lock_recovery",
         }
     }
@@ -311,7 +258,7 @@ impl std::fmt::Display for DirectUnaryTransportError {
             }
             Self::RegionRecovery(message) => write!(formatter, "region recovery failed: {message}"),
             Self::RegionTerminal(message) => write!(formatter, "terminal region error: {message}"),
-            Self::RetryCancelled => formatter.write_str("region retry cancelled"),
+            Self::CallerCancelled => formatter.write_str("query cancelled by caller"),
             Self::LockRecovery(message) => write!(formatter, "lock recovery failed: {message}"),
         }
     }
@@ -368,24 +315,42 @@ impl ReplicaReadSeed {
 }
 
 impl<C, L: RegionLoader> DirectUnaryQueryTransport<C, L> {
-    /// Retains one client and one PD-backed region-cache authority.
-    pub fn new(
+    /// Retains one client, one PD-backed cache, and a required timestamp
+    /// authority for production optimistic-lock recovery.
+    pub fn new<S>(
         client: C,
         region_cache: RegionCache<L>,
         config: DirectUnaryRuntimeConfig,
-    ) -> Result<Self, DirectUnaryTransportError> {
-        Self::with_shared_runtime(SharedReadRuntime::new(client, region_cache), config)
+        timestamp_source: S,
+    ) -> Result<Self, DirectUnaryTransportError>
+    where
+        C: tidb_txnkv::lock::LockRecoveryClient,
+        L: RegionRecoveryLoader,
+        S: tidb_txnkv::lock::TimestampSource + 'static,
+    {
+        Self::with_shared_runtime(
+            SharedReadRuntime::new(client, region_cache),
+            config,
+            timestamp_source,
+        )
     }
 
-    /// Retains already-shared client/cache handles without creating authority.
-    pub fn with_shared_runtime(
+    /// Retains already-shared client/cache handles and installs required
+    /// production lock recovery without creating another runtime authority.
+    pub fn with_shared_runtime<S>(
         shared_runtime: SharedReadRuntime<C, L>,
         config: DirectUnaryRuntimeConfig,
-    ) -> Result<Self, DirectUnaryTransportError> {
+        timestamp_source: S,
+    ) -> Result<Self, DirectUnaryTransportError>
+    where
+        C: tidb_txnkv::lock::LockRecoveryClient,
+        L: RegionRecoveryLoader,
+        S: tidb_txnkv::lock::TimestampSource + 'static,
+    {
         Self::with_locked_response_delegate(
             shared_runtime,
             config,
-            Rc::new(FailClosedLockedResponse),
+            Rc::new(super::OptimisticLockRecovery::new(timestamp_source)),
         )
     }
 
@@ -417,6 +382,14 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
         request: &TransportRequest,
         dispatch: &QueryDispatch,
     ) -> Result<Option<Self::Response>, String> {
+        let cancellation = Arc::clone(
+            request
+                .request_cancellation()
+                .map_err(|error| DirectUnaryTransportError::Request(error).to_string())?,
+        );
+        if cancellation.is_cancelled() {
+            return Err(DirectUnaryTransportError::CallerCancelled.to_string());
+        }
         if dispatch.operation != QueryOperation::SelectWithRuntimeStats {
             return Err(
                 DirectUnaryTransportError::UnsupportedOperation(dispatch.operation).to_string(),
@@ -471,10 +444,22 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
             .to_string());
         }
         let selection_seed = self.replica_read_seed.next();
+        let timeout = if metadata.session.tikv_client_read_timeout_ms > 0 {
+            Duration::from_millis(metadata.session.tikv_client_read_timeout_ms)
+        } else {
+            self.config.default_timeout
+        };
+        let bound_at = request
+            .bound_at()
+            .map_err(|error| DirectUnaryTransportError::Request(error).to_string())?;
+        let call =
+            UnaryCallContext::with_deadline(bound_at + timeout, cancellation.unary_cancellation());
 
         Ok(Some(DirectUnaryQueryResponse {
             shared_runtime: self.shared_runtime.clone(),
             locked_response_delegate: Rc::clone(&self.locked_response_delegate),
+            cancellation,
+            call,
             selection_seed,
             read_policy,
             metadata: metadata.clone(),
@@ -591,6 +576,8 @@ fn task_region_ver_id(
 pub struct DirectUnaryQueryResponse<C, L> {
     shared_runtime: SharedReadRuntime<C, L>,
     locked_response_delegate: Rc<dyn LockedResponseDelegate<C, L>>,
+    cancellation: Arc<CancelHandle>,
+    call: UnaryCallContext,
     selection_seed: u32,
     read_policy: ReadPolicy,
     metadata: crate::KvRequestMetadata,
@@ -722,10 +709,6 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             self.cluster_id,
             &selected,
         );
-        let timeout = request
-            .timeout_override_ms
-            .map(Duration::from_millis)
-            .unwrap_or(self.config.default_timeout);
         if request.endpoint != EndpointType::TiKv {
             return Err(DirectUnaryTransportError::ResponseState(
                 "direct unary request selected a non-TiKV endpoint",
@@ -744,20 +727,16 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             encoded_request: request.encoded_request,
         };
         let dispatch_started = Instant::now();
-        let call = UnaryCallContext::new(
-            timeout,
-            self.config
-                .active_unary_cancellation
-                .cancellation_for_call(),
-        );
+        let call = self.call.clone();
         let send_result = try_borrow_client(self.shared_runtime.client())?
             .send_request_with_context(&selected.attempt.address, &client_request, &call);
         let dispatch_duration = dispatch_started.elapsed();
-        if matches!(&send_result, Err(DirectUnaryClientError::CallerCancelled)) {
-            let Err(error) = send_result else {
-                unreachable!("caller-cancelled match checked above")
-            };
-            return Err(DirectUnaryTransportError::Client(error));
+        // Go checks ctx.Err after SendRequest returns. Caller cancellation has
+        // precedence over a simultaneous transport error or successful reply.
+        if self.cancellation.is_cancelled()
+            || matches!(&send_result, Err(DirectUnaryClientError::CallerCancelled))
+        {
+            return Err(DirectUnaryTransportError::CallerCancelled);
         }
         let raw_response = match send_result {
             Ok(response) => response,
@@ -807,7 +786,14 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                         call,
                     },
                 )
-                .map_err(DirectUnaryTransportError::LockRecovery)?;
+                .map_err(|error| {
+                    if self.cancellation.is_cancelled() {
+                        DirectUnaryTransportError::CallerCancelled
+                    } else {
+                        DirectUnaryTransportError::LockRecovery(error)
+                    }
+                })?;
+            self.check_retry_active()?;
             match action {
                 LockedResponseAction::RetrySameTask => {
                     let failed = self.runtime.consume_failed_attempt(attempt_id)?;
@@ -1092,13 +1078,10 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
     }
 
     fn check_retry_active(&self) -> Result<(), DirectUnaryTransportError> {
-        if self.closed {
-            return Err(DirectUnaryTransportError::RetryCancelled);
+        if self.closed || self.cancellation.is_cancelled() {
+            return Err(DirectUnaryTransportError::CallerCancelled);
         }
-        self.config
-            .region_retry_control
-            .check_cancelled()
-            .map_err(|_| DirectUnaryTransportError::RetryCancelled)
+        Ok(())
     }
 
     fn sleep_retry(&self, delay: Duration) -> Result<(), DirectUnaryTransportError> {
@@ -1106,16 +1089,23 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         if delay.is_zero() {
             return Ok(());
         }
-        self.config
-            .region_retry_control
-            .sleep(delay)
-            .map_err(|_| DirectUnaryTransportError::RetryCancelled)?;
+        if self
+            .config
+            .region_retry_waiter
+            .wait(&self.cancellation.unary_cancellation(), delay)
+        {
+            return Err(DirectUnaryTransportError::CallerCancelled);
+        }
         self.check_retry_active()
     }
 
     fn fail<T>(&mut self, error: DirectUnaryTransportError) -> Result<T, QueryResponseError> {
         self.closed = true;
-        Err(QueryResponseError::Source(error.to_string()))
+        if matches!(error, DirectUnaryTransportError::CallerCancelled) {
+            Err(QueryResponseError::Cancelled)
+        } else {
+            Err(QueryResponseError::Source(error.to_string()))
+        }
     }
 }
 
@@ -1134,6 +1124,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> QueryResponse
     }
 
     fn close(&mut self) {
+        self.cancellation.cancel();
         self.closed = true;
     }
 }

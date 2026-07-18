@@ -295,7 +295,7 @@ fn unary_rpc_attaches_context_once_reuses_address_and_recreates_after_close() {
 }
 
 #[test]
-fn unary_rpc_propagates_caller_timeout_as_grpc_deadline_metadata() {
+fn unary_rpc_propagates_remaining_absolute_deadline_as_grpc_timeout_metadata() {
     // client-go/internal/client/client.go:403-406 context.WithTimeout.
     let grpc_timeouts = Arc::new(Mutex::new(Vec::new()));
     let server = TestServer::start(RecordingTikv {
@@ -314,7 +314,16 @@ fn unary_rpc_propagates_caller_timeout_as_grpc_deadline_metadata() {
             Duration::from_millis(777),
         )
         .unwrap();
-    assert_eq!(*grpc_timeouts.lock().unwrap(), [Some("777000u".to_owned())]);
+    let recorded = grpc_timeouts.lock().unwrap();
+    let timeout = recorded[0]
+        .as_deref()
+        .expect("gRPC timeout metadata")
+        .strip_suffix('u')
+        .expect("subsecond timeout uses microseconds")
+        .parse::<u64>()
+        .expect("numeric gRPC timeout");
+    assert!(timeout > 0);
+    assert!(timeout <= 777_000);
 }
 
 #[test]

@@ -146,6 +146,10 @@ fn go_serial_select_results_close_calls_every_source_and_returns_last_error() {
 #[test]
 fn unsupported_result_capabilities_are_explicit() {
     assert_eq!(
+        SelectResultError::Cancelled.to_string(),
+        "query cancelled by caller"
+    );
+    assert_eq!(
         SelectResultRow::new(4, "row").map(str::len),
         SelectResultRow::new(4, 3)
     );

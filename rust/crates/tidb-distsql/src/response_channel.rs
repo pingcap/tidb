@@ -149,6 +149,8 @@ pub enum ResponseChannelError {
     RowDecode(String),
     /// An owned response source reported a terminal error.
     Source(String),
+    /// The canonical query cancellation interrupted the source.
+    Cancelled,
     /// The owned source is still open but has no response available yet.
     Pending,
 }
@@ -186,6 +188,7 @@ impl fmt::Display for ResponseChannelError {
             ),
             Self::RowDecode(message) => write!(f, "failed to decode select response row: {message}"),
             Self::Source(message) => f.write_str(message),
+            Self::Cancelled => f.write_str("query cancelled by caller"),
             Self::Pending => f.write_str("DistSQL response source is still open and pending"),
         }
     }
@@ -424,6 +427,7 @@ impl SelectResponseSource {
                 Err(QueryResponseError::Source(message)) => {
                     Err(ResponseChannelError::Source(message))
                 }
+                Err(QueryResponseError::Cancelled) => Err(ResponseChannelError::Cancelled),
             },
         }
     }

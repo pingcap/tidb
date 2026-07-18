@@ -94,6 +94,7 @@ fn cancellation_carrier_is_monotonic_and_bound_to_call_context() {
     cancellation.cancel();
     assert!(call.cancellation().is_cancelled());
     assert!(lock_call.cancellation().is_cancelled());
-    assert_eq!(call.timeout(), std::time::Duration::from_millis(250));
-    assert_eq!(lock_call.timeout(), call.timeout());
+    assert_eq!(lock_call.deadline(), call.deadline());
+    assert!(call.timeout() <= std::time::Duration::from_millis(250));
+    assert!(!call.timeout().is_zero());
 }

@@ -37,6 +37,8 @@ pub enum QueryResponseError {
     Pending,
     /// The response source returned its first terminal error.
     Source(String),
+    /// The canonical query cancellation interrupted response consumption.
+    Cancelled,
 }
 
 impl std::fmt::Display for QueryResponseError {
@@ -44,6 +46,7 @@ impl std::fmt::Display for QueryResponseError {
         match self {
             Self::Pending => formatter.write_str("DistSQL query response is still pending"),
             Self::Source(message) => formatter.write_str(message),
+            Self::Cancelled => formatter.write_str("query cancelled by caller"),
         }
     }
 }
