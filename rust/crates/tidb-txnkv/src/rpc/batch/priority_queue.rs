@@ -16,6 +16,7 @@
 
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
+use std::mem;
 
 /// A request that can be ordered and retired by the batch scheduler.
 pub trait PriorityItem {
@@ -26,12 +27,11 @@ pub trait PriorityItem {
 #[derive(Debug)]
 struct HeapItem<T> {
     value: T,
-    sequence: u64,
 }
 
 impl<T: PriorityItem> PartialEq for HeapItem<T> {
     fn eq(&self, other: &Self) -> bool {
-        self.value.priority() == other.value.priority() && self.sequence == other.sequence
+        self.value.priority() == other.value.priority()
     }
 }
 
@@ -45,27 +45,20 @@ impl<T: PriorityItem> PartialOrd for HeapItem<T> {
 
 impl<T: PriorityItem> Ord for HeapItem<T> {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.value
-            .priority()
-            .cmp(&other.value.priority())
-            // Earlier arrivals win ties. Go's heap keeps the first equal item at
-            // the root; making the tie explicit avoids depending on heap layout.
-            .then_with(|| other.sequence.cmp(&self.sequence))
+        self.value.priority().cmp(&other.value.priority())
     }
 }
 
-/// Highest-priority-first queue with stable ordering for equal priorities.
+/// Source-shaped highest-priority-first queue.
 #[derive(Debug)]
 pub struct PriorityQueue<T> {
     heap: BinaryHeap<HeapItem<T>>,
-    next_sequence: u64,
 }
 
 impl<T> Default for PriorityQueue<T> {
     fn default() -> Self {
         Self {
             heap: BinaryHeap::new(),
-            next_sequence: 0,
         }
     }
 }
@@ -84,9 +77,7 @@ impl<T: PriorityItem> PriorityQueue<T> {
     }
 
     pub fn push(&mut self, value: T) {
-        let sequence = self.next_sequence;
-        self.next_sequence = self.next_sequence.wrapping_add(1);
-        self.heap.push(HeapItem { value, sequence });
+        self.heap.push(HeapItem { value });
     }
 
     pub fn highest_priority(&self) -> u64 {
@@ -97,13 +88,20 @@ impl<T: PriorityItem> PriorityQueue<T> {
         self.heap.pop().map(|entry| entry.value)
     }
 
-    /// Removes at most `count` items in priority order.
+    /// Removes at most `count` items with client-go's exact `Take` ordering.
     ///
-    /// Moving each item out of the heap also clears the queue's owning
-    /// reference. This is the Rust equivalent of the explicit backing-array
-    /// clearing required by client-go's `PriorityQueue.Take`.
+    /// Partial takes pop in priority order. A full take preserves the heap's
+    /// raw backing order, matching the source fast path. Moving the heap out
+    /// also clears every queue-owned reference.
     pub fn take(&mut self, count: usize) -> Vec<T> {
-        let count = count.min(self.len());
+        if count >= self.len() {
+            return mem::take(&mut self.heap)
+                .into_vec()
+                .into_iter()
+                .map(|entry| entry.value)
+                .collect();
+        }
+
         let mut values = Vec::with_capacity(count);
         for _ in 0..count {
             if let Some(value) = self.pop() {

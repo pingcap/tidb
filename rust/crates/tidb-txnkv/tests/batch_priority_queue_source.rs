@@ -86,7 +86,7 @@ fn test_priority() {
     queue.clean_canceled();
     assert!(queue.is_empty());
 
-    // Equal priorities retain arrival order rather than depending on heap layout.
+    // A full Take exposes the raw heap layout, as in client-go.
     for value in 6..=8 {
         queue.push(FakeItem {
             priority: 1,
@@ -143,4 +143,42 @@ fn test_priority_queue_take_all_leaves_references_in_backing_array() {
     queue.clean_canceled();
     assert!(queue.is_empty());
     assert_eq!(Arc::strong_count(&retained), 1);
+}
+
+#[test]
+fn full_take_preserves_source_heap_layout_while_partial_take_pops() {
+    let mut queue = PriorityQueue::new();
+    for priority in [1, 5, 4, 3, 2] {
+        queue.push(FakeItem {
+            priority,
+            value: priority as usize,
+            canceled: false,
+            retained: None,
+        });
+    }
+    assert_eq!(
+        queue
+            .take(queue.len())
+            .into_iter()
+            .map(|item| item.value)
+            .collect::<Vec<_>>(),
+        vec![5, 3, 4, 1, 2]
+    );
+
+    for priority in [1, 5, 4, 3, 2] {
+        queue.push(FakeItem {
+            priority,
+            value: priority as usize,
+            canceled: false,
+            retained: None,
+        });
+    }
+    assert_eq!(
+        queue
+            .take(3)
+            .into_iter()
+            .map(|item| item.value)
+            .collect::<Vec<_>>(),
+        vec![5, 4, 3]
+    );
 }

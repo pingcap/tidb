@@ -27,10 +27,15 @@ use batch::{
     DEFAULT_BATCH_POLICY, HIGH_TASK_PRIORITY,
 };
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TestBatchError {
+    Closed,
+}
+
 #[derive(Debug, Default)]
 struct TestCompletion {
     canceled: AtomicBool,
-    failure: Mutex<Option<String>>,
+    failure: Mutex<Option<TestBatchError>>,
 }
 
 impl TestCompletion {
@@ -38,24 +43,24 @@ impl TestCompletion {
         self.canceled.store(true, Ordering::Release);
     }
 
-    fn failure(&self) -> Option<String> {
-        self.failure.lock().unwrap().clone()
+    fn failure(&self) -> Option<TestBatchError> {
+        *self.failure.lock().unwrap()
     }
 }
 
-impl BatchEntryCompletion for TestCompletion {
+impl BatchEntryCompletion<TestBatchError> for TestCompletion {
     fn is_canceled(&self) -> bool {
         self.canceled.load(Ordering::Acquire)
     }
 
-    fn fail(&self, reason: &str) {
-        *self.failure.lock().unwrap() = Some(reason.to_owned());
+    fn fail(&self, error: TestBatchError) {
+        *self.failure.lock().unwrap() = Some(error);
     }
 }
 
-fn entry<T>(payload: T) -> (BatchEntry<T>, Arc<TestCompletion>) {
+fn entry<T>(payload: T) -> (BatchEntry<T, TestBatchError>, Arc<TestCompletion>) {
     let completion = Arc::new(TestCompletion::default());
-    let scheduler_completion: Arc<dyn BatchEntryCompletion> = completion.clone();
+    let scheduler_completion: Arc<dyn BatchEntryCompletion<TestBatchError>> = completion.clone();
     (BatchEntry::new(payload, scheduler_completion), completion)
 }
 
@@ -147,10 +152,10 @@ fn test_batch_commands_builder() {
         cancellation_states.push(completion);
         scheduler.push(entry);
     }
-    assert_eq!(scheduler.cancel_all("error").len(), 3);
+    assert_eq!(scheduler.cancel_all(TestBatchError::Closed).len(), 3);
     assert!(cancellation_states
         .iter()
-        .all(|state| state.failure().as_deref() == Some("error")));
+        .all(|state| state.failure() == Some(TestBatchError::Closed)));
     scheduler.reset();
     assert_eq!(scheduler.len(), 0);
     assert_ne!(scheduler.id_alloc(), 0);
@@ -296,13 +301,48 @@ fn test_batch_policy() {
 
     for invalid_json in [
         r#"{"t":+1}"#,
-        r#"{"v":-1}"#,
-        r#"{"w":1.1}"#,
-        r#"{"t":1e308}"#,
+        r#"{"v":1.5}"#,
+        r#"{"v":"1"}"#,
+        r#"{"t":[]}"#,
+        r#"{"v":9223372036854775808}"#,
     ] {
         let (_, valid) = BatchTrigger::from_policy(invalid_json);
         assert!(!valid, "{invalid_json}");
     }
+
+    // encoding/json accepts the full signed-int/float field domain. These are
+    // valid custom policies even when the values are unusual; policy behavior,
+    // not parsing, owns their source semantics.
+    let (mut permissive, valid) = BatchTrigger::from_policy(
+        r#"{"v":-1,"n":9223372036854775807,"t":-0.5,"w":1.1,"p":-1.0,"q":2.0}"#,
+    );
+    assert!(valid);
+    assert_eq!(
+        permissive.options(),
+        BatchPolicyOptions {
+            version: -1,
+            max_arrival_intervals: i64::MAX,
+            wait_seconds: -0.5,
+            weight: 1.1,
+            threshold: -1.0,
+            wait_size_rounding: 2.0,
+        }
+    );
+    assert_eq!(permissive.turbo_wait_time(), Duration::ZERO);
+    assert!(permissive.need_fetch_more(Duration::from_secs(1)));
+
+    let (mut unknown_version, valid) =
+        BatchTrigger::from_policy(r#"{"v":3,"t":1e308,"w":2,"p":2,"q":2}"#);
+    assert!(valid);
+    assert_eq!(unknown_version.options().wait_seconds, 1e308);
+    assert_eq!(unknown_version.turbo_wait_time(), Duration::ZERO);
+    assert!(unknown_version.need_fetch_more(Duration::from_secs(1)));
+
+    let (null_fields, valid) =
+        BatchTrigger::from_policy(r#"{"v":null,"n":null,"t":null,"w":null,"p":null,"q":null}"#);
+    assert!(valid);
+    assert_eq!(null_fields.options(), basic.options());
+
     let (unknown_fields, valid) =
         BatchTrigger::from_policy(r#"{"t":0.0001,"label":"ignored","nested":{"enabled":true}}"#);
     assert!(valid);

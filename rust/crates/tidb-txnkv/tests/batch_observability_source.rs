@@ -17,11 +17,11 @@
 #[path = "../src/rpc/batch/mod.rs"]
 mod batch;
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use batch::{
     terminal_outcome, BatchRequestObservation, BatchRequestOutcome, BatchRequestProgress,
-    BatchRequestStage, BatchRequestState, BatchTerminalError,
+    BatchRequestStage, BatchRequestState, BatchStreamState, BatchTerminalError,
 };
 
 #[test]
@@ -175,11 +175,14 @@ fn test_write_batch_commands_entry_progress() {
         "prefix=EntryProgress{batch:4ms, size:1, send:1ns, ack:4ms, recv:4ms}"
     );
 
-    let acknowledged = BatchRequestProgress::default();
+    let arrived_at = Instant::now();
+    let acknowledged = BatchRequestProgress::with_arrival(arrived_at, None);
     let acknowledged_state = BatchRequestState::default();
+    let acknowledged_stream = BatchStreamState::default();
     acknowledged_state.set_batch_size(1);
-    acknowledged_state.record_send_start_after_arrival(Duration::from_millis(4));
-    acknowledged_state.record_max_response_request_id(5);
+    acknowledged_state.record_send_started_at(arrived_at + Duration::from_millis(4));
+    acknowledged_stream.record_max_response_request_id(5);
+    acknowledged_state.attach_stream_state(acknowledged_stream);
     acknowledged.record_batch_selected(4, Duration::from_millis(4), acknowledged_state);
     assert_eq!(
         acknowledged.format(Duration::from_millis(10)),
@@ -193,6 +196,68 @@ fn test_write_batch_commands_entry_progress() {
     );
 }
 
+#[test]
+fn shared_send_start_is_derived_from_each_entry_arrival() {
+    let first_arrival = Instant::now();
+    let second_arrival = first_arrival + Duration::from_millis(4);
+    let send_started_at = first_arrival + Duration::from_millis(10);
+    let state = BatchRequestState::default();
+    state.set_batch_size(2);
+    state.record_send_started_at(send_started_at);
+    state.record_sent_after_send_start(Duration::from_millis(2));
+
+    let first = BatchRequestProgress::with_arrival(first_arrival, None);
+    first.record_batch_selected(1, Duration::from_millis(3), state.clone());
+    let second = BatchRequestProgress::with_arrival(second_arrival, None);
+    second.record_batch_selected(2, Duration::from_millis(1), state);
+
+    assert_eq!(
+        first.format(Duration::from_millis(15)),
+        "EntryProgress{batch:3ms, size:2, send:9ms}"
+    );
+    assert_eq!(
+        second.format(Duration::from_millis(11)),
+        "EntryProgress{batch:1ms, size:2, send:7ms}"
+    );
+}
+
+#[test]
+fn successive_groups_share_stream_ack_progress() {
+    let stream = BatchStreamState::default();
+    let first_group = BatchRequestState::default();
+    let second_group = BatchRequestState::default();
+    first_group.set_batch_size(1);
+    second_group.set_batch_size(1);
+    first_group.attach_stream_state(stream.clone());
+    second_group.attach_stream_state(stream.clone());
+
+    let first = BatchRequestProgress::default();
+    first.record_batch_selected(4, Duration::from_millis(1), first_group.clone());
+    let second = BatchRequestProgress::default();
+    second.record_batch_selected(7, Duration::from_millis(1), second_group.clone());
+
+    assert!(!first_group.shares_state_with(&second_group));
+    assert!(first_group
+        .stream_state()
+        .unwrap()
+        .shares_state_with(&second_group.stream_state().unwrap()));
+    stream.record_max_response_request_id(5);
+    assert_eq!(
+        first.format(Duration::from_millis(10)),
+        "EntryProgress{batch:1ms, size:1, send:9ms, ack:yes}"
+    );
+    assert_eq!(
+        second.format(Duration::from_millis(10)),
+        "EntryProgress{batch:1ms, size:1, send:9ms}"
+    );
+
+    stream.record_max_response_request_id(7);
+    assert_eq!(
+        second.format(Duration::from_millis(10)),
+        "EntryProgress{batch:1ms, size:1, send:9ms, ack:yes}"
+    );
+}
+
 fn progress(batched_ms: u64, sent_ms: u64, received_ms: u64) -> BatchRequestProgress {
     progress_with_host(batched_ms, sent_ms, received_ms, None)
 }
@@ -203,12 +268,13 @@ fn progress_with_host(
     received_ms: u64,
     forwarded_host: Option<String>,
 ) -> BatchRequestProgress {
-    let progress = BatchRequestProgress::new(forwarded_host);
+    let arrived_at = Instant::now();
+    let progress = BatchRequestProgress::with_arrival(arrived_at, forwarded_host);
     if batched_ms > 0 {
         let batch_state = BatchRequestState::default();
         if sent_ms > 0 || received_ms > 0 {
             batch_state.set_batch_size(1);
-            batch_state.record_send_start_after_arrival(Duration::from_millis(batched_ms));
+            batch_state.record_send_started_at(arrived_at + Duration::from_millis(batched_ms));
             if sent_ms > 0 {
                 batch_state.record_sent_after_send_start(
                     Duration::from_millis(sent_ms - batched_ms).max(Duration::from_nanos(1)),

@@ -67,10 +67,37 @@ pub struct BatchRequestObservation {
 #[derive(Debug, Default)]
 struct BatchRequestStateInner {
     batch_size: AtomicUsize,
-    send_start_after_arrival_ns: AtomicU64,
+    send_started_at: Mutex<Option<Instant>>,
     sent_after_send_start_ns: AtomicU64,
     first_response_after_send_start_ns: AtomicU64,
+    stream_state: Mutex<Option<BatchStreamState>>,
+}
+
+#[derive(Debug, Default)]
+struct BatchStreamStateInner {
     max_response_request_id: AtomicU64,
+}
+
+/// Response progress shared by every batch request on one concrete stream.
+#[derive(Clone, Debug, Default)]
+pub struct BatchStreamState {
+    inner: Arc<BatchStreamStateInner>,
+}
+
+impl BatchStreamState {
+    pub fn shares_state_with(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
+
+    pub fn record_max_response_request_id(&self, request_id: u64) {
+        self.inner
+            .max_response_request_id
+            .fetch_max(request_id, Ordering::AcqRel);
+    }
+
+    pub fn max_response_request_id(&self) -> u64 {
+        self.inner.max_response_request_id.load(Ordering::Acquire)
+    }
 }
 
 /// State shared by every entry in one concrete BatchCommands request.
@@ -92,10 +119,12 @@ impl BatchRequestState {
         self.inner.batch_size.store(batch_size, Ordering::Release);
     }
 
-    pub fn record_send_start_after_arrival(&self, duration: Duration) {
-        self.inner
-            .send_start_after_arrival_ns
-            .store(nonzero_duration_ns(duration), Ordering::Release);
+    pub fn record_send_started_at(&self, send_started_at: Instant) {
+        *self
+            .inner
+            .send_started_at
+            .lock()
+            .expect("batch send start lock") = Some(send_started_at);
     }
 
     pub fn record_sent_after_send_start(&self, duration: Duration) {
@@ -110,14 +139,20 @@ impl BatchRequestState {
             .store(nonzero_duration_ns(duration), Ordering::Release);
     }
 
-    pub fn record_max_response_request_id(&self, request_id: u64) {
-        self.inner
-            .max_response_request_id
-            .fetch_max(request_id, Ordering::AcqRel);
+    pub fn attach_stream_state(&self, stream_state: BatchStreamState) {
+        *self
+            .inner
+            .stream_state
+            .lock()
+            .expect("batch stream state lock") = Some(stream_state);
     }
 
-    pub fn max_response_request_id(&self) -> u64 {
-        self.inner.max_response_request_id.load(Ordering::Acquire)
+    pub fn stream_state(&self) -> Option<BatchStreamState> {
+        self.inner
+            .stream_state
+            .lock()
+            .expect("batch stream state lock")
+            .clone()
     }
 }
 
@@ -339,6 +374,7 @@ impl BatchRequestProgress {
         request_id > 0
             && self
                 .batch_state()
+                .and_then(|state| state.stream_state())
                 .is_some_and(|state| state.max_response_request_id() >= request_id)
     }
 
@@ -347,11 +383,14 @@ impl BatchRequestProgress {
         let mut sent_ns = 0;
         let mut first_response_ns = 0;
         if let Some(state) = self.batch_state() {
-            let send_start_ns = state
+            let send_started_at = *state
                 .inner
-                .send_start_after_arrival_ns
-                .load(Ordering::Acquire);
-            if send_start_ns > 0 {
+                .send_started_at
+                .lock()
+                .expect("batch send start lock");
+            if let Some(send_started_at) = send_started_at {
+                let send_start_ns =
+                    nonzero_duration_ns(send_started_at.saturating_duration_since(self.arrived_at));
                 let sent_after_start = state.inner.sent_after_send_start_ns.load(Ordering::Acquire);
                 if sent_after_start > 0 {
                     sent_ns = send_start_ns.saturating_add(sent_after_start);

@@ -36,23 +36,23 @@ pub const DEFAULT_BATCH_POLICY: &str = BATCH_POLICY_STANDARD;
 /// The scheduler stores no parallel completion state. The later async adapter
 /// implements this trait with the same once-only handle returned to the pull
 /// caller, so queue cancellation and terminal failure share one authority.
-pub trait BatchEntryCompletion: fmt::Debug + Send + Sync {
+pub trait BatchEntryCompletion<E>: fmt::Debug + Send + Sync {
     fn is_canceled(&self) -> bool;
-    fn fail(&self, reason: &str);
+    fn fail(&self, error: E);
 }
 
 /// One opaque request waiting to be assigned a BatchCommands request ID.
 #[derive(Debug)]
-pub struct BatchEntry<T> {
+pub struct BatchEntry<T, E> {
     payload: T,
     forwarded_host: Option<String>,
     priority: u64,
-    completion: Arc<dyn BatchEntryCompletion>,
+    completion: Arc<dyn BatchEntryCompletion<E>>,
     progress: Arc<BatchRequestProgress>,
 }
 
-impl<T> BatchEntry<T> {
-    pub fn new(payload: T, completion: Arc<dyn BatchEntryCompletion>) -> Self {
+impl<T, E> BatchEntry<T, E> {
+    pub fn new(payload: T, completion: Arc<dyn BatchEntryCompletion<E>>) -> Self {
         Self {
             payload,
             forwarded_host: None,
@@ -74,7 +74,7 @@ impl<T> BatchEntry<T> {
         self
     }
 
-    pub fn completion(&self) -> &dyn BatchEntryCompletion {
+    pub fn completion(&self) -> &dyn BatchEntryCompletion<E> {
         self.completion.as_ref()
     }
 
@@ -95,7 +95,7 @@ impl<T> BatchEntry<T> {
     }
 }
 
-impl<T> PriorityItem for BatchEntry<T> {
+impl<T, E> PriorityItem for BatchEntry<T, E> {
     fn priority(&self) -> u64 {
         self.priority
     }
@@ -106,28 +106,28 @@ impl<T> PriorityItem for BatchEntry<T> {
 }
 
 #[derive(Debug)]
-pub struct ScheduledEntry<T> {
+pub struct ScheduledEntry<T, E> {
     request_id: u64,
-    entry: BatchEntry<T>,
+    entry: BatchEntry<T, E>,
 }
 
-impl<T> ScheduledEntry<T> {
+impl<T, E> ScheduledEntry<T, E> {
     pub fn request_id(&self) -> u64 {
         self.request_id
     }
 
-    pub fn entry(&self) -> &BatchEntry<T> {
+    pub fn entry(&self) -> &BatchEntry<T, E> {
         &self.entry
     }
 }
 
 #[derive(Debug)]
-pub struct BatchGroup<T> {
-    entries: Vec<ScheduledEntry<T>>,
+pub struct BatchGroup<T, E> {
+    entries: Vec<ScheduledEntry<T, E>>,
     state: BatchRequestState,
 }
 
-impl<T> Default for BatchGroup<T> {
+impl<T, E> Default for BatchGroup<T, E> {
     fn default() -> Self {
         Self {
             entries: Vec::new(),
@@ -136,7 +136,7 @@ impl<T> Default for BatchGroup<T> {
     }
 }
 
-impl<T> BatchGroup<T> {
+impl<T, E> BatchGroup<T, E> {
     pub fn len(&self) -> usize {
         self.entries.len()
     }
@@ -145,7 +145,7 @@ impl<T> BatchGroup<T> {
         self.entries.is_empty()
     }
 
-    pub fn entries(&self) -> &[ScheduledEntry<T>] {
+    pub fn entries(&self) -> &[ScheduledEntry<T, E>] {
         &self.entries
     }
 
@@ -153,7 +153,7 @@ impl<T> BatchGroup<T> {
         self.state.clone()
     }
 
-    fn push(&mut self, entry: ScheduledEntry<T>, selected_at: Instant) {
+    fn push(&mut self, entry: ScheduledEntry<T, E>, selected_at: Instant) {
         entry.entry.progress.record_batch_selected_at(
             entry.request_id,
             selected_at,
@@ -165,12 +165,12 @@ impl<T> BatchGroup<T> {
 }
 
 #[derive(Debug)]
-pub struct BatchGroups<T> {
-    direct: Option<BatchGroup<T>>,
-    forwarded: BTreeMap<String, BatchGroup<T>>,
+pub struct BatchGroups<T, E> {
+    direct: Option<BatchGroup<T, E>>,
+    forwarded: BTreeMap<String, BatchGroup<T, E>>,
 }
 
-impl<T> Default for BatchGroups<T> {
+impl<T, E> Default for BatchGroups<T, E> {
     fn default() -> Self {
         Self {
             direct: None,
@@ -179,16 +179,16 @@ impl<T> Default for BatchGroups<T> {
     }
 }
 
-impl<T> BatchGroups<T> {
-    pub fn direct(&self) -> Option<&BatchGroup<T>> {
+impl<T, E> BatchGroups<T, E> {
+    pub fn direct(&self) -> Option<&BatchGroup<T, E>> {
         self.direct.as_ref()
     }
 
-    pub fn forwarded(&self) -> &BTreeMap<String, BatchGroup<T>> {
+    pub fn forwarded(&self) -> &BTreeMap<String, BatchGroup<T, E>> {
         &self.forwarded
     }
 
-    fn push(&mut self, entry: ScheduledEntry<T>, selected_at: Instant) {
+    fn push(&mut self, entry: ScheduledEntry<T, E>, selected_at: Instant) {
         if let Some(host) = entry.entry.forwarded_host.clone() {
             self.forwarded
                 .entry(host)
@@ -204,12 +204,12 @@ impl<T> BatchGroups<T> {
 
 /// Pure request collector shared by future synchronous and asynchronous batch clients.
 #[derive(Debug)]
-pub struct BatchScheduler<T> {
+pub struct BatchScheduler<T, E> {
     id_alloc: u64,
-    entries: PriorityQueue<BatchEntry<T>>,
+    entries: PriorityQueue<BatchEntry<T, E>>,
 }
 
-impl<T> Default for BatchScheduler<T> {
+impl<T, E> Default for BatchScheduler<T, E> {
     fn default() -> Self {
         Self {
             id_alloc: 0,
@@ -218,7 +218,7 @@ impl<T> Default for BatchScheduler<T> {
     }
 }
 
-impl<T> BatchScheduler<T> {
+impl<T, E> BatchScheduler<T, E> {
     pub fn new() -> Self {
         Self::default()
     }
@@ -235,7 +235,7 @@ impl<T> BatchScheduler<T> {
         self.id_alloc
     }
 
-    pub fn push(&mut self, entry: BatchEntry<T>) {
+    pub fn push(&mut self, entry: BatchEntry<T, E>) {
         self.entries.push(entry);
     }
 
@@ -244,7 +244,7 @@ impl<T> BatchScheduler<T> {
     /// Normal requests consume `limit`; priorities at or above
     /// `HIGH_TASK_PRIORITY` bypass it. Canceled requests are discarded without
     /// receiving an ID and without consuming concurrency.
-    pub fn build_with_limit(&mut self, limit: usize) -> BatchGroups<T> {
+    pub fn build_with_limit(&mut self, limit: usize) -> BatchGroups<T, E> {
         let mut groups = BatchGroups::default();
         let mut normal_count = 0;
         let selected_at = Instant::now();
@@ -281,10 +281,13 @@ impl<T> BatchScheduler<T> {
     }
 
     /// Fails and drains every queued request through its sole completion handle.
-    pub fn cancel_all(&mut self, reason: &str) -> Vec<BatchEntry<T>> {
+    pub fn cancel_all(&mut self, error: E) -> Vec<BatchEntry<T, E>>
+    where
+        E: Clone,
+    {
         let entries = self.entries.drain();
         for entry in &entries {
-            entry.completion.fail(reason);
+            entry.completion.fail(error.clone());
         }
         entries
     }
@@ -292,8 +295,8 @@ impl<T> BatchScheduler<T> {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct BatchPolicyOptions {
-    pub version: i32,
-    pub max_arrival_intervals: i32,
+    pub version: i64,
+    pub max_arrival_intervals: i64,
     pub wait_seconds: f64,
     pub weight: f64,
     pub threshold: f64,
@@ -365,7 +368,7 @@ impl BatchTrigger {
     }
 
     pub fn turbo_wait_time(&self) -> Duration {
-        Duration::try_from_secs_f64(self.options.wait_seconds).unwrap_or(Duration::ZERO)
+        source_effective_wait_time(self.options.wait_seconds)
     }
 
     pub fn need_fetch_more(&mut self, request_arrival_interval: Duration) -> bool {
@@ -374,7 +377,7 @@ impl BatchTrigger {
                 let mut arrival = request_arrival_interval.as_secs_f64();
                 if self.max_arrival_interval == 0.0 {
                     self.max_arrival_interval =
-                        self.options.wait_seconds * f64::from(self.options.max_arrival_intervals);
+                        self.options.wait_seconds * self.options.max_arrival_intervals as f64;
                 }
                 arrival = arrival.min(self.max_arrival_interval);
                 if self.estimated_arrival_interval == 0.0 {
@@ -435,39 +438,43 @@ fn parse_custom_options(policy: &str) -> Option<BatchPolicyOptions> {
     let value: Value = serde_json::from_str(raw).ok()?;
     let body = value.as_object()?;
     let mut options = BatchPolicyOptions::default();
-    options.version = parse_nonnegative_integer(body, "v")?.unwrap_or_default();
-    if options.version > 2 {
-        return None;
-    }
-    options.max_arrival_intervals = parse_nonnegative_integer(body, "n")?.unwrap_or_default();
-    options.wait_seconds = parse_bounded_number(body, "t", f64::INFINITY)?.unwrap_or_default();
-    Duration::try_from_secs_f64(options.wait_seconds).ok()?;
-    options.weight = parse_bounded_number(body, "w", 1.0)?.unwrap_or_default();
-    options.threshold = parse_bounded_number(body, "p", 1.0)?.unwrap_or_default();
-    options.wait_size_rounding = parse_bounded_number(body, "q", 1.0)?.unwrap_or_default();
+    options.version = parse_json_integer(body, "v")?.unwrap_or_default();
+    options.max_arrival_intervals = parse_json_integer(body, "n")?.unwrap_or_default();
+    options.wait_seconds = parse_json_number(body, "t")?.unwrap_or_default();
+    options.weight = parse_json_number(body, "w")?.unwrap_or_default();
+    options.threshold = parse_json_number(body, "p")?.unwrap_or_default();
+    options.wait_size_rounding = parse_json_number(body, "q")?.unwrap_or_default();
     Some(options)
 }
 
-fn parse_nonnegative_integer(body: &Map<String, Value>, key: &str) -> Option<Option<i32>> {
+fn parse_json_integer(body: &Map<String, Value>, key: &str) -> Option<Option<i64>> {
     let Some(value) = body.get(key) else {
         return Some(None);
     };
     if value.is_null() {
         return Some(None);
     }
-    let value = value.as_i64()?;
-    (0..=i64::from(i32::MAX))
-        .contains(&value)
-        .then_some(Some(value as i32))
+    value.as_i64().map(Some)
 }
 
-fn parse_bounded_number(body: &Map<String, Value>, key: &str, maximum: f64) -> Option<Option<f64>> {
+fn parse_json_number(body: &Map<String, Value>, key: &str) -> Option<Option<f64>> {
     let Some(value) = body.get(key) else {
         return Some(None);
     };
     if value.is_null() {
         return Some(None);
     }
-    let value = value.as_f64()?;
-    (value.is_finite() && value >= 0.0 && value <= maximum).then_some(Some(value))
+    value.as_f64().map(Some)
+}
+
+fn source_effective_wait_time(seconds: f64) -> Duration {
+    // Go stores this as a signed nanosecond duration. Rust's Duration cannot
+    // represent the source-valid negative or overflowing cases; both make the
+    // source timer fire immediately, so retain the raw seconds in options and
+    // project only their effective wait here.
+    let nanoseconds = seconds * 1_000_000_000.0;
+    if nanoseconds <= 0.0 || nanoseconds >= i64::MAX as f64 || !nanoseconds.is_finite() {
+        return Duration::ZERO;
+    }
+    Duration::from_nanos(nanoseconds as u64)
 }

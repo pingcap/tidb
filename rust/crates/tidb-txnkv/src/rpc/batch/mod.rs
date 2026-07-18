@@ -24,7 +24,8 @@ mod scheduler;
 
 pub use observability::{
     normalize_observed_sent_ns, terminal_outcome, BatchRequestObservation, BatchRequestOutcome,
-    BatchRequestProgress, BatchRequestStage, BatchRequestState, BatchTerminalError,
+    BatchRequestProgress, BatchRequestStage, BatchRequestState, BatchStreamState,
+    BatchTerminalError,
 };
 pub use priority_queue::{PriorityItem, PriorityQueue};
 pub use scheduler::{
