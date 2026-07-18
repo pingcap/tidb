@@ -19,7 +19,8 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use crate::region::{
-    BackgroundRegionCache, BackgroundRegionCacheError, RegionCache, RegionLoader, RegionQueryLoader,
+    BackgroundRegionCache, BackgroundRegionCacheError, KeyRange, RegionCache, RegionLoader,
+    RegionLocation, RegionQueryLoader, RegionRouteError,
 };
 
 const DEFAULT_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(1);
@@ -84,6 +85,22 @@ impl<C, L: RegionLoader> SharedReadRuntime<C, L> {
         operation: impl FnOnce(&mut RegionCache<L>) -> R,
     ) -> Result<R, BackgroundRegionCacheError> {
         self.region_cache.with_cache(operation)
+    }
+
+    /// Finds one key without holding the canonical cache lock across loader I/O.
+    pub fn locate_key(
+        &self,
+        key: &[u8],
+    ) -> Result<Result<RegionLocation, RegionRouteError>, BackgroundRegionCacheError> {
+        self.region_cache.locate_key(key)
+    }
+
+    /// Resolves ranges without holding the canonical cache lock across loader I/O.
+    pub fn locate_ranges(
+        &self,
+        ranges: &[KeyRange],
+    ) -> Result<Result<Vec<RegionLocation>, RegionRouteError>, BackgroundRegionCacheError> {
+        self.region_cache.locate_ranges(ranges)
     }
 
     /// Coalesces a store-check request into the sole maintenance worker.

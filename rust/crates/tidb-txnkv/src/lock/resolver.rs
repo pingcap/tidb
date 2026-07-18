@@ -377,12 +377,13 @@ fn route_key<C, L>(
 where
     L: RegionLoader,
 {
+    let region = runtime
+        .locate_key(key)
+        .map_err(|_| LockRecoveryError::RegionCacheLifecycle)?
+        .map_err(|error| LockRecoveryError::Route(error.to_string()))?
+        .region;
     let selected = runtime
         .with_region_cache(|cache| {
-            let region = cache
-                .locate_key(key)
-                .map_err(|error| LockRecoveryError::Route(error.to_string()))?
-                .region;
             let mut selector = cache
                 .request_selector(region, ReadPolicy::default())
                 .map_err(|error| LockRecoveryError::Route(error.to_string()))?;

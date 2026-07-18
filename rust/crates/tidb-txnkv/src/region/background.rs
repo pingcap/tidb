@@ -12,12 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::collections::BTreeMap;
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use super::cache::StoreRefreshApplication;
-use super::{RegionCache, RegionGcRound, RegionLoader, RegionQueryLoader, StoreMaintenanceRound};
+use super::cache::{
+    RegionLookupApplication, RegionLookupSelection, SharedRegionLoader, StoreRefreshApplication,
+};
+use super::{
+    KeyRange, RegionCache, RegionGcRound, RegionLoader, RegionLocation, RegionQueryLoader,
+    RegionRouteError, RegionVerId, StoreMaintenanceRound,
+};
 
 /// One complete pass performed by the single maintenance driver.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -85,6 +91,7 @@ struct DriverState {
 /// Sole synchronized owner and cancellable maintenance task for RegionCache.
 struct BackgroundRegionCacheInner<L> {
     cache: Arc<Mutex<RegionCache<L>>>,
+    loader: SharedRegionLoader<L>,
     driver: Arc<(Mutex<DriverState>, Condvar)>,
     worker: Mutex<Option<JoinHandle<()>>>,
 }
@@ -109,9 +116,11 @@ impl<L> BackgroundRegionCache<L> {
     /// runtimes use [`Self::start`] and therefore cannot bypass maintenance.
     #[must_use]
     pub(crate) fn without_worker(cache: RegionCache<L>) -> Self {
+        let loader = cache.loader_handle();
         Self {
             inner: Arc::new(BackgroundRegionCacheInner {
                 cache: Arc::new(Mutex::new(cache)),
+                loader,
                 driver: Arc::new((
                     Mutex::new(DriverState {
                         shutdown: true,
@@ -162,6 +171,7 @@ impl<L> BackgroundRegionCache<L> {
         if gc_limit == 0 {
             return Err(BackgroundRegionCacheError::ZeroGcLimit);
         }
+        let loader = cache.loader_handle();
         let cache = Arc::new(Mutex::new(cache));
         let driver = Arc::new((Mutex::new(DriverState::default()), Condvar::new()));
         let worker_cache = Arc::clone(&cache);
@@ -173,10 +183,105 @@ impl<L> BackgroundRegionCache<L> {
         Ok(Self {
             inner: Arc::new(BackgroundRegionCacheInner {
                 cache,
+                loader,
                 driver,
                 worker: Mutex::new(Some(worker)),
             }),
         })
+    }
+
+    /// Finds one key while keeping loader I/O outside the canonical cache lock.
+    pub fn locate_key(
+        &self,
+        key: &[u8],
+    ) -> Result<Result<RegionLocation, RegionRouteError>, BackgroundRegionCacheError>
+    where
+        L: RegionLoader,
+    {
+        self.locate_key_with_boundary(key, false)
+    }
+
+    /// Resolves every requested range through optimistic, fragment-at-a-time lookup.
+    pub fn locate_ranges(
+        &self,
+        ranges: &[KeyRange],
+    ) -> Result<Result<Vec<RegionLocation>, RegionRouteError>, BackgroundRegionCacheError>
+    where
+        L: RegionLoader,
+    {
+        let mut located = BTreeMap::<RegionVerId, RegionLocation>::new();
+        for range in ranges {
+            if !range.is_valid() {
+                return Ok(Err(RegionRouteError::InvalidRange));
+            }
+            let mut cursor = range.start.clone();
+            let mut first_fragment = true;
+            loop {
+                let location = match self.locate_key_with_boundary(&cursor, !first_fragment)? {
+                    Ok(location) => location,
+                    Err(error) => return Ok(Err(error)),
+                };
+                let region = location.region;
+                let region_end = location.end_key.clone();
+                located.entry(region).or_insert(location);
+
+                let request_is_covered = if range.end.is_empty() {
+                    region_end.is_empty()
+                } else {
+                    region_end.is_empty() || range.end <= region_end
+                };
+                if request_is_covered {
+                    break;
+                }
+                if region_end <= cursor {
+                    return Ok(Err(RegionRouteError::NonProgressingRegion { region }));
+                }
+                cursor = region_end;
+                first_fragment = false;
+            }
+        }
+        let mut regions = located.into_values().collect::<Vec<_>>();
+        regions.sort_by(|left, right| left.start_key.cmp(&right.start_key));
+        Ok(Ok(regions))
+    }
+
+    fn locate_key_with_boundary(
+        &self,
+        key: &[u8],
+        require_exact_start: bool,
+    ) -> Result<Result<RegionLocation, RegionRouteError>, BackgroundRegionCacheError>
+    where
+        L: RegionLoader,
+    {
+        loop {
+            let selection = {
+                let mut cache = self
+                    .inner
+                    .cache
+                    .lock()
+                    .map_err(|_| BackgroundRegionCacheError::CachePoisoned)?;
+                cache.select_region_lookup(key, require_exact_start)
+            };
+            let plan = match selection {
+                Ok(RegionLookupSelection::Hit(location)) => return Ok(Ok(location)),
+                Ok(RegionLookupSelection::Load(plan)) => plan,
+                Err(error) => return Ok(Err(error)),
+            };
+            let loaded = self.inner.loader.load_region(plan);
+            let publication = {
+                let mut cache = self
+                    .inner
+                    .cache
+                    .lock()
+                    .map_err(|_| BackgroundRegionCacheError::CachePoisoned)?;
+                cache.publish_region_lookup(loaded)
+            };
+            match publication {
+                Ok(RegionLookupApplication::Published(location)) => return Ok(Ok(location)),
+                Ok(RegionLookupApplication::Retry) => {}
+                Err(error) => return Ok(Err(error)),
+            }
+        }
     }
 
     /// Runs a foreground operation against the same canonical cache authority.

@@ -204,6 +204,40 @@ impl<L: RegionQueryLoader> SharedRegionLoader<L> {
     }
 }
 
+impl<L: RegionLoader> SharedRegionLoader<L> {
+    pub(super) fn load_region(&self, plan: RegionLookupPlan) -> RegionLookupResult {
+        let loaded = self.with_loader(|loader| {
+            let location = loader.load_region(&plan.key)?;
+            let labels = labels_for_location(loader, &location);
+            Ok((location, labels))
+        });
+        RegionLookupResult { plan, loaded }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct RegionLookupPlan {
+    key: Vec<u8>,
+    require_exact_start: bool,
+    observed_location: Option<RegionLocation>,
+    observed_store_revision: u64,
+}
+
+pub(super) struct RegionLookupResult {
+    plan: RegionLookupPlan,
+    loaded: Result<(RegionLocation, BTreeMap<u64, Vec<(String, String)>>), RegionLoadError>,
+}
+
+pub(super) enum RegionLookupSelection {
+    Hit(RegionLocation),
+    Load(RegionLookupPlan),
+}
+
+pub(super) enum RegionLookupApplication {
+    Published(RegionLocation),
+    Retry,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct StoreRefreshPlan {
     store_id: u64,
@@ -592,6 +626,9 @@ where
                 }
             }
         }
+        if outcome != StoreRefreshOutcome::Unchanged {
+            self.store_revision = self.store_revision.saturating_add(1);
+        }
         match outcome {
             StoreRefreshOutcome::Unchanged => StoreRefreshApplication::Unchanged,
             StoreRefreshOutcome::Refreshed => StoreRefreshApplication::Refreshed,
@@ -628,6 +665,7 @@ pub struct RegionCache<L> {
     pub(super) loader: SharedRegionLoader<L>,
     pub(super) regions: Vec<RegionLocation>,
     pub(super) stores: BTreeMap<u64, RegionStoreTopology>,
+    store_revision: u64,
     preferred_proxies: BTreeMap<RegionVerId, RegionAttempt>,
     entry_states: BTreeMap<RegionVerId, CacheEntryState>,
     base_ttl_seconds: u64,
@@ -643,6 +681,7 @@ impl<L> RegionCache<L> {
             loader: SharedRegionLoader::new(loader),
             regions: Vec::new(),
             stores: BTreeMap::new(),
+            store_revision: 0,
             preferred_proxies: BTreeMap::new(),
             entry_states: BTreeMap::new(),
             base_ttl_seconds: 600,
@@ -658,6 +697,7 @@ impl<L> RegionCache<L> {
             loader: SharedRegionLoader::new(loader),
             regions: Vec::new(),
             stores: BTreeMap::new(),
+            store_revision: 0,
             preferred_proxies: BTreeMap::new(),
             entry_states: BTreeMap::new(),
             base_ttl_seconds,
@@ -692,6 +732,88 @@ impl<L> RegionCache<L> {
 
     pub(super) fn with_loader<R>(&self, operation: impl FnOnce(&mut L) -> R) -> R {
         self.loader.with_loader(operation)
+    }
+
+    pub(super) fn select_region_lookup(
+        &mut self,
+        key: &[u8],
+        require_exact_start: bool,
+    ) -> Result<RegionLookupSelection, RegionRouteError> {
+        self.select_region_lookup_at(key, require_exact_start, cache_now_seconds())
+    }
+
+    fn select_region_lookup_at(
+        &mut self,
+        key: &[u8],
+        require_exact_start: bool,
+        now_seconds: u64,
+    ) -> Result<RegionLookupSelection, RegionRouteError> {
+        let observed_location = self.find_key(key).map(|index| self.regions[index].clone());
+        if let Some(location) = &observed_location {
+            let next_expiry = self.next_expiry_at(now_seconds, location.region);
+            let valid = self
+                .entry_states
+                .get_mut(&location.region)
+                .is_some_and(|state| {
+                    state.check_and_renew(now_seconds, self.base_ttl_seconds, next_expiry)
+                });
+            if valid {
+                if require_exact_start && location.start_key != key {
+                    return Err(RegionRouteError::DiscontinuousRegion {
+                        region: location.region,
+                    });
+                }
+                return Ok(RegionLookupSelection::Hit(location.clone()));
+            }
+            self.preferred_proxies.remove(&location.region);
+        }
+        Ok(RegionLookupSelection::Load(RegionLookupPlan {
+            key: key.to_vec(),
+            require_exact_start,
+            observed_location,
+            observed_store_revision: self.store_revision,
+        }))
+    }
+
+    pub(super) fn publish_region_lookup(
+        &mut self,
+        result: RegionLookupResult,
+    ) -> Result<RegionLookupApplication, RegionRouteError> {
+        let RegionLookupResult { plan, loaded } = result;
+        match self.select_region_lookup(&plan.key, plan.require_exact_start)? {
+            RegionLookupSelection::Hit(location) => {
+                return Ok(RegionLookupApplication::Published(location));
+            }
+            RegionLookupSelection::Load(current)
+                if current.observed_location != plan.observed_location
+                    || current.observed_store_revision != plan.observed_store_revision =>
+            {
+                return Ok(RegionLookupApplication::Retry);
+            }
+            RegionLookupSelection::Load(_) => {}
+        }
+
+        let (loaded, labels) = loaded.map_err(RegionRouteError::Loader)?;
+        if !loaded.end_key.is_empty() && loaded.start_key >= loaded.end_key {
+            return Err(RegionRouteError::InvalidRegionBounds {
+                region: loaded.region,
+            });
+        }
+        if plan.require_exact_start && loaded.start_key != plan.key {
+            return Err(RegionRouteError::DiscontinuousRegion {
+                region: loaded.region,
+            });
+        }
+        if !loaded.contains_key(&plan.key) {
+            return Err(RegionRouteError::LoadedRegionDoesNotContainKey {
+                region: loaded.region,
+            });
+        }
+
+        let index = self.insert_loaded_with_labels_at(loaded, labels, cache_now_seconds())?;
+        Ok(RegionLookupApplication::Published(
+            self.regions[index].clone(),
+        ))
     }
 
     /// Invalidates only the exact versioned region identity.
@@ -987,6 +1109,7 @@ impl<L> RegionCache<L> {
         let previous_epoch = store.epoch;
         store.epoch = store.epoch.saturating_add(1);
         store.resolve_state = StoreResolveState::NeedCheck;
+        self.store_revision = self.store_revision.saturating_add(1);
         let current_epoch = store.epoch;
         self.preferred_proxies.retain(|_, proxy| {
             proxy.store_id != attempt.store_id || proxy.store_epoch != previous_epoch
@@ -1682,6 +1805,7 @@ impl<L> RegionCache<L> {
         }
         self.regions = next;
         self.stores = next_stores;
+        self.store_revision = self.store_revision.saturating_add(1);
         next_states.retain(|region, _| self.regions.iter().any(|cached| cached.region == *region));
         self.entry_states = next_states;
         self.preferred_proxies.remove(&observed);
@@ -1986,22 +2110,32 @@ impl<L> RegionCache<L> {
 
     fn insert_loaded_at(
         &mut self,
-        mut loaded: RegionLocation,
+        loaded: RegionLocation,
         now_seconds: u64,
     ) -> Result<usize, RegionRouteError>
     where
         L: RegionLoader,
     {
+        let labels = self.with_loader(|loader| labels_for_location(loader, &loaded));
+        self.insert_loaded_with_labels_at(loaded, labels, now_seconds)
+    }
+
+    fn insert_loaded_with_labels_at(
+        &mut self,
+        mut loaded: RegionLocation,
+        labels: BTreeMap<u64, Vec<(String, String)>>,
+        now_seconds: u64,
+    ) -> Result<usize, RegionRouteError> {
         let mut next_regions = self.regions.clone();
         let mut next_stores = self.stores.clone();
         preserve_newer_buckets(&self.regions, &mut loaded);
-        let labels = self.with_loader(|loader| labels_for_location(loader, &loaded));
         normalize_loaded(&mut next_stores, &mut loaded, &labels);
         let region = loaded.region;
         let expire_after_ttl = !loaded.down_peer_ids.is_empty();
         let index = insert_loaded_into(&mut next_regions, loaded)?;
         self.regions = next_regions;
         self.stores = next_stores;
+        self.store_revision = self.store_revision.saturating_add(1);
         self.entry_states
             .retain(|cached, _| self.regions.iter().any(|region| region.region == *cached));
         let mut state = CacheEntryState::new(self.next_expiry_at(now_seconds, region));
