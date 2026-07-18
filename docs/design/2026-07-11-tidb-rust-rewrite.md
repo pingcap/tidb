@@ -40,7 +40,7 @@ finished subsystem.
 | Parser | 51,488 exact accepted single-statement restores, 10 exact multi-statement restores, 99 explicit dual rejections, and one pinned Go restore failure; 520 parser unit tests pass; geometry aliases, FieldType compatibility, and duplicate-COLLATE ordering rows are source-owned | Close the remaining source/test ledger and keep the pinned Go failure separate from Rust regressions |
 | Planner | Narrow source-owned pseudo-cardinality/equality/less/between/range and exponential-backoff leaves plus a typed physical-plan metadata tree and planner differential package | The full logical/physical rule pipeline, session/statistics/catalog-aware `pseudoSelectivity`, cost model, hints, bindings, SQL normalization/digest, and plan-digest ring |
 | Result/expression | Source-shaped scalar leaves, bounded table-less/single-table/multi-relation ResultField binding, planner-owned LEFT/INNER/CROSS join output metadata (including USING order/coalescing and nullable-side declarations), bounded FullSchema-to-visible USING indices, direct-column/wildcard/alias projection metadata wired through the automatic row owner, direct cross-side equality ON/USING with NULL non-match semantics, a planner-owned `ON`/`USING` equality classifier, explicit residual `AND`/`OR`/`NOT` shape metadata with deferred typed evaluation, deferred residual column bindings into `FullSchema`, conservative left/right/join/deferred predicate dependency routing with typed-safety gates, native scalar/default-row Datum decoding, and static Go-backed query/expression rings | General planner ON/USING predicate typing and join algorithms, typed expression projection and nested/FullSchema execution mappings, full temporal SQL semantics and Duration/session policy, decimal/JSON/enum/set/vector Datum and native CHBlock codecs, full FieldType/session/collation context, vectorized execution, and real-cluster shadow traffic |
-| Transaction/storage | Portable key, handle, version, iterator, and request-tag contracts; a bounded plaintext PD gRPC client with discovered membership, foreground refresh, and role-aware direct-endpoint failover; API-v1 region loading; exact nested NotLeader/EpochNotMatch payloads; one RegionCache topology/recovery authority; source-shaped per-region backoff; failed-task-only 1:N retry/rebuild; lazy address-keyed TiKV Coprocessor RPC; and same-process live PD/TiKV movement proof | Background PD/store health, router service, TLS/forwarding, generic TiKV connection-failure retry, locks/MVCC, production cache concurrency/TTL, 2PC, async commit, 1PC, full table/DAG lowering, and COM_QUERY integration |
+| Transaction/storage | Portable key, handle, version, iterator, and request-tag contracts; a bounded plaintext PD gRPC client with discovered membership, foreground refresh, and role-aware direct-endpoint failover; API-v1 region loading; exact nested NotLeader/EpochNotMatch payloads; one RegionCache topology/recovery/store authority; request-scoped leader-semantics peer selection; source-shaped per-region backoff; failed-task-only 1:N region and transport retry/rebuild; structured generation-aware TiKV failures with foreground gRPC health; lazy address-keyed TiKV Coprocessor RPC; and same-process live PD/TiKV movement/failure proofs | Background PD/store health, router service, TLS/forwarding, follower/stale/learner policy, active in-flight cancellation, locks/MVCC, batch/stream/TiFlash, production cache concurrency/TTL, 2PC, async commit, 1PC, full table/DAG lowering, and COM_QUERY integration |
 | Server/cluster | A local connected seam now frames uncompressed `COM_QUERY` packets, decodes the Go-shaped command byte, dispatches COM_QUERY/PING/QUIT through `tidb-server::Connection`, parses SQL, executes through the shared seed session, and emits bounded metadata/row/EOF text-result packets; adapted Go-shaped ResultFields feed that sequence, typed integer/float/decimal/byte scalar formatting and the native scalar/default-row chunk Datum subset are connected, `tidb-exec` derives table-less, single-table, and bounded multi-relation catalog metadata from declared `ColumnType`s and attaches statement status including `exec_success` to the shared Session, the automatic path now proves bare-wildcard catalog-backed INNER/CROSS/LEFT/USING metadata and rows including null extension and coalesced order, direct-column/alias/wildcard projection metadata now crosses the same `Database::project_row` owner, direct cross-side equality ON/USING predicates share NULL non-match semantics, `tidb-exec` exposes planner-owned bounded join output metadata and a source-shaped executor→protocol error-kind adapter, `tidb-protocol::ResultEncoder` ports registered charset precedence including GBK and source-shaped ERR payload order plus typed error-kind→MySQL errno/SQLSTATE conversion, `tidb-server::error_response` attaches caller-rendered errors and optional published status to sequence-one ERR frames without guessing context, `tidb-codec` validates raw default/TypeChunk framing, FieldType physical layouts, native scalar columns, source-proven default-row Datum tags, fixed duration nanosecond payloads with DecodeOne MaxFsp metadata, decimal precision/scale/length metadata with exact remainder handling, BinaryJSON physical boundaries, the exact packed-temporal integer boundary, and explicit raw native CHBlock framing while keeping unsupported SQL semantics explicit, `tidb-proto` owns exact SelectResponse/StreamResponse/CoprocessorRequest/StoreBatchTask wire projections, and `tidb-distsql` validates raw SelectResponse/Chunk and StreamResponse envelopes plus opaque KV/coprocessor/CHBlock request metadata; `tidb-distsql` owns serial/channel response iteration plus ordered response events, and `tidb-server` owns source-shaped initial-handshake parsing, raw auth exchange envelopes, validated custom auth-plugin metadata/client-plugin selection, JWT compact-shape/retry/JWKS-load admission, opaque session-auth challenge/pending-verification state, explicit secure-transport admission policy, SSL/TLS/auth-plugin negotiation phases, idempotent TCP listener lifecycle, and a generic injected accept loop | General planner ON/USING typing and typed expression/nested FullSchema projection mappings, full SQL duration parsing/range/warning policy, decimal/enum/set/vector Datum and native CHBlock semantics beyond opaque framing, dynamic Go ErrCtx/warning policy, full session charset/encoder lifecycle, TLS handshake/certificate and password verification/user store, JWT RSA/JWK verification, filesystem/network refresh, claims decoding, compressed protocol, connection admission/session lifecycle beyond policy, Unix sockets/PROXY handling, distsql/MPP execution beyond the bounded PD/TiKV unary route, schema lease/MDL, DDL ownership, stats, bootstrap, and mixed-cluster routing |
 
 Campaign `2026-07-read-path-07` adds the first bounded connected read path from
@@ -120,6 +120,46 @@ receipt-backed claims are released as `partial`. Background health and router
 service, TLS/forwarding, generic TiKV
 connection-failure retry, locks/MVCC, cache TTL/concurrency, active in-flight
 RPC cancellation, and commit protocols remain explicit gaps.
+
+### Campaign 12 TiKV transport-recovery state
+
+Campaign `2026-07-read-path-12` directly transits pinned client-go's unary
+send-failure loop instead of adding a same-address retry counter. One
+`RegionCache`-owned canonical store registry now drives request-scoped
+leader-semantics peer selection. Every immutable attempt carries its peer,
+store, address, and observed channel generation; failure handling preserves
+caller-cancellation precedence, closes only the exact remote-Canceled
+generation, probes foreground gRPC health for connection/timeout failures,
+invalidates every cached region sharing a dead store epoch, applies the same
+bounded TiKVRPC backoff/reselection budget, and rebuilds only the failed
+logical task. Failed attempts cannot advance paging, cache, EMA, or later-task
+state.
+
+The testify ledger now promotes reachable zero-argument `Test*` suite methods
+into parent-qualified original obligations. One suite type run by two parents
+therefore creates two obligations; lifecycle hooks, helpers, and invalid
+signatures remain declaration-only. Current generated counts remain in
+`rust/STATUS.md` rather than this design.
+
+The ignored owner test was executed by
+`rust/scripts/run-campaign12-realtikv.sh` against three PD and three TiKV
+processes. One retained Rust response/cache proved two already-bound regions
+shared the stopped store, recorded the exact failed address/generation,
+received a usable decoded response for both regions through survivors, and
+recorded zero future dispatches through the stale store generation:
+
+    region=28 127.0.0.1:47162#1 -> 127.0.0.1:47160
+    successful_survivor_responses=2
+    stale_future_dispatches=0
+    recovered_store_liveness=Unreachable
+    structured_results=2
+
+Strict cleanup removed endpoints, TiUP registry rows, tags, and owned
+processes. The 12-job gate issued `integration_receipt 3`; all claims are
+released as `partial` and exact membership is archived. Remaining transport
+work is follower/stale/learner policy, forwarding, active in-flight
+cancellation, background recovery, TLS health, batch/stream/TiFlash,
+locks/MVCC, slow-score policy, and production concurrency.
 
 The checked source/test totals and campaign queue are generated into
 `rust/STATUS.md` from the authoritative ledgers and manifests. Do not copy

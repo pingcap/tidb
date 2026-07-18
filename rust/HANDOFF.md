@@ -71,10 +71,11 @@ source-shaped RegionCache/leader routing. Campaign 10 made that cache the sole
 DistSQL topology authority; Campaign 11 retains discovered PD members, performs
 foreground role-aware endpoint refresh/failover, consumes exact nested region
 errors, atomically recovers cache routes, and retries/rebuilds only failed work
-under one bounded per-region budget. MVCC, lock resolution, generic TiKV
-connection retry, background health, TLS/forwarding, and commit remain
-unimplemented. Many
-statements are honestly `Unsupported` at execution while being fully
+under one bounded per-region budget. Campaign 12 adds request-scoped peer
+selection, generation-aware transport recovery, shared-store invalidation, and
+foreground health. MVCC, lock resolution, background health, TLS/forwarding,
+and commit remain unimplemented. Many statements are honestly `Unsupported`
+at execution while being fully
 parse+restore-faithful. That's intentional — don't fake success.
 
 The first connected local read-only seam is now real: `tidb-protocol` frames
@@ -120,10 +121,11 @@ ON/USING typing and explicit projection output names, and full
 session/error-context attachment remain open alongside authentication,
 TLS/compression, temporal/JSON/enum/set/vector and full session charset
 conversion, Unix sockets/PROXY/connection admission, background PD/store health,
-router service, production cache TTL/concurrency, generic TiKV connection
-retry, lock/MVCC/TLS/forwarding policy, and deployable bootstrap.
+router service, production cache TTL/concurrency, follower/stale/learner and
+forwarding policy, active in-flight cancellation, lock/MVCC/TLS policy, and
+deployable bootstrap.
 
-### Historical Campaign 10 and current Campaign 11 boundary
+### Historical Campaign 10/11 and current Campaign 12 boundary
 
 Campaign `2026-07-read-path-10` is integrated and both receipt-backed claims
 are released as `partial`. Campaign 09 first made the checked read chain reach
@@ -160,6 +162,34 @@ remaining routing boundary is background PD/store health, router service,
 cache TTL/concurrency, generic TiKV connection-failure retry, locks/MVCC,
 active in-flight cancellation, TLS/forwarding, and commit protocols.
 Full table/DAG lowering and COM_QUERY integration also remain open.
+
+Campaign 12 closes that historical generic unary connection-failure boundary
+without adding a duplicate topology map or same-address retry counter. One
+canonical store registry and request-scoped leader-semantics selector preserve
+exact peer/store/address/channel generations. DistSQL owns failure precedence,
+exact remote-Canceled close, foreground health, shared-store invalidation,
+backoff, reselection, failed-task-only rebuild, and success-state mutation.
+Tonic remains a fact-producing RPC leaf rather than a second retry policy.
+
+The retained-process three-PD/three-TiKV proof bound two regions while they
+shared one leader store, stopped that store before either RPC dispatch, and
+then observed:
+
+    region=28 127.0.0.1:47162#1 -> 127.0.0.1:47160
+    successful_survivor_responses=2
+    stale_future_dispatches=0
+    recovered_store_liveness=Unreachable
+    structured_results=2
+
+The same campaign repairs the Go-test ledger so reachable testify suite
+methods are tracked as exact parent-qualified obligations rather than hidden
+receiver declarations. The final 12-job gate issued `integration_receipt 3`;
+all three claims are released as `partial`, membership is archived, and the
+queue has zero active claims. Commit `b57736524d` records the root integration.
+The next boundary is follower/stale/learner and forwarding policy, active
+in-flight cancellation, background recovery, TLS health, batch/stream/TiFlash,
+locks/MVCC, slow-score policy, production concurrency/TTL, full DAG/table
+lowering, and COM_QUERY integration.
 
 ## 4. The differential tools (how you verify)
 
