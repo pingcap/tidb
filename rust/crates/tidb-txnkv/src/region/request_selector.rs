@@ -67,15 +67,21 @@ pub enum RequestSelection {
 pub struct RequestSelector {
     pub(crate) region: RegionVerId,
     pub(crate) policy: ReadPolicy,
+    pub(crate) leader_peer_id: Option<u64>,
     pub(crate) attempts_by_peer: BTreeMap<u64, PeerAttemptState>,
     pub(crate) pending_attempt: Option<RegionAttempt>,
 }
 
 impl RequestSelector {
-    pub(crate) fn new(region: RegionVerId, policy: ReadPolicy) -> Self {
+    pub(crate) fn new(
+        region: RegionVerId,
+        policy: ReadPolicy,
+        leader_peer_id: Option<u64>,
+    ) -> Self {
         Self {
             region,
             policy,
+            leader_peer_id,
             attempts_by_peer: BTreeMap::new(),
             pending_attempt: None,
         }
@@ -102,6 +108,23 @@ impl RequestSelector {
         self.attempts_by_peer
             .get(&peer_id)
             .map_or(Duration::ZERO, |state| state.attempted_time)
+    }
+
+    pub(crate) fn observe_leader(&mut self, leader_peer_id: Option<u64>) {
+        if self.leader_peer_id == leader_peer_id {
+            return;
+        }
+        self.leader_peer_id = leader_peer_id;
+        let Some(peer_id) = leader_peer_id else {
+            return;
+        };
+        let state = self.attempts_by_peer.entry(peer_id).or_default();
+        if state.attempts >= MAX_REPLICA_ATTEMPTS
+            || state.attempted_time >= MAX_REPLICA_ATTEMPT_TIME
+        {
+            state.attempts = MAX_REPLICA_ATTEMPTS - 1;
+            state.attempted_time = Duration::ZERO;
+        }
     }
 
     pub(crate) fn record_dispatch(&mut self, attempt: RegionAttempt) {

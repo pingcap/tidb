@@ -154,14 +154,18 @@ impl<L> RegionCache<L> {
         if policy.mode != ReplicaReadMode::Leader || policy.stale_read || policy.forwarding {
             return Err(RegionRouteError::UnsupportedReadPolicy);
         }
-        if !self
+        let Some(location) = self
             .regions
             .iter()
-            .any(|location| location.region == region)
-        {
+            .find(|location| location.region == region)
+        else {
             return Err(RegionRouteError::MissingLeader);
-        }
-        Ok(RequestSelector::new(region, policy))
+        };
+        Ok(RequestSelector::new(
+            region,
+            policy,
+            location.leader_peer_id,
+        ))
     }
 
     /// Selects the next leader-semantics peer and invalidates on exhaustion.
@@ -192,6 +196,7 @@ impl<L> RegionCache<L> {
         };
 
         let leader_peer_id = location.leader_peer_id;
+        selector.observe_leader(leader_peer_id);
         let leader = leader_peer_id
             .and_then(|peer_id| location.peers.iter().find(|peer| peer.id == peer_id));
         let selected = leader

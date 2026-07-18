@@ -243,6 +243,64 @@ fn known_leader_updates_snapshot_then_returns_through_reselection() {
 }
 
 #[test]
+fn newly_named_exhausted_leader_receives_one_fresh_attempt() {
+    let (mut cache, _) = cache(location(7, 3, 4, b"", b""), []);
+    let region = seed(&mut cache);
+    let mut selector = cache
+        .request_selector(region, tidb_txnkv::region::ReadPolicy::default())
+        .unwrap();
+    let tidb_txnkv::region::RequestSelection::Attempt(leader) =
+        cache.select_request(&mut selector).unwrap()
+    else {
+        panic!("expected cached leader")
+    };
+    assert!(selector.record_attempt_result(&leader.attempt, Duration::from_millis(1)));
+    selector.reject_peer(leader.attempt.peer_id);
+    let tidb_txnkv::region::RequestSelection::Attempt(alternate) =
+        cache.select_request(&mut selector).unwrap()
+    else {
+        panic!("expected alternate")
+    };
+    assert_eq!(alternate.attempt.peer_id, 12);
+    assert!(selector.record_attempt_result(&alternate.attempt, Duration::from_millis(1)));
+    selector.reject_peer(alternate.attempt.peer_id);
+
+    let error = errorpb::Error {
+        not_leader: Some(errorpb::NotLeader {
+            region_id: 7,
+            leader: Some(metapb::Peer {
+                id: 12,
+                store_id: 102,
+                role: 0,
+                is_witness: false,
+            }),
+        }),
+        ..Default::default()
+    };
+    let RegionErrorDisposition::RetryPeers {
+        rejected_peer_id, ..
+    } = cache
+        .on_region_error(
+            &error,
+            attempt(region),
+            &mut RegionBackoffBudget::campaign_default(),
+        )
+        .unwrap()
+    else {
+        panic!("known leader must reselect")
+    };
+    selector.reject_peer(rejected_peer_id);
+
+    let tidb_txnkv::region::RequestSelection::Attempt(retried) =
+        cache.select_request(&mut selector).unwrap()
+    else {
+        panic!("new leader must receive one fresh attempt")
+    };
+    assert_eq!(retried.attempt.peer_id, 12);
+    assert!(retried.cached_leader);
+}
+
+#[test]
 fn known_unreachable_leader_never_bypasses_reselection() {
     let first = location(7, 3, 4, b"", b"");
     let refreshed = first.clone();
