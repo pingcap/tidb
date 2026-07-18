@@ -154,6 +154,8 @@ DROP DATABASE IF EXISTS campaign13_lock;
 CREATE DATABASE campaign13_lock;
 USE campaign13_lock;
 CREATE TABLE locked_secondary (id BIGINT PRIMARY KEY CLUSTERED, value BIGINT);
+SET SESSION tidb_wait_split_region_finish = 1;
+SPLIT TABLE locked_secondary BY (2);
 SET SESSION tidb_enable_async_commit = 0;
 SET SESSION tidb_enable_1pc = 0;
 BEGIN OPTIMISTIC;
