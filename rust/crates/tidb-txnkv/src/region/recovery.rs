@@ -19,7 +19,7 @@ use tidb_proto::{errorpb, metapb};
 use crate::retry::{RegionBackoffBudget, RegionBackoffKind};
 
 use super::{
-    PeerRole, RegionCache, RegionLoadError, RegionMetadata, RegionMetadataPeer,
+    BucketMetadata, PeerRole, RegionCache, RegionLoadError, RegionMetadata, RegionMetadataPeer,
     RegionRecoveryLoader, RegionRouteError, RegionVerId, SelectorRecovery,
 };
 
@@ -272,7 +272,8 @@ impl<L: RegionRecoveryLoader> RegionCache<L> {
         if let Some(epoch) = &error.epoch_not_match {
             return self.on_epoch_not_match(epoch, attempt, backoff);
         }
-        if error.bucket_version_not_match.is_some() {
+        if let Some(mismatch) = &error.bucket_version_not_match {
+            self.publish_bucket_version_not_match(attempt.region, mismatch);
             return Ok(RegionErrorDisposition::ReturnRegionError);
         }
         if error.server_is_busy.is_some() {
@@ -342,6 +343,34 @@ impl<L: RegionRecoveryLoader> RegionCache<L> {
             delay: Duration::ZERO,
             action: RegionRebuildAction::CacheReady,
         })
+    }
+
+    fn publish_bucket_version_not_match(
+        &mut self,
+        region: RegionVerId,
+        mismatch: &errorpb::BucketVersionNotMatch,
+    ) {
+        let Some(location) = self
+            .regions
+            .iter_mut()
+            .find(|location| location.region == region)
+        else {
+            return;
+        };
+        if location
+            .buckets
+            .as_ref()
+            .is_some_and(|buckets| buckets.version >= mismatch.version)
+        {
+            return;
+        }
+        location.buckets = Some(BucketMetadata {
+            region_id: location.region.id,
+            version: mismatch.version,
+            keys: mismatch.keys.clone(),
+            stats: None,
+            period_in_ms: 0,
+        });
     }
 
     fn on_not_leader(

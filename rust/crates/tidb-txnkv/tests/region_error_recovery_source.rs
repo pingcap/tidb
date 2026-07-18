@@ -213,6 +213,83 @@ fn pinned_handler_order_checks_undetermined_before_not_leader() {
 }
 
 #[test]
+fn bucket_version_mismatch_publishes_only_strictly_newer_metadata() {
+    let (mut cache, _) = cache(location(7, 3, 4, b"", b""), []);
+    let region = seed(&mut cache);
+    let mut budget = RegionBackoffBudget::campaign_default();
+
+    let error = errorpb::Error {
+        bucket_version_not_match: Some(errorpb::BucketVersionNotMatch {
+            version: 5,
+            keys: vec![b"a".to_vec(), b"m".to_vec(), b"z".to_vec()],
+        }),
+        ..Default::default()
+    };
+    assert_eq!(
+        cache
+            .on_region_error(&error, attempt(region), &mut budget)
+            .unwrap(),
+        RegionErrorDisposition::ReturnRegionError
+    );
+    let published = cache.locate_key(b"k").unwrap().buckets.clone().unwrap();
+    assert_eq!(published.region_id, region.id);
+    assert_eq!(published.version, 5);
+    assert_eq!(
+        published.keys,
+        vec![b"a".to_vec(), b"m".to_vec(), b"z".to_vec()]
+    );
+    assert_eq!(published.stats, None);
+    assert_eq!(published.period_in_ms, 0);
+
+    for version in [4, 5] {
+        let stale = errorpb::Error {
+            bucket_version_not_match: Some(errorpb::BucketVersionNotMatch {
+                version,
+                keys: vec![b"stale".to_vec()],
+            }),
+            ..Default::default()
+        };
+        assert_eq!(
+            cache
+                .on_region_error(&stale, attempt(region), &mut budget)
+                .unwrap(),
+            RegionErrorDisposition::ReturnRegionError
+        );
+    }
+    let retained = cache.locate_key(b"k").unwrap().buckets.as_ref().unwrap();
+    assert_eq!(retained.version, 5);
+    assert_eq!(
+        retained.keys,
+        vec![b"a".to_vec(), b"m".to_vec(), b"z".to_vec()]
+    );
+}
+
+#[test]
+fn bucket_version_mismatch_does_not_synthesize_a_missing_region() {
+    let (mut cache, _) = cache(location(7, 3, 4, b"", b""), []);
+    let region = seed(&mut cache);
+    let observed = attempt(region);
+    assert!(cache.invalidate(region));
+
+    let error = errorpb::Error {
+        bucket_version_not_match: Some(errorpb::BucketVersionNotMatch {
+            version: 5,
+            keys: vec![b"a".to_vec()],
+        }),
+        ..Default::default()
+    };
+    assert_eq!(
+        cache.on_region_error(
+            &error,
+            observed.clone(),
+            &mut RegionBackoffBudget::campaign_default(),
+        ),
+        Err(RegionRecoveryError::StaleObservation(observed))
+    );
+    assert!(cache.is_empty());
+}
+
+#[test]
 fn known_leader_updates_snapshot_then_returns_through_reselection() {
     let (mut cache, _) = cache(location(7, 3, 4, b"", b""), []);
     let region = seed(&mut cache);
