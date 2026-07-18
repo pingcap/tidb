@@ -95,4 +95,6 @@ pub struct PdStore {
     pub state: PdStoreState,
     /// Replacement source state.
     pub node_state: PdNodeState,
+    /// Store labels in PD metadata order.
+    pub labels: Vec<(String, String)>,
 }

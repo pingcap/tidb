@@ -981,6 +981,11 @@ fn project_store(
         address: store.address,
         state,
         node_state,
+        labels: store
+            .labels
+            .into_iter()
+            .map(|label| (label.key, label.value))
+            .collect(),
     }))
 }
 

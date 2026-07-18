@@ -14,10 +14,17 @@ enum NodeState {
   Removed = 3;
 }
 
+// Case insensitive key/value for replica constraints.
+message StoreLabel {
+  string key = 1;
+  string value = 2;
+}
+
 message Store {
   uint64 id = 1;
   string address = 2;
   StoreState state = 3;
+  repeated StoreLabel labels = 4;
   NodeState node_state = 13;
 }
 

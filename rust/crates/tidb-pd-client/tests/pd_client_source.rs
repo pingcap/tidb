@@ -19,6 +19,7 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
+use prost::Message;
 use tidb_pd_client::{
     PdClient, PdNodeState, PdStoreState, GET_MEMBERS_PATH, GET_REGION_PATH, GET_STORE_PATH,
 };
@@ -30,6 +31,25 @@ use tidb_proto::pdpb::{
 
 const CLUSTER_ID: u64 = 42;
 const SELF_URL: &str = "http://127.0.0.1:0";
+
+#[test]
+fn store_labels_keep_the_pinned_kvproto_field_four_wire_contract() {
+    // Pinned kvproto metapb.proto: StoreLabel key=1/value=2 and Store labels=4.
+    let store = metapb::Store {
+        id: 0,
+        address: String::new(),
+        state: metapb::StoreState::Up as i32,
+        labels: vec![metapb::StoreLabel {
+            key: "zone".to_owned(),
+            value: "s1".to_owned(),
+        }],
+        node_state: metapb::NodeState::Preparing as i32,
+    };
+    assert_eq!(
+        store.encode_to_vec(),
+        [0x22, 0x0a, 0x0a, 0x04, b'z', b'o', b'n', b'e', 0x12, 0x02, b's', b'1']
+    );
+}
 
 #[derive(Clone)]
 enum Reply<T> {
@@ -256,6 +276,7 @@ fn store_response(
             id,
             address: format!("127.0.0.1:{}", 20000 + id),
             state: state as i32,
+            labels: Vec::new(),
             node_state: node_state as i32,
         }),
     }
@@ -348,7 +369,22 @@ fn exact_methods_headers_wire_key_roles_and_store_states_are_preserved_once() {
     assert_eq!(GET_REGION_PATH, "/pdpb.PD/GetRegion");
     assert_eq!(GET_STORE_PATH, "/pdpb.PD/GetStore");
 
-    let server = Server::start(valid_state());
+    let mut state = valid_state();
+    let store = match state.stores.get_mut(&101).unwrap() {
+        Reply::Value(response) => response.store.as_mut().unwrap(),
+        _ => unreachable!(),
+    };
+    store.labels = vec![
+        metapb::StoreLabel {
+            key: "zone".to_owned(),
+            value: "shanghai".to_owned(),
+        },
+        metapb::StoreLabel {
+            key: "disk".to_owned(),
+            value: "ssd".to_owned(),
+        },
+    ];
+    let server = Server::start(state);
     let mut client = PdClient::connect(&server.address, Duration::from_secs(2)).unwrap();
     assert_eq!(client.cluster_id(), CLUSTER_ID);
     assert_eq!(client.endpoint(), server.address);
@@ -375,6 +411,13 @@ fn exact_methods_headers_wire_key_roles_and_store_states_are_preserved_once() {
     let up = client.get_store(101).unwrap().unwrap();
     assert_eq!(up.state, PdStoreState::Up);
     assert_eq!(up.node_state, PdNodeState::Serving);
+    assert_eq!(
+        up.labels,
+        [
+            ("zone".to_owned(), "shanghai".to_owned()),
+            ("disk".to_owned(), "ssd".to_owned()),
+        ]
+    );
     let removing = client.get_store(102).unwrap().unwrap();
     assert_eq!(removing.state, PdStoreState::Offline);
     assert_eq!(removing.node_state, PdNodeState::Removing);

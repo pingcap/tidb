@@ -154,7 +154,25 @@ impl Drop for Server {
 fn loader_encodes_key_decodes_boundaries_and_filters_source_unusable_peers() {
     // client-go/internal/locate/pd_codec.go:107-112,197-203.
     // client-go/internal/locate/region_cache.go:362-430.
-    let server = Server::start(valid_state());
+    let mut state = valid_state();
+    state
+        .stores
+        .get_mut(&101)
+        .unwrap()
+        .store
+        .as_mut()
+        .unwrap()
+        .labels = vec![
+        metapb::StoreLabel {
+            key: "zone".to_owned(),
+            value: "shanghai".to_owned(),
+        },
+        metapb::StoreLabel {
+            key: "disk".to_owned(),
+            value: "ssd".to_owned(),
+        },
+    ];
+    let server = Server::start(state);
     let mut loader =
         PdRegionLoader::connect_seeds([server.address.clone()], Duration::from_secs(2)).unwrap();
     assert_eq!(loader.cluster_id(), CLUSTER_ID);
@@ -192,6 +210,14 @@ fn loader_encodes_key_decodes_boundaries_and_filters_source_unusable_peers() {
         [101, 102]
     );
     assert!(location.stores.iter().all(|store| store.epoch == 0));
+    assert_eq!(
+        loader.store_labels(101),
+        [
+            ("zone".to_owned(), "shanghai".to_owned()),
+            ("disk".to_owned(), "ssd".to_owned()),
+        ]
+    );
+    assert!(loader.store_labels(102).is_empty());
 
     let state = server.state.lock().unwrap();
     assert_eq!(state.region_requests.len(), 1);
@@ -493,6 +519,7 @@ fn store_response(
             id,
             address: format!("127.0.0.1:{}", 20000 + id),
             state: state as i32,
+            labels: Vec::new(),
             node_state: node_state as i32,
         }),
     }

@@ -17,9 +17,10 @@ use std::collections::BTreeMap;
 use super::{
     KeyRange, LeaderRequest, OwnedLeaderRoute, Peer, PeerRole, ReadPolicy, RegionAttempt,
     RegionLoadError, RegionLocation, RegionMetadata, RegionRebuildAction, RegionRecoveryError,
-    RegionRouteError, RegionVerId, ReplicaReadMode, RequestSelection, RequestSelector, Store,
-    StoreFailureOutcome, StoreLiveness, StoreResolveState, StoreState, MAX_REPLICA_ATTEMPTS,
-    MAX_REPLICA_ATTEMPT_TIME,
+    RegionRouteError, RegionStoreTopology, RegionVerId, ReplicaReadMode, RequestSelection,
+    RequestSelector, RouteFeedback, RouteFeedbackApplication, RouteOutcome, RoutePeer,
+    RouteSnapshot, Store, StoreFailureOutcome, StoreLiveness, StoreResolveState, StoreState,
+    MAX_REPLICA_ATTEMPTS, MAX_REPLICA_ATTEMPT_TIME,
 };
 
 /// Injected PD-shaped region metadata loader.
@@ -29,6 +30,14 @@ pub trait RegionLoader {
 
     /// Loads the region containing `key` without prescribing any network API.
     fn load_region(&mut self, key: &[u8]) -> Result<RegionLocation, RegionLoadError>;
+
+    /// Returns the most recently resolved PD labels for one store.
+    ///
+    /// Loaders without a label-bearing control plane retain source-compatible
+    /// empty-label matching through this default.
+    fn store_labels(&self, _store_id: u64) -> &[(String, String)] {
+        &[]
+    }
 }
 
 /// Region loader with the required current-region store hydration capability.
@@ -45,7 +54,8 @@ pub trait RegionRecoveryLoader: RegionLoader {
 pub struct RegionCache<L> {
     pub(super) loader: L,
     pub(super) regions: Vec<RegionLocation>,
-    pub(super) stores: BTreeMap<u64, StoreState>,
+    pub(super) stores: BTreeMap<u64, RegionStoreTopology>,
+    preferred_proxies: BTreeMap<RegionVerId, RegionAttempt>,
 }
 
 impl<L> RegionCache<L> {
@@ -56,6 +66,7 @@ impl<L> RegionCache<L> {
             loader,
             regions: Vec::new(),
             stores: BTreeMap::new(),
+            preferred_proxies: BTreeMap::new(),
         }
     }
 
@@ -83,6 +94,7 @@ impl<L> RegionCache<L> {
     pub fn invalidate(&mut self, region: RegionVerId) -> bool {
         let original_len = self.regions.len();
         self.regions.retain(|cached| cached.region != region);
+        self.preferred_proxies.remove(&region);
         self.regions.len() != original_len
     }
 
@@ -114,7 +126,107 @@ impl<L> RegionCache<L> {
     /// Returns one immutable view of the canonical store authority.
     #[must_use]
     pub fn store_state(&self, store_id: u64) -> Option<&StoreState> {
-        self.stores.get(&store_id)
+        self.stores.get(&store_id).map(RegionStoreTopology::state)
+    }
+
+    /// Copies one immutable routing view from the sole mutable cache authority.
+    pub fn route_snapshot(&self, region: RegionVerId) -> Result<RouteSnapshot, RegionRouteError> {
+        let location = self
+            .regions
+            .iter()
+            .find(|location| location.region == region)
+            .ok_or(RegionRouteError::MissingLeader)?;
+        let peers = location
+            .peers
+            .iter()
+            .map(|peer| {
+                let store = self
+                    .stores
+                    .get(&peer.store_id)
+                    .ok_or(RegionRouteError::MissingStore(peer.store_id))?;
+                if peer.store_epoch != store.epoch {
+                    return Err(RegionRouteError::StaleStoreEpoch {
+                        store_id: peer.store_id,
+                        expected: peer.store_epoch,
+                        actual: store.epoch,
+                    });
+                }
+                Ok(RoutePeer::new(
+                    RegionAttempt {
+                        region,
+                        peer_id: peer.id,
+                        store_id: peer.store_id,
+                        address: store.address.clone(),
+                        store_epoch: store.epoch,
+                    },
+                    peer.role,
+                    peer.is_witness,
+                    location.leader_peer_id == Some(peer.id),
+                    store.labels().to_vec(),
+                ))
+            })
+            .collect::<Result<Vec<_>, RegionRouteError>>()?;
+        let preferred_proxy = self
+            .preferred_proxies
+            .get(&region)
+            .filter(|proxy| self.validate_attempt(proxy).is_ok())
+            .cloned();
+        Ok(RouteSnapshot::new(region, peers, preferred_proxy))
+    }
+
+    /// Applies a transport result only when both captured generations still
+    /// belong to this exact region topology.
+    pub fn apply_route_feedback(
+        &mut self,
+        feedback: &RouteFeedback,
+    ) -> Result<RouteFeedbackApplication, RegionRecoveryError> {
+        self.validate_attempt(feedback.target())?;
+        let target_is_leader = self.regions.iter().any(|location| {
+            location.region == feedback.target().region
+                && location.leader_peer_id == Some(feedback.target().peer_id)
+        });
+        if !target_is_leader {
+            return Err(RegionRecoveryError::StaleObservation(
+                feedback.target().clone(),
+            ));
+        }
+        if let Some(proxy) = feedback.proxy() {
+            self.validate_attempt(proxy)?;
+            if proxy.region != feedback.target().region
+                || proxy.peer_id == feedback.target().peer_id
+                || proxy.store_id == feedback.target().store_id
+            {
+                return Err(RegionRecoveryError::StaleObservation(proxy.clone()));
+            }
+        }
+
+        let region = feedback.target().region;
+        match (feedback.proxy(), feedback.outcome()) {
+            (Some(proxy), RouteOutcome::Success) => {
+                if self.preferred_proxies.get(&region) == Some(proxy) {
+                    Ok(RouteFeedbackApplication::Unchanged)
+                } else {
+                    self.preferred_proxies.insert(region, proxy.clone());
+                    Ok(RouteFeedbackApplication::ProxyPublished)
+                }
+            }
+            (Some(proxy), RouteOutcome::Failure) => {
+                if self.preferred_proxies.get(&region) == Some(proxy) {
+                    self.preferred_proxies.remove(&region);
+                    Ok(RouteFeedbackApplication::ProxyCleared)
+                } else {
+                    Ok(RouteFeedbackApplication::Unchanged)
+                }
+            }
+            (None, RouteOutcome::Success) => {
+                if self.preferred_proxies.remove(&region).is_some() {
+                    Ok(RouteFeedbackApplication::ProxyCleared)
+                } else {
+                    Ok(RouteFeedbackApplication::Unchanged)
+                }
+            }
+            (None, RouteOutcome::Failure) => Ok(RouteFeedbackApplication::Unchanged),
+        }
     }
 
     /// Applies one exact foreground send-failure observation.
@@ -139,9 +251,13 @@ impl<L> RegionCache<L> {
         let previous_epoch = store.epoch;
         store.epoch = store.epoch.saturating_add(1);
         store.resolve_state = StoreResolveState::NeedCheck;
+        let current_epoch = store.epoch;
+        self.preferred_proxies.retain(|_, proxy| {
+            proxy.store_id != attempt.store_id || proxy.store_epoch != previous_epoch
+        });
         Ok(StoreFailureOutcome::Invalidated {
             previous_epoch,
-            current_epoch: store.epoch,
+            current_epoch,
         })
     }
 
@@ -401,6 +517,7 @@ impl<L> RegionCache<L> {
             });
         if usable {
             location.leader_peer_id = Some(peer_id);
+            self.preferred_proxies.remove(&region);
         }
         usable
     }
@@ -449,7 +566,10 @@ impl<L> RegionCache<L> {
         &mut self,
         observed: RegionVerId,
         mut replacements: Vec<RegionLocation>,
-    ) -> Result<(), RegionRouteError> {
+    ) -> Result<(), RegionRouteError>
+    where
+        L: RegionLoader,
+    {
         replacements.sort_by(|left, right| left.start_key.cmp(&right.start_key));
         for replacement in &replacements {
             if !replacement.end_key.is_empty() && replacement.start_key >= replacement.end_key {
@@ -472,11 +592,15 @@ impl<L> RegionCache<L> {
         let mut next_stores = self.stores.clone();
         next.retain(|location| location.region != observed);
         for mut replacement in replacements {
-            normalize_loaded(&mut next_stores, &mut replacement);
+            let labels = labels_for_location(&self.loader, &replacement);
+            normalize_loaded(&mut next_stores, &mut replacement, &labels);
             insert_loaded_into(&mut next, replacement)?;
         }
         self.regions = next;
         self.stores = next_stores;
+        self.preferred_proxies.remove(&observed);
+        self.preferred_proxies
+            .retain(|region, _| self.regions.iter().any(|cached| cached.region == *region));
         Ok(())
     }
 
@@ -614,13 +738,19 @@ impl<L> RegionCache<L> {
             .ok()
     }
 
-    fn insert_loaded(&mut self, mut loaded: RegionLocation) -> Result<usize, RegionRouteError> {
+    fn insert_loaded(&mut self, mut loaded: RegionLocation) -> Result<usize, RegionRouteError>
+    where
+        L: RegionLoader,
+    {
         let mut next_regions = self.regions.clone();
         let mut next_stores = self.stores.clone();
-        normalize_loaded(&mut next_stores, &mut loaded);
+        let labels = labels_for_location(&self.loader, &loaded);
+        normalize_loaded(&mut next_stores, &mut loaded, &labels);
         let index = insert_loaded_into(&mut next_regions, loaded)?;
         self.regions = next_regions;
         self.stores = next_stores;
+        self.preferred_proxies
+            .retain(|region, _| self.regions.iter().any(|cached| cached.region == *region));
         Ok(index)
     }
 }
@@ -672,19 +802,38 @@ fn request_flags(selector: &RequestSelector, cached_leader: bool) -> (bool, bool
     (false, true)
 }
 
-fn normalize_loaded(stores: &mut BTreeMap<u64, StoreState>, loaded: &mut RegionLocation) {
+fn labels_for_location<L: RegionLoader>(
+    loader: &L,
+    loaded: &RegionLocation,
+) -> BTreeMap<u64, Vec<(String, String)>> {
+    loaded
+        .stores
+        .iter()
+        .map(|store| (store.id, loader.store_labels(store.id).to_vec()))
+        .collect()
+}
+
+fn normalize_loaded(
+    stores: &mut BTreeMap<u64, RegionStoreTopology>,
+    loaded: &mut RegionLocation,
+    labels: &BTreeMap<u64, Vec<(String, String)>>,
+) {
     for supplied in &loaded.stores {
+        let supplied_labels = labels.get(&supplied.id).cloned().unwrap_or_default();
         match stores.get_mut(&supplied.id) {
             None => {
                 stores.insert(
                     supplied.id,
-                    StoreState {
-                        id: supplied.id,
-                        address: supplied.address.clone(),
-                        epoch: supplied.epoch,
-                        resolve_state: StoreResolveState::Resolved,
-                        liveness: StoreLiveness::Reachable,
-                    },
+                    RegionStoreTopology::new(
+                        StoreState {
+                            id: supplied.id,
+                            address: supplied.address.clone(),
+                            epoch: supplied.epoch,
+                            resolve_state: StoreResolveState::Resolved,
+                            liveness: StoreLiveness::Reachable,
+                        },
+                        supplied_labels,
+                    ),
                 );
             }
             Some(canonical) => {
@@ -694,6 +843,7 @@ fn normalize_loaded(stores: &mut BTreeMap<u64, StoreState>, loaded: &mut RegionL
                 }
                 canonical.address.clone_from(&supplied.address);
                 canonical.resolve_state = StoreResolveState::Resolved;
+                canonical.replace_labels(supplied_labels);
             }
         }
     }

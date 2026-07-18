@@ -26,6 +26,7 @@ use crate::region::{
 /// Concrete API-v1 region loader backed by the bounded PD control plane.
 pub struct PdRegionLoader {
     client: PdClient,
+    store_labels: HashMap<u64, Vec<(String, String)>>,
 }
 
 impl PdRegionLoader {
@@ -42,6 +43,7 @@ impl PdRegionLoader {
     {
         Ok(Self {
             client: PdClient::connect_seeds(seeds, timeout)?,
+            store_labels: HashMap::new(),
         })
     }
 
@@ -89,6 +91,14 @@ impl RegionLoader for PdRegionLoader {
                     .client
                     .get_store(peer.store_id)
                     .map_err(region_load_error)?;
+                match &store {
+                    Some(store) => {
+                        self.store_labels.insert(store.id, store.labels.clone());
+                    }
+                    None => {
+                        self.store_labels.remove(&peer.store_id);
+                    }
+                }
                 entry.insert(store);
             }
         }
@@ -161,6 +171,13 @@ impl RegionLoader for PdRegionLoader {
             stores,
         })
     }
+
+    fn store_labels(&self, store_id: u64) -> &[(String, String)] {
+        self.store_labels
+            .get(&store_id)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
 }
 
 impl RegionRecoveryLoader for PdRegionLoader {
@@ -178,6 +195,16 @@ impl RegionRecoveryLoader for PdRegionLoader {
                         .get_store(peer.store_id)
                         .map_err(region_load_error)?,
                 );
+            }
+        }
+        for (store_id, store) in &resolved {
+            match store {
+                Some(store) => {
+                    self.store_labels.insert(*store_id, store.labels.clone());
+                }
+                None => {
+                    self.store_labels.remove(store_id);
+                }
             }
         }
 
