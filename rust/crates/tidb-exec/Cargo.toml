@@ -81,3 +81,7 @@ path = "tests/table_index_reader_runtime_source.rs"
 [[test]]
 name = "tikv_scan_dag_lowering_source"
 path = "tests/tikv_scan_dag_lowering_source.rs"
+
+[[test]]
+name = "direct_unary_cancellation_source"
+path = "tests/direct_unary_cancellation_source.rs"

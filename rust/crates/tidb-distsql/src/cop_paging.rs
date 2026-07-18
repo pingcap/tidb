@@ -14,11 +14,13 @@
 
 //! Connected adaptive-paging continuation from the coprocessor worker.
 
+mod active_cancellation;
 mod cop_read_task_runtime;
 mod direct_unary_query_transport;
 mod tikv_rpc_contract;
 mod transport_failure;
 
+pub use active_cancellation::ExecutionUnaryCancellation;
 pub use cop_read_task_runtime::{
     CopReadAcceptedResponse, CopReadResponseError, CopReadTaskError, CopReadTaskReplacement,
     CopReadTaskResponse, CopReadTaskRuntime, FailedCopReadAttempt, PreparedCopReadTask,

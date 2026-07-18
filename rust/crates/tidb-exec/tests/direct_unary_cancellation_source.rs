@@ -17,12 +17,7 @@
 use std::sync::Arc;
 
 use tidb_distsql::cop_paging::ActiveUnaryCancellation;
-use tidb_distsql::{CancelHandle, ExecutionState};
-
-#[path = "../../tidb-distsql/src/cop_paging/active_cancellation.rs"]
-mod active_cancellation;
-
-use active_cancellation::ExecutionUnaryCancellation;
+use tidb_distsql::{CancelHandle, ExecutionState, ExecutionUnaryCancellation};
 
 #[test]
 fn detached_executor_cancellation_reaches_the_exact_direct_unary_carrier() {

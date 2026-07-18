@@ -29,7 +29,6 @@ support_anchors = [
   "pkg/store/copr/coprocessor.go:970-1021:iterator cancellation ownership",
 ]
 rust_paths = [
-  "rust/crates/tidb-txnkv/src/rpc/cancellation.rs",
   "rust/crates/tidb-txnkv/tests/tikv_active_cancellation_source.rs",
   "rust/crates/tidb-distsql/src/cop_paging/active_cancellation.rs",
   "rust/crates/tidb-distsql/tests/active_cancellation_source.rs",

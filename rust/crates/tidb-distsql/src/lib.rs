@@ -64,7 +64,7 @@ pub use cop_paging::{
     BatchBucketVersionUpdate, CopPagingError, CopPagingOutcome, CopPagingState, DirectUnaryClient,
     DirectUnaryClientError, DirectUnaryQueryResponse, DirectUnaryQueryTransport,
     DirectUnaryRequest, DirectUnaryResponse, DirectUnaryRuntimeConfig, DirectUnaryTransportError,
-    ReadEngineGeneration,
+    ExecutionUnaryCancellation, ReadEngineGeneration,
 };
 pub use copr_cache::{
     build_copr_cache_key, CoprCache, CoprCacheAdmission, CoprCacheConfig, CoprCacheError,
