@@ -101,6 +101,7 @@ pub use retry::{
     retry_backoff_upper_bound_ms, should_retry_after_failure, RETRY_BACKOFF_BASE_MS,
     RETRY_BACKOFF_CAP_MS,
 };
+pub use rpc::{DirectUnaryClientError, DirectUnaryConnectionError};
 pub use txn_scope::{TxnScopeVar, GLOBAL_TXN_SCOPE, LOCAL_TXN_SCOPE};
 pub use txn_source::{
     get_cdc_write_source, get_lossy_ddl_reorg_source, is_cdc_write_source_set,

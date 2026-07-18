@@ -19,7 +19,7 @@ use tidb_distsql::{
     CoprocessorRequestEnvelope, KvRequestBuilder, RequestKeyRange, RequestType, TransportBinding,
     TransportRequest, TransportRequestError,
 };
-use tidb_proto::CoprocessorRequest;
+use tidb_proto::{CoprocessorRequest, KvrpcContext};
 
 #[test]
 fn coprocessor_request_uses_source_field_numbers_and_preserves_payload() {
@@ -42,14 +42,17 @@ fn coprocessor_request_uses_source_field_numbers_and_preserves_payload() {
             end_key: vec![2, 3],
         }],
     )
-    .with_context(vec![0x99])
+    .with_context(KvrpcContext {
+        region_id: 9,
+        ..KvrpcContext::default()
+    })
     .with_paging_size(7)
     .with_cache_version(17)
     .with_max_keys_read(257);
 
     let encoded = envelope.encode_to_vec();
     let expected = vec![
-        0x0a, 0x01, 0x99, // context = 1
+        0x0a, 0x02, 0x08, 0x09, // context.region_id = 9
         0x10, 0x67, // tp = 2
         0x1a, 0x03, 0xde, 0xad, 0x00, // data = 3
         0x22, 0x07, 0x0a, 0x01, 0x01, 0x12, 0x02, 0x02, 0x03, // ranges = 4
@@ -62,7 +65,7 @@ fn coprocessor_request_uses_source_field_numbers_and_preserves_payload() {
     assert_eq!(encoded, expected);
 
     let decoded = CoprocessorRequest::decode(encoded.as_slice()).expect("coprocessor wire");
-    assert_eq!(decoded.context.as_deref(), Some([0x99].as_slice()));
+    assert_eq!(decoded.context.unwrap().region_id, 9);
     assert_eq!(decoded.tp, RequestType::Dag as i64);
     assert_eq!(decoded.data, payload);
     assert_eq!(decoded.ranges[0].start, vec![1]);

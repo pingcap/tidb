@@ -62,8 +62,9 @@ pub use context::{
 pub use cop_paging::{
     calculate_paging_remain, calculate_paging_retry, paging_response_read_bytes,
     BatchBucketVersionUpdate, CopPagingError, CopPagingOutcome, CopPagingState, DirectUnaryClient,
-    DirectUnaryQueryResponse, DirectUnaryQueryTransport, DirectUnaryRequest, DirectUnaryResponse,
-    DirectUnaryRuntimeConfig, DirectUnaryTransportError, ReadEngineGeneration, ResolvedRegionRoute,
+    DirectUnaryClientError, DirectUnaryQueryResponse, DirectUnaryQueryTransport,
+    DirectUnaryRequest, DirectUnaryResponse, DirectUnaryRuntimeConfig, DirectUnaryTransportError,
+    ReadEngineGeneration, ResolvedRegionRoute,
 };
 pub use copr_cache::{
     build_copr_cache_key, CoprCache, CoprCacheAdmission, CoprCacheConfig, CoprCacheError,

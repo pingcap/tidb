@@ -33,7 +33,9 @@ use crate::query_runtime::{
 use crate::{
     CoprCache, CoprCacheConfig, ResponseChannelEvent, TransportRequest, TransportRequestError,
 };
-pub use tidb_txnkv::{DirectUnaryClient, DirectUnaryRequest, DirectUnaryResponse};
+pub use tidb_txnkv::{
+    DirectUnaryClient, DirectUnaryClientError, DirectUnaryRequest, DirectUnaryResponse,
+};
 use tidb_txnkv::{EndpointType, TraceInfo};
 
 use super::{
@@ -60,6 +62,10 @@ pub struct DirectUnaryRuntimeConfig {
     pub read_engine_generation: ReadEngineGeneration,
     /// Initial shared read-byte prediction for one request runtime.
     pub seed_read_bytes: u64,
+    /// PD cluster identity attached to every checked request context.
+    /// The constructor rejects the default zero value before retaining the
+    /// client or any route.
+    pub cluster_id: u64,
     /// Optional cache configuration. Each returned query response owns one
     /// cache instance for all of its logical tasks and paging attempts.
     pub cache: Option<CoprCacheConfig>,
@@ -80,6 +86,7 @@ impl Default for DirectUnaryRuntimeConfig {
             default_timeout: Duration::from_secs(60),
             read_engine_generation: ReadEngineGeneration::Classic,
             seed_read_bytes: 0,
+            cluster_id: 0,
             cache: None,
             trace: None,
             observation_time: system_observation_time,
@@ -96,6 +103,8 @@ fn system_observation_time() -> Duration {
 /// Fail-closed construction and response errors for the direct unary seam.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DirectUnaryTransportError {
+    /// Live TiKV contexts require the nonzero identity published by PD.
+    MissingClusterId,
     /// Two supplied routes claim the same region ID.
     DuplicateRoute(u64),
     /// A supplied route has no usable address.
@@ -126,6 +135,7 @@ impl DirectUnaryTransportError {
     #[must_use]
     pub const fn kind(&self) -> &'static str {
         match self {
+            Self::MissingClusterId => "missing_cluster_id",
             Self::DuplicateRoute(_) => "duplicate_route",
             Self::MissingAddress(_) => "missing_address",
             Self::MissingRoute => "missing_route",
@@ -144,6 +154,9 @@ impl DirectUnaryTransportError {
 impl std::fmt::Display for DirectUnaryTransportError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::MissingClusterId => {
+                formatter.write_str("direct unary runtime has no PD cluster identity")
+            }
             Self::DuplicateRoute(region_id) => {
                 write!(formatter, "duplicate route for region {region_id}")
             }
@@ -195,6 +208,9 @@ impl<C> DirectUnaryQueryTransport<C> {
         routes: impl IntoIterator<Item = ResolvedRegionRoute>,
         config: DirectUnaryRuntimeConfig,
     ) -> Result<Self, DirectUnaryTransportError> {
+        if config.cluster_id == 0 {
+            return Err(DirectUnaryTransportError::MissingClusterId);
+        }
         let mut topology = Vec::new();
         let mut addresses = BTreeMap::new();
         for route in routes {
@@ -376,6 +392,7 @@ impl<C: DirectUnaryClient> DirectUnaryQueryResponse<C> {
             &self.metadata,
             predicted_read_bytes,
             self.config.trace.as_ref(),
+            self.config.cluster_id,
         );
         let timeout = request
             .timeout_override_ms
@@ -400,7 +417,7 @@ impl<C: DirectUnaryClient> DirectUnaryQueryResponse<C> {
         };
         let raw_response = try_borrow_client(self.client.as_ref())?
             .send_request(address, &client_request, timeout)
-            .map_err(DirectUnaryTransportError::Client)?;
+            .map_err(|error| DirectUnaryTransportError::Client(error.to_string()))?;
         let response = decode_tikv_unary_response(&raw_response.encoded_response)
             .map_err(|error| DirectUnaryTransportError::Decode(error.to_string()))?;
         let accepted = self.runtime.accept_response(

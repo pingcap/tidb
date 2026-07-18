@@ -24,6 +24,8 @@ use std::time::Duration;
 
 use tidb_proto::{KvrpcContext, KvrpcSourceStmt};
 
+use crate::rpc::DirectUnaryClientError;
+
 /// TiKV client-go replica-read values.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[repr(u8)]
@@ -105,7 +107,8 @@ pub struct DirectUnaryRequest {
     pub read_replica_scope: String,
     /// Transaction scope retained by the request wrapper.
     pub txn_scope: String,
-    /// Exact decoded context also encoded into the request body.
+    /// Exact decoded context kept beside the context-free body until the RPC
+    /// leaf replaces field 1 immediately before dispatch.
     pub context: KvrpcContext,
     /// Exact encoded `coprocessor.Request` body.
     pub encoded_request: Vec<u8>,
@@ -131,7 +134,13 @@ pub trait DirectUnaryClient {
         address: &str,
         request: &DirectUnaryRequest,
         timeout: Duration,
-    ) -> Result<DirectUnaryResponse, String>;
+    ) -> Result<DirectUnaryResponse, DirectUnaryClientError>;
+
+    /// Drops the active channel generation for one address.
+    fn close_address(&mut self, address: &str) -> Result<(), DirectUnaryClientError>;
+
+    /// Permanently closes the client. Later sends must fail closed.
+    fn close(&mut self) -> Result<(), DirectUnaryClientError>;
 }
 
 /// Trace identity attached by TiDB's `injectTraceClient`.

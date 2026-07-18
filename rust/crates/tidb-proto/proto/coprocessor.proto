@@ -2,10 +2,9 @@
 //
 // This is a dependency-closed projection of the coprocessor.Request wire
 // contract consumed by TiDB's coprocessor worker. The nested kvrpcpb.Context
-// has a dependency-closed owner in this crate and remains encoded bytes at
-// this established envelope boundary; protobuf messages and bytes share the
-// exact length-delimited field-1 wire shape. Table-shard metadata remains
-// outside this leaf.
+// has a dependency-closed owner in this crate and is kept as a typed message,
+// so the RPC leaf can replace stale context without disturbing other request
+// fields. Table-shard metadata remains outside this leaf.
 syntax = "proto3";
 
 package coprocessor;
@@ -62,10 +61,7 @@ message StoreBatchTask {
 // serialize the raw DAG/analyze/checksum payload and the request-level range
 // envelope without fabricating a Context, region task, or RPC client.
 message Request {
-  // Serialized kvrpcpb.Context produced by the unary request-contract owner.
-  // Keeping bytes here preserves the existing envelope API without changing
-  // the exact field number or length-delimited wire type.
-  optional bytes context = 1;
+  kvrpcpb.Context context = 1;
   int64 tp = 2;
   bytes data = 3;
   repeated KeyRange ranges = 4;

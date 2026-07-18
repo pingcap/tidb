@@ -65,6 +65,7 @@ pub fn build_tikv_unary_request(
     metadata: &KvRequestMetadata,
     predicted_read_bytes: u64,
     trace: Option<&TraceInfo>,
+    cluster_id: u64,
 ) -> TikvUnaryRequest {
     let task = prepared.task();
     let mut replica_read_type = map_replica_read_type(metadata.session.replica_read as u8);
@@ -120,14 +121,16 @@ pub fn build_tikv_unary_request(
         // resulting wire value directly rather than leaking the pre-fill zero.
         request_origin: KvrpcRequestOrigin::TiDb as i32,
         buckets_version: task.buckets_version,
+        cluster_id,
         ..KvrpcContext::default()
     };
     inject_source_stmt(&mut context, trace);
 
-    let request = prepared
-        .request()
-        .clone()
-        .with_context(context.encode_to_vec());
+    // RegionRequestSender/client-go keeps Context on the request wrapper and
+    // RPCClient attaches it to the command body immediately before the send.
+    // Preserve that single authority so a real transport cannot observe two
+    // independently mutable context copies.
+    let request = prepared.request().clone();
     TikvUnaryRequest {
         // PreparedCopReadTask is produced only after the coordinator rejects
         // every non-TiKV store. TiFlash resource-group clearing and

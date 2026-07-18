@@ -1,0 +1,16 @@
+// Source: github.com/pingcap/kvproto/proto/tikvpb.proto
+//
+// Dependency-closed unary TiKV service projection. The service and method
+// names are part of the gRPC path `/tikvpb.Tikv/Coprocessor`; unrelated TiKV
+// commands stay outside this first live transport leaf.
+syntax = "proto3";
+
+package tikvpb;
+
+import "coprocessor.proto";
+
+// Key/value store API for TiKV.
+service Tikv {
+  // Executes one SQL coprocessor request as a unary RPC.
+  rpc Coprocessor(coprocessor.Request) returns (coprocessor.Response) {}
+}

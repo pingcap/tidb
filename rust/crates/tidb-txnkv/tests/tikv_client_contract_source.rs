@@ -20,9 +20,9 @@ use std::time::Duration;
 use tidb_proto::{KvrpcContext, KvrpcSourceStmt};
 use tidb_txnkv::{
     endpoint_type, inject_source_stmt, map_replica_read_type, BackoffMetadata,
-    ClientReplicaReadType, DirectUnaryClient, DirectUnaryRequest, DirectUnaryResponse,
-    DriverDefaults, DriverOptions, EndpointType, PdClientConfig, SecurityConfig, TikvClientConfig,
-    TikvDriverConfig, TraceInfo, TxnLocalLatchesConfig,
+    ClientReplicaReadType, DirectUnaryClient, DirectUnaryClientError, DirectUnaryRequest,
+    DirectUnaryResponse, DriverDefaults, DriverOptions, EndpointType, PdClientConfig,
+    SecurityConfig, TikvClientConfig, TikvDriverConfig, TraceInfo, TxnLocalLatchesConfig,
 };
 
 #[derive(Default)]
@@ -36,12 +36,20 @@ impl DirectUnaryClient for RecordingUnaryClient {
         address: &str,
         request: &DirectUnaryRequest,
         timeout: Duration,
-    ) -> Result<DirectUnaryResponse, String> {
+    ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
         self.calls
             .push((address.to_owned(), request.clone(), timeout));
         Ok(DirectUnaryResponse {
             encoded_response: b"raw-response".to_vec(),
         })
+    }
+
+    fn close_address(&mut self, _address: &str) -> Result<(), DirectUnaryClientError> {
+        Ok(())
+    }
+
+    fn close(&mut self) -> Result<(), DirectUnaryClientError> {
+        Ok(())
     }
 }
 

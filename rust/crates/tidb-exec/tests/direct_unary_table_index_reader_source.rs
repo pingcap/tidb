@@ -22,10 +22,10 @@ use std::time::Duration;
 use prost::Message;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_distsql::{
-    DirectUnaryClient, DirectUnaryQueryTransport, DirectUnaryRequest, DirectUnaryResponse,
-    DirectUnaryRuntimeConfig, KvRequestMetadata, RegionTaskEpoch, RegionTaskPeer,
-    RegionTaskTopology, RequestKeyRange, RequestKeyRanges, RequestType, ResolvedRegionRoute,
-    StoreType, TransportRequest,
+    DirectUnaryClient, DirectUnaryClientError, DirectUnaryQueryTransport, DirectUnaryRequest,
+    DirectUnaryResponse, DirectUnaryRuntimeConfig, KvRequestMetadata, RegionTaskEpoch,
+    RegionTaskPeer, RegionTaskTopology, RequestKeyRange, RequestKeyRanges, RequestType,
+    ResolvedRegionRoute, StoreType, TransportRequest,
 };
 use tidb_exec::storage_reader::{ReaderKind, ReaderPlan, ReaderState, TableIndexReader};
 use tidb_proto::tipb::{Chunk, SelectResponse};
@@ -42,17 +42,25 @@ impl DirectUnaryClient for ReaderUnaryClient {
         address: &str,
         request: &DirectUnaryRequest,
         timeout: Duration,
-    ) -> Result<DirectUnaryResponse, String> {
+    ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
         assert_eq!(address, "tikv-1:20160");
         let wire =
             tidb_proto::CoprocessorRequest::decode(request.encoded_request.as_slice()).unwrap();
-        let context = tidb_proto::KvrpcContext::decode(wire.context.unwrap().as_slice()).unwrap();
-        assert_eq!(context.region_id, 1);
+        assert!(wire.context.is_none());
+        assert_eq!(request.context.region_id, 1);
         assert_eq!(timeout, Duration::from_secs(9));
         self.sends.set(self.sends.get() + 1);
         Ok(DirectUnaryResponse {
             encoded_response: self.responses.pop_front().expect("one unary response"),
         })
+    }
+
+    fn close_address(&mut self, _address: &str) -> Result<(), DirectUnaryClientError> {
+        Ok(())
+    }
+
+    fn close(&mut self) -> Result<(), DirectUnaryClientError> {
+        Ok(())
     }
 }
 
@@ -107,6 +115,7 @@ fn transport(sends: Rc<Cell<usize>>) -> DirectUnaryQueryTransport<ReaderUnaryCli
         }],
         DirectUnaryRuntimeConfig {
             default_timeout: Duration::from_secs(9),
+            cluster_id: 9001,
             ..DirectUnaryRuntimeConfig::default()
         },
     )

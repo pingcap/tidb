@@ -21,7 +21,7 @@
 //! leaving Context, batch tasks, region routing, and RPC ownership explicit.
 
 use prost::Message;
-use tidb_proto::{CoprocessorKeyRange, CoprocessorRequest};
+use tidb_proto::{CoprocessorKeyRange, CoprocessorRequest, KvrpcContext};
 
 use crate::{KvRequestMetadata, RequestKeyRange};
 
@@ -32,8 +32,8 @@ use crate::{KvRequestMetadata, RequestKeyRange};
 /// does not flatten partitioned `kv.KeyRanges` or perform region splitting.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct CoprocessorRequestEnvelope {
-    /// Opaque serialized `kvrpcpb.Context` bytes (field 1).
-    pub context: Option<Vec<u8>>,
+    /// Typed `kvrpcpb.Context` (field 1).
+    pub context: Option<KvrpcContext>,
     /// Source `kv.Request.Tp` (field 2).
     pub tp: i64,
     /// Exact source `kv.Request.Data` bytes (field 3).
@@ -85,10 +85,10 @@ impl CoprocessorRequestEnvelope {
         }
     }
 
-    /// Sets opaque serialized `kvrpcpb.Context` bytes without decoding them.
+    /// Sets the typed `kvrpcpb.Context`.
     #[must_use]
-    pub fn with_context(mut self, context: impl Into<Vec<u8>>) -> Self {
-        self.context = Some(context.into());
+    pub fn with_context(mut self, context: KvrpcContext) -> Self {
+        self.context = Some(context);
         self
     }
 

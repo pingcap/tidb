@@ -30,6 +30,11 @@ pub mod kvrpcpb {
     include!(concat!(env!("OUT_DIR"), "/kvrpcpb.rs"));
 }
 
+/// The generated dependency-closed TiKV gRPC service package.
+pub mod tikvpb {
+    include!(concat!(env!("OUT_DIR"), "/tikvpb.rs"));
+}
+
 pub use coprocessor::{
     ExecDetailsV2 as CoprocessorExecDetailsV2, KeyRange as CoprocessorKeyRange,
     Peer as CoprocessorPeer, RegionEpoch as CoprocessorRegionEpoch, Request as CoprocessorRequest,

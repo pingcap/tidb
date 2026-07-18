@@ -22,11 +22,11 @@ use std::time::Duration;
 use prost::Message;
 use tidb_datatype::FieldType;
 use tidb_distsql::{
-    DirectUnaryClient, DirectUnaryQueryTransport, DirectUnaryRequest, DirectUnaryResponse,
-    DirectUnaryRuntimeConfig, DirectUnaryTransportError, InjectedQueryRuntime, KvRequestMetadata,
-    QueryResultContext, RegionTaskEpoch, RegionTaskPeer, RegionTaskTopology, RequestKeyRange,
-    RequestKeyRanges, RequestType, ResolvedRegionRoute, SelectInput, StoreType, TransportRequest,
-    WarningCollector,
+    DirectUnaryClient, DirectUnaryClientError, DirectUnaryQueryTransport, DirectUnaryRequest,
+    DirectUnaryResponse, DirectUnaryRuntimeConfig, DirectUnaryTransportError, InjectedQueryRuntime,
+    KvRequestMetadata, QueryResultContext, RegionTaskEpoch, RegionTaskPeer, RegionTaskTopology,
+    RequestKeyRange, RequestKeyRanges, RequestType, ResolvedRegionRoute, SelectInput, StoreType,
+    TransportRequest, WarningCollector,
 };
 use tidb_proto::{
     CoprocessorExecDetailsV2, CoprocessorKeyRange, CoprocessorRequest, CoprocessorResponse,
@@ -59,16 +59,13 @@ impl DirectUnaryClient for ScriptedClient {
         address: &str,
         request: &DirectUnaryRequest,
         timeout: Duration,
-    ) -> Result<DirectUnaryResponse, String> {
+    ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
         let wire = CoprocessorRequest::decode(request.encoded_request.as_slice()).unwrap();
+        assert!(wire.context.is_none());
         self.calls.borrow_mut().push(ObservedCall {
             address: address.to_owned(),
             timeout,
-            region_id: wire
-                .context
-                .as_ref()
-                .and_then(|context| tidb_proto::KvrpcContext::decode(context.as_slice()).ok())
-                .map_or(0, |context| context.region_id),
+            region_id: request.context.region_id,
             data: wire.data,
             predicted_read_bytes: request.predicted_read_bytes,
         });
@@ -76,6 +73,15 @@ impl DirectUnaryClient for ScriptedClient {
             .pop_front()
             .expect("one scripted response per client call")
             .map(|encoded_response| DirectUnaryResponse { encoded_response })
+            .map_err(DirectUnaryClientError::InvalidRequest)
+    }
+
+    fn close_address(&mut self, _address: &str) -> Result<(), DirectUnaryClientError> {
+        Ok(())
+    }
+
+    fn close(&mut self) -> Result<(), DirectUnaryClientError> {
+        Ok(())
     }
 }
 
@@ -148,6 +154,7 @@ fn transport(
         DirectUnaryRuntimeConfig {
             default_timeout: Duration::from_secs(60),
             seed_read_bytes: 4096,
+            cluster_id: 9001,
             observation_time,
             ..DirectUnaryRuntimeConfig::default()
         },
@@ -340,13 +347,28 @@ fn retry_responses_and_client_or_decode_failures_are_terminal() {
 #[test]
 fn missing_duplicate_and_empty_routes_fail_before_client_dispatch() {
     let calls = Rc::new(RefCell::new(Vec::new()));
+    let missing_cluster = DirectUnaryQueryTransport::new(
+        ScriptedClient {
+            calls: Rc::clone(&calls),
+            responses: VecDeque::new(),
+        },
+        [route(1, "a", "z", "one")],
+        DirectUnaryRuntimeConfig::default(),
+    )
+    .err()
+    .unwrap();
+    assert_eq!(missing_cluster, DirectUnaryTransportError::MissingClusterId);
+
     let duplicate = DirectUnaryQueryTransport::new(
         ScriptedClient {
             calls: Rc::clone(&calls),
             responses: VecDeque::new(),
         },
         [route(1, "a", "m", "one"), route(1, "m", "z", "duplicate")],
-        DirectUnaryRuntimeConfig::default(),
+        DirectUnaryRuntimeConfig {
+            cluster_id: 9001,
+            ..DirectUnaryRuntimeConfig::default()
+        },
     )
     .err()
     .unwrap();
@@ -360,7 +382,10 @@ fn missing_duplicate_and_empty_routes_fail_before_client_dispatch() {
             responses: VecDeque::new(),
         },
         [empty],
-        DirectUnaryRuntimeConfig::default(),
+        DirectUnaryRuntimeConfig {
+            cluster_id: 9001,
+            ..DirectUnaryRuntimeConfig::default()
+        },
     )
     .err()
     .unwrap();

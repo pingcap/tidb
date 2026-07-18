@@ -26,8 +26,8 @@ use tidb_distsql::{
     RequestSource, RequestType, StoreType,
 };
 use tidb_proto::{
-    CoprocessorRequest, CoprocessorResponse, KvrpcContext, KvrpcLockInfo, KvrpcRequestOrigin,
-    RegionError, StoreBatchTaskResponse,
+    CoprocessorRequest, CoprocessorResponse, KvrpcLockInfo, KvrpcRequestOrigin, RegionError,
+    StoreBatchTaskResponse,
 };
 use tidb_txnkv::{ClientReplicaReadType, EndpointType, TraceInfo};
 
@@ -117,6 +117,7 @@ fn checked_task_becomes_wire_ready_request_with_exact_context_and_wrapper_metada
             connection_id: 123,
             session_alias: "trace-alias".to_owned(),
         }),
+        9001,
     );
 
     assert_eq!(request.endpoint, EndpointType::TiKv);
@@ -139,8 +140,8 @@ fn checked_task_becomes_wire_ready_request_with_exact_context_and_wrapper_metada
     assert_eq!(wire.connection_alias, "session");
     assert_eq!(wire.ranges.len(), 1);
 
-    let context = KvrpcContext::decode(wire.context.unwrap().as_slice()).unwrap();
-    assert_eq!(context, request.context);
+    assert!(wire.context.is_none());
+    let context = request.context;
     assert_eq!(context.region_id, 8);
     assert_eq!(context.region_epoch.unwrap().version, 3);
     assert_eq!(context.peer.unwrap().store_id, 12);
@@ -155,6 +156,7 @@ fn checked_task_becomes_wire_ready_request_with_exact_context_and_wrapper_metada
     assert_eq!(context.buckets_version, 13);
     assert_eq!(context.request_source, "internal_stats_analyze");
     assert_eq!(context.request_origin, KvrpcRequestOrigin::TiDb as i32);
+    assert_eq!(context.cluster_id, 9001);
     assert_eq!(
         context
             .resource_control_context
