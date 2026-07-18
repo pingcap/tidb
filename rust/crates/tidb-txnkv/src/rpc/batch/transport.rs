@@ -203,64 +203,58 @@ impl BatchTransportState {
         group: BatchGroup<OpaqueBatchCommand, BatchCommandCompletion>,
         commands: &std_mpsc::Sender<WorkerCommand>,
     ) -> Option<BatchPublicationReceipt> {
-        let mut prepared = Some(PreparedBatch::from_group(group));
+        let prepared = PreparedBatch::from_group(group);
         let key = StreamKey::new(address, forwarded_host);
-        loop {
-            let retired_route = self.streams.get(&key).and_then(|stream| {
-                stream
-                    .terminal
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner())
-                    .as_ref()
-                    .map(|_| stream.route.clone())
-            });
-            if let Some(retired_route) = retired_route {
-                self.remove_stream_if_current(&key, &retired_route);
-                self.reconnect_budget.remove(&key);
-            }
-
-            if !self.streams.contains_key(&key) {
-                if let Err(error) = self
-                    .recreate_stream(channels, runtime, key.clone(), commands)
-                    .await
-                {
-                    prepared
-                        .take()
-                        .expect("prepared batch is consumed only after stream selection")
-                        .fail(BatchInflightError::Transport(error));
-                    return None;
-                }
-            }
-
-            let stream = self
-                .streams
-                .get(&key)
-                .expect("stream recreation succeeded before publication");
-            let route = stream.route.clone();
-            let terminal = Arc::clone(&stream.terminal);
-            let outbound = stream.outbound.clone();
-            let connection_version = stream.connection_version;
-            let mut terminal_guard = terminal
+        let retired_route = self.streams.get(&key).and_then(|stream| {
+            stream
+                .terminal
                 .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            if terminal_guard.is_some() {
-                drop(terminal_guard);
-                self.remove_stream_if_current(&key, &route);
-                continue;
-            }
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .as_ref()
+                .map(|_| stream.route.clone())
+        });
+        if let Some(retired_route) = retired_route {
+            self.remove_stream_if_current(&key, &retired_route);
+            self.reconnect_budget.remove(&key);
+        }
 
-            let PreparedBatch {
-                commands: batch_commands,
-                request_ids,
-                pending,
-            } = prepared
-                .take()
-                .expect("prepared batch is consumed once at the publication boundary");
-            let request = match BatchWireRequest::new(
-                batch_commands,
-                request_ids.clone(),
-                client_send_time_ns(),
-            ) {
+        if !self.streams.contains_key(&key) {
+            if let Err(error) = self
+                .recreate_stream(channels, runtime, key.clone(), commands)
+                .await
+            {
+                prepared.fail(BatchInflightError::Transport(error));
+                return None;
+            }
+        }
+
+        let stream = self
+            .streams
+            .get(&key)
+            .expect("stream recreation succeeded before publication");
+        let route = stream.route.clone();
+        let terminal = Arc::clone(&stream.terminal);
+        let outbound = stream.outbound.clone();
+        let connection_version = stream.connection_version;
+        let mut terminal_guard = terminal
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(error) = terminal_guard.as_ref().cloned() {
+            drop(terminal_guard);
+            self.remove_stream_if_current(&key, &route);
+            self.reconnect_budget.remove(&key);
+            prepared.fail(error);
+            return None;
+        }
+
+        let PreparedBatch {
+            commands: batch_commands,
+            request_ids,
+            pending,
+        } = prepared;
+        let request =
+            match BatchWireRequest::new(batch_commands, request_ids.clone(), client_send_time_ns())
+            {
                 Ok(request) => request,
                 Err(error) => {
                     drop(terminal_guard);
@@ -270,40 +264,39 @@ impl BatchTransportState {
                     return None;
                 }
             };
-            if BatchInflightTable::publish_shared(&self.inflight, route.clone(), pending).is_err() {
-                drop(terminal_guard);
-                return None;
-            }
-            let send_error = outbound.send(request.into_proto()).err().map(|_| {
-                BatchInflightError::Transport(stream_error(
-                    address,
-                    connection_version,
-                    "BatchCommands request stream closed",
-                ))
-            });
-            if let Some(error) = &send_error {
-                *terminal_guard = Some(error.clone());
-                self.inflight
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner())
-                    .fail_route(&route, error.clone());
-            }
+        if BatchInflightTable::publish_shared(&self.inflight, route.clone(), pending).is_err() {
             drop(terminal_guard);
-            let receipt = BatchPublicationReceipt {
-                route: route.clone(),
-                request_ids,
-            };
-
-            if send_error.is_some() {
-                self.reconnect_budget.remove(&key);
-                if self.remove_stream_if_current(&key, &route) {
-                    let _ = self.recreate_stream(channels, runtime, key, commands).await;
-                }
-            } else {
-                self.reconnect_budget.insert(key);
-            }
-            return Some(receipt);
+            return None;
         }
+        let send_error = outbound.send(request.into_proto()).err().map(|_| {
+            BatchInflightError::Transport(stream_error(
+                address,
+                connection_version,
+                "BatchCommands request stream closed",
+            ))
+        });
+        if let Some(error) = &send_error {
+            *terminal_guard = Some(error.clone());
+            self.inflight
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .fail_route(&route, error.clone());
+        }
+        drop(terminal_guard);
+        let receipt = BatchPublicationReceipt {
+            route: route.clone(),
+            request_ids,
+        };
+
+        if send_error.is_some() {
+            self.reconnect_budget.remove(&key);
+            if self.remove_stream_if_current(&key, &route) {
+                let _ = self.recreate_stream(channels, runtime, key, commands).await;
+            }
+        } else {
+            self.reconnect_budget.insert(key);
+        }
+        Some(receipt)
     }
 
     fn route_for_submission(&mut self, key: &StreamKey) -> BatchRoute {

@@ -41,6 +41,7 @@ struct StreamingTikv {
     received_bodies: Arc<Mutex<Vec<Vec<u8>>>>,
     hold_seen: Arc<Mutex<Option<mpsc::Sender<()>>>>,
     withhold_headers: bool,
+    close_before_request: bool,
     headers_started: Arc<Mutex<Option<mpsc::Sender<()>>>>,
     release_headers: Arc<AtomicBool>,
 }
@@ -77,6 +78,13 @@ impl Tikv for StreamingTikv {
                 tokio::time::sleep(Duration::from_millis(5)).await;
             }
             return Err(tonic::Status::cancelled("withheld header test released"));
+        }
+        if self.close_before_request {
+            let (responses, response_rx) = tokio::sync::mpsc::channel(1);
+            drop(responses);
+            return Ok(tonic::Response::new(
+                tokio_stream::wrappers::ReceiverStream::new(response_rx),
+            ));
         }
         let received_bodies = Arc::clone(&self.received_bodies);
         let hold_seen = Arc::clone(&self.hold_seen);
@@ -237,6 +245,7 @@ fn duplex_stream_reuses_pool_isolates_forwarding_reconnects_and_drains_close() {
         received_bodies: Arc::clone(&received_bodies),
         hold_seen: Arc::new(Mutex::new(Some(hold_seen))),
         withhold_headers: false,
+        close_before_request: false,
         headers_started: Arc::new(Mutex::new(None)),
         release_headers: Arc::new(AtomicBool::new(false)),
     });
@@ -355,6 +364,7 @@ fn shutdown_cancellation_interrupts_withheld_stream_headers_and_joins_promptly()
         received_bodies: Arc::new(Mutex::new(Vec::new())),
         hold_seen: Arc::new(Mutex::new(None)),
         withhold_headers: true,
+        close_before_request: false,
         headers_started: Arc::new(Mutex::new(Some(headers_started))),
         release_headers: Arc::clone(&release_headers),
     });
@@ -388,4 +398,79 @@ fn shutdown_cancellation_interrupts_withheld_stream_headers_and_joins_promptly()
             DirectUnaryClientError::Closed
         ))
     );
+}
+
+#[test]
+fn immediate_close_before_request_fails_once_without_on_demand_open_spin() {
+    let streams = Arc::new(AtomicUsize::new(0));
+    let server = TestServer::start(StreamingTikv {
+        streams: Arc::clone(&streams),
+        metadata: Arc::new(Mutex::new(Vec::new())),
+        received_bodies: Arc::new(Mutex::new(Vec::new())),
+        hold_seen: Arc::new(Mutex::new(None)),
+        withhold_headers: false,
+        close_before_request: true,
+        headers_started: Arc::new(Mutex::new(None)),
+        release_headers: Arc::new(AtomicBool::new(false)),
+    });
+    let mut client = tidb_txnkv::rpc::TonicCoprocessorClient::new().unwrap();
+    let cancellation = client.shutdown_cancellation();
+    let (request, mut pull) = entry(b"must-not-spin", None);
+    let address = server.address.clone();
+    let (submitted, submitted_wait) = mpsc::channel();
+    let (allow_close, close_wait) = mpsc::channel();
+    let (closed, closed_wait) = mpsc::channel();
+    let thread = std::thread::spawn(move || {
+        let result = client.submit_batch_commands(&address, vec![request]);
+        let _ = submitted.send(result);
+        let _ = close_wait.recv();
+        let _ = closed.send(client.close());
+    });
+
+    let submitted = match submitted_wait.recv_timeout(Duration::from_secs(1)) {
+        Ok(submitted) => submitted,
+        Err(error) => {
+            cancellation.cancel();
+            let _ = allow_close.send(());
+            let _ = closed_wait.recv_timeout(Duration::from_secs(1));
+            let _ = thread.join();
+            panic!("one on-demand open must not retry in a loop: {error}");
+        }
+    };
+    let mut completion = None;
+    let mut completion_poll_error = None;
+    for _ in 0..200 {
+        match pull.try_complete() {
+            Ok(Some(result)) => {
+                completion = Some(result);
+                break;
+            }
+            Ok(None) => {}
+            Err(error) => {
+                completion_poll_error = Some(error);
+                break;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let stream_count = streams.load(Ordering::Acquire);
+    let allow_close = allow_close.send(());
+    let close = closed_wait.recv_timeout(Duration::from_secs(1));
+    let joined = thread.join();
+
+    let _receipts = submitted.unwrap();
+    allow_close.unwrap();
+    close.unwrap().unwrap();
+    joined.unwrap();
+    assert!(
+        completion_poll_error.is_none(),
+        "completion polling must remain valid: {completion_poll_error:?}"
+    );
+    assert!(matches!(
+        completion.expect("terminal stream must fail the unpublished batch"),
+        Err(BatchInflightError::Transport(
+            DirectUnaryClientError::Connection(_)
+        ))
+    ));
+    assert!((1..=2).contains(&stream_count));
 }

@@ -119,6 +119,7 @@ fn command_adapters_share_one_transport_authority_and_exact_paths() {
     let publish = send_group.find("::publish_shared").unwrap();
     let send = send_group.find(".send(request.into_proto())").unwrap();
     assert!(stamp < publish && publish < send);
+    assert!(!send_group.contains("continue;"));
 }
 
 #[test]
