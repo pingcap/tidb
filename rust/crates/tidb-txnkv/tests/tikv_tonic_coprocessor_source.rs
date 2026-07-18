@@ -20,6 +20,7 @@ use std::time::Duration;
 
 use prost::Message;
 use tidb_proto::tikvpb::tikv_server::{Tikv, TikvServer};
+use tidb_proto::tikvpb::{BatchCommandsRequest, BatchCommandsResponse};
 use tidb_proto::{
     CoprocessorKeyRange, CoprocessorRequest, CoprocessorResponse, KvrpcContext, KvrpcPeer,
     KvrpcRegionEpoch,
@@ -41,6 +42,9 @@ struct RecordingTikv {
 
 #[tonic::async_trait]
 impl Tikv for RecordingTikv {
+    type BatchCommandsStream =
+        tokio_stream::wrappers::ReceiverStream<Result<BatchCommandsResponse, tonic::Status>>;
+
     async fn coprocessor(
         &self,
         request: tonic::Request<CoprocessorRequest>,
@@ -71,6 +75,15 @@ impl Tikv for RecordingTikv {
             data,
             ..CoprocessorResponse::default()
         }))
+    }
+
+    async fn batch_commands(
+        &self,
+        _request: tonic::Request<tonic::Streaming<BatchCommandsRequest>>,
+    ) -> Result<tonic::Response<Self::BatchCommandsStream>, tonic::Status> {
+        Err(tonic::Status::unimplemented(
+            "BatchCommands is not used here",
+        ))
     }
 }
 

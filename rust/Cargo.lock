@@ -1127,6 +1127,7 @@ dependencies = [
  "tidb-pd-client",
  "tidb-proto",
  "tokio",
+ "tokio-stream",
  "tonic",
 ]
 

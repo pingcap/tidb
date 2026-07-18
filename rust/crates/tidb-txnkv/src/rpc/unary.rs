@@ -20,8 +20,7 @@
 //! region routing, retry, lock policy, and response interpretation stay above
 //! this transport authority.
 
-use std::sync::{mpsc, Arc, Condvar, Mutex};
-use std::thread::JoinHandle;
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use bytes::{Buf, BufMut};
@@ -29,9 +28,10 @@ use tonic::codec::{Codec, DecodeBuf, Decoder, EncodeBuf, Encoder};
 
 use crate::region::StoreLiveness;
 
+use super::batch::transport::{BatchCommandEntry, BatchPublicationReceipt};
 use super::channel_pool::ChannelPool;
 use super::forwarding;
-use super::liveness::check_liveness;
+use super::transport_runtime::TransportRuntime;
 use super::{DirectUnaryClientError, DirectUnaryConnectionError, DirectUnaryGrpcCode};
 
 // client-go internal/client sets MaxRecvMsgSize to math.MaxInt64-1. Tonic's
@@ -179,36 +179,6 @@ pub(super) struct RawUnaryResponse {
     pub(super) encoded_response: Vec<u8>,
 }
 
-enum WorkerCommand {
-    Send {
-        address: String,
-        request: RawUnaryRequest,
-        call: UnaryCallContext,
-        reply: mpsc::Sender<Result<RawUnaryResponse, DirectUnaryClientError>>,
-    },
-    CloseAddress {
-        address: String,
-        reply: mpsc::Sender<()>,
-    },
-    CloseAddressVersion {
-        address: String,
-        version: u64,
-        reply: mpsc::Sender<()>,
-    },
-    Liveness {
-        address: String,
-        timeout: Duration,
-        reply: mpsc::Sender<StoreLiveness>,
-    },
-    Inspect {
-        address: String,
-        reply: mpsc::Sender<(Option<u64>, usize)>,
-    },
-    Close {
-        reply: mpsc::Sender<()>,
-    },
-}
-
 enum UnaryAttemptError {
     Connection(String),
     RemoteGrpc(tonic::Status),
@@ -221,46 +191,16 @@ enum UnaryCallOutcome {
     ),
 }
 
-/// Sole synchronous raw-unary runtime and channel-pool owner.
-pub(super) struct RawUnaryClient {
-    commands: Option<mpsc::Sender<WorkerCommand>>,
-    worker: Option<JoinHandle<()>>,
+/// Synchronous handle to the sole shared unary and BatchCommands transport.
+pub(super) struct RawTransportClient {
+    transport: TransportRuntime,
 }
 
-impl RawUnaryClient {
+impl RawTransportClient {
     pub(super) fn new() -> Result<Self, DirectUnaryClientError> {
-        let (commands, receiver) = mpsc::channel();
-        let (ready_tx, ready_rx) = mpsc::channel();
-        let worker = std::thread::spawn(move || {
-            let runtime = match tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-            {
-                Ok(runtime) => runtime,
-                Err(error) => {
-                    let _ = ready_tx.send(Err(DirectUnaryClientError::Runtime(error.to_string())));
-                    return;
-                }
-            };
-            if ready_tx.send(Ok(())).is_err() {
-                return;
-            }
-            run_worker(runtime, receiver);
-        });
-        match ready_rx.recv() {
-            Ok(Ok(())) => Ok(Self {
-                commands: Some(commands),
-                worker: Some(worker),
-            }),
-            Ok(Err(error)) => {
-                let _ = worker.join();
-                Err(error)
-            }
-            Err(error) => {
-                let _ = worker.join();
-                Err(DirectUnaryClientError::Runtime(error.to_string()))
-            }
-        }
+        Ok(Self {
+            transport: TransportRuntime::new()?,
+        })
     }
 
     pub(super) fn send(
@@ -272,35 +212,19 @@ impl RawUnaryClient {
         if call.cancellation().is_cancelled() {
             return Err(DirectUnaryClientError::CallerCancelled);
         }
-        let Some(commands) = &self.commands else {
-            return Err(DirectUnaryClientError::Closed);
-        };
-        let (reply, response) = mpsc::channel();
-        commands
-            .send(WorkerCommand::Send {
-                address: address.to_owned(),
-                request,
-                call: call.clone(),
-                reply,
-            })
-            .map_err(|_| DirectUnaryClientError::Closed)?;
-        response
-            .recv()
-            .unwrap_or(Err(DirectUnaryClientError::Closed))
+        self.transport.unary_send(address, request, call)
+    }
+
+    pub(super) fn submit_batch(
+        &self,
+        address: &str,
+        entries: Vec<BatchCommandEntry>,
+    ) -> Result<Vec<BatchPublicationReceipt>, DirectUnaryClientError> {
+        self.transport.batch_submit(address, entries)
     }
 
     pub(super) fn close_address(&mut self, address: &str) -> Result<(), DirectUnaryClientError> {
-        let Some(commands) = &self.commands else {
-            return Ok(());
-        };
-        let (reply, response) = mpsc::channel();
-        commands
-            .send(WorkerCommand::CloseAddress {
-                address: address.to_owned(),
-                reply,
-            })
-            .map_err(|_| DirectUnaryClientError::Closed)?;
-        response.recv().map_err(|_| DirectUnaryClientError::Closed)
+        self.transport.close_address(address)
     }
 
     pub(super) fn close_address_version(
@@ -308,18 +232,7 @@ impl RawUnaryClient {
         address: &str,
         version: u64,
     ) -> Result<(), DirectUnaryClientError> {
-        let Some(commands) = &self.commands else {
-            return Ok(());
-        };
-        let (reply, response) = mpsc::channel();
-        commands
-            .send(WorkerCommand::CloseAddressVersion {
-                address: address.to_owned(),
-                version,
-                reply,
-            })
-            .map_err(|_| DirectUnaryClientError::Closed)?;
-        response.recv().map_err(|_| DirectUnaryClientError::Closed)
+        self.transport.close_address_version(address, version)
     }
 
     pub(super) fn liveness(
@@ -327,102 +240,29 @@ impl RawUnaryClient {
         address: &str,
         timeout: Duration,
     ) -> Result<StoreLiveness, DirectUnaryClientError> {
-        let Some(commands) = &self.commands else {
-            return Err(DirectUnaryClientError::Closed);
-        };
-        let (reply, response) = mpsc::channel();
-        commands
-            .send(WorkerCommand::Liveness {
-                address: address.to_owned(),
-                timeout,
-                reply,
-            })
-            .map_err(|_| DirectUnaryClientError::Closed)?;
-        response.recv().map_err(|_| DirectUnaryClientError::Closed)
+        self.transport.liveness(address, timeout)
     }
 
     pub(super) fn inspect(&self, address: &str) -> (Option<u64>, usize) {
-        let Some(commands) = &self.commands else {
-            return (None, 0);
-        };
-        let (reply, response) = mpsc::channel();
-        if commands
-            .send(WorkerCommand::Inspect {
-                address: address.to_owned(),
-                reply,
-            })
-            .is_err()
-        {
-            return (None, 0);
-        }
-        response.recv().unwrap_or((None, 0))
+        self.transport.inspect(address)
+    }
+
+    pub(super) fn inspect_batch(&self, address: &str, forwarded_host: Option<&str>) -> Option<u64> {
+        self.transport.inspect_batch(address, forwarded_host)
     }
 
     pub(super) fn shutdown(&mut self) {
-        if let Some(commands) = self.commands.take() {
-            let (reply, response) = mpsc::channel();
-            if commands.send(WorkerCommand::Close { reply }).is_ok() {
-                let _ = response.recv();
-            }
-        }
-        if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
-        }
+        self.transport.shutdown();
     }
 }
 
-impl Drop for RawUnaryClient {
+impl Drop for RawTransportClient {
     fn drop(&mut self) {
         self.shutdown();
     }
 }
 
-fn run_worker(runtime: tokio::runtime::Runtime, receiver: mpsc::Receiver<WorkerCommand>) {
-    let mut channels = ChannelPool::new();
-    while let Ok(command) = receiver.recv() {
-        match command {
-            WorkerCommand::Send {
-                address,
-                request,
-                call,
-                reply,
-            } => {
-                let result = send_unary(&runtime, &mut channels, &address, request, &call);
-                let _ = reply.send(result);
-            }
-            WorkerCommand::CloseAddress { address, reply } => {
-                channels.close_address(&address);
-                let _ = reply.send(());
-            }
-            WorkerCommand::CloseAddressVersion {
-                address,
-                version,
-                reply,
-            } => {
-                channels.close_address_version(&address, version);
-                let _ = reply.send(());
-            }
-            WorkerCommand::Liveness {
-                address,
-                timeout,
-                reply,
-            } => {
-                let result = check_liveness(&runtime, &address, timeout);
-                let _ = reply.send(result);
-            }
-            WorkerCommand::Inspect { address, reply } => {
-                let _ = reply.send((channels.version(&address), channels.len()));
-            }
-            WorkerCommand::Close { reply } => {
-                channels.close();
-                let _ = reply.send(());
-                break;
-            }
-        }
-    }
-}
-
-fn send_unary(
+pub(super) fn send_unary(
     runtime: &tokio::runtime::Runtime,
     channels: &mut ChannelPool,
     address: &str,

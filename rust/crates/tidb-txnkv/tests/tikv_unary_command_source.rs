@@ -69,17 +69,45 @@ fn pinned_transaction_commands_preserve_exact_fields() {
 }
 
 #[test]
-fn command_adapters_share_one_raw_unary_authority_and_exact_paths() {
+fn command_adapters_share_one_transport_authority_and_exact_paths() {
     let adapter = include_str!("../src/rpc/tonic_coprocessor.rs");
     assert!(adapter.contains("/tikvpb.Tikv/Coprocessor"));
     assert!(adapter.contains("/tikvpb.Tikv/KvCheckTxnStatus"));
     assert!(adapter.contains("/tikvpb.Tikv/KvResolveLock"));
-    assert_eq!(adapter.matches("unary: RawUnaryClient").count(), 2);
+    assert_eq!(adapter.matches("transport: RawTransportClient").count(), 2);
     assert!(!adapter.contains("ChannelPool::new()"));
+    assert!(adapter.contains("submit_batch_commands"));
 
     let core = include_str!("../src/rpc/unary.rs");
-    assert_eq!(core.matches("ChannelPool::new()").count(), 1);
     assert!(core.contains("tokio::select!"));
+    assert!(!core.contains("ChannelPool::new()"));
+
+    let runtime = include_str!("../src/rpc/transport_runtime.rs");
+    assert_eq!(runtime.matches("ChannelPool::new()").count(), 1);
+    assert_eq!(runtime.matches("Builder::new_multi_thread()").count(), 1);
+    assert!(runtime.contains("WorkerCommand::UnarySend"));
+    assert!(runtime.contains("WorkerCommand::BatchSubmit"));
+
+    let batch = include_str!("../src/rpc/batch/transport.rs");
+    assert!(batch.contains(".batch_commands(request)"));
+    assert!(batch.contains("Arc<Mutex<BatchInflightTable>>"));
+    assert!(batch.contains("BatchStreamEvent::Retired"));
+    assert!(!batch.contains("BatchStreamEvent::Response"));
+    assert!(!batch.contains("ChannelPool::new()"));
+    assert!(!batch.contains("Runtime::new()"));
+    assert!(!batch.contains("Builder::new_"));
+
+    let send_group = batch
+        .split("async fn send_group")
+        .nth(1)
+        .unwrap()
+        .split("fn route_for_submission")
+        .next()
+        .unwrap();
+    let stamp = send_group.find("client_send_time_ns()").unwrap();
+    let publish = send_group.find(".publish_or_fail").unwrap();
+    let send = send_group.find(".send(request.into_proto())").unwrap();
+    assert!(stamp < publish && publish < send);
 }
 
 #[test]

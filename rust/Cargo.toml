@@ -54,6 +54,7 @@ regex = "1"
 prost = "0.14"
 prost-build = "0.14"
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "sync", "time"] }
+tokio-stream = "0.1"
 tonic = { version = "0.14", features = ["transport"] }
 tonic-prost = "0.14"
 tonic-prost-build = "0.14"

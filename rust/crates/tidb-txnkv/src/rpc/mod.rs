@@ -11,6 +11,7 @@ mod error;
 mod forwarding;
 mod liveness;
 mod tonic_coprocessor;
+mod transport_runtime;
 mod unary;
 
 pub use async_completion::{

@@ -83,3 +83,11 @@ fn missing_command_presence_remains_observable() {
     let decoded = BatchCommandsRequest::decode(request.encode_to_vec().as_slice()).unwrap();
     assert!(decoded.requests[0].cmd.is_none());
 }
+
+#[test]
+fn pinned_tikv_service_exposes_real_batch_commands_duplex_stream() {
+    let source = include_str!("../proto/tikvpb.proto");
+    assert!(source.contains(
+        "rpc BatchCommands(stream BatchCommandsRequest) returns (stream BatchCommandsResponse) {}"
+    ));
+}

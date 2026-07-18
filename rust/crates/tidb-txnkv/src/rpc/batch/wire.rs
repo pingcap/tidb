@@ -322,19 +322,26 @@ impl BatchWireRequest {
     /// Encodes without consuming or releasing any inner command body.
     #[must_use]
     pub fn encode_to_vec(&self) -> Vec<u8> {
+        self.clone().into_proto().encode_to_vec()
+    }
+
+    /// Consumes this validated envelope into the generated tonic request.
+    ///
+    /// Keeping oneof construction here prevents the concrete stream owner from
+    /// becoming a second wire authority.
+    #[must_use]
+    pub fn into_proto(self) -> BatchCommandsRequest {
         BatchCommandsRequest {
             requests: self
                 .commands
-                .iter()
-                .cloned()
+                .into_iter()
                 .map(|command| batch_commands_request::Request {
                     cmd: Some(into_request_cmd(command)),
                 })
                 .collect(),
-            request_ids: self.request_ids.clone(),
+            request_ids: self.request_ids,
             client_send_time_ns: self.client_send_time_ns,
         }
-        .encode_to_vec()
     }
 
     /// Commands in wire order.
@@ -394,52 +401,31 @@ impl BatchWireResponse {
     pub fn decode(bytes: &[u8]) -> Result<Self, BatchWireError> {
         let response = BatchCommandsResponse::decode(bytes)
             .map_err(|error| BatchWireError::Decode(error.to_string()))?;
-        validate_cardinality(
-            BatchEnvelopeKind::Response,
-            response.responses.len(),
-            response.request_ids.len(),
-        )?;
-        let commands = response
-            .responses
-            .into_iter()
-            .enumerate()
-            .map(|(index, response)| {
-                response
-                    .cmd
-                    .map(from_response_cmd)
-                    .ok_or(BatchWireError::MissingCommand {
-                        kind: BatchEnvelopeKind::Response,
-                        index,
-                    })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        Self::new(
-            commands,
-            response.request_ids,
-            response.transport_layer_load,
-            response.health_feedback,
-            response.tikv_send_time_ns,
-        )
+        Self::try_from(response)
+    }
+
+    /// Consumes this validated envelope into the generated tonic response.
+    #[must_use]
+    pub fn into_proto(self) -> BatchCommandsResponse {
+        BatchCommandsResponse {
+            responses: self
+                .commands
+                .into_iter()
+                .map(|command| batch_commands_response::Response {
+                    cmd: Some(into_response_cmd(command)),
+                })
+                .collect(),
+            request_ids: self.request_ids,
+            transport_layer_load: self.transport_layer_load,
+            health_feedback: self.health_feedback,
+            tikv_send_time_ns: self.tikv_send_time_ns,
+        }
     }
 
     /// Encodes without consuming or releasing any inner response body.
     #[must_use]
     pub fn encode_to_vec(&self) -> Vec<u8> {
-        BatchCommandsResponse {
-            responses: self
-                .commands
-                .iter()
-                .cloned()
-                .map(|command| batch_commands_response::Response {
-                    cmd: Some(into_response_cmd(command)),
-                })
-                .collect(),
-            request_ids: self.request_ids.clone(),
-            transport_layer_load: self.transport_layer_load,
-            health_feedback: self.health_feedback.clone(),
-            tikv_send_time_ns: self.tikv_send_time_ns,
-        }
-        .encode_to_vec()
+        self.clone().into_proto().encode_to_vec()
     }
 
     /// Responses in wire order.
@@ -470,5 +456,38 @@ impl BatchWireResponse {
     #[must_use]
     pub const fn tikv_send_time_ns(&self) -> u64 {
         self.tikv_send_time_ns
+    }
+}
+
+impl TryFrom<BatchCommandsResponse> for BatchWireResponse {
+    type Error = BatchWireError;
+
+    fn try_from(response: BatchCommandsResponse) -> Result<Self, Self::Error> {
+        validate_cardinality(
+            BatchEnvelopeKind::Response,
+            response.responses.len(),
+            response.request_ids.len(),
+        )?;
+        let commands = response
+            .responses
+            .into_iter()
+            .enumerate()
+            .map(|(index, response)| {
+                response
+                    .cmd
+                    .map(from_response_cmd)
+                    .ok_or(BatchWireError::MissingCommand {
+                        kind: BatchEnvelopeKind::Response,
+                        index,
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Self::new(
+            commands,
+            response.request_ids,
+            response.transport_layer_load,
+            response.health_feedback,
+            response.tikv_send_time_ns,
+        )
     }
 }

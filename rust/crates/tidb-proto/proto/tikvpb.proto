@@ -1,9 +1,9 @@
 // Source: github.com/pingcap/kvproto/proto/tikvpb.proto
 //
 // Dependency-closed TiKV service and BatchCommands envelope projection. The
-// generated server stays Coprocessor-only so existing bounded test services do
-// not acquire the duplex stream before its owner lands. The shared raw-unary
-// client also uses the pinned command paths
+// shared transport runtime owns both unary Coprocessor calls and the persistent
+// BatchCommands duplex stream. The shared raw transport also uses the pinned
+// command paths
 // `/tikvpb.Tikv/KvCheckTxnStatus` and `/tikvpb.Tikv/KvResolveLock` without
 // generating a second client or service authority.
 syntax = "proto3";
@@ -16,6 +16,8 @@ import "coprocessor.proto";
 service Tikv {
   // Executes one SQL coprocessor request as a unary RPC.
   rpc Coprocessor(coprocessor.Request) returns (coprocessor.Response) {}
+  // Multiplexes opaque TiKV commands over one persistent duplex stream.
+  rpc BatchCommands(stream BatchCommandsRequest) returns (stream BatchCommandsResponse) {}
 }
 
 // Opaque, dependency-closed projection of TiKV's BatchCommands envelopes.

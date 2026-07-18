@@ -170,6 +170,10 @@ impl PendingBatchCommand {
         let (command, completion, progress) = entry.into_payload_completion();
         (command, Self::new(request_id, completion, progress))
     }
+
+    pub(super) fn fail(self, error: BatchInflightError) {
+        self.completion.schedule_error(error);
+    }
 }
 
 #[derive(Debug, Default)]
@@ -212,19 +216,8 @@ impl BatchInflightTable {
         route: BatchRoute,
         pending: Vec<PendingBatchCommand>,
     ) -> Result<(), BatchPublishError> {
-        let mut new_ids = HashSet::with_capacity(pending.len());
-        for request in &pending {
-            if request.request_id == 0 {
-                return Err(BatchPublishError::ZeroRequestId);
-            }
-            if !new_ids.insert(request.request_id)
-                || self
-                    .routes
-                    .values()
-                    .any(|state| state.pending.contains_key(&request.request_id))
-            {
-                return Err(BatchPublishError::DuplicateRequestId(request.request_id));
-            }
+        if let Some(error) = self.publication_error(&pending) {
+            return Err(error);
         }
 
         let state = self.routes.entry(route).or_default();
@@ -235,6 +228,49 @@ impl BatchInflightTable {
             state.pending.insert(request.request_id, request);
         }
         Ok(())
+    }
+
+    /// Publishes consumed transport entries or fails their original completions.
+    pub(super) fn publish_or_fail(
+        &mut self,
+        route: BatchRoute,
+        pending: Vec<PendingBatchCommand>,
+    ) -> Result<(), BatchPublishError> {
+        if let Some(error) = self.publication_error(&pending) {
+            let failure = BatchInflightError::Transport(DirectUnaryClientError::InvalidRequest(
+                error.to_string(),
+            ));
+            for request in pending {
+                request.fail(failure.clone());
+            }
+            return Err(error);
+        }
+        let state = self.routes.entry(route).or_default();
+        for request in pending {
+            if let Some(batch_state) = request.progress.batch_state() {
+                batch_state.attach_stream_state(state.stream_state.clone());
+            }
+            state.pending.insert(request.request_id, request);
+        }
+        Ok(())
+    }
+
+    fn publication_error(&self, pending: &[PendingBatchCommand]) -> Option<BatchPublishError> {
+        let mut new_ids = HashSet::with_capacity(pending.len());
+        pending.iter().find_map(|request| {
+            if request.request_id == 0 {
+                return Some(BatchPublishError::ZeroRequestId);
+            }
+            if !new_ids.insert(request.request_id)
+                || self
+                    .routes
+                    .values()
+                    .any(|state| state.pending.contains_key(&request.request_id))
+            {
+                return Some(BatchPublishError::DuplicateRequestId(request.request_id));
+            }
+            None
+        })
     }
 
     /// Number of requests pending across every direct and forwarded route.
@@ -350,6 +386,20 @@ impl BatchInflightTable {
             pending.completion.schedule_error(error.clone());
         }
         failed
+    }
+
+    /// Fails every stream generation owned by one physical address.
+    pub fn fail_address(&mut self, address: &str, error: BatchInflightError) -> usize {
+        let routes = self
+            .routes
+            .keys()
+            .filter(|route| route.physical_address() == address)
+            .cloned()
+            .collect::<Vec<_>>();
+        routes
+            .iter()
+            .map(|route| self.fail_route(route, error.clone()))
+            .sum()
     }
 
     /// Fails every remaining async request when the owning client closes.

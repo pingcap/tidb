@@ -22,6 +22,7 @@ mod inflight;
 mod observability;
 mod priority_queue;
 mod scheduler;
+pub(super) mod transport;
 mod wire;
 
 pub use inflight::{
@@ -39,6 +40,7 @@ pub use scheduler::{
     BatchTrigger, ConsumedBatchGroups, ScheduledEntry, BATCH_POLICY_BASIC, BATCH_POLICY_CUSTOM,
     BATCH_POLICY_POSITIVE, BATCH_POLICY_STANDARD, DEFAULT_BATCH_POLICY, HIGH_TASK_PRIORITY,
 };
+pub use transport::{BatchCommandCompletion, BatchCommandEntry, BatchPublicationReceipt};
 pub use wire::{
     BatchCommandTag, BatchEnvelopeKind, BatchWireError, BatchWireRequest, BatchWireResponse,
     OpaqueBatchCommand,

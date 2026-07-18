@@ -109,6 +109,10 @@ pub use retry::{
     RETRY_BACKOFF_CAP_MS,
 };
 pub use rpc::{
+    batch::{
+        BatchCommandCompletion, BatchCommandEntry, BatchCommandTag, BatchInflightError,
+        BatchPublicationReceipt, BatchRoute, BatchWireError, OpaqueBatchCommand,
+    },
     DirectUnaryClientError, DirectUnaryConnectionError, DirectUnaryGrpcCode,
     DirectUnaryTransportClass, UnaryCallContext, UnaryCancellation, DEFAULT_STORE_LIVENESS_TIMEOUT,
 };

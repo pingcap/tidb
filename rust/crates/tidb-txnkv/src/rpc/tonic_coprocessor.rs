@@ -23,8 +23,9 @@ use tidb_proto::{
 use crate::region::StoreLiveness;
 use crate::{DirectUnaryClient, DirectUnaryRequest, DirectUnaryResponse};
 
+use super::batch::{BatchCommandEntry, BatchPublicationReceipt};
 use super::liveness::DEFAULT_STORE_LIVENESS_TIMEOUT;
-use super::unary::{RawUnaryClient, RawUnaryRequest, UnaryCallContext};
+use super::unary::{RawTransportClient, RawUnaryRequest, UnaryCallContext};
 use super::DirectUnaryClientError;
 
 pub(super) use super::unary::RawProtobufCodec;
@@ -34,22 +35,49 @@ const COPROCESSOR_PATH: &str = "/tikvpb.Tikv/Coprocessor";
 const CHECK_TXN_STATUS_PATH: &str = "/tikvpb.Tikv/KvCheckTxnStatus";
 const RESOLVE_LOCK_PATH: &str = "/tikvpb.Tikv/KvResolveLock";
 
-/// Synchronous client-go-shaped unary capability backed by tonic.
+/// Synchronous client-go-shaped TiKV transport capability backed by tonic.
 ///
 /// A dedicated worker thread owns the Tokio runtime and every tonic channel.
 /// Consequently the synchronous trait is safe to call from either ordinary or
 /// already-async-hosted threads: it never nests `Runtime::block_on`. Channels
 /// are created lazily, reused by address, and versioned on recreation.
 pub struct TonicCoprocessorClient {
-    unary: RawUnaryClient,
+    transport: RawTransportClient,
 }
 
 impl TonicCoprocessorClient {
     /// Constructs a live client without opening a socket.
     pub fn new() -> Result<Self, DirectUnaryClientError> {
         Ok(Self {
-            unary: RawUnaryClient::new()?,
+            transport: RawTransportClient::new()?,
         })
+    }
+
+    /// Admits opaque commands to the retained scheduler and tonic duplex stream.
+    ///
+    /// Each entry already carries the sole completion returned to its caller.
+    /// The returned receipts prove atomic in-flight publication; terminal send,
+    /// receive, reconnect, cancellation, and close outcomes arrive only through
+    /// those original completions.
+    pub fn submit_batch_commands(
+        &mut self,
+        address: &str,
+        entries: Vec<BatchCommandEntry>,
+    ) -> Result<Vec<BatchPublicationReceipt>, DirectUnaryClientError> {
+        self.transport.submit_batch(address, entries)
+    }
+
+    /// Returns the active BatchCommands generation for one physical/logical route.
+    ///
+    /// This is a worker barrier as well as a focused lifecycle diagnostic: all
+    /// receive events accepted before it have already retired their old route.
+    #[must_use]
+    pub fn batch_stream_generation(
+        &self,
+        address: &str,
+        forwarded_host: Option<&str>,
+    ) -> Option<u64> {
+        self.transport.inspect_batch(address, forwarded_host)
     }
 
     /// Closes the current generation only when it is not newer than `version`.
@@ -58,7 +86,7 @@ impl TonicCoprocessorClient {
         address: &str,
         version: u64,
     ) -> Result<(), DirectUnaryClientError> {
-        self.unary.close_address_version(address, version)
+        self.transport.close_address_version(address, version)
     }
 
     /// Runs one foreground health check with client-go's one-second default.
@@ -79,11 +107,11 @@ impl TonicCoprocessorClient {
     }
 
     fn inspect(&self, address: &str) -> (Option<u64>, usize) {
-        self.unary.inspect(address)
+        self.transport.inspect(address)
     }
 
     fn shutdown(&mut self) {
-        self.unary.shutdown();
+        self.transport.shutdown();
     }
 
     /// Sends the exact pinned CheckTxnStatus command through the shared core.
@@ -96,7 +124,7 @@ impl TonicCoprocessorClient {
     ) -> Result<KvrpcCheckTxnStatusResponse, DirectUnaryClientError> {
         let mut request = request.clone();
         request.context = Some(context.clone());
-        let response = self.unary.send(
+        let response = self.transport.send(
             address,
             RawUnaryRequest {
                 path: CHECK_TXN_STATUS_PATH,
@@ -122,7 +150,7 @@ impl TonicCoprocessorClient {
     ) -> Result<KvrpcResolveLockResponse, DirectUnaryClientError> {
         let mut request = request.clone();
         request.context = Some(context.clone());
-        let response = self.unary.send(
+        let response = self.transport.send(
             address,
             RawUnaryRequest {
                 path: RESOLVE_LOCK_PATH,
@@ -164,7 +192,7 @@ impl DirectUnaryClient for TonicCoprocessorClient {
         call: &UnaryCallContext,
     ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
         let body = replace_top_level_context(&request.encoded_request, &request.context)?;
-        let response = self.unary.send(
+        let response = self.transport.send(
             address,
             RawUnaryRequest {
                 path: COPROCESSOR_PATH,
@@ -179,7 +207,7 @@ impl DirectUnaryClient for TonicCoprocessorClient {
     }
 
     fn close_address(&mut self, address: &str) -> Result<(), DirectUnaryClientError> {
-        self.unary.close_address(address)
+        self.transport.close_address(address)
     }
 
     fn close_address_version(
@@ -195,7 +223,7 @@ impl DirectUnaryClient for TonicCoprocessorClient {
         address: &str,
         timeout: Duration,
     ) -> Result<StoreLiveness, DirectUnaryClientError> {
-        self.unary.liveness(address, timeout)
+        self.transport.liveness(address, timeout)
     }
 
     fn close(&mut self) -> Result<(), DirectUnaryClientError> {

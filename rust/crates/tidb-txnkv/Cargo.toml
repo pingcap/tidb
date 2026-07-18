@@ -20,4 +20,5 @@ tidb-error = { path = "../tidb-error" }
 tidb-proto = { path = "../tidb-proto" }
 tidb-pd-client = { path = "../tidb-pd-client" }
 tokio.workspace = true
+tokio-stream.workspace = true
 tonic.workspace = true

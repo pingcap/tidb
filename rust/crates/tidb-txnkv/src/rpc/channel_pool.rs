@@ -77,15 +77,13 @@ impl ChannelPool {
         Ok(versioned)
     }
 
-    pub(super) fn close_address(&mut self, address: &str) {
-        if !self.closed {
-            self.channels.remove(address);
-        }
+    pub(super) fn close_address(&mut self, address: &str) -> bool {
+        !self.closed && self.channels.remove(address).is_some()
     }
 
-    pub(super) fn close_address_version(&mut self, address: &str, version: u64) {
+    pub(super) fn close_address_version(&mut self, address: &str, version: u64) -> bool {
         if self.closed {
-            return;
+            return false;
         }
         if self
             .channels
@@ -93,7 +91,9 @@ impl ChannelPool {
             .is_some_and(|channel| channel.version <= version)
         {
             self.channels.remove(address);
+            return true;
         }
+        false
     }
 
     pub(super) fn close(&mut self) {
