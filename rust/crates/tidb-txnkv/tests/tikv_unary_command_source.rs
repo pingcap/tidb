@@ -86,8 +86,14 @@ fn command_adapters_share_one_raw_unary_authority_and_exact_paths() {
 fn cancellation_carrier_is_monotonic_and_bound_to_call_context() {
     let cancellation = UnaryCancellation::new();
     let call = UnaryCallContext::new(std::time::Duration::from_millis(250), cancellation.clone());
+    let lock_call = call.clone();
     assert!(!call.cancellation().is_cancelled());
+    assert!(call
+        .cancellation()
+        .shares_state_with(lock_call.cancellation()));
     cancellation.cancel();
     assert!(call.cancellation().is_cancelled());
+    assert!(lock_call.cancellation().is_cancelled());
     assert_eq!(call.timeout(), std::time::Duration::from_millis(250));
+    assert_eq!(lock_call.timeout(), call.timeout());
 }

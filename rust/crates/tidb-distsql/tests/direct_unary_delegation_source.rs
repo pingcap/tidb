@@ -33,28 +33,53 @@ fn direct_unary_call_uses_active_cancellation_context() {
 }
 
 #[test]
-fn locked_response_delegates_before_success_mutation() {
+fn route_success_precedes_lock_delegation_but_paging_does_not() {
     let source = include_str!("../src/cop_paging/direct_unary_query_transport.rs");
-    let locked = source
-        .find("if let Some(lock) = locked")
-        .expect("locked-response branch");
-    let tail = &source[locked..];
-    let delegated = tail
-        .find("handle_locked_response")
-        .expect("lock delegate call");
+    let branch = source
+        .find("if let Some(region_error)")
+        .expect("region-error branch before route success");
+    let tail = &source[branch..];
     let recorded = tail
         .find("record_attempt_result")
-        .expect("route observation after lock handling");
+        .expect("successful route observation");
     let promoted = tail
         .find("promote_successful_request")
-        .expect("success promotion after lock handling");
+        .expect("client-go onSendSuccess projection");
+    let locked = tail
+        .find("if let Some(lock) = locked")
+        .expect("locked-response branch");
+    let delegated = tail[locked..]
+        .find("handle_locked_response")
+        .map(|offset| locked + offset)
+        .expect("lock delegate call");
     let accepted = tail
         .find("accept_response")
         .expect("paging acceptance after lock handling");
-    assert!(delegated < recorded);
-    assert!(delegated < promoted);
+    assert!(recorded < promoted);
+    assert!(promoted < delegated);
     assert!(delegated < accepted);
-    assert!(tail[delegated..recorded].contains("map_err(DirectUnaryTransportError::LockRecovery)"));
+    assert!(tail[delegated..accepted].contains("return Ok(())"));
+    assert!(tail[delegated..accepted].contains("map_err(DirectUnaryTransportError::LockRecovery)"));
+}
+
+#[test]
+fn locked_response_carries_the_exact_cop_call_context() {
+    let source = include_str!("../src/cop_paging/direct_unary_query_transport.rs");
+    let call = source
+        .find("let call = UnaryCallContext::new")
+        .expect("one Cop call context");
+    let send = source[call..]
+        .find("send_request_with_context(&selected.attempt.address, &client_request, &call)")
+        .map(|offset| call + offset)
+        .expect("Cop send borrows the call context");
+    let observation = source[send..]
+        .find("LockedResponseObservation {")
+        .map(|offset| send + offset)
+        .expect("lock observation after Cop send");
+    let observation_tail = &source[observation..];
+    assert!(observation_tail.contains("request_context: client_request.context.clone()"));
+    assert!(observation_tail.contains("call,"));
+    assert!(!observation_tail[..observation_tail.find("},").unwrap()].contains("timeout:"));
 }
 
 #[test]

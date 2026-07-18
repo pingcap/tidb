@@ -72,6 +72,12 @@ impl UnaryCancellation {
         *self.state.borrow()
     }
 
+    /// Whether both carriers observe and update the same cancellation state.
+    #[must_use]
+    pub fn shares_state_with(&self, other: &Self) -> bool {
+        self.state.same_channel(&other.state)
+    }
+
     async fn cancelled(&self) {
         let mut receiver = self.state.subscribe();
         if *receiver.borrow() {

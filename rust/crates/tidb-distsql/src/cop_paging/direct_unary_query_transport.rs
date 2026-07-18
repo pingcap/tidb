@@ -136,17 +136,19 @@ impl ActiveUnaryCancellation for NoActiveUnaryCancellation {
     }
 }
 
-/// Immutable locked-response fact passed before success-side mutation.
-#[derive(Clone, Debug, PartialEq)]
+/// Immutable locked-response fact passed after route success and before the
+/// task can mutate paging, EMA, cache admission, or response publication.
+#[derive(Clone, Debug)]
 pub struct LockedResponseObservation {
     /// Address that returned the valid locked response.
     pub address: String,
     /// Exact request context attached at the send boundary.
-    pub context: tidb_proto::KvrpcContext,
+    pub request_context: tidb_proto::KvrpcContext,
     /// Exact optimistic lock fact returned by TiKV.
     pub lock: tidb_proto::KvrpcLockInfo,
-    /// Unary deadline inherited by lock-status and resolve commands.
-    pub timeout: Duration,
+    /// Exact call context used by the Cop request. Lock-status, resolve, and
+    /// TTL waiting must reuse its deadline and cancellation carrier.
+    pub call: UnaryCallContext,
 }
 
 /// Only continuation admitted after bounded lock handling succeeds.
@@ -722,6 +724,13 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                 region_error,
             );
         }
+        self.record_attempt_result(logical_task_id, &selected, dispatch_duration)?;
+        self.shared_runtime
+            .region_cache()
+            .try_borrow_mut()
+            .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle)?
+            .promote_successful_request(&selected)
+            .map_err(|error| DirectUnaryTransportError::RegionRecovery(error.to_string()))?;
         if let Some(lock) = locked {
             let action = self
                 .locked_response_delegate
@@ -729,13 +738,12 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                     &self.shared_runtime,
                     LockedResponseObservation {
                         address: selected.attempt.address.clone(),
-                        context: client_request.context.clone(),
+                        request_context: client_request.context.clone(),
                         lock,
-                        timeout,
+                        call,
                     },
                 )
                 .map_err(DirectUnaryTransportError::LockRecovery)?;
-            self.record_attempt_result(logical_task_id, &selected, dispatch_duration)?;
             match action {
                 LockedResponseAction::RetrySameTask => {
                     let failed = self.runtime.consume_failed_attempt(attempt_id)?;
@@ -745,13 +753,6 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                 }
             }
         }
-        self.record_attempt_result(logical_task_id, &selected, dispatch_duration)?;
-        self.shared_runtime
-            .region_cache()
-            .try_borrow_mut()
-            .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle)?
-            .promote_successful_request(&selected)
-            .map_err(|error| DirectUnaryTransportError::RegionRecovery(error.to_string()))?;
         let accepted = self.runtime.accept_response(
             attempt_id,
             response,
