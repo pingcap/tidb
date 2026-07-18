@@ -45,14 +45,14 @@ from the Campaign 07 baseline with the toolchain pinned in
 | `tidb-ast` | AST nodes + `restore_into` (SQL text regeneration) | `pkg/parser/ast/*` |
 | `tidb-parser` | recursive-descent parser | `pkg/parser/*_parser.go` |
 | `tidb-proto` | generated prost protocol leaves shared by real consumers | `tipb`/`kvproto` serialized contracts |
-| `tidb-pd-client` | bounded plaintext PD gRPC control plane with discovered-member retention, foreground refresh, role-aware direct-endpoint failover, and cluster/region/store metadata | pinned `github.com/tikv/pd/client` GetMembers/GetRegion/GetStore and service-discovery paths |
+| `tidb-pd-client` | bounded plaintext PD gRPC control plane with discovered-member retention, foreground refresh, role-aware direct-endpoint failover, and cluster/previous-region/region/store metadata | pinned `github.com/tikv/pd/client` GetMembers/GetPrevRegion/GetRegion/GetStore and service-discovery paths |
 | `tidb-protocol` | source-backed uncompressed MySQL framing, result packets, column metadata projection, and dependency-closed typed text-row scalar formatting | `pkg/server/internal/packetio.go`, `pkg/server/internal/column/**`, `pkg/format/textrow/**` |
 | `tidb-distsql` | request/response metadata plus the lazy direct-unary task, retry/rebuild, paging, warning, request-owned active cancellation, bounded optimistic lock recovery, synchronous forwarding/route metrics, and detach-state runtime | `pkg/distsql/**`, `pkg/store/copr/**` |
 | `tidb-expr` | typed expression construction, evaluation, and builtins | `pkg/expression/*` |
 | `tidb-datatype` | sole shared SQL scalar authority: `Datum`, `FieldType`, charset/collation, exact decimal | `pkg/types/**` and TiKV query datatypes |
 | `tidb-stats` | source-backed CMSketch/TopN/FMSketch/loading-status statistics primitives | `pkg/statistics/**` |
 | `tidb-codec` | byte-exact comparable scalar and datum-key encoding | dependency-closed paths in `pkg/util/codec/**` |
-| `tidb-txnkv` | transaction primitives plus the live address-keyed `tikvpb.Tikv/Coprocessor` RPC leaf, API-v1 PD region/store/label loader, exact region-error recovery, adaptive replica health/scoring, bounded region backoff, exact unary forwarding metadata, and sole topology/store/proxy RegionCache | `pkg/kv/**`, pinned `tikv/client-go/v2` transport and locate paths |
+| `tidb-txnkv` | transaction primitives plus the live address-keyed `tikvpb.Tikv/Coprocessor` RPC leaf, retained tonic BatchCommands duplex transport, API-v1 PD previous-region/region/store/label loader, exact region-error recovery, adaptive replica health/scoring, bounded region backoff, exact unary forwarding metadata, and one synchronized, maintained topology/store/proxy RegionCache authority | `pkg/kv/**`, pinned `tikv/client-go/v2` transport and locate paths |
 | `tidb-exec` | a seed stateful executor plus shared-cluster/session, aggregate leaves, result metadata bridge, typed scalar result encoding, and framed COM_QUERY boundary | `pkg/session/**`, `pkg/executor/**`, `pkg/server/**` |
 | `tidb-server` | source-shaped unframed and framed connection dispatch over protocol, DistSQL, and the seed session | `pkg/server/conn.go`, `pkg/server/conn_stmt.go` |
 | `difftest` | shared differential library, Go helpers, corpora, inventory/ledger generators, and two infrastructure tests | — |
@@ -76,8 +76,17 @@ selection, generation-aware transport recovery, shared-store invalidation, and
 foreground health. Campaign 13 adds synchronous replica policy, active
 cancellation, and bounded optimistic read-lock recovery. Campaign 14 adds
 source-shaped labels, slow/load scoring, busy diversion, and synchronous unary
-proxy forwarding with direct recovery. Background health, TLS, pessimistic and
-async lock recovery, and commit remain unimplemented. Many statements are honestly `Unsupported`
+proxy forwarding with direct recovery. Campaigns 15 and 16 add exact bucket and
+batch-location state, cache validity/maintenance primitives, the sole
+BatchCommands scheduler/in-flight/completion authorities, and the
+transport-neutral async request seam. Campaign 17 connects exact previous-
+region lookup, one foreground/background synchronized cache with a joined
+maintenance worker and peer-vector-guarded failure feedback, and retained
+tonic BatchCommands streams over the existing runtime/channel pool. PD router
+service, TLS, cancellation-aware PD backoff, loader I/O outside the coarse
+cache mutex, concurrent live cache proof, Go prolonged-outage BatchCommands
+recovery, the concrete async RegionRequest adapter, pessimistic/async lock
+recovery, and commit remain unimplemented. Many statements are honestly `Unsupported`
 at execution while being fully
 parse+restore-faithful. That's intentional — don't fake success.
 
@@ -302,6 +311,30 @@ read runtime. There is no tonic BatchCommands duplex stream/reconnect loop and
 no concrete async RegionCache/RequestSelector adapter or response region-error
 decoder. Campaign 16 used source-shaped and injected tests, not a live PD/TiKV
 proof. Those connected runtime seams are the next campaign boundary.
+
+Campaign 17 connects the next three boundaries across 14 exact pinned
+production sources and 65 exact original Go obligations. The retained PD
+worker now projects API-v1 `GetPrevRegion` end-key lookups through the existing
+endpoint and leader failover. `SharedReadRuntime` owns one synchronized
+RegionCache shared by foreground reads and its coalesced, joined maintenance
+worker; selected attempts carry the exact peer-vector observation that
+production failure handling must revalidate before mutating topology, store,
+proxy, or retry state. The retained tonic worker/channel pool now owns
+route-generation BatchCommands streams, pending-before-send publication,
+response-ID demultiplexing, forwarding isolation, generation-safe
+cancellation/failure retirement, bounded demand-budgeted reconnect, and exact
+close drainage.
+
+All local pinned Go commands passed, followed by the full 12-job Rust
+integration gate and Ready lint; `integration_receipt 3` records the frozen
+workspace. All three slices remain `PARTIAL`, and Campaign 17 has no live
+PD/TiKV proof. The PD router service, TLS, and cancellation-aware discovery and
+failover backoff remain open. Region loader I/O still occurs while holding the
+coarse cache mutex, with no concurrent live foreground/maintenance proof.
+BatchCommands reconnect is bounded and demand-budgeted rather than the pinned
+Go prolonged-outage loop. The concrete async RegionRequest adapter remains
+deferred until it can reuse this stream and the canonical selector/backoff
+state without creating a second policy owner.
 
 ## 4. The differential tools (how you verify)
 
