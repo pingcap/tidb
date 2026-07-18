@@ -22,8 +22,10 @@ mod inflight;
 mod observability;
 mod priority_queue;
 mod scheduler;
-pub(super) mod transport;
+mod transport;
 mod wire;
+
+pub(in crate::rpc) use transport::{BatchStreamEvent, BatchTransportState};
 
 pub use inflight::{
     BatchInflightError, BatchInflightTable, BatchPublishError, BatchRetirementReport, BatchRoute,

@@ -22,7 +22,7 @@ use tokio::sync::watch;
 
 use crate::region::StoreLiveness;
 
-use super::batch::transport::{
+use super::batch::{
     BatchCommandEntry, BatchPublicationReceipt, BatchStreamEvent, BatchTransportState,
 };
 use super::channel_pool::ChannelPool;

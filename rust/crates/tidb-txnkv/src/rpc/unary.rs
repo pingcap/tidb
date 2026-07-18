@@ -28,7 +28,7 @@ use tonic::codec::{Codec, DecodeBuf, Decoder, EncodeBuf, Encoder};
 
 use crate::region::StoreLiveness;
 
-use super::batch::transport::{BatchCommandEntry, BatchPublicationReceipt};
+use super::batch::{BatchCommandEntry, BatchPublicationReceipt};
 use super::channel_pool::ChannelPool;
 use super::forwarding;
 use super::transport_runtime::{TransportRuntime, TransportShutdownCancellation};

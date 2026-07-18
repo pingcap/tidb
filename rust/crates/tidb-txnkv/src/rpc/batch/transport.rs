@@ -97,7 +97,7 @@ struct ActiveStream {
 }
 
 /// Stream-map bookkeeping returned after the receive task retires in-flight work.
-pub(super) enum BatchStreamEvent {
+pub(in crate::rpc) enum BatchStreamEvent {
     Retired { route: BatchRoute },
 }
 
@@ -133,7 +133,7 @@ impl PreparedBatch {
 }
 
 /// Scheduler, route generation, stream, and pending ownership for one worker.
-pub(super) struct BatchTransportState {
+pub(in crate::rpc) struct BatchTransportState {
     scheduler: BatchScheduler<OpaqueBatchCommand, BatchCommandCompletion>,
     streams: HashMap<StreamKey, ActiveStream>,
     generations: HashMap<StreamKey, u64>,
@@ -143,7 +143,7 @@ pub(super) struct BatchTransportState {
 }
 
 impl BatchTransportState {
-    pub(super) fn new(shutdown: watch::Receiver<bool>) -> Self {
+    pub(in crate::rpc) fn new(shutdown: watch::Receiver<bool>) -> Self {
         Self {
             scheduler: BatchScheduler::new(),
             streams: HashMap::new(),
@@ -154,7 +154,7 @@ impl BatchTransportState {
         }
     }
 
-    pub(super) async fn submit(
+    pub(in crate::rpc) async fn submit(
         &mut self,
         channels: &mut ChannelPool,
         runtime: &tokio::runtime::Runtime,
@@ -311,7 +311,7 @@ impl BatchTransportState {
         key.route(*generation)
     }
 
-    pub(super) async fn handle_event(
+    pub(in crate::rpc) async fn handle_event(
         &mut self,
         channels: &mut ChannelPool,
         runtime: &tokio::runtime::Runtime,
@@ -354,7 +354,7 @@ impl BatchTransportState {
         Ok(())
     }
 
-    pub(super) fn close_address(&mut self, address: &str) {
+    pub(in crate::rpc) fn close_address(&mut self, address: &str) {
         self.streams
             .retain(|key, _| key.physical_address != address);
         self.reconnect_budget
@@ -368,7 +368,7 @@ impl BatchTransportState {
             );
     }
 
-    pub(super) fn close(&mut self) {
+    pub(in crate::rpc) fn close(&mut self) {
         self.scheduler.cancel_all(BatchInflightError::Transport(
             DirectUnaryClientError::Closed,
         ));
@@ -380,7 +380,7 @@ impl BatchTransportState {
             .close();
     }
 
-    pub(super) fn active_generation(
+    pub(in crate::rpc) fn active_generation(
         &self,
         address: &str,
         forwarded_host: Option<&str>,
