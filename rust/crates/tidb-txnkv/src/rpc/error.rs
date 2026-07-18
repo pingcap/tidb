@@ -18,8 +18,6 @@
 /// status from local transport failure without depending on tonic types.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DirectUnaryGrpcCode {
-    /// The RPC completed successfully.
-    Ok,
     /// The operation was cancelled remotely.
     Canceled,
     /// An unspecified failure occurred.
@@ -67,6 +65,13 @@ pub enum DirectUnaryTransportClass {
     Connection,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DirectUnaryTransportFailure {
+    LocalDeadline,
+    RemoteGrpc(DirectUnaryGrpcCode),
+    Connection,
+}
+
 /// Address and connection generation attached to an RPC failure.
 ///
 /// This is the transport-neutral projection of client-go's `ErrConn`. Tonic
@@ -74,15 +79,89 @@ pub enum DirectUnaryTransportClass {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DirectUnaryConnectionError {
     /// Target address selected by the caller.
-    pub address: String,
+    address: String,
     /// Address-local connection generation.
-    pub version: u64,
-    /// Whether the failure is local deadline, remote status, or connection.
-    pub class: DirectUnaryTransportClass,
-    /// Exact remote gRPC status code, when the remote stack returned one.
-    pub grpc_code: Option<DirectUnaryGrpcCode>,
+    version: u64,
+    failure: DirectUnaryTransportFailure,
     /// Concrete connection or RPC failure text.
-    pub message: String,
+    message: String,
+}
+
+impl DirectUnaryConnectionError {
+    /// Constructs a local channel/readiness failure for a selected generation.
+    #[must_use]
+    pub fn connection(address: &str, version: u64, message: String) -> Self {
+        Self {
+            address: address.to_owned(),
+            version,
+            failure: DirectUnaryTransportFailure::Connection,
+            message,
+        }
+    }
+
+    /// Constructs a caller-owned local deadline failure.
+    #[must_use]
+    pub fn local_deadline(address: &str, version: u64, message: String) -> Self {
+        Self {
+            address: address.to_owned(),
+            version,
+            failure: DirectUnaryTransportFailure::LocalDeadline,
+            message,
+        }
+    }
+
+    /// Constructs a structured remote gRPC failure.
+    #[must_use]
+    pub fn remote_grpc(
+        address: &str,
+        version: u64,
+        code: DirectUnaryGrpcCode,
+        message: String,
+    ) -> Self {
+        Self {
+            address: address.to_owned(),
+            version,
+            failure: DirectUnaryTransportFailure::RemoteGrpc(code),
+            message,
+        }
+    }
+
+    /// Target address selected by the caller.
+    #[must_use]
+    pub fn address(&self) -> &str {
+        &self.address
+    }
+
+    /// Address-local connection generation selected for the failed attempt.
+    #[must_use]
+    pub const fn version(&self) -> u64 {
+        self.version
+    }
+
+    /// Failure origin without exposing tonic types.
+    #[must_use]
+    pub const fn transport_class(&self) -> DirectUnaryTransportClass {
+        match self.failure {
+            DirectUnaryTransportFailure::LocalDeadline => DirectUnaryTransportClass::LocalDeadline,
+            DirectUnaryTransportFailure::RemoteGrpc(_) => DirectUnaryTransportClass::RemoteGrpc,
+            DirectUnaryTransportFailure::Connection => DirectUnaryTransportClass::Connection,
+        }
+    }
+
+    /// Exact remote gRPC code, when the failure came from a remote status.
+    #[must_use]
+    pub const fn grpc_code(&self) -> Option<DirectUnaryGrpcCode> {
+        match self.failure {
+            DirectUnaryTransportFailure::RemoteGrpc(code) => Some(code),
+            _ => None,
+        }
+    }
+
+    /// Concrete transport failure text.
+    #[must_use]
+    pub fn message(&self) -> &str {
+        &self.message
+    }
 }
 
 impl std::fmt::Display for DirectUnaryConnectionError {
@@ -158,7 +237,7 @@ impl DirectUnaryClientError {
     pub const fn transport_class(&self) -> Option<DirectUnaryTransportClass> {
         match self {
             Self::CallerCancelled => Some(DirectUnaryTransportClass::CallerCancelled),
-            Self::Connection(error) => Some(error.class),
+            Self::Connection(error) => Some(error.transport_class()),
             Self::Timeout { .. } => Some(DirectUnaryTransportClass::LocalDeadline),
             _ => None,
         }
@@ -168,7 +247,7 @@ impl DirectUnaryClientError {
     #[must_use]
     pub const fn grpc_code(&self) -> Option<DirectUnaryGrpcCode> {
         match self {
-            Self::Connection(error) => error.grpc_code,
+            Self::Connection(error) => error.grpc_code(),
             _ => None,
         }
     }
@@ -179,14 +258,15 @@ impl DirectUnaryClientError {
     /// unavailable, and connection failures remain open for liveness policy.
     #[must_use]
     pub const fn requires_generation_close(&self) -> bool {
-        matches!(
-            self,
-            Self::Connection(DirectUnaryConnectionError {
-                class: DirectUnaryTransportClass::RemoteGrpc,
-                grpc_code: Some(DirectUnaryGrpcCode::Canceled),
-                ..
-            })
-        )
+        match self {
+            Self::Connection(error) => {
+                matches!(
+                    error.failure,
+                    DirectUnaryTransportFailure::RemoteGrpc(DirectUnaryGrpcCode::Canceled)
+                )
+            }
+            _ => false,
+        }
     }
 }
 

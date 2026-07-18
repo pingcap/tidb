@@ -21,9 +21,10 @@ use tidb_proto::{KvrpcContext, KvrpcSourceStmt};
 use tidb_txnkv::region::StoreLiveness;
 use tidb_txnkv::{
     endpoint_type, inject_source_stmt, map_replica_read_type, BackoffMetadata,
-    ClientReplicaReadType, DirectUnaryClient, DirectUnaryClientError, DirectUnaryRequest,
-    DirectUnaryResponse, DriverDefaults, DriverOptions, EndpointType, PdClientConfig,
-    SecurityConfig, TikvClientConfig, TikvDriverConfig, TraceInfo, TxnLocalLatchesConfig,
+    ClientReplicaReadType, DirectUnaryClient, DirectUnaryClientError, DirectUnaryConnectionError,
+    DirectUnaryGrpcCode, DirectUnaryRequest, DirectUnaryResponse, DirectUnaryTransportClass,
+    DriverDefaults, DriverOptions, EndpointType, PdClientConfig, SecurityConfig, TikvClientConfig,
+    TikvDriverConfig, TraceInfo, TxnLocalLatchesConfig,
 };
 
 #[derive(Default)]
@@ -83,6 +84,43 @@ fn unary_client_contract_requires_exact_generation_close_and_liveness() {
             .unwrap(),
         StoreLiveness::Unknown
     );
+}
+
+#[test]
+fn transport_fact_constructors_preserve_valid_class_and_code_combinations() {
+    let connection =
+        DirectUnaryConnectionError::connection("tikv-1:20160", 7, "connection failed".to_owned());
+    assert_eq!(connection.address(), "tikv-1:20160");
+    assert_eq!(connection.version(), 7);
+    assert_eq!(
+        connection.transport_class(),
+        DirectUnaryTransportClass::Connection
+    );
+    assert_eq!(connection.grpc_code(), None);
+
+    let deadline = DirectUnaryConnectionError::local_deadline(
+        "tikv-1:20160",
+        8,
+        "deadline elapsed".to_owned(),
+    );
+    assert_eq!(
+        deadline.transport_class(),
+        DirectUnaryTransportClass::LocalDeadline
+    );
+    assert_eq!(deadline.grpc_code(), None);
+
+    let remote = DirectUnaryConnectionError::remote_grpc(
+        "tikv-1:20160",
+        9,
+        DirectUnaryGrpcCode::Canceled,
+        "remote canceled".to_owned(),
+    );
+    assert_eq!(
+        remote.transport_class(),
+        DirectUnaryTransportClass::RemoteGrpc
+    );
+    assert_eq!(remote.grpc_code(), Some(DirectUnaryGrpcCode::Canceled));
+    assert_eq!(remote.message(), "remote canceled");
 }
 
 #[test]

@@ -26,10 +26,7 @@ use crate::{DirectUnaryClient, DirectUnaryRequest, DirectUnaryResponse};
 
 use super::channel_pool::ChannelPool;
 use super::liveness::{check_liveness, DEFAULT_STORE_LIVENESS_TIMEOUT};
-use super::{
-    DirectUnaryClientError, DirectUnaryConnectionError, DirectUnaryGrpcCode,
-    DirectUnaryTransportClass,
-};
+use super::{DirectUnaryClientError, DirectUnaryConnectionError, DirectUnaryGrpcCode};
 
 // client-go internal/client sets MaxRecvMsgSize to math.MaxInt64-1. Tonic's
 // default is only 4 MiB, which is too small for valid Coprocessor responses.
@@ -368,11 +365,10 @@ fn send_coprocessor(
     let selected = channels.get_or_create(address, runtime)?;
     let mut client =
         tonic::client::Grpc::new(selected.channel).max_decoding_message_size(MAX_RECV_MESSAGE_SIZE);
-    // The caller-owned local timer is the sole timeout authority. Setting the
-    // gRPC timeout header to the same duration races tonic's internal timer,
-    // which can surface transport-specific Cancelled instead of our stable
-    // typed Timeout result.
-    let rpc_request = tonic::Request::new(body);
+    // Match client-go's context.WithTimeout: TiKV sees the request deadline,
+    // while the local timer remains the synchronous caller's safety boundary.
+    let mut rpc_request = tonic::Request::new(body);
+    rpc_request.set_timeout(timeout);
     let path = tonic::codegen::http::uri::PathAndQuery::from_static(COPROCESSOR_PATH);
     let result = runtime.block_on(async {
         tokio::time::timeout(timeout, async {
@@ -552,24 +548,23 @@ fn connection_error(
     version: u64,
     error: impl std::fmt::Display,
 ) -> DirectUnaryClientError {
-    DirectUnaryClientError::Connection(connection_identity(
+    DirectUnaryClientError::Connection(DirectUnaryConnectionError::connection(
         address,
         version,
-        DirectUnaryTransportClass::Connection,
-        None,
-        error,
+        error.to_string(),
     ))
 }
 
 fn remote_grpc_error(address: &str, version: u64, error: tonic::Status) -> DirectUnaryClientError {
-    let code = grpc_code(error.code());
-    DirectUnaryClientError::Connection(connection_identity(
-        address,
-        version,
-        DirectUnaryTransportClass::RemoteGrpc,
-        Some(code),
-        error,
-    ))
+    match grpc_error_code(error.code()) {
+        Some(code) => DirectUnaryClientError::Connection(DirectUnaryConnectionError::remote_grpc(
+            address,
+            version,
+            code,
+            error.to_string(),
+        )),
+        None => connection_error(address, version, error),
+    }
 }
 
 fn timeout_error(
@@ -579,52 +574,30 @@ fn timeout_error(
     error: impl std::fmt::Display,
 ) -> DirectUnaryClientError {
     DirectUnaryClientError::Timeout {
-        connection: connection_identity(
-            address,
-            version,
-            DirectUnaryTransportClass::LocalDeadline,
-            None,
-            error,
-        ),
+        connection: DirectUnaryConnectionError::local_deadline(address, version, error.to_string()),
         timeout_ms: u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX),
     }
 }
 
-fn connection_identity(
-    address: &str,
-    version: u64,
-    class: DirectUnaryTransportClass,
-    grpc_code: Option<DirectUnaryGrpcCode>,
-    error: impl std::fmt::Display,
-) -> DirectUnaryConnectionError {
-    DirectUnaryConnectionError {
-        address: address.to_owned(),
-        version,
-        class,
-        grpc_code,
-        message: error.to_string(),
-    }
-}
-
-const fn grpc_code(code: tonic::Code) -> DirectUnaryGrpcCode {
+const fn grpc_error_code(code: tonic::Code) -> Option<DirectUnaryGrpcCode> {
     match code {
-        tonic::Code::Ok => DirectUnaryGrpcCode::Ok,
-        tonic::Code::Cancelled => DirectUnaryGrpcCode::Canceled,
-        tonic::Code::Unknown => DirectUnaryGrpcCode::Unknown,
-        tonic::Code::InvalidArgument => DirectUnaryGrpcCode::InvalidArgument,
-        tonic::Code::DeadlineExceeded => DirectUnaryGrpcCode::DeadlineExceeded,
-        tonic::Code::NotFound => DirectUnaryGrpcCode::NotFound,
-        tonic::Code::AlreadyExists => DirectUnaryGrpcCode::AlreadyExists,
-        tonic::Code::PermissionDenied => DirectUnaryGrpcCode::PermissionDenied,
-        tonic::Code::ResourceExhausted => DirectUnaryGrpcCode::ResourceExhausted,
-        tonic::Code::FailedPrecondition => DirectUnaryGrpcCode::FailedPrecondition,
-        tonic::Code::Aborted => DirectUnaryGrpcCode::Aborted,
-        tonic::Code::OutOfRange => DirectUnaryGrpcCode::OutOfRange,
-        tonic::Code::Unimplemented => DirectUnaryGrpcCode::Unimplemented,
-        tonic::Code::Internal => DirectUnaryGrpcCode::Internal,
-        tonic::Code::Unavailable => DirectUnaryGrpcCode::Unavailable,
-        tonic::Code::DataLoss => DirectUnaryGrpcCode::DataLoss,
-        tonic::Code::Unauthenticated => DirectUnaryGrpcCode::Unauthenticated,
+        tonic::Code::Ok => None,
+        tonic::Code::Cancelled => Some(DirectUnaryGrpcCode::Canceled),
+        tonic::Code::Unknown => Some(DirectUnaryGrpcCode::Unknown),
+        tonic::Code::InvalidArgument => Some(DirectUnaryGrpcCode::InvalidArgument),
+        tonic::Code::DeadlineExceeded => Some(DirectUnaryGrpcCode::DeadlineExceeded),
+        tonic::Code::NotFound => Some(DirectUnaryGrpcCode::NotFound),
+        tonic::Code::AlreadyExists => Some(DirectUnaryGrpcCode::AlreadyExists),
+        tonic::Code::PermissionDenied => Some(DirectUnaryGrpcCode::PermissionDenied),
+        tonic::Code::ResourceExhausted => Some(DirectUnaryGrpcCode::ResourceExhausted),
+        tonic::Code::FailedPrecondition => Some(DirectUnaryGrpcCode::FailedPrecondition),
+        tonic::Code::Aborted => Some(DirectUnaryGrpcCode::Aborted),
+        tonic::Code::OutOfRange => Some(DirectUnaryGrpcCode::OutOfRange),
+        tonic::Code::Unimplemented => Some(DirectUnaryGrpcCode::Unimplemented),
+        tonic::Code::Internal => Some(DirectUnaryGrpcCode::Internal),
+        tonic::Code::Unavailable => Some(DirectUnaryGrpcCode::Unavailable),
+        tonic::Code::DataLoss => Some(DirectUnaryGrpcCode::DataLoss),
+        tonic::Code::Unauthenticated => Some(DirectUnaryGrpcCode::Unauthenticated),
     }
 }
 

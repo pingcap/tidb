@@ -33,6 +33,7 @@ use tidb_txnkv::{
 #[derive(Clone)]
 struct RecordingTikv {
     requests: Arc<Mutex<Vec<CoprocessorRequest>>>,
+    grpc_timeouts: Arc<Mutex<Vec<Option<String>>>>,
     delay: Duration,
     response_size: Option<usize>,
     failure: Option<tonic::Code>,
@@ -44,6 +45,13 @@ impl Tikv for RecordingTikv {
         &self,
         request: tonic::Request<CoprocessorRequest>,
     ) -> Result<tonic::Response<CoprocessorResponse>, tonic::Status> {
+        self.grpc_timeouts.lock().unwrap().push(
+            request
+                .metadata()
+                .get("grpc-timeout")
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_owned),
+        );
         if !self.delay.is_zero() {
             tokio::time::sleep(self.delay).await;
         }
@@ -211,6 +219,7 @@ fn unary_rpc_attaches_context_once_reuses_address_and_recreates_after_close() {
     let requests = Arc::new(Mutex::new(Vec::new()));
     let server = TestServer::start(RecordingTikv {
         requests: Arc::clone(&requests),
+        grpc_timeouts: Arc::new(Mutex::new(Vec::new())),
         delay: Duration::ZERO,
         response_size: None,
         failure: None,
@@ -286,11 +295,35 @@ fn unary_rpc_attaches_context_once_reuses_address_and_recreates_after_close() {
 }
 
 #[test]
+fn unary_rpc_propagates_caller_timeout_as_grpc_deadline_metadata() {
+    // client-go/internal/client/client.go:403-406 context.WithTimeout.
+    let grpc_timeouts = Arc::new(Mutex::new(Vec::new()));
+    let server = TestServer::start(RecordingTikv {
+        requests: Arc::new(Mutex::new(Vec::new())),
+        grpc_timeouts: Arc::clone(&grpc_timeouts),
+        delay: Duration::ZERO,
+        response_size: None,
+        failure: None,
+    });
+    let mut client = TonicCoprocessorClient::new().unwrap();
+
+    client
+        .send_request(
+            &server.address,
+            &request(b"deadline"),
+            Duration::from_millis(777),
+        )
+        .unwrap();
+    assert_eq!(*grpc_timeouts.lock().unwrap(), [Some("777000u".to_owned())]);
+}
+
+#[test]
 fn caller_timeout_and_malformed_body_have_typed_fail_closed_results() {
     // client-go/internal/client/client_test.go:1272 TestErrConn
     let requests = Arc::new(Mutex::new(Vec::new()));
     let server = TestServer::start(RecordingTikv {
         requests,
+        grpc_timeouts: Arc::new(Mutex::new(Vec::new())),
         delay: Duration::from_millis(200),
         response_size: None,
         failure: None,
@@ -301,7 +334,12 @@ fn caller_timeout_and_malformed_body_have_typed_fail_closed_results() {
         .send_request(&server.address, &request(b"zero"), Duration::ZERO)
         .unwrap_err();
     assert_eq!(zero_timeout.kind(), "timeout");
-    assert_eq!(zero_timeout.connection().unwrap().version, 1);
+    assert_eq!(zero_timeout.connection().unwrap().version(), 1);
+    assert_eq!(
+        zero_timeout.connection().unwrap().transport_class(),
+        DirectUnaryTransportClass::LocalDeadline
+    );
+    assert_eq!(zero_timeout.connection().unwrap().grpc_code(), None);
     assert_eq!(
         zero_timeout.transport_class(),
         Some(DirectUnaryTransportClass::LocalDeadline)
@@ -323,8 +361,8 @@ fn caller_timeout_and_malformed_body_have_typed_fail_closed_results() {
         "unexpected timeout mapping: {error}"
     );
     let connection = error.connection().unwrap();
-    assert_eq!(connection.address, server.address);
-    assert_eq!(connection.version, 1);
+    assert_eq!(connection.address(), server.address);
+    assert_eq!(connection.version(), 1);
 
     let mut malformed = request(b"malformed");
     malformed.encoded_request = vec![0xff];
@@ -358,6 +396,7 @@ fn response_larger_than_tonic_default_limit_is_returned() {
     let response_size = 5 * 1024 * 1024;
     let server = TestServer::start(RecordingTikv {
         requests: Arc::new(Mutex::new(Vec::new())),
+        grpc_timeouts: Arc::new(Mutex::new(Vec::new())),
         delay: Duration::ZERO,
         response_size: Some(response_size),
         failure: None,
@@ -388,6 +427,7 @@ fn remote_grpc_failures_preserve_code_address_and_generation_without_implicit_cl
     ] {
         let server = TestServer::start(RecordingTikv {
             requests: Arc::new(Mutex::new(Vec::new())),
+            grpc_timeouts: Arc::new(Mutex::new(Vec::new())),
             delay: Duration::ZERO,
             response_size: None,
             failure: Some(tonic_code),
@@ -404,8 +444,14 @@ fn remote_grpc_failures_preserve_code_address_and_generation_without_implicit_cl
         );
         assert_eq!(error.grpc_code(), Some(expected));
         let connection = error.connection().unwrap();
-        assert_eq!(connection.address, server.address);
-        assert_eq!(connection.version, 1);
+        assert_eq!(connection.address(), server.address);
+        assert_eq!(connection.version(), 1);
+        assert_eq!(
+            connection.transport_class(),
+            DirectUnaryTransportClass::RemoteGrpc
+        );
+        assert_eq!(connection.grpc_code(), Some(expected));
+        assert!(connection.message().contains("injected remote status"));
         assert_eq!(client.connection_version(&server.address), Some(1));
         assert_eq!(
             error.requires_generation_close(),
@@ -419,6 +465,7 @@ fn delayed_exact_generation_close_cannot_close_a_newer_channel() {
     // client-go/internal/client/client.go:553-579 CloseAddrVer.
     let server = TestServer::start(RecordingTikv {
         requests: Arc::new(Mutex::new(Vec::new())),
+        grpc_timeouts: Arc::new(Mutex::new(Vec::new())),
         delay: Duration::ZERO,
         response_size: None,
         failure: Some(tonic::Code::Cancelled),
@@ -429,7 +476,7 @@ fn delayed_exact_generation_close_cannot_close_a_newer_channel() {
         .send_request(&server.address, &request(b"first"), Duration::from_secs(2))
         .unwrap_err();
     assert!(first.requires_generation_close());
-    let failed_version = first.connection().unwrap().version;
+    let failed_version = first.connection().unwrap().version();
     client
         .close_address_version(&server.address, failed_version)
         .unwrap();
@@ -438,7 +485,7 @@ fn delayed_exact_generation_close_cannot_close_a_newer_channel() {
     let second = client
         .send_request(&server.address, &request(b"second"), Duration::from_secs(2))
         .unwrap_err();
-    assert_eq!(second.connection().unwrap().version, failed_version + 1);
+    assert_eq!(second.connection().unwrap().version(), failed_version + 1);
     client
         .close_address_version(&server.address, failed_version)
         .unwrap();
