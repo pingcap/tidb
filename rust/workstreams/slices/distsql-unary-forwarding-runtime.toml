@@ -1,6 +1,6 @@
 schema = "1"
 slice = "distsql-unary-forwarding-runtime"
-status = "ready"
+status = "partial"
 target = "tidb-distsql"
 ring = "result"
 consumer = "Campaign 14 consumes one immutable target-plus-proxy RouteDecision, dispatches to the physical proxy while emitting exactly one tikv-forwarded-host for the logical leader, preserves caller cancellation precedence, applies failures to the physical proxy, rotates proxies, caches successful proxies through typed feedback, and returns to direct leader routing after recovery. Batch/stream forwarding, async sends, background health loops, TLS, and write uncertainty remain explicit."

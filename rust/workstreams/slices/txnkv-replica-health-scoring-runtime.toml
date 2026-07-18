@@ -1,6 +1,6 @@
 schema = "1"
 slice = "txnkv-replica-health-scoring-runtime"
-status = "ready"
+status = "partial"
 target = "tidb-txnkv"
 ring = "transaction"
 consumer = "Campaign 14 directly transits pinned client-go label/store matching, estimated-wait decay, client and TiKV slow health, the exact five-bit replica score, leader reachability, busy-threshold diversion, and no-idle fallback into request-owned pure selection. Canonical mutable health remains in StoreState; async dispatch, background feedback transport, TiFlash, flashback, and production concurrency remain explicit."

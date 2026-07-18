@@ -1,6 +1,6 @@
 schema = "1"
 slice = "txnkv-region-topology-runtime"
-status = "ready"
+status = "partial"
 target = "tidb-txnkv"
 ring = "transaction"
 consumer = "Campaign 14 keeps ordered region lookup, store generations, labels, preferred proxy identity, and feedback application inside the sole RegionCache authority. It produces immutable RouteSnapshot values and applies exact target/proxy feedback without exposing mutable cache state to scoring or transport. TTL, buckets, background GC, batch scans, keyspace-v2 codecs, and production concurrency remain explicit."

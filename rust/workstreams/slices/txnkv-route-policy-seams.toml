@@ -1,6 +1,6 @@
 schema = "1"
 slice = "txnkv-route-policy-seams"
-status = "ready"
+status = "partial"
 target = "tidb-txnkv"
 ring = "transaction"
 consumer = "Campaign 14 extends the existing immutable LeaderRequest route decision with one logical target and optional physical proxy instead of adding a duplicate wrapper. RegionCache remains the sole topology/store authority, selection is pure over immutable facts, transport consumes only the decision, and typed feedback returns to RegionCache."
