@@ -36,6 +36,7 @@ rust_paths = [
   "rust/crates/tidb-txnkv/src/rpc/batch/mod.rs",
   "rust/crates/tidb-txnkv/src/rpc/mod.rs",
   "rust/crates/tidb-txnkv/src/rpc/tonic_coprocessor.rs",
+  "rust/crates/tidb-txnkv/src/rpc/unary.rs",
   "rust/crates/tidb-txnkv/tests/batch_coprocessor_dispatch_source.rs",
   "rust/crates/tidb-txnkv/tests/batch_tonic_stream_source.rs",
   "rust/crates/tidb-txnkv/tests/tikv_tonic_coprocessor_source.rs",
