@@ -1,0 +1,5 @@
+# client-go source evidence for Campaign 14 region topology and route feedback.
+# source_path	status	owner	evidence_artifact	note
+internal/locate/pd_codec.go	PARTIAL	txnkv-region-topology-runtime	rust/crates/tidb-txnkv/src/pd_loader.rs	The pinned API-v1 PD boundary now carries exact peer topology and store labels into the canonical RegionCache. Keyspace-v2 scans, split RPCs, and broader codecs remain external.
+internal/locate/region_cache.go	PARTIAL	txnkv-region-topology-runtime	rust/crates/tidb-txnkv/src/region/cache.rs	One RegionCache owns ordered peers, store generations, labels, preferred proxy identity, immutable route snapshots, and typed target/proxy feedback. TTL, buckets, background GC, batch scans, and production concurrency remain external.
+internal/locate/sorted_btree.go	PARTIAL	txnkv-region-topology-runtime	rust/crates/tidb-txnkv/src/region/cache.rs	The sole sorted region authority preserves half-open lookup and stale-overlap protection while producing immutable route snapshots. B-tree concurrency, TTL traversal, batch ascent, and benchmarks remain external.

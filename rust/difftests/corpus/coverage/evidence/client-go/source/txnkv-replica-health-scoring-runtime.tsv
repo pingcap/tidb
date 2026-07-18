@@ -1,0 +1,5 @@
+# client-go source evidence for Campaign 14 adaptive replica scoring.
+# source_path	status	owner	evidence_artifact	note
+internal/locate/replica_selector.go	PARTIAL	txnkv-replica-health-scoring-runtime	rust/crates/tidb-txnkv/src/region/health_policy.rs	The synchronous selector consumes immutable label, leader, attempt, slow-health, and decaying-load facts through the exact five-bit score and busy-threshold policy. Async selection, TiFlash, and flashback remain external.
+internal/locate/slow_score.go	PARTIAL	txnkv-replica-health-scoring-runtime	rust/crates/tidb-txnkv/src/region/slow_score.rs	Client-side slow score updates, recovery, and avoidance are directly transited with deterministic time injection. Background feedback transport and production scheduling remain external.
+internal/locate/store_cache.go	PARTIAL	txnkv-replica-health-scoring-runtime	rust/crates/tidb-txnkv/src/region/store_health.rs	Canonical StoreState retains labels, client/TiKV slow health, and decaying ServerIsBusy load across metadata refresh. Background health fetch loops, TLS probes, and production concurrency remain external.
