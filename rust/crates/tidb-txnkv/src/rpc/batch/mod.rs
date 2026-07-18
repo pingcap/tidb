@@ -21,3 +21,14 @@
 mod observability;
 mod priority_queue;
 mod scheduler;
+
+pub use observability::{
+    normalize_observed_sent_ns, terminal_outcome, BatchRequestObservation, BatchRequestOutcome,
+    BatchRequestProgress, BatchRequestStage, BatchRequestState, BatchTerminalError,
+};
+pub use priority_queue::{PriorityItem, PriorityQueue};
+pub use scheduler::{
+    BatchEntry, BatchEntryState, BatchGroup, BatchGroups, BatchPolicyOptions, BatchScheduler,
+    BatchTrigger, ScheduledEntry, BATCH_POLICY_BASIC, BATCH_POLICY_CUSTOM, BATCH_POLICY_POSITIVE,
+    BATCH_POLICY_STANDARD, DEFAULT_BATCH_POLICY, HIGH_TASK_PRIORITY,
+};
