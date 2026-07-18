@@ -1,6 +1,6 @@
 schema = "1"
 slice = "txnkv-optimistic-lock-read-recovery-runtime"
-status = "ready"
+status = "partial"
 target = "tidb-txnkv"
 ring = "transaction"
 consumer = "Campaign 13 transits the bounded optimistic non-async read-lock path: decode one LockInfo or SharedLock wrapper, query the primary with CheckTxnStatus through the same RegionCache/client authority, return exact alive TTL, or resolve committed/rolled-back secondary keys with ResolveLock and retry the same unconsumed Cop task. A locked response is a valid route observation but cannot advance paging/cache/EMA/publication. Pessimistic, async-commit, file, TxnNotFound retry, batch resolve, writes, 2PC, and background lock cleanup fail closed."

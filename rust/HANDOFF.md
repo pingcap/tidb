@@ -125,7 +125,7 @@ router service, production cache TTL/concurrency, forwarding/proxy and
 label/load/slow/busy policy, initial PD-discovery cancellation,
 pessimistic/async-commit lock recovery, TLS policy, and deployable bootstrap.
 
-### Historical Campaign 10-12 and current Campaign 13 boundary
+### Historical Campaign 10-13 boundary
 
 Campaign `2026-07-read-path-10` is integrated and both receipt-backed claims
 are released as `partial`. Campaign 09 first made the checked read chain reach
@@ -214,12 +214,15 @@ and one publication:
 
     campaign13_lock_recovery status=committed lock_start_ts=467767409883480085 caller_start_ts=467767409923063811 locked_key_hex=7480000000000000775f728000000000000002 primary_key_hex=7480000000000000775f728000000000000001 primary_route=127.0.0.1:51160 commit_ts=467767409883480086 resolve_route=127.0.0.1:51160 resolve_key_hex=7480000000000000775f728000000000000002 cop_route=127.0.0.1:51160 cop_attempts=2 publications=1
 
-Both live runners removed owned processes, TiUP state/data, and endpoints.
+Both live runners removed owned processes, TiUP state/data, and endpoints. The
+Ready lint and frozen 12-job gate passed and issued `integration_receipt 4`;
+all four receipt-backed claims are released as `partial`, exact membership is
+archived, Campaign 13 is `integrated`, and the queue has zero active claims.
 Pessimistic/async-commit locks, TxnNotFound retry, forwarding/proxy metadata,
 label/load/slow/busy policy, background health/recovery, TLS,
 batch/stream/TiFlash, production cache concurrency/TTL, full DAG/table
 lowering, and COM_QUERY integration remain explicit. Read `STATUS.md` for the
-receipt-backed claim, membership, and queue state.
+generated membership and queue state.
 
 ## 4. The differential tools (how you verify)
 

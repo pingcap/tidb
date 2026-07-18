@@ -1,6 +1,6 @@
 schema = "1"
 slice = "txnkv-replica-read-policy-runtime"
-status = "ready"
+status = "partial"
 target = "tidb-txnkv"
 ring = "transaction"
 consumer = "Campaign 13 atomically succeeds the Campaign 12 store/leader selector owner and transits follower, mixed, prefer-leader, stale-read, and learner policy into the existing request-scoped selector. Deterministic seed rotation, legal peer roles, stale-read request flags, leader fallback state, shared-store failure state, and unreachable-peer exclusion remain under one RegionCache authority. Forwarding/proxy metadata, labels, load-based routing, slow score, busy threshold, flashback, and async API remain explicit gaps."

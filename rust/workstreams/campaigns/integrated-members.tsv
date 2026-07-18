@@ -47,3 +47,7 @@
 2026-07-read-path-12	txnkv-store-replica-failure-runtime
 2026-07-read-path-12	txnkv-tonic-failure-generation-runtime
 2026-07-read-path-12	distsql-unary-transport-retry-runtime
+2026-07-read-path-13	txnkv-read-runtime-seams
+2026-07-read-path-13	txnkv-replica-read-policy-runtime
+2026-07-read-path-13	distsql-unary-active-cancel-runtime
+2026-07-read-path-13	txnkv-optimistic-lock-read-recovery-runtime

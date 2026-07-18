@@ -185,8 +185,11 @@ preserving cached leader peer 15. The final v8.5.7 lock proof split primary and
 secondary into distinct region batches, used the current failpoint-enabled
 TiDB to commit row 1 while leaving row 2 locked, then observed one status RPC,
 one exact-key resolve RPC, two Cop attempts, and one publication. Both runners
-proved cleanup of their TiUP state, processes, and endpoints. Exact receipt,
-claim, membership, and queue state remains generated in `rust/STATUS.md`.
+proved cleanup of their TiUP state, processes, and endpoints. The Ready lint
+and frozen 12-job gate passed, issued `integration_receipt 4`, released all
+four claims as `partial`, and archived exact membership. Campaign 13 is
+integrated with zero active claims. Current membership and queue state remain
+generated in `rust/STATUS.md`.
 
 The checked source/test totals and campaign queue are generated into
 `rust/STATUS.md` from the authoritative ledgers and manifests. Do not copy

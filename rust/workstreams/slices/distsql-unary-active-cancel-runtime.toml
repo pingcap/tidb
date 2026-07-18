@@ -1,6 +1,6 @@
 schema = "1"
 slice = "distsql-unary-active-cancel-runtime"
-status = "ready"
+status = "partial"
 target = "tidb-distsql"
 ring = "result"
 consumer = "Campaign 13 connects the existing execution cancellation owner through the shared unary core so cancellation interrupts an RPC that is already in flight. Caller cancellation remains terminal before response classification, channel close, liveness, store/cache mutation, selector/backoff, PD recovery, paging, EMA, or publication. Timeout and remote gRPC Canceled remain distinct transport facts. The slice owns no new worker, channel pool, topology map, or retry policy."

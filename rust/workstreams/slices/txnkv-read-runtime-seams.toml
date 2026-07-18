@@ -1,6 +1,6 @@
 schema = "1"
 slice = "txnkv-read-runtime-seams"
-status = "ready"
+status = "partial"
 target = "tidb-txnkv"
 ring = "transaction"
 consumer = "Campaign 13 first removes the remaining parallel-write bottleneck without adding another transport, cache, or retry authority. The existing tonic worker becomes one address-directed raw unary core owning the sole ChannelPool, address generation, deadline, and cancellation wait. Coprocessor, CheckTxnStatus, and ResolveLock are typed adapters above it. One SharedReadRuntime owns the sole client and RegionCache handles, while the DistSQL loop delegates active cancellation and locked-response policy into isolated leaves. This seam is source-shaped plumbing only: it does not select replica policy, resolve a lock, or retry inside transport."
