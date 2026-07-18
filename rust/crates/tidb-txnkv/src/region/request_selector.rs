@@ -52,8 +52,10 @@ pub const MAX_REPLICA_ATTEMPT_TIME: Duration = Duration::from_secs(50);
 /// One immutable request target selected from the cached region.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LeaderRequest {
-    /// Exact region/store route observed by this request.
+    /// Exact logical region/store target observed by this request.
     pub attempt: RegionAttempt,
+    /// Optional physical proxy which forwards the request to `attempt`.
+    pub proxy: Option<RegionAttempt>,
     /// Raft role copied from the immutable region snapshot.
     pub role: PeerRole,
     /// Whether source metadata marks this peer as a witness.
@@ -66,6 +68,38 @@ pub struct LeaderRequest {
     pub cached_leader: bool,
     /// Effective request-scoped selector mode for this immutable dispatch.
     pub read_mode: ReplicaReadMode,
+}
+
+impl LeaderRequest {
+    /// Logical TiKV target which must interpret the region request.
+    #[must_use]
+    pub const fn target(&self) -> &RegionAttempt {
+        &self.attempt
+    }
+
+    /// Optional physical TiKV proxy selected for this immutable dispatch.
+    #[must_use]
+    pub const fn proxy(&self) -> Option<&RegionAttempt> {
+        self.proxy.as_ref()
+    }
+
+    /// Physical attempt which owns the network connection and its outcome.
+    #[must_use]
+    pub fn dispatch_attempt(&self) -> &RegionAttempt {
+        self.proxy.as_ref().unwrap_or(&self.attempt)
+    }
+
+    /// Physical TiKV address to which transport must connect.
+    #[must_use]
+    pub fn dispatch_address(&self) -> &str {
+        &self.dispatch_attempt().address
+    }
+
+    /// Logical target address emitted when the physical dispatch uses a proxy.
+    #[must_use]
+    pub fn forwarded_host(&self) -> Option<&str> {
+        self.proxy.as_ref().map(|_| self.attempt.address.as_str())
+    }
 }
 
 /// Result of one request-scoped selection step.

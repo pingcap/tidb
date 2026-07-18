@@ -11,6 +11,7 @@ mod location;
 mod recovery;
 mod replica_selector;
 mod request_selector;
+mod route;
 mod store_state;
 
 pub use crate::retry::{RegionBackoffBudget, RegionBackoffExhausted, RegionBackoffKind};
@@ -29,4 +30,5 @@ pub use request_selector::{
     LeaderRequest, RequestSelection, RequestSelector, SelectorRecovery, MAX_REPLICA_ATTEMPTS,
     MAX_REPLICA_ATTEMPT_TIME,
 };
+pub use route::{RouteFeedback, RouteOutcome};
 pub use store_state::{StoreFailureOutcome, StoreLiveness, StoreResolveState, StoreState};

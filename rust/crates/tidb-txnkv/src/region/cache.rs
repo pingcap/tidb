@@ -223,6 +223,7 @@ impl<L> RegionCache<L> {
         selector.record_dispatch(attempt.clone());
         Ok(RequestSelection::Attempt(LeaderRequest {
             attempt,
+            proxy: None,
             role: peer.role,
             is_witness: peer.is_witness,
             replica_read,
