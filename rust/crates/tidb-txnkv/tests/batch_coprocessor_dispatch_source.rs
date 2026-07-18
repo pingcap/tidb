@@ -34,6 +34,13 @@ use tidb_txnkv::{
 };
 
 const FORWARD_METADATA_KEY: &str = "tikv-forwarded-host";
+type ReceivedRequests = Arc<Mutex<Vec<(Option<String>, CoprocessorRequest)>>>;
+type FixtureParts = (
+    TestServer,
+    ReceivedRequests,
+    mpsc::Receiver<()>,
+    tokio::sync::watch::Sender<bool>,
+);
 
 #[derive(Clone, Copy)]
 enum ResponseMode {
@@ -46,7 +53,7 @@ enum ResponseMode {
 #[derive(Clone)]
 struct BatchFixture {
     mode: ResponseMode,
-    received: Arc<Mutex<Vec<(Option<String>, CoprocessorRequest)>>>,
+    received: ReceivedRequests,
     seen: Arc<Mutex<Option<mpsc::Sender<()>>>>,
     release: tokio::sync::watch::Receiver<bool>,
 }
@@ -239,14 +246,7 @@ fn request(data: &[u8]) -> DirectUnaryRequest {
     }
 }
 
-fn fixture(
-    mode: ResponseMode,
-) -> (
-    TestServer,
-    Arc<Mutex<Vec<(Option<String>, CoprocessorRequest)>>>,
-    mpsc::Receiver<()>,
-    tokio::sync::watch::Sender<bool>,
-) {
+fn fixture(mode: ResponseMode) -> FixtureParts {
     let received = Arc::new(Mutex::new(Vec::new()));
     let (seen, seen_rx) = mpsc::channel();
     let (release, release_rx) = tokio::sync::watch::channel(false);
