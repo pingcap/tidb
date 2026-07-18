@@ -36,6 +36,15 @@ pub enum SelectorRecovery {
     DataIsNotReady,
 }
 
+/// Store-owned action required after one `ServerIsBusy` response.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ServerBusyAction {
+    /// TiKV supplied a positive optimistic wait estimate.
+    UpdateEstimatedWait(Duration),
+    /// A response without an estimate marks the store immediately slow.
+    MarkStoreSlow,
+}
+
 /// Attempt count and completed RPC time for one peer.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct PeerAttemptState {
@@ -127,6 +136,8 @@ pub struct RequestSelector {
     pub(crate) pending_attempt: Option<RegionAttempt>,
     pub(crate) completed_attempt: Option<RegionAttempt>,
     pub(crate) data_not_ready_peers: BTreeSet<u64>,
+    pub(crate) server_busy_peers: BTreeSet<u64>,
+    pub(crate) busy_threshold: Duration,
     pub(crate) dispatches: u32,
 }
 
@@ -144,6 +155,8 @@ impl RequestSelector {
             pending_attempt: None,
             completed_attempt: None,
             data_not_ready_peers: BTreeSet::new(),
+            server_busy_peers: BTreeSet::new(),
+            busy_threshold: Duration::ZERO,
             dispatches: 0,
         }
     }
@@ -152,6 +165,53 @@ impl RequestSelector {
     #[must_use]
     pub const fn region(&self) -> RegionVerId {
         self.region
+    }
+
+    /// Sets the optimistic wait threshold used to divert read-only requests.
+    pub fn set_busy_threshold(&mut self, threshold: Duration) {
+        self.busy_threshold = threshold;
+    }
+
+    /// Current request-owned busy threshold.
+    #[must_use]
+    pub const fn busy_threshold(&self) -> Duration {
+        self.busy_threshold
+    }
+
+    /// Records the exact peer which returned `ServerIsBusy`.
+    ///
+    /// The returned action is deliberately store-neutral. RegionCache applies
+    /// it to its canonical store state; the selector retains only request-local
+    /// attempt history.
+    #[must_use]
+    pub fn record_server_busy(&mut self, peer_id: u64, estimated_wait_ms: u32) -> ServerBusyAction {
+        self.server_busy_peers.insert(peer_id);
+        if estimated_wait_ms == 0 {
+            ServerBusyAction::MarkStoreSlow
+        } else {
+            ServerBusyAction::UpdateEstimatedWait(Duration::from_millis(u64::from(
+                estimated_wait_ms,
+            )))
+        }
+    }
+
+    /// Whether this request already observed `ServerIsBusy` from one peer.
+    #[must_use]
+    pub fn peer_reported_busy(&self, peer_id: u64) -> bool {
+        self.server_busy_peers.contains(&peer_id)
+    }
+
+    /// Clears the threshold before retrying the leader after no idle replica.
+    ///
+    /// Returning `false` when no threshold was configured lets callers avoid a
+    /// duplicate fallback transition.
+    #[must_use]
+    pub fn clear_busy_threshold_for_leader_fallback(&mut self) -> bool {
+        if self.busy_threshold.is_zero() {
+            return false;
+        }
+        self.busy_threshold = Duration::ZERO;
+        true
     }
 
     /// Excludes a peer which returned `NotLeader` without a known leader.

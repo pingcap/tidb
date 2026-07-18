@@ -36,6 +36,37 @@ impl RegionLoader for Loader {
     }
 }
 
+#[test]
+fn server_busy_state_is_request_owned_and_no_idle_fallback_clears_threshold() {
+    let mut cache = cache();
+    let mut selector = cache
+        .request_selector(location().region, ReadPolicy::default())
+        .unwrap();
+    selector.set_busy_threshold(Duration::from_millis(50));
+    assert_eq!(selector.busy_threshold(), Duration::from_millis(50));
+    assert_eq!(
+        format!("{:?}", selector.record_server_busy(11, 500)),
+        "UpdateEstimatedWait(500ms)"
+    );
+    assert!(selector.peer_reported_busy(11));
+    assert_eq!(
+        format!("{:?}", selector.record_server_busy(12, 0)),
+        "MarkStoreSlow"
+    );
+    assert!(selector.peer_reported_busy(12));
+
+    assert!(selector.clear_busy_threshold_for_leader_fallback());
+    assert_eq!(selector.busy_threshold(), Duration::ZERO);
+    assert!(!selector.clear_busy_threshold_for_leader_fallback());
+
+    let RequestSelection::Attempt(fallback) = cache.select_request(&mut selector).unwrap() else {
+        panic!("clearing a busy threshold must retry without invalidating the region")
+    };
+    assert_eq!(fallback.attempt.peer_id, 11);
+    assert!(fallback.cached_leader);
+    assert!(!fallback.replica_read);
+}
+
 fn location() -> RegionLocation {
     let specs = [
         (11, 101, PeerRole::Voter, false),
