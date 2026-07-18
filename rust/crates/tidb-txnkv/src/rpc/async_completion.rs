@@ -23,7 +23,6 @@ use std::collections::VecDeque;
 use std::error::Error;
 use std::fmt;
 use std::mem;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, Weak};
 
 use crate::client::{DirectUnaryRequest, DirectUnaryResponse};
@@ -37,6 +36,8 @@ pub enum CompletionError {
     ConcurrentDriver,
     /// The caller cancelled before every queued task could run.
     Cancelled,
+    /// The caller's deadline elapsed before every queued task could run.
+    DeadlineExceeded,
     /// A terminal value had already been delivered.
     AlreadyCompleted,
 }
@@ -46,6 +47,7 @@ impl fmt::Display for CompletionError {
         match self {
             Self::ConcurrentDriver => formatter.write_str("completion already has a driver"),
             Self::Cancelled => formatter.write_str("completion execution cancelled"),
+            Self::DeadlineExceeded => formatter.write_str("completion execution deadline exceeded"),
             Self::AlreadyCompleted => formatter.write_str("completion already fulfilled"),
         }
     }
@@ -100,17 +102,34 @@ impl CompletionRunOutcome {
     }
 }
 
+/// Exact reason a completion drive was interrupted.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CompletionCancellationReason {
+    /// The caller explicitly cancelled the attempt.
+    Cancelled,
+    /// The caller's deadline elapsed.
+    DeadlineExceeded,
+}
+
+impl CompletionCancellationReason {
+    const fn as_error(self) -> CompletionError {
+        match self {
+            Self::Cancelled => CompletionError::Cancelled,
+            Self::DeadlineExceeded => CompletionError::DeadlineExceeded,
+        }
+    }
+}
+
 struct CancellationState {
-    cancelled: AtomicBool,
-    changed: Condvar,
-    waiters: Mutex<Vec<Weak<Mutex<RunLoopInner>>>>,
+    reason: Mutex<Option<CompletionCancellationReason>>,
+    waiters: Mutex<Vec<Weak<RunLoopSignal>>>,
 }
 
 /// Cloneable cancellation carrier for one completion-queue drive.
 ///
-/// Cancellation is monotonic. A waiting run loop installs this carrier as its
-/// active ready signal, allowing both cancellation and concurrent appends to
-/// wake the same condition-variable wait without polling.
+/// Cancellation is monotonic. Each waiting run loop registers its own paired
+/// mutex and condition variable so one cancellation can safely wake every
+/// loop without ever using a condition variable with a different mutex.
 #[derive(Clone)]
 pub struct CompletionCancellation {
     inner: Arc<CancellationState>,
@@ -120,7 +139,7 @@ impl fmt::Debug for CompletionCancellation {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("CompletionCancellation")
-            .field("cancelled", &self.is_cancelled())
+            .field("reason", &self.reason())
             .finish()
     }
 }
@@ -137,8 +156,7 @@ impl CompletionCancellation {
     pub fn new() -> Self {
         Self {
             inner: Arc::new(CancellationState {
-                cancelled: AtomicBool::new(false),
-                changed: Condvar::new(),
+                reason: Mutex::new(None),
                 waiters: Mutex::new(Vec::new()),
             }),
         }
@@ -146,7 +164,24 @@ impl CompletionCancellation {
 
     /// Cancels current and future drives using this carrier.
     pub fn cancel(&self) {
-        self.inner.cancelled.store(true, Ordering::Release);
+        self.cancel_with(CompletionCancellationReason::Cancelled);
+    }
+
+    /// Interrupts current and future drives with the exact source reason.
+    ///
+    /// Cancellation is monotonic: the first reason wins.
+    pub fn cancel_with(&self, reason: CompletionCancellationReason) {
+        {
+            let mut current = self
+                .inner
+                .reason
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if current.is_some() {
+                return;
+            }
+            *current = Some(reason);
+        }
         let waiters = {
             let mut registered = self
                 .inner
@@ -166,16 +201,27 @@ impl CompletionCancellation {
         };
         for waiting in waiters {
             let _guard = waiting
+                .inner
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            self.inner.changed.notify_all();
+            waiting.changed.notify_all();
         }
     }
 
     /// Whether cancellation has been requested.
     #[must_use]
     pub fn is_cancelled(&self) -> bool {
-        self.inner.cancelled.load(Ordering::Acquire)
+        self.reason().is_some()
+    }
+
+    /// Returns the exact cancellation reason, if cancellation was requested.
+    #[must_use]
+    pub fn reason(&self) -> Option<CompletionCancellationReason> {
+        *self
+            .inner
+            .reason
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 }
 
@@ -185,18 +231,39 @@ type CompletionTask = Box<dyn FnOnce() + Send + 'static>;
 struct RunLoopInner {
     runnable: VecDeque<CompletionTask>,
     state: CompletionRunLoopState,
-    waiting_on: Option<Arc<CancellationState>>,
+}
+
+#[derive(Default)]
+struct RunLoopSignal {
+    inner: Mutex<RunLoopInner>,
+    changed: Condvar,
+}
+
+/// Configurable source-shaped worker delegation used by [`CompletionRunLoop::go`].
+pub trait CompletionSpawner: Send + Sync + 'static {
+    /// Starts one independent producer task.
+    fn go(&self, task: Box<dyn FnOnce() + Send + 'static>);
 }
 
 /// Caller-driven task queue used by asynchronous response completion.
 ///
-/// The queue deliberately owns no thread or Tokio runtime. Producers append
-/// tasks from transport callbacks, while a response-pull caller becomes the
-/// sole driver through [`Self::execute_ready`] or [`Self::execute`]. Tasks
-/// appended by a running task are drained before a successful drive returns.
-#[derive(Clone, Default)]
+/// Producers can start independent work through [`Self::go`], while a
+/// response-pull caller becomes the sole completion driver through
+/// [`Self::execute_ready`] or [`Self::execute`]. Tasks appended by a running
+/// completion are drained before a successful drive returns.
+#[derive(Clone)]
 pub struct CompletionRunLoop {
-    inner: Arc<Mutex<RunLoopInner>>,
+    signal: Arc<RunLoopSignal>,
+    spawner: Option<Arc<dyn CompletionSpawner>>,
+}
+
+impl Default for CompletionRunLoop {
+    fn default() -> Self {
+        Self {
+            signal: Arc::new(RunLoopSignal::default()),
+            spawner: None,
+        }
+    }
 }
 
 impl fmt::Debug for CompletionRunLoop {
@@ -205,6 +272,7 @@ impl fmt::Debug for CompletionRunLoop {
             .debug_struct("CompletionRunLoop")
             .field("state", &self.state())
             .field("num_runnable", &self.num_runnable())
+            .field("has_spawner", &self.spawner.is_some())
             .finish()
     }
 }
@@ -214,6 +282,30 @@ impl CompletionRunLoop {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Creates an idle completion queue backed by a source-shaped worker pool.
+    #[must_use]
+    pub fn with_spawner(spawner: Arc<dyn CompletionSpawner>) -> Self {
+        Self {
+            signal: Arc::new(RunLoopSignal::default()),
+            spawner: Some(spawner),
+        }
+    }
+
+    /// Starts producer work immediately, delegating to the configured pool.
+    ///
+    /// Without a pool this mirrors client-go's `go f()` path with one detached
+    /// operating-system thread. Completion delivery still uses the run loop.
+    pub fn go<F>(&self, task: F)
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        if let Some(spawner) = &self.spawner {
+            spawner.go(Box::new(task));
+        } else {
+            drop(std::thread::spawn(task));
+        }
     }
 
     /// Returns the current queue state.
@@ -267,8 +359,8 @@ impl CompletionRunLoop {
             if inner.state != CompletionRunLoopState::Idle {
                 return CompletionRunOutcome::failed(0, CompletionError::ConcurrentDriver);
             }
-            if cancellation.is_cancelled() {
-                return CompletionRunOutcome::failed(0, CompletionError::Cancelled);
+            if let Some(reason) = cancellation.reason() {
+                return CompletionRunOutcome::failed(0, reason.as_error());
             }
             if !inner.runnable.is_empty() {
                 inner.state = CompletionRunLoopState::Running;
@@ -276,20 +368,18 @@ impl CompletionRunLoop {
             }
 
             inner.state = CompletionRunLoopState::Waiting;
-            inner.waiting_on = Some(Arc::clone(&cancellation.inner));
-            cancellation.register_waiter(&self.inner);
-            inner = cancellation
-                .inner
+            cancellation.register_waiter(&self.signal);
+            inner = self
+                .signal
                 .changed
                 .wait_while(inner, |current| {
                     current.state == CompletionRunLoopState::Waiting && !cancellation.is_cancelled()
                 })
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            inner.waiting_on = None;
 
-            if cancellation.is_cancelled() {
+            if let Some(reason) = cancellation.reason() {
                 inner.state = CompletionRunLoopState::Idle;
-                return CompletionRunOutcome::failed(0, CompletionError::Cancelled);
+                return CompletionRunOutcome::failed(0, reason.as_error());
             }
             // Append changes Waiting back to Idle before notifying us. Loop to
             // re-check ownership and detach the newly runnable batch.
@@ -303,13 +393,13 @@ impl CompletionRunLoop {
             inner.runnable.push_back(task);
             if inner.state == CompletionRunLoopState::Waiting {
                 inner.state = CompletionRunLoopState::Idle;
-                inner.waiting_on.take()
+                true
             } else {
-                None
+                false
             }
         };
-        if let Some(wake) = wake {
-            wake.changed.notify_one();
+        if wake {
+            self.signal.changed.notify_one();
         }
     }
 
@@ -321,12 +411,12 @@ impl CompletionRunLoop {
         let mut executed = 0;
         loop {
             while !running.is_empty() {
-                if cancellation.is_some_and(CompletionCancellation::is_cancelled) {
+                if let Some(reason) = cancellation.and_then(CompletionCancellation::reason) {
                     let mut inner = self.lock_inner();
                     running.append(&mut inner.runnable);
                     inner.runnable = running;
                     inner.state = CompletionRunLoopState::Idle;
-                    return CompletionRunOutcome::failed(executed, CompletionError::Cancelled);
+                    return CompletionRunOutcome::failed(executed, reason.as_error());
                 }
                 let task = running
                     .pop_front()
@@ -345,14 +435,15 @@ impl CompletionRunLoop {
     }
 
     fn lock_inner(&self) -> MutexGuard<'_, RunLoopInner> {
-        self.inner
+        self.signal
+            .inner
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 }
 
 impl CompletionCancellation {
-    fn register_waiter(&self, run_loop: &Arc<Mutex<RunLoopInner>>) {
+    fn register_waiter(&self, run_loop: &Arc<RunLoopSignal>) {
         let waiting = Arc::downgrade(run_loop);
         let mut waiters = self
             .inner
@@ -438,30 +529,32 @@ where
     }
 
     /// Claims and invokes the callback immediately on the current thread.
-    pub fn invoke(&self, result: Result<T, E>) -> Result<(), CompletionError> {
-        let (transforms, terminal) = self.claim()?;
+    /// Duplicate terminal attempts are silently ignored, matching `sync.Once`.
+    pub fn invoke(&self, result: Result<T, E>) {
+        let Some((transforms, terminal)) = self.claim() else {
+            return;
+        };
         Self::deliver(result, transforms, terminal);
-        Ok(())
     }
 
     /// Claims the callback and queues its terminal delivery for later driving.
-    pub fn schedule(&self, result: Result<T, E>) -> Result<(), CompletionError> {
-        let (transforms, terminal) = self.claim()?;
+    /// Duplicate terminal attempts are silently ignored, matching `sync.Once`.
+    pub fn schedule(&self, result: Result<T, E>) {
+        let Some((transforms, terminal)) = self.claim() else {
+            return;
+        };
         self.run_loop.append_task(Box::new(move || {
             Self::deliver(result, transforms, terminal);
         }));
-        Ok(())
     }
 
-    fn claim(
-        &self,
-    ) -> Result<(Vec<CompletionTransform<T, E>>, CompletionTerminal<T, E>), CompletionError> {
+    fn claim(&self) -> Option<(Vec<CompletionTransform<T, E>>, CompletionTerminal<T, E>)> {
         let mut inner = self
             .inner
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         if inner.fulfilled {
-            return Err(CompletionError::AlreadyCompleted);
+            return None;
         }
         inner.fulfilled = true;
         let transforms = mem::take(&mut inner.transforms);
@@ -469,7 +562,7 @@ where
             .terminal
             .take()
             .expect("unfulfilled callback must retain its terminal action");
-        Ok((transforms, terminal))
+        Some((transforms, terminal))
     }
 
     fn deliver(
@@ -492,11 +585,13 @@ struct PullState<T, E> {
 /// Pull-side owner of one scheduled completion result.
 ///
 /// Multiple pulls are allowed, but each pull consumes at most one terminal
-/// result. Cancellation suppresses a terminal action that has not already
-/// acquired this pull state; it does not fabricate an error response.
+/// result. Cancellation invokes the exact source-attempt hook and suppresses a
+/// terminal action that has not already acquired this pull state; it does not
+/// fabricate an error response.
 pub struct CompletionPull<T, E> {
     run_loop: CompletionRunLoop,
     inner: Arc<Mutex<PullState<T, E>>>,
+    cancel_hook: Option<Box<dyn FnOnce() + Send + 'static>>,
 }
 
 impl<T, E> CompletionPull<T, E> {
@@ -513,13 +608,18 @@ impl<T, E> CompletionPull<T, E> {
         Ok(inner.result.take())
     }
 
-    /// Cancels terminal publication for this request.
+    /// Cancels this exact source attempt and suppresses later publication.
     pub fn cancel(&mut self) {
-        let mut inner = self
-            .inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        inner.cancelled = true;
+        {
+            let mut inner = self
+                .inner
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            inner.cancelled = true;
+        }
+        if let Some(cancel_hook) = self.cancel_hook.take() {
+            cancel_hook();
+        }
     }
 
     /// Whether this request has been cancelled.
@@ -532,13 +632,15 @@ impl<T, E> CompletionPull<T, E> {
     }
 }
 
-/// Creates the source and pull sides of one once-only completion.
-pub fn completion_pair<T, E>(
+/// Creates both sides of one once-only completion with its exact cancel hook.
+pub fn completion_pair<T, E, F>(
     run_loop: CompletionRunLoop,
+    cancel_hook: F,
 ) -> (CompletionCallback<T, E>, CompletionPull<T, E>)
 where
     T: Send + 'static,
     E: Send + 'static,
+    F: FnOnce() + Send + 'static,
 {
     let inner = Arc::new(Mutex::new(PullState {
         cancelled: false,
@@ -553,7 +655,14 @@ where
             inner.result = Some(result);
         }
     });
-    (callback, CompletionPull { run_loop, inner })
+    (
+        callback,
+        CompletionPull {
+            run_loop,
+            inner,
+            cancel_hook: Some(Box::new(cancel_hook)),
+        },
+    )
 }
 
 impl PendingRequest for CompletionPull<DirectUnaryResponse, DirectUnaryClientError> {

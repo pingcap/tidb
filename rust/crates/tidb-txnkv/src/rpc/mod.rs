@@ -15,8 +15,8 @@ mod unary;
 
 pub use async_completion::{
     completion_pair, AsyncRequestDispatcher, CompletionCallback, CompletionCancellation,
-    CompletionError, CompletionPull, CompletionRunLoop, CompletionRunLoopState,
-    CompletionRunOutcome, PendingRequest,
+    CompletionCancellationReason, CompletionError, CompletionPull, CompletionRunLoop,
+    CompletionRunLoopState, CompletionRunOutcome, CompletionSpawner, PendingRequest,
 };
 pub use error::{
     DirectUnaryClientError, DirectUnaryConnectionError, DirectUnaryGrpcCode,
