@@ -34,8 +34,9 @@ use tidb_proto::{
 };
 use tidb_txnkv::region::{
     Peer, PeerRole, RegionCache, RegionLoadError, RegionLoader, RegionLocation, RegionMetadata,
-    RegionRecoveryLoader, RegionRouteError, RegionVerId, Store,
+    RegionRecoveryLoader, RegionRouteError, RegionVerId, Store, StoreLiveness,
 };
+use tidb_txnkv::{DirectUnaryConnectionError, DirectUnaryGrpcCode, DirectUnaryTransportClass};
 
 const OBSERVATION_TIME: Duration = Duration::from_secs(1_000);
 
@@ -116,7 +117,17 @@ impl RegionRecoveryLoader for ScriptedLoader {
 
 struct ScriptedClient {
     calls: Rc<RefCell<Vec<ObservedCall>>>,
-    responses: VecDeque<Result<Vec<u8>, String>>,
+    responses: VecDeque<Result<Vec<u8>, DirectUnaryClientError>>,
+    events: Rc<RefCell<Vec<ClientEvent>>>,
+    liveness: RefCell<VecDeque<Result<StoreLiveness, DirectUnaryClientError>>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ClientEvent {
+    Send(String),
+    ForceClose(String),
+    CloseGeneration { address: String, version: u64 },
+    Liveness { address: String, timeout: Duration },
 }
 
 impl DirectUnaryClient for ScriptedClient {
@@ -126,6 +137,9 @@ impl DirectUnaryClient for ScriptedClient {
         request: &DirectUnaryRequest,
         timeout: Duration,
     ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
+        self.events
+            .borrow_mut()
+            .push(ClientEvent::Send(address.to_owned()));
         let wire = CoprocessorRequest::decode(request.encoded_request.as_slice()).unwrap();
         assert!(wire.context.is_none());
         let epoch = request.context.region_epoch.as_ref().unwrap();
@@ -154,11 +168,40 @@ impl DirectUnaryClient for ScriptedClient {
             .pop_front()
             .expect("one scripted response per client call")
             .map(|encoded_response| DirectUnaryResponse { encoded_response })
-            .map_err(DirectUnaryClientError::InvalidRequest)
     }
 
-    fn close_address(&mut self, _address: &str) -> Result<(), DirectUnaryClientError> {
+    fn close_address(&mut self, address: &str) -> Result<(), DirectUnaryClientError> {
+        self.events
+            .borrow_mut()
+            .push(ClientEvent::ForceClose(address.to_owned()));
         Ok(())
+    }
+
+    fn close_address_version(
+        &mut self,
+        address: &str,
+        version: u64,
+    ) -> Result<(), DirectUnaryClientError> {
+        self.events.borrow_mut().push(ClientEvent::CloseGeneration {
+            address: address.to_owned(),
+            version,
+        });
+        Ok(())
+    }
+
+    fn liveness(
+        &self,
+        address: &str,
+        timeout: Duration,
+    ) -> Result<StoreLiveness, DirectUnaryClientError> {
+        self.events.borrow_mut().push(ClientEvent::Liveness {
+            address: address.to_owned(),
+            timeout,
+        });
+        self.liveness
+            .borrow_mut()
+            .pop_front()
+            .unwrap_or(Ok(StoreLiveness::Unknown))
     }
 
     fn close(&mut self) -> Result<(), DirectUnaryClientError> {
@@ -269,6 +312,21 @@ fn region_not_found(region_id: u64) -> Vec<u8> {
     .encode_to_vec()
 }
 
+fn store_not_match(region_id: u64) -> Vec<u8> {
+    CoprocessorResponse {
+        region_error: Some(errorpb::Error {
+            message: "store not match".to_owned(),
+            store_not_match: Some(errorpb::StoreNotMatch {
+                request_store_id: region_id + 200,
+                actual_store_id: region_id + 201,
+            }),
+            ..errorpb::Error::default()
+        }),
+        ..CoprocessorResponse::default()
+    }
+    .encode_to_vec()
+}
+
 fn raft_entry_too_large(region_id: u64) -> Vec<u8> {
     CoprocessorResponse {
         region_error: Some(errorpb::Error {
@@ -313,6 +371,33 @@ fn response(data: &[u8]) -> Vec<u8> {
         ..CoprocessorResponse::default()
     }
     .encode_to_vec()
+}
+
+fn connection_failure(
+    address: &str,
+    version: u64,
+    class: DirectUnaryTransportClass,
+    grpc_code: Option<DirectUnaryGrpcCode>,
+) -> DirectUnaryClientError {
+    let message = "scripted transport failure".to_owned();
+    let connection = match class {
+        DirectUnaryTransportClass::Connection => {
+            DirectUnaryConnectionError::connection(address, version, message)
+        }
+        DirectUnaryTransportClass::LocalDeadline => {
+            DirectUnaryConnectionError::local_deadline(address, version, message)
+        }
+        DirectUnaryTransportClass::RemoteGrpc => DirectUnaryConnectionError::remote_grpc(
+            address,
+            version,
+            grpc_code.expect("remote gRPC scripts require a code"),
+            message,
+        ),
+        DirectUnaryTransportClass::CallerCancelled => {
+            panic!("caller cancellation has no selected connection")
+        }
+    };
+    DirectUnaryClientError::Connection(connection)
 }
 
 fn transport(
@@ -371,11 +456,41 @@ fn transport_with_loader_calls_and_config(
     DirectUnaryQueryTransport::new(
         ScriptedClient {
             calls,
-            responses: responses.into_iter().collect(),
+            responses: responses
+                .into_iter()
+                .map(|response| response.map_err(DirectUnaryClientError::InvalidRequest))
+                .collect(),
+            events: Rc::new(RefCell::new(Vec::new())),
+            liveness: RefCell::new(VecDeque::new()),
         },
         RegionCache::new(ScriptedLoader {
             cluster_id,
             calls: loader_calls,
+            regions: regions.into_iter().collect(),
+        }),
+        config,
+    )
+    .unwrap()
+}
+
+fn transport_with_transport_failures(
+    calls: Rc<RefCell<Vec<ObservedCall>>>,
+    responses: impl IntoIterator<Item = Result<Vec<u8>, DirectUnaryClientError>>,
+    liveness: impl IntoIterator<Item = Result<StoreLiveness, DirectUnaryClientError>>,
+    events: Rc<RefCell<Vec<ClientEvent>>>,
+    regions: impl IntoIterator<Item = RegionLocation>,
+    config: DirectUnaryRuntimeConfig,
+) -> DirectUnaryQueryTransport<ScriptedClient, ScriptedLoader> {
+    DirectUnaryQueryTransport::new(
+        ScriptedClient {
+            calls,
+            responses: responses.into_iter().collect(),
+            events,
+            liveness: RefCell::new(liveness.into_iter().collect()),
+        },
+        RegionCache::new(ScriptedLoader {
+            cluster_id: 9001,
+            calls: Rc::new(RefCell::new(Vec::new())),
             regions: regions.into_iter().collect(),
         }),
         config,
@@ -861,7 +976,375 @@ fn close_before_pull_stops_every_unsent_attempt() {
 }
 
 #[test]
-fn return_region_error_typed_terminal_and_transport_failures_close_without_future_dispatch() {
+fn remote_canceled_closes_exact_generation_before_resending_the_same_task() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let retry_control = Rc::new(RecordingRetryControl::default());
+    let mut runtime = InjectedQueryRuntime::new(transport_with_transport_failures(
+        Rc::clone(&calls),
+        [
+            Err(connection_failure(
+                "tikv-1:20160",
+                41,
+                DirectUnaryTransportClass::RemoteGrpc,
+                Some(DirectUnaryGrpcCode::Canceled),
+            )),
+            Ok(response(b"retried")),
+        ],
+        [Ok(StoreLiveness::Unreachable)],
+        Rc::clone(&events),
+        [location_with_second_peer(
+            1,
+            "a",
+            "z",
+            "tikv-1:20160",
+            "tikv-2:20160",
+        )],
+        DirectUnaryRuntimeConfig {
+            region_retry_control: retry_control.clone(),
+            ..DirectUnaryRuntimeConfig::default()
+        },
+    ));
+    let mut result = select_result(&mut runtime, &TransportRequest::new(metadata("a", "z")));
+
+    assert_eq!(result.next_raw().unwrap(), Some(b"retried".to_vec()));
+    assert_eq!(result.next_raw().unwrap(), None);
+    assert_eq!(calls.borrow().len(), 2);
+    assert_eq!(calls.borrow()[0].region_id, calls.borrow()[1].region_id);
+    assert_eq!(calls.borrow()[0].data, calls.borrow()[1].data);
+    assert_eq!(
+        events.borrow().as_slice(),
+        [
+            ClientEvent::Send("tikv-1:20160".to_owned()),
+            ClientEvent::CloseGeneration {
+                address: "tikv-1:20160".to_owned(),
+                version: 41,
+            },
+            ClientEvent::Liveness {
+                address: "tikv-1:20160".to_owned(),
+                timeout: Duration::from_secs(1),
+            },
+            ClientEvent::Send("tikv-2:20160".to_owned()),
+        ]
+    );
+    assert_eq!(retry_control.sleeps.borrow().len(), 1);
+}
+
+#[test]
+fn unreachable_store_reselects_an_alternate_and_promotes_it_for_the_next_query() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let retry_control = Rc::new(RecordingRetryControl::default());
+    let mut runtime = InjectedQueryRuntime::new(transport_with_transport_failures(
+        Rc::clone(&calls),
+        [
+            Err(connection_failure(
+                "tikv-old:20160",
+                9,
+                DirectUnaryTransportClass::Connection,
+                None,
+            )),
+            Ok(response(b"alternate")),
+            Ok(response(b"promoted")),
+        ],
+        [Ok(StoreLiveness::Unreachable)],
+        Rc::clone(&events),
+        [location_with_second_peer(
+            1,
+            "a",
+            "z",
+            "tikv-old:20160",
+            "tikv-new:20160",
+        )],
+        DirectUnaryRuntimeConfig {
+            region_retry_control: retry_control.clone(),
+            ..DirectUnaryRuntimeConfig::default()
+        },
+    ));
+    let request = TransportRequest::new(metadata("a", "z"));
+    let mut first = select_result(&mut runtime, &request);
+
+    assert_eq!(first.next_raw().unwrap(), Some(b"alternate".to_vec()));
+    assert_eq!(first.next_raw().unwrap(), None);
+    drop(first);
+    let mut second = select_result(&mut runtime, &request);
+    assert_eq!(second.next_raw().unwrap(), Some(b"promoted".to_vec()));
+    assert_eq!(second.next_raw().unwrap(), None);
+    assert_eq!(
+        calls
+            .borrow()
+            .iter()
+            .map(|call| call.address.as_str())
+            .collect::<Vec<_>>(),
+        ["tikv-old:20160", "tikv-new:20160", "tikv-new:20160"]
+    );
+    assert_eq!(
+        events.borrow()[..2],
+        [
+            ClientEvent::Send("tikv-old:20160".to_owned()),
+            ClientEvent::Liveness {
+                address: "tikv-old:20160".to_owned(),
+                timeout: Duration::from_secs(1),
+            },
+        ]
+    );
+    assert_eq!(retry_control.sleeps.borrow().len(), 1);
+}
+
+#[test]
+fn one_store_failure_stales_later_bound_regions_without_reordering_them() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let retry_control = Rc::new(RecordingRetryControl::default());
+    let shared_leader = Store {
+        id: 201,
+        address: "tikv-dead:20160".to_owned(),
+        epoch: 7,
+    };
+    let first = RegionLocation {
+        region: RegionVerId::new(1, 1, 2),
+        start_key: b"a".to_vec(),
+        end_key: b"m".to_vec(),
+        peers: vec![
+            Peer {
+                id: 101,
+                store_id: 201,
+                role: PeerRole::Voter,
+                is_witness: false,
+                store_epoch: 7,
+            },
+            Peer {
+                id: 102,
+                store_id: 202,
+                role: PeerRole::Voter,
+                is_witness: false,
+                store_epoch: 7,
+            },
+        ],
+        leader_peer_id: Some(101),
+        stores: vec![
+            shared_leader.clone(),
+            Store {
+                id: 202,
+                address: "tikv-first-alternate:20160".to_owned(),
+                epoch: 7,
+            },
+        ],
+    };
+    let second = RegionLocation {
+        region: RegionVerId::new(2, 1, 2),
+        start_key: b"m".to_vec(),
+        end_key: b"z".to_vec(),
+        peers: vec![
+            Peer {
+                id: 201,
+                store_id: 201,
+                role: PeerRole::Voter,
+                is_witness: false,
+                store_epoch: 7,
+            },
+            Peer {
+                id: 202,
+                store_id: 203,
+                role: PeerRole::Voter,
+                is_witness: false,
+                store_epoch: 7,
+            },
+        ],
+        leader_peer_id: Some(201),
+        stores: vec![
+            shared_leader,
+            Store {
+                id: 203,
+                address: "tikv-second-alternate:20160".to_owned(),
+                epoch: 7,
+            },
+        ],
+    };
+    let mut runtime = InjectedQueryRuntime::new(transport_with_transport_failures(
+        Rc::clone(&calls),
+        [
+            Err(connection_failure(
+                "tikv-dead:20160",
+                4,
+                DirectUnaryTransportClass::Connection,
+                None,
+            )),
+            Ok(response(b"first")),
+            Ok(response(b"second")),
+        ],
+        [Ok(StoreLiveness::Unreachable)],
+        Rc::clone(&events),
+        [first, second],
+        DirectUnaryRuntimeConfig {
+            region_retry_control: retry_control,
+            ..DirectUnaryRuntimeConfig::default()
+        },
+    ));
+    let mut result = select_result(&mut runtime, &TransportRequest::new(metadata("a", "z")));
+
+    assert_eq!(result.next_raw().unwrap(), Some(b"first".to_vec()));
+    assert_eq!(result.next_raw().unwrap(), Some(b"second".to_vec()));
+    assert_eq!(result.next_raw().unwrap(), None);
+    assert_eq!(
+        calls
+            .borrow()
+            .iter()
+            .map(|call| (call.region_id, call.address.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            (1, "tikv-dead:20160"),
+            (1, "tikv-first-alternate:20160"),
+            (2, "tikv-second-alternate:20160"),
+        ]
+    );
+    assert_eq!(
+        events
+            .borrow()
+            .iter()
+            .filter(|event| matches!(event, ClientEvent::Send(_)))
+            .count(),
+        3
+    );
+}
+
+#[test]
+fn store_not_match_force_closes_the_address_before_region_miss_rebuild() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let mut runtime = InjectedQueryRuntime::new(transport_with_transport_failures(
+        Rc::clone(&calls),
+        [
+            Ok(store_not_match(1)),
+            Ok(response(b"reloaded-after-store-mismatch")),
+        ],
+        [],
+        Rc::clone(&events),
+        [
+            location(1, "a", "z", "tikv-old:20160"),
+            location(1, "a", "z", "tikv-new:20160"),
+        ],
+        DirectUnaryRuntimeConfig::default(),
+    ));
+    let mut result = select_result(&mut runtime, &TransportRequest::new(metadata("a", "z")));
+
+    assert_eq!(
+        result.next_raw().unwrap(),
+        Some(b"reloaded-after-store-mismatch".to_vec())
+    );
+    assert_eq!(result.next_raw().unwrap(), None);
+    assert_eq!(
+        events.borrow().as_slice(),
+        [
+            ClientEvent::Send("tikv-old:20160".to_owned()),
+            ClientEvent::ForceClose("tikv-old:20160".to_owned()),
+            ClientEvent::Send("tikv-new:20160".to_owned()),
+        ]
+    );
+}
+
+#[test]
+fn transport_attempt_exhaustion_rebuilds_through_region_miss_instead_of_returning_client() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let retry_control = Rc::new(RecordingRetryControl::default());
+    let mut responses = Vec::new();
+    for version in 1..=10 {
+        responses.push(Err(connection_failure(
+            "tikv-stuck:20160",
+            version,
+            DirectUnaryTransportClass::Connection,
+            None,
+        )));
+    }
+    responses.push(Ok(response(b"reloaded-after-exhaustion")));
+    let mut runtime = InjectedQueryRuntime::new(transport_with_transport_failures(
+        Rc::clone(&calls),
+        responses,
+        std::iter::repeat_n(Ok(StoreLiveness::Reachable), 10),
+        Rc::clone(&events),
+        [
+            location(1, "a", "z", "tikv-stuck:20160"),
+            location(1, "a", "z", "tikv-reloaded:20160"),
+        ],
+        DirectUnaryRuntimeConfig {
+            region_retry_control: retry_control.clone(),
+            region_retry_max_sleep: Duration::from_secs(60),
+            ..DirectUnaryRuntimeConfig::default()
+        },
+    ));
+    let mut result = select_result(&mut runtime, &TransportRequest::new(metadata("a", "z")));
+
+    assert_eq!(
+        result.next_raw().unwrap(),
+        Some(b"reloaded-after-exhaustion".to_vec())
+    );
+    assert_eq!(result.next_raw().unwrap(), None);
+    let calls = calls.borrow();
+    assert_eq!(calls.len(), 11);
+    assert!(calls[..10]
+        .iter()
+        .all(|call| call.address == "tikv-stuck:20160"));
+    assert_eq!(calls[10].address, "tikv-reloaded:20160");
+    assert_eq!(
+        events
+            .borrow()
+            .iter()
+            .filter(|event| matches!(event, ClientEvent::Liveness { .. }))
+            .count(),
+        10
+    );
+    assert_eq!(retry_control.sleeps.borrow().len(), 11);
+}
+
+#[test]
+fn caller_cancellation_is_terminal_before_failure_consumption_or_retry_mutation() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let retry_control = Rc::new(RecordingRetryControl::default());
+    let mut runtime = InjectedQueryRuntime::new(transport_with_transport_failures(
+        Rc::clone(&calls),
+        [
+            Err(DirectUnaryClientError::CallerCancelled),
+            Ok(response(b"same-cached-route-next-query")),
+        ],
+        [],
+        Rc::clone(&events),
+        [location(1, "a", "z", "tikv-1:20160")],
+        DirectUnaryRuntimeConfig {
+            region_retry_control: retry_control.clone(),
+            ..DirectUnaryRuntimeConfig::default()
+        },
+    ));
+    let mut result = select_result(&mut runtime, &TransportRequest::new(metadata("a", "z")));
+
+    let error = result.next_raw().unwrap_err().to_string();
+    assert!(error.contains("cancelled by caller"), "{error}");
+    assert_eq!(result.next_raw().unwrap(), None);
+    drop(result);
+    let mut next = select_result(&mut runtime, &TransportRequest::new(metadata("a", "z")));
+    assert_eq!(
+        next.next_raw().unwrap(),
+        Some(b"same-cached-route-next-query".to_vec())
+    );
+    assert_eq!(next.next_raw().unwrap(), None);
+    assert_eq!(calls.borrow().len(), 2);
+    assert!(calls
+        .borrow()
+        .iter()
+        .all(|call| call.address == "tikv-1:20160"));
+    assert_eq!(
+        events.borrow().as_slice(),
+        [
+            ClientEvent::Send("tikv-1:20160".to_owned()),
+            ClientEvent::Send("tikv-1:20160".to_owned()),
+        ]
+    );
+    assert!(retry_control.sleeps.borrow().is_empty());
+}
+
+#[test]
+fn return_region_error_and_non_connection_failures_close_without_future_dispatch() {
     let cases = [
         (
             Ok(undetermined_region_error("ambiguous write")),
@@ -898,6 +1381,8 @@ fn missing_cluster_loader_failure_and_empty_pd_address_fail_before_client_dispat
         ScriptedClient {
             calls: Rc::clone(&calls),
             responses: VecDeque::new(),
+            events: Rc::new(RefCell::new(Vec::new())),
+            liveness: RefCell::new(VecDeque::new()),
         },
         RegionCache::new(ScriptedLoader {
             cluster_id: 0,
@@ -917,18 +1402,8 @@ fn missing_cluster_loader_failure_and_empty_pd_address_fail_before_client_dispat
     empty.stores[0].address.clear();
     let mut runtime =
         InjectedQueryRuntime::new(transport(Rc::clone(&calls), std::iter::empty(), [empty]));
-    let error = runtime
-        .select_with_runtime_stats(
-            &TransportRequest::new(metadata("a", "z")),
-            SelectInput::default(),
-            QueryResultContext::new(Vec::new(), WarningCollector::new()),
-            Vec::new(),
-            0,
-            false,
-        )
-        .err()
-        .unwrap()
-        .to_string();
+    let mut result = select_result(&mut runtime, &TransportRequest::new(metadata("a", "z")));
+    let error = result.next_raw().unwrap_err().to_string();
     assert!(error.contains("MissingAddress(202)"), "{error}");
     assert!(calls.borrow().is_empty());
 

@@ -464,6 +464,44 @@ fn region_error_attempt_is_consumed_once_without_success_state_mutation() {
 }
 
 #[test]
+fn transport_failure_rebinds_only_response_ownership_without_success_state_mutation() {
+    let metadata = metadata(vec![range("a", "z")]);
+    let mut runtime = prepare(
+        &metadata,
+        &[topology(1, "a", "m"), topology(2, "m", "z")],
+        Some(cache()),
+    )
+    .unwrap();
+    let future = runtime.prepared_attempt(2).unwrap().clone();
+    let failed_cache_key = runtime
+        .prepared_attempt(1)
+        .unwrap()
+        .cache_key()
+        .unwrap()
+        .to_vec();
+
+    let failed = runtime.consume_failed_attempt(1).unwrap();
+    let replacement = runtime.retry_transport_attempt(failed).unwrap();
+
+    assert_eq!(replacement.logical_task_ids, [1]);
+    assert_eq!(replacement.active_attempt_ids, [3]);
+    assert_eq!(runtime.in_flight_attempt_ids(), [2, 3]);
+    let retry = runtime.prepared_attempt(3).unwrap();
+    assert_eq!(retry.logical_task_id(), 1);
+    assert_eq!(retry.request().ranges, [range("a", "m")]);
+    assert_eq!(retry.request().paging_size, 2);
+    assert_eq!(runtime.prepared_attempt(2).unwrap(), &future);
+    assert_eq!(runtime.predicted_read_bytes(), 0);
+    assert!(runtime.cache().unwrap().get(&failed_cache_key).is_none());
+    assert_eq!(runtime.next_response(1), None);
+    assert_eq!(runtime.next_response(2), None);
+    assert_eq!(
+        runtime.consume_failed_attempt(1).unwrap_err().kind(),
+        "duplicate_response"
+    );
+}
+
+#[test]
 fn known_leader_retry_rebinds_one_logical_task_without_growing_paging() {
     let metadata = metadata(vec![range("a", "z")]);
     let mut runtime = prepare(&metadata, &[topology(1, "a", "z")], None).unwrap();

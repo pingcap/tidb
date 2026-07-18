@@ -17,6 +17,7 @@
 mod cop_read_task_runtime;
 mod direct_unary_query_transport;
 mod tikv_rpc_contract;
+mod transport_failure;
 
 pub use cop_read_task_runtime::{
     CopReadAcceptedResponse, CopReadResponseError, CopReadTaskError, CopReadTaskReplacement,
@@ -28,8 +29,10 @@ pub use direct_unary_query_transport::{
     RegionRetryCancelled, RegionRetryControl,
 };
 pub use tikv_rpc_contract::{
-    build_tikv_unary_request, decode_tikv_unary_response, TikvUnaryRequest,
+    build_tikv_unary_request, build_tikv_unary_request_for_dispatch, decode_tikv_unary_response,
+    TikvUnaryRequest,
 };
+pub use transport_failure::{classify_transport_failure, TransportFailureAction};
 
 use std::sync::Arc;
 use std::time::Duration;

@@ -580,12 +580,12 @@ impl CopReadTaskRuntime {
         })
     }
 
-    /// Consumes one region-error attempt without accepting any response data.
+    /// Consumes one failed attempt without accepting any response data.
     ///
     /// The cache lookup remains unmodified and no cache, paging, EMA, range,
     /// or response-channel transition is performed. A duplicate call for the
     /// same attempt is rejected as a duplicate response.
-    pub fn consume_region_error(
+    pub fn consume_failed_attempt(
         &mut self,
         attempt_id: u64,
     ) -> Result<FailedCopReadAttempt, CopReadTaskError> {
@@ -600,6 +600,39 @@ impl CopReadTaskRuntime {
         self.in_flight.remove(&attempt_id);
         self.completed_attempts.insert(attempt_id);
         Ok(failed)
+    }
+
+    /// Compatibility name for the region-error recovery path.
+    pub fn consume_region_error(
+        &mut self,
+        attempt_id: u64,
+    ) -> Result<FailedCopReadAttempt, CopReadTaskError> {
+        self.consume_failed_attempt(attempt_id)
+    }
+
+    /// Rebinds the same unconsumed logical task after a transport failure.
+    ///
+    /// Unlike region recovery this does not rebuild topology or replace task
+    /// ranges. The request-scoped selector chooses a fresh peer immediately
+    /// before the new attempt is dispatched, so the coordinator changes only
+    /// exact response-matching ownership here.
+    pub fn retry_transport_attempt(
+        &mut self,
+        failed: FailedCopReadAttempt,
+    ) -> Result<CopReadTaskReplacement, CopReadTaskError> {
+        let logical = self
+            .tasks
+            .get(failed.logical_task_index)
+            .ok_or(CopReadTaskError::UnmatchedResponse)?;
+        if logical.task.task_id != failed.logical_task_id {
+            return Err(CopReadTaskError::UnmatchedResponse);
+        }
+        let attempt_id =
+            self.prepare_attempt(failed.logical_task_index, failed.ranges, failed.paging_size)?;
+        Ok(CopReadTaskReplacement {
+            logical_task_ids: vec![failed.logical_task_id],
+            active_attempt_ids: vec![attempt_id],
+        })
     }
 
     /// Returns the failed task's unconsumed ranges for topology rebuild.

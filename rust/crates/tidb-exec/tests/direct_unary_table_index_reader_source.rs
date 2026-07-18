@@ -23,7 +23,7 @@ use prost::Message;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_distsql::region::{
     Peer, PeerRole, RegionCache, RegionLoadError, RegionLoader, RegionLocation, RegionMetadata,
-    RegionRecoveryLoader, RegionVerId, Store,
+    RegionRecoveryLoader, RegionVerId, Store, StoreLiveness,
 };
 use tidb_distsql::{
     DirectUnaryClient, DirectUnaryClientError, DirectUnaryQueryTransport, DirectUnaryRequest,
@@ -97,6 +97,22 @@ impl DirectUnaryClient for ReaderUnaryClient {
 
     fn close_address(&mut self, _address: &str) -> Result<(), DirectUnaryClientError> {
         Ok(())
+    }
+
+    fn close_address_version(
+        &mut self,
+        _address: &str,
+        _version: u64,
+    ) -> Result<(), DirectUnaryClientError> {
+        Ok(())
+    }
+
+    fn liveness(
+        &self,
+        _address: &str,
+        _timeout: Duration,
+    ) -> Result<StoreLiveness, DirectUnaryClientError> {
+        Ok(StoreLiveness::Reachable)
     }
 
     fn close(&mut self) -> Result<(), DirectUnaryClientError> {

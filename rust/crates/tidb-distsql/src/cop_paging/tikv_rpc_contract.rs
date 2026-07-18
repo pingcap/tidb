@@ -19,6 +19,7 @@ use tidb_proto::{
     CoprocessorResponse, KvrpcContext, KvrpcPeer, KvrpcRegionEpoch, KvrpcRequestOrigin,
     KvrpcResourceControlContext,
 };
+use tidb_txnkv::region::LeaderRequest;
 use tidb_txnkv::{
     endpoint_type, inject_source_stmt, map_replica_read_type, ClientReplicaReadType, EndpointType,
     TraceInfo,
@@ -67,13 +68,57 @@ pub fn build_tikv_unary_request(
     trace: Option<&TraceInfo>,
     cluster_id: u64,
 ) -> TikvUnaryRequest {
+    build_tikv_unary_request_inner(
+        prepared,
+        metadata,
+        predicted_read_bytes,
+        trace,
+        cluster_id,
+        None,
+    )
+}
+
+/// Constructs a request whose peer and leader flags come from the selection
+/// made immediately before dispatch.
+#[must_use]
+pub fn build_tikv_unary_request_for_dispatch(
+    prepared: &PreparedCopReadTask,
+    metadata: &KvRequestMetadata,
+    predicted_read_bytes: u64,
+    trace: Option<&TraceInfo>,
+    cluster_id: u64,
+    selected: &LeaderRequest,
+) -> TikvUnaryRequest {
+    build_tikv_unary_request_inner(
+        prepared,
+        metadata,
+        predicted_read_bytes,
+        trace,
+        cluster_id,
+        Some(selected),
+    )
+}
+
+fn build_tikv_unary_request_inner(
+    prepared: &PreparedCopReadTask,
+    metadata: &KvRequestMetadata,
+    predicted_read_bytes: u64,
+    trace: Option<&TraceInfo>,
+    cluster_id: u64,
+    selected: Option<&LeaderRequest>,
+) -> TikvUnaryRequest {
     let task = prepared.task();
     let mut replica_read_type = map_replica_read_type(metadata.session.replica_read as u8);
     let mut replica_read = replica_read_type != ClientReplicaReadType::Leader;
-    let stale_read = metadata.is_staleness;
+    let mut stale_read = metadata.is_staleness;
     if stale_read {
         replica_read_type = ClientReplicaReadType::Mixed;
         replica_read = false;
+    }
+    if let Some(selected) = selected {
+        replica_read_type = ClientReplicaReadType::Leader;
+        replica_read = selected.replica_read;
+        stale_read = selected.stale_read;
     }
 
     let input_request_source = request_source(&metadata.session.request_source);
@@ -94,12 +139,24 @@ pub fn build_tikv_unary_request(
             conf_ver: epoch.conf_ver,
             version: epoch.version,
         }),
-        peer: task.peer.map(|peer| KvrpcPeer {
-            id: peer.id,
-            store_id: peer.store_id,
-            role: peer.role,
-            is_witness: peer.is_witness,
-        }),
+        peer: selected.map_or_else(
+            || {
+                task.peer.map(|peer| KvrpcPeer {
+                    id: peer.id,
+                    store_id: peer.store_id,
+                    role: peer.role,
+                    is_witness: peer.is_witness,
+                })
+            },
+            |selected| {
+                Some(KvrpcPeer {
+                    id: selected.attempt.peer_id,
+                    store_id: selected.attempt.store_id,
+                    role: selected.role.as_i32(),
+                    is_witness: selected.is_witness,
+                })
+            },
+        ),
         priority: metadata.session.priority as i32,
         isolation_level: metadata.session.isolation_level as i32,
         not_fill_cache: metadata.session.not_fill_cache,
