@@ -1,8 +1,9 @@
 // Source: github.com/pingcap/kvproto/proto/tikvpb.proto
 //
-// Dependency-closed unary TiKV service projection. The generated server stays
-// Coprocessor-only so existing bounded test services do not acquire unrelated
-// methods. The shared raw-unary client also uses the pinned command paths
+// Dependency-closed TiKV service and BatchCommands envelope projection. The
+// generated server stays Coprocessor-only so existing bounded test services do
+// not acquire the duplex stream before its owner lands. The shared raw-unary
+// client also uses the pinned command paths
 // `/tikvpb.Tikv/KvCheckTxnStatus` and `/tikvpb.Tikv/KvResolveLock` without
 // generating a second client or service authority.
 syntax = "proto3";
@@ -15,4 +16,110 @@ import "coprocessor.proto";
 service Tikv {
   // Executes one SQL coprocessor request as a unary RPC.
   rpc Coprocessor(coprocessor.Request) returns (coprocessor.Response) {}
+}
+
+// Opaque, dependency-closed projection of TiKV's BatchCommands envelopes.
+//
+// Every command body is itself an encoded protobuf message. Message and bytes
+// fields have the same length-delimited wire representation, so retaining the
+// pinned oneof field numbers as bytes is wire-identical without making this
+// bounded transport leaf depend on every kvrpcpb command type.
+message BatchCommandsRequest {
+  repeated Request requests = 1;
+  repeated uint64 request_ids = 2;
+  uint64 client_send_time_ns = 3;
+
+  message Request {
+    oneof cmd {
+      bytes get = 1;
+      bytes scan = 2;
+      bytes prewrite = 3;
+      bytes commit = 4;
+      bytes import = 5;
+      bytes cleanup = 6;
+      bytes batch_get = 7;
+      bytes batch_rollback = 8;
+      bytes scan_lock = 9;
+      bytes resolve_lock = 10;
+      bytes gc = 11;
+      bytes delete_range = 12;
+      bytes raw_get = 13;
+      bytes raw_batch_get = 14;
+      bytes raw_put = 15;
+      bytes raw_batch_put = 16;
+      bytes raw_delete = 17;
+      bytes raw_batch_delete = 18;
+      bytes raw_scan = 19;
+      bytes raw_delete_range = 20;
+      bytes raw_batch_scan = 21;
+      bytes coprocessor = 22;
+      bytes pessimistic_lock = 23;
+      bytes pessimistic_rollback = 24;
+      bytes check_txn_status = 25;
+      bytes txn_heart_beat = 26;
+      bytes check_secondary_locks = 33;
+      bytes raw_coprocessor = 34;
+      bytes flashback_to_version = 35;
+      bytes prepare_flashback_to_version = 36;
+      bytes flush = 37;
+      bytes buffer_batch_get = 38;
+      bytes get_health_feedback = 39;
+      bytes broadcast_txn_status = 40;
+      bytes empty = 255;
+    }
+
+    reserved 27 to 32;
+    reserved 1000 to 1199;
+  }
+}
+
+message BatchCommandsResponse {
+  repeated Response responses = 1;
+  repeated uint64 request_ids = 2;
+  uint64 transport_layer_load = 3;
+  // Opaque encoded kvrpcpb.HealthFeedback.
+  optional bytes health_feedback = 4;
+  uint64 tikv_send_time_ns = 5;
+
+  message Response {
+    oneof cmd {
+      bytes get = 1;
+      bytes scan = 2;
+      bytes prewrite = 3;
+      bytes commit = 4;
+      bytes import = 5;
+      bytes cleanup = 6;
+      bytes batch_get = 7;
+      bytes batch_rollback = 8;
+      bytes scan_lock = 9;
+      bytes resolve_lock = 10;
+      bytes gc = 11;
+      bytes delete_range = 12;
+      bytes raw_get = 13;
+      bytes raw_batch_get = 14;
+      bytes raw_put = 15;
+      bytes raw_batch_put = 16;
+      bytes raw_delete = 17;
+      bytes raw_batch_delete = 18;
+      bytes raw_scan = 19;
+      bytes raw_delete_range = 20;
+      bytes raw_batch_scan = 21;
+      bytes coprocessor = 22;
+      bytes pessimistic_lock = 23;
+      bytes pessimistic_rollback = 24;
+      bytes check_txn_status = 25;
+      bytes txn_heart_beat = 26;
+      bytes check_secondary_locks = 33;
+      bytes raw_coprocessor = 34;
+      bytes flashback_to_version = 35;
+      bytes prepare_flashback_to_version = 36;
+      bytes flush = 37;
+      bytes buffer_batch_get = 38;
+      bytes get_health_feedback = 39;
+      bytes broadcast_txn_status = 40;
+      bytes empty = 255;
+    }
+
+    reserved 27 to 32;
+  }
 }
