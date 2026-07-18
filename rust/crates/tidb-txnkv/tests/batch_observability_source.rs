@@ -14,12 +14,9 @@
 
 //! Direct transit of client-go's pure BatchCommands request-progress tests.
 
-#[path = "../src/rpc/batch/mod.rs"]
-mod batch;
-
 use std::time::{Duration, Instant};
 
-use batch::{
+use tidb_txnkv::rpc::batch::{
     terminal_outcome, BatchRequestObservation, BatchRequestOutcome, BatchRequestProgress,
     BatchRequestStage, BatchRequestState, BatchStreamState, BatchTerminalError,
 };

@@ -5,7 +5,7 @@
 //! at the final send boundary.
 
 mod async_completion;
-mod batch;
+pub mod batch;
 mod channel_pool;
 mod error;
 mod forwarding;
@@ -26,3 +26,17 @@ pub use error::{
 pub use liveness::DEFAULT_STORE_LIVENESS_TIMEOUT;
 pub use tonic_coprocessor::TonicCoprocessorClient;
 pub use unary::{UnaryCallContext, UnaryCancellation};
+
+impl<T, E> batch::BatchEntryCompletion<E> for CompletionRequest<T, E>
+where
+    T: Send + 'static,
+    E: Send + 'static,
+{
+    fn is_canceled(&self) -> bool {
+        self.is_cancelled()
+    }
+
+    fn fail(&self, error: E) {
+        self.schedule_error(error);
+    }
+}

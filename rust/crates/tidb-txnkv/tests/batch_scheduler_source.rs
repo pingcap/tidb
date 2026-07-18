@@ -14,18 +14,16 @@
 
 //! Direct transit of the pure scheduler tests in client-go `client_test.go`.
 
-#[path = "../src/rpc/batch/mod.rs"]
-mod batch;
-
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use batch::{
+use tidb_txnkv::rpc::batch::{
     BatchEntry, BatchEntryCompletion, BatchPolicyOptions, BatchScheduler, BatchTrigger,
     BATCH_POLICY_BASIC, BATCH_POLICY_CUSTOM, BATCH_POLICY_POSITIVE, BATCH_POLICY_STANDARD,
     DEFAULT_BATCH_POLICY, HIGH_TASK_PRIORITY,
 };
+use tidb_txnkv::rpc::{completion_pair, CompletionRunLoop};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum TestBatchError {
@@ -159,6 +157,30 @@ fn test_batch_commands_builder() {
     scheduler.reset();
     assert_eq!(scheduler.len(), 0);
     assert_ne!(scheduler.id_alloc(), 0);
+}
+
+#[test]
+fn scheduler_and_pull_share_one_completion_authority() {
+    let run_loop = CompletionRunLoop::new();
+    let (cancelled_request, mut cancelled_pull) =
+        completion_pair::<usize, TestBatchError, _>(run_loop.clone(), || {});
+    let cancelled_completion: Arc<dyn BatchEntryCompletion<TestBatchError>> =
+        Arc::new(cancelled_request);
+    let mut scheduler = BatchScheduler::new();
+    scheduler.push(BatchEntry::new(1, cancelled_completion));
+    cancelled_pull.cancel();
+    scheduler.reset();
+    assert!(scheduler.is_empty());
+
+    let (failed_request, mut failed_pull) =
+        completion_pair::<usize, TestBatchError, _>(run_loop, || {});
+    let failed_completion: Arc<dyn BatchEntryCompletion<TestBatchError>> = Arc::new(failed_request);
+    scheduler.push(BatchEntry::new(2, failed_completion));
+    assert_eq!(scheduler.cancel_all(TestBatchError::Closed).len(), 1);
+    assert_eq!(
+        failed_pull.try_complete(),
+        Ok(Some(Err(TestBatchError::Closed)))
+    );
 }
 
 #[test]

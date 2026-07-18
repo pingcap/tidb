@@ -14,12 +14,9 @@
 
 //! Direct transit of client-go `internal/client/priority_queue_test.go`.
 
-#[path = "../src/rpc/batch/mod.rs"]
-mod batch;
-
 use std::sync::Arc;
 
-use batch::{PriorityItem, PriorityQueue};
+use tidb_txnkv::rpc::batch::{PriorityItem, PriorityQueue};
 
 #[derive(Debug)]
 struct FakeItem {
