@@ -3,7 +3,7 @@ slice = "distsql-unary-region-retry-runtime"
 status = "ready"
 target = "tidb-distsql"
 ring = "result"
-consumer = "Campaign 11 replaces the direct-unary terminal region-error boundary with one response-owned, bounded, cancellation-aware resend/rebuild loop. It consumes txnkv recovery dispositions, shares one region backoff budget across client-like resend and TiDB outer task rebuild, preserves successful paging state, replaces only unconsumed work in logical order, and permits one failed task to become many after re-location. Locks, active in-flight RPC cancellation, follower/stale reads, generic TiKV connection-failure retry, TiFlash/batch cop, TLS, forwarding, table/DAG lowering, and COM_QUERY remain open."
+consumer = "Campaign 11 replaces the direct-unary terminal region-error boundary with one response-owned, bounded, cancellation-aware resend/rebuild loop. It consumes txnkv recovery dispositions, keeps one per-region backoff budget shared across client-like resend and TiDB outer task rebuild, preserves successful paging state, replaces only unconsumed work in logical order, and permits one failed task to become many after re-location. Locks, active in-flight RPC cancellation, follower/stale reads, generic TiKV connection-failure retry, TiFlash/batch cop, TLS, forwarding, table/DAG lowering, and COM_QUERY remain open."
 test_target = "cop_read_task_runtime_source, direct_unary_client_runtime_source, and the ignored Campaign 11 PD/region movement proof"
 go_sources = [
   "pkg/store/copr/coprocessor.go",
