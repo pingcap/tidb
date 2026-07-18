@@ -148,8 +148,11 @@ fn coverage_distinguishes_holes_from_a_reached_limit() {
     ));
 }
 
+type BatchLoadCall = (usize, usize, bool, bool);
+type SharedBatchLoadCalls = Arc<Mutex<Vec<BatchLoadCall>>>;
+
 struct BatchLoader {
-    calls: Arc<Mutex<Vec<(usize, usize, bool, bool)>>>,
+    calls: SharedBatchLoadCalls,
 }
 
 impl RegionLoader for BatchLoader {

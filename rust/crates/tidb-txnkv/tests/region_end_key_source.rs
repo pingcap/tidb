@@ -25,9 +25,12 @@ fn region(id: u64, start: &[u8], end: &[u8]) -> RegionLocation {
     }
 }
 
+type EndKeyProbe<'a> = (&'a [u8], bool);
+type EndKeyCase<'a> = (&'a [u8], &'a [u8], &'a [EndKeyProbe<'a>]);
+
 #[test]
 fn contains_by_end_ports_the_original_table() {
-    let cases: &[(&[u8], &[u8], &[(&[u8], bool)])] = &[
+    let cases: &[EndKeyCase<'_>] = &[
         (b"", b"", &[(b"", true), (b"10", true)]),
         (b"10", b"", &[(b"", true), (b"10", false), (b"11", true)]),
         (b"", b"10", &[(b"", false), (b"10", true), (b"11", false)]),
