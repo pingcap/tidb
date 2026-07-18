@@ -24,8 +24,13 @@ support_anchors = [
   "client-go/internal/locate/region_cache.go:3340-3356:preferred proxy publication",
 ]
 rust_paths = [
+  "rust/crates/tidb-pd-client/src/client.rs",
+  "rust/crates/tidb-pd-client/src/model.rs",
+  "rust/crates/tidb-pd-client/tests/pd_client_source.rs",
+  "rust/crates/tidb-txnkv/src/pd_loader.rs",
   "rust/crates/tidb-txnkv/src/region/cache.rs",
   "rust/crates/tidb-txnkv/src/region/location.rs",
   "rust/crates/tidb-txnkv/src/region/topology.rs",
+  "rust/crates/tidb-txnkv/tests/pd_region_loader_source.rs",
   "rust/crates/tidb-txnkv/tests/region_topology_source.rs",
 ]
