@@ -23,7 +23,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/failpoint"
 	metamodel "github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -68,9 +68,8 @@ func TestExpBackoffEstimation(t *testing.T) {
 	// all land in TopN so the histogram is empty for this range; ~1.36 when some
 	// values end up in buckets), so we assert structural invariants of the
 	// fallback plan rather than the numeric estimate.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/planner/cardinality/cleanEstResults", `return(true)`))
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/cardinality/cleanEstResults", `return(true)`)
 	rows := tk.MustQuery(input[inputLen-1]).Rows()
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/planner/cardinality/cleanEstResults"))
 	require.Len(t, rows, 2, "fallback plan should be IndexReader → IndexRangeScan")
 	require.Equal(t, "IndexReader", rows[0][0])
 	require.Equal(t, "└─IndexRangeScan", rows[1][0])
