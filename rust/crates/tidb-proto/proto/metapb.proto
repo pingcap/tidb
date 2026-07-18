@@ -33,6 +33,23 @@ message RegionEpoch {
   uint64 version = 2;
 }
 
+message BucketStats {
+  repeated uint64 read_bytes = 1;
+  repeated uint64 write_bytes = 2;
+  repeated uint64 read_qps = 3;
+  repeated uint64 write_qps = 4;
+  repeated uint64 read_keys = 5;
+  repeated uint64 write_keys = 6;
+}
+
+message Buckets {
+  uint64 region_id = 1;
+  uint64 version = 2;
+  repeated bytes keys = 3;
+  BucketStats stats = 4;
+  uint64 period_in_ms = 5;
+}
+
 message Region {
   uint64 id = 1;
   bytes start_key = 2;

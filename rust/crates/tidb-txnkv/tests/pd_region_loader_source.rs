@@ -25,7 +25,7 @@ use tidb_proto::pdpb::{
     self,
     pd_server::{Pd, PdServer},
 };
-use tidb_txnkv::region::RegionLoader;
+use tidb_txnkv::region::{BatchRegionLoader, KeyRange, RegionLoader};
 use tidb_txnkv::region::{
     PeerRole, RegionMetadata, RegionMetadataPeer, RegionRecoveryLoader, RegionVerId,
 };
@@ -41,8 +41,15 @@ struct MockPd {
 
 struct State {
     region: pdpb::GetRegionResponse,
+    region_by_id: pdpb::GetRegionResponse,
+    scan_regions: pdpb::ScanRegionsResponse,
+    batch_scan_regions: pdpb::BatchScanRegionsResponse,
+    batch_scan_unimplemented: bool,
     stores: HashMap<u64, pdpb::GetStoreResponse>,
     region_requests: Vec<pdpb::GetRegionRequest>,
+    region_by_id_requests: Vec<pdpb::GetRegionByIdRequest>,
+    scan_region_requests: Vec<pdpb::ScanRegionsRequest>,
+    batch_scan_region_requests: Vec<pdpb::BatchScanRegionsRequest>,
     store_requests: Vec<pdpb::GetStoreRequest>,
 }
 
@@ -74,6 +81,36 @@ impl Pd for MockPd {
         let mut state = self.state.lock().unwrap();
         state.region_requests.push(request.into_inner());
         Ok(tonic::Response::new(state.region.clone()))
+    }
+
+    async fn get_region_by_id(
+        &self,
+        request: tonic::Request<pdpb::GetRegionByIdRequest>,
+    ) -> Result<tonic::Response<pdpb::GetRegionResponse>, tonic::Status> {
+        let mut state = self.state.lock().unwrap();
+        state.region_by_id_requests.push(request.into_inner());
+        Ok(tonic::Response::new(state.region_by_id.clone()))
+    }
+
+    async fn scan_regions(
+        &self,
+        request: tonic::Request<pdpb::ScanRegionsRequest>,
+    ) -> Result<tonic::Response<pdpb::ScanRegionsResponse>, tonic::Status> {
+        let mut state = self.state.lock().unwrap();
+        state.scan_region_requests.push(request.into_inner());
+        Ok(tonic::Response::new(state.scan_regions.clone()))
+    }
+
+    async fn batch_scan_regions(
+        &self,
+        request: tonic::Request<pdpb::BatchScanRegionsRequest>,
+    ) -> Result<tonic::Response<pdpb::BatchScanRegionsResponse>, tonic::Status> {
+        let mut state = self.state.lock().unwrap();
+        state.batch_scan_region_requests.push(request.into_inner());
+        if state.batch_scan_unimplemented {
+            return Err(tonic::Status::unimplemented("legacy PD"));
+        }
+        Ok(tonic::Response::new(state.batch_scan_regions.clone()))
     }
 
     async fn get_store(
@@ -184,6 +221,22 @@ fn loader_encodes_key_decodes_boundaries_and_filters_source_unusable_peers() {
     assert_eq!(location.region.epoch.conf_ver, 3);
     assert_eq!(location.region.epoch.version, 4);
     assert_eq!(location.leader_peer_id, Some(11));
+    assert_eq!(location.down_peer_ids, [14]);
+    assert_eq!(location.pending_peer_ids, [12]);
+    let buckets = location.buckets.as_ref().unwrap();
+    assert_eq!(buckets.region_id, 7);
+    assert_eq!(buckets.version, 8);
+    assert_eq!(
+        buckets.keys,
+        vec![
+            b"logical-start".to_vec(),
+            b"logical-split".to_vec(),
+            b"logical-end".to_vec()
+        ]
+    );
+    assert_eq!(buckets.stats.as_ref().unwrap().read_bytes, [1, 2]);
+    assert_eq!(buckets.stats.as_ref().unwrap().write_keys, [11, 12]);
+    assert_eq!(buckets.period_in_ms, 1_000);
     assert_eq!(
         location
             .peers
@@ -235,6 +288,98 @@ fn loader_encodes_key_decodes_boundaries_and_filters_source_unusable_peers() {
             .collect::<Vec<_>>(),
         [101, 102, 103, 104]
     );
+}
+
+#[test]
+fn loader_decodes_by_id_scan_and_batch_regions_once_without_synthetic_buckets() {
+    // client-go/internal/locate/pd_codec.go:114-171.
+    let server = Server::start(valid_state());
+    let mut loader = PdRegionLoader::connect(&server.address, Duration::from_secs(2)).unwrap();
+
+    let by_id = loader.load_region_by_id(7, false).unwrap();
+    assert_eq!(by_id.start_key, b"logical-start");
+    assert_eq!(by_id.buckets.as_ref().unwrap().keys[1], b"logical-split");
+
+    let scan = loader.scan_regions(b"a", b"z", 9).unwrap();
+    assert_eq!(
+        scan.iter()
+            .map(|region| region.region.id)
+            .collect::<Vec<_>>(),
+        [21, 22]
+    );
+    assert_eq!(scan[0].start_key, b"a");
+    assert_eq!(scan[0].end_key, b"m");
+    assert_eq!(scan[0].pending_peer_ids, [212]);
+    assert_eq!(
+        scan[0].buckets.as_ref().unwrap().keys,
+        vec![b"a".to_vec(), b"m".to_vec()]
+    );
+    assert!(scan[1].buckets.is_none());
+
+    let ranges = [
+        KeyRange::new(b"a".to_vec(), b"m".to_vec()),
+        KeyRange::new(b"q".to_vec(), Vec::new()),
+    ];
+    let batch = loader.batch_load_regions(&ranges, 13, true).unwrap();
+    assert_eq!(
+        batch
+            .iter()
+            .map(|region| region.region.id)
+            .collect::<Vec<_>>(),
+        [31, 32]
+    );
+    assert_eq!(batch[0].buckets.as_ref().unwrap().version, 41);
+    assert!(batch[1].buckets.is_none());
+
+    let state = server.state.lock().unwrap();
+    assert_eq!(state.region_by_id_requests.len(), 1);
+    assert_eq!(state.region_by_id_requests[0].region_id, 7);
+    assert!(!state.region_by_id_requests[0].need_buckets);
+
+    assert_eq!(state.scan_region_requests.len(), 1);
+    assert_eq!(state.scan_region_requests[0].start_key, encoded(b"a"));
+    assert_eq!(state.scan_region_requests[0].end_key, encoded(b"z"));
+    assert_eq!(state.scan_region_requests[0].limit, 9);
+
+    assert_eq!(state.batch_scan_region_requests.len(), 1);
+    let request = &state.batch_scan_region_requests[0];
+    assert_eq!(request.limit, 13);
+    assert!(request.need_buckets);
+    assert!(request.contain_all_key_range);
+    assert_eq!(request.ranges.len(), 2);
+    assert_eq!(request.ranges[0].start_key, encoded(b"a"));
+    assert_eq!(request.ranges[0].end_key, encoded(b"m"));
+    assert_eq!(request.ranges[1].start_key, encoded(b"q"));
+    assert!(request.ranges[1].end_key.is_empty());
+}
+
+#[test]
+fn batch_loader_falls_back_only_from_unimplemented_and_does_not_invent_buckets() {
+    // client-go/internal/locate/region_cache.go:2620-2625,2737-2768.
+    let mut state = valid_state();
+    state.batch_scan_unimplemented = true;
+    for region in &mut state.scan_regions.regions {
+        region.buckets = None;
+    }
+    let server = Server::start(state);
+    let mut loader = PdRegionLoader::connect(&server.address, Duration::from_secs(2)).unwrap();
+
+    let regions = loader
+        .batch_load_regions(&[KeyRange::new(b"a".to_vec(), b"z".to_vec())], 2, true)
+        .unwrap();
+    assert_eq!(
+        regions
+            .iter()
+            .map(|region| region.region.id)
+            .collect::<Vec<_>>(),
+        [21, 22]
+    );
+    assert!(regions.iter().all(|region| region.buckets.is_none()));
+
+    let state = server.state.lock().unwrap();
+    assert_eq!(state.batch_scan_region_requests.len(), 1);
+    assert_eq!(state.scan_region_requests.len(), 1);
+    assert_eq!(state.scan_region_requests[0].limit, 2);
 }
 
 #[test]
@@ -439,26 +584,54 @@ fn valid_state() -> State {
         peer(14, 104, metapb::PeerRole::DemotingVoter, false),
         peer(15, 101, metapb::PeerRole::IncomingVoter, false),
     ];
-    State {
-        region: pdpb::GetRegionResponse {
-            header: Some(header()),
-            region: Some(metapb::Region {
-                id: 7,
-                start_key: encoded(b"logical-start"),
-                end_key: encoded(b"logical-end"),
-                region_epoch: Some(metapb::RegionEpoch {
-                    conf_ver: 3,
-                    version: 4,
-                }),
-                peers: peers.clone(),
+    let region = pdpb::GetRegionResponse {
+        header: Some(header()),
+        region: Some(metapb::Region {
+            id: 7,
+            start_key: encoded(b"logical-start"),
+            end_key: encoded(b"logical-end"),
+            region_epoch: Some(metapb::RegionEpoch {
+                conf_ver: 3,
+                version: 4,
             }),
-            leader: Some(peers[0]),
-            down_peers: vec![pdpb::PeerStats {
-                peer: Some(peers[3]),
-                down_seconds: 10,
-            }],
-            pending_peers: Vec::new(),
+            peers: peers.clone(),
+        }),
+        leader: Some(peers[0]),
+        down_peers: vec![pdpb::PeerStats {
+            peer: Some(peers[3]),
+            down_seconds: 10,
+        }],
+        pending_peers: vec![peers[1]],
+        buckets: Some(bucket_metadata(
+            7,
+            8,
+            [
+                b"logical-start".as_slice(),
+                b"logical-split",
+                b"logical-end",
+            ],
+        )),
+    };
+    State {
+        region: region.clone(),
+        region_by_id: region,
+        scan_regions: pdpb::ScanRegionsResponse {
+            header: Some(header()),
+            region_metas: Vec::new(),
+            leaders: Vec::new(),
+            regions: vec![
+                extended_region(21, b"a", b"m", true),
+                extended_region(22, b"m", b"z", false),
+            ],
         },
+        batch_scan_regions: pdpb::BatchScanRegionsResponse {
+            header: Some(header()),
+            regions: vec![
+                extended_region(31, b"a", b"m", true),
+                extended_region(32, b"m", b"z", false),
+            ],
+        },
+        batch_scan_unimplemented: false,
         stores: HashMap::from([
             (
                 101,
@@ -482,7 +655,52 @@ fn valid_state() -> State {
             ),
         ]),
         region_requests: Vec::new(),
+        region_by_id_requests: Vec::new(),
+        scan_region_requests: Vec::new(),
+        batch_scan_region_requests: Vec::new(),
         store_requests: Vec::new(),
+    }
+}
+
+fn bucket_metadata<const N: usize>(
+    region_id: u64,
+    version: u64,
+    keys: [&[u8]; N],
+) -> metapb::Buckets {
+    metapb::Buckets {
+        region_id,
+        version,
+        keys: keys.into_iter().map(encoded).collect(),
+        stats: Some(metapb::BucketStats {
+            read_bytes: vec![1, 2],
+            write_bytes: vec![3, 4],
+            read_qps: vec![5, 6],
+            write_qps: vec![7, 8],
+            read_keys: vec![9, 10],
+            write_keys: vec![11, 12],
+        }),
+        period_in_ms: 1_000,
+    }
+}
+
+fn extended_region(id: u64, start: &[u8], end: &[u8], with_buckets: bool) -> pdpb::Region {
+    let leader = peer(id * 10 + 1, 101, metapb::PeerRole::Voter, false);
+    let pending = peer(id * 10 + 2, 102, metapb::PeerRole::Learner, false);
+    pdpb::Region {
+        region: Some(metapb::Region {
+            id,
+            start_key: encoded(start),
+            end_key: encoded(end),
+            region_epoch: Some(metapb::RegionEpoch {
+                conf_ver: id + 1,
+                version: id + 2,
+            }),
+            peers: vec![leader.clone(), pending.clone()],
+        }),
+        leader: Some(leader),
+        down_peers: Vec::new(),
+        pending_peers: vec![pending],
+        buckets: with_buckets.then(|| bucket_metadata(id, id + 10, [start, end])),
     }
 }
 

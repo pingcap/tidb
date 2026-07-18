@@ -45,6 +45,47 @@ pub struct PdRegionEpoch {
     pub version: u64,
 }
 
+/// Exact bucket activity arrays carried by pinned kvproto.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PdBucketStats {
+    /// Total read bytes per bucket.
+    pub read_bytes: Vec<u64>,
+    /// Total written bytes per bucket.
+    pub write_bytes: Vec<u64>,
+    /// Read QPS per bucket.
+    pub read_qps: Vec<u64>,
+    /// Write QPS per bucket.
+    pub write_qps: Vec<u64>,
+    /// Read keys per bucket.
+    pub read_keys: Vec<u64>,
+    /// Written keys per bucket.
+    pub write_keys: Vec<u64>,
+}
+
+/// Ordered bucket topology in PD's wire key domain.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PdBuckets {
+    /// Region owning these buckets.
+    pub region_id: u64,
+    /// Monotonic bucket boundary version.
+    pub version: u64,
+    /// Ordered boundaries, including the region boundaries when complete.
+    pub keys: Vec<Vec<u8>>,
+    /// Optional activity arrays returned by PD.
+    pub stats: Option<PdBucketStats>,
+    /// Source collection period in milliseconds.
+    pub period_in_ms: u64,
+}
+
+/// One already encoded PD batch-scan range.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PdKeyRange {
+    /// Inclusive start key.
+    pub start_key: Vec<u8>,
+    /// Exclusive end key; empty means positive infinity.
+    pub end_key: Vec<u8>,
+}
+
 /// Region metadata in PD's wire key domain.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PdRegion {
@@ -58,10 +99,14 @@ pub struct PdRegion {
     pub epoch: PdRegionEpoch,
     /// Peers in PD metadata order.
     pub peers: Vec<PdPeer>,
-    /// Leader returned by PD.
-    pub leader: PdPeer,
-    /// Exact peer identities reported down by the leader.
-    pub down_peer_ids: Vec<u64>,
+    /// Leader returned by PD. Scans preserve a missing/zero leader as `None`.
+    pub leader: Option<PdPeer>,
+    /// Exact peers reported down by the leader, in response order.
+    pub down_peers: Vec<PdPeer>,
+    /// Pending peers in response order.
+    pub pending_peers: Vec<PdPeer>,
+    /// Optional bucket topology in PD's wire key domain.
+    pub buckets: Option<PdBuckets>,
 }
 
 /// Legacy store lifecycle state.

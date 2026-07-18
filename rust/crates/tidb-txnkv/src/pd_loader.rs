@@ -16,11 +16,12 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use tidb_codec::{decode_bytes, encode_bytes};
-use tidb_pd_client::{PdClient, PdClientError, PdMemberSet, PdStore};
+use tidb_pd_client::{PdClient, PdClientError, PdKeyRange, PdMemberSet, PdRegion, PdStore};
 
 use crate::region::{
-    Peer, PeerRole, RegionEpoch, RegionLoadError, RegionLoader, RegionLocation, RegionMetadata,
-    RegionRecoveryLoader, RegionVerId, Store,
+    BatchRegionLoader, BucketMetadata, BucketStats, KeyRange, Peer, PeerRole, RegionEpoch,
+    RegionLoadError, RegionLoader, RegionLocation, RegionMetadata, RegionRecoveryLoader,
+    RegionVerId, Store,
 };
 
 /// Concrete API-v1 region loader backed by the bounded PD control plane.
@@ -64,21 +65,85 @@ impl PdRegionLoader {
     pub fn member_set(&self) -> PdMemberSet {
         self.client.member_set()
     }
-}
 
-impl RegionLoader for PdRegionLoader {
-    fn cluster_id(&self) -> u64 {
-        self.client.cluster_id()
-    }
-
-    fn load_region(&mut self, key: &[u8]) -> Result<RegionLocation, RegionLoadError> {
-        let mut encoded_key = Vec::new();
-        encode_bytes(&mut encoded_key, key);
+    /// Loads one region identity and decodes its exact optional bucket metadata.
+    pub fn load_region_by_id(
+        &mut self,
+        region_id: u64,
+        need_buckets: bool,
+    ) -> Result<RegionLocation, RegionLoadError> {
         let region = self
             .client
-            .get_region(&encoded_key)
+            .get_region_by_id(region_id, need_buckets)
             .map_err(region_load_error)?;
+        self.project_region(region, false)
+    }
 
+    /// Loads an ordered contiguous PD scan in the logical API-v1 key domain.
+    pub fn scan_regions(
+        &mut self,
+        start_key: &[u8],
+        end_key: &[u8],
+        limit: usize,
+    ) -> Result<Vec<RegionLocation>, RegionLoadError> {
+        let (start_key, end_key) = encode_region_range(start_key, end_key);
+        let limit = pd_limit(limit)?;
+        let regions = self
+            .client
+            .scan_regions(start_key, end_key, limit)
+            .map_err(region_load_error)?;
+        self.project_regions(regions)
+    }
+
+    fn project_regions(
+        &mut self,
+        regions: Vec<PdRegion>,
+    ) -> Result<Vec<RegionLocation>, RegionLoadError> {
+        regions
+            .into_iter()
+            .map(|region| self.project_region(region, false))
+            .collect()
+    }
+
+    fn batch_scan_regions_fallback(
+        &mut self,
+        ranges: &[KeyRange],
+        mut limit: usize,
+    ) -> Result<Vec<RegionLocation>, RegionLoadError> {
+        let mut result = Vec::new();
+        let mut last_end_key: Option<Vec<u8>> = None;
+        for range in ranges {
+            let mut start_key = range.start.clone();
+            if let Some(end_key) = &last_end_key {
+                if end_key.is_empty() {
+                    break;
+                }
+                if end_key.as_slice() >= range.end.as_slice() {
+                    continue;
+                }
+                if end_key.as_slice() > start_key.as_slice() {
+                    start_key.clone_from(end_key);
+                }
+            }
+            let regions = self.scan_regions(&start_key, &range.end, limit)?;
+            if let Some(last) = regions.last() {
+                last_end_key = Some(last.end_key.clone());
+            }
+            let loaded = regions.len();
+            result.extend(regions);
+            if loaded >= limit {
+                return Ok(result);
+            }
+            limit -= loaded;
+        }
+        Ok(result)
+    }
+
+    fn project_region(
+        &mut self,
+        region: PdRegion,
+        require_usable_leader: bool,
+    ) -> Result<RegionLocation, RegionLoadError> {
         // Resolve every peer-referenced store exactly once before filtering.
         // This matches client-go's region construction: a tombstone/removed
         // store yields no usable address, while a malformed response fails the
@@ -107,8 +172,15 @@ impl RegionLoader for PdRegionLoader {
         let mut stores = Vec::with_capacity(region.peers.len());
         let mut store_indexes = HashMap::new();
         for peer in &region.peers {
-            let is_leader = peer.id == region.leader.id && peer.store_id == region.leader.store_id;
-            if region.down_peer_ids.contains(&peer.id) {
+            let is_leader = region
+                .leader
+                .as_ref()
+                .is_some_and(|leader| peer.id == leader.id && peer.store_id == leader.store_id);
+            if region
+                .down_peers
+                .iter()
+                .any(|down| down.id == peer.id && down.store_id == peer.store_id)
+            {
                 continue;
             }
             let Some(store) = resolved
@@ -146,15 +218,25 @@ impl RegionLoader for PdRegionLoader {
                 format!("region {} has no usable peers", region.id),
             ));
         }
-        if !peers.iter().any(|peer| peer.id == region.leader.id) {
+        let leader_peer_id = region.leader.as_ref().and_then(|leader| {
+            peers
+                .iter()
+                .any(|peer| peer.id == leader.id && peer.store_id == leader.store_id)
+                .then_some(leader.id)
+        });
+        if require_usable_leader && leader_peer_id.is_none() {
             return Err(loader_topology_error(
                 "missing_usable_leader",
-                format!(
-                    "region {} leader {} was down or on a removed store",
-                    region.id, region.leader.id
-                ),
+                format!("region {} leader was down or on a removed store", region.id),
             ));
         }
+        let buckets = region.buckets.map(decode_buckets).transpose()?;
+        let down_peer_ids = region.down_peers.into_iter().map(|peer| peer.id).collect();
+        let pending_peer_ids = region
+            .pending_peers
+            .into_iter()
+            .map(|peer| peer.id)
+            .collect();
 
         Ok(RegionLocation {
             region: RegionVerId {
@@ -167,9 +249,28 @@ impl RegionLoader for PdRegionLoader {
             start_key: decode_region_boundary(&region.start_key)?,
             end_key: decode_region_boundary(&region.end_key)?,
             peers,
-            leader_peer_id: Some(region.leader.id),
+            leader_peer_id,
             stores,
+            buckets,
+            down_peer_ids,
+            pending_peer_ids,
         })
+    }
+}
+
+impl RegionLoader for PdRegionLoader {
+    fn cluster_id(&self) -> u64 {
+        self.client.cluster_id()
+    }
+
+    fn load_region(&mut self, key: &[u8]) -> Result<RegionLocation, RegionLoadError> {
+        let mut encoded_key = Vec::new();
+        encode_bytes(&mut encoded_key, key);
+        let region = self
+            .client
+            .get_region(&encoded_key)
+            .map_err(region_load_error)?;
+        self.project_region(region, true)
     }
 
     fn store_labels(&self, store_id: u64) -> &[(String, String)] {
@@ -177,6 +278,33 @@ impl RegionLoader for PdRegionLoader {
             .get(&store_id)
             .map(Vec::as_slice)
             .unwrap_or(&[])
+    }
+}
+
+impl BatchRegionLoader for PdRegionLoader {
+    fn batch_load_regions(
+        &mut self,
+        ranges: &[KeyRange],
+        limit: usize,
+        need_buckets: bool,
+    ) -> Result<Vec<RegionLocation>, RegionLoadError> {
+        let encoded_ranges = ranges
+            .iter()
+            .map(|range| {
+                let (start_key, end_key) = encode_region_range(&range.start, &range.end);
+                PdKeyRange { start_key, end_key }
+            })
+            .collect::<Vec<_>>();
+        match self
+            .client
+            .batch_scan_regions(&encoded_ranges, pd_limit(limit)?, need_buckets, true)
+        {
+            Ok(regions) => self.project_regions(regions),
+            Err(PdClientError::Transport { ref code, .. }) if code == "Unimplemented" => {
+                self.batch_scan_regions_fallback(ranges, limit)
+            }
+            Err(error) => Err(region_load_error(error)),
+        }
     }
 }
 
@@ -277,8 +405,22 @@ impl RegionRecoveryLoader for PdRegionLoader {
             peers,
             leader_peer_id: Some(leader_peer_id),
             stores,
+            buckets: None,
+            down_peer_ids: Vec::new(),
+            pending_peer_ids: Vec::new(),
         })
     }
+}
+
+fn encode_region_range(start: &[u8], end: &[u8]) -> (Vec<u8>, Vec<u8>) {
+    let mut encoded_start = Vec::new();
+    encode_bytes(&mut encoded_start, start);
+    if end.is_empty() {
+        return (encoded_start, Vec::new());
+    }
+    let mut encoded_end = Vec::new();
+    encode_bytes(&mut encoded_end, end);
+    (encoded_start, encoded_end)
 }
 
 fn decode_region_boundary(encoded: &[u8]) -> Result<Vec<u8>, RegionLoadError> {
@@ -288,6 +430,37 @@ fn decode_region_boundary(encoded: &[u8]) -> Result<Vec<u8>, RegionLoadError> {
     decode_bytes(encoded)
         .map(|(_, decoded)| decoded)
         .map_err(|error| RegionLoadError::new("invalid_region_key", error.to_string()))
+}
+
+fn decode_buckets(buckets: tidb_pd_client::PdBuckets) -> Result<BucketMetadata, RegionLoadError> {
+    let keys = buckets
+        .keys
+        .iter()
+        .map(|key| decode_region_boundary(key))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(BucketMetadata {
+        region_id: buckets.region_id,
+        version: buckets.version,
+        keys,
+        stats: buckets.stats.map(|stats| BucketStats {
+            read_bytes: stats.read_bytes,
+            write_bytes: stats.write_bytes,
+            read_qps: stats.read_qps,
+            write_qps: stats.write_qps,
+            read_keys: stats.read_keys,
+            write_keys: stats.write_keys,
+        }),
+        period_in_ms: buckets.period_in_ms,
+    })
+}
+
+fn pd_limit(limit: usize) -> Result<i32, RegionLoadError> {
+    i32::try_from(limit).map_err(|_| {
+        RegionLoadError::new(
+            "region_scan_limit_overflow",
+            format!("region scan limit {limit} exceeds i32::MAX"),
+        )
+    })
 }
 
 const fn map_peer_role(role: i32) -> PeerRole {

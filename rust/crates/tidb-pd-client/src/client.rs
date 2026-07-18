@@ -22,14 +22,20 @@ use tidb_proto::pdpb::{self, pd_client::PdClient as TonicPdClient};
 use tonic::transport::{Channel, Endpoint};
 
 use crate::{
-    PdClientError, PdMemberSet, PdNodeState, PdOperation, PdPeer, PdRegion, PdRegionEpoch, PdStore,
-    PdStoreState,
+    PdBucketStats, PdBuckets, PdClientError, PdKeyRange, PdMemberSet, PdNodeState, PdOperation,
+    PdPeer, PdRegion, PdRegionEpoch, PdStore, PdStoreState,
 };
 
 /// Exact method paths generated from the checked source projection.
 pub const GET_MEMBERS_PATH: &str = "/pdpb.PD/GetMembers";
 /// Exact key lookup method path.
 pub const GET_REGION_PATH: &str = "/pdpb.PD/GetRegion";
+/// Exact region-by-ID method path.
+pub const GET_REGION_BY_ID_PATH: &str = "/pdpb.PD/GetRegionByID";
+/// Exact deprecated contiguous scan method path.
+pub const SCAN_REGIONS_PATH: &str = "/pdpb.PD/ScanRegions";
+/// Exact ordered batch scan method path.
+pub const BATCH_SCAN_REGIONS_PATH: &str = "/pdpb.PD/BatchScanRegions";
 /// Exact store lookup method path.
 pub const GET_STORE_PATH: &str = "/pdpb.PD/GetStore";
 
@@ -39,7 +45,26 @@ enum WorkerCommand {
     },
     GetRegion {
         encoded_key: Vec<u8>,
+        need_buckets: bool,
         reply: mpsc::Sender<Result<PdRegion, PdClientError>>,
+    },
+    GetRegionById {
+        region_id: u64,
+        need_buckets: bool,
+        reply: mpsc::Sender<Result<PdRegion, PdClientError>>,
+    },
+    ScanRegions {
+        start_key: Vec<u8>,
+        end_key: Vec<u8>,
+        limit: i32,
+        reply: mpsc::Sender<Result<Vec<PdRegion>, PdClientError>>,
+    },
+    BatchScanRegions {
+        ranges: Vec<PdKeyRange>,
+        limit: i32,
+        need_buckets: bool,
+        contain_all_key_range: bool,
+        reply: mpsc::Sender<Result<Vec<PdRegion>, PdClientError>>,
     },
     GetStore {
         store_id: u64,
@@ -207,6 +232,15 @@ impl PdClient {
 
     /// Loads the region containing one already encoded PD wire key.
     pub fn get_region(&mut self, encoded_key: &[u8]) -> Result<PdRegion, PdClientError> {
+        self.get_region_with_buckets(encoded_key, true)
+    }
+
+    /// Loads a region while preserving the caller's exact bucket request flag.
+    pub fn get_region_with_buckets(
+        &mut self,
+        encoded_key: &[u8],
+        need_buckets: bool,
+    ) -> Result<PdRegion, PdClientError> {
         let Some(commands) = &self.commands else {
             return Err(PdClientError::Closed);
         };
@@ -214,6 +248,73 @@ impl PdClient {
         commands
             .send(WorkerCommand::GetRegion {
                 encoded_key: encoded_key.to_vec(),
+                need_buckets,
+                reply,
+            })
+            .map_err(|_| PdClientError::Closed)?;
+        response.recv().unwrap_or(Err(PdClientError::Closed))
+    }
+
+    /// Loads one region identity with the exact bucket request flag.
+    pub fn get_region_by_id(
+        &mut self,
+        region_id: u64,
+        need_buckets: bool,
+    ) -> Result<PdRegion, PdClientError> {
+        let Some(commands) = &self.commands else {
+            return Err(PdClientError::Closed);
+        };
+        let (reply, response) = mpsc::channel();
+        commands
+            .send(WorkerCommand::GetRegionById {
+                region_id,
+                need_buckets,
+                reply,
+            })
+            .map_err(|_| PdClientError::Closed)?;
+        response.recv().unwrap_or(Err(PdClientError::Closed))
+    }
+
+    /// Scans one contiguous encoded key interval through the pinned legacy RPC.
+    pub fn scan_regions(
+        &mut self,
+        start_key: &[u8],
+        end_key: &[u8],
+        limit: i32,
+    ) -> Result<Vec<PdRegion>, PdClientError> {
+        let Some(commands) = &self.commands else {
+            return Err(PdClientError::Closed);
+        };
+        let (reply, response) = mpsc::channel();
+        commands
+            .send(WorkerCommand::ScanRegions {
+                start_key: start_key.to_vec(),
+                end_key: end_key.to_vec(),
+                limit,
+                reply,
+            })
+            .map_err(|_| PdClientError::Closed)?;
+        response.recv().unwrap_or(Err(PdClientError::Closed))
+    }
+
+    /// Batch-scans ordered encoded ranges with exact source request options.
+    pub fn batch_scan_regions(
+        &mut self,
+        ranges: &[PdKeyRange],
+        limit: i32,
+        need_buckets: bool,
+        contain_all_key_range: bool,
+    ) -> Result<Vec<PdRegion>, PdClientError> {
+        let Some(commands) = &self.commands else {
+            return Err(PdClientError::Closed);
+        };
+        let (reply, response) = mpsc::channel();
+        commands
+            .send(WorkerCommand::BatchScanRegions {
+                ranges: ranges.to_vec(),
+                limit,
+                need_buckets,
+                contain_all_key_range,
                 reply,
             })
             .map_err(|_| PdClientError::Closed)?;
@@ -270,9 +371,70 @@ fn run_worker(
                 let result = refresh_membership(&runtime, &mut clients, timeout, &state);
                 let _ = reply.send(result);
             }
-            WorkerCommand::GetRegion { encoded_key, reply } => {
-                let result =
-                    get_region_with_failover(&runtime, &mut clients, timeout, &state, &encoded_key);
+            WorkerCommand::GetRegion {
+                encoded_key,
+                need_buckets,
+                reply,
+            } => {
+                let result = get_region_with_failover(
+                    &runtime,
+                    &mut clients,
+                    timeout,
+                    &state,
+                    &encoded_key,
+                    need_buckets,
+                );
+                let _ = reply.send(result);
+            }
+            WorkerCommand::GetRegionById {
+                region_id,
+                need_buckets,
+                reply,
+            } => {
+                let result = get_region_by_id_with_failover(
+                    &runtime,
+                    &mut clients,
+                    timeout,
+                    &state,
+                    region_id,
+                    need_buckets,
+                );
+                let _ = reply.send(result);
+            }
+            WorkerCommand::ScanRegions {
+                start_key,
+                end_key,
+                limit,
+                reply,
+            } => {
+                let result = scan_regions_with_failover(
+                    &runtime,
+                    &mut clients,
+                    timeout,
+                    &state,
+                    &start_key,
+                    &end_key,
+                    limit,
+                );
+                let _ = reply.send(result);
+            }
+            WorkerCommand::BatchScanRegions {
+                ranges,
+                limit,
+                need_buckets,
+                contain_all_key_range,
+                reply,
+            } => {
+                let result = batch_scan_regions_with_failover(
+                    &runtime,
+                    &mut clients,
+                    timeout,
+                    &state,
+                    &ranges,
+                    limit,
+                    need_buckets,
+                    contain_all_key_range,
+                );
                 let _ = reply.send(result);
             }
             WorkerCommand::GetStore { store_id, reply } => {
@@ -366,6 +528,7 @@ fn get_region(
     timeout: Duration,
     cluster_id: u64,
     encoded_key: &[u8],
+    need_buckets: bool,
 ) -> Result<PdRegion, PdClientError> {
     let client = tonic_client(runtime, clients, endpoint)?;
     let response = runtime.block_on(async {
@@ -374,7 +537,7 @@ fn get_region(
             client.get_region(pdpb::GetRegionRequest {
                 header: Some(request_header(cluster_id)),
                 region_key: encoded_key.to_vec(),
-                need_buckets: true,
+                need_buckets,
             }),
         )
         .await
@@ -382,7 +545,117 @@ fn get_region(
     let response =
         map_rpc_result(response, PdOperation::GetRegion, endpoint, timeout)?.into_inner();
     validate_response_header(PdOperation::GetRegion, response.header.as_ref(), cluster_id)?;
-    project_region(response)
+    project_region(response, true)
+}
+
+fn get_region_by_id(
+    runtime: &tokio::runtime::Runtime,
+    clients: &mut HashMap<String, TonicPdClient<Channel>>,
+    endpoint: &str,
+    timeout: Duration,
+    cluster_id: u64,
+    region_id: u64,
+    need_buckets: bool,
+) -> Result<PdRegion, PdClientError> {
+    let client = tonic_client(runtime, clients, endpoint)?;
+    let response = runtime.block_on(async {
+        tokio::time::timeout(
+            timeout,
+            client.get_region_by_id(pdpb::GetRegionByIdRequest {
+                header: Some(request_header(cluster_id)),
+                region_id,
+                need_buckets,
+            }),
+        )
+        .await
+    });
+    let response =
+        map_rpc_result(response, PdOperation::GetRegionById, endpoint, timeout)?.into_inner();
+    validate_response_header(
+        PdOperation::GetRegionById,
+        response.header.as_ref(),
+        cluster_id,
+    )?;
+    project_region(response, false)
+}
+
+fn scan_regions(
+    runtime: &tokio::runtime::Runtime,
+    clients: &mut HashMap<String, TonicPdClient<Channel>>,
+    endpoint: &str,
+    timeout: Duration,
+    cluster_id: u64,
+    start_key: &[u8],
+    end_key: &[u8],
+    limit: i32,
+) -> Result<Vec<PdRegion>, PdClientError> {
+    let client = tonic_client(runtime, clients, endpoint)?;
+    let response = runtime.block_on(async {
+        tokio::time::timeout(
+            timeout,
+            client.scan_regions(pdpb::ScanRegionsRequest {
+                header: Some(request_header(cluster_id)),
+                start_key: start_key.to_vec(),
+                limit,
+                end_key: end_key.to_vec(),
+            }),
+        )
+        .await
+    });
+    let response =
+        map_rpc_result(response, PdOperation::ScanRegions, endpoint, timeout)?.into_inner();
+    validate_response_header(
+        PdOperation::ScanRegions,
+        response.header.as_ref(),
+        cluster_id,
+    )?;
+    project_scan_regions(response)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn batch_scan_regions(
+    runtime: &tokio::runtime::Runtime,
+    clients: &mut HashMap<String, TonicPdClient<Channel>>,
+    endpoint: &str,
+    timeout: Duration,
+    cluster_id: u64,
+    ranges: &[PdKeyRange],
+    limit: i32,
+    need_buckets: bool,
+    contain_all_key_range: bool,
+) -> Result<Vec<PdRegion>, PdClientError> {
+    let client = tonic_client(runtime, clients, endpoint)?;
+    let response = runtime.block_on(async {
+        tokio::time::timeout(
+            timeout,
+            client.batch_scan_regions(pdpb::BatchScanRegionsRequest {
+                header: Some(request_header(cluster_id)),
+                need_buckets,
+                ranges: ranges
+                    .iter()
+                    .map(|range| pdpb::KeyRange {
+                        start_key: range.start_key.clone(),
+                        end_key: range.end_key.clone(),
+                    })
+                    .collect(),
+                limit,
+                contain_all_key_range,
+            }),
+        )
+        .await
+    });
+    let response =
+        map_rpc_result(response, PdOperation::BatchScanRegions, endpoint, timeout)?.into_inner();
+    validate_response_header(
+        PdOperation::BatchScanRegions,
+        response.header.as_ref(),
+        cluster_id,
+    )?;
+    response
+        .regions
+        .into_iter()
+        .map(project_extended_region)
+        .collect()
 }
 
 fn get_store(
@@ -417,6 +690,7 @@ fn get_region_with_failover(
     timeout: Duration,
     state: &Arc<RwLock<PdSharedState>>,
     encoded_key: &[u8],
+    need_buckets: bool,
 ) -> Result<PdRegion, PdClientError> {
     let snapshot = state.read().expect("PD state lock poisoned").clone();
     let mut attempted = HashSet::new();
@@ -428,6 +702,7 @@ fn get_region_with_failover(
         timeout,
         snapshot.members.cluster_id,
         encoded_key,
+        need_buckets,
     ) {
         Ok(region) => Ok(region),
         Err(error) if needs_failover_probe(&error) => {
@@ -455,10 +730,155 @@ fn get_region_with_failover(
                     timeout,
                     current.members.cluster_id,
                     encoded_key,
+                    need_buckets,
                 ) {
                     Ok(region) => {
                         set_active_endpoint(state, endpoint);
                         return Ok(region);
+                    }
+                    Err(error)
+                        if is_retryable_endpoint_error(
+                            &error,
+                            &endpoint,
+                            &current.members.leader_url,
+                        ) =>
+                    {
+                        last_error = error;
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            Err(last_error)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn get_region_by_id_with_failover(
+    runtime: &tokio::runtime::Runtime,
+    clients: &mut HashMap<String, TonicPdClient<Channel>>,
+    timeout: Duration,
+    state: &Arc<RwLock<PdSharedState>>,
+    region_id: u64,
+    need_buckets: bool,
+) -> Result<PdRegion, PdClientError> {
+    foreground_with_failover(
+        runtime,
+        clients,
+        timeout,
+        state,
+        |runtime, clients, endpoint, cluster_id| {
+            get_region_by_id(
+                runtime,
+                clients,
+                endpoint,
+                timeout,
+                cluster_id,
+                region_id,
+                need_buckets,
+            )
+        },
+    )
+}
+
+fn scan_regions_with_failover(
+    runtime: &tokio::runtime::Runtime,
+    clients: &mut HashMap<String, TonicPdClient<Channel>>,
+    timeout: Duration,
+    state: &Arc<RwLock<PdSharedState>>,
+    start_key: &[u8],
+    end_key: &[u8],
+    limit: i32,
+) -> Result<Vec<PdRegion>, PdClientError> {
+    foreground_with_failover(
+        runtime,
+        clients,
+        timeout,
+        state,
+        |runtime, clients, endpoint, cluster_id| {
+            scan_regions(
+                runtime, clients, endpoint, timeout, cluster_id, start_key, end_key, limit,
+            )
+        },
+    )
+}
+
+fn batch_scan_regions_with_failover(
+    runtime: &tokio::runtime::Runtime,
+    clients: &mut HashMap<String, TonicPdClient<Channel>>,
+    timeout: Duration,
+    state: &Arc<RwLock<PdSharedState>>,
+    ranges: &[PdKeyRange],
+    limit: i32,
+    need_buckets: bool,
+    contain_all_key_range: bool,
+) -> Result<Vec<PdRegion>, PdClientError> {
+    foreground_with_failover(
+        runtime,
+        clients,
+        timeout,
+        state,
+        |runtime, clients, endpoint, cluster_id| {
+            batch_scan_regions(
+                runtime,
+                clients,
+                endpoint,
+                timeout,
+                cluster_id,
+                ranges,
+                limit,
+                need_buckets,
+                contain_all_key_range,
+            )
+        },
+    )
+}
+
+fn foreground_with_failover<T, F>(
+    runtime: &tokio::runtime::Runtime,
+    clients: &mut HashMap<String, TonicPdClient<Channel>>,
+    timeout: Duration,
+    state: &Arc<RwLock<PdSharedState>>,
+    mut action: F,
+) -> Result<T, PdClientError>
+where
+    F: FnMut(
+        &tokio::runtime::Runtime,
+        &mut HashMap<String, TonicPdClient<Channel>>,
+        &str,
+        u64,
+    ) -> Result<T, PdClientError>,
+{
+    let snapshot = state.read().expect("PD state lock poisoned").clone();
+    let mut attempted = HashSet::new();
+    attempted.insert(snapshot.active_endpoint.clone());
+    match action(
+        runtime,
+        clients,
+        &snapshot.active_endpoint,
+        snapshot.members.cluster_id,
+    ) {
+        Ok(value) => Ok(value),
+        Err(error) if needs_failover_probe(&error) => {
+            let direct_failure = is_direct_failure(&error);
+            let mut last_error = error;
+            if let Err(error @ PdClientError::ClusterMismatch { .. }) =
+                refresh_membership(runtime, clients, timeout, state)
+            {
+                return Err(error);
+            }
+            let current = state.read().expect("PD state lock poisoned").clone();
+            if !direct_failure && snapshot.active_endpoint == current.members.leader_url {
+                return Err(last_error);
+            }
+            for endpoint in endpoint_attempt_order(&current) {
+                if !attempted.insert(endpoint.clone()) {
+                    continue;
+                }
+                match action(runtime, clients, &endpoint, current.members.cluster_id) {
+                    Ok(value) => {
+                        set_active_endpoint(state, endpoint);
+                        return Ok(value);
                     }
                     Err(error)
                         if is_retryable_endpoint_error(
@@ -806,10 +1226,74 @@ fn reject_header_error(
     Ok(())
 }
 
-fn project_region(response: pdpb::GetRegionResponse) -> Result<PdRegion, PdClientError> {
+fn project_region(
+    response: pdpb::GetRegionResponse,
+    require_leader: bool,
+) -> Result<PdRegion, PdClientError> {
     let region = response
         .region
         .ok_or_else(|| invalid_topology("missing_region", "GetRegion omitted region"))?;
+    project_region_parts(
+        region,
+        response.leader,
+        response.down_peers,
+        response.pending_peers,
+        response.buckets,
+        require_leader,
+    )
+}
+
+fn project_extended_region(region: pdpb::Region) -> Result<PdRegion, PdClientError> {
+    let metadata = region
+        .region
+        .ok_or_else(|| invalid_topology("missing_region", "scan result omitted region"))?;
+    project_region_parts(
+        metadata,
+        region.leader,
+        region.down_peers,
+        region.pending_peers,
+        region.buckets,
+        false,
+    )
+}
+
+fn project_scan_regions(
+    response: pdpb::ScanRegionsResponse,
+) -> Result<Vec<PdRegion>, PdClientError> {
+    if !response.regions.is_empty() {
+        return response
+            .regions
+            .into_iter()
+            .map(project_extended_region)
+            .collect();
+    }
+
+    let leaders = response.leaders;
+    response
+        .region_metas
+        .into_iter()
+        .enumerate()
+        .map(|(index, region)| {
+            project_region_parts(
+                region,
+                leaders.get(index).cloned(),
+                Vec::new(),
+                Vec::new(),
+                None,
+                false,
+            )
+        })
+        .collect()
+}
+
+fn project_region_parts(
+    region: metapb::Region,
+    leader: Option<metapb::Peer>,
+    down_peer_stats: Vec<pdpb::PeerStats>,
+    pending_peer_metadata: Vec<metapb::Peer>,
+    buckets: Option<metapb::Buckets>,
+    require_leader: bool,
+) -> Result<PdRegion, PdClientError> {
     if region.id == 0 {
         return Err(invalid_topology("zero_region_id", "region ID is zero"));
     }
@@ -837,27 +1321,35 @@ fn project_region(response: pdpb::GetRegionResponse) -> Result<PdRegion, PdClien
             format!("region {} repeats a peer ID", region.id),
         ));
     }
-    let returned_leader = project_peer(response.leader.ok_or_else(|| {
-        invalid_topology(
+    let leader = match leader {
+        None => None,
+        Some(leader) if leader.id == 0 => None,
+        Some(leader) => {
+            let returned_leader = project_peer(leader)?;
+            Some(
+                peers
+                    .iter()
+                    .find(|peer| same_peer_identity(peer, &returned_leader))
+                    .cloned()
+                    .ok_or_else(|| {
+                        invalid_topology(
+                            "leader_not_in_peers",
+                            format!(
+                                "region {} leader {} is not a region peer",
+                                region.id, returned_leader.id
+                            ),
+                        )
+                    })?,
+            )
+        }
+    };
+    if require_leader && leader.is_none() {
+        return Err(invalid_topology(
             "missing_leader",
             format!("region {} omitted leader", region.id),
-        )
-    })?)?;
-    let leader = peers
-        .iter()
-        .find(|peer| same_peer_identity(peer, &returned_leader))
-        .cloned()
-        .ok_or_else(|| {
-            invalid_topology(
-                "leader_not_in_peers",
-                format!(
-                    "region {} leader {} is not a region peer",
-                    region.id, returned_leader.id
-                ),
-            )
-        })?;
-    let down_peer_ids = response
-        .down_peers
+        ));
+    }
+    let down_peers = down_peer_stats
         .into_iter()
         .map(|stats| {
             let peer = stats.peer.ok_or_else(|| {
@@ -873,8 +1365,12 @@ fn project_region(response: pdpb::GetRegionResponse) -> Result<PdRegion, PdClien
                     format!("down peer {} is not an exact region peer", peer.id),
                 ));
             }
-            Ok(peer.id)
+            Ok(peer)
         })
+        .collect::<Result<Vec<_>, PdClientError>>()?;
+    let pending_peers = pending_peer_metadata
+        .into_iter()
+        .map(project_peer)
         .collect::<Result<Vec<_>, PdClientError>>()?;
 
     Ok(PdRegion {
@@ -887,8 +1383,27 @@ fn project_region(response: pdpb::GetRegionResponse) -> Result<PdRegion, PdClien
         },
         peers,
         leader,
-        down_peer_ids,
+        down_peers,
+        pending_peers,
+        buckets: buckets.map(project_buckets),
     })
+}
+
+fn project_buckets(buckets: metapb::Buckets) -> PdBuckets {
+    PdBuckets {
+        region_id: buckets.region_id,
+        version: buckets.version,
+        keys: buckets.keys,
+        stats: buckets.stats.map(|stats| PdBucketStats {
+            read_bytes: stats.read_bytes,
+            write_bytes: stats.write_bytes,
+            read_qps: stats.read_qps,
+            write_qps: stats.write_qps,
+            read_keys: stats.read_keys,
+            write_keys: stats.write_keys,
+        }),
+        period_in_ms: buckets.period_in_ms,
+    }
 }
 
 fn project_peer(peer: metapb::Peer) -> Result<PdPeer, PdClientError> {

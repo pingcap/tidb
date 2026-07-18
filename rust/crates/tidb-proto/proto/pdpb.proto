@@ -7,6 +7,9 @@ service PD {
   rpc GetMembers(GetMembersRequest) returns (GetMembersResponse) {}
   rpc GetStore(GetStoreRequest) returns (GetStoreResponse) {}
   rpc GetRegion(GetRegionRequest) returns (GetRegionResponse) {}
+  rpc GetRegionByID(GetRegionByIDRequest) returns (GetRegionResponse) {}
+  rpc ScanRegions(ScanRegionsRequest) returns (ScanRegionsResponse) {}
+  rpc BatchScanRegions(BatchScanRegionsRequest) returns (BatchScanRegionsResponse) {}
 }
 
 message RequestHeader {
@@ -65,6 +68,53 @@ message GetRegionResponse {
   metapb.Peer leader = 3;
   repeated PeerStats down_peers = 5;
   repeated metapb.Peer pending_peers = 6;
+  metapb.Buckets buckets = 7;
+}
+
+message GetRegionByIDRequest {
+  RequestHeader header = 1;
+  uint64 region_id = 2;
+  bool need_buckets = 3;
+}
+
+message ScanRegionsRequest {
+  RequestHeader header = 1;
+  bytes start_key = 2;
+  int32 limit = 3;
+  bytes end_key = 4;
+}
+
+message Region {
+  metapb.Region region = 1;
+  metapb.Peer leader = 2;
+  repeated PeerStats down_peers = 3;
+  repeated metapb.Peer pending_peers = 4;
+  metapb.Buckets buckets = 5;
+}
+
+message ScanRegionsResponse {
+  ResponseHeader header = 1;
+  repeated metapb.Region region_metas = 2;
+  repeated metapb.Peer leaders = 3;
+  repeated Region regions = 4;
+}
+
+message KeyRange {
+  bytes start_key = 1;
+  bytes end_key = 2;
+}
+
+message BatchScanRegionsRequest {
+  RequestHeader header = 1;
+  bool need_buckets = 2;
+  repeated KeyRange ranges = 3;
+  int32 limit = 4;
+  bool contain_all_key_range = 5;
+}
+
+message BatchScanRegionsResponse {
+  ResponseHeader header = 1;
+  repeated Region regions = 2;
 }
 
 message Member {

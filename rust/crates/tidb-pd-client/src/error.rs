@@ -19,6 +19,12 @@ pub enum PdOperation {
     GetMembers,
     /// Key-based region lookup.
     GetRegion,
+    /// Region lookup by identity.
+    GetRegionById,
+    /// Deprecated contiguous region scan.
+    ScanRegions,
+    /// Ordered multi-range region scan.
+    BatchScanRegions,
     /// Store lookup by ID.
     GetStore,
 }
@@ -28,6 +34,9 @@ impl std::fmt::Display for PdOperation {
         match self {
             Self::GetMembers => formatter.write_str("GetMembers"),
             Self::GetRegion => formatter.write_str("GetRegion"),
+            Self::GetRegionById => formatter.write_str("GetRegionByID"),
+            Self::ScanRegions => formatter.write_str("ScanRegions"),
+            Self::BatchScanRegions => formatter.write_str("BatchScanRegions"),
             Self::GetStore => formatter.write_str("GetStore"),
         }
     }

@@ -21,7 +21,8 @@ use std::time::Duration;
 
 use prost::Message;
 use tidb_pd_client::{
-    PdClient, PdNodeState, PdStoreState, GET_MEMBERS_PATH, GET_REGION_PATH, GET_STORE_PATH,
+    PdClient, PdKeyRange, PdNodeState, PdStoreState, BATCH_SCAN_REGIONS_PATH, GET_MEMBERS_PATH,
+    GET_REGION_BY_ID_PATH, GET_REGION_PATH, GET_STORE_PATH, SCAN_REGIONS_PATH,
 };
 use tidb_proto::metapb;
 use tidb_proto::pdpb::{
@@ -77,9 +78,15 @@ impl<T> Reply<T> {
 struct State {
     members: Reply<pdpb::GetMembersResponse>,
     region: Reply<pdpb::GetRegionResponse>,
+    region_by_id: Reply<pdpb::GetRegionResponse>,
+    scan_regions: Reply<pdpb::ScanRegionsResponse>,
+    batch_scan_regions: Reply<pdpb::BatchScanRegionsResponse>,
     stores: HashMap<u64, Reply<pdpb::GetStoreResponse>>,
     member_requests: Vec<pdpb::GetMembersRequest>,
     region_requests: Vec<pdpb::GetRegionRequest>,
+    region_by_id_requests: Vec<pdpb::GetRegionByIdRequest>,
+    scan_region_requests: Vec<pdpb::ScanRegionsRequest>,
+    batch_scan_region_requests: Vec<pdpb::BatchScanRegionsRequest>,
     store_requests: Vec<pdpb::GetStoreRequest>,
 }
 
@@ -132,6 +139,42 @@ impl Pd for MockPd {
             let mut state = self.state.lock().unwrap();
             state.region_requests.push(request.into_inner());
             state.region.clone()
+        };
+        reply.send().await
+    }
+
+    async fn get_region_by_id(
+        &self,
+        request: tonic::Request<pdpb::GetRegionByIdRequest>,
+    ) -> Result<tonic::Response<pdpb::GetRegionResponse>, tonic::Status> {
+        let reply = {
+            let mut state = self.state.lock().unwrap();
+            state.region_by_id_requests.push(request.into_inner());
+            state.region_by_id.clone()
+        };
+        reply.send().await
+    }
+
+    async fn scan_regions(
+        &self,
+        request: tonic::Request<pdpb::ScanRegionsRequest>,
+    ) -> Result<tonic::Response<pdpb::ScanRegionsResponse>, tonic::Status> {
+        let reply = {
+            let mut state = self.state.lock().unwrap();
+            state.scan_region_requests.push(request.into_inner());
+            state.scan_regions.clone()
+        };
+        reply.send().await
+    }
+
+    async fn batch_scan_regions(
+        &self,
+        request: tonic::Request<pdpb::BatchScanRegionsRequest>,
+    ) -> Result<tonic::Response<pdpb::BatchScanRegionsResponse>, tonic::Status> {
+        let reply = {
+            let mut state = self.state.lock().unwrap();
+            state.batch_scan_region_requests.push(request.into_inner());
+            state.batch_scan_regions.clone()
         };
         reply.send().await
     }
@@ -262,6 +305,56 @@ fn region_response() -> pdpb::GetRegionResponse {
             down_seconds: 9,
         }],
         pending_peers: vec![peers[2]],
+        buckets: Some(bucket_metadata(
+            7,
+            8,
+            [b"wire-start".as_slice(), b"split", b"wire-end"],
+        )),
+    }
+}
+
+fn bucket_metadata<const N: usize>(
+    region_id: u64,
+    version: u64,
+    keys: [&[u8]; N],
+) -> metapb::Buckets {
+    metapb::Buckets {
+        region_id,
+        version,
+        keys: keys.into_iter().map(<[u8]>::to_vec).collect(),
+        stats: Some(metapb::BucketStats {
+            read_bytes: vec![1, 2],
+            write_bytes: vec![3, 4],
+            read_qps: vec![5, 6],
+            write_qps: vec![7, 8],
+            read_keys: vec![9, 10],
+            write_keys: vec![11, 12],
+        }),
+        period_in_ms: 1_000,
+    }
+}
+
+fn extended_region(id: u64, start_key: &[u8], end_key: &[u8]) -> pdpb::Region {
+    let leader = peer(id * 10 + 1, id * 100 + 1, metapb::PeerRole::Voter, false);
+    let pending = peer(id * 10 + 2, id * 100 + 2, metapb::PeerRole::Learner, false);
+    pdpb::Region {
+        region: Some(metapb::Region {
+            id,
+            start_key: start_key.to_vec(),
+            end_key: end_key.to_vec(),
+            region_epoch: Some(metapb::RegionEpoch {
+                conf_ver: id + 1,
+                version: id + 2,
+            }),
+            peers: vec![leader.clone(), pending.clone()],
+        }),
+        leader: Some(leader.clone()),
+        down_peers: vec![pdpb::PeerStats {
+            peer: Some(leader),
+            down_seconds: id,
+        }],
+        pending_peers: vec![pending],
+        buckets: Some(bucket_metadata(id, id + 10, [start_key, end_key])),
     }
 }
 
@@ -291,6 +384,23 @@ fn valid_state() -> State {
             ..pdpb::GetMembersResponse::default()
         }),
         region: Reply::Value(region_response()),
+        region_by_id: Reply::Value(region_response()),
+        scan_regions: Reply::Value(pdpb::ScanRegionsResponse {
+            header: Some(header(CLUSTER_ID)),
+            region_metas: Vec::new(),
+            leaders: Vec::new(),
+            regions: vec![
+                extended_region(21, b"a", b"m"),
+                extended_region(22, b"m", b"z"),
+            ],
+        }),
+        batch_scan_regions: Reply::Value(pdpb::BatchScanRegionsResponse {
+            header: Some(header(CLUSTER_ID)),
+            regions: vec![
+                extended_region(31, b"a", b"m"),
+                extended_region(32, b"m", b"z"),
+            ],
+        }),
         stores: HashMap::from([
             (
                 101,
@@ -311,6 +421,9 @@ fn valid_state() -> State {
         ]),
         member_requests: Vec::new(),
         region_requests: Vec::new(),
+        region_by_id_requests: Vec::new(),
+        scan_region_requests: Vec::new(),
+        batch_scan_region_requests: Vec::new(),
         store_requests: Vec::new(),
     }
 }
@@ -367,6 +480,9 @@ fn exact_methods_headers_wire_key_roles_and_store_states_are_preserved_once() {
     // client.go:714-764 GetRegion; client.go:1034-1091 GetStore.
     assert_eq!(GET_MEMBERS_PATH, "/pdpb.PD/GetMembers");
     assert_eq!(GET_REGION_PATH, "/pdpb.PD/GetRegion");
+    assert_eq!(GET_REGION_BY_ID_PATH, "/pdpb.PD/GetRegionByID");
+    assert_eq!(SCAN_REGIONS_PATH, "/pdpb.PD/ScanRegions");
+    assert_eq!(BATCH_SCAN_REGIONS_PATH, "/pdpb.PD/BatchScanRegions");
     assert_eq!(GET_STORE_PATH, "/pdpb.PD/GetStore");
 
     let mut state = valid_state();
@@ -404,9 +520,37 @@ fn exact_methods_headers_wire_key_roles_and_store_states_are_preserved_once() {
         [0, 1, 2, 3]
     );
     assert!(region.peers[1].is_witness);
-    assert_eq!(region.leader.role, 0);
-    assert!(!region.leader.is_witness);
-    assert_eq!(region.down_peer_ids, [14]);
+    assert_eq!(region.leader.as_ref().unwrap().role, 0);
+    assert!(!region.leader.as_ref().unwrap().is_witness);
+    assert_eq!(
+        region
+            .down_peers
+            .iter()
+            .map(|peer| peer.id)
+            .collect::<Vec<_>>(),
+        [14]
+    );
+    assert_eq!(
+        region
+            .pending_peers
+            .iter()
+            .map(|peer| peer.id)
+            .collect::<Vec<_>>(),
+        [13]
+    );
+    let buckets = region.buckets.as_ref().unwrap();
+    assert_eq!(buckets.region_id, 7);
+    assert_eq!(buckets.version, 8);
+    assert_eq!(
+        buckets.keys,
+        vec![
+            b"wire-start".to_vec(),
+            b"split".to_vec(),
+            b"wire-end".to_vec()
+        ]
+    );
+    assert_eq!(buckets.stats.as_ref().unwrap().write_keys, [11, 12]);
+    assert_eq!(buckets.period_in_ms, 1_000);
 
     let up = client.get_store(101).unwrap().unwrap();
     assert_eq!(up.state, PdStoreState::Up);
@@ -437,6 +581,123 @@ fn exact_methods_headers_wire_key_roles_and_store_states_are_preserved_once() {
         assert_exact_header(request.header.as_ref().unwrap());
         true
     }));
+}
+
+#[test]
+fn by_id_scan_and_batch_scan_preserve_flags_ranges_limits_and_response_order() {
+    // pd-client/client.go:GetRegionByID, ScanRegions, BatchScanRegions.
+    // pd-client/clients/router/client.go:handleRegionsResponse.
+    let server = Server::start(valid_state());
+    let mut client = PdClient::connect(&server.address, Duration::from_secs(2)).unwrap();
+
+    let by_id = client.get_region_by_id(7, false).unwrap();
+    assert_eq!(by_id.id, 7);
+    assert_eq!(by_id.buckets.as_ref().unwrap().version, 8);
+
+    let scan = client.scan_regions(b"wire-a", b"wire-z", 17).unwrap();
+    assert_eq!(
+        scan.iter().map(|region| region.id).collect::<Vec<_>>(),
+        [21, 22]
+    );
+    assert_eq!(scan[0].leader.as_ref().unwrap().id, 211);
+    assert_eq!(scan[0].down_peers[0].store_id, 2_101);
+    assert_eq!(scan[0].pending_peers[0].id, 212);
+    assert_eq!(scan[0].buckets.as_ref().unwrap().version, 31);
+
+    let ranges = vec![
+        PdKeyRange {
+            start_key: b"wire-a".to_vec(),
+            end_key: b"wire-m".to_vec(),
+        },
+        PdKeyRange {
+            start_key: b"wire-q".to_vec(),
+            end_key: Vec::new(),
+        },
+    ];
+    let batch = client.batch_scan_regions(&ranges, 23, true, true).unwrap();
+    assert_eq!(
+        batch.iter().map(|region| region.id).collect::<Vec<_>>(),
+        [31, 32]
+    );
+    assert_eq!(batch[1].pending_peers[0].store_id, 3_202);
+    assert_eq!(batch[1].buckets.as_ref().unwrap().region_id, 32);
+
+    let state = server.state.lock().unwrap();
+    assert_eq!(state.region_by_id_requests.len(), 1);
+    let by_id_request = &state.region_by_id_requests[0];
+    assert_exact_header(by_id_request.header.as_ref().unwrap());
+    assert_eq!(by_id_request.region_id, 7);
+    assert!(!by_id_request.need_buckets);
+
+    assert_eq!(state.scan_region_requests.len(), 1);
+    let scan_request = &state.scan_region_requests[0];
+    assert_exact_header(scan_request.header.as_ref().unwrap());
+    assert_eq!(scan_request.start_key, b"wire-a");
+    assert_eq!(scan_request.end_key, b"wire-z");
+    assert_eq!(scan_request.limit, 17);
+
+    assert_eq!(state.batch_scan_region_requests.len(), 1);
+    let batch_request = &state.batch_scan_region_requests[0];
+    assert_exact_header(batch_request.header.as_ref().unwrap());
+    assert!(batch_request.need_buckets);
+    assert_eq!(batch_request.limit, 23);
+    assert!(batch_request.contain_all_key_range);
+    assert_eq!(batch_request.ranges.len(), 2);
+    assert_eq!(batch_request.ranges[0].start_key, ranges[0].start_key);
+    assert_eq!(batch_request.ranges[0].end_key, ranges[0].end_key);
+    assert_eq!(batch_request.ranges[1].start_key, ranges[1].start_key);
+    assert_eq!(batch_request.ranges[1].end_key, ranges[1].end_key);
+}
+
+#[test]
+fn bounded_worker_keeps_each_bucket_flag_and_owned_response_isolated() {
+    // pd-client/clients/router/client_test.go:
+    // TestRequestFinisherNoDataRace and TestRequestFinisherClearsUnrequestedBuckets.
+    // This retained worker does not batch QueryRegion requests, so the exact
+    // equivalent contract is one flag and one owned projection per command.
+    let server = Server::start(valid_state());
+    let mut client = PdClient::connect(&server.address, Duration::from_secs(2)).unwrap();
+
+    let mut first = client.get_region_with_buckets(b"first", true).unwrap();
+    first.buckets.as_mut().unwrap().keys[0].push(b'!');
+    first.pending_peers[0].id = 999;
+    let second = client.get_region_with_buckets(b"second", false).unwrap();
+
+    assert_eq!(second.buckets.as_ref().unwrap().keys[0], b"wire-start");
+    assert_eq!(second.pending_peers[0].id, 13);
+    let state = server.state.lock().unwrap();
+    assert_eq!(state.region_requests.len(), 2);
+    assert!(state.region_requests[0].need_buckets);
+    assert!(!state.region_requests[1].need_buckets);
+    assert_eq!(state.region_requests[0].region_key, b"first");
+    assert_eq!(state.region_requests[1].region_key, b"second");
+}
+
+#[test]
+fn legacy_scan_fallback_keeps_meta_order_and_missing_leader() {
+    // pd-client/client.go:1005-1031 handleRegionsResponse compatibility path.
+    let mut state = valid_state();
+    let first = extended_region(41, b"a", b"m");
+    let second = extended_region(42, b"m", b"z");
+    state.scan_regions = Reply::Value(pdpb::ScanRegionsResponse {
+        header: Some(header(CLUSTER_ID)),
+        region_metas: vec![first.region.unwrap(), second.region.unwrap()],
+        leaders: vec![first.leader.unwrap()],
+        regions: Vec::new(),
+    });
+    let server = Server::start(state);
+    let mut client = PdClient::connect(&server.address, Duration::from_secs(2)).unwrap();
+
+    let regions = client.scan_regions(b"a", b"z", 2).unwrap();
+    assert_eq!(
+        regions.iter().map(|region| region.id).collect::<Vec<_>>(),
+        [41, 42]
+    );
+    assert_eq!(regions[0].leader.as_ref().unwrap().id, 411);
+    assert!(regions[1].leader.is_none());
+    assert!(regions.iter().all(|region| region.down_peers.is_empty()));
+    assert!(regions.iter().all(|region| region.pending_peers.is_empty()));
+    assert!(regions.iter().all(|region| region.buckets.is_none()));
 }
 
 #[test]
@@ -1005,7 +1266,7 @@ fn unknown_peer_role_is_preserved_for_forward_compatible_routing() {
 
     let region = client.get_region(b"wire").unwrap();
     assert_eq!(region.peers[0].role, 99);
-    assert_eq!(region.leader.role, 99);
+    assert_eq!(region.leader.as_ref().unwrap().role, 99);
 }
 
 #[test]
