@@ -37,11 +37,14 @@ support_anchors = [
 ]
 rust_paths = [
   "rust/crates/tidb-txnkv/src/client.rs",
+  "rust/crates/tidb-txnkv/src/rpc/mod.rs",
   "rust/crates/tidb-txnkv/src/rpc/forwarding.rs",
   "rust/crates/tidb-txnkv/src/rpc/tonic_coprocessor.rs",
   "rust/crates/tidb-txnkv/src/rpc/unary.rs",
   "rust/crates/tidb-txnkv/tests/forwarding_metadata_source.rs",
   "rust/crates/tidb-distsql/src/cop_paging/direct_unary_query_transport.rs",
+  "rust/crates/tidb-distsql/src/cop_paging.rs",
   "rust/crates/tidb-distsql/src/cop_paging/forwarding.rs",
+  "rust/crates/tidb-distsql/tests/direct_unary_client_runtime_source.rs",
   "rust/crates/tidb-distsql/tests/direct_unary_forwarding_source.rs",
 ]

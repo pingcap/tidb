@@ -13,14 +13,16 @@
 // limitations under the License.
 
 use std::collections::BTreeMap;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use super::{
-    KeyRange, LeaderRequest, OwnedLeaderRoute, Peer, PeerRole, ReadPolicy, RegionAttempt,
-    RegionLoadError, RegionLocation, RegionMetadata, RegionRebuildAction, RegionRecoveryError,
-    RegionRouteError, RegionStoreTopology, RegionVerId, ReplicaReadMode, RequestSelection,
-    RequestSelector, RouteFeedback, RouteFeedbackApplication, RouteOutcome, RoutePeer,
-    RouteSnapshot, Store, StoreFailureOutcome, StoreLiveness, StoreResolveState, StoreState,
-    MAX_REPLICA_ATTEMPTS, MAX_REPLICA_ATTEMPT_TIME,
+    HealthInstant, KeyRange, LeaderRequest, OwnedLeaderRoute, Peer, PeerRole, ReadPolicy,
+    RegionAttempt, RegionLoadError, RegionLocation, RegionMetadata, RegionRebuildAction,
+    RegionRecoveryError, RegionRouteError, RegionStoreTopology, RegionVerId, ReplicaHealthFacts,
+    ReplicaReadMode, RequestSelection, RequestSelector, RouteFeedback, RouteFeedbackApplication,
+    RouteOutcome, RoutePeer, RouteSnapshot, ServerBusyAction, Store, StoreFailureOutcome,
+    StoreLabel, StoreLiveness, StoreResolveState, StoreState, MAX_REPLICA_ATTEMPTS,
+    MAX_REPLICA_ATTEMPT_TIME,
 };
 
 /// Injected PD-shaped region metadata loader.
@@ -129,6 +131,25 @@ impl<L> RegionCache<L> {
         self.stores.get(&store_id).map(RegionStoreTopology::state)
     }
 
+    /// Returns one exact PD label from the canonical store authority.
+    #[must_use]
+    pub fn store_label(&self, store_id: u64, key: &str) -> Option<&str> {
+        self.stores.get(&store_id).and_then(|store| {
+            store
+                .labels()
+                .iter()
+                .find_map(|(label_key, value)| (label_key == key).then_some(value.as_str()))
+        })
+    }
+
+    /// Returns the currently reusable proxy for one exact region.
+    #[must_use]
+    pub fn preferred_proxy(&self, region: RegionVerId) -> Option<&RegionAttempt> {
+        self.preferred_proxies
+            .get(&region)
+            .filter(|proxy| self.validate_attempt(proxy).is_ok())
+    }
+
     /// Copies one immutable routing view from the sole mutable cache authority.
     pub fn route_snapshot(&self, region: RegionVerId) -> Result<RouteSnapshot, RegionRouteError> {
         let location = self
@@ -166,11 +187,7 @@ impl<L> RegionCache<L> {
                 ))
             })
             .collect::<Result<Vec<_>, RegionRouteError>>()?;
-        let preferred_proxy = self
-            .preferred_proxies
-            .get(&region)
-            .filter(|proxy| self.validate_attempt(proxy).is_ok())
-            .cloned();
+        let preferred_proxy = self.preferred_proxy(region).cloned();
         Ok(RouteSnapshot::new(region, peers, preferred_proxy))
     }
 
@@ -261,13 +278,89 @@ impl<L> RegionCache<L> {
         })
     }
 
+    /// Applies one request-scoped busy observation to the canonical store.
+    pub fn on_server_busy(
+        &mut self,
+        selector: &mut RequestSelector,
+        attempt: &RegionAttempt,
+        estimated_wait_ms: u32,
+        now: HealthInstant,
+    ) -> Result<ServerBusyAction, RegionRecoveryError> {
+        self.validate_attempt(attempt)?;
+        if selector.region != attempt.region || selector.completed_attempt.as_ref() != Some(attempt)
+        {
+            return Err(RegionRecoveryError::StaleObservation(attempt.clone()));
+        }
+        let action = selector.record_server_busy(attempt.peer_id, estimated_wait_ms);
+        self.stores
+            .get_mut(&attempt.store_id)
+            .expect("validated attempt has a canonical store")
+            .routing_health
+            .observe_server_busy(estimated_wait_ms, now);
+        Ok(action)
+    }
+
+    /// Applies failure to the physical dispatch while preserving a failed
+    /// leader generation long enough to route that same target through a
+    /// healthy proxy.
+    pub fn on_route_send_failure(
+        &mut self,
+        request: &LeaderRequest,
+        liveness: StoreLiveness,
+    ) -> Result<StoreFailureOutcome, RegionRecoveryError> {
+        let feedback = RouteFeedback::from_request(request, RouteOutcome::Failure);
+        if request.proxy().is_some()
+            || (request.cached_leader && request.read_mode == ReplicaReadMode::Leader)
+        {
+            self.apply_route_feedback(&feedback)?;
+        } else {
+            self.validate_attempt(feedback.target())?;
+        }
+        if request.proxy().is_none()
+            && request.forwarding
+            && request.cached_leader
+            && request.read_mode == ReplicaReadMode::Leader
+            && liveness != StoreLiveness::Reachable
+            && self.has_forwarding_proxy(request.target())?
+        {
+            let store = self
+                .stores
+                .get_mut(&request.target().store_id)
+                .expect("validated route target has a canonical store");
+            store.liveness = liveness;
+            return Ok(StoreFailureOutcome::ForwardingRequired { epoch: store.epoch });
+        }
+        self.on_send_failure(feedback.dispatch_attempt(), liveness)
+    }
+
+    /// Publishes one usable route and marks its physical dispatch reachable.
+    pub fn on_route_success(
+        &mut self,
+        request: &LeaderRequest,
+    ) -> Result<RouteFeedbackApplication, RegionRecoveryError> {
+        let feedback = RouteFeedback::from_request(request, RouteOutcome::Success);
+        let application = if request.proxy().is_some()
+            || (request.cached_leader && request.read_mode == ReplicaReadMode::Leader)
+        {
+            self.apply_route_feedback(&feedback)?
+        } else {
+            self.validate_attempt(feedback.target())?;
+            RouteFeedbackApplication::Unchanged
+        };
+        self.stores
+            .get_mut(&feedback.dispatch_attempt().store_id)
+            .expect("validated dispatch has a canonical store")
+            .liveness = StoreLiveness::Reachable;
+        Ok(application)
+    }
+
     /// Creates a request-scoped selector over one exact cached region.
     pub fn request_selector(
         &self,
         region: RegionVerId,
         policy: ReadPolicy,
     ) -> Result<RequestSelector, RegionRouteError> {
-        if policy.forwarding || (policy.stale_read && policy.mode != ReplicaReadMode::Mixed) {
+        if policy.stale_read && policy.mode != ReplicaReadMode::Mixed {
             return Err(RegionRouteError::UnsupportedReadPolicy);
         }
         let Some(location) = self
@@ -289,9 +382,16 @@ impl<L> RegionCache<L> {
         &mut self,
         selector: &mut RequestSelector,
     ) -> Result<RequestSelection, RegionRouteError> {
-        if selector.policy.forwarding
-            || (selector.policy.stale_read && selector.policy.mode != ReplicaReadMode::Mixed)
-        {
+        self.select_request_at(selector, health_now())
+    }
+
+    /// Selects using an injected monotonic health instant.
+    pub fn select_request_at(
+        &mut self,
+        selector: &mut RequestSelector,
+        now: HealthInstant,
+    ) -> Result<RequestSelection, RegionRouteError> {
+        if selector.policy.stale_read && selector.policy.mode != ReplicaReadMode::Mixed {
             return Err(RegionRouteError::UnsupportedReadPolicy);
         }
         if let Some(pending) = &selector.pending_attempt {
@@ -312,10 +412,22 @@ impl<L> RegionCache<L> {
 
         let leader_peer_id = location.leader_peer_id;
         selector.observe_leader(leader_peer_id);
-        let selected = if selector.policy.mode == ReplicaReadMode::Leader {
-            self.select_leader_semantics(selector, location, leader_peer_id)?
+        let (selected, proxy) = if selector.policy.mode == ReplicaReadMode::Leader {
+            let selected = if selector.policy.forwarding {
+                self.select_forwarding_leader(selector, location, leader_peer_id, now)?
+            } else {
+                self.select_leader_semantics(selector, location, leader_peer_id, now)?
+                    .map(|peer| (peer, None))
+            };
+            match selected {
+                Some((peer, proxy)) => (Some(peer), proxy),
+                None => (None, None),
+            }
         } else {
-            self.select_replica_read(selector, location, leader_peer_id)?
+            (
+                self.select_replica_read(selector, location, leader_peer_id, now)?,
+                None,
+            )
         };
 
         let Some(peer) = selected else {
@@ -336,15 +448,16 @@ impl<L> RegionCache<L> {
         };
         let cached_leader = Some(peer.id) == leader_peer_id;
         let (replica_read, stale_read) = request_flags(selector, cached_leader);
-        selector.record_dispatch(attempt.clone());
+        selector.record_route_dispatch(attempt.clone(), proxy.as_ref());
         Ok(RequestSelection::Attempt(LeaderRequest {
             attempt,
-            proxy: None,
+            proxy,
             role: peer.role,
             is_witness: peer.is_witness,
             replica_read,
             stale_read,
             cached_leader,
+            forwarding: selector.policy.forwarding,
             read_mode: selector.policy.mode,
         }))
     }
@@ -370,9 +483,10 @@ impl<L> RegionCache<L> {
 
     fn select_leader_semantics(
         &self,
-        selector: &RequestSelector,
+        selector: &mut RequestSelector,
         location: &RegionLocation,
         leader_peer_id: Option<u64>,
+        now: HealthInstant,
     ) -> Result<Option<Peer>, RegionRouteError> {
         let leader = leader_peer_id
             .and_then(|peer_id| location.peers.iter().find(|peer| peer.id == peer_id));
@@ -381,6 +495,16 @@ impl<L> RegionCache<L> {
                 && selector.attempted_time_for(peer.id) < MAX_REPLICA_ATTEMPT_TIME
                 && self.peer_is_candidate(peer, true, false)?
             {
+                if !self.leader_is_busy(selector, peer, now)? {
+                    return Ok(Some(peer.clone()));
+                }
+                if let Some(idle) =
+                    self.select_replica_read(selector, location, leader_peer_id, now)?
+                {
+                    return Ok(Some(idle));
+                }
+                let cleared = selector.clear_busy_threshold_for_leader_fallback();
+                debug_assert!(cleared);
                 return Ok(Some(peer.clone()));
             }
         }
@@ -395,11 +519,118 @@ impl<L> RegionCache<L> {
         Ok(None)
     }
 
+    fn select_forwarding_leader(
+        &self,
+        selector: &mut RequestSelector,
+        location: &RegionLocation,
+        leader_peer_id: Option<u64>,
+        now: HealthInstant,
+    ) -> Result<Option<(Peer, Option<RegionAttempt>)>, RegionRouteError> {
+        let Some(leader) = leader_peer_id
+            .and_then(|peer_id| location.peers.iter().find(|peer| peer.id == peer_id))
+        else {
+            return Ok(None);
+        };
+        let target_store = self
+            .stores
+            .get(&leader.store_id)
+            .ok_or(RegionRouteError::MissingStore(leader.store_id))?;
+        if target_store.resolve_state != StoreResolveState::Resolved
+            || target_store.address.is_empty()
+            || leader.store_epoch != target_store.epoch
+        {
+            return Ok(None);
+        }
+        if target_store.liveness == StoreLiveness::Reachable {
+            return self
+                .select_leader_semantics(selector, location, leader_peer_id, now)
+                .map(|peer| peer.map(|peer| (peer, None)));
+        }
+
+        let mut proxy_peer = None;
+        if let Some(preferred) = self.preferred_proxies.get(&location.region) {
+            if let Some(peer) = location.peers.iter().find(|peer| {
+                peer.id == preferred.peer_id
+                    && peer.store_id == preferred.store_id
+                    && peer.store_epoch == preferred.store_epoch
+            }) {
+                if selector.attempts_for(peer.id) == 0
+                    && self.peer_is_candidate(peer, false, true)?
+                {
+                    proxy_peer = Some(peer);
+                }
+            }
+        }
+        if proxy_peer.is_none() {
+            for peer in &location.peers {
+                if peer.id != leader.id
+                    && selector.attempts_for(peer.id) == 0
+                    && self.peer_is_candidate(peer, false, true)?
+                {
+                    proxy_peer = Some(peer);
+                    break;
+                }
+            }
+        }
+        let Some(proxy_peer) = proxy_peer else {
+            return Ok(None);
+        };
+        let proxy_store = self
+            .stores
+            .get(&proxy_peer.store_id)
+            .ok_or(RegionRouteError::MissingStore(proxy_peer.store_id))?;
+        Ok(Some((
+            leader.clone(),
+            Some(RegionAttempt {
+                region: location.region,
+                peer_id: proxy_peer.id,
+                store_id: proxy_peer.store_id,
+                address: proxy_store.address.clone(),
+                store_epoch: proxy_store.epoch,
+            }),
+        )))
+    }
+
+    fn leader_is_busy(
+        &self,
+        selector: &RequestSelector,
+        leader: &Peer,
+        now: HealthInstant,
+    ) -> Result<bool, RegionRouteError> {
+        let threshold = selector.busy_threshold();
+        if threshold.is_zero() {
+            return Ok(false);
+        }
+        let store = self
+            .stores
+            .get(&leader.store_id)
+            .ok_or(RegionRouteError::MissingStore(leader.store_id))?;
+        Ok(store.routing_health.load.estimated_wait(now) > threshold
+            || selector.peer_reported_busy(leader.id))
+    }
+
+    fn has_forwarding_proxy(&self, target: &RegionAttempt) -> Result<bool, RegionRecoveryError> {
+        let Some(location) = self
+            .regions
+            .iter()
+            .find(|location| location.region == target.region)
+        else {
+            return Ok(false);
+        };
+        for peer in &location.peers {
+            if peer.id != target.peer_id && self.peer_is_candidate(peer, false, true)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     fn select_replica_read(
         &self,
         selector: &RequestSelector,
         location: &RegionLocation,
         leader_peer_id: Option<u64>,
+        now: HealthInstant,
     ) -> Result<Option<Peer>, RegionRouteError> {
         if selector.policy.stale_read && selector.dispatches == 1 {
             if let Some(leader) = leader_peer_id
@@ -428,7 +659,32 @@ impl<L> RegionCache<L> {
             if selector.attempts_for(peer.id) >= max_attempts {
                 continue;
             }
-            let score = replica_score(selector, peer, is_leader);
+            let store = self
+                .stores
+                .get(&peer.store_id)
+                .ok_or(RegionRouteError::MissingStore(peer.store_id))?;
+            let labels = store
+                .labels()
+                .iter()
+                .map(|(key, value)| StoreLabel {
+                    key: key.clone(),
+                    value: value.clone(),
+                })
+                .collect::<Vec<_>>();
+            let facts = ReplicaHealthFacts {
+                store_id: peer.store_id,
+                labels: &labels,
+                is_leader,
+                is_learner: peer.role == PeerRole::Learner,
+                attempts: selector.attempts_for(peer.id),
+                reported_busy: selector.peer_reported_busy(peer.id),
+                health: store.routing_health.health.detail(),
+                load: store.routing_health.load,
+            };
+            if !selector.health_policy.is_candidate(facts, now) {
+                continue;
+            }
+            let score = selector.health_policy.score(facts);
             match best_score {
                 None => {
                     best_score = Some(score);
@@ -755,30 +1011,18 @@ impl<L> RegionCache<L> {
     }
 }
 
-fn replica_score(selector: &RequestSelector, peer: &Peer, is_leader: bool) -> u8 {
-    const NOT_ATTEMPTED: u8 = 1;
-    const NORMAL_PEER: u8 = 1 << 1;
-    const PREFER_LEADER: u8 = 1 << 2;
-
-    let mut score = 0;
-    if selector.attempts_for(peer.id) == 0 {
-        score |= NOT_ATTEMPTED;
-    }
-    if is_leader {
-        match selector.policy.mode {
-            ReplicaReadMode::Mixed => score |= NORMAL_PEER,
-            ReplicaReadMode::PreferLeader => score |= PREFER_LEADER,
-            ReplicaReadMode::Leader | ReplicaReadMode::Follower | ReplicaReadMode::Learner => {}
-        }
-    } else if selector.policy.mode != ReplicaReadMode::Learner || peer.role == PeerRole::Learner {
-        score |= NORMAL_PEER;
-    }
-    score
+fn health_now() -> Duration {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or(Duration::ZERO)
 }
 
 fn request_flags(selector: &RequestSelector, cached_leader: bool) -> (bool, bool) {
     if selector.policy.mode == ReplicaReadMode::Leader {
-        return (false, false);
+        return (
+            !cached_leader && !selector.busy_threshold().is_zero(),
+            false,
+        );
     }
     if !selector.policy.stale_read {
         return (!cached_leader, false);
@@ -831,6 +1075,7 @@ fn normalize_loaded(
                             epoch: supplied.epoch,
                             resolve_state: StoreResolveState::Resolved,
                             liveness: StoreLiveness::Reachable,
+                            routing_health: super::StoreRoutingHealth::default(),
                         },
                         supplied_labels,
                     ),

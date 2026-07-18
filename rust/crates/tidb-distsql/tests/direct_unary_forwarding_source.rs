@@ -114,6 +114,7 @@ fn attempt(peer_id: u64, store_id: u64) -> RegionAttempt {
 }
 
 fn route(target_store: u64, proxy_store: Option<u64>) -> LeaderRequest {
+    let forwarding = proxy_store.is_some();
     LeaderRequest {
         attempt: attempt(target_store, target_store),
         proxy: proxy_store.map(|store| attempt(store, store)),
@@ -122,6 +123,7 @@ fn route(target_store: u64, proxy_store: Option<u64>) -> LeaderRequest {
         replica_read: false,
         stale_read: false,
         cached_leader: true,
+        forwarding,
         read_mode: ReplicaReadMode::Leader,
     }
 }

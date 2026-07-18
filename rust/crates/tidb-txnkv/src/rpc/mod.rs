@@ -6,6 +6,7 @@
 
 mod channel_pool;
 mod error;
+mod forwarding;
 mod liveness;
 mod tonic_coprocessor;
 mod unary;

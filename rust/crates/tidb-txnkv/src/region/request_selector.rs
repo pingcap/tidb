@@ -15,7 +15,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
-use super::{PeerRole, ReadPolicy, RegionAttempt, RegionVerId, ReplicaReadMode};
+use super::{
+    PeerRole, ReadPolicy, RegionAttempt, RegionVerId, ReplicaHealthPolicy, ReplicaReadMode,
+};
 
 /// Typed request-scoped recovery returned by the canonical region-error path.
 ///
@@ -75,6 +77,8 @@ pub struct LeaderRequest {
     pub stale_read: bool,
     /// Whether this peer was the cached leader when selected.
     pub cached_leader: bool,
+    /// Whether this request may preserve an unreachable leader for proxying.
+    pub forwarding: bool,
     /// Effective request-scoped selector mode for this immutable dispatch.
     pub read_mode: ReplicaReadMode,
 }
@@ -137,7 +141,7 @@ pub struct RequestSelector {
     pub(crate) completed_attempt: Option<RegionAttempt>,
     pub(crate) data_not_ready_peers: BTreeSet<u64>,
     pub(crate) server_busy_peers: BTreeSet<u64>,
-    pub(crate) busy_threshold: Duration,
+    pub(crate) health_policy: ReplicaHealthPolicy,
     pub(crate) dispatches: u32,
 }
 
@@ -156,7 +160,15 @@ impl RequestSelector {
             completed_attempt: None,
             data_not_ready_peers: BTreeSet::new(),
             server_busy_peers: BTreeSet::new(),
-            busy_threshold: Duration::ZERO,
+            health_policy: ReplicaHealthPolicy {
+                try_leader: matches!(
+                    policy.mode,
+                    ReplicaReadMode::Mixed | ReplicaReadMode::PreferLeader
+                ),
+                prefer_leader: policy.mode == ReplicaReadMode::PreferLeader,
+                learner_only: policy.mode == ReplicaReadMode::Learner,
+                ..ReplicaHealthPolicy::default()
+            },
             dispatches: 0,
         }
     }
@@ -169,13 +181,27 @@ impl RequestSelector {
 
     /// Sets the optimistic wait threshold used to divert read-only requests.
     pub fn set_busy_threshold(&mut self, threshold: Duration) {
-        self.busy_threshold = threshold;
+        self.health_policy.busy_threshold = threshold;
     }
 
     /// Current request-owned busy threshold.
     #[must_use]
     pub const fn busy_threshold(&self) -> Duration {
-        self.busy_threshold
+        self.health_policy.busy_threshold
+    }
+
+    /// Replaces request-local label, store, leader-preference, and busy policy.
+    ///
+    /// The cache consumes this immutable policy but remains the only owner of
+    /// mutable store health and topology.
+    pub fn set_health_policy(&mut self, policy: ReplicaHealthPolicy) {
+        self.health_policy = policy;
+    }
+
+    /// Current request-local replica health policy.
+    #[must_use]
+    pub const fn health_policy(&self) -> &ReplicaHealthPolicy {
+        &self.health_policy
     }
 
     /// Records the exact peer which returned `ServerIsBusy`.
@@ -201,16 +227,28 @@ impl RequestSelector {
         self.server_busy_peers.contains(&peer_id)
     }
 
+    /// Consumes the exact completed busy attempt before a request-local retry.
+    #[must_use]
+    pub fn acknowledge_server_busy(&mut self, attempt: &RegionAttempt) -> bool {
+        if self.completed_attempt.as_ref() != Some(attempt)
+            || !self.server_busy_peers.contains(&attempt.peer_id)
+        {
+            return false;
+        }
+        self.completed_attempt = None;
+        true
+    }
+
     /// Clears the threshold before retrying the leader after no idle replica.
     ///
     /// Returning `false` when no threshold was configured lets callers avoid a
     /// duplicate fallback transition.
     #[must_use]
     pub fn clear_busy_threshold_for_leader_fallback(&mut self) -> bool {
-        if self.busy_threshold.is_zero() {
+        if self.health_policy.busy_threshold.is_zero() {
             return false;
         }
-        self.busy_threshold = Duration::ZERO;
+        self.health_policy.busy_threshold = Duration::ZERO;
         true
     }
 
@@ -293,9 +331,17 @@ impl RequestSelector {
         }
     }
 
-    pub(crate) fn record_dispatch(&mut self, attempt: RegionAttempt) {
+    pub(crate) fn record_route_dispatch(
+        &mut self,
+        attempt: RegionAttempt,
+        proxy: Option<&RegionAttempt>,
+    ) {
         let state = self.attempts_by_peer.entry(attempt.peer_id).or_default();
         state.attempts = state.attempts.saturating_add(1);
+        if let Some(proxy) = proxy {
+            let state = self.attempts_by_peer.entry(proxy.peer_id).or_default();
+            state.attempts = state.attempts.saturating_add(1);
+        }
         self.pending_attempt = Some(attempt);
         self.completed_attempt = None;
         self.dispatches = self.dispatches.saturating_add(1);

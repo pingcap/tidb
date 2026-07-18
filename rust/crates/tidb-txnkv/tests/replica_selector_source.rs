@@ -123,12 +123,18 @@ fn supported_replica_read_policies_create_request_scoped_selectors() {
 }
 
 #[test]
-fn forwarding_and_invalid_stale_policy_combinations_fail_closed() {
+fn leader_forwarding_is_admitted_and_invalid_stale_combinations_fail_closed() {
+    assert!(cache()
+        .request_selector(
+            location().region,
+            ReadPolicy {
+                forwarding: true,
+                ..ReadPolicy::default()
+            },
+        )
+        .is_ok());
+
     for policy in [
-        ReadPolicy {
-            forwarding: true,
-            ..ReadPolicy::default()
-        },
         ReadPolicy {
             mode: ReplicaReadMode::Leader,
             stale_read: true,

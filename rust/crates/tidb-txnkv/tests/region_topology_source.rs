@@ -15,11 +15,12 @@
 #![allow(missing_docs)]
 
 use std::collections::{BTreeMap, VecDeque};
+use std::time::Duration;
 
 use tidb_txnkv::region::{
     LeaderRequest, Peer, PeerRole, ReadPolicy, RegionAttempt, RegionCache, RegionLoadError,
     RegionLoader, RegionLocation, RegionVerId, ReplicaReadMode, RequestSelection, RouteFeedback,
-    RouteFeedbackApplication, RouteOutcome, Store, StoreLiveness,
+    RouteFeedbackApplication, RouteOutcome, Store, StoreFailureOutcome, StoreLiveness,
 };
 
 struct Loader {
@@ -79,6 +80,7 @@ fn request(target: RegionAttempt, proxy: Option<RegionAttempt>) -> LeaderRequest
         replica_read: false,
         stale_read: false,
         cached_leader: true,
+        forwarding: true,
         read_mode: ReplicaReadMode::Leader,
     }
 }
@@ -250,4 +252,152 @@ fn one_store_failure_invalidates_every_region_snapshot_of_that_generation() {
             region: right_version
         }
     );
+}
+
+#[test]
+fn forwarding_runtime_preserves_target_rotates_proxy_reuses_and_recovers_direct() {
+    let location = region(
+        12,
+        b"",
+        b"",
+        &[
+            (51, 501, PeerRole::Voter),
+            (52, 502, PeerRole::Voter),
+            (53, 503, PeerRole::Voter),
+        ],
+    );
+    let mut cache = RegionCache::new(Loader {
+        locations: VecDeque::from([location]),
+        labels: BTreeMap::new(),
+    });
+    let version = cache.locate_key(b"k").unwrap().region;
+    let policy = ReadPolicy {
+        forwarding: true,
+        ..ReadPolicy::default()
+    };
+    let mut selector = cache.request_selector(version, policy).unwrap();
+
+    let RequestSelection::Attempt(direct) = cache.select_request(&mut selector).unwrap() else {
+        panic!("leader must be tried directly first")
+    };
+    assert_eq!(direct.target().store_id, 501);
+    assert!(direct.proxy().is_none());
+    assert!(selector.record_attempt_result(direct.target(), Duration::from_millis(1)));
+    assert_eq!(
+        cache
+            .on_route_send_failure(&direct, StoreLiveness::Unreachable)
+            .unwrap(),
+        StoreFailureOutcome::ForwardingRequired { epoch: 0 }
+    );
+    assert_eq!(cache.store_state(501).unwrap().epoch(), 0);
+
+    let RequestSelection::Attempt(first_proxy) = cache.select_request(&mut selector).unwrap()
+    else {
+        panic!("unreachable leader must retain its identity through a proxy")
+    };
+    assert_eq!(first_proxy.target(), direct.target());
+    assert_eq!(first_proxy.proxy().map(|proxy| proxy.store_id), Some(502));
+    assert_eq!(first_proxy.dispatch_address(), "store-502");
+    assert_eq!(first_proxy.forwarded_host(), Some("store-501"));
+    assert!(selector.record_attempt_result(first_proxy.target(), Duration::from_millis(1)));
+    cache
+        .on_route_send_failure(&first_proxy, StoreLiveness::Unreachable)
+        .unwrap();
+    assert_eq!(cache.store_state(501).unwrap().epoch(), 0);
+    assert_eq!(cache.store_state(502).unwrap().epoch(), 1);
+
+    let RequestSelection::Attempt(second_proxy) = cache.select_request(&mut selector).unwrap()
+    else {
+        panic!("failed physical proxy must rotate without changing the target")
+    };
+    assert_eq!(second_proxy.target(), direct.target());
+    assert_eq!(second_proxy.proxy().map(|proxy| proxy.store_id), Some(503));
+    assert!(selector.record_attempt_result(second_proxy.target(), Duration::from_millis(1)));
+    assert_eq!(
+        cache.on_route_success(&second_proxy).unwrap(),
+        RouteFeedbackApplication::ProxyPublished
+    );
+
+    let mut fresh = cache.request_selector(version, policy).unwrap();
+    let RequestSelection::Attempt(reused) = cache.select_request(&mut fresh).unwrap() else {
+        panic!("fresh selector must reuse the proven proxy")
+    };
+    assert_eq!(reused.proxy().map(|proxy| proxy.store_id), Some(503));
+
+    cache
+        .on_send_failure(direct.target(), StoreLiveness::Reachable)
+        .unwrap();
+    let mut recovered = cache.request_selector(version, policy).unwrap();
+    let RequestSelection::Attempt(recovered_direct) = cache.select_request(&mut recovered).unwrap()
+    else {
+        panic!("reachable leader must return to direct dispatch")
+    };
+    assert!(recovered_direct.proxy().is_none());
+    assert_eq!(recovered_direct.dispatch_address(), "store-501");
+    assert_eq!(
+        cache.on_route_success(&recovered_direct).unwrap(),
+        RouteFeedbackApplication::ProxyCleared
+    );
+    assert!(cache.preferred_proxy(version).is_none());
+}
+
+#[test]
+fn busy_runtime_executes_the_exact_500_800_150_diversion_sequence() {
+    let location = region(
+        13,
+        b"",
+        b"",
+        &[
+            (61, 601, PeerRole::Voter),
+            (62, 602, PeerRole::Voter),
+            (63, 603, PeerRole::Voter),
+        ],
+    );
+    let mut cache = RegionCache::new(Loader {
+        locations: VecDeque::from([location]),
+        labels: BTreeMap::new(),
+    });
+    let version = cache.locate_key(b"k").unwrap().region;
+    let start = Duration::from_secs(1);
+    let mut selector = cache
+        .request_selector(version, ReadPolicy::default())
+        .unwrap();
+    selector.set_busy_threshold(Duration::from_millis(50));
+
+    for (expected_peer, estimated_wait_ms) in [(61, 500), (62, 800), (63, 150)] {
+        let RequestSelection::Attempt(selected) =
+            cache.select_request_at(&mut selector, start).unwrap()
+        else {
+            panic!("an idle replica must remain before the final busy response")
+        };
+        assert_eq!(selected.target().peer_id, expected_peer);
+        assert!(selector.record_attempt_result(selected.target(), Duration::from_millis(1)));
+        cache
+            .on_server_busy(&mut selector, selected.target(), estimated_wait_ms, start)
+            .unwrap();
+        assert!(selector.acknowledge_server_busy(selected.target()));
+    }
+
+    let RequestSelection::Attempt(fallback) =
+        cache.select_request_at(&mut selector, start).unwrap()
+    else {
+        panic!("all-busy fallback must retain the region and retry its leader")
+    };
+    assert_eq!(fallback.target().peer_id, 61);
+    assert!(!fallback.replica_read);
+    assert_eq!(selector.busy_threshold(), Duration::ZERO);
+    assert_eq!(cache.len(), 1);
+
+    let mut fresh = cache
+        .request_selector(version, ReadPolicy::default())
+        .unwrap();
+    fresh.set_busy_threshold(Duration::from_millis(50));
+    let RequestSelection::Attempt(least_busy) = cache
+        .select_request_at(&mut fresh, start + Duration::from_millis(120))
+        .unwrap()
+    else {
+        panic!("decayed 150ms follower must be selected by the fresh request")
+    };
+    assert_eq!(least_busy.target().peer_id, 63);
+    assert!(least_busy.replica_read);
 }

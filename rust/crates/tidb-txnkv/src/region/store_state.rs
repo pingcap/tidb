@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::StoreRoutingHealth;
+
 /// Foreground TiKV liveness result shared by transport and region routing.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum StoreLiveness {
@@ -42,6 +44,7 @@ pub struct StoreState {
     pub(crate) epoch: u64,
     pub(crate) resolve_state: StoreResolveState,
     pub(crate) liveness: StoreLiveness,
+    pub(crate) routing_health: StoreRoutingHealth,
 }
 
 impl StoreState {
@@ -74,6 +77,12 @@ impl StoreState {
     pub const fn liveness(&self) -> StoreLiveness {
         self.liveness
     }
+
+    /// Immutable load and slow-health facts used by replica policy.
+    #[must_use]
+    pub const fn routing_health(&self) -> &StoreRoutingHealth {
+        &self.routing_health
+    }
 }
 
 /// Exact result of applying one foreground send-failure observation.
@@ -82,6 +91,12 @@ pub enum StoreFailureOutcome {
     /// The health request proved the observed store generation is reachable.
     Reachable {
         /// Unchanged canonical store epoch.
+        epoch: u64,
+    },
+    /// A failed direct leader remains the logical target while a healthy
+    /// follower can serve as its physical proxy.
+    ForwardingRequired {
+        /// Preserved canonical leader generation.
         epoch: u64,
     },
     /// A non-reachable result invalidated exactly the observed generation.

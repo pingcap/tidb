@@ -30,6 +30,7 @@ fn attempt(peer_id: u64, store_id: u64, address: &str, store_epoch: u64) -> Regi
 }
 
 fn request(proxy: Option<RegionAttempt>) -> LeaderRequest {
+    let forwarding = proxy.is_some();
     LeaderRequest {
         attempt: attempt(11, 101, "leader:20160", 3),
         proxy,
@@ -38,6 +39,7 @@ fn request(proxy: Option<RegionAttempt>) -> LeaderRequest {
         replica_read: false,
         stale_read: false,
         cached_leader: true,
+        forwarding,
         read_mode: ReplicaReadMode::Leader,
     }
 }

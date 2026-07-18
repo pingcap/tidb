@@ -816,7 +816,7 @@ fn production_metadata_drives_supported_replica_policies_and_exact_request_flags
 }
 
 #[test]
-fn labels_and_load_inputs_fail_closed_instead_of_silently_changing_selection() {
+fn labels_and_load_inputs_are_consumed_by_the_live_selector() {
     let configurations: [fn(&mut KvRequestMetadata); 2] = [
         |metadata: &mut KvRequestMetadata| {
             metadata.match_store_labels.push(tidb_distsql::StoreLabel {
@@ -832,26 +832,24 @@ fn labels_and_load_inputs_fail_closed_instead_of_silently_changing_selection() {
         let mut metadata = metadata("a", "z");
         metadata.session.replica_read = ReplicaReadType::Mixed;
         configure(&mut metadata);
+        let calls = Rc::new(RefCell::new(Vec::new()));
         let mut runtime = InjectedQueryRuntime::new(transport(
-            Rc::new(RefCell::new(Vec::new())),
-            [Ok(response(b"must-not-send"))],
+            Rc::clone(&calls),
+            [Ok(response(b"selected"))],
             [location_with_three_peers(1, "a", "z", "tikv-policy")],
         ));
-        let error = match runtime.select_with_runtime_stats(
-            &transport_request(metadata),
-            SelectInput::default(),
-            QueryResultContext::new(Vec::new(), WarningCollector::new()),
-            vec![1],
-            2,
-            true,
-        ) {
-            Ok(_) => panic!("unsupported selector metadata must fail before dispatch"),
-            Err(error) => error,
-        };
-        assert!(
-            error.to_string().contains("UnsupportedReadPolicy"),
-            "{error}"
-        );
+        let mut result = runtime
+            .select_with_runtime_stats(
+                &transport_request(metadata),
+                SelectInput::default(),
+                QueryResultContext::new(Vec::new(), WarningCollector::new()),
+                vec![1],
+                2,
+                true,
+            )
+            .expect("Campaign 14 selector metadata is supported");
+        assert_eq!(result.next_raw().unwrap(), Some(b"selected".to_vec()));
+        assert_eq!(calls.borrow().len(), 1);
     }
 }
 
@@ -1972,12 +1970,12 @@ fn unsupported_operation_fails_before_preparing_or_sending() {
 }
 
 #[test]
-fn unsupported_replica_policy_fails_before_pd_or_tikv() {
+fn closest_replica_policy_with_labels_reaches_the_live_selector() {
     let calls = Rc::new(RefCell::new(Vec::new()));
     let loader_calls = Rc::new(RefCell::new(Vec::new()));
     let mut runtime = InjectedQueryRuntime::new(transport_with_loader_calls(
         Rc::clone(&calls),
-        std::iter::empty(),
+        [Ok(response(b"closest"))],
         [location(1, "a", "z", "one")],
         9001,
         Rc::clone(&loader_calls),
@@ -1991,21 +1989,19 @@ fn unsupported_replica_policy_fails_before_pd_or_tikv() {
             value: "z1".to_owned(),
         });
 
-    let error = runtime
+    let mut result = runtime
         .select_with_runtime_stats(
             &transport_request(closest_with_labels),
             SelectInput::default(),
             QueryResultContext::new(Vec::new(), WarningCollector::new()),
-            Vec::new(),
-            0,
-            false,
+            vec![1],
+            2,
+            true,
         )
-        .err()
-        .unwrap()
-        .to_string();
-    assert!(error.contains("UnsupportedReadPolicy"), "{error}");
-    assert!(calls.borrow().is_empty());
-    assert!(loader_calls.borrow().is_empty());
+        .expect("closest label policy is supported");
+    assert_eq!(result.next_raw().unwrap(), Some(b"closest".to_vec()));
+    assert_eq!(calls.borrow().len(), 1);
+    assert_eq!(loader_calls.borrow().as_slice(), &[b"a".to_vec()]);
 }
 
 #[test]

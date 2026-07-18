@@ -40,8 +40,8 @@ use prost::Message;
 use tidb_txnkv::region::{
     KeyRange as RegionKeyRange, LeaderRequest, ReadPolicy, RegionAttempt, RegionBackoffBudget,
     RegionBackoffKind, RegionCache, RegionErrorDisposition, RegionLoader, RegionLocation,
-    RegionRecoveryLoader, RegionRouteError, RegionVerId, ReplicaReadMode, RequestSelection,
-    RequestSelector,
+    RegionRecoveryLoader, RegionRouteError, RegionVerId, ReplicaHealthPolicy, ReplicaReadMode,
+    RequestSelection, RequestSelector, StoreLabel as RoutingStoreLabel,
 };
 pub use tidb_txnkv::{
     DirectUnaryClient, DirectUnaryClientError, DirectUnaryRequest, DirectUnaryResponse,
@@ -89,6 +89,8 @@ pub struct DirectUnaryRuntimeConfig {
     pub region_retry_max_sleep: Duration,
     /// Whether leader requests may use a cache-selected physical proxy.
     pub enable_forwarding: bool,
+    /// TiDB's configured local `zone` label for exact traffic classification.
+    pub local_zone_label: Option<String>,
 }
 
 impl std::fmt::Debug for DirectUnaryRuntimeConfig {
@@ -104,6 +106,7 @@ impl std::fmt::Debug for DirectUnaryRuntimeConfig {
             .field("region_retry_waiter", &self.region_retry_waiter)
             .field("region_retry_max_sleep", &self.region_retry_max_sleep)
             .field("enable_forwarding", &self.enable_forwarding)
+            .field("local_zone_label", &self.local_zone_label)
             .finish()
     }
 }
@@ -120,6 +123,7 @@ impl Default for DirectUnaryRuntimeConfig {
             region_retry_waiter: Rc::new(ExactRegionRetryWaiter),
             region_retry_max_sleep: Duration::from_secs(20),
             enable_forwarding: false,
+            local_zone_label: None,
         }
     }
 }
@@ -493,13 +497,6 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
 fn read_policy_from_metadata(
     metadata: &crate::KvRequestMetadata,
 ) -> Result<ReadPolicy, DirectUnaryTransportError> {
-    // Closest modes require label filtering, and a nonzero busy threshold
-    // requires load/slow-score state not yet represented by this runtime.
-    // Silently dropping either would change which TiKV serves the request.
-    if !metadata.match_store_labels.is_empty() || metadata.session.store_busy_threshold_ms != 0 {
-        return Err(RegionRouteError::UnsupportedReadPolicy.into());
-    }
-
     let mode = match metadata.session.replica_read {
         ReplicaReadType::Leader => ReplicaReadMode::Leader,
         ReplicaReadType::Follower => ReplicaReadMode::Follower,
@@ -690,23 +687,46 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         if replace_selector {
             let mut read_policy = self.read_policy;
             read_policy.selection_seed = self.selection_seed;
-            let selector = self
+            let mut selector = self
                 .shared_runtime
                 .region_cache()
                 .try_borrow_mut()
                 .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle)?
                 .request_selector(region, read_policy)?;
+            selector.set_health_policy(ReplicaHealthPolicy {
+                try_leader: matches!(
+                    read_policy.mode,
+                    ReplicaReadMode::Mixed | ReplicaReadMode::PreferLeader
+                ),
+                prefer_leader: read_policy.mode == ReplicaReadMode::PreferLeader,
+                learner_only: read_policy.mode == ReplicaReadMode::Learner,
+                labels: self
+                    .metadata
+                    .match_store_labels
+                    .iter()
+                    .map(|label| RoutingStoreLabel {
+                        key: label.key.clone(),
+                        value: label.value.clone(),
+                    })
+                    .collect(),
+                stores: Vec::new(),
+                busy_threshold: Duration::from_millis(
+                    self.metadata.session.store_busy_threshold_ms,
+                ),
+            });
             self.request_selectors.insert(logical_task_id, selector);
         }
-        let selection = {
+        let (selection, effective_busy_threshold) = {
             let selector = self.request_selectors.get_mut(&logical_task_id).ok_or(
                 DirectUnaryTransportError::ResponseState("request selector was not installed"),
             )?;
-            self.shared_runtime
+            let selection = self
+                .shared_runtime
                 .region_cache()
                 .try_borrow_mut()
                 .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle)?
-                .select_request(selector)?
+                .select_request(selector)?;
+            (selection, selector.busy_threshold())
         };
         let selected = match selection {
             RequestSelection::Attempt(selected) => selected,
@@ -722,7 +742,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             .ok_or(DirectUnaryTransportError::ResponseState(
                 "active task has no read-byte prediction",
             ))?;
-        let request = build_tikv_unary_request_for_dispatch(
+        let mut request = build_tikv_unary_request_for_dispatch(
             &prepared,
             &self.metadata,
             predicted_read_bytes,
@@ -730,6 +750,8 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             self.cluster_id,
             &selected,
         );
+        request.context.busy_threshold_ms =
+            u32::try_from(effective_busy_threshold.as_millis()).unwrap_or(u32::MAX);
         if request.endpoint != EndpointType::TiKv {
             return Err(DirectUnaryTransportError::ResponseState(
                 "direct unary request selected a non-TiKV endpoint",
@@ -749,10 +771,23 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         };
         let dispatch = UnaryRouteDispatch::from_request(&selected);
         let request_bytes = client_request.encoded_request.len();
-        // Campaign 14's topology composition supplies exact locality after
-        // label-bearing RouteSnapshot lands. Unknown still preserves total
-        // bytes and never misclassifies local traffic as cross-zone.
-        let traffic_location = UnaryTrafficLocation::from_cross_zone(None);
+        let target_zone = self
+            .shared_runtime
+            .region_cache()
+            .try_borrow()
+            .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle)?
+            .store_label(selected.target().store_id, "zone")
+            .map(str::to_owned);
+        let cross_zone = match (
+            self.config.local_zone_label.as_deref(),
+            target_zone.as_deref(),
+        ) {
+            (Some(local), Some(target)) if !local.is_empty() && !target.is_empty() => {
+                Some(local != target)
+            }
+            _ => None,
+        };
+        let traffic_location = UnaryTrafficLocation::from_cross_zone(cross_zone);
         self.network_metrics
             .on_request(request_bytes, selected.stale_read, traffic_location);
         let dispatch_started = Instant::now();
@@ -815,14 +850,20 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         if selected.stale_read {
             self.network_metrics.on_stale_read_result(true);
         }
-        let _feedback = dispatch.feedback(&selected, tidb_txnkv::region::RouteOutcome::Success);
         self.record_attempt_result(logical_task_id, &selected, dispatch_duration)?;
-        self.shared_runtime
-            .region_cache()
-            .try_borrow_mut()
-            .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle)?
-            .promote_successful_request(&selected)
-            .map_err(|error| DirectUnaryTransportError::RegionRecovery(error.to_string()))?;
+        {
+            let mut region_cache = self
+                .shared_runtime
+                .region_cache()
+                .try_borrow_mut()
+                .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle)?;
+            region_cache
+                .on_route_success(&selected)
+                .map_err(|error| DirectUnaryTransportError::RegionRecovery(error.to_string()))?;
+            region_cache
+                .promote_successful_request(&selected)
+                .map_err(|error| DirectUnaryTransportError::RegionRecovery(error.to_string()))?;
+        }
         if let Some(lock) = locked {
             let action = self
                 .locked_response_delegate
@@ -933,7 +974,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             .region_cache()
             .try_borrow_mut()
             .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle)?
-            .on_send_failure(feedback.dispatch_attempt(), liveness)
+            .on_route_send_failure(&selected, liveness)
             .map_err(|error| DirectUnaryTransportError::RegionRecovery(error.to_string()))?;
         let delay = self
             .region_backoffs
@@ -956,6 +997,40 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         region_error: tidb_proto::RegionError,
     ) -> Result<(), DirectUnaryTransportError> {
         self.check_retry_active()?;
+        if let Some(server_busy) = &region_error.server_is_busy {
+            let fast_retry = {
+                let selector = self.request_selectors.get_mut(&logical_task_id).ok_or(
+                    DirectUnaryTransportError::ResponseState(
+                        "missing request selector for ServerIsBusy",
+                    ),
+                )?;
+                let fast_retry =
+                    server_busy.estimated_wait_ms > 0 && !selector.busy_threshold().is_zero();
+                self.shared_runtime
+                    .region_cache()
+                    .try_borrow_mut()
+                    .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle)?
+                    .on_server_busy(
+                        selector,
+                        &observed_attempt,
+                        server_busy.estimated_wait_ms,
+                        (self.config.observation_time)(),
+                    )
+                    .map_err(|error| {
+                        DirectUnaryTransportError::RegionRecovery(error.to_string())
+                    })?;
+                if fast_retry && !selector.acknowledge_server_busy(&observed_attempt) {
+                    return Err(DirectUnaryTransportError::RegionRecovery(
+                        "ServerIsBusy did not match the completed selector attempt".to_owned(),
+                    ));
+                }
+                fast_retry
+            };
+            if fast_retry {
+                let replacement = self.runtime.retry_transport_attempt(failed)?;
+                return self.install_same_task_retry(replacement);
+            }
+        }
         if region_error.store_not_match.is_some() {
             try_borrow_client(self.shared_runtime.client())?
                 .close_address(&observed_attempt.address)

@@ -16,6 +16,7 @@
 
 mod cop_read_task_runtime;
 mod direct_unary_query_transport;
+mod forwarding;
 mod lock_recovery;
 mod tikv_rpc_contract;
 mod transport_failure;
