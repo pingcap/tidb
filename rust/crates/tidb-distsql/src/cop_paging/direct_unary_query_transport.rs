@@ -44,12 +44,13 @@ use tidb_txnkv::region::{
     ReplicaHealthPolicy, ReplicaReadMode, RequestSelection, RequestSelector, StoreFailureOutcome,
     StoreLabel as RoutingStoreLabel,
 };
-pub use tidb_txnkv::{
-    DirectUnaryClient, DirectUnaryClientError, DirectUnaryRequest, DirectUnaryResponse,
-};
 use tidb_txnkv::{
+    rpc::{AsyncRequestDispatcher, CompletionError, PendingRequest},
     EndpointType, SharedReadRuntime, TraceInfo, UnaryCallContext, UnaryCancellation,
     DEFAULT_STORE_LIVENESS_TIMEOUT,
+};
+pub use tidb_txnkv::{
+    DirectUnaryClient, DirectUnaryClientError, DirectUnaryRequest, DirectUnaryResponse,
 };
 
 use super::{
@@ -317,8 +318,39 @@ impl From<CopReadTaskError> for DirectUnaryTransportError {
 pub struct DirectUnaryQueryTransport<C, L> {
     shared_runtime: SharedReadRuntime<C, L>,
     locked_response_delegate: Rc<dyn LockedResponseDelegate<C, L>>,
+    async_begin: Option<AsyncBegin<C>>,
     replica_read_seed: ReplicaReadSeed,
     config: DirectUnaryRuntimeConfig,
+}
+
+type AsyncBegin<C> = fn(
+    &RefCell<C>,
+    &LeaderRequest,
+    &DirectUnaryRequest,
+    &UnaryCallContext,
+) -> Result<
+    Result<Box<dyn PendingRequest>, DirectUnaryClientError>,
+    DirectUnaryTransportError,
+>;
+
+fn begin_async_request<C>(
+    client: &RefCell<C>,
+    selected: &LeaderRequest,
+    request: &DirectUnaryRequest,
+    call: &UnaryCallContext,
+) -> Result<Result<Box<dyn PendingRequest>, DirectUnaryClientError>, DirectUnaryTransportError>
+where
+    C: AsyncRequestDispatcher,
+    C::Pending: 'static,
+{
+    Ok(try_borrow_client(client)?
+        .begin(
+            selected.dispatch_address(),
+            selected.forwarded_host(),
+            request,
+            call,
+        )
+        .map(|pending| Box::new(pending) as Box<dyn PendingRequest>))
 }
 
 /// One transport-owned rotating seed source sampled once per lazy response.
@@ -362,6 +394,29 @@ impl<C, L: RegionLoader> DirectUnaryQueryTransport<C, L> {
         )
     }
 
+    /// Constructs an injected transport whose first physical attempt for each
+    /// logical request uses BatchCommands. Injected clients which do not opt
+    /// into this constructor stay on the synchronous path without consuming
+    /// selector or backoff state.
+    pub fn new_injected_batch_first<S>(
+        client: C,
+        region_cache: RegionCache<L>,
+        config: DirectUnaryRuntimeConfig,
+        timestamp_source: S,
+    ) -> Result<Self, DirectUnaryTransportError>
+    where
+        C: tidb_txnkv::lock::LockRecoveryClient + AsyncRequestDispatcher,
+        C::Pending: 'static,
+        L: RegionRecoveryLoader,
+        S: tidb_txnkv::lock::TimestampSource + 'static,
+    {
+        Self::with_shared_runtime_batch_first(
+            SharedReadRuntime::new_injected(client, region_cache),
+            config,
+            timestamp_source,
+        )
+    }
+
     /// Retains already-shared client/cache handles and installs required
     /// production lock recovery without creating another runtime authority.
     pub fn with_shared_runtime<S>(
@@ -381,6 +436,28 @@ impl<C, L: RegionLoader> DirectUnaryQueryTransport<C, L> {
         )
     }
 
+    /// Retains shared runtime ownership and enables one BatchCommands attempt
+    /// before the response-owned synchronous retry loop.
+    pub fn with_shared_runtime_batch_first<S>(
+        shared_runtime: SharedReadRuntime<C, L>,
+        config: DirectUnaryRuntimeConfig,
+        timestamp_source: S,
+    ) -> Result<Self, DirectUnaryTransportError>
+    where
+        C: tidb_txnkv::lock::LockRecoveryClient + AsyncRequestDispatcher,
+        C::Pending: 'static,
+        L: RegionRecoveryLoader,
+        S: tidb_txnkv::lock::TimestampSource + 'static,
+    {
+        let mut transport = Self::with_locked_response_delegate(
+            shared_runtime,
+            config,
+            Rc::new(super::OptimisticLockRecovery::new(timestamp_source)),
+        )?;
+        transport.async_begin = Some(begin_async_request::<C>);
+        Ok(transport)
+    }
+
     /// Installs the bounded lock policy over the same shared read runtime.
     pub fn with_locked_response_delegate(
         shared_runtime: SharedReadRuntime<C, L>,
@@ -393,6 +470,7 @@ impl<C, L: RegionLoader> DirectUnaryQueryTransport<C, L> {
         Ok(Self {
             shared_runtime,
             locked_response_delegate,
+            async_begin: None,
             replica_read_seed: ReplicaReadSeed::new(),
             config,
         })
@@ -412,13 +490,14 @@ where
         timestamp_source: S,
     ) -> Result<Self, DirectUnaryTransportError>
     where
-        C: tidb_txnkv::lock::LockRecoveryClient,
+        C: tidb_txnkv::lock::LockRecoveryClient + AsyncRequestDispatcher,
+        C::Pending: 'static,
         S: tidb_txnkv::lock::TimestampSource + 'static,
     {
         let runtime = SharedReadRuntime::new_with_maintenance(client, region_cache)
             .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle)?;
         debug_assert!(runtime.is_maintained());
-        Self::with_shared_runtime(runtime, config, timestamp_source)
+        Self::with_shared_runtime_batch_first(runtime, config, timestamp_source)
     }
 }
 
@@ -455,14 +534,12 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
             .map_err(|error| DirectUnaryTransportError::from(error).to_string())?;
         let requested_ranges =
             metadata_region_ranges(metadata).map_err(|error| error.to_string())?;
-        let (cluster_id, locations) = cache_operation(&self.shared_runtime, |region_cache| {
-            let cluster_id = region_cache.cluster_id();
-            let locations = region_cache
-                .locate_ranges(&requested_ranges)
-                .map_err(|error| DirectUnaryTransportError::Route(error).to_string())?;
-            Ok::<_, String>((cluster_id, locations))
-        })
-        .map_err(|error| error.to_string())??;
+        let cluster_id = self.shared_runtime.cluster_id();
+        let locations = self
+            .shared_runtime
+            .locate_ranges(&requested_ranges)
+            .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle.to_string())?
+            .map_err(|error| DirectUnaryTransportError::Route(error).to_string())?;
         let topology = topology_from_locations(locations);
         let cache = CoprCache::from_optional_config(self.config.cache.as_ref())
             .map_err(|error| DirectUnaryTransportError::Cache(error.to_string()).to_string())?;
@@ -506,6 +583,7 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
         Ok(Some(DirectUnaryQueryResponse {
             shared_runtime: self.shared_runtime.clone(),
             locked_response_delegate: Rc::clone(&self.locked_response_delegate),
+            async_begin: self.async_begin,
             cancellation,
             call,
             selection_seed,
@@ -520,6 +598,8 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
             closed: false,
             region_backoffs: BTreeMap::new(),
             request_selectors: BTreeMap::new(),
+            sync_only_chains: BTreeSet::new(),
+            pending_batch: None,
             network_metrics: UnaryNetworkMetrics::default(),
         }))
     }
@@ -618,6 +698,7 @@ fn task_region_ver_id(
 pub struct DirectUnaryQueryResponse<C, L> {
     shared_runtime: SharedReadRuntime<C, L>,
     locked_response_delegate: Rc<dyn LockedResponseDelegate<C, L>>,
+    async_begin: Option<AsyncBegin<C>>,
     cancellation: Arc<CancelHandle>,
     call: UnaryCallContext,
     selection_seed: u32,
@@ -632,7 +713,37 @@ pub struct DirectUnaryQueryResponse<C, L> {
     closed: bool,
     region_backoffs: BTreeMap<u64, RegionBackoffBudget>,
     request_selectors: BTreeMap<u64, RequestSelector>,
+    // Region/send failure keeps this logical request chain on the existing
+    // synchronous loop. Terminal success clears it so the next page can begin
+    // a fresh BatchCommands attempt, matching SendReqAsync-per-call behavior.
+    sync_only_chains: BTreeSet<u64>,
+    pending_batch: Option<PendingBatchAttempt>,
     network_metrics: UnaryNetworkMetrics,
+}
+
+struct PreparedRegionDispatch {
+    logical_task_id: u64,
+    attempt_id: u64,
+    selected: LeaderRequest,
+    observation: tidb_txnkv::region::RegionAttemptObservation,
+    client_request: DirectUnaryRequest,
+    request_bytes: usize,
+    traffic_location: UnaryTrafficLocation,
+    batch_attempt: bool,
+}
+
+struct PendingBatchAttempt {
+    dispatch: PreparedRegionDispatch,
+    pending: Box<dyn PendingRequest>,
+    started_at: Instant,
+}
+
+impl<C, L> Drop for DirectUnaryQueryResponse<C, L> {
+    fn drop(&mut self) {
+        if let Some(attempt) = self.pending_batch.as_mut() {
+            attempt.pending.cancel();
+        }
+    }
 }
 
 fn try_borrow_client<C>(client: &RefCell<C>) -> Result<RefMut<'_, C>, DirectUnaryTransportError> {
@@ -704,7 +815,12 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                     "open logical task has no active attempt",
                 ));
             };
-            if let Err(error) = self.dispatch_attempt(logical_task_id, attempt_id) {
+            let dispatch_result = if self.pending_batch.is_some() {
+                self.complete_batch_attempt()
+            } else {
+                self.dispatch_attempt(logical_task_id, attempt_id)
+            };
+            if let Err(error) = dispatch_result {
                 return self.fail(error);
             }
         }
@@ -822,7 +938,6 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             context: request.context,
             encoded_request: request.encoded_request,
         };
-        let dispatch = UnaryRouteDispatch::from_request(&selected);
         let request_bytes = client_request.encoded_request.len();
         let target_zone = cache_operation(&self.shared_runtime, |region_cache| {
             region_cache
@@ -839,29 +954,164 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             _ => None,
         };
         let traffic_location = UnaryTrafficLocation::from_cross_zone(cross_zone);
-        self.network_metrics
-            .on_request(request_bytes, selected.stale_read, traffic_location);
+        let prepared_dispatch = PreparedRegionDispatch {
+            logical_task_id,
+            attempt_id,
+            selected,
+            observation,
+            client_request,
+            request_bytes,
+            traffic_location,
+            batch_attempt: false,
+        };
+        self.check_retry_active()?;
         let dispatch_started = Instant::now();
         let call = self.call.clone();
+        if let Some(begin) = self.async_begin.filter(|_| {
+            !self
+                .sync_only_chains
+                .contains(&prepared_dispatch.logical_task_id)
+        }) {
+            let mut prepared_dispatch = prepared_dispatch;
+            prepared_dispatch.batch_attempt = true;
+            let mut begin_result = begin(
+                self.shared_runtime.client(),
+                &prepared_dispatch.selected,
+                &prepared_dispatch.client_request,
+                &call,
+            )?;
+            if let Err(error) = self.check_retry_active() {
+                if let Ok(pending) = &mut begin_result {
+                    pending.cancel();
+                }
+                return Err(error);
+            }
+            self.network_metrics.on_request(
+                prepared_dispatch.request_bytes,
+                prepared_dispatch.selected.stale_read,
+                prepared_dispatch.traffic_location,
+            );
+            match begin_result {
+                Ok(pending) => {
+                    self.pending_batch = Some(PendingBatchAttempt {
+                        dispatch: prepared_dispatch,
+                        pending,
+                        started_at: dispatch_started,
+                    });
+                    return Ok(());
+                }
+                Err(error) => {
+                    self.sync_only_chains
+                        .insert(prepared_dispatch.logical_task_id);
+                    return self.settle_dispatch(
+                        prepared_dispatch,
+                        Err(error),
+                        dispatch_started.elapsed(),
+                    );
+                }
+            }
+        }
+        self.network_metrics.on_request(
+            prepared_dispatch.request_bytes,
+            prepared_dispatch.selected.stale_read,
+            prepared_dispatch.traffic_location,
+        );
+        let dispatch = UnaryRouteDispatch::from_request(&prepared_dispatch.selected);
         let send_result = try_borrow_client(self.shared_runtime.client())?.send_request_with_route(
             dispatch.physical_address(),
             dispatch.forwarded_host(),
-            &client_request,
+            &prepared_dispatch.client_request,
             &call,
         );
         let dispatch_duration = dispatch_started.elapsed();
+        self.settle_dispatch(prepared_dispatch, send_result, dispatch_duration)
+    }
+
+    fn complete_batch_attempt(&mut self) -> Result<(), DirectUnaryTransportError> {
+        if let Err(error) = self.check_retry_active() {
+            if let Some(attempt) = self.pending_batch.as_mut() {
+                attempt.pending.cancel();
+            }
+            return Err(error);
+        }
+        let completion = {
+            let attempt =
+                self.pending_batch
+                    .as_mut()
+                    .ok_or(DirectUnaryTransportError::ResponseState(
+                        "missing pending BatchCommands attempt",
+                    ))?;
+            attempt.pending.complete(&self.call)
+        };
+        if let Err(error) = self.check_retry_active() {
+            if let Some(attempt) = self.pending_batch.as_mut() {
+                attempt.pending.cancel();
+            }
+            return Err(error);
+        }
+        let send_result = match completion {
+            Ok(result) => result,
+            Err(CompletionError::Cancelled) => {
+                if let Some(attempt) = self.pending_batch.as_mut() {
+                    attempt.pending.cancel();
+                }
+                return Err(DirectUnaryTransportError::CallerCancelled);
+            }
+            Err(CompletionError::DeadlineExceeded) => {
+                if let Some(attempt) = self.pending_batch.as_mut() {
+                    attempt.pending.cancel();
+                }
+                return Err(DirectUnaryTransportError::DeadlineExceeded);
+            }
+            Err(error) => Err(DirectUnaryClientError::Runtime(error.to_string())),
+        };
+        let pending = self
+            .pending_batch
+            .take()
+            .ok_or(DirectUnaryTransportError::ResponseState(
+                "completed BatchCommands attempt vanished",
+            ))?;
+        self.settle_dispatch(pending.dispatch, send_result, pending.started_at.elapsed())
+    }
+
+    fn settle_dispatch(
+        &mut self,
+        dispatch: PreparedRegionDispatch,
+        send_result: Result<DirectUnaryResponse, DirectUnaryClientError>,
+        dispatch_duration: Duration,
+    ) -> Result<(), DirectUnaryTransportError> {
+        let PreparedRegionDispatch {
+            logical_task_id,
+            attempt_id,
+            selected,
+            observation,
+            client_request,
+            request_bytes,
+            traffic_location,
+            batch_attempt,
+        } = dispatch;
         // Go checks ctx.Err after SendRequest returns. Caller cancellation has
         // precedence over a simultaneous transport error or successful reply.
         if self.cancellation.is_cancelled()
+            || self.call.timeout().is_zero()
             || matches!(&send_result, Err(DirectUnaryClientError::CallerCancelled))
         {
-            return Err(DirectUnaryTransportError::CallerCancelled);
+            return if self.cancellation.is_cancelled()
+                || matches!(&send_result, Err(DirectUnaryClientError::CallerCancelled))
+            {
+                Err(DirectUnaryTransportError::CallerCancelled)
+            } else {
+                Err(DirectUnaryTransportError::DeadlineExceeded)
+            };
         }
         let raw_response = match send_result {
             Ok(response) => response,
             Err(error) => {
-                let feedback =
-                    dispatch.feedback(&selected, tidb_txnkv::region::RouteOutcome::Failure);
+                if batch_attempt {
+                    self.sync_only_chains.insert(logical_task_id);
+                }
+                let feedback = UnaryRouteDispatch::from_request(&selected)
+                    .feedback(&selected, tidb_txnkv::region::RouteOutcome::Failure);
                 let observation_current = match cache_operation(&self.shared_runtime, |cache| {
                     cache.validate_route_observation(&selected, &observation)
                 })? {
@@ -899,6 +1149,9 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         let response = decode_tikv_unary_response(&raw_response.encoded_response)
             .map_err(|error| DirectUnaryTransportError::Decode(error.to_string()))?;
         if let Some(region_error) = response.region_error_ref().cloned() {
+            if batch_attempt {
+                self.sync_only_chains.insert(logical_task_id);
+            }
             if selected.stale_read && region_error.data_is_not_ready.is_some() {
                 self.network_metrics.on_stale_read_result(false);
             }
@@ -934,7 +1187,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                         request_context: client_request.context.clone(),
                         lock,
                         caller_start_ts: self.metadata.start_ts,
-                        call,
+                        call: self.call.clone(),
                     },
                 )
                 .map_err(|error| {
@@ -960,6 +1213,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             None,
             (self.config.observation_time)(),
         )?;
+        self.sync_only_chains.remove(&logical_task_id);
         self.request_selectors.remove(&logical_task_id);
         match accepted.next_attempt_id {
             Some(next_attempt_id) => {
@@ -1195,9 +1449,11 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             .iter()
             .map(|range| RegionKeyRange::new(range.start_key.clone(), range.end_key.clone()))
             .collect();
-        let locations = cache_operation(&self.shared_runtime, |region_cache| {
-            region_cache.locate_ranges(&region_ranges)
-        })??;
+        let locations = self
+            .shared_runtime
+            .locate_ranges(&region_ranges)
+            .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle)?
+            .map_err(DirectUnaryTransportError::Route)?;
         Ok(topology_from_locations(locations))
     }
 
@@ -1236,6 +1492,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                 "region rebuild changed the failed logical task identity",
             ));
         }
+        let sync_only_chain = self.sync_only_chains.contains(&failed_logical_task_id);
         self.active_attempts.remove(&failed_logical_task_id);
         self.request_selectors.remove(&failed_logical_task_id);
         self.logical_order.splice(
@@ -1247,6 +1504,9 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             .into_iter()
             .zip(replacement.active_attempt_ids)
         {
+            if sync_only_chain {
+                self.sync_only_chains.insert(logical_task_id);
+            }
             self.active_attempts.insert(logical_task_id, attempt_id);
         }
         Ok(())

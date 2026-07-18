@@ -4,7 +4,6 @@
 //! address-directed RPC. Concrete PD networking remains behind the loader
 //! boundary so this module owns topology semantics without owning transport.
 
-mod async_request;
 mod background;
 mod batch_locate;
 mod bucket;
@@ -24,11 +23,6 @@ mod store_state;
 mod topology;
 
 pub use crate::retry::{RegionBackoffBudget, RegionBackoffExhausted, RegionBackoffKind};
-pub use async_request::{
-    AsyncRegionAttemptDecision, AsyncRegionAttemptPolicy, AsyncRegionAttemptPoll,
-    AsyncRegionAttemptState, AsyncRegionRequestAttempt, AsyncRegionRetryCause,
-    RoutedRegionResponse,
-};
 pub use background::{
     BackgroundMaintenanceRound, BackgroundRegionCache, BackgroundRegionCacheError,
 };

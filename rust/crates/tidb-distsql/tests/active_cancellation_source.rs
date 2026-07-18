@@ -534,3 +534,21 @@ fn production_failure_uses_selection_observation_without_holding_cache_during_io
     assert!(!source.contains(".on_route_send_failure(&selected, liveness)"));
     assert!(!source.contains(".region_cache().try_borrow"));
 }
+
+#[test]
+fn pending_batch_is_cancelled_before_async_feedback() {
+    let source = include_str!("../src/cop_paging/direct_unary_query_transport.rs");
+    let poll = source
+        .find("fn complete_batch_attempt(")
+        .expect("BatchCommands pending owner");
+    let settle = source[poll..]
+        .find("fn settle_dispatch(")
+        .map(|offset| poll + offset)
+        .expect("shared settlement owner");
+    let poll = &source[poll..settle];
+    assert!(poll.contains("self.check_retry_active()"));
+    assert!(poll.contains("attempt.pending.cancel()"));
+    assert!(poll.contains("attempt.pending.complete(&self.call)"));
+    assert!(!poll.contains("record_attempt_result"));
+    assert!(!poll.contains("validate_route_observation"));
+}

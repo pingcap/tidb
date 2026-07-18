@@ -96,7 +96,7 @@ fn locked_response_carries_the_exact_cop_call_context() {
     let observation_tail = &source[observation..];
     assert!(observation_tail.contains("request_context: client_request.context.clone()"));
     assert!(observation_tail.contains("caller_start_ts: self.metadata.start_ts"));
-    assert!(observation_tail.contains("call,"));
+    assert!(observation_tail.contains("call: self.call.clone(),"));
     assert!(!observation_tail[..observation_tail.find("},").unwrap()].contains("timeout:"));
 }
 

@@ -2043,3 +2043,32 @@ fn unsupported_request_shape_fails_before_pd_or_tikv() {
         assert!(loader_calls.borrow().is_empty());
     }
 }
+
+#[test]
+fn batch_failure_retains_the_logical_request_selector_for_sync_fallback() {
+    let source = include_str!("../src/cop_paging/direct_unary_query_transport.rs");
+    let settle = source
+        .find("fn settle_dispatch(")
+        .expect("shared async and sync settlement owner");
+    let record = source[settle..]
+        .find("self.record_attempt_result(logical_task_id")
+        .map(|offset| settle + offset)
+        .expect("one selector records the failed batch attempt");
+    let recover = source[record..]
+        .find("self.recover_transport_failure(")
+        .map(|offset| record + offset)
+        .expect("same synchronous recovery loop");
+    let recovery_owner = source[recover..]
+        .find("fn recover_transport_failure(")
+        .map(|offset| recover + offset)
+        .expect("response-owned synchronous recovery method");
+    let retry = source[recovery_owner..]
+        .find("self.install_same_task_retry(replacement)")
+        .map(|offset| recovery_owner + offset)
+        .expect("same logical task is reinstalled");
+    let next_dispatch = &source[retry..];
+    assert!(record < recover);
+    assert!(recover < retry);
+    assert!(next_dispatch.contains("debug_assert!(self.request_selectors.contains_key"));
+    assert!(!source[recovery_owner..retry].contains("request_selectors.remove(&logical_task_id)"));
+}
