@@ -784,7 +784,7 @@ fn extended_region(id: u64, start: &[u8], end: &[u8], with_buckets: bool) -> pdp
                 conf_ver: id + 1,
                 version: id + 2,
             }),
-            peers: vec![leader.clone(), pending.clone()],
+            peers: vec![leader, pending],
         }),
         leader: Some(leader),
         down_peers: Vec::new(),

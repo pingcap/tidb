@@ -142,15 +142,15 @@ fn test_visit_batch_request_observations() {
 
 #[test]
 fn test_format_batch_request_timeout_reason_normalizes_observed_sent_ns() {
-    let progress = progress(4, 0, 8);
+    let missing_sent = progress(4, 0, 8);
     assert_eq!(
-        progress.format_timeout(Duration::from_millis(10), Duration::from_millis(10)),
+        missing_sent.format_timeout(Duration::from_millis(10), Duration::from_millis(10)),
         "wait recvLoop timeout, timeout:10ms, EntryProgress{batch:4ms, size:1, send:1ns, ack:4ms, recv:4ms}"
     );
 
-    let progress = progress(4, 7, 5);
+    let out_of_order = progress(4, 7, 5);
     assert_eq!(
-        progress.format_timeout(Duration::from_millis(10), Duration::from_millis(10)),
+        out_of_order.format_timeout(Duration::from_millis(10), Duration::from_millis(10)),
         "wait recvLoop timeout, timeout:10ms, EntryProgress{batch:4ms, size:1, send:1ms, ack:1ns, recv:1ns}"
     );
 }
