@@ -58,8 +58,9 @@ pub use checker::{
 };
 pub use client::{
     endpoint_type, inject_source_stmt, map_replica_read_type, BackoffMetadata,
-    ClientReplicaReadType, DriverDefaults, DriverOptions, EndpointType, PdClientConfig, PdOptions,
-    SecurityConfig, TikvClientConfig, TikvDriverConfig, TraceInfo, TxnLocalLatchesConfig,
+    ClientReplicaReadType, DirectUnaryClient, DirectUnaryRequest, DirectUnaryResponse,
+    DriverDefaults, DriverOptions, EndpointType, PdClientConfig, PdOptions, SecurityConfig,
+    TikvClientConfig, TikvDriverConfig, TraceInfo, TxnLocalLatchesConfig,
 };
 pub use counter::{get_int64, inc_int64, CounterError, CounterStorage};
 pub use driver::mem_buffer::{

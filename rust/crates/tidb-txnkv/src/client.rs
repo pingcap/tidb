@@ -20,6 +20,7 @@
 //! projection, trace metadata injection, and already-observed backoff stats.
 
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 use tidb_proto::{KvrpcContext, KvrpcSourceStmt};
 
@@ -79,6 +80,58 @@ pub const fn endpoint_type(source: u8, disaggregated_tiflash: bool) -> EndpointT
         2 => EndpointType::TiDb,
         _ => EndpointType::TiKv,
     }
+}
+
+/// Immutable request presented to an address-directed unary TiKV client.
+///
+/// DistSQL owns construction of the encoded coprocessor body. The KV client
+/// owns only dispatch and therefore cannot reach upward into planner or
+/// DistSQL types.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DirectUnaryRequest {
+    /// Endpoint selected before dispatch. This bounded runtime admits TiKV.
+    pub endpoint: EndpointType,
+    /// Replica selection copied from client-go's request wrapper.
+    pub replica_read_type: ClientReplicaReadType,
+    /// Whether follower-capable replica routing is active.
+    pub replica_read: bool,
+    /// Whether this is a stale-read attempt.
+    pub stale_read: bool,
+    /// Request source before client-go appends retry metadata.
+    pub input_request_source: String,
+    /// Predicted read bytes used by resource control.
+    pub predicted_read_bytes: u64,
+    /// Replica scope retained by the request wrapper.
+    pub read_replica_scope: String,
+    /// Transaction scope retained by the request wrapper.
+    pub txn_scope: String,
+    /// Exact decoded context also encoded into the request body.
+    pub context: KvrpcContext,
+    /// Exact encoded `coprocessor.Request` body.
+    pub encoded_request: Vec<u8>,
+}
+
+/// Raw successful result from an address-directed unary TiKV client.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct DirectUnaryResponse {
+    /// Exact encoded `coprocessor.Response` body.
+    pub encoded_response: Vec<u8>,
+}
+
+/// Pinned client-go `Client.SendRequest` capability projection.
+///
+/// A concrete implementation may own gRPC channels and connection pools, but
+/// this trait owns none. The selected address and timeout stay explicit, the
+/// request is immutable for the duration of the call, and transport failure
+/// remains separate from a successful raw response.
+pub trait DirectUnaryClient {
+    /// Sends one unary request to one already-resolved address.
+    fn send_request(
+        &mut self,
+        address: &str,
+        request: &DirectUnaryRequest,
+        timeout: Duration,
+    ) -> Result<DirectUnaryResponse, String>;
 }
 
 /// Trace identity attached by TiDB's `injectTraceClient`.

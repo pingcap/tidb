@@ -15,11 +15,16 @@
 //! Connected adaptive-paging continuation from the coprocessor worker.
 
 mod cop_read_task_runtime;
+mod direct_unary_query_transport;
 mod tikv_rpc_contract;
 
 pub use cop_read_task_runtime::{
     CopReadAcceptedResponse, CopReadResponseError, CopReadTaskError, CopReadTaskResponse,
     CopReadTaskRuntime, PreparedCopReadTask,
+};
+pub use direct_unary_query_transport::{
+    DirectUnaryClient, DirectUnaryQueryResponse, DirectUnaryQueryTransport, DirectUnaryRequest,
+    DirectUnaryResponse, DirectUnaryRuntimeConfig, DirectUnaryTransportError, ResolvedRegionRoute,
 };
 pub use tikv_rpc_contract::{
     build_tikv_unary_request, decode_tikv_unary_response, TikvUnaryRequest,

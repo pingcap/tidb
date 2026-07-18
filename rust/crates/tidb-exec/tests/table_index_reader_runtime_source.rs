@@ -14,6 +14,9 @@
 
 #![allow(missing_docs)]
 
+#[path = "direct_unary_table_index_reader_source.rs"]
+mod direct_unary_table_index_reader_source;
+
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::rc::Rc;

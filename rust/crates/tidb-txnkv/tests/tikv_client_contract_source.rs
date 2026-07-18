@@ -15,13 +15,71 @@
 #![allow(missing_docs)]
 
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 use tidb_proto::{KvrpcContext, KvrpcSourceStmt};
 use tidb_txnkv::{
     endpoint_type, inject_source_stmt, map_replica_read_type, BackoffMetadata,
-    ClientReplicaReadType, DriverDefaults, DriverOptions, EndpointType, PdClientConfig,
-    SecurityConfig, TikvClientConfig, TikvDriverConfig, TraceInfo, TxnLocalLatchesConfig,
+    ClientReplicaReadType, DirectUnaryClient, DirectUnaryRequest, DirectUnaryResponse,
+    DriverDefaults, DriverOptions, EndpointType, PdClientConfig, SecurityConfig, TikvClientConfig,
+    TikvDriverConfig, TraceInfo, TxnLocalLatchesConfig,
 };
+
+#[derive(Default)]
+struct RecordingUnaryClient {
+    calls: Vec<(String, DirectUnaryRequest, Duration)>,
+}
+
+impl DirectUnaryClient for RecordingUnaryClient {
+    fn send_request(
+        &mut self,
+        address: &str,
+        request: &DirectUnaryRequest,
+        timeout: Duration,
+    ) -> Result<DirectUnaryResponse, String> {
+        self.calls
+            .push((address.to_owned(), request.clone(), timeout));
+        Ok(DirectUnaryResponse {
+            encoded_response: b"raw-response".to_vec(),
+        })
+    }
+}
+
+#[test]
+fn unary_client_contract_keeps_address_request_timeout_and_result_separate() {
+    // client-go/internal/client/client.go:96-105 Client.SendRequest
+    let request = DirectUnaryRequest {
+        endpoint: EndpointType::TiKv,
+        replica_read_type: ClientReplicaReadType::Leader,
+        replica_read: false,
+        stale_read: false,
+        input_request_source: "external".to_owned(),
+        predicted_read_bytes: 4096,
+        read_replica_scope: "global".to_owned(),
+        txn_scope: "global".to_owned(),
+        context: KvrpcContext {
+            region_id: 42,
+            ..KvrpcContext::default()
+        },
+        encoded_request: b"immutable-cop-request".to_vec(),
+    };
+    let mut client = RecordingUnaryClient::default();
+    let response = client
+        .send_request("tikv-1:20160", &request, Duration::from_millis(777))
+        .unwrap();
+    assert_eq!(request.encoded_request, b"immutable-cop-request");
+    assert_eq!(request.context.region_id, 42);
+    assert_eq!(request.predicted_read_bytes, 4096);
+    assert_eq!(response.encoded_response, b"raw-response");
+    assert_eq!(
+        client.calls,
+        [(
+            "tikv-1:20160".to_owned(),
+            request,
+            Duration::from_millis(777),
+        )]
+    );
+}
 
 #[test]
 fn replica_and_endpoint_mappings_match_tidb_and_client_go_discriminants() {
