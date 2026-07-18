@@ -339,7 +339,7 @@ fn get_members(
         .header
         .as_ref()
         .ok_or(PdClientError::MissingHeader(PdOperation::GetMembers))?;
-    reject_header_error(PdOperation::GetMembers, &header)?;
+    reject_header_error(PdOperation::GetMembers, header)?;
     if header.cluster_id == 0 {
         return Err(PdClientError::ZeroClusterId);
     }
@@ -429,7 +429,7 @@ fn get_region_with_failover(
         snapshot.members.cluster_id,
         encoded_key,
     ) {
-        Ok(region) => return Ok(region),
+        Ok(region) => Ok(region),
         Err(error) if needs_failover_probe(&error) => {
             let direct_failure = is_direct_failure(&error);
             let mut last_error = error;
@@ -496,7 +496,7 @@ fn get_store_with_failover(
         snapshot.members.cluster_id,
         store_id,
     ) {
-        Ok(store) => return Ok(store),
+        Ok(store) => Ok(store),
         Err(error) if needs_failover_probe(&error) => {
             let direct_failure = is_direct_failure(&error);
             let mut last_error = error;

@@ -28,10 +28,12 @@ use tidb_txnkv::region::{
     RegionVerId, Store,
 };
 
+type RecordedMetadata = Rc<RefCell<Vec<(RegionMetadata, u64)>>>;
+
 struct Loader {
     initial: VecDeque<RegionLocation>,
     hydrated: VecDeque<Result<RegionLocation, RegionLoadError>>,
-    metadata: Rc<RefCell<Vec<(RegionMetadata, u64)>>>,
+    metadata: RecordedMetadata,
 }
 
 impl RegionLoader for Loader {
@@ -114,7 +116,7 @@ fn location(id: u64, conf_ver: u64, version: u64, start: &[u8], end: &[u8]) -> R
 fn cache(
     first: RegionLocation,
     hydrated: impl IntoIterator<Item = Result<RegionLocation, RegionLoadError>>,
-) -> (RegionCache<Loader>, Rc<RefCell<Vec<(RegionMetadata, u64)>>>) {
+) -> (RegionCache<Loader>, RecordedMetadata) {
     let metadata = Rc::new(RefCell::new(Vec::new()));
     let loader = Loader {
         initial: VecDeque::from([first]),

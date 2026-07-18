@@ -611,15 +611,12 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             let failed = self.runtime.consume_region_error(attempt_id)?;
             return self.recover_region_error(failed, observed_attempt, region_error);
         }
-        let accepted = match self.runtime.accept_response(
+        let accepted = self.runtime.accept_response(
             attempt_id,
             response,
             None,
             (self.config.observation_time)(),
-        ) {
-            Ok(accepted) => accepted,
-            Err(error) => return Err(error.into()),
-        };
+        )?;
         match accepted.next_attempt_id {
             Some(next_attempt_id) => {
                 self.active_attempts

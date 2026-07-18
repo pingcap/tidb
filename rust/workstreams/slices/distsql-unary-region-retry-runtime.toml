@@ -1,10 +1,10 @@
 schema = "1"
 slice = "distsql-unary-region-retry-runtime"
-status = "ready"
+status = "partial"
 target = "tidb-distsql"
 ring = "result"
-consumer = "Campaign 11 replaces the direct-unary terminal region-error boundary with one response-owned, bounded, cancellation-aware resend/rebuild loop. It consumes txnkv recovery dispositions, keeps one per-region backoff budget shared across client-like resend and TiDB outer task rebuild, preserves successful paging state, replaces only unconsumed work in logical order, and permits one failed task to become many after re-location. Locks, active in-flight RPC cancellation, follower/stale reads, generic TiKV connection-failure retry, TiFlash/batch cop, TLS, forwarding, table/DAG lowering, and COM_QUERY remain open."
-test_target = "cop_read_task_runtime_source, direct_unary_client_runtime_source, and the ignored Campaign 11 PD/region movement proof"
+consumer = "Campaign 11 replaces the direct-unary terminal region-error boundary with one response-owned, bounded, cancellation-aware resend/rebuild loop. It consumes txnkv recovery dispositions, keeps one per-region backoff budget shared across client-like resend and TiDB outer task rebuild, preserves successful paging state, rebuilds only the failed logical task's unconsumed ranges 1:N, and leaves later prepared tasks untouched. Locks, active in-flight RPC cancellation, follower/stale reads, generic TiKV connection-failure retry, TiFlash/batch cop, TLS, forwarding, table/DAG lowering, and COM_QUERY remain open."
+test_target = "cop_read_task_runtime_source, direct_unary_client_runtime_source, table_index_reader_runtime_source, and the owner-executed ignored Campaign 11 PD/region movement proof"
 go_sources = [
   "pkg/store/copr/coprocessor.go",
   "pkg/store/copr/coprocessor_cache.go",
@@ -131,6 +131,8 @@ rust_paths = [
   "rust/crates/tidb-distsql/src/cop_paging/tikv_rpc_contract.rs",
   "rust/crates/tidb-distsql/tests/cop_read_task_runtime_source.rs",
   "rust/crates/tidb-distsql/tests/direct_unary_client_runtime_source.rs",
+  "rust/crates/tidb-exec/tests/direct_unary_table_index_reader_source.rs",
+  "rust/difftests/transaction-tests/Cargo.toml",
   "rust/difftests/transaction-tests/tests/realtikv_pd_route.rs",
   "rust/difftests/transaction-tests/tests/realtikv_region_retry.rs",
   "rust/scripts/run-campaign10-realtikv.sh",

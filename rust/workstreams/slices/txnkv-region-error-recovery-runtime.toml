@@ -1,9 +1,9 @@
 schema = "1"
 slice = "txnkv-region-error-recovery-runtime"
-status = "ready"
+status = "partial"
 target = "tidb-txnkv"
 ring = "transaction"
-consumer = "Campaign 11 restores the exact NotLeader leader and EpochNotMatch current-regions wire payloads, classifies region errors in pinned field order, and applies source-shaped leader, epoch, store, and exact-observation transitions through the sole RegionCache authority. It owns typed backoff arithmetic and store hydration but not DistSQL task order or sleeping. Background refresh, follower/stale/proxy selection, lock resolution, TLS, buckets, and production concurrency remain open."
+consumer = "Campaign 11 restores the exact NotLeader leader and EpochNotMatch current-regions wire payloads, classifies region errors in pinned client-go handler precedence, and applies source-shaped leader, epoch, store, and exact-observation transitions through the sole RegionCache authority. It owns typed backoff arithmetic and store hydration but not DistSQL task order or sleeping. Background refresh, follower/stale/proxy selection, lock resolution, TLS, buckets, and production concurrency remain open."
 test_target = "region_error_wire_source, region_error_recovery_source, region_cache_source, pd_region_loader_source, and leader-only replica-selector source cases"
 go_sources = []
 go_tests = []
@@ -27,7 +27,7 @@ evidence_prerequisites = []
 support_anchors = [
   "kvproto/errorpb.proto:19-24:NotLeader leader payload",
   "kvproto/errorpb.proto:86-89:EpochNotMatch current regions",
-  "client-go/internal/locate/region_request.go:1921-2259:region error field-order contract",
+  "client-go/internal/locate/region_request.go:1921-2259:region error handler precedence",
   "client-go/internal/locate/region_cache.go:2145-2188:leader update and exact invalidation",
   "client-go/internal/locate/region_cache.go:2884-2944:epoch replacement",
   "client-go/internal/locate/store_cache.go:388-539:store resolution state",

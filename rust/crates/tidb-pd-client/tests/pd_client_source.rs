@@ -531,7 +531,7 @@ fn membership_refresh_replaces_urls_and_normalizes_duplicates() {
         2,
     ));
     let refreshed = client.refresh_members().unwrap();
-    assert_eq!(refreshed.member_urls, [survivor_url.clone()]);
+    assert_eq!(refreshed.member_urls, std::slice::from_ref(&survivor_url));
     assert_eq!(refreshed.leader_url, survivor_url);
     assert_eq!(client.member_set(), refreshed);
 }

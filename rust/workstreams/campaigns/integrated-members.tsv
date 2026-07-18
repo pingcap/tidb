@@ -41,3 +41,6 @@
 2026-07-read-path-09	txnkv-single-region-route-runtime
 2026-07-read-path-10	distsql-pd-route-runtime
 2026-07-read-path-10	txnkv-pd-region-loader-runtime
+2026-07-read-path-11	pd-member-refresh-runtime
+2026-07-read-path-11	txnkv-region-error-recovery-runtime
+2026-07-read-path-11	distsql-unary-region-retry-runtime

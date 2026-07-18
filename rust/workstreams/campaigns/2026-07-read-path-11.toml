@@ -1,6 +1,6 @@
 schema = "1"
 campaign = "2026-07-read-path-11"
-status = "active"
+status = "integrated"
 slices = [
   "pd-member-refresh-runtime",
   "txnkv-region-error-recovery-runtime",

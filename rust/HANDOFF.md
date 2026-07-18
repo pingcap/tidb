@@ -45,20 +45,20 @@ from the Campaign 07 baseline with the toolchain pinned in
 | `tidb-ast` | AST nodes + `restore_into` (SQL text regeneration) | `pkg/parser/ast/*` |
 | `tidb-parser` | recursive-descent parser | `pkg/parser/*_parser.go` |
 | `tidb-proto` | generated prost protocol leaves shared by real consumers | `tipb`/`kvproto` serialized contracts |
-| `tidb-pd-client` | bounded one-endpoint PD gRPC control plane for cluster, region, and store metadata | pinned `github.com/tikv/pd/client` GetMembers/GetRegion/GetStore paths |
+| `tidb-pd-client` | bounded plaintext PD gRPC control plane with discovered-member retention, foreground refresh, role-aware direct-endpoint failover, and cluster/region/store metadata | pinned `github.com/tikv/pd/client` GetMembers/GetRegion/GetStore and service-discovery paths |
 | `tidb-protocol` | source-backed uncompressed MySQL framing, result packets, column metadata projection, and dependency-closed typed text-row scalar formatting | `pkg/server/internal/packetio.go`, `pkg/server/internal/column/**`, `pkg/format/textrow/**` |
-| `tidb-distsql` | request metadata, warnings, cancellation, and detach-state primitives | `pkg/distsql/context/**` |
+| `tidb-distsql` | request/response metadata plus the lazy direct-unary task, retry/rebuild, paging, warning, cancellation, and detach-state runtime | `pkg/distsql/**`, `pkg/store/copr/**` |
 | `tidb-expr` | typed expression construction, evaluation, and builtins | `pkg/expression/*` |
 | `tidb-datatype` | sole shared SQL scalar authority: `Datum`, `FieldType`, charset/collation, exact decimal | `pkg/types/**` and TiKV query datatypes |
 | `tidb-stats` | source-backed CMSketch/TopN/FMSketch/loading-status statistics primitives | `pkg/statistics/**` |
 | `tidb-codec` | byte-exact comparable scalar and datum-key encoding | dependency-closed paths in `pkg/util/codec/**` |
-| `tidb-txnkv` | transaction primitives plus the live address-keyed `tikvpb.Tikv/Coprocessor` RPC leaf, API-v1 PD region loader, and shared leader-routing RegionCache | `pkg/kv/**`, pinned `tikv/client-go/v2` transport and locate paths |
+| `tidb-txnkv` | transaction primitives plus the live address-keyed `tikvpb.Tikv/Coprocessor` RPC leaf, API-v1 PD region loader, exact region-error recovery, store hydration, bounded region backoff, and sole leader-routing RegionCache | `pkg/kv/**`, pinned `tikv/client-go/v2` transport and locate paths |
 | `tidb-exec` | a seed stateful executor plus shared-cluster/session, aggregate leaves, result metadata bridge, typed scalar result encoding, and framed COM_QUERY boundary | `pkg/session/**`, `pkg/executor/**`, `pkg/server/**` |
 | `tidb-server` | source-shaped unframed and framed connection dispatch over protocol, DistSQL, and the seed session | `pkg/server/conn.go`, `pkg/server/conn_stmt.go` |
 | `difftest` | shared differential library, Go helpers, corpora, inventory/ledger generators, and two infrastructure tests | — |
 | `difftest-parser-tests` | parser-only oracle replay, topology gate, and stable selector shards | `pkg/parser/**`, parser fixtures |
 | `difftest-result-tests` | expression/query/table result rings | `pkg/expression/**`, `pkg/executor/**` |
-| `difftest-transaction-tests` | source-translated transaction primitive evidence | `pkg/kv/**`; future client-go/real-TiKV ring |
+| `difftest-transaction-tests` | source-translated transaction evidence plus owner-run PD/RealTiKV routing and movement proofs | `pkg/kv/**`, pinned client-go/PD/TiKV paths |
 
 `tidb-exec` is a **seed executor**: a flat in-memory catalog (no real TiKV,
 databases, views, or users), a deliberately incomplete `Datum` domain, and no
@@ -67,10 +67,13 @@ bounded source tests, but it is not the `tidb-txnkv` protocol. The separate
 `tidb-proto`, `tidb-codec`, and `tidb-txnkv` now form a real dependency chain
 for generated request-tag wire contracts, comparable keys,
 `Int`/`Common`/`Partition` handles, a live TiKV Coprocessor unary RPC leaf, and
-source-shaped RegionCache/leader routing. Campaign 10 adds a concrete
-single-endpoint PD loader and makes that cache the sole DistSQL topology
-authority; MVCC, lock resolution, retry/backoff, endpoint refresh/failover,
-TLS, and commit remain unimplemented. Many
+source-shaped RegionCache/leader routing. Campaign 10 made that cache the sole
+DistSQL topology authority; Campaign 11 retains discovered PD members, performs
+foreground role-aware endpoint refresh/failover, consumes exact nested region
+errors, atomically recovers cache routes, and retries/rebuilds only failed work
+under one bounded per-region budget. MVCC, lock resolution, generic TiKV
+connection retry, background health, TLS/forwarding, and commit remain
+unimplemented. Many
 statements are honestly `Unsupported` at execution while being fully
 parse+restore-faithful. That's intentional — don't fake success.
 
@@ -116,11 +119,11 @@ still bounded leaves: typed default/columnar/CHBlock codecs, general planner
 ON/USING typing and explicit projection output names, and full
 session/error-context attachment remain open alongside authentication,
 TLS/compression, temporal/JSON/enum/set/vector and full session charset
-conversion, Unix sockets/PROXY/connection admission, PD endpoint/store refresh
-and failover, production multi-region resilience, TiKV retry/lock/TLS policy,
-and deployable bootstrap.
+conversion, Unix sockets/PROXY/connection admission, background PD/store health,
+router service, production cache TTL/concurrency, generic TiKV connection
+retry, lock/MVCC/TLS/forwarding policy, and deployable bootstrap.
 
-### Current Campaign 10 boundary
+### Historical Campaign 10 and current Campaign 11 boundary
 
 Campaign `2026-07-read-path-10` is integrated and both receipt-backed claims
 are released as `partial`. Campaign 09 first made the checked read chain reach
@@ -142,12 +145,21 @@ the unary leaf, and receives a structured TiKV application response. Teardown
 proves both PD and TiKV endpoints are unreachable and leaves no dynamic owned
 process, TiUP registry row, or tag directory.
 
-Campaign 11 should build on this single topology authority rather than adding
-another sender. The next vertical closure is production routing behavior:
-endpoint/store refresh and failover, bounded retry/backoff with exact cache
-invalidation, lock resolution, cancellation, and TLS/forwarding policy. Full
-table/DAG lowering and COM_QUERY should connect only after that runtime can
-survive ordinary region and store changes.
+Campaign 11 builds on that single topology authority without adding another
+sender. Commits `d3060d12ed`, `1ab75ec3ab`, and `6f54db744a` integrated the PD,
+txnkv, and DistSQL slices; `58c3ea76f8` closed cross-slice source-transit and
+validation gaps. The same retained Rust client/cache passed the owner-run live
+movement proof:
+
+    Campaign 11 movement proof passed: PD http://127.0.0.1:26379 -> http://127.0.0.1:26382; TiKV 127.0.0.1:44162 -> 127.0.0.1:44161
+
+The runner removed its TiUP tag, processes, phase directory, and endpoints.
+The official 12-job gate issued `integration_receipt 3`; the campaign is
+integrated and all three receipt-backed claims are released as `partial`. The
+remaining routing boundary is background PD/store health, router service,
+cache TTL/concurrency, generic TiKV connection-failure retry, locks/MVCC,
+active in-flight cancellation, TLS/forwarding, and commit protocols.
+Full table/DAG lowering and COM_QUERY integration also remain open.
 
 ## 4. The differential tools (how you verify)
 

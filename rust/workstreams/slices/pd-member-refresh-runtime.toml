@@ -1,6 +1,6 @@
 schema = "1"
 slice = "pd-member-refresh-runtime"
-status = "ready"
+status = "partial"
 target = "tidb-pd-client"
 ring = "transaction"
 consumer = "Campaign 11 retains the GetMembers topology already returned during bootstrap, refreshes that member set through any discovered plaintext endpoint, and performs foreground direct-endpoint failover for GetRegion and GetStore while preserving one nonzero cluster identity. Background health loops, router service, TLS, forwarding, generic retry budgets, and production concurrency remain open."
