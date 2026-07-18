@@ -200,7 +200,7 @@ fn transport_with_rows(
             .encode_to_vec()
         })
         .collect();
-    DirectUnaryQueryTransport::new(
+    DirectUnaryQueryTransport::new_injected(
         ReaderUnaryClient { sends, responses },
         RegionCache::new(ReaderLoader {
             region: RegionLocation {

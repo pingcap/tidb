@@ -213,7 +213,7 @@ fn same_process_survives_pd_removal_and_region_leader_transfer() {
         inner: TonicCoprocessorClient::new().expect("construct live unary client"),
         addresses: Rc::clone(&addresses),
     };
-    let transport = DirectUnaryQueryTransport::new(
+    let transport = DirectUnaryQueryTransport::new_injected(
         client,
         cache,
         DirectUnaryRuntimeConfig {

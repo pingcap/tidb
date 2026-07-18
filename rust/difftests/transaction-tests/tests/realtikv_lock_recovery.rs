@@ -177,7 +177,7 @@ fn committed_primary_resolves_secondary_then_publishes_one_cop_response() {
         inner: TonicCoprocessorClient::new().expect("construct sole unary client"),
         evidence: Rc::clone(&evidence),
     };
-    let transport = DirectUnaryQueryTransport::new(
+    let transport = DirectUnaryQueryTransport::new_injected(
         client,
         RegionCache::new(loader),
         DirectUnaryRuntimeConfig {

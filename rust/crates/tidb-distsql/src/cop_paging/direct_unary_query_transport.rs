@@ -351,22 +351,6 @@ impl<C, L: RegionLoader> DirectUnaryQueryTransport<C, L> {
         )
     }
 
-    /// Compatibility alias for callers that predate explicit runtime modes.
-    #[doc(hidden)]
-    pub fn new<S>(
-        client: C,
-        region_cache: RegionCache<L>,
-        config: DirectUnaryRuntimeConfig,
-        timestamp_source: S,
-    ) -> Result<Self, DirectUnaryTransportError>
-    where
-        C: tidb_txnkv::lock::LockRecoveryClient,
-        L: RegionRecoveryLoader,
-        S: tidb_txnkv::lock::TimestampSource + 'static,
-    {
-        Self::new_injected(client, region_cache, config, timestamp_source)
-    }
-
     /// Retains already-shared client/cache handles and installs required
     /// production lock recovery without creating another runtime authority.
     pub fn with_shared_runtime<S>(

@@ -313,7 +313,7 @@ fn one_lazy_response_recovers_after_its_cached_tikv_leader_stops() {
         inner: TonicCoprocessorClient::new().expect("construct live unary client"),
         trace: Rc::clone(&trace),
     };
-    let transport = DirectUnaryQueryTransport::new(
+    let transport = DirectUnaryQueryTransport::new_injected(
         client,
         cache,
         DirectUnaryRuntimeConfig {

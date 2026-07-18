@@ -34,7 +34,7 @@ fn pd_only_input_discovers_route_and_reaches_tikv() {
         .expect("bootstrap live PD region loader");
     let region_cache = RegionCache::new(loader);
     let client = TonicCoprocessorClient::new().expect("construct live unary client");
-    let transport = DirectUnaryQueryTransport::new(
+    let transport = DirectUnaryQueryTransport::new_injected(
         client,
         region_cache,
         DirectUnaryRuntimeConfig {

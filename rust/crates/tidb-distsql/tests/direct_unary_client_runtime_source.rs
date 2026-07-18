@@ -555,7 +555,7 @@ fn transport_with_loader_calls_and_config(
     loader_calls: Rc<RefCell<Vec<Vec<u8>>>>,
     config: DirectUnaryRuntimeConfig,
 ) -> DirectUnaryQueryTransport<ScriptedClient, ScriptedLoader> {
-    DirectUnaryQueryTransport::new(
+    DirectUnaryQueryTransport::new_injected(
         ScriptedClient {
             calls,
             responses: responses
@@ -584,7 +584,7 @@ fn transport_with_transport_failures(
     regions: impl IntoIterator<Item = RegionLocation>,
     config: DirectUnaryRuntimeConfig,
 ) -> DirectUnaryQueryTransport<ScriptedClient, ScriptedLoader> {
-    DirectUnaryQueryTransport::new(
+    DirectUnaryQueryTransport::new_injected(
         ScriptedClient {
             calls,
             responses: responses.into_iter().collect(),
@@ -1895,7 +1895,7 @@ fn return_region_error_and_non_connection_failures_close_without_future_dispatch
 #[test]
 fn missing_cluster_loader_failure_and_empty_pd_address_fail_before_client_dispatch() {
     let calls = Rc::new(RefCell::new(Vec::new()));
-    let missing_cluster = DirectUnaryQueryTransport::new(
+    let missing_cluster = DirectUnaryQueryTransport::new_injected(
         ScriptedClient {
             calls: Rc::clone(&calls),
             responses: VecDeque::new(),
