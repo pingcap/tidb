@@ -62,3 +62,6 @@
 2026-07-read-path-16	txnkv-region-cache-maintenance-runtime
 2026-07-read-path-16	txnkv-batchcommands-wire-inflight-core
 2026-07-read-path-16	txnkv-async-region-request-runtime
+2026-07-read-path-17	txnkv-pd-prev-region-wire-runtime
+2026-07-read-path-17	txnkv-shared-cache-maintenance-runtime
+2026-07-read-path-17	txnkv-batchcommands-tonic-stream-runtime

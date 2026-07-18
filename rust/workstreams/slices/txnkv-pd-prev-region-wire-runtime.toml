@@ -1,6 +1,6 @@
 schema = "1"
 slice = "txnkv-pd-prev-region-wire-runtime"
-status = "ready"
+status = "partial"
 target = "tidb-txnkv"
 ring = "transaction"
 consumer = "Transit the pinned GetPrevRegion path through the retained PD worker and PdRegionLoader EndKey query. Preserve API-v1 key encoding, need_buckets, active-endpoint attempt, leader-only retry, response validation, and the existing region projection without adding a PD client, router loop, cache, or fallback lookup algorithm."

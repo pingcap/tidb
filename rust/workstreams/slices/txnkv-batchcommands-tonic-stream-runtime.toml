@@ -1,6 +1,6 @@
 schema = "1"
 slice = "txnkv-batchcommands-tonic-stream-runtime"
-status = "ready"
+status = "partial"
 target = "tidb-txnkv"
 ring = "transaction"
 consumer = "Extend the retained tonic transport worker and address channel pool with the real BatchCommands duplex stream, route-scoped stream generations, pending-before-send publication, response-ID demultiplexing, reconnect, forwarding isolation, and exact close drainage. Reuse the Campaign 16 scheduler, wire, inflight, and completion authorities; do not add a runtime, channel pool, retry loop, pending table, or once gate."

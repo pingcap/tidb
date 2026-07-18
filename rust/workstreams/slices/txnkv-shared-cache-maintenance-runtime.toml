@@ -1,6 +1,6 @@
 schema = "1"
 slice = "txnkv-shared-cache-maintenance-runtime"
-status = "ready"
+status = "partial"
 target = "tidb-txnkv"
 ring = "transaction"
 consumer = "Replace the split foreground/background cache ownership with one synchronized SharedReadRuntime authority, start and join the sole maintenance worker, and carry the exact selection-time peer-vector observation into production send-failure handling before any cache, store, proxy, or retry mutation. Do not add a cache, selector, retry loop, health loop, or async adapter."
