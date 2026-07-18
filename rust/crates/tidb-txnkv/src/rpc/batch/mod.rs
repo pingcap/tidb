@@ -18,6 +18,7 @@
 //! state. The exact streaming wire and connection lifecycle are added only
 //! after this authority and asynchronous completion are integrated.
 
+mod coprocessor;
 mod inflight;
 mod observability;
 mod priority_queue;
@@ -26,6 +27,8 @@ mod transport;
 mod wire;
 
 pub(in crate::rpc) use transport::{BatchStreamEvent, BatchTransportState};
+
+pub use coprocessor::BatchCoprocessorPending;
 
 pub use inflight::{
     BatchInflightError, BatchInflightTable, BatchPublishError, BatchRetirementReport, BatchRoute,

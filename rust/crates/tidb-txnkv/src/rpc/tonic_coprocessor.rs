@@ -23,10 +23,12 @@ use tidb_proto::{
 use crate::region::StoreLiveness;
 use crate::{DirectUnaryClient, DirectUnaryRequest, DirectUnaryResponse};
 
-use super::batch::{BatchCommandEntry, BatchPublicationReceipt};
+use super::batch::{BatchCommandEntry, BatchCoprocessorPending, BatchPublicationReceipt};
 use super::liveness::DEFAULT_STORE_LIVENESS_TIMEOUT;
 use super::unary::{RawTransportClient, RawUnaryRequest, UnaryCallContext};
-use super::{DirectUnaryClientError, TransportShutdownCancellation};
+use super::{
+    AsyncRequestDispatcher, DirectUnaryClientError, PendingRequest, TransportShutdownCancellation,
+};
 
 pub(super) use super::unary::RawProtobufCodec;
 
@@ -238,6 +240,33 @@ impl DirectUnaryClient for TonicCoprocessorClient {
     fn close(&mut self) -> Result<(), DirectUnaryClientError> {
         self.shutdown();
         Ok(())
+    }
+}
+
+impl AsyncRequestDispatcher for TonicCoprocessorClient {
+    type Pending = BatchCoprocessorPending;
+
+    fn begin(
+        &mut self,
+        physical_address: &str,
+        forwarded_host: Option<&str>,
+        request: &DirectUnaryRequest,
+        call: &UnaryCallContext,
+    ) -> Result<Self::Pending, DirectUnaryClientError> {
+        if call.cancellation().is_cancelled() {
+            return Err(DirectUnaryClientError::CallerCancelled);
+        }
+        let body = replace_top_level_context(&request.encoded_request, &request.context)?;
+        let (entry, mut pending) = BatchCoprocessorPending::entry(body, forwarded_host);
+        if let Err(error) = self.submit_batch_commands(physical_address, vec![entry]) {
+            pending.cancel();
+            return Err(error);
+        }
+        if call.cancellation().is_cancelled() {
+            pending.cancel();
+            return Err(DirectUnaryClientError::CallerCancelled);
+        }
+        Ok(pending)
     }
 }
 

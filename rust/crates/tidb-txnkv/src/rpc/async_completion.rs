@@ -882,13 +882,4 @@ pub trait AsyncRequestDispatcher {
         request: &DirectUnaryRequest,
         call: &UnaryCallContext,
     ) -> Result<Self::Pending, DirectUnaryClientError>;
-
-    /// Executes a retry synchronously after async policy advances its state.
-    fn send_retry_sync(
-        &mut self,
-        physical_address: &str,
-        forwarded_host: Option<&str>,
-        request: &DirectUnaryRequest,
-        call: &UnaryCallContext,
-    ) -> Result<DirectUnaryResponse, DirectUnaryClientError>;
 }
