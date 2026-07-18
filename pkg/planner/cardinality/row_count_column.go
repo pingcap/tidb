@@ -40,13 +40,23 @@ func init() {
 // estimateRowCountWithUniformDistribution, OutOfRangeRowCount), and through
 // GetIncreaseFactor which is applied per range inside getColumnRowCount.
 //
-// TODO: remove realtimeCount and modifyCount from the key. This requires
-// refactoring OutOfRangeRowCount (and related helpers) to return a selectivity
-// ratio in stats-count space rather than an absolute row count already scaled to
-// realtimeCount. Once those functions no longer take realtimeCount/modifyCount as
-// inputs, GetIncreaseFactor can be applied once at the GetRowCountByColumnRanges
-// call site, and the cache key can be reduced to (physicalID, colInfoID, pkIsHandle,
-// rangesKey).
+// TODO: remove realtimeCount and modifyCount from the key. Two possible routes:
+//  1. Pin the stats snapshot per statement (suggested by @qw4990 in #67098):
+//     memoize GetStatsTable on StmtCtx as a lazy physicalID -> *statistics.Table
+//     map, populated at first use after the sync-load point (SyncWaitStatsLoadPoint
+//     deliberately observes newer stats mid-statement, so the pin cannot be taken
+//     at statement start). Pin the whole snapshot rather than only the two counts,
+//     so a histogram loaded mid-statement is never paired with stale counts. With
+//     the counts constant per physicalID for the whole optimization, they add no
+//     discriminating power and drop out of the key; as a bonus, repeated references
+//     to the same table (e.g. self-joins) get identical estimates.
+//  2. Refactor OutOfRangeRowCount (and related helpers) to return a selectivity
+//     ratio in stats-count space rather than an absolute row count already scaled
+//     to realtimeCount. Once those functions no longer take realtimeCount/modifyCount
+//     as inputs, GetIncreaseFactor can be applied once at the GetRowCountByColumnRanges
+//     call site.
+//
+// Either way the key reduces to (physicalID, colInfoID, pkIsHandle, rangesKey).
 type colEstimateCacheKey struct {
 	physicalID    int64
 	colInfoID     int64
@@ -88,6 +98,15 @@ const colEstimateCacheRangesKeyLimit = 16 * 1024
 // Returns ok=false when the serialized rangesKey would exceed
 // colEstimateCacheRangesKeyLimit; the caller must then skip the cache.
 func buildColEstimateCacheKey(physicalID, colInfoID int64, pkIsHandle bool, ranges []*ranger.Range, realtimeCount, modifyCount int64) (colEstimateCacheKey, bool) {
+	// Fast path: each range serializes to at least 4 bytes (Range.Redact always
+	// emits the enclosing brackets and the low/high separator, plus the comma
+	// joining consecutive ranges), so this many ranges is guaranteed to exceed
+	// the byte limit. Bail before serializing so repeated estimate calls on a
+	// pathological statement don't each pay the (bounded) serialization cost
+	// only to fail the limit check.
+	if len(ranges) > colEstimateCacheRangesKeyLimit/4 {
+		return colEstimateCacheKey{}, false
+	}
 	var b strings.Builder
 	appendDatumCollations := func(vals []types.Datum) {
 		for i := range vals {

@@ -52,6 +52,7 @@ go_test(
         "exponential_test.go",
         "main_test.go",
         "ndv_test.go",
+        "row_count_column_test.go",
         "row_size_test.go",
         "selectivity_test.go",
     ],
