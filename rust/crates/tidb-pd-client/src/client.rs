@@ -54,16 +54,11 @@ enum WorkerCommand {
         reply: mpsc::Sender<Result<PdRegion, PdClientError>>,
     },
     ScanRegions {
-        start_key: Vec<u8>,
-        end_key: Vec<u8>,
-        limit: i32,
+        request: pdpb::ScanRegionsRequest,
         reply: mpsc::Sender<Result<Vec<PdRegion>, PdClientError>>,
     },
     BatchScanRegions {
-        ranges: Vec<PdKeyRange>,
-        limit: i32,
-        need_buckets: bool,
-        contain_all_key_range: bool,
+        request: pdpb::BatchScanRegionsRequest,
         reply: mpsc::Sender<Result<Vec<PdRegion>, PdClientError>>,
     },
     GetStore {
@@ -288,9 +283,12 @@ impl PdClient {
         let (reply, response) = mpsc::channel();
         commands
             .send(WorkerCommand::ScanRegions {
-                start_key: start_key.to_vec(),
-                end_key: end_key.to_vec(),
-                limit,
+                request: pdpb::ScanRegionsRequest {
+                    header: None,
+                    start_key: start_key.to_vec(),
+                    limit,
+                    end_key: end_key.to_vec(),
+                },
                 reply,
             })
             .map_err(|_| PdClientError::Closed)?;
@@ -311,10 +309,19 @@ impl PdClient {
         let (reply, response) = mpsc::channel();
         commands
             .send(WorkerCommand::BatchScanRegions {
-                ranges: ranges.to_vec(),
-                limit,
-                need_buckets,
-                contain_all_key_range,
+                request: pdpb::BatchScanRegionsRequest {
+                    header: None,
+                    need_buckets,
+                    ranges: ranges
+                        .iter()
+                        .map(|range| pdpb::KeyRange {
+                            start_key: range.start_key.clone(),
+                            end_key: range.end_key.clone(),
+                        })
+                        .collect(),
+                    limit,
+                    contain_all_key_range,
+                },
                 reply,
             })
             .map_err(|_| PdClientError::Closed)?;
@@ -401,39 +408,18 @@ fn run_worker(
                 );
                 let _ = reply.send(result);
             }
-            WorkerCommand::ScanRegions {
-                start_key,
-                end_key,
-                limit,
-                reply,
-            } => {
-                let result = scan_regions_with_failover(
-                    &runtime,
-                    &mut clients,
-                    timeout,
-                    &state,
-                    &start_key,
-                    &end_key,
-                    limit,
-                );
+            WorkerCommand::ScanRegions { request, reply } => {
+                let result =
+                    scan_regions_with_failover(&runtime, &mut clients, timeout, &state, &request);
                 let _ = reply.send(result);
             }
-            WorkerCommand::BatchScanRegions {
-                ranges,
-                limit,
-                need_buckets,
-                contain_all_key_range,
-                reply,
-            } => {
+            WorkerCommand::BatchScanRegions { request, reply } => {
                 let result = batch_scan_regions_with_failover(
                     &runtime,
                     &mut clients,
                     timeout,
                     &state,
-                    &ranges,
-                    limit,
-                    need_buckets,
-                    contain_all_key_range,
+                    &request,
                 );
                 let _ = reply.send(result);
             }
@@ -585,23 +571,13 @@ fn scan_regions(
     endpoint: &str,
     timeout: Duration,
     cluster_id: u64,
-    start_key: &[u8],
-    end_key: &[u8],
-    limit: i32,
+    request: &pdpb::ScanRegionsRequest,
 ) -> Result<Vec<PdRegion>, PdClientError> {
     let client = tonic_client(runtime, clients, endpoint)?;
-    let response = runtime.block_on(async {
-        tokio::time::timeout(
-            timeout,
-            client.scan_regions(pdpb::ScanRegionsRequest {
-                header: Some(request_header(cluster_id)),
-                start_key: start_key.to_vec(),
-                limit,
-                end_key: end_key.to_vec(),
-            }),
-        )
-        .await
-    });
+    let mut request = request.clone();
+    request.header = Some(request_header(cluster_id));
+    let response = runtime
+        .block_on(async { tokio::time::timeout(timeout, client.scan_regions(request)).await });
     let response =
         map_rpc_result(response, PdOperation::ScanRegions, endpoint, timeout)?.into_inner();
     validate_response_header(
@@ -612,37 +588,20 @@ fn scan_regions(
     project_scan_regions(response)
 }
 
-#[allow(clippy::too_many_arguments)]
 fn batch_scan_regions(
     runtime: &tokio::runtime::Runtime,
     clients: &mut HashMap<String, TonicPdClient<Channel>>,
     endpoint: &str,
     timeout: Duration,
     cluster_id: u64,
-    ranges: &[PdKeyRange],
-    limit: i32,
-    need_buckets: bool,
-    contain_all_key_range: bool,
+    request: &pdpb::BatchScanRegionsRequest,
 ) -> Result<Vec<PdRegion>, PdClientError> {
     let client = tonic_client(runtime, clients, endpoint)?;
+    let need_buckets = request.need_buckets;
+    let mut request = request.clone();
+    request.header = Some(request_header(cluster_id));
     let response = runtime.block_on(async {
-        tokio::time::timeout(
-            timeout,
-            client.batch_scan_regions(pdpb::BatchScanRegionsRequest {
-                header: Some(request_header(cluster_id)),
-                need_buckets,
-                ranges: ranges
-                    .iter()
-                    .map(|range| pdpb::KeyRange {
-                        start_key: range.start_key.clone(),
-                        end_key: range.end_key.clone(),
-                    })
-                    .collect(),
-                limit,
-                contain_all_key_range,
-            }),
-        )
-        .await
+        tokio::time::timeout(timeout, client.batch_scan_regions(request)).await
     });
     let response =
         map_rpc_result(response, PdOperation::BatchScanRegions, endpoint, timeout)?.into_inner();
@@ -786,9 +745,7 @@ fn scan_regions_with_failover(
     clients: &mut HashMap<String, TonicPdClient<Channel>>,
     timeout: Duration,
     state: &Arc<RwLock<PdSharedState>>,
-    start_key: &[u8],
-    end_key: &[u8],
-    limit: i32,
+    request: &pdpb::ScanRegionsRequest,
 ) -> Result<Vec<PdRegion>, PdClientError> {
     foreground_with_failover(
         runtime,
@@ -796,9 +753,7 @@ fn scan_regions_with_failover(
         timeout,
         state,
         |runtime, clients, endpoint, cluster_id| {
-            scan_regions(
-                runtime, clients, endpoint, timeout, cluster_id, start_key, end_key, limit,
-            )
+            scan_regions(runtime, clients, endpoint, timeout, cluster_id, request)
         },
     )
 }
@@ -808,10 +763,7 @@ fn batch_scan_regions_with_failover(
     clients: &mut HashMap<String, TonicPdClient<Channel>>,
     timeout: Duration,
     state: &Arc<RwLock<PdSharedState>>,
-    ranges: &[PdKeyRange],
-    limit: i32,
-    need_buckets: bool,
-    contain_all_key_range: bool,
+    request: &pdpb::BatchScanRegionsRequest,
 ) -> Result<Vec<PdRegion>, PdClientError> {
     foreground_with_failover(
         runtime,
@@ -819,17 +771,7 @@ fn batch_scan_regions_with_failover(
         timeout,
         state,
         |runtime, clients, endpoint, cluster_id| {
-            batch_scan_regions(
-                runtime,
-                clients,
-                endpoint,
-                timeout,
-                cluster_id,
-                ranges,
-                limit,
-                need_buckets,
-                contain_all_key_range,
-            )
+            batch_scan_regions(runtime, clients, endpoint, timeout, cluster_id, request)
         },
     )
 }
