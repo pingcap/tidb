@@ -461,7 +461,7 @@ func (ssMap *stmtSummaryByDigestMap) clearInternal() {
 	defer ssMap.Unlock()
 
 	for _, key := range ssMap.summaryMap.Keys() {
-		summary, ok := ssMap.summaryMap.Get(key)
+		summary, ok := ssMap.summaryMap.Peek(key)
 		if !ok {
 			continue
 		}

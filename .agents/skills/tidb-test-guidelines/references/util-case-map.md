@@ -301,7 +301,7 @@
 
 ### Tests
 - `pkg/util/kvcache/main_test.go` - Configures default goleak settings and registers testdata.
-- `pkg/util/kvcache/simple_lru_test.go` - util/kvcache: Tests put.
+- `pkg/util/kvcache/simple_lru_test.go` - util/kvcache: Tests put, get, and peek behavior.
 
 ## pkg/util/logutil
 
@@ -528,7 +528,7 @@
 ### Tests
 - `pkg/util/stmtsummary/evicted_test.go` - util/stmtsummary: Tests map to evicted count datum.
 - `pkg/util/stmtsummary/main_test.go` - Configures default goleak settings and registers testdata.
-- `pkg/util/stmtsummary/statement_summary_test.go` - util/stmtsummary: Tests set up.
+- `pkg/util/stmtsummary/statement_summary_test.go` - util/stmtsummary: Tests statement aggregation, LRU eviction, and current/history row behavior.
 
 ## pkg/util/stmtsummary/v2
 

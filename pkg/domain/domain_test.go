@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
@@ -35,11 +36,15 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
@@ -230,6 +235,51 @@ func unixSocketAvailable() bool {
 
 func mockFactory() (pools.Resource, error) {
 	return nil, errors.New("mock factory should not be called")
+}
+
+type stmtSummarySysVarContext struct {
+	*mock.Context
+	rows []chunk.Row
+}
+
+func (c *stmtSummarySysVarContext) GetRestrictedSQLExecutor() sqlexec.RestrictedSQLExecutor {
+	return c
+}
+
+func (c *stmtSummarySysVarContext) ExecRestrictedSQL(context.Context, []sqlexec.OptionFuncAlias, string, ...any) ([]chunk.Row, []*resolve.ResultField, error) {
+	return c.rows, nil, nil
+}
+
+// Regression coverage for issue #69913's periodic trigger path.
+func TestLoadSysVarCacheLoopReappliesStmtSummaryInternalQuery(t *testing.T) {
+	require.False(t, config.GetGlobalConfig().Instance.StmtSummaryEnablePersistent)
+
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	dom := NewDomain(store, 80*time.Millisecond, 0, 0, mockFactory)
+	t.Cleanup(func() {
+		dom.Close()
+		require.NoError(t, store.Close())
+	})
+
+	ctx := &stmtSummarySysVarContext{
+		Context: mock.NewContext(),
+		rows: []chunk.Row{
+			chunk.MutRowFromValues(vardef.TiDBStmtSummaryInternalQuery, vardef.Off).ToRow(),
+			// This lightweight Domain does not start DDL, so keep the MDL callback
+			// from calling its DDL-owned hook while rebuilding unrelated sysvars.
+			chunk.MutRowFromValues(vardef.TiDBEnableMDL, variable.BoolToOnOff(vardef.IsMDLEnabled())).ToRow(),
+		},
+	}
+
+	require.NoError(t, stmtsummaryv2.SetEnableInternalQuery(true))
+	t.Cleanup(func() {
+		require.NoError(t, stmtsummaryv2.SetEnableInternalQuery(false))
+	})
+	require.True(t, stmtsummaryv2.EnabledInternal())
+
+	require.NoError(t, dom.LoadSysVarCacheLoop(ctx))
+	require.False(t, stmtsummaryv2.EnabledInternal())
 }
 
 func sysMockFactory(*Domain) (pools.Resource, error) {
