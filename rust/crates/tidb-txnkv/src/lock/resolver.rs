@@ -411,6 +411,6 @@ where
     });
     context.replica_read = false;
     context.stale_read = false;
-    context.cluster_id = cache.cluster_id();
+    context.cluster_id = runtime.cluster_id();
     Ok((selected.attempt.address, context))
 }
