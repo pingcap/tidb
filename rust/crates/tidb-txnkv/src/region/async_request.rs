@@ -32,6 +32,30 @@ use crate::rpc::{
 };
 use crate::{DirectUnaryRequest, DirectUnaryResponse, EndpointType};
 
+/// Successful raw response paired with the final logical TiKV target.
+///
+/// The address is the selected target, not an optional forwarding proxy. A
+/// synchronous fallback may therefore return a different final address from
+/// the first asynchronous attempt without losing routing identity.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RoutedRegionResponse {
+    /// Raw successful response from TiKV.
+    pub response: DirectUnaryResponse,
+    /// Logical TiKV address which interpreted the request.
+    pub logical_address: String,
+}
+
+impl RoutedRegionResponse {
+    /// Binds a successful response to its final logical target.
+    #[must_use]
+    pub fn new(response: DirectUnaryResponse, logical_address: impl Into<String>) -> Self {
+        Self {
+            response,
+            logical_address: logical_address.into(),
+        }
+    }
+}
+
 /// Why the caller-owned synchronous region-request loop must continue.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AsyncRegionRetryCause {
@@ -103,7 +127,7 @@ pub enum AsyncRegionAttemptPoll {
 
 enum AttemptPhase<P> {
     Pending { pending: P, started_at: Instant },
-    AwaitingSynchronousRetry,
+    AwaitingSynchronousRetry { cause: AsyncRegionRetryCause },
     Complete,
 }
 
@@ -116,7 +140,7 @@ enum AttemptPhase<P> {
 pub struct AsyncRegionRequestAttempt<P, A> {
     route: LeaderRequest,
     call: UnaryCallContext,
-    completion: CompletionRequest<DirectUnaryResponse, DirectUnaryClientError>,
+    completion: CompletionRequest<RoutedRegionResponse, DirectUnaryClientError>,
     policy: A,
     phase: AttemptPhase<P>,
 }
@@ -133,8 +157,8 @@ where
         route: LeaderRequest,
         request: &DirectUnaryRequest,
         call: UnaryCallContext,
-        completion: CompletionRequest<DirectUnaryResponse, DirectUnaryClientError>,
-        policy: A,
+        completion: CompletionRequest<RoutedRegionResponse, DirectUnaryClientError>,
+        mut policy: A,
     ) -> Self
     where
         D: AsyncRequestDispatcher<Pending = P>,
@@ -182,11 +206,29 @@ where
                 pending,
                 started_at,
             },
-            Err(error) => {
-                // `begin` returning an error means no asynchronous attempt was
-                // published, so there is no selector attempt to feed back.
-                completion.invoke(Err(error));
+            Err(_) if completion.is_cancelled() => AttemptPhase::Complete,
+            Err(_) if call.cancellation().is_cancelled() => {
+                completion.schedule(Err(DirectUnaryClientError::CallerCancelled));
                 AttemptPhase::Complete
+            }
+            Err(error) => {
+                let decision = policy.on_send_failure(&route, started_at.elapsed(), error);
+                if completion.is_cancelled() {
+                    AttemptPhase::Complete
+                } else if call.cancellation().is_cancelled() {
+                    completion.schedule(Err(DirectUnaryClientError::CallerCancelled));
+                    AttemptPhase::Complete
+                } else {
+                    match decision {
+                        AsyncRegionAttemptDecision::Complete(result) => {
+                            completion.schedule(route_result(&route, result));
+                            AttemptPhase::Complete
+                        }
+                        AsyncRegionAttemptDecision::Retry(cause) => {
+                            AttemptPhase::AwaitingSynchronousRetry { cause }
+                        }
+                    }
+                }
             }
         };
         Self {
@@ -203,7 +245,7 @@ where
     pub const fn state(&self) -> AsyncRegionAttemptState {
         match &self.phase {
             AttemptPhase::Pending { .. } => AsyncRegionAttemptState::Pending,
-            AttemptPhase::AwaitingSynchronousRetry => {
+            AttemptPhase::AwaitingSynchronousRetry { .. } => {
                 AsyncRegionAttemptState::AwaitingSynchronousRetry
             }
             AttemptPhase::Complete => AsyncRegionAttemptState::Complete,
@@ -216,6 +258,9 @@ where
     /// the source invariant which prevents a cancelled request from dropping
     /// or reloading a still-valid cached region.
     pub fn poll(&mut self) -> AsyncRegionAttemptPoll {
+        if let AttemptPhase::AwaitingSynchronousRetry { cause } = &self.phase {
+            return AsyncRegionAttemptPoll::Retry(cause.clone());
+        }
         let AttemptPhase::Pending {
             pending,
             started_at,
@@ -232,7 +277,7 @@ where
         if self.call.cancellation().is_cancelled() {
             pending.cancel();
             self.completion
-                .invoke(Err(DirectUnaryClientError::CallerCancelled));
+                .schedule(Err(DirectUnaryClientError::CallerCancelled));
             self.phase = AttemptPhase::Complete;
             return AsyncRegionAttemptPoll::Complete;
         }
@@ -242,7 +287,7 @@ where
             Ok(None) => return AsyncRegionAttemptPoll::Pending,
             Err(error) => {
                 self.completion
-                    .invoke(Err(DirectUnaryClientError::Runtime(error.to_string())));
+                    .schedule(Err(DirectUnaryClientError::Runtime(error.to_string())));
                 self.phase = AttemptPhase::Complete;
                 return AsyncRegionAttemptPoll::Complete;
             }
@@ -257,7 +302,7 @@ where
             || matches!(&outcome, Err(DirectUnaryClientError::CallerCancelled))
         {
             self.completion
-                .invoke(Err(DirectUnaryClientError::CallerCancelled));
+                .schedule(Err(DirectUnaryClientError::CallerCancelled));
             self.phase = AttemptPhase::Complete;
             return AsyncRegionAttemptPoll::Complete;
         }
@@ -267,26 +312,75 @@ where
             Ok(response) => self.policy.on_response(&self.route, elapsed, response),
             Err(error) => self.policy.on_send_failure(&self.route, elapsed, error),
         };
+        if self.completion.is_cancelled() {
+            self.phase = AttemptPhase::Complete;
+            return AsyncRegionAttemptPoll::Complete;
+        }
+        if self.call.cancellation().is_cancelled() {
+            self.completion
+                .schedule(Err(DirectUnaryClientError::CallerCancelled));
+            self.phase = AttemptPhase::Complete;
+            return AsyncRegionAttemptPoll::Complete;
+        }
         match decision {
             AsyncRegionAttemptDecision::Complete(result) => {
-                self.completion.invoke(result);
+                self.completion.schedule(route_result(&self.route, result));
                 self.phase = AttemptPhase::Complete;
                 AsyncRegionAttemptPoll::Complete
             }
             AsyncRegionAttemptDecision::Retry(cause) => {
-                self.phase = AttemptPhase::AwaitingSynchronousRetry;
+                self.phase = AttemptPhase::AwaitingSynchronousRetry {
+                    cause: cause.clone(),
+                };
                 AsyncRegionAttemptPoll::Retry(cause)
             }
         }
     }
 
-    /// Publishes the terminal result from the caller-owned synchronous retry
-    /// loop. Duplicate calls are suppressed by both phase and completion once.
-    pub fn complete_retry(&mut self, result: Result<DirectUnaryResponse, DirectUnaryClientError>) {
-        if matches!(self.phase, AttemptPhase::AwaitingSynchronousRetry) {
-            self.completion.schedule(result);
-            self.phase = AttemptPhase::Complete;
+    /// Runs the caller-owned synchronous retry loop with the same policy and
+    /// call context, then publishes through the same completion once gate.
+    ///
+    /// `retry` owns selection, cache reload, backoff, and every synchronous
+    /// attempt. Cancellation is checked on both sides of the closure so a
+    /// fallback result cannot win a race with caller cancellation.
+    pub fn run_synchronous_retry<F>(&mut self, retry: F)
+    where
+        F: FnOnce(
+            &mut A,
+            &UnaryCallContext,
+        ) -> Result<RoutedRegionResponse, DirectUnaryClientError>,
+    {
+        if !matches!(&self.phase, AttemptPhase::AwaitingSynchronousRetry { .. }) {
+            return;
         }
+        if self.completion.is_cancelled() {
+            self.phase = AttemptPhase::Complete;
+            return;
+        }
+        if self.call.cancellation().is_cancelled() {
+            self.completion
+                .schedule(Err(DirectUnaryClientError::CallerCancelled));
+            self.phase = AttemptPhase::Complete;
+            return;
+        }
+
+        let result = retry(&mut self.policy, &self.call);
+        if self.completion.is_cancelled() {
+            self.phase = AttemptPhase::Complete;
+            return;
+        }
+        if self.call.cancellation().is_cancelled() {
+            self.completion
+                .schedule(Err(DirectUnaryClientError::CallerCancelled));
+        } else {
+            self.completion.schedule(result);
+        }
+        self.phase = AttemptPhase::Complete;
+    }
+
+    /// Publishes an already-computed routed fallback result.
+    pub fn complete_retry(&mut self, result: Result<RoutedRegionResponse, DirectUnaryClientError>) {
+        self.run_synchronous_retry(|_, _| result);
     }
 
     /// Returns the policy, including its canonical selector/cache adapter.
@@ -294,6 +388,13 @@ where
     pub fn into_policy(self) -> A {
         self.policy
     }
+}
+
+fn route_result(
+    route: &LeaderRequest,
+    result: Result<DirectUnaryResponse, DirectUnaryClientError>,
+) -> Result<RoutedRegionResponse, DirectUnaryClientError> {
+    result.map(|response| RoutedRegionResponse::new(response, route.target().address.clone()))
 }
 
 fn prepare_request(
