@@ -42,7 +42,9 @@ rust_paths = [
   "rust/crates/tidb-proto/proto/tikvpb.proto",
   "rust/crates/tidb-proto/tests/batch_commands_wire_source.rs",
   "rust/crates/tidb-txnkv/src/rpc/batch/inflight.rs",
+  "rust/crates/tidb-txnkv/src/rpc/batch/scheduler.rs",
   "rust/crates/tidb-txnkv/src/rpc/batch/wire.rs",
   "rust/crates/tidb-txnkv/tests/batch_inflight_source.rs",
+  "rust/crates/tidb-txnkv/tests/batch_scheduler_source.rs",
   "rust/crates/tidb-txnkv/tests/batch_wire_source.rs",
 ]
