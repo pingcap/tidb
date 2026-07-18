@@ -12,20 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Logical datasource input for the bounded index access-task transition.
+//! Logical datasource input for bounded table/index access-task transitions.
 
 use crate::{
     access_path::DataSourceAccessPath,
-    index_task::IndexTask,
-    logical_data_source_task::{build_index_task, IndexTaskProperty},
+    index_task::{IndexTask, ScanReadTask},
+    logical_data_source_task::{build_index_task, build_scan_read_task, IndexTaskProperty},
 };
 
 /// A logical datasource with the access paths already produced by ranger.
 ///
-/// This intentionally owns no expressions, table metadata, partition state,
-/// or optimizer cache.  Those source responsibilities are prerequisites for a
-/// full `logicalop.DataSource`; this type is the smallest real owner needed to
-/// drive `IndexAccessPath` into a physical index task.
+/// This intentionally owns no expressions, live schema lookup, partition
+/// pruning, or optimizer cache. Those source responsibilities are
+/// prerequisites for a full `logicalop.DataSource`; represented table and
+/// index paths instead carry their already-resolved scan inputs.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LogicalDataSource {
     physical_plan_id: i32,
@@ -77,5 +77,16 @@ impl LogicalDataSource {
     #[must_use]
     pub fn build_index_task(&self, property: IndexTaskProperty) -> IndexTask {
         build_index_task(self, property)
+    }
+
+    /// Builds the unified bounded table/index read task.
+    ///
+    /// Index-only inputs retain [`Self::build_index_task`] semantics. Exactly
+    /// one admitted TiKV table path can additionally become a root
+    /// `PhysicalTableReaderPlan`; alternatives that need cross-path costing or
+    /// an unsupported executor tree fail closed.
+    #[must_use]
+    pub fn build_scan_read_task(&self, property: IndexTaskProperty) -> ScanReadTask {
+        build_scan_read_task(self, property)
     }
 }

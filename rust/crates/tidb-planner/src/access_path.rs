@@ -21,7 +21,7 @@
 use crate::{
     cardinality::live_index_optimizer::{estimate_proven_point_rows, LiveIndexCandidate},
     scan_pushdown::{
-        IndexPushdownMetadataError, ResolvedIndexDescriptor, TiKvIndexScanSpec,
+        IndexPushdownMetadataError, ResolvedIndexDescriptor, TiKvIndexScanSpec, TiKvTableScanSpec,
         ValidatedIndexPushdown,
     },
 };
@@ -33,6 +33,131 @@ pub enum AccessPathStore {
     TiKv,
     /// TiFlash columnar-store access.
     TiFlash,
+}
+
+/// An ordinary table path whose schema-dependent TiKV payload is already
+/// resolved by the source adapter.
+///
+/// Go's `AccessPath` carries ranger output, storage choice, filters, and the
+/// earlier PointGet decision into `convertToTableScan`. The bounded Rust
+/// transition keeps those admissions explicit so a table path cannot skip a
+/// planner branch that does not yet have an owner.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TableAccessPath {
+    pushdown: TiKvTableScanSpec,
+    point_get_admission: PointGetAdmission,
+    count_after_access: f64,
+    store: AccessPathStore,
+    empty_ranges: bool,
+    partitioned: bool,
+    sampled: bool,
+    has_filters: bool,
+}
+
+impl TableAccessPath {
+    /// Creates a non-empty TiKV table path with an explicit upstream
+    /// PointGet admission.
+    #[must_use]
+    pub const fn from_source_table_scan(
+        pushdown: TiKvTableScanSpec,
+        point_get_admission: PointGetAdmission,
+        count_after_access: f64,
+    ) -> Self {
+        Self {
+            pushdown,
+            point_get_admission,
+            count_after_access,
+            store: AccessPathStore::TiKv,
+            empty_ranges: false,
+            partitioned: false,
+            sampled: false,
+            has_filters: false,
+        }
+    }
+
+    /// Marks ranger's exact empty-range result.
+    #[must_use]
+    pub const fn with_empty_ranges(mut self) -> Self {
+        self.empty_ranges = true;
+        self
+    }
+
+    /// Changes the source storage engine.
+    #[must_use]
+    pub const fn with_store(mut self, store: AccessPathStore) -> Self {
+        self.store = store;
+        self
+    }
+
+    /// Records a physical partition path, which needs partition pruning and
+    /// physical-table identity owners.
+    #[must_use]
+    pub const fn with_partitioned(mut self, partitioned: bool) -> Self {
+        self.partitioned = partitioned;
+        self
+    }
+
+    /// Records a `TABLESAMPLE` path, which uses a different physical plan.
+    #[must_use]
+    pub const fn with_table_sample(mut self, sampled: bool) -> Self {
+        self.sampled = sampled;
+        self
+    }
+
+    /// Records filters that require a Selection owner above the scan.
+    #[must_use]
+    pub const fn with_filters(mut self, has_filters: bool) -> Self {
+        self.has_filters = has_filters;
+        self
+    }
+
+    /// Returns the pre-resolved table-scan protobuf payload.
+    #[must_use]
+    pub const fn pushdown(&self) -> &TiKvTableScanSpec {
+        &self.pushdown
+    }
+
+    /// Returns the upstream PointGet decision.
+    #[must_use]
+    pub const fn point_get_admission(&self) -> PointGetAdmission {
+        self.point_get_admission
+    }
+
+    /// Returns source `CountAfterAccess` for the physical scan statistics.
+    #[must_use]
+    pub const fn count_after_access(&self) -> f64 {
+        self.count_after_access
+    }
+
+    /// Returns the selected storage engine.
+    #[must_use]
+    pub const fn store(&self) -> AccessPathStore {
+        self.store
+    }
+
+    /// Reports whether ranger produced no ranges.
+    #[must_use]
+    pub const fn has_empty_ranges(&self) -> bool {
+        self.empty_ranges
+    }
+
+    /// Reports whether this path addresses a physical partition.
+    #[must_use]
+    pub const fn is_partitioned(&self) -> bool {
+        self.partitioned
+    }
+
+    /// Reports whether this path came from `TABLESAMPLE`.
+    #[must_use]
+    pub const fn is_table_sample(&self) -> bool {
+        self.sampled
+    }
+
+    /// Reports whether a Selection would be required around the scan.
+    #[must_use]
+    pub const fn has_filters(&self) -> bool {
+        self.has_filters
+    }
 }
 
 /// The source path's required read shape.
@@ -269,8 +394,8 @@ impl IndexAccessPath {
 pub enum DataSourceAccessPath {
     /// An ordinary index path.
     Index(IndexAccessPath),
-    /// A table scan path.
-    Table,
+    /// An ordinary table scan path.
+    Table(TableAccessPath),
     /// An index-merge path.
     IndexMerge,
 }

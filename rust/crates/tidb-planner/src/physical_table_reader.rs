@@ -19,8 +19,11 @@
 //! cost, index resolution, task attachment, and protobuf/runtime wiring. This
 //! leaf ports the stable reader identity, request-type naming, clone field
 //! behavior, table-scan cardinality error, explain/normalized strings, and
-//! monotonic metadata accounting. Storage and planner graph operations remain
-//! external boundaries.
+//! monotonic metadata accounting. It also owns the exact physical table scan
+//! produced by the bounded Cop-task conversion; general planner trees,
+//! storage execution, and RPC remain external boundaries.
+
+use crate::physical_table_scan::PhysicalTableScanPlan;
 
 /// The source plan-codec type assigned by `PhysicalTableReader.Init`.
 pub const PLAN_TYPE: &str = "TableReader";
@@ -95,8 +98,9 @@ pub struct PhysicalTableReaderPlan {
     store_type: StoreType,
     mpp_version: u32,
     is_common_handle: bool,
-    table_plan_identity: Option<u64>,
-    flattened_first_identity: Option<u64>,
+    table_plan_identity: Option<i32>,
+    flattened_first_identity: Option<i32>,
+    table_scan_plan: Option<PhysicalTableScanPlan>,
 }
 
 impl PhysicalTableReaderPlan {
@@ -119,6 +123,30 @@ impl PhysicalTableReaderPlan {
             is_common_handle: false,
             table_plan_identity,
             flattened_first_identity: table_plan_identity,
+            table_scan_plan: None,
+        }
+    }
+
+    /// Converts one table-side Cop task into the corresponding root
+    /// `PhysicalTableReader`, matching `CopTask.convertToRootTaskImpl`.
+    #[must_use]
+    pub fn from_table_scan(table_scan_plan: PhysicalTableScanPlan) -> Self {
+        let query_block_offset = table_scan_plan.plan().query_block_offset();
+        let table_plan_explain = table_scan_plan.plan().explain_id(true);
+        let table_plan_identity = table_scan_plan.plan().id();
+        Self {
+            query_block_offset,
+            table_plan_explain: Some(table_plan_explain),
+            table_plans_len: 1,
+            table_scan_count: 1,
+            table_scan_partition_info_count: 0,
+            read_req_type: ReadReqType::Cop,
+            store_type: StoreType::TiKv,
+            mpp_version: 0,
+            is_common_handle: false,
+            table_plan_identity: Some(table_plan_identity),
+            flattened_first_identity: Some(table_plan_identity),
+            table_scan_plan: Some(table_scan_plan),
         }
     }
 
@@ -155,7 +183,7 @@ impl PhysicalTableReaderPlan {
 
     /// Supplies a stable opaque child identity for flattening checks.
     #[must_use]
-    pub const fn with_table_plan_identity(mut self, identity: u64) -> Self {
+    pub const fn with_table_plan_identity(mut self, identity: i32) -> Self {
         self.table_plan_identity = Some(identity);
         self.flattened_first_identity = Some(identity);
         self
@@ -240,6 +268,13 @@ impl PhysicalTableReaderPlan {
     #[must_use]
     pub const fn table_scan_count(&self) -> usize {
         self.table_scan_count
+    }
+
+    /// Returns the owned physical table scan for a reader built from a Cop
+    /// table task. Metadata-only reader fixtures intentionally return `None`.
+    #[must_use]
+    pub const fn table_scan_plan(&self) -> Option<&PhysicalTableScanPlan> {
+        self.table_scan_plan.as_ref()
     }
 
     /// Returns the source common-handle flag.

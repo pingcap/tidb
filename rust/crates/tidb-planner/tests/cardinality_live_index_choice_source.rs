@@ -9,7 +9,7 @@ use tidb_planner::cardinality::index_range_policy::{IndexRangeShape, RangeBoundK
 use tidb_planner::{
     access_path::{
         AccessPathStore, DataSourceAccessPath, ExpectedCountRows, IndexAccessPath, IndexReadShape,
-        PointEstimateAdmissionError, PointGetAdmission,
+        PointEstimateAdmissionError, PointGetAdmission, TableAccessPath,
     },
     cardinality::live_index_optimizer::{IndexPointStatistics, LiveIndexCandidate},
     index_task::{IndexTask, IndexTaskRejection},
@@ -17,6 +17,7 @@ use tidb_planner::{
     logical_data_source_task::IndexTaskProperty,
     physical_index_scan::PhysicalIndexScanPlan,
     physical_property::IndexOrderingRequirement,
+    scan_pushdown::TiKvTableScanSpec,
     task_type::TaskType,
 };
 
@@ -178,7 +179,13 @@ fn source_datasource_index_task_rejects_unimplemented_go_path_forms() {
     // pkg/planner/core/find_best_task.go:2156-2327,2571-2728
     assert_eq!(rejection([]), Some(IndexTaskRejection::NoAccessPaths));
     assert_eq!(
-        rejection([DataSourceAccessPath::Table]),
+        rejection([DataSourceAccessPath::Table(
+            TableAccessPath::from_source_table_scan(
+                TiKvTableScanSpec::new(1, vec![]),
+                PointGetAdmission::NotEligible,
+                1.0,
+            ),
+        )]),
         Some(IndexTaskRejection::TablePath)
     );
     assert_eq!(
