@@ -17,8 +17,10 @@
 //! The injected [`RegionCache`] is the sole topology authority. Query binding
 //! discovers every required region and selects its PD-declared leader, while
 //! TiKV dispatch remains lazy until the consumer pulls the returned response.
-//! Region errors invalidate only the exact cached version and stop; this owner
-//! never manufactures a same-query retry.
+//! Region errors are classified through the sole [`RegionCache`] authority.
+//! This response then owns the bounded resend/rebuild loop, per-region
+//! backoff budgets, cancellation-aware sleep, and ordered replacement of only
+//! unconsumed work.
 
 use std::cell::{RefCell, RefMut};
 use std::collections::{BTreeMap, BTreeSet};
@@ -33,8 +35,9 @@ use crate::{
     CoprCache, CoprCacheConfig, ResponseChannelEvent, TransportRequest, TransportRequestError,
 };
 use tidb_txnkv::region::{
-    KeyRange as RegionKeyRange, ReadPolicy, RegionCache, RegionLoader, RegionLocation,
-    RegionRouteError, RegionVerId, ReplicaSelector,
+    KeyRange as RegionKeyRange, OwnedLeaderRoute, ReadPolicy, RegionAttempt, RegionBackoffBudget,
+    RegionBackoffKind, RegionCache, RegionErrorDisposition, RegionLoader, RegionLocation,
+    RegionRecoveryLoader, RegionRouteError, RegionVerId, ReplicaSelector,
 };
 pub use tidb_txnkv::{
     DirectUnaryClient, DirectUnaryClientError, DirectUnaryRequest, DirectUnaryResponse,
@@ -48,7 +51,7 @@ use super::{
 use crate::{RegionTaskEpoch, RegionTaskPeer, RegionTaskTopology, ReplicaReadType};
 
 /// Deterministic policy owned by the direct unary runtime.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct DirectUnaryRuntimeConfig {
     /// Default used when the task has no request-local read timeout.
     pub default_timeout: Duration,
@@ -68,6 +71,26 @@ pub struct DirectUnaryRuntimeConfig {
     /// zero `time.Time`, so the first real response replaces the seed. A
     /// function pointer keeps that contract deterministic in focused tests.
     pub observation_time: fn() -> Duration,
+    /// Cancellation and sleeping owner for region-recovery delays.
+    pub region_retry_control: Rc<dyn RegionRetryControl>,
+    /// Effective sleep budget shared by both retry levels for one region ID.
+    pub region_retry_max_sleep: Duration,
+}
+
+impl std::fmt::Debug for DirectUnaryRuntimeConfig {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("DirectUnaryRuntimeConfig")
+            .field("default_timeout", &self.default_timeout)
+            .field("read_engine_generation", &self.read_engine_generation)
+            .field("seed_read_bytes", &self.seed_read_bytes)
+            .field("cache", &self.cache)
+            .field("trace", &self.trace)
+            .field("observation_time", &"fn() -> Duration")
+            .field("region_retry_control", &self.region_retry_control)
+            .field("region_retry_max_sleep", &self.region_retry_max_sleep)
+            .finish()
+    }
 }
 
 impl Default for DirectUnaryRuntimeConfig {
@@ -79,7 +102,47 @@ impl Default for DirectUnaryRuntimeConfig {
             cache: None,
             trace: None,
             observation_time: system_observation_time,
+            region_retry_control: Rc::new(ThreadRegionRetryControl),
+            region_retry_max_sleep: Duration::from_secs(20),
         }
+    }
+}
+
+/// Cancellation result returned before retry-side mutation or dispatch.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RegionRetryCancelled;
+
+impl std::fmt::Display for RegionRetryCancelled {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("region retry cancelled")
+    }
+}
+
+impl std::error::Error for RegionRetryCancelled {}
+
+/// Injected cancellation-aware sleeper for response-owned region recovery.
+///
+/// This seam deliberately does not claim cancellation of an active blocking
+/// `DirectUnaryClient::send_request` call.
+pub trait RegionRetryControl: std::fmt::Debug {
+    /// Rejects work before cache mutation, PD lookup, or TiKV dispatch.
+    fn check_cancelled(&self) -> Result<(), RegionRetryCancelled>;
+
+    /// Sleeps one already-reserved delay, returning early on cancellation.
+    fn sleep(&self, delay: Duration) -> Result<(), RegionRetryCancelled>;
+}
+
+#[derive(Debug)]
+struct ThreadRegionRetryControl;
+
+impl RegionRetryControl for ThreadRegionRetryControl {
+    fn check_cancelled(&self) -> Result<(), RegionRetryCancelled> {
+        Ok(())
+    }
+
+    fn sleep(&self, delay: Duration) -> Result<(), RegionRetryCancelled> {
+        std::thread::sleep(delay);
+        Ok(())
     }
 }
 
@@ -113,6 +176,12 @@ pub enum DirectUnaryTransportError {
     /// The coordinator produced a response-channel state this synchronous
     /// owner cannot consume.
     ResponseState(&'static str),
+    /// Region recovery rejected stale or malformed topology.
+    RegionRecovery(String),
+    /// Pinned client-go classified the region error as terminal.
+    RegionTerminal(String),
+    /// Cancellation won before retry-side mutation, sleep, PD, or dispatch.
+    RetryCancelled,
 }
 
 impl DirectUnaryTransportError {
@@ -130,6 +199,9 @@ impl DirectUnaryTransportError {
             Self::ClientLifecycle => "client_lifecycle",
             Self::Decode(_) => "decode",
             Self::ResponseState(_) => "response_state",
+            Self::RegionRecovery(_) => "region_recovery",
+            Self::RegionTerminal(_) => "region_terminal",
+            Self::RetryCancelled => "retry_cancelled",
         }
     }
 }
@@ -158,6 +230,9 @@ impl std::fmt::Display for DirectUnaryTransportError {
             Self::ResponseState(state) => {
                 write!(formatter, "invalid unary response state: {state}")
             }
+            Self::RegionRecovery(message) => write!(formatter, "region recovery failed: {message}"),
+            Self::RegionTerminal(message) => write!(formatter, "terminal region error: {message}"),
+            Self::RetryCancelled => formatter.write_str("region retry cancelled"),
         }
     }
 }
@@ -187,7 +262,10 @@ impl From<CopReadTaskError> for DirectUnaryTransportError {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct SelectedRegionRoute {
     region: RegionVerId,
+    peer_id: u64,
+    store_id: u64,
     address: String,
+    store_epoch: u64,
 }
 
 /// Injected transport that creates lazy, response-owned unary runtimes.
@@ -215,7 +293,7 @@ impl<C, L: RegionLoader> DirectUnaryQueryTransport<C, L> {
     }
 }
 
-impl<C: DirectUnaryClient + 'static, L: RegionLoader + 'static> QueryTransport
+impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTransport
     for DirectUnaryQueryTransport<C, L>
 {
     type Response = DirectUnaryQueryResponse<C, L>;
@@ -302,6 +380,7 @@ impl<C: DirectUnaryClient + 'static, L: RegionLoader + 'static> QueryTransport
             active_attempts,
             logical_index: 0,
             closed: false,
+            region_backoffs: BTreeMap::new(),
         }))
     }
 }
@@ -356,7 +435,10 @@ fn topology_from_locations(
             location.region,
             SelectedRegionRoute {
                 region: location.region,
+                peer_id: selected.peer.id,
+                store_id: selected.peer.store_id,
                 address: selected.store.address.clone(),
+                store_epoch: selected.store.epoch,
             },
         );
         topology.push(RegionTaskTopology {
@@ -402,6 +484,7 @@ pub struct DirectUnaryQueryResponse<C, L> {
     active_attempts: BTreeMap<u64, u64>,
     logical_index: usize,
     closed: bool,
+    region_backoffs: BTreeMap<u64, RegionBackoffBudget>,
 }
 
 fn try_borrow_client<C>(client: &RefCell<C>) -> Result<RefMut<'_, C>, DirectUnaryTransportError> {
@@ -410,7 +493,7 @@ fn try_borrow_client<C>(client: &RefCell<C>) -> Result<RefMut<'_, C>, DirectUnar
         .map_err(|_| DirectUnaryTransportError::ClientLifecycle)
 }
 
-impl<C: DirectUnaryClient, L: RegionLoader> DirectUnaryQueryResponse<C, L> {
+impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, L> {
     fn pull(
         &mut self,
         _required_rows: usize,
@@ -468,6 +551,7 @@ impl<C: DirectUnaryClient, L: RegionLoader> DirectUnaryQueryResponse<C, L> {
         logical_task_id: u64,
         attempt_id: u64,
     ) -> Result<(), DirectUnaryTransportError> {
+        self.check_retry_active()?;
         let prepared = self.runtime.prepared_attempt(attempt_id).cloned().ok_or(
             DirectUnaryTransportError::ResponseState("active attempt is not prepared"),
         )?;
@@ -477,6 +561,13 @@ impl<C: DirectUnaryClient, L: RegionLoader> DirectUnaryQueryResponse<C, L> {
                 "prepared task has no PD-backed route".to_owned(),
             )
         })?;
+        let observed_attempt = RegionAttempt {
+            region: route.region,
+            peer_id: route.peer_id,
+            store_id: route.store_id,
+            address: route.address.clone(),
+            store_epoch: route.store_epoch,
+        };
         let predicted_read_bytes = self
             .runtime
             .task_predicted_read_bytes(logical_task_id)
@@ -516,6 +607,10 @@ impl<C: DirectUnaryClient, L: RegionLoader> DirectUnaryQueryResponse<C, L> {
             .map_err(DirectUnaryTransportError::Client)?;
         let response = decode_tikv_unary_response(&raw_response.encoded_response)
             .map_err(|error| DirectUnaryTransportError::Decode(error.to_string()))?;
+        if let Some(region_error) = response.region_error_ref().cloned() {
+            let failed = self.runtime.consume_region_error(attempt_id)?;
+            return self.recover_region_error(failed, observed_attempt, region_error);
+        }
         let accepted = match self.runtime.accept_response(
             attempt_id,
             response,
@@ -523,16 +618,6 @@ impl<C: DirectUnaryClient, L: RegionLoader> DirectUnaryQueryResponse<C, L> {
             (self.config.observation_time)(),
         ) {
             Ok(accepted) => accepted,
-            Err(CopReadTaskError::RegionError) => {
-                let exact_region = route.region;
-                self.region_cache
-                    .try_borrow_mut()
-                    .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle)?
-                    .invalidate(exact_region);
-                return Err(DirectUnaryTransportError::Coordinator(
-                    CopReadTaskError::RegionError.to_string(),
-                ));
-            }
             Err(error) => return Err(error.into()),
         };
         match accepted.next_attempt_id {
@@ -547,13 +632,177 @@ impl<C: DirectUnaryClient, L: RegionLoader> DirectUnaryQueryResponse<C, L> {
         Ok(())
     }
 
+    fn recover_region_error(
+        &mut self,
+        failed: super::FailedCopReadAttempt,
+        observed_attempt: RegionAttempt,
+        region_error: tidb_proto::RegionError,
+    ) -> Result<(), DirectUnaryTransportError> {
+        self.check_retry_active()?;
+        let region_id = observed_attempt.region.id;
+        let region_retry_max_sleep = self.config.region_retry_max_sleep;
+        let disposition = {
+            let budget = self
+                .region_backoffs
+                .entry(region_id)
+                .or_insert_with(|| RegionBackoffBudget::new(region_retry_max_sleep));
+            self.region_cache
+                .try_borrow_mut()
+                .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle)?
+                .on_region_error(&region_error, observed_attempt, budget)
+                .map_err(|error| DirectUnaryTransportError::RegionRecovery(error.to_string()))?
+        };
+
+        match disposition {
+            RegionErrorDisposition::RetryRoute { route, delay } => {
+                self.sleep_retry(delay)?;
+                let ranges = failed.ranges().to_vec();
+                let (topology, routes) = self.locate_retry_ranges(&ranges)?;
+                validate_retry_route(&route, &routes)?;
+                let replacement = self.runtime.retry_region_attempt(failed, &topology)?;
+                self.install_same_task_retry(replacement, routes)
+            }
+            RegionErrorDisposition::RebuildRanges { delay, action } => {
+                self.sleep_retry(delay)?;
+                self.check_retry_active()?;
+                self.region_cache
+                    .try_borrow_mut()
+                    .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle)?
+                    .apply_rebuild_action(action)
+                    .map_err(|error| {
+                        DirectUnaryTransportError::RegionRecovery(error.to_string())
+                    })?;
+                let outer_delay = self
+                    .region_backoffs
+                    .get_mut(&region_id)
+                    .expect("region budget is created before disposition")
+                    .next_delay(RegionBackoffKind::RegionMiss)
+                    .map_err(|error| {
+                        DirectUnaryTransportError::RegionTerminal(format!("{error:?}"))
+                    })?;
+                self.sleep_retry(outer_delay)?;
+                let ranges = self.runtime.retry_ranges_from(&failed)?;
+                let (topology, routes) = self.locate_retry_ranges(&ranges)?;
+                let replacement = self.runtime.rebuild_region_attempts(failed, &topology)?;
+                self.install_rebuilt_tail(replacement, routes)
+            }
+            RegionErrorDisposition::ReturnRegionError => Err(
+                DirectUnaryTransportError::Coordinator(CopReadTaskError::RegionError.to_string()),
+            ),
+            RegionErrorDisposition::Terminal(error) => Err(
+                DirectUnaryTransportError::RegionTerminal(format!("{error:?}")),
+            ),
+        }
+    }
+
+    fn locate_retry_ranges(
+        &mut self,
+        ranges: &[crate::RequestKeyRange],
+    ) -> Result<
+        (
+            Vec<RegionTaskTopology>,
+            BTreeMap<RegionVerId, SelectedRegionRoute>,
+        ),
+        DirectUnaryTransportError,
+    > {
+        self.check_retry_active()?;
+        let region_ranges: Vec<_> = ranges
+            .iter()
+            .map(|range| RegionKeyRange::new(range.start_key.clone(), range.end_key.clone()))
+            .collect();
+        let locations = self
+            .region_cache
+            .try_borrow_mut()
+            .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle)?
+            .locate_ranges(&region_ranges)?;
+        topology_from_locations(locations).map_err(Into::into)
+    }
+
+    fn install_same_task_retry(
+        &mut self,
+        replacement: super::CopReadTaskReplacement,
+        routes: BTreeMap<RegionVerId, SelectedRegionRoute>,
+    ) -> Result<(), DirectUnaryTransportError> {
+        if replacement.logical_task_ids.len() != 1 || replacement.active_attempt_ids.len() != 1 {
+            return Err(DirectUnaryTransportError::ResponseState(
+                "known-leader retry did not produce one attempt",
+            ));
+        }
+        self.routes.extend(routes);
+        self.active_attempts.insert(
+            replacement.logical_task_ids[0],
+            replacement.active_attempt_ids[0],
+        );
+        Ok(())
+    }
+
+    fn install_rebuilt_tail(
+        &mut self,
+        replacement: super::CopReadTaskReplacement,
+        routes: BTreeMap<RegionVerId, SelectedRegionRoute>,
+    ) -> Result<(), DirectUnaryTransportError> {
+        if replacement.logical_task_ids.len() != replacement.active_attempt_ids.len()
+            || replacement.logical_task_ids.is_empty()
+        {
+            return Err(DirectUnaryTransportError::ResponseState(
+                "region rebuild produced an invalid active tail",
+            ));
+        }
+        let failed_logical_task_id = self.logical_order.get(self.logical_index).copied().ok_or(
+            DirectUnaryTransportError::ResponseState("region rebuild has no current logical task"),
+        )?;
+        if replacement.logical_task_ids[0] != failed_logical_task_id {
+            return Err(DirectUnaryTransportError::ResponseState(
+                "region rebuild changed the failed logical task identity",
+            ));
+        }
+        self.active_attempts.remove(&failed_logical_task_id);
+        self.logical_order.splice(
+            self.logical_index..=self.logical_index,
+            replacement.logical_task_ids.iter().copied(),
+        );
+        for (logical_task_id, attempt_id) in replacement
+            .logical_task_ids
+            .into_iter()
+            .zip(replacement.active_attempt_ids)
+        {
+            self.active_attempts.insert(logical_task_id, attempt_id);
+        }
+        self.routes.extend(routes);
+        Ok(())
+    }
+
+    fn check_retry_active(&self) -> Result<(), DirectUnaryTransportError> {
+        if self.closed {
+            return Err(DirectUnaryTransportError::RetryCancelled);
+        }
+        self.config
+            .region_retry_control
+            .check_cancelled()
+            .map_err(|_| DirectUnaryTransportError::RetryCancelled)
+    }
+
+    fn sleep_retry(&self, delay: Duration) -> Result<(), DirectUnaryTransportError> {
+        self.check_retry_active()?;
+        if delay.is_zero() {
+            return Ok(());
+        }
+        self.config
+            .region_retry_control
+            .sleep(delay)
+            .map_err(|_| DirectUnaryTransportError::RetryCancelled)?;
+        self.check_retry_active()
+    }
+
     fn fail<T>(&mut self, error: DirectUnaryTransportError) -> Result<T, QueryResponseError> {
         self.closed = true;
         Err(QueryResponseError::Source(error.to_string()))
     }
 }
 
-impl<C: DirectUnaryClient, L: RegionLoader> QueryResponse for DirectUnaryQueryResponse<C, L> {
+impl<C: DirectUnaryClient, L: RegionRecoveryLoader> QueryResponse
+    for DirectUnaryQueryResponse<C, L>
+{
     fn next(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {
         self.pull(usize::MAX)
     }
@@ -568,6 +817,27 @@ impl<C: DirectUnaryClient, L: RegionLoader> QueryResponse for DirectUnaryQueryRe
     fn close(&mut self) {
         self.closed = true;
     }
+}
+
+fn validate_retry_route(
+    expected: &OwnedLeaderRoute,
+    routes: &BTreeMap<RegionVerId, SelectedRegionRoute>,
+) -> Result<(), DirectUnaryTransportError> {
+    let actual = routes.get(&expected.region).ok_or_else(|| {
+        DirectUnaryTransportError::Coordinator(
+            "updated leader route is absent from the region cache".to_owned(),
+        )
+    })?;
+    if actual.peer_id != expected.peer_id
+        || actual.store_id != expected.store_id
+        || actual.address != expected.address
+        || actual.store_epoch != expected.store_epoch
+    {
+        return Err(DirectUnaryTransportError::Coordinator(
+            "updated leader route disagrees with the region cache".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

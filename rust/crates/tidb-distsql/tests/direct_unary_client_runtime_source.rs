@@ -14,13 +14,14 @@
 
 #![allow(missing_docs)]
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::rc::Rc;
 use std::time::Duration;
 
 use prost::Message;
 use tidb_datatype::FieldType;
+use tidb_distsql::cop_paging::{RegionRetryCancelled, RegionRetryControl};
 use tidb_distsql::{
     DirectUnaryClient, DirectUnaryClientError, DirectUnaryQueryTransport, DirectUnaryRequest,
     DirectUnaryResponse, DirectUnaryRuntimeConfig, DirectUnaryTransportError, InjectedQueryRuntime,
@@ -28,12 +29,12 @@ use tidb_distsql::{
     SelectInput, StoreType, TransportRequest, WarningCollector,
 };
 use tidb_proto::{
-    CoprocessorExecDetailsV2, CoprocessorKeyRange, CoprocessorRequest, CoprocessorResponse,
-    CoprocessorScanDetailV2, RegionError,
+    errorpb, metapb, CoprocessorExecDetailsV2, CoprocessorKeyRange, CoprocessorRequest,
+    CoprocessorResponse, CoprocessorScanDetailV2,
 };
 use tidb_txnkv::region::{
-    Peer, PeerRole, RegionCache, RegionLoadError, RegionLoader, RegionLocation, RegionRouteError,
-    RegionVerId, Store,
+    Peer, PeerRole, RegionCache, RegionLoadError, RegionLoader, RegionLocation, RegionMetadata,
+    RegionRecoveryLoader, RegionRouteError, RegionVerId, Store,
 };
 
 const OBSERVATION_TIME: Duration = Duration::from_secs(1_000);
@@ -42,12 +43,33 @@ fn observation_time() -> Duration {
     OBSERVATION_TIME
 }
 
+#[derive(Debug, Default)]
+struct RecordingRetryControl {
+    sleeps: RefCell<Vec<Duration>>,
+    fail_next_sleep: Cell<bool>,
+}
+
+impl RegionRetryControl for RecordingRetryControl {
+    fn check_cancelled(&self) -> Result<(), RegionRetryCancelled> {
+        Ok(())
+    }
+
+    fn sleep(&self, delay: Duration) -> Result<(), RegionRetryCancelled> {
+        self.sleeps.borrow_mut().push(delay);
+        if self.fail_next_sleep.replace(false) {
+            return Err(RegionRetryCancelled);
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ObservedCall {
     address: String,
     timeout: Duration,
     region_id: u64,
     data: Vec<u8>,
+    paging_size: u64,
     predicted_read_bytes: u64,
     cluster_id: u64,
     conf_ver: u64,
@@ -82,6 +104,16 @@ impl RegionLoader for ScriptedLoader {
     }
 }
 
+impl RegionRecoveryLoader for ScriptedLoader {
+    fn hydrate_region(
+        &mut self,
+        metadata: &RegionMetadata,
+        _leader_store_id: u64,
+    ) -> Result<RegionLocation, RegionLoadError> {
+        self.load_region(&metadata.encoded_start_key)
+    }
+}
+
 struct ScriptedClient {
     calls: Rc<RefCell<Vec<ObservedCall>>>,
     responses: VecDeque<Result<Vec<u8>, String>>,
@@ -103,6 +135,7 @@ impl DirectUnaryClient for ScriptedClient {
             timeout,
             region_id: request.context.region_id,
             data: wire.data,
+            paging_size: wire.paging_size,
             predicted_read_bytes: request.predicted_read_bytes,
             cluster_id: request.context.cluster_id,
             conf_ver: epoch.conf_ver,
@@ -183,6 +216,97 @@ fn location(region_id: u64, start: &str, end: &str, address: &str) -> RegionLoca
     }
 }
 
+fn location_with_second_peer(
+    region_id: u64,
+    start: &str,
+    end: &str,
+    first_address: &str,
+    second_address: &str,
+) -> RegionLocation {
+    let mut location = location(region_id, start, end, first_address);
+    location.peers.push(Peer {
+        id: region_id + 101,
+        store_id: region_id + 201,
+        role: PeerRole::Voter,
+        is_witness: false,
+        store_epoch: 7,
+    });
+    location.stores.push(Store {
+        id: region_id + 201,
+        address: second_address.to_owned(),
+        epoch: 7,
+    });
+    location
+}
+
+fn not_leader(region_id: u64, leader: Option<(u64, u64)>) -> Vec<u8> {
+    CoprocessorResponse {
+        region_error: Some(errorpb::Error {
+            not_leader: Some(errorpb::NotLeader {
+                region_id,
+                leader: leader.map(|(id, store_id)| metapb::Peer {
+                    id,
+                    store_id,
+                    role: 0,
+                    is_witness: false,
+                }),
+            }),
+            ..errorpb::Error::default()
+        }),
+        ..CoprocessorResponse::default()
+    }
+    .encode_to_vec()
+}
+
+fn region_not_found(region_id: u64) -> Vec<u8> {
+    CoprocessorResponse {
+        region_error: Some(errorpb::Error {
+            region_not_found: Some(errorpb::RegionNotFound { region_id }),
+            ..errorpb::Error::default()
+        }),
+        ..CoprocessorResponse::default()
+    }
+    .encode_to_vec()
+}
+
+fn raft_entry_too_large(region_id: u64) -> Vec<u8> {
+    CoprocessorResponse {
+        region_error: Some(errorpb::Error {
+            raft_entry_too_large: Some(errorpb::RaftEntryTooLarge {
+                region_id,
+                entry_size: 1_048_576,
+            }),
+            ..errorpb::Error::default()
+        }),
+        ..CoprocessorResponse::default()
+    }
+    .encode_to_vec()
+}
+
+fn undetermined_region_error(message: &str) -> Vec<u8> {
+    CoprocessorResponse {
+        region_error: Some(errorpb::Error {
+            undetermined_result: Some(errorpb::UndeterminedResult {
+                message: message.to_owned(),
+            }),
+            ..errorpb::Error::default()
+        }),
+        ..CoprocessorResponse::default()
+    }
+    .encode_to_vec()
+}
+
+fn unknown_region_error(message: &str) -> Vec<u8> {
+    CoprocessorResponse {
+        region_error: Some(errorpb::Error {
+            message: message.to_owned(),
+            ..errorpb::Error::default()
+        }),
+        ..CoprocessorResponse::default()
+    }
+    .encode_to_vec()
+}
+
 fn response(data: &[u8]) -> Vec<u8> {
     CoprocessorResponse {
         data: data.to_vec(),
@@ -221,6 +345,29 @@ fn transport_with_loader_calls(
     cluster_id: u64,
     loader_calls: Rc<RefCell<Vec<Vec<u8>>>>,
 ) -> DirectUnaryQueryTransport<ScriptedClient, ScriptedLoader> {
+    transport_with_loader_calls_and_config(
+        calls,
+        responses,
+        regions,
+        cluster_id,
+        loader_calls,
+        DirectUnaryRuntimeConfig {
+            default_timeout: Duration::from_secs(60),
+            seed_read_bytes: 4096,
+            observation_time,
+            ..DirectUnaryRuntimeConfig::default()
+        },
+    )
+}
+
+fn transport_with_loader_calls_and_config(
+    calls: Rc<RefCell<Vec<ObservedCall>>>,
+    responses: impl IntoIterator<Item = Result<Vec<u8>, String>>,
+    regions: impl IntoIterator<Item = RegionLocation>,
+    cluster_id: u64,
+    loader_calls: Rc<RefCell<Vec<Vec<u8>>>>,
+    config: DirectUnaryRuntimeConfig,
+) -> DirectUnaryQueryTransport<ScriptedClient, ScriptedLoader> {
     DirectUnaryQueryTransport::new(
         ScriptedClient {
             calls,
@@ -231,12 +378,7 @@ fn transport_with_loader_calls(
             calls: loader_calls,
             regions: regions.into_iter().collect(),
         }),
-        DirectUnaryRuntimeConfig {
-            default_timeout: Duration::from_secs(60),
-            seed_read_bytes: 4096,
-            observation_time,
-            ..DirectUnaryRuntimeConfig::default()
-        },
+        config,
     )
     .unwrap()
 }
@@ -289,6 +431,7 @@ fn client_go_shaped_dispatch_is_lazy_address_directed_and_logically_ordered() {
                 timeout: Duration::from_millis(777),
                 region_id: 1,
                 data: b"dag-read".to_vec(),
+                paging_size: 0,
                 predicted_read_bytes: 4096,
                 cluster_id: 9001,
                 conf_ver: 1,
@@ -308,6 +451,7 @@ fn client_go_shaped_dispatch_is_lazy_address_directed_and_logically_ordered() {
                 timeout: Duration::from_millis(777),
                 region_id: 2,
                 data: b"dag-read".to_vec(),
+                paging_size: 0,
                 predicted_read_bytes: 4096,
                 cluster_id: 9001,
                 conf_ver: 1,
@@ -365,44 +509,271 @@ fn pd_peer_role_witness_and_cluster_fields_have_one_context_authority() {
 }
 
 #[test]
-fn region_error_invalidates_exact_version_for_next_query_without_same_query_retry() {
+fn known_leader_region_error_resends_immediately_in_the_same_query() {
     let calls = Rc::new(RefCell::new(Vec::new()));
     let loader_calls = Rc::new(RefCell::new(Vec::new()));
-    let first = location(1, "a", "z", "tikv-old:20160");
-    let mut replacement = location(1, "a", "z", "tikv-new:20160");
-    replacement.region = RegionVerId::new(1, 1, 3);
-    let region_error = CoprocessorResponse {
-        region_error: Some(RegionError {
-            message: "epoch not match".to_owned(),
-            ..RegionError::default()
-        }),
-        ..CoprocessorResponse::default()
-    }
-    .encode_to_vec();
-    let transport = transport_with_loader_calls(
+    let first = location_with_second_peer(1, "a", "z", "tikv-old:20160", "tikv-new:20160");
+    let retry_control = Rc::new(RecordingRetryControl::default());
+    let transport = transport_with_loader_calls_and_config(
         Rc::clone(&calls),
-        [Ok(region_error), Ok(response(b"fresh"))],
-        [first, replacement],
+        [Ok(not_leader(1, Some((102, 202)))), Ok(response(b"fresh"))],
+        [first],
         9001,
         Rc::clone(&loader_calls),
+        DirectUnaryRuntimeConfig {
+            default_timeout: Duration::from_secs(60),
+            seed_read_bytes: 4096,
+            observation_time,
+            region_retry_control: retry_control.clone(),
+            ..DirectUnaryRuntimeConfig::default()
+        },
     );
     let mut runtime = InjectedQueryRuntime::new(transport);
     let request = TransportRequest::new(metadata("a", "z"));
 
-    let mut stale = select_result(&mut runtime, &request);
-    let error = stale.next_raw().unwrap_err().to_string();
-    assert!(error.contains("region_error"), "{error}");
-    assert_eq!(calls.borrow().len(), 1, "no same-query retry is allowed");
-
-    let mut fresh = select_result(&mut runtime, &request);
-    assert_eq!(fresh.next_raw().unwrap(), Some(b"fresh".to_vec()));
+    let mut result = select_result(&mut runtime, &request);
+    assert_eq!(result.next_raw().unwrap(), Some(b"fresh".to_vec()));
+    assert_eq!(result.next_raw().unwrap(), None);
     assert_eq!(
         loader_calls.borrow().as_slice(),
-        [b"a".to_vec(), b"a".to_vec()],
-        "the exact invalidation must force the next query to reload"
+        [b"a".to_vec()],
+        "known-leader retry must use the exact cache update without PD reload"
     );
+    assert_eq!(calls.borrow()[0].address, "tikv-old:20160");
     assert_eq!(calls.borrow()[1].address, "tikv-new:20160");
-    assert_eq!(calls.borrow()[1].version, 3);
+    assert_eq!(calls.borrow()[1].peer_id, 102);
+    assert_eq!(calls.borrow()[1].store_id, 202);
+    assert!(retry_control.sleeps.borrow().is_empty());
+}
+
+#[test]
+fn nil_leader_sleeps_then_invalidates_reloads_and_resends() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let loader_calls = Rc::new(RefCell::new(Vec::new()));
+    let retry_control = Rc::new(RecordingRetryControl::default());
+    let transport = transport_with_loader_calls_and_config(
+        Rc::clone(&calls),
+        [Ok(not_leader(1, None)), Ok(response(b"reloaded"))],
+        [
+            location(1, "a", "z", "tikv-old:20160"),
+            location(1, "a", "z", "tikv-new:20160"),
+        ],
+        9001,
+        Rc::clone(&loader_calls),
+        DirectUnaryRuntimeConfig {
+            seed_read_bytes: 4096,
+            observation_time,
+            region_retry_control: retry_control.clone(),
+            ..DirectUnaryRuntimeConfig::default()
+        },
+    );
+    let mut runtime = InjectedQueryRuntime::new(transport);
+    let mut result = select_result(&mut runtime, &TransportRequest::new(metadata("a", "z")));
+
+    assert_eq!(result.next_raw().unwrap(), Some(b"reloaded".to_vec()));
+    assert_eq!(calls.borrow()[0].address, "tikv-old:20160");
+    assert_eq!(calls.borrow()[1].address, "tikv-new:20160");
+    assert_eq!(
+        loader_calls.borrow().as_slice(),
+        [b"a".to_vec(), b"a".to_vec()]
+    );
+    assert_eq!(
+        retry_control.sleeps.borrow().as_slice(),
+        [Duration::from_millis(2), Duration::from_millis(2)]
+    );
+}
+
+#[test]
+fn cancellation_during_nil_leader_sleep_keeps_cached_route_and_skips_pd_and_redispatch() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let loader_calls = Rc::new(RefCell::new(Vec::new()));
+    let retry_control = Rc::new(RecordingRetryControl::default());
+    retry_control.fail_next_sleep.set(true);
+    let transport = transport_with_loader_calls_and_config(
+        Rc::clone(&calls),
+        [Ok(not_leader(1, None)), Ok(response(b"same-cached-route"))],
+        [
+            location(1, "a", "z", "tikv-old:20160"),
+            location(1, "a", "z", "must-remain-unloaded:20160"),
+        ],
+        9001,
+        Rc::clone(&loader_calls),
+        DirectUnaryRuntimeConfig {
+            seed_read_bytes: 4096,
+            observation_time,
+            region_retry_control: retry_control.clone(),
+            ..DirectUnaryRuntimeConfig::default()
+        },
+    );
+    let mut runtime = InjectedQueryRuntime::new(transport);
+    let request = TransportRequest::new(metadata("a", "z"));
+
+    let mut cancelled = select_result(&mut runtime, &request);
+    let error = cancelled.next_raw().unwrap_err().to_string();
+    assert!(error.contains("region retry cancelled"), "{error}");
+    assert_eq!(calls.borrow().len(), 1);
+    assert_eq!(loader_calls.borrow().as_slice(), [b"a".to_vec()]);
+
+    let mut next_query = select_result(&mut runtime, &request);
+    assert_eq!(
+        next_query.next_raw().unwrap(),
+        Some(b"same-cached-route".to_vec())
+    );
+    assert_eq!(calls.borrow()[1].address, "tikv-old:20160");
+    assert_eq!(loader_calls.borrow().as_slice(), [b"a".to_vec()]);
+}
+
+#[test]
+fn rebuild_splits_failed_task_in_place_and_keeps_future_task_order_and_attempt() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let loader_calls = Rc::new(RefCell::new(Vec::new()));
+    let retry_control = Rc::new(RecordingRetryControl::default());
+    let transport = transport_with_loader_calls_and_config(
+        Rc::clone(&calls),
+        [
+            Ok(region_not_found(1)),
+            Ok(response(b"split-left")),
+            Ok(response(b"split-right")),
+            Ok(response(b"future-original")),
+        ],
+        [
+            location(1, "a", "m", "tikv-old-1:20160"),
+            location(2, "m", "z", "tikv-old-2:20160"),
+            location(10, "a", "g", "tikv-new-10:20160"),
+            location(11, "g", "m", "tikv-new-11:20160"),
+        ],
+        9001,
+        Rc::clone(&loader_calls),
+        DirectUnaryRuntimeConfig {
+            seed_read_bytes: 4096,
+            observation_time,
+            region_retry_control: retry_control,
+            ..DirectUnaryRuntimeConfig::default()
+        },
+    );
+    let mut runtime = InjectedQueryRuntime::new(transport);
+    let mut result = select_result(&mut runtime, &TransportRequest::new(metadata("a", "z")));
+
+    assert_eq!(result.next_raw().unwrap(), Some(b"split-left".to_vec()));
+    assert_eq!(result.next_raw().unwrap(), Some(b"split-right".to_vec()));
+    assert_eq!(
+        result.next_raw().unwrap(),
+        Some(b"future-original".to_vec())
+    );
+    assert_eq!(result.next_raw().unwrap(), None);
+    let calls = calls.borrow();
+    assert_eq!(
+        calls
+            .iter()
+            .map(|call| call.address.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "tikv-old-1:20160",
+            "tikv-new-10:20160",
+            "tikv-new-11:20160",
+            "tikv-old-2:20160",
+        ]
+    );
+    assert_eq!(calls[3].region_id, 2);
+    assert_eq!(calls[3].task_id, 29);
+}
+
+#[test]
+fn one_region_budget_is_shared_by_sender_and_outer_rebuild_backoff() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let retry_control = Rc::new(RecordingRetryControl::default());
+    let transport = transport_with_loader_calls_and_config(
+        Rc::clone(&calls),
+        [Ok(not_leader(1, None))],
+        [location(1, "a", "z", "tikv-old:20160")],
+        9001,
+        Rc::new(RefCell::new(Vec::new())),
+        DirectUnaryRuntimeConfig {
+            region_retry_control: retry_control.clone(),
+            region_retry_max_sleep: Duration::from_millis(1),
+            ..DirectUnaryRuntimeConfig::default()
+        },
+    );
+    let mut runtime = InjectedQueryRuntime::new(transport);
+    let mut result = select_result(&mut runtime, &TransportRequest::new(metadata("a", "z")));
+
+    let error = result.next_raw().unwrap_err().to_string();
+    assert!(error.contains("terminal region error"), "{error}");
+    assert_eq!(calls.borrow().len(), 1);
+    assert_eq!(
+        retry_control.sleeps.borrow().as_slice(),
+        [Duration::from_millis(2)]
+    );
+}
+
+#[test]
+fn split_child_region_gets_an_independent_budget() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let retry_control = Rc::new(RecordingRetryControl::default());
+    let transport = transport_with_loader_calls_and_config(
+        Rc::clone(&calls),
+        [Ok(region_not_found(1)), Ok(not_leader(10, None))],
+        [
+            location(1, "a", "z", "tikv-old:20160"),
+            location(10, "a", "m", "tikv-new-10:20160"),
+            location(11, "m", "z", "tikv-new-11:20160"),
+        ],
+        9001,
+        Rc::new(RefCell::new(Vec::new())),
+        DirectUnaryRuntimeConfig {
+            region_retry_control: retry_control.clone(),
+            region_retry_max_sleep: Duration::from_millis(1),
+            ..DirectUnaryRuntimeConfig::default()
+        },
+    );
+    let mut runtime = InjectedQueryRuntime::new(transport);
+    let mut result = select_result(&mut runtime, &TransportRequest::new(metadata("a", "z")));
+
+    let error = result.next_raw().unwrap_err().to_string();
+    assert!(error.contains("terminal region error"), "{error}");
+    assert_eq!(calls.borrow().len(), 2);
+    assert_eq!(calls.borrow()[1].region_id, 10);
+    assert_eq!(
+        retry_control.sleeps.borrow().as_slice(),
+        [Duration::from_millis(2), Duration::from_millis(2)]
+    );
+}
+
+#[test]
+fn unknown_region_error_invalidates_and_rebuilds_under_outer_region_miss() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let loader_calls = Rc::new(RefCell::new(Vec::new()));
+    let retry_control = Rc::new(RecordingRetryControl::default());
+    let transport = transport_with_loader_calls_and_config(
+        Rc::clone(&calls),
+        [
+            Ok(unknown_region_error("future kvproto field")),
+            Ok(response(b"rebuilt")),
+        ],
+        [
+            location(1, "a", "z", "tikv-old:20160"),
+            location(1, "a", "z", "tikv-reloaded:20160"),
+        ],
+        9001,
+        Rc::clone(&loader_calls),
+        DirectUnaryRuntimeConfig {
+            region_retry_control: retry_control.clone(),
+            ..DirectUnaryRuntimeConfig::default()
+        },
+    );
+    let mut runtime = InjectedQueryRuntime::new(transport);
+    let mut result = select_result(&mut runtime, &TransportRequest::new(metadata("a", "z")));
+
+    assert_eq!(result.next_raw().unwrap(), Some(b"rebuilt".to_vec()));
+    assert_eq!(calls.borrow()[1].address, "tikv-reloaded:20160");
+    assert_eq!(
+        loader_calls.borrow().as_slice(),
+        [b"a".to_vec(), b"a".to_vec()]
+    );
+    assert_eq!(
+        retry_control.sleeps.borrow().as_slice(),
+        [Duration::from_millis(2)]
+    );
 }
 
 #[test]
@@ -490,19 +861,13 @@ fn close_before_pull_stops_every_unsent_attempt() {
 }
 
 #[test]
-fn retry_responses_and_client_or_decode_failures_are_terminal() {
+fn return_region_error_typed_terminal_and_transport_failures_close_without_future_dispatch() {
     let cases = [
         (
-            Ok(CoprocessorResponse {
-                region_error: Some(RegionError {
-                    message: "not leader".to_owned(),
-                    ..RegionError::default()
-                }),
-                ..CoprocessorResponse::default()
-            }
-            .encode_to_vec()),
+            Ok(undetermined_region_error("ambiguous write")),
             "region_error",
         ),
+        (Ok(raft_entry_too_large(1)), "terminal region error"),
         (Err("connection reset".to_owned()), "connection reset"),
         (Ok(vec![0x0a, 0x02, 0x01]), "invalid unary response"),
     ];

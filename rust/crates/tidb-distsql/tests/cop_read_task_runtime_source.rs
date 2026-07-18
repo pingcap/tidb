@@ -438,6 +438,121 @@ fn response_errors_newer_buckets_invalid_hits_and_attempt_mismatches_fail_closed
 }
 
 #[test]
+fn region_error_attempt_is_consumed_once_without_success_state_mutation() {
+    let metadata = metadata(vec![range("a", "z")]);
+    let mut runtime = prepare(&metadata, &[topology(1, "a", "z")], Some(cache())).unwrap();
+    let cache_key = runtime
+        .prepared_attempt(1)
+        .unwrap()
+        .cache_key()
+        .unwrap()
+        .to_vec();
+
+    let failed = runtime.consume_region_error(1).unwrap();
+    assert_eq!(failed.attempt_id(), 1);
+    assert_eq!(failed.logical_task_id(), 1);
+    assert_eq!(failed.ranges(), [range("a", "z")]);
+    assert_eq!(failed.paging_size(), 2);
+    assert!(runtime.in_flight_attempt_ids().is_empty());
+    assert_eq!(runtime.predicted_read_bytes(), 0);
+    assert!(runtime.cache().unwrap().get(&cache_key).is_none());
+    assert_eq!(runtime.next_response(1), None);
+    assert_eq!(
+        runtime.consume_region_error(1).unwrap_err().kind(),
+        "duplicate_response"
+    );
+}
+
+#[test]
+fn known_leader_retry_rebinds_one_logical_task_without_growing_paging() {
+    let metadata = metadata(vec![range("a", "z")]);
+    let mut runtime = prepare(&metadata, &[topology(1, "a", "z")], None).unwrap();
+    let failed = runtime.consume_region_error(1).unwrap();
+    let replacement = runtime
+        .retry_region_attempt(failed, &[topology(1, "a", "z")])
+        .unwrap();
+
+    assert_eq!(replacement.logical_task_ids, [1]);
+    assert_eq!(replacement.active_attempt_ids, [2]);
+    let resent = runtime.prepared_attempt(2).unwrap();
+    assert_eq!(resent.logical_task_id(), 1);
+    assert_eq!(resent.request().ranges, [range("a", "z")]);
+    assert_eq!(resent.request().paging_size, 2);
+    assert_eq!(resent.page_index(), 2);
+}
+
+#[test]
+fn rebuild_splits_only_failed_task_and_preserves_prior_page_and_future_attempt() {
+    let metadata = metadata(vec![range("a", "z")]);
+    let mut runtime = prepare(
+        &metadata,
+        &[topology(1, "a", "m"), topology(2, "m", "z")],
+        None,
+    )
+    .unwrap();
+    let accepted = runtime
+        .accept_response(
+            1,
+            response("prior-page", "a", "g", 4096),
+            None,
+            Duration::from_secs(100),
+        )
+        .unwrap();
+    assert_eq!(accepted.next_attempt_id, Some(3));
+    let failed = runtime.consume_region_error(3).unwrap();
+
+    let replacement = runtime
+        .rebuild_region_attempts(failed, &[topology(10, "g", "j"), topology(11, "j", "m")])
+        .unwrap();
+
+    assert_eq!(replacement.logical_task_ids, [1, 3]);
+    assert_eq!(replacement.active_attempt_ids, [4, 5]);
+    assert_eq!(runtime.in_flight_attempt_ids(), [2, 4, 5]);
+    assert_eq!(
+        runtime.prepared_attempt(4).unwrap().request().ranges,
+        [range("g", "j")]
+    );
+    assert_eq!(
+        runtime.prepared_attempt(5).unwrap().request().ranges,
+        [range("j", "m")]
+    );
+    assert_eq!(
+        runtime.prepared_attempt(4).unwrap().request().paging_size,
+        4
+    );
+    assert_eq!(
+        runtime.prepared_attempt(5).unwrap().request().paging_size,
+        4
+    );
+    assert_eq!(
+        runtime.prepared_attempt(2).unwrap().request().ranges,
+        [range("m", "z")]
+    );
+    assert_eq!(runtime.prepared_attempt(2).unwrap().logical_task_id(), 2);
+    assert_eq!(
+        runtime.prepared_attempt(2).unwrap().request().paging_size,
+        2
+    );
+    assert_eq!(runtime.predicted_read_bytes(), 4096);
+    assert_eq!(
+        runtime.next_response(1),
+        Some(ResponseChannelEvent::Result(b"prior-page".to_vec()))
+    );
+    runtime
+        .accept_response(
+            2,
+            response("future-task", "m", "z", 1),
+            None,
+            Duration::from_secs(101),
+        )
+        .unwrap();
+    assert_eq!(
+        runtime.next_response(2),
+        Some(ResponseChannelEvent::Result(b"future-task".to_vec()))
+    );
+}
+
+#[test]
 fn backpressure_rejects_before_cache_or_paging_mutation() {
     let metadata = metadata(vec![range("a", "z")]);
     let mut runtime = prepare(&metadata, &[topology(1, "a", "z")], Some(cache())).unwrap();

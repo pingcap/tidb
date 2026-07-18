@@ -19,12 +19,13 @@ mod direct_unary_query_transport;
 mod tikv_rpc_contract;
 
 pub use cop_read_task_runtime::{
-    CopReadAcceptedResponse, CopReadResponseError, CopReadTaskError, CopReadTaskResponse,
-    CopReadTaskRuntime, PreparedCopReadTask,
+    CopReadAcceptedResponse, CopReadResponseError, CopReadTaskError, CopReadTaskReplacement,
+    CopReadTaskResponse, CopReadTaskRuntime, FailedCopReadAttempt, PreparedCopReadTask,
 };
 pub use direct_unary_query_transport::{
     DirectUnaryClient, DirectUnaryClientError, DirectUnaryQueryResponse, DirectUnaryQueryTransport,
     DirectUnaryRequest, DirectUnaryResponse, DirectUnaryRuntimeConfig, DirectUnaryTransportError,
+    RegionRetryCancelled, RegionRetryControl,
 };
 pub use tikv_rpc_contract::{
     build_tikv_unary_request, decode_tikv_unary_response, TikvUnaryRequest,
@@ -240,6 +241,30 @@ impl CopPagingState {
             response_capacity: task.response_channel_capacity.max(1),
             queued_responses: 0,
         }
+    }
+
+    pub(super) fn replace_ranges_for_region_retry(
+        &mut self,
+        ranges: Vec<crate::RequestKeyRange>,
+        paging_size: u64,
+    ) {
+        self.ranges = KeyRanges::new(
+            ranges
+                .into_iter()
+                .map(|range| {
+                    KeyRange::new(
+                        Key::from_bytes(range.start_key),
+                        Key::from_bytes(range.end_key),
+                    )
+                })
+                .collect(),
+        );
+        self.paging_size = paging_size;
+        self.complete = false;
+    }
+
+    pub(super) const fn generation(&self) -> ReadEngineGeneration {
+        self.generation
     }
 
     /// Checks the only fallible producer condition before a caller mutates

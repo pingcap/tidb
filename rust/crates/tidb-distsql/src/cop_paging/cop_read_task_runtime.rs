@@ -30,7 +30,8 @@ use crate::{
     region_task::build_region_tasks, CoprCache, CoprCacheError, CoprCacheLookup,
     CoprCacheRequestContext, CoprCacheResponseContext, CoprCacheResponseOutcome,
     CoprocessorRequestEnvelope, KvRequestMetadata, ReadBytesEma, RegionTaskEnvelope,
-    RegionTaskTopology, RequestKeyRange, RequestType, ResponseChannelEvent, StoreType,
+    RegionTaskTopology, RequestKeyRange, RequestKeyRanges, RequestType, ResponseChannelEvent,
+    StoreType,
 };
 
 const MAX_RANGES_PER_TASK_BUILD: usize = 25_000;
@@ -169,6 +170,14 @@ impl CopReadTaskResponse {
             error: Some(CopReadResponseError::Batch),
         }
     }
+
+    /// Returns the exact decoded region error before coordinator mutation.
+    #[must_use]
+    pub fn region_error_ref(&self) -> Option<&tidb_proto::RegionError> {
+        matches!(self.error.as_ref(), Some(CopReadResponseError::Region))
+            .then(|| self.response.region_error.as_ref())
+            .flatten()
+    }
 }
 
 impl From<CoprocessorResponse> for CopReadTaskResponse {
@@ -188,6 +197,56 @@ pub struct CopReadAcceptedResponse {
     pub paging: CopPagingOutcome,
     /// Newly prepared continuation attempt, if ranges remain.
     pub next_attempt_id: Option<u64>,
+}
+
+/// Ownership token for one failed transport attempt.
+///
+/// Creating this token removes the attempt from response matching exactly
+/// once, without touching cache, paging, EMA, or response-channel state. The
+/// token can then be consumed by either the same-route resend or the
+/// one-to-many task-rebuild path.
+#[derive(Debug, Eq, PartialEq)]
+pub struct FailedCopReadAttempt {
+    attempt_id: u64,
+    logical_task_id: u64,
+    logical_task_index: usize,
+    ranges: Vec<RequestKeyRange>,
+    paging_size: u64,
+}
+
+impl FailedCopReadAttempt {
+    /// Attempt identity which has already been retired from response matching.
+    #[must_use]
+    pub const fn attempt_id(&self) -> u64 {
+        self.attempt_id
+    }
+
+    /// Stable logical task whose current request failed.
+    #[must_use]
+    pub const fn logical_task_id(&self) -> u64 {
+        self.logical_task_id
+    }
+
+    /// Exact ranges which the failed request had not consumed.
+    #[must_use]
+    pub fn ranges(&self) -> &[RequestKeyRange] {
+        &self.ranges
+    }
+
+    /// Paging size retained across region-error resend and rebuild.
+    #[must_use]
+    pub const fn paging_size(&self) -> u64 {
+        self.paging_size
+    }
+}
+
+/// New active tail produced after a failed attempt is rebound or rebuilt.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CopReadTaskReplacement {
+    /// Logical task IDs in their new response order.
+    pub logical_task_ids: Vec<u64>,
+    /// One active attempt per logical task, in the same order.
+    pub active_attempt_ids: Vec<u64>,
 }
 
 /// Exact fail-closed boundaries of the pre-transport coordinator.
@@ -309,6 +368,7 @@ pub struct CopReadTaskRuntime {
     prepared: Vec<Arc<PreparedCopReadTask>>,
     completed_attempts: BTreeSet<u64>,
     next_attempt_id: u64,
+    next_logical_task_id: u64,
     next_paging_task_index: u32,
     cache: Option<CoprCache>,
     ema: Arc<ReadBytesEma>,
@@ -365,6 +425,9 @@ impl CopReadTaskRuntime {
                 }
             })
             .collect();
+        let next_logical_task_id = u64::try_from(tasks.len())
+            .unwrap_or(u64::MAX)
+            .saturating_add(1);
         let mut runtime = Self {
             metadata: metadata.clone(),
             tasks,
@@ -372,6 +435,7 @@ impl CopReadTaskRuntime {
             prepared: Vec::new(),
             completed_attempts: BTreeSet::new(),
             next_attempt_id: 1,
+            next_logical_task_id,
             next_paging_task_index: 0,
             cache,
             ema,
@@ -516,6 +580,168 @@ impl CopReadTaskRuntime {
         })
     }
 
+    /// Consumes one region-error attempt without accepting any response data.
+    ///
+    /// The cache lookup remains unmodified and no cache, paging, EMA, range,
+    /// or response-channel transition is performed. A duplicate call for the
+    /// same attempt is rejected as a duplicate response.
+    pub fn consume_region_error(
+        &mut self,
+        attempt_id: u64,
+    ) -> Result<FailedCopReadAttempt, CopReadTaskError> {
+        let in_flight = self.require_in_flight(attempt_id)?;
+        let failed = FailedCopReadAttempt {
+            attempt_id,
+            logical_task_id: in_flight.prepared.logical_task_id,
+            logical_task_index: in_flight.logical_task_index,
+            ranges: in_flight.prepared.request.ranges.clone(),
+            paging_size: in_flight.prepared.task.paging_size,
+        };
+        self.in_flight.remove(&attempt_id);
+        self.completed_attempts.insert(attempt_id);
+        Ok(failed)
+    }
+
+    /// Returns the failed task's unconsumed ranges for topology rebuild.
+    ///
+    /// Pinned TiDB rebuilds only `task.ranges`; later logical tasks retain
+    /// their independently prepared attempts and recover only if they fail.
+    pub fn retry_ranges_from(
+        &self,
+        failed: &FailedCopReadAttempt,
+    ) -> Result<Vec<RequestKeyRange>, CopReadTaskError> {
+        let current = self
+            .tasks
+            .get(failed.logical_task_index)
+            .ok_or(CopReadTaskError::UnmatchedResponse)?;
+        if current.task.task_id != failed.logical_task_id {
+            return Err(CopReadTaskError::UnmatchedResponse);
+        }
+        Ok(failed.ranges.clone())
+    }
+
+    /// Rebinds a failed attempt to one refreshed region topology.
+    ///
+    /// This is the known-leader resend path: it preserves the logical task,
+    /// paging size, shared EMA, cache lookup policy, and response channel while
+    /// producing exactly one new response-matching attempt.
+    pub fn retry_region_attempt(
+        &mut self,
+        failed: FailedCopReadAttempt,
+        topology: &[RegionTaskTopology],
+    ) -> Result<CopReadTaskReplacement, CopReadTaskError> {
+        let mut rebuilt = self.build_retry_tasks(failed.ranges.clone(), topology)?;
+        if rebuilt.len() != 1 {
+            return Err(CopReadTaskError::InvalidTopology);
+        }
+        let mut task = rebuilt.pop().expect("length checked above");
+        task.task_id = failed.logical_task_id;
+        task.paging_size = failed.paging_size;
+        let logical = self
+            .tasks
+            .get_mut(failed.logical_task_index)
+            .ok_or(CopReadTaskError::UnmatchedResponse)?;
+        if logical.task.task_id != failed.logical_task_id {
+            return Err(CopReadTaskError::UnmatchedResponse);
+        }
+        logical
+            .paging
+            .replace_ranges_for_region_retry(task.ranges.clone(), failed.paging_size);
+        logical.task = task;
+        let attempt_id =
+            self.prepare_attempt(failed.logical_task_index, failed.ranges, failed.paging_size)?;
+        Ok(CopReadTaskReplacement {
+            logical_task_ids: vec![failed.logical_task_id],
+            active_attempt_ids: vec![attempt_id],
+        })
+    }
+
+    /// Replaces only the failed task with one or more refreshed tasks.
+    ///
+    /// The failed task's response channel and paging/EMA history remain on the
+    /// first replacement. Remaining replacements receive fresh logical IDs
+    /// but share the same EMA. Later logical tasks and their prepared attempts
+    /// remain unchanged, while the refreshed topology may split the failed
+    /// task into many new tasks.
+    pub fn rebuild_region_attempts(
+        &mut self,
+        failed: FailedCopReadAttempt,
+        topology: &[RegionTaskTopology],
+    ) -> Result<CopReadTaskReplacement, CopReadTaskError> {
+        let current = self
+            .tasks
+            .get(failed.logical_task_index)
+            .ok_or(CopReadTaskError::UnmatchedResponse)?;
+        if current.task.task_id != failed.logical_task_id {
+            return Err(CopReadTaskError::UnmatchedResponse);
+        }
+
+        let ranges = self.retry_ranges_from(&failed)?;
+        let mut rebuilt = self.build_retry_tasks(ranges, topology)?;
+        if rebuilt.is_empty() {
+            return Err(CopReadTaskError::InvalidTopology);
+        }
+        for task in &mut rebuilt {
+            task.paging_size = failed.paging_size;
+        }
+
+        let mut rebuilt = rebuilt.into_iter();
+        let mut first = rebuilt.next().expect("non-empty checked above");
+        first.task_id = failed.logical_task_id;
+        {
+            let logical = &mut self.tasks[failed.logical_task_index];
+            logical
+                .paging
+                .replace_ranges_for_region_retry(first.ranges.clone(), failed.paging_size);
+            logical.task = first;
+        }
+
+        let mut logical_task_ids = vec![failed.logical_task_id];
+        let mut inserted = 0_usize;
+        for mut task in rebuilt {
+            let logical_task_id = self.next_logical_task_id;
+            self.next_logical_task_id = self.next_logical_task_id.saturating_add(1);
+            task.task_id = logical_task_id;
+            let paging = CopPagingState::new_with_shared_ema(
+                &task,
+                self.metadata.desc,
+                self.metadata.session.paging.max_size,
+                self.tasks[failed.logical_task_index].paging.generation(),
+                self.ema.clone(),
+            );
+            let insert_at = failed.logical_task_index + 1 + inserted;
+            self.tasks
+                .insert(insert_at, LogicalCopReadTask { task, paging });
+            logical_task_ids.push(logical_task_id);
+            inserted += 1;
+        }
+        if inserted > 0 {
+            for in_flight in self.in_flight.values_mut() {
+                if in_flight.logical_task_index > failed.logical_task_index {
+                    in_flight.logical_task_index =
+                        in_flight.logical_task_index.saturating_add(inserted);
+                }
+            }
+        }
+
+        let mut active_attempt_ids = Vec::with_capacity(logical_task_ids.len());
+        for logical_task_index in
+            failed.logical_task_index..=failed.logical_task_index.saturating_add(inserted)
+        {
+            let ranges = self.tasks[logical_task_index].task.ranges.clone();
+            let paging_size = self.tasks[logical_task_index].task.paging_size;
+            active_attempt_ids.push(self.prepare_attempt(
+                logical_task_index,
+                ranges,
+                paging_size,
+            )?);
+        }
+        Ok(CopReadTaskReplacement {
+            logical_task_ids,
+            active_attempt_ids,
+        })
+    }
+
     /// Fails closed on a region error without consuming the matched attempt.
     pub fn accept_region_error(&self, attempt_id: u64) -> Result<(), CopReadTaskError> {
         self.require_in_flight(attempt_id)?;
@@ -609,6 +835,21 @@ impl CopReadTaskRuntime {
             },
         );
         Ok(attempt_id)
+    }
+
+    fn build_retry_tasks(
+        &self,
+        ranges: Vec<RequestKeyRange>,
+        topology: &[RegionTaskTopology],
+    ) -> Result<Vec<RegionTaskEnvelope>, CopReadTaskError> {
+        let mut metadata = self.metadata.clone();
+        metadata.key_ranges = Some(RequestKeyRanges::new_non_partitioned(ranges));
+        let tasks =
+            build_region_tasks(&metadata, topology).ok_or(CopReadTaskError::InvalidTopology)?;
+        if tasks.iter().any(|task| !task.batch_task_list.is_empty()) {
+            return Err(CopReadTaskError::StoreBatching);
+        }
+        Ok(tasks)
     }
 }
 
