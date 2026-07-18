@@ -1,6 +1,6 @@
 schema = "1"
 campaign = "2026-07-read-path-14"
-status = "active"
+status = "integrated"
 slices = [
   "txnkv-route-policy-seams",
   "txnkv-region-topology-runtime",

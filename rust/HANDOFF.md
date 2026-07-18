@@ -1,6 +1,6 @@
 # TiDB → Rust rewrite — Agent Handoff
 
-_Last updated: 2026-07-18. This document preserves durable decisions and
+_Last updated: 2026-07-19. This document preserves durable decisions and
 historical context. Read generated `STATUS.md` first for current counters,
 campaigns, and queue state; do not scan every historical wave before dispatch._
 
@@ -47,12 +47,12 @@ from the Campaign 07 baseline with the toolchain pinned in
 | `tidb-proto` | generated prost protocol leaves shared by real consumers | `tipb`/`kvproto` serialized contracts |
 | `tidb-pd-client` | bounded plaintext PD gRPC control plane with discovered-member retention, foreground refresh, role-aware direct-endpoint failover, and cluster/region/store metadata | pinned `github.com/tikv/pd/client` GetMembers/GetRegion/GetStore and service-discovery paths |
 | `tidb-protocol` | source-backed uncompressed MySQL framing, result packets, column metadata projection, and dependency-closed typed text-row scalar formatting | `pkg/server/internal/packetio.go`, `pkg/server/internal/column/**`, `pkg/format/textrow/**` |
-| `tidb-distsql` | request/response metadata plus the lazy direct-unary task, retry/rebuild, paging, warning, request-owned active cancellation, bounded optimistic lock recovery, and detach-state runtime | `pkg/distsql/**`, `pkg/store/copr/**` |
+| `tidb-distsql` | request/response metadata plus the lazy direct-unary task, retry/rebuild, paging, warning, request-owned active cancellation, bounded optimistic lock recovery, synchronous forwarding/route metrics, and detach-state runtime | `pkg/distsql/**`, `pkg/store/copr/**` |
 | `tidb-expr` | typed expression construction, evaluation, and builtins | `pkg/expression/*` |
 | `tidb-datatype` | sole shared SQL scalar authority: `Datum`, `FieldType`, charset/collation, exact decimal | `pkg/types/**` and TiKV query datatypes |
 | `tidb-stats` | source-backed CMSketch/TopN/FMSketch/loading-status statistics primitives | `pkg/statistics/**` |
 | `tidb-codec` | byte-exact comparable scalar and datum-key encoding | dependency-closed paths in `pkg/util/codec/**` |
-| `tidb-txnkv` | transaction primitives plus the live address-keyed `tikvpb.Tikv/Coprocessor` RPC leaf, API-v1 PD region loader, exact region-error recovery, store hydration, bounded region backoff, and sole leader-routing RegionCache | `pkg/kv/**`, pinned `tikv/client-go/v2` transport and locate paths |
+| `tidb-txnkv` | transaction primitives plus the live address-keyed `tikvpb.Tikv/Coprocessor` RPC leaf, API-v1 PD region/store/label loader, exact region-error recovery, adaptive replica health/scoring, bounded region backoff, exact unary forwarding metadata, and sole topology/store/proxy RegionCache | `pkg/kv/**`, pinned `tikv/client-go/v2` transport and locate paths |
 | `tidb-exec` | a seed stateful executor plus shared-cluster/session, aggregate leaves, result metadata bridge, typed scalar result encoding, and framed COM_QUERY boundary | `pkg/session/**`, `pkg/executor/**`, `pkg/server/**` |
 | `tidb-server` | source-shaped unframed and framed connection dispatch over protocol, DistSQL, and the seed session | `pkg/server/conn.go`, `pkg/server/conn_stmt.go` |
 | `difftest` | shared differential library, Go helpers, corpora, inventory/ledger generators, and two infrastructure tests | — |
@@ -73,8 +73,11 @@ foreground role-aware endpoint refresh/failover, consumes exact nested region
 errors, atomically recovers cache routes, and retries/rebuilds only failed work
 under one bounded per-region budget. Campaign 12 adds request-scoped peer
 selection, generation-aware transport recovery, shared-store invalidation, and
-foreground health. MVCC, lock resolution, background health, TLS/forwarding,
-and commit remain unimplemented. Many statements are honestly `Unsupported`
+foreground health. Campaign 13 adds synchronous replica policy, active
+cancellation, and bounded optimistic read-lock recovery. Campaign 14 adds
+source-shaped labels, slow/load scoring, busy diversion, and synchronous unary
+proxy forwarding with direct recovery. Background health, TLS, pessimistic and
+async lock recovery, and commit remain unimplemented. Many statements are honestly `Unsupported`
 at execution while being fully
 parse+restore-faithful. That's intentional — don't fake success.
 
@@ -121,11 +124,12 @@ ON/USING typing and explicit projection output names, and full
 session/error-context attachment remain open alongside authentication,
 TLS/compression, temporal/JSON/enum/set/vector and full session charset
 conversion, Unix sockets/PROXY/connection admission, background PD/store health,
-router service, production cache TTL/concurrency, forwarding/proxy and
-label/load/slow/busy policy, initial PD-discovery cancellation,
-pessimistic/async-commit lock recovery, TLS policy, and deployable bootstrap.
+router service, production cache TTL/concurrency/buckets, async/batch/stream
+forwarding, background health/fetch feedback, initial PD-discovery
+cancellation, pessimistic/async-commit lock recovery, TLS policy, TiFlash and
+flashback routing, and deployable bootstrap.
 
-### Historical Campaign 10-13 boundary
+### Historical Campaign 10-14 boundary
 
 Campaign `2026-07-read-path-10` is integrated and both receipt-backed claims
 are released as `partial`. Campaign 09 first made the checked read chain reach
@@ -218,9 +222,32 @@ Both live runners removed owned processes, TiUP state/data, and endpoints. The
 Ready lint and frozen 12-job gate passed and issued `integration_receipt 4`;
 all four receipt-backed claims are released as `partial`, exact membership is
 archived, Campaign 13 is `integrated`, and the queue has zero active claims.
-Pessimistic/async-commit locks, TxnNotFound retry, forwarding/proxy metadata,
-label/load/slow/busy policy, background health/recovery, TLS,
-batch/stream/TiFlash, production cache concurrency/TTL, full DAG/table
+Pessimistic/async-commit locks, TxnNotFound retry, background health/recovery,
+TLS, batch/stream/TiFlash, production cache concurrency/TTL, full DAG/table
+lowering, and COM_QUERY integration remain explicit.
+
+Campaign 14 closes the synchronous unary adaptive-routing boundary without
+adding a second topology, health, proxy, channel, deadline, retry, or
+publication owner. Exact PD Store labels reach canonical StoreState, which
+also retains slow score, TiKV health, decaying busy load, generation, and
+preferred proxy identity. Immutable request selection uses the pinned
+five-bit score and preserves strict busy comparison plus no-idle leader
+fallback. A route keeps logical target separate from physical proxy; tonic
+attaches exactly one `tikv-forwarded-host`, failures mutate the physical
+proxy, matching successes publish preference, and foreground leader recovery
+returns to direct dispatch.
+
+All 57 exact client-go obligations and 107 focused Campaign 14 Rust checks
+pass. The retained TiUP v8.5.6 client/cache/transport forwarded two usable Cop
+responses from leader `127.0.0.1:49160` through proxy
+`127.0.0.1:49161`, exercised the 500/800/150 busy sequence, recovered direct,
+cleared preference, and removed all owned cluster state. The Ready lint and
+frozen 12-job gate passed after exposing and repairing a missing Store-label
+wire fixture and a manual checked-division branch. `integration_receipt 4`
+released all four claims as `partial`; membership is archived and the queue is
+empty. Async/batch/stream forwarding, background health/fetch feedback, TLS,
+TiFlash/flashback/bucket routing, cache TTL/concurrency, pessimistic and
+async-commit locks, TxnNotFound retry, commit protocols, full DAG/table
 lowering, and COM_QUERY integration remain explicit. Read `STATUS.md` for the
 generated membership and queue state.
 
