@@ -25,6 +25,7 @@ support_anchors = [
 ]
 rust_paths = [
   "rust/crates/tidb-proto/proto/metapb.proto",
+  "rust/crates/tidb-proto/tests/pd_wire_source.rs",
   "rust/crates/tidb-pd-client/src/client.rs",
   "rust/crates/tidb-pd-client/src/model.rs",
   "rust/crates/tidb-pd-client/tests/pd_client_source.rs",

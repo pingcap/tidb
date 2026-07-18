@@ -73,9 +73,14 @@ fn region_peer_store_projection_round_trips_sparse_source_tags() {
         id: 6,
         address: "127.0.0.1:20160".to_owned(),
         state: metapb::StoreState::Offline as i32,
+        labels: vec![metapb::StoreLabel {
+            key: "zone".to_owned(),
+            value: "z1".to_owned(),
+        }],
         node_state: metapb::NodeState::Removing as i32,
     };
     let wire = store.encode_to_vec();
+    assert!(wire.contains(&0x22)); // labels, field 4
     assert!(wire.contains(&0x68)); // node_state, field 13
     assert_eq!(metapb::Store::decode(wire.as_slice()).unwrap(), store);
 }
