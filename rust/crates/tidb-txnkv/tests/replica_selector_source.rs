@@ -29,12 +29,14 @@ fn location() -> RegionLocation {
                 id: 11,
                 store_id: 101,
                 role: PeerRole::Voter,
+                is_witness: false,
                 store_epoch: 4,
             },
             Peer {
                 id: 12,
                 store_id: 102,
                 role: PeerRole::Voter,
+                is_witness: false,
                 store_epoch: 8,
             },
         ],
@@ -63,7 +65,7 @@ fn leader_policy_selects_only_pd_leader_store() {
 }
 
 #[test]
-fn follower_stale_mixed_and_proxy_modes_fail_closed() {
+fn every_non_leader_and_proxy_policy_fails_closed() {
     for policy in [
         ReadPolicy {
             mode: ReplicaReadMode::Follower,
@@ -71,6 +73,14 @@ fn follower_stale_mixed_and_proxy_modes_fail_closed() {
         },
         ReadPolicy {
             mode: ReplicaReadMode::Mixed,
+            ..ReadPolicy::default()
+        },
+        ReadPolicy {
+            mode: ReplicaReadMode::Learner,
+            ..ReadPolicy::default()
+        },
+        ReadPolicy {
+            mode: ReplicaReadMode::PreferLeader,
             ..ReadPolicy::default()
         },
         ReadPolicy {

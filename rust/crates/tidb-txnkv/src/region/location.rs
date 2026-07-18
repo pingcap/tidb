@@ -38,14 +38,19 @@ impl KeyRange {
     }
 }
 
-/// Peer role needed by the leader-only route.
+/// Source protobuf peer-role discriminants.
+#[repr(i32)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum PeerRole {
     /// Normal voting replica.
     #[default]
-    Voter,
+    Voter = 0,
     /// Learner replica.
-    Learner,
+    Learner = 1,
+    /// Voting replica being added by joint consensus.
+    IncomingVoter = 2,
+    /// Voting replica being removed by joint consensus.
+    DemotingVoter = 3,
 }
 
 /// Immutable region peer metadata.
@@ -57,6 +62,8 @@ pub struct Peer {
     pub store_id: u64,
     /// Raft role.
     pub role: PeerRole,
+    /// Whether source metadata marks this peer as a witness.
+    pub is_witness: bool,
     /// Store epoch captured when this region snapshot was loaded.
     pub store_epoch: u64,
 }

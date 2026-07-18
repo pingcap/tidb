@@ -44,6 +44,7 @@ fn location(id: u64, conf_ver: u64, version: u64, start: &[u8], end: &[u8]) -> R
             id: id * 10,
             store_id: id * 100,
             role: PeerRole::Voter,
+            is_witness: false,
             store_epoch: 7,
         }],
         leader_peer_id: Some(id * 10),
@@ -121,4 +122,49 @@ fn loader_must_return_a_containing_region() {
         Err(RegionRouteError::Loader(_))
     ));
     assert!(cache.is_empty());
+}
+
+#[test]
+fn stale_merge_parent_does_not_evict_newer_split_child() {
+    let child = location(2, 1, 3, b"m", b"z");
+    let stale_parent = location(1, 1, 2, b"a", b"z");
+    let loader = Loader {
+        loads: 0,
+        regions: VecDeque::from([child.clone(), stale_parent.clone()]),
+    };
+    let mut cache = RegionCache::new(loader);
+
+    assert_eq!(cache.locate_key(b"n").unwrap(), &child);
+    assert_eq!(
+        cache.locate_key(b"b"),
+        Err(RegionRouteError::StaleRegionEpoch {
+            loaded: stale_parent.region,
+            cached: child.region,
+        })
+    );
+
+    assert_eq!(cache.len(), 1);
+    assert_eq!(cache.locate_key(b"n").unwrap(), &child);
+}
+
+#[test]
+fn stale_same_region_loader_result_is_rejected_without_eviction() {
+    let current = location(3, 4, 5, b"m", b"z");
+    let stale = location(3, 4, 4, b"a", b"z");
+    let loader = Loader {
+        loads: 0,
+        regions: VecDeque::from([current.clone(), stale.clone()]),
+    };
+    let mut cache = RegionCache::new(loader);
+
+    assert_eq!(cache.locate_key(b"n").unwrap(), &current);
+    assert_eq!(
+        cache.locate_key(b"b"),
+        Err(RegionRouteError::StaleRegionEpoch {
+            loaded: stale.region,
+            cached: current.region,
+        })
+    );
+    assert_eq!(cache.len(), 1);
+    assert_eq!(cache.locate_key(b"n").unwrap(), &current);
 }

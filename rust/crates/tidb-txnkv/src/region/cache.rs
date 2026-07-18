@@ -118,6 +118,15 @@ impl<L> RegionCache<L> {
                 });
             }
         }
+        if let Some(current) = self.regions.iter().find(|current| {
+            ranges_intersect(current, &loaded)
+                && current.region.epoch.version > loaded.region.epoch.version
+        }) {
+            return Err(RegionRouteError::StaleRegionEpoch {
+                loaded: loaded.region,
+                cached: current.region,
+            });
+        }
 
         self.regions.retain(|current| {
             current.region.id != loaded.region.id && !ranges_intersect(current, &loaded)

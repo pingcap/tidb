@@ -58,8 +58,6 @@ pub enum RegionRouteError {
     MissingClusterId,
     /// Request context was already attached by an earlier dispatch.
     ContextAlreadyAttached,
-    /// The address-directed injected RPC returned an error.
-    Rpc(String),
 }
 
 impl std::fmt::Display for RegionRouteError {
@@ -69,3 +67,36 @@ impl std::fmt::Display for RegionRouteError {
 }
 
 impl std::error::Error for RegionRouteError {}
+
+/// One route-validation or typed direct-unary failure.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RegionSendError<E> {
+    /// Request dispatch stopped before the direct-unary boundary.
+    Route(RegionRouteError),
+    /// The direct-unary client returned its original typed error.
+    DirectUnary(E),
+}
+
+impl<E> From<RegionRouteError> for RegionSendError<E> {
+    fn from(error: RegionRouteError) -> Self {
+        Self::Route(error)
+    }
+}
+
+impl<E: std::fmt::Display> std::fmt::Display for RegionSendError<E> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Route(error) => error.fmt(formatter),
+            Self::DirectUnary(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl<E: std::error::Error + 'static> std::error::Error for RegionSendError<E> {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Route(error) => Some(error),
+            Self::DirectUnary(error) => Some(error),
+        }
+    }
+}

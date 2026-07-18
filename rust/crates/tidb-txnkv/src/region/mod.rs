@@ -12,7 +12,7 @@ mod replica_selector;
 mod request_sender;
 
 pub use cache::{RegionCache, RegionLoader};
-pub use error::RegionRouteError;
+pub use error::{RegionRouteError, RegionSendError};
 pub use id::{RegionEpoch, RegionVerId};
 pub use location::{KeyRange, Peer, PeerRole, RegionLocation, Store};
 pub use replica_selector::{LeaderRoute, ReadPolicy, ReplicaReadMode, ReplicaSelector};
