@@ -160,7 +160,7 @@ fn empty_handles_preserve_non_partitioned_builder_shape() {
     let attached = request.key_ranges.expect("empty ranges attached");
     assert!(attached.is_non_partitioned());
     assert_eq!(attached.partitions, vec![vec![]]);
-    assert_eq!(attached.row_count_hints, vec![vec![]]);
+    assert_eq!(attached.row_count_hints, vec![Vec::<usize>::new()]);
 }
 
 #[test]

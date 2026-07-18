@@ -36,12 +36,10 @@ fn write_cf_round_trip_preserves_source_remainder() {
     assert_eq!(decoded.short_value, [b'v', 3, b'a', b'b', b'c']);
 
     let no_value = encode_write_cf_value(WriteType::Rollback, u64::MAX, &[]);
-    assert_eq!(
-        parse_write_cf_value(&no_value)
-            .expect("rollback decodes")
-            .short_value,
-        []
-    );
+    assert!(parse_write_cf_value(&no_value)
+        .expect("rollback decodes")
+        .short_value
+        .is_empty());
 }
 
 #[test]
