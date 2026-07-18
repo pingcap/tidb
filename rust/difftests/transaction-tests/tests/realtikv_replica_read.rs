@@ -655,8 +655,8 @@ fn live_pd_prev_region_and_forwarded_batch_survive_same_address_restart() {
     let context = KvrpcContext {
         region_id: left.region.id,
         region_epoch: Some(KvrpcRegionEpoch {
-            conf_ver: left.region.conf_ver,
-            version: left.region.version,
+            conf_ver: left.region.epoch.conf_ver,
+            version: left.region.epoch.version,
         }),
         peer: Some(KvrpcPeer {
             id: leader.id,
