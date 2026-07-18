@@ -4,7 +4,10 @@
 //! address-directed RPC. Concrete PD networking remains behind the loader
 //! boundary so this module owns topology semantics without owning transport.
 
+mod batch_locate;
+mod bucket;
 mod cache;
+mod cache_entry;
 mod error;
 mod health_policy;
 mod id;

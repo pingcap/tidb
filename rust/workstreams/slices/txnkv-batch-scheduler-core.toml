@@ -1,0 +1,40 @@
+schema = "1"
+slice = "txnkv-batch-scheduler-core"
+status = "ready"
+target = "tidb-txnkv"
+ring = "transaction"
+consumer = "Campaign 15 directly transits the untriaged BatchCommands scheduling core: priority ordering, cancellation-aware entry state, terminal observations, request grouping, concurrency limits, and preset/custom turbo batch policy. Wire streaming, connection lifecycle, sync send, and async callbacks stay explicit successors behind this shared scheduler."
+test_target = "BatchCommands scheduler and observability source"
+go_sources = []
+go_tests = []
+module_sources = [
+  "client-go::config/client.go",
+  "client-go::internal/client/client_batch.go",
+  "client-go::internal/client/priority_queue.go",
+]
+module_tests = [
+  "client-go::internal/client/client_test.go:471:TestBatchCommandsBuilder",
+  "client-go::internal/client/client_test.go:584:TestBatchRequestTerminalOutcome",
+  "client-go::internal/client/client_test.go:605:TestVisitBatchRequestObservations",
+  "client-go::internal/client/client_test.go:685:TestFormatBatchRequestTimeoutReasonNormalizesObservedSentNS",
+  "client-go::internal/client/client_test.go:710:TestWriteBatchCommandsEntryProgress",
+  "client-go::internal/client/client_test.go:1018:TestLimitConcurrency",
+  "client-go::internal/client/client_test.go:1355:TestBatchPolicy",
+  "client-go::internal/client/priority_queue_test.go:37:TestPriority",
+  "client-go::internal/client/priority_queue_test.go:80:TestPriorityQueueTakeAllLeavesReferencesInBackingArray",
+]
+depends_on = []
+evidence_prerequisites = []
+support_anchors = [
+  "client-go/internal/client/priority_queue.go:20-158:heap ordering and backing-array cleanup",
+  "client-go/internal/client/client_batch.go:144-539:entry state, observations, grouping, and concurrency",
+  "client-go/internal/client/client_batch.go:733-849:batch policy selection",
+]
+rust_paths = [
+  "rust/crates/tidb-txnkv/src/rpc/batch/mod.rs",
+  "rust/crates/tidb-txnkv/src/rpc/batch/observability.rs",
+  "rust/crates/tidb-txnkv/src/rpc/batch/priority_queue.rs",
+  "rust/crates/tidb-txnkv/src/rpc/batch/scheduler.rs",
+  "rust/crates/tidb-txnkv/tests/batch_observability_source.rs",
+  "rust/crates/tidb-txnkv/tests/batch_scheduler_source.rs",
+]

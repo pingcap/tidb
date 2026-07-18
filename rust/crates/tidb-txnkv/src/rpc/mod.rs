@@ -4,6 +4,8 @@
 //! already selected address and attaches the caller-owned request context only
 //! at the final send boundary.
 
+mod async_completion;
+mod batch;
 mod channel_pool;
 mod error;
 mod forwarding;
@@ -11,6 +13,7 @@ mod liveness;
 mod tonic_coprocessor;
 mod unary;
 
+pub use async_completion::{AsyncRequestDispatcher, CompletionError, PendingRequest};
 pub use error::{
     DirectUnaryClientError, DirectUnaryConnectionError, DirectUnaryGrpcCode,
     DirectUnaryTransportClass,
