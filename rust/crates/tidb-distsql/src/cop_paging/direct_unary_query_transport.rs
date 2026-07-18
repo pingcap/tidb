@@ -146,6 +146,17 @@ pub struct LockedResponseObservation {
     pub call: UnaryCallContext,
 }
 
+/// Immutable selection, cache-observation, and transport facts for one failed
+/// dispatch. Keeping them together prevents retry policy from mixing facts
+/// from different attempts or route generations.
+struct ObservedTransportFailure {
+    selected: LeaderRequest,
+    observation: tidb_txnkv::region::RegionAttemptObservation,
+    observation_current: bool,
+    feedback: tidb_txnkv::region::RouteFeedback,
+    error: DirectUnaryClientError,
+}
+
 /// Only continuation admitted after bounded lock handling succeeds.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LockedResponseAction {
@@ -864,11 +875,13 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                 return self.recover_transport_failure(
                     logical_task_id,
                     attempt_id,
-                    selected,
-                    observation,
-                    observation_current,
-                    feedback,
-                    error,
+                    ObservedTransportFailure {
+                        selected,
+                        observation,
+                        observation_current,
+                        feedback,
+                        error,
+                    },
                 );
             }
         };
@@ -985,12 +998,15 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         &mut self,
         logical_task_id: u64,
         attempt_id: u64,
-        selected: LeaderRequest,
-        observation: tidb_txnkv::region::RegionAttemptObservation,
-        observation_current: bool,
-        feedback: tidb_txnkv::region::RouteFeedback,
-        error: DirectUnaryClientError,
+        failure: ObservedTransportFailure,
     ) -> Result<(), DirectUnaryTransportError> {
+        let ObservedTransportFailure {
+            selected,
+            observation,
+            observation_current,
+            feedback,
+            error,
+        } = failure;
         self.check_retry_active()?;
         let action = classify_transport_failure(&error);
         let (connection, close_generation) = match action {
