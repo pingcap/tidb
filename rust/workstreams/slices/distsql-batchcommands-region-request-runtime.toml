@@ -38,7 +38,6 @@ support_anchors = [
   "client-go/internal/locate/replica_selector.go:139-690:sole selector state machine",
 ]
 rust_paths = [
-  "rust/crates/tidb-txnkv/src/region/async_request.rs",
   "rust/crates/tidb-txnkv/src/region/mod.rs",
   "rust/crates/tidb-txnkv/tests/async_region_request_source.rs",
   "rust/crates/tidb-distsql/src/cop_paging/direct_unary_query_transport.rs",
