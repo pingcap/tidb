@@ -4,7 +4,7 @@ status = "ready"
 target = "tidb-txnkv"
 ring = "transaction"
 consumer = "Extend the retained tonic transport worker and address channel pool with the real BatchCommands duplex stream, route-scoped stream generations, pending-before-send publication, response-ID demultiplexing, reconnect, forwarding isolation, and exact close drainage. Reuse the Campaign 16 scheduler, wire, inflight, and completion authorities; do not add a runtime, channel pool, retry loop, pending table, or once gate."
-test_target = "tonic BatchCommands send, receive, reconnect, forwarding, failure, and close source"
+test_target = "tonic BatchCommands send, receive, route-generation reconnect, forwarding, established-stream failure, and close source"
 go_sources = []
 go_tests = []
 module_sources = [
@@ -67,6 +67,7 @@ rust_paths = [
   "rust/crates/tidb-proto/tests/batch_commands_wire_source.rs",
   "rust/crates/tidb-txnkv/Cargo.toml",
   "rust/crates/tidb-txnkv/src/lib.rs",
+  "rust/crates/tidb-txnkv/src/rpc/async_completion.rs",
   "rust/crates/tidb-txnkv/src/rpc/batch/inflight.rs",
   "rust/crates/tidb-txnkv/src/rpc/batch/mod.rs",
   "rust/crates/tidb-txnkv/src/rpc/batch/transport.rs",
@@ -76,6 +77,7 @@ rust_paths = [
   "rust/crates/tidb-txnkv/src/rpc/tonic_coprocessor.rs",
   "rust/crates/tidb-txnkv/src/rpc/transport_runtime.rs",
   "rust/crates/tidb-txnkv/src/rpc/unary.rs",
+  "rust/crates/tidb-txnkv/tests/batch_inflight_source.rs",
   "rust/crates/tidb-txnkv/tests/batch_tonic_stream_source.rs",
   "rust/crates/tidb-txnkv/tests/forwarding_metadata_source.rs",
   "rust/crates/tidb-txnkv/tests/tikv_active_cancellation_source.rs",
