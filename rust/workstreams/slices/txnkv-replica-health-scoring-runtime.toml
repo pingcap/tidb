@@ -1,0 +1,72 @@
+schema = "1"
+slice = "txnkv-replica-health-scoring-runtime"
+status = "ready"
+target = "tidb-txnkv"
+ring = "transaction"
+consumer = "Campaign 14 directly transits pinned client-go label/store matching, estimated-wait decay, client and TiKV slow health, the exact five-bit replica score, leader reachability, busy-threshold diversion, and no-idle fallback into request-owned pure selection. Canonical mutable health remains in StoreState; async dispatch, background feedback transport, TiFlash, flashback, and production concurrency remain explicit."
+test_target = "replica health and scoring source"
+go_sources = []
+go_tests = []
+module_sources = [
+  "client-go::internal/locate/replica_selector.go",
+  "client-go::internal/locate/slow_score.go",
+  "client-go::internal/locate/store_cache.go",
+]
+module_tests = [
+  "client-go::internal/locate/region_cache_test.go:726:TestRegionCache/TestUpdateLeader",
+  "client-go::internal/locate/region_cache_test.go:746:TestRegionCache/TestUpdateLeader2",
+  "client-go::internal/locate/region_cache_test.go:800:TestRegionCache/TestUpdateLeader3",
+  "client-go::internal/locate/region_cache_test.go:842:TestRegionCache/TestSendFailedButLeaderNotChange",
+  "client-go::internal/locate/region_cache_test.go:1053:TestRegionCache/TestSendFailedInMultipleNode",
+  "client-go::internal/locate/region_cache_test.go:1518:TestRegionCache/TestFollowerReadFallback",
+  "client-go::internal/locate/region_cache_test.go:1549:TestRegionCache/TestMixedReadFallback",
+  "client-go::internal/locate/region_cache_test.go:1691:TestRegionCache/TestSwitchPeerWhenNoLeader",
+  "client-go::internal/locate/region_request3_test.go:130:TestRegionRequestToThreeStores/TestSwitchPeerWhenNoLeader",
+  "client-go::internal/locate/region_request3_test.go:159:TestRegionRequestToThreeStores/TestSwitchPeerWhenNoLeaderErrorWithNewLeaderInfo",
+  "client-go::internal/locate/region_request3_test.go:377:TestRegionRequestToThreeStores/TestLearnerReplicaSelector",
+  "client-go::internal/locate/region_request3_test.go:434:TestRegionRequestToThreeStores/TestReplicaSelector",
+  "client-go::internal/locate/region_request3_test.go:1059:TestRegionRequestToThreeStores/TestAccessFollowerAfter1TiKVDown",
+  "client-go::internal/locate/region_request3_test.go:1232:TestRegionRequestToThreeStores/TestReplicaReadFallbackToLeaderRegionError",
+  "client-go::internal/locate/region_request3_test.go:1394:TestRegionRequestToThreeStores/TestStaleReadTryFollowerAfterTimeout",
+  "client-go::internal/locate/region_request3_test.go:1437:TestRegionRequestToThreeStores/TestDoNotTryUnreachableLeader",
+  "client-go::internal/locate/region_request3_test.go:1463:TestRegionRequestToThreeStores/TestPreferLeader",
+  "client-go::internal/locate/replica_selector_test.go:386:TestReplicaReadAccessPathByCase",
+  "client-go::internal/locate/replica_selector_test.go:828:TestReplicaReadAccessPathByCase2",
+  "client-go::internal/locate/replica_selector_test.go:1110:TestReplicaReadAccessPathByBasicCase",
+  "client-go::internal/locate/replica_selector_test.go:1285:TestReplicaReadAccessPathByLeaderCase",
+  "client-go::internal/locate/replica_selector_test.go:1617:TestReplicaReadAccessPathByFollowerCase",
+  "client-go::internal/locate/replica_selector_test.go:1735:TestReplicaReadAccessPathByMixedAndPreferLeaderCase",
+  "client-go::internal/locate/replica_selector_test.go:2004:TestReplicaReadAccessPathByStaleReadCase",
+  "client-go::internal/locate/replica_selector_test.go:2734:TestReplicaReadAccessPathByLearnerCase",
+  "client-go::internal/locate/region_cache_test.go:351:TestRegionCache/TestStoreLabels",
+  "client-go::internal/locate/region_cache_test.go:1157:TestRegionCache/TestLabelSelectorTiKVPeer",
+  "client-go::internal/locate/region_cache_test.go:2291:TestRegionCache/TestSlowScoreStat",
+  "client-go::internal/locate/region_cache_test.go:2317:TestRegionCache/TestHealthCheckWithAddressChange",
+  "client-go::internal/locate/region_cache_test.go:2357:TestRegionCache/TestTiKVSideSlowScore",
+  "client-go::internal/locate/region_cache_test.go:2397:TestRegionCache/TestStoreHealthStatus",
+  "client-go::internal/locate/region_cache_test.go:2430:TestRegionCache/TestRegionCacheHandleHealthStatus",
+  "client-go::internal/locate/region_request3_test.go:939:TestRegionRequestToThreeStores/TestLoadBasedReplicaRead",
+  "client-go::internal/locate/region_request3_test.go:1634:TestRegionRequestToThreeStores/TestTiKVRecoveredFromDown",
+  "client-go::internal/locate/replica_selector_test.go:225:TestReplicaSelectorCalculateScore",
+  "client-go::internal/locate/replica_selector_test.go:304:TestCanFastRetry",
+  "client-go::internal/locate/replica_selector_test.go:344:TestPendingBackoff",
+  "client-go::internal/locate/replica_selector_test.go:2356:TestReplicaReadAccessPathByTryIdleReplicaCase",
+  "client-go::internal/locate/replica_selector_test.go:2768:TestReplicaReadAvoidSlowStore",
+]
+depends_on = []
+evidence_prerequisites = []
+support_anchors = [
+  "client-go/internal/locate/slow_score.go:24-169:client slow score",
+  "client-go/internal/locate/store_cache.go:216-380,844-1116:labels load and health",
+  "client-go/internal/locate/replica_selector.go:141-239,271-463,565-611:busy diversion and scoring",
+]
+rust_paths = [
+  "rust/crates/tidb-txnkv/src/region/request_selector.rs",
+  "rust/crates/tidb-txnkv/src/region/store_state.rs",
+  "rust/crates/tidb-txnkv/src/region/slow_score.rs",
+  "rust/crates/tidb-txnkv/src/region/store_health.rs",
+  "rust/crates/tidb-txnkv/src/region/health_policy.rs",
+  "rust/crates/tidb-txnkv/tests/replica_health_scoring_source.rs",
+  "rust/crates/tidb-txnkv/tests/replica_selector_source.rs",
+  "rust/crates/tidb-txnkv/tests/request_selector_source.rs",
+]

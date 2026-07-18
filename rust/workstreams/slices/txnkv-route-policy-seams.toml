@@ -1,0 +1,29 @@
+schema = "1"
+slice = "txnkv-route-policy-seams"
+status = "ready"
+target = "tidb-txnkv"
+ring = "transaction"
+consumer = "Campaign 14 replaces the one-address request special case with one immutable RouteDecision carrying a logical target and optional physical proxy. RegionCache remains the sole topology/store authority, selection is pure over an immutable snapshot, transport consumes only the decision, and typed feedback returns to RegionCache. The seam predeclares disjoint topology, health/scoring, and forwarding leaves without implementing their deferred policy."
+test_target = "route policy seam source"
+go_sources = []
+go_tests = []
+module_sources = [
+  "client-go::kv/store_vars.go",
+  "client-go::internal/locate/accessmode.go",
+]
+module_tests = [
+  "client-go::internal/locate/replica_selector_test.go:108:TestReplicaSelectorBasic",
+]
+depends_on = []
+evidence_prerequisites = []
+support_anchors = [
+  "client-go/internal/locate/accessmode.go:18-61:typed access modes",
+  "client-go/internal/locate/replica_selector.go:33-43:request-local target and proxy",
+  "client-go/internal/locate/region_cache.go:857-903:target/proxy RPC context",
+]
+rust_paths = [
+  "rust/crates/tidb-txnkv/src/region/mod.rs",
+  "rust/crates/tidb-txnkv/src/region/replica_selector.rs",
+  "rust/crates/tidb-txnkv/src/region/route.rs",
+  "rust/crates/tidb-txnkv/tests/route_policy_seam_source.rs",
+]

@@ -1,0 +1,31 @@
+schema = "1"
+slice = "txnkv-region-topology-runtime"
+status = "ready"
+target = "tidb-txnkv"
+ring = "transaction"
+consumer = "Campaign 14 keeps ordered region lookup, store generations, labels, preferred proxy identity, and feedback application inside the sole RegionCache authority. It produces immutable RouteSnapshot values and applies exact target/proxy feedback without exposing mutable cache state to scoring or transport. TTL, buckets, background GC, batch scans, keyspace-v2 codecs, and production concurrency remain explicit."
+test_target = "region topology source"
+go_sources = []
+go_tests = []
+module_sources = [
+  "client-go::internal/locate/pd_codec.go",
+  "client-go::internal/locate/region_cache.go",
+  "client-go::internal/locate/sorted_btree.go",
+]
+module_tests = [
+  "client-go::internal/locate/region_cache_test.go:242:TestRegionCache",
+  "client-go::internal/locate/region_cache_test.go:1028:TestRegionCache/TestSendFailInvalidateRegionsInSameStore",
+]
+depends_on = []
+evidence_prerequisites = []
+support_anchors = [
+  "client-go/internal/locate/region_cache.go:857-1032:target/proxy topology context",
+  "client-go/internal/locate/region_cache.go:2822-2862:preferred proxy lookup",
+  "client-go/internal/locate/region_cache.go:3340-3356:preferred proxy publication",
+]
+rust_paths = [
+  "rust/crates/tidb-txnkv/src/region/cache.rs",
+  "rust/crates/tidb-txnkv/src/region/location.rs",
+  "rust/crates/tidb-txnkv/src/region/topology.rs",
+  "rust/crates/tidb-txnkv/tests/region_topology_source.rs",
+]
