@@ -1,6 +1,6 @@
 schema = "1"
 slice = "distsql-pd-route-runtime"
-status = "ready"
+status = "partial"
 target = "tidb-exec"
 ring = "result"
 consumer = "Campaign 10 makes the loader-backed txnkv RegionCache the sole topology authority consumed by the checked DistSQL direct-unary path. It discovers every half-open region needed by the built request, rejects non-progressing or malformed boundaries, deduplicates cache loads, preserves logical range and two-region dispatch order, attaches one PD-backed context, and deletes constructor-injected static route and duplicate context-sender authorities. A region application error may invalidate the exact cached version for a later query, but this slice performs no same-query retry. TTL refresh, endpoint/store failover, follower or stale reads, buckets, retry/backoff, locks, cancellation, production multi-region resilience, TiFlash, table/DAG lowering, and COM_QUERY remain open."

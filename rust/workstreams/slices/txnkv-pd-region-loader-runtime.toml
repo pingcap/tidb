@@ -1,6 +1,6 @@
 schema = "1"
 slice = "txnkv-pd-region-loader-runtime"
-status = "ready"
+status = "partial"
 target = "tidb-txnkv"
 ring = "transaction"
 consumer = "Campaign 10 provides one plaintext-endpoint, one-attempt PD control-plane leaf below txnkv. It bootstraps the nonzero cluster ID with pdpb.PD/GetMembers, resolves the region containing an encoded key with GetRegion, resolves every referenced store with GetStore, rejects malformed or unusable topology with typed errors, and converts the result into the stable RegionLoader contract. Its ignored TiUP proof accepts only the PD endpoint and reaches the existing real TiKV Coprocessor leaf. It does not claim endpoint discovery or refresh, leader failover, TLS, forwarding, retries, backoff, router-service parity, keyspace-v2 codecs, lock resolution, production multi-region resilience, table/DAG lowering, or COM_QUERY."
