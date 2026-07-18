@@ -20,7 +20,7 @@
 //! region routing, retry, lock policy, and response interpretation stay above
 //! this transport authority.
 
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use bytes::{Buf, BufMut};
@@ -28,6 +28,7 @@ use tonic::codec::{Codec, DecodeBuf, Decoder, EncodeBuf, Encoder};
 
 use crate::region::StoreLiveness;
 
+use super::async_completion::RunLoopSignal;
 use super::batch::{BatchCommandEntry, BatchPublicationReceipt};
 use super::channel_pool::ChannelPool;
 use super::forwarding;
@@ -47,6 +48,7 @@ const MAX_RECV_MESSAGE_SIZE: usize = (i64::MAX as usize).saturating_sub(1);
 pub struct UnaryCancellation {
     state: tokio::sync::watch::Sender<bool>,
     blocking_wait: Arc<(Mutex<()>, Condvar)>,
+    completion_waiters: Arc<Mutex<Vec<Weak<RunLoopSignal>>>>,
 }
 
 impl Default for UnaryCancellation {
@@ -63,6 +65,7 @@ impl UnaryCancellation {
         Self {
             state,
             blocking_wait: Arc::new((Mutex::new(()), Condvar::new())),
+            completion_waiters: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -73,6 +76,25 @@ impl UnaryCancellation {
         self.state.send_replace(true);
         drop(guard);
         changed.notify_all();
+        let waiters = {
+            let mut registered = self
+                .completion_waiters
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut waiters = Vec::with_capacity(registered.len());
+            registered.retain(|waiting| {
+                if let Some(waiting) = waiting.upgrade() {
+                    waiters.push(waiting);
+                    true
+                } else {
+                    false
+                }
+            });
+            waiters
+        };
+        for waiting in waiters {
+            waiting.wake_all();
+        }
     }
 
     /// Whether the caller has already cancelled.
@@ -104,6 +126,31 @@ impl UnaryCancellation {
             .wait_timeout_while(guard, timeout, |_| !self.is_cancelled())
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         self.is_cancelled()
+    }
+
+    pub(super) fn register_completion_waiter(&self, run_loop: &Arc<RunLoopSignal>) {
+        let waiting = Arc::downgrade(run_loop);
+        let mut waiters = self
+            .completion_waiters
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if !self.is_cancelled()
+            && !waiters
+                .iter()
+                .any(|registered| Weak::ptr_eq(registered, &waiting))
+        {
+            waiters.push(waiting);
+        }
+    }
+
+    pub(super) fn unregister_completion_waiter(&self, run_loop: &Arc<RunLoopSignal>) {
+        let waiting = Arc::downgrade(run_loop);
+        self.completion_waiters
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .retain(|registered| {
+                registered.strong_count() > 0 && !Weak::ptr_eq(registered, &waiting)
+            });
     }
 
     async fn cancelled(&self) {

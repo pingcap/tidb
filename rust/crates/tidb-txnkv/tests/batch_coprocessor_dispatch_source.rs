@@ -25,7 +25,8 @@ use tidb_proto::tikvpb::tikv_server::{Tikv, TikvServer};
 use tidb_proto::tikvpb::{batch_commands_response, BatchCommandsRequest, BatchCommandsResponse};
 use tidb_proto::{CoprocessorRequest, CoprocessorResponse, KvrpcContext};
 use tidb_txnkv::rpc::{
-    AsyncRequestDispatcher, PendingRequest, TonicCoprocessorClient, UnaryCallContext,
+    AsyncRequestDispatcher, CompletionError, PendingRequest, TonicCoprocessorClient,
+    UnaryCallContext, UnaryCancellation,
 };
 use tidb_txnkv::{
     ClientReplicaReadType, DirectUnaryClient, DirectUnaryClientError, DirectUnaryRequest,
@@ -258,32 +259,21 @@ fn fixture(
     (server, received, seen_rx, release)
 }
 
-fn wait_for_completion<P: PendingRequest>(
-    pending: &mut P,
-) -> Result<tidb_txnkv::DirectUnaryResponse, DirectUnaryClientError> {
-    for _ in 0..200 {
-        if let Some(result) = pending.try_complete().expect("completion run loop") {
-            return result;
-        }
-        std::thread::sleep(Duration::from_millis(5));
-    }
-    panic!("BatchCommands Coprocessor attempt did not complete");
-}
-
 #[test]
 fn concrete_dispatch_attaches_context_forwards_and_maps_coprocessor_response() {
     let (server, received, _seen, _release) = fixture(ResponseMode::Echo);
     let mut client = TonicCoprocessorClient::new().unwrap();
+    let call = UnaryCallContext::with_timeout(Duration::from_secs(2));
     let mut pending = client
         .begin(
             &server.address,
             Some("logical-tikv:20160"),
             &request(b"dag"),
-            &UnaryCallContext::with_timeout(Duration::from_secs(2)),
+            &call,
         )
         .unwrap();
 
-    let raw = wait_for_completion(&mut pending).unwrap();
+    let raw = pending.complete(&call).unwrap().unwrap();
     let response = CoprocessorResponse::decode(raw.encoded_response.as_slice()).unwrap();
     assert_eq!(response.data, b"dag");
     let received = received.lock().unwrap();
@@ -319,15 +309,11 @@ fn pull_cancellation_retires_the_exact_inflight_id_and_suppresses_late_response(
 fn unexpected_batch_tag_fails_closed_without_reinterpreting_the_body() {
     let (server, _received, _seen, _release) = fixture(ResponseMode::WrongTag);
     let mut client = TonicCoprocessorClient::new().unwrap();
+    let call = UnaryCallContext::with_timeout(Duration::from_secs(2));
     let mut pending = client
-        .begin(
-            &server.address,
-            None,
-            &request(b"wrong-tag"),
-            &UnaryCallContext::with_timeout(Duration::from_secs(2)),
-        )
+        .begin(&server.address, None, &request(b"wrong-tag"), &call)
         .unwrap();
-    let error = wait_for_completion(&mut pending).unwrap_err();
+    let error = pending.complete(&call).unwrap().unwrap_err();
     assert_eq!(error.kind(), "invalid_request");
     client.close().unwrap();
 }
@@ -336,15 +322,48 @@ fn unexpected_batch_tag_fails_closed_without_reinterpreting_the_body() {
 fn batch_stream_failure_preserves_the_typed_transport_error() {
     let (server, _received, _seen, _release) = fixture(ResponseMode::TransportFailure);
     let mut client = TonicCoprocessorClient::new().unwrap();
+    let call = UnaryCallContext::with_timeout(Duration::from_secs(2));
     let mut pending = client
-        .begin(
-            &server.address,
-            None,
-            &request(b"transport"),
-            &UnaryCallContext::with_timeout(Duration::from_secs(2)),
-        )
+        .begin(&server.address, None, &request(b"transport"), &call)
         .unwrap();
-    let error = wait_for_completion(&mut pending).unwrap_err();
+    let error = pending.complete(&call).unwrap().unwrap_err();
     assert!(matches!(error, DirectUnaryClientError::Connection(_)));
+    client.close().unwrap();
+}
+
+#[test]
+fn canonical_call_cancellation_wakes_the_blocking_completion_and_retires_inflight() {
+    let (server, _received, seen, release) = fixture(ResponseMode::Hold);
+    let mut client = TonicCoprocessorClient::new().unwrap();
+    let cancellation = UnaryCancellation::new();
+    let call = UnaryCallContext::new(Duration::from_secs(2), cancellation.clone());
+    let mut pending = client
+        .begin(&server.address, None, &request(b"cancel-call"), &call)
+        .unwrap();
+    seen.recv_timeout(Duration::from_secs(1)).unwrap();
+    let canceller = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(20));
+        cancellation.cancel();
+    });
+    assert_eq!(pending.complete(&call), Err(CompletionError::Cancelled));
+    canceller.join().unwrap();
+    release.send(true).unwrap();
+    client.close().unwrap();
+}
+
+#[test]
+fn exact_call_deadline_bounds_the_same_completion_condvar_wait() {
+    let (server, _received, seen, release) = fixture(ResponseMode::Hold);
+    let mut client = TonicCoprocessorClient::new().unwrap();
+    let call = UnaryCallContext::with_timeout(Duration::from_millis(50));
+    let mut pending = client
+        .begin(&server.address, None, &request(b"deadline"), &call)
+        .unwrap();
+    seen.recv_timeout(Duration::from_secs(1)).unwrap();
+    assert_eq!(
+        pending.complete(&call),
+        Err(CompletionError::DeadlineExceeded)
+    );
+    release.send(true).unwrap();
     client.close().unwrap();
 }

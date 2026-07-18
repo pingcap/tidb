@@ -234,9 +234,19 @@ struct RunLoopInner {
 }
 
 #[derive(Default)]
-struct RunLoopSignal {
+pub(super) struct RunLoopSignal {
     inner: Mutex<RunLoopInner>,
     changed: Condvar,
+}
+
+impl RunLoopSignal {
+    pub(super) fn wake_all(&self) {
+        let _guard = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        self.changed.notify_all();
+    }
 }
 
 /// Configurable source-shaped worker delegation used by [`CompletionRunLoop::go`].
@@ -385,6 +395,57 @@ impl CompletionRunLoop {
             // re-check ownership and detach the newly runnable batch.
         };
         self.run(running, Some(cancellation))
+    }
+
+    fn execute_with_call(&self, call: &UnaryCallContext) -> CompletionRunOutcome {
+        let mut inner = self.lock_inner();
+        if inner.state != CompletionRunLoopState::Idle {
+            return CompletionRunOutcome::failed(0, CompletionError::ConcurrentDriver);
+        }
+        call.cancellation().register_completion_waiter(&self.signal);
+        let outcome = loop {
+            if call.cancellation().is_cancelled() {
+                inner.state = CompletionRunLoopState::Idle;
+                break CompletionRunOutcome::failed(0, CompletionError::Cancelled);
+            }
+            let remaining = call
+                .deadline()
+                .saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                inner.state = CompletionRunLoopState::Idle;
+                break CompletionRunOutcome::failed(0, CompletionError::DeadlineExceeded);
+            }
+            if !inner.runnable.is_empty() {
+                inner.state = CompletionRunLoopState::Running;
+                let running = mem::take(&mut inner.runnable);
+                drop(inner);
+                let outcome = self.run(running, None);
+                if call.cancellation().is_cancelled() {
+                    break CompletionRunOutcome::failed(
+                        outcome.executed(),
+                        CompletionError::Cancelled,
+                    );
+                }
+                if call.deadline() <= std::time::Instant::now() {
+                    break CompletionRunOutcome::failed(
+                        outcome.executed(),
+                        CompletionError::DeadlineExceeded,
+                    );
+                }
+                break outcome;
+            }
+
+            inner.state = CompletionRunLoopState::Waiting;
+            let (next, _) = self
+                .signal
+                .changed
+                .wait_timeout(inner, remaining)
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            inner = next;
+        };
+        call.cancellation()
+            .unregister_completion_waiter(&self.signal);
+        outcome
     }
 
     fn append_task(&self, task: CompletionTask) {
@@ -776,6 +837,43 @@ impl<T, E> CompletionPull<T, E> {
         Ok(inner.result.take())
     }
 
+    /// Blocks until this exact request completes, the caller cancels, or the
+    /// caller's absolute deadline elapses.
+    ///
+    /// Completion publication and cancellation wake the same run-loop
+    /// condition variable. The deadline is the condition variable's exact
+    /// timed-wait bound, so this path owns no polling interval, watcher thread,
+    /// or second timer state.
+    pub fn complete(&mut self, call: &UnaryCallContext) -> Result<Result<T, E>, CompletionError> {
+        loop {
+            if self.is_cancelled() {
+                return Err(CompletionError::Cancelled);
+            }
+            let outcome = self.run_loop.execute_with_call(call);
+            if let Some(error) = outcome.error() {
+                self.cancel();
+                return Err(error);
+            }
+            if call.cancellation().is_cancelled() {
+                self.cancel();
+                return Err(CompletionError::Cancelled);
+            }
+            if call.deadline() <= std::time::Instant::now() {
+                self.cancel();
+                return Err(CompletionError::DeadlineExceeded);
+            }
+            let result = self
+                .inner
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .result
+                .take();
+            if let Some(result) = result {
+                return Ok(result);
+            }
+        }
+    }
+
     /// Cancels this exact source attempt and suppresses later publication.
     pub fn cancel(&mut self) {
         let listeners = {
@@ -856,6 +954,13 @@ impl PendingRequest for CompletionPull<DirectUnaryResponse, DirectUnaryClientErr
     fn cancel(&mut self) {
         CompletionPull::cancel(self);
     }
+
+    fn complete(
+        &mut self,
+        call: &UnaryCallContext,
+    ) -> Result<Result<DirectUnaryResponse, DirectUnaryClientError>, CompletionError> {
+        CompletionPull::complete(self, call)
+    }
 }
 
 /// One in-flight source request returned by [`AsyncRequestDispatcher::begin`].
@@ -864,6 +969,13 @@ pub trait PendingRequest {
     fn try_complete(
         &mut self,
     ) -> Result<Option<Result<DirectUnaryResponse, DirectUnaryClientError>>, CompletionError>;
+
+    /// Waits without polling until this attempt completes or its canonical
+    /// call cancellation/deadline wins.
+    fn complete(
+        &mut self,
+        call: &UnaryCallContext,
+    ) -> Result<Result<DirectUnaryResponse, DirectUnaryClientError>, CompletionError>;
 
     /// Cancels this exact attempt without inventing a terminal response.
     fn cancel(&mut self);

@@ -79,4 +79,11 @@ impl PendingRequest for BatchCoprocessorPending {
     fn cancel(&mut self) {
         self.completion.cancel();
     }
+
+    fn complete(
+        &mut self,
+        call: &crate::rpc::UnaryCallContext,
+    ) -> Result<Result<DirectUnaryResponse, DirectUnaryClientError>, CompletionError> {
+        self.completion.complete(call).map(Self::map_result)
+    }
 }
