@@ -149,6 +149,29 @@ pub trait DirectUnaryClient {
         call: &UnaryCallContext,
     ) -> Result<DirectUnaryResponse, DirectUnaryClientError>;
 
+    /// Sends one logical-target request through an optional physical proxy.
+    ///
+    /// `address` always names the physical connection. A nonempty
+    /// `forwarded_host` names the logical TiKV target and must be emitted as
+    /// exactly one `tikv-forwarded-host` gRPC metadata value. The default is
+    /// deliberately fail-closed: a direct-only injected client must not
+    /// silently send a forwarded request to the proxy as if it were the
+    /// logical target.
+    fn send_request_with_route(
+        &mut self,
+        address: &str,
+        forwarded_host: Option<&str>,
+        request: &DirectUnaryRequest,
+        call: &UnaryCallContext,
+    ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
+        if forwarded_host.is_some() {
+            return Err(DirectUnaryClientError::InvalidRequest(
+                "unary client does not support request forwarding".to_owned(),
+            ));
+        }
+        self.send_request_with_context(address, request, call)
+    }
+
     /// Drops the active channel generation for one address.
     fn close_address(&mut self, address: &str) -> Result<(), DirectUnaryClientError>;
 

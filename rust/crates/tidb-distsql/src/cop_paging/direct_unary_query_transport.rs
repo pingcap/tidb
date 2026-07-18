@@ -58,6 +58,9 @@ use super::{
 };
 use crate::{RegionTaskEpoch, RegionTaskTopology, ReplicaReadType};
 
+pub use super::forwarding::UnaryNetworkMetrics;
+use super::forwarding::{UnaryRouteDispatch, UnaryTrafficLocation};
+
 /// Deterministic policy owned by the direct unary runtime.
 #[derive(Clone)]
 pub struct DirectUnaryRuntimeConfig {
@@ -84,6 +87,8 @@ pub struct DirectUnaryRuntimeConfig {
     pub region_retry_waiter: Rc<dyn RegionRetryWaiter>,
     /// Effective sleep budget shared by both retry levels for one region ID.
     pub region_retry_max_sleep: Duration,
+    /// Whether leader requests may use a cache-selected physical proxy.
+    pub enable_forwarding: bool,
 }
 
 impl std::fmt::Debug for DirectUnaryRuntimeConfig {
@@ -98,6 +103,7 @@ impl std::fmt::Debug for DirectUnaryRuntimeConfig {
             .field("observation_time", &"fn() -> Duration")
             .field("region_retry_waiter", &self.region_retry_waiter)
             .field("region_retry_max_sleep", &self.region_retry_max_sleep)
+            .field("enable_forwarding", &self.enable_forwarding)
             .finish()
     }
 }
@@ -113,6 +119,7 @@ impl Default for DirectUnaryRuntimeConfig {
             observation_time: system_observation_time,
             region_retry_waiter: Rc::new(ExactRegionRetryWaiter),
             region_retry_max_sleep: Duration::from_secs(20),
+            enable_forwarding: false,
         }
     }
 }
@@ -402,7 +409,9 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
         let metadata = request
             .metadata_for_send()
             .map_err(|error| DirectUnaryTransportError::Request(error).to_string())?;
-        let read_policy = read_policy_from_metadata(metadata).map_err(|error| error.to_string())?;
+        let mut read_policy =
+            read_policy_from_metadata(metadata).map_err(|error| error.to_string())?;
+        read_policy.forwarding = self.config.enable_forwarding;
         CopPagingState::validate_read_request(metadata)
             .map_err(|error| DirectUnaryTransportError::from(error).to_string())?;
         let requested_ranges =
@@ -476,6 +485,7 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
             closed: false,
             region_backoffs: BTreeMap::new(),
             request_selectors: BTreeMap::new(),
+            network_metrics: UnaryNetworkMetrics::default(),
         }))
     }
 }
@@ -594,6 +604,7 @@ pub struct DirectUnaryQueryResponse<C, L> {
     closed: bool,
     region_backoffs: BTreeMap<u64, RegionBackoffBudget>,
     request_selectors: BTreeMap<u64, RequestSelector>,
+    network_metrics: UnaryNetworkMetrics,
 }
 
 fn try_borrow_client<C>(client: &RefCell<C>) -> Result<RefMut<'_, C>, DirectUnaryTransportError> {
@@ -603,6 +614,12 @@ fn try_borrow_client<C>(client: &RefCell<C>) -> Result<RefMut<'_, C>, DirectUnar
 }
 
 impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, L> {
+    /// Request-local network observations accumulated before publication.
+    #[must_use]
+    pub const fn network_metrics(&self) -> &UnaryNetworkMetrics {
+        &self.network_metrics
+    }
+
     fn pull(
         &mut self,
         _required_rows: usize,
@@ -730,10 +747,22 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             context: request.context,
             encoded_request: request.encoded_request,
         };
+        let dispatch = UnaryRouteDispatch::from_request(&selected);
+        let request_bytes = client_request.encoded_request.len();
+        // Campaign 14's topology composition supplies exact locality after
+        // label-bearing RouteSnapshot lands. Unknown still preserves total
+        // bytes and never misclassifies local traffic as cross-zone.
+        let traffic_location = UnaryTrafficLocation::from_cross_zone(None);
+        self.network_metrics
+            .on_request(request_bytes, selected.stale_read, traffic_location);
         let dispatch_started = Instant::now();
         let call = self.call.clone();
-        let send_result = try_borrow_client(self.shared_runtime.client())?
-            .send_request_with_context(&selected.attempt.address, &client_request, &call);
+        let send_result = try_borrow_client(self.shared_runtime.client())?.send_request_with_route(
+            dispatch.physical_address(),
+            dispatch.forwarded_host(),
+            &client_request,
+            &call,
+        );
         let dispatch_duration = dispatch_started.elapsed();
         // Go checks ctx.Err after SendRequest returns. Caller cancellation has
         // precedence over a simultaneous transport error or successful reply.
@@ -745,15 +774,25 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         let raw_response = match send_result {
             Ok(response) => response,
             Err(error) => {
+                let feedback =
+                    dispatch.feedback(&selected, tidb_txnkv::region::RouteOutcome::Failure);
                 self.record_attempt_result(logical_task_id, &selected, dispatch_duration)?;
                 return self.recover_transport_failure(
                     logical_task_id,
                     attempt_id,
                     selected,
+                    feedback,
                     error,
                 );
             }
         };
+        self.network_metrics.on_response(
+            request_bytes,
+            raw_response.encoded_response.len(),
+            selected.replica_read,
+            selected.stale_read,
+            traffic_location,
+        );
         let locked =
             tidb_proto::CoprocessorResponse::decode(raw_response.encoded_response.as_slice())
                 .map_err(|error| DirectUnaryTransportError::Decode(error.to_string()))?
@@ -761,6 +800,9 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         let response = decode_tikv_unary_response(&raw_response.encoded_response)
             .map_err(|error| DirectUnaryTransportError::Decode(error.to_string()))?;
         if let Some(region_error) = response.region_error_ref().cloned() {
+            if selected.stale_read && region_error.data_is_not_ready.is_some() {
+                self.network_metrics.on_stale_read_result(false);
+            }
             self.record_attempt_result(logical_task_id, &selected, dispatch_duration)?;
             let failed = self.runtime.consume_region_error(attempt_id)?;
             return self.recover_region_error(
@@ -770,6 +812,10 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                 region_error,
             );
         }
+        if selected.stale_read {
+            self.network_metrics.on_stale_read_result(true);
+        }
+        let _feedback = dispatch.feedback(&selected, tidb_txnkv::region::RouteOutcome::Success);
         self.record_attempt_result(logical_task_id, &selected, dispatch_duration)?;
         self.shared_runtime
             .region_cache()
@@ -852,6 +898,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         logical_task_id: u64,
         attempt_id: u64,
         selected: LeaderRequest,
+        feedback: tidb_txnkv::region::RouteFeedback,
         error: DirectUnaryClientError,
     ) -> Result<(), DirectUnaryTransportError> {
         self.check_retry_active()?;
@@ -865,7 +912,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                 close_generation,
             } => (connection, close_generation),
         };
-        if connection.address() != selected.attempt.address {
+        if connection.address() != feedback.dispatch_attempt().address {
             return Err(DirectUnaryTransportError::RegionRecovery(
                 "transport failure address disagrees with selected attempt".to_owned(),
             ));
@@ -886,7 +933,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             .region_cache()
             .try_borrow_mut()
             .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle)?
-            .on_send_failure(&selected.attempt, liveness)
+            .on_send_failure(feedback.dispatch_attempt(), liveness)
             .map_err(|error| DirectUnaryTransportError::RegionRecovery(error.to_string()))?;
         let delay = self
             .region_backoffs

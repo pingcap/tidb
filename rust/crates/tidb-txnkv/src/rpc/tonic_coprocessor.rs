@@ -101,6 +101,7 @@ impl TonicCoprocessorClient {
             RawUnaryRequest {
                 path: CHECK_TXN_STATUS_PATH,
                 encoded_request: request.encode_to_vec(),
+                forwarded_host: None,
             },
             call,
         )?;
@@ -126,6 +127,7 @@ impl TonicCoprocessorClient {
             RawUnaryRequest {
                 path: RESOLVE_LOCK_PATH,
                 encoded_request: request.encode_to_vec(),
+                forwarded_host: None,
             },
             call,
         )?;
@@ -151,12 +153,23 @@ impl DirectUnaryClient for TonicCoprocessorClient {
         request: &DirectUnaryRequest,
         call: &UnaryCallContext,
     ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
+        self.send_request_with_route(address, None, request, call)
+    }
+
+    fn send_request_with_route(
+        &mut self,
+        address: &str,
+        forwarded_host: Option<&str>,
+        request: &DirectUnaryRequest,
+        call: &UnaryCallContext,
+    ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
         let body = replace_top_level_context(&request.encoded_request, &request.context)?;
         let response = self.unary.send(
             address,
             RawUnaryRequest {
                 path: COPROCESSOR_PATH,
                 encoded_request: body,
+                forwarded_host: forwarded_host.map(str::to_owned),
             },
             call,
         )?;

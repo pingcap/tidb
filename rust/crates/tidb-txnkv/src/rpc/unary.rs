@@ -30,6 +30,7 @@ use tonic::codec::{Codec, DecodeBuf, Decoder, EncodeBuf, Encoder};
 use crate::region::StoreLiveness;
 
 use super::channel_pool::ChannelPool;
+use super::forwarding;
 use super::liveness::check_liveness;
 use super::{DirectUnaryClientError, DirectUnaryConnectionError, DirectUnaryGrpcCode};
 
@@ -170,6 +171,7 @@ impl UnaryCallContext {
 pub(super) struct RawUnaryRequest {
     pub(super) path: &'static str,
     pub(super) encoded_request: Vec<u8>,
+    pub(super) forwarded_host: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -430,6 +432,8 @@ fn send_unary(
     if call.cancellation().is_cancelled() {
         return Err(DirectUnaryClientError::CallerCancelled);
     }
+    let mut rpc_request = tonic::Request::new(request.encoded_request);
+    forwarding::attach_forwarded_host(&mut rpc_request, request.forwarded_host.as_deref())?;
     let selected = channels.get_or_create(address, runtime)?;
     let timeout = call.timeout();
     if timeout.is_zero() {
@@ -440,10 +444,9 @@ fn send_unary(
             "absolute unary deadline elapsed",
         ));
     }
+    rpc_request.set_timeout(timeout);
     let mut client =
         tonic::client::Grpc::new(selected.channel).max_decoding_message_size(MAX_RECV_MESSAGE_SIZE);
-    let mut rpc_request = tonic::Request::new(request.encoded_request);
-    rpc_request.set_timeout(timeout);
     let path = tonic::codegen::http::uri::PathAndQuery::from_static(request.path);
     let cancellation = call.cancellation().clone();
     let result = runtime.block_on(async {
