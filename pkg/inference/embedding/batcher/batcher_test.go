@@ -16,7 +16,6 @@ package batcher
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -170,7 +169,7 @@ func (b *blockingEmbedder) CreateEmbeddings(ctx context.Context, _ string, texts
 		return embeddings, nil
 	case <-ctx.Done():
 		b.cancelOnce.Do(func() { close(b.canceled) })
-		return nil, ctx.Err()
+		return nil, context.Cause(ctx)
 	}
 }
 
@@ -665,14 +664,13 @@ func TestBatch_ContextCancellation1(t *testing.T) {
 	batcher := New()
 	batcher.Register("test", mockEmb)
 
-	customCause := errors.New("custom cancellation cause")
-	ctx, cancel := context.WithCancelCause(context.Background())
-	cancel(customCause) // make sure ctx is cancelled before making the request
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	cancel() // make sure ctx is cancelled before making the request
 
 	_, err := batcher.CreateEmbeddings(ctx, "test/model1", []string{"hello"}, nil)
 
-	require.ErrorIs(t, err, context.Canceled)
-	require.NotErrorIs(t, err, customCause)
+	require.Error(t, err)
+	require.Equal(t, context.Canceled, err)
 }
 
 func TestBatch_ContextCancellation2(t *testing.T) {

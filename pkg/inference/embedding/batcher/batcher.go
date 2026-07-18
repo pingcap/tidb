@@ -247,7 +247,7 @@ func (b *Batch) CreateEmbeddings(ctx context.Context, modelWithProvider string, 
 		}
 		return result.embeddings, nil
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return nil, context.Cause(ctx)
 	}
 }
 
