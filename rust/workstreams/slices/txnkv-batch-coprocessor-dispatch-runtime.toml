@@ -1,0 +1,40 @@
+schema = "1"
+slice = "txnkv-batch-coprocessor-dispatch-runtime"
+status = "ready" # ready | active | partial | covered | blocked
+target = "tidb-txnkv"
+ring = "transaction"
+consumer = "Bind DirectUnaryRequest to one real Coprocessor BatchCommands entry and expose one concrete nonblocking pending attempt from TonicCoprocessorClient. Reuse the sole retained stream, scheduler, in-flight table, completion, runtime, channel pool, forwarding route, and cancellation hook; own no selector, retry budget, fallback loop, or second completion gate."
+test_target = "concrete Coprocessor BatchCommands request encoding, context attachment, forwarding, response decoding, cancellation retirement, and terminal transport mapping"
+go_sources = []
+go_tests = []
+module_sources = [
+  "client-go::internal/client/client_async.go",
+]
+module_tests = [
+  "client-go::internal/client/client_async_test.go:38:TestSendRequestAsyncBasic",
+  "client-go::internal/client/client_async_test.go:104:TestSendRequestAsyncAttachContext",
+  "client-go::internal/client/client_async_test.go:151:TestSendRequestAsyncUpdateTiKVRUV2",
+  "client-go::internal/client/client_async_test.go:239:TestSendRequestAsyncTimeout",
+  "client-go::internal/client/client_async_test.go:354:TestSendRequestAsyncAndCloseClientOnHandle",
+  "client-go::internal/client/client_async_test.go:406:TestSendRequestAsyncAndCloseClientBeforeSend",
+  "client-go::internal/client/client_fail_test.go:53:TestPanicInRecvLoop",
+  "client-go::internal/client/client_fail_test.go:83:TestRecvErrorInMultipleRecvLoops",
+  "client-go::internal/client/client_test.go:172:TestSendWhenReconnect",
+  "client-go::internal/client/client_test.go:1303:TestFastFailWhenNoAvailableConn",
+]
+depends_on = []
+evidence_prerequisites = []
+support_anchors = [
+  "client-go/internal/client/client_async.go:35-188:BatchCommands-only one-attempt dispatcher",
+  "client-go/internal/client/client_batch.go:203-215:sole completion publication",
+  "client-go/internal/client/conn_batch.go:135-278:pending-before-send and cancellation ownership",
+]
+rust_paths = [
+  "rust/crates/tidb-txnkv/src/lib.rs",
+  "rust/crates/tidb-txnkv/src/rpc/async_completion.rs",
+  "rust/crates/tidb-txnkv/src/rpc/batch/coprocessor.rs",
+  "rust/crates/tidb-txnkv/src/rpc/batch/mod.rs",
+  "rust/crates/tidb-txnkv/src/rpc/mod.rs",
+  "rust/crates/tidb-txnkv/src/rpc/tonic_coprocessor.rs",
+  "rust/crates/tidb-txnkv/tests/batch_coprocessor_dispatch_source.rs",
+]

@@ -1,0 +1,46 @@
+schema = "1"
+slice = "distsql-batchcommands-region-request-runtime"
+status = "ready" # ready | active | partial | covered | blocked
+target = "tidb-distsql"
+ring = "result"
+consumer = "Make the production DistSQL region-request coordinator use one BatchCommands attempt first, then settle its result through the existing selector, cache observation, backoff, region-error, and synchronous retry authorities. Delete the parallel async policy/retry/terminal state so later fallback re-enters the same synchronous loop without duplicating selection or retry ownership."
+test_target = "BatchCommands-first success, transport and region-error fallback, cancellation precedence, selector continuity, forwarding identity, and exactly one terminal result"
+go_sources = []
+go_tests = []
+module_sources = [
+  "client-go::internal/locate/accessmode.go",
+  "client-go::internal/locate/region_request.go",
+  "client-go::internal/locate/replica_selector.go",
+]
+module_tests = [
+  "client-go::internal/locate/region_request_state_test.go:267:TestRegionCacheStaleReadUsingAsyncAPI",
+  "client-go::internal/locate/region_request_test.go:78:TestRegionRequestToSingleStore",
+  "client-go::internal/locate/region_request_test.go:149:TestRegionRequestToSingleStore/TestOnRegionError",
+  "client-go::internal/locate/region_request_test.go:226:TestRegionRequestToSingleStore/TestOnSendFailedWithStoreRestartUsingAsyncAPI",
+  "client-go::internal/locate/region_request_test.go:270:TestRegionRequestToSingleStore/TestOnSendFailedWithCloseKnownStoreThenUseNewOneUsingAsyncAPI",
+  "client-go::internal/locate/region_request_test.go:314:TestRegionRequestToSingleStore/TestOnSendFailedWithCancelledUsingAsyncAPI",
+  "client-go::internal/locate/region_request_test.go:354:TestRegionRequestToSingleStore/TestNoReloadRegionWhenCtxCanceledUsingAsyncAPI",
+  "client-go::internal/locate/region_request_test.go:400:TestRegionRequestToSingleStore/TestSendReqAsync",
+  "client-go::internal/locate/region_request3_test.go:71:TestRegionRequestToThreeStores",
+  "client-go::internal/locate/replica_selector_test.go:394:TestReplicaReadAccessPathByCaseUsingAsyncAPI",
+  "client-go::internal/locate/replica_selector_test.go:836:TestReplicaReadAccessPathByCase2UsingAsyncAPI",
+  "client-go::internal/locate/replica_selector_test.go:1118:TestReplicaReadAccessPathByBasicCaseUsingAsyncAPI",
+  "client-go::internal/locate/replica_selector_test.go:1293:TestReplicaReadAccessPathByLeaderCaseUsingAsyncAPI",
+  "client-go::internal/locate/replica_selector_test.go:1625:TestReplicaReadAccessPathByFollowerCaseUsingAsyncAPI",
+  "client-go::internal/locate/replica_selector_test.go:1743:TestReplicaReadAccessPathByMixedAndPreferLeaderCaseUsingAsyncAPI",
+]
+depends_on = []
+evidence_prerequisites = []
+support_anchors = [
+  "client-go/internal/client/client_async.go:35-188:one physical BatchCommands attempt",
+  "Campaign 18 frozen interface: AsyncRequestDispatcher owns one physical attempt; integration owns selection, fallback, and terminal query state",
+  "client-go/internal/locate/region_request.go:1029-1190:async first attempt and synchronous continuation",
+  "client-go/internal/locate/replica_selector.go:139-690:sole selector state machine",
+]
+rust_paths = [
+  "rust/crates/tidb-txnkv/src/region/async_request.rs",
+  "rust/crates/tidb-txnkv/src/region/mod.rs",
+  "rust/crates/tidb-txnkv/tests/async_region_request_source.rs",
+  "rust/crates/tidb-distsql/src/cop_paging/direct_unary_query_transport.rs",
+  "rust/crates/tidb-distsql/tests/direct_unary_async_region_runtime_source.rs",
+]
