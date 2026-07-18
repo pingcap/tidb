@@ -21,10 +21,15 @@ use prost::Message;
 use tidb_proto::KvrpcContext;
 use tonic::codec::{Codec, DecodeBuf, Decoder, EncodeBuf, Encoder};
 
+use crate::region::StoreLiveness;
 use crate::{DirectUnaryClient, DirectUnaryRequest, DirectUnaryResponse};
 
 use super::channel_pool::ChannelPool;
-use super::{DirectUnaryClientError, DirectUnaryConnectionError};
+use super::liveness::{check_liveness, DEFAULT_STORE_LIVENESS_TIMEOUT};
+use super::{
+    DirectUnaryClientError, DirectUnaryConnectionError, DirectUnaryGrpcCode,
+    DirectUnaryTransportClass,
+};
 
 // client-go internal/client sets MaxRecvMsgSize to math.MaxInt64-1. Tonic's
 // default is only 4 MiB, which is too small for valid Coprocessor responses.
@@ -33,13 +38,13 @@ const MAX_PROTOBUF_FIELD_NUMBER: u64 = (1 << 29) - 1;
 const COPROCESSOR_PATH: &str = "/tikvpb.Tikv/Coprocessor";
 
 #[derive(Clone, Copy, Debug, Default)]
-struct RawProtobufCodec;
+pub(super) struct RawProtobufCodec;
 
 #[derive(Clone, Copy, Debug, Default)]
-struct RawProtobufEncoder;
+pub(super) struct RawProtobufEncoder;
 
 #[derive(Clone, Copy, Debug, Default)]
-struct RawProtobufDecoder;
+pub(super) struct RawProtobufDecoder;
 
 impl Codec for RawProtobufCodec {
     type Encode = Vec<u8>;
@@ -95,6 +100,11 @@ enum WorkerCommand {
         version: u64,
         reply: mpsc::Sender<()>,
     },
+    Liveness {
+        address: String,
+        timeout: Duration,
+        reply: mpsc::Sender<StoreLiveness>,
+    },
     Inspect {
         address: String,
         reply: mpsc::Sender<(Option<u64>, usize)>,
@@ -102,6 +112,11 @@ enum WorkerCommand {
     Close {
         reply: mpsc::Sender<()>,
     },
+}
+
+enum CoprocessorAttemptError {
+    Connection(String),
+    RemoteGrpc(tonic::Status),
 }
 
 /// Synchronous client-go-shaped unary capability backed by tonic.
@@ -153,21 +168,28 @@ impl TonicCoprocessorClient {
     }
 
     /// Closes the current generation only when it is not newer than `version`.
-    pub fn close_address_version(&mut self, address: &str, version: u64) {
+    fn close_address_generation(
+        &mut self,
+        address: &str,
+        version: u64,
+    ) -> Result<(), DirectUnaryClientError> {
         let Some(commands) = &self.commands else {
-            return;
+            return Ok(());
         };
         let (reply, response) = mpsc::channel();
-        if commands
+        commands
             .send(WorkerCommand::CloseAddressVersion {
                 address: address.to_owned(),
                 version,
                 reply,
             })
-            .is_ok()
-        {
-            let _ = response.recv();
-        }
+            .map_err(|_| DirectUnaryClientError::Closed)?;
+        response.recv().map_err(|_| DirectUnaryClientError::Closed)
+    }
+
+    /// Runs one foreground health check with client-go's one-second default.
+    pub fn liveness_default(&self, address: &str) -> Result<StoreLiveness, DirectUnaryClientError> {
+        self.liveness(address, DEFAULT_STORE_LIVENESS_TIMEOUT)
     }
 
     /// Returns the active generation for focused lifecycle diagnostics.
@@ -250,6 +272,33 @@ impl DirectUnaryClient for TonicCoprocessorClient {
         response.recv().map_err(|_| DirectUnaryClientError::Closed)
     }
 
+    fn close_address_version(
+        &mut self,
+        address: &str,
+        version: u64,
+    ) -> Result<(), DirectUnaryClientError> {
+        self.close_address_generation(address, version)
+    }
+
+    fn liveness(
+        &self,
+        address: &str,
+        timeout: Duration,
+    ) -> Result<StoreLiveness, DirectUnaryClientError> {
+        let Some(commands) = &self.commands else {
+            return Err(DirectUnaryClientError::Closed);
+        };
+        let (reply, response) = mpsc::channel();
+        commands
+            .send(WorkerCommand::Liveness {
+                address: address.to_owned(),
+                timeout,
+                reply,
+            })
+            .map_err(|_| DirectUnaryClientError::Closed)?;
+        response.recv().map_err(|_| DirectUnaryClientError::Closed)
+    }
+
     fn close(&mut self) -> Result<(), DirectUnaryClientError> {
         self.shutdown();
         Ok(())
@@ -287,6 +336,14 @@ fn run_worker(runtime: tokio::runtime::Runtime, receiver: mpsc::Receiver<WorkerC
                 channels.close_address_version(&address, version);
                 let _ = reply.send(());
             }
+            WorkerCommand::Liveness {
+                address,
+                timeout,
+                reply,
+            } => {
+                let result = check_liveness(&runtime, &address, timeout);
+                let _ = reply.send(result);
+            }
             WorkerCommand::Inspect { address, reply } => {
                 let _ = reply.send((channels.version(&address), channels.len()));
             }
@@ -320,19 +377,24 @@ fn send_coprocessor(
     let result = runtime.block_on(async {
         tokio::time::timeout(timeout, async {
             client.ready().await.map_err(|error| {
-                tonic::Status::unknown(format!("TiKV gRPC service is not ready: {error}"))
+                CoprocessorAttemptError::Connection(format!(
+                    "TiKV gRPC service is not ready: {error}"
+                ))
             })?;
-            client.unary(rpc_request, path, RawProtobufCodec).await
+            client
+                .unary(rpc_request, path, RawProtobufCodec)
+                .await
+                .map_err(CoprocessorAttemptError::RemoteGrpc)
         })
         .await
     });
     let response = match result {
         Ok(Ok(response)) => response.into_inner(),
-        Ok(Err(error)) if error.code() == tonic::Code::DeadlineExceeded => {
-            return Err(timeout_error(address, selected.version, timeout, error));
-        }
-        Ok(Err(error)) => {
+        Ok(Err(CoprocessorAttemptError::Connection(error))) => {
             return Err(connection_error(address, selected.version, error));
+        }
+        Ok(Err(CoprocessorAttemptError::RemoteGrpc(error))) => {
+            return Err(remote_grpc_error(address, selected.version, error));
         }
         Err(error) => {
             return Err(timeout_error(address, selected.version, timeout, error));
@@ -490,7 +552,24 @@ fn connection_error(
     version: u64,
     error: impl std::fmt::Display,
 ) -> DirectUnaryClientError {
-    DirectUnaryClientError::Connection(connection_identity(address, version, error))
+    DirectUnaryClientError::Connection(connection_identity(
+        address,
+        version,
+        DirectUnaryTransportClass::Connection,
+        None,
+        error,
+    ))
+}
+
+fn remote_grpc_error(address: &str, version: u64, error: tonic::Status) -> DirectUnaryClientError {
+    let code = grpc_code(error.code());
+    DirectUnaryClientError::Connection(connection_identity(
+        address,
+        version,
+        DirectUnaryTransportClass::RemoteGrpc,
+        Some(code),
+        error,
+    ))
 }
 
 fn timeout_error(
@@ -500,7 +579,13 @@ fn timeout_error(
     error: impl std::fmt::Display,
 ) -> DirectUnaryClientError {
     DirectUnaryClientError::Timeout {
-        connection: connection_identity(address, version, error),
+        connection: connection_identity(
+            address,
+            version,
+            DirectUnaryTransportClass::LocalDeadline,
+            None,
+            error,
+        ),
         timeout_ms: u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX),
     }
 }
@@ -508,12 +593,38 @@ fn timeout_error(
 fn connection_identity(
     address: &str,
     version: u64,
+    class: DirectUnaryTransportClass,
+    grpc_code: Option<DirectUnaryGrpcCode>,
     error: impl std::fmt::Display,
 ) -> DirectUnaryConnectionError {
     DirectUnaryConnectionError {
         address: address.to_owned(),
         version,
+        class,
+        grpc_code,
         message: error.to_string(),
+    }
+}
+
+const fn grpc_code(code: tonic::Code) -> DirectUnaryGrpcCode {
+    match code {
+        tonic::Code::Ok => DirectUnaryGrpcCode::Ok,
+        tonic::Code::Cancelled => DirectUnaryGrpcCode::Canceled,
+        tonic::Code::Unknown => DirectUnaryGrpcCode::Unknown,
+        tonic::Code::InvalidArgument => DirectUnaryGrpcCode::InvalidArgument,
+        tonic::Code::DeadlineExceeded => DirectUnaryGrpcCode::DeadlineExceeded,
+        tonic::Code::NotFound => DirectUnaryGrpcCode::NotFound,
+        tonic::Code::AlreadyExists => DirectUnaryGrpcCode::AlreadyExists,
+        tonic::Code::PermissionDenied => DirectUnaryGrpcCode::PermissionDenied,
+        tonic::Code::ResourceExhausted => DirectUnaryGrpcCode::ResourceExhausted,
+        tonic::Code::FailedPrecondition => DirectUnaryGrpcCode::FailedPrecondition,
+        tonic::Code::Aborted => DirectUnaryGrpcCode::Aborted,
+        tonic::Code::OutOfRange => DirectUnaryGrpcCode::OutOfRange,
+        tonic::Code::Unimplemented => DirectUnaryGrpcCode::Unimplemented,
+        tonic::Code::Internal => DirectUnaryGrpcCode::Internal,
+        tonic::Code::Unavailable => DirectUnaryGrpcCode::Unavailable,
+        tonic::Code::DataLoss => DirectUnaryGrpcCode::DataLoss,
+        tonic::Code::Unauthenticated => DirectUnaryGrpcCode::Unauthenticated,
     }
 }
 

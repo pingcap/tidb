@@ -24,6 +24,7 @@ use std::time::Duration;
 
 use tidb_proto::{KvrpcContext, KvrpcSourceStmt};
 
+use crate::region::StoreLiveness;
 use crate::rpc::DirectUnaryClientError;
 
 /// TiKV client-go replica-read values.
@@ -138,6 +139,23 @@ pub trait DirectUnaryClient {
 
     /// Drops the active channel generation for one address.
     fn close_address(&mut self, address: &str) -> Result<(), DirectUnaryClientError>;
+
+    /// Drops an address channel only if it is not newer than `version`.
+    ///
+    /// Implementations must model the generation comparison explicitly. A
+    /// delayed failure must never force-close a newer replacement channel.
+    fn close_address_version(
+        &mut self,
+        address: &str,
+        version: u64,
+    ) -> Result<(), DirectUnaryClientError>;
+
+    /// Performs one foreground gRPC health check without retry or mutation.
+    fn liveness(
+        &self,
+        address: &str,
+        timeout: Duration,
+    ) -> Result<StoreLiveness, DirectUnaryClientError>;
 
     /// Permanently closes the client. Later sends must fail closed.
     fn close(&mut self) -> Result<(), DirectUnaryClientError>;

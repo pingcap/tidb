@@ -26,8 +26,8 @@ use tidb_proto::{
 };
 use tidb_txnkv::rpc::TonicCoprocessorClient;
 use tidb_txnkv::{
-    ClientReplicaReadType, DirectUnaryClient, DirectUnaryClientError, DirectUnaryRequest,
-    EndpointType,
+    ClientReplicaReadType, DirectUnaryClient, DirectUnaryClientError, DirectUnaryGrpcCode,
+    DirectUnaryRequest, DirectUnaryTransportClass, EndpointType,
 };
 
 #[derive(Clone)]
@@ -35,6 +35,7 @@ struct RecordingTikv {
     requests: Arc<Mutex<Vec<CoprocessorRequest>>>,
     delay: Duration,
     response_size: Option<usize>,
+    failure: Option<tonic::Code>,
 }
 
 #[tonic::async_trait]
@@ -45,6 +46,9 @@ impl Tikv for RecordingTikv {
     ) -> Result<tonic::Response<CoprocessorResponse>, tonic::Status> {
         if !self.delay.is_zero() {
             tokio::time::sleep(self.delay).await;
+        }
+        if let Some(code) = self.failure {
+            return Err(tonic::Status::new(code, "injected remote status"));
         }
         let request = request.into_inner();
         request
@@ -209,6 +213,7 @@ fn unary_rpc_attaches_context_once_reuses_address_and_recreates_after_close() {
         requests: Arc::clone(&requests),
         delay: Duration::ZERO,
         response_size: None,
+        failure: None,
     });
     let mut client = TonicCoprocessorClient::new().unwrap();
 
@@ -257,7 +262,7 @@ fn unary_rpc_attaches_context_once_reuses_address_and_recreates_after_close() {
             .unwrap();
     });
 
-    client.close_address_version(&server.address, 0);
+    client.close_address_version(&server.address, 0).unwrap();
     assert_eq!(client.connection_version(&server.address), Some(1));
     client.close_address(&server.address).unwrap();
     assert_eq!(client.active_address_count(), 0);
@@ -288,6 +293,7 @@ fn caller_timeout_and_malformed_body_have_typed_fail_closed_results() {
         requests,
         delay: Duration::from_millis(200),
         response_size: None,
+        failure: None,
     });
     let mut client = TonicCoprocessorClient::new().unwrap();
 
@@ -296,6 +302,13 @@ fn caller_timeout_and_malformed_body_have_typed_fail_closed_results() {
         .unwrap_err();
     assert_eq!(zero_timeout.kind(), "timeout");
     assert_eq!(zero_timeout.connection().unwrap().version, 1);
+    assert_eq!(
+        zero_timeout.transport_class(),
+        Some(DirectUnaryTransportClass::LocalDeadline)
+    );
+    assert_eq!(zero_timeout.grpc_code(), None);
+    assert!(!zero_timeout.requires_generation_close());
+    assert_eq!(client.connection_version(&server.address), Some(1));
 
     let error = client
         .send_request(
@@ -347,6 +360,7 @@ fn response_larger_than_tonic_default_limit_is_returned() {
         requests: Arc::new(Mutex::new(Vec::new())),
         delay: Duration::ZERO,
         response_size: Some(response_size),
+        failure: None,
     });
     let mut client = TonicCoprocessorClient::new().unwrap();
 
@@ -360,4 +374,99 @@ fn response_larger_than_tonic_default_limit_is_returned() {
     let response = CoprocessorResponse::decode(raw.encoded_response.as_slice()).unwrap();
     assert_eq!(response.data.len(), response_size);
     assert!(response.data.iter().all(|byte| *byte == 0x5a));
+}
+
+#[test]
+fn remote_grpc_failures_preserve_code_address_and_generation_without_implicit_close() {
+    for (tonic_code, expected) in [
+        (tonic::Code::Cancelled, DirectUnaryGrpcCode::Canceled),
+        (
+            tonic::Code::DeadlineExceeded,
+            DirectUnaryGrpcCode::DeadlineExceeded,
+        ),
+        (tonic::Code::Unavailable, DirectUnaryGrpcCode::Unavailable),
+    ] {
+        let server = TestServer::start(RecordingTikv {
+            requests: Arc::new(Mutex::new(Vec::new())),
+            delay: Duration::ZERO,
+            response_size: None,
+            failure: Some(tonic_code),
+        });
+        let mut client = TonicCoprocessorClient::new().unwrap();
+        let error = client
+            .send_request(&server.address, &request(b"fail"), Duration::from_secs(2))
+            .unwrap_err();
+
+        assert_eq!(error.kind(), "connection");
+        assert_eq!(
+            error.transport_class(),
+            Some(DirectUnaryTransportClass::RemoteGrpc)
+        );
+        assert_eq!(error.grpc_code(), Some(expected));
+        let connection = error.connection().unwrap();
+        assert_eq!(connection.address, server.address);
+        assert_eq!(connection.version, 1);
+        assert_eq!(client.connection_version(&server.address), Some(1));
+        assert_eq!(
+            error.requires_generation_close(),
+            expected == DirectUnaryGrpcCode::Canceled
+        );
+    }
+}
+
+#[test]
+fn delayed_exact_generation_close_cannot_close_a_newer_channel() {
+    // client-go/internal/client/client.go:553-579 CloseAddrVer.
+    let server = TestServer::start(RecordingTikv {
+        requests: Arc::new(Mutex::new(Vec::new())),
+        delay: Duration::ZERO,
+        response_size: None,
+        failure: Some(tonic::Code::Cancelled),
+    });
+    let mut client = TonicCoprocessorClient::new().unwrap();
+
+    let first = client
+        .send_request(&server.address, &request(b"first"), Duration::from_secs(2))
+        .unwrap_err();
+    assert!(first.requires_generation_close());
+    let failed_version = first.connection().unwrap().version;
+    client
+        .close_address_version(&server.address, failed_version)
+        .unwrap();
+    assert_eq!(client.connection_version(&server.address), None);
+
+    let second = client
+        .send_request(&server.address, &request(b"second"), Duration::from_secs(2))
+        .unwrap_err();
+    assert_eq!(second.connection().unwrap().version, failed_version + 1);
+    client
+        .close_address_version(&server.address, failed_version)
+        .unwrap();
+    assert_eq!(
+        client.connection_version(&server.address),
+        Some(failed_version + 1)
+    );
+}
+
+#[test]
+fn local_deadline_and_terminal_control_errors_are_distinct_from_remote_status() {
+    let caller_cancelled = DirectUnaryClientError::CallerCancelled;
+    assert_eq!(caller_cancelled.kind(), "caller_cancelled");
+    assert_eq!(
+        caller_cancelled.transport_class(),
+        Some(DirectUnaryTransportClass::CallerCancelled)
+    );
+    assert_eq!(caller_cancelled.grpc_code(), None);
+    assert_eq!(caller_cancelled.connection(), None);
+
+    for terminal in [
+        DirectUnaryClientError::Closed,
+        DirectUnaryClientError::InvalidRequest("bad wire".to_owned()),
+        DirectUnaryClientError::Runtime("runtime stopped".to_owned()),
+    ] {
+        assert_eq!(terminal.transport_class(), None);
+        assert_eq!(terminal.grpc_code(), None);
+        assert_eq!(terminal.connection(), None);
+        assert!(!terminal.requires_generation_close());
+    }
 }

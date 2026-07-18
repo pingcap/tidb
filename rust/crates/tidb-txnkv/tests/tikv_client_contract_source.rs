@@ -18,6 +18,7 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use tidb_proto::{KvrpcContext, KvrpcSourceStmt};
+use tidb_txnkv::region::StoreLiveness;
 use tidb_txnkv::{
     endpoint_type, inject_source_stmt, map_replica_read_type, BackoffMetadata,
     ClientReplicaReadType, DirectUnaryClient, DirectUnaryClientError, DirectUnaryRequest,
@@ -28,6 +29,7 @@ use tidb_txnkv::{
 #[derive(Default)]
 struct RecordingUnaryClient {
     calls: Vec<(String, DirectUnaryRequest, Duration)>,
+    exact_closes: Vec<(String, u64)>,
 }
 
 impl DirectUnaryClient for RecordingUnaryClient {
@@ -48,9 +50,39 @@ impl DirectUnaryClient for RecordingUnaryClient {
         Ok(())
     }
 
+    fn close_address_version(
+        &mut self,
+        address: &str,
+        version: u64,
+    ) -> Result<(), DirectUnaryClientError> {
+        self.exact_closes.push((address.to_owned(), version));
+        Ok(())
+    }
+
+    fn liveness(
+        &self,
+        _address: &str,
+        _timeout: Duration,
+    ) -> Result<StoreLiveness, DirectUnaryClientError> {
+        Ok(StoreLiveness::Unknown)
+    }
+
     fn close(&mut self) -> Result<(), DirectUnaryClientError> {
         Ok(())
     }
+}
+
+#[test]
+fn unary_client_contract_requires_exact_generation_close_and_liveness() {
+    let mut client = RecordingUnaryClient::default();
+    client.close_address_version("tikv-1:20160", 7).unwrap();
+    assert_eq!(client.exact_closes, [("tikv-1:20160".to_owned(), 7)]);
+    assert_eq!(
+        client
+            .liveness("tikv-1:20160", Duration::from_millis(23))
+            .unwrap(),
+        StoreLiveness::Unknown
+    );
 }
 
 #[test]

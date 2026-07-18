@@ -12,6 +12,61 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+/// Transport-neutral projection of tonic's gRPC status code.
+///
+/// Keeping this enum outside the tonic leaf lets DistSQL distinguish protocol
+/// status from local transport failure without depending on tonic types.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DirectUnaryGrpcCode {
+    /// The RPC completed successfully.
+    Ok,
+    /// The operation was cancelled remotely.
+    Canceled,
+    /// An unspecified failure occurred.
+    Unknown,
+    /// The request was malformed.
+    InvalidArgument,
+    /// The RPC deadline elapsed in the remote gRPC stack.
+    DeadlineExceeded,
+    /// The requested resource was not found.
+    NotFound,
+    /// The requested resource already exists.
+    AlreadyExists,
+    /// The caller lacks permission.
+    PermissionDenied,
+    /// A resource was exhausted.
+    ResourceExhausted,
+    /// A required precondition failed.
+    FailedPrecondition,
+    /// The operation was aborted.
+    Aborted,
+    /// A value was out of range.
+    OutOfRange,
+    /// The operation is not implemented.
+    Unimplemented,
+    /// An internal error occurred.
+    Internal,
+    /// The service is unavailable.
+    Unavailable,
+    /// Data was lost or corrupted.
+    DataLoss,
+    /// Authentication failed.
+    Unauthenticated,
+}
+
+/// Origin class for a selected-address unary transport failure.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DirectUnaryTransportClass {
+    /// The caller cancelled before transport policy should mutate state.
+    CallerCancelled,
+    /// The caller-owned local Tokio deadline elapsed.
+    LocalDeadline,
+    /// The remote gRPC stack returned a structured status.
+    RemoteGrpc,
+    /// The channel could not become ready or otherwise failed locally.
+    Connection,
+}
+
 /// Address and connection generation attached to an RPC failure.
 ///
 /// This is the transport-neutral projection of client-go's `ErrConn`. Tonic
@@ -22,6 +77,10 @@ pub struct DirectUnaryConnectionError {
     pub address: String,
     /// Address-local connection generation.
     pub version: u64,
+    /// Whether the failure is local deadline, remote status, or connection.
+    pub class: DirectUnaryTransportClass,
+    /// Exact remote gRPC status code, when the remote stack returned one.
+    pub grpc_code: Option<DirectUnaryGrpcCode>,
     /// Concrete connection or RPC failure text.
     pub message: String,
 }
@@ -41,6 +100,8 @@ impl std::error::Error for DirectUnaryConnectionError {}
 /// Typed failures at the KV-owned direct unary boundary.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DirectUnaryClientError {
+    /// The caller cancelled before the RPC leaf should mutate transport state.
+    CallerCancelled,
     /// The client was closed and may never create another connection.
     Closed,
     /// The supplied address cannot form a plaintext tonic endpoint.
@@ -70,6 +131,7 @@ impl DirectUnaryClientError {
     #[must_use]
     pub const fn kind(&self) -> &'static str {
         match self {
+            Self::CallerCancelled => "caller_cancelled",
             Self::Closed => "closed",
             Self::InvalidAddress { .. } => "invalid_address",
             Self::InvalidRequest(_) => "invalid_request",
@@ -90,11 +152,48 @@ impl DirectUnaryClientError {
             _ => None,
         }
     }
+
+    /// Returns the transport origin without exposing tonic types.
+    #[must_use]
+    pub const fn transport_class(&self) -> Option<DirectUnaryTransportClass> {
+        match self {
+            Self::CallerCancelled => Some(DirectUnaryTransportClass::CallerCancelled),
+            Self::Connection(error) => Some(error.class),
+            Self::Timeout { .. } => Some(DirectUnaryTransportClass::LocalDeadline),
+            _ => None,
+        }
+    }
+
+    /// Returns the exact remote gRPC status code when one was observed.
+    #[must_use]
+    pub const fn grpc_code(&self) -> Option<DirectUnaryGrpcCode> {
+        match self {
+            Self::Connection(error) => error.grpc_code,
+            _ => None,
+        }
+    }
+
+    /// Whether client-go requires the caller to close exactly this generation.
+    ///
+    /// Only remote gRPC Canceled has that contract. Ordinary deadline,
+    /// unavailable, and connection failures remain open for liveness policy.
+    #[must_use]
+    pub const fn requires_generation_close(&self) -> bool {
+        matches!(
+            self,
+            Self::Connection(DirectUnaryConnectionError {
+                class: DirectUnaryTransportClass::RemoteGrpc,
+                grpc_code: Some(DirectUnaryGrpcCode::Canceled),
+                ..
+            })
+        )
+    }
 }
 
 impl std::fmt::Display for DirectUnaryClientError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::CallerCancelled => formatter.write_str("TiKV RPC cancelled by caller"),
             Self::Closed => formatter.write_str("TiKV RPC client is closed"),
             Self::InvalidAddress { address, message } => {
                 write!(formatter, "invalid TiKV address {address:?}: {message}")
