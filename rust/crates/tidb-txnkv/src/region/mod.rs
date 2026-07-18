@@ -13,6 +13,7 @@ mod replica_selector;
 mod request_selector;
 mod route;
 mod store_state;
+mod topology;
 
 pub use crate::retry::{RegionBackoffBudget, RegionBackoffExhausted, RegionBackoffKind};
 pub use cache::{RegionCache, RegionLoader, RegionRecoveryLoader};
@@ -32,3 +33,5 @@ pub use request_selector::{
 };
 pub use route::{RouteFeedback, RouteOutcome};
 pub use store_state::{StoreFailureOutcome, StoreLiveness, StoreResolveState, StoreState};
+pub(crate) use topology::RegionStoreTopology;
+pub use topology::{RouteFeedbackApplication, RoutePeer, RouteSnapshot};
