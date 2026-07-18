@@ -346,9 +346,9 @@ fn extended_region(id: u64, start_key: &[u8], end_key: &[u8]) -> pdpb::Region {
                 conf_ver: id + 1,
                 version: id + 2,
             }),
-            peers: vec![leader.clone(), pending.clone()],
+            peers: vec![leader, pending],
         }),
-        leader: Some(leader.clone()),
+        leader: Some(leader),
         down_peers: vec![pdpb::PeerStats {
             peer: Some(leader),
             down_seconds: id,

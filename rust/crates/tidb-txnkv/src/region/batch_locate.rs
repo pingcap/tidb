@@ -29,7 +29,7 @@ pub fn ranges_after_key(ranges: &[KeyRange], split_key: &[u8]) -> Vec<KeyRange> 
     if ranges.is_empty() || split_key.is_empty() {
         return Vec::new();
     }
-    let last = &ranges[ranges.len() - 1];
+    let last = ranges.last().expect("nonempty ranges were validated above");
     if !last.end.is_empty() && split_key >= last.end.as_slice() {
         return Vec::new();
     }

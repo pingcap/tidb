@@ -90,7 +90,7 @@ impl PdRegionLoader {
         let limit = pd_limit(limit)?;
         let regions = self
             .client
-            .scan_regions(start_key, end_key, limit)
+            .scan_regions(&start_key, &end_key, limit)
             .map_err(region_load_error)?;
         self.project_regions(regions)
     }

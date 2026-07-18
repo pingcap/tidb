@@ -24,11 +24,17 @@ use serde_json::{Map, Value};
 use super::observability::{BatchRequestProgress, BatchRequestState};
 use super::priority_queue::{PriorityItem, PriorityQueue};
 
+/// Priority at which a request bypasses the normal concurrency limit.
 pub const HIGH_TASK_PRIORITY: u64 = 10;
+/// Source policy that disables adaptive batch waiting.
 pub const BATCH_POLICY_BASIC: &str = "basic";
+/// Source policy that adapts to recent arrival intervals.
 pub const BATCH_POLICY_STANDARD: &str = "standard";
+/// Source policy that favors fetching more requests.
 pub const BATCH_POLICY_POSITIVE: &str = "positive";
+/// Prefix used for a JSON-defined custom policy.
 pub const BATCH_POLICY_CUSTOM: &str = "custom";
+/// Default source policy used when configuration is absent or invalid.
 pub const DEFAULT_BATCH_POLICY: &str = BATCH_POLICY_STANDARD;
 
 /// One cancellation and terminal-delivery authority supplied by the caller.
@@ -37,7 +43,9 @@ pub const DEFAULT_BATCH_POLICY: &str = BATCH_POLICY_STANDARD;
 /// implements this trait with the same once-only handle returned to the pull
 /// caller, so queue cancellation and terminal failure share one authority.
 pub trait BatchEntryCompletion<E>: fmt::Debug + Send + Sync {
+    /// Whether the caller canceled this exact request.
     fn is_canceled(&self) -> bool;
+    /// Publishes one typed terminal failure through the caller's completion gate.
     fn fail(&self, error: E);
 }
 
@@ -52,6 +60,7 @@ pub struct BatchEntry<T, E> {
 }
 
 impl<T, E> BatchEntry<T, E> {
+    /// Creates a direct, normal-priority entry with caller-owned completion.
     pub fn new(payload: T, completion: Arc<dyn BatchEntryCompletion<E>>) -> Self {
         Self {
             payload,
@@ -62,6 +71,7 @@ impl<T, E> BatchEntry<T, E> {
         }
     }
 
+    /// Routes this entry through the batch group for `forwarded_host`.
     pub fn with_forwarded_host(mut self, forwarded_host: impl Into<String>) -> Self {
         let forwarded_host = forwarded_host.into();
         self.progress.set_forwarded_host(forwarded_host.clone());
@@ -69,27 +79,33 @@ impl<T, E> BatchEntry<T, E> {
         self
     }
 
+    /// Sets the source scheduling priority.
     pub const fn with_priority(mut self, priority: u64) -> Self {
         self.priority = priority;
         self
     }
 
+    /// Returns the caller-owned cancellation and completion authority.
     pub fn completion(&self) -> &dyn BatchEntryCompletion<E> {
         self.completion.as_ref()
     }
 
+    /// Returns the entry's shared request progress.
     pub fn progress(&self) -> Arc<BatchRequestProgress> {
         Arc::clone(&self.progress)
     }
 
+    /// Returns the opaque request payload.
     pub fn payload(&self) -> &T {
         &self.payload
     }
 
+    /// Returns the forwarding target, if this is not a direct request.
     pub fn forwarded_host(&self) -> Option<&str> {
         self.forwarded_host.as_deref()
     }
 
+    /// Returns the source scheduling priority.
     pub const fn priority_value(&self) -> u64 {
         self.priority
     }
@@ -105,6 +121,7 @@ impl<T, E> PriorityItem for BatchEntry<T, E> {
     }
 }
 
+/// One entry after the scheduler assigns its stream request ID.
 #[derive(Debug)]
 pub struct ScheduledEntry<T, E> {
     request_id: u64,
@@ -112,15 +129,18 @@ pub struct ScheduledEntry<T, E> {
 }
 
 impl<T, E> ScheduledEntry<T, E> {
+    /// Returns the assigned request ID.
     pub fn request_id(&self) -> u64 {
         self.request_id
     }
 
+    /// Returns the scheduled entry and its caller-owned state.
     pub fn entry(&self) -> &BatchEntry<T, E> {
         &self.entry
     }
 }
 
+/// Entries assigned to one direct or forwarded BatchCommands request.
 #[derive(Debug)]
 pub struct BatchGroup<T, E> {
     entries: Vec<ScheduledEntry<T, E>>,
@@ -137,18 +157,22 @@ impl<T, E> Default for BatchGroup<T, E> {
 }
 
 impl<T, E> BatchGroup<T, E> {
+    /// Returns the number of entries in this batch group.
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
+    /// Whether this batch group contains no entries.
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 
+    /// Returns entries in their scheduled request order.
     pub fn entries(&self) -> &[ScheduledEntry<T, E>] {
         &self.entries
     }
 
+    /// Returns a handle to the group's shared request state.
     pub fn state(&self) -> BatchRequestState {
         self.state.clone()
     }
@@ -164,6 +188,7 @@ impl<T, E> BatchGroup<T, E> {
     }
 }
 
+/// Direct and forwarding-specific groups built in one scheduling pass.
 #[derive(Debug)]
 pub struct BatchGroups<T, E> {
     direct: Option<BatchGroup<T, E>>,
@@ -180,10 +205,12 @@ impl<T, E> Default for BatchGroups<T, E> {
 }
 
 impl<T, E> BatchGroups<T, E> {
+    /// Returns the direct request group, if one was built.
     pub fn direct(&self) -> Option<&BatchGroup<T, E>> {
         self.direct.as_ref()
     }
 
+    /// Returns request groups keyed by forwarding target.
     pub fn forwarded(&self) -> &BTreeMap<String, BatchGroup<T, E>> {
         &self.forwarded
     }
@@ -219,22 +246,27 @@ impl<T, E> Default for BatchScheduler<T, E> {
 }
 
 impl<T, E> BatchScheduler<T, E> {
+    /// Creates an empty scheduler with request IDs starting at one.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Returns the number of entries still waiting for selection.
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
+    /// Whether no entries remain waiting for selection.
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
 
+    /// Returns the most recently allocated request ID.
     pub const fn id_alloc(&self) -> u64 {
         self.id_alloc
     }
 
+    /// Queues one request for a future scheduling pass.
     pub fn push(&mut self, entry: BatchEntry<T, E>) {
         self.entries.push(entry);
     }
@@ -293,13 +325,20 @@ impl<T, E> BatchScheduler<T, E> {
     }
 }
 
+/// Parsed source options for an adaptive batch trigger.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct BatchPolicyOptions {
+    /// Adaptive policy version.
     pub version: i64,
+    /// Maximum number of arrival intervals included in the estimate.
     pub max_arrival_intervals: i64,
+    /// Configured maximum batch wait in seconds.
     pub wait_seconds: f64,
+    /// Weight assigned to the newest observation.
     pub weight: f64,
+    /// Fetch-more decision threshold.
     pub threshold: f64,
+    /// Fractional boundary used to round the preferred wait size.
     pub wait_size_rounding: f64,
 }
 
@@ -334,6 +373,7 @@ impl BatchPolicyOptions {
     }
 }
 
+/// Stateful adaptive trigger built from one source batch policy.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BatchTrigger {
     options: BatchPolicyOptions,
@@ -343,6 +383,7 @@ pub struct BatchTrigger {
 }
 
 impl BatchTrigger {
+    /// Parses a preset or custom policy and reports whether it was valid.
     pub fn from_policy(policy: &str) -> (Self, bool) {
         let options = match policy {
             BATCH_POLICY_BASIC => Some(BatchPolicyOptions::default()),
@@ -363,14 +404,17 @@ impl BatchTrigger {
         )
     }
 
+    /// Returns the parsed source policy options.
     pub const fn options(&self) -> BatchPolicyOptions {
         self.options
     }
 
+    /// Returns the effective non-negative batch wait duration.
     pub fn turbo_wait_time(&self) -> Duration {
         source_effective_wait_time(self.options.wait_seconds)
     }
 
+    /// Updates adaptive state and decides whether to fetch another request.
     pub fn need_fetch_more(&mut self, request_arrival_interval: Duration) -> bool {
         match self.options.version {
             1 => {
@@ -403,6 +447,7 @@ impl BatchTrigger {
         }
     }
 
+    /// Chooses the number of requests to await before sending a batch.
     pub fn preferred_batch_wait_size(
         &self,
         average_batch_wait_size: f64,
@@ -421,10 +466,12 @@ impl BatchTrigger {
         rounded.max(0.0) as usize
     }
 
+    /// Returns the current estimated request-arrival interval in seconds.
     pub const fn estimated_arrival_interval(&self) -> f64 {
         self.estimated_arrival_interval
     }
 
+    /// Returns the maximum arrival interval included in the estimate.
     pub const fn max_arrival_interval(&self) -> f64 {
         self.max_arrival_interval
     }

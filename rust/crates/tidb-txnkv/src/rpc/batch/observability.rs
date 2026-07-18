@@ -19,32 +19,50 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+/// One observable stage in a BatchCommands request lifecycle.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BatchRequestStage {
+    /// Time spent waiting for batch selection.
     BatchWait,
+    /// Time spent waiting for the selected batch to be sent.
     SendWait,
+    /// Time spent waiting for the request response.
     ReceiveWait,
+    /// Total duration of a successfully completed request.
     Done,
 }
 
+/// Terminal outcome attached to one request-stage observation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BatchRequestOutcome {
+    /// The observed stage completed successfully.
     Ok,
+    /// The request deadline elapsed.
     Timeout,
+    /// The caller canceled the request.
     Canceled,
+    /// The request failed for another reason.
     Failed,
+    /// The batch connection or client closed.
     Closed,
 }
 
+/// Typed terminal failure used to derive a request outcome.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BatchTerminalError {
+    /// The request deadline elapsed.
     DeadlineExceeded,
+    /// The caller canceled the request.
     Canceled,
+    /// The active batch connection closed.
     BatchConnectionClosed,
+    /// The owning batch client closed.
     BatchClientClosed,
+    /// The request failed for another reason.
     Failed,
 }
 
+/// Maps a typed terminal failure to the source observation outcome.
 pub const fn terminal_outcome(error: Option<BatchTerminalError>) -> BatchRequestOutcome {
     match error {
         None => BatchRequestOutcome::Ok,
@@ -57,10 +75,14 @@ pub const fn terminal_outcome(error: Option<BatchTerminalError>) -> BatchRequest
     }
 }
 
+/// One stage, outcome, and duration emitted for a batch request.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BatchRequestObservation {
+    /// Lifecycle stage being observed.
     pub stage: BatchRequestStage,
+    /// Outcome assigned to this stage.
     pub outcome: BatchRequestOutcome,
+    /// Time spent in this stage or request lifecycle.
     pub duration: Duration,
 }
 
@@ -85,16 +107,19 @@ pub struct BatchStreamState {
 }
 
 impl BatchStreamState {
+    /// Whether two handles reference the same concrete stream state.
     pub fn shares_state_with(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.inner, &other.inner)
     }
 
+    /// Advances the greatest response request ID observed on the stream.
     pub fn record_max_response_request_id(&self, request_id: u64) {
         self.inner
             .max_response_request_id
             .fetch_max(request_id, Ordering::AcqRel);
     }
 
+    /// Returns the greatest response request ID observed on the stream.
     pub fn max_response_request_id(&self) -> u64 {
         self.inner.max_response_request_id.load(Ordering::Acquire)
     }
@@ -107,18 +132,22 @@ pub struct BatchRequestState {
 }
 
 impl BatchRequestState {
+    /// Whether two handles reference the same concrete batch state.
     pub fn shares_state_with(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.inner, &other.inner)
     }
 
+    /// Returns the number of entries assigned to this batch.
     pub fn batch_size(&self) -> usize {
         self.inner.batch_size.load(Ordering::Acquire)
     }
 
+    /// Records the final number of entries assigned to this batch.
     pub fn set_batch_size(&self, batch_size: usize) {
         self.inner.batch_size.store(batch_size, Ordering::Release);
     }
 
+    /// Records the absolute instant at which sending began.
     pub fn record_send_started_at(&self, send_started_at: Instant) {
         *self
             .inner
@@ -127,18 +156,21 @@ impl BatchRequestState {
             .expect("batch send start lock") = Some(send_started_at);
     }
 
+    /// Records the delay from send start until packet writing completed.
     pub fn record_sent_after_send_start(&self, duration: Duration) {
         self.inner
             .sent_after_send_start_ns
             .store(nonzero_duration_ns(duration), Ordering::Release);
     }
 
+    /// Records the delay from send start until the first response arrived.
     pub fn record_first_response_after_send_start(&self, duration: Duration) {
         self.inner
             .first_response_after_send_start_ns
             .store(nonzero_duration_ns(duration), Ordering::Release);
     }
 
+    /// Attaches the concrete stream-wide response progress authority.
     pub fn attach_stream_state(&self, stream_state: BatchStreamState) {
         *self
             .inner
@@ -147,6 +179,7 @@ impl BatchRequestState {
             .expect("batch stream state lock") = Some(stream_state);
     }
 
+    /// Returns the attached stream-wide response progress, if any.
     pub fn stream_state(&self) -> Option<BatchStreamState> {
         self.inner
             .stream_state
@@ -174,10 +207,12 @@ impl Default for BatchRequestProgress {
 }
 
 impl BatchRequestProgress {
+    /// Creates progress stamped with the current arrival instant.
     pub fn new(forwarded_host: Option<String>) -> Self {
         Self::with_arrival(Instant::now(), forwarded_host)
     }
 
+    /// Creates progress with a caller-supplied arrival instant.
     pub fn with_arrival(arrived_at: Instant, forwarded_host: Option<String>) -> Self {
         Self {
             arrived_at,
@@ -189,14 +224,17 @@ impl BatchRequestProgress {
         }
     }
 
+    /// Returns the request ID assigned during batch selection.
     pub fn request_id(&self) -> u64 {
         self.request_id.load(Ordering::Acquire)
     }
 
+    /// Returns the delay from arrival until batch selection.
     pub fn batch_selected_after_arrival(&self) -> Option<Duration> {
         load_optional_duration(&self.batch_selected_after_arrival_ns)
     }
 
+    /// Returns the shared state of the selected batch, if assigned.
     pub fn batch_state(&self) -> Option<BatchRequestState> {
         self.batch_state
             .lock()
@@ -204,6 +242,7 @@ impl BatchRequestProgress {
             .clone()
     }
 
+    /// Records batch selection using a caller-supplied relative delay.
     pub fn record_batch_selected(
         &self,
         request_id: u64,
@@ -218,6 +257,7 @@ impl BatchRequestProgress {
         *self.batch_state.lock().expect("batch progress state lock") = Some(batch_state);
     }
 
+    /// Records the delay from arrival until this entry's response arrived.
     pub fn record_received_after_arrival(&self, duration: Duration) {
         self.received_after_arrival_ns
             .store(nonzero_duration_ns(duration), Ordering::Release);
@@ -243,6 +283,7 @@ impl BatchRequestProgress {
             .expect("batch forwarded host lock") = Some(forwarded_host);
     }
 
+    /// Formats source-compatible request progress at the supplied elapsed time.
     pub fn format(&self, now_after_arrival: Duration) -> String {
         let mut output = String::from("EntryProgress{");
         let (batched_ns, sent_ns, first_response_ns, received_ns) = self.load();
@@ -306,6 +347,7 @@ impl BatchRequestProgress {
         output
     }
 
+    /// Formats the source timeout reason and current request progress.
     pub fn format_timeout(&self, timeout: Duration, now_after_arrival: Duration) -> String {
         format!(
             "wait recvLoop timeout, timeout:{}, {}",
@@ -314,6 +356,7 @@ impl BatchRequestProgress {
         )
     }
 
+    /// Builds source-compatible stage observations for one terminal outcome.
     pub fn observations(
         &self,
         terminal: BatchRequestOutcome,
@@ -412,13 +455,14 @@ impl BatchRequestProgress {
 
 fn load_optional_duration(value: &AtomicU64) -> Option<Duration> {
     let value = value.load(Ordering::Acquire);
-    (value > 0).then(|| Duration::from_nanos(value))
+    (value > 0).then_some(Duration::from_nanos(value))
 }
 
 fn nonzero_duration_ns(duration: Duration) -> u64 {
     duration_ns(duration).max(1)
 }
 
+/// Normalizes a missing or out-of-order send timestamp against observed replies.
 pub const fn normalize_observed_sent_ns(
     batched_ns: u64,
     mut sent_ns: u64,

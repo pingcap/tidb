@@ -20,7 +20,9 @@ use std::mem;
 
 /// A request that can be ordered and retired by the batch scheduler.
 pub trait PriorityItem {
+    /// Returns the source request priority used by the max heap.
     fn priority(&self) -> u64;
+    /// Whether the scheduler should discard this item before batching.
     fn is_canceled(&self) -> bool;
 }
 
@@ -64,26 +66,32 @@ impl<T> Default for PriorityQueue<T> {
 }
 
 impl<T: PriorityItem> PriorityQueue<T> {
+    /// Creates an empty priority queue.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Returns the number of queued items.
     pub fn len(&self) -> usize {
         self.heap.len()
     }
 
+    /// Whether the queue contains no items.
     pub fn is_empty(&self) -> bool {
         self.heap.is_empty()
     }
 
+    /// Inserts one item according to its source priority.
     pub fn push(&mut self, value: T) {
         self.heap.push(HeapItem { value });
     }
 
+    /// Returns the current maximum priority, or zero for an empty queue.
     pub fn highest_priority(&self) -> u64 {
         self.heap.peek().map_or(0, |entry| entry.value.priority())
     }
 
+    /// Removes and returns the highest-priority item.
     pub fn pop(&mut self) -> Option<T> {
         self.heap.pop().map(|entry| entry.value)
     }
@@ -111,16 +119,19 @@ impl<T: PriorityItem> PriorityQueue<T> {
         values
     }
 
+    /// Removes every item while preserving the source full-take layout.
     pub fn drain(&mut self) -> Vec<T> {
         self.take(self.len())
     }
 
+    /// Removes canceled items and releases their queue-owned references.
     pub fn clean_canceled(&mut self) {
         if self.heap.iter().any(|entry| entry.value.is_canceled()) {
             self.heap.retain(|entry| !entry.value.is_canceled());
         }
     }
 
+    /// Clears every queued item without returning it.
     pub fn reset(&mut self) {
         self.heap.clear();
     }
