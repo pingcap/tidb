@@ -466,8 +466,12 @@ fn execution_cancellation_interrupts_dispatch_before_all_recovery_and_success_mu
 #[test]
 fn caller_cancellation_branch_is_terminal_before_response_and_retry_mutation() {
     let source = include_str!("../src/cop_paging/direct_unary_query_transport.rs");
-    let branch = source
+    let settle_dispatch = source
+        .find("fn settle_dispatch(")
+        .expect("response settlement boundary");
+    let branch = source[settle_dispatch..]
         .find("if self.cancellation.is_cancelled()")
+        .map(|offset| settle_dispatch + offset)
         .expect("caller cancellation precedence branch");
     let raw_response = source[branch..]
         .find("let raw_response = match send_result")
