@@ -478,7 +478,8 @@ fn caller_cancellation_branch_is_terminal_before_response_and_retry_mutation() {
         .map(|offset| branch + offset)
         .expect("response classification follows cancellation");
     let terminal = &source[branch..raw_response];
-    assert!(terminal.contains("return Err(DirectUnaryTransportError::CallerCancelled)"));
+    assert!(terminal.contains("return if self.cancellation.is_cancelled()"));
+    assert!(terminal.contains("Err(DirectUnaryTransportError::CallerCancelled)"));
     for forbidden in [
         "record_attempt_result",
         "recover_transport_failure",
