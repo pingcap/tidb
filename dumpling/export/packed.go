@@ -138,7 +138,7 @@ type packedTableData struct {
 	legacyEncryption bool
 	table            *model.TableInfo
 	ranges           []packedRange
-	observation      *packedTableObservation
+	observation      *packedExportObservation
 	iter             *packedRowIter
 }
 
@@ -151,7 +151,7 @@ func newPackedTableData(
 	executable, metadataURL string,
 	legacyEncryption bool,
 	table *model.TableInfo,
-	observation *packedTableObservation,
+	observation *packedExportObservation,
 ) *packedTableData {
 	return &packedTableData{
 		executable:       executable,
@@ -179,7 +179,6 @@ func (d *packedTableData) Start(tctx *tcontext.Context, _ *sql.Conn) error {
 		decoder:          decoder,
 		args:             make([]any, len(decoder.columns)),
 	}
-	iter.observation.start()
 	iter.readNext()
 	d.iter = iter
 	return iter.err
@@ -189,9 +188,7 @@ func (d *packedTableData) Rows() SQLRowIter { return d.iter }
 
 func (d *packedTableData) Close() error {
 	if d.iter != nil {
-		err := d.iter.Close()
-		d.iter.observation.finish(d.iter.err, err)
-		return err
+		return d.iter.Close()
 	}
 	return nil
 }
@@ -199,15 +196,14 @@ func (d *packedTableData) Close() error {
 func (*packedTableData) RawRows() *sql.Rows { return nil }
 
 type packedRowIter struct {
-	ctx              *tcontext.Context
+	ctx              context.Context
 	executable       string
 	metadataURL      string
 	legacyEncryption bool
 	ranges           []packedRange
 	nextRange        int
-	activeRange      int
 	scan             *cseDumperScan
-	observation      *packedTableObservation
+	observation      *packedExportObservation
 	table            *model.TableInfo
 	decoder          *packedRowDecoder
 	key              []byte
@@ -221,6 +217,9 @@ type packedRowIter struct {
 func (i *packedRowIter) HasNext() bool { return i.err == nil && i.hasRow }
 
 func (i *packedRowIter) Decode(receiver RowReceiver) error {
+	if i.observation == nil {
+		return i.decode(receiver)
+	}
 	return i.observation.decode(func() error { return i.decode(receiver) })
 }
 
@@ -281,9 +280,7 @@ func (i *packedRowIter) Close() error {
 	}
 	scan := i.scan
 	i.scan = nil
-	err := scan.close()
-	i.observation.cancelRange(i.activeRange, scan, err)
-	return err
+	return scan.close()
 }
 
 func (i *packedRowIter) readNext() {
@@ -293,8 +290,7 @@ func (i *packedRowIter) readNext() {
 				i.hasRow = false
 				return
 			}
-			i.activeRange = i.nextRange
-			rangeToScan := i.ranges[i.activeRange]
+			rangeToScan := i.ranges[i.nextRange]
 			i.nextRange++
 			scan, err := startCSEDumperScan(
 				i.ctx,
@@ -303,34 +299,27 @@ func (i *packedRowIter) readNext() {
 				i.legacyEncryption,
 				rangeToScan.start,
 				rangeToScan.end,
+				i.observation,
 			)
 			if err != nil {
-				i.observation.rangeStartFailed(i.activeRange, err)
 				i.err = err
 				i.hasRow = false
 				return
 			}
 			i.scan = scan
-			i.observation.rangeStarted(i.activeRange, scan)
 		}
 
 		key, value, end, err := i.scan.readRow(i.key, i.value)
 		if err != nil {
-			scan := i.scan
-			canceled := err != nil && i.ctx.Err() != nil
-			i.observation.rangeFinished(i.activeRange, scan, err, canceled, false)
 			i.err = err
 			i.hasRow = false
 			i.scan = nil
 			return
 		}
 		if end {
-			scan := i.scan
-			i.observation.rangeFinished(i.activeRange, scan, nil, false, true)
 			i.scan = nil
 			continue
 		}
-		i.observation.row(key, value)
 		i.key = key
 		i.value = value
 		i.hasRow = true
@@ -447,10 +436,7 @@ func packedPhysicalTableRanges(table *model.TableInfo) []packedRange {
 	ranges := make([]packedRange, 0, len(tableIDs))
 	for _, tableID := range tableIDs {
 		start := tablecodec.GenTableRecordPrefix(tableID)
-		ranges = append(ranges, packedRange{
-			start: start,
-			end:   start.PrefixNext(),
-		})
+		ranges = append(ranges, packedRange{start: start, end: start.PrefixNext()})
 	}
 	return ranges
 }
@@ -478,6 +464,29 @@ type packedRangeScanner func(
 	startKey, endKey []byte,
 	emit func(key, value []byte) error,
 ) error
+
+func newCSEDumperRangeScanner(
+	executable, metadataURL string,
+	legacyEncryption bool,
+	observation *packedExportObservation,
+) packedRangeScanner {
+	return func(
+		ctx context.Context,
+		startKey, endKey []byte,
+		emit func(key, value []byte) error,
+	) error {
+		return scanCSEDumperRange(
+			ctx,
+			executable,
+			metadataURL,
+			legacyEncryption,
+			startKey,
+			endKey,
+			emit,
+			observation,
+		)
+	}
+}
 
 func packedHashDataPrefix(hashKey []byte) kv.Key {
 	prefix := []byte{'m'}
@@ -507,10 +516,7 @@ func scanPackedHash(
 	})
 }
 
-func loadPackedDatabases(
-	ctx context.Context,
-	scan packedRangeScanner,
-) ([]*model.DBInfo, error) {
+func loadPackedDatabases(ctx context.Context, scan packedRangeScanner) ([]*model.DBInfo, error) {
 	var databases []*model.DBInfo
 	if err := scanPackedHash(ctx, scan, []byte("DBs"), func(field, value []byte) error {
 		if !tidbmeta.IsDBkey(field) {
@@ -569,151 +575,40 @@ func packedCreateTableSQL(table *model.TableInfo) (string, error) {
 }
 
 func (d *Dumper) dumpPacked() (resultErr error) {
-	start := time.Now()
-	scanTotals := &packedScanTotals{}
-	outputTotals := &packedOutputTotals{}
-	summary := newPackedExportSummary(outputTotals)
-	outputStorage := &packedObservedStorage{
-		Storage: d.extStore,
-		tctx:    d.tctx,
-		totals:  outputTotals,
-	}
+	observation := newPackedExportObservation(d.tctx)
 	defer func() {
-		d.logPackedExportFinished(start, scanTotals, summary, resultErr)
+		observation.finish(resultErr)
 	}()
-	d.tctx.L().Info("starting packed backup export",
-		zap.String("backup_id", packedBackupLogID(d.conf.PackedBackup)),
-		zap.String("input_storage", packedStorageScheme(d.conf.PackedBackup)),
-		zap.Int("threads", d.conf.Threads),
-		zap.String("cse_ctl_path", d.conf.CSEExecutable),
-		zap.String("output_storage", packedStorageScheme(d.extStore.URI())),
-		zap.String("compression", packedCompressionName(d.conf.CompressType.FileSuffix())),
-		zap.Uint64("file_size", d.conf.FileSize),
-		zap.Bool("legacy_encryption", d.conf.CSELegacyEncryption),
-		zap.Bool("no_header", d.conf.NoHeader),
-		zap.Bool("no_schemas", d.conf.NoSchemas),
-		zap.Bool("no_data", d.conf.NoData))
-	progressCtx, cancelProgress := d.tctx.WithCancel()
-	go d.runPackedLogProgress(progressCtx, start, scanTotals, summary)
-	defer cancelProgress()
-
-	metadataStarted := time.Now()
 	databases, err := loadPackedDatabases(
 		d.tctx,
 		newCSEDumperRangeScanner(
-			d.tctx,
 			d.conf.CSEExecutable,
 			d.conf.PackedBackup,
 			d.conf.CSELegacyEncryption,
-			scanTotals,
+			observation,
 		),
 	)
-	summary.metadataDuration = time.Since(metadataStarted)
 	if err != nil {
 		return err
 	}
-	metadataPlanningStartedAt := time.Now()
-	publicTableCount := 0
-	selectedDatabaseCount := 0
-	selectedTableCount := 0
-	selectedRangeCount := 0
-	for _, database := range databases {
-		for _, table := range database.Deprecated.Tables {
-			if !table.IsView() && !table.IsSequence() {
-				publicTableCount++
-			}
-		}
-		if !d.conf.TableFilter.MatchSchema(database.Name.O) {
-			continue
-		}
-		selectedDatabaseCount++
-		for _, table := range database.Deprecated.Tables {
-			if table.IsView() || table.IsSequence() || !d.conf.TableFilter.MatchTable(database.Name.O, table.Name.O) {
-				continue
-			}
-			selectedTableCount++
-			if !d.conf.NoData {
-				selectedRangeCount += len(packedPhysicalTableIDs(table))
-			}
-		}
-	}
-	summary.metadataPlanningDuration = time.Since(metadataPlanningStartedAt)
-	metadataScans := scanTotals.snapshot()
-	metadataNonScanDuration := summary.metadataDuration - metadataScans.duration
-	if metadataNonScanDuration < 0 {
-		metadataNonScanDuration = 0
-	}
-	scanTotals.planned.Store(int64(metadataScans.started) + int64(selectedRangeCount))
-	summary.selectedTables = selectedTableCount
-	summary.selectedRanges = selectedRangeCount
-	atomic.StoreInt64(&d.totalTables, int64(selectedTableCount))
-	if selectedTableCount == 0 {
-		d.tctx.L().Warn("packed backup export selected no tables",
-			zap.Int("databases", len(databases)),
-			zap.Int("public_tables", publicTableCount),
-			zap.Int("selected_databases", selectedDatabaseCount),
-			zap.Bool("no_schemas", d.conf.NoSchemas),
-			zap.Bool("no_data", d.conf.NoData))
-	}
-	if d.conf.NoData {
-		d.metrics.totalChunks.Store(0)
-	} else {
-		d.metrics.totalChunks.Store(int64(selectedTableCount))
-	}
-	logPackedMetadataLoaded(
-		d.tctx,
-		len(databases),
-		publicTableCount,
-		selectedDatabaseCount,
-		selectedTableCount,
-		selectedRangeCount,
-		metadataScans,
-		metadataNonScanDuration,
-		summary,
-	)
 
-	summary.setStage("prepare_writers")
-	summary.writersStartedAt = time.Now()
 	taskIn, taskOut := infiniteChan[Task]()
 	wg, writingCtx := errgroup.WithContext(d.tctx)
 	writerCtx := d.tctx.WithContext(writingCtx)
 	writers := make([]*Writer, d.conf.Threads)
 	for index := range d.conf.Threads {
-		writer := NewWriter(writerCtx, int64(index), d.conf, nil, outputStorage, d.metrics)
+		writer := NewWriter(writerCtx, int64(index), d.conf, nil, d.extStore, d.metrics)
 		writer.rebuildConnFn = func(conn *sql.Conn, _ bool) (*sql.Conn, error) { return conn, nil }
-		writer.setFinishTableCallBack(func(task Task) {
-			if _, ok := task.(*TaskTableData); ok {
-				IncCounter(d.metrics.finishedTablesCounter)
-			}
-		})
-		writer.setFinishTaskCallBack(func(task Task) {
-			if _, ok := task.(*TaskTableData); ok {
-				d.metrics.completedChunks.Add(1)
-			}
-		})
 		wg.Go(func() error { return writer.run(taskOut) })
 		writers[index] = writer
 	}
 
-	summary.setStage("schedule_tasks")
-	schedulingStartedAt := time.Now()
-	schedulingFinished := false
-	finishScheduling := func() {
-		if schedulingFinished {
-			return
-		}
-		schedulingFinished = true
-		summary.taskSchedulingDuration = time.Since(schedulingStartedAt)
-	}
-	defer finishScheduling()
+	start := time.Now()
+	tableCount := 0
 	send := func(task Task) error {
-		enqueueStartedAt := time.Now()
 		if d.sendTaskToChan(writerCtx, task, taskIn) {
-			summary.taskEnqueueWaitDuration += time.Since(enqueueStartedAt)
 			return writerCtx.Err()
 		}
-		summary.taskEnqueueWaitDuration += time.Since(enqueueStartedAt)
-		summary.scheduledTasks++
 		return nil
 	}
 	for _, database := range databases {
@@ -721,9 +616,7 @@ func (d *Dumper) dumpPacked() (resultErr error) {
 			continue
 		}
 		if !d.conf.NoSchemas {
-			schemaBuildStartedAt := time.Now()
 			createSQL, err := packedCreateDatabaseSQL(database)
-			summary.schemaBuildDuration += time.Since(schemaBuildStartedAt)
 			if err != nil {
 				close(taskIn)
 				_ = wg.Wait()
@@ -739,12 +632,10 @@ func (d *Dumper) dumpPacked() (resultErr error) {
 			if table.IsView() || table.IsSequence() || !d.conf.TableFilter.MatchTable(database.Name.O, table.Name.O) {
 				continue
 			}
-			summary.scheduledTables++
+			tableCount++
 			var createSQL string
 			if !d.conf.NoSchemas {
-				schemaBuildStartedAt := time.Now()
 				createSQL, err = packedCreateTableSQL(table)
-				summary.schemaBuildDuration += time.Since(schemaBuildStartedAt)
 				if err != nil {
 					close(taskIn)
 					_ = wg.Wait()
@@ -763,7 +654,7 @@ func (d *Dumper) dumpPacked() (resultErr error) {
 					d.conf.PackedBackup,
 					d.conf.CSELegacyEncryption,
 					table,
-					newPackedTableObservation(d.tctx, scanTotals, database.Name.O, table),
+					observation,
 				)
 				if err := send(NewTaskTableData(meta, data, 0, 1)); err != nil {
 					close(taskIn)
@@ -773,22 +664,15 @@ func (d *Dumper) dumpPacked() (resultErr error) {
 			}
 		}
 	}
+	atomic.StoreInt64(&d.totalTables, int64(tableCount))
 	close(taskIn)
-	finishScheduling()
-	d.tctx.L().Info("scheduled packed backup tasks",
-		zap.Int("selected_tables", summary.selectedTables),
-		zap.Int("selected_ranges", summary.selectedRanges),
-		zap.Int("scheduled_tables", summary.scheduledTables),
-		zap.Int("tasks", summary.scheduledTasks),
-		zap.Duration("schema_build_duration", summary.schemaBuildDuration),
-		zap.Duration("task_enqueue_wait_duration", summary.taskEnqueueWaitDuration),
-		zap.Duration("duration", summary.taskSchedulingDuration))
-	d.metrics.progressReady.Store(true)
-	summary.setStage("write_tasks")
 	if err := wg.Wait(); err != nil {
 		return errors.Trace(err)
 	}
-	summary.setStage("complete")
+	d.tctx.L().Info("finished dumping packed backup",
+		zap.Int("tables", tableCount),
+		zap.Int("tasks", countTotalTask(writers)),
+		zap.Duration("duration", time.Since(start)))
 	return nil
 }
 
