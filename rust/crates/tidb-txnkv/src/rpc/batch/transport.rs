@@ -376,14 +376,17 @@ impl BatchTransportState {
             .close();
     }
 
-    pub(in crate::rpc) fn active_generation(
+    pub(in crate::rpc) fn inspect(
         &self,
         address: &str,
         forwarded_host: Option<&str>,
-    ) -> Option<u64> {
-        self.streams
-            .get(&StreamKey::new(address, forwarded_host))
-            .map(|stream| stream.route.generation())
+    ) -> (Option<u64>, u64) {
+        (
+            self.streams
+                .get(&StreamKey::new(address, forwarded_host))
+                .map(|stream| stream.route.generation()),
+            self.scheduler.id_alloc(),
+        )
     }
 
     fn remove_stream_if_current(&mut self, key: &StreamKey, route: &BatchRoute) -> bool {

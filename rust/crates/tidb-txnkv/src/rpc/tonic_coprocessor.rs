@@ -79,7 +79,17 @@ impl TonicCoprocessorClient {
         address: &str,
         forwarded_host: Option<&str>,
     ) -> Option<u64> {
-        self.transport.inspect_batch(address, forwarded_host)
+        self.transport.inspect_batch(address, forwarded_host).0
+    }
+
+    /// Returns the greatest request ID allocated by the sole batch scheduler.
+    ///
+    /// This worker barrier distinguishes caller submissions from empty stream
+    /// recreation after a transport failure. A stable value proves that the
+    /// transport did not schedule another request behind the caller's back.
+    #[must_use]
+    pub fn batch_request_id_watermark(&self) -> u64 {
+        self.transport.inspect_batch("", None).1
     }
 
     /// Returns the runtime cancellation fired before orderly close is queued.

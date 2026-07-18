@@ -64,7 +64,7 @@ pub(super) enum WorkerCommand {
     InspectBatch {
         address: String,
         forwarded_host: Option<String>,
-        reply: mpsc::Sender<Option<u64>>,
+        reply: mpsc::Sender<(Option<u64>, u64)>,
     },
     Close {
         reply: mpsc::Sender<()>,
@@ -237,9 +237,13 @@ impl TransportRuntime {
         response.recv().unwrap_or((None, 0))
     }
 
-    pub(super) fn inspect_batch(&self, address: &str, forwarded_host: Option<&str>) -> Option<u64> {
+    pub(super) fn inspect_batch(
+        &self,
+        address: &str,
+        forwarded_host: Option<&str>,
+    ) -> (Option<u64>, u64) {
         let Ok(commands) = self.sender() else {
-            return None;
+            return (None, 0);
         };
         let (reply, response) = mpsc::channel();
         if commands
@@ -250,9 +254,9 @@ impl TransportRuntime {
             })
             .is_err()
         {
-            return None;
+            return (None, 0);
         }
-        response.recv().unwrap_or(None)
+        response.recv().unwrap_or((None, 0))
     }
 
     pub(super) fn shutdown_cancellation(&self) -> TransportShutdownCancellation {
@@ -351,7 +355,7 @@ fn run_worker(
                 forwarded_host,
                 reply,
             } => {
-                let _ = reply.send(batch.active_generation(&address, forwarded_host.as_deref()));
+                let _ = reply.send(batch.inspect(&address, forwarded_host.as_deref()));
             }
             WorkerCommand::Close { reply } => {
                 batch.close();

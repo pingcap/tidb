@@ -294,7 +294,11 @@ impl RawTransportClient {
         self.transport.inspect(address)
     }
 
-    pub(super) fn inspect_batch(&self, address: &str, forwarded_host: Option<&str>) -> Option<u64> {
+    pub(super) fn inspect_batch(
+        &self,
+        address: &str,
+        forwarded_host: Option<&str>,
+    ) -> (Option<u64>, u64) {
         self.transport.inspect_batch(address, forwarded_host)
     }
 
