@@ -38,10 +38,15 @@ nonexistent artifacts, and any status other than `PARTIAL`, `COVERED`, or
 The pinned client-go and pd-client universes follow the same conservative rule
 in one module-qualified set of checked files.
 `external_go_test_declaration_inventory.tsv` records all AST function
-declarations, including helpers and invalid runner signatures;
-`external_go_test_inventory.tsv` contains only structurally valid
-Test/Benchmark/Fuzz/Example/TestMain obligations with file SHA-256 and an
-initial `UNTRIAGED` state. `external_go_ledger --check` resolves only the
+declarations, including helpers and non-actionable test-like declarations.
+`external_go_test_inventory.tsv` contains structurally valid standalone
+Test/Benchmark/Fuzz/Example/TestMain obligations plus zero-argument `Test*`
+methods whose receiver is passed to testify's `suite.Run` by a valid top-level
+test. Suite children are emitted as `TestSuiteMethod` with the actionable name
+`<parent-test>/<method>`; a receiver invoked by two configured parents produces
+two obligations from one AST method declaration. Setup/teardown hooks and
+arbitrary methods remain declaration-only. Every obligation carries its file
+SHA-256 and starts `UNTRIAGED`. `external_go_ledger --check` resolves only the
 offline module cache and rejects direct-pin, replacement, exact Go-sum, file,
 declaration, runner, and duplicate qualified-key drift.
 

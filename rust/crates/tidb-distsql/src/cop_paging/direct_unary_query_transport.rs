@@ -519,7 +519,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         let replace_selector = self
             .request_selectors
             .get(&logical_task_id)
-            .map_or(true, |selector| selector.region() != region);
+            .is_none_or(|selector| selector.region() != region);
         if replace_selector {
             let selector = self
                 .region_cache

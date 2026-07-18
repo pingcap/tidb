@@ -199,20 +199,26 @@ impl<L> RegionCache<L> {
         selector.observe_leader(leader_peer_id);
         let leader = leader_peer_id
             .and_then(|peer_id| location.peers.iter().find(|peer| peer.id == peer_id));
-        let selected = leader
-            .filter(|peer| {
-                selector.attempts_for(peer.id) < MAX_REPLICA_ATTEMPTS
-                    && selector.attempted_time_for(peer.id) < MAX_REPLICA_ATTEMPT_TIME
-                    && self.peer_is_candidate(peer, true)
-            })
-            .or_else(|| {
-                location.peers.iter().find(|peer| {
-                    Some(peer.id) != leader_peer_id
-                        && selector.attempts_for(peer.id) == 0
-                        && self.peer_is_candidate(peer, false)
-                })
-            })
-            .cloned();
+        let mut selected = None;
+        if let Some(peer) = leader {
+            if selector.attempts_for(peer.id) < MAX_REPLICA_ATTEMPTS
+                && selector.attempted_time_for(peer.id) < MAX_REPLICA_ATTEMPT_TIME
+                && self.peer_is_candidate(peer, true)?
+            {
+                selected = Some(peer.clone());
+            }
+        }
+        if selected.is_none() {
+            for peer in &location.peers {
+                if Some(peer.id) != leader_peer_id
+                    && selector.attempts_for(peer.id) == 0
+                    && self.peer_is_candidate(peer, false)?
+                {
+                    selected = Some(peer.clone());
+                    break;
+                }
+            }
+        }
 
         let Some(peer) = selected else {
             let region = selector.region;
@@ -260,9 +266,13 @@ impl<L> RegionCache<L> {
         ))
     }
 
-    fn peer_is_candidate(&self, peer: &Peer, cached_leader: bool) -> bool {
+    fn peer_is_candidate(
+        &self,
+        peer: &Peer,
+        cached_leader: bool,
+    ) -> Result<bool, RegionRouteError> {
         if peer.is_witness || peer.role == PeerRole::Learner {
-            return false;
+            return Ok(false);
         }
         if !cached_leader
             && !matches!(
@@ -270,14 +280,24 @@ impl<L> RegionCache<L> {
                 PeerRole::Voter | PeerRole::IncomingVoter | PeerRole::DemotingVoter
             )
         {
-            return false;
+            return Ok(false);
         }
-        self.stores.get(&peer.store_id).is_some_and(|store| {
-            peer.store_epoch == store.epoch
-                && !store.address.is_empty()
-                && store.resolve_state == StoreResolveState::Resolved
-                && store.liveness != StoreLiveness::Unreachable
-        })
+        let store = self
+            .stores
+            .get(&peer.store_id)
+            .ok_or(RegionRouteError::MissingStore(peer.store_id))?;
+        if store.resolve_state != StoreResolveState::Resolved
+            || store.liveness == StoreLiveness::Unreachable
+        {
+            return Ok(false);
+        }
+        if store.address.is_empty() {
+            return Err(RegionRouteError::MissingAddress(store.id));
+        }
+        if peer.store_epoch != store.epoch {
+            return Ok(false);
+        }
+        Ok(true)
     }
 
     pub(super) fn update_leader(

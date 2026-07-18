@@ -587,16 +587,14 @@ fn client_go_shaped_dispatch_is_lazy_address_directed_and_logically_ordered() {
 
 #[test]
 fn pd_peer_role_witness_and_cluster_fields_have_one_context_authority() {
-    for (role, encoded, witness) in [
-        (PeerRole::Voter, 0, false),
-        (PeerRole::Learner, 1, true),
-        (PeerRole::IncomingVoter, 2, false),
-        (PeerRole::DemotingVoter, 3, true),
+    for (role, encoded) in [
+        (PeerRole::Voter, 0),
+        (PeerRole::IncomingVoter, 2),
+        (PeerRole::DemotingVoter, 3),
     ] {
         let calls = Rc::new(RefCell::new(Vec::new()));
         let mut candidate = location(7, "a", "z", "tikv-7:20160");
         candidate.peers[0].role = role;
-        candidate.peers[0].is_witness = witness;
         let mut runtime = InjectedQueryRuntime::new(transport(
             Rc::clone(&calls),
             [Ok(response(b"ok"))],
@@ -614,7 +612,7 @@ fn pd_peer_role_witness_and_cluster_fields_have_one_context_authority() {
         assert_eq!(calls[0].peer_id, 107);
         assert_eq!(calls[0].store_id, 207);
         assert_eq!(calls[0].peer_role, encoded);
-        assert_eq!(calls[0].is_witness, witness);
+        assert!(!calls[0].is_witness);
         assert_eq!(calls[0].task_id, 29);
         assert_eq!(calls[0].request_source, "internal_ddl");
         assert!(calls[0].not_fill_cache);

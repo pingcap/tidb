@@ -22,12 +22,15 @@ use std::rc::Rc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use prost::Message;
+use tidb_codec::encode_bytes;
 use tidb_distsql::{
     DirectUnaryClient, DirectUnaryClientError, DirectUnaryQueryTransport, DirectUnaryRequest,
     DirectUnaryResponse, DirectUnaryRuntimeConfig, InjectedQueryRuntime, KvRequestMetadata,
     QueryResultContext, RequestKeyRange, RequestKeyRanges, RequestType, SelectInput, StoreType,
     TransportRequest, WarningCollector,
 };
+use tidb_proto::CoprocessorResponse;
 use tidb_txnkv::region::{
     RegionCache, RegionLoadError, RegionLoader, RegionLocation, RegionMetadata,
     RegionRecoveryLoader, StoreLiveness,
@@ -43,9 +46,15 @@ const TABLE_SCAN_DAG: &[u8] = &[0x12, 0x04, 0x12, 0x02, 0x08, 0x2a];
 
 #[derive(Default)]
 struct TransportTrace {
-    addresses: Vec<String>,
-    failures: Vec<(String, u64)>,
+    dispatches: Vec<DispatchTrace>,
+    failures: Vec<(u64, String, u64)>,
     liveness: Vec<(String, StoreLiveness)>,
+}
+
+struct DispatchTrace {
+    region_id: u64,
+    address: String,
+    usable_response: bool,
 }
 
 struct RecordingClient {
@@ -98,14 +107,24 @@ impl DirectUnaryClient for RecordingClient {
         request: &DirectUnaryRequest,
         timeout: Duration,
     ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
-        self.trace.borrow_mut().addresses.push(address.to_owned());
         let result = self.inner.send_request(address, request, timeout);
+        let usable_response = result.as_ref().ok().is_some_and(|response| {
+            CoprocessorResponse::decode(response.encoded_response.as_slice()).is_ok_and(|decoded| {
+                decoded.region_error.is_none() && decoded.other_error.is_empty()
+            })
+        });
+        self.trace.borrow_mut().dispatches.push(DispatchTrace {
+            region_id: request.context.region_id,
+            address: address.to_owned(),
+            usable_response,
+        });
         if let Err(error) = &result {
             if let Some(connection) = error.connection() {
-                self.trace
-                    .borrow_mut()
-                    .failures
-                    .push((connection.address().to_owned(), connection.version()));
+                self.trace.borrow_mut().failures.push((
+                    request.context.region_id,
+                    connection.address().to_owned(),
+                    connection.version(),
+                ));
             }
         }
         result
@@ -160,7 +179,16 @@ fn one_lazy_response_recovers_after_its_cached_tikv_leader_stops() {
         .borrow_mut()
         .load_region(TABLE_START)
         .expect("discover the region which the runner will split");
-    let mut split_source_phase = format!("region_id={}\n", split_source.region.id);
+    let mut encoded_split_key = Vec::new();
+    encode_bytes(&mut encoded_split_key, SPLIT_KEY);
+    let split_key_hex = encoded_split_key
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let mut split_source_phase = format!(
+        "region_id={}\nsplit_key_hex={}\n",
+        split_source.region.id, split_key_hex
+    );
     for peer in &split_source.peers {
         split_source_phase.push_str(&format!("peer_store_id={}\n", peer.store_id));
     }
@@ -278,7 +306,7 @@ fn one_lazy_response_recovers_after_its_cached_tikv_leader_stops() {
         )
         .expect("bind one lazy response while the cached leader is alive");
     assert!(
-        trace.borrow().addresses.is_empty(),
+        trace.borrow().dispatches.is_empty(),
         "binding must not dispatch before the runner stops the cached leader"
     );
 
@@ -309,25 +337,38 @@ fn one_lazy_response_recovers_after_its_cached_tikv_leader_stops() {
     let failure = trace
         .failures
         .iter()
-        .find(|(address, _)| address == &old_address)
+        .find(|(_, address, _)| address == &old_address)
         .expect("stopped leader must retain its exact failed generation");
-    let survivors: Vec<_> = trace
-        .addresses
+    let successful_survivors: Vec<_> = trace
+        .dispatches
         .iter()
-        .filter(|address| *address != &old_address)
+        .filter(|dispatch| dispatch.address != old_address && dispatch.usable_response)
         .collect();
-    assert!(
-        survivors.len() >= 2,
-        "both already-bound tasks must dispatch through surviving stores"
-    );
+    for region_id in [left.region.id, right.region.id] {
+        assert!(
+            successful_survivors
+                .iter()
+                .any(|dispatch| dispatch.region_id == region_id),
+            "both already-bound regions must receive a usable survivor response"
+        );
+    }
     assert_eq!(
         trace
-            .addresses
+            .dispatches
             .iter()
-            .filter(|address| *address == &old_address)
+            .filter(|dispatch| dispatch.address == old_address)
             .count(),
         1,
         "a stale store generation must never receive a future dispatch"
+    );
+    let stale_future_dispatches = trace
+        .dispatches
+        .iter()
+        .filter(|dispatch| dispatch.region_id != failure.0 && dispatch.address == old_address)
+        .count();
+    assert_eq!(
+        stale_future_dispatches, 0,
+        "the second cached region must not dispatch through the failed generation"
     );
     let recovered_liveness = trace
         .liveness
@@ -340,11 +381,13 @@ fn one_lazy_response_recovers_after_its_cached_tikv_leader_stops() {
         &phase_dir,
         "completed",
         &format!(
-            "failed_address={}\nfailed_generation={}\nsurvivor_address={}\nsurvivor_dispatches={}\nstale_future_dispatches=0\nrecovered_store_liveness={:?}\nstructured_results={}\n",
+            "failed_region_id={}\nfailed_address={}\nfailed_generation={}\nsuccessful_survivor_address={}\nsuccessful_survivor_responses={}\nstale_future_dispatches={}\nrecovered_store_liveness={:?}\nstructured_results={}\n",
             failure.0,
             failure.1,
-            survivors[0],
-            survivors.len(),
+            failure.2,
+            successful_survivors[0].address,
+            successful_survivors.len(),
+            stale_future_dispatches,
             recovered_liveness,
             structured_results
         ),

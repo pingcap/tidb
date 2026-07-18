@@ -44,3 +44,6 @@
 2026-07-read-path-11	pd-member-refresh-runtime
 2026-07-read-path-11	txnkv-region-error-recovery-runtime
 2026-07-read-path-11	distsql-unary-region-retry-runtime
+2026-07-read-path-12	txnkv-store-replica-failure-runtime
+2026-07-read-path-12	txnkv-tonic-failure-generation-runtime
+2026-07-read-path-12	distsql-unary-transport-retry-runtime

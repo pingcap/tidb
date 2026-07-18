@@ -244,7 +244,9 @@ fn known_leader_updates_snapshot_then_returns_through_reselection() {
 
 #[test]
 fn newly_named_exhausted_leader_receives_one_fresh_attempt() {
-    let (mut cache, _) = cache(location(7, 3, 4, b"", b""), []);
+    let mut candidate = location(7, 3, 4, b"", b"");
+    candidate.peers[1].role = PeerRole::Voter;
+    let (mut cache, _) = cache(candidate, []);
     let region = seed(&mut cache);
     let mut selector = cache
         .request_selector(region, tidb_txnkv::region::ReadPolicy::default())

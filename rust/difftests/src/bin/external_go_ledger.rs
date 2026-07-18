@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Pins the complete Go source and runner universes of TiDB's direct external dependencies.
+//! Pins the complete Go source and test-obligation universes of TiDB's direct external dependencies.
 //!
 //! Resolution is deliberately offline: the exact direct `go.mod` pin must already exist in
 //! `GOMODCACHE`. The checked ledgers bind every production source and test declaration to its
@@ -42,7 +42,7 @@ struct ModuleSpec {
     expected_production_sources: usize,
     expected_test_files: usize,
     expected_declarations: usize,
-    expected_runners: usize,
+    expected_obligations: usize,
 }
 
 const MODULES: [ModuleSpec; 2] = [
@@ -55,7 +55,7 @@ const MODULES: [ModuleSpec; 2] = [
         expected_production_sources: 151,
         expected_test_files: 75,
         expected_declarations: 809,
-        expected_runners: 337,
+        expected_obligations: 474,
     },
     ModuleSpec {
         universe: "pd-client",
@@ -66,7 +66,7 @@ const MODULES: [ModuleSpec; 2] = [
         expected_production_sources: 58,
         expected_test_files: 28,
         expected_declarations: 319,
-        expected_runners: 156,
+        expected_obligations: 170,
     },
 ];
 
@@ -86,8 +86,43 @@ struct Declaration {
     receiver: String,
     name: String,
     category: String,
-    valid: bool,
+    actionable: bool,
+    suite_parents: Vec<String>,
     file_sha256: String,
+}
+
+#[derive(Clone, Debug)]
+struct TestObligation {
+    path: String,
+    line: usize,
+    name: String,
+    category: String,
+    file_sha256: String,
+}
+
+fn test_obligations(declarations: &[Declaration]) -> Vec<TestObligation> {
+    declarations
+        .iter()
+        .filter(|declaration| declaration.actionable)
+        .flat_map(|declaration| {
+            let names = if declaration.category == "TestSuiteMethod" {
+                declaration
+                    .suite_parents
+                    .iter()
+                    .map(|parent| format!("{parent}/{}", declaration.name))
+                    .collect()
+            } else {
+                vec![declaration.name.clone()]
+            };
+            names.into_iter().map(|name| TestObligation {
+                path: declaration.path.clone(),
+                line: declaration.line,
+                name,
+                category: declaration.category.clone(),
+                file_sha256: declaration.file_sha256.clone(),
+            })
+        })
+        .collect()
 }
 
 #[derive(Debug)]
@@ -99,7 +134,7 @@ struct Inventory {
     production_sources: usize,
     test_files: usize,
     declaration_count: usize,
-    runner_count: usize,
+    obligation_count: usize,
     source_keys: Vec<String>,
     test_keys: Vec<String>,
 }
@@ -247,9 +282,9 @@ fn source_evidence(
 fn test_evidence(
     repo: &Path,
     spec: ModuleSpec,
-    runners: &[&Declaration],
+    obligations: &[TestObligation],
 ) -> Result<BTreeMap<(String, usize, String), Evidence>, String> {
-    let known: BTreeMap<_, _> = runners
+    let known: BTreeMap<_, _> = obligations
         .iter()
         .map(|item| {
             (
@@ -483,9 +518,9 @@ fn declarations(
             continue;
         }
         let fields: Vec<_> = line.split('\t').collect();
-        if fields.len() != 7 {
+        if fields.len() != 8 {
             return Err(format!(
-                "AST helper line {} has {} fields, expected 7",
+                "AST helper line {} has {} fields, expected 8",
                 index + 1,
                 fields.len()
             ));
@@ -495,6 +530,26 @@ fn declarations(
             .get(&path)
             .ok_or_else(|| format!("AST helper returned unknown test file {path}"))?
             .clone();
+        let suite_parents = if fields[7] == "-" {
+            Vec::new()
+        } else {
+            let parents: Vec<_> = fields[7].split(',').map(str::to_owned).collect();
+            if parents.iter().any(String::is_empty)
+                || parents.windows(2).any(|pair| pair[0] >= pair[1])
+            {
+                return Err(format!(
+                    "AST helper row {} has unsorted or duplicate suite parents",
+                    index + 1
+                ));
+            }
+            parents
+        };
+        if (fields[5] == "TestSuiteMethod") != !suite_parents.is_empty() {
+            return Err(format!(
+                "AST helper row {} has inconsistent suite category and parents",
+                index + 1
+            ));
+        }
         result.push(Declaration {
             path,
             line: fields[1]
@@ -506,9 +561,10 @@ fn declarations(
             receiver: fields[3].to_owned(),
             name: fields[4].to_owned(),
             category: fields[5].to_owned(),
-            valid: fields[6]
+            actionable: fields[6]
                 .parse()
-                .map_err(|_| format!("invalid AST validity at helper row {}", index + 1))?,
+                .map_err(|_| format!("invalid AST obligation flag at helper row {}", index + 1))?,
+            suite_parents,
             file_sha256,
         });
     }
@@ -619,37 +675,37 @@ fn render_module(
         }
     }
     let declarations = declarations(repo, &module_root, &hashes)?;
-    let runners: Vec<_> = declarations
+    let obligations = test_obligations(&declarations);
+    let unique_obligation_anchors: BTreeSet<_> = obligations
         .iter()
-        .filter(|declaration| declaration.valid)
+        .map(|obligation| (&obligation.path, obligation.line, &obligation.name))
         .collect();
-    let unique_runner_anchors: BTreeSet<_> = runners
-        .iter()
-        .map(|declaration| (&declaration.path, declaration.line, &declaration.name))
-        .collect();
-    if unique_runner_anchors.len() != runners.len() {
-        return Err(format!("{} runner anchors are not unique", spec.universe));
+    if unique_obligation_anchors.len() != obligations.len() {
+        return Err(format!(
+            "{} test obligation anchors are not unique",
+            spec.universe
+        ));
     }
     let counts = (
         production.len(),
         test_files,
         declarations.len(),
-        runners.len(),
+        obligations.len(),
     );
     let expected = (
         spec.expected_production_sources,
         spec.expected_test_files,
         spec.expected_declarations,
-        spec.expected_runners,
+        spec.expected_obligations,
     );
     if counts != expected {
         return Err(format!(
-            "{} universe drift: expected production/test-files/declarations/runners {expected:?}, found {counts:?}",
+            "{} universe drift: expected production/test-files/declarations/obligations {expected:?}, found {counts:?}",
             spec.universe
         ));
     }
     let source_evidence = source_evidence(repo, spec, &production)?;
-    let test_evidence = test_evidence(repo, spec, &runners)?;
+    let test_evidence = test_evidence(repo, spec, &obligations)?;
 
     let tree_sha256 = format!("{:x}", tree_hasher.finalize());
     let module = format!(
@@ -659,7 +715,7 @@ fn render_module(
         spec.version,
         production.len(),
         declarations.len(),
-        runners.len()
+        obligations.len()
     );
 
     let mut sources = String::new();
@@ -683,7 +739,7 @@ fn render_module(
     let mut declaration_text = String::new();
     for item in &declarations {
         declaration_text.push_str(&format!(
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
             spec.universe,
             item.path,
             item.line,
@@ -691,12 +747,17 @@ fn render_module(
             item.receiver,
             item.name,
             item.category,
-            item.valid,
+            item.actionable,
+            if item.suite_parents.is_empty() {
+                "-".to_owned()
+            } else {
+                item.suite_parents.join(",")
+            },
             item.file_sha256
         ));
     }
     let mut tests = String::new();
-    for item in &runners {
+    for item in &obligations {
         let key = (item.path.clone(), item.line, item.name.clone());
         let (status, owner, artifact, note) =
             test_evidence
@@ -718,7 +779,7 @@ fn render_module(
         .iter()
         .map(|(path, _, _)| format!("{}::{path}", spec.universe))
         .collect();
-    let test_keys = runners
+    let test_keys = obligations
         .iter()
         .map(|item| {
             format!(
@@ -735,7 +796,7 @@ fn render_module(
         production_sources: production.len(),
         test_files,
         declaration_count: declarations.len(),
-        runner_count: unique_runner_anchors.len(),
+        obligation_count: unique_obligation_anchors.len(),
         source_keys,
         test_keys,
     })
@@ -760,12 +821,12 @@ fn render(repo: &Path) -> Result<Inventory, String> {
     let mut combined = Inventory {
         module: String::from("# universe\tmodule\tversion\tgo_sum\tgo_mod_sum\tgo_file_tree_sha256\tproduction_sources\ttest_files\ttest_declarations\ttest_obligations\n"),
         sources: String::from("# universe\tsource_path\tline_count\tfile_sha256\tstatus\towner\tartifact\tnote\n"),
-        declarations: String::from("# universe\tsource_path\tsource_line\tsource_column\treceiver\tfunction_name\tcategory\tvalid_runner_signature\tfile_sha256\n"),
+        declarations: String::from("# universe\tsource_path\tsource_line\tsource_column\treceiver\tfunction_name\tcategory\tactionable_test_obligation\tsuite_parents\tfile_sha256\n"),
         tests: String::from("# universe\tkind\tsource_path\tsource_line\tfunction_name\tring\tfile_sha256\tstatus\towner\tartifact\tnote\n"),
         production_sources: 0,
         test_files: 0,
         declaration_count: 0,
-        runner_count: 0,
+        obligation_count: 0,
         source_keys: Vec::new(),
         test_keys: Vec::new(),
     };
@@ -782,7 +843,7 @@ fn render(repo: &Path) -> Result<Inventory, String> {
         combined.production_sources += inventory.production_sources;
         combined.test_files += inventory.test_files;
         combined.declaration_count += inventory.declaration_count;
-        combined.runner_count += inventory.runner_count;
+        combined.obligation_count += inventory.obligation_count;
     }
     combined.source_keys = source_keys.into_iter().collect();
     combined.test_keys = test_keys.into_iter().collect();
@@ -840,7 +901,7 @@ fn main() -> Result<(), String> {
                 inventory.production_sources,
                 inventory.test_files,
                 inventory.declaration_count,
-                inventory.runner_count
+                inventory.obligation_count
             );
         }
         _ => unreachable!(),
@@ -850,9 +911,31 @@ fn main() -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{exact_direct_pin, exact_sums, insert_unique, source_evidence, MODULES};
+    use super::{
+        exact_direct_pin, exact_sums, insert_unique, source_evidence, test_obligations,
+        Declaration, MODULES,
+    };
     use std::collections::BTreeSet;
     use std::fs;
+
+    #[test]
+    fn suite_methods_expand_once_per_reachable_parent() {
+        let declarations = [Declaration {
+            path: "suite_test.go".to_owned(),
+            line: 42,
+            column: 1,
+            receiver: "method".to_owned(),
+            name: "TestCase".to_owned(),
+            category: "TestSuiteMethod".to_owned(),
+            actionable: true,
+            suite_parents: vec!["TestConfiguredA".to_owned(), "TestConfiguredB".to_owned()],
+            file_sha256: "hash".to_owned(),
+        }];
+        let obligations = test_obligations(&declarations);
+        assert_eq!(obligations.len(), 2);
+        assert_eq!(obligations[0].name, "TestConfiguredA/TestCase");
+        assert_eq!(obligations[1].name, "TestConfiguredB/TestCase");
+    }
 
     #[test]
     fn direct_pin_rejects_version_drift_and_indirect_only_rows() {

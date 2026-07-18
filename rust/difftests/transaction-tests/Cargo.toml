@@ -13,6 +13,7 @@ autotests = false
 workspace = true
 
 [dependencies]
+prost.workspace = true
 tidb-codec = { path = "../../crates/tidb-codec" }
 tidb-datatype = { path = "../../crates/tidb-datatype" }
 tidb-distsql = { path = "../../crates/tidb-distsql" }

@@ -161,6 +161,39 @@ fn existing_canonical_epoch_ignores_every_loader_supplied_epoch() {
 }
 
 #[test]
+fn address_change_stales_old_region_peer_but_preserves_healthy_alternate() {
+    let mut left = location(1, b"", b"m", "tikv-old", 7);
+    left.peers.push(Peer {
+        id: 11,
+        store_id: 102,
+        role: PeerRole::Voter,
+        is_witness: false,
+        store_epoch: 3,
+    });
+    left.stores.push(Store {
+        id: 102,
+        address: "tikv-alternate".to_owned(),
+        epoch: 3,
+    });
+    let right = location(2, b"m", b"", "tikv-new", 0);
+    let mut cache = RegionCache::new(Loader(VecDeque::from([left.clone(), right])));
+    cache.locate_key(b"a").unwrap();
+    cache.locate_key(b"z").unwrap();
+    assert_eq!(cache.store_state(101).unwrap().epoch(), 8);
+
+    let mut selector = cache
+        .request_selector(left.region, ReadPolicy::default())
+        .unwrap();
+    let RequestSelection::Attempt(request) = cache.select_request(&mut selector).unwrap() else {
+        panic!("stale leader store generation must fall through to a healthy voter")
+    };
+    assert_eq!(request.attempt.peer_id, 11);
+    assert_eq!(request.attempt.store_id, 102);
+    assert_eq!(request.attempt.address, "tikv-alternate");
+    assert!(!request.cached_leader);
+}
+
+#[test]
 fn re_resolved_unknown_cached_leader_remains_a_candidate() {
     let first = location(1, b"", b"", "tikv", 7);
     let refreshed = location(1, b"", b"", "tikv", 0);

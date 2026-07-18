@@ -12,7 +12,7 @@ the source or obligation still has explicit unported behavior.
 - Active claims: 0
 - Active slices: 0
 - Declared ready slices: 0
-- Partial slices: 46
+- Partial slices: 49
 - Covered slices: 2
 - Blocked slices: 1
 
@@ -27,6 +27,7 @@ the source or obligation still has explicit unported behavior.
 | 2026-07-read-path-09 | integrated | 2 |
 | 2026-07-read-path-10 | integrated | 2 |
 | 2026-07-read-path-11 | integrated | 3 |
+| 2026-07-read-path-12 | integrated | 3 |
 | 2026-07-runtime-closure-03 | integrated | 6 |
 | 2026-07-runtime-closure-04 | integrated | 6 |
 | 2026-07-runtime-closure-05 | integrated | 6 |
@@ -36,8 +37,8 @@ the source or obligation still has explicit unported behavior.
 
 | Module | Version | Production sources | Test files | AST declarations | Runner obligations |
 | --- | --- | --- | --- | --- | --- |
-| github.com/tikv/client-go/v2 | v2.0.8-0.20260708122311-01bd8f99f4da | 151 | 75 | 809 | 337 |
-| github.com/tikv/pd/client | v0.0.0-20260708075407-4e05b9d2c2d3 | 58 | 28 | 319 | 156 |
+| github.com/tikv/client-go/v2 | v2.0.8-0.20260708122311-01bd8f99f4da | 151 | 75 | 809 | 474 |
+| github.com/tikv/pd/client | v0.0.0-20260708075407-4e05b9d2c2d3 | 58 | 28 | 319 | 170 |
 
 ### External ownership states
 
@@ -45,10 +46,10 @@ the source or obligation still has explicit unported behavior.
 | --- | --- | --- | --- | --- |
 | client-go production sources | 140 | 11 | 0 | 0 |
 | pd-client production sources | 53 | 5 | 0 | 0 |
-| client-go runner obligations | 327 | 10 | 0 | 0 |
-| pd-client runner obligations | 153 | 3 | 0 | 0 |
+| client-go runner obligations | 456 | 18 | 0 | 0 |
+| pd-client runner obligations | 167 | 3 | 0 | 0 |
 | All external production sources | 193 | 16 | 0 | 0 |
-| All external runner obligations | 480 | 13 | 0 | 0 |
+| All external runner obligations | 623 | 21 | 0 | 0 |
 
 External module counts are pinned porting obligations and are not included in TiDB product-parity totals.
 
@@ -92,7 +93,7 @@ External module counts are pinned porting obligations and are not included in Ti
 
 | State | Count |
 | --- | --- |
-| UNTRIAGED | 15233 |
+| UNTRIAGED | 15418 |
 | PARTIAL | 975 |
 | COVERED | 312 |
 | BLOCKED | 14 |
@@ -101,11 +102,11 @@ External module counts are pinned porting obligations and are not included in Ti
 
 | Ring | Untriaged | Partial | Covered | Blocked |
 | --- | --- | --- | --- | --- |
-| unassigned | 4841 | 316 | 134 | 0 |
-| result | 4278 | 436 | 29 | 3 |
-| deferred-external | 2963 | 0 | 0 | 0 |
+| unassigned | 4848 | 316 | 134 | 0 |
+| result | 4296 | 436 | 29 | 3 |
+| deferred-external | 3042 | 0 | 0 | 0 |
 | plan | 1784 | 123 | 5 | 0 |
-| transaction | 1054 | 67 | 68 | 6 |
+| transaction | 1135 | 67 | 68 | 6 |
 | parser | 313 | 33 | 76 | 5 |
 
 ## Blocked slices

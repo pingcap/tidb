@@ -29,7 +29,7 @@ use tidb_distsql::{
 };
 use tidb_txnkv::region::{
     RegionCache, RegionLoadError, RegionLoader, RegionLocation, RegionMetadata,
-    RegionRecoveryLoader,
+    RegionRecoveryLoader, StoreLiveness,
 };
 use tidb_txnkv::rpc::TonicCoprocessorClient;
 use tidb_txnkv::PdRegionLoader;
@@ -84,6 +84,22 @@ impl DirectUnaryClient for RecordingClient {
 
     fn close_address(&mut self, address: &str) -> Result<(), DirectUnaryClientError> {
         self.inner.close_address(address)
+    }
+
+    fn close_address_version(
+        &mut self,
+        address: &str,
+        version: u64,
+    ) -> Result<(), DirectUnaryClientError> {
+        self.inner.close_address_version(address, version)
+    }
+
+    fn liveness(
+        &self,
+        address: &str,
+        timeout: Duration,
+    ) -> Result<StoreLiveness, DirectUnaryClientError> {
+        self.inner.liveness(address, timeout)
     }
 
     fn close(&mut self) -> Result<(), DirectUnaryClientError> {

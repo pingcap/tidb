@@ -1,6 +1,6 @@
 schema = "1"
 campaign = "2026-07-read-path-12"
-status = "planned"
+status = "integrated"
 slices = [
   "txnkv-store-replica-failure-runtime",
   "txnkv-tonic-failure-generation-runtime",

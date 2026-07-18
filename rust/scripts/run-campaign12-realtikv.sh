@@ -106,7 +106,11 @@ cleanup() {
   if [[ "${cleanup_failed}" == false ]]; then
     rm -rf -- "${TAG_DIR}" "${PHASE_DIR}"
   fi
-  rm -f "${PLAYGROUND_LOG}" "${RUST_LOG}"
+  if [[ "${cleanup_failed}" == false ]] && [[ "${original_status}" -eq 0 ]]; then
+    rm -f "${PLAYGROUND_LOG}" "${RUST_LOG}"
+  else
+    echo "Campaign 12 retained logs: ${PLAYGROUND_LOG} ${RUST_LOG}" >&2
+  fi
   if [[ "${cleanup_failed}" == true ]]; then
     exit 1
   fi
@@ -163,9 +167,13 @@ RUST_PID=$!
 
 wait_for_phase split-source
 SOURCE_REGION=$(phase_values "${PHASE_DIR}/split-source" region_id)
-SPLIT_KEY_HEX=74800000000000002a5f728000000000000000
+SPLIT_KEY_HEX=$(phase_values "${PHASE_DIR}/split-source" split_key_hex)
 if [[ -z "${SOURCE_REGION}" ]]; then
   echo "Rust split phase omitted the source region" >&2
+  exit 1
+fi
+if [[ -z "${SPLIT_KEY_HEX}" ]]; then
+  echo "Rust split phase omitted the memcomparable split key" >&2
   exit 1
 fi
 INITIAL_REGION_COUNT=$(curl -sf --max-time 2 "http://${PD_SEED}/pd/api/v1/regions" \
@@ -274,16 +282,18 @@ wait_for_phase completed
 COMPLETED="${PHASE_DIR}/completed"
 FAILED_ADDRESS=$(phase_values "${COMPLETED}" failed_address)
 FAILED_GENERATION=$(phase_values "${COMPLETED}" failed_generation)
-SURVIVOR_ADDRESS=$(phase_values "${COMPLETED}" survivor_address)
+FAILED_REGION=$(phase_values "${COMPLETED}" failed_region_id)
+SURVIVOR_ADDRESS=$(phase_values "${COMPLETED}" successful_survivor_address)
 STALE_FUTURE=$(phase_values "${COMPLETED}" stale_future_dispatches)
 LIVENESS=$(phase_values "${COMPLETED}" recovered_store_liveness)
-SURVIVOR_DISPATCHES=$(phase_values "${COMPLETED}" survivor_dispatches)
+SURVIVOR_RESPONSES=$(phase_values "${COMPLETED}" successful_survivor_responses)
 STRUCTURED_RESULTS=$(phase_values "${COMPLETED}" structured_results)
 if [[ "${FAILED_ADDRESS}" != "${OLD_ADDRESS}" ]] \
   || [[ -z "${FAILED_GENERATION}" ]] \
+  || [[ -z "${FAILED_REGION}" ]] \
   || [[ -z "${SURVIVOR_ADDRESS}" ]] \
   || [[ "${SURVIVOR_ADDRESS}" == "${OLD_ADDRESS}" ]] \
-  || [[ "${SURVIVOR_DISPATCHES:-0}" -lt 2 ]] \
+  || [[ "${SURVIVOR_RESPONSES:-0}" -lt 2 ]] \
   || [[ "${STALE_FUTURE}" != 0 ]] \
   || [[ "${LIVENESS}" == Reachable ]] \
   || [[ "${STRUCTURED_RESULTS}" != 2 ]]; then
@@ -291,4 +301,4 @@ if [[ "${FAILED_ADDRESS}" != "${OLD_ADDRESS}" ]] \
   cat "${COMPLETED}" >&2
   exit 1
 fi
-echo "Campaign 12 transport retry passed: ${FAILED_ADDRESS}#${FAILED_GENERATION} -> ${SURVIVOR_ADDRESS}; survivor_dispatches=${SURVIVOR_DISPATCHES}; liveness=${LIVENESS}"
+echo "Campaign 12 transport retry passed: region=${FAILED_REGION} ${FAILED_ADDRESS}#${FAILED_GENERATION} -> ${SURVIVOR_ADDRESS}; successful_survivor_responses=${SURVIVOR_RESPONSES}; liveness=${LIVENESS}"

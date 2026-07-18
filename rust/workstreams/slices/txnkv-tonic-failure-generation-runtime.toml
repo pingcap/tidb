@@ -1,6 +1,6 @@
 schema = "1"
 slice = "txnkv-tonic-failure-generation-runtime"
-status = "ready"
+status = "partial"
 target = "tidb-txnkv"
 ring = "transaction"
 consumer = "Campaign 12 preserves transport-neutral gRPC failure classes, exposes exact address-generation close through DirectUnaryClient, and adds a foreground gRPC Health/Check liveness seam. The RPC leaf reports facts but owns no retry policy. Only remote gRPC Canceled generation-closes; ordinary timeout/connection errors stay open for caller liveness policy, and delayed failures cannot close a newer generation. TLS health, background loops, async/batch/stream clients, forwarding, and write uncertainty remain explicit gaps."

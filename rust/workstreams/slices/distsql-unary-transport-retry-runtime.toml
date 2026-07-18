@@ -1,6 +1,6 @@
 schema = "1"
 slice = "distsql-unary-transport-retry-runtime"
-status = "ready"
+status = "partial"
 target = "tidb-distsql"
 ring = "result"
 consumer = "Campaign 12 replaces the direct-unary terminal transport-error boundary with a response-owned send-failure state machine. Peer selection happens immediately before dispatch; each immutable attempt carries its exact route and connection generation; cancellation, remote Canceled, generic timeout/connection, StoreNotMatch, liveness, shared-store invalidation, TiKVRPC backoff, peer probing, task rebuild, and successful leader promotion follow pinned client-go precedence. Failed attempts cannot advance paging/cache/EMA or reorder later logical tasks. Active in-flight cancellation, configurable short-read fast rotation, follower/stale reads, forwarding, locks, batch/stream/TiFlash, TLS, and production concurrency remain explicit gaps."
@@ -106,7 +106,14 @@ module_sources = [
 ]
 module_tests = [
   "client-go::internal/locate/region_request3_test.go:71:TestRegionRequestToThreeStores",
+  "client-go::internal/locate/region_request3_test.go:704:TestRegionRequestToThreeStores/TestSendReqWithReplicaSelector",
+  "client-go::internal/locate/region_request3_test.go:1531:TestRegionRequestToThreeStores/TestLeaderStuck",
   "client-go::internal/locate/region_request_test.go:78:TestRegionRequestToSingleStore",
+  "client-go::internal/locate/region_request_test.go:266:TestRegionRequestToSingleStore/TestOnSendFailedWithCloseKnownStoreThenUseNewOne",
+  "client-go::internal/locate/region_request_test.go:310:TestRegionRequestToSingleStore/TestOnSendFailedWithCancelled",
+  "client-go::internal/locate/region_request_test.go:350:TestRegionRequestToSingleStore/TestNoReloadRegionWhenCtxCanceled",
+  "client-go::internal/locate/region_request_test.go:798:TestRegionRequestToSingleStore/TestNoReloadRegionForGrpcWhenCtxCanceled",
+  "client-go::internal/locate/region_request_test.go:916:TestRegionRequestToSingleStore/TestCloseConnectionOnStoreNotMatch",
 ]
 depends_on = []
 evidence_prerequisites = [

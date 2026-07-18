@@ -390,7 +390,7 @@ fn send_coprocessor(
             return Err(connection_error(address, selected.version, error));
         }
         Ok(Err(CoprocessorAttemptError::RemoteGrpc(error))) => {
-            return Err(remote_grpc_error(address, selected.version, error));
+            return Err(remote_grpc_error(address, selected.version, timeout, error));
         }
         Err(error) => {
             return Err(timeout_error(address, selected.version, timeout, error));
@@ -555,7 +555,15 @@ fn connection_error(
     ))
 }
 
-fn remote_grpc_error(address: &str, version: u64, error: tonic::Status) -> DirectUnaryClientError {
+fn remote_grpc_error(
+    address: &str,
+    version: u64,
+    timeout: Duration,
+    error: tonic::Status,
+) -> DirectUnaryClientError {
+    if error_chain_contains_timeout(&error) {
+        return timeout_error(address, version, timeout, error);
+    }
     match grpc_error_code(error.code()) {
         Some(code) => DirectUnaryClientError::Connection(DirectUnaryConnectionError::remote_grpc(
             address,
@@ -565,6 +573,17 @@ fn remote_grpc_error(address: &str, version: u64, error: tonic::Status) -> Direc
         )),
         None => connection_error(address, version, error),
     }
+}
+
+fn error_chain_contains_timeout(error: &(dyn std::error::Error + 'static)) -> bool {
+    let mut current = Some(error);
+    while let Some(candidate) = current {
+        if candidate.downcast_ref::<tonic::TimeoutExpired>().is_some() {
+            return true;
+        }
+        current = candidate.source();
+    }
+    false
 }
 
 fn timeout_error(
@@ -608,8 +627,16 @@ mod tests {
     use tidb_proto::{CoprocessorRequest, KvrpcContext};
 
     use super::{
-        copy_remaining, replace_top_level_context, write_varint, MAX_PROTOBUF_FIELD_NUMBER,
+        copy_remaining, error_chain_contains_timeout, replace_top_level_context, write_varint,
+        MAX_PROTOBUF_FIELD_NUMBER,
     };
+
+    #[test]
+    fn tonic_timeout_source_is_not_misclassified_as_remote_canceled() {
+        let status = tonic::Status::from_error(Box::new(tonic::TimeoutExpired(())));
+        assert_eq!(status.code(), tonic::Code::Cancelled);
+        assert!(error_chain_contains_timeout(&status));
+    }
 
     #[test]
     fn wire_context_replacement_preserves_unprojected_fields() {

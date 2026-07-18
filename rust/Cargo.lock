@@ -227,6 +227,7 @@ dependencies = [
 name = "difftest-transaction-tests"
 version = "0.0.0"
 dependencies = [
+ "prost",
  "tidb-codec",
  "tidb-datatype",
  "tidb-distsql",

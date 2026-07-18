@@ -1,3 +1,3 @@
 # universe	module	version	go_sum	go_mod_sum	go_file_tree_sha256	production_sources	test_files	test_declarations	test_obligations
-client-go	github.com/tikv/client-go/v2	v2.0.8-0.20260708122311-01bd8f99f4da	h1:Ju9uUKu3M5gPl7Z90e9dcGSe8LtXxGqvSetbPcr6tyc=	h1:MRhIujZMMkYcI49Euif4+A3+SHSGwTpyUUadNz48R4g=	0afa48b55c7b694c649ef0af2df2596143297b5256c3b6a85c32794d2224694e	151	75	809	337
-pd-client	github.com/tikv/pd/client	v0.0.0-20260708075407-4e05b9d2c2d3	h1:OoBvgoeWmdNEXtS+eOlhysz/OvhA4GS0OdPVhTXteGA=	h1:3/Bu91CJONgkDA+Y0v/cnbROSJnu5tQ09vv7JGybUBA=	487180a4e89c8ee0bcbbc72b124ab3003a994e6902fe7d013b445d02e94ca4cd	58	28	319	156
+client-go	github.com/tikv/client-go/v2	v2.0.8-0.20260708122311-01bd8f99f4da	h1:Ju9uUKu3M5gPl7Z90e9dcGSe8LtXxGqvSetbPcr6tyc=	h1:MRhIujZMMkYcI49Euif4+A3+SHSGwTpyUUadNz48R4g=	0afa48b55c7b694c649ef0af2df2596143297b5256c3b6a85c32794d2224694e	151	75	809	474
+pd-client	github.com/tikv/pd/client	v0.0.0-20260708075407-4e05b9d2c2d3	h1:OoBvgoeWmdNEXtS+eOlhysz/OvhA4GS0OdPVhTXteGA=	h1:3/Bu91CJONgkDA+Y0v/cnbROSJnu5tQ09vv7JGybUBA=	487180a4e89c8ee0bcbbc72b124ab3003a994e6902fe7d013b445d02e94ca4cd	58	28	319	170
