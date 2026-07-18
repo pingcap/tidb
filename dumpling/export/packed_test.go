@@ -96,27 +96,18 @@ func TestPackedProtocolRows(t *testing.T) {
 	)
 
 	stderr := &cseDumperStderr{}
-	_, err := stderr.Write([]byte(
-		"human diagnostic\n" +
-			cseDumperStagePrefix + "load_manifest\n" +
-			cseDumperStagePrefix + "scan\n" +
-			cseDumperStatsPrefix + `{"version":1,"success":true,"scan_completed":true,"keyspace_id":2,"backup_ts":99,"manifest_bytes":101,"manifest_shards":17,"content_files":922,"plaintext_shards":15,"legacy_shards":1,"cmek_shards":1,"shards_scanned":2,"scanned_cmek_shards":2,"l0_candidates":3,"ln_candidates":4,"l0_retained":1,"ln_retained":2,"content_reads":5,"content_bytes":6,"rows":8,"key_bytes":9,"value_bytes":10,"stdout_write_failures":11,"first_stdout_write_ns":12,"scan_first_row_ns":13,"snapshot_load_ns":7,"cmek_snapshot_load_ns":14,"max_stdout_write_ns":15,"iterator_init_ns":16}` + "\n",
-	))
-	require.NoError(t, err)
-	stderrData, truncated := stderr.snapshot()
-	require.False(t, truncated)
-	require.Equal(t, "scan", cseDumperStage(stderrData))
-	stats, found, err := parseCSEDumperMachineStats(stderrData)
-	require.NoError(t, err)
-	require.True(t, found)
-	require.True(t, stats.Success)
-	require.True(t, stats.ScanCompleted)
-	require.Equal(t, uint32(2), stats.KeyspaceID)
-	require.Equal(t, uint64(16), stats.IteratorInitNanos)
-	require.Equal(t, []byte("human diagnostic"), cseDumperHumanStderr(stderrData))
-	_, found, err = parseCSEDumperMachineStats([]byte(cseDumperStatsPrefix + `{"version":2}`))
-	require.True(t, found)
-	require.ErrorContains(t, err, "unsupported cse-ctl dumper statistics version 2")
+	for _, chunk := range []string{
+		"human diag",
+		"nostic\nCSE packed ",
+		"perf part=setup manifest=1ms\nnot-CSE packed perf part=scan\n",
+		"CSE packed perf part=scan total=2ms\nlast diagnostic",
+	} {
+		_, err := stderr.Write([]byte(chunk))
+		require.NoError(t, err)
+	}
+	require.True(t, isCSEPackedPerfLine([]byte("CSE packed perf part=output total=3ms")))
+	require.False(t, isCSEPackedPerfLine([]byte("not-CSE packed perf part=scan")))
+	require.Equal(t, "human diagnostic\nnot-CSE packed perf part=scan\nlast diagnostic", stderr.diagnostics())
 }
 
 func TestPackedRowsUseTiDBStorageEncoding(t *testing.T) {
@@ -236,12 +227,11 @@ func readPackedTestRows(t *testing.T, store kv.Storage, table *model.TableInfo) 
 		for iterator.Valid() {
 			row := MakeRowReceiver(meta.ColumnTypes())
 			packed := &packedRowIter{
-				table:       table,
-				key:         append([]byte(nil), iterator.Key()...),
-				value:       append([]byte(nil), iterator.Value()...),
-				args:        make([]any, meta.ColumnCount()),
-				hasRow:      true,
-				observation: &packedTableObservation{},
+				table:  table,
+				key:    append([]byte(nil), iterator.Key()...),
+				value:  append([]byte(nil), iterator.Value()...),
+				args:   make([]any, meta.ColumnCount()),
+				hasRow: true,
 			}
 			require.NoError(t, packed.Decode(row))
 			var output bytes.Buffer

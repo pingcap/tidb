@@ -22,7 +22,6 @@ import (
 	"io"
 	"os/exec"
 	"sync"
-	"sync/atomic"
 
 	"github.com/pingcap/errors"
 )
@@ -31,9 +30,8 @@ type cseDumperScan struct {
 	cmd         *exec.Cmd
 	input       *bufio.Reader
 	stderr      cseDumperStderr
-	observation cseDumperProcessObservation
-	finished    atomic.Bool
-	done        chan struct{}
+	observation *packedScanContext
+	finished    bool
 	waitOnce    sync.Once
 	waitErr     error
 }
@@ -43,25 +41,27 @@ func startCSEDumperScan(
 	executable, metadataURL string,
 	legacyEncryption bool,
 	startKey, endKey []byte,
+	parent *packedExportObservation,
 ) (*cseDumperScan, error) {
+	observation := newPackedScanContext(parent)
 	args := cseDumperArgs(metadataURL, legacyEncryption, startKey, endKey)
 	cmd := exec.CommandContext(ctx, executable, args...)
-	cmd.Env = append(cmd.Environ(), cseDumperObservabilityEnv+"=1")
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
+		observation.finish(err)
 		return nil, errors.Annotate(err, "open cse-ctl dumper stdout")
 	}
 	scan := &cseDumperScan{
 		cmd:         cmd,
 		input:       bufio.NewReaderSize(stdout, 256*1024),
-		observation: newCSEDumperProcessObservation(),
-		done:        make(chan struct{}),
+		observation: observation,
 	}
+	scan.stderr = newCSEDumperStderr(observation)
 	cmd.Stderr = &scan.stderr
-	if err := cmd.Start(); err != nil {
+	if err := observation.spawn(cmd.Start); err != nil {
+		observation.finish(err)
 		return nil, errors.Annotatef(err, "start %q dumper", executable)
 	}
-	scan.observation.recordSpawn()
 	return scan, nil
 }
 
@@ -90,7 +90,7 @@ func (s *cseDumperScan) readRow(keyBuffer, valueBuffer []byte) (key, value []byt
 	if !end {
 		return key, value, false, nil
 	}
-	s.finished.Store(true)
+	s.finished = true
 	if err := s.wait(); err != nil {
 		return nil, nil, false, s.exitError(err)
 	}
@@ -135,8 +135,7 @@ func (s *cseDumperScan) fail(streamErr error) error {
 		_ = s.cmd.Process.Kill()
 	}
 	waitErr := s.wait()
-	stderr, _ := s.stderr.snapshot()
-	detail := cseDumperHumanStderr(stderr)
+	detail := s.stderr.diagnostics()
 	if len(detail) > 0 {
 		return errors.Annotatef(streamErr, "cse-ctl dumper stderr: %s", detail)
 	}
@@ -147,8 +146,7 @@ func (s *cseDumperScan) fail(streamErr error) error {
 }
 
 func (s *cseDumperScan) exitError(waitErr error) error {
-	stderr, _ := s.stderr.snapshot()
-	detail := cseDumperHumanStderr(stderr)
+	detail := s.stderr.diagnostics()
 	if len(detail) > 0 {
 		return errors.Annotatef(waitErr, "cse-ctl dumper stderr: %s", detail)
 	}
@@ -157,18 +155,19 @@ func (s *cseDumperScan) exitError(waitErr error) error {
 
 func (s *cseDumperScan) wait() error {
 	s.waitOnce.Do(func() {
-		defer close(s.done)
 		s.waitErr = s.observation.wait(s.cmd.Wait)
+		s.stderr.finish()
+		s.observation.finish(s.waitErr)
 	})
 	return s.waitErr
 }
 
 func (s *cseDumperScan) close() error {
-	if !s.finished.Load() && s.cmd.Process != nil {
+	if !s.finished && s.cmd.Process != nil {
 		_ = s.cmd.Process.Kill()
 	}
 	waitErr := s.wait()
-	if s.finished.Load() && waitErr != nil {
+	if s.finished && waitErr != nil {
 		return s.exitError(waitErr)
 	}
 	return nil
@@ -180,8 +179,8 @@ func scanCSEDumperRange(
 	legacyEncryption bool,
 	startKey, endKey []byte,
 	emit func(key, value []byte) error,
-	observer *cseDumperScanObserver,
-) (resultErr error) {
+	observation *packedExportObservation,
+) error {
 	scan, err := startCSEDumperScan(
 		ctx,
 		executable,
@@ -189,21 +188,12 @@ func scanCSEDumperRange(
 		legacyEncryption,
 		startKey,
 		endKey,
+		observation,
 	)
 	if err != nil {
 		return err
 	}
-	if observer != nil && observer.started != nil {
-		observer.started(scan)
-	}
-	defer func() {
-		if closeErr := scan.close(); resultErr == nil && closeErr != nil {
-			resultErr = closeErr
-		}
-		if observer != nil && observer.finished != nil {
-			observer.finished(scan, resultErr)
-		}
-	}()
+	defer func() { _ = scan.close() }()
 	var keyBuffer, valueBuffer []byte
 	for {
 		key, value, end, err := scan.readRow(keyBuffer, valueBuffer)
