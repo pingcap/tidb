@@ -27,6 +27,9 @@ import tomllib
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE_LEDGER = ROOT / "difftests/corpus/coverage/go_source_inventory.tsv"
 TEST_LEDGER = ROOT / "difftests/corpus/coverage/go_test_inventory.tsv"
+EXTERNAL_MODULE_LEDGER = ROOT / "difftests/corpus/coverage/external_go_modules.tsv"
+EXTERNAL_SOURCE_LEDGER = ROOT / "difftests/corpus/coverage/client_go_source_inventory.tsv"
+EXTERNAL_TEST_LEDGER = ROOT / "difftests/corpus/coverage/client_go_test_inventory.tsv"
 SLICE_DIR = ROOT / "workstreams/slices"
 CAMPAIGN_DIR = ROOT / "workstreams/campaigns"
 CLAIM_DIR = ROOT / "workstreams/claims"
@@ -77,12 +80,17 @@ def render() -> str:
     """Render the complete deterministic dashboard."""
     sources = read_tsv(SOURCE_LEDGER)
     tests = read_tsv(TEST_LEDGER)
+    external_modules = read_tsv(EXTERNAL_MODULE_LEDGER)
+    external_sources = read_tsv(EXTERNAL_SOURCE_LEDGER)
+    external_tests = read_tsv(EXTERNAL_TEST_LEDGER)
     slices = read_toml_dir(SLICE_DIR)
     campaigns = read_toml_dir(CAMPAIGN_DIR)
     source_counts = status_counts(sources, 4)
     test_counts = status_counts(tests, 5)
     source_groups = grouped_status_counts(sources, 2, 4)
     test_groups = grouped_status_counts(tests, 4, 5)
+    external_source_counts = status_counts(external_sources, 4)
+    external_test_counts = status_counts(external_tests, 7)
     slice_counts = Counter(str(item["status"]) for item in slices)
     active_claims = len(list(CLAIM_DIR.glob("*.claim.json"))) if CLAIM_DIR.exists() else 0
 
@@ -113,6 +121,51 @@ def render() -> str:
         for item in campaigns
     ]
     lines.extend(markdown_table(("Campaign", "Status", "Slices"), campaign_rows))
+    lines.extend(["", "## Pinned external Go universes", ""])
+    lines.extend(
+        markdown_table(
+            (
+                "Module",
+                "Version",
+                "Production sources",
+                "Test files",
+                "AST declarations",
+                "Runner obligations",
+            ),
+            [
+                (row[1], row[2], row[6], row[7], row[8], row[9])
+                for row in external_modules
+            ],
+        )
+    )
+    lines.extend(["", "### External ownership states", ""])
+    lines.extend(
+        markdown_table(
+            ("Universe", "Untriaged", "Partial", "Covered", "Blocked"),
+            [
+                (
+                    "Production sources",
+                    external_source_counts["UNTRIAGED"],
+                    external_source_counts["PARTIAL"],
+                    external_source_counts["COVERED"],
+                    external_source_counts["BLOCKED"],
+                ),
+                (
+                    "Runner obligations",
+                    external_test_counts["UNTRIAGED"],
+                    external_test_counts["PARTIAL"],
+                    external_test_counts["COVERED"],
+                    external_test_counts["BLOCKED"],
+                ),
+            ],
+        )
+    )
+    lines.extend(
+        [
+            "",
+            "External module counts are pinned porting obligations and are not included in TiDB product-parity totals.",
+        ]
+    )
     lines.extend(["", "## Production source ledger", ""])
     lines.extend(
         markdown_table(

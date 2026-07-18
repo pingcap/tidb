@@ -35,6 +35,8 @@ RUST_ROOT = Path(
 )
 SOURCE_LEDGER = Path("difftests/corpus/coverage/go_source_inventory.tsv")
 TEST_LEDGER = Path("difftests/corpus/coverage/go_test_inventory.tsv")
+MODULE_SOURCE_LEDGER = Path("difftests/corpus/coverage/client_go_source_inventory.tsv")
+MODULE_TEST_LEDGER = Path("difftests/corpus/coverage/client_go_test_inventory.tsv")
 CLAIMS_DIR = Path("workstreams/claims")
 TRANSFERS_DIR = Path("difftests/corpus/coverage/evidence/transfers")
 SLICES_DIR = Path("workstreams/slices")
@@ -132,6 +134,28 @@ def test_key(row: dict[str, object]) -> str:
     return f"{row['path']}:{row['line']}:{row['name']}"
 
 
+def load_module_source_anchors(root: Path) -> set[str]:
+    path = root / MODULE_SOURCE_LEDGER
+    if not path.exists():
+        return set()
+    return {
+        f"{universe}::{source}"
+        for universe, source, _lines, _sha, _status, _owner, _artifact, _note in read_tsv(
+            path, 8
+        )
+    }
+
+
+def load_module_test_anchors(root: Path) -> set[str]:
+    path = root / MODULE_TEST_LEDGER
+    if not path.exists():
+        return set()
+    return {
+        f"{universe}::{source}:{int(line)}:{name}"
+        for universe, _kind, source, line, name, _ring, _sha, _status, _owner, _artifact, _note in read_tsv(path, 11)
+    }
+
+
 def source_test_stem(path: str) -> tuple[str, str]:
     item = Path(path)
     stem = item.name.removesuffix("_test.go").removesuffix(".go")
@@ -196,9 +220,18 @@ def load_slices(root: Path) -> dict[str, dict[str, object]]:
             raise ValueError(f"{path}: duplicate slice {name}")
         if record["status"] not in SLICE_STATUSES:
             raise ValueError(f"{path}: invalid status {record['status']!r}")
+        for field in ("module_sources", "module_tests"):
+            value = record.get(field, [])
+            if not isinstance(value, list) or not all(
+                isinstance(item, str) and item for item in value
+            ):
+                raise ValueError(f"{path}: {field} must be a string array")
+            record[field] = sorted(set(value))
         sources = sorted(set(record["go_sources"]))
-        if not sources:
-            raise ValueError(f"{path}: vertical slice must own at least one Go source")
+        if not sources and not record["module_sources"]:
+            raise ValueError(
+                f"{path}: vertical slice must own at least one Go or module source"
+            )
         unknown_sources = sorted(set(sources) - known_sources)
         if unknown_sources:
             raise ValueError(f"{path}: unknown source anchor {unknown_sources[0]}")
@@ -206,8 +239,26 @@ def load_slices(root: Path) -> dict[str, dict[str, object]]:
         unknown_tests = sorted(set(tests) - known_tests)
         if unknown_tests:
             raise ValueError(f"{path}: unknown test anchor {unknown_tests[0]}")
+        unknown_module_sources = sorted(
+            set(record["module_sources"]) - load_module_source_anchors(root)
+        )
+        if unknown_module_sources:
+            raise ValueError(
+                f"{path}: unknown qualified module source anchor {unknown_module_sources[0]}"
+            )
+        normalized_module_tests = sorted(
+            {parse_module_test_anchor(item) for item in record["module_tests"]}
+        )
+        unknown_module_tests = sorted(
+            set(normalized_module_tests) - load_module_test_anchors(root)
+        )
+        if unknown_module_tests:
+            raise ValueError(
+                f"{path}: unknown qualified module test anchor {unknown_module_tests[0]}"
+            )
         record["go_sources"] = sources
         record["go_tests"] = tests
+        record["module_tests"] = normalized_module_tests
         prerequisites = record.get("evidence_prerequisites", [])
         if not isinstance(prerequisites, list):
             raise ValueError(f"{path}: evidence_prerequisites must be an array of tables")
@@ -362,12 +413,16 @@ def load_campaigns(
 
         seen_sources: dict[str, str] = {}
         seen_tests: dict[str, str] = {}
+        seen_module_sources: dict[str, str] = {}
+        seen_module_tests: dict[str, str] = {}
         seen_rust_paths: dict[str, str] = {}
         for member in members:
             slice_record = slices[member]
             for label, values, seen in (
                 ("source", slice_record["go_sources"], seen_sources),
                 ("test", slice_record["go_tests"], seen_tests),
+                ("module source", slice_record["module_sources"], seen_module_sources),
+                ("module test", slice_record["module_tests"], seen_module_tests),
                 ("Rust path", slice_record["rust_paths"], seen_rust_paths),
             ):
                 for value in values:
@@ -383,19 +438,21 @@ def load_campaigns(
         # validated; rewriting campaign membership to satisfy today's count
         # would instead falsify that history.
         if status != "integrated":
-            if len(seen_sources) < CAMPAIGN_MIN_SOURCE_COUNT:
+            combined_source_count = len(seen_sources) + len(seen_module_sources)
+            combined_test_count = len(seen_tests) + len(seen_module_tests)
+            if combined_source_count < CAMPAIGN_MIN_SOURCE_COUNT:
                 raise ValueError(
-                    f"{path}: campaign has {len(seen_sources)} production sources; "
+                    f"{path}: campaign has {combined_source_count} production sources; "
                     f"minimum is {CAMPAIGN_MIN_SOURCE_COUNT}"
                 )
-            if len(seen_tests) < CAMPAIGN_MIN_TEST_COUNT:
+            if combined_test_count < CAMPAIGN_MIN_TEST_COUNT:
                 raise ValueError(
-                    f"{path}: campaign has {len(seen_tests)} original obligations; "
+                    f"{path}: campaign has {combined_test_count} original obligations; "
                     f"minimum is {CAMPAIGN_MIN_TEST_COUNT}"
                 )
         record["_path"] = path
-        record["source_count"] = len(seen_sources)
-        record["test_count"] = len(seen_tests)
+        record["source_count"] = len(seen_sources) + len(seen_module_sources)
+        record["test_count"] = len(seen_tests) + len(seen_module_tests)
         records[name] = record
     stale_frozen = sorted(set(frozen_members) - set(records))
     if stale_frozen:
@@ -556,6 +613,8 @@ def validate_claims(root: Path) -> list[dict[str, object]]:
     tests = {test_key(row) for row in load_test_rows(root)}
     seen_sources: dict[str, str] = {}
     seen_tests: dict[str, str] = {}
+    seen_module_sources: dict[str, str] = {}
+    seen_module_tests: dict[str, str] = {}
     seen_rust_paths: dict[str, str] = {}
     claims = load_claims(root)
     for claim in claims:
@@ -564,12 +623,12 @@ def validate_claims(root: Path) -> list[dict[str, object]]:
         schema = claim.get("schema")
         claimed_sources = claim_sources(claim)
         claimed_tests = claim.get("tests")
+        claimed_module_sources = claim.get("module_sources", [])
+        claimed_module_tests = claim.get("module_tests", [])
         if schema not in {1, 2} or not isinstance(owner, str):
             raise ValueError(f"{path}: expected schema 1 or 2 and string owner")
         if not OWNER_RE.fullmatch(owner) or path.name != f"{owner}.claim.json":
             raise ValueError(f"{path}: invalid owner or filename")
-        if not claimed_sources:
-            raise ValueError(f"{path}: claim must own at least one source")
         for source in claimed_sources:
             if source not in sources:
                 raise ValueError(f"{path}: stale source anchor {source!r}")
@@ -577,17 +636,46 @@ def validate_claims(root: Path) -> list[dict[str, object]]:
             isinstance(item, str) for item in claimed_tests
         ):
             raise ValueError(f"{path}: tests must be a string array")
+        if not isinstance(claimed_module_sources, list) or not all(
+            isinstance(item, str) for item in claimed_module_sources
+        ):
+            raise ValueError(f"{path}: module_sources must be a string array")
+        if not isinstance(claimed_module_tests, list) or not all(
+            isinstance(item, str) for item in claimed_module_tests
+        ):
+            raise ValueError(f"{path}: module_tests must be a string array")
+        claimed_module_sources = sorted(set(claimed_module_sources))
+        claimed_module_tests = sorted({parse_module_test_anchor(item) for item in claimed_module_tests})
+        unknown_module_sources = sorted(set(claimed_module_sources) - load_module_source_anchors(root))
+        if unknown_module_sources:
+            raise ValueError(f"{path}: stale qualified module source anchor {unknown_module_sources[0]!r}")
+        unknown_module_tests = sorted(set(claimed_module_tests) - load_module_test_anchors(root))
+        if unknown_module_tests:
+            raise ValueError(f"{path}: stale qualified module test anchor {unknown_module_tests[0]!r}")
+        if not claimed_sources and not claimed_module_sources:
+            raise ValueError(f"{path}: claim must own at least one Go or module source")
         slice_record = slices.get(owner) if schema == 2 else None
         if slice_record is not None:
             expected_sources = list(slice_record["go_sources"])
             expected_tests = list(slice_record["go_tests"])
-            if claimed_sources != expected_sources or sorted(claimed_tests) != expected_tests:
+            expected_module_sources = list(slice_record["module_sources"])
+            expected_module_tests = list(slice_record["module_tests"])
+            if (
+                claimed_sources != expected_sources
+                or sorted(claimed_tests) != expected_tests
+                or claimed_module_sources != expected_module_sources
+                or claimed_module_tests != expected_module_tests
+            ):
                 differences = []
                 for label, values in (
                     ("missing sources", sorted(set(expected_sources) - set(claimed_sources))),
                     ("extra sources", sorted(set(claimed_sources) - set(expected_sources))),
                     ("missing tests", sorted(set(expected_tests) - set(claimed_tests))),
                     ("extra tests", sorted(set(claimed_tests) - set(expected_tests))),
+                    ("missing module sources", sorted(set(expected_module_sources) - set(claimed_module_sources))),
+                    ("extra module sources", sorted(set(claimed_module_sources) - set(expected_module_sources))),
+                    ("missing module tests", sorted(set(expected_module_tests) - set(claimed_module_tests))),
+                    ("extra module tests", sorted(set(claimed_module_tests) - set(expected_module_tests))),
                 ):
                     if values:
                         differences.append(f"{label}: {','.join(values)}")
@@ -606,6 +694,8 @@ def validate_claims(root: Path) -> list[dict[str, object]]:
         else:
             claim["_rust_paths"] = []
         claim["_sources"] = claimed_sources
+        claim["_module_sources"] = claimed_module_sources
+        claim["_module_tests"] = claimed_module_tests
         for source in claimed_sources:
             if source in seen_sources:
                 raise ValueError(
@@ -620,6 +710,18 @@ def validate_claims(root: Path) -> list[dict[str, object]]:
                     f"test {item} overlaps claims {seen_tests[item]} and {owner}"
                 )
             seen_tests[item] = owner
+        for item in claimed_module_sources:
+            if item in seen_module_sources:
+                raise ValueError(
+                    f"module source {item} overlaps claims {seen_module_sources[item]} and {owner}"
+                )
+            seen_module_sources[item] = owner
+        for item in claimed_module_tests:
+            if item in seen_module_tests:
+                raise ValueError(
+                    f"module test {item} overlaps claims {seen_module_tests[item]} and {owner}"
+                )
+            seen_module_tests[item] = owner
     return claims
 
 
@@ -892,13 +994,33 @@ def parse_test_anchor(value: str) -> str:
     return f"{source_path}:{int(line)}:{tail}"
 
 
-def claim(root: Path, owner: str, sources: list[str], tests: list[str]) -> None:
+def parse_module_test_anchor(value: str) -> str:
+    module, separator, anchor = value.partition("::")
+    if not separator or not module or not anchor:
+        raise ValueError(
+            f"invalid qualified module test anchor {value!r}; use MODULE::PATH:LINE:NAME"
+        )
+    return f"{module}::{parse_test_anchor(anchor)}"
+
+
+def claim(
+    root: Path,
+    owner: str,
+    sources: list[str],
+    tests: list[str],
+    module_sources: list[str] | None = None,
+    module_tests: list[str] | None = None,
+) -> None:
     if not OWNER_RE.fullmatch(owner):
         raise ValueError("owner must use lowercase letters, digits, '.', or '-'")
     normalized_sources = sorted(set(sources))
-    if not normalized_sources:
-        raise ValueError("claim requires at least one --source")
     normalized_tests = sorted({parse_test_anchor(item) for item in tests})
+    normalized_module_sources = sorted(set(module_sources or []))
+    normalized_module_tests = sorted(
+        {parse_module_test_anchor(item) for item in (module_tests or [])}
+    )
+    if not normalized_sources and not normalized_module_sources:
+        raise ValueError("claim requires at least one Go or module source")
     with claim_lock(root):
         claims = validate_claims(root)
         new_slice = load_slices(root).get(owner)
@@ -914,6 +1036,20 @@ def claim(root: Path, owner: str, sources: list[str], tests: list[str]) -> None:
             overlap = sorted(set(active["tests"]) & set(normalized_tests))
             if overlap:
                 raise ValueError(f"test {overlap[0]} is already claimed by {active['owner']}")
+            module_source_overlap = sorted(
+                set(active["_module_sources"]) & set(normalized_module_sources)
+            )
+            if module_source_overlap:
+                raise ValueError(
+                    f"module source {module_source_overlap[0]} is already claimed by {active['owner']}"
+                )
+            module_test_overlap = sorted(
+                set(active["_module_tests"]) & set(normalized_module_tests)
+            )
+            if module_test_overlap:
+                raise ValueError(
+                    f"module test {module_test_overlap[0]} is already claimed by {active['owner']}"
+                )
             rust_overlap = sorted(set(active["_rust_paths"]) & new_rust_paths)
             if rust_overlap:
                 raise ValueError(
@@ -927,12 +1063,24 @@ def claim(root: Path, owner: str, sources: list[str], tests: list[str]) -> None:
         unknown = sorted(set(normalized_tests) - known_tests)
         if unknown:
             raise ValueError(f"unknown test anchor {unknown[0]}")
+        unknown_module_sources = sorted(
+            set(normalized_module_sources) - load_module_source_anchors(root)
+        )
+        if unknown_module_sources:
+            raise ValueError(f"unknown qualified module source anchor {unknown_module_sources[0]}")
+        unknown_module_tests = sorted(
+            set(normalized_module_tests) - load_module_test_anchors(root)
+        )
+        if unknown_module_tests:
+            raise ValueError(f"unknown qualified module test anchor {unknown_module_tests[0]}")
         destination = root / CLAIMS_DIR / f"{owner}.claim.json"
         payload = {
             "schema": 2,
             "owner": owner,
             "sources": normalized_sources,
             "tests": normalized_tests,
+            "module_sources": normalized_module_sources,
+            "module_tests": normalized_module_tests,
         }
         descriptor = os.open(destination, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         with os.fdopen(descriptor, "w", encoding="utf-8") as output:
@@ -1009,6 +1157,8 @@ def amend(root: Path, owner: str, sources: list[str], tests: list[str]) -> None:
             "owner": owner,
             "sources": sorted(set(current["_sources"]) | source_additions),
             "tests": sorted(set(current["tests"]) | test_additions),
+            "module_sources": list(current["_module_sources"]),
+            "module_tests": list(current["_module_tests"]),
         }
         destination = root / CLAIMS_DIR / f"{owner}.claim.json"
         temporary = destination.with_name(f".{destination.name}.{os.getpid()}.tmp")
@@ -1074,6 +1224,9 @@ def ready_slices(root: Path, target: str | None, ring: str | None) -> None:
     records = load_slices(root)
     claims = validate_claims(root)
     claimed_sources = {source for item in claims for source in item["_sources"]}
+    claimed_module_sources = {
+        source for item in claims for source in item["_module_sources"]
+    }
     claimed_rust_paths = {path for item in claims for path in item["_rust_paths"]}
     print(
         "slice\tstatus\ttarget\tring\tconsumer\tsource_count\ttest_count\t"
@@ -1088,12 +1241,14 @@ def ready_slices(root: Path, target: str | None, ring: str | None) -> None:
             continue
         if set(record["go_sources"]) & claimed_sources:
             continue
+        if set(record["module_sources"]) & claimed_module_sources:
+            continue
         if set(record["rust_paths"]) & claimed_rust_paths:
             continue
         print(
             f"{name}\t{record['status']}\t{record['target']}\t{record['ring']}\t"
-            f"{record['consumer']}\t{len(record['go_sources'])}\t"
-            f"{len(record['go_tests'])}\t{record['test_target']}\t"
+            f"{record['consumer']}\t{len(record['go_sources']) + len(record['module_sources'])}\t"
+            f"{len(record['go_tests']) + len(record['module_tests'])}\t{record['test_target']}\t"
             f"{','.join(record['depends_on']) if record['depends_on'] else '-'}"
         )
 
@@ -1107,7 +1262,14 @@ def claim_slice(root: Path, owner: str, slice_name: str) -> None:
         unmet = unmet_slice_prerequisites(record, records)
         detail = f"; unmet prerequisites: {'; '.join(unmet)}" if unmet else ""
         raise ValueError(f"vertical slice {slice_name} is not ready{detail}")
-    claim(root, owner, list(record["go_sources"]), list(record["go_tests"]))
+    claim(
+        root,
+        owner,
+        list(record["go_sources"]),
+        list(record["go_tests"]),
+        list(record["module_sources"]),
+        list(record["module_tests"]),
+    )
 
 
 def parser() -> argparse.ArgumentParser:
@@ -1192,6 +1354,10 @@ def main() -> int:
                 for record in slices.values()
                 if slice_is_ready(record, slices)
                 and not (set(record["go_sources"]) & claimed_sources)
+                and not (
+                    set(record["module_sources"])
+                    & {source for item in claims for source in item["_module_sources"]}
+                )
                 and not (set(record["rust_paths"]) & claimed_rust_paths)
             )
             print(f"active_claims\t{len(claims)}")

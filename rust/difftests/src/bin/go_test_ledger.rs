@@ -1082,13 +1082,42 @@ fn relative(root: &Path, path: &Path) -> String {
         .replace('\\', "/")
 }
 
+fn inventory_files(root: &Path) -> io::Result<Vec<PathBuf>> {
+    let output = Command::new("git")
+        .current_dir(root)
+        .args([
+            "ls-files",
+            "-z",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+        ])
+        .output();
+    if let Ok(output) = output {
+        if output.status.success() {
+            let mut files: Vec<_> = output
+                .stdout
+                .split(|byte| *byte == 0)
+                .filter(|path| !path.is_empty())
+                .map(|path| root.join(String::from_utf8_lossy(path).as_ref()))
+                .filter(|path| path.is_file())
+                .collect();
+            files.sort();
+            return Ok(files);
+        }
+    }
+    // Unit-test fixture roots are intentionally not Git repositories.
+    let mut files = Vec::new();
+    walk(root, root, &mut files)?;
+    Ok(files)
+}
+
 fn collect(
     root: &Path,
     declarations: &[GoTestDeclaration],
     fixture_accesses: &[GoTestFixtureAccess],
 ) -> io::Result<BTreeSet<Entry>> {
-    let mut files = Vec::new();
-    walk(root, root, &mut files)?;
+    let files = inventory_files(root)?;
 
     let mut entries = BTreeSet::new();
     for path in files {

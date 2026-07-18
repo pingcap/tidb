@@ -13,6 +13,8 @@ autotests = false
 workspace = true
 
 [dependencies]
+sha2.workspace = true
+serde_json.workspace = true
 tidb-lexer = { path = "../crates/tidb-lexer" }
 tidb-parser = { path = "../crates/tidb-parser" }
 

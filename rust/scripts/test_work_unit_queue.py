@@ -48,6 +48,22 @@ class WorkUnitQueueTest(unittest.TestCase):
             "go_test\tpkg/planner/other_test.go\t20\tTestOther\tplan\tUNTRIAGED\t-\t-\t-\n",
             encoding="utf-8",
         )
+        (coverage / "client_go_source_inventory.tsv").write_text(
+            "# external sources\n"
+            + "".join(
+                f"client-go\tinternal/client/client{index}.go\t100\tdeadbeef\tUNTRIAGED\t-\t-\t-\n"
+                for index in range(9)
+            ),
+            encoding="utf-8",
+        )
+        (coverage / "client_go_test_inventory.tsv").write_text(
+            "# external tests\n"
+            + "".join(
+                f"client-go\tTest\tinternal/client/client_test.go\t{20 + index}\tTestSend{index}\ttransaction\tfeedface\tUNTRIAGED\t-\t-\t-\n"
+                for index in range(50)
+            ),
+            encoding="utf-8",
+        )
 
     def tearDown(self) -> None:
         self.shared_fixture_artifact.unlink(missing_ok=True)
@@ -215,6 +231,79 @@ class WorkUnitQueueTest(unittest.TestCase):
         self.assertEqual(claim["sources"], ["pkg/planner/foo.go"])
         self.assertEqual(claim["tests"], ["pkg/planner/foo_test.go:10:TestFoo"])
         self.assertNotIn("planner-consumer", self.run_tool("ready").stdout)
+
+    def test_external_only_slice_claims_qualified_module_anchors(self) -> None:
+        slices = self.root / "workstreams/slices"
+        slices.mkdir(parents=True)
+        (slices / "client-runtime.toml").write_text(
+            'schema = "1"\n'
+            'slice = "client-runtime"\n'
+            'status = "ready"\n'
+            'target = "tidb-txnkv"\n'
+            'ring = "transaction"\n'
+            'consumer = "injected client"\n'
+            'test_target = "client_runtime"\n'
+            'go_sources = []\n'
+            'go_tests = []\n'
+            'module_sources = ["client-go::internal/client/client0.go"]\n'
+            'module_tests = ["client-go::internal/client/client_test.go:20:TestSend0"]\n'
+            'depends_on = []\n'
+            'rust_paths = ["rust/crates/tidb-txnkv/src/client_runtime.rs"]\n',
+            encoding="utf-8",
+        )
+        self.assertIn("client-runtime", self.run_tool("ready").stdout)
+        self.run_tool(
+            "claim-slice", "--owner", "client-runtime", "--slice", "client-runtime"
+        )
+        claim = json.loads(
+            (self.root / "workstreams/claims/client-runtime.claim.json").read_text()
+        )
+        self.assertEqual(
+            claim["module_sources"],
+            ["client-go::internal/client/client0.go"],
+        )
+        self.assertEqual(
+            claim["module_tests"],
+            [
+                "client-go::internal/client/client_test.go:20:TestSend0"
+            ],
+        )
+        self.assertNotIn("client-runtime", self.run_tool("ready").stdout)
+
+    def test_campaign_floor_counts_qualified_module_anchors(self) -> None:
+        slices = self.root / "workstreams/slices"
+        campaigns = self.root / "workstreams/campaigns"
+        slices.mkdir(parents=True)
+        campaigns.mkdir(parents=True)
+        for member, source_range, test_range in (
+            ("client-a", range(5), range(25)),
+            ("client-b", range(5, 9), range(25, 50)),
+        ):
+            module_sources = ", ".join(
+                f'"client-go::internal/client/client{index}.go"'
+                for index in source_range
+            )
+            module_tests = ", ".join(
+                f'"client-go::internal/client/client_test.go:{20 + index}:TestSend{index}"'
+                for index in test_range
+            )
+            (slices / f"{member}.toml").write_text(
+                f'schema = "1"\nslice = "{member}"\nstatus = "ready"\n'
+                'target = "tidb-txnkv"\nring = "transaction"\n'
+                f'consumer = "{member}"\ntest_target = "{member}"\n'
+                'go_sources = []\ngo_tests = []\n'
+                f'module_sources = [{module_sources}]\n'
+                f'module_tests = [{module_tests}]\n'
+                f'depends_on = []\nrust_paths = ["rust/{member}.rs"]\n',
+                encoding="utf-8",
+            )
+        (campaigns / "external-client.toml").write_text(
+            'schema = "1"\ncampaign = "external-client"\nstatus = "planned"\n'
+            'slices = ["client-a", "client-b"]\n',
+            encoding="utf-8",
+        )
+        result = self.run_tool("check")
+        self.assertIn("campaigns\t1", result.stdout)
 
     def test_partial_slice_claim_must_exactly_match_its_manifest(self) -> None:
         slices = self.root / "workstreams/slices"

@@ -1,0 +1,2 @@
+# universe	module	version	go_sum	go_mod_sum	go_file_tree_sha256	production_sources	test_files	test_declarations	test_obligations
+client-go	github.com/tikv/client-go/v2	v2.0.8-0.20260708122311-01bd8f99f4da	h1:Ju9uUKu3M5gPl7Z90e9dcGSe8LtXxGqvSetbPcr6tyc=	h1:MRhIujZMMkYcI49Euif4+A3+SHSGwTpyUUadNz48R4g=	0afa48b55c7b694c649ef0af2df2596143297b5256c3b6a85c32794d2224694e	151	75	809	337

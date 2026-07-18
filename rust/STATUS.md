@@ -11,7 +11,7 @@ the source or obligation still has explicit unported behavior.
 
 - Active claims: 0
 - Active slices: 0
-- Declared ready slices: 0
+- Declared ready slices: 2
 - Partial slices: 42
 - Covered slices: 2
 - Blocked slices: 1
@@ -23,10 +23,26 @@ the source or obligation still has explicit unported behavior.
 | 2026-07-read-path-01 | integrated | 6 |
 | 2026-07-read-path-02 | integrated | 6 |
 | 2026-07-read-path-07 | integrated | 3 |
+| 2026-07-read-path-08 | planned | 2 |
 | 2026-07-runtime-closure-03 | integrated | 6 |
 | 2026-07-runtime-closure-04 | integrated | 6 |
 | 2026-07-runtime-closure-05 | integrated | 6 |
 | 2026-07-runtime-closure-06 | integrated | 3 |
+
+## Pinned external Go universes
+
+| Module | Version | Production sources | Test files | AST declarations | Runner obligations |
+| --- | --- | --- | --- | --- | --- |
+| github.com/tikv/client-go/v2 | v2.0.8-0.20260708122311-01bd8f99f4da | 151 | 75 | 809 | 337 |
+
+### External ownership states
+
+| Universe | Untriaged | Partial | Covered | Blocked |
+| --- | --- | --- | --- | --- |
+| Production sources | 151 | 0 | 0 | 0 |
+| Runner obligations | 337 | 0 | 0 | 0 |
+
+External module counts are pinned porting obligations and are not included in TiDB product-parity totals.
 
 ## Production source ledger
 
@@ -68,7 +84,7 @@ the source or obligation still has explicit unported behavior.
 
 | State | Count |
 | --- | --- |
-| UNTRIAGED | 15284 |
+| UNTRIAGED | 15233 |
 | PARTIAL | 976 |
 | COVERED | 311 |
 | BLOCKED | 14 |
@@ -77,9 +93,9 @@ the source or obligation still has explicit unported behavior.
 
 | Ring | Untriaged | Partial | Covered | Blocked |
 | --- | --- | --- | --- | --- |
-| unassigned | 4835 | 316 | 134 | 0 |
-| result | 4339 | 436 | 29 | 3 |
-| deferred-external | 2959 | 0 | 0 | 0 |
+| unassigned | 4841 | 316 | 134 | 0 |
+| result | 4278 | 436 | 29 | 3 |
+| deferred-external | 2963 | 0 | 0 | 0 |
 | plan | 1784 | 123 | 5 | 0 |
 | transaction | 1054 | 68 | 67 | 6 |
 | parser | 313 | 33 | 76 | 5 |

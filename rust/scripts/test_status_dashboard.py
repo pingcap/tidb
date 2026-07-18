@@ -61,6 +61,9 @@ class StatusDashboardTest(unittest.TestCase):
         self.assertIn("ownership states, not product-parity percentages", rendered)
         self.assertIn("- Active slices:", rendered)
         self.assertIn("## Blocked slices", rendered)
+        self.assertIn("## Pinned external Go universes", rendered)
+        self.assertIn("github.com/tikv/client-go/v2", rendered)
+        self.assertIn("not included in TiDB product-parity totals", rendered)
 
 
 if __name__ == "__main__":

@@ -276,6 +276,12 @@ Cargo lane and defeats the parallel layout.
 - Every non-test Go production file stays visible in
   `difftests/corpus/coverage/go_source_inventory.tsv`, including explicitly
   deferred and not-yet-assigned owners.
+- Pinned external module work uses qualified `module_sources` and
+  `module_tests` anchors such as `client-go::internal/client/client.go` and
+  `client-go::internal/client/client_test.go:45:TestName`. The queue validates
+  and collision-checks these anchors like TiDB anchors; campaign admission
+  counts both universes, while status reporting keeps external ownership totals
+  separate from TiDB product-parity totals.
 - Every parser change has a Go source anchor and an exact restore/error
   comparison. Do not hand-write goldens.
 - Evidence fragments are append-only ownership units: one file owns one
