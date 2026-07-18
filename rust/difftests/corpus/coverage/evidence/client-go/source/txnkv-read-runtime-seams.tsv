@@ -1,0 +1,3 @@
+# client-go source evidence for the Campaign 13 shared read-runtime seam.
+# source_path	status	owner	evidence_artifact	note
+tikvrpc/tikvrpc.go	PARTIAL	txnkv-read-runtime-seams	rust/crates/tidb-txnkv/src/rpc/unary.rs	One address-directed raw unary core now carries the exact command context for Cop, CheckTxnStatus, and ResolveLock through the sole ChannelPool generation and deadline authority. The remaining client-go command switch, batch, stream, forwarding, compression, metrics, resource control, and keyspace mutation stay external.

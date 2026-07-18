@@ -7,6 +7,8 @@ consumer = "Campaign 12 replaces copied per-region Store authorities and the sta
 test_target = "region_cache_source, region_error_recovery_source, replica_selector_source, and new store failure/request selector source tests"
 go_sources = []
 go_tests = []
+# Campaign 12 is an integrated immutable receipt. These sources record the
+# gate-era scope; current ledger ownership is transferred to Campaign 13.
 module_sources = [
   "client-go::internal/locate/accessmode.go",
   "client-go::internal/locate/pd_codec.go",
@@ -19,9 +21,6 @@ module_sources = [
 module_tests = [
   "client-go::internal/locate/region_cache_test.go:242:TestRegionCache",
   "client-go::internal/locate/region_cache_test.go:1028:TestRegionCache/TestSendFailInvalidateRegionsInSameStore",
-  "client-go::internal/locate/replica_selector_test.go:108:TestReplicaSelectorBasic",
-  "client-go::internal/locate/replica_selector_test.go:1110:TestReplicaReadAccessPathByBasicCase",
-  "client-go::internal/locate/replica_selector_test.go:1285:TestReplicaReadAccessPathByLeaderCase",
 ]
 depends_on = []
 evidence_prerequisites = []

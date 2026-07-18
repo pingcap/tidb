@@ -8,15 +8,12 @@ test_target = "tikv_client_contract_source, tikv_tonic_coprocessor_source, and n
 go_sources = []
 go_tests = []
 module_sources = [
-  "client-go::internal/client/client.go",
   "client-go::internal/client/conn_pool.go",
-  "client-go::tikvrpc/tikvrpc.go",
 ]
 module_tests = [
   "client-go::internal/client/client_test.go:68:TestConn",
   "client-go::internal/client/client_test.go:103:TestGetConnAfterClose",
   "client-go::internal/client/client_test.go:1272:TestErrConn",
-  "client-go::tikvrpc/tikvrpc_test.go:124:TestAttachContextSetsRequestContext",
 ]
 depends_on = []
 evidence_prerequisites = []

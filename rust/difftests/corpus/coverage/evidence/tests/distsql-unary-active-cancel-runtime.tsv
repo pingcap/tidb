@@ -1,0 +1,3 @@
+# TiDB execution cancellation evidence for Campaign 13.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/executor/adapter_test.go	93	TestContextCancelWhenReadFromCopIterator	PARTIAL	distsql-unary-active-cancel-runtime	rust/crates/tidb-exec/tests/direct_unary_cancellation_source.rs	Executor close and response close share the request-owned cancellation carrier, so a dispatched unary call terminates before retry or success mutation. The full TiDB session, tracker, goroutine, and mock-store lifecycle in the original test remains external.

@@ -10,7 +10,6 @@ go_sources = [
   "pkg/distsql/select_result.go",
   "pkg/executor/distsql.go",
   "pkg/executor/table_reader.go",
-  "pkg/store/copr/coprocessor.go",
   "pkg/store/copr/coprocessor_cache.go",
   "pkg/store/copr/ema.go",
   "pkg/store/copr/key_ranges.go",
@@ -56,25 +55,6 @@ go_tests = [
   "pkg/store/copr/coprocessor_cache_test.go:213:TestGetSet",
   "pkg/store/copr/coprocessor_cache_test.go:238:TestGetSet/paging size bytes cache hit keeps range",
   "pkg/store/copr/coprocessor_cache_test.go:256:TestIssue24118",
-  "pkg/store/copr/coprocessor_test.go:0:coprocessor_test.go",
-  "pkg/store/copr/coprocessor_test.go:43:TestEnsureMonotonicKeyRanges",
-  "pkg/store/copr/coprocessor_test.go:63:TestBuildTasksWithoutBuckets",
-  "pkg/store/copr/coprocessor_test.go:189:TestBuildTasksByBuckets",
-  "pkg/store/copr/coprocessor_test.go:387:TestSplitKeyRangesByLocationsWithoutBuckets",
-  "pkg/store/copr/coprocessor_test.go:473:TestSplitKeyRanges",
-  "pkg/store/copr/coprocessor_test.go:544:TestRebuild",
-  "pkg/store/copr/coprocessor_test.go:607:TestBuildPagingTasks",
-  "pkg/store/copr/coprocessor_test.go:639:TestBuildCopTaskDoesNotCancelBoCtx",
-  "pkg/store/copr/coprocessor_test.go:674:TestBuildPagingTasksDisablePagingForSmallLimit",
-  "pkg/store/copr/coprocessor_test.go:710:TestBuildCopTasksWithPagingSizeBytes",
-  "pkg/store/copr/coprocessor_test.go:786:TestCalculateRetry",
-  "pkg/store/copr/coprocessor_test.go:844:TestCalculateRemain",
-  "pkg/store/copr/coprocessor_test.go:902:TestBasicSmallTaskConc",
-  "pkg/store/copr/coprocessor_test.go:913:TestBuildCopTasksWithRowCountHint",
-  "pkg/store/copr/coprocessor_test.go:988:TestSmallTaskConcurrencyLimit",
-  "pkg/store/copr/coprocessor_test.go:1005:TestBatchStoreCoprOnlySendToLeader",
-  "pkg/store/copr/coprocessor_test.go:1055:TestStoreBatchTasksPreserveChildBucketsVersion",
-  "pkg/store/copr/coprocessor_test.go:1096:TestHandleBatchCopResponseUpdatesChildBucketsOnVersionNotMatch",
   "pkg/store/copr/ema_test.go:0:ema_test.go",
   "pkg/store/copr/ema_test.go:28:TestRUEMASeedAndConverge",
   "pkg/store/copr/ema_test.go:29:TestRUEMASeedAndConverge/seeded prediction",
@@ -101,18 +81,13 @@ go_tests = [
   "pkg/store/driver/config_test.go:26:TestSetDefaultAndOptions",
   "pkg/kv/key_test.go:369:TestKeyRangeDefinition",
 ]
-module_sources = [
-  "client-go::internal/locate/region_request.go",
-]
+module_sources = []
 module_tests = [
   "client-go::internal/locate/region_request3_test.go:71:TestRegionRequestToThreeStores",
   "client-go::internal/locate/region_request3_test.go:704:TestRegionRequestToThreeStores/TestSendReqWithReplicaSelector",
   "client-go::internal/locate/region_request3_test.go:1531:TestRegionRequestToThreeStores/TestLeaderStuck",
   "client-go::internal/locate/region_request_test.go:78:TestRegionRequestToSingleStore",
   "client-go::internal/locate/region_request_test.go:266:TestRegionRequestToSingleStore/TestOnSendFailedWithCloseKnownStoreThenUseNewOne",
-  "client-go::internal/locate/region_request_test.go:310:TestRegionRequestToSingleStore/TestOnSendFailedWithCancelled",
-  "client-go::internal/locate/region_request_test.go:350:TestRegionRequestToSingleStore/TestNoReloadRegionWhenCtxCanceled",
-  "client-go::internal/locate/region_request_test.go:798:TestRegionRequestToSingleStore/TestNoReloadRegionForGrpcWhenCtxCanceled",
   "client-go::internal/locate/region_request_test.go:916:TestRegionRequestToSingleStore/TestCloseConnectionOnStoreNotMatch",
 ]
 depends_on = []
