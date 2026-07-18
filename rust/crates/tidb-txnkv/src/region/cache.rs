@@ -73,7 +73,7 @@ where
             return Ok(Vec::new());
         }
 
-        let unavailable = self.refresh_traversed_entries(ranges, now_seconds)?;
+        let mut unavailable = self.refresh_traversed_entries(ranges, now_seconds)?;
 
         let mut misses = cache_misses(&self.regions, ranges, &unavailable)?;
         while !misses.is_empty() {
@@ -88,7 +88,18 @@ where
             };
             let split_key = last.end_key.clone();
             for region in loaded {
+                let replaced_unavailable = self
+                    .regions
+                    .iter()
+                    .filter(|cached| {
+                        unavailable.contains(&cached.region) && ranges_intersect(cached, &region)
+                    })
+                    .map(|cached| cached.region)
+                    .collect::<Vec<_>>();
                 self.insert_loaded_at(region, now_seconds)?;
+                for replaced in replaced_unavailable {
+                    unavailable.remove(&replaced);
+                }
             }
             if split_key.is_empty() {
                 misses.clear();

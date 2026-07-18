@@ -171,6 +171,54 @@ fn batch_access_renews_only_regions_traversed_by_requested_ranges() {
     assert_eq!(*loads.lock().unwrap(), [1, 2, 2]);
 }
 
+struct StableBatchLoader {
+    location: RegionLocation,
+    batch_calls: Arc<Mutex<usize>>,
+}
+
+impl RegionLoader for StableBatchLoader {
+    fn cluster_id(&self) -> u64 {
+        42
+    }
+
+    fn load_region(&mut self, _key: &[u8]) -> Result<RegionLocation, RegionLoadError> {
+        Ok(self.location.clone())
+    }
+}
+
+impl BatchRegionLoader for StableBatchLoader {
+    fn batch_load_regions(
+        &mut self,
+        _ranges: &[KeyRange],
+        _limit: usize,
+        _need_buckets: bool,
+    ) -> Result<Vec<RegionLocation>, RegionLoadError> {
+        *self.batch_calls.lock().unwrap() += 1;
+        Ok(vec![self.location.clone()])
+    }
+}
+
+#[test]
+fn expired_batch_reload_with_identical_region_identity_remains_visible() {
+    let batch_calls = Arc::new(Mutex::new(0));
+    let stable = region(7, 3, b"a", b"z");
+    let mut cache = RegionCache::with_ttl(
+        StableBatchLoader {
+            location: stable.clone(),
+            batch_calls: Arc::clone(&batch_calls),
+        },
+        2,
+        0,
+    );
+    assert_eq!(cache.locate_key_at(b"b", 100).unwrap(), &stable);
+
+    let located = cache
+        .batch_locate_key_ranges_at(&[KeyRange::new(b"a".to_vec(), b"z".to_vec())], false, 103)
+        .unwrap();
+    assert_eq!(located, [stable]);
+    assert_eq!(*batch_calls.lock().unwrap(), 1);
+}
+
 struct SequenceLoader {
     regions: VecDeque<RegionLocation>,
     loads: Arc<Mutex<usize>>,
