@@ -1,0 +1,20 @@
+## Go `pkg/sessionctx/variable/sysvar.go` validates `SYSTEM` specially,
+## preserves the loaded `UTC` location label, and keeps fixed-offset labels.
+## `time_zone` is session state, not transaction state: a ROLLBACK must not
+## undo a SET inside the transaction. Named IANA zones remain outside this
+## deterministic seed because it has no timezone database.
+set time_zone='+00:00'
+select @@time_zone
+set time_zone='UTC'
+select @@time_zone
+begin
+set time_zone='SYSTEM'
+rollback
+select @@time_zone
+set time_zone='utc'
+select @@time_zone
+set time_zone='system'
+select @@time_zone
+set time_zone='+05:30'
+select @@time_zone
+select @@global.time_zone

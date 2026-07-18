@@ -1,0 +1,36 @@
+## Source anchors: pkg/table/table.go:489-514; pkg/executor/insert_common.go:964-1020;
+## tests/integrationtest/t/executor/autoid.test.
+## Bounded to default auto_increment_increment/offset (1/1) and INT/BIGINT.
+create table auto_diff (id bigint unsigned auto_increment primary key, v int unique) auto_increment=100
+insert into auto_diff (v) values (1), (2)
+select id, v from auto_diff order by id
+select last_insert_id(), @@last_insert_id, @@identity
+insert into auto_diff (v) values (1)
+select last_insert_id()
+insert ignore into auto_diff (v) values (1)
+select last_insert_id()
+insert into auto_diff (v) values (3)
+select id, v from auto_diff order by id
+insert into auto_diff values (200, 4)
+insert into auto_diff (v) values (5)
+begin
+insert into auto_diff (v) values (6)
+rollback
+insert into auto_diff (v) values (7)
+update auto_diff set id = 300 where v = 7
+insert into auto_diff (v) values (8)
+update auto_diff set id = 0 where v = 8
+insert into auto_diff (v) values (9)
+select id, v from auto_diff order by id
+truncate table auto_diff
+insert into auto_diff (v) values (10)
+rename table auto_diff to auto_diff_renamed
+insert into auto_diff_renamed (v) values (11)
+select id, v from auto_diff_renamed order by id
+drop table auto_diff_renamed
+create table auto_diff_renamed (id bigint unsigned auto_increment primary key, v int)
+insert into auto_diff_renamed (v) values (12)
+select id, v from auto_diff_renamed
+create table auto_option_big (id bigint unsigned auto_increment primary key) auto_increment=18446744073709551615
+insert into auto_option_big values ()
+select id from auto_option_big

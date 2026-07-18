@@ -1,0 +1,5 @@
+OK
+OK
+RS:BAR;foo
+RS:foo
+RS:0;1

@@ -1,0 +1,28 @@
+schema = "1"
+slice = "stats-global-singleton"
+status = "partial"
+target = "tidb-stats"
+ring = "plan"
+consumer = "distributed statistics merge computes global singleton counts from the existing FMSketch authority"
+test_target = "estimate_source"
+go_sources = ["pkg/statistics/estimate.go"]
+go_tests = [
+  "pkg/statistics/cmsketch_test.go:205:TestEstimateNDVByGEE",
+  "pkg/statistics/cmsketch_test.go:241:TestEstimateNDVByGEE/<generated>",
+  "pkg/statistics/cmsketch_test.go:246:TestEstimateNDVByGEE/invalid input",
+  "pkg/statistics/estimate_test.go:60:TestEstimateGlobalSingletonBySketches",
+  "pkg/statistics/estimate_test.go:72:TestEstimateGlobalSingletonBySketches/DocCommentExample",
+  "pkg/statistics/estimate_test.go:91:TestEstimateGlobalSingletonBySketches/SingleNode",
+  "pkg/statistics/estimate_test.go:103:TestEstimateGlobalSingletonBySketches/NoOverlap",
+  "pkg/statistics/estimate_test.go:119:TestEstimateGlobalSingletonBySketches/FullOverlap",
+  "pkg/statistics/estimate_test.go:136:TestEstimateGlobalSingletonBySketches/NegativeContributionIsClamped",
+  "pkg/statistics/estimate_test.go:154:TestEstimateGlobalSingletonBySketches/NilEntry",
+  "pkg/statistics/estimate_test.go:169:TestEstimateGlobalSingletonBySketches/EmptyInput",
+  "pkg/statistics/estimate_test.go:175:TestEstimateGlobalSingletonBySketches/MismatchedLengths",
+  "pkg/statistics/estimate_test.go:0:estimate_test.go",
+]
+depends_on = []
+rust_paths = [
+  "rust/crates/tidb-stats/src/estimate.rs",
+  "rust/crates/tidb-stats/tests/estimate_source.rs",
+]

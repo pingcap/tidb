@@ -1,0 +1,39 @@
+## Window function explicit RANGE frame clause (RANGE BETWEEN <bound> AND
+## <bound>, and the single-bound RANGE <bound> shorthand): shares the exact
+## same grammar/validity rules as ROWS (see window_frame_clause.txt) but
+## measures VALUE distance against the single ORDER BY key's own value
+## instead of physical row position -- confirmed via gorun that RANGE
+## BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW is byte-identical to the
+## implicit default frame (peer-group cumulative), that a PRECEDING/
+## FOLLOWING numeric offset bound requires EXACTLY one ORDER BY column
+## (zero or multiple both error), that DESC flips which side of the
+## current row's value PRECEDING/FOLLOWING extend into (since both are
+## defined relative to SCAN order, not raw value order), that DECIMAL
+## arithmetic on the ORDER BY key works, that a numeric offset against a
+## STRING-ordered column errors, and that a negative offset errors --
+## matching ROWS's own non-negative requirement. Also covers PARTITION BY,
+## no ORDER BY (whole partition is one group), GROUP BY combination, no
+## effect on a non-frame-eligible function (ROW_NUMBER), and the same
+## start-ranks-after-end static error / same-kind-inverted silent-empty
+## rules ROWS already has.
+create table t (id int, dept varchar(10), v int)
+insert into t values (1,'a',10),(2,'a',20),(3,'a',20),(4,'b',30),(5,'b',40)
+select id, v, sum(v) over (order by v range between 5 preceding and 5 following) from t
+select id, v, sum(v) over (order by v range between unbounded preceding and current row) from t
+select id, v, sum(v) over (order by v) from t
+select id, v, sum(v) over (order by v desc range between 10 preceding and 2 following) from t
+select id, v, sum(v) over (order by v range between 10 preceding and 2 following) from t
+select id, dept, v, sum(v) over (partition by dept order by v range between unbounded preceding and current row) from t
+select id, v, first_value(v) over (order by v range between 1 preceding and 1 following) from t
+select id, v, row_number() over (order by v range between 1 preceding and 1 following) from t
+select dept, sum(v) s, sum(sum(v)) over (order by dept range between unbounded preceding and current row) from t group by dept
+select id, v, sum(v) over (range between unbounded preceding and current row) from t
+select id, v, sum(v) over (order by v range between 2 following and 1 following) from t
+create table d (id int, amt decimal(10,2))
+insert into d values (1,10.50),(2,12.00),(3,15.00)
+select id, amt, sum(amt) over (order by amt range between 2.00 preceding and 2.00 following) from d
+select id, v, sum(v) over (order by v range between current row and 1 preceding) from t
+select id, sum(v) over (range between 5 preceding and 5 following) from t
+select id, sum(v) over (order by dept, v range between 5 preceding and 5 following) from t
+select id, sum(v) over (order by dept range between 5 preceding and 5 following) from t
+select id, v, sum(v) over (order by v range between -5 preceding and 5 following) from t

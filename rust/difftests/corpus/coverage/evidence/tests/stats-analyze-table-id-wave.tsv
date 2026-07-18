@@ -1,0 +1,3 @@
+# Source-owned statistics analyze-table identity test evidence.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test_file	pkg/statistics/main_test.go	0	main_test.go	PARTIAL	stats-analyze-table-id-wave	rust/crates/tidb-stats/tests/analyze_table_id_source.rs	The Go package has no dedicated AnalyzeTableID test; Rust tests cover table-versus-partition selection, exact diagnostic formatting, field equality, and the source nil/nil/one-sided nil cases, while executor/handle integration remains open.

@@ -1,0 +1,6 @@
+## Go parser vectors: pkg/parser/differential_test.go:664-665.
+## Basic table-level KEY and INDEX spellings restore as INDEX. The third
+## vector additionally verifies declaration order with a PRIMARY KEY.
+CREATE TABLE t (a INT, INDEX idx_a (a))
+CREATE TABLE t (a INT, KEY idx_a (a), INDEX (a))
+CREATE TABLE t (a INT, b INT, KEY idx_ab (a, b), PRIMARY KEY (a), INDEX (b))

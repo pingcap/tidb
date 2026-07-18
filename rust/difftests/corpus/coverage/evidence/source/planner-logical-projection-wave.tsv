@@ -1,0 +1,3 @@
+# Source-owned evidence fragment for planner-logical-projection-wave.
+# source_path	status	owner	evidence_artifact	note
+pkg/planner/core/operator/logicalop/logical_projection.go	PARTIAL	planner-logical-projection-wave	rust/crates/tidb-planner/src/logical_projection.rs	Ports generated LogicalProjection Hash64/Equals identity: Projection tag, schema and ordered Exprs nil/present framing, normalized column-expression identity, CalculateNoDelay, and Proj4Expand; arbitrary expression metadata/evaluation, projection rewrites/pruning, plan context, and runtime execution remain external.

@@ -1,0 +1,58 @@
+schema = "1"
+slice = "datatype-core-time-authority"
+status = "blocked"
+target = "tidb-datatype"
+ring = "result"
+consumer = "single CoreTime calendar, arithmetic, week, timezone, and DST authority; blocked until the distinct time.go CoreTime constructor/bit layout, Duration clock value, and error identities are owned without substituting codec PackedTime"
+test_target = "core_time_source"
+go_sources = ["pkg/types/core_time.go"]
+go_tests = [
+  "pkg/types/core_time_test.go:24:TestWeekBehaviour",
+  "pkg/types/core_time_test.go:34:TestWeek",
+  "pkg/types/core_time_test.go:51:TestCalcDaynr",
+  "pkg/types/core_time_test.go:60:TestCalcTimeTimeDiff",
+  "pkg/types/core_time_test.go:99:TestCompareTime",
+  "pkg/types/core_time_test.go:118:TestGetDateFromDaynr",
+  "pkg/types/core_time_test.go:147:TestMixDateAndTime",
+  "pkg/types/core_time_test.go:196:TestIsLeapYear",
+  "pkg/types/core_time_test.go:220:TestGetLastDay",
+  "pkg/types/core_time_test.go:239:TestGetFixDays",
+  "pkg/types/core_time_test.go:260:TestAddDate",
+  "pkg/types/core_time_test.go:297:TestWeekday",
+  "pkg/types/core_time_test.go:313:TestAdjustedGoTime",
+  "pkg/types/core_time_test.go:0:core_time_test.go",
+]
+depends_on = []
+evidence_prerequisites = [
+  { capability = "fsp-authority", evidence_owner = "datatype-fsp-source-wave", kind = "source", anchor = "pkg/types/fsp.go", minimum_status = "COVERED" },
+  { capability = "duration-clock-authority", evidence_owner = "codec-duration-source-wave", kind = "test", anchor = "pkg/types/time_test.go:1033:TestDurationClock", minimum_status = "COVERED" },
+  { capability = "core-time-support-authority", evidence_owner = "datatype-core-time-support", kind = "source", anchor = "pkg/types/time.go", minimum_status = "COVERED" },
+  { capability = "types-error-authority", evidence_owner = "datatype-error-authority", kind = "source", anchor = "pkg/types/errors.go", minimum_status = "COVERED" },
+]
+support_anchors = [
+  "pkg/types/time.go:180:FromDate",
+  "pkg/types/time.go:235:CoreTime bit-field offsets and widths",
+  "pkg/types/time.go:253:CoreTime bit-field masks",
+  "pkg/types/time.go:1297:NewDuration",
+  "pkg/types/time.go:1305:Duration",
+  "pkg/types/time.go:1859:splitDuration",
+  "pkg/types/errors.go:25:TimeStr",
+  "pkg/types/errors.go:65:ErrDatetimeFunctionOverflow",
+  "pkg/types/errors.go:83:ErrWrongValue",
+]
+blocked_by = [
+  "pkg/types/time.go support anchors are not function-granular queue claims; its current PARTIAL evidence covers codec Time.ToPackedUint/FromPackedUint, not CoreTime's different bit layout or FromDate",
+  "pkg/types/time_test.go:1033:TestDurationClock is only PARTIAL and the Rust datatype crate has no source-shaped public Duration value with NewDuration, Neg, Hour, and splitDuration semantics",
+  "pkg/types/errors.go is UNTRIAGED, so AddDate and AdjustedGoTime cannot yet preserve ErrDatetimeFunctionOverflow and ErrWrongValue identity",
+  "TestAdjustedGoTime requires real IANA zone transitions and ZoneBounds behavior; tidb-datatype currently has no timezone database dependency",
+]
+rust_paths = [
+  "rust/Cargo.toml",
+  "rust/Cargo.lock",
+  "rust/crates/tidb-datatype/Cargo.toml",
+  "rust/crates/tidb-datatype/src/lib.rs",
+  "rust/crates/tidb-datatype/src/core_time/mod.rs",
+  "rust/crates/tidb-datatype/src/core_time/calendar.rs",
+  "rust/crates/tidb-datatype/src/core_time/timezone.rs",
+  "rust/crates/tidb-datatype/tests/core_time_source.rs",
+]

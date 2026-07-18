@@ -1,0 +1,5 @@
+# Source-owned test-evidence fragment for datatype-fsp-source-wave.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/types/fsp_test.go	24	TestCheckFsp	COVERED	datatype-fsp-source-wave	rust/crates/tidb-datatype/src/fsp_tests.rs	Every original normalization clamp invalid-negative and wide integer assertion executes with exact values and error prefix
+go_test	pkg/types/fsp_test.go	63	TestParseFrac	COVERED	datatype-fsp-source-wave	rust/crates/tidb-datatype/src/fsp_tests.rs	Every original empty invalid numeric scale padding rounding and overflow assertion executes through the byte-preserving production parser
+go_test	pkg/types/fsp_test.go	121	TestAlignFrac	COVERED	datatype-fsp-source-wave	rust/crates/tidb-datatype/src/fsp_tests.rs	Every original positive negative short and already-wide alignment row executes through the production byte-alignment API

@@ -1,0 +1,12 @@
+#IDX 0
+SET @`x`=5
+#END
+#IDX 1
+SET @`x`=5
+#END
+#IDX 2
+SET @`X`=1+2
+#END
+#IDX 3
+SET @`x`=@`y`
+#END

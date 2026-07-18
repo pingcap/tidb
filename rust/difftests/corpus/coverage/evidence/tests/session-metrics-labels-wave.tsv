@@ -1,0 +1,3 @@
+# Source-owned session metrics label test-port evidence.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/metrics/metrics_test.go	32	TestRegisterMetrics	PARTIAL	session-metrics-labels-wave	rust/crates/tidb-exec/tests/session_metrics_source.rs	Rust vectors cover the exact delete/insert/update label order registered by the source metrics package; Prometheus counter writes, statement execution, metric deltas, and NTDML admission remain external.

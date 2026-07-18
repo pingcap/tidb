@@ -1,0 +1,3 @@
+# Source-owned test-evidence fragment for planner-logical-mem-table-wave.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/planner/core/operator/logicalop/logicalop_test/hash64_equals_test.go	416	TestLogicalMemTableHash64Equals	PARTIAL	planner-logical-mem-table-wave	rust/difftests/planner-tests/tests/logical_mem_table.rs	Rust vectors cover equal identity/hash, schema-column changes, case-folded DBName behavior, nil-versus-ID TableInfo framing, and normalized type fingerprints; extractor/columns/query-time range, infoschema, plan context, and runtime execution remain external.

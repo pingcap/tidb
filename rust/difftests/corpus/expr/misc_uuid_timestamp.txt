@@ -1,0 +1,14 @@
+## Go-backed UUID_TIMESTAMP vectors. The first eight are exactly
+## pkg/expression/builtin_miscellaneous_test.go's TestUUIDTimestamp; the
+## remaining values verify NULL/error and google/uuid.Parse's compact form.
+uuid_timestamp('5f13f854-d74a-11f0-9b7a-0ae0156bd76b')
+uuid_timestamp('c6437ef1-5b86-3a4e-a071-c2d4ad414e65')
+uuid_timestamp('a3e3b4a1-ea6d-471e-9860-8303a8b261f6')
+uuid_timestamp('271a8175-dadd-5df9-b0bd-20a4a0b441e6')
+uuid_timestamp('1f0e48c1-7860-69cc-9b3f-35f89c103d4d')
+uuid_timestamp('019b1440-87b7-7380-ab00-ce413e795004')
+uuid_timestamp('00000000-0000-0000-0000-000000000000')
+uuid_timestamp('ffffffff-ffff-ffff-ffff-ffffffffffff')
+uuid_timestamp(null)
+uuid_timestamp('6ccd780cbaba102695645b8c656024db')
+uuid_timestamp('abc')

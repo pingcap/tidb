@@ -1,0 +1,5 @@
+go_owner	rust_module	status	note
+method:pkg/parser/expr_cast_parser.go#HandParser.parseCurrentFunc	rust/crates/tidb-parser/src/expr.rs	partial	Bare LOCALTIME and LOCALTIMESTAMP are typed as nullary Expr::Func values, preserving their source names and Go restore shape inside CHECK expressions.
+tests:tests/integrationtest/t/ddl/constraint.test#50,54	rust/crates/tidb-parser/src/tests/ddl_check_time_source.rs	partial	Direct source rows cover CREATE TABLE CHECK expressions with bare LOCALTIME and LOCALTIMESTAMP and exact canonical restore.
+tests:integration_parser_golden	rust/difftests/parser-tests/tests/selectors/create/create_table_check_time_selector.rs	partial	Dynamic selector covers both accepted single-statement CREATE TABLE rows with bare time keywords in CHECK expressions.
+execution capability	rust/crates/tidb-exec/src/ddl_runtime.rs	partial	CHECK expression semantic validation remains an executor boundary; this slice only closes parser and restore parity before mutation.

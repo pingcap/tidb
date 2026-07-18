@@ -1,0 +1,6 @@
+go_owner	rust_module	status	note
+method:pkg/parser/dml_parser.go#HandParser.parseAssignment	rust/crates/tidb-parser/src/dml.rs	covered	Go routes every UPDATE assignment RHS through parseExprOrDefault, including joined and derived-table forms; Rust now preserves bare DEFAULT as a typed zero-argument placeholder.
+method:pkg/parser/ast/dml.go#Assignment.Restore	rust/crates/tidb-ast/src/expr.rs	covered	The shared Expr restore emits the zero-argument DEFAULT placeholder in Assignment SET clauses exactly as Go's Assignment.Restore does.
+tests:tests/integrationtest/t/planner/core/integration.test#89,942	rust/crates/tidb-parser/src/tests/update_default_source.rs	covered	Direct source rows cover derived-table and joined UPDATE assignments with bare DEFAULT and exact canonical restore.
+tests:integration_parser_golden	rust/difftests/parser-tests/tests/selectors/dml/joined_update_default_selector.rs	covered	Dynamic selector covers the two accepted single-statement joined UPDATE rows; the other three UPDATE queue parse failures are unrelated boundaries.
+execution capability	rust/crates/tidb-exec/src/dml.rs	covered	Multi-table UPDATE resolves each bare DEFAULT against its target table's declared column default; derived-table targets remain Unsupported before relation construction or mutation.

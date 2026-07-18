@@ -1,0 +1,10 @@
+STR:MySQL
+STR:g
+STR:&
+STR:
+STR:g
+STR:&
+NULL
+NULL
+NULL
+NULL

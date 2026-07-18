@@ -1,0 +1,47 @@
+## Source vectors from pkg/expression/builtin_op_test.go's TestLogicAnd and
+## TestLogicOr. Logical operands use TiDB's ETInt numeric-prefix coercion:
+## false/true dominate AND/OR respectively, otherwise NULL propagates.
+1 and 1
+1 and 0
+0 and 1
+0 and 0
+2 and -1
+'a' and '0'
+'a' and '1'
+'1a' and '0'
+'1a' and '1'
+0 and null
+null and 0
+null and 1
+0.001 and 0
+0.001 and 1
+null and 0.000
+null and 0.001
+0.000001 and 0
+0.000001 and 1
+0.000000 and null
+0.000001 and null
+1 or 1
+1 or 0
+0 or 1
+0 or 0
+2 or -1
+'a' or '0'
+'a' or '1'
+'1a' or '0'
+'1a' or '1'
+'0.0a' or 0
+'0.0001a' or 0
+1 or null
+null or 1
+null or 0
+0.000 or 0
+0.001 or 0
+null or 0.000
+null or 0.001
+0.000000 or 0
+0.000000 or 1
+0.000000 or null
+0.000001 or 0
+0.000001 or 1
+0.000001 or null

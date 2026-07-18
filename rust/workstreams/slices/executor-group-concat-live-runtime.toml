@@ -1,0 +1,39 @@
+schema = "1"
+slice = "executor-group-concat-live-runtime"
+status = "partial"
+target = "tidb-exec"
+ring = "result"
+consumer = "Database GROUP_CONCAT execution consumes one canonical plain, DISTINCT, ordered, spillable, warning-publishing partial state with Go merge and truncation semantics"
+test_target = "source_shard_a"
+go_sources = ["pkg/executor/aggfuncs/func_group_concat.go"]
+go_tests = [
+  "pkg/executor/aggfuncs/func_group_concat_test.go:0:func_group_concat_test.go",
+  "pkg/executor/aggfuncs/func_group_concat_test.go:37:TestMergePartialResult4GroupConcat",
+  "pkg/executor/aggfuncs/func_group_concat_test.go:42:TestGroupConcat",
+  "pkg/executor/aggfuncs/func_group_concat_test.go:66:TestMemGroupConcat",
+  "pkg/executor/aggfuncs/func_group_concat_test.go:81:TestMemGroupConcat/<generated>",
+  "pkg/executor/aggfuncs/spill_helper_test.go:748:TestBasePartialResult4GroupConcat",
+]
+depends_on = []
+evidence_prerequisites = [
+  { capability = "aggregate-kind-authority", evidence_owner = "expression-aggregate-and-field-resolution", kind = "source", anchor = "pkg/expression/aggregation/aggregation.go", minimum_status = "PARTIAL" },
+  { capability = "datum-scalar-authority", evidence_owner = "datatype-value-context-and-format", kind = "source", anchor = "pkg/types/datum.go", minimum_status = "PARTIAL" },
+  { capability = "warning-publication-authority", evidence_owner = "session-warning-status-publication", kind = "source", anchor = "pkg/util/context/warn.go", minimum_status = "PARTIAL" },
+]
+rust_paths = [
+  "rust/crates/tidb-exec/src/group_concat.rs",
+  "rust/crates/tidb-exec/src/aggregate.rs",
+  "rust/crates/tidb-exec/src/aggregate/runtime/group_concat/mod.rs",
+  "rust/crates/tidb-exec/src/aggregate/runtime/group_concat/plain.rs",
+  "rust/crates/tidb-exec/src/aggregate/runtime/group_concat/distinct.rs",
+  "rust/crates/tidb-exec/src/aggregate/runtime/group_concat/ordered.rs",
+  "rust/crates/tidb-exec/src/aggregate/runtime/group_concat/spill.rs",
+  "rust/crates/tidb-exec/tests/group_concat_source.rs",
+  "rust/crates/tidb-exec/tests/group_concat_live_source.rs",
+  "rust/crates/tidb-exec/tests/source_shard_a.rs",
+  "rust/difftests/corpus/coverage/evidence/source/executor-group-concat-live-runtime.tsv",
+  "rust/difftests/corpus/coverage/evidence/tests/executor-group-concat-live-runtime.tsv",
+  "rust/difftests/corpus/coverage/evidence/transfers/executor-group-concat-live-runtime.tsv",
+  "rust/difftests/corpus/coverage/evidence/source/executor-group-concat-wave.tsv",
+  "rust/difftests/corpus/coverage/evidence/tests/executor-group-concat-wave.tsv",
+]

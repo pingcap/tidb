@@ -1,0 +1,4 @@
+# Source-owned rowcodec framing evidence.
+# source_path	status	owner	evidence_artifact	note
+pkg/util/rowcodec/common.go	PARTIAL	codec-row-layout-wave	rust/crates/tidb-codec/src/row_layout.rs	CodecVer, IsNewFormat, and IsRowKey are source-shaped; dependency-closed row header/ID/offset framing is exposed without runtime keyspace policy, typed Datum conversion, checksum calculation, or encoder/decoder ownership.
+pkg/util/rowcodec/row.go	PARTIAL	codec-row-layout-wave	rust/crates/tidb-codec/src/row_layout.rs	The six-byte header, large/small metadata widths, sorted ID partitions, monotonic end offsets, opaque data boundary, checksum trailer framing, binary-search column lookup, and default-null decision are ported; typed row encoding/decoding, schema defaults, handles, and checksum calculation remain open.

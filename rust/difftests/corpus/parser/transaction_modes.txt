@@ -1,0 +1,4 @@
+## Go parser tests pkg/parser/parser_test.go:1146-1147. Explicit BEGIN modes
+## have distinct AST restore text from an unqualified BEGIN/START TRANSACTION.
+BEGIN OPTIMISTIC
+BEGIN PESSIMISTIC

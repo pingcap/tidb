@@ -1,0 +1,9 @@
+#IDX 0
+CREATE TABLE `t` (`a` INT,INDEX `idx_a`(`a`))
+#END
+#IDX 1
+CREATE TABLE `t` (`a` INT,INDEX `idx_a`(`a`),INDEX(`a`))
+#END
+#IDX 2
+CREATE TABLE `t` (`a` INT,`b` INT,INDEX `idx_ab`(`a`, `b`),PRIMARY KEY(`a`),INDEX(`b`))
+#END

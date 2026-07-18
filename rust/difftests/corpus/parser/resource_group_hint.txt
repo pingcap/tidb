@@ -1,0 +1,9 @@
+## RESOURCE_GROUP(name) -- a single bare identifier argument, always
+## back-quoted on restore (real TiDB's own WriteName). No @qb_name
+## suffix accepted on the argument itself -- real TiDB's own
+## parseResourceGroupHint only ever calls parseIdentifier, never
+## parseHintTable.
+select /*+ resource_group(rg1) */ * from t1
+select /*+ resource_group(default) */ * from t1
+select /*+ resource_group(rg1) resource_group(default) */ * from t1
+select DB, RESOURCE_GROUP from information_schema.processlist where DB = 'x'

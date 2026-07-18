@@ -1,0 +1,11 @@
+## `GROUP BY expr ASC|DESC` is a TiDB compatibility-only no-op gated by
+## `tidb_enable_noop_functions`. The default rejects either explicit
+## direction; ON accepts both while preserving the ordinary grouping order.
+## The session-variable gate is defined in pkg/sessionctx/variable/noop.go;
+## the statement/result contract is confirmed against gorun.
+create table group_direction (a int, b int)
+insert into group_direction values (3,1),(1,2),(2,3)
+select a from group_direction group by a asc
+set tidb_enable_noop_functions = on
+select a from group_direction group by a asc
+select a from group_direction group by a desc

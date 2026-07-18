@@ -1,0 +1,3 @@
+# Source-owned statistics row-estimate arithmetic test evidence.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/statistics/statistics_test.go	136	TestMergeHistogram	PARTIAL	stats-row-estimate-wave	rust/crates/tidb-stats/tests/row_estimate_source.rs	The Go statistics range subcases around lines 234 and 313 consume RowEstimate results indirectly; the Rust tests directly pin constructor, field-wise arithmetic, ordering clamp, positive skew, and negative-skew source behavior. Full histogram/planner callers remain open.

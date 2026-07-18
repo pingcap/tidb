@@ -1,0 +1,3 @@
+# Source-owned stats-meta count metadata evidence.
+# source_path	status	owner	evidence_artifact	note
+pkg/statistics/handle/storage/read.go	PARTIAL	stats-meta-wave	rust/crates/tidb-stats/src/stats_meta.rs	The Rust leaf ports StatsMetaCountAndModifyCount and StatsMetaCountAndModifyCountForUpdate from lines 44-82: exact normal/locking query selectors, empty-row isNull sentinel, and first-row count/modify_count conversion; SQL execution, transactions, row decoding, DDL concurrency, and statistics-handle lifecycle remain external.

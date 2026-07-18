@@ -1,0 +1,3 @@
+# Source-owned evidence fragment for planner-handle-cols-wave.
+# source_path	status	owner	evidence_artifact	note
+pkg/planner/util/handle_cols.go	PARTIAL	planner-handle-cols-wave	rust/crates/tidb-planner/src/handle_cols.rs	Ports CommonHandleCols and IntHandleCols Hash64/Equals field order, nil/present metadata and column framing, ordered columns, and clone identity over normalized TableInfo/IndexInfo IDs and columns; handle encoding, row/datums, index truncation, full catalog metadata, compare/collation, schema resolution, and runtime storage integration remain external.

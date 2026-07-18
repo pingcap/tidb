@@ -1,0 +1,24 @@
+## Go source: pkg/sessionctx/variable/sysvar.go:2905-2907;
+## sysvar_test.go:388-408; variable.go:402-417.
+## This models the source-tested typed session-variable contract only. ON and
+## WARN affect TiDB client protocol multi-statement handling, which remains
+## outside this executor's single-statement entrypoint.
+select @@tidb_multi_statement_mode, @@session.tidb_multi_statement_mode, @@global.tidb_multi_statement_mode
+set tidb_multi_statement_mode = on
+select @@tidb_multi_statement_mode
+set tidb_multi_statement_mode = 0
+select @@tidb_multi_statement_mode
+set tidb_multi_statement_mode = '2'
+select @@tidb_multi_statement_mode
+set tidb_multi_statement_mode = true
+select @@tidb_multi_statement_mode
+set tidb_multi_statement_mode = default
+select @@tidb_multi_statement_mode
+set tidb_multi_statement_mode = 'TRUE'
+select @@tidb_multi_statement_mode
+set tidb_multi_statement_mode = 3
+select @@tidb_multi_statement_mode
+begin
+set tidb_multi_statement_mode = warn
+rollback
+select @@tidb_multi_statement_mode

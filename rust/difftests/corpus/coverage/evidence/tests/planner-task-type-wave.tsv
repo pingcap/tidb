@@ -1,0 +1,3 @@
+# Source-owned test-evidence fragment for planner-task-type-wave.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/planner/property/physical_property_test.go	26	TestNeedEnforceExchangerWithHashByEquivalence	PARTIAL	planner-task-type-wave	rust/difftests/planner-tests/tests/task_type.rs	Direct Rust vectors cover all known task-kind raw values, labels, Display output, and unknown-value preservation; the Go functional-dependency/property exchanger logic remains open.

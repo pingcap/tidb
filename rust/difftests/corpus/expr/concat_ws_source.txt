@@ -1,0 +1,8 @@
+concat_ws(null, null)
+concat_ws(null, 'a', 'b')
+concat_ws(',', 'a', 'b', 'hello', '$^%')
+concat_ws('|', 'a', null, 'b', 'c')
+concat_ws(',', 'a', ',', 'b', 'c')
+concat_ws(',', 'a', 'b', 1, 2, 1.1, 0.11, cast(1.1 as decimal(3, 1)))
+concat_ws(0x2c, 0x61, 'b')
+concat_ws(',', 'a', '')

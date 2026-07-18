@@ -1,0 +1,3 @@
+#IDX 227
+SELECT TO_DAYS(`a`) FROM `t`
+#END

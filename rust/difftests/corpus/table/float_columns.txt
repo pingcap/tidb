@@ -1,0 +1,24 @@
+## MERGED TOPIC: statements below share mutable table state -- run against
+## one fresh Database like every other topic. Float/Double columns:
+## storage/comparison/arithmetic/ordering/MAX-MIN/SUM/AVG all round-trip
+## via native f64, matching real TiDB (verified via gorun, not assumed);
+## AVG over a real DOUBLE column is plain sum/count, NOT MySQL's Decimal
+## div_precision_increment scale-growth rule
+create table price (id int, amt double)
+insert into price values (1, 1.5e2)
+insert into price values (2, 2.5e2)
+insert into price values (3, 4e2)
+select id, amt from price
+select id, amt from price where amt > 200
+select amt from price order by amt desc
+select amt + 1 from price where id = 1
+select max(amt), min(amt) from price
+select amt from price where amt = 1.5e2
+select sum(amt) from price
+select avg(amt) from price
+select sum(amt) from price where id < 1
+create table sale (cat varchar(9), amt double)
+insert into sale values ('a', 10.5e0), ('a', 5.25e0), ('b', 3e0)
+select cat, sum(amt) from sale group by cat
+select cat, avg(amt) from sale group by cat
+select sum(amt) from sale where cat = 'z'

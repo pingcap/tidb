@@ -1,0 +1,24 @@
+## Source vectors from pkg/expression/builtin_op_test.go's TestLogicXor.
+## Logical XOR evaluates both operands as ETInt: strings take MySQL's numeric
+## prefix, nonzero decimal/float values are true, and NULL always propagates.
+1 xor 1
+1 xor 0
+0 xor 1
+0 xor 0
+2 xor -1
+'a' xor '0'
+'a' xor '1'
+'1a' xor '0'
+'1a' xor '1'
+0 xor null
+null xor 0
+null xor 1
+0.5000 xor 0.4999
+0.5000 xor 1.0
+0.4999 xor 1.0
+null xor 0.000
+null xor 0.001
+0.000001 xor 0.00001
+0.000001 xor 1
+0.000000 xor null
+0.000001 xor null

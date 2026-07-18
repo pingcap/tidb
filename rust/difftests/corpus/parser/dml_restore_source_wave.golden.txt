@@ -1,0 +1,27 @@
+#IDX 0
+SELECT 1 LIMIT 10
+#END
+#IDX 1
+SELECT 1 LIMIT 10,20
+#END
+#IDX 2
+SELECT 1 LIMIT 10,20
+#END
+#IDX 3
+SELECT *
+#END
+#IDX 4
+SELECT `t`.*
+#END
+#IDX 5
+SELECT `testdb`.`t`.*
+#END
+#IDX 6
+SELECT `col` AS `a`
+#END
+#IDX 7
+SELECT `col`+1 AS `a`
+#END
+#IDX 8
+SELECT `t`.*,`s`.`col` AS `a`
+#END

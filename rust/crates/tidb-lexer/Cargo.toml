@@ -1,0 +1,13 @@
+[package]
+name = "tidb-lexer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Faithful Rust port of the TiDB SQL scanner (pkg/parser/lexer.go)."
+
+[lints]
+workspace = true
+
+[dependencies]

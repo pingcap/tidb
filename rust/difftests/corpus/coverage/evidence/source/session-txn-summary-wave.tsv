@@ -1,0 +1,3 @@
+# Source-owned transaction-history summary evidence.
+# source_path	status	owner	evidence_artifact	note
+pkg/session/txninfo/summary.go	PARTIAL	session-txn-summary-wave	rust/crates/tidb-exec/src/txn_summary.rs	FNV-1a digesting, distinct-sequence LRU promotion, capacity eviction, and resize are typed; JSON Datum formatting, minimum-duration filtering, test-only Clean/global Recorder ownership, and live transaction/infoschema wiring remain external.

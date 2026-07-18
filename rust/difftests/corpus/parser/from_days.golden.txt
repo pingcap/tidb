@@ -1,0 +1,3 @@
+#IDX 0
+SELECT FROM_DAYS(`a`) FROM `t`
+#END

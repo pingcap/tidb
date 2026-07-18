@@ -1,0 +1,3 @@
+# Source-owned test-evidence fragment for the TIMESTAMPDIFF source wave.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/expression/builtin_time_test.go	2130	TestTimestampDiff	PARTIAL	time-timestamp-diff-source-wave	rust/crates/tidb-expr/src/time_fn/calendar.rs	All three valid scalar unit rows, both invalid zero-date rows, and NULL input are covered with exact integer/NULL results; typed DATETIME conversion, StatementContext warning behavior, IgnoreZeroInDate/IgnoreTruncateErr state, and function metadata remain outside the value-only Datum boundary

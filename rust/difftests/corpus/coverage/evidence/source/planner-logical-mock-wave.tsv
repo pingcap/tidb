@@ -1,0 +1,3 @@
+# Source-owned evidence fragment for planner-logical-mock-wave.
+# source_path	status	owner	evidence_artifact	note
+pkg/planner/core/operator/logicalop/logical_mock.go	PARTIAL	planner-logical-mock-wave	rust/crates/tidb-planner/src/logical_mock.rs	Ports test-only MockDataSource.Init replacement of embedded BaseLogicalPlan metadata: fixed mockDS plan type, query-block offset zero, and caller PlanContext retention through an opaque token; plan-ID allocation, task maps, schema, and physical mock datasource planning remain external.

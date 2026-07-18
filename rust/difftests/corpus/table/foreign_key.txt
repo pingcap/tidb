@@ -1,0 +1,32 @@
+## MERGED TOPIC: statements below share mutable table state -- run against
+## one fresh Database like every other topic. FOREIGN KEY: only the
+## "child side" is enforced (an INSERT/UPDATE into the table THAT DECLARES
+## the constraint must reference an existing parent row, or have a NULL
+## referencing column, MATCH SIMPLE) -- DELETE/UPDATE on the PARENT table
+## does not cascade/restrict/null dependents (out of scope, see
+## ForeignKeyConstraint's own doc); parent tables are always created
+## before their children (creating a child before its parent's own table
+## exists is itself an error in real TiDB -- a known, accepted divergence
+## from this seed executor, which defers all referential resolution to
+## check-time rather than validating at CREATE TABLE time)
+create table parent (id int primary key)
+create table child (id int, pid int, foreign key (pid) references parent(id))
+insert into parent values (1)
+insert into child values (10, 1)
+insert into child values (20, 99)
+insert into child values (30, null)
+select * from child
+update child set pid = 1 where id = 30
+update child set pid = 99 where id = 30
+select * from child
+## Composite FK: MATCH SIMPLE -- ANY null local column skips the check
+## entirely, even in a composite key (confirmed against real TiDB, not
+## assumed)
+create table cparent (x int, y int, primary key(x, y))
+create table cchild (a int, b int, foreign key (a, b) references cparent(x, y))
+insert into cparent values (1, 1)
+insert into cchild values (1, null)
+insert into cchild values (null, 1)
+insert into cchild values (1, 1)
+insert into cchild values (1, 2)
+select * from cchild

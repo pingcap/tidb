@@ -1,0 +1,3 @@
+# Source-owned process-information test-port evidence.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/session/sessmgr/processinfo_test.go	31	TestProcessInfoShallowCP	PARTIAL	session-process-info-wave	rust/crates/tidb-exec/tests/process_info_source.rs	Direct Rust vectors cover the source identity fields, callback identity, and shared owner pointers; tracker accounting and live session-manager behavior remain external.

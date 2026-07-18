@@ -1,0 +1,26 @@
+// Source: github.com/pingcap/tipb/proto/resourcetag.proto
+//
+// The upstream file also imports gogoproto/rustproto option definitions.  Those
+// options control Go/rust-protobuf code generation and have no wire meaning;
+// this checked-in prost input keeps the exact package, field numbers, scalar
+// types, enum values, and comments while omitting generator-specific options.
+syntax = "proto2";
+
+package tipb;
+
+message ResourceGroupTag {
+  optional bytes sql_digest = 1;
+  optional bytes plan_digest = 2;
+
+  // Use to label the handling kv type of the request.
+  // This is for TiKV resource_metering to collect execution information by the key label.
+  optional ResourceGroupTagLabel label = 3;
+  optional int64 table_id = 4;
+  optional bytes keyspace_name = 5;
+}
+
+enum ResourceGroupTagLabel {
+  ResourceGroupTagLabelUnknown = 0;
+  ResourceGroupTagLabelRow = 1;
+  ResourceGroupTagLabelIndex = 2;
+}

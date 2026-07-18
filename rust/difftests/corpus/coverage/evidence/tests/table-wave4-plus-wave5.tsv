@@ -1,0 +1,3 @@
+# Source-owned test-evidence fragment for table-wave4+wave5.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+integration_fixture	tests/integrationtest/t/executor/foreign_key.test	0	foreign_key.test	PARTIAL	table-wave4+wave5	rust/difftests/corpus/coverage/evidence/foreign_key.test.md	Source slices: TestForeignKeyOnInsertIgnore lines 4-11; TestForeignKey lines 42-48

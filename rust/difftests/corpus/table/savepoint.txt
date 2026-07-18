@@ -1,0 +1,89 @@
+## SAVEPOINT / ROLLBACK TO [SAVEPOINT] / RELEASE SAVEPOINT. Confirmed via
+## gorun: ROLLBACK TO restores data to the savepoint's own definition
+## point WITHOUT ending the transaction or removing the savepoint itself
+## (a repeated ROLLBACK TO the same savepoint succeeds again), but DOES
+## remove every savepoint defined AFTER it. RELEASE SAVEPOINT removes the
+## named savepoint AND every savepoint defined after it, without touching
+## data. Redefining an EXISTING savepoint name moves it to the END of the
+## savepoint list (removing the old entry, not updating in place) --
+## confirmed via a probe where rolling back to an EARLIER savepoint
+## first, then to a savepoint that was LATER redefined, still succeeds
+## (the redefinition didn't disturb the earlier one's own position), but
+## rolling back to the redefined one FIRST then invalidates the earlier
+## one (since the redefinition moved it to the end, after the earlier
+## one). Savepoint names match case-insensitively. A SAVEPOINT outside an
+## explicit transaction is a harmless no-op that records nothing (ROLLBACK
+## TO/RELEASE immediately after still errors as unknown). Every DDL
+## statement's own implicit commit clears all savepoints, same as it
+## already clears the whole transaction snapshot.
+create table t (id int)
+begin
+insert into t values (1)
+savepoint sp1
+insert into t values (2)
+select * from t
+rollback to sp1
+select * from t
+insert into t values (3)
+commit
+select * from t
+begin
+insert into t values (4)
+savepoint sp1
+insert into t values (5)
+savepoint sp2
+insert into t values (6)
+rollback to sp1
+select * from t
+rollback to sp1
+select * from t
+rollback to sp2
+rollback
+select * from t
+begin
+insert into t values (7)
+savepoint sp1
+insert into t values (8)
+release savepoint sp1
+rollback to sp1
+commit
+select * from t
+begin
+rollback to nosuch
+commit
+release savepoint nosuch2
+begin
+savepoint sp1
+create table t2 (id int)
+rollback to sp1
+commit
+begin
+savepoint SP1
+insert into t values (9)
+rollback to sp1
+select * from t
+commit
+begin
+insert into t values (10)
+savepoint sp_a
+insert into t values (11)
+savepoint sp_b
+insert into t values (12)
+savepoint sp_a
+insert into t values (13)
+rollback to sp_b
+select * from t
+rollback
+begin
+insert into t values (14)
+savepoint sp_a
+insert into t values (15)
+savepoint sp_b
+insert into t values (16)
+savepoint sp_a
+insert into t values (17)
+rollback to sp_a
+select * from t
+rollback to sp_b
+select * from t
+rollback

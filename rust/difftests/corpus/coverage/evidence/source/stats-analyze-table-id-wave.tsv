@@ -1,0 +1,3 @@
+# Source-owned statistics analyze-table identity evidence.
+# source_path	status	owner	evidence_artifact	note
+pkg/statistics/analyze.go	PARTIAL	stats-analyze-table-id-wave	rust/crates/tidb-stats/src/analyze_table_id.rs	The Rust leaf ports NonPartitionTableID, AnalyzeTableID fields, GetStatisticsID, IsPartitionTable, String, and Equals from lines 21-60. Analyze scheduling, partition metadata resolution, storage persistence, and AnalyzeResult lifecycle remain explicit future owners.

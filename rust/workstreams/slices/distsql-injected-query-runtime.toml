@@ -1,0 +1,24 @@
+schema = "1"
+slice = "distsql-injected-query-runtime"
+status = "retired"
+target = "tidb-distsql"
+ring = "result"
+consumer = "Superseded by distsql-query-response-runtime; retained only as its checked ownership-transfer predecessor for pkg/distsql/distsql.go"
+test_target = "query_runtime_source"
+go_sources = ["pkg/distsql/distsql.go"]
+go_tests = [
+  "pkg/distsql/BUILD.bazel:57:distsql_test",
+  "pkg/distsql/distsql_test.go:0:distsql_test.go",
+  "pkg/distsql/distsql_test.go:42:TestSelectNormal",
+  "pkg/distsql/distsql_test.go:61:TestSelectMemTracker",
+  "pkg/distsql/distsql_test.go:73:TestSelectNormalChunkSize",
+  "pkg/distsql/distsql_test.go:82:TestSelectWithRuntimeStats",
+  "pkg/distsql/distsql_test.go:106:TestSelectResultRuntimeStats",
+  "pkg/distsql/distsql_test.go:154:TestAnalyze",
+  "pkg/distsql/distsql_test.go:179:TestChecksum",
+  "pkg/distsql/main_test.go:0:main_test.go",
+  "pkg/distsql/main_test.go:24:TestMain",
+]
+depends_on = []
+evidence_prerequisites = []
+rust_paths = ["rust/difftests/corpus/coverage/evidence/transfers/distsql-query-response-runtime.tsv"]

@@ -1,0 +1,43 @@
+## FOR UPDATE / FOR SHARE / LOCK IN SHARE MODE locking clauses. LOCK IN
+## SHARE MODE (real MySQL's older, simpler syntax) normalizes to FOR
+## SHARE on restore and never accepts OF/NOWAIT/SKIP LOCKED (those are
+## genuine ParseErrors on that spelling, confirmed via godump restore —
+## not exercised here, since the parser corpus itself must never contain
+## a statement the Go parser rejects).
+select * from t for update
+select * from t lock in share mode
+select * from t where a = 1 for update
+select * from t for update nowait
+select * from t for update skip locked
+select * from t for share
+select * from t for share nowait
+select * from t for share skip locked
+select * from t for update of t
+select * from t for update of t1, t2
+select * from db.t for update of db.t
+select * from t for update of t1 nowait
+select * from t1, t2 for update
+select a from t where a in (select b from t2 for update)
+## ORDER BY / LIMIT / the locking clause parse in ANY relative order
+## (confirmed via godump restore: LIMIT before ORDER BY, and the locking
+## clause before or after either, all parse), always restoring in a
+## FIXED canonical order — ORDER BY, LIMIT, then the lock for a plain
+## SELECT (real SQL clause order).
+select * from t order by a for update
+select * from t for update order by a
+select * from t limit 1 for update
+select * from t for update limit 1
+select * from t limit 1 order by a
+## A locking clause on a NON-final UNION term attaches to that term
+## specifically (a following set operator disambiguates it); on the
+## FINAL term it's the WHOLE statement's own, restoring BEFORE ORDER BY/
+## LIMIT there -- the OPPOSITE order from a plain SELECT's own lock
+## above, both confirmed via godump restore.
+select * from t union select * from t2 for update
+select * from t for update union select * from t2
+select * from t order by a for update union select * from t2
+select * from t union select * from t2 order by a for update
+select * from t union select * from t2 for update order by a
+select * from t union select * from t2 limit 1 order by a
+select * from t union select * from t2 limit 1 for update order by a
+select * from t1 union select * from t2 union select * from t3 for update

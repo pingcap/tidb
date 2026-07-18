@@ -1,0 +1,26 @@
+## USE / FORCE / IGNORE INDEX table hints (KEY is a true synonym for
+## INDEX, normalizing to INDEX on restore). An optional FOR JOIN/FOR
+## ORDER BY/FOR GROUP BY scope qualifier comes right after the kind
+## keyword, before the paren name list. The name list may be EMPTY (real
+## grammar meaning "use no index") and each name may be a keyword-shaped
+## identifier. Multiple hints can stack on one table, each a complete,
+## independent unit repeating its own USE/FORCE/IGNORE INDEX keyword.
+## Shared by SELECT's FROM clause and single-table UPDATE/DELETE.
+select * from t use index (idx1) where a = 1
+select * from t force index (idx1) join t2 on t.a = t2.a
+select * from t use index ()
+select * from t use index (primary)
+select * from t use index (asc)
+select * from t use index (key)
+select * from t ignore index (idx1), t2 use index (idx2)
+select * from t use index for join (idx1)
+select * from t use index for order by (idx1)
+select * from t use index for group by (idx1)
+select * from t as x use index (idx1)
+select * from t use index (idx1) ignore index (idx2)
+select * from t use index (a) use index for order by (b)
+select * from t force key (idx1)
+select * from t ignore key (idx1)
+select * from t use index (idx1, idx2)
+update t use index (idx1) set a = 1
+delete from t use index (idx1) where a = 1

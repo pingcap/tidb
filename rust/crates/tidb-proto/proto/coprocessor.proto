@@ -1,0 +1,116 @@
+// Source: github.com/pingcap/kvproto/proto/coprocessor.proto
+//
+// This is a dependency-closed projection of the coprocessor.Request wire
+// contract consumed by TiDB's coprocessor worker. The nested kvrpcpb.Context
+// has a dependency-closed owner in this crate and remains encoded bytes at
+// this established envelope boundary; protobuf messages and bytes share the
+// exact length-delimited field-1 wire shape. Table-shard metadata remains
+// outside this leaf.
+syntax = "proto3";
+
+package coprocessor;
+
+import "errorpb.proto";
+import "kvrpcpb.proto";
+
+// [start, end)
+message KeyRange {
+  bytes start = 1;
+  bytes end = 2;
+}
+
+// KeyRange with an attached read_ts (version), copied from kvproto.
+message VersionedKeyRange {
+  KeyRange range = 1;
+  uint64 read_ts = 2;
+}
+
+// Region epoch copied from kvproto/metapb.proto. This narrow projection keeps
+// the StoreBatchTask wire shape dependency-closed until the full metapb owner
+// is available.
+message RegionEpoch {
+  uint64 conf_ver = 1;
+  uint64 version = 2;
+}
+
+// Peer metadata copied from kvproto/metapb.proto. `role` remains an integer so
+// an unknown future enum value is preserved rather than guessed away.
+message Peer {
+  uint64 id = 1;
+  uint64 store_id = 2;
+  int32 role = 3;
+  bool is_witness = 4;
+}
+
+// A child task sent to one TiKV store in a batch coprocessor request. Field
+// numbers and nested wire types match kvproto/coprocessor.proto exactly; the
+// Rust owner stops before region routing, retries, and RPC dispatch.
+message StoreBatchTask {
+  uint64 region_id = 1;
+  RegionEpoch region_epoch = 2;
+  Peer peer = 3;
+  repeated KeyRange ranges = 4;
+  uint64 task_id = 5;
+  repeated VersionedKeyRange versioned_ranges = 6;
+  uint64 buckets_version = 7;
+}
+
+// Request sent to TiKV's coprocessor endpoint.
+//
+// Field numbers and scalar wire types match kvproto's
+// `coprocessor.Request`. The projection is deliberately narrow: it can
+// serialize the raw DAG/analyze/checksum payload and the request-level range
+// envelope without fabricating a Context, region task, or RPC client.
+message Request {
+  // Serialized kvrpcpb.Context produced by the unary request-contract owner.
+  // Keeping bytes here preserves the existing envelope API without changing
+  // the exact field number or length-delimited wire type.
+  optional bytes context = 1;
+  int64 tp = 2;
+  bytes data = 3;
+  repeated KeyRange ranges = 4;
+  bool is_cache_enabled = 5;
+  uint64 cache_if_match_version = 6;
+  uint64 start_ts = 7;
+  int64 schema_ver = 8;
+  bool is_trace_enabled = 9;
+  uint64 paging_size = 10;
+  uint64 connection_id = 12;
+  string connection_alias = 13;
+  uint64 max_keys_read = 16;
+  uint64 paging_size_bytes = 17;
+}
+
+// Dependency-closed projections of the response fields consumed by adaptive
+// paging. Field numbers match kvproto's kvrpcpb and coprocessor contracts.
+message ScanDetailV2 {
+  uint64 processed_versions_size = 8;
+  uint64 total_versions_size = 14;
+}
+
+message ExecDetailsV2 {
+  ScanDetailV2 scan_detail_v2 = 2;
+}
+
+message StoreBatchTaskResponse {
+  bytes data = 1;
+  errorpb.Error region_error = 2;
+  kvrpcpb.LockInfo locked = 3;
+  string other_error = 4;
+  uint64 task_id = 5;
+  ExecDetailsV2 exec_details_v2 = 6;
+}
+
+message Response {
+  bytes data = 1;
+  errorpb.Error region_error = 2;
+  kvrpcpb.LockInfo locked = 3;
+  string other_error = 4;
+  KeyRange range = 5;
+  bool is_cache_hit = 7;
+  uint64 cache_last_version = 8;
+  bool can_be_cached = 9;
+  ExecDetailsV2 exec_details_v2 = 11;
+  uint64 latest_buckets_version = 12;
+  repeated StoreBatchTaskResponse batch_responses = 13;
+}

@@ -1,0 +1,29 @@
+## SET name = value (a single session-variable assignment) restores
+## canonically as `SET @@SESSION.`name`=value`, even for a name that lexes
+## as a reserved keyword (`TIMESTAMP`), with case preserved verbatim, not
+## canonicalized. NOW()/CURRENT_TIMESTAMP()/CURDATE()/CURRENT_DATE()/
+## CURTIME()/CURRENT_TIME()/UTC_TIMESTAMP()/UTC_DATE()/UTC_TIME(): NOW and
+## CURDATE/CURTIME always need `()`; CURRENT_TIMESTAMP/CURRENT_DATE/
+## CURRENT_TIME/UTC_DATE/UTC_TIME/UTC_TIMESTAMP all also parse bare, with
+## no `()` at all, restoring identically to their parenthesized form.
+set timestamp = 1700000000
+set TIMESTAMP = 1700000000
+set time_zone = '+00:00'
+select now()
+select now(3)
+select current_timestamp
+select current_timestamp()
+select current_timestamp(6)
+select curdate()
+select curtime()
+select curtime(3)
+select current_date
+select current_date()
+select current_time
+select current_time(3)
+select utc_date
+select utc_date()
+select utc_time
+select utc_time(3)
+select utc_timestamp
+select utc_timestamp(3)

@@ -1,0 +1,3 @@
+#IDX 225
+SELECT DATEDIFF(`a`, `b`) FROM `t`
+#END

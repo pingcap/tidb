@@ -1,0 +1,3 @@
+# Source-owned plan-cache parameter test-port evidence.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/expression/exprstatic/evalctx_test.go	417	TestParamList	PARTIAL	session-plan-cache-params-wave	rust/crates/tidb-exec/tests/plan_cache_params_source.rs	The TestParamList cases continue through line 439; direct tests cover ordered append/index access, reset-independent snapshot values, and privacy reset; live EvalContext attachment and parameter expression evaluation remain external

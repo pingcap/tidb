@@ -1,0 +1,5 @@
+## FROM_DAYS over an actual INT table column
+create table fd (n int)
+insert into fd values (719528)
+insert into fd values (738156)
+select from_days(n) from fd order by n

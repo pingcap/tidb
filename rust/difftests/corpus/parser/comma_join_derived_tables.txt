@@ -1,0 +1,21 @@
+## A comma-chain between two DERIVED tables restores with a plain `, `
+## separator and no wrapping parens at all -- the OPPOSITE of a
+## comma-chain between plain tables, which restores as `(...) JOIN ...`.
+## Confirmed directly from real TiDB's own Join.Restore source
+## (pkg/parser/ast/dml.go), not guessed: a comma continuation's own
+## accumulated-so-far operand is always wrapped in a fresh
+## single-operand Join{right: None} node, and restore only collapses
+## that wrapper into a bare `, ` when its OWN left is specifically a
+## derived-table subquery, not a plain table reference. A third comma
+## term always reverts to the `(...) JOIN ...` form for the OUTER join,
+## since that join's own left is the already-accumulated join node, never
+## a bare derived table directly.
+select a from (select 1 a) x, (select 2 a) x
+select a from t1, t2
+select a from (select 1 a) x, t2
+select a from t1, (select 2 a) x
+select a from t1, t2, t3
+select a from (select 1 a) x, (select 2 a) y, t3
+select a from (select 1 a) x, t2, (select 2 a) y
+select a from (select 1 a) x join (select 2 a) y on x.a = y.a
+select t1.ts from (select ts from tsup use index (idx)) as t1, (select ts from tsup use index ()) as t2

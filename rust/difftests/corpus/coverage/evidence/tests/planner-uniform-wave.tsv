@@ -1,0 +1,3 @@
+# Source-owned test-evidence fragment for planner-uniform-wave.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/planner/cardinality/selectivity_test.go	2462	TestRiskEqSkewRatio	PARTIAL	planner-uniform-wave	rust/difftests/planner-tests/tests/uniform.rs	Direct Rust vectors cover the source uniform histogram average, TopN minimum fallback, out-of-range increase/deletion derivation, and RiskEqSkewRatio interpolation; mock-store statistics, session-variable publication, and full index/column integration remain open.

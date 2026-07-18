@@ -1,0 +1,3 @@
+# Source-owned direct tests for the bounded JSON_LENGTH scalar leaf.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test_file	pkg/expression/builtin_json_test.go	0	builtin_json_test.go	PARTIAL	expression-json-length-source-wave	rust/crates/tidb-expr/src/builtin_ext/json.rs	The complete representable TestJSONLength table executes directly: all 38 original rows cover scalar length-one semantics, direct-child object/array counts, exact paths, NULL and missing-path propagation, and wildcard/range/recursive multiple-selection errors; JSON typed-value domains, warning/session state, function-class construction, and vectorized execution remain outside the seed evaluator

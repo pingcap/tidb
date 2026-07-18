@@ -1,0 +1,4 @@
+# Source-owned sharded hash-join entry-map test evidence.
+# kind source_path source_line test_name status owner evidence_artifact note
+go_test	pkg/executor/join/concurrent_map_test.go	27	TestConcurrentMap	PARTIAL	executor-concurrent-entry-map-wave	rust/crates/tidb-exec/tests/concurrent_entry_map_source.rs	Rust covers the two-worker 1000-entry insertion, duplicate-key newest-to-oldest chains, lookup misses, shard count, and row identity assertions; Go lock scheduling and hash-map iteration order remain external.
+go_test	pkg/executor/join/concurrent_map_test.go	70	TestConcurrentMapMemoryUsage	PARTIAL	executor-concurrent-entry-map-wave	rust/crates/tidb-exec/tests/concurrent_entry_map_source.rs	Rust covers all 10240 inserts and deterministic portable pointer accounting; exact MemAwareMap Bytes/RealBytes constants are Go runtime ABI obligations and remain external.

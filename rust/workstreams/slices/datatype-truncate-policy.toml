@@ -1,0 +1,31 @@
+schema = "1"
+slice = "datatype-truncate-policy"
+status = "retired"
+target = "tidb-datatype"
+ring = "result"
+consumer = "Superseded by datatype-value-context-and-format; retained only as its checked ownership-transfer predecessor"
+test_target = "truncate_policy_source"
+go_sources = ["pkg/types/truncate.go"]
+go_tests = [
+  "pkg/types/binary_literal_test.go:194:TestBinaryLiteral/TestToInt",
+]
+depends_on = []
+evidence_prerequisites = [
+  { capability = "truncate-error-codes", evidence_owner = "error-catalog-and-terror-identity", kind = "source", anchor = "pkg/errno/errcode.go", minimum_status = "COVERED" },
+  { capability = "binary-literal-runtime", evidence_owner = "datatype-binary-literal-source-wave", kind = "source", anchor = "pkg/types/binary_literal.go", minimum_status = "COVERED" },
+  { capability = "mysql-error-code-catalog", evidence_owner = "error-catalog-and-terror-identity", kind = "source", anchor = "pkg/parser/mysql/errcode.go", minimum_status = "COVERED" },
+  { capability = "mysql-error-message-catalog", evidence_owner = "error-catalog-and-terror-identity", kind = "source", anchor = "pkg/parser/mysql/errname.go", minimum_status = "COVERED" },
+  { capability = "mysql-sql-error-authority", evidence_owner = "error-catalog-and-terror-identity", kind = "source", anchor = "pkg/parser/mysql/error.go", minimum_status = "PARTIAL" },
+  { capability = "mysql-sqlstate-catalog", evidence_owner = "error-catalog-and-terror-identity", kind = "source", anchor = "pkg/parser/mysql/state.go", minimum_status = "COVERED" },
+  { capability = "terror-error-identity", evidence_owner = "error-catalog-and-terror-identity", kind = "source", anchor = "pkg/parser/terror/terror.go", minimum_status = "PARTIAL" },
+]
+rust_paths = [
+  "rust/crates/tidb-datatype/src/truncate.rs",
+  "rust/crates/tidb-datatype/src/binary_literal.rs",
+  "rust/crates/tidb-datatype/src/lib.rs",
+  "rust/crates/tidb-datatype/Cargo.toml",
+  "rust/crates/tidb-datatype/tests/truncate_policy_source.rs",
+  "rust/Cargo.lock",
+  "rust/difftests/corpus/coverage/evidence/source/datatype-truncate-policy.tsv",
+  "rust/difftests/corpus/coverage/evidence/tests/datatype-truncate-policy.tsv",
+]

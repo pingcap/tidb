@@ -1,0 +1,6 @@
+## Go-backed end-to-end vectors for UUID_VERSION. The first row is the exact
+## TestUUIDVersion family; the second checks all accepted parse spellings plus
+## NULL and version-zero UUIDs. The final invalid input is an expected Go ERR.
+select uuid_version('5f13f854-d74a-11f0-9b7a-0ae0156bd76b'), uuid_version('c6437ef1-5b86-3a4e-a071-c2d4ad414e65'), uuid_version('a3e3b4a1-ea6d-471e-9860-8303a8b261f6'), uuid_version('271a8175-dadd-5df9-b0bd-20a4a0b441e6'), uuid_version('1f0e48c1-7860-69cc-9b3f-35f89c103d4d'), uuid_version('019b1440-87b7-7380-ab00-ce413e795004')
+select uuid_version('6ccd780cbaba102695645b8c656024db'), uuid_version('urn:uuid:6ccd780c-baba-1026-9564-5b8c656024db'), uuid_version('{99a9ad03-5298-11ec-8f5c-00ff90147ac3*'), uuid_version('123e4567-e89b-02d3-a456-426614174000'), uuid_version(null)
+select uuid_version('abc')

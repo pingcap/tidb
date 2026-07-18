@@ -1,0 +1,3 @@
+## DATEDIFF: the day count between two dates' DATE parts (not a lexer
+## keyword, so it's an ordinary identifier-function call, no parser change)
+select datediff(a, b) from t

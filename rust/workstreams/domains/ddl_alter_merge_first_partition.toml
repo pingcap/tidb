@@ -1,0 +1,16 @@
+schema = "2"
+domain = "ddl_alter_merge_first_partition"
+owner = "parser-alter-merge-first-partition"
+status = "partial"
+go_owners = [
+  "method:pkg/parser/ddl_alter_handlers.go#HandParser.parseMergeFirstPartition",
+]
+rust_paths = [
+  "rust/crates/tidb-parser/src/ddl.rs",
+]
+evidence_paths = [
+  "rust/difftests/corpus/coverage/evidence/domain/ddl_alter_merge_first_partition.tsv",
+]
+required_commands = [
+  "CARGO_BUILD_JOBS=12 cargo test --locked -j12 -p tidb-parser --lib",
+]

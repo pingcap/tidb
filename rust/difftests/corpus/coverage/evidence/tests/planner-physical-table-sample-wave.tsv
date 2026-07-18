@@ -1,0 +1,2 @@
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/executor/sample_test.go	111	TestTableSamplePlan	PARTIAL	planner-physical-table-sample-wave	rust/difftests/planner-tests/tests/physical_table_sample.rs	Rust vectors preserve the TableSample EXPLAIN plan type and source initialization metadata; full SQL parsing, region sampling, schema/table setup, and executor output remain external.

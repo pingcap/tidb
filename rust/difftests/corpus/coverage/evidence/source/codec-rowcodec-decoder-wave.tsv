@@ -1,0 +1,3 @@
+# Source-owned dependency-closed rowcodec decoder evidence.
+# source_path	status	owner	evidence_artifact	note
+pkg/util/rowcodec/decoder.go	PARTIAL	codec-rowcodec-decoder-wave	rust/crates/tidb-codec/src/row_decoder.rs	RawRowValue lookup, source not-null/null/missing distinction, and compact signed/unsigned payload decoding are ported behind RowLayout; schema-aware Datum/chunk conversion, defaults, handles, timezone conversion, old-row output, and warning/error policy remain open.

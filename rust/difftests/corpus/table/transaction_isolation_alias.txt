@@ -1,0 +1,14 @@
+## `tx_isolation` and `transaction_isolation` are mutual aliases in TiDB's
+## system-variable registry (`pkg/sessionctx/variable/sysvar.go`), as covered
+## by `pkg/executor/set_test.go:TestSetVar`.  A session write through either
+## spelling changes the same session value; GLOBAL readback remains the fixed
+## default because this seed intentionally has no writable global state.
+select @@tx_isolation
+select @@transaction_isolation
+select @@session.transaction_isolation
+select @@global.transaction_isolation
+set session transaction_isolation = 'read-committed'
+select @@tx_isolation, @@transaction_isolation
+select @@global.tx_isolation, @@global.transaction_isolation
+set session tx_isolation = 'repeatable-read'
+select @@session.tx_isolation, @@session.transaction_isolation

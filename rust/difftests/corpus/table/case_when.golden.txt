@@ -1,0 +1,13 @@
+OK
+OK
+RS:1|10.0000;2|<nil>;3|3.3333
+RS:1|10|ten;2|0|other;3|30|thirty
+OK
+OK
+RS:1|multi
+RS:many
+RS:3
+RS:1;3;2
+RS:big|1;small|2
+OK
+RS:1|10;2|-1;3|30

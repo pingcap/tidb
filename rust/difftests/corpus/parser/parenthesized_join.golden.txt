@@ -1,0 +1,30 @@
+#IDX 0
+SELECT * FROM `t`
+#END
+#IDX 1
+SELECT * FROM `t1`
+#END
+#IDX 2
+SELECT * FROM (`t` AS `a`) JOIN `t2` AS `b`
+#END
+#IDX 3
+SELECT * FROM (`t1`) JOIN `t2`
+#END
+#IDX 4
+SELECT * FROM `t` AS `a` JOIN `t2` AS `b`
+#END
+#IDX 5
+SELECT * FROM `t1` JOIN `t2` ON `t1`.`a`=`t2`.`a`
+#END
+#IDX 6
+SELECT * FROM (`t1` JOIN `t2` USING (`a`)) JOIN (`t3` JOIN `t4` USING (`a`)) ON (`t2`.`a`=`t4`.`a` AND `t1`.`a`=`t3`.`a`)
+#END
+#IDX 7
+SELECT * FROM (`t1` NATURAL JOIN `t2`) NATURAL JOIN (`t3` NATURAL JOIN `t4`)
+#END
+#IDX 8
+SELECT * FROM (`t1`) JOIN `t2`
+#END
+#IDX 9
+SELECT * FROM `t1` JOIN (`t2`)
+#END

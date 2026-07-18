@@ -1,0 +1,29 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+go_library(
+    name = "gorun_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/pingcap/tidb/rust/difftests/gorun",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//pkg/parser",
+        "//pkg/parser/ast",
+        "//pkg/session",
+        "//pkg/store/mockstore",
+        "//pkg/types/parser_driver",
+    ],
+)
+
+go_binary(
+    name = "gorun",
+    embed = [":gorun_lib"],
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "gorun_test",
+    timeout = "short",
+    srcs = ["main_test.go"],
+    embed = [":gorun_lib"],
+    flaky = True,
+)

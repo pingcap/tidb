@@ -1,0 +1,138 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! Data-manipulation statements and their shared restore boundary.
+
+use crate::util::push_name_path;
+use crate::{DeleteStmt, ImportIntoStmt, InsertStmt, LoadDataStmt, UpdateStmt, WithClause};
+
+/// A statement that mutates table rows.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DmlStmt {
+    /// A top-level `WITH ... <DML>` statement. The CTE prefix belongs to the
+    /// mutation statement, not to a synthetic SELECT.
+    With {
+        /// The source-ordered CTE definitions.
+        with: WithClause,
+        /// The DML statement governed by those CTE definitions.
+        statement: Box<DmlStmt>,
+    },
+    /// An `INSERT` or `REPLACE` statement.
+    Insert(Box<InsertStmt>),
+    /// An `UPDATE` statement.
+    Update(Box<UpdateStmt>),
+    /// A `DELETE` statement.
+    Delete(Box<DeleteStmt>),
+    /// An `IMPORT INTO` statement.
+    ImportInto(Box<ImportIntoStmt>),
+    /// A `LOAD DATA` file-load statement.
+    LoadData(Box<LoadDataStmt>),
+    /// A TiDB non-transactional `BATCH ... <DML>` wrapper.
+    Batch(Box<BatchDmlStmt>),
+}
+
+impl DmlStmt {
+    /// Appends the DML statement's canonical SQL to `out`.
+    pub(crate) fn restore_into(&self, out: &mut String) {
+        match self {
+            Self::With { with, statement } => {
+                with.restore_into(out);
+                out.push(' ');
+                statement.restore_into(out);
+            }
+            Self::Insert(insert) => insert.restore_into(out),
+            Self::Update(update) => update.restore_into(out),
+            Self::Delete(delete) => delete.restore_into(out),
+            Self::ImportInto(import) => import.restore_into(out),
+            Self::LoadData(load) => load.restore_into(out),
+            Self::Batch(batch) => batch.restore_into(out),
+        }
+    }
+}
+
+/// How a [`BatchDmlStmt`] should be dry-run by TiDB.
+///
+/// This maps Go's `NoDryRun`, `DryRunQuery`, and `DryRunSplitDml` constants
+/// without conflating their observably different restore spellings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BatchDmlDryRun {
+    /// Execute the command normally.
+    None,
+    /// `DRY RUN QUERY`.
+    Query,
+    /// `DRY RUN`.
+    SplitDml,
+}
+
+/// The inner DML family permitted by TiDB's non-transactional DML wrapper.
+///
+/// This intentionally does not use [`DmlStmt`]: Go's
+/// `NonTransactionalDMLStmt.DMLStmt` is a `ShardableDMLStmt`, which excludes
+/// another `BATCH` wrapper as well as every non-DML statement.
+#[derive(Debug, Clone, PartialEq)]
+pub enum BatchDml {
+    /// An `INSERT` or `REPLACE` statement.
+    Insert(Box<InsertStmt>),
+    /// An `UPDATE` statement.
+    Update(Box<UpdateStmt>),
+    /// A `DELETE` statement.
+    Delete(Box<DeleteStmt>),
+}
+
+impl BatchDml {
+    fn restore_into(&self, out: &mut String) {
+        match self {
+            Self::Insert(insert) => insert.restore_into(out),
+            Self::Update(update) => update.restore_into(out),
+            Self::Delete(delete) => delete.restore_into(out),
+        }
+    }
+}
+
+/// TiDB's `BATCH [ON column] LIMIT N [DRY RUN [QUERY]] <DML>` statement.
+///
+/// It is an AST/restore boundary only. The seed executor deliberately rejects
+/// this before opening an implicit transaction because implementing it needs
+/// TiDB's shard selection and repeated statement execution protocol.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BatchDmlStmt {
+    /// Optional shard column chosen by `ON`; absent means TiDB chooses it.
+    pub shard_column: Option<Vec<String>>,
+    /// Required positive/zero unsigned batch limit as parsed by TiDB's
+    /// `intLit` grammar.
+    pub limit: u64,
+    /// Requested dry-run mode.
+    pub dry_run: BatchDmlDryRun,
+    /// The shardable inner DML statement.
+    pub dml: BatchDml,
+}
+
+impl BatchDmlStmt {
+    fn restore_into(&self, out: &mut String) {
+        out.push_str("BATCH ");
+        if let Some(column) = &self.shard_column {
+            out.push_str("ON ");
+            push_name_path(out, column);
+            out.push(' ');
+        }
+        out.push_str("LIMIT ");
+        out.push_str(&self.limit.to_string());
+        out.push(' ');
+        match self.dry_run {
+            BatchDmlDryRun::None => {}
+            BatchDmlDryRun::Query => out.push_str("DRY RUN QUERY "),
+            BatchDmlDryRun::SplitDml => out.push_str("DRY RUN "),
+        }
+        self.dml.restore_into(out);
+    }
+}

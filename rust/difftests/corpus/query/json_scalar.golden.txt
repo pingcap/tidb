@@ -1,0 +1,5 @@
+RS:<nil>|INTEGER|DOUBLE|BOOLEAN|ARRAY|OBJECT
+RS:<nil>|"a"|"{\"a\":\"b\"}"
+RS:<nil>||a|{"a":"b"}
+RS:<nil>|0|1|0|1
+ERR

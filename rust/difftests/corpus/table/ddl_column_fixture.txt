@@ -1,0 +1,7 @@
+create table t(a bit(64) default b'1111111111111111111111111111111111111111111111111111111111111111');
+drop table t;
+create table t(a bit(3) default b'111');
+drop table t;
+create table t(a bit(3) default b'000111');
+drop table t;
+create table t(a bit(32) default b'1111111111111111111111111111111');

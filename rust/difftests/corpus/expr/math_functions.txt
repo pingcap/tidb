@@ -1,0 +1,29 @@
+## Transcendental math functions (SQRT/POW/POWER/EXP/LN/LOG/LOG2/LOG10/PI),
+## always promoting to Float. Two DIFFERENT failure modes, both confirmed
+## via goeval, neither assumed from the other: SQRT/LN/LOG/LOG2/LOG10
+## return NULL for an out-of-domain argument (MySQL's own explicit domain
+## check); POW/EXP instead let a NaN or overflow-to-infinity result
+## become a genuine evaluation ERROR (not required by the differential
+## harness, which only skips ERR goldens -- covered by a direct unit test
+## instead; the in-domain cases below are what this corpus verifies)
+sqrt(4)
+sqrt(2)
+sqrt(0)
+sqrt(null)
+sqrt(2.5)
+pow(2, 10)
+power(2, 10)
+pow(2.5, 2)
+pow(-2, 3)
+pow(2, -1)
+pow(0, 0)
+exp(1)
+exp(0)
+exp(-1000)
+ln(1)
+ln(2.5e0)
+log(10)
+log2(8)
+log10(100)
+log(2, 8)
+pi()

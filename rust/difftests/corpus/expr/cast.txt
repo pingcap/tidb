@@ -1,0 +1,97 @@
+## CAST(expr AS type) / CONVERT(expr, type) / CONVERT(expr USING charset)
+## evaluation. TIME/JSON targets are deliberately out of scope (no value
+## domain for either in this crate — see tidb_expr::cast's own doc) and so
+## are NOT exercised here (goeval itself can't label a TIME result either,
+## a SKIP: case this differential harness ignores; TIME/JSON's own
+## Unsupported behavior is covered by tidb-expr's own unit test instead).
+##
+## SIGNED: Decimal source rounds ties away from zero; Float source rounds
+## ties to EVEN (the same asymmetry the `~` bitwise operator already has);
+## both CLAMP (never error) past i64 range; a Str source parses a leading
+## digit run only (no `.`, no exponent), defaulting to 0.
+cast('123' as signed)
+cast(1.5 as signed)
+cast(1.9 as signed)
+cast(-1.9 as signed)
+cast('abc' as signed)
+cast(NULL as signed)
+cast('  42abc' as signed)
+cast('   4.5e1  ' as signed)
+cast(1e300 as signed)
+cast(-1e300 as signed)
+cast(2.5e0 as signed)
+cast(-2.5e0 as signed)
+cast(true as signed)
+cast(-1 as char)
+## UNSIGNED: a Decimal/Float source's NEGATIVE result clamps to a genuine
+## 0. An Int/Str source with a NEGATIVE value is deliberately
+## Unsupported here (NOT exercised by this corpus at all — see
+## tidb_expr::cast::to_i64_unsigned's own doc for why: goeval's own debug
+## label happens to ALSO print the same negative number for that case,
+## which would look like a match at THIS comparison layer while actually
+## being wrong at tidb-exec's real client-format/comparison layer;
+## covered by tidb-expr's own unit test instead, which asserts the
+## deliberate Unsupported result directly rather than risk a
+## misleadingly-passing corpus entry).
+cast(1 as unsigned)
+cast(-1.5 as unsigned)
+cast(0.5e0 as unsigned)
+cast(1 as unsigned) + 1
+cast('9223372036854775807' as unsigned) + 1
+## DECIMAL: bare (no parens) is a real (10, 0) default; an explicit
+## (flen, scale) rounds ties away from zero then CLAMPS the magnitude to
+## the largest value representable in flen digits; a Str source parses a
+## fuller float-like prefix (digits, optional '.', optional exponent).
+cast('123.45' as decimal)
+cast('123.45' as decimal(10,2))
+cast(1 as decimal(5,2))
+cast(3.5 as decimal)
+cast(1.5 as decimal)
+cast(123456 as decimal(5,2))
+cast(123.456 as decimal(5,2))
+cast(-123.456 as decimal(5,2))
+cast('3.5abc' as decimal)
+cast('1e2' as decimal)
+## CHAR/BINARY: CHAR(N) truncates (character-based), never pads; BINARY(N)
+## is fixed-width, right-padding a shorter value with NUL bytes.
+cast(123 as char)
+cast(123.45 as char)
+cast('  123  ' as char)
+cast(1 as char(1))
+cast('hello' as char(3))
+cast('hi' as char(5))
+cast(1 as binary)
+cast('hi' as binary(5))
+cast('hi' as binary)
+cast(123 as binary)
+## DATE/DATETIME: DATE parses (and validates) only the calendar date,
+## ignoring any trailing time-of-day; DATETIME also parses the time,
+## defaulting to midnight when absent.
+cast('2021-01-01' as date)
+cast('2021-01-01 10:30:00' as date)
+cast('2021-01-01' as datetime)
+cast('not a date' as date)
+cast(NULL as date)
+## YEAR: the calendar year for a date-shaped string, else a plain
+## SIGNED-style integer coercion (no two-digit-year century pivot at this
+## scalar CAST, a rule that only applies to the YEAR column type).
+cast('2021-01-01' as year)
+cast(2021 as year)
+cast('99' as year)
+cast(0 as year)
+cast(2000 as year)
+## DOUBLE/FLOAT: promote like ordinary Int/Decimal/Float arithmetic; a Str
+## source reuses DECIMAL's own fuller numeric-prefix scan (consuming the
+## exponent SIGNED's own narrower scan would stop before).
+cast(1 as double)
+cast('1.5' as double)
+cast(1 as float)
+cast('3.5e1abc' as double)
+## CONVERT(expr, type) is the same operation as CAST(expr AS type);
+## CONVERT(expr USING charset) always yields a plain stringification,
+## regardless of source type (this crate has no charset domain).
+convert('123', signed)
+convert('hello' using utf8)
+convert(123 using utf8)
+convert(1.5 using utf8)
+convert(NULL using utf8)

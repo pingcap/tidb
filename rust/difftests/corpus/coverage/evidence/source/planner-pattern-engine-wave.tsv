@@ -1,0 +1,3 @@
+# Source-owned source-port fragment for planner-pattern-engine-wave.
+# source_path	status	owner	evidence_artifact	note
+pkg/planner/cascades/pattern/engine.go	PARTIAL	planner-pattern-engine-wave	rust/crates/tidb-planner/src/pattern_engine.rs	Ports EngineType bit flags, predefined EngineTypeSet membership masks, Contains overlap semantics, raw bit access, and String labels; cascades pattern matching and logical-plan integration remain external.

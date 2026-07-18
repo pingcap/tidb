@@ -1,0 +1,9 @@
+select cast, extract, convert, timestampadd, timestampdiff, get_format, adddate, subdate from t;
+select cast(1 as signed);
+select extract(year from '2020-01-01');
+select convert('123', signed);
+select timestampadd(day, 1, '2020-01-01');
+select timestampdiff(day, '2020-01-01', '2020-01-02');
+select get_format(date, 'usa');
+select adddate('2020-01-01', interval 1 day);
+select subdate('2020-01-01', interval 1 day);

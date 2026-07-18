@@ -1,0 +1,10 @@
+## Go grammar/restore: pkg/parser/admin_stmt_parser.go:299-337 and
+## pkg/parser/ast/misc.go:2779-2878. Direct parser coverage is TestAdminStmt
+## in pkg/parser/parser_test.go:489-507. Current fixture anchors include
+## executor/admin.test:58-59,194 and util/admin.test:4-159.
+ADMIN CHECK TABLE t1, schema.t2
+ADMIN CHECK TABLE `enum-set`
+ADMIN CHECK INDEX tableName idxName
+ADMIN CHECK INDEX tableName idxName (1, 2), (4, 5)
+ADMIN CHECK INDEX executor__admin.check_index_test a_b (2, 3), (4, 5)
+ADMIN CHECK INDEX t `c_datetime`

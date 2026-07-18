@@ -1,0 +1,55 @@
+schema = "1"
+slice = "executor-window-ranking-live-runtime"
+status = "retired"
+target = "tidb-exec"
+ring = "result"
+consumer = "Superseded by executor-window-complete-live-runtime; retained only as the checked ownership-transfer predecessor for the canonical physical-partition window runtime"
+test_target = "window_ranking_live_source"
+go_sources = [
+  "pkg/executor/aggfuncs/row_number.go",
+  "pkg/executor/aggfuncs/func_rank.go",
+  "pkg/executor/aggfuncs/func_percent_rank.go",
+  "pkg/executor/aggfuncs/func_cume_dist.go",
+  "pkg/executor/aggfuncs/func_ntile.go",
+]
+go_tests = [
+  "pkg/executor/aggfuncs/row_number_test.go:0:row_number_test.go",
+  "pkg/executor/aggfuncs/row_number_test.go:25:TestMemRowNumber",
+  "pkg/executor/aggfuncs/func_rank_test.go:0:func_rank_test.go",
+  "pkg/executor/aggfuncs/func_rank_test.go:25:TestMemRank",
+  "pkg/executor/aggfuncs/func_percent_rank_test.go:0:func_percent_rank_test.go",
+  "pkg/executor/aggfuncs/func_percent_rank_test.go:25:TestMemPercentRank",
+  "pkg/executor/aggfuncs/func_cume_dist_test.go:0:func_cume_dist_test.go",
+  "pkg/executor/aggfuncs/func_cume_dist_test.go:25:TestMemCumeDist",
+  "pkg/executor/aggfuncs/func_ntile_test.go:0:func_ntile_test.go",
+  "pkg/executor/aggfuncs/func_ntile_test.go:25:TestMemNtile",
+  "pkg/executor/aggfuncs/window_func_test.go:172:TestWindowFunctions",
+]
+depends_on = []
+evidence_prerequisites = [
+  { capability = "datum-total-order", evidence_owner = "datatype-value-context-and-format", kind = "source", anchor = "pkg/types/datum.go", minimum_status = "PARTIAL" },
+  { capability = "live-partition-window-consumer", evidence_owner = "executor-lead-lag-live-window-runtime", kind = "source", anchor = "pkg/executor/aggfuncs/func_lead_lag.go", minimum_status = "PARTIAL" },
+]
+support_anchors = [
+  "pkg/expression/aggregation/window_func.go:NewWindowFuncDesc constant uint64 validation and noFrameWindowFuncs",
+  "pkg/executor/aggfuncs/builder.go:buildNtile",
+  "pkg/expression/util.go:GetUint64FromConstant",
+  "pkg/executor/windows/window_sql_test.go:26:TestWindowFunctions",
+]
+rust_paths = [
+  "rust/crates/tidb-exec/src/window.rs",
+  "rust/crates/tidb-exec/src/window/ranking_runtime.rs",
+  "rust/crates/tidb-exec/src/cume_dist.rs",
+  "rust/crates/tidb-exec/src/ntile.rs",
+  "rust/crates/tidb-exec/tests/window_ranking_live_source.rs",
+  "rust/crates/tidb-exec/tests/source_shard_d.rs",
+  "rust/crates/tidb-exec/tests/cume_dist_source.rs",
+  "rust/crates/tidb-exec/tests/ntile_source.rs",
+  "rust/difftests/corpus/coverage/evidence/transfers/executor-window-ranking-live-runtime.tsv",
+  "rust/difftests/corpus/coverage/evidence/source/executor-window-rank-source-wave.tsv",
+  "rust/difftests/corpus/coverage/evidence/tests/executor-window-rank-source-wave.tsv",
+  "rust/difftests/corpus/coverage/evidence/source/executor-cume-dist-wave.tsv",
+  "rust/difftests/corpus/coverage/evidence/tests/executor-cume-dist-wave.tsv",
+  "rust/difftests/corpus/coverage/evidence/source/executor-ntile-wave.tsv",
+  "rust/difftests/corpus/coverage/evidence/tests/executor-ntile-wave.tsv",
+]

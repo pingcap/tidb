@@ -1,0 +1,7 @@
+## Default-charset scalar rows from pkg/expression/builtin_string_test.go:1548 TestBitLength.
+## GBK connection-charset conversion rows require session charset state outside the String value domain.
+bit_length('hi')
+bit_length('你好')
+bit_length('')
+bit_length('一二三')
+bit_length('一二三!')

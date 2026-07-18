@@ -1,0 +1,39 @@
+#IDX 0
+CREATE TABLE `child` (`id` INT,`pid` INT,CONSTRAINT FOREIGN KEY (`pid`) REFERENCES `parent`(`id`))
+#END
+#IDX 1
+CREATE TABLE `child` (`id` INT,`pid` INT,CONSTRAINT `fk1` FOREIGN KEY (`pid`) REFERENCES `parent`(`id`))
+#END
+#IDX 2
+CREATE TABLE `child` (`id` INT,`pid` INT,CONSTRAINT `fk_pid` FOREIGN KEY (`pid`) REFERENCES `parent`(`id`))
+#END
+#IDX 3
+CREATE TABLE `child` (`id` INT,`a` INT,`b` INT,CONSTRAINT FOREIGN KEY (`a`, `b`) REFERENCES `parent`(`x`, `y`))
+#END
+#IDX 4
+CREATE TABLE `child` (`id` INT,`pid` INT,CONSTRAINT FOREIGN KEY (`pid`) REFERENCES `db1`.`parent`(`id`))
+#END
+#IDX 5
+CREATE TABLE `child` (`id` INT,`pid` INT,CONSTRAINT FOREIGN KEY (`pid`) REFERENCES `parent`(`id`) ON DELETE CASCADE)
+#END
+#IDX 6
+CREATE TABLE `child` (`id` INT,`pid` INT,CONSTRAINT FOREIGN KEY (`pid`) REFERENCES `parent`(`id`) ON DELETE SET NULL)
+#END
+#IDX 7
+CREATE TABLE `child` (`id` INT,`pid` INT,CONSTRAINT FOREIGN KEY (`pid`) REFERENCES `parent`(`id`) ON DELETE RESTRICT)
+#END
+#IDX 8
+CREATE TABLE `child` (`id` INT,`pid` INT,CONSTRAINT FOREIGN KEY (`pid`) REFERENCES `parent`(`id`) ON DELETE NO ACTION)
+#END
+#IDX 9
+CREATE TABLE `child` (`id` INT,`pid` INT,CONSTRAINT FOREIGN KEY (`pid`) REFERENCES `parent`(`id`) ON DELETE SET DEFAULT)
+#END
+#IDX 10
+CREATE TABLE `child` (`id` INT,`pid` INT,CONSTRAINT FOREIGN KEY (`pid`) REFERENCES `parent`(`id`) ON UPDATE CASCADE)
+#END
+#IDX 11
+CREATE TABLE `child` (`id` INT,`pid` INT,CONSTRAINT FOREIGN KEY (`pid`) REFERENCES `parent`(`id`) ON DELETE CASCADE ON UPDATE SET NULL)
+#END
+#IDX 12
+CREATE TABLE `child` (`id` INT,`pid` INT,PRIMARY KEY(`id`),CONSTRAINT FOREIGN KEY (`pid`) REFERENCES `parent`(`id`))
+#END

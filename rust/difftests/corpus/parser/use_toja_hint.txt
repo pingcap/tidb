@@ -1,0 +1,9 @@
+## USE_TOJA(TRUE|FALSE) / USE_CASCADES(TRUE|FALSE) -- a boolean-argument
+## optimizer hint, both dispatched through the SAME grammar in real
+## TiDB (pkg/parser/hintparser.go's parseBooleanHint). Restores as
+## uppercase TRUE/FALSE regardless of the source's own casing.
+select /*+ use_toja(TRUE) */ t1.a, t1.b from t1 where t1.a in (select t2.a from t2)
+select /*+ use_toja(false) */ t1.a, t1.b from t1 where t1.a in (select t2.a from t2)
+select /*+ use_cascades(true) */ t1.a, t1.b from t1
+select /*+ use_toja(false) hash_join_build(t1), set_var(tidb_hash_join_version=legacy) */ t1.a, t1.b from t1 where t1.a in (select t2.a from t2)
+select /*+ use_toja(TRUE) hash_join_build(t2@sel_2) */ t1.a, t1.b from t1 where t1.a in (select t2.a from t2)

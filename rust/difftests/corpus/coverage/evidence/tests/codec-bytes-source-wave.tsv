@@ -1,0 +1,6 @@
+# Source-owned test-evidence fragment for codec-bytes-source-wave.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/util/codec/bytes_test.go	23	TestFastSlowFastReverse	COVERED	codec-bytes-source-wave	rust/crates/tidb-codec/src/bytes.rs	Exact source vector and inversion involution execute through one safe implementation; Go architecture branch is eliminated
+go_test	pkg/util/codec/bytes_test.go	35	TestBytesCodec	COVERED	codec-bytes-source-wave	rust/crates/tidb-codec/tests/bytes_source.rs	All sixteen exact encoded rows all nine malformed rows exact length assertions leftovers and descending mirrors execute
+go_test	pkg/util/codec/bytes_test.go	98	TestBytesCodecExt	COVERED	codec-bytes-source-wave	rust/crates/tidb-codec/tests/bytes_source.rs	All three rows execute in raw append and comparable modes with existing prefixes
+go_test	pkg/util/codec/codec_test.go	456	TestBytes	COVERED	codec-bytes-source-wave	rust/crates/tidb-codec/tests/bytes_source.rs	All comparable round trip ordering and all six compact byte source rows execute

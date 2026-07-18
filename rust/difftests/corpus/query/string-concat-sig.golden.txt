@@ -1,0 +1,6 @@
+RS:ab
+RS:中a
+RS:中文a
+RS:a,b
+RS:中,a
+RS:中文,a

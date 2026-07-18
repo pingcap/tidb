@@ -1,0 +1,5 @@
+# Source-owned slow-log rule metadata test-port evidence.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/sessionctx/variable/tests/slowlog/slow_log_test.go	260	TestMatchMultipleRulesOR	PARTIAL	session-slow-log-rules-wave	rust/crates/tidb-exec/tests/slow_log_rules_source.rs	Direct Rust vectors cover NewSessionSlowLogRules ownership and its stale effective-fields marker; rule evaluation and OR execution remain external.
+go_test	pkg/sessionctx/variable/tests/slowlog/slow_log_test.go	485	TestParseSessionSlowLogRules	PARTIAL	session-slow-log-rules-wave	rust/crates/tidb-exec/tests/slow_log_rules_source.rs	Direct Rust vectors cover parsed-rule field/condition storage shape; text parsing and field extraction remain external.
+go_test	pkg/sessionctx/variable/tests/slowlog/slow_log_test.go	622	TestParseGlobalSlowLogRules	PARTIAL	session-slow-log-rules-wave	rust/crates/tidb-exec/tests/slow_log_rules_source.rs	Direct Rust vectors cover connection-ID indexing, the -1 global sentinel, raw text, and hash metadata; parsing and hash computation remain external.

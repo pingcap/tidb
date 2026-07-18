@@ -1,0 +1,6 @@
+#IDX 0
+SELECT /*+ QB_NAME(`qb1`)*/ `a` FROM `t`
+#END
+#IDX 1
+SELECT /*+ QB_NAME(`qb` , `v4`@`sel_4`) USE_INDEX(`t4`@`qb` `idx_a`) QB_NAME(`qb2` , `v4`@`sel_5`) USE_INDEX(`t4`@`qb` `idx_b`)*/ * FROM (SELECT * FROM `d1`) AS `t0` JOIN (SELECT * FROM `d2`) AS `t1`
+#END

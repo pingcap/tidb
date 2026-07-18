@@ -1,0 +1,6 @@
+## Qualified wildcards (t.*, db.t.*): a name path terminated by `.` `*`
+## instead of another name, not to be confused with a plain t.a column ref
+select t.* from t
+select emp.*, dept.name from emp join dept on emp.id = dept.id
+select t.a, t.* from t
+select a.*, b.* from a join b on a.id = b.id

@@ -1,0 +1,2 @@
+go_owner	rust_module	status	note
+method:pkg/parser/admin_stmt_parser.go#HandParser.parseAdminShow	rust/crates/tidb-parser/src/admin.rs	partial	ADMIN SHOW DDL JOBS [number] [WHERE expression] is typed and source-tested. Bare ADMIN SHOW DDL and ADMIN SHOW DDL JOB QUERIES are separate typed leaves with independent direct source evidence.

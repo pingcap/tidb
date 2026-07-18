@@ -1,0 +1,15 @@
+## GROUP BY expr [ASC|DESC], ... -- each item carries its own independent
+## direction (confirmed via godump restore), mirroring ORDER BY's own
+## per-item shape. An explicit ASC restores identically to no direction
+## at all (only DESC ever shows in restored output); real MySQL/TiDB
+## rejects ANY explicit direction at EXECUTION time by default (a
+## tidb-exec concern, not exercised by this parser-only corpus, which
+## only ever verifies restore fidelity).
+select * from t group by a
+select * from t group by a asc
+select * from t group by a desc
+select * from t group by a, b desc
+select * from t group by a desc, b
+select * from t group by a desc, b asc
+select * from t group by a desc, b desc
+select a, count(*) from t group by a desc having count(*) > 1

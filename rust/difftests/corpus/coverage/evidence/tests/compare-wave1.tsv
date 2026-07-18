@@ -1,0 +1,8 @@
+# Source-owned test-evidence fragment for compare-wave1.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/expression/builtin_test.go	126	TestIsNullFunc	PARTIAL	compare-wave1	rust/difftests/corpus/query/compare2.txt	Scalar ISNULL vectors
+go_test	pkg/expression/builtin_compare_test.go	229	TestIntervalFunc	PARTIAL	compare-wave1	rust/difftests/corpus/query/compare2.txt	Signed-domain INTERVAL vectors
+go_test	pkg/expression/builtin_miscellaneous_test.go	34	TestInetAton	PARTIAL	compare-wave1	rust/difftests/corpus/query/compare2.txt	IPv4 text and NULL vectors
+go_test	pkg/expression/builtin_miscellaneous_test.go	70	TestIsIPv4	PARTIAL	compare-wave1	rust/difftests/corpus/query/compare2.txt	IPv4 predicate vectors
+go_test	pkg/expression/builtin_miscellaneous_test.go	326	TestIsIPv6	PARTIAL	compare-wave1	rust/difftests/corpus/query/compare2.txt	IPv6 predicate vectors
+go_test	pkg/expression/builtin_miscellaneous_test.go	355	TestInetNtoa	PARTIAL	compare-wave1	rust/difftests/corpus/query/compare2.txt	IPv4 integer conversion vectors

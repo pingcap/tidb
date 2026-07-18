@@ -1,0 +1,9 @@
+#IDX 139
+CREATE TABLE `t` (`a` INT,`b` INT,PRIMARY KEY(`a`, `b`))
+#END
+#IDX 140
+CREATE TABLE `t` (`a` INT,`b` INT,`c` INT,PRIMARY KEY(`a`, `b`))
+#END
+#IDX 141
+CREATE TABLE `t` (`a` INT,PRIMARY KEY(`a`))
+#END

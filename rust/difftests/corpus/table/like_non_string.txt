@@ -1,0 +1,10 @@
+## LIKE against a non-string column/aggregate value: real TiDB implicitly
+## stringifies (confirmed via gorun) rather than erroring. This is the
+## table-level case of the same fix `corpus/expr/predicates.txt` covers at
+## the constant-expression level, plus the aggregate-hidden-inside-LIKE
+## case explicitly flagged as a follow-up two turns ago.
+create table t (id int, v int)
+insert into t values (1, 10), (2, 20)
+select v from t where v like '10'
+select v from t where v like '1%'
+select id, count(*) from t group by id having count(*) like '1'

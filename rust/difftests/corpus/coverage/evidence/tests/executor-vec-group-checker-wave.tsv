@@ -1,0 +1,3 @@
+# Source-owned integer vector-group boundary test evidence.
+# kind source_path source_line test_name status owner evidence_artifact note
+go_test	pkg/executor/internal/vecgroupchecker/vec_group_checker_test.go	141	TestVecGroupChecker4GroupCount	PARTIAL	executor-vec-group-checker-wave	rust/crates/tidb-exec/tests/vec_group_checker_int_source.rs	Rust covers all six source chunk-size/group-size/count/continuity cases with deterministic integer keys, plus null equality and cursor ranges; randomized generation, expression evaluation, chunk allocation, collation behavior, and data-race coverage remain external.

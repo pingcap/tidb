@@ -1,0 +1,4 @@
+## DATEDIFF over actual DATE table columns
+create table dd (a date, b date)
+insert into dd values ('2021-03-15', '2021-03-10')
+select datediff(a, b) from dd

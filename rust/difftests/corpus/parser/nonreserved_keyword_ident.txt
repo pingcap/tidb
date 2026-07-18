@@ -1,0 +1,20 @@
+## Real MySQL/TiDB distinguishes RESERVED keywords (never usable as a bare,
+## unquoted identifier) from a much larger set of NON-RESERVED keywords
+## (usable as a table/column/alias name whenever the grammar isn't
+## otherwise ambiguous there). This project's own parser previously only
+## accepted TokenKind::Ident for identifiers -- ANY keyword-classified
+## token, even non-reserved ones like UUID, hit a generic "unsupported
+## keyword in expression" ParseError. Derived the exact 232-word reserved
+## list from pkg/parser/reserved_words.go (cross-referenced against
+## misc.go's string-to-token map) -- see tidb_lexer::is_reserved's own
+## doc. Fixed at the two confirmed call sites: parse_name_path (table/
+## column name paths, including qualified segments like t.uuid) and
+## parse_prefix's Keyword-arm fallback (a bare non-reserved-keyword
+## expression, or a call to an unrecognized function of that name).
+select uuid from t
+select uuid() from t
+select * from t where uuid = 1
+select t.uuid from t
+select status, value, type from t
+select a.status from t as a
+select uuid as x from t

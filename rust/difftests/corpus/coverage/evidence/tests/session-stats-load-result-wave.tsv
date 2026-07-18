@@ -1,0 +1,4 @@
+# Source-owned statistics-load result test-port evidence.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/statistics/handle/syncload/stats_syncload_test.go	125	TestConcurrentLoadHistWithPanicAndFail	PARTIAL	session-stats-load-result-wave	rust/crates/tidb-exec/tests/stats_load_result_source.rs	The assertions continue through line 230; direct tests preserve successful item identity and add exact HasError/ErrorMsg coverage while statistics worker/channel orchestration and storage loading remain external
+go_test	pkg/statistics/handle/syncload/stats_syncload_test.go	240	TestRetry	PARTIAL	session-stats-load-result-wave	rust/crates/tidb-exec/tests/stats_load_result_source.rs	The failure assertions continue through line 313; direct failure metadata and error rendering are covered while retry counts, failpoints, channel publication, and stats storage remain external

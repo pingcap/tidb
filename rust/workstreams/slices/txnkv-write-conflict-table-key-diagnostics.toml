@@ -1,0 +1,46 @@
+schema = "1"
+slice = "txnkv-write-conflict-table-key-diagnostics"
+status = "partial"
+target = "tidb-txnkv"
+ring = "transaction"
+consumer = "StorageDriverError routes write-conflict and retryable transaction failures through one table-key decoder for exact record, index, meta, and malformed-key diagnostics; existing DistSQL row-key and resource-group-tag consumers reuse the same codec authority"
+test_target = "driver_transaction_error_source and table_key_source"
+go_sources = [
+  "pkg/store/driver/txn/error.go",
+  "pkg/tablecodec/tablecodec.go",
+]
+go_tests = [
+  "pkg/store/driver/txn/driver_test.go:0:driver_test.go",
+  "pkg/store/driver/txn/driver_test.go:25:TestLockNotFoundPrint",
+  "pkg/store/driver/txn/driver_test.go:33:TestWriteConflictPrettyFormat",
+  "pkg/tablecodec/tablecodec_test.go:46:TestTableCodec",
+  "pkg/tablecodec/tablecodec_test.go:59:TestTableCodecInvalid",
+  "pkg/tablecodec/tablecodec_test.go:418:TestIndexKey",
+  "pkg/tablecodec/tablecodec_test.go:429:TestRecordKey",
+  "pkg/tablecodec/tablecodec_test.go:456:TestPrefix",
+  "pkg/tablecodec/tablecodec_test.go:481:TestDecodeIndexKey",
+  "pkg/tablecodec/tablecodec_test.go:515:TestCutPrefix",
+  "pkg/tablecodec/tablecodec_test.go:537:TestDecodeAutoIDMeta",
+]
+depends_on = []
+evidence_prerequisites = [
+  { capability = "kv-error-identities-and-retry-marker", evidence_owner = "txnkv-error-source-wave", kind = "source", anchor = "pkg/kv/error.go", minimum_status = "COVERED" },
+  { capability = "root-cause-driver-conversion", evidence_owner = "txnkv-driver-error-conversion", kind = "source", anchor = "pkg/store/driver/error/error.go", minimum_status = "PARTIAL" },
+  { capability = "safe-handle-parser-display", evidence_owner = "txnkv-handle-codec-wave3", kind = "source", anchor = "pkg/kv/key.go", minimum_status = "PARTIAL" },
+  { capability = "memcomparable-number-codec", evidence_owner = "txnkv-handle-codec-wave3", kind = "source", anchor = "pkg/util/codec/number.go", minimum_status = "COVERED" },
+  { capability = "memcomparable-bytes-codec", evidence_owner = "codec-bytes-source-wave", kind = "source", anchor = "pkg/util/codec/bytes.go", minimum_status = "COVERED" },
+  { capability = "scalar-datum-decode", evidence_owner = "txnkv-handle-codec-wave3", kind = "source", anchor = "pkg/util/codec/codec.go", minimum_status = "PARTIAL" },
+  { capability = "table-row-prefix-authority", evidence_owner = "distsql-table-handle-row-key-ranges", kind = "source", anchor = "pkg/tablecodec/tablecodec.go", minimum_status = "PARTIAL" },
+]
+rust_paths = [
+  "rust/crates/tidb-codec/src/table_key.rs",
+  "rust/crates/tidb-codec/tests/table_key_source.rs",
+  "rust/crates/tidb-txnkv/src/driver/transaction_error.rs",
+  "rust/crates/tidb-txnkv/src/driver_error.rs",
+  "rust/crates/tidb-txnkv/tests/driver_transaction_error_source.rs",
+  "rust/difftests/corpus/coverage/evidence/source/distsql-table-handle-row-key-ranges.tsv",
+  "rust/difftests/corpus/coverage/evidence/source/txnkv-write-conflict-table-key-diagnostics.tsv",
+  "rust/difftests/corpus/coverage/evidence/tests/txnkv-resource-group-tag-source-wave.tsv",
+  "rust/difftests/corpus/coverage/evidence/tests/txnkv-write-conflict-table-key-diagnostics.tsv",
+  "rust/difftests/corpus/coverage/evidence/transfers/txnkv-write-conflict-table-key-diagnostics.tsv",
+]

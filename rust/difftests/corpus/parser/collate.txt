@@ -1,0 +1,31 @@
+## `expr COLLATE collation_name` — a general postfix suffix at a VERY HIGH
+## precedence, TIGHTER than unary -/~/!, confirmed by reading real TiDB's
+## own hand-written parser directly (pkg/parser/prec.go's precCollate,
+## pkg/parser/expr_parser.go's `case collate:` arm) rather than guessed
+## from restore text alone (ambiguous for this grammar shape, since
+## COLLATE's own right-hand side is always a bare name, never a
+## sub-expression). MySQL's own documented example: `-1 COLLATE x` ==
+## `-(1 COLLATE x)`. Chains left-to-right with itself. Collation names
+## restore canonically lowercased (the OPPOSITE case convention from a
+## charset name's own uppercasing).
+select 'a' collate utf8mb4_bin
+select a collate utf8mb4_bin from t
+select a collate UTF8MB4_BIN from t
+select a collate utf8mb4_bin = 'A' collate utf8mb4_general_ci from t
+select a collate utf8mb4_bin from t order by a collate utf8mb4_bin
+select a from t where a collate utf8mb4_bin = 'x'
+select 'a' collate utf8mb4_bin like 'A'
+## Precedence vs unary and binary operators — COLLATE grabs only its
+## immediate left operand, never the whole surrounding expression.
+select -a collate utf8mb4_bin from t
+select not a collate utf8mb4_bin from t
+select a + b collate utf8mb4_bin from t
+select a collate utf8mb4_bin + b from t
+select a collate utf8mb4_bin collate utf8mb4_general_ci from t
+select (a collate utf8mb4_bin) from t
+select a collate utf8mb4_bin and b from t
+## The collation name accepts a QUOTED STRING too, not just a bare
+## identifier (`parseCollateExpr`'s own `p.next()` takes literally any
+## next token) — restores identically either way, lowercased, unquoted.
+select a collate 'binary' from t
+select a collate 'UTF8MB4_BIN' from t

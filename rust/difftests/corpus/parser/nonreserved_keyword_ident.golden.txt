@@ -1,0 +1,21 @@
+#IDX 0
+SELECT `uuid` FROM `t`
+#END
+#IDX 1
+SELECT UUID() FROM `t`
+#END
+#IDX 2
+SELECT * FROM `t` WHERE `uuid`=1
+#END
+#IDX 3
+SELECT `t`.`uuid` FROM `t`
+#END
+#IDX 4
+SELECT `status`,`value`,`type` FROM `t`
+#END
+#IDX 5
+SELECT `a`.`status` FROM `t` AS `a`
+#END
+#IDX 6
+SELECT `uuid` AS `x` FROM `t`
+#END

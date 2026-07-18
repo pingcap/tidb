@@ -1,0 +1,21 @@
+#IDX 0
+SELECT /*+ LEADING(`t1`)*/ * FROM (`t1` JOIN `t2` ON `t1`.`a`=`t2`.`a`) JOIN `t3` ON `t2`.`b`=`t3`.`b`
+#END
+#IDX 1
+SELECT /*+ LEADING(`t1`, `t2`, `t3`)*/ * FROM (`t1` JOIN `t2` ON `t1`.`a`=`t2`.`a`) JOIN `t3` ON `t2`.`b`=`t3`.`b`
+#END
+#IDX 2
+SELECT /*+ HASH_JOIN_BUILD(`t1`) LEADING(`t1`)*/ `t1`.`a`,`t2`.`a` FROM (`t1` JOIN `t2` ON `t1`.`a`=`t2`.`a` AND `t1`.`b`=`t2`.`b`) JOIN `t3` ON `t2`.`a`=`t3`.`a`
+#END
+#IDX 3
+SELECT /*+ STRAIGHT_JOIN() LEADING(`t1`)*/ * FROM (`t1` JOIN `t2` ON `t1`.`a`=`t2`.`a`) JOIN `t3` ON `t2`.`b`=`t3`.`b`
+#END
+#IDX 4
+SELECT /*+ LEADING(`t1`) LEADING(`t2`)*/ * FROM (`t1` JOIN `t2` ON `t1`.`a`=`t2`.`a`) JOIN `t3` ON `t2`.`b`=`t3`.`b`
+#END
+#IDX 5
+SELECT * FROM (SELECT /*+ LEADING(`t1`, `t3`@`sel_1`)*/ `t2`.`b` FROM `t1` JOIN `t2` ON `t1`.`a`=`t2`.`a`) AS `t4` JOIN `t3` ON `t4`.`b`=`t3`.`b`
+#END
+#IDX 6
+SELECT /*+ LEADING(`t3`, `t2`@`sel_2`)*/ * FROM (SELECT `t2`.`b` FROM `t1` JOIN `t2` ON `t1`.`a`=`t2`.`a`) AS `t4` JOIN `t3` ON `t4`.`b`=`t3`.`b`
+#END

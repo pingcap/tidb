@@ -1,0 +1,4 @@
+# Source-owned statistics index-usage test evidence.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/statistics/handle/usage/indexusage/collector_test.go	36	TestGetBucket	PARTIAL	stats-index-usage-wave	rust/crates/tidb-stats/tests/index_usage_source.rs	Rust tests mirror all eleven Go bucket vectors plus explicit out-of-range/NaN behavior; the Go package test remains the authoritative collector test.
+go_test	pkg/statistics/handle/usage/indexusage/collector_test.go	59	TestUpdateIndex	PARTIAL	stats-index-usage-wave	rust/crates/tidb-stats/tests/index_usage_source.rs	Rust tests cover NewSample full/partial/zero-total buckets and updateByKey-equivalent value merging; session/global worker and map lifecycle remain open.

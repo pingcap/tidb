@@ -1,0 +1,15 @@
+## Source anchor: pkg/session/test/txn/txn_test.go:483 TestMemBufferCleanupMemoryLeak.
+## This preserves the source's single-session transaction control flow: one
+## already-buffered key, then a multi-row INSERT where the later row conflicts.
+## The Rust executor's unit test repeats this failed statement the source's
+## exact 100 times and asserts the first row never leaks through to COMMIT.
+## Excluded: tidb_mem_oom_action, tidb_mem_quota_query, memory Tracker and its
+## allocation-leak measurement require TiKV/session-memory machinery outside
+## the seed executor.
+create table txn_membuffer_cleanup_src (a int primary key)
+begin
+insert into txn_membuffer_cleanup_src values (2)
+insert into txn_membuffer_cleanup_src values (1), (2)
+select a from txn_membuffer_cleanup_src order by a
+commit
+select a from txn_membuffer_cleanup_src order by a

@@ -1,0 +1,26 @@
+[package]
+name = "tidb-protocol"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Source-backed MySQL packet framing for the TiDB Rust rewrite."
+
+# GBK result encoding uses the audited WHATWG GBK tables. The conversion is
+# kept in this protocol leaf because the datatype registry deliberately only
+# covers the charsets that are shared by expression/metadata code today.
+
+[dependencies]
+encoding_rs.workspace = true
+flate2.workspace = true
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-error = { path = "../tidb-error" }
+zstd.workspace = true
+
+[[bench]]
+name = "packetio_source"
+harness = false
+
+[lints]
+workspace = true

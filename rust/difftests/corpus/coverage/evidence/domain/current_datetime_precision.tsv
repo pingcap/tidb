@@ -1,0 +1,3 @@
+go_owner	rust_module	status	note
+method:pkg/parser/expr_func_parser.go#parseCurrentFunc;parseCurDateFunc	rust/crates/tidb-parser/src/expr.rs	covered	Current/UTC/local datetime precision calls use a dedicated IntLit-only leaf, while CURDATE keeps Go's separate empty-parentheses production; signed and arithmetic arguments are rejected at parse time.
+tests:tests/integrationtest/t/expression/builtin.test#1599;1605	rust/difftests/parser-tests/tests/selectors/query/current_datetime_precision_selector.rs;rust/crates/tidb-parser/src/tests/stmt.rs	covered	The exact CURRENT_TIME(-1) and CURRENT_TIMESTAMP(-1) Go-rejected rows are selected from the checked oracle and direct boundary vectors are asserted.

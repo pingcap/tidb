@@ -1,0 +1,3 @@
+# Source-owned analyze-worker panic-classification test-port evidence.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/executor/analyze_utils_test.go	41	TestGetAnalyzePanicErr	PARTIAL	executor-analyze-panic-error-wave	rust/crates/tidb-exec/tests/analyze_panic_error_source.rs	Rust preserves the original memory-sentinel formatting regression and adds vectors for the source string/error/fallback branches; Go error wrappers, panic recovery, worker scheduling, and logging remain external.

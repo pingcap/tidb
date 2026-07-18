@@ -1,0 +1,20 @@
+schema = "1"
+slice = "expression-field-name-resolution"
+status = "retired"
+target = "tidb-expr"
+ring = "result"
+consumer = "Superseded by expression-aggregate-and-field-resolution; retained only as its checked ownership-transfer predecessor"
+test_target = "field_name_resolution_source"
+go_sources = [
+  "pkg/types/field_name.go",
+  "pkg/expression/simple_rewriter.go",
+]
+go_tests = [
+  "pkg/expression/simple_rewriter_test.go:66:TestFindFieldName",
+  "pkg/expression/simple_rewriter_test.go:199:BenchmarkFindFieldName",
+  "pkg/expression/simple_rewriter_test.go:0:simple_rewriter_test.go",
+  "pkg/expression/simple_rewriter_test.go:165:TestFindFieldName/<generated>",
+]
+depends_on = []
+evidence_prerequisites = []
+rust_paths = ["rust/difftests/corpus/coverage/evidence/transfers/expression-aggregate-and-field-resolution.tsv"]

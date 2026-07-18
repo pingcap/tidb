@@ -1,0 +1,6 @@
+# Source-owned bounded integer/real APPROX_PERCENTILE test evidence.
+# kind source_path source_line test_name status owner evidence_artifact note
+go_test	pkg/executor/aggfuncs/func_percentile_test.go	35	TestPercentile	PARTIAL	executor-percentile-wave	rust/crates/tidb-exec/tests/percentile_source.rs	Rust covers integer and real NULL-skipping collection and P=50 ordinal output; typed Eval coercion and chunk output remain external.
+go_test_generator	pkg/executor/aggfuncs/func_percentile_test.go	45	TestPercentile/<generated>	PARTIAL	executor-percentile-wave	rust/crates/tidb-exec/tests/percentile_source.rs	Generated percentile rows remain represented at the source boundary; decimal/time/duration typed variants remain external.
+go_test	pkg/executor/aggfuncs/func_percentile_test.go	51	TestFix26807	PARTIAL	executor-percentile-wave	rust/crates/tidb-exec/tests/percentile_source.rs	Rust covers repeated P=100 selection of the largest integer; Go introselect/random pivot implementation remains external.
+go_test	pkg/executor/aggfuncs/func_percentile_test.go	63	TestFix40463	PARTIAL	executor-percentile-wave	rust/crates/tidb-exec/tests/percentile_source.rs	Enum/set aggregate routing to the base NULL result remains explicit external coverage; this leaf covers state-size and empty behavior only.

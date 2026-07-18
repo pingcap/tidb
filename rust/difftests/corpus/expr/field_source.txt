@@ -1,0 +1,11 @@
+## pkg/expression/builtin_string_test.go:1712 TestField
+field('ej', 'Hej', 'ej', 'Heja', 'hej', 'foo')
+field('fo', 'Hej', 'ej', 'Heja', 'hej', 'foo')
+field('ej', 'Hej', 'ej', 'Heja', 'ej', 'hej', 'foo')
+field(1, 2, 3, 11, 1)
+field(null, 2, 3, 11, 1)
+field(1.1e0, 2.1e0, 3.1e0, 11.1e0, 1.1e0)
+field(1.1e0, '2.1', '3.1', '11.1', '1.1')
+field('1.1a', 2.1e0, 3.1e0, 11.1e0, 1.1e0)
+field(1.10, 0, 11e-1)
+field('abc', 0, 1, 11.1e0, 1.1e0)

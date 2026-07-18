@@ -1,0 +1,6 @@
+# Source-owned test-evidence fragment for the complete overflow source table.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/types/overflow_test.go	25	TestAdd	COVERED	datatype-overflow-source-wave	rust/crates/tidb-datatype/src/overflow_tests.rs	All unsigned, signed, mixed-integer, and duration addition vectors execute with Go's overflow boundaries.
+go_test	pkg/types/overflow_test.go	100	TestSub	COVERED	datatype-overflow-source-wave	rust/crates/tidb-datatype/src/overflow_tests.rs	All unsigned, signed, mixed-integer subtraction vectors execute with MinInt64-safe unsigned magnitudes.
+go_test	pkg/types/overflow_test.go	198	TestMul	COVERED	datatype-overflow-source-wave	rust/crates/tidb-datatype/src/overflow_tests.rs	All unsigned, signed, and mixed-integer multiplication vectors execute through checked arithmetic.
+go_test	pkg/types/overflow_test.go	271	TestDiv	COVERED	datatype-overflow-source-wave	rust/crates/tidb-datatype/src/overflow_tests.rs	All division vectors execute, including the exact BIGINT UNSIGNED error text and signed/unsigned boundary behavior.

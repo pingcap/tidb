@@ -1,0 +1,30 @@
+## Go source: pkg/sessionctx/variable/sysvar.go:3856-3860;
+## pkg/sessionctx/variable/variable.go:344-376;
+## pkg/executor/set_test.go:1791-1820;
+## pkg/executor/test/executor/executor_test.go:2488-2510.
+## Scalar `/`, grouped AVG and window AVG must all consume the same bounded
+## nontransactional session value. The seed has no mutable global-variable
+## store, so its SET GLOBAL rejection is covered by a direct executor test;
+## @@global readback remains the Go default here.
+create table dpi (a decimal(3,0), b decimal(3,0))
+insert into dpi values (8, 7), (9, 7)
+select @@div_precision_increment, a/b from dpi order by a
+select avg(a), avg(a/b) from dpi
+set div_precision_increment = 7
+select @@div_precision_increment, a/b from dpi order by a
+select avg(a) / 2, avg(a/b) from dpi
+select a, avg(a) over () from dpi order by a
+select a, avg(a/b) over () from dpi order by a
+set div_precision_increment = 30
+select @@div_precision_increment, a/b from dpi order by a
+set div_precision_increment = -1
+select @@div_precision_increment, 8/7
+set div_precision_increment = 31
+select @@div_precision_increment, 8/7
+set div_precision_increment = default
+select @@div_precision_increment, 8/7
+begin
+set div_precision_increment = 7
+rollback
+select @@div_precision_increment, 8/7
+select @@global.div_precision_increment

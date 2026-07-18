@@ -1,0 +1,52 @@
+## Source anchor: pkg/session/test/txn/txn_test.go:346 TestErrorRollback.
+## One worker's exact SQL control flow. The source starts four workers over
+## this same script; rust/crates/tidb-exec/src/tests/cluster.rs is the
+## authoritative real-thread concurrency proof. The Go source intentionally
+## ignores every INSERT result because the first (1, 1) may succeed and all
+## later attempts duplicate.
+use test
+drop table if exists t_rollback
+create table t_rollback (c1 int, c2 int, primary key(c1))
+insert into t_rollback values (0, 0)
+set @@session.tidb_retry_limit = 100
+insert into t_rollback values (1, 1)
+update t_rollback set c2 = c2 + 1 where c1 = 0
+insert into t_rollback values (1, 1)
+update t_rollback set c2 = c2 + 1 where c1 = 0
+insert into t_rollback values (1, 1)
+update t_rollback set c2 = c2 + 1 where c1 = 0
+insert into t_rollback values (1, 1)
+update t_rollback set c2 = c2 + 1 where c1 = 0
+insert into t_rollback values (1, 1)
+update t_rollback set c2 = c2 + 1 where c1 = 0
+insert into t_rollback values (1, 1)
+update t_rollback set c2 = c2 + 1 where c1 = 0
+insert into t_rollback values (1, 1)
+update t_rollback set c2 = c2 + 1 where c1 = 0
+insert into t_rollback values (1, 1)
+update t_rollback set c2 = c2 + 1 where c1 = 0
+insert into t_rollback values (1, 1)
+update t_rollback set c2 = c2 + 1 where c1 = 0
+insert into t_rollback values (1, 1)
+update t_rollback set c2 = c2 + 1 where c1 = 0
+insert into t_rollback values (1, 1)
+update t_rollback set c2 = c2 + 1 where c1 = 0
+insert into t_rollback values (1, 1)
+update t_rollback set c2 = c2 + 1 where c1 = 0
+insert into t_rollback values (1, 1)
+update t_rollback set c2 = c2 + 1 where c1 = 0
+insert into t_rollback values (1, 1)
+update t_rollback set c2 = c2 + 1 where c1 = 0
+insert into t_rollback values (1, 1)
+update t_rollback set c2 = c2 + 1 where c1 = 0
+insert into t_rollback values (1, 1)
+update t_rollback set c2 = c2 + 1 where c1 = 0
+insert into t_rollback values (1, 1)
+update t_rollback set c2 = c2 + 1 where c1 = 0
+insert into t_rollback values (1, 1)
+update t_rollback set c2 = c2 + 1 where c1 = 0
+insert into t_rollback values (1, 1)
+update t_rollback set c2 = c2 + 1 where c1 = 0
+insert into t_rollback values (1, 1)
+update t_rollback set c2 = c2 + 1 where c1 = 0
+select c2 from t_rollback where c1 = 0

@@ -1,0 +1,3 @@
+# Source-owned test-evidence fragment for server-auth-exchange-wave.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/server/internal/parse/handshake_test.go	25	TestAuthSwitchRequest	PARTIAL	server-auth-exchange-wave	rust/crates/tidb-server/tests/auth_exchange_source.rs	AuthSwitchRequest field order, NUL boundaries, AuthMoreData prefix, framed opaque client response, and malformed/trailing cases execute; the Go parser's full HandshakeResponse41 attribute/session integration remains outside this wire leaf

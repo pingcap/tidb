@@ -1,0 +1,6 @@
+## Source vectors from TestJSONType/TestJSONQuote/TestJSONUnquote/TestJSONValid.
+select json_type(null), json_type('3'), json_type('3.0'), json_type('true'), json_type('[]'), json_type('{}');
+select json_quote(null), json_quote('a'), json_quote('{"a":"b"}');
+select json_unquote(null), json_unquote(''), json_unquote('"a"'), json_unquote('{"a":"b"}');
+select json_valid(null), json_valid('hello'), json_valid('"hello"'), json_valid(2), json_valid('2');
+select json_unquote('""a""');

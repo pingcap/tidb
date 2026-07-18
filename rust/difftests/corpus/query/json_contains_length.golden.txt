@@ -1,0 +1,6 @@
+RS:<nil>|1|0|2
+RS:2|<nil>|<nil>
+RS:<nil>|<nil>|<nil>
+RS:1|0|1
+RS:<nil>
+ERR

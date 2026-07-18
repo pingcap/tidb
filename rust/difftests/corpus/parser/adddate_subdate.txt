@@ -1,0 +1,12 @@
+## `ADDDATE`/`SUBDATE(date, interval_or_days)` -- a genuinely dual-form
+## MySQL grammar: the second argument is EITHER an explicit `INTERVAL n
+## unit` (identical to DATE_ADD/DATE_SUB's own only form) OR a bare
+## number, silently meaning `INTERVAL n DAY` (confirmed via godump
+## restore). DATE_ADD/DATE_SUB do NOT have this bare-number shorthand.
+## Found while investigating the same pre-existing gap as
+## timestamp_arith_functions.txt (a bare numeric second argument
+## previously prevented ADDDATE/SUBDATE from parsing at all).
+select adddate('2008-01-34', -1)
+select adddate('2008-01-34', interval -1 day)
+select subdate('2008-01-34', 5)
+select adddate('2008-01-34', 5.5)

@@ -1,0 +1,12 @@
+#IDX 0
+SELECT * FROM (`t1`) JOIN `t2` WHERE `t1`.`a`=`t2`.`a`
+#END
+#IDX 1
+SELECT * FROM (`t1`) JOIN `t2` WHERE `t1`.`a`=`t2`.`a`
+#END
+#IDX 2
+SELECT * FROM (`t1`) JOIN `t2` WHERE `t1`.`a`=`t2`.`a`
+#END
+#IDX 3
+SELECT * FROM `t` WHERE `a`=1 OR `b`=1
+#END

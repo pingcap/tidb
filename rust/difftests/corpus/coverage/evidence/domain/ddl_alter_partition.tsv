@@ -1,0 +1,2 @@
+go_owner	rust_module	status	note
+method:pkg/parser/ddl_alter_handlers.go#HandParser.parseAlterPartition	rust/crates/tidb-{ast,parser,exec}/src/{ddl_partition.rs,ddl/alter/repartition.rs,partition.rs}	partial	Direct terminal PARTITION BY port with nine owned Go TestDDL acceptance rows, eight source rejections, and a 49-row checked-oracle selector. Named partition attributes/options remain independently partial.

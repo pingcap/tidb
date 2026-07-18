@@ -1,0 +1,25 @@
+## MERGED TOPIC: statements below share mutable table state across
+## sub-features (each sub-section was originally its own comment block;
+## merged because later sections reference earlier sections' tables
+## without recreating them) -- kept as one script so the shared state
+## stays correct; run against one fresh Database like every other topic.
+## Decimal columns: literals are inserted at the column's own scale (2), so
+## storage/comparison/arithmetic/ordering/MAX-MIN all round-trip exactly
+create table price (id int, amt decimal(10,2))
+insert into price values (1, 9.99)
+insert into price values (2, 19.99)
+insert into price values (3, 5.00)
+select id, amt from price
+select id, amt from price where amt > 10.00
+select amt from price order by amt desc
+select amt + 1.00 from price where id = 1
+select max(amt), min(amt) from price
+select amt from price where amt = 9.99
+## SUM(decimal): exact addition (via the same `+` a constant expression
+## uses), so no rounding differs from real TiDB; NULL over an empty group
+select sum(amt) from price
+select sum(amt) from price where id < 3
+create table sale (cat varchar(9), amt decimal(10,2))
+insert into sale values ('a', 10.50), ('a', 5.25), ('b', 3.00)
+select cat, sum(amt) from sale group by cat
+select sum(amt) from sale where cat = 'z'

@@ -1,0 +1,9 @@
+drop table if exists t1, t2
+create table t1 (c1 int, c2 int, index (c1))
+create table t2 (c1 int, c2 int)
+insert into t1 values (1, 1), (2, 2)
+delete from t1 where t1.c1 = 1
+delete from t1 where t1.c2 = 2
+select * from t1
+insert into t1 values (1, 3)
+delete from t1 as a where a.c1 = 1

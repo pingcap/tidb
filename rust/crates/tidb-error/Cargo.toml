@@ -1,0 +1,11 @@
+[package]
+name = "tidb-error"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Single source-backed MySQL and TiDB error catalog for the TiDB Rust rewrite."
+
+[lints]
+workspace = true

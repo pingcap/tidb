@@ -1,0 +1,36 @@
+#IDX 0
+SELECT `id` FROM `articles` WHERE MATCH (`id`) AGAINST (_UTF8MB4'MySQL')
+#END
+#IDX 1
+SELECT `id`,`content` FROM `t` WHERE MATCH (`content`) AGAINST (_UTF8MB4'+100% +Progress' IN BOOLEAN MODE)
+#END
+#IDX 2
+SELECT `id`,MATCH (`title`) AGAINST (_UTF8MB4'+MySQL' IN BOOLEAN MODE) AS `score` FROM `articles`
+#END
+#IDX 3
+SELECT `id`,`title` FROM `articles` GROUP BY `id`,`title` HAVING MATCH (`title`) AGAINST (_UTF8MB4'PostgreSQL')
+#END
+#IDX 4
+SELECT `id`,`title` FROM `articles` ORDER BY MATCH (`title`) AGAINST (_UTF8MB4'+MySQL' IN BOOLEAN MODE) DESC
+#END
+#IDX 5
+SELECT `id`,`title` FROM `articles` WHERE (CASE WHEN MATCH (`title`) AGAINST (_UTF8MB4'MySQL') THEN 1 ELSE 0 END)=1
+#END
+#IDX 6
+SELECT MATCH (`a`,`b`) AGAINST (_UTF8MB4'x') FROM `t`
+#END
+#IDX 7
+SELECT MATCH (`a`) AGAINST (_UTF8MB4'x') FROM `t`
+#END
+#IDX 8
+SELECT MATCH (`a`) AGAINST (_UTF8MB4'x' WITH QUERY EXPANSION) FROM `t`
+#END
+#IDX 9
+SELECT MATCH (`a`) AGAINST (_UTF8MB4'x' WITH QUERY EXPANSION) FROM `t`
+#END
+#IDX 10
+SELECT `a`.`id`,`a`.`title` FROM `articles` AS `a` JOIN `articles` AS `a2` ON `a`.`id`=`a2`.`id` AND MATCH (`a`.`title`) AGAINST (_UTF8MB4'Security')
+#END
+#IDX 11
+SELECT MATCH (`a`) AGAINST (NULL) FROM `t`
+#END

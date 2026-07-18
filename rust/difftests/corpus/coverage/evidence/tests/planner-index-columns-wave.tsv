@@ -1,0 +1,3 @@
+# Source-owned test-evidence fragment for planner-index-columns-wave.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/planner/util/column_test.go	29	TestIndexInfo2Cols	PARTIAL	planner-index-columns-wave	rust/difftests/planner-tests/tests/index_columns.rs	Direct Rust vectors cover source prefix-column stopping, full-column nil slots, strict prefix marking, and full-length unspecified normalization; expression/catalog integration remains open.

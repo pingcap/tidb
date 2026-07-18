@@ -1,0 +1,18 @@
+#IDX 0
+ADMIN CHECK TABLE `t1`, `schema`.`t2`
+#END
+#IDX 1
+ADMIN CHECK TABLE `enum-set`
+#END
+#IDX 2
+ADMIN CHECK INDEX `tableName` idxName
+#END
+#IDX 3
+ADMIN CHECK INDEX `tableName` idxName (1,2), (4,5)
+#END
+#IDX 4
+ADMIN CHECK INDEX `executor__admin`.`check_index_test` a_b (2,3), (4,5)
+#END
+#IDX 5
+ADMIN CHECK INDEX `t` c_datetime
+#END

@@ -1,0 +1,3 @@
+# Source-owned residual boolean-condition metadata evidence.
+# source_path	status	owner	evidence_artifact	note
+pkg/planner/core/exhaust_physical_plans.go	PARTIAL	planner-residual-condition-wave	rust/crates/tidb-planner/src/residual_condition.rs	The dependency-closed planner leaf preserves the OtherConditions residual shape (AND/OR/NOT plus syntax-only comparison/function metadata) after direct join-key extraction, with explicit deferred evaluation and unsupported AST/unary outcomes; Go expression construction, predicate pushdown, typed coercion, and physical execution remain open.

@@ -1,0 +1,2 @@
+select /*+ unknown_hint(c1)*/ 1;
+select /*+ merge(q) no_merge(q1) */ * from q, q q1 where q.a=1 and q1.a=2;

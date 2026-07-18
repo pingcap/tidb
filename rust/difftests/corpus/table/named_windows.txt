@@ -1,0 +1,27 @@
+## Named windows: `OVER w` (bare) and `OVER (w)`/`OVER (w ...)`
+## (parenthesized) both reference a `WINDOW name AS (...), ...` clause's
+## own definition. Extending a named window may add `ORDER BY`/a frame
+## ONLY if the base doesn't already have one, and may NEVER add
+## `PARTITION BY` -- all confirmed via gorun to be real EXECUTION-time
+## restrictions (the grammar parses every combination syntactically), not
+## silently accepted or misapplied. A named window may itself extend an
+## earlier one, chaining the same rules transitively; a self-referencing
+## definition is a genuine error, not an infinite loop; a `WINDOW` clause
+## entry no `OVER` clause actually references is a harmless no-op. The 4
+## deliberately-erroring probes are kept LAST, each isolated enough not
+## to depend on a PRECEDING erroring statement's own state, per the
+## standing lesson about an earlier ERR corrupting later statements'
+## apparent results in the same gorun batch.
+create table t (id int, dept varchar(10), salary int)
+insert into t values (1,'a',100),(2,'a',200),(3,'a',200),(4,'b',150),(5,'b',300)
+select id, dept, salary, row_number() over w from t window w as (partition by dept order by salary) order by id
+select id, dept, salary, rank() over (w) from t window w as (partition by dept order by salary) order by id
+select id, dept, salary, sum(salary) over (w order by salary) from t window w as (partition by dept) order by id
+select id, dept, salary, sum(salary) over (w rows between 1 preceding and current row) from t window w as (partition by dept order by salary) order by id
+select id, row_number() over w1, rank() over w2 from t window w1 as (partition by dept), w2 as (partition by dept order by salary) order by id
+select id, sum(salary) over w2 from t window w1 as (partition by dept order by salary), w2 as (w1 rows between 1 preceding and current row) order by id
+select id from t window w as (partition by dept order by salary) order by id
+select sum(salary) over (w partition by dept) from t window w as (order by salary)
+select sum(salary) over (w order by salary) from t window w as (partition by dept order by salary)
+select sum(salary) over (w rows between 1 preceding and current row) from t window w as (partition by dept rows between 1 preceding and current row)
+select sum(salary) over w from t window w as (w order by salary)

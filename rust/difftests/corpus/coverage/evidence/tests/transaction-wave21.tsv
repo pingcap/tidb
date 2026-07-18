@@ -1,0 +1,3 @@
+# Source-owned test-evidence fragment for transaction-wave21.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/session/test/txn/txn_test.go	346	TestErrorRollback	PARTIAL	transaction-wave21	rust/crates/tidb-exec/src/tests/cluster.rs	The table corpus records one worker's sequential SQL transcript only; this focused Rust test proves the exact four-session source topology over real scoped threads, shared-catalog version CAS, and observed complete-statement retries. TiKV lock manager, pessimistic/optimistic modes, distributed retry errors, and explicit transaction write buffers remain outside this autocommit runtime slice

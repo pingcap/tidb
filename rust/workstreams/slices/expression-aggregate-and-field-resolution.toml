@@ -1,0 +1,59 @@
+schema = "1"
+slice = "expression-aggregate-and-field-resolution"
+status = "partial"
+target = "tidb-expr"
+ring = "result"
+consumer = "bounded catalog-backed SELECT COUNT(t.a) AS c closure: validate one qualified column through the simple usable FieldName path, independently consume the source-translated fixed COUNT type and existing runtime, and publish exact aggregate metadata and rows through automatic COM_QUERY. Aggregate descriptor identity and full FieldName ambiguity/redundancy behavior remain independently owned partial authorities; no shared bound descriptor is claimed until a real planner carries it into execution"
+test_target = "tidb-exec cluster and tidb-server automatic_response_source"
+go_sources = [
+  "pkg/expression/aggregation/aggregation.go",
+  "pkg/expression/aggregation/base_func.go",
+  "pkg/expression/aggregation/descriptor.go",
+  "pkg/types/field_name.go",
+  "pkg/expression/simple_rewriter.go",
+]
+go_tests = [
+  "pkg/expression/aggregation/aggregation_test.go:620:TestAggFuncDesc",
+  "pkg/expression/simple_rewriter_test.go:66:TestFindFieldName",
+  "pkg/expression/simple_rewriter_test.go:199:BenchmarkFindFieldName",
+  "pkg/expression/simple_rewriter_test.go:0:simple_rewriter_test.go",
+  "pkg/expression/simple_rewriter_test.go:165:TestFindFieldName/<generated>",
+]
+depends_on = []
+evidence_prerequisites = [
+  { capability = "logical-aggregation-identity", evidence_owner = "planner-logical-aggregation-wave", kind = "source", anchor = "pkg/planner/core/operator/logicalop/logical_aggregation.go", minimum_status = "PARTIAL" },
+  { capability = "planner-aggregate-build-path", evidence_owner = "planner-executor-right-natural-join-runtime", kind = "source", anchor = "pkg/planner/core/logical_plan_builder.go", minimum_status = "PARTIAL" },
+  { capability = "planner-column-bind-path", evidence_owner = "planner-executor-typed-join-runtime", kind = "source", anchor = "pkg/planner/core/expression_rewriter.go", minimum_status = "PARTIAL" },
+  { capability = "count-runtime", evidence_owner = "executor-core-aggregate-runtime", kind = "source", anchor = "pkg/executor/aggfuncs/func_count.go", minimum_status = "PARTIAL" },
+  { capability = "count-complete-mode", evidence_owner = "session-tableless-count-com-query", kind = "source", anchor = "pkg/expression/aggregation/count.go", minimum_status = "PARTIAL" },
+  { capability = "result-field-adapter", evidence_owner = "server-distsql-streaming-resultset", kind = "source", anchor = "pkg/executor/adapter.go", minimum_status = "PARTIAL" },
+  { capability = "server-command-query-dispatch", evidence_owner = "server-compressed-command-io-runtime", kind = "source", anchor = "pkg/server/conn.go", minimum_status = "PARTIAL" },
+  { capability = "count-type-contract", evidence_owner = "session-tableless-count-com-query", kind = "test", anchor = "pkg/expression/typeinfer_test.go:37:TestInferType", minimum_status = "PARTIAL" },
+  { capability = "mysql-error-code-catalog", evidence_owner = "error-catalog-and-terror-identity", kind = "source", anchor = "pkg/parser/mysql/errcode.go", minimum_status = "COVERED" },
+  { capability = "mysql-error-message-catalog", evidence_owner = "error-catalog-and-terror-identity", kind = "source", anchor = "pkg/parser/mysql/errname.go", minimum_status = "COVERED" },
+  { capability = "mysql-sql-error-authority", evidence_owner = "error-catalog-and-terror-identity", kind = "source", anchor = "pkg/parser/mysql/error.go", minimum_status = "PARTIAL" },
+  { capability = "mysql-sqlstate-catalog", evidence_owner = "error-catalog-and-terror-identity", kind = "source", anchor = "pkg/parser/mysql/state.go", minimum_status = "COVERED" },
+]
+support_anchors = [
+  "pkg/planner/core/logical_plan_builder.go:255:PlanBuilder.buildAggregation",
+  "pkg/planner/core/logical_plan_builder.go:1535:PlanBuilder.buildProjectionField",
+  "pkg/planner/core/expression_rewriter.go:547:AggregateFuncExpr rewrite",
+  "pkg/expression/aggregation/descriptor.go:47:NewAggFuncDesc",
+]
+rust_paths = [
+  "rust/crates/tidb-planner/src/aggregation_descriptor.rs",
+  "rust/crates/tidb-planner/src/logical_aggregation.rs",
+  "rust/crates/tidb-planner/src/wrap_cast.rs",
+  "rust/crates/tidb-exec/src/result_field_resolver.rs",
+  "rust/crates/tidb-datatype/src/field_name.rs",
+  "rust/crates/tidb-expr/src/field_name.rs",
+  "rust/crates/tidb-expr/tests/field_name_resolution_source.rs",
+  "rust/crates/tidb-exec/src/cluster.rs",
+  "rust/crates/tidb-exec/src/database.rs",
+  "rust/crates/tidb-exec/src/result_schema.rs",
+  "rust/crates/tidb-exec/src/tests/cluster.rs",
+  "rust/crates/tidb-server/tests/automatic_response_source.rs",
+  "rust/difftests/corpus/coverage/evidence/source/expression-aggregate-and-field-resolution.tsv",
+  "rust/difftests/corpus/coverage/evidence/tests/expression-aggregate-and-field-resolution.tsv",
+  "rust/difftests/corpus/coverage/evidence/transfers/expression-aggregate-and-field-resolution.tsv",
+]

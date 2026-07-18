@@ -1,0 +1,4 @@
+go_owner	rust_module	status	note
+method:pkg/parser/ddl_alter_handlers.go#HandParser.parseAlterPartitionAction[DISCARD PARTITION]	rust/crates/tidb-parser/src/ddl_partition.rs	covered	DISCARD PARTITION accepts ALL or a comma-separated partition-name list and requires TABLESPACE; direct source assertions cover valid and mixed-list rejection rows from TestDDL.
+restore:pkg/parser/ast/ddl.go#AlterTableSpec.Restore[AlterTableDiscardPartitionTablespace]	rust/crates/tidb-ast/src/ddl_partition.rs	covered	Restores canonical DISCARD PARTITION names with Go's no-space comma list and TABLESPACE suffix.
+runtime:pkg/ddl/executor.go#AlterTable[partition-actions]	rust/crates/tidb-exec/src/partition.rs	covered	Rejects DISCARD PARTITION TABLESPACE before catalog or transaction mutation because the seed has no tablespace engine path; the dedicated executor test covers the integration row.

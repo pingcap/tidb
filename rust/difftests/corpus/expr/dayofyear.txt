@@ -1,0 +1,6 @@
+## DAYOFYEAR: 1-based day count within the year, leap-year aware
+dayofyear('2021-01-01')
+dayofyear('2021-12-31')
+dayofyear('2020-12-31')
+dayofyear('2020-02-29')
+dayofyear('not a date')

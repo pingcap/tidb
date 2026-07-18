@@ -1,0 +1,9 @@
+## Named table-level PRIMARY KEY / UNIQUE constraints: a CONSTRAINT name or
+## an inline index name restores as `KEYWORD `name`(cols)`; a CONSTRAINT
+## name wins over an inline index name when both are given
+create table t (a int, b int, constraint pk_ab primary key (a, b))
+create table t (a int, b int, unique key idx_ab (a, b))
+create table t (a int, b int, constraint uq_ab unique key (a, b))
+create table t (a int, b int, constraint uq_ab unique (a, b))
+create table t (a int, b int, constraint cn1 unique key idx1 (a, b))
+create table t (a int, constraint primary key (a))

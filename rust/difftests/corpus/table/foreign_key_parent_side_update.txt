@@ -1,0 +1,41 @@
+## MERGED TOPIC: statements below share mutable table state -- run against
+## one fresh Database like every other topic. FOREIGN KEY parent-side
+## UPDATE enforcement: RESTRICT (default, no ON UPDATE clause) rejects
+## changing a referenced column's value when dependents exist; changing a
+## NON-referenced column, or "changing" a referenced column to the SAME
+## value, never triggers a check at all (confirmed against real TiDB, not
+## assumed); CASCADE propagates the new value into dependents; SET NULL
+## nulls the dependents' referencing columns instead.
+create table parent (id int primary key, name varchar(10))
+create table child (id int, pid int, foreign key (pid) references parent(id))
+insert into parent values (1, 'a'), (2, 'b')
+insert into child values (10, 1)
+## Updating a non-referenced column never checks FK dependents.
+update parent set name = 'z' where id = 1
+## A no-op value change (same value) never checks either.
+update parent set id = 1 where id = 1
+select * from parent
+## Default (no ON UPDATE) rejects changing a referenced value with
+## dependents, but a parent row with none updates freely.
+update parent set id = 99 where id = 1
+update parent set id = 88 where id = 2
+select * from parent
+select * from child
+## CASCADE, including transitively through a second FK hop
+create table p (id int primary key)
+create table c (id int primary key, pid int, foreign key (pid) references p(id) on update cascade)
+create table g (id int, cid int, foreign key (cid) references c(id) on update cascade)
+insert into p values (1)
+insert into c values (10, 1)
+insert into g values (100, 10)
+update p set id = 99 where id = 1
+select * from p
+select * from c
+select * from g
+## SET NULL
+create table np (id int primary key)
+create table nc (id int, pid int, foreign key (pid) references np(id) on update set null)
+insert into np values (1)
+insert into nc values (10, 1)
+update np set id = 99 where id = 1
+select * from nc

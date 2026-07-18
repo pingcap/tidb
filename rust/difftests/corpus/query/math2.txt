@@ -1,0 +1,29 @@
+## math2: ports/audits from pkg/expression/builtin_arithmetic.go,
+## builtin_compare.go, builtin_math.go, and their matching *_test.go cases.
+## Division by zero is NULL in this mock-session result ring (the Go path also
+## emits a statement warning, which this value-only executor has no channel for).
+select 11 / 2, 11 / 0, 13 div 11, -13 div 11, 13 div -11, -13 div -11, 13 % 11, -13 % 11, 13 % -11, -13 % -11, mod(13.5, 2), mod(13, 0)
+select null / 3, 3 / null, null div 3, 3 div null, null % 3, 3 % null
+## `getBaseCmpType` chooses ETReal for every string/numeric pair.
+select '123' = 123, '123.5' = 123.5, 'abc' = 0, 'abc' < 1, '12x' = 12, '  -2.5x' < -2, '1e2' = 100, '.5x' = .5
+select '123' <=> 123, 'abc' <=> 0, null = '1', null <=> '1', '1' <=> null, null <=> null
+## builtin_math_test.go: TestLog/TestLog2/TestLog10/TestSqrt plus the Go
+## EvalReal string-prefix cases that exposed the previous Rust rejection.
+select sqrt(null), sqrt(1), sqrt(4e0), sqrt('4'), sqrt('9'), sqrt('-16'), sqrt('abc')
+select log(null), log(100), log(10, 100), log(-1e0), log(2e0, -1e0), log('abc')
+select log2(null), log2(16), log2(5), log2(-1), log2('4abc'), log2('abc')
+select log10(null), log10(100), log10(101), log10(-1), log10('100abc'), log10('abc')
+select pow(1, 3), pow(2, 2), pow(4, .5), pow(4, -2), pow('test', 'test'), pow(1, 'test')
+select degrees(null), degrees(0), degrees(1), degrees(''), degrees('-2'), degrees('abc'), degrees('+1abc')
+select radians(null), radians(0), radians(180e0), radians(-360), radians('180'), radians('notNum')
+select sin(null), sin(0), sin('adfsdfgs'), sin('0.000'), cos(null), cos(0), cos('0.000'), cos('sdfgsfsdf')
+select acos(null), acos(1e0), acos(2e0), acos(-1e0), acos(-2e0), acos('tidb'), asin(null), asin(1e0), asin(2e0), asin(-1e0), asin(-2e0), asin('tidb')
+select atan(null), atan(null, null), atan(1e0), atan(-1e0), atan(0e0, -2e0), atan('tidb'), atan2(0e0, -2e0)
+## TestCot's `COT(0)`/`COT('tidb')` error vectors are covered by the local
+## unit test below: query_diff deliberately skips ERR goldens.
+select tan(null), tan(0), tan('0.000'), tan('sdfgsdfg'), cot(null), cot(-1e0), cot(1e0)
+## builtin_math_test.go: TestRound and TestTruncate float signatures.  `e0`
+## forces the Float path, whose Go `types.Round` tie behavior is to-even.
+select round(-1.23e0), round(-1.23e0, 0), round(-1.58e0), round(1.58e0), round(1.298e0, 1), round(-1.5e0, 0), round(1.5e0, 0), round(23.298e0, -1)
+select round(2.5e0), round(3.5e0), round(-2.5e0), round(1.25e0, 1), round(1.35e0, 1), round(12345e0, -2)
+select truncate(-1.23e0, 0), truncate(1.58e0, 0), truncate(1.298e0, 1), truncate(123.2e0, -1), truncate(123.2e0, 100), truncate(123.2e0, -100), truncate(1.1e0, 400), truncate(1.1e0, -400)

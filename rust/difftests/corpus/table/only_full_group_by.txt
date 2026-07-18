@@ -1,0 +1,29 @@
+## ONLY_FULL_GROUP_BY (real MySQL/TiDB's default sql_mode): a non-aggregated
+## column in the select list/HAVING/ORDER BY of a GROUP BY/aggregate query
+## must be a bare GROUP BY column, or the whole checked expression must
+## exactly match one GROUP BY expression (top-level only, not recursive).
+## Also covers an aggregate hidden inside an ordinary function call's
+## argument (e.g. IF(cond, COUNT(*), 0)), which must still be recognized as
+## making the query aggregating.
+create table t (id int, v int)
+insert into t values (1, 10), (1, 20), (2, 30)
+select v, count(*) from t
+select id, count(*) from t
+select count(*), 1+1 from t
+select if(1=1, count(*), 0) from t
+select id, v, count(*) from t group by id
+select id, count(*) from t group by id having v > 0
+select id from t group by id order by v
+select id from t group by id order by id
+select id+1, count(*) from t group by id
+select t.id, count(*) from t group by id
+select id, count(*) from t group by id+1
+select id+1+1, count(*) from t group by id+1
+select id+1, count(*) from t group by id+1
+select id, count(distinct v) from t group by id
+select id, v from t group by id, v
+create table t2 (x int)
+insert into t2 values (1), (2), (3)
+select id, (select count(*) from t2) from t
+select id, (select v from t t2b where t2b.id = t.id limit 1), count(*) from t group by id order by id
+select id, count(*) from t group by id having v in (select 1)

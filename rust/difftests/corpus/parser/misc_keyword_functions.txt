@@ -1,0 +1,19 @@
+## COLLATION/WEIGHT_STRING/APPROX_COUNT_DISTINCT are lexer keywords (like
+## real TiDB) that otherwise hit `parse_prefix`'s generic "unsupported
+## keyword in expression" catch-all with no function-call recognition at
+## all. COLLATION/WEIGHT_STRING are plain single-arg scalar-shaped calls;
+## APPROX_COUNT_DISTINCT restores with a DISTINCT modifier like every
+## other aggregate here. Evaluation of all three remains Unsupported
+## beyond this parse+restore recognition -- a deliberate, narrower scope
+## boundary, same "parse and restore only" pattern already used
+## elsewhere. WEIGHT_STRING's own extended `... AS CHAR(N) LEVEL ...`
+## grammar is a genuinely separate, more complex shape not modelled here
+## (covered by tidb-parser's own unit test as a rejection, not this
+## corpus, since the corpus itself must never contain a Go-rejecting
+## statement OR a statement this Rust parser wrongly accepts/rejects).
+select collation(a) from t
+select collation('x')
+select weight_string(a) from t
+select weight_string('x' collate utf8mb4_bin)
+select approx_count_distinct(a) from t
+select approx_count_distinct(distinct a) from t

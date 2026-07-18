@@ -1,0 +1,10 @@
+## Go parser TestExplain: pkg/parser/parser_test.go:5946-5948, plus the
+## shared parseExplainStmt fallback in pkg/parser/set_explain_parser.go:694-709.
+## DESC, DESCRIBE, and EXPLAIN table targets all restore through one normal form.
+DESC SCHE.TABL
+DESC SCHE.TABL COLUM
+DESCRIBE SCHE.TABL COLUM
+EXPLAIN SCHE.TABL
+EXPLAIN SCHE.TABL COLUM
+EXPLAIN FORMAT = brief SCHE.TABL COLUM
+EXPLAIN ANALYZE SCHE.TABL

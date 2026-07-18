@@ -1,0 +1,3 @@
+# Source-owned statement push-down test-port evidence.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/sessionctx/stmtctx/stmtctx_test.go	89	TestStatementContextPushDownFLags	PARTIAL	session-statement-pushdown-wave	rust/crates/tidb-exec/tests/statement_pushdown_source.rs	The source table continues through line 132; all cases are directly represented, including INSERT/UPDATE/DELETE/SELECT precedence, type/error bits, LOAD DATA, and combined cases; live StatementContext and TiKV request execution remain external

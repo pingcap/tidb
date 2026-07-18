@@ -1,0 +1,7 @@
+target/
+__pycache__/
+*.pyc
+workstreams/claims/*.claim.json
+workstreams/claims/.lock
+workstreams/integration-attempt.json
+workstreams/integration-receipt.json

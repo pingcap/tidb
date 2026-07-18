@@ -1,0 +1,3 @@
+# Source-owned test-evidence fragment for planner-topn-push-down-wave.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/planner/core/logical_plans_test.go	1640	TestTopNPushDown	PARTIAL	planner-topn-push-down-wave	rust/difftests/planner-tests/tests/topn_push_down.rs	Rust vectors cover the source rule wrapper's nil-parent callback, stable registry name, and false change flag; the Go SQL plan-tree suite, logical operator rewrites, storage pushdown, and testdata remain external.

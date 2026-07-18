@@ -1,0 +1,6 @@
+## Go source vectors: pkg/expression/builtin_time_test.go TestTimeToSec.
+select time_to_sec('22:23:00'),time_to_sec('00:39:38'),time_to_sec('23:00'),time_to_sec('00:00'),time_to_sec('00:00:00'),time_to_sec('23:59:59')
+select time_to_sec('1:0'),time_to_sec('1:00'),time_to_sec('1:0:0'),time_to_sec('-02:00'),time_to_sec('-02:00:05'),time_to_sec('020005'),time_to_sec(null)
+## Go source vectors: pkg/expression/builtin_time_test.go TestSecToTime.
+select sec_to_time(2378),sec_to_time(3864000),sec_to_time(-3864000),sec_to_time(86401.4),sec_to_time(-86401.4),sec_to_time(86401.54321)
+select sec_to_time('123.4'),sec_to_time('123.4567891'),sec_to_time('123'),sec_to_time('abc'),sec_to_time('1e-4'),sec_to_time('1e-5'),sec_to_time('1e-6'),sec_to_time('1e-7'),sec_to_time(null)

@@ -1,0 +1,12 @@
+RS:world
+RS:helloworld
+RS:helloworld
+RS:
+RS:
+RS:<nil>
+RS:BYTES_HEX:FF
+RS:abc123
+RS:<nil>
+RS:<nil>
+RS:BYTES_HEX:6162FF
+RS:ab

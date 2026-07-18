@@ -1,0 +1,2 @@
+select position('a' in 'AA');
+select hex(position(a in 0xe4b880)), hex(position(b in 0xd2bb)) from t;

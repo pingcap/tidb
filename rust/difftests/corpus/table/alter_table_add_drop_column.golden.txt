@@ -1,0 +1,15 @@
+OK
+OK
+OK
+OK
+RS:1|10|<nil>;2|20|<nil>
+OK
+RS:1|10|<nil>|99;2|20|<nil>|99
+OK
+RS:1|<nil>|99;2|<nil>|99
+OK
+RS:<nil>|1|<nil>|99;<nil>|2|<nil>|99
+OK
+RS:<nil>|1|<nil>|<nil>|99;<nil>|2|<nil>|<nil>|99
+OK
+RS:5|1|6|7|8;<nil>|1|<nil>|<nil>|99;<nil>|2|<nil>|<nil>|99

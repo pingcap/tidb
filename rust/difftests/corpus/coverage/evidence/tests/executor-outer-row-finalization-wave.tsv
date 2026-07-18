@@ -1,0 +1,3 @@
+# Source-owned executor outer-row finalization test evidence.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/executor/join/test/indexjoin/index_lookup_join_test.go	162	TestIndexJoinNullEQOuterJoin	PARTIAL	executor-outer-row-finalization-wave	rust/crates/tidb-exec/tests/typed_condition_eval_source.rs	The Rust source-shaped test emits only non-matched rows in source order, distinguishes UNKNOWN via has_null, and marks each event for default-inner extension; SQL/index-join execution and physical null-extension remain open.

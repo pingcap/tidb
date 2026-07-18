@@ -1,0 +1,444 @@
+#IDX 0
+CREATE DATABASE `bindinfo__bind_test`
+#END
+#IDX 1
+CREATE DATABASE `with_cluster_index`
+#END
+#IDX 2
+CREATE DATABASE `wout_cluster_index`
+#END
+#IDX 3
+CREATE DATABASE IF NOT EXISTS `cd_test_utf8mb4_0900_bin`
+#END
+#IDX 4
+CREATE DATABASE `collation_point_get`
+#END
+#IDX 5
+CREATE DATABASE `cte1`
+#END
+#IDX 6
+CREATE DATABASE `ddl__attributes_sql_test`
+#END
+#IDX 7
+CREATE DATABASE `bdr_mode`
+#END
+#IDX 8
+CREATE DATABASE `bdr_mode`
+#END
+#IDX 9
+CREATE DATABASE `bdr_mode`
+#END
+#IDX 10
+CREATE DATABASE `bdr_mode`
+#END
+#IDX 11
+CREATE DATABASE `ddl__column_modify2`
+#END
+#IDX 12
+CREATE DATABASE `库库库库库库库库库库库库库库库库库库库库库库库库库库库库库库库库库库库库库库库库库库库库库库库库库库库库库库库库库库库库库库库`
+#END
+#IDX 13
+CREATE DATABASE `test_db2`
+#END
+#IDX 14
+CREATE DATABASE `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`
+#END
+#IDX 15
+CREATE DATABASE `test`
+#END
+#IDX 16
+CREATE DATABASE IF NOT EXISTS `testt`
+#END
+#IDX 17
+CREATE DATABASE `db_one`
+#END
+#IDX 18
+CREATE DATABASE `db_two`
+#END
+#IDX 19
+CREATE DATABASE `test_db_with_partition_const`
+#END
+#IDX 20
+CREATE DATABASE `partition_exchange`
+#END
+#IDX 21
+CREATE DATABASE `test_2`
+#END
+#IDX 22
+CREATE DATABASE `ddl__foreign_key_test`
+#END
+#IDX 23
+CREATE DATABASE `ddl__foreign_key`
+#END
+#IDX 24
+CREATE DATABASE `ddl__foreign_key`
+#END
+#IDX 25
+CREATE DATABASE `test_db_1`
+#END
+#IDX 26
+CREATE DATABASE `test_db_2`
+#END
+#IDX 27
+CREATE DATABASE `test_db_3`
+#END
+#IDX 28
+CREATE DATABASE IF NOT EXISTS `test1`
+#END
+#IDX 29
+CREATE DATABASE `dct`
+#END
+#IDX 30
+CREATE DATABASE `ucd`
+#END
+#IDX 31
+CREATE DATABASE IF NOT EXISTS `executor__cte1`
+#END
+#IDX 32
+CREATE DATABASE `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`
+#END
+#IDX 33
+CREATE DATABASE `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`
+#END
+#IDX 34
+CREATE DATABASE `test`
+#END
+#IDX 35
+CREATE DATABASE `test_show`
+#END
+#IDX 36
+CREATE DATABASE `mytest`
+#END
+#IDX 37
+CREATE DATABASE `test2`
+#END
+#IDX 38
+CREATE DATABASE `plan_cache`
+#END
+#IDX 39
+CREATE DATABASE `s1`
+#END
+#IDX 40
+CREATE DATABASE `executor__foreign_key_other_schema`
+#END
+#IDX 41
+CREATE DATABASE `dddb_%`
+#END
+#IDX 42
+CREATE DATABASE `d29268`
+#END
+#IDX 43
+CREATE DATABASE `test_ddl_jobs`
+#END
+#IDX 44
+CREATE DATABASE `test1`
+#END
+#IDX 45
+CREATE DATABASE `test2`
+#END
+#IDX 46
+CREATE DATABASE `executor__infoschema_reader_2`
+#END
+#IDX 47
+CREATE DATABASE `executor__issues2`
+#END
+#IDX 48
+CREATE DATABASE `d1`
+#END
+#IDX 49
+CREATE DATABASE `test1`
+#END
+#IDX 50
+CREATE DATABASE `test2`
+#END
+#IDX 51
+CREATE DATABASE `TEST_$1`
+#END
+#IDX 52
+CREATE DATABASE `test_$2`
+#END
+#IDX 53
+CREATE DATABASE `AAAA`
+#END
+#IDX 54
+CREATE DATABASE `BBBB`
+#END
+#IDX 55
+CREATE DATABASE `test2`
+#END
+#IDX 56
+CREATE DATABASE IF NOT EXISTS `imdbload`
+#END
+#IDX 57
+CREATE DATABASE `test1`
+#END
+#IDX 58
+CREATE DATABASE `test2`
+#END
+#IDX 59
+CREATE DATABASE `infoschema__infoschema_2`
+#END
+#IDX 60
+CREATE DATABASE `indexusage`
+#END
+#IDX 61
+CREATE DATABASE `columnsinfo`
+#END
+#IDX 62
+CREATE DATABASE IF NOT EXISTS `db1`
+#END
+#IDX 63
+CREATE DATABASE IF NOT EXISTS `db2`
+#END
+#IDX 64
+CREATE DATABASE IF NOT EXISTS `Db1`
+#END
+#IDX 65
+CREATE DATABASE IF NOT EXISTS `dB2`
+#END
+#IDX 66
+CREATE DATABASE `test_db_080`
+#END
+#IDX 67
+CREATE DATABASE `infoschema__v2`
+#END
+#IDX 68
+CREATE DATABASE `infoschema__v2`
+#END
+#IDX 69
+CREATE DATABASE `infoschema__v2`
+#END
+#IDX 70
+CREATE DATABASE `infoschema__v2`
+#END
+#IDX 71
+CREATE DATABASE `testdb`
+#END
+#IDX 72
+CREATE DATABASE `list_push_down`
+#END
+#IDX 73
+CREATE DATABASE `list_col_partition_types`
+#END
+#IDX 74
+CREATE DATABASE `list_partition_pruning`
+#END
+#IDX 75
+CREATE DATABASE `test_partition_2`
+#END
+#IDX 76
+CREATE DATABASE `test_partition_2`
+#END
+#IDX 77
+CREATE DATABASE `test_partition_2`
+#END
+#IDX 78
+CREATE DATABASE `test_partition`
+#END
+#IDX 79
+CREATE DATABASE `issue42135`
+#END
+#IDX 80
+CREATE DATABASE `db1`
+#END
+#IDX 81
+CREATE DATABASE `test_new_collation`
+#END
+#IDX 82
+CREATE DATABASE `cluster_idx_unique_double_read`
+#END
+#IDX 83
+CREATE DATABASE `db1`
+#END
+#IDX 84
+CREATE DATABASE `natural_join_update`
+#END
+#IDX 85
+CREATE DATABASE `list_partition_dml`
+#END
+#IDX 86
+CREATE DATABASE `list_partition_cre`
+#END
+#IDX 87
+CREATE DATABASE `list_partition_ddl`
+#END
+#IDX 88
+CREATE DATABASE `list_partition_op`
+#END
+#IDX 89
+CREATE DATABASE `list_partition_shard_bits`
+#END
+#IDX 90
+CREATE DATABASE `list_partition_split_region`
+#END
+#IDX 91
+CREATE DATABASE `list_partition_auto_incre`
+#END
+#IDX 92
+CREATE DATABASE `list_partition_auto_rand`
+#END
+#IDX 93
+CREATE DATABASE `list_partition_invisible_idx`
+#END
+#IDX 94
+CREATE DATABASE `list_partition_cte`
+#END
+#IDX 95
+CREATE DATABASE `list_partition_temp_table`
+#END
+#IDX 96
+CREATE DATABASE `list_partition_alter_pk`
+#END
+#IDX 97
+CREATE DATABASE `issue_27018`
+#END
+#IDX 98
+CREATE DATABASE `issue_27017`
+#END
+#IDX 99
+CREATE DATABASE `issue_27544`
+#END
+#IDX 100
+CREATE DATABASE `issue_27012`
+#END
+#IDX 101
+CREATE DATABASE `issue_27030`
+#END
+#IDX 102
+CREATE DATABASE `issue_27070`
+#END
+#IDX 103
+CREATE DATABASE `issue_27031`
+#END
+#IDX 104
+CREATE DATABASE `issue_27493`
+#END
+#IDX 105
+CREATE DATABASE `issue_27532`
+#END
+#IDX 106
+CREATE DATABASE `RangeColumnsMulti`
+#END
+#IDX 107
+CREATE DATABASE `RColumnsMulti`
+#END
+#IDX 108
+CREATE DATABASE `rce`
+#END
+#IDX 109
+CREATE DATABASE `cwc`
+#END
+#IDX 110
+CREATE DATABASE `rcd`
+#END
+#IDX 111
+CREATE DATABASE `rcd`
+#END
+#IDX 112
+CREATE DATABASE `issue42323`
+#END
+#IDX 113
+CREATE DATABASE `list_partition_pri`
+#END
+#IDX 114
+CREATE DATABASE IF NOT EXISTS `test_59427`
+#END
+#IDX 115
+CREATE DATABASE `lock_db1`
+#END
+#IDX 116
+CREATE DATABASE `lock_db2`
+#END
+#IDX 117
+CREATE DATABASE `test_range_col_in`
+#END
+#IDX 118
+CREATE DATABASE `test_range_col_in_string`
+#END
+#IDX 119
+CREATE DATABASE `test_partition`
+#END
+#IDX 120
+CREATE DATABASE `test_partition_1`
+#END
+#IDX 121
+CREATE DATABASE `Issue32007`
+#END
+#IDX 122
+CREATE DATABASE `issue33231`
+#END
+#IDX 123
+CREATE DATABASE `ListDefaultPrune`
+#END
+#IDX 124
+CREATE DATABASE `issue42273`
+#END
+#IDX 125
+CREATE DATABASE `issue43459`
+#END
+#IDX 126
+CREATE DATABASE `TestErrKeyPart`
+#END
+#IDX 127
+CREATE DATABASE IF NOT EXISTS `privilege__privileges`
+#END
+#IDX 128
+CREATE DATABASE IF NOT EXISTS `test_rc`
+#END
+#IDX 129
+CREATE DATABASE IF NOT EXISTS `privilege__privileges`
+#END
+#IDX 130
+CREATE DATABASE IF NOT EXISTS `privilege__privileges_test1`
+#END
+#IDX 131
+CREATE DATABASE IF NOT EXISTS `privilege__privileges`
+#END
+#IDX 132
+CREATE DATABASE IF NOT EXISTS `privilege__privileges`
+#END
+#IDX 133
+CREATE DATABASE `privilege__privileges_db1`
+#END
+#IDX 134
+CREATE DATABASE `privilege__privileges_db2`
+#END
+#IDX 135
+CREATE DATABASE `placement_db`
+#END
+#IDX 136
+CREATE DATABASE `tmpdb`
+#END
+#IDX 137
+CREATE DATABASE `xxx`
+#END
+#IDX 138
+CREATE DATABASE `xxx`
+#END
+#IDX 139
+CREATE DATABASE IF NOT EXISTS `xxx`
+#END
+#IDX 140
+CREATE DATABASE `session__common1`
+#END
+#IDX 141
+CREATE DATABASE `session__nontransactional2`
+#END
+#IDX 142
+CREATE DATABASE `weperk`
+#END
+#IDX 143
+CREATE DATABASE `service`
+#END
+#IDX 144
+CREATE DATABASE `report`
+#END
+#IDX 145
+CREATE DATABASE `ap`
+#END
+#IDX 146
+CREATE DATABASE `tp`
+#END
+#IDX 147
+CREATE DATABASE IF NOT EXISTS `TPCH50`
+#END

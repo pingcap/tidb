@@ -1,0 +1,2 @@
+# source_path	status	owner	evidence_artifact	note
+pkg/planner/cascades/rule/ruleset/rule_set.go	PARTIAL	planner-rule-set-wave	rust/crates/tidb-planner/src/rule_set.rs	Ports ListRules.Filter bitset membership/order and OperandRules.Filter's intermediate de-correlate-Apply set switch over opaque rule IDs; concrete rules, memo GroupExpression flags, cascades traversal, and optimizer execution remain external.

@@ -1,0 +1,4 @@
+# Source-owned normalized ranger-detachment test evidence.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/util/ranger/ranger_test.go	45	TestTableRange	PARTIAL	planner-range-detacher-wave	rust/difftests/planner-tests/tests/range_detacher.rs	Covers CNF access/filter partition, DNF branch reconstruction, reserved approximate conditions, and unusable-branch fallback; original typed range-building and full test matrix remain external.
+go_test	pkg/util/ranger/ranger_test.go	1917	TestRangeFallbackForDetachCondAndBuildRangeForIndex	PARTIAL	planner-range-detacher-wave	rust/difftests/planner-tests/tests/range_detacher.rs	Covers the detachment-side boolean contract only; range quota/fallback, expression formatting, and index endpoint construction remain external.

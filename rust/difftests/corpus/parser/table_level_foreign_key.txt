@@ -1,0 +1,19 @@
+## Table-level FOREIGN KEY: `[CONSTRAINT [name]] FOREIGN KEY [name]
+## (col1, ...) REFERENCES table (col1, ...) [ON DELETE action] [ON UPDATE
+## action]`. Unlike PRIMARY KEY/UNIQUE/CHECK, `CONSTRAINT` ALWAYS restores
+## here even with no name written -- a real asymmetry, confirmed via
+## godump restore not assumed. ON DELETE always restores before ON UPDATE
+## regardless of which was written first.
+create table child (id int, pid int, foreign key (pid) references parent(id))
+create table child (id int, pid int, constraint fk1 foreign key (pid) references parent(id))
+create table child (id int, pid int, foreign key fk_pid (pid) references parent(id))
+create table child (id int, a int, b int, foreign key (a, b) references parent(x, y))
+create table child (id int, pid int, foreign key (pid) references db1.parent(id))
+create table child (id int, pid int, foreign key (pid) references parent(id) on delete cascade)
+create table child (id int, pid int, foreign key (pid) references parent(id) on delete set null)
+create table child (id int, pid int, foreign key (pid) references parent(id) on delete restrict)
+create table child (id int, pid int, foreign key (pid) references parent(id) on delete no action)
+create table child (id int, pid int, foreign key (pid) references parent(id) on delete set default)
+create table child (id int, pid int, foreign key (pid) references parent(id) on update cascade)
+create table child (id int, pid int, foreign key (pid) references parent(id) on update set null on delete cascade)
+create table child (id int, pid int, primary key(id), foreign key (pid) references parent(id))

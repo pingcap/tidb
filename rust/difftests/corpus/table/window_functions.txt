@@ -1,0 +1,55 @@
+## Window functions: ROW_NUMBER/RANK/DENSE_RANK OVER (PARTITION BY ... ORDER
+## BY ...). Covers ties, no-PARTITION-BY, no-ORDER-BY, output row order
+## (original scan order, not the window's own order), a window function
+## referenced directly by the query's own top-level ORDER BY, and two
+## distinct window specs in one query. Also covers the frame-based window
+## aggregates COUNT/SUM/AVG/MAX/MIN and their default frame: no ORDER BY ->
+## whole-partition frame for every row; ORDER BY present -> cumulative
+## RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW, where RANGE's
+## "CURRENT ROW" is peer-group-inclusive (tied rows share one value, not
+## each their own running total).
+create table t (id int, dept varchar(10), salary int)
+insert into t values (1,'a',100),(2,'a',200),(3,'a',200),(4,'b',150),(5,'b',300)
+select id, dept, salary, row_number() over (partition by dept order by salary) from t
+select id, dept, salary, rank() over (partition by dept order by salary) from t
+select id, dept, salary, dense_rank() over (partition by dept order by salary) from t
+select id, dept, salary, row_number() over (order by salary) from t
+select id, dept, salary, row_number() over () from t
+select id, rank() over (order by salary), row_number() over (partition by dept) from t
+select id, salary, row_number() over (order by salary) from t where salary > 100
+select id, dept, salary, sum(salary) over (partition by dept) from t
+select id, dept, salary, sum(salary) over (partition by dept order by salary) from t
+select id, dept, salary, count(*) over (partition by dept) from t
+select id, dept, salary, avg(salary) over (partition by dept order by salary) from t
+select id, dept, salary, max(salary) over (partition by dept order by salary) from t
+select count(*) over () from t
+select id, dept, salary, lag(salary) over (partition by dept order by salary) from t
+select id, dept, salary, lead(salary) over (partition by dept order by salary) from t
+select id, dept, salary, lag(salary, 2) over (partition by dept order by salary) from t
+select id, dept, salary, lag(salary, 1, 0) over (partition by dept order by salary) from t
+select id, lag(salary) over (partition by dept) from t
+select id, dept, salary, first_value(salary) over (partition by dept order by salary) from t
+select id, dept, salary, last_value(salary) over (partition by dept order by salary) from t
+select id, dept, salary, nth_value(salary, 2) over (partition by dept order by salary) from t
+select id, dept, salary, nth_value(salary, 5) over (partition by dept order by salary) from t
+select id, dept, salary, first_value(salary) over (partition by dept) from t
+select id, dept, salary, last_value(salary) over (partition by dept) from t
+select id, dept, salary, ntile(2) over (partition by dept order by salary) from t
+select id, salary, ntile(3) over (order by salary) from t
+select id, ntile(0) over (order by salary) from t
+select id, dept, salary, percent_rank() over (partition by dept order by salary) from t
+select id, dept, salary, cume_dist() over (partition by dept order by salary) from t
+select id, dept, salary, percent_rank() over (partition by dept) from t
+select id, dept, salary, cume_dist() over (partition by dept) from t
+create table single (id int, dept varchar(10), salary int)
+insert into single values (1,'a',100)
+select id, dept, salary, percent_rank() over (partition by dept order by salary) from single
+select id, dept, salary, cume_dist() over (partition by dept order by salary) from single
+select id, dept, salary, ntile(3) over (partition by dept order by salary) from single
+create table u (id int, v int)
+insert into u values (1,10),(2,20),(3,20),(4,30),(5,NULL)
+select id, v, rank() over (order by v), dense_rank() over (order by v) from u
+select id, v, rank() over (order by v desc) from u
+create table dep (id int, dept varchar(10))
+insert into dep values (1,'a'),(2,'a'),(3,'a'),(4,'b')
+select id, dept, rank() over (partition by dept), row_number() over (partition by dept), dense_rank() over (partition by dept) from dep

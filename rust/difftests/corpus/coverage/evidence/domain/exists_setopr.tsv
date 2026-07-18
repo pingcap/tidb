@@ -1,0 +1,5 @@
+go_owner	rust_module	status	note
+method:pkg/parser/expr_subquery_parser.go#HandParser.parseExistsSubquery; pkg/parser/ast/expressions.go#ExistsSubqueryExpr	rust/crates/tidb-parser/src/expr.rs;rust/crates/tidb-ast/src/expr.rs	covered	EXISTS delegates to the general subquery parser, preserving UNION ALL as a typed QueryStmt::SetOpr instead of flattening the first SELECT.
+method:pkg/parser/select_parser.go#HandParser.parseSubquery	rust/crates/tidb-parser/src/select.rs	covered	The EXISTS-only query-subquery helper accepts WITH and top-level UNION/EXCEPT/INTERSECT while scalar and ANY/ALL positions retain their narrower SelectStmt seam.
+tests:tests/integrationtest/t/expression/issues.test#1900-1904	rust/crates/tidb-parser/src/tests/exists_setopr_source.rs;rust/difftests/parser-tests/tests/selectors/query/exists_setopr_selector.rs	covered	The exact accepted source row is asserted directly and selected dynamically from the checked Go parser oracle.
+execution capability	rust/crates/tidb-exec/src/subquery.rs	covered	EXISTS evaluates both QueryStmt::Select and QueryStmt::SetOpr through the existing query-row path; no catalog mutation is introduced.

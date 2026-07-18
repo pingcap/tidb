@@ -1,0 +1,6 @@
+## pkg/expression/builtin_miscellaneous_test.go:240 TestAnyValue
+any_value(null)
+any_value(1234)
+any_value(-153)
+any_value(cast(3.1415926 as double))
+any_value('Hello, World')

@@ -1,0 +1,18 @@
+## A decimal/integer literal whose digit count exceeds real MySQL/TiDB's
+## internal MyDecimal storage capacity (9 "words" of 9 digits each, 81
+## total, split between integer and fraction parts, with the integer part
+## alone capped at 9 words / 81 digits) is silently clamped or replaced at
+## LEX time -- read directly from pkg/types/mydecimal.go's FromString/
+## fixWordCntError and pkg/parser/lexer_helpers.go's toDecimal, not guessed
+## from restore text alone. See tidb_ast::util::clamp_decimal_magnitude's
+## own doc for the full rule (integer part >81 digits: whole literal
+## replaced with the fixed constant mysql.DefaultDecimal, 65 nines;
+## otherwise excess fraction digits are truncated, no rounding, possibly to
+## zero -- dropping the fraction and its dot entirely).
+select 8888888888888888888888888888888888888888888888888888888888888888888888888888888888888888
+select 111111111111111111111111111111111111111111111111111111111111111111111111111111111
+select 1111111111111111111111111111111111111111111111111111111111111111111111111111111111
+select 0.00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+select 0.0000000000000000000000000000000000000000000000000000000000000000000000012
+select 0.111111111111111111111111111111111111111111111111111111111111111111111111
+select 111111111111111111111111111111111111111111111111111111111111111111111111111111111.5

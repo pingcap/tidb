@@ -1,0 +1,11 @@
+## `SET @name = value` (a user-variable assignment) restores as
+## `SET @`name`=value` -- a genuinely DIFFERENT shape from the plain
+## `SET name = value` session-variable form (`set_and_now`'s own test:
+## that one restores as `SET @@SESSION.`name`=value`), confirmed via
+## `godump restore`. `:=` is accepted as a synonym for `=` here and
+## restores identically; case is preserved verbatim, not canonicalized;
+## the value may itself reference another user variable.
+set @x = 5
+set @x := 5
+set @X = 1 + 2
+set @x = @y

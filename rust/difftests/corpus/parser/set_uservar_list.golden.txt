@@ -1,0 +1,306 @@
+#IDX 0
+SET @`a`=0, @`b`=1
+#END
+#IDX 1
+SET @`a`=0, @`b`=1
+#END
+#IDX 2
+SET @`a`=0, @`b`=1
+#END
+#IDX 3
+SET @`a`=0, @`b`=1
+#END
+#IDX 4
+SET @`a`=5, @`b`=4, @`c`=2, @`d`=1
+#END
+#IDX 5
+SET @`a`=10, @`b`=2
+#END
+#IDX 6
+SET @`a`=1, @`b`=2, @`c`=3, @`d`=4, @`e`=5
+#END
+#IDX 7
+SET @`a`=1, @`b`=2, @`c`=3, @`d`=4, @`e`=5, @`f`=0
+#END
+#IDX 8
+SET @`a`=-128, @`b`=107, @`c`=-128
+#END
+#IDX 9
+SET @`a`=1, @`b`=NULL, @`c`=0
+#END
+#IDX 10
+SET @`a`=x'01', @`b`=x'01', @`c`=x'01'
+#END
+#IDX 11
+SET @`a`=x'00', @`b`=x'00', @`c`=x'01'
+#END
+#IDX 12
+SET @`a`=_UTF8MB4'2038-01-19 03:14:07', @`b`=_UTF8MB4'2038-01-19 03:14:07', @`c`=_UTF8MB4'2038-01-19 03:14:07', @`d`=_UTF8MB4'2038-01-19 03:14:07'
+#END
+#IDX 13
+SET @`a`=_UTF8MB4'1976-09-09 20:21:11', @`b`=_UTF8MB4'2021-07-14 09:28:16', @`c`=_UTF8MB4'1982-01-09 03:36:39', @`d`=_UTF8MB4'1970-12-18 10:53:28'
+#END
+#IDX 14
+SET @`a`=NULL, @`b`=-2
+#END
+#IDX 15
+SET @`a`=_UTF8MB4'1', @`b`=REPEAT(_UTF8MB4'x', 80)
+#END
+#IDX 16
+SET @`a`=1, @`b`=2, @`c`=3
+#END
+#IDX 17
+SET @`a`=2, @`b`=3
+#END
+#IDX 18
+SET @`a`=1, @`b`=2, @`c`=3, @`d`=4
+#END
+#IDX 19
+SET @`v1`=1, @`v2`=3, @`v3`=5
+#END
+#IDX 20
+SET @`v1`=1, @`v2`=2, @`v3`=4
+#END
+#IDX 21
+SET @`v1`=1, @`v2`=3, @`v3`=5
+#END
+#IDX 22
+SET @`v1`=1, @`v2`=2, @`v3`=4
+#END
+#IDX 23
+SET @`im_a`=4, @`im_b1`=1, @`im_b2`=3, @`im_b3`=5, @`im_limit`=6
+#END
+#IDX 24
+SET @`im_a`=1, @`im_b1`=2, @`im_b2`=4, @`im_b3`=5, @`im_limit`=5
+#END
+#IDX 25
+SET @`a`=10, @`b`=20, @`c`=30, @`d`=40, @`e`=50
+#END
+#IDX 26
+SET @`a`=54, @`b`=28
+#END
+#IDX 27
+SET @`a`=1, @`b`=2, @`c`=3
+#END
+#IDX 28
+SET @`a`=1, @`b`=2, @`c`=3
+#END
+#IDX 29
+SET @`a`=1, @`b`=2, @`c`=3, @`d`=4
+#END
+#IDX 30
+SET @`a`=999999999999999999999999999999999.9999, @`b`=999999999999999999999999999999999.9999, @`c`=999999999999999999999999999999999.9999, @`d`=999999999999999999999999999999999.9999
+#END
+#IDX 31
+SET @`a`=895769331208356.9029, @`b`=471841432147994.4981, @`c`=729024465529090.5423, @`d`=492790234219503.0846
+#END
+#IDX 32
+SET @`p0`=_UTF8MB4'1', @`p1`=_UTF8MB4'2'
+#END
+#IDX 33
+SET @`p0`=_UTF8MB4'1', @`p1`=_UTF8MB4'1'
+#END
+#IDX 34
+SET @`a`=x'01', @`b`=x'01', @`c`=-3088380202191555887, @`d`=_UTF8MB4'缎馗惫砲兣肬憵急鳸嫅稩邏蠧鄂艘腯灩專妴粈', @`e`=_UTF8MB4'缎馗惫砲兣肬憵急鳸嫅稩邏蠧鄂艘腯灩專妴粈', @`f`=_UTF8MB4'缎馗惫砲兣肬憵急鳸嫅稩邏蠧鄂艘腯灩專妴粈'
+#END
+#IDX 35
+SET @`a`=NULL, @`b`=NULL, @`c`=-4016793239832666288, @`d`=_UTF8MB4'缎馗惫砲兣肬憵急鳸嫅稩邏蠧鄂艘腯灩專妴粈', @`e`=_UTF8MB4'仲膩蕦圓猴洠飌镂喵疎偌嫺荂踖Ƕ藨蜿諪軁笞', @`f`=_UTF8MB4'缎馗惫砲兣肬憵急鳸嫅稩邏蠧鄂艘腯灩專妴粈'
+#END
+#IDX 36
+SET @`a`=x'01', @`b`=x'01', @`c`=-3088380202191555887, @`d`=_UTF8MB4'缎馗惫砲兣肬憵急鳸嫅稩邏蠧鄂艘腯灩專妴粈', @`e`=_UTF8MB4'缎馗惫砲兣肬憵急鳸嫅稩邏蠧鄂艘腯灩專妴粈', @`f`=_UTF8MB4'缎馗惫砲兣肬憵急鳸嫅稩邏蠧鄂艘腯灩專妴粈'
+#END
+#IDX 37
+SET @`a`=1, @`b`=1
+#END
+#IDX 38
+SET @`a`=-8414766051197, @`b`=-8388608
+#END
+#IDX 39
+SET @`a`=16614, @`b`=16614
+#END
+#IDX 40
+SET @`a`=0, @`b`=0
+#END
+#IDX 41
+SET @`a`=8950167, @`b`=16305982
+#END
+#IDX 42
+SET @`a`=_UTF8MB4'0051-12-23', @`b`=_UTF8MB4'none', @`c`=_UTF8MB4'none', @`d`=_UTF8MB4'none', @`e`=-32757, @`f`=-32757
+#END
+#IDX 43
+SET @`a`=_UTF8MB4'9795-01-10', @`b`=_UTF8MB4'aa', @`c`=_UTF8MB4'aa', @`d`=_UTF8MB4'aa', @`e`=31928, @`f`=31928
+#END
+#IDX 44
+SET @`v0`=_UTF8MB4'nice hellman', @`v1`=_UTF8MB4'flamboyant booth', @`v2`=_UTF8MB4'quirky brahmagupta'
+#END
+#IDX 45
+SET @`a`=_UTF8MB4'a', @`b`=_UTF8MB4'b'
+#END
+#IDX 46
+SET @`p`=1, @`q`=2, @`u`=3
+#END
+#IDX 47
+SET @`p1`=1, @`p2`=2
+#END
+#IDX 48
+SET @`p1`=3, @`p2`=4
+#END
+#IDX 49
+SET @`a`=-1.56018e+38, @`b`=-1.96716e+38, @`c`=9.46347e+37, @`d`=1.1, @`e`=0, @`f`=-1, @`g`=1, @`h`=2, @`i`=-1.1
+#END
+#IDX 50
+SET @`a`=-32373, @`b`=_UTF8MB4'545:50:46.85487'
+#END
+#IDX 51
+SET @`a`=-27225, @`b`=_UTF8MB4'-836:46:08'
+#END
+#IDX 52
+SET @`a`=752400293960, @`b`=258241896853, @`c`=_UTF8MB4'none'
+#END
+#IDX 53
+SET @`a`=-170756280585, @`b`=3756, @`c`=_UTF8MB4'aa'
+#END
+#IDX 54
+SET @`a`=_UTF8MB4'捲', @`b`=_UTF8MB4'颽', @`c`=_UTF8MB4'睭', @`d`=_UTF8MB4'詼'
+#END
+#IDX 55
+SET @`a`=_UTF8MB4'龂', @`b`=_UTF8MB4'龂', @`c`=_UTF8MB4'龂', @`d`=_UTF8MB4'龂'
+#END
+#IDX 56
+SET @`a`=102, @`b`=102, @`c`=102
+#END
+#IDX 57
+SET @`a`=-97, @`b`=-97, @`c`=-97
+#END
+#IDX 58
+SET @`a`=_UTF8MB4'mm', @`b`=_UTF8MB4'aa'
+#END
+#IDX 59
+SET @`a`=_UTF8MB4'aa', @`b`=_UTF8MB4'aa'
+#END
+#IDX 60
+SET @`a`=-21188, @`b`=26824, @`c`=31855, @`d`=_UTF8MB4'5597-1-4', @`e`=_UTF8MB4'5755-12-6', @`f`=_UTF8MB4'1253-7-12'
+#END
+#IDX 61
+SET @`a`=-5360, @`b`=-11715, @`c`=9399, @`d`=_UTF8MB4'9213-09-13', @`e`=_UTF8MB4'4705-12-24', @`f`=_UTF8MB4'9901-06-17'
+#END
+#IDX 62
+SET @`a`=-29408, @`b`=-9254, @`c`=-1849, @`d`=-2346
+#END
+#IDX 63
+SET @`a`=126, @`b`=126, @`c`=-125, @`d`=707
+#END
+#IDX 64
+SET @`a`=10, @`b`=20
+#END
+#IDX 65
+SET @`a`=1, @`b`=2
+#END
+#IDX 66
+SET @`a`=7309027171262036496, @`b`=-9798213896406520625
+#END
+#IDX 67
+SET @`a`=5408499810319315618, @`b`=-9999999999999999999999999999999999999999999999999999999
+#END
+#IDX 68
+SET @`a`=7309027171262036496, @`b`=-9798213896406520625
+#END
+#IDX 69
+SET @`a`=_UTF8MB4'9941971237863475', @`b`=9941971237863475, @`c`=_UTF8MB4'xayh7vrWVNqZtzlJmdJQUwAHnkI8Ec', @`d`=_UTF8MB4'0.0', @`e`=_UTF8MB4'0.1', @`f`=_UTF8MB4'9941971237863476'
+#END
+#IDX 70
+SET @`a`=_UTF8MB4'畻', @`b`=_UTF8MB4'龺'
+#END
+#IDX 71
+SET @`a`=_UTF8MB4'a', @`b`=_UTF8MB4'b', @`z`=_UTF8MB4'z'
+#END
+#IDX 72
+SET @`a`=_UTF8MB4'a', @`b`=_UTF8MB4'b', @`z`=_UTF8MB4'z'
+#END
+#IDX 73
+SET @`a`=_UTF8MB4'a', @`b`=_UTF8MB4'b', @`z`=_UTF8MB4'z'
+#END
+#IDX 74
+SET @`a`=_UTF8MB4'a', @`b`=_UTF8MB4'b', @`z`=_UTF8MB4'z'
+#END
+#IDX 75
+SET @`a`=-3865356285544170443, @`b`=-4055949188488870713
+#END
+#IDX 76
+SET @`a`=1, @`b`=1, @`c`=1
+#END
+#IDX 77
+SET @`a`=1, @`b`=1, @`c`=10
+#END
+#IDX 78
+SET @`a`=10, @`b`=_UTF8MB4'aa'
+#END
+#IDX 79
+SET @`a`=30410, @`b`=3937, @`c`=22045, @`d`=-4374
+#END
+#IDX 80
+SET @`a`=127, @`b`=127, @`c`=127, @`d`=127
+#END
+#IDX 81
+SET @`a`=9223372036854775807, @`b`=1
+#END
+#IDX 82
+SET @`a`=1, @`b`=3
+#END
+#IDX 83
+SET @`a`=0, @`b`=1
+#END
+#IDX 84
+SET @`p0`=_UTF8MB4'1', @`p1`=_UTF8MB4'2'
+#END
+#IDX 85
+SET @`p0`=_UTF8MB4'1', @`p1`=_UTF8MB4'1'
+#END
+#IDX 86
+SET @`p0`=_UTF8MB4'0', @`p1`=_UTF8MB4'0'
+#END
+#IDX 87
+SET @`p0`=_UTF8MB4'0', @`p1`=_UTF8MB4'1'
+#END
+#IDX 88
+SET @`a0`=1.1, @`a1`=_UTF8MB4'1.1', @`a2`=1, @`a3`=1.0, @`a4`=_UTF8MB4'1.0'
+#END
+#IDX 89
+SET @`a0`=1.1, @`a1`=_UTF8MB4'1.1', @`a2`=1, @`a3`=1.0, @`a4`=_UTF8MB4'1.0'
+#END
+#IDX 90
+SET @`a0`=0, @`a1`=1, @`a2`=2, @`a3`=3, @`a1_1`=1.1, @`a4`=4, @`a5`=5
+#END
+#IDX 91
+SET @`a0`=0, @`a1`=1, @`a2`=2, @`a3`=3, @`a1_1`=1.1, @`a4`=4, @`a5`=5
+#END
+#IDX 92
+SET @`a2`=2, @`a3`=3
+#END
+#IDX 93
+SET @`a2`=4, @`a3`=2
+#END
+#IDX 94
+SET @`a`=2, @`b`=1
+#END
+#IDX 95
+SET @`a0`=_UTF8MB4'0000', @`b0`=_UTF8MB4'9999'
+#END
+#IDX 96
+SET @`a1`=_UTF8MB4'0000', @`b1`=_UTF8MB4'9999'
+#END
+#IDX 97
+SET @`a2`=0, @`b2`=9
+#END
+#IDX 98
+SET @`a3`=1, @`b3`=3
+#END
+#IDX 99
+SET @`a3`=1, @`b3`=3
+#END
+#IDX 100
+SET @`a4`=1, @`b4`=3
+#END
+#IDX 101
+SET @`a4`=1, @`b4`=3
+#END

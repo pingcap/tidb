@@ -1,0 +1,4 @@
+go_owner	rust_module	status	note
+method:pkg/parser/ddl_alter_handlers.go#HandParser.parseAlterAdd[ADD PARTITION]	rust/crates/tidb-parser/src/ddl_partition.rs	covered	The empty payload leaves Go's Num and PartDefinitions at zero values; AddPartitionSpec::Count(0) preserves that typed state and restores the bare action. Direct source assertions cover the TestDDL row and option variants.
+restore:pkg/parser/ast/ddl.go#AlterTableSpec.Restore[AlterTableAddPartitions]	rust/crates/tidb-ast/src/ddl_partition.rs	covered	Count(0) intentionally emits no PARTITIONS suffix, matching Go's bare ADD PARTITION restore for db_partition.test:419.
+runtime:pkg/ddl/executor.go#AlterTable[ADD PARTITION]	rust/crates/tidb-exec/src/partition.rs	covered	The existing Add partition boundary rejects the newly parsed empty action before catalog or transaction mutation; the dedicated executor test covers the bare form.

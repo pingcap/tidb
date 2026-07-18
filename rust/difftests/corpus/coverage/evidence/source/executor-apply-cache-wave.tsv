@@ -1,0 +1,3 @@
+# Source-owned apply-cache memory/LRU policy evidence.
+# source_path status owner evidence_artifact note
+pkg/executor/internal/applycache/apply_cache.go	PARTIAL	executor-apply-cache-wave	rust/crates/tidb-exec/src/apply_cache.rs	The dependency-closed key-memory charge, over-quota rejection, oldest-entry eviction, LRU touch, and retained-memory accounting from lines 35-43 and 76-101 are ported; chunk.List values, memory.Tracker/session quota wiring, source mutex, and executor lifecycle remain external.

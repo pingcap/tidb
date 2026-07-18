@@ -1,0 +1,3 @@
+# Source-owned lock-status diagnostic formatting evidence.
+# source_path	status	owner	evidence_artifact	note
+pkg/statistics/handle/lockstats/lock_stats.go	PARTIAL	stats-lock-messages-wave	rust/crates/tidb-stats/src/lock_messages.rs	The Rust leaf ports generateStableSkippedTablesMessage and generateStableSkippedPartitionsMessage from lines 243-286, including sorted names, singular/plural wording, and successful remainder suffixes; lock/unlock mutations, SQL/session state, and transaction handling remain explicit external owners.

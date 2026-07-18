@@ -1,0 +1,48 @@
+## Window functions (Phase 0 subset): the zero-argument ranking functions
+## `ROW_NUMBER`/`RANK`/`DENSE_RANK`, the frame-based window aggregates
+## `COUNT`/`SUM`/`AVG`/`MAX`/`MIN` (sharing the SAME single-argument shape
+## `Expr::Aggregate` uses -- `COUNT(*)` restores as `COUNT(1)`), the "value
+## function" family `LAG`/`LEAD` (one to three arguments) and
+## `FIRST_VALUE`/`LAST_VALUE`/`NTH_VALUE`, and the "distribution function"
+## family `NTILE(n)` and `PERCENT_RANK`/`CUME_DIST` (zero arguments, like
+## the ranking functions), all with an inline `OVER (PARTITION BY ...
+## ORDER BY ...)` spec. Also covers the explicit `ROWS`/`RANGE BETWEEN
+## <bound> AND <bound>` frame clause, including the single-bound `ROWS`/
+## `RANGE <bound>` shorthand, which restores normalized to the full
+## `BETWEEN` form -- both kinds share the exact same grammar/restore
+## shape, differing only in the `ROWS`/`RANGE` keyword itself.
+select row_number() over (partition by dept order by salary) from t
+select rank() over () from t
+select dense_rank() over (order by salary desc) from t
+select row_number() over (partition by a, b) from t
+select row_number() over (partition by a, b order by c, d desc) from t
+select sum(salary) over (partition by dept) from t
+select count(*) over () from t
+select avg(salary) over (order by salary desc) from t
+select lag(salary) over (partition by dept order by salary) from t
+select lag(salary, 2, 0) over (order by salary) from t
+select lead(salary) over (order by salary) from t
+select first_value(salary) over (order by salary) from t
+select last_value(salary) over (order by salary) from t
+select nth_value(salary, 2) over (order by salary) from t
+select ntile(2) over (partition by dept order by salary) from t
+select percent_rank() over (order by salary) from t
+select cume_dist() over () from t
+select sum(salary) over (order by salary rows between unbounded preceding and current row) from t
+select sum(salary) over (order by salary rows between 1 preceding and 1 following) from t
+select sum(salary) over (order by salary rows 3 preceding) from t
+select sum(salary) over (partition by dept rows between current row and unbounded following) from t
+select sum(salary) over (order by salary range between unbounded preceding and current row) from t
+select sum(salary) over (order by salary range between 1 preceding and 1 following) from t
+select sum(salary) over (order by salary range 3 preceding) from t
+select sum(salary) over (partition by dept range between current row and unbounded following) from t
+## Named windows: OVER w (bare, no parens) restores DIFFERENTLY from
+## OVER (w) (parenthesized, no extension) even though semantically
+## identical; extending a named window renders its own clauses right
+## after the base name inside the SAME parentheses; multiple WINDOW
+## clause entries join with a comma and NO space.
+select row_number() over w from t window w as (partition by dept order by salary)
+select row_number() over (w) from t window w as (partition by dept order by salary)
+select sum(salary) over (w order by salary) from t window w as (partition by dept)
+select sum(salary) over (w2) from t window w1 as (partition by dept), w2 as (w1 order by salary)
+select sum(v) over (w rows between 1 preceding and current row) from t window w as (order by v)

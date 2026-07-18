@@ -1,0 +1,19 @@
+## An alias whose text is the empty string (`` `` ``) restores identically
+## to no alias at all -- confirmed directly from real TiDB's own
+## `TableSource.Restore`/`SelectField.Restore` source (pkg/parser/ast/
+## dml.go): `AsName` is a plain, non-optional `CIStr` there, so "absent"
+## and "written empty" are literally the same value; both restore paths
+## share the identical `if asName := n.AsName.String(); asName != ""`
+## guard. Applies uniformly to a SELECT-field alias, a plain-table alias,
+## and a derived-table alias (whose alias is otherwise grammatically
+## MANDATORY -- some identifier must follow AS -- but that identifier's
+## own TEXT may still be empty).
+select 1 as ``
+select 1 a, 2 as ``
+select a from (select 1 a) ``
+select a from (select 1 a) ``, (select 2 a) ``
+select * from t as ``
+select t.a from t as ``, u as x where t.a = x.a
+select a from t as ``, (select 1 a) ``
+select a from (select 1 a) `` join (select 2 a) y on 1=1
+select 1 as `` from t

@@ -1,0 +1,18 @@
+## Currently representable scalar rows from pkg/expression/builtin_string_test.go:39 TestLengthAndOctetLength.
+## The source table runs each row through both LENGTH and OCTET_LENGTH.
+length('abc')
+length('你好')
+length(1)
+length(3.14)
+length(123.123)
+length(0x01)
+length(null)
+length(cast('你好world' as binary(5)))
+octet_length('abc')
+octet_length('你好')
+octet_length(1)
+octet_length(3.14)
+octet_length(123.123)
+octet_length(0x01)
+octet_length(null)
+octet_length(cast('你好world' as binary(5)))

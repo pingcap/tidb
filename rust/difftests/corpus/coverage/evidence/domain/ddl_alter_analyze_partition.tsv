@@ -1,0 +1,5 @@
+go_owner	rust_module	status	note
+method:pkg/parser/ddl_alter_parser.go#HandParser.parseAlterAnalyzePartition	rust/crates/tidb-parser/src/ddl.rs	covered	The ALTER TABLE ANALYZE PARTITION diversion is parsed after the common table-name prefix and returns Go's AnalyzeTableStmt envelope, preserving table and partition names for the exact integration row.
+restore:pkg/parser/ast/stats.go#AnalyzeTableStmt.Restore	rust/crates/tidb-ast/src/stmt/analyze.rs	covered	Canonical restore emits ANALYZE TABLE with backquoted table and partition names, matching Go's AST normalization for the source row.
+tests:tests/integrationtest/t/table/partition.test#390	rust/difftests/parser-tests/tests/selectors/alter/alter_analyze_partition_selector.rs	covered	The exact checked Go oracle row is selected by source path and line and matched byte-for-byte.
+runtime:pkg/ddl/executor.go#AlterTable[analyze-partition]	rust/crates/tidb-exec/src/tests/alter_analyze_partition.rs	partial	The parser payload is accepted, but the seed rejects ANALYZE TABLE before catalog or transaction mutation because statistics storage is not implemented.

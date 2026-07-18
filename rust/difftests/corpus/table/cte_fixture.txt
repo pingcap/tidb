@@ -1,0 +1,7 @@
+## Source: tests/integrationtest/t/executor/cte.test
+## TestUnionDistinct (lines 16-19). Kept as the original ordered fixture
+## block: the UNION-bodied CTE reads the populated two-column t1.
+drop table if exists t1;
+create table t1(c1 int, c2 int);
+insert into t1 values(1, 1), (1, 2), (2, 2);
+with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 c1 from t1) select * from cte1 order by c1;

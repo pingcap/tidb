@@ -1,0 +1,3 @@
+# Source-owned planner pattern evidence.
+# source_path	status	owner	evidence_artifact	note
+pkg/planner/cascades/pattern/pattern.go	PARTIAL	planner-pattern-wave	rust/crates/tidb-planner/src/pattern.rs	The Rust leaf ports source operand numbering and labels, wildcard matching, logical-operator classification through a typed adapter, engine filtering, child-pattern construction, and source-order semantics; real Go logical-plan objects and cascades memo integration remain external.

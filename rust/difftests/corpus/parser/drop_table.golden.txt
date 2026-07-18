@@ -1,0 +1,15 @@
+#IDX 0
+DROP TABLE `t`
+#END
+#IDX 1
+DROP TABLE IF EXISTS `t1`, `t2`
+#END
+#IDX 2
+DROP TABLE `db`.`t1`
+#END
+#IDX 3
+DROP TABLE `t1`, `t2`
+#END
+#IDX 4
+DROP TABLE `t1`
+#END

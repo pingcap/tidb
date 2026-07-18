@@ -1,0 +1,3 @@
+# Source-owned hash-join version predicate evidence.
+# source_path	status	owner	evidence_artifact	note
+pkg/executor/join/joinversion/join_version.go	PARTIAL	executor-hash-join-version-wave	rust/crates/tidb-exec/src/hash_join_version.rs	The legacy/optimized literals, TiFlash legacy default, and case-insensitive IsOptimizedVersion predicate are ported; runtime support probing, non-GA join gates, system-variable validation, session mutation, and join execution remain external.

@@ -1,0 +1,11 @@
+## `/` (true division) over real table columns: Decimal and Int columns both
+## promote to Decimal, result scale is the dividend's own scale plus 4,
+## divisor's own scale is irrelevant; division by zero is NULL
+create table ratio (id int, amt decimal(10,2), qty int)
+insert into ratio values (1, 9.99, 2)
+insert into ratio values (2, 100.00, 4)
+insert into ratio values (3, 5.00, 0)
+select id, amt / qty from ratio
+select id, amt / 2 from ratio
+select id, qty / 2 from ratio
+select amt / qty from ratio where id = 3

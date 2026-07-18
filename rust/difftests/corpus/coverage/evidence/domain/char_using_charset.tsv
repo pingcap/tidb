@@ -1,0 +1,5 @@
+go_owner	rust_module	status	note
+method:pkg/parser/expr_func_parser.go#parseCharFuncCall	rust/crates/tidb-parser/src/expr.rs	covered	CHAR(... USING charset) now validates and canonicalizes through the shared charset registry, matching Go's GetCharsetInfo boundary.
+tests:tests/integrationtest/t/expression/builtin.test#612	rust/difftests/parser-tests/tests/selectors/query/char_using_charset_selector.rs;rust/crates/tidb-parser/src/tests/expr.rs	covered	The exact Go-rejected `USING tidb` row and a canonical utf8mb3 accepted row execute through the same expression leaf.
+method:pkg/parser/expr_cast_parser.go#parseConvertFunc	rust/crates/tidb-parser/src/cast.rs	covered	CONVERT(expr USING charset) validates and canonicalizes the charset through the same source registry as Go.
+tests:tests/integrationtest/t/expression/builtin.test#921	rust/difftests/parser-tests/tests/selectors/query/convert_using_charset_selector.rs;rust/crates/tidb-parser/src/tests/expr.rs	covered	The exact Go-rejected `USING 866` row executes through the typed CONVERT USING leaf.

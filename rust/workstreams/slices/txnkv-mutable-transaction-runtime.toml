@@ -1,0 +1,69 @@
+schema = "1"
+slice = "txnkv-mutable-transaction-runtime"
+status = "partial"
+target = "tidb-txnkv"
+ring = "transaction"
+consumer = "A source-shaped generic MemBufferDriver supplies mutable values, deletion tombstones, flags, assertions, staging, snapshot-buffer views, and forward/reverse iterators to the existing TransactionReadDriver; that single driver remains the canonical Get, BatchGet, Set, Delete, merged scan, snapshot-interceptor, and prefix-operation consumer while the concrete TiKV MemDB, transaction commit, locking, checkpoints, broad option registry, RPC, MVCC, and client lifecycle remain explicit external gaps, so implementation evidence must finish PARTIAL rather than inventing a production store"
+test_target = "mutable_transaction_runtime_source"
+go_sources = [
+  "pkg/store/driver/txn/batch_getter.go",
+  "pkg/store/driver/txn/scanner.go",
+  "pkg/store/driver/txn/snapshot.go",
+  "pkg/store/driver/txn/txn_driver.go",
+  "pkg/store/driver/txn/union_iter.go",
+  "pkg/store/driver/txn/unionstore_driver.go",
+  "pkg/util/prefix_helper.go",
+]
+go_tests = [
+  "pkg/store/driver/txn/batch_getter_test.go:0:batch_getter_test.go",
+  "pkg/store/driver/txn/batch_getter_test.go:25:TestBufferBatchGetter",
+  "pkg/store/driver/txn/main_test.go:0:main_test.go",
+  "pkg/store/driver/txn/main_test.go:24:TestMain",
+  "pkg/store/driver/txn/union_iter_test.go:0:union_iter_test.go",
+  "pkg/store/driver/txn/union_iter_test.go:36:TestUnionIter",
+  "pkg/store/driver/txn/union_iter_test.go:116:TestUnionIterErrors",
+  "pkg/store/driver/txn_test.go:0:txn_test.go",
+  "pkg/store/driver/txn_test.go:56:TestTxnGet",
+  "pkg/store/driver/txn_test.go:139:TestTxnBatchGet",
+  "pkg/store/driver/txn_test.go:218:TestTxnScan",
+  "pkg/util/prefix_helper_test.go:0:prefix_helper_test.go",
+  "pkg/util/prefix_helper_test.go:36:TestPrefix",
+  "pkg/util/prefix_helper_test.go:76:TestPrefixFilter",
+]
+depends_on = []
+evidence_prerequisites = [
+  { capability = "kv-key-prefix-authority", evidence_owner = "txnkv-handle-codec-wave3", kind = "source", anchor = "pkg/kv/key.go", minimum_status = "PARTIAL" },
+  { capability = "kv-not-found-identity", evidence_owner = "txnkv-error-source-wave", kind = "source", anchor = "pkg/kv/error.go", minimum_status = "COVERED" },
+  { capability = "kv-iterator-contract", evidence_owner = "txnkv-iteration-source-wave", kind = "source", anchor = "pkg/kv/iter.go", minimum_status = "COVERED" },
+  { capability = "kv-key-flags", evidence_owner = "txnkv-keyflags-assertion-source-wave", kind = "source", anchor = "pkg/kv/keyflags.go", minimum_status = "COVERED" },
+  { capability = "kv-assertion-operations", evidence_owner = "txnkv-keyflags-assertion-source-wave", kind = "source", anchor = "pkg/kv/assertion.go", minimum_status = "COVERED" },
+  { capability = "driver-error-conversion", evidence_owner = "txnkv-driver-error-complete-conversion", kind = "source", anchor = "pkg/store/driver/error/error.go", minimum_status = "PARTIAL" },
+  { capability = "transaction-option-identities", evidence_owner = "txnkv-txn-source-option-wave", kind = "source", anchor = "pkg/kv/option.go", minimum_status = "PARTIAL" },
+]
+rust_paths = [
+  "rust/crates/tidb-txnkv/src/driver/read.rs",
+  "rust/crates/tidb-txnkv/src/driver/mem_buffer.rs",
+  "rust/crates/tidb-txnkv/src/driver/mod.rs",
+  "rust/crates/tidb-txnkv/src/batch_getter.rs",
+  "rust/crates/tidb-txnkv/src/union_iter.rs",
+  "rust/crates/tidb-txnkv/src/prefix_ops.rs",
+  "rust/crates/tidb-txnkv/src/lib.rs",
+  "rust/crates/tidb-txnkv/tests/mutable_transaction_runtime_source.rs",
+  "rust/crates/tidb-txnkv/tests/transaction_read_source.rs",
+  "rust/crates/tidb-txnkv/tests/batch_getter_source.rs",
+  "rust/crates/tidb-txnkv/tests/union_iter_source.rs",
+  "rust/crates/tidb-txnkv/tests/prefix_ops_source.rs",
+  "rust/difftests/corpus/coverage/evidence/source/txnkv-mutable-transaction-runtime.tsv",
+  "rust/difftests/corpus/coverage/evidence/tests/txnkv-mutable-transaction-runtime.tsv",
+  "rust/difftests/corpus/coverage/evidence/transfers/txnkv-mutable-transaction-runtime.tsv",
+  "rust/difftests/corpus/coverage/evidence/source/txnkv-transaction-read-driver.tsv",
+  "rust/difftests/corpus/coverage/evidence/source/txnkv-prefix-transaction-ops.tsv",
+  "rust/difftests/corpus/coverage/evidence/source/txnkv-buffer-batch-getter.tsv",
+  "rust/difftests/corpus/coverage/evidence/source/txnkv-union-iterator.tsv",
+  "rust/difftests/corpus/coverage/evidence/tests/txnkv-transaction-read-driver.tsv",
+  "rust/difftests/corpus/coverage/evidence/tests/txnkv-prefix-transaction-ops.tsv",
+  "rust/difftests/corpus/coverage/evidence/tests/txnkv-buffer-batch-getter.tsv",
+  "rust/difftests/corpus/coverage/evidence/tests/txnkv-union-iterator.tsv",
+  "rust/difftests/corpus/coverage/evidence/transfers/txnkv-transaction-read-driver.tsv",
+  "rust/difftests/corpus/coverage/evidence/transfers/txnkv-prefix-transaction-ops.tsv",
+]

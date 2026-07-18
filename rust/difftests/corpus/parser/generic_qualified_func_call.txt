@@ -1,0 +1,2 @@
+SELECT T.upper(1);
+SELECT t.upper(1);

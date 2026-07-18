@@ -1,0 +1,3 @@
+# Source-owned test evidence for authentication-plugin metadata.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/extension/registry_test.go	360	TestAuthPluginValidation	PARTIAL	server-auth-plugin-registry-wave	rust/crates/tidb-server/tests/auth_plugin_registry_source.rs	Covers the Go validation order, built-in/custom/unsupported name admission, native fallback, session-token passthrough, clear-password mapping, plugin-switch and legacy-client outcomes, required callback/name failures, and LDAP/custom client-plugin selection; does not claim Go extension callback execution or password/TLS parity.

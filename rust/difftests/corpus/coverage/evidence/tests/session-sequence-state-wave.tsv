@@ -1,0 +1,3 @@
+# Source-owned test-port fragment for session-sequence-state-wave.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/sessionctx/sessionstates/session_states_test.go	380	TestSessionCtx	PARTIAL	session-sequence-state-wave	rust/crates/tidb-exec/tests/sequence_state_source.rs	The source test's SequenceState migration subcase begins at line 530 inside TestSessionCtx; direct tests cover latest-value update, missing lookup, copied snapshot, and maps.Copy-style merge while SQL sequence execution, migration JSON, and session-state orchestration remain external

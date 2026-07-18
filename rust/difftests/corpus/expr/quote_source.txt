@@ -1,0 +1,11 @@
+## pkg/expression/builtin_string_test.go:2528 TestQuote
+quote(x'446f6e5c277421')
+quote(x'446f6e2774')
+quote(x'446f6e22')
+quote(x'446f6e5c22')
+quote(x'5c27')
+quote(x'5c22')
+quote('萌萌哒(๑•ᴗ•๑)😊')
+quote('㍿㌍㍑㌫')
+quote(x'001a')
+quote(null)

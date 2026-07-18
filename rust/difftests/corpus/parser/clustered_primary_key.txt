@@ -1,0 +1,10 @@
+## Explicit primary-key storage layouts from pkg/parser/parser_test.go
+## TestSimple lines 3965-3970 and the production mysqltest fixtures
+## tests/integrationtest/t/clustered_index.test lines 9 and 15. This is
+## deliberately partition-free and excludes USING/index-option combinations.
+create table t (a int, b varchar(255), primary key(b, a) clustered)
+create table t (a int, b varchar(255), primary key(b, a) nonclustered)
+create table t (a int primary key nonclustered, b varchar(255))
+create table t (a int, b varchar(255) default 'a' primary key clustered)
+create table tbl_2 (col_10 datetime default '1976-05-11', col_11 datetime, col_12 float, col_13 double(56,29) default 18.0118, col_14 char not null, primary key idx_8 (col_14,col_13,col_10) clustered, key idx_9 (col_11))
+create table tbl_2 (col_10 datetime default '1976-05-11', col_11 datetime, col_12 float, col_13 double(56,29) default 18.0118, col_14 char not null, primary key idx_8 (col_14,col_13,col_10) nonclustered, key idx_9 (col_11))

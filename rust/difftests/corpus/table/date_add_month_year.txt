@@ -1,0 +1,6 @@
+## DATE_ADD with INTERVAL n MONTH/YEAR over a real DATE column, including
+## the leap-day clamping case (2020-01-31 + 1 MONTH = 2020-02-29)
+create table dm (d date)
+insert into dm values ('2021-01-31')
+insert into dm values ('2020-01-31')
+select date_add(d, interval 1 month), date_add(d, interval 1 year) from dm order by d

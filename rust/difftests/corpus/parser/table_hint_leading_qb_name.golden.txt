@@ -1,0 +1,6 @@
+#IDX 0
+SELECT /*+ HASH_JOIN(@`sel_1` `t2`)*/ * FROM (SELECT 1) AS `t1` NATURAL LEFT JOIN (SELECT 2) AS `t2`
+#END
+#IDX 1
+SELECT /*+ INL_JOIN(@`sel_1` `t1`, `t2`)*/ * FROM (`t1`) JOIN `t2`
+#END

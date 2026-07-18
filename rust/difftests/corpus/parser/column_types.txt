@@ -1,0 +1,8 @@
+## UNSIGNED / ZEROFILL, and TINYINT/SMALLINT/MEDIUMINT/FLOAT/DOUBLE types.
+## Bare ZEROFILL implies (and restores) UNSIGNED even when not written.
+create table t (id int unsigned primary key, v bigint unsigned)
+create table t (id int(10) unsigned zerofill, v tinyint unsigned not null)
+create table t (a decimal(10,2) unsigned)
+create table t (a int zerofill)
+create table t (a tinyint, b smallint, c mediumint, d float, e double)
+create table t (a float(10,2), b double(10,2), c tinyint(1) unsigned)

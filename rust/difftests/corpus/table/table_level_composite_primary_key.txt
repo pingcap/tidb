@@ -1,0 +1,10 @@
+## Table-level composite PRIMARY KEY (a, b): a conflict requires ALL key
+## columns to match, not just one
+create table cc (a int, b int, v int, primary key (a, b))
+insert into cc values (1, 1, 10)
+insert into cc values (1, 2, 20)
+insert into cc (a, b, v) values (1, 1, 99) on duplicate key update v = 99
+insert into cc (a, b, v) values (2, 1, 30)
+select a, b, v from cc order by a, b
+insert ignore into cc (a, b, v) values (1, 1, 777)
+select v from cc where a = 1 and b = 1

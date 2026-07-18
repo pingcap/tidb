@@ -1,0 +1,29 @@
+## `col -> path` / `col ->> path` -- JSON extraction, DESUGARS at parse
+## time to `JSON_EXTRACT(col, path)` / `JSON_UNQUOTE(JSON_EXTRACT(col,
+## path))`. Real TiDB's own grammar has no dedicated AST node for this
+## operator at all (pkg/parser/expr_parser.go's `case jss, juss:` builds
+## a plain FuncCallExpr) -- matches the SAME "operator desugars to a
+## function-call AST shape" precedent date_expr +/- INTERVAL already
+## established. ONLY valid when the left operand is a BARE COLUMN
+## reference (confirmed via godump restore: `(a+b)->'$.x'` is a genuine
+## ParseError). Needs NO new evaluation code: JSON_EXTRACT/JSON_UNQUOTE
+## are unrecognized function names to tidb_expr::eval_func's own existing
+## wildcard, already Unsupported (this crate has no JSON value domain
+## yet).
+##
+## `expr MEMBER OF (array)` -- MySQL/TiDB's JSON tuple-membership
+## predicate, read directly from real TiDB's own hand-written parser
+## (`pkg/parser/expr_parser.go`'s `case memberof:`) and restore
+## (`FuncCallExpr.customRestore`'s own JSONMemberOf special case).
+## tidb_lexer already merges MEMBER OF into ONE keyword token (the SAME
+## AS-OF-style two-word merge). Relies on the SAME generic eval_in
+## wildcard Expr::MatchAgainst already uses -- Unsupported,
+## unconditionally.
+select a->'$.a' from t
+select a->>'$.a' from t
+select a->'$.a[2].aa' as x, a->>'$.b' as y from test_json
+select not (a->'$.a' = 1)
+select a->'$.a' + 1 from t
+select 1 member of ('[1,2,3]')
+select '[4,5]' member of ('[[3,4],[4,5]]')
+select 1 member of (j0->'$.path0')

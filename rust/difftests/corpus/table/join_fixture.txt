@@ -1,0 +1,5 @@
+drop table if exists t, tt
+create table t(a int, b int)
+create table tt(a varchar(10), b int)
+insert into t values(1, 1)
+select * from t left join tt on t.a=tt.a left join t ttt on t.a=ttt.a

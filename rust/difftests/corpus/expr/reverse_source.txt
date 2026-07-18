@@ -1,0 +1,6 @@
+## pkg/expression/builtin_string_test.go:689 TestReverse
+reverse(null)
+reverse('abc')
+reverse('LIKE')
+reverse(123)
+reverse('')

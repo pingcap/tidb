@@ -1,0 +1,74 @@
+## CAST(expr AS type) / CONVERT(expr, type) / CONVERT(expr USING charset).
+## The target-type grammar is a narrower, MySQL-specific subset of CREATE
+## TABLE's own column-type grammar (INT/INTEGER/BOOL/BOOLEAN/NCHAR/REAL(n)
+## are all genuine ParseErrors here even though some are valid column
+## types — covered by tidb-parser's own unit test, not this corpus, since
+## the parser corpus itself must never contain a statement the Go parser
+## rejects). SIGNED/UNSIGNED reinterpret an integer; CHAR/BINARY/DECIMAL
+## carry an optional length/precision (DECIMAL's bare-vs-explicit-(0)
+## distinction is a real upstream normalization, confirmed via godump
+## restore, not a restore bug; CHAR's own CHARSET clause is omitted
+## specifically when it names the DEFAULT charset (UTF8MB4), independent
+## of length -- confirmed by reading real TiDB's own
+## FieldType.RestoreAsCastType source directly, pkg/parser/types/
+## field_type.go, not guessed -- and CHARSET binary restores the type
+## keyword itself as BINARY instead of CHAR, a restore-text substitution
+## only, NOT the same as a genuine BINARY cast at evaluation time, see
+## tidb_ast::CastType::Char's own doc); DATE/DATETIME/TIME/YEAR/DOUBLE/
+## FLOAT/JSON round out the target set. FLOAT's own precision argument
+## resolves to FLOAT or DOUBLE AT PARSE TIME depending on magnitude.
+select cast(a as signed) from t
+select cast(a as unsigned) from t
+select cast('123' as signed integer) from t
+select cast(a as unsigned integer) from t
+select cast(a as char) from t
+select cast(a as char(10)) from t
+select cast(a as char charset utf8) from t
+select cast(a as char character set utf8) from t
+select cast(a as char(10) charset utf8mb4) from t
+select cast(a as char(10) charset utf8) from t
+select cast(a as char charset binary) from t
+select cast(a as char(10) charset binary) from t
+select cast(a as char charset UTF8MB4) from t
+select cast(a as binary) from t
+select cast(a as binary(10)) from t
+select cast(a as decimal) from t
+select cast(a as decimal(5)) from t
+select cast(a as decimal(10,2)) from t
+select cast(a as decimal(10,0)) from t
+select cast(a as decimal(0)) from t
+select cast(a as decimal(0,5)) from t
+select cast(a as decimal(65,30)) from t
+select cast(a as date) from t
+select cast(a as datetime) from t
+select cast(a as datetime(3)) from t
+select cast(a as time) from t
+select cast(a as time(3)) from t
+select cast(a as year) from t
+select cast(a as json) from t
+select cast(a as double) from t
+select cast(a as real) from t
+select cast(a as float) from t
+select cast(a as float(10)) from t
+select cast(a as float(24)) from t
+select cast(a as float(25)) from t
+select cast(a as float(53)) from t
+select cast(a as float(10,2)) from t
+select cast(a as float(53,10)) from t
+## CONVERT(expr, type) is the same operation as CAST(expr AS type) but its
+## own concrete syntax (restores differently); CONVERT(expr USING charset)
+## is a genuinely different node, a charset conversion.
+select convert(a, signed) from t
+select convert(a using utf8) from t
+select convert(a using utf8mb4) from t
+## Interaction with the surrounding grammar: aliasing, unary negation
+## (both outside and of the operand), IS NULL, NULL/subquery/binary-
+## expression operands, and a nested CAST as another CAST's operand.
+select cast(a as signed) as x from t
+select -cast(a as signed) from t
+select cast(-a as signed) from t
+select cast(a as signed) is null from t
+select cast(null as signed) from t
+select cast((select b from t2) as signed) from t
+select cast(a+1 as signed) from t
+select cast(cast(a as signed) as char) from t

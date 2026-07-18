@@ -1,0 +1,3 @@
+# Source-owned session-token timing evidence.
+# source_path	status	owner	evidence_artifact	note
+pkg/sessionctx/sessionstates/session_token.go	PARTIAL	session-token-timing-wave	rust/crates/tidb-exec/src/session_token_timing.rs	Classic/Starter token lifetime, certificate reload interval, and old-certificate grace windows preserve source constants and mode selection; certificate I/O/rotation, signing, token serialization, failpoints, and authentication remain external.

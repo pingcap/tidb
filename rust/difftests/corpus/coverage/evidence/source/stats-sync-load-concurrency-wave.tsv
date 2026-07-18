@@ -1,0 +1,3 @@
+# Source-owned synchronous stats-load concurrency policy evidence.
+# source_path	status	owner	evidence_artifact	note
+pkg/statistics/handle/syncload/stats_syncload.go	PARTIAL	stats-sync-load-concurrency-wave	rust/crates/tidb-stats/src/sync_load_concurrency.rs	The Rust leaf ports GetSyncLoadConcurrencyByCPU from lines 50-61: <=8 CPUs maps to 5 workers, <=16 to 6, <=32 to 8, and larger counts to 10; runtime GOMAXPROCS probing, config queue sizing, worker lifecycle, and storage loading remain external.

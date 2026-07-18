@@ -1,0 +1,2 @@
+# source_path	status	owner	evidence_artifact	note
+pkg/planner/core/operator/physicalop/physical_cte_table.go	PARTIAL	planner-physical-cte-table-wave	rust/crates/tidb-planner/src/physical_cte_table.rs	Ports PhysicalCTETable storage identity, ExplainInfo text, and findBestTask4LogicalCTETable's index-join/sort rejection gates; schema/statistics/context, task wiring, memory accounting, and CTE runtime execution remain external.

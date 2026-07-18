@@ -1,0 +1,2 @@
+go_source	rust_module	status
+pkg/parser/prec.go	rust/crates/tidb-parser/src/prec.rs	partial

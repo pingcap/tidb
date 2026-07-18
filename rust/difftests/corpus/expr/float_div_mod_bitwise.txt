@@ -1,0 +1,24 @@
+## `DIV` truncates its quotient toward zero (an Int result), same as
+## Int/Decimal; `MOD` keeps native f64 remainder semantics (so a
+## fractional result carries the same floating-point rounding noise real
+## MySQL's own f64 does, e.g. 100.7 mod 3 != exactly 1.7); bitwise/shift
+## operators round to the nearest i64 first -- but TIES TO EVEN, the
+## OPPOSITE tie-breaking rule from Decimal's own bitwise conversion (ties
+## away from zero) -- a real, easy-to-miss asymmetry confirmed via
+## goeval, not assumed: ~2.5 is -3 (2.5 rounds to the even 2), not -4
+1.5e2 div 2
+1.007e2 div 3
+-1.007e2 div 3
+-1.7e2 div 2
+1.5e2 div 0
+1.5e2 div 0.0e0
+-1.7e2 mod 2
+~1.5e2
+~2.5e0
+~3.5e0
+~(-2.5e0)
+~0.0e0
+2.5e0 & 1
+2.5e0 & 3
+2.5e0 << 2
+100.0e0 >> 2

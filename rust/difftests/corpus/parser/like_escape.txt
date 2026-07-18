@@ -1,0 +1,4 @@
+select 'a' like '+a' escape '+'
+select 'a' like 'x' escape '\\'
+select 'a' like 'x' escape ''
+select 'a' not like 'x%' escape '+'

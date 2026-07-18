@@ -1,0 +1,5 @@
+## Go parser tests: pkg/parser/parser_test.go:3374-3375; KEY alias is
+## accepted by pkg/parser/ddl_alter_handlers.go:151-174 and restores as INDEX.
+ALTER TABLE t DROP INDEX a
+ALTER TABLE t DROP INDEX IF EXISTS a
+ALTER TABLE t DROP KEY a

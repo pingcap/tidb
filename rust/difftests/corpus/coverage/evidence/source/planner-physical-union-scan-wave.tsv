@@ -1,0 +1,2 @@
+# source_path	status	owner	evidence_artifact	note
+pkg/planner/core/operator/physicalop/physical_union_scan.go	PARTIAL	planner-physical-union-scan-wave	rust/crates/tidb-planner/src/physical_union_scan.rs	Ports ExhaustPhysicalPlans4LogicalUnionScan's TiFlash rejection, index-join-admission outcome, and Init metadata (UnionScan type/offset/condition/handle counts); concrete property cloning, expression/handle identity, child/task attachment, transaction-buffer reads, and executor behavior remain external.

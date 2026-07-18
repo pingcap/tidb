@@ -1,0 +1,27 @@
+## Go source: pkg/expression/builtin_info.go:451-520;
+## pkg/executor/select.go:1224-1229; pkg/sessionctx/variable/sysvar.go:157-165;
+## pkg/expression/integration_test/integration_test.go:1590-1606;
+## pkg/sessionctx/variable/sysvar_test.go:619-640,678-688.
+## LAST_INSERT_ID(expr) returns UInt immediately but publishes it only at the
+## next top-level statement boundary. The status is session metadata, never
+## transaction state: rollback and a later failed statement preserve it.
+select last_insert_id(), @@last_insert_id, @@identity
+select last_insert_id(5), last_insert_id(), @@last_insert_id, @@identity
+select last_insert_id(), @@last_insert_id, @@identity
+select last_insert_id(-1)
+select last_insert_id(), @@last_insert_id, @@identity
+select last_insert_id(18446744073709551615)
+select last_insert_id(), @@last_insert_id
+select last_insert_id(1.5), last_insert_id()
+select last_insert_id(), @@last_insert_id
+select last_insert_id('1e2tail'), last_insert_id()
+select last_insert_id(), @@last_insert_id
+select last_insert_id(null)
+select last_insert_id(), @@last_insert_id
+begin
+select last_insert_id(9)
+rollback
+select last_insert_id(), @@last_insert_id, @@identity
+select last_insert_id(17), no_such_last_insert_function()
+select last_insert_id(), @@last_insert_id
+select @@global.last_insert_id

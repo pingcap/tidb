@@ -1,0 +1,18 @@
+## An aggregate hidden inside a non-Binary/Unary/CASE expression shape must
+## still fold correctly per group: an ordinary function call's own argument
+## (IF), BETWEEN, IN (both a literal list and a subquery), IS NOT NULL, and
+## a comparison-subquery's outer-scope operand. A nested subquery's OWN
+## aggregate does NOT count -- it belongs to that subquery's own scope, so
+## the query stays a per-row (non-grouped) one.
+create table t (id int, v int)
+insert into t values (1, 10), (1, 20), (2, 30)
+select if(1=1, count(*), 0) from t
+create table t2 (x int)
+insert into t2 values (1), (2), (3)
+select id, (select count(*) from t2) from t
+insert into t values (2, 40)
+select id, count(*) from t group by id having count(*) between 1 and 5
+select id, count(*) from t group by id having count(*) in (2)
+select id, count(*) from t group by id having count(*) is not null
+select id, count(*) from t group by id having count(*) > any (select 1)
+select id, count(*) from t group by id having count(*) in (select 2)

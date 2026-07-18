@@ -1,0 +1,3 @@
+# Source-owned production evidence for the bounded BIT_COUNT scalar leaf.
+# source_path	status	owner	evidence_artifact	note
+pkg/expression/builtin_other.go	PARTIAL	expression-bit-count-source-wave	rust/crates/tidb-expr/src/string_fn.rs	BIT_COUNT now follows builtinBitCountSig's ETInt cast boundary: signed and UInt payloads preserve their 64 bits, positive string casts parse through UINT64 (including 2^63..=UINT64_MAX and overflow clamping), negative strings clamp below INT64_MIN, and malformed byte prefixes remain consumable; function-class/vectorized/session warning state remains outside the value-only Datum domain

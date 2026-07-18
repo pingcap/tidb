@@ -1,0 +1,14 @@
+## CREATE USER account/authentication subset. Sources: pkg/parser/parser_test.go
+## TestUser lines 5314-5330; tests/integrationtest/t/executor/simple.test
+## lines 183-219 and dual_password.test line 171. Statement-global account
+## options deliberately stay out of this parse/restore slice.
+create user test@'%'
+CREATE USER IF NOT EXISTS 'root'@'localhost' IDENTIFIED BY 'new-password'
+CREATE USER 'root'@'localhost' IDENTIFIED BY PASSWORD 'hashstring'
+CREATE USER 'nopwd_native'@'localhost' IDENTIFIED WITH 'mysql_native_password'
+create user 'bug19354014user'@'%' identified WITH mysql_native_password by 'new-password'
+create user 'bug19354014user'@'%' identified WITH mysql_native_password as 'hashstring'
+CREATE USER 'bob'@'localhost' IDENTIFIED WITH authentication_ldap_simple AS 'uid=bob,ou=People,dc=example,dc=com'
+CREATE USER 'sha_test3'@'localhost' IDENTIFIED WITH 'caching_sha2_password' AS 0x24412430303524255B03496C662C1055127B3B654A2F04207D01485276703644704B76303247474564416A516662346C5868646D32764C6B514F43585A473779565947514F34
+create user dpm1 identified by 'p1', dpm2 identified by 'q1', dpm3 identified by 'r1'
+CREATE USER super_user, placement_user, empty_user

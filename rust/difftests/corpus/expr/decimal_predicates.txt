@@ -1,0 +1,4 @@
+## decimal predicates (IN / BETWEEN reuse the comparison operators)
+3.14 in (1.5, 3.14, 5)
+3.14 between 3.0 and 4.0
+3.14 not between 3.0 and 3.5

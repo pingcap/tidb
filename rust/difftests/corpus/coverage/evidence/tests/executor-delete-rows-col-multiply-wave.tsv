@@ -1,0 +1,3 @@
+# Source-owned delete row/column accounting test-port evidence.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/executor/adapter_test.go	934	TestDMLRowsColMultiplyRUV2SQLPath	PARTIAL	executor-delete-rows-col-multiply-wave	rust/crates/tidb-exec/tests/delete_rows_col_multiply_source.rs	Rust covers the helper's ordinary, non-positive, already-saturated, and overflow boundaries; the Go SQL-path metric assertions remain represented while session metrics, storage mutation, and multi-table DELETE lifecycle stay external.

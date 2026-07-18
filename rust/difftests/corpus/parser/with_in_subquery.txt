@@ -1,0 +1,15 @@
+## WITH [RECURSIVE] cte AS (...) SELECT ... inside a scalar/IN/EXISTS/
+## ANY-SOME-ALL subquery position -- these 4 positions all ultimately
+## reach tidb-parser's own parse_paren_subquery, but two of them
+## (scalar and IN) gate entry with a ONE-TOKEN lookahead that only
+## recognized a following SELECT, not WITH, so a leading WITH there
+## was a genuine ParseError before this. EXISTS/ANY/SOME/ALL dispatch
+## to parse_paren_subquery unconditionally (no competing shape to
+## disambiguate against), so they already worked once
+## parse_paren_subquery itself learned to handle WITH.
+select * from t1 where exists (with q as (select 1) select * from q)
+select * from t1 where c1 in (with cte1 as (select c1 from t2) select c1 from cte1)
+select (with q as (select 1) select * from q)
+select 1 = all (with q as (select 1) select * from q)
+select * from t1 where exists (with recursive qn as (select a*0 as b union all select b+1 from qn where b=0) select * from qn where b=a)
+select * from t1 where c1 > all(with recursive cte1 as (select c1 from t2 where t2.c2 = t1.c2 union all select c1+1 as c1 from cte1 limit 1) select c1 from cte1)

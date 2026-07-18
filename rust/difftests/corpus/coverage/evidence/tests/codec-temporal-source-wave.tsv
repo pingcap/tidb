@@ -1,0 +1,4 @@
+# Source-owned packed temporal codec test evidence.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/util/codec/codec_test.go	533	TestTime	PARTIAL	codec-temporal-source-wave	rust/crates/tidb-codec/tests/temporal_source.rs	Zero packed value, date-time microseconds, explicit uint-tag payload, exact remainder, and source ordering rows execute; DecodeAsDateTime type/timezone conversion remains open
+go_test	pkg/types/time_test.go	577	TestCodec	PARTIAL	codec-temporal-source-wave	rust/crates/tidb-codec/tests/temporal_source.rs	Packed calendar fields, zero, fractional microseconds, and short-buffer boundary execute; full Time parsing validation and FSP/type metadata remain open

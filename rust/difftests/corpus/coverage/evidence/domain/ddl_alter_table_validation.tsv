@@ -1,0 +1,4 @@
+go_owner	rust_module	status	note
+method:pkg/parser/ddl_alter_handlers.go#HandParser.parseAlterTableSpec[WITH|WITHOUT VALIDATION]	rust/crates/tidb-parser/src/ddl.rs	covered	Standalone WITH VALIDATION and WITHOUT VALIDATION specifications are parsed as ordered typed ALTER TABLE actions; direct source assertions cover canonical restore and malformed missing-keyword rejection.
+restore:pkg/parser/ast/ddl.go#AlterTableSpec.Restore[AlterTableWithValidation|AlterTableWithoutValidation]	rust/crates/tidb-ast/src/ddl.rs	covered	The two source choices restore as exact canonical keywords and remain comma-separated when ordered with another ALTER action.
+runtime:pkg/ddl/executor.go#AlterTable[validation]	rust/crates/tidb-exec/src/ddl/table_capability.rs	covered	Validation actions are rejected before the implicit-commit boundary because the seed executor does not model generated-column validation semantics; the dedicated executor test covers both forms.

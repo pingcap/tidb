@@ -1,0 +1,123 @@
+## tidb-expr differential corpus: constant scalar expressions, one per line.
+## Each is evaluated by the Go engine (goeval) and by tidb-expr; the results
+## must match on the integer/NULL domain. Out-of-domain results (SKIP/ERR in
+## the golden) are ignored by the test.
+1 + 1
+2 * 3
+10 - 3 - 2
+(2 + 3) * 4
+5 DIV 2
+7 DIV 2
+5 MOD 2
+7 MOD 3
+-5
+- -5
++7
+~0
+~5
+100 * 0
+1000000 * 1000000
+1 = 1
+1 = 2
+2 > 1
+2 < 1
+3 >= 3
+3 <= 2
+1 <> 1
+1 != 2
+5 <=> 5
+NULL <=> NULL
+NULL <=> 1
+1 AND 1
+1 AND 0
+0 AND 1
+1 OR 0
+0 OR 0
+1 XOR 1
+1 XOR 0
+NOT 0
+NOT 1
+NOT 5
+NULL
+NULL + 1
+1 + NULL
+NULL * 2
+1 AND NULL
+0 AND NULL
+NULL AND 0
+1 OR NULL
+0 OR NULL
+NULL OR NULL
+1 XOR NULL
+NOT NULL
+7 & 3
+7 | 8
+5 ^ 1
+1 << 4
+100 >> 2
+1 << 62
+6 & 3 | 8
+2 + 3 * 4
+(1 + 2) * (3 + 4)
+10 DIV 0
+10 MOD 0
+1 = 1 AND 2 = 2
+1 = 1 OR 1 = 2
+1 < 2 AND 3 < 4 AND 5 < 6
+true
+false
+1 AND 2
+3 AND 4
+100 - 50 - 25
+2 * 3 + 4 * 5
+abs(-5)
+abs(5)
+abs(NULL)
+sign(-3)
+sign(0)
+sign(7)
+sign(NULL)
+least(3, 1, 2)
+least(5, 3, NULL, 1)
+greatest(1, 2, 3)
+greatest(NULL, 1)
+coalesce(NULL, NULL, 7)
+coalesce(1, NULL, 2)
+coalesce(NULL)
+if(1, 10, 20)
+if(0, 10, 20)
+if(NULL, 10, 20)
+if(-1, 10, 20)
+ifnull(NULL, 5)
+ifnull(3, 5)
+ifnull(NULL, NULL)
+nullif(3, 3)
+nullif(3, 4)
+nullif(NULL, 3)
+nullif(3, NULL)
+abs(least(3, -5, 2))
+if(1 > 0, abs(-3), 0)
+coalesce(nullif(2, 2), 9)
+greatest(abs(-1), sign(-4), 0)
+'hello'
+concat('a', 'b', 'c')
+concat('foo', 'bar')
+concat('x', NULL)
+length('hello')
+length('héllo')
+char_length('héllo')
+upper('abc')
+lower('ABC')
+left('hello', 3)
+right('hello', 2)
+substring('hello', 2, 3)
+concat(upper('ab'), lower('CD'))
+length(concat('a', 'bc'))
+upper(left('hello world', 5))
+concat('n=', 5)
+coalesce(NULL, 'x')
+if(1, 'yes', 'no')
+if(0, 'yes', 'no')
+ifnull(NULL, 'fallback')
+substr('abcdef', 3, 2)
+char_length('')

@@ -1,0 +1,15 @@
+## Scalar source rows from pkg/expression/builtin_string_test.go:1436 TestHexFunc.
+## The test's connection-charset rows and injected-error datum need session charset/error domains.
+hex('abc')
+hex('你好')
+hex(12)
+hex(12.3e0)
+hex(12.8e0)
+hex(-1)
+hex(-12.3e0)
+hex(-12.8e0)
+hex(0x0c)
+hex(0x12)
+hex(null)
+hex('🀁')
+hex('一忒(๑•ㅂ•)و✧')

@@ -1,0 +1,4 @@
+## Table-level composite PRIMARY KEY
+create table t (a int, b int, primary key (a, b))
+create table t (a int, b int, c int, primary key (a, b))
+create table t (a int, primary key (a))

@@ -1,0 +1,80 @@
+[package]
+name = "difftest-parser-tests"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Parser-ring differential tests and source-owned selector shards."
+publish = false
+autotests = false
+
+[lints]
+workspace = true
+
+[dependencies]
+difftest = { path = ".." }
+tidb-lexer = { path = "../../crates/tidb-lexer" }
+tidb-ast = { path = "../../crates/tidb-ast" }
+tidb-parser = { path = "../../crates/tidb-parser" }
+
+[[test]]
+name = "integration_parser_diff"
+path = "tests/integration_parser_diff.rs"
+[[test]]
+name = "integration_parser_inventory"
+path = "tests/integration_parser_inventory.rs"
+[[test]]
+name = "integration_parser_queue"
+path = "tests/integration_parser_queue.rs"
+[[test]]
+name = "lexer_diff"
+path = "tests/lexer_diff.rs"
+[[test]]
+name = "parser_diff"
+path = "tests/parser_diff.rs"
+[[test]]
+name = "parser_translation_manifest"
+path = "tests/parser_translation_manifest.rs"
+[[test]]
+name = "difftest_topology"
+path = "tests/difftest_topology.rs"
+[[test]]
+name = "selector_admin"
+path = "tests/selector_admin.rs"
+[[test]]
+name = "selector_alter"
+path = "tests/selector_alter.rs"
+[[test]]
+name = "selector_create"
+path = "tests/selector_create.rs"
+[[test]]
+name = "selector_drop"
+path = "tests/selector_drop.rs"
+[[test]]
+name = "selector_show"
+path = "tests/selector_show.rs"
+[[test]]
+name = "selector_set"
+path = "tests/selector_set.rs"
+[[test]]
+name = "selector_dml"
+path = "tests/selector_dml.rs"
+[[test]]
+name = "selector_security"
+path = "tests/selector_security.rs"
+[[test]]
+name = "selector_schema"
+path = "tests/selector_schema.rs"
+[[test]]
+name = "selector_query"
+path = "tests/selector_query.rs"
+[[test]]
+name = "selector_operations"
+path = "tests/selector_operations.rs"
+[[test]]
+name = "selector_session"
+path = "tests/selector_session.rs"
+[[test]]
+name = "selector_multi_statement"
+path = "tests/selector_multi_statement.rs"

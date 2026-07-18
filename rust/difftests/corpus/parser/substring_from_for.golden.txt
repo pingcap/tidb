@@ -1,0 +1,3 @@
+#IDX 0
+SELECT SUBSTR(_UTF8MB4'foobarbar', 4),SUBSTR(_UTF8MB4'Sakila', -4, 2)
+#END

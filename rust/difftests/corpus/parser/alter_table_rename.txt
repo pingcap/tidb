@@ -1,0 +1,4 @@
+## ALTER TABLE RENAME: TO/AS/neither all restore identically as `RENAME AS`
+alter table t rename to t2
+alter table t rename t2
+alter table t rename as t2

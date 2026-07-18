@@ -1,0 +1,3 @@
+# Source-owned statistics table-ID filter evidence.
+# source_path	status	owner	evidence_artifact	note
+pkg/statistics/handle/cache/stats_table_row_cache.go	PARTIAL	stats-table-id-filter-wave	rust/crates/tidb-stats/src/table_id_filter.rs	The Rust leaf ports buildInTableIDsString from lines 134-144: caller-ordered signed decimal IDs are joined without spaces inside the exact table_id in (...) text, including the empty-input output. Cache maps, storage reads, SQL execution, and InfoSchema table-length calculations remain external.

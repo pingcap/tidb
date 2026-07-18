@@ -1,0 +1,2 @@
+go_owner	rust_module	status	note
+method:pkg/parser/ddl_alter_handlers.go#HandParser.parseAlterRename	rust/crates/tidb-parser/src/ddl/alter/rename_index.rs	partial	RENAME {KEY|INDEX} old TO new is typed with canonical RENAME INDEX restore, direct TestDDL coverage, and a static Go-oracle selector; RENAME TABLE and RENAME COLUMN remain independently unported branches of the same Go owner.

@@ -1,0 +1,1 @@
+select substr('foobarbar' from 4), substr('Sakila' from -4 for 2);

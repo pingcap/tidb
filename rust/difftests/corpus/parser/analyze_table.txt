@@ -1,0 +1,14 @@
+## Go grammar/restore: pkg/parser/ddl_drop_parser.go:252-410 and
+## pkg/parser/ast/stats.go:30-155. Direct parser coverage is TestAnalyze in
+## pkg/parser/parser_test.go:6443-6493. Current integration inputs include
+## executor/analyze.test:808-812,882,893,904 and
+## planner/cardinality/selectivity.test:17-45.
+ANALYZE TABLE t
+ANALYZE TABLE t1,t2 ALL COLUMNS
+ANALYZE TABLE t PARTITION p0,p1
+ANALYZE TABLE t PARTITION p0 INDEX PRIMARY
+ANALYZE TABLE t INDEX
+ANALYZE TABLE t INDEX b,b_s,d_s
+ANALYZE TABLE t COLUMNS a,e
+ANALYZE TABLE t ALL COLUMNS WITH 2 TOPN, 3 BUCKETS
+ANALYZE TABLE t WITH 0 TOPN

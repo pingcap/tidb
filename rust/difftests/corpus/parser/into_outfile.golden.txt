@@ -1,0 +1,12 @@
+#IDX 0
+SELECT 1 INTO OUTFILE '/tmp/doesntmatter-no-permissions'
+#END
+#IDX 1
+SELECT `a` FROM `t` INTO OUTFILE '/tmp/x'
+#END
+#IDX 2
+SELECT * FROM (SELECT 1 INTO OUTFILE '/tmp/x') AS `t`
+#END
+#IDX 3
+SELECT 1 FROM DUAL WHERE 1 IN (SELECT 1 INTO OUTFILE '/tmp/x')
+#END

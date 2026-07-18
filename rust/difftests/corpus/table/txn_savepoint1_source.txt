@@ -1,0 +1,71 @@
+## Source anchor: pkg/executor/test/txn/txn_test.go:340 TestTxnSavepoint1.
+## This is the source test's single-session, default-mode SQL behavior:
+## transaction-local data restoration, repeated/redefined savepoints, release
+## cascades, case-insensitive names, and duplicate-key/update work before a
+## rollback point. TiKV optimistic/pessimistic engine selection and lock
+## scheduling are intentionally excluded from this seed-model slice.
+create table txn_savepoint1_src (id int, a int, unique index idx(id))
+commit
+savepoint s1
+insert into txn_savepoint1_src values (3, 3)
+rollback to s1
+delete from txn_savepoint1_src
+begin
+release savepoint x
+savepoint s1
+savepoint s2
+savepoint s3
+savepoint s4
+release savepoint s1
+rollback to s1
+rollback to s2
+rollback to s3
+rollback to savepoint s4
+rollback
+begin
+insert into txn_savepoint1_src values (1, 1), (2, 2)
+savepoint s1
+insert into txn_savepoint1_src values (3, 3)
+savepoint s2
+select * from txn_savepoint1_src order by id
+rollback to s1
+select * from txn_savepoint1_src order by id
+insert into txn_savepoint1_src values (3, 4), (4, 4)
+select * from txn_savepoint1_src order by id
+rollback to s1
+insert into txn_savepoint1_src values (3, 5)
+select * from txn_savepoint1_src order by id
+rollback to s2
+rollback to s1
+select * from txn_savepoint1_src order by id
+commit
+select * from txn_savepoint1_src order by id
+begin
+insert into txn_savepoint1_src values (1, 1), (3, 3) on duplicate key update a = a + 1
+select * from txn_savepoint1_src order by id
+savepoint s1
+update txn_savepoint1_src set a = a + 1 where id in (1, 2)
+rollback to s1
+insert into txn_savepoint1_src values (4, 4)
+commit
+select * from txn_savepoint1_src order by id
+delete from txn_savepoint1_src
+begin
+savepoint s1
+insert into txn_savepoint1_src values (1, 1)
+savepoint s2
+insert into txn_savepoint1_src values (2, 2)
+savepoint s1
+insert into txn_savepoint1_src values (3, 3)
+rollback to s1
+select * from txn_savepoint1_src order by id
+commit
+select * from txn_savepoint1_src order by id
+delete from txn_savepoint1_src
+begin
+savepoint s1
+insert into txn_savepoint1_src values (1, 1)
+release savepoint S1
+rollback to s1
+rollback to S1
+rollback

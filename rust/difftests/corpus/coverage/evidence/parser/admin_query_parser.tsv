@@ -1,0 +1,2 @@
+go_source	rust_module	status
+pkg/parser/admin_query_parser.go	rust/crates/tidb-parser/src/lib.rs	partial

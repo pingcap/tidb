@@ -1,0 +1,8 @@
+SELECT HEX(WEIGHT_STRING('ab' AS BINARY(1000000000000000000)));
+SELECT HEX(WEIGHT_STRING('ab' AS char(1000000000000000000)));
+select hex(weight_string(7 AS BINARY(2)));
+select hex(weight_string(a as binary(1))) from t order by id;
+select hex(weight_string(a as binary(5))) from t order by id;
+select hex(weight_string(a as char(1))) from t order by id;
+select hex(weight_string(a as char(3))) from t order by id;
+select hex(weight_string(cast(20190821 as date) as binary(5)));

@@ -1,0 +1,44 @@
+## tidb-lexer differential corpus. One SQL statement per line.
+## Lines starting with ## are comments. Keep statements single-line.
+## Scope note: charset introducers (_utf8'x'), N'x', and \N are tracked
+## separately (lexer tail) and intentionally excluded here.
+SELECT a, b+1 FROM t WHERE c = 'x' AND d >= 3.14 LIMIT 10
+SELECT * FROM t1 JOIN t2 ON t1.id = t2.id
+select count(*) from `my table`
+SELECT SUM(x), AVG(y), MAX(z) FROM t GROUP BY g HAVING COUNT(*) > 1
+INSERT INTO t (a, b, c) VALUES (0x1F, b'101', 42)
+INSERT INTO t VALUES (1, 2.5, 3e2, .5, 1.5e3)
+UPDATE t SET a = a + 1, b = b - 2 WHERE id <> 0
+DELETE FROM t WHERE x <= 10 OR y >= 20
+SELECT a FROM t WHERE name = 'O''Brien'
+SELECT 'a\nb\t\\c' AS s
+SELECT `col``with``ticks` FROM t
+SELECT t.a, t.b, db.t.c FROM db.t
+SELECT @var, @@global.max_connections, @@session.tx_isolation, @@autocommit
+SELECT a <=> b, a != b, a <> b, a << 2, a >> 1, a || b, a && b
+SELECT 1 -> 2, json_col->>'$.k', j->'$.a' FROM t
+SELECT a % b, a & b, a ^ b, ~a, !a FROM t
+SELECT * FROM t -- trailing line comment
+SELECT * FROM t # hash comment
+SELECT /* block comment */ a FROM t
+SELECT /*! STRAIGHT_JOIN */ a FROM t1, t2
+SELECT id FROM t WHERE k IN (1, 2, 3) AND s LIKE 'a%b_c'
+SELECT CAST(a AS SIGNED), CONVERT(b, CHAR) FROM t
+SELECT ROW_NUMBER() OVER (PARTITION BY a ORDER BY b) FROM t
+SELECT a FROM t ORDER BY a ASC, b DESC LIMIT 5, 10
+CREATE TABLE t (id INT PRIMARY KEY, name VARCHAR(255), price DECIMAL(10,2))
+SELECT 0xABCDEF, 0b1010, 0777, 100, 3.14159, 1e10, 2.5E-3
+SELECT COUNT(DISTINCT a) FROM t
+SELECT a IS NULL, b IS NOT NULL, c IS TRUE FROM t
+SELECT CASE WHEN a > 0 THEN 'pos' WHEN a < 0 THEN 'neg' ELSE 'zero' END FROM t
+SELECT DATE_ADD(d, INTERVAL 1 DAY) FROM t
+WITH cte AS (SELECT 1 AS x) SELECT * FROM cte
+SELECT a := 5, @b := 10
+EXPLAIN SELECT * FROM t WHERE id = 1
+SELECT * FROM t FOR UPDATE
+SELECT HIGH_PRIORITY a FROM t
+SELECT a FROM t WHERE b BETWEEN 1 AND 100
+SELECT GROUP_CONCAT(a SEPARATOR ',') FROM t
+SELECT * FROM t1 LEFT JOIN t2 USING (id)
+SELECT id2, count2, over2 FROM t
+SELECT 9e9, 9e9e, 9est, 0x, 0xGG, 12abc FROM t

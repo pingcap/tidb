@@ -1,0 +1,14 @@
+## FLOAT/DOUBLE literals (exponent-notation numbers, `Expr::Float`):
+## rendered via Rust's own f64 Display, confirmed byte-identical to Go's
+## strconv.FormatFloat(f, 'f', -1, 64) (what Datum.ToString() and this
+## corpus's own golden both use) across a wide value range, not assumed
+1.5e2
+-1.5e2
+1.5e-1
+0.0e0
+-0.0e0
+1e10
+1e-10
+1.7976931348623157e308
+1e100
+123.456e2

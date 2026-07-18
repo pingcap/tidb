@@ -1,0 +1,16 @@
+## A genuinely EMPTY quoted bit literal (`b''`/`B''`) restores as `b''`,
+## NOT `b'0'` -- a different value from `b'0'` in real TiDB (confirmed
+## via `goeval`: `LENGTH(b'')` is 0, `LENGTH(b'0')` is 1, even though both
+## evaluate to 0 under arithmetic), so the leading-zero-stripping
+## normalization must not fold "started empty" into "stripped down to
+## empty" (`b'0'`/`b'00'`/...). Also confirmed the `DEFAULT b''` column
+## option context, which reuses the same `Expr::Bit` node.
+select b''
+select B''
+select b'0'
+select b'00'
+select b'1'
+select b'01'
+select b''+1
+select b'0'+1
+create table t (a int default b'')

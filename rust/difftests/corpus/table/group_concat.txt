@@ -1,0 +1,28 @@
+## GROUP_CONCAT: multiple args concatenate per row like CONCAT (a row where
+## any arg is NULL contributes nothing); DISTINCT dedups; SEPARATOR defaults
+## to ','; an empty/all-NULL group is NULL, same as SUM. The DISTINCT dedup
+## test below uses a group that collapses to a SINGLE value on purpose: real
+## TiDB's GROUP_CONCAT(DISTINCT) result order over MULTIPLE surviving
+## distinct values is genuinely non-deterministic (observed flipping between
+## repeated `gorun` invocations of the identical script — verified via
+## direct repetition, not assumed), since MySQL makes no ordering guarantee
+## without an explicit ORDER BY inside the call (which this executor does
+## not model); a single-value result sidesteps the ambiguity entirely.
+create table gc (k int, a varchar(9), b varchar(9))
+insert into gc values (1, 'x', 'p')
+insert into gc values (1, 'y', 'q')
+insert into gc values (2, 'z', 'r')
+select group_concat(a) from gc group by k
+select group_concat(a, b) from gc group by k
+select group_concat(a separator '-') from gc group by k
+select group_concat(distinct a) from gc where k = 2
+insert into gc values (3, 'm', 'n')
+insert into gc values (3, 'm', 'n')
+select group_concat(distinct a) from gc where k = 3
+select group_concat(a) from gc where k > 100
+create table gc2 (k int, a varchar(9), b varchar(9))
+insert into gc2 values (1, 'x', NULL)
+insert into gc2 values (1, 'y', 'q')
+insert into gc2 values (2, NULL, NULL)
+select group_concat(a) from gc2 group by k
+select group_concat(a, b) from gc2 group by k

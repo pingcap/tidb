@@ -1,0 +1,24 @@
+#IDX 0
+SET @@SESSION.`autocommit`=1
+#END
+#IDX 1
+SET @@SESSION.`sql_log_bin`=0
+#END
+#IDX 2
+SET @@GLOBAL.`autocommit`=DEFAULT
+#END
+#IDX 3
+SET @@INSTANCE.`tidb_mem_quota_query`=128
+#END
+#IDX 4
+SET @@SESSION.`character_set_results`=_UTF8MB4'BINARY'
+#END
+#IDX 5
+SET @@SESSION.`autocommit`=_UTF8MB4'ON', @@SESSION.`time_zone`=_UTF8MB4'+08:00'
+#END
+#IDX 6
+SET @@SESSION.`autocommit`=`off`
+#END
+#IDX 7
+SET @@SESSION.`xx.xx`=666
+#END

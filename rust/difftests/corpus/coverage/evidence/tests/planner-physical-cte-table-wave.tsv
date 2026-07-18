@@ -1,0 +1,2 @@
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/planner/core/tests/redact/redact_test.go	23	TestRedactExplain	PARTIAL	planner-physical-cte-table-wave	rust/difftests/planner-tests/tests/physical_cte_table.rs	Rust vectors preserve the CTE plan-tree ExplainInfo contract (`Scan on CTE_<id>`) and task eligibility gates; the source test's full SQL planning/redaction and recursive CTE execution remain external.

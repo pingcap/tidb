@@ -1,0 +1,5 @@
+go_owner	rust_module	status
+pkg/parser/ddl_fieldtype_parser.go	rust/crates/tidb-parser/src/ddl/field_type.rs	partial
+pkg/parser/ddl_alter_handlers.go:237-252; pkg/parser/ast/ddl.go:566-578	rust/crates/tidb-parser/src/ddl/field_type.rs; rust/crates/tidb-ast/src/ddl/field_type.rs	ALTER MODIFY/CHANGE shares the field-type owner; binary ENUM/SET members decode before canonical restore
+tests/integrationtest/t/ddl/column_type_change.test:735,737,739,741,743,745,747,762,764,766,768,770,772,774	rust/difftests/parser-tests/tests/selectors/alter/alter_enum_set_binary_selector.rs	14 accepted Go rows match byte-for-byte after binary member decoding
+ALTER TABLE execution capability	rust/crates/tidb-exec/src/ddl/table_capability.rs; rust/crates/tidb-exec/src/tests/ddl.rs	Explicit ENUM/SET ALTER rejection before transaction or catalog mutation

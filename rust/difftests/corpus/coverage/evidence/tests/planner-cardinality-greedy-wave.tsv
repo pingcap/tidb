@@ -1,0 +1,3 @@
+# Source-owned test-evidence fragment for planner-cardinality-greedy-wave.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/planner/cardinality/selectivity_test.go	1376	TestSelectivityGreedyAlgo	PARTIAL	planner-cardinality-greedy-wave	rust/difftests/planner-tests/tests/selectivity_greedy.rs	Directly preserves both original overlapping-mask and reordered-input assertions; additional Rust vectors pin source type coverage full/partial DNF access-count column-count and selectivity tie-break order without inventing planner statistics

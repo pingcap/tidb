@@ -1,0 +1,4 @@
+# Source-owned statistics sample byte-boundary test evidence.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/statistics/sample_test.go	320	TestSampleSerial	PARTIAL	stats-sample-bytes-wave	rust/crates/tidb-stats/tests/sample_bytes_source.rs	Rust covers the scalar sample-size and total-byte decisions exercised by the original serial sample collector suite; record sets, Datum/protobuf conversion, sketches, and collector lifecycle remain external.
+go_test_subtest	pkg/statistics/sample_test.go	324	TestSampleSerial/SubTestCollectorProtoConversion	PARTIAL	stats-sample-bytes-wave	rust/crates/tidb-stats/tests/sample_bytes_source.rs	Rust pins the inclusive maximum sample-value length and collector total-size arithmetic underlying the original protobuf conversion subtest; actual tipb payload conversion and sketch round trips remain external.

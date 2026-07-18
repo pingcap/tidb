@@ -1,0 +1,19 @@
+## `DEFAULT(col)` -- a column's own DEFAULT value, read directly from real
+## TiDB's own hand-written parser (pkg/parser/expr_subquery_parser.go's
+## parseDefaultExpr). Modelled here as a plain Expr::Func call over a
+## single Expr::Column argument (no dedicated AST node needed, unlike
+## real TiDB's own internal ast.DefaultExpr, since the restore text is
+## byte-identical either way). `col` is a DOTTED COLUMN-NAME PATH
+## specifically, not an arbitrary expression (confirmed via godump
+## restore: DEFAULT(1+1)/DEFAULT()/DEFAULT(a,b) are all genuine
+## ParseErrors). A bare DEFAULT (no parens) is ALSO a genuine ParseError
+## in this general-expression context -- real TiDB only allows it in
+## VALUES/SET-assignment positions, a separate, unmodelled scope.
+select default(x) from t1
+select default(t1.a) from t1
+select a from t8 order by default(b) * a
+select a from t8 order by default(b)
+select a, default(a) from t6 where a > (select default(a) from t7 where t6.a = t7.a)
+select default(a) from t1, t2
+select default(a0) from (select a as a0 from t1) as t0
+select default(t1.a) from t1, t2

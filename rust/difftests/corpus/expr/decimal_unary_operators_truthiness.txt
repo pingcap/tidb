@@ -1,0 +1,14 @@
+## decimal unary operators and truthiness (nonzero is truthy, shared by NOT,
+## IS TRUE/FALSE, AND/OR/XOR)
++3.14
+-(3.14)
+-(0.0)
+not 3.14
+not 0.0
+3.14 is true
+0.0 is false
+3.14 and 1
+0.0 and 1
+3.14 or 0
+0.0 xor 1.0
+0.0 xor 0.0

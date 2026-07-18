@@ -1,0 +1,14 @@
+## SQL binding parser/restore slice. Sources: pkg/parser/binding_parser.go,
+## pkg/parser/set_explain_parser.go, and scoped SHOW parsing. Nested SQL stays
+## in the normal parser rather than being captured as raw text.
+create global binding for select * from t using select * from t use index(a)
+create session binding using select * from t
+create global binding from history using plan digest 'plan-a', @plan_b
+drop binding for select * from t
+drop global binding for select * from t using select * from t use index(a)
+drop session binding for sql digest 'sql-a', @sql_b
+set binding enabled for select * from t using select * from t use index(a)
+set binding disabled for sql digest 'sql-a'
+show bindings
+show global bindings
+show session bindings where original_sql = 'select 1'

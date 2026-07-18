@@ -1,0 +1,5 @@
+# Source-owned test-evidence fragment for planner-base-traits-wave.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/planner/cascades/base/hash_equaler_test.go	33	TestStringLen	PARTIAL	planner-base-traits-wave	rust/difftests/planner-tests/tests/base_traits.rs	Rust TmpStr Hash64 vectors preserve source field-order framing and distinguish concatenated versus separately framed strings; full Go interface/runtime ownership remains external.
+go_test	pkg/planner/cascades/base/hash_equaler_test.go	88	TestStructType	PARTIAL	planner-base-traits-wave	rust/difftests/planner-tests/tests/base_traits.rs	Rust StructA/StructB vectors preserve same-field hash equality but concrete-type Equals rejection, plus the HashEquals composition bound; broader cascades object integration remains external.
+go_test	pkg/planner/cascades/base/hash_equaler_test.go	113	TestHash64a	PARTIAL	planner-base-traits-wave	rust/difftests/planner-tests/tests/base_traits.rs	Rust vectors preserve the source primitive sequence, Unicode rune updates, and reset/replay behavior through the existing Hasher owner; cache and broader object dispatch remain external.

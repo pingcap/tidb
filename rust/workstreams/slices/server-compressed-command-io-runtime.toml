@@ -1,0 +1,61 @@
+schema = "1"
+slice = "server-compressed-command-io-runtime"
+status = "partial"
+target = "tidb-server"
+ring = "result"
+consumer = "The parsed handshake capability intersection selects zlib before zstd and preserves the negotiated zstd level; one generic command-I/O adapter then reads a sequence-zero command through PacketIoReader, routes it through tidb_server::Connection::dispatch_framed_auto, and writes and flushes the resulting sequence-one response through PacketIoWriter in the same negotiated compression mode. This direct packetio.go plus conn.go transition preserves existing uncompressed and compressed packet vectors and command dispatch behavior, and its conn.go ownership transfer must preserve every non-conn row in the prior multirow server evidence files. Live TcpStream ownership, TLS and authentication execution, socket deadlines, metrics, server error-stack conversion, backpressure, incremental result streaming, prepared statements and unsupported COM commands, connection shutdown and kill state, and the complete server lifecycle remain external, so implementation evidence must finish PARTIAL"
+test_target = "compressed_command_io_source"
+go_sources = [
+  "pkg/server/internal/packetio.go",
+  "pkg/server/conn.go",
+]
+go_tests = [
+  "pkg/server/internal/packetio_test.go:0:packetio_test.go",
+  "pkg/server/internal/packetio_test.go:31:BenchmarkPacketIOWrite",
+  "pkg/server/internal/packetio_test.go:40:TestPacketIOWrite",
+  "pkg/server/internal/packetio_test.go:65:TestPacketIOWriteCompressed",
+  "pkg/server/internal/packetio_test.go:91:TestPacketIORead",
+  "pkg/server/internal/packetio_test.go:92:TestPacketIORead/uncompressed",
+  "pkg/server/internal/packetio_test.go:127:TestPacketIORead/compressed_short",
+  "pkg/server/internal/packetio_test.go:154:TestPacketIORead/zlib",
+  "pkg/server/internal/packetio_test.go:192:TestPacketIORead/zstd",
+  "pkg/server/internal/packetio_test.go:241:TestCompressedWriterShort",
+  "pkg/server/internal/packetio_test.go:262:TestCompressedWriterLong",
+  "pkg/server/internal/packetio_test.go:263:TestCompressedWriterLong/zlib",
+  "pkg/server/internal/packetio_test.go:290:TestCompressedWriterLong/zstd",
+  "pkg/server/internal/packetio_test.go:321:TestCompressedReaderShort",
+  "pkg/server/internal/packetio_test.go:352:TestCompressedReaderLong",
+  "pkg/server/internal/packetio_test.go:353:TestCompressedReaderLong/zlib",
+  "pkg/server/internal/packetio_test.go:389:TestCompressedReaderLong/zstd",
+  "pkg/server/internal/packetio_test.go:441:TestSubHeaderWithWrongSequenceNumber",
+  "pkg/server/conn_test.go:670:TestDispatch",
+  "pkg/server/conn_test.go:2447:TestStats",
+]
+depends_on = []
+evidence_prerequisites = [
+  { capability = "parsed-handshake-compression-fields", evidence_owner = "server-handshake-listener-wave", kind = "source", anchor = "pkg/server/internal/parse/parse.go", minimum_status = "PARTIAL" },
+  { capability = "session-query-execution", evidence_owner = "server-distsql-streaming-resultset", kind = "source", anchor = "pkg/session/session.go", minimum_status = "PARTIAL" },
+  { capability = "automatic-result-field-adapter", evidence_owner = "server-distsql-streaming-resultset", kind = "source", anchor = "pkg/executor/adapter.go", minimum_status = "PARTIAL" },
+]
+rust_paths = [
+  "rust/crates/tidb-protocol/src/packet.rs",
+  "rust/crates/tidb-protocol/src/compression.rs",
+  "rust/crates/tidb-protocol/src/error.rs",
+  "rust/crates/tidb-protocol/src/lib.rs",
+  "rust/crates/tidb-protocol/tests/packetio_source.rs",
+  "rust/crates/tidb-protocol/benches/packetio_source.rs",
+  "rust/crates/tidb-server/src/compressed_command_io.rs",
+  "rust/crates/tidb-server/src/lib.rs",
+  "rust/crates/tidb-server/src/connection_resultset.rs",
+  "rust/crates/tidb-server/tests/response_source.rs",
+  "rust/crates/tidb-server/tests/compressed_command_io_source.rs",
+  "rust/difftests/corpus/coverage/evidence/source/server-compressed-command-io-runtime.tsv",
+  "rust/difftests/corpus/coverage/evidence/tests/server-compressed-command-io-runtime.tsv",
+  "rust/difftests/corpus/coverage/evidence/transfers/server-compressed-command-io-runtime.tsv",
+  "rust/difftests/corpus/coverage/evidence/source/protocol-compressed-packetio-runtime.tsv",
+  "rust/difftests/corpus/coverage/evidence/tests/protocol-compressed-packetio-runtime.tsv",
+  "rust/difftests/corpus/coverage/evidence/transfers/protocol-compressed-packetio-runtime.tsv",
+  "rust/difftests/corpus/coverage/evidence/tests/protocol-packetio-source-wave.tsv",
+  "rust/difftests/corpus/coverage/evidence/source/server-distsql-streaming-resultset.tsv",
+  "rust/difftests/corpus/coverage/evidence/tests/server-execute-sql-source-wave.tsv",
+]

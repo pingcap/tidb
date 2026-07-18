@@ -1,0 +1,3 @@
+# Source-owned test evidence for the dependency-closed DistSQL context leaf.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/distsql/context/context_test.go	38	TestContextDetach	PARTIAL	distsql-context-source-wave	rust/crates/tidb-distsql/src/tests.rs	The Rust leaf preserves the source detach invariants for shared warnings, SQL killer and cancellation handles, copied CPU/KV state, fresh max-keys counters, request metadata, replica-read, priority, paging, timeouts, task ID, and session identity. Full Go deep-clone coverage remains partial until TiKV client variables, runtime statistics, memory trackers, error context, resource-group hooks, and result streaming have typed Rust consumers; no RPC or protobuf behavior is claimed.

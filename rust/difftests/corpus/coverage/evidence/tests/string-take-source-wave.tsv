@@ -1,0 +1,4 @@
+# Source-owned test-evidence fragment for LEFT and RIGHT.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/expression/builtin_string_test.go	395	TestLeft	PARTIAL	string-take-source-wave	rust/crates/tidb-expr/src/string_fn.rs	Complete representable TestLeft rows: numeric/negative/zero/Unicode/NULL/string-prefix counts, integer/real/string input coercion, and raw binary bytes; injected error, FieldType signature, warning, and vectorized paths remain outside the seed evaluator
+go_test	pkg/expression/builtin_string_test.go	445	TestRight	PARTIAL	string-take-source-wave	rust/crates/tidb-expr/src/string_fn.rs	Complete representable TestRight rows: numeric/negative/zero/Unicode/NULL/string-prefix counts, integer/real/string input coercion, and raw binary bytes; injected error, FieldType signature, warning, and vectorized paths remain outside the seed evaluator

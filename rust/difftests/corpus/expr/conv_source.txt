@@ -1,0 +1,17 @@
+## Exact evaluator vectors from pkg/expression/builtin_math_test.go's TestConv.
+## All result values, ETString/ETInt coercion, signed-base handling, and NULL
+## invalid-base behavior are scalar and checked against the Go engine.
+conv('a', 16, 2)
+conv('6E', 18, 8)
+conv('-17', 10, -18)
+conv('-17', 10, 18)
+conv(null, 10, 10)
+conv('+18aZ', 7, 36)
+conv('18446744073709551615', -10, 16)
+conv('12F', -10, 16)
+conv('  FF ', 16, 10)
+conv('TIDB', 10, 8)
+conv('aa', 10, 2)
+conv(' A', -10, 16)
+conv('a6a', 10, 8)
+conv('a6a', 1, 8)

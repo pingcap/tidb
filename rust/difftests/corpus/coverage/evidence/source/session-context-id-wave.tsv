@@ -1,0 +1,3 @@
+# Source-owned statement-context ID evidence.
+# source_path	status	owner	evidence_artifact	note
+pkg/util/context/context.go	PARTIAL	session-context-id-wave	rust/crates/tidb-exec/src/context_id.rs	Process-local atomic non-zero monotonic ID allocation mirrors GenContextID; StatementContext construction/reset, lifecycle locks, timezone, warning handlers, and session attachment remain external

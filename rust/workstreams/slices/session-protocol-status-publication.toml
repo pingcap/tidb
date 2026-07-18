@@ -1,0 +1,12 @@
+schema = "1"
+slice = "session-protocol-status-publication"
+status = "retired"
+target = "tidb-server"
+ring = "result"
+consumer = "Superseded by session-warning-status-publication; retained only as its checked ownership-transfer predecessor"
+test_target = "status_publication_source"
+go_sources = ["pkg/server/driver_tidb.go"]
+go_tests = []
+depends_on = []
+evidence_prerequisites = []
+rust_paths = ["rust/difftests/corpus/coverage/evidence/transfers/session-warning-status-publication.tsv"]

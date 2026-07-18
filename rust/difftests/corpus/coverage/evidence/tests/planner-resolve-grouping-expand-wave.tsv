@@ -1,0 +1,3 @@
+# Source-owned test-evidence fragment for planner-resolve-grouping-expand-wave.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/planner/core/logical_plans_test.go	2473	TestRollupExpand	PARTIAL	planner-resolve-grouping-expand-wave	rust/difftests/planner-tests/tests/resolve_grouping_expand.rs	Rust vectors cover nested post-order Expand traversal, append-style level generation, unchanged non-expand nodes, child ordering, and stable rule naming; Go grouping-set expression construction, schema/GID/GPos metadata, SQL plan output, and optimizer error paths remain external.

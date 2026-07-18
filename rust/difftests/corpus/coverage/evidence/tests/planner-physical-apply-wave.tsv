@@ -1,0 +1,2 @@
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/planner/core/casetest/physicalplantest/physical_plan_test.go	1537	TestPhysicalApplyIsNotPhysicalJoin	PARTIAL	planner-physical-apply-wave	rust/difftests/planner-tests/tests/physical_apply.rs	Rust vectors preserve Apply plan identity/offset and the exact negative physical-join interface decision; embedded hash-join behavior, subquery planning, and execution remain external.

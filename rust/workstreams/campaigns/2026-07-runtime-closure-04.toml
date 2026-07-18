@@ -1,0 +1,11 @@
+schema = "1"
+campaign = "2026-07-runtime-closure-04"
+status = "integrated"
+slices = [
+  "distsql-request-builder-complete-envelope",
+  "protocol-compressed-packetio-runtime",
+  "stats-cmsketch-estimator-live-family",
+  "executor-group-concat-live-runtime",
+  "stats-priority-heap-live-analysis-job",
+  "parser-arena-complete-runtime",
+]

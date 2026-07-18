@@ -1,0 +1,32 @@
+RS:ab
+RS:1
+RS:one week’s time test
+RS:one week's time test
+RS:abc测试def
+RS:abcテストdef
+RS:<nil>
+RS:AB
+RS:1
+RS:ONE WEEK’S TIME TEST
+RS:ONE WEEK'S TIME TEST
+RS:ABC测试DEF
+RS:ABCテストDEF
+RS:<nil>
+RS:0
+RS:1
+RS:-1
+RS:-1
+RS:0
+RS:0
+RS:<nil>
+RS:<nil>
+RS:-1
+RS:1
+RS:0
+RS:<nil>
+RS:<nil>
+RS:<nil>
+RS:0
+RS:0
+RS:BYTES_HEX:61FF
+RS:1

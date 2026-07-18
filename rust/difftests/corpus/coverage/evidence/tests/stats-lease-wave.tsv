@@ -1,0 +1,4 @@
+# Source-owned statistics lease test evidence.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/statistics/integration_test.go	220	TestShowHistogramsLoadStatus	PARTIAL	stats-lease-wave	rust/crates/tidb-stats/tests/stats_lease_source.rs	Rust pins lease load/store behavior used when the integration test saves, overrides, and restores the stats lease; domain setup, histogram loading, and session lifecycle remain external.
+go_test	pkg/statistics/integration_test.go	266	TestColumnStatsLazyLoad	PARTIAL	stats-lease-wave	rust/crates/tidb-stats/tests/stats_lease_source.rs	Rust pins the lease override and restoration state used to enable lazy column-stat loading; schema creation, predicate collection, and asynchronous loading remain external.

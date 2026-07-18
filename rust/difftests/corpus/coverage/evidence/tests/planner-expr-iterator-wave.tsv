@@ -1,0 +1,6 @@
+# Source-owned test evidence fragment for planner-expr-iterator-wave.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/planner/memo/expr_iterator_test.go	29	TestNewExprIterFromGroupElem	PARTIAL	planner-expr-iterator-wave	rust/difftests/planner-tests/tests/expr_iterator.rs	Typed group vectors cover root-expression construction, operand matching, and child metadata; Go intrusive list and real logical-plan setup remain external.
+go_test	pkg/planner/memo/expr_iterator_test.go	77	TestExprIterNext	PARTIAL	planner-expr-iterator-wave	rust/difftests/planner-tests/tests/expr_iterator.rs	Rust vectors cover deterministic Next traversal and cartesian child matches over equivalent expressions; source memo/list ownership remains external.
+go_test	pkg/planner/memo/expr_iterator_test.go	130	TestExprIterReset	PARTIAL	planner-expr-iterator-wave	rust/difftests/planner-tests/tests/expr_iterator.rs	Rust vectors cover reset-to-first and matched-state transitions, with child cardinality represented by owned vectors.
+go_test	pkg/planner/memo/expr_iterator_test.go	207	TestExprIterWithEngineType	PARTIAL	planner-expr-iterator-wave	rust/difftests/planner-tests/tests/expr_iterator.rs	Rust vectors cover TiDB/TiKV/TiFlash nested-engine filtering and leaf matching through the shared pattern adapter.

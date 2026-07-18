@@ -1,0 +1,2 @@
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/planner/core/casetest/mpp/mpp_test.go	446	TestMppUnionAll	PARTIAL	planner-physical-union-all-wave	rust/difftests/planner-tests/tests/physical_union_all.rs	Rust vectors preserve UnionAll plan identity/Mpp bit, source ordinary-before-MPP root candidate order, and sort/MPP-partition rejection gates; full SQL/CBO child planning, schemas/stats, and union execution remain external.

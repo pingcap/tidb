@@ -1,0 +1,14 @@
+## Source-derived UInt64 runtime-domain boundaries.
+18446744073709551615
+-18446744073709551615
+18446744073709551615 > -1
+18446744073709551615 = -1
+cast(-1 as unsigned)
+cast(-5 as unsigned)
+cast(1 as unsigned) + 1
+cast('9223372036854775807' as unsigned) + 1
+~0
+7 & 3
+1 << 4
+bit_count(18446744073709551615)
+inet_aton('255.255.255.255')

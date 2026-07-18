@@ -1,0 +1,3 @@
+# Source-owned evidence fragment for planner-rule-type-wave.
+# source_path	status	owner	evidence_artifact	note
+pkg/planner/cascades/rule/rule_type.go	PARTIAL	planner-rule-type-wave	rust/crates/tidb-planner/src/rule_type.rs	Ports the source iota-backed rule Type values and pointer String behavior: XFJoinToApply renders join_to_apply while every other value, including unknown integers, renders default_none; rule construction, masks, and cascades execution remain external.

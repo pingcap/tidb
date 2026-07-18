@@ -1,0 +1,34 @@
+## Source anchor: pkg/session/test/txn/txn_test.go:40 TestAutocommit.
+## This source-derived, single-session slice checks the observable commit
+## boundary when SET autocommit changes mode, including redundant SET values.
+## The Go test's wire-status flag assertions, separate-session lazy-start
+## visibility, and SET GLOBAL behavior require protocol/global-session state
+## that this seed deliberately does not model.
+create table autocommit_src (id int primary key)
+set autocommit = 0
+begin
+insert into autocommit_src values (1)
+set autocommit = 1
+rollback
+select count(*) from autocommit_src where id = 1
+select @@autocommit
+set autocommit = 0
+insert into autocommit_src values (2)
+set autocommit = 1
+rollback
+select count(*) from autocommit_src where id = 2
+select @@autocommit
+set autocommit = 0
+begin
+insert into autocommit_src values (3)
+set autocommit = 0
+rollback
+select count(*) from autocommit_src where id = 3
+select @@autocommit
+set autocommit = 1
+begin
+insert into autocommit_src values (4)
+set autocommit = 1
+rollback
+select count(*) from autocommit_src where id = 4
+select @@autocommit

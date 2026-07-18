@@ -1,0 +1,2 @@
+difftests/corpus/**/*.tsv whitespace=-blank-at-eol
+difftests/corpus/**/*.golden.txt whitespace=-blank-at-eol

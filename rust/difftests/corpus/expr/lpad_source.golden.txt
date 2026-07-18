@@ -1,0 +1,13 @@
+STR:???hi
+STR:h
+STR:
+NULL
+STR:h
+STR:
+STR:abahi
+STR:ababhi
+STR:字符字中文
+STR:中
+NULL
+STR:
+NULL

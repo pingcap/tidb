@@ -1,0 +1,7 @@
+## Full scalar vectors from pkg/expression/builtin_math_test.go:35 TestAbs.
+abs(null)
+abs(1)
+abs(cast(1 as unsigned))
+abs(-1)
+abs(3.14e0)
+abs(-3.14e0)

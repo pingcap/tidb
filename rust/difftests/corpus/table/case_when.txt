@@ -1,0 +1,24 @@
+## CASE evaluation is LAZY: only the taken branch is evaluated, matching
+## real MySQL's short-circuit CASE, a load-bearing idiom for guarding
+## against errors (confirmed via gorun: dividing by v below never raises
+## division-by-zero for v = 0, since that branch is guarded out). CASE
+## works in every expression-evaluation site (SELECT projection, WHERE,
+## ORDER BY, GROUP BY, UPDATE SET), including with a SUBQUERY or an
+## AGGREGATE inside a branch -- both needed a new Expr::Case arm in
+## tidb-exec's subquery-resolution and aggregate-detection structural
+## walks (a silent gap the SAME shape as the tuple-match bugs found
+## earlier in this project: a wildcard fallback that quietly skips
+## recursing into a new AST variant's sub-expressions).
+create table t (id int, v int)
+insert into t values (1, 10), (2, 0), (3, 30)
+select id, case when v != 0 then 100 / v else null end from t
+select id, v, case v when 10 then 'ten' when 30 then 'thirty' else 'other' end from t
+create table dept (id int, name varchar(20))
+insert into dept values (1, 'eng'), (2, 'sales')
+select id, case when (select count(*) from dept) > 1 then 'multi' else 'single' end from t where id = 1
+select case when count(*) > 2 then 'many' else 'few' end from t
+select id from t where case when v > 15 then 1 else 0 end = 1
+select id from t order by case when v = 0 then 1 else 0 end, id
+select case when v > 15 then 'big' else 'small' end, count(*) from t group by case when v > 15 then 'big' else 'small' end
+update t set v = case when v = 0 then -1 else v end where id = 2
+select id, v from t order by id

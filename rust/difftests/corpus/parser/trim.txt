@@ -1,0 +1,11 @@
+SELECT HEX(TRIM(convert(0x20202081408141208144202020 using gb18030)));
+select hex(trim('')), hex(trim('x' from ''));
+select hex(trim('\t   bar\n   ')), hex(trim('   \rbar   \t'));
+select hex(trim(leading from '   bar')), hex(trim('x' from 'xxxbarxxx')), hex(trim('x' from 'bar')), hex(trim('' from '   bar   '));
+select hex(trim(null from 'bar')), hex(trim('x' from null)), hex(trim(null)), hex(trim(leading null from 'bar'));
+select trim('   bar   '), trim(leading 'x' from 'xxxbarxxx'), trim(trailing 'xyz' from 'barxxyz'), trim(both 'x' from 'xxxbarxxx');
+select trim(both 'abc' collate utf8mb4_bin from 'c' collate utf8mb4_general_ci);
+select trim(cast('[]' as json)) between 'W' and 'm';
+select trim(leading from " a "), trim(both from " a "), trim(trailing from " a ");
+select trim(leading null from " a "), trim(both null from " a "), trim(trailing null from " a ");
+select trim(null from " a ");

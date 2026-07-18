@@ -1,0 +1,330 @@
+#IDX 0
+ALTER USER `dpu1`@`%` IDENTIFIED WITH 'caching_sha2_password' BY 'b'
+#END
+#IDX 1
+ALTER USER `dpu1`@`%` IDENTIFIED WITH 'mysql_native_password' BY 'c'
+#END
+#IDX 2
+ALTER USER `testuser`@`%` IDENTIFIED WITH 'mysql_native_password' AS ''
+#END
+#IDX 3
+ALTER USER `testuser`@`%` IDENTIFIED BY ''
+#END
+#IDX 4
+ALTER USER `testuser1`@`%` IDENTIFIED WITH 'mysql_native_password' AS ''
+#END
+#IDX 5
+ALTER USER `testuser1`@`%` IDENTIFIED BY ''
+#END
+#IDX 6
+ALTER USER `testuser2`@`%` IDENTIFIED WITH 'mysql_native_password' AS ''
+#END
+#IDX 7
+ALTER USER `testuser2`@`%` IDENTIFIED BY ''
+#END
+#IDX 8
+ALTER USER `testuser3`@`%` IDENTIFIED WITH 'mysql_native_password' AS ''
+#END
+#IDX 9
+ALTER USER `testuser3`@`%` IDENTIFIED BY ''
+#END
+#IDX 10
+ALTER USER `testuser4`@`%` IDENTIFIED WITH 'mysql_native_password' AS ''
+#END
+#IDX 11
+ALTER USER `testuser4`@`%` IDENTIFIED BY ''
+#END
+#IDX 12
+ALTER USER `role1`@`%` IDENTIFIED WITH 'mysql_native_password' AS ''
+#END
+#IDX 13
+ALTER USER `role1`@`%` IDENTIFIED BY ''
+#END
+#IDX 14
+ALTER USER `u1`@`localhost` IDENTIFIED BY 'pass'
+#END
+#IDX 15
+ALTER USER `u1`@`localhost` IDENTIFIED BY 'pass'
+#END
+#IDX 16
+ALTER USER `u1`@`localhost` IDENTIFIED BY 'pass'
+#END
+#IDX 17
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test'
+#END
+#IDX 18
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test'
+#END
+#IDX 19
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test1'
+#END
+#IDX 20
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test'
+#END
+#IDX 21
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test1'
+#END
+#IDX 22
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test2'
+#END
+#IDX 23
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test3'
+#END
+#IDX 24
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test'
+#END
+#IDX 25
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test1'
+#END
+#IDX 26
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test2'
+#END
+#IDX 27
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test3'
+#END
+#IDX 28
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test'
+#END
+#IDX 29
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test4'
+#END
+#IDX 30
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test5'
+#END
+#IDX 31
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test1'
+#END
+#IDX 32
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test'
+#END
+#IDX 33
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test1'
+#END
+#IDX 34
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test2'
+#END
+#IDX 35
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test3'
+#END
+#IDX 36
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test4'
+#END
+#IDX 37
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test5'
+#END
+#IDX 38
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test'
+#END
+#IDX 39
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test'
+#END
+#IDX 40
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test1'
+#END
+#IDX 41
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test2'
+#END
+#IDX 42
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test3'
+#END
+#IDX 43
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test'
+#END
+#IDX 44
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test'
+#END
+#IDX 45
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test'
+#END
+#IDX 46
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test1'
+#END
+#IDX 47
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test'
+#END
+#IDX 48
+ALTER USER `testReuse`@`%` IDENTIFIED BY ''
+#END
+#IDX 49
+ALTER USER `testReuse`@`%` IDENTIFIED BY ''
+#END
+#IDX 50
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test2'
+#END
+#IDX 51
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test3'
+#END
+#IDX 52
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test1'
+#END
+#IDX 53
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test2'
+#END
+#IDX 54
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test3'
+#END
+#IDX 55
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test'
+#END
+#IDX 56
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test1'
+#END
+#IDX 57
+ALTER USER `testReuse`@`%` IDENTIFIED WITH 'tidb_sm3_password'
+#END
+#IDX 58
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test'
+#END
+#IDX 59
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test1'
+#END
+#IDX 60
+ALTER USER `testReuse`@`%` IDENTIFIED WITH 'caching_sha2_password'
+#END
+#IDX 61
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test'
+#END
+#IDX 62
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test1'
+#END
+#IDX 63
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test2'
+#END
+#IDX 64
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test3'
+#END
+#IDX 65
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test'
+#END
+#IDX 66
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test'
+#END
+#IDX 67
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test'
+#END
+#IDX 68
+ALTER USER `testReuse`@`%` IDENTIFIED WITH 'caching_sha2_password' BY 'test'
+#END
+#IDX 69
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test'
+#END
+#IDX 70
+ALTER USER `testReuse`@`%` IDENTIFIED WITH 'caching_sha2_password' BY 'test'
+#END
+#IDX 71
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test'
+#END
+#IDX 72
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test1', `testReuse3`@`%` IDENTIFIED BY 'test1'
+#END
+#IDX 73
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test1'
+#END
+#IDX 74
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test2'
+#END
+#IDX 75
+ALTER USER `testReuse`@`%` IDENTIFIED BY 'test3'
+#END
+#IDX 76
+ALTER USER `test1`@`%` IDENTIFIED BY '222', `test_not_exist`@`localhost` IDENTIFIED BY '111'
+#END
+#IDX 77
+ALTER USER IF EXISTS `test1`@`%` IDENTIFIED BY '222', `test_not_exist`@`localhost` IDENTIFIED BY '111'
+#END
+#IDX 78
+ALTER USER `bob`@`localhost` IDENTIFIED WITH 'authentication_ldap_sasl' AS 'uid=bob,ou=Manager,dc=example,dc=com'
+#END
+#IDX 79
+ALTER USER `bob`@`localhost` IDENTIFIED WITH 'authentication_ldap_sasl' AS 'uid=bob,ou=People,dc=example,dc=com'
+#END
+#IDX 80
+ALTER USER `bob`@`localhost` IDENTIFIED WITH 'authentication_ldap_sasl' AS 'uid=bob,ou=Manager,dc=example,dc=com'
+#END
+#IDX 81
+ALTER USER `bob`@`localhost` IDENTIFIED WITH 'authentication_ldap_sasl' AS 'uid=bob,ou=People,dc=example,dc=com'
+#END
+#IDX 82
+ALTER USER `bob`@`localhost` IDENTIFIED WITH 'authentication_ldap_sasl' AS 'uid=bob,ou=Manager,dc=example,dc=com'
+#END
+#IDX 83
+ALTER USER CURRENT_USER IDENTIFIED BY 'zzz'
+#END
+#IDX 84
+ALTER USER `issue17247`@`%` IDENTIFIED BY 'kkk'
+#END
+#IDX 85
+ALTER USER `issue17247`@`%` IDENTIFIED WITH 'mysql_native_password' AS '*B50FBDB37F1256824274912F2A1CE648082C3F1F'
+#END
+#IDX 86
+ALTER USER `default_sha2_user`@`%` IDENTIFIED WITH 'tidb_sm3_password'
+#END
+#IDX 87
+ALTER USER `default_sha2_user`@`%` IDENTIFIED BY '123456'
+#END
+#IDX 88
+ALTER USER `default_sha2_user`@`%` IDENTIFIED WITH 'mysql_native_password' BY '123456'
+#END
+#IDX 89
+ALTER USER `default_sha2_user`@`%` IDENTIFIED WITH 'caching_sha2_password'
+#END
+#IDX 90
+ALTER USER `non_exist_user`@`%` IDENTIFIED WITH 'mysql_native_password'
+#END
+#IDX 91
+ALTER USER `user_sensitive`@`%` IDENTIFIED BY 'abcdefg'
+#END
+#IDX 92
+ALTER USER `nobodyuser2`@`%` IDENTIFIED BY 'newpassword'
+#END
+#IDX 93
+ALTER USER `nobodyuser2`@`%` IDENTIFIED BY ''
+#END
+#IDX 94
+ALTER USER `nobodyuser2`@`%` IDENTIFIED BY 'newpassword'
+#END
+#IDX 95
+ALTER USER `nobodyuser2`@`%` IDENTIFIED BY ''
+#END
+#IDX 96
+ALTER USER `nobodyuser3`@`%` IDENTIFIED BY ''
+#END
+#IDX 97
+ALTER USER `nobodyuser4`@`%` IDENTIFIED BY 'newpassword'
+#END
+#IDX 98
+ALTER USER `superuser2`@`%` IDENTIFIED BY 'newpassword'
+#END
+#IDX 99
+ALTER USER `nobodyuser3`@`%` IDENTIFIED BY ''
+#END
+#IDX 100
+ALTER USER `nobodyuser4`@`%` IDENTIFIED BY 'newpassword'
+#END
+#IDX 101
+ALTER USER `superuser2`@`%` IDENTIFIED BY 'newpassword'
+#END
+#IDX 102
+ALTER USER `nobodyuser2`@`%` IDENTIFIED BY ''
+#END
+#IDX 103
+ALTER USER `nobodyuser3`@`%` IDENTIFIED BY ''
+#END
+#IDX 104
+ALTER USER `nobodyuser4`@`%` IDENTIFIED BY 'newpassword'
+#END
+#IDX 105
+ALTER USER `semuser1`@`%` IDENTIFIED BY ''
+#END
+#IDX 106
+ALTER USER `semuser2`@`%` IDENTIFIED BY ''
+#END
+#IDX 107
+ALTER USER `semuser3`@`%` IDENTIFIED BY ''
+#END
+#IDX 108
+ALTER USER `u59677`@`%` IDENTIFIED WITH 'native_password'
+#END
+#IDX 109
+ALTER USER `u59677`@`%` IDENTIFIED BY 'abcde'
+#END

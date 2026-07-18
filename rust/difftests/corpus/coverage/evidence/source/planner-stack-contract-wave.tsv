@@ -1,0 +1,3 @@
+# Source-owned evidence fragment for planner-stack-contract-wave.
+# source_path	status	owner	evidence_artifact	note
+pkg/planner/cascades/base/task_stack_base.go	PARTIAL	planner-stack-contract-wave	rust/crates/tidb-planner/src/stack_contract.rs	Ports the source Stack push/pop/empty/destroy contract and its richer Execute-plus-Desc Task boundary as local opaque traits; concrete reusable TaskStack allocation, stack pooling, and cascades task ownership remain external.

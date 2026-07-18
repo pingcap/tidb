@@ -1,0 +1,5 @@
+## HOUR/MINUTE/SECOND: reserved lexer keywords (already used as INTERVAL
+## unit tokens), so -- like YEAR/MONTH/DAY/QUARTER -- they need an
+## explicit is_scalar_kw_func allow-list entry to parse as an ordinary
+## function call at all.
+select hour(a), minute(a), second(a) from t

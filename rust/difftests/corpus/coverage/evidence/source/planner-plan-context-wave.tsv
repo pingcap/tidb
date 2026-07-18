@@ -1,0 +1,3 @@
+# Source-owned source-port fragment for planner-plan-context-wave.
+# source_path	status	owner	evidence_artifact	note
+pkg/planner/planctx/context.go	PARTIAL	planner-plan-context-wave	rust/crates/tidb-planner/src/plan_context.rs	Ports BuildPBContext state identity, GetExprCtx/GetClient accessors, and Detach shallow-copy replacement of only ExprCtx; full PlanContext/session interfaces, protobuf clients, and warning implementations remain external.

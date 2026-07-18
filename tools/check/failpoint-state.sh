@@ -220,7 +220,10 @@ collect_target_dirs() {
 	target_dirs=()
 	while IFS= read -r -d '' dir; do
 		case "$(basename "${dir}")" in
-			.git|.idea|tools)
+			# failpoint-ctl rewrites Go source trees.  Keep the independent Cargo
+			# workspace out of its recursive walk: its target directory contains
+			# Rust artifacts that are neither Go source nor valid failpoint input.
+			.git|.idea|rust|tools)
 				continue
 				;;
 		esac

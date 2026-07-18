@@ -1,0 +1,16 @@
+## ALTER TABLE MODIFY/CHANGE COLUMN: FIRST/AFTER repositioning shifts every
+## existing PRIMARY KEY/UNIQUE tracked index, same as ADD COLUMN; CHANGE
+## COLUMN additionally renames without disturbing the stored values
+create table mc_t (a int, b int, c int)
+insert into mc_t values (1, 10, 100)
+insert into mc_t values (2, 20, 200)
+alter table mc_t modify column c int first
+select * from mc_t
+alter table mc_t change column a z int after c
+select * from mc_t
+create table mc_pk (id int primary key, v int, w int)
+insert into mc_pk values (1, 10, 100)
+alter table mc_pk change column v vv bigint first
+select * from mc_pk
+insert into mc_pk values (999, 1, 200) on duplicate key update w = 555
+select * from mc_pk

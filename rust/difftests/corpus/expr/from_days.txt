@@ -1,0 +1,17 @@
+## FROM_DAYS: the inverse of TO_DAYS (days_from_civil's inverse,
+## civil_from_days, offset by TO_DAYS's own epoch constant); outside the
+## valid range (year 0001 through 9999) real TiDB returns the "zero date"
+## string; a narrow, clearly-anomalous NULL sub-band immediately above the
+## valid range is deliberately out of scope (see date_fn::from_days's doc
+## comment) and not tested here. Scoped to Int arguments only (a string or
+## decimal argument would need MySQL's general numeric coercion, which this
+## codebase doesn't otherwise model).
+from_days(719528)
+from_days(738156)
+from_days(738321)
+from_days(366)
+from_days(3652424)
+from_days(365)
+from_days(0)
+from_days(-1)
+from_days(NULL)

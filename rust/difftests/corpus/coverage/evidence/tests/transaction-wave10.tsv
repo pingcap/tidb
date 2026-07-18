@@ -1,0 +1,4 @@
+# Source-owned test-evidence fragment for transaction-wave10.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/executor/set_test.go	1791	TestDivPrecisionIncrement	PARTIAL	transaction-wave10	rust/difftests/corpus/table/div_precision_increment.txt	TypeUnsigned default/readback clamps and DEFAULT; seed global-write boundary asserted by tidb-exec session test because it has no mutable global store
+go_test	pkg/executor/test/executor/executor_test.go	2488	TestDecimalDivPrecisionIncrement	PARTIAL	transaction-wave10	rust/difftests/corpus/table/div_precision_increment.txt	Exact scalar decimal division and AVG scale vectors at increments 4 7 30, plus grouped and window propagation

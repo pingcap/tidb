@@ -1,0 +1,48 @@
+#IDX 0
+SELECT ++1
+#END
+#IDX 1
+SELECT --1
+#END
+#IDX 2
+SELECT -+1
+#END
+#IDX 3
+SELECT -1
+#END
+#IDX 4
+SELECT NOT TRUE
+#END
+#IDX 5
+SELECT ~3
+#END
+#IDX 6
+SELECT !TRUE
+#END
+#IDX 7
+SELECT `abc`
+#END
+#IDX 8
+SELECT `abc`
+#END
+#IDX 9
+SELECT `ab``c`
+#END
+#IDX 10
+SELECT `sabc`.`tABC`
+#END
+#IDX 11
+SELECT `dabc`.`sabc`.`tabc`
+#END
+#IDX 12
+SELECT `dabc`.`sabc`.`tabc`
+#END
+#IDX 13
+SELECT `dABC`.`sabc`.`tabc`
+#END
+#IDX 14
+SELECT `a` IS NULL
+#END
+#IDX 15
+SELECT `a` IS NOT NULL
+#END

@@ -1,0 +1,62 @@
+## ROUND(x)/ROUND(x, d)/TRUNCATE(x, d): NULL if any argument is NULL.
+## Int stays Int for 1-arg ROUND (a plain passthrough); the 2-arg forms
+## round-trip through f64 exactly like real TiDB does. Decimal NEVER
+## collapses to Int (unlike CEIL/FLOOR -- ROUND(3.14159) is DEC:3, not
+## INT:3) and rounds ties AWAY from zero, clamped to DECIMAL's max scale
+## (30) for a positive d. Float rounds ties TO EVEN -- the OPPOSITE
+## tie-breaking rule from Decimal -- via Go's exact types.Round/
+## types.Truncate algorithm (multiply by 10^d, round/truncate, divide
+## back), including Go's own math.Pow10 lookup table (NOT a mathematically
+## "more correct" power of ten -- confirmed the two disagree by 1 ULP for
+## most exponents by dumping bit patterns, not assumed). Every case here
+## was confirmed via goeval, then cross-checked against
+## pkg/expression/builtin_math.go and pkg/types/helper.go.
+round(3.14159)
+round(3.14159, 2)
+round(3.14159, 0)
+round(3.14159, -1)
+round(12345, -2)
+round(3.5)
+round(2.5)
+round(-3.5)
+round(-2.5)
+round(3.14159e0)
+round(3.14159e0, 2)
+round(2.5e0)
+round(3.5e0)
+round(-2.5e0)
+round(-3.5e0)
+round(1.005e0, 2)
+round(2.675, 2)
+round(0)
+round(0, 5)
+round(5)
+round(5, -1)
+round(5, 2)
+round(-5, -1)
+round(100, -2)
+round(150, -2)
+round(250, -2)
+round(null)
+round(3.14, null)
+round(null, 2)
+truncate(3.14159, 2)
+truncate(3.14159, 0)
+truncate(3.14159, -1)
+truncate(12345, -2)
+truncate(12345, 2)
+truncate(-12345, -2)
+truncate(3.14159e0, 2)
+truncate(-3.14159e0, 2)
+truncate(3.999, 0)
+truncate(-3.999, 0)
+truncate(null, 2)
+round(3.14159, 100)
+round(1.5, 100)
+round(123.456, 30)
+round(123.456, 31)
+truncate(3.14159, 100)
+round(1e300, 2)
+round(1e300, -300)
+ceil(round(3.6))
+round(3.6) + 1

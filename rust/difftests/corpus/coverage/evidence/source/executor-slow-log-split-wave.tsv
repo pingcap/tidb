@@ -1,0 +1,3 @@
+# Source-owned slow-log field-splitting evidence.
+# source_path	status	owner	evidence_artifact	note
+pkg/executor/slow_query.go	PARTIAL	executor-slow-log-split-wave	rust/crates/tidb-exec/src/slow_log_split.rs	The ASCII key scan, plain/empty values, nested same-type bracket values, malformed-bracket rejection, and field/value count boundary are ported; slow-log I/O, logging, time conversion, row/datums, and privilege filtering remain external.

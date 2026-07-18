@@ -1,0 +1,3 @@
+# Source-owned batch stats-meta SQL evidence.
+# source_path	status	owner	evidence_artifact	note
+pkg/statistics/handle/storage/save.go	PARTIAL	stats-meta-save-sql-wave	rust/crates/tidb-stats/src/stats_meta_save_sql.rs	The Rust leaf ports SaveMetaToStorage SQL assembly from lines 376-403: source-ordered tuples, false/true last_stats_histograms_version column selection, exact upsert clauses, and empty-input spacing are preserved. StartTS acquisition, SQL execution, transaction/session state, and MetaUpdate production remain external.

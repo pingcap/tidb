@@ -1,0 +1,5 @@
+go_owner	rust_module	status	note
+method:pkg/parser/ddl_alter_handlers.go#HandParser.parseAlterDrop	rust/crates/tidb-parser/src/ddl/alter/drop_primary_key.rs	partial	Go checks PRIMARY KEY before the generic INDEX or KEY branch and stores no name, conditional flag, or secondary-index payload. The Rust physical leaf retains that payload-free typed action and leaves DROP INDEX plus other drop forms independently owned.
+method:pkg/parser/ast/ddl.go#AlterTableSpec.Restore	rust/crates/tidb-ast/src/ddl/alter/drop_primary_key.rs	partial	Go restores this distinct action as exactly DROP PRIMARY KEY; the AST leaf owns the same canonical output.
+tests:pkg/parser/ast/ddl_test.go#TestDDL	rust/crates/tidb-parser/src/tests/alter_drop_primary_key_source.rs	partial	Direct TestDDL coverage asserts the standalone source row, action typing, Go-rejected incomplete variants, and the existing comma-separated ALTER action loop.
+tests:integration_parser_golden	rust/difftests/parser-tests/tests/selectors/alter/alter_drop_primary_key_selector.rs	partial	The static selector covers all 12 accepted checked corpus rows, including a mixed DROP INDEX plus DROP PRIMARY KEY statement.

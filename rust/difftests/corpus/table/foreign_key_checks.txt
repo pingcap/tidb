@@ -1,0 +1,33 @@
+## Go `pkg/sessionctx/variable/sysvar.go:2053-2062`: FOREIGN_KEY_CHECKS
+## defaults ON, has strict typed boolean validation, and is session state.
+## The seed already models child/parent DML and parent-drop FK enforcement;
+## OFF bypasses those current boundaries without retroactively checking rows
+## when it is re-enabled. `DEFAULT` returns to the fixed seed global default.
+create table fkc_parent (id int primary key)
+create table fkc_child (id int primary key, pid int, foreign key (pid) references fkc_parent(id))
+insert into fkc_child values (1, 9)
+set foreign_key_checks=0
+select @@foreign_key_checks
+set foreign_key_checks=3
+select @@foreign_key_checks
+insert into fkc_child values (1, 9)
+set foreign_key_checks=1
+select @@foreign_key_checks
+insert into fkc_child values (2, 8)
+select * from fkc_child order by id
+insert into fkc_parent values (9)
+delete from fkc_parent where id=9
+set foreign_key_checks=off
+delete from fkc_parent where id=9
+select * from fkc_child order by id
+set foreign_key_checks=default
+select @@foreign_key_checks
+create table fkc_drop_parent (id int primary key)
+create table fkc_drop_child (id int primary key, pid int, foreign key (pid) references fkc_drop_parent(id))
+drop table fkc_drop_parent
+set foreign_key_checks=0
+drop table fkc_drop_parent
+begin
+set foreign_key_checks=1
+rollback
+select @@foreign_key_checks

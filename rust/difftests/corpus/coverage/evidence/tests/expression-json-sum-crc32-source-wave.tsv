@@ -1,0 +1,3 @@
+# Source-owned test evidence for JSON_SUM_CRC32.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/expression/builtin_json_test.go	127	TestJSONSumCrc32	PARTIAL	expression-json-sum-crc32-source-wave	rust/crates/tidb-expr/src/builtin_ext/json.rs	Representable text-domain rows cover homogeneous numeric/string arrays, empty arrays, NULL, root/object/scalar/nested/mixed-type errors, invalid JSON, and arity; typed BinaryJSON FieldType conversion (signed/unsigned/string width), explicit JSON_EXTRACT path construction, session warnings, function-class construction, and vectorized execution remain boundaries

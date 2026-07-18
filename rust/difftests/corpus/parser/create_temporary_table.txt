@@ -1,0 +1,5 @@
+## Go parser tests: pkg/parser/parser_test.go:2622-2627 and differential
+## input pkg/parser/differential_test.go:675. Local TEMPORARY reuses the
+## supported CREATE TABLE body and preserves IF NOT EXISTS.
+CREATE TEMPORARY TABLE t (a INT)
+CREATE TEMPORARY TABLE IF NOT EXISTS t (a INT, KEY idx_a (a))

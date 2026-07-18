@@ -1,0 +1,10 @@
+## NATURAL [LEFT|RIGHT] JOIN. Only plain/LEFT/RIGHT may be NATURAL --
+## NATURAL INNER/CROSS/STRAIGHT_JOIN and an explicit ON/USING after
+## NATURAL are all genuine ParseErrors, covered by tidb-parser's own
+## unit test, not this corpus, since the parser corpus itself must never
+## contain a statement the Go parser rejects.
+select * from t natural join t2
+select * from t natural left join t2
+select * from t natural right join t2
+select * from t natural join t2 natural join t3
+select a from t natural join t2 where a = 1

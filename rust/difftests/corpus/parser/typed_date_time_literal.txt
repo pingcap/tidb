@@ -1,0 +1,32 @@
+## `DATE`/`TIME`/`TIMESTAMP 'literal'` -- an ODBC-style typed literal, read
+## directly from real TiDB's own hand-written parser
+## (pkg/parser/expr_prefix_parser.go's parsePrefixTimeLiteral: only
+## recognized when the keyword is immediately followed by a string
+## literal, else falls through to the ordinary non-reserved-keyword path).
+## Reuses Expr::Cast under three new CastStyle variants (see
+## tidb_ast::CastStyle::DateLiteral's own doc) rather than a new Expr
+## variant -- restore is "KEYWORD 'literal'" with NO _UTF8MB4
+## charset-introducer prefix (confirmed via godump restore, a genuinely
+## different restore rule from an ordinary standalone string literal).
+## Confirmed via goeval/gorun that evaluation genuinely diverges from
+## CAST(... AS DATE)'s existing lenient (NULL-on-invalid) behavior: an
+## invalid date string is a hard query ERROR here (SELECT DATE
+## '2007-10-00' fails outright), not NULL -- this crate's own execution
+## deliberately does NOT replicate that (a clean Unsupported for BOTH
+## valid and invalid inputs, rather than silently reusing CAST's lenient
+## path and producing the wrong value for invalid dates), matching the
+## same "parse/restore fidelity only" precedent TABLESAMPLE/ROW/GROUP BY
+## WITH ROLLUP already established.
+select date '2020-01-01'
+select date '2007-10-00'
+select date '2017-2-31'
+select date '0000-00-00'
+select time '12:00:01.341300'
+select time '-1 12:00:01.341300'
+select timestamp '9999-01-01 00:00:00'
+select timestamp 'invalid-date'
+select date '2007-10-00' + 1
+select addtime(date '2024-11-01', time '1 12:00:01.341300') from t
+select date(x) from t
+select date from t
+select cast(x as date) from t

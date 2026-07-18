@@ -1,0 +1,3 @@
+# Source-owned global-statistics TopN merge-task evidence.
+# source_path	status	owner	evidence_artifact	note
+pkg/statistics/handle/globalstats/merge_worker.go	PARTIAL	stats-topn-merge-task-wave	rust/crates/tidb-stats/src/topn_merge_task.rs	The Rust leaf ports TopnStatsMergeTask and NewTopnStatsMergeTask at lines 70-82, preserving the caller-provided start/end range without validation. Worker channels, TopN/histogram data, cancellation, slicing, concurrency, and merge arithmetic remain external.

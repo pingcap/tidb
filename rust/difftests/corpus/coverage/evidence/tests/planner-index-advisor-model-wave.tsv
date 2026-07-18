@@ -1,0 +1,3 @@
+# Source-owned test evidence fragment for planner-index-advisor-model-wave.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/planner/indexadvisor/optimizer_test.go	68	TestOptimizerPrefixContainIndex	PARTIAL	planner-index-advisor-model-wave	rust/difftests/planner-tests/tests/index_advisor_model.rs	Rust vectors preserve all source prefix-order cases and normalized schema/table/column identity keys; Go catalog discovery and optimizer execution remain external.

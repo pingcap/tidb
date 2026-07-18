@@ -1,0 +1,47 @@
+## Date-part extraction: a DATE/DATETIME value is a plain string, parsed
+## for its calendar components (calendar-validated: month 1-12, day valid
+## for that month/year including leap years); NULL for an invalid date,
+## a non-date string, or NULL itself
+year('2021-03-15')
+month('2021-03-15')
+day('2021-03-15')
+quarter('2021-03-15')
+quarter('2021-12-31')
+dayofmonth('2021-03-15')
+year('2021-03-15 10:30:00')
+month('2021-03-15 10:30:00')
+day('2021-03-15 10:30:00')
+year('2021-3-5')
+year('  2021-01-15  ')
+year('2021/01/15')
+year('2021.01.15')
+year('not a date')
+year('2021-13-01')
+year('2021-01-32')
+year('2021-02-30')
+year('2020-02-29')
+year('2021-02-29')
+year('10:30:00')
+year(NULL)
+month(NULL)
+## A bare, separator-less digit run of exactly 6 or 8 digits (including
+## from an integer literal argument) is a separate positional
+## YYMMDD/YYYYMMDD reading; the 6-digit form's 2-digit year, and a
+## separator-based date's own 1-2 digit year, are CENTURY-PIVOTED
+## (00-69 -> 2000-2069, 70-99 -> 1970-1999) based on the ORIGINAL
+## WRITTEN digit count, not the numeric value -- a 3+ digit year is
+## taken literally even when under 100.
+year(20240315)
+month(20240315)
+day(20240315)
+quarter(20240315)
+year('20240315')
+year(240315)
+year(690101)
+year(700101)
+year('24-03-15')
+year('99-03-15')
+year('1-03-15')
+year('099-03-15')
+year(20241332)
+year(230229)

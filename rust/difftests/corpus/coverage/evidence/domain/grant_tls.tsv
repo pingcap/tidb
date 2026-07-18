@@ -1,0 +1,7 @@
+go_owner	rust_module	status	note
+method:pkg/parser/grant_revoke_parser.go#HandParser.parseGrantStmt	rust/crates/tidb-parser/src/privilege.rs	partial	The privilege branch consumes the optional REQUIRE clause after typed grantee accounts and before WITH GRANT OPTION, preserving Go option order.
+method:pkg/parser/ddl_user_parser.go#HandParser.parseTLSOptions	rust/crates/tidb-parser/src/privilege.rs	partial	The shared TLS option family is represented by AlterUserTlsOption and restored with Go's NONE/SSL/X509 and quoted CIPHER/ISSUER/SUBJECT/SAN/TOKEN_ISSUER forms.
+method:pkg/parser/ast/misc.go#GrantStmt.Restore	rust/crates/tidb-ast/src/stmt/admin.rs	partial	GrantStmt owns the typed tls_options payload and restores REQUIRE before WITH GRANT OPTION.
+tests:pkg/parser/parser_test.go#TestPrivilege	rust/crates/tidb-parser/src/tests/grant_tls_source.rs	partial	Direct four-row GRANT REQUIRE source slice covers X509, SSL, NONE, and multi-option ISSUER+CIPHER forms.
+tests:integration_parser_golden	rust/difftests/parser-tests/tests/selectors/security/grant_tls_selector.rs	partial	Dynamic selector covers all three accepted single-statement integration rows containing GRANT REQUIRE.
+execution capability	rust/crates/tidb-exec/src/admin_runtime.rs	partial	GRANT remains explicitly unsupported before transaction or privilege mutation; this wave only closes parser and restore parity.

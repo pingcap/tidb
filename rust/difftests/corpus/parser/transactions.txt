@@ -1,0 +1,44 @@
+## BEGIN / START TRANSACTION (synonyms, both restore as START TRANSACTION)
+## / COMMIT / ROLLBACK. Also covers SAVEPOINT / ROLLBACK TO [SAVEPOINT] /
+## RELEASE SAVEPOINT -- ROLLBACK TO's own optional SAVEPOINT keyword is
+## dropped on restore, but RELEASE SAVEPOINT's is NOT optional to begin
+## with; savepoint names restore verbatim, case preserved, no
+## backtick-quoting.
+begin
+start transaction
+commit
+rollback
+BEGIN
+savepoint sp1
+rollback to sp1
+rollback to savepoint sp1
+release savepoint sp1
+savepoint SP1
+## SET autocommit = value -- a bare ON/OFF is a real, ASYMMETRIC TiDB
+## grammar quirk (neither is a general expression literal): ON always
+## restores as an UPPERCASED string literal regardless of source case,
+## while OFF restores as a backtick-quoted identifier that PRESERVES the
+## source text's own case verbatim.
+set autocommit=on
+set autocommit=off
+set autocommit=1
+set autocommit=0
+set autocommit=true
+set autocommit=false
+set autocommit='0'
+## SET [SESSION] TRANSACTION ISOLATION LEVEL / READ ONLY / READ WRITE --
+## real TiDB desugars this to an ordinary single-assignment SET, confirmed
+## via godump restore: bare (one-shot) ISOLATION LEVEL maps to
+## tx_isolation_one_shot, SESSION-prefixed to tx_isolation, both with the
+## level text DASH-joined; READ ONLY/READ WRITE map to tx_read_only
+## (0/1) regardless of SESSION, unlike ISOLATION LEVEL's own split.
+set transaction isolation level read committed
+set transaction isolation level read uncommitted
+set transaction isolation level repeatable read
+set transaction isolation level serializable
+set session transaction isolation level read committed
+set session transaction isolation level repeatable read
+set transaction read only
+set session transaction read only
+set transaction read write
+set session transaction read write

@@ -1,0 +1,4 @@
+# Source-owned statistics column/index existence metadata test evidence.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/statistics/table_test.go	23	TestCloneColAndIdxExistenceMap	PARTIAL	stats-existence-map-wave	rust/crates/tidb-stats/tests/existence_map_source.rs	The Rust tests cover source clone independence, presence versus analyzed flags, replacement, deletion, constructors, counts, and equality; broader handle/DDL existence-map workflows remain open.
+go_test	pkg/statistics/handle/syncload/stats_syncload_test.go	375	TestSyncLoadOnObjectWhichCanNotFoundInStorage	PARTIAL	stats-existence-map-wave	rust/crates/tidb-stats/tests/existence_map_source.rs	The Go sync-load test continues through line 410 and is retained as the integration anchor for column presence/analyzed flags; Rust remains the metadata-only leaf and does not claim online loading parity.

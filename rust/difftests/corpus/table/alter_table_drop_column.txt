@@ -1,0 +1,10 @@
+## DROP COLUMN removes that column's own UNIQUE key group entirely, while a
+## surviving PRIMARY KEY group keeps working
+create table alt_uniq (id int primary key, email varchar(9) unique, v int)
+insert into alt_uniq values (1, 'a@x.com', 10)
+alter table alt_uniq drop column email
+select * from alt_uniq
+insert into alt_uniq values (2, 20)
+select * from alt_uniq
+insert into alt_uniq values (1, 999) on duplicate key update v = 999
+select * from alt_uniq

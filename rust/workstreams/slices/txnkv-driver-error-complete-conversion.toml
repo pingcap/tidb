@@ -1,0 +1,29 @@
+schema = "1"
+slice = "txnkv-driver-error-complete-conversion"
+status = "partial"
+target = "tidb-txnkv"
+ring = "transaction"
+consumer = "Every modeled direct TiKV and PD error branch entering the transaction/read driver maps through one linear-wrapper-aware TiDB conversion authority with catalog identity and arguments; arbitrary Go Is/As graphs, nil, and concrete external client types remain outside this boundary"
+test_target = "driver_error_source"
+go_sources = ["pkg/store/driver/error/error.go"]
+go_tests = [
+  "pkg/store/driver/error/error_test.go:0:error_test.go",
+  "pkg/store/driver/error/error_test.go:29:TestMain",
+  "pkg/store/driver/error/error_test.go:41:TestConvertError",
+  "pkg/store/driver/error/error_test.go:57:TestMemBufferOversizeError",
+]
+depends_on = []
+evidence_prerequisites = [
+  { capability = "mysql-error-catalog", evidence_owner = "error-catalog-and-terror-identity", kind = "source", anchor = "pkg/errno/errcode.go", minimum_status = "COVERED" },
+  { capability = "kv-error-identities", evidence_owner = "txnkv-error-source-wave", kind = "source", anchor = "pkg/kv/error.go", minimum_status = "COVERED" },
+  { capability = "result-undetermined-identity", evidence_owner = "error-catalog-and-terror-identity", kind = "source", anchor = "pkg/parser/terror/terror.go", minimum_status = "PARTIAL" },
+]
+rust_paths = [
+  "rust/crates/tidb-txnkv/src/driver_error.rs",
+  "rust/crates/tidb-txnkv/tests/driver_error_source.rs",
+  "rust/difftests/corpus/coverage/evidence/source/txnkv-driver-error-complete-conversion.tsv",
+  "rust/difftests/corpus/coverage/evidence/tests/txnkv-driver-error-complete-conversion.tsv",
+  "rust/difftests/corpus/coverage/evidence/transfers/txnkv-driver-error-complete-conversion.tsv",
+  "rust/difftests/corpus/coverage/evidence/source/txnkv-driver-error-conversion.tsv",
+  "rust/difftests/corpus/coverage/evidence/tests/txnkv-driver-error-conversion.tsv",
+]

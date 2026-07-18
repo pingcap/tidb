@@ -1,0 +1,3 @@
+# Source-owned statistics-table lock filter evidence.
+# source_path	status	owner	evidence_artifact	note
+pkg/statistics/handle/lockstats/query_lock.go	PARTIAL	stats-locked-tables-wave	rust/crates/tidb-stats/src/locked_tables.rs	The Rust leaf ports the exact SELECT marker and GetLockedTables map/set filter from lines 17-55, including empty-set behavior and duplicate collapse; SQL execution, row decoding, lock/unlock writes, and session lifecycle remain explicit external owners.

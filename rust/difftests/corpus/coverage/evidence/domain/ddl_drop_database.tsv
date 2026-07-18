@@ -1,0 +1,4 @@
+go_owner	rust_module	status	note
+method:pkg/parser/ddl_drop_parser.go#HandParser.parseDropDatabase	rust/crates/tidb-parser/src/statement.rs	covered	Go consumes the DROP DATABASE name token directly, so reserved keyword names such as plan_cache remain accepted and restore quoted; direct source and exact integration selector cover the branch.
+method:pkg/parser/ast/ddl.go#DropDatabaseStmt.Restore	rust/crates/tidb-ast/src/stmt/ddl.rs	covered	The existing typed DropDatabase payload restores DATABASE rather than SCHEMA and preserves IF EXISTS, matching Go's canonical AST output.
+runtime:pkg/ddl/executor.go#ExecDDL[DROP DATABASE]	rust/crates/tidb-exec/src/ddl.rs	partial	The seed executor rejects DROP DATABASE before transaction or catalog mutation; the dedicated boundary test records the unsupported contract while real database semantics remain future work.

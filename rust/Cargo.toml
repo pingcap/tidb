@@ -1,0 +1,83 @@
+# tidb-rs: Rust rewrite of the TiDB SQL layer.
+#
+# See docs/design/2026-07-11-tidb-rust-rewrite.md. This workspace is a standalone
+# process tree: it never links into the Go binary and contains no cgo. All
+# cross-language boundaries are the existing serialized network protocols.
+[workspace]
+resolver = "2"
+members = [
+    "crates/tidb-error",
+    "crates/tidb-lexer",
+    "crates/tidb-ast",
+    "crates/tidb-parser",
+    "crates/tidb-proto",
+    "crates/tidb-protocol",
+    "crates/tidb-distsql",
+    "crates/tidb-planner",
+    "crates/tidb-datatype",
+    "crates/tidb-stats",
+    "crates/tidb-codec",
+    "crates/tidb-txnkv",
+    "crates/tidb-expr",
+    "crates/tidb-exec",
+    "crates/tidb-server",
+    "difftests",
+    "difftests/parser-tests",
+    "difftests/planner-tests",
+    "difftests/result-tests",
+    "difftests/transaction-tests",
+]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.97"
+license = "Apache-2.0"
+repository = "https://github.com/pingcap/tidb"
+
+# This workspace's first external dependency (see
+# `tidb_ast::Expr::Regexp`'s own doc for why it was deliberately
+# deferred until now) — real TiDB's own `[NOT] REGEXP`/`RLIKE` uses Go's
+# standard-library `regexp` package (confirmed by reading
+# `pkg/expression/builtin_regexp_util.go` directly), which is RE2-based;
+# the `regex` crate is explicitly designed around the SAME RE2 engine
+# (linear-time, no backreferences/lookaround), making it the natural,
+# high-fidelity match rather than an arbitrary choice.
+[workspace.dependencies]
+encoding_rs = "0.8"
+regex = "1"
+# The first generated protocol leaf.  The proto source is checked in under
+# `crates/tidb-proto/proto`; keeping prost in the workspace makes subsequent
+# tipb/kvproto extraction use one generator and one lockfile.
+prost = "0.14"
+prost-build = "0.14"
+# Hash builtins (MD5/SHA1/SHA2 — `pkg/expression/builtin_encryption.go`
+# calls Go's crypto/md5, crypto/sha1, crypto/sha256): the RustCrypto
+# crates are the standard, audited implementations of the SAME algorithms
+# — hand-rolling cryptographic hashes would be the higher-risk choice.
+md-5 = "0.10"
+sha1 = "0.10"
+sha2 = "0.10"
+# TiDB's `TIDB_SHARD` uses Vitess' exact DES-ECB/null-key hash. RustCrypto's
+# audited DES implementation preserves that algorithm without a hand-rolled
+# cryptographic primitive.
+des = "=0.9.0"
+# JSON builtins (`pkg/expression/builtin_json.go` over TiDB's BinaryJSON):
+# serde_json for PARSING/validation only; output formatting is hand-written
+# to match TiDB's own text form exactly (spacing differs from serde_json's
+# defaults), verified via gorun.
+serde_json = "1"
+# MySQL compressed protocol uses the same two standardized wire codecs as
+# TiDB's Go packetio owner. Keep codec choice separate from packet framing.
+flate2 = "1"
+zstd = "0.13"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"        # Phase 0 is safe Rust end-to-end.
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+all = "warn"
+
+[profile.release]
+lto = "thin"

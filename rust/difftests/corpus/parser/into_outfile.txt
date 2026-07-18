@@ -1,0 +1,4 @@
+select 1 into outfile '/tmp/doesntmatter-no-permissions'
+select a from t into outfile '/tmp/x'
+select * from (select 1 into outfile '/tmp/x') t
+select 1 where 1 in (select 1 into outfile '/tmp/x')

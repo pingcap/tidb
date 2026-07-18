@@ -1,0 +1,4 @@
+# Source-owned production evidence for the LIKE matcher audit.
+# source_path	status	owner	evidence_artifact	note
+pkg/expression/builtin_like.go	PARTIAL	expression-like-audit	rust/crates/tidb-expr/src/like.rs	Scalar LIKE control flow is ported from Go: NULL short-circuit, EvalString coercion, escape-byte compilation, wildcard matching, and utf8mb4_bin character semantics. The explicit like_match_with_collation helper also covers registered general-CI and Unicode-CI wildcard weights; expression-level session selection, pattern-cache state, and warning/error channels remain outside the seed evaluator.
+pkg/expression/builtin_like_vec.go	PARTIAL	expression-like-audit	rust/crates/tidb-expr/src/like.rs	The scalar physical matcher is shared by the seed evaluator; Go's chunk/vectorized allocator and per-row collation state are not represented yet, so this source file remains an explicit partial rather than an unverified claim of vector coverage.

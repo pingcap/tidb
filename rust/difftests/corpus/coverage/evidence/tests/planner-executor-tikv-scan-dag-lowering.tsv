@@ -1,0 +1,16 @@
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/executor/test/executor/executor_test.go	84	TestTimezonePushDown	PARTIAL	planner-executor-tikv-scan-dag-lowering	rust/crates/tidb-exec/tests/tikv_scan_dag_lowering_source.rs	Resolved timezone name and offset cross the same constructed protobuf request, including an exact nonzero Asia/Shanghai vector. Full SQL execution, CheckSelectRequestHook, actual SystemLocation discovery, named-IANA loading, and live session-to-request adaptation remain external.
+# The following direct PhysicalIndexScan.ToPB comments remain UNTRIAGED: their
+# real contract is live DDL schema-state/default-column selection, not this
+# pre-resolved ColumnInfo boundary.
+# pkg/ddl/db_change_test.go:470 TestWriteReorgForModifyColumn
+# pkg/ddl/db_change_test.go:476 TestWriteReorgForModifyColumnWithUniqIdx
+# pkg/ddl/db_change_test.go:482 TestWriteReorgForModifyColumnWithPKIsHandle
+# pkg/ddl/db_change_test.go:513 TestWriteReorgForModifyColumnWithPrimaryIdx
+# pkg/ddl/db_change_test.go:519 TestWriteReorgForModifyColumnWithoutFirst
+# pkg/ddl/db_change_test.go:525 TestWriteReorgForModifyColumnWithoutDefaultVal
+# pkg/ddl/db_change_test.go:531 TestDeleteOnlyForModifyColumnWithoutDefaultVal
+# pkg/ddl/db_change_test.go:583 TestWriteOnly
+# pkg/ddl/db_change_test.go:596 TestWriteOnlyForAddColumns
+# pkg/ddl/db_change_test.go:609 TestDeleteOnly
+# pkg/ddl/db_change_test.go:705 TestDeleteOnlyForDropColumns

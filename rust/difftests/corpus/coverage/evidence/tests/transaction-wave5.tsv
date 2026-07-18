@@ -1,0 +1,4 @@
+# Source-owned test-evidence fragment for transaction-wave5.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/sessionctx/variable/sysvar_test.go	642	TestTimestamp	PARTIAL	transaction-wave5	rust/difftests/corpus/table/timestamp_session.txt	Fixed/default timestamp readback, negative clamp, MaxInt32 rejection, and one-statement clock consistency; Go warning collection is outside the seed result surface
+go_test	pkg/expression/builtin_info_test.go	230	TestRowCount	PARTIAL	transaction-wave5	rust/difftests/corpus/table/row_count.txt	ROW_COUNT signed prior-statement status across every currently executable INSERT UPDATE DELETE path, including duplicate REPLACE FK cascade and multi-table behavior; seed-unsupported DML remains outside the result surface

@@ -1,0 +1,4 @@
+go_owner	rust_module	status	note
+map:pkg/parser/ddl_show_ident_parser.go#showSimpleTypes[PRIVILEGES]	rust/crates/tidb-parser/src/show.rs	partial	SHOW PRIVILEGES is the no-suffix identifier-dispatched leaf; its exact executor corpus row is selected from executor.test:1668 and restored canonically.
+restore:pkg/parser/ast/dml.go#ShowStmt.Restore[ShowPrivileges]	rust/crates/tidb-ast/src/stmt/admin.rs	partial	Restores the typed unit leaf as SHOW PRIVILEGES, matching Go's source spelling.
+runtime:pkg/executor/show.go#ShowExec[ShowPrivileges]	rust/crates/tidb-exec/src/admin_runtime.rs	partial	Rejects privilege-registry inspection before transaction mutation because the seed has no privilege catalog or result schema.

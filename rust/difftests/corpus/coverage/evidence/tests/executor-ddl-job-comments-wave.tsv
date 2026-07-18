@@ -1,0 +1,4 @@
+# Source-owned DDL job comment formatting test evidence.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/executor/show_ddl_jobs_test.go	26	TestShowCommentsFromJob	PARTIAL	executor-ddl-job-comments-wave	rust/crates/tidb-exec/tests/ddl_job_comments_source.rs	Rust covers the source job vectors for nil metadata, txn/txn-merge/ingest, DXF/cloud, max-node, tunables, defaults, service scope, analyze labels, and next-gen early return; live DDL model and SHOW result wiring remain external.
+go_test	pkg/executor/show_ddl_jobs_test.go	115	TestShowCommentsFromSubJob	PARTIAL	executor-ddl-job-comments-wave	rust/crates/tidb-exec/tests/ddl_job_comments_source.rs	Rust covers none/ingest, DXF/cloud nesting, and next-gen suppression; live subjob lifecycle and SHOW result wiring remain external.

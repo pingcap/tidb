@@ -1,0 +1,30 @@
+## Source anchors: pkg/sessionctx/variable/sysvar_test.go:41 TestSQLSelectLimit;
+## tests/integrationtest/t/planner/core/integration.test:639 TestSelectLimit;
+## pkg/session/test/vars/vars_test.go:386 global/session readback.
+## The explicit LIMIT on sysvar reads is intentional: after setting the
+## implicit cap to zero, an unbounded SELECT cannot return even its one row.
+select @@sql_select_limit, @@global.sql_select_limit limit 1
+create table sql_select_limit_uint (a int)
+insert into sql_select_limit_uint values (1), (2), (3)
+set @@sql_select_limit = -10
+select @@sql_select_limit limit 1
+select a from sql_select_limit_uint order by a
+set @@sql_select_limit = 100000000000
+select @@sql_select_limit limit 1
+set @@sql_select_limit = 2
+select a from sql_select_limit_uint order by a
+select a from sql_select_limit_uint order by a limit 3
+begin
+set @@sql_select_limit = 1
+rollback
+select @@sql_select_limit limit 1
+select a from sql_select_limit_uint order by a
+select 1 union all select 2 union all select 3
+select 1 union all select 2 union all select 3 limit 2
+select no_such_sql_select_limit_column
+select @@sql_select_limit limit 1
+set @@sql_select_limit = 18446744073709551616
+select @@sql_select_limit limit 1
+select @@global.sql_select_limit limit 1
+set @@sql_select_limit = default
+select a from sql_select_limit_uint order by a

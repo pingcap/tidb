@@ -1,0 +1,4 @@
+go_owner	rust_module	status	note
+method:pkg/parser/ddl_drop_parser.go#HandParser.parseAnalyzeTableStmt	rust/crates/tidb-parser/src/analyze/incremental.rs	partial	INCREMENTAL is transited as its own typed AST and router branch, preserving Go's common TABLE list, optional PARTITION list, and optional INDEX payload including the valid empty INDEX selector.
+tests:pkg/parser/parser_test.go#TestAnalyze	rust/crates/tidb-parser/src/tests/analyze_incremental_source.rs	partial	Direct Go parser rows cover empty and named INDEX selectors; the partition-target integration row is asserted structurally to retain its target distinction.
+tests:tests/integrationtest/t/executor/analyze.test#TestIncrementalAnalyze	rust/crates/tidb-exec/src/tests/session.rs	partial	The seed has no statistics subsystem, so typed incremental ANALYZE rejects before transaction mutation instead of reporting fabricated success.

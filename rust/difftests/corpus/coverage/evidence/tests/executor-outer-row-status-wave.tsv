@@ -1,0 +1,3 @@
+# Source-owned executor outer-row status transition test evidence.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/executor/join/left_outer_join_probe_test.go	296	TestLeftOuterJoinProbeWithSel	PARTIAL	executor-outer-row-status-wave	rust/crates/tidb-exec/tests/typed_condition_eval_source.rs	The Rust source-shaped tests apply the Go filterAndCheckOuterRowStatus TRUE/FALSE/UNKNOWN transition over batch masks and enforce aligned status/mask lengths; row/chunk selection lifecycle, null-extension, and physical outer-join execution remain open.

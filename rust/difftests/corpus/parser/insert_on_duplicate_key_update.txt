@@ -1,0 +1,5 @@
+## INSERT ... ON DUPLICATE KEY UPDATE
+insert into t (id, v) values (1, 'a') on duplicate key update v = 'b'
+insert into t (id, v) values (1, 'a') on duplicate key update v = values(v)
+insert into t (id, v) values (1, 'a'), (2, 'b') on duplicate key update v = 'x'
+insert into t (id, v, w) values (1, 'a', 'b') on duplicate key update v = 'x', w = values(w)

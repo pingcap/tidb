@@ -1,0 +1,15 @@
+negative_1byte_last=0701
+negative_2byte_first=06ff00
+negative_2byte_last=060001
+negative_3byte_first=05ff0000
+negative_3byte_last=05000001
+negative_4byte_first=04ff000000
+negative_4byte_last=0400000001
+negative_5byte_first=03ff00000000
+negative_5byte_last=030000000001
+negative_6byte_first=02ff0000000000
+negative_6byte_last=02000000000001
+negative_7byte_first=01ff000000000000
+negative_7byte_last=0100000000000001
+negative_8byte_first=00ff00000000000000
+negative_min=008000000000000000

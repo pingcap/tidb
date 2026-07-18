@@ -1,0 +1,2 @@
+# source_path	status	owner	evidence_artifact	note
+pkg/planner/core/operator/physicalop/physical_apply.go	PARTIAL	planner-physical-apply-wave	rust/crates/tidb-planner/src/physical_apply.rs	Ports PhysicalApply.Init Apply type/query-block offset and PhysicalJoinImplement=false (Apply is intentionally not a PhysicalJoin); embedded hash-join state, correlated schema, clone/cost/index/task wiring, and subquery execution remain external.

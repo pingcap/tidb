@@ -1,0 +1,21 @@
+[package]
+name = "tidb-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Source-shaped TiDB SQL connection dispatch (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-distsql = { path = "../tidb-distsql" }
+tidb-exec = { path = "../tidb-exec" }
+tidb-protocol = { path = "../tidb-protocol" }
+
+[dev-dependencies]
+prost.workspace = true
+tidb-proto = { path = "../tidb-proto" }

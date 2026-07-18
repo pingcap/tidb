@@ -1,0 +1,3 @@
+# Source-owned test-port fragment for session-removed-sysvar-wave.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/sessionctx/variable/removed_test.go	24	TestRemovedOpt	PARTIAL	session-removed-sysvar-wave	rust/crates/tidb-exec/tests/removed_sysvar_source.rs	Direct tests cover known/unknown lookup, exact source reasons, case-sensitive names, and registry completeness; the source test continues through line 30; TiDB error-code rendering and statement dispatch remain external

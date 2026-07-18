@@ -1,0 +1,21 @@
+schema = "2"
+domain = "ddl_table_create"
+owner = "parser-create-table"
+status = "partial"
+go_owners = [
+  "method:pkg/parser/ddl_table_parser.go#HandParser.parseCreateTableStmt",
+]
+rust_paths = [
+  "rust/crates/tidb-ast/src/ddl/create.rs",
+  "rust/crates/tidb-parser/src/ddl/create.rs",
+  "rust/crates/tidb-parser/src/tests/ddl.rs",
+  "rust/crates/tidb-parser/src/tests/ddl_table_parser_source.rs",
+]
+evidence_paths = [
+  "rust/difftests/corpus/coverage/evidence/domain/ddl_table_create.tsv",
+]
+required_commands = [
+  "GOFLAGS='-p=12' ./tools/check/failpoint-go-test.sh pkg/parser -run '^TestDDL$' -count=1",
+  "CARGO_BUILD_JOBS=12 cargo test --locked -j12 -p tidb-parser ddl_table_parser_source",
+  "CARGO_BUILD_JOBS=12 cargo clippy --locked -j12 -p tidb-ast -p tidb-parser --all-targets -- -D warnings",
+]

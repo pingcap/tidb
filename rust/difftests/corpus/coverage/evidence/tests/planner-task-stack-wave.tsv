@@ -1,0 +1,4 @@
+# Source-owned test evidence fragment for planner-task-stack-wave.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/planner/cascades/task/task_test.go	39	TestTaskStack	PARTIAL	planner-task-stack-wave	rust/difftests/planner-tests/tests/task_stack.rs	Rust vectors preserve the source default-capacity, empty-pop, and stack-shape contract; Go interface/unsafe.Sizeof assertions are not portable and remain outside this typed boundary.
+go_test	pkg/planner/cascades/task/task_test.go	55	TestTaskFunctionality	PARTIAL	planner-task-stack-wave	rust/difftests/planner-tests/tests/task_stack.rs	Rust vectors preserve source LIFO pop, description ordering, empty-pop, and destroy-clear/capacity reuse; Go sync.Pool ownership remains external.

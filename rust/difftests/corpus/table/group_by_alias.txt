@@ -1,0 +1,24 @@
+## GROUP BY referencing a select-list alias (crate::order::resolve_alias,
+## reused from ORDER BY's own whole-item resolution): confirmed via gorun
+## that HAVING/ORDER BY may reference EITHER the alias itself or the
+## underlying real column name once GROUP BY has established it via the
+## alias, that multiple aliases (or a mix of aliased and unaliased
+## columns) may appear in GROUP BY together, that a GROUP BY alias
+## resolves to its own COMPUTED expression (not treated as a literal
+## unknown column), and that combines correctly with window functions.
+## A GROUP BY item resolving to an AGGREGATE alias (SELECT dept, COUNT(*)
+## AS c ... GROUP BY c) is a genuine ERR -- grouping's own per-row
+## eval_in naturally has no notion of Expr::Aggregate, so no special
+## rejection is needed.
+create table t (id int, dept varchar(10), salary int)
+insert into t values (1,'a',100),(2,'a',200),(3,'b',150),(4,'b',300),(5,'c',50)
+select dept as x, count(*) from t group by x
+select dept as x, count(*) from t group by x having dept = 'a'
+select dept as x, count(*) from t group by x order by dept
+select dept as x, count(*) c from t group by x having x = 'a'
+select dept as x, salary, count(*) from t group by x, salary
+select dept as x, salary as y from t group by x, y
+select concat(dept, '_s') as x, count(*) from t group by x
+select dept as x, count(*) c from t group by x having c > 1
+select dept as x, count(*), rank() over (order by dept) from t group by x
+select dept, count(*) as c from t group by c

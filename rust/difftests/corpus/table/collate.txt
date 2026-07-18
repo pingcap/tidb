@@ -1,0 +1,10 @@
+## `expr COLLATE name` is a pure passthrough at execution time (no
+## collation domain modelled at all) -- the value, comparison, and
+## equality results are identical to leaving the COLLATE clause out
+## entirely (confirmed against real TiDB: gorun-stable across repeated
+## regenerations).
+create table ct1 (a varchar(10))
+insert into ct1 values ('foo'), ('BAR')
+select a collate utf8mb4_bin from ct1
+select a from ct1 where a collate utf8mb4_bin = 'foo'
+select a collate utf8mb4_bin = 'foo' from ct1

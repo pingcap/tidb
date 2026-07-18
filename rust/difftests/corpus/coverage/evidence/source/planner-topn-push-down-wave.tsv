@@ -1,0 +1,3 @@
+# Source-owned evidence fragment for planner-topn-push-down-wave.
+# source_path	status	owner	evidence_artifact	note
+pkg/planner/core/rule_topn_push_down.go	PARTIAL	planner-topn-push-down-wave	rust/crates/tidb-planner/src/topn_push_down.rs	Ports PushDownTopNOptimizer's nil-parent callback, stable topn_push_down name, false planChanged flag, and nil error boundary through a caller-owned plan trait; logical operator TopN placement, session context, and full optimizer integration remain external.

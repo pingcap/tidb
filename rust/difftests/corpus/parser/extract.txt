@@ -1,0 +1,9 @@
+## `EXTRACT(unit FROM expr)` -- unit FIRST, then FROM, then value (the
+## opposite argument order from `INTERVAL value unit`). A compound unit
+## (real MySQL/TiDB grammar) parses fine even though this project's
+## evaluator doesn't give it meaning -- parsing and evaluation are
+## separate scope boundaries.
+select extract(year from a) from t
+select extract(day_hour from a) from t
+select extract(year from a + 1) from t
+select extract(hour from now()) from t

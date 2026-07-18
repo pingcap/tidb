@@ -1,0 +1,15 @@
+## ORDER BY / HAVING referencing a select-list alias (crate::order::resolve_alias
+## / resolve_having_aliases): ORDER BY resolves a bare top-level identifier
+## matching exactly one explicit alias (row-wise or grouped); HAVING resolves
+## an alias reference ANYWHERE in its expression tree (HAVING s + 1 > 100),
+## unlike ORDER BY's whole-item-only resolution, and unlike the SELECT list
+## itself, where a later field referencing an earlier field's own alias is a
+## genuine ERR (not covered here since it stays unsupported).
+create table g (k int, v int, s varchar(9))
+insert into g values (1,10,'a'),(1,20,'b'),(2,30,'a'),(2,40,'c'),(2,50,'a')
+select k as x, v from g where k = 1 order by x
+select k, count(*) c from g group by k order by c desc
+select k, count(*) c from g group by k having c > 2
+select k, sum(v) s from g group by k having s > 100
+select k, sum(v) s from g group by k having s + 1 > 100
+select k, count(*) c, sum(v) s from g group by k having c > 2 and s > 100

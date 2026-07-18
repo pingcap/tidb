@@ -1,0 +1,3 @@
+# Source-owned readable byte-size parser test-port evidence.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/executor/inspection_result_internal_test.go	22	TestConvertReadableSizeToByteSize	PARTIAL	executor-readable-size-wave	rust/crates/tidb-exec/tests/readable_size_source.rs	Rust vectors cover every source test suffix/value, invalid and case-sensitive suffix boundaries, plus the source's signed-parse-to-uint64 multiplication behavior; inspection integration remains external.

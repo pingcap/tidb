@@ -1,0 +1,21 @@
+## `EXTRACT(unit FROM expr)` -- a genuinely separate general-purpose
+## extraction syntax from `INTERVAL value unit`, with its own grammar
+## (unit first, then FROM, then value) and restore form. Sugar for
+## calling the SAME single-argument function `unit` already names --
+## every simple unit this project's evaluator already supports as a
+## standalone function (YEAR/MONTH/DAY/QUARTER/HOUR/MINUTE/SECOND) works
+## identically through EXTRACT. NULL propagates; the unit keyword is
+## case-insensitive. Compound units (DAY_HOUR, YEAR_MONTH, ...) and WEEK
+## are real MySQL/TiDB grammar but deliberately not modelled here --
+## excluded from this corpus since real TiDB gives them real values this
+## project intentionally does not reproduce.
+extract(year from '2024-03-15')
+extract(month from '2024-03-15')
+extract(day from '2024-03-15')
+extract(quarter from '2024-03-15')
+extract(hour from '2024-03-15 10:30:45')
+extract(minute from '2024-03-15 10:30:45')
+extract(second from '2024-03-15 10:30:45')
+extract(year from NULL)
+extract(YEAR from '2024-03-15')
+extract(hour from '25:30:45')

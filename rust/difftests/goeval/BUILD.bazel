@@ -1,0 +1,24 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "goeval_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/pingcap/tidb/rust/difftests/goeval",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//pkg/config",
+        "//pkg/expression",
+        "//pkg/parser/mysql",
+        "//pkg/planner/core",
+        "//pkg/types",
+        "//pkg/types/parser_driver",
+        "//pkg/util/chunk",
+        "//pkg/util/mock",
+    ],
+)
+
+go_binary(
+    name = "goeval",
+    embed = [":goeval_lib"],
+    visibility = ["//visibility:public"],
+)

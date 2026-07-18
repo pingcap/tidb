@@ -1,0 +1,4 @@
+## RENAME TABLE: a separate top-level statement, distinct from
+## ALTER TABLE ... RENAME; can rename several tables in one statement
+rename table t to t2
+rename table t to t2, u to u2

@@ -1,0 +1,2 @@
+go_owner	rust_module	status	note
+method:pkg/parser/ddl_alter_handlers.go#HandParser.parseAlterAlter	rust/crates/tidb-{ast,parser}/src/ddl/alter/{index_visibility,check,column_default}.rs	partial	Direct typed ALTER INDEX VISIBLE/INVISIBLE port (two Go TestDDL rows, 22-row selector), ALTER CHECK/CONSTRAINT enforcement port (four rows, 16-row selector), and ALTER [COLUMN] SET/DROP DEFAULT port (eight accepted plus three rejected rows, 25-row selector including Go's no-space DEFAULT( spelling). No other parseAlterAlter branch is claimed.

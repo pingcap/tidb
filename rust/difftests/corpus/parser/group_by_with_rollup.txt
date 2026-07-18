@@ -1,0 +1,19 @@
+## `GROUP BY expr_list WITH ROLLUP` -- read directly from real TiDB's own
+## hand-written parser (pkg/parser/select_clauses_parser.go's
+## parseGroupByClause) and AST restore (GroupByClause.Restore): appends
+## " WITH ROLLUP" right after the group-by items, before HAVING/WINDOW/
+## ORDER BY/LIMIT. Only recognized after a NON-EMPTY GROUP BY list (a bare
+## `GROUP BY WITH ROLLUP` is itself already a genuine ParseError). Confirmed
+## via gorun that this has a REAL, multi-level semantic effect on real
+## TiDB's own result rows (super-aggregate rows at every GROUP BY prefix
+## length, rolled-up columns showing NULL; HAVING filters these rows too) --
+## this crate's own execution deliberately does NOT replicate that (a clean
+## Unsupported rather than a partial/incorrect implementation), matching
+## the same "parse/restore fidelity only" precedent TABLESAMPLE/MATCH
+## AGAINST already established for execution-affecting-but-complex
+## features -- see tidb_ast::SelectStmt::rollup's own doc.
+select a, sum(b) from t group by a with rollup
+select a, sum(b) from t group by a with rollup having sum(b) > 1
+select a, sum(b) from t group by a with rollup order by a
+select distinct sum(b) from t1 group by a with rollup
+select a, b, sum(c) from t group by a, b with rollup

@@ -1,0 +1,3 @@
+# Source-owned source-port fragment for session-nontransactional-policy-wave.
+# source_path	status	owner	evidence_artifact	note
+pkg/session/nontransactional.go	PARTIAL	session-nontransactional-policy-wave	rust/crates/tidb-exec/src/nontransactional.rs	Typed admission of autocommit/no-active-transaction, batch-DML, weak-consistency, snapshot, and supported INSERT SELECT/REPLACE SELECT/UPDATE/DELETE policy facts from checkConstraint; AST table-reference/read-clause checks, shard selection, workers, metrics, failpoints, and job error aggregation remain external.

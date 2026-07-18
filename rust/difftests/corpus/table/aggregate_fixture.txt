@@ -1,0 +1,9 @@
+drop table if exists t
+create table t(a int primary key, b int)
+select min(a), min(a) from t
+insert into t values(1, -1), (2, -2), (3, 1), (4, NULL)
+select max(a) from t
+select min(b) from t
+select max(b*b) from t
+select min(b*b) from t
+select group_concat(b, b) from t group by a

@@ -1,0 +1,10 @@
+## Column-level COMMENT 'text': unlike DEFAULT's string literals, the text
+## restores as a PLAIN quoted string with no _UTF8MB4 charset-introducer
+## prefix; option order is preserved verbatim, not canonicalized
+create table t (id int comment 'the id column', name varchar(20))
+create table t (id int primary key comment 'pk', name varchar(20) not null comment 'the name')
+create table t (id int default 5 comment 'has default')
+create table t (id int, v varchar(20) default 'x' comment 'has string default')
+create table t (id int, name varchar(20) comment 'it''s a test')
+create table t (id int comment 'c1' not null)
+create table t (id int auto_increment comment 'ai col', v int)

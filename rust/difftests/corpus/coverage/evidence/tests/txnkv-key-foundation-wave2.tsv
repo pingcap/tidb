@@ -1,0 +1,9 @@
+# Source-owned test-evidence fragment for txnkv-key-foundation-wave2.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/kv/key_test.go	325	TestMemAwareHandleMapWithPartialHandle	BLOCKED	txnkv-key-foundation-wave2	rust/difftests/transaction-tests/SOURCE_COVERAGE.md	Requires complete Handle identity and a deliberate portable Rust memory-accounting design instead of Go map and slice layout constants
+# TestKeyRangeDefinition moved through the checked test-only transfer to txnkv-copr-key-ranges now that tidb-proto safe conversion exists.
+go_test	pkg/kv/key_test.go	390	BenchmarkIsPoint	BLOCKED	txnkv-key-foundation-wave2	rust/difftests/transaction-tests/SOURCE_COVERAGE.md	Correctness is covered but allocation and performance parity require the workspace reproducible benchmark harness
+go_test	pkg/kv/key_test.go	437	BenchmarkMemAwareHandleMap	BLOCKED	txnkv-key-foundation-wave2	rust/difftests/transaction-tests/SOURCE_COVERAGE.md	Handle exists, but the portable memory-aware map and comparable benchmark harness are absent
+go_test	pkg/kv/key_test.go	459	BenchmarkNativeHandleMap	BLOCKED	txnkv-key-foundation-wave2	rust/difftests/transaction-tests/SOURCE_COVERAGE.md	HandleMap exists, but the paired reproducible native-map benchmark harness is absent
+go_test	pkg/kv/version_test.go	36	TestMppVersion	BLOCKED	txnkv-key-foundation-wave2	rust/difftests/transaction-tests/SOURCE_COVERAGE.md	Needs kvproto mpp.TaskMeta field 9 plus a real tidb-distsql MPPTask to_pb and dispatch round trip; enum-only txnkv code would not prove serialization compatibility
+go_test	pkg/kv/version_test.go	70	TestExchangeCompressionMode	BLOCKED	txnkv-key-foundation-wave2	rust/difftests/transaction-tests/SOURCE_COVERAGE.md	Needs tidb-session variable parsing/defaulting plus generated tipb CompressionMode NONE=0 FAST=1 HIGH_COMPRESSION=2 and a real tidb-distsql ExchangeSender to_pb consumer; do not duplicate a protocol stub in txnkv

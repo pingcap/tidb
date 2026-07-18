@@ -1,0 +1,17 @@
+schema = "1"
+slice = "session-warning-handler-authority"
+status = "retired"
+target = "tidb-exec"
+ring = "result"
+consumer = "Superseded by session-warning-status-publication; retained only as its checked ownership-transfer predecessor"
+test_target = "source_shard_d"
+go_sources = ["pkg/util/context/warn.go"]
+go_tests = [
+  "pkg/util/context/warn_test.go:28:TestSQLWarn",
+  "pkg/util/context/warn_test.go:64:TestIgnoreWarn",
+  "pkg/util/context/warn_test.go:79:TestStaticWarnHandler",
+  "pkg/util/context/warn_test.go:158:TestCopyWarnHandler",
+  "pkg/util/context/warn_test.go:0:warn_test.go",
+]
+depends_on = []
+rust_paths = ["rust/difftests/corpus/coverage/evidence/transfers/session-warning-status-publication.tsv"]

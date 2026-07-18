@@ -1,0 +1,3 @@
+# Source-owned source-port fragment for planner-cardinality-row-size.
+# source_path	status	owner	evidence_artifact	note
+pkg/planner/cardinality/row_size.go	PARTIAL	planner-cardinality-row-size	rust/crates/tidb-planner/src/cardinality/row_size.rs	All six row-size formulas and TiKV/TiFlash accounting paths execute through a typed statistics adapter; the future planner still owns the real PlanContext HistColl expression-column and chunk integrations.

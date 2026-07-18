@@ -1,0 +1,4 @@
+# Source-owned direct tests for the bounded INET6 scalar family.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/expression/builtin_miscellaneous_test.go	385	TestInet6NtoA	PARTIAL	expression-ipv6-source-wave	rust/crates/tidb-expr/src/builtin_ext/compare2.rs	All original success/failure/NULL vectors execute directly, including canonical mapped IPv6 output and invalid byte lengths; Go function-class, warning/session charset, and vectorized paths remain outside the seed evaluator.
+go_test	pkg/expression/builtin_miscellaneous_test.go	423	TestInet6AtoN	PARTIAL	expression-ipv6-source-wave	rust/crates/tidb-expr/src/builtin_ext/compare2.rs	All original valid/invalid/NULL vectors execute directly, including binary 4-byte IPv4 and 16-byte mapped/ordinary IPv6 results; Go function-class, error-channel, warning/session charset, and vectorized paths remain outside the seed evaluator.

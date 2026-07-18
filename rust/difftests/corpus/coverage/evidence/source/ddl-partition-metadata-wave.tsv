@@ -1,0 +1,3 @@
+# Source-owned partition metadata and ADD PARTITION phase evidence.
+# source_path	status	owner	evidence_artifact	note
+pkg/ddl/partition.go	PARTIAL	ddl-partition-metadata-wave	rust/crates/tidb-exec/src/ddl/partition_metadata.rs	Ports source partition-name normalization/uniqueness, ADD/REORGANIZE name validation, case-insensitive lookup, physical-ID extraction, Definitions/AddingDefinitions staging, and ADD phase ordering; partition-expression evaluation, physical ID allocation, TiKV/tablecodec, PD placement, catalog mutation, and DDL worker coordination remain open.

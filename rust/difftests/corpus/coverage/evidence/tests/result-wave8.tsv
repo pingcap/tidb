@@ -1,0 +1,4 @@
+# Source-owned test-evidence fragment for result-wave8.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/expression/builtin_math_test.go	578	TestConv	PARTIAL	result-wave8	rust/crates/tidb-expr/src/tests/math.rs	All source evaluator vectors and getValidPrefix cases execute under the same math-family owner as production CONV; result FieldType charset/collation/flag metadata is outside the Datum domain
+go_test	pkg/expression/builtin_string_test.go	2071	TestOct	PARTIAL	result-wave8	rust/crates/tidb-expr/src/tests/mod.rs	All UTF-8-value-domain TestOct string, float, signed-integer, overflow, NULL, and empty-string vectors plus malformed-byte ETString zero-prefix behavior; the three binary-literal ETInt rows require original AST context

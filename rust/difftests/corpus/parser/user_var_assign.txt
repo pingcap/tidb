@@ -1,0 +1,17 @@
+## @name := value -- an inline user-variable assignment expression,
+## usable anywhere an ordinary expression can appear (not just a
+## standalone SET statement). Restores as @`name`:=value with NO
+## spaces. Chains right-associatively since value is parsed at the
+## LOWEST precedence (matching real TiDB's own p.parseExpression
+## (precNone)). A real MySQL/TiDB quirk this project's own Expr::Assign
+## doc documents: := following ANY variable atom, even one written
+## @@sysvar or @@scope.sysvar, always targets a PLAIN user variable by
+## its own bare name, discarding the @@ marker and scope entirely.
+select @i := 1
+select @i := @i + 1
+select @tmp := c-2 from t where c=3
+select @tmp := count(*) from t
+select @tmp1 := 11, @tmp2
+select (@j := case when substr(t2.b,1,3)=@i then 1 else @j+1 end) from t2, (select @j := 0, @i := "0") tt limit 10
+select @v:=(select 1 from t1 t2 left join t1 on t1.a group by t1.a) from t1
+select @@session.autocommit := 1

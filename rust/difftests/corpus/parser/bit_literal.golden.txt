@@ -1,0 +1,27 @@
+#IDX 0
+SELECT b''
+#END
+#IDX 1
+SELECT b''
+#END
+#IDX 2
+SELECT b'0'
+#END
+#IDX 3
+SELECT b'0'
+#END
+#IDX 4
+SELECT b'1'
+#END
+#IDX 5
+SELECT b'1'
+#END
+#IDX 6
+SELECT b''+1
+#END
+#IDX 7
+SELECT b'0'+1
+#END
+#IDX 8
+CREATE TABLE `t` (`a` INT DEFAULT b'')
+#END

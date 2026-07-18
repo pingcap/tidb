@@ -1,0 +1,5 @@
+# Source-owned test-evidence fragment for result-wave7.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/expression/builtin_string_test.go	958	TestSpace	PARTIAL	result-wave7	rust/difftests/corpus/expr/space_source.txt	All SQL-value scalar TestSpace vectors, including ETInt string/float coercion and MaxBlobWidth rejection; Go's injected-error and vector-warning harness paths are outside the seed evaluator
+go_test	pkg/expression/builtin_json_test.go	890	TestJSONDepth	PARTIAL	result-wave7	rust/crates/tidb-expr/src/builtin_ext/json2.rs	Complete scalar/container depth vectors plus NULL, invalid-document, and non-JSON argument errors; typed BinaryJSON, warning/session, function construction, and vectorized paths remain outside the seed evaluator
+go_test	pkg/expression/builtin_math_test.go	126	TestExp	PARTIAL	result-wave7	rust/difftests/corpus/expr/exp_source.txt	All source scalar result/error vectors and wrong-arity regression; Go statement warning count for EXP('tidb') is intentionally unmodeled by the value-only evaluator

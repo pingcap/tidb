@@ -1,0 +1,64 @@
+## Trailing CREATE TABLE table options (ENGINE/AUTO_INCREMENT/CHARACTER
+## SET/CHARSET/COLLATE/COMMENT): restored in WRITTEN order, not a fixed
+## canonical order; ENGINE preserves its exact case; CHARACTER SET/CHARSET/
+## COLLATE uppercase and gain a `DEFAULT` prefix even if not written;
+## table-level COLLATE uppercases (opposite of a column's own COLLATE,
+## which lowercases); a `,` between options is accepted and dropped
+create table t (a int) engine=innodb
+create table t (a int) engine = InnoDB
+create table t (a int) engine='InnoDB'
+create table t (a int) charset=utf8mb4
+create table t (a int) character set utf8mb4
+create table t (a int) default character set = utf8mb4
+create table t (a int) collate=utf8mb4_bin
+create table t (a int) auto_increment=100
+create table t (a int) auto_increment 100
+create table t (a int) engine=InnoDB auto_increment=100 default charset=utf8mb4 collate=utf8mb4_bin comment='hi'
+create table t (a int) comment='hi' collate=utf8mb4_bin charset=utf8mb4 auto_increment=100 engine=InnoDB
+create table t (a int) engine=MyISAM, auto_increment=5
+## ROW_FORMAT/KEY_BLOCK_SIZE/COMPRESSION/TABLESPACE: ROW_FORMAT
+## uppercases like ENGINE/CHARACTER SET/COLLATE; COMPRESSION preserves
+## its string value's case verbatim (the OPPOSITE of ROW_FORMAT);
+## TABLESPACE restores as a backtick-quoted identifier, the only one of
+## these that does; `=` is optional for all four, same as the others.
+create table t (a int) row_format=dynamic engine=InnoDB
+create table t (a int) row_format Compact
+create table t (a int) key_block_size=8
+create table t (a int) key_block_size 16
+create table t (a int) compression='zlib'
+create table t (a int) compression 'ZLIB'
+create table t (a int) tablespace ts1
+create table t (a int) tablespace=ts2
+create table t (a int) row_format=dynamic key_block_size=4 comment='x'
+## SHARD_ROW_ID_BITS/PRE_SPLIT_REGIONS/AUTO_ID_CACHE (TiDB-specific
+## extensions) and MAX_ROWS/MIN_ROWS/AVG_ROW_LENGTH/CHECKSUM/
+## DELAY_KEY_WRITE (plain MySQL compatibility options) all restore as
+## plain `KEYWORD = value`, with NO special-comment wrapping even for
+## the TiDB-specific ones (confirmed via godump restore -- this
+## project's own oracle uses format.DefaultRestoreFlags, not TiDB's own
+## feature-ID special-comment mode); `=` is optional for all eight, same
+## as every other table option here.
+create table t (a int) shard_row_id_bits = 4
+create table t (a int) shard_row_id_bits 4
+create table t (a int) pre_split_regions = 2
+create table t (a int) auto_id_cache = 100
+create table t (a int) max_rows = 1000
+create table t (a int) min_rows = 10
+create table t (a int) avg_row_length = 100
+create table t (a int) checksum = 1
+create table t (a int) delay_key_write = 1
+create table t (a int) engine = innodb shard_row_id_bits = 4, pre_split_regions = 2 comment = 'x'
+## STATS_PERSISTENT/PACK_KEYS: the parsed value (`DEFAULT`, `0`, or `1`,
+## the only accepted forms) is entirely DISCARDED on restore -- real
+## TiDB's own `Restore()` always emits a FIXED string instead, including
+## a genuine trailing space baked into the comment itself (confirmed via
+## a byte-level godump check: a real double space appears before
+## whatever follows). Error cases (a bare option with no value, a
+## non-numeric word, a negative number, a string literal) are covered by
+## the unit test instead -- this corpus may only contain statements the
+## Go parser accepts.
+create table t (a int) stats_persistent = 0
+create table t (a int) stats_persistent default
+create table t (a int) pack_keys = 1
+create table t (a int) stats_persistent=0 comment='x'
+create table t (a int) stats_persistent = 0, pack_keys = 1

@@ -1,0 +1,10 @@
+STR:'Don\\\'t!'
+STR:'Don\'t'
+STR:'Don"'
+STR:'Don\\"'
+STR:'\\\''
+STR:'\\"'
+STR:'萌萌哒(๑•ᴗ•๑)😊'
+STR:'㍿㌍㍑㌫'
+STR:'\0\Z'
+STR:NULL

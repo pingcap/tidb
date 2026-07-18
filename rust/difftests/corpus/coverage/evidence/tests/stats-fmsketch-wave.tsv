@@ -1,0 +1,3 @@
+# Source-owned statistics FM sketch test evidence.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test_file	pkg/statistics/fmsketch_test.go	0	fmsketch_test.go	PARTIAL	stats-fmsketch-wave	rust/crates/tidb-stats/tests/fmsketch_source.rs	The raw-hash leaf covers the source SubTestSketch maxSize/NDV/merge scenarios and SubTestSketchProtoConversion clone shape; Datum-derived sample vectors, tipb protobuf conversion, coding, and sampler integration remain open.

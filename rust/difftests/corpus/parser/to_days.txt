@@ -1,0 +1,2 @@
+## TO_DAYS: also not a lexer keyword
+select to_days(a) from t

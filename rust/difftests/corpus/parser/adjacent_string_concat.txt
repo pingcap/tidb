@@ -1,0 +1,7 @@
+select "ss" "a" "b";
+select "ss" "a" ' ' "b" ' ' "d";
+select "ss" "a" ' ' "b";
+select "ss" "a";
+select 'a' " " "string";
+select 'a' ' ' 'string';
+select 'string' 'string';

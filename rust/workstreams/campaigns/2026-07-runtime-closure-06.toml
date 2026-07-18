@@ -1,0 +1,8 @@
+schema = "1"
+campaign = "2026-07-runtime-closure-06"
+status = "integrated"
+slices = [
+  "distsql-query-response-runtime",
+  "session-warning-status-publication",
+  "distsql-cop-read-task-runtime",
+]

@@ -1,0 +1,16 @@
+## A bare (no-AS) or `AS`-explicit alias accepts not just a plain
+## identifier but also MOST keywords -- real TiDB's own
+## CanBeImplicitAlias (pkg/parser/select_clauses_parser.go) excludes
+## only a curated set of clause/DDL/window-function keywords, confirmed
+## via godump restore. Found while implementing task #88's @var :=
+## expr feature (SELECT @sum := IF(...) sum FROM tmp needed this).
+select 1 sum
+select 1 as sum
+select 1 json
+select 1 binary
+select 1 char
+select 1 timestamp
+select 1 match
+select 1 collation
+select @sum := 1 sum
+select a from t1 t1sum

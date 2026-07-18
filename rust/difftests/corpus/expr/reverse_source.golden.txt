@@ -1,0 +1,5 @@
+NULL
+STR:cba
+STR:EKIL
+STR:321
+STR:

@@ -1,0 +1,3 @@
+# Source-owned variable-error code evidence.
+# source_path	status	owner	evidence_artifact	note
+pkg/sessionctx/variable/error.go	PARTIAL	session-sysvar-error-wave	rust/crates/tidb-exec/src/sysvar_error.rs	Variable/session error-code identities preserve the source MySQL/TiDB numbers; dbterror constructors, message templates, SQLSTATE, formatting, and warning/error publication remain external.

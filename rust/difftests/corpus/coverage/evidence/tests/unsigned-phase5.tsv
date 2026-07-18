@@ -1,0 +1,4 @@
+# Source-owned test-evidence fragment for unsigned-phase5.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/executor/insert_test.go	437	TestDuplicateEntryMessage	PARTIAL	unsigned-phase5	rust/difftests/corpus/table/unsigned_integer_dml.txt	BIGINT UNSIGNED primary-key MaxUint64 storage, numeric ordering, and duplicate-key boundary
+go_test	pkg/types/convert_test.go	635	TestConvert	PARTIAL	unsigned-phase5	rust/difftests/corpus/table/unsigned_integer_dml.txt	INT/BIGINT signed and unsigned bounds plus decimal/string half-away and DOUBLE ties-even assignment conversion; strict seed excludes sql_mode warning/saturation behavior

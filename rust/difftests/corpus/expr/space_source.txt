@@ -1,0 +1,10 @@
+## pkg/expression/builtin_string_test.go:958 TestSpace
+space(0)
+space(3)
+space(16777217)
+space(-1)
+space('abc')
+space('3')
+space(1.2)
+space(1.9)
+space(null)

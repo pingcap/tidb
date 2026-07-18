@@ -1,0 +1,40 @@
+schema = "1"
+slice = "datatype-conversion-context"
+status = "retired"
+target = "tidb-datatype"
+ring = "result"
+consumer = "Superseded by datatype-value-context-and-format; retained only as its checked ownership-transfer predecessor"
+test_target = "conversion_context_source"
+go_sources = ["pkg/types/context.go"]
+go_tests = [
+  "pkg/types/context_test.go:27:TestWithNewFlags",
+  "pkg/types/context_test.go:36:TestSimpleOnOffFlags",
+  "pkg/types/context_test.go:0:context_test.go",
+]
+depends_on = []
+evidence_prerequisites = [
+  { capability = "truncate-error-codes", evidence_owner = "error-catalog-and-terror-identity", kind = "source", anchor = "pkg/errno/errcode.go", minimum_status = "COVERED" },
+  { capability = "datatype-truncate-policy", evidence_owner = "datatype-value-context-and-format", kind = "source", anchor = "pkg/types/truncate.go", minimum_status = "PARTIAL" },
+  { capability = "warning-appender-contract", evidence_owner = "session-warning-status-publication", kind = "source", anchor = "pkg/util/context/warn.go", minimum_status = "PARTIAL" },
+  { capability = "ignore-warning-contract", evidence_owner = "session-warning-status-publication", kind = "test", anchor = "pkg/util/context/warn_test.go:64:TestIgnoreWarn", minimum_status = "COVERED" },
+  { capability = "binary-literal-runtime", evidence_owner = "datatype-binary-literal-source-wave", kind = "source", anchor = "pkg/types/binary_literal.go", minimum_status = "COVERED" },
+  { capability = "binary-literal-to-int-contract", evidence_owner = "datatype-value-context-and-format", kind = "test", anchor = "pkg/types/binary_literal_test.go:194:TestBinaryLiteral/TestToInt", minimum_status = "COVERED" },
+  { capability = "terror-error-identity", evidence_owner = "error-catalog-and-terror-identity", kind = "source", anchor = "pkg/parser/terror/terror.go", minimum_status = "PARTIAL" },
+]
+rust_paths = [
+  "rust/crates/tidb-datatype/src/conversion_context/mod.rs",
+  "rust/crates/tidb-datatype/src/conversion_context/flags.rs",
+  "rust/crates/tidb-datatype/src/lib.rs",
+  "rust/crates/tidb-datatype/src/truncate.rs",
+  "rust/crates/tidb-datatype/src/binary_literal.rs",
+  "rust/crates/tidb-datatype/src/binary_literal_tests.rs",
+  "rust/crates/tidb-datatype/tests/conversion_context_source.rs",
+  "rust/crates/tidb-exec/src/error_context.rs",
+  "rust/crates/tidb-exec/src/warning_publication.rs",
+  "rust/crates/tidb-exec/src/statement_pushdown.rs",
+  "rust/crates/tidb-exec/src/lib.rs",
+  "rust/crates/tidb-exec/tests/error_context_source.rs",
+  "rust/crates/tidb-exec/tests/statement_pushdown_source.rs",
+  "rust/difftests/corpus/coverage/evidence/source/datatype-conversion-context.tsv",
+  "rust/difftests/corpus/coverage/evidence/tests/datatype-conversion-context.tsv",
+]

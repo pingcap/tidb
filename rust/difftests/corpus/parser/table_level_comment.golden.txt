@@ -1,0 +1,12 @@
+#IDX 163
+CREATE TABLE `t` (`id` INT,`name` VARCHAR(20)) COMMENT = 'no equals sign'
+#END
+#IDX 164
+CREATE TABLE `t` (`id` INT,`name` VARCHAR(20)) COMMENT = 'with equals'
+#END
+#IDX 165
+CREATE TABLE `t` (`id` INT PRIMARY KEY,`v` INT) COMMENT = 'spaced equals'
+#END
+#IDX 166
+CREATE TABLE `t` (`id` INT) COMMENT = 'it''s escaped'
+#END

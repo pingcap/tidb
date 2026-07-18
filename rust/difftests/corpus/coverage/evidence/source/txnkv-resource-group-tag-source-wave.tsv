@@ -1,0 +1,4 @@
+# Source-owned boundary evidence for ResourceGroupTagBuilder.
+# source_path	status	owner	evidence_artifact	note
+pkg/kv/kv.go	PARTIAL	txnkv-resource-group-tag-source-wave	rust/crates/tidb-txnkv/src/resource_group.rs	ResourceGroupTagBuilder now marshals generated tidb-proto ResourceGroupTag with raw SQL/plan digests, nullable keyspace, always-present table_id, and row/index/unknown labels; request extraction, API-V2 key decoding, and session/kernel keyspace ownership remain outside this leaf
+pkg/util/resourcegrouptag/resource_group_tag.go	PARTIAL	txnkv-resource-group-tag-source-wave	rust/crates/tidb-txnkv/src/resource_group.rs	GetResourceGroupLabelByKey's row/index/unknown classification is ported through tidb-codec, while GetFirstKeyFromRequest awaits typed kvproto request envelopes and DecodeResourceGroupTag remains a future protocol utility

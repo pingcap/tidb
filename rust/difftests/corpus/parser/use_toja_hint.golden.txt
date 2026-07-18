@@ -1,0 +1,15 @@
+#IDX 0
+SELECT /*+ USE_TOJA(TRUE)*/ `t1`.`a`,`t1`.`b` FROM `t1` WHERE `t1`.`a` IN (SELECT `t2`.`a` FROM `t2`)
+#END
+#IDX 1
+SELECT /*+ USE_TOJA(FALSE)*/ `t1`.`a`,`t1`.`b` FROM `t1` WHERE `t1`.`a` IN (SELECT `t2`.`a` FROM `t2`)
+#END
+#IDX 2
+SELECT /*+ USE_CASCADES(TRUE)*/ `t1`.`a`,`t1`.`b` FROM `t1`
+#END
+#IDX 3
+SELECT /*+ USE_TOJA(FALSE) HASH_JOIN_BUILD(`t1`) SET_VAR(tidb_hash_join_version = 'legacy')*/ `t1`.`a`,`t1`.`b` FROM `t1` WHERE `t1`.`a` IN (SELECT `t2`.`a` FROM `t2`)
+#END
+#IDX 4
+SELECT /*+ USE_TOJA(TRUE) HASH_JOIN_BUILD(`t2`@`sel_2`)*/ `t1`.`a`,`t1`.`b` FROM `t1` WHERE `t1`.`a` IN (SELECT `t2`.`a` FROM `t2`)
+#END

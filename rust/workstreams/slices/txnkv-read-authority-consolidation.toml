@@ -1,0 +1,23 @@
+schema = "1"
+slice = "txnkv-read-authority-consolidation"
+status = "partial"
+target = "tidb-txnkv"
+ring = "transaction"
+consumer = "transaction-read authority consolidation and future client enabler: InjectedTransaction and InjectedSnapshot consume the existing Getter, BatchGetter, ValueEntry, Key, and BufferBatchGetter-facing contracts instead of maintaining a second generic KvRead value/batch model; no production storage implements KvStorage and InjectedStore is not connected to a real transaction path, while transaction options, context, Go value-plus-error and nil-map result shapes, root-cause error identity, and Begin-on-error wrapper behavior remain explicit gaps; this slice must not invent a TiKV client, RPC request enum, region cache, in-memory production transaction, or transport binding"
+test_target = "fault_injection_matches_source_error_precedence_and_clear"
+go_sources = ["pkg/kv/fault_injection.go"]
+go_tests = [
+  "pkg/kv/fault_injection_test.go:29:TestFaultInjectionBasic",
+  "pkg/kv/fault_injection_test.go:0:fault_injection_test.go",
+]
+depends_on = []
+evidence_prerequisites = [
+  { capability = "transaction-getter-batch-getter-value-entry-authority", evidence_owner = "txnkv-mutable-transaction-runtime", kind = "source", anchor = "pkg/store/driver/txn/batch_getter.go", minimum_status = "PARTIAL" },
+]
+rust_paths = [
+  "rust/crates/tidb-txnkv/src/fault_injection.rs",
+  "rust/crates/tidb-txnkv/src/lib.rs",
+  "rust/difftests/corpus/coverage/evidence/source/txnkv-read-authority-consolidation.tsv",
+  "rust/difftests/corpus/coverage/evidence/tests/txnkv-read-authority-consolidation.tsv",
+  "rust/difftests/corpus/coverage/evidence/transfers/txnkv-read-authority-consolidation.tsv",
+]

@@ -1,0 +1,41 @@
+## predicates (IN / BETWEEN / IS / LIKE) — evaluated by the Go engine
+2 in (1, 2, 3)
+5 in (1, 2, 3)
+5 not in (1, 2, 3)
+5 in (1, NULL, 3)
+1 in (1, NULL)
+NULL in (1, 2)
+5 between 1 and 10
+5 between 6 and 10
+5 not between 6 and 10
+NULL between 1 and 10
+NULL is null
+1 is null
+1 is not null
+1 is true
+0 is true
+NULL is true
+NULL is not true
+0 is false
+'abc' like 'abc'
+'abc' like 'a%'
+'abc' like '%c'
+'abc' like '%b%'
+'abc' like 'a%d'
+'abc' like 'a_c'
+'abc' like 'a_'
+'abc' like 'ABC'
+'abc' not like 'a%'
+'abc' not like 'x%'
+NULL like 'a%'
+'abc' like NULL
+'' like ''
+'a' like ''
+2 like '2'
+123 like '12%'
+12.50 like '12.5'
+12.50 like '12.50'
+1.5e2 like '150'
+-5 like '-5'
+'2' like 2
+123 like 12

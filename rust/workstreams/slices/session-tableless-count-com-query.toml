@@ -1,0 +1,32 @@
+schema = "1"
+slice = "session-tableless-count-com-query"
+status = "partial"
+target = "tidb-server"
+ring = "result"
+consumer = "existing Connection::dispatch_framed_auto decodes COM_QUERY, asks the shared Session for dependency-closed table-less result metadata, and executes through Session::run_statement/StatementAttempt into Database aggregate evaluation; this slice admits only top-level COUNT expressions whose arguments already satisfy the immutable shared-pure expression envelope, so COUNT(*)/COUNT(literal)/COUNT(NULL) reach the canonical aggregate executor without admitting functions, variables, assignments, subqueries, clocks, RNG, table-backed aggregate schema guessing, GROUP BY, HAVING, windows, or shallow-Rc mutation"
+test_target = "tidb-exec cluster module plus tidb-server automatic_response_source"
+go_sources = [
+  "pkg/expression/aggregation/count.go",
+  "pkg/expression/aggregation/base_func.go",
+]
+go_tests = [
+  "pkg/expression/aggregation/aggregation_test.go:429:TestCount",
+  "pkg/expression/typeinfer_test.go:37:TestInferType",
+]
+depends_on = []
+evidence_prerequisites = [
+  { capability = "server-command-query-dispatch", evidence_owner = "server-compressed-command-io-runtime", kind = "source", anchor = "pkg/server/conn.go", minimum_status = "PARTIAL" },
+  { capability = "executor-result-field-adapter", evidence_owner = "executor-result-field-adapter-source-wave", kind = "source", anchor = "pkg/executor/adapter.go", minimum_status = "PARTIAL" },
+]
+support_anchors = [
+  "pkg/server/conn.go",
+  "pkg/executor/adapter.go",
+]
+rust_paths = [
+  "rust/crates/tidb-exec/src/cluster.rs",
+  "rust/crates/tidb-exec/src/result_field_resolver.rs",
+  "rust/crates/tidb-exec/src/tests/cluster.rs",
+  "rust/crates/tidb-server/tests/automatic_response_source.rs",
+  "rust/difftests/corpus/coverage/evidence/source/session-tableless-count-com-query.tsv",
+  "rust/difftests/corpus/coverage/evidence/tests/session-tableless-count-com-query.tsv",
+]

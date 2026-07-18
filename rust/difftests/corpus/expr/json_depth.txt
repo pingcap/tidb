@@ -1,0 +1,18 @@
+## All structural vectors from pkg/expression/builtin_json_test.go TestJSONDepth.
+json_depth(null)
+json_depth('null')
+json_depth('true')
+json_depth('1.1')
+json_depth('"1"')
+json_depth('{}')
+json_depth('[]')
+json_depth('[10, 20]')
+json_depth('[[], {}]')
+json_depth('{"Name": "Homer"}')
+json_depth('[10, {"a": 20}]')
+json_depth('{"Person": {"Name": "Homer", "Age": 39, "Hobbies": ["Eating", "Sleeping"]}}')
+json_depth('[1,2,[1,[5,[3]]]]')
+json_depth('[1,2,[1,[5,{"a":[2,3]}]]]')
+json_depth('[{"a":{"a":1},"b":2}]')
+## Invalid JSON is a TiDB error, not a NULL depth.
+json_depth('a')

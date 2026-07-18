@@ -1,0 +1,35 @@
+## MERGED TOPIC: statements below share mutable table state across
+## sub-features -- kept as one script so the shared state stays correct,
+## run against one fresh Database like every other topic.
+## Standalone UPDATE ... SET ... [WHERE ...] and DELETE FROM ... [WHERE
+## ...] -- previously entirely unimplemented in tidb-exec (the parser
+## supported both, but Database::run had no dispatch arm for either, so
+## every standalone UPDATE/DELETE silently fell through to NotSelect; this
+## was never caught because no differential corpus statement had ever
+## exercised either, since the corpus is the only thing that runs them)
+create table t (a int, b int)
+insert into t values (1, 100), (2, 200), (3, 300)
+update t set b = 999 where a = 2
+select * from t
+## UPDATE with no WHERE touches every row
+update t set b = b + 1
+select * from t
+## A SET clause's expressions are evaluated against the ORIGINAL row
+## values simultaneously, not chained -- `b = a` sees the OLD `a`, not the
+## `a + 1` just computed in the same clause (confirmed via gorun)
+update t set a = a + 1, b = a where a = 1
+select * from t
+## UPDATE matching zero rows is a no-op, not an error
+update t set b = -1 where a = 999
+select * from t
+delete from t where a = 3
+select * from t
+## DELETE with no WHERE removes every row
+delete from t
+select * from t
+## A table alias is usable in both UPDATE and DELETE's own WHERE/SET
+create table u (id int, v int)
+insert into u values (1, 10), (2, 20)
+update u as x set x.v = x.v * 10 where x.id = 1
+delete from u as y where y.id = 2
+select * from u

@@ -1,0 +1,18 @@
+[package]
+name = "tidb-planner"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Source-backed TiDB planner primitives (Rust)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-ast = { path = "../tidb-ast" }
+tidb-stats = { path = "../tidb-stats" }
+
+[dev-dependencies]
+tidb-parser = { path = "../tidb-parser" }

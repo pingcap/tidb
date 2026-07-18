@@ -1,0 +1,4 @@
+# Source-owned statistics-meta update SQL test evidence.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/statistics/handle/storage/dump_test.go	204	TestLastStatsHistUpdateVersionAfterLoadStats	PARTIAL	stats-meta-update-wave	rust/crates/tidb-stats/tests/stats_meta_update_source.rs	Rust mirrors the exact stats-meta version query and argument ordering exercised by the original load/update test; TiDB session, JSON loading, timestamp acquisition, and storage assertions remain external.
+go_test	pkg/statistics/handle/storage/dump_test.go	666	TestPersistStats	PARTIAL	stats-meta-update-wave	rust/crates/tidb-stats/tests/stats_meta_update_source.rs	Rust directly tests the locked/unlocked positive/negative DeltaUpdate SQL partitions used by stats persistence/update flows, including ordered IDs and cache invalidation; persistence callbacks, SQL execution, schema setup, and transaction lifecycle remain external.

@@ -1,0 +1,15 @@
+## LEADING(table, ...) join-order optimizer hint -- a flat table list,
+## reusing the SAME Hint::kind (HintKind::Tables) already used for
+## INL_JOIN/HASH_JOIN/etc, since real TiDB's own restore for the flat
+## form is byte-identical. Real TiDB's own grammar also allows a
+## nested parenthesized sub-list per element (its own recursive
+## join-order-tree shape) and a hint-level `@qb` prefix -- neither
+## appears anywhere in the real-TiDB integration-test corpus this
+## project measures coverage against, so neither is modelled here.
+select /*+ leading(t1) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b
+select /*+ leading(t1, t2, t3) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b
+select /*+ hash_join_build(t1) leading(t1) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b join t3 on t2.a = t3.a
+select /*+ straight_join() leading(t1) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b
+select /*+ leading(t1) leading(t2) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b
+select * from (select /*+ leading(t1, t3@sel_1) */ t2.b from t1 join t2 on t1.a=t2.a) t4 join t3 on t4.b=t3.b
+select /*+ leading(t3, t2@sel_2) */ * from (select t2.b from t1 join t2 on t1.a=t2.a) t4 join t3 on t4.b=t3.b

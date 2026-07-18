@@ -1,0 +1,3 @@
+# Source-owned bootstrap system-database filter test-port evidence.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/meta/metadef/db_test.go	37	TestIsSystemDB	PARTIAL	session-system-db-filter-wave	rust/crates/tidb-exec/tests/system_db_filter_source.rs	Rust vectors cover mysql acceptance, sys/uppercase rejection, schema-skip inversion, and the always-false diff filter; DBInfo lower-name normalization and live infoschema loader/domain behavior remain external.

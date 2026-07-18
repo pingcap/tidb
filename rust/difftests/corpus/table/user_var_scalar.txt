@@ -1,0 +1,16 @@
+## Source anchors: pkg/expression/builtin_other_test.go:84 TestSetVar;
+## pkg/expression/builtin_other_test.go:119 TestGetVar;
+## pkg/expression/builtin_other_test.go:229 TestSetVarFromColumn.
+## Scalar Value coverage only: NULL, strings, signed/unsigned integers,
+## float, and decimal. The source Timestamp rows remain excluded until the
+## executor has a temporal Value plus user-variable type metadata.
+set @scalar_s = '12', @scalar_i = 3, @scalar_f = 2.5, @scalar_u = 18446744073709551615
+select @scalar_s, @scalar_i, @scalar_f, @scalar_u
+select @scalar_i := @scalar_i + 1, @scalar_i
+select @scalar_i := null
+select @scalar_i
+create table scalar_uv (v varchar(8))
+insert into scalar_uv values ('a'), ('b'), ('c')
+set @scalar_last = 'seed'
+select @scalar_last := v, @scalar_last from scalar_uv order by v
+select @scalar_last

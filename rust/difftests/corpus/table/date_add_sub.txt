@@ -1,0 +1,4 @@
+## DATE_ADD/DATE_SUB with INTERVAL n DAY over real DATE/DATETIME columns
+create table da (d date, dt datetime)
+insert into da values ('2021-01-31', '2021-01-31 10:30:00')
+select date_add(d, interval 1 day), date_sub(dt, interval 5 day) from da

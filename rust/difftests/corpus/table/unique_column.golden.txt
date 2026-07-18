@@ -1,0 +1,8 @@
+OK
+OK
+OK
+RS:1|a@x.com|999
+OK
+RS:1|a@x.com|999
+OK
+RS:1|a@x.com|999;4|z@x.com|40

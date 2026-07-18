@@ -1,0 +1,6 @@
+drop sequence if exists seq
+create sequence seq
+select nextval(seq)
+select nextval(seq)
+select nextval(seq)
+alter sequence seq increment by 2

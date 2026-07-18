@@ -1,0 +1,4 @@
+# Source-owned dependency-closed error-context policy test evidence.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/errctx/context_test.go	28	TestContext	PARTIAL	session-errctx-wave	rust/crates/tidb-exec/tests/error_context_source.rs	Source-shaped tests cover strict defaults, all seven groups, copy-on-write group/strict replacement, resolve_err_level precedence, and typed return/warn/ignore dispositions; error-code matching and warning sink lifecycle remain open.
+go_test	pkg/sessionctx/stmtctx/stmtctx_test.go	536	TestErrCtx	PARTIAL	session-errctx-wave	rust/crates/tidb-exec/tests/error_context_source.rs	Source-shaped tests cover the DefaultStmtErrLevels divided-by-zero warning, truncate flag precedence, and zero-in-date as a separate typed flag; full StatementContext reset/push-down/session wiring remains open.

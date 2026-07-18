@@ -1,0 +1,103 @@
+## Source rows from TestMonthName, TestDayOfWeek, TestDayOfMonth,
+## TestDayOfYear, TestQuarter, and the shared calendar-function section of
+## TestDate in pkg/expression/builtin_time_test.go.
+##
+## The focused Go tests install IgnoreZeroInDate before their zero-component
+## rows. This value-only Rust evaluator has no StatementContext type flags, so
+## the four DAYOFMONTH zero rows and QUARTER('2008-00-01') are listed as
+## PARTIAL-only source evidence in comments rather than executable claims.
+## DAYOFWEEK/DAYOFYEAR/WEEKDAY reject invalid-zero dates after EvalTime in Go,
+## so their NULL rows are context-independent and remain executable below.
+
+## TestMonthName: every focused row has a context-independent observable
+## result even though the Go test enables IgnoreZeroInDate.
+monthname('2017-12-01')
+monthname('2017-00-01')
+monthname('0000-00-00')
+monthname('0000-00-00 00:00:00.000000')
+monthname('0000-00-00 00:00:11.000000')
+
+## TestDate's representable MONTH/MONTHNAME rows.
+month('2000-01-01')
+monthname('2000-01-01')
+month('2011-11-11')
+monthname('2011-11-11')
+month('0000-01-01')
+monthname('0000-01-01')
+## PARTIAL MONTH rows: without NO_ZERO_DATE the two full-zero inputs return
+## INT:0, while NO_ZERO_DATE changes them to NULL. TestVecMonth additionally
+## requires a vectorized typed-Time path and StatementContext warning state.
+
+## TestDayOfWeek.
+dayofweek('2017-12-01')
+dayofweek('0000-00-00')
+dayofweek('2018-00-00')
+dayofweek('2017-00-00 12:12:12')
+dayofweek('0000-00-00 12:12:12')
+
+## TestDayOfMonth: only the ordinary date is context-independent.
+dayofmonth('2017-12-01')
+## PARTIAL IgnoreZeroInDate rows: '0000-00-00', '2018-00-00',
+## '2017-00-00 12:12:12', and '0000-00-00 12:12:12' each return INT:0.
+
+## TestDayOfYear.
+dayofyear('2017-12-01')
+dayofyear('0000-00-00')
+dayofyear('2018-00-00')
+dayofyear('2017-00-00 12:12:12')
+dayofyear('0000-00-00 12:12:12')
+
+## TestQuarter boundary rows.
+quarter('2008-04-01')
+quarter('2008-01-01')
+quarter('2008-03-31')
+quarter('2008-06-30')
+quarter('2008-07-01')
+quarter('2008-09-30')
+quarter('2008-10-01')
+quarter('2008-12-31')
+## PARTIAL IgnoreZeroInDate row: quarter('2008-00-01') returns INT:0.
+quarter('2008-13-01')
+
+## TestDate's directly shared function-class rows, including year zero.
+dayofmonth('2000-01-01')
+dayofweek('2000-01-01')
+dayofyear('2000-01-01')
+weekday('2000-01-01')
+quarter('2000-01-01')
+dayofmonth('2011-11-11')
+dayofweek('2011-11-11')
+dayofyear('2011-11-11')
+weekday('2011-11-11')
+quarter('2011-11-11')
+dayofmonth('0000-01-01')
+dayofweek('0000-01-01')
+dayofyear('0000-01-01')
+weekday('0000-01-01')
+quarter('0000-01-01')
+
+## NULL, numeric ETDatetime coercion, invalid input, and arity domains.
+month(NULL)
+monthname(NULL)
+dayofmonth(NULL)
+dayofweek(NULL)
+dayofyear(NULL)
+weekday(NULL)
+quarter(NULL)
+month(20240315)
+monthname(20240315)
+dayofmonth(20240315)
+dayofweek(20240315)
+dayofyear(20240315)
+weekday(20240315)
+quarter(20240315)
+month('2008-13-01')
+monthname('2008-13-01')
+dayofmonth('2008-13-01')
+dayofweek('2008-13-01')
+dayofyear('2008-13-01')
+weekday('2008-13-01')
+month()
+monthname('2008-01-01', 1)
+dayofweek()
+quarter('2008-01-01', 1)

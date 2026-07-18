@@ -1,0 +1,19 @@
+## A derived table's own body may itself be a `UNION`/`EXCEPT`/
+## `INTERSECT`-joined set operation (`(SELECT ... UNION [ALL] SELECT ...)
+## alias`), the SAME `Stmt::Select`-or-`Stmt::SetOpr` shape
+## `tidb_ast::Cte::query` already established for a CTE's own definition,
+## parsed via the SAME `parse_select_or_setopr`. Found via a fresh
+## stratified resample of the unhandled bucket. A doubly-parenthosized
+## first term (`((SELECT ...) UNION (SELECT ...)) alias`) needed a wider
+## lookahead in `parse_table_factor`'s own gate check
+## (`looks_like_derived_table`), since a plain 1-token lookahead can't see
+## past the first term's own wrapping paren -- every OTHER subquery
+## position in this crate (scalar/IN/EXISTS) still uses the narrower
+## check, a known, separate, not-yet-widened limitation.
+select * from (select a from t union all select a from tv) t1 order by a
+select * from ((select a as aa from t t1) union all (select b as aa from t t2)) as t3 order by aa
+select 1 from (select 1 x union all select 3) a straight_join (select 1 x union all select 2) b using (x)
+select a, count(b) from (select * from t union all select * from tt) k group by a order by a
+select avg(a) from (select * from t ta union all select * from t tb) t
+select * from (select * from t union all select * from t1) t1 join t2 on t1.c1 = t2.c1
+select * from t where exists (select a from (select a from t1 union all select a from t2) u where t.a=u.a)

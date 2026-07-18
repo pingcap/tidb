@@ -1,0 +1,16 @@
+## Table-level CHECK constraint: `[CONSTRAINT [name]] CHECK (expr)
+## [[NOT] ENFORCED]`, defaulting to ENFORCED when neither is written; a
+## `CONSTRAINT` with no name behaves as if absent, same as PRIMARY KEY/
+## UNIQUE. Also covers table-level constraint ORDERING: PRIMARY KEY/UNIQUE/
+## CHECK all restore in WRITTEN order relative to each other, not a fixed
+## canonical order (a real, previously-unverified rule this corpus locks in)
+create table t (a int, check (a > 0))
+create table t (a int, constraint ck1 check (a > 0))
+create table t (a int, check (a > 0) not enforced)
+create table t (a int, check (a > 0) enforced)
+create table t (a int, constraint check (a > 0))
+create table t (a int, b int, check (a > b and a < 100))
+create table t (a int, check (a>0), check (a<100))
+create table t (a int, b int, primary key(a), check (a > 0), unique(b))
+create table t (a int, b int, check (a > 0), unique(b), primary key(a))
+create table t (a int, b int, unique(b), primary key(a))

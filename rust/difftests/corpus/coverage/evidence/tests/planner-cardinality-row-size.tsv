@@ -1,0 +1,3 @@
+# Source-owned test-evidence fragment for planner-cardinality-row-size.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/planner/cardinality/row_size_test.go	30	TestAvgColLen	PARTIAL	planner-cardinality-row-size	rust/difftests/planner-tests/tests/row_size.rs	All 28 post-analyze assertions from the original test execute against source-shaped integer histogram statistics, including fixed and variable widths, null-only columns, two-row rounding, chunk format, and disk-row accounting; testkit mock-store/domain/analyze setup remains outside the seed planner boundary.

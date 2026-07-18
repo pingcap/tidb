@@ -1,0 +1,18 @@
+[package]
+name = "tidb-txnkv"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Source-backed transactional KV primitives for the TiDB Rust rewrite."
+
+[lints]
+workspace = true
+
+[dependencies]
+prost.workspace = true
+tidb-codec = { path = "../tidb-codec" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-error = { path = "../tidb-error" }
+tidb-proto = { path = "../tidb-proto" }

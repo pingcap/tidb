@@ -1,0 +1,106 @@
+// Source: github.com/pingcap/kvproto/proto/kvrpcpb.proto
+//
+// Dependency-closed projection of the request context and lock response used
+// by TiDB's unary coprocessor path. Field numbers and wire types are exact;
+// unrelated transaction commands and imported resource-manager payloads are
+// intentionally absent.
+syntax = "proto3";
+
+package kvrpcpb;
+
+message RegionEpoch {
+  uint64 conf_ver = 1;
+  uint64 version = 2;
+}
+
+message Peer {
+  uint64 id = 1;
+  uint64 store_id = 2;
+  int32 role = 3;
+  bool is_witness = 4;
+}
+
+enum RequestOrigin {
+  RequestOriginUnknown = 0;
+  RequestOriginTiDB = 1;
+}
+
+enum CommandPri {
+  Normal = 0;
+  Low = 1;
+  High = 2;
+}
+
+enum IsolationLevel {
+  SI = 0;
+  RC = 1;
+  RCCheckTS = 2;
+}
+
+message SourceStmt {
+  uint64 start_ts = 1;
+  uint64 connection_id = 2;
+  uint64 stmt_id = 3;
+  string session_alias = 4;
+}
+
+message ResourceControlContext {
+  string resource_group_name = 1;
+  // Upstream field 2 is resource_manager.Consumption. It is deliberately
+  // omitted until that protocol owner exists; field 3 retains its exact tag.
+  uint64 override_priority = 3;
+}
+
+message Context {
+  reserved 4;
+  reserved 26;
+  uint64 region_id = 1;
+  RegionEpoch region_epoch = 2;
+  Peer peer = 3;
+  uint64 term = 5;
+  CommandPri priority = 6;
+  IsolationLevel isolation_level = 7;
+  bool not_fill_cache = 8;
+  bool sync_log = 9;
+  bool record_time_stat = 10;
+  bool record_scan_stat = 11;
+  bool replica_read = 12;
+  repeated uint64 resolved_locks = 13;
+  uint64 max_execution_duration_ms = 14;
+  uint64 applied_index = 15;
+  uint64 task_id = 16;
+  bool stale_read = 17;
+  bytes resource_group_tag = 18;
+  int32 disk_full_opt = 19;
+  bool is_retry_request = 20;
+  int32 api_version = 21;
+  repeated uint64 committed_locks = 22;
+  string request_source = 24;
+  uint64 txn_source = 25;
+  uint32 busy_threshold_ms = 27;
+  ResourceControlContext resource_control_context = 28;
+  RequestOrigin request_origin = 29;
+  string keyspace_name = 31;
+  uint32 keyspace_id = 32;
+  uint64 buckets_version = 33;
+  SourceStmt source_stmt = 34;
+  uint64 cluster_id = 35;
+  bytes trace_id = 36;
+  uint64 trace_control_flags = 37;
+}
+
+message LockInfo {
+  bytes primary_lock = 1;
+  uint64 lock_version = 2;
+  bytes key = 3;
+  uint64 lock_ttl = 4;
+  uint64 txn_size = 5;
+  int32 lock_type = 6;
+  uint64 lock_for_update_ts = 7;
+  bool use_async_commit = 8;
+  uint64 min_commit_ts = 9;
+  repeated bytes secondaries = 10;
+  uint64 duration_to_last_update_ms = 11;
+  repeated LockInfo shared_lock_infos = 12;
+  bool is_txn_file = 100;
+}

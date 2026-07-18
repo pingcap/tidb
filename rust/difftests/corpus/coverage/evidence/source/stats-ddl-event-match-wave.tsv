@@ -1,0 +1,3 @@
+# Source-owned statistics DDL event-selection evidence.
+# source_path	status	owner	evidence_artifact	note
+pkg/statistics/handle/ddl/testutil/util.go	PARTIAL	stats-ddl-event-match-wave	rust/crates/tidb-stats/src/ddl_event_match.rs	The Rust leaf ports FindEventWithTimeout at lines 54-68 as first-match selection over events observed before timeout, with no-match returning None. Channel blocking, ticker duration, notifier event decoding, and DDL/session lifecycle remain external.

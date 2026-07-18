@@ -1,0 +1,3 @@
+# Source-owned test-evidence fragment for the complete representable TestSign source table.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/expression/builtin_math_test.go	642	TestSign	COVERED	expression-sign-source-wave	rust/crates/tidb-expr/src/tests/math.rs	All twelve original TestSign rows execute in source order, including NULL, signed and real values, numeric-prefix strings, and UInt64(2^63); the production sign path matches Go's EvalReal result domain.

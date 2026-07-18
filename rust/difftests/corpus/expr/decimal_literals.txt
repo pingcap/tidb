@@ -1,0 +1,16 @@
+## decimal literals: the original text's scale is preserved verbatim; leading
+## zeros in the integer part are stripped; a numerically zero value never
+## carries a sign (MyDecimal's canonical string form)
+3.14
+3.140
+010.500
+-0.0
+0.0
+-3.14
+.5
+5.
+00.5
+-.5
+0.00
+-0.00
+1.23456789012345678901234567890

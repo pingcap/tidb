@@ -1,0 +1,19 @@
+## `/` (true division): always promotes both operands to Decimal, even for
+## two Int operands. Result scale is the DIVIDEND's own scale plus 4 (MySQL's
+## div_precision_increment) — the divisor's own scale never affects it.
+## Rounds (not truncates); division by zero is NULL; sign follows XOR.
+1 / 2
+1.5 / 2
+10 / 3
+1.50 / 2
+3.14159 / 2
+5 / 2.5
+2.5 / 5
+1.5 / 0
+10.00 / 4
+1.123456789 / 1
+1 / 6
+-1 / 6
+1 / -6
+-1.5 / -2
+0 / 5

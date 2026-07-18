@@ -1,0 +1,4 @@
+# Source-owned test-port fragment for session-txn-read-ts-wave.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/sessiontxn/staleread/processor_test.go	107	TestStaleReadProcessorWithSelectTable	PARTIAL	session-txn-read-ts-wave	rust/crates/tidb-exec/tests/txn_read_ts_source.rs	Direct tests cover use marking, non-consuming peek, set refresh, default zero, and the used/nonzero cleanup edge reflected by the stale-read consumption/cleanup assertions; parser, timestamp-oracle, stale-read processor, and snapshot owners remain external.
+go_test	pkg/sessiontxn/staleread/processor_test.go	314	TestStaleReadProcessorWithExecutePreparedStmt	PARTIAL	session-txn-read-ts-wave	rust/crates/tidb-exec/tests/txn_read_ts_source.rs	The same value transitions are exercised for prepared statements in the source suite; prepared execution, parser, timestamp-oracle, stale-read processor, and snapshot owners remain external.

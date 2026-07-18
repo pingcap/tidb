@@ -1,0 +1,19 @@
+## `TABLESAMPLE [SYSTEM|BERNOULLI|REGION] (expr [PERCENT|ROWS])
+## [REPEATABLE(seed)]` -- a TiDB-specific table-source suffix for
+## approximate, storage-region-boundary-based row sampling. Read directly
+## from real TiDB's own hand-written parser (pkg/parser/join_parser.go)
+## and AST restore (pkg/parser/ast/dml.go's TableSample.Restore): the
+## written REGIONS spelling always restores as the singular REGION, and
+## an empty TABLESAMPLE () clause is real, valid grammar. Only valid on a
+## plain table reference, never a derived table. ALWAYS Unsupported at
+## execution time, unconditionally -- confirmed via gorun that it has a
+## REAL semantic effect tied to actual TiKV storage regions, which this
+## crate's in-memory table representation has no analogue for (same
+## precedent as tidb_ast::TableRef::partitions).
+select * from a tablesample regions() order by pk
+select * from t tablesample regions() order by a
+select a from t as t1 tablesample regions(), t as t2 tablesample system()
+select a from t tablesample ()
+select a from t tablesample system(50 percent) repeatable(10)
+select a from t tablesample bernoulli(10 rows)
+select * from t as t1 use index (idx1) tablesample regions() where a = 1

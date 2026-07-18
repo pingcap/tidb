@@ -1,0 +1,3 @@
+# Source-owned CTE first-error precedence test-port evidence.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/executor/test/cte/cte_test.go	113	TestCTEExecError	PARTIAL	executor-cte-first-error-wave	rust/crates/tidb-exec/tests/cte_first_error_source.rs	Rust covers nil/new, existing/new, existing/nil, and nil/nil precedence plus concrete-value preservation; Go CTE execution, worker scheduling, logging, and error-wrapper identity remain external.

@@ -1,0 +1,4 @@
+# Source-owned dynamic system-variable initial-value test evidence.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/sessionctx/variable/sysvar_test.go	1575	TestGlobalSystemVariableInitialValue	PARTIAL	session-global-sysvar-initial-wave	rust/crates/tidb-exec/tests/global_sysvar_initial_source.rs	Rust covers the source override table for TiKV async/1PC, test OOM/auto-analyze, row format, classic assertion/fair-locking, mutation checker, and unchanged values; live variable registry/session state remains external.
+go_test	pkg/sessionctx/variable/nextgen_test.go	27	TestTiDBPessimisticTransactionFairLocking	PARTIAL	session-global-sysvar-initial-wave	rust/crates/tidb-exec/tests/global_sysvar_initial_source.rs	Rust covers the next-gen fair-locking OFF and strict assertion branches through explicit kernel facts; nextgen build-tagged validation and SessionVars hooks remain external.

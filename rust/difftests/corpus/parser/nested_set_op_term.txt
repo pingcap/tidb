@@ -1,0 +1,5 @@
+select * from (select 1 union select 1)
+select * from (select 1 INTERSECT select 1)
+select * from t1 intersect (select * from t2 except (select * from t3))
+select * from t1 union (select * from t2 union all select * from t3)
+select * from t1 union all (select * from t2 except select * from t3)

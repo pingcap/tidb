@@ -1,0 +1,10 @@
+## Exact SQL statements from tests/integrationtest/t/executor/union_scan.test
+## TestIssue36903, source lines 187-194. Only the source-test label and
+## --sorted_result directive are omitted because they are not SQL.
+drop table if exists t_vwvgdc;
+CREATE TABLE t_vwvgdc (wkey int, pkey int NOT NULL, c_rdsfbc double DEFAULT NULL, PRIMARY KEY (`pkey`));
+insert into t_vwvgdc values (2, 15000, 61.75);
+BEGIN OPTIMISTIC;
+insert into t_vwvgdc (wkey, pkey, c_rdsfbc) values (155, 228000, 99.50);
+select pkey from t_vwvgdc where 0 <> 0 union select pkey from t_vwvgdc;
+rollback;

@@ -1,0 +1,18 @@
+#IDX 179
+CREATE TABLE `t` (`a` INT,`b` INT,PRIMARY KEY `pk_ab`(`a`, `b`))
+#END
+#IDX 180
+CREATE TABLE `t` (`a` INT,`b` INT,UNIQUE `idx_ab`(`a`, `b`))
+#END
+#IDX 181
+CREATE TABLE `t` (`a` INT,`b` INT,UNIQUE `uq_ab`(`a`, `b`))
+#END
+#IDX 182
+CREATE TABLE `t` (`a` INT,`b` INT,UNIQUE `uq_ab`(`a`, `b`))
+#END
+#IDX 183
+CREATE TABLE `t` (`a` INT,`b` INT,UNIQUE `cn1`(`a`, `b`))
+#END
+#IDX 184
+CREATE TABLE `t` (`a` INT,PRIMARY KEY(`a`))
+#END

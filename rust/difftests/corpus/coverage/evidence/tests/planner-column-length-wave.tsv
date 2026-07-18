@@ -1,0 +1,3 @@
+# Source-owned test evidence fragment for planner-column-length-wave.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/planner/util/path_test.go	30	TestCompareCol2Len	PARTIAL	planner-column-length-wave	rust/difftests/planner-tests/tests/column_length.rs	Rust vectors preserve all six source Col2Len ordering/comparability cases plus shared-column unspecified-length ordering; AccessPath/ranger integration remains external.

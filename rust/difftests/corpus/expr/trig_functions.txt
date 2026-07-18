@@ -1,0 +1,25 @@
+## Trigonometric functions (SIN/COS/TAN/ASIN/ACOS/ATAN/ATAN2/COT/
+## RADIANS/DEGREES), always promoting to Float. ASIN/ACOS return NULL
+## outside [-1, 1] (MySQL's own explicit domain check, mirroring SQRT's);
+## everything else here has no such check and instead goes through the
+## same finite_float overflow/NaN check POW/EXP already use (not
+## required by this corpus -- COT(0) is a genuine ERR, covered by a
+## direct unit test instead, same as POW/EXP's own overflow cases).
+## ATAN(y, x) (2 args) is exactly ATAN2(y, x), same argument order.
+sin(0)
+sin(pi() / 2)
+cos(0)
+cos(pi())
+tan(0)
+asin(1)
+asin(2)
+acos(1)
+acos(2)
+atan(1)
+atan2(1, 1)
+atan(1, 2)
+atan2(1, 2)
+cot(1)
+radians(180)
+degrees(pi())
+degrees(-1)

@@ -1,0 +1,12 @@
+#IDX 0
+SELECT /*+ RESOURCE_GROUP(`rg1`)*/ * FROM `t1`
+#END
+#IDX 1
+SELECT /*+ RESOURCE_GROUP(`default`)*/ * FROM `t1`
+#END
+#IDX 2
+SELECT /*+ RESOURCE_GROUP(`rg1`) RESOURCE_GROUP(`default`)*/ * FROM `t1`
+#END
+#IDX 3
+SELECT `DB`,`RESOURCE_GROUP` FROM `information_schema`.`processlist` WHERE `DB`=_UTF8MB4'x'
+#END

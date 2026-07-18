@@ -1,0 +1,4 @@
+# Source-owned physical chunk-codec test evidence.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/util/chunk/codec_test.go	26	TestCodec	PARTIAL	tidb-chunk-codec-wave	rust/crates/tidb-codec/tests/column_source.rs	Fixed/variable physical framing, null bitmap semantics, offsets, truncation, and remainder are covered; scalar integer/float/string Datum materialization is bounded in typed_column_source.rs while opaque types remain open
+go_test	pkg/util/chunk/codec_test.go	76	TestEstimateTypeWidth	PARTIAL	tidb-chunk-codec-wave	rust/crates/tidb-codec/tests/column_source.rs	The decoder accepts explicit fixed widths and ColumnLayout::for_field_type mirrors getFixedLen; Go EstimateTypeWidth heuristics and non-scalar Datum materialization remain open

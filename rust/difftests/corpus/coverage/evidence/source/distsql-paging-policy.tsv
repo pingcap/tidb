@@ -1,0 +1,3 @@
+# Complete source ownership for the DistSQL row-paging policy.
+# source_path	status	owner	evidence_artifact	note
+pkg/util/paging/paging.go	COVERED	distsql-paging-policy	rust/crates/tidb-distsql/src/paging.rs	All exported constants, private growth constants, defensive maximum floor, wrapping uint64 doubling, growth cap, zero/small/geometric/excess seek-count branches, and exact boundaries are directly translated; PagingConfig defaults consume the same minimum and maximum authority, while range calculation, retry, transport, and response handling remain outside this source file and claim

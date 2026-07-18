@@ -1,0 +1,192 @@
+#IDX 0
+CREATE TABLE `dbb`.`tbb1` (`id` VARCHAR(128) NOT NULL)
+#END
+#IDX 1
+CREATE TABLE `tbb2` (`id` VARCHAR(128) NOT NULL)
+#END
+#IDX 2
+CREATE TABLE `tbb3` (`id` VARCHAR(128) NOT NULL)
+#END
+#IDX 3
+CREATE TABLE `dbb`.`hello-world` (`id` VARCHAR(128) NOT NULL)
+#END
+#IDX 4
+CREATE TABLE `dbb`.`hello-world` (`id` VARCHAR(128) NOT NULL)
+#END
+#IDX 5
+CREATE TABLE `dbb.HelloWorld` (`id` VARCHAR(128) NOT NULL)
+#END
+#IDX 6
+SELECT * FROM `t` USE INDEX (`hello`)
+#END
+#IDX 7
+SELECT * FROM `t` USE INDEX (`hello`, `world`)
+#END
+#IDX 8
+SELECT * FROM `t` USE INDEX ()
+#END
+#IDX 9
+SELECT * FROM `t` USE INDEX ()
+#END
+#IDX 10
+SELECT * FROM `t` IGNORE INDEX ()
+#END
+#IDX 11
+SELECT * FROM `t` FORCE INDEX ()
+#END
+#IDX 12
+SELECT * FROM `t` USE INDEX FOR ORDER BY (`idx1`)
+#END
+#IDX 13
+SELECT * FROM `t` USE INDEX (`hello`, `world`, `yes`) FORCE INDEX (`good`)
+#END
+#IDX 14
+SELECT * FROM `t` USE INDEX (`hello`, `world`, `yes`) USE INDEX FOR ORDER BY (`good`)
+#END
+#IDX 15
+SELECT * FROM `t` IGNORE INDEX (`hello`, `world`, `yes`) FORCE INDEX (`good`)
+#END
+#IDX 16
+SELECT * FROM `t` USE INDEX FOR GROUP BY (`idx1`) USE INDEX FOR ORDER BY (`idx2`)
+#END
+#IDX 17
+SELECT * FROM `t` USE INDEX FOR GROUP BY (`idx1`) IGNORE INDEX FOR ORDER BY (`idx2`)
+#END
+#IDX 18
+SELECT * FROM `t` USE INDEX FOR GROUP BY (`idx1`) IGNORE INDEX FOR GROUP BY (`idx2`)
+#END
+#IDX 19
+SELECT * FROM `t` USE INDEX FOR ORDER BY (`idx1`) IGNORE INDEX FOR GROUP BY (`idx2`)
+#END
+#IDX 20
+SELECT * FROM `t` USE INDEX FOR ORDER BY (`idx1`) IGNORE INDEX FOR GROUP BY (`idx2`) USE INDEX (`idx3`)
+#END
+#IDX 21
+SELECT * FROM `t` USE INDEX FOR ORDER BY (`idx1`) IGNORE INDEX FOR GROUP BY (`idx2`) USE INDEX (`idx3`)
+#END
+#IDX 22
+SELECT * FROM `t` USE INDEX (`foo``bar`) FORCE INDEX (`baz``1`, `xyz`)
+#END
+#IDX 23
+SELECT * FROM `t` FORCE INDEX (`foo``bar`) IGNORE INDEX (`baz``1`, `xyz`)
+#END
+#IDX 24
+SELECT * FROM `t` IGNORE INDEX (`foo``bar`) FORCE INDEX (`baz``1`, `xyz`)
+#END
+#IDX 25
+SELECT * FROM `t` IGNORE INDEX (`foo``bar`) IGNORE INDEX FOR GROUP BY (`baz``1`, `xyz`)
+#END
+#IDX 26
+SELECT * FROM `t` IGNORE INDEX (`foo``bar`) IGNORE INDEX FOR ORDER BY (`baz``1`, `xyz`)
+#END
+#IDX 27
+SELECT * FROM `t` USE INDEX FOR GROUP BY (`foo``bar`) USE INDEX FOR ORDER BY (`baz``1`, `xyz`)
+#END
+#IDX 28
+SELECT * FROM `t` USE INDEX FOR GROUP BY (`foo``bar`) IGNORE INDEX FOR ORDER BY (`baz``1`, `xyz`)
+#END
+#IDX 29
+SELECT * FROM `t` USE INDEX FOR GROUP BY (`foo``bar`) IGNORE INDEX FOR GROUP BY (`baz``1`, `xyz`)
+#END
+#IDX 30
+SELECT * FROM `t` USE INDEX FOR ORDER BY (`foo``bar`) IGNORE INDEX FOR GROUP BY (`baz``1`, `xyz`)
+#END
+#IDX 31
+SELECT * FROM `t` AS `tt` USE INDEX FOR ORDER BY (`foo``bar`) IGNORE INDEX FOR GROUP BY (`baz``1`, `xyz`)
+#END
+#IDX 32
+SELECT * FROM `t` AS `tt` USE INDEX FOR ORDER BY (`foo``bar`) IGNORE INDEX FOR GROUP BY (`baz``1`, `xyz`)
+#END
+#IDX 33
+SELECT * FROM `tbl`
+#END
+#IDX 34
+SELECT * FROM `tbl` AS `t`
+#END
+#IDX 35
+SELECT * FROM (SELECT * FROM `tbl`) AS `t`
+#END
+#IDX 36
+SELECT * FROM (SELECT * FROM `a` UNION SELECT * FROM `b`) AS `t`
+#END
+#IDX 37
+SELECT * FROM `t1` JOIN `t2` ON `t1`.`a`=`t2`.`a`
+#END
+#IDX 38
+SELECT * FROM `t1` JOIN `t2` ON `t1`.`a`=`t2`.`a` AND `t1`.`b`=`t2`.`b`
+#END
+#IDX 39
+SELECT * FROM `t1` NATURAL JOIN `t2`
+#END
+#IDX 40
+SELECT * FROM `t1` NATURAL LEFT JOIN `t2`
+#END
+#IDX 41
+SELECT * FROM `t1` NATURAL RIGHT JOIN `t2`
+#END
+#IDX 42
+SELECT * FROM `t1` STRAIGHT_JOIN `t2`
+#END
+#IDX 43
+SELECT * FROM `t1` STRAIGHT_JOIN `t2` ON `t1`.`a`>`t2`.`a`
+#END
+#IDX 44
+SELECT * FROM `t1` JOIN `t2`
+#END
+#IDX 45
+SELECT * FROM `t1` JOIN `t2` ON `t1`.`a`>`t2`.`a`
+#END
+#IDX 46
+SELECT * FROM `t1` JOIN `t2` USING (`b`)
+#END
+#IDX 47
+SELECT * FROM (`t1` JOIN `t2` USING (`b`,`c`)) LEFT JOIN `t3` ON `t1`.`a`>`t3`.`a`
+#END
+#IDX 48
+SELECT * FROM (`t1` NATURAL JOIN `t2`) RIGHT JOIN `t3` USING (`b`,`c`)
+#END
+#IDX 49
+SELECT * FROM (`t1`) JOIN `t2`
+#END
+#IDX 50
+SELECT * FROM ((`t1`) JOIN `t2`) JOIN `t3`
+#END
+#IDX 51
+SELECT * FROM (SELECT * FROM `t`) AS `t1`, ((`t2`) JOIN `t3`)
+#END
+#IDX 52
+SELECT * FROM (SELECT * FROM `t`) AS `t1`, `t2`
+#END
+#IDX 53
+SELECT * FROM (SELECT * FROM (SELECT `a` FROM `t1`) AS `tb1`) AS `tb`
+#END
+#IDX 54
+SELECT * FROM (SELECT * FROM `t`) AS `t1` JOIN `t2`
+#END
+#IDX 55
+SELECT * FROM (SELECT * FROM `t`) AS `t1` NATURAL JOIN `t2`
+#END
+#IDX 56
+SELECT * FROM (SELECT * FROM `t`) AS `t1` JOIN `t2` ON `t1`.`a`>`t2`.`a`
+#END
+#IDX 57
+SELECT * FROM (SELECT * FROM `t` UNION SELECT * FROM `t1`) AS `tb1`, `t2`
+#END
+#IDX 58
+SELECT * FROM ((SELECT `a` FROM `t`) AS `t1` JOIN `t` AS `t2`) JOIN `t3`
+#END
+#IDX 59
+SELECT * FROM (`a` AS `al` LEFT JOIN `b` AS `bl` ON `al`.`a1`>`bl`.`b1`) JOIN (`a` AS `ar` RIGHT JOIN `b` AS `br` ON `ar`.`a1`>`br`.`b1`)
+#END
+#IDX 60
+SELECT * FROM (`a` AS `al` LEFT JOIN `b` AS `bl` ON `al`.`a1`>`bl`.`b1`) JOIN (`a` AS `ar` RIGHT JOIN `b` AS `br` ON `ar`.`a1`>`br`.`b1`)
+#END
+#IDX 61
+SELECT * FROM `t1` JOIN ((`t2` RIGHT JOIN `t3` ON `t2`.`a`>`t3`.`a`) JOIN (`t4` RIGHT JOIN `t5` ON `t4`.`a`>`t5`.`a`))
+#END
+#IDX 62
+SELECT * FROM (`t1` JOIN `t2`) RIGHT JOIN `t3` ON `t2`.`a`=`t3`.`a`
+#END
+#IDX 63
+SELECT * FROM `t1` JOIN (`t2` RIGHT JOIN `t3` ON `t2`.`a`=`t3`.`a`)
+#END

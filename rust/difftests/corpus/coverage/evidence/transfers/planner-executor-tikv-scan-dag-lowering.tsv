@@ -1,0 +1,3 @@
+# Move only protobuf/runtime ownership of PhysicalIndexScan; cardinality tests and sibling sources remain with the existing partial planner owner.
+# old_owner	new_owner	source_path	test_path	test_line	test_name	retired_artifacts	new_artifacts	note
+planner-cardinality-live-index-choice	planner-executor-tikv-scan-dag-lowering	pkg/planner/core/operator/physicalop/physical_index_scan.go	-	-	-	-	rust/crates/tidb-planner/src/physical_index_scan.rs,rust/difftests/corpus/coverage/evidence/source/planner-executor-tikv-scan-dag-lowering.tsv	The live scan metadata and cost consumer remain intact while the successor adds the missing direct ToPB and DAGRequest consumer; the predecessor retains all cardinality source and test ownership.

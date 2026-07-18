@@ -1,0 +1,27 @@
+#IDX 0
+SELECT `a` FROM (SELECT 1 AS `a`) AS `x`, (SELECT 2 AS `a`) AS `x`
+#END
+#IDX 1
+SELECT `a` FROM (`t1`) JOIN `t2`
+#END
+#IDX 2
+SELECT `a` FROM (SELECT 1 AS `a`) AS `x`, `t2`
+#END
+#IDX 3
+SELECT `a` FROM (`t1`) JOIN (SELECT 2 AS `a`) AS `x`
+#END
+#IDX 4
+SELECT `a` FROM ((`t1`) JOIN `t2`) JOIN `t3`
+#END
+#IDX 5
+SELECT `a` FROM ((SELECT 1 AS `a`) AS `x`, (SELECT 2 AS `a`) AS `y`) JOIN `t3`
+#END
+#IDX 6
+SELECT `a` FROM ((SELECT 1 AS `a`) AS `x`, `t2`) JOIN (SELECT 2 AS `a`) AS `y`
+#END
+#IDX 7
+SELECT `a` FROM (SELECT 1 AS `a`) AS `x` JOIN (SELECT 2 AS `a`) AS `y` ON `x`.`a`=`y`.`a`
+#END
+#IDX 8
+SELECT `t1`.`ts` FROM (SELECT `ts` FROM `tsup` USE INDEX (`idx`)) AS `t1`, (SELECT `ts` FROM `tsup` USE INDEX ()) AS `t2`
+#END

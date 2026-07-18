@@ -1,0 +1,3 @@
+# Source-owned test evidence for txnkv-mvcc-metadata-wave.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test_file	pkg/store/mockstore/unistore/tikv/mvcc_test.go	0	mvcc_test.go	PARTIAL	txnkv-mvcc-metadata-wave	rust/difftests/transaction-tests/tests/mvcc_metadata.rs	Focused tests pin the dependency-closed write-CF type/varint/remainder bytes, DBUserMeta little-endian pair, timestamp suffix, extra-status key boundaries, and safe lock metadata fields; the original Badger lockstore PD and full MVCC integration tests remain open.

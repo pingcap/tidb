@@ -1,0 +1,3 @@
+# Source-owned production evidence for the bounded FIELD scalar leaf.
+# source_path	status	owner	evidence_artifact	note
+pkg/expression/builtin_string.go	PARTIAL	expression-field-signature-source-wave	rust/crates/tidb-expr/src/string_fn.rs	FIELD now selects one source-shaped comparison signature for the complete argument list: ETString for all-text values, ETInt for all-integral values, and ETReal for mixed/decimal/real values; FROM_BASE64 now follows Go StdEncoding padding/CRLF/space/tab rules and preserves binary output; FieldType/function-class, collation/session, warning, and vectorized paths remain explicit partial boundaries.

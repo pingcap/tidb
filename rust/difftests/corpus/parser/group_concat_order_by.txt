@@ -1,0 +1,13 @@
+## `GROUP_CONCAT([DISTINCT] arg [, arg ...] [ORDER BY item [, item ...]]
+## [SEPARATOR sep])` -- GROUP_CONCAT's own ORDER BY clause, controlling the
+## row order within the concatenated result. Found while investigating why
+## these previously failed to parse at all. A positional item (`ORDER BY
+## 1`) refers to GROUP_CONCAT's OWN argument list position, a separate
+## scope from the outer SELECT's own ORDER BY (confirmed via godump
+## restore). This crate's own execution rejects a non-empty ORDER BY
+## cleanly (Unsupported) rather than silently concatenating in an
+## unspecified row order -- see tidb_ast::Expr::GroupConcat's own doc.
+select group_concat(distinct name order by name desc) from t
+select group_concat(name order by name desc separator '++'), group_concat(id order by name desc, id asc separator '--') from t
+select group_concat(a, b order by 1 desc, a) from t
+select group_concat(name order by name) from t

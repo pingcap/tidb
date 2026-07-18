@@ -1,0 +1,9 @@
+## `/*+ ... */` optimizer hints have NO effect on execution results at all
+## (confirmed against real TiDB: gorun-stable across repeated
+## regenerations) -- parsed and restored for fidelity only, matching the
+## same "parsed but not read at execution" precedent index hints and
+## table options already follow.
+create table ht1 (a int, b int)
+insert into ht1 values (1, 10), (2, 20)
+select /*+ USE_INDEX(ht1, idx) */ a from ht1 where b = 10
+select /*+ SET_VAR(tidb_max_keys_read=5) */ a, b from ht1

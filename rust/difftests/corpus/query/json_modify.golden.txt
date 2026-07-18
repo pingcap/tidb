@@ -1,0 +1,9 @@
+RS:{"a": 3}
+RS:{"a": 3}
+RS:{}
+RS:{"a": 3, "b": "3"}
+RS:{"a": null, "b": "nil"}
+RS:[{}]
+ERR
+RS:[{}]
+ERR

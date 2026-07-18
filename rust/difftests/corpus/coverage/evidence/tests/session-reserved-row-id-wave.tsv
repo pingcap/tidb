@@ -1,0 +1,3 @@
+# Source-owned test-port fragment for session-reserved-row-id-wave.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/sessionctx/stmtctx/stmtctx_test.go	566	TestReservedRowIDAlloc	PARTIAL	session-reserved-row-id-wave	rust/crates/tidb-exec/tests/reserved_row_id_source.rs	Direct tests cover the original default/exhaustion and reset/consumption sequence; table mutate-context plumbing and auto-ID service integration remain external

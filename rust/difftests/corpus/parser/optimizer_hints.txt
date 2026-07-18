@@ -1,0 +1,33 @@
+## `SELECT /*+ ... */` optimizer-hint comments — only recognized directly
+## after `SELECT` (matching tidb_lexer's own HINTED_KEYWORDS gate).
+## Covers the four grammar shapes confirmed (via a stratified sample of
+## real TiDB's own integration-test corpus) to account for the
+## overwhelming majority of real-world hint usage; see
+## tidb_ast::Hint's own doc for the exact scope boundary (LEADING,
+## QB_NAME, RESOURCE_GROUP, READ_FROM_STORAGE, NTH_PLAN,
+## MAX_EXECUTION_TIME, and any unrecognized name are genuine
+## ParseErrors here, covered by tidb-parser's own unit test as
+## rejections, not this corpus).
+select /*+ SET_VAR(tidb_max_keys_read=0) */ @@tidb_max_keys_read
+select /*+ TIDB_HJ(t1, t2) */ * from t1, t2
+select /*+ HASH_JOIN(t1@sel_1, t2) */ * from t1, t2
+select /*+ use_index_merge(t, idx1, idx2) */ a from t
+select /*+ straight_join() */ a from t
+select /*+ straight_join */ a from t
+select /*+ no_decorrelate() */ a from t
+select /*+ set_var(sql_mode = "ONLY_FULL_GROUP_BY") */ 1
+select /*+ set_var(tidb_allow_mpp=1) */ 1
+select /*+ set_var(tidb_partition_prune_mode=static) */ 1
+select /*+ set_var(tidb_opt_ordering_index_selectivity_ratio=-1) */ 1
+select /*+ set_var(tidb_default_string_match_selectivity=0.5) */ 1
+select /*+ SET_VAR(tidb_max_keys_read=25), USE_INDEX(t_mrs, idx_val) */ extra from t_mrs where val >= 1
+## `MERGE` is a real, isolated PARSE/RESTORE asymmetry (see
+## tidb_ast::Hint's own doc) -- parses a table list but always restores
+## bare, discarding it.
+select /*+ merge(q) */ * from q
+select /*+ ignore_index(t, idx) */ a from t
+## A hint comment written anywhere OTHER than directly after SELECT is
+## silently dropped as an ordinary comment, not recognized as a hint at
+## all -- confirmed via godump restore (no /*+ ... */ visible on
+## restore, and no ParseError either).
+select distinct /*+ SET_VAR(a=1) */ b from t

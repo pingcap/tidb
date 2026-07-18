@@ -1,0 +1,28 @@
+[package]
+name = "difftest"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Differential test harness: Rust lexer/parser vs the Go implementation."
+publish = false
+autotests = false
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-lexer = { path = "../crates/tidb-lexer" }
+tidb-parser = { path = "../crates/tidb-parser" }
+
+[[test]]
+name = "go_test_ledger"
+path = "tests/go_test_ledger.rs"
+[[test]]
+name = "integration_plan_inventory"
+path = "tests/integration_plan_inventory.rs"
+
+[[test]]
+name = "domain_queue"
+path = "tests/domain_queue.rs"

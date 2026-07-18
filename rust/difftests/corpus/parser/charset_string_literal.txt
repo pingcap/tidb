@@ -1,0 +1,12 @@
+select * from t where a = N'a';
+select * from t where a = _latin1'a';
+select * from t where a = _utf8'a';
+select _utf8"string";
+select concat(a, if(b>10, N'x', N'y')) from t1;
+select collation(_utf8mb4'12345' collate utf8mb4_general_ci);
+select collation(_utf8mb4'12345');
+select collation(_utf8mb4'@a' collate utf8mb4_general_ci);
+select collation(_utf8mb4'@a');
+select collation(_utf8mb4'xxx' collate utf8mb4_general_ci);
+select collation(concat(_latin1 'a', convert('啊' using gbk) collate gbk_bin));
+select ord(X''), ord(X'6161'), ord(X'e4bd'), ord(X'e4bda0'), ord(_ascii'你'), ord(_latin1'你');

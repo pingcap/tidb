@@ -1,0 +1,5 @@
+# Source-owned test-evidence fragment for transaction-wave7.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/expression/builtin_math_test.go	366	TestRand	PARTIAL	transaction-wave7	rust/difftests/corpus/table/rand_session.txt	Constant RAND(N) advances per source AST occurrence across rows; row-dependent RAND(expr) reseeds per row; NULL seed is zero
+go_test	pkg/util/mathutil/rand_test.go	42	TestRandWithSeed	PARTIAL	transaction-wave7	rust/crates/tidb-expr/src/rng.rs	All four source NewWithSeed recurrence vectors are asserted in the Rust unit test
+go_test	pkg/util/mathutil/rand_test.go	60	TestRandWithSeed1AndSeed2	PARTIAL	transaction-wave7	rust/crates/tidb-expr/src/rng.rs	Source raw seed setter and three-step recurrence vectors are asserted in the Rust unit test

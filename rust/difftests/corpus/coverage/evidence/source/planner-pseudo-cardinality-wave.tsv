@@ -1,0 +1,3 @@
+# Source-owned planner pseudo-cardinality evidence.
+# source_path	status	owner	evidence_artifact	note
+pkg/planner/cardinality/pseudo.go	PARTIAL	planner-pseudo-cardinality-wave	rust/crates/tidb-planner/src/cardinality/pseudo.rs	The Rust planner now ports the pseudo equality/less/between divisors and signed, unsigned, scalar, and prefix-index range arithmetic; pseudoSelectivity's session/expression/catalog inspection and full statistics/index integration remain open.

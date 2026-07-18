@@ -1,0 +1,3 @@
+# Source-owned system-session pool capacity test-port evidence.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/session/syssession/pool_test.go	38	TestNewSessionPool	PARTIAL	session-pool-capacity-wave	rust/crates/tidb-exec/tests/session_pool_capacity_source.rs	Focused Rust vectors cover normal, zero, negative, exact-maximum, over-maximum, and in-range capacities; Go factory/channel/session lifecycle and suppressed assertion behavior remain external.

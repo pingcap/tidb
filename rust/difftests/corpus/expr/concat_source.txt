@@ -1,0 +1,5 @@
+concat(null)
+concat('a', 'b', 1, 2, 1.1, 1.2, cast(1.1 as decimal(3, 1)))
+concat('a', 'b', null, 'c')
+concat(0xFF, 'a')
+concat('a', unhex('FF00'))

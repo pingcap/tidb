@@ -1,0 +1,3 @@
+# Source-owned stats-table equality test evidence.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/statistics/handle/handletest/statstest/stats_test.go	307	TestStatsStoreAndLoad	PARTIAL	stats-table-snapshot-wave	rust/crates/tidb-stats/tests/stats_table_snapshot_source.rs	Rust pins the table equality contract invoked at line 333 after stats store/load; SQL/session setup, statistics.Table reconstruction, payload encoding, and storage lifecycle remain external.

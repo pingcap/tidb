@@ -1,0 +1,3 @@
+# Source-owned evidence fragment for planner-column-length-wave.
+# source_path	status	owner	evidence_artifact	note
+pkg/planner/util/path.go	PARTIAL	planner-column-length-wave	rust/crates/tidb-planner/src/column_length.rs	Ports source Col2Len/compareLength/dominate/CompareCol2Len semantics from lines 420-523; AccessPath, expression extraction, ranger values, index metadata, and session context remain external.

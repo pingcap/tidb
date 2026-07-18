@@ -1,0 +1,12 @@
+OK
+OK
+OK
+OK
+RS:1|a|x;2|b|y
+RS:a|x;b|y
+RS:1|a|x;2|b|y
+RS:1|1;2|2
+RS:1|a|x;2|b|y;3|c|<nil>
+RS:1|x|a;2|y|b;9|z|<nil>
+RS:1
+RS:2

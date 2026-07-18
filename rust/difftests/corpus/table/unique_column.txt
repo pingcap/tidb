@@ -1,0 +1,10 @@
+## UNIQUE column: a duplicate-key conflict via a non-primary UNIQUE column
+## updates the row that OWNS the conflicting value, same dispatch as PRIMARY
+create table users (id int primary key, email varchar(20) unique, v int)
+insert into users values (1, 'a@x.com', 10)
+insert into users values (2, 'a@x.com', 20) on duplicate key update v = 999
+select id, email, v from users order by id
+insert ignore into users values (3, 'a@x.com', 30)
+select id, email, v from users order by id
+insert into users values (4, 'z@x.com', 40)
+select id, email, v from users order by id

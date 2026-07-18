@@ -1,0 +1,3 @@
+# Source-owned evidence fragment for planner-resolve-grouping-expand-wave.
+# source_path	status	owner	evidence_artifact	note
+pkg/planner/core/rule_resolve_grouping_expand.go	PARTIAL	planner-resolve-grouping-expand-wave	rust/crates/tidb-planner/src/resolve_grouping_expand.rs	Ports genExpand's post-order child traversal, Expand-only level generation, append-style generated-level count, untouched non-expand nodes, and stable resolve_expand name over a structural adapter; LogicalExpand grouping-set expressions, schema/GID/GPos construction, SQL plan output, and planner error/session integration remain external.

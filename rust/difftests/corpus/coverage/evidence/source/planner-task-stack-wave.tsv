@@ -1,0 +1,3 @@
+# Source-owned planner task stack evidence.
+# source_path	status	owner	evidence_artifact	note
+pkg/planner/cascades/task/task.go	PARTIAL	planner-task-stack-wave	rust/crates/tidb-planner/src/task_stack.rs	The Rust leaf ports the reusable LIFO stack contract, including default capacity, push/pop/empty/length, description order, and destroy clearing while retaining allocation capacity; the source stack-pool, base.Task interface, cascades context, and unsafe Go layout assertions remain external.

@@ -1,0 +1,21 @@
+schema = "1"
+slice = "distsql-select-response-consumption"
+status = "retired"
+target = "tidb-distsql"
+ring = "result"
+consumer = "Superseded by distsql-query-response-runtime except for the indivisible TestSelectResultIter domain transferred to server-distsql-streaming-resultset; retained only as their checked ownership-transfer predecessor"
+test_target = "select_result_source"
+go_sources = ["pkg/distsql/select_result.go"]
+go_tests = [
+  "pkg/distsql/select_result_test.go:0:select_result_test.go",
+  "pkg/distsql/select_result_test.go:37:TestUpdateCopRuntimeStats",
+  "pkg/distsql/select_result_test.go:77:TestNewSelRespChannelIter",
+  "pkg/distsql/select_result_test.go:183:TestSelRespChannelIterRead",
+  "pkg/distsql/select_result_test.go:387:TestSelectResultIter/<generated>",
+]
+depends_on = []
+evidence_prerequisites = []
+rust_paths = [
+  "rust/difftests/corpus/coverage/evidence/transfers/distsql-query-response-runtime.tsv",
+  "rust/difftests/corpus/coverage/evidence/transfers/server-distsql-streaming-resultset.tsv",
+]

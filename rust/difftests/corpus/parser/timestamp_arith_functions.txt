@@ -1,0 +1,16 @@
+## `TIMESTAMPADD(unit, interval, datetime_expr)` / `TIMESTAMPDIFF(unit,
+## expr1, expr2)` / `GET_FORMAT(DATE|TIME|DATETIME|TIMESTAMP, format_expr)`
+## -- each function's own FIRST argument is a bare unit/format keyword, a
+## genuinely different grammar production from an ordinary comma-separated
+## expression argument (read directly from real TiDB's own hand-written
+## parser, pkg/parser/expr_func_parser.go's parseTimestampAddFuncCall/
+## parseGetFormatFuncCall). Found while investigating why these previously
+## failed to parse at all (a pre-existing gap, unrelated to and unmasked
+## by adding non-reserved-keyword-as-identifier support). TIMESTAMP
+## normalizes to DATETIME for GET_FORMAT (confirmed via godump restore).
+select timestampadd(hour, 1, '2025-03-30 02:30:00')
+select timestampadd(hour, 1, ts) from t
+select timestampdiff(hour, '2025-03-30 01:59:59', '2025-03-30 02:30:00')
+select timestampdiff(hour, '2025-03-30 01:59:59', ts) from t
+select timestampadd(year, 1.212208e+308, '1995-01-05 06:32:20.859724') as result
+select get_format(date, 'jis'), get_format(datetime, 'iso'), get_format(timestamp, 'eur'), get_format(time, 'internal')

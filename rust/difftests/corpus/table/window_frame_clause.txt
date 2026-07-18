@@ -1,0 +1,32 @@
+## Window function explicit ROWS frame clause (ROWS BETWEEN <bound> AND
+## <bound>, and the single-bound ROWS <bound> shorthand): restricts the
+## window AGGREGATE / FIRST_VALUE/LAST_VALUE/NTH_VALUE shapes to a
+## PHYSICAL row-offset range around the current row, instead of the
+## implicit default RANGE-cumulative frame -- confirmed via gorun that
+## ROWS framing is NOT peer-group aware (two tied ORDER BY rows get their
+## own distinct value), that a frame whose start bound outranks its end
+## bound (UnboundedPreceding < Preceding < CurrentRow < Following <
+## UnboundedFollowing) is a genuine execution error regardless of the
+## PRECEDING/FOLLOWING offset's own value, while a same-kind pair that
+## happens to produce an empty range at runtime (e.g. 2 FOLLOWING AND 1
+## FOLLOWING) silently yields NULL/0 rather than erroring, and that a
+## frame clause is accepted but has NO effect on non-frame-eligible
+## functions (ROW_NUMBER etc). Also covers PARTITION BY, no ORDER BY,
+## and combination with GROUP BY.
+create table t (id int, dept varchar(10), v int)
+insert into t values (1,'a',10),(2,'a',20),(3,'a',20),(4,'b',30),(5,'b',40)
+select id, v, sum(v) over (order by id rows between 1 preceding and 1 following) from t
+select id, v, sum(v) over (order by id rows between unbounded preceding and current row) from t
+select id, v, sum(v) over (order by id rows between current row and unbounded following) from t
+select id, v, sum(v) over (order by id rows 2 preceding) from t
+select id, v, count(*) over (order by id rows between 1 following and 2 following) from t
+select id, v, sum(v) over (order by id rows between 2 following and 1 following) from t
+select id, v, first_value(v) over (order by id rows between 1 preceding and 1 following) from t
+select id, v, last_value(v) over (order by id rows between 1 preceding and 1 following) from t
+select id, v, nth_value(v, 2) over (order by id rows between 1 preceding and 1 following) from t
+select id, v, sum(v) over (order by v rows between 1 preceding and current row) from t
+select id, v, sum(v) over (rows between 1 preceding and 1 following) from t
+select id, dept, v, sum(v) over (partition by dept order by id rows between 1 preceding and 1 following) from t
+select id, row_number() over (order by id rows between 1 preceding and 1 following) from t
+select dept, sum(v) s, sum(sum(v)) over (order by dept rows between 1 preceding and current row) from t group by dept
+select id, v, sum(v) over (order by id rows between current row and 1 preceding) from t

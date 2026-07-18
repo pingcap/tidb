@@ -1,0 +1,9 @@
+## Scalar rows from pkg/expression/builtin_string_test.go TestConcatSig and
+## TestConcatWSSig. Chunk-column packet warnings and typed metadata remain in
+## the source evidence boundary, while these value rows run through SQL.
+select concat('a', 'b')
+select concat('中', 'a')
+select concat('中文', 'a')
+select concat_ws(',', 'a', 'b')
+select concat_ws(',', '中', 'a')
+select concat_ws(',', '中文', 'a')

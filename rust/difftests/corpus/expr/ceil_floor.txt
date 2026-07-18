@@ -1,0 +1,33 @@
+## CEIL/CEILING/FLOOR: Int stays Int; Decimal computes the EXACT ceiling/
+## floor (digit-string math, not via f64) and returns Int if it fits i64,
+## else Decimal itself -- real MySQL's own "BIGINT if it fits, else
+## DECIMAL" rule, confirmed via goeval, not assumed; Float stays Float --
+## the OPPOSITE convention from Decimal's own int-collapsing rule, also
+## confirmed via goeval. CEIL rounds toward +infinity, FLOOR toward
+## -infinity.
+ceil(3)
+ceil(3.14)
+ceil(-3.14)
+ceiling(3.14)
+floor(3)
+floor(3.14)
+floor(-3.14)
+ceil(1.5e2)
+ceil(3.7e0)
+floor(3.7e0)
+ceil(null)
+floor(null)
+ceil(0)
+ceil(0.0)
+ceil(-0.0e0)
+floor(-0.0e0)
+ceil(3.00)
+floor(-3.00)
+ceil(9223372036854775807)
+ceil(1.7976931348623157e308)
+floor(1.7976931348623157e308)
+## When the exact result exceeds i64's range, it stays Decimal rather
+## than erroring or silently truncating.
+ceil(99999999999999999999.5)
+floor(-99999999999999999999.5)
+ceil(9223372036854775807.5)

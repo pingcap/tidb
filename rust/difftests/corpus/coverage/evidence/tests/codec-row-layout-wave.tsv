@@ -1,0 +1,5 @@
+# Source-owned rowcodec framing test evidence.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/util/rowcodec/common_test.go	27	TestRemoveKeyspacePrefix	PARTIAL	codec-row-layout-wave	rust/crates/tidb-codec/tests/row_layout_source.rs	Runtime kernel/keyspace policy remains intentionally outside the dependency-closed Rust codec; common.go's format predicates and row metadata are covered separately.
+go_test	pkg/util/rowcodec/rowcodec_test.go	752	TestCodecUtil	PARTIAL	codec-row-layout-wave	rust/crates/tidb-codec/tests/row_layout_source.rs	New-format detection, row-key predicate, and ColumnIsNull's not-null/null/missing-default decision are covered on manually framed rows; old-row conversion and typed decode remain open.
+go_test_file	pkg/util/rowcodec/rowcodec_test.go	0	rowcodec_test.go	PARTIAL	codec-row-layout-wave	rust/crates/tidb-codec/tests/row_layout_source.rs	The source file remains a broad encoder/decoder suite. This leaf executes only its dependency-closed framing and lookup boundaries, preserving explicit gaps for row, encoder, decoder, schema, and tablecodec owners.

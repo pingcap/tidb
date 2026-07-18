@@ -1,0 +1,3 @@
+# Source-owned test-evidence fragment for the STR_TO_DATE parser wave.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/expression/builtin_time_test.go	1792	TestStrToDate	PARTIAL	time-str-to-date-source-wave	rust/crates/tidb-expr/src/time_fn/calendar.rs	All 28 representable source rows cover numeric date/time directives, case-insensitive AM/PM, %r/%T, fractional-second padding, invalid patterns, and %@/%#/%. skip directives; canonical string output stands in for typed DATE/DATETIME/DURATION, while SQLMode zero-date checks, warning state, and function-class type selection remain outside the value-only Datum boundary

@@ -1,0 +1,5 @@
+## DAYOFYEAR/DAYOFWEEK/WEEKDAY over actual DATE table columns
+create table dw (a date)
+insert into dw values ('2021-01-01')
+insert into dw values ('2021-03-15')
+select dayofyear(a), dayofweek(a), weekday(a) from dw order by a

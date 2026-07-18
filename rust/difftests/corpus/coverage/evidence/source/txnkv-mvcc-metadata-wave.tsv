@@ -1,0 +1,4 @@
+# Source-owned production evidence for txnkv-mvcc-metadata-wave.
+# source_path	status	owner	evidence_artifact	note
+pkg/store/mockstore/unistore/tikv/mvcc/tikv.go	PARTIAL	txnkv-mvcc-metadata-wave	rust/crates/tidb-txnkv/src/mvcc_metadata.rs	WriteType and LockType bytes plus EncodeWriteCFValue and ParseWriteCFValue are translated with the source remainder semantics; EncodeLockCFValue and DB-backed write batches remain open because they depend on lock payloads, badger, and kvproto.
+pkg/store/mockstore/unistore/tikv/mvcc/mvcc.go	PARTIAL	txnkv-mvcc-metadata-wave	rust/crates/tidb-txnkv/src/mvcc_metadata.rs	DbUserMeta, key timestamp suffix decoding, and extra transaction-status key encode/decode are typed safely; DecodeLock, MarshalBinary, ToLockInfo, and the unsafe Go lock layout remain explicit gaps.

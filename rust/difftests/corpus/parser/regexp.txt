@@ -1,0 +1,14 @@
+## `expr [NOT] REGEXP pattern` -- a regular-expression match predicate at
+## the SAME precedence level as LIKE/IN/BETWEEN (confirmed via godump
+## restore: `a REGEXP 'x' | 'y'` binds `|` into the pattern operand, the
+## SAME bit_expr precedence LIKE's own pattern uses). RLIKE is a real
+## MySQL synonym that normalizes to REGEXP on restore. Evaluation is
+## deliberately Unsupported -- see tidb_ast::Expr::Regexp's own doc for
+## why (this crate has no regex engine/external dependencies at all
+## today).
+select a regexp 'x' from t
+select a not regexp 'x' from t
+select 'a' rlike 'x'
+select a regexp 'x' | 'y' from t
+select a regexp 'x' and b from t
+select a from t where a regexp '.*'

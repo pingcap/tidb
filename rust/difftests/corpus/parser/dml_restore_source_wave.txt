@@ -1,0 +1,12 @@
+## Source-owned parser differential rows for pkg/parser/ast/dml_test.go:
+## TestLimitRestore:134, TestWildCardFieldRestore:146,
+## TestSelectFieldRestore:158, and TestFieldListRestore:172.
+SELECT 1 LIMIT 10
+SELECT 1 LIMIT 10,20
+SELECT 1 LIMIT 20 OFFSET 10
+SELECT *
+SELECT t.*
+SELECT testdb.t.*
+SELECT col AS a
+SELECT col + 1 a
+SELECT `t`.*, s.col AS a

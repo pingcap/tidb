@@ -1,0 +1,27 @@
+## Source anchor: pkg/session/test/txn/txn_test.go:378 TestInTrans.
+## The companion tidb-exec unit test asserts the source's direct transaction
+## liveness checks (`Session.Txn(true).Valid()`) against the executor's
+## rollback-snapshot boundary. This exact SQL sequence independently confirms
+## each source statement stays in the Rust execution domain.
+drop table if exists in_trans_src
+create table in_trans_src (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)
+insert in_trans_src values ()
+begin
+insert in_trans_src values ()
+drop table if exists in_trans_src
+create table in_trans_src (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)
+insert in_trans_src values ()
+commit
+insert in_trans_src values ()
+set autocommit=0
+begin
+insert in_trans_src values ()
+commit
+insert in_trans_src values ()
+commit
+set autocommit=1
+drop table if exists in_trans_src
+create table in_trans_src (id BIGINT PRIMARY KEY AUTO_INCREMENT NOT NULL)
+begin
+insert in_trans_src values ()
+rollback

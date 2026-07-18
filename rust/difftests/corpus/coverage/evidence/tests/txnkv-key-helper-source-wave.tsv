@@ -1,0 +1,4 @@
+# Source-owned direct behavior tests for the remaining portable key helpers in pkg/kv/key.go.
+# Existing TestPartialNext/TestIsPoint anchors remain owned by their prior waves; TestKeyRangeDefinition moved to txnkv-copr-key-ranges through a checked test-only transfer.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test_file	pkg/kv/key_test.go	0	key_test.go	PARTIAL	txnkv-key-helper-source-wave	rust/difftests/transaction-tests/tests/key_helpers.rs	Direct byte/order/prefix/clone/string and safe KeyRange boundary checks execute; TestKeyRangeDefinition now has separate PARTIAL safe-protobuf conversion evidence under txnkv-copr-key-ranges, while its unsafe alias and memory-size assertion remain unported

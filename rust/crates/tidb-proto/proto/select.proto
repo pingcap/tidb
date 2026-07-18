@@ -1,0 +1,280 @@
+// Source: github.com/pingcap/tipb/proto/select.proto
+//
+// This is a source-owned, dependency-closed projection of the request and
+// response messages used by TiDB's bounded TiKV scan and distsql SelectResult
+// paths. Field names, numbers, scalar types, repeated/optional cardinality, and
+// enum values are copied from the upstream proto. Generator-only
+// gogoproto/rustproto options and unsupported executor messages are omitted.
+syntax = "proto2";
+
+package tipb;
+
+// The two executor kinds admitted by the bounded TiKV scan lowering path.
+enum ExecType {
+  TypeTableScan = 0;
+  TypeIndexScan = 1;
+}
+
+enum EngineType {
+  Local = 0;
+  TiKV = 1;
+  TiFlash = 2;
+}
+
+// Dependency-closed projection of schema.proto ColumnInfo. The scalar fields
+// marked nullable=false upstream remain optional here so callers can preserve
+// their required wire presence with Some, including zero values.
+message ColumnInfo {
+  optional int64 column_id = 1;
+  optional int32 tp = 2;
+  optional int32 collation = 3;
+  optional int32 columnLen = 4;
+  optional int32 decimal = 5;
+  optional int32 flag = 6;
+  repeated string elems = 7;
+  optional bytes default_val = 8;
+  optional bool pk_handle = 21;
+  optional bool array = 22;
+}
+
+message TableScan {
+  optional int64 table_id = 1;
+  repeated ColumnInfo columns = 2;
+  optional bool desc = 3;
+  repeated int64 primary_column_ids = 4;
+  optional EngineType next_read_engine = 5;
+  repeated int64 primary_prefix_column_ids = 7;
+  optional bool keep_order = 8;
+  optional bool is_fast_scan = 9;
+  optional int32 max_wait_time_ms = 12;
+}
+
+message IndexScan {
+  optional int64 table_id = 1;
+  optional int64 index_id = 2;
+  repeated ColumnInfo columns = 3;
+  optional bool desc = 4;
+  optional bool unique = 5;
+  repeated int64 primary_column_ids = 6;
+}
+
+message Executor {
+  optional ExecType tp = 1;
+  optional TableScan tbl_scan = 2;
+  optional IndexScan idx_scan = 3;
+  optional string executor_id = 10;
+  optional uint32 parent_idx = 25;
+}
+
+// TiKV list-based DAG request fields owned by ConstructDAGReq. TiFlash's
+// tree-based root_executor and unrelated request settings are intentionally
+// absent from this bounded projection.
+message DAGRequest {
+  repeated Executor executors = 2;
+  optional int64 time_zone_offset = 3;
+  optional uint64 flags = 4;
+  optional EncodeType encode_type = 8;
+  optional string time_zone_name = 11;
+  optional bool collect_execution_summaries = 12;
+  optional ChunkMemoryLayout chunk_memory_layout = 14;
+  optional uint32 div_precision_increment = 19;
+}
+
+message ChunkMemoryLayout {
+  optional Endian endian = 1;
+}
+
+enum Endian {
+  LittleEndian = 0;
+  BigEndian = 1;
+}
+
+// Values are all in text format in the legacy row encoding.
+message Row {
+  optional bytes handle = 1;
+  optional bytes data = 2;
+}
+
+message Error {
+  optional int32 code = 1;
+  optional string msg = 2;
+}
+
+// It is the data of an intermediate output channel.
+message IntermediateOutput {
+  optional EncodeType encode_type = 1;
+  repeated Chunk chunks = 2;
+}
+
+// Response for SelectRequest.
+message SelectResponse {
+  optional Error error = 1;
+  // Result rows.
+  repeated Row rows = 2;
+  // Use multiple chunks to reduce memory allocation and avoid allocating large
+  // contiguous memory.
+  repeated Chunk chunks = 3;
+  repeated Error warnings = 4;
+  repeated int64 output_counts = 5;
+  optional int64 warning_count = 6;
+  // The execution summary of each executor, in the order in request.
+  repeated ExecutorExecutionSummary execution_summaries = 8;
+  // It indicates the encode type of response.
+  optional EncodeType encode_type = 9;
+  // ndvs collects the number of distinct value information per range.
+  repeated int64 ndvs = 10;
+  // It contains all the intermediate outputs.
+  repeated IntermediateOutput intermediate_outputs = 11;
+}
+
+// Chunk contains multiple rows data and rows meta.
+message Chunk {
+  // Data for all rows in the chunk.
+  optional bytes rows_data = 3;
+  // Meta data for every row.
+  repeated RowMeta rows_meta = 4;
+}
+
+// RowMeta contains row handle and length of a row.
+message RowMeta {
+  optional int64 handle = 1;
+  optional int64 length = 2;
+}
+
+enum EncodeType {
+  TypeDefault = 0;
+  TypeChunk = 1;
+  // TypeCHBlock is used by TiSpark and TiFlash.
+  TypeCHBlock = 2;
+}
+
+// StreamResponse is the streamed coprocessor response contract.
+message StreamResponse {
+  optional Error error = 1;
+  // Data for all rows.
+  optional bytes data = 3;
+  repeated Error warnings = 4;
+  // Output row count for each executor.
+  repeated int64 output_counts = 5;
+  optional int64 warning_count = 6;
+  repeated int64 ndvs = 7;
+}
+
+// ExecutorExecutionSummary is the exact summary dependency referenced by
+// SelectResponse.execution_summaries.  The nested TiFlash messages are kept
+// here so field 6/8/9 decode with the same wire types as upstream.
+message ExecutorExecutionSummary {
+  optional uint64 time_processed_ns = 1;
+  optional uint64 num_produced_rows = 2;
+  optional uint64 num_iterations = 3;
+  optional string executor_id = 4;
+  optional uint64 concurrency = 5;
+
+  oneof DetailInfo {
+    TiFlashScanContext tiflash_scan_context = 6;
+  }
+
+  optional bytes ru_consumption = 7;
+  optional TiFlashWaitSummary tiflash_wait_summary = 8;
+  optional TiFlashNetWorkSummary tiflash_network_summary = 9;
+}
+
+message TiFlashRegionNumOfInstance {
+  optional string instance_id = 1;
+  optional uint64 region_num = 2;
+}
+
+message TiFlashScanContext {
+  optional uint64 dmfile_scanned_packs = 1 [deprecated = true];
+  optional uint64 dmfile_skipped_packs = 2 [deprecated = true];
+  optional uint64 dmfile_data_scanned_rows = 3;
+  optional uint64 dmfile_data_skipped_rows = 4;
+  optional uint64 total_dmfile_rs_load_ms = 5 [deprecated = true];
+  optional uint64 total_dmfile_read_ms = 6;
+  optional uint64 total_build_snapshot_ms = 7;
+  optional uint64 local_regions = 8;
+  optional uint64 remote_regions = 9;
+  optional uint64 user_read_bytes = 10;
+  optional uint64 total_learner_read_ms = 11;
+  optional uint64 disagg_read_cache_hit_bytes = 12;
+  optional uint64 disagg_read_cache_miss_bytes = 13;
+  optional uint64 total_dmfile_rs_check_ms = 14;
+  optional uint64 stale_read_regions = 15;
+  optional uint64 segments = 16;
+  optional uint64 read_tasks = 17;
+  optional uint64 delta_rows = 18;
+  optional uint64 delta_bytes = 19;
+  optional uint64 mvcc_input_rows = 20;
+  optional uint64 mvcc_input_bytes = 21;
+  optional uint64 mvcc_output_rows = 22;
+  optional uint64 lm_skip_rows = 23;
+  optional uint64 total_build_inputstream_ms = 24;
+  optional uint64 total_build_bitmap_ms = 25;
+  optional uint64 min_local_stream_ms = 26;
+  optional uint64 max_local_stream_ms = 27;
+  optional uint64 min_remote_stream_ms = 28;
+  optional uint64 max_remote_stream_ms = 29;
+  repeated TiFlashRegionNumOfInstance regions_of_instance = 30;
+  optional uint64 dmfile_mvcc_scanned_rows = 31;
+  optional uint64 dmfile_mvcc_skipped_rows = 32;
+  optional uint64 dmfile_lm_filter_scanned_rows = 33;
+  optional uint64 dmfile_lm_filter_skipped_rows = 34;
+
+  optional uint64 vector_idx_load_from_s3 = 100;
+  optional uint64 vector_idx_load_from_disk = 101;
+  optional uint64 vector_idx_load_from_cache = 102;
+  optional uint64 vector_idx_load_time_ms = 103;
+  optional uint64 vector_idx_search_time_ms = 104;
+  optional uint64 vector_idx_search_visited_nodes = 105;
+  optional uint64 vector_idx_search_discarded_nodes = 106;
+  optional uint64 vector_idx_read_vec_time_ms = 107;
+  optional uint64 vector_idx_read_others_time_ms = 108;
+
+  optional uint32 inverted_idx_load_from_s3 = 120;
+  optional uint32 inverted_idx_load_from_disk = 121;
+  optional uint32 inverted_idx_load_from_cache = 122;
+  optional uint64 inverted_idx_load_time_ms = 123;
+  optional uint64 inverted_idx_search_time_ms = 124;
+  optional uint32 inverted_idx_search_skipped_packs = 125;
+  optional uint64 inverted_idx_indexed_rows = 126;
+  optional uint64 inverted_idx_search_selected_rows = 127;
+
+  optional uint32 fts_n_from_inmemory_noindex = 150;
+  optional uint32 fts_n_from_tiny_index = 151;
+  optional uint32 fts_n_from_tiny_noindex = 152;
+  optional uint32 fts_n_from_dmf_index = 153;
+  optional uint32 fts_n_from_dmf_noindex = 154;
+  optional uint64 fts_rows_from_inmemory_noindex = 155;
+  optional uint64 fts_rows_from_tiny_index = 156;
+  optional uint64 fts_rows_from_tiny_noindex = 157;
+  optional uint64 fts_rows_from_dmf_index = 158;
+  optional uint64 fts_rows_from_dmf_noindex = 159;
+  optional uint64 fts_idx_load_total_ms = 160;
+  optional uint32 fts_idx_load_from_cache = 161;
+  optional uint32 fts_idx_load_from_column_file = 162;
+  optional uint32 fts_idx_load_from_stable_s3 = 163;
+  optional uint32 fts_idx_load_from_stable_disk = 164;
+  optional uint32 fts_idx_search_n = 165;
+  optional uint64 fts_idx_search_total_ms = 166;
+  optional uint64 fts_idx_dm_search_rows = 167;
+  optional uint64 fts_idx_dm_total_read_fts_ms = 168;
+  optional uint64 fts_idx_dm_total_read_others_ms = 169;
+  optional uint64 fts_idx_tiny_search_rows = 170;
+  optional uint64 fts_idx_tiny_total_read_fts_ms = 171;
+  optional uint64 fts_idx_tiny_total_read_others_ms = 172;
+  optional uint64 fts_brute_total_read_ms = 173;
+  optional uint64 fts_brute_total_search_ms = 174;
+}
+
+message TiFlashWaitSummary {
+  optional uint64 minTSO_wait_ns = 1;
+  optional uint64 pipeline_queue_wait_ns = 2;
+  optional uint64 pipeline_breaker_wait_ns = 3;
+}
+
+message TiFlashNetWorkSummary {
+  optional uint64 inner_zone_send_bytes = 1;
+  optional uint64 inner_zone_receive_bytes = 2;
+  optional uint64 inter_zone_send_bytes = 3;
+  optional uint64 inter_zone_receive_bytes = 4;
+}

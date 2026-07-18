@@ -1,0 +1,5 @@
+## TO_DAYS over an actual DATE table column
+create table td (a date)
+insert into td values ('1970-01-01')
+insert into td values ('2021-01-01')
+select to_days(a) from td order by a

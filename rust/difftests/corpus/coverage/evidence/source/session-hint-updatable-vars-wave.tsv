@@ -1,0 +1,3 @@
+# Source-owned SET_VAR hint-updatable registry evidence.
+# source_path	status	owner	evidence_artifact	note
+pkg/sessionctx/variable/setvar_affect.go	PARTIAL	session-hint-updatable-vars-wave	rust/crates/tidb-exec/src/hint_updatable_vars.rs	Complete 128-name exact-case registry and membership predicate are typed; SysVar marker mutation, hint parsing/application, validation, planner use, and session lifecycle remain external.

@@ -1,0 +1,25 @@
+[package]
+name = "tidb-expr"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Constant-expression evaluator over the TiDB AST (Phase 0/1 seed of tidb-expr)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-ast = { path = "../tidb-ast" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-error = { path = "../tidb-error" }
+regex = { workspace = true }
+md-5 = { workspace = true }
+sha1 = { workspace = true }
+sha2 = { workspace = true }
+des = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tidb-parser = { path = "../tidb-parser" }

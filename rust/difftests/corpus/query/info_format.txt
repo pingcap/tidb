@@ -1,0 +1,3 @@
+## Query-level Go result-ring vectors for source-ported information formatters.
+select format_bytes(0), format_bytes(2048), format_bytes(-1.8446644073709551615e19), format_bytes(null)
+select format_nano_time(0), format_nano_time(2000), format_nano_time(-9999999991), format_nano_time(null)

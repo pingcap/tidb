@@ -1,0 +1,152 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! The source-owned `CREATE VIEW` AST and canonical restore boundary.
+
+use crate::util::{back_quote, push_name_path};
+use crate::QueryStmt;
+
+/// The `ALGORITHM` characteristic of a `CREATE VIEW` statement.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ViewAlgorithm {
+    /// `ALGORITHM = UNDEFINED` (the default).
+    #[default]
+    Undefined,
+    /// `ALGORITHM = MERGE`.
+    Merge,
+    /// `ALGORITHM = TEMPTABLE`.
+    Temptable,
+}
+
+impl ViewAlgorithm {
+    pub(crate) fn restore(self) -> &'static str {
+        match self {
+            Self::Undefined => "UNDEFINED",
+            Self::Merge => "MERGE",
+            Self::Temptable => "TEMPTABLE",
+        }
+    }
+}
+
+/// The check-option payload this Rust slice can restore for `CREATE VIEW`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ViewCheckOption {
+    /// The implicit or explicit `CASCADED` form, omitted on restore.
+    #[default]
+    Cascaded,
+    /// `WITH LOCAL CHECK OPTION`.
+    Local,
+}
+
+/// The `SQL SECURITY` characteristic of a `CREATE VIEW` statement.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ViewSecurity {
+    /// `SQL SECURITY DEFINER` (the default).
+    #[default]
+    Definer,
+    /// `SQL SECURITY INVOKER`.
+    Invoker,
+}
+
+impl ViewSecurity {
+    pub(crate) fn restore(self) -> &'static str {
+        match self {
+            Self::Definer => "DEFINER",
+            Self::Invoker => "INVOKER",
+        }
+    }
+}
+
+/// A `CREATE [OR REPLACE] [ALGORITHM = ...] VIEW` definition.
+///
+/// The grammar carries Go's default `CURRENT_USER` definer and `DEFINER`
+/// security mode, and retains explicit alternatives with the shared typed
+/// user-identity representation. View execution is deliberately rejected by
+/// `tidb-exec` before it changes catalog or transaction state.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CreateViewStmt {
+    /// Whether the source wrote `OR REPLACE`.
+    pub or_replace: bool,
+    /// The view algorithm, including Go's always-restored default.
+    pub algorithm: ViewAlgorithm,
+    /// The view definer, including Go's always-restored `CURRENT_USER`
+    /// default. This is syntactic metadata only until view execution has a
+    /// privilege-aware catalog.
+    pub definer: crate::UserSpec,
+    /// The view security mode, including Go's always-restored `DEFINER`
+    /// default. This is syntactic metadata only until view execution has a
+    /// privilege-aware catalog.
+    pub security: ViewSecurity,
+    /// The view name path.
+    pub name: Vec<String>,
+    /// Optional output column names, in written order.
+    pub columns: Vec<String>,
+    /// The view query. This uses the typed query envelope so a view cannot
+    /// accidentally contain a DDL/DML/session statement.
+    pub query: Box<QueryStmt>,
+    /// Whether the whole query was enclosed in the `AS (...)` form.
+    pub query_parenthesized: bool,
+    /// The optional view check option.
+    pub check_option: ViewCheckOption,
+}
+
+impl CreateViewStmt {
+    pub(crate) fn restore_into(&self, out: &mut String) {
+        out.push_str("CREATE ");
+        if self.or_replace {
+            out.push_str("OR REPLACE ");
+        }
+        out.push_str("ALGORITHM = ");
+        out.push_str(self.algorithm.restore());
+        out.push_str(" DEFINER = ");
+        // `CreateViewStmt.Restore` deliberately differs from
+        // `auth.UserIdentity.Restore`: a view's explicitly empty hostname
+        // (`DEFINER=``@```) is omitted, while ordinary user statements still
+        // restore `@``. Keep that Go-specific behavior at this AST boundary.
+        if self.definer.current_user {
+            out.push_str("CURRENT_USER");
+        } else {
+            out.push_str(&back_quote(&self.definer.user));
+            if !self.definer.host.is_empty() {
+                out.push('@');
+                out.push_str(&back_quote(&self.definer.host));
+            }
+        }
+        out.push_str(" SQL SECURITY ");
+        out.push_str(self.security.restore());
+        out.push_str(" VIEW ");
+        push_name_path(out, &self.name);
+        if !self.columns.is_empty() {
+            out.push_str(" (");
+            for (index, column) in self.columns.iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                out.push_str(&back_quote(column));
+            }
+            out.push(')');
+        }
+        out.push_str(" AS ");
+        if self.query_parenthesized {
+            out.push('(');
+        }
+        self.query.restore_into(out);
+        if self.query_parenthesized {
+            out.push(')');
+        }
+        if self.check_option == ViewCheckOption::Local {
+            out.push_str(" WITH LOCAL CHECK OPTION");
+        }
+    }
+}

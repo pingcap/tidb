@@ -1,0 +1,3 @@
+# Source-owned bounded integer window-value state evidence.
+# source_path	status	owner	evidence_artifact	note
+pkg/executor/aggfuncs/func_value.go	PARTIAL	executor-window-value-int-wave	rust/crates/tidb-exec/src/window_value_int.rs	The dependency-closed already-evaluated integer state transitions for FIRST_VALUE, LAST_VALUE, and NTH_VALUE are ported: first-row capture including NULL, last-row overwrite, one-based batch-spanning NTH selection, zero/unreached NULL, and reset; typed evaluators, all value domains, memory/chunk/window dispatch, and lifecycle remain external.

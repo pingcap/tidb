@@ -1,0 +1,3 @@
+# Source-owned evidence fragment for planner-logical-expand-wave.
+# source_path	status	owner	evidence_artifact	note
+pkg/planner/core/operator/logicalop/logical_expand.go	PARTIAL	planner-logical-expand-wave	rust/crates/tidb-planner/src/logical_expand.rs	Ports generated LogicalExpand Hash64/Equals identity: Expand tag, schema and ordered grouping columns/expressions, DistinctSize, nested RollupGroupingSets/LevelExprs, GID, and GPos; arbitrary expression variants, FieldType/collation metadata, grouping-name/ID maps, plan context/schema propagation, and optimizer/runtime execution remain external.

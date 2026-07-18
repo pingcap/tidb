@@ -1,0 +1,15 @@
+## CHAR(expr, ...) / CHAR(expr, ... USING charset) -- desugars to
+## Expr::Func{name: "CHAR_FUNC", args}, matching real TiDB's own
+## pkg/parser/expr_func_parser.go's parseCharFuncCall exactly: the
+## original args, plus a trailing charset-name string (if USING was
+## given) or a NULL sentinel (if not). CHAR() with zero args is a real,
+## earlier short-circuit (real TiDB's own parseScalarFuncCall) that
+## restores as bare CHAR() -- name unchanged, no sentinel appended.
+select char(97, 100, 256, 89)
+select char(97, null, 100, 256, 89 using ascii)
+select char(97, null, 100, 256, 89 using utf8)
+select char(0x1234 using gb18030)
+select char(a using gbk), char(a using utf8), char(a) from t
+select t0.c0 from t0 where char(204355900)
+select char()
+select char_func(97, 100)

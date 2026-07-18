@@ -1,0 +1,3 @@
+# Source-owned next-input row/cell accounting test evidence.
+# kind source_path source_line test_name status owner evidence_artifact note
+go_test	pkg/executor/internal/exec/executor_test.go	35	TestNextIOAccAddInputCountsRowsWithZeroCols	PARTIAL	executor-next-io-acc-wave	rust/crates/tidb-exec/tests/next_io_acc_source.rs	Rust covers the exact zero-column rows, reset/reuse, child/parent admission, and rows*cols guard subtests; executor allocation reuse, atomic concurrency, and RUV2 metric publication remain external.

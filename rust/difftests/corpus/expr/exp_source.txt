@@ -1,0 +1,13 @@
+## Exact result vectors from pkg/expression/builtin_math_test.go's TestExp.
+## `EXP('tidb')` has the Go value 1 after ETReal numeric-prefix coercion; Go
+## also emits a statement warning, deliberately not modeled by this corpus.
+exp(null)
+exp(1)
+exp(1.23e0)
+exp(-1.23e0)
+exp(0)
+exp('0')
+exp('tidb')
+exp(-1000)
+exp(100000)
+exp(1, 2)

@@ -1,0 +1,3 @@
+# Source-owned test-evidence fragment for txnkv-keyspace-source-wave.
+go_test	pkg/kv/utils_test.go	136	TestIsUserKS	COVERED	txnkv-keyspace-source-wave	rust/difftests/transaction-tests/tests/keyspace.rs	All original classic user and next-generation user-versus-SYSTEM assertions execute against the production tidb-txnkv predicates; an exhaustive crate test also covers empty and arbitrary keyspace names.
+go_test	pkg/kv/utils_test.go	149	TestIsSystemKS	COVERED	txnkv-keyspace-source-wave	rust/difftests/transaction-tests/tests/keyspace.rs	All original classic non-system and next-generation user/SYSTEM assertions execute against the production tidb-txnkv predicates; an exhaustive crate test covers arbitrary names and classic-mode gating.

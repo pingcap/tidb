@@ -1,0 +1,4 @@
+# Source-owned auto-analyze process set test evidence.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/statistics/handle/autoanalyze/exec/exec_test.go	35	TestExecAutoAnalyzes	PARTIAL	stats-auto-analyze-process-set-wave	rust/crates/tidb-stats/tests/auto_analyze_process_set_source.rs	Rust pins active-process tracking, duplicate insertion, removal, and membership semantics exercised during auto-analyze execution; session/domain setup, process-ID generation, and analyze execution remain external.
+go_test	pkg/statistics/handle/autoanalyze/exec/exec_test.go	154	TestKillInWindows	PARTIAL	stats-auto-analyze-process-set-wave	rust/crates/tidb-stats/tests/auto_analyze_process_set_source.rs	Rust pins the concurrent-safe process snapshot/membership boundary used while auto-analyze jobs are killed or skipped in configured windows; scheduling, sysproctrack callbacks, and SQL lifecycle remain external.

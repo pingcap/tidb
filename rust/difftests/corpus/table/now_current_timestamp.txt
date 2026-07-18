@@ -1,0 +1,80 @@
+## This topic covers every function reading the session's FIXED clock
+## (from `SET timestamp =
+## <epoch seconds[.fraction]>`, adjusted by `SET time_zone = '+HH:MM'`,
+## default UTC). Dynamic timestamp/default mode is verified by the session
+## unit test because its live statement clock cannot use a static golden;
+## this corpus keeps only deterministic fixed-clock cases. NOW()/
+## CURRENT_TIMESTAMP() (true synonyms) and
+## CURDATE()/CURRENT_DATE()/CURTIME()/CURRENT_TIME() use the LOCAL
+## (time_zone-adjusted) time; UTC_TIMESTAMP()/UTC_DATE()/UTC_TIME() use the
+## RAW UTC clock, ignoring time_zone entirely. Rounding is genuinely
+## inconsistent across this family (confirmed via gorun + reading
+## pkg/expression/builtin_time.go, not assumed): NOW/CURRENT_TIMESTAMP
+## ALWAYS truncate; UTC_TIMESTAMP ALWAYS rounds (both 0-arg and explicit-arg
+## forms alike); CURTIME/CURRENT_TIME/UTC_TIME instead SPLIT -- the 0-arg
+## form truncates, but an EXPLICIT argument (even literally 0) rounds.
+## CURRENT_TIMESTAMP/CURRENT_DATE/CURRENT_TIME/UTC_DATE/UTC_TIME/
+## UTC_TIMESTAMP all also parse bare, with no `()` at all -- a genuine MySQL
+## grammar rule NOW/CURDATE/CURTIME don't share (CURDATE(1) is a real parse
+## error: CURDATE/UTC_DATE take no argument at all, no fsp). A clock-reading
+## function inside an INSERT VALUES list is deliberately NOT exercised
+## here: INSERT rows are const-evaluated (a pre-existing scope boundary,
+## not new to this topic), so a session-clock reference there is out of
+## domain -- every case below instead seeds rows with a literal and reads
+## the clock through SELECT/UPDATE SET/WHERE/DELETE WHERE, which all go
+## through the stateful resolver path.
+set time_zone = '+00:00'
+set timestamp = 1700000000.5
+select now()
+select now(0)
+select now(1)
+select now(6)
+select now(8)
+select now(-2)
+select current_timestamp
+select current_timestamp()
+select current_timestamp(2)
+select now() = current_timestamp()
+create table evt (id int, stamp varchar(32))
+insert into evt values (1, 'x'), (2, 'y')
+update evt set stamp = now() where id = 1
+update evt set stamp = now(3) where id = 2
+select id, stamp from evt
+select id from evt where stamp = now()
+delete from evt where stamp = now() and id = 2
+select count(*) from evt
+set time_zone = '-05:00'
+select now()
+set time_zone = '+05:30'
+select now()
+set timestamp = 1700000000.654321
+select curdate()
+select current_date()
+select curtime()
+select current_time()
+select current_time(3)
+select current_time(6)
+select current_time(-1)
+select current_time(7)
+select curtime(3)
+select curdate() = current_date()
+select curtime() = current_time()
+select utc_timestamp()
+select utc_timestamp(0)
+select utc_timestamp(3)
+select utc_timestamp(6)
+select utc_timestamp(8)
+select utc_timestamp(-2)
+select utc_date()
+select utc_time()
+select utc_time(3)
+select utc_time(6)
+select utc_time(-1)
+select utc_time(7)
+select curdate(1)
+set time_zone = '+00:00'
+select curtime()
+select curtime(0)
+select utc_time()
+select utc_time(0)
+select curdate(), curtime(), current_date, current_time, now(), current_timestamp, utc_date(), utc_time(), utc_timestamp()

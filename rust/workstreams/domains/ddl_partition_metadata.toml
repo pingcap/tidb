@@ -1,0 +1,18 @@
+schema = "2"
+domain = "ddl_partition_metadata"
+owner = "ddl-partition-metadata-wave"
+status = "partial"
+go_owners = [
+  "file:pkg/ddl/partition.go",
+]
+rust_paths = [
+  "rust/crates/tidb-exec/src/ddl/partition_metadata.rs",
+  "rust/crates/tidb-exec/src/tests/ddl_partition_metadata.rs",
+]
+evidence_paths = [
+  "rust/difftests/corpus/coverage/evidence/domain/ddl_partition_metadata.tsv",
+]
+required_commands = [
+  "CARGO_BUILD_JOBS=12 rustc --edition 2021 --crate-type lib rust/crates/tidb-exec/src/ddl/partition_metadata.rs",
+  "CARGO_BUILD_JOBS=12 cargo test --locked -j12 -p tidb-exec ddl_partition_metadata",
+]

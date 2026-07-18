@@ -1,0 +1,3 @@
+# Source-owned statistics index-usage lookup identity evidence.
+# source_path	status	owner	evidence_artifact	note
+pkg/statistics/handle/usage/index_usage.go	PARTIAL	stats-index-usage-key-wave	rust/crates/tidb-stats/src/index_usage_key.rs	The Rust leaf ports GetIndexUsage's tableID/indexID forwarding at lines 59-62 as an immutable lookup identity. Collection samples, dropped-object GC, worker lifecycle, InfoSchema lookup, and session/storage state remain external.

@@ -1,0 +1,6 @@
+STR:Hej
+NULL
+NULL
+NULL
+STR:11
+STR:2.1

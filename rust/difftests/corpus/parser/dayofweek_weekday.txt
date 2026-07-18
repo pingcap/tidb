@@ -1,0 +1,2 @@
+## DAYOFYEAR/DAYOFWEEK/WEEKDAY: none are lexer keywords either
+select dayofyear(a), dayofweek(a), weekday(a) from t

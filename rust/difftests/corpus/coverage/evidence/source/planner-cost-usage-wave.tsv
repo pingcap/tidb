@@ -1,0 +1,3 @@
+# Source-owned evidence fragment for planner-cost-usage-wave.
+# source_path	status	owner	evidence_artifact	note
+pkg/planner/util/costusage/cost_misc.go	PARTIAL	planner-cost-usage-wave	rust/crates/tidb-planner/src/cost_usage.rs	Ports CostFlag constants, CostVer2 non-negative value semantics, lazy CostTrace factor/formula construction, ordered trace aggregation, fixed-two-decimal divide/multiply formulas, and trace-preserving tie-breaker updates; optimizer plan traversal, factor selection, session wiring, and SQL-facing EXPLAIN integration remain external.

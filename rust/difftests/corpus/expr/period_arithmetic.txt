@@ -1,0 +1,25 @@
+## Go-backed PERIOD_ADD/PERIOD_DIFF vectors from
+## pkg/expression/builtin_time_test.go TestPeriodAdd and TestPeriodDiff.
+## A period is YYMM/YYYYMM, not a calendar date. Invalid periods are errors;
+## both functions return NULL when either ETInt argument evaluates to NULL.
+period_add(201611,2)
+period_add(201611,3)
+period_add(201611,-13)
+period_add(1611,3)
+period_add(7011,3)
+period_add(0,3)
+period_add(12323,10)
+period_add(0,null)
+period_add(null,3)
+period_diff(201611,201611)
+period_diff(200802,200703)
+period_diff(201510,201611)
+period_diff(201702,1611)
+period_diff(197102,7011)
+period_diff(0,999999999)
+period_diff(9999999,0)
+period_diff(null,201611)
+period_diff(201611,null)
+## Direct Go oracle boundary probes for uint64 helper arithmetic.
+period_add(9223372036854775807,1)
+period_diff(9223372036854775807,197001)

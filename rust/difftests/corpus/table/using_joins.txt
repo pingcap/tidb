@@ -1,0 +1,17 @@
+## USING joins: named columns coalesce into one physical column (SELECT *
+## shows it once), reachable via either side's qualifier or unqualified;
+## RIGHT JOIN swaps the remaining-column order (verified against real TiDB —
+## it effectively rewrites `A RIGHT JOIN B USING(x)` as `B LEFT JOIN A
+## USING(x)`, unlike a plain ON join, whose column order never swaps)
+create table u1 (id int, v varchar(9))
+create table u2 (id int, w varchar(9))
+insert into u1 values (1, 'a'), (2, 'b'), (3, 'c')
+insert into u2 values (1, 'x'), (2, 'y'), (9, 'z')
+select * from u1 join u2 using (id)
+select u1.v, u2.w from u1 join u2 using (id)
+select id, v, w from u1 join u2 using (id)
+select u1.id, u2.id from u1 join u2 using (id)
+select * from u1 left join u2 using (id)
+select * from u1 right join u2 using (id)
+select id from u1 join u2 using (id) where id = 1
+select count(*) from u1 join u2 using (id)

@@ -1,0 +1,24 @@
+## `ROW(expr, expr, ...)` -- an explicit or implicit (bare `(expr, expr,
+## ...)`, 2+ comma-separated elements, distinct from a single-element
+## parenthesized expression) row/tuple constructor, used for row-wise
+## comparison and tuple membership. Both source syntaxes build the SAME
+## node and restore IDENTICALLY as `ROW(...)`, commas with NO trailing
+## space -- read directly from real TiDB's own hand-written parser
+## (pkg/parser/expr_prefix_parser.go's parsePrefixKeywordExpr, case row:,
+## and pkg/parser/expr_subquery_parser.go's parseParenOrSubquery) and AST
+## restore (RowExpr.Restore). Confirmed via gorun that real TiDB DOES
+## execute row-wise comparison (ROW(1,2,3) > ROW(3,2,1) is a real,
+## non-error query) -- this crate's own execution deliberately does NOT
+## replicate that (a clean Unsupported rather than a partial/incorrect
+## implementation, needing a genuine tuple-shaped Value domain this crate
+## doesn't have yet), matching the same "parse/restore fidelity only"
+## precedent TABLESAMPLE/MATCH AGAINST/GROUP BY WITH ROLLUP already
+## established.
+select row(1,2,3) from t
+select (1,2,3) from t
+select row(1, 0) in (row(1, 1))
+select * from t where row(1,2,3) > (3,2,1)
+select row(1, 1) > (select 1, 0)
+select * from test group by row(1, 1)
+select row(a,b) = row(1,2) from t
+select ((1,2)) from t

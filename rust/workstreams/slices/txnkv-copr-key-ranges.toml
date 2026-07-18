@@ -1,0 +1,19 @@
+schema = "1"
+slice = "txnkv-copr-key-ranges"
+status = "retired"
+target = "tidb-txnkv"
+ring = "transaction"
+consumer = "dependency leaf for future coprocessor task construction: this slice provides one source-shaped KeyRanges container over the existing tidb-txnkv Key and KeyRange authority, but no tidb-distsql consumer is connected yet; it owns key_ranges.rs, Go-compatible print tables, its lib.rs export, and key_ranges_source.rs, preserves logical first/mid/last ordering plus slicing/splitting/reset/string/safe protobuf conversion semantics, deliberately uses immutable owned/shared storage and explicit bounds policy instead of Go mutable pointers, and must not alter key.rs identity, invent a second range type in tidb-distsql, or absorb region lookup, task splitting, retry, or transport policy"
+test_target = "key_ranges_source"
+go_sources = ["pkg/store/copr/key_ranges.go"]
+go_tests = [
+  "pkg/store/copr/key_ranges_test.go:24:TestCopRanges",
+  "pkg/store/copr/key_ranges_test.go:37:TestCopRangeSplit",
+  "pkg/store/copr/key_ranges_test.go:0:key_ranges_test.go",
+  "pkg/kv/key_test.go:369:TestKeyRangeDefinition",
+]
+depends_on = []
+evidence_prerequisites = []
+rust_paths = [
+  "rust/difftests/corpus/coverage/evidence/transfers/distsql-cop-read-task-runtime.tsv",
+]

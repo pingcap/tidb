@@ -1,0 +1,3 @@
+go_owner	rust_module	status	note
+file:pkg/expression/builtin_control.go	rust/crates/tidb-expr/src/func.rs	partial	The control-builtin source file is reserved as one bounded family; this increment closes IFNULL's scalar value path while CASE/IF and typed temporal JSON vector signatures remain explicit partials.
+tests:pkg/expression/builtin_control_test.go#TestIfNull	rust/crates/tidb-expr/src/tests/control.rs	partial	Direct source-table rows cover signed integer, NULL, string, decimal, float, and binary datum forms. The Go temporal, JSON, SET, and injected-error rows require FieldType/session or non-SQL error state and remain explicit partials.

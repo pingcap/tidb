@@ -1,0 +1,13 @@
+## ALTER TABLE ADD INDEX/KEY (plain secondary index, no observable executor
+## effect) and ADD UNIQUE (a new UNIQUE constraint); KEY normalizes to
+## INDEX; a CONSTRAINT name wins over an inline index name, same as
+## CREATE TABLE's table-level constraints
+alter table t add index (a)
+alter table t add index idx_a (a)
+alter table t add key idx_a (a)
+alter table t add unique index (a)
+alter table t add unique key idx_a (a)
+alter table t add index (a, b)
+alter table t add constraint cn1 unique index idx1 (a)
+alter table t add constraint unique (a)
+alter table t add constraint cn1 index idx1 (a)

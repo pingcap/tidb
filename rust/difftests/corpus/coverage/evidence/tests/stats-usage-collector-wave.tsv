@@ -1,0 +1,5 @@
+# Source-owned statistics usage collector test evidence.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/statistics/handle/usage/collector/collector_test.go	25	TestSessionSendDelta	PARTIAL	stats-usage-collector-wave	rust/crates/tidb-stats/tests/usage_collector_source.rs	Rust mirrors accepted normal-update counting and close-time drain; merge callback ownership is caller-provided and statistics payload lifecycle remains open.
+go_test	pkg/statistics/handle/usage/collector/collector_test.go	45	TestSessionParallelSendDelta	PARTIAL	stats-usage-collector-wave	rust/crates/tidb-stats/tests/usage_collector_source.rs	Rust mirrors concurrent non-blocking session sends and serial worker aggregation; source channel scheduling remains represented by the bounded queue.
+go_test	pkg/statistics/handle/usage/collector/collector_test.go	74	TestSessionParallelSendDeltaSync	PARTIAL	stats-usage-collector-wave	rust/crates/tidb-stats/tests/usage_collector_source.rs	Rust mirrors concurrent synchronous sends and verifies every delta is accepted before close; caller-specific merge behavior remains external.

@@ -1,0 +1,8 @@
+## Source vectors from pkg/expression/builtin_json_test.go (TestJSONSearch).
+select json_search('["abc", [{"k": "10"}, "def"], {"x":"abc"}, {"y":"bcd"}]','one','abc')
+select json_search('["abc", [{"k": "10"}, "def"], {"x":"abc"}, {"y":"bcd"}]','all','abc')
+select json_search('["abc", [{"k": "10"}, "def"], {"x":"abc"}, {"y":"bcd"}]','all','%b%')
+select json_search('["abc", [{"k": "10"}, "def"], {"x":"abc"}, {"y":"bcd"}]','all','10',null,'$**.k')
+select json_search('["abc", [{"k": "10"}, "def"], {"x":"abc"}, {"y":"bcd"}]','all','%b%',null,'$[1]')
+select json_search('["abc", [{"k": "10"}, "def"], {"x":"ab%d"}, {"y":"abcd"}]','all','ab\\%d')
+select json_search('["abc", [{"k": "10"}, "def"], {"x":"ab%d"}, {"y":"abcd"}]','all','ab|%d','|')

@@ -1,0 +1,2 @@
+go_owner	rust_module	status
+method:pkg/parser/ddl_table_parser.go#HandParser.parseGlobalLocalOption	rust/crates/tidb-parser/src/ddl/column/inline_key.rs	partial

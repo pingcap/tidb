@@ -1,0 +1,22 @@
+## A `UNION`/`UNION ALL`-bodied CTE (`Stmt::SetOpr`) is legal even WITHOUT
+## `RECURSIVE` on the clause, as long as no term references the CTE's own
+## name (confirmed via gorun) -- evaluated once and folded, reusing the
+## SAME machinery an ordinary top-level UNION statement already uses, so
+## mixed UNION/UNION ALL terms and the CTE's own ORDER BY/LIMIT fall out
+## for free. `RECURSIVE` on the clause but no term self-referencing still
+## degenerates to the same single-evaluation path. A later CTE's own UNION
+## body may reference an earlier one; the materialized CTE may be
+## self-joined at the outer level. Self-referencing a UNION-bodied CTE
+## WITHOUT `RECURSIVE` is a genuine error (the self-reference resolves to
+## no table at all), not a silent non-recursive evaluation -- kept LAST in
+## this script since an earlier gorun ERR can corrupt later statements'
+## apparent results in the same batch.
+create table t (id int, v int)
+insert into t values (1,10),(2,20),(3,30)
+with cte as (select 1 as n union select 2 as n) select n from cte order by n
+with cte as (select 1 as n union all select 2 as n union select 1 as n) select n from cte order by n
+with recursive cte as (select 1 as n union select 2 as n) select n from cte order by n
+with a as (select 1 as n), b as (select * from a union select 2 as n) select n from b order by n
+with cte as (select 1 as n union select 2 as n) select c1.n, c2.n from cte c1 join cte c2 on c1.n = c2.n order by c1.n
+with cte as (select v from t union select v+100 from t order by 1 desc limit 2) select v from cte order by v
+with cte as (select 1 as n union all select n+1 from cte where n<5) select * from cte

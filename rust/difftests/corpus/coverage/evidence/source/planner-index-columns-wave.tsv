@@ -1,0 +1,3 @@
+# Source-owned source-port fragment for planner-index-columns-wave.
+# source_path	status	owner	evidence_artifact	note
+pkg/planner/util/column.go	PARTIAL	planner-index-columns-wave	rust/crates/tidb-planner/src/index_columns.rs	Ports indexCol2Col/indexInfo2ColsImpl name matching, prefix marking, leading-prefix stop, full-column missing slots, and unspecified-length normalization over caller-owned metadata; expression-column cloning, model FieldType, assertions, and catalog/index integration remain external.

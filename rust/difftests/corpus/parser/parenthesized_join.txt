@@ -1,0 +1,25 @@
+## `(table_refs)` -- a purely structural grouping paren around a single
+## table, a comma-joined list, or an explicit JOIN chain, NOT a derived
+## table (no SELECT inside). Read directly from real TiDB's own
+## hand-written parser (pkg/parser/join_parser.go's parseTableSource,
+## the final `else` branch: `join, _ := p.parseCommaJoin(); ...
+## return join` -- no alias parsing at all, unlike a derived table).
+## Reuses this crate's own top-level parse_from FROM-clause entry point
+## recursively, since real MySQL grammar allows a comma-joined list
+## inside these parens too. Parens are PURELY structural: dropped/
+## re-derived on restore based on the resulting join tree's own shape,
+## never preserved as an explicit "was parenthesized" flag (confirmed
+## via godump restore across a wide range of cases before implementing,
+## not assumed -- full 8741-statement coverage re-run showed matched
+## +42 with ZERO new restore mismatches, more than the sampled cluster
+## alone).
+select * from (t)
+select * from ((t1))
+select * from (t as a, t2 as b)
+select * from (t1, t2)
+select * from (t as a cross join t2 as b)
+select * from (t1 join t2 on t1.a=t2.a)
+select * from (t1 join t2 using (a)) join (t3 join t4 using (a)) on (t2.a = t4.a and t1.a = t3.a)
+select * from (t1 natural join t2) natural join (t3 natural join t4)
+select * from (t1) join t2
+select * from t1 join (t2)

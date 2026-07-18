@@ -1,0 +1,3 @@
+# Source-owned test-evidence fragment for the QUARTER source wave.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/expression/builtin_time_test.go	2781	TestQuarter	PARTIAL	time-quarter-source-wave	rust/crates/tidb-expr/src/time_fn/mod.rs	All eight normal boundary rows, the IgnoreZeroInDate month-zero quarter-0 row, invalid month, and NULL are covered; typed temporal conversion, session warning state, and SQL-mode flag behavior remain outside the value-only Datum boundary

@@ -1,0 +1,3 @@
+## Query-level Go result-ring vectors for source-ported JSON_DEPTH.
+select json_depth(null), json_depth('null'), json_depth('[1,[2,[3,4]]]')
+select json_depth('{}'), json_depth('[[],{}]'), json_depth('[{"a":{"a":1},"b":2}]')

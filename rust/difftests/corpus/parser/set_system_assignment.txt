@@ -1,0 +1,14 @@
+## Generic system-variable assignments from pkg/parser/parser_test.go's
+## TestSimple (lines 1412-1436) and TestSetVariable (lines 1539-1577).
+## This is intentionally limited to system assignments: `SET @user = ...`
+## remains the separate SetUserVar grammar.  It covers every scope spelling,
+## `:=`, DEFAULT, the BINARY/ON special SET strings, a dotted name, and a
+## comma-separated system assignment list.
+set @@session.autocommit = 1
+set @@local.sql_log_bin := 0
+set @@global.autocommit := default
+set @@instance.tidb_mem_quota_query = 128
+set @@character_set_results = binary
+set @@autocommit = on, @@local.time_zone = '+08:00'
+set @@session.autocommit = off
+set @@xx.xx = 666

@@ -1,0 +1,15 @@
+## Go source: pkg/sessionctx/variable/sysvar.go Timestamp and TestTimestamp.
+## Only deterministic fixed-clock behavior belongs in this static corpus;
+## dynamic/default readback and the negative-value warning are asserted by
+## the session unit regression because their timestamp/warning output is live.
+set time_zone = '+00:00'
+set timestamp = 10.5000
+select @@timestamp, now(6), current_timestamp(6)
+set timestamp = 2147483648
+select @@timestamp
+set timestamp = '11.2500'
+select @@timestamp, now(4)
+begin
+set timestamp = 2.5
+rollback
+select @@timestamp, now(1)

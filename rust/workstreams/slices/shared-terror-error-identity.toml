@@ -1,0 +1,20 @@
+schema = "1"
+slice = "shared-terror-error-identity"
+status = "retired"
+target = "tidb-error"
+ring = "result"
+consumer = "Superseded by error-catalog-and-terror-identity; retained only as the checked ownership-transfer predecessor for the canonical tidb-error authority"
+test_target = "terror_source"
+go_sources = ["pkg/parser/terror/terror.go"]
+go_tests = [
+  "pkg/parser/terror/terror_test.go:28:TestErrCode",
+  "pkg/parser/terror/terror_test.go:33:TestTError",
+  "pkg/parser/terror/terror_test.go:69:TestJson",
+  "pkg/parser/terror/terror_test.go:91:TestErrorEqual",
+  "pkg/parser/terror/terror_test.go:129:TestLog",
+  "pkg/parser/terror/terror_test.go:134:TestTraceAndLocation",
+  "pkg/parser/terror/terror_test.go:0:terror_test.go",
+]
+depends_on = []
+evidence_prerequisites = []
+rust_paths = ["rust/difftests/corpus/coverage/evidence/transfers/error-catalog-and-terror-identity.tsv"]

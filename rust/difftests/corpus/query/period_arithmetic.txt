@@ -1,0 +1,6 @@
+## Query-level result-ring vectors for the source-ported period arithmetic.
+select period_add(201611,2), period_add(201611,-13), period_add(null,2)
+select period_diff(200802,200703), period_diff(201510,201611), period_diff(null,201611)
+## Invalid periods are TiDB execution errors (ER_WRONG_ARGUMENTS).
+select period_add(0,3)
+select period_diff(0,201611)

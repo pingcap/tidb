@@ -1,0 +1,5 @@
+# Source-owned test-evidence fragment for unsigned-phase3.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/sessionctx/variable/sysvar_test.go	619	TestLastInsertID	PARTIAL	unsigned-phase3	rust/difftests/corpus/table/last_insert_id_uint.txt	UInt64 default/readback including above-i64 values; @@identity alias; source statement-promotion and failed-statement persistence
+go_test	pkg/sessionctx/variable/sysvar_test.go	678	TestIdentity	PARTIAL	unsigned-phase3	rust/difftests/corpus/table/last_insert_id_uint.txt	Identity is the same session-only UInt64 statement-status value as last_insert_id
+go_test	pkg/expression/builtin_info_test.go	258	TestLastInsertID	PARTIAL	unsigned-phase3	rust/difftests/corpus/table/last_insert_id_uint.txt	Both forms, UInt64 results including -1 as MaxUint64, source coercion vectors, statement-promotion, and failure persistence; automatic-increment allocation remains unported

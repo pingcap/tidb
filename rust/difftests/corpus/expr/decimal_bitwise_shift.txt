@@ -1,0 +1,11 @@
+## decimal bitwise / shift: rounds to the nearest i64 first (ties away from
+## zero), then applies the same integer operator
+~3.14
+~3.5
+~0.4
+3.14 & 5
+3.14 | 8
+3.14 ^ 1
+3.14 << 1
+14.9 >> 1
+-1.5 & 3

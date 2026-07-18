@@ -1,0 +1,3 @@
+# Source-owned count aggregate spill test evidence.
+# kind source_path source_line test_name status owner evidence_artifact note
+go_test	pkg/executor/aggfuncs/spill_helper_test.go	73	TestPartialResult4Count	PARTIAL	executor-spill-count-wave	rust/crates/tidb-exec/tests/spill_count_source.rs	Rust covers the exact -123/0/123 count spill round-trip and reusable serializer buffer; Go chunk column ownership, malformed-row panic behavior, and other typed aggregate spill helpers remain external.

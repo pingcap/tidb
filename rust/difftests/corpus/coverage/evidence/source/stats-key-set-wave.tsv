@@ -1,0 +1,3 @@
+# Source-owned statistics-cache key set evidence.
+# source_path	status	owner	evidence_artifact	note
+pkg/statistics/handle/cache/internal/lfu/key_set.go	PARTIAL	stats-key-set-wave	rust/crates/tidb-stats/src/stats_key_set.rs	The Rust leaf ports thread-safe AddKeyValue replacement, Remove cost return, Get, Keys, Len, and Clear from lines 17-68 using caller-derived costs. statistics.Table memory accounting, LFU admission/eviction, sharding, and cache integration remain explicit future owners.

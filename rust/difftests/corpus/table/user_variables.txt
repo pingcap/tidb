@@ -1,0 +1,35 @@
+## User-defined session variables (`SET @name = value`, `Expr::UserVar`
+## readback via `@name`): unlike `@@sysvar`, EVERY name is inherently
+## valid -- an unset (or session-less) variable reads as NULL, never an
+## error, confirmed via gorun. Also covers: the value expression may
+## reference OTHER already-set user variables (including the SAME name
+## being assigned, reading the OLD value first) and subqueries; names are
+## case-insensitive; a user variable is an ordinary expression operand
+## usable anywhere a column reference could be, including a table-scanning
+## WHERE clause; user variables are session-scoped, NOT transactional
+## (survive a LATER ROLLBACK, unlike table data); a scalar-subquery
+## cardinality violation in the value expression is a genuine error, same
+## as anywhere else that resolves a scalar subquery. Deliberately EXCLUDES
+## the inline `@x := expr` assignment EXPRESSION (usable mid-SELECT for
+## the classic MySQL row-numbering idiom) -- a separately-scoped, larger
+## follow-up needing live mutation during row iteration this project
+## doesn't support yet.
+select @undefined_var
+set @x = 5
+select @x
+select @x + 1
+set @y = 'hello'
+select @y
+set @z = @x + 1
+select @z
+select @X
+create table t (id int primary key, v int)
+insert into t values (1,10),(2,20)
+set @c = (select count(*) from t)
+select @c
+select id, v from t where v > @x order by id
+begin
+set @w = 99
+rollback
+select @w
+set @bad = (select id from t)

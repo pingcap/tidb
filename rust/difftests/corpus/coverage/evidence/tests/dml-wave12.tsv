@@ -1,0 +1,3 @@
+# Source-owned test-evidence fragment for dml-wave12.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/executor/delete_test.go	111	TestDeleteIgnoreWithFK	PARTIAL	dml-wave12	rust/difftests/corpus/table/delete_ignore_foreign_key.txt	Single and multi-table FK-restricted DELETE plus DELETE IGNORE per-target skip rows; warning-buffer and BATCH ON protocol are outside the seed

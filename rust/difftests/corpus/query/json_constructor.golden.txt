@@ -1,0 +1,7 @@
+RS:[]
+RS:[1]
+RS:[null, "a", 3, "{\"a\": \"b\"}"]
+RS:{}
+RS:{"1": 2, "hello": null}
+ERR
+ERR

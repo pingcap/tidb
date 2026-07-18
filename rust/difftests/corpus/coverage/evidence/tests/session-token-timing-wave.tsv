@@ -1,0 +1,3 @@
+# Source-owned session-token timing test-port evidence.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/sessionctx/sessionstates/session_token_test.go	163	TestStarterSessionTokenLifetime	PARTIAL	session-token-timing-wave	rust/crates/tidb-exec/tests/session_token_timing_source.rs	Direct Rust vectors cover classic and Starter timing constants; certificate setup, token signing/validation, failpoint time offsets, deploymode globals, and migration authentication remain external.

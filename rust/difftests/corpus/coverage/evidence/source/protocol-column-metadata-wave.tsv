@@ -1,0 +1,3 @@
+# Source-owned column metadata projection.
+# source_path	status	owner	evidence_artifact	note
+pkg/server/internal/column/column.go	PARTIAL	protocol-column-metadata-wave	rust/crates/tidb-protocol/src/column.rs	The Rust leaf now matches source metadata field ordering, truncates only Name and OrgName at the 256-byte alias limit without splitting valid UTF-8, projects vector-float32 charset/length/flag/type overrides, and emits explicit NULL/default markers; ResultEncoder charset conversion and Go any-value default formatting remain outside this dependency-closed leaf.

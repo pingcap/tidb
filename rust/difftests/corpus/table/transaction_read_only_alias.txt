@@ -1,0 +1,32 @@
+## Exact session-state behavior from pkg/sessionctx/variable/noop.go and
+## varsutil.go:checkReadOnly, exercised end-to-end by
+## pkg/executor/set_test.go:TestSetVar. `tx_read_only` and
+## `transaction_read_only` are one compatibility-only value: OFF accepts
+## false but rejects true, while ON/WARN permit true without making DML
+## read-only. The seed intentionally has no global-variable store, so this
+## table corpus stays on its fully modeled session path.
+select @@tx_read_only, @@transaction_read_only
+select @@tidb_enable_noop_functions
+set tx_read_only = 0
+set transaction_read_only = 1
+select @@tx_read_only, @@transaction_read_only
+set tidb_enable_noop_functions = on
+select @@tidb_enable_noop_functions
+set transaction read only
+select @@tx_read_only, @@transaction_read_only
+create table read_only_noop (id int)
+insert into read_only_noop values (1)
+select id from read_only_noop
+set tidb_enable_noop_functions = off
+set transaction read write
+set tidb_enable_noop_functions = off
+select @@tx_read_only, @@transaction_read_only
+set tidb_enable_noop_functions = warn
+select @@tidb_enable_noop_functions
+set tx_read_only = 1
+select @@tx_read_only, @@transaction_read_only
+set tx_read_only = 0
+set tidb_enable_noop_functions = 0
+select @@tidb_enable_noop_functions
+select @@global.tx_read_only, @@global.transaction_read_only
+select @@global.tidb_enable_noop_functions

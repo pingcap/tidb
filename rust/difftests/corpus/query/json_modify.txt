@@ -1,0 +1,10 @@
+## Source vectors from pkg/expression/builtin_json_test.go (TestJSONSetInsertReplace, TestJSONMerge, TestJSONMergePreserve).
+select json_set('{}','$.a',3)
+select json_insert('{}','$.a',3)
+select json_replace('{}','$.a',3)
+select json_set('{}','$.a',3,'$.b','3')
+select json_set('{}','$.a',null,'$.b','nil')
+select json_merge('{}','[]')
+select json_merge('{}','[]',3,'4')
+select json_merge_preserve('{}','[]')
+select json_merge_preserve('{}','[]',3,'4')

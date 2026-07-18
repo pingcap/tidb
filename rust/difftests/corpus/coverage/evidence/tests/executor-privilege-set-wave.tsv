@@ -1,0 +1,3 @@
+# Source-owned privilege-set helper test-port evidence.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/executor/revoke_test.go	97	TestRevokeTableScope	PARTIAL	executor-privilege-set-wave	rust/crates/tidb-exec/tests/privilege_set_source.rs	Rust vectors cover empty and comma-preserving splits, round-trip joins, duplicate suppression, ordered append, first-match deletion, and missing-value no-op; Go GRANT/REVOKE execution and privilege-table assertions remain external.

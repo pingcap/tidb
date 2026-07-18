@@ -1,0 +1,79 @@
+## tidb-exec differential corpus: table-less SELECT statements, one per line.
+## Each is run by the Go engine (goquery) and by tidb-exec; the result rows
+## (projection + selection) must match. Out-of-scope statements are ignored.
+select 1
+select 1, 2, 3
+select 1 + 1, 2 * 3, 10 - 4
+select 'hello'
+select 'a', 'b', 'c'
+select 1, 'x', NULL
+select abs(-5), sign(-2), 3
+select concat('a', 'b'), length('hello')
+select upper('mix'), lower('MIX')
+select 1 = 1, 2 > 3, 5 <=> 5
+select 1 and 0, 1 or 0, not 0
+select least(3, 1, 2), greatest(4, 5, 6)
+select if(1, 10, 20), coalesce(NULL, 7)
+select 5 where 1 = 1
+select 5 where 1 = 0
+select 5 where NULL
+select 10, 20 where 3 < 2
+select 10, 20 where 3 > 2
+select 'kept' where 1 and 1
+select 'dropped' where 0 or 0
+select abs(-3), concat('x', 'y') where 2 > 1
+select 1 from dual
+select 1, 2 from dual where 1 = 1
+select 1 from dual where 0
+select left('hello', 3), right('world', 2) where 1
+select nullif(2, 2), ifnull(NULL, 9)
+select 100 * 0, 100 div 7, 100 mod 7
+select 1 = 1 and 2 = 2, 1 = 2 or 3 = 3
+select char_length('héllo'), length('héllo')
+select substring('abcdef', 2, 3) where char_length('xy') = 2
+select 1 union select 2
+select 2 union select 1
+select 1 union all select 1
+select 1 union select 2 union select 3
+select 1 union select 1 union select 2
+select 1 union all select 2 union select 1
+select 'a' union select 'b' union select 'a'
+select 1 except select 1
+select 1 except select 2
+select 1 intersect select 1
+select 1 intersect select 2
+select 1, 'x' union select 2, 'y'
+(select 1) union (select 2)
+select 5 where 1 = 0 union select 6
+select 5 union select 6 where 1 = 0
+select 3 union select 1 union select 2 order by 1
+select abs(-1) union select sign(2) union select 5
+select reverse('abc'), repeat('ab', 3)
+select replace('aaa', 'a', 'bb'), ascii('A')
+select space(4), strcmp('a', 'b'), strcmp('b', 'a')
+select lpad('x', 5, '-'), rpad('x', 5, '-')
+select lpad('hello', 3, '.'), rpad('hi', 1, '.')
+select locate('lo', 'hello'), instr('hello', 'l')
+select reverse(null), repeat('z', 0)
+select hex(255), hex('abc'), unhex('4D7953514C')
+select bin(12), oct(64), conv('ff', 16, 10)
+select field('c', 'a', 'b', 'c'), elt(2, 'x', 'y', 'z')
+select greatest('a', 'c', 'b'), least('x', 'y', 'z')
+select bit_length('ab'), conv(100, 10, 2)
+select substring_index('a.b.c.d', '.', 2), substring_index('a.b.c.d', '.', -2)
+select concat_ws('-', 'a', 'b', 'c'), concat_ws(',', 'a', null, 'c')
+select to_base64('abc'), from_base64('YWJj')
+select insert('Quadratic', 3, 4, 'What'), make_set(5, 'a', 'b', 'c', 'd')
+select crc32('MySQL'), bit_length('MySQL')
+select date_format('2021-03-05', '%Y-%m-%d'), date_format('2021-03-05', '%y/%c/%e')
+select date_format('2021-03-05 14:07:09', '%H:%i:%S'), date_format('2021-03-05 14:07:09', '%h:%i %p')
+select date_format('2021-03-05', '%W %M'), date_format('2021-03-05', '%a %b')
+select date_format('2021-03-05', '%j'), date_format('2021-01-09', '%D')
+select date_format('2021-12-31', '%Y%m%d'), date_format('2021-03-05 14:07:09', '%T')
+select format(1234567.891, 2), format(1234.5, 0)
+select bit_count(255), bit_count(7), ord('A')
+select quote('a''b'), quote('hi')
+select char(77, 121, 83, 81, 76)
+select format(-9999.555, 1), format(0, 2)
+select conv('-1', 10, 16), conv(-17, 10, -18), conv('a', 16, 2)
+select lpad('x', -1, '-'), lpad('x', 0, '-'), rpad('ab', -5, '.')

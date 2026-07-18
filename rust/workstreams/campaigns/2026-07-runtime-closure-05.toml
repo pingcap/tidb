@@ -1,0 +1,11 @@
+schema = "1"
+campaign = "2026-07-runtime-closure-05"
+status = "integrated"
+slices = [
+  "planner-cardinality-live-index-choice",
+  "txnkv-mutable-transaction-runtime",
+  "executor-window-complete-live-runtime",
+  "distsql-injected-query-runtime",
+  "stats-auto-analyze-complete-runtime",
+  "server-compressed-command-io-runtime",
+]

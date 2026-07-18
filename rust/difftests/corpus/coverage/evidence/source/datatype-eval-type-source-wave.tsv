@@ -1,0 +1,4 @@
+# Source-owned source-port fragment for datatype-eval-type-source-wave.
+# source_path	status	owner	evidence_artifact	note
+pkg/parser/types/eval_type.go	COVERED	datatype-eval-type-source-wave	rust/crates/tidb-datatype/src/eval_type.rs	All nine byte discriminants exact display strings IsStringKind and IsVectorKind behavior execute; invalid source bytes are rejected by a typed conversion instead of surviving until Go String panics
+pkg/types/eval_type.go	COVERED	datatype-eval-type-source-wave	rust/crates/tidb-datatype/src/eval_type.rs	The public alias surface reuses the single EvalType definition and exports all nine source constants without a duplicate representation

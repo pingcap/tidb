@@ -1,0 +1,4 @@
+# Source-owned test-evidence fragment for txnkv-error-source-wave.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/kv/key_test.go	115	TestBasicFunc	COVERED	txnkv-error-source-wave	rust/difftests/transaction-tests/tests/key_version.rs	Original nil retryable and foreign-error rows execute plus both other source retry identities root-cause equality and not-found classification
+go_test	pkg/kv/error_test.go	25	TestError	COVERED	txnkv-error-source-wave	rust/difftests/transaction-tests/tests/key_version.rs	All original SQL error-code assertions execute and the same table pins every remaining pkg kv error identity class template and redaction position

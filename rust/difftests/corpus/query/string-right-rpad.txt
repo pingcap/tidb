@@ -1,0 +1,15 @@
+## Source vectors from pkg/expression/builtin_string_test.go (TestStringRight
+## and the scalar value row of TestRpadSig). Binary rows keep the separate
+## byte signatures visible without depending on chunk metadata.
+select right('helloworld', 5)
+select right('helloworld', 10)
+select right('helloworld', 11)
+select right('helloworld', -1)
+select right('', 2)
+select right(NULL, 2)
+select right(unhex('6162FF'), 1)
+select rpad('abc', 6, '123')
+select rpad(NULL, 6, '123')
+select rpad('abc', 6, NULL)
+select rpad(unhex('6162'), 3, unhex('FF'))
+select rpad(unhex('6162FF'), 2, unhex('00'))

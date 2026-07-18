@@ -1,0 +1,91 @@
+// Source: github.com/pingcap/kvproto/proto/errorpb.proto
+//
+// Dependency-closed region-error projection for unary coprocessor responses.
+// Every outer error variant retains its exact field number. Nested metapb
+// region/peer payloads that are not consumed by this slice are represented by
+// empty messages, preserving variant presence without claiming refresh logic.
+syntax = "proto3";
+
+package errorpb;
+
+message NotLeader { uint64 region_id = 1; }
+message RegionNotFound { uint64 region_id = 1; }
+message KeyNotInRegion {
+  bytes key = 1;
+  uint64 region_id = 2;
+  bytes start_key = 3;
+  bytes end_key = 4;
+}
+message EpochNotMatch {}
+message ServerIsBusy {
+  string reason = 1;
+  uint64 backoff_ms = 2;
+  uint32 estimated_wait_ms = 3;
+  uint64 applied_index = 4;
+}
+message StaleCommand {}
+message StoreNotMatch {
+  uint64 request_store_id = 1;
+  uint64 actual_store_id = 2;
+}
+message RaftEntryTooLarge {
+  uint64 region_id = 1;
+  uint64 entry_size = 2;
+}
+message MaxTimestampNotSynced {}
+message ReadIndexNotReady {
+  string reason = 1;
+  uint64 region_id = 2;
+}
+message ProposalInMergingMode { uint64 region_id = 1; }
+message DataIsNotReady {
+  uint64 region_id = 1;
+  uint64 peer_id = 2;
+  uint64 safe_ts = 3;
+}
+message RegionNotInitialized { uint64 region_id = 1; }
+message DiskFull {
+  repeated uint64 store_id = 1;
+  string reason = 2;
+}
+message RecoveryInProgress { uint64 region_id = 1; }
+message FlashbackInProgress {
+  uint64 region_id = 1;
+  uint64 flashback_start_ts = 2;
+}
+message FlashbackNotPrepared { uint64 region_id = 1; }
+message IsWitness { uint64 region_id = 1; }
+message MismatchPeerId {
+  uint64 request_peer_id = 1;
+  uint64 store_peer_id = 2;
+}
+message BucketVersionNotMatch {
+  uint64 version = 1;
+  repeated bytes keys = 2;
+}
+message UndeterminedResult { string message = 1; }
+
+message Error {
+  string message = 1;
+  NotLeader not_leader = 2;
+  RegionNotFound region_not_found = 3;
+  KeyNotInRegion key_not_in_region = 4;
+  EpochNotMatch epoch_not_match = 5;
+  ServerIsBusy server_is_busy = 6;
+  StaleCommand stale_command = 7;
+  StoreNotMatch store_not_match = 8;
+  RaftEntryTooLarge raft_entry_too_large = 9;
+  MaxTimestampNotSynced max_timestamp_not_synced = 10;
+  ReadIndexNotReady read_index_not_ready = 11;
+  ProposalInMergingMode proposal_in_merging_mode = 12;
+  DataIsNotReady data_is_not_ready = 13;
+  RegionNotInitialized region_not_initialized = 14;
+  DiskFull disk_full = 15;
+  RecoveryInProgress recovery_in_progress = 16;
+  FlashbackInProgress flashback_in_progress = 17;
+  FlashbackNotPrepared flashback_not_prepared = 18;
+  IsWitness is_witness = 19;
+  MismatchPeerId mismatch_peer_id = 20;
+  BucketVersionNotMatch bucket_version_not_match = 21;
+  UndeterminedResult undetermined_result = 22;
+}

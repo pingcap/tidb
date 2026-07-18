@@ -1,0 +1,2 @@
+go_owner	rust_module	status	note
+method:pkg/parser/ddl_alter_handlers.go#HandParser.parseAlterPartitionAction	rust/crates/tidb-parser/src/ddl.rs	partial	The shared Rust ALTER router remains a dispatch surface; narrow partition-action leaves (ADD, CHECK/IMPORT, DISCARD, and interval bounds) carry their own source selectors/evidence while the broader Go method stays partial.

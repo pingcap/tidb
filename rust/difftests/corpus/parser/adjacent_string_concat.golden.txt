@@ -1,0 +1,21 @@
+#IDX 0
+SELECT _UTF8MB4'ssab'
+#END
+#IDX 1
+SELECT _UTF8MB4'ssa b d'
+#END
+#IDX 2
+SELECT _UTF8MB4'ssa b'
+#END
+#IDX 3
+SELECT _UTF8MB4'ssa'
+#END
+#IDX 4
+SELECT _UTF8MB4'a string'
+#END
+#IDX 5
+SELECT _UTF8MB4'a string'
+#END
+#IDX 6
+SELECT _UTF8MB4'stringstring'
+#END

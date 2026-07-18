@@ -1,0 +1,2 @@
+select /*+ HASH_JOIN(@sel_1 t2) */ * FROM (select 1) t1 NATURAL LEFT JOIN (select 2) t2;
+select /*+ inl_join(@sel_1 t1, t2) */ * from t1, t2;

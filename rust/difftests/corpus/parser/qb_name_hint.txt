@@ -1,0 +1,2 @@
+select /*+ QB_NAME(qb1) */ a from t
+select /*+ qb_name(qb, v4@sel_4) use_index(t4@qb, idx_a)   qb_name(qb2, v4@sel_5) use_index(t4@qb, idx_b) */ * from (select * from d1) as t0 join (select * from d2) as t1

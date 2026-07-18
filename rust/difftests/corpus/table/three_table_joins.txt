@@ -1,0 +1,12 @@
+## 3+ table joins (verifies the join chain generalizes past two tables)
+create table x1 (id int, v varchar(9))
+create table x2 (id int, x1_id int, v varchar(9))
+create table x3 (id int, x2_id int, v varchar(9))
+insert into x1 values (1, 'a'), (2, 'b')
+insert into x2 values (1, 1, 'p'), (2, 2, 'q'), (3, 9, 'r')
+insert into x3 values (1, 1, 'm')
+select x1.v, x2.v, x3.v from x1 join x2 on x2.x1_id = x1.id join x3 on x3.x2_id = x2.id
+select x1.v, x2.v, x3.v from x1 join x2 on x2.x1_id = x1.id left join x3 on x3.x2_id = x2.id
+select x1.v, x2.v, x3.v from x1, x2, x3 where x2.x1_id = x1.id and x3.x2_id = x2.id
+select count(*) from x1 join x2 on x2.x1_id = x1.id join x3 on x3.x2_id = x2.id
+select x1.v, count(*) from x1 join x2 on x2.x1_id = x1.id left join x3 on x3.x2_id = x2.id group by x1.v

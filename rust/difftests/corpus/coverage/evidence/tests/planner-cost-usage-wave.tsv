@@ -1,0 +1,3 @@
+# Source-owned test-evidence fragment for planner-cost-usage-wave.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/planner/core/plan_cost_ver2_test.go	83	TestCostModelTraceVer2	PARTIAL	planner-cost-usage-wave	rust/crates/tidb-planner/src/cost_usage.rs	Inline Rust vectors cover trace gating, factor/formula construction, empty-trace handling, source-order sum aggregation, divide/multiply scaling, fixed two-decimal formatting, negative-cost clamping, and trace-preserving tie-breakers; full Cascades plan generation, statistics, factor selection, warning emission, and EXPLAIN integration remain external.

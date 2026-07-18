@@ -1,0 +1,2 @@
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/planner/core/casetest/mpp/mpp_test.go	673	TestPushDownSelectionForMPP	PARTIAL	planner-physical-selection-wave	rust/difftests/planner-tests/tests/physical_selection.rs	Rust vectors preserve Selection plan identity/offset and MPP stream_count explain suffix over opaque condition text; full SQL expression pushdown, MPP setup, schema/session state, and execution remain external.

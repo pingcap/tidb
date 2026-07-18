@@ -1,0 +1,9 @@
+## TO_DAYS: an absolute day number (days_from_civil plus a fixed offset
+## solved from real TiDB's own answer); ignores time-of-day; year 0000's
+## special "zero date" territory is deliberately out of scope
+to_days('2021-01-01')
+to_days('1970-01-01')
+to_days('0001-01-01')
+to_days('2021-03-15 10:30:00')
+to_days('not a date')
+to_days(NULL)

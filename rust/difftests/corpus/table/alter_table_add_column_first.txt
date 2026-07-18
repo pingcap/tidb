@@ -1,0 +1,8 @@
+## ADD COLUMN ... FIRST shifts an existing PRIMARY KEY's tracked index, so
+## conflict detection still finds the right column afterward
+create table alt_pk (id int primary key, v int)
+insert into alt_pk values (1, 100)
+alter table alt_pk add column tag varchar(9) first
+select * from alt_pk
+insert into alt_pk values ('x', 1, 200) on duplicate key update v = 999
+select * from alt_pk

@@ -1,0 +1,50 @@
+schema = "1"
+slice = "session-warning-status-publication"
+status = "partial"
+target = "tidb-server"
+ring = "result"
+consumer = "bounded direct Go-to-Rust warning-to-session-to-protocol runtime: StatementStatus owns the sole StaticWarningHandler and delegates reset, single/batch append, set, snapshot, total count, and error count; finish snapshots the ordered warnings once into immutable PublishedStatementStatus; status_result publishes Go-compatible wrapping uint16 warning counts to OK and EOF metadata; the existing checkReadOnly WARN producer reaches this store through the live COM_QUERY session boundary. It does not claim SHOW WARNINGS, warning errno or typed terror identity, generic SysVar plumbing, global persistence, every warning producer, full SessionVars, or broader driver/session behavior"
+test_target = "tidb-exec source_shard_b, source_shard_c, source_shard_d, and status_result_source plus tidb-server status_publication_source"
+go_sources = [
+  "pkg/util/context/warn.go",
+  "pkg/sessionctx/stmtctx/stmtctx.go",
+  "pkg/sessionctx/variable/noop.go",
+  "pkg/sessionctx/variable/varsutil.go",
+  "pkg/server/driver_tidb.go",
+]
+go_tests = [
+  "pkg/util/context/warn_test.go:28:TestSQLWarn",
+  "pkg/util/context/warn_test.go:64:TestIgnoreWarn",
+  "pkg/util/context/warn_test.go:79:TestStaticWarnHandler",
+  "pkg/util/context/warn_test.go:158:TestCopyWarnHandler",
+  "pkg/util/context/warn_test.go:0:warn_test.go",
+  "pkg/sessionctx/stmtctx/stmtctx_test.go:415:TestNewStmtCtx",
+  "pkg/sessionctx/stmtctx/stmtctx_test.go:468:TestResetStmtCtx",
+  "pkg/sessionctx/variable/tests/session_test.go:89:TestSession",
+  "pkg/sessionctx/variable/sysvar_test.go:351:TestTxnIsolation",
+  "pkg/sessionctx/variable/sysvar_test.go:411:TestReadOnlyNoop",
+  "pkg/executor/set_test.go:1530:TestEnableNoopFunctionsVar",
+]
+depends_on = []
+evidence_prerequisites = [
+  { capability = "session-vars-statement-context", evidence_owner = "session-isolation-state-wave", kind = "source", anchor = "pkg/sessionctx/variable/session.go", minimum_status = "PARTIAL" },
+  { capability = "mysql-ok-eof-framing", evidence_owner = "server-distsql-streaming-resultset", kind = "test", anchor = "pkg/server/conn_test.go:2145:TestOkEof", minimum_status = "COVERED" },
+  { capability = "server-write-response-boundary", evidence_owner = "server-compressed-command-io-runtime", kind = "source", anchor = "pkg/server/conn.go", minimum_status = "PARTIAL" },
+]
+rust_paths = [
+  "rust/crates/tidb-exec/src/warning_publication.rs",
+  "rust/crates/tidb-exec/src/statement_status.rs",
+  "rust/crates/tidb-exec/src/noop_read_only.rs",
+  "rust/crates/tidb-exec/src/session_runtime.rs",
+  "rust/crates/tidb-exec/src/cluster.rs",
+  "rust/crates/tidb-exec/src/status_result.rs",
+  "rust/crates/tidb-exec/tests/warning_publication_source.rs",
+  "rust/crates/tidb-exec/tests/statement_status_source.rs",
+  "rust/crates/tidb-exec/tests/status_result_source.rs",
+  "rust/crates/tidb-exec/tests/noop_read_only_source.rs",
+  "rust/crates/tidb-exec/tests/isolation_state_source.rs",
+  "rust/crates/tidb-server/tests/status_publication_source.rs",
+  "rust/difftests/corpus/coverage/evidence/source/session-warning-status-publication.tsv",
+  "rust/difftests/corpus/coverage/evidence/tests/session-warning-status-publication.tsv",
+  "rust/difftests/corpus/coverage/evidence/transfers/session-warning-status-publication.tsv",
+]

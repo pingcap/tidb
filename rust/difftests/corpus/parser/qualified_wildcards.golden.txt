@@ -1,0 +1,12 @@
+#IDX 152
+SELECT `t`.* FROM `t`
+#END
+#IDX 153
+SELECT `emp`.*,`dept`.`name` FROM `emp` JOIN `dept` ON `emp`.`id`=`dept`.`id`
+#END
+#IDX 154
+SELECT `t`.`a`,`t`.* FROM `t`
+#END
+#IDX 155
+SELECT `a`.*,`b`.* FROM `a` JOIN `b` ON `a`.`id`=`b`.`id`
+#END

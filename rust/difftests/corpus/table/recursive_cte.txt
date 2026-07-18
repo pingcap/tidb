@@ -1,0 +1,48 @@
+## `WITH RECURSIVE` evaluation: base term executed once, then the
+## recursive term(s) iterated to a fixpoint, each round seeing ONLY the
+## PREVIOUS round's newly-added rows (not the whole accumulated table) --
+## confirmed via gorun this is REQUIRED (not an optimization): the
+## classic counter pattern gives 1,2,3,4,5 under UNION ALL, which a
+## whole-table rescan would double-count. UNION deduplicates across the
+## WHOLE accumulated result every round (a diamond-shaped graph reaches
+## one node via two paths -- UNION ALL shows it twice, UNION once); a
+## non-recursive CTE may still appear inside a WITH RECURSIVE clause
+## (RECURSIVE is a clause-level flag, not per-CTE) and reference an
+## earlier recursive one; the materialized CTE may be referenced more
+## than once at the OUTER query level (unlike inside its own recursive
+## term, where that's a self-join error); a recursive term may join a
+## real table; multiple recursive terms in one CTE combine together each
+## round. Also covers the deliberate scope boundaries confirmed real via
+## gorun: a self-join WITHIN a recursive term, an aggregate, ORDER BY,
+## and DISTINCT inside a recursive term are all genuine errors.
+create table t (id int, v int)
+insert into t values (1,10),(2,20),(3,30)
+create table edges (src int, dst int)
+insert into edges values (1,2),(1,3),(2,4),(3,4)
+with recursive r as (select 1 as n) select * from r
+with recursive cte as (select 1 as n union all select n + 1 from cte where n < 5) select * from cte
+with recursive cte as (select 1 as n union select n + 1 from cte where n < 5) select n from cte order by n
+with recursive cte as (select 1 as n union all select cte.n + 1 from cte join t on t.id = 1 where cte.n < t.v) select n from cte order by n
+with recursive a as (select 1 as n union all select n+1 from a where n<2), b as (select * from a) select * from b
+with recursive cte as (select 1 as n union all select n+1 from cte where n<2) select * from cte c1 join cte c2 on c1.n = c2.n
+with recursive reach as (select 1 as n union all select e.dst from edges e join reach r on e.src = r.n) select n from reach order by n
+with recursive reach as (select 1 as n union select e.dst from edges e join reach r on e.src = r.n) select n from reach order by n
+with recursive cte as (select 1 as n union all select n+1 from cte where n<2 union all select n+10 from cte where n<2) select n from cte order by n
+with recursive cte as (select 1 as n union all select c1.n + c2.n from cte c1, cte c2 where c1.n < 3) select * from cte limit 5
+with recursive cte as (select 1 as n union all select count(*) from cte) select * from cte limit 3
+with recursive cte as (select 1 as n union all select n+1 from cte where n < 5 order by n) select * from cte
+with recursive cte as (select 1 as n union all select distinct n+1 from cte where n < 5) select * from cte
+## Unlike ORDER BY, a LIMIT on the recursive CTE's own definition IS
+## supported: a real early-termination optimization capping the TOTAL
+## accumulated row count across every round, confirmed via gorun --
+## including LIMIT+OFFSET, LIMIT 0 (short-circuits before any round
+## runs), a LIMIT exceeding the fixpoint's own natural termination,
+## UNION (dedup) combined with LIMIT, and a round that overshoots the
+## target by more than one row (two recursive terms firing the same
+## round, truncated to the first N in term-evaluation order).
+with recursive cte as (select 1 as n union all select n+1 from cte where n<1000000 limit 5) select n from cte order by n
+with recursive cte as (select 1 as n union all select n+1 from cte where n<1000000 limit 3 offset 2) select n from cte order by n
+with recursive cte as (select 1 as n union all select n+1 from cte where n<1000000 limit 0) select n from cte
+with recursive cte as (select 1 as n union all select n+1 from cte where n<3 limit 100) select n from cte order by n
+with recursive cte as (select 1 as n union select n+1 from cte where n<1000000 limit 5) select n from cte order by n
+with recursive cte as (select 1 as n union all select n+1 from cte union all select n+100 from cte where n<3 limit 4) select n from cte order by n

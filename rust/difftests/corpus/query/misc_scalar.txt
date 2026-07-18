@@ -1,0 +1,7 @@
+## Exact value vectors from pkg/expression/builtin_miscellaneous_test.go:
+## TestAnyValue. `ANY_VALUE` is a scalar pass-through in TiDB; its grouped
+## query-planning purpose does not change that evaluation contract.
+select any_value(null), any_value(1234), any_value(-153), any_value(3.1415926), any_value('Hello, World')
+## Exact vectors from TestIsUUID. The 38-byte malformed-brace vector is
+## intentionally accepted because TiDB delegates to google/uuid.Parse.
+select is_uuid('6ccd780c-baba-1026-9564-5b8c656024db'), is_uuid('6CCD780C-BABA-1026-9564-5B8C656024DB'), is_uuid('6ccd780cbaba102695645b8c656024db'), is_uuid('{6ccd780c-baba-1026-9564-5b8c656024db}'), is_uuid('6ccd780c-baba-1026-9564-5b8c6560'), is_uuid('6CCD780C-BABA-1026-9564-5B8C656024DQ'), is_uuid(' 6ccd780c-baba-1026-9564-5b8c656024db'), is_uuid('6ccd780c-baba-1026-9564-5b8c656024db '), is_uuid(' 6ccd780c-baba-1026-9564-5b8c656024db '), is_uuid('{99a9ad03-5298-11ec-8f5c-00ff90147ac3*'), is_uuid('urn:uuid:99a9ad03-5298-11ec-8f5c-00ff90147ac3'), is_uuid(null)

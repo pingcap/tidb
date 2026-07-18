@@ -1,0 +1,3 @@
+# Source-owned direct evidence for the LENGTH/OCTET_LENGTH scalar boundary.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/expression/builtin_string_test.go	39	TestLengthAndOctetLength	PARTIAL	expression-length-source-wave	rust/difftests/corpus/expr/length_source.txt	All currently representable TestLengthAndOctetLength scalar rows execute through both LENGTH and OCTET_LENGTH, including UTF-8 byte counts, integer/float/decimal ETString coercion, binary literals, and NULL; Go's DATETIME/SET/DURATION typed values, connection-charset GBK loop, and injected-error datum remain outside the seed value/context domain.

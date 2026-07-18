@@ -1,0 +1,73 @@
+schema = "1"
+slice = "stats-priority-heap-live-analysis-job"
+status = "partial"
+target = "tidb-stats"
+ring = "plan"
+consumer = "The auto-analyze queue consumes the canonical mutable priority heap through real AnalysisJob identity and weight semantics"
+test_target = "priority_heap_source"
+go_sources = [
+  "pkg/statistics/handle/autoanalyze/priorityqueue/heap.go",
+  "pkg/statistics/handle/autoanalyze/priorityqueue/job.go",
+  "pkg/statistics/handle/autoanalyze/priorityqueue/queue.go",
+]
+go_tests = [
+  "pkg/statistics/handle/autoanalyze/priorityqueue/heap_test.go:0:heap_test.go",
+  "pkg/statistics/handle/autoanalyze/priorityqueue/heap_test.go:86:TestHeap_AddOrUpdate",
+  "pkg/statistics/handle/autoanalyze/priorityqueue/heap_test.go:121:TestHeapEmptyPop",
+  "pkg/statistics/handle/autoanalyze/priorityqueue/heap_test.go:127:TestHeap_Delete",
+  "pkg/statistics/handle/autoanalyze/priorityqueue/heap_test.go:162:TestHeap_Update",
+  "pkg/statistics/handle/autoanalyze/priorityqueue/heap_test.go:186:TestHeap_Get",
+  "pkg/statistics/handle/autoanalyze/priorityqueue/heap_test.go:207:TestHeap_GetByKey",
+  "pkg/statistics/handle/autoanalyze/priorityqueue/heap_test.go:228:TestHeap_List",
+  "pkg/statistics/handle/autoanalyze/priorityqueue/heap_test.go:250:TestHeap_ListKeys",
+  "pkg/statistics/handle/autoanalyze/priorityqueue/heap_test.go:273:TestHeap_Peek",
+  "pkg/statistics/handle/autoanalyze/priorityqueue/heap_test.go:296:TestHeap_IsEmpty",
+  "pkg/statistics/handle/autoanalyze/priorityqueue/heap_test.go:309:TestHeap_Len",
+  "pkg/statistics/handle/autoanalyze/priorityqueue/job_test.go:0:job_test.go",
+  "pkg/statistics/handle/autoanalyze/priorityqueue/job_test.go:24:TestStringer",
+  "pkg/statistics/handle/autoanalyze/priorityqueue/job_test.go:140:TestStringer/<generated>",
+  "pkg/statistics/handle/autoanalyze/priorityqueue/job_test.go:146:TestIsDynamicPartitionedTableAnalysisJob",
+  "pkg/statistics/handle/autoanalyze/priorityqueue/job_test.go:171:TestIsDynamicPartitionedTableAnalysisJob/<generated>",
+  "pkg/statistics/handle/autoanalyze/priorityqueue/queue_test.go:0:queue_test.go",
+  "pkg/statistics/handle/autoanalyze/priorityqueue/queue_test.go:36:TestCallAPIBeforeInitialize",
+  "pkg/statistics/handle/autoanalyze/priorityqueue/queue_test.go:42:TestCallAPIBeforeInitialize/IsEmpty",
+  "pkg/statistics/handle/autoanalyze/priorityqueue/queue_test.go:48:TestCallAPIBeforeInitialize/Pop",
+  "pkg/statistics/handle/autoanalyze/priorityqueue/queue_test.go:54:TestCallAPIBeforeInitialize/GetAllJobs",
+  "pkg/statistics/handle/autoanalyze/priorityqueue/queue_test.go:59:TestCallAPIBeforeInitialize/Peek",
+  "pkg/statistics/handle/autoanalyze/priorityqueue/queue_test.go:66:TestAnalysisPriorityQueue",
+  "pkg/statistics/handle/autoanalyze/priorityqueue/queue_test.go:89:TestAnalysisPriorityQueue/Initialize",
+  "pkg/statistics/handle/autoanalyze/priorityqueue/queue_test.go:106:TestAnalysisPriorityQueue/IsEmpty And Pop",
+  "pkg/statistics/handle/autoanalyze/priorityqueue/queue_test.go:128:TestRefreshLastAnalysisDuration",
+  "pkg/statistics/handle/autoanalyze/priorityqueue/queue_test.go:281:TestProcessDMLChanges",
+  "pkg/statistics/handle/autoanalyze/priorityqueue/queue_test.go:285:TestProcessDMLChangesPartitioned",
+  "pkg/statistics/handle/autoanalyze/priorityqueue/queue_test.go:289:TestProcessDMLChangesWithRunningJobs",
+  "pkg/statistics/handle/autoanalyze/priorityqueue/queue_test.go:375:TestRequeueMustRetryJobs",
+  "pkg/statistics/handle/autoanalyze/priorityqueue/queue_test.go:429:TestProcessDMLChangesWithLockedTables",
+  "pkg/statistics/handle/autoanalyze/priorityqueue/queue_test.go:496:TestProcessDMLChangesWithLockedPartitionsAndDynamicPruneMode",
+  "pkg/statistics/handle/autoanalyze/priorityqueue/queue_test.go:558:TestProcessDMLChangesWithLockedPartitionsAndStaticPruneMode",
+  "pkg/statistics/handle/autoanalyze/priorityqueue/queue_test.go:622:TestPQCanBeClosedAndReInitialized",
+  "pkg/statistics/handle/autoanalyze/priorityqueue/queue_test.go:642:TestPQHandlesTableDeletionGracefully",
+  "pkg/statistics/handle/autoanalyze/priorityqueue/queue_test.go:688:TestConcurrentCloseAndBackgroundOperations",
+  "pkg/statistics/handle/autoanalyze/priorityqueue/queue_test.go:715:TestConcurrentClose",
+  "pkg/statistics/handle/autoanalyze/priorityqueue/queue_test.go:756:TestConcurrentInitializeAndClose",
+  "pkg/statistics/handle/autoanalyze/priorityqueue/queue_test.go:799:TestPanicAndRecoverInQueueRun",
+]
+depends_on = []
+rust_paths = [
+  "rust/crates/tidb-stats/src/priority_heap.rs",
+  "rust/crates/tidb-stats/src/auto_analyze_job.rs",
+  "rust/crates/tidb-stats/src/auto_analyze_queue.rs",
+  "rust/crates/tidb-stats/tests/priority_heap_source.rs",
+  "rust/crates/tidb-stats/tests/priority_heap_live_source.rs",
+  "rust/crates/tidb-stats/tests/auto_analyze_job_source.rs",
+  "rust/crates/tidb-stats/tests/queue_gate_source.rs",
+  "rust/difftests/corpus/coverage/evidence/source/stats-priority-heap-live-analysis-job.tsv",
+  "rust/difftests/corpus/coverage/evidence/tests/stats-priority-heap-live-analysis-job.tsv",
+  "rust/difftests/corpus/coverage/evidence/transfers/stats-priority-heap-live-analysis-job.tsv",
+  "rust/difftests/corpus/coverage/evidence/source/stats-priority-heap-wave.tsv",
+  "rust/difftests/corpus/coverage/evidence/tests/stats-priority-heap-wave.tsv",
+  "rust/difftests/corpus/coverage/evidence/source/stats-auto-analyze-job-wave.tsv",
+  "rust/difftests/corpus/coverage/evidence/tests/stats-auto-analyze-job-wave.tsv",
+  "rust/difftests/corpus/coverage/evidence/source/stats-queue-gate-wave.tsv",
+  "rust/difftests/corpus/coverage/evidence/tests/stats-queue-gate-wave.tsv",
+]

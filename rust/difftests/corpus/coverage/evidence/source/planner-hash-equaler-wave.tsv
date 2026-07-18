@@ -1,0 +1,3 @@
+# Source-owned source-port fragment for planner-hash-equaler-wave.
+# source_path	status	owner	evidence_artifact	note
+pkg/planner/cascades/base/hash_equaler.go	PARTIAL	planner-hash-equaler-wave	rust/crates/tidb-planner/src/hash_equaler.rs	Ports FNV-1a offset/prime updates for bool, signed/unsigned integers, floats, runes, strings, bytes, nil markers, reset, cache, and digest readback; cascades object hashing/equality dispatch and invalid UTF-8 byte-string inputs remain external.

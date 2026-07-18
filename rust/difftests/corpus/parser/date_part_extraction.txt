@@ -1,0 +1,4 @@
+## Date-part extraction: a DATE/DATETIME value is a plain string to this
+## parser/evaluator, so these are ordinary keyword-function calls
+select year(a), month(a), day(a), quarter(a) from t
+select dayofmonth(a) from t

@@ -1,0 +1,3 @@
+# Source-owned variable-error code test-port evidence.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/sessionctx/variable/tests/variable_test.go	112	TestError	PARTIAL	session-sysvar-error-wave	rust/crates/tidb-exec/tests/sysvar_error_source.rs	Focused Rust vectors cover the ten source-tested variable error codes plus special/shared code identities; dbterror construction, message rendering, SQLSTATE, and ToSQLError publication remain external.

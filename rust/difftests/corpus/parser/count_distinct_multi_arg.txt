@@ -1,0 +1,20 @@
+## `COUNT(DISTINCT a, b, ...)` -- the multi-argument DISTINCT form of
+## COUNT, counting distinct non-NULL (a, b, ...) tuples. Read directly from
+## real TiDB's own hand-written parser (pkg/parser/expr_func_parser.go's
+## parseAggregateFuncCall): the comma-separated arg list is syntactically
+## generic for every aggregate name, then a name-keyed post-check rejects
+## `len(args) > 1` for every aggregate here EXCEPT COUNT (which additionally
+## requires DISTINCT for the multi-arg form -- COUNT(a, b) without DISTINCT
+## is still a genuine ParseError). Execution semantics (confirmed via
+## gorun against pkg/executor/aggfuncs/func_count_distinct.go's
+## baseCountDistinct4MultiArgs.UpdatePartialResult): a row is skipped
+## entirely if ANY argument is NULL, otherwise the full tuple is deduped.
+select count(distinct a, b) from t
+select count(distinct a, b, c) from t
+select count(distinct t.a, t.b) from t join s on t.b= s.b
+select count(distinct b, c) from tx where a < 3 order by count(distinct b, c)
+select count(distinct b, c, d) from t group by id
+select count(distinct c), count(distinct a,b) from t
+select count(distinct value, value1) from t order by count(distinct value, value1)
+select count(distinct value collate utf8mb4_bin, value1) from t order by count(distinct value collate utf8mb4_bin, value1)
+select /*+ HASH_AGG() */ avg(b), c, avg(b), count(distinct A, B),  count(distinct A), count(distinct c), sum(b) from t group by c

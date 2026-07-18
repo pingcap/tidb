@@ -1,0 +1,3 @@
+# Source-owned statistics order-correlation test evidence.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test_file	pkg/statistics/handle/handletest/handle_test.go	0	handle_test.go	PARTIAL	stats-correlation-wave	rust/crates/tidb-stats/tests/correlation_source.rs	Rust tests cover identity, reverse, fractional, single-item, and undefined zero-sample arithmetic; the Go handle-level TestCorrelation exercises the complete analyze/handle path and remains open.

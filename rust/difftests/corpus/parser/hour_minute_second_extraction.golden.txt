@@ -1,0 +1,3 @@
+#IDX 0
+SELECT HOUR(`a`),MINUTE(`a`),SECOND(`a`) FROM `t`
+#END

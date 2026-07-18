@@ -1,0 +1,14 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "go_test_declaration_inventory_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/pingcap/tidb/rust/difftests/tools/go_test_declaration_inventory",
+    visibility = ["//visibility:private"],
+)
+
+go_binary(
+    name = "go_test_declaration_inventory",
+    embed = [":go_test_declaration_inventory_lib"],
+    visibility = ["//visibility:public"],
+)

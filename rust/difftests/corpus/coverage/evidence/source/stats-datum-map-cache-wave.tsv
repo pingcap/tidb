@@ -1,0 +1,3 @@
+# Source-owned TopN Datum-cache evidence.
+# source_path	status	owner	evidence_artifact	note
+pkg/statistics/cmsketch_util.go	PARTIAL	stats-datum-map-cache-wave	rust/crates/tidb-stats/src/datum_map_cache.rs	The Rust leaf ports DatumMapCache construction, byte-keyed Get/Put replacement, and cached Datum ownership from lines 18-74. Schema-aware topNMetaToDatum conversion (time/float/index branches), types.Datum integration, histogram lookup, and global-statistics lifecycle remain explicit future owners.

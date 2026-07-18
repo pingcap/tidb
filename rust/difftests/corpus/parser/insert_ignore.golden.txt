@@ -1,0 +1,6 @@
+#IDX 137
+INSERT IGNORE INTO `t` (`id`,`v`) VALUES (1,_UTF8MB4'a')
+#END
+#IDX 138
+INSERT IGNORE INTO `t` (`id`,`v`) VALUES (1,_UTF8MB4'a'),(2,_UTF8MB4'b')
+#END

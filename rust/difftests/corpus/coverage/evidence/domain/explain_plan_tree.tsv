@@ -1,0 +1,4 @@
+go_owner	rust_module	status	note
+method:pkg/parser/hintparser.go#parseLeadingHint	rust/crates/tidb-parser/src/select.rs	partial	Recursive LEADING groups and malformed NO_HASH_JOIN hint dropping preserve Go EXPLAIN FORMAT='plan_tree' corpus restores.
+tests:tests/integrationtest/t/planner/core/casetest/predicate_simplification.test#345;tests/integrationtest/t/planner/core/casetest/rule/rule_join_reorder.test#529,530,533	rust/crates/tidb-parser/src/tests/explain_plan_tree_source.rs	partial	Direct source rows cover malformed NO_HASH_JOIN and nested LEADING groups.
+execution capability	rust/crates/tidb-exec/src	unsupported	EXPLAIN remains parser-only in this rewrite slice; executor capability is intentionally unsupported before mutation.

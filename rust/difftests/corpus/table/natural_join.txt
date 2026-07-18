@@ -1,0 +1,25 @@
+## NATURAL [LEFT|RIGHT] JOIN: exactly `JOIN ... USING (<every column name
+## common to both sides>)` (confirmed against real TiDB) -- coalesced
+## columns, LEFT/RIGHT outer-join NULL-padding, and the same LEFT/RIGHT
+## column-order swap an explicit USING join already has. Zero common
+## columns degenerates to a plain cross join (the full cartesian
+## product); multiple common columns are ordered as they appear in the
+## LEFT side's own columns, not the right side's or alphabetically.
+create table nj1 (a int, b int)
+create table nj2 (a int, c int)
+insert into nj1 values (1, 10), (2, 20)
+insert into nj2 values (1, 100), (3, 300)
+select * from nj1 natural join nj2
+select nj1.a, b, c from nj1 natural join nj2
+select * from nj1 natural left join nj2
+select * from nj1 natural right join nj2
+create table nj3 (x int, y int)
+create table nj4 (p int, q int)
+insert into nj3 values (1, 2)
+insert into nj4 values (3, 4)
+select * from nj3 natural join nj4
+create table nj5 (c int, a int, b int)
+create table nj6 (b int, a int, d int)
+insert into nj5 values (100, 1, 2)
+insert into nj6 values (2, 1, 200)
+select * from nj5 natural join nj6

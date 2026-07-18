@@ -1,0 +1,26 @@
+## Comparisons, three-valued logic/truthiness, IN/BETWEEN/IS predicates,
+## and builtins (COALESCE/IFNULL/GREATEST/LEAST/ABS/SIGN) over Float,
+## including mixed Int/Decimal/Float argument lists (GREATEST/LEAST reuse
+## the same promotion `+`/`-` already use, confirmed via goeval, not
+## assumed); SIGN(0.0) is 0 (unlike IEEE-754 signum, which is never 0)
+1.5e2 = 150
+1.5e2 > 100
+1e2 = 100
+1.5e2 <> 100.5
+1.5e2 <=> null
+1.5e2 <=> 1.5e2
+1.5e2 and 1
+not 0.0e0
+1.5e2 is true
+1.5e2 is false
+0.0e0 is false
+1.5e2 in (1, 2, 150)
+1.5e2 between 100 and 200
+1.5e2 is null
+coalesce(null, 1.5e2)
+greatest(1.5e2, 3.14, 2)
+least(1.5e2, 3.14, 2)
+abs(-1.5e2)
+sign(-1.5e2)
+sign(0.0e0)
+ifnull(null, 1.5e2)

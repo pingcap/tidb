@@ -1,0 +1,3 @@
+# Source-owned source-port fragment for planner-cardinality-exponential.
+# source_path	status	owner	evidence_artifact	note
+pkg/planner/cardinality/exponential.go	COVERED	planner-cardinality-exponential	rust/crates/tidb-planner/src/cardinality.rs	Direct port of MaxExponentialBackoffCols and ApplyExponentialBackoff preserves empty and single-value paths four-column cap successive square-root order and lower/upper bound clamping

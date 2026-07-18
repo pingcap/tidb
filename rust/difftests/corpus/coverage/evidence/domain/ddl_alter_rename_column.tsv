@@ -1,0 +1,2 @@
+go_owner	rust_module	status	note
+method:pkg/parser/ddl_alter_handlers.go#HandParser.parseAlterRename	rust/crates/tidb-parser/src/ddl/alter/rename_column.rs	covered	RENAME COLUMN old TO new is typed with source-faithful canonical restore, direct TestDDL rows, and a dynamic selector covering all 16 accepted single-statement integration rows.

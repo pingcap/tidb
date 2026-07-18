@@ -1,0 +1,23 @@
+schema = "1"
+slice = "distsql-copr-cache-live-runtime"
+status = "retired"
+target = "tidb-distsql"
+ring = "transaction"
+consumer = "The coprocessor read path can construct, disable, admit, populate, retrieve, validate, and page-restore source-keyed cache values through one bounded cache owner"
+test_target = "copr_cache_source"
+go_sources = ["pkg/store/copr/coprocessor_cache.go"]
+go_tests = [
+  "pkg/store/copr/coprocessor_cache_test.go:0:coprocessor_cache_test.go",
+  "pkg/store/copr/coprocessor_cache_test.go:27:TestBuildCacheKey",
+  "pkg/store/copr/coprocessor_cache_test.go:97:TestDisable",
+  "pkg/store/copr/coprocessor_cache_test.go:121:TestAdmission",
+  "pkg/store/copr/coprocessor_cache_test.go:184:TestCacheValueLen",
+  "pkg/store/copr/coprocessor_cache_test.go:213:TestGetSet",
+  "pkg/store/copr/coprocessor_cache_test.go:238:TestGetSet/paging size bytes cache hit keeps range",
+  "pkg/store/copr/coprocessor_cache_test.go:256:TestIssue24118",
+]
+depends_on = []
+evidence_prerequisites = []
+rust_paths = [
+  "rust/difftests/corpus/coverage/evidence/transfers/distsql-cop-read-task-runtime.tsv",
+]

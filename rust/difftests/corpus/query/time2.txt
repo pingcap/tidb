@@ -1,0 +1,26 @@
+## Go source vectors: pkg/expression/builtin_time_test.go TestDateFormat.
+select date_format('2010-01-07 23:12:34','%U %u %V %v %X %x')
+select date_format('2012-12-21 23:12:34','%U %u %V %v %X %x')
+select date_format('2019-12-29','%U %u %V %v %X %x')
+select date_format('2020-01-01','%U %u %V %v %X %x')
+select date_format('2021-01-01','%U %u %V %v %X %x')
+select date_format('2010-01-07 23:12:34.12345','%f %w %U %u %V %v %X %x')
+## Go source vectors: TestWeek and TestYearWeek.
+select week('2008-02-20',0),week('2008-02-20',1),week('2008-12-31',1),week('2023-01-01',null)
+select yearweek('1987-01-01',0),yearweek('2000-01-01',0),yearweek('2016-09-03',3)
+select yearweek('2016-00-05')
+## Go source vectors: TestMonthName, TestDayName, and TestLastDay.
+select monthname('2003-02-05'),monthname('2004-01-01'),monthname(null)
+select dayname('2003-02-05'),dayname('2004-01-01'),dayname(null)
+select last_day('2003-02-05'),last_day('2004-02-05'),last_day('2004-01-01 01:01:01'),last_day(950501)
+## Go source vectors: TestTimeToSec.
+select time_to_sec('22:23:00'),time_to_sec('23:00'),time_to_sec('1:0:0'),time_to_sec('-02:00:05'),time_to_sec('020005')
+## Go source vectors: TestSecToTime.
+select sec_to_time(2378),sec_to_time(3864000),sec_to_time(-3864000),sec_to_time(86401.4),sec_to_time(-86401.4)
+select sec_to_time('123.4'),sec_to_time('123.4567891'),sec_to_time('1e-4')
+## Go source vectors: TestMakeDate and TestMakeTime.
+select makedate(71,1),makedate(71.1,1.89),makedate(99,1),makedate(100,1),makedate(69,1),makedate(70,1),makedate(2060,2900025)
+select maketime(12,15,30),maketime(25,15,30),maketime(-25,15,30),maketime(12,15,30.1),maketime(838,59,59.1),maketime(1000,1,1)
+## Go source vectors: TestTimeFormat.
+select time_format('23:00:00','%H %k %h %I %l'),time_format('17:42:03.000001','%r %T %h:%i%p %h:%i:%s %p %H %i %s'),time_format('07:42:03.000001','%f')
+select time_format(null,'%H %k %h %I %l'),time_format('12:34:56',''),time_format('11:00:00','%H %k %h %I %l'),time_format('1990-05-07 19:30:10','%H %i %s')

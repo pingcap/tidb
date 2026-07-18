@@ -1,0 +1,9 @@
+## pkg/expression/builtin_miscellaneous_test.go:520 TestNameConst
+name_const('test_int', 3)
+name_const('test_uint', 18446744073709551615)
+name_const('test_float', cast(3.14159 as double))
+name_const('test_string', 'TiDB')
+name_const('test_binary', 0x0080FF)
+name_const('test_null', null)
+name_const('test_decimal', 123.123)
+name_const(null, -7)

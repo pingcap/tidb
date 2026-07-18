@@ -1,0 +1,131 @@
+## tidb-parser differential corpus (SELECT core). One statement per line.
+## Each must fully parse in tidb-parser and restore identically to the Go AST.
+## Scope: columns, int/decimal/string/NULL/bool literals, unary + binary
+## operators, parens, function calls, IN / BETWEEN / LIKE / IS predicates.
+select a from t
+select a, b, c from t
+select a + 1, b * 2, c - 3 from t
+select a from t where b = 1
+select a from t where b > 1 and c < 2 or d = 3
+select a from t where not b = 1
+select 1 + 2 * 3, (1 + 2) * 3, 1 * 2 + 3
+select a from t where a and b xor c or d
+select a from t where a = 1 and b = 2 and c = 3
+select -a, +b, ~c, !d from t
+select a from t where a >= 1 and a <= 10
+select a from t where a <> 1 and b != 2
+select a from t where a <=> b
+select a | b, a & b, a ^ c from t
+select a << 2, b >> 1 from t
+select a div b, a mod c, a % d from t
+select foo(a, b), bar(1, 2, 3) from t
+select f(a + 1, b * 2) from t
+select a from t where a in (1, 2, 3)
+select a from t where a not in (4, 5)
+select a from t where a between 1 and 10
+select a from t where a not between 1 and 10
+select a from t where name like 'abc%'
+select a from t where name not like 'x_y'
+select a from t where a is null
+select a from t where a is not null
+select a from t where a is true and b is false
+select a from t where a is not unknown
+select null, true, false from t
+select 'hello', 'it''s', 'a b c' from t
+select a as x, b + 1 as y from t
+select a x, b y from t
+select db.t.col from db.t
+select t.a, t.b from db.t
+select * from t
+select a from db.tbl as alias where alias.x = 1
+select ((a))from t
+select a from t where ((a = 1) and (b = 2))
+select a from t where a = 1 and b in (2, 3) or c between 4 and 5
+select g(h(a), i(b, c)) from t
+select distinct a from t
+select distinct a, b from t where c = 1
+select all a from t
+select a from t group by a
+select a, b from t group by a, b
+select a from t group by a having a > 10
+select a from t order by a
+select a from t order by a desc
+select a from t order by a asc, b desc, c
+select a from t limit 10
+select a from t limit 5, 10
+select a from t limit 100 offset 20
+select a from t where b > 1 order by c desc limit 3
+select a from t group by a having count > 1 order by a limit 5
+select @x, @y from t
+select @@max_connections, @@global.time_zone, @@session.sql_mode
+select a from t where @flag = 1
+select distinct a, b + 1 as s from t where c in (1,2) group by a order by s desc limit 10
+select * from t order by 1, 2
+select @@z from dual
+select a from t1, t2
+select a from t1, t2, t3
+select a from t1 join t2 on t1.id = t2.id
+select a from t1 left join t2 on a = b
+select a from t1 right join t2 on a = b
+select a from t1 inner join t2 on x
+select a from t1 cross join t2
+select a from t1 straight_join t2 on a = b
+select a from t1 join t2 using (id)
+select a from t1 join t2 on x join t3 on y
+select a from t1, t2 join t3 on x
+select a from t1 left outer join t2 on a = b
+select 1e3, 1.5e3, 2.5e-3, 1e10 from t
+select 0xff, 0xf, 0xABCDEF, x'1a2b' from t
+select 0b101, 0b0101, b'1101' from t
+select .5, 1.50, 100.00, 3.14 from t
+select a from t1 join t2 on t1.a = t2.a where t1.b > 1 order by t1.c limit 5
+select t1.a, t2.b from t1, t2 where t1.id = t2.id
+select 1e3 + 0xff * 2 from t
+select a from db1.t1 as x join db2.t2 as y on x.id = y.id
+select count(*) from t
+select count(a), count(distinct b) from t
+select sum(a), avg(b), max(c), min(d) from t
+select sum(distinct a) from t
+select count(*) + 1, sum(a) * 2 from t
+select std(a), stddev(b), variance(c), var_samp(d) from t
+select bit_and(a), bit_or(b), bit_xor(c) from t
+select count(*) from t group by a having count(*) > 1
+select a, count(*) from t group by a order by count(*) desc
+insert into t values (1, 2, 3)
+insert into t (a, b, c) values (1, 2, 3)
+insert into t (a, b) values (1, 2), (3, 4), (5, 6)
+insert into db.t values ('x', 'y')
+insert into t values (1 + 2, 'a', null, true)
+update t set a = 1 where id = 5
+update t set a = 1, b = 2, c = 3 where x > 0
+update db.t set a = a + 1
+delete from t where a = 1
+delete from t where a > 1 and b < 2
+delete from db.t
+select a from (select 1 as x) t
+select a from (select c from t2) as d where d.c > 1
+select a from t where b in (select c from t2)
+select a from t where b not in (select c from t2)
+select a from t where b = (select max(c) from t2)
+select a from t where exists (select 1 from t2)
+select a from t where not exists (select 1 from t2)
+select (select max(x) from t2) as m from t
+select a from t1, (select c from t2) d
+select a from t where b > any (select c from t2)
+select a from t where b > all (select c from t2)
+select a from t where id in (select id from t2 where x > 1) and b = 2
+select a from (select b from (select c from t3) x) y
+select count(*) from (select a from t group by a) t2
+select 1 union select 2
+select 1 union all select 2
+select 1 union select 2 union select 3
+select 1 union all select 1 union select 2
+select a from t union select b from t2
+(select 1) union (select 2)
+select 1 union select 2 order by 1 limit 5
+select 1 except select 2
+select 1 intersect select 2
+select a from t1 where x > 1 union all select a from t2 where y < 2
+select id from a union select id from b union all select id from c
+select 1 union select 2 union select 3 order by 1
+(select a from t1) union all (select a from t2) order by 1 limit 10

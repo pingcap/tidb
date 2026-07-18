@@ -1,0 +1,3 @@
+# Source-owned test-evidence fragment for result-wave10.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/expression/builtin_string_test.go	107	TestASCII	PARTIAL	result-wave10	rust/difftests/corpus/expr/ascii_source.txt	All default-charset scalar TestASCII rows plus a direct invalid-UTF-8 binary first-byte regression, including UTF-8 first-byte behavior, numeric ETString coercion, empty string, and NULL; GBK/GB18030 connection-charset conversion and the injected-error datum require session charset/type state outside the seed evaluator

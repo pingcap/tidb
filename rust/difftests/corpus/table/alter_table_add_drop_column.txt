@@ -1,0 +1,18 @@
+## ALTER TABLE ADD/DROP COLUMN: an added column backfills existing rows with
+## its DEFAULT (or NULL); FIRST/AFTER position it and shift every existing
+## PRIMARY KEY/UNIQUE index that comes at or after the insertion point
+create table alt_t (a int, b int)
+insert into alt_t values (1, 10)
+insert into alt_t values (2, 20)
+alter table alt_t add column c int
+select * from alt_t
+alter table alt_t add column d int default 99
+select * from alt_t
+alter table alt_t drop column b
+select * from alt_t
+alter table alt_t add column e int first
+select * from alt_t
+alter table alt_t add column f int after a
+select * from alt_t
+insert into alt_t values (5, 1, 6, 7, 8)
+select * from alt_t

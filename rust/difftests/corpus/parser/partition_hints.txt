@@ -1,0 +1,17 @@
+## PARTITION (name, ...) table hints. Parses BEFORE the alias (the
+## opposite of an index hint's own AFTER); no space between PARTITION
+## and the opening paren on restore (unlike an index hint's own space).
+## Names are PLAIN identifiers only, unlike an index hint's own broader
+## Ident-or-Keyword acceptance -- covered by tidb-parser's own unit test,
+## not this corpus, since the parser corpus itself must never contain a
+## statement the Go parser rejects. Shared by SELECT/UPDATE/DELETE/INSERT.
+select * from t partition (p0)
+select * from t partition (p0, p1)
+select * from t partition (p0) where a = 1
+update t partition (p0) set a = 1
+delete from t partition (p0) where a = 1
+insert into t partition (p0) values (1)
+insert into t partition (p0) (a, b) values (1, 2)
+select * from t partition (p0) as x
+select * from t partition (p0) as x use index (idx1)
+select * from t1 partition (p0) join t2 partition (p1) on t1.a = t2.a

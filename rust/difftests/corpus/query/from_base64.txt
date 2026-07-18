@@ -1,0 +1,15 @@
+## Go vectors from pkg/expression/builtin_string_test.go (TestFromBase64 and TestFromBase64Sig).
+## Charset/session max_allowed_packet cases are represented by direct byte and
+## malformed-boundary vectors; typed chunk state remains outside this query ring.
+select from_base64('')
+select from_base64('YWJj')
+select from_base64('YWIgYw==')
+select from_base64('YWIKYw==')
+select from_base64('YWIJYw==')
+select from_base64('YQ==')
+select from_base64('YWI=')
+select from_base64('YWJj=')
+select from_base64('YWI')
+select from_base64('asc')
+select from_base64('QUJDREVGR0hJSkt\tMTU5PUFFSU1RVVld\nYWVphYmNkZ\rWZnaGlqa2xt   bm9wcXJzdHV2d3h5ejAxMjM0NTY3ODkrLw==')
+select from_base64(NULL)

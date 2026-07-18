@@ -1,0 +1,83 @@
+[package]
+name = "tidb-exec"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Minimal query executor (projection + selection) — the Phase-1 executor seed."
+autotests = false
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-ast = { path = "../tidb-ast" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-distsql = { path = "../tidb-distsql" }
+tidb-expr = { path = "../tidb-expr" }
+tidb-error = { path = "../tidb-error" }
+tidb-parser = { path = "../tidb-parser" }
+tidb-planner = { path = "../tidb-planner" }
+tidb-proto = { path = "../tidb-proto" }
+tidb-protocol = { path = "../tidb-protocol" }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+prost.workspace = true
+
+[[test]]
+name = "source_shard_a"
+path = "tests/source_shard_a.rs"
+
+[[test]]
+name = "source_shard_b"
+path = "tests/source_shard_b.rs"
+
+[[test]]
+name = "source_shard_c"
+path = "tests/source_shard_c.rs"
+
+[[test]]
+name = "source_shard_d"
+path = "tests/source_shard_d.rs"
+
+# These schema tests intentionally stay standalone: their source-backed test
+# modules compile several implementation files at the integration crate root,
+# and those files use `crate::...` imports. Nesting them under a shard would
+# change that module topology and either duplicate or alter the tested types.
+[[test]]
+name = "result_field_resolver_source"
+path = "tests/result_field_resolver_source.rs"
+
+[[test]]
+name = "result_metadata_source"
+path = "tests/result_metadata_source.rs"
+
+[[test]]
+name = "result_schema_join_output_source"
+path = "tests/result_schema_join_output_source.rs"
+
+[[test]]
+name = "result_schema_multi_source"
+path = "tests/result_schema_multi_source.rs"
+
+[[test]]
+name = "result_schema_projection_source"
+path = "tests/result_schema_projection_source.rs"
+
+[[test]]
+name = "result_schema_source"
+path = "tests/result_schema_source.rs"
+
+[[test]]
+name = "explain_source"
+path = "tests/explain_source.rs"
+
+[[test]]
+name = "table_index_reader_runtime_source"
+path = "tests/table_index_reader_runtime_source.rs"
+
+[[test]]
+name = "tikv_scan_dag_lowering_source"
+path = "tests/tikv_scan_dag_lowering_source.rs"

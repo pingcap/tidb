@@ -1,0 +1,22 @@
+## DROP TABLE: basic drop, IF EXISTS on a missing table, a multi-table drop
+## with a missing name in the middle (drops the existing ones anyway, only
+## reports an error for the missing one), and FOREIGN KEY interaction (a
+## referenced parent table cannot be dropped alone, but succeeds when its
+## child is dropped in the SAME statement, regardless of listed order).
+create table t1 (id int)
+drop table t1
+drop table if exists t1
+create table ta (id int)
+create table tc (id int)
+drop table ta, tb, tc
+select * from ta
+select * from tc
+create table p (id int primary key)
+create table c (id int, pid int, foreign key (pid) references p(id))
+create table tx (id int)
+drop table tx, p
+select * from tx
+select * from p
+drop table p, c
+select * from p
+select * from c

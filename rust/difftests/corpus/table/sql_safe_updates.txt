@@ -1,0 +1,33 @@
+## TiDB registers `sql_safe_updates` in `variable/noop.go`: it is typed
+## session/global compatibility state, not a MySQL-style UPDATE/DELETE guard.
+## `SET_VAR(sql_safe_updates=...)` is the one source-backed hint overlay:
+## scoped to its SELECT and restored even when SELECT evaluation fails. Other
+## parsed hint kinds keep the executor's current no-effect behavior.
+select @@sql_safe_updates
+select @@global.sql_safe_updates
+set sql_safe_updates=1
+select @@sql_safe_updates
+set sql_safe_updates=3
+select @@sql_safe_updates
+set sql_safe_updates=default
+select @@sql_safe_updates
+select /*+ SET_VAR(sql_safe_updates=1) */ @@sql_safe_updates
+select @@sql_safe_updates
+select /*+ SET_VAR(sql_safe_updates=1) SET_VAR(sql_safe_updates=0) */ @@sql_safe_updates
+select @@sql_safe_updates
+set sql_safe_updates=1
+select /*+ SET_VAR(sql_safe_updates=0) */ @@sql_safe_updates
+select @@sql_safe_updates
+select /*+ SET_VAR(sql_safe_updates=0) */ no_such_column
+select @@sql_safe_updates
+select /*+ SET_VAR(sql_safe_updates = 1) SET_VAR(max_heap_table_size = 1G) */ 1
+select @@sql_safe_updates
+begin
+set sql_safe_updates=1
+rollback
+select @@sql_safe_updates
+create table ssu (id int)
+insert into ssu values (1), (2)
+update ssu set id=id+10
+delete from ssu
+select * from ssu order by id

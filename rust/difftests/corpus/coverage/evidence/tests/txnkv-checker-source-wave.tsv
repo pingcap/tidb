@@ -1,0 +1,3 @@
+# Source-owned test-evidence fragment for txnkv-checker-source-wave.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/kv/checker_test.go	25	TestIsRequestTypeSupported	COVERED	txnkv-checker-source-wave	rust/difftests/transaction-tests/tests/key_version.rs	All eight original assertions execute in source order including the repeated Signature assertion; exhaustive crate tests also cover all 53 pinned TIPB ExprType identities every request and special subtype branch unknowns Analyze wildcard and Go int32 wrap behavior

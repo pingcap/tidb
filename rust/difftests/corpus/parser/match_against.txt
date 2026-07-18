@@ -1,0 +1,22 @@
+## `MATCH(col, ...) AGAINST(expr [search_modifier])` -- MySQL/TiDB full-text
+## search, usable both as a boolean predicate and a scalar relevance-score
+## expression. Grammar/restore read directly from real TiDB's own
+## hand-written parser (pkg/parser/expr_parser.go's parseMatchAgainstExpr)
+## and AST restore (pkg/parser/ast/expressions.go's MatchAgainst.Restore),
+## not guessed from restore text alone -- the 4 written modifier spellings
+## collapse to 3 distinct restore outputs (an explicit IN NATURAL LANGUAGE
+## MODE restores identically to no modifier at all). Evaluation is
+## deliberately Unsupported: no fulltext index/scoring is modelled at all,
+## matching the same "parse/restore fidelity only" boundary as Expr::Regexp.
+select id from articles where match(id) against('MySQL')
+select id, content from t where match(content) against('+100% +Progress' in boolean mode)
+select id, match(title) against('+MySQL' in boolean mode) as score from articles
+select id, title from articles group by id, title having match(title) against('PostgreSQL')
+select id, title from articles order by match(title) against('+MySQL' in boolean mode) desc
+select id, title from articles where (case when match(title) against('MySQL') then 1 else 0 end) = 1
+select match(a,b) against('x') from t
+select match(a) against('x' in natural language mode) from t
+select match(a) against('x' in natural language mode with query expansion) from t
+select match(a) against('x' with query expansion) from t
+select a.id, a.title from articles a inner join articles a2 on a.id = a2.id and match(a.title) against('Security')
+select match(a) against(null) from t

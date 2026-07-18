@@ -1,0 +1,2 @@
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/planner/core/tests/pointget/point_get_plan_test.go	407	TestIssue52592ForNextGen	PARTIAL	planner-physical-lock-wave	rust/difftests/planner-tests/tests/physical_lock.rs	Rust vectors preserve the SelectLock plan emission/rejection boundary, Lock plan kind/query-block offset 0, and exact `for update 0` explain text from the point-get plan tree; full SQL planning, table/handle metadata, and lock execution remain external.

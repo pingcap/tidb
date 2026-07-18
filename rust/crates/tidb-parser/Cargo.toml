@@ -1,0 +1,15 @@
+[package]
+name = "tidb-parser"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB recursive-descent SQL parser (Rust port of the hand-written parser)."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-lexer = { path = "../tidb-lexer" }
+tidb-ast = { path = "../tidb-ast" }

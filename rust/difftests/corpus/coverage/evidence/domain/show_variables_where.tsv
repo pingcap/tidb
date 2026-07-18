@@ -1,0 +1,2 @@
+go_owner	rust_module	status	note
+method:pkg/parser/ddl_show_parser.go#HandParser.parseShowLikeOrWhere	rust/crates/tidb-parser/src/show.rs	partial	SHOW [GLOBAL|SESSION] VARIABLES WHERE expression is typed and source-tested; the existing LIKE payload is preserved and no other SHOW family is claimed.

@@ -1,0 +1,14 @@
+## CHARACTER SET / COLLATE column options: charset canonicalizes to
+## UPPERCASE, collation to lowercase; CHARSET is a CHARACTER SET alias;
+## COLLATE can also appear as a standalone option anywhere among the others
+create table t (a varchar(20) character set utf8mb4)
+create table t (a varchar(20) charset utf8mb4)
+create table t (a varchar(20) collate utf8mb4_bin)
+create table t (a varchar(20) character set utf8mb4 collate utf8mb4_bin)
+create table t (a varchar(20) character set UTF8MB4)
+create table t (a varchar(20) collate UTF8MB4_BIN)
+create table t (a varchar(20) character set utf8mb4 not null)
+create table t (a varchar(20) not null collate utf8mb4_bin)
+create table t (a varchar(20) collate utf8mb4_bin not null)
+create table t (a varchar(20) character set utf8mb4 default 'x')
+create table t (a varchar(20) character set ascii)

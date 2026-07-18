@@ -1,0 +1,2 @@
+go_owner	rust_module	status	note
+method:pkg/parser/admin_stmt_parser.go#HandParser.parseAdminDDLJobs	rust/crates/tidb-parser/src/admin/ddl_job_control.rs	partial	CANCEL, PAUSE, and RESUME share one typed DDL-job-control payload with a nonempty signed ID list. The parser preserves Go's exact discarded one-token noun rule (JOBS, JOB, and FOO all canonicalize to JOBS), direct TestAdminStmt rows and godump probe coverage, a three-row static Go selector, and executor preflight rejection before transaction mutation.

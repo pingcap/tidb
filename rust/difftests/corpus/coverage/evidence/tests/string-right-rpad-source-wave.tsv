@@ -1,0 +1,4 @@
+# Source-owned test evidence for RIGHT and RPAD.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/expression/builtin_string_test.go	1831	TestRpadSig	PARTIAL	string-right-rpad-source-wave	rust/crates/tidb-expr/src/tests/mod.rs	Scalar value row (`abc`, 6, `123`) and binary/NULL/arity boundaries are covered; vectorized chunk metadata, max_allowed_packet warning, and FieldType-dependent signature selection remain outside the value evaluator.
+go_test	pkg/expression/builtin_string_test.go	2719	TestStringRight	PARTIAL	string-right-rpad-source-wave	rust/crates/tidb-expr/src/tests/mod.rs	All source scalar rows are covered for character RIGHT semantics, with explicit binary-byte and arity assertions; session FieldType/collation metadata and warning propagation remain outside the seed evaluator.

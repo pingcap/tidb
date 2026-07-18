@@ -1,0 +1,9 @@
+## ALTER TABLE ADD/DROP COLUMN: `ADD`/`DROP` alone (no `COLUMN` keyword)
+## restore identically, matching the Go AST's normalization
+alter table t add column c int
+alter table t add c int
+alter table t add column c varchar(20) not null default 'x'
+alter table t add c int first
+alter table t add c int after b
+alter table t drop column c
+alter table t drop c

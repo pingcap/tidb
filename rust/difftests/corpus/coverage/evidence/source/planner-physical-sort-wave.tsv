@@ -1,0 +1,2 @@
+# source_path	status	owner	evidence_artifact	note
+pkg/planner/core/operator/physicalop/physical_sort.go	PARTIAL	planner-physical-sort-wave	rust/crates/tidb-planner/src/physical_sort.rs	Ports PhysicalSort.Init Sort identity/query-block offset, ByItems direction rendering, IsPartialSort, inherited stream_count ExplainInfo suffix, deep clone metadata, and monotonic MemoryUsage growth; expression/session/schema/property/task/cost/index/PB/runtime wiring remains external.

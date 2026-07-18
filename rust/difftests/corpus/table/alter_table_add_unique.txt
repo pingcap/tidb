@@ -1,0 +1,10 @@
+## ALTER TABLE ADD UNIQUE adds a new conflict-detection constraint to an
+## existing table; ADD INDEX (non-unique) has no observable effect
+create table ai (a int, b int)
+insert into ai values (1, 10)
+insert into ai values (2, 20)
+alter table ai add unique index (a)
+insert into ai values (1, 999) on duplicate key update b = 999
+select * from ai
+alter table ai add index (b)
+select * from ai

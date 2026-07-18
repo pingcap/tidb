@@ -1,0 +1,22 @@
+schema = "1"
+slice = "txnkv-buffer-batch-getter"
+status = "partial"
+target = "tidb-txnkv"
+ring = "transaction"
+consumer = "dependency-ready future transaction-driver batch-read seam that merges a transaction buffer, optional middle cache, and snapshot with buffer precedence and empty-value tombstones; this slice owns batch_getter.rs, its lib.rs export, and batch_getter_source.rs, uses the existing Key and KV not-found predicate, preserves ReturnCommitTS values without reinterpretation, uses safe owned keys instead of Go unsafe slice casts, and must not claim the absent TiDB-to-client-go not-found adapter, MemBuffer mutation, Snapshot RPC, transaction commit, region retry, or the wider kv option registry"
+test_target = "batch_getter_source"
+go_sources = ["pkg/store/driver/txn/batch_getter.go"]
+go_tests = [
+  "pkg/store/driver/txn/batch_getter_test.go:25:TestBufferBatchGetter",
+  "pkg/store/driver/txn/batch_getter_test.go:0:batch_getter_test.go",
+]
+depends_on = []
+evidence_prerequisites = [
+  { capability = "kv-key-byte-order-authority", evidence_owner = "txnkv-handle-codec-wave3", kind = "source", anchor = "pkg/kv/key.go", minimum_status = "PARTIAL" },
+  { capability = "kv-not-found-identity", evidence_owner = "txnkv-error-source-wave", kind = "source", anchor = "pkg/kv/error.go", minimum_status = "COVERED" },
+]
+rust_paths = [
+  "rust/crates/tidb-txnkv/src/batch_getter.rs",
+  "rust/crates/tidb-txnkv/src/lib.rs",
+  "rust/crates/tidb-txnkv/tests/batch_getter_source.rs",
+]

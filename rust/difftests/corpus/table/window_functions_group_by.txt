@@ -1,0 +1,35 @@
+## Window functions combined with GROUP BY (confirmed via gorun): a window
+## computes over the post-aggregation "virtual rows," one per group, in the
+## group's own (pre-ORDER-BY) discovery order. HAVING filters groups BEFORE
+## window computation runs, so an excluded group is invisible to the window,
+## not just to the final output. A window's own PARTITION BY/ORDER BY/args
+## may reference an aggregate expression directly (SUM(salary)) but NOT a
+## select-list alias (a separate, deliberately unsupported case, not covered
+## here since it's an ERR). The top-level ORDER BY may reference a window's
+## own select-list alias (ordinary alias resolution, not window-specific).
+## A window AGGREGATE's own argument may itself be an aggregate expression
+## (SUM(SUM(x)) OVER (...)): each group contributes ONE resolved value,
+## which is what the window then folds -- not a re-aggregation over raw
+## rows. LAG/LEAD/FIRST_VALUE/LAST_VALUE/NTILE/PERCENT_RANK/CUME_DIST all
+## carry over to the grouped case unchanged from their row-wise semantics,
+## just operating on groups instead of rows. LIMIT still truncates after
+## both the window computation and the final ORDER BY. A query with
+## aggregates but no GROUP BY forms a single group, so its window functions
+## are trivial (e.g. RANK() is always 1).
+create table t (id int, dept varchar(10), salary int)
+insert into t values (1,'a',100),(2,'a',200),(3,'a',200),(4,'b',150),(5,'b',300),(6,'c',50)
+select dept, count(*), row_number() over (order by dept) from t group by dept
+select dept, count(*), rank() over (order by count(*) desc) from t group by dept
+select dept, count(*) c from t group by dept having c > 1 order by row_number() over (order by dept desc)
+select dept, sum(salary), rank() over (order by sum(salary) desc) rnk from t group by dept order by rnk
+select dept, count(*), rank() over (partition by sum(salary) > 200 order by dept) from t group by dept
+select dept, count(*) c, sum(sum(salary)) over (order by dept) from t group by dept
+select dept, sum(salary) s, lag(sum(salary)) over (order by dept) from t group by dept
+select dept, sum(salary) s, lead(sum(salary)) over (order by dept) from t group by dept
+select dept, sum(salary) s, first_value(sum(salary)) over (order by dept) from t group by dept
+select dept, sum(salary) s, last_value(sum(salary)) over (order by dept) from t group by dept
+select dept, count(*) c, ntile(2) over (order by dept) from t group by dept
+select dept, count(*) c, percent_rank() over (order by dept), cume_dist() over (order by dept) from t group by dept
+select dept, count(*) c, rank() over (order by dept) rn from t group by dept limit 2
+select dept, count(*), rank() over (order by dept), row_number() over (order by dept desc) from t group by dept
+select count(*), rank() over (order by count(*)) from t

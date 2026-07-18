@@ -1,0 +1,7 @@
+## pkg/expression/builtin_string_test.go:495 TestRepeat
+repeat('a', 2)
+repeat('a', -1)
+repeat('a', 0)
+repeat('a', cast(0 as unsigned))
+repeat(null, 2)
+repeat('毅', 6)

@@ -1,0 +1,28 @@
+## Go-backed FORMAT_BYTES vectors from TestFormatBytes in
+## pkg/expression/builtin_info_test.go, including threshold/sign/null edges.
+format_bytes(null)
+format_bytes(0)
+format_bytes(2048)
+format_bytes(75295729)
+format_bytes(5287242702)
+format_bytes(5039757204245)
+format_bytes(890250274520475525)
+format_bytes(1.8446644073709551615e19)
+format_bytes(287952852482075252752429875)
+format_bytes(-1.8446644073709551615e19)
+format_bytes(-0.0)
+format_bytes('1e9999')
+## Go-backed FORMAT_NANO_TIME vectors from TestFormatNanoTime. The SQL name
+## is TiDB's format_nano_time; its input unit is nanoseconds.
+format_nano_time(null)
+format_nano_time(0)
+format_nano_time(2000)
+format_nano_time(898787877)
+format_nano_time(9999999991)
+format_nano_time(898787877424)
+format_nano_time(5827527520021)
+format_nano_time(42566623663736353)
+format_nano_time(4827524825702572425242552)
+format_nano_time(-9999999991)
+format_nano_time(-0.0)
+format_nano_time('1e9999')

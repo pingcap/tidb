@@ -1,0 +1,19 @@
+## Go-backed UUID_TO_BIN/BIN_TO_UUID vectors from
+## pkg/expression/builtin_miscellaneous_test.go:563 TestUUIDToBin and
+## :684 TestBinToUUID. Invalid rows remain ERR in the Go oracle.
+uuid_to_bin('6ccd780c-baba-1026-9564-5b8c656024db')
+uuid_to_bin('6CCD780C-BABA-1026-9564-5B8C656024DB')
+uuid_to_bin('6ccd780cbaba102695645b8c656024db')
+uuid_to_bin('{6ccd780c-baba-1026-9564-5b8c656024db}')
+uuid_to_bin('6ccd780c-baba-1026-9564-5b8c656024db', 0)
+uuid_to_bin('6ccd780c-baba-1026-9564-5b8c656024db', 1)
+uuid_to_bin('6ccd780c-baba-1026-9564-5b8c656024db', null)
+uuid_to_bin(null)
+uuid_to_bin('6ccd780c-baba-1026-9564-5b8c6560')
+uuid_to_bin(' 6ccd780c-baba-1026-9564-5b8c656024db')
+uuid_to_bin('6ccd780c-baba-1026-9564-5b8c656024db ')
+bin_to_uuid(unhex('6CCD780CBABA102695645B8C656024DB'))
+bin_to_uuid(unhex('6CCD780CBABA102695645B8C656024DB'), 1)
+bin_to_uuid(unhex('6CCD780CBABA102695645B8C656024DB'), null)
+bin_to_uuid(null)
+bin_to_uuid(unhex('6CCD780C-BABA-1026-9564-5B8C656024'))

@@ -1,0 +1,7 @@
+## CREATE TABLE: column types (with args) and options
+create table t (id int, name varchar(20))
+create table t (id int not null, name varchar(20) not null default 'x')
+create table t (id bigint primary key auto_increment, amt decimal(10,2))
+create table if not exists t (id int, v text)
+create table t (id int, name char(1) null)
+create table t (id int default 5, flag int not null)

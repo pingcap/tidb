@@ -1,0 +1,10 @@
+## Source: tests/integrationtest/t/executor/union_scan.test
+## TestForApplyAndUnionScan (lines 198-206). The original ordered transaction
+## uses a correlated subquery while its inserted rows are transaction-local.
+drop table if exists t;
+create table t ( c_int int, c_str varchar(40), primary key(c_int, c_str) );
+begin;
+insert into t values (1, 'amazing almeida'), (2, 'boring bardeen'), (3, 'busy wescoff');
+select c_int, (select t1.c_int from t t1 where t1.c_int = 3 and t1.c_int > t.c_int order by t1.c_int limit 1) x from t;
+commit;
+select c_int, (select t1.c_int from t t1 where t1.c_int = 3 and t1.c_int > t.c_int order by t1.c_int limit 1) x from t;

@@ -1,0 +1,9 @@
+## A table-level CHECK constraint is parsed (and restores) but NOT enforced
+## by default: real TiDB itself only enforces CHECK behind the GLOBAL-scope
+## `tidb_enable_check_constraint` system variable, which defaults OFF — so a
+## row violating the constraint still inserts successfully here, matching
+## real TiDB's own out-of-the-box behavior (verified via gorun, not assumed)
+create table ck (a int, check (a > 0))
+insert into ck values (5)
+insert into ck values (-1)
+select * from ck

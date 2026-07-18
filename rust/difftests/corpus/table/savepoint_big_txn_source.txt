@@ -1,0 +1,68 @@
+## Source anchor: pkg/executor/test/txn/txn_test.go:556 TestSavepointInBigTxn.
+## This preserves the source's four DML rollback phases and many-savepoint
+## ordering with a deterministic four-row seed. The Go test's 10,000-row
+## stress scale is a performance/resource assertion outside this interpreter
+## differential; every observable state transition below is source-derived.
+create table savepoint_big_src (id int primary key, a int)
+begin pessimistic
+insert into savepoint_big_src values (0, 0)
+savepoint s1
+insert into savepoint_big_src values (1, 1)
+insert into savepoint_big_src values (2, 2)
+insert into savepoint_big_src values (3, 3)
+select count(*) from savepoint_big_src
+rollback to s1
+select count(*) from savepoint_big_src
+commit
+select count(*) from savepoint_big_src
+begin
+insert into savepoint_big_src values (1, 1)
+insert into savepoint_big_src values (2, 2)
+insert into savepoint_big_src values (3, 3)
+commit
+begin pessimistic
+savepoint s1
+update savepoint_big_src set a = a + 1 where id = 1
+update savepoint_big_src set a = a + 1 where id = 2
+update savepoint_big_src set a = a + 1 where id = 3
+select count(*) from savepoint_big_src where id != a
+rollback to s1
+select count(*) from savepoint_big_src where id != a
+commit
+select count(*) from savepoint_big_src
+begin pessimistic
+savepoint s1
+insert into savepoint_big_src values (1, 1) on duplicate key update a = a + 1
+insert into savepoint_big_src values (2, 2) on duplicate key update a = a + 1
+insert into savepoint_big_src values (3, 3) on duplicate key update a = a + 1
+select count(*) from savepoint_big_src where id != a
+rollback to s1
+select count(*) from savepoint_big_src where id != a
+commit
+select count(*) from savepoint_big_src
+begin pessimistic
+insert into savepoint_big_src values (-1, -1)
+savepoint s1
+delete from savepoint_big_src where id = 0
+delete from savepoint_big_src where id = 1
+delete from savepoint_big_src where id = 2
+delete from savepoint_big_src where id = 3
+select count(*) from savepoint_big_src
+rollback to s1
+select count(*) from savepoint_big_src
+rollback
+select count(*) from savepoint_big_src
+truncate table savepoint_big_src
+begin pessimistic
+insert into savepoint_big_src values (0, 0)
+savepoint s0
+insert into savepoint_big_src values (1, 1)
+savepoint s1
+insert into savepoint_big_src values (2, 2)
+savepoint s2
+insert into savepoint_big_src values (3, 3)
+savepoint s3
+select count(*) from savepoint_big_src
+rollback to s1
+commit
+select * from savepoint_big_src order by id

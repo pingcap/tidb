@@ -1,0 +1,3 @@
+# Source-owned source-port fragment for session-removed-sysvar-wave.
+# source_path	status	owner	evidence_artifact	note
+pkg/sessionctx/variable/removed.go	PARTIAL	session-removed-sysvar-wave	rust/crates/tidb-exec/src/removed_sysvar.rs	The complete 13-entry removed-system-variable name/reason registry and exact lookup/case semantics are typed; dbterror construction, parser normalization, SET/SELECT dispatch, and the live SysVar registry remain external

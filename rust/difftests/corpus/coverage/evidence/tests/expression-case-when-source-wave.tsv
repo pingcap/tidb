@@ -1,0 +1,3 @@
+# Source-owned direct tests for the bounded CASE control leaf.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/expression/builtin_control_test.go	29	TestCaseWhen	PARTIAL	expression-case-when-source-wave	rust/crates/tidb-expr/src/tests/control.rs	Complete representable TestCaseWhen rows: first-match ordering, NULL/boolean/numeric truthiness, lazy dead-branch evaluation, and the unreachable JSON result row; selected JSON, injected-error, typed result-promotion, and function-class/session paths remain explicit boundaries.

@@ -1,0 +1,3 @@
+# Checked consolidation of the earlier codec-owned Datum scalar evidence into the datatype authority.
+# old_owner	new_owner	source_path	test_path	test_line	test_name	retired_artifacts	new_artifacts	note
+default-datum-scalar-wave	datatype-datum-sentinel-order	pkg/types/datum.go	-	-	-	rust/difftests/corpus/coverage/evidence/source/default-datum-scalar-wave.tsv	rust/crates/tidb-datatype/src/datum.rs,rust/crates/tidb-codec/src/value.rs,rust/difftests/corpus/coverage/evidence/source/datatype-datum-sentinel-order.tsv,rust/difftests/corpus/coverage/evidence/tests/datatype-datum-sentinel-order.tsv	Only the earlier Datum source ownership moved; TestCompareDatum is a newly acquired PARTIAL anchor, not a test transferred by the former owner.

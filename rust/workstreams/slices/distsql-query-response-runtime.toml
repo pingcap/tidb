@@ -1,0 +1,49 @@
+schema = "1"
+slice = "distsql-query-response-runtime"
+status = "partial"
+target = "tidb-distsql"
+ring = "result"
+consumer = "one canonical Go-shaped DistSQL raw-response owner: an already-built immutable request crosses the caller-injected QueryTransport boundary and yields an owned QueryResponse whose ordered QueryResultSubset values retain raw response bytes, runtime metadata, source errors, and close lifecycle. QueryResultContext keeps the final field layout and shared warning sink together for both Select entry points, and QuerySelectResult retains that result state over the response; query_runtime.rs declares and re-exports its nested query_runtime/query_response.rs module, and the crate registry exposes query_runtime as a public module alongside cop_paging so parallel implementations do not require repeated registry edits. Select and SelectWithRuntimeStats decode each raw subset exactly once through the existing SelectResponseIter path, while Analyze and Checksum expose the same owner's next_raw path without decoding. ResponseChannel is only the deterministic test adapter for this raw contract. Concrete TiKV or TiFlash routing, protobuf RPC construction, retries, cancellation, caching, asynchronous production, memory accounting, response-close error propagation, a non-nil subset returned together with a source error, temporal/timezone Datum materialization, CHBlock, full cop runtime telemetry, a production table-reader consumer, and sorted heap merging remain explicit PARTIAL gaps"
+test_target = "query_runtime_source and distsql_query_runtime_source"
+go_sources = [
+  "pkg/distsql/distsql.go",
+  "pkg/distsql/select_result.go",
+]
+go_tests = [
+  "pkg/distsql/BUILD.bazel:57:distsql_test",
+  "pkg/distsql/distsql_test.go:0:distsql_test.go",
+  "pkg/distsql/distsql_test.go:42:TestSelectNormal",
+  "pkg/distsql/distsql_test.go:61:TestSelectMemTracker",
+  "pkg/distsql/distsql_test.go:73:TestSelectNormalChunkSize",
+  "pkg/distsql/distsql_test.go:82:TestSelectWithRuntimeStats",
+  "pkg/distsql/distsql_test.go:106:TestSelectResultRuntimeStats",
+  "pkg/distsql/distsql_test.go:154:TestAnalyze",
+  "pkg/distsql/distsql_test.go:179:TestChecksum",
+  "pkg/distsql/main_test.go:0:main_test.go",
+  "pkg/distsql/main_test.go:24:TestMain",
+  "pkg/distsql/select_result_test.go:0:select_result_test.go",
+  "pkg/distsql/select_result_test.go:37:TestUpdateCopRuntimeStats",
+  "pkg/distsql/select_result_test.go:77:TestNewSelRespChannelIter",
+  "pkg/distsql/select_result_test.go:183:TestSelRespChannelIterRead",
+]
+depends_on = []
+evidence_prerequisites = [
+  { capability = "built-transport-request", evidence_owner = "distsql-request-builder-complete-envelope", kind = "source", anchor = "pkg/distsql/request_builder.go", minimum_status = "PARTIAL" },
+  { capability = "distsql-context-runtime-policy", evidence_owner = "distsql-context-chunk-rpc-policy", kind = "source", anchor = "pkg/distsql/context/context.go", minimum_status = "PARTIAL" },
+  { capability = "typed-result-field-layout", evidence_owner = "datatype-value-context-and-format", kind = "source", anchor = "pkg/types/field_type.go", minimum_status = "PARTIAL" },
+  { capability = "packed-time-bits", evidence_owner = "codec-temporal-source-wave", kind = "source", anchor = "pkg/types/time.go", minimum_status = "PARTIAL" },
+  { capability = "type-chunk-decoding", evidence_owner = "tidb-chunk-codec-wave", kind = "source", anchor = "pkg/util/chunk/codec.go", minimum_status = "PARTIAL" },
+  { capability = "default-row-decoding", evidence_owner = "txnkv-handle-codec-wave3", kind = "source", anchor = "pkg/util/codec/codec.go", minimum_status = "PARTIAL" },
+  { capability = "shared-warning-state", evidence_owner = "distsql-context-source-wave", kind = "test", anchor = "pkg/distsql/context/context_test.go:38:TestContextDetach", minimum_status = "PARTIAL" },
+]
+rust_paths = [
+  "rust/crates/tidb-distsql/src/query_runtime/query_response.rs",
+  "rust/crates/tidb-distsql/src/query_runtime.rs",
+  "rust/crates/tidb-distsql/src/response_channel.rs",
+  "rust/crates/tidb-distsql/src/lib.rs",
+  "rust/crates/tidb-distsql/tests/query_runtime_source.rs",
+  "rust/crates/tidb-exec/tests/distsql_query_runtime_source.rs",
+  "rust/difftests/corpus/coverage/evidence/source/distsql-query-response-runtime.tsv",
+  "rust/difftests/corpus/coverage/evidence/tests/distsql-query-response-runtime.tsv",
+  "rust/difftests/corpus/coverage/evidence/transfers/distsql-query-response-runtime.tsv",
+]

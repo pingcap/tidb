@@ -1,0 +1,25 @@
+schema = "1"
+slice = "distsql-context-chunk-rpc-policy"
+status = "partial"
+target = "tidb-distsql"
+ring = "result"
+consumer = "source-direct DistSqlContext ownership for EnableChunkRPC consumed by the existing DAG encoding policy: removes the duplicate caller-supplied enable flag, preserves detach copying, and selects TypeChunk only when both the context setting and host-alignment gate allow it; reachability is the existing dependency-closed DistSQL runtime/test boundary, not a TiKV client, protobuf DAG request, RPC, or response decoder"
+test_target = "distsql_runtime_source"
+go_sources = ["pkg/distsql/context/context.go"]
+go_tests = []
+depends_on = []
+evidence_prerequisites = [
+  { capability = "distsql-context-detach-contract", evidence_owner = "distsql-context-source-wave", kind = "test", anchor = "pkg/distsql/context/context_test.go:38:TestContextDetach", minimum_status = "PARTIAL" },
+]
+support_anchors = [
+  "pkg/distsql/distsql.go:230:SetEncodeType",
+  "pkg/distsql/distsql.go:239:canUseChunkRPC",
+  "pkg/distsql/distsql_test.go:73:TestSelectNormalChunkSize",
+]
+rust_paths = [
+  "rust/crates/tidb-distsql/src/context.rs",
+  "rust/crates/tidb-distsql/src/distsql_runtime.rs",
+  "rust/crates/tidb-distsql/src/tests.rs",
+  "rust/crates/tidb-distsql/tests/distsql_runtime_source.rs",
+  "rust/difftests/corpus/coverage/evidence/source/distsql-context-chunk-rpc-policy.tsv",
+]

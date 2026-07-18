@@ -1,0 +1,10 @@
+## UTF-8 scalar slice of pkg/expression/builtin_math_test.go:543 TestCRC32.
+crc32(null)
+crc32('')
+crc32(-1)
+crc32('-1')
+crc32('mysql')
+crc32('MySQL')
+crc32('hello')
+crc32('一二三')
+crc32('一')

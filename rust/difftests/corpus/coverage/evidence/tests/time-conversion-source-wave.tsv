@@ -1,0 +1,4 @@
+# Source-owned test-evidence fragment for the TIME_TO_SEC/SEC_TO_TIME source wave.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/expression/builtin_time_test.go	3117	TestTimeToSec	PARTIAL	time-conversion-source-wave	rust/crates/tidb-expr/src/time_fn/mod.rs	All twelve scalar duration rows plus NULL are covered with exact integer seconds; typed duration conversion and warning metadata remain outside the value-only Datum boundary
+go_test	pkg/expression/builtin_time_test.go	3162	TestSecToTime	PARTIAL	time-conversion-source-wave	rust/crates/tidb-expr/src/time_fn/mod.rs	All integer, natural-float, string, scientific-notation, overflow-clamp, and NULL rows are covered with exact strings; source expression decimal/FSP overrides (notably inputDecimal -1 forcing six digits) remain typed metadata gaps

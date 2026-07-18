@@ -1,0 +1,15 @@
+## CAST(expr AS type ARRAY) / CONVERT(expr, type ARRAY) -- a trailing
+## ARRAY suffix on any CAST/CONVERT target type, a JSON multi-valued-
+## index type modifier (confirmed via pkg/parser/expr_cast_parser.go's
+## parseCastType and pkg/parser/types/field_type.go's own
+## RestoreAsCastType: " ARRAY" appended uniformly after any base type).
+## JSON_SUM_CRC32(expr AS type ARRAY) reuses the identical CastExpr
+## restore shape as CAST itself (confirmed via pkg/parser/ast/
+## functions.go's JSONSumCrc32Expr.Restore) -- the ARRAY suffix is
+## MANDATORY there, unlike CAST/CONVERT's own optional suffix.
+select cast(a as signed array) from t
+select cast('[1,2,3]' as unsigned array)
+select convert(a, signed array) from t
+select cast(a as double array)
+select json_sum_crc32(j AS SIGNED ARRAY) as sum_crc32 from t
+select json_sum_crc32(j AS char(10) ARRAY) from t

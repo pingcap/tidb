@@ -1,0 +1,3 @@
+# Source-owned integer vector-group boundary evidence.
+# source_path status owner evidence_artifact note
+pkg/executor/internal/vecgroupchecker/vec_group_checker.go	PARTIAL	executor-vec-group-checker-wave	rust/crates/tidb-exec/src/vec_group_checker_int.rs	The dependency-closed integer/null group offsets, cross-chunk first-group continuity, cursor, exhaustion, reset, and count behavior from lines 80-151 and 524-564 are ported; expression/chunk evaluation, datum/key codec, collations, non-integer types, vector buffers, and stream-aggregation wiring remain external.

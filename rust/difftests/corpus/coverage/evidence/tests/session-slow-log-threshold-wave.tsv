@@ -1,0 +1,4 @@
+# Source-owned slow-log threshold test-port evidence.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/sessionctx/variable/tests/slowlog/slow_log_test.go	83	TestMatchSpecialTypeConditions	PARTIAL	session-slow-log-threshold-wave	rust/crates/tidb-exec/tests/slow_log_threshold_source.rs	Direct Rust vectors cover same-type bool/text equality and numeric zero behavior from this matching suite; executor field accessors and session state remain external.
+go_test	pkg/sessionctx/variable/tests/slowlog/slow_log_test.go	320	TestMatchUintExecDetailFieldsAfterParse	PARTIAL	session-slow-log-threshold-wave	rust/crates/tidb-exec/tests/slow_log_threshold_source.rs	Direct Rust vectors cover negative signed rejection, unsigned conversion, and same-type >= behavior used by scan/commit fields; parser/accessor wiring remains external.

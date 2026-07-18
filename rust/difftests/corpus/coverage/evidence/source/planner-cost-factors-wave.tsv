@@ -1,0 +1,3 @@
+# Source-owned source-port fragment for planner-cost-factors-wave.
+# source_path	status	owner	evidence_artifact	note
+pkg/planner/core/cost/factors_thresholds.go	PARTIAL	planner-cost-factors-wave	rust/crates/tidb-planner/src/cost_factors.rs	Ports source selection/distinct/tolerance factors, small-scan threshold, all sixteen AggFuncFactor entries including the default key, and case-sensitive unknown-name fallback; full physical cost model, session overrides, and AST aggregate catalog remain future planner owners

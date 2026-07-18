@@ -1,0 +1,3 @@
+# Source-owned integration-fixture evidence for the binary INSERT escape ring.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+integration_fixture	tests/integrationtest/t/table/partition.test	0	partition.test	PARTIAL	parser-insert-binary	rust/difftests/parser-tests/tests/selectors/dml/insert_binary_escape_selector.rs	Issue57675 line 449 has exact parser/restore coverage for plain, _binary, and UNHEX literals; the full table fixture still has unrelated execution obligations.

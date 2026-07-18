@@ -1,0 +1,19 @@
+schema = "2"
+domain = "ddl_affinity"
+owner = "ddl-affinity-metadata"
+status = "partial"
+go_owners = [
+  "file:pkg/ddl/affinity.go",
+]
+rust_paths = [
+  "rust/crates/tidb-exec/src/ddl/affinity.rs",
+  "rust/crates/tidb-exec/src/ddl/table_capability.rs",
+  "rust/crates/tidb-exec/src/tests/ddl_affinity.rs",
+]
+evidence_paths = [
+  "rust/difftests/corpus/coverage/evidence/domain/ddl_affinity.tsv",
+]
+required_commands = [
+  "CARGO_BUILD_JOBS=12 rustc --edition 2021 --crate-type lib rust/crates/tidb-exec/src/ddl/affinity.rs",
+  "CARGO_BUILD_JOBS=12 cargo test --locked -j12 -p tidb-exec ddl_affinity",
+]

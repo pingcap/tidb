@@ -1,0 +1,3 @@
+# Source-owned executor cumulative outer-match status test evidence.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/executor/join/outer_join_spill_test.go	301	TestOuterJoinSpillWithOtherCondition	PARTIAL	executor-outer-match-merge-wave	rust/crates/tidb-exec/tests/typed_condition_eval_source.rs	The Rust source-shaped tests merge three candidate batches and preserve TRUE over UNKNOWN over FALSE, with an explicit length guard; spill workers, row pointers, chunk result ownership, null-extension, and physical outer joins remain open.

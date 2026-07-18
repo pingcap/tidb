@@ -1,0 +1,11 @@
+## Source: tests/integrationtest/t/executor/foreign_key.test:42-48 (TestForeignKey).
+## This self-contained successful sub-sequence begins after the test's session
+## setup and retains every SQL statement in its selected upstream line range.
+## Semicolon terminators are omitted by corpus convention.
+drop table if exists t1, t2, t3
+create table t1 (id int, a int, b int, primary key (id))
+create table t2 (b int, a int, id int, primary key (a), foreign key (a) references t1(id))
+create table t3 (b int, a int, id int, primary key (a), foreign key (a) references t1(id))
+insert into t1 (id, a, b) values (1, 1, 1)
+insert into t2 (id, a, b) values (1, 1, 1)
+insert into t3 (id, a, b) values (1, 1, 1)

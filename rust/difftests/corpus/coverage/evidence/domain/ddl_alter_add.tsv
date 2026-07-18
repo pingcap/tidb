@@ -1,0 +1,4 @@
+go_owner	rust_module	status	note
+method:pkg/parser/ddl_alter_handlers.go#HandParser.parseAlterAdd	rust/crates/tidb-parser/src/ddl.rs	partial	Queued exact ALTER ADD owner; the shared Rust ALTER router is a dispatch surface only and no implementation or test coverage is claimed.
+tests:tests/integrationtest/t/ddl/multi_schema_change.test:20,25,30,35	rust/crates/tidb-ast/src/ddl.rs;rust/crates/tidb-parser/src/ddl.rs	covered	Grouped ADD COLUMN now retains Go's separate NewColumns/NewConstraints payloads, restores columns before index/primary constraints, and preserves IF NOT EXISTS; the four accepted static oracle rows have direct source tests and an exact selector.
+ALTER TABLE execution capability	rust/crates/tidb-exec/src/ddl/table_capability.rs;rust/crates/tidb-exec/src/tests/ddl.rs	covered	Grouped column/index/primary lists remain explicitly unsupported before transaction or catalog mutation.

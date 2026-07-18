@@ -1,0 +1,30 @@
+#IDX 0
+SELECT 1 AS `sum`
+#END
+#IDX 1
+SELECT 1 AS `sum`
+#END
+#IDX 2
+SELECT 1 AS `json`
+#END
+#IDX 3
+SELECT 1 AS `binary`
+#END
+#IDX 4
+SELECT 1 AS `char`
+#END
+#IDX 5
+SELECT 1 AS `timestamp`
+#END
+#IDX 6
+SELECT 1 AS `match`
+#END
+#IDX 7
+SELECT 1 AS `collation`
+#END
+#IDX 8
+SELECT @`sum`:=1 AS `sum`
+#END
+#IDX 9
+SELECT `a` FROM `t1` AS `t1sum`
+#END

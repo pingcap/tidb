@@ -1,0 +1,11 @@
+## Non-recursive `WITH` (common table expressions), attached directly to
+## the top-level `SELECT` only. Also covers `WITH RECURSIVE` and a CTE
+## body that is itself a `UNION`/`UNION ALL`-joined set operation (legal
+## even for a non-recursive CTE, not just `WITH RECURSIVE`'s own `base
+## UNION [ALL] recursive` shape).
+with a as (select 1 as x) select * from a
+with a as (select 1 as x), b as (select x+1 as y from a) select * from b
+with a (m,n) as (select 1,2) select m,n from a
+with recursive a as (select 1) select * from a
+with recursive cte as (select 1 as n union all select n+1 from cte where n<5) select * from cte
+with a as (select 1 as x union select 2) select * from a

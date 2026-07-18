@@ -1,0 +1,8 @@
+## Query-level scalar constructor vectors from TestJSONArray/TestJSONObject.
+select json_array();
+select json_array(1);
+select json_array(null, 'a', 3, '{"a": "b"}');
+select json_object();
+select json_object(1, 2, 'hello', null);
+select json_object(1, 2, 3);
+select json_object(null, 2);

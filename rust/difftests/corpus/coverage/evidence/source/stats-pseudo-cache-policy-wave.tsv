@@ -1,0 +1,3 @@
+# Source-owned pseudo-statistics cache policy evidence.
+# source_path	status	owner	evidence_artifact	note
+pkg/statistics/handle/handle.go	PARTIAL	stats-pseudo-cache-policy-wave	rust/crates/tidb-stats/src/pseudo_cache_policy.rs	The Rust leaf ports the shouldCachePseudo and temporary-table checks at lines 226-239: non-partitioned or cache length below 64 admits pseudo stats, while temporary tables are always rejected. Pseudo-table construction, cache mutation, system-schema checks, failpoints, and session/InfoSchema lifecycle remain external.

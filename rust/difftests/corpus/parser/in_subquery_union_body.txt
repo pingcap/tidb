@@ -1,0 +1,9 @@
+## `IN`'s own subquery may be `UNION`/`EXCEPT`/`INTERSECT`-bodied too --
+## the ONLY one of the four parenthesized-subquery positions (this one,
+## a scalar subquery, `EXISTS`, `ANY`/`SOME`/`ALL`) confirmed to accept
+## this; the other three are deliberately NOT widened the same way in
+## this same pass (not exercised by the corpus). A row-value operand
+## (`ROW(...)` or a bare comma-tuple) composes normally.
+select a from t where a in (select 1 union select 2)
+select a from t where a not in (select 1 union select 2)
+select (table1.a, table1.b) NOT IN (SELECT 3, 2 UNION SELECT 9, 2) AS field2 from t as table1 order by field2

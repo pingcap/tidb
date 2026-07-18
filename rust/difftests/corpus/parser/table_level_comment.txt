@@ -1,0 +1,6 @@
+## Table-level COMMENT [=] '...': always restores as `COMMENT = '...'`
+## regardless of whether `=` was written in the source
+create table t (id int, name varchar(20)) comment 'no equals sign'
+create table t (id int, name varchar(20)) comment='with equals'
+create table t (id int primary key, v int) comment = 'spaced equals'
+create table t (id int) comment 'it''s escaped'

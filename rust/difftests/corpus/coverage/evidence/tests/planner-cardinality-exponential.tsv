@@ -1,0 +1,3 @@
+# Source-owned test-evidence fragment for planner-cardinality-exponential.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/planner/cardinality/exponential_test.go	33	TestApplyExponentialBackoff	COVERED	planner-cardinality-exponential	rust/difftests/planner-tests/tests/cardinality.rs	All twelve source vectors execute: five NDV cases including the four-column cap four selectivity cases three bound clamps and empty input; bounds are asserted for every vector through the external tidb-planner API

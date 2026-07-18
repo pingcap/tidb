@@ -1,0 +1,17 @@
+## Non-recursive `WITH` (common table expressions) desugar into ordinary
+## derived tables: filtering, ORDER BY, chained CTEs (a later one
+## referencing an earlier one), aggregation, column renaming, and a CTE
+## referenced MULTIPLE times in one query (a self-join) all work through
+## the SAME existing derived-table machinery. A CTE sharing a real
+## table's name shadows it in the OUTER query but NOT inside the CTE's
+## own defining query (confirmed via gorun, not assumed).
+create table t (id int, v int)
+insert into t values (1, 10), (2, 20), (3, 30)
+with a as (select id, v from t where v > 10) select * from a
+with a as (select id, v from t where v > 10) select * from a order by id desc
+with a as (select id, v from t where v > 10), b as (select id from a where v > 20) select * from b
+with a as (select id, v from t) select count(*) from a
+with a (x, y) as (select id, v from t) select x, y from a where x = 2
+with a as (select id, v from t where v > 10) select t1.id, t2.id from a t1 join a t2 on t1.id != t2.id
+with t as (select id, v * 10 as v from t) select * from t
+select * from t

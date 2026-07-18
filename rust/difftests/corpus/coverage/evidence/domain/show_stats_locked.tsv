@@ -1,0 +1,3 @@
+go_owner	rust_module	status	note
+method:pkg/parser/ddl_show_ident_parser.go#HandParser.parseShowIdentBased	rust/crates/tidb-parser/src/show/stats_locked.rs	partial	STATS_LOCKED is a source-table-mapped identifier entry with mysql.stats_table_locked binding. The typed Rust leaf retains its exact LIKE simple-expression and WHERE full-expression filter contract, three checked corpus rows, and executor pre-mutation rejection.
+method:pkg/parser/ddl_show_parser.go#HandParser.parseShowLikeOrWhere	rust/crates/tidb-parser/src/show/stats_locked.rs	partial	The shared SHOW helper is transited for STATS_LOCKED only: LIKE parses at unary/simple-expression precedence and WHERE at full-expression precedence; other SHOW forms remain independent leaves.

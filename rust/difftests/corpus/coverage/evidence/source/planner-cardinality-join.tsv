@@ -1,0 +1,3 @@
+# Source-owned source-port fragment for planner-cardinality-join.
+# source_path	status	owner	evidence_artifact	note
+pkg/planner/cardinality/join.go	PARTIAL	planner-cardinality-join	rust/crates/tidb-planner/src/cardinality/join.rs	The source-shaped arithmetic preserves Cartesian products equi-versus-NA key selection larger-NDV division join-reorder gating and the 0.9 correlation exponent; PlanContext expression-column/schema StatsInfo and operator adapters remain open.

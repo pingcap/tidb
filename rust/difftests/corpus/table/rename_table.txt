@@ -1,0 +1,9 @@
+## RENAME TABLE: multiple pairs apply sequentially in written order, which
+## also correctly performs a 3-way swap via a temporary name
+create table rna (v int)
+create table rnb (v int)
+insert into rna values (1)
+insert into rnb values (2)
+rename table rna to rnc, rnb to rna, rnc to rnb
+select * from rna
+select * from rnb

@@ -1,0 +1,31 @@
+## Source anchors: pkg/types/convert_test.go:690-730;
+## pkg/executor/insert_test.go:497-500;
+## tests/integrationtest/t/executor/insert.test:1222-1239.
+## Strict-default assignment only: this seed does not model sql_mode's
+## non-strict saturation/warning channel.
+create table uint_dml (ui int unsigned, ub bigint unsigned primary key, si int)
+insert into uint_dml values (4294967295, 18446744073709551615, -2147483648)
+insert into uint_dml values (1, 9223372036854775808, 1)
+select ui, ub, si from uint_dml order by ub
+insert into uint_dml values (1, 18446744073709551615, 1)
+insert into uint_dml values (4294967296, 2, 1)
+insert into uint_dml values (2, -1, 1)
+select ui, ub, si from uint_dml order by ub
+update uint_dml set ui=1.5, ub='2.5' where ub=9223372036854775808
+select ui, ub, si from uint_dml order by ub
+update uint_dml set ui=4294967296 where ub=3
+select ui, ub, si from uint_dml order by ub
+create table uint_default (ui int unsigned default 4294967295, ub bigint unsigned default 18446744073709551615, s int)
+insert into uint_default (s) values (7)
+select ui, ub, s from uint_default
+create table uint_float_round (u bigint unsigned, s bigint)
+insert into uint_float_round values (cast(2.5 as double), cast(-2.5 as double))
+insert into uint_float_round values (cast(3.5 as double), cast(-3.5 as double))
+select u, s from uint_float_round order by u
+create table uint_scientific (u bigint unsigned, s bigint)
+insert into uint_scientific values ('2.5e0', '2.5e0')
+insert into uint_scientific values ('5e-1', '-5e-1')
+insert into uint_scientific values ('4e-1', '-4e-1')
+insert into uint_scientific values ('18446744073709551615e0', '9223372036854775807e0')
+insert into uint_scientific values ('18446744073709551616e0', '9223372036854775808e0')
+select u, s from uint_scientific order by u, s

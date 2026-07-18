@@ -1,0 +1,3 @@
+# Source-owned transaction-history summary test-port evidence.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/infoschema/test/clustertablestest/tables_test.go	1424	TestTiDBTrxSummary	PARTIAL	session-txn-summary-wave	rust/crates/tidb-exec/tests/txn_summary_source.rs	Focused Rust vectors cover digest-sequence identity, LRU promotion, capacity eviction, resize, and zero-capacity behavior; SQL execution, duration sleeps, JSON output, test-only Clean/global recorder synchronization, and infoschema publication remain external.

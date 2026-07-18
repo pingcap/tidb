@@ -1,0 +1,5 @@
+## DATE_ADD with INTERVAL n HOUR/MINUTE over real DATE/DATETIME columns,
+## including day-rollover carry and a DATE-only input treated as midnight
+create table dh (dt datetime, d date)
+insert into dh values ('2021-01-01 22:00:00', '2021-01-01')
+select date_add(dt, interval 5 hour), date_add(d, interval 30 minute) from dh

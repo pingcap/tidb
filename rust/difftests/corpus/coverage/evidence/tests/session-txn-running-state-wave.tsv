@@ -1,0 +1,3 @@
+# Source-owned transaction-running-state test-port evidence.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	tests/realtikvtest/txntest/txn_state_test.go	32	TestBasicTxnState	PARTIAL	session-txn-running-state-wave	rust/crates/tidb-exec/tests/txn_running_state_source.rs	Focused Rust vectors cover source discriminants and LockWaiting display naming; real TiKV blocking/commit transitions, failpoints, timing, and transaction/session publication remain external.

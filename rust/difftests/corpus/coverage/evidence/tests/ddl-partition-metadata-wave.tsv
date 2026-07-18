@@ -1,0 +1,4 @@
+# Source-owned partition metadata test evidence.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/ddl/partition_test.go	34	TestDropAndTruncatePartition	PARTIAL	ddl-partition-metadata-wave	rust/crates/tidb-exec/src/tests/ddl_partition_metadata.rs	Ordered partition physical-ID extraction and the staged-to-published partition metadata contract are covered; TiKV allocation, schema-version publication, placement, and worker lifecycle remain open.
+go_test	pkg/ddl/partition_test.go	153	TestReorganizePartitionRollback	PARTIAL	ddl-partition-metadata-wave	rust/crates/tidb-exec/src/tests/ddl_partition_metadata.rs	Case-insensitive partition name validation and replacement/drop ordering are covered as dependency-closed metadata; rollback workers, backfill, and transaction/catalog coordination remain open.

@@ -1,0 +1,28 @@
+schema = "2"
+domain = "ddl_alter_table_options"
+owner = "parser-alter-table-options"
+status = "partial"
+go_owners = [
+  "method:pkg/parser/ddl_alter_handlers.go#HandParser.parseAlterTableOptions",
+]
+rust_paths = [
+  "rust/crates/tidb-ast/src/ddl.rs",
+  "rust/crates/tidb-ast/src/ddl/alter/lock.rs",
+  "rust/crates/tidb-parser/src/ddl.rs",
+  "rust/crates/tidb-parser/src/ddl/alter/lock.rs",
+  "rust/crates/tidb-parser/src/tests/alter_lock_source.rs",
+  "rust/crates/tidb-parser/src/tests/ddl_attributes_source.rs",
+  "rust/difftests/parser-tests/tests/selectors/alter/alter_lock_selector.rs",
+  "rust/difftests/parser-tests/tests/selectors/alter/alter_table_attributes_selector.rs",
+]
+evidence_paths = [
+  "rust/difftests/corpus/coverage/evidence/domain/ddl_alter_table_options.tsv",
+]
+required_commands = [
+  "GOFLAGS='-p=12' ./tools/check/failpoint-go-test.sh pkg/parser -run '^TestDDL$' -count=1",
+  "CARGO_BUILD_JOBS=12 cargo test --locked -j12 -p tidb-parser ddl_attributes_source",
+  "CARGO_BUILD_JOBS=12 cargo test --locked -j12 -p tidb-parser alter_lock",
+  "CARGO_BUILD_JOBS=12 cargo test --locked -j12 -p difftest-parser-tests --test selector_alter alter_table_attributes_static_go_rows_match",
+  "CARGO_BUILD_JOBS=12 cargo test --locked -j12 -p difftest-parser-tests --test selector_alter alter_lock_static_go_rows_match",
+  "CARGO_BUILD_JOBS=12 cargo clippy --locked -j12 -p tidb-ast -p tidb-parser --all-targets -- -D warnings",
+]

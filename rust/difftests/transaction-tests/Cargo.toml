@@ -1,0 +1,54 @@
+[package]
+name = "difftest-transaction-tests"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Source-translated transaction primitive tests for tidb-txnkv."
+publish = false
+autotests = false
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-codec = { path = "../../crates/tidb-codec" }
+tidb-datatype = { path = "../../crates/tidb-datatype" }
+tidb-txnkv = { path = "../../crates/tidb-txnkv" }
+
+[[test]]
+name = "key_version"
+path = "tests/key_version.rs"
+
+[[test]]
+name = "handle"
+path = "tests/handle.rs"
+
+[[test]]
+name = "keyspace"
+path = "tests/keyspace.rs"
+
+[[test]]
+name = "counter"
+path = "tests/counter.rs"
+
+[[test]]
+name = "iteration"
+path = "tests/iteration.rs"
+
+[[test]]
+name = "key_helpers"
+path = "tests/key_helpers.rs"
+
+[[test]]
+name = "retry"
+path = "tests/retry.rs"
+
+[[test]]
+name = "txn_scope"
+path = "tests/txn_scope.rs"
+
+[[test]]
+name = "mvcc_metadata"
+path = "tests/mvcc_metadata.rs"

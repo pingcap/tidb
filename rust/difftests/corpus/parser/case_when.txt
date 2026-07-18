@@ -1,0 +1,8 @@
+## CASE has two forms sharing one AST node -- simple (`CASE value WHEN
+## cond THEN result ... [ELSE result] END`) and searched (`CASE WHEN cond
+## THEN result ... [ELSE result] END`, no compare value).
+select case 1 when 1 then 'a' when 2 then 'b' else 'c' end
+select case when 1=1 then 10 else 20 end
+select case 1 when 2 then 'x' end
+select case when 1=1 then case when 2=2 then 'nested' else 'no' end else 'outer' end
+select 1 + case when 1=1 then 10 else 20 end

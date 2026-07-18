@@ -1,0 +1,3 @@
+# Source-owned statistics analyze-version matching test evidence.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/statistics/table_test.go	89	TestResolveAnalyzeVersionOnTableKeepsRequestedVersion	PARTIAL	stats-analyze-version-wave	rust/crates/tidb-stats/tests/analyze_version_policy_source.rs	The assertions continue through line 99; Rust directly covers nil/pseudo, Version0, requested equality, and differing analyzed versions while rewrite/scheduler integration remains open.

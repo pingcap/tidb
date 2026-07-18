@@ -1,0 +1,3 @@
+# Source-owned duration parser evidence.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/types/time_test.go	309	TestTime	PARTIAL	datatype-duration-parse-source-wave	rust/crates/tidb-datatype/src/duration_tests.rs	Colon HH:MM[:SS], compact HHMMSS (including short/leading-zero forms), day-prefixed forms, signs, fraction/FSP rounding, carry, endpoint clamp, and invalid component rejection execute; canFallbackToDateTime shape classification and pure overflow/fallback/truncation events now execute, while calendar conversion, SQL warning/session policy, and Unicode trimming remain open

@@ -1,0 +1,28 @@
+schema = "1"
+slice = "txnkv-prefix-transaction-ops"
+status = "covered"
+target = "tidb-txnkv"
+ring = "transaction"
+consumer = "TransactionReadDriver supplies the merged dirty-buffer and snapshot iterator plus mutation tombstones to the complete ScanMetaWithPrefix, DelKeyWithPrefix, and RowKeyPrefixFilter utility family"
+test_target = "prefix_ops_source"
+go_sources = ["pkg/util/prefix_helper.go"]
+go_tests = [
+  "pkg/util/prefix_helper_test.go:0:prefix_helper_test.go",
+  "pkg/util/prefix_helper_test.go:36:TestPrefix",
+  "pkg/util/prefix_helper_test.go:76:TestPrefixFilter",
+]
+depends_on = []
+evidence_prerequisites = [
+  { capability = "transaction-read-mutation-driver", evidence_owner = "txnkv-mutable-transaction-runtime", kind = "source", anchor = "pkg/store/driver/txn/txn_driver.go", minimum_status = "PARTIAL" },
+  { capability = "kv-iterator-contract", evidence_owner = "txnkv-iteration-source-wave", kind = "source", anchor = "pkg/kv/iter.go", minimum_status = "COVERED" },
+  { capability = "kv-prefix-next", evidence_owner = "txnkv-handle-codec-wave3", kind = "source", anchor = "pkg/kv/key.go", minimum_status = "PARTIAL" },
+]
+rust_paths = [
+  "rust/crates/tidb-txnkv/src/prefix_ops.rs",
+  "rust/crates/tidb-txnkv/src/driver/read.rs",
+  "rust/crates/tidb-txnkv/src/lib.rs",
+  "rust/crates/tidb-txnkv/tests/prefix_ops_source.rs",
+  "rust/difftests/corpus/coverage/evidence/source/txnkv-prefix-transaction-ops.tsv",
+  "rust/difftests/corpus/coverage/evidence/tests/txnkv-prefix-transaction-ops.tsv",
+  "rust/difftests/corpus/coverage/evidence/transfers/txnkv-prefix-transaction-ops.tsv",
+]

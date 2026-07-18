@@ -1,0 +1,17 @@
+schema = "1"
+slice = "distsql-region-location-coverage"
+status = "retired"
+target = "tidb-distsql"
+ring = "transaction"
+consumer = "source-direct callable validation on the existing RegionTaskEnvelope: tests pass the concrete task's ordered RequestKeyRange values and supplied region-location boundaries through the Go-shaped overlap, gap, and extraneous-location rules; no runtime task builder or serialization path calls it yet, and it deliberately owns no cache lookup, PD client, retry, bucket split, endpoint, or RPC state"
+test_target = "region_location_coverage_source"
+go_sources = ["pkg/store/copr/region_cache.go"]
+go_tests = [
+  "pkg/store/copr/region_cache_test.go:51:TestValidateLocationCoverage",
+  "pkg/store/copr/region_cache_test.go:340:TestValidateLocationCoverage/<generated>",
+]
+depends_on = []
+evidence_prerequisites = []
+rust_paths = [
+  "rust/difftests/corpus/coverage/evidence/transfers/distsql-cop-read-task-runtime.tsv",
+]

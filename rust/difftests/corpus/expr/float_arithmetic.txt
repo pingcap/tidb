@@ -1,0 +1,22 @@
+## `+`/`-`/`*`/`/`/`MOD` over Float: an Int or Decimal operand promotes to
+## `f64` (Float dominates Decimal, the OPPOSITE of how Decimal dominates
+## Int); NATIVE f64 arithmetic throughout, since Rust's f64 already
+## matches Go's IEEE-754 semantics bit for bit (confirmed, not assumed);
+## division/MOD by zero is NULL, same as Int/Decimal; underflow to zero is
+## fine, overflow to +/-infinity is a genuine evaluation error (not
+## covered here — ERR goldens aren't asserted by the differential harness,
+## covered instead by a direct unit-test assertion)
+1.5e2 + 1
+1.5e2 + 1.5
+1.5e2 - 0.5e2
+1.5e2 * 2
+1.5e2 / 2
+1.5e2 / 0
+1.5e2 + 3.14
+1.007e2 mod 3
+2.7e2 mod 1.5e2
+0.0e0 mod 1.5e2
+1.5e2 mod 0
+null + 1.5e2
+1e300 + 1e300
+1e-300 * 1e-300

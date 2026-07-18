@@ -1,0 +1,6 @@
+#IDX 212
+RENAME TABLE `t` TO `t2`
+#END
+#IDX 213
+RENAME TABLE `t` TO `t2`, `u` TO `u2`
+#END

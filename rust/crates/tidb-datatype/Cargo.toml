@@ -1,0 +1,17 @@
+[package]
+name = "tidb-datatype"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Core TiDB SQL data types."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-error = { path = "../tidb-error" }
+
+[dev-dependencies]
+sha2 = { workspace = true }

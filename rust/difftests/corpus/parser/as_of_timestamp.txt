@@ -1,0 +1,22 @@
+## `AS OF TIMESTAMP expr` -- TiDB's own stale-read/time-travel table-source
+## clause, reading a table as of a historical MVCC snapshot. Read directly
+## from real TiDB's own hand-written parser (pkg/parser/join_parser.go's
+## inline handling: `if p.peek().Tp == asof { ... } else if
+## p.accept(as) { ...alias... }`) and restore (pkg/parser/ast/dml.go's
+## TableSource.Restore: name -> partitions -> alias -> AS OF TIMESTAMP ->
+## index hints -> TABLESAMPLE). The lexer merges `AS OF` into a SINGLE
+## keyword token (matching real TiDB's own lexer-level two-word merge, the
+## SAME mechanism `MEMBER OF` uses) -- confirmed via a direct tidb_lexer
+## probe, not assumed. Mutually exclusive with a plain alias at the SAME
+## grammar position, in EITHER order (both a genuine ParseError, confirmed
+## via godump restore). ALWAYS Unsupported at execution time,
+## unconditionally -- the SAME "real semantic effect this crate's
+## in-memory Vec<Row> table representation has no analogue for" precedent
+## TABLESAMPLE already established.
+select * from t1 as of timestamp @a
+select * from t1 as of timestamp @a where a = 1
+select * from t as of timestamp now(6) - interval 0.1 second
+select * from t1 as of timestamp null
+select * from t1 as of timestamp @a use index (a)
+update t1 as of timestamp @a set a = 1
+delete from t1 as of timestamp @a

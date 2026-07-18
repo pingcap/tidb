@@ -1,0 +1,7 @@
+## UNSIGNED / ZEROFILL columns: the executor is type-agnostic, so these parse
+## and execute exactly like their bare counterparts
+create table cnts (id int unsigned primary key, v bigint unsigned)
+insert into cnts values (1, 100)
+insert into cnts values (2, 200)
+select id, v from cnts order by id
+select sum(v) from cnts

@@ -1,0 +1,8 @@
+## A named table-level PRIMARY KEY (CONSTRAINT name) triggers conflict
+## detection identically to an unnamed one — the name is purely cosmetic
+create table named_pk (id int, v int, constraint pk_id primary key (id))
+insert into named_pk values (1, 10)
+insert into named_pk values (1, 20) on duplicate key update v = 999
+select * from named_pk
+insert into named_pk values (2, 30) on duplicate key update v = 999
+select * from named_pk

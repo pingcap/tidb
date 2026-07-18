@@ -1,0 +1,37 @@
+## CASE has two forms sharing one AST node: `CASE value WHEN cond THEN
+## result ... [ELSE result] END` (simple -- WHEN compares `value = cond`
+## via ordinary `=`, so NULL never matches, matching `=`'s own
+## propagation) and `CASE WHEN cond THEN result ... [ELSE result] END`
+## (searched -- each cond truthiness-tested directly, the same
+## three-valued logic IF/WHERE use). The first matching WHEN wins; no
+## match and no ELSE is NULL. Evaluation is LAZY (only the taken branch's
+## expression is evaluated, matching real MySQL's short-circuit CASE, a
+## load-bearing idiom for guarding against errors like division by zero)
+## -- deliberately EXCLUDED from this corpus: any case where an UNTAKEN
+## branch's type would statically promote the overall result (confirmed
+## via goeval: `case when 1=0 then 1/0 else 5 end` is `DEC:5.0000`, not
+## `INT:5`, even though `1/0` is never evaluated -- real MySQL infers the
+## result type from every branch at plan time, which this evaluator
+## cannot replicate without a genuine type-inference pass; every case
+## below was checked to have no such cross-branch promotion in play).
+case 1 when 1 then 'a' when 2 then 'b' else 'c' end
+case 2 when 1 then 'a' when 2 then 'b' else 'c' end
+case 3 when 1 then 'a' when 2 then 'b' else 'c' end
+case 3 when 1 then 'a' when 2 then 'b' end
+case when 1=1 then 10 else 20 end
+case when 1=0 then 10 else 20 end
+case when 1=0 then 10 end
+case when null then 1 else 2 end
+case null when null then 1 else 2 end
+case when 1=1 then 1 when 1=1 then 2 else 3 end
+case 1 when 1 then 10 when 1 then 20 end
+case when 1=0 then 1 when 1=1 then 2.5 end
+case 1.5e2 when 150 then 'match' else 'no' end
+case null when 1 then 'a' else 'b' end
+case when 5 > 3 then 'yes' else 'no' end
+case when null is null then 'isnull' else 'notnull' end
+case (case when 1=1 then 1 else 2 end) when 1 then 'inner-one' else 'inner-other' end
+case when 1=1 then case when 2=2 then 'nested' else 'no' end else 'outer' end
+1 + case when 1=1 then 10 else 20 end
+case 'a' when 'a' then 1 when 'b' then 2 else 3 end
+case when 1 in (1,2,3) then 'in' else 'out' end

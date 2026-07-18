@@ -1,0 +1,3 @@
+# Source-owned weighted reservoir sampling test evidence.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/statistics/sample_test.go	61	TestWeightedSampling	PARTIAL	stats-weighted-reservoir-wave	rust/crates/tidb-stats/tests/weighted_reservoir_source.rs	Rust deterministically verifies the bounded largest-weight selection and strict tie behavior from the original weighted-sampling test; random generation and full row collector integration remain external. TestDistributedWeightedSampling at line 99 is intentionally unclaimed.

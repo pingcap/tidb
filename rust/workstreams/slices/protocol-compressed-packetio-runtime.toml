@@ -1,0 +1,45 @@
+schema = "1"
+slice = "protocol-compressed-packetio-runtime"
+status = "partial"
+target = "tidb-protocol"
+ring = "result"
+consumer = "MySQL packet reader and writer consume one compression-mode state for uncompressed, zlib, and zstd framing with independent sequence numbers and MariaDB compatibility"
+test_target = "packetio_source"
+go_sources = ["pkg/server/internal/packetio.go"]
+go_tests = [
+  "pkg/server/internal/packetio_test.go:0:packetio_test.go",
+  "pkg/server/internal/packetio_test.go:31:BenchmarkPacketIOWrite",
+  "pkg/server/internal/packetio_test.go:40:TestPacketIOWrite",
+  "pkg/server/internal/packetio_test.go:65:TestPacketIOWriteCompressed",
+  "pkg/server/internal/packetio_test.go:91:TestPacketIORead",
+  "pkg/server/internal/packetio_test.go:92:TestPacketIORead/uncompressed",
+  "pkg/server/internal/packetio_test.go:127:TestPacketIORead/compressed_short",
+  "pkg/server/internal/packetio_test.go:154:TestPacketIORead/zlib",
+  "pkg/server/internal/packetio_test.go:192:TestPacketIORead/zstd",
+  "pkg/server/internal/packetio_test.go:241:TestCompressedWriterShort",
+  "pkg/server/internal/packetio_test.go:262:TestCompressedWriterLong",
+  "pkg/server/internal/packetio_test.go:263:TestCompressedWriterLong/zlib",
+  "pkg/server/internal/packetio_test.go:290:TestCompressedWriterLong/zstd",
+  "pkg/server/internal/packetio_test.go:321:TestCompressedReaderShort",
+  "pkg/server/internal/packetio_test.go:352:TestCompressedReaderLong",
+  "pkg/server/internal/packetio_test.go:353:TestCompressedReaderLong/zlib",
+  "pkg/server/internal/packetio_test.go:389:TestCompressedReaderLong/zstd",
+  "pkg/server/internal/packetio_test.go:441:TestSubHeaderWithWrongSequenceNumber",
+]
+depends_on = []
+rust_paths = [
+  "rust/Cargo.toml",
+  "rust/Cargo.lock",
+  "rust/crates/tidb-protocol/Cargo.toml",
+  "rust/crates/tidb-protocol/src/packet.rs",
+  "rust/crates/tidb-protocol/src/compression.rs",
+  "rust/crates/tidb-protocol/src/error.rs",
+  "rust/crates/tidb-protocol/src/lib.rs",
+  "rust/crates/tidb-protocol/tests/packetio_source.rs",
+  "rust/crates/tidb-protocol/benches/packetio_source.rs",
+  "rust/difftests/corpus/coverage/go_test_domain_manifest.tsv",
+  "rust/difftests/corpus/coverage/evidence/source/protocol-compressed-packetio-runtime.tsv",
+  "rust/difftests/corpus/coverage/evidence/tests/protocol-compressed-packetio-runtime.tsv",
+  "rust/difftests/corpus/coverage/evidence/transfers/protocol-compressed-packetio-runtime.tsv",
+  "rust/difftests/corpus/coverage/evidence/tests/protocol-packetio-source-wave.tsv",
+]

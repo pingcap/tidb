@@ -1,0 +1,12 @@
+RS:
+RS:abc
+RS:ab c
+RS:BYTES_HEX:61620A63
+RS:ab	c
+RS:a
+RS:ab
+RS:<nil>
+RS:<nil>
+RS:<nil>
+RS:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/
+RS:<nil>

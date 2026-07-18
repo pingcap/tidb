@@ -1,0 +1,14 @@
+## LATERAL (subquery) [AS] alias [(col, ...)] -- a derived table that
+## may reference columns of tables preceding it in the same FROM
+## clause. Real TiDB's own execution treats this as a correlated,
+## per-outer-row re-evaluation, which this crate's Relation-based join
+## engine can't cheaply model -- parses and restores fully; execution
+## is unconditionally Unsupported (see tidb-exec's build_node).
+select * from t1, lateral (select b from t2 where t2.a = t1.a) as lat
+select * from t1 cross join lateral (select b from t2 where t2.a = t1.a) as lat
+select * from t1 left join lateral (select b from t2 where t2.a = t1.a limit 1) as lat on true
+select * from t1 right join lateral (select b from t2 where t2.a = t1.a) as lat on true
+select * from t1, lateral (select b from t2 where t2.a = t1.a) as dt(c1, c2)
+select * from t1, lateral (select b from t2 where t2.a = t1.a order by b limit 1) as lat order by t1.a
+select * from t1, t2, lateral (select c from t3 where t3.b = t2.b limit 1) as lat
+select dt.id, dt.val from t1, lateral (select t2.a, t2.b from t2 where t2.a = t1.a) as dt(id, val) order by dt.id

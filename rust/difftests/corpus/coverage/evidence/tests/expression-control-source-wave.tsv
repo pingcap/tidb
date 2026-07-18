@@ -1,0 +1,4 @@
+# Source-owned test-evidence fragment for the representable control-builtin source tables.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/expression/builtin_compare_test.go	174	TestCoalesce	PARTIAL	expression-control-source-wave	rust/crates/tidb-expr/src/tests/control.rs	All-null, NULL-plus-scalar, and decimal/double rows are exercised; Go FieldType promotion for mixed numeric and temporal rows remains outside the seed datum/context domain.
+go_test	pkg/expression/builtin_control_test.go	109	TestIfNull	PARTIAL	expression-control-source-wave	rust/crates/tidb-expr/src/tests/control.rs	Scalar integer/string/decimal/double/binary rows are exercised; typed temporal, JSON, SET, and injected-error rows remain explicit context-domain gaps.

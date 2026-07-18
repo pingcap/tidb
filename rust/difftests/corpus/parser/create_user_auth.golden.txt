@@ -1,0 +1,30 @@
+#IDX 0
+CREATE USER `test`@`%`
+#END
+#IDX 1
+CREATE USER IF NOT EXISTS `root`@`localhost` IDENTIFIED BY 'new-password'
+#END
+#IDX 2
+CREATE USER `root`@`localhost` IDENTIFIED WITH 'mysql_native_password' AS 'hashstring'
+#END
+#IDX 3
+CREATE USER `nopwd_native`@`localhost` IDENTIFIED WITH 'mysql_native_password'
+#END
+#IDX 4
+CREATE USER `bug19354014user`@`%` IDENTIFIED WITH 'mysql_native_password' BY 'new-password'
+#END
+#IDX 5
+CREATE USER `bug19354014user`@`%` IDENTIFIED WITH 'mysql_native_password' AS 'hashstring'
+#END
+#IDX 6
+CREATE USER `bob`@`localhost` IDENTIFIED WITH 'authentication_ldap_simple' AS 'uid=bob,ou=People,dc=example,dc=com'
+#END
+#IDX 7
+CREATE USER `sha_test3`@`localhost` IDENTIFIED WITH 'caching_sha2_password' AS '$A$005$%[Ilf,U{;eJ/ }HRvp6DpKv02GGEdAjQfb4lXhdm2vLkQOCXZG7yVYGQO4'
+#END
+#IDX 8
+CREATE USER `dpm1`@`%` IDENTIFIED BY 'p1', `dpm2`@`%` IDENTIFIED BY 'q1', `dpm3`@`%` IDENTIFIED BY 'r1'
+#END
+#IDX 9
+CREATE USER `super_user`@`%`, `placement_user`@`%`, `empty_user`@`%`
+#END

@@ -1,0 +1,3 @@
+select convert("123" using "binary"), convert("中文" using "binary"), convert("中文" using "utf8"), convert("中文" using "utf8mb4"), convert(cast("中文" as binary) using "utf8");
+select char(65 using "gbk");
+select char(65 using gbk);

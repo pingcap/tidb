@@ -1,0 +1,3 @@
+# Source-owned evidence fragment for planner-explore-mark-wave.
+# source_path	status	owner	evidence_artifact	note
+pkg/planner/memo/group.go	PARTIAL	planner-explore-mark-wave	rust/crates/tidb-planner/src/explore_mark.rs	Ports ExploreMark round-bit set/clear/query semantics for memo groups and expressions; fixed-width overflow handling is explicit and group/memo lifecycle remains external.

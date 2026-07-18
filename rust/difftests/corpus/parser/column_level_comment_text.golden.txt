@@ -1,0 +1,21 @@
+#IDX 156
+CREATE TABLE `t` (`id` INT COMMENT 'the id column',`name` VARCHAR(20))
+#END
+#IDX 157
+CREATE TABLE `t` (`id` INT PRIMARY KEY COMMENT 'pk',`name` VARCHAR(20) NOT NULL COMMENT 'the name')
+#END
+#IDX 158
+CREATE TABLE `t` (`id` INT DEFAULT 5 COMMENT 'has default')
+#END
+#IDX 159
+CREATE TABLE `t` (`id` INT,`v` VARCHAR(20) DEFAULT _UTF8MB4'x' COMMENT 'has string default')
+#END
+#IDX 160
+CREATE TABLE `t` (`id` INT,`name` VARCHAR(20) COMMENT 'it''s a test')
+#END
+#IDX 161
+CREATE TABLE `t` (`id` INT COMMENT 'c1' NOT NULL)
+#END
+#IDX 162
+CREATE TABLE `t` (`id` INT AUTO_INCREMENT COMMENT 'ai col',`v` INT)
+#END

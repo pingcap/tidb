@@ -1,0 +1,27 @@
+#IDX 0
+SELECT COUNT(DISTINCT `a`, `b`) FROM `t`
+#END
+#IDX 1
+SELECT COUNT(DISTINCT `a`, `b`, `c`) FROM `t`
+#END
+#IDX 2
+SELECT COUNT(DISTINCT `t`.`a`, `t`.`b`) FROM `t` JOIN `s` ON `t`.`b`=`s`.`b`
+#END
+#IDX 3
+SELECT COUNT(DISTINCT `b`, `c`) FROM `tx` WHERE `a`<3 ORDER BY COUNT(DISTINCT `b`, `c`)
+#END
+#IDX 4
+SELECT COUNT(DISTINCT `b`, `c`, `d`) FROM `t` GROUP BY `id`
+#END
+#IDX 5
+SELECT COUNT(DISTINCT `c`),COUNT(DISTINCT `a`, `b`) FROM `t`
+#END
+#IDX 6
+SELECT COUNT(DISTINCT `value`, `value1`) FROM `t` ORDER BY COUNT(DISTINCT `value`, `value1`)
+#END
+#IDX 7
+SELECT COUNT(DISTINCT `value` COLLATE utf8mb4_bin, `value1`) FROM `t` ORDER BY COUNT(DISTINCT `value` COLLATE utf8mb4_bin, `value1`)
+#END
+#IDX 8
+SELECT /*+ HASH_AGG()*/ AVG(`b`),`c`,AVG(`b`),COUNT(DISTINCT `A`, `B`),COUNT(DISTINCT `A`),COUNT(DISTINCT `c`),SUM(`b`) FROM `t` GROUP BY `c`
+#END

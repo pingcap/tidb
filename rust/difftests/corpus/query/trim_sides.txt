@@ -1,0 +1,3 @@
+## Query-level result-ring vectors from TestLTrim/TestRTrim.
+select hex(ltrim('   bar   ')), hex(ltrim('\t   bar   ')), hex(ltrim(null)), ltrim(123)
+select hex(rtrim('   bar   ')), hex(rtrim('bar   \t')), hex(rtrim(null)), rtrim(123)

@@ -1,0 +1,30 @@
+[package]
+name = "difftest-result-tests"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Expression, query, and table result differential tests."
+publish = false
+autotests = false
+
+[lints]
+workspace = true
+
+[dependencies]
+difftest = { path = ".." }
+tidb-ast = { path = "../../crates/tidb-ast" }
+tidb-parser = { path = "../../crates/tidb-parser" }
+tidb-expr = { path = "../../crates/tidb-expr" }
+tidb-exec = { path = "../../crates/tidb-exec" }
+
+[[test]]
+name = "expr_diff"
+path = "tests/expr_diff.rs"
+[[test]]
+name = "query_diff"
+path = "tests/query_diff.rs"
+[[test]]
+name = "table_diff"
+path = "tests/table_diff.rs"

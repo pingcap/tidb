@@ -1,0 +1,22 @@
+## Go `SimpleExec.executeSavepoint` opens the lazy transaction when
+## autocommit is off, even before DML. A savepoint in autocommit mode remains
+## a no-op. This is a separate corpus topic so the transaction workstream can
+## evolve without colliding with the broader savepoint script.
+create table savepoint_autocommit (id int)
+set autocommit = 0
+savepoint before_write
+insert into savepoint_autocommit values (1)
+rollback to before_write
+select id from savepoint_autocommit order by id
+insert into savepoint_autocommit values (2)
+savepoint after_write
+insert into savepoint_autocommit values (3)
+rollback to after_write
+select id from savepoint_autocommit order by id
+commit
+select id from savepoint_autocommit order by id
+set autocommit = 1
+savepoint no_transaction
+insert into savepoint_autocommit values (4)
+rollback to no_transaction
+select id from savepoint_autocommit order by id

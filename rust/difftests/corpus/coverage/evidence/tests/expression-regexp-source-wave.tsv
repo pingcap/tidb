@@ -1,0 +1,3 @@
+# Source-owned direct evidence for the original two-argument REGEXP operator.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/expression/builtin_like_test.go	64	TestRegexp	PARTIAL	expression-regexp-source-wave	rust/crates/tidb-expr/src/tests/mod.rs	All nine successful TestRegexp vectors and both NOT REGEXP negations run through parser Expr::Regexp dispatch; regexp.rs also asserts the four malformed source patterns (including a lone backslash) fail in the production regexp_match builder. Function-class/session collation, vectorized execution, and warning/error channels remain explicit boundaries.

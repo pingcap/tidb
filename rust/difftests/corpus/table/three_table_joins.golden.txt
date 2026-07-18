@@ -1,0 +1,11 @@
+OK
+OK
+OK
+OK
+OK
+OK
+RS:a|p|m
+RS:a|p|m;b|q|<nil>
+RS:a|p|m
+RS:1
+RS:a|1;b|1

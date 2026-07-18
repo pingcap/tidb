@@ -1,0 +1,3 @@
+# Source-owned test evidence fragment for planner-explore-mark-wave.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/planner/memo/group_test.go	287	TestExploreMark	PARTIAL	planner-explore-mark-wave	rust/difftests/planner-tests/tests/explore_mark.rs	Rust vectors preserve source round-bit initialization, set, clear, and query behavior; the typed fixed-width adapter also pins inert out-of-width rounds while memo ownership remains external.

@@ -1,0 +1,198 @@
+## MERGED TOPIC: statements below share mutable table state across
+## sub-features (each sub-section was originally its own comment block;
+## merged because later sections reference earlier sections' tables
+## without recreating them) -- kept as one script so the shared state
+## stays correct; run against one fresh Database like every other topic.
+## tidb-exec table-access differential corpus: an ordered SCRIPT of statements
+## (CREATE TABLE / INSERT / SELECT), run in one TiDB session by gorun and by the
+## Rust Database. Each statement's outcome (OK / RS:... / ERR) must match.
+## Scope: single-table scans with column refs, WHERE selection, projection,
+## SELECT * , and constant expressions over columns.
+create table t (a int, b int, c varchar(20))
+insert into t values (1, 10, 'x')
+insert into t values (2, 20, 'y')
+insert into t values (3, 30, 'z')
+select a, b, c from t
+select * from t
+select a from t where a > 1
+select a, b from t where b >= 20
+select c from t where a = 2
+select a + b from t
+select a, b * 2 from t where a <> 2
+select a from t where a > 1 and b < 30
+select upper(c), length(c) from t
+select a from t where c = 'y'
+select a from t order by a
+select a from t where a > 100
+select t.a, t.b from t where t.a = 1
+select concat(c, '!') from t where a = 3
+select a from t union select a from t
+select a from t where a = 1 union select a from t where a = 3
+create table nums (n int)
+insert into nums values (5), (3), (8), (3)
+select n from nums where n > 3
+select n from nums
+select n from nums union select n from nums
+create table g (k int, v int, s varchar(9))
+insert into g values (1, 10, 'a')
+insert into g values (1, 20, 'b')
+insert into g values (2, 30, 'a')
+insert into g values (2, 40, 'c')
+insert into g values (2, 50, 'a')
+select count(*) from g
+select sum(v) from g
+select max(v), min(v) from g
+select k, count(*) from g group by k
+select k, sum(v) from g group by k
+select k, max(v), min(v) from g group by k
+select k, count(distinct s) from g group by k
+select count(distinct k) from g
+select k from g group by k
+select k, count(*) from g where v > 15 group by k
+select max(s), min(s) from g
+select count(*) from nums
+select n, count(*) from nums group by n
+create table dept (id int, name varchar(9))
+insert into dept values (1, 'eng'), (2, 'sales'), (3, 'ops')
+create table emp (id int, dept_id int, name varchar(9))
+insert into emp values (10, 1, 'ann'), (11, 1, 'bob'), (12, 2, 'cid'), (13, 9, 'dan')
+select emp.name, dept.name from emp join dept on emp.dept_id = dept.id
+select emp.name from emp, dept where emp.dept_id = dept.id
+select e.name, d.name from emp e join dept d on e.dept_id = d.id
+select emp.name, dept.name from emp left join dept on emp.dept_id = dept.id
+select dept.name, emp.name from dept left join emp on emp.dept_id = dept.id
+select emp.name from emp join dept on emp.dept_id = dept.id where dept.name = 'eng'
+select dept.name, count(*) from emp join dept on emp.dept_id = dept.id group by dept.name
+select count(*) from emp join dept on emp.dept_id = dept.id
+select e.name, d.name from emp e right join dept d on e.dept_id = d.id
+select emp.dept_id, dept.id from emp cross join dept where emp.dept_id = dept.id
+## ORDER BY: output order becomes significant (gorun keeps it, Rust must match)
+select a from t order by a desc
+select a, b from t order by a desc
+select c from t order by c desc
+select n from nums order by n
+select n from nums order by n desc
+select a from t order by 1 desc
+select b from t order by a desc
+select * from t order by a desc
+select k, v from g order by k, v desc
+select emp.name from emp join dept on emp.dept_id = dept.id order by emp.name
+select e.name, d.name from emp e join dept d on e.dept_id = d.id order by e.name desc
+## LIMIT (with ORDER BY so the chosen rows are deterministic)
+select a from t order by a desc limit 1
+select n from nums order by n limit 2
+select a, b from t order by a limit 2
+select a from t order by a limit 1, 2
+## GROUP BY + ORDER BY (order the grouped output by key or aggregate)
+select k, count(*) from g group by k order by k
+select k, count(*) from g group by k order by count(*) desc
+select k, sum(v) from g group by k order by sum(v)
+select k, count(*) from g group by k order by 2 desc
+## HAVING: filter whole groups after aggregation
+select k, count(*) from g group by k having count(*) > 2
+select k, sum(v) from g group by k having sum(v) > 100
+select k from g group by k having count(*) = 2
+select k, count(distinct s) from g group by k having count(distinct s) = 2 order by k
+select k, count(*) from g group by k having count(*) >= 1 order by count(*) desc limit 1
+## Set operation with statement-level ORDER BY / LIMIT
+select a from t union all select n from nums order by 1
+select a from t union select n from nums order by 1 desc
+select n from nums union all select a from t order by 1 limit 3
+## A set operation's own statement-level ORDER BY may also reference a
+## select-list ALIAS (from the first term), not just a position or a
+## literal repeated expression -- confirmed via gorun.
+select a as x from t union select n as x from nums order by x
+select a as x from t union select n as x from nums order by x desc limit 2
+## IN / BETWEEN / IS NULL predicates in WHERE (three-valued logic)
+select a from t where a in (1, 3)
+select a from t where a not in (2)
+select n from nums where n in (3, 8)
+select c from t where c in ('x', 'z')
+select a from t where a between 2 and 3
+select n from nums where n not between 4 and 9
+select a, b from t where b between 15 and 30
+select emp.name from emp left join dept on emp.dept_id = dept.id where dept.id is null
+select emp.name from emp left join dept on emp.dept_id = dept.id where dept.id is not null
+## Uncorrelated scalar subqueries in WHERE
+select a from t where a = (select max(id) from dept)
+select a from t where a > (select min(id) from dept)
+select name from dept where id = (select dept_id from emp where name = 'cid')
+select a from t where a = (select id from dept where id > 100)
+## Uncorrelated IN / NOT IN subqueries
+select name from dept where id in (select dept_id from emp)
+select name from emp where dept_id in (select id from dept)
+select n from nums where n not in (select id from dept)
+## Uncorrelated EXISTS / NOT EXISTS
+select a from t where exists (select 1 from dept)
+select a from t where not exists (select 1 from dept where id > 100)
+## Correlated subqueries (inner references the outer row)
+select name from dept where exists (select 1 from emp where emp.dept_id = dept.id)
+select name from dept where not exists (select 1 from emp where emp.dept_id = dept.id)
+select name from emp where id = (select max(id) from emp e2 where e2.dept_id = emp.dept_id)
+select name from emp where id = (select min(id) from emp e2 where e2.dept_id = emp.dept_id)
+select dept.name from dept where (select count(*) from emp where emp.dept_id = dept.id) > 1
+select dept.name from dept where (select count(*) from emp where emp.dept_id = dept.id) = 0
+## ANY / ALL subqueries (desugar to an OR / AND chain over the subquery's values)
+select a from t where a > any (select id from dept)
+select n from nums where n > all (select id from dept)
+select a from t where a < any (select id from dept)
+select a from t where a >= all (select id from dept)
+## Empty subquery: ALL is vacuously TRUE, ANY is vacuously FALSE
+select a from t where a > all (select id from dept where id > 100)
+select a from t where a > any (select id from dept where id > 100)
+## Derived tables (subquery in FROM)
+select gs.k, gs.total from (select k, sum(v) as total from g group by k) as gs where gs.total > 50
+select dt.a from (select a from t where a > 1) as dt
+select dt.a, dt.b from (select a, b from t) as dt order by dt.a desc
+select count(*) from (select k from g group by k) as gcount
+select x.name from (select name, dept_id from emp) as x where x.dept_id = 1
+select e.name, gd.cnt from emp e join (select dept_id, count(*) as cnt from emp group by dept_id) as gd on e.dept_id = gd.dept_id where e.name = 'ann'
+## Subqueries in projection / HAVING (previously only WHERE resolved them —
+## project_row/aggregate/eval_group now thread subquery resolution too)
+select a, (select max(id) from dept) from t
+select dept.name, (select count(*) from emp where emp.dept_id = dept.id) from dept
+select k, (select count(*) from g g2 where g2.k = g.k) from g group by k
+select k, count(*), (select max(id) from dept) from g group by k
+select k, count(*) from g group by k having (select count(*) from g g2 where g2.k = g.k) > 2
+## Subqueries inside an aggregate's own argument (compute_aggregate now
+## resolves them per row too, not just the select-list/HAVING wrapper)
+select sum((select max(id) from dept)) from t
+select dept.name, sum((select count(*) from emp where emp.dept_id = dept.id)) from dept group by dept.name
+select count((select id from dept d2 where d2.id = dept.id)) from dept
+## `*` inside a derived table's own select list: expands to the underlying
+## FROM relation's columns, requalified under the derived table's alias
+select * from (select * from t) dt
+select dt.a, dt.b from (select * from t) dt
+select * from (select a, b from t) dt where a = 1
+select dt.a from (select * from t) dt order by dt.a desc
+## Qualified wildcards (`emp.*`) in a multi-table query: restricts expansion
+## to just that table/alias's columns, not every column in the join
+select emp.* from emp join dept on emp.dept_id = dept.id
+select dept.* from emp join dept on emp.dept_id = dept.id
+select emp.*, dept.name from emp join dept on emp.dept_id = dept.id
+select e.*, d.name from emp e join dept d on e.dept_id = d.id
+## Qualified wildcard inside a derived table's own select list
+select x.* from (select emp.* from emp join dept on emp.dept_id = dept.id) x
+select dt.id, dt.name from (select dept.* from emp join dept on emp.dept_id = dept.id) dt
+## AVG: SUM/COUNT with MySQL's scale-growth-and-round rule (+4 fractional
+## digits past the input's own scale, rounded not truncated)
+create table avg_t (a int, b int)
+insert into avg_t values (1, 10)
+insert into avg_t values (2, 20)
+insert into avg_t values (3, 30)
+select avg(a) from avg_t
+select avg(b) from avg_t
+create table avg_d (v decimal(10,2))
+insert into avg_d values (1.50)
+insert into avg_d values (2.50)
+insert into avg_d values (4.00)
+select avg(v) from avg_d
+create table avg_d2 (v decimal(10,4))
+insert into avg_d2 values (1.5000)
+insert into avg_d2 values (2.5000)
+select avg(v) from avg_d2
+select avg(a) from avg_t where a > 100
+select avg(distinct a) from avg_t
+insert into avg_t values (2, 99)
+select avg(a) from avg_t
+select k, avg(v) from g group by k

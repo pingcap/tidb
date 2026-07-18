@@ -1,0 +1,9 @@
+## DATE/DATETIME columns: dates are plain string values to this executor (no
+## special date semantics), and ISO date/datetime text happens to sort and
+## compare correctly as a plain string, so no new code is needed here
+create table dt (a date, b datetime, c varchar(9))
+insert into dt values ('2021-01-01', '2021-01-01 10:00:00', 'x')
+insert into dt values ('2021-06-15', '2021-06-15 12:30:00', 'y')
+select * from dt
+select a, c from dt where a > '2021-01-01'
+select a from dt order by a

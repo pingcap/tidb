@@ -1,0 +1,4 @@
+go_owner	rust_module	status	note
+method:pkg/parser/expr_subquery_parser.go#HandParser.parseSubquery; pkg/parser/select_parser.go#HandParser.parseSubquery	rust/crates/tidb-parser/src/expr.rs;rust/crates/tidb-ast/src/expr.rs	covered	Scalar subqueries retain the complete QueryStmt envelope, including a top-level UNION body, matching Go's general parseSubquery path.
+tests:tests/integrationtest/t/cte.test#328	rust/crates/tidb-parser/src/tests/cte_scalar_union_source.rs;rust/difftests/parser-tests/tests/selectors/query/cte_scalar_union_selector.rs	covered	The exact nested CTE/scalar-UNION row is asserted directly and selected dynamically from the checked Go parser oracle.
+execution capability	rust/crates/tidb-exec/src/subquery.rs	covered	Scalar subquery execution dispatches QueryStmt::Select and QueryStmt::SetOpr through the existing query-row path; unsupported catalog semantics remain explicit at execution.

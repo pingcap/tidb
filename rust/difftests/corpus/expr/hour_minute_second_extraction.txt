@@ -1,0 +1,59 @@
+## HOUR/MINUTE/SECOND: real TiDB's own two-path algorithm (confirmed via
+## goeval, not assumed), depending on whether the argument contains a ':'.
+## WITH a colon: an optional "[DATE ]" prefix (a JUNK prefix invalidates
+## the whole value, not just gets ignored) followed by H:M[:S] (S defaults
+## to 0); H may exceed 23 (TiDB's TIME domain is elapsed-time, not
+## wall-clock), clamped -- along with M and S -- to exactly 838:59:59 once
+## H exceeds 838, even when M/S were individually valid; M/S must each be
+## 0-59 or the WHOLE value is NULL regardless of H. WITHOUT a colon
+## (including a bare DATE-only value, which is NOT (0,0,0), a genuinely
+## surprising real behavior): the value's own leading digit run decodes as
+## a right-aligned HHMMSS number (SECOND = N%100, MINUTE = (N/100)%100,
+## HOUR = N/10000), the same rule an integer literal already uses.
+hour('10:30:45')
+minute('10:30:45')
+second('10:30:45')
+hour('2024-01-15 10:30:45')
+minute('2024-01-15 10:30:45')
+second('2024-01-15 10:30:45')
+hour('100:30:45')
+hour('-10:30:45')
+minute('-10:30:45')
+hour('838:59:59')
+hour('839:00:00')
+minute('839:00:00')
+second('839:00:00')
+hour('900:30:15')
+minute('900:30:15')
+second('900:30:15')
+hour('839:70:80')
+minute('839:70:80')
+second('839:70:80')
+hour('10:30')
+minute('10:30')
+second('10:30')
+hour('2024-01-15 10:30')
+hour('1:2:3')
+hour(' 10:30:45 ')
+hour('junk 10:30:45')
+hour(NULL)
+hour('not a time')
+hour(103045)
+hour(-103045)
+minute(-103045)
+hour(103045.789)
+second(103045.789)
+hour('2024-01-15')
+minute('2024-01-15')
+second('2024-01-15')
+minute('2024-02-15')
+hour('12')
+minute('12')
+second('12')
+hour('abc123')
+hour('12abc')
+hour('-')
+hour('')
+hour(999999999)
+minute(999999999)
+second(999999999)

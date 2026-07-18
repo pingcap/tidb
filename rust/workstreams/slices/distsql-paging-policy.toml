@@ -1,0 +1,24 @@
+schema = "1"
+slice = "distsql-paging-policy"
+status = "partial"
+target = "tidb-distsql"
+ring = "result"
+consumer = "DistSQL PagingConfig defaults and coprocessor request metadata consume one source-shaped paging policy authority; this slice owns new paging.rs, the context.rs default-constant adoption, its lib.rs exports, and paging_source.rs, must translate every growth cap and seek-count boundary exactly, and must not redefine PagingConfig, edit kv_request.rs/coprocessor_request.rs/distsql_runtime.rs transport semantics, or absorb paging range calculation, region retry, response handling, or session-variable policy"
+test_target = "paging_source"
+go_sources = ["pkg/util/paging/paging.go"]
+go_tests = [
+  "pkg/util/paging/paging_test.go:23:TestGrowPagingSize",
+  "pkg/util/paging/paging_test.go:29:TestCalculateSeekCnt",
+  "pkg/util/paging/paging_test.go:0:paging_test.go",
+]
+depends_on = []
+evidence_prerequisites = [
+  { capability = "distsql-paging-config-consumer", evidence_owner = "distsql-context-source-wave", kind = "test", anchor = "pkg/distsql/context/context_test.go:38:TestContextDetach", minimum_status = "PARTIAL" },
+  { capability = "distsql-runtime-paging-metadata", evidence_owner = "distsql-query-response-runtime", kind = "source", anchor = "pkg/distsql/distsql.go", minimum_status = "PARTIAL" },
+]
+rust_paths = [
+  "rust/crates/tidb-distsql/src/context.rs",
+  "rust/crates/tidb-distsql/src/lib.rs",
+  "rust/crates/tidb-distsql/src/paging.rs",
+  "rust/crates/tidb-distsql/tests/paging_source.rs",
+]

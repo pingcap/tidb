@@ -1,0 +1,3 @@
+# Source-owned source-port fragment for txnkv-iteration-source-wave.
+# source_path	status	owner	evidence_artifact	note
+pkg/kv/iter.go	COVERED	txnkv-iteration-source-wave	rust/crates/tidb-txnkv/src/iteration.rs	NextUntil preserves the source valid-before-predicate-before-next loop and returns iterator advancement errors unchanged; the Rust trait boundary is explicit and does not invent a TiKV client

@@ -1,0 +1,2 @@
+go_source	rust_module	status
+pkg/parser/expr_func_parser.go	rust/crates/tidb-parser/src/expr.rs	partial

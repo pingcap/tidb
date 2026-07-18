@@ -1,0 +1,16 @@
+## `INTERVAL(N, N1, N2, ...)` (immediately followed by `(`) -- a totally
+## unrelated generic scalar function (index-lookup among a sorted numeric
+## list), NOT `INTERVAL value unit`'s own date-arithmetic prefix-expression
+## grammar. Read directly from real TiDB's own hand-written parser
+## (pkg/parser/expr_prefix_parser.go's parsePrefixKeywordExpr, case
+## interval:): `if p.peekN(1).Tp != '(' { ...date-arith form... } else {
+## return p.parseIdentOrFuncCall() }` -- falls through to the SAME generic
+## function-call path any other unrecognized-but-non-reserved name uses.
+## Found as a regression while adding Expr::Row's own bare-paren-comma-list
+## grammar (see difftests/corpus/parser/row_constructor.txt): without this
+## disambiguation, `parse_interval`'s single-value parse silently absorbed
+## the ENTIRE INTERVAL(...) argument list as one Row expr, spanning past
+## the function's own closing paren.
+select interval(23, 1, 15, 17, 30, 44, 200) from t
+select interval(1, 0, 1, 2) from t
+select interval(-11752, 6558853612195285496, col1) from t1

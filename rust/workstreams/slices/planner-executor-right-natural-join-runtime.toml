@@ -1,0 +1,38 @@
+schema = "1"
+slice = "planner-executor-right-natural-join-runtime"
+status = "partial"
+target = "tidb-exec"
+ring = "result"
+consumer = "The automatic catalog-backed Session and framed COM_QUERY path consumes planner-derived RIGHT and NATURAL join metadata, preserves mirrored FullSchema order and left null extension, and evaluates ON UNKNOWN as a nonmatch through the existing typed tri-state row executor"
+test_target = "typed_join_runtime_source"
+go_sources = [
+  "pkg/executor/join/base_join_probe.go",
+  "pkg/executor/join/joiner.go",
+  "pkg/planner/core/logical_plan_builder.go",
+]
+go_tests = [
+  "pkg/executor/join/right_outer_join_probe_test.go:0:right_outer_join_probe_test.go",
+  "pkg/executor/join/right_outer_join_probe_test.go:109:TestRightOuterJoinProbeBasic",
+  "pkg/executor/join/right_outer_join_probe_test.go:254:TestRightOuterJoinProbeOtherCondition",
+  "pkg/executor/test/jointest/join_test.go:32:TestJoin2",
+]
+depends_on = []
+evidence_prerequisites = [
+  { capability = "field-type-runtime", evidence_owner = "datatype-value-context-and-format", kind = "source", anchor = "pkg/types/field_type.go", minimum_status = "PARTIAL" },
+  { capability = "left-outer-tristate-runtime", evidence_owner = "planner-executor-typed-join-runtime", kind = "test", anchor = "pkg/executor/join/left_outer_join_probe_test.go:255:TestLeftOuterJoinProbeOtherCondition", minimum_status = "PARTIAL" },
+  { capability = "typed-null-equality", evidence_owner = "planner-executor-typed-join-runtime", kind = "test", anchor = "pkg/planner/core/casetest/join/join_test.go:96:TestJoinWithNullEQ", minimum_status = "PARTIAL" },
+  { capability = "reusable-true-unknown-masks", evidence_owner = "planner-executor-typed-join-runtime", kind = "test", anchor = "pkg/expression/builtin_vectorized_test.go:878:TestVectorizedFilterConsiderNull", minimum_status = "PARTIAL" },
+]
+rust_paths = [
+  "rust/crates/tidb-exec/src/result_schema_join_output.rs",
+  "rust/crates/tidb-exec/src/cluster.rs",
+  "rust/crates/tidb-exec/src/select.rs",
+  "rust/crates/tidb-exec/src/tests/cluster.rs",
+  "rust/crates/tidb-exec/src/tests/select.rs",
+  "rust/crates/tidb-exec/tests/result_schema_join_output_source.rs",
+  "rust/crates/tidb-exec/tests/typed_join_runtime_source.rs",
+  "rust/crates/tidb-server/tests/automatic_response_source.rs",
+  "rust/difftests/corpus/coverage/evidence/source/planner-executor-right-natural-join-runtime.tsv",
+  "rust/difftests/corpus/coverage/evidence/tests/planner-executor-right-natural-join-runtime.tsv",
+  "rust/difftests/corpus/coverage/evidence/transfers/planner-executor-right-natural-join-runtime.tsv",
+]

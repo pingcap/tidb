@@ -1,0 +1,6 @@
+#IDX 0
+SELECT 1
+#END
+#IDX 1
+SELECT /*+ MERGE()*/ * FROM (`q`) JOIN `q` AS `q1` WHERE `q`.`a`=1 AND `q1`.`a`=2
+#END

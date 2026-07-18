@@ -1,0 +1,9 @@
+## Default-charset scalar rows from pkg/expression/builtin_string_test.go:107 TestASCII.
+ascii('2')
+ascii(2)
+ascii('23')
+ascii(23)
+ascii(2.3)
+ascii(null)
+ascii('')
+ascii('你好')

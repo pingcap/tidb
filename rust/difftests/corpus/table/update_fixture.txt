@@ -1,0 +1,13 @@
+## Source: tests/integrationtest/t/executor/update.test:295-310 (TestUpdate).
+## Harness directives (`--enable_info` / `--disable_info`) are not SQL and
+## are intentionally omitted; the SQL statements retain their upstream order
+## and shared table state. Semicolon terminators are omitted by corpus convention.
+drop table if exists update_test
+create table update_test(id int not null default 1, name varchar(255), PRIMARY KEY(id))
+insert INTO update_test VALUES (1, "hello")
+insert into update_test values (2, "hello")
+UPDATE update_test SET name = "abc" where id > 0
+begin
+SELECT * from update_test limit 2
+commit
+UPDATE update_test SET name = "foo"

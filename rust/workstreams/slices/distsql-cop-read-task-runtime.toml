@@ -1,0 +1,67 @@
+schema = "1"
+slice = "distsql-cop-read-task-runtime"
+status = "retired"
+target = "tidb-distsql"
+ring = "transaction"
+consumer = "Superseded by distsql-tikv-unary-rpc-contract; retained only as its checked ownership-transfer predecessor"
+test_target = "transferred to distsql-tikv-unary-rpc-contract"
+go_sources = [
+  "pkg/store/copr/coprocessor.go",
+  "pkg/store/copr/coprocessor_cache.go",
+  "pkg/store/copr/ema.go",
+  "pkg/store/copr/key_ranges.go",
+  "pkg/store/copr/region_cache.go",
+]
+go_tests = [
+  "pkg/store/copr/coprocessor_test.go:0:coprocessor_test.go",
+  "pkg/store/copr/coprocessor_test.go:43:TestEnsureMonotonicKeyRanges",
+  "pkg/store/copr/coprocessor_test.go:63:TestBuildTasksWithoutBuckets",
+  "pkg/store/copr/coprocessor_test.go:189:TestBuildTasksByBuckets",
+  "pkg/store/copr/coprocessor_test.go:387:TestSplitKeyRangesByLocationsWithoutBuckets",
+  "pkg/store/copr/coprocessor_test.go:473:TestSplitKeyRanges",
+  "pkg/store/copr/coprocessor_test.go:544:TestRebuild",
+  "pkg/store/copr/coprocessor_test.go:607:TestBuildPagingTasks",
+  "pkg/store/copr/coprocessor_test.go:639:TestBuildCopTaskDoesNotCancelBoCtx",
+  "pkg/store/copr/coprocessor_test.go:674:TestBuildPagingTasksDisablePagingForSmallLimit",
+  "pkg/store/copr/coprocessor_test.go:710:TestBuildCopTasksWithPagingSizeBytes",
+  "pkg/store/copr/coprocessor_test.go:786:TestCalculateRetry",
+  "pkg/store/copr/coprocessor_test.go:844:TestCalculateRemain",
+  "pkg/store/copr/coprocessor_test.go:902:TestBasicSmallTaskConc",
+  "pkg/store/copr/coprocessor_test.go:913:TestBuildCopTasksWithRowCountHint",
+  "pkg/store/copr/coprocessor_test.go:988:TestSmallTaskConcurrencyLimit",
+  "pkg/store/copr/coprocessor_test.go:1005:TestBatchStoreCoprOnlySendToLeader",
+  "pkg/store/copr/coprocessor_test.go:1055:TestStoreBatchTasksPreserveChildBucketsVersion",
+  "pkg/store/copr/coprocessor_test.go:1096:TestHandleBatchCopResponseUpdatesChildBucketsOnVersionNotMatch",
+  "pkg/store/copr/coprocessor_cache_test.go:0:coprocessor_cache_test.go",
+  "pkg/store/copr/coprocessor_cache_test.go:27:TestBuildCacheKey",
+  "pkg/store/copr/coprocessor_cache_test.go:97:TestDisable",
+  "pkg/store/copr/coprocessor_cache_test.go:121:TestAdmission",
+  "pkg/store/copr/coprocessor_cache_test.go:184:TestCacheValueLen",
+  "pkg/store/copr/coprocessor_cache_test.go:213:TestGetSet",
+  "pkg/store/copr/coprocessor_cache_test.go:238:TestGetSet/paging size bytes cache hit keeps range",
+  "pkg/store/copr/coprocessor_cache_test.go:256:TestIssue24118",
+  "pkg/store/copr/ema_test.go:0:ema_test.go",
+  "pkg/store/copr/ema_test.go:28:TestRUEMASeedAndConverge",
+  "pkg/store/copr/ema_test.go:29:TestRUEMASeedAndConverge/seeded prediction",
+  "pkg/store/copr/ema_test.go:40:TestRUEMASeedAndConverge/unseeded first observation",
+  "pkg/store/copr/ema_test.go:55:TestRUEMATracksShift",
+  "pkg/store/copr/ema_test.go:75:TestRUEMALargeGapCollapsesWeight",
+  "pkg/store/copr/ema_test.go:86:TestPagingResponseReadBytes",
+  "pkg/store/copr/ema_test.go:118:TestPagingResponseReadBytes/<generated>",
+  "pkg/store/copr/ema_test.go:133:TestRUEMAConcurrentObserveAndPredict",
+  "pkg/store/copr/ema_test.go:170:TestRUEMANonMonotonicTime",
+  "pkg/store/copr/key_ranges_test.go:0:key_ranges_test.go",
+  "pkg/store/copr/key_ranges_test.go:24:TestCopRanges",
+  "pkg/store/copr/key_ranges_test.go:37:TestCopRangeSplit",
+  "pkg/kv/key_test.go:369:TestKeyRangeDefinition",
+  "pkg/store/copr/region_cache_test.go:0:region_cache_test.go",
+  "pkg/store/copr/region_cache_test.go:51:TestValidateLocationCoverage",
+  "pkg/store/copr/region_cache_test.go:340:TestValidateLocationCoverage/<generated>",
+  "pkg/store/copr/region_cache_test.go:350:TestPanicInSplitKeyRangesByBuckets",
+  "pkg/store/copr/region_cache_test.go:414:TestLocateBucketNilFallback",
+  "pkg/store/copr/region_cache_test.go:454:TestLocateBucketOutsideRegionNonNilFallback",
+  "pkg/store/copr/region_cache_test.go:486:TestOverlappingRangesCanProduceOutOfOrderRangesAfterSplit",
+]
+depends_on = []
+evidence_prerequisites = []
+rust_paths = ["rust/difftests/corpus/coverage/evidence/transfers/distsql-tikv-unary-rpc-contract.tsv"]

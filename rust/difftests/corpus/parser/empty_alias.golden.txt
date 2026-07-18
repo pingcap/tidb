@@ -1,0 +1,27 @@
+#IDX 0
+SELECT 1
+#END
+#IDX 1
+SELECT 1 AS `a`,2
+#END
+#IDX 2
+SELECT `a` FROM (SELECT 1 AS `a`)
+#END
+#IDX 3
+SELECT `a` FROM (SELECT 1 AS `a`), (SELECT 2 AS `a`)
+#END
+#IDX 4
+SELECT * FROM `t`
+#END
+#IDX 5
+SELECT `t`.`a` FROM (`t`) JOIN `u` AS `x` WHERE `t`.`a`=`x`.`a`
+#END
+#IDX 6
+SELECT `a` FROM (`t`) JOIN (SELECT 1 AS `a`)
+#END
+#IDX 7
+SELECT `a` FROM (SELECT 1 AS `a`) JOIN (SELECT 2 AS `a`) AS `y` ON 1=1
+#END
+#IDX 8
+SELECT 1 FROM `t`
+#END

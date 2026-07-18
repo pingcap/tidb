@@ -1,0 +1,3 @@
+# Source-owned batch stats-meta SQL test evidence.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/statistics/integration_test.go	442	TestSaveMetaToStorage	PARTIAL	stats-meta-save-sql-wave	rust/crates/tidb-stats/tests/stats_meta_save_sql_source.rs	Rust pins both refreshLastHistVer false/true batch-upsert SQL paths and tuple ordering used by the integration test; mock-store setup, start timestamps, execution, and persisted-row assertions remain external.

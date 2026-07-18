@@ -1,0 +1,3 @@
+# Source-owned planner predicate dependency-routing evidence.
+# source_path	status	owner	evidence_artifact	note
+pkg/planner/core/operator/logicalop/logical_selection.go	PARTIAL	planner-predicate-partition-wave	rust/crates/tidb-planner/src/predicate_partition.rs	The bounded planner leaf preserves source-order predicate dependencies and conservative left/right/cross-child/deferred routes, with an explicit typed effects check; Go predicate simplification, DNF relaxation, null rejection, selection construction, and physical pushdown remain open.

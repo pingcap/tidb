@@ -1,0 +1,3 @@
+# Source-owned slow-log rule composition evidence.
+# source_path	status	owner	evidence_artifact	note
+pkg/executor/adapter_slow_log.go	PARTIAL	executor-slow-log-match-wave	rust/crates/tidb-exec/src/slow_log_match.rs	The Match AND-within/OR-across rule logic and ShouldWriteSlowLog session→specific-connection→global precedence are ported over pre-evaluated booleans; parser/accessor/threshold evaluation, SessionVars/global rule maps, and slow-log output remain external.

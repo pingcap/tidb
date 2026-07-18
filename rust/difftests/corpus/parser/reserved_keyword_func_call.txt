@@ -1,0 +1,16 @@
+## A RESERVED keyword immediately followed by `(` is a function call --
+## real TiDB's own rule (pkg/parser/expr_prefix_parser.go's
+## parsePrefixKeywordExpr, its own final fallback) is far more general
+## than a per-keyword allowlist: ANY keyword token, unless it's one of
+## a small set of clause-introducing keywords (FROM/WHERE/GROUP/ORDER/
+## LIMIT/HAVING/UNION/INTO/FOR/LOCK/SELECT/SET/ON), is eligible.
+## REPEAT/REPLACE are real MySQL string functions that happen to share
+## a name with a reserved keyword. INSERT desugars to a renamed
+## INSERT_FUNC; MOD desugars to the % binary operator -- both need
+## their own dispatch ahead of the general fallback.
+select repeat('ab', 3)
+select replace('abc', 'a', 'x')
+select insert('abc', 1, 2, 'X')
+select mod(10, 3)
+select a from t where mod(a, 5) < 2
+select t0.c0 from t0 where insert('abc', 1, 2, t0.c0) = 'X'

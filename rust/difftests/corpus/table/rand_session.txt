@@ -1,0 +1,31 @@
+## Go source: pkg/util/mathutil/rand.go:20-78; rand_test.go:42-74;
+## pkg/expression/builtin_math.go:1086-1177; builtin_math_test.go:366-385;
+## pkg/sessionctx/variable/sysvar.go:425-442; variable.go:374-393.
+## Every RAND(1) occurrence owns an independent constant generator that
+## advances over rows. A row-dependent seed instead recreates its generator
+## per row; NULL follows the constant seed-zero generator path.
+select rand(20160101), rand(20160101)
+create table rand_rows (id int primary key)
+insert into rand_rows values (1), (2), (3)
+select rand(1), rand(1) from rand_rows order by id
+select rand(1)
+select rand(id), rand(id) from rand_rows order by id
+select rand(null), rand(null) from rand_rows order by id
+select rand(1.5), rand(1.5)
+select rand('not-a-number'), rand('not-a-number')
+select rand(-1), rand(9223372036854775807)
+set rand_seed1 = 10000000
+set rand_seed2 = 1000000
+select rand(), rand(), rand(), @@rand_seed1, @@rand_seed2
+set rand_seed1 = -1
+set rand_seed2 = 2147483648
+select rand(), @@rand_seed1, @@rand_seed2
+set rand_seed1 = 7
+set rand_seed2 = 11
+begin
+set rand_seed1 = 19
+rollback
+select rand(), @@rand_seed1, @@rand_seed2
+set rand_seed1 = default
+set rand_seed2 = default
+select rand(), @@rand_seed1, @@rand_seed2

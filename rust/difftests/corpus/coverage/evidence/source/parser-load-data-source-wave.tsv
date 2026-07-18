@@ -1,0 +1,3 @@
+# Source-owned source-port fragment for parser-load-data-source-wave.
+# source_path	status	owner	evidence_artifact	note
+pkg/parser/ast/dml.go	PARTIAL	parser-load-data-source-wave	rust/crates/tidb-ast/src/stmt/load_data.rs	Typed LOAD DATA payload field line duplicate column assignment and option restore are source-owned and all attributable original restore rows execute; broader DML AST remains open

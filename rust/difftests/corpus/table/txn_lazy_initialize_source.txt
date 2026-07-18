@@ -1,0 +1,17 @@
+## Source anchor: pkg/session/test/txn/txn_test.go:131 TestTxnLazyInitialize.
+## This exact single-session SQL slice preserves the source's lazy-start
+## control flow. The companion tidb-exec unit test asserts the internal
+## transaction-liveness boundary after each relevant statement.
+## Excluded: optimistic/pessimistic TiKV engine selection, @@tidb_current_ts,
+## tidb_general_log, and EXPLAIN require session-protocol or TiKV state outside
+## this seed executor.
+create table lazy_txn_src (id int)
+set @@autocommit = 0
+select 1
+select * from lazy_txn_src
+rollback
+begin
+rollback
+insert into lazy_txn_src values (1)
+rollback
+select * from lazy_txn_src order by id

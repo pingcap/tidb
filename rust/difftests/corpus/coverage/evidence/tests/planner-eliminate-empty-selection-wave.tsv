@@ -1,0 +1,3 @@
+# Source-owned test-evidence fragment for planner-eliminate-empty-selection-wave.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/planner/core/casetest/rule/rule_eliminate_empty_selection_test.go	23	TestEmptySelectionEliminator	PARTIAL	planner-eliminate-empty-selection-wave	rust/difftests/planner-tests/tests/eliminate_empty_selection.rs	Rust vectors cover the source rule wrapper's recursive callback, stable registry name, and false change flag; the Go logical-plan tree rewrite, empty-condition detection, SQL plan output, and testdata remain external.

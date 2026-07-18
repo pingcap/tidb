@@ -1,0 +1,19 @@
+## MERGED TOPIC: statements below share mutable table state across
+## sub-features (each sub-section was originally its own comment block;
+## merged because later sections reference earlier sections' tables
+## without recreating them) -- kept as one script so the shared state
+## stays correct; run against one fresh Database like every other topic.
+## INSERT ... ON DUPLICATE KEY UPDATE: a PRIMARY KEY conflict applies the
+## update instead of inserting; VALUES(col) refers to the proposed row
+create table cnt (id int primary key, v int)
+insert into cnt values (1, 10)
+insert into cnt (id, v) values (1, 20) on duplicate key update v = 20
+insert into cnt (id, v) values (2, 30) on duplicate key update v = 999
+select id, v from cnt order by id
+insert into cnt (id, v) values (1, 5) on duplicate key update v = v + values(v)
+select v from cnt where id = 1
+## INSERT IGNORE: a PRIMARY KEY conflict silently keeps the existing row; a
+## non-conflicting row still inserts normally
+insert ignore into cnt (id, v) values (1, 777)
+insert ignore into cnt (id, v) values (3, 40)
+select id, v from cnt order by id

@@ -1,0 +1,12 @@
+## DATEDIFF: the day count between two dates' DATE parts, ignoring any
+## time-of-day component; NULL if either date is invalid or NULL
+datediff('2021-03-15', '2021-03-10')
+datediff('2021-03-10', '2021-03-15')
+datediff('2021-01-01', '2020-01-01')
+datediff('2021-03-15 23:59:59', '2021-03-15 00:00:01')
+datediff('2021-03-15', '2021-03-15')
+datediff('2020-03-01', '2020-02-28')
+datediff('not a date', '2021-01-01')
+datediff('2021-01-01', NULL)
+datediff(NULL, NULL)
+datediff('2021-02-29', '2021-01-01')

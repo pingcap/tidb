@@ -1,0 +1,35 @@
+## MERGED TOPIC: statements below share mutable table state -- run against
+## one fresh Database like every other topic. FOREIGN KEY parent-side
+## DELETE enforcement: RESTRICT (default, no ON DELETE clause) rejects
+## deleting a parent row with dependents; CASCADE recursively removes
+## dependents (verified transitively through multiple FK hops, not just
+## one level); SET NULL nulls out the dependents' referencing columns.
+## UPDATE-side parent enforcement (changing a referenced column) is not
+## modelled yet, deliberately out of scope for this topic.
+create table parent (id int primary key)
+create table child (id int, pid int, foreign key (pid) references parent(id))
+insert into parent values (1), (2)
+insert into child values (10, 1)
+delete from parent where id = 1
+select * from parent
+select * from child
+delete from parent where id = 2
+select * from parent
+## CASCADE, including transitively through a second FK hop
+create table p (id int primary key)
+create table c (id int primary key, pid int, foreign key (pid) references p(id) on delete cascade)
+create table g (id int, cid int, foreign key (cid) references c(id) on delete cascade)
+insert into p values (1), (2)
+insert into c values (10, 1), (11, 1), (12, 2)
+insert into g values (100, 10)
+delete from p where id = 1
+select * from p
+select * from c
+select * from g
+## SET NULL
+create table np (id int primary key)
+create table nc (id int, pid int, foreign key (pid) references np(id) on delete set null)
+insert into np values (1), (2)
+insert into nc values (10, 1), (11, 2)
+delete from np where id = 1
+select * from nc

@@ -1,0 +1,9 @@
+## pkg/expression/builtin_compare_test.go:286 TestGreatestLeastFunc
+greatest(-9223372036854775808, 9223372036854775809)
+least(-9223372036854775808, 9223372036854775809)
+greatest(cast(9223372036854775808 as unsigned), cast(9223372036854775809 as unsigned))
+least(cast(9223372036854775808 as unsigned), cast(9223372036854775809 as unsigned))
+greatest(1, cast(2 as unsigned))
+least(1, cast(2 as unsigned))
+greatest('123a', 'b', 'c', 12)
+least('123a', 'b', 'c', 12)

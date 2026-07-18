@@ -1,0 +1,16 @@
+## `BINARY expr` -- a bare PREFIX operator (no parens, no `AS`/`,`), the
+## SAME operation as `CAST(expr AS BINARY)` under a THIRD concrete syntax.
+## Binds at the same tight precedence as unary -/~/! (confirmed via
+## godump restore: `BINARY -a` restores as `BINARY -`a``, wrapping the
+## whole unary-minus expression). Read directly from real TiDB's own
+## hand-written parser (pkg/parser/expr_prefix_parser.go's
+## parsePrefixKeywordExpr, case binaryType), which builds the EXACT SAME
+## FuncCastExpr shape as CAST(expr AS BINARY), just with a different
+## FunctionType discriminator purely for restore -- reuses this crate's
+## own existing Expr::Cast node (a new CastStyle::BinaryOperator variant),
+## so no new traversal-function coverage or evaluation logic was needed.
+select binary a from t
+select not (v0.c0) like (binary v0.c0)
+select 'a' regexp binary 'A'
+select binary a = binary b from t
+select binary -a from t

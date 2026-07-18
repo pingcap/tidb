@@ -1,0 +1,4 @@
+select /*+ max_execution_time(10) */ sleep(3);
+select /*+ nth_plan(3) */ count(1) from t0 where c > 10 and b < 2;
+select /*+ max_execution_time(@sel_1 10) */ 1;
+select /*+ nth_plan(@sel_1 3) */ 1;

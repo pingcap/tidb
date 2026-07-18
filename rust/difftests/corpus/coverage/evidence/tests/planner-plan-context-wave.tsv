@@ -1,0 +1,3 @@
+# Source-owned test-evidence fragment for planner-plan-context-wave.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/planner/planctx/context_test.go	26	TestContextDetach	PARTIAL	planner-plan-context-wave	rust/difftests/planner-tests/tests/plan_context.rs	Direct Rust vectors cover expression-context replacement, client/warning handle identity, scalar field preservation, and accessor readback; full expression/session deep-clone assertions remain external.

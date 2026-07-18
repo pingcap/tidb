@@ -1,0 +1,48 @@
+#IDX 0
+SELECT _UTF8MB4'a' COLLATE utf8mb4_bin
+#END
+#IDX 1
+SELECT `a` COLLATE utf8mb4_bin FROM `t`
+#END
+#IDX 2
+SELECT `a` COLLATE utf8mb4_bin FROM `t`
+#END
+#IDX 3
+SELECT `a` COLLATE utf8mb4_bin=_UTF8MB4'A' COLLATE utf8mb4_general_ci FROM `t`
+#END
+#IDX 4
+SELECT `a` COLLATE utf8mb4_bin FROM `t` ORDER BY `a` COLLATE utf8mb4_bin
+#END
+#IDX 5
+SELECT `a` FROM `t` WHERE `a` COLLATE utf8mb4_bin=_UTF8MB4'x'
+#END
+#IDX 6
+SELECT _UTF8MB4'a' COLLATE utf8mb4_bin LIKE _UTF8MB4'A'
+#END
+#IDX 7
+SELECT -`a` COLLATE utf8mb4_bin FROM `t`
+#END
+#IDX 8
+SELECT NOT `a` COLLATE utf8mb4_bin FROM `t`
+#END
+#IDX 9
+SELECT `a`+`b` COLLATE utf8mb4_bin FROM `t`
+#END
+#IDX 10
+SELECT `a` COLLATE utf8mb4_bin+`b` FROM `t`
+#END
+#IDX 11
+SELECT `a` COLLATE utf8mb4_bin COLLATE utf8mb4_general_ci FROM `t`
+#END
+#IDX 12
+SELECT (`a` COLLATE utf8mb4_bin) FROM `t`
+#END
+#IDX 13
+SELECT `a` COLLATE utf8mb4_bin AND `b` FROM `t`
+#END
+#IDX 14
+SELECT `a` COLLATE binary FROM `t`
+#END
+#IDX 15
+SELECT `a` COLLATE utf8mb4_bin FROM `t`
+#END

@@ -1,0 +1,4 @@
+# Source-owned direct tests for the Vitess DES-backed TIDB_SHARD scalar.
+# The Go source fragment is already owned by the miscellaneous builtin
+# source ledger; this fragment claims only its TestTidbShard test anchor.
+go_test	pkg/expression/builtin_miscellaneous_test.go	755	TestTidbShard	PARTIAL	expression-tidb-shard-source-wave	rust/crates/tidb-expr/src/builtin_ext/misc.rs	All original integer and string vectors execute through the exact Vitess HashUint64 DES-ECB all-zero-key algorithm; direct tests also pin ETInt string/real/decimal coercion, NULL propagation, and wrong-arity dispatch. Go function-class metadata, warning/session state, and vectorized execution remain outside the seed evaluator; local Go baseline is blocked by the known darwin arm64 linker panic.

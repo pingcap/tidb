@@ -1,0 +1,6 @@
+## UNIQUE / UNIQUE KEY: column-level always restores as UNIQUE KEY; a
+## table-level constraint always restores as UNIQUE (dropping KEY)
+create table t (id int primary key, email varchar(255) unique)
+create table t (id int primary key, email varchar(255) unique key)
+create table t (id int primary key, a int, b int, unique key (a, b))
+create table t (id int primary key, a int, b int, unique (a, b))

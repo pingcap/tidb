@@ -1,0 +1,3 @@
+# Source-owned test-evidence fragment for planner-stack-contract-wave.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test_file	pkg/planner/cascades/task/task_test.go	0	task_test.go	PARTIAL	planner-stack-contract-wave	rust/difftests/planner-tests/tests/stack_contract.rs	The concrete TestTaskStack and TestTaskFunctionality anchors at lines 39 and 55 are already owned by planner-task-stack-wave; this file-level row covers only the base Stack/Task interface, LIFO/empty-pop, and Destroy behavior through a local mock without duplicating those function anchors.

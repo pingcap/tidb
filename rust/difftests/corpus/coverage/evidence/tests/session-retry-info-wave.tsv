@@ -1,0 +1,4 @@
+# Source-owned test-port fragment for session-retry-info-wave.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/executor/test/autoidtest/autoid_test.go	96	TestInsertWithAutoidSchema	PARTIAL	session-retry-info-wave	rust/crates/tidb-exec/tests/retry_info_source.rs	Direct tests cover source-order auto-increment replay and exhaustion; table execution, allocator integration, and session retry orchestration remain external
+go_test	pkg/sessiontxn/isolation/readcommitted_test.go	45	TestPessimisticRCTxnContextProviderRCCheck	PARTIAL	session-retry-info-wave	rust/crates/tidb-exec/tests/retry_info_source.rs	The retrying lifecycle field is preserved and tested as metadata; read-committed provider, TSO, and isolation execution remain external

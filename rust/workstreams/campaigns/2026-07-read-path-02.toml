@@ -1,0 +1,11 @@
+schema = "1"
+campaign = "2026-07-read-path-02"
+status = "integrated"
+slices = [
+  "executor-max-min-aggregate-runtime",
+  "planner-executor-right-natural-join-runtime",
+  "txnkv-prefix-transaction-ops",
+  "distsql-cop-paging-continuation",
+  "server-distsql-streaming-resultset",
+  "executor-lead-lag-live-window-runtime",
+]

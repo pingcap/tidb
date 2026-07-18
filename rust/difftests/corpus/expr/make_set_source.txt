@@ -1,0 +1,8 @@
+## pkg/expression/builtin_string_test.go:2045 TestMakeSet
+make_set(1, 'a', 'b', 'c')
+make_set(5, 'hello', 'nice', 'world')
+make_set(5, 'hello', 'nice', null, 'world')
+make_set(0, 'a', 'b', 'c')
+make_set(null, 'a', 'b', 'c')
+make_set(-100, 'hello', 'nice', 'abc', 'world')
+make_set(-1, 'hello', 'nice', 'abc', 'world')

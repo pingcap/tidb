@@ -1,0 +1,6 @@
+## Default-charset scalar rows from pkg/expression/builtin_string_test.go:1635 TestCharLength.
+char_length('33')
+char_length('你好')
+char_length(33)
+char_length(3.14)
+char_length(null)

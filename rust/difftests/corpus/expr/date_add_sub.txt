@@ -1,0 +1,112 @@
+## DATE_ADD/DATE_SUB with INTERVAL n DAY: exact day arithmetic via the same
+## days_from_civil/civil_from_days round-trip TO_DAYS/FROM_DAYS use, so
+## month/year rollover and leap days are handled correctly for free, not via
+## a separate calendar-increment implementation. A time-of-day suffix on
+## the input is preserved verbatim in the output. HOUR/MINUTE/SECOND are
+## deliberately out of scope (see date_fn::date_add's doc comment).
+date_add('2021-01-01', interval 5 day)
+date_sub('2021-01-01', interval 5 day)
+date_add('2021-01-31', interval 1 day)
+date_add('2020-02-28', interval 1 day)
+date_add('2021-01-01', interval -5 day)
+date_add('2021-01-01 10:30:00', interval 5 day)
+date_add('2021-12-31 23:59:59', interval 1 day)
+date_add('not a date', interval 5 day)
+date_add(NULL, interval 5 day)
+date_add('2021-01-01', interval NULL day)
+date_add('2021-01-01', interval 0 day)
+date_add('2021-01-10', interval 5.5 day)
+date_add('2021-01-10', interval -5.5 day)
+date_sub('2021-01-01 10:30:00', interval 5 day)
+## DAY's year-range boundary: a computed year of exactly 0 is MySQL's "zero
+## date" string; any other out-of-1..=9999 year (negative, or past 9999) is
+## NULL -- a real bug in this crate's earlier DAY-only implementation never
+## checked this at all (see date_fn::format_ymd_result's doc comment).
+date_add('9999-12-31', interval 1 day)
+date_add('0001-01-01', interval -1 day)
+date_add('0001-01-01', interval -366 day)
+date_add('0001-01-01', interval -367 day)
+## DATE_ADD/DATE_SUB with INTERVAL n MONTH/YEAR: calendar-FIELD arithmetic,
+## a genuinely different algorithm from DAY -- MySQL clamps the day to the
+## target month's length rather than overflowing into the next month, and
+## the clamp is computed once against the FINAL target month, not
+## iteratively re-clamped one month at a time (see date_fn::add_months's
+## doc comment).
+date_add('2021-01-31', interval 1 month)
+date_add('2021-03-31', interval 1 month)
+date_add('2021-01-30', interval 1 month)
+date_add('2021-01-28', interval 1 month)
+date_add('2021-01-15', interval 1 month)
+date_add('2021-01-31', interval 2 month)
+date_add('2021-01-31', interval -1 month)
+date_add('2021-03-31', interval -1 month)
+date_add('2020-01-31', interval 1 month)
+date_add('2021-01-31', interval 13 month)
+date_add('2020-02-29', interval 12 month)
+date_add('2020-02-29', interval 1 year)
+date_add('2021-02-28', interval 1 year)
+date_add('2021-01-31', interval 1 year)
+date_add('2021-01-31', interval 1.5 month)
+date_add('2021-01-31', interval -1.5 month)
+date_add('2021-01-31 10:30:00', interval 1 month)
+date_add('2021-01-31', interval NULL month)
+date_add('not a date', interval 1 month)
+date_add('2021-01-31', interval 0 month)
+date_add('2021-06-15', interval 6 year)
+date_sub('2021-06-15', interval 100 year)
+## MONTH/YEAR's year-range boundary: same rule as DAY's.
+date_add('9999-12-01', interval 1 month)
+date_add('0001-02-01', interval -2 month)
+date_add('0003-06-15', interval -3 year)
+date_add('0003-06-15', interval -4 year)
+## DATE_ADD/DATE_SUB with INTERVAL n WEEK: exact day arithmetic, WEEK being
+## DAY with the (already-rounded) amount pre-multiplied by 7 -- confirmed
+## via goeval rather than assumed, including that a fractional WEEK amount
+## rounds to the nearest whole WEEK FIRST, then multiplies by 7 (not the
+## reverse order -- see date_fn::date_add's doc comment).
+date_add('2021-01-01', interval 1 week)
+date_add('2021-01-01', interval 5 week)
+date_sub('2021-01-01', interval 1 week)
+date_add('2021-01-01', interval 1.5 week)
+date_add('2021-01-01', interval -1.5 week)
+date_add('2021-01-01 10:30:00', interval 1 week)
+date_add('2021-01-01', interval NULL week)
+date_add('not a date', interval 1 week)
+date_add('9999-12-25', interval 1 week)
+date_add('0001-01-08', interval -2 week)
+## DATE_ADD/DATE_SUB with INTERVAL n HOUR/MINUTE/SECOND: unlike DAY/WEEK/
+## MONTH/YEAR (which preserve an existing time suffix verbatim or omit it),
+## these units ALWAYS render a time-of-day component, treating a DATE-only
+## input as midnight -- absolute seconds-since-epoch arithmetic, so
+## overflow carries into the day/month/year exactly like DAY-unit
+## arithmetic (see date_fn::date_add_time's doc comment). This is a
+## DIFFERENT, much simpler problem than the standalone HOUR()/MINUTE()/
+## SECOND() extraction functions' bizarre two-path algorithm (still not
+## implemented) -- the interval unit here is always explicit, so there is
+## no ambiguous string to reinterpret.
+date_add('2021-01-01 10:30:00', interval 5 hour)
+date_add('2021-01-01', interval 5 hour)
+date_add('2021-01-01 22:00:00', interval 5 hour)
+date_add('2021-01-01 10:30:00', interval -15 hour)
+date_add('2021-01-31 22:00:00', interval 5 hour)
+date_add('2021-01-01 10:30:00', interval 5 minute)
+date_add('2021-01-01 10:30:00', interval 5 second)
+date_add('2021-01-01 10:30:45', interval 20 second)
+date_add('2021-01-01 10:30:00', interval 100 hour)
+date_add('2021-01-01 10:30:00', interval 1.5 hour)
+date_add('2021-01-01 10:30:00', interval -1.5 hour)
+date_add('2021-01-01 10:30:00', interval NULL hour)
+date_add('not a date', interval 5 hour)
+date_add('9999-12-31 23:00:00', interval 2 hour)
+date_add('0001-01-01 00:00:00', interval -1 hour)
+date_add('0001-01-01', interval -1 second)
+## `date_expr + INTERVAL amount unit` / `date_expr - INTERVAL amount unit`
+## desugar to `DATE_ADD`/`DATE_SUB` at PARSE time (`tidb-parser`'s own
+## `fold_interval_arith`), so evaluation reuses 100% of the arithmetic
+## already exhaustively verified above for the function-call form -- just
+## a few representative statements confirming the operator syntax reaches
+## the SAME evaluation path, not a full re-verification.
+'2020-01-01' + interval 5 day
+'2020-01-01' - interval 5 day
+interval 5 day + '2020-01-01'
+'2021-01-31' + interval 1 month

@@ -1,0 +1,21 @@
+## Source-owned parser differential rows for pkg/parser/ast/expressions_test.go:
+## TestUnaryOperationExprRestore:103, TestColumnNameExprRestore:119, and
+## TestIsNullExprRestore:135. Keep these vectors separate from the broad expr
+## corpus so the Go restore contract remains attributable to those exact AST
+## leaves.
+select ++1
+select --1
+select -+1
+select -1
+select not true
+select ~3
+select !true
+select abc
+select `abc`
+select `ab``c`
+select sabc.tABC
+select dabc.sabc.tabc
+select dabc.`sabc`.tabc
+select `dABC`.`sabc`.tabc
+select a is null
+select a is not null

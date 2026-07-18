@@ -1,0 +1,24 @@
+## `GROUP BY`/`ORDER BY` positional ordinals (`GROUP BY 1`, `ORDER BY 2`),
+## including the `TRUE`/`FALSE`-as-position-1/0 quirk (confirmed via
+## gorun: `GROUP BY true` groups by the first select-list column exactly
+## like `GROUP BY 1`). Position `0`, a negative position, and a
+## non-integer literal (`1.0`) are NOT treated as positional at all -- the
+## item stays a literal constant expression, which (combined with an
+## ungrouped select-list column) is a genuine ERR under ONLY_FULL_GROUP_BY,
+## confirmed via gorun.
+create table t (a int, b int)
+insert into t values (1,10),(2,20),(1,30)
+select a, count(*) from t group by 1
+select a, count(*) from t group by true
+select a, b, count(*) from t group by 1, 2
+select a from t order by 1
+select a from t order by true desc
+select b, a from t order by 2
+select a, count(*) from t group by 1 order by 1 desc
+select a, count(*) from t group by 1 having count(*) > 1
+select a, count(*) from t group by 0
+select a, count(*) from t group by false
+select a, count(*) from t group by -1
+select a, count(*) from t group by 1.0
+select a from t order by 0
+select a from t order by false

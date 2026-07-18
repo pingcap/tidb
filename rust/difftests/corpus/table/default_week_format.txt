@@ -1,0 +1,33 @@
+## Go source: pkg/sessionctx/variable/sysvar.go:1924; variable.go checkUInt64SystemVar;
+## pkg/expression/builtin_time.go:1491-1512; builtin_time_test.go:2069-2097.
+## The three no-mode dates distinguish all 0..7 week modes. The final
+## explicit-mode column must remain mode 0 regardless of session state.
+select @@default_week_format, week('2000-01-01'), week('2000-01-02'), week('2008-12-31'), week('2000-12-31', 0)
+set default_week_format = 0
+select @@default_week_format, week('2000-01-01'), week('2000-01-02'), week('2008-12-31'), week('2000-12-31', 0)
+set default_week_format = 1
+select @@default_week_format, week('2000-01-01'), week('2000-01-02'), week('2008-12-31'), week('2000-12-31', 0)
+set default_week_format = 2
+select @@default_week_format, week('2000-01-01'), week('2000-01-02'), week('2008-12-31'), week('2000-12-31', 0)
+set default_week_format = 3
+select @@default_week_format, week('2000-01-01'), week('2000-01-02'), week('2008-12-31'), week('2000-12-31', 0)
+set default_week_format = 4
+select @@default_week_format, week('2000-01-01'), week('2000-01-02'), week('2008-12-31'), week('2000-12-31', 0)
+set default_week_format = 5
+select @@default_week_format, week('2000-01-01'), week('2000-01-02'), week('2008-12-31'), week('2000-12-31', 0)
+set default_week_format = 6
+select @@default_week_format, week('2000-01-01'), week('2000-01-02'), week('2008-12-31'), week('2000-12-31', 0)
+set default_week_format = 7
+select @@default_week_format, week('2000-01-01'), week('2000-01-02'), week('2008-12-31'), week('2000-12-31', 0)
+set default_week_format = -1
+select @@default_week_format, week('2000-01-01')
+set default_week_format = 8
+select @@default_week_format, week('2000-01-01')
+set default_week_format = 6.5
+select @@default_week_format
+set default_week_format = default
+select @@default_week_format, week('2000-12-31')
+begin
+set default_week_format = 6
+rollback
+select @@default_week_format, week('2000-12-31')

@@ -1,0 +1,11 @@
+schema = "1"
+campaign = "2026-07-read-path-01"
+status = "integrated"
+slices = [
+  "txnkv-transaction-read-driver",
+  "txnkv-write-conflict-table-key-diagnostics",
+  "distsql-region-task-construction",
+  "distsql-select-response-consumption",
+  "executor-core-aggregate-runtime",
+  "planner-executor-typed-join-runtime",
+]

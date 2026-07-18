@@ -1,0 +1,24 @@
+## `@@[scope.]name` system-variable readback (`Expr::SysVar`): modelled
+## ONLY for `autocommit`/`time_zone`, the two session-state variables this
+## executor already tracks for its own execution -- a PERMANENT scope
+## boundary (real MySQL/TiDB has roughly 600 system variables, this
+## project models only what it already needs, never a general-purpose
+## variable store). Confirmed via gorun: the default `@@time_zone` is the
+## literal string "SYSTEM", NOT "+00:00"; `@@GLOBAL.*` always answers with
+## the fixed real-MySQL default regardless of this session's own `SET`s
+## (this executor has no separate global variable store); a system
+## variable is an ordinary expression operand usable in arithmetic; any
+## unrecognized variable name is a genuine execution error.
+select @@autocommit
+select @@session.autocommit
+select @@global.autocommit
+select @@time_zone
+select @@global.time_zone
+set autocommit=0
+select @@autocommit
+select @@global.autocommit
+set time_zone='+05:30'
+select @@time_zone
+select @@global.time_zone
+select 1 + @@autocommit
+select @@totally_bogus_var_xyz

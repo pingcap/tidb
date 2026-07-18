@@ -1,0 +1,3 @@
+# Source-owned test-port fragment for datatype-ascii-encoding-source-wave.
+# kind	source_path	line	symbol	status	owner	evidence_artifact	note
+go_test	pkg/parser/charset/encoding_test.go	102	TestEncodingValidate	PARTIAL	datatype-ascii-encoding-source-wave	rust/crates/tidb-datatype/src/ascii_encoding.rs	All five ASCII rows execute with IsValid CountValidBytes and OpReplaceNoErr output; UTF8 UTF8MB3 GBK and GB18030 rows remain outside this leaf until their encoders and shared dispatcher are ported

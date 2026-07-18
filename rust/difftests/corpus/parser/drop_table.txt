@@ -1,0 +1,7 @@
+## DROP TABLE: IF EXISTS, multi-table lists, a qualified name path, and the
+## RESTRICT/CASCADE modifiers (accepted but restore to nothing).
+drop table t
+drop table if exists t1, t2
+drop table db.t1
+drop table t1, t2 restrict
+drop table t1 cascade

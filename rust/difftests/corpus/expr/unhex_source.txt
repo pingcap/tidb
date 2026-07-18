@@ -1,0 +1,12 @@
+## Printable scalar rows from pkg/expression/builtin_string_test.go:1508 TestUnhexFunc.
+## Control-byte source results and the injected-error datum are asserted directly in tidb-expr tests.
+unhex('4D7953514C')
+unhex('1267')
+unhex('126')
+unhex('')
+unhex(1267)
+unhex(126)
+unhex(1267.3)
+unhex('string')
+unhex('你好')
+unhex(null)

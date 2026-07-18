@@ -1,0 +1,11 @@
+## Go parser TestExplain: pkg/parser/parser_test.go:5937-5993.
+## This focused ring includes only inners already supported by the Rust parser.
+EXPLAIN SELECT 1
+EXPLAIN ANALYZE SELECT 1
+EXPLAIN ANALYZE FORMAT = verbose SELECT 1
+EXPLAIN FORMAT = 'brief' SELECT a FROM t
+EXPLAIN FORMAT = DOT SELECT 1
+EXPLAIN INSERT INTO t VALUES (1)
+EXPLAIN UPDATE t SET a = 1
+EXPLAIN DELETE FROM t
+EXPLAIN ALTER TABLE t ADD COLUMN a INT

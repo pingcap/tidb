@@ -1,0 +1,3 @@
+select /*+ read_from_storage(tikv[`executor__admin`.`admin_test`]) */ bit_xor(crc32(md5(concat_ws(0x2, `c1`, `c2`)))), ((cast(crc32(md5(concat_ws(0x2, `c1`))) as signed) - 9223372036854775807) div 1 % 1024), count(*) from `executor__admin`.`admin_test` use index() where 0 = 0 group by ((cast(crc32(md5(concat_ws(0x2, `c1`))) as signed) - 9223372036854775807) div 1 % 1024)
+select /*+ read_from_storage(tikv[t1], tiflash[t2]) */ 1 from t1, t2
+select /*+ read_from_storage(@sel_1 tikv[t1]) */ 1 from t1

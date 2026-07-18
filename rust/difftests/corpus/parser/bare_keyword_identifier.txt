@@ -1,0 +1,5 @@
+select char, trim, json_sum_crc32 from t;
+select char(65,66,67);
+select trim('  bar  ');
+select json_sum_crc32(1 as signed array);
+select position, substr, substring from t;

@@ -1,0 +1,5 @@
+## Date-part extraction over an actual DATE/DATETIME table column
+create table dpt (a date, b datetime)
+insert into dpt values ('2021-03-15', '2021-06-20 10:30:00')
+select year(a), month(a), day(a) from dpt
+select year(b), quarter(b) from dpt

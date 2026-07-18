@@ -1,0 +1,6 @@
+#IDX 0
+SELECT `T`.`upper`(1)
+#END
+#IDX 1
+SELECT `t`.`upper`(1)
+#END

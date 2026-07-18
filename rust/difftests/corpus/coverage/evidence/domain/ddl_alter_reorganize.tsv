@@ -1,0 +1,2 @@
+go_owner	rust_module	status	note
+method:pkg/parser/ddl_alter_handlers.go#HandParser.parseAlterReorganize	rust/crates/tidb-parser/src/ddl.rs	partial	Queued exact ALTER REORGANIZE owner; the shared Rust ALTER router is a dispatch surface only and no implementation or test coverage is claimed.

@@ -1,0 +1,3 @@
+go_owner	rust_module	status	note
+method:pkg/parser/hintparser.go#parseQBName;parseHintTable	rust/crates/tidb-parser/src/select.rs	partial	The quoted @query-block payload path is ported through decode_at_name for the covered index/table-level and aggregate shapes; the broader Go hint grammar remains partial.
+tests:tests/integrationtest/t/planner/core/plan.test#4	rust/difftests/parser-tests/tests/selectors/query/explain_plan_tree_selector.rs;rust/crates/tidb-parser/src/tests/explain_plan_tree_source.rs	covered	The exact EXPLAIN FORMAT='hint' source row covers both query-block-qualified USE_INDEX and HASH_AGG hints against the checked Go restore.

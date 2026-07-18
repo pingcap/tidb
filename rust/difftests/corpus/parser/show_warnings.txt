@@ -1,0 +1,8 @@
+## Go grammar: pkg/parser/ddl_show_parser.go:145-175,473-485; restore:
+## pkg/parser/ast/dml.go:3322+,3570+. The WHERE cases are from
+## tests/integrationtest/t/executor/analyze.test:811-813 and
+## tests/integrationtest/t/executor/partition/write.test:602-611.
+SHOW WARNINGS
+SHOW WARNINGS LIKE 'Warn%'
+SHOW WARNINGS WHERE Level IN ('Warning', 'Error')
+SHOW WARNINGS WHERE Message NOT LIKE '%disable dynamic pruning%'

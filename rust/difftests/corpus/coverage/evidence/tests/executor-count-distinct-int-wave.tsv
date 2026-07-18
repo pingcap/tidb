@@ -1,0 +1,3 @@
+# Residual test-only ownership outside the consolidated aggregate claim.
+# kind source_path source_line test_name status owner evidence_artifact note
+go_test	pkg/executor/aggfuncs/func_distinct_agg_test.go	26	TestParallelDistinctCount	PARTIAL	executor-count-distinct-int-wave	rust/crates/tidb-exec/tests/count_distinct_int_source.rs	The parallel typed-int subcase remains represented by the retained source test; other types and parallel scheduling remain external. TestMemCount ownership moved to executor-core-aggregate-runtime.

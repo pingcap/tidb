@@ -1,0 +1,4 @@
+# Source-owned test-evidence fragment for json-wave1.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/expression/builtin_json_test.go	233	TestJSONExtract	PARTIAL	json-wave1	rust/crates/tidb-expr/src/builtin_ext/json.rs	Complete representable three-row TestJSONExtract table: NULL propagation, two exact paths yielding [1, 2], and invalid-path errors; typed BinaryJSON, warning/session state, function-class construction, and vectorized execution remain outside the seed evaluator
+go_test	pkg/expression/builtin_json_test.go	743	TestJSONLength	PARTIAL	json-wave1	rust/difftests/corpus/query/json.txt	Scalar JSON length vectors

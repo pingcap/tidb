@@ -1,0 +1,9 @@
+## DATE/DATETIME/TIME/TIMESTAMP/YEAR column types: dates are plain string
+## literals to the parser (no special date-literal syntax), so DEFAULT
+## '...' works via the already-existing string-literal DEFAULT parsing
+create table t (a date, b datetime, c time, d timestamp, e year)
+create table t (a datetime(3), b time(6), c timestamp(2))
+create table t (a year(4))
+create table t (a date not null default '2021-01-01')
+create table t (a date primary key, b datetime not null)
+select a from t where b > '2021-01-01'

@@ -1,0 +1,3 @@
+go_owner	rust_module	status	note
+method:pkg/parser/expr_parser.go#HandParser.parseCharsetIntroducer	rust/crates/tidb-parser/src/expr.rs	partial	The parser validates scanner-recognized charset names through the legacy introducer subset from charset.GetDefaultCollationLegacy; accepted literal forms remain covered while unsupported registered names reject at the same boundary.
+tests:tests/integrationtest/t/executor/charset.test#12	rust/difftests/parser-tests/tests/selectors/query/charset_introducer_selector.rs;rust/crates/tidb-parser/src/tests/expr.rs	covered	The exact SELECT _gbk 'a' Go-rejected row is selected from the checked oracle and asserted as a Rust parse rejection.

@@ -1,0 +1,3 @@
+# Source-owned statistics-cache LFU memory-cost evidence.
+# source_path	status	owner	evidence_artifact	note
+pkg/statistics/handle/cache/internal/lfu/lfu_cache.go	PARTIAL	stats-memory-cost-wave	rust/crates/tidb-stats/src/memory_cost.rs	The Rust leaf ports adjustMemCost's unchanged nonzero path, 20%-of-system-memory path, NewLFU's 5MB test override, and addCost's signed int64 wraparound from lines 82-93 and 278-281; Ristretto cache construction, host-memory probing, atomics, metrics, eviction, and table lifecycle remain open.

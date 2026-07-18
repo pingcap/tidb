@@ -1,0 +1,4 @@
+## DATE_ADD/DATE_SUB with INTERVAL n WEEK over a real DATE column
+create table dw (d date)
+insert into dw values ('2021-01-01')
+select date_add(d, interval 1 week), date_sub(d, interval 2 week) from dw

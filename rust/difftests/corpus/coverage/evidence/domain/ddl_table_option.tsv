@@ -1,0 +1,16 @@
+go_owner	rust_module	status	supporting_declaration
+method:pkg/parser/ddl_table_option_parser.go#HandParser.parseCreateTableOptions	rust/crates/tidb-parser/src/ddl/table_option.rs	partial	
+method:pkg/parser/ddl_table_option_parser.go#HandParser.parseTableOption	rust/crates/tidb-parser/src/ddl/table_option.rs	partial	
+method:pkg/parser/ddl_table_option_parser.go#HandParser.parseTableOptionRowFormat	rust/crates/tidb-parser/src/ddl/table_option.rs	partial	rowFormatNames
+method:pkg/parser/ddl_table_option_parser.go#HandParser.parseTableOptionTTLJobInterval	rust/crates/tidb-parser/src/ddl/table_option.rs	partial	
+method:pkg/parser/ddl_table_option_parser.go#HandParser.parseForceAutoOption	rust/crates/tidb-parser/src/ddl/table_option.rs	partial	
+method:pkg/parser/ddl_table_option_parser.go#HandParser.parseTableOptionUint	rust/crates/tidb-parser/src/ddl/table_option.rs	partial	
+method:pkg/parser/ddl_table_option_parser.go#HandParser.parseTableOptionString	rust/crates/tidb-parser/src/ddl/table_option.rs	partial	
+method:pkg/parser/ddl_table_option_parser.go#HandParser.parseTableOptionStringLit	rust/crates/tidb-parser/src/ddl/table_option.rs	partial	
+method:pkg/parser/ddl_table_option_parser.go#HandParser.parseTableOptionDefaultOrDiscard	rust/crates/tidb-parser/src/ddl/table_option.rs	partial	
+tests:tests/integrationtest/t/ddl/table_create_compat.test	rust/crates/tidb-parser/src/tests/table_option_source.rs	partial	7 MariaDB/MySQL compatibility option rows: AUTOEXTEND_SIZE, PAGE_*, TRANSACTIONAL, IETF_QUOTES, SEQUENCE
+selector:tests/integrationtest/t/ddl/table_create_compat.test	rust/difftests/parser-tests/tests/selectors/create/create_table_compatibility_selector.rs	partial	7 exact accepted single-statement rows
+runtime:pkg/ddl/executor.go#CreateTable	rust/crates/tidb-exec/src/ddl/table_capability.rs	partial	Rejects parser-visible compatibility options before implicit commit because compact catalog has no storage-engine metadata
+tests:tests/integrationtest/t/ddl/table_modify.test	rust/crates/tidb-parser/src/tests/table_option_source.rs	partial	ENGINE=MERGE UNION=(x,y) retains typed table-name paths and comma-tight restore
+selector:tests/integrationtest/t/ddl/table_modify.test	rust/difftests/parser-tests/tests/selectors/create/create_table_merge_union_selector.rs	partial	1 exact accepted single-statement row at source line 52
+runtime:pkg/ddl/executor.go#CreateTable	rust/crates/tidb-exec/src/tests/ddl.rs	partial	Rejects CREATE TABLE MERGE UNION before implicit commit; compact catalog has no merge-engine union metadata

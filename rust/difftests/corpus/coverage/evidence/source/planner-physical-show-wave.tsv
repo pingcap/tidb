@@ -1,0 +1,2 @@
+# source_path	status	owner	evidence_artifact	note
+pkg/planner/core/operator/physicalop/physical_show.go	PARTIAL	planner-physical-show-wave	rust/crates/tidb-planner/src/physical_show.rs	Ports PhysicalShow/PhysicalShowDDLJobs Init plan kind, pseudo RowCount=1, DDL JobNumber identity, and shared IndexJoinProp/sort rejection gates; ShowContents/extractor/catalog/schema/context/task wiring and SHOW runtime remain external.

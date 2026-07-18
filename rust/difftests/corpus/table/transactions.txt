@@ -1,0 +1,120 @@
+## BEGIN/START TRANSACTION (synonyms) / COMMIT / ROLLBACK: the observable
+## semantics reduce to one simple rule (confirmed via gorun, not assumed) --
+## BEGIN snapshots the current catalog as a rollback target; ROLLBACK
+## restores it; COMMIT (and a second BEGIN while already in a transaction,
+## and any DDL statement -- a real MySQL rule: DDL causes an implicit
+## commit) all just discard the snapshot reference, since there is no
+## separate write buffer to flush -- `tables` already IS the live,
+## eventually-committed state. Outside an explicit transaction every
+## statement is permanent immediately (autocommit), which falls out for
+## free from there being no snapshot to roll back to. COMMIT/ROLLBACK with
+## nothing pending are harmless no-ops.
+create table t (id int, v int)
+insert into t values (1, 10)
+commit
+rollback
+begin
+insert into t values (2, 20)
+select id, v from t order by id
+rollback
+select id, v from t order by id
+start transaction
+insert into t values (3, 30)
+commit
+select id, v from t order by id
+begin
+delete from t where id = 3
+update t set v = 999 where id = 1
+select id, v from t order by id
+rollback
+select id, v from t order by id
+begin
+begin
+insert into t values (4, 40)
+rollback
+select id, v from t order by id
+begin
+insert into t values (5, 50)
+create table u (id int)
+select id, v from t order by id
+rollback
+select id, v from t order by id
+begin
+alter table t add column w int
+select id, v, w from t order by id
+rollback
+select id, v, w from t order by id
+## `SET autocommit = 0` opens an implicit transaction (the SAME mechanics
+## BEGIN uses) the moment a DML statement needs one, no explicit BEGIN
+## required -- it persists across MULTIPLE statements until an explicit
+## COMMIT/ROLLBACK, and DDL's own implicit commit is followed immediately
+## by a fresh implicit transaction (autocommit stays off). Turning
+## autocommit back ON commits whatever is pending -- even an EXPLICIT
+## transaction that merely had autocommit toggled off and back on
+## mid-transaction -- but a REDUNDANT `SET autocommit = 1` (already on)
+## does not commit an in-progress explicit transaction; only a genuine
+## OFF-to-ON transition does. Every value form (bare OFF, 'ON'/'OFF'/'0'
+## quoted strings, TRUE) behaves identically.
+create table ac (id int)
+set autocommit=0
+insert into ac values (1)
+insert into ac values (2)
+rollback
+select id from ac order by id
+insert into ac values (1)
+commit
+insert into ac values (2)
+rollback
+select id from ac order by id
+create table ac2 (id int)
+insert into ac2 values (9)
+rollback
+select id from ac2 order by id
+insert into ac values (2)
+set autocommit=1
+rollback
+select id from ac order by id
+begin
+insert into ac values (3)
+set autocommit=1
+rollback
+select id from ac order by id
+begin
+insert into ac values (3)
+set autocommit=0
+set autocommit=1
+rollback
+select id from ac order by id
+set autocommit=off
+insert into ac values (5)
+rollback
+select id from ac order by id
+set autocommit='0'
+insert into ac values (5)
+rollback
+select id from ac order by id
+set autocommit=true
+insert into ac values (5)
+rollback
+select id from ac order by id
+set autocommit='ON'
+insert into ac values (6)
+rollback
+select id from ac order by id
+## SET [SESSION] TRANSACTION ISOLATION LEVEL / READ WRITE are accepted
+## no-ops (no MVCC/concurrent transactions modeled for an isolation
+## level to affect); READ ONLY is a genuine ERR here too -- confirmed
+## via gorun that real TiDB's own mockstore rejects it outright, even
+## as the very first statement in a fresh session -- kept LAST in this
+## script per the standing lesson about an earlier ERR corrupting later
+## statements' apparent results in the same gorun batch.
+set transaction isolation level read committed
+insert into ac values (7)
+select id from ac order by id
+set session transaction isolation level repeatable read
+insert into ac values (8)
+select id from ac order by id
+set transaction read write
+insert into ac values (9)
+select id from ac order by id
+set transaction read only

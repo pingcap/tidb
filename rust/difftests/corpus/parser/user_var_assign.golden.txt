@@ -1,0 +1,24 @@
+#IDX 0
+SELECT @`i`:=1
+#END
+#IDX 1
+SELECT @`i`:=@`i`+1
+#END
+#IDX 2
+SELECT @`tmp`:=`c`-2 FROM `t` WHERE `c`=3
+#END
+#IDX 3
+SELECT @`tmp`:=COUNT(1) FROM `t`
+#END
+#IDX 4
+SELECT @`tmp1`:=11,@`tmp2`
+#END
+#IDX 5
+SELECT (@`j`:=CASE WHEN SUBSTR(`t2`.`b`, 1, 3)=@`i` THEN 1 ELSE @`j`+1 END) FROM (`t2`) JOIN (SELECT @`j`:=0,@`i`:=_UTF8MB4'0') AS `tt` LIMIT 10
+#END
+#IDX 6
+SELECT @`v`:=(SELECT 1 FROM `t1` AS `t2` LEFT JOIN `t1` ON `t1`.`a` GROUP BY `t1`.`a`) FROM `t1`
+#END
+#IDX 7
+SELECT @`autocommit`:=1
+#END

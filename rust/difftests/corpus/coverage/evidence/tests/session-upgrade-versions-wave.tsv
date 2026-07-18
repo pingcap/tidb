@@ -1,0 +1,3 @@
+# Source-owned bootstrap upgrade-version test-port evidence.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/session/upgrade_test.go	52	TestUpgradeToVerFunctionsCheck	PARTIAL	session-upgrade-versions-wave	rust/crates/tidb-exec/tests/upgrade_versions_source.rs	Rust vectors compare the complete 173-entry source registry shape, strict ordering, current-version boundary, intentional gaps, and upgradeToVer<N> names; Go reflection/function pointers, upgrade execution, and mutable test bootstrap version remain external.

@@ -1,0 +1,18 @@
+## Source anchor: pkg/executor/test/txn/txn_test.go:716 TestSavepointWithForeignKey.
+## This exact single-session slice proves that ROLLBACK TO restores parent and
+## child tables together and restores FK visibility. The source test's second
+## half checks a cross-session pessimistic-lock retention limitation, which is
+## intentionally outside this single-session seed model.
+create table savepoint_fk_parent (id int primary key)
+create table savepoint_fk_child (id int primary key, parent_id int, foreign key (parent_id) references savepoint_fk_parent(id))
+begin
+savepoint sp1
+insert into savepoint_fk_parent values (1)
+savepoint sp2
+insert into savepoint_fk_child values (1, 1)
+rollback to sp2
+select * from savepoint_fk_child
+rollback to sp1
+insert into savepoint_fk_child values (1, 1)
+select * from savepoint_fk_parent
+rollback

@@ -1,0 +1,3 @@
+select (\N) from test;
+select \N from test;
+select \N;

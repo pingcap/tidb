@@ -1,0 +1,20 @@
+## `GROUP BY`/`ORDER BY` positional references (`GROUP BY 1`, `ORDER BY 2`)
+## and the `TRUE`/`FALSE`-as-position quirk: MySQL/TiDB treats a bare
+## boolean literal in these two positions as its integer value (`TRUE` ==
+## `1`, `FALSE` == `0`) and restores it as the bare digit, not `TRUE`/
+## `FALSE` -- confirmed via `godump restore`. `Expr::Bool` restores as
+## `TRUE`/`FALSE` everywhere else (SELECT list, WHERE, HAVING), so this is a
+## narrow, position-specific restore rule (`tidb_ast::select::restore_by_item_expr`),
+## not a general property of boolean literals.
+select 1 from t group by 1
+select 1 from t group by true
+select 1 from t group by false
+select 1,2 from t group by 1,2
+select 1 from t order by 1
+select 1 from t order by true
+select 1 from t order by false
+select 1 from t order by 1 desc
+select 1 from t group by 1 desc
+select 1 from t where true
+select 1 from t having true
+select true

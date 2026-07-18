@@ -1,0 +1,3 @@
+# Source-owned statistics initialization concurrency evidence.
+# source_path	status	owner	evidence_artifact	note
+pkg/statistics/handle/initstats/load_stats.go	PARTIAL	stats-init-concurrency-wave	rust/crates/tidb-stats/src/init_stats_concurrency.rs	The Rust leaf ports GetConcurrency from lines 20-37: force mode uses observed CPU count minus two, normal mode uses half, and both paths clamp to [2,16] with Go-compatible signed division. Runtime GOMAXPROCS/config access, worker lifecycle, memory policy, and stats loading remain external.

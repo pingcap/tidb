@@ -1,0 +1,118 @@
+// Copyright 2026 PingCAP, Inc.
+// Licensed under the Apache License, Version 2.0.
+
+//! Source-derived coverage for TiDB table, record, index, and metadata keys.
+
+use tidb_codec::table_key::*;
+use tidb_codec::{encode_int, encode_key};
+use tidb_datatype::Datum;
+
+#[test]
+fn test_table_codec() {
+    let mut handle = Vec::new();
+    encode_int(&mut handle, 2);
+    let key = encode_row_key(1, &handle);
+    assert_eq!(decode_row_key(&key), Ok(RecordHandle::Int(2)));
+    assert_eq!(encode_row_key_with_handle(1, &RecordHandle::Int(2)), key);
+}
+
+#[test]
+fn test_table_codec_invalid() {
+    let mut handle = Vec::new();
+    encode_int(&mut handle, -9_078_412_423_848_787_968);
+    handle.push(b'0');
+    assert!(decode_row_key(&encode_row_key(100, &handle)).is_err());
+}
+
+#[test]
+fn test_index_key() {
+    assert_eq!(
+        decode_key_head(&encode_index_seek_key(4, 5, &[])),
+        Ok(KeyHead::Index {
+            table_id: 4,
+            index_id: 5
+        })
+    );
+}
+
+#[test]
+fn test_record_key() {
+    let mut handle = Vec::new();
+    encode_int(&mut handle, u32::MAX.into());
+    let key = encode_row_key(55, &handle);
+    assert_eq!(decode_key_head(&key), Ok(KeyHead::Record { table_id: 55 }));
+    assert_eq!(
+        decode_record_key(&key),
+        Ok((55, RecordHandle::Int(u32::MAX.into())))
+    );
+    assert_eq!(
+        encode_record_key(
+            &gen_table_record_prefix(55),
+            &RecordHandle::Int(u32::MAX.into())
+        ),
+        key
+    );
+    assert!(decode_record_key(&[]).is_err());
+    assert!(decode_record_key(b"abcdefghijklmnopqrstuvwxyz").is_err());
+    assert_eq!(decode_table_id(&[]), 0);
+}
+
+#[test]
+fn test_prefix() {
+    let key = encode_table_prefix(66);
+    assert_eq!(decode_table_id(&key), 66);
+    assert_eq!(TABLE_PREFIX, b"t");
+    assert_eq!(gen_table_prefix(66), key);
+    let index_prefix = encode_table_index_prefix(66, u32::MAX.into());
+    assert_eq!(
+        decode_key_head(&index_prefix),
+        Ok(KeyHead::Index {
+            table_id: 66,
+            index_id: u32::MAX.into()
+        })
+    );
+    assert_eq!(decode_table_id(&gen_table_index_prefix(66)), 66);
+    let mut extended = index_prefix;
+    extended.extend_from_slice(b"xyz");
+    assert_eq!(truncate_to_row_key_len(&extended).len(), RECORD_ROW_KEY_LEN);
+    assert_eq!(truncate_to_row_key_len(&key).len(), key.len());
+}
+
+#[test]
+fn test_decode_index_key() {
+    let values = vec![
+        Datum::new_int(1),
+        Datum::new_bytes(b"abc".to_vec()),
+        Datum::new_real(123.45),
+    ];
+    let encoded = encode_key(&values).expect("encode key");
+    assert_eq!(
+        decode_index_key(&encode_index_seek_key(4, 5, &encoded)),
+        Ok((4, 5, vec!["1".into(), "abc".into(), "123.45".into()]))
+    );
+}
+
+#[test]
+fn test_cut_prefix() {
+    let key = encode_table_index_prefix(42, 666);
+    assert_eq!(cut_row_key_prefix(&key), [0x80, 0, 0, 0, 0, 0, 2, 0x9a]);
+    assert!(cut_index_prefix(&key).is_empty());
+}
+
+#[test]
+fn test_decode_auto_id_meta() {
+    let key = [
+        0x6d, 0x44, 0x42, 0x3a, 0x35, 0x36, 0, 0, 0, 0xfc, 0, 0, 0, 0, 0, 0, 0, 0x68, 0x54, 0x49,
+        0x44, 0x3a, 0x31, 0x30, 0x38, 0, 0xfe,
+    ];
+    assert_eq!(
+        decode_meta_key(&key),
+        Ok((b"DB:56".to_vec(), b"TID:108".to_vec()))
+    );
+    let mut with_remainder = key.to_vec();
+    with_remainder.extend_from_slice(b"ignored");
+    assert_eq!(
+        decode_meta_key(&with_remainder),
+        Ok((b"DB:56".to_vec(), b"TID:108".to_vec()))
+    );
+}

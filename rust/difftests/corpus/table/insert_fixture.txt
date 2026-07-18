@@ -1,0 +1,8 @@
+## Source: tests/integrationtest/t/executor/insert.test
+## TestInsertValueForCastDecimalField (lines 237-242). Kept as the original
+## ordered fixture block so decimal insertion and projection remain stateful.
+drop table if exists t1;
+create table t1(a decimal(15,2));
+insert into t1 values (1111111111111.01);
+select * from t1;
+select cast(a as decimal) from t1;

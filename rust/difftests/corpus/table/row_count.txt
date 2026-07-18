@@ -1,0 +1,75 @@
+## Go source: pkg/expression/builtin_info.go:913-921 and executor/select.go:1224-1237.
+## ROW_COUNT() observes the preceding statement while its own SELECT runs,
+## then that SELECT publishes -1. Each DML family below is already executable
+## by the seed executor, so its source affected-row result is covered here.
+create table rc (id int primary key, u int unique, v int)
+insert into rc values (1, 10, 1), (2, 20, 2)
+select row_count()
+select row_count()
+update rc set v = 1 where id = 1
+select row_count()
+update rc set v = 3 where id = 1
+select row_count()
+delete from rc where id = 99
+select row_count()
+delete from rc where id = 2
+select row_count()
+insert into rc values (1, 30, 4) on duplicate key update v = values(v)
+select row_count()
+insert into rc values (1, 30, 4) on duplicate key update v = values(v)
+select row_count()
+insert ignore into rc values (1, 30, 4)
+select row_count()
+replace into rc values (1, 20, 5)
+select row_count()
+create table p (id int primary key)
+create table c (id int primary key, pid int, foreign key (pid) references p(id) on delete cascade)
+insert into p values (1)
+insert into c values (1, 1), (2, 1)
+delete from p where id = 1
+select row_count()
+create table u1 (id int primary key, v int)
+create table u2 (id int primary key, v int)
+insert into u1 values (1, 1), (2, 2)
+insert into u2 values (1, 10), (2, 20)
+update u1 join u2 on u1.id = u2.id set u1.v = u1.v + 1, u2.v = u2.v + 1 where u1.id = 1
+select row_count()
+delete u1, u2 from u1 join u2 on u1.id = u2.id where u1.id = 1
+select row_count()
+select * from no_such_row_count_table
+select row_count()
+insert into no_such_row_count_table values (1)
+select row_count()
+create table src (id int primary key)
+create table dst (id int primary key)
+insert into src values (1), (2)
+insert into dst select id from src
+select row_count()
+create table ri (a int primary key, b int unique)
+insert into ri values (1, 10), (2, 20)
+replace into ri values (1, 20)
+select row_count()
+create table fp (id int primary key)
+create table fc (id int primary key, pid int, foreign key (pid) references fp(id))
+insert ignore into fc values (1, 99)
+select row_count()
+insert into fp values (1)
+insert into fc values (1, 1)
+delete ignore from fp where id = 1
+select row_count()
+set foreign_key_checks = 0
+delete from fp where id = 1
+select row_count()
+set foreign_key_checks = 1
+create table up (id int primary key)
+create table uc (id int primary key, pid int, foreign key (pid) references up(id) on update cascade)
+insert into up values (1)
+insert into uc values (1, 1), (2, 1)
+update up set id = 2 where id = 1
+select row_count()
+create table np (id int primary key)
+create table nc (id int primary key, pid int, foreign key (pid) references np(id) on delete set null)
+insert into np values (1)
+insert into nc values (1, 1), (2, 1)
+delete from np where id = 1
+select row_count()

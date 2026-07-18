@@ -1,0 +1,4 @@
+# Source-owned test evidence for ORD and BIN.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+go_test	pkg/expression/builtin_string_test.go	2395	TestOrd	PARTIAL	string-ord-bin-source-wave	rust/crates/tidb-expr/src/tests/mod.rs	Source-shaped text, Unicode, numeric, NULL, empty, binary-byte, and arity rows cover Go's first-rune/first-byte ORD semantics; connection charset conversion, warning/session state, and vectorized execution remain outside the value evaluator.
+go_test	pkg/expression/builtin_string_test.go	2496	TestBin	PARTIAL	string-ord-bin-source-wave	rust/crates/tidb-expr/src/tests/mod.rs	Source-shaped numeric-prefix, decimal, negative, invalid, empty, NULL, binary, and arity rows cover BIN's ETInt conversion; the upstream direct-datum empty-string expectation conflicts with the SQL oracle's zero result and remains explicitly documented rather than special-cased.

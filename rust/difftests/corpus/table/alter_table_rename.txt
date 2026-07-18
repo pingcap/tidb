@@ -1,0 +1,10 @@
+## ALTER TABLE RENAME: the table (rows, keys) is preserved and queryable
+## under the new name; the old name no longer resolves
+create table rt (id int primary key, v int)
+insert into rt values (1, 10)
+insert into rt values (2, 20)
+alter table rt rename to rt2
+select * from rt2
+insert into rt2 values (1, 30) on duplicate key update v = 999
+select * from rt2
+select * from rt

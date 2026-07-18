@@ -1,0 +1,3 @@
+# Source-owned statistics cache interface evidence.
+# source_path	status	owner	evidence_artifact	note
+pkg/statistics/handle/cache/internal/inner.go	PARTIAL	stats-cache-inner-wave	rust/crates/tidb-stats/src/stats_cache_inner.rs	The Rust trait ports StatsCacheInner's Get/Put/Del/Cost/Values/Len/Copy/SetCapacity/Close/TriggerEvict/WaitForAsyncUpdates method boundary with an opaque table value. Concrete map/LFU admission, memory accounting, eviction, async visibility, and statistics.Table lifecycle remain external.

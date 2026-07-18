@@ -1,0 +1,4 @@
+# Source-owned bounded MAX/MIN deque helper test evidence.
+# kind source_path source_line test_name status owner evidence_artifact note
+go_test	pkg/executor/aggfuncs/func_max_min_test.go	335	TestDequeReset	PARTIAL	executor-minmax-deque-wave	rust/crates/tidb-exec/tests/minmax_deque_source.rs	Rust covers source deque reset, empty state, and max-mode flag; full aggregate reset/lifecycle remains external.
+go_test	pkg/executor/aggfuncs/func_max_min_test.go	345	TestDequePushPop	PARTIAL	executor-minmax-deque-wave	rust/crates/tidb-exec/tests/minmax_deque_source.rs	Rust covers source push/back/front/pop ordering and empty-pop error; comparator-driven enqueue/dequeue is additionally covered in the focused helper test.

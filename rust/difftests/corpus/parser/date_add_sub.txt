@@ -1,0 +1,25 @@
+## DATE_ADD/DATE_SUB with INTERVAL n DAY: DATE_ADD/DATE_SUB and DAY are all
+## lexer keywords, so DATE_ADD/DATE_SUB needed adding to is_scalar_kw_func;
+## INTERVAL is parsed as a general prefix expression (matching real MySQL
+## grammar), not special-cased to these two function names.
+select date_add(a, interval 5 day) from t
+select date_sub(a, interval 5 day) from t
+select date_add(a, interval b day) from t
+select date_add(a, interval -5 day) from t
+## `date_expr + INTERVAL amount unit` / `date_expr - INTERVAL amount unit`
+## desugar to `DATE_ADD`/`DATE_SUB` at PARSE time (confirmed via godump
+## restore, a genuine real-TiDB grammar rule, not a tidb-exec rewrite):
+## `+` is commutative (INTERVAL may be written on either side, but the
+## non-INTERVAL operand always becomes DATE_ADD's FIRST argument), `-` is
+## not; a chain builds on the already-desugared result at each step,
+## left-associatively. (INTERVAL on the left of `-`, INTERVAL+INTERVAL,
+## and a parenthesized INTERVAL operand are all genuine real-TiDB
+## `ParseError`s -- the last one is a KNOWN, accepted narrower divergence
+## here, not modelled, covered by the unit test instead of this corpus.)
+select '2020-01-01' + interval 5 day
+select '2020-01-01' - interval 5 day
+select interval 5 day + '2020-01-01'
+select 1 + interval 5 day
+select '2020-01-01' + interval 5 day + interval 3 day
+select '2020-01-01' - interval 5 day + interval 3 day
+select '2020-01-01' + interval 5 day - interval 3 day

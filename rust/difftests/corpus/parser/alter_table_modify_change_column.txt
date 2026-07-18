@@ -1,0 +1,10 @@
+## ALTER TABLE MODIFY/CHANGE COLUMN: `MODIFY`/`CHANGE` alone (no `COLUMN`)
+## restore identically, matching the Go AST's normalization; CHANGE COLUMN
+## renames (old name, then the new column def)
+alter table t modify column c bigint
+alter table t modify c bigint
+alter table t modify c int first
+alter table t modify c int after b
+alter table t change b c int
+alter table t change column b c int
+alter table t change b c int after a
