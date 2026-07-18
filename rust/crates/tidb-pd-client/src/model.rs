@@ -25,6 +25,17 @@ pub struct PdPeer {
     pub is_witness: bool,
 }
 
+/// One validated foreground PD membership snapshot.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PdMemberSet {
+    /// Nonzero cluster identity shared by every accepted response.
+    pub cluster_id: u64,
+    /// Normalized plaintext client URL reported for the PD leader.
+    pub leader_url: String,
+    /// Sorted, deduplicated normalized plaintext URLs for all PD members.
+    pub member_urls: Vec<String>,
+}
+
 /// Versioned region epoch.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PdRegionEpoch {

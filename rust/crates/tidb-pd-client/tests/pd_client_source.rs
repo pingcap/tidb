@@ -29,6 +29,7 @@ use tidb_proto::pdpb::{
 };
 
 const CLUSTER_ID: u64 = 42;
+const SELF_URL: &str = "http://127.0.0.1:0";
 
 #[derive(Clone)]
 enum Reply<T> {
@@ -124,13 +125,14 @@ struct Server {
 }
 
 impl Server {
-    fn start(state: State) -> Self {
+    fn start(mut state: State) -> Self {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        replace_self_urls(&mut state.members, &format!("http://{address}"));
         let state = Arc::new(Mutex::new(state));
         let service = MockPd {
             state: Arc::clone(&state),
         };
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
         drop(listener);
         let (shutdown, shutdown_rx) = tokio::sync::oneshot::channel();
         let (started_tx, started_rx) = mpsc::channel();
@@ -162,6 +164,27 @@ impl Server {
             std::thread::sleep(Duration::from_millis(1));
         }
         panic!("mock PD did not accept connections");
+    }
+}
+
+fn replace_self_urls(reply: &mut Reply<pdpb::GetMembersResponse>, address: &str) {
+    let response = match reply {
+        Reply::Value(response) | Reply::Delayed(_, response) => response,
+        Reply::Status(_, _) => return,
+    };
+    for member in &mut response.members {
+        for url in &mut member.client_urls {
+            if url == SELF_URL {
+                *url = address.to_owned();
+            }
+        }
+    }
+    if let Some(leader) = &mut response.leader {
+        for url in &mut leader.client_urls {
+            if url == SELF_URL {
+                *url = address.to_owned();
+            }
+        }
     }
 }
 
@@ -242,6 +265,8 @@ fn valid_state() -> State {
     State {
         members: Reply::Value(pdpb::GetMembersResponse {
             header: Some(header(CLUSTER_ID)),
+            members: vec![pd_member(1, [SELF_URL])],
+            leader: Some(pd_member(1, [SELF_URL])),
             ..pdpb::GetMembersResponse::default()
         }),
         region: Reply::Value(region_response()),
@@ -269,6 +294,52 @@ fn valid_state() -> State {
     }
 }
 
+fn pd_member<const N: usize>(member_id: u64, urls: [&str; N]) -> pdpb::Member {
+    pdpb::Member {
+        name: format!("pd-{member_id}"),
+        member_id,
+        client_urls: urls.into_iter().map(str::to_owned).collect(),
+        ..pdpb::Member::default()
+    }
+}
+
+fn membership_response(
+    cluster_id: u64,
+    members: &[(u64, String)],
+    leader_id: u64,
+) -> pdpb::GetMembersResponse {
+    let members = members
+        .iter()
+        .map(|(member_id, url)| pdpb::Member {
+            name: format!("pd-{member_id}"),
+            member_id: *member_id,
+            client_urls: vec![url.clone()],
+            ..pdpb::Member::default()
+        })
+        .collect::<Vec<_>>();
+    let leader = members
+        .iter()
+        .find(|member| member.member_id == leader_id)
+        .cloned();
+    pdpb::GetMembersResponse {
+        header: Some(header(cluster_id)),
+        members,
+        leader,
+        ..pdpb::GetMembersResponse::default()
+    }
+}
+
+fn http_url(server: &Server) -> String {
+    format!("http://{}", server.address)
+}
+
+fn unused_address() -> String {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap().to_string();
+    drop(listener);
+    address
+}
+
 #[test]
 fn exact_methods_headers_wire_key_roles_and_store_states_are_preserved_once() {
     // servicediscovery/service_discovery.go:960-994 getMembers.
@@ -280,6 +351,10 @@ fn exact_methods_headers_wire_key_roles_and_store_states_are_preserved_once() {
     let server = Server::start(valid_state());
     let mut client = PdClient::connect(&server.address, Duration::from_secs(2)).unwrap();
     assert_eq!(client.cluster_id(), CLUSTER_ID);
+    assert_eq!(client.endpoint(), server.address);
+    assert_eq!(client.member_set().leader_url, http_url(&server));
+    assert_eq!(client.member_set().member_urls, [http_url(&server)]);
+    assert_eq!(client.active_endpoint(), http_url(&server));
     let wire_key = b"\x74\x80wire-key";
     let region = client.get_region(wire_key).unwrap();
     assert_eq!(region.start_key, b"wire-start");
@@ -319,6 +394,309 @@ fn exact_methods_headers_wire_key_roles_and_store_states_are_preserved_once() {
         assert_exact_header(request.header.as_ref().unwrap());
         true
     }));
+}
+
+#[test]
+fn one_or_more_seeds_bootstrap_and_validate_every_reachable_cluster() {
+    // servicediscovery/service_discovery.go:840-864 initClusterID.
+    let survivor = Server::start(valid_state());
+    let unavailable = unused_address();
+    let client = PdClient::connect_seeds(
+        [unavailable, survivor.address.clone()],
+        Duration::from_millis(30),
+    )
+    .unwrap();
+    assert_eq!(client.cluster_id(), CLUSTER_ID);
+    assert_eq!(client.member_set().leader_url, http_url(&survivor));
+    assert_eq!(survivor.state.lock().unwrap().member_requests.len(), 1);
+
+    let mismatched = Server::start(valid_state());
+    let mismatched_url = http_url(&mismatched);
+    mismatched.state.lock().unwrap().members = Reply::Value(membership_response(
+        CLUSTER_ID + 1,
+        &[(2, mismatched_url)],
+        2,
+    ));
+    for seeds in [
+        [survivor.address.clone(), mismatched.address.clone()],
+        [mismatched.address.clone(), survivor.address.clone()],
+    ] {
+        let error = PdClient::connect_seeds(seeds, Duration::from_secs(2))
+            .err()
+            .expect("responsive seeds from different clusters must fail");
+        assert_eq!(error.kind(), "cluster_mismatch");
+    }
+}
+
+#[test]
+fn bootstrap_retains_last_complete_same_cluster_snapshot() {
+    let first = Server::start(valid_state());
+    let second = Server::start(valid_state());
+    let first_url = http_url(&first);
+    let second_url = http_url(&second);
+    first.state.lock().unwrap().members =
+        Reply::Value(membership_response(CLUSTER_ID, &[(1, first_url)], 1));
+    second.state.lock().unwrap().members = Reply::Value(membership_response(
+        CLUSTER_ID,
+        &[(2, second_url.clone())],
+        2,
+    ));
+
+    let client = PdClient::connect_seeds(
+        [first.address.clone(), second.address.clone()],
+        Duration::from_secs(2),
+    )
+    .unwrap();
+    assert_eq!(client.member_set().leader_url, second_url.clone());
+    assert_eq!(client.member_set().member_urls, [second_url]);
+}
+
+#[test]
+fn bootstrap_skips_bad_member_observations_in_both_seed_orders() {
+    // servicediscovery/service_discovery.go:840-864 continues per-URL errors.
+    let bad_replies = [
+        Reply::Value(pdpb::GetMembersResponse {
+            header: None,
+            ..pdpb::GetMembersResponse::default()
+        }),
+        Reply::Value(pdpb::GetMembersResponse {
+            header: Some(pdpb::ResponseHeader {
+                cluster_id: CLUSTER_ID,
+                error: Some(pdpb::Error {
+                    r#type: pdpb::ErrorType::NotBootstrapped as i32,
+                    message: "not bootstrapped".to_owned(),
+                }),
+            }),
+            ..pdpb::GetMembersResponse::default()
+        }),
+        Reply::Value(pdpb::GetMembersResponse {
+            header: Some(header(0)),
+            ..pdpb::GetMembersResponse::default()
+        }),
+        Reply::Value(pdpb::GetMembersResponse {
+            header: Some(header(CLUSTER_ID)),
+            ..pdpb::GetMembersResponse::default()
+        }),
+    ];
+
+    for bad_reply in bad_replies {
+        for bad_first in [true, false] {
+            let mut bad_state = valid_state();
+            bad_state.members = bad_reply.clone();
+            let bad = Server::start(bad_state);
+            let healthy = Server::start(valid_state());
+            let seeds = if bad_first {
+                [bad.address.clone(), healthy.address.clone()]
+            } else {
+                [healthy.address.clone(), bad.address.clone()]
+            };
+
+            let client = PdClient::connect_seeds(seeds, Duration::from_secs(2)).unwrap();
+            assert_eq!(client.cluster_id(), CLUSTER_ID);
+            assert_eq!(client.member_set().leader_url, http_url(&healthy));
+            assert_eq!(client.member_set().member_urls, [http_url(&healthy)]);
+        }
+    }
+}
+
+#[test]
+fn membership_refresh_replaces_urls_and_normalizes_duplicates() {
+    // servicediscovery/service_discovery.go:996-1012 updateURLs.
+    let first = Server::start(valid_state());
+    let survivor = Server::start(valid_state());
+    let first_url = http_url(&first);
+    let survivor_url = http_url(&survivor);
+    first.state.lock().unwrap().members = Reply::Value(pdpb::GetMembersResponse {
+        header: Some(header(CLUSTER_ID)),
+        members: vec![pdpb::Member {
+            member_id: 1,
+            client_urls: vec![
+                first.address.clone(),
+                first_url.clone(),
+                survivor_url.clone(),
+            ],
+            ..pdpb::Member::default()
+        }],
+        leader: Some(pd_member(1, [first_url.as_str()])),
+        ..pdpb::GetMembersResponse::default()
+    });
+    let mut client = PdClient::connect(&first.address, Duration::from_secs(2)).unwrap();
+    let mut expected_urls = vec![first_url.clone(), survivor_url.clone()];
+    expected_urls.sort();
+    assert_eq!(client.member_set().member_urls, expected_urls);
+
+    first.state.lock().unwrap().members = Reply::Value(membership_response(
+        CLUSTER_ID,
+        &[(2, survivor_url.clone())],
+        2,
+    ));
+    let refreshed = client.refresh_members().unwrap();
+    assert_eq!(refreshed.member_urls, [survivor_url.clone()]);
+    assert_eq!(refreshed.leader_url, survivor_url);
+    assert_eq!(client.member_set(), refreshed);
+}
+
+#[test]
+fn membership_refresh_rejects_cluster_mismatch_without_mutation() {
+    // servicediscovery/service_discovery.go:840-864 same-cluster identity.
+    let server = Server::start(valid_state());
+    let mut client = PdClient::connect(&server.address, Duration::from_secs(2)).unwrap();
+    let original = client.member_set();
+    server.state.lock().unwrap().members = Reply::Value(membership_response(
+        CLUSTER_ID + 1,
+        &[(1, http_url(&server))],
+        1,
+    ));
+
+    let error = client.refresh_members().unwrap_err();
+    assert_eq!(error.kind(), "cluster_mismatch");
+    assert_eq!(client.member_set(), original);
+}
+
+#[test]
+fn failed_active_endpoint_refreshes_through_survivor_for_region() {
+    // servicediscovery/service_discovery.go:891-922 tries known URLs.
+    let active = Server::start(valid_state());
+    let survivor = Server::start(valid_state());
+    let active_url = http_url(&active);
+    let survivor_url = http_url(&survivor);
+    active.state.lock().unwrap().members = Reply::Value(membership_response(
+        CLUSTER_ID,
+        &[(1, active_url.clone()), (2, survivor_url.clone())],
+        1,
+    ));
+    survivor.state.lock().unwrap().members = Reply::Value(membership_response(
+        CLUSTER_ID,
+        &[(2, survivor_url.clone())],
+        2,
+    ));
+    let mut client = PdClient::connect(&active.address, Duration::from_millis(50)).unwrap();
+    active.state.lock().unwrap().region = Reply::Status(tonic::Code::Unavailable, "removed");
+    active.state.lock().unwrap().members = Reply::Status(tonic::Code::Unavailable, "removed");
+
+    let region = client.get_region(b"wire").unwrap();
+    assert_eq!(region.id, 7);
+    assert_eq!(client.active_endpoint(), survivor_url.clone());
+    assert_eq!(client.member_set().member_urls, [survivor_url]);
+    let state = survivor.state.lock().unwrap();
+    assert_eq!(state.member_requests.len(), 1);
+    assert_eq!(state.region_requests.len(), 1);
+}
+
+#[test]
+fn failed_auxiliary_refresh_preserves_known_survivor_for_region() {
+    let active = Server::start(valid_state());
+    let survivor = Server::start(valid_state());
+    let active_url = http_url(&active);
+    let survivor_url = http_url(&survivor);
+    active.state.lock().unwrap().members = Reply::Value(membership_response(
+        CLUSTER_ID,
+        &[(1, active_url), (2, survivor_url.clone())],
+        1,
+    ));
+    let mut client = PdClient::connect(&active.address, Duration::from_secs(2)).unwrap();
+    let member_error = Reply::Value(pdpb::GetMembersResponse {
+        header: Some(pdpb::ResponseHeader {
+            cluster_id: CLUSTER_ID,
+            error: Some(pdpb::Error {
+                r#type: pdpb::ErrorType::NotBootstrapped as i32,
+                message: "stale discovery".to_owned(),
+            }),
+        }),
+        ..pdpb::GetMembersResponse::default()
+    });
+    active.state.lock().unwrap().region = Reply::Status(tonic::Code::Unavailable, "removed");
+    active.state.lock().unwrap().members = member_error.clone();
+    survivor.state.lock().unwrap().members = member_error;
+
+    let original = client.member_set();
+    let region = client.get_region(b"wire").unwrap();
+    assert_eq!(region.id, 7);
+    assert_eq!(client.member_set(), original);
+    assert_eq!(client.active_endpoint(), survivor_url);
+    assert_eq!(survivor.state.lock().unwrap().member_requests.len(), 1);
+    assert_eq!(survivor.state.lock().unwrap().region_requests.len(), 1);
+}
+
+#[test]
+fn failed_active_endpoint_refreshes_through_survivor_for_store() {
+    let active = Server::start(valid_state());
+    let survivor = Server::start(valid_state());
+    let active_url = http_url(&active);
+    let survivor_url = http_url(&survivor);
+    active.state.lock().unwrap().members = Reply::Value(membership_response(
+        CLUSTER_ID,
+        &[(1, active_url), (2, survivor_url.clone())],
+        1,
+    ));
+    survivor.state.lock().unwrap().members = Reply::Value(membership_response(
+        CLUSTER_ID,
+        &[(2, survivor_url.clone())],
+        2,
+    ));
+    let mut client = PdClient::connect(&active.address, Duration::from_millis(50)).unwrap();
+    active
+        .state
+        .lock()
+        .unwrap()
+        .stores
+        .insert(101, Reply::Status(tonic::Code::Unavailable, "removed"));
+    active.state.lock().unwrap().members = Reply::Status(tonic::Code::Unavailable, "removed");
+
+    let store = client.get_store(101).unwrap().unwrap();
+    assert_eq!(store.id, 101);
+    assert_eq!(client.active_endpoint(), survivor_url);
+    let state = survivor.state.lock().unwrap();
+    assert_eq!(state.member_requests.len(), 1);
+    assert_eq!(state.store_requests.len(), 1);
+}
+
+#[test]
+fn grpc_application_status_is_terminal_without_member_failover() {
+    let active = Server::start(valid_state());
+    let survivor = Server::start(valid_state());
+    let active_url = http_url(&active);
+    let survivor_url = http_url(&survivor);
+    active.state.lock().unwrap().members = Reply::Value(membership_response(
+        CLUSTER_ID,
+        &[(1, active_url), (2, survivor_url)],
+        1,
+    ));
+    let mut client = PdClient::connect(&active.address, Duration::from_secs(2)).unwrap();
+    for (code, expected) in [
+        (tonic::Code::InvalidArgument, "InvalidArgument"),
+        (tonic::Code::PermissionDenied, "PermissionDenied"),
+    ] {
+        active.state.lock().unwrap().region = Reply::Status(code, "application error");
+        let before = active.state.lock().unwrap().region_requests.len();
+
+        let error = client.get_region(b"wire").unwrap_err();
+        assert_eq!(error.kind(), "transport");
+        assert!(error.to_string().contains(expected));
+        assert_eq!(active.state.lock().unwrap().member_requests.len(), 1);
+        assert_eq!(
+            active.state.lock().unwrap().region_requests.len(),
+            before + 1
+        );
+        assert!(survivor.state.lock().unwrap().member_requests.is_empty());
+        assert!(survivor.state.lock().unwrap().region_requests.is_empty());
+    }
+}
+
+#[test]
+fn invalid_discovered_urls_fail_closed() {
+    let mut state = valid_state();
+    state.members = Reply::Value(pdpb::GetMembersResponse {
+        header: Some(header(CLUSTER_ID)),
+        members: vec![pd_member(1, ["https://127.0.0.1:2379"])],
+        leader: Some(pd_member(1, ["https://127.0.0.1:2379"])),
+        ..pdpb::GetMembersResponse::default()
+    });
+    let server = Server::start(state);
+    let error = PdClient::connect(&server.address, Duration::from_secs(2))
+        .err()
+        .expect("TLS discovery is outside this slice");
+    assert_eq!(error.kind(), "invalid_endpoint");
 }
 
 #[test]

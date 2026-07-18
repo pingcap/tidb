@@ -36,7 +36,7 @@ impl std::fmt::Display for PdOperation {
 /// Typed failures from the bounded PD client and topology projection.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PdClientError {
-    /// The single plaintext endpoint is not a valid URI.
+    /// A configured or discovered plaintext endpoint is not a valid URI.
     InvalidEndpoint {
         /// Original configured endpoint.
         endpoint: String,
@@ -47,22 +47,22 @@ pub enum PdClientError {
     Runtime(String),
     /// The worker terminated or was closed.
     Closed,
-    /// The one RPC attempt failed.
+    /// One direct endpoint attempt failed.
     Transport {
         /// Attempted operation.
         operation: PdOperation,
-        /// Sole configured endpoint.
+        /// Attempted endpoint.
         endpoint: String,
         /// Tonic status code identity.
         code: String,
         /// Tonic status message.
         message: String,
     },
-    /// The one operation deadline elapsed.
+    /// One direct endpoint deadline elapsed.
     Timeout {
         /// Attempted operation.
         operation: PdOperation,
-        /// Sole configured endpoint.
+        /// Attempted endpoint.
         endpoint: String,
         /// Configured deadline in milliseconds.
         timeout_ms: u64,

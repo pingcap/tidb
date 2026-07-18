@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::HashSet;
-use std::sync::mpsc;
+use std::collections::{HashMap, HashSet};
+use std::sync::{mpsc, Arc, RwLock};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -22,7 +22,8 @@ use tidb_proto::pdpb::{self, pd_client::PdClient as TonicPdClient};
 use tonic::transport::{Channel, Endpoint};
 
 use crate::{
-    PdClientError, PdNodeState, PdOperation, PdPeer, PdRegion, PdRegionEpoch, PdStore, PdStoreState,
+    PdClientError, PdMemberSet, PdNodeState, PdOperation, PdPeer, PdRegion, PdRegionEpoch, PdStore,
+    PdStoreState,
 };
 
 /// Exact method paths generated from the checked source projection.
@@ -33,6 +34,9 @@ pub const GET_REGION_PATH: &str = "/pdpb.PD/GetRegion";
 pub const GET_STORE_PATH: &str = "/pdpb.PD/GetStore";
 
 enum WorkerCommand {
+    RefreshMembers {
+        reply: mpsc::Sender<Result<PdMemberSet, PdClientError>>,
+    },
     GetRegion {
         encoded_key: Vec<u8>,
         reply: mpsc::Sender<Result<PdRegion, PdClientError>>,
@@ -46,28 +50,48 @@ enum WorkerCommand {
     },
 }
 
-/// Synchronous one-endpoint PD client backed by a dedicated Tokio worker.
+#[derive(Clone, Debug)]
+struct PdSharedState {
+    members: PdMemberSet,
+    active_endpoint: String,
+}
+
+struct PdMemberObservation {
+    cluster_id: u64,
+    projected: Result<PdMemberSet, PdClientError>,
+}
+
+/// Synchronous foreground PD client backed by a dedicated Tokio worker.
 pub struct PdClient {
-    endpoint: String,
+    bootstrap_endpoint: String,
     timeout: Duration,
     cluster_id: u64,
+    state: Arc<RwLock<PdSharedState>>,
     commands: Option<mpsc::Sender<WorkerCommand>>,
     worker: Option<JoinHandle<()>>,
 }
 
 impl PdClient {
-    /// Connects to one plaintext endpoint and bootstraps a nonzero cluster ID.
+    /// Connects to one plaintext seed and discovers its PD membership.
     pub fn connect(endpoint: impl Into<String>, timeout: Duration) -> Result<Self, PdClientError> {
-        let endpoint = endpoint.into();
-        let uri = normalize_plaintext_endpoint(&endpoint)?;
-        let parsed =
-            Endpoint::from_shared(uri).map_err(|error| PdClientError::InvalidEndpoint {
-                endpoint: endpoint.clone(),
-                message: error.to_string(),
-            })?;
+        Self::connect_seeds([endpoint.into()], timeout)
+    }
+
+    /// Connects through one or more plaintext seeds in caller-provided order.
+    pub fn connect_seeds<I, S>(seeds: I, timeout: Duration) -> Result<Self, PdClientError>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let raw_seeds = seeds.into_iter().map(Into::into).collect::<Vec<String>>();
+        let bootstrap_endpoint = raw_seeds
+            .first()
+            .cloned()
+            .ok_or_else(|| invalid_topology("missing_pd_seed", "no PD seed was configured"))?;
+        let seeds = normalize_endpoints(raw_seeds, false)?;
         let (commands, receiver) = mpsc::channel();
         let (ready_tx, ready_rx) = mpsc::channel();
-        let worker_endpoint = endpoint.clone();
+        let worker_seeds = seeds.clone();
         let worker = std::thread::spawn(move || {
             let runtime = match tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -79,39 +103,44 @@ impl PdClient {
                     return;
                 }
             };
-            let channel = {
-                let _guard = runtime.enter();
-                parsed.connect_lazy()
-            };
-            let mut client = TonicPdClient::new(channel);
-            let cluster_id = match get_members(&runtime, &mut client, &worker_endpoint, timeout) {
-                Ok(cluster_id) => cluster_id,
+            let mut clients = HashMap::new();
+            let members = match bootstrap_members(&runtime, &mut clients, &worker_seeds, timeout) {
+                Ok(members) => members,
                 Err(error) => {
                     let _ = ready_tx.send(Err(error));
                     return;
                 }
             };
-            if ready_tx.send(Ok(cluster_id)).is_err() {
+            let state = Arc::new(RwLock::new(PdSharedState {
+                active_endpoint: members.leader_url.clone(),
+                members,
+            }));
+            if ready_tx.send(Ok(Arc::clone(&state))).is_err() {
                 return;
             }
-            run_worker(
-                runtime,
-                client,
-                receiver,
-                worker_endpoint,
-                timeout,
-                cluster_id,
+            retain_member_clients(
+                &mut clients,
+                &state.read().expect("PD state lock poisoned").members,
             );
+            run_worker(runtime, clients, receiver, timeout, state);
         });
 
         match ready_rx.recv() {
-            Ok(Ok(cluster_id)) => Ok(Self {
-                endpoint,
-                timeout,
-                cluster_id,
-                commands: Some(commands),
-                worker: Some(worker),
-            }),
+            Ok(Ok(state)) => {
+                let cluster_id = state
+                    .read()
+                    .expect("PD state lock poisoned")
+                    .members
+                    .cluster_id;
+                Ok(Self {
+                    bootstrap_endpoint,
+                    timeout,
+                    cluster_id,
+                    state,
+                    commands: Some(commands),
+                    worker: Some(worker),
+                })
+            }
             Ok(Err(error)) => {
                 let _ = worker.join();
                 Err(error)
@@ -129,16 +158,51 @@ impl PdClient {
         self.cluster_id
     }
 
-    /// Returns the sole configured endpoint.
+    /// Returns the first configured seed for backward-compatible diagnostics.
+    ///
+    /// This value is not the routing authority. Use [`Self::member_set`] and
+    /// [`Self::active_endpoint`] to inspect current discovery state.
     #[must_use]
     pub fn endpoint(&self) -> &str {
-        &self.endpoint
+        &self.bootstrap_endpoint
+    }
+
+    /// Returns the latest validated membership snapshot.
+    #[must_use]
+    pub fn member_set(&self) -> PdMemberSet {
+        self.state
+            .read()
+            .expect("PD state lock poisoned")
+            .members
+            .clone()
+    }
+
+    /// Returns the endpoint that most recently completed a foreground action.
+    #[must_use]
+    pub fn active_endpoint(&self) -> String {
+        self.state
+            .read()
+            .expect("PD state lock poisoned")
+            .active_endpoint
+            .clone()
     }
 
     /// Returns the one-attempt deadline applied independently to each call.
     #[must_use]
     pub const fn timeout(&self) -> Duration {
         self.timeout
+    }
+
+    /// Refreshes membership through the first reachable known endpoint.
+    pub fn refresh_members(&mut self) -> Result<PdMemberSet, PdClientError> {
+        let Some(commands) = &self.commands else {
+            return Err(PdClientError::Closed);
+        };
+        let (reply, response) = mpsc::channel();
+        commands
+            .send(WorkerCommand::RefreshMembers { reply })
+            .map_err(|_| PdClientError::Closed)?;
+        response.recv().unwrap_or(Err(PdClientError::Closed))
     }
 
     /// Loads the region containing one already encoded PD wire key.
@@ -195,34 +259,25 @@ impl Drop for PdClient {
 
 fn run_worker(
     runtime: tokio::runtime::Runtime,
-    mut client: TonicPdClient<Channel>,
+    mut clients: HashMap<String, TonicPdClient<Channel>>,
     receiver: mpsc::Receiver<WorkerCommand>,
-    endpoint: String,
     timeout: Duration,
-    cluster_id: u64,
+    state: Arc<RwLock<PdSharedState>>,
 ) {
     while let Ok(command) = receiver.recv() {
         match command {
+            WorkerCommand::RefreshMembers { reply } => {
+                let result = refresh_membership(&runtime, &mut clients, timeout, &state);
+                let _ = reply.send(result);
+            }
             WorkerCommand::GetRegion { encoded_key, reply } => {
-                let result = get_region(
-                    &runtime,
-                    &mut client,
-                    &endpoint,
-                    timeout,
-                    cluster_id,
-                    &encoded_key,
-                );
+                let result =
+                    get_region_with_failover(&runtime, &mut clients, timeout, &state, &encoded_key);
                 let _ = reply.send(result);
             }
             WorkerCommand::GetStore { store_id, reply } => {
-                let result = get_store(
-                    &runtime,
-                    &mut client,
-                    &endpoint,
-                    timeout,
-                    cluster_id,
-                    store_id,
-                );
+                let result =
+                    get_store_with_failover(&runtime, &mut clients, timeout, &state, store_id);
                 let _ = reply.send(result);
             }
             WorkerCommand::Close { reply } => {
@@ -233,12 +288,44 @@ fn run_worker(
     }
 }
 
+fn bootstrap_members(
+    runtime: &tokio::runtime::Runtime,
+    clients: &mut HashMap<String, TonicPdClient<Channel>>,
+    seeds: &[String],
+    timeout: Duration,
+) -> Result<PdMemberSet, PdClientError> {
+    let mut accepted = None;
+    let mut cluster_id = None;
+    let mut last_error = None;
+    for seed in seeds {
+        match get_members(runtime, clients, seed, timeout, cluster_id) {
+            Ok(observation) => {
+                cluster_id = Some(observation.cluster_id);
+                match observation.projected {
+                    Ok(members) => accepted = Some(members),
+                    Err(error) => last_error = Some(error),
+                }
+            }
+            Err(error @ PdClientError::ClusterMismatch { .. }) => return Err(error),
+            Err(error) => last_error = Some(error),
+        }
+    }
+    if let Some(members) = accepted {
+        Ok(members)
+    } else {
+        Err(last_error
+            .unwrap_or_else(|| invalid_topology("missing_pd_seed", "no PD seed was configured")))
+    }
+}
+
 fn get_members(
     runtime: &tokio::runtime::Runtime,
-    client: &mut TonicPdClient<Channel>,
+    clients: &mut HashMap<String, TonicPdClient<Channel>>,
     endpoint: &str,
     timeout: Duration,
-) -> Result<u64, PdClientError> {
+    expected_cluster_id: Option<u64>,
+) -> Result<PdMemberObservation, PdClientError> {
+    let client = tonic_client(runtime, clients, endpoint)?;
     let response = runtime.block_on(async {
         tokio::time::timeout(
             timeout,
@@ -247,25 +334,40 @@ fn get_members(
         .await
     });
     let response = map_rpc_result(response, PdOperation::GetMembers, endpoint, timeout)?;
+    let response = response.into_inner();
     let header = response
-        .into_inner()
         .header
+        .as_ref()
         .ok_or(PdClientError::MissingHeader(PdOperation::GetMembers))?;
     reject_header_error(PdOperation::GetMembers, &header)?;
     if header.cluster_id == 0 {
         return Err(PdClientError::ZeroClusterId);
     }
-    Ok(header.cluster_id)
+    if let Some(expected) = expected_cluster_id {
+        if header.cluster_id != expected {
+            return Err(PdClientError::ClusterMismatch {
+                operation: PdOperation::GetMembers,
+                expected,
+                actual: header.cluster_id,
+            });
+        }
+    }
+    let cluster_id = header.cluster_id;
+    Ok(PdMemberObservation {
+        cluster_id,
+        projected: project_member_set(response),
+    })
 }
 
 fn get_region(
     runtime: &tokio::runtime::Runtime,
-    client: &mut TonicPdClient<Channel>,
+    clients: &mut HashMap<String, TonicPdClient<Channel>>,
     endpoint: &str,
     timeout: Duration,
     cluster_id: u64,
     encoded_key: &[u8],
 ) -> Result<PdRegion, PdClientError> {
+    let client = tonic_client(runtime, clients, endpoint)?;
     let response = runtime.block_on(async {
         tokio::time::timeout(
             timeout,
@@ -285,12 +387,13 @@ fn get_region(
 
 fn get_store(
     runtime: &tokio::runtime::Runtime,
-    client: &mut TonicPdClient<Channel>,
+    clients: &mut HashMap<String, TonicPdClient<Channel>>,
     endpoint: &str,
     timeout: Duration,
     cluster_id: u64,
     store_id: u64,
 ) -> Result<Option<PdStore>, PdClientError> {
+    let client = tonic_client(runtime, clients, endpoint)?;
     let response = runtime.block_on(async {
         tokio::time::timeout(
             timeout,
@@ -306,6 +409,264 @@ fn get_store(
         return Ok(None);
     }
     project_store(response.store, store_id)
+}
+
+fn get_region_with_failover(
+    runtime: &tokio::runtime::Runtime,
+    clients: &mut HashMap<String, TonicPdClient<Channel>>,
+    timeout: Duration,
+    state: &Arc<RwLock<PdSharedState>>,
+    encoded_key: &[u8],
+) -> Result<PdRegion, PdClientError> {
+    let snapshot = state.read().expect("PD state lock poisoned").clone();
+    let mut attempted = HashSet::new();
+    attempted.insert(snapshot.active_endpoint.clone());
+    match get_region(
+        runtime,
+        clients,
+        &snapshot.active_endpoint,
+        timeout,
+        snapshot.members.cluster_id,
+        encoded_key,
+    ) {
+        Ok(region) => return Ok(region),
+        Err(error) if is_direct_failure(&error) => {
+            let mut last_error = error;
+            // A bad membership observation never erases the last accepted
+            // snapshot; its remaining direct endpoints are still candidates.
+            if let Err(error @ PdClientError::ClusterMismatch { .. }) =
+                refresh_membership(runtime, clients, timeout, state)
+            {
+                return Err(error);
+            }
+            let current = state.read().expect("PD state lock poisoned").clone();
+            for endpoint in endpoint_attempt_order(&current) {
+                if !attempted.insert(endpoint.clone()) {
+                    continue;
+                }
+                match get_region(
+                    runtime,
+                    clients,
+                    &endpoint,
+                    timeout,
+                    current.members.cluster_id,
+                    encoded_key,
+                ) {
+                    Ok(region) => {
+                        set_active_endpoint(state, endpoint);
+                        return Ok(region);
+                    }
+                    Err(error) if is_direct_failure(&error) => last_error = error,
+                    Err(error) => return Err(error),
+                }
+            }
+            Err(last_error)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn get_store_with_failover(
+    runtime: &tokio::runtime::Runtime,
+    clients: &mut HashMap<String, TonicPdClient<Channel>>,
+    timeout: Duration,
+    state: &Arc<RwLock<PdSharedState>>,
+    store_id: u64,
+) -> Result<Option<PdStore>, PdClientError> {
+    let snapshot = state.read().expect("PD state lock poisoned").clone();
+    let mut attempted = HashSet::new();
+    attempted.insert(snapshot.active_endpoint.clone());
+    match get_store(
+        runtime,
+        clients,
+        &snapshot.active_endpoint,
+        timeout,
+        snapshot.members.cluster_id,
+        store_id,
+    ) {
+        Ok(store) => return Ok(store),
+        Err(error) if is_direct_failure(&error) => {
+            let mut last_error = error;
+            // A bad membership observation never erases the last accepted
+            // snapshot; its remaining direct endpoints are still candidates.
+            if let Err(error @ PdClientError::ClusterMismatch { .. }) =
+                refresh_membership(runtime, clients, timeout, state)
+            {
+                return Err(error);
+            }
+            let current = state.read().expect("PD state lock poisoned").clone();
+            for endpoint in endpoint_attempt_order(&current) {
+                if !attempted.insert(endpoint.clone()) {
+                    continue;
+                }
+                match get_store(
+                    runtime,
+                    clients,
+                    &endpoint,
+                    timeout,
+                    current.members.cluster_id,
+                    store_id,
+                ) {
+                    Ok(store) => {
+                        set_active_endpoint(state, endpoint);
+                        return Ok(store);
+                    }
+                    Err(error) if is_direct_failure(&error) => last_error = error,
+                    Err(error) => return Err(error),
+                }
+            }
+            Err(last_error)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn refresh_membership(
+    runtime: &tokio::runtime::Runtime,
+    clients: &mut HashMap<String, TonicPdClient<Channel>>,
+    timeout: Duration,
+    state: &Arc<RwLock<PdSharedState>>,
+) -> Result<PdMemberSet, PdClientError> {
+    let snapshot = state.read().expect("PD state lock poisoned").clone();
+    let mut last_error = None;
+    let mut cluster_mismatch = None;
+    for endpoint in endpoint_attempt_order(&snapshot) {
+        match get_members(
+            runtime,
+            clients,
+            &endpoint,
+            timeout,
+            Some(snapshot.members.cluster_id),
+        ) {
+            Ok(observation) => match observation.projected {
+                Ok(members) => {
+                    retain_member_clients(clients, &members);
+                    let mut current = state.write().expect("PD state lock poisoned");
+                    current.active_endpoint = members.leader_url.clone();
+                    current.members = members.clone();
+                    return Ok(members);
+                }
+                Err(error) => last_error = Some(error),
+            },
+            Err(error @ PdClientError::ClusterMismatch { .. }) => cluster_mismatch = Some(error),
+            Err(error) => last_error = Some(error),
+        }
+    }
+    Err(cluster_mismatch.or(last_error).unwrap_or_else(|| {
+        invalid_topology(
+            "missing_pd_member",
+            "membership contains no usable endpoint",
+        )
+    }))
+}
+
+fn endpoint_attempt_order(state: &PdSharedState) -> Vec<String> {
+    let mut endpoints = Vec::with_capacity(state.members.member_urls.len() + 2);
+    let mut seen = HashSet::new();
+    for endpoint in std::iter::once(&state.active_endpoint)
+        .chain(std::iter::once(&state.members.leader_url))
+        .chain(state.members.member_urls.iter())
+    {
+        if seen.insert(endpoint.clone()) {
+            endpoints.push(endpoint.clone());
+        }
+    }
+    endpoints
+}
+
+fn set_active_endpoint(state: &Arc<RwLock<PdSharedState>>, endpoint: String) {
+    state
+        .write()
+        .expect("PD state lock poisoned")
+        .active_endpoint = endpoint;
+}
+
+fn is_direct_failure(error: &PdClientError) -> bool {
+    match error {
+        PdClientError::Timeout { .. } => true,
+        PdClientError::Transport { code, .. } => {
+            matches!(
+                code.as_str(),
+                "Unavailable" | "DeadlineExceeded" | "Cancelled"
+            )
+        }
+        _ => false,
+    }
+}
+
+fn tonic_client<'a>(
+    runtime: &tokio::runtime::Runtime,
+    clients: &'a mut HashMap<String, TonicPdClient<Channel>>,
+    endpoint: &str,
+) -> Result<&'a mut TonicPdClient<Channel>, PdClientError> {
+    match clients.entry(endpoint.to_owned()) {
+        std::collections::hash_map::Entry::Occupied(entry) => Ok(entry.into_mut()),
+        std::collections::hash_map::Entry::Vacant(entry) => {
+            let parsed = Endpoint::from_shared(endpoint.to_owned()).map_err(|error| {
+                PdClientError::InvalidEndpoint {
+                    endpoint: endpoint.to_owned(),
+                    message: error.to_string(),
+                }
+            })?;
+            let channel = {
+                let _guard = runtime.enter();
+                parsed.connect_lazy()
+            };
+            Ok(entry.insert(TonicPdClient::new(channel)))
+        }
+    }
+}
+
+fn retain_member_clients(
+    clients: &mut HashMap<String, TonicPdClient<Channel>>,
+    members: &PdMemberSet,
+) {
+    clients.retain(|endpoint, _| members.member_urls.contains(endpoint));
+}
+
+fn project_member_set(response: pdpb::GetMembersResponse) -> Result<PdMemberSet, PdClientError> {
+    let cluster_id = response
+        .header
+        .as_ref()
+        .expect("GetMembers header validated before projection")
+        .cluster_id;
+    let leader = response
+        .leader
+        .ok_or_else(|| invalid_topology("missing_pd_leader", "GetMembers omitted the PD leader"))?;
+    let leader_url = leader
+        .client_urls
+        .first()
+        .ok_or_else(|| {
+            invalid_topology(
+                "missing_pd_leader_url",
+                format!("PD leader {} has no client URL", leader.member_id),
+            )
+        })
+        .and_then(|url| normalize_plaintext_endpoint(url))?;
+    let member_urls = normalize_endpoints(
+        response
+            .members
+            .into_iter()
+            .flat_map(|member| member.client_urls),
+        true,
+    )?;
+    if member_urls.is_empty() {
+        return Err(invalid_topology(
+            "missing_pd_member_url",
+            "GetMembers returned no member client URL",
+        ));
+    }
+    if !member_urls.contains(&leader_url) {
+        return Err(invalid_topology(
+            "leader_not_in_members",
+            format!("PD leader URL {leader_url} is absent from member URLs"),
+        ));
+    }
+    Ok(PdMemberSet {
+        cluster_id,
+        leader_url,
+        member_urls,
+    })
 }
 
 fn store_is_removed(
@@ -597,11 +958,35 @@ fn normalize_plaintext_endpoint(endpoint: &str) -> Result<String, PdClientError>
             message: "only plaintext http endpoints are supported".to_owned(),
         });
     }
-    Ok(if endpoint.starts_with("http://") {
+    let normalized = if endpoint.starts_with("http://") {
         endpoint.to_owned()
     } else {
         format!("http://{endpoint}")
-    })
+    };
+    Endpoint::from_shared(normalized.clone()).map_err(|error| PdClientError::InvalidEndpoint {
+        endpoint: endpoint.to_owned(),
+        message: error.to_string(),
+    })?;
+    Ok(normalized)
+}
+
+fn normalize_endpoints<I, S>(endpoints: I, sort: bool) -> Result<Vec<String>, PdClientError>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut normalized = Vec::new();
+    let mut seen = HashSet::new();
+    for endpoint in endpoints {
+        let endpoint = normalize_plaintext_endpoint(endpoint.as_ref())?;
+        if seen.insert(endpoint.clone()) {
+            normalized.push(endpoint);
+        }
+    }
+    if sort {
+        normalized.sort();
+    }
+    Ok(normalized)
 }
 
 fn invalid_topology(kind: &'static str, message: impl Into<String>) -> PdClientError {
