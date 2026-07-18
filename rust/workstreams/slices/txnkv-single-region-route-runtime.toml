@@ -1,0 +1,49 @@
+schema = "1"
+slice = "txnkv-single-region-route-runtime"
+status = "ready"
+target = "tidb-txnkv"
+ring = "transaction"
+consumer = "A source-shaped single-region leader route authority below DistSQL: immutable RegionVerId/epoch/peer/store identity, ordered key containment, injected PD loader misses, cache insert/lookup/invalidate, leader selection, and exactly-once request-context attachment immediately before the address-directed RPC. It deliberately rejects multi-region splits, follower/stale/proxy reads, store failover, retry/backoff, locks, buckets, keyspace-v2 codecs, and concrete PD networking."
+test_target = "region_cache_source, region_request_sender_source, and replica_selector_source"
+go_sources = []
+go_tests = []
+module_sources = [
+  "client-go::internal/locate/accessmode.go",
+  "client-go::internal/locate/pd_codec.go",
+  "client-go::internal/locate/region_cache.go",
+  "client-go::internal/locate/region_request.go",
+  "client-go::internal/locate/replica_selector.go",
+  "client-go::internal/locate/slow_score.go",
+  "client-go::internal/locate/sorted_btree.go",
+  "client-go::internal/locate/store_cache.go",
+]
+module_tests = [
+  "client-go::internal/locate/region_cache_test.go:242:TestRegionCache",
+  "client-go::internal/locate/region_request_test.go:78:TestRegionRequestToSingleStore",
+  "client-go::internal/locate/replica_selector_test.go:108:TestReplicaSelectorBasic",
+]
+depends_on = []
+evidence_prerequisites = []
+support_anchors = [
+  "client-go/internal/locate/region_cache_test.go:383:TestSimple",
+  "client-go/internal/locate/region_cache_test.go:403:TestResolveStateTransition",
+  "client-go/internal/locate/region_cache_test.go:3468:TestLocateRegionByIDFromPD",
+  "client-go/internal/locate/region_request_test.go:381:TestSendReqCtx",
+  "client-go/internal/locate/region_request_test.go:877:TestGetRegionByIDFromCache",
+  "client-go/internal/locate/region_request_test.go:1030:TestClusterIDInReq",
+  "github.com/tikv/pd/client@v0.0.0-20260708075407-4e05b9d2c2d3:concrete PD discovery remains external",
+]
+rust_paths = [
+  "rust/crates/tidb-txnkv/src/region/mod.rs",
+  "rust/crates/tidb-txnkv/src/region/cache.rs",
+  "rust/crates/tidb-txnkv/src/region/error.rs",
+  "rust/crates/tidb-txnkv/src/region/id.rs",
+  "rust/crates/tidb-txnkv/src/region/location.rs",
+  "rust/crates/tidb-txnkv/src/region/replica_selector.rs",
+  "rust/crates/tidb-txnkv/src/region/request_sender.rs",
+  "rust/crates/tidb-txnkv/tests/region_cache_source.rs",
+  "rust/crates/tidb-txnkv/tests/region_request_sender_source.rs",
+  "rust/crates/tidb-txnkv/tests/replica_selector_source.rs",
+  "rust/difftests/corpus/coverage/evidence/client-go/source/txnkv-single-region-route-runtime.tsv",
+  "rust/difftests/corpus/coverage/evidence/client-go/tests/txnkv-single-region-route-runtime.tsv",
+]

@@ -1,10 +1,10 @@
 schema = "1"
 slice = "distsql-direct-unary-client-runtime"
-status = "partial"
+status = "ready"
 target = "tidb-exec"
 ring = "result"
-consumer = "one bounded TiKV unary DAG read path from executor TableIndexReader through the canonical QueryTransport and CopReadTaskRuntime to a caller-injected address-directed unary client. The client projection preserves the pinned client-go SendRequest argument/result shape: explicit address, immutable unary coprocessor request, timeout, raw response, and transport error. The transport consumes caller-supplied checked region topology plus an exact region-to-address map, prepares each request with the shared cache/EMA/paging owners, builds the checked TiKV request context, sends it once, fully decodes region/lock/other/batch precedence before coordinator mutation, publishes successful SelectResponse bytes in logical-task order, and transfers the resulting QueryResponse once into TableIndexReader decoding. Missing or duplicate routes, unsupported request/store shapes, and every response requiring retry fail closed. This remains PARTIAL: the client is injected, not a socket or live TiKV client; PD/RegionCache discovery, replica/address selection, retries/backoff, lock resolution, cancellation, TLS, connection pooling, batch commands, forwarding, compression, metrics, asynchronous dispatch, unordered execution, and RealTiKV remain external."
-test_target = "cop_read_task_runtime_source, cop_paging_source, copr_cache_source, read_bytes_ema_source, region_location_coverage_source, region_task_source, region_task_builder_source, key_ranges_source, tikv_rpc_contract_source, tikv_client_contract_source, query_runtime_source, distsql_query_runtime_source, table_index_reader_runtime_source, lack_handles_source, direct_unary_client_runtime_source, and direct_unary_table_index_reader_source"
+consumer = "Campaign 09 extends the bounded TiKV unary DAG read path with the pinned client-go address-keyed connection lifecycle and exact tikvpb.Tikv/Coprocessor gRPC method. The real client implements the existing KV-owned SendRequest-shaped capability, reuses channels per address, attaches the already selected request context exactly once, enforces the caller timeout, returns raw protobuf response bytes, and preserves typed address/version transport errors and close/reopen behavior. A live-TiKV probe may supply checked single-region topology, but this slice does not claim PD discovery, RegionCache freshness, retry, locks, TLS, batch/stream/async RPC, forwarding, compression, metrics, or COM_QUERY wiring."
+test_target = "existing direct unary/read suites plus tikv_tonic_coprocessor_source and the ignored Campaign 09 RealTiKV unary proof"
 go_sources = [
   "pkg/store/copr/coprocessor.go",
   "pkg/store/copr/coprocessor_cache.go",
@@ -103,9 +103,13 @@ go_tests = [
 ]
 module_sources = [
   "client-go::internal/client/client.go",
+  "client-go::internal/client/conn_pool.go",
   "client-go::tikvrpc/tikvrpc.go",
 ]
 module_tests = [
+  "client-go::internal/client/client_test.go:68:TestConn",
+  "client-go::internal/client/client_test.go:103:TestGetConnAfterClose",
+  "client-go::internal/client/client_test.go:1272:TestErrConn",
   "client-go::tikvrpc/tikvrpc_test.go:124:TestAttachContextSetsRequestContext",
 ]
 depends_on = []
@@ -128,6 +132,10 @@ support_anchors = [
   "client-go/tikvrpc/tikvrpc.go:1193-1256:CmdCop calls Tikv.Coprocessor",
 ]
 rust_paths = [
+  "rust/Cargo.toml",
+  "rust/Cargo.lock",
+  "rust/crates/tidb-proto/Cargo.toml",
+  "rust/crates/tidb-proto/proto/tikvpb.proto",
   "rust/crates/tidb-distsql/src/cop_paging/cop_read_task_runtime.rs",
   "rust/crates/tidb-distsql/src/cop_paging.rs",
   "rust/crates/tidb-distsql/src/copr_cache.rs",
@@ -152,7 +160,13 @@ rust_paths = [
   "rust/crates/tidb-distsql/tests/tikv_rpc_contract_source.rs",
   "rust/crates/tidb-txnkv/src/client.rs",
   "rust/crates/tidb-txnkv/src/lib.rs",
+  "rust/crates/tidb-txnkv/Cargo.toml",
+  "rust/crates/tidb-txnkv/src/rpc/mod.rs",
+  "rust/crates/tidb-txnkv/src/rpc/channel_pool.rs",
+  "rust/crates/tidb-txnkv/src/rpc/error.rs",
+  "rust/crates/tidb-txnkv/src/rpc/tonic_coprocessor.rs",
   "rust/crates/tidb-txnkv/tests/tikv_client_contract_source.rs",
+  "rust/crates/tidb-txnkv/tests/tikv_tonic_coprocessor_source.rs",
   "rust/crates/tidb-distsql/src/query_runtime/query_response.rs",
   "rust/crates/tidb-distsql/src/query_runtime.rs",
   "rust/crates/tidb-distsql/src/response_channel.rs",
@@ -171,5 +185,7 @@ rust_paths = [
   "rust/difftests/corpus/coverage/evidence/tests/distsql-direct-unary-client-runtime.tsv",
   "rust/difftests/corpus/coverage/evidence/client-go/source/distsql-direct-unary-client-runtime.tsv",
   "rust/difftests/corpus/coverage/evidence/client-go/tests/distsql-direct-unary-client-runtime.tsv",
+  "rust/difftests/transaction-tests/tests/realtikv_tikv_unary.rs",
+  "rust/scripts/run-campaign09-realtikv.sh",
   "rust/difftests/corpus/coverage/evidence/transfers/distsql-direct-unary-client-runtime.tsv",
 ]
