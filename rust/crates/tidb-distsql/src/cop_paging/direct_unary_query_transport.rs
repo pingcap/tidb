@@ -331,9 +331,9 @@ impl ReplicaReadSeed {
 }
 
 impl<C, L: RegionLoader> DirectUnaryQueryTransport<C, L> {
-    /// Compatibility constructor for injected and non-Send loader runtimes.
+    /// Constructs an explicitly injected, workerless transport runtime.
     /// Production PD-backed callers use [`Self::new_production`].
-    pub fn new<S>(
+    pub fn new_injected<S>(
         client: C,
         region_cache: RegionCache<L>,
         config: DirectUnaryRuntimeConfig,
@@ -345,10 +345,26 @@ impl<C, L: RegionLoader> DirectUnaryQueryTransport<C, L> {
         S: tidb_txnkv::lock::TimestampSource + 'static,
     {
         Self::with_shared_runtime(
-            SharedReadRuntime::new(client, region_cache),
+            SharedReadRuntime::new_injected(client, region_cache),
             config,
             timestamp_source,
         )
+    }
+
+    /// Compatibility alias for callers that predate explicit runtime modes.
+    #[doc(hidden)]
+    pub fn new<S>(
+        client: C,
+        region_cache: RegionCache<L>,
+        config: DirectUnaryRuntimeConfig,
+        timestamp_source: S,
+    ) -> Result<Self, DirectUnaryTransportError>
+    where
+        C: tidb_txnkv::lock::LockRecoveryClient,
+        L: RegionRecoveryLoader,
+        S: tidb_txnkv::lock::TimestampSource + 'static,
+    {
+        Self::new_injected(client, region_cache, config, timestamp_source)
     }
 
     /// Retains already-shared client/cache handles and installs required
@@ -406,6 +422,7 @@ where
     {
         let runtime = SharedReadRuntime::new_with_maintenance(client, region_cache)
             .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle)?;
+        debug_assert!(runtime.is_maintained());
         Self::with_shared_runtime(runtime, config, timestamp_source)
     }
 }
@@ -850,12 +867,22 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             Err(error) => {
                 let feedback =
                     dispatch.feedback(&selected, tidb_txnkv::region::RouteOutcome::Failure);
+                let observation_current = match cache_operation(&self.shared_runtime, |cache| {
+                    cache.validate_route_observation(&selected, &observation)
+                })? {
+                    Ok(()) => true,
+                    Err(RegionRecoveryError::StaleObservation(_)) => false,
+                    Err(error) => {
+                        return Err(DirectUnaryTransportError::RegionRecovery(error.to_string()));
+                    }
+                };
                 self.record_attempt_result(logical_task_id, &selected, dispatch_duration)?;
                 return self.recover_transport_failure(
                     logical_task_id,
                     attempt_id,
                     selected,
                     observation,
+                    observation_current,
                     feedback,
                     error,
                 );
@@ -976,6 +1003,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         attempt_id: u64,
         selected: LeaderRequest,
         observation: tidb_txnkv::region::RegionAttemptObservation,
+        observation_current: bool,
         feedback: tidb_txnkv::region::RouteFeedback,
         error: DirectUnaryClientError,
     ) -> Result<(), DirectUnaryTransportError> {
@@ -1007,15 +1035,18 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             .liveness(connection.address(), DEFAULT_STORE_LIVENESS_TIMEOUT)
             .map_err(DirectUnaryTransportError::Client)?;
         self.check_retry_active()?;
-        let failure_outcome = cache_operation(&self.shared_runtime, |region_cache| {
-            region_cache.on_route_send_failure_observed(&selected, &observation, liveness)
-        })?;
-        let failure_outcome = match failure_outcome {
-            Ok(outcome) => Some(outcome),
-            Err(RegionRecoveryError::StaleObservation(_)) => None,
-            Err(error) => {
-                return Err(DirectUnaryTransportError::RegionRecovery(error.to_string()));
+        let failure_outcome = if observation_current {
+            match cache_operation(&self.shared_runtime, |region_cache| {
+                region_cache.on_route_send_failure_observed(&selected, &observation, liveness)
+            })? {
+                Ok(outcome) => Some(outcome),
+                Err(RegionRecoveryError::StaleObservation(_)) => None,
+                Err(error) => {
+                    return Err(DirectUnaryTransportError::RegionRecovery(error.to_string()));
+                }
             }
+        } else {
+            None
         };
         if matches!(
             failure_outcome,

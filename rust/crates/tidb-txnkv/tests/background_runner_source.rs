@@ -17,8 +17,9 @@
 use std::time::Duration;
 
 use tidb_txnkv::region::{
-    BackgroundRegionCache, KeyRange, RegionCache, RegionLoadError, RegionLoader, RegionLocation,
-    RegionQuery, RegionQueryLoader, RegionQueryOptions, StoreMetadata,
+    BackgroundRegionCache, BackgroundRegionCacheError, KeyRange, RegionCache, RegionLoadError,
+    RegionLoader, RegionLocation, RegionQuery, RegionQueryLoader, RegionQueryOptions,
+    StoreMetadata,
 };
 use tidb_txnkv::SharedReadRuntime;
 
@@ -79,13 +80,12 @@ fn trigger_wakes_the_single_driver_and_shutdown_waits_for_close() {
     assert!(background.last_round().unwrap().unwrap().triggered);
 
     background.shutdown().unwrap();
-    assert!(background.is_closed().unwrap());
-    assert!(!background.trigger_store_check().unwrap());
 }
 
 #[test]
-fn shared_runtime_clones_one_maintained_cache_and_joins_once() {
+fn shared_runtime_clones_one_maintained_cache_and_cannot_stop_each_other() {
     let runtime = SharedReadRuntime::new_with_maintenance((), RegionCache::new(Loader)).unwrap();
+    assert!(runtime.is_maintained());
     let clone = runtime.clone();
     let background = runtime.region_cache_handle();
     let runtime_cache = runtime
@@ -96,7 +96,21 @@ fn shared_runtime_clones_one_maintained_cache_and_joins_once() {
         .unwrap();
     assert_eq!(runtime_cache, background_cache);
 
-    clone.shutdown().unwrap();
-    assert!(background.is_closed().unwrap());
+    assert!(matches!(
+        clone.shutdown(),
+        Err(BackgroundRegionCacheError::SharedOwners { owners }) if owners >= 2
+    ));
+    assert!(!background.is_closed().unwrap());
+    let completed = background.completed_rounds().unwrap();
+    assert!(background.trigger_store_check().unwrap());
+    for _ in 0..100 {
+        if background.completed_rounds().unwrap() > completed {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(background.completed_rounds().unwrap() > completed);
+
+    drop(background);
     runtime.shutdown().unwrap();
 }

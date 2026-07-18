@@ -44,6 +44,11 @@ pub enum BackgroundRegionCacheError {
     DriverPoisoned,
     /// The maintenance thread panicked during shutdown.
     WorkerPanicked,
+    /// Explicit shutdown requires the last handle to the shared authority.
+    SharedOwners {
+        /// Number of live handles observed by the consumed shutdown handle.
+        owners: usize,
+    },
 }
 
 impl std::fmt::Display for BackgroundRegionCacheError {
@@ -57,6 +62,10 @@ impl std::fmt::Display for BackgroundRegionCacheError {
             Self::CachePoisoned => formatter.write_str("canonical region cache lock is poisoned"),
             Self::DriverPoisoned => formatter.write_str("maintenance driver lock is poisoned"),
             Self::WorkerPanicked => formatter.write_str("maintenance driver panicked"),
+            Self::SharedOwners { owners } => write!(
+                formatter,
+                "explicit shutdown requires unique ownership; observed {owners} live handles"
+            ),
         }
     }
 }
@@ -214,9 +223,16 @@ impl<L> BackgroundRegionCache<L> {
             .map_err(|_| BackgroundRegionCacheError::DriverPoisoned)
     }
 
-    /// Cancels the sole worker and waits for its termination exactly once.
-    pub fn shutdown(&self) -> Result<(), BackgroundRegionCacheError> {
-        shutdown_inner(&self.inner)
+    /// Consumes the unique owner, cancels the sole worker, and joins it once.
+    ///
+    /// Dropping the last handle performs the same shutdown automatically. A
+    /// shared handle cannot terminate the worker while another owner uses it.
+    pub fn shutdown(self) -> Result<(), BackgroundRegionCacheError> {
+        let inner = Arc::try_unwrap(self.inner).map_err(|inner| {
+            let owners = Arc::strong_count(&inner);
+            BackgroundRegionCacheError::SharedOwners { owners }
+        })?;
+        shutdown_inner(&inner)
     }
 
     /// Whether shutdown has completed and no worker remains.

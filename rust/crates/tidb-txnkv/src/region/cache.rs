@@ -971,6 +971,20 @@ impl<L> RegionCache<L> {
         Ok(())
     }
 
+    /// Validates a route observation without mutating cache or retry state.
+    pub fn validate_route_observation(
+        &self,
+        request: &LeaderRequest,
+        observation: &RegionAttemptObservation,
+    ) -> Result<(), RegionRecoveryError> {
+        if observation.attempt() != request.dispatch_attempt() {
+            return Err(RegionRecoveryError::StaleObservation(
+                observation.attempt().clone(),
+            ));
+        }
+        self.validate_attempt_observation(observation)
+    }
+
     /// Applies one request-scoped busy observation to the canonical store.
     pub fn on_server_busy(
         &mut self,
@@ -1035,12 +1049,7 @@ impl<L> RegionCache<L> {
         observation: &RegionAttemptObservation,
         liveness: StoreLiveness,
     ) -> Result<StoreFailureOutcome, RegionRecoveryError> {
-        if observation.attempt() != request.dispatch_attempt() {
-            return Err(RegionRecoveryError::StaleObservation(
-                observation.attempt().clone(),
-            ));
-        }
-        self.validate_attempt_observation(observation)?;
+        self.validate_route_observation(request, observation)?;
         self.on_route_send_failure(request, liveness)
     }
 

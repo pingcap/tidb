@@ -88,9 +88,16 @@ fn cache_issued_observation_rejects_down_and_witness_transitions() {
             panic!("fresh region must select its leader");
         };
         let observation = cache.observe_attempt(selected.dispatch_attempt()).unwrap();
+        cache
+            .validate_route_observation(&selected, &observation)
+            .unwrap();
 
         cache.invalidate(before.region);
         cache.locate_key(b"a").unwrap();
+        assert!(matches!(
+            cache.validate_route_observation(&selected, &observation),
+            Err(RegionRecoveryError::StaleObservation(_))
+        ));
         assert!(matches!(
             cache.on_route_send_failure_observed(
                 &selected,

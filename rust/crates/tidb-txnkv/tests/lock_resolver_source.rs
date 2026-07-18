@@ -171,7 +171,7 @@ fn runtime(
             location(2, b"r", b"", "secondary:20160"),
         ],
     });
-    (SharedReadRuntime::new(client, cache), recorded)
+    (SharedReadRuntime::new_injected(client, cache), recorded)
 }
 
 fn secondary() -> OptimisticLock {

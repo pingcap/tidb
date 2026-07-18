@@ -289,7 +289,7 @@ fn pre_cancelled_query_never_reaches_pd_selector_cache_or_client() {
     cancel.cancel();
     let observations = Rc::new(ClientObservations::default());
     let loader_calls = Rc::new(RefCell::new(Vec::new()));
-    let shared = SharedReadRuntime::new(
+    let shared = SharedReadRuntime::new_injected(
         CancellationBlockingClient {
             observations: Rc::clone(&observations),
             dispatch_started: None,
@@ -299,6 +299,7 @@ fn pre_cancelled_query_never_reaches_pd_selector_cache_or_client() {
             regions: [location(1, "a", "z")].into_iter().collect(),
         }),
     );
+    assert!(!shared.is_maintained());
     let transport = DirectUnaryQueryTransport::with_locked_response_delegate(
         shared,
         DirectUnaryRuntimeConfig::default(),
@@ -330,7 +331,7 @@ fn cancellation_after_rpc_wins_over_transport_error_before_recovery_mutation() {
     let cancel = Arc::new(CancelHandle::default());
     let observations = Rc::new(ClientObservations::default());
     let loader_calls = Rc::new(RefCell::new(Vec::new()));
-    let shared = SharedReadRuntime::new(
+    let shared = SharedReadRuntime::new_injected(
         CancellationThenTransportErrorClient {
             observations: Rc::clone(&observations),
         },
@@ -381,7 +382,7 @@ fn execution_cancellation_interrupts_dispatch_before_all_recovery_and_success_mu
     let loader_calls = Rc::new(RefCell::new(Vec::new()));
     let retry = Rc::new(NoRetryMutation::default());
     let (dispatch_started, dispatch_started_rx) = mpsc::channel();
-    let shared = SharedReadRuntime::new(
+    let shared = SharedReadRuntime::new_injected(
         CancellationBlockingClient {
             observations: Rc::clone(&observations),
             dispatch_started: Some(dispatch_started),
@@ -508,12 +509,28 @@ fn production_failure_uses_selection_observation_without_holding_cache_during_io
     let send = source
         .find(".send_request_with_route(")
         .expect("unlocked client dispatch");
+    let immediate_validation = source
+        .find("cache.validate_route_observation(&selected, &observation)")
+        .expect("read-only validation immediately after send failure");
+    let selector_mutation = source[immediate_validation..]
+        .find("self.record_attempt_result(logical_task_id, &selected, dispatch_duration)")
+        .map(|offset| immediate_validation + offset)
+        .expect("selector mutation follows immediate validation");
     let guarded_failure = source
         .find(".on_route_send_failure_observed(&selected, &observation, liveness)")
         .expect("guarded production failure mutation");
+    let retry = source[guarded_failure..]
+        .find(".retry_transport_attempt(failed)")
+        .map(|offset| guarded_failure + offset)
+        .expect("stale observation still reaches coordinator retry");
 
     assert!(observation < send);
-    assert!(send < guarded_failure);
+    assert!(send < immediate_validation);
+    assert!(immediate_validation < selector_mutation);
+    assert!(selector_mutation < guarded_failure);
+    assert!(guarded_failure < retry);
+    assert!(source.contains("Err(RegionRecoveryError::StaleObservation(_)) => false"));
+    assert!(source.contains("if observation_current"));
     assert!(!source.contains(".on_route_send_failure(&selected, liveness)"));
     assert!(!source.contains(".region_cache().try_borrow"));
 }

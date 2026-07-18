@@ -208,5 +208,6 @@ fn production_failure_triggers_in_place_maintenance_on_the_shared_cache() {
             assert_eq!(cache.store_label(101, "zone"), Some("z2"));
         })
         .unwrap();
+    drop(background);
     runtime.shutdown().unwrap();
 }

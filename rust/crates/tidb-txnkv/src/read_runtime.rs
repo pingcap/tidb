@@ -33,6 +33,7 @@ pub struct SharedReadRuntime<C, L> {
     client: Rc<RefCell<C>>,
     region_cache: BackgroundRegionCache<L>,
     cluster_id: u64,
+    maintained: bool,
 }
 
 impl<C, L> Clone for SharedReadRuntime<C, L> {
@@ -41,6 +42,7 @@ impl<C, L> Clone for SharedReadRuntime<C, L> {
             client: Rc::clone(&self.client),
             region_cache: self.region_cache.clone(),
             cluster_id: self.cluster_id,
+            maintained: self.maintained,
         }
     }
 }
@@ -48,12 +50,13 @@ impl<C, L> Clone for SharedReadRuntime<C, L> {
 impl<C, L: RegionLoader> SharedReadRuntime<C, L> {
     /// Creates the synchronized cache authority for an injected runtime.
     #[must_use]
-    pub fn new(client: C, region_cache: RegionCache<L>) -> Self {
+    pub fn new_injected(client: C, region_cache: RegionCache<L>) -> Self {
         let cluster_id = region_cache.cluster_id();
         Self {
             client: Rc::new(RefCell::new(client)),
             region_cache: BackgroundRegionCache::without_worker(region_cache),
             cluster_id,
+            maintained: false,
         }
     }
 
@@ -89,8 +92,14 @@ impl<C, L: RegionLoader> SharedReadRuntime<C, L> {
     }
 
     /// Cancels and joins the sole maintenance worker exactly once.
-    pub fn shutdown(&self) -> Result<(), BackgroundRegionCacheError> {
+    pub fn shutdown(self) -> Result<(), BackgroundRegionCacheError> {
         self.region_cache.shutdown()
+    }
+
+    /// Whether this runtime owns the production maintenance worker.
+    #[must_use]
+    pub const fn is_maintained(&self) -> bool {
+        self.maintained
     }
 
     /// Cluster identity owned by the sole region cache.
@@ -119,6 +128,7 @@ where
             client: Rc::new(RefCell::new(client)),
             region_cache,
             cluster_id,
+            maintained: true,
         })
     }
 }
