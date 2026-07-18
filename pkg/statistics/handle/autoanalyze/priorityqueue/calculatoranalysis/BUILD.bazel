@@ -1,0 +1,21 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "calculatoranalysis_test",
+    timeout = "short",
+    srcs = [
+        "calculator_analysis_test.go",
+        "main_test.go",
+    ],
+    data = glob(["testdata/**"]),
+    flaky = True,
+    deps = [
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/sysproctrack",
+        "//pkg/statistics/handle/autoanalyze/priorityqueue",
+        "//pkg/statistics/handle/types",
+        "//pkg/testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

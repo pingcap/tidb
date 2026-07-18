@@ -1,0 +1,34 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "sessiontest_test",
+    timeout = "moderate",
+    srcs = [
+        "cross_ks_gc_test.go",
+        "infoschema_test.go",
+        "infoschema_v2_test.go",
+        "main_test.go",
+        "paging_test.go",
+        "session_fail_test.go",
+    ],
+    flaky = True,
+    race = "on",
+    shard_count = 18,
+    deps = [
+        "//pkg/config",
+        "//pkg/config/kerneltype",
+        "//pkg/infoschema",
+        "//pkg/keyspace",
+        "//pkg/meta",
+        "//pkg/parser/ast",
+        "//pkg/session",
+        "//pkg/sessionctx/vardef",
+        "//pkg/store/helper",
+        "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
+        "//pkg/util/sqlkiller",
+        "//tests/realtikvtest",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+    ],
+)

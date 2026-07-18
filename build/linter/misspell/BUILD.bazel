@@ -1,0 +1,13 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "misspell",
+    srcs = ["analyzer.go"],
+    importpath = "github.com/pingcap/tidb/build/linter/misspell",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//build/linter/util",
+        "@com_github_golangci_misspell//:misspell",
+        "@org_golang_x_tools//go/analysis",
+    ],
+)

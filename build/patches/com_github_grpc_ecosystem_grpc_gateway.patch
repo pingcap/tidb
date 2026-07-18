@@ -1,0 +1,76 @@
+diff --git a/internal/BUILD.bazel b/internal/BUILD.bazel
+index 5242751fb..b3b6fa842 100644
+--- a/internal/BUILD.bazel
++++ b/internal/BUILD.bazel
+@@ -4,20 +4,12 @@ load("@io_bazel_rules_go//proto:def.bzl", "go_proto_library")
+ 
+ package(default_visibility = ["//visibility:public"])
+ 
+-proto_library(
+-    name = "internal_proto",
+-    srcs = ["errors.proto"],
+-    deps = ["@com_google_protobuf//:any_proto"],
+-)
+-
+-go_proto_library(
+-    name = "internal_go_proto",
+-    importpath = "github.com/grpc-ecosystem/grpc-gateway/internal",
+-    proto = ":internal_proto",
+-)
+-
+ go_library(
+     name = "go_default_library",
+-    embed = [":internal_go_proto"],
++    srcs = ["errors.pb.go"],
++    deps = [
++        "@com_github_golang_protobuf//proto:go_default_library",
++        "@com_github_golang_protobuf//ptypes/any:go_default_library",
++    ],
+     importpath = "github.com/grpc-ecosystem/grpc-gateway/internal",
+ )
+diff --git a/protoc-gen-grpc-gateway/descriptor/BUILD.bazel b/protoc-gen-grpc-gateway/descriptor/BUILD.bazel
+index 02aa7d2a8..fd922a156 100644
+--- a/protoc-gen-grpc-gateway/descriptor/BUILD.bazel
++++ b/protoc-gen-grpc-gateway/descriptor/BUILD.bazel
+@@ -19,8 +19,8 @@ go_library(
+         "@com_github_golang_glog//:go_default_library",
+         "@com_github_golang_protobuf//jsonpb:go_default_library_gen",
+         "@com_github_golang_protobuf//proto:go_default_library",
+-        "@go_googleapis//google/api:annotations_go_proto",
++        "@com_github_golang_protobuf//protoc-gen-go/descriptor:go_default_library",
+         "@io_bazel_rules_go//proto/wkt:compiler_plugin_go_proto",
+-        "@io_bazel_rules_go//proto/wkt:descriptor_go_proto",
++        "@org_golang_google_genproto//googleapis/api/annotations:go_default_library",
+     ],
+ )
+
+diff --git a/runtime/BUILD.bazel b/runtime/BUILD.bazel
+index c4d18f624..41d5319fb 100644
+--- a/runtime/BUILD.bazel
++++ b/runtime/BUILD.bazel
+@@ -27,16 +27,17 @@
+     deps = [
+         "//internal:go_default_library",
+         "//utilities:go_default_library",
+-        "@com_github_golang_protobuf//descriptor:go_default_library_gen",
++        "@com_github_golang_protobuf//descriptor:descriptor",
+         "@com_github_golang_protobuf//jsonpb:go_default_library_gen",
+         "@com_github_golang_protobuf//proto:go_default_library",
+-        "@go_googleapis//google/api:httpbody_go_proto",
+-        "@io_bazel_rules_go//proto/wkt:any_go_proto",
+-        "@io_bazel_rules_go//proto/wkt:descriptor_go_proto",
+-        "@io_bazel_rules_go//proto/wkt:duration_go_proto",
+-        "@io_bazel_rules_go//proto/wkt:field_mask_go_proto",
+-        "@io_bazel_rules_go//proto/wkt:timestamp_go_proto",
+-        "@io_bazel_rules_go//proto/wkt:wrappers_go_proto",
++        "@com_github_golang_protobuf//protoc-gen-go/descriptor:go_default_library",
++        "@com_github_golang_protobuf//ptypes:go_default_library",
++        "@com_github_golang_protobuf//ptypes/any:go_default_library",
++        "@com_github_golang_protobuf//ptypes/duration:go_default_library",
++        "@com_github_golang_protobuf//ptypes/timestamp:go_default_library",
++        "@com_github_golang_protobuf//ptypes/wrappers:go_default_library",
++        "@org_golang_google_genproto_googleapis_api//httpbody",
++        "@org_golang_google_genproto//protobuf/field_mask:go_default_library",
+         "@org_golang_google_grpc//codes:go_default_library",
+         "@org_golang_google_grpc//grpclog:go_default_library",
+         "@org_golang_google_grpc//metadata:go_default_library",

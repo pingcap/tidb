@@ -1,0 +1,9 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "client",
+    srcs = ["client.go"],
+    importpath = "github.com/pingcap/tidb/pkg/store/mockstore/unistore/client",
+    visibility = ["//visibility:public"],
+    deps = ["@com_github_tikv_client_go_v2//tikvrpc"],
+)

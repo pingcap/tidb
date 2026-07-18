@@ -1,0 +1,98 @@
+// Copyright 2023 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package importintotest
+
+import (
+	"fmt"
+	"testing"
+	"time"
+
+	"github.com/fsouza/fake-gcs-server/fakestorage"
+	"github.com/pingcap/tidb/pkg/dxf/framework/testutil"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/tests/realtikvtest"
+	"github.com/stretchr/testify/suite"
+)
+
+type mockGCSSuite struct {
+	suite.Suite
+
+	server *fakestorage.Server
+	store  kv.Storage
+	tk     *testkit.TestKit
+}
+
+var (
+	gcsHost = "127.0.0.1"
+	gcsPort = uint16(4443)
+	// for fake gcs server, we must use this endpoint format
+	// NOTE: must end with '/'
+	gcsEndpointFormat = "http://%s:%d/storage/v1/"
+	gcsEndpoint       = fmt.Sprintf(gcsEndpointFormat, gcsHost, gcsPort)
+
+	maxWaitTime = 30 * time.Second
+)
+
+func TestImportInto(t *testing.T) {
+	suite.Run(t, &mockGCSSuite{})
+}
+
+func (s *mockGCSSuite) SetupSuite() {
+	s.Require().True(*realtikvtest.WithRealTiKV)
+	testutil.ReduceCheckInterval(s.T())
+	var err error
+	opt := fakestorage.Options{
+		Scheme:     "http",
+		Host:       gcsHost,
+		Port:       gcsPort,
+		PublicHost: gcsHost,
+	}
+	s.server, err = fakestorage.NewServerWithOptions(opt)
+	s.Require().NoError(err)
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/domain/deltaUpdateDuration", `return`)
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(16)")
+	bak := vardef.GetStatsLease()
+	s.T().Cleanup(func() {
+		vardef.SetStatsLease(bak)
+	})
+	vardef.SetStatsLease(time.Second)
+	s.store = realtikvtest.CreateMockStoreAndSetup(s.T())
+	s.tk = testkit.NewTestKit(s.T(), s.store)
+	// when intest, auto analyze is disabled by default, we enable it here.
+	bakRunAutoAnalyze := vardef.RunAutoAnalyze.Load()
+	s.tk.MustExec("set global tidb_enable_auto_analyze=true")
+	s.T().Cleanup(func() {
+		s.tk.MustExec(fmt.Sprintf("set global tidb_enable_auto_analyze=%t", bakRunAutoAnalyze))
+	})
+}
+
+func (s *mockGCSSuite) BeforeTest(_, _ string) {
+	// some test will set session variable, and might not reset it, so we recreate
+	// the testkit on each test.
+	s.tk = testkit.NewTestKit(s.T(), s.store)
+}
+
+func (s *mockGCSSuite) TearDownSuite() {
+	s.server.Stop()
+}
+
+func (s *mockGCSSuite) cleanupSysTables() {
+	s.tk.MustExec("delete from mysql.tidb_import_jobs")
+	s.tk.MustExec("delete from mysql.tidb_global_task")
+	s.tk.MustExec("delete from mysql.tidb_background_subtask")
+}

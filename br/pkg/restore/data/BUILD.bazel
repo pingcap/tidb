@@ -1,0 +1,57 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "data",
+    srcs = [
+        "data.go",
+        "key.go",
+        "recover.go",
+    ],
+    importpath = "github.com/pingcap/tidb/br/pkg/restore/data",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//br/pkg/common",
+        "//br/pkg/conn",
+        "//br/pkg/errors",
+        "//br/pkg/glue",
+        "//br/pkg/logutil",
+        "//br/pkg/utils",
+        "//br/pkg/utils/storewatch",
+        "//pkg/ddl",
+        "//pkg/util",
+        "@com_github_emirpasic_gods//maps/treemap",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/metapb",
+        "@com_github_pingcap_kvproto//pkg/recoverdatapb",
+        "@com_github_pingcap_log//:log",
+        "@com_github_tikv_client_go_v2//kv",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@com_github_tikv_client_go_v2//txnkv/rangetask",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//backoff",
+        "@org_golang_x_sync//errgroup",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "data_test",
+    timeout = "short",
+    srcs = [
+        "data_test.go",
+        "key_test.go",
+    ],
+    flaky = True,
+    shard_count = 6,
+    deps = [
+        ":data",
+        "//br/pkg/conn",
+        "//br/pkg/gluetidb/mock",
+        "//br/pkg/pdutil",
+        "@com_github_pingcap_kvproto//pkg/metapb",
+        "@com_github_pingcap_kvproto//pkg/recoverdatapb",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//testutils",
+        "@com_github_tikv_pd_client//:client",
+    ],
+)

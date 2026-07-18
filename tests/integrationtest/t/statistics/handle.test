@@ -1,0 +1,50 @@
+# TestIssues27147
+set @@tidb_partition_prune_mode='dynamic';
+drop table if exists t;
+create table t (a int, b int) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20), partition p2 values less than maxvalue);
+alter table t add index idx((a+5));
+analyze table t;
+drop table if exists t1;
+create table t1 (a int, b int as (a+1) virtual, c int) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20), partition p2 values less than maxvalue);
+alter table t1 add index idx((a+5));
+analyze table t1;
+set @@tidb_partition_prune_mode=default;
+
+# TestIssues24401
+set @@tidb_partition_prune_mode='static';
+drop table if exists t;
+delete from mysql.stats_fm_sketch;
+create table t(a int, index(a));
+insert into t values (1), (2), (3);
+analyze table t;
+select count(*) from mysql.stats_fm_sketch;
+create table tp(a int, index(a)) partition by hash(a) partitions 3;
+insert into tp values (1), (2), (3);
+analyze table tp;
+select count(*) from mysql.stats_fm_sketch;
+set @@tidb_partition_prune_mode='dynamic';
+analyze table t;
+select count(*) from mysql.stats_fm_sketch;
+analyze table tp;
+select count(*) from mysql.stats_fm_sketch;
+insert into t values (10), (20), (30), (12), (23), (23), (4344);
+analyze table tp;
+select count(*) from mysql.stats_fm_sketch;
+set @@tidb_partition_prune_mode=default;
+
+# TestHideIndexUsageSyncLease
+# NOTICE: remove this test when index usage is GA.
+select @@tidb_config like '%index-usage-sync-lease%';
+
+# TestHandleDDLEventForTimestampDefaultValue
+drop table if exists t;
+set time_zone = '+08:00';
+create table t(a int);
+alter table t add column ts timestamp DEFAULT '1970-01-01 08:00:01';
+drop table if exists t;
+set time_zone = '+09:00';
+create table t(a int);
+-- error 1067
+alter table t add column ts timestamp DEFAULT '1970-01-01 08:00:01';
+drop table if exists t;
+set time_zone = default;

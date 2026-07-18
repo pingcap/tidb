@@ -1,0 +1,14 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "analyzehelper",
+    srcs = ["helper.go"],
+    importpath = "github.com/pingcap/tidb/pkg/testkit/analyzehelper",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/kv",
+        "//pkg/session",
+        "//pkg/testkit",
+        "@com_github_stretchr_testify//require",
+    ],
+)

@@ -1,0 +1,56 @@
+# TestFunctionEncodeSQLDigest
+drop table if exists test_func_encode_sql_digest;
+create table test_func_encode_sql_digest(id int primary key, v int);
+select tidb_encode_sql_digest("begin");
+select tidb_encode_sql_digest("select @@tidb_current_ts");
+select tidb_encode_sql_digest("select id, v from test_func_decode_sql_digests where id = 1 for update");
+select tidb_encode_sql_digest(null);
+-- error 1582
+select tidb_encode_sql_digest();
+select (select tidb_encode_sql_digest('select 1')) = tidb_encode_sql_digest('select 1;');
+select (select tidb_encode_sql_digest('select 1')) = tidb_encode_sql_digest('select 1 ;');
+select (select tidb_encode_sql_digest('select 1')) = tidb_encode_sql_digest('select 2 ;');
+
+# TestFunctionDecodeSQLDigestsPrivilege
+drop user if exists 'testuser'@'localhost';
+create user 'testuser'@'localhost';
+
+connect (conn1, localhost, testuser,,);
+connection conn1;
+-- error 1227
+select tidb_decode_sql_digests('["aa"]');
+connection default;
+
+grant process on *.* to 'testuser'@'localhost';
+connection conn1;
+select tidb_decode_sql_digests('["aa"]');
+connection default;
+disconnect conn1;
+drop user 'testuser'@'localhost';
+
+# TestFunctionDecodeSQLDigests
+set global tidb_enable_stmt_summary = 1;
+select @@global.tidb_enable_stmt_summary;
+drop table if exists test_func_decode_sql_digests;
+create table test_func_decode_sql_digests(id int primary key, v int);
+begin;
+--disable_result_log
+select @@tidb_current_ts;
+--enable_result_log
+select id, v from test_func_decode_sql_digests where id = 1 for update;
+rollback;
+select tidb_decode_sql_digests('["e6f07d43b5c21db0fbb9a31feac2dc599787763393dd5acbfad80e247eb02ad5","58f3717da2d79c14773a1e3094aaddeff2b11747d3aef95741151af9acba9d44","7e9f826ed22a09940940a42d1aca47a75b3adc3c3fde252f4b912ac886194eb9"]', 0);
+select tidb_decode_sql_digests('["e6f07d43b5c21db0fbb9a31feac2dc599787763393dd5acbfad80e247eb02ad5","58f3717da2d79c14773a1e3094aaddeff2b11747d3aef95741151af9acba9d44","7e9f826ed22a09940940a42d1aca47a75b3adc3c3fde252f4b912ac886194eb9"]', 24);
+select tidb_decode_sql_digests('[]');
+select tidb_decode_sql_digests(null);
+select tidb_decode_sql_digests('["e6f07d43b5c21db0fbb9a31feac2dc599787763393dd5acbfad80e247eb02ad5",1,null,"58f3717da2d79c14773a1e3094aaddeff2b11747d3aef95741151af9acba9d44",{"a":1},[2],"7e9f826ed22a09940940a42d1aca47a75b3adc3c3fde252f4b912ac886194eb9","","abcde"]');
+select tidb_decode_sql_digests('{"a":1}');
+show warnings;
+select tidb_decode_sql_digests('aabbccdd');
+show warnings;
+-- error 1582
+select tidb_decode_sql_digests('a', 1, 2);
+-- error 1582
+select tidb_decode_sql_digests();
+set global tidb_enable_stmt_summary = default;
+

@@ -1,0 +1,19 @@
+[
+  {
+    "name": "TestWarningsInSlowQuery",
+    "cases": [
+      "insert into t(a) value (1)",
+      "select /*+ READ_FROM_STORAGE(TIKV[t]) */ a/0 from t",
+      "create binding for select * from t where c = 10 using select * from t use index (c_d_e) where c = 10",
+      "select * from t where c = 10",
+      "select /*+ READ_FROM_STORAGE(TIKV[t]) */ * from t where a > 1 order by f",
+      "select /*+ READ_FROM_STORAGE(TIKV[t]) */ * from t where f > 1",
+      "select /*+ READ_FROM_STORAGE(TIKV[t]) */ f from t where f > 1",
+      "select /*+ READ_FROM_STORAGE(TIKV[t]) */ * from t where f > 3 and g = 5",
+      "select /*+ READ_FROM_STORAGE(TIKV[t]) */ * from t where g = 5 order by f",
+      "select /*+ READ_FROM_STORAGE(TIKV[t]) */ * from t where d = 3 order by c, e",
+      "select /*+ READ_FROM_STORAGE(TIKV[t]) */ * from t where h = '11,22'",
+      "select /*+ READ_FROM_STORAGE(TIKV[t]) */ * from t where a > rand()*100"
+    ]
+  }
+]

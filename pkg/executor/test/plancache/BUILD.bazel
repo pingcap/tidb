@@ -1,0 +1,28 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "plancache_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "plan_cache_test.go",
+    ],
+    flaky = True,
+    shard_count = 8,
+    deps = [
+        "//pkg/config",
+        "//pkg/expression",
+        "//pkg/kv",
+        "//pkg/meta/autoid",
+        "//pkg/parser/auth",
+        "//pkg/parser/mysql",
+        "//pkg/planner/core",
+        "//pkg/session/sessmgr",
+        "//pkg/sessionctx/vardef",
+        "//pkg/testkit",
+        "//pkg/testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

@@ -1,0 +1,16 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "serialization",
+    srcs = [
+        "common_util.go",
+        "deserialization_util.go",
+        "serialization_util.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/util/serialization",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/types",
+        "//pkg/util/chunk",
+    ],
+)

@@ -1,0 +1,10 @@
+[*]
+end_of_line = lf
+insert_final_newline = true
+charset = utf-8
+
+# tab_size = 4 spaces
+[*.go]
+indent_style = tab
+indent_size = 4
+trim_trailing_whitespace = true

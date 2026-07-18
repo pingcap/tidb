@@ -1,0 +1,74 @@
+# TestSelectBindingOnGlobalTempTableProhibited
+# covers https://github.com/pingcap/tidb/issues/26377
+drop table if exists t1,tmp1;
+create table t1(a int(11));
+create global temporary table tmp1(a int(11), key idx_a(a)) on commit delete rows;
+create temporary table tmp2(a int(11), key idx_a(a));
+-- error 8006
+create global binding for with cte1 as (select a from tmp1) select * from cte1 using with cte1 as (select a from tmp1) select * from cte1;
+-- error 8006
+create global binding for select * from t1 inner join tmp1 on t1.a=tmp1.a using select * from  t1 inner join tmp1 on t1.a=tmp1.a;
+-- error 8006
+create global binding for select * from t1 where t1.a in (select a from tmp1) using select * from t1 where t1.a in (select a from tmp1 use index (idx_a));
+-- error 8006
+create global binding for select a from t1 union select a from tmp1 using select a from t1 union select a from tmp1 use index (idx_a);
+-- error 8006
+create global binding for select t1.a, (select a from tmp1 where tmp1.a=1) as t2 from t1 using select t1.a, (select a from tmp1 where tmp1.a=1) as t2 from t1;
+-- error 8006
+create global binding for select * from (select * from tmp1) using select * from (select * from tmp1);
+-- error 8006
+create global binding for select * from t1 where t1.a = (select a from tmp1) using select * from t1 where t1.a = (select a from tmp1);
+-- error 8006
+create global binding for with cte1 as (select a from tmp2) select * from cte1 using with cte1 as (select a from tmp2) select * from cte1;
+-- error 8006
+create global binding for select * from t1 inner join tmp2 on t1.a=tmp2.a using select * from  t1 inner join tmp2 on t1.a=tmp2.a;
+-- error 8006
+create global binding for select * from t1 where t1.a in (select a from tmp2) using select * from t1 where t1.a in (select a from tmp2 use index (idx_a));
+-- error 8006
+create global binding for select a from t1 union select a from tmp2 using select a from t1 union select a from tmp2 use index (idx_a);
+-- error 8006
+create global binding for select t1.a, (select a from tmp2 where tmp2.a=1) as t2 from t1 using select t1.a, (select a from tmp2 where tmp2.a=1) as t2 from t1;
+-- error 8006
+create global binding for select * from (select * from tmp2) using select * from (select * from tmp2);
+-- error 8006
+create global binding for select * from t1 where t1.a = (select a from tmp2) using select * from t1 where t1.a = (select a from tmp2);
+
+# TestDMLBindingOnGlobalTempTableProhibited
+# covers https://github.com/pingcap/tidb/issues/27422
+drop table if exists t1,tmp1,tmp2;
+create table t1(a int(11));
+create global temporary table tmp1(a int(11), key idx_a(a)) on commit delete rows;
+create temporary table tmp2(a int(11), key idx_a(a));
+-- error 8006
+create global binding for insert into t1 (select * from tmp1) using insert into t1 (select * from tmp1);
+-- error 8006
+create global binding for update t1 inner join tmp1 on t1.a=tmp1.a set t1.a=1 using update t1 inner join tmp1 on t1.a=tmp1.a set t1.a=1;
+-- error 8006
+create global binding for update t1 set t1.a=(select a from tmp1) using update t1 set t1.a=(select a from tmp1);
+-- error 8006
+create global binding for update t1 set t1.a=1 where t1.a = (select a from tmp1) using update t1 set t1.a=1 where t1.a = (select a from tmp1);
+-- error 8006
+create global binding for with cte1 as (select a from tmp1) update t1 set t1.a=1 where t1.a in (select a from cte1) using with cte1 as (select a from tmp1) update t1 set t1.a=1 where t1.a in (select a from cte1);
+-- error 8006
+create global binding for delete from t1 where t1.a in (select a from tmp1) using delete from t1 where t1.a in (select a from tmp1);
+-- error 8006
+create global binding for delete from t1 where t1.a = (select a from tmp1) using delete from t1 where t1.a = (select a from tmp1);
+-- error 8006
+create global binding for delete t1 from t1,tmp1 using delete t1 from t1,tmp1;
+-- error 8006
+create global binding for insert into t1 (select * from tmp2) using insert into t1 (select * from tmp2);
+-- error 8006
+create global binding for update t1 inner join tmp2 on t1.a=tmp2.a set t1.a=1 using update t1 inner join tmp2 on t1.a=tmp2.a set t1.a=1;
+-- error 8006
+create global binding for update t1 set t1.a=(select a from tmp2) using update t1 set t1.a=(select a from tmp2);
+-- error 8006
+create global binding for update t1 set t1.a=1 where t1.a = (select a from tmp2) using update t1 set t1.a=1 where t1.a = (select a from tmp2);
+-- error 8006
+create global binding for with cte1 as (select a from tmp2) update t1 set t1.a=1 where t1.a in (select a from cte1) using with cte1 as (select a from tmp2) update t1 set t1.a=1 where t1.a in (select a from cte1);
+-- error 8006
+create global binding for delete from t1 where t1.a in (select a from tmp2) using delete from t1 where t1.a in (select a from tmp2);
+-- error 8006
+create global binding for delete from t1 where t1.a = (select a from tmp2) using delete from t1 where t1.a = (select a from tmp2);
+-- error 8006
+create global binding for delete t1 from t1,tmp2 using delete t1 from t1,tmp2;
+

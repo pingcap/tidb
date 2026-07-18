@@ -1,0 +1,51 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "charset",
+    srcs = [
+        "charset.go",
+        "encoding.go",
+        "encoding_ascii.go",
+        "encoding_base.go",
+        "encoding_bin.go",
+        "encoding_gb18030.go",
+        "encoding_gb18030_data.go",
+        "encoding_gbk.go",
+        "encoding_latin1.go",
+        "encoding_table.go",
+        "encoding_utf8.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/parser/charset",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/parser/mysql",
+        "//pkg/parser/terror",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_log//:log",
+        "@org_golang_x_text//encoding",
+        "@org_golang_x_text//encoding/charmap",
+        "@org_golang_x_text//encoding/japanese",
+        "@org_golang_x_text//encoding/korean",
+        "@org_golang_x_text//encoding/simplifiedchinese",
+        "@org_golang_x_text//encoding/traditionalchinese",
+        "@org_golang_x_text//encoding/unicode",
+        "@org_golang_x_text//transform",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "charset_test",
+    timeout = "short",
+    srcs = [
+        "charset_test.go",
+        "encoding_test.go",
+    ],
+    embed = [":charset"],
+    flaky = True,
+    shard_count = 9,
+    deps = [
+        "@com_github_stretchr_testify//require",
+        "@org_golang_x_text//transform",
+    ],
+)

@@ -1,0 +1,480 @@
+// Copyright 2023 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package importer_test
+
+import (
+	"context"
+	"testing"
+
+	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/stretchr/testify/require"
+)
+
+func mockSummary(rowCnt int64) *importer.Summary {
+	return &importer.Summary{
+		ImportedRows: rowCnt,
+	}
+}
+
+func jobInfoEqual(t *testing.T, expected, got *importer.JobInfo) {
+	cloned := *expected
+	cloned.CreateTime = got.CreateTime
+	cloned.StartTime = got.StartTime
+	cloned.UpdateTime = got.UpdateTime
+	cloned.EndTime = got.EndTime
+	require.Equal(t, &cloned, got)
+}
+
+func TestJobHappyPath(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	ctx := context.Background()
+	conn := tk.Session().GetSQLExecutor()
+
+	cases := []struct {
+		action         func(jobID int64)
+		preStartNoOp   bool
+		expectStatus   string
+		expectStep     string
+		expectedRowCnt int64
+		expectedErrMsg string
+	}{
+		{
+			action: func(jobID int64) {
+				require.NoError(t, importer.FinishJob(ctx, conn, jobID, mockSummary(111)))
+			},
+			preStartNoOp:   true,
+			expectStatus:   "finished",
+			expectStep:     "",
+			expectedRowCnt: 111,
+		},
+		{
+			action: func(jobID int64) {
+				require.NoError(t, importer.FailJob(ctx, conn, jobID, "some error", mockSummary(111)))
+			},
+			preStartNoOp:   false,
+			expectStatus:   "failed",
+			expectStep:     importer.JobStepValidating,
+			expectedErrMsg: "some error",
+			expectedRowCnt: 111,
+		},
+	}
+	for _, c := range cases {
+		jobInfo := &importer.JobInfo{
+			TableSchema: "test",
+			TableName:   "t",
+			TableID:     1,
+			CreatedBy:   "root@%",
+			Parameters: importer.ImportParameters{
+				ColumnsAndVars: "(a, b, c)",
+				SetClause:      "d = 1",
+				Format:         importer.DataFormatCSV,
+				Options: map[string]any{
+					"skip_rows": float64(1), // json unmarshal will convert number to float64
+					"detached":  nil,
+				},
+			},
+			SourceFileSize: 123,
+			Status:         "pending",
+		}
+
+		// create job
+		jobID, err := importer.CreateJob(ctx, conn, jobInfo.TableSchema, jobInfo.TableName, jobInfo.TableID,
+			jobInfo.CreatedBy, "", &jobInfo.Parameters, jobInfo.SourceFileSize)
+		require.NoError(t, err)
+		jobInfo.ID = jobID
+		gotJobInfo, err := importer.GetJob(ctx, conn, jobID, jobInfo.CreatedBy, false)
+		require.NoError(t, err)
+		require.False(t, gotJobInfo.CreateTime.IsZero())
+		require.True(t, gotJobInfo.StartTime.IsZero())
+		require.True(t, gotJobInfo.EndTime.IsZero())
+		jobInfoEqual(t, jobInfo, gotJobInfo)
+		cnt, err := importer.GetActiveJobCnt(ctx, conn, gotJobInfo.TableSchema, gotJobInfo.TableName)
+		require.NoError(t, err)
+		require.Equal(t, int64(1), cnt)
+
+		if c.preStartNoOp {
+			// action before start, no effect
+			c.action(jobID)
+			gotJobInfo, err = importer.GetJob(ctx, conn, jobID, jobInfo.CreatedBy, false)
+			require.NoError(t, err)
+			jobInfoEqual(t, jobInfo, gotJobInfo)
+		}
+
+		// start job
+		require.NoError(t, importer.StartJob(ctx, conn, jobID, importer.JobStepImporting))
+		gotJobInfo, err = importer.GetJob(ctx, conn, jobID, jobInfo.CreatedBy, false)
+		require.NoError(t, err)
+		require.False(t, gotJobInfo.CreateTime.IsZero())
+		require.False(t, gotJobInfo.StartTime.IsZero())
+		require.True(t, gotJobInfo.EndTime.IsZero())
+		jobInfo.Status = "running"
+		jobInfo.Step = importer.JobStepImporting
+		jobInfoEqual(t, jobInfo, gotJobInfo)
+		cnt, err = importer.GetActiveJobCnt(ctx, conn, gotJobInfo.TableSchema, gotJobInfo.TableName)
+		require.NoError(t, err)
+		require.Equal(t, int64(1), cnt)
+
+		// change job step
+		require.NoError(t, importer.Job2Step(ctx, conn, jobID, importer.JobStepValidating))
+		cnt, err = importer.GetActiveJobCnt(ctx, conn, gotJobInfo.TableSchema, gotJobInfo.TableName)
+		require.NoError(t, err)
+		require.Equal(t, int64(1), cnt)
+
+		// do action
+		c.action(jobID)
+		gotJobInfo, err = importer.GetJob(ctx, conn, jobID, jobInfo.CreatedBy, false)
+		require.NoError(t, err)
+		require.False(t, gotJobInfo.CreateTime.IsZero())
+		require.False(t, gotJobInfo.StartTime.IsZero())
+		require.False(t, gotJobInfo.EndTime.IsZero())
+		jobInfo.Status = c.expectStatus
+		jobInfo.Step = c.expectStep
+		jobInfo.Summary = mockSummary(c.expectedRowCnt)
+		jobInfo.ErrorMessage = c.expectedErrMsg
+		jobInfoEqual(t, jobInfo, gotJobInfo)
+		cnt, err = importer.GetActiveJobCnt(ctx, conn, gotJobInfo.TableSchema, gotJobInfo.TableName)
+		require.NoError(t, err)
+		require.Equal(t, int64(0), cnt)
+
+		// do action again, no effect
+		endTime := gotJobInfo.EndTime
+		c.action(jobID)
+		gotJobInfo, err = importer.GetJob(ctx, conn, jobID, jobInfo.CreatedBy, false)
+		require.NoError(t, err)
+		require.Equal(t, endTime, gotJobInfo.EndTime)
+	}
+
+	t.Run("prepare phase transition", func(t *testing.T) {
+		createdParams := &importer.ImportParameters{
+			FileLocation: "s3://bucket/path.csv",
+			Format:       importer.DataFormatAuto,
+			Options: map[string]any{
+				"detached": nil,
+				"thread":   float64(16),
+			},
+		}
+		jobID, err := importer.CreateJob(ctx, conn, "test", "t", 1,
+			"root@%", "", createdParams, 123)
+		require.NoError(t, err)
+
+		require.NoError(t, importer.StartJob(ctx, conn, jobID, importer.JobStepPreparing))
+		info, err := importer.GetJob(ctx, conn, jobID, "root@%", true)
+		require.NoError(t, err)
+		require.Equal(t, importer.JobStatusRunning, info.Status)
+		require.Equal(t, importer.JobStepPreparing, info.Step)
+		require.False(t, info.StartTime.IsZero())
+		startTime := info.StartTime
+
+		require.NoError(t, importer.UpdateJobPreparedInfo(ctx, conn, jobID, 456, importer.DataFormatCSV))
+		info, err = importer.GetJob(ctx, conn, jobID, "root@%", true)
+		require.NoError(t, err)
+		require.EqualValues(t, 456, info.SourceFileSize)
+		require.Equal(t, importer.DataFormatCSV, info.Parameters.Format)
+		require.Equal(t, createdParams.FileLocation, info.Parameters.FileLocation)
+		require.Equal(t, createdParams.Options, info.Parameters.Options)
+
+		require.NoError(t, importer.Job2Step(ctx, conn, jobID, importer.JobStepGlobalSorting))
+		info, err = importer.GetJob(ctx, conn, jobID, "root@%", true)
+		require.NoError(t, err)
+		require.Equal(t, importer.JobStatusRunning, info.Status)
+		require.Equal(t, importer.JobStepGlobalSorting, info.Step)
+		require.Equal(t, startTime, info.StartTime)
+	})
+}
+
+func TestGetAndCancelJob(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	ctx := context.Background()
+	conn := tk.Session().GetSQLExecutor()
+	jobInfo := &importer.JobInfo{
+		TableSchema: "test",
+		TableName:   "t",
+		TableID:     1,
+		CreatedBy:   "user-for-test@%",
+		Parameters: importer.ImportParameters{
+			ColumnsAndVars: "(a, b, c)",
+			SetClause:      "d = 1",
+			Format:         importer.DataFormatCSV,
+			Options: map[string]any{
+				"skip_rows": float64(1), // json unmarshal will convert number to float64
+				"detached":  nil,
+			},
+		},
+		SourceFileSize: 123,
+		Status:         "pending",
+	}
+
+	// create job
+	jobID1, err := importer.CreateJob(ctx, conn, jobInfo.TableSchema, jobInfo.TableName, jobInfo.TableID,
+		jobInfo.CreatedBy, "", &jobInfo.Parameters, jobInfo.SourceFileSize)
+	require.NoError(t, err)
+	jobInfo.ID = jobID1
+	gotJobInfo, err := importer.GetJob(ctx, conn, jobID1, jobInfo.CreatedBy, false)
+	require.NoError(t, err)
+	require.False(t, gotJobInfo.CreateTime.IsZero())
+	require.True(t, gotJobInfo.StartTime.IsZero())
+	require.True(t, gotJobInfo.EndTime.IsZero())
+	jobInfoEqual(t, jobInfo, gotJobInfo)
+	cnt, err := importer.GetActiveJobCnt(ctx, conn, gotJobInfo.TableSchema, gotJobInfo.TableName)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), cnt)
+
+	// cancel job
+	require.NoError(t, importer.CancelJob(ctx, conn, jobID1))
+	require.Equal(t, uint64(1), tk.Session().GetSessionVars().StmtCtx.AffectedRows())
+	gotJobInfo, err = importer.GetJob(ctx, conn, jobID1, jobInfo.CreatedBy, false)
+	require.NoError(t, err)
+	require.False(t, gotJobInfo.CreateTime.IsZero())
+	// we don't set start/end time for canceled job
+	require.True(t, gotJobInfo.StartTime.IsZero())
+	require.True(t, gotJobInfo.EndTime.IsZero())
+	jobInfo.Status = "cancelled"
+	jobInfo.ErrorMessage = "cancelled by user"
+	jobInfoEqual(t, jobInfo, gotJobInfo)
+	cnt, err = importer.GetActiveJobCnt(ctx, conn, gotJobInfo.TableSchema, gotJobInfo.TableName)
+	require.NoError(t, err)
+	require.Equal(t, int64(0), cnt)
+
+	// call cancel twice is ok, caller should check job status before cancel.
+	require.NoError(t, importer.CancelJob(ctx, conn, jobID1))
+	require.Equal(t, uint64(0), tk.Session().GetSessionVars().StmtCtx.AffectedRows())
+
+	jobInfo.Status = "pending"
+	jobInfo.ErrorMessage = ""
+	jobInfo.CreatedBy = "user-for-test-2@%"
+
+	// create another job
+	jobID2, err := importer.CreateJob(ctx, conn, jobInfo.TableSchema, jobInfo.TableName, jobInfo.TableID,
+		jobInfo.CreatedBy, "", &jobInfo.Parameters, jobInfo.SourceFileSize)
+	require.NoError(t, err)
+	jobInfo.ID = jobID2
+	gotJobInfo, err = importer.GetJob(ctx, conn, jobID2, jobInfo.CreatedBy, false)
+	require.NoError(t, err)
+	require.False(t, gotJobInfo.CreateTime.IsZero())
+	require.True(t, gotJobInfo.StartTime.IsZero())
+	require.True(t, gotJobInfo.EndTime.IsZero())
+	jobInfoEqual(t, jobInfo, gotJobInfo)
+
+	// start job
+	require.NoError(t, importer.StartJob(ctx, conn, jobID2, importer.JobStepImporting))
+	gotJobInfo, err = importer.GetJob(ctx, conn, jobID2, jobInfo.CreatedBy, false)
+	require.NoError(t, err)
+	require.False(t, gotJobInfo.CreateTime.IsZero())
+	require.False(t, gotJobInfo.StartTime.IsZero())
+	require.True(t, gotJobInfo.EndTime.IsZero())
+	jobInfo.Status = "running"
+	jobInfo.Step = importer.JobStepImporting
+	jobInfoEqual(t, jobInfo, gotJobInfo)
+
+	// cancel job
+	require.NoError(t, importer.CancelJob(ctx, conn, jobID2))
+	require.Equal(t, uint64(1), tk.Session().GetSessionVars().StmtCtx.AffectedRows())
+	gotJobInfo, err = importer.GetJob(ctx, conn, jobID2, jobInfo.CreatedBy, false)
+	require.NoError(t, err)
+	require.False(t, gotJobInfo.CreateTime.IsZero())
+	require.False(t, gotJobInfo.StartTime.IsZero())
+	require.True(t, gotJobInfo.EndTime.IsZero())
+	jobInfo.Status = "cancelled"
+	jobInfo.ErrorMessage = "cancelled by user"
+	jobInfoEqual(t, jobInfo, gotJobInfo)
+	cnt, err = importer.GetActiveJobCnt(ctx, conn, gotJobInfo.TableSchema, gotJobInfo.TableName)
+	require.NoError(t, err)
+	require.Equal(t, int64(0), cnt)
+
+	_, err = importer.GetJob(ctx, conn, 999999999, jobInfo.CreatedBy, false)
+	require.ErrorIs(t, err, exeerrors.ErrLoadDataJobNotFound)
+	_, err = importer.GetJob(ctx, conn, jobID2, "aaa", false)
+	require.ErrorIs(t, err, plannererrors.ErrSpecificAccessDenied)
+	_, err = importer.GetJob(ctx, conn, jobID2, "aaa", true)
+	require.NoError(t, err)
+
+	// only see job created by user-for-test-2@%
+	jobs, err := importer.GetAllViewableJobs(ctx, conn, "user-for-test-2@%", false)
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	require.Equal(t, jobID2, jobs[0].ID)
+	// with super privilege, we can see all jobs
+	jobs, err = importer.GetAllViewableJobs(ctx, conn, "user-for-test-2@%", true)
+	require.NoError(t, err)
+	require.Len(t, jobs, 2)
+	require.Equal(t, jobID1, jobs[0].ID)
+	require.Equal(t, jobID2, jobs[1].ID)
+}
+
+func TestCancelPendingJob(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	ctx := context.Background()
+	conn := tk.Session().GetSQLExecutor()
+	parameters := &importer.ImportParameters{
+		Format: importer.DataFormatCSV,
+	}
+
+	pendingJobID, err := importer.CreateJob(ctx, conn, "test", "t", 1, "root@%", "", parameters, 123)
+	require.NoError(t, err)
+	cnt, err := importer.GetActiveJobCnt(ctx, conn, "test", "t")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), cnt)
+
+	require.NoError(t, importer.CancelPendingJob(ctx, conn, pendingJobID))
+	require.Equal(t, uint64(1), tk.Session().GetSessionVars().StmtCtx.AffectedRows())
+	pendingJob, err := importer.GetJob(ctx, conn, pendingJobID, "root@%", true)
+	require.NoError(t, err)
+	require.Equal(t, "cancelled", pendingJob.Status)
+	require.True(t, pendingJob.IsCancelled())
+	require.Equal(t, "cancelled by user", pendingJob.ErrorMessage)
+	require.True(t, pendingJob.StartTime.IsZero())
+	require.True(t, pendingJob.EndTime.IsZero())
+	cnt, err = importer.GetActiveJobCnt(ctx, conn, "test", "t")
+	require.NoError(t, err)
+	require.Equal(t, int64(0), cnt)
+
+	runningJobID, err := importer.CreateJob(ctx, conn, "test", "t", 1, "root@%", "", parameters, 123)
+	require.NoError(t, err)
+	require.NoError(t, importer.StartJob(ctx, conn, runningJobID, importer.JobStepImporting))
+	cnt, err = importer.GetActiveJobCnt(ctx, conn, "test", "t")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), cnt)
+
+	require.NoError(t, importer.CancelPendingJob(ctx, conn, runningJobID))
+	require.Equal(t, uint64(0), tk.Session().GetSessionVars().StmtCtx.AffectedRows())
+	runningJob, err := importer.GetJob(ctx, conn, runningJobID, "root@%", true)
+	require.NoError(t, err)
+	require.Equal(t, importer.JobStatusRunning, runningJob.Status)
+	require.Equal(t, importer.JobStepImporting, runningJob.Step)
+	require.False(t, runningJob.IsCancelled())
+	require.Equal(t, "", runningJob.ErrorMessage)
+	cnt, err = importer.GetActiveJobCnt(ctx, conn, "test", "t")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), cnt)
+}
+
+func TestFailJobBeforeStart(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	ctx := context.Background()
+	conn := tk.Session().GetSQLExecutor()
+
+	jobInfo := &importer.JobInfo{
+		TableSchema: "test",
+		TableName:   "t",
+		TableID:     1,
+		CreatedBy:   "root@%",
+		Parameters: importer.ImportParameters{
+			Format: importer.DataFormatCSV,
+		},
+		SourceFileSize: 123,
+	}
+
+	jobID, err := importer.CreateJob(ctx, conn, jobInfo.TableSchema, jobInfo.TableName, jobInfo.TableID,
+		jobInfo.CreatedBy, "", &jobInfo.Parameters, jobInfo.SourceFileSize)
+	require.NoError(t, err)
+
+	require.NoError(t, importer.FailJob(ctx, conn, jobID, "failed before start", mockSummary(0)))
+
+	gotJobInfo, err := importer.GetJob(ctx, conn, jobID, jobInfo.CreatedBy, false)
+	require.NoError(t, err)
+	require.Equal(t, "failed", gotJobInfo.Status)
+	require.Equal(t, "failed before start", gotJobInfo.ErrorMessage)
+	require.True(t, gotJobInfo.StartTime.IsZero())
+	require.False(t, gotJobInfo.EndTime.IsZero())
+	require.Equal(t, mockSummary(0), gotJobInfo.Summary)
+
+	cnt, err := importer.GetActiveJobCnt(ctx, conn, gotJobInfo.TableSchema, gotJobInfo.TableName)
+	require.NoError(t, err)
+	require.Equal(t, int64(0), cnt)
+}
+
+func TestJobInfo_CanCancel(t *testing.T) {
+	jobInfo := &importer.JobInfo{}
+	for _, c := range []struct {
+		status      string
+		canCancel   bool
+		isCancelled bool
+		isSuccess   bool
+	}{
+		{status: "pending", canCancel: true},
+		{status: "running", canCancel: true},
+		{status: "finished", isSuccess: true},
+		{status: "failed"},
+		{status: "cancelled", isCancelled: true},
+		{status: "canceled"},
+	} {
+		jobInfo.Status = c.status
+		require.Equal(t, c.canCancel, jobInfo.CanCancel(), c.status)
+		require.Equal(t, c.isCancelled, jobInfo.IsCancelled(), c.status)
+		require.Equal(t, c.isSuccess, jobInfo.IsSuccess(), c.status)
+	}
+}
+
+func TestGetJobInfoNullField(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	ctx := context.Background()
+	conn := tk.Session().GetSQLExecutor()
+	jobInfo := &importer.JobInfo{
+		TableSchema: "test",
+		TableName:   "t",
+		TableID:     1,
+		CreatedBy:   "user-for-test@%",
+		Parameters: importer.ImportParameters{
+			ColumnsAndVars: "(a, b, c)",
+			SetClause:      "d = 1",
+			Format:         importer.DataFormatCSV,
+			Options: map[string]any{
+				"skip_rows": float64(1), // json unmarshal will convert number to float64
+				"detached":  nil,
+			},
+		},
+		SourceFileSize: 123,
+		Status:         "pending",
+	}
+	// create jobs
+	jobID1, err := importer.CreateJob(ctx, conn, jobInfo.TableSchema, jobInfo.TableName, jobInfo.TableID,
+		jobInfo.CreatedBy, "", &jobInfo.Parameters, jobInfo.SourceFileSize)
+	require.NoError(t, err)
+	require.NoError(t, importer.StartJob(ctx, conn, jobID1, importer.JobStepImporting))
+	require.NoError(t, importer.FailJob(ctx, conn, jobID1, "failed", mockSummary(0)))
+	jobID2, err := importer.CreateJob(ctx, conn, jobInfo.TableSchema, jobInfo.TableName, jobInfo.TableID,
+		jobInfo.CreatedBy, "", &jobInfo.Parameters, jobInfo.SourceFileSize)
+	require.NoError(t, err)
+	gotJobInfos, err := importer.GetAllViewableJobs(ctx, conn, "", true)
+	require.NoError(t, err)
+	require.Len(t, gotJobInfos, 2)
+	// result should be in order, jobID1, jobID2
+	jobInfo.ID = jobID1
+	jobInfo.Status = "failed"
+	jobInfo.Step = importer.JobStepImporting
+	jobInfo.ErrorMessage = "failed"
+	jobInfo.Summary = mockSummary(0)
+	jobInfoEqual(t, jobInfo, gotJobInfos[0])
+	require.False(t, gotJobInfos[0].StartTime.IsZero())
+	require.False(t, gotJobInfos[0].EndTime.IsZero())
+	jobInfo.ID = jobID2
+	jobInfo.Status = "pending"
+	jobInfo.Step = ""
+	// err msg of jobID2 should be empty
+	jobInfo.ErrorMessage = ""
+	jobInfo.Summary = nil
+	jobInfoEqual(t, jobInfo, gotJobInfos[1])
+	// start/end time of jobID2 should be zero
+	require.True(t, gotJobInfos[1].StartTime.IsZero())
+	require.True(t, gotJobInfos[1].EndTime.IsZero())
+}

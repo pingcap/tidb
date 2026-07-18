@@ -1,0 +1,17 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "null_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "null_test.go",
+    ],
+    flaky = True,
+    shard_count = 2,
+    deps = [
+        "//pkg/testkit",
+        "//pkg/testkit/testsetup",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

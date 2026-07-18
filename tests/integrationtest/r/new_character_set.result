@@ -1,0 +1,201 @@
+set @@sql_mode='';
+drop table if exists t;
+set names utf8mb4;
+create table t (a varchar(255) charset utf8mb4);
+insert into t values ('一二三四一');
+select hex(a) from t;
+hex(a)
+E4B880E4BA8CE4B889E59B9BE4B880
+select a from t;
+a
+一二三四一
+set @@character_set_results = 'gbk';
+select a from t;
+a
+һ������һ
+drop table if exists 一;
+create table 一 (二 char(20));
+show create table 一;
+Table	Create Table
+һ	CREATE TABLE `һ` (
+  `��` char(20) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table if exists t;
+set names utf8mb4;
+create table t (a varchar(255) charset gbk, b varchar(255) charset utf8mb4, c varchar(255) charset binary);
+insert into t values ('一', '一', '一');
+set @@character_set_results = null;
+select * from t;
+a	b	c
+һ	一	一
+set @@character_set_results = BINARY;
+select * from t;
+a	b	c
+һ	一	一
+set @@character_set_results = "BINARY";
+select * from t;
+a	b	c
+һ	一	一
+set names utf8mb4;
+select * from t;
+a	b	c
+一	一	一
+set @@character_set_results = 'utf8mb4';
+drop table if exists t;
+create table t (a varchar(255) charset utf8mb4);
+set @@character_set_client = 'gbk';
+insert into t values ('中文');
+set @@character_set_client = 'utf8mb4';
+insert into t values ('中文');
+set @@character_set_client = 'gbk';
+prepare p1 from "insert into t values ('中文');";
+execute p1;
+select a, hex(a) from t;
+a	hex(a)
+涓?枃	E6B6933FE69E83
+中文	E4B8ADE69687
+涓?枃	E6B6933FE69E83
+set @@character_set_client = 'utf8mb4';
+set names gbk;
+drop table if exists t;
+create table t (b blob, d json);
+insert into t values ('你好', '{"测试": "你好"}');
+select b, d from t;
+b	d
+你好	{"测试": "你好"}
+select hex(b), hex(d) from t;
+hex(b)	hex(d)
+E4BDA0E5A5BD	7B22E6B58BE8AF95223A2022E4BDA0E5A5BD227D
+set names utf8mb4;
+drop table if exists t;
+create table t(a blob, b char(10));
+insert into t values (0x61, '啊');
+insert into t values (0x61, '一');
+set names gbk;
+select * from t;
+a	b
+a	��
+a	һ
+drop table t;
+set names gbk;
+set character_set_connection = utf8mb4;
+create table t(j json, b blob, s1 varchar(255) collate binary, s2 varchar(255), st set('{"点赞": "你好"}'), en enum('{"点赞": "你好"}'));
+insert into t values('{"点赞": "你好"}', '{"点赞": "你好"}', '{"点赞": "你好"}', '{"点赞": "你好"}', '{"点赞": "你好"}', '{"点赞": "你好"}');
+select * from t;
+j	b	s1	s2	st	en
+{"点赞": "你好"}	{"鐐硅禐": "浣犲ソ"}	{"鐐硅禐": "浣犲ソ"}	{"点赞": "你好"}	{"点赞": "你好"}	{"点赞": "你好"}
+set names utf8mb4;
+set @@character_set_client=gbk;
+set @@character_set_connection=gbk;
+select hex('一a'), '一a';
+hex(0xe4b88061)	涓?
+E4B83F	涓?
+set @@sql_mode=default;
+set @@character_set_client=default;
+set @@character_set_connection=default;
+show variables like 'collation_connection';
+Variable_name	Value
+collation_connection	utf8mb4_bin
+set default_collation_for_utf8mb4 = 'utf8mb4_general_ci';
+set names utf8mb4;
+show variables like 'collation_connection';
+Variable_name	Value
+collation_connection	utf8mb4_general_ci
+set default_collation_for_utf8mb4 = 'utf8mb4_0900_ai_ci';
+set names utf8mb4;
+show variables like 'collation_connection';
+Variable_name	Value
+collation_connection	utf8mb4_0900_ai_ci
+set default_collation_for_utf8mb4 = default;
+set names utf8mb4;
+show variables like 'collation_connection';
+Variable_name	Value
+collation_connection	utf8mb4_bin
+set character_set_results = "gbk";
+select cast(0x414141E280A9424242 as char charset utf8mb4);
+cast(0x414141E280A9424242 as char charset utf8mb4)
+AAA?BBB
+SET character_set_results = @undefined_var;
+DROP TABLE if exists t61085;
+create table t61085 (a char(255) charset gbk);
+insert into t61085 values ('AAA');
+set SESSION sql_mode = '';
+select * from t61085 where a = cast(0x41414180424242 as char charset gbk);
+a
+AAA
+DROP TABLE t61085;
+set character_set_results = default;
+set SESSION sql_mode = default;
+create table a (id bigint primary key, name varchar(10) collate utf8mb4_general_ci, key(name));
+insert into a values (1, 'A�B');
+select hex(weight_string(name)) from a;
+hex(weight_string(name))
+0041FFFD0042
+select name, hex(weight_string(name)) from a where id = 1;
+name	hex(weight_string(name))
+A�B	0041FFFD0042
+select * from a where name = (select name from a where id = 1);
+id	name
+1	A�B
+delete from a where id = 1;
+DROP TABLE IF EXISTS t_fffd;
+CREATE TABLE t_fffd (
+id INT PRIMARY KEY AUTO_INCREMENT,
+c_utf8mb4_general_ci VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
+c_utf8mb4_unicode_ci VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
+c_utf8mb4_bin VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin,
+INDEX idx_general (c_utf8mb4_general_ci),
+INDEX idx_unicode (c_utf8mb4_unicode_ci),
+INDEX idx_bin (c_utf8mb4_bin)
+);
+INSERT INTO t_fffd (c_utf8mb4_general_ci, c_utf8mb4_unicode_ci, c_utf8mb4_bin)
+VALUES ('a�b', '�', 'test�string');
+SELECT * FROM t_fffd ORDER BY id;
+id	c_utf8mb4_general_ci	c_utf8mb4_unicode_ci	c_utf8mb4_bin
+1	a�b	�	test�string
+explain format='brief' select id FROM t_fffd WHERE c_utf8mb4_general_ci = 'a�b';
+id	estRows	task	access object	operator info
+IndexReader	10.00	root		index:Projection
+└─Projection	10.00	cop[tikv]		new_character_set.t_fffd.id
+  └─IndexRangeScan	10.00	cop[tikv]	table:t_fffd, index:idx_general(c_utf8mb4_general_ci)	range:["\x00A\xff\xfd\x00B","\x00A\xff\xfd\x00B"], keep order:false, stats:pseudo
+SELECT id FROM t_fffd WHERE c_utf8mb4_general_ci = 'a�b';
+id
+1
+explain format='brief' select id FROM t_fffd WHERE c_utf8mb4_unicode_ci = '�';
+id	estRows	task	access object	operator info
+IndexReader	10.00	root		index:Projection
+└─Projection	10.00	cop[tikv]		new_character_set.t_fffd.id
+  └─IndexRangeScan	10.00	cop[tikv]	table:t_fffd, index:idx_unicode(c_utf8mb4_unicode_ci)	range:["\r\xc6","\r\xc6"], keep order:false, stats:pseudo
+SELECT id FROM t_fffd WHERE c_utf8mb4_unicode_ci = '�';
+id
+1
+explain format='brief' select id FROM t_fffd WHERE c_utf8mb4_bin = 'test�string';
+id	estRows	task	access object	operator info
+IndexReader	10.00	root		index:Projection
+└─Projection	10.00	cop[tikv]		new_character_set.t_fffd.id
+  └─IndexRangeScan	10.00	cop[tikv]	table:t_fffd, index:idx_bin(c_utf8mb4_bin)	range:["test�string","test�string"], keep order:false, stats:pseudo
+SELECT id FROM t_fffd WHERE c_utf8mb4_bin = 'test�string';
+id
+1
+UPDATE t_fffd SET c_utf8mb4_general_ci = 'X�Y' WHERE c_utf8mb4_general_ci = 'a�b';
+UPDATE t_fffd SET c_utf8mb4_unicode_ci = 'UPDATED�' WHERE c_utf8mb4_unicode_ci = '�';
+UPDATE t_fffd SET c_utf8mb4_bin = 'bin�updated' WHERE c_utf8mb4_bin = 'test�string';
+SELECT * FROM t_fffd ORDER BY id;
+id	c_utf8mb4_general_ci	c_utf8mb4_unicode_ci	c_utf8mb4_bin
+1	X�Y	UPDATED�	bin�updated
+DELETE FROM t_fffd WHERE c_utf8mb4_general_ci = 'X�Y';
+SELECT COUNT(*) FROM t_fffd;
+COUNT(*)
+0
+INSERT INTO t_fffd (c_utf8mb4_general_ci, c_utf8mb4_unicode_ci, c_utf8mb4_bin)
+VALUES ('another�row', 'multi�char', 'end�case');
+SELECT * FROM t_fffd ORDER BY id;
+id	c_utf8mb4_general_ci	c_utf8mb4_unicode_ci	c_utf8mb4_bin
+2	another�row	multi�char	end�case
+SELECT id FROM t_fffd WHERE c_utf8mb4_bin = 'end�case';
+id
+2
+SELECT id FROM t_fffd WHERE c_utf8mb4_unicode_ci = 'multi�char';
+id
+2
+DROP TABLE t_fffd;

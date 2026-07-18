@@ -1,0 +1,20 @@
+[mydumper]
+default-file-rules = true
+
+[[mydumper.files]]
+pattern = "data-sql/"
+schema = "s3_test"
+table = "tbl"
+type = "sql"
+
+[[mydumper.files]]
+pattern = "data-csv/"
+schema = "s3_test"
+table = "tbl"
+type = "csv"
+
+[[mydumper.files]]
+pattern = "data-parquet/"
+schema = "s3_test"
+table = "tbl"
+type = "parquet"

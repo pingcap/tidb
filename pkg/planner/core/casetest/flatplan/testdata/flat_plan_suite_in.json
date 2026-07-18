@@ -1,0 +1,13 @@
+[
+  {
+    "name": "TestFlatPhysicalPlan",
+    "cases": [
+      "select * from t",
+      "select sum(t.a) from t join t2",
+      "select a from t use index (f) where f > 100",
+      "select a from t use index () where f > 100",
+      "with cte1 as (select a, b from t), cte2 as (select a, b from t2) select * from cte1 join cte2 on cte1.a = cte2.a",
+      "WITH RECURSIVE cte (n) AS(  SELECT 1  UNION ALL  SELECT n + 1 FROM cte WHERE n < 5)SELECT * FROM cte;"
+    ]
+  }
+]

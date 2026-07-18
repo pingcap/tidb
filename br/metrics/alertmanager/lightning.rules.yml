@@ -1,0 +1,14 @@
+groups:
+- name: alert.rules
+  rules:
+  - alert: Lightning_import_failure_tables_count
+    expr: sum ( lightning_tables{result="failure"} ) > 0
+    for: 1m
+    labels:
+      env: ENV_LABELS_ENV
+      level: emergency
+      expr:  sum ( lightning_tables{result="failure"} ) > 0
+    annotations:
+      description: 'cluster: ENV_LABELS_ENV, instance: {{ $labels.instance }}, values:{{ $value }}'
+      value: '{{ $value }}'
+      summary: Lightning failed to import a table

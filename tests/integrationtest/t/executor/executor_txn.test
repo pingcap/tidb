@@ -1,0 +1,133 @@
+# TestRollbackToSavepoint
+drop table if exists t;
+create table t(id int, a int, unique index idx(id));
+begin pessimistic;
+insert into t values (1,1);
+savepoint s1;
+insert into t values (2,2);
+rollback to s1;
+insert into t values (2,2);
+select * from t;
+rollback to s1;
+select * from t;
+commit;
+select * from t;
+delete from t;
+insert into t values (1,1);
+begin pessimistic;
+delete from t where id = 1;
+savepoint s1;
+insert into t values (1,2);
+rollback to s1;
+select * from t;
+commit;
+select * from t;
+
+# TestSavepointRandTestIssue0
+drop table if exists t;
+CREATE TABLE t (a enum('B','C') NOT NULL,UNIQUE KEY idx_1 (a),KEY idx_2 (a));
+begin pessimistic;
+savepoint sp0;
+insert ignore into t values ( 'B' ),( 'C' );
+-- error 1062
+update t set a = 'C' where a = 'B';
+select * from t where a = 'B' for update;
+rollback to sp0;
+delete from t where a = 'B' ;
+rollback;
+
+# TestSavepointWithTemporaryTable
+set session tidb_txn_mode='optimistic';
+drop table if exists tmp1;
+create temporary table tmp1 (id int primary key auto_increment, u int unique, v int);
+insert into tmp1 values(1, 11, 101);
+begin;
+savepoint sp0;
+insert into tmp1 values(2, 22, 202);
+savepoint sp1;
+insert into tmp1 values(3, 33, 303);
+rollback to sp1;
+select * from tmp1 order by id;
+commit;
+select * from tmp1 order by id;
+
+set session tidb_txn_mode='pessimistic';
+drop table if exists tmp1;
+create temporary table tmp1 (id int primary key auto_increment, u int unique, v int);
+insert into tmp1 values(1, 11, 101);
+begin;
+savepoint sp0;
+insert into tmp1 values(2, 22, 202);
+savepoint sp1;
+insert into tmp1 values(3, 33, 303);
+rollback to sp1;
+select * from tmp1 order by id;
+commit;
+select * from tmp1 order by id;
+
+set session tidb_txn_mode='';
+drop table if exists tmp1;
+create temporary table tmp1 (id int primary key auto_increment, u int unique, v int);
+insert into tmp1 values(1, 11, 101);
+begin;
+savepoint sp0;
+insert into tmp1 values(2, 22, 202);
+savepoint sp1;
+insert into tmp1 values(3, 33, 303);
+rollback to sp1;
+select * from tmp1 order by id;
+commit;
+select * from tmp1 order by id;
+
+set session tidb_txn_mode='optimistic';
+drop table if exists tmp1;
+create global temporary table tmp1 (id int primary key auto_increment, u int unique, v int) on commit delete rows;
+begin;
+savepoint sp0;
+insert into tmp1 values(2, 22, 202);
+savepoint sp1;
+insert into tmp1 values(3, 33, 303);
+savepoint sp2;
+insert into tmp1 values(4, 44, 404);
+rollback to sp2;
+select * from tmp1 order by id;
+rollback to sp1;
+select * from tmp1 order by id;
+commit;
+select * from tmp1 order by id;
+
+set session tidb_txn_mode='pessimistic';
+drop table if exists tmp1;
+create global temporary table tmp1 (id int primary key auto_increment, u int unique, v int) on commit delete rows;
+begin;
+savepoint sp0;
+insert into tmp1 values(2, 22, 202);
+savepoint sp1;
+insert into tmp1 values(3, 33, 303);
+savepoint sp2;
+insert into tmp1 values(4, 44, 404);
+rollback to sp2;
+select * from tmp1 order by id;
+rollback to sp1;
+select * from tmp1 order by id;
+commit;
+select * from tmp1 order by id;
+
+set session tidb_txn_mode='';
+drop table if exists tmp1;
+create global temporary table tmp1 (id int primary key auto_increment, u int unique, v int) on commit delete rows;
+begin;
+savepoint sp0;
+insert into tmp1 values(2, 22, 202);
+savepoint sp1;
+insert into tmp1 values(3, 33, 303);
+savepoint sp2;
+insert into tmp1 values(4, 44, 404);
+rollback to sp2;
+select * from tmp1 order by id;
+rollback to sp1;
+select * from tmp1 order by id;
+commit;
+select * from tmp1 order by id;
+
+set session tidb_txn_mode=default;

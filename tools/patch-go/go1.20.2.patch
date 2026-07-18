@@ -1,0 +1,126 @@
+diff --git a/src/runtime/metrics.go b/src/runtime/metrics.go
+index 2061dc0cf0..d0297a7cec 100644
+--- a/src/runtime/metrics.go
++++ b/src/runtime/metrics.go
+@@ -395,6 +395,12 @@ func initMetrics() {
+ 				out.scalar = uint64(gomaxprocs)
+ 			},
+ 		},
++		"/sched/goroutine/running:nanoseconds": {
++			compute: func(_ *statAggregate, out *metricValue) {
++				out.kind = metricKindUint64
++				out.scalar = uint64(grunningnanos())
++			},
++		},
+ 		"/sched/goroutines:goroutines": {
+ 			compute: func(_ *statAggregate, out *metricValue) {
+ 				out.kind = metricKindUint64
+diff --git a/src/runtime/metrics/description.go b/src/runtime/metrics/description.go
+index dcfe01e67c..50d9392387 100644
+--- a/src/runtime/metrics/description.go
++++ b/src/runtime/metrics/description.go
+@@ -356,6 +356,11 @@ var allDesc = []Description{
+ 		Description: "The current runtime.GOMAXPROCS setting, or the number of operating system threads that can execute user-level Go code simultaneously.",
+ 		Kind:        KindUint64,
+ 	},
++	{
++		Name:        "/sched/goroutine/running:nanoseconds",
++		Description: "Wall time spent by the current goroutine in the running state.",
++		Kind:        KindUint64,
++	},
+ 	{
+ 		Name:        "/sched/goroutines:goroutines",
+ 		Description: "Count of live goroutines.",
+diff --git a/src/runtime/metrics/doc.go b/src/runtime/metrics/doc.go
+index b593d8d812..05f081b4c3 100644
+--- a/src/runtime/metrics/doc.go
++++ b/src/runtime/metrics/doc.go
+@@ -266,6 +266,9 @@ Below is the full list of supported metrics, ordered lexicographically.
+ 		operating system threads that can execute user-level Go code
+ 		simultaneously.
+ 
++	/sched/goroutine/running:nanoseconds
++		Wall time spent by the current goroutine in the running state.
++
+ 	/sched/goroutines:goroutines
+ 		Count of live goroutines.
+ 
+diff --git a/src/runtime/proc.go b/src/runtime/proc.go
+index 554a60d747..80df6dd31d 100644
+--- a/src/runtime/proc.go
++++ b/src/runtime/proc.go
+@@ -1027,13 +1027,24 @@ func casgstatus(gp *g, oldval, newval uint32) {
+ 		}
+ 	}
+ 
++	now := nanotime()
+ 	if oldval == _Grunning {
+ 		// Track every gTrackingPeriod time a goroutine transitions out of running.
+ 		if casgstatusAlwaysTrack || gp.trackingSeq%gTrackingPeriod == 0 {
+ 			gp.tracking = true
+ 		}
+ 		gp.trackingSeq++
++
++		// We're transitioning out of running, record how long we were in the
++		// state.
++		gp.runningnanos += now - gp.lastsched
+ 	}
++	if newval == _Grunning {
++		// We're transitioning into the running state, record the timestamp for
++		// subsequent use.
++		gp.lastsched = now
++	}
++
+ 	if !gp.tracking {
+ 		return
+ 	}
+@@ -3412,6 +3423,14 @@ func dropg() {
+ 	setGNoWB(&gp.m.curg, nil)
+ }
+ 
++// grunningnanos returns the wall time spent by current g in the running state.
++// A goroutine may be running on an OS thread that's descheduled by the OS
++// scheduler, this time still counts towards the metric.
++func grunningnanos() int64 {
++	gp := getg()
++	return gp.runningnanos + nanotime() - gp.lastsched
++}
++
+ // checkTimers runs any timers for the P that are ready.
+ // If now is not 0 it is the current time.
+ // It returns the passed time or the current time if now was passed as 0.
+@@ -3646,6 +3665,8 @@ func goexit0(gp *g) {
+ 	gp.param = nil
+ 	gp.labels = nil
+ 	gp.timer = nil
++	gp.lastsched = 0
++	gp.runningnanos = 0
+ 
+ 	if gcBlackenEnabled != 0 && gp.gcAssistBytes > 0 {
+ 		// Flush assist credit to the global pool. This gives
+diff --git a/src/runtime/runtime2.go b/src/runtime/runtime2.go
+index 9381d1e3f7..64caf80e7e 100644
+--- a/src/runtime/runtime2.go
++++ b/src/runtime/runtime2.go
+@@ -488,6 +488,8 @@ type g struct {
+ 	labels         unsafe.Pointer // profiler labels
+ 	timer          *timer         // cached timer for time.Sleep
+ 	selectDone     atomic.Uint32  // are we participating in a select and did someone win the race?
++	lastsched      int64 // timestamp when the G last started running
++	runningnanos   int64 // wall time spent in the running state
+ 
+ 	// goroutineProfiled indicates the status of this goroutine's stack for the
+ 	// current in-progress goroutine profile
+diff --git a/src/runtime/sizeof_test.go b/src/runtime/sizeof_test.go
+index 9ce0a3afcd..6ccba1a070 100644
+--- a/src/runtime/sizeof_test.go
++++ b/src/runtime/sizeof_test.go
+@@ -21,7 +21,7 @@ func TestSizeof(t *testing.T) {
+ 		_32bit uintptr // size on 32bit platforms
+ 		_64bit uintptr // size on 64bit platforms
+ 	}{
+-		{runtime.G{}, 240, 392},   // g, but exported for testing
++		{runtime.G{}, 256, 416},   // g, but exported for testing
+ 		{runtime.Sudog{}, 56, 88}, // sudog, but exported for testing
+ 	}
+ 

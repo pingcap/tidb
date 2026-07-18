@@ -1,0 +1,612 @@
+drop table if exists t;
+create table t (a int, b int, c int, d int);
+begin;
+select a from t where a in (1, 2, 3);
+a
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+0
+create binding for select a from t where a in (1) using select a from t where a in (1);
+select a from t where a in (1, 2, 3);
+a
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+1
+select a from t where a in (1, 2);
+a
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+1
+select a from t where a in (1);
+a
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+1
+select b from t where b in (1);
+b
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+0
+create binding for select b from t where b in (1,2,3) using select b from t where b in (1,2,3);
+select b from t where b in (1);
+b
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+1
+select * from t where a in (1) and b in (1) and c in (1);
+a	b	c	d
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+0
+create binding for select * from t where a in (1) and b in (1,2) and c in (1,2,3) using
+select * from t where a in (1,2,3) and b in (1,2) and c in (1);
+select * from t where a in (1) and b in (1) and c in (1);
+a	b	c	d
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+1
+select * from t where a in (1) and b in (1,2) and c in (1,2,3);
+a	b	c	d
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+1
+select * from t where a in (1,2,3) and b in (1,2) and c in (1);
+a	b	c	d
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+1
+commit;
+drop binding for select a from t where a in (1);
+drop binding for select b from t where b in (1,2,3);
+drop binding for select * from t where a in (1) and b in (1,2) and c in (1,2,3);
+drop table if exists t1;
+drop table if exists t2;
+create table t1(id int);
+create table t2(id int);
+explain format='plan_tree' SELECT * from t1,t2 where t1.id = t2.id;
+id	task	access object	operator info
+HashJoin	root		inner join, equal:[eq(bindinfo__bind.t1.id, bindinfo__bind.t2.id)]
+├─TableReader(Build)	root		data:Selection
+│ └─Selection	cop[tikv]		not(isnull(bindinfo__bind.t2.id))
+│   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader(Probe)	root		data:Selection
+  └─Selection	cop[tikv]		not(isnull(bindinfo__bind.t1.id))
+    └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format='plan_tree' SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id;
+id	task	access object	operator info
+MergeJoin	root		inner join, left key:bindinfo__bind.t1.id, right key:bindinfo__bind.t2.id
+├─Sort(Build)	root		bindinfo__bind.t2.id
+│ └─TableReader	root		data:Selection
+│   └─Selection	cop[tikv]		not(isnull(bindinfo__bind.t2.id))
+│     └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─Sort(Probe)	root		bindinfo__bind.t1.id
+  └─TableReader	root		data:Selection
+    └─Selection	cop[tikv]		not(isnull(bindinfo__bind.t1.id))
+      └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+create global binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id;
+explain format='plan_tree' SELECT * from t1,t2 where t1.id = t2.id;
+id	task	access object	operator info
+MergeJoin	root		inner join, left key:bindinfo__bind.t1.id, right key:bindinfo__bind.t2.id
+├─Sort(Build)	root		bindinfo__bind.t2.id
+│ └─TableReader	root		data:Selection
+│   └─Selection	cop[tikv]		not(isnull(bindinfo__bind.t2.id))
+│     └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─Sort(Probe)	root		bindinfo__bind.t1.id
+  └─TableReader	root		data:Selection
+    └─Selection	cop[tikv]		not(isnull(bindinfo__bind.t1.id))
+      └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+drop global binding for SELECT * from t1,t2 where t1.id = t2.id;
+create index index_id on t1(id);
+explain format='plan_tree' SELECT * from t1 union SELECT * from t1;
+id	task	access object	operator info
+HashAgg	root		group by:Column, funcs:firstrow(Column)->Column
+└─Union	root		
+  ├─IndexReader	root		index:IndexFullScan
+  │ └─IndexFullScan	cop[tikv]	table:t1, index:index_id(id)	keep order:false, stats:pseudo
+  └─IndexReader	root		index:IndexFullScan
+    └─IndexFullScan	cop[tikv]	table:t1, index:index_id(id)	keep order:false, stats:pseudo
+explain format='plan_tree' SELECT * from t1 use index(index_id) union SELECT * from t1;
+id	task	access object	operator info
+HashAgg	root		group by:Column, funcs:firstrow(Column)->Column
+└─Union	root		
+  ├─IndexReader	root		index:IndexFullScan
+  │ └─IndexFullScan	cop[tikv]	table:t1, index:index_id(id)	keep order:false, stats:pseudo
+  └─IndexReader	root		index:IndexFullScan
+    └─IndexFullScan	cop[tikv]	table:t1, index:index_id(id)	keep order:false, stats:pseudo
+create global binding for SELECT * from t1 union SELECT * from t1 using SELECT * from t1 use index(index_id) union SELECT * from t1;
+explain format='plan_tree' SELECT * from t1 union SELECT * from t1;
+id	task	access object	operator info
+HashAgg	root		group by:Column, funcs:firstrow(Column)->Column
+└─Union	root		
+  ├─IndexReader	root		index:IndexFullScan
+  │ └─IndexFullScan	cop[tikv]	table:t1, index:index_id(id)	keep order:false, stats:pseudo
+  └─IndexReader	root		index:IndexFullScan
+    └─IndexFullScan	cop[tikv]	table:t1, index:index_id(id)	keep order:false, stats:pseudo
+drop global binding for SELECT * from t1 union SELECT * from t1;
+drop table if exists t1;
+drop table if exists t2;
+create table t1(id int);
+create table t2(id int);
+explain format='plan_tree' select * from t1 where exists(select 1 from t2 where t1.id=t2.id);
+id	task	access object	operator info
+HashJoin	root		semi join, left side:TableReader, equal:[eq(bindinfo__bind.t1.id, bindinfo__bind.t2.id)]
+├─TableReader(Build)	root		data:Selection
+│ └─Selection	cop[tikv]		not(isnull(bindinfo__bind.t2.id))
+│   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader(Probe)	root		data:Selection
+  └─Selection	cop[tikv]		not(isnull(bindinfo__bind.t1.id))
+    └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format='plan_tree' select * from t1 where exists(select /*+ SEMI_JOIN_REWRITE() */ 1 from t2 where t1.id=t2.id);
+id	task	access object	operator info
+HashJoin	root		inner join, equal:[eq(bindinfo__bind.t1.id, bindinfo__bind.t2.id)]
+├─HashAgg(Build)	root		group by:bindinfo__bind.t2.id, funcs:firstrow(bindinfo__bind.t2.id)->bindinfo__bind.t2.id
+│ └─TableReader	root		data:HashAgg
+│   └─HashAgg	cop[tikv]		group by:bindinfo__bind.t2.id, 
+│     └─Selection	cop[tikv]		not(isnull(bindinfo__bind.t2.id))
+│       └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader(Probe)	root		data:Selection
+  └─Selection	cop[tikv]		not(isnull(bindinfo__bind.t1.id))
+    └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+create global binding for
+select * from t1 where exists(select 1 from t2 where t1.id=t2.id)
+using
+select * from t1 where exists(select /*+ SEMI_JOIN_REWRITE() */ 1 from t2 where t1.id=t2.id);
+explain format='plan_tree' select * from t1 where exists(select 1 from t2 where t1.id=t2.id);
+id	task	access object	operator info
+HashJoin	root		inner join, equal:[eq(bindinfo__bind.t1.id, bindinfo__bind.t2.id)]
+├─HashAgg(Build)	root		group by:bindinfo__bind.t2.id, funcs:firstrow(bindinfo__bind.t2.id)->bindinfo__bind.t2.id
+│ └─TableReader	root		data:HashAgg
+│   └─HashAgg	cop[tikv]		group by:bindinfo__bind.t2.id, 
+│     └─Selection	cop[tikv]		not(isnull(bindinfo__bind.t2.id))
+│       └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader(Probe)	root		data:Selection
+  └─Selection	cop[tikv]		not(isnull(bindinfo__bind.t1.id))
+    └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+drop global binding for
+select * from t1 where exists(select 1 from t2 where t1.id=t2.id)
+using
+select * from t1 where exists(select /*+ SEMI_JOIN_REWRITE() */ 1 from t2 where t1.id=t2.id);
+drop table if exists t1;
+create table t1(id int);
+explain format='plan_tree' with cte as (select * from t1) select * from cte a, cte b;
+id	task	access object	operator info
+HashJoin	root		CARTESIAN inner join
+├─CTEFullScan(Build)	root	CTE:cte AS b	data:CTE_0
+└─CTEFullScan(Probe)	root	CTE:cte AS a	data:CTE_0
+CTE_0	root		Non-Recursive CTE
+└─TableReader(Seed Part)	root		data:TableFullScan
+  └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format='plan_tree' with cte as (select /*+ MERGE() */ * from t1) select * from cte a, cte b;
+id	task	access object	operator info
+HashJoin	root		CARTESIAN inner join
+├─TableReader(Build)	root		data:TableFullScan
+│ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─TableReader(Probe)	root		data:TableFullScan
+  └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+create global binding for
+with cte as (select * from t1) select * from cte
+using
+with cte as (select /*+ MERGE() */ * from t1) select * from cte;
+explain format='plan_tree' with cte as (select * from t1) select * from cte;
+id	task	access object	operator info
+TableReader	root		data:TableFullScan
+└─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+drop global binding for
+with cte as (select * from t1) select * from cte
+using
+with cte as (select /*+ MERGE() */ * from t1) select * from cte;
+drop table if exists t1;
+drop table if exists t2;
+create table t1(a int, b int);
+create table t2(a int, b int);
+explain format='plan_tree' select exists (select t2.b from t2 where t2.a = t1.b limit 2) from t1;
+id	task	access object	operator info
+HashJoin	root		left outer semi join, left side:TableReader, equal:[eq(bindinfo__bind.t1.b, bindinfo__bind.t2.a)]
+├─TableReader(Build)	root		data:TableFullScan
+│ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader(Probe)	root		data:TableFullScan
+  └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format='plan_tree' select exists (select /*+ no_decorrelate() */ t2.b from t2 where t2.a = t1.b limit 2) from t1;
+id	task	access object	operator info
+Projection	root		Column
+└─Apply	root		CARTESIAN left outer semi join, left side:TableReader
+  ├─TableReader(Build)	root		data:TableFullScan
+  │ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─Limit(Probe)	root		offset:0, count:2
+    └─TableReader	root		data:Limit
+      └─Limit	cop[tikv]		offset:0, count:2
+        └─Selection	cop[tikv]		eq(bindinfo__bind.t2.a, bindinfo__bind.t1.b)
+          └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+create global binding for
+select exists (select t2.b from t2 where t2.a = t1.b limit 2) from t1
+using
+select exists (select /*+ no_decorrelate() */ t2.b from t2 where t2.a = t1.b limit 2) from t1;
+explain format='plan_tree' select exists (select t2.b from t2 where t2.a = t1.b limit 2) from t1;
+id	task	access object	operator info
+Projection	root		Column
+└─Apply	root		CARTESIAN left outer semi join, left side:TableReader
+  ├─TableReader(Build)	root		data:TableFullScan
+  │ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─Limit(Probe)	root		offset:0, count:2
+    └─TableReader	root		data:Limit
+      └─Limit	cop[tikv]		offset:0, count:2
+        └─Selection	cop[tikv]		eq(bindinfo__bind.t2.a, bindinfo__bind.t1.b)
+          └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+drop global binding for
+select exists (select t2.b from t2 where t2.a = t1.b limit 2) from t1
+using
+select exists (select /*+ no_decorrelate() */ t2.b from t2 where t2.a = t1.b limit 2) from t1;
+show variables like "%baselines%";
+Variable_name	Value
+tidb_capture_plan_baselines	OFF
+tidb_evolve_plan_baselines	OFF
+tidb_use_plan_baselines	ON
+show global variables like "%baselines%";
+Variable_name	Value
+tidb_capture_plan_baselines	OFF
+tidb_evolve_plan_baselines	OFF
+tidb_use_plan_baselines	ON
+drop table if exists t1;
+drop table if exists t2;
+create table t1(id int);
+create table t2(id int);
+explain format='plan_tree' SELECT * from t1,t2 where t1.id = t2.id;
+id	task	access object	operator info
+HashJoin	root		inner join, equal:[eq(bindinfo__bind.t1.id, bindinfo__bind.t2.id)]
+├─TableReader(Build)	root		data:Selection
+│ └─Selection	cop[tikv]		not(isnull(bindinfo__bind.t2.id))
+│   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader(Probe)	root		data:Selection
+  └─Selection	cop[tikv]		not(isnull(bindinfo__bind.t1.id))
+    └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format='plan_tree' SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id;
+id	task	access object	operator info
+MergeJoin	root		inner join, left key:bindinfo__bind.t1.id, right key:bindinfo__bind.t2.id
+├─Sort(Build)	root		bindinfo__bind.t2.id
+│ └─TableReader	root		data:Selection
+│   └─Selection	cop[tikv]		not(isnull(bindinfo__bind.t2.id))
+│     └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─Sort(Probe)	root		bindinfo__bind.t1.id
+  └─TableReader	root		data:Selection
+    └─Selection	cop[tikv]		not(isnull(bindinfo__bind.t1.id))
+      └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+begin;
+SELECT * from t1,t2 where t1.id = t2.id;
+id	id
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+0
+create global binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id;
+explain format='plan_tree' SELECT * from t1,t2 where t1.id = t2.id;
+id	task	access object	operator info
+MergeJoin	root		inner join, left key:bindinfo__bind.t1.id, right key:bindinfo__bind.t2.id
+├─Sort(Build)	root		bindinfo__bind.t2.id
+│ └─TableReader	root		data:Selection
+│   └─Selection	cop[tikv]		not(isnull(bindinfo__bind.t2.id))
+│     └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─Sort(Probe)	root		bindinfo__bind.t1.id
+  └─TableReader	root		data:Selection
+    └─Selection	cop[tikv]		not(isnull(bindinfo__bind.t1.id))
+      └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+SELECT * from t1,t2 where t1.id = t2.id;
+id	id
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+1
+set binding disabled for SELECT * from t1,t2 where t1.id = t2.id;
+SELECT * from t1,t2 where t1.id = t2.id;
+id	id
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+0
+commit;
+drop global binding for SELECT * from t1,t2 where t1.id = t2.id;
+drop table if exists t;
+create table t(a int, b int, key(a));
+create global binding for select * from t using select * from t use index(a);
+select original_sql, bind_sql from mysql.bind_info where bind_sql = 'SELECT * FROM `bindinfo__bind`.`t` USE INDEX (`a`)';
+original_sql	bind_sql
+select * from `bindinfo__bind` . `t`	SELECT * FROM `bindinfo__bind`.`t` USE INDEX (`a`)
+explain format = 'brief' select * from t;
+id	estRows	task	access object	operator info
+IndexLookUp	10000.00	root		
+├─IndexFullScan(Build)	10000.00	cop[tikv]	table:t, index:a(a)	keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+drop global binding for select * from t using select * from t use index(a);
+drop table if exists t;
+create table t(id int, value decimal(5,2));
+table t;
+id	value
+explain table t;
+id	estRows	task	access object	operator info
+TableReader_5	10000.00	root		data:TableFullScan_4
+└─TableFullScan_4	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+desc table t;
+id	estRows	task	access object	operator info
+TableReader_5	10000.00	root		data:TableFullScan_4
+└─TableFullScan_4	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+drop table if exists t;
+create table t (a int, b int, c int, d int);
+create binding for select * from t where a in(1) using select * from t where a in(1);
+create binding for select * from t where a in(1,2) using select * from t where a in(1);
+create binding for select * from t where a in(1) using select * from t where a in(1,2);
+create binding for select * from t where a in(1,2) using select * from t where a in(1,2);
+create binding for select * from t where a in(1,2,3) using select * from t where a in(1,2,3);
+show bindings where default_db='bindinfo__bind';
+Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
+select * from `bindinfo__bind` . `t` where `a` in ( ... )	SELECT * FROM `bindinfo__bind`.`t` WHERE `a` IN (1,2,3)	bindinfo__bind	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	b67d59db636eefe4353553308079b13a6e0ea71235906ab3ce0c7f9e99c06ed8	
+drop binding for select * from t where a in(1);
+show bindings where default_db='bindinfo__bind';
+Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
+create binding for select * from t where a in(1,2,3) using select * from t where a in(1);
+show bindings where default_db='bindinfo__bind';
+Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
+select * from `bindinfo__bind` . `t` where `a` in ( ... )	SELECT * FROM `bindinfo__bind`.`t` WHERE `a` IN (1)	bindinfo__bind	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	b67d59db636eefe4353553308079b13a6e0ea71235906ab3ce0c7f9e99c06ed8	
+drop binding for select * from t where a in(1);
+show bindings where default_db='bindinfo__bind';
+Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
+create binding for select * from t where a in(1) using select * from t where a in(1);
+show bindings where default_db='bindinfo__bind';
+Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
+select * from `bindinfo__bind` . `t` where `a` in ( ... )	SELECT * FROM `bindinfo__bind`.`t` WHERE `a` IN (1)	bindinfo__bind	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	b67d59db636eefe4353553308079b13a6e0ea71235906ab3ce0c7f9e99c06ed8	
+drop binding for select * from t where a in(1,2,3);
+show bindings where default_db='bindinfo__bind';
+Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
+create binding for select * from t where a in(1) using select * from t where a in(1);
+show bindings where default_db='bindinfo__bind';
+Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
+select * from `bindinfo__bind` . `t` where `a` in ( ... )	SELECT * FROM `bindinfo__bind`.`t` WHERE `a` IN (1)	bindinfo__bind	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	b67d59db636eefe4353553308079b13a6e0ea71235906ab3ce0c7f9e99c06ed8	
+drop binding for select * from t where a in(1,2,3,4,5,6,7,8,9,0,11,12);
+show bindings where default_db='bindinfo__bind';
+Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
+create global binding for select * from t where a in(1,2,3) using select * from t where a in(1);
+show global bindings where original_sql like '%bindinfo__bind%';
+Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
+select * from `bindinfo__bind` . `t` where `a` in ( ... )	SELECT * FROM `bindinfo__bind`.`t` WHERE `a` IN (1)	bindinfo__bind	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	b67d59db636eefe4353553308079b13a6e0ea71235906ab3ce0c7f9e99c06ed8	
+set binding disabled for select * from t where a in(1);
+show global bindings where original_sql like '%bindinfo__bind%';
+Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
+select * from `bindinfo__bind` . `t` where `a` in ( ... )	SELECT * FROM `bindinfo__bind`.`t` WHERE `a` IN (1)	bindinfo__bind	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	b67d59db636eefe4353553308079b13a6e0ea71235906ab3ce0c7f9e99c06ed8	
+set binding enabled for select * from t where a in(1,2,3,4,5);
+show global bindings where original_sql like '%bindinfo__bind%';
+Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
+select * from `bindinfo__bind` . `t` where `a` in ( ... )	SELECT * FROM `bindinfo__bind`.`t` WHERE `a` IN (1)	bindinfo__bind	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	b67d59db636eefe4353553308079b13a6e0ea71235906ab3ce0c7f9e99c06ed8	
+drop global binding for select * from t where a in(1,2,3);
+drop table if exists t;
+create table t (a varchar(10) CHARACTER SET utf8);
+create global binding for select * from t where a = 'aa' using select * from t where a = 'aa';
+show global bindings where original_sql like '%bindinfo__bind%';
+Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
+select * from `bindinfo__bind` . `t` where `a` = ?	SELECT * FROM `bindinfo__bind`.`t` WHERE `a` = 'aa'	bindinfo__bind	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	6d1a1929b70cc162e7e4a9e635a920d811556a2fad8c86a98cd36f5ef0ac2d8e	
+drop global binding for select * from t where a = 'aa';
+drop table if exists t;
+create table t (a int);
+create global binding for select * from (select * from t where a = 1) tt using select * from (select * from t where a = 1) tt;
+create global binding for select * from ((select * from t where a = 1)) tt using select * from (select * from t where a = 1) tt;
+show global bindings where original_sql like '%bindinfo__bind%';
+Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
+select * from ( select * from `bindinfo__bind` . `t` where `a` = ? ) as `tt`	SELECT * FROM (SELECT * FROM `bindinfo__bind`.`t` WHERE `a` = 1) AS `tt`	bindinfo__bind	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	b2066cb17a2e393e9b1304af7a880aff99a8b7c918daa5d08374e6a9d3cc5bdb	
+drop global binding for select * from ((select * from t where a = 1)) tt;
+drop table if exists t;
+drop user if exists test@'%';
+create table t(a int, b int, index idx(a));
+create global binding for select * from t using select * from t use index(idx);
+show global bindings where original_sql like '%bindinfo__bind%';
+Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
+select * from `bindinfo__bind` . `t`	SELECT * FROM `bindinfo__bind`.`t` USE INDEX (`idx`)	bindinfo__bind	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	7bfe86d915f554b2714045c1f8006e44f9586ea258b605cb6de2f79753674c20	
+create user test@'%';
+show global bindings where original_sql like '%bindinfo__bind%';
+Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
+drop global binding for select * from t;
+drop table if exists t;
+create table t(a int, b int, key(a));
+create global binding for select * from t using select * from t force index(a);
+select * from t;
+Error 1046 (3D000): No database selected
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+0
+explain format ='plan_tree' select * from bindinfo__bind.t;
+id	task	access object	operator info
+IndexLookUp	root		
+├─IndexFullScan(Build)	cop[tikv]	table:t, index:a(a)	keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from bindinfo__bind.t;
+a	b
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+1
+set binding disabled for select * from bindinfo__bind.t;
+select * from bindinfo__bind.t;
+a	b
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+0
+drop global binding for select * from t;
+drop table if exists t;
+create table t(a int, b int, c int, key idx_b(b), key idx_c(c));
+explain format='plan_tree' delete from t where b = 1 and c > 1;
+id	task	access object	operator info
+Delete	root		N/A
+└─IndexLookUp	root		
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:idx_b(b)	range:[1,1], keep order:false, stats:pseudo
+  └─Selection(Probe)	cop[tikv]		gt(bindinfo__bind.t.c, 1)
+    └─TableRowIDScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+create global binding for delete from t where b = 1 and c > 1 using delete from t use index(idx_c) where b = 1 and c > 1;
+explain format='plan_tree' delete from t where b = 1 and c > 1;
+id	task	access object	operator info
+Delete	root		N/A
+└─IndexLookUp	root		
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:idx_c(c)	range:(1,+inf], keep order:false, stats:pseudo
+  └─Selection(Probe)	cop[tikv]		eq(bindinfo__bind.t.b, 1)
+    └─TableRowIDScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+drop global binding for delete from t where b = 1 and c > 1;
+show session variables like "tidb_capture_plan_baselines";
+Variable_name	Value
+tidb_capture_plan_baselines	OFF
+show global variables like "tidb_capture_plan_baselines";
+Variable_name	Value
+tidb_capture_plan_baselines	OFF
+select @@global.tidb_capture_plan_baselines;
+@@global.tidb_capture_plan_baselines
+0
+SET GLOBAL tidb_capture_plan_baselines = on;
+show variables like "tidb_capture_plan_baselines";
+Variable_name	Value
+tidb_capture_plan_baselines	ON
+show global variables like "tidb_capture_plan_baselines";
+Variable_name	Value
+tidb_capture_plan_baselines	ON
+show global variables like "tidb_capture_plan_baselines";
+Variable_name	Value
+tidb_capture_plan_baselines	ON
+select @@global.tidb_capture_plan_baselines;
+@@global.tidb_capture_plan_baselines
+1
+set GLOBAL tidb_capture_plan_baselines = default;
+drop database if exists bindinfo__bind_test;
+create database bindinfo__bind_test;
+use bindinfo__bind_test;
+create table t(a int, b int, index idx(a));
+select original_sql, status from mysql.bind_info where original_sql like '%bindinfo__bind_test%';
+original_sql	status
+show global bindings where original_sql like '%bindinfo__bind_test%';
+Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
+create global binding for select * from t using select * from t;
+select original_sql, status from mysql.bind_info where original_sql like '%bindinfo__bind_test%';
+original_sql	status
+select * from `bindinfo__bind_test` . `t`	enabled
+show global bindings where original_sql like '%bindinfo__bind_test%';
+Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
+select * from `bindinfo__bind_test` . `t`	SELECT * FROM `bindinfo__bind_test`.`t`	bindinfo__bind_test	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	7b6e1829d138552ad533ff6ee71b33faeda4e30020fdba3bdf36eee580d5a500	
+create global binding for select * from t using select * from t;
+select original_sql, status from mysql.bind_info where original_sql like '%bindinfo__bind_test%';
+original_sql	status
+select * from `bindinfo__bind_test` . `t`	deleted
+select * from `bindinfo__bind_test` . `t`	enabled
+show global bindings where original_sql like '%bindinfo__bind_test%';
+Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
+select * from `bindinfo__bind_test` . `t`	SELECT * FROM `bindinfo__bind_test`.`t`	bindinfo__bind_test	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	7b6e1829d138552ad533ff6ee71b33faeda4e30020fdba3bdf36eee580d5a500	
+drop global binding for select * from t;
+use bindinfo__bind;
+drop database bindinfo__bind_test;
+drop table if exists t1, t2;
+create table t1(a int, b int, c int, key idx_b(b), key idx_c(c));
+create table t2(a int, b int, c int, key idx_b(b), key idx_c(c));
+explain format='plan_tree' delete from t1 where b = 1 and c > 1;
+id	task	access object	operator info
+Delete	root		N/A
+└─IndexLookUp	root		
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:idx_b(b)	range:[1,1], keep order:false, stats:pseudo
+  └─Selection(Probe)	cop[tikv]		gt(bindinfo__bind.t1.c, 1)
+    └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+create global binding for delete from t1 where b = 1 and c > 1 using delete /*+ use_index(t1,idx_c) */ from t1 where b = 1 and c > 1;
+explain format='plan_tree' delete from t1 where b = 1 and c > 1;
+id	task	access object	operator info
+Delete	root		N/A
+└─IndexLookUp	root		
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:idx_c(c)	range:(1,+inf], keep order:false, stats:pseudo
+  └─Selection(Probe)	cop[tikv]		eq(bindinfo__bind.t1.b, 1)
+    └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format='plan_tree' delete t1, t2 from t1 inner join t2 on t1.b = t2.b;
+id	task	access object	operator info
+Delete	root		N/A
+└─HashJoin	root		inner join, equal:[eq(bindinfo__bind.t1.b, bindinfo__bind.t2.b)]
+  ├─TableReader(Build)	root		data:Selection
+  │ └─Selection	cop[tikv]		not(isnull(bindinfo__bind.t2.b))
+  │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─TableReader(Probe)	root		data:Selection
+    └─Selection	cop[tikv]		not(isnull(bindinfo__bind.t1.b))
+      └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+create global binding for delete t1, t2 from t1 inner join t2 on t1.b = t2.b using delete /*+ inl_join(t1) */ t1, t2 from t1 inner join t2 on t1.b = t2.b;
+explain format='plan_tree' delete t1, t2 from t1 inner join t2 on t1.b = t2.b;
+id	task	access object	operator info
+Delete	root		N/A
+└─IndexJoin	root		inner join, inner:IndexLookUp, outer key:bindinfo__bind.t2.b, inner key:bindinfo__bind.t1.b, equal cond:eq(bindinfo__bind.t2.b, bindinfo__bind.t1.b)
+  ├─TableReader(Build)	root		data:Selection
+  │ └─Selection	cop[tikv]		not(isnull(bindinfo__bind.t2.b))
+  │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─IndexLookUp(Probe)	root		
+    ├─Selection(Build)	cop[tikv]		not(isnull(bindinfo__bind.t1.b))
+    │ └─IndexRangeScan	cop[tikv]	table:t1, index:idx_b(b)	range: decided by [eq(bindinfo__bind.t1.b, bindinfo__bind.t2.b)], keep order:false, stats:pseudo
+    └─TableRowIDScan(Probe)	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format='plan_tree' update t1 set a = 1 where b = 1 and c > 1;
+id	task	access object	operator info
+Update	root		N/A
+└─IndexLookUp	root		
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:idx_b(b)	range:[1,1], keep order:false, stats:pseudo
+  └─Selection(Probe)	cop[tikv]		gt(bindinfo__bind.t1.c, 1)
+    └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+create global binding for update t1 set a = 1 where b = 1 and c > 1 using update /*+ use_index(t1,idx_c) */ t1 set a = 1 where b = 1 and c > 1;
+explain format='plan_tree' update t1 set a = 1 where b = 1 and c > 1;
+id	task	access object	operator info
+Update	root		N/A
+└─IndexLookUp	root		
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:idx_c(c)	range:(1,+inf], keep order:false, stats:pseudo
+  └─Selection(Probe)	cop[tikv]		eq(bindinfo__bind.t1.b, 1)
+    └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format='plan_tree' update t1, t2 set t1.a = 1 where t1.b = t2.b;
+id	task	access object	operator info
+Update	root		N/A
+└─HashJoin	root		inner join, equal:[eq(bindinfo__bind.t1.b, bindinfo__bind.t2.b)]
+  ├─IndexReader(Build)	root		index:IndexFullScan
+  │ └─IndexFullScan	cop[tikv]	table:t2, index:idx_b(b)	keep order:false, stats:pseudo
+  └─TableReader(Probe)	root		data:Selection
+    └─Selection	cop[tikv]		not(isnull(bindinfo__bind.t1.b))
+      └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+create global binding for update t1, t2 set t1.a = 1 where t1.b = t2.b using update /*+ inl_join(t1) */ t1, t2 set t1.a = 1 where t1.b = t2.b;
+explain format='plan_tree' update t1, t2 set t1.a = 1 where t1.b = t2.b;
+id	task	access object	operator info
+Update	root		N/A
+└─IndexJoin	root		inner join, inner:IndexLookUp, outer key:bindinfo__bind.t2.b, inner key:bindinfo__bind.t1.b, equal cond:eq(bindinfo__bind.t2.b, bindinfo__bind.t1.b)
+  ├─IndexReader(Build)	root		index:IndexFullScan
+  │ └─IndexFullScan	cop[tikv]	table:t2, index:idx_b(b)	keep order:false, stats:pseudo
+  └─IndexLookUp(Probe)	root		
+    ├─Selection(Build)	cop[tikv]		not(isnull(bindinfo__bind.t1.b))
+    │ └─IndexRangeScan	cop[tikv]	table:t1, index:idx_b(b)	range: decided by [eq(bindinfo__bind.t1.b, bindinfo__bind.t2.b)], keep order:false, stats:pseudo
+    └─TableRowIDScan(Probe)	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format='plan_tree' insert into t1 select * from t2 where t2.b = 2 and t2.c > 2;
+id	task	access object	operator info
+Insert	root		N/A
+└─IndexLookUp	root		
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t2, index:idx_b(b)	range:[2,2], keep order:false, stats:pseudo
+  └─Selection(Probe)	cop[tikv]		gt(bindinfo__bind.t2.c, 2)
+    └─TableRowIDScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+create global binding for insert into t1 select * from t2 where t2.b = 1 and t2.c > 1 using insert /*+ use_index(t2,idx_c) */ into t1 select * from t2 where t2.b = 1 and t2.c > 1;
+explain format='plan_tree' insert into t1 select * from t2 where t2.b = 2 and t2.c > 2;
+id	task	access object	operator info
+Insert	root		N/A
+└─IndexLookUp	root		
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t2, index:idx_b(b)	range:[2,2], keep order:false, stats:pseudo
+  └─Selection(Probe)	cop[tikv]		gt(bindinfo__bind.t2.c, 2)
+    └─TableRowIDScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+drop global binding for insert into t1 select * from t2 where t2.b = 1 and t2.c > 1;
+create global binding for insert into t1 select * from t2 where t2.b = 1 and t2.c > 1 using insert into t1 select /*+ use_index(t2,idx_c) */ * from t2 where t2.b = 1 and t2.c > 1;
+explain format='plan_tree' insert into t1 select * from t2 where t2.b = 2 and t2.c > 2;
+id	task	access object	operator info
+Insert	root		N/A
+└─IndexLookUp	root		
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t2, index:idx_c(c)	range:(2,+inf], keep order:false, stats:pseudo
+  └─Selection(Probe)	cop[tikv]		eq(bindinfo__bind.t2.b, 2)
+    └─TableRowIDScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+explain format='plan_tree' replace into t1 select * from t2 where t2.b = 2 and t2.c > 2;
+id	task	access object	operator info
+Insert	root		N/A
+└─IndexLookUp	root		
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t2, index:idx_b(b)	range:[2,2], keep order:false, stats:pseudo
+  └─Selection(Probe)	cop[tikv]		gt(bindinfo__bind.t2.c, 2)
+    └─TableRowIDScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+create global binding for replace into t1 select * from t2 where t2.b = 1 and t2.c > 1 using replace into t1 select /*+ use_index(t2,idx_c) */ * from t2 where t2.b = 1 and t2.c > 1;
+explain format='plan_tree' replace into t1 select * from t2 where t2.b = 2 and t2.c > 2;
+id	task	access object	operator info
+Insert	root		N/A
+└─IndexLookUp	root		
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t2, index:idx_c(c)	range:(2,+inf], keep order:false, stats:pseudo
+  └─Selection(Probe)	cop[tikv]		eq(bindinfo__bind.t2.b, 2)
+    └─TableRowIDScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+drop global binding for delete from t1 where b = 1 and c > 1;
+drop global binding for delete t1, t2 from t1 inner join t2 on t1.b = t2.b;
+drop global binding for update t1 set a = 1 where b = 1 and c > 1;
+drop global binding for update t1, t2 set t1.a = 1 where t1.b = t2.b;
+drop global binding for insert into t1 select * from t2 where t2.b = 1 and t2.c > 1;
+drop global binding for replace into t1 select * from t2 where t2.b = 1 and t2.c > 1;

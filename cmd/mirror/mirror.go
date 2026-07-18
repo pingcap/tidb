@@ -1,0 +1,334 @@
+// Copyright 2022 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package main
+
+import (
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sort"
+	"strings"
+
+	"github.com/bazelbuild/rules_go/go/tools/bazel"
+)
+
+// downloadedModule captures `go mod download -json` output.
+type downloadedModule struct {
+	Path    string `json:"Path"`
+	Sum     string `json:"Sum"`
+	Version string `json:"Version"`
+	Zip     string `json:"Zip"`
+}
+
+// listedModule captures `go list -m -json` output.
+type listedModule struct {
+	Path    string        `json:"Path"`
+	Version string        `json:"Version"`
+	Replace *listedModule `json:"Replace,omitempty"`
+}
+
+var (
+	isMirror bool
+	isUpload bool
+)
+
+func init() {
+	flag.BoolVar(&isMirror, "mirror", false, "deprecated; ignored")
+	flag.BoolVar(&isUpload, "upload", false, "deprecated; ignored")
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	_, err = io.Copy(out, in)
+	return err
+}
+
+func createTmpDir() (tmpdir string, err error) {
+	tmpdir, err = bazel.NewTmpDir("gomirror")
+	if err != nil {
+		return
+	}
+	err = os.MkdirAll(filepath.Join(tmpdir, "pkg/parser"), os.ModePerm)
+	if err != nil {
+		return
+	}
+	gomod, err := bazel.Runfile("go.mod")
+	if err != nil {
+		return
+	}
+	gosum, err := bazel.Runfile("go.sum")
+	if err != nil {
+		return
+	}
+	parsergomod := strings.Replace(gomod, "go.mod", "pkg/parser/go.mod", 1)
+	parsergosum := strings.Replace(gosum, "go.sum", "pkg/parser/go.sum", 1)
+	err = copyFile(gomod, filepath.Join(tmpdir, "go.mod"))
+	if err != nil {
+		return
+	}
+	err = copyFile(parsergomod, filepath.Join(tmpdir, "pkg/parser/go.mod"))
+	if err != nil {
+		return
+	}
+	err = copyFile(gosum, filepath.Join(tmpdir, "go.sum"))
+	if err != nil {
+		return
+	}
+	err = copyFile(parsergosum, filepath.Join(tmpdir, "pkg/parser/go.sum"))
+	return
+}
+
+func downloadZips(
+	tmpdir string, listed map[string]listedModule,
+) (map[string]downloadedModule, error) {
+	gobin, err := bazel.Runfile("bin/go")
+	if err != nil {
+		return nil, err
+	}
+	downloadArgs := make([]string, 0, len(listed)+3)
+	downloadArgs = append(downloadArgs, "mod", "download", "-json")
+	for _, mod := range listed {
+		if mod.Replace != nil {
+			if mod.Replace.Version == "" {
+				continue
+			}
+			downloadArgs = append(downloadArgs, fmt.Sprintf("%s@%s", mod.Replace.Path, mod.Replace.Version))
+		} else {
+			downloadArgs = append(downloadArgs, fmt.Sprintf("%s@%s", mod.Path, mod.Version))
+		}
+	}
+	cmd := exec.Command(gobin, downloadArgs...)
+	cmd.Dir = tmpdir
+	env := os.Environ()
+	env = append(env, fmt.Sprintf("GOSUMDB=%s", "sum.golang.org"))
+	cmd.Env = env
+	jsonBytes, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	var jsonBuilder strings.Builder
+	ret := make(map[string]downloadedModule)
+	for _, line := range strings.Split(string(jsonBytes), "\n") {
+		jsonBuilder.WriteString(line)
+		if strings.HasPrefix(line, "}") {
+			var mod downloadedModule
+			if err := json.Unmarshal([]byte(jsonBuilder.String()), &mod); err != nil {
+				return nil, err
+			}
+			ret[mod.Path] = mod
+			jsonBuilder.Reset()
+		}
+	}
+	return ret, nil
+}
+
+func listAllModules(tmpdir string) (map[string]listedModule, error) {
+	gobin, err := bazel.Runfile("bin/go")
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.Command(gobin, "list", "-mod=readonly", "-m", "-json", "all")
+	cmd.Dir = tmpdir
+	env := os.Environ()
+	env = append(env, fmt.Sprintf("GOSUMDB=%s", "sum.golang.org"))
+	cmd.Env = env
+	jsonBytes, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	ret := make(map[string]listedModule)
+	var jsonBuilder strings.Builder
+	for _, line := range strings.Split(string(jsonBytes), "\n") {
+		jsonBuilder.WriteString(line)
+		if strings.HasPrefix(line, "}") {
+			var mod listedModule
+			if err := json.Unmarshal([]byte(jsonBuilder.String()), &mod); err != nil {
+				return nil, err
+			}
+			jsonBuilder.Reset()
+			if mod.Path == "github.com/pingcap/tidb" {
+				continue
+			}
+			ret[mod.Path] = mod
+		}
+	}
+	return ret, nil
+}
+
+func mungeBazelRepoNameComponent(component string) string {
+	component = strings.ReplaceAll(component, "-", "_")
+	component = strings.ReplaceAll(component, ".", "_")
+	return strings.ToLower(component)
+}
+
+func modulePathToBazelRepoName(mod string) string {
+	components := strings.Split(mod, "/")
+	head := strings.Split(components[0], ".")
+	for i, j := 0, len(head)-1; i < j; i, j = i+1, j-1 {
+		head[i], head[j] = mungeBazelRepoNameComponent(head[j]), mungeBazelRepoNameComponent(head[i])
+	}
+	for index, component := range components {
+		if index == 0 {
+			continue
+		}
+		components[index] = mungeBazelRepoNameComponent(component)
+	}
+	return strings.Join(append(head, components[1:]...), "_")
+}
+
+func dumpPatchArgsForRepo(repoName string) error {
+	runfiles, err := bazel.RunfilesPath()
+	if err != nil {
+		return err
+	}
+	candidate := filepath.Join(runfiles, "build", "patches", repoName+".patch")
+	if _, err := os.Stat(candidate); err == nil {
+		fmt.Printf(`        patch_args = ["-p1"],
+        patches = [
+            "//build/patches:%s.patch",
+        ],
+`, repoName)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+func buildFileProtoModeForRepo(repoName string) string {
+	if repoName == "io_etcd_go_etcd_api_v3" {
+		return "disable"
+	}
+	return "disable_global"
+}
+
+func dumpBuildNamingConventionArgsForRepo(repoName string) {
+	if repoName == "com_github_grpc_ecosystem_grpc_gateway" {
+		fmt.Printf("        build_naming_convention = \"go_default_library\",\n")
+	}
+}
+
+func dumpNewDepsBzl(
+	listed map[string]listedModule,
+	downloaded map[string]downloadedModule,
+) error {
+	var sorted []string
+	repoNameToModPath := make(map[string]string)
+	for _, mod := range listed {
+		repoName := modulePathToBazelRepoName(mod.Path)
+		sorted = append(sorted, repoName)
+		repoNameToModPath[repoName] = mod.Path
+	}
+	sort.Strings(sorted)
+
+	// This uses a lot of fmt.Println to output the generated configuration to stdout,
+	// and the generator will only be used under "make bazel_prepare", so it won't output
+	// too much and affect development.
+	fmt.Println(`load("@bazel_gazelle//:deps.bzl", "go_repository")
+
+def go_deps():
+    # NOTE: We ensure that we pin to these specific dependencies by calling
+    # this function FIRST, before calls to pull in dependencies for
+    # third-party libraries (e.g. rules_go, gazelle, etc.)`)
+	for _, repoName := range sorted {
+		if repoName == "com_github_pingcap_tidb_pkg_parser" {
+			continue
+		}
+		path := repoNameToModPath[repoName]
+		mod := listed[path]
+		replaced := &mod
+		if mod.Replace != nil {
+			replaced = mod.Replace
+		}
+		fmt.Printf(`    go_repository(
+        name = "%s",
+`, repoName)
+		if strings.HasPrefix(repoName, "com_github_tikv") {
+			fmt.Printf(`        build_tags = ["nextgen", "intest"],
+`)
+		}
+		fmt.Printf(`        build_file_proto_mode = "%s",
+`, buildFileProtoModeForRepo(repoName))
+		dumpBuildNamingConventionArgsForRepo(repoName)
+		fmt.Printf("        importpath = \"%s\",\n", mod.Path)
+		if err := dumpPatchArgsForRepo(repoName); err != nil {
+			return err
+		}
+		d, ok := downloaded[replaced.Path]
+		if !ok {
+			return fmt.Errorf("could not find downloaded module for %s@%s", replaced.Path, replaced.Version)
+		}
+		if mod.Replace != nil {
+			fmt.Printf("        replace = \"%s\",\n", replaced.Path)
+		}
+		fmt.Printf(`        sum = "%s",
+        version = "%s",
+`, d.Sum, d.Version)
+		fmt.Println("    )")
+	}
+	return nil
+}
+
+func mirror() error {
+	tmpdir, err := createTmpDir()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		err := os.RemoveAll(tmpdir)
+		if err != nil {
+			panic(err)
+		}
+	}()
+	listed, err := listAllModules(tmpdir)
+	if err != nil {
+		return err
+	}
+	downloaded, err := downloadZips(tmpdir, listed)
+	if err != nil {
+		return err
+	}
+	return dumpNewDepsBzl(listed, downloaded)
+}
+
+func main() {
+	flag.Parse()
+	if isMirror {
+		fmt.Fprintln(os.Stderr, "--mirror is deprecated and ignored; modules are resolved through GOPROXY")
+	}
+	if isUpload {
+		fmt.Fprintln(os.Stderr, "--upload is deprecated and ignored; modules are resolved through GOPROXY")
+	}
+	if err := mirror(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			panic("subprocess exited with stderr:\n" + string(exitErr.Stderr))
+		}
+		panic(err)
+	}
+}

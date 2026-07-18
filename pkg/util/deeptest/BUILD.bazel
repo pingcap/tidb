@@ -1,0 +1,21 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "deeptest",
+    srcs = ["statictesthelper.go"],
+    importpath = "github.com/pingcap/tidb/pkg/util/deeptest",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@com_github_gobwas_glob//:glob",
+        "@com_github_stretchr_testify//require",
+    ],
+)
+
+go_test(
+    name = "deeptest_test",
+    timeout = "short",
+    srcs = ["statictesthelper_test.go"],
+    embed = [":deeptest"],
+    flaky = True,
+    deps = ["@com_github_stretchr_testify//require"],
+)

@@ -1,0 +1,214 @@
+// Copyright 2021 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package topsql
+
+import (
+	"context"
+	"runtime/pprof"
+	"strings"
+	"time"
+
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/pingcap/tidb/pkg/util/topsql/collector"
+	"github.com/pingcap/tidb/pkg/util/topsql/reporter"
+	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
+	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
+	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
+	"google.golang.org/grpc"
+)
+
+const (
+	// MaxSQLTextSize exports for testing.
+	MaxSQLTextSize = 4 * 1024
+	// MaxBinaryPlanSize exports for testing.
+	MaxBinaryPlanSize = 2 * 1024
+)
+
+var (
+	globalTopProfilingReport reporter.TopSQLReporter
+	singleTargetDataSink     *reporter.SingleTargetDataSink
+)
+
+func init() {
+	remoteReporter := reporter.NewRemoteTopSQLReporter(plancodec.DecodeNormalizedPlan, plancodec.Compress)
+	globalTopProfilingReport = remoteReporter
+	singleTargetDataSink = reporter.NewSingleTargetDataSink(remoteReporter)
+}
+
+// SetupTopProfiling sets up the Top Profiling pipeline.
+//
+// NOTE: Despite the package name, this initializer wires the shared TopSQL and
+// TopRU pipeline.
+func SetupTopProfiling(keyspaceName []byte, updater collector.ProcessCPUTimeUpdater, ruVersionProvider stmtstats.RUVersionProvider) {
+	globalTopProfilingReport.BindKeyspaceName(keyspaceName)
+	globalTopProfilingReport.BindProcessCPUTimeUpdater(updater)
+	globalTopProfilingReport.Start()
+	singleTargetDataSink.Start()
+
+	stmtstats.RegisterCollector(globalTopProfilingReport)
+	if ruCollector, ok := globalTopProfilingReport.(stmtstats.RUCollector); ok {
+		stmtstats.RegisterRUCollector(ruCollector)
+	}
+	stmtstats.BindRUVersionProvider(ruVersionProvider)
+	stmtstats.SetupAggregator()
+}
+
+// SetupTopProfilingForTest sets up the global reporter for tests.
+func SetupTopProfilingForTest(r reporter.TopSQLReporter) {
+	globalTopProfilingReport = r
+}
+
+// RegisterPubSubServer registers TopSQLPubSubService to the given gRPC server.
+func RegisterPubSubServer(s *grpc.Server) {
+	if register, ok := globalTopProfilingReport.(reporter.DataSinkRegisterer); ok {
+		service := reporter.NewTopSQLPubSubService(register)
+		tipb.RegisterTopSQLPubSubServer(s, service)
+	}
+}
+
+// Close uses to close and release the top sql resource.
+func Close() {
+	if ruCollector, ok := globalTopProfilingReport.(stmtstats.RUCollector); ok {
+		stmtstats.UnregisterRUCollector(ruCollector)
+	}
+	singleTargetDataSink.Close()
+	globalTopProfilingReport.Close()
+	stmtstats.CloseAggregator()
+	stmtstats.BindRUVersionProvider(nil)
+}
+
+// RegisterSQL uses to register SQL information into Top Profiling.
+func RegisterSQL(normalizedSQL string, sqlDigest *parser.Digest, isInternal bool) {
+	if sqlDigest != nil {
+		sqlDigestBytes := sqlDigest.Bytes()
+		linkSQLTextWithDigest(sqlDigestBytes, normalizedSQL, isInternal)
+	}
+}
+
+// RegisterPlan uses to register plan information into Top Profiling.
+func RegisterPlan(normalizedPlan string, planDigest *parser.Digest) {
+	if planDigest != nil {
+		planDigestBytes := planDigest.Bytes()
+		linkPlanTextWithDigest(planDigestBytes, normalizedPlan)
+	}
+}
+
+// AttachAndRegisterSQLInfo attach the sql information into Top Profiling and register the SQL meta information.
+func AttachAndRegisterSQLInfo(ctx context.Context, normalizedSQL string, sqlDigest *parser.Digest, isInternal bool) context.Context {
+	if sqlDigest == nil || len(sqlDigest.String()) == 0 {
+		return ctx
+	}
+	sqlDigestBytes := sqlDigest.Bytes()
+	ctx = collector.CtxWithSQLDigest(ctx, sqlDigest.String())
+	if topsqlstate.TopSQLEnabled() {
+		pprof.SetGoroutineLabels(ctx)
+	}
+
+	linkSQLTextWithDigest(sqlDigestBytes, normalizedSQL, isInternal)
+
+	failpoint.Inject("mockHighLoadForEachSQL", func(val failpoint.Value) {
+		// In integration test, some SQL run very fast that Top SQL pprof profile unable to sample data of those SQL,
+		// So need mock some high cpu load to make sure pprof profile successfully samples the data of those SQL.
+		// Attention: Top SQL pprof profile unable to sample data of those SQL which run very fast, this behavior is expected.
+		// The integration test was just want to make sure each type of SQL will be set goroutine labels and and can be collected.
+		if val.(bool) {
+			sqlPrefixes := []string{"insert", "update", "delete", "load", "replace", "select", "begin",
+				"commit", "analyze", "explain", "trace", "create", "set global"}
+			if MockHighCPULoad(normalizedSQL, sqlPrefixes, 1) {
+				logutil.BgLogger().Info("attach SQL info", zap.String("sql", normalizedSQL))
+			}
+		}
+	})
+	return ctx
+}
+
+// AttachSQLAndPlanInfo attach the sql and plan information into Top Profiling.
+func AttachSQLAndPlanInfo(ctx context.Context, sqlDigest *parser.Digest, planDigest *parser.Digest) context.Context {
+	if sqlDigest == nil || len(sqlDigest.String()) == 0 {
+		return ctx
+	}
+	var planDigestStr string
+	sqlDigestStr := sqlDigest.String()
+	if planDigest != nil {
+		planDigestStr = planDigest.String()
+	}
+	ctx = collector.CtxWithSQLAndPlanDigest(ctx, sqlDigestStr, planDigestStr)
+	if topsqlstate.TopSQLEnabled() {
+		pprof.SetGoroutineLabels(ctx)
+	}
+
+	failpoint.Inject("mockHighLoadForEachPlan", func(val failpoint.Value) {
+		// Work like mockHighLoadForEachSQL failpoint.
+		if val.(bool) {
+			if MockHighCPULoad("", []string{""}, 1) {
+				logutil.BgLogger().Info("attach SQL info")
+			}
+		}
+	})
+	return ctx
+}
+
+// AttachAndRegisterProcessInfo attach the ProcessInfo into Goroutine labels.
+func AttachAndRegisterProcessInfo(ctx context.Context, connID uint64, sqlID uint64) context.Context {
+	ctx = collector.CtxWithProcessInfo(ctx, connID, sqlID)
+	if topsqlstate.TopSQLEnabled() {
+		pprof.SetGoroutineLabels(ctx)
+	}
+	return ctx
+}
+
+// MockHighCPULoad mocks high cpu load, only use in failpoint test.
+func MockHighCPULoad(sql string, sqlPrefixs []string, load int64) bool {
+	lowerSQL := strings.ToLower(sql)
+	if strings.Contains(lowerSQL, "mysql") && !strings.Contains(lowerSQL, "global_variables") {
+		return false
+	}
+	match := false
+	for _, prefix := range sqlPrefixs {
+		if strings.HasPrefix(lowerSQL, prefix) {
+			match = true
+			break
+		}
+	}
+	if !match {
+		return false
+	}
+	start := time.Now()
+	for {
+		if time.Since(start) > 12*time.Millisecond*time.Duration(load) {
+			break
+		}
+		for range int(10e5) {
+			continue
+		}
+	}
+	return true
+}
+
+func linkSQLTextWithDigest(sqlDigest []byte, normalizedSQL string, isInternal bool) {
+	if len(normalizedSQL) > MaxSQLTextSize {
+		normalizedSQL = normalizedSQL[:MaxSQLTextSize]
+	}
+
+	globalTopProfilingReport.RegisterSQL(sqlDigest, normalizedSQL, isInternal)
+}
+
+func linkPlanTextWithDigest(planDigest []byte, normalizedBinaryPlan string) {
+	globalTopProfilingReport.RegisterPlan(planDigest, normalizedBinaryPlan, len(normalizedBinaryPlan) > MaxBinaryPlanSize)
+}

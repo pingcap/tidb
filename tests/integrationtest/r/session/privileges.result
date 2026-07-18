@@ -1,0 +1,103 @@
+drop user if exists 'abcddfjakldfjaldddds'@'%';
+create table if not exists t (a int);
+## Test username length can be longer than 16.
+CREATE USER 'abcddfjakldfjaldddds'@'%' identified by '';
+grant all privileges on test.* to 'abcddfjakldfjaldddds'@'%';
+grant all privileges on test.t to 'abcddfjakldfjaldddds'@'%';
+drop view if exists v_version29;
+drop user if exists 'u_version29'@'%';
+create table if not exists t (a int);
+create view v_version29 as select * from t;
+create user 'u_version29'@'%';
+grant select on t to u_version29@'%';
+select current_user();
+current_user()
+u_version29@%
+select * from test.v_version29;
+Error 1142 (42000): SELECT command denied to user 'u_version29'@'%' for table 'v_version29'
+select current_user();
+current_user()
+u_version29@%
+create view v_version29_c as select * from t;
+Error 1142 (42000): CREATE VIEW command denied to user 'u_version29'@'%' for table 'v_version29_c'
+grant show view, select on v_version29 to 'u_version29'@'%';
+select table_priv from mysql.tables_priv where host='%' and db='session__privileges' and user='u_version29' and table_name='v_version29';
+table_priv
+Select,Show View
+select current_user();
+current_user()
+u_version29@%
+show create view v_version29;
+View	Create View	character_set_client	collation_connection
+v_version29	CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`%` SQL SECURITY DEFINER VIEW `v_version29` (`a`) AS SELECT `session__privileges`.`t`.`a` AS `a` FROM `session__privileges`.`t`	utf8mb4	utf8mb4_general_ci
+create view v_version29_c as select * from v_version29;
+Error 1142 (42000): CREATE VIEW command denied to user 'u_version29'@'%' for table 'v_version29_c'
+create view v_version29_c as select * from v_version29;
+grant create view on v_version29_c to 'u_version29'@'%';
+select table_priv from mysql.tables_priv where host='%' and db='session__privileges' and user='u_version29' and table_name='v_version29_c';
+table_priv
+Create View
+drop view v_version29_c;
+grant select on v_version29 to 'u_version29'@'%';
+select current_user();
+current_user()
+u_version29@%
+create view v_version29_c as select * from v_version29;
+drop table if exists t1, t2;
+drop user if exists xxx;
+create table t1 (id int);
+create table t2 (id int);
+insert into t1 values (1);
+insert into t2 values (2);
+create user xxx;
+grant all on session__privileges.t1 to xxx;
+grant select on session__privileges.t2 to xxx;
+update t2 set id = 666 where id = 1;
+Error 8121 (HY000): privilege check for 'Update' fail
+## Cover a bug that t1 and t2 both require update privilege.
+## In fact, the privlege check for t1 should be update, and for t2 should be select.
+update t1,t2 set t1.id = t2.id;
+## Fix issue 8911
+drop database if exists weperk;
+drop user if exists weperk;
+create database weperk;
+use weperk;
+create table tb_wehub_server (id int, active_count int, used_count int);
+create user 'weperk';
+grant all privileges on weperk.* to 'weperk'@'%';
+update tb_wehub_server a set a.active_count=a.active_count+1,a.used_count=a.used_count+1 where id=1;
+drop database if exists service;
+drop database if exists report;
+create database service;
+create database report;
+CREATE TABLE service.t1 (
+id int(11) DEFAULT NULL,
+a bigint(20) NOT NULL,
+b text DEFAULT NULL,
+PRIMARY KEY (a)
+);
+CREATE TABLE report.t2 (
+a bigint(20) DEFAULT NULL,
+c bigint(20) NOT NULL
+);
+grant all privileges on service.* to weperk;
+grant all privileges on report.* to weperk;
+update service.t1 s,
+report.t2 t
+set s.a = t.a
+WHERE
+s.a = t.a
+and t.c >=  1 and t.c <= 10000
+and s.b !='xx';
+## Fix issue 10028
+drop database if exists ap;
+drop database if exists tp;
+create database ap;
+create database tp;
+grant all privileges on ap.* to xxx;
+grant select on tp.* to xxx;
+create table tp.record( id int,name varchar(128),age int);
+insert into tp.record (id,name,age) values (1,'john',18),(2,'lary',19),(3,'lily',18);
+create table ap.record( id int,name varchar(128),age int);
+insert into ap.record(id) values(1);
+update ap.record t inner join tp.record tt on t.id=tt.id  set t.name=tt.name;

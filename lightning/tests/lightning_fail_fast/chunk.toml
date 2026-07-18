@@ -1,0 +1,6 @@
+[checkpoint]
+enable = false
+
+[tikv-importer]
+on-duplicate = "error"
+max-kv-pairs = 1

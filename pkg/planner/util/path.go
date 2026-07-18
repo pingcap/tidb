@@ -1,0 +1,571 @@
+// Copyright 2019 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package util
+
+import (
+	"slices"
+
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/ranger"
+	sliceutil "github.com/pingcap/tidb/pkg/util/slice"
+)
+
+// IndexLookUpPushDownByType indicates whether to use index lookup push down optimization where it comes.
+type IndexLookUpPushDownByType int
+
+const (
+	// IndexLookUpPushDownNone indicates do not push down the index lookup.
+	IndexLookUpPushDownNone IndexLookUpPushDownByType = iota
+	// IndexLookUpPushDownByHint indicates the hint tells to push down the index lookup.
+	IndexLookUpPushDownByHint
+	// IndexLookUpPushDownBySysVar indicates the system variable tells to push down the index lookup.
+	IndexLookUpPushDownBySysVar
+)
+
+// AccessPath indicates the way we access a table: by using single index, or by using multiple indexes,
+// or just by using table scan.
+type AccessPath struct {
+	Index          *model.IndexInfo
+	FullIdxCols    []*expression.Column
+	FullIdxColLens []int
+	IdxCols        []*expression.Column
+	IdxColLens     []int
+	// ConstCols indicates whether the column is constant under the given conditions for all index columns.
+	ConstCols []bool
+	Ranges    []*ranger.Range
+	// CountAfterAccess is the row count after we apply range seek and before we use other filter to filter data.
+	// For index merge path, CountAfterAccess is the row count after partial paths and before we apply table filters.
+	CountAfterAccess float64
+	// MinCountAfterAccess is a lower bound on CountAfterAccess, accounting for risks that could
+	// lead to overestimation, such as assuming correlation with exponential backoff when columns are actually independent.
+	// Case MinCountAfterAccess > 0 : we've encountered risky scenarios and have a potential lower row count estimation
+	// Default MinCountAfterAccess = 0 : we have not identified risks that could lead to lower row count
+	MinCountAfterAccess float64
+	// MaxCountAfterAccess is an upper bound on the CountAfterAccess, accounting for risks that could
+	// lead to underestimation, such as assuming independence between non-index columns.
+	// Case MaxCountAfterAccess > 0 : we've encountered risky scenarios and have a potential greater row count estimation
+	// Default MaxCountAfterAccess = 0 : we have not identified risks that could lead to greater row count
+	MaxCountAfterAccess float64
+	// CountAfterIndex is the row count after we apply filters on index and before we apply the table filters.
+	CountAfterIndex float64
+	AccessConds     []expression.Expression
+	EqCondCount     int
+	EqOrInCondCount int
+	IndexFilters    []expression.Expression
+	TableFilters    []expression.Expression
+	// PartialIndexPaths store all index access paths.
+	// If there are extra filters, store them in TableFilters.
+	PartialIndexPaths []*AccessPath
+
+	// The 3 fields below are for another case for building IndexMerge path besides AccessPath.PartialIndexPaths.
+	// Currently, it only applies to OR type IndexMerge.
+	// For every item in the OR list, there might be multiple candidate paths that satisfy the filters.
+	// The AccessPath.PartialIndexPaths case decides on one of them when building AccessPath. But here, we keep all the
+	// alternatives and make the decision later in findBestTask (see matchPropForIndexMergeAlternatives()).
+	// It's because we only know the required Sort property at that time. Delaying the decision to findBestTask can make
+	// us able to consider and try to satisfy the required Sort property.
+	/* For example:
+		create table t (a int, b int, c int, key a(a), key b(b), key ac(a, c), key bc(b, c));
+		explain format='verbose' select * from t where a=1 or b=1 order by c;
+	For a=1, it has two partial alternative paths: [a, ac]
+	For b=1, it has two partial alternative paths: [b, bc]
+	Then we build such a AccessPath:
+		AccessPath {
+			PartialAlternativeIndexPaths: [[[a], [ac]], [[b], [bc]]]
+			IndexMergeORSourceFilter: a = 1 or b = 1
+		}
+	*/
+
+	// PartialAlternativeIndexPaths stores all the alternative paths for each OR branch.
+	// meaning of the 3 dimensions:
+	// each OR branch -> each alternative for this OR branch -> each access path of this alternative (One JSON filter on
+	// MV index may build into multiple partial paths. For example, json_overlap(a, '[1, 2, 3]') builds into 3 partial
+	// paths in the final plan. For non-MV index, each alternative only has one AccessPath.)
+	PartialAlternativeIndexPaths [][][]*AccessPath
+	// KeepIndexMergeORSourceFilter indicates if we need to keep IndexMergeORSourceFilter in the final Selection of the
+	// IndexMerge plan.
+	// It has 2 cases:
+	// 1. The AccessPath.PartialAlternativeIndexPaths is set.
+	// If this field is true, the final plan should keep the filter.
+	// 2. It's a children of AccessPath.PartialAlternativeIndexPaths.
+	// If the final plan contains this alternative, it should keep the filter.
+	KeepIndexMergeORSourceFilter bool
+	// IndexMergeORSourceFilter is the original OR list for building the IndexMerge path.
+	IndexMergeORSourceFilter expression.Expression
+
+	// IndexMergeIsIntersection means whether it's intersection type or union type IndexMerge path.
+	// It's only valid for a IndexMerge path.
+	// Intersection type is for expressions connected by `AND` and union type is for `OR`.
+	IndexMergeIsIntersection bool
+	// IndexMergeAccessMVIndex indicates whether this IndexMerge path accesses a MVIndex.
+	IndexMergeAccessMVIndex bool
+
+	StoreType kv.StoreType
+
+	// If the top level of the filters is an OR list, IsDNFCond is true.
+	// In this case, MinAccessCondsForDNFCond will record the minimum number of access conditions among all DNF items.
+	// For example, if the filter is (a=1 and b=2) or (a=3 and b=4) or (a=5 and b=6 and c=7),
+	// for index (a) or index (b), MinAccessCondsForDNFCond will be 1;
+	// for index (a, b, c), MinAccessCondsForDNFCond will be 2.
+	IsDNFCond                bool
+	MinAccessCondsForDNFCond int
+
+	// IsIntHandlePath indicates whether this path is table path.
+	IsIntHandlePath    bool
+	IsCommonHandlePath bool
+	// Forced means this path is generated by `use/force index()`.
+	Forced           bool
+	ForceKeepOrder   bool
+	ForceNoKeepOrder bool
+	// ForcePartialOrder means whether to force using "current path + partial order optimize".
+	// Only when "Index is Force", "Partial Order is enable" and "Index can match partial order property"
+	// this flag will be set to true.
+	ForcePartialOrder bool
+	// IsSingleScan indicates whether the path is a single index/table scan or table access after index scan.
+	IsSingleScan bool
+
+	// Maybe added in model.IndexInfo better, but the cache of model.IndexInfo may lead side effect
+	IsUkShardIndexPath bool
+	// IndexLookUpPushDownBy indicates whether to use index lookup push down optimization and where it is from.
+	IndexLookUpPushDownBy IndexLookUpPushDownByType
+
+	// GroupedRanges and GroupByColIdxs are used for the SortPropSatisfiedNeedMergeSort case from matchProperty().
+	// It's for queries like `SELECT * FROM t WHERE a IN (1,2,3) ORDER BY b, c` with index(a, b, c), where we need a
+	// merge sort on the 3 ranges to satisfy the ORDER BY b, c.
+
+	// GroupedRanges stores the result of grouping ranges by columns. Finally, we need a merge sort on the results of
+	// each range group.
+	GroupedRanges [][]*ranger.Range
+	// GroupByColIdxs stores the column indices used for grouping ranges when using merge sort to satisfy the physical
+	// property.
+	// This field is used to rebuild GroupedRanges from ranges using GroupRangesByCols().
+	// It's used in plan cache or Apply.
+	GroupByColIdxs []int
+
+	// Disables plan cache for plans using this Path.
+	NoncacheableReason string
+}
+
+// Clone returns a deep copy of the original AccessPath.
+// Note that we rely on the Expression.Clone(), (*IndexInfo).Clone() and (*Range).Clone() in this method, so there are
+// some fields like FieldType are not deep-copied.
+func (path *AccessPath) Clone() *AccessPath {
+	ret := &AccessPath{
+		Index:                        path.Index.Clone(),
+		FullIdxCols:                  CloneCols(path.FullIdxCols),
+		FullIdxColLens:               slices.Clone(path.FullIdxColLens),
+		IdxCols:                      CloneCols(path.IdxCols),
+		IdxColLens:                   slices.Clone(path.IdxColLens),
+		ConstCols:                    slices.Clone(path.ConstCols),
+		Ranges:                       sliceutil.DeepClone(path.Ranges),
+		CountAfterAccess:             path.CountAfterAccess,
+		MinCountAfterAccess:          path.MinCountAfterAccess,
+		MaxCountAfterAccess:          path.MaxCountAfterAccess,
+		CountAfterIndex:              path.CountAfterIndex,
+		AccessConds:                  CloneExprs(path.AccessConds),
+		EqCondCount:                  path.EqCondCount,
+		EqOrInCondCount:              path.EqOrInCondCount,
+		IndexFilters:                 CloneExprs(path.IndexFilters),
+		TableFilters:                 CloneExprs(path.TableFilters),
+		IndexMergeIsIntersection:     path.IndexMergeIsIntersection,
+		PartialIndexPaths:            nil,
+		StoreType:                    path.StoreType,
+		IsDNFCond:                    path.IsDNFCond,
+		MinAccessCondsForDNFCond:     path.MinAccessCondsForDNFCond,
+		IsIntHandlePath:              path.IsIntHandlePath,
+		IsCommonHandlePath:           path.IsCommonHandlePath,
+		Forced:                       path.Forced,
+		ForceKeepOrder:               path.ForceKeepOrder,
+		ForceNoKeepOrder:             path.ForceNoKeepOrder,
+		ForcePartialOrder:            path.ForcePartialOrder,
+		IsSingleScan:                 path.IsSingleScan,
+		IsUkShardIndexPath:           path.IsUkShardIndexPath,
+		KeepIndexMergeORSourceFilter: path.KeepIndexMergeORSourceFilter,
+		GroupedRanges:                make([][]*ranger.Range, 0, len(path.GroupedRanges)),
+		GroupByColIdxs:               slices.Clone(path.GroupByColIdxs),
+		NoncacheableReason:           path.NoncacheableReason,
+	}
+	if path.IndexMergeORSourceFilter != nil {
+		ret.IndexMergeORSourceFilter = path.IndexMergeORSourceFilter.Clone()
+	}
+	ret.PartialIndexPaths = sliceutil.DeepClone(path.PartialIndexPaths)
+	ret.PartialAlternativeIndexPaths = make([][][]*AccessPath, 0, len(path.PartialAlternativeIndexPaths))
+	for _, oneORBranch := range path.PartialAlternativeIndexPaths {
+		clonedORBranch := make([][]*AccessPath, 0, len(oneORBranch))
+		for _, oneAlternative := range oneORBranch {
+			clonedOneAlternative := sliceutil.DeepClone(oneAlternative)
+			clonedORBranch = append(clonedORBranch, clonedOneAlternative)
+		}
+		ret.PartialAlternativeIndexPaths = append(ret.PartialAlternativeIndexPaths, clonedORBranch)
+	}
+	for _, ranges := range path.GroupedRanges {
+		ret.GroupedRanges = append(ret.GroupedRanges, sliceutil.DeepClone(ranges))
+	}
+	return ret
+}
+
+// IsTablePath returns true if it's IntHandlePath or CommonHandlePath. Including tiflash table scan.
+func (path *AccessPath) IsTablePath() bool {
+	return path.IsIntHandlePath || path.IsCommonHandlePath || (path.Index != nil && path.StoreType == kv.TiFlash)
+}
+
+// IsTiKVTablePath returns true if it's IntHandlePath or CommonHandlePath. And the store type is TiKV.
+func (path *AccessPath) IsTiKVTablePath() bool {
+	return (path.IsIntHandlePath || path.IsCommonHandlePath) && path.StoreType == kv.TiKV
+}
+
+// IsTiFlashSimpleTablePath returns true if it's a TiFlash path and will not use any special indexes like vector index.
+func (path *AccessPath) IsTiFlashSimpleTablePath() bool {
+	return path.StoreType == kv.TiFlash && path.Index == nil
+}
+
+// SplitCorColAccessCondFromFilters move the necessary filter in the form of index_col = corrlated_col to access conditions.
+// The function consider the `idx_col_1 = const and index_col_2 = cor_col and index_col_3 = const` case.
+// It also supports a trailing range predicate (LT/GT/LE/GE) with a correlated column on the last
+// access column, e.g. `idx_col_1 = cor_col AND idx_col_2 < cor_col`.
+// It enables more index columns to be considered. The range will be rebuilt in 'ResolveCorrelatedColumns'.
+func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext, eqOrInCount int) (access, remained []expression.Expression) {
+	access = make([]expression.Expression, len(path.IdxCols)-eqOrInCount)
+	used := make([]bool, len(path.TableFilters))
+	usedCnt := 0
+	for i := eqOrInCount; i < len(path.IdxCols); i++ {
+		matched := false
+		for j, filter := range path.TableFilters {
+			if used[j] {
+				continue
+			}
+			colEqConstant := isColEqConstant(filter, path.IdxCols[i])
+			if i == eqOrInCount && colEqConstant {
+				// If there is a col-eq-constant condition for path.IdxCols[eqOrInCount], it means that range fallback happens
+				// in DetachCondAndBuildRangeForIndex. In this case we don't consider adding access conditions. Besides, the IF
+				// branch also ensures that there must be some col-eq-corcol condition in access if len(access) > 0, which is
+				// important. If there is no col-eq-corcol condition in access, we would not rebuild ranges, which brings the
+				// correctness issue.
+				return nil, path.TableFilters
+			}
+			colEqCorCol := isColEqCorCol(filter, path.IdxCols[i])
+			if !colEqConstant && !colEqCorCol {
+				continue
+			}
+			// The plan cache do not support subquery now. So we skip the plan cache when there are correlated subqueries.
+			// Future judgement should be aligned with the function `isPhysicalPlanCacheable`.
+			ctx.GetExprCtx().SetSkipPlanCache("Correlated subquery is not cached currently")
+			matched = true
+			access[i-eqOrInCount] = filter
+			if path.IdxColLens[i] == types.UnspecifiedLength {
+				used[j] = true
+				usedCnt++
+			}
+			break
+		}
+		if !matched {
+			// Try a range predicate (LT/GT/LE/GE) with a correlated column.
+			// A range predicate terminates the access prefix, so we only
+			// attempt this when no EQ match was found.
+			for j, filter := range path.TableFilters {
+				if used[j] {
+					continue
+				}
+				if isColRangeCorCol(filter, path.IdxCols[i]) {
+					ctx.GetExprCtx().SetSkipPlanCache("Correlated subquery is not cached currently")
+					access[i-eqOrInCount] = filter
+					// Range predicates must also remain as post-scan filters
+					// because the index range is a superset when prefix lengths
+					// are involved, and to be safe we always keep the filter.
+					access = access[:i-eqOrInCount+1]
+					remained = make([]expression.Expression, 0, len(path.TableFilters)-usedCnt)
+					for k, ok := range used {
+						if !ok {
+							remained = append(remained, path.TableFilters[k]) // nozero
+						}
+					}
+					return access, remained
+				}
+			}
+			access = access[:i-eqOrInCount]
+			break
+		}
+	}
+	remained = make([]expression.Expression, 0, len(used)-usedCnt)
+	for i, ok := range used {
+		if !ok {
+			remained = append(remained, path.TableFilters[i]) // nozero
+		}
+	}
+	return access, remained
+}
+
+// isColEqConstant checks if the expression is eq function that one side is column and the other side is constant.
+func isColEqConstant(expr expression.Expression, col *expression.Column) bool {
+	isConstant := func(arg expression.Expression) bool {
+		_, ok := arg.(*expression.Constant)
+		return ok
+	}
+	return isColEqExpr(expr, col, isConstant)
+}
+
+// isColEqCorCol checks if the expression is eq function that one side is column and the other side is correlated column.
+func isColEqCorCol(expr expression.Expression, col *expression.Column) bool {
+	isCorCol := func(arg expression.Expression) bool {
+		_, ok := arg.(*expression.CorrelatedColumn)
+		return ok
+	}
+	return isColEqExpr(expr, col, isCorCol)
+}
+
+// isColRangeCorCol checks if the expression is a range comparison (LT/GT/LE/GE)
+// where one side is the given column and the other side is a correlated column.
+func isColRangeCorCol(expr expression.Expression, col *expression.Column) bool {
+	f, ok := expr.(*expression.ScalarFunction)
+	if !ok {
+		return false
+	}
+	switch f.FuncName.L {
+	case ast.LT, ast.GT, ast.LE, ast.GE:
+	default:
+		return false
+	}
+	_, collation := f.CharsetAndCollation()
+	if c, ok := f.GetArgs()[0].(*expression.Column); ok {
+		if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(collation, c.RetType.GetCollate()) {
+			return false
+		}
+		if _, ok := f.GetArgs()[1].(*expression.CorrelatedColumn); ok {
+			if col.EqualColumn(c) {
+				return true
+			}
+		}
+	}
+	if c, ok := f.GetArgs()[1].(*expression.Column); ok {
+		if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(collation, c.RetType.GetCollate()) {
+			return false
+		}
+		if _, ok := f.GetArgs()[0].(*expression.CorrelatedColumn); ok {
+			if col.EqualColumn(c) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// isColEqExpr checks if the expression is eq function that one side is column and the other side passes checkFn.
+func isColEqExpr(expr expression.Expression, col *expression.Column, checkFn func(expression.Expression) bool) bool {
+	f, ok := expr.(*expression.ScalarFunction)
+	if !ok || f.FuncName.L != ast.EQ {
+		return false
+	}
+	_, collation := f.CharsetAndCollation()
+	if c, ok := f.GetArgs()[0].(*expression.Column); ok {
+		if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(collation, c.RetType.GetCollate()) {
+			return false
+		}
+		if checkFn(f.GetArgs()[1]) {
+			if col.EqualColumn(c) {
+				return true
+			}
+		}
+	}
+	if c, ok := f.GetArgs()[1].(*expression.Column); ok {
+		if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(collation, c.RetType.GetCollate()) {
+			return false
+		}
+		if checkFn(f.GetArgs()[0]) {
+			if col.EqualColumn(c) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// OnlyPointRange checks whether each range is a point(no interval range exists).
+func (path *AccessPath) OnlyPointRange(tc types.Context) bool {
+	if path.IsIntHandlePath {
+		for _, ran := range path.Ranges {
+			if !ran.IsPointNullable(tc) {
+				return false
+			}
+		}
+		return true
+	}
+	for _, ran := range path.Ranges {
+		// Not point or the not full matched.
+		if !ran.IsPointNonNullable(tc) || len(ran.HighVal) != len(path.Index.Columns) {
+			return false
+		}
+	}
+	return true
+}
+
+// Col2Len maps expression.Column.UniqueID to column length
+type Col2Len map[int64]int
+
+// ExtractCol2Len collects index/table columns with lengths from expressions. If idxCols and idxColLens are not nil, it collects index columns with lengths(maybe prefix lengths).
+// Otherwise it collects table columns with full lengths.
+func ExtractCol2Len(ctx expression.EvalContext, exprs []expression.Expression, idxCols []*expression.Column, idxColLens []int) Col2Len {
+	col2len := make(Col2Len, len(idxCols))
+	for _, expr := range exprs {
+		extractCol2LenFromExpr(ctx, expr, idxCols, idxColLens, col2len)
+	}
+	return col2len
+}
+
+func extractCol2LenFromExpr(ctx expression.EvalContext, expr expression.Expression, idxCols []*expression.Column, idxColLens []int, col2Len Col2Len) {
+	switch v := expr.(type) {
+	case *expression.Column:
+		if idxCols == nil {
+			col2Len[v.UniqueID] = types.UnspecifiedLength
+		} else {
+			for i, col := range idxCols {
+				if col != nil && v.EqualByExprAndID(ctx, col) {
+					col2Len[v.UniqueID] = idxColLens[i]
+					break
+				}
+			}
+		}
+	case *expression.ScalarFunction:
+		for _, arg := range v.GetArgs() {
+			extractCol2LenFromExpr(ctx, arg, idxCols, idxColLens, col2Len)
+		}
+	}
+}
+
+// compareLength will compare the two column lengths. The return value:
+// (1) -1 means that l is shorter than r;
+// (2) 0 means that l equals to r;
+// (3) 1 means that l is longer than r;
+func compareLength(l, r int) int {
+	if l == r {
+		return 0
+	}
+	if l == types.UnspecifiedLength {
+		return 1
+	}
+	if r == types.UnspecifiedLength {
+		return -1
+	}
+	if l > r {
+		return 1
+	}
+	return -1
+}
+
+// dominate return true if each column of c2 exists in c1 and c2's column length is no longer than c1's column length.
+func (c1 Col2Len) dominate(c2 Col2Len) bool {
+	if len(c2) > len(c1) {
+		return false
+	}
+	for colID, len2 := range c2 {
+		len1, ok := c1[colID]
+		if !ok || compareLength(len2, len1) == 1 {
+			return false
+		}
+	}
+	return true
+}
+
+// CompareCol2Len will compare the two Col2Len maps.
+// The first return value:
+// (1) -1 means that len(c1) is less than len(c2);
+// (2) 0 means that len(c1) equals to len(c2);
+// (3) 1 means that c1 is better than c2;
+// The 2nd return value is used to indicate whether they are comparable. If they are NOT comparable, then the caller
+// should use other criteria to determine whether the winner is justified.
+func CompareCol2Len(c1, c2 Col2Len) (int, bool) {
+	l1, l2 := len(c1), len(c2)
+	if l1 > l2 {
+		if c1.dominate(c2) {
+			return 1, true
+		}
+		return 1, false
+	}
+	if l1 < l2 {
+		if c2.dominate(c1) {
+			return -1, true
+		}
+		return -1, false
+	}
+	// If c1 and c2 have the same columns but have different lengths on some column, we regard c1 and c2 incomparable.
+	for colID, colLen2 := range c2 {
+		colLen1, ok := c1[colID]
+		if !ok {
+			return 0, false
+		}
+		if colLen1 != colLen2 {
+			// If lengths are not equal, return 1 if c1 is larger, or -1 if c2 is larger
+			if colLen1 > colLen2 {
+				return 1, false
+			}
+			return -1, false
+		}
+	}
+	return 0, true
+}
+
+// GetCol2LenFromAccessConds returns columns with lengths from path.AccessConds.
+func (path *AccessPath) GetCol2LenFromAccessConds(ctx planctx.PlanContext) Col2Len {
+	if path.IsTablePath() {
+		return ExtractCol2Len(ctx.GetExprCtx().GetEvalCtx(), path.AccessConds, nil, nil)
+	}
+	return ExtractCol2Len(ctx.GetExprCtx().GetEvalCtx(), path.AccessConds, path.IdxCols, path.IdxColLens)
+}
+
+// IsFullScanRange checks that a table scan does not have any filtering such that it can limit the range of
+// the table scan.
+func (path *AccessPath) IsFullScanRange(tableInfo *model.TableInfo) bool {
+	var unsignedIntHandle bool
+	if path.IsIntHandlePath && tableInfo.PKIsHandle {
+		if pkColInfo := tableInfo.GetPkColInfo(); pkColInfo != nil {
+			unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
+		}
+	}
+	if ranger.HasFullRange(path.Ranges, unsignedIntHandle) {
+		return true
+	}
+	return false
+}
+
+// IsUndetermined checks if the path is undetermined.
+// The undetermined path is the one that may not be always valid.
+// e.g. The multi value index for JSON is not always valid, because the index must be used with JSON functions.
+func (path *AccessPath) IsUndetermined() bool {
+	if path.IsTablePath() || path.Index == nil {
+		return false
+	}
+	if path.Index.MVIndex || path.Index.ConditionExprString != "" {
+		return true
+	}
+	return false
+}
+
+// IsIndexJoinUnapplicable checks if the path is unapplicable for index join.
+// If path is mv index path:
+// for mv index like mvi(a, json, b), if driving condition is a=1, and we build a prefix scan with range [1,1]
+// on mvi, it will return many index rows which breaks handle-unique attribute here.
+// So we cannot use mv index path for index join.
+// If path is partial index path:
+// We need to first determine whether we already meet the partial index condition.
+// Currently we don't support that, so we conservatively return true here.
+func (path *AccessPath) IsIndexJoinUnapplicable() bool {
+	return path.IsUndetermined()
+}

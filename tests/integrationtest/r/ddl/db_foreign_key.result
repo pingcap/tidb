@@ -1,0 +1,28 @@
+drop table if exists t, t1;
+create table t(id int key);
+create table t1(id int, id_fk int, CONSTRAINT `fk_aaa` FOREIGN KEY (`id_fk`) REFERENCES `t` (`id`), CONSTRAINT `fk_aaa` FOREIGN KEY (`id_fk`) REFERENCES `t` (`id`));
+Error 1826 (HY000): Duplicate foreign key constraint name 'fk_aaa'
+create table t1(id int, id_fk int, CONSTRAINT `fk_aaa` FOREIGN KEY (`id_fk`) REFERENCES `t` (`id`), CONSTRAINT `fk_aaA` FOREIGN KEY (`id_fk`) REFERENCES `t` (`id`));
+Error 1826 (HY000): Duplicate foreign key constraint name 'fk_aaA'
+create table t1(id int, id_fk int, CONSTRAINT `fk_aaa` FOREIGN KEY (`id_fk`) REFERENCES `t` (`id`));
+alter table t1 add CONSTRAINT `fk_aaa` FOREIGN KEY (`id_fk`) REFERENCES `t` (`id`);
+Error 1826 (HY000): Duplicate foreign key constraint name 'fk_aaa'
+alter table t1 add CONSTRAINT `fk_aAa` FOREIGN KEY (`id_fk`) REFERENCES `t` (`id`);
+Error 1826 (HY000): Duplicate foreign key constraint name 'fk_aAa'
+drop table if exists t, t1;
+drop table if exists t1;
+create table t1 (a int, b int);
+drop table if exists t1_tmp;
+create global temporary table t1_tmp (a int, b int) on commit delete rows;
+create temporary table t2_tmp (a int, b int);
+drop table if exists t2;
+create table t2 (a int, b int);
+alter table t1_tmp add foreign key (c) REFERENCES t2(a);
+Error 1215 (HY000): Cannot add foreign key constraint
+alter table t2_tmp add foreign key (c) REFERENCES t2(a);
+Error 8200 (HY000): TiDB doesn't support ALTER TABLE for local temporary table
+create global temporary table t3 (c int,d int,foreign key (d) references t1 (b)) on commit delete rows;
+Error 1215 (HY000): Cannot add foreign key constraint
+create temporary table t4(c int,d int,foreign key (d) references t1 (b));
+Error 1215 (HY000): Cannot add foreign key constraint
+drop table if exists t1,t2,t3,t4,t1_tmp,t2_tmp;

@@ -1,0 +1,9 @@
+[tikv-importer]
+backend = "local"
+add-index-by-sql = false
+
+[conflict]
+strategy = "replace"
+
+[mydumper.csv]
+header = true

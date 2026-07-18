@@ -1,0 +1,25 @@
+load("@bazel_gazelle//:def.bzl", "gazelle")
+
+exports_files([
+    "DEPS.bzl",
+    "WORKSPACE",
+    "go.mod",
+    "go.sum",
+])
+
+# gazelle:proto disable_global
+# gazelle:prefix github.com/pingcap/tidb
+# gazelle:exclude tidb-binlog/proto/proto
+# gazelle:exclude plugin/conn_ip_example
+# gazelle:exclude build/linter/staticcheck
+# gazelle:exclude vendor
+# gazelle:exclude tools/patch-go
+# gazelle:resolve go github.com/bazelbuild/buildtools/build @com_github_bazelbuild_buildtools//build:go_default_library
+gazelle(name = "gazelle")
+
+package(default_visibility = ["//visibility:public"])
+
+xcode_version(
+    name = "xcode_version",
+    version = "10.0",
+)

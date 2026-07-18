@@ -1,0 +1,20 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "graceshutdown_test",
+    timeout = "short",
+    srcs = [
+        "graceshutdown_test.go",
+        "main_test.go",
+    ],
+    flaky = True,
+    deps = [
+        "//pkg/testkit/testsetup",
+        "@com_github_go_sql_driver_mysql//:mysql",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_log//:log",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+        "@org_uber_go_zap//:zap",
+    ],
+)

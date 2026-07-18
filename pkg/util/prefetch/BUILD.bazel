@@ -1,0 +1,17 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "prefetch",
+    srcs = ["reader.go"],
+    importpath = "github.com/pingcap/tidb/pkg/util/prefetch",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "prefetch_test",
+    timeout = "short",
+    srcs = ["reader_test.go"],
+    embed = [":prefetch"],
+    flaky = True,
+    deps = ["@com_github_stretchr_testify//require"],
+)

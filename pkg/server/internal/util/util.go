@@ -1,0 +1,188 @@
+// Copyright 2015 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Copyright 2013 The Go-MySQL-Driver Authors. All rights reserved.
+//
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this file,
+// You can obtain one at http://mozilla.org/MPL/2.0/.
+
+// The MIT License (MIT)
+//
+// Copyright (c) 2014 wandoulabs
+// Copyright (c) 2014 siddontang
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy of
+// this software and associated documentation files (the "Software"), to deal in
+// the Software without restriction, including without limitation the rights to
+// use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+// the Software, and to permit persons to whom the Software is furnished to do so,
+// subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+
+package util
+
+import (
+	"bytes"
+	"io"
+	"net/http"
+
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/parser/charset"
+)
+
+// ParseNullTermString parses a null terminated string.
+func ParseNullTermString(b []byte) (str []byte, remain []byte) {
+	off := bytes.IndexByte(b, 0)
+	if off == -1 {
+		return nil, b
+	}
+	return b[:off], b[off+1:]
+}
+
+// ParseLengthEncodedInt parses a length encoded integer.
+// It returns io.EOF when the length-encoded header is truncated.
+func ParseLengthEncodedInt(b []byte) (num uint64, isNull bool, n int, err error) {
+	if len(b) == 0 {
+		return 0, false, 0, io.EOF
+	}
+
+	switch b[0] {
+	// 251: NULL
+	case 0xfb:
+		return 0, true, 1, nil
+
+	// 252: value of following 2
+	case 0xfc:
+		if len(b) < 3 {
+			return 0, false, 0, io.EOF
+		}
+		num = uint64(b[1]) | uint64(b[2])<<8
+		return num, false, 3, nil
+
+	// 253: value of following 3
+	case 0xfd:
+		if len(b) < 4 {
+			return 0, false, 0, io.EOF
+		}
+		num = uint64(b[1]) | uint64(b[2])<<8 | uint64(b[3])<<16
+		return num, false, 4, nil
+
+	// 254: value of following 8
+	case 0xfe:
+		if len(b) < 9 {
+			return 0, false, 0, io.EOF
+		}
+		num = uint64(b[1]) | uint64(b[2])<<8 | uint64(b[3])<<16 |
+			uint64(b[4])<<24 | uint64(b[5])<<32 | uint64(b[6])<<40 |
+			uint64(b[7])<<48 | uint64(b[8])<<56
+		return num, false, 9, nil
+	}
+
+	// https://dev.mysql.com/doc/internals/en/integer.html#length-encoded-integer
+	// TODO: 0xff is undefined.
+
+	// 0-250: value of first byte
+	return uint64(b[0]), false, 1, nil
+}
+
+// ParseLengthEncodedBytes parses a length encoded byte slice.
+func ParseLengthEncodedBytes(b []byte) ([]byte, bool, int, error) {
+	// Get length
+	num, isNull, n, err := ParseLengthEncodedInt(b)
+	if err != nil {
+		return nil, isNull, n, err
+	}
+	if num < 1 {
+		return nil, isNull, n, nil
+	}
+
+	n += int(num)
+
+	// Check data length
+	if len(b) >= n {
+		return b[n-int(num) : n], false, n, nil
+	}
+
+	return nil, false, n, io.EOF
+}
+
+// InputDecoder is used to decode input.
+type InputDecoder struct {
+	encoding charset.Encoding
+}
+
+// NewInputDecoder creates a new InputDecoder.
+func NewInputDecoder(chs string) *InputDecoder {
+	return &InputDecoder{
+		encoding: charset.FindEncodingTakeUTF8AsNoop(chs),
+	}
+}
+
+// DecodeInput decodes input.
+func (i *InputDecoder) DecodeInput(src []byte) []byte {
+	result, err := i.encoding.Transform(nil, src, charset.OpDecode)
+	if err != nil {
+		return src
+	}
+	return result
+}
+
+// LengthEncodedIntSize returns the size of length encoded integer.
+func LengthEncodedIntSize(n uint64) int {
+	switch {
+	case n <= 250:
+		return 1
+
+	case n <= 0xffff:
+		return 3
+
+	case n <= 0xffffff:
+		return 4
+	}
+
+	return 9
+}
+
+// CorsHandler adds Cors Header if `cors` config is set.
+type CorsHandler struct {
+	handler http.Handler
+	cfg     *config.Config
+}
+
+// NewCorsHandler creates a new CorsHandler.
+func NewCorsHandler(handler http.Handler, cfg *config.Config) http.Handler {
+	return CorsHandler{handler: handler, cfg: cfg}
+}
+
+// ServeHTTP implements http.Handler interface.
+func (h CorsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if h.cfg.Cors != "" {
+		w.Header().Set("Access-Control-Allow-Origin", h.cfg.Cors)
+		w.Header().Set("Access-Control-Allow-Methods", "GET")
+	}
+	h.handler.ServeHTTP(w, req)
+}
+
+// NewTestConfig creates a new config for test.
+func NewTestConfig() *config.Config {
+	cfg := config.NewConfig()
+	cfg.Host = "127.0.0.1"
+	cfg.Status.StatusHost = "127.0.0.1"
+	cfg.Security.AutoTLS = false
+	cfg.Socket = ""
+	return cfg
+}

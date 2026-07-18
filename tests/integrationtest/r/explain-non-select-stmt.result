@@ -1,0 +1,29 @@
+drop table if exists t;
+create table t(a bigint, b bigint);
+explain format = 'plan_tree' insert into t values(1, 1);
+id	task	access object	operator info
+Insert	root		N/A
+explain format = 'plan_tree' insert into t select * from t;
+id	task	access object	operator info
+Insert	root		N/A
+└─TableReader	root		data:TableFullScan
+  └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'plan_tree' delete from t where a > 100;
+id	task	access object	operator info
+Delete	root		N/A
+└─TableReader	root		data:Projection
+  └─Projection	cop[tikv]		explain-non-select-stmt.t._tidb_rowid
+    └─Selection	cop[tikv]		gt(explain-non-select-stmt.t.a, 100)
+      └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'plan_tree' update t set b = 100 where a = 200;
+id	task	access object	operator info
+Update	root		N/A
+└─TableReader	root		data:Selection
+  └─Selection	cop[tikv]		eq(explain-non-select-stmt.t.a, 200)
+    └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'plan_tree' replace into t select a, 100 from t;
+id	task	access object	operator info
+Insert	root		N/A
+└─Projection	root		explain-non-select-stmt.t.a, 100->Column
+  └─TableReader	root		data:TableFullScan
+    └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo

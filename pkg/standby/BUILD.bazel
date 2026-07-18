@@ -1,0 +1,39 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "standby",
+    srcs = [
+        "idle_watcher.go",
+        "standby.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/standby",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/config",
+        "//pkg/config/deploymode",
+        "//pkg/keyspace",
+        "//pkg/parser/mysql",
+        "//pkg/server",
+        "//pkg/tidbmanager",
+        "//pkg/util/logutil",
+        "//pkg/util/signal",
+        "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "standby_test",
+    timeout = "short",
+    srcs = ["standby_test.go"],
+    embed = [":standby"],
+    flaky = True,
+    shard_count = 12,
+    deps = [
+        "//pkg/config",
+        "//pkg/config/deploymode",
+        "//pkg/config/kerneltype",
+        "//pkg/server",
+        "@com_github_stretchr_testify//require",
+    ],
+)

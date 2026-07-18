@@ -1,0 +1,623 @@
+// Copyright 2018 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package metrics
+
+import (
+	"context"
+	"net"
+	"sync"
+
+	"github.com/pingcap/tidb/pkg/dxf/framework/dxfmetric"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestmetric"
+	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
+	timermetrics "github.com/pingcap/tidb/pkg/timer/metrics"
+	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
+	tikvmetrics "github.com/tikv/client-go/v2/metrics"
+	tikvcollectors "github.com/tikv/client-go/v2/util/collectors"
+	"go.uber.org/zap"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/channelz/grpc_channelz_v1"
+	"google.golang.org/grpc/channelz/service"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/test/bufconn"
+)
+
+var (
+	// PanicCounter measures the count of panics.
+	PanicCounter *prometheus.CounterVec
+
+	// MemoryUsage measures the usage gauge of memory.
+	MemoryUsage *prometheus.GaugeVec
+)
+
+// metrics labels.
+const (
+	LabelSession    = "session"
+	LabelDomain     = "domain"
+	LabelDDLOwner   = "ddl-owner"
+	LabelDDL        = "ddl"
+	LabelDDLWorker  = "ddl-worker"
+	LabelDistReorg  = "dist-reorg"
+	LabelDDLSyncer  = "ddl-syncer"
+	LabelGCWorker   = "gcworker"
+	LabelAnalyze    = "analyze"
+	LabelWorkerPool = "worker-pool"
+	LabelStats      = "stats"
+
+	LabelBatchRecvLoop = "batch-recv-loop"
+	LabelBatchSendLoop = "batch-send-loop"
+
+	opSucc   = "ok"
+	opFailed = "err"
+
+	TiDB         = "tidb"
+	LabelScope   = "scope"
+	ScopeGlobal  = "global"
+	ScopeSession = "session"
+	Server       = "server"
+	TiKVClient   = "tikvclient"
+)
+
+// RetLabel returns "ok" when err == nil and "err" when err != nil.
+// This could be useful when you need to observe the operation result.
+func RetLabel(err error) string {
+	if err == nil {
+		return opSucc
+	}
+	return opFailed
+}
+
+func init() {
+	InitMetrics()
+}
+
+// InitMetrics is used to initialize metrics.
+func InitMetrics() {
+	InitBindInfoMetrics()
+	InitDDLMetrics()
+	InitDistSQLMetrics()
+	InitDomainMetrics()
+	InitExecutorMetrics()
+	InitGCWorkerMetrics()
+	InitLogBackupMetrics()
+	InitMetaMetrics()
+	InitOwnerMetrics()
+	InitRawKVMetrics()
+	InitResourceManagerMetrics()
+	InitServerMetrics()
+	InitSessionMetrics()
+	InitRUV2Metrics()
+	InitSliMetrics()
+	InitStatsMetrics()
+	InitTelemetryMetrics()
+	InitTopSQLMetrics()
+	InitTTLMetrics()
+	InitExternalWorkloadMetrics()
+	InitStmtSummaryMetrics()
+	dxfmetric.InitDistTaskMetrics()
+	ingestmetric.InitIngestMetrics()
+	InitResourceGroupMetrics()
+	InitGlobalSortMetrics()
+	InitInfoSchemaV2Metrics()
+	InitMemoryMetrics()
+	timermetrics.InitTimerMetrics()
+
+	InitBRMetrics()
+
+	PanicCounter = metricscommon.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "panic_total",
+			Help:      "Counter of panic.",
+		}, []string{LblType})
+
+	MemoryUsage = metricscommon.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "memory_usage",
+			Help:      "Memory Usage",
+		}, []string{LblModule, LblType})
+}
+
+// RegisterMetrics registers the metrics which are ONLY used in TiDB server.
+func RegisterMetrics() {
+	// use new go collector
+	prometheus.DefaultRegisterer.Unregister(collectors.NewGoCollector())
+	prometheus.MustRegister(collectors.NewGoCollector(collectors.WithGoCollectorRuntimeMetrics(collectors.MetricsGC, collectors.MetricsMemory, collectors.MetricsScheduler)))
+
+	prometheus.MustRegister(AutoAnalyzeCounter)
+	prometheus.MustRegister(ManualAnalyzeCounter)
+	prometheus.MustRegister(AutoAnalyzeHistogram)
+	prometheus.MustRegister(AutoIDHistogram)
+	prometheus.MustRegister(BatchAddIdxHistogram)
+	prometheus.MustRegister(CampaignOwnerCounter)
+	prometheus.MustRegister(ConnGauge)
+	prometheus.MustRegister(DisconnectionCounter)
+	prometheus.MustRegister(PreparedStmtGauge)
+	prometheus.MustRegister(CriticalErrorCounter)
+	prometheus.MustRegister(DDLCounter)
+	prometheus.MustRegister(BackfillTotalCounter)
+	prometheus.MustRegister(BackfillProgressGauge)
+	prometheus.MustRegister(DDLWorkerHistogram)
+	prometheus.MustRegister(DDLJobTableDuration)
+	prometheus.MustRegister(DDLRunningJobCount)
+	prometheus.MustRegister(DeploySyncerHistogram)
+	prometheus.MustRegister(DistSQLPartialCountHistogram)
+	prometheus.MustRegister(DistSQLCoprCacheCounter)
+	prometheus.MustRegister(DistSQLCoprClosestReadCounter)
+	prometheus.MustRegister(DistSQLCoprRespBodySize)
+	prometheus.MustRegister(DistSQLQueryHistogram)
+	prometheus.MustRegister(DistSQLScanKeysHistogram)
+	prometheus.MustRegister(DistSQLScanKeysPartialHistogram)
+	prometheus.MustRegister(ExecuteErrorCounter)
+	prometheus.MustRegister(ExecutorCounter)
+	prometheus.MustRegister(GetTokenDurationHistogram)
+	prometheus.MustRegister(NumOfMultiQueryHistogram)
+	prometheus.MustRegister(HandShakeErrorCounter)
+	prometheus.MustRegister(HandleJobHistogram)
+	prometheus.MustRegister(SyncLoadCounter)
+	prometheus.MustRegister(SyncLoadTimeoutCounter)
+	prometheus.MustRegister(SyncLoadDedupCounter)
+	prometheus.MustRegister(SyncLoadHistogram)
+	prometheus.MustRegister(ReadStatsHistogram)
+	prometheus.MustRegister(JobsGauge)
+	prometheus.MustRegister(LoadPrivilegeCounter)
+	prometheus.MustRegister(InfoCacheCounters)
+	prometheus.MustRegister(LeaseExpireTime)
+	prometheus.MustRegister(LoadSchemaCounter)
+	prometheus.MustRegister(LoadSchemaDuration)
+	prometheus.MustRegister(MetaHistogram)
+	prometheus.MustRegister(NewSessionHistogram)
+	prometheus.MustRegister(OwnerHandleSyncerHistogram)
+	prometheus.MustRegister(PanicCounter)
+	prometheus.MustRegister(PlanCacheCounter)
+	prometheus.MustRegister(PlanCacheMissCounter)
+	prometheus.MustRegister(PlanCacheInstanceMemoryUsage)
+	prometheus.MustRegister(PlanCacheInstancePlanNumCounter)
+	prometheus.MustRegister(PlanCacheProcessDuration)
+	prometheus.MustRegister(PseudoEstimation)
+	prometheus.MustRegister(PacketIOCounter)
+	prometheus.MustRegister(QueryDurationHistogram)
+	prometheus.MustRegister(QueryRPCHistogram)
+	prometheus.MustRegister(QueryProcessedKeyHistogram)
+	prometheus.MustRegister(IARemoteReadSegmentCount)
+	prometheus.MustRegister(IARemoteReadSegmentSize)
+	prometheus.MustRegister(IARemoteReadSegmentWaitDuration)
+	prometheus.MustRegister(QueryTotalCounter)
+	prometheus.MustRegister(AffectedRowsCounter)
+	prometheus.MustRegister(SchemaLeaseErrorCounter)
+	prometheus.MustRegister(ServerEventCounter)
+	prometheus.MustRegister(SessionExecuteCompileDuration)
+	prometheus.MustRegister(SessionExecuteParseDuration)
+	prometheus.MustRegister(SessionExecuteRunDuration)
+	prometheus.MustRegister(SessionRestrictedSQLCounter)
+	prometheus.MustRegister(SessionRetry)
+	prometheus.MustRegister(SessionRetryErrorCounter)
+	prometheus.MustRegister(StatementPerTransaction)
+	prometheus.MustRegister(StatsInaccuracyRate)
+	prometheus.MustRegister(StmtNodeCounter)
+	prometheus.MustRegister(DbStmtNodeCounter)
+	prometheus.MustRegister(ExecPhaseDuration)
+	prometheus.MustRegister(OngoingTxnDurationHistogram)
+	prometheus.MustRegister(MppCoordinatorStats)
+	prometheus.MustRegister(MppCoordinatorLatency)
+	prometheus.MustRegister(TimeJumpBackCounter)
+	prometheus.MustRegister(TransactionDuration)
+	prometheus.MustRegister(StatementDeadlockDetectDuration)
+	prometheus.MustRegister(StatementPessimisticRetryCount)
+	prometheus.MustRegister(StatementLockKeysCount)
+	prometheus.MustRegister(StatementSharedLockKeysCount)
+	prometheus.MustRegister(ValidateReadTSFromPDCount)
+	prometheus.MustRegister(UpdateSelfVersionHistogram)
+	prometheus.MustRegister(WatchOwnerCounter)
+	prometheus.MustRegister(GCActionRegionResultCounter)
+	prometheus.MustRegister(GCConfigGauge)
+	prometheus.MustRegister(GCHistogram)
+	prometheus.MustRegister(GCJobFailureCounter)
+	prometheus.MustRegister(GCRegionTooManyLocksCounter)
+	prometheus.MustRegister(GCWorkerCounter)
+	prometheus.MustRegister(TotalQueryProcHistogram)
+	prometheus.MustRegister(TotalCopProcHistogram)
+	prometheus.MustRegister(TotalCopWaitHistogram)
+	prometheus.MustRegister(CopMVCCRatioHistogram)
+	prometheus.MustRegister(SlowQueryCounter)
+	prometheus.MustRegister(HandleSchemaValidate)
+	prometheus.MustRegister(MaxProcs)
+	prometheus.MustRegister(GOGC)
+	prometheus.MustRegister(ConnIdleDurationHistogram)
+	prometheus.MustRegister(ServerInfo)
+	prometheus.MustRegister(TokenGauge)
+	prometheus.MustRegister(ConfigStatus)
+	prometheus.MustRegister(TiFlashQueryTotalCounter)
+	prometheus.MustRegister(TiFlashFailedMPPStoreState)
+	prometheus.MustRegister(SmallTxnWriteDuration)
+	prometheus.MustRegister(TxnWriteThroughput)
+	prometheus.MustRegister(LoadSysVarCacheCounter)
+	prometheus.MustRegister(TopSQLIgnoredCounter)
+	prometheus.MustRegister(TopSQLReportDurationHistogram)
+	prometheus.MustRegister(TopSQLReportDataHistogram)
+	prometheus.MustRegister(PDAPIExecutionHistogram)
+	prometheus.MustRegister(PDAPIRequestCounter)
+	prometheus.MustRegister(CPUProfileCounter)
+	prometheus.MustRegister(ReadFromTableCacheCounter)
+	prometheus.MustRegister(LoadTableCacheDurationHistogram)
+	prometheus.MustRegister(NonTransactionalDMLCount)
+	prometheus.MustRegister(PessimisticDMLDurationByAttempt)
+	prometheus.MustRegister(ResetAutoIDConnCounter)
+	prometheus.MustRegister(ResourceGroupQueryTotalCounter)
+	prometheus.MustRegister(MemoryUsage)
+	prometheus.MustRegister(StatsCacheCounter)
+	prometheus.MustRegister(StatsCacheGauge)
+	prometheus.MustRegister(StatsHealthyGauge)
+	prometheus.MustRegister(StatsDeltaLoadHistogram)
+	prometheus.MustRegister(StatsDeltaUpdateHistogram)
+	prometheus.MustRegister(StatsUsageUpdateHistogram)
+	prometheus.MustRegister(TxnStatusEnteringCounter)
+	prometheus.MustRegister(TxnDurationHistogram)
+	prometheus.MustRegister(LastCheckpoint)
+	prometheus.MustRegister(ExternalStorageCheckpoint)
+	prometheus.MustRegister(AdvancerOwner)
+	prometheus.MustRegister(AdvancerTickDuration)
+	prometheus.MustRegister(GetCheckpointBatchSize)
+	prometheus.MustRegister(RegionCheckpointRequest)
+	prometheus.MustRegister(RegionCheckpointFailure)
+	prometheus.MustRegister(AutoIDReqDuration)
+	prometheus.MustRegister(RegionCheckpointSubscriptionEvent)
+	prometheus.MustRegister(RCCheckTSWriteConfilictCounter)
+	prometheus.MustRegister(FairLockingUsageCount)
+	prometheus.MustRegister(PessimisticLockKeysDuration)
+	prometheus.MustRegister(MemoryLimit)
+	prometheus.MustRegister(LogBackupCurrentLastRegionID)
+	prometheus.MustRegister(LogBackupCurrentLastRegionLeaderStoreID)
+
+	prometheus.MustRegister(TTLQueryDuration)
+	prometheus.MustRegister(TTLProcessedExpiredRowsCounter)
+	prometheus.MustRegister(TTLJobStatus)
+	prometheus.MustRegister(TTLTaskStatus)
+	prometheus.MustRegister(TTLPhaseTime)
+	prometheus.MustRegister(TTLInsertRowsCount)
+	prometheus.MustRegister(TTLWatermarkDelay)
+	prometheus.MustRegister(TTLEventCounter)
+
+	prometheus.MustRegister(ExternalWorkloadTaskCounter)
+
+	prometheus.MustRegister(timermetrics.TimerEventCounter)
+
+	prometheus.MustRegister(EMACPUUsageGauge)
+	prometheus.MustRegister(PoolConcurrencyCounter)
+
+	prometheus.MustRegister(HistoricalStatsCounter)
+	prometheus.MustRegister(PlanReplayerTaskCounter)
+	prometheus.MustRegister(PlanReplayerRegisterTaskGauge)
+
+	dxfmetric.Register(prometheus.DefaultRegisterer)
+	ingestmetric.Register(prometheus.DefaultRegisterer)
+
+	prometheus.MustRegister(RunawayCheckerCounter)
+	prometheus.MustRegister(RunawayFlusherCounter)
+	prometheus.MustRegister(RunawayFlusherAddCounter)
+	prometheus.MustRegister(RunawayFlusherBatchSizeHistogram)
+	prometheus.MustRegister(RunawayFlusherDurationHistogram)
+	prometheus.MustRegister(RunawayFlusherIntervalHistogram)
+	prometheus.MustRegister(RunawaySyncerDurationHistogram)
+	prometheus.MustRegister(RunawaySyncerIntervalHistogram)
+	prometheus.MustRegister(RunawaySyncerCheckpointGauge)
+	prometheus.MustRegister(RunawaySyncerCounter)
+	prometheus.MustRegister(GlobalSortWriteToCloudStorageDuration)
+	prometheus.MustRegister(GlobalSortWriteToCloudStorageRate)
+	prometheus.MustRegister(GlobalSortReadFromCloudStorageDuration)
+	prometheus.MustRegister(GlobalSortReadFromCloudStorageRate)
+	prometheus.MustRegister(GlobalSortIngestWorkerCnt)
+	prometheus.MustRegister(GlobalSortUploadWorkerCount)
+	prometheus.MustRegister(AddIndexScanRate)
+	prometheus.MustRegister(RetryableErrorCount)
+	prometheus.MustRegister(MergeSortWriteBytes)
+	prometheus.MustRegister(MergeSortReadBytes)
+
+	prometheus.MustRegister(InfoSchemaV2CacheCounter)
+	prometheus.MustRegister(InfoSchemaV2CacheMemUsage)
+	prometheus.MustRegister(InfoSchemaV2CacheMemLimit)
+	prometheus.MustRegister(InfoSchemaV2CacheObjCnt)
+	prometheus.MustRegister(TableByNameDuration)
+
+	prometheus.MustRegister(BindingCacheHitCounter)
+	prometheus.MustRegister(BindingCacheMissCounter)
+	prometheus.MustRegister(BindingCacheMemUsage)
+	prometheus.MustRegister(BindingCacheMemLimit)
+	prometheus.MustRegister(BindingCacheNumBindings)
+	prometheus.MustRegister(InternalSessions)
+	prometheus.MustRegister(ActiveUser)
+	prometheus.MustRegister(RUV2ResultChunkCells)
+	prometheus.MustRegister(RUV2ExecutorL1)
+	prometheus.MustRegister(RUV2ExecutorL2)
+	prometheus.MustRegister(RUV2ExecutorL3)
+	prometheus.MustRegister(RUV2ExecutorL5InsertRows)
+	prometheus.MustRegister(RUV2PlanCnt)
+	prometheus.MustRegister(RUV2PlanDeriveStatsPaths)
+	prometheus.MustRegister(RUV2ResourceManagerReadCnt)
+	prometheus.MustRegister(RUV2ResourceManagerWriteCnt)
+	prometheus.MustRegister(RUV2WriteKeys)
+	prometheus.MustRegister(RUV2WriteSize)
+	prometheus.MustRegister(RUV2SessionParserTotal)
+	prometheus.MustRegister(RUV2TxnCnt)
+	prometheus.MustRegister(RUV2TiKVKVEngineCacheMiss)
+	prometheus.MustRegister(RUV2TiKVCoprocessorExecutorIterations)
+	prometheus.MustRegister(RUV2TiKVCoprocessorResponseBytes)
+	prometheus.MustRegister(RUV2TiKVRaftstoreStoreWriteTriggerWB)
+	prometheus.MustRegister(RUV2TiKVStorageProcessedKeysBatchGet)
+	prometheus.MustRegister(RUV2TiKVStorageProcessedKeysGet)
+	prometheus.MustRegister(RUV2TiKVCoprocessorWorkTotal)
+
+	prometheus.MustRegister(NetworkTransmissionStats)
+
+	prometheus.MustRegister(RestoreTableCreatedCount)
+	prometheus.MustRegister(RestoreImportFileSeconds)
+	prometheus.MustRegister(RestoreUploadSSTForPiTRSeconds)
+	prometheus.MustRegister(RestoreUploadSSTMetaForPiTRSeconds)
+
+	prometheus.MustRegister(RawKVBatchPutDurationSeconds)
+	prometheus.MustRegister(RawKVBatchPutBatchSize)
+
+	prometheus.MustRegister(MetaKVBatchFiles)
+	prometheus.MustRegister(MetaKVBatchFilteredKeys)
+	prometheus.MustRegister(MetaKVBatchKeys)
+	prometheus.MustRegister(MetaKVBatchSize)
+
+	prometheus.MustRegister(KVApplyBatchDuration)
+	prometheus.MustRegister(KVApplyBatchFiles)
+	prometheus.MustRegister(KVApplyBatchRegions)
+	prometheus.MustRegister(KVApplyBatchSize)
+	prometheus.MustRegister(KVApplyRegionFiles)
+
+	tikvmetrics.InitMetricsWithConstLabels(TiDB, TiKVClient, metricscommon.GetConstLabels())
+	tikvmetrics.RegisterMetrics()
+	tikvmetrics.TiKVPanicCounter = PanicCounter // reset tidb metrics for tikv metrics
+
+	prometheus.MustRegister(GlobalMemArbitrationDuration)
+	prometheus.MustRegister(GlobalMemArbitratorWorkMode)
+	prometheus.MustRegister(GlobalMemArbitratorQuota)
+	prometheus.MustRegister(GlobalMemArbitratorWaitingTask)
+	prometheus.MustRegister(GlobalMemArbitratorRuntimeMemMagnifi)
+	prometheus.MustRegister(GlobalMemArbitratorRootPool)
+	prometheus.MustRegister(GlobalMemArbitratorEventCounter)
+	prometheus.MustRegister(GlobalMemArbitratorTaskExecCounter)
+
+	// TLS
+	prometheus.MustRegister(TLSVersion)
+	prometheus.MustRegister(TLSCipher)
+
+	// IndexLookup
+	prometheus.MustRegister(IndexLookUpExecutorDuration)
+	prometheus.MustRegister(IndexLookRowsCounter)
+	prometheus.MustRegister(IndexLookUpExecutorRowNumber)
+	prometheus.MustRegister(IndexLookUpCopTaskCount)
+
+	// StmtSummary
+	prometheus.MustRegister(StmtSummaryWindowRecordCount)
+	prometheus.MustRegister(StmtSummaryWindowEvictedCount)
+	prometheus.MustRegister(StmtSummaryEvictedLogCounter)
+
+	// Channelz
+	setupChannelzCollector()
+}
+
+// Register registers custom collectors.
+func Register(cs ...prometheus.Collector) {
+	prometheus.MustRegister(cs...)
+}
+
+// Unregister unregisters custom collectors.
+func Unregister(cs ...prometheus.Collector) {
+	for _, c := range cs {
+		prometheus.Unregister(c)
+	}
+}
+
+var mode struct {
+	sync.Mutex
+	isSimplified bool
+}
+
+// ToggleSimplifiedMode is used to register/unregister the metrics that unused by grafana.
+func ToggleSimplifiedMode(simplified bool) {
+	var unusedMetricsByGrafana = []prometheus.Collector{
+		StatementDeadlockDetectDuration,
+		ValidateReadTSFromPDCount,
+		LoadTableCacheDurationHistogram,
+		TxnWriteThroughput,
+		SmallTxnWriteDuration,
+		InfoCacheCounters,
+		ReadFromTableCacheCounter,
+		TiFlashQueryTotalCounter,
+		TiFlashFailedMPPStoreState,
+		CampaignOwnerCounter,
+		NonTransactionalDMLCount,
+		MemoryUsage,
+		TokenGauge,
+		tikvmetrics.TiKVRawkvSizeHistogram,
+		tikvmetrics.TiKVRawkvCmdHistogram,
+		tikvmetrics.TiKVReadThroughput,
+		tikvmetrics.TiKVSmallReadDuration,
+		tikvmetrics.TiKVBatchWaitOverLoad,
+		tikvmetrics.TiKVBatchClientRecycle,
+		tikvmetrics.TiKVRequestRetryTimesHistogram,
+		tikvmetrics.TiKVStatusDuration,
+	}
+	mode.Lock()
+	defer mode.Unlock()
+	if mode.isSimplified == simplified {
+		return
+	}
+	mode.isSimplified = simplified
+	if simplified {
+		for _, m := range unusedMetricsByGrafana {
+			prometheus.Unregister(m)
+		}
+	} else {
+		for _, m := range unusedMetricsByGrafana {
+			err := prometheus.Register(m)
+			if err != nil {
+				logutil.BgLogger().Error("cannot register metrics", zap.Error(err))
+				break
+			}
+		}
+	}
+}
+
+var grpcChannelzCollector struct {
+	mu sync.Mutex
+
+	listener *bufconn.Listener
+	server   *grpc.Server
+	conn     *grpc.ClientConn
+
+	collector  prometheus.Collector
+	registered bool
+}
+
+func setupChannelzCollector() {
+	if intest.InTest {
+		return
+	}
+
+	grpcChannelzCollector.mu.Lock()
+	defer grpcChannelzCollector.mu.Unlock()
+
+	if err := initGrpcChannelzCollectorLocked(); err != nil {
+		logutil.BgLogger().Warn("setup internal channelz collector failed", zap.Error(err))
+		return
+	}
+	if grpcChannelzCollector.registered {
+		return
+	}
+	prometheus.MustRegister(grpcChannelzCollector.collector)
+	grpcChannelzCollector.registered = true
+}
+
+// initGrpcChannelzCollectorLocked initializes the singleton channelz collector.
+// It must be called with grpcChannelzCollector.mu held.
+func initGrpcChannelzCollectorLocked() error {
+	if grpcChannelzCollector.collector != nil {
+		return nil
+	}
+
+	grpcChannelzCollector.listener = bufconn.Listen(1 << 20)
+	grpcChannelzCollector.server = grpc.NewServer()
+	service.RegisterChannelzServiceToServer(grpcChannelzCollector.server)
+	go func(listener *bufconn.Listener, server *grpc.Server) {
+		if err := server.Serve(listener); err != nil {
+			logutil.BgLogger().Warn("internal channelz grpc server stopped", zap.Error(err))
+		}
+	}(grpcChannelzCollector.listener, grpcChannelzCollector.server)
+
+	listener := grpcChannelzCollector.listener
+	conn, err := grpc.NewClient(
+		"passthrough:///bufnet",
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+			return listener.DialContext(ctx)
+		}),
+	)
+	if err != nil {
+		stopGrpcChannelzCollectorLocked()
+		return err
+	}
+
+	grpcChannelzCollector.conn = conn
+	grpcChannelzCollector.collector = tikvcollectors.NewChannelzCollector(conn, channelzCollectorOpts())
+	return nil
+}
+
+func channelzCollectorOpts() tikvcollectors.ChannelzCollectorOpts {
+	return tikvcollectors.ChannelzCollectorOpts{
+		Namespace: namespace,
+		Filter: func(node any) (collect bool, walkChildren bool) {
+			// Only collect socket and leaf subchannel info, which are more useful for troubleshooting network issues.
+			switch n := node.(type) {
+			case *grpc_channelz_v1.Channel:
+				if isInternalChannelzTarget(n.GetData().GetTarget()) {
+					return false, false
+				}
+				return false, true
+
+			case *grpc_channelz_v1.Subchannel:
+				if isInternalChannelzTarget(n.GetData().GetTarget()) {
+					return false, false
+				}
+				isLeaf := len(n.GetSocketRef()) > 0 &&
+					len(n.GetChannelRef()) == 0 &&
+					len(n.GetSubchannelRef()) == 0
+
+				return isLeaf, true
+
+			case *grpc_channelz_v1.Socket:
+				if isInternalChannelzSocket(n) {
+					return false, false
+				}
+				return true, false
+
+			default:
+				return false, true
+			}
+		},
+	}
+}
+
+// isInternalChannelzTarget returns true if the target is used for internal channelz collector, which is identified by
+// the fact that its target is "bufnet" or "passthrough:///bufnet".
+func isInternalChannelzTarget(target string) bool {
+	return target == "bufnet" || target == "passthrough:///bufnet"
+}
+
+// isInternalChannelzSocket returns true if the socket is created by the internal channelz collector for scrapping
+// channelz metrics, which is identified by the fact that it has no remote endpoint.
+func isInternalChannelzSocket(socket *grpc_channelz_v1.Socket) bool {
+	return socket.GetRemote() == nil && socket.GetRemoteName() == ""
+}
+
+func cleanupGrpcChannelzCollectorForTest() {
+	grpcChannelzCollector.mu.Lock()
+	defer grpcChannelzCollector.mu.Unlock()
+
+	stopGrpcChannelzCollectorLocked()
+}
+
+// stopGrpcChannelzCollectorLocked stops and resets the singleton channelz collector.
+// It must be called with grpcChannelzCollector.mu held.
+func stopGrpcChannelzCollectorLocked() {
+	if grpcChannelzCollector.registered && grpcChannelzCollector.collector != nil {
+		prometheus.Unregister(grpcChannelzCollector.collector)
+	}
+	if grpcChannelzCollector.conn != nil {
+		_ = grpcChannelzCollector.conn.Close()
+	}
+	if grpcChannelzCollector.server != nil {
+		grpcChannelzCollector.server.Stop()
+	}
+	if grpcChannelzCollector.listener != nil {
+		_ = grpcChannelzCollector.listener.Close()
+	}
+
+	grpcChannelzCollector.server = nil
+	grpcChannelzCollector.listener = nil
+	grpcChannelzCollector.conn = nil
+	grpcChannelzCollector.collector = nil
+	grpcChannelzCollector.registered = false
+}

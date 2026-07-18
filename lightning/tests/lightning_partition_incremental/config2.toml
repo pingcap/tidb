@@ -1,0 +1,3 @@
+[tikv-importer]
+backend = 'tidb'
+max-kv-pairs = 1

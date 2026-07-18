@@ -1,0 +1,45 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "profile",
+    srcs = [
+        "flamegraph.go",
+        "profile.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/util/profile",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/types",
+        "//pkg/util/cpuprofile",
+        "//pkg/util/texttree",
+        "@com_github_google_pprof//profile",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "profile_test",
+    timeout = "short",
+    srcs = [
+        "flamegraph_test.go",
+        "main_test.go",
+        "profile_test.go",
+    ],
+    data = glob(["testdata/**"]),
+    embed = [":profile"],
+    flaky = True,
+    deps = [
+        "//pkg/domain",
+        "//pkg/kv",
+        "//pkg/session",
+        "//pkg/store/mockstore",
+        "//pkg/testkit",
+        "//pkg/testkit/testsetup",
+        "//pkg/types",
+        "//pkg/util/collate",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+        "@io_opencensus_go//stats/view",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

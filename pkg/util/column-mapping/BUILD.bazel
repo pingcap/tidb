@@ -1,0 +1,21 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "column-mapping",
+    srcs = ["column.go"],
+    importpath = "github.com/pingcap/tidb/pkg/util/column-mapping",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/util/table-rule-selector",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "column-mapping_test",
+    timeout = "short",
+    srcs = ["column_test.go"],
+    embed = [":column-mapping"],
+    flaky = True,
+    deps = ["@com_github_stretchr_testify//require"],
+)

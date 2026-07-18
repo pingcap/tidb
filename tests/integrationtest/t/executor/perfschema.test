@@ -1,0 +1,7 @@
+# TestTableSessionVar
+select * from performance_schema.SESSION_VARIABLES where VARIABLE_NAME='tidb_retry_limit';
+
+DESCRIBE performance_schema.GLOBAL_VARIABLES;
+DESCRIBE performance_schema.SESSION_VARIABLES;
+DESCRIBE performance_schema.GLOBAL_STATUS;
+DESCRIBE performance_schema.SESSION_STATUS;

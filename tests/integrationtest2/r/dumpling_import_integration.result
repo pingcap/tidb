@@ -1,0 +1,16 @@
+CREATE TABLE t2(c BIGINT AUTO_RANDOM PRIMARY KEY, a INT, b INT);
+INSERT INTO t2(a, b) VALUES (1, 1), (2, 2), (3, 3);
+SELECT (c & 31) as inc FROM t2 ORDER BY inc;
+inc
+1
+2
+3
+INSERT INTO tt2(a, b) VALUES (1, 1), (2, 2), (3, 3);
+SELECT (c & 31) as inc FROM tt2 ORDER BY inc;
+inc
+1
+2
+3
+4
+5
+6

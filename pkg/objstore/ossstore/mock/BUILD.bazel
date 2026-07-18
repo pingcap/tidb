@@ -1,0 +1,16 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "mock",
+    srcs = [
+        "api_mock.go",
+        "provider_mock.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/objstore/ossstore/mock",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@com_github_aliyun_alibabacloud_oss_go_sdk_v2//oss",
+        "@com_github_aliyun_credentials_go//credentials/providers",
+        "@org_uber_go_mock//gomock",
+    ],
+)

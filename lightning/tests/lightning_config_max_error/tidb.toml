@@ -1,0 +1,8 @@
+[conflict]
+threshold = 20
+
+[mydumper.csv]
+header = true
+
+[tikv-importer]
+on-duplicate = "ignore"

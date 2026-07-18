@@ -1,0 +1,6 @@
+[mydumper]
+strict-format = true
+max-region-size = 200
+
+[mydumper.csv]
+terminator = "\n"

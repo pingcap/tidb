@@ -1,0 +1,26 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "passwordtest_test",
+    timeout = "short",
+    srcs = [
+        "dual_password_test.go",
+        "main_test.go",
+        "password_management_test.go",
+    ],
+    flaky = True,
+    shard_count = 37,
+    deps = [
+        "//pkg/domain",
+        "//pkg/errno",
+        "//pkg/kv",
+        "//pkg/parser/auth",
+        "//pkg/parser/mysql",
+        "//pkg/privilege/privileges",
+        "//pkg/sessionctx/vardef",
+        "//pkg/testkit",
+        "//pkg/util/sqlescape",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

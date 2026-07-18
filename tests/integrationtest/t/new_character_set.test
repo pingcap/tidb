@@ -1,0 +1,153 @@
+set @@sql_mode='';
+# @@character_set_results = 'gbk', TiDB transforms row value into GBK charset.
+drop table if exists t;
+set names utf8mb4;
+create table t (a varchar(255) charset utf8mb4);
+insert into t values ('一二三四一');
+select hex(a) from t;
+select a from t;
+set @@character_set_results = 'gbk';
+select a from t;
+# TiDB transforms table name and column name into GBK charset.
+drop table if exists 一;
+create table 一 (二 char(20));
+show create table 一;
+
+# @@character_set_results = null or binary.
+drop table if exists t;
+set names utf8mb4;
+create table t (a varchar(255) charset gbk, b varchar(255) charset utf8mb4, c varchar(255) charset binary);
+insert into t values ('一', '一', '一');
+set @@character_set_results = null;
+select * from t;
+set @@character_set_results = BINARY;
+select * from t;
+set @@character_set_results = "BINARY";
+select * from t;
+set names utf8mb4;
+select * from t;
+set @@character_set_results = 'utf8mb4';
+
+# Test for @@character_set_client.
+drop table if exists t;
+create table t (a varchar(255) charset utf8mb4);
+set @@character_set_client = 'gbk';
+insert into t values ('中文');
+set @@character_set_client = 'utf8mb4';
+insert into t values ('中文');
+set @@character_set_client = 'gbk';
+prepare p1 from "insert into t values ('中文');";
+execute p1;
+select a, hex(a) from t;
+set @@character_set_client = 'utf8mb4';
+
+set names gbk;
+drop table if exists t;
+create table t (b blob, d json);
+insert into t values ('你好', '{"测试": "你好"}');
+select b, d from t;
+select hex(b), hex(d) from t;
+
+set names utf8mb4;
+drop table if exists t;
+create table t(a blob, b char(10));
+insert into t values (0x61, '啊');
+insert into t values (0x61, '一');
+set names gbk;
+select * from t;
+
+drop table t;
+set names gbk;
+set character_set_connection = utf8mb4;
+create table t(j json, b blob, s1 varchar(255) collate binary, s2 varchar(255), st set('{"点赞": "你好"}'), en enum('{"点赞": "你好"}'));
+insert into t values('{"点赞": "你好"}', '{"点赞": "你好"}', '{"点赞": "你好"}', '{"点赞": "你好"}', '{"点赞": "你好"}', '{"点赞": "你好"}');
+select * from t;
+
+set names utf8mb4;
+set @@character_set_client=gbk;
+set @@character_set_connection=gbk;
+select hex('一a'), '一a';
+
+set @@sql_mode=default;
+set @@character_set_client=default;
+set @@character_set_connection=default;
+
+show variables like 'collation_connection';
+set default_collation_for_utf8mb4 = 'utf8mb4_general_ci';
+set names utf8mb4;
+show variables like 'collation_connection';
+set default_collation_for_utf8mb4 = 'utf8mb4_0900_ai_ci';
+set names utf8mb4;
+show variables like 'collation_connection';
+set default_collation_for_utf8mb4 = default;
+set names utf8mb4;
+show variables like 'collation_connection';
+
+# Bug#61085: https://github.com/pingcap/tidb/issues/61085 should replace instead of truncation for result charset
+set character_set_results = "gbk";
+select cast(0x414141E280A9424242 as char charset utf8mb4);
+SET character_set_results = @undefined_var;
+DROP TABLE if exists t61085;
+create table t61085 (a char(255) charset gbk);
+insert into t61085 values ('AAA');
+set SESSION sql_mode = '';
+select * from t61085 where a = cast(0x41414180424242 as char charset gbk);
+DROP TABLE t61085;
+set character_set_results = default;
+set SESSION sql_mode = default;
+
+# TestIssue64144
+create table a (id bigint primary key, name varchar(10) collate utf8mb4_general_ci, key(name));
+insert into a values (1, 'A�B');
+select hex(weight_string(name)) from a;
+
+select name, hex(weight_string(name)) from a where id = 1;
+select * from a where name = (select name from a where id = 1);
+
+delete from a where id = 1;
+
+--disable_warnings
+DROP TABLE IF EXISTS t_fffd;
+--enable_warnings
+
+CREATE TABLE t_fffd (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    c_utf8mb4_general_ci VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
+    c_utf8mb4_unicode_ci VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
+    c_utf8mb4_bin VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin,
+    INDEX idx_general (c_utf8mb4_general_ci),
+    INDEX idx_unicode (c_utf8mb4_unicode_ci),
+    INDEX idx_bin (c_utf8mb4_bin)
+);
+
+INSERT INTO t_fffd (c_utf8mb4_general_ci, c_utf8mb4_unicode_ci, c_utf8mb4_bin)
+VALUES ('a�b', '�', 'test�string');
+
+SELECT * FROM t_fffd ORDER BY id;
+
+explain format='brief' select id FROM t_fffd WHERE c_utf8mb4_general_ci = 'a�b';
+SELECT id FROM t_fffd WHERE c_utf8mb4_general_ci = 'a�b';
+
+explain format='brief' select id FROM t_fffd WHERE c_utf8mb4_unicode_ci = '�';
+SELECT id FROM t_fffd WHERE c_utf8mb4_unicode_ci = '�';
+
+explain format='brief' select id FROM t_fffd WHERE c_utf8mb4_bin = 'test�string';
+SELECT id FROM t_fffd WHERE c_utf8mb4_bin = 'test�string';
+
+UPDATE t_fffd SET c_utf8mb4_general_ci = 'X�Y' WHERE c_utf8mb4_general_ci = 'a�b';
+UPDATE t_fffd SET c_utf8mb4_unicode_ci = 'UPDATED�' WHERE c_utf8mb4_unicode_ci = '�';
+UPDATE t_fffd SET c_utf8mb4_bin = 'bin�updated' WHERE c_utf8mb4_bin = 'test�string';
+
+SELECT * FROM t_fffd ORDER BY id;
+
+DELETE FROM t_fffd WHERE c_utf8mb4_general_ci = 'X�Y';
+SELECT COUNT(*) FROM t_fffd;
+
+INSERT INTO t_fffd (c_utf8mb4_general_ci, c_utf8mb4_unicode_ci, c_utf8mb4_bin)
+VALUES ('another�row', 'multi�char', 'end�case');
+SELECT * FROM t_fffd ORDER BY id;
+
+SELECT id FROM t_fffd WHERE c_utf8mb4_bin = 'end�case';
+SELECT id FROM t_fffd WHERE c_utf8mb4_unicode_ci = 'multi�char';
+
+DROP TABLE t_fffd;

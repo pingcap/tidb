@@ -1,0 +1,13 @@
+# TestSelectTemporaryTableUnionView
+drop table if exists t;
+drop view if exists tv;
+drop temporary table if exists t;
+create table t(a int);
+insert into t values(1);
+create view tv as select a from t;
+create temporary table t(a int);
+insert into t values(2);
+select * from tv;
+select * from t;
+select * from (select a from t union all select a from tv) t1 order by a;
+

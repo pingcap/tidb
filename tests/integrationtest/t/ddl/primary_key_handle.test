@@ -1,0 +1,247 @@
+# TestPrimaryKey
+set tidb_enable_clustered_index = ON;
+drop table if exists t;
+create table t (a int, b varchar(10));
+-- error 8200
+alter table t add primary key(a) clustered;
+alter table t add primary key(a) nonclustered;
+alter table t drop primary key;
+alter table t add primary key(a) nonclustered;
+drop index `primary` on t;
+alter table t add primary key(a);
+drop index `primary` on t;
+-- error 1091
+drop index `primary` on t;
+drop table if exists t;
+create table t (a int, b varchar(10), primary key(a) clustered);
+-- error 8200
+alter table t drop primary key;
+-- error 8200
+alter table t add primary key(a) clustered;
+-- error 1068
+alter table t add primary key(a) nonclustered;
+-- error 1068
+alter table t add primary key(a);
+-- error 8200
+alter table t add primary key(b) clustered;
+-- error 1068
+alter table t add primary key(b) nonclustered;
+-- error 1068
+alter table t add primary key(b);
+drop table if exists t;
+create table t (a int, b varchar(10), primary key(a) nonclustered);
+-- error 8200
+alter table t add primary key(a) clustered;
+-- error 1068
+alter table t add primary key(a) nonclustered;
+-- error 1068
+alter table t add primary key(a);
+-- error 8200
+alter table t add primary key(b) clustered;
+-- error 1068
+alter table t add primary key(b) nonclustered;
+-- error 1068
+alter table t add primary key(b);
+alter table t drop primary key;
+drop table if exists t;
+create table t (a int, b varchar(10), primary key(b) clustered);
+-- error 8200
+alter table t drop primary key;
+-- error 8200
+alter table t add primary key(a) clustered;
+-- error 1068
+alter table t add primary key(a) nonclustered;
+-- error 1068
+alter table t add primary key(a);
+-- error 8200
+alter table t add primary key(b) clustered;
+-- error 1068
+alter table t add primary key(b) nonclustered;
+-- error 1068
+alter table t add primary key(b);
+drop table if exists t;
+create table t (`primary` int);
+alter table t add index (`primary`);
+-- error 1091
+drop index `primary` on t;
+drop table if exists t;
+-- error 3522
+create table t(c1 int not null, primary key(c1) invisible);
+create table t (a int, b int not null, primary key(a), unique(b) invisible);
+drop table t;
+set tidb_enable_clustered_index = default;
+
+# TestAutoRandomChangeFromAutoInc
+set @@tidb_allow_remove_auto_inc = 1;
+drop table if exists t;
+create table t (a bigint auto_increment primary key);
+insert into t values (), (), ();
+alter table t modify column a bigint auto_random(3);
+insert into t values (), (), ();
+show table t next_row_id;
+drop table if exists t;
+create table t (a bigint auto_increment unique key);
+-- error 8216
+alter table t modify column a bigint auto_random;
+drop table if exists t;
+create table t (a bigint auto_increment unique key, b bigint auto_random primary key);
+-- error 8216
+alter table t modify column a bigint auto_random;
+drop table if exists t;
+create table t (a bigint);
+-- error 8216
+alter table t modify column a bigint auto_random;
+drop table if exists t;
+create table t (a bigint primary key);
+-- error 8216
+alter table t modify column a bigint auto_random;
+drop table if exists t;
+create table t (a int auto_increment primary key);
+-- error 8216
+alter table t modify column a int auto_random;
+-- error 8216
+alter table t modify column a bigint auto_random;
+drop table if exists t;
+create table t (a bigint auto_random primary key);
+-- error 8200
+alter table t modify column a bigint auto_increment;
+drop table if exists t;
+create table t (a bigint auto_increment primary key);
+insert into t values (1<<(64-5));
+-- error 8216
+alter table t modify column a bigint auto_random(4);
+drop table if exists t;
+create table t (a bigint auto_increment primary key);
+insert into t values (1<<(64-6));
+alter table t modify column a bigint auto_random(4);
+set @@tidb_allow_remove_auto_inc = default;
+
+# TestAutoRandomExchangePartition
+set @@tidb_enable_exchange_partition=1;
+drop table if exists e1, e2, e3, e4;
+create table e1 (a bigint primary key clustered auto_random(3)) partition by hash(a) partitions 1;
+create table e2 (a bigint primary key);
+-- error 1736
+alter table e1 exchange partition p0 with table e2;
+create table e3 (a bigint primary key auto_random(2));
+-- error 1736
+alter table e1 exchange partition p0 with table e3;
+insert into e1 values (), (), ();
+create table e4 (a bigint primary key auto_random(3));
+insert into e4 values ();
+alter table e1 exchange partition p0 with table e4;
+select count(*) from e1;
+insert into e1 values ();
+select count(*) from e1;
+select count(*) from e4;
+insert into e4 values ();
+select count(*) from e4;
+set @@tidb_enable_exchange_partition=default;
+drop database if exists auto_random_db;
+
+# TestAutoRandomIncBitsIncrementAndOffset
+drop table if exists t;
+create table t (a bigint auto_random(6) primary key clustered);
+set @@auto_increment_increment=5;
+set @@auto_increment_offset=10;
+insert into t values ();
+insert into t values ();
+insert into t values ();
+select a & b'111111111111111111111111111111111111111111111111111111111' from t order by a & b'111111111111111111111111111111111111111111111111111111111' asc;
+drop table if exists t;
+create table t (a bigint auto_random(6) primary key clustered);
+set @@auto_increment_increment=2;
+set @@auto_increment_offset=10;
+insert into t values ();
+insert into t values ();
+insert into t values ();
+select a & b'111111111111111111111111111111111111111111111111111111111' from t order by a & b'111111111111111111111111111111111111111111111111111111111' asc;
+delete from t;
+set @@auto_increment_increment=5;
+set @@auto_increment_offset=10;
+insert into t values ();
+insert into t values ();
+insert into t values ();
+select a & b'111111111111111111111111111111111111111111111111111111111' from t order by a & b'111111111111111111111111111111111111111111111111111111111' asc;
+delete from t;
+set @@auto_increment_increment=10;
+set @@auto_increment_offset=10;
+insert into t values ();
+insert into t values ();
+insert into t values ();
+select a & b'111111111111111111111111111111111111111111111111111111111' from t order by a & b'111111111111111111111111111111111111111111111111111111111' asc;
+delete from t;
+set @@auto_increment_increment=5;
+set @@auto_increment_offset=10;
+insert into t values ();
+insert into t values ();
+insert into t values ();
+select a & b'111111111111111111111111111111111111111111111111111111111' from t order by a & b'111111111111111111111111111111111111111111111111111111111' asc;
+drop database if exists auto_random_db;
+set @@auto_increment_increment=default;
+set @@auto_increment_offset=default;
+
+# TestInvisibleIndex
+drop table if exists t,t1,t2,t3,t4,t5,t6;
+create table t (a int, b int, unique (a) invisible);
+select index_name, is_visible from information_schema.statistics where table_schema = 'ddl__primary_key_handle' and table_name = 't';
+insert into t values (1, 2);
+select * from t;
+alter table t drop index a;
+select index_name, is_visible from information_schema.statistics where table_schema = 'ddl__primary_key_handle' and table_name = 't';
+insert into t values (3, 4);
+select * from t;
+alter table t add index (b) invisible;
+select index_name, is_visible from information_schema.statistics where table_schema = 'ddl__primary_key_handle' and table_name = 't';
+insert into t values (5, 6);
+select * from t;
+alter table t drop index b;
+select index_name, is_visible from information_schema.statistics where table_schema = 'ddl__primary_key_handle' and table_name = 't';
+insert into t values (7, 8);
+select * from t;
+alter table t add index a_b(a, b) invisible;
+select index_name, is_visible from information_schema.statistics where table_schema = 'ddl__primary_key_handle' and table_name = 't';
+insert into t values (9, 10);
+select * from t;
+alter table t drop index a_b;
+select index_name, is_visible from information_schema.statistics where table_schema = 'ddl__primary_key_handle' and table_name = 't';
+insert into t values (11, 12);
+select * from t;
+-- error 3522
+create table t1 (a int, primary key (a) nonclustered invisible);
+-- error 3522
+create table t1 (a int, b int, primary key (a, b) nonclustered invisible);
+create table t1 (a int, b int);
+-- error 3522
+alter table t1 add primary key(a) nonclustered invisible;
+-- error 3522
+alter table t1 add primary key(a, b) nonclustered invisible;
+-- error 3522
+create table t2(a int not null, unique (a) invisible);
+-- error 3522
+create table t2(a int auto_increment, unique key (a) invisible);
+create table t2(a int not null);
+-- error 3522
+alter table t2 add unique (a) invisible;
+create table t3(a int, unique index (a) invisible);
+-- error 3522
+alter table t3 modify column a int not null;
+create table t4(a int not null, b int not null, unique (a), unique (b) invisible);
+select index_name, is_visible from information_schema.statistics where table_schema = 'ddl__primary_key_handle' and table_name = 't4';
+insert into t4 values (1, 2);
+select * from t4;
+-- error 3522
+create table t5(a int not null, b int not null, unique (b) invisible, unique (a));
+create table t5(a int not null, b int not null, unique (a), unique (b) invisible);
+-- error 3522
+alter table t5 drop index a;
+-- error 3522
+alter table t5 modify column a int null;
+create table t6 (a int not null, b int, unique (a) invisible, primary key(b) nonclustered);
+select index_name, is_visible from information_schema.statistics where table_schema = 'ddl__primary_key_handle' and table_name = 't6';
+insert into t6 values (1, 2);
+select * from t6;
+-- error 3522
+alter table t6 drop primary key;
+show index from t6 where Key_name='PRIMARY';
+

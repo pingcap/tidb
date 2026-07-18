@@ -1,0 +1,19 @@
+# config of tidb
+
+# Schema lease duration
+# There are lot of ddl in the tests, setting this
+# to 360s to test whther BR is gracefully shutdown.
+lease = "360s"
+[security]
+ssl-ca = "/tmp/lightning_test/certs/ca.pem"
+ssl-cert = "/tmp/lightning_test/certs/tidb.pem"
+ssl-key = "/tmp/lightning_test/certs/tidb.key"
+cluster-ssl-ca = "/tmp/lightning_test/certs/ca.pem"
+cluster-ssl-cert = "/tmp/lightning_test/certs/tidb.pem"
+cluster-ssl-key = "/tmp/lightning_test/certs/tidb.key"
+
+# experimental section controls the features that are still experimental: their semantics,
+# interfaces are subject to change, using these features in the production environment is not recommended.
+[experimental]
+# enable creating expression index.
+allow-expression-index = true

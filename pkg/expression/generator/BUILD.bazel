@@ -1,0 +1,14 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "generator_lib",
+    srcs = ["builtin_threadsafe.go"],
+    importpath = "github.com/pingcap/tidb/pkg/expression/generator",
+    visibility = ["//visibility:private"],
+)
+
+go_binary(
+    name = "generator",
+    embed = [":generator_lib"],
+    visibility = ["//visibility:public"],
+)

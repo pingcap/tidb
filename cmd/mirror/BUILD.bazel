@@ -1,0 +1,26 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "mirror_lib",
+    srcs = ["mirror.go"],
+    importpath = "github.com/pingcap/tidb/cmd/mirror",
+    visibility = ["//visibility:private"],
+    deps = [
+        "@io_bazel_rules_go//go/tools/bazel:go_default_library",
+    ],
+)
+
+go_binary(
+    name = "mirror",
+    data = [
+        "//:DEPS.bzl",
+        "//:go.mod",
+        "//:go.sum",
+        "//build/patches:all_patches",
+        "//pkg/parser:go.mod",
+        "//pkg/parser:go.sum",
+        "@go_sdk//:files",
+    ],
+    embed = [":mirror_lib"],
+    visibility = ["//visibility:public"],
+)
