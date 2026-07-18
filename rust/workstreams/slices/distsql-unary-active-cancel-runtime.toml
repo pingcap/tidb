@@ -29,7 +29,9 @@ support_anchors = [
 ]
 rust_paths = [
   "rust/crates/tidb-txnkv/tests/tikv_active_cancellation_source.rs",
-  "rust/crates/tidb-distsql/src/cop_paging/active_cancellation.rs",
+  "rust/crates/tidb-distsql/src/execution.rs",
+  "rust/crates/tidb-distsql/src/transport.rs",
+  "rust/crates/tidb-distsql/src/query_runtime.rs",
   "rust/crates/tidb-distsql/tests/active_cancellation_source.rs",
   "rust/crates/tidb-exec/tests/direct_unary_cancellation_source.rs",
 ]

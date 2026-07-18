@@ -192,7 +192,9 @@ if [[ "${MARKER}" != *"status=committed"* ]] \
   || [[ "${MARKER}" != *"locked_key_hex="* ]] \
   || [[ "${MARKER}" != *"primary_key_hex="* ]] \
   || [[ "${MARKER}" != *"primary_route="* ]] \
+  || [[ "${MARKER}" != *"commit_ts="* ]] \
   || [[ "${MARKER}" != *"resolve_route="* ]] \
+  || [[ "${MARKER}" != *"cop_route="* ]] \
   || [[ "${MARKER}" != *"cop_attempts=2"* ]] \
   || [[ "${MARKER}" != *"publications=1"* ]] \
   || [[ "${MARKER}" != *"resolve_key_hex="* ]]; then
