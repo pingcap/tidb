@@ -53,6 +53,25 @@ open. The campaign's three slices stay `PARTIAL` after cross-review repaired
 split index authority, late `RequiredRows` truncation, and unknown TiDB request
 origin.
 
+### Campaign 09 read-path runtime state
+
+Campaign `2026-07-read-path-09` replaces that envelope's fake network boundary
+with a real `tikvpb.Tikv/Coprocessor` gRPC socket leaf. The address-keyed client
+lazily opens and reuses one channel, supports address/version and terminal
+close, preserves typed timeout/connection failures, and accepts the
+client-go-sized response limit. Its raw protobuf codec preserves all request
+wire bytes except top-level field 1, which is removed and replaced exactly once
+with the selected typed region context; response bytes are returned unchanged.
+
+The routing side is a source-shaped, fail-closed single-region cache, leader
+selector, and request sender backed by an injected region loader. A pinned TiKV
+v8.5.6 playground test has crossed the existing DistSQL/direct-unary seam and
+reached the real Coprocessor method using source-derived static topology. This
+proves live unary transport and the bounded routing seam, not table reads or
+product parity. A concrete PD client, retry/backoff, lock resolution, TLS,
+follower/stale/proxy reads, multi-region dispatch, table semantics, and
+`COM_QUERY` integration remain open.
+
 The checked source/test totals and campaign queue are generated into
 `rust/STATUS.md` from the authoritative ledgers and manifests. Do not copy
 those counters into this design again: they change after every integrated

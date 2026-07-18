@@ -11,6 +11,7 @@ description = "Source-backed transactional KV primitives for the TiDB Rust rewri
 workspace = true
 
 [dependencies]
+bytes.workspace = true
 prost.workspace = true
 tidb-codec = { path = "../tidb-codec" }
 tidb-datatype = { path = "../tidb-datatype" }

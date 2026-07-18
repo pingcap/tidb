@@ -37,3 +37,5 @@
 2026-07-read-path-07	distsql-tikv-unary-rpc-contract
 2026-07-read-path-08	planner-tikv-table-read-task-runtime
 2026-07-read-path-08	distsql-direct-unary-client-runtime
+2026-07-read-path-09	distsql-direct-unary-client-runtime
+2026-07-read-path-09	txnkv-single-region-route-runtime

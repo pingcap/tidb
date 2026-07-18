@@ -44,6 +44,7 @@ repository = "https://github.com/pingcap/tidb"
 # (linear-time, no backreferences/lookaround), making it the natural,
 # high-fidelity match rather than an arbitrary choice.
 [workspace.dependencies]
+bytes = "1"
 encoding_rs = "0.8"
 regex = "1"
 # The first generated protocol leaf.  The proto source is checked in under

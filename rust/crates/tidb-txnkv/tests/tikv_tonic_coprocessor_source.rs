@@ -34,6 +34,7 @@ use tidb_txnkv::{
 struct RecordingTikv {
     requests: Arc<Mutex<Vec<CoprocessorRequest>>>,
     delay: Duration,
+    response_size: Option<usize>,
 }
 
 #[tonic::async_trait]
@@ -51,8 +52,11 @@ impl Tikv for RecordingTikv {
             .as_ref()
             .ok_or_else(|| tonic::Status::invalid_argument("missing request context"))?;
         self.requests.lock().unwrap().push(request.clone());
+        let data = self
+            .response_size
+            .map_or(request.data, |size| vec![0x5a; size]);
         Ok(tonic::Response::new(CoprocessorResponse {
-            data: request.data,
+            data,
             ..CoprocessorResponse::default()
         }))
     }
@@ -204,6 +208,7 @@ fn unary_rpc_attaches_context_once_reuses_address_and_recreates_after_close() {
     let server = TestServer::start(RecordingTikv {
         requests: Arc::clone(&requests),
         delay: Duration::ZERO,
+        response_size: None,
     });
     let mut client = TonicCoprocessorClient::new().unwrap();
 
@@ -282,6 +287,7 @@ fn caller_timeout_and_malformed_body_have_typed_fail_closed_results() {
     let server = TestServer::start(RecordingTikv {
         requests,
         delay: Duration::from_millis(200),
+        response_size: None,
     });
     let mut client = TonicCoprocessorClient::new().unwrap();
 
@@ -331,4 +337,27 @@ fn invalid_address_fails_before_pool_insertion() {
         } if original == address
     ));
     assert_eq!(client.active_address_count(), 0);
+}
+
+#[test]
+fn response_larger_than_tonic_default_limit_is_returned() {
+    // client-go/internal/client/client.go:72-74 MaxRecvMsgSize.
+    let response_size = 5 * 1024 * 1024;
+    let server = TestServer::start(RecordingTikv {
+        requests: Arc::new(Mutex::new(Vec::new())),
+        delay: Duration::ZERO,
+        response_size: Some(response_size),
+    });
+    let mut client = TonicCoprocessorClient::new().unwrap();
+
+    let raw = client
+        .send_request(
+            &server.address,
+            &request(b"large-response"),
+            Duration::from_secs(2),
+        )
+        .unwrap();
+    let response = CoprocessorResponse::decode(raw.encoded_response.as_slice()).unwrap();
+    assert_eq!(response.data.len(), response_size);
+    assert!(response.data.iter().all(|byte| *byte == 0x5a));
 }

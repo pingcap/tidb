@@ -21,7 +21,7 @@
 //! tasks onto the existing protobuf shape. It keeps region epochs, peer
 //! fields, ordered key ranges, task IDs, versioned point ranges, and bucket
 //! versions exact while leaving cache lookup, retries, endpoint selection,
-//! and RPC dispatch to a future TiKV owner.
+//! and RPC dispatch to the separate TiKV transport owner.
 
 use std::collections::BTreeMap;
 

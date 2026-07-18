@@ -15,9 +15,11 @@
 //!
 //! This foundation translates complete dependency-closed contracts from
 //! `pkg/kv/{key,version,keyflags,assertion,error,checker}.go` plus the bounded
-//! transaction-source bitfield in `pkg/kv/option.go`. It is not a TiKV client:
-//! it has no RPC, region cache, timestamp oracle, MVCC, transaction buffer,
-//! lock resolver, automatic retry loop, or commit protocol.
+//! transaction-source bitfield in `pkg/kv/option.go`. The bounded RPC and
+//! region modules now provide one real unary Coprocessor transport and one
+//! injected single-region leader route. Concrete PD discovery, timestamp
+//! oracle, MVCC transaction protocol, lock resolution, automatic retry, TLS,
+//! and commit remain outside this crate's implemented boundary.
 
 mod assertion;
 mod batch_getter;

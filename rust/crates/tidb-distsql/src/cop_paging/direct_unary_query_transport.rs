@@ -14,12 +14,12 @@
 
 //! One address-directed unary TiKV read path with an injected client.
 //!
-//! This is deliberately the last dependency-closed seam before real client-go
-//! networking. The caller supplies checked region snapshots and the exact
-//! address selected for each snapshot. A returned response owns the
+//! The caller supplies checked region snapshots, a nonzero PD cluster identity,
+//! and the exact address selected for each snapshot. The injected client may be
+//! the real KV-owned tonic Coprocessor transport. A returned response owns the
 //! coordinator and dispatches lazily, in logical-task order, only when its
-//! consumer pulls. Region errors, locks, batch responses, and every other
-//! retry case stop the response instead of manufacturing retry behavior.
+//! consumer pulls. Region errors, locks, batch responses, and every other retry
+//! case stop the response instead of manufacturing retry behavior.
 
 use std::cell::{RefCell, RefMut};
 use std::collections::{BTreeMap, BTreeSet};

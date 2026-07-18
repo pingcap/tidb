@@ -1,6 +1,6 @@
 schema = "1"
 slice = "txnkv-single-region-route-runtime"
-status = "ready"
+status = "partial"
 target = "tidb-txnkv"
 ring = "transaction"
 consumer = "A source-shaped single-region leader route authority below DistSQL: immutable RegionVerId/epoch/peer/store identity, ordered key containment, injected PD loader misses, cache insert/lookup/invalidate, leader selection, and exactly-once request-context attachment immediately before the address-directed RPC. It deliberately rejects multi-region splits, follower/stale/proxy reads, store failover, retry/backoff, locks, buckets, keyspace-v2 codecs, and concrete PD networking."

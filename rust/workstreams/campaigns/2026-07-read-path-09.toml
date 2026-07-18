@@ -1,6 +1,6 @@
 schema = "1"
 campaign = "2026-07-read-path-09"
-status = "active"
+status = "integrated"
 slices = [
   "distsql-direct-unary-client-runtime",
   "txnkv-single-region-route-runtime",

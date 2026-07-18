@@ -1,6 +1,6 @@
 schema = "1"
 slice = "distsql-direct-unary-client-runtime"
-status = "ready"
+status = "partial"
 target = "tidb-exec"
 ring = "result"
 consumer = "Campaign 09 extends the bounded TiKV unary DAG read path with the pinned client-go address-keyed connection lifecycle and exact tikvpb.Tikv/Coprocessor gRPC method. The real client implements the existing KV-owned SendRequest-shaped capability, reuses channels per address, attaches the already selected request context exactly once, enforces the caller timeout, returns raw protobuf response bytes, and preserves typed address/version transport errors and close/reopen behavior. A live-TiKV probe may supply checked single-region topology, but this slice does not claim PD discovery, RegionCache freshness, retry, locks, TLS, batch/stream/async RPC, forwarding, compression, metrics, or COM_QUERY wiring."
@@ -186,6 +186,7 @@ rust_paths = [
   "rust/difftests/corpus/coverage/evidence/client-go/source/distsql-direct-unary-client-runtime.tsv",
   "rust/difftests/corpus/coverage/evidence/client-go/tests/distsql-direct-unary-client-runtime.tsv",
   "rust/difftests/transaction-tests/tests/realtikv_tikv_unary.rs",
+  "rust/difftests/transaction-tests/Cargo.toml",
   "rust/scripts/run-campaign09-realtikv.sh",
   "rust/difftests/corpus/coverage/evidence/transfers/distsql-direct-unary-client-runtime.tsv",
 ]

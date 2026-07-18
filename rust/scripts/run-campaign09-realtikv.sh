@@ -8,21 +8,85 @@ PORT_OFFSET=${C09_PORT_OFFSET:-20000}
 PD_PORT=$((2379 + PORT_OFFSET))
 PD_ADDR="127.0.0.1:${PD_PORT}"
 PLAYGROUND_PID=
+OWNED_PIDS=
 PLAYGROUND_LOG="${TMPDIR:-/tmp}/${TAG}.log"
+TAG_DIR="${TIUP_HOME:-${HOME}/.tiup}/data/${TAG}"
+
+tag_status_rows() {
+  tiup status 2>/dev/null | awk -v tag="${TAG}" \
+    'NR > 2 && ($1 == tag || index($0, "/data/" tag "/")) { print }'
+}
+
+collect_descendant_pids() {
+  local frontier=$1
+  local descendants=
+  local child
+  local next
+  local parent
+  while [[ -n "${frontier}" ]]; do
+    next=
+    for parent in ${frontier}; do
+      while IFS= read -r child; do
+        if [[ -n "${child}" ]]; then
+          descendants="${descendants}${descendants:+ }${child}"
+          next="${next}${next:+ }${child}"
+        fi
+      done < <(pgrep -P "${parent}" || true)
+    done
+    frontier=${next}
+  done
+  printf '%s\n' "${descendants}"
+}
 
 cleanup() {
   local original_status=$?
+  local cleanup_failed=false
   trap - EXIT INT TERM
-  if [[ -n "${PLAYGROUND_PID}" ]] && kill -0 "${PLAYGROUND_PID}" 2>/dev/null; then
-    kill "${PLAYGROUND_PID}" 2>/dev/null || true
+  if [[ -n "${PLAYGROUND_PID}" ]]; then
+    if kill -0 "${PLAYGROUND_PID}" 2>/dev/null; then
+      kill "${PLAYGROUND_PID}" 2>/dev/null || true
+    fi
     wait "${PLAYGROUND_PID}" 2>/dev/null || true
   fi
   tiup clean "${TAG}" --all >/dev/null 2>&1 || true
+
+  local processes_cleaned=false
+  for _ in $(seq 1 30); do
+    local process_alive=false
+    local pid
+    for pid in ${OWNED_PIDS}; do
+      if kill -0 "${pid}" 2>/dev/null; then
+        process_alive=true
+        break
+      fi
+    done
+    if [[ "${process_alive}" == false ]] && [[ -z "$(tag_status_rows)" ]]; then
+      processes_cleaned=true
+      break
+    fi
+    sleep 1
+  done
+  if [[ "${processes_cleaned}" != true ]]; then
+    echo "Campaign 09 cleanup failed: owned TiUP registry or process remains for ${TAG}" >&2
+    cleanup_failed=true
+  else
+    # A tagged playground may not leave the metadata that `tiup clean` needs,
+    # so remove residual data only after registry and process teardown is
+    # independently proven.
+    rm -rf -- "${TAG_DIR}"
+    if [[ -e "${TAG_DIR}" ]]; then
+      echo "Campaign 09 cleanup failed: owned tag directory remains at ${TAG_DIR}" >&2
+      cleanup_failed=true
+    fi
+  fi
   if curl -sf --max-time 1 "http://${PD_ADDR}/pd/api/v1/version" >/dev/null; then
     echo "Campaign 09 cleanup failed: owned PD endpoint ${PD_ADDR} is still reachable" >&2
-    exit 1
+    cleanup_failed=true
   fi
   rm -f "${PLAYGROUND_LOG}"
+  if [[ "${cleanup_failed}" == true ]]; then
+    exit 1
+  fi
   exit "${original_status}"
 }
 trap cleanup EXIT INT TERM
@@ -52,6 +116,12 @@ done
 if [[ "${ready}" != true ]]; then
   echo "PD endpoint ${PD_ADDR} did not become ready" >&2
   tail -80 "${PLAYGROUND_LOG}" >&2
+  exit 1
+fi
+
+OWNED_PIDS=$(collect_descendant_pids "${PLAYGROUND_PID}")
+if [[ -z "${OWNED_PIDS}" ]]; then
+  echo "TiUP did not publish owned descendant processes for ${TAG}" >&2
   exit 1
 fi
 

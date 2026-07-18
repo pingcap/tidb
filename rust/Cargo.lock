@@ -1107,6 +1107,7 @@ dependencies = [
 name = "tidb-txnkv"
 version = "0.0.0"
 dependencies = [
+ "bytes",
  "prost",
  "tidb-codec",
  "tidb-datatype",
