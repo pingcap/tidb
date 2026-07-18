@@ -1,0 +1,37 @@
+schema = "1"
+slice = "distsql-unary-active-cancel-runtime"
+status = "ready"
+target = "tidb-distsql"
+ring = "result"
+consumer = "Campaign 13 connects the existing execution cancellation owner through the shared unary core so cancellation interrupts an RPC that is already in flight. Caller cancellation remains terminal before response classification, channel close, liveness, store/cache mutation, selector/backoff, PD recovery, paging, EMA, or publication. Timeout and remote gRPC Canceled remain distinct transport facts. The slice owns no new worker, channel pool, topology map, or retry policy."
+test_target = "active cancellation leaf/runtime source tests and hanging tonic server integration"
+go_sources = []
+go_tests = [
+  "pkg/executor/adapter_test.go:93:TestContextCancelWhenReadFromCopIterator",
+]
+module_sources = [
+  "client-go::internal/client/client.go",
+  "client-go::internal/locate/region_request.go",
+  "client-go::tikv/region.go",
+]
+module_tests = [
+  "client-go::internal/locate/region_request_test.go:310:TestRegionRequestToSingleStore/TestOnSendFailedWithCancelled",
+  "client-go::internal/locate/region_request_test.go:350:TestRegionRequestToSingleStore/TestNoReloadRegionWhenCtxCanceled",
+  "client-go::internal/locate/region_request_test.go:400:TestRegionRequestToSingleStore/TestSendReqAsync",
+  "client-go::internal/locate/region_request_test.go:798:TestRegionRequestToSingleStore/TestNoReloadRegionForGrpcWhenCtxCanceled",
+]
+depends_on = []
+evidence_prerequisites = []
+support_anchors = [
+  "client-go/internal/locate/region_request.go:1625-1670:RPCCanceller lifecycle",
+  "client-go/internal/locate/region_request.go:1072-1080:in-flight request registration",
+  "client-go/internal/locate/region_request.go:1723-1763:caller cancellation precedence",
+  "pkg/store/copr/coprocessor.go:970-1021:iterator cancellation ownership",
+]
+rust_paths = [
+  "rust/crates/tidb-txnkv/src/rpc/cancellation.rs",
+  "rust/crates/tidb-txnkv/tests/tikv_active_cancellation_source.rs",
+  "rust/crates/tidb-distsql/src/cop_paging/active_cancellation.rs",
+  "rust/crates/tidb-distsql/tests/active_cancellation_source.rs",
+  "rust/crates/tidb-exec/tests/direct_unary_cancellation_source.rs",
+]

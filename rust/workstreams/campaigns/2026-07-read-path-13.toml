@@ -1,0 +1,9 @@
+schema = "1"
+campaign = "2026-07-read-path-13"
+status = "planned"
+slices = [
+  "txnkv-read-runtime-seams",
+  "txnkv-replica-read-policy-runtime",
+  "distsql-unary-active-cancel-runtime",
+  "txnkv-optimistic-lock-read-recovery-runtime",
+]

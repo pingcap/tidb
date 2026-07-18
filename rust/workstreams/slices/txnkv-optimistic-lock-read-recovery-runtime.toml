@@ -1,0 +1,33 @@
+schema = "1"
+slice = "txnkv-optimistic-lock-read-recovery-runtime"
+status = "ready"
+target = "tidb-txnkv"
+ring = "transaction"
+consumer = "Campaign 13 transits the bounded optimistic non-async read-lock path: decode one LockInfo or SharedLock wrapper, query the primary with CheckTxnStatus through the same RegionCache/client authority, return exact alive TTL, or resolve committed/rolled-back secondary keys with ResolveLock and retry the same unconsumed Cop task. A locked response is a valid route observation but cannot advance paging/cache/EMA/publication. Pessimistic, async-commit, file, TxnNotFound retry, batch resolve, writes, 2PC, and background lock cleanup fail closed."
+test_target = "lock model/resolver/read retry source tests and owner-executed committed-primary locked-secondary TiKV proof"
+go_sources = []
+go_tests = []
+module_sources = [
+  "client-go::txnkv/txnlock/lock.go",
+  "client-go::txnkv/txnlock/lock_resolver.go",
+  "client-go::txnkv/txnsnapshot/client_helper.go",
+]
+module_tests = []
+depends_on = []
+evidence_prerequisites = []
+support_anchors = [
+  "client-go/txnkv/txnlock/lock.go:LockInfo mapping and shared lock expansion",
+  "client-go/txnkv/txnlock/lock_resolver.go:ResolveLocksWithOpts status and lite resolve flow",
+  "pkg/store/copr/coprocessor.go:2512-2585:locked response retry precedence",
+]
+rust_paths = [
+  "rust/crates/tidb-txnkv/src/lock/mod.rs",
+  "rust/crates/tidb-txnkv/src/lock/model.rs",
+  "rust/crates/tidb-txnkv/src/lock/resolver.rs",
+  "rust/crates/tidb-txnkv/tests/lock_model_source.rs",
+  "rust/crates/tidb-txnkv/tests/lock_resolver_source.rs",
+  "rust/crates/tidb-distsql/src/cop_paging/lock_recovery.rs",
+  "rust/crates/tidb-distsql/tests/lock_recovery_source.rs",
+  "rust/difftests/transaction-tests/tests/realtikv_lock_recovery.rs",
+  "rust/scripts/run-campaign13-lock-recovery.sh",
+]
