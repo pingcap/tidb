@@ -1,0 +1,61 @@
+schema = "1"
+slice = "txnkv-pd-region-loader-runtime"
+status = "ready"
+target = "tidb-txnkv"
+ring = "transaction"
+consumer = "Campaign 10 provides one plaintext-endpoint, one-attempt PD control-plane leaf below txnkv. It bootstraps the nonzero cluster ID with pdpb.PD/GetMembers, resolves the region containing an encoded key with GetRegion, resolves every referenced store with GetStore, rejects malformed or unusable topology with typed errors, and converts the result into the stable RegionLoader contract. Its ignored TiUP proof accepts only the PD endpoint and reaches the existing real TiKV Coprocessor leaf. It does not claim endpoint discovery or refresh, leader failover, TLS, forwarding, retries, backoff, router-service parity, keyspace-v2 codecs, lock resolution, production multi-region resilience, table/DAG lowering, or COM_QUERY."
+test_target = "pd_wire_source, pd_client_source, pd_region_loader_source, and the ignored Campaign 10 PD-only-input RealTiKV proof"
+go_sources = []
+go_tests = []
+module_sources = [
+  "pd-client::client.go",
+  "pd-client::clients/router/client.go",
+  "pd-client::clients/router/request.go",
+  "pd-client::opt/option.go",
+  "pd-client::servicediscovery/service_discovery.go",
+]
+module_tests = [
+  "pd-client::opt/option_test.go:115:TestOptions",
+]
+depends_on = []
+evidence_prerequisites = []
+support_anchors = [
+  "go.mod:126:github.com/tikv/pd/client v0.0.0-20260708075407-4e05b9d2c2d3",
+  "pd-client/client.go:714-764:GetRegion",
+  "pd-client/client.go:1034-1091:GetStore",
+  "pd-client/client.go:1329:requestHeader",
+  "pd-client/servicediscovery/service_discovery.go:840-864,960-994:GetMembers bootstrap and cluster identity",
+  "client-go/internal/locate/region_cache.go:362-430:newRegion maps region, epoch, leader, peers, and stores",
+  "client-go/internal/locate/region_cache.go:721-746:GetClusterID consumption",
+  "client-go/internal/locate/region_cache.go:2361-2418:loadRegion",
+  "client-go/internal/locate/store_cache.go:418-505:PD-backed store resolution",
+  "client-go/internal/locate/region_cache_test.go:383:TestRegionCache/TestSimple",
+  "client-go/internal/locate/region_cache_test.go:3468:TestRegionCache/TestLocateRegionByIDFromPD",
+  "client-go/internal/locate/region_request_test.go:1030:TestRegionRequestToSingleStore/TestClusterIDInReq",
+  "pd-client has no direct original GetMembers/GetRegion/GetStore unit test; source-derived mock PD and live TiUP evidence are required",
+]
+rust_paths = [
+  "rust/Cargo.toml",
+  "rust/Cargo.lock",
+  "rust/crates/tidb-proto/Cargo.toml",
+  "rust/crates/tidb-proto/build.rs",
+  "rust/crates/tidb-proto/src/lib.rs",
+  "rust/crates/tidb-proto/proto/metapb.proto",
+  "rust/crates/tidb-proto/proto/pdpb.proto",
+  "rust/crates/tidb-proto/tests/pd_wire_source.rs",
+  "rust/crates/tidb-pd-client/Cargo.toml",
+  "rust/crates/tidb-pd-client/src/lib.rs",
+  "rust/crates/tidb-pd-client/src/client.rs",
+  "rust/crates/tidb-pd-client/src/error.rs",
+  "rust/crates/tidb-pd-client/src/model.rs",
+  "rust/crates/tidb-pd-client/tests/pd_client_source.rs",
+  "rust/crates/tidb-txnkv/Cargo.toml",
+  "rust/crates/tidb-txnkv/src/lib.rs",
+  "rust/crates/tidb-txnkv/src/pd_loader.rs",
+  "rust/crates/tidb-txnkv/tests/pd_region_loader_source.rs",
+  "rust/difftests/transaction-tests/Cargo.toml",
+  "rust/difftests/transaction-tests/tests/realtikv_pd_route.rs",
+  "rust/scripts/run-campaign10-realtikv.sh",
+  "rust/difftests/corpus/coverage/evidence/pd-client/source/txnkv-pd-region-loader-runtime.tsv",
+  "rust/difftests/corpus/coverage/evidence/pd-client/tests/txnkv-pd-region-loader-runtime.tsv",
+]
