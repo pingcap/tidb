@@ -3,8 +3,8 @@ slice = "txnkv-unlocked-store-refresh-runtime"
 status = "ready" # ready | active | partial | covered | blocked
 target = "tidb-txnkv"
 ring = "transaction"
-consumer = "Replace background PD store refresh under the canonical region-cache mutex with one select, fetch, revalidate, and publish pipeline. Keep one cache, loader, worker, and trigger authority; discard stale refresh results without mutating address, labels, resolve state, epoch, or dependent regions."
-test_target = "foreground cache progress during blocked PD refresh, stale-result rejection, current-result publication, bounded GC, trigger coalescing, and joined shutdown"
+consumer = "Replace every production PD metadata operation under the canonical region-cache mutex with select, fetch, revalidate, and publish pipelines. Cache hits and plans run under the cache lock; region and store fetches run through the sole loader with that lock released; guarded merge discards stale results without overwriting newer topology. Keep one cache, loader, worker, trigger, and publication authority."
+test_target = "foreground cache progress during blocked region/store PD fetch, stale-result rejection, guarded current publication, bounded GC, trigger coalescing, and joined shutdown"
 go_sources = []
 go_tests = []
 module_sources = [
@@ -42,10 +42,13 @@ support_anchors = [
 ]
 rust_paths = [
   "rust/crates/tidb-txnkv/src/read_runtime.rs",
+  "rust/crates/tidb-txnkv/src/lock/resolver.rs",
   "rust/crates/tidb-txnkv/src/region/background.rs",
   "rust/crates/tidb-txnkv/src/region/cache.rs",
   "rust/crates/tidb-txnkv/src/region/recovery.rs",
   "rust/crates/tidb-txnkv/tests/background_region_gc_source.rs",
   "rust/crates/tidb-txnkv/tests/background_runner_source.rs",
   "rust/crates/tidb-txnkv/tests/background_store_maintenance_source.rs",
+  "rust/crates/tidb-txnkv/tests/lock_resolver_source.rs",
+  "rust/crates/tidb-txnkv/tests/unlocked_region_lookup_source.rs",
 ]
