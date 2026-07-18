@@ -462,8 +462,7 @@ impl<L: RegionRecoveryLoader> RegionCache<L> {
         for current in &mismatch.current_regions {
             let metadata = region_metadata(current)?;
             let hydrated = self
-                .loader
-                .hydrate_region(&metadata, attempt.store_id)
+                .with_loader(|loader| loader.hydrate_region(&metadata, attempt.store_id))
                 .map_err(RegionRecoveryError::Loader)?;
             if hydrated.region != metadata.region {
                 return Err(RegionRecoveryError::HydratedRegionMismatch {

@@ -77,7 +77,10 @@ fn trigger_wakes_the_single_driver_and_shutdown_waits_for_close() {
         std::thread::sleep(Duration::from_millis(1));
     }
     assert_eq!(background.completed_rounds().unwrap(), 1);
-    assert!(background.last_round().unwrap().unwrap().triggered);
+    let round = background.last_round().unwrap().unwrap();
+    assert!(round.triggered);
+    assert_eq!(round.stores.attempted, 0);
+    assert_eq!(round.stores.stale_discarded, 0);
 
     background.shutdown().unwrap();
 }

@@ -16,6 +16,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
+use super::cache::StoreRefreshApplication;
 use super::{RegionCache, RegionGcRound, RegionLoader, RegionQueryLoader, StoreMaintenanceRound};
 
 /// One complete pass performed by the single maintenance driver.
@@ -133,12 +134,13 @@ impl<L> BackgroundRegionCache<L> {
     where
         L: RegionLoader + Send + 'static,
     {
-        Self::start_with_round(cache, interval, gc_limit, |cache, triggered, gc_limit| {
-            BackgroundMaintenanceRound {
+        Self::start_with_round(cache, interval, gc_limit, |shared, triggered, gc_limit| {
+            let mut cache = shared.lock().ok()?;
+            Some(BackgroundMaintenanceRound {
                 triggered,
                 regions: cache.maintain_entries_bounded(gc_limit),
                 stores: StoreMaintenanceRound::default(),
-            }
+            })
         })
     }
 
@@ -150,7 +152,9 @@ impl<L> BackgroundRegionCache<L> {
     ) -> Result<Self, BackgroundRegionCacheError>
     where
         L: RegionLoader + Send + 'static,
-        F: FnMut(&mut RegionCache<L>, bool, usize) -> BackgroundMaintenanceRound + Send + 'static,
+        F: FnMut(&Arc<Mutex<RegionCache<L>>>, bool, usize) -> Option<BackgroundMaintenanceRound>
+            + Send
+            + 'static,
     {
         if interval.is_zero() {
             return Err(BackgroundRegionCacheError::ZeroInterval);
@@ -255,13 +259,45 @@ where
         interval: Duration,
         gc_limit: usize,
     ) -> Result<Self, BackgroundRegionCacheError> {
-        Self::start_with_round(cache, interval, gc_limit, |cache, triggered, gc_limit| {
-            BackgroundMaintenanceRound {
-                triggered,
-                stores: cache.maintain_stores(triggered),
-                regions: cache.maintain_entries_bounded(gc_limit),
-            }
-        })
+        let loader = cache.loader_handle();
+        Self::start_with_round(
+            cache,
+            interval,
+            gc_limit,
+            move |shared, triggered, gc_limit| {
+                let (plans, regions) = {
+                    let mut cache = shared.lock().ok()?;
+                    (
+                        cache.plan_store_refreshes(triggered),
+                        cache.maintain_entries_bounded(gc_limit),
+                    )
+                };
+                let attempted = plans.len();
+                let observations = plans
+                    .into_iter()
+                    .map(|plan| loader.load_store(plan))
+                    .collect::<Vec<_>>();
+                let mut stores = StoreMaintenanceRound {
+                    attempted,
+                    ..StoreMaintenanceRound::default()
+                };
+                let mut cache = shared.lock().ok()?;
+                for observation in observations {
+                    match cache.publish_store_refresh(observation) {
+                        StoreRefreshApplication::Unchanged => {}
+                        StoreRefreshApplication::Refreshed => stores.refreshed += 1,
+                        StoreRefreshApplication::Removed => stores.removed += 1,
+                        StoreRefreshApplication::Failed => stores.failed += 1,
+                        StoreRefreshApplication::StaleDiscarded => stores.stale_discarded += 1,
+                    }
+                }
+                Some(BackgroundMaintenanceRound {
+                    triggered,
+                    regions,
+                    stores,
+                })
+            },
+        )
     }
 }
 
@@ -313,7 +349,7 @@ fn maintenance_loop<L, F>(
     mut round: F,
 ) where
     L: RegionLoader + Send + 'static,
-    F: FnMut(&mut RegionCache<L>, bool, usize) -> BackgroundMaintenanceRound,
+    F: FnMut(&Arc<Mutex<RegionCache<L>>>, bool, usize) -> Option<BackgroundMaintenanceRound>,
 {
     loop {
         let (state, wake) = &*driver;
@@ -332,14 +368,12 @@ fn maintenance_loop<L, F>(
         let triggered = std::mem::take(&mut state_guard.triggered);
         drop(state_guard);
 
-        let Ok(mut cache) = cache.lock() else {
+        let Some(completed) = round(&cache, triggered, gc_limit) else {
             if let Ok(mut state) = state.lock() {
                 state.closed = true;
             }
             return;
         };
-        let completed = round(&mut cache, triggered, gc_limit);
-        drop(cache);
 
         let Ok(mut state) = state.lock() else {
             return;

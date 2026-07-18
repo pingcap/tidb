@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use super::{
@@ -164,6 +165,66 @@ pub struct StoreMaintenanceRound {
     pub removed: usize,
     /// Bounded loader failures deferred to a later round.
     pub failed: usize,
+    /// Results discarded because the canonical store changed during PD I/O.
+    pub stale_discarded: usize,
+}
+
+pub(super) struct SharedRegionLoader<L> {
+    inner: Arc<Mutex<L>>,
+}
+
+impl<L> Clone for SharedRegionLoader<L> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+        }
+    }
+}
+
+impl<L> SharedRegionLoader<L> {
+    fn new(loader: L) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(loader)),
+        }
+    }
+
+    fn with_loader<R>(&self, operation: impl FnOnce(&mut L) -> R) -> R {
+        let mut loader = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        operation(&mut loader)
+    }
+}
+
+impl<L: RegionQueryLoader> SharedRegionLoader<L> {
+    pub(super) fn load_store(&self, plan: StoreRefreshPlan) -> StoreRefreshResult {
+        let metadata = self.with_loader(|loader| loader.load_store(plan.store_id));
+        StoreRefreshResult { plan, metadata }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct StoreRefreshPlan {
+    store_id: u64,
+    observed_epoch: u64,
+    observed_resolve_state: StoreResolveState,
+    observed_address: String,
+    observed_labels: Vec<(String, String)>,
+}
+
+pub(super) struct StoreRefreshResult {
+    plan: StoreRefreshPlan,
+    metadata: Result<Option<StoreMetadata>, RegionLoadError>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum StoreRefreshApplication {
+    Unchanged,
+    Refreshed,
+    Removed,
+    Failed,
+    StaleDiscarded,
 }
 
 /// Injected PD-shaped region metadata loader.
@@ -236,8 +297,9 @@ where
             let request = &misses[..batch_len];
             let publishable = loop {
                 let loaded = self
-                    .loader
-                    .batch_load_regions(request, DEFAULT_REGIONS_PER_BATCH, options)
+                    .with_loader(|loader| {
+                        loader.batch_load_regions(request, DEFAULT_REGIONS_PER_BATCH, options)
+                    })
                     .map_err(RegionRouteError::Loader)?;
                 let retry = if loaded.is_empty() {
                     Some(BatchScanRetryReason::EmptyReply)
@@ -316,8 +378,9 @@ where
         region_id: u64,
     ) -> Result<RegionLocation, RegionRouteError> {
         let loaded = self
-            .loader
-            .query_region(RegionQuery::Id(region_id), RegionQueryOptions::default())
+            .with_loader(|loader| {
+                loader.query_region(RegionQuery::Id(region_id), RegionQueryOptions::default())
+            })
             .map_err(RegionRouteError::Loader)?;
         ensure_region_id(region_id, &loaded)?;
         Ok(loaded)
@@ -352,8 +415,9 @@ where
             }
         }
         let loaded = self
-            .loader
-            .query_region(RegionQuery::Id(region_id), RegionQueryOptions::default())
+            .with_loader(|loader| {
+                loader.query_region(RegionQuery::Id(region_id), RegionQueryOptions::default())
+            })
             .map_err(RegionRouteError::Loader)?;
         ensure_region_id(region_id, &loaded)?;
         let index = self.insert_loaded_at(loaded, now_seconds)?;
@@ -379,8 +443,7 @@ where
         };
         loop {
             let loaded = self
-                .loader
-                .scan_regions_once(range, limit, options)
+                .with_loader(|loader| loader.scan_regions_once(range, limit, options))
                 .map_err(RegionRouteError::Loader)?;
             let retry = if loaded.is_empty() {
                 Some(RegionQueryRetryReason::EmptyReply)
@@ -427,38 +490,59 @@ where
         Ok(loaded)
     }
 
-    /// Re-resolves one canonical store record without replacing its identity.
-    pub fn refresh_store(
+    /// Selects immutable store refresh plans under the canonical cache lock.
+    pub(super) fn plan_store_refreshes(&self, need_check_only: bool) -> Vec<StoreRefreshPlan> {
+        self.stores
+            .values()
+            .filter(|store| {
+                if need_check_only {
+                    store.resolve_state == StoreResolveState::NeedCheck
+                } else {
+                    store.resolve_state != StoreResolveState::Removed
+                }
+            })
+            .map(|store| StoreRefreshPlan {
+                store_id: store.id,
+                observed_epoch: store.epoch,
+                observed_resolve_state: store.resolve_state,
+                observed_address: store.address.clone(),
+                observed_labels: store.labels().to_vec(),
+            })
+            .collect()
+    }
+
+    /// Publishes one PD observation only if its complete selection snapshot is current.
+    pub(super) fn publish_store_refresh(
         &mut self,
-        store_id: u64,
-    ) -> Result<StoreRefreshOutcome, RegionRecoveryError> {
-        let metadata = self
-            .loader
-            .load_store(store_id)
-            .map_err(RegionRecoveryError::Loader)?;
+        result: StoreRefreshResult,
+    ) -> StoreRefreshApplication {
+        let StoreRefreshResult { plan, metadata } = result;
+        let Some(current) = self.stores.get(&plan.store_id) else {
+            return StoreRefreshApplication::StaleDiscarded;
+        };
+        if current.epoch != plan.observed_epoch
+            || current.resolve_state != plan.observed_resolve_state
+            || current.address != plan.observed_address
+            || current.labels() != plan.observed_labels.as_slice()
+        {
+            return StoreRefreshApplication::StaleDiscarded;
+        }
+        let metadata = match metadata {
+            Ok(metadata) => metadata,
+            Err(_) => return StoreRefreshApplication::Failed,
+        };
         if let Some(metadata) = &metadata {
-            if metadata.id != store_id {
-                return Err(RegionRecoveryError::Loader(RegionLoadError::new(
-                    "store-id-mismatch",
-                    format!(
-                        "control plane returned store {}, expected {store_id}",
-                        metadata.id
-                    ),
-                )));
+            if metadata.id != plan.store_id {
+                return StoreRefreshApplication::Failed;
             }
             if metadata.address.is_empty() {
-                return Err(RegionRecoveryError::Loader(RegionLoadError::new(
-                    "empty-store-address",
-                    format!("store {store_id} has an empty address"),
-                )));
+                return StoreRefreshApplication::Failed;
             }
         }
         let store = self
             .stores
-            .get_mut(&store_id)
-            .ok_or(RegionRecoveryError::Route(RegionRouteError::MissingStore(
-                store_id,
-            )))?;
+            .get_mut(&plan.store_id)
+            .expect("refresh plan was revalidated against the canonical store");
         let previous_epoch = store.epoch;
         let outcome = match metadata {
             None => {
@@ -492,48 +576,27 @@ where
         let removed = outcome == StoreRefreshOutcome::Removed;
         if store.epoch != previous_epoch {
             self.preferred_proxies.retain(|_, proxy| {
-                proxy.store_id != store_id || proxy.store_epoch != previous_epoch
+                proxy.store_id != plan.store_id || proxy.store_epoch != previous_epoch
             });
         }
         if removed {
             for location in &self.regions {
-                if location.peers.iter().any(|peer| peer.store_id == store_id) {
+                if location
+                    .peers
+                    .iter()
+                    .any(|peer| peer.store_id == plan.store_id)
+                {
                     if let Some(state) = self.entry_states.get_mut(&location.region) {
                         state.mark(CacheReloadState::ExpireAfterTtl);
                     }
                 }
             }
         }
-        Ok(outcome)
-    }
-
-    /// Runs one sequential store pass through the sole loader and registry.
-    pub fn maintain_stores(&mut self, need_check_only: bool) -> StoreMaintenanceRound {
-        let store_ids = self
-            .stores
-            .iter()
-            .filter_map(|(store_id, store)| {
-                let selected = if need_check_only {
-                    store.resolve_state == StoreResolveState::NeedCheck
-                } else {
-                    store.resolve_state != StoreResolveState::Removed
-                };
-                selected.then_some(*store_id)
-            })
-            .collect::<Vec<_>>();
-        let mut round = StoreMaintenanceRound {
-            attempted: store_ids.len(),
-            ..StoreMaintenanceRound::default()
-        };
-        for store_id in store_ids {
-            match self.refresh_store(store_id) {
-                Ok(StoreRefreshOutcome::Unchanged) => {}
-                Ok(StoreRefreshOutcome::Refreshed) => round.refreshed += 1,
-                Ok(StoreRefreshOutcome::Removed) => round.removed += 1,
-                Err(_) => round.failed += 1,
-            }
+        match outcome {
+            StoreRefreshOutcome::Unchanged => StoreRefreshApplication::Unchanged,
+            StoreRefreshOutcome::Refreshed => StoreRefreshApplication::Refreshed,
+            StoreRefreshOutcome::Removed => StoreRefreshApplication::Removed,
         }
-        round
     }
 }
 
@@ -562,7 +625,7 @@ pub trait RegionRecoveryLoader: RegionLoader {
 
 /// Ordered cache for versioned region snapshots.
 pub struct RegionCache<L> {
-    pub(super) loader: L,
+    pub(super) loader: SharedRegionLoader<L>,
     pub(super) regions: Vec<RegionLocation>,
     pub(super) stores: BTreeMap<u64, RegionStoreTopology>,
     preferred_proxies: BTreeMap<RegionVerId, RegionAttempt>,
@@ -575,9 +638,9 @@ pub struct RegionCache<L> {
 impl<L> RegionCache<L> {
     /// Creates an empty cache over an injected loader.
     #[must_use]
-    pub const fn new(loader: L) -> Self {
+    pub fn new(loader: L) -> Self {
         Self {
-            loader,
+            loader: SharedRegionLoader::new(loader),
             regions: Vec::new(),
             stores: BTreeMap::new(),
             preferred_proxies: BTreeMap::new(),
@@ -590,9 +653,9 @@ impl<L> RegionCache<L> {
 
     /// Creates an empty cache with deterministic source-shaped TTL settings.
     #[must_use]
-    pub const fn with_ttl(loader: L, base_ttl_seconds: u64, ttl_jitter_seconds: u64) -> Self {
+    pub fn with_ttl(loader: L, base_ttl_seconds: u64, ttl_jitter_seconds: u64) -> Self {
         Self {
-            loader,
+            loader: SharedRegionLoader::new(loader),
             regions: Vec::new(),
             stores: BTreeMap::new(),
             preferred_proxies: BTreeMap::new(),
@@ -620,7 +683,15 @@ impl<L> RegionCache<L> {
     where
         L: RegionLoader,
     {
-        self.loader.cluster_id()
+        self.with_loader(|loader| loader.cluster_id())
+    }
+
+    pub(super) fn loader_handle(&self) -> SharedRegionLoader<L> {
+        self.loader.clone()
+    }
+
+    pub(super) fn with_loader<R>(&self, operation: impl FnOnce(&mut L) -> R) -> R {
+        self.loader.with_loader(operation)
     }
 
     /// Invalidates only the exact versioned region identity.
@@ -1598,7 +1669,7 @@ impl<L> RegionCache<L> {
         let now_seconds = cache_now_seconds();
         for mut replacement in replacements {
             apply_observed_buckets(observed_buckets.as_ref(), &mut replacement);
-            let labels = labels_for_location(&self.loader, &replacement);
+            let labels = self.with_loader(|loader| labels_for_location(loader, &replacement));
             normalize_loaded(&mut next_stores, &mut replacement, &labels);
             let region = replacement.region;
             let expire_after_ttl = !replacement.down_peer_ids.is_empty();
@@ -1678,8 +1749,7 @@ impl<L> RegionCache<L> {
             self.preferred_proxies.remove(&region);
         }
         let loaded = self
-            .loader
-            .load_region_by_end_key(key)
+            .with_loader(|loader| loader.load_region_by_end_key(key))
             .map_err(RegionRouteError::Loader)?;
         if !loaded.contains_end_key(key) {
             return Err(RegionRouteError::LoadedRegionDoesNotContainKey {
@@ -1725,8 +1795,7 @@ impl<L> RegionCache<L> {
             self.preferred_proxies.remove(&region);
         }
         let loaded = self
-            .loader
-            .load_region(key)
+            .with_loader(|loader| loader.load_region(key))
             .map_err(RegionRouteError::Loader)?;
         if !loaded.end_key.is_empty() && loaded.start_key >= loaded.end_key {
             return Err(RegionRouteError::InvalidRegionBounds {
@@ -1926,7 +1995,7 @@ impl<L> RegionCache<L> {
         let mut next_regions = self.regions.clone();
         let mut next_stores = self.stores.clone();
         preserve_newer_buckets(&self.regions, &mut loaded);
-        let labels = labels_for_location(&self.loader, &loaded);
+        let labels = self.with_loader(|loader| labels_for_location(loader, &loaded));
         normalize_loaded(&mut next_stores, &mut loaded, &labels);
         let region = loaded.region;
         let expire_after_ttl = !loaded.down_peer_ids.is_empty();
