@@ -45,9 +45,10 @@ fn batch_success_settles_through_the_existing_response_owner() {
 #[test]
 fn first_batch_failure_reenters_the_same_sync_selector_loop() {
     let dispatch = owner("fn dispatch_attempt(", "fn complete_batch_attempt(");
-    assert!(dispatch.contains("!self.sync_only_chains.contains"));
+    let compact_dispatch = dispatch.split_whitespace().collect::<String>();
+    assert!(compact_dispatch.contains("!self.sync_only_chains.contains"));
     assert!(dispatch.contains("send_request_with_route("));
-    assert!(dispatch.contains("self.sync_only_chains.insert"));
+    assert!(compact_dispatch.contains("self.sync_only_chains.insert"));
     let settle = owner("fn settle_dispatch(", "fn record_attempt_result(");
     assert!(settle.contains("if batch_attempt"));
     assert!(settle.contains("self.sync_only_chains.insert(logical_task_id)"));
