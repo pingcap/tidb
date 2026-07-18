@@ -22,7 +22,13 @@ mod store_state;
 mod topology;
 
 pub use crate::retry::{RegionBackoffBudget, RegionBackoffExhausted, RegionBackoffKind};
-pub use cache::{RegionCache, RegionLoader, RegionRecoveryLoader};
+pub use batch_locate::{
+    merge_loaded_and_cached, ranges_after_key, regions_have_gap, regions_intersecting_ranges,
+    DEFAULT_REGIONS_PER_BATCH, MAX_RANGES_PER_BATCH,
+};
+pub use bucket::{Bucket, BucketMetadata, BucketStats};
+pub use cache::{BatchRegionLoader, RegionCache, RegionLoader, RegionRecoveryLoader};
+pub use cache_entry::{CacheEntryState, CacheReloadState};
 pub use error::{RegionLoadError, RegionRouteError};
 pub use health_policy::{ReplicaHealthFacts, ReplicaHealthPolicy, StoreLabel, StoreSelectionScore};
 pub use id::{RegionEpoch, RegionVerId};

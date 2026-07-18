@@ -16,12 +16,14 @@ use std::collections::BTreeMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use super::{
-    HealthInstant, KeyRange, LeaderRequest, OwnedLeaderRoute, Peer, PeerRole, ReadPolicy,
-    RegionAttempt, RegionLoadError, RegionLocation, RegionMetadata, RegionRebuildAction,
-    RegionRecoveryError, RegionRouteError, RegionStoreTopology, RegionVerId, ReplicaHealthFacts,
-    ReplicaReadMode, RequestSelection, RequestSelector, RouteFeedback, RouteFeedbackApplication,
-    RouteOutcome, RoutePeer, RouteSnapshot, ServerBusyAction, Store, StoreFailureOutcome,
-    StoreLabel, StoreLiveness, StoreResolveState, StoreState, MAX_REPLICA_ATTEMPTS,
+    ranges_after_key, regions_have_gap, regions_intersecting_ranges, CacheEntryState,
+    CacheReloadState, HealthInstant, KeyRange, LeaderRequest, OwnedLeaderRoute, Peer, PeerRole,
+    ReadPolicy, RegionAttempt, RegionLoadError, RegionLocation, RegionMetadata,
+    RegionRebuildAction, RegionRecoveryError, RegionRouteError, RegionStoreTopology, RegionVerId,
+    ReplicaHealthFacts, ReplicaReadMode, RequestSelection, RequestSelector, RouteFeedback,
+    RouteFeedbackApplication, RouteOutcome, RoutePeer, RouteSnapshot, ServerBusyAction, Store,
+    StoreFailureOutcome, StoreLabel, StoreLiveness, StoreResolveState, StoreState,
+    DEFAULT_REGIONS_PER_BATCH, MAX_RANGES_PER_BATCH, MAX_REPLICA_ATTEMPTS,
     MAX_REPLICA_ATTEMPT_TIME,
 };
 
@@ -42,6 +44,96 @@ pub trait RegionLoader {
     }
 }
 
+impl<L> RegionCache<L>
+where
+    L: BatchRegionLoader,
+{
+    /// Resolves ordered key ranges through valid cache entries first and the
+    /// exact PD batch-scan boundary second.
+    pub fn batch_locate_key_ranges(
+        &mut self,
+        ranges: &[KeyRange],
+        need_buckets: bool,
+    ) -> Result<Vec<RegionLocation>, RegionRouteError> {
+        if ranges.iter().any(|range| !range.is_valid()) {
+            return Err(RegionRouteError::InvalidRange);
+        }
+        if ranges.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let now_seconds = cache_now_seconds();
+        let mut expired = Vec::new();
+        for region in &self.regions {
+            let next_expiry = self.next_expiry_at(now_seconds, region.region);
+            let valid = self
+                .entry_states
+                .get_mut(&region.region)
+                .is_some_and(|state| {
+                    state.check_and_renew(now_seconds, self.base_ttl_seconds, next_expiry)
+                });
+            if !valid {
+                expired.push(region.region);
+            }
+        }
+        if !expired.is_empty() {
+            self.regions
+                .retain(|region| !expired.contains(&region.region));
+            for region in expired {
+                self.entry_states.remove(&region);
+                self.preferred_proxies.remove(&region);
+            }
+        }
+
+        let mut misses = cache_misses(&self.regions, ranges)?;
+        while !misses.is_empty() {
+            let batch_len = misses.len().min(MAX_RANGES_PER_BATCH);
+            let request = &misses[..batch_len];
+            let loaded = self
+                .loader
+                .batch_load_regions(request, DEFAULT_REGIONS_PER_BATCH, need_buckets)
+                .map_err(RegionRouteError::Loader)?;
+            let Some(last) = loaded.last() else {
+                return Err(RegionRouteError::EmptyBatchLoad);
+            };
+            let split_key = last.end_key.clone();
+            for region in loaded {
+                self.insert_loaded_at(region, now_seconds)?;
+            }
+            if split_key.is_empty() {
+                misses.clear();
+            } else {
+                let remaining_batch = ranges_after_key(request, &split_key);
+                let mut remaining = remaining_batch;
+                remaining.extend_from_slice(&misses[batch_len..]);
+                if remaining == misses {
+                    return Err(RegionRouteError::NonProgressingBatchScan { split_key });
+                }
+                misses = remaining;
+            }
+        }
+
+        let result = regions_intersecting_ranges(&self.regions, ranges);
+        if regions_have_gap(ranges, &result, 0) {
+            return Err(RegionRouteError::BatchScanGap);
+        }
+        Ok(result)
+    }
+}
+
+/// PD-shaped ordered batch-region loader used only after cache misses are
+/// identified. Implementations own source-specific fallback from an exact
+/// Unimplemented response; RegionCache never silently replaces other errors.
+pub trait BatchRegionLoader: RegionLoader {
+    /// Loads at most `limit` regions intersecting ordered key ranges.
+    fn batch_load_regions(
+        &mut self,
+        ranges: &[KeyRange],
+        limit: usize,
+        need_buckets: bool,
+    ) -> Result<Vec<RegionLocation>, RegionLoadError>;
+}
+
 /// Region loader with the required current-region store hydration capability.
 pub trait RegionRecoveryLoader: RegionLoader {
     /// Resolves the stores referenced by TiKV-provided current-region metadata.
@@ -58,6 +150,9 @@ pub struct RegionCache<L> {
     pub(super) regions: Vec<RegionLocation>,
     pub(super) stores: BTreeMap<u64, RegionStoreTopology>,
     preferred_proxies: BTreeMap<RegionVerId, RegionAttempt>,
+    entry_states: BTreeMap<RegionVerId, CacheEntryState>,
+    base_ttl_seconds: u64,
+    ttl_jitter_seconds: u64,
 }
 
 impl<L> RegionCache<L> {
@@ -69,6 +164,23 @@ impl<L> RegionCache<L> {
             regions: Vec::new(),
             stores: BTreeMap::new(),
             preferred_proxies: BTreeMap::new(),
+            entry_states: BTreeMap::new(),
+            base_ttl_seconds: 600,
+            ttl_jitter_seconds: 60,
+        }
+    }
+
+    /// Creates an empty cache with deterministic source-shaped TTL settings.
+    #[must_use]
+    pub const fn with_ttl(loader: L, base_ttl_seconds: u64, ttl_jitter_seconds: u64) -> Self {
+        Self {
+            loader,
+            regions: Vec::new(),
+            stores: BTreeMap::new(),
+            preferred_proxies: BTreeMap::new(),
+            entry_states: BTreeMap::new(),
+            base_ttl_seconds,
+            ttl_jitter_seconds,
         }
     }
 
@@ -97,7 +209,24 @@ impl<L> RegionCache<L> {
         let original_len = self.regions.len();
         self.regions.retain(|cached| cached.region != region);
         self.preferred_proxies.remove(&region);
+        self.entry_states.remove(&region);
         self.regions.len() != original_len
+    }
+
+    /// Forces this exact entry to reload on its next foreground access.
+    pub fn mark_reload_on_access(&mut self, region: RegionVerId) -> bool {
+        self.entry_states.get_mut(&region).is_some_and(|state| {
+            state.mark(CacheReloadState::ReloadOnAccess);
+            true
+        })
+    }
+
+    /// Preserves the current expiry even when the entry is repeatedly read.
+    pub fn mark_expire_after_ttl(&mut self, region: RegionVerId) -> bool {
+        self.entry_states.get_mut(&region).is_some_and(|state| {
+            state.mark(CacheReloadState::ExpireAfterTtl);
+            true
+        })
     }
 
     pub(super) fn validate_attempt(
@@ -846,14 +975,27 @@ impl<L> RegionCache<L> {
         }
         let mut next = self.regions.clone();
         let mut next_stores = self.stores.clone();
+        let mut next_states = self.entry_states.clone();
         next.retain(|location| location.region != observed);
+        next_states.remove(&observed);
+        let now_seconds = cache_now_seconds();
         for mut replacement in replacements {
+            preserve_newer_buckets(&self.regions, &mut replacement);
             let labels = labels_for_location(&self.loader, &replacement);
             normalize_loaded(&mut next_stores, &mut replacement, &labels);
+            let region = replacement.region;
+            let expire_after_ttl = !replacement.down_peer_ids.is_empty();
             insert_loaded_into(&mut next, replacement)?;
+            let mut state = CacheEntryState::new(self.next_expiry_at(now_seconds, region));
+            if expire_after_ttl {
+                state.mark(CacheReloadState::ExpireAfterTtl);
+            }
+            next_states.insert(region, state);
         }
         self.regions = next;
         self.stores = next_stores;
+        next_states.retain(|region, _| self.regions.iter().any(|cached| cached.region == *region));
+        self.entry_states = next_states;
         self.preferred_proxies.remove(&observed);
         self.preferred_proxies
             .retain(|region, _| self.regions.iter().any(|cached| cached.region == *region));
@@ -875,7 +1017,19 @@ impl<L> RegionCache<L> {
     where
         L: RegionLoader,
     {
-        self.locate_key_with_boundary(key, false)
+        self.locate_key_at(key, cache_now_seconds())
+    }
+
+    /// Deterministic-clock form of [`Self::locate_key`] used by source tests.
+    pub fn locate_key_at(
+        &mut self,
+        key: &[u8],
+        now_seconds: u64,
+    ) -> Result<&RegionLocation, RegionRouteError>
+    where
+        L: RegionLoader,
+    {
+        self.locate_key_with_boundary_at(key, false, now_seconds)
     }
 
     fn locate_key_with_boundary(
@@ -886,13 +1040,33 @@ impl<L> RegionCache<L> {
     where
         L: RegionLoader,
     {
+        self.locate_key_with_boundary_at(key, require_exact_start, cache_now_seconds())
+    }
+
+    fn locate_key_with_boundary_at(
+        &mut self,
+        key: &[u8],
+        require_exact_start: bool,
+        now_seconds: u64,
+    ) -> Result<&RegionLocation, RegionRouteError>
+    where
+        L: RegionLoader,
+    {
         if let Some(index) = self.find_key(key) {
-            if require_exact_start && self.regions[index].start_key != key {
-                return Err(RegionRouteError::DiscontinuousRegion {
-                    region: self.regions[index].region,
-                });
+            let region = self.regions[index].region;
+            let next_expiry = self.next_expiry_at(now_seconds, region);
+            let valid = self.entry_states.get_mut(&region).is_some_and(|state| {
+                state.check_and_renew(now_seconds, self.base_ttl_seconds, next_expiry)
+            });
+            if valid {
+                if require_exact_start && self.regions[index].start_key != key {
+                    return Err(RegionRouteError::DiscontinuousRegion { region });
+                }
+                return Ok(&self.regions[index]);
             }
-            return Ok(&self.regions[index]);
+            self.regions.remove(index);
+            self.entry_states.remove(&region);
+            self.preferred_proxies.remove(&region);
         }
         let loaded = self
             .loader
@@ -913,7 +1087,7 @@ impl<L> RegionCache<L> {
                 region: loaded.region,
             });
         }
-        let index = self.insert_loaded(loaded)?;
+        let index = self.insert_loaded_at(loaded, now_seconds)?;
         Ok(&self.regions[index])
     }
 
@@ -994,20 +1168,52 @@ impl<L> RegionCache<L> {
             .ok()
     }
 
-    fn insert_loaded(&mut self, mut loaded: RegionLocation) -> Result<usize, RegionRouteError>
+    fn insert_loaded(&mut self, loaded: RegionLocation) -> Result<usize, RegionRouteError>
+    where
+        L: RegionLoader,
+    {
+        self.insert_loaded_at(loaded, cache_now_seconds())
+    }
+
+    fn insert_loaded_at(
+        &mut self,
+        mut loaded: RegionLocation,
+        now_seconds: u64,
+    ) -> Result<usize, RegionRouteError>
     where
         L: RegionLoader,
     {
         let mut next_regions = self.regions.clone();
         let mut next_stores = self.stores.clone();
+        preserve_newer_buckets(&self.regions, &mut loaded);
         let labels = labels_for_location(&self.loader, &loaded);
         normalize_loaded(&mut next_stores, &mut loaded, &labels);
+        let region = loaded.region;
+        let expire_after_ttl = !loaded.down_peer_ids.is_empty();
         let index = insert_loaded_into(&mut next_regions, loaded)?;
         self.regions = next_regions;
         self.stores = next_stores;
+        self.entry_states
+            .retain(|cached, _| self.regions.iter().any(|region| region.region == *cached));
+        let mut state = CacheEntryState::new(self.next_expiry_at(now_seconds, region));
+        if expire_after_ttl {
+            state.mark(CacheReloadState::ExpireAfterTtl);
+        }
+        self.entry_states.insert(region, state);
         self.preferred_proxies
             .retain(|region, _| self.regions.iter().any(|cached| cached.region == *region));
         Ok(index)
+    }
+
+    fn next_expiry_at(&self, now_seconds: u64, region: RegionVerId) -> u64 {
+        let jitter = if self.ttl_jitter_seconds == 0 {
+            0
+        } else {
+            region.id % self.ttl_jitter_seconds
+        };
+        now_seconds
+            .saturating_add(self.base_ttl_seconds)
+            .saturating_add(jitter)
     }
 }
 
@@ -1015,6 +1221,59 @@ fn health_now() -> Duration {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or(Duration::ZERO)
+}
+
+fn cache_now_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or(Duration::ZERO)
+        .as_secs()
+}
+
+fn preserve_newer_buckets(cached: &[RegionLocation], loaded: &mut RegionLocation) {
+    let Some(current) = cached
+        .iter()
+        .find(|current| current.region.id == loaded.region.id)
+    else {
+        return;
+    };
+    let current_version = current.bucket_version();
+    let loaded_version = loaded.bucket_version();
+    if current_version > 0 && (loaded_version == 0 || loaded_version < current_version) {
+        loaded.buckets.clone_from(&current.buckets);
+    }
+}
+
+fn cache_misses(
+    cached: &[RegionLocation],
+    ranges: &[KeyRange],
+) -> Result<Vec<KeyRange>, RegionRouteError> {
+    let mut misses = Vec::new();
+    for range in ranges {
+        let mut cursor = range.start.clone();
+        loop {
+            let current = cached.iter().find(|region| region.contains_key(&cursor));
+            let Some(current) = current else {
+                misses.push(KeyRange::new(cursor, range.end.clone()));
+                break;
+            };
+            let covered = if range.end.is_empty() {
+                current.end_key.is_empty()
+            } else {
+                current.end_key.is_empty() || current.end_key >= range.end
+            };
+            if covered {
+                break;
+            }
+            if current.end_key.is_empty() || current.end_key <= cursor {
+                return Err(RegionRouteError::NonProgressingRegion {
+                    region: current.region,
+                });
+            }
+            cursor.clone_from(&current.end_key);
+        }
+    }
+    Ok(misses)
 }
 
 fn request_flags(selector: &RequestSelector, cached_leader: bool) -> (bool, bool) {

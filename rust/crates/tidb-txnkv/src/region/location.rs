@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::RegionVerId;
+use super::{BucketMetadata, RegionVerId};
 
 /// Half-open encoded TiKV key range.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -139,6 +139,12 @@ pub struct RegionLocation {
     pub leader_peer_id: Option<u64>,
     /// Immutable loader snapshots for stores referenced by peers.
     pub stores: Vec<Store>,
+    /// Latest bucket metadata returned with this exact region snapshot.
+    pub buckets: Option<BucketMetadata>,
+    /// Down peer identities reported by PD.
+    pub down_peer_ids: Vec<u64>,
+    /// Pending peer identities reported by PD.
+    pub pending_peer_ids: Vec<u64>,
 }
 
 impl RegionLocation {

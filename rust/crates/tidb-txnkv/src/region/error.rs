@@ -79,6 +79,15 @@ pub enum RegionRouteError {
         /// Exact region that returned the repeated or backward boundary.
         region: RegionVerId,
     },
+    /// A batch scan returned no regions without reporting an error.
+    EmptyBatchLoad,
+    /// A batch scan repeated its split key and could not consume input.
+    NonProgressingBatchScan {
+        /// Repeated exclusive end boundary.
+        split_key: Vec<u8>,
+    },
+    /// Loaded and cached regions do not cover every requested range.
+    BatchScanGap,
     /// A later fragment overlaps or leaves a gap before the walk cursor.
     DiscontinuousRegion {
         /// Exact region whose start did not equal the prior region end.
