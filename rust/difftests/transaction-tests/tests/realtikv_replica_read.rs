@@ -91,8 +91,8 @@ fn follower_policy_reaches_a_live_nonleader_voter() {
     let context = KvrpcContext {
         region_id: location.region.id,
         region_epoch: Some(KvrpcRegionEpoch {
-            conf_ver: location.region.conf_ver,
-            version: location.region.version,
+            conf_ver: location.region.epoch.conf_ver,
+            version: location.region.epoch.version,
         }),
         peer: Some(KvrpcPeer {
             id: selected.attempt.peer_id,

@@ -67,3 +67,7 @@ path = "tests/realtikv_region_retry.rs"
 [[test]]
 name = "realtikv_transport_retry"
 path = "tests/realtikv_transport_retry.rs"
+
+[[test]]
+name = "realtikv_replica_read"
+path = "tests/realtikv_replica_read.rs"
