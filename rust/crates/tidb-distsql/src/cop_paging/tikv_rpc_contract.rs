@@ -19,7 +19,7 @@ use tidb_proto::{
     CoprocessorResponse, KvrpcContext, KvrpcPeer, KvrpcRegionEpoch, KvrpcRequestOrigin,
     KvrpcResourceControlContext,
 };
-use tidb_txnkv::region::LeaderRequest;
+use tidb_txnkv::region::{LeaderRequest, ReplicaReadMode};
 use tidb_txnkv::{
     endpoint_type, inject_source_stmt, map_replica_read_type, ClientReplicaReadType, EndpointType,
     TraceInfo,
@@ -116,7 +116,13 @@ fn build_tikv_unary_request_inner(
         replica_read = false;
     }
     if let Some(selected) = selected {
-        replica_read_type = ClientReplicaReadType::Leader;
+        replica_read_type = match selected.read_mode {
+            ReplicaReadMode::Leader => ClientReplicaReadType::Leader,
+            ReplicaReadMode::Follower => ClientReplicaReadType::Follower,
+            ReplicaReadMode::Mixed => ClientReplicaReadType::Mixed,
+            ReplicaReadMode::Learner => ClientReplicaReadType::Learner,
+            ReplicaReadMode::PreferLeader => ClientReplicaReadType::PreferLeader,
+        };
         replica_read = selected.replica_read;
         stale_read = selected.stale_read;
     }

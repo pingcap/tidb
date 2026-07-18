@@ -15,7 +15,26 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
-use super::{PeerRole, ReadPolicy, RegionAttempt, RegionVerId};
+use super::{PeerRole, ReadPolicy, RegionAttempt, RegionVerId, ReplicaReadMode};
+
+/// Typed request-scoped recovery returned by the canonical region-error path.
+///
+/// The region cache owns topology mutation. The selector owns only the exact
+/// completed attempt and the request-local policy transition, so retry callers
+/// cannot independently reinterpret the same region error.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SelectorRecovery {
+    /// `NotLeader` did not name a successor; exhaust the completed peer and
+    /// continue the existing policy after the scheduling backoff.
+    RejectPeer,
+    /// A `NotLeader` response named a valid cached leader.
+    FollowKnownLeader {
+        /// Peer promoted by the canonical region cache.
+        leader_peer_id: u64,
+    },
+    /// A stale-read response reported that its safe timestamp was not ready.
+    DataIsNotReady,
+}
 
 /// Attempt count and completed RPC time for one peer.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -45,6 +64,8 @@ pub struct LeaderRequest {
     pub stale_read: bool,
     /// Whether this peer was the cached leader when selected.
     pub cached_leader: bool,
+    /// Effective request-scoped selector mode for this immutable dispatch.
+    pub read_mode: ReplicaReadMode,
 }
 
 /// Result of one request-scoped selection step.
@@ -133,6 +154,51 @@ impl RequestSelector {
         }
     }
 
+    /// Applies one exact typed recovery to this selector.
+    ///
+    /// Stale, duplicated, unrelated, or still-pending observations return
+    /// `false` without changing request state.
+    #[must_use]
+    pub fn apply_recovery(&mut self, attempt: &RegionAttempt, recovery: SelectorRecovery) -> bool {
+        if self.completed_attempt.as_ref() != Some(attempt) {
+            return false;
+        }
+
+        match recovery {
+            SelectorRecovery::RejectPeer => {
+                self.completed_attempt = None;
+                self.reject_peer(attempt.peer_id);
+                true
+            }
+            SelectorRecovery::FollowKnownLeader { leader_peer_id } => {
+                self.completed_attempt = None;
+                self.policy.mode = super::ReplicaReadMode::Leader;
+                self.policy.stale_read = false;
+                self.leader_peer_id = Some(leader_peer_id);
+
+                // Pinned client-go retries a newly named leader even when the
+                // same peer was already attempted under follower semantics.
+                // Preserve its accumulated ordinary attempt unless a previous
+                // rejection/exhaustion would otherwise hide the new leader.
+                let state = self.attempts_by_peer.entry(leader_peer_id).or_default();
+                if state.attempts >= MAX_REPLICA_ATTEMPTS
+                    || state.attempted_time >= MAX_REPLICA_ATTEMPT_TIME
+                {
+                    state.attempts = MAX_REPLICA_ATTEMPTS - 1;
+                    state.attempted_time = Duration::ZERO;
+                }
+                true
+            }
+            SelectorRecovery::DataIsNotReady => {
+                if !self.policy.stale_read || self.leader_peer_id == Some(attempt.peer_id) {
+                    return false;
+                }
+                self.completed_attempt = None;
+                self.data_not_ready_peers.insert(attempt.peer_id)
+            }
+        }
+    }
+
     pub(crate) fn record_dispatch(&mut self, attempt: RegionAttempt) {
         let state = self.attempts_by_peer.entry(attempt.peer_id).or_default();
         state.attempts = state.attempts.saturating_add(1);
@@ -163,14 +229,7 @@ impl RequestSelector {
     /// cannot change the access path.
     #[must_use]
     pub fn record_data_not_ready(&mut self, attempt: &RegionAttempt) -> bool {
-        if !self.policy.stale_read
-            || self.completed_attempt.as_ref() != Some(attempt)
-            || self.leader_peer_id == Some(attempt.peer_id)
-        {
-            return false;
-        }
-        self.completed_attempt = None;
-        self.data_not_ready_peers.insert(attempt.peer_id)
+        self.apply_recovery(attempt, SelectorRecovery::DataIsNotReady)
     }
 
     pub(crate) fn may_retry_data_not_ready(&self, peer_id: u64) -> bool {

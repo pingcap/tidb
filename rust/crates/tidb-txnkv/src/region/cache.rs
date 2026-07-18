@@ -228,6 +228,7 @@ impl<L> RegionCache<L> {
             replica_read,
             stale_read,
             cached_leader,
+            read_mode: selector.policy.mode,
         }))
     }
 

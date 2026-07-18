@@ -25,8 +25,8 @@ use tidb_distsql::cop_paging::{RegionRetryCancelled, RegionRetryControl};
 use tidb_distsql::{
     DirectUnaryClient, DirectUnaryClientError, DirectUnaryQueryTransport, DirectUnaryRequest,
     DirectUnaryResponse, DirectUnaryRuntimeConfig, DirectUnaryTransportError, InjectedQueryRuntime,
-    KvRequestMetadata, QueryResultContext, RequestKeyRange, RequestKeyRanges, RequestType,
-    SelectInput, StoreType, TransportRequest, WarningCollector,
+    KvRequestMetadata, QueryResultContext, ReplicaReadType, RequestKeyRange, RequestKeyRanges,
+    RequestType, SelectInput, StoreType, TransportRequest, WarningCollector,
 };
 use tidb_proto::{
     errorpb, metapb, CoprocessorExecDetailsV2, CoprocessorKeyRange, CoprocessorRequest,
@@ -36,7 +36,10 @@ use tidb_txnkv::region::{
     Peer, PeerRole, RegionCache, RegionLoadError, RegionLoader, RegionLocation, RegionMetadata,
     RegionRecoveryLoader, RegionRouteError, RegionVerId, Store, StoreLiveness,
 };
-use tidb_txnkv::{DirectUnaryConnectionError, DirectUnaryGrpcCode, DirectUnaryTransportClass};
+use tidb_txnkv::{
+    ClientReplicaReadType, DirectUnaryConnectionError, DirectUnaryGrpcCode,
+    DirectUnaryTransportClass,
+};
 
 const OBSERVATION_TIME: Duration = Duration::from_secs(1_000);
 
@@ -82,6 +85,7 @@ struct ObservedCall {
     task_id: u64,
     request_source: String,
     not_fill_cache: bool,
+    replica_read_type: ClientReplicaReadType,
     replica_read: bool,
     stale_read: bool,
 }
@@ -161,6 +165,7 @@ impl DirectUnaryClient for ScriptedClient {
             task_id: request.context.task_id,
             request_source: request.context.request_source.clone(),
             not_fill_cache: request.context.not_fill_cache,
+            replica_read_type: request.replica_read_type,
             replica_read: request.context.replica_read,
             stale_read: request.context.stale_read,
         });
@@ -282,6 +287,45 @@ fn location_with_second_peer(
     location
 }
 
+fn location_with_three_peers(
+    region_id: u64,
+    start: &str,
+    end: &str,
+    address_prefix: &str,
+) -> RegionLocation {
+    let mut location = location(
+        region_id,
+        start,
+        end,
+        &format!("{address_prefix}-leader:20160"),
+    );
+    location.peers.push(Peer {
+        id: region_id + 101,
+        store_id: region_id + 201,
+        role: PeerRole::Voter,
+        is_witness: false,
+        store_epoch: 7,
+    });
+    location.peers.push(Peer {
+        id: region_id + 102,
+        store_id: region_id + 202,
+        role: PeerRole::Learner,
+        is_witness: false,
+        store_epoch: 7,
+    });
+    location.stores.push(Store {
+        id: region_id + 201,
+        address: format!("{address_prefix}-follower:20160"),
+        epoch: 7,
+    });
+    location.stores.push(Store {
+        id: region_id + 202,
+        address: format!("{address_prefix}-learner:20160"),
+        epoch: 7,
+    });
+    location
+}
+
 fn not_leader(region_id: u64, leader: Option<(u64, u64)>) -> Vec<u8> {
     CoprocessorResponse {
         region_error: Some(errorpb::Error {
@@ -294,6 +338,17 @@ fn not_leader(region_id: u64, leader: Option<(u64, u64)>) -> Vec<u8> {
                     is_witness: false,
                 }),
             }),
+            ..errorpb::Error::default()
+        }),
+        ..CoprocessorResponse::default()
+    }
+    .encode_to_vec()
+}
+
+fn data_is_not_ready() -> Vec<u8> {
+    CoprocessorResponse {
+        region_error: Some(errorpb::Error {
+            data_is_not_ready: Some(errorpb::DataIsNotReady::default()),
             ..errorpb::Error::default()
         }),
         ..CoprocessorResponse::default()
@@ -558,6 +613,7 @@ fn client_go_shaped_dispatch_is_lazy_address_directed_and_logically_ordered() {
                 task_id: 29,
                 request_source: "internal_ddl".to_owned(),
                 not_fill_cache: true,
+                replica_read_type: ClientReplicaReadType::Leader,
                 replica_read: false,
                 stale_read: false,
             },
@@ -578,6 +634,7 @@ fn client_go_shaped_dispatch_is_lazy_address_directed_and_logically_ordered() {
                 task_id: 29,
                 request_source: "internal_ddl".to_owned(),
                 not_fill_cache: true,
+                replica_read_type: ClientReplicaReadType::Leader,
                 replica_read: false,
                 stale_read: false,
             },
@@ -619,6 +676,213 @@ fn pd_peer_role_witness_and_cluster_fields_have_one_context_authority() {
         assert!(!calls[0].replica_read);
         assert!(!calls[0].stale_read);
     }
+}
+
+#[test]
+fn production_metadata_drives_supported_replica_policies_and_exact_request_flags() {
+    struct Case {
+        source: ReplicaReadType,
+        address_suffix: &'static str,
+        request_type: ClientReplicaReadType,
+        replica_read: bool,
+    }
+
+    for case in [
+        Case {
+            source: ReplicaReadType::Leader,
+            address_suffix: "-leader:20160",
+            request_type: ClientReplicaReadType::Leader,
+            replica_read: false,
+        },
+        Case {
+            source: ReplicaReadType::Follower,
+            address_suffix: "-learner:20160",
+            request_type: ClientReplicaReadType::Follower,
+            replica_read: true,
+        },
+        Case {
+            source: ReplicaReadType::Mixed,
+            address_suffix: "-follower:20160",
+            request_type: ClientReplicaReadType::Mixed,
+            replica_read: true,
+        },
+        Case {
+            source: ReplicaReadType::PreferLeader,
+            address_suffix: "-leader:20160",
+            request_type: ClientReplicaReadType::PreferLeader,
+            replica_read: false,
+        },
+        Case {
+            source: ReplicaReadType::Learner,
+            address_suffix: "-learner:20160",
+            request_type: ClientReplicaReadType::Learner,
+            replica_read: true,
+        },
+        Case {
+            source: ReplicaReadType::Closest,
+            address_suffix: "-follower:20160",
+            request_type: ClientReplicaReadType::Mixed,
+            replica_read: true,
+        },
+        Case {
+            source: ReplicaReadType::ClosestAdaptive,
+            address_suffix: "-follower:20160",
+            request_type: ClientReplicaReadType::Mixed,
+            replica_read: true,
+        },
+    ] {
+        let calls = Rc::new(RefCell::new(Vec::new()));
+        let mut metadata = metadata("a", "z");
+        metadata.session.replica_read = case.source;
+        let mut runtime = InjectedQueryRuntime::new(transport(
+            Rc::clone(&calls),
+            [Ok(response(b"ok"))],
+            [location_with_three_peers(1, "a", "z", "tikv-policy")],
+        ));
+        let mut result = select_result(&mut runtime, &TransportRequest::new(metadata));
+        assert_eq!(result.next_raw().unwrap(), Some(b"ok".to_vec()));
+
+        let calls = calls.borrow();
+        assert_eq!(calls.len(), 1);
+        assert!(
+            calls[0].address.ends_with(case.address_suffix),
+            "{:?} selected {}",
+            case.source,
+            calls[0].address
+        );
+        assert_eq!(calls[0].replica_read_type, case.request_type);
+        assert_eq!(calls[0].replica_read, case.replica_read);
+        assert!(!calls[0].stale_read);
+    }
+}
+
+#[test]
+fn labels_and_load_inputs_fail_closed_instead_of_silently_changing_selection() {
+    let configurations: [fn(&mut KvRequestMetadata); 2] = [
+        |metadata: &mut KvRequestMetadata| {
+            metadata.match_store_labels.push(tidb_distsql::StoreLabel {
+                key: "zone".to_owned(),
+                value: "z1".to_owned(),
+            });
+        },
+        |metadata: &mut KvRequestMetadata| {
+            metadata.session.store_busy_threshold_ms = 1;
+        },
+    ];
+    for configure in configurations {
+        let mut metadata = metadata("a", "z");
+        metadata.session.replica_read = ReplicaReadType::Mixed;
+        configure(&mut metadata);
+        let mut runtime = InjectedQueryRuntime::new(transport(
+            Rc::new(RefCell::new(Vec::new())),
+            [Ok(response(b"must-not-send"))],
+            [location_with_three_peers(1, "a", "z", "tikv-policy")],
+        ));
+        let error = match runtime.select_with_runtime_stats(
+            &TransportRequest::new(metadata),
+            SelectInput::default(),
+            QueryResultContext::new(Vec::new(), WarningCollector::new()),
+            vec![1],
+            2,
+            true,
+        ) {
+            Ok(_) => panic!("unsupported selector metadata must fail before dispatch"),
+            Err(error) => error,
+        };
+        assert!(
+            error.to_string().contains("UnsupportedReadPolicy"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn logical_tasks_rotate_seeds_but_region_reload_reuses_the_same_task_seed() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let mut request_metadata = metadata("a", "z");
+    request_metadata.session.replica_read = ReplicaReadType::Mixed;
+    let mut runtime = InjectedQueryRuntime::new(transport(
+        Rc::clone(&calls),
+        [
+            Ok(response(b"left")),
+            Ok(region_not_found(100)),
+            Ok(response(b"right")),
+        ],
+        [
+            location_with_three_peers(1, "a", "m", "left"),
+            location_with_three_peers(100, "m", "z", "right-old"),
+            location_with_three_peers(100, "m", "z", "right-new"),
+        ],
+    ));
+    let mut result = select_result(&mut runtime, &TransportRequest::new(request_metadata));
+    assert_eq!(result.next_raw().unwrap(), Some(b"left".to_vec()));
+    assert_eq!(result.next_raw().unwrap(), Some(b"right".to_vec()));
+    assert_eq!(result.next_raw().unwrap(), None);
+
+    let addresses: Vec<_> = calls
+        .borrow()
+        .iter()
+        .map(|call| call.address.clone())
+        .collect();
+    assert_eq!(
+        addresses,
+        [
+            "left-follower:20160",
+            "right-old-learner:20160",
+            "right-new-learner:20160",
+        ],
+        "distinct logical tasks advance once, while a rebuilt selector reuses its task seed"
+    );
+}
+
+#[test]
+fn stale_data_not_ready_then_known_leader_retries_one_selector_and_publishes_once() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let mut request_metadata = metadata("a", "z");
+    request_metadata.session.replica_read = ReplicaReadType::Leader;
+    request_metadata.is_staleness = true;
+    let mut runtime = InjectedQueryRuntime::new(transport(
+        Rc::clone(&calls),
+        [
+            Ok(data_is_not_ready()),
+            Ok(not_leader(1, Some((102, 202)))),
+            Ok(response(b"fresh")),
+        ],
+        [location_with_second_peer(
+            1,
+            "a",
+            "z",
+            "tikv-leader:20160",
+            "tikv-follower:20160",
+        )],
+    ));
+    let mut result = select_result(&mut runtime, &TransportRequest::new(request_metadata));
+    assert_eq!(result.next_raw().unwrap(), Some(b"fresh".to_vec()));
+    assert_eq!(result.next_raw().unwrap(), None);
+
+    let calls = calls.borrow();
+    assert_eq!(calls.len(), 3);
+    assert_eq!(calls[0].address, "tikv-follower:20160");
+    assert!(!calls[0].replica_read);
+    assert!(calls[0].stale_read);
+    assert_eq!(calls[1].address, "tikv-leader:20160");
+    assert!(!calls[1].replica_read);
+    assert!(!calls[1].stale_read);
+    assert_eq!(calls[2].address, "tikv-follower:20160");
+    assert!(!calls[2].replica_read);
+    assert!(!calls[2].stale_read);
+    assert_eq!(
+        calls
+            .iter()
+            .map(|call| call.replica_read_type)
+            .collect::<Vec<_>>(),
+        [
+            ClientReplicaReadType::Mixed,
+            ClientReplicaReadType::Mixed,
+            ClientReplicaReadType::Leader,
+        ],
+        "stale and ordinary fallback attempts stay Mixed until known-NotLeader transitions the selector to Leader"
+    );
 }
 
 #[test]
@@ -1462,12 +1726,18 @@ fn unsupported_replica_policy_fails_before_pd_or_tikv() {
         9001,
         Rc::clone(&loader_calls),
     ));
-    let mut follower = metadata("a", "z");
-    follower.session.replica_read = tidb_distsql::ReplicaReadType::Follower;
+    let mut closest_with_labels = metadata("a", "z");
+    closest_with_labels.session.replica_read = tidb_distsql::ReplicaReadType::Closest;
+    closest_with_labels
+        .match_store_labels
+        .push(tidb_distsql::StoreLabel {
+            key: "zone".to_owned(),
+            value: "z1".to_owned(),
+        });
 
     let error = runtime
         .select_with_runtime_stats(
-            &TransportRequest::new(follower),
+            &TransportRequest::new(closest_with_labels),
             SelectInput::default(),
             QueryResultContext::new(Vec::new(), WarningCollector::new()),
             Vec::new(),

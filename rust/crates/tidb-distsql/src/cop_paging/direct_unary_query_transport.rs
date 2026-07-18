@@ -22,7 +22,7 @@
 //! backoff budgets, cancellation-aware sleep, and ordered replacement of
 //! unconsumed work.
 
-use std::cell::{RefCell, RefMut};
+use std::cell::{Cell, RefCell, RefMut};
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -38,7 +38,8 @@ use prost::Message;
 use tidb_txnkv::region::{
     KeyRange as RegionKeyRange, LeaderRequest, ReadPolicy, RegionAttempt, RegionBackoffBudget,
     RegionBackoffKind, RegionCache, RegionErrorDisposition, RegionLoader, RegionLocation,
-    RegionRecoveryLoader, RegionRouteError, RegionVerId, RequestSelection, RequestSelector,
+    RegionRecoveryLoader, RegionRouteError, RegionVerId, ReplicaReadMode, RequestSelection,
+    RequestSelector,
 };
 pub use tidb_txnkv::{
     DirectUnaryClient, DirectUnaryClientError, DirectUnaryRequest, DirectUnaryResponse,
@@ -342,7 +343,33 @@ impl From<CopReadTaskError> for DirectUnaryTransportError {
 pub struct DirectUnaryQueryTransport<C, L> {
     shared_runtime: SharedReadRuntime<C, L>,
     locked_response_delegate: Rc<dyn LockedResponseDelegate<C, L>>,
+    replica_read_seed: Rc<ReplicaReadSeed>,
     config: DirectUnaryRuntimeConfig,
+}
+
+/// One transport-owned rotating seed source shared by all lazy responses.
+///
+/// Pinned client-go initializes `KVStore.replicaReadSeed` once and advances it
+/// for each logical request. Keeping this owner beside the shared read runtime
+/// prevents caller defaults and test-only injection from selecting production
+/// replicas.
+#[derive(Debug)]
+struct ReplicaReadSeed {
+    current: Cell<u32>,
+}
+
+impl ReplicaReadSeed {
+    fn new() -> Self {
+        Self {
+            current: Cell::new(0),
+        }
+    }
+
+    fn next(&self) -> u32 {
+        let next = self.current.get().wrapping_add(1);
+        self.current.set(next);
+        next
+    }
 }
 
 impl<C, L: RegionLoader> DirectUnaryQueryTransport<C, L> {
@@ -379,6 +406,7 @@ impl<C, L: RegionLoader> DirectUnaryQueryTransport<C, L> {
         Ok(Self {
             shared_runtime,
             locked_response_delegate,
+            replica_read_seed: Rc::new(ReplicaReadSeed::new()),
             config,
         })
     }
@@ -402,12 +430,7 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
         let metadata = request
             .metadata_for_send()
             .map_err(|error| DirectUnaryTransportError::Request(error).to_string())?;
-        if metadata.session.replica_read != ReplicaReadType::Leader || metadata.is_staleness {
-            return Err(
-                DirectUnaryTransportError::Route(RegionRouteError::UnsupportedReadPolicy)
-                    .to_string(),
-            );
-        }
+        let read_policy = read_policy_from_metadata(metadata).map_err(|error| error.to_string())?;
         CopPagingState::validate_read_request(metadata)
             .map_err(|error| DirectUnaryTransportError::from(error).to_string())?;
         let requested_ranges =
@@ -456,6 +479,8 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
         Ok(Some(DirectUnaryQueryResponse {
             shared_runtime: self.shared_runtime.clone(),
             locked_response_delegate: Rc::clone(&self.locked_response_delegate),
+            replica_read_seed: Rc::clone(&self.replica_read_seed),
+            read_policy,
             metadata: metadata.clone(),
             cluster_id,
             config: self.config.clone(),
@@ -466,8 +491,45 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
             closed: false,
             region_backoffs: BTreeMap::new(),
             request_selectors: BTreeMap::new(),
+            selection_seeds: BTreeMap::new(),
         }))
     }
+}
+
+fn read_policy_from_metadata(
+    metadata: &crate::KvRequestMetadata,
+) -> Result<ReadPolicy, DirectUnaryTransportError> {
+    // Closest modes require label filtering, and a nonzero busy threshold
+    // requires load/slow-score state not yet represented by this runtime.
+    // Silently dropping either would change which TiKV serves the request.
+    if !metadata.match_store_labels.is_empty() || metadata.session.store_busy_threshold_ms != 0 {
+        return Err(RegionRouteError::UnsupportedReadPolicy.into());
+    }
+
+    let mode = match metadata.session.replica_read {
+        ReplicaReadType::Leader => ReplicaReadMode::Leader,
+        ReplicaReadType::Follower => ReplicaReadMode::Follower,
+        ReplicaReadType::Mixed => ReplicaReadMode::Mixed,
+        ReplicaReadType::Learner => ReplicaReadMode::Learner,
+        ReplicaReadType::PreferLeader => ReplicaReadMode::PreferLeader,
+        // Pinned client-go treats the closest variants as mixed selection
+        // plus labels/load inputs. Those inputs are rejected above until the
+        // corresponding store metadata exists; the bare mode is exact Mixed.
+        ReplicaReadType::Closest | ReplicaReadType::ClosestAdaptive => ReplicaReadMode::Mixed,
+    };
+    Ok(ReadPolicy {
+        // EnableStaleWithMixedReplicaRead overrides the session mode.
+        mode: if metadata.is_staleness {
+            ReplicaReadMode::Mixed
+        } else {
+            mode
+        },
+        stale_read: metadata.is_staleness,
+        forwarding: false,
+        // Assigned from the sole rotating source when a logical selector is
+        // created, then held stable across that selector's retries.
+        selection_seed: 0,
+    })
 }
 
 fn metadata_region_ranges(
@@ -534,6 +596,8 @@ fn task_region_ver_id(
 pub struct DirectUnaryQueryResponse<C, L> {
     shared_runtime: SharedReadRuntime<C, L>,
     locked_response_delegate: Rc<dyn LockedResponseDelegate<C, L>>,
+    replica_read_seed: Rc<ReplicaReadSeed>,
+    read_policy: ReadPolicy,
     metadata: crate::KvRequestMetadata,
     cluster_id: u64,
     config: DirectUnaryRuntimeConfig,
@@ -544,6 +608,7 @@ pub struct DirectUnaryQueryResponse<C, L> {
     closed: bool,
     region_backoffs: BTreeMap<u64, RegionBackoffBudget>,
     request_selectors: BTreeMap<u64, RequestSelector>,
+    selection_seeds: BTreeMap<u64, u32>,
 }
 
 fn try_borrow_client<C>(client: &RefCell<C>) -> Result<RefMut<'_, C>, DirectUnaryTransportError> {
@@ -576,6 +641,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                 Some(ResponseChannelEvent::Closed) => {
                     self.active_attempts.remove(&logical_task_id);
                     self.request_selectors.remove(&logical_task_id);
+                    self.selection_seeds.remove(&logical_task_id);
                     self.logical_index += 1;
                     continue;
                 }
@@ -621,12 +687,17 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             .get(&logical_task_id)
             .is_none_or(|selector| selector.region() != region);
         if replace_selector {
+            let mut read_policy = self.read_policy;
+            read_policy.selection_seed = *self
+                .selection_seeds
+                .entry(logical_task_id)
+                .or_insert_with(|| self.replica_read_seed.next());
             let selector = self
                 .shared_runtime
                 .region_cache()
                 .try_borrow_mut()
                 .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle)?
-                .request_selector(region, ReadPolicy::default())?;
+                .request_selector(region, read_policy)?;
             self.request_selectors.insert(logical_task_id, selector);
         }
         let selection = {
@@ -879,16 +950,23 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         };
 
         match disposition {
-            RegionErrorDisposition::RetryPeers {
-                rejected_peer_id,
+            RegionErrorDisposition::RetrySelector {
+                attempt,
+                transition,
                 delay,
             } => {
-                self.request_selectors
+                if !self
+                    .request_selectors
                     .get_mut(&logical_task_id)
                     .ok_or(DirectUnaryTransportError::ResponseState(
-                        "missing request selector for peer retry",
+                        "missing request selector for typed recovery",
                     ))?
-                    .reject_peer(rejected_peer_id);
+                    .apply_recovery(&attempt, transition)
+                {
+                    return Err(DirectUnaryTransportError::RegionRecovery(
+                        "typed recovery did not match the selector's completed attempt".to_owned(),
+                    ));
+                }
                 self.sleep_retry(delay)?;
                 let replacement = self.runtime.retry_transport_attempt(failed)?;
                 self.install_same_task_retry(replacement)

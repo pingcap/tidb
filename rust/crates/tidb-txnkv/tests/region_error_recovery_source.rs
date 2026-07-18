@@ -25,7 +25,7 @@ use tidb_txnkv::region::{
     Peer, PeerRole, RegionAttempt, RegionBackoffBudget, RegionBackoffKind, RegionCache,
     RegionErrorDisposition, RegionLoadError, RegionLoader, RegionLocation, RegionMetadata,
     RegionRebuildAction, RegionRecoveryError, RegionRecoveryLoader, RegionTerminalError,
-    RegionVerId, Store, StoreLiveness,
+    RegionVerId, ReplicaReadMode, SelectorRecovery, Store, StoreLiveness,
 };
 
 type RecordedMetadata = Rc<RefCell<Vec<(RegionMetadata, u64)>>>;
@@ -233,8 +233,9 @@ fn known_leader_updates_snapshot_then_returns_through_reselection() {
         cache
             .on_region_error(&error, attempt(region), &mut budget)
             .unwrap(),
-        RegionErrorDisposition::RetryPeers {
-            rejected_peer_id: 11,
+        RegionErrorDisposition::RetrySelector {
+            attempt: attempt(region),
+            transition: SelectorRecovery::FollowKnownLeader { leader_peer_id: 12 },
             delay: Duration::ZERO,
         }
     );
@@ -243,29 +244,27 @@ fn known_leader_updates_snapshot_then_returns_through_reselection() {
 }
 
 #[test]
-fn newly_named_exhausted_leader_receives_one_fresh_attempt() {
+fn newly_named_leader_is_retried_after_a_follower_attempt() {
     let mut candidate = location(7, 3, 4, b"", b"");
     candidate.peers[1].role = PeerRole::Voter;
     let (mut cache, _) = cache(candidate, []);
     let region = seed(&mut cache);
     let mut selector = cache
-        .request_selector(region, tidb_txnkv::region::ReadPolicy::default())
+        .request_selector(
+            region,
+            tidb_txnkv::region::ReadPolicy {
+                mode: ReplicaReadMode::Follower,
+                ..tidb_txnkv::region::ReadPolicy::default()
+            },
+        )
         .unwrap();
-    let tidb_txnkv::region::RequestSelection::Attempt(leader) =
-        cache.select_request(&mut selector).unwrap()
-    else {
-        panic!("expected cached leader")
-    };
-    assert!(selector.record_attempt_result(&leader.attempt, Duration::from_millis(1)));
-    selector.reject_peer(leader.attempt.peer_id);
     let tidb_txnkv::region::RequestSelection::Attempt(alternate) =
         cache.select_request(&mut selector).unwrap()
     else {
-        panic!("expected alternate")
+        panic!("expected follower")
     };
     assert_eq!(alternate.attempt.peer_id, 12);
     assert!(selector.record_attempt_result(&alternate.attempt, Duration::from_millis(1)));
-    selector.reject_peer(alternate.attempt.peer_id);
 
     let error = errorpb::Error {
         not_leader: Some(errorpb::NotLeader {
@@ -279,27 +278,88 @@ fn newly_named_exhausted_leader_receives_one_fresh_attempt() {
         }),
         ..Default::default()
     };
-    let RegionErrorDisposition::RetryPeers {
-        rejected_peer_id, ..
-    } = cache
+    let disposition = cache
         .on_region_error(
             &error,
-            attempt(region),
+            alternate.attempt.clone(),
             &mut RegionBackoffBudget::campaign_default(),
         )
-        .unwrap()
+        .unwrap();
+    let RegionErrorDisposition::RetrySelector {
+        attempt,
+        transition,
+        ..
+    } = disposition
     else {
-        panic!("known leader must reselect")
+        panic!("known leader must transition the same selector")
     };
-    selector.reject_peer(rejected_peer_id);
+    assert!(selector.apply_recovery(&attempt, transition));
+    assert!(!selector.apply_recovery(&attempt, transition));
 
     let tidb_txnkv::region::RequestSelection::Attempt(retried) =
         cache.select_request(&mut selector).unwrap()
     else {
-        panic!("new leader must receive one fresh attempt")
+        panic!("new leader must receive one fresh leader-semantics attempt")
     };
     assert_eq!(retried.attempt.peer_id, 12);
     assert!(retried.cached_leader);
+    assert!(!retried.replica_read);
+    assert!(!retried.stale_read);
+}
+
+#[test]
+fn stale_data_not_ready_is_an_exact_single_use_selector_transition() {
+    let mut candidate = location(7, 3, 4, b"", b"");
+    candidate.peers[1].role = PeerRole::Voter;
+    let (mut cache, _) = cache(candidate, []);
+    let region = seed(&mut cache);
+    let mut selector = cache
+        .request_selector(
+            region,
+            tidb_txnkv::region::ReadPolicy {
+                mode: ReplicaReadMode::Mixed,
+                stale_read: true,
+                selection_seed: 1,
+                ..tidb_txnkv::region::ReadPolicy::default()
+            },
+        )
+        .unwrap();
+    let tidb_txnkv::region::RequestSelection::Attempt(stale) =
+        cache.select_request(&mut selector).unwrap()
+    else {
+        panic!("expected stale attempt")
+    };
+    assert!(stale.stale_read);
+    assert!(selector.record_attempt_result(&stale.attempt, Duration::from_millis(1)));
+    let disposition = cache
+        .on_region_error(
+            &errorpb::Error {
+                data_is_not_ready: Some(errorpb::DataIsNotReady::default()),
+                ..errorpb::Error::default()
+            },
+            stale.attempt.clone(),
+            &mut RegionBackoffBudget::campaign_default(),
+        )
+        .unwrap();
+    let RegionErrorDisposition::RetrySelector {
+        attempt,
+        transition,
+        ..
+    } = disposition
+    else {
+        panic!("data-not-ready must stay selector-owned")
+    };
+    assert!(selector.apply_recovery(&attempt, transition));
+    assert!(!selector.apply_recovery(&attempt, transition));
+
+    let tidb_txnkv::region::RequestSelection::Attempt(leader) =
+        cache.select_request(&mut selector).unwrap()
+    else {
+        panic!("stale retry must try the unattempted leader")
+    };
+    assert_eq!(leader.attempt.peer_id, 11);
+    assert!(!leader.replica_read);
+    assert!(!leader.stale_read);
 }
 
 #[test]
@@ -346,8 +406,9 @@ fn known_unreachable_leader_never_bypasses_reselection() {
                 &mut RegionBackoffBudget::campaign_default(),
             )
             .unwrap(),
-        RegionErrorDisposition::RetryPeers {
-            rejected_peer_id: 11,
+        RegionErrorDisposition::RetrySelector {
+            attempt: attempt(region),
+            transition: SelectorRecovery::FollowKnownLeader { leader_peer_id: 12 },
             delay: Duration::ZERO,
         }
     );
@@ -393,8 +454,9 @@ fn missing_leader_retries_peers_while_unknown_named_leader_rebuilds() {
             assert_eq!(cache.len(), 1, "nil leader keeps topology for peer probing");
             assert_eq!(
                 disposition,
-                RegionErrorDisposition::RetryPeers {
-                    rejected_peer_id: 11,
+                RegionErrorDisposition::RetrySelector {
+                    attempt: attempt(region),
+                    transition: SelectorRecovery::RejectPeer,
                     delay: Duration::from_millis(2),
                 }
             );
@@ -633,7 +695,10 @@ fn terminal_and_backoff_branches_are_typed_and_budgeted_once() {
         first_cache
             .on_region_error(&no_leader, attempt(region), &mut tiny)
             .unwrap(),
-        RegionErrorDisposition::RetryPeers { .. }
+        RegionErrorDisposition::RetrySelector {
+            transition: SelectorRecovery::RejectPeer,
+            ..
+        }
     ));
     let (mut second_cache, _) = cache(location(7, 3, 4, b"", b""), []);
     let region = seed(&mut second_cache);
@@ -933,7 +998,7 @@ fn every_outer_region_error_branch_has_a_typed_source_action() {
                 data_is_not_ready: Some(errorpb::DataIsNotReady::default()),
                 ..Default::default()
             },
-            Expected::Return,
+            Expected::Retry,
             false,
         ),
         (
@@ -983,7 +1048,7 @@ fn every_outer_region_error_branch_has_a_typed_source_action() {
             .unwrap();
         let actual = match disposition {
             RegionErrorDisposition::RetryRoute { .. } => Expected::Retry,
-            RegionErrorDisposition::RetryPeers { .. } => Expected::Retry,
+            RegionErrorDisposition::RetrySelector { .. } => Expected::Retry,
             RegionErrorDisposition::RebuildRanges { .. } => Expected::Rebuild,
             RegionErrorDisposition::ReturnRegionError => Expected::Return,
             RegionErrorDisposition::Terminal(RegionTerminalError::FlashbackInProgress {

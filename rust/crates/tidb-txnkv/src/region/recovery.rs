@@ -20,7 +20,7 @@ use crate::retry::{RegionBackoffBudget, RegionBackoffKind};
 
 use super::{
     PeerRole, RegionCache, RegionLoadError, RegionMetadata, RegionMetadataPeer,
-    RegionRecoveryLoader, RegionRouteError, RegionVerId,
+    RegionRecoveryLoader, RegionRouteError, RegionVerId, SelectorRecovery,
 };
 
 /// Exact route observation attached to one failed TiKV request.
@@ -63,11 +63,14 @@ pub enum RegionErrorDisposition {
         /// Sleep reserved from the shared response budget.
         delay: Duration,
     },
-    /// Reject the observed peer and continue the same request-scoped selector.
-    RetryPeers {
-        /// Peer which returned `NotLeader` without naming its successor.
-        rejected_peer_id: u64,
-        /// Election scheduling delay reserved from the shared budget.
+    /// Continue the same request-scoped selector after an exact typed state
+    /// transition. The cache has already completed any topology mutation.
+    RetrySelector {
+        /// Exact completed attempt to which the transition applies.
+        attempt: RegionAttempt,
+        /// Sole request-local recovery transition.
+        transition: SelectorRecovery,
+        /// Sleep reserved from the shared response budget.
         delay: Duration,
     },
     /// Re-locate the failed task's remaining ranges after the reserved delay.
@@ -311,7 +314,11 @@ impl<L: RegionRecoveryLoader> RegionCache<L> {
             return self.retry_same_route(attempt, backoff, RegionBackoffKind::RegionScheduling);
         }
         if error.data_is_not_ready.is_some() {
-            return Ok(RegionErrorDisposition::ReturnRegionError);
+            return Ok(RegionErrorDisposition::RetrySelector {
+                attempt,
+                transition: SelectorRecovery::DataIsNotReady,
+                delay: Duration::ZERO,
+            });
         }
         if error.mismatch_peer_id.is_some() {
             self.invalidate(attempt.region);
@@ -348,15 +355,19 @@ impl<L: RegionRecoveryLoader> RegionCache<L> {
                 Ok(delay) => delay,
                 Err(terminal) => return Ok(RegionErrorDisposition::Terminal(terminal)),
             };
-            return Ok(RegionErrorDisposition::RetryPeers {
-                rejected_peer_id: attempt.peer_id,
+            return Ok(RegionErrorDisposition::RetrySelector {
+                attempt,
+                transition: SelectorRecovery::RejectPeer,
                 delay,
             });
         };
 
         if self.update_leader(attempt.region, leader.id, leader.store_id) {
-            Ok(RegionErrorDisposition::RetryPeers {
-                rejected_peer_id: attempt.peer_id,
+            Ok(RegionErrorDisposition::RetrySelector {
+                attempt,
+                transition: SelectorRecovery::FollowKnownLeader {
+                    leader_peer_id: leader.id,
+                },
                 delay: Duration::ZERO,
             })
         } else {

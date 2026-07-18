@@ -14,23 +14,87 @@
 
 #![allow(missing_docs)]
 
-use std::time::{Duration, Instant};
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::time::Duration;
 
-use prost::Message;
-use tidb_codec::encode_bytes;
-use tidb_proto::{
-    CoprocessorKeyRange, CoprocessorRequest, CoprocessorResponse, KvrpcContext, KvrpcPeer,
-    KvrpcRegionEpoch,
+use tidb_datatype::FieldType;
+use tidb_distsql::{
+    decode_select_response, DirectUnaryClient, DirectUnaryClientError, DirectUnaryQueryTransport,
+    DirectUnaryRequest, DirectUnaryResponse, DirectUnaryRuntimeConfig, InjectedQueryRuntime,
+    KvRequestMetadata, QueryResultContext, ReplicaReadType, RequestKeyRange, RequestKeyRanges,
+    RequestType, SelectInput, StoreType, TransportRequest, WarningCollector,
 };
-use tidb_txnkv::region::{PeerRole, ReadPolicy, RegionCache, ReplicaReadMode, RequestSelection};
+use tidb_txnkv::region::{PeerRole, RegionCache, StoreLiveness};
 use tidb_txnkv::rpc::TonicCoprocessorClient;
-use tidb_txnkv::{
-    ClientReplicaReadType, DirectUnaryClient, DirectUnaryRequest, EndpointType, PdRegionLoader,
-};
+use tidb_txnkv::{ClientReplicaReadType, PdRegionLoader};
 
 const TABLE_START: &[u8] = b"t\x80\0\0\0\0\0\0*_r";
 const TABLE_END: &[u8] = b"t\x80\0\0\0\0\0\0+";
 const TABLE_SCAN_DAG: &[u8] = &[0x12, 0x04, 0x12, 0x02, 0x08, 0x2a];
+
+#[derive(Clone, Debug)]
+struct ObservedDispatch {
+    address: String,
+    peer_id: u64,
+    store_id: u64,
+    replica_read_type: ClientReplicaReadType,
+    replica_read: bool,
+    stale_read: bool,
+}
+
+struct RecordingClient {
+    inner: TonicCoprocessorClient,
+    dispatches: Rc<RefCell<Vec<ObservedDispatch>>>,
+}
+
+impl DirectUnaryClient for RecordingClient {
+    fn send_request(
+        &mut self,
+        address: &str,
+        request: &DirectUnaryRequest,
+        timeout: Duration,
+    ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
+        let peer = request
+            .context
+            .peer
+            .as_ref()
+            .expect("production transport must attach one selected peer");
+        self.dispatches.borrow_mut().push(ObservedDispatch {
+            address: address.to_owned(),
+            peer_id: peer.id,
+            store_id: peer.store_id,
+            replica_read_type: request.replica_read_type,
+            replica_read: request.context.replica_read,
+            stale_read: request.context.stale_read,
+        });
+        self.inner.send_request(address, request, timeout)
+    }
+
+    fn close_address(&mut self, address: &str) -> Result<(), DirectUnaryClientError> {
+        self.inner.close_address(address)
+    }
+
+    fn close_address_version(
+        &mut self,
+        address: &str,
+        version: u64,
+    ) -> Result<(), DirectUnaryClientError> {
+        self.inner.close_address_version(address, version)
+    }
+
+    fn liveness(
+        &self,
+        address: &str,
+        timeout: Duration,
+    ) -> Result<StoreLiveness, DirectUnaryClientError> {
+        self.inner.liveness(address, timeout)
+    }
+
+    fn close(&mut self) -> Result<(), DirectUnaryClientError> {
+        self.inner.close()
+    }
+}
 
 #[test]
 #[ignore = "requires the cleanup-safe Campaign 13 three-TiKV runner"]
@@ -59,102 +123,100 @@ fn follower_policy_reaches_a_live_nonleader_voter() {
         "runner must expose a nonleader voter"
     );
 
-    let mut selector = cache
-        .request_selector(
-            location.region,
-            ReadPolicy {
-                mode: ReplicaReadMode::Follower,
-                ..ReadPolicy::default()
+    let dispatches = Rc::new(RefCell::new(Vec::new()));
+    let transport = DirectUnaryQueryTransport::new(
+        RecordingClient {
+            inner: TonicCoprocessorClient::new().expect("construct live unary client"),
+            dispatches: Rc::clone(&dispatches),
+        },
+        cache,
+        DirectUnaryRuntimeConfig {
+            default_timeout: Duration::from_secs(5),
+            ..DirectUnaryRuntimeConfig::default()
+        },
+    )
+    .expect("construct production direct unary transport");
+    let mut runtime = InjectedQueryRuntime::new(transport);
+    let mut metadata = KvRequestMetadata {
+        request_type: RequestType::Dag,
+        data: Some(TABLE_SCAN_DAG.to_vec()),
+        key_ranges: Some(RequestKeyRanges::new_non_partitioned(vec![
+            RequestKeyRange {
+                start_key: TABLE_START.to_vec(),
+                end_key: TABLE_END.to_vec(),
             },
-        )
-        .expect("construct request-scoped follower selector");
-    let RequestSelection::Attempt(selected) = cache
-        .select_request(&mut selector)
-        .expect("select follower request")
-    else {
-        panic!("fresh live region must have a follower candidate")
-    };
-    assert_ne!(selected.attempt.peer_id, leader_peer_id);
-    assert!(matches!(
-        selected.role,
-        PeerRole::Voter | PeerRole::IncomingVoter | PeerRole::DemotingVoter
-    ));
-    assert!(!selected.is_witness);
-    assert!(selected.replica_read);
-    assert!(!selected.stale_read);
-    assert!(!selected.cached_leader);
-
-    let mut encoded_start = Vec::new();
-    let mut encoded_end = Vec::new();
-    encode_bytes(&mut encoded_start, TABLE_START);
-    encode_bytes(&mut encoded_end, TABLE_END);
-    let context = KvrpcContext {
-        region_id: location.region.id,
-        region_epoch: Some(KvrpcRegionEpoch {
-            conf_ver: location.region.epoch.conf_ver,
-            version: location.region.epoch.version,
-        }),
-        peer: Some(KvrpcPeer {
-            id: selected.attempt.peer_id,
-            store_id: selected.attempt.store_id,
-            role: selected.role.as_i32(),
-            is_witness: selected.is_witness,
-        }),
-        replica_read: true,
-        stale_read: false,
-        cluster_id: cache.cluster_id(),
-        request_source: "external_campaign13".to_owned(),
-        ..KvrpcContext::default()
-    };
-    let request = DirectUnaryRequest {
-        endpoint: EndpointType::TiKv,
-        replica_read_type: ClientReplicaReadType::Follower,
-        replica_read: true,
-        stale_read: false,
-        input_request_source: "external_campaign13".to_owned(),
-        predicted_read_bytes: 0,
+        ])),
+        keep_order: true,
+        store_type: StoreType::TiKv,
+        start_ts: 1,
         read_replica_scope: "global".to_owned(),
         txn_scope: "global".to_owned(),
-        context,
-        encoded_request: CoprocessorRequest {
-            tp: 103,
-            data: TABLE_SCAN_DAG.to_vec(),
-            ranges: vec![CoprocessorKeyRange {
-                start: encoded_start,
-                end: encoded_end,
-            }],
-            start_ts: 1,
-            ..CoprocessorRequest::default()
-        }
-        .encode_to_vec(),
+        ..KvRequestMetadata::default()
     };
+    metadata.session.replica_read = ReplicaReadType::Follower;
+    metadata.session.request_source.explicit_source_type = "campaign13".to_owned();
+    let request = TransportRequest::new(metadata);
+    let mut result = runtime
+        .select_with_runtime_stats(
+            &request,
+            SelectInput::default(),
+            QueryResultContext::new(Vec::<FieldType>::new(), WarningCollector::new()),
+            Vec::new(),
+            0,
+            false,
+        )
+        .expect("enter through InjectedQueryRuntime and production transport");
+    assert!(
+        dispatches.borrow().is_empty(),
+        "production response must remain lazy until first pull"
+    );
+    let raw = result
+        .next_raw()
+        .expect("live follower dispatch must complete")
+        .expect("one live region must publish one result");
+    assert_eq!(result.next_raw().expect("finish live response"), None);
+    let select = decode_select_response(&raw).expect("decode returned tipb SelectResponse");
+    assert!(
+        select.error.is_none(),
+        "live follower SelectResponse returned application error: {:?}",
+        select.error
+    );
+    assert!(
+        select.rows.is_empty()
+            && select.chunks.iter().all(|chunk| chunk
+                .rows_data
+                .as_deref()
+                .unwrap_or_default()
+                .is_empty()),
+        "the known empty table-42 range must return no row payload"
+    );
 
-    let mut client = TonicCoprocessorClient::new().expect("construct live unary client");
-    let started = Instant::now();
-    let raw = client
-        .send_request(&selected.attempt.address, &request, Duration::from_secs(5))
-        .expect("send follower read to Rust-selected nonleader voter");
-    assert!(selector.record_attempt_result(&selected.attempt, started.elapsed()));
-    let response = CoprocessorResponse::decode(raw.encoded_response.as_slice())
-        .expect("decode live coprocessor response");
-    assert!(
-        response.region_error.is_none(),
-        "follower route returned region error: {:?}",
-        response.region_error
-    );
-    assert!(
-        response.other_error.is_empty(),
-        "follower route returned application error: {}",
-        response.other_error
-    );
+    let dispatches = dispatches.borrow();
+    assert_eq!(dispatches.len(), 1, "one logical region dispatch expected");
+    let selected = &dispatches[0];
+    let selected_peer = location
+        .peers
+        .iter()
+        .find(|peer| peer.id == selected.peer_id)
+        .expect("recorded peer must come from PD topology");
+    assert_ne!(selected.peer_id, leader_peer_id);
+    assert!(matches!(
+        selected_peer.role,
+        PeerRole::Voter | PeerRole::IncomingVoter | PeerRole::DemotingVoter
+    ));
+    assert!(!selected_peer.is_witness);
+    assert_eq!(selected_peer.store_id, selected.store_id);
+    assert_eq!(selected.replica_read_type, ClientReplicaReadType::Follower);
+    assert!(selected.replica_read);
+    assert!(!selected.stale_read);
 
     println!(
         "campaign13_replica_read region_id={} leader_peer_id={} selected_peer_id={} selected_store_id={} selected_address={} replica_read={} stale_read={} usable_response=true",
         location.region.id,
         leader_peer_id,
-        selected.attempt.peer_id,
-        selected.attempt.store_id,
-        selected.attempt.address,
+        selected.peer_id,
+        selected.store_id,
+        selected.address,
         selected.replica_read,
         selected.stale_read,
     );

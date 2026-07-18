@@ -26,7 +26,7 @@ pub use recovery::{
 };
 pub use replica_selector::{ReadPolicy, ReplicaReadMode};
 pub use request_selector::{
-    LeaderRequest, RequestSelection, RequestSelector, MAX_REPLICA_ATTEMPTS,
+    LeaderRequest, RequestSelection, RequestSelector, SelectorRecovery, MAX_REPLICA_ATTEMPTS,
     MAX_REPLICA_ATTEMPT_TIME,
 };
 pub use store_state::{StoreFailureOutcome, StoreLiveness, StoreResolveState, StoreState};
