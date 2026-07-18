@@ -76,7 +76,7 @@ impl PdRegionLoader {
             .client
             .get_region_by_id(region_id, need_buckets)
             .map_err(region_load_error)?;
-        self.project_region(region, false)
+        self.project_region(region)
     }
 
     /// Loads an ordered contiguous PD scan in the logical API-v1 key domain.
@@ -101,7 +101,7 @@ impl PdRegionLoader {
     ) -> Result<Vec<RegionLocation>, RegionLoadError> {
         regions
             .into_iter()
-            .map(|region| self.project_region(region, false))
+            .map(|region| self.project_region(region))
             .collect()
     }
 
@@ -139,11 +139,7 @@ impl PdRegionLoader {
         Ok(result)
     }
 
-    fn project_region(
-        &mut self,
-        region: PdRegion,
-        require_usable_leader: bool,
-    ) -> Result<RegionLocation, RegionLoadError> {
+    fn project_region(&mut self, region: PdRegion) -> Result<RegionLocation, RegionLoadError> {
         // Resolve every peer-referenced store exactly once before filtering.
         // This matches client-go's region construction: a tombstone/removed
         // store yields no usable address, while a malformed response fails the
@@ -224,12 +220,6 @@ impl PdRegionLoader {
                 .any(|peer| peer.id == leader.id && peer.store_id == leader.store_id)
                 .then_some(leader.id)
         });
-        if require_usable_leader && leader_peer_id.is_none() {
-            return Err(loader_topology_error(
-                "missing_usable_leader",
-                format!("region {} leader was down or on a removed store", region.id),
-            ));
-        }
         let buckets = region.buckets.map(decode_buckets).transpose()?;
         let down_peer_ids = region.down_peers.into_iter().map(|peer| peer.id).collect();
         let pending_peer_ids = region
@@ -270,7 +260,7 @@ impl RegionLoader for PdRegionLoader {
             .client
             .get_region(&encoded_key)
             .map_err(region_load_error)?;
-        self.project_region(region, true)
+        self.project_region(region)
     }
 
     fn store_labels(&self, store_id: u64) -> &[(String, String)] {

@@ -545,7 +545,7 @@ fn get_region(
     let response =
         map_rpc_result(response, PdOperation::GetRegion, endpoint, timeout)?.into_inner();
     validate_response_header(PdOperation::GetRegion, response.header.as_ref(), cluster_id)?;
-    project_region(response, true)
+    project_region(response)
 }
 
 fn get_region_by_id(
@@ -576,7 +576,7 @@ fn get_region_by_id(
         response.header.as_ref(),
         cluster_id,
     )?;
-    project_region(response, false)
+    project_region(response)
 }
 
 fn scan_regions(
@@ -1226,10 +1226,7 @@ fn reject_header_error(
     Ok(())
 }
 
-fn project_region(
-    response: pdpb::GetRegionResponse,
-    require_leader: bool,
-) -> Result<PdRegion, PdClientError> {
+fn project_region(response: pdpb::GetRegionResponse) -> Result<PdRegion, PdClientError> {
     let region = response
         .region
         .ok_or_else(|| invalid_topology("missing_region", "GetRegion omitted region"))?;
@@ -1239,7 +1236,6 @@ fn project_region(
         response.down_peers,
         response.pending_peers,
         response.buckets,
-        require_leader,
     )
 }
 
@@ -1253,7 +1249,6 @@ fn project_extended_region(region: pdpb::Region) -> Result<PdRegion, PdClientErr
         region.down_peers,
         region.pending_peers,
         region.buckets,
-        false,
     )
 }
 
@@ -1280,7 +1275,6 @@ fn project_scan_regions(
                 Vec::new(),
                 Vec::new(),
                 None,
-                false,
             )
         })
         .collect()
@@ -1292,7 +1286,6 @@ fn project_region_parts(
     down_peer_stats: Vec<pdpb::PeerStats>,
     pending_peer_metadata: Vec<metapb::Peer>,
     buckets: Option<metapb::Buckets>,
-    require_leader: bool,
 ) -> Result<PdRegion, PdClientError> {
     if region.id == 0 {
         return Err(invalid_topology("zero_region_id", "region ID is zero"));
@@ -1343,12 +1336,6 @@ fn project_region_parts(
             )
         }
     };
-    if require_leader && leader.is_none() {
-        return Err(invalid_topology(
-            "missing_leader",
-            format!("region {} omitted leader", region.id),
-        ));
-    }
     let down_peers = down_peer_stats
         .into_iter()
         .map(|stats| {

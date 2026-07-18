@@ -383,20 +383,21 @@ fn batch_loader_falls_back_only_from_unimplemented_and_does_not_invent_buckets()
 }
 
 #[test]
-fn removed_leader_and_malformed_boundary_fail_with_loader_identity() {
+fn leaderless_region_is_routable_and_malformed_boundary_fails_with_loader_identity() {
     let mut state = valid_state();
-    state.stores.insert(
-        101,
-        store_response(
-            101,
-            metapb::StoreState::Tombstone,
-            metapb::NodeState::Serving,
-        ),
-    );
+    state.region.leader = None;
     let server = Server::start(state);
     let mut loader = PdRegionLoader::connect(&server.address, Duration::from_secs(2)).unwrap();
-    let error = loader.load_region(b"k").unwrap_err();
-    assert_eq!(error.identity(), "missing_usable_leader");
+    let location = loader.load_region(b"logical-key").unwrap();
+    assert_eq!(location.leader_peer_id, None);
+    assert_eq!(
+        location
+            .peers
+            .iter()
+            .map(|peer| peer.id)
+            .collect::<Vec<_>>(),
+        [11, 12, 15]
+    );
 
     let mut state = valid_state();
     state.region.region.as_mut().unwrap().start_key = vec![1, 2, 3];

@@ -1227,13 +1227,6 @@ fn region_header_and_topology_errors_fail_after_exactly_one_attempt() {
         ),
         (
             pdpb::GetRegionResponse {
-                leader: None,
-                ..region_response()
-            },
-            "missing_leader",
-        ),
-        (
-            pdpb::GetRegionResponse {
                 leader: Some(peer(99, 101, metapb::PeerRole::Voter, false)),
                 ..region_response()
             },
@@ -1250,6 +1243,27 @@ fn region_header_and_topology_errors_fail_after_exactly_one_attempt() {
             before + 1
         );
     }
+}
+
+#[test]
+fn leaderless_get_region_preserves_ordered_peers() {
+    // client-go/internal/locate/region_cache_test.go:493-524.
+    let mut state = valid_state();
+    let response = match &mut state.region {
+        Reply::Value(response) => response,
+        _ => unreachable!(),
+    };
+    response.leader = None;
+    let server = Server::start(state);
+    let mut client = PdClient::connect(&server.address, Duration::from_secs(2)).unwrap();
+
+    let region = client.get_region(b"wire").unwrap();
+    assert!(region.leader.is_none());
+    assert_eq!(
+        region.peers.iter().map(|peer| peer.id).collect::<Vec<_>>(),
+        [11, 12, 13, 14]
+    );
+    assert_eq!(server.state.lock().unwrap().region_requests.len(), 1);
 }
 
 #[test]
