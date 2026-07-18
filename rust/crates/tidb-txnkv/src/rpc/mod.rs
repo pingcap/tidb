@@ -13,7 +13,11 @@ mod liveness;
 mod tonic_coprocessor;
 mod unary;
 
-pub use async_completion::{AsyncRequestDispatcher, CompletionError, PendingRequest};
+pub use async_completion::{
+    completion_pair, AsyncRequestDispatcher, CompletionCallback, CompletionCancellation,
+    CompletionError, CompletionPull, CompletionRunLoop, CompletionRunLoopState,
+    CompletionRunOutcome, PendingRequest,
+};
 pub use error::{
     DirectUnaryClientError, DirectUnaryConnectionError, DirectUnaryGrpcCode,
     DirectUnaryTransportClass,
