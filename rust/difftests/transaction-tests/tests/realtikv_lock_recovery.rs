@@ -38,9 +38,12 @@ use tidb_txnkv::PdRegionLoader;
 #[derive(Debug, Default)]
 struct Evidence {
     cop_attempts: usize,
+    cop_addresses: Vec<String>,
     checks: Vec<KvrpcCheckTxnStatusRequest>,
+    check_addresses: Vec<String>,
     check_commit_ts: u64,
     resolves: Vec<KvrpcResolveLockRequest>,
+    resolve_addresses: Vec<String>,
 }
 
 struct RecordingClient {
@@ -55,7 +58,10 @@ impl DirectUnaryClient for RecordingClient {
         request: &DirectUnaryRequest,
         timeout: Duration,
     ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
-        self.evidence.borrow_mut().cop_attempts += 1;
+        let mut evidence = self.evidence.borrow_mut();
+        evidence.cop_attempts += 1;
+        evidence.cop_addresses.push(address.to_owned());
+        drop(evidence);
         self.inner.send_request(address, request, timeout)
     }
 
@@ -65,7 +71,10 @@ impl DirectUnaryClient for RecordingClient {
         request: &DirectUnaryRequest,
         call: &UnaryCallContext,
     ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
-        self.evidence.borrow_mut().cop_attempts += 1;
+        let mut evidence = self.evidence.borrow_mut();
+        evidence.cop_attempts += 1;
+        evidence.cop_addresses.push(address.to_owned());
+        drop(evidence);
         self.inner.send_request_with_context(address, request, call)
     }
 
@@ -102,7 +111,10 @@ impl LockRecoveryClient for RecordingClient {
         context: &KvrpcContext,
         call: &UnaryCallContext,
     ) -> Result<KvrpcCheckTxnStatusResponse, DirectUnaryClientError> {
-        self.evidence.borrow_mut().checks.push(request.clone());
+        let mut evidence = self.evidence.borrow_mut();
+        evidence.checks.push(request.clone());
+        evidence.check_addresses.push(address.to_owned());
+        drop(evidence);
         let response = self
             .inner
             .check_txn_status(address, request, context, call)?;
@@ -117,7 +129,10 @@ impl LockRecoveryClient for RecordingClient {
         context: &KvrpcContext,
         call: &UnaryCallContext,
     ) -> Result<KvrpcResolveLockResponse, DirectUnaryClientError> {
-        self.evidence.borrow_mut().resolves.push(request.clone());
+        let mut evidence = self.evidence.borrow_mut();
+        evidence.resolves.push(request.clone());
+        evidence.resolve_addresses.push(address.to_owned());
+        drop(evidence);
         self.inner.resolve_lock(address, request, context, call)
     }
 }
@@ -214,11 +229,26 @@ fn committed_primary_resolves_secondary_then_publishes_one_cop_response() {
 
     let evidence = evidence.borrow();
     assert_eq!(evidence.cop_attempts, 2, "locked response plus exact retry");
+    assert_eq!(evidence.cop_addresses.len(), 2);
     assert_eq!(evidence.checks.len(), 1);
+    assert_eq!(evidence.check_addresses.len(), 1);
     assert!(evidence.check_commit_ts > 0, "primary must be committed");
+    assert!(
+        evidence.checks[0].lock_ts > 0,
+        "lock start TS must be observed"
+    );
+    assert!(
+        evidence.checks[0].lock_ts < current_ts,
+        "the blocking transaction must precede the read"
+    );
+    assert!(
+        !evidence.checks[0].primary_key.is_empty(),
+        "the locked response must provide the primary key"
+    );
     assert_eq!(evidence.checks[0].caller_start_ts, current_ts);
     assert_eq!(evidence.checks[0].current_ts, current_ts);
     assert_eq!(evidence.resolves.len(), 1);
+    assert_eq!(evidence.resolve_addresses.len(), 1);
     assert_eq!(
         evidence.resolves[0].keys,
         vec![expected_secondary_key.clone()]
@@ -228,9 +258,16 @@ fn committed_primary_resolves_secondary_then_publishes_one_cop_response() {
         evidence.check_commit_ts
     );
     println!(
-        "campaign13_lock_recovery status=committed commit_ts={} resolve_key_hex={} cop_attempts=2 publications=1",
-        evidence.check_commit_ts,
+        "campaign13_lock_recovery status=committed lock_start_ts={} caller_start_ts={} locked_key_hex={} primary_key_hex={} primary_route={} commit_ts={} resolve_route={} resolve_key_hex={} cop_route={} cop_attempts=2 publications=1",
+        evidence.checks[0].lock_ts,
+        current_ts,
         hex(&expected_secondary_key),
+        hex(&evidence.checks[0].primary_key),
+        evidence.check_addresses[0],
+        evidence.check_commit_ts,
+        evidence.resolve_addresses[0],
+        hex(&expected_secondary_key),
+        evidence.cop_addresses[0],
     );
 }
 

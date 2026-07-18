@@ -187,6 +187,12 @@ CARGO_BUILD_JOBS=12 cargo test -j12 -p difftest-transaction-tests \
 
 MARKER=$(grep '^campaign13_lock_recovery ' "${RUST_LOG}" | tail -1 || true)
 if [[ "${MARKER}" != *"status=committed"* ]] \
+  || [[ "${MARKER}" != *"lock_start_ts="* ]] \
+  || [[ "${MARKER}" != *"caller_start_ts="* ]] \
+  || [[ "${MARKER}" != *"locked_key_hex="* ]] \
+  || [[ "${MARKER}" != *"primary_key_hex="* ]] \
+  || [[ "${MARKER}" != *"primary_route="* ]] \
+  || [[ "${MARKER}" != *"resolve_route="* ]] \
   || [[ "${MARKER}" != *"cop_attempts=2"* ]] \
   || [[ "${MARKER}" != *"publications=1"* ]] \
   || [[ "${MARKER}" != *"resolve_key_hex="* ]]; then
