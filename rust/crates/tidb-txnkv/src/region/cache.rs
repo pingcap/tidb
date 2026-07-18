@@ -151,7 +151,7 @@ impl<L> RegionCache<L> {
         region: RegionVerId,
         policy: ReadPolicy,
     ) -> Result<RequestSelector, RegionRouteError> {
-        if policy.mode != ReplicaReadMode::Leader || policy.stale_read || policy.forwarding {
+        if policy.forwarding || (policy.stale_read && policy.mode != ReplicaReadMode::Mixed) {
             return Err(RegionRouteError::UnsupportedReadPolicy);
         }
         let Some(location) = self
@@ -168,14 +168,13 @@ impl<L> RegionCache<L> {
         ))
     }
 
-    /// Selects the next leader-semantics peer and invalidates on exhaustion.
+    /// Selects the next source-shaped replica and invalidates on exhaustion.
     pub fn select_request(
         &mut self,
         selector: &mut RequestSelector,
     ) -> Result<RequestSelection, RegionRouteError> {
-        if selector.policy.mode != ReplicaReadMode::Leader
-            || selector.policy.stale_read
-            || selector.policy.forwarding
+        if selector.policy.forwarding
+            || (selector.policy.stale_read && selector.policy.mode != ReplicaReadMode::Mixed)
         {
             return Err(RegionRouteError::UnsupportedReadPolicy);
         }
@@ -197,28 +196,11 @@ impl<L> RegionCache<L> {
 
         let leader_peer_id = location.leader_peer_id;
         selector.observe_leader(leader_peer_id);
-        let leader = leader_peer_id
-            .and_then(|peer_id| location.peers.iter().find(|peer| peer.id == peer_id));
-        let mut selected = None;
-        if let Some(peer) = leader {
-            if selector.attempts_for(peer.id) < MAX_REPLICA_ATTEMPTS
-                && selector.attempted_time_for(peer.id) < MAX_REPLICA_ATTEMPT_TIME
-                && self.peer_is_candidate(peer, true)?
-            {
-                selected = Some(peer.clone());
-            }
-        }
-        if selected.is_none() {
-            for peer in &location.peers {
-                if Some(peer.id) != leader_peer_id
-                    && selector.attempts_for(peer.id) == 0
-                    && self.peer_is_candidate(peer, false)?
-                {
-                    selected = Some(peer.clone());
-                    break;
-                }
-            }
-        }
+        let selected = if selector.policy.mode == ReplicaReadMode::Leader {
+            self.select_leader_semantics(selector, location, leader_peer_id)?
+        } else {
+            self.select_replica_read(selector, location, leader_peer_id)?
+        };
 
         let Some(peer) = selected else {
             let region = selector.region;
@@ -236,14 +218,16 @@ impl<L> RegionCache<L> {
             address: store.address.clone(),
             store_epoch: store.epoch,
         };
+        let cached_leader = Some(peer.id) == leader_peer_id;
+        let (replica_read, stale_read) = request_flags(selector, cached_leader);
         selector.record_dispatch(attempt.clone());
         Ok(RequestSelection::Attempt(LeaderRequest {
             attempt,
             role: peer.role,
             is_witness: peer.is_witness,
-            replica_read: false,
-            stale_read: false,
-            cached_leader: Some(peer.id) == leader_peer_id,
+            replica_read,
+            stale_read,
+            cached_leader,
         }))
     }
 
@@ -266,20 +250,107 @@ impl<L> RegionCache<L> {
         ))
     }
 
+    fn select_leader_semantics(
+        &self,
+        selector: &RequestSelector,
+        location: &RegionLocation,
+        leader_peer_id: Option<u64>,
+    ) -> Result<Option<Peer>, RegionRouteError> {
+        let leader = leader_peer_id
+            .and_then(|peer_id| location.peers.iter().find(|peer| peer.id == peer_id));
+        if let Some(peer) = leader {
+            if selector.attempts_for(peer.id) < MAX_REPLICA_ATTEMPTS
+                && selector.attempted_time_for(peer.id) < MAX_REPLICA_ATTEMPT_TIME
+                && self.peer_is_candidate(peer, true, false)?
+            {
+                return Ok(Some(peer.clone()));
+            }
+        }
+        for peer in &location.peers {
+            if Some(peer.id) != leader_peer_id
+                && selector.attempts_for(peer.id) == 0
+                && self.peer_is_candidate(peer, false, false)?
+            {
+                return Ok(Some(peer.clone()));
+            }
+        }
+        Ok(None)
+    }
+
+    fn select_replica_read(
+        &self,
+        selector: &RequestSelector,
+        location: &RegionLocation,
+        leader_peer_id: Option<u64>,
+    ) -> Result<Option<Peer>, RegionRouteError> {
+        if selector.policy.stale_read && selector.dispatches == 1 {
+            if let Some(leader) = leader_peer_id
+                .and_then(|peer_id| location.peers.iter().find(|peer| peer.id == peer_id))
+            {
+                if selector.attempts_for(leader.id) == 0
+                    && self.peer_is_candidate(leader, true, false)?
+                {
+                    return Ok(Some(leader.clone()));
+                }
+            }
+        }
+
+        let mut best_score = None;
+        let mut best = Vec::new();
+        for peer in &location.peers {
+            let is_leader = Some(peer.id) == leader_peer_id;
+            if !self.peer_is_candidate(peer, is_leader, true)? {
+                continue;
+            }
+            let max_attempts = if !is_leader && selector.may_retry_data_not_ready(peer.id) {
+                2
+            } else {
+                1
+            };
+            if selector.attempts_for(peer.id) >= max_attempts {
+                continue;
+            }
+            let score = replica_score(selector, peer, is_leader);
+            match best_score {
+                None => {
+                    best_score = Some(score);
+                    best.push(peer.clone());
+                }
+                Some(current) if score > current => {
+                    best_score = Some(score);
+                    best.clear();
+                    best.push(peer.clone());
+                }
+                Some(current) if score == current => best.push(peer.clone()),
+                Some(_) => {}
+            }
+        }
+        if best.is_empty() {
+            return Ok(None);
+        }
+        let index = selector.policy.selection_seed as usize % best.len();
+        Ok(Some(best.swap_remove(index)))
+    }
+
     fn peer_is_candidate(
         &self,
         peer: &Peer,
         cached_leader: bool,
+        replica_policy: bool,
     ) -> Result<bool, RegionRouteError> {
-        if peer.is_witness || peer.role == PeerRole::Learner {
+        if peer.is_witness {
             return Ok(false);
         }
-        if !cached_leader
-            && !matches!(
-                peer.role,
-                PeerRole::Voter | PeerRole::IncomingVoter | PeerRole::DemotingVoter
-            )
+        let voter = matches!(
+            peer.role,
+            PeerRole::Voter | PeerRole::IncomingVoter | PeerRole::DemotingVoter
+        );
+        if (!replica_policy && !voter)
+            || (replica_policy && !voter && peer.role != PeerRole::Learner)
         {
+            return Ok(false);
+        }
+        if cached_leader && !voter {
             return Ok(false);
         }
         let store = self
@@ -550,6 +621,53 @@ impl<L> RegionCache<L> {
         self.stores = next_stores;
         Ok(index)
     }
+}
+
+fn replica_score(selector: &RequestSelector, peer: &Peer, is_leader: bool) -> u8 {
+    const NOT_ATTEMPTED: u8 = 1;
+    const NORMAL_PEER: u8 = 1 << 1;
+    const PREFER_LEADER: u8 = 1 << 2;
+
+    let mut score = 0;
+    if selector.attempts_for(peer.id) == 0 {
+        score |= NOT_ATTEMPTED;
+    }
+    if is_leader {
+        match selector.policy.mode {
+            ReplicaReadMode::Mixed => score |= NORMAL_PEER,
+            ReplicaReadMode::PreferLeader => score |= PREFER_LEADER,
+            ReplicaReadMode::Leader | ReplicaReadMode::Follower | ReplicaReadMode::Learner => {}
+        }
+    } else if selector.policy.mode != ReplicaReadMode::Learner || peer.role == PeerRole::Learner {
+        score |= NORMAL_PEER;
+    }
+    score
+}
+
+fn request_flags(selector: &RequestSelector, cached_leader: bool) -> (bool, bool) {
+    if selector.policy.mode == ReplicaReadMode::Leader {
+        return (false, false);
+    }
+    if !selector.policy.stale_read {
+        return (!cached_leader, false);
+    }
+    if selector.dispatches == 0 {
+        return (false, true);
+    }
+    if cached_leader
+        && selector
+            .leader_peer_id
+            .is_some_and(|leader| selector.attempts_for(leader) == 0)
+    {
+        return (false, false);
+    }
+    if selector
+        .leader_peer_id
+        .is_some_and(|leader| selector.attempts_for(leader) > 0)
+    {
+        return (true, false);
+    }
+    (false, true)
 }
 
 fn normalize_loaded(stores: &mut BTreeMap<u64, StoreState>, loaded: &mut RegionLocation) {

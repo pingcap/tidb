@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
 use super::{PeerRole, ReadPolicy, RegionAttempt, RegionVerId};
@@ -30,7 +30,7 @@ pub const MAX_REPLICA_ATTEMPTS: u8 = 10;
 /// Pinned client-go's maximum accumulated attempt time for one leader.
 pub const MAX_REPLICA_ATTEMPT_TIME: Duration = Duration::from_secs(50);
 
-/// One immutable leader-semantics request target.
+/// One immutable request target selected from the cached region.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LeaderRequest {
     /// Exact region/store route observed by this request.
@@ -39,9 +39,9 @@ pub struct LeaderRequest {
     pub role: PeerRole,
     /// Whether source metadata marks this peer as a witness.
     pub is_witness: bool,
-    /// Leader requests remain non-replica reads even on an alternate peer.
+    /// Whether TiKV must execute this as a replica read.
     pub replica_read: bool,
-    /// Leader requests never become stale reads while probing peers.
+    /// Whether TiKV must execute this as a stale read.
     pub stale_read: bool,
     /// Whether this peer was the cached leader when selected.
     pub cached_leader: bool,
@@ -59,7 +59,7 @@ pub enum RequestSelection {
     },
 }
 
-/// Request-scoped leader-first selector state.
+/// Request-scoped replica selector state.
 ///
 /// The cache remains the store/leader authority. This object owns only attempt
 /// history, so every selection is revalidated against current canonical state.
@@ -70,6 +70,9 @@ pub struct RequestSelector {
     pub(crate) leader_peer_id: Option<u64>,
     pub(crate) attempts_by_peer: BTreeMap<u64, PeerAttemptState>,
     pub(crate) pending_attempt: Option<RegionAttempt>,
+    pub(crate) completed_attempt: Option<RegionAttempt>,
+    pub(crate) data_not_ready_peers: BTreeSet<u64>,
+    pub(crate) dispatches: u32,
 }
 
 impl RequestSelector {
@@ -84,6 +87,9 @@ impl RequestSelector {
             leader_peer_id,
             attempts_by_peer: BTreeMap::new(),
             pending_attempt: None,
+            completed_attempt: None,
+            data_not_ready_peers: BTreeSet::new(),
+            dispatches: 0,
         }
     }
 
@@ -131,6 +137,8 @@ impl RequestSelector {
         let state = self.attempts_by_peer.entry(attempt.peer_id).or_default();
         state.attempts = state.attempts.saturating_add(1);
         self.pending_attempt = Some(attempt);
+        self.completed_attempt = None;
+        self.dispatches = self.dispatches.saturating_add(1);
     }
 
     /// Records the duration of the exact outstanding RPC attempt.
@@ -144,7 +152,28 @@ impl RequestSelector {
         }
         let state = self.attempts_by_peer.entry(attempt.peer_id).or_default();
         state.attempted_time = state.attempted_time.saturating_add(duration);
-        self.pending_attempt = None;
+        self.completed_attempt = self.pending_attempt.take();
         true
+    }
+
+    /// Marks an exact completed stale-read attempt as `DataIsNotReady`.
+    ///
+    /// Pinned client-go permits that nonleader peer one later ordinary
+    /// replica-read attempt. Stale, duplicated, or still-pending observations
+    /// cannot change the access path.
+    #[must_use]
+    pub fn record_data_not_ready(&mut self, attempt: &RegionAttempt) -> bool {
+        if !self.policy.stale_read
+            || self.completed_attempt.as_ref() != Some(attempt)
+            || self.leader_peer_id == Some(attempt.peer_id)
+        {
+            return false;
+        }
+        self.completed_attempt = None;
+        self.data_not_ready_peers.insert(attempt.peer_id)
+    }
+
+    pub(crate) fn may_retry_data_not_ready(&self, peer_id: u64) -> bool {
+        self.data_not_ready_peers.contains(&peer_id)
     }
 }

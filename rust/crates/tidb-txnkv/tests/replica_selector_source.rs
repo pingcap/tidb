@@ -94,7 +94,7 @@ fn leader_policy_selects_pd_leader_first_with_leader_flags() {
 }
 
 #[test]
-fn every_non_leader_and_proxy_policy_fails_closed() {
+fn supported_replica_read_policies_create_request_scoped_selectors() {
     for policy in [
         ReadPolicy {
             mode: ReplicaReadMode::Follower,
@@ -113,11 +113,40 @@ fn every_non_leader_and_proxy_policy_fails_closed() {
             ..ReadPolicy::default()
         },
         ReadPolicy {
+            mode: ReplicaReadMode::Mixed,
+            stale_read: true,
+            ..ReadPolicy::default()
+        },
+    ] {
+        assert!(cache().request_selector(location().region, policy).is_ok());
+    }
+}
+
+#[test]
+fn forwarding_and_invalid_stale_policy_combinations_fail_closed() {
+    for policy in [
+        ReadPolicy {
+            forwarding: true,
+            ..ReadPolicy::default()
+        },
+        ReadPolicy {
+            mode: ReplicaReadMode::Leader,
             stale_read: true,
             ..ReadPolicy::default()
         },
         ReadPolicy {
-            forwarding: true,
+            mode: ReplicaReadMode::Follower,
+            stale_read: true,
+            ..ReadPolicy::default()
+        },
+        ReadPolicy {
+            mode: ReplicaReadMode::Learner,
+            stale_read: true,
+            ..ReadPolicy::default()
+        },
+        ReadPolicy {
+            mode: ReplicaReadMode::PreferLeader,
+            stale_read: true,
             ..ReadPolicy::default()
         },
     ] {

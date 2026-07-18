@@ -18,8 +18,8 @@ use std::time::Duration;
 
 use tidb_txnkv::region::{
     LeaderRequest, Peer, PeerRole, ReadPolicy, RegionCache, RegionLoadError, RegionLoader,
-    RegionLocation, RegionRouteError, RegionVerId, RequestSelection, Store, StoreLiveness,
-    MAX_REPLICA_ATTEMPTS,
+    RegionLocation, RegionRouteError, RegionVerId, ReplicaReadMode, RequestSelection, Store,
+    StoreLiveness, MAX_REPLICA_ATTEMPTS,
 };
 
 struct Loader(Option<RegionLocation>);
@@ -43,6 +43,7 @@ fn location() -> RegionLocation {
         (13, 103, PeerRole::Voter, false),
         (14, 104, PeerRole::Learner, false),
         (15, 105, PeerRole::Voter, true),
+        (16, 106, PeerRole::Unknown(99), false),
     ];
     RegionLocation {
         region: RegionVerId::new(9, 2, 3),
@@ -84,6 +85,244 @@ fn next(cache: &mut RegionCache<Loader>) -> LeaderRequest {
         panic!("expected request")
     };
     request
+}
+
+fn policy(mode: ReplicaReadMode) -> ReadPolicy {
+    ReadPolicy {
+        mode,
+        ..ReadPolicy::default()
+    }
+}
+
+fn select(
+    cache: &mut RegionCache<Loader>,
+    selector: &mut tidb_txnkv::region::RequestSelector,
+) -> LeaderRequest {
+    let RequestSelection::Attempt(request) = cache.select_request(selector).unwrap() else {
+        panic!("expected request attempt")
+    };
+    request
+}
+
+fn complete(selector: &mut tidb_txnkv::region::RequestSelector, request: &LeaderRequest) {
+    assert!(selector.record_attempt_result(&request.attempt, Duration::from_millis(1)));
+}
+
+#[test]
+fn follower_policy_visits_nonleaders_before_leader_with_replica_flags() {
+    let mut cache = cache();
+    let region = location().region;
+    let mut selector = cache
+        .request_selector(region, policy(ReplicaReadMode::Follower))
+        .unwrap();
+
+    for (peer_id, role) in [
+        (12, PeerRole::Voter),
+        (13, PeerRole::Voter),
+        (14, PeerRole::Learner),
+    ] {
+        let request = select(&mut cache, &mut selector);
+        assert_eq!(request.attempt.peer_id, peer_id);
+        assert_eq!(request.role, role);
+        assert!(request.replica_read);
+        assert!(!request.stale_read);
+        complete(&mut selector, &request);
+    }
+    let leader = select(&mut cache, &mut selector);
+    assert_eq!(leader.attempt.peer_id, 11);
+    assert!(leader.cached_leader);
+    assert!(!leader.replica_read);
+    assert!(!leader.stale_read);
+
+    let mut rotated = cache
+        .request_selector(
+            region,
+            ReadPolicy {
+                mode: ReplicaReadMode::Follower,
+                selection_seed: 1,
+                ..ReadPolicy::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(select(&mut cache, &mut rotated).attempt.peer_id, 13);
+
+    complete(&mut selector, &leader);
+    assert_eq!(
+        cache.select_request(&mut selector).unwrap(),
+        RequestSelection::ReloadRegion { region }
+    );
+}
+
+#[test]
+fn mixed_policy_treats_leader_and_replicas_as_equal_seeded_candidates() {
+    let mut cache = cache();
+    let region = location().region;
+    let mut leader_first = cache
+        .request_selector(region, policy(ReplicaReadMode::Mixed))
+        .unwrap();
+    let leader = select(&mut cache, &mut leader_first);
+    assert_eq!(leader.attempt.peer_id, 11);
+    assert!(!leader.replica_read);
+    assert!(!leader.stale_read);
+
+    let mut follower_first = cache
+        .request_selector(
+            region,
+            ReadPolicy {
+                mode: ReplicaReadMode::Mixed,
+                selection_seed: 1,
+                ..ReadPolicy::default()
+            },
+        )
+        .unwrap();
+    let follower = select(&mut cache, &mut follower_first);
+    assert_eq!(follower.attempt.peer_id, 12);
+    assert!(follower.replica_read);
+    assert!(!follower.stale_read);
+}
+
+#[test]
+fn prefer_leader_falls_back_to_replica_after_leader_rejection() {
+    let mut cache = cache();
+    let region = location().region;
+    let mut selector = cache
+        .request_selector(
+            region,
+            ReadPolicy {
+                mode: ReplicaReadMode::PreferLeader,
+                selection_seed: 2,
+                ..ReadPolicy::default()
+            },
+        )
+        .unwrap();
+
+    let leader = select(&mut cache, &mut selector);
+    assert_eq!(leader.attempt.peer_id, 11);
+    assert!(!leader.replica_read);
+    complete(&mut selector, &leader);
+    selector.reject_peer(leader.attempt.peer_id);
+
+    let fallback = select(&mut cache, &mut selector);
+    assert_eq!(fallback.attempt.peer_id, 14);
+    assert!(fallback.replica_read);
+    assert!(!fallback.stale_read);
+}
+
+#[test]
+fn learner_policy_prefers_learner_then_falls_back_to_voter() {
+    let mut cache = cache();
+    let region = location().region;
+    let mut selector = cache
+        .request_selector(region, policy(ReplicaReadMode::Learner))
+        .unwrap();
+
+    let learner = select(&mut cache, &mut selector);
+    assert_eq!(learner.attempt.peer_id, 14);
+    assert_eq!(learner.role, PeerRole::Learner);
+    assert!(learner.replica_read);
+    complete(&mut selector, &learner);
+    selector.reject_peer(learner.attempt.peer_id);
+
+    let fallback = select(&mut cache, &mut selector);
+    assert_eq!(fallback.attempt.peer_id, 11);
+    assert!(fallback.cached_leader);
+    assert!(!fallback.replica_read);
+}
+
+#[test]
+fn stale_policy_forces_unattempted_leader_then_uses_ordinary_replica_reads() {
+    let mut cache = cache();
+    let region = location().region;
+    let mut selector = cache
+        .request_selector(
+            region,
+            ReadPolicy {
+                mode: ReplicaReadMode::Mixed,
+                stale_read: true,
+                selection_seed: 1,
+                ..ReadPolicy::default()
+            },
+        )
+        .unwrap();
+
+    let stale = select(&mut cache, &mut selector);
+    assert_eq!(stale.attempt.peer_id, 12);
+    assert!(!stale.replica_read);
+    assert!(stale.stale_read);
+    complete(&mut selector, &stale);
+    assert!(!cache.promote_successful_request(&stale).unwrap());
+
+    let leader = select(&mut cache, &mut selector);
+    assert_eq!(leader.attempt.peer_id, 11);
+    assert!(!leader.replica_read);
+    assert!(!leader.stale_read);
+    complete(&mut selector, &leader);
+    assert!(!selector.record_data_not_ready(&leader.attempt));
+
+    let ordinary = select(&mut cache, &mut selector);
+    assert_ne!(ordinary.attempt.peer_id, 11);
+    assert!(ordinary.replica_read);
+    assert!(!ordinary.stale_read);
+}
+
+#[test]
+fn data_is_not_ready_allows_one_deferred_retry_after_unattempted_peers() {
+    let mut cache = cache();
+    let region = location().region;
+    let mut selector = cache
+        .request_selector(
+            region,
+            ReadPolicy {
+                mode: ReplicaReadMode::Mixed,
+                stale_read: true,
+                selection_seed: 1,
+                ..ReadPolicy::default()
+            },
+        )
+        .unwrap();
+
+    let stale = select(&mut cache, &mut selector);
+    assert_eq!(stale.attempt.peer_id, 12);
+    complete(&mut selector, &stale);
+    assert!(selector.record_data_not_ready(&stale.attempt));
+    assert!(!selector.record_data_not_ready(&stale.attempt));
+
+    let leader = select(&mut cache, &mut selector);
+    assert_eq!(leader.attempt.peer_id, 11);
+    complete(&mut selector, &leader);
+
+    for _ in 0..2 {
+        let unattempted = select(&mut cache, &mut selector);
+        assert_ne!(unattempted.attempt.peer_id, 12);
+        complete(&mut selector, &unattempted);
+    }
+    let retry = select(&mut cache, &mut selector);
+    assert_eq!(retry.attempt.peer_id, 12);
+    assert!(retry.replica_read);
+    assert!(!retry.stale_read);
+}
+
+#[test]
+fn unreachable_replica_is_excluded_from_a_fresh_request_selector() {
+    let mut cache = cache();
+    let region = location().region;
+    let mut first = cache
+        .request_selector(region, policy(ReplicaReadMode::Follower))
+        .unwrap();
+    let failed = select(&mut cache, &mut first);
+    assert_eq!(failed.attempt.peer_id, 12);
+    complete(&mut first, &failed);
+    cache
+        .on_send_failure(&failed.attempt, StoreLiveness::Unreachable)
+        .unwrap();
+
+    let mut later = cache
+        .request_selector(region, policy(ReplicaReadMode::Follower))
+        .unwrap();
+    let selected = select(&mut cache, &mut later);
+    assert_eq!(selected.attempt.peer_id, 13);
+    assert_ne!(selected.attempt.store_id, failed.attempt.store_id);
+    assert!(selected.replica_read);
 }
 
 #[test]
