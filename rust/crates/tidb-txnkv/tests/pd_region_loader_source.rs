@@ -332,9 +332,14 @@ fn loader_decodes_by_id_scan_and_batch_regions_once_without_synthetic_buckets() 
     let server = Server::start(valid_state());
     let mut loader = PdRegionLoader::connect(&server.address, Duration::from_secs(2)).unwrap();
 
-    let by_id = loader.load_region_by_id(7, false).unwrap();
-    assert_eq!(by_id.start_key, b"logical-start");
-    assert_eq!(by_id.buckets.as_ref().unwrap().keys[1], b"logical-split");
+    let by_id_without_buckets = loader.load_region_by_id(7, false).unwrap();
+    assert_eq!(by_id_without_buckets.start_key, b"logical-start");
+    assert!(by_id_without_buckets.buckets.is_none());
+    let by_id_with_buckets = loader.load_region_by_id(7, true).unwrap();
+    assert_eq!(
+        by_id_with_buckets.buckets.as_ref().unwrap().keys[1],
+        b"logical-split"
+    );
 
     let scan = loader.scan_regions(b"a", b"z", 9).unwrap();
     assert_eq!(
@@ -346,11 +351,7 @@ fn loader_decodes_by_id_scan_and_batch_regions_once_without_synthetic_buckets() 
     assert_eq!(scan[0].start_key, b"a");
     assert_eq!(scan[0].end_key, b"m");
     assert_eq!(scan[0].pending_peer_ids, [212]);
-    assert_eq!(
-        scan[0].buckets.as_ref().unwrap().keys,
-        vec![b"a".to_vec(), b"m".to_vec()]
-    );
-    assert!(scan[1].buckets.is_none());
+    assert!(scan.iter().all(|region| region.buckets.is_none()));
 
     let ranges = [
         KeyRange::new(b"a".to_vec(), b"m".to_vec()),
@@ -377,9 +378,13 @@ fn loader_decodes_by_id_scan_and_batch_regions_once_without_synthetic_buckets() 
     assert!(batch[1].buckets.is_none());
 
     let state = server.state.lock().unwrap();
-    assert_eq!(state.region_by_id_requests.len(), 1);
-    assert_eq!(state.region_by_id_requests[0].region_id, 7);
+    assert_eq!(state.region_by_id_requests.len(), 2);
+    assert!(state
+        .region_by_id_requests
+        .iter()
+        .all(|request| request.region_id == 7));
     assert!(!state.region_by_id_requests[0].need_buckets);
+    assert!(state.region_by_id_requests[1].need_buckets);
 
     assert_eq!(state.scan_region_requests.len(), 1);
     assert_eq!(state.scan_region_requests[0].start_key, encoded(b"a"));
@@ -438,6 +443,7 @@ fn batch_loader_falls_back_only_from_unimplemented_and_does_not_invent_buckets()
 fn legacy_fallback_preserves_the_same_leader_required_filtering_contract() {
     let mut state = valid_state();
     state.batch_scan_unimplemented = true;
+    state.scan_regions.regions[1].leader = None;
     let server = Server::start(state);
     let loader = PdRegionLoader::connect(&server.address, Duration::from_secs(2)).unwrap();
     let mut cache = RegionCache::new(loader);
