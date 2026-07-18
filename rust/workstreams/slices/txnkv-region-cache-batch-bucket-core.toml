@@ -53,7 +53,6 @@ support_anchors = [
   "client-go/internal/locate/region_cache.go:2193-2946:ordered load, scan, replacement, and bucket preservation",
 ]
 rust_paths = [
-  "rust/crates/tidb-txnkv/src/pd_loader.rs",
   "rust/crates/tidb-txnkv/src/region/batch_locate.rs",
   "rust/crates/tidb-txnkv/src/region/bucket.rs",
   "rust/crates/tidb-txnkv/src/region/cache.rs",
@@ -66,7 +65,6 @@ rust_paths = [
   "rust/crates/tidb-txnkv/tests/region_cache_ttl_source.rs",
   "rust/crates/tidb-txnkv/tests/region_end_key_source.rs",
   "rust/crates/tidb-txnkv/tests/region_epoch_bucket_inheritance_source.rs",
-  "rust/crates/tidb-txnkv/tests/pd_region_loader_source.rs",
   "rust/crates/tidb-txnkv/tests/lock_resolver_source.rs",
   "rust/crates/tidb-txnkv/tests/region_cache_source.rs",
   "rust/crates/tidb-txnkv/tests/region_error_recovery_source.rs",

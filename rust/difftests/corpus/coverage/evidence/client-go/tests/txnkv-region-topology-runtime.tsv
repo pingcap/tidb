@@ -1,4 +1,3 @@
-# Exact pinned client-go test evidence for txnkv-region-topology-runtime.
+# Remaining exact pinned client-go test evidence for txnkv-region-topology-runtime.
 # kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-Test	internal/locate/region_cache_test.go	242	TestRegionCache	PARTIAL	txnkv-region-topology-runtime	rust/crates/tidb-txnkv/tests/region_error_recovery_source.rs	The canonical RegionCache topology and typed feedback path retain this exact source behavior; TTL, background refresh, and production concurrency remain external.
 TestSuiteMethod	internal/locate/region_cache_test.go	1028	TestRegionCache/TestSendFailInvalidateRegionsInSameStore	PARTIAL	txnkv-region-topology-runtime	rust/crates/tidb-txnkv/tests/region_cache_source.rs	The canonical RegionCache topology and typed feedback path retain this exact source behavior; TTL, background refresh, and production concurrency remain external.

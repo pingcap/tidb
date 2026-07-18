@@ -1120,6 +1120,7 @@ version = "0.0.0"
 dependencies = [
  "bytes",
  "prost",
+ "serde_json",
  "tidb-codec",
  "tidb-datatype",
  "tidb-error",

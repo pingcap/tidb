@@ -1,0 +1,4 @@
+# client-go source evidence for Campaign 15 async completion core.
+# source_path	status	owner	evidence_artifact	note
+util/async/core.go	PARTIAL	txnkv-async-completion-core	rust/crates/tidb-txnkv/src/rpc/async_completion.rs	One source-shaped completion authority preserves reverse injection, silent once-only invoke or schedule, exact terminal delivery, pull-owned cancellation, and cancellation suppression. BatchCommands transport callbacks and full async RegionRequest retry policy remain external.
+util/async/runloop.go	PARTIAL	txnkv-async-completion-core	rust/crates/tidb-txnkv/src/rpc/async_completion.rs	Per-loop mutex and condition state preserves queued execution, waiting, cancellation fan-out, exact Cancelled versus DeadlineExceeded identity, concurrent-driver exclusion, and immediate or configured spawning without another Tokio runtime. BatchCommands connection lifecycle and request retry remain external.
