@@ -147,9 +147,8 @@ func TestPackedRowsUseTiDBStorageEncoding(t *testing.T) {
 
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	databases, _, err := loadPackedDatabases(context.Background(), func(
+	databases, err := loadPackedDatabases(context.Background(), func(
 		_ context.Context,
-		_ packedScanTarget,
 		startKey, endKey []byte,
 		emit func(key, value []byte) error,
 	) error {
@@ -237,11 +236,12 @@ func readPackedTestRows(t *testing.T, store kv.Storage, table *model.TableInfo) 
 		for iterator.Valid() {
 			row := MakeRowReceiver(meta.ColumnTypes())
 			packed := &packedRowIter{
-				table:  table,
-				key:    append([]byte(nil), iterator.Key()...),
-				value:  append([]byte(nil), iterator.Value()...),
-				args:   make([]any, meta.ColumnCount()),
-				hasRow: true,
+				table:       table,
+				key:         append([]byte(nil), iterator.Key()...),
+				value:       append([]byte(nil), iterator.Value()...),
+				args:        make([]any, meta.ColumnCount()),
+				hasRow:      true,
+				observation: &packedTableObservation{},
 			}
 			require.NoError(t, packed.Decode(row))
 			var output bytes.Buffer

@@ -24,11 +24,13 @@ The supplied MinIO fixture proves the result. Exporting `test.warehouse` while t
 - [x] (2026-07-17) Added opt-in legacy encryption: Dumpling propagates `--cse-legacy-encryption`, and CSE resolves the existing `CSE_MASTER_KEY_*` KMS configuration for legacy shard properties.
 - [x] (2026-07-18) Added SST range-hint pruning and statistics so a range scan reports candidate, retained, and conservatively retained files.
 - [x] (2026-07-18) Added bounded observability for packed-export stages, range processes, shard/object reads, packed row decoding, and packed output-storage calls. Normal per-range and per-shard records stay at debug level; only slow operations and failures are promoted.
-- [x] (2026-07-18) Removed the draft packed instrumentation from the generic Dumpling writer files. Packed output timing is installed only by `dumpPacked` through a storage wrapper defined in `packed.go`.
-- [x] (2026-07-18) Moved SST range-hint statistics out of generic kvengine metadata code. The packed reader now derives them locally from the existing unfiltered and filtered change sets, leaving the kvengine API and implementation unchanged.
+- [x] (2026-07-18) Removed the draft packed instrumentation from the generic Dumpling writer files. Packed output timing is installed only by `dumpPacked` through a storage wrapper defined in `packed_observability.go`.
+- [x] (2026-07-18) Moved SST range-hint statistics out of generic kvengine metadata code. The packed reader now derives them locally from the existing unfiltered and filtered change sets, without adding generic kvengine observation hooks, counters, or logs.
 - [x] (2026-07-18) Re-ran the focused CSE and Dumpling tests, CSE format, and CSE clippy after the observability changes.
 - [x] (2026-07-18) Rebuilt CSE with the release profile and Dumpling with the optimized Go build, exported the MinIO fixture, audited log volume and sensitive fields, and rechecked the stable output hashes.
 - [x] (2026-07-18) Passed the TiDB Ready lint gate and completed the final scope, diff, and test-quality audit.
+- [x] (2026-07-18) Moved most performance-only implementation out of packed export, protocol, CSE dumper, and packed-reader main-path files. Normal structs keep at most one compact observation handle rather than collections of counters and timers.
+- [x] (2026-07-18) Replaced the oversized terminal and per-range log records with bounded, topic-specific records, then repeated Ready validation and the release-profile fixture export.
 
 ## Surprises & Discoveries
 
@@ -93,7 +95,11 @@ The supplied MinIO fixture proves the result. Exporting `test.warehouse` while t
   Date/Author: 2026-07-18, Codex.
 
 - Decision: Keep SST selection statistics inside the packed reader.
-  Rationale: Comparing the existing full and range-filtered change sets provides the packed-export diagnostics without adding statistics, hooks, or API changes to generic kvengine metadata code.
+  Rationale: Comparing the existing full and range-filtered change sets provides the packed-export diagnostics without adding statistics, hooks, or logs to generic kvengine metadata code. The separate range-hint API remains the functional pruning boundary requested for packed scans.
+  Date/Author: 2026-07-18, Codex.
+
+- Decision: Isolate performance observation from the normal packed-export control and data path.
+  Rationale: The scope is limited to `dumpPacked`, its CSE dumper protocol, and the packed reader. Generic Dumpling writers, object-storage implementations, kvengine metadata, snapshots, and DFS paths receive no observability hooks or logs. Packed main-path files expose only small observer handles; counter sets, timing aggregation, machine telemetry, slow-operation sampling, and detailed log construction belong in dedicated observability files. Terminal logs are split by topic so no ordinary log record carries the full metric set.
   Date/Author: 2026-07-18, Codex.
 
 ## Outcomes & Retrospective
@@ -211,17 +217,21 @@ an actually encrypted L0 file and reads it through the injected legacy master
 key.
 
 The final 2026-07-18 scope-audit run used a CSE binary built by `make release`
-and reporting `build_profile=release`, plus an optimized, stripped Dumpling binary. It completed
-five one-shot scans with no failed or canceled scans, retained 10 of 410 SST
-candidates, read 10 content objects, and reported matching CSE/protocol row and
-byte totals. Peak CSE child RSS was 103,145,472 bytes. The debug log contained 32
-records: 25 debug, 7 info, and no warning or error records. Routine range and
-table completion appeared only at debug level, no internal machine-protocol
-line escaped into the parent log, and the sensitive-value audit found no full
-metadata URL, URL credentials, AWS credential/session-token value, or legacy
-master-key configuration value. The CSV and schema hashes remained unchanged,
-with 300 data rows, 300 unique IDs, and nine fields per row. Generic Dumpling
-writer files and generic kvengine metadata files both had zero diff.
+and reporting `build_profile=release`, plus an optimized, stripped Dumpling
+binary. It completed five one-shot scans with no failed or canceled scans,
+retained 10 of 410 SST candidates, read 10 content objects, and reported
+matching CSE/protocol row and byte totals. Peak CSE child RSS was 100,614,144
+bytes. After splitting detailed records by topic, the debug log contained 61
+records: 47 debug, 14 info, and no warning or error records; its longest record
+was 764 bytes. Routine range and table completion appeared only at debug level,
+no internal machine-protocol line escaped into the parent log, and the
+sensitive-value audit found no full metadata URL, URL credentials, AWS
+credential/session-token value, or legacy master-key configuration value. The
+CSV and schema hashes remained unchanged, with 300 data rows, 300 unique IDs,
+and nine fields per row. Generic Dumpling
+writer files had zero diff, and the observability follow-up had zero diff in
+generic kvengine metadata files. The earlier packed-scan range-hint commit still
+contains the functional `meta.rs` API change used for SST pruning.
 
 ## Interfaces and Dependencies
 
