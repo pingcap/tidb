@@ -484,6 +484,12 @@ struct OnceBodyGuard<T, E> {
     state: Arc<CallbackState<T, E>>,
 }
 
+type ClaimedOnceBody<T, E> = (
+    Vec<CompletionTransform<T, E>>,
+    CompletionTerminal<T, E>,
+    OnceBodyGuard<T, E>,
+);
+
 impl<T, E> Drop for OnceBodyGuard<T, E> {
     fn drop(&mut self) {
         {
@@ -585,13 +591,7 @@ where
         }));
     }
 
-    fn begin_once_body(
-        &self,
-    ) -> Option<(
-        Vec<CompletionTransform<T, E>>,
-        CompletionTerminal<T, E>,
-        OnceBodyGuard<T, E>,
-    )> {
+    fn begin_once_body(&self) -> Option<ClaimedOnceBody<T, E>> {
         let mut inner = self
             .state
             .inner

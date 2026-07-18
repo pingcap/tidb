@@ -484,14 +484,14 @@ fn parse_custom_options(policy: &str) -> Option<BatchPolicyOptions> {
         .trim();
     let value: Value = serde_json::from_str(raw).ok()?;
     let body = value.as_object()?;
-    let mut options = BatchPolicyOptions::default();
-    options.version = parse_json_integer(body, "v")?.unwrap_or_default();
-    options.max_arrival_intervals = parse_json_integer(body, "n")?.unwrap_or_default();
-    options.wait_seconds = parse_json_number(body, "t")?.unwrap_or_default();
-    options.weight = parse_json_number(body, "w")?.unwrap_or_default();
-    options.threshold = parse_json_number(body, "p")?.unwrap_or_default();
-    options.wait_size_rounding = parse_json_number(body, "q")?.unwrap_or_default();
-    Some(options)
+    Some(BatchPolicyOptions {
+        version: parse_json_integer(body, "v")?.unwrap_or_default(),
+        max_arrival_intervals: parse_json_integer(body, "n")?.unwrap_or_default(),
+        wait_seconds: parse_json_number(body, "t")?.unwrap_or_default(),
+        weight: parse_json_number(body, "w")?.unwrap_or_default(),
+        threshold: parse_json_number(body, "p")?.unwrap_or_default(),
+        wait_size_rounding: parse_json_number(body, "q")?.unwrap_or_default(),
+    })
 }
 
 fn parse_json_integer(body: &Map<String, Value>, key: &str) -> Option<Option<i64>> {

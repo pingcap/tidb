@@ -57,9 +57,9 @@ pub fn merge_loaded_and_cached(
     let mut last_loaded_end: Option<&[u8]> = None;
 
     for fresh in loaded {
-        if fresh.start_key.is_empty() {
-            merged.push(fresh.clone());
-        } else if last_loaded_end.is_some_and(|end| end >= fresh.start_key.as_slice()) {
+        if fresh.start_key.is_empty()
+            || last_loaded_end.is_some_and(|end| end >= fresh.start_key.as_slice())
+        {
             merged.push(fresh.clone());
         } else {
             while let Some(current) = cached.get(cached_index) {

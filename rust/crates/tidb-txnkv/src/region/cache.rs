@@ -1416,10 +1416,7 @@ impl<L> RegionCache<L> {
         let mut unavailable = BTreeSet::new();
         for range in ranges {
             let mut cursor = range.start.clone();
-            loop {
-                let Some(index) = self.find_key(&cursor) else {
-                    break;
-                };
+            while let Some(index) = self.find_key(&cursor) {
                 let region = self.regions[index].region;
                 if unavailable.contains(&region) {
                     break;
@@ -1455,13 +1452,6 @@ impl<L> RegionCache<L> {
         self.regions.retain(|cached| cached.region != region);
         self.entry_states.remove(&region);
         self.preferred_proxies.remove(&region);
-    }
-
-    fn insert_loaded(&mut self, loaded: RegionLocation) -> Result<usize, RegionRouteError>
-    where
-        L: RegionLoader,
-    {
-        self.insert_loaded_at(loaded, cache_now_seconds())
     }
 
     fn insert_loaded_at(
