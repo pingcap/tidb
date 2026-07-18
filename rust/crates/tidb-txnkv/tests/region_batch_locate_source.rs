@@ -435,7 +435,7 @@ fn gap_reply_retries_then_publishes_only_the_converged_reply() {
 }
 
 #[test]
-fn overlapping_cached_and_loaded_regions_progress_to_complete_coverage() {
+fn overlapping_loaded_regions_preserve_the_partial_cached_prefix() {
     let calls = Arc::new(Mutex::new(0));
     let mut cache = RegionCache::with_ttl(
         ReplyLoader {
@@ -465,6 +465,7 @@ fn overlapping_cached_and_loaded_regions_progress_to_complete_coverage() {
             .map(|region| (region.start_key.clone(), region.end_key.clone()))
             .collect::<Vec<_>>(),
         vec![
+            (b"a".to_vec(), b"c".to_vec()),
             (b"b".to_vec(), b"d".to_vec()),
             (b"d".to_vec(), b"e".to_vec()),
         ]
