@@ -590,9 +590,11 @@ fn by_id_scan_and_batch_scan_preserve_flags_ranges_limits_and_response_order() {
     let server = Server::start(valid_state());
     let mut client = PdClient::connect(&server.address, Duration::from_secs(2)).unwrap();
 
-    let by_id = client.get_region_by_id(7, false).unwrap();
-    assert_eq!(by_id.id, 7);
-    assert_eq!(by_id.buckets.as_ref().unwrap().version, 8);
+    let by_id_without_buckets = client.get_region_by_id(7, false).unwrap();
+    assert_eq!(by_id_without_buckets.id, 7);
+    assert!(by_id_without_buckets.buckets.is_none());
+    let by_id_with_buckets = client.get_region_by_id(7, true).unwrap();
+    assert_eq!(by_id_with_buckets.buckets.as_ref().unwrap().version, 8);
 
     let scan = client.scan_regions(b"wire-a", b"wire-z", 17).unwrap();
     assert_eq!(
@@ -602,7 +604,7 @@ fn by_id_scan_and_batch_scan_preserve_flags_ranges_limits_and_response_order() {
     assert_eq!(scan[0].leader.as_ref().unwrap().id, 211);
     assert_eq!(scan[0].down_peers[0].store_id, 2_101);
     assert_eq!(scan[0].pending_peers[0].id, 212);
-    assert_eq!(scan[0].buckets.as_ref().unwrap().version, 31);
+    assert!(scan.iter().all(|region| region.buckets.is_none()));
 
     let ranges = vec![
         PdKeyRange {
@@ -621,13 +623,19 @@ fn by_id_scan_and_batch_scan_preserve_flags_ranges_limits_and_response_order() {
     );
     assert_eq!(batch[1].pending_peers[0].store_id, 3_202);
     assert_eq!(batch[1].buckets.as_ref().unwrap().region_id, 32);
+    let batch_without_buckets = client.batch_scan_regions(&ranges, 23, false, true).unwrap();
+    assert!(batch_without_buckets
+        .iter()
+        .all(|region| region.buckets.is_none()));
 
     let state = server.state.lock().unwrap();
-    assert_eq!(state.region_by_id_requests.len(), 1);
-    let by_id_request = &state.region_by_id_requests[0];
-    assert_exact_header(by_id_request.header.as_ref().unwrap());
-    assert_eq!(by_id_request.region_id, 7);
-    assert!(!by_id_request.need_buckets);
+    assert_eq!(state.region_by_id_requests.len(), 2);
+    for request in &state.region_by_id_requests {
+        assert_exact_header(request.header.as_ref().unwrap());
+        assert_eq!(request.region_id, 7);
+    }
+    assert!(!state.region_by_id_requests[0].need_buckets);
+    assert!(state.region_by_id_requests[1].need_buckets);
 
     assert_eq!(state.scan_region_requests.len(), 1);
     let scan_request = &state.scan_region_requests[0];
@@ -636,7 +644,7 @@ fn by_id_scan_and_batch_scan_preserve_flags_ranges_limits_and_response_order() {
     assert_eq!(scan_request.end_key, b"wire-z");
     assert_eq!(scan_request.limit, 17);
 
-    assert_eq!(state.batch_scan_region_requests.len(), 1);
+    assert_eq!(state.batch_scan_region_requests.len(), 2);
     let batch_request = &state.batch_scan_region_requests[0];
     assert_exact_header(batch_request.header.as_ref().unwrap());
     assert!(batch_request.need_buckets);
@@ -647,14 +655,18 @@ fn by_id_scan_and_batch_scan_preserve_flags_ranges_limits_and_response_order() {
     assert_eq!(batch_request.ranges[0].end_key, ranges[0].end_key);
     assert_eq!(batch_request.ranges[1].start_key, ranges[1].start_key);
     assert_eq!(batch_request.ranges[1].end_key, ranges[1].end_key);
+    let batch_without_buckets_request = &state.batch_scan_region_requests[1];
+    assert_exact_header(batch_without_buckets_request.header.as_ref().unwrap());
+    assert!(!batch_without_buckets_request.need_buckets);
+    assert_eq!(batch_without_buckets_request.ranges, batch_request.ranges);
 }
 
 #[test]
 fn bounded_worker_keeps_each_bucket_flag_and_owned_response_isolated() {
     // pd-client/clients/router/client_test.go:
     // TestRequestFinisherNoDataRace and TestRequestFinisherClearsUnrequestedBuckets.
-    // This retained worker does not batch QueryRegion requests, so the exact
-    // equivalent contract is one flag and one owned projection per command.
+    // This retained worker does not batch QueryRegion requests, so it enforces
+    // the same per-request bucket filtering at its one owned projection point.
     let server = Server::start(valid_state());
     let mut client = PdClient::connect(&server.address, Duration::from_secs(2)).unwrap();
 
@@ -663,7 +675,7 @@ fn bounded_worker_keeps_each_bucket_flag_and_owned_response_isolated() {
     first.pending_peers[0].id = 999;
     let second = client.get_region_with_buckets(b"second", false).unwrap();
 
-    assert_eq!(second.buckets.as_ref().unwrap().keys[0], b"wire-start");
+    assert!(second.buckets.is_none());
     assert_eq!(second.pending_peers[0].id, 13);
     let state = server.state.lock().unwrap();
     assert_eq!(state.region_requests.len(), 2);

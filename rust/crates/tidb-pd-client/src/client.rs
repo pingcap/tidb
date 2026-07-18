@@ -545,7 +545,7 @@ fn get_region(
     let response =
         map_rpc_result(response, PdOperation::GetRegion, endpoint, timeout)?.into_inner();
     validate_response_header(PdOperation::GetRegion, response.header.as_ref(), cluster_id)?;
-    project_region(response)
+    project_region(response, need_buckets)
 }
 
 fn get_region_by_id(
@@ -576,7 +576,7 @@ fn get_region_by_id(
         response.header.as_ref(),
         cluster_id,
     )?;
-    project_region(response)
+    project_region(response, need_buckets)
 }
 
 fn scan_regions(
@@ -654,7 +654,7 @@ fn batch_scan_regions(
     response
         .regions
         .into_iter()
-        .map(project_extended_region)
+        .map(|region| project_extended_region(region, need_buckets))
         .collect()
 }
 
@@ -1226,7 +1226,10 @@ fn reject_header_error(
     Ok(())
 }
 
-fn project_region(response: pdpb::GetRegionResponse) -> Result<PdRegion, PdClientError> {
+fn project_region(
+    response: pdpb::GetRegionResponse,
+    need_buckets: bool,
+) -> Result<PdRegion, PdClientError> {
     let region = response
         .region
         .ok_or_else(|| invalid_topology("missing_region", "GetRegion omitted region"))?;
@@ -1236,10 +1239,14 @@ fn project_region(response: pdpb::GetRegionResponse) -> Result<PdRegion, PdClien
         response.down_peers,
         response.pending_peers,
         response.buckets,
+        need_buckets,
     )
 }
 
-fn project_extended_region(region: pdpb::Region) -> Result<PdRegion, PdClientError> {
+fn project_extended_region(
+    region: pdpb::Region,
+    need_buckets: bool,
+) -> Result<PdRegion, PdClientError> {
     let metadata = region
         .region
         .ok_or_else(|| invalid_topology("missing_region", "scan result omitted region"))?;
@@ -1249,6 +1256,7 @@ fn project_extended_region(region: pdpb::Region) -> Result<PdRegion, PdClientErr
         region.down_peers,
         region.pending_peers,
         region.buckets,
+        need_buckets,
     )
 }
 
@@ -1259,7 +1267,7 @@ fn project_scan_regions(
         return response
             .regions
             .into_iter()
-            .map(project_extended_region)
+            .map(|region| project_extended_region(region, false))
             .collect();
     }
 
@@ -1275,6 +1283,7 @@ fn project_scan_regions(
                 Vec::new(),
                 Vec::new(),
                 None,
+                false,
             )
         })
         .collect()
@@ -1286,6 +1295,7 @@ fn project_region_parts(
     down_peer_stats: Vec<pdpb::PeerStats>,
     pending_peer_metadata: Vec<metapb::Peer>,
     buckets: Option<metapb::Buckets>,
+    need_buckets: bool,
 ) -> Result<PdRegion, PdClientError> {
     if region.id == 0 {
         return Err(invalid_topology("zero_region_id", "region ID is zero"));
@@ -1359,6 +1369,9 @@ fn project_region_parts(
         .into_iter()
         .map(project_peer)
         .collect::<Result<Vec<_>, PdClientError>>()?;
+    // PD can return batch-wide bucket metadata for a request that did not ask
+    // for it. Enforce the per-request contract at the shared projection point.
+    let buckets = buckets.filter(|_| need_buckets).map(project_buckets);
 
     Ok(PdRegion {
         id: region.id,
@@ -1372,7 +1385,7 @@ fn project_region_parts(
         leader,
         down_peers,
         pending_peers,
-        buckets: buckets.map(project_buckets),
+        buckets,
     })
 }
 
