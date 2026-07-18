@@ -18,10 +18,16 @@
 //! state. The exact streaming wire and connection lifecycle are added only
 //! after this authority and asynchronous completion are integrated.
 
+mod inflight;
 mod observability;
 mod priority_queue;
 mod scheduler;
+mod wire;
 
+pub use inflight::{
+    BatchInflightError, BatchInflightTable, BatchPublishError, BatchRetirementReport, BatchRoute,
+    PendingBatchCommand,
+};
 pub use observability::{
     normalize_observed_sent_ns, terminal_outcome, BatchRequestObservation, BatchRequestOutcome,
     BatchRequestProgress, BatchRequestStage, BatchRequestState, BatchStreamState,
@@ -32,4 +38,8 @@ pub use scheduler::{
     BatchEntry, BatchEntryCompletion, BatchGroup, BatchGroups, BatchPolicyOptions, BatchScheduler,
     BatchTrigger, ScheduledEntry, BATCH_POLICY_BASIC, BATCH_POLICY_CUSTOM, BATCH_POLICY_POSITIVE,
     BATCH_POLICY_STANDARD, DEFAULT_BATCH_POLICY, HIGH_TASK_PRIORITY,
+};
+pub use wire::{
+    BatchCommandTag, BatchEnvelopeKind, BatchWireError, BatchWireRequest, BatchWireResponse,
+    OpaqueBatchCommand,
 };
