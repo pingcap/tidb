@@ -1,4 +1,5 @@
-package declarations
+//revive:disable:duplicated-imports Synthetic aliases exercise AST fixture-access discovery.
+package fixture
 
 import (
 	"os"
