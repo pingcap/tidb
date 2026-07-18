@@ -144,6 +144,7 @@ impl Tikv for StreamingTikv {
 struct TestServer {
     address: String,
     shutdown: Option<tokio::sync::oneshot::Sender<()>>,
+    finished: Option<mpsc::Receiver<()>>,
     thread: Option<JoinHandle<()>>,
 }
 
@@ -154,6 +155,7 @@ impl TestServer {
         drop(listener);
         let (shutdown, shutdown_rx) = tokio::sync::oneshot::channel();
         let (started_tx, started_rx) = mpsc::channel();
+        let (finished_tx, finished_rx) = mpsc::channel();
         let thread = std::thread::spawn(move || {
             tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -168,6 +170,7 @@ impl TestServer {
                     started_tx.send(()).unwrap();
                     server.await.unwrap();
                 });
+            let _ = finished_tx.send(());
         });
         started_rx.recv().unwrap();
         for attempt in 0..100 {
@@ -175,6 +178,7 @@ impl TestServer {
                 return Self {
                     address: address.to_string(),
                     shutdown: Some(shutdown),
+                    finished: Some(finished_rx),
                     thread: Some(thread),
                 };
             }
@@ -190,8 +194,14 @@ impl Drop for TestServer {
         if let Some(shutdown) = self.shutdown.take() {
             let _ = shutdown.send(());
         }
-        if let Some(thread) = self.thread.take() {
-            thread.join().unwrap();
+        let finished = self
+            .finished
+            .take()
+            .map(|finished| finished.recv_timeout(Duration::from_secs(1)));
+        if matches!(finished, Some(Ok(()))) {
+            if let Some(thread) = self.thread.take() {
+                thread.join().unwrap();
+            }
         }
     }
 }
@@ -432,9 +442,18 @@ fn immediate_close_before_request_fails_once_without_on_demand_open_spin() {
         Err(error) => {
             cancellation.cancel();
             let _ = allow_close.send(());
-            let _ = closed_wait.recv_timeout(Duration::from_secs(1));
-            let _ = thread.join();
-            panic!("one on-demand open must not retry in a loop: {error}");
+            match closed_wait.recv_timeout(Duration::from_secs(1)) {
+                Ok(_) => {
+                    let _ = thread.join();
+                    panic!("one on-demand open must not retry in a loop: {error}");
+                }
+                Err(close_error) => {
+                    drop(thread);
+                    panic!(
+                        "one on-demand open must not retry in a loop: {error}; client close did not finish: {close_error}"
+                    );
+                }
+            }
         }
     };
     let mut completion = None;
@@ -455,12 +474,23 @@ fn immediate_close_before_request_fails_once_without_on_demand_open_spin() {
     }
     let stream_count = streams.load(Ordering::Acquire);
     let allow_close = allow_close.send(());
-    let close = closed_wait.recv_timeout(Duration::from_secs(1));
+    let close = match closed_wait.recv_timeout(Duration::from_secs(1)) {
+        Ok(close) => close,
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            drop(thread);
+            panic!("client worker exited without reporting close");
+        }
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            cancellation.cancel();
+            drop(thread);
+            panic!("client close timed out");
+        }
+    };
     let joined = thread.join();
 
     let _receipts = submitted.unwrap();
     allow_close.unwrap();
-    close.unwrap().unwrap();
+    close.unwrap();
     joined.unwrap();
     assert!(
         completion_poll_error.is_none(),
