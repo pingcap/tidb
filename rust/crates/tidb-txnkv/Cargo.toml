@@ -13,6 +13,7 @@ workspace = true
 [dependencies]
 bytes.workspace = true
 prost.workspace = true
+serde_json.workspace = true
 tidb-codec = { path = "../tidb-codec" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-error = { path = "../tidb-error" }

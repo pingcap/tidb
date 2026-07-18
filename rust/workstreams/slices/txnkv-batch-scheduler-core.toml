@@ -31,6 +31,7 @@ support_anchors = [
   "client-go/internal/client/client_batch.go:733-849:batch policy selection",
 ]
 rust_paths = [
+  "rust/crates/tidb-txnkv/Cargo.toml",
   "rust/crates/tidb-txnkv/src/rpc/batch/mod.rs",
   "rust/crates/tidb-txnkv/src/rpc/batch/observability.rs",
   "rust/crates/tidb-txnkv/src/rpc/batch/priority_queue.rs",
