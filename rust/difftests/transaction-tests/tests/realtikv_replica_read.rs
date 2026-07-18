@@ -15,8 +15,11 @@
 #![allow(missing_docs)]
 
 use std::cell::RefCell;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::time::Duration;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use tidb_datatype::FieldType;
 use tidb_distsql::{
@@ -28,11 +31,15 @@ use tidb_distsql::{
 use tidb_txnkv::region::{PeerRole, RegionCache, StoreLiveness};
 use tidb_txnkv::region::{ReadPolicy, RequestSelection, StoreFailureOutcome};
 use tidb_txnkv::rpc::TonicCoprocessorClient;
-use tidb_txnkv::{ClientReplicaReadType, PdRegionLoader, SharedReadRuntime};
+use tidb_txnkv::{
+    ClientReplicaReadType, EndpointType, PdRegionLoader, SharedReadRuntime, UnaryCallContext,
+};
 
 const TABLE_START: &[u8] = b"t\x80\0\0\0\0\0\0*_r";
 const TABLE_END: &[u8] = b"t\x80\0\0\0\0\0\0+";
 const TABLE_SCAN_DAG: &[u8] = &[0x12, 0x04, 0x12, 0x02, 0x08, 0x2a];
+const CAMPAIGN18_SPLIT_KEY: &[u8] = b"t\x80\0\0\0\0\0\0*_r\x80\0\0\0\0\0\0\0";
+const CAMPAIGN18_PHASE_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[derive(Clone, Debug)]
 struct ObservedDispatch {
@@ -558,4 +565,274 @@ fn adaptive_forwarding_reuses_proxy_then_recovers_direct() {
         least_busy.target().peer_id,
         recovered.address,
     );
+}
+
+#[test]
+#[ignore = "requires the cleanup-safe Campaign 18 three-PD/three-TiKV runner"]
+fn live_pd_prev_region_and_forwarded_batch_survive_same_address_restart() {
+    use prost::Message;
+    use tidb_codec::encode_bytes;
+    use tidb_proto::{
+        CoprocessorKeyRange, CoprocessorRequest, KvrpcContext, KvrpcPeer, KvrpcRegionEpoch,
+    };
+    use tidb_txnkv::region::RegionLoader;
+    use tidb_txnkv::rpc::{AsyncRequestDispatcher, PendingRequest};
+
+    let pd_seed = std::env::var("C18_PD_SEED")
+        .expect("C18_PD_SEED must be supplied by run-campaign18-pd-batch-topology.sh");
+    let phase_dir = PathBuf::from(
+        std::env::var("C18_PHASE_DIR")
+            .expect("C18_PHASE_DIR must be supplied by run-campaign18-pd-batch-topology.sh"),
+    );
+    assert!(phase_dir.is_dir(), "phase directory must already exist");
+
+    let mut loader = PdRegionLoader::connect(pd_seed, Duration::from_secs(5))
+        .expect("bootstrap production PD region loader");
+    let cluster_id = loader.cluster_id();
+    let split_source = loader
+        .load_region(TABLE_START)
+        .expect("discover live region containing the split key");
+    let mut encoded_split_key = Vec::new();
+    encode_bytes(&mut encoded_split_key, CAMPAIGN18_SPLIT_KEY);
+    write_campaign18_phase(
+        &phase_dir,
+        "split-source",
+        &format!(
+            "region_id={}\nsplit_key_hex={}\n",
+            split_source.region.id,
+            hex_bytes(&encoded_split_key),
+        ),
+    );
+    wait_for_campaign18_phase(&phase_dir, "split-complete");
+
+    // Loading an exact split boundary by inclusive end must transit through
+    // production PdRegionLoader's GetPrevRegion branch and return the left
+    // neighbor, while ordinary key lookup returns the right neighbor.
+    let left = loader
+        .load_region_by_end_key(CAMPAIGN18_SPLIT_KEY)
+        .expect("GetPrevRegion must resolve the left split neighbor");
+    let right = loader
+        .load_region(CAMPAIGN18_SPLIT_KEY)
+        .expect("GetRegion must resolve the right split neighbor");
+    assert_ne!(left.region, right.region);
+    assert_eq!(left.end_key, CAMPAIGN18_SPLIT_KEY);
+    assert_eq!(right.start_key, CAMPAIGN18_SPLIT_KEY);
+    assert_eq!(
+        left.end_key, right.start_key,
+        "split neighbors must be adjacent"
+    );
+
+    let leader_peer_id = left.leader_peer_id.expect("left region must have a leader");
+    let leader = left
+        .peers
+        .iter()
+        .find(|peer| peer.id == leader_peer_id)
+        .expect("PD leader must be one projected peer");
+    let logical_store = left
+        .stores
+        .iter()
+        .find(|store| store.id == leader.store_id)
+        .expect("leader store must have a resolved address");
+    let proxy_peer = left
+        .peers
+        .iter()
+        .find(|peer| {
+            peer.id != leader_peer_id
+                && matches!(
+                    peer.role,
+                    PeerRole::Voter | PeerRole::IncomingVoter | PeerRole::DemotingVoter
+                )
+                && !peer.is_witness
+        })
+        .expect("three-TiKV topology must expose a nonleader physical proxy");
+    let physical_store = left
+        .stores
+        .iter()
+        .find(|store| store.id == proxy_peer.store_id)
+        .expect("proxy store must have a resolved address");
+    assert_ne!(physical_store.address, logical_store.address);
+
+    let context = KvrpcContext {
+        region_id: left.region.id,
+        region_epoch: Some(KvrpcRegionEpoch {
+            conf_ver: left.region.conf_ver,
+            version: left.region.version,
+        }),
+        peer: Some(KvrpcPeer {
+            id: leader.id,
+            store_id: leader.store_id,
+            role: leader.role.as_i32(),
+            is_witness: leader.is_witness,
+        }),
+        cluster_id,
+        request_source: "campaign18-live-pd-batch".to_owned(),
+        ..KvrpcContext::default()
+    };
+    let request = DirectUnaryRequest {
+        endpoint: EndpointType::TiKv,
+        replica_read_type: ClientReplicaReadType::Leader,
+        replica_read: false,
+        stale_read: false,
+        input_request_source: "campaign18-live-pd-batch".to_owned(),
+        predicted_read_bytes: 0,
+        read_replica_scope: "global".to_owned(),
+        txn_scope: "global".to_owned(),
+        context: context.clone(),
+        encoded_request: CoprocessorRequest {
+            context: Some(context),
+            tp: 103,
+            data: TABLE_SCAN_DAG.to_vec(),
+            start_ts: 1,
+            ranges: vec![CoprocessorKeyRange {
+                start: TABLE_START.to_vec(),
+                end: CAMPAIGN18_SPLIT_KEY.to_vec(),
+            }],
+            ..CoprocessorRequest::default()
+        }
+        .encode_to_vec(),
+    };
+
+    let mut client = TonicCoprocessorClient::new().expect("construct production tonic client");
+    let first_call = UnaryCallContext::with_timeout(Duration::from_secs(10));
+    let mut first = client
+        .begin(
+            &physical_store.address,
+            Some(&logical_store.address),
+            &request,
+            &first_call,
+        )
+        .expect("begin first production forwarded BatchCommands request");
+    let first_raw = first
+        .complete(&first_call)
+        .expect("drive first production BatchCommands completion")
+        .expect("first forwarded BatchCommands request must succeed");
+    assert_usable_campaign18_response(&first_raw);
+    let generation_n = client
+        .batch_stream_generation(&physical_store.address, Some(&logical_store.address))
+        .expect("successful forwarded request must retain generation N");
+
+    let mut route_phase = format!(
+        "left_region_id={}\nright_region_id={}\nboundary_hex={}\nphysical_store_id={}\nphysical_address={}\nlogical_store_id={}\nlogical_address={}\ngeneration_n={}\n",
+        left.region.id,
+        right.region.id,
+        hex_bytes(CAMPAIGN18_SPLIT_KEY),
+        physical_store.id,
+        physical_store.address,
+        logical_store.id,
+        logical_store.address,
+        generation_n,
+    );
+    for store in &left.stores {
+        route_phase.push_str(&format!("store_address={}\n", store.address));
+    }
+    write_campaign18_phase(&phase_dir, "route-ready", &route_phase);
+    wait_for_campaign18_phase(&phase_dir, "proxy-frozen");
+
+    // The runner freezes the exact physical process, so begin publishes into
+    // generation N but cannot receive a response before the runner kills it.
+    let failed_call = UnaryCallContext::with_timeout(Duration::from_secs(15));
+    let mut failed = client
+        .begin(
+            &physical_store.address,
+            Some(&logical_store.address),
+            &request,
+            &failed_call,
+        )
+        .expect("publish one request into the frozen generation N stream");
+    assert_eq!(
+        client.batch_stream_generation(&physical_store.address, Some(&logical_store.address)),
+        Some(generation_n),
+    );
+    write_campaign18_phase(&phase_dir, "request-published", "published=1\n");
+    let failure = failed
+        .complete(&failed_call)
+        .expect("generation failure must use the pending completion")
+        .expect_err("killed physical proxy must fail generation N exactly once");
+    let connection = failure
+        .connection()
+        .expect("BatchCommands stream failure must retain address generation");
+    assert_eq!(connection.address(), physical_store.address);
+    assert_eq!(connection.version(), generation_n);
+    assert!(failed
+        .try_complete()
+        .expect("duplicate completion probe")
+        .is_none());
+    assert_eq!(
+        client.batch_stream_generation(&physical_store.address, Some(&logical_store.address)),
+        None,
+        "transport must not auto-resend or recreate before caller retry",
+    );
+    write_campaign18_phase(
+        &phase_dir,
+        "failure-observed",
+        &format!(
+            "failed_address={}\nfailed_generation={}\nfailure_count=1\nauto_resend_count=0\n",
+            connection.address(),
+            connection.version(),
+        ),
+    );
+    wait_for_campaign18_phase(&phase_dir, "tikv-restarted");
+
+    let retry_call = UnaryCallContext::with_timeout(Duration::from_secs(15));
+    let mut retry = client
+        .begin(
+            &physical_store.address,
+            Some(&logical_store.address),
+            &request,
+            &retry_call,
+        )
+        .expect("caller retry must create a new forwarded stream");
+    let retry_raw = retry
+        .complete(&retry_call)
+        .expect("drive explicit caller retry")
+        .expect("same-address restarted TiKV must serve caller retry");
+    assert_usable_campaign18_response(&retry_raw);
+    let retry_generation = client
+        .batch_stream_generation(&physical_store.address, Some(&logical_store.address))
+        .expect("caller retry must retain its new generation");
+    assert!(retry_generation > generation_n);
+    client.close().expect("close production tonic client");
+
+    write_campaign18_phase(
+        &phase_dir,
+        "completed",
+        &format!(
+            "left_region_id={}\nright_region_id={}\nadjacent=true\nphysical_address={}\nlogical_address={}\ninitial_generation={}\nfailed_generation={}\nretry_generation={}\nfailure_count=1\nauto_resend_count=0\nretry_usable=true\nplaintext_only=true\n",
+            left.region.id,
+            right.region.id,
+            physical_store.address,
+            logical_store.address,
+            generation_n,
+            generation_n,
+            retry_generation,
+        ),
+    );
+}
+
+fn assert_usable_campaign18_response(response: &DirectUnaryResponse) {
+    use prost::Message;
+
+    let response = tidb_proto::CoprocessorResponse::decode(response.encoded_response.as_slice())
+        .expect("decode live BatchCommands Coprocessor response");
+    assert!(response.region_error.is_none());
+    assert!(response.other_error.is_empty());
+}
+
+fn hex_bytes(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn write_campaign18_phase(directory: &Path, name: &str, body: &str) {
+    let temporary = directory.join(format!(".{name}.tmp"));
+    fs::write(&temporary, body).expect("write temporary Campaign 18 phase file");
+    fs::rename(temporary, directory.join(name)).expect("publish Campaign 18 phase atomically");
+}
+
+fn wait_for_campaign18_phase(directory: &Path, name: &str) {
+    let path = directory.join(name);
+    let deadline = Instant::now() + CAMPAIGN18_PHASE_TIMEOUT;
+    while !path.is_file() {
+        assert!(Instant::now() < deadline, "timed out waiting for {name}");
+        thread::sleep(Duration::from_millis(100));
+    }
 }

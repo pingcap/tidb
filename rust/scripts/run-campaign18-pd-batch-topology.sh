@@ -1,0 +1,391 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+for prerequisite in tiup cargo curl jq nc lsof pgrep ps awk sed; do
+  if ! command -v "${prerequisite}" >/dev/null 2>&1; then
+    echo "missing Campaign 18 prerequisite: ${prerequisite}" >&2
+    exit 1
+  fi
+done
+
+RUST_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+TAG="campaign18-pd-batch-${$}-$(date +%s)"
+PORT_OFFSET=${C18_PORT_OFFSET:-38000}
+PD_SEED_PORT=$((2379 + PORT_OFFSET))
+PD_SEED="127.0.0.1:${PD_SEED_PORT}"
+TAG_DIR="${TIUP_HOME:-${HOME}/.tiup}/data/${TAG}"
+PHASE_DIR="${TMPDIR:-/tmp}/${TAG}-phases"
+PLAYGROUND_LOG="${TMPDIR:-/tmp}/${TAG}-playground.log"
+RUST_LOG="${TMPDIR:-/tmp}/${TAG}-rust.log"
+RESTART_LOG="${TMPDIR:-/tmp}/${TAG}-tikv-restart.log"
+PLAYGROUND_PID=
+RUST_PID=
+STOPPED_PID=
+RESTART_PID=
+OWNED_PIDS=
+
+phase_values() {
+  local file=$1
+  local key=$2
+  awk -F= -v key="${key}" '$1 == key { sub(/^[^=]*=/, ""); print }' "${file}"
+}
+
+wait_for_phase() {
+  local name=$1
+  local path="${PHASE_DIR}/${name}"
+  for _ in $(seq 1 1200); do
+    if [[ -s "${path}" ]]; then
+      return 0
+    fi
+    if [[ -n "${RUST_PID}" ]] && ! kill -0 "${RUST_PID}" 2>/dev/null; then
+      echo "Rust phase process exited while waiting for ${name}" >&2
+      tail -160 "${RUST_LOG}" >&2
+      return 1
+    fi
+    sleep 0.1
+  done
+  echo "timed out waiting for Rust phase ${name}" >&2
+  return 1
+}
+
+tag_status_rows() {
+  tiup status | awk -v tag="${TAG}" \
+    'NR > 2 && ($1 == tag || index($0, "/data/" tag "/")) { print }'
+}
+
+tag_owned_pids() {
+  pgrep -f "${TAG_DIR}" || true
+}
+
+collect_descendant_pids() {
+  local frontier=$1
+  local descendants=
+  local child
+  local next
+  local parent
+  while [[ -n "${frontier}" ]]; do
+    next=
+    for parent in ${frontier}; do
+      while IFS= read -r child; do
+        if [[ -n "${child}" ]]; then
+          descendants="${descendants}${descendants:+ }${child}"
+          next="${next}${next:+ }${child}"
+        fi
+      done < <(pgrep -P "${parent}" || true)
+    done
+    frontier=${next}
+  done
+  printf '%s\n' "${descendants}"
+}
+
+merge_owned_pids() {
+  {
+    for pid in ${OWNED_PIDS}; do
+      printf '%s\n' "${pid}"
+    done
+    if [[ -n "${PLAYGROUND_PID}" ]]; then
+      collect_descendant_pids "${PLAYGROUND_PID}"
+    fi
+    if [[ -n "${RESTART_PID}" ]]; then
+      printf '%s\n' "${RESTART_PID}"
+    fi
+    tag_owned_pids
+  } | awk 'NF && !seen[$1]++ { print $1 }' | tr '\n' ' '
+}
+
+address_port() {
+  local address=$1
+  address=${address%/}
+  printf '%s\n' "${address##*:}"
+}
+
+cleanup() {
+  local original_status=$?
+  local cleanup_failed=false
+  trap - EXIT INT TERM
+
+  if [[ -n "${RUST_PID}" ]] && kill -0 "${RUST_PID}" 2>/dev/null; then
+    kill "${RUST_PID}" 2>/dev/null || true
+    wait "${RUST_PID}" 2>/dev/null || true
+  fi
+  if [[ -n "${STOPPED_PID}" ]] && kill -0 "${STOPPED_PID}" 2>/dev/null; then
+    kill -CONT "${STOPPED_PID}" 2>/dev/null || true
+    kill "${STOPPED_PID}" 2>/dev/null || true
+  fi
+  if [[ -n "${RESTART_PID}" ]] && kill -0 "${RESTART_PID}" 2>/dev/null; then
+    kill "${RESTART_PID}" 2>/dev/null || true
+    wait "${RESTART_PID}" 2>/dev/null || true
+  fi
+  OWNED_PIDS=$(merge_owned_pids)
+  if [[ -n "${PLAYGROUND_PID}" ]] && kill -0 "${PLAYGROUND_PID}" 2>/dev/null; then
+    kill "${PLAYGROUND_PID}" 2>/dev/null || true
+    wait "${PLAYGROUND_PID}" 2>/dev/null || true
+  fi
+  if ! tiup clean "${TAG}" --all >/dev/null 2>&1; then
+    echo "Campaign 18 cleanup failed: tiup clean failed for ${TAG}" >&2
+    cleanup_failed=true
+  fi
+
+  local processes_cleaned=false
+  for _ in $(seq 1 30); do
+    OWNED_PIDS=$(merge_owned_pids)
+    local alive=false
+    local pid
+    for pid in ${OWNED_PIDS}; do
+      if kill -0 "${pid}" 2>/dev/null; then
+        alive=true
+        break
+      fi
+    done
+    local rows
+    rows=$(tag_status_rows 2>/dev/null || true)
+    if [[ "${alive}" == false ]] && [[ -z "${rows}" ]]; then
+      processes_cleaned=true
+      break
+    fi
+    sleep 1
+  done
+  if [[ "${processes_cleaned}" != true ]]; then
+    echo "Campaign 18 cleanup failed: owned process or TiUP registry row remains" >&2
+    cleanup_failed=true
+  fi
+
+  local endpoint
+  if [[ -f "${PHASE_DIR}/topology-ready" ]]; then
+    while IFS= read -r endpoint; do
+      if curl -sf --max-time 1 "${endpoint}/pd/api/v1/version" >/dev/null; then
+        echo "Campaign 18 cleanup failed: PD endpoint ${endpoint} remains reachable" >&2
+        cleanup_failed=true
+      fi
+    done < <(phase_values "${PHASE_DIR}/topology-ready" member_url)
+  fi
+  if [[ -f "${PHASE_DIR}/route-ready" ]]; then
+    while IFS= read -r endpoint; do
+      local port
+      port=$(address_port "${endpoint}")
+      if nc -z -w 1 127.0.0.1 "${port}" >/dev/null 2>&1; then
+        echo "Campaign 18 cleanup failed: TiKV endpoint ${endpoint} remains reachable" >&2
+        cleanup_failed=true
+      fi
+    done < <(phase_values "${PHASE_DIR}/route-ready" store_address)
+  fi
+
+  if [[ "${cleanup_failed}" == false ]]; then
+    rm -rf -- "${TAG_DIR}" "${PHASE_DIR}"
+    if [[ -e "${TAG_DIR}" || -e "${PHASE_DIR}" ]]; then
+      echo "Campaign 18 cleanup failed: owned data or phase directory remains" >&2
+      cleanup_failed=true
+    fi
+  fi
+  if [[ "${cleanup_failed}" == false ]] && [[ "${original_status}" -eq 0 ]]; then
+    rm -f -- "${PLAYGROUND_LOG}" "${RUST_LOG}" "${RESTART_LOG}"
+  else
+    echo "Campaign 18 retained logs: ${PLAYGROUND_LOG} ${RUST_LOG} ${RESTART_LOG}" >&2
+  fi
+  if [[ "${cleanup_failed}" == true ]]; then
+    exit 1
+  fi
+  exit "${original_status}"
+}
+trap cleanup EXIT INT TERM
+
+if curl -sf --max-time 1 "http://${PD_SEED}/pd/api/v1/version" >/dev/null; then
+  echo "refusing occupied PD seed ${PD_SEED}; set C18_PORT_OFFSET" >&2
+  exit 1
+fi
+mkdir -m 700 "${PHASE_DIR}"
+
+tiup playground v8.5.6 --mode tikv-slim --without-monitor --tag "${TAG}" \
+  --pd 3 --kv 3 --port-offset "${PORT_OFFSET}" >"${PLAYGROUND_LOG}" 2>&1 &
+PLAYGROUND_PID=$!
+
+ready=false
+for _ in $(seq 1 120); do
+  if ! kill -0 "${PLAYGROUND_PID}" 2>/dev/null; then
+    echo "TiUP playground exited before readiness" >&2
+    tail -160 "${PLAYGROUND_LOG}" >&2
+    exit 1
+  fi
+  PD_COUNT=$(curl -sf --max-time 2 "http://${PD_SEED}/pd/api/v1/members" \
+    | jq -r '.members | length' 2>/dev/null) || true
+  TIKV_COUNT=$(curl -sf --max-time 2 "http://${PD_SEED}/pd/api/v1/stores" \
+    | jq -r '[.stores[] | select(.store.state_name == "Up" and ((.store.node_state_name // "Serving") == "Serving"))] | length' \
+      2>/dev/null) || true
+  if [[ "${PD_COUNT:-0}" == 3 ]] && [[ "${TIKV_COUNT:-0}" == 3 ]]; then
+    ready=true
+    break
+  fi
+  sleep 1
+done
+if [[ "${ready}" != true ]]; then
+  echo "three PD members and three Up/Serving TiKV stores did not become ready" >&2
+  tail -160 "${PLAYGROUND_LOG}" >&2
+  exit 1
+fi
+OWNED_PIDS=$(merge_owned_pids)
+if [[ -z "${OWNED_PIDS}" ]]; then
+  echo "TiUP did not publish tag-owned processes for ${TAG}" >&2
+  exit 1
+fi
+
+TOPOLOGY_PHASE=
+while IFS= read -r endpoint; do
+  TOPOLOGY_PHASE="${TOPOLOGY_PHASE}member_url=${endpoint}"$'\n'
+done < <(curl -sf --max-time 2 "http://${PD_SEED}/pd/api/v1/members" \
+  | jq -r '.members[].client_urls[]')
+printf '%s' "${TOPOLOGY_PHASE}" >"${PHASE_DIR}/topology-ready"
+
+export C18_PD_SEED="${PD_SEED}"
+export C18_PHASE_DIR="${PHASE_DIR}"
+cd "${RUST_ROOT}"
+CARGO_BUILD_JOBS=12 cargo test -j12 -p difftest-transaction-tests \
+  --test realtikv_replica_read \
+  live_pd_prev_region_and_forwarded_batch_survive_same_address_restart \
+  -- --ignored --exact --nocapture >"${RUST_LOG}" 2>&1 &
+RUST_PID=$!
+
+wait_for_phase split-source
+SOURCE_REGION=$(phase_values "${PHASE_DIR}/split-source" region_id)
+SPLIT_KEY_HEX=$(phase_values "${PHASE_DIR}/split-source" split_key_hex)
+if [[ -z "${SOURCE_REGION}" || -z "${SPLIT_KEY_HEX}" ]]; then
+  echo "Rust split phase omitted source region or memcomparable split key" >&2
+  exit 1
+fi
+INITIAL_REGION_COUNT=$(curl -sf --max-time 2 "http://${PD_SEED}/pd/api/v1/regions" \
+  | jq -r '.count // 0')
+SPLIT_OUTPUT=$(tiup ctl:v8.5.6 pd -u "http://${PD_SEED}" \
+  operator add split-region "${SOURCE_REGION}" --policy=usekey --keys "${SPLIT_KEY_HEX}" 2>&1) || {
+  printf '%s\n' "${SPLIT_OUTPUT}" >&2
+  exit 1
+}
+split_ready=false
+for _ in $(seq 1 120); do
+  REGION_COUNT=$(curl -sf --max-time 2 "http://${PD_SEED}/pd/api/v1/regions" \
+    | jq -r '.count // 0' 2>/dev/null) || true
+  if [[ "${REGION_COUNT:-0}" -gt "${INITIAL_REGION_COUNT}" ]]; then
+    split_ready=true
+    break
+  fi
+  sleep 0.5
+done
+if [[ "${split_ready}" != true ]]; then
+  echo "region ${SOURCE_REGION} did not split at ${SPLIT_KEY_HEX}" >&2
+  printf '%s\n' "${SPLIT_OUTPUT}" >&2
+  exit 1
+fi
+: >"${PHASE_DIR}/split-complete"
+
+wait_for_phase route-ready
+ROUTE_PHASE="${PHASE_DIR}/route-ready"
+PHYSICAL_ADDRESS=$(phase_values "${ROUTE_PHASE}" physical_address)
+PHYSICAL_STORE_ID=$(phase_values "${ROUTE_PHASE}" physical_store_id)
+LOGICAL_ADDRESS=$(phase_values "${ROUTE_PHASE}" logical_address)
+GENERATION_N=$(phase_values "${ROUTE_PHASE}" generation_n)
+if [[ -z "${PHYSICAL_ADDRESS}" || -z "${PHYSICAL_STORE_ID}" \
+  || -z "${LOGICAL_ADDRESS}" || -z "${GENERATION_N}" \
+  || "${PHYSICAL_ADDRESS}" == "${LOGICAL_ADDRESS}" ]]; then
+  echo "Rust route phase did not prove a nonleader physical forwarding route" >&2
+  cat "${ROUTE_PHASE}" >&2
+  exit 1
+fi
+PHYSICAL_PORT=$(address_port "${PHYSICAL_ADDRESS}")
+STOPPED_PID=$(lsof -nP -iTCP:"${PHYSICAL_PORT}" -sTCP:LISTEN -t | head -1 || true)
+if [[ -z "${STOPPED_PID}" ]] \
+  || ! ps -ww -p "${STOPPED_PID}" -o command= | grep -F "${TAG_DIR}" >/dev/null \
+  || ! ps -ww -p "${STOPPED_PID}" -o command= | grep -F tikv-server >/dev/null; then
+  echo "refusing to freeze TiKV not owned by ${TAG}: ${PHYSICAL_ADDRESS}" >&2
+  exit 1
+fi
+TIKV_COMMAND=$(ps -ww -p "${STOPPED_PID}" -o command=)
+if [[ -z "${TIKV_COMMAND}" || "${TIKV_COMMAND}" == *$'\n'* \
+  || "${TIKV_COMMAND}" != *"${TAG_DIR}"* \
+  || "${TIKV_COMMAND}" != *"${PHYSICAL_PORT}"* ]]; then
+  echo "cannot capture a deterministic same-address tag-owned TiKV command" >&2
+  exit 1
+fi
+kill -STOP "${STOPPED_PID}"
+: >"${PHASE_DIR}/proxy-frozen"
+
+wait_for_phase request-published
+kill -KILL "${STOPPED_PID}"
+for _ in $(seq 1 60); do
+  if ! kill -0 "${STOPPED_PID}" 2>/dev/null \
+    && ! nc -z -w 1 127.0.0.1 "${PHYSICAL_PORT}" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.5
+done
+if kill -0 "${STOPPED_PID}" 2>/dev/null \
+  || nc -z -w 1 127.0.0.1 "${PHYSICAL_PORT}" >/dev/null 2>&1; then
+  echo "frozen physical TiKV ${PHYSICAL_ADDRESS} did not stop" >&2
+  exit 1
+fi
+: >"${PHASE_DIR}/physical-stopped"
+
+wait_for_phase failure-observed
+FAILED_GENERATION=$(phase_values "${PHASE_DIR}/failure-observed" failed_generation)
+FAILURE_COUNT=$(phase_values "${PHASE_DIR}/failure-observed" failure_count)
+AUTO_RESEND_COUNT=$(phase_values "${PHASE_DIR}/failure-observed" auto_resend_count)
+if [[ "${FAILED_GENERATION}" != "${GENERATION_N}" \
+  || "${FAILURE_COUNT}" != 1 || "${AUTO_RESEND_COUNT}" != 0 ]]; then
+  echo "generation N did not fail exactly once without transport auto-resend" >&2
+  cat "${PHASE_DIR}/failure-observed" >&2
+  exit 1
+fi
+
+# TiUP has no playground restart subcommand. The command was captured only
+# after proving its PID, data path, binary, and address belong to this tag.
+/bin/sh -c "exec ${TIKV_COMMAND}" >>"${RESTART_LOG}" 2>&1 &
+RESTART_PID=$!
+restarted=false
+for _ in $(seq 1 120); do
+  if ! kill -0 "${RESTART_PID}" 2>/dev/null; then
+    echo "same-address TiKV restart exited before readiness" >&2
+    tail -160 "${RESTART_LOG}" >&2
+    exit 1
+  fi
+  STORE_STATE=$(curl -sf --max-time 2 "http://${PD_SEED}/pd/api/v1/stores" \
+    | jq -r --argjson id "${PHYSICAL_STORE_ID}" \
+      '.stores[] | select(.store.id == $id) | [.store.state_name, (.store.node_state_name // "Serving"), .store.address] | @tsv' \
+      2>/dev/null) || true
+  if nc -z -w 1 127.0.0.1 "${PHYSICAL_PORT}" >/dev/null 2>&1 \
+    && [[ "${STORE_STATE}" == $'Up\tServing\t'"${PHYSICAL_ADDRESS}" ]]; then
+    restarted=true
+    break
+  fi
+  sleep 0.5
+done
+if [[ "${restarted}" != true ]]; then
+  echo "same-address TiKV ${PHYSICAL_ADDRESS} did not return Up/Serving" >&2
+  tail -160 "${RESTART_LOG}" >&2
+  exit 1
+fi
+if ! ps -ww -p "${RESTART_PID}" -o command= | grep -F "${TAG_DIR}" >/dev/null; then
+  echo "restarted TiKV is not tag-owned" >&2
+  exit 1
+fi
+printf 'restart_pid=%s\naddress=%s\n' "${RESTART_PID}" "${PHYSICAL_ADDRESS}" \
+  >"${PHASE_DIR}/tikv-restarted"
+
+wait "${RUST_PID}" || {
+  echo "Campaign 18 Rust live proof failed" >&2
+  tail -200 "${RUST_LOG}" >&2
+  exit 1
+}
+RUST_PID=
+wait_for_phase completed
+COMPLETED="${PHASE_DIR}/completed"
+INITIAL_GENERATION=$(phase_values "${COMPLETED}" initial_generation)
+RETRY_GENERATION=$(phase_values "${COMPLETED}" retry_generation)
+ADJACENT=$(phase_values "${COMPLETED}" adjacent)
+RETRY_USABLE=$(phase_values "${COMPLETED}" retry_usable)
+PLAINTEXT_ONLY=$(phase_values "${COMPLETED}" plaintext_only)
+if [[ "${ADJACENT}" != true || "${RETRY_USABLE}" != true \
+  || "${PLAINTEXT_ONLY}" != true || "${INITIAL_GENERATION}" != "${GENERATION_N}" \
+  || "${RETRY_GENERATION:-0}" -le "${INITIAL_GENERATION:-0}" ]]; then
+  echo "Campaign 18 completion marker is incomplete" >&2
+  cat "${COMPLETED}" >&2
+  exit 1
+fi
+echo "Campaign 18 live proof passed: GetPrevRegion adjacency; forwarded ${PHYSICAL_ADDRESS} -> ${LOGICAL_ADDRESS}; generation ${INITIAL_GENERATION} failed once; caller retry generation ${RETRY_GENERATION} succeeded"
