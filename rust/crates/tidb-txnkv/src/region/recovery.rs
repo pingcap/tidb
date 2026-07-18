@@ -63,6 +63,13 @@ pub enum RegionErrorDisposition {
         /// Sleep reserved from the shared response budget.
         delay: Duration,
     },
+    /// Reject the observed peer and continue the same request-scoped selector.
+    RetryPeers {
+        /// Peer which returned `NotLeader` without naming its successor.
+        rejected_peer_id: u64,
+        /// Election scheduling delay reserved from the shared budget.
+        delay: Duration,
+    },
     /// Re-locate the failed task's remaining ranges after the reserved delay.
     RebuildRanges {
         /// Sleep reserved from the shared response budget.
@@ -84,8 +91,6 @@ pub enum RegionErrorDisposition {
 pub enum RegionRebuildAction {
     /// The cache was invalidated or replaced before returning the disposition.
     CacheReady,
-    /// Revalidate and invalidate this observation only after sender backoff.
-    InvalidateObservedAfterDelay(RegionAttempt),
 }
 
 /// Region errors which pinned client-go does not retry.
@@ -339,14 +344,13 @@ impl<L: RegionRecoveryLoader> RegionCache<L> {
         backoff: &mut RegionBackoffBudget,
     ) -> Result<RegionErrorDisposition, RegionRecoveryError> {
         let Some(leader) = &not_leader.leader else {
-            // Leader-only CmdCop must not rotate onto an arbitrary follower.
             let delay = match reserve_delay(backoff, RegionBackoffKind::RegionScheduling) {
                 Ok(delay) => delay,
                 Err(terminal) => return Ok(RegionErrorDisposition::Terminal(terminal)),
             };
-            return Ok(RegionErrorDisposition::RebuildRanges {
+            return Ok(RegionErrorDisposition::RetryPeers {
+                rejected_peer_id: attempt.peer_id,
                 delay,
-                action: RegionRebuildAction::InvalidateObservedAfterDelay(attempt),
             });
         };
 

@@ -35,6 +35,8 @@ pub const REGION_RETRY_MAX_SLEEP: Duration = Duration::from_secs(20);
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
 pub enum RegionBackoffKind {
+    /// TiKV RPC transport failure.
+    TikvRpc,
     /// Epoch cache miss or stale TiKV epoch.
     RegionMiss,
     /// Election, split, merge, or read-index scheduling.
@@ -56,8 +58,9 @@ pub enum RegionBackoffKind {
 }
 
 impl RegionBackoffKind {
-    const COUNT: usize = 9;
+    const COUNT: usize = 10;
     const ALL: [Self; Self::COUNT] = [
+        Self::TikvRpc,
         Self::RegionMiss,
         Self::RegionScheduling,
         Self::TikvServerBusy,
@@ -75,6 +78,7 @@ impl RegionBackoffKind {
 
     const fn config(self) -> (u64, u64, bool) {
         match self {
+            Self::TikvRpc => (100, 2_000, true),
             Self::RegionMiss | Self::RegionScheduling => (2, 500, false),
             Self::TikvServerBusy => (2_000, 10_000, true),
             Self::TikvDiskFull => (500, 5_000, false),

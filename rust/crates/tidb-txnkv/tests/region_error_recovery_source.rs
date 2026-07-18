@@ -248,7 +248,7 @@ fn known_leader_updates_exact_snapshot_and_retries_without_backoff() {
 }
 
 #[test]
-fn missing_or_unknown_leader_invalidates_instead_of_rotating_to_follower() {
+fn missing_leader_retries_peers_while_unknown_named_leader_rebuilds() {
     for leader in [
         None,
         Some(metapb::Peer {
@@ -276,12 +276,12 @@ fn missing_or_unknown_leader_invalidates_instead_of_rotating_to_follower() {
             .unwrap();
         let deferred = error.not_leader.as_ref().unwrap().leader.is_none();
         if deferred {
-            assert_eq!(cache.len(), 1, "nil leader must sleep before invalidation");
+            assert_eq!(cache.len(), 1, "nil leader keeps topology for peer probing");
             assert_eq!(
                 disposition,
-                RegionErrorDisposition::RebuildRanges {
+                RegionErrorDisposition::RetryPeers {
+                    rejected_peer_id: 11,
                     delay: Duration::from_millis(2),
-                    action: RegionRebuildAction::InvalidateObservedAfterDelay(attempt(region)),
                 }
             );
         } else {
@@ -293,14 +293,7 @@ fn missing_or_unknown_leader_invalidates_instead_of_rotating_to_follower() {
                 }
             );
         }
-        cache
-            .apply_rebuild_action(if deferred {
-                RegionRebuildAction::InvalidateObservedAfterDelay(attempt(region))
-            } else {
-                RegionRebuildAction::CacheReady
-            })
-            .unwrap();
-        assert!(cache.is_empty());
+        assert_eq!(cache.is_empty(), !deferred);
     }
 }
 
@@ -526,7 +519,7 @@ fn terminal_and_backoff_branches_are_typed_and_budgeted_once() {
         first_cache
             .on_region_error(&no_leader, attempt(region), &mut tiny)
             .unwrap(),
-        RegionErrorDisposition::RebuildRanges { .. }
+        RegionErrorDisposition::RetryPeers { .. }
     ));
     let (mut second_cache, _) = cache(location(7, 3, 4, b"", b""), []);
     let region = seed(&mut second_cache);
@@ -577,6 +570,21 @@ fn backoff_arithmetic_preserves_strict_exponential_equal_jitter_and_busy_exclusi
         Duration::from_millis(2),
         "the excluded busy cap applies only to another excluded backoff"
     );
+}
+
+#[test]
+fn tikv_rpc_backoff_uses_equal_jitter_and_the_shared_effective_budget() {
+    let mut budget = RegionBackoffBudget::with_jitter_seed(Duration::from_secs(20), 7);
+    let first = budget.next_delay(RegionBackoffKind::TikvRpc).unwrap();
+    let second = budget.next_delay(RegionBackoffKind::TikvRpc).unwrap();
+    assert!((Duration::from_millis(50)..Duration::from_millis(100)).contains(&first));
+    assert!((Duration::from_millis(100)..Duration::from_millis(200)).contains(&second));
+    assert_eq!(budget.remaining(), Duration::from_secs(20) - first - second);
+
+    let mut capped = RegionBackoffBudget::with_jitter_seed(Duration::from_secs(60), 11);
+    for _ in 0..20 {
+        assert!(capped.next_delay(RegionBackoffKind::TikvRpc).unwrap() < Duration::from_secs(2));
+    }
 }
 
 #[test]
@@ -861,6 +869,7 @@ fn every_outer_region_error_branch_has_a_typed_source_action() {
             .unwrap();
         let actual = match disposition {
             RegionErrorDisposition::RetryRoute { .. } => Expected::Retry,
+            RegionErrorDisposition::RetryPeers { .. } => Expected::Retry,
             RegionErrorDisposition::RebuildRanges { .. } => Expected::Rebuild,
             RegionErrorDisposition::ReturnRegionError => Expected::Return,
             RegionErrorDisposition::Terminal(RegionTerminalError::FlashbackInProgress {

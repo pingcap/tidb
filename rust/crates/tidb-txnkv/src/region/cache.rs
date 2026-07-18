@@ -15,8 +15,11 @@
 use std::collections::BTreeMap;
 
 use super::{
-    KeyRange, OwnedLeaderRoute, RegionAttempt, RegionLoadError, RegionLocation, RegionMetadata,
-    RegionRebuildAction, RegionRecoveryError, RegionRouteError, RegionVerId,
+    KeyRange, LeaderRequest, OwnedLeaderRoute, Peer, PeerRole, ReadPolicy, RegionAttempt,
+    RegionLoadError, RegionLocation, RegionMetadata, RegionRebuildAction, RegionRecoveryError,
+    RegionRouteError, RegionVerId, ReplicaReadMode, RequestSelection, RequestSelector, Store,
+    StoreFailureOutcome, StoreLiveness, StoreResolveState, StoreState, MAX_REPLICA_ATTEMPTS,
+    MAX_REPLICA_ATTEMPT_TIME,
 };
 
 /// Injected PD-shaped region metadata loader.
@@ -42,6 +45,7 @@ pub trait RegionRecoveryLoader: RegionLoader {
 pub struct RegionCache<L> {
     pub(super) loader: L,
     pub(super) regions: Vec<RegionLocation>,
+    pub(super) stores: BTreeMap<u64, StoreState>,
 }
 
 impl<L> RegionCache<L> {
@@ -51,6 +55,7 @@ impl<L> RegionCache<L> {
         Self {
             loader,
             regions: Vec::new(),
+            stores: BTreeMap::new(),
         }
     }
 
@@ -97,15 +102,175 @@ impl<L> RegionCache<L> {
                 && peer.store_id == attempt.store_id
                 && peer.store_epoch == attempt.store_epoch
         });
-        let store_matches = location.stores.iter().any(|store| {
-            store.id == attempt.store_id
-                && store.address == attempt.address
-                && store.epoch == attempt.store_epoch
+        let store_matches = self.stores.get(&attempt.store_id).is_some_and(|store| {
+            store.address == attempt.address && store.epoch == attempt.store_epoch
         });
-        if !peer_matches || !store_matches || location.leader_peer_id != Some(attempt.peer_id) {
+        if !peer_matches || !store_matches {
             return Err(RegionRecoveryError::StaleObservation(attempt.clone()));
         }
         Ok(())
+    }
+
+    /// Returns one immutable view of the canonical store authority.
+    #[must_use]
+    pub fn store_state(&self, store_id: u64) -> Option<&StoreState> {
+        self.stores.get(&store_id)
+    }
+
+    /// Applies one exact foreground send-failure observation.
+    ///
+    /// A delayed address or epoch cannot mutate a newer generation. Both
+    /// `Unreachable` and `Unknown` fail closed: client-go probes another peer
+    /// instead of treating an inconclusive health request as proof of health.
+    pub fn on_send_failure(
+        &mut self,
+        attempt: &RegionAttempt,
+        liveness: StoreLiveness,
+    ) -> Result<StoreFailureOutcome, RegionRecoveryError> {
+        self.validate_attempt(attempt)?;
+        let store = self
+            .stores
+            .get_mut(&attempt.store_id)
+            .expect("validated attempt has a canonical store");
+        store.liveness = liveness;
+        if liveness == StoreLiveness::Reachable {
+            return Ok(StoreFailureOutcome::Reachable { epoch: store.epoch });
+        }
+        let previous_epoch = store.epoch;
+        store.epoch = store.epoch.saturating_add(1);
+        store.resolve_state = StoreResolveState::NeedCheck;
+        Ok(StoreFailureOutcome::Invalidated {
+            previous_epoch,
+            current_epoch: store.epoch,
+        })
+    }
+
+    /// Creates a request-scoped selector over one exact cached region.
+    pub fn request_selector(
+        &self,
+        region: RegionVerId,
+        policy: ReadPolicy,
+    ) -> Result<RequestSelector, RegionRouteError> {
+        if policy.mode != ReplicaReadMode::Leader || policy.stale_read || policy.forwarding {
+            return Err(RegionRouteError::UnsupportedReadPolicy);
+        }
+        if !self
+            .regions
+            .iter()
+            .any(|location| location.region == region)
+        {
+            return Err(RegionRouteError::MissingLeader);
+        }
+        Ok(RequestSelector::new(region, policy))
+    }
+
+    /// Selects the next leader-semantics peer and invalidates on exhaustion.
+    pub fn select_request(
+        &mut self,
+        selector: &mut RequestSelector,
+        attempted_time: std::time::Duration,
+    ) -> Result<RequestSelection, RegionRouteError> {
+        if selector.policy.mode != ReplicaReadMode::Leader
+            || selector.policy.stale_read
+            || selector.policy.forwarding
+        {
+            return Err(RegionRouteError::UnsupportedReadPolicy);
+        }
+        let Some(location) = self
+            .regions
+            .iter()
+            .find(|location| location.region == selector.region)
+        else {
+            return Ok(RequestSelection::ReloadRegion {
+                region: selector.region,
+            });
+        };
+
+        let leader_peer_id = location.leader_peer_id;
+        let leader = leader_peer_id
+            .and_then(|peer_id| location.peers.iter().find(|peer| peer.id == peer_id));
+        let selected = leader
+            .filter(|peer| {
+                selector.attempts_for(peer.id) < MAX_REPLICA_ATTEMPTS
+                    && attempted_time < MAX_REPLICA_ATTEMPT_TIME
+                    && self.peer_is_candidate(peer, true)
+            })
+            .or_else(|| {
+                location.peers.iter().find(|peer| {
+                    Some(peer.id) != leader_peer_id
+                        && selector.attempts_for(peer.id) == 0
+                        && self.peer_is_candidate(peer, false)
+                })
+            })
+            .cloned();
+
+        let Some(peer) = selected else {
+            let region = selector.region;
+            self.invalidate(region);
+            return Ok(RequestSelection::ReloadRegion { region });
+        };
+        let store = self
+            .stores
+            .get(&peer.store_id)
+            .ok_or(RegionRouteError::MissingStore(peer.store_id))?;
+        selector.record_attempt(peer.id);
+        Ok(RequestSelection::Attempt(LeaderRequest {
+            attempt: RegionAttempt {
+                region: selector.region,
+                peer_id: peer.id,
+                store_id: peer.store_id,
+                address: store.address.clone(),
+                store_epoch: store.epoch,
+            },
+            role: peer.role,
+            is_witness: peer.is_witness,
+            replica_read: false,
+            stale_read: false,
+            cached_leader: Some(peer.id) == leader_peer_id,
+        }))
+    }
+
+    /// Promotes an alternate peer only after a successful leader-semantics RPC.
+    pub fn promote_successful_request(
+        &mut self,
+        request: &LeaderRequest,
+    ) -> Result<bool, RegionRecoveryError> {
+        if request.replica_read || request.stale_read {
+            return Ok(false);
+        }
+        self.validate_attempt(&request.attempt)?;
+        if request.cached_leader {
+            return Ok(false);
+        }
+        Ok(self.update_leader(
+            request.attempt.region,
+            request.attempt.peer_id,
+            request.attempt.store_id,
+        ))
+    }
+
+    fn peer_is_candidate(&self, peer: &Peer, cached_leader: bool) -> bool {
+        if peer.is_witness || peer.role == PeerRole::Learner {
+            return false;
+        }
+        if !cached_leader
+            && !matches!(
+                peer.role,
+                PeerRole::Voter | PeerRole::IncomingVoter | PeerRole::DemotingVoter
+            )
+        {
+            return false;
+        }
+        self.stores.get(&peer.store_id).is_some_and(|store| {
+            peer.store_epoch == store.epoch
+                && !store.address.is_empty()
+                && store.resolve_state == StoreResolveState::Resolved
+                && if cached_leader {
+                    store.liveness == StoreLiveness::Reachable
+                } else {
+                    store.liveness != StoreLiveness::Unreachable
+                }
+        })
     }
 
     pub(super) fn update_leader(
@@ -125,9 +290,9 @@ impl<L> RegionCache<L> {
             .peers
             .iter()
             .any(|peer| peer.id == peer_id && peer.store_id == store_id)
-            && location.stores.iter().any(|store| {
-                store.id == store_id
-                    && !store.address.is_empty()
+            && self.stores.get(&store_id).is_some_and(|store| {
+                !store.address.is_empty()
+                    && store.resolve_state == StoreResolveState::Resolved
                     && location.peers.iter().any(|peer| {
                         peer.id == peer_id
                             && peer.store_id == store.id
@@ -157,10 +322,9 @@ impl<L> RegionCache<L> {
             .iter()
             .find(|peer| peer.id == peer_id)
             .ok_or(RegionRouteError::MissingLeader)?;
-        let store = location
+        let store = self
             .stores
-            .iter()
-            .find(|store| store.id == peer.store_id)
+            .get(&peer.store_id)
             .ok_or(RegionRouteError::MissingStore(peer.store_id))?;
         if store.address.is_empty() {
             return Err(RegionRouteError::MissingAddress(store.id));
@@ -205,11 +369,14 @@ impl<L> RegionCache<L> {
             }
         }
         let mut next = self.regions.clone();
+        let mut next_stores = self.stores.clone();
         next.retain(|location| location.region != observed);
-        for replacement in replacements {
+        for mut replacement in replacements {
+            normalize_loaded(&mut next_stores, &mut replacement);
             insert_loaded_into(&mut next, replacement)?;
         }
         self.regions = next;
+        self.stores = next_stores;
         Ok(())
     }
 
@@ -220,11 +387,6 @@ impl<L> RegionCache<L> {
     ) -> Result<(), RegionRecoveryError> {
         match action {
             RegionRebuildAction::CacheReady => Ok(()),
-            RegionRebuildAction::InvalidateObservedAfterDelay(attempt) => {
-                self.validate_attempt(&attempt)?;
-                self.invalidate(attempt.region);
-                Ok(())
-            }
         }
     }
 
@@ -352,9 +514,69 @@ impl<L> RegionCache<L> {
             .ok()
     }
 
-    fn insert_loaded(&mut self, loaded: RegionLocation) -> Result<usize, RegionRouteError> {
-        insert_loaded_into(&mut self.regions, loaded)
+    fn insert_loaded(&mut self, mut loaded: RegionLocation) -> Result<usize, RegionRouteError> {
+        let mut next_regions = self.regions.clone();
+        let mut next_stores = self.stores.clone();
+        normalize_loaded(&mut next_stores, &mut loaded);
+        let index = insert_loaded_into(&mut next_regions, loaded)?;
+        self.regions = next_regions;
+        self.stores = next_stores;
+        Ok(index)
     }
+}
+
+fn normalize_loaded(stores: &mut BTreeMap<u64, StoreState>, loaded: &mut RegionLocation) {
+    for supplied in &loaded.stores {
+        match stores.get_mut(&supplied.id) {
+            None => {
+                stores.insert(
+                    supplied.id,
+                    StoreState {
+                        id: supplied.id,
+                        address: supplied.address.clone(),
+                        epoch: supplied.epoch,
+                        resolve_state: StoreResolveState::Resolved,
+                        liveness: StoreLiveness::Reachable,
+                    },
+                );
+            }
+            Some(canonical) => {
+                let address_changed = canonical.address != supplied.address;
+                if supplied.epoch > canonical.epoch {
+                    canonical.epoch = supplied.epoch;
+                } else if address_changed && canonical.resolve_state == StoreResolveState::Resolved
+                {
+                    canonical.epoch = canonical.epoch.saturating_add(1);
+                }
+                canonical.address.clone_from(&supplied.address);
+                canonical.resolve_state = StoreResolveState::Resolved;
+            }
+        }
+    }
+
+    for peer in &mut loaded.peers {
+        if let Some(store) = stores.get(&peer.store_id) {
+            peer.store_epoch = store.epoch;
+        }
+    }
+    loaded.stores = loaded
+        .peers
+        .iter()
+        .filter_map(|peer| stores.get(&peer.store_id))
+        .map(|store| Store {
+            id: store.id,
+            address: store.address.clone(),
+            epoch: store.epoch,
+        })
+        .fold(Vec::new(), |mut snapshots, store| {
+            if !snapshots
+                .iter()
+                .any(|current: &Store| current.id == store.id)
+            {
+                snapshots.push(store);
+            }
+            snapshots
+        });
 }
 
 fn insert_loaded_into(

@@ -83,7 +83,11 @@ pub struct Peer {
     pub store_epoch: u64,
 }
 
-/// Resolved TiKV store metadata.
+/// Resolved TiKV store metadata supplied by a loader.
+///
+/// RegionCache normalizes this transfer value into its canonical store
+/// registry. Cached copies are immutable snapshots and are never mutation
+/// authority for liveness, resolution, or failure epochs.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Store {
     /// Store identifier.
@@ -133,7 +137,7 @@ pub struct RegionLocation {
     pub peers: Vec<Peer>,
     /// Leader peer selected by PD.
     pub leader_peer_id: Option<u64>,
-    /// Stores referenced by peers.
+    /// Immutable loader snapshots for stores referenced by peers.
     pub stores: Vec<Store>,
 }
 

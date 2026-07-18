@@ -12,12 +12,28 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Source-shaped leader selector tests.
+//! Source-shaped leader selector policy tests.
+
+use std::time::Duration;
 
 use tidb_txnkv::region::{
-    Peer, PeerRole, ReadPolicy, RegionLocation, RegionRouteError, RegionVerId, ReplicaReadMode,
-    ReplicaSelector, Store,
+    Peer, PeerRole, ReadPolicy, RegionCache, RegionLoadError, RegionLoader, RegionLocation,
+    RegionRouteError, RegionVerId, ReplicaReadMode, RequestSelection, Store,
 };
+
+struct Loader(Option<RegionLocation>);
+
+impl RegionLoader for Loader {
+    fn cluster_id(&self) -> u64 {
+        42
+    }
+
+    fn load_region(&mut self, _key: &[u8]) -> Result<RegionLocation, RegionLoadError> {
+        self.0
+            .take()
+            .ok_or_else(|| RegionLoadError::new("empty", "region already loaded"))
+    }
+}
 
 fn location() -> RegionLocation {
     RegionLocation {
@@ -56,12 +72,29 @@ fn location() -> RegionLocation {
     }
 }
 
+fn cache() -> RegionCache<Loader> {
+    let mut cache = RegionCache::new(Loader(Some(location())));
+    cache.locate_key(b"key").unwrap();
+    cache
+}
+
 #[test]
-fn leader_policy_selects_only_pd_leader_store() {
-    let location = location();
-    let selected = ReplicaSelector::select_leader(&location, ReadPolicy::default()).unwrap();
-    assert_eq!(selected.peer.id, 12);
-    assert_eq!(selected.store.address, "leader:20160");
+fn leader_policy_selects_pd_leader_first_with_leader_flags() {
+    let mut cache = cache();
+    let region = location().region;
+    let mut selector = cache
+        .request_selector(region, ReadPolicy::default())
+        .unwrap();
+    let RequestSelection::Attempt(selected) =
+        cache.select_request(&mut selector, Duration::ZERO).unwrap()
+    else {
+        panic!("leader must be selected")
+    };
+    assert_eq!(selected.attempt.peer_id, 12);
+    assert_eq!(selected.attempt.address, "leader:20160");
+    assert!(selected.cached_leader);
+    assert!(!selected.replica_read);
+    assert!(!selected.stale_read);
 }
 
 #[test]
@@ -93,43 +126,8 @@ fn every_non_leader_and_proxy_policy_fails_closed() {
         },
     ] {
         assert_eq!(
-            ReplicaSelector::select_leader(&location(), policy),
+            cache().request_selector(location().region, policy),
             Err(RegionRouteError::UnsupportedReadPolicy)
         );
     }
-}
-
-#[test]
-fn missing_metadata_and_stale_store_epoch_are_typed_failures() {
-    let mut candidate = location();
-    candidate.leader_peer_id = None;
-    assert_eq!(
-        ReplicaSelector::select_leader(&candidate, ReadPolicy::default()),
-        Err(RegionRouteError::MissingLeader)
-    );
-
-    candidate = location();
-    candidate.stores.retain(|store| store.id != 102);
-    assert_eq!(
-        ReplicaSelector::select_leader(&candidate, ReadPolicy::default()),
-        Err(RegionRouteError::MissingStore(102))
-    );
-
-    candidate = location();
-    candidate.stores[1].address.clear();
-    assert_eq!(
-        ReplicaSelector::select_leader(&candidate, ReadPolicy::default()),
-        Err(RegionRouteError::MissingAddress(102))
-    );
-
-    candidate = location();
-    candidate.stores[1].epoch = 9;
-    assert_eq!(
-        ReplicaSelector::select_leader(&candidate, ReadPolicy::default()),
-        Err(RegionRouteError::StaleStoreEpoch {
-            store_id: 102,
-            expected: 8,
-            actual: 9,
-        })
-    );
 }

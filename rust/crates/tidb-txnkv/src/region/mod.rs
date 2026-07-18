@@ -10,6 +10,8 @@ mod id;
 mod location;
 mod recovery;
 mod replica_selector;
+mod request_selector;
+mod store_state;
 
 pub use crate::retry::{RegionBackoffBudget, RegionBackoffExhausted, RegionBackoffKind};
 pub use cache::{RegionCache, RegionLoader, RegionRecoveryLoader};
@@ -22,4 +24,9 @@ pub use recovery::{
     OwnedLeaderRoute, RegionAttempt, RegionErrorDisposition, RegionRebuildAction,
     RegionRecoveryError, RegionTerminalError,
 };
-pub use replica_selector::{LeaderRoute, ReadPolicy, ReplicaReadMode, ReplicaSelector};
+pub use replica_selector::{ReadPolicy, ReplicaReadMode};
+pub use request_selector::{
+    LeaderRequest, RequestSelection, RequestSelector, MAX_REPLICA_ATTEMPTS,
+    MAX_REPLICA_ATTEMPT_TIME,
+};
+pub use store_state::{StoreFailureOutcome, StoreLiveness, StoreResolveState, StoreState};
