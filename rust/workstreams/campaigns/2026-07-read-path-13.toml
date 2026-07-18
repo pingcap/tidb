@@ -1,6 +1,6 @@
 schema = "1"
 campaign = "2026-07-read-path-13"
-status = "planned"
+status = "active"
 slices = [
   "txnkv-read-runtime-seams",
   "txnkv-replica-read-policy-runtime",

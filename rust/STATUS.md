@@ -28,7 +28,7 @@ the source or obligation still has explicit unported behavior.
 | 2026-07-read-path-10 | integrated | 2 |
 | 2026-07-read-path-11 | integrated | 3 |
 | 2026-07-read-path-12 | integrated | 3 |
-| 2026-07-read-path-13 | planned | 4 |
+| 2026-07-read-path-13 | active | 4 |
 | 2026-07-runtime-closure-03 | integrated | 6 |
 | 2026-07-runtime-closure-04 | integrated | 6 |
 | 2026-07-runtime-closure-05 | integrated | 6 |
