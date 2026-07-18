@@ -7,6 +7,7 @@ TAG="campaign13-lock-recovery-${$}"
 PORT_OFFSET=${C13_PORT_OFFSET:-31000}
 PD_PORT=$((2379 + PORT_OFFSET))
 DB_PORT=$((4000 + PORT_OFFSET))
+KV_PORT=$((20160 + PORT_OFFSET))
 PD_ADDR="127.0.0.1:${PD_PORT}"
 DB_ADDR="127.0.0.1:${DB_PORT}"
 TAG_DIR="${TIUP_HOME:-${HOME}/.tiup}/data/${TAG}"
@@ -70,6 +71,10 @@ cleanup() {
       cleanup_failed=true
     fi
   done
+  if nc -z -w 1 127.0.0.1 "${KV_PORT}" >/dev/null 2>&1; then
+    echo "Campaign 13 cleanup failed: TiKV 127.0.0.1:${KV_PORT} remains reachable" >&2
+    cleanup_failed=true
+  fi
   if nc -z -w 1 127.0.0.1 "${DB_PORT}" >/dev/null 2>&1; then
     echo "Campaign 13 cleanup failed: TiDB ${DB_ADDR} remains reachable" >&2
     cleanup_failed=true
@@ -98,7 +103,8 @@ if [[ -z "${TIDB_SERVER}" ]] || [[ ! -x "${TIDB_SERVER}" ]]; then
   exit 1
 fi
 if nc -z -w 1 127.0.0.1 "${PD_PORT}" >/dev/null 2>&1 \
-  || nc -z -w 1 127.0.0.1 "${DB_PORT}" >/dev/null 2>&1; then
+  || nc -z -w 1 127.0.0.1 "${DB_PORT}" >/dev/null 2>&1 \
+  || nc -z -w 1 127.0.0.1 "${KV_PORT}" >/dev/null 2>&1; then
   echo "refusing occupied Campaign 13 endpoints; set C13_PORT_OFFSET" >&2
   exit 1
 fi
