@@ -215,6 +215,33 @@ impl<L: RegionLoader> SharedRegionLoader<L> {
     }
 }
 
+impl<L: RegionRecoveryLoader> SharedRegionLoader<L> {
+    pub(super) fn hydrate_regions(
+        &self,
+        metadata: &[RegionMetadata],
+        leader_store_id: u64,
+    ) -> Result<Vec<(RegionLocation, StoreLabels)>, RegionRecoveryError> {
+        self.with_loader(|loader| {
+            metadata
+                .iter()
+                .map(|metadata| {
+                    let hydrated = loader
+                        .hydrate_region(metadata, leader_store_id)
+                        .map_err(RegionRecoveryError::Loader)?;
+                    if hydrated.region != metadata.region {
+                        return Err(RegionRecoveryError::HydratedRegionMismatch {
+                            expected: metadata.region,
+                            actual: hydrated.region,
+                        });
+                    }
+                    let labels = labels_for_location(loader, &hydrated);
+                    Ok((hydrated, labels))
+                })
+                .collect()
+        })
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct RegionLookupPlan {
     key: Vec<u8>,
@@ -223,7 +250,7 @@ pub(super) struct RegionLookupPlan {
     observed_store_revision: u64,
 }
 
-type StoreLabels = BTreeMap<u64, Vec<(String, String)>>;
+pub(super) type StoreLabels = BTreeMap<u64, Vec<(String, String)>>;
 type LoadedRegion = Result<(RegionLocation, StoreLabels), RegionLoadError>;
 
 pub(super) struct RegionLookupResult {
@@ -630,7 +657,7 @@ where
             }
         }
         if outcome != StoreRefreshOutcome::Unchanged {
-            self.store_revision = self.store_revision.saturating_add(1);
+            self.advance_store_revision();
         }
         match outcome {
             StoreRefreshOutcome::Unchanged => StoreRefreshApplication::Unchanged,
@@ -669,6 +696,7 @@ pub struct RegionCache<L> {
     pub(super) regions: Vec<RegionLocation>,
     pub(super) stores: BTreeMap<u64, RegionStoreTopology>,
     store_revision: u64,
+    topology_revision: u64,
     preferred_proxies: BTreeMap<RegionVerId, RegionAttempt>,
     entry_states: BTreeMap<RegionVerId, CacheEntryState>,
     base_ttl_seconds: u64,
@@ -685,6 +713,7 @@ impl<L> RegionCache<L> {
             regions: Vec::new(),
             stores: BTreeMap::new(),
             store_revision: 0,
+            topology_revision: 0,
             preferred_proxies: BTreeMap::new(),
             entry_states: BTreeMap::new(),
             base_ttl_seconds: 600,
@@ -701,6 +730,7 @@ impl<L> RegionCache<L> {
             regions: Vec::new(),
             stores: BTreeMap::new(),
             store_revision: 0,
+            topology_revision: 0,
             preferred_proxies: BTreeMap::new(),
             entry_states: BTreeMap::new(),
             base_ttl_seconds,
@@ -735,6 +765,19 @@ impl<L> RegionCache<L> {
 
     pub(super) fn with_loader<R>(&self, operation: impl FnOnce(&mut L) -> R) -> R {
         self.loader.with_loader(operation)
+    }
+
+    pub(super) const fn topology_revision(&self) -> u64 {
+        self.topology_revision
+    }
+
+    fn advance_store_revision(&mut self) {
+        self.store_revision = self.store_revision.saturating_add(1);
+        self.advance_topology_revision();
+    }
+
+    fn advance_topology_revision(&mut self) {
+        self.topology_revision = self.topology_revision.saturating_add(1);
     }
 
     pub(super) fn select_region_lookup(
@@ -825,7 +868,11 @@ impl<L> RegionCache<L> {
         self.regions.retain(|cached| cached.region != region);
         self.preferred_proxies.remove(&region);
         self.entry_states.remove(&region);
-        self.regions.len() != original_len
+        let removed = self.regions.len() != original_len;
+        if removed {
+            self.advance_topology_revision();
+        }
+        removed
     }
 
     /// Forces this exact entry to reload on its next foreground access.
@@ -1112,8 +1159,8 @@ impl<L> RegionCache<L> {
         let previous_epoch = store.epoch;
         store.epoch = store.epoch.saturating_add(1);
         store.resolve_state = StoreResolveState::NeedCheck;
-        self.store_revision = self.store_revision.saturating_add(1);
         let current_epoch = store.epoch;
+        self.advance_store_revision();
         self.preferred_proxies.retain(|_, proxy| {
             proxy.store_id != attempt.store_id || proxy.store_epoch != previous_epoch
         });
@@ -1709,9 +1756,10 @@ impl<L> RegionCache<L> {
                             && peer.store_epoch == store.epoch
                     })
             });
-        if usable {
+        if usable && location.leader_peer_id != Some(peer_id) {
             location.leader_peer_id = Some(peer_id);
             self.preferred_proxies.remove(&region);
+            self.advance_topology_revision();
         }
         usable
     }
@@ -1759,23 +1807,23 @@ impl<L> RegionCache<L> {
     pub(super) fn replace_regions_atomically(
         &mut self,
         observed: RegionVerId,
-        mut replacements: Vec<RegionLocation>,
+        mut replacements: Vec<(RegionLocation, StoreLabels)>,
     ) -> Result<(), RegionRouteError>
     where
         L: RegionLoader,
     {
-        replacements.sort_by(|left, right| left.start_key.cmp(&right.start_key));
-        for replacement in &replacements {
+        replacements.sort_by(|left, right| left.0.start_key.cmp(&right.0.start_key));
+        for (replacement, _) in &replacements {
             if !replacement.end_key.is_empty() && replacement.start_key >= replacement.end_key {
                 return Err(RegionRouteError::InvalidRegionBounds {
                     region: replacement.region,
                 });
             }
         }
-        for (index, left) in replacements.iter().enumerate() {
+        for (index, (left, _)) in replacements.iter().enumerate() {
             if replacements[index + 1..]
                 .iter()
-                .any(|right| right.region.id == left.region.id)
+                .any(|(right, _)| right.region.id == left.region.id)
             {
                 return Err(RegionRouteError::DuplicateReplacementRegion {
                     region: left.region,
@@ -1793,9 +1841,8 @@ impl<L> RegionCache<L> {
         next.retain(|location| location.region != observed);
         next_states.remove(&observed);
         let now_seconds = cache_now_seconds();
-        for mut replacement in replacements {
+        for (mut replacement, labels) in replacements {
             apply_observed_buckets(observed_buckets.as_ref(), &mut replacement);
-            let labels = self.with_loader(|loader| labels_for_location(loader, &replacement));
             normalize_loaded(&mut next_stores, &mut replacement, &labels);
             let region = replacement.region;
             let expire_after_ttl = !replacement.down_peer_ids.is_empty();
@@ -1808,7 +1855,7 @@ impl<L> RegionCache<L> {
         }
         self.regions = next;
         self.stores = next_stores;
-        self.store_revision = self.store_revision.saturating_add(1);
+        self.advance_store_revision();
         next_states.retain(|region, _| self.regions.iter().any(|cached| cached.region == *region));
         self.entry_states = next_states;
         self.preferred_proxies.remove(&observed);
@@ -2106,9 +2153,13 @@ impl<L> RegionCache<L> {
     }
 
     fn remove_cached_region(&mut self, region: RegionVerId) {
+        let original_len = self.regions.len();
         self.regions.retain(|cached| cached.region != region);
         self.entry_states.remove(&region);
         self.preferred_proxies.remove(&region);
+        if self.regions.len() != original_len {
+            self.advance_topology_revision();
+        }
     }
 
     fn insert_loaded_at(
@@ -2138,7 +2189,7 @@ impl<L> RegionCache<L> {
         let index = insert_loaded_into(&mut next_regions, loaded)?;
         self.regions = next_regions;
         self.stores = next_stores;
-        self.store_revision = self.store_revision.saturating_add(1);
+        self.advance_store_revision();
         self.entry_states
             .retain(|cached, _| self.regions.iter().any(|region| region.region == *cached));
         let mut state = CacheEntryState::new(self.next_expiry_at(now_seconds, region));

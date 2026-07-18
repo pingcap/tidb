@@ -29,6 +29,7 @@ use tidb_txnkv::region::{
 struct BlockingLoader {
     regions: VecDeque<RegionLocation>,
     calls: usize,
+    block_at: usize,
     started: mpsc::Sender<()>,
     release: Arc<(Mutex<bool>, Condvar)>,
 }
@@ -44,7 +45,7 @@ impl RegionLoader for BlockingLoader {
             .regions
             .pop_front()
             .ok_or_else(|| RegionLoadError::new("missing-region", "region script exhausted"))?;
-        if self.calls == 2 {
+        if self.calls == self.block_at {
             self.started.send(()).unwrap();
             let (released, wake) = &*self.release;
             let mut released = released.lock().unwrap();
@@ -117,6 +118,7 @@ fn blocked_region_load_allows_foreground_update_and_cannot_overwrite_it() {
     let mut cache = RegionCache::new(BlockingLoader {
         regions: [initial.clone(), stale, current.clone()].into(),
         calls: 0,
+        block_at: 2,
         started: started_tx,
         release: Arc::clone(&release),
     });
@@ -180,6 +182,80 @@ fn blocked_region_load_allows_foreground_update_and_cannot_overwrite_it() {
         background.locate_key(b"k").unwrap().unwrap(),
         current,
         "the stale leader reply must be discarded before current publication"
+    );
+    background.shutdown().unwrap();
+}
+
+fn ranged_location(id: u64, version: u64, start: &[u8], end: &[u8]) -> RegionLocation {
+    RegionLocation {
+        region: RegionVerId::new(id, version, 1),
+        start_key: start.to_vec(),
+        end_key: end.to_vec(),
+        peers: vec![Peer {
+            id: id * 10 + 1,
+            store_id: id * 100 + 1,
+            role: PeerRole::Voter,
+            is_witness: false,
+            store_epoch: version,
+        }],
+        leader_peer_id: Some(id * 10 + 1),
+        stores: vec![Store {
+            id: id * 100 + 1,
+            address: format!("tikv-{id}-{version}"),
+            epoch: version,
+        }],
+        ..RegionLocation::default()
+    }
+}
+
+#[test]
+fn range_lookup_restarts_after_concurrent_topology_replacement() {
+    let old_left = ranged_location(1, 1, b"", b"m");
+    let old_right = ranged_location(2, 1, b"m", b"");
+    let new_right = ranged_location(2, 2, b"m", b"");
+    let new_left = ranged_location(1, 2, b"", b"m");
+    let (started_tx, started_rx) = mpsc::channel();
+    let release = Arc::new((Mutex::new(false), Condvar::new()));
+    let mut cache = RegionCache::new(BlockingLoader {
+        regions: [
+            old_left.clone(),
+            old_right.clone(),
+            new_right.clone(),
+            new_left.clone(),
+        ]
+        .into(),
+        calls: 0,
+        block_at: 3,
+        started: started_tx,
+        release: Arc::clone(&release),
+    });
+    assert_eq!(cache.locate_key(b"b").unwrap().region, old_left.region);
+    assert_eq!(cache.locate_key(b"n").unwrap().region, old_right.region);
+    assert!(cache.mark_reload_on_access(old_right.region));
+    let background = BackgroundRegionCache::start_gc(cache, Duration::from_secs(3600), 50).unwrap();
+
+    let lookup = background.clone();
+    let lookup_thread = thread::spawn(move || {
+        lookup
+            .locate_ranges(&[KeyRange::new(b"b".to_vec(), b"z".to_vec())])
+            .unwrap()
+            .unwrap()
+    });
+    started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+
+    assert!(background
+        .with_cache(|cache| cache.invalidate(old_left.region))
+        .unwrap());
+    {
+        let (released, wake) = &*release;
+        *released.lock().unwrap() = true;
+        wake.notify_one();
+    }
+
+    assert_eq!(
+        lookup_thread.join().unwrap(),
+        vec![new_left, new_right],
+        "a range lookup must restart instead of returning old-left/new-right"
     );
     background.shutdown().unwrap();
 }

@@ -201,7 +201,7 @@ impl<L> BackgroundRegionCache<L> {
         self.locate_key_with_boundary(key, false)
     }
 
-    /// Resolves every requested range through optimistic, fragment-at-a-time lookup.
+    /// Resolves every requested range from one stable canonical topology revision.
     pub fn locate_ranges(
         &self,
         ranges: &[KeyRange],
@@ -209,40 +209,55 @@ impl<L> BackgroundRegionCache<L> {
     where
         L: RegionLoader,
     {
-        let mut located = BTreeMap::<RegionVerId, RegionLocation>::new();
         for range in ranges {
             if !range.is_valid() {
                 return Ok(Err(RegionRouteError::InvalidRange));
             }
-            let mut cursor = range.start.clone();
-            let mut first_fragment = true;
-            loop {
-                let location = match self.locate_key_with_boundary(&cursor, !first_fragment)? {
-                    Ok(location) => location,
-                    Err(error) => return Ok(Err(error)),
-                };
-                let region = location.region;
-                let region_end = location.end_key.clone();
-                located.entry(region).or_insert(location);
+        }
+        loop {
+            let revision = self.topology_revision()?;
+            let mut located = BTreeMap::<RegionVerId, RegionLocation>::new();
+            for range in ranges {
+                let mut cursor = range.start.clone();
+                let mut first_fragment = true;
+                loop {
+                    let location = match self.locate_key_with_boundary(&cursor, !first_fragment)? {
+                        Ok(location) => location,
+                        Err(error) => return Ok(Err(error)),
+                    };
+                    let region = location.region;
+                    let region_end = location.end_key.clone();
+                    located.entry(region).or_insert(location);
 
-                let request_is_covered = if range.end.is_empty() {
-                    region_end.is_empty()
-                } else {
-                    region_end.is_empty() || range.end <= region_end
-                };
-                if request_is_covered {
-                    break;
+                    let request_is_covered = if range.end.is_empty() {
+                        region_end.is_empty()
+                    } else {
+                        region_end.is_empty() || range.end <= region_end
+                    };
+                    if request_is_covered {
+                        break;
+                    }
+                    if region_end <= cursor {
+                        return Ok(Err(RegionRouteError::NonProgressingRegion { region }));
+                    }
+                    cursor = region_end;
+                    first_fragment = false;
                 }
-                if region_end <= cursor {
-                    return Ok(Err(RegionRouteError::NonProgressingRegion { region }));
-                }
-                cursor = region_end;
-                first_fragment = false;
+            }
+            if self.topology_revision()? == revision {
+                let mut regions = located.into_values().collect::<Vec<_>>();
+                regions.sort_by(|left, right| left.start_key.cmp(&right.start_key));
+                return Ok(Ok(regions));
             }
         }
-        let mut regions = located.into_values().collect::<Vec<_>>();
-        regions.sort_by(|left, right| left.start_key.cmp(&right.start_key));
-        Ok(Ok(regions))
+    }
+
+    fn topology_revision(&self) -> Result<u64, BackgroundRegionCacheError> {
+        self.inner
+            .cache
+            .lock()
+            .map(|cache| cache.topology_revision())
+            .map_err(|_| BackgroundRegionCacheError::CachePoisoned)
     }
 
     fn locate_key_with_boundary(
