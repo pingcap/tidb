@@ -11,7 +11,7 @@ the source or obligation still has explicit unported behavior.
 
 - Active claims: 0
 - Active slices: 0
-- Declared ready slices: 0
+- Declared ready slices: 3
 - Partial slices: 61
 - Covered slices: 2
 - Blocked slices: 1
@@ -31,6 +31,7 @@ the source or obligation still has explicit unported behavior.
 | 2026-07-read-path-13 | integrated | 4 |
 | 2026-07-read-path-14 | integrated | 4 |
 | 2026-07-read-path-15 | integrated | 4 |
+| 2026-07-read-path-16 | active | 3 |
 | 2026-07-runtime-closure-03 | integrated | 6 |
 | 2026-07-runtime-closure-04 | integrated | 6 |
 | 2026-07-runtime-closure-05 | integrated | 6 |

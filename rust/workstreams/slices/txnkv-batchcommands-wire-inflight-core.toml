@@ -1,0 +1,48 @@
+schema = "1"
+slice = "txnkv-batchcommands-wire-inflight-core"
+status = "ready"
+target = "tidb-txnkv"
+ring = "transaction"
+consumer = "Campaign 16 directly transits pinned BatchCommands command tags, immutable pre-encoded body ownership, route-scoped pending-ID publication and retirement, cancellation, forwarded-route failure isolation, and exactly-once async terminal delivery. Tonic duplex stream creation and reconnect remain behind this sole in-flight authority."
+test_target = "BatchCommands opaque wire and route-scoped in-flight demultiplexing source"
+go_sources = []
+go_tests = []
+module_sources = [
+  "client-go::internal/client/client_async.go",
+  "client-go::internal/client/client_batch.go",
+  "client-go::internal/client/conn_batch.go",
+  "client-go::tikvrpc/tikvrpc.go",
+]
+module_tests = [
+  "client-go::internal/client/client_async_test.go:38:TestSendRequestAsyncBasic",
+  "client-go::internal/client/client_async_test.go:239:TestSendRequestAsyncTimeout",
+  "client-go::internal/client/client_async_test.go:354:TestSendRequestAsyncAndCloseClientOnHandle",
+  "client-go::internal/client/client_async_test.go:406:TestSendRequestAsyncAndCloseClientBeforeSend",
+  "client-go::internal/client/client_batch_test.go:27:TestEncodedBatchCmd_SizeAndMarshalTo",
+  "client-go::internal/client/client_batch_test.go:42:TestEncodeRequestCmd_Basic",
+  "client-go::internal/client/client_batch_test.go:75:TestEncodeRequestCmd_PoolReuse",
+  "client-go::internal/client/client_batch_test.go:101:TestEncodeRequestCmd_AfterPoolReturn",
+  "client-go::internal/client/client_batch_test.go:124:TestReuseRequestData_Basic",
+  "client-go::internal/client/client_batch_test.go:158:TestReuseRequestData_DoubleReturn",
+  "client-go::internal/client/client_batch_test.go:183:TestEncodedMsgDataPool_ConcurrentSafety",
+  "client-go::internal/client/client_test.go:742:TestInspectPendingBatchRequests",
+  "client-go::tikvrpc/tikvrpc_test.go:55:TestBatchResponse",
+  "client-go::tikvrpc/tikvrpc_test.go:177:TestTiDB51921",
+]
+depends_on = []
+evidence_prerequisites = []
+support_anchors = [
+  "client-go/tikvrpc/tikvrpc.go:644-713:request command to BatchCommands tag conversion",
+  "client-go/tikvrpc/tikvrpc.go:768-840:response demultiplexing and nil-command error",
+  "client-go/internal/client/client_batch.go:69-218:encoded ownership and terminal entry state",
+  "client-go/internal/client/client_batch.go:929-1095:pending publication, send failure, and close fanout",
+  "client-go/internal/client/client_batch.go:1202-1337:response-ID demux and stream feedback",
+]
+rust_paths = [
+  "rust/crates/tidb-proto/proto/tikvpb.proto",
+  "rust/crates/tidb-proto/tests/batch_commands_wire_source.rs",
+  "rust/crates/tidb-txnkv/src/rpc/batch/inflight.rs",
+  "rust/crates/tidb-txnkv/src/rpc/batch/wire.rs",
+  "rust/crates/tidb-txnkv/tests/batch_inflight_source.rs",
+  "rust/crates/tidb-txnkv/tests/batch_wire_source.rs",
+]
