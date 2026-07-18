@@ -22,6 +22,13 @@ The supplied MinIO fixture proves the result. Exporting `test.warehouse` while t
 - [x] (2026-07-16) Passed CSE target tests, TiDB WIP target tests, and the real-fixture export with baseline hashes.
 - [x] (2026-07-16) Passed final CSE format/clippy gates, TiDB Ready validation, final fixture export, and the diff/test-quality audit.
 - [x] (2026-07-17) Added opt-in legacy encryption: Dumpling propagates `--cse-legacy-encryption`, and CSE resolves the existing `CSE_MASTER_KEY_*` KMS configuration for legacy shard properties.
+- [x] (2026-07-18) Added SST range-hint pruning and statistics so a range scan reports candidate, retained, and conservatively retained files.
+- [x] (2026-07-18) Added bounded observability for packed-export stages, range processes, shard/object reads, packed row decoding, and packed output-storage calls. Normal per-range and per-shard records stay at debug level; only slow operations and failures are promoted.
+- [x] (2026-07-18) Removed the draft packed instrumentation from the generic Dumpling writer files. Packed output timing is installed only by `dumpPacked` through a storage wrapper defined in `packed.go`.
+- [x] (2026-07-18) Moved SST range-hint statistics out of generic kvengine metadata code. The packed reader now derives them locally from the existing unfiltered and filtered change sets, leaving the kvengine API and implementation unchanged.
+- [x] (2026-07-18) Re-ran the focused CSE and Dumpling tests, CSE format, and CSE clippy after the observability changes.
+- [x] (2026-07-18) Rebuilt CSE with the release profile and Dumpling with the optimized Go build, exported the MinIO fixture, audited log volume and sensitive fields, and rechecked the stable output hashes.
+- [x] (2026-07-18) Passed the TiDB Ready lint gate and completed the final scope, diff, and test-quality audit.
 
 ## Surprises & Discoveries
 
@@ -39,6 +46,9 @@ The supplied MinIO fixture proves the result. Exporting `test.warehouse` while t
 
 - Observation: The one-shot implementation preserves the prior fixture output byte for byte.
   Evidence: The WIP run produced CSV SHA256 `ba114d3290558252db863c0ee51177721da09a2296d96eaf2cd2e91abb5f7f79` and schema SHA256 `04c67a09bed9d3b993cdf48605a023953b2d57d1fe22ab1f7461d32e9ff42e8c`.
+
+- Observation: A child range duration alone cannot identify a storage bottleneck because stdout backpressure can extend the child lifetime.
+  Evidence: CSE writes framed rows through a bounded stdout pipe while Dumpling decodes rows, formats CSV, and writes the destination concurrently. The observability breakdown therefore records CSE object/snapshot/iteration/stdout time, packed row-decode and table-pipeline time, and packed output-storage create/write/close time.
 
 ## Decision Log
 
@@ -74,6 +84,18 @@ The supplied MinIO fixture proves the result. Exporting `test.warehouse` while t
   Rationale: Opt-in behavior preserves unencrypted and CMEK reads, while keeping plaintext master-key material out of process arguments.
   Date/Author: 2026-07-17, Codex.
 
+- Decision: Keep routine range, shard, and table completion records at debug level; emit info only for packed-export progress, terminal summaries, and operations exceeding fixed slow thresholds, and warn on failures.
+  Rationale: One process is launched for every metadata or physical-table range, so unconditional info logs at each inner boundary would scale with schema and partition count. Slow and failure records retain the detailed fields needed for diagnosis without flooding normal exports.
+  Date/Author: 2026-07-18, Codex.
+
+- Decision: Keep Dumpling-side instrumentation inside the packed-export implementation.
+  Rationale: Packed row decoding is timed by `packedRowIter`, and `dumpPacked` supplies a packed-only storage wrapper to existing writers. Generic writer source files retain no packed fields, phases, branches, or callbacks.
+  Date/Author: 2026-07-18, Codex.
+
+- Decision: Keep SST selection statistics inside the packed reader.
+  Rationale: Comparing the existing full and range-filtered change sets provides the packed-export diagnostics without adding statistics, hooks, or API changes to generic kvengine metadata code.
+  Date/Author: 2026-07-18, Codex.
+
 ## Outcomes & Retrospective
 
 The implementation now matches the one-shot raw KV design in both workspaces. CSE no longer imports TiDB schema types or table-key codecs from its packed reader. Dumpling starts no persistent CSE processes, reconstructs schema from raw metadata, and launches table range scans only while writers consume rows.
@@ -82,7 +104,7 @@ Focused tests, repository lint gates, and the real fixture pass. The test change
 
 ## Context and Orientation
 
-There are two workspaces. TiDB is `/root/workspace/tidb/exp-export-packed`. CSE is `/workspace/cloud-storage-engine/exp-export-packed-csv`.
+There are two workspaces. TiDB is `/root/workspace/tidb/exp-export-packed`. CSE is `/root/workspace/cloud-storage-engine/exp-export-packed-csv`.
 
 In CSE, `components/native_br/src/packed_reader.rs` adapts a decoded `kvenginepb::PackedBackup` to `kvengine::SnapAccess`. The manifest supplies the API V2 keyspace ID, fixed `backup_ts`, shard snapshots, and `(file_id, file_type)` object references. A half-open range `[start, end)` includes `start` and excludes `end`. An inner key is the TiDB logical key without the API V2 keyspace prefix. `cmd/cse-ctl/src/dumper.rs` parses the object-store URL and CLI range, loads the manifest, invokes the reader once, writes raw frames, flushes, and exits.
 
@@ -110,29 +132,35 @@ In `dumpling/export/packed.go`, implement a range-scanner callback, TiDB hash me
 
 Extend existing broad tests. Use a real TiDB mock store transaction as the test range scanner, so production metadata range and JSON logic consumes keys written by TiDB business logic. Run CSE tests, format, clippy, TiDB failpoint-aware target tests, `make lint`, and the real MinIO export. Compare the exact row count and hashes.
 
+### Milestone 4: Make slow exports diagnosable without noisy logs
+
+In Dumpling, report the overall stage and bounded periodic progress, and attach process startup, first-row, row/byte, and duration fields to range completion. Aggregate packed row-decode and table-pipeline time inside packed types, and observe destination create/write/close calls through a storage wrapper installed only by `dumpPacked`. Emit routine per-range and per-table records only at debug level, with one info record when an operation crosses its slow threshold. Do not add packed observability fields or branches to the generic writer implementation.
+
+In CSE, emit one terminal range summary containing manifest, encryption-mode, SST-pruning, object-read, snapshot, iteration, stdout, and flush statistics. Keep successful shard detail at debug level, cap slow-object info records to three per process, and preserve elapsed time on failing stages. Run a release-profile fixture export and inspect the actual log distribution before accepting the thresholds and fields.
+
 ## Concrete Steps
 
-From `/workspace/cloud-storage-engine/exp-export-packed-csv`, run:
+From `/root/workspace/cloud-storage-engine/exp-export-packed-csv`, run:
 
     cargo test -p native_br packed_reader::tests -- --nocapture
     cargo test -p cse-ctl dumper::tests -- --nocapture
     cargo test -p kvengine test_read_iterator_all_versions -- --nocapture
-    cargo build -p cse-ctl
-    target/debug/cse-ctl dumper --help
+    make release
+    target/release/cse-ctl dumper --help
     make format
     make clippy
 
-From `/root/workspace/tidb/exp-export-packed`, inspect the Bazel gate. `dumpling/export/BUILD.bazel` changes, so `make bazel_prepare` is required. The package contains failpoints, so use the cleanup-safe test script:
+From `/root/workspace/tidb/exp-export-packed`, inspect the Bazel gate. Run `make bazel_prepare` only when the current local diff matches a trigger in `AGENTS.md`; the observability-only diff changes existing Go files and existing test content, so it does not add a new trigger. The package contains failpoints, so use the cleanup-safe test script:
 
-    make bazel_prepare
     ./tools/check/failpoint-go-test.sh dumpling/export -run '^(TestPackedProtocolRows|TestPackedRowsUseTiDBStorageEncoding|TestConfigValidation|TestDumpExit|TestDumpTableMeta|TestPrepareDumpingDatabases)$' -count=1
     ./tools/check/failpoint-go-test.sh dumpling/export -run '^(TestWriteDatabaseMeta|TestWriteTableMeta|TestWriteTableDataWithFileSize|TestWriteInsertInCsv|TestWriteInsertInCsvWithDialect)$' -count=1
+    go build -trimpath -ldflags '-s -w' -o /tmp/dumpling-packed-observability ./dumpling/cmd/dumpling
     make lint
 
 Run the real fixture with an unusable TiDB port:
 
     rm -rf /tmp/dumpling-packed-warehouse-range
-    go run ./dumpling/cmd/dumpling --host 127.0.0.1 --port 1 --packed-backup 'http://minioadmin:minioadmin@localhost:9000/juncen-native-br/backup/tpcc300/7628844331459966093/_meta/20261504/070237.meta' --cse-ctl-path /workspace/cloud-storage-engine/exp-export-packed-csv/target/debug/cse-ctl --filter 'test.warehouse' --filetype csv --output /tmp/dumpling-packed-warehouse-range --threads 2
+    /tmp/dumpling-packed-observability --host 127.0.0.1 --port 1 --packed-backup 'http://minioadmin:minioadmin@localhost:9000/juncen-native-br/backup/tpcc300/7628844331459966093/_meta/20261504/070237.meta' --cse-ctl-path /root/workspace/cloud-storage-engine/exp-export-packed-csv/target/release/cse-ctl --filter 'test.warehouse' --filetype csv --output /tmp/dumpling-packed-warehouse-range --threads 2 --loglevel debug
 
 Inspect the result:
 
@@ -151,7 +179,7 @@ CSE adds the manifest keyspace prefix before storage access, scans `WRITE_CF` wi
 
 Dumpling loads full public database/table schema through raw metadata ranges, exports partition ranges sequentially, and has no persistent child process pool. Existing SQL-source tests remain green. Packed mode completes with `--host 127.0.0.1 --port 1`, proving no TiDB connection is used.
 
-The fixture output contains `test-schema-create.sql`, `test.warehouse-schema.sql`, and `test.warehouse.000000000.csv`. The CSV has one header and 300 rows, 300 unique IDs, and nine fields per record. Its schema and CSV hashes match below.
+The fixture output contains `test-schema-create.sql`, `test.warehouse-schema.sql`, and `test.warehouse.000000000.csv`. The CSV has one header and 300 rows, 300 unique IDs, and nine fields per record. Its schema and CSV hashes match below. The release-profile run must also show one start, metadata, scheduling, and terminal export record; routine range/shard detail must remain debug-only; and no full metadata URL, access key, secret key, session token, or master-key material may appear in the logs.
 
 ## Idempotence and Recovery
 
@@ -182,6 +210,19 @@ both runs retained the same 301 lines and hashes. The packed-reader test builds
 an actually encrypted L0 file and reads it through the injected legacy master
 key.
 
+The final 2026-07-18 scope-audit run used a CSE binary built by `make release`
+and reporting `build_profile=release`, plus an optimized, stripped Dumpling binary. It completed
+five one-shot scans with no failed or canceled scans, retained 10 of 410 SST
+candidates, read 10 content objects, and reported matching CSE/protocol row and
+byte totals. Peak CSE child RSS was 103,145,472 bytes. The debug log contained 32
+records: 25 debug, 7 info, and no warning or error records. Routine range and
+table completion appeared only at debug level, no internal machine-protocol
+line escaped into the parent log, and the sensitive-value audit found no full
+metadata URL, URL credentials, AWS credential/session-token value, or legacy
+master-key configuration value. The CSV and schema hashes remained unchanged,
+with 300 data rows, 300 unique IDs, and nine fields per row. Generic Dumpling
+writer files and generic kvengine metadata files both had zero diff.
+
 ## Interfaces and Dependencies
 
 In CSE, `native_br::packed_reader::PackedBackupReader` has the public operation:
@@ -191,7 +232,7 @@ In CSE, `native_br::packed_reader::PackedBackupReader` has the public operation:
         start_inner: &[u8],
         end_inner: &[u8],
         emit: F,
-    ) -> native_br::Result<()>
+    ) -> native_br::Result<PackedScanStats>
     where
         F: FnMut(&[u8], &[u8]) -> std::io::Result<()>;
 
@@ -212,4 +253,4 @@ stdout repeats `u32_le key_len`, `u32_le value_len`, `key`, and `value`. A clean
 
 In TiDB, `packedRangeScanner` accepts a context, start/end logical keys, and an emit callback. `loadPackedDatabases` uses it for metadata hashes. `packedTableData` stores executable, URL, table schema, and physical ranges. `packedRowIter` owns at most one `cseDumperScan` and advances ranges sequentially. These types remain behind the existing `TableMeta`, `TableDataIR`, and `SQLRowIter` interfaces.
 
-Revision note: Created on 2026-07-16 for the initial packed CSV implementation. Rewritten later that day to record the one-shot raw KV command, TiDB-owned schema parsing, removal of the long-lived protocol, and current validation evidence.
+Revision note: Created on 2026-07-16 for the initial packed CSV implementation. Rewritten later that day to record the one-shot raw KV command, TiDB-owned schema parsing, removal of the long-lived protocol, and current validation evidence. Updated on 2026-07-18 with the range-pruning and low-noise observability milestone plus release-profile acceptance steps.
