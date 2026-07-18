@@ -5,6 +5,7 @@
 //! boundary so this module owns topology semantics without owning transport.
 
 mod async_request;
+mod background;
 mod batch_locate;
 mod bucket;
 mod cache;
@@ -27,6 +28,9 @@ pub use async_request::{
     AsyncRegionAttemptDecision, AsyncRegionAttemptPolicy, AsyncRegionAttemptPoll,
     AsyncRegionAttemptState, AsyncRegionRequestAttempt, AsyncRegionRetryCause,
 };
+pub use background::{
+    BackgroundMaintenanceRound, BackgroundRegionCache, BackgroundRegionCacheError,
+};
 pub use batch_locate::{
     merge_loaded_and_cached, ranges_after_key, regions_have_gap, regions_intersecting_ranges,
     DEFAULT_REGIONS_PER_BATCH, MAX_RANGES_PER_BATCH,
@@ -34,8 +38,9 @@ pub use batch_locate::{
 pub use bucket::{Bucket, BucketMetadata, BucketStats};
 pub use cache::{
     BatchLoadOptions, BatchRegionLoader, BatchScanBackoff, BatchScanRetryReason, RegionCache,
-    RegionLoader, RegionQuery, RegionQueryBackoff, RegionQueryLoader, RegionQueryOptions,
-    RegionQueryRetryReason, RegionQueryRoute, RegionRecoveryLoader, StoreMetadata,
+    RegionGcRound, RegionLoader, RegionQuery, RegionQueryBackoff, RegionQueryLoader,
+    RegionQueryOptions, RegionQueryRetryReason, RegionQueryRoute, RegionRecoveryLoader,
+    StoreMaintenanceRound, StoreMetadata,
 };
 pub use cache_entry::{CacheEntryState, CacheReloadState};
 pub use error::{RegionLoadError, RegionRouteError};
@@ -45,8 +50,8 @@ pub use location::{
     KeyRange, Peer, PeerRole, RegionLocation, RegionMetadata, RegionMetadataPeer, Store,
 };
 pub use recovery::{
-    OwnedLeaderRoute, RegionAttempt, RegionErrorDisposition, RegionRebuildAction,
-    RegionRecoveryError, RegionTerminalError,
+    OwnedLeaderRoute, RegionAttempt, RegionAttemptObservation, RegionErrorDisposition,
+    RegionRebuildAction, RegionRecoveryError, RegionTerminalError,
 };
 pub use replica_selector::{ReadPolicy, ReplicaReadMode};
 pub use request_selector::{
@@ -57,6 +62,8 @@ pub use route::{RouteFeedback, RouteOutcome};
 pub use store_health::{
     HealthInstant, StoreHealth, StoreHealthDetail, StoreLoad, StoreRoutingHealth,
 };
-pub use store_state::{StoreFailureOutcome, StoreLiveness, StoreResolveState, StoreState};
+pub use store_state::{
+    StoreFailureOutcome, StoreLiveness, StoreRefreshOutcome, StoreResolveState, StoreState,
+};
 pub(crate) use topology::RegionStoreTopology;
 pub use topology::{RouteFeedbackApplication, RoutePeer, RouteSnapshot};

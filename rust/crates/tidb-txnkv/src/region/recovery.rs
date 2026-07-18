@@ -38,6 +38,32 @@ pub struct RegionAttempt {
     pub store_epoch: u64,
 }
 
+/// Cache-issued dispatch observation binding an attempt to its peer vector.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RegionAttemptObservation {
+    attempt: RegionAttempt,
+    selectable_peer_count: usize,
+}
+
+impl RegionAttemptObservation {
+    pub(crate) const fn new(attempt: RegionAttempt, selectable_peer_count: usize) -> Self {
+        Self {
+            attempt,
+            selectable_peer_count,
+        }
+    }
+
+    /// Exact route generation captured for dispatch.
+    #[must_use]
+    pub const fn attempt(&self) -> &RegionAttempt {
+        &self.attempt
+    }
+
+    pub(crate) const fn selectable_peer_count(&self) -> usize {
+        self.selectable_peer_count
+    }
+}
+
 /// Owned leader route safe to carry across cache borrows.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OwnedLeaderRoute {

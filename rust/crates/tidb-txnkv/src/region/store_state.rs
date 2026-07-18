@@ -34,6 +34,19 @@ pub enum StoreResolveState {
     Resolved,
     /// A failed generation must be re-resolved before reuse.
     NeedCheck,
+    /// PD reported that the store is removed or tombstone.
+    Removed,
+}
+
+/// Result of re-resolving one canonical store record in place.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StoreRefreshOutcome {
+    /// Metadata and resolve state were already current.
+    Unchanged,
+    /// Address, labels, or resolve state changed on the existing record.
+    Refreshed,
+    /// PD reported the store removed or tombstone.
+    Removed,
 }
 
 /// Immutable view of the sole RegionCache-owned store authority.

@@ -18,13 +18,13 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use super::{
     merge_loaded_and_cached, ranges_after_key, regions_have_gap, regions_intersecting_ranges,
     CacheEntryState, CacheReloadState, HealthInstant, KeyRange, LeaderRequest, OwnedLeaderRoute,
-    Peer, PeerRole, ReadPolicy, RegionAttempt, RegionLoadError, RegionLocation, RegionMetadata,
-    RegionRebuildAction, RegionRecoveryError, RegionRouteError, RegionStoreTopology, RegionVerId,
-    ReplicaHealthFacts, ReplicaReadMode, RequestSelection, RequestSelector, RouteFeedback,
-    RouteFeedbackApplication, RouteOutcome, RoutePeer, RouteSnapshot, ServerBusyAction, Store,
-    StoreFailureOutcome, StoreLabel, StoreLiveness, StoreResolveState, StoreState,
-    DEFAULT_REGIONS_PER_BATCH, MAX_RANGES_PER_BATCH, MAX_REPLICA_ATTEMPTS,
-    MAX_REPLICA_ATTEMPT_TIME,
+    Peer, PeerRole, ReadPolicy, RegionAttempt, RegionAttemptObservation, RegionLoadError,
+    RegionLocation, RegionMetadata, RegionRebuildAction, RegionRecoveryError, RegionRouteError,
+    RegionStoreTopology, RegionVerId, ReplicaHealthFacts, ReplicaReadMode, RequestSelection,
+    RequestSelector, RouteFeedback, RouteFeedbackApplication, RouteOutcome, RoutePeer,
+    RouteSnapshot, ServerBusyAction, Store, StoreFailureOutcome, StoreLabel, StoreLiveness,
+    StoreRefreshOutcome, StoreResolveState, StoreState, DEFAULT_REGIONS_PER_BATCH,
+    MAX_RANGES_PER_BATCH, MAX_REPLICA_ATTEMPTS, MAX_REPLICA_ATTEMPT_TIME,
 };
 
 /// Caller-selected options for one PD batch-region attempt.
@@ -138,6 +138,32 @@ pub trait RegionQueryLoader: RegionLoader {
 
     /// Reloads one store. None means removed/tombstone.
     fn load_store(&mut self, store_id: u64) -> Result<Option<StoreMetadata>, RegionLoadError>;
+}
+
+/// Result of one bounded rotating cache-GC round.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RegionGcRound {
+    /// Entries inspected in this round.
+    pub scanned: usize,
+    /// Expired entries removed.
+    pub expired: usize,
+    /// Delayed reloads made visible to foreground lookup.
+    pub delayed_reloads_released: usize,
+    /// Whether the next round continues before wrapping to the beginning.
+    pub has_more: bool,
+}
+
+/// Aggregate result of one canonical store-maintenance pass.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct StoreMaintenanceRound {
+    /// Stores selected for refresh.
+    pub attempted: usize,
+    /// Existing records refreshed in place.
+    pub refreshed: usize,
+    /// Existing records marked removed.
+    pub removed: usize,
+    /// Bounded loader failures deferred to a later round.
+    pub failed: usize,
 }
 
 /// Injected PD-shaped region metadata loader.
@@ -400,6 +426,113 @@ where
         }
         Ok(loaded)
     }
+
+    /// Re-resolves one canonical store record without replacing its identity.
+    pub fn refresh_store(
+        &mut self,
+        store_id: u64,
+    ) -> Result<StoreRefreshOutcome, RegionRecoveryError> {
+        let metadata = self
+            .loader
+            .load_store(store_id)
+            .map_err(RegionRecoveryError::Loader)?;
+        if let Some(metadata) = &metadata {
+            if metadata.id != store_id {
+                return Err(RegionRecoveryError::Loader(RegionLoadError::new(
+                    "store-id-mismatch",
+                    format!(
+                        "control plane returned store {}, expected {store_id}",
+                        metadata.id
+                    ),
+                )));
+            }
+            if metadata.address.is_empty() {
+                return Err(RegionRecoveryError::Loader(RegionLoadError::new(
+                    "empty-store-address",
+                    format!("store {store_id} has an empty address"),
+                )));
+            }
+        }
+        let store = self
+            .stores
+            .get_mut(&store_id)
+            .ok_or_else(|| RegionRecoveryError::Route(RegionRouteError::MissingStore(store_id)))?;
+        let previous_epoch = store.epoch;
+        let outcome = match metadata {
+            None => {
+                if store.resolve_state == StoreResolveState::Removed {
+                    StoreRefreshOutcome::Unchanged
+                } else {
+                    store.epoch = store.epoch.saturating_add(1);
+                    store.resolve_state = StoreResolveState::Removed;
+                    store.liveness = StoreLiveness::Unreachable;
+                    store.replace_labels(Vec::new());
+                    StoreRefreshOutcome::Removed
+                }
+            }
+            Some(metadata) => {
+                let changed = store.address != metadata.address
+                    || store.labels() != metadata.labels
+                    || store.resolve_state != StoreResolveState::Resolved;
+                if store.address != metadata.address {
+                    store.epoch = store.epoch.saturating_add(1);
+                }
+                store.address = metadata.address;
+                store.replace_labels(metadata.labels);
+                store.resolve_state = StoreResolveState::Resolved;
+                if changed {
+                    StoreRefreshOutcome::Refreshed
+                } else {
+                    StoreRefreshOutcome::Unchanged
+                }
+            }
+        };
+        let removed = outcome == StoreRefreshOutcome::Removed;
+        if store.epoch != previous_epoch {
+            self.preferred_proxies.retain(|_, proxy| {
+                proxy.store_id != store_id || proxy.store_epoch != previous_epoch
+            });
+        }
+        if removed {
+            for location in &self.regions {
+                if location.peers.iter().any(|peer| peer.store_id == store_id) {
+                    if let Some(state) = self.entry_states.get_mut(&location.region) {
+                        state.mark(CacheReloadState::ExpireAfterTtl);
+                    }
+                }
+            }
+        }
+        Ok(outcome)
+    }
+
+    /// Runs one sequential store pass through the sole loader and registry.
+    pub fn maintain_stores(&mut self, need_check_only: bool) -> StoreMaintenanceRound {
+        let store_ids = self
+            .stores
+            .iter()
+            .filter_map(|(store_id, store)| {
+                let selected = if need_check_only {
+                    store.resolve_state == StoreResolveState::NeedCheck
+                } else {
+                    store.resolve_state != StoreResolveState::Removed
+                };
+                selected.then_some(*store_id)
+            })
+            .collect::<Vec<_>>();
+        let mut round = StoreMaintenanceRound {
+            attempted: store_ids.len(),
+            ..StoreMaintenanceRound::default()
+        };
+        for store_id in store_ids {
+            match self.refresh_store(store_id) {
+                Ok(StoreRefreshOutcome::Unchanged) => {}
+                Ok(StoreRefreshOutcome::Refreshed) => round.refreshed += 1,
+                Ok(StoreRefreshOutcome::Removed) => round.removed += 1,
+                Err(_) => round.failed += 1,
+            }
+        }
+        round
+    }
 }
 
 /// PD-shaped ordered batch-region loader used only after cache misses are
@@ -434,6 +567,7 @@ pub struct RegionCache<L> {
     entry_states: BTreeMap<RegionVerId, CacheEntryState>,
     base_ttl_seconds: u64,
     ttl_jitter_seconds: u64,
+    gc_cursor: usize,
 }
 
 impl<L> RegionCache<L> {
@@ -448,6 +582,7 @@ impl<L> RegionCache<L> {
             entry_states: BTreeMap::new(),
             base_ttl_seconds: 600,
             ttl_jitter_seconds: 60,
+            gc_cursor: 0,
         }
     }
 
@@ -462,6 +597,7 @@ impl<L> RegionCache<L> {
             entry_states: BTreeMap::new(),
             base_ttl_seconds,
             ttl_jitter_seconds,
+            gc_cursor: 0,
         }
     }
 
@@ -527,12 +663,40 @@ impl<L> RegionCache<L> {
         self.maintain_entries_at(cache_now_seconds())
     }
 
+    /// Runs one bounded rotating cache-GC round at the current wall clock.
+    pub fn maintain_entries_bounded(&mut self, limit: usize) -> RegionGcRound {
+        self.maintain_entries_bounded_at(cache_now_seconds(), limit)
+    }
+
     /// Deterministic-clock form of [`Self::maintain_entries`]. Returns the
     /// number of delayed reloads released by this scan.
     pub fn maintain_entries_at(&mut self, now_seconds: u64) -> usize {
+        let limit = self.regions.len().max(1);
+        self.gc_cursor = 0;
+        self.maintain_entries_bounded_at(now_seconds, limit)
+            .delayed_reloads_released
+    }
+
+    /// Inspects at most `limit` entries and continues from the prior round.
+    pub fn maintain_entries_bounded_at(&mut self, now_seconds: u64, limit: usize) -> RegionGcRound {
+        let limit = limit.max(1);
+        if self.regions.is_empty() {
+            self.gc_cursor = 0;
+            return RegionGcRound::default();
+        }
+        self.gc_cursor = self.gc_cursor.min(self.regions.len() - 1);
+        let end = self.gc_cursor.saturating_add(limit).min(self.regions.len());
+        let selected = self.regions[self.gc_cursor..end]
+            .iter()
+            .map(|location| location.region)
+            .collect::<Vec<_>>();
+        let next_region = self.regions.get(end).map(|location| location.region);
         let mut expired = Vec::new();
         let mut released = 0;
-        for (region, state) in &mut self.entry_states {
+        for region in &selected {
+            let Some(state) = self.entry_states.get_mut(region) else {
+                continue;
+            };
             if now_seconds > state.expires_at_seconds() {
                 expired.push(*region);
                 continue;
@@ -563,10 +727,23 @@ impl<L> RegionCache<L> {
                 state.mark(CacheReloadState::ExpireAfterTtl);
             }
         }
+        let expired_count = expired.len();
         for region in expired {
             self.remove_cached_region(region);
         }
-        released
+        self.gc_cursor = next_region
+            .and_then(|next| {
+                self.regions
+                    .iter()
+                    .position(|location| location.region == next)
+            })
+            .unwrap_or(0);
+        RegionGcRound {
+            scanned: selected.len(),
+            expired: expired_count,
+            delayed_reloads_released: released,
+            has_more: next_region.is_some(),
+        }
     }
 
     pub(super) fn validate_attempt(
@@ -745,6 +922,43 @@ impl<L> RegionCache<L> {
             previous_epoch,
             current_epoch,
         })
+    }
+
+    /// Issues an opaque dispatch observation over the selectable peer vector.
+    pub fn observe_attempt(
+        &self,
+        attempt: &RegionAttempt,
+    ) -> Result<RegionAttemptObservation, RegionRecoveryError> {
+        self.validate_attempt(attempt)?;
+        let location = self
+            .regions
+            .iter()
+            .find(|location| location.region == attempt.region)
+            .expect("validated attempt has a canonical region");
+        Ok(RegionAttemptObservation::new(
+            attempt.clone(),
+            selectable_peer_count(location),
+        ))
+    }
+
+    /// Applies a send failure only when the cache-issued selectable peer-vector
+    /// width still matches the topology observed at dispatch.
+    pub fn on_send_failure_observed(
+        &mut self,
+        observation: &RegionAttemptObservation,
+        liveness: StoreLiveness,
+    ) -> Result<StoreFailureOutcome, RegionRecoveryError> {
+        let attempt = observation.attempt();
+        self.validate_attempt(attempt)?;
+        let location = self
+            .regions
+            .iter()
+            .find(|location| location.region == attempt.region)
+            .expect("validated attempt has a canonical region");
+        if selectable_peer_count(location) != observation.selectable_peer_count() {
+            return Err(RegionRecoveryError::StaleObservation(attempt.clone()));
+        }
+        self.on_send_failure(attempt, liveness)
     }
 
     /// Applies one request-scoped busy observation to the canonical store.
@@ -1744,6 +1958,17 @@ fn ensure_region_id(expected: u64, loaded: &RegionLocation) -> Result<(), Region
             loaded.region.id
         ),
     )))
+}
+
+fn selectable_peer_count(location: &RegionLocation) -> usize {
+    location
+        .peers
+        .iter()
+        .filter(|peer| {
+            !location.down_peer_ids.contains(&peer.id)
+                && (!peer.is_witness || location.leader_peer_id == Some(peer.id))
+        })
+        .count()
 }
 
 fn apply_observed_buckets(current: Option<&super::BucketMetadata>, loaded: &mut RegionLocation) {
