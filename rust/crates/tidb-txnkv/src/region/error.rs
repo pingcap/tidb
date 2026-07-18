@@ -91,6 +91,23 @@ pub enum RegionRouteError {
         /// Current cached identity.
         cached: RegionVerId,
     },
+    /// TiKV returned the same region identity more than once in one replacement.
+    DuplicateReplacementRegion {
+        /// Duplicated region identity.
+        region: RegionVerId,
+    },
+    /// TiKV returned overlapping or gapped replacement boundaries.
+    DiscontinuousReplacement {
+        /// Left region at the invalid boundary.
+        left: RegionVerId,
+        /// Right region at the invalid boundary.
+        right: RegionVerId,
+    },
+    /// Returned replacements do not cover the exact observed key range.
+    ReplacementDoesNotCoverObserved {
+        /// Observed stale region.
+        observed: RegionVerId,
+    },
     /// The selected region has no declared leader.
     MissingLeader,
     /// The leader peer references no store.

@@ -25,7 +25,10 @@ use tidb_proto::pdpb::{
     self,
     pd_server::{Pd, PdServer},
 };
-use tidb_txnkv::region::{PeerRole, RegionLoader};
+use tidb_txnkv::region::RegionLoader;
+use tidb_txnkv::region::{
+    PeerRole, RegionMetadata, RegionMetadataPeer, RegionRecoveryLoader, RegionVerId,
+};
 use tidb_txnkv::PdRegionLoader;
 
 const CLUSTER_ID: u64 = 84;
@@ -142,7 +145,8 @@ fn loader_encodes_key_decodes_boundaries_and_filters_source_unusable_peers() {
     // client-go/internal/locate/pd_codec.go:107-112,197-203.
     // client-go/internal/locate/region_cache.go:362-430.
     let server = Server::start(valid_state());
-    let mut loader = PdRegionLoader::connect(&server.address, Duration::from_secs(2)).unwrap();
+    let mut loader =
+        PdRegionLoader::connect_seeds([server.address.clone()], Duration::from_secs(2)).unwrap();
     assert_eq!(loader.cluster_id(), CLUSTER_ID);
     let location = loader.load_region(b"logical-key").unwrap();
 
@@ -263,6 +267,95 @@ fn unknown_leader_role_reaches_the_raw_context_domain() {
         .unwrap();
     assert_eq!(leader.role, PeerRole::Unknown(99));
     assert_eq!(leader.role.as_i32(), 99);
+}
+
+#[test]
+fn current_region_hydration_reresolves_stores_and_preserves_unknown_roles() {
+    let mut state = valid_state();
+    state
+        .stores
+        .get_mut(&101)
+        .unwrap()
+        .store
+        .as_mut()
+        .unwrap()
+        .address = "127.0.0.1:31001".to_owned();
+    let server = Server::start(state);
+    let mut loader = PdRegionLoader::connect(&server.address, Duration::from_secs(2)).unwrap();
+    let metadata = RegionMetadata {
+        region: RegionVerId::new(8, 4, 5),
+        encoded_start_key: encoded(b"split-start"),
+        encoded_end_key: encoded(b"split-end"),
+        peers: vec![
+            RegionMetadataPeer {
+                id: 21,
+                store_id: 101,
+                role: PeerRole::Unknown(99),
+                is_witness: false,
+            },
+            RegionMetadataPeer {
+                id: 22,
+                store_id: 102,
+                role: PeerRole::Learner,
+                is_witness: false,
+            },
+        ],
+    };
+
+    let hydrated = loader.hydrate_region(&metadata, 101).unwrap();
+    assert_eq!(hydrated.start_key, b"split-start");
+    assert_eq!(hydrated.end_key, b"split-end");
+    assert_eq!(hydrated.leader_peer_id, Some(21));
+    assert_eq!(hydrated.peers.len(), 1);
+    assert_eq!(hydrated.peers[0].role, PeerRole::Unknown(99));
+    assert_eq!(hydrated.stores[0].address, "127.0.0.1:31001");
+    assert_eq!(
+        server
+            .state
+            .lock()
+            .unwrap()
+            .store_requests
+            .iter()
+            .map(|request| request.store_id)
+            .collect::<Vec<_>>(),
+        [101, 102]
+    );
+}
+
+#[test]
+fn split_child_without_old_store_selects_first_usable_electable_peer() {
+    let server = Server::start(valid_state());
+    let mut loader = PdRegionLoader::connect(&server.address, Duration::from_secs(2)).unwrap();
+    let metadata = RegionMetadata {
+        region: RegionVerId::new(9, 4, 5),
+        encoded_start_key: encoded(b"middle"),
+        encoded_end_key: Vec::new(),
+        peers: vec![
+            RegionMetadataPeer {
+                id: 22,
+                store_id: 102,
+                role: PeerRole::Learner,
+                is_witness: false,
+            },
+            RegionMetadataPeer {
+                id: 23,
+                store_id: 104,
+                role: PeerRole::Voter,
+                is_witness: false,
+            },
+        ],
+    };
+
+    let hydrated = loader.hydrate_region(&metadata, 101).unwrap();
+    assert_eq!(hydrated.leader_peer_id, Some(23));
+    assert_eq!(
+        hydrated
+            .peers
+            .iter()
+            .map(|peer| peer.id)
+            .collect::<Vec<_>>(),
+        [23]
+    );
 }
 
 fn valid_state() -> State {

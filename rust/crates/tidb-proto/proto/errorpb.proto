@@ -2,13 +2,18 @@
 //
 // Dependency-closed region-error projection for unary coprocessor responses.
 // Every outer error variant retains its exact field number. Nested metapb
-// region/peer payloads that are not consumed by this slice are represented by
-// empty messages, preserving variant presence without claiming refresh logic.
+// region/peer payloads are restored only when the checked runtime consumes
+// them, preserving exact field numbers without projecting unrelated metadata.
 syntax = "proto3";
 
 package errorpb;
 
-message NotLeader { uint64 region_id = 1; }
+import "metapb.proto";
+
+message NotLeader {
+  uint64 region_id = 1;
+  metapb.Peer leader = 2;
+}
 message RegionNotFound { uint64 region_id = 1; }
 message KeyNotInRegion {
   bytes key = 1;
@@ -16,7 +21,7 @@ message KeyNotInRegion {
   bytes start_key = 3;
   bytes end_key = 4;
 }
-message EpochNotMatch {}
+message EpochNotMatch { repeated metapb.Region current_regions = 1; }
 message ServerIsBusy {
   string reason = 1;
   uint64 backoff_ms = 2;

@@ -94,6 +94,32 @@ pub struct Store {
     pub epoch: u64,
 }
 
+/// One peer from TiKV-provided current-region metadata before store hydration.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RegionMetadataPeer {
+    /// Peer identifier.
+    pub id: u64,
+    /// Owning store identifier.
+    pub store_id: u64,
+    /// Raw protobuf role discriminant.
+    pub role: PeerRole,
+    /// Whether the peer is a witness.
+    pub is_witness: bool,
+}
+
+/// Transport-neutral current-region metadata awaiting store hydration.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RegionMetadata {
+    /// Versioned region identity.
+    pub region: RegionVerId,
+    /// Source-encoded inclusive start boundary.
+    pub encoded_start_key: Vec<u8>,
+    /// Source-encoded exclusive end boundary.
+    pub encoded_end_key: Vec<u8>,
+    /// Region peers in source order.
+    pub peers: Vec<RegionMetadataPeer>,
+}
+
 /// One immutable region snapshot returned by the injected loader.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RegionLocation {

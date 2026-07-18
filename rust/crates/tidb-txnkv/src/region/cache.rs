@@ -14,7 +14,10 @@
 
 use std::collections::BTreeMap;
 
-use super::{KeyRange, RegionLoadError, RegionLocation, RegionRouteError, RegionVerId};
+use super::{
+    KeyRange, OwnedLeaderRoute, RegionAttempt, RegionLoadError, RegionLocation, RegionMetadata,
+    RegionRebuildAction, RegionRecoveryError, RegionRouteError, RegionVerId,
+};
 
 /// Injected PD-shaped region metadata loader.
 pub trait RegionLoader {
@@ -25,10 +28,20 @@ pub trait RegionLoader {
     fn load_region(&mut self, key: &[u8]) -> Result<RegionLocation, RegionLoadError>;
 }
 
+/// Region loader with the required current-region store hydration capability.
+pub trait RegionRecoveryLoader: RegionLoader {
+    /// Resolves the stores referenced by TiKV-provided current-region metadata.
+    fn hydrate_region(
+        &mut self,
+        metadata: &RegionMetadata,
+        leader_store_id: u64,
+    ) -> Result<RegionLocation, RegionLoadError>;
+}
+
 /// Ordered cache for versioned region snapshots.
 pub struct RegionCache<L> {
-    loader: L,
-    regions: Vec<RegionLocation>,
+    pub(super) loader: L,
+    pub(super) regions: Vec<RegionLocation>,
 }
 
 impl<L> RegionCache<L> {
@@ -66,6 +79,181 @@ impl<L> RegionCache<L> {
         let original_len = self.regions.len();
         self.regions.retain(|cached| cached.region != region);
         self.regions.len() != original_len
+    }
+
+    pub(super) fn validate_attempt(
+        &self,
+        attempt: &RegionAttempt,
+    ) -> Result<(), RegionRecoveryError> {
+        let Some(location) = self
+            .regions
+            .iter()
+            .find(|location| location.region == attempt.region)
+        else {
+            return Err(RegionRecoveryError::StaleObservation(attempt.clone()));
+        };
+        let peer_matches = location.peers.iter().any(|peer| {
+            peer.id == attempt.peer_id
+                && peer.store_id == attempt.store_id
+                && peer.store_epoch == attempt.store_epoch
+        });
+        let store_matches = location.stores.iter().any(|store| {
+            store.id == attempt.store_id
+                && store.address == attempt.address
+                && store.epoch == attempt.store_epoch
+        });
+        if !peer_matches || !store_matches || location.leader_peer_id != Some(attempt.peer_id) {
+            return Err(RegionRecoveryError::StaleObservation(attempt.clone()));
+        }
+        Ok(())
+    }
+
+    pub(super) fn update_leader(
+        &mut self,
+        region: RegionVerId,
+        peer_id: u64,
+        store_id: u64,
+    ) -> bool {
+        let Some(location) = self
+            .regions
+            .iter_mut()
+            .find(|location| location.region == region)
+        else {
+            return false;
+        };
+        let usable = location
+            .peers
+            .iter()
+            .any(|peer| peer.id == peer_id && peer.store_id == store_id)
+            && location.stores.iter().any(|store| {
+                store.id == store_id
+                    && !store.address.is_empty()
+                    && location.peers.iter().any(|peer| {
+                        peer.id == peer_id
+                            && peer.store_id == store.id
+                            && peer.store_epoch == store.epoch
+                    })
+            });
+        if usable {
+            location.leader_peer_id = Some(peer_id);
+        }
+        usable
+    }
+
+    pub(super) fn owned_leader_route(
+        &self,
+        region: RegionVerId,
+    ) -> Result<OwnedLeaderRoute, RegionRouteError> {
+        let location = self
+            .regions
+            .iter()
+            .find(|location| location.region == region)
+            .ok_or(RegionRouteError::MissingLeader)?;
+        let peer_id = location
+            .leader_peer_id
+            .ok_or(RegionRouteError::MissingLeader)?;
+        let peer = location
+            .peers
+            .iter()
+            .find(|peer| peer.id == peer_id)
+            .ok_or(RegionRouteError::MissingLeader)?;
+        let store = location
+            .stores
+            .iter()
+            .find(|store| store.id == peer.store_id)
+            .ok_or(RegionRouteError::MissingStore(peer.store_id))?;
+        if store.address.is_empty() {
+            return Err(RegionRouteError::MissingAddress(store.id));
+        }
+        if peer.store_epoch != store.epoch {
+            return Err(RegionRouteError::StaleStoreEpoch {
+                store_id: store.id,
+                expected: peer.store_epoch,
+                actual: store.epoch,
+            });
+        }
+        Ok(OwnedLeaderRoute {
+            region,
+            peer_id,
+            store_id: store.id,
+            address: store.address.clone(),
+            store_epoch: store.epoch,
+        })
+    }
+
+    pub(super) fn replace_regions_atomically(
+        &mut self,
+        observed: RegionVerId,
+        mut replacements: Vec<RegionLocation>,
+    ) -> Result<(), RegionRouteError> {
+        let observed_location = self
+            .regions
+            .iter()
+            .find(|location| location.region == observed)
+            .ok_or(RegionRouteError::ReplacementDoesNotCoverObserved { observed })?;
+        replacements.sort_by(|left, right| left.start_key.cmp(&right.start_key));
+        for replacement in &replacements {
+            if !replacement.end_key.is_empty() && replacement.start_key >= replacement.end_key {
+                return Err(RegionRouteError::InvalidRegionBounds {
+                    region: replacement.region,
+                });
+            }
+        }
+        for (index, left) in replacements.iter().enumerate() {
+            if replacements[index + 1..]
+                .iter()
+                .any(|right| right.region.id == left.region.id)
+            {
+                return Err(RegionRouteError::DuplicateReplacementRegion {
+                    region: left.region,
+                });
+            }
+        }
+        for pair in replacements.windows(2) {
+            if pair[0].end_key.is_empty() || pair[0].end_key != pair[1].start_key {
+                return Err(RegionRouteError::DiscontinuousReplacement {
+                    left: pair[0].region,
+                    right: pair[1].region,
+                });
+            }
+        }
+        let covers_observed = replacements.first().is_some_and(|first| {
+            first.start_key.as_slice() <= observed_location.start_key.as_slice()
+                && replacements.last().is_some_and(|last| {
+                    if observed_location.end_key.is_empty() {
+                        last.end_key.is_empty()
+                    } else {
+                        last.end_key.is_empty()
+                            || last.end_key.as_slice() >= observed_location.end_key.as_slice()
+                    }
+                })
+        });
+        if !covers_observed {
+            return Err(RegionRouteError::ReplacementDoesNotCoverObserved { observed });
+        }
+
+        let mut next = self.regions.clone();
+        next.retain(|location| location.region != observed);
+        for replacement in replacements {
+            insert_loaded_into(&mut next, replacement)?;
+        }
+        self.regions = next;
+        Ok(())
+    }
+
+    /// Applies the topology mutation intentionally deferred until after sleep.
+    pub fn apply_rebuild_action(
+        &mut self,
+        action: RegionRebuildAction,
+    ) -> Result<(), RegionRecoveryError> {
+        match action {
+            RegionRebuildAction::CacheReady => Ok(()),
+            RegionRebuildAction::InvalidateObservedAfterDelay(attempt) => {
+                self.validate_attempt(&attempt)?;
+                self.invalidate(attempt.region);
+                Ok(())
+            }
+        }
     }
 
     /// Finds one key, loading and inserting on a miss.
@@ -193,38 +381,43 @@ impl<L> RegionCache<L> {
     }
 
     fn insert_loaded(&mut self, loaded: RegionLocation) -> Result<usize, RegionRouteError> {
-        if let Some(current) = self
-            .regions
-            .iter()
-            .find(|region| region.region.id == loaded.region.id)
-        {
-            if loaded.region.epoch.is_older_than(current.region.epoch) {
-                return Err(RegionRouteError::StaleRegionEpoch {
-                    loaded: loaded.region,
-                    cached: current.region,
-                });
-            }
-        }
-        if let Some(current) = self.regions.iter().find(|current| {
-            ranges_intersect(current, &loaded)
-                && current.region.epoch.version > loaded.region.epoch.version
-        }) {
+        insert_loaded_into(&mut self.regions, loaded)
+    }
+}
+
+fn insert_loaded_into(
+    regions: &mut Vec<RegionLocation>,
+    loaded: RegionLocation,
+) -> Result<usize, RegionRouteError> {
+    if let Some(current) = regions
+        .iter()
+        .find(|region| region.region.id == loaded.region.id)
+    {
+        if loaded.region.epoch.is_older_than(current.region.epoch) {
             return Err(RegionRouteError::StaleRegionEpoch {
                 loaded: loaded.region,
                 cached: current.region,
             });
         }
-
-        self.regions.retain(|current| {
-            current.region.id != loaded.region.id && !ranges_intersect(current, &loaded)
-        });
-        let index = self
-            .regions
-            .binary_search_by(|region| region.start_key.cmp(&loaded.start_key))
-            .unwrap_or_else(|index| index);
-        self.regions.insert(index, loaded);
-        Ok(index)
     }
+    if let Some(current) = regions.iter().find(|current| {
+        ranges_intersect(current, &loaded)
+            && current.region.epoch.version > loaded.region.epoch.version
+    }) {
+        return Err(RegionRouteError::StaleRegionEpoch {
+            loaded: loaded.region,
+            cached: current.region,
+        });
+    }
+
+    regions.retain(|current| {
+        current.region.id != loaded.region.id && !ranges_intersect(current, &loaded)
+    });
+    let index = regions
+        .binary_search_by(|region| region.start_key.cmp(&loaded.start_key))
+        .unwrap_or_else(|index| index);
+    regions.insert(index, loaded);
+    Ok(index)
 }
 
 fn ranges_intersect(left: &RegionLocation, right: &RegionLocation) -> bool {
