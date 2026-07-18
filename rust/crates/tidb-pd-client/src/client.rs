@@ -430,7 +430,8 @@ fn get_region_with_failover(
         encoded_key,
     ) {
         Ok(region) => return Ok(region),
-        Err(error) if is_direct_failure(&error) => {
+        Err(error) if needs_failover_probe(&error) => {
+            let direct_failure = is_direct_failure(&error);
             let mut last_error = error;
             // A bad membership observation never erases the last accepted
             // snapshot; its remaining direct endpoints are still candidates.
@@ -440,6 +441,9 @@ fn get_region_with_failover(
                 return Err(error);
             }
             let current = state.read().expect("PD state lock poisoned").clone();
+            if !direct_failure && snapshot.active_endpoint == current.members.leader_url {
+                return Err(last_error);
+            }
             for endpoint in endpoint_attempt_order(&current) {
                 if !attempted.insert(endpoint.clone()) {
                     continue;
@@ -456,7 +460,15 @@ fn get_region_with_failover(
                         set_active_endpoint(state, endpoint);
                         return Ok(region);
                     }
-                    Err(error) if is_direct_failure(&error) => last_error = error,
+                    Err(error)
+                        if is_retryable_endpoint_error(
+                            &error,
+                            &endpoint,
+                            &current.members.leader_url,
+                        ) =>
+                    {
+                        last_error = error;
+                    }
                     Err(error) => return Err(error),
                 }
             }
@@ -485,7 +497,8 @@ fn get_store_with_failover(
         store_id,
     ) {
         Ok(store) => return Ok(store),
-        Err(error) if is_direct_failure(&error) => {
+        Err(error) if needs_failover_probe(&error) => {
+            let direct_failure = is_direct_failure(&error);
             let mut last_error = error;
             // A bad membership observation never erases the last accepted
             // snapshot; its remaining direct endpoints are still candidates.
@@ -495,6 +508,9 @@ fn get_store_with_failover(
                 return Err(error);
             }
             let current = state.read().expect("PD state lock poisoned").clone();
+            if !direct_failure && snapshot.active_endpoint == current.members.leader_url {
+                return Err(last_error);
+            }
             for endpoint in endpoint_attempt_order(&current) {
                 if !attempted.insert(endpoint.clone()) {
                     continue;
@@ -511,7 +527,15 @@ fn get_store_with_failover(
                         set_active_endpoint(state, endpoint);
                         return Ok(store);
                     }
-                    Err(error) if is_direct_failure(&error) => last_error = error,
+                    Err(error)
+                        if is_retryable_endpoint_error(
+                            &error,
+                            &endpoint,
+                            &current.members.leader_url,
+                        ) =>
+                    {
+                        last_error = error;
+                    }
                     Err(error) => return Err(error),
                 }
             }
@@ -592,6 +616,27 @@ fn is_direct_failure(error: &PdClientError) -> bool {
         }
         _ => false,
     }
+}
+
+fn needs_failover_probe(error: &PdClientError) -> bool {
+    is_direct_failure(error)
+        || matches!(
+            error,
+            PdClientError::Transport { .. } | PdClientError::HeaderError { .. }
+        )
+}
+
+fn is_retryable_endpoint_error(
+    error: &PdClientError,
+    endpoint: &str,
+    leader_endpoint: &str,
+) -> bool {
+    is_direct_failure(error)
+        || (endpoint != leader_endpoint
+            && matches!(
+                error,
+                PdClientError::Transport { .. } | PdClientError::HeaderError { .. }
+            ))
 }
 
 fn tonic_client<'a>(

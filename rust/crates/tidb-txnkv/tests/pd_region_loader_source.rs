@@ -36,6 +36,7 @@ const CLUSTER_ID: u64 = 84;
 #[derive(Clone)]
 struct MockPd {
     state: Arc<Mutex<State>>,
+    member_url: String,
 }
 
 struct State {
@@ -52,8 +53,16 @@ impl Pd for MockPd {
         request: tonic::Request<pdpb::GetMembersRequest>,
     ) -> Result<tonic::Response<pdpb::GetMembersResponse>, tonic::Status> {
         assert!(request.into_inner().header.is_none());
+        let member = pdpb::Member {
+            name: "pd-1".to_owned(),
+            member_id: 1,
+            client_urls: vec![self.member_url.clone()],
+            ..pdpb::Member::default()
+        };
         Ok(tonic::Response::new(pdpb::GetMembersResponse {
             header: Some(header()),
+            members: vec![member.clone()],
+            leader: Some(member),
             ..pdpb::GetMembersResponse::default()
         }))
     }
@@ -90,12 +99,13 @@ struct Server {
 impl Server {
     fn start(state: State) -> Self {
         let state = Arc::new(Mutex::new(state));
-        let service = MockPd {
-            state: Arc::clone(&state),
-        };
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         drop(listener);
+        let service = MockPd {
+            state: Arc::clone(&state),
+            member_url: format!("http://{address}"),
+        };
         let (shutdown, shutdown_rx) = tokio::sync::oneshot::channel();
         let (started_tx, started_rx) = mpsc::channel();
         let thread = std::thread::spawn(move || {
@@ -306,8 +316,9 @@ fn current_region_hydration_reresolves_stores_and_preserves_unknown_roles() {
     assert_eq!(hydrated.start_key, b"split-start");
     assert_eq!(hydrated.end_key, b"split-end");
     assert_eq!(hydrated.leader_peer_id, Some(21));
-    assert_eq!(hydrated.peers.len(), 1);
+    assert_eq!(hydrated.peers.len(), 2);
     assert_eq!(hydrated.peers[0].role, PeerRole::Unknown(99));
+    assert_eq!(hydrated.peers[1].role, PeerRole::Learner);
     assert_eq!(hydrated.stores[0].address, "127.0.0.1:31001");
     assert_eq!(
         server
@@ -323,7 +334,7 @@ fn current_region_hydration_reresolves_stores_and_preserves_unknown_roles() {
 }
 
 #[test]
-fn split_child_without_old_store_selects_first_usable_electable_peer() {
+fn split_child_without_old_store_keeps_client_go_first_usable_peer() {
     let server = Server::start(valid_state());
     let mut loader = PdRegionLoader::connect(&server.address, Duration::from_secs(2)).unwrap();
     let metadata = RegionMetadata {
@@ -347,14 +358,50 @@ fn split_child_without_old_store_selects_first_usable_electable_peer() {
     };
 
     let hydrated = loader.hydrate_region(&metadata, 101).unwrap();
-    assert_eq!(hydrated.leader_peer_id, Some(23));
+    assert_eq!(hydrated.leader_peer_id, Some(22));
     assert_eq!(
         hydrated
             .peers
             .iter()
             .map(|peer| peer.id)
             .collect::<Vec<_>>(),
-        [23]
+        [22, 23]
+    );
+}
+
+#[test]
+fn epoch_hydration_never_preserves_a_witness_as_the_observed_leader() {
+    let server = Server::start(valid_state());
+    let mut loader = PdRegionLoader::connect(&server.address, Duration::from_secs(2)).unwrap();
+    let metadata = RegionMetadata {
+        region: RegionVerId::new(9, 4, 5),
+        encoded_start_key: encoded(b"middle"),
+        encoded_end_key: Vec::new(),
+        peers: vec![
+            RegionMetadataPeer {
+                id: 13,
+                store_id: 103,
+                role: PeerRole::Voter,
+                is_witness: true,
+            },
+            RegionMetadataPeer {
+                id: 14,
+                store_id: 104,
+                role: PeerRole::DemotingVoter,
+                is_witness: false,
+            },
+        ],
+    };
+
+    let hydrated = loader.hydrate_region(&metadata, 103).unwrap();
+    assert_eq!(hydrated.leader_peer_id, Some(14));
+    assert_eq!(
+        hydrated
+            .peers
+            .iter()
+            .map(|peer| peer.id)
+            .collect::<Vec<_>>(),
+        [14]
     );
 }
 

@@ -58,3 +58,7 @@ path = "tests/mvcc_metadata.rs"
 [[test]]
 name = "realtikv_pd_route"
 path = "tests/realtikv_pd_route.rs"
+
+[[test]]
+name = "realtikv_region_retry"
+path = "tests/realtikv_region_retry.rs"

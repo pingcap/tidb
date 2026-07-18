@@ -22,7 +22,8 @@ use std::time::Duration;
 use prost::Message;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_distsql::region::{
-    Peer, PeerRole, RegionCache, RegionLoadError, RegionLoader, RegionLocation, RegionVerId, Store,
+    Peer, PeerRole, RegionCache, RegionLoadError, RegionLoader, RegionLocation, RegionMetadata,
+    RegionRecoveryLoader, RegionVerId, Store,
 };
 use tidb_distsql::{
     DirectUnaryClient, DirectUnaryClientError, DirectUnaryQueryTransport, DirectUnaryRequest,
@@ -39,7 +40,7 @@ struct ReaderUnaryClient {
 }
 
 struct ReaderLoader {
-    region: Option<RegionLocation>,
+    region: RegionLocation,
 }
 
 impl RegionLoader for ReaderLoader {
@@ -48,9 +49,30 @@ impl RegionLoader for ReaderLoader {
     }
 
     fn load_region(&mut self, _key: &[u8]) -> Result<RegionLocation, RegionLoadError> {
-        self.region
-            .take()
-            .ok_or_else(|| RegionLoadError::new("reader-loader-empty", "no region"))
+        Ok(self.region.clone())
+    }
+}
+
+impl RegionRecoveryLoader for ReaderLoader {
+    fn hydrate_region(
+        &mut self,
+        metadata: &RegionMetadata,
+        leader_store_id: u64,
+    ) -> Result<RegionLocation, RegionLoadError> {
+        if metadata.region != self.region.region {
+            return Err(RegionLoadError::new(
+                "reader-loader-region-mismatch",
+                "recovery metadata does not match the scripted region",
+            ));
+        }
+        let mut location = self.region.clone();
+        location.leader_peer_id = location
+            .peers
+            .iter()
+            .find(|peer| peer.store_id == leader_store_id)
+            .map(|peer| peer.id)
+            .or(location.leader_peer_id);
+        Ok(location)
     }
 }
 
@@ -113,7 +135,7 @@ fn transport(sends: Rc<Cell<usize>>) -> DirectUnaryQueryTransport<ReaderUnaryCli
             responses: [response].into_iter().collect(),
         },
         RegionCache::new(ReaderLoader {
-            region: Some(RegionLocation {
+            region: RegionLocation {
                 region: RegionVerId::new(1, 1, 1),
                 start_key: b"a".to_vec(),
                 end_key: b"z".to_vec(),
@@ -130,7 +152,7 @@ fn transport(sends: Rc<Cell<usize>>) -> DirectUnaryQueryTransport<ReaderUnaryCli
                     address: "tikv-1:20160".to_owned(),
                     epoch: 4,
                 }],
-            }),
+            },
         }),
         DirectUnaryRuntimeConfig {
             default_timeout: Duration::from_secs(9),

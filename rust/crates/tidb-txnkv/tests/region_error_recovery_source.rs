@@ -19,6 +19,7 @@ use std::collections::VecDeque;
 use std::rc::Rc;
 use std::time::Duration;
 
+use tidb_codec::encode_bytes;
 use tidb_proto::{errorpb, metapb};
 use tidb_txnkv::region::{
     Peer, PeerRole, RegionAttempt, RegionBackoffBudget, RegionBackoffKind, RegionCache,
@@ -54,9 +55,22 @@ impl RegionRecoveryLoader for Loader {
         self.metadata
             .borrow_mut()
             .push((metadata.clone(), leader_store_id));
-        self.hydrated
+        let hydrated = self
+            .hydrated
             .pop_front()
-            .unwrap_or_else(|| Err(RegionLoadError::new("empty", "no hydrated region")))
+            .unwrap_or_else(|| Err(RegionLoadError::new("empty", "no hydrated region")))?;
+        let expected_start = encoded_boundary(&hydrated.start_key);
+        let expected_end = encoded_boundary(&hydrated.end_key);
+        if hydrated.region != metadata.region
+            || expected_start != metadata.encoded_start_key
+            || expected_end != metadata.encoded_end_key
+        {
+            return Err(RegionLoadError::new(
+                "dishonest_hydration",
+                "scripted hydrated region disagrees with TiKV metadata",
+            ));
+        }
+        Ok(hydrated)
     }
 }
 
@@ -133,16 +147,33 @@ fn current_region(
 ) -> metapb::Region {
     metapb::Region {
         id,
-        start_key: start.to_vec(),
-        end_key: end.to_vec(),
+        start_key: encoded_boundary(start),
+        end_key: encoded_boundary(end),
         region_epoch: Some(metapb::RegionEpoch { conf_ver, version }),
-        peers: vec![metapb::Peer {
-            id: 12,
-            store_id: 102,
-            role: 99,
-            is_witness: false,
-        }],
+        peers: vec![
+            metapb::Peer {
+                id: 11,
+                store_id: 101,
+                role: 0,
+                is_witness: false,
+            },
+            metapb::Peer {
+                id: 12,
+                store_id: 102,
+                role: 99,
+                is_witness: false,
+            },
+        ],
     }
+}
+
+fn encoded_boundary(key: &[u8]) -> Vec<u8> {
+    if key.is_empty() {
+        return Vec::new();
+    }
+    let mut encoded = Vec::new();
+    encode_bytes(&mut encoded, key);
+    encoded
 }
 
 #[test]
@@ -299,19 +330,17 @@ fn epoch_ahead_retries_old_route_but_empty_current_regions_rebuilds() {
         }),
         ..Default::default()
     };
-    assert!(matches!(
-        cache
-            .on_region_error(
-                &ahead,
-                attempt(region),
-                &mut RegionBackoffBudget::campaign_default(),
-            )
-            .unwrap(),
-        RegionErrorDisposition::RetryRoute {
-            delay: Duration::from_millis(2),
-            ..
-        }
-    ));
+    let RegionErrorDisposition::RetryRoute { delay, .. } = cache
+        .on_region_error(
+            &ahead,
+            attempt(region),
+            &mut RegionBackoffBudget::campaign_default(),
+        )
+        .unwrap()
+    else {
+        panic!("an epoch-ahead response must retry the old route")
+    };
+    assert_eq!(delay, Duration::from_millis(2));
     assert_eq!(cache.len(), 1);
 
     let empty = errorpb::Error {
@@ -346,8 +375,8 @@ fn split_hydrates_every_region_then_replaces_old_snapshot_atomically() {
     let error = errorpb::Error {
         epoch_not_match: Some(errorpb::EpochNotMatch {
             current_regions: vec![
-                current_region(8, 4, 5, b"encoded-left", b"encoded-middle"),
-                current_region(9, 4, 5, b"encoded-middle", b""),
+                current_region(8, 4, 5, b"", b"m"),
+                current_region(9, 4, 5, b"m", b""),
             ],
         }),
         ..Default::default()
@@ -373,7 +402,7 @@ fn split_hydrates_every_region_then_replaces_old_snapshot_atomically() {
     assert!(recorded
         .iter()
         .all(|(_, leader_store)| *leader_store == 101));
-    assert_eq!(recorded[0].0.peers[0].role, PeerRole::Unknown(99));
+    assert_eq!(recorded[0].0.peers[1].role, PeerRole::Unknown(99));
 }
 
 #[test]
@@ -410,39 +439,42 @@ fn hydration_failure_preserves_the_complete_old_snapshot() {
 }
 
 #[test]
-fn overlapping_or_gapped_replacement_sets_leave_old_snapshot_intact() {
-    for (left_end, right_start) in [(b"n".as_slice(), b"m".as_slice()), (b"m", b"n")] {
-        let left = location(8, 4, 5, b"", left_end);
-        let right = location(9, 4, 5, right_start, b"");
-        let (mut cache, _) = cache(location(7, 3, 4, b"", b""), [Ok(left), Ok(right)]);
-        let region = seed(&mut cache);
-        let error = errorpb::Error {
-            epoch_not_match: Some(errorpb::EpochNotMatch {
-                current_regions: vec![
-                    current_region(8, 4, 5, b"", left_end),
-                    current_region(9, 4, 5, right_start, b""),
-                ],
-            }),
-            ..Default::default()
-        };
+fn available_sibling_subset_replaces_old_snapshot_without_requiring_full_coverage() {
+    let left = location(8, 4, 5, b"", b"g");
+    let right = location(9, 4, 5, b"m", b"");
+    let (mut cache, _) = cache(
+        location(7, 3, 4, b"", b""),
+        [Ok(left.clone()), Ok(right.clone())],
+    );
+    let region = seed(&mut cache);
+    let error = errorpb::Error {
+        epoch_not_match: Some(errorpb::EpochNotMatch {
+            current_regions: vec![
+                current_region(8, 4, 5, b"", b"g"),
+                current_region(9, 4, 5, b"m", b""),
+            ],
+        }),
+        ..Default::default()
+    };
 
-        assert!(matches!(
-            cache.on_region_error(
+    assert!(matches!(
+        cache
+            .on_region_error(
                 &error,
                 attempt(region),
-                &mut RegionBackoffBudget::campaign_default()
-            ),
-            Err(RegionRecoveryError::Route(_))
-        ));
-        assert_eq!(cache.len(), 1);
-        assert_eq!(cache.locate_key(b"z").unwrap().region, region);
-    }
+                &mut RegionBackoffBudget::campaign_default(),
+            )
+            .unwrap(),
+        RegionErrorDisposition::RebuildRanges { .. }
+    ));
+    assert_eq!(cache.locate_key(b"a").unwrap(), &left);
+    assert_eq!(cache.locate_key(b"z").unwrap(), &right);
 }
 
 #[test]
 fn terminal_and_backoff_branches_are_typed_and_budgeted_once() {
-    let (mut cache, _) = cache(location(7, 3, 4, b"", b""), []);
-    let region = seed(&mut cache);
+    let (mut terminal_cache, _) = cache(location(7, 3, 4, b"", b""), []);
+    let region = seed(&mut terminal_cache);
     let terminal = errorpb::Error {
         raft_entry_too_large: Some(errorpb::RaftEntryTooLarge {
             region_id: 7,
@@ -451,7 +483,7 @@ fn terminal_and_backoff_branches_are_typed_and_budgeted_once() {
         ..Default::default()
     };
     assert_eq!(
-        cache
+        terminal_cache
             .on_region_error(
                 &terminal,
                 attempt(region),
@@ -469,7 +501,7 @@ fn terminal_and_backoff_branches_are_typed_and_budgeted_once() {
         ..Default::default()
     };
     let mut budget = RegionBackoffBudget::with_jitter_seed(Duration::from_secs(20), 1);
-    let first = cache
+    let first = terminal_cache
         .on_region_error(&busy, attempt(region), &mut budget)
         .unwrap();
     let RegionErrorDisposition::RetryRoute { delay, .. } = first else {
@@ -486,18 +518,18 @@ fn terminal_and_backoff_branches_are_typed_and_budgeted_once() {
         }),
         ..Default::default()
     };
-    let (mut cache, _) = cache(location(7, 3, 4, b"", b""), []);
-    let region = seed(&mut cache);
+    let (mut first_cache, _) = cache(location(7, 3, 4, b"", b""), []);
+    let region = seed(&mut first_cache);
     assert!(matches!(
-        cache
+        first_cache
             .on_region_error(&no_leader, attempt(region), &mut tiny)
             .unwrap(),
         RegionErrorDisposition::RebuildRanges { .. }
     ));
-    let (mut cache, _) = cache(location(7, 3, 4, b"", b""), []);
-    let region = seed(&mut cache);
+    let (mut second_cache, _) = cache(location(7, 3, 4, b"", b""), []);
+    let region = seed(&mut second_cache);
     assert_eq!(
-        cache
+        second_cache
             .on_region_error(&no_leader, attempt(region), &mut tiny)
             .unwrap(),
         RegionErrorDisposition::Terminal(RegionTerminalError::BackoffExhausted {
@@ -523,7 +555,9 @@ fn backoff_arithmetic_preserves_strict_exponential_equal_jitter_and_busy_exclusi
         match busy.next_delay(RegionBackoffKind::TikvServerBusy) {
             Ok(delay) => {
                 assert!(
-                    (Duration::from_millis(1_000)..Duration::from_millis(10_000)).contains(&delay)
+                    (Duration::from_millis(1_000)..Duration::from_millis(10_000)).contains(&delay),
+                    "busy delay escaped its equal-jitter bounds after {} attempts: {delay:?}",
+                    sleeps.len(),
                 );
                 sleeps.push(delay);
             }
@@ -536,6 +570,44 @@ fn backoff_arithmetic_preserves_strict_exponential_equal_jitter_and_busy_exclusi
     assert!(busy.total_sleep() >= Duration::from_secs(600));
     assert_eq!(busy.remaining(), Duration::from_secs(20));
     assert!(sleeps.len() > 60);
+    assert_eq!(
+        busy.next_delay(RegionBackoffKind::RegionMiss).unwrap(),
+        Duration::from_millis(2),
+        "the excluded busy cap applies only to another excluded backoff"
+    );
+}
+
+#[test]
+fn exhausted_disk_full_returns_to_the_outer_region_miss_owner() {
+    let disk_full = errorpb::Error {
+        disk_full: Some(errorpb::DiskFull::default()),
+        ..Default::default()
+    };
+    let (mut cache, _) = cache(location(7, 3, 4, b"", b""), []);
+    let region = seed(&mut cache);
+    let mut budget = RegionBackoffBudget::with_jitter_seed(Duration::from_millis(1), 1);
+
+    let RegionErrorDisposition::RetryRoute { delay, .. } = cache
+        .on_region_error(&disk_full, attempt(region), &mut budget)
+        .unwrap()
+    else {
+        panic!("the first disk-full response must retry its route")
+    };
+    assert_eq!(delay, Duration::from_millis(500));
+    assert_eq!(
+        cache
+            .on_region_error(&disk_full, attempt(region), &mut budget)
+            .unwrap(),
+        RegionErrorDisposition::RebuildRanges {
+            delay: Duration::ZERO,
+            action: RegionRebuildAction::CacheReady,
+        }
+    );
+    assert_eq!(cache.len(), 1, "disk-full does not invalidate topology");
+    let exhausted = budget
+        .next_delay(RegionBackoffKind::RegionMiss)
+        .unwrap_err();
+    assert_eq!(exhausted.kind, RegionBackoffKind::TikvDiskFull);
 }
 
 #[test]

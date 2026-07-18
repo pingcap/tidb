@@ -186,11 +186,6 @@ impl<L> RegionCache<L> {
         observed: RegionVerId,
         mut replacements: Vec<RegionLocation>,
     ) -> Result<(), RegionRouteError> {
-        let observed_location = self
-            .regions
-            .iter()
-            .find(|location| location.region == observed)
-            .ok_or(RegionRouteError::ReplacementDoesNotCoverObserved { observed })?;
         replacements.sort_by(|left, right| left.start_key.cmp(&right.start_key));
         for replacement in &replacements {
             if !replacement.end_key.is_empty() && replacement.start_key >= replacement.end_key {
@@ -209,29 +204,6 @@ impl<L> RegionCache<L> {
                 });
             }
         }
-        for pair in replacements.windows(2) {
-            if pair[0].end_key.is_empty() || pair[0].end_key != pair[1].start_key {
-                return Err(RegionRouteError::DiscontinuousReplacement {
-                    left: pair[0].region,
-                    right: pair[1].region,
-                });
-            }
-        }
-        let covers_observed = replacements.first().is_some_and(|first| {
-            first.start_key.as_slice() <= observed_location.start_key.as_slice()
-                && replacements.last().is_some_and(|last| {
-                    if observed_location.end_key.is_empty() {
-                        last.end_key.is_empty()
-                    } else {
-                        last.end_key.is_empty()
-                            || last.end_key.as_slice() >= observed_location.end_key.as_slice()
-                    }
-                })
-        });
-        if !covers_observed {
-            return Err(RegionRouteError::ReplacementDoesNotCoverObserved { observed });
-        }
-
         let mut next = self.regions.clone();
         next.retain(|location| location.region != observed);
         for replacement in replacements {

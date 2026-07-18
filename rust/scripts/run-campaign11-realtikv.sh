@@ -265,31 +265,44 @@ if [[ -z "${REGION_ID}" ]] || [[ -z "${OLD_STORE}" ]] || [[ -z "${OLD_LEADER_ADD
   echo "Rust route phase omitted region or old-leader identity" >&2
   exit 1
 fi
-TARGET_STORE=$(phase_values "${ROUTE_PHASE}" peer_store_id | awk -v old="${OLD_STORE}" '$1 != old { print; exit }')
-if [[ -z "${TARGET_STORE}" ]]; then
+TARGET_STORES=$(phase_values "${ROUTE_PHASE}" peer_store_id | awk -v old="${OLD_STORE}" '$1 != old { print }')
+if [[ -z "${TARGET_STORES}" ]]; then
   echo "region ${REGION_ID} has no alternate discovered TiKV peer" >&2
+  exit 1
+fi
+
+# PD can report all peers before a just-started follower is eligible to lead.
+# Require the operator to be accepted and the PD route to change; try every
+# Rust-discovered peer rather than guessing that metadata order is readiness.
+TARGET_STORE=
+TRANSFER_OUTPUT=
+transferred=false
+for _ in $(seq 1 60); do
+  for candidate in ${TARGET_STORES}; do
+    TRANSFER_OUTPUT=$(tiup ctl:v8.5.6 pd -u "${SURVIVING_PD}" \
+      operator add transfer-leader "${REGION_ID}" "${candidate}" 2>&1) || true
+    for _ in $(seq 1 10); do
+      CURRENT_STORE=$(curl -sf --max-time 2 \
+        "${SURVIVING_PD}/pd/api/v1/region/id/${REGION_ID}" | jq -r '.leader.store_id // 0') || true
+      if [[ "${CURRENT_STORE}" == "${candidate}" ]]; then
+        TARGET_STORE=${candidate}
+        transferred=true
+        break 3
+      fi
+      sleep 0.2
+    done
+  done
+  sleep 0.5
+done
+if [[ "${transferred}" != true ]]; then
+  echo "region ${REGION_ID} did not transfer from ${OLD_STORE} to any discovered peer ${TARGET_STORES//$'\n'/,}" >&2
+  printf '%s\n' "${TRANSFER_OUTPUT}" >&2
   exit 1
 fi
 TARGET_ADDRESS=$(phase_values "${ROUTE_PHASE}" store_route | \
   awk -F '\t' -v target="${TARGET_STORE}" '$1 == target { print $2; exit }')
 if [[ -z "${TARGET_ADDRESS}" ]]; then
-  echo "Rust route phase has no address for target store ${TARGET_STORE}" >&2
-  exit 1
-fi
-tiup ctl:v8.5.6 pd -u "${SURVIVING_PD}" operator add transfer-leader \
-  "${REGION_ID}" "${TARGET_STORE}"
-transferred=false
-for _ in $(seq 1 120); do
-  CURRENT_STORE=$(curl -sf --max-time 2 \
-    "${SURVIVING_PD}/pd/api/v1/region/id/${REGION_ID}" | jq -r '.leader.store_id // 0') || true
-  if [[ "${CURRENT_STORE}" == "${TARGET_STORE}" ]]; then
-    transferred=true
-    break
-  fi
-  sleep 0.5
-done
-if [[ "${transferred}" != true ]]; then
-  echo "region ${REGION_ID} did not transfer from ${OLD_STORE} to ${TARGET_STORE}" >&2
+  echo "Rust route phase has no address for transferred store ${TARGET_STORE}" >&2
   exit 1
 fi
 : >"${PHASE_DIR}/region-moved"

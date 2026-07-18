@@ -181,7 +181,10 @@ impl RegionRecoveryLoader for PdRegionLoader {
             }
         }
 
-        let leader_peer_id = metadata
+        // EpochNotMatch carries no leader. Pinned client-go first constructs
+        // the region with its first usable TiKV peer, then switches to the
+        // responding store when that exact peer survived hydration.
+        let observed_peer_id = metadata
             .peers
             .iter()
             .find(|peer| peer.store_id == leader_store_id)
@@ -190,7 +193,6 @@ impl RegionRecoveryLoader for PdRegionLoader {
         let mut stores = Vec::with_capacity(metadata.peers.len());
         let mut store_indexes = HashMap::new();
         for peer in &metadata.peers {
-            let is_leader = leader_peer_id == Some(peer.id);
             let Some(store) = resolved
                 .get(&peer.store_id)
                 .expect("every current-region peer store was resolved")
@@ -198,7 +200,7 @@ impl RegionRecoveryLoader for PdRegionLoader {
             else {
                 continue;
             };
-            if peer.is_witness && !is_leader {
+            if peer.is_witness {
                 continue;
             }
             peers.push(Peer {
@@ -224,18 +226,13 @@ impl RegionRecoveryLoader for PdRegionLoader {
                 format!("region {} has no usable peers", metadata.region.id),
             ));
         }
-        let leader_peer_id = leader_peer_id
+        let leader_peer_id = observed_peer_id
             .filter(|leader| {
                 peers
                     .iter()
                     .any(|peer| peer.id == *leader && peer.store_id == leader_store_id)
             })
-            .or_else(|| {
-                peers
-                    .iter()
-                    .find(|peer| peer.role != PeerRole::Learner && !peer.is_witness)
-                    .map(|peer| peer.id)
-            });
+            .or_else(|| peers.first().map(|peer| peer.id));
         let Some(leader_peer_id) = leader_peer_id else {
             return Err(loader_topology_error(
                 "missing_usable_leader",

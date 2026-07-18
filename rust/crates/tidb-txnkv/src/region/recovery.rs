@@ -216,7 +216,17 @@ impl<L: RegionRecoveryLoader> RegionCache<L> {
             return self.on_not_leader(not_leader, attempt, backoff);
         }
         if error.disk_full.is_some() {
-            return self.retry_same_route(attempt, backoff, RegionBackoffKind::TikvDiskFull);
+            let route = self.owned_leader_route(attempt.region)?;
+            return Ok(match backoff.next_delay(RegionBackoffKind::TikvDiskFull) {
+                Ok(delay) => RegionErrorDisposition::RetryRoute { route, delay },
+                // Pinned client-go discards the exhausted inner backoff error
+                // and returns the region error to the cop owner. That owner
+                // then attempts its ordinary outer RegionMiss backoff.
+                Err(_) => RegionErrorDisposition::RebuildRanges {
+                    delay: Duration::ZERO,
+                    action: RegionRebuildAction::CacheReady,
+                },
+            });
         }
         if error.recovery_in_progress.is_some() {
             self.invalidate(attempt.region);

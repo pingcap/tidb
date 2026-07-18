@@ -652,7 +652,7 @@ fn failed_active_endpoint_refreshes_through_survivor_for_store() {
 }
 
 #[test]
-fn grpc_application_status_is_terminal_without_member_failover() {
+fn grpc_application_status_is_terminal_after_confirming_the_endpoint_is_still_leader() {
     let active = Server::start(valid_state());
     let survivor = Server::start(valid_state());
     let active_url = http_url(&active);
@@ -669,17 +669,80 @@ fn grpc_application_status_is_terminal_without_member_failover() {
     ] {
         active.state.lock().unwrap().region = Reply::Status(code, "application error");
         let before = active.state.lock().unwrap().region_requests.len();
+        let member_before = active.state.lock().unwrap().member_requests.len();
 
         let error = client.get_region(b"wire").unwrap_err();
         assert_eq!(error.kind(), "transport");
         assert!(error.to_string().contains(expected));
-        assert_eq!(active.state.lock().unwrap().member_requests.len(), 1);
+        assert_eq!(
+            active.state.lock().unwrap().member_requests.len(),
+            member_before + 1
+        );
         assert_eq!(
             active.state.lock().unwrap().region_requests.len(),
             before + 1
         );
         assert!(survivor.state.lock().unwrap().member_requests.is_empty());
         assert!(survivor.state.lock().unwrap().region_requests.is_empty());
+    }
+}
+
+#[test]
+fn reachable_old_leader_header_errors_refresh_and_retry_the_new_leader() {
+    for get_store in [false, true] {
+        let old_leader = Server::start(valid_state());
+        let new_leader = Server::start(valid_state());
+        let old_url = http_url(&old_leader);
+        let new_url = http_url(&new_leader);
+        old_leader.state.lock().unwrap().members = Reply::Value(membership_response(
+            CLUSTER_ID,
+            &[(1, old_url.clone()), (2, new_url.clone())],
+            1,
+        ));
+        let mut client = PdClient::connect(&old_leader.address, Duration::from_secs(2)).unwrap();
+
+        old_leader.state.lock().unwrap().members = Reply::Value(membership_response(
+            CLUSTER_ID,
+            &[(1, old_url), (2, new_url.clone())],
+            2,
+        ));
+        let error_header = Some(pdpb::ResponseHeader {
+            cluster_id: CLUSTER_ID,
+            error: Some(pdpb::Error {
+                r#type: pdpb::ErrorType::Unknown as i32,
+                message: "not leader".to_owned(),
+            }),
+        });
+        if get_store {
+            let mut response =
+                store_response(101, metapb::StoreState::Up, metapb::NodeState::Serving);
+            response.header = error_header;
+            old_leader
+                .state
+                .lock()
+                .unwrap()
+                .stores
+                .insert(101, Reply::Value(response));
+            assert_eq!(client.get_store(101).unwrap().unwrap().id, 101);
+        } else {
+            let mut response = region_response();
+            response.header = error_header;
+            old_leader.state.lock().unwrap().region = Reply::Value(response);
+            assert_eq!(client.get_region(b"wire").unwrap().id, 7);
+        }
+
+        assert_eq!(client.active_endpoint(), new_url);
+        let old = old_leader.state.lock().unwrap();
+        let new = new_leader.state.lock().unwrap();
+        assert_eq!(old.member_requests.len(), 2);
+        assert_eq!(new.member_requests.len(), 0);
+        if get_store {
+            assert_eq!(old.store_requests.len(), 1);
+            assert_eq!(new.store_requests.len(), 1);
+        } else {
+            assert_eq!(old.region_requests.len(), 1);
+            assert_eq!(new.region_requests.len(), 1);
+        }
     }
 }
 

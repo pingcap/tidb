@@ -57,6 +57,21 @@ pub enum RegionBackoffKind {
 
 impl RegionBackoffKind {
     const COUNT: usize = 9;
+    const ALL: [Self; Self::COUNT] = [
+        Self::RegionMiss,
+        Self::RegionScheduling,
+        Self::TikvServerBusy,
+        Self::TikvDiskFull,
+        Self::RegionRecoveryInProgress,
+        Self::StaleCommand,
+        Self::MaxTimestampNotSynced,
+        Self::RegionNotInitialized,
+        Self::IsWitness,
+    ];
+
+    const fn is_sleep_excluded(self) -> bool {
+        matches!(self, Self::TikvServerBusy)
+    }
 
     const fn config(self) -> (u64, u64, bool) {
         match self {
@@ -84,6 +99,7 @@ pub struct RegionBackoffBudget {
     total_sleep_ms: u64,
     excluded_sleep_ms: u64,
     attempts: [u32; RegionBackoffKind::COUNT],
+    sleep_ms_by_kind: [u64; RegionBackoffKind::COUNT],
     jitter_state: u64,
 }
 
@@ -96,6 +112,7 @@ impl RegionBackoffBudget {
             total_sleep_ms: 0,
             excluded_sleep_ms: 0,
             attempts: [0; RegionBackoffKind::COUNT],
+            sleep_ms_by_kind: [0; RegionBackoffKind::COUNT],
             jitter_state: entropy_seed(),
         }
     }
@@ -114,6 +131,7 @@ impl RegionBackoffBudget {
             total_sleep_ms: 0,
             excluded_sleep_ms: 0,
             attempts: [0; RegionBackoffKind::COUNT],
+            sleep_ms_by_kind: [0; RegionBackoffKind::COUNT],
             jitter_state: seed,
         }
     }
@@ -124,11 +142,16 @@ impl RegionBackoffBudget {
         kind: RegionBackoffKind,
     ) -> Result<Duration, RegionBackoffExhausted> {
         let effective_exhausted = self.effective_sleep_ms() >= self.max_sleep_ms;
-        let excluded_exhausted =
-            self.excluded_sleep_ms >= 600_000 && self.excluded_sleep_ms >= self.max_sleep_ms;
+        let excluded_exhausted = kind.is_sleep_excluded()
+            && self.excluded_sleep_ms >= 600_000
+            && self.excluded_sleep_ms >= self.max_sleep_ms;
         if self.max_sleep_ms > 0 && (effective_exhausted || excluded_exhausted) {
             return Err(RegionBackoffExhausted {
-                kind,
+                kind: if effective_exhausted {
+                    self.longest_effective_kind().unwrap_or(kind)
+                } else {
+                    kind
+                },
                 max_sleep: Duration::from_millis(self.max_sleep_ms),
             });
         }
@@ -136,7 +159,8 @@ impl RegionBackoffBudget {
         let index = kind as usize;
         let attempt = self.attempts[index];
         let (base, cap, equal_jitter) = kind.config();
-        let exponential = base.checked_shl(attempt).unwrap_or(u64::MAX).min(cap);
+        let multiplier = 1_u64.checked_shl(attempt).unwrap_or(u64::MAX);
+        let exponential = base.saturating_mul(multiplier).min(cap);
         let computed = if equal_jitter {
             let half = exponential / 2;
             half + self.next_jitter(exponential.saturating_sub(half))
@@ -147,7 +171,8 @@ impl RegionBackoffBudget {
 
         self.attempts[index] = attempt.saturating_add(1);
         self.total_sleep_ms = self.total_sleep_ms.saturating_add(delay_ms);
-        if kind == RegionBackoffKind::TikvServerBusy {
+        self.sleep_ms_by_kind[index] = self.sleep_ms_by_kind[index].saturating_add(delay_ms);
+        if kind.is_sleep_excluded() {
             self.excluded_sleep_ms = self.excluded_sleep_ms.saturating_add(delay_ms);
         }
         Ok(Duration::from_millis(delay_ms))
@@ -179,6 +204,14 @@ impl RegionBackoffBudget {
         state ^= state << 17;
         self.jitter_state = state;
         state % width
+    }
+
+    fn longest_effective_kind(&self) -> Option<RegionBackoffKind> {
+        RegionBackoffKind::ALL
+            .into_iter()
+            .filter(|kind| !kind.is_sleep_excluded())
+            .max_by_key(|kind| self.sleep_ms_by_kind[*kind as usize])
+            .filter(|kind| self.sleep_ms_by_kind[*kind as usize] > 0)
     }
 }
 

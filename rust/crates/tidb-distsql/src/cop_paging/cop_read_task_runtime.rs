@@ -408,7 +408,7 @@ impl CopReadTaskRuntime {
         }
 
         let ema = Arc::new(ReadBytesEma::new(seed_read_bytes));
-        let tasks = envelopes
+        let tasks: Vec<LogicalCopReadTask> = envelopes
             .iter_mut()
             .enumerate()
             .map(|(index, task)| {
