@@ -108,13 +108,15 @@ pub fn regions_have_gap(ranges: &[KeyRange], regions: &[RegionLocation], limit: 
     for range in ranges {
         let mut cursor = range.start.as_slice();
         let mut covered = false;
+        let mut reached_returned_region = false;
         for region in regions {
             if !region.end_key.is_empty() && region.end_key.as_slice() <= cursor {
                 continue;
             }
             if region.start_key.as_slice() > cursor {
-                break;
+                return true;
             }
+            reached_returned_region = true;
             if range.end.is_empty() {
                 if region.end_key.is_empty() {
                     covered = true;
@@ -128,7 +130,10 @@ pub fn regions_have_gap(ranges: &[KeyRange], regions: &[RegionLocation], limit: 
                 cursor = &region.end_key;
             }
         }
-        if !covered && (limit == 0 || regions.len() < limit) {
+        // Reaching the response limit makes only a suffix after contiguous
+        // returned coverage inconclusive. It never excuses a missing prefix
+        // or interior span.
+        if !covered && (!reached_returned_region || limit == 0 || regions.len() < limit) {
             return true;
         }
     }

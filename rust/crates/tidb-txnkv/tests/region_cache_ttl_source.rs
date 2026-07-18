@@ -18,10 +18,22 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use tidb_txnkv::region::{
-    BatchRegionLoader, CacheEntryState, CacheReloadState, KeyRange, Peer, PeerRole, ReadPolicy,
-    RegionCache, RegionEpoch, RegionLoadError, RegionLoader, RegionLocation, RegionVerId,
-    ReplicaReadMode, RequestSelection, Store, StoreLiveness,
+    BatchLoadOptions, BatchRegionLoader, BatchScanBackoff, BatchScanRetryReason, CacheEntryState,
+    CacheReloadState, KeyRange, Peer, PeerRole, ReadPolicy, RegionCache, RegionEpoch,
+    RegionLoadError, RegionLoader, RegionLocation, RegionRouteError, RegionVerId, ReplicaReadMode,
+    RequestSelection, Store, StoreLiveness,
 };
+
+struct NoRetry;
+
+impl BatchScanBackoff for NoRetry {
+    fn backoff(&mut self, reason: BatchScanRetryReason) -> Result<(), RegionRouteError> {
+        Err(RegionRouteError::Loader(RegionLoadError::new(
+            "unexpected-batch-retry",
+            format!("unexpected {reason:?}"),
+        )))
+    }
+}
 
 struct Loader {
     loads: usize,
@@ -126,7 +138,7 @@ impl BatchRegionLoader for DisjointLoader {
         &mut self,
         _ranges: &[KeyRange],
         _limit: usize,
-        _need_buckets: bool,
+        _options: BatchLoadOptions,
     ) -> Result<Vec<RegionLocation>, RegionLoadError> {
         Err(RegionLoadError::new(
             "unexpected-batch-load",
@@ -152,14 +164,24 @@ fn batch_access_renews_only_regions_traversed_by_requested_ranges() {
     let left_range = [KeyRange::new(b"a".to_vec(), b"m".to_vec())];
     assert_eq!(
         cache
-            .batch_locate_key_ranges_at(&left_range, false, 102)
+            .batch_locate_key_ranges_at(
+                &left_range,
+                BatchLoadOptions::default(),
+                &mut NoRetry,
+                102,
+            )
             .unwrap()[0]
             .region,
         left
     );
     assert_eq!(
         cache
-            .batch_locate_key_ranges_at(&left_range, false, 103)
+            .batch_locate_key_ranges_at(
+                &left_range,
+                BatchLoadOptions::default(),
+                &mut NoRetry,
+                103,
+            )
             .unwrap()[0]
             .region,
         left
@@ -191,7 +213,7 @@ impl BatchRegionLoader for StableBatchLoader {
         &mut self,
         _ranges: &[KeyRange],
         _limit: usize,
-        _need_buckets: bool,
+        _options: BatchLoadOptions,
     ) -> Result<Vec<RegionLocation>, RegionLoadError> {
         *self.batch_calls.lock().unwrap() += 1;
         Ok(vec![self.location.clone()])
@@ -213,7 +235,12 @@ fn expired_batch_reload_with_identical_region_identity_remains_visible() {
     assert_eq!(cache.locate_key_at(b"b", 100).unwrap(), &stable);
 
     let located = cache
-        .batch_locate_key_ranges_at(&[KeyRange::new(b"a".to_vec(), b"z".to_vec())], false, 103)
+        .batch_locate_key_ranges_at(
+            &[KeyRange::new(b"a".to_vec(), b"z".to_vec())],
+            BatchLoadOptions::default(),
+            &mut NoRetry,
+            103,
+        )
         .unwrap();
     assert_eq!(located, [stable]);
     assert_eq!(*batch_calls.lock().unwrap(), 1);
@@ -295,6 +322,41 @@ fn replica_selection_marks_stale_candidate_store_for_delayed_reload() {
     assert_eq!(cache.maintain_entries_at(101), 1);
 
     assert_eq!(cache.locate_key_at(b"x", 101).unwrap().region.id, 2);
+    assert_eq!(*loads.lock().unwrap(), 2);
+}
+
+#[test]
+fn maintenance_marks_stale_store_observation_to_expire_at_original_ttl() {
+    let loads = Arc::new(Mutex::new(0));
+    let mut cache = RegionCache::with_ttl(
+        SequenceLoader {
+            regions: VecDeque::from([routed_region(1, 1), routed_region(2, 2)]),
+            loads: Arc::clone(&loads),
+        },
+        10,
+        0,
+    );
+    let region = cache.locate_key_at(b"x", 100).unwrap().region;
+    let mut selector = cache
+        .request_selector(
+            region,
+            ReadPolicy {
+                mode: ReplicaReadMode::Mixed,
+                ..ReadPolicy::default()
+            },
+        )
+        .unwrap();
+    let RequestSelection::Attempt(request) = cache.select_request(&mut selector).unwrap() else {
+        panic!("the leader attempt must exist")
+    };
+    cache
+        .on_send_failure(&request.attempt, StoreLiveness::Unreachable)
+        .unwrap();
+
+    assert_eq!(cache.maintain_entries_at(101), 0);
+    assert_eq!(cache.locate_key_at(b"x", 109).unwrap().region, region);
+    assert_eq!(cache.locate_key_at(b"x", 110).unwrap().region, region);
+    assert_eq!(cache.locate_key_at(b"x", 111).unwrap().region.id, 2);
     assert_eq!(*loads.lock().unwrap(), 2);
 }
 

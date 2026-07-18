@@ -19,9 +19,9 @@ use tidb_codec::{decode_bytes, encode_bytes};
 use tidb_pd_client::{PdClient, PdClientError, PdKeyRange, PdMemberSet, PdRegion, PdStore};
 
 use crate::region::{
-    BatchRegionLoader, BucketMetadata, BucketStats, KeyRange, Peer, PeerRole, RegionEpoch,
-    RegionLoadError, RegionLoader, RegionLocation, RegionMetadata, RegionRecoveryLoader,
-    RegionVerId, Store,
+    BatchLoadOptions, BatchRegionLoader, BucketMetadata, BucketStats, KeyRange, Peer, PeerRole,
+    RegionEpoch, RegionLoadError, RegionLoader, RegionLocation, RegionMetadata,
+    RegionRecoveryLoader, RegionVerId, Store,
 };
 
 /// Concrete API-v1 region loader backed by the bounded PD control plane.
@@ -276,7 +276,7 @@ impl BatchRegionLoader for PdRegionLoader {
         &mut self,
         ranges: &[KeyRange],
         limit: usize,
-        need_buckets: bool,
+        options: BatchLoadOptions,
     ) -> Result<Vec<RegionLocation>, RegionLoadError> {
         let encoded_ranges = ranges
             .iter()
@@ -285,10 +285,12 @@ impl BatchRegionLoader for PdRegionLoader {
                 PdKeyRange { start_key, end_key }
             })
             .collect::<Vec<_>>();
-        match self
-            .client
-            .batch_scan_regions(&encoded_ranges, pd_limit(limit)?, need_buckets, true)
-        {
+        match self.client.batch_scan_regions(
+            &encoded_ranges,
+            pd_limit(limit)?,
+            options.need_buckets,
+            true,
+        ) {
             Ok(regions) => self.project_regions(regions),
             Err(PdClientError::Transport { ref code, .. }) if code == "Unimplemented" => {
                 self.batch_scan_regions_fallback(ranges, limit)

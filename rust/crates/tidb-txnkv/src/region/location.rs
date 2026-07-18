@@ -155,6 +155,15 @@ impl RegionLocation {
             && (self.end_key.is_empty() || key < self.end_key.as_slice())
     }
 
+    /// Whether this location contains an inclusive range end. An empty end
+    /// key is positive infinity, while a finite boundary belongs to the
+    /// region on its left.
+    #[must_use]
+    pub fn contains_end_key(&self, key: &[u8]) -> bool {
+        (self.end_key.is_empty() || (!key.is_empty() && key <= self.end_key.as_slice()))
+            && (key.is_empty() || self.start_key.as_slice() < key)
+    }
+
     /// Whether the complete request is contained by this one region.
     #[must_use]
     pub fn contains_range(&self, range: &KeyRange) -> bool {

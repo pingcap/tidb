@@ -27,7 +27,10 @@ pub use batch_locate::{
     DEFAULT_REGIONS_PER_BATCH, MAX_RANGES_PER_BATCH,
 };
 pub use bucket::{Bucket, BucketMetadata, BucketStats};
-pub use cache::{BatchRegionLoader, RegionCache, RegionLoader, RegionRecoveryLoader};
+pub use cache::{
+    BatchLoadOptions, BatchRegionLoader, BatchScanBackoff, BatchScanRetryReason, RegionCache,
+    RegionLoader, RegionRecoveryLoader,
+};
 pub use cache_entry::{CacheEntryState, CacheReloadState};
 pub use error::{RegionLoadError, RegionRouteError};
 pub use health_policy::{ReplicaHealthFacts, ReplicaHealthPolicy, StoreLabel, StoreSelectionScore};

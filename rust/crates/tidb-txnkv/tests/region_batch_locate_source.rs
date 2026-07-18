@@ -19,10 +19,47 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use tidb_txnkv::region::{
-    merge_loaded_and_cached, ranges_after_key, regions_have_gap, BatchRegionLoader, KeyRange,
-    RegionCache, RegionEpoch, RegionLoadError, RegionLoader, RegionLocation, RegionRouteError,
-    RegionVerId, DEFAULT_REGIONS_PER_BATCH, MAX_RANGES_PER_BATCH,
+    merge_loaded_and_cached, ranges_after_key, regions_have_gap, BatchLoadOptions,
+    BatchRegionLoader, BatchScanBackoff, BatchScanRetryReason, KeyRange, RegionCache, RegionEpoch,
+    RegionLoadError, RegionLoader, RegionLocation, RegionRouteError, RegionVerId,
+    DEFAULT_REGIONS_PER_BATCH, MAX_RANGES_PER_BATCH,
 };
+
+#[derive(Default)]
+struct NoRetry;
+
+impl BatchScanBackoff for NoRetry {
+    fn backoff(&mut self, reason: BatchScanRetryReason) -> Result<(), RegionRouteError> {
+        Err(RegionRouteError::Loader(RegionLoadError::new(
+            "batch-backoff-exhausted",
+            format!("retry budget exhausted after {reason:?}"),
+        )))
+    }
+}
+
+#[derive(Default)]
+struct ScriptedBackoff {
+    remaining: usize,
+    reasons: Vec<BatchScanRetryReason>,
+}
+
+impl BatchScanBackoff for ScriptedBackoff {
+    fn backoff(&mut self, reason: BatchScanRetryReason) -> Result<(), RegionRouteError> {
+        self.reasons.push(reason);
+        if self.remaining == 0 {
+            return NoRetry.backoff(reason);
+        }
+        self.remaining -= 1;
+        Ok(())
+    }
+}
+
+fn options(need_buckets: bool) -> BatchLoadOptions {
+    BatchLoadOptions {
+        need_buckets,
+        need_leader: false,
+    }
+}
 
 fn region(id: u64, start: &str, end: &str) -> RegionLocation {
     RegionLocation {
@@ -42,6 +79,12 @@ fn region(id: u64, start: &str, end: &str) -> RegionLocation {
         down_peer_ids: Vec::new(),
         pending_peer_ids: Vec::new(),
     }
+}
+
+fn leaderful_region(id: u64, start: &str, end: &str) -> RegionLocation {
+    let mut location = region(id, start, end);
+    location.leader_peer_id = Some(id * 10);
+    location
 }
 
 fn ranges(keys: &[(&str, &str)]) -> Vec<KeyRange> {
@@ -97,6 +140,7 @@ fn coverage_distinguishes_holes_from_a_reached_limit() {
     let partial = vec![region(1, "a", "b")];
     assert!(regions_have_gap(&requested, &partial, 0));
     assert!(!regions_have_gap(&requested, &partial, 1));
+    assert!(regions_have_gap(&requested, &[region(2, "x", "y")], 1));
     assert!(!regions_have_gap(
         &requested,
         &[region(1, "a", "b"), region(2, "b", "c")],
@@ -105,7 +149,7 @@ fn coverage_distinguishes_holes_from_a_reached_limit() {
 }
 
 struct BatchLoader {
-    calls: Arc<Mutex<Vec<(usize, usize, bool)>>>,
+    calls: Arc<Mutex<Vec<(usize, usize, bool, bool)>>>,
 }
 
 impl RegionLoader for BatchLoader {
@@ -126,10 +170,15 @@ impl BatchRegionLoader for BatchLoader {
         &mut self,
         requested: &[KeyRange],
         limit: usize,
-        need_buckets: bool,
+        options: BatchLoadOptions,
     ) -> Result<Vec<RegionLocation>, RegionLoadError> {
         let mut calls = self.calls.lock().unwrap();
-        calls.push((requested.len(), limit, need_buckets));
+        calls.push((
+            requested.len(),
+            limit,
+            options.need_buckets,
+            options.need_leader,
+        ));
         let call = calls.len();
         drop(calls);
         Ok(requested
@@ -154,21 +203,23 @@ fn batch_cache_uses_exact_pd_limit_and_need_bucket_flag() {
     };
     let mut cache = RegionCache::with_ttl(loader, 600, 0);
     let requested = ranges(&[("a", "b"), ("c", "d")]);
-    let loaded = cache.batch_locate_key_ranges(&requested, true).unwrap();
+    let loaded = cache
+        .batch_locate_key_ranges(&requested, options(true), &mut NoRetry)
+        .unwrap();
     assert_eq!(loaded.len(), 2);
-    assert_eq!(*calls.lock().unwrap(), vec![(2, 128, true)]);
+    assert_eq!(*calls.lock().unwrap(), vec![(2, 128, true, false)]);
     // A second lookup is served entirely by the canonical cache.
     assert_eq!(
         cache
-            .batch_locate_key_ranges(&requested, true)
+            .batch_locate_key_ranges(&requested, options(true), &mut NoRetry)
             .unwrap()
             .len(),
         2
     );
-    assert_eq!(*calls.lock().unwrap(), vec![(2, 128, true)]);
+    assert_eq!(*calls.lock().unwrap(), vec![(2, 128, true, false)]);
 }
 
-type BatchCall = (Vec<KeyRange>, usize, bool);
+type BatchCall = (Vec<KeyRange>, usize, BatchLoadOptions);
 
 struct OrderedLoader {
     regions: Vec<RegionLocation>,
@@ -193,12 +244,12 @@ impl BatchRegionLoader for OrderedLoader {
         &mut self,
         requested: &[KeyRange],
         limit: usize,
-        need_buckets: bool,
+        options: BatchLoadOptions,
     ) -> Result<Vec<RegionLocation>, RegionLoadError> {
         self.calls
             .lock()
             .unwrap()
-            .push((requested.to_vec(), limit, need_buckets));
+            .push((requested.to_vec(), limit, options));
         Ok(self
             .regions
             .iter()
@@ -226,7 +277,7 @@ fn batch_cache_progresses_after_the_exact_128_region_pd_limit() {
     let requested = [KeyRange::new(key(0), key(130))];
 
     let located = cache
-        .batch_locate_key_ranges_at(&requested, false, 100)
+        .batch_locate_key_ranges_at(&requested, options(false), &mut NoRetry, 100)
         .unwrap();
     assert_eq!(located.len(), 130);
     let calls = calls.lock().unwrap();
@@ -255,7 +306,7 @@ fn batch_cache_caps_each_pd_request_at_2048_ranges() {
 
     assert_eq!(
         cache
-            .batch_locate_key_ranges_at(&requested, false, 100)
+            .batch_locate_key_ranges_at(&requested, options(false), &mut NoRetry, 100)
             .unwrap()
             .len(),
         requested.len()
@@ -263,8 +314,13 @@ fn batch_cache_caps_each_pd_request_at_2048_ranges() {
     assert_eq!(
         *calls.lock().unwrap(),
         vec![
-            (MAX_RANGES_PER_BATCH, DEFAULT_REGIONS_PER_BATCH, false),
-            (2, DEFAULT_REGIONS_PER_BATCH, false),
+            (
+                MAX_RANGES_PER_BATCH,
+                DEFAULT_REGIONS_PER_BATCH,
+                false,
+                false
+            ),
+            (2, DEFAULT_REGIONS_PER_BATCH, false, false),
         ]
     );
 }
@@ -292,7 +348,7 @@ impl BatchRegionLoader for ReplyLoader {
         &mut self,
         _requested: &[KeyRange],
         _limit: usize,
-        _need_buckets: bool,
+        _options: BatchLoadOptions,
     ) -> Result<Vec<RegionLocation>, RegionLoadError> {
         *self.calls.lock().unwrap() += 1;
         self.replies.pop_front().ok_or_else(|| {
@@ -302,7 +358,7 @@ impl BatchRegionLoader for ReplyLoader {
 }
 
 #[test]
-fn batch_cache_rejects_a_pd_reply_with_a_coverage_hole() {
+fn terminal_gap_reply_does_not_pollute_the_cache() {
     let mut cache = RegionCache::with_ttl(
         ReplyLoader {
             replies: VecDeque::from([vec![region(1, "a", "b"), region(2, "c", "d")]]),
@@ -312,9 +368,67 @@ fn batch_cache_rejects_a_pd_reply_with_a_coverage_hole() {
         0,
     );
     let error = cache
-        .batch_locate_key_ranges_at(&ranges(&[("a", "d")]), false, 100)
+        .batch_locate_key_ranges_at(&ranges(&[("a", "d")]), options(false), &mut NoRetry, 100)
         .unwrap_err();
-    assert_eq!(error, RegionRouteError::BatchScanGap);
+    assert!(matches!(error, RegionRouteError::Loader(_)));
+    assert!(cache.is_empty());
+}
+
+#[test]
+fn cached_overlap_cannot_mask_an_interior_gap_in_the_exact_pd_reply() {
+    let mut cache = RegionCache::with_ttl(
+        ReplyLoader {
+            replies: VecDeque::from([
+                vec![region(1, "b", "c")],
+                vec![region(2, "a", "b"), region(3, "c", "d")],
+            ]),
+            calls: Arc::new(Mutex::new(0)),
+        },
+        600,
+        0,
+    );
+    cache
+        .batch_locate_key_ranges_at(&ranges(&[("b", "c")]), options(false), &mut NoRetry, 100)
+        .unwrap();
+
+    assert!(matches!(
+        cache
+            .batch_locate_key_ranges_at(&ranges(&[("a", "d")]), options(false), &mut NoRetry, 100,),
+        Err(RegionRouteError::Loader(_))
+    ));
+    assert_eq!(cache.locate_key_at(b"b", 100).unwrap().region.id, 1);
+}
+
+#[test]
+fn gap_reply_retries_then_publishes_only_the_converged_reply() {
+    let calls = Arc::new(Mutex::new(0));
+    let mut cache = RegionCache::with_ttl(
+        ReplyLoader {
+            replies: VecDeque::from([
+                vec![region(1, "a", "b"), region(2, "c", "d")],
+                vec![region(3, "a", "b"), region(4, "b", "d")],
+            ]),
+            calls: Arc::clone(&calls),
+        },
+        600,
+        0,
+    );
+    let mut backoff = ScriptedBackoff {
+        remaining: 1,
+        reasons: Vec::new(),
+    };
+    let located = cache
+        .batch_locate_key_ranges_at(&ranges(&[("a", "d")]), options(false), &mut backoff, 100)
+        .unwrap();
+    assert_eq!(
+        located
+            .iter()
+            .map(|region| region.region.id)
+            .collect::<Vec<_>>(),
+        [3, 4]
+    );
+    assert_eq!(backoff.reasons, [BatchScanRetryReason::CoverageGap]);
+    assert_eq!(*calls.lock().unwrap(), 2);
 }
 
 #[test]
@@ -334,14 +448,14 @@ fn overlapping_cached_and_loaded_regions_progress_to_complete_coverage() {
     );
     assert_eq!(
         cache
-            .batch_locate_key_ranges_at(&ranges(&[("a", "c")]), false, 100)
+            .batch_locate_key_ranges_at(&ranges(&[("a", "c")]), options(false), &mut NoRetry, 100,)
             .unwrap()
             .len(),
         1
     );
 
     let located = cache
-        .batch_locate_key_ranges_at(&ranges(&[("b", "e")]), false, 100)
+        .batch_locate_key_ranges_at(&ranges(&[("b", "e")]), options(false), &mut NoRetry, 100)
         .unwrap();
     assert_eq!(
         located
@@ -353,6 +467,87 @@ fn overlapping_cached_and_loaded_regions_progress_to_complete_coverage() {
             (b"d".to_vec(), b"e".to_vec()),
         ]
     );
+    assert_eq!(*calls.lock().unwrap(), 3);
+}
+
+#[test]
+fn live_batch_merger_preserves_a_partial_cached_bridge_for_this_result() {
+    let calls = Arc::new(Mutex::new(0));
+    let mut cache = RegionCache::with_ttl(
+        ReplyLoader {
+            replies: VecDeque::from([
+                vec![region(1, "e", "f")],
+                vec![region(2, "d2", "e1"), region(3, "f", "g")],
+            ]),
+            calls: Arc::clone(&calls),
+        },
+        600,
+        0,
+    );
+    cache
+        .batch_locate_key_ranges_at(&ranges(&[("e", "f")]), options(false), &mut NoRetry, 100)
+        .unwrap();
+
+    let located = cache
+        .batch_locate_key_ranges_at(
+            &ranges(&[("d2", "e1"), ("f", "g")]),
+            options(false),
+            &mut NoRetry,
+            100,
+        )
+        .unwrap();
+    assert_eq!(
+        located
+            .iter()
+            .map(|region| (region.start_key.clone(), region.end_key.clone()))
+            .collect::<Vec<_>>(),
+        vec![
+            (b"d2".to_vec(), b"e1".to_vec()),
+            (b"e".to_vec(), b"f".to_vec()),
+            (b"f".to_vec(), b"g".to_vec()),
+        ]
+    );
+    assert_eq!(*calls.lock().unwrap(), 2);
+}
+
+#[test]
+fn leader_required_batch_retries_all_leaderless_but_accepts_mixed_metadata() {
+    let calls = Arc::new(Mutex::new(0));
+    let mut cache = RegionCache::with_ttl(
+        ReplyLoader {
+            replies: VecDeque::from([
+                vec![region(1, "a", "c")],
+                vec![leaderful_region(2, "a", "b"), region(3, "b", "c")],
+                vec![leaderful_region(4, "b", "c")],
+            ]),
+            calls: Arc::clone(&calls),
+        },
+        600,
+        0,
+    );
+    let mut backoff = ScriptedBackoff {
+        remaining: 1,
+        reasons: Vec::new(),
+    };
+    let located = cache
+        .batch_locate_key_ranges_at(
+            &ranges(&[("a", "c")]),
+            BatchLoadOptions {
+                need_buckets: true,
+                need_leader: true,
+            },
+            &mut backoff,
+            100,
+        )
+        .unwrap();
+    assert_eq!(
+        located
+            .iter()
+            .map(|region| region.region.id)
+            .collect::<Vec<_>>(),
+        [2, 4]
+    );
+    assert_eq!(backoff.reasons, [BatchScanRetryReason::MissingLeader]);
     assert_eq!(*calls.lock().unwrap(), 3);
 }
 
@@ -434,7 +629,7 @@ fn cache_accepts_loader_owned_legacy_scan_fallback_results() {
     );
     assert_eq!(
         cache
-            .batch_locate_key_ranges_at(&ranges(&[("a", "d")]), true, 100)
+            .batch_locate_key_ranges_at(&ranges(&[("a", "d")]), options(true), &mut NoRetry, 100,)
             .unwrap()
             .len(),
         2

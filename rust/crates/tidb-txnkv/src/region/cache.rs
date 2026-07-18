@@ -16,9 +16,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use super::{
-    ranges_after_key, regions_have_gap, regions_intersecting_ranges, CacheEntryState,
-    CacheReloadState, HealthInstant, KeyRange, LeaderRequest, OwnedLeaderRoute, Peer, PeerRole,
-    ReadPolicy, RegionAttempt, RegionLoadError, RegionLocation, RegionMetadata,
+    merge_loaded_and_cached, ranges_after_key, regions_have_gap, regions_intersecting_ranges,
+    CacheEntryState, CacheReloadState, HealthInstant, KeyRange, LeaderRequest, OwnedLeaderRoute,
+    Peer, PeerRole, ReadPolicy, RegionAttempt, RegionLoadError, RegionLocation, RegionMetadata,
     RegionRebuildAction, RegionRecoveryError, RegionRouteError, RegionStoreTopology, RegionVerId,
     ReplicaHealthFacts, ReplicaReadMode, RequestSelection, RequestSelector, RouteFeedback,
     RouteFeedbackApplication, RouteOutcome, RoutePeer, RouteSnapshot, ServerBusyAction, Store,
@@ -27,6 +27,32 @@ use super::{
     MAX_REPLICA_ATTEMPT_TIME,
 };
 
+/// Caller-selected options for one PD batch-region attempt.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct BatchLoadOptions {
+    /// Request bucket metadata with each region.
+    pub need_buckets: bool,
+    /// Filter leaderless metadata and retry when none remains.
+    pub need_leader: bool,
+}
+
+/// Why a batch scan must be retried before any reply is published.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BatchScanRetryReason {
+    /// PD returned no regions.
+    EmptyReply,
+    /// PD returned a prefix or interior coverage gap.
+    CoverageGap,
+    /// The caller required leaders and every returned region was leaderless.
+    MissingLeader,
+}
+
+/// Source-shaped retry context owned by the batch-scan caller.
+pub trait BatchScanBackoff {
+    /// Waits, cancels, or exhausts the caller's PD-RPC retry budget.
+    fn backoff(&mut self, reason: BatchScanRetryReason) -> Result<(), RegionRouteError>;
+}
+
 /// Injected PD-shaped region metadata loader.
 pub trait RegionLoader {
     /// Returns the cluster identity attached to requests routed by this loader.
@@ -34,6 +60,13 @@ pub trait RegionLoader {
 
     /// Loads the region containing `key` without prescribing any network API.
     fn load_region(&mut self, key: &[u8]) -> Result<RegionLocation, RegionLoadError>;
+
+    /// Loads the region containing an inclusive range end. Loaders backed by
+    /// a control plane with a previous-region API should override this
+    /// boundary; the default preserves compatibility for cache-only loaders.
+    fn load_region_by_end_key(&mut self, key: &[u8]) -> Result<RegionLocation, RegionLoadError> {
+        self.load_region(key)
+    }
 
     /// Returns the most recently resolved PD labels for one store.
     ///
@@ -53,9 +86,10 @@ where
     pub fn batch_locate_key_ranges(
         &mut self,
         ranges: &[KeyRange],
-        need_buckets: bool,
+        options: BatchLoadOptions,
+        backoff: &mut impl BatchScanBackoff,
     ) -> Result<Vec<RegionLocation>, RegionRouteError> {
-        self.batch_locate_key_ranges_at(ranges, need_buckets, cache_now_seconds())
+        self.batch_locate_key_ranges_at(ranges, options, backoff, cache_now_seconds())
     }
 
     /// Deterministic-clock form of [`Self::batch_locate_key_ranges`] used by
@@ -63,7 +97,8 @@ where
     pub fn batch_locate_key_ranges_at(
         &mut self,
         ranges: &[KeyRange],
-        need_buckets: bool,
+        options: BatchLoadOptions,
+        backoff: &mut impl BatchScanBackoff,
         now_seconds: u64,
     ) -> Result<Vec<RegionLocation>, RegionRouteError> {
         if ranges.iter().any(|range| !range.is_valid()) {
@@ -73,34 +108,56 @@ where
             return Ok(Vec::new());
         }
 
-        let mut unavailable = self.refresh_traversed_entries(ranges, now_seconds)?;
+        let unavailable = self.refresh_traversed_entries(ranges, now_seconds)?;
+        let cached_before_load = self
+            .regions
+            .iter()
+            .filter(|region| !unavailable.contains(&region.region))
+            .cloned()
+            .collect::<Vec<_>>();
 
         let mut misses = cache_misses(&self.regions, ranges, &unavailable)?;
+        let mut fresh = Vec::new();
         while !misses.is_empty() {
             let batch_len = misses.len().min(MAX_RANGES_PER_BATCH);
             let request = &misses[..batch_len];
-            let loaded = self
-                .loader
-                .batch_load_regions(request, DEFAULT_REGIONS_PER_BATCH, need_buckets)
-                .map_err(RegionRouteError::Loader)?;
-            let Some(last) = loaded.last() else {
-                return Err(RegionRouteError::EmptyBatchLoad);
-            };
-            let split_key = last.end_key.clone();
-            for region in loaded {
-                let replaced_unavailable = self
-                    .regions
-                    .iter()
-                    .filter(|cached| {
-                        unavailable.contains(&cached.region) && ranges_intersect(cached, &region)
-                    })
-                    .map(|cached| cached.region)
-                    .collect::<Vec<_>>();
-                self.insert_loaded_at(region, now_seconds)?;
-                for replaced in replaced_unavailable {
-                    unavailable.remove(&replaced);
+            let (loaded, publishable) = loop {
+                let loaded = self
+                    .loader
+                    .batch_load_regions(request, DEFAULT_REGIONS_PER_BATCH, options)
+                    .map_err(RegionRouteError::Loader)?;
+                let retry = if loaded.is_empty() {
+                    Some(BatchScanRetryReason::EmptyReply)
+                } else if regions_have_gap(request, &loaded, DEFAULT_REGIONS_PER_BATCH) {
+                    Some(BatchScanRetryReason::CoverageGap)
+                } else {
+                    None
+                };
+                if let Some(reason) = retry {
+                    backoff.backoff(reason)?;
+                    continue;
                 }
-            }
+                let publishable = if options.need_leader {
+                    loaded
+                        .iter()
+                        .filter(|region| region.leader_peer_id.is_some())
+                        .cloned()
+                        .collect::<Vec<_>>()
+                } else {
+                    loaded.clone()
+                };
+                if publishable.is_empty() {
+                    backoff.backoff(BatchScanRetryReason::MissingLeader)?;
+                    continue;
+                }
+                break (loaded, publishable);
+            };
+            let split_key = publishable
+                .last()
+                .expect("validated publishable batch reply is nonempty")
+                .end_key
+                .clone();
+            fresh.extend(publishable);
             if split_key.is_empty() {
                 misses.clear();
             } else {
@@ -114,12 +171,22 @@ where
             }
         }
 
-        let result = regions_intersecting_ranges(&self.regions, ranges)
-            .into_iter()
-            .filter(|region| !unavailable.contains(&region.region))
-            .collect::<Vec<_>>();
+        let merged = merge_loaded_and_cached(&cached_before_load, &fresh);
+        let result = regions_intersecting_ranges(&merged, ranges);
         if regions_have_gap(ranges, &result, 0) {
             return Err(RegionRouteError::BatchScanGap);
+        }
+
+        // Validate the complete canonical insertion sequence against a clone
+        // before publishing the first region. This keeps terminal failures
+        // from leaving a partially updated cache.
+        let mut preview = self.regions.clone();
+        for mut region in fresh.iter().cloned() {
+            preserve_newer_buckets(&preview, &mut region);
+            insert_loaded_into(&mut preview, region)?;
+        }
+        for region in fresh {
+            self.insert_loaded_at(region, now_seconds)?;
         }
         Ok(result)
     }
@@ -134,7 +201,7 @@ pub trait BatchRegionLoader: RegionLoader {
         &mut self,
         ranges: &[KeyRange],
         limit: usize,
-        need_buckets: bool,
+        options: BatchLoadOptions,
     ) -> Result<Vec<RegionLocation>, RegionLoadError>;
 }
 
@@ -258,8 +325,32 @@ impl<L> RegionCache<L> {
         for (region, state) in &mut self.entry_states {
             if now_seconds > state.expires_at_seconds() {
                 expired.push(*region);
-            } else if state.release_delayed_reload() {
+                continue;
+            }
+            if state.is_marked(CacheReloadState::DelayedReloadReady) {
+                continue;
+            }
+            if state.release_delayed_reload() {
                 released += 1;
+                continue;
+            }
+            if state.is_marked(CacheReloadState::ExpireAfterTtl) {
+                continue;
+            }
+            let stale_or_unreachable = self
+                .regions
+                .iter()
+                .find(|cached| cached.region == *region)
+                .is_some_and(|cached| {
+                    cached.peers.iter().any(|peer| {
+                        self.stores.get(&peer.store_id).is_some_and(|store| {
+                            peer.store_epoch != store.epoch
+                                || store.liveness != StoreLiveness::Reachable
+                        })
+                    })
+                });
+            if stale_or_unreachable {
+                state.mark(CacheReloadState::ExpireAfterTtl);
             }
         }
         for region in expired {
@@ -1034,15 +1125,18 @@ impl<L> RegionCache<L> {
             }
         }
         let mut next = self.regions.clone();
-        let mut inheritance_regions = self.regions.clone();
+        let observed_buckets = self
+            .regions
+            .iter()
+            .find(|location| location.region == observed)
+            .and_then(|location| location.buckets.clone());
         let mut next_stores = self.stores.clone();
         let mut next_states = self.entry_states.clone();
         next.retain(|location| location.region != observed);
         next_states.remove(&observed);
         let now_seconds = cache_now_seconds();
         for mut replacement in replacements {
-            preserve_newer_buckets(&inheritance_regions, &mut replacement);
-            insert_loaded_into(&mut inheritance_regions, replacement.clone())?;
+            apply_observed_buckets(observed_buckets.as_ref(), &mut replacement);
             let labels = labels_for_location(&self.loader, &replacement);
             normalize_loaded(&mut next_stores, &mut replacement, &labels);
             let region = replacement.region;
@@ -1092,6 +1186,47 @@ impl<L> RegionCache<L> {
         L: RegionLoader,
     {
         self.locate_key_with_boundary_at(key, false, now_seconds)
+    }
+
+    /// Finds the region containing an inclusive range end.
+    pub fn locate_end_key(&mut self, key: &[u8]) -> Result<&RegionLocation, RegionRouteError>
+    where
+        L: RegionLoader,
+    {
+        self.locate_end_key_at(key, cache_now_seconds())
+    }
+
+    /// Deterministic-clock form of [`Self::locate_end_key`].
+    pub fn locate_end_key_at(
+        &mut self,
+        key: &[u8],
+        now_seconds: u64,
+    ) -> Result<&RegionLocation, RegionRouteError>
+    where
+        L: RegionLoader,
+    {
+        if let Some(index) = self.find_end_key(key) {
+            let region = self.regions[index].region;
+            let next_expiry = self.next_expiry_at(now_seconds, region);
+            let valid = self.entry_states.get_mut(&region).is_some_and(|state| {
+                state.check_and_renew(now_seconds, self.base_ttl_seconds, next_expiry)
+            });
+            if valid {
+                return Ok(&self.regions[index]);
+            }
+            self.preferred_proxies.remove(&region);
+        }
+        let loaded = self
+            .loader
+            .load_region_by_end_key(key)
+            .map_err(RegionRouteError::Loader)?;
+        if !loaded.contains_end_key(key) {
+            return Err(RegionRouteError::LoadedRegionDoesNotContainKey {
+                region: loaded.region,
+            });
+        }
+        let index = self.insert_loaded_at(loaded, now_seconds)?;
+        Ok(&self.regions[index])
     }
 
     fn locate_key_with_boundary(
@@ -1214,12 +1349,57 @@ impl<L> RegionCache<L> {
         Ok(regions)
     }
 
+    /// Lists cached/loaded region IDs from `start_key` through the region
+    /// containing inclusive `end_key`, matching client-go's cache helper.
+    pub fn list_region_ids(
+        &mut self,
+        start_key: &[u8],
+        end_key: &[u8],
+    ) -> Result<Vec<u64>, RegionRouteError>
+    where
+        L: RegionLoader,
+    {
+        if !end_key.is_empty() && start_key > end_key {
+            return Err(RegionRouteError::InvalidRange);
+        }
+        let mut ids = Vec::new();
+        let mut cursor = start_key.to_vec();
+        loop {
+            let location = self.locate_key(&cursor)?;
+            ids.push(location.region.id);
+            let region = location.region;
+            let next = location.end_key.clone();
+            if next.is_empty() || (!end_key.is_empty() && next.as_slice() > end_key) {
+                break;
+            }
+            if next <= cursor {
+                return Err(RegionRouteError::NonProgressingRegion { region });
+            }
+            cursor = next;
+        }
+        Ok(ids)
+    }
+
     fn find_key(&self, key: &[u8]) -> Option<usize> {
         self.regions
             .binary_search_by(|region| {
                 if region.contains_key(key) {
                     std::cmp::Ordering::Equal
                 } else if region.start_key.as_slice() > key {
+                    std::cmp::Ordering::Greater
+                } else {
+                    std::cmp::Ordering::Less
+                }
+            })
+            .ok()
+    }
+
+    fn find_end_key(&self, key: &[u8]) -> Option<usize> {
+        self.regions
+            .binary_search_by(|region| {
+                if region.contains_end_key(key) {
+                    std::cmp::Ordering::Equal
+                } else if key.is_empty() || region.start_key.as_slice() >= key {
                     std::cmp::Ordering::Greater
                 } else {
                     std::cmp::Ordering::Less
@@ -1351,6 +1531,13 @@ fn preserve_newer_buckets(cached: &[RegionLocation], loaded: &mut RegionLocation
     if current_version > 0 && (loaded_version == 0 || loaded_version < current_version) {
         loaded.buckets.clone_from(&current.buckets);
     }
+}
+
+fn apply_observed_buckets(current: Option<&super::BucketMetadata>, loaded: &mut RegionLocation) {
+    let Some(current) = current else {
+        return;
+    };
+    loaded.buckets = Some(current.clone());
 }
 
 fn cache_misses(

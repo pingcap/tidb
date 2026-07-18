@@ -62,6 +62,13 @@ impl CacheEntryState {
         self.flags |= state.flag();
     }
 
+    /// Whether one source synchronization flag is currently set.
+    #[must_use]
+    pub const fn is_marked(self, state: CacheReloadState) -> bool {
+        let flag = state.flag();
+        flag != 0 && self.flags & flag != 0
+    }
+
     /// Advances Pending to Ready in one background-GC transition.
     pub const fn release_delayed_reload(&mut self) -> bool {
         if self.flags & DELAYED_RELOAD_PENDING == 0 {

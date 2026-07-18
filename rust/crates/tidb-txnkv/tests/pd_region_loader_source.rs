@@ -25,13 +25,39 @@ use tidb_proto::pdpb::{
     self,
     pd_server::{Pd, PdServer},
 };
-use tidb_txnkv::region::{BatchRegionLoader, KeyRange, RegionLoader};
+use tidb_txnkv::region::{
+    BatchLoadOptions, BatchRegionLoader, BatchScanBackoff, BatchScanRetryReason, KeyRange,
+    RegionCache, RegionLoader, RegionRouteError,
+};
 use tidb_txnkv::region::{
     PeerRole, RegionMetadata, RegionMetadataPeer, RegionRecoveryLoader, RegionVerId,
 };
 use tidb_txnkv::PdRegionLoader;
 
 const CLUSTER_ID: u64 = 84;
+
+struct PromoteFallbackLeader {
+    state: Arc<Mutex<State>>,
+    reasons: Vec<BatchScanRetryReason>,
+}
+
+impl BatchScanBackoff for PromoteFallbackLeader {
+    fn backoff(&mut self, reason: BatchScanRetryReason) -> Result<(), RegionRouteError> {
+        self.reasons.push(reason);
+        let mut state = self.state.lock().unwrap();
+        let region = state
+            .scan_regions
+            .regions
+            .get_mut(1)
+            .expect("scripted fallback has a second region");
+        region.leader = region
+            .region
+            .as_ref()
+            .and_then(|meta| meta.peers.first())
+            .cloned();
+        Ok(())
+    }
+}
 
 #[derive(Clone)]
 struct MockPd {
@@ -97,8 +123,18 @@ impl Pd for MockPd {
         request: tonic::Request<pdpb::ScanRegionsRequest>,
     ) -> Result<tonic::Response<pdpb::ScanRegionsResponse>, tonic::Status> {
         let mut state = self.state.lock().unwrap();
-        state.scan_region_requests.push(request.into_inner());
-        Ok(tonic::Response::new(state.scan_regions.clone()))
+        let request = request.into_inner();
+        state.scan_region_requests.push(request.clone());
+        let mut response = state.scan_regions.clone();
+        response.regions.retain(|region| {
+            let Some(meta) = &region.region else {
+                return false;
+            };
+            (meta.end_key.is_empty() || meta.end_key.as_slice() > request.start_key.as_slice())
+                && (request.end_key.is_empty()
+                    || meta.start_key.as_slice() < request.end_key.as_slice())
+        });
+        Ok(tonic::Response::new(response))
     }
 
     async fn batch_scan_regions(
@@ -320,7 +356,16 @@ fn loader_decodes_by_id_scan_and_batch_regions_once_without_synthetic_buckets() 
         KeyRange::new(b"a".to_vec(), b"m".to_vec()),
         KeyRange::new(b"q".to_vec(), Vec::new()),
     ];
-    let batch = loader.batch_load_regions(&ranges, 13, true).unwrap();
+    let batch = loader
+        .batch_load_regions(
+            &ranges,
+            13,
+            BatchLoadOptions {
+                need_buckets: true,
+                need_leader: false,
+            },
+        )
+        .unwrap();
     assert_eq!(
         batch
             .iter()
@@ -365,7 +410,14 @@ fn batch_loader_falls_back_only_from_unimplemented_and_does_not_invent_buckets()
     let mut loader = PdRegionLoader::connect(&server.address, Duration::from_secs(2)).unwrap();
 
     let regions = loader
-        .batch_load_regions(&[KeyRange::new(b"a".to_vec(), b"z".to_vec())], 2, true)
+        .batch_load_regions(
+            &[KeyRange::new(b"a".to_vec(), b"z".to_vec())],
+            2,
+            BatchLoadOptions {
+                need_buckets: true,
+                need_leader: true,
+            },
+        )
         .unwrap();
     assert_eq!(
         regions
@@ -380,6 +432,42 @@ fn batch_loader_falls_back_only_from_unimplemented_and_does_not_invent_buckets()
     assert_eq!(state.batch_scan_region_requests.len(), 1);
     assert_eq!(state.scan_region_requests.len(), 1);
     assert_eq!(state.scan_region_requests[0].limit, 2);
+}
+
+#[test]
+fn legacy_fallback_preserves_the_same_leader_required_filtering_contract() {
+    let mut state = valid_state();
+    state.batch_scan_unimplemented = true;
+    let server = Server::start(state);
+    let loader = PdRegionLoader::connect(&server.address, Duration::from_secs(2)).unwrap();
+    let mut cache = RegionCache::new(loader);
+    let mut backoff = PromoteFallbackLeader {
+        state: Arc::clone(&server.state),
+        reasons: Vec::new(),
+    };
+
+    let located = cache
+        .batch_locate_key_ranges(
+            &[KeyRange::new(b"a".to_vec(), b"z".to_vec())],
+            BatchLoadOptions {
+                need_buckets: false,
+                need_leader: true,
+            },
+            &mut backoff,
+        )
+        .unwrap();
+    assert_eq!(
+        located
+            .iter()
+            .map(|region| region.region.id)
+            .collect::<Vec<_>>(),
+        [21, 22]
+    );
+    assert_eq!(backoff.reasons, [BatchScanRetryReason::MissingLeader]);
+
+    let state = server.state.lock().unwrap();
+    assert_eq!(state.batch_scan_region_requests.len(), 3);
+    assert_eq!(state.scan_region_requests.len(), 3);
 }
 
 #[test]
