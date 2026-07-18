@@ -42,5 +42,8 @@ rust_paths = [
   "rust/crates/tidb-txnkv/src/region/mod.rs",
   "rust/crates/tidb-txnkv/tests/async_region_request_source.rs",
   "rust/crates/tidb-distsql/src/cop_paging/direct_unary_query_transport.rs",
+  "rust/crates/tidb-distsql/tests/active_cancellation_source.rs",
+  "rust/crates/tidb-distsql/tests/direct_unary_client_runtime_source.rs",
+  "rust/crates/tidb-distsql/tests/direct_unary_delegation_source.rs",
   "rust/crates/tidb-distsql/tests/direct_unary_async_region_runtime_source.rs",
 ]
