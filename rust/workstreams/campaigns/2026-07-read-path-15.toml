@@ -1,6 +1,6 @@
 schema = "1"
 campaign = "2026-07-read-path-15"
-status = "active"
+status = "integrated"
 slices = [
   "txnkv-pd-bucket-batch-wire",
   "txnkv-region-cache-batch-bucket-core",

@@ -1,6 +1,6 @@
 schema = "1"
 slice = "txnkv-async-completion-core"
-status = "ready"
+status = "partial"
 target = "tidb-txnkv"
 ring = "transaction"
 consumer = "Campaign 15 directly transits client-go util/async once-only completion, reverse injected transforms, ready notification, queue draining, cancellation, and concurrent-driver rejection into the existing response-pull model. It also freezes the one-attempt AsyncRequestDispatcher contract that the later BatchCommands owner must implement; ordinary tonic unary is explicitly not an implementation of SendRequestAsync."

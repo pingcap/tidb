@@ -1,6 +1,6 @@
 schema = "1"
 slice = "txnkv-pd-bucket-batch-wire"
-status = "ready"
+status = "partial"
 target = "tidb-pd-client"
 ring = "transaction"
 consumer = "Campaign 15 transits the exact pinned PD bucket and batch-region wire into the retained PD worker: GetRegion/GetRegionByID preserve returned Buckets, ScanRegions and BatchScanRegions retain ordered region/leader/down/pending/bucket metadata, and PdRegionLoader decodes it once for the sole RegionCache authority. No cache behavior may synthesize bucket metadata when the control plane omitted it."

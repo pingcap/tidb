@@ -55,3 +55,7 @@
 2026-07-read-path-14	txnkv-region-topology-runtime
 2026-07-read-path-14	txnkv-replica-health-scoring-runtime
 2026-07-read-path-14	distsql-unary-forwarding-runtime
+2026-07-read-path-15	txnkv-pd-bucket-batch-wire
+2026-07-read-path-15	txnkv-region-cache-batch-bucket-core
+2026-07-read-path-15	txnkv-async-completion-core
+2026-07-read-path-15	txnkv-batch-scheduler-core

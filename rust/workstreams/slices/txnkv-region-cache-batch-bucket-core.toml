@@ -1,6 +1,6 @@
 schema = "1"
 slice = "txnkv-region-cache-batch-bucket-core"
-status = "ready"
+status = "partial"
 target = "tidb-txnkv"
 ring = "transaction"
 consumer = "Campaign 15 succeeds the canonical RegionCache owner and directly transits strict TTL, ordered overlap replacement, range/end lookup, bucket version retention and clamping, cached batch traversal, range splitting, batch-scan merge and coverage checks. Background scheduling and shared-lock concurrency remain an explicit successor after lookup returns owned immutable snapshots."

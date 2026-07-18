@@ -1,6 +1,6 @@
 schema = "1"
 slice = "txnkv-batch-scheduler-core"
-status = "ready"
+status = "partial"
 target = "tidb-txnkv"
 ring = "transaction"
 consumer = "Campaign 15 directly transits the untriaged BatchCommands scheduling core: priority ordering, cancellation-aware entry state, terminal observations, request grouping, concurrency limits, and preset/custom turbo batch policy. Wire streaming, connection lifecycle, sync send, and async callbacks stay explicit successors behind this shared scheduler."

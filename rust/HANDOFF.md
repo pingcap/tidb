@@ -251,6 +251,30 @@ async-commit locks, TxnNotFound retry, commit protocols, full DAG/table
 lowering, and COM_QUERY integration remain explicit. Read `STATUS.md` for the
 generated membership and queue state.
 
+Campaign 15 establishes the next direct-transit foundations without adding a
+second cache, PD client, Tokio runtime, completion path, or scheduler. Exact PD
+bucket and batch-scan metadata reaches the retained worker/loader; request
+finishers clear unrequested buckets. RegionCache owns strict TTL/reload state,
+ordered overlap replacement, observed-epoch bucket inheritance, monotonic
+bucket-error publication, clamping, bounded batch loading, leader filtering,
+caller-owned gap retry, and cached/fresh merging. The async leaf preserves
+full-body once-only completion, cancellation, queue drain, and driver
+exclusion; the batch leaf preserves Go heap ordering, shared progress,
+terminal observations, grouping, concurrency, send timing, response IDs, and
+batch-policy parsing.
+
+All 11 exact sources and 53 pinned original Go obligations passed, followed by
+the Ready lint and frozen 12-job Rust gate. `integration_receipt 4` released
+all four claims as `partial`; membership is archived and the queue is empty.
+Seven exact RegionCache behaviors remain explicitly PARTIAL for Campaign 16:
+scan leader filtering, down/witness stale-context safety, unary leader
+redirection, background store-health/label refresh, the complete cache-validity
+API matrix, and direct-PD region-ID lookup without publication. BatchCommands
+wire/connection lifecycle, async RegionRequest, cold previous-region lookup,
+cache concurrency/background GC, and coalesced bucket refresh also remain.
+Campaign 15 used injected local protocol peers only and does not claim a live
+PD/TiKV proof.
+
 ## 4. The differential tools (how you verify)
 
 Two prebuilt Go binaries at the **repo root**, untracked:
