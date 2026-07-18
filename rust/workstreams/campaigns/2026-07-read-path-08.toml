@@ -1,6 +1,6 @@
 schema = "1"
 campaign = "2026-07-read-path-08"
-status = "planned"
+status = "active"
 slices = [
   "planner-tikv-table-read-task-runtime",
   "distsql-direct-unary-client-runtime",
