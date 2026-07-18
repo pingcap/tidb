@@ -121,7 +121,7 @@ where
         while !misses.is_empty() {
             let batch_len = misses.len().min(MAX_RANGES_PER_BATCH);
             let request = &misses[..batch_len];
-            let (loaded, publishable) = loop {
+            let publishable = loop {
                 let loaded = self
                     .loader
                     .batch_load_regions(request, DEFAULT_REGIONS_PER_BATCH, options)
@@ -150,7 +150,7 @@ where
                     backoff.backoff(BatchScanRetryReason::MissingLeader)?;
                     continue;
                 }
-                break (loaded, publishable);
+                break publishable;
             };
             let split_key = publishable
                 .last()
