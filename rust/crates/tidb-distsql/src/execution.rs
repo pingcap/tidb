@@ -15,9 +15,10 @@
 //! Shared execution handles and detach-time owned state.
 
 use std::sync::{
-    atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
+    atomic::{AtomicU32, AtomicU64, Ordering},
     Arc,
 };
+use tidb_txnkv::UnaryCancellation;
 
 /// Shared kill signal corresponding to Go's `*sqlkiller.SQLKiller` identity.
 #[derive(Debug, Default)]
@@ -46,19 +47,28 @@ impl KillHandle {
 /// Shared cancellation token retained by detached execution.
 #[derive(Debug, Default)]
 pub struct CancelHandle {
-    cancelled: AtomicBool,
+    cancellation: UnaryCancellation,
 }
 
 impl CancelHandle {
     /// Marks this request as cancelled.
     pub fn cancel(&self) {
-        self.cancelled.store(true, Ordering::Release);
+        self.cancellation.cancel();
     }
 
     /// Returns whether cancellation has been requested.
     #[must_use]
     pub fn is_cancelled(&self) -> bool {
-        self.cancelled.load(Ordering::Acquire)
+        self.cancellation.is_cancelled()
+    }
+
+    /// Returns the canonical transport-neutral cancellation carrier.
+    ///
+    /// Every returned carrier shares the same monotonic cancellation state,
+    /// including when cancellation happened before carrier acquisition.
+    #[must_use]
+    pub fn unary_cancellation(&self) -> UnaryCancellation {
+        self.cancellation.clone()
     }
 }
 

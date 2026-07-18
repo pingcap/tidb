@@ -128,6 +128,33 @@ fn test_context_detach_shared_kill_and_cancel_state_remains_observable() {
 }
 
 #[test]
+fn test_cancel_handle_cancel_before_carrier_acquisition_shares_identity() {
+    let cancel = CancelHandle::default();
+
+    cancel.cancel();
+    let first = cancel.unary_cancellation();
+    let second = cancel.unary_cancellation();
+
+    assert!(cancel.is_cancelled());
+    assert!(first.is_cancelled());
+    assert!(first.shares_state_with(&second));
+}
+
+#[test]
+fn test_cancel_handle_cancel_after_carrier_acquisition_shares_identity() {
+    let cancel = CancelHandle::default();
+    let first = cancel.unary_cancellation();
+    let second = cancel.unary_cancellation();
+
+    assert!(first.shares_state_with(&second));
+    assert!(!first.is_cancelled());
+    cancel.cancel();
+    assert!(cancel.is_cancelled());
+    assert!(first.is_cancelled());
+    assert!(second.is_cancelled());
+}
+
+#[test]
 fn test_request_builder_maps_session_settings_without_transport() {
     let mut context = DistSqlContext::new();
     context.request.dist_sql_concurrency = 15;

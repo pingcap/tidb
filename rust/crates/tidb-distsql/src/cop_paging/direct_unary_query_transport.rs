@@ -146,6 +146,8 @@ pub struct LockedResponseObservation {
     pub request_context: tidb_proto::KvrpcContext,
     /// Exact optimistic lock fact returned by TiKV.
     pub lock: tidb_proto::KvrpcLockInfo,
+    /// Caller transaction start timestamp from the original Cop request.
+    pub caller_start_ts: u64,
     /// Exact call context used by the Cop request. Lock-status, resolve, and
     /// TTL waiting must reuse its deadline and cancellation carrier.
     pub call: UnaryCallContext,
@@ -740,6 +742,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                         address: selected.attempt.address.clone(),
                         request_context: client_request.context.clone(),
                         lock,
+                        caller_start_ts: self.metadata.start_ts,
                         call,
                     },
                 )
