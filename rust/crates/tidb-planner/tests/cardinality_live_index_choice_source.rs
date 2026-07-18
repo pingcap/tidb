@@ -9,7 +9,8 @@ use tidb_planner::cardinality::index_range_policy::{IndexRangeShape, RangeBoundK
 use tidb_planner::{
     access_path::{
         AccessPathStore, DataSourceAccessPath, ExpectedCountRows, IndexAccessPath, IndexReadShape,
-        PointEstimateAdmissionError, PointGetAdmission, TableAccessPath,
+        PointEstimateAdmissionError, PointGetAdmission, ResolvedTableDescriptor,
+        ResolvedTableScanKind, TableAccessPath, TableScanExplainIdSuffix,
     },
     cardinality::live_index_optimizer::{IndexPointStatistics, LiveIndexCandidate},
     index_task::{IndexTask, IndexTaskRejection},
@@ -181,10 +182,17 @@ fn source_datasource_index_task_rejects_unimplemented_go_path_forms() {
     assert_eq!(
         rejection([DataSourceAccessPath::Table(
             TableAccessPath::from_source_table_scan(
+                ResolvedTableDescriptor::new(
+                    1,
+                    false,
+                    ResolvedTableScanKind::Full,
+                    TableScanExplainIdSuffix::IncludePlanId,
+                ),
                 TiKvTableScanSpec::new(1, vec![]),
                 PointGetAdmission::NotEligible,
                 1.0,
-            ),
+            )
+            .expect("test table descriptor matches its pushdown payload"),
         )]),
         Some(IndexTaskRejection::TablePath)
     );

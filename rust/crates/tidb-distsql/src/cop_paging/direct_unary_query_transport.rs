@@ -21,10 +21,10 @@
 //! consumer pulls. Region errors, locks, batch responses, and every other
 //! retry case stop the response instead of manufacturing retry behavior.
 
-use std::cell::RefCell;
+use std::cell::{RefCell, RefMut};
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::query_runtime::{
     QueryDispatch, QueryOperation, QueryResponse, QueryResponseError, QueryResultSubset,
@@ -65,6 +65,13 @@ pub struct DirectUnaryRuntimeConfig {
     pub cache: Option<CoprCacheConfig>,
     /// Optional source-statement trace data injected before dispatch.
     pub trace: Option<TraceInfo>,
+    /// Absolute observation clock used by the shared read-byte EMA.
+    ///
+    /// The default is wall-clock time since the Unix epoch. Keeping the
+    /// epoch distance is essential: Go observes with `time.Now()` against a
+    /// zero `time.Time`, so the first real response replaces the seed. A
+    /// function pointer keeps that contract deterministic in focused tests.
+    pub observation_time: fn() -> Duration,
 }
 
 impl Default for DirectUnaryRuntimeConfig {
@@ -75,8 +82,15 @@ impl Default for DirectUnaryRuntimeConfig {
             seed_read_bytes: 0,
             cache: None,
             trace: None,
+            observation_time: system_observation_time,
         }
     }
+}
+
+fn system_observation_time() -> Duration {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or(Duration::ZERO)
 }
 
 /// Fail-closed construction and response errors for the direct unary seam.
@@ -98,6 +112,8 @@ pub enum DirectUnaryTransportError {
     Coordinator(String),
     /// The injected client failed before returning a raw response.
     Client(String),
+    /// Another response is already dispatching through the shared client.
+    ClientLifecycle,
     /// The raw protobuf response was malformed.
     Decode(String),
     /// The coordinator produced a response-channel state this synchronous
@@ -118,6 +134,7 @@ impl DirectUnaryTransportError {
             Self::Cache(_) => "cache",
             Self::Coordinator(_) => "coordinator",
             Self::Client(_) => "client",
+            Self::ClientLifecycle => "client_lifecycle",
             Self::Decode(_) => "decode",
             Self::ResponseState(_) => "response_state",
         }
@@ -143,6 +160,9 @@ impl std::fmt::Display for DirectUnaryTransportError {
             Self::Cache(message) => write!(formatter, "invalid coprocessor cache: {message}"),
             Self::Coordinator(message) => write!(formatter, "cop read task failed: {message}"),
             Self::Client(message) => write!(formatter, "unary client failed: {message}"),
+            Self::ClientLifecycle => {
+                formatter.write_str("unary client is already in use by another response")
+            }
             Self::Decode(message) => write!(formatter, "invalid unary response: {message}"),
             Self::ResponseState(state) => {
                 write!(formatter, "invalid unary response state: {state}")
@@ -256,7 +276,6 @@ impl<C: DirectUnaryClient + 'static> QueryTransport for DirectUnaryQueryTranspor
             logical_order,
             active_attempts,
             logical_index: 0,
-            started_at: Instant::now(),
             closed: false,
         }))
     }
@@ -272,8 +291,13 @@ pub struct DirectUnaryQueryResponse<C> {
     logical_order: Vec<u64>,
     active_attempts: BTreeMap<u64, u64>,
     logical_index: usize,
-    started_at: Instant,
     closed: bool,
+}
+
+fn try_borrow_client<C>(client: &RefCell<C>) -> Result<RefMut<'_, C>, DirectUnaryTransportError> {
+    client
+        .try_borrow_mut()
+        .map_err(|_| DirectUnaryTransportError::ClientLifecycle)
 }
 
 impl<C: DirectUnaryClient> DirectUnaryQueryResponse<C> {
@@ -374,16 +398,17 @@ impl<C: DirectUnaryClient> DirectUnaryQueryResponse<C> {
             context: request.context,
             encoded_request: request.encoded_request,
         };
-        let raw_response = self
-            .client
-            .borrow_mut()
+        let raw_response = try_borrow_client(self.client.as_ref())?
             .send_request(address, &client_request, timeout)
             .map_err(DirectUnaryTransportError::Client)?;
         let response = decode_tikv_unary_response(&raw_response.encoded_response)
             .map_err(|error| DirectUnaryTransportError::Decode(error.to_string()))?;
-        let accepted =
-            self.runtime
-                .accept_response(attempt_id, response, None, self.started_at.elapsed())?;
+        let accepted = self.runtime.accept_response(
+            attempt_id,
+            response,
+            None,
+            (self.config.observation_time)(),
+        )?;
         match accepted.next_attempt_id {
             Some(next_attempt_id) => {
                 self.active_attempts
@@ -416,5 +441,28 @@ impl<C: DirectUnaryClient> QueryResponse for DirectUnaryQueryResponse<C> {
 
     fn close(&mut self) {
         self.closed = true;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+
+    use super::{try_borrow_client, DirectUnaryTransportError};
+
+    #[test]
+    fn shared_client_borrow_conflict_is_a_typed_lifecycle_error() {
+        let client = RefCell::new(());
+        let active_dispatch = client.borrow_mut();
+
+        let error = match try_borrow_client(&client) {
+            Ok(_) => panic!("a second mutable client owner must be rejected"),
+            Err(error) => error,
+        };
+        assert_eq!(error, DirectUnaryTransportError::ClientLifecycle);
+        assert_eq!(error.kind(), "client_lifecycle");
+
+        drop(active_dispatch);
+        assert!(try_borrow_client(&client).is_ok());
     }
 }

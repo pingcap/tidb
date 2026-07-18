@@ -20,7 +20,14 @@ RUST_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 cd "$RUST_ROOT"
 
 export CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS:-12}
-export CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/tidb-rust-target}
+if [ -z "${CARGO_TARGET_DIR:-}" ]; then
+    # Several evidence binaries embed CARGO_MANIFEST_DIR. Reusing their target
+    # across Git worktrees can execute a fresh binary against the checkout that
+    # compiled it, so the default cache must be checkout-specific.
+    checkout_key=$(printf '%s' "$RUST_ROOT" | cksum | awk '{print $1}')
+    CARGO_TARGET_DIR=${XDG_CACHE_HOME:-$HOME/.cache}/tidb-rust-target-$checkout_key
+    export CARGO_TARGET_DIR
+fi
 
 usage() {
     echo "usage: $0 status | leaf <package> <test-target> [filter] | static | integrate" >&2

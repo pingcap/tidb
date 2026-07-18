@@ -234,16 +234,19 @@ fn build_supported_table_task(
         return invalid_table(TableTaskRejection::UnsupportedScanFeature(feature));
     }
 
-    let Some(scan) = PhysicalTableScanPlan::init(
+    let Some(scan) = PhysicalTableScanPlan::from_validated_pushdown(
         source.physical_plan_id(),
         source.query_block_offset(),
-        path.pushdown().clone(),
+        path.validated_pushdown().clone(),
     )
     .try_with_source_estimated_rows(path.count_after_access()) else {
         return invalid_table(TableTaskRejection::InvalidCountAfterAccess);
     };
     let cop_task = CopTableTask::new(scan);
-    ScanReadTask::TableReader(cop_task.convert_to_root())
+    match cop_task.convert_to_root() {
+        Ok(reader) => ScanReadTask::TableReader(reader),
+        Err(_) => invalid_table(TableTaskRejection::MissingSourceDescriptor),
+    }
 }
 
 const fn invalid_table(reason: TableTaskRejection) -> ScanReadTask {

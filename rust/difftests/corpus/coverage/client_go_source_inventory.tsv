@@ -12,7 +12,7 @@ client-go	internal/apicodec/codec.go	138	e6c2af49ceef15ad8337433250fe362485af7c2
 client-go	internal/apicodec/codec_v1.go	233	0d128ab9a3d055245faec0b940eab0c0558a6cd64c9a70ba962c741ff0d74fa3	UNTRIAGED	-	-	-
 client-go	internal/apicodec/codec_v2.go	1184	7ff430b6409b19221ca27b2154704b1ecca37c40064434becb8eb8f2607b2fd1	UNTRIAGED	-	-	-
 client-go	internal/apicodec/mem_codec.go	57	fd01c513ddfb80db1cbbdb018747013274bced0bb205735c67ebf771e2c7da29	UNTRIAGED	-	-	-
-client-go	internal/client/client.go	923	d96fb5f128ce62716bc43d6493d7d8216b82b252e50a6c4f01e479d98d5582ad	UNTRIAGED	-	-	-
+client-go	internal/client/client.go	923	d96fb5f128ce62716bc43d6493d7d8216b82b252e50a6c4f01e479d98d5582ad	PARTIAL	distsql-direct-unary-client-runtime	rust/crates/tidb-txnkv/src/client.rs	DirectUnaryClient preserves the pinned SendRequest address, immutable request, timeout, raw response, and distinct transport-error boundary, and the connected runtime proves lazy ordered calls. RPCClient sockets, gRPC pools, codec wrapping, cancellation, metrics, forwarding, batching, reconnect, and Close remain external.
 client-go	internal/client/client_async.go	188	9df6fe7a0c68108bf61f08c242ac7c735cdcfed3eec986dc6dcccddab9f67389	UNTRIAGED	-	-	-
 client-go	internal/client/client_batch.go	1497	1bd61047646f9d5d146e750642b0e0f8f3f9d4e89d765fb2c71be36d593debc5	UNTRIAGED	-	-	-
 client-go	internal/client/client_collapse.go	166	343a880fde53e725eb6c609eafbf853d7d12c61c1915600ec649f5a1c3961139	UNTRIAGED	-	-	-
@@ -102,7 +102,7 @@ client-go	tikv/unionstore_export.go	68	741bf6d99202642b5b57b8a6a2c8f727d631c82f0
 client-go	tikvrpc/cmds_generated.go	486	7e5a83f61bd2a2e27645723bbc143e289a8754d88568bce6bb6aa3f7d9ee2081	UNTRIAGED	-	-	-
 client-go	tikvrpc/endpoint.go	91	d69ae8449ec32328b5deb7ae39d9c261e57072d3c49172bc0714542316b1a1b2	UNTRIAGED	-	-	-
 client-go	tikvrpc/interceptor/interceptor.go	271	95644dd740dce11f21aab96e051e451b7c60c7654c05369c0916f8dd78ee202c	UNTRIAGED	-	-	-
-client-go	tikvrpc/tikvrpc.go	1564	5c3a95131991f15ea39bd4617d63c6dc3a38955b004282518cfd722406f870a5	UNTRIAGED	-	-	-
+client-go	tikvrpc/tikvrpc.go	1564	5c3a95131991f15ea39bd4617d63c6dc3a38955b004282518cfd722406f870a5	PARTIAL	distsql-direct-unary-client-runtime	rust/crates/tidb-distsql/src/cop_paging/tikv_rpc_contract.rs	The bounded CmdCop path builds one exact coprocessor request and attached region context, carries client-go wrapper metadata, and fully decodes the raw coprocessor response before coordinator mutation. All other command families, actual TikvClient dispatch, streams, batching, codec mutation, and live gRPC remain external.
 client-go	trace/flags.go	48	ee8afa668ed81d40e61e0d183d466e63db0455217c25dbf5f35ff32fcbdccb72	UNTRIAGED	-	-	-
 client-go	trace/trace.go	150	e754b02059f63eb711bccf14451f05f9d1593d08ebbc1bc250ef31146909b19c	UNTRIAGED	-	-	-
 client-go	txnkv/client.go	130	2d0b053d5e01d69ee60775c50c994b77cf1ef78fdee12aa4fc888a05688d87dd	UNTRIAGED	-	-	-

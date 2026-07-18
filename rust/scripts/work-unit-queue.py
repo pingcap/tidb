@@ -135,25 +135,53 @@ def test_key(row: dict[str, object]) -> str:
 
 
 def load_module_source_anchors(root: Path) -> set[str]:
+    return set(load_module_source_rows(root))
+
+
+def load_module_source_rows(root: Path) -> dict[str, dict[str, str]]:
     path = root / MODULE_SOURCE_LEDGER
     if not path.exists():
-        return set()
-    return {
-        f"{universe}::{source}"
-        for universe, source, _lines, _sha, _status, _owner, _artifact, _note in read_tsv(
-            path, 8
-        )
-    }
+        return {}
+    rows = {}
+    for universe, source, _lines, _sha, status, owner, artifact, note in read_tsv(path, 8):
+        anchor = f"{universe}::{source}"
+        validate_evidence_artifact(root, MODULE_SOURCE_LEDGER, anchor, artifact)
+        rows[anchor] = {"status": status, "owner": owner, "artifact": artifact, "note": note}
+    return rows
 
 
 def load_module_test_anchors(root: Path) -> set[str]:
+    return set(load_module_test_rows(root))
+
+
+def load_module_test_rows(root: Path) -> dict[str, dict[str, str]]:
     path = root / MODULE_TEST_LEDGER
     if not path.exists():
-        return set()
-    return {
-        f"{universe}::{source}:{int(line)}:{name}"
-        for universe, _kind, source, line, name, _ring, _sha, _status, _owner, _artifact, _note in read_tsv(path, 11)
-    }
+        return {}
+    rows = {}
+    for universe, _kind, source, line, name, _ring, _sha, status, owner, artifact, note in read_tsv(path, 11):
+        anchor = f"{universe}::{source}:{int(line)}:{name}"
+        validate_evidence_artifact(root, MODULE_TEST_LEDGER, anchor, artifact)
+        rows[anchor] = {"status": status, "owner": owner, "artifact": artifact, "note": note}
+    return rows
+
+
+def require_promoted_module_evidence(root: Path, claim: dict[str, object], status: str) -> None:
+    source_rows = load_module_source_rows(root)
+    test_rows = load_module_test_rows(root)
+    required_status = "COVERED" if status == "covered" else "PARTIAL"
+    for kind, anchors, rows in (
+        ("module source", claim["_module_sources"], source_rows),
+        ("module test", claim["_module_tests"], test_rows),
+    ):
+        for anchor in anchors:
+            row = rows[anchor]
+            if row["owner"] != claim["owner"] or EVIDENCE_STATUS_RANK.get(row["status"], -1) < EVIDENCE_STATUS_RANK[required_status]:
+                raise ValueError(
+                    f"integrated release requires promoted {kind} {anchor} owned by "
+                    f"{claim['owner']} at {required_status} or better; found "
+                    f"{row['owner']}@{row['status']}"
+                )
 
 
 def source_test_stem(path: str) -> tuple[str, str]:
@@ -784,6 +812,8 @@ def release_workspace_digest(root: Path) -> str:
         INTEGRATION_RECEIPT.as_posix(),
         "difftests/corpus/coverage/go_source_inventory.tsv",
         "difftests/corpus/coverage/go_test_inventory.tsv",
+        "difftests/corpus/coverage/client_go_source_inventory.tsv",
+        "difftests/corpus/coverage/client_go_test_inventory.tsv",
         "HANDOFF.md",
         "PARALLEL.md",
     }
@@ -1111,6 +1141,7 @@ def release(root: Path, owner: str, integrated: bool, abandon: bool) -> None:
                     f"integrated slice {owner} must be partial or covered before release; "
                     f"found {record['status']}"
                 )
+            require_promoted_module_evidence(root, current, str(record["status"]))
             consume_integration_receipt(root, current)
         elif abandon:
             discard_integration_receipt(root, owner)

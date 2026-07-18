@@ -81,13 +81,16 @@ multi-domain batch is frozen.
 | Static | evidence/workspace steward | claims, shared manifest rows, generated ledgers, docs, duplicate/queue checks | evidence tools only |
 | Integrate | evidence/workspace steward | frozen multi-domain source-family batch | one batched `cargo test` + Clippy gate |
 
-Do not give every agent a private full Cargo target. That repeats linking and
-can exhaust disk. Keep one persistent target directory per checkout for the
-integrate lane (for example `CARGO_TARGET_DIR=$HOME/.cache/tidb-rust-target`)
-and reuse it across waves; clean obsolete targets only after checking disk
-usage. Set `CARGO_BUILD_JOBS=12` for every Cargo build. Agents may run focused
-package tests when a leaf needs Cargo integration, but they should not launch
-the workspace gate independently.
+Do not give every agent a throwaway full Cargo target. That repeats linking and
+can exhaust disk. Keep one persistent target directory per checkout and reuse
+it across waves; never share one target between Git worktrees because evidence
+binaries embed their checkout path through `CARGO_MANIFEST_DIR`.
+`scripts/rewrite-gate.sh` derives a stable checkout-specific default. An
+explicit override must preserve the same isolation, for example
+`CARGO_TARGET_DIR=$HOME/.cache/tidb-rust-target-<worktree-name>`. Clean obsolete
+targets only after checking disk usage. Set `CARGO_BUILD_JOBS=12` for every
+Cargo build. Agents may run focused package tests when a leaf needs Cargo
+integration, but they should not launch the workspace gate independently.
 
 The root steward should batch exactly one integration gate after all active
 lanes report frozen with a substantial source-family delta, then update the

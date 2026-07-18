@@ -14,7 +14,14 @@
 
 //! Dependency-closed physical TiKV table scan.
 
-use crate::{plan::PlanNode, scan_pushdown::TiKvTableScanSpec};
+use crate::{
+    access_path::{
+        ResolvedTableDescriptor, ResolvedTableScanKind, TableScanExplainIdSuffix,
+        ValidatedTablePushdown,
+    },
+    plan::PlanNode,
+    scan_pushdown::TiKvTableScanSpec,
+};
 
 /// The source plan-codec type assigned by `PhysicalTableScan.Init`.
 pub const PLAN_TYPE: &str = "TableScan";
@@ -24,6 +31,7 @@ pub const PLAN_TYPE: &str = "TableScan";
 pub struct PhysicalTableScanPlan {
     plan: PlanNode,
     pushdown: TiKvTableScanSpec,
+    descriptor: Option<ResolvedTableDescriptor>,
 }
 
 // `PhysicalTableScanPlan` can contain only no row estimate or a finite
@@ -33,12 +41,31 @@ pub struct PhysicalTableScanPlan {
 impl Eq for PhysicalTableScanPlan {}
 
 impl PhysicalTableScanPlan {
-    /// Creates a physical table scan ready for bounded DAG lowering.
+    /// Creates a raw physical table scan ready for bounded DAG lowering.
+    ///
+    /// DAG construction needs only the pre-resolved protobuf payload. This
+    /// constructor deliberately does not invent the planner-only table
+    /// descriptor required by TableReader conversion.
     #[must_use]
     pub fn init(plan_id: i32, query_block_offset: i32, pushdown: TiKvTableScanSpec) -> Self {
         Self {
             plan: PlanNode::new(PLAN_TYPE, plan_id, query_block_offset),
             pushdown,
+            descriptor: None,
+        }
+    }
+
+    /// Creates the planner-owned scan after access-path descriptor validation.
+    #[must_use]
+    pub(crate) fn from_validated_pushdown(
+        plan_id: i32,
+        query_block_offset: i32,
+        pushdown: ValidatedTablePushdown,
+    ) -> Self {
+        Self {
+            plan: PlanNode::new(PLAN_TYPE, plan_id, query_block_offset),
+            descriptor: Some(pushdown.descriptor()),
+            pushdown: pushdown.spec().clone(),
         }
     }
 
@@ -62,6 +89,44 @@ impl PhysicalTableScanPlan {
     #[must_use]
     pub const fn pushdown(&self) -> &TiKvTableScanSpec {
         &self.pushdown
+    }
+
+    /// Returns the source-authoritative table descriptor retained by the
+    /// physical scan.
+    #[must_use]
+    pub const fn descriptor(&self) -> Option<ResolvedTableDescriptor> {
+        self.descriptor
+    }
+
+    /// Returns the source-resolved full/range scan kind.
+    #[must_use]
+    pub const fn scan_kind(&self) -> Option<ResolvedTableScanKind> {
+        match self.descriptor {
+            Some(descriptor) => Some(descriptor.scan_kind()),
+            None => None,
+        }
+    }
+
+    /// Returns Go's bounded `PhysicalTableScan.ExplainID` result.
+    #[must_use]
+    pub fn explain_id(&self) -> Option<String> {
+        let descriptor = self.descriptor?;
+        let plan_type = descriptor.scan_kind().plan_type();
+        Some(match descriptor.explain_id_suffix() {
+            TableScanExplainIdSuffix::IncludePlanId => {
+                format!("{plan_type}_{}", self.plan.id())
+            }
+            TableScanExplainIdSuffix::Omit => plan_type.to_owned(),
+        })
+    }
+
+    /// Returns whether the source table uses a common handle.
+    #[must_use]
+    pub const fn is_common_handle(&self) -> Option<bool> {
+        match self.descriptor {
+            Some(descriptor) => Some(descriptor.is_common_handle()),
+            None => None,
+        }
     }
 
     /// Returns source `CountAfterAccess` attached by the table-task builder.

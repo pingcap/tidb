@@ -1,6 +1,6 @@
 schema = "1"
 slice = "planner-cardinality-live-index-choice"
-status = "partial"
+status = "retired"
 target = "tidb-planner"
 ring = "plan"
 consumer = "An executable bounded LogicalDataSource-to-index-task path carries Index.QueryBytes precedence, source-owned CountAfterAccess and exact upstream ExpectedCnt, point-get admission, Go index-scan cost selection, PhysicalIndexScanPlan construction, and typed zero-row TableDual. It admits only an unordered TiKV Cop single-read index path explicitly proven ineligible for point-get; all other represented paths reject explicitly. Expression/ranger/collation encoding, histogram and stats-v2 fallback beyond the proven equality adapter, statistics-handle lifecycle, session policy, schema-derived row size beyond the source input, non-index scan and distributed costs, Cascades, plan cache, partitions, SQL, EXPLAIN, and execution remain external."
@@ -31,23 +31,5 @@ evidence_prerequisites = [
   { capability = "cost-ver2-arithmetic", evidence_owner = "planner-cost-usage-wave", kind = "source", anchor = "pkg/planner/util/costusage/cost_misc.go", minimum_status = "PARTIAL" },
 ]
 rust_paths = [
-  "rust/crates/tidb-stats/src/index_query.rs",
-  "rust/crates/tidb-stats/tests/index_query_source.rs",
-  "rust/crates/tidb-planner/src/cardinality/live_index_optimizer.rs",
-  "rust/crates/tidb-planner/src/cardinality.rs",
-  "rust/crates/tidb-planner/src/cardinality/index_range_policy.rs",
-  "rust/crates/tidb-planner/src/access_path.rs",
-  "rust/crates/tidb-planner/src/index_task.rs",
-  "rust/crates/tidb-planner/src/logical_data_source.rs",
-  "rust/crates/tidb-planner/src/logical_data_source_task.rs",
-  "rust/crates/tidb-planner/src/physical_property.rs",
-  "rust/difftests/planner-tests/tests/index_range_policy.rs",
-  "rust/crates/tidb-planner/tests/cardinality_live_index_choice_source.rs",
-  "rust/difftests/corpus/coverage/evidence/source/planner-cardinality-live-index-choice.tsv",
-  "rust/difftests/corpus/coverage/evidence/tests/planner-cardinality-live-index-choice.tsv",
-  "rust/difftests/corpus/coverage/evidence/transfers/planner-cardinality-live-index-choice.tsv",
-  "rust/difftests/corpus/coverage/evidence/source/stats-index-query-wave.tsv",
-  "rust/difftests/corpus/coverage/evidence/tests/stats-index-query-wave.tsv",
-  "rust/difftests/corpus/coverage/evidence/source/planner-cardinality-index-fast-path-wave.tsv",
-  "rust/difftests/corpus/coverage/evidence/tests/planner-cardinality-index-fast-path-wave.tsv",
+  "rust/difftests/corpus/coverage/evidence/transfers/planner-tikv-table-read-task-runtime.tsv",
 ]

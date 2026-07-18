@@ -1,6 +1,6 @@
 schema = "1"
 slice = "distsql-query-response-runtime"
-status = "partial"
+status = "retired"
 target = "tidb-distsql"
 ring = "result"
 consumer = "one canonical Go-shaped DistSQL raw-response owner: an already-built immutable request crosses the caller-injected QueryTransport boundary and yields an owned QueryResponse whose ordered QueryResultSubset values retain raw response bytes, runtime metadata, source errors, and close lifecycle. QueryResultContext keeps the final field layout and shared warning sink together for both Select entry points, and QuerySelectResult retains that result state over the response; query_runtime.rs declares and re-exports its nested query_runtime/query_response.rs module, and the crate registry exposes query_runtime as a public module alongside cop_paging so parallel implementations do not require repeated registry edits. Select and SelectWithRuntimeStats decode each raw subset exactly once through the existing SelectResponseIter path, while Analyze and Checksum expose the same owner's next_raw path without decoding. ResponseChannel is only the deterministic test adapter for this raw contract. Concrete TiKV or TiFlash routing, protobuf RPC construction, retries, cancellation, caching, asynchronous production, memory accounting, response-close error propagation, a non-nil subset returned together with a source error, temporal/timezone Datum materialization, CHBlock, full cop runtime telemetry, a production table-reader consumer, and sorted heap merging remain explicit PARTIAL gaps"

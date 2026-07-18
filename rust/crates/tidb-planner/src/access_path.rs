@@ -35,6 +35,158 @@ pub enum AccessPathStore {
     TiFlash,
 }
 
+/// Source-resolved table-scan kind returned by Go's
+/// `PhysicalTableScan.IsFullScan` decision.
+///
+/// Cluster-table and index-lookup child identities are outside the bounded
+/// ordinary TiKV table path, so only the full/range branches are admitted.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ResolvedTableScanKind {
+    /// Every source range is a full range for the table handle type.
+    Full,
+    /// At least one source range restricts the table handle domain.
+    Range,
+}
+
+impl ResolvedTableScanKind {
+    /// Returns the exact Go plan-codec identity for this bounded scan kind.
+    #[must_use]
+    pub const fn plan_type(self) -> &'static str {
+        match self {
+            Self::Full => "TableFullScan",
+            Self::Range => "TableRangeScan",
+        }
+    }
+}
+
+/// Source statement-context policy for `PhysicalTableScan.ExplainID`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TableScanExplainIdSuffix {
+    /// Normal Go explain output appends the physical plan ID.
+    IncludePlanId,
+    /// `StmtCtx.IgnoreExplainIDSuffix` suppresses the physical plan ID.
+    Omit,
+}
+
+/// Authoritative source descriptor for one ordinary TiKV table scan.
+///
+/// Go derives table identity, common-handle state, range kind, and explain-ID
+/// policy from the same table/range/session objects used to build the physical
+/// scan. Keeping them together prevents caller-proposed protobuf metadata from
+/// silently naming another table or dropping reader metadata.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ResolvedTableDescriptor {
+    table_id: i64,
+    is_common_handle: bool,
+    scan_kind: ResolvedTableScanKind,
+    explain_id_suffix: TableScanExplainIdSuffix,
+}
+
+impl ResolvedTableDescriptor {
+    /// Creates one source-resolved bounded table descriptor.
+    #[must_use]
+    pub const fn new(
+        table_id: i64,
+        is_common_handle: bool,
+        scan_kind: ResolvedTableScanKind,
+        explain_id_suffix: TableScanExplainIdSuffix,
+    ) -> Self {
+        Self {
+            table_id,
+            is_common_handle,
+            scan_kind,
+            explain_id_suffix,
+        }
+    }
+
+    /// Returns the authoritative table identity.
+    #[must_use]
+    pub const fn table_id(self) -> i64 {
+        self.table_id
+    }
+
+    /// Returns whether the source table uses a common handle.
+    #[must_use]
+    pub const fn is_common_handle(self) -> bool {
+        self.is_common_handle
+    }
+
+    /// Returns the source full/range classification.
+    #[must_use]
+    pub const fn scan_kind(self) -> ResolvedTableScanKind {
+        self.scan_kind
+    }
+
+    /// Returns the source explain-ID suffix policy.
+    #[must_use]
+    pub const fn explain_id_suffix(self) -> TableScanExplainIdSuffix {
+        self.explain_id_suffix
+    }
+}
+
+/// A rejected attempt to emit a table scan for a different source table.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TablePushdownIdentityError {
+    descriptor: i64,
+    pushdown: i64,
+}
+
+impl TablePushdownIdentityError {
+    /// Returns the source-authoritative table ID.
+    #[must_use]
+    pub const fn descriptor(self) -> i64 {
+        self.descriptor
+    }
+
+    /// Returns the mismatched protobuf table ID.
+    #[must_use]
+    pub const fn pushdown(self) -> i64 {
+        self.pushdown
+    }
+}
+
+impl std::fmt::Display for TablePushdownIdentityError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("table scan descriptor and pushdown table ID differ")
+    }
+}
+
+impl std::error::Error for TablePushdownIdentityError {}
+
+/// Table pushdown data validated against its source descriptor.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ValidatedTablePushdown {
+    descriptor: ResolvedTableDescriptor,
+    spec: TiKvTableScanSpec,
+}
+
+impl ValidatedTablePushdown {
+    fn new(
+        descriptor: ResolvedTableDescriptor,
+        spec: TiKvTableScanSpec,
+    ) -> Result<Self, TablePushdownIdentityError> {
+        if descriptor.table_id() != spec.table_id {
+            return Err(TablePushdownIdentityError {
+                descriptor: descriptor.table_id(),
+                pushdown: spec.table_id,
+            });
+        }
+        Ok(Self { descriptor, spec })
+    }
+
+    /// Returns the sole source-authoritative table descriptor.
+    #[must_use]
+    pub const fn descriptor(&self) -> ResolvedTableDescriptor {
+        self.descriptor
+    }
+
+    /// Returns the validated protobuf payload.
+    #[must_use]
+    pub const fn spec(&self) -> &TiKvTableScanSpec {
+        &self.spec
+    }
+}
+
 /// An ordinary table path whose schema-dependent TiKV payload is already
 /// resolved by the source adapter.
 ///
@@ -44,7 +196,7 @@ pub enum AccessPathStore {
 /// planner branch that does not yet have an owner.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TableAccessPath {
-    pushdown: TiKvTableScanSpec,
+    pushdown: ValidatedTablePushdown,
     point_get_admission: PointGetAdmission,
     count_after_access: f64,
     store: AccessPathStore,
@@ -57,14 +209,14 @@ pub struct TableAccessPath {
 impl TableAccessPath {
     /// Creates a non-empty TiKV table path with an explicit upstream
     /// PointGet admission.
-    #[must_use]
-    pub const fn from_source_table_scan(
+    pub fn from_source_table_scan(
+        descriptor: ResolvedTableDescriptor,
         pushdown: TiKvTableScanSpec,
         point_get_admission: PointGetAdmission,
         count_after_access: f64,
-    ) -> Self {
-        Self {
-            pushdown,
+    ) -> Result<Self, TablePushdownIdentityError> {
+        Ok(Self {
+            pushdown: ValidatedTablePushdown::new(descriptor, pushdown)?,
             point_get_admission,
             count_after_access,
             store: AccessPathStore::TiKv,
@@ -72,7 +224,7 @@ impl TableAccessPath {
             partitioned: false,
             sampled: false,
             has_filters: false,
-        }
+        })
     }
 
     /// Marks ranger's exact empty-range result.
@@ -114,6 +266,18 @@ impl TableAccessPath {
     /// Returns the pre-resolved table-scan protobuf payload.
     #[must_use]
     pub const fn pushdown(&self) -> &TiKvTableScanSpec {
+        self.pushdown.spec()
+    }
+
+    /// Returns source-authoritative table identity and scan metadata.
+    #[must_use]
+    pub const fn descriptor(&self) -> ResolvedTableDescriptor {
+        self.pushdown.descriptor()
+    }
+
+    /// Returns the validated descriptor/payload pair for physical lowering.
+    #[must_use]
+    pub(crate) const fn validated_pushdown(&self) -> &ValidatedTablePushdown {
         &self.pushdown
     }
 

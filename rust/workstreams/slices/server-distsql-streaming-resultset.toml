@@ -23,8 +23,8 @@ go_tests = [
 ]
 depends_on = []
 evidence_prerequisites = [
-  { capability = "distsql-result-metadata", evidence_owner = "distsql-query-response-runtime", kind = "source", anchor = "pkg/distsql/distsql.go", minimum_status = "PARTIAL" },
-  { capability = "select-response-iterator", evidence_owner = "distsql-query-response-runtime", kind = "source", anchor = "pkg/distsql/select_result.go", minimum_status = "PARTIAL" },
+  { capability = "distsql-result-metadata", evidence_owner = "distsql-direct-unary-client-runtime", kind = "source", anchor = "pkg/distsql/distsql.go", minimum_status = "PARTIAL" },
+  { capability = "select-response-iterator", evidence_owner = "distsql-direct-unary-client-runtime", kind = "source", anchor = "pkg/distsql/select_result.go", minimum_status = "PARTIAL" },
   { capability = "result-field-adapter", evidence_owner = "executor-result-field-adapter-source-wave", kind = "source", anchor = "pkg/executor/adapter.go", minimum_status = "PARTIAL" },
   { capability = "protocol-resultset-sequence", evidence_owner = "protocol-resultset-source-wave", kind = "test", anchor = "pkg/server/conn_test.go:2145:TestOkEof", minimum_status = "COVERED" },
 ]

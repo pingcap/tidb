@@ -28,7 +28,16 @@ use tidb_distsql::{
     RequestKeyRanges, RequestType, ResolvedRegionRoute, SelectInput, StoreType, TransportRequest,
     WarningCollector,
 };
-use tidb_proto::{CoprocessorKeyRange, CoprocessorRequest, CoprocessorResponse, RegionError};
+use tidb_proto::{
+    CoprocessorExecDetailsV2, CoprocessorKeyRange, CoprocessorRequest, CoprocessorResponse,
+    CoprocessorScanDetailV2, RegionError,
+};
+
+const OBSERVATION_TIME: Duration = Duration::from_secs(1_000);
+
+fn observation_time() -> Duration {
+    OBSERVATION_TIME
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ObservedCall {
@@ -36,6 +45,7 @@ struct ObservedCall {
     timeout: Duration,
     region_id: u64,
     data: Vec<u8>,
+    predicted_read_bytes: u64,
 }
 
 struct ScriptedClient {
@@ -60,6 +70,7 @@ impl DirectUnaryClient for ScriptedClient {
                 .and_then(|context| tidb_proto::KvrpcContext::decode(context.as_slice()).ok())
                 .map_or(0, |context| context.region_id),
             data: wire.data,
+            predicted_read_bytes: request.predicted_read_bytes,
         });
         self.responses
             .pop_front()
@@ -137,6 +148,7 @@ fn transport(
         DirectUnaryRuntimeConfig {
             default_timeout: Duration::from_secs(60),
             seed_read_bytes: 4096,
+            observation_time,
             ..DirectUnaryRuntimeConfig::default()
         },
     )
@@ -191,12 +203,14 @@ fn client_go_shaped_dispatch_is_lazy_address_directed_and_logically_ordered() {
                 timeout: Duration::from_millis(777),
                 region_id: 1,
                 data: b"dag-read".to_vec(),
+                predicted_read_bytes: 4096,
             },
             ObservedCall {
                 address: "tikv-2:20160".to_owned(),
                 timeout: Duration::from_millis(777),
                 region_id: 2,
                 data: b"dag-read".to_vec(),
+                predicted_read_bytes: 4096,
             },
         ]
     );
@@ -230,6 +244,45 @@ fn only_successful_paging_creates_a_continuation_attempt() {
     assert_eq!(result.next_raw().unwrap(), Some(b"page-two".to_vec()));
     assert_eq!(calls.borrow().len(), 2);
     assert_eq!(result.next_raw().unwrap(), None);
+}
+
+#[test]
+fn first_real_unary_response_replaces_the_seed_before_continuation() {
+    // pkg/store/copr/ema.go:33-36 newRUEMA leaves lastObsAt at zero so the
+    // first time.Now observation has unit alpha and replaces the byte seed.
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let first = CoprocessorResponse {
+        data: b"page-one".to_vec(),
+        range: Some(CoprocessorKeyRange {
+            start: b"a".to_vec(),
+            end: b"m".to_vec(),
+        }),
+        exec_details_v2: Some(CoprocessorExecDetailsV2 {
+            scan_detail_v2: Some(CoprocessorScanDetailV2 {
+                processed_versions_size: 1_000_000,
+                total_versions_size: 1_000_000,
+            }),
+        }),
+        ..CoprocessorResponse::default()
+    }
+    .encode_to_vec();
+    let mut metadata = metadata("a", "z");
+    metadata.session.paging.enabled = true;
+    metadata.session.paging.min_size = 2;
+    metadata.session.paging.max_size = 8;
+    let mut runtime = InjectedQueryRuntime::new(transport(
+        Rc::clone(&calls),
+        [Ok(first), Ok(response(b"page-two"))],
+        [route(1, "a", "z", "tikv-1:20160")],
+    ));
+    let mut result = select_result(&mut runtime, &TransportRequest::new(metadata));
+
+    assert_eq!(result.next_raw().unwrap(), Some(b"page-one".to_vec()));
+    assert_eq!(result.next_raw().unwrap(), Some(b"page-two".to_vec()));
+    assert_eq!(result.next_raw().unwrap(), None);
+    let calls = calls.borrow();
+    assert_eq!(calls[0].predicted_read_bytes, 4096);
+    assert_eq!(calls[1].predicted_read_bytes, 1_000_000);
 }
 
 #[test]

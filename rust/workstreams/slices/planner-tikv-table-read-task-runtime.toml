@@ -1,6 +1,6 @@
 schema = "1"
 slice = "planner-tikv-table-read-task-runtime"
-status = "ready"
+status = "partial"
 target = "tidb-planner"
 ring = "plan"
 consumer = "one bounded source-admitted LogicalDataSource path preserves the existing index-only task behavior and adds an ordinary non-empty non-partitioned TiKV table path: pre-resolved AccessPath and PhysicalProperty inputs construct PhysicalTableScanPlan, wrap it through the CopTask-to-root conversion into one PhysicalTableReaderPlan, and retain the existing downstream TiKV scan-to-DAG lowering boundary. Empty ranges still return zero-row TableDual before task construction. The returned TableReader is a planner task only: executor building, KV range construction, snapshots, region routing, RPC, decoded rows, and COM_QUERY remain external."

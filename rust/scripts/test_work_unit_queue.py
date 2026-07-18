@@ -270,6 +270,43 @@ class WorkUnitQueueTest(unittest.TestCase):
         )
         self.assertNotIn("client-runtime", self.run_tool("ready").stdout)
 
+    def test_integrated_external_release_requires_promoted_module_evidence(self) -> None:
+        slices = self.root / "workstreams/slices"
+        slices.mkdir(parents=True)
+        artifact_relative = f"{self.root.name}/client-runtime.rs"
+        (self.root.parent / artifact_relative).write_text("runtime", encoding="utf-8")
+        manifest = slices / "client-runtime.toml"
+        manifest.write_text(
+            'schema = "1"\nslice = "client-runtime"\nstatus = "ready"\n'
+            'target = "tidb-txnkv"\nring = "transaction"\nconsumer = "client"\n'
+            'test_target = "client"\ngo_sources = []\ngo_tests = []\n'
+            'module_sources = ["client-go::internal/client/client0.go"]\n'
+            'module_tests = ["client-go::internal/client/client_test.go:20:TestSend0"]\n'
+            f'depends_on = []\nrust_paths = ["{artifact_relative}"]\n',
+            encoding="utf-8",
+        )
+        self.run_tool("claim-slice", "--owner", "client-runtime", "--slice", "client-runtime")
+        self.run_tool("gate-begin")
+        self.run_tool("gate-finish")
+        manifest.write_text(
+            manifest.read_text(encoding="utf-8").replace('status = "ready"', 'status = "partial"'),
+            encoding="utf-8",
+        )
+        failure = self.run_tool("release", "--owner", "client-runtime", "--integrated", success=False)
+        self.assertIn("requires promoted module source", failure.stderr)
+        for ledger in (
+            self.root / "difftests/corpus/coverage/client_go_source_inventory.tsv",
+            self.root / "difftests/corpus/coverage/client_go_test_inventory.tsv",
+        ):
+            ledger.write_text(
+                ledger.read_text(encoding="utf-8").replace(
+                    "UNTRIAGED\t-\t-\t-", f"PARTIAL\tclient-runtime\t{artifact_relative}\tbounded evidence", 1
+                ),
+                encoding="utf-8",
+            )
+        self.run_tool("release", "--owner", "client-runtime", "--integrated")
+        self.assertFalse((self.root / "workstreams/claims/client-runtime.claim.json").exists())
+
     def test_campaign_floor_counts_qualified_module_anchors(self) -> None:
         slices = self.root / "workstreams/slices"
         campaigns = self.root / "workstreams/campaigns"

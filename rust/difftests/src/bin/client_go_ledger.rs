@@ -19,7 +19,7 @@
 //! file SHA-256, while the module row also binds the Go sums and the digest of all Go files.
 
 use sha2::{Digest, Sha256};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
 use std::io;
@@ -38,6 +38,16 @@ const MODULE_LEDGER: &str = "external_go_modules.tsv";
 const SOURCE_LEDGER: &str = "client_go_source_inventory.tsv";
 const DECLARATION_LEDGER: &str = "client_go_test_declaration_inventory.tsv";
 const TEST_LEDGER: &str = "client_go_test_inventory.tsv";
+const SOURCE_EVIDENCE_DIRECTORY: &str = "rust/difftests/corpus/coverage/evidence/client-go/source";
+const TEST_EVIDENCE_DIRECTORY: &str = "rust/difftests/corpus/coverage/evidence/client-go/tests";
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Evidence {
+    status: String,
+    owner: String,
+    artifact: String,
+    note: String,
+}
 
 #[derive(Clone, Debug)]
 struct Declaration {
@@ -61,6 +71,198 @@ struct Inventory {
     test_files: usize,
     declaration_count: usize,
     runner_count: usize,
+}
+
+fn evidence_files(repo: &Path, relative: &str) -> Result<Vec<PathBuf>, String> {
+    let directory = repo.join(relative);
+    let mut files = Vec::new();
+    for entry in fs::read_dir(&directory)
+        .map_err(|error| format!("read evidence directory {}: {error}", directory.display()))?
+    {
+        let entry = entry.map_err(|error| format!("read evidence entry: {error}"))?;
+        let path = entry.path();
+        if !entry
+            .file_type()
+            .map_err(|error| format!("read evidence type {}: {error}", path.display()))?
+            .is_file()
+            || path.extension().and_then(|value| value.to_str()) != Some("tsv")
+        {
+            return Err(format!(
+                "unexpected client-go evidence entry {}; only regular .tsv files are allowed",
+                path.display()
+            ));
+        }
+        files.push(path);
+    }
+    files.sort();
+    Ok(files)
+}
+
+fn evidence_row(
+    repo: &Path,
+    path: &Path,
+    line: usize,
+    fields: &[&str],
+    status_index: usize,
+) -> Result<Evidence, String> {
+    let status = fields[status_index];
+    if !matches!(status, "PARTIAL" | "COVERED" | "BLOCKED") {
+        return Err(format!(
+            "{}:{line}: status must be PARTIAL, COVERED, or BLOCKED",
+            path.display()
+        ));
+    }
+    let owner = fields[status_index + 1];
+    let artifact = fields[status_index + 2];
+    let note = fields[status_index + 3];
+    if owner.is_empty() || artifact.is_empty() || note.is_empty() {
+        return Err(format!(
+            "{}:{line}: status, owner, artifact, and note must all be present",
+            path.display()
+        ));
+    }
+    if path.file_stem().and_then(|value| value.to_str()) != Some(owner) {
+        return Err(format!(
+            "{}:{line}: evidence owner {owner} must match the fragment filename",
+            path.display()
+        ));
+    }
+    if artifact.contains(',') {
+        return Err(format!(
+            "{}:{line}: evidence artifact must be one path, not a comma-separated list",
+            path.display()
+        ));
+    }
+    if !repo.join(artifact).is_file() {
+        return Err(format!(
+            "{}:{line}: evidence artifact {} does not exist",
+            path.display(),
+            repo.join(artifact).display()
+        ));
+    }
+    Ok(Evidence {
+        status: status.to_owned(),
+        owner: owner.to_owned(),
+        artifact: artifact.to_owned(),
+        note: note.to_owned(),
+    })
+}
+
+fn source_evidence(
+    repo: &Path,
+    production: &[(String, usize, String)],
+) -> Result<BTreeMap<String, Evidence>, String> {
+    let known: BTreeSet<_> = production.iter().map(|item| item.0.as_str()).collect();
+    let mut overlays = BTreeMap::new();
+    let mut origins = BTreeMap::new();
+    for path in evidence_files(repo, SOURCE_EVIDENCE_DIRECTORY)? {
+        let text = fs::read_to_string(&path)
+            .map_err(|error| format!("read {}: {error}", path.display()))?;
+        for (index, line) in text.lines().enumerate() {
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let fields: Vec<_> = line.split('\t').collect();
+            if fields.len() != 5 {
+                return Err(format!(
+                    "{}:{}: expected 5 tab-separated fields",
+                    path.display(),
+                    index + 1
+                ));
+            }
+            if !known.contains(fields[0]) {
+                return Err(format!(
+                    "{}:{}: stale client-go source path {}",
+                    path.display(),
+                    index + 1,
+                    fields[0]
+                ));
+            }
+            if let Some(first) = origins.insert(fields[0].to_owned(), path.display().to_string()) {
+                return Err(format!(
+                    "{}:{}: duplicate client-go source {} (first declared in {first})",
+                    path.display(),
+                    index + 1,
+                    fields[0]
+                ));
+            }
+            overlays.insert(
+                fields[0].to_owned(),
+                evidence_row(repo, &path, index + 1, &fields, 1)?,
+            );
+        }
+    }
+    Ok(overlays)
+}
+
+fn test_evidence(
+    repo: &Path,
+    runners: &[&Declaration],
+) -> Result<BTreeMap<(String, usize, String), Evidence>, String> {
+    let known: BTreeMap<_, _> = runners
+        .iter()
+        .map(|item| {
+            (
+                (item.path.as_str(), item.line, item.name.as_str()),
+                item.category.as_str(),
+            )
+        })
+        .collect();
+    let mut overlays = BTreeMap::new();
+    let mut origins = BTreeMap::new();
+    for path in evidence_files(repo, TEST_EVIDENCE_DIRECTORY)? {
+        let text = fs::read_to_string(&path)
+            .map_err(|error| format!("read {}: {error}", path.display()))?;
+        for (index, line) in text.lines().enumerate() {
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let fields: Vec<_> = line.split('\t').collect();
+            if fields.len() != 8 {
+                return Err(format!(
+                    "{}:{}: expected 8 tab-separated fields",
+                    path.display(),
+                    index + 1
+                ));
+            }
+            let source_line: usize = fields[2]
+                .parse()
+                .map_err(|_| format!("{}:{}: invalid source line", path.display(), index + 1))?;
+            let borrowed = (fields[1], source_line, fields[3]);
+            let Some(category) = known.get(&borrowed) else {
+                return Err(format!(
+                    "{}:{}: stale client-go test anchor {}:{}:{}",
+                    path.display(),
+                    index + 1,
+                    fields[1],
+                    source_line,
+                    fields[3]
+                ));
+            };
+            if fields[0] != *category {
+                return Err(format!(
+                    "{}:{}: test kind {} does not match generated kind {}",
+                    path.display(),
+                    index + 1,
+                    fields[0],
+                    category
+                ));
+            }
+            let key = (fields[1].to_owned(), source_line, fields[3].to_owned());
+            if let Some(first) = origins.insert(key.clone(), path.display().to_string()) {
+                return Err(format!(
+                    "{}:{}: duplicate client-go test anchor {}:{}:{} (first declared in {first})",
+                    path.display(),
+                    index + 1,
+                    fields[1],
+                    source_line,
+                    fields[3]
+                ));
+            }
+            overlays.insert(key, evidence_row(repo, &path, index + 1, &fields, 4)?);
+        }
+    }
+    Ok(overlays)
 }
 
 fn repo_root() -> PathBuf {
@@ -368,6 +570,8 @@ fn render(repo: &Path) -> Result<Inventory, String> {
             "client-go universe drift: expected production/test-files/declarations/runners {expected:?}, found {counts:?}"
         ));
     }
+    let source_evidence = source_evidence(repo, &production)?;
+    let test_evidence = test_evidence(repo, &runners)?;
 
     let tree_sha256 = format!("{:x}", tree_hasher.finalize());
     let mut module = String::from("# universe\tmodule\tversion\tgo_sum\tgo_mod_sum\tgo_file_tree_sha256\tproduction_sources\ttest_files\ttest_declarations\ttest_obligations\n");
@@ -377,8 +581,19 @@ fn render(repo: &Path) -> Result<Inventory, String> {
         "# universe\tsource_path\tline_count\tfile_sha256\tstatus\towner\tartifact\tnote\n",
     );
     for (path, lines, hash) in &production {
+        let (status, owner, artifact, note) =
+            source_evidence
+                .get(path)
+                .map_or(("UNTRIAGED", "-", "-", "-"), |item| {
+                    (
+                        item.status.as_str(),
+                        item.owner.as_str(),
+                        item.artifact.as_str(),
+                        item.note.as_str(),
+                    )
+                });
         sources.push_str(&format!(
-            "{UNIVERSE}\t{path}\t{lines}\t{hash}\tUNTRIAGED\t-\t-\t-\n"
+            "{UNIVERSE}\t{path}\t{lines}\t{hash}\t{status}\t{owner}\t{artifact}\t{note}\n"
         ));
     }
     let mut declaration_text = String::from("# universe\tsource_path\tsource_line\tsource_column\treceiver\tfunction_name\tcategory\tvalid_runner_signature\tfile_sha256\n");
@@ -397,8 +612,20 @@ fn render(repo: &Path) -> Result<Inventory, String> {
     }
     let mut tests = String::from("# universe\tkind\tsource_path\tsource_line\tfunction_name\tring\tfile_sha256\tstatus\towner\tartifact\tnote\n");
     for item in runners {
+        let key = (item.path.clone(), item.line, item.name.clone());
+        let (status, owner, artifact, note) =
+            test_evidence
+                .get(&key)
+                .map_or(("UNTRIAGED", "-", "-", "-"), |evidence| {
+                    (
+                        evidence.status.as_str(),
+                        evidence.owner.as_str(),
+                        evidence.artifact.as_str(),
+                        evidence.note.as_str(),
+                    )
+                });
         tests.push_str(&format!(
-            "{UNIVERSE}\t{}\t{}\t{}\t{}\ttransaction\t{}\tUNTRIAGED\t-\t-\t-\n",
+            "{UNIVERSE}\t{}\t{}\t{}\t{}\ttransaction\t{}\t{status}\t{owner}\t{artifact}\t{note}\n",
             item.category, item.path, item.line, item.name, item.file_sha256
         ));
     }
@@ -463,7 +690,8 @@ fn main() -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{exact_direct_pin, exact_sums, MODULE, VERSION};
+    use super::{exact_direct_pin, exact_sums, source_evidence, MODULE, VERSION};
+    use std::fs;
 
     #[test]
     fn direct_pin_rejects_version_drift_and_indirect_only_rows() {
@@ -484,5 +712,38 @@ mod tests {
             Ok(("h1:source".to_owned(), "h1:module".to_owned()))
         );
         assert!(exact_sums(&format!("{MODULE} {VERSION} h1:source\n")).is_err());
+    }
+
+    #[test]
+    fn checked_source_overlay_promotes_only_an_exact_generated_anchor() {
+        let repo =
+            std::env::temp_dir().join(format!("tidb-client-go-ledger-{}", std::process::id()));
+        let directory = repo.join("rust/difftests/corpus/coverage/evidence/client-go/source");
+        fs::remove_dir_all(&repo).ok();
+        fs::create_dir_all(&directory).unwrap();
+        fs::create_dir_all(repo.join("rust/evidence")).unwrap();
+        fs::write(repo.join("rust/evidence/client.rs"), "evidence").unwrap();
+        fs::write(
+            directory.join("owner.tsv"),
+            "internal/client/client.go\tPARTIAL\towner\trust/evidence/client.rs\tbounded\n",
+        )
+        .unwrap();
+        let production = vec![(
+            "internal/client/client.go".to_owned(),
+            10,
+            "hash".to_owned(),
+        )];
+        let overlay = source_evidence(&repo, &production).unwrap();
+        assert_eq!(overlay["internal/client/client.go"].status, "PARTIAL");
+
+        fs::write(
+            directory.join("owner.tsv"),
+            "internal/client/missing.go\tPARTIAL\towner\trust/evidence/client.rs\tstale\n",
+        )
+        .unwrap();
+        assert!(source_evidence(&repo, &production)
+            .unwrap_err()
+            .contains("stale client-go source path"));
+        fs::remove_dir_all(repo).unwrap();
     }
 }

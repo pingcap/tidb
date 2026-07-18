@@ -1,6 +1,6 @@
 schema = "1"
 slice = "distsql-tikv-unary-rpc-contract"
-status = "partial"
+status = "retired"
 target = "tidb-distsql"
 ring = "transaction"
 consumer = "direct Go-owned RPC-ready coprocessor contract over the existing checked read-task coordinator: preserve every implemented cache, EMA, KeyRanges, region-task, paging, and bounded-publication authority; add exact kvrpc request-context and response-error wire projections, replica/endpoint mapping, SourceStmt trace injection, and deterministic backoff metadata so one checked RegionTaskEnvelope can become a unary request and one raw response can be decoded atomically before coordinator mutation. This slice must remain PARTIAL after implementation: it does not claim sockets or gRPC, a TiKV client, PD lookup, live RegionCache, endpoint discovery, oracle, lock resolution, retry scheduling, TLS, cancellation, or RealTiKV validation."

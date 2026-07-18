@@ -35,3 +35,5 @@
 2026-07-read-path-07	planner-executor-tikv-scan-dag-lowering
 2026-07-read-path-07	executor-table-index-reader-runtime
 2026-07-read-path-07	distsql-tikv-unary-rpc-contract
+2026-07-read-path-08	planner-tikv-table-read-task-runtime
+2026-07-read-path-08	distsql-direct-unary-client-runtime

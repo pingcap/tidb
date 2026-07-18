@@ -65,6 +65,17 @@ class StatusDashboardTest(unittest.TestCase):
         self.assertIn("github.com/tikv/client-go/v2", rendered)
         self.assertIn("not included in TiDB product-parity totals", rendered)
 
+    def test_external_ownership_counts_include_checked_promotions(self) -> None:
+        rendered = dashboard.render()
+        source_counts = dashboard.status_counts(dashboard.read_tsv(dashboard.EXTERNAL_SOURCE_LEDGER), 4)
+        test_counts = dashboard.status_counts(dashboard.read_tsv(dashboard.EXTERNAL_TEST_LEDGER), 7)
+        self.assertGreaterEqual(source_counts["PARTIAL"], 2)
+        self.assertGreaterEqual(test_counts["PARTIAL"], 1)
+        self.assertIn(
+            f"| Production sources | {source_counts['UNTRIAGED']} | {source_counts['PARTIAL']} |",
+            rendered,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

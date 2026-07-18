@@ -1,6 +1,6 @@
 schema = "1"
 slice = "executor-table-index-reader-runtime"
-status = "partial"
+status = "retired"
 target = "tidb-exec"
 ring = "result"
 consumer = "one executor-owned storage-reader lifecycle starts from already-built immutable TransportRequest values, preserves the TableReader/IndexReader distinction, sends every non-dummy request through the canonical injected SelectWithRuntimeStats boundary, transfers each response exactly once into SelectResponseIter, forwards the remaining caller-required row budget through the shared serial/select/query response chain, consumes ordered request groups without reading past that bound, and closes every opened response exactly once. Dummy temporary-table readers preserve their Table/Index identity and return an empty batch without invoking transport. The existing ordered missing-handle reconciliation remains under the same indivisible pkg/executor/distsql.go owner. Physical-plan-to-DAG lowering, snapshot and infoschema acquisition, ranger/correlated-column rebuilding, partition pruning, unsigned-boundary range splitting, virtual columns, sorted heap merging, UnionScan materialization, concrete RegionCache/PD/lock/backoff/endpoint/TiKV RPC transport, response-close errors, and full temporary-table SQL behavior remain explicit PARTIAL gaps"

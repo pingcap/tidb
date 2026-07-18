@@ -7,7 +7,8 @@
 
 use tidb_planner::{
     access_path::{
-        AccessPathStore, DataSourceAccessPath, IndexAccessPath, PointGetAdmission, TableAccessPath,
+        AccessPathStore, DataSourceAccessPath, IndexAccessPath, PointGetAdmission,
+        ResolvedTableDescriptor, ResolvedTableScanKind, TableAccessPath, TableScanExplainIdSuffix,
     },
     cardinality::{
         index_range_policy::{IndexRangeShape, RangeBoundKind},
@@ -17,6 +18,8 @@ use tidb_planner::{
     logical_data_source::LogicalDataSource,
     logical_data_source_task::IndexTaskProperty,
     physical_property::IndexOrderingRequirement,
+    physical_table_reader::PhysicalTableReaderPlan,
+    physical_table_scan::PhysicalTableScanPlan,
     scan_pushdown::{ScanColumnInfo, TiKvTableScanSpec, UnsupportedScanFeature},
     task_type::TaskType,
 };
@@ -26,7 +29,92 @@ fn source(paths: impl IntoIterator<Item = DataSourceAccessPath>) -> LogicalDataS
 }
 
 fn table_path(spec: TiKvTableScanSpec) -> TableAccessPath {
-    TableAccessPath::from_source_table_scan(spec, PointGetAdmission::NotEligible, 12.0)
+    source_table_path(spec, PointGetAdmission::NotEligible, 12.0)
+}
+
+fn source_table_path(
+    spec: TiKvTableScanSpec,
+    point_get_admission: PointGetAdmission,
+    count_after_access: f64,
+) -> TableAccessPath {
+    let descriptor = ResolvedTableDescriptor::new(
+        spec.table_id,
+        false,
+        ResolvedTableScanKind::Full,
+        TableScanExplainIdSuffix::IncludePlanId,
+    );
+    TableAccessPath::from_source_table_scan(
+        descriptor,
+        spec,
+        point_get_admission,
+        count_after_access,
+    )
+    .expect("test table descriptor must match its pushdown payload")
+}
+
+#[test]
+fn source_descriptor_rejects_cross_table_payload_identity() {
+    let error = TableAccessPath::from_source_table_scan(
+        ResolvedTableDescriptor::new(
+            42,
+            false,
+            ResolvedTableScanKind::Full,
+            TableScanExplainIdSuffix::IncludePlanId,
+        ),
+        TiKvTableScanSpec::new(43, vec![]),
+        PointGetAdmission::NotEligible,
+        1.0,
+    )
+    .expect_err("one table access path cannot emit another table's payload");
+
+    assert_eq!(error.descriptor(), 42);
+    assert_eq!(error.pushdown(), 43);
+    assert_eq!(
+        error.to_string(),
+        "table scan descriptor and pushdown table ID differ"
+    );
+}
+
+#[test]
+fn source_range_kind_and_suffix_policy_drive_reader_explain_id() {
+    let path = TableAccessPath::from_source_table_scan(
+        ResolvedTableDescriptor::new(
+            7,
+            false,
+            ResolvedTableScanKind::Range,
+            TableScanExplainIdSuffix::Omit,
+        ),
+        TiKvTableScanSpec::new(7, vec![]),
+        PointGetAdmission::NotEligible,
+        1.0,
+    )
+    .expect("source table descriptor matches its pushdown payload");
+    let task = source([DataSourceAccessPath::Table(path)])
+        .build_scan_read_task(IndexTaskProperty::new(TaskType::Root));
+    let reader = task.table_reader().expect("range path becomes a reader");
+    let scan = reader
+        .table_scan_plan()
+        .expect("reader owns its range scan");
+
+    assert_eq!(scan.scan_kind(), Some(ResolvedTableScanKind::Range));
+    assert_eq!(scan.explain_id().as_deref(), Some("TableRangeScan"));
+    assert_eq!(reader.table_plan_explain(), Some("TableRangeScan"));
+    assert_eq!(reader.explain_info(), "data:TableRangeScan");
+    assert!(!reader.is_common_handle());
+}
+
+#[test]
+fn raw_dag_table_scan_cannot_become_a_table_reader() {
+    let raw = PhysicalTableScanPlan::init(3, 0, TiKvTableScanSpec::new(7, vec![]));
+    assert_eq!(raw.descriptor(), None);
+    assert_eq!(raw.explain_id(), None);
+    assert_eq!(raw.is_common_handle(), None);
+    assert_eq!(
+        PhysicalTableReaderPlan::from_table_scan(raw)
+            .expect_err("raw DAG scans must fail closed at reader conversion")
+            .to_string(),
+        "table reader requires a source-resolved table descriptor"
+    );
 }
 
 fn index_path() -> DataSourceAccessPath {
@@ -77,7 +165,20 @@ fn source_admitted_table_path_becomes_one_root_table_reader() {
     let mut spec = TiKvTableScanSpec::new(42, vec![column]);
     spec.primary_column_ids = vec![3];
 
-    let task = source([DataSourceAccessPath::Table(table_path(spec.clone()))])
+    let descriptor = ResolvedTableDescriptor::new(
+        42,
+        true,
+        ResolvedTableScanKind::Full,
+        TableScanExplainIdSuffix::IncludePlanId,
+    );
+    let path = TableAccessPath::from_source_table_scan(
+        descriptor,
+        spec.clone(),
+        PointGetAdmission::NotEligible,
+        12.0,
+    )
+    .expect("source table descriptor matches its pushdown payload");
+    let task = source([DataSourceAccessPath::Table(path)])
         .build_scan_read_task(IndexTaskProperty::new(TaskType::Root));
     let reader = task
         .table_reader()
@@ -92,9 +193,14 @@ fn source_admitted_table_path_becomes_one_root_table_reader() {
     assert_eq!(reader.table_plans_len(), 1);
     assert_eq!(reader.table_scan_count(), 1);
     assert!(reader.table_plan_is_first_flattened());
-    assert_eq!(reader.table_plan_explain(), Some("TableScan"));
-    assert_eq!(reader.explain_info(), "data:TableScan");
+    assert_eq!(reader.table_plan_explain(), Some("TableFullScan_91"));
+    assert_eq!(reader.explain_info(), "data:TableFullScan_91");
+    assert!(reader.is_common_handle());
     assert_eq!(scan.plan().operator(), "TableScan");
+    assert_eq!(scan.descriptor(), Some(descriptor));
+    assert_eq!(scan.scan_kind(), Some(ResolvedTableScanKind::Full));
+    assert_eq!(scan.explain_id().as_deref(), Some("TableFullScan_91"));
+    assert_eq!(scan.is_common_handle(), Some(true));
     assert_eq!(scan.plan().id(), 91);
     assert_eq!(scan.plan().query_block_offset(), -4);
     assert_eq!(scan.estimated_rows(), Some(12.0));
@@ -118,10 +224,17 @@ fn source_admitted_table_path_becomes_one_root_table_reader() {
 fn empty_table_ranges_return_dual_before_any_other_admission() {
     // pkg/planner/core/find_best_task.go:2180-2188
     let path = TableAccessPath::from_source_table_scan(
+        ResolvedTableDescriptor::new(
+            1,
+            false,
+            ResolvedTableScanKind::Range,
+            TableScanExplainIdSuffix::Omit,
+        ),
         TiKvTableScanSpec::new(1, vec![]).with_unsupported(UnsupportedScanFeature::Partition),
         PointGetAdmission::Unproven,
         f64::NAN,
     )
+    .expect("test table descriptor matches its pushdown payload")
     .with_store(AccessPathStore::TiFlash)
     .with_filters(true)
     .with_empty_ranges();
@@ -167,7 +280,7 @@ fn table_path_fails_closed_on_unowned_planner_and_executor_shapes() {
 
     assert_eq!(
         table_rejection(
-            TableAccessPath::from_source_table_scan(spec.clone(), PointGetAdmission::Unproven, 1.0,),
+            source_table_path(spec.clone(), PointGetAdmission::Unproven, 1.0),
             root,
         ),
         Some(ScanReadTaskRejection::Table(
@@ -176,7 +289,7 @@ fn table_path_fails_closed_on_unowned_planner_and_executor_shapes() {
     );
     assert_eq!(
         table_rejection(
-            TableAccessPath::from_source_table_scan(spec.clone(), PointGetAdmission::Eligible, 1.0,),
+            source_table_path(spec.clone(), PointGetAdmission::Eligible, 1.0),
             root,
         ),
         Some(ScanReadTaskRejection::Table(
@@ -234,7 +347,7 @@ fn table_path_fails_closed_on_unowned_planner_and_executor_shapes() {
     for count_after_access in [f64::NAN, f64::INFINITY, -1.0] {
         assert_eq!(
             table_rejection(
-                TableAccessPath::from_source_table_scan(
+                source_table_path(
                     spec.clone(),
                     PointGetAdmission::NotEligible,
                     count_after_access,

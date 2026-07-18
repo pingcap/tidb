@@ -15,8 +15,10 @@
 //! Typed task shapes for the dependency-closed index-only planner branch.
 
 use crate::{
-    physical_index_scan::PhysicalIndexScanPlan, physical_table_dual::PhysicalTableDualPlan,
-    physical_table_reader::PhysicalTableReaderPlan, physical_table_scan::PhysicalTableScanPlan,
+    physical_index_scan::PhysicalIndexScanPlan,
+    physical_table_dual::PhysicalTableDualPlan,
+    physical_table_reader::{MissingTableDescriptorError, PhysicalTableReaderPlan},
+    physical_table_scan::PhysicalTableScanPlan,
     scan_pushdown::UnsupportedScanFeature,
 };
 
@@ -76,6 +78,8 @@ pub enum TableTaskRejection {
     TableSample,
     /// The pre-resolved scan named a feature outside the bounded TiKV path.
     UnsupportedScanFeature(UnsupportedScanFeature),
+    /// A raw DAG scan lacks the source descriptor required by TableReader.
+    MissingSourceDescriptor,
 }
 
 /// Why the unified datasource scan transition failed before task construction.
@@ -141,8 +145,7 @@ impl CopTableTask {
 
     /// Performs the bounded table-only branch of
     /// `CopTask.convertToRootTaskImpl`.
-    #[must_use]
-    pub fn convert_to_root(self) -> PhysicalTableReaderPlan {
+    pub fn convert_to_root(self) -> Result<PhysicalTableReaderPlan, MissingTableDescriptorError> {
         PhysicalTableReaderPlan::from_table_scan(self.table_plan)
     }
 }

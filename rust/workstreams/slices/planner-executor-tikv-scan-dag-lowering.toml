@@ -8,7 +8,6 @@ test_target = "tikv_scan_dag_lowering_source"
 go_sources = [
   "pkg/executor/internal/builder/builder_utils.go",
   "pkg/planner/core/operator/physicalop/physical_index_scan.go",
-  "pkg/planner/core/operator/physicalop/physical_table_scan.go",
 ]
 go_tests = [
   "pkg/executor/test/executor/executor_test.go:84:TestTimezonePushDown",
@@ -17,12 +16,11 @@ depends_on = []
 evidence_prerequisites = [
   { capability = "pushdown-flags", evidence_owner = "session-statement-pushdown-wave", kind = "test", anchor = "pkg/sessionctx/stmtctx/stmtctx_test.go:89:TestStatementContextPushDownFLags", minimum_status = "PARTIAL" },
   { capability = "response-encode-policy", evidence_owner = "distsql-context-chunk-rpc-policy", kind = "source", anchor = "pkg/distsql/context/context.go", minimum_status = "PARTIAL" },
-  { capability = "live-index-task", evidence_owner = "planner-cardinality-live-index-choice", kind = "source", anchor = "pkg/planner/core/find_best_task.go", minimum_status = "PARTIAL" },
+  { capability = "live-index-task", evidence_owner = "planner-tikv-table-read-task-runtime", kind = "source", anchor = "pkg/planner/core/find_best_task.go", minimum_status = "PARTIAL" },
 ]
 support_anchors = [
   "pkg/executor/internal/builder/builder_utils.go:64:ConstructDAGReq",
   "pkg/planner/core/operator/physicalop/physical_index_scan.go:547:PhysicalIndexScan.ToPB",
-  "pkg/planner/core/operator/physicalop/physical_table_scan.go:776:PhysicalTableScan.ToPB",
 ]
 rust_paths = [
   "rust/crates/tidb-proto/proto/select.proto",

@@ -86,6 +86,18 @@ impl std::fmt::Display for TableScanCountError {
 
 impl std::error::Error for TableScanCountError {}
 
+/// Error returned when a raw DAG scan is used as a planner TableReader child.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MissingTableDescriptorError;
+
+impl std::fmt::Display for MissingTableDescriptorError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("table reader requires a source-resolved table descriptor")
+    }
+}
+
+impl std::error::Error for MissingTableDescriptorError {}
+
 /// Minimal initialized physical TableReader metadata.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PhysicalTableReaderPlan {
@@ -129,12 +141,18 @@ impl PhysicalTableReaderPlan {
 
     /// Converts one table-side Cop task into the corresponding root
     /// `PhysicalTableReader`, matching `CopTask.convertToRootTaskImpl`.
-    #[must_use]
-    pub fn from_table_scan(table_scan_plan: PhysicalTableScanPlan) -> Self {
+    pub fn from_table_scan(
+        table_scan_plan: PhysicalTableScanPlan,
+    ) -> Result<Self, MissingTableDescriptorError> {
         let query_block_offset = table_scan_plan.plan().query_block_offset();
-        let table_plan_explain = table_scan_plan.plan().explain_id(true);
+        let table_plan_explain = table_scan_plan
+            .explain_id()
+            .ok_or(MissingTableDescriptorError)?;
         let table_plan_identity = table_scan_plan.plan().id();
-        Self {
+        let is_common_handle = table_scan_plan
+            .is_common_handle()
+            .ok_or(MissingTableDescriptorError)?;
+        Ok(Self {
             query_block_offset,
             table_plan_explain: Some(table_plan_explain),
             table_plans_len: 1,
@@ -143,11 +161,11 @@ impl PhysicalTableReaderPlan {
             read_req_type: ReadReqType::Cop,
             store_type: StoreType::TiKv,
             mpp_version: 0,
-            is_common_handle: false,
+            is_common_handle,
             table_plan_identity: Some(table_plan_identity),
             flattened_first_identity: Some(table_plan_identity),
             table_scan_plan: Some(table_scan_plan),
-        }
+        })
     }
 
     /// Supplies source flattened TablePlans and table-scan cardinality.

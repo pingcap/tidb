@@ -1,6 +1,6 @@
 schema = "1"
 slice = "distsql-direct-unary-client-runtime"
-status = "ready"
+status = "partial"
 target = "tidb-exec"
 ring = "result"
 consumer = "one bounded TiKV unary DAG read path from executor TableIndexReader through the canonical QueryTransport and CopReadTaskRuntime to a caller-injected address-directed unary client. The client projection preserves the pinned client-go SendRequest argument/result shape: explicit address, immutable unary coprocessor request, timeout, raw response, and transport error. The transport consumes caller-supplied checked region topology plus an exact region-to-address map, prepares each request with the shared cache/EMA/paging owners, builds the checked TiKV request context, sends it once, fully decodes region/lock/other/batch precedence before coordinator mutation, publishes successful SelectResponse bytes in logical-task order, and transfers the resulting QueryResponse once into TableIndexReader decoding. Missing or duplicate routes, unsupported request/store shapes, and every response requiring retry fail closed. This remains PARTIAL: the client is injected, not a socket or live TiKV client; PD/RegionCache discovery, replica/address selection, retries/backoff, lock resolution, cancellation, TLS, connection pooling, batch commands, forwarding, compression, metrics, asynchronous dispatch, unordered execution, and RealTiKV remain external."
@@ -101,6 +101,13 @@ go_tests = [
   "pkg/executor/temporary_table_test.go:53:TestLocalTemporaryTableNoNetworkWithCreateOutsideTxn",
   "pkg/executor/temporary_table_test.go:60:TestLocalTemporaryTableNoNetworkWithInsideTxn",
 ]
+module_sources = [
+  "client-go::internal/client/client.go",
+  "client-go::tikvrpc/tikvrpc.go",
+]
+module_tests = [
+  "client-go::tikvrpc/tikvrpc_test.go:124:TestAttachContextSetsRequestContext",
+]
 depends_on = []
 evidence_prerequisites = [
   { capability = "driver-error-conversion", evidence_owner = "txnkv-driver-error-complete-conversion", kind = "source", anchor = "pkg/store/driver/error/error.go", minimum_status = "PARTIAL" },
@@ -162,5 +169,7 @@ rust_paths = [
   "rust/crates/tidb-exec/tests/direct_unary_table_index_reader_source.rs",
   "rust/difftests/corpus/coverage/evidence/source/distsql-direct-unary-client-runtime.tsv",
   "rust/difftests/corpus/coverage/evidence/tests/distsql-direct-unary-client-runtime.tsv",
+  "rust/difftests/corpus/coverage/evidence/client-go/source/distsql-direct-unary-client-runtime.tsv",
+  "rust/difftests/corpus/coverage/evidence/client-go/tests/distsql-direct-unary-client-runtime.tsv",
   "rust/difftests/corpus/coverage/evidence/transfers/distsql-direct-unary-client-runtime.tsv",
 ]

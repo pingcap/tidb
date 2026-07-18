@@ -14,7 +14,7 @@ go_tests = [
 depends_on = []
 evidence_prerequisites = [
   { capability = "distsql-paging-config-consumer", evidence_owner = "distsql-context-source-wave", kind = "test", anchor = "pkg/distsql/context/context_test.go:38:TestContextDetach", minimum_status = "PARTIAL" },
-  { capability = "distsql-runtime-paging-metadata", evidence_owner = "distsql-query-response-runtime", kind = "source", anchor = "pkg/distsql/distsql.go", minimum_status = "PARTIAL" },
+  { capability = "distsql-runtime-paging-metadata", evidence_owner = "distsql-direct-unary-client-runtime", kind = "source", anchor = "pkg/distsql/distsql.go", minimum_status = "PARTIAL" },
 ]
 rust_paths = [
   "rust/crates/tidb-distsql/src/context.rs",
