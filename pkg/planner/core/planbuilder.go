@@ -4773,8 +4773,13 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	mockTablePlan.SetSchema(insertPlan.Schema4OnDuplicate)
 	mockTablePlan.SetOutputNames(insertPlan.names4OnDuplicate)
 
+	var odkuMemo *odkuExprMemo
+	if b.ctx.GetSessionVars().EnableODKUExpressionReuse && hasEnoughODKUFunctionsForExpressionReuse(insert.OnDuplicate) {
+		odkuMemo = newODKUExprMemo()
+		insertPlan.odkuExpressionReuseEnabled = true
+	}
 	onDupColSet, err := insertPlan.resolveOnDuplicate(insert.OnDuplicate, tableInfo, func(node ast.ExprNode) (expression.Expression, error) {
-		return b.rewriteInsertOnDuplicateUpdate(ctx, node, mockTablePlan, insertPlan)
+		return b.rewriteInsertOnDuplicateUpdate(ctx, node, mockTablePlan, insertPlan, odkuMemo)
 	})
 	if err != nil {
 		return nil, err
@@ -4794,6 +4799,68 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	}
 	err = insertPlan.buildOnInsertFKTriggers(b.ctx, b.is, tnW.DBInfo.Name.L)
 	return insertPlan, err
+}
+
+const minODKUFunctionCountForExpressionReuse = 8
+
+func hasEnoughODKUFunctionsForExpressionReuse(onDup []*ast.Assignment) bool {
+	hasNonSimpleExpr := false
+	for _, assign := range onDup {
+		if assign.Expr != nil && !isSimpleODKUExprForExpressionReuse(assign.Expr) {
+			hasNonSimpleExpr = true
+			break
+		}
+	}
+	if !hasNonSimpleExpr {
+		return false
+	}
+
+	counter := odkuFunctionCounter{}
+	for _, assign := range onDup {
+		if assign.Expr == nil {
+			continue
+		}
+		assign.Expr.Accept(&counter)
+		if counter.count >= minODKUFunctionCountForExpressionReuse {
+			return true
+		}
+	}
+	return false
+}
+
+func isSimpleODKUExprForExpressionReuse(expr ast.ExprNode) bool {
+	for {
+		parentheses, ok := expr.(*ast.ParenthesesExpr)
+		if !ok {
+			break
+		}
+		expr = parentheses.Expr
+	}
+	switch expr.(type) {
+	case *ast.ColumnNameExpr, *ast.DefaultExpr, *ast.ValuesExpr, *driver.ValueExpr:
+		return true
+	default:
+		return false
+	}
+}
+
+type odkuFunctionCounter struct {
+	count int
+}
+
+func (c *odkuFunctionCounter) Enter(in ast.Node) (ast.Node, bool) {
+	switch in.(type) {
+	case *ast.BetweenExpr, *ast.BinaryOperationExpr, *ast.CaseExpr, *ast.FuncCallExpr,
+		*ast.FuncCastExpr, *ast.IsNullExpr, *ast.IsTruthExpr, *ast.PatternInExpr,
+		*ast.PatternLikeOrIlikeExpr, *ast.PatternRegexpExpr, *ast.RowExpr,
+		*ast.UnaryOperationExpr:
+		c.count++
+	}
+	return in, c.count >= minODKUFunctionCountForExpressionReuse
+}
+
+func (*odkuFunctionCounter) Leave(in ast.Node) (ast.Node, bool) {
+	return in, true
 }
 
 func (p *Insert) resolveOnDuplicate(onDup []*ast.Assignment, tblInfo *model.TableInfo, yield func(ast.ExprNode) (expression.Expression, error)) (map[string]struct{}, error) {

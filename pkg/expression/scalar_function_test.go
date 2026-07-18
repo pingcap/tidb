@@ -115,6 +115,34 @@ func TestScalarFunction(t *testing.T) {
 	require.True(t, ok)
 }
 
+func TestScalarFunctionCloneWithArgs(t *testing.T) {
+	ctx := mock.NewContext()
+	a := &Column{
+		UniqueID: 1,
+		RetType:  types.NewFieldType(mysql.TypeDouble),
+	}
+	b := &Column{
+		UniqueID: 2,
+		RetType:  types.NewFieldType(mysql.TypeDouble),
+	}
+
+	sf := newFunctionWithMockCtx(ast.Plus, a, b).(*ScalarFunction)
+	sf.HashCode()
+	sf.CanonicalHashCode()
+
+	cloneArgs := []Expression{a.Clone(), b.Clone()}
+	cloned := sf.CloneWithArgs(cloneArgs).(*ScalarFunction)
+
+	cloneArgs[0] = b
+	require.True(t, cloned.Equal(ctx, sf))
+	require.True(t, cloned.GetArgs()[0].Equal(ctx, a))
+	require.True(t, cloned.GetArgs()[1].Equal(ctx, b))
+	require.True(t, sf.GetArgs()[0].Equal(ctx, a))
+	require.True(t, sf.GetArgs()[1].Equal(ctx, b))
+	require.Equal(t, sf.HashCode(), cloned.HashCode())
+	require.Equal(t, sf.CanonicalHashCode(), cloned.CanonicalHashCode())
+}
+
 func TestIssue23309(t *testing.T) {
 	a := &Column{
 		UniqueID: 1,

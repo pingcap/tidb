@@ -1136,6 +1136,9 @@ type SessionVars struct {
 	// EnableVectorizedExpression  enables the vectorized expression evaluation.
 	EnableVectorizedExpression bool
 
+	// EnableODKUExpressionReuse enables reusing common expressions in ON DUPLICATE KEY UPDATE assignments.
+	EnableODKUExpressionReuse bool
+
 	// DDLReorgPriority is the operation priority of adding indices.
 	DDLReorgPriority int
 
@@ -2207,6 +2210,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		concurrencyFactor:              DefOptConcurrencyFactor,
 		enableForceInlineCTE:           DefOptForceInlineCTE,
 		EnableVectorizedExpression:     DefEnableVectorizedExpression,
+		EnableODKUExpressionReuse:      DefTiDBEnableODKUExpressionReuse,
 		IndexScanCostFactor:            DefOptIndexScanCostFactor,
 		IndexReaderCostFactor:          DefOptIndexReaderCostFactor,
 		TableReaderCostFactor:          DefOptTableReaderCostFactor,

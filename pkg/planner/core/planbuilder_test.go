@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -36,6 +37,7 @@ import (
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -204,6 +206,384 @@ func TestDisableFold(t *testing.T) {
 			require.IsType(t, expectedArg, rewrittenArg)
 		}
 	}
+}
+
+func TestInsertOnDuplicateUpdateReusesCommonSubExpressions(t *testing.T) {
+	ctx := MockContext()
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
+
+	rewritePair := func(enableODKUExpressionReuse bool) (*Insert, expression.Expression, expression.Expression) {
+		ctx.GetSessionVars().EnableODKUExpressionReuse = enableODKUExpressionReuse
+
+		colNames := []string{"c1", "c2", "c3"}
+		cols := make([]*expression.Column, 0, len(colNames))
+		names := make(types.NameSlice, 0, len(colNames))
+		for i, name := range colNames {
+			cols = append(cols, &expression.Column{
+				RetType:  types.NewFieldType(mysql.TypeLonglong),
+				ID:       int64(i + 1),
+				UniqueID: int64(i + 1),
+				Index:    i,
+				OrigName: name,
+			})
+			names = append(names, &types.FieldName{ColName: pmodel.NewCIStr(name)})
+		}
+		schema := expression.NewSchema(cols...)
+
+		insertPlan := Insert{
+			tableSchema:                schema,
+			tableColNames:              names,
+			Schema4OnDuplicate:         schema,
+			names4OnDuplicate:          names,
+			odkuExpressionReuseEnabled: enableODKUExpressionReuse,
+		}.Init(ctx)
+		mockTablePlan := logicalop.LogicalTableDual{}.Init(ctx, 0)
+		mockTablePlan.SetSchema(schema)
+		mockTablePlan.SetOutputNames(names)
+
+		parseExpr := func(exprSQL string) ast.ExprNode {
+			stmt, err := parser.New().ParseOneStmt("select "+exprSQL, "", "")
+			require.NoError(t, err)
+			return stmt.(*ast.SelectStmt).Fields.Fields[0].Expr
+		}
+
+		builder, _ := NewPlanBuilder().Init(ctx, nil, hint.NewQBHintHandler(nil))
+		var odkuMemo *odkuExprMemo
+		if ctx.GetSessionVars().EnableODKUExpressionReuse {
+			odkuMemo = newODKUExprMemo()
+		}
+		expr1, err := builder.rewriteInsertOnDuplicateUpdate(
+			context.Background(),
+			parseExpr("if(values(c1) is not null and c2 = 1, values(c1), c1)"),
+			mockTablePlan,
+			insertPlan,
+			odkuMemo,
+		)
+		require.NoError(t, err)
+		expr2, err := builder.rewriteInsertOnDuplicateUpdate(
+			context.Background(),
+			parseExpr("if(values(c1) is not null and c2 = 1, values(c2), c2)"),
+			mockTablePlan,
+			insertPlan,
+			odkuMemo,
+		)
+		require.NoError(t, err)
+
+		insertPlan.OnDuplicate = []*expression.Assignment{
+			{Col: cols[0], ColName: names[0].ColName, Expr: expr1},
+			{Col: cols[1], ColName: names[1].ColName, Expr: expr2},
+		}
+		return insertPlan, expr1, expr2
+	}
+
+	t.Run("enabled", func(t *testing.T) {
+		insertPlan, expr1, expr2 := rewritePair(true)
+		cond1 := expr1.(*expression.ScalarFunction).GetArgs()[0]
+		cond2 := expr2.(*expression.ScalarFunction).GetArgs()[0]
+		require.Same(t, cond1, cond2)
+
+		require.NoError(t, insertPlan.ResolveIndices())
+
+		resolvedCond1 := insertPlan.OnDuplicate[0].Expr.(*expression.ScalarFunction).GetArgs()[0]
+		resolvedCond2 := insertPlan.OnDuplicate[1].Expr.(*expression.ScalarFunction).GetArgs()[0]
+		require.Same(t, resolvedCond1, resolvedCond2)
+	})
+
+	t.Run("disabled", func(t *testing.T) {
+		insertPlan, expr1, expr2 := rewritePair(false)
+		cond1 := expr1.(*expression.ScalarFunction).GetArgs()[0]
+		cond2 := expr2.(*expression.ScalarFunction).GetArgs()[0]
+		require.NotSame(t, cond1, cond2)
+
+		require.NoError(t, insertPlan.ResolveIndices())
+
+		resolvedCond1 := insertPlan.OnDuplicate[0].Expr.(*expression.ScalarFunction).GetArgs()[0]
+		resolvedCond2 := insertPlan.OnDuplicate[1].Expr.(*expression.ScalarFunction).GetArgs()[0]
+		require.NotSame(t, resolvedCond1, resolvedCond2)
+	})
+}
+
+func TestInsertOnDuplicateUpdateExpressionReuseComplexityGate(t *testing.T) {
+	parseAssignment := func(exprSQL string) *ast.Assignment {
+		stmt, err := parser.New().ParseOneStmt("insert into t values (1) on duplicate key update c1 = "+exprSQL, "", "")
+		require.NoError(t, err)
+		return stmt.(*ast.InsertStmt).OnDuplicate[0]
+	}
+
+	require.False(t, hasEnoughODKUFunctionsForExpressionReuse([]*ast.Assignment{
+		parseAssignment("values(c1)"),
+		parseAssignment("values(c2)"),
+		parseAssignment("values(c3)"),
+		parseAssignment("values(c4)"),
+		parseAssignment("values(c5)"),
+		parseAssignment("values(c6)"),
+		parseAssignment("values(c7)"),
+	}))
+	require.True(t, hasEnoughODKUFunctionsForExpressionReuse([]*ast.Assignment{
+		parseAssignment("if(values(c1) is not null and (c1 <= values(c1) or c1 = '2100-01-01 00:00:00') and values(c2) != 1, values(c3), c3)"),
+		parseAssignment("if(values(c1) is not null and (c1 <= values(c1) or c1 = '2100-01-01 00:00:00') and values(c2) != 1, values(c4), c4)"),
+	}))
+}
+
+func mockBenchmarkODKUTableInfo(name string, colTypes []byte) *model.TableInfo {
+	columns := make([]*model.ColumnInfo, 0, len(colTypes))
+	for i, tp := range colTypes {
+		colName := fmt.Sprintf("c%d", i+1)
+		colInfo := &model.ColumnInfo{
+			ID:        int64(i + 1),
+			Name:      pmodel.NewCIStr(colName),
+			Offset:    i,
+			FieldType: benchmarkODKUFieldType(tp),
+			State:     model.StatePublic,
+		}
+		if i == 0 {
+			colInfo.SetFlag(mysql.PriKeyFlag | mysql.NotNullFlag)
+		}
+		columns = append(columns, colInfo)
+	}
+	return &model.TableInfo{
+		ID:         1,
+		Name:       pmodel.NewCIStr(name),
+		Columns:    columns,
+		PKIsHandle: true,
+		State:      model.StatePublic,
+	}
+}
+
+func benchmarkODKUFieldType(tp byte) types.FieldType {
+	fieldType := types.NewFieldType(tp)
+	switch tp {
+	case mysql.TypeVarchar:
+		ch, coll := types.DefaultCharsetForType(tp)
+		fieldType.SetCharset(ch)
+		fieldType.SetCollate(coll)
+	case mysql.TypeNewDecimal:
+		fieldType.SetFlen(19)
+		fieldType.SetDecimal(6)
+	}
+	return *fieldType
+}
+
+func benchmarkODKUTableInfo() *model.TableInfo {
+	return mockBenchmarkODKUTableInfo("t_odku_complex", []byte{
+		mysql.TypeLonglong,
+		mysql.TypeVarchar,
+		mysql.TypeVarchar,
+		mysql.TypeVarchar,
+		mysql.TypeLong,
+		mysql.TypeLong,
+		mysql.TypeVarchar,
+		mysql.TypeVarchar,
+		mysql.TypeVarchar,
+		mysql.TypeVarchar,
+		mysql.TypeVarchar,
+		mysql.TypeDatetime,
+		mysql.TypeVarchar,
+		mysql.TypeNewDecimal,
+		mysql.TypeNewDecimal,
+		mysql.TypeNewDecimal,
+		mysql.TypeNewDecimal,
+		mysql.TypeNewDecimal,
+		mysql.TypeDatetime,
+		mysql.TypeLonglong,
+		mysql.TypeDatetime,
+		mysql.TypeLonglong,
+		mysql.TypeLong,
+		mysql.TypeVarchar,
+		mysql.TypeVarchar,
+		mysql.TypeVarchar,
+		mysql.TypeNewDecimal,
+		mysql.TypeTiny,
+		mysql.TypeVarchar,
+		mysql.TypeNewDecimal,
+		mysql.TypeVarchar,
+		mysql.TypeVarchar,
+		mysql.TypeDatetime,
+		mysql.TypeLong,
+		mysql.TypeVarchar,
+		mysql.TypeDatetime,
+		mysql.TypeLong,
+		mysql.TypeNewDecimal,
+		mysql.TypeNewDecimal,
+		mysql.TypeNewDecimal,
+		mysql.TypeNewDecimal,
+		mysql.TypeNewDecimal,
+		mysql.TypeNewDecimal,
+		mysql.TypeLong,
+		mysql.TypeDate,
+	})
+}
+
+func benchmarkODKUInsertSQL() string {
+	values := []string{
+		"1",
+		"'v2'",
+		"'v3'",
+		"'v4'",
+		"1",
+		"2",
+		"'v7'",
+		"'v8'",
+		"'v9'",
+		"'v10'",
+		"'v11'",
+		"'2026-06-01 00:00:00'",
+		"'v13'",
+		"1.23",
+		"2.34",
+		"3.45",
+		"4.56",
+		"5.67",
+		"'2026-06-02 00:00:00'",
+		"1",
+		"'2026-06-02 00:00:01'",
+		"2",
+		"2",
+		"'v24'",
+		"'v25'",
+		"'v26'",
+		"100.00",
+		"0",
+		"'v29'",
+		"1.50",
+		"'v31'",
+		"'v32'",
+		"'2026-06-02 00:00:02'",
+		"123",
+		"'v35'",
+		"'2026-06-02 00:00:03'",
+		"1",
+		"0.05",
+		"0.06",
+		"0.07",
+		"0.08",
+		"0.09",
+		"0.10",
+		"0",
+		"'2026-06-02'",
+	}
+
+	tail := strings.TrimSpace(`
+ON DUPLICATE KEY UPDATE
+c3 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c3), c3),
+c9 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c9), c9),
+c4 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c4), c4),
+c5 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c5), c5),
+c6 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c6), c6),
+c7 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c7), c7),
+c8 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c8), c8),
+c10 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c10), c10),
+c14 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c14), c14),
+c15 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c15), c15),
+c16 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c16), c16),
+c39 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c39), c39),
+c38 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c38) != 1, values(c38), c38),
+c17 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c17), c17),
+c40 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c40), c40),
+c41 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c41), c41),
+c42 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c42), c42),
+c43 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c43), c43),
+c18 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c18), c18),
+c19 = IF((values(c19) is not null and c20 = 0) or values(c23) = 3, values(c19), c19),
+c23 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c23), c23),
+c24 = IF(c24 is null or c24 = '', values(c24), c24),
+c25 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c25), c25),
+c26 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c26), c26),
+c27 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c27), c27),
+c28 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c28), c28),
+c29= IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c29), c29),
+c30 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c30), c30),
+c31 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c31), c31),
+c32 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c32), c32),
+c33 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c33), c33),
+c34 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c34), c34),
+c35 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c35), c35),
+c36= IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c36), c36),
+c20= IF((values(c20) is not null and c20 = 0) or values(c23) = 3, values(c20), c20),
+c22 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c22),c22),
+c21 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c21), c21),
+c45 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, DATE(values(c36)), c45)
+`)
+
+	return "insert into t_odku_complex values (" + strings.Join(values, ", ") + ") " + tail
+}
+
+func benchmarkODKUValuesOnlyTableInfo() *model.TableInfo {
+	return mockBenchmarkODKUTableInfo("t_odku_values_only", []byte{
+		mysql.TypeLonglong,
+		mysql.TypeVarchar,
+		mysql.TypeVarchar,
+		mysql.TypeVarchar,
+		mysql.TypeNewDecimal,
+		mysql.TypeNewDecimal,
+		mysql.TypeLong,
+		mysql.TypeDatetime,
+	})
+}
+
+func benchmarkODKUValuesOnlyInsertSQL() string {
+	return strings.TrimSpace(`
+insert into t_odku_values_only values (
+	1,
+	'2026-06-01',
+	'v3',
+	'v4',
+	1.23,
+	2.34,
+	1,
+	'2026-06-01 00:00:00'
+) on duplicate key update
+  c2 = values(c2),
+  c3 = values(c3),
+  c4 = values(c4),
+  c5 = values(c5),
+  c6 = values(c6),
+  c7 = values(c7),
+  c8 = values(c8)
+`)
+}
+
+func runInsertOnDuplicateUpdateCompileBenchmark(b *testing.B, tableInfo *model.TableInfo, insertSQL string) {
+	run := func(b *testing.B, enableODKUExpressionReuse bool) {
+		ctx := MockContext()
+		ctx.GetSessionVars().CurrentDB = "test"
+		ctx.GetSessionVars().EnableODKUExpressionReuse = enableODKUExpressionReuse
+
+		is := infoschema.MockInfoSchema([]*model.TableInfo{tableInfo})
+
+		stmt, err := parser.New().ParseOneStmt(insertSQL, "", "")
+		require.NoError(b, err)
+		nodeW := resolve.NewNodeW(stmt)
+		ret := &PreprocessorReturn{InfoSchema: is}
+		err = Preprocess(context.Background(), ctx, nodeW, WithPreprocessorReturn(ret))
+		require.NoError(b, err)
+
+		builder := NewPlanBuilder()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			builder, _ = builder.ResetForReuse().Init(ctx.GetPlanCtx(), ret.InfoSchema, hint.NewQBHintHandler(nil))
+			_, err := builder.Build(context.Background(), nodeW)
+			require.NoError(b, err)
+		}
+		b.ReportAllocs()
+	}
+
+	b.Run("reuse_off", func(b *testing.B) {
+		run(b, false)
+	})
+	b.Run("reuse_on", func(b *testing.B) {
+		run(b, true)
+	})
+}
+
+func BenchmarkInsertOnDuplicateUpdateCompile(b *testing.B) {
+	runInsertOnDuplicateUpdateCompileBenchmark(b, benchmarkODKUTableInfo(), benchmarkODKUInsertSQL())
+}
+
+func BenchmarkInsertOnDuplicateUpdateCompileValuesOnly(b *testing.B) {
+	runInsertOnDuplicateUpdateCompileBenchmark(b, benchmarkODKUValuesOnlyTableInfo(), benchmarkODKUValuesOnlyInsertSQL())
 }
 
 func TestDeepClone(t *testing.T) {

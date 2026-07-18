@@ -2409,6 +2409,10 @@ var defaultSysVars = []*SysVar{
 		s.EnableVectorizedExpression = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableODKUExpressionReuse, Value: BoolToOnOff(DefTiDBEnableODKUExpressionReuse), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableODKUExpressionReuse = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableFastAnalyze, Value: BoolToOnOff(DefTiDBUseFastAnalyze), Type: TypeBool,
 		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 			if TiDBOptOn(normalizedValue) {

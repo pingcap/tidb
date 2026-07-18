@@ -25,6 +25,7 @@
 package expression
 
 import (
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -431,8 +432,34 @@ func (b *baseBuiltinFunc) cloneFrom(from *baseBuiltinFunc) {
 	}
 }
 
+func (b *baseBuiltinFunc) resetForCloneWithArgs(args []Expression) {
+	b.args = make([]Expression, len(args))
+	copy(b.args, args)
+	b.bufAllocator = nil
+	b.childrenVectorized = false
+	b.childrenVectorizedOnce = new(sync.Once)
+	if b.ctor != nil {
+		b.ctor = b.ctor.Clone()
+	}
+}
+
 func (*baseBuiltinFunc) Clone() builtinFunc {
 	panic("you should not call this method.")
+}
+
+func cloneBuiltinFuncWithArgs(fun builtinFunc, args []Expression) builtinFunc {
+	if fun == nil {
+		return nil
+	}
+	v := reflect.ValueOf(fun)
+	if v.Kind() != reflect.Ptr || v.IsNil() {
+		panic("unexpected non-pointer builtinFunc")
+	}
+	cloned := reflect.New(v.Elem().Type())
+	cloned.Elem().Set(v.Elem())
+	clonedFun := cloned.Interface().(builtinFunc)
+	clonedFun.(interface{ resetForCloneWithArgs([]Expression) }).resetForCloneWithArgs(args)
+	return clonedFun
 }
 
 // baseBuiltinCastFunc will be contained in every struct that implement cast builtinFunc.

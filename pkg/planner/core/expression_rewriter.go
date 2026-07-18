@@ -15,6 +15,7 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strconv"
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
@@ -176,7 +178,7 @@ func buildSimpleExpr(ctx expression.BuildContext, node ast.ExprNode, opts ...exp
 	return expr, err
 }
 
-func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(ctx context.Context, exprNode ast.ExprNode, mockPlan base.LogicalPlan, insertPlan *Insert) (expression.Expression, error) {
+func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(ctx context.Context, exprNode ast.ExprNode, mockPlan base.LogicalPlan, insertPlan *Insert, odkuMemo *odkuExprMemo) (expression.Expression, error) {
 	b.rewriterCounter++
 	defer func() { b.rewriterCounter-- }()
 
@@ -193,6 +195,14 @@ func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(ctx context.Context, exprNo
 	rewriter.planCtx.insertPlan = insertPlan
 	rewriter.asScalar = true
 	rewriter.allowBuildCastArray = b.allowBuildCastArray
+	if odkuMemo != nil {
+		rewriter.odkuMemo = odkuMemo
+		defer func() {
+			rewriter.odkuMemo = nil
+			rewriter.odkuMemoDisableDepth = 0
+			odkuMemo.resetFrames()
+		}()
+	}
 
 	expr, _, err := rewriteExprNode(rewriter, exprNode, true)
 	return expr, err
@@ -266,6 +276,8 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p base.LogicalP
 	rewriter.ctxNameStk = rewriter.ctxNameStk[:0]
 	rewriter.ctx = ctx
 	rewriter.err = nil
+	rewriter.odkuMemo = nil
+	rewriter.odkuMemoDisableDepth = 0
 	rewriter.planCtx.plan = p
 	rewriter.planCtx.curClause = b.curClause
 	rewriter.planCtx.aggrMap = nil
@@ -366,7 +378,81 @@ type expressionRewriter struct {
 	disableFoldCounter int
 	tryFoldCounter     int
 
-	planCtx *exprRewriterPlanCtx
+	planCtx              *exprRewriterPlanCtx
+	odkuMemo             *odkuExprMemo
+	odkuMemoDisableDepth int
+}
+
+type odkuExprMemo struct {
+	cache      map[string]expression.Expression
+	frames     []odkuMemoFrame
+	restoreBuf bytes.Buffer
+	restoreCtx *format.RestoreCtx
+}
+
+type odkuMemoFrame struct {
+	key         string
+	stackLen    int
+	hit         bool
+	valid       bool
+	disableMemo bool
+}
+
+func newODKUExprMemo() *odkuExprMemo {
+	return &odkuExprMemo{
+		cache: make(map[string]expression.Expression),
+	}
+}
+
+func (m *odkuExprMemo) resetFrames() {
+	m.frames = m.frames[:0]
+}
+
+func (m *odkuExprMemo) pushFrame(frame odkuMemoFrame) {
+	m.frames = append(m.frames, frame)
+}
+
+func (m *odkuExprMemo) popFrame() odkuMemoFrame {
+	frame := m.frames[len(m.frames)-1]
+	m.frames = m.frames[:len(m.frames)-1]
+	return frame
+}
+
+func (m *odkuExprMemo) buildKey(node ast.Node) (string, bool) {
+	exprNode, ok := node.(ast.ExprNode)
+	if !ok {
+		return "", false
+	}
+	switch v := node.(type) {
+	case *driver.ParamMarkerExpr:
+		return "", false
+	case *ast.SubqueryExpr, *ast.CompareSubqueryExpr, *ast.ExistsSubqueryExpr, *ast.AggregateFuncExpr,
+		*ast.WindowFuncExpr, *ast.VariableExpr:
+		return "", false
+	case *ast.PatternInExpr:
+		if v.Sel != nil {
+			return "", false
+		}
+	}
+	const unsafeFlags = ast.FlagHasSubquery | ast.FlagHasAggregateFunc | ast.FlagHasWindowFunc |
+		ast.FlagHasVariable | ast.FlagHasParamMarker
+	if exprNode.GetFlag()&unsafeFlags != 0 {
+		return "", false
+	}
+	m.restoreBuf.Reset()
+	const restoreFlags = format.DefaultRestoreFlags | format.RestoreWithoutSchemaName
+	if m.restoreCtx == nil {
+		m.restoreCtx = format.NewRestoreCtx(restoreFlags, &m.restoreBuf)
+	} else {
+		m.restoreCtx.Flags = restoreFlags
+		m.restoreCtx.In = &m.restoreBuf
+		m.restoreCtx.DefaultDB = ""
+		m.restoreCtx.CTERestorer = format.CTERestorer{}
+	}
+	if err := node.Restore(m.restoreCtx); err != nil {
+		return "", false
+	}
+	return m.restoreBuf.String(), true
 }
 
 func (er *expressionRewriter) ctxStackLen() int {
@@ -519,6 +605,34 @@ func (er *expressionRewriter) requirePlanCtx(inNode ast.Node, detail string) (ct
 
 // Enter implements Visitor interface.
 func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
+	if er.odkuMemo != nil {
+		frame := odkuMemoFrame{stackLen: er.ctxStackLen()}
+		if _, ok := inNode.(*ast.SetCollationExpr); ok {
+			frame.disableMemo = true
+			er.odkuMemoDisableDepth++
+		}
+		if er.odkuMemoDisableDepth == 0 {
+			key, ok := er.odkuMemo.buildKey(inNode)
+			if !ok {
+				er.odkuMemo.pushFrame(frame)
+				return er.enterWithoutODKUMemo(inNode)
+			}
+			frame.valid = true
+			frame.key = key
+			if expr, ok := er.odkuMemo.cache[key]; ok {
+				frame.hit = true
+				er.ctxStackAppend(expr, types.EmptyName)
+				er.odkuMemo.pushFrame(frame)
+				return inNode, true
+			}
+		}
+		er.odkuMemo.pushFrame(frame)
+	}
+
+	return er.enterWithoutODKUMemo(inNode)
+}
+
+func (er *expressionRewriter) enterWithoutODKUMemo(inNode ast.Node) (ast.Node, bool) {
 	enterWithPlanCtx := func(fn func(*exprRewriterPlanCtx) (ast.Node, bool)) (ast.Node, bool) {
 		planCtx, err := er.requirePlanCtx(inNode, "")
 		if err != nil {
@@ -1441,6 +1555,18 @@ func (er *expressionRewriter) adjustUTF8MB4Collation(tp *types.FieldType) {
 
 // Leave implements Visitor interface.
 func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok bool) {
+	var odkuFrame odkuMemoFrame
+	var hasODKUFrame bool
+	if er.odkuMemo != nil {
+		odkuFrame = er.odkuMemo.popFrame()
+		hasODKUFrame = true
+		if odkuFrame.disableMemo {
+			er.odkuMemoDisableDepth--
+		}
+		if odkuFrame.hit {
+			return originInNode, true
+		}
+	}
 	if er.err != nil {
 		return retNode, false
 	}
@@ -1651,6 +1777,12 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 
 	if er.err != nil {
 		return retNode, false
+	}
+	if hasODKUFrame && odkuFrame.valid && er.ctxStackLen() == odkuFrame.stackLen+1 {
+		expr := er.ctxStack[len(er.ctxStack)-1]
+		if !expression.IsMutableEffectsExpr(expr) {
+			er.odkuMemo.cache[odkuFrame.key] = expr
+		}
 	}
 	return originInNode, true
 }

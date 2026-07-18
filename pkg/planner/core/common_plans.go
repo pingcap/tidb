@@ -427,6 +427,8 @@ type Insert struct {
 	OnDuplicate        []*expression.Assignment
 	Schema4OnDuplicate *expression.Schema `plan-cache-clone:"shallow"`
 	names4OnDuplicate  types.NameSlice    `plan-cache-clone:"shallow"`
+	// odkuExpressionReuseEnabled records whether this INSERT actually used ODKU expression reuse.
+	odkuExpressionReuseEnabled bool
 
 	GenCols InsertGeneratedColumns
 

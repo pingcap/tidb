@@ -632,6 +632,9 @@ const (
 	// TiDBEnableVectorizedExpression is used to control whether to enable the vectorized expression evaluation.
 	TiDBEnableVectorizedExpression = "tidb_enable_vectorized_expression"
 
+	// TiDBEnableODKUExpressionReuse is used to control whether to reuse common expressions in ON DUPLICATE KEY UPDATE assignments.
+	TiDBEnableODKUExpressionReuse = "tidb_enable_odku_expression_reuse"
+
 	// TiDBOptJoinReorderThreshold defines the threshold less than which
 	// we'll choose a rather time-consuming algorithm to calculate the join order.
 	TiDBOptJoinReorderThreshold = "tidb_opt_join_reorder_threshold"
@@ -1435,6 +1438,7 @@ const (
 	DefEnablePipelinedWindowFunction        = true
 	DefEnableStrictDoubleTypeCheck          = true
 	DefEnableVectorizedExpression           = true
+	DefTiDBEnableODKUExpressionReuse        = true
 	DefTiDBOptJoinReorderThreshold          = 0
 	DefTiDBDDLSlowOprThreshold              = 300
 	DefTiDBUseFastAnalyze                   = false
