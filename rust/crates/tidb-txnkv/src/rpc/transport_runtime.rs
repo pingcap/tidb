@@ -40,6 +40,7 @@ pub(super) enum WorkerCommand {
     BatchSubmit {
         address: String,
         entries: Vec<BatchCommandEntry>,
+        call: Option<UnaryCallContext>,
         reply: mpsc::Sender<Vec<BatchPublicationReceipt>>,
     },
     BatchEvent(BatchStreamEvent),
@@ -158,12 +159,31 @@ impl TransportRuntime {
         address: &str,
         entries: Vec<BatchCommandEntry>,
     ) -> Result<Vec<BatchPublicationReceipt>, DirectUnaryClientError> {
+        self.batch_submit_inner(address, entries, None)
+    }
+
+    pub(super) fn batch_submit_with_call(
+        &self,
+        address: &str,
+        entries: Vec<BatchCommandEntry>,
+        call: &UnaryCallContext,
+    ) -> Result<Vec<BatchPublicationReceipt>, DirectUnaryClientError> {
+        self.batch_submit_inner(address, entries, Some(call.clone()))
+    }
+
+    fn batch_submit_inner(
+        &self,
+        address: &str,
+        entries: Vec<BatchCommandEntry>,
+        call: Option<UnaryCallContext>,
+    ) -> Result<Vec<BatchPublicationReceipt>, DirectUnaryClientError> {
         let commands = self.sender()?;
         let (reply, response) = mpsc::channel();
         commands
             .send(WorkerCommand::BatchSubmit {
                 address: address.to_owned(),
                 entries,
+                call,
                 reply,
             })
             .map_err(|_| DirectUnaryClientError::Closed)?;
@@ -309,6 +329,7 @@ fn run_worker(
             WorkerCommand::BatchSubmit {
                 address,
                 entries,
+                call,
                 reply,
             } => {
                 let receipts = runtime.block_on(batch.submit(
@@ -316,6 +337,7 @@ fn run_worker(
                     &runtime,
                     &address,
                     entries,
+                    call.as_ref(),
                     &commands,
                 ));
                 let _ = reply.send(receipts);

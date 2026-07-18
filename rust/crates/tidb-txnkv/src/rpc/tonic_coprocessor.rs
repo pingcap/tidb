@@ -69,6 +69,16 @@ impl TonicCoprocessorClient {
         self.transport.submit_batch(address, entries)
     }
 
+    fn submit_batch_commands_with_call(
+        &mut self,
+        address: &str,
+        entries: Vec<BatchCommandEntry>,
+        call: &UnaryCallContext,
+    ) -> Result<Vec<BatchPublicationReceipt>, DirectUnaryClientError> {
+        self.transport
+            .submit_batch_with_call(address, entries, call)
+    }
+
     /// Returns the active BatchCommands generation for one physical/logical route.
     ///
     /// This is a worker barrier as well as a focused lifecycle diagnostic: all
@@ -268,7 +278,9 @@ impl AsyncRequestDispatcher for TonicCoprocessorClient {
         }
         let body = replace_top_level_context(&request.encoded_request, &request.context)?;
         let (entry, mut pending) = BatchCoprocessorPending::entry(body, forwarded_host);
-        if let Err(error) = self.submit_batch_commands(physical_address, vec![entry]) {
+        if let Err(error) =
+            self.submit_batch_commands_with_call(physical_address, vec![entry], call)
+        {
             pending.cancel();
             return Err(error);
         }

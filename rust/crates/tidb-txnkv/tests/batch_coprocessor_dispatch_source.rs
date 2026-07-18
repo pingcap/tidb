@@ -46,6 +46,7 @@ type FixtureParts = (
 enum ResponseMode {
     Echo,
     Hold,
+    WithholdHeaders,
     WrongTag,
     TransportFailure,
 }
@@ -86,6 +87,19 @@ impl Tikv for BatchFixture {
         let received = Arc::clone(&self.received);
         let seen = Arc::clone(&self.seen);
         let mut release = self.release.clone();
+        if matches!(mode, ResponseMode::WithholdHeaders) {
+            if let Some(seen) = seen.lock().unwrap().take() {
+                let _ = seen.send(());
+            }
+            while !*release.borrow() {
+                if release.changed().await.is_err() {
+                    break;
+                }
+            }
+            return Err(tonic::Status::cancelled(
+                "withheld BatchCommands headers released",
+            ));
+        }
         let mut inbound = request.into_inner();
         let (responses, response_rx) = tokio::sync::mpsc::channel(4);
         tokio::spawn(async move {
@@ -366,4 +380,89 @@ fn exact_call_deadline_bounds_the_same_completion_condvar_wait() {
     );
     release.send(true).unwrap();
     client.close().unwrap();
+}
+
+#[test]
+fn canonical_cancellation_interrupts_cold_stream_open_and_releases_the_worker() {
+    let (blocked_server, _received, headers_started, release_headers) =
+        fixture(ResponseMode::WithholdHeaders);
+    let (echo_server, _received, _seen, _release) = fixture(ResponseMode::Echo);
+    let cancellation = UnaryCancellation::new();
+    let thread_cancellation = cancellation.clone();
+    let blocked_address = blocked_server.address.clone();
+    let echo_address = echo_server.address.clone();
+    let (finished, finished_wait) = mpsc::channel();
+    let thread = std::thread::spawn(move || {
+        let mut client = TonicCoprocessorClient::new().unwrap();
+        let call = UnaryCallContext::new(Duration::from_secs(2), thread_cancellation);
+        let started = std::time::Instant::now();
+        let blocked = client
+            .begin(&blocked_address, None, &request(b"cancel-open"), &call)
+            .err()
+            .expect("canonical cancellation must reject cold stream admission");
+        let blocked_elapsed = started.elapsed();
+
+        let echo_call = UnaryCallContext::with_timeout(Duration::from_secs(2));
+        let mut echo = client
+            .begin(
+                &echo_address,
+                None,
+                &request(b"worker-released"),
+                &echo_call,
+            )
+            .unwrap();
+        let echo = echo.complete(&echo_call).unwrap().unwrap();
+        client.close().unwrap();
+        finished
+            .send((blocked, blocked_elapsed, echo.encoded_response))
+            .unwrap();
+    });
+
+    headers_started
+        .recv_timeout(Duration::from_secs(1))
+        .unwrap();
+    let cancelled_at = std::time::Instant::now();
+    cancellation.cancel();
+    let (blocked, blocked_elapsed, echo) =
+        finished_wait.recv_timeout(Duration::from_secs(1)).unwrap();
+    release_headers.send(true).unwrap();
+    thread.join().unwrap();
+
+    assert_eq!(blocked, DirectUnaryClientError::CallerCancelled);
+    assert!(cancelled_at.elapsed() < Duration::from_secs(1));
+    assert!(blocked_elapsed < Duration::from_secs(1));
+    assert_eq!(
+        CoprocessorResponse::decode(echo.as_slice()).unwrap().data,
+        b"worker-released"
+    );
+}
+
+#[test]
+fn canonical_deadline_bounds_cold_stream_open_before_the_fixed_cap() {
+    let (server, _received, headers_started, release_headers) =
+        fixture(ResponseMode::WithholdHeaders);
+    let address = server.address.clone();
+    let (finished, finished_wait) = mpsc::channel();
+    let thread = std::thread::spawn(move || {
+        let mut client = TonicCoprocessorClient::new().unwrap();
+        let call = UnaryCallContext::with_timeout(Duration::from_millis(50));
+        let started = std::time::Instant::now();
+        let mut pending = client
+            .begin(&address, None, &request(b"deadline-open"), &call)
+            .unwrap();
+        let begin_elapsed = started.elapsed();
+        let completion = pending.complete(&call);
+        client.close().unwrap();
+        finished.send((begin_elapsed, completion)).unwrap();
+    });
+
+    headers_started
+        .recv_timeout(Duration::from_secs(1))
+        .unwrap();
+    let (begin_elapsed, completion) = finished_wait.recv_timeout(Duration::from_secs(1)).unwrap();
+    release_headers.send(true).unwrap();
+    thread.join().unwrap();
+
+    assert!(begin_elapsed < Duration::from_secs(1));
+    assert_eq!(completion, Err(CompletionError::DeadlineExceeded));
 }

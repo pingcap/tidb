@@ -153,7 +153,7 @@ impl UnaryCancellation {
             });
     }
 
-    async fn cancelled(&self) {
+    pub(super) async fn cancelled(&self) {
         let mut receiver = self.state.subscribe();
         if *receiver.borrow() {
             return;
@@ -268,6 +268,16 @@ impl RawTransportClient {
         entries: Vec<BatchCommandEntry>,
     ) -> Result<Vec<BatchPublicationReceipt>, DirectUnaryClientError> {
         self.transport.batch_submit(address, entries)
+    }
+
+    pub(super) fn submit_batch_with_call(
+        &self,
+        address: &str,
+        entries: Vec<BatchCommandEntry>,
+        call: &UnaryCallContext,
+    ) -> Result<Vec<BatchPublicationReceipt>, DirectUnaryClientError> {
+        self.transport
+            .batch_submit_with_call(address, entries, call)
     }
 
     pub(super) fn close_address(&mut self, address: &str) -> Result<(), DirectUnaryClientError> {

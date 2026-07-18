@@ -26,7 +26,9 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use crate::rpc::channel_pool::{ChannelPool, VersionedChannel};
 use crate::rpc::forwarding;
 use crate::rpc::transport_runtime::WorkerCommand;
-use crate::rpc::{CompletionRequest, DirectUnaryClientError, DirectUnaryConnectionError};
+use crate::rpc::{
+    CompletionRequest, DirectUnaryClientError, DirectUnaryConnectionError, UnaryCallContext,
+};
 
 use super::{
     BatchEntry, BatchGroup, BatchInflightError, BatchInflightTable, BatchRoute, BatchScheduler,
@@ -160,6 +162,7 @@ impl BatchTransportState {
         runtime: &tokio::runtime::Runtime,
         address: &str,
         entries: Vec<BatchCommandEntry>,
+        call: Option<&UnaryCallContext>,
         commands: &std_mpsc::Sender<WorkerCommand>,
     ) -> Vec<BatchPublicationReceipt> {
         for entry in entries {
@@ -170,7 +173,7 @@ impl BatchTransportState {
             Vec::with_capacity(groups.forwarded.len() + usize::from(groups.direct.is_some()));
         if let Some(group) = groups.direct {
             if let Some(receipt) = self
-                .send_group(channels, runtime, address, None, group, commands)
+                .send_group(channels, runtime, address, None, group, call, commands)
                 .await
             {
                 receipts.push(receipt);
@@ -184,6 +187,7 @@ impl BatchTransportState {
                     address,
                     Some(forwarded_host.as_str()),
                     group,
+                    call,
                     commands,
                 )
                 .await
@@ -201,6 +205,7 @@ impl BatchTransportState {
         address: &str,
         forwarded_host: Option<&str>,
         group: BatchGroup<OpaqueBatchCommand, BatchCommandCompletion>,
+        call: Option<&UnaryCallContext>,
         commands: &std_mpsc::Sender<WorkerCommand>,
     ) -> Option<BatchPublicationReceipt> {
         let prepared = PreparedBatch::from_group(group);
@@ -220,7 +225,7 @@ impl BatchTransportState {
 
         if !self.streams.contains_key(&key) {
             if let Err(error) = self
-                .recreate_stream(channels, runtime, key.clone(), commands)
+                .recreate_stream(channels, runtime, key.clone(), call, commands)
                 .await
             {
                 prepared.fail(BatchInflightError::Transport(error));
@@ -319,7 +324,9 @@ impl BatchTransportState {
         let BatchStreamEvent::Retired { route } = event;
         let key = StreamKey::new(route.physical_address(), route.forwarded_host());
         if self.remove_stream_if_current(&key, &route) && self.reconnect_budget.remove(&key) {
-            let _ = self.recreate_stream(channels, runtime, key, commands).await;
+            let _ = self
+                .recreate_stream(channels, runtime, key, None, commands)
+                .await;
         }
     }
 
@@ -328,6 +335,7 @@ impl BatchTransportState {
         channels: &mut ChannelPool,
         runtime: &tokio::runtime::Runtime,
         key: StreamKey,
+        call: Option<&UnaryCallContext>,
         commands: &std_mpsc::Sender<WorkerCommand>,
     ) -> Result<(), DirectUnaryClientError> {
         // PARTIAL: open is bounded and shutdown-cancelable, but prolonged
@@ -344,6 +352,7 @@ impl BatchTransportState {
             commands.clone(),
             Arc::clone(&self.inflight),
             self.shutdown.clone(),
+            call,
         )
         .await?;
         self.streams.insert(key, stream);
@@ -409,6 +418,7 @@ async fn open_stream(
     commands: std_mpsc::Sender<WorkerCommand>,
     inflight: Arc<Mutex<BatchInflightTable>>,
     mut shutdown: watch::Receiver<bool>,
+    call: Option<&UnaryCallContext>,
 ) -> Result<ActiveStream, DirectUnaryClientError> {
     let (outbound, receiver) = mpsc::unbounded_channel();
     let mut request = tonic::Request::new(UnboundedReceiverStream::new(receiver));
@@ -419,16 +429,37 @@ async fn open_stream(
     if *shutdown.borrow() {
         return Err(DirectUnaryClientError::Closed);
     }
-    let response = tokio::select! {
-        _ = shutdown.changed() => return Err(DirectUnaryClientError::Closed),
-        result = tokio::time::timeout(STREAM_OPEN_TIMEOUT, client.batch_commands(request)) => {
-            match result {
-                Ok(Ok(response)) => response,
-                Ok(Err(error)) => {
-                    return Err(stream_error(&key.physical_address, version, error));
+    let response = match call {
+        Some(call) => {
+            if call.cancellation().is_cancelled() {
+                return Err(DirectUnaryClientError::CallerCancelled);
+            }
+            let timeout = call.timeout().min(STREAM_OPEN_TIMEOUT);
+            if timeout.is_zero() {
+                return Err(stream_open_timeout(&key.physical_address, version, timeout));
+            }
+            let cancellation = call.cancellation().clone();
+            tokio::select! {
+                biased;
+                () = cancellation.cancelled() => {
+                    return Err(DirectUnaryClientError::CallerCancelled);
                 }
-                Err(_) => {
-                    return Err(stream_open_timeout(&key.physical_address, version));
+                _ = shutdown.changed() => return Err(DirectUnaryClientError::Closed),
+                result = tokio::time::timeout(timeout, client.batch_commands(request)) => {
+                    open_stream_response(&key.physical_address, version, timeout, result)?
+                }
+            }
+        }
+        None => {
+            tokio::select! {
+                _ = shutdown.changed() => return Err(DirectUnaryClientError::Closed),
+                result = tokio::time::timeout(STREAM_OPEN_TIMEOUT, client.batch_commands(request)) => {
+                    open_stream_response(
+                        &key.physical_address,
+                        version,
+                        STREAM_OPEN_TIMEOUT,
+                        result,
+                    )?
                 }
             }
         }
@@ -503,14 +534,27 @@ async fn open_stream(
     })
 }
 
-fn stream_open_timeout(address: &str, version: u64) -> DirectUnaryClientError {
+fn open_stream_response<T>(
+    address: &str,
+    version: u64,
+    timeout: Duration,
+    result: Result<Result<T, tonic::Status>, tokio::time::error::Elapsed>,
+) -> Result<T, DirectUnaryClientError> {
+    match result {
+        Ok(Ok(response)) => Ok(response),
+        Ok(Err(error)) => Err(stream_error(address, version, error)),
+        Err(_) => Err(stream_open_timeout(address, version, timeout)),
+    }
+}
+
+fn stream_open_timeout(address: &str, version: u64, timeout: Duration) -> DirectUnaryClientError {
     DirectUnaryClientError::Timeout {
         connection: DirectUnaryConnectionError::local_deadline(
             address,
             version,
             "BatchCommands stream open timed out".to_owned(),
         ),
-        timeout_ms: u64::try_from(STREAM_OPEN_TIMEOUT.as_millis()).unwrap_or(u64::MAX),
+        timeout_ms: u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX),
     }
 }
 
