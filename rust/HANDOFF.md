@@ -47,7 +47,7 @@ from the Campaign 07 baseline with the toolchain pinned in
 | `tidb-proto` | generated prost protocol leaves shared by real consumers | `tipb`/`kvproto` serialized contracts |
 | `tidb-pd-client` | bounded plaintext PD gRPC control plane with discovered-member retention, foreground refresh, role-aware direct-endpoint failover, and cluster/region/store metadata | pinned `github.com/tikv/pd/client` GetMembers/GetRegion/GetStore and service-discovery paths |
 | `tidb-protocol` | source-backed uncompressed MySQL framing, result packets, column metadata projection, and dependency-closed typed text-row scalar formatting | `pkg/server/internal/packetio.go`, `pkg/server/internal/column/**`, `pkg/format/textrow/**` |
-| `tidb-distsql` | request/response metadata plus the lazy direct-unary task, retry/rebuild, paging, warning, cancellation, and detach-state runtime | `pkg/distsql/**`, `pkg/store/copr/**` |
+| `tidb-distsql` | request/response metadata plus the lazy direct-unary task, retry/rebuild, paging, warning, request-owned active cancellation, bounded optimistic lock recovery, and detach-state runtime | `pkg/distsql/**`, `pkg/store/copr/**` |
 | `tidb-expr` | typed expression construction, evaluation, and builtins | `pkg/expression/*` |
 | `tidb-datatype` | sole shared SQL scalar authority: `Datum`, `FieldType`, charset/collation, exact decimal | `pkg/types/**` and TiKV query datatypes |
 | `tidb-stats` | source-backed CMSketch/TopN/FMSketch/loading-status statistics primitives | `pkg/statistics/**` |
@@ -121,11 +121,11 @@ ON/USING typing and explicit projection output names, and full
 session/error-context attachment remain open alongside authentication,
 TLS/compression, temporal/JSON/enum/set/vector and full session charset
 conversion, Unix sockets/PROXY/connection admission, background PD/store health,
-router service, production cache TTL/concurrency, follower/stale/learner and
-forwarding policy, active in-flight cancellation, lock/MVCC/TLS policy, and
-deployable bootstrap.
+router service, production cache TTL/concurrency, forwarding/proxy and
+label/load/slow/busy policy, initial PD-discovery cancellation,
+pessimistic/async-commit lock recovery, TLS policy, and deployable bootstrap.
 
-### Historical Campaign 10/11 and current Campaign 12 boundary
+### Historical Campaign 10-12 and current Campaign 13 boundary
 
 Campaign `2026-07-read-path-10` is integrated and both receipt-backed claims
 are released as `partial`. Campaign 09 first made the checked read chain reach
@@ -190,6 +190,36 @@ The next boundary is follower/stale/learner and forwarding policy, active
 in-flight cancellation, background recovery, TLS health, batch/stream/TiFlash,
 locks/MVCC, slow-score policy, production concurrency/TTL, full DAG/table
 lowering, and COM_QUERY integration.
+
+Campaign 13 closes the bounded synchronous replica-policy, bound-unary active
+cancellation, and optimistic read-lock gaps without introducing a second
+client, topology map, deadline, or publication path. Request metadata now owns
+the legal leader/follower/stale access path, learner admission, and rotating
+seed; known `NotLeader` and `DataIsNotReady` feed the same selector. One execution
+cancellation parent mints a registered child for each bound transport request,
+so executor cancellation fans out while response close stays local. The one
+bind-anchored deadline covers Cop, retry waits, CheckTxnStatus, ResolveLock, and
+TTL wait. Initial PD discovery still owns its separate PD timeout and remains
+an explicit later boundary.
+
+The retained production constructor installs the bounded optimistic resolver
+over the same unary client and RegionCache. It handles committed, rolled-back,
+and live-TTL status, uses fresh TSO for remaining TTL, resolves only the locked
+secondary key, and retries only the unconsumed Cop task. The final live replica
+proof preserved leader peer 15 while selecting nonleader peer 25/store 2. The
+final coherent v8.5.7 lock fixture split row 2 into a secondary region batch;
+the current failpoint-enabled TiDB committed row 1 and skipped secondary commit,
+then Rust recorded one status RPC, one exact-key resolve RPC, two Cop attempts,
+and one publication:
+
+    campaign13_lock_recovery status=committed lock_start_ts=467767409883480085 caller_start_ts=467767409923063811 locked_key_hex=7480000000000000775f728000000000000002 primary_key_hex=7480000000000000775f728000000000000001 primary_route=127.0.0.1:51160 commit_ts=467767409883480086 resolve_route=127.0.0.1:51160 resolve_key_hex=7480000000000000775f728000000000000002 cop_route=127.0.0.1:51160 cop_attempts=2 publications=1
+
+Both live runners removed owned processes, TiUP state/data, and endpoints.
+Pessimistic/async-commit locks, TxnNotFound retry, forwarding/proxy metadata,
+label/load/slow/busy policy, background health/recovery, TLS,
+batch/stream/TiFlash, production cache concurrency/TTL, full DAG/table
+lowering, and COM_QUERY integration remain explicit. Read `STATUS.md` for the
+receipt-backed claim, membership, and queue state.
 
 ## 4. The differential tools (how you verify)
 
