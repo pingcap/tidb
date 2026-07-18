@@ -102,8 +102,10 @@ impl SlowScoreStat {
 
         let mut update_gradient = 1.0;
         let mut time_gradient = 1.0;
-        if self.interval_update_count > 0 {
-            let interval_average = self.interval_time_cost_micros / self.interval_update_count;
+        if let Some(interval_average) = self
+            .interval_time_cost_micros
+            .checked_div(self.interval_update_count)
+        {
             update_gradient = self.update_count_window.append(self.interval_update_count);
             time_gradient = self.time_cost_window.append(interval_average);
         }
