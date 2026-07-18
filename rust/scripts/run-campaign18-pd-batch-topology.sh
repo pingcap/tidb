@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-for prerequisite in tiup cargo curl jq nc lsof pgrep ps awk sed; do
+for prerequisite in tiup cargo curl jq nc lsof pgrep ps awk sed seq; do
   if ! command -v "${prerequisite}" >/dev/null 2>&1; then
     echo "missing Campaign 18 prerequisite: ${prerequisite}" >&2
     exit 1
@@ -300,7 +300,8 @@ fi
 TIKV_COMMAND=$(ps -ww -p "${STOPPED_PID}" -o command=)
 if [[ -z "${TIKV_COMMAND}" || "${TIKV_COMMAND}" == *$'\n'* \
   || "${TIKV_COMMAND}" != *"${TAG_DIR}"* \
-  || "${TIKV_COMMAND}" != *"${PHYSICAL_PORT}"* ]]; then
+  || "${TIKV_COMMAND}" != *"${PHYSICAL_PORT}"* \
+  || "${TIKV_COMMAND}" =~ [^[:alnum:][:space:]/._:=,@%+-] ]]; then
   echo "cannot capture a deterministic same-address tag-owned TiKV command" >&2
   exit 1
 fi
