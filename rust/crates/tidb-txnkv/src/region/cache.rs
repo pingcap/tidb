@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use super::{
@@ -55,6 +55,17 @@ where
         ranges: &[KeyRange],
         need_buckets: bool,
     ) -> Result<Vec<RegionLocation>, RegionRouteError> {
+        self.batch_locate_key_ranges_at(ranges, need_buckets, cache_now_seconds())
+    }
+
+    /// Deterministic-clock form of [`Self::batch_locate_key_ranges`] used by
+    /// source-transition tests.
+    pub fn batch_locate_key_ranges_at(
+        &mut self,
+        ranges: &[KeyRange],
+        need_buckets: bool,
+        now_seconds: u64,
+    ) -> Result<Vec<RegionLocation>, RegionRouteError> {
         if ranges.iter().any(|range| !range.is_valid()) {
             return Err(RegionRouteError::InvalidRange);
         }
@@ -62,30 +73,9 @@ where
             return Ok(Vec::new());
         }
 
-        let now_seconds = cache_now_seconds();
-        let mut expired = Vec::new();
-        for region in &self.regions {
-            let next_expiry = self.next_expiry_at(now_seconds, region.region);
-            let valid = self
-                .entry_states
-                .get_mut(&region.region)
-                .is_some_and(|state| {
-                    state.check_and_renew(now_seconds, self.base_ttl_seconds, next_expiry)
-                });
-            if !valid {
-                expired.push(region.region);
-            }
-        }
-        if !expired.is_empty() {
-            self.regions
-                .retain(|region| !expired.contains(&region.region));
-            for region in expired {
-                self.entry_states.remove(&region);
-                self.preferred_proxies.remove(&region);
-            }
-        }
+        let unavailable = self.refresh_traversed_entries(ranges, now_seconds)?;
 
-        let mut misses = cache_misses(&self.regions, ranges)?;
+        let mut misses = cache_misses(&self.regions, ranges, &unavailable)?;
         while !misses.is_empty() {
             let batch_len = misses.len().min(MAX_RANGES_PER_BATCH);
             let request = &misses[..batch_len];
@@ -113,7 +103,10 @@ where
             }
         }
 
-        let result = regions_intersecting_ranges(&self.regions, ranges);
+        let result = regions_intersecting_ranges(&self.regions, ranges)
+            .into_iter()
+            .filter(|region| !unavailable.contains(&region.region))
+            .collect::<Vec<_>>();
         if regions_have_gap(ranges, &result, 0) {
             return Err(RegionRouteError::BatchScanGap);
         }
@@ -227,6 +220,41 @@ impl<L> RegionCache<L> {
             state.mark(CacheReloadState::ExpireAfterTtl);
             true
         })
+    }
+
+    /// Defers this exact entry's reload until one cache-maintenance scan has
+    /// observed it, matching client-go's delayed split-reload state machine.
+    pub fn mark_delayed_reload(&mut self, region: RegionVerId) -> bool {
+        self.entry_states.get_mut(&region).is_some_and(|state| {
+            state.mark(CacheReloadState::DelayedReloadPending);
+            true
+        })
+    }
+
+    /// Runs one cache-maintenance scan at the current wall clock.
+    ///
+    /// Expired entries are removed and delayed reloads become visible to the
+    /// next foreground lookup. Scheduling this hook remains the caller's job.
+    pub fn maintain_entries(&mut self) -> usize {
+        self.maintain_entries_at(cache_now_seconds())
+    }
+
+    /// Deterministic-clock form of [`Self::maintain_entries`]. Returns the
+    /// number of delayed reloads released by this scan.
+    pub fn maintain_entries_at(&mut self, now_seconds: u64) -> usize {
+        let mut expired = Vec::new();
+        let mut released = 0;
+        for (region, state) in &mut self.entry_states {
+            if now_seconds > state.expires_at_seconds() {
+                expired.push(*region);
+            } else if state.release_delayed_reload() {
+                released += 1;
+            }
+        }
+        for region in expired {
+            self.remove_cached_region(region);
+        }
+        released
     }
 
     pub(super) fn validate_attempt(
@@ -528,6 +556,11 @@ impl<L> RegionCache<L> {
                 region: pending.region,
                 peer_id: pending.peer_id,
             });
+        }
+        if selector.policy.mode != ReplicaReadMode::Leader
+            && self.region_has_stale_candidate_store(selector.region)
+        {
+            self.mark_delayed_reload(selector.region);
         }
         let Some(location) = self
             .regions
@@ -874,6 +907,22 @@ impl<L> RegionCache<L> {
         Ok(true)
     }
 
+    fn region_has_stale_candidate_store(&self, region: RegionVerId) -> bool {
+        self.regions
+            .iter()
+            .find(|location| location.region == region)
+            .is_some_and(|location| {
+                location.peers.iter().any(|peer| {
+                    self.stores.get(&peer.store_id).is_some_and(|store| {
+                        peer.store_epoch != store.epoch
+                            && ((store.liveness == StoreLiveness::Reachable
+                                && store.resolve_state == StoreResolveState::Resolved)
+                                || location.leader_peer_id == Some(peer.id))
+                    })
+                })
+            })
+    }
+
     pub(super) fn update_leader(
         &mut self,
         region: RegionVerId,
@@ -974,13 +1023,15 @@ impl<L> RegionCache<L> {
             }
         }
         let mut next = self.regions.clone();
+        let mut inheritance_regions = self.regions.clone();
         let mut next_stores = self.stores.clone();
         let mut next_states = self.entry_states.clone();
         next.retain(|location| location.region != observed);
         next_states.remove(&observed);
         let now_seconds = cache_now_seconds();
         for mut replacement in replacements {
-            preserve_newer_buckets(&self.regions, &mut replacement);
+            preserve_newer_buckets(&inheritance_regions, &mut replacement);
+            insert_loaded_into(&mut inheritance_regions, replacement.clone())?;
             let labels = labels_for_location(&self.loader, &replacement);
             normalize_loaded(&mut next_stores, &mut replacement, &labels);
             let region = replacement.region;
@@ -1064,8 +1115,6 @@ impl<L> RegionCache<L> {
                 }
                 return Ok(&self.regions[index]);
             }
-            self.regions.remove(index);
-            self.entry_states.remove(&region);
             self.preferred_proxies.remove(&region);
         }
         let loaded = self
@@ -1168,6 +1217,55 @@ impl<L> RegionCache<L> {
             .ok()
     }
 
+    fn refresh_traversed_entries(
+        &mut self,
+        ranges: &[KeyRange],
+        now_seconds: u64,
+    ) -> Result<BTreeSet<RegionVerId>, RegionRouteError> {
+        let mut unavailable = BTreeSet::new();
+        for range in ranges {
+            let mut cursor = range.start.clone();
+            loop {
+                let Some(index) = self.find_key(&cursor) else {
+                    break;
+                };
+                let region = self.regions[index].region;
+                if unavailable.contains(&region) {
+                    break;
+                }
+                let next_expiry = self.next_expiry_at(now_seconds, region);
+                let valid = self.entry_states.get_mut(&region).is_some_and(|state| {
+                    state.check_and_renew(now_seconds, self.base_ttl_seconds, next_expiry)
+                });
+                if !valid {
+                    unavailable.insert(region);
+                    break;
+                }
+
+                let region_end = self.regions[index].end_key.clone();
+                let covered = if range.end.is_empty() {
+                    region_end.is_empty()
+                } else {
+                    region_end.is_empty() || region_end >= range.end
+                };
+                if covered {
+                    break;
+                }
+                if region_end.is_empty() || region_end <= cursor {
+                    return Err(RegionRouteError::NonProgressingRegion { region });
+                }
+                cursor = region_end;
+            }
+        }
+        Ok(unavailable)
+    }
+
+    fn remove_cached_region(&mut self, region: RegionVerId) {
+        self.regions.retain(|cached| cached.region != region);
+        self.entry_states.remove(&region);
+        self.preferred_proxies.remove(&region);
+    }
+
     fn insert_loaded(&mut self, loaded: RegionLocation) -> Result<usize, RegionRouteError>
     where
         L: RegionLoader,
@@ -1233,7 +1331,7 @@ fn cache_now_seconds() -> u64 {
 fn preserve_newer_buckets(cached: &[RegionLocation], loaded: &mut RegionLocation) {
     let Some(current) = cached
         .iter()
-        .find(|current| current.region.id == loaded.region.id)
+        .find(|current| ranges_intersect(current, loaded))
     else {
         return;
     };
@@ -1247,12 +1345,15 @@ fn preserve_newer_buckets(cached: &[RegionLocation], loaded: &mut RegionLocation
 fn cache_misses(
     cached: &[RegionLocation],
     ranges: &[KeyRange],
+    unavailable: &BTreeSet<RegionVerId>,
 ) -> Result<Vec<KeyRange>, RegionRouteError> {
     let mut misses = Vec::new();
     for range in ranges {
         let mut cursor = range.start.clone();
         loop {
-            let current = cached.iter().find(|region| region.contains_key(&cursor));
+            let current = cached.iter().find(|region| {
+                !unavailable.contains(&region.region) && region.contains_key(&cursor)
+            });
             let Some(current) = current else {
                 misses.push(KeyRange::new(cursor, range.end.clone()));
                 break;

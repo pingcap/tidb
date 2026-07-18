@@ -15,7 +15,12 @@
 //! Direct transition of client-go `TestBuckets`, `TestLocateBucket`, and all
 //! `TestBucketClampingToRegion` table rows.
 
-use tidb_txnkv::region::{Bucket, BucketMetadata, RegionEpoch, RegionLocation, RegionVerId};
+use std::collections::VecDeque;
+
+use tidb_txnkv::region::{
+    Bucket, BucketMetadata, RegionCache, RegionEpoch, RegionLoadError, RegionLoader,
+    RegionLocation, RegionVerId,
+};
 
 fn location(start: &str, end: &str, keys: &[&str]) -> RegionLocation {
     RegionLocation {
@@ -203,5 +208,121 @@ fn bucket_clamping_ports_every_original_table_shape() {
             .expect("probe belongs to region");
         assert_eq!(actual.start_key, case.expected_start.as_bytes());
         assert_eq!(actual.end_key, case.expected_end.as_bytes());
+    }
+}
+
+struct ScriptedLoader {
+    regions: VecDeque<RegionLocation>,
+}
+
+impl RegionLoader for ScriptedLoader {
+    fn cluster_id(&self) -> u64 {
+        42
+    }
+
+    fn load_region(&mut self, _key: &[u8]) -> Result<RegionLocation, RegionLoadError> {
+        self.regions.pop_front().ok_or_else(|| {
+            RegionLoadError::new("missing-scripted-region", "test loader was exhausted")
+        })
+    }
+}
+
+#[test]
+fn cache_insertion_and_epoch_refresh_retain_only_newer_bucket_versions() {
+    let mut cache = RegionCache::with_ttl(
+        ScriptedLoader {
+            regions: VecDeque::from([
+                location_with_buckets(7, 1, "", "", Some((9, &["", "a", "b", ""]))),
+                location_with_buckets(7, 2, "", "", None),
+                location_with_buckets(7, 3, "", "", Some((8, &["", "a", "b", ""]))),
+                location_with_buckets(7, 4, "", "", Some((10, &["", "a", ""]))),
+                location_with_buckets(7, 5, "", "", None),
+            ]),
+        },
+        600,
+        0,
+    );
+
+    let mut region = cache.locate_key_at(b"a", 100).unwrap().region;
+    assert_eq!(cache.locate_key_at(b"a", 100).unwrap().bucket_version(), 9);
+    for expected in [9, 9, 10, 10] {
+        assert!(cache.mark_reload_on_access(region));
+        let refreshed = cache.locate_key_at(b"a", 100).unwrap();
+        region = refreshed.region;
+        assert_eq!(refreshed.bucket_version(), expected);
+    }
+    assert_eq!(region.epoch.version, 5);
+}
+
+#[test]
+fn split_child_inherits_buckets_from_intersecting_parent_with_a_new_id() {
+    let mut cache = RegionCache::with_ttl(
+        ScriptedLoader {
+            regions: VecDeque::from([
+                location_with_buckets(1, 1, "a", "z", Some((11, &["a", "m", "z"]))),
+                location_with_buckets(2, 2, "a", "m", None),
+            ]),
+        },
+        600,
+        0,
+    );
+    let parent = cache.locate_key_at(b"b", 100).unwrap().region;
+    assert!(cache.mark_reload_on_access(parent));
+    let child = cache.locate_key_at(b"b", 100).unwrap();
+    assert_eq!(child.region.id, 2);
+    assert_eq!(child.bucket_version(), 11);
+}
+
+#[test]
+fn merge_inherits_buckets_from_first_intersected_cached_region() {
+    let mut cache = RegionCache::with_ttl(
+        ScriptedLoader {
+            regions: VecDeque::from([
+                location_with_buckets(1, 1, "a", "m", Some((7, &["a", "m"]))),
+                location_with_buckets(2, 1, "m", "z", Some((12, &["m", "z"]))),
+                location_with_buckets(3, 2, "a", "z", None),
+            ]),
+        },
+        600,
+        0,
+    );
+    let left = cache.locate_key_at(b"b", 100).unwrap().region;
+    cache.locate_key_at(b"x", 100).unwrap();
+    assert!(cache.mark_reload_on_access(left));
+
+    let merged = cache.locate_key_at(b"b", 100).unwrap();
+    assert_eq!(merged.region.id, 3);
+    assert_eq!(merged.bucket_version(), 7);
+}
+
+fn location_with_buckets(
+    id: u64,
+    version: u64,
+    start: &str,
+    end: &str,
+    buckets: Option<(u64, &[&str])>,
+) -> RegionLocation {
+    RegionLocation {
+        region: RegionVerId {
+            id,
+            epoch: RegionEpoch {
+                conf_ver: version,
+                version,
+            },
+        },
+        start_key: start.as_bytes().to_vec(),
+        end_key: end.as_bytes().to_vec(),
+        peers: Vec::new(),
+        leader_peer_id: None,
+        stores: Vec::new(),
+        buckets: buckets.map(|(bucket_version, keys)| BucketMetadata {
+            region_id: id,
+            version: bucket_version,
+            keys: keys.iter().map(|key| key.as_bytes().to_vec()).collect(),
+            stats: None,
+            period_in_ms: 1_000,
+        }),
+        down_peer_ids: Vec::new(),
+        pending_peer_ids: Vec::new(),
     }
 }

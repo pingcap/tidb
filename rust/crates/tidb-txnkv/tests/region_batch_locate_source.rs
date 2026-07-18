@@ -15,12 +15,13 @@
 //! Direct transition of client-go batch merge, range splitting, limits, and
 //! coverage checks.
 
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use tidb_txnkv::region::{
     merge_loaded_and_cached, ranges_after_key, regions_have_gap, BatchRegionLoader, KeyRange,
-    RegionCache, RegionEpoch, RegionLoadError, RegionLoader, RegionLocation, RegionVerId,
-    DEFAULT_REGIONS_PER_BATCH, MAX_RANGES_PER_BATCH,
+    RegionCache, RegionEpoch, RegionLoadError, RegionLoader, RegionLocation, RegionRouteError,
+    RegionVerId, DEFAULT_REGIONS_PER_BATCH, MAX_RANGES_PER_BATCH,
 };
 
 fn region(id: u64, start: &str, end: &str) -> RegionLocation {
@@ -165,4 +166,295 @@ fn batch_cache_uses_exact_pd_limit_and_need_bucket_flag() {
         2
     );
     assert_eq!(*calls.lock().unwrap(), vec![(2, 128, true)]);
+}
+
+type BatchCall = (Vec<KeyRange>, usize, bool);
+
+struct OrderedLoader {
+    regions: Vec<RegionLocation>,
+    calls: Arc<Mutex<Vec<BatchCall>>>,
+}
+
+impl RegionLoader for OrderedLoader {
+    fn cluster_id(&self) -> u64 {
+        42
+    }
+
+    fn load_region(&mut self, _key: &[u8]) -> Result<RegionLocation, RegionLoadError> {
+        Err(RegionLoadError::new(
+            "unexpected-unary",
+            "batch path required",
+        ))
+    }
+}
+
+impl BatchRegionLoader for OrderedLoader {
+    fn batch_load_regions(
+        &mut self,
+        requested: &[KeyRange],
+        limit: usize,
+        need_buckets: bool,
+    ) -> Result<Vec<RegionLocation>, RegionLoadError> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push((requested.to_vec(), limit, need_buckets));
+        Ok(self
+            .regions
+            .iter()
+            .filter(|region| requested.iter().any(|range| intersects(region, range)))
+            .take(limit)
+            .cloned()
+            .collect())
+    }
+}
+
+#[test]
+fn batch_cache_progresses_after_the_exact_128_region_pd_limit() {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let all_regions = (0..130)
+        .map(|index| binary_region(index + 1, key(index), key(index + 1)))
+        .collect();
+    let mut cache = RegionCache::with_ttl(
+        OrderedLoader {
+            regions: all_regions,
+            calls: Arc::clone(&calls),
+        },
+        600,
+        0,
+    );
+    let requested = [KeyRange::new(key(0), key(130))];
+
+    let located = cache
+        .batch_locate_key_ranges_at(&requested, false, 100)
+        .unwrap();
+    assert_eq!(located.len(), 130);
+    let calls = calls.lock().unwrap();
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[0].0, requested);
+    assert_eq!(calls[0].1, DEFAULT_REGIONS_PER_BATCH);
+    assert_eq!(calls[1].0, [KeyRange::new(key(128), key(130))]);
+    assert_eq!(calls[1].1, DEFAULT_REGIONS_PER_BATCH);
+}
+
+#[test]
+fn batch_cache_caps_each_pd_request_at_2048_ranges() {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let loader = BatchLoader {
+        calls: Arc::clone(&calls),
+    };
+    let mut cache = RegionCache::with_ttl(loader, 600, 0);
+    let requested = (0..(MAX_RANGES_PER_BATCH + 2))
+        .map(|index| {
+            KeyRange::new(
+                format!("{index:05}a").into_bytes(),
+                format!("{index:05}b").into_bytes(),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        cache
+            .batch_locate_key_ranges_at(&requested, false, 100)
+            .unwrap()
+            .len(),
+        requested.len()
+    );
+    assert_eq!(
+        *calls.lock().unwrap(),
+        vec![
+            (MAX_RANGES_PER_BATCH, DEFAULT_REGIONS_PER_BATCH, false),
+            (2, DEFAULT_REGIONS_PER_BATCH, false),
+        ]
+    );
+}
+
+struct ReplyLoader {
+    replies: VecDeque<Vec<RegionLocation>>,
+    calls: Arc<Mutex<usize>>,
+}
+
+impl RegionLoader for ReplyLoader {
+    fn cluster_id(&self) -> u64 {
+        42
+    }
+
+    fn load_region(&mut self, _key: &[u8]) -> Result<RegionLocation, RegionLoadError> {
+        Err(RegionLoadError::new(
+            "unexpected-unary",
+            "batch path required",
+        ))
+    }
+}
+
+impl BatchRegionLoader for ReplyLoader {
+    fn batch_load_regions(
+        &mut self,
+        _requested: &[KeyRange],
+        _limit: usize,
+        _need_buckets: bool,
+    ) -> Result<Vec<RegionLocation>, RegionLoadError> {
+        *self.calls.lock().unwrap() += 1;
+        self.replies.pop_front().ok_or_else(|| {
+            RegionLoadError::new("missing-scripted-batch", "test loader was exhausted")
+        })
+    }
+}
+
+#[test]
+fn batch_cache_rejects_a_pd_reply_with_a_coverage_hole() {
+    let mut cache = RegionCache::with_ttl(
+        ReplyLoader {
+            replies: VecDeque::from([vec![region(1, "a", "b"), region(2, "c", "d")]]),
+            calls: Arc::new(Mutex::new(0)),
+        },
+        600,
+        0,
+    );
+    let error = cache
+        .batch_locate_key_ranges_at(&ranges(&[("a", "d")]), false, 100)
+        .unwrap_err();
+    assert_eq!(error, RegionRouteError::BatchScanGap);
+}
+
+#[test]
+fn overlapping_cached_and_loaded_regions_progress_to_complete_coverage() {
+    let calls = Arc::new(Mutex::new(0));
+    let mut cache = RegionCache::with_ttl(
+        ReplyLoader {
+            replies: VecDeque::from([
+                vec![region(1, "a", "c")],
+                vec![region(2, "b", "d")],
+                vec![region(3, "d", "e")],
+            ]),
+            calls: Arc::clone(&calls),
+        },
+        600,
+        0,
+    );
+    assert_eq!(
+        cache
+            .batch_locate_key_ranges_at(&ranges(&[("a", "c")]), false, 100)
+            .unwrap()
+            .len(),
+        1
+    );
+
+    let located = cache
+        .batch_locate_key_ranges_at(&ranges(&[("b", "e")]), false, 100)
+        .unwrap();
+    assert_eq!(
+        located
+            .iter()
+            .map(|region| (region.start_key.clone(), region.end_key.clone()))
+            .collect::<Vec<_>>(),
+        vec![
+            (b"b".to_vec(), b"d".to_vec()),
+            (b"d".to_vec(), b"e".to_vec()),
+        ]
+    );
+    assert_eq!(*calls.lock().unwrap(), 3);
+}
+
+#[test]
+fn merger_ports_the_original_overlap_and_hole_table() {
+    let cases = [
+        (
+            vec![("b", "c"), ("c", "d")],
+            vec![("a", "b")],
+            vec![("a", "b"), ("b", "c"), ("c", "d")],
+        ),
+        (
+            vec![("a", "b"), ("c", "d")],
+            vec![("b", "c")],
+            vec![("a", "b"), ("b", "c"), ("c", "d")],
+        ),
+        (vec![("", "")], vec![("a", "b"), ("b", "c")], vec![("", "")]),
+        (
+            vec![("b", "")],
+            vec![("a", "b"), ("c", "d")],
+            vec![("a", "b"), ("b", "")],
+        ),
+        (
+            vec![("b", "e")],
+            vec![("a", "b"), ("c", "d")],
+            vec![("a", "b"), ("b", "e")],
+        ),
+        (
+            vec![("b", "d")],
+            vec![("a", "b"), ("c", "e")],
+            vec![("a", "b"), ("b", "d"), ("c", "e")],
+        ),
+        (
+            vec![("b", "d"), ("d", "e"), ("f", "h")],
+            vec![("a", "b"), ("c", "g")],
+            vec![("a", "b"), ("b", "d"), ("d", "e"), ("c", "g"), ("f", "h")],
+        ),
+    ];
+    for (fresh, cached, expected) in cases {
+        let expected = expected
+            .into_iter()
+            .map(|(start, end)| (start.to_owned(), end.to_owned()))
+            .collect::<Vec<_>>();
+        let fresh = fresh
+            .into_iter()
+            .enumerate()
+            .map(|(index, (start, end))| region(10_000 + index as u64, start, end))
+            .collect::<Vec<_>>();
+        let cached = cached
+            .into_iter()
+            .enumerate()
+            .map(|(index, (start, end))| region(20_000 + index as u64, start, end))
+            .collect::<Vec<_>>();
+        let actual = merge_loaded_and_cached(&cached, &fresh)
+            .into_iter()
+            .map(|region| {
+                (
+                    String::from_utf8(region.start_key).unwrap(),
+                    String::from_utf8(region.end_key).unwrap(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(actual, expected);
+    }
+}
+
+#[test]
+fn cache_accepts_loader_owned_legacy_scan_fallback_results() {
+    let calls = Arc::new(Mutex::new(0));
+    let mut cache = RegionCache::with_ttl(
+        ReplyLoader {
+            // The BatchRegionLoader boundary owns the exact-Unimplemented
+            // fallback; this reply is the ordered legacy ScanRegions result.
+            replies: VecDeque::from([vec![region(1, "a", "b"), region(2, "b", "d")]]),
+            calls: Arc::clone(&calls),
+        },
+        600,
+        0,
+    );
+    assert_eq!(
+        cache
+            .batch_locate_key_ranges_at(&ranges(&[("a", "d")]), true, 100)
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(*calls.lock().unwrap(), 1);
+}
+
+fn key(value: u64) -> Vec<u8> {
+    value.to_be_bytes().to_vec()
+}
+
+fn binary_region(id: u64, start: Vec<u8>, end: Vec<u8>) -> RegionLocation {
+    let mut location = region(id, "", "");
+    location.start_key = start;
+    location.end_key = end;
+    location
+}
+
+fn intersects(region: &RegionLocation, range: &KeyRange) -> bool {
+    let region_before = !region.end_key.is_empty() && region.end_key <= range.start;
+    let range_before = !range.end.is_empty() && range.end <= region.start_key;
+    !region_before && !range_before
 }
