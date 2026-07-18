@@ -14,6 +14,7 @@ TAG_DIR="${TIUP_HOME:-${HOME}/.tiup}/data/${TAG}"
 PLAYGROUND_LOG="${TMPDIR:-/tmp}/${TAG}-playground.log"
 RUST_LOG="${TMPDIR:-/tmp}/${TAG}-rust.log"
 TIDB_SERVER=${C13_TIDB_SERVER:-}
+MYSQL_CLIENT=${C13_MYSQL_CLIENT:-mysql}
 READINESS_ATTEMPTS=240
 PLAYGROUND_PID=
 STORE_ADDRESSES=
@@ -103,6 +104,10 @@ if [[ -z "${TIDB_SERVER}" ]] || [[ ! -x "${TIDB_SERVER}" ]]; then
   echo "C13_TIDB_SERVER must name an executable failpoint-enabled tidb-server" >&2
   exit 1
 fi
+if ! command -v "${MYSQL_CLIENT}" >/dev/null 2>&1; then
+  echo "C13_MYSQL_CLIENT must name an executable MySQL client" >&2
+  exit 1
+fi
 if nc -z -w 1 127.0.0.1 "${PD_PORT}" >/dev/null 2>&1 \
   || nc -z -w 1 127.0.0.1 "${DB_PORT}" >/dev/null 2>&1 \
   || nc -z -w 1 127.0.0.1 "${KV_PORT}" >/dev/null 2>&1; then
@@ -127,7 +132,7 @@ for _ in $(seq 1 "${READINESS_ATTEMPTS}"); do
     | jq -r '.stores[] | select(.store.state_name == "Up" and ((.store.node_state_name // "Serving") == "Serving")) | .store.address' \
       2>/dev/null) || true
   if [[ -n "${STORE_ADDRESSES}" ]] \
-    && mysql --protocol=tcp -h 127.0.0.1 -P "${DB_PORT}" -uroot -Nse 'select 1' \
+    && "${MYSQL_CLIENT}" --protocol=tcp -h 127.0.0.1 -P "${DB_PORT}" -uroot -Nse 'select 1' \
       >/dev/null 2>&1; then
     ready=true
     break
@@ -144,7 +149,7 @@ if [[ -z "$(tag_owned_pids)" ]]; then
   exit 1
 fi
 
-mysql --protocol=tcp -h 127.0.0.1 -P "${DB_PORT}" -uroot <<'SQL'
+"${MYSQL_CLIENT}" --protocol=tcp -h 127.0.0.1 -P "${DB_PORT}" -uroot <<'SQL'
 DROP DATABASE IF EXISTS campaign13_lock;
 CREATE DATABASE campaign13_lock;
 USE campaign13_lock;
@@ -172,10 +177,10 @@ fi
 
 export C13_PD_ADDR="${PD_ADDR}"
 export C13_LOCK_TABLE_ID
-C13_LOCK_TABLE_ID=$(mysql --protocol=tcp -h 127.0.0.1 -P "${DB_PORT}" -uroot -Nse \
+C13_LOCK_TABLE_ID=$("${MYSQL_CLIENT}" --protocol=tcp -h 127.0.0.1 -P "${DB_PORT}" -uroot -Nse \
   "select tidb_table_id from information_schema.tables where table_schema='campaign13_lock' and table_name='locked_secondary'")
 export C13_CURRENT_TS
-C13_CURRENT_TS=$(mysql --protocol=tcp -h 127.0.0.1 -P "${DB_PORT}" -uroot -Nse \
+C13_CURRENT_TS=$("${MYSQL_CLIENT}" --protocol=tcp -h 127.0.0.1 -P "${DB_PORT}" -uroot -Nse \
   'begin; select @@tidb_current_ts; rollback')
 if [[ ! "${C13_LOCK_TABLE_ID}" =~ ^[0-9]+$ ]] || [[ ! "${C13_CURRENT_TS}" =~ ^[0-9]+$ ]]; then
   echo "fixture failed: invalid table ID or current TSO" >&2
