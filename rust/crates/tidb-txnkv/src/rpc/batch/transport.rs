@@ -290,9 +290,7 @@ impl BatchTransportState {
 
         if send_error.is_some() {
             self.reconnect_budget.remove(&key);
-            if self.remove_stream_if_current(&key, &route) {
-                let _ = self.recreate_stream(channels, runtime, key, commands).await;
-            }
+            self.remove_stream_if_current(&key, &route);
         } else {
             self.reconnect_budget.insert(key);
         }
@@ -320,10 +318,8 @@ impl BatchTransportState {
     ) {
         let BatchStreamEvent::Retired { route } = event;
         let key = StreamKey::new(route.physical_address(), route.forwarded_host());
-        if self.remove_stream_if_current(&key, &route) {
-            if self.reconnect_budget.remove(&key) {
-                let _ = self.recreate_stream(channels, runtime, key, commands).await;
-            }
+        if self.remove_stream_if_current(&key, &route) && self.reconnect_budget.remove(&key) {
+            let _ = self.recreate_stream(channels, runtime, key, commands).await;
         }
     }
 
@@ -444,7 +440,7 @@ async fn open_stream(
             match inbound.message().await {
                 Ok(Some(response)) => match BatchWireResponse::try_from(response) {
                     Ok(response) => {
-                        inflight
+                        let _ = inflight
                             .lock()
                             .unwrap_or_else(|poisoned| poisoned.into_inner())
                             .receive(&receive_route, response);
