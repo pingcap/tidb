@@ -18,9 +18,10 @@ use tidb_proto::{errorpb, metapb};
 
 use crate::retry::{RegionBackoffBudget, RegionBackoffKind};
 
+use super::cache::StoreLabels;
 use super::{
-    BucketMetadata, PeerRole, RegionCache, RegionLoadError, RegionMetadata, RegionMetadataPeer,
-    RegionRecoveryLoader, RegionRouteError, RegionVerId, SelectorRecovery,
+    BucketMetadata, PeerRole, RegionCache, RegionLoadError, RegionLocation, RegionMetadata,
+    RegionMetadataPeer, RegionRecoveryLoader, RegionRouteError, RegionVerId, SelectorRecovery,
 };
 
 /// Exact route observation attached to one failed TiKV request.
@@ -228,6 +229,18 @@ impl From<RegionRouteError> for RegionRecoveryError {
     }
 }
 
+pub(super) enum RegionErrorRecoveryPlan {
+    Complete(RegionErrorDisposition),
+    HydrateEpochNotMatch(EpochNotMatchRecoveryPlan),
+}
+
+pub(super) struct EpochNotMatchRecoveryPlan {
+    pub(super) attempt: RegionAttempt,
+    pub(super) observed_location: RegionLocation,
+    pub(super) observed_topology_revision: u64,
+    pub(super) metadata: Vec<RegionMetadata>,
+}
+
 impl<L: RegionRecoveryLoader> RegionCache<L> {
     /// Applies one pinned region error to the sole topology authority.
     ///
@@ -240,6 +253,39 @@ impl<L: RegionRecoveryLoader> RegionCache<L> {
         error: &errorpb::Error,
         attempt: RegionAttempt,
         backoff: &mut RegionBackoffBudget,
+    ) -> Result<RegionErrorDisposition, RegionRecoveryError> {
+        match self.plan_region_error(error, attempt, backoff)? {
+            RegionErrorRecoveryPlan::Complete(disposition) => Ok(disposition),
+            RegionErrorRecoveryPlan::HydrateEpochNotMatch(plan) => {
+                let replacements = self
+                    .loader_handle()
+                    .hydrate_regions(&plan.metadata, plan.attempt.store_id)?;
+                self.publish_epoch_not_match(plan, replacements)
+            }
+        }
+    }
+
+    pub(super) fn plan_region_error(
+        &mut self,
+        error: &errorpb::Error,
+        attempt: RegionAttempt,
+        backoff: &mut RegionBackoffBudget,
+    ) -> Result<RegionErrorRecoveryPlan, RegionRecoveryError> {
+        let mut epoch_not_match = None;
+        let disposition =
+            self.on_region_error_inner(error, attempt, backoff, &mut epoch_not_match)?;
+        Ok(match epoch_not_match {
+            Some(plan) => RegionErrorRecoveryPlan::HydrateEpochNotMatch(plan),
+            None => RegionErrorRecoveryPlan::Complete(disposition),
+        })
+    }
+
+    fn on_region_error_inner(
+        &mut self,
+        error: &errorpb::Error,
+        attempt: RegionAttempt,
+        backoff: &mut RegionBackoffBudget,
+        epoch_not_match: &mut Option<EpochNotMatchRecoveryPlan>,
     ) -> Result<RegionErrorDisposition, RegionRecoveryError> {
         self.validate_attempt(&attempt)?;
 
@@ -296,7 +342,7 @@ impl<L: RegionRecoveryLoader> RegionCache<L> {
             });
         }
         if let Some(epoch) = &error.epoch_not_match {
-            return self.on_epoch_not_match(epoch, attempt, backoff);
+            return self.on_epoch_not_match(epoch, attempt, backoff, epoch_not_match);
         }
         if let Some(mismatch) = &error.bucket_version_not_match {
             self.publish_bucket_version_not_match(attempt.region, mismatch);
@@ -439,6 +485,7 @@ impl<L: RegionRecoveryLoader> RegionCache<L> {
         mismatch: &errorpb::EpochNotMatch,
         attempt: RegionAttempt,
         backoff: &mut RegionBackoffBudget,
+        recovery_plan: &mut Option<EpochNotMatchRecoveryPlan>,
     ) -> Result<RegionErrorDisposition, RegionRecoveryError> {
         if mismatch.current_regions.is_empty() {
             self.invalidate(attempt.region);
@@ -458,21 +505,45 @@ impl<L: RegionRecoveryLoader> RegionCache<L> {
             return self.retry_same_route(attempt, backoff, RegionBackoffKind::RegionMiss);
         }
 
-        let mut replacements = Vec::with_capacity(mismatch.current_regions.len());
+        let observed_location = self
+            .regions
+            .iter()
+            .find(|location| location.region == attempt.region)
+            .expect("the region attempt was validated before EpochNotMatch planning")
+            .clone();
+        let mut metadata = Vec::with_capacity(mismatch.current_regions.len());
         for current in &mismatch.current_regions {
-            let metadata = region_metadata(current)?;
-            let hydrated = self
-                .with_loader(|loader| loader.hydrate_region(&metadata, attempt.store_id))
-                .map_err(RegionRecoveryError::Loader)?;
-            if hydrated.region != metadata.region {
-                return Err(RegionRecoveryError::HydratedRegionMismatch {
-                    expected: metadata.region,
-                    actual: hydrated.region,
-                });
-            }
-            replacements.push(hydrated);
+            metadata.push(region_metadata(current)?);
         }
-        self.replace_regions_atomically(attempt.region, replacements)?;
+        *recovery_plan = Some(EpochNotMatchRecoveryPlan {
+            attempt,
+            observed_location,
+            observed_topology_revision: self.topology_revision(),
+            metadata,
+        });
+        Ok(RegionErrorDisposition::RebuildRanges {
+            delay: Duration::ZERO,
+            action: RegionRebuildAction::CacheReady,
+        })
+    }
+
+    pub(super) fn publish_epoch_not_match(
+        &mut self,
+        plan: EpochNotMatchRecoveryPlan,
+        replacements: Vec<(RegionLocation, StoreLabels)>,
+    ) -> Result<RegionErrorDisposition, RegionRecoveryError> {
+        let location_is_current = self
+            .regions
+            .iter()
+            .any(|location| location == &plan.observed_location);
+        if !location_is_current || self.topology_revision() != plan.observed_topology_revision {
+            return Ok(RegionErrorDisposition::RebuildRanges {
+                delay: Duration::ZERO,
+                action: RegionRebuildAction::CacheReady,
+            });
+        }
+        self.validate_attempt(&plan.attempt)?;
+        self.replace_regions_atomically(plan.attempt.region, replacements)?;
         Ok(RegionErrorDisposition::RebuildRanges {
             delay: Duration::ZERO,
             action: RegionRebuildAction::CacheReady,

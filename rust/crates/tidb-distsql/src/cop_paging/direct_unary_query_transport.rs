@@ -1373,10 +1373,11 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                 .region_backoffs
                 .entry(region_id)
                 .or_insert_with(|| RegionBackoffBudget::new(region_retry_max_sleep));
-            cache_operation(&self.shared_runtime, |region_cache| {
-                region_cache.on_region_error(&region_error, observed_attempt, budget)
-            })?
-            .map_err(|error| DirectUnaryTransportError::RegionRecovery(error.to_string()))?
+            self.shared_runtime
+                .region_cache_handle()
+                .on_region_error(&region_error, observed_attempt, budget)
+                .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle)?
+                .map_err(|error| DirectUnaryTransportError::RegionRecovery(error.to_string()))?
         };
 
         match disposition {

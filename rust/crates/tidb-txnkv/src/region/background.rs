@@ -20,9 +20,11 @@ use std::time::Duration;
 use super::cache::{
     RegionLookupApplication, RegionLookupSelection, SharedRegionLoader, StoreRefreshApplication,
 };
+use super::recovery::RegionErrorRecoveryPlan;
 use super::{
-    KeyRange, RegionCache, RegionGcRound, RegionLoader, RegionLocation, RegionQueryLoader,
-    RegionRouteError, RegionVerId, StoreMaintenanceRound,
+    KeyRange, RegionAttempt, RegionBackoffBudget, RegionCache, RegionErrorDisposition,
+    RegionGcRound, RegionLoader, RegionLocation, RegionQueryLoader, RegionRecoveryError,
+    RegionRecoveryLoader, RegionRouteError, RegionVerId, StoreMaintenanceRound,
 };
 
 /// One complete pass performed by the single maintenance driver.
@@ -366,6 +368,49 @@ impl<L> BackgroundRegionCache<L> {
             .lock()
             .map(|state| state.closed)
             .map_err(|_| BackgroundRegionCacheError::DriverPoisoned)
+    }
+}
+
+impl<L: RegionRecoveryLoader> BackgroundRegionCache<L> {
+    /// Applies one region error while keeping EpochNotMatch store hydration
+    /// outside the canonical cache lock.
+    pub fn on_region_error(
+        &self,
+        error: &tidb_proto::errorpb::Error,
+        attempt: RegionAttempt,
+        backoff: &mut RegionBackoffBudget,
+    ) -> Result<Result<RegionErrorDisposition, RegionRecoveryError>, BackgroundRegionCacheError>
+    {
+        let recovery = {
+            let mut cache = self
+                .inner
+                .cache
+                .lock()
+                .map_err(|_| BackgroundRegionCacheError::CachePoisoned)?;
+            cache.plan_region_error(error, attempt, backoff)
+        };
+        let recovery = match recovery {
+            Ok(recovery) => recovery,
+            Err(error) => return Ok(Err(error)),
+        };
+        let plan = match recovery {
+            RegionErrorRecoveryPlan::Complete(disposition) => return Ok(Ok(disposition)),
+            RegionErrorRecoveryPlan::HydrateEpochNotMatch(plan) => plan,
+        };
+        let replacements = match self
+            .inner
+            .loader
+            .hydrate_regions(&plan.metadata, plan.attempt.store_id)
+        {
+            Ok(replacements) => replacements,
+            Err(error) => return Ok(Err(error)),
+        };
+        let mut cache = self
+            .inner
+            .cache
+            .lock()
+            .map_err(|_| BackgroundRegionCacheError::CachePoisoned)?;
+        Ok(cache.publish_epoch_not_match(plan, replacements))
     }
 }
 

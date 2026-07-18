@@ -22,8 +22,8 @@ use std::time::Duration;
 use tidb_proto::{errorpb, metapb};
 use tidb_txnkv::region::{
     BackgroundRegionCache, KeyRange, Peer, PeerRole, RegionAttempt, RegionBackoffBudget,
-    RegionCache, RegionLoadError, RegionLoader, RegionLocation, RegionMetadata,
-    RegionRecoveryLoader, RegionVerId, Store,
+    RegionCache, RegionErrorDisposition, RegionLoadError, RegionLoader, RegionLocation,
+    RegionMetadata, RegionRecoveryLoader, RegionVerId, Store,
 };
 
 struct BlockingLoader {
@@ -183,6 +183,158 @@ fn blocked_region_load_allows_foreground_update_and_cannot_overwrite_it() {
         current,
         "the stale leader reply must be discarded before current publication"
     );
+    background.shutdown().unwrap();
+}
+
+struct BlockingHydrationLoader {
+    initial: Option<RegionLocation>,
+    replacement: Option<RegionLocation>,
+    started: mpsc::Sender<()>,
+    release: Arc<(Mutex<bool>, Condvar)>,
+}
+
+impl RegionLoader for BlockingHydrationLoader {
+    fn cluster_id(&self) -> u64 {
+        42
+    }
+
+    fn load_region(&mut self, _key: &[u8]) -> Result<RegionLocation, RegionLoadError> {
+        self.initial
+            .take()
+            .ok_or_else(|| RegionLoadError::new("missing-region", "initial region was consumed"))
+    }
+}
+
+impl RegionRecoveryLoader for BlockingHydrationLoader {
+    fn hydrate_region(
+        &mut self,
+        metadata: &RegionMetadata,
+        leader_store_id: u64,
+    ) -> Result<RegionLocation, RegionLoadError> {
+        let replacement = self.replacement.take().ok_or_else(|| {
+            RegionLoadError::new("missing-hydration", "replacement region was consumed")
+        })?;
+        assert_eq!(metadata.region, replacement.region);
+        assert_eq!(leader_store_id, 101);
+        self.started.send(()).unwrap();
+        let (released, wake) = &*self.release;
+        let mut released = released.lock().unwrap();
+        while !*released {
+            released = wake.wait(released).unwrap();
+        }
+        Ok(replacement)
+    }
+}
+
+#[test]
+fn blocked_epoch_hydration_allows_topology_update_and_discards_stale_replacement() {
+    let initial = location(11);
+    let mut replacement = location(11);
+    replacement.region = RegionVerId::new(8, 2, 2);
+    let (started_tx, started_rx) = mpsc::channel();
+    let release = Arc::new((Mutex::new(false), Condvar::new()));
+    let mut cache = RegionCache::new(BlockingHydrationLoader {
+        initial: Some(initial),
+        replacement: Some(replacement),
+        started: started_tx,
+        release: Arc::clone(&release),
+    });
+    let region = cache.locate_key(b"k").unwrap().region;
+    let background = BackgroundRegionCache::start_gc(cache, Duration::from_secs(3600), 50).unwrap();
+
+    let recovery = background.clone();
+    let recovery_thread = thread::spawn(move || {
+        recovery
+            .on_region_error(
+                &errorpb::Error {
+                    epoch_not_match: Some(errorpb::EpochNotMatch {
+                        current_regions: vec![metapb::Region {
+                            id: 8,
+                            region_epoch: Some(metapb::RegionEpoch {
+                                conf_ver: 2,
+                                version: 2,
+                            }),
+                            peers: vec![
+                                metapb::Peer {
+                                    id: 11,
+                                    store_id: 101,
+                                    role: 0,
+                                    is_witness: false,
+                                },
+                                metapb::Peer {
+                                    id: 12,
+                                    store_id: 102,
+                                    role: 0,
+                                    is_witness: false,
+                                },
+                            ],
+                            ..metapb::Region::default()
+                        }],
+                    }),
+                    ..errorpb::Error::default()
+                },
+                RegionAttempt {
+                    region,
+                    peer_id: 11,
+                    store_id: 101,
+                    address: "tikv-101".to_owned(),
+                    store_epoch: 7,
+                },
+                &mut RegionBackoffBudget::campaign_default(),
+            )
+            .unwrap()
+            .unwrap()
+    });
+    started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+
+    let foreground = background.clone();
+    let (access_tx, access_rx) = mpsc::channel();
+    let foreground_thread = thread::spawn(move || {
+        let disposition = foreground
+            .with_cache(|cache| {
+                cache.on_region_error(
+                    &errorpb::Error {
+                        not_leader: Some(errorpb::NotLeader {
+                            region_id: 7,
+                            leader: Some(metapb::Peer {
+                                id: 12,
+                                store_id: 102,
+                                role: 0,
+                                is_witness: false,
+                            }),
+                        }),
+                        ..errorpb::Error::default()
+                    },
+                    RegionAttempt {
+                        region,
+                        peer_id: 11,
+                        store_id: 101,
+                        address: "tikv-101".to_owned(),
+                        store_epoch: 7,
+                    },
+                    &mut RegionBackoffBudget::campaign_default(),
+                )
+            })
+            .unwrap()
+            .unwrap();
+        access_tx.send(disposition).unwrap();
+    });
+    let access = access_rx.recv_timeout(Duration::from_millis(100));
+    {
+        let (released, wake) = &*release;
+        *released.lock().unwrap() = true;
+        wake.notify_one();
+    }
+    access.expect("topology update must not wait for EpochNotMatch store hydration");
+    foreground_thread.join().unwrap();
+
+    assert!(matches!(
+        recovery_thread.join().unwrap(),
+        RegionErrorDisposition::RebuildRanges { .. }
+    ));
+    let current = background.locate_key(b"k").unwrap().unwrap();
+    assert_eq!(current.region, region);
+    assert_eq!(current.leader_peer_id, Some(12));
     background.shutdown().unwrap();
 }
 
