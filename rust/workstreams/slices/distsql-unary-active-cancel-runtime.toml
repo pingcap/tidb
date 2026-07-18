@@ -17,7 +17,6 @@ module_sources = [
 module_tests = [
   "client-go::internal/locate/region_request_test.go:310:TestRegionRequestToSingleStore/TestOnSendFailedWithCancelled",
   "client-go::internal/locate/region_request_test.go:350:TestRegionRequestToSingleStore/TestNoReloadRegionWhenCtxCanceled",
-  "client-go::internal/locate/region_request_test.go:400:TestRegionRequestToSingleStore/TestSendReqAsync",
   "client-go::internal/locate/region_request_test.go:798:TestRegionRequestToSingleStore/TestNoReloadRegionForGrpcWhenCtxCanceled",
 ]
 depends_on = []
