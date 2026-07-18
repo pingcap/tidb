@@ -277,7 +277,7 @@ impl<L> BackgroundRegionCache<L> {
                 cache.publish_region_lookup(loaded)
             };
             match publication {
-                Ok(RegionLookupApplication::Published(location)) => return Ok(Ok(location)),
+                Ok(RegionLookupApplication::Published(location)) => return Ok(Ok(*location)),
                 Ok(RegionLookupApplication::Retry) => {}
                 Err(error) => return Ok(Err(error)),
             }

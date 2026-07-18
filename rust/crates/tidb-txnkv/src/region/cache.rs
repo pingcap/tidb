@@ -223,9 +223,12 @@ pub(super) struct RegionLookupPlan {
     observed_store_revision: u64,
 }
 
+type StoreLabels = BTreeMap<u64, Vec<(String, String)>>;
+type LoadedRegion = Result<(RegionLocation, StoreLabels), RegionLoadError>;
+
 pub(super) struct RegionLookupResult {
     plan: RegionLookupPlan,
-    loaded: Result<(RegionLocation, BTreeMap<u64, Vec<(String, String)>>), RegionLoadError>,
+    loaded: LoadedRegion,
 }
 
 pub(super) enum RegionLookupSelection {
@@ -234,7 +237,7 @@ pub(super) enum RegionLookupSelection {
 }
 
 pub(super) enum RegionLookupApplication {
-    Published(RegionLocation),
+    Published(Box<RegionLocation>),
     Retry,
 }
 
@@ -782,7 +785,7 @@ impl<L> RegionCache<L> {
         let RegionLookupResult { plan, loaded } = result;
         match self.select_region_lookup(&plan.key, plan.require_exact_start)? {
             RegionLookupSelection::Hit(location) => {
-                return Ok(RegionLookupApplication::Published(location));
+                return Ok(RegionLookupApplication::Published(Box::new(location)));
             }
             RegionLookupSelection::Load(current)
                 if current.observed_location != plan.observed_location
@@ -811,9 +814,9 @@ impl<L> RegionCache<L> {
         }
 
         let index = self.insert_loaded_with_labels_at(loaded, labels, cache_now_seconds())?;
-        Ok(RegionLookupApplication::Published(
+        Ok(RegionLookupApplication::Published(Box::new(
             self.regions[index].clone(),
-        ))
+        )))
     }
 
     /// Invalidates only the exact versioned region identity.
@@ -2123,7 +2126,7 @@ impl<L> RegionCache<L> {
     fn insert_loaded_with_labels_at(
         &mut self,
         mut loaded: RegionLocation,
-        labels: BTreeMap<u64, Vec<(String, String)>>,
+        labels: StoreLabels,
         now_seconds: u64,
     ) -> Result<usize, RegionRouteError> {
         let mut next_regions = self.regions.clone();
@@ -2282,10 +2285,7 @@ fn request_flags(selector: &RequestSelector, cached_leader: bool) -> (bool, bool
     (false, true)
 }
 
-fn labels_for_location<L: RegionLoader>(
-    loader: &L,
-    loaded: &RegionLocation,
-) -> BTreeMap<u64, Vec<(String, String)>> {
+fn labels_for_location<L: RegionLoader>(loader: &L, loaded: &RegionLocation) -> StoreLabels {
     loaded
         .stores
         .iter()
@@ -2296,7 +2296,7 @@ fn labels_for_location<L: RegionLoader>(
 fn normalize_loaded(
     stores: &mut BTreeMap<u64, RegionStoreTopology>,
     loaded: &mut RegionLocation,
-    labels: &BTreeMap<u64, Vec<(String, String)>>,
+    labels: &StoreLabels,
 ) {
     for supplied in &loaded.stores {
         let supplied_labels = labels.get(&supplied.id).cloned().unwrap_or_default();
