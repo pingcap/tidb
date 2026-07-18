@@ -1,0 +1,3 @@
+# Exact pinned pd-client test evidence for Campaign 17 txnkv-pd-prev-region-wire-runtime.
+# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
+Test	clients/router/client_test.go	58	TestRequestFinisherNoDataRace	PARTIAL	txnkv-pd-prev-region-wire-runtime	rust/crates/tidb-pd-client/tests/pd_client_source.rs	The retained worker gives each request an owned terminal response and keeps successive metadata projections isolated; request pooling, race-detector parity, and router streaming remain external.

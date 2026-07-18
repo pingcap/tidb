@@ -1,3 +1,0 @@
-# client-go source evidence for Campaign 15 PD bucket and batch-region wire.
-# source_path	status	owner	evidence_artifact	note
-internal/locate/pd_codec.go	PARTIAL	txnkv-pd-bucket-batch-wire	rust/crates/tidb-txnkv/src/pd_loader.rs	The pinned API-v1 adapter now decodes exact GetRegion, GetRegionByID, ScanRegions, and BatchScanRegions region, leader, down, pending, and optional bucket metadata through the retained PD worker. API-v2 codec paths, split/scatter operations, full router streaming, and broader PD methods remain external.
