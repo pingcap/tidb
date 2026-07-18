@@ -758,9 +758,15 @@ where
         self.callback.inject(transform)
     }
 
-    /// Completes this request immediately on the current thread.
+    /// Publishes this request through its wakeable run-loop queue.
+    ///
+    /// Pull-backed requests deliberately normalize invoke and schedule onto
+    /// one publication shape. A terminal value can therefore never appear in
+    /// pull state without waking a caller blocked in [`CompletionPull::complete`].
+    /// Standalone [`CompletionCallback::invoke`] retains its immediate source
+    /// semantics.
     pub fn invoke(&self, result: Result<T, E>) {
-        self.callback.invoke(result);
+        self.callback.schedule(result);
     }
 
     /// Schedules this request's completion on its shared run loop.

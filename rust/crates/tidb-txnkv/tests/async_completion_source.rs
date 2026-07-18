@@ -22,6 +22,7 @@ use std::time::{Duration, Instant};
 use tidb_txnkv::rpc::{
     completion_pair, CompletionCallback, CompletionCancellation, CompletionCancellationReason,
     CompletionError, CompletionRunLoop, CompletionRunLoopState, CompletionSpawner,
+    UnaryCallContext,
 };
 
 fn wait_for_state(run_loop: &CompletionRunLoop, expected: CompletionRunLoopState) {
@@ -498,4 +499,33 @@ fn completion_request_schedules_one_typed_failure() {
         Ok(Some(Err("batch connection closed")))
     );
     assert_eq!(pending.try_complete(), Ok(None));
+}
+
+#[test]
+fn pull_backed_invoke_before_wait_uses_the_wakeable_publication_queue() {
+    let run_loop = CompletionRunLoop::new();
+    let (request, mut pending) = completion_pair::<i32, (), _>(run_loop.clone(), || {});
+    let call = UnaryCallContext::with_timeout(Duration::from_secs(1));
+
+    request.invoke(Ok(17));
+
+    assert_eq!(run_loop.num_runnable(), 1);
+    assert_eq!(pending.complete(&call), Ok(Ok(17)));
+    assert_eq!(run_loop.num_runnable(), 0);
+}
+
+#[test]
+fn pull_backed_invoke_racing_a_blocked_wait_wakes_the_same_run_loop() {
+    let run_loop = CompletionRunLoop::new();
+    let (request, mut pending) = completion_pair::<i32, (), _>(run_loop.clone(), || {});
+    let call = UnaryCallContext::with_timeout(Duration::from_secs(1));
+    let (done_tx, done_rx) = mpsc::channel();
+    let waiter = thread::spawn(move || done_tx.send(pending.complete(&call)).unwrap());
+    wait_for_state(&run_loop, CompletionRunLoopState::Waiting);
+
+    request.invoke(Ok(23));
+
+    assert_eq!(done_rx.recv_timeout(Duration::from_secs(1)), Ok(Ok(Ok(23))));
+    waiter.join().unwrap();
+    assert_eq!(run_loop.state(), CompletionRunLoopState::Idle);
 }
