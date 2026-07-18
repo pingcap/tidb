@@ -1,0 +1,54 @@
+schema = "1"
+slice = "txnkv-store-replica-failure-runtime"
+status = "ready"
+target = "tidb-txnkv"
+ring = "transaction"
+consumer = "Campaign 12 replaces copied per-region Store authorities and the stateless leader validator with one RegionCache-owned store registry plus one request-scoped leader-semantics peer selector. Exact observed epochs, tri-state liveness, attempt/time limits, alternate-peer probing, leader promotion, stale-failure rejection, and all-peer exhaustion are transited from pinned client-go. Follower/stale/learner reads, forwarding, background recovery, slow score, TiFlash, and concurrency remain explicit gaps."
+test_target = "region_cache_source, region_error_recovery_source, replica_selector_source, and new store failure/request selector source tests"
+go_sources = []
+go_tests = []
+module_sources = [
+  "client-go::internal/locate/accessmode.go",
+  "client-go::internal/locate/pd_codec.go",
+  "client-go::internal/locate/region_cache.go",
+  "client-go::internal/locate/replica_selector.go",
+  "client-go::internal/locate/slow_score.go",
+  "client-go::internal/locate/sorted_btree.go",
+  "client-go::internal/locate/store_cache.go",
+]
+module_tests = [
+  "client-go::internal/locate/region_cache_test.go:242:TestRegionCache",
+  "client-go::internal/locate/replica_selector_test.go:108:TestReplicaSelectorBasic",
+  "client-go::internal/locate/replica_selector_test.go:1110:TestReplicaReadAccessPathByBasicCase",
+  "client-go::internal/locate/replica_selector_test.go:1285:TestReplicaReadAccessPathByLeaderCase",
+]
+depends_on = []
+evidence_prerequisites = []
+support_anchors = [
+  "client-go/internal/locate/store_cache.go:202-240:shared store state and epoch",
+  "client-go/internal/locate/region_cache.go:362-426:region snapshots capture store epochs",
+  "client-go/internal/locate/region_request.go:776-793:exact observed store invalidation",
+  "client-go/internal/locate/replica_selector.go:141-183:leader then mixed peer probing",
+  "client-go/internal/locate/replica_selector.go:241-379:candidate limits and exhaustion",
+  "client-go/internal/locate/replica_selector.go:643-672:send failure and leader promotion",
+  "client-go/internal/locate/region_cache_test.go:1028:shared-store invalidation test",
+  "client-go/internal/locate/replica_selector_test.go:1463-1516:leader-semantics alternate peer tests",
+]
+rust_paths = [
+  "rust/crates/tidb-txnkv/src/pd_loader.rs",
+  "rust/crates/tidb-txnkv/src/region/mod.rs",
+  "rust/crates/tidb-txnkv/src/region/cache.rs",
+  "rust/crates/tidb-txnkv/src/region/error.rs",
+  "rust/crates/tidb-txnkv/src/region/location.rs",
+  "rust/crates/tidb-txnkv/src/region/recovery.rs",
+  "rust/crates/tidb-txnkv/src/region/replica_selector.rs",
+  "rust/crates/tidb-txnkv/src/region/request_selector.rs",
+  "rust/crates/tidb-txnkv/src/region/store_state.rs",
+  "rust/crates/tidb-txnkv/src/retry.rs",
+  "rust/crates/tidb-txnkv/tests/pd_region_loader_source.rs",
+  "rust/crates/tidb-txnkv/tests/region_cache_source.rs",
+  "rust/crates/tidb-txnkv/tests/region_error_recovery_source.rs",
+  "rust/crates/tidb-txnkv/tests/replica_selector_source.rs",
+  "rust/crates/tidb-txnkv/tests/request_selector_source.rs",
+  "rust/crates/tidb-txnkv/tests/store_failure_state_source.rs",
+]

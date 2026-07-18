@@ -1,0 +1,8 @@
+schema = "1"
+campaign = "2026-07-read-path-12"
+status = "planned"
+slices = [
+  "txnkv-store-replica-failure-runtime",
+  "txnkv-tonic-failure-generation-runtime",
+  "distsql-unary-transport-retry-runtime",
+]
