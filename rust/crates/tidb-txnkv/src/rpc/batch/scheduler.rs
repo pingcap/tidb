@@ -15,10 +15,13 @@
 //! Source-shaped BatchCommands grouping and adaptive policy.
 
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::fmt;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
+use serde_json::{Map, Value};
+
+use super::observability::{BatchRequestProgress, BatchRequestState};
 use super::priority_queue::{PriorityItem, PriorityQueue};
 
 pub const HIGH_TASK_PRIORITY: u64 = 10;
@@ -28,29 +31,14 @@ pub const BATCH_POLICY_POSITIVE: &str = "positive";
 pub const BATCH_POLICY_CUSTOM: &str = "custom";
 pub const DEFAULT_BATCH_POLICY: &str = BATCH_POLICY_STANDARD;
 
-/// State retained by the caller while an entry is owned by the scheduler.
-#[derive(Clone, Debug, Default)]
-pub struct BatchEntryState {
-    canceled: Arc<AtomicBool>,
-    failure: Arc<Mutex<Option<String>>>,
-}
-
-impl BatchEntryState {
-    pub fn cancel(&self) {
-        self.canceled.store(true, Ordering::Release);
-    }
-
-    pub fn is_canceled(&self) -> bool {
-        self.canceled.load(Ordering::Acquire)
-    }
-
-    pub fn failure(&self) -> Option<String> {
-        self.failure.lock().expect("batch failure lock").clone()
-    }
-
-    fn fail(&self, reason: &str) {
-        *self.failure.lock().expect("batch failure lock") = Some(reason.to_owned());
-    }
+/// One cancellation and terminal-delivery authority supplied by the caller.
+///
+/// The scheduler stores no parallel completion state. The later async adapter
+/// implements this trait with the same once-only handle returned to the pull
+/// caller, so queue cancellation and terminal failure share one authority.
+pub trait BatchEntryCompletion: fmt::Debug + Send + Sync {
+    fn is_canceled(&self) -> bool;
+    fn fail(&self, reason: &str);
 }
 
 /// One opaque request waiting to be assigned a BatchCommands request ID.
@@ -59,21 +47,25 @@ pub struct BatchEntry<T> {
     payload: T,
     forwarded_host: Option<String>,
     priority: u64,
-    state: BatchEntryState,
+    completion: Arc<dyn BatchEntryCompletion>,
+    progress: Arc<BatchRequestProgress>,
 }
 
 impl<T> BatchEntry<T> {
-    pub fn new(payload: T) -> Self {
+    pub fn new(payload: T, completion: Arc<dyn BatchEntryCompletion>) -> Self {
         Self {
             payload,
             forwarded_host: None,
             priority: 0,
-            state: BatchEntryState::default(),
+            completion,
+            progress: Arc::new(BatchRequestProgress::new(None)),
         }
     }
 
     pub fn with_forwarded_host(mut self, forwarded_host: impl Into<String>) -> Self {
-        self.forwarded_host = Some(forwarded_host.into());
+        let forwarded_host = forwarded_host.into();
+        self.progress.set_forwarded_host(forwarded_host.clone());
+        self.forwarded_host = Some(forwarded_host);
         self
     }
 
@@ -82,8 +74,12 @@ impl<T> BatchEntry<T> {
         self
     }
 
-    pub fn state(&self) -> BatchEntryState {
-        self.state.clone()
+    pub fn completion(&self) -> &dyn BatchEntryCompletion {
+        self.completion.as_ref()
+    }
+
+    pub fn progress(&self) -> Arc<BatchRequestProgress> {
+        Arc::clone(&self.progress)
     }
 
     pub fn payload(&self) -> &T {
@@ -105,7 +101,7 @@ impl<T> PriorityItem for BatchEntry<T> {
     }
 
     fn is_canceled(&self) -> bool {
-        self.state.is_canceled()
+        self.completion.is_canceled()
     }
 }
 
@@ -128,12 +124,14 @@ impl<T> ScheduledEntry<T> {
 #[derive(Debug)]
 pub struct BatchGroup<T> {
     entries: Vec<ScheduledEntry<T>>,
+    state: BatchRequestState,
 }
 
 impl<T> Default for BatchGroup<T> {
     fn default() -> Self {
         Self {
             entries: Vec::new(),
+            state: BatchRequestState::default(),
         }
     }
 }
@@ -151,8 +149,18 @@ impl<T> BatchGroup<T> {
         &self.entries
     }
 
-    fn push(&mut self, entry: ScheduledEntry<T>) {
+    pub fn state(&self) -> BatchRequestState {
+        self.state.clone()
+    }
+
+    fn push(&mut self, entry: ScheduledEntry<T>, selected_at: Instant) {
+        entry.entry.progress.record_batch_selected_at(
+            entry.request_id,
+            selected_at,
+            self.state.clone(),
+        );
         self.entries.push(entry);
+        self.state.set_batch_size(self.entries.len());
     }
 }
 
@@ -180,13 +188,16 @@ impl<T> BatchGroups<T> {
         &self.forwarded
     }
 
-    fn push(&mut self, entry: ScheduledEntry<T>) {
+    fn push(&mut self, entry: ScheduledEntry<T>, selected_at: Instant) {
         if let Some(host) = entry.entry.forwarded_host.clone() {
-            self.forwarded.entry(host).or_default().push(entry);
+            self.forwarded
+                .entry(host)
+                .or_default()
+                .push(entry, selected_at);
         } else {
             self.direct
                 .get_or_insert_with(BatchGroup::default)
-                .push(entry);
+                .push(entry, selected_at);
         }
     }
 }
@@ -216,6 +227,10 @@ impl<T> BatchScheduler<T> {
         self.entries.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
     pub const fn id_alloc(&self) -> u64 {
         self.id_alloc
     }
@@ -232,28 +247,29 @@ impl<T> BatchScheduler<T> {
     pub fn build_with_limit(&mut self, limit: usize) -> BatchGroups<T> {
         let mut groups = BatchGroups::default();
         let mut normal_count = 0;
+        let selected_at = Instant::now();
 
-        while !self.entries.is_empty() {
-            let high_priority = self.entries.highest_priority() >= HIGH_TASK_PRIORITY;
-            if !high_priority && normal_count >= limit {
-                break;
-            }
+        while (normal_count < limit && !self.entries.is_empty())
+            || self.entries.highest_priority() >= HIGH_TASK_PRIORITY
+        {
+            let take_count = if limit == 0 { 1 } else { limit };
+            for entry in self.entries.take(take_count) {
+                if entry.completion.is_canceled() {
+                    continue;
+                }
+                if entry.priority < HIGH_TASK_PRIORITY {
+                    normal_count += 1;
+                }
 
-            let Some(entry) = self.entries.pop() else {
-                break;
-            };
-            if entry.state.is_canceled() {
-                continue;
+                self.id_alloc = self.id_alloc.wrapping_add(1);
+                groups.push(
+                    ScheduledEntry {
+                        request_id: self.id_alloc,
+                        entry,
+                    },
+                    selected_at,
+                );
             }
-            if entry.priority < HIGH_TASK_PRIORITY {
-                normal_count += 1;
-            }
-
-            self.id_alloc = self.id_alloc.wrapping_add(1);
-            groups.push(ScheduledEntry {
-                request_id: self.id_alloc,
-                entry,
-            });
         }
 
         groups
@@ -264,11 +280,11 @@ impl<T> BatchScheduler<T> {
         self.entries.clean_canceled();
     }
 
-    /// Fails and drains every queued request without invoking a transport callback.
+    /// Fails and drains every queued request through its sole completion handle.
     pub fn cancel_all(&mut self, reason: &str) -> Vec<BatchEntry<T>> {
         let entries = self.entries.drain();
         for entry in &entries {
-            entry.state.fail(reason);
+            entry.completion.fail(reason);
         }
         entries
     }
@@ -349,7 +365,7 @@ impl BatchTrigger {
     }
 
     pub fn turbo_wait_time(&self) -> Duration {
-        Duration::from_secs_f64(self.options.wait_seconds.max(0.0))
+        Duration::try_from_secs_f64(self.options.wait_seconds).unwrap_or(Duration::ZERO)
     }
 
     pub fn need_fetch_more(&mut self, request_arrival_interval: Duration) -> bool {
@@ -416,42 +432,42 @@ fn parse_custom_options(policy: &str) -> Option<BatchPolicyOptions> {
         .strip_prefix(BATCH_POLICY_CUSTOM)
         .unwrap_or(policy)
         .trim();
-    let body = raw.strip_prefix('{')?.strip_suffix('}')?.trim();
+    let value: Value = serde_json::from_str(raw).ok()?;
+    let body = value.as_object()?;
     let mut options = BatchPolicyOptions::default();
-    if body.is_empty() {
-        return Some(options);
+    options.version = parse_nonnegative_integer(body, "v")?.unwrap_or_default();
+    if options.version > 2 {
+        return None;
     }
-
-    for member in body.split(',') {
-        let (key, value) = member.split_once(':')?;
-        let key = key.trim();
-        let key = key.strip_prefix('"')?.strip_suffix('"')?;
-        let value = value.trim();
-        match key {
-            "v" => options.version = parse_json_integer(value)?,
-            "n" => options.max_arrival_intervals = parse_json_integer(value)?,
-            "t" => options.wait_seconds = parse_json_number(value)?,
-            "w" => options.weight = parse_json_number(value)?,
-            "p" => options.threshold = parse_json_number(value)?,
-            "q" => options.wait_size_rounding = parse_json_number(value)?,
-            // encoding/json ignores unknown object fields.
-            _ => {
-                parse_json_number(value)?;
-            }
-        }
-    }
+    options.max_arrival_intervals = parse_nonnegative_integer(body, "n")?.unwrap_or_default();
+    options.wait_seconds = parse_bounded_number(body, "t", f64::INFINITY)?.unwrap_or_default();
+    Duration::try_from_secs_f64(options.wait_seconds).ok()?;
+    options.weight = parse_bounded_number(body, "w", 1.0)?.unwrap_or_default();
+    options.threshold = parse_bounded_number(body, "p", 1.0)?.unwrap_or_default();
+    options.wait_size_rounding = parse_bounded_number(body, "q", 1.0)?.unwrap_or_default();
     Some(options)
 }
 
-fn parse_json_integer(raw: &str) -> Option<i32> {
-    let value = parse_json_number(raw)?;
-    if value.fract() != 0.0 || value < f64::from(i32::MIN) || value > f64::from(i32::MAX) {
-        return None;
+fn parse_nonnegative_integer(body: &Map<String, Value>, key: &str) -> Option<Option<i32>> {
+    let Some(value) = body.get(key) else {
+        return Some(None);
+    };
+    if value.is_null() {
+        return Some(None);
     }
-    Some(value as i32)
+    let value = value.as_i64()?;
+    (0..=i64::from(i32::MAX))
+        .contains(&value)
+        .then_some(Some(value as i32))
 }
 
-fn parse_json_number(raw: &str) -> Option<f64> {
-    let value = raw.parse::<f64>().ok()?;
-    value.is_finite().then_some(value)
+fn parse_bounded_number(body: &Map<String, Value>, key: &str, maximum: f64) -> Option<Option<f64>> {
+    let Some(value) = body.get(key) else {
+        return Some(None);
+    };
+    if value.is_null() {
+        return Some(None);
+    }
+    let value = value.as_f64()?;
+    (value.is_finite() && value >= 0.0 && value <= maximum).then_some(Some(value))
 }

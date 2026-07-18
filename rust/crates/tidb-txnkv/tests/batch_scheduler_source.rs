@@ -17,20 +17,54 @@
 #[path = "../src/rpc/batch/mod.rs"]
 mod batch;
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use batch::{
-    BatchEntry, BatchPolicyOptions, BatchScheduler, BatchTrigger, BATCH_POLICY_BASIC,
-    BATCH_POLICY_CUSTOM, BATCH_POLICY_POSITIVE, BATCH_POLICY_STANDARD, DEFAULT_BATCH_POLICY,
-    HIGH_TASK_PRIORITY,
+    BatchEntry, BatchEntryCompletion, BatchPolicyOptions, BatchScheduler, BatchTrigger,
+    BATCH_POLICY_BASIC, BATCH_POLICY_CUSTOM, BATCH_POLICY_POSITIVE, BATCH_POLICY_STANDARD,
+    DEFAULT_BATCH_POLICY, HIGH_TASK_PRIORITY,
 };
+
+#[derive(Debug, Default)]
+struct TestCompletion {
+    canceled: AtomicBool,
+    failure: Mutex<Option<String>>,
+}
+
+impl TestCompletion {
+    fn cancel(&self) {
+        self.canceled.store(true, Ordering::Release);
+    }
+
+    fn failure(&self) -> Option<String> {
+        self.failure.lock().unwrap().clone()
+    }
+}
+
+impl BatchEntryCompletion for TestCompletion {
+    fn is_canceled(&self) -> bool {
+        self.canceled.load(Ordering::Acquire)
+    }
+
+    fn fail(&self, reason: &str) {
+        *self.failure.lock().unwrap() = Some(reason.to_owned());
+    }
+}
+
+fn entry<T>(payload: T) -> (BatchEntry<T>, Arc<TestCompletion>) {
+    let completion = Arc::new(TestCompletion::default());
+    let scheduler_completion: Arc<dyn BatchEntryCompletion> = completion.clone();
+    (BatchEntry::new(payload, scheduler_completion), completion)
+}
 
 #[test]
 fn test_batch_commands_builder() {
     let mut scheduler = BatchScheduler::new();
 
     for payload in 0..10 {
-        scheduler.push(BatchEntry::new(payload));
+        scheduler.push(entry(payload).0);
         assert_eq!(scheduler.len(), payload + 1);
     }
     let groups = scheduler.build_with_limit(usize::MAX);
@@ -40,6 +74,15 @@ fn test_batch_commands_builder() {
     for (index, item) in direct.entries().iter().enumerate() {
         assert_eq!(item.request_id(), (index + 1) as u64);
         assert_eq!(*item.entry().payload(), index);
+        assert_eq!(item.entry().progress().request_id(), item.request_id());
+        assert!(item
+            .entry()
+            .progress()
+            .batch_selected_after_arrival()
+            .is_some_and(|duration| duration > Duration::ZERO));
+        let progress_state = item.entry().progress().batch_state().unwrap();
+        assert!(progress_state.shares_state_with(&direct.state()));
+        assert_eq!(progress_state.batch_size(), 10);
     }
     assert_eq!(scheduler.id_alloc(), 10);
 
@@ -53,7 +96,7 @@ fn test_batch_commands_builder() {
     let mut payload = 0;
     for start in 0..forwarded_hosts.len() {
         for host in &forwarded_hosts[start..] {
-            let entry = BatchEntry::new(payload);
+            let entry = entry(payload).0;
             scheduler.push(match host {
                 Some(host) => entry.with_forwarded_host(*host),
                 None => entry,
@@ -71,15 +114,21 @@ fn test_batch_commands_builder() {
             .entries()
             .iter()
             .all(|item| { item.entry().forwarded_host() == Some(host.expect("forwarded host")) }));
+        assert_eq!(group.state().batch_size(), index + 2);
+        assert!(group.entries().iter().all(|item| item
+            .entry()
+            .progress()
+            .batch_state()
+            .unwrap()
+            .shares_state_with(&group.state())));
     }
     assert_eq!(scheduler.id_alloc(), 20);
 
     scheduler.reset();
     for (payload, canceled) in [true, false, true, true, false].into_iter().enumerate() {
-        let entry = BatchEntry::new(payload);
-        let state = entry.state();
+        let (entry, completion) = entry(payload);
         if canceled {
-            state.cancel();
+            completion.cancel();
         }
         scheduler.push(entry);
     }
@@ -89,13 +138,13 @@ fn test_batch_commands_builder() {
     assert!(direct
         .entries()
         .iter()
-        .all(|item| !item.entry().state().is_canceled()));
+        .all(|item| !item.entry().completion().is_canceled()));
 
     scheduler.reset();
     let mut cancellation_states = Vec::new();
     for payload in 0..3 {
-        let entry = BatchEntry::new(payload);
-        cancellation_states.push(entry.state());
+        let (entry, completion) = entry(payload);
+        cancellation_states.push(completion);
         scheduler.push(entry);
     }
     assert_eq!(scheduler.cancel_all("error").len(), 3);
@@ -111,7 +160,7 @@ fn test_batch_commands_builder() {
 fn test_limit_concurrency() {
     let mut scheduler = BatchScheduler::new();
 
-    scheduler.push(BatchEntry::new(1));
+    scheduler.push(entry(1).0);
     assert_eq!(
         scheduler
             .build_with_limit(1)
@@ -123,8 +172,8 @@ fn test_limit_concurrency() {
     assert_eq!(scheduler.len(), 0);
     scheduler.reset();
 
-    scheduler.push(BatchEntry::new(2).with_priority(HIGH_TASK_PRIORITY));
-    scheduler.push(BatchEntry::new(3).with_priority(HIGH_TASK_PRIORITY - 1));
+    scheduler.push(entry(2).0.with_priority(HIGH_TASK_PRIORITY));
+    scheduler.push(entry(3).0.with_priority(HIGH_TASK_PRIORITY - 1));
     assert_eq!(
         scheduler
             .build_with_limit(0)
@@ -136,8 +185,8 @@ fn test_limit_concurrency() {
     scheduler.reset();
     assert_eq!(scheduler.len(), 1);
 
-    scheduler.push(BatchEntry::new(4));
-    scheduler.push(BatchEntry::new(5));
+    scheduler.push(entry(4).0);
+    scheduler.push(entry(5).0);
     assert_eq!(
         scheduler
             .build_with_limit(2)
@@ -150,12 +199,30 @@ fn test_limit_concurrency() {
     scheduler.reset();
 
     for payload in 6..=7 {
-        let entry = BatchEntry::new(payload);
-        entry.state().cancel();
+        let (entry, completion) = entry(payload);
+        completion.cancel();
         scheduler.push(entry);
     }
     scheduler.reset();
     assert_eq!(scheduler.len(), 1);
+
+    let mut mixed = BatchScheduler::new();
+    mixed.push(entry(10).0.with_priority(HIGH_TASK_PRIORITY));
+    for payload in 11..=13 {
+        mixed.push(entry(payload).0);
+    }
+    // client-go takes `limit` entries per pass. The first pass contains the
+    // high-priority entry plus one normal, then the second full chunk takes
+    // both remaining normals even though the normal count overshoots `limit`.
+    assert_eq!(
+        mixed
+            .build_with_limit(2)
+            .direct()
+            .expect("mixed priority group")
+            .len(),
+        4
+    );
+    assert_eq!(mixed.len(), 0);
 }
 
 #[test]
@@ -226,6 +293,20 @@ fn test_batch_policy() {
         assert!(!valid, "{invalid}");
         assert_eq!(trigger.options(), standard_options.options(), "{invalid}");
     }
+
+    for invalid_json in [
+        r#"{"t":+1}"#,
+        r#"{"v":-1}"#,
+        r#"{"w":1.1}"#,
+        r#"{"t":1e308}"#,
+    ] {
+        let (_, valid) = BatchTrigger::from_policy(invalid_json);
+        assert!(!valid, "{invalid_json}");
+    }
+    let (unknown_fields, valid) =
+        BatchTrigger::from_policy(r#"{"t":0.0001,"label":"ignored","nested":{"enabled":true}}"#);
+    assert!(valid);
+    assert_eq!(unknown_fields.options(), positive.options());
 
     // Keep the exact source shape visible without exporting preset constructors.
     assert_eq!(BatchPolicyOptions::default(), basic.options());
