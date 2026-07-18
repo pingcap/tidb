@@ -31,7 +31,9 @@ fn direct_unary_call_uses_request_owned_cancellation_context() {
         .expect("direct unary dispatch owner");
     let dispatch = &source[dispatch..];
     assert!(dispatch.contains("self.check_retry_active()?"));
-    assert!(dispatch.contains("send_request_with_context"));
+    assert!(dispatch.contains("send_request_with_route"));
+    assert!(dispatch.contains("dispatch.physical_address()"));
+    assert!(dispatch.contains("dispatch.forwarded_host()"));
     let caller_cancelled = dispatch
         .find("DirectUnaryClientError::CallerCancelled")
         .expect("caller cancellation precedence branch");
@@ -78,9 +80,15 @@ fn locked_response_carries_the_exact_cop_call_context() {
         .find("UnaryCallContext::with_deadline")
         .expect("one Cop call context");
     let send = source[call..]
-        .find("send_request_with_context(&selected.attempt.address, &client_request, &call)")
+        .find("send_request_with_route(")
         .map(|offset| call + offset)
         .expect("Cop send borrows the call context");
+    let send_tail = &source[send..];
+    assert!(send_tail.starts_with("send_request_with_route("));
+    assert!(send_tail.contains("dispatch.physical_address()"));
+    assert!(send_tail.contains("dispatch.forwarded_host()"));
+    assert!(send_tail.contains("&client_request"));
+    assert!(send_tail.contains("&call"));
     let observation = source[send..]
         .find("LockedResponseObservation {")
         .map(|offset| send + offset)
