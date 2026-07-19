@@ -39,6 +39,15 @@ pub enum RealTiKvMultiReadError {
         /// Existing planner error.
         source: ReadOnlyScanError,
     },
+    /// An already-lowered plan belongs to a different configured relation.
+    PlanTableMismatch {
+        /// Zero-based source relation.
+        relation: usize,
+        /// Table ID owned by the relation reader.
+        expected_table_id: i64,
+        /// Table ID carried by the supplied plan.
+        actual_table_id: i64,
+    },
     /// The statement timestamp source failed.
     Timestamp(String),
     /// The timestamp source returned an invalid zero timestamp.
@@ -58,6 +67,14 @@ impl std::fmt::Display for RealTiKvMultiReadError {
             Self::Plan { relation, source } => {
                 write!(formatter, "relation {relation} planning failed: {source}")
             }
+            Self::PlanTableMismatch {
+                relation,
+                expected_table_id,
+                actual_table_id,
+            } => write!(
+                formatter,
+                "relation {relation} expected table ID {expected_table_id}, supplied plan has table ID {actual_table_id}"
+            ),
             Self::Timestamp(message) => write!(formatter, "PD timestamp failed: {message}"),
             Self::ZeroTimestamp => formatter.write_str("PD returned a zero snapshot timestamp"),
             Self::Read { relation, source } => {
@@ -72,7 +89,7 @@ impl std::error::Error for RealTiKvMultiReadError {
         match self {
             Self::Plan { source, .. } => Some(source),
             Self::Read { source, .. } => Some(source),
-            Self::Timestamp(_) | Self::ZeroTimestamp => None,
+            Self::PlanTableMismatch { .. } | Self::Timestamp(_) | Self::ZeroTimestamp => None,
         }
     }
 }
@@ -108,6 +125,35 @@ where
     ) -> Result<RealTiKvMultiQuery, RealTiKvMultiReadError> {
         let left_plan = self.lower_plan(0, relation_sql[0])?;
         let right_plan = self.lower_plan(1, relation_sql[1])?;
+        self.execute_plans_with_cancellation([left_plan, right_plan], cancellation)
+    }
+
+    /// Starts two already-lowered physical scans with a fresh cancellation owner.
+    ///
+    /// Planner-owned multi-relation statements use this entrypoint so binding,
+    /// predicate ownership, and projection decisions are not reconstructed from
+    /// SQL inside the executor.
+    pub fn execute_plans(
+        &mut self,
+        plans: [ReadOnlyScanPlan; 2],
+    ) -> Result<RealTiKvMultiQuery, RealTiKvMultiReadError> {
+        self.execute_plans_with_cancellation(plans, Arc::new(CancelHandle::default()))
+    }
+
+    /// Starts two already-lowered physical scans under one caller cancellation.
+    ///
+    /// Both plans are preflighted before timestamp or transport work. A local
+    /// contradiction therefore returns the typed empty result without PD, and
+    /// both physical reads otherwise receive the same timestamp and cancellation
+    /// authority.
+    pub fn execute_plans_with_cancellation(
+        &mut self,
+        plans: [ReadOnlyScanPlan; 2],
+        cancellation: Arc<CancelHandle>,
+    ) -> Result<RealTiKvMultiQuery, RealTiKvMultiReadError> {
+        let [left_plan, right_plan] = plans;
+        self.validate_plan(0, &left_plan)?;
+        self.validate_plan(1, &right_plan)?;
         if left_plan.is_contradiction() || right_plan.is_contradiction() {
             return Ok(RealTiKvMultiQuery::Empty);
         }
@@ -156,6 +202,23 @@ where
     ) -> Result<ReadOnlyScanPlan, RealTiKvMultiReadError> {
         ReadOnlyScanPlan::lower(sql, self.readers[relation].configured_table())
             .map_err(|source| RealTiKvMultiReadError::Plan { relation, source })
+    }
+
+    fn validate_plan(
+        &self,
+        relation: usize,
+        plan: &ReadOnlyScanPlan,
+    ) -> Result<(), RealTiKvMultiReadError> {
+        let expected_table_id = self.readers[relation].configured_table().table_id();
+        let actual_table_id = plan.table_id();
+        if actual_table_id == expected_table_id {
+            return Ok(());
+        }
+        Err(RealTiKvMultiReadError::PlanTableMismatch {
+            relation,
+            expected_table_id,
+            actual_table_id,
+        })
     }
 }
 

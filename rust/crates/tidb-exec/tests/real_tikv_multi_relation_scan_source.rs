@@ -21,7 +21,7 @@ use tidb_distsql::query_runtime::{QueryResponse, QueryResponseError, QueryResult
 use tidb_distsql::{
     CancelHandle, QueryDispatch, QueryTransport, TimestampSource, TransportRequest,
 };
-use tidb_planner::read_only_scan::{ConfiguredColumn, ConfiguredTable};
+use tidb_planner::read_only_scan::{ConfiguredColumn, ConfiguredTable, ReadOnlyScanPlan};
 
 use crate::real_tikv_multi_read::RealTiKvMultiReadError;
 use crate::real_tikv_read::{RealTiKvReadSessionOpener, RealTiKvSessionTransportFactory};
@@ -183,6 +183,145 @@ fn configured_tables() -> [ConfiguredTable; 2] {
             ],
         ),
     ]
+}
+
+fn lower_plans(tables: &[ConfiguredTable; 2], relation_sql: [&str; 2]) -> [ReadOnlyScanPlan; 2] {
+    [
+        ReadOnlyScanPlan::lower(relation_sql[0], &tables[0]).unwrap(),
+        ReadOnlyScanPlan::lower(relation_sql[1], &tables[1]).unwrap(),
+    ]
+}
+
+#[test]
+fn supplied_plans_share_one_timestamp_and_cancellation_authority() {
+    let timestamps = CountingTimestampSource::new(7_676);
+    let factory = CapturingTransportFactory::default();
+    let state = Arc::clone(&factory.state);
+    let tables = configured_tables();
+    let plans = lower_plans(
+        &tables,
+        [
+            "SELECT id, balance FROM accounts WHERE balance > 10",
+            "SELECT id, score FROM profiles WHERE id >= 5",
+        ],
+    );
+    let opener =
+        RealTiKvReadSessionOpener::new(tables[0].clone(), factory, timestamps.clone(), 123);
+    let mut authority = opener.open_multi_session(tables).unwrap();
+    let cancellation = Arc::new(CancelHandle::default());
+
+    let query = authority
+        .execute_plans_with_cancellation(plans, Arc::clone(&cancellation))
+        .unwrap();
+
+    assert_eq!(timestamps.calls(), 1);
+    assert_eq!(query.snapshot_ts(), Some(7_676));
+    let relations = query.relations().unwrap();
+    assert_eq!(relations[0].snapshot_ts(), Some(7_676));
+    assert_eq!(relations[1].snapshot_ts(), Some(7_676));
+    assert_eq!(relations[0].plan_evidence().predicate_count(), 1);
+    assert_eq!(relations[1].plan_evidence().handle_range_count(), 1);
+    let state = state.lock().unwrap();
+    assert_eq!(state.requests.len(), 2);
+    assert!(state
+        .requests
+        .iter()
+        .all(|request| request.start_ts == 7_676));
+    drop(state);
+
+    cancellation.cancel();
+    assert!(query
+        .relations()
+        .unwrap()
+        .iter()
+        .all(|relation| relation.is_cancelled()));
+}
+
+#[test]
+fn supplied_plan_contradiction_returns_empty_before_timestamp_or_send() {
+    let timestamps = CountingTimestampSource::new(7_677);
+    let factory = CapturingTransportFactory::default();
+    let state = Arc::clone(&factory.state);
+    let tables = configured_tables();
+    let plans = lower_plans(
+        &tables,
+        [
+            "SELECT id FROM accounts WHERE id > 10 AND id < 0",
+            "SELECT id FROM profiles",
+        ],
+    );
+    let opener =
+        RealTiKvReadSessionOpener::new(tables[0].clone(), factory, timestamps.clone(), 123);
+    let mut authority = opener.open_multi_session(tables).unwrap();
+
+    let query = authority.execute_plans(plans).unwrap();
+
+    assert!(query.is_empty());
+    assert_eq!(query.snapshot_ts(), None);
+    assert_eq!(timestamps.calls(), 0);
+    assert!(state.lock().unwrap().requests.is_empty());
+}
+
+#[test]
+fn mismatched_supplied_plan_fails_before_timestamp_or_send() {
+    let timestamps = CountingTimestampSource::new(7_678);
+    let factory = CapturingTransportFactory::default();
+    let state = Arc::clone(&factory.state);
+    let tables = configured_tables();
+    let plans = [
+        ReadOnlyScanPlan::lower("SELECT id FROM profiles", &tables[1]).unwrap(),
+        ReadOnlyScanPlan::lower("SELECT id FROM accounts", &tables[0]).unwrap(),
+    ];
+    let opener =
+        RealTiKvReadSessionOpener::new(tables[0].clone(), factory, timestamps.clone(), 123);
+    let mut authority = opener.open_multi_session(tables).unwrap();
+
+    let error = authority
+        .execute_plans(plans)
+        .err()
+        .expect("table-plan mismatch must fail closed during preflight");
+
+    assert!(matches!(
+        error,
+        RealTiKvMultiReadError::PlanTableMismatch {
+            relation: 0,
+            expected_table_id: 42,
+            actual_table_id: 84,
+        }
+    ));
+    assert_eq!(timestamps.calls(), 0);
+    assert!(state.lock().unwrap().requests.is_empty());
+}
+
+#[test]
+fn supplied_second_send_failure_cancels_and_closes_first_response() {
+    let timestamps = CountingTimestampSource::new(7_679);
+    let factory = CapturingTransportFactory::fail_second_send();
+    let state = Arc::clone(&factory.state);
+    let tables = configured_tables();
+    let plans = lower_plans(
+        &tables,
+        ["SELECT id FROM accounts", "SELECT id FROM profiles"],
+    );
+    let opener =
+        RealTiKvReadSessionOpener::new(tables[0].clone(), factory, timestamps.clone(), 123);
+    let mut authority = opener.open_multi_session(tables).unwrap();
+    let cancellation = Arc::new(CancelHandle::default());
+
+    let error = authority
+        .execute_plans_with_cancellation(plans, Arc::clone(&cancellation))
+        .err()
+        .expect("second supplied-plan send is injected to fail");
+
+    assert!(matches!(
+        error,
+        RealTiKvMultiReadError::Read { relation: 1, .. }
+    ));
+    assert_eq!(timestamps.calls(), 1);
+    assert!(cancellation.is_cancelled());
+    let state = state.lock().unwrap();
+    assert_eq!(state.requests.len(), 2);
+    assert_eq!(state.closed_responses, [0]);
 }
 
 #[test]
