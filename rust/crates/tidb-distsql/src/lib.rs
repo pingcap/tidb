@@ -43,6 +43,7 @@ mod request;
 mod request_builder;
 mod response_channel;
 mod select_iter;
+mod signed_handle_range;
 mod stream_decode;
 mod table_handle_ranges;
 mod tiflash_replica_read;
@@ -120,6 +121,7 @@ pub use select_iter::{
     SelectResultError, SelectResultRow, SelectResultSource, SerialSelectResults,
     UnsupportedCapability,
 };
+pub use signed_handle_range::{signed_handle_ranges_to_kv_ranges, SignedHandleRange};
 pub use stream_decode::{decode_stream_response, RawStreamResponse};
 pub use table_handle_ranges::table_handles_to_kv_ranges;
 pub use tidb_txnkv::lock::{FixedTimestampSource, LockRecoveryClient, TimestampSource};

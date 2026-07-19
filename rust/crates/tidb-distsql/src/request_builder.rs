@@ -21,15 +21,15 @@
 //! outside this crate.
 
 use tidb_codec::table_key::encode_index_seek_key;
-use tidb_codec::{encode_int, encode_key, encode_row_key};
+use tidb_codec::{encode_key, encode_row_key};
 use tidb_datatype::Datum;
 use tidb_txnkv::{Handle, Key, ResourceGroupTagBuilder};
 
 use crate::{
     DistSqlContext, IsolationLevel, KvPriority, KvRequestMetadata, PartitionIdAndRanges,
     ReadRequestBuilder, ReplicaReadType, RequestEnvelope, RequestKeyRange, RequestKeyRanges,
-    RequestSource, RequestType, StoreLabel, StoreType, TransportRequest, DC_LABEL_KEY,
-    DEFAULT_DIST_SQL_CONCURRENCY, GLOBAL_REPLICA_SCOPE,
+    RequestSource, RequestType, SignedHandleRange, StoreLabel, StoreType, TransportRequest,
+    DC_LABEL_KEY, DEFAULT_DIST_SQL_CONCURRENCY, GLOBAL_REPLICA_SCOPE,
 };
 
 /// One source ranger boundary represented by already typed Datum values.
@@ -494,7 +494,7 @@ pub fn table_ranges_to_kv_ranges(
     table_id: i64,
     ranges: &[DatumRange],
 ) -> Result<Vec<RequestKeyRange>, KvRequestBuildError> {
-    ranges
+    let ranges = ranges
         .iter()
         .map(|range| {
             let low = range
@@ -507,22 +507,10 @@ pub fn table_ranges_to_kv_ranges(
                 .first()
                 .and_then(int_bits)
                 .ok_or(KvRequestBuildError::RangeEncoding)?;
-            let mut low_encoded = Vec::with_capacity(8);
-            encode_int(&mut low_encoded, low);
-            let mut high_encoded = Vec::with_capacity(8);
-            encode_int(&mut high_encoded, high);
-            if range.low_exclude {
-                low_encoded = Key::from_bytes(low_encoded).prefix_next().into_bytes();
-            }
-            if !range.high_exclude {
-                high_encoded = Key::from_bytes(high_encoded).prefix_next().into_bytes();
-            }
-            Ok(RequestKeyRange {
-                start_key: encode_row_key(table_id, &low_encoded),
-                end_key: encode_row_key(table_id, &high_encoded),
-            })
+            SignedHandleRange::new(low, high, range.low_exclude, range.high_exclude)
         })
-        .collect()
+        .collect::<Result<Vec<_>, KvRequestBuildError>>()?;
+    Ok(crate::signed_handle_ranges_to_kv_ranges(table_id, &ranges))
 }
 
 /// Encodes index ranges for every physical table without flattening groups.
