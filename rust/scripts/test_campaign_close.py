@@ -214,6 +214,19 @@ class CampaignCloseTest(unittest.TestCase):
         self.assertIn('status = "planned"', self.campaign_path.read_text())
         self.assertFalse(self.archive_path.exists())
 
+    def test_preflight_rejects_omitted_transfer_with_duplicate_evidence_owner(self) -> None:
+        self.new_source.write_text(
+            self.new_source.read_text(encoding="utf-8")
+            + "pkg/planner/source1.go\tPARTIAL\tmember-a\trust/impl.rs\tported without transfer\n",
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "post-close source evidence pkg/planner/source1.go has duplicate owners",
+        ):
+            campaign_close.build_close_plan(self.root, "campaign-x")
+
     def test_apply_keeps_partial_fragment_and_passes_real_queue_validation(self) -> None:
         source_inventory = (
             self.root / "difftests/corpus/coverage/go_source_inventory.tsv"

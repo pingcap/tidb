@@ -417,6 +417,12 @@ def build_close_plan(root: Path, campaign_name: str) -> ClosePlan:
 
     for kind in ("source", "test"):
         owners = _evidence_owners(root, writes, deletes, kind)
+        for anchor, found in sorted(owners.items()):
+            if len(found) > 1 and any(owner in members for owner in found):
+                raise ValueError(
+                    f"campaign post-close {kind} evidence {anchor} has duplicate "
+                    f"owners {found}"
+                )
         for anchor_kind, anchor, new_owner in terminal_anchors:
             if anchor_kind != kind:
                 continue
