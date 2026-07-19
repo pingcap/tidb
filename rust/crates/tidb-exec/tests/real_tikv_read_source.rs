@@ -26,9 +26,10 @@ use tidb_distsql::{
     CancelHandle, CopPagingState, QueryDispatch, QueryOperation, QueryTransport, RequestKeyRange,
     RequestType, TimestampSource, TransportRequest,
 };
-use tidb_exec::real_tikv_read::{RealTiKvReadError, RealTiKvReadSession};
+use tidb_exec::real_tikv_read::{RealTiKvPlanExecutorKind, RealTiKvReadError, RealTiKvReadSession};
 use tidb_planner::read_only_scan::{
     ConfiguredColumn, ConfiguredTable, ReadOnlyScanError, UnsupportedReadOnlyFeature,
+    UnsupportedReadOnlyPredicate,
 };
 use tidb_proto::tipb::{Chunk, DagRequest, SelectResponse};
 
@@ -306,6 +307,12 @@ fn exact_select_builds_one_timestamped_table_request_and_decodes_lazily() {
     let query = engine
         .execute("SELECT id FROM test.accounts")
         .expect("the exact milestone query must reach the transport");
+    assert_eq!(
+        query.plan_evidence().executor_kinds(),
+        [RealTiKvPlanExecutorKind::TableScan]
+    );
+    assert_eq!(query.plan_evidence().predicate_count(), 0);
+    assert_eq!(query.plan_evidence().output_offsets(), [0]);
     assert_eq!(query.snapshot_ts(), 4_242);
     assert_eq!(query.table_id(), 42);
     assert_eq!(engine.last_snapshot_ts(), Some(4_242));
@@ -389,7 +396,7 @@ fn caller_cancellation_remains_the_query_transport_authority() {
 }
 
 #[test]
-fn unsupported_where_and_write_fail_before_tso_or_send() {
+fn unsupported_predicate_and_write_fail_before_tso_or_send() {
     let timestamps = ScriptedTimestampSource::new([99]);
     let state = Rc::new(SharedTransportState::default());
     let mut engine = RealTiKvReadSession::new(
@@ -399,10 +406,10 @@ fn unsupported_where_and_write_fail_before_tso_or_send() {
     );
 
     assert!(matches!(
-        engine.execute("SELECT id FROM accounts WHERE id = 1"),
-        Err(RealTiKvReadError::Plan(ReadOnlyScanError::Unsupported(
-            UnsupportedReadOnlyFeature::Predicate
-        )))
+        engine.execute("SELECT id FROM accounts WHERE id = 1 OR balance = 2"),
+        Err(RealTiKvReadError::Plan(
+            ReadOnlyScanError::UnsupportedPredicate(UnsupportedReadOnlyPredicate::BooleanOperator)
+        ))
     ));
     assert!(matches!(
         engine.execute("UPDATE accounts SET id = 2"),

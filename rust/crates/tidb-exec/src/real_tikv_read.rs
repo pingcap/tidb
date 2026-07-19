@@ -48,7 +48,7 @@ use tidb_txnkv::{
 };
 
 use crate::dag_request::{
-    construct_dag_req, DagRequestBuildError, DagRequestContext, TiKvScanPlan,
+    construct_read_only_dag_req, DagRequestBuildError, DagRequestContext, TiKvScanPlan,
 };
 use crate::distsql_recordset::DistSqlRecordSet;
 
@@ -654,7 +654,90 @@ pub struct RealTiKvQuery {
     snapshot_ts: u64,
     table_id: i64,
     session_identity: RealTiKvReadSessionIdentity,
+    plan_evidence: RealTiKvQueryPlanEvidence,
     cancellation: Arc<CancelHandle>,
+}
+
+/// One physical executor kind frozen before a real query is published.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RealTiKvPlanExecutorKind {
+    /// The configured table scan at executor-list position zero.
+    TableScan,
+    /// A TiKV Selection containing the planner's resolved predicates.
+    Selection,
+}
+
+impl RealTiKvPlanExecutorKind {
+    /// Returns the stable source-facing executor name used by live evidence.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::TableScan => "TableScan",
+            Self::Selection => "Selection",
+        }
+    }
+
+    const fn request_envelope_kind(self) -> ExecutorKind {
+        match self {
+            Self::TableScan => ExecutorKind::TableScan,
+            // Selection is deliberately `Other` in the request-builder's
+            // concurrency-only shape model. The immutable query evidence and
+            // encoded DAG retain its exact physical identity.
+            Self::Selection => ExecutorKind::Other,
+        }
+    }
+}
+
+/// Immutable physical-plan evidence attached to an admitted real query.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RealTiKvQueryPlanEvidence {
+    executor_kinds: Vec<RealTiKvPlanExecutorKind>,
+    predicate_count: usize,
+    output_offsets: Vec<u32>,
+}
+
+impl RealTiKvQueryPlanEvidence {
+    fn from_plan(plan: &ReadOnlyScanPlan) -> Self {
+        let predicate_count = plan
+            .selection()
+            .map_or(0, |selection| selection.conditions().len());
+        let mut executor_kinds = vec![RealTiKvPlanExecutorKind::TableScan];
+        if predicate_count != 0 {
+            executor_kinds.push(RealTiKvPlanExecutorKind::Selection);
+        }
+        Self {
+            executor_kinds,
+            predicate_count,
+            output_offsets: plan.projection_output_offsets().to_vec(),
+        }
+    }
+
+    /// Returns executor kinds in exact TiKV list-DAG order.
+    #[must_use]
+    pub fn executor_kinds(&self) -> &[RealTiKvPlanExecutorKind] {
+        &self.executor_kinds
+    }
+
+    /// Returns the number of flattened Selection conditions.
+    #[must_use]
+    pub const fn predicate_count(&self) -> usize {
+        self.predicate_count
+    }
+
+    /// Returns the final reader projection over the scan input.
+    #[must_use]
+    pub fn output_offsets(&self) -> &[u32] {
+        &self.output_offsets
+    }
+
+    fn request_envelope(&self) -> RequestEnvelope {
+        RequestEnvelope::new(
+            self.executor_kinds
+                .iter()
+                .map(|kind| ExecutorShape::new(kind.request_envelope_kind()))
+                .collect(),
+        )
+    }
 }
 
 impl RealTiKvQuery {
@@ -674,6 +757,12 @@ impl RealTiKvQuery {
     #[must_use]
     pub const fn session_identity(&self) -> RealTiKvReadSessionIdentity {
         self.session_identity
+    }
+
+    /// Returns immutable physical-plan evidence before response completion.
+    #[must_use]
+    pub const fn plan_evidence(&self) -> &RealTiKvQueryPlanEvidence {
+        &self.plan_evidence
     }
 
     /// Cancels only this query and its transport-owned request children.
@@ -850,6 +939,7 @@ where
         cancellation: Arc<CancelHandle>,
     ) -> Result<RealTiKvQuery, RealTiKvReadError> {
         let plan = ReadOnlyScanPlan::lower(sql, self.table.as_ref())?;
+        let plan_evidence = RealTiKvQueryPlanEvidence::from_plan(&plan);
         let snapshot_ts = self
             .timestamp_source
             .current_ts()
@@ -860,9 +950,11 @@ where
             ));
         }
 
-        let dag = construct_dag_req(
+        let dag = construct_read_only_dag_req(
             &DagRequestContext::new("UTC", 0, 0, EncodeType::Default),
-            &[TiKvScanPlan::Table(plan.table_scan())],
+            TiKvScanPlan::Table(plan.table_scan()),
+            plan.selection(),
+            plan.projection_output_offsets(),
         )?;
         let dag_data = dag.encode_to_vec();
         let table_id = plan.table_id();
@@ -880,10 +972,7 @@ where
                     vec![Datum::Int(i64::MAX)],
                 )],
             )
-            .set_dag_request(
-                RequestEnvelope::new(vec![ExecutorShape::new(ExecutorKind::TableScan)]),
-                dag_data,
-            );
+            .set_dag_request(plan_evidence.request_envelope(), dag_data);
         let request = builder
             .build_transport_request(Arc::clone(&cancellation))
             .map_err(|error| RealTiKvReadError::Request(format!("{error:?}")))?;
@@ -933,6 +1022,7 @@ where
             snapshot_ts,
             table_id,
             session_identity: self.identity,
+            plan_evidence,
             cancellation,
         })
     }

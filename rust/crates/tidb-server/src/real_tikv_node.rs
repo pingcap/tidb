@@ -176,6 +176,14 @@ impl QuerySession for RealTiKvServerSession {
         let table_id = query.table_id();
         let cluster_id = self.inner.cluster_id();
         let identity = query.session_identity();
+        let executor_kinds = query
+            .plan_evidence()
+            .executor_kinds()
+            .iter()
+            .map(|kind| kind.as_str())
+            .collect::<Vec<_>>();
+        let predicate_count = query.plan_evidence().predicate_count();
+        let output_offsets = query.plan_evidence().output_offsets().to_vec();
         let evidence = self.inner.transport_evidence_handle();
         let connection_id = self.context.connection_id;
         let authority_id = identity.authority_id();
@@ -192,7 +200,7 @@ impl QuerySession for RealTiKvServerSession {
             })
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
         eprintln!(
-            "{{\"event\":\"query_snapshot\",\"connection_id\":{},\"query_id\":{query_id},\"authority_id\":{},\"session_id\":{},\"cluster_id\":{cluster_id},\"snapshot_ts\":{snapshot_ts},\"table_id\":{table_id},\"user\":{:?},\"host\":{:?}}}",
+            "{{\"event\":\"query_snapshot\",\"connection_id\":{},\"query_id\":{query_id},\"authority_id\":{},\"session_id\":{},\"cluster_id\":{cluster_id},\"snapshot_ts\":{snapshot_ts},\"table_id\":{table_id},\"executor_kinds\":{executor_kinds:?},\"predicate_count\":{predicate_count},\"output_offsets\":{output_offsets:?},\"user\":{:?},\"host\":{:?}}}",
             connection_id,
             authority_id,
             session_id,
