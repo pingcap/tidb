@@ -48,37 +48,47 @@ fn parses_exact_upper_lower_and_mixed_case_stage_two_hashes() {
 #[test]
 fn rejects_every_noncanonical_encoded_shape_without_echoing_secret() {
     let cases = [
-        ("", NativePasswordHashError::InvalidLength),
+        (
+            "",
+            NativePasswordHashError::InvalidLength,
+            "native password hash has invalid length",
+        ),
         (
             "0D3CED9BEC10A777AEC23CCC353A8C08A633045E",
             NativePasswordHashError::InvalidLength,
+            "native password hash has invalid length",
         ),
         (
             "!0D3CED9BEC10A777AEC23CCC353A8C08A633045E",
             NativePasswordHashError::MissingPrefix,
+            "native password hash has invalid prefix",
         ),
         (
             "*0D3CED9BEC10A777AEC23CCC353A8C08A633045",
             NativePasswordHashError::InvalidLength,
+            "native password hash has invalid length",
         ),
         (
             "*0D3CED9BEC10A777AEC23CCC353A8C08A633045EE",
             NativePasswordHashError::InvalidLength,
+            "native password hash has invalid length",
         ),
         (
             "*0D3CED9BEC10A777AEC23CCC353A8C08A633045Z",
             NativePasswordHashError::InvalidHex,
+            "native password hash has invalid encoding",
         ),
         (
             "*0D3CED9BEC10A777AEC23CCC353A8C08A63304é",
-            NativePasswordHashError::InvalidLength,
+            NativePasswordHashError::InvalidHex,
+            "native password hash has invalid encoding",
         ),
     ];
 
-    for (encoded, expected) in cases {
+    for (encoded, expected, safe_diagnostic) in cases {
         let error = NativePasswordHash::parse(encoded).expect_err("invalid hash");
         assert_eq!(error, expected);
-        assert!(!error.to_string().contains(encoded));
+        assert_eq!(error.to_string(), safe_diagnostic);
     }
 }
 
