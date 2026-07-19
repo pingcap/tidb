@@ -1,2 +1,2 @@
-# Campaign 24 live clustered-PK range proof has no directly claimed Go test declarations; its bounded test-support obligation is recorded in the owner-named source evidence.
+# Campaign 24 live clustered-PK range proof has no directly claimed Go test declarations; its thin scenario retains range-specific query and plan assertions while the shared harness owns topology and shutdown lifecycle.
 # kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
