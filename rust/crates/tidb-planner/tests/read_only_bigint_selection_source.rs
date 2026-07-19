@@ -61,24 +61,20 @@ fn six_comparisons_preserve_and_order_operand_order_and_signed_extremes() {
             .collect::<Vec<_>>(),
         [7, 9]
     );
+    assert!(plan.is_contradiction());
     let conditions = plan.selection().unwrap().conditions();
-    assert_eq!(conditions.len(), 6);
-    assert_eq!(conditions[0].op(), ComparisonOp::Lt);
-    assert_eq!(conditions[0].lhs(), ComparisonOperand::InputOffset(0));
-    assert_eq!(conditions[0].rhs(), ComparisonOperand::Int(i64::MIN));
-    assert_eq!(conditions[1].op(), ComparisonOp::Le);
-    assert_eq!(conditions[1].lhs(), ComparisonOperand::Int(-5));
-    assert_eq!(conditions[1].rhs(), ComparisonOperand::InputOffset(1));
-    assert_eq!(conditions[2].op(), ComparisonOp::Gt);
-    assert_eq!(conditions[3].op(), ComparisonOp::Ge);
-    assert_eq!(conditions[4].op(), ComparisonOp::Eq);
-    assert_eq!(conditions[5].op(), ComparisonOp::Ne);
+    assert_eq!(conditions.len(), 3);
+    assert_eq!(conditions[0].op(), ComparisonOp::Le);
+    assert_eq!(conditions[0].lhs(), ComparisonOperand::Int(-5));
+    assert_eq!(conditions[0].rhs(), ComparisonOperand::InputOffset(1));
+    assert_eq!(conditions[1].op(), ComparisonOp::Ge);
+    assert_eq!(conditions[2].op(), ComparisonOp::Ne);
     assert_eq!(
         plan.selection()
             .unwrap()
             .condition_input_offsets()
             .collect::<Vec<_>>(),
-        [0, 1, 0, 1, 0, 1]
+        [1, 1, 1]
     );
 }
 
@@ -107,7 +103,7 @@ fn projection_prefix_is_stable_and_predicate_only_columns_are_appended_once() {
             .unwrap()
             .condition_input_offsets()
             .collect::<Vec<_>>(),
-        [2, 2, 1]
+        [2, 2]
     );
 }
 

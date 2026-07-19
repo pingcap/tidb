@@ -97,8 +97,11 @@ fn unsupported_plan_shapes_fail_before_physical_lowering() {
         UnsupportedReadOnlyFeature::WriteOrNonQueryStatement,
     );
     let filtered = ReadOnlyScanPlan::lower("SELECT id FROM accounts WHERE id = 1", &table())
-        .expect("bounded signed-BIGINT predicates now lower to Selection");
-    assert!(filtered.selection().is_some());
+        .expect("bounded signed-BIGINT handle predicates now lower to ranges");
+    assert!(filtered.selection().is_none());
+    assert_eq!(filtered.handle_ranges().len(), 1);
+    assert_eq!(filtered.handle_ranges()[0].start(), 1);
+    assert_eq!(filtered.handle_ranges()[0].end(), 1);
     assert_eq!(filtered.projection_output_offsets(), [0]);
     unsupported(
         "SELECT accounts.id FROM accounts JOIN other ON accounts.id = other.id",

@@ -1,6 +1,6 @@
 schema = "1"
 slice = "planner-read-only-clustered-pk-range-runtime"
-status = "ready"
+status = "partial"
 target = "tidb-planner"
 ring = "plan"
 consumer = "The configured read-only planner detaches clustered-primary-key access conditions into logical ranges, retains stored-column and non-detachable conditions in physical Selection, and exposes both through one physical table-reader plan."
@@ -22,5 +22,8 @@ support_anchors = [
 ]
 rust_paths = [
   "rust/crates/tidb-planner/src/read_only_scan.rs",
+  "rust/crates/tidb-planner/tests/read_only_bigint_selection_source.rs",
   "rust/crates/tidb-planner/tests/read_only_clustered_pk_range_source.rs",
+  "rust/crates/tidb-planner/tests/read_only_scan_source.rs",
+  "rust/difftests/corpus/coverage/evidence/source/planner-read-only-clustered-pk-range-runtime.tsv",
 ]

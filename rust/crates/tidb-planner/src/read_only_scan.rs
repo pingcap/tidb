@@ -19,8 +19,10 @@
 //! primary key. It
 //! validates the complete parsed query envelope before entering the existing
 //! `LogicalDataSource -> TableAccessPath -> PhysicalTableReaderPlan` path.
-//! Ordinary signed-`BIGINT` comparisons joined by `AND` are bound to a
-//! physical TiKV Selection; every other predicate shape fails closed.
+//! Ordinary signed-`BIGINT` comparisons joined by `AND` are bound once. Exact
+//! clustered-primary-key comparisons become logical table-handle ranges;
+//! stored-column comparisons remain in the physical TiKV Selection. Every
+//! other predicate shape fails closed.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -47,6 +49,7 @@ use crate::{
     },
     physical_table_scan::PhysicalTableScanPlan,
     scan_pushdown::{ScanColumnInfo, TiKvTableScanSpec},
+    signed_bigint_ranger::{detach_clustered_signed_bigint_ranges, SignedBigIntRange},
     task_type::TaskType,
 };
 
@@ -401,12 +404,14 @@ impl fmt::Display for ReadOnlyScanError {
 
 impl Error for ReadOnlyScanError {}
 
-/// One validated direct projection plus optional signed-`BIGINT` Selection.
+/// One validated direct projection, clustered-handle ranges, and optional
+/// residual signed-`BIGINT` Selection.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReadOnlyScanPlan {
     reader: crate::physical_table_reader::PhysicalTableReaderPlan,
     projected_columns: Vec<ResolvedProjectionColumn>,
     projection_output_offsets: Vec<u32>,
+    handle_ranges: Vec<SignedBigIntRange>,
     selection: Option<PhysicalSelectionPlan>,
 }
 
@@ -499,11 +504,28 @@ impl ReadOnlyScanPlan {
                 .map_err(ReadOnlyScanError::PhysicalSelection)
             })
             .collect::<Result<Vec<_>, ReadOnlyScanError>>()?;
-        let selection = if comparisons.is_empty() {
+        let clustered_column_id = table
+            .columns
+            .iter()
+            .find(|column| column.kind == ConfiguredColumnKind::ClusteredPrimaryKey)
+            .expect("ConfiguredTable::validate requires one clustered primary key")
+            .id;
+        let (handle_ranges, residual_comparisons) =
+            if let Some(clustered_input_offset) = scan_offsets.get(&clustered_column_id) {
+                let detached =
+                    detach_clustered_signed_bigint_ranges(&comparisons, *clustered_input_offset);
+                (
+                    detached.ranges().to_vec(),
+                    detached.residual_conditions().to_vec(),
+                )
+            } else {
+                (vec![SignedBigIntRange::full()], comparisons)
+            };
+        let selection = if residual_comparisons.is_empty() {
             None
         } else {
             Some(
-                PhysicalSelectionPlan::from_bigint_conditions(comparisons)
+                PhysicalSelectionPlan::from_bigint_conditions(residual_comparisons)
                     .map_err(ReadOnlyScanError::PhysicalSelection)?,
             )
         };
@@ -538,6 +560,7 @@ impl ReadOnlyScanPlan {
             reader,
             projected_columns,
             projection_output_offsets,
+            handle_ranges,
             selection,
         })
     }
@@ -569,8 +592,24 @@ impl ReadOnlyScanPlan {
         &self.projection_output_offsets
     }
 
+    /// Returns normalized inclusive clustered signed-handle ranges.
+    ///
+    /// DistSQL owns conversion to physical TiDB record-key bytes. An empty
+    /// slice is an exact contradiction and must short-circuit before TSO or
+    /// transport work.
+    #[must_use]
+    pub fn handle_ranges(&self) -> &[SignedBigIntRange] {
+        &self.handle_ranges
+    }
+
+    /// Returns whether exact clustered-handle predicates are contradictory.
+    #[must_use]
+    pub fn is_contradiction(&self) -> bool {
+        self.handle_ranges.is_empty()
+    }
+
     /// Returns the physical signed-`BIGINT` Selection above the table scan,
-    /// when the query has a bounded `WHERE` clause.
+    /// when the query has residual non-handle conditions.
     #[must_use]
     pub const fn selection(&self) -> Option<&PhysicalSelectionPlan> {
         self.selection.as_ref()
