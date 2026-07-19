@@ -87,7 +87,7 @@ fn locked_response_carries_the_exact_cop_call_context() {
     assert!(send_tail.starts_with("send_request_with_route("));
     assert!(send_tail.contains("dispatch.physical_address()"));
     assert!(send_tail.contains("dispatch.forwarded_host()"));
-    assert!(send_tail.contains("&client_request"));
+    assert!(send_tail.contains("&prepared_dispatch.client_request"));
     assert!(send_tail.contains("&call"));
     let observation = source[send..]
         .find("LockedResponseObservation {")
