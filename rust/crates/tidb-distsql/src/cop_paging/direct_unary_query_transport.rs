@@ -38,15 +38,15 @@ use crate::{
 };
 use prost::Message;
 use tidb_txnkv::region::{
-    KeyRange as RegionKeyRange, LeaderRequest, ReadPolicy, RegionAttempt, RegionBackoffBudget,
-    RegionBackoffKind, RegionCache, RegionErrorDisposition, RegionLoader, RegionLocation,
-    RegionQueryLoader, RegionRecoveryError, RegionRecoveryLoader, RegionRouteError, RegionVerId,
-    ReplicaHealthPolicy, ReplicaReadMode, RequestSelection, RequestSelector, StoreFailureOutcome,
+    KeyRange as RegionKeyRange, LeaderRequest, ReadPolicy, RegionBackoffBudget, RegionBackoffKind,
+    RegionCache, RegionErrorDisposition, RegionLoader, RegionLocation, RegionQueryLoader,
+    RegionRecoveryError, RegionRecoveryLoader, RegionRouteError, RegionVerId, ReplicaHealthPolicy,
+    ReplicaReadMode, RequestSelection, RequestSelector, StoreFailureOutcome,
     StoreLabel as RoutingStoreLabel,
 };
 use tidb_txnkv::{
     rpc::{AsyncRequestDispatcher, CompletionError, PendingRequest},
-    EndpointType, SharedReadAuthority, SharedReadRuntime, TraceInfo, UnaryCallContext,
+    EndpointType, SharedReadOpener, SharedReadRuntime, TraceInfo, UnaryCallContext,
     UnaryCancellation, DEFAULT_STORE_LIVENESS_TIMEOUT,
 };
 pub use tidb_txnkv::{
@@ -156,6 +156,25 @@ struct ObservedTransportFailure {
     observation_current: bool,
     feedback: tidb_txnkv::region::RouteFeedback,
     error: DirectUnaryClientError,
+}
+
+/// Exact physical channel which returned one decoded TiKV response.
+///
+/// Region attempts identify the logical target generation. They cannot be
+/// substituted for this transport identity, especially when forwarding uses
+/// a healthy proxy or when a delayed response outlives its channel generation.
+struct ObservedPhysicalResponse {
+    address: String,
+    channel_version: u64,
+}
+
+impl From<&DirectUnaryResponse> for ObservedPhysicalResponse {
+    fn from(response: &DirectUnaryResponse) -> Self {
+        Self {
+            address: response.physical_address().to_owned(),
+            channel_version: response.physical_channel_version(),
+        }
+    }
 }
 
 /// Only continuation admitted after bounded lock handling succeeds.
@@ -546,13 +565,13 @@ impl<C, L> DirectUnaryQueryTransport<C, L>
 where
     L: RegionQueryLoader + RegionRecoveryLoader + Send + 'static,
 {
-    /// Opens one worker-local query transport from the process read authority.
+    /// Opens one worker-local query transport from a process-issued opener.
     ///
-    /// The authority retains maintenance ownership. This transport receives a
+    /// The authority retains maintenance ownership. This opener supplies a
     /// cloneable TiKV command capability and a cache handle, but no shutdown or
     /// worker-join capability.
     pub fn from_read_authority<S>(
-        authority: &SharedReadAuthority<C, L>,
+        authority: &SharedReadOpener<C, L>,
         config: DirectUnaryRuntimeConfig,
         timestamp_source: S,
     ) -> Result<Self, DirectUnaryTransportError>
@@ -1252,6 +1271,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                 );
             }
         };
+        let physical_response = ObservedPhysicalResponse::from(&raw_response);
         self.network_metrics.on_response(
             request_bytes,
             raw_response.encoded_response.len(),
@@ -1277,7 +1297,8 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             return self.recover_region_error(
                 logical_task_id,
                 failed,
-                selected.attempt,
+                selected,
+                physical_response,
                 region_error,
             );
         }
@@ -1444,10 +1465,12 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         &mut self,
         logical_task_id: u64,
         failed: super::FailedCopReadAttempt,
-        observed_attempt: RegionAttempt,
+        selected: LeaderRequest,
+        physical_response: ObservedPhysicalResponse,
         region_error: tidb_proto::RegionError,
     ) -> Result<(), DirectUnaryTransportError> {
         self.check_retry_active()?;
+        let observed_attempt = selected.attempt.clone();
         if let Some(server_busy) = &region_error.server_is_busy {
             let fast_retry = {
                 let selector = self.request_selectors.get_mut(&logical_task_id).ok_or(
@@ -1478,13 +1501,24 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                 return self.install_same_task_retry(replacement);
             }
         }
-        // StoreNotMatch belongs to this cache-issued route generation, not to
-        // every transport channel currently using the same address. A delayed
-        // response may arrive after another session has already installed a
-        // replacement channel, and this response does not carry the channel
-        // pool version needed by `close_address_version`. Let the canonical
-        // region-error owner below apply the exact `observed_attempt`; never
-        // turn this stale route fact into an address-wide transport mutation.
+        // A direct StoreNotMatch proves that the exact physical channel which
+        // returned it is connected to the wrong store process. Retire only
+        // that response-carried channel generation. This is safe even for a
+        // delayed response because ChannelPool retirement requires equality.
+        //
+        // A forwarded StoreNotMatch describes the logical target named in the
+        // forwarding metadata. The proxy carried the response successfully,
+        // so preserve its physical channel and let RegionCache invalidate only
+        // the logical target route below.
+        if region_error.store_not_match.is_some() && selected.forwarded_host().is_none() {
+            self.check_retry_active()?;
+            try_borrow_client(self.shared_runtime.client())?
+                .close_address_version(
+                    &physical_response.address,
+                    physical_response.channel_version,
+                )
+                .map_err(DirectUnaryTransportError::Client)?;
+        }
         let region_id = observed_attempt.region.id;
         let region_retry_max_sleep = self.config.region_retry_max_sleep;
         let disposition = {

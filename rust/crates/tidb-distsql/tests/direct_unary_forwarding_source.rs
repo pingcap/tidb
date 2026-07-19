@@ -38,7 +38,7 @@ impl DirectUnaryClient for RecordingClient {
         _timeout: Duration,
     ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
         self.access_path.push(path(address, None, request));
-        Ok(DirectUnaryResponse::default())
+        Ok(DirectUnaryResponse::new(Vec::new(), address, 1))
     }
 
     fn send_request_with_context(
@@ -62,7 +62,7 @@ impl DirectUnaryClient for RecordingClient {
         }
         self.access_path
             .push(path(address, forwarded_host, request));
-        Ok(DirectUnaryResponse::default())
+        Ok(DirectUnaryResponse::new(Vec::new(), address, 1))
     }
 
     fn close_address(&mut self, _address: &str) -> Result<(), DirectUnaryClientError> {

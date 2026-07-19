@@ -178,7 +178,7 @@ impl DirectUnaryClient for ScriptedClient {
         self.responses
             .pop_front()
             .expect("one scripted response per client call")
-            .map(|encoded_response| DirectUnaryResponse { encoded_response })
+            .map(|encoded_response| DirectUnaryResponse::new(encoded_response, address, 1))
     }
 
     fn send_request_with_context(
@@ -196,6 +196,16 @@ impl DirectUnaryClient for ScriptedClient {
         } else {
             result
         }
+    }
+
+    fn send_request_with_route(
+        &mut self,
+        address: &str,
+        _forwarded_host: Option<&str>,
+        request: &DirectUnaryRequest,
+        call: &UnaryCallContext,
+    ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
+        self.send_request_with_context(address, request, call)
     }
 
     fn close_address(&mut self, address: &str) -> Result<(), DirectUnaryClientError> {
@@ -1752,12 +1762,15 @@ fn one_store_failure_stales_later_bound_regions_without_reordering_them() {
 #[derive(Debug, Default)]
 struct DelayedStoreMismatchState {
     active_generation: Option<u64>,
+    next_generation: u64,
+    close_requests: Vec<u64>,
     force_closed_generations: Vec<u64>,
     sent_generations: Vec<u64>,
 }
 
 struct DelayedStoreMismatchClient {
     state: Rc<RefCell<DelayedStoreMismatchState>>,
+    replace_before_first_response: bool,
 }
 
 impl DirectUnaryClient for DelayedStoreMismatchClient {
@@ -1769,24 +1782,37 @@ impl DirectUnaryClient for DelayedStoreMismatchClient {
     ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
         assert_eq!(address, "shared-tikv:20160");
         let mut state = self.state.borrow_mut();
-        let generation = state.active_generation.ok_or_else(|| {
-            DirectUnaryClientError::InvalidRequest("replacement channel was closed".to_owned())
-        })?;
+        let generation = match state.active_generation {
+            Some(generation) => generation,
+            None => {
+                state.next_generation += 1;
+                let generation = state.next_generation;
+                state.active_generation = Some(generation);
+                generation
+            }
+        };
         state.sent_generations.push(generation);
         if state.sent_generations.len() == 1 {
             assert_eq!(generation, 1);
-            // Session B replaces the channel while session A's request is in
-            // flight. The delayed StoreNotMatch below still belongs to
-            // generation 1 and must not close this replacement.
-            state.active_generation = Some(2);
-            return Ok(DirectUnaryResponse {
-                encoded_response: store_not_match(1),
-            });
+            if self.replace_before_first_response {
+                // Session B replaces the channel while session A's request is
+                // in flight. The delayed StoreNotMatch below still belongs to
+                // generation 1 and must not close this replacement.
+                state.active_generation = Some(2);
+                state.next_generation = 2;
+            }
+            return Ok(DirectUnaryResponse::new(
+                store_not_match(1),
+                address,
+                generation,
+            ));
         }
         assert_eq!(generation, 2);
-        Ok(DirectUnaryResponse {
-            encoded_response: response(b"replacement-survived"),
-        })
+        Ok(DirectUnaryResponse::new(
+            response(b"replacement-survived"),
+            address,
+            generation,
+        ))
     }
 
     fn send_request_with_context(
@@ -1814,9 +1840,10 @@ impl DirectUnaryClient for DelayedStoreMismatchClient {
     ) -> Result<(), DirectUnaryClientError> {
         assert_eq!(address, "shared-tikv:20160");
         let mut state = self.state.borrow_mut();
+        state.close_requests.push(version);
         if state
             .active_generation
-            .is_some_and(|generation| generation <= version)
+            .is_some_and(|generation| generation == version)
         {
             let generation = state.active_generation.take().unwrap();
             state.force_closed_generations.push(generation);
@@ -1863,15 +1890,18 @@ impl tidb_txnkv::lock::LockRecoveryClient for DelayedStoreMismatchClient {
     }
 }
 
-#[test]
-fn delayed_store_not_match_cannot_close_a_replacement_channel() {
+fn run_store_not_match_with_channel_replacement(
+    replace_before_first_response: bool,
+) -> Rc<RefCell<DelayedStoreMismatchState>> {
     let state = Rc::new(RefCell::new(DelayedStoreMismatchState {
         active_generation: Some(1),
+        next_generation: 1,
         ..DelayedStoreMismatchState::default()
     }));
     let transport = DirectUnaryQueryTransport::new_injected(
         DelayedStoreMismatchClient {
             state: Rc::clone(&state),
+            replace_before_first_response,
         },
         RegionCache::new(ScriptedLoader {
             cluster_id: 9001,
@@ -1904,10 +1934,84 @@ fn delayed_store_not_match_cannot_close_a_replacement_channel() {
         Some(b"replacement-survived".to_vec())
     );
     assert_eq!(result.next_raw().unwrap(), None);
+    drop(result);
+    state
+}
+
+#[test]
+fn current_store_not_match_closes_exact_observed_channel() {
+    let state = run_store_not_match_with_channel_replacement(false);
     let state = state.borrow();
     assert_eq!(state.sent_generations, [1, 2]);
+    assert_eq!(state.close_requests, [1]);
+    assert_eq!(state.force_closed_generations, [1]);
+    assert_eq!(state.active_generation, Some(2));
+}
+
+#[test]
+fn delayed_store_not_match_cannot_close_a_replacement_channel() {
+    let state = run_store_not_match_with_channel_replacement(true);
+    let state = state.borrow();
+    assert_eq!(state.sent_generations, [1, 2]);
+    assert_eq!(state.close_requests, [1]);
     assert!(state.force_closed_generations.is_empty());
     assert_eq!(state.active_generation, Some(2));
+}
+
+#[test]
+fn forwarded_store_not_match_invalidates_target_without_closing_proxy_channel() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let location =
+        location_with_second_peer(1, "a", "z", "logical-target:20160", "healthy-proxy:20160");
+    let mut runtime = InjectedQueryRuntime::new(transport_with_transport_failures(
+        Rc::clone(&calls),
+        [
+            Err(connection_failure(
+                "logical-target:20160",
+                1,
+                DirectUnaryTransportClass::Connection,
+                None,
+            )),
+            Ok(store_not_match(1)),
+            Ok(response(b"logical-route-reloaded")),
+        ],
+        [Ok(StoreLiveness::Unreachable)],
+        Rc::clone(&events),
+        [location.clone(), location],
+        DirectUnaryRuntimeConfig {
+            enable_forwarding: true,
+            region_retry_waiter: Rc::new(RecordingRetryControl::default()),
+            ..DirectUnaryRuntimeConfig::default()
+        },
+    ));
+    let mut result = select_result(&mut runtime, &transport_request(metadata("a", "z")));
+
+    assert_eq!(
+        result.next_raw().unwrap(),
+        Some(b"logical-route-reloaded".to_vec())
+    );
+    assert_eq!(result.next_raw().unwrap(), None);
+    assert_eq!(
+        calls
+            .borrow()
+            .iter()
+            .map(|call| call.address.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "logical-target:20160",
+            "healthy-proxy:20160",
+            "healthy-proxy:20160",
+        ]
+    );
+    assert!(events.borrow().iter().all(|event| {
+        !matches!(
+            event,
+            ClientEvent::ForceClose(address)
+                | ClientEvent::CloseGeneration { address, .. }
+                if address == "healthy-proxy:20160"
+        )
+    }));
 }
 
 #[test]
