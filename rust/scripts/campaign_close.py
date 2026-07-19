@@ -156,6 +156,30 @@ def _remove_fragment_rows(
     return "\n".join(retained) + "\n", removed
 
 
+def _render_transfer_retirements(
+    path: Path, retained_artifacts: list[tuple[str, ...]]
+) -> str:
+    """Render transfer rows with only artifacts absent after the transaction."""
+    rendered: list[str] = []
+    data_index = 0
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        if not line or line.startswith("#"):
+            rendered.append(line)
+            continue
+        fields = line.split("\t")
+        if len(fields) != 9:
+            raise ValueError(f"{path}:{number}: expected 9 fields, got {len(fields)}")
+        if data_index >= len(retained_artifacts):
+            raise ValueError(f"{path}:{number}: transfer row count changed during preflight")
+        artifacts = retained_artifacts[data_index]
+        fields[6] = ",".join(artifacts) if artifacts else "-"
+        rendered.append("\t".join(fields))
+        data_index += 1
+    if data_index != len(retained_artifacts):
+        raise ValueError(f"{path}: transfer row count changed during preflight")
+    return "\n".join(rendered) + "\n"
+
+
 def _evidence_owners(
     root: Path, planned_writes: dict[Path, str], planned_deletes: set[Path], kind: str
 ) -> dict[str, list[str]]:
@@ -374,6 +398,22 @@ def build_close_plan(root: Path, campaign_name: str) -> ClosePlan:
             deletes.add(path)
         else:
             writes[path] = rendered
+
+    # A transfer's retired_artifacts field is an absence assertion checked by
+    # work-unit-queue, not a row-edit instruction. Partial predecessor
+    # fragments survive and therefore must no longer be named there; fragments
+    # deleted by this transaction and already-absent non-evidence history stay.
+    retained_retirements: list[tuple[str, ...]] = []
+    for row in transfer_rows:
+        retained = []
+        for artifact in _split_artifacts(row[6]):
+            path = _repository_path(root, artifact)
+            if path in deletes or (_fragment_kind(root, path) is None and not path.exists()):
+                retained.append(artifact)
+        retained_retirements.append(tuple(retained))
+    writes[transfer_path] = _render_transfer_retirements(
+        transfer_path, retained_retirements
+    )
 
     for kind in ("source", "test"):
         owners = _evidence_owners(root, writes, deletes, kind)

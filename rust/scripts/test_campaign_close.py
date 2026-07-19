@@ -193,12 +193,98 @@ class CampaignCloseTest(unittest.TestCase):
         self.assertIn("source1.go", plan.writes[self.old_source])
         self.assertIn(self.old_test, plan.deletes)
         self.assertNotIn(self.root / "-", plan.touched_paths)
+        transfer_path = (
+            self.root
+            / "difftests/corpus/coverage/evidence/transfers/campaign-x.tsv"
+        )
+        transfer_rows = [
+            line.split("\t")
+            for line in plan.writes[transfer_path].splitlines()
+            if line and not line.startswith("#")
+        ]
+        self.assertEqual(
+            transfer_rows[0][6],
+            "rust/difftests/corpus/coverage/evidence/tests/old-owner.tsv",
+        )
+        self.assertEqual(transfer_rows[1][6], "-")
         self.assertEqual(plan.transfer_count, 2)
         # Dry-run/preflight computes the complete mutation but changes nothing.
         self.assertEqual(self.old_source.read_text(encoding="utf-8"), before_source)
         self.assertEqual(self.old_test.read_text(encoding="utf-8"), before_test)
         self.assertIn('status = "planned"', self.campaign_path.read_text())
         self.assertFalse(self.archive_path.exists())
+
+    def test_apply_keeps_partial_fragment_and_passes_real_queue_validation(self) -> None:
+        source_inventory = (
+            self.root / "difftests/corpus/coverage/go_source_inventory.tsv"
+        )
+        test_inventory = self.root / "difftests/corpus/coverage/go_test_inventory.tsv"
+
+        def regenerate(command: list[str], root: Path) -> None:
+            if "go_source_ledger" in command:
+                source_inventory.write_text(
+                    source_inventory.read_text(encoding="utf-8").replace(
+                        "PARTIAL\told-owner\t"
+                        "rust/difftests/corpus/coverage/evidence/source/old-owner.tsv\told",
+                        "PARTIAL\tmember-a\t"
+                        "rust/difftests/corpus/coverage/evidence/source/member-a.tsv\tported",
+                        1,
+                    ),
+                    encoding="utf-8",
+                )
+            elif "go_test_ledger" in command:
+                text = test_inventory.read_text(encoding="utf-8")
+                text = text.replace(
+                    "PARTIAL\told-owner\t"
+                    "rust/difftests/corpus/coverage/evidence/tests/old-owner.tsv\told",
+                    "PARTIAL\tmember-a\t"
+                    "rust/difftests/corpus/coverage/evidence/tests/member-a.tsv\tported",
+                    1,
+                )
+                text = text.replace(
+                    "Test1\tplan\tUNTRIAGED\t-\t-\t-",
+                    "Test1\tplan\tPARTIAL\tmember-a\t"
+                    "rust/difftests/corpus/coverage/evidence/tests/member-a.tsv\tported",
+                    1,
+                )
+                test_inventory.write_text(text, encoding="utf-8")
+            else:
+                (root / "STATUS.md").write_text("generated\n", encoding="utf-8")
+
+        # Reproduce the Campaign 23 failure after inventory generation: the
+        # terminal owner is correct, but the surviving partial fragment is
+        # still falsely declared retired by the original transfer row.
+        regenerate(["go_source_ledger"], self.root)
+        regenerate(["go_test_ledger"], self.root)
+        with self.assertRaisesRegex(ValueError, "retired artifact still exists"):
+            campaign_close.queue.validate_transfers(self.root)
+
+        plan = campaign_close.build_close_plan(self.root, "campaign-x")
+
+        campaign_close.apply_close_plan(
+            self.root, plan, command_runner=regenerate, validate=True
+        )
+
+        self.assertTrue(self.old_source.exists())
+        self.assertIn("source1.go", self.old_source.read_text(encoding="utf-8"))
+        self.assertFalse(self.old_test.exists())
+        transfer_path = (
+            self.root
+            / "difftests/corpus/coverage/evidence/transfers/campaign-x.tsv"
+        )
+        rows = campaign_close.queue.read_tsv(transfer_path, 9)
+        self.assertNotIn(
+            "rust/difftests/corpus/coverage/evidence/source/old-owner.tsv",
+            rows[0][6],
+        )
+        self.assertEqual(
+            rows[0][6],
+            "rust/difftests/corpus/coverage/evidence/tests/old-owner.tsv",
+        )
+        self.assertEqual(rows[1][6], "-")
+        # Exercise the production validator again explicitly: a surviving
+        # predecessor fragment must no longer be treated as a retired artifact.
+        campaign_close.queue.validate_claims(self.root)
 
     def test_apply_rolls_back_all_bookkeeping_when_a_generator_fails(self) -> None:
         plan = campaign_close.build_close_plan(self.root, "campaign-x")

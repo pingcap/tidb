@@ -34,8 +34,11 @@ python3 scripts/campaign_close.py --campaign <campaign> --gate
 The command removes only transferred rows from predecessor evidence fragments,
 deletes a fragment only when no evidence rows remain, and treats a transfer's
 `retired_artifacts = "-"` as an empty set rather than a path. Preflight is
-read-only. Apply snapshots every file the generators, campaign archive, gate,
-and releases can mutate and restores them if any step fails.
+read-only. If unrelated rows keep a predecessor fragment alive, close also
+removes that surviving path from the transfer's retired-artifact field; only
+artifacts absent after the transaction remain declared retired. Apply snapshots
+every file the generators, campaign archive, gate, and releases can mutate and
+restores them if any step fails.
 
 Campaigns form a pipeline, not a sequence of planning pauses. Before the
 current campaign consumes its final ready batch, root freezes the next
