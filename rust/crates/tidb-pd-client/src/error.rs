@@ -188,3 +188,87 @@ impl std::fmt::Display for PdClientError {
 }
 
 impl std::error::Error for PdClientError {}
+
+/// Typed failures while stopping the unique PD worker lifecycle owner.
+///
+/// Shutdown is deliberately separate from foreground [`PdClientError`]
+/// because a process can finish every request successfully and still fail to
+/// prove that its retained worker stopped cleanly.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PdClientShutdownError {
+    /// A cloneable request handle tried to exercise process lifecycle authority.
+    NotOwner,
+    /// Explicit shutdown began while request handles were still retained.
+    SharedOwners {
+        /// Number of live owner and request-handle values.
+        owners: usize,
+    },
+    /// The worker command receiver disappeared before accepting Close.
+    CommandSend,
+    /// The worker accepted Close but disappeared before acknowledging it.
+    MissingAcknowledgement,
+    /// The mutex retaining the unique join handle was poisoned.
+    WorkerStatePoisoned,
+    /// The retained PD worker panicked before or during shutdown.
+    WorkerPanicked,
+    /// More than one independent shutdown failure was observed.
+    Multiple(Vec<Self>),
+}
+
+impl PdClientShutdownError {
+    /// Stable failure family used by lifecycle callers and tests.
+    #[must_use]
+    pub const fn kind(&self) -> &'static str {
+        match self {
+            Self::NotOwner => "not_owner",
+            Self::SharedOwners { .. } => "shared_owners",
+            Self::CommandSend => "command_send",
+            Self::MissingAcknowledgement => "missing_acknowledgement",
+            Self::WorkerStatePoisoned => "worker_state_poisoned",
+            Self::WorkerPanicked => "worker_panicked",
+            Self::Multiple(_) => "multiple",
+        }
+    }
+
+    pub(crate) fn from_failures(mut failures: Vec<Self>) -> Result<(), Self> {
+        match failures.len() {
+            0 => Ok(()),
+            1 => Err(failures.pop().expect("one shutdown failure")),
+            _ => Err(Self::Multiple(failures)),
+        }
+    }
+}
+
+impl std::fmt::Display for PdClientShutdownError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotOwner => formatter.write_str("PD request handle does not own worker shutdown"),
+            Self::SharedOwners { owners } => write!(
+                formatter,
+                "explicit PD shutdown requires drained request handles; observed {owners} live handles"
+            ),
+            Self::CommandSend => {
+                formatter.write_str("PD worker stopped before accepting the shutdown command")
+            }
+            Self::MissingAcknowledgement => {
+                formatter.write_str("PD worker stopped without acknowledging shutdown")
+            }
+            Self::WorkerStatePoisoned => {
+                formatter.write_str("PD worker lifecycle state is poisoned")
+            }
+            Self::WorkerPanicked => formatter.write_str("PD worker panicked during shutdown"),
+            Self::Multiple(failures) => {
+                formatter.write_str("multiple PD shutdown failures: ")?;
+                for (index, failure) in failures.iter().enumerate() {
+                    if index > 0 {
+                        formatter.write_str("; ")?;
+                    }
+                    failure.fmt(formatter)?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+impl std::error::Error for PdClientShutdownError {}

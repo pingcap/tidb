@@ -15,6 +15,7 @@
 use std::time::{Duration, Instant};
 
 use tidb_proto::pdpb::{self, pd_client::PdClient as TonicPdClient};
+use tokio::sync::watch;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::transport::Channel;
 
@@ -149,12 +150,20 @@ impl RetainedTsoStream {
         endpoint: &str,
         cluster_id: u64,
         deadline: Instant,
+        shutdown: &watch::Receiver<bool>,
     ) -> Result<(Self, TimestampParts), PdClientError> {
         let timeout = remaining(deadline, endpoint)?;
         let (requests, receiver) = tokio::sync::mpsc::channel(1);
         let request = tso_request(cluster_id);
+        if *shutdown.borrow() {
+            return Err(PdClientError::Closed);
+        }
+        let mut cancellation = shutdown.clone();
         let response = runtime.block_on(async {
-            tokio::time::timeout(timeout, async {
+            tokio::select! {
+                biased;
+                () = shutdown_requested(&mut cancellation) => None,
+                response = tokio::time::timeout(timeout, async {
                 // PD may wait for its first inbound TSO request before it
                 // publishes response headers. Queue the request before
                 // polling the tonic open future, matching grpc-go's
@@ -172,13 +181,14 @@ impl RetainedTsoStream {
                     tonic::Status::unavailable("PD Tso response stream is closed")
                 })?;
                 Ok::<_, tonic::Status>((responses, response))
-            })
-            .await
+                }) => Some(response),
+            }
         });
         let (responses, response) = match response {
-            Ok(Ok(response)) => response,
-            Ok(Err(status)) => return Err(map_status(endpoint, status)),
-            Err(_) => return Err(timeout_error(endpoint, timeout)),
+            Some(Ok(Ok(response))) => response,
+            Some(Ok(Err(status))) => return Err(map_status(endpoint, status)),
+            Some(Err(_)) => return Err(timeout_error(endpoint, timeout)),
+            None => return Err(PdClientError::Closed),
         };
         let timestamp = TimestampParts::from_response(endpoint, cluster_id, response)?;
         Ok((
@@ -200,12 +210,19 @@ impl RetainedTsoStream {
         runtime: &tokio::runtime::Runtime,
         cluster_id: u64,
         deadline: Instant,
+        shutdown: &watch::Receiver<bool>,
     ) -> Result<TimestampParts, PdClientError> {
         let timeout = remaining(deadline, &self.endpoint)?;
         let request = tso_request(cluster_id);
-        let response =
-            runtime.block_on(async {
-                tokio::time::timeout(timeout, async {
+        if *shutdown.borrow() {
+            return Err(PdClientError::Closed);
+        }
+        let mut cancellation = shutdown.clone();
+        let response = runtime.block_on(async {
+            tokio::select! {
+                biased;
+                () = shutdown_requested(&mut cancellation) => None,
+                response = tokio::time::timeout(timeout, async {
                     self.requests.send(request).await.map_err(|_| {
                         tonic::Status::unavailable("PD Tso request stream is closed")
                     })?;
@@ -213,15 +230,24 @@ impl RetainedTsoStream {
                         tonic::Status::unavailable("PD Tso response stream is closed")
                     })
                 })
-                .await
-            });
+                => Some(response),
+            }
+        });
         let response = match response {
-            Ok(Ok(response)) => response,
-            Ok(Err(status)) => return Err(map_status(&self.endpoint, status)),
-            Err(_) => return Err(timeout_error(&self.endpoint, timeout)),
+            Some(Ok(Ok(response))) => response,
+            Some(Ok(Err(status))) => return Err(map_status(&self.endpoint, status)),
+            Some(Err(_)) => return Err(timeout_error(&self.endpoint, timeout)),
+            None => return Err(PdClientError::Closed),
         };
         TimestampParts::from_response(&self.endpoint, cluster_id, response)
     }
+}
+
+async fn shutdown_requested(shutdown: &mut watch::Receiver<bool>) {
+    if *shutdown.borrow() {
+        return;
+    }
+    let _ = shutdown.changed().await;
 }
 
 fn tso_request(cluster_id: u64) -> pdpb::TsoRequest {

@@ -13,12 +13,14 @@
 // limitations under the License.
 
 use std::collections::{HashMap, HashSet};
+use std::future::Future;
 use std::sync::{mpsc, Arc, Mutex, RwLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use tidb_proto::metapb;
 use tidb_proto::pdpb::{self, pd_client::PdClient as TonicPdClient};
+use tokio::sync::watch;
 use tonic::transport::{Channel, Endpoint};
 
 use crate::tso::{
@@ -26,8 +28,8 @@ use crate::tso::{
     TimestampParts, MAX_TSO_RETRIES,
 };
 use crate::{
-    PdBucketStats, PdBuckets, PdClientError, PdKeyRange, PdMemberSet, PdNodeState, PdOperation,
-    PdPeer, PdRegion, PdRegionEpoch, PdStore, PdStoreState,
+    PdBucketStats, PdBuckets, PdClientError, PdClientShutdownError, PdKeyRange, PdMemberSet,
+    PdNodeState, PdOperation, PdPeer, PdRegion, PdRegionEpoch, PdStore, PdStoreState,
 };
 
 /// Exact method paths generated from the checked source projection.
@@ -102,31 +104,36 @@ struct PdMemberObservation {
     projected: Result<PdMemberSet, PdClientError>,
 }
 
+#[derive(Clone, Copy)]
+struct RpcControl<'a> {
+    timeout: Duration,
+    shutdown: &'a watch::Receiver<bool>,
+}
+
 struct PdClientShared {
     bootstrap_endpoint: String,
     timeout: Duration,
     cluster_id: u64,
     state: Arc<RwLock<PdSharedState>>,
     commands: mpsc::Sender<WorkerCommand>,
+    shutdown: watch::Sender<bool>,
     worker: Mutex<Option<JoinHandle<()>>>,
 }
 
-impl Drop for PdClientShared {
-    fn drop(&mut self) {
-        let (reply, response) = mpsc::channel();
-        if self.commands.send(WorkerCommand::Close { reply }).is_ok() {
-            let _ = response.recv();
-        }
-        if let Some(worker) = self.worker.lock().expect("PD worker lock poisoned").take() {
-            let _ = worker.join();
-        }
-    }
-}
-
 /// Cloneable synchronous foreground PD client backed by one shared Tokio worker.
-#[derive(Clone)]
 pub struct PdClient {
     shared: Arc<PdClientShared>,
+    owns_worker: bool,
+}
+
+impl Clone for PdClient {
+    /// Creates a request-only handle without shutdown or join authority.
+    fn clone(&self) -> Self {
+        Self {
+            shared: Arc::clone(&self.shared),
+            owns_worker: false,
+        }
+    }
 }
 
 impl PdClient {
@@ -148,6 +155,7 @@ impl PdClient {
             .ok_or_else(|| invalid_topology("missing_pd_seed", "no PD seed was configured"))?;
         let seeds = normalize_endpoints(raw_seeds, false)?;
         let (commands, receiver) = mpsc::channel();
+        let (shutdown, shutdown_rx) = watch::channel(false);
         let (ready_tx, ready_rx) = mpsc::channel();
         let worker_seeds = seeds.clone();
         let worker = std::thread::spawn(move || {
@@ -162,7 +170,13 @@ impl PdClient {
                 }
             };
             let mut clients = HashMap::new();
-            let members = match bootstrap_members(&runtime, &mut clients, &worker_seeds, timeout) {
+            let members = match bootstrap_members(
+                &runtime,
+                &mut clients,
+                &worker_seeds,
+                timeout,
+                &shutdown_rx,
+            ) {
                 Ok(members) => members,
                 Err(error) => {
                     let _ = ready_tx.send(Err(error));
@@ -180,7 +194,7 @@ impl PdClient {
                 &mut clients,
                 &state.read().expect("PD state lock poisoned").members,
             );
-            run_worker(runtime, clients, receiver, timeout, state);
+            run_worker(runtime, clients, receiver, timeout, state, shutdown_rx);
         });
 
         match ready_rx.recv() {
@@ -197,8 +211,10 @@ impl PdClient {
                         cluster_id,
                         state,
                         commands,
+                        shutdown,
                         worker: Mutex::new(Some(worker)),
                     }),
+                    owns_worker: true,
                 })
             }
             Ok(Err(error)) => {
@@ -256,6 +272,21 @@ impl PdClient {
     #[must_use]
     pub fn timeout(&self) -> Duration {
         self.shared.timeout
+    }
+
+    /// Whether this value retains the unique PD worker lifecycle authority.
+    #[must_use]
+    pub const fn is_worker_owner(&self) -> bool {
+        self.owns_worker
+    }
+
+    /// Consumes the unique owner, cancels foreground work, and joins the worker.
+    ///
+    /// Every request handle must be drained first. Dropping the owner invokes
+    /// the same idempotent machinery only as a best-effort containment path;
+    /// production lifecycle success must come from this explicit result.
+    pub fn shutdown(mut self) -> Result<(), PdClientShutdownError> {
+        self.shutdown_inner(true)
     }
 
     /// Refreshes membership through the first reachable known endpoint.
@@ -475,6 +506,56 @@ impl PdClient {
             .map_err(|_| PdClientError::Closed)?;
         response.recv().unwrap_or(Err(PdClientError::Closed))
     }
+
+    fn shutdown_inner(&mut self, require_unique: bool) -> Result<(), PdClientShutdownError> {
+        if !self.owns_worker {
+            return Err(PdClientShutdownError::NotOwner);
+        }
+        if require_unique {
+            let owners = Arc::strong_count(&self.shared);
+            if owners != 1 {
+                return Err(PdClientShutdownError::SharedOwners { owners });
+            }
+        }
+
+        let (worker, worker_state_poisoned) = match self.shared.worker.lock() {
+            Ok(mut worker) => (worker.take(), false),
+            Err(poisoned) => (poisoned.into_inner().take(), true),
+        };
+        let Some(worker) = worker else {
+            return Ok(());
+        };
+
+        let mut failures = Vec::new();
+        if worker_state_poisoned {
+            failures.push(PdClientShutdownError::WorkerStatePoisoned);
+        }
+
+        let _ = self.shared.shutdown.send(true);
+        let (reply, response) = mpsc::channel();
+        if self
+            .shared
+            .commands
+            .send(WorkerCommand::Close { reply })
+            .is_err()
+        {
+            failures.push(PdClientShutdownError::CommandSend);
+        } else if response.recv().is_err() {
+            failures.push(PdClientShutdownError::MissingAcknowledgement);
+        }
+        if worker.join().is_err() {
+            failures.push(PdClientShutdownError::WorkerPanicked);
+        }
+        PdClientShutdownError::from_failures(failures)
+    }
+}
+
+impl Drop for PdClient {
+    fn drop(&mut self) {
+        if self.owns_worker {
+            let _ = self.shutdown_inner(false);
+        }
+    }
 }
 
 fn run_worker(
@@ -483,10 +564,45 @@ fn run_worker(
     receiver: mpsc::Receiver<WorkerCommand>,
     timeout: Duration,
     state: Arc<RwLock<PdSharedState>>,
+    shutdown: watch::Receiver<bool>,
 ) {
     let mut tso_stream = None;
     let mut last_timestamp = None;
     while let Ok(command) = receiver.recv() {
+        if *shutdown.borrow() {
+            match command {
+                WorkerCommand::RefreshMembers { reply } => {
+                    let _ = reply.send(Err(PdClientError::Closed));
+                }
+                WorkerCommand::GetRegion { reply, .. } => {
+                    let _ = reply.send(Err(PdClientError::Closed));
+                }
+                WorkerCommand::GetPrevRegion { reply, .. } => {
+                    let _ = reply.send(Err(PdClientError::Closed));
+                }
+                WorkerCommand::GetRegionById { reply, .. } => {
+                    let _ = reply.send(Err(PdClientError::Closed));
+                }
+                WorkerCommand::ScanRegions { reply, .. } => {
+                    let _ = reply.send(Err(PdClientError::Closed));
+                }
+                WorkerCommand::BatchScanRegions { reply, .. } => {
+                    let _ = reply.send(Err(PdClientError::Closed));
+                }
+                WorkerCommand::GetStore { reply, .. } => {
+                    let _ = reply.send(Err(PdClientError::Closed));
+                }
+                WorkerCommand::GetTimestamp { reply, .. } => {
+                    let _ = reply.send(Err(PdClientError::Closed));
+                }
+                WorkerCommand::Close { reply } => {
+                    drop(tso_stream.take());
+                    let _ = reply.send(());
+                    break;
+                }
+            }
+            continue;
+        }
         match command {
             WorkerCommand::RefreshMembers { reply } => {
                 let previous_leader = state
@@ -495,7 +611,7 @@ fn run_worker(
                     .members
                     .leader_url
                     .clone();
-                let result = refresh_membership(&runtime, &mut clients, timeout, &state);
+                let result = refresh_membership(&runtime, &mut clients, timeout, &state, &shutdown);
                 if result
                     .as_ref()
                     .is_ok_and(|members| members.leader_url != previous_leader)
@@ -520,7 +636,10 @@ fn run_worker(
                                 runtime,
                                 clients,
                                 endpoint,
-                                timeout,
+                                RpcControl {
+                                    timeout,
+                                    shutdown: &shutdown,
+                                },
                                 cluster_id,
                                 &encoded_key,
                                 need_buckets,
@@ -533,6 +652,7 @@ fn run_worker(
                         &mut clients,
                         timeout,
                         &state,
+                        &shutdown,
                         &encoded_key,
                         need_buckets,
                     )
@@ -555,7 +675,10 @@ fn run_worker(
                                 runtime,
                                 clients,
                                 endpoint,
-                                timeout,
+                                RpcControl {
+                                    timeout,
+                                    shutdown: &shutdown,
+                                },
                                 cluster_id,
                                 &encoded_key,
                                 need_buckets,
@@ -568,6 +691,7 @@ fn run_worker(
                         &mut clients,
                         timeout,
                         &state,
+                        &shutdown,
                         &encoded_key,
                         need_buckets,
                     )
@@ -590,7 +714,10 @@ fn run_worker(
                                 runtime,
                                 clients,
                                 endpoint,
-                                timeout,
+                                RpcControl {
+                                    timeout,
+                                    shutdown: &shutdown,
+                                },
                                 cluster_id,
                                 region_id,
                                 need_buckets,
@@ -603,6 +730,7 @@ fn run_worker(
                         &mut clients,
                         timeout,
                         &state,
+                        &shutdown,
                         region_id,
                         need_buckets,
                     )
@@ -620,11 +748,21 @@ fn run_worker(
                         &mut clients,
                         &state,
                         |runtime, clients, endpoint, cluster_id| {
-                            scan_regions(runtime, clients, endpoint, timeout, cluster_id, &request)
+                            scan_regions(
+                                runtime, clients, endpoint, timeout, &shutdown, cluster_id,
+                                &request,
+                            )
                         },
                     )
                 } else {
-                    scan_regions_with_failover(&runtime, &mut clients, timeout, &state, &request)
+                    scan_regions_with_failover(
+                        &runtime,
+                        &mut clients,
+                        timeout,
+                        &state,
+                        &shutdown,
+                        &request,
+                    )
                 };
                 let _ = reply.send(result);
             }
@@ -634,20 +772,30 @@ fn run_worker(
                     &mut clients,
                     timeout,
                     &state,
+                    &shutdown,
                     &request,
                 );
                 let _ = reply.send(result);
             }
             WorkerCommand::GetStore { store_id, reply } => {
-                let result =
-                    get_store_with_failover(&runtime, &mut clients, timeout, &state, store_id);
+                let result = get_store_with_failover(
+                    &runtime,
+                    &mut clients,
+                    timeout,
+                    &state,
+                    &shutdown,
+                    store_id,
+                );
                 let _ = reply.send(result);
             }
             WorkerCommand::GetTimestamp { deadline, reply } => {
                 let result = get_timestamp_with_retry(
                     &runtime,
                     &mut clients,
-                    timeout,
+                    RpcControl {
+                        timeout,
+                        shutdown: &shutdown,
+                    },
                     deadline,
                     &state,
                     &mut tso_stream,
@@ -667,7 +815,7 @@ fn run_worker(
 fn get_timestamp_with_retry(
     runtime: &tokio::runtime::Runtime,
     clients: &mut HashMap<String, TonicPdClient<Channel>>,
-    timeout: Duration,
+    control: RpcControl<'_>,
     deadline: Instant,
     state: &Arc<RwLock<PdSharedState>>,
     stream: &mut Option<RetainedTsoStream>,
@@ -693,6 +841,7 @@ fn get_timestamp_with_retry(
                     &leader,
                     snapshot.members.cluster_id,
                     deadline,
+                    control.shutdown,
                 )?;
                 *stream = Some(opened);
                 timestamp
@@ -700,7 +849,12 @@ fn get_timestamp_with_retry(
                 stream
                     .as_mut()
                     .expect("TSO stream exists before retained request")
-                    .request(runtime, snapshot.members.cluster_id, deadline)?
+                    .request(
+                        runtime,
+                        snapshot.members.cluster_id,
+                        deadline,
+                        control.shutdown,
+                    )?
             };
             timestamp.ensure_after(*last_timestamp)?;
             let composed = timestamp.compose()?;
@@ -719,7 +873,14 @@ fn get_timestamp_with_retry(
             }
         }
 
-        match refresh_membership_before_deadline(runtime, clients, timeout, deadline, state) {
+        match refresh_membership_before_deadline(
+            runtime,
+            clients,
+            control.timeout,
+            deadline,
+            state,
+            control.shutdown,
+        ) {
             Ok(_) => {}
             Err(error @ PdClientError::ClusterMismatch { .. }) => return Err(error),
             Err(error @ PdClientError::Timeout { .. }) => return Err(error),
@@ -735,7 +896,9 @@ fn get_timestamp_with_retry(
                 .leader_url
                 .clone();
             let remaining = remaining_tso_time(deadline, &leader)?;
-            std::thread::sleep(delay.min(remaining));
+            if wait_for_shutdown(runtime, control.shutdown, delay.min(remaining)) {
+                return Err(PdClientError::Closed);
+            }
         }
     }
     Err(last_error.expect("bounded TSO retry loop records every failure"))
@@ -747,6 +910,7 @@ fn refresh_membership_before_deadline(
     timeout: Duration,
     deadline: Instant,
     state: &Arc<RwLock<PdSharedState>>,
+    shutdown: &watch::Receiver<bool>,
 ) -> Result<PdMemberSet, PdClientError> {
     let snapshot = state.read().expect("PD state lock poisoned").clone();
     let mut last_error = None;
@@ -758,6 +922,7 @@ fn refresh_membership_before_deadline(
             clients,
             &endpoint,
             attempt_timeout,
+            shutdown,
             Some(snapshot.members.cluster_id),
         ) {
             Ok(observation) => match observation.projected {
@@ -787,12 +952,13 @@ fn bootstrap_members(
     clients: &mut HashMap<String, TonicPdClient<Channel>>,
     seeds: &[String],
     timeout: Duration,
+    shutdown: &watch::Receiver<bool>,
 ) -> Result<PdMemberSet, PdClientError> {
     let mut accepted = None;
     let mut cluster_id = None;
     let mut last_error = None;
     for seed in seeds {
-        match get_members(runtime, clients, seed, timeout, cluster_id) {
+        match get_members(runtime, clients, seed, timeout, shutdown, cluster_id) {
             Ok(observation) => {
                 cluster_id = Some(observation.cluster_id);
                 match observation.projected {
@@ -817,16 +983,16 @@ fn get_members(
     clients: &mut HashMap<String, TonicPdClient<Channel>>,
     endpoint: &str,
     timeout: Duration,
+    shutdown: &watch::Receiver<bool>,
     expected_cluster_id: Option<u64>,
 ) -> Result<PdMemberObservation, PdClientError> {
     let client = tonic_client(runtime, clients, endpoint)?;
-    let response = runtime.block_on(async {
-        tokio::time::timeout(
-            timeout,
-            client.get_members(pdpb::GetMembersRequest { header: None }),
-        )
-        .await
-    });
+    let response = block_on_rpc(
+        runtime,
+        timeout,
+        shutdown,
+        client.get_members(pdpb::GetMembersRequest { header: None }),
+    );
     let response = map_rpc_result(response, PdOperation::GetMembers, endpoint, timeout)?;
     let response = response.into_inner();
     let header = response
@@ -857,25 +1023,24 @@ fn get_region(
     runtime: &tokio::runtime::Runtime,
     clients: &mut HashMap<String, TonicPdClient<Channel>>,
     endpoint: &str,
-    timeout: Duration,
+    control: RpcControl<'_>,
     cluster_id: u64,
     encoded_key: &[u8],
     need_buckets: bool,
 ) -> Result<PdRegion, PdClientError> {
     let client = tonic_client(runtime, clients, endpoint)?;
-    let response = runtime.block_on(async {
-        tokio::time::timeout(
-            timeout,
-            client.get_region(pdpb::GetRegionRequest {
-                header: Some(request_header(cluster_id)),
-                region_key: encoded_key.to_vec(),
-                need_buckets,
-            }),
-        )
-        .await
-    });
+    let response = block_on_rpc(
+        runtime,
+        control.timeout,
+        control.shutdown,
+        client.get_region(pdpb::GetRegionRequest {
+            header: Some(request_header(cluster_id)),
+            region_key: encoded_key.to_vec(),
+            need_buckets,
+        }),
+    );
     let response =
-        map_rpc_result(response, PdOperation::GetRegion, endpoint, timeout)?.into_inner();
+        map_rpc_result(response, PdOperation::GetRegion, endpoint, control.timeout)?.into_inner();
     validate_response_header(PdOperation::GetRegion, response.header.as_ref(), cluster_id)?;
     project_region(response, need_buckets)
 }
@@ -884,25 +1049,29 @@ fn get_prev_region(
     runtime: &tokio::runtime::Runtime,
     clients: &mut HashMap<String, TonicPdClient<Channel>>,
     endpoint: &str,
-    timeout: Duration,
+    control: RpcControl<'_>,
     cluster_id: u64,
     encoded_key: &[u8],
     need_buckets: bool,
 ) -> Result<PdRegion, PdClientError> {
     let client = tonic_client(runtime, clients, endpoint)?;
-    let response = runtime.block_on(async {
-        tokio::time::timeout(
-            timeout,
-            client.get_prev_region(pdpb::GetRegionRequest {
-                header: Some(request_header(cluster_id)),
-                region_key: encoded_key.to_vec(),
-                need_buckets,
-            }),
-        )
-        .await
-    });
-    let response =
-        map_rpc_result(response, PdOperation::GetPrevRegion, endpoint, timeout)?.into_inner();
+    let response = block_on_rpc(
+        runtime,
+        control.timeout,
+        control.shutdown,
+        client.get_prev_region(pdpb::GetRegionRequest {
+            header: Some(request_header(cluster_id)),
+            region_key: encoded_key.to_vec(),
+            need_buckets,
+        }),
+    );
+    let response = map_rpc_result(
+        response,
+        PdOperation::GetPrevRegion,
+        endpoint,
+        control.timeout,
+    )?
+    .into_inner();
     validate_response_header(
         PdOperation::GetPrevRegion,
         response.header.as_ref(),
@@ -915,25 +1084,29 @@ fn get_region_by_id(
     runtime: &tokio::runtime::Runtime,
     clients: &mut HashMap<String, TonicPdClient<Channel>>,
     endpoint: &str,
-    timeout: Duration,
+    control: RpcControl<'_>,
     cluster_id: u64,
     region_id: u64,
     need_buckets: bool,
 ) -> Result<PdRegion, PdClientError> {
     let client = tonic_client(runtime, clients, endpoint)?;
-    let response = runtime.block_on(async {
-        tokio::time::timeout(
-            timeout,
-            client.get_region_by_id(pdpb::GetRegionByIdRequest {
-                header: Some(request_header(cluster_id)),
-                region_id,
-                need_buckets,
-            }),
-        )
-        .await
-    });
-    let response =
-        map_rpc_result(response, PdOperation::GetRegionById, endpoint, timeout)?.into_inner();
+    let response = block_on_rpc(
+        runtime,
+        control.timeout,
+        control.shutdown,
+        client.get_region_by_id(pdpb::GetRegionByIdRequest {
+            header: Some(request_header(cluster_id)),
+            region_id,
+            need_buckets,
+        }),
+    );
+    let response = map_rpc_result(
+        response,
+        PdOperation::GetRegionById,
+        endpoint,
+        control.timeout,
+    )?
+    .into_inner();
     validate_response_header(
         PdOperation::GetRegionById,
         response.header.as_ref(),
@@ -947,14 +1120,14 @@ fn scan_regions(
     clients: &mut HashMap<String, TonicPdClient<Channel>>,
     endpoint: &str,
     timeout: Duration,
+    shutdown: &watch::Receiver<bool>,
     cluster_id: u64,
     request: &pdpb::ScanRegionsRequest,
 ) -> Result<Vec<PdRegion>, PdClientError> {
     let client = tonic_client(runtime, clients, endpoint)?;
     let mut request = request.clone();
     request.header = Some(request_header(cluster_id));
-    let response = runtime
-        .block_on(async { tokio::time::timeout(timeout, client.scan_regions(request)).await });
+    let response = block_on_rpc(runtime, timeout, shutdown, client.scan_regions(request));
     let response =
         map_rpc_result(response, PdOperation::ScanRegions, endpoint, timeout)?.into_inner();
     validate_response_header(
@@ -970,6 +1143,7 @@ fn batch_scan_regions(
     clients: &mut HashMap<String, TonicPdClient<Channel>>,
     endpoint: &str,
     timeout: Duration,
+    shutdown: &watch::Receiver<bool>,
     cluster_id: u64,
     request: &pdpb::BatchScanRegionsRequest,
 ) -> Result<Vec<PdRegion>, PdClientError> {
@@ -977,9 +1151,12 @@ fn batch_scan_regions(
     let need_buckets = request.need_buckets;
     let mut request = request.clone();
     request.header = Some(request_header(cluster_id));
-    let response = runtime.block_on(async {
-        tokio::time::timeout(timeout, client.batch_scan_regions(request)).await
-    });
+    let response = block_on_rpc(
+        runtime,
+        timeout,
+        shutdown,
+        client.batch_scan_regions(request),
+    );
     let response =
         map_rpc_result(response, PdOperation::BatchScanRegions, endpoint, timeout)?.into_inner();
     validate_response_header(
@@ -999,20 +1176,20 @@ fn get_store(
     clients: &mut HashMap<String, TonicPdClient<Channel>>,
     endpoint: &str,
     timeout: Duration,
+    shutdown: &watch::Receiver<bool>,
     cluster_id: u64,
     store_id: u64,
 ) -> Result<Option<PdStore>, PdClientError> {
     let client = tonic_client(runtime, clients, endpoint)?;
-    let response = runtime.block_on(async {
-        tokio::time::timeout(
-            timeout,
-            client.get_store(pdpb::GetStoreRequest {
-                header: Some(request_header(cluster_id)),
-                store_id,
-            }),
-        )
-        .await
-    });
+    let response = block_on_rpc(
+        runtime,
+        timeout,
+        shutdown,
+        client.get_store(pdpb::GetStoreRequest {
+            header: Some(request_header(cluster_id)),
+            store_id,
+        }),
+    );
     let response = map_rpc_result(response, PdOperation::GetStore, endpoint, timeout)?.into_inner();
     if store_is_removed(response.header.as_ref(), cluster_id)? {
         return Ok(None);
@@ -1025,6 +1202,7 @@ fn get_region_with_failover(
     clients: &mut HashMap<String, TonicPdClient<Channel>>,
     timeout: Duration,
     state: &Arc<RwLock<PdSharedState>>,
+    shutdown: &watch::Receiver<bool>,
     encoded_key: &[u8],
     need_buckets: bool,
 ) -> Result<PdRegion, PdClientError> {
@@ -1035,7 +1213,7 @@ fn get_region_with_failover(
         runtime,
         clients,
         &snapshot.active_endpoint,
-        timeout,
+        RpcControl { timeout, shutdown },
         snapshot.members.cluster_id,
         encoded_key,
         need_buckets,
@@ -1047,7 +1225,7 @@ fn get_region_with_failover(
             // A bad membership observation never erases the last accepted
             // snapshot; its remaining direct endpoints are still candidates.
             if let Err(error @ PdClientError::ClusterMismatch { .. }) =
-                refresh_membership(runtime, clients, timeout, state)
+                refresh_membership(runtime, clients, timeout, state, shutdown)
             {
                 return Err(error);
             }
@@ -1063,7 +1241,7 @@ fn get_region_with_failover(
                     runtime,
                     clients,
                     &endpoint,
-                    timeout,
+                    RpcControl { timeout, shutdown },
                     current.members.cluster_id,
                     encoded_key,
                     need_buckets,
@@ -1095,6 +1273,7 @@ fn get_prev_region_with_failover(
     clients: &mut HashMap<String, TonicPdClient<Channel>>,
     timeout: Duration,
     state: &Arc<RwLock<PdSharedState>>,
+    shutdown: &watch::Receiver<bool>,
     encoded_key: &[u8],
     need_buckets: bool,
 ) -> Result<PdRegion, PdClientError> {
@@ -1103,12 +1282,13 @@ fn get_prev_region_with_failover(
         clients,
         timeout,
         state,
+        shutdown,
         |runtime, clients, endpoint, cluster_id| {
             get_prev_region(
                 runtime,
                 clients,
                 endpoint,
-                timeout,
+                RpcControl { timeout, shutdown },
                 cluster_id,
                 encoded_key,
                 need_buckets,
@@ -1122,6 +1302,7 @@ fn get_region_by_id_with_failover(
     clients: &mut HashMap<String, TonicPdClient<Channel>>,
     timeout: Duration,
     state: &Arc<RwLock<PdSharedState>>,
+    shutdown: &watch::Receiver<bool>,
     region_id: u64,
     need_buckets: bool,
 ) -> Result<PdRegion, PdClientError> {
@@ -1130,12 +1311,13 @@ fn get_region_by_id_with_failover(
         clients,
         timeout,
         state,
+        shutdown,
         |runtime, clients, endpoint, cluster_id| {
             get_region_by_id(
                 runtime,
                 clients,
                 endpoint,
-                timeout,
+                RpcControl { timeout, shutdown },
                 cluster_id,
                 region_id,
                 need_buckets,
@@ -1149,6 +1331,7 @@ fn scan_regions_with_failover(
     clients: &mut HashMap<String, TonicPdClient<Channel>>,
     timeout: Duration,
     state: &Arc<RwLock<PdSharedState>>,
+    shutdown: &watch::Receiver<bool>,
     request: &pdpb::ScanRegionsRequest,
 ) -> Result<Vec<PdRegion>, PdClientError> {
     foreground_with_failover(
@@ -1156,8 +1339,11 @@ fn scan_regions_with_failover(
         clients,
         timeout,
         state,
+        shutdown,
         |runtime, clients, endpoint, cluster_id| {
-            scan_regions(runtime, clients, endpoint, timeout, cluster_id, request)
+            scan_regions(
+                runtime, clients, endpoint, timeout, shutdown, cluster_id, request,
+            )
         },
     )
 }
@@ -1167,6 +1353,7 @@ fn batch_scan_regions_with_failover(
     clients: &mut HashMap<String, TonicPdClient<Channel>>,
     timeout: Duration,
     state: &Arc<RwLock<PdSharedState>>,
+    shutdown: &watch::Receiver<bool>,
     request: &pdpb::BatchScanRegionsRequest,
 ) -> Result<Vec<PdRegion>, PdClientError> {
     foreground_with_failover(
@@ -1174,8 +1361,11 @@ fn batch_scan_regions_with_failover(
         clients,
         timeout,
         state,
+        shutdown,
         |runtime, clients, endpoint, cluster_id| {
-            batch_scan_regions(runtime, clients, endpoint, timeout, cluster_id, request)
+            batch_scan_regions(
+                runtime, clients, endpoint, timeout, shutdown, cluster_id, request,
+            )
         },
     )
 }
@@ -1185,6 +1375,7 @@ fn foreground_with_failover<T, F>(
     clients: &mut HashMap<String, TonicPdClient<Channel>>,
     timeout: Duration,
     state: &Arc<RwLock<PdSharedState>>,
+    shutdown: &watch::Receiver<bool>,
     mut action: F,
 ) -> Result<T, PdClientError>
 where
@@ -1209,7 +1400,7 @@ where
             let direct_failure = is_direct_failure(&error);
             let mut last_error = error;
             if let Err(error @ PdClientError::ClusterMismatch { .. }) =
-                refresh_membership(runtime, clients, timeout, state)
+                refresh_membership(runtime, clients, timeout, state, shutdown)
             {
                 return Err(error);
             }
@@ -1272,6 +1463,7 @@ fn get_store_with_failover(
     clients: &mut HashMap<String, TonicPdClient<Channel>>,
     timeout: Duration,
     state: &Arc<RwLock<PdSharedState>>,
+    shutdown: &watch::Receiver<bool>,
     store_id: u64,
 ) -> Result<Option<PdStore>, PdClientError> {
     let snapshot = state.read().expect("PD state lock poisoned").clone();
@@ -1282,6 +1474,7 @@ fn get_store_with_failover(
         clients,
         &snapshot.active_endpoint,
         timeout,
+        shutdown,
         snapshot.members.cluster_id,
         store_id,
     ) {
@@ -1292,7 +1485,7 @@ fn get_store_with_failover(
             // A bad membership observation never erases the last accepted
             // snapshot; its remaining direct endpoints are still candidates.
             if let Err(error @ PdClientError::ClusterMismatch { .. }) =
-                refresh_membership(runtime, clients, timeout, state)
+                refresh_membership(runtime, clients, timeout, state, shutdown)
             {
                 return Err(error);
             }
@@ -1309,6 +1502,7 @@ fn get_store_with_failover(
                     clients,
                     &endpoint,
                     timeout,
+                    shutdown,
                     current.members.cluster_id,
                     store_id,
                 ) {
@@ -1339,6 +1533,7 @@ fn refresh_membership(
     clients: &mut HashMap<String, TonicPdClient<Channel>>,
     timeout: Duration,
     state: &Arc<RwLock<PdSharedState>>,
+    shutdown: &watch::Receiver<bool>,
 ) -> Result<PdMemberSet, PdClientError> {
     let snapshot = state.read().expect("PD state lock poisoned").clone();
     let mut last_error = None;
@@ -1349,6 +1544,7 @@ fn refresh_membership(
             clients,
             &endpoint,
             timeout,
+            shutdown,
             Some(snapshot.members.cluster_id),
         ) {
             Ok(observation) => match observation.projected {
@@ -1526,24 +1722,81 @@ fn store_is_removed(
     Ok(false)
 }
 
+enum RpcCompletion<T> {
+    Completed(Result<tonic::Response<T>, tonic::Status>),
+    Timeout,
+    Shutdown,
+}
+
+fn block_on_rpc<F, T>(
+    runtime: &tokio::runtime::Runtime,
+    timeout: Duration,
+    shutdown: &watch::Receiver<bool>,
+    future: F,
+) -> RpcCompletion<T>
+where
+    F: Future<Output = Result<tonic::Response<T>, tonic::Status>>,
+{
+    if *shutdown.borrow() {
+        return RpcCompletion::Shutdown;
+    }
+    let mut cancellation = shutdown.clone();
+    runtime.block_on(async move {
+        tokio::select! {
+            biased;
+            () = shutdown_requested(&mut cancellation) => RpcCompletion::Shutdown,
+            result = tokio::time::timeout(timeout, future) => match result {
+                Ok(result) => RpcCompletion::Completed(result),
+                Err(_) => RpcCompletion::Timeout,
+            },
+        }
+    })
+}
+
+fn wait_for_shutdown(
+    runtime: &tokio::runtime::Runtime,
+    shutdown: &watch::Receiver<bool>,
+    duration: Duration,
+) -> bool {
+    if *shutdown.borrow() {
+        return true;
+    }
+    let mut cancellation = shutdown.clone();
+    runtime.block_on(async move {
+        tokio::select! {
+            biased;
+            () = shutdown_requested(&mut cancellation) => true,
+            () = tokio::time::sleep(duration) => false,
+        }
+    })
+}
+
+async fn shutdown_requested(shutdown: &mut watch::Receiver<bool>) {
+    if *shutdown.borrow() {
+        return;
+    }
+    let _ = shutdown.changed().await;
+}
+
 fn map_rpc_result<T>(
-    result: Result<Result<tonic::Response<T>, tonic::Status>, tokio::time::error::Elapsed>,
+    result: RpcCompletion<T>,
     operation: PdOperation,
     endpoint: &str,
     timeout: Duration,
 ) -> Result<tonic::Response<T>, PdClientError> {
     match result {
-        Ok(Ok(response)) => Ok(response),
-        Ok(Err(status)) if status.code() == tonic::Code::DeadlineExceeded => {
+        RpcCompletion::Completed(Ok(response)) => Ok(response),
+        RpcCompletion::Completed(Err(status)) if status.code() == tonic::Code::DeadlineExceeded => {
             Err(timeout_error(operation, endpoint, timeout))
         }
-        Ok(Err(status)) => Err(PdClientError::Transport {
+        RpcCompletion::Completed(Err(status)) => Err(PdClientError::Transport {
             operation,
             endpoint: endpoint.to_owned(),
             code: format!("{:?}", status.code()),
             message: status.message().to_owned(),
         }),
-        Err(_) => Err(timeout_error(operation, endpoint, timeout)),
+        RpcCompletion::Timeout => Err(timeout_error(operation, endpoint, timeout)),
+        RpcCompletion::Shutdown => Err(PdClientError::Closed),
     }
 }
 
@@ -1927,5 +2180,164 @@ fn invalid_topology(kind: &'static str, message: impl Into<String>) -> PdClientE
     PdClientError::InvalidTopology {
         kind,
         message: message.into(),
+    }
+}
+
+#[cfg(test)]
+mod worker_lifecycle_tests {
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+    use std::sync::mpsc;
+
+    use super::{
+        watch, Arc, Duration, JoinHandle, Mutex, PdClient, PdClientError, PdClientShared,
+        PdClientShutdownError, PdMemberSet, PdSharedState, RwLock, WorkerCommand,
+    };
+
+    fn test_client(
+        worker: impl FnOnce(mpsc::Receiver<WorkerCommand>, watch::Receiver<bool>) + Send + 'static,
+    ) -> PdClient {
+        let members = PdMemberSet {
+            cluster_id: 42,
+            leader_url: "http://127.0.0.1:2379".to_owned(),
+            member_urls: vec!["http://127.0.0.1:2379".to_owned()],
+        };
+        let (commands, receiver) = mpsc::channel();
+        let (shutdown, shutdown_rx) = watch::channel(false);
+        let worker: JoinHandle<()> = std::thread::spawn(move || worker(receiver, shutdown_rx));
+        PdClient {
+            shared: Arc::new(PdClientShared {
+                bootstrap_endpoint: "http://127.0.0.1:2379".to_owned(),
+                timeout: Duration::from_secs(30),
+                cluster_id: 42,
+                state: Arc::new(RwLock::new(PdSharedState {
+                    active_endpoint: members.leader_url.clone(),
+                    members,
+                })),
+                commands,
+                shutdown,
+                worker: Mutex::new(Some(worker)),
+            }),
+            owns_worker: true,
+        }
+    }
+
+    fn acknowledge_close(
+        receiver: mpsc::Receiver<WorkerCommand>,
+        _shutdown: watch::Receiver<bool>,
+    ) {
+        let WorkerCommand::Close { reply } = receiver.recv().expect("close command") else {
+            panic!("fixture accepts only Close")
+        };
+        reply.send(()).expect("shutdown receiver");
+    }
+
+    #[test]
+    fn clones_are_request_handles_and_explicit_shutdown_requires_drain() {
+        let owner = test_client(acknowledge_close);
+        assert!(owner.is_worker_owner());
+
+        let non_owner = owner.clone();
+        assert!(!non_owner.is_worker_owner());
+        assert_eq!(non_owner.shutdown(), Err(PdClientShutdownError::NotOwner));
+
+        let retained = owner.clone();
+        assert_eq!(
+            owner.shutdown(),
+            Err(PdClientShutdownError::SharedOwners { owners: 2 })
+        );
+        assert_eq!(retained.refresh_members(), Err(PdClientError::Closed));
+    }
+
+    #[test]
+    fn shutdown_reports_worker_panic_after_acknowledgement() {
+        let owner = test_client(|receiver, _shutdown| {
+            let WorkerCommand::Close { reply } = receiver.recv().expect("close command") else {
+                panic!("fixture accepts only Close")
+            };
+            reply.send(()).expect("shutdown receiver");
+            panic!("deterministic worker panic");
+        });
+
+        assert_eq!(owner.shutdown(), Err(PdClientShutdownError::WorkerPanicked));
+    }
+
+    #[test]
+    fn shutdown_reports_missing_acknowledgement() {
+        let owner = test_client(|receiver, _shutdown| {
+            let WorkerCommand::Close { reply } = receiver.recv().expect("close command") else {
+                panic!("fixture accepts only Close")
+            };
+            drop(reply);
+        });
+
+        assert_eq!(
+            owner.shutdown(),
+            Err(PdClientShutdownError::MissingAcknowledgement)
+        );
+    }
+
+    #[test]
+    fn shutdown_reports_closed_command_channel() {
+        let (closed, observed) = mpsc::channel();
+        let owner = test_client(move |receiver, _shutdown| {
+            drop(receiver);
+            closed.send(()).expect("test receiver");
+        });
+        observed.recv().expect("worker closed command channel");
+
+        assert_eq!(owner.shutdown(), Err(PdClientShutdownError::CommandSend));
+    }
+
+    #[test]
+    fn shutdown_recovers_poison_and_is_idempotent() {
+        let mut owner = test_client(acknowledge_close);
+        let shared = Arc::clone(&owner.shared);
+        let poison = catch_unwind(AssertUnwindSafe(move || {
+            let _worker = shared.worker.lock().expect("initial worker state");
+            panic!("deterministic lifecycle-state poison");
+        }));
+        assert!(poison.is_err());
+
+        assert_eq!(
+            owner.shutdown_inner(true),
+            Err(PdClientShutdownError::WorkerStatePoisoned)
+        );
+        assert_eq!(owner.shutdown_inner(true), Ok(()));
+    }
+
+    #[test]
+    fn owner_drop_cancels_in_flight_request_before_join() {
+        let (started, observed) = mpsc::channel();
+        let owner = test_client(move |receiver, shutdown| {
+            let WorkerCommand::RefreshMembers { reply } =
+                receiver.recv().expect("foreground command")
+            else {
+                panic!("expected RefreshMembers")
+            };
+            started.send(()).expect("test receiver");
+            while !*shutdown.borrow() {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            reply
+                .send(Err(PdClientError::Closed))
+                .expect("foreground receiver");
+
+            let WorkerCommand::Close { reply } = receiver.recv().expect("close command") else {
+                panic!("expected Close")
+            };
+            reply.send(()).expect("shutdown receiver");
+        });
+        let request = owner.clone();
+        let foreground = std::thread::spawn(move || request.refresh_members());
+        observed.recv().expect("worker started foreground request");
+
+        assert_eq!(
+            owner.shutdown(),
+            Err(PdClientShutdownError::SharedOwners { owners: 2 })
+        );
+        assert_eq!(
+            foreground.join().expect("foreground thread"),
+            Err(PdClientError::Closed)
+        );
     }
 }

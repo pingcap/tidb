@@ -308,7 +308,7 @@ fn tso_wire_keeps_the_pinned_stream_path_and_field_numbers() {
 }
 
 #[test]
-fn shared_clones_retain_one_stream_and_one_monotonic_authority() {
+fn request_handles_share_one_stream_and_one_monotonic_owner() {
     let server = Server::start([
         TsoReply::Response(timestamp(10, 1)),
         TsoReply::Response(timestamp(10, 2)),
@@ -316,7 +316,6 @@ fn shared_clones_retain_one_stream_and_one_monotonic_authority() {
     let client = PdClient::connect(&server.address, Duration::from_secs(1)).unwrap();
     let clone = client.clone();
     assert_eq!(client.get_timestamp().unwrap(), (10_u64 << 18) + 1);
-    drop(client);
     assert_eq!(clone.get_timestamp().unwrap(), (10_u64 << 18) + 2);
 
     let state = server.state.lock().unwrap();
@@ -332,6 +331,9 @@ fn shared_clones_retain_one_stream_and_one_monotonic_authority() {
                     && header.caller_component.is_empty()
             })
     }));
+    drop(state);
+    drop(clone);
+    client.shutdown().unwrap();
 }
 
 #[test]
