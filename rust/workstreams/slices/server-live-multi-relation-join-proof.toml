@@ -40,7 +40,6 @@ support_anchors = [
 rust_paths = [
   "rust/crates/tidb-server/src/lib.rs",
   "rust/crates/tidb-server/src/real_tikv_multi_node.rs",
-  "rust/crates/tidb-server/src/sql_node.rs",
   "rust/crates/tidb-server/tests/real_tikv_multi_relation_node_source.rs",
   "rust/scripts/run-campaign25-multi-relation-join-sql-node.sh",
   "rust/difftests/corpus/coverage/evidence/source/server-live-multi-relation-join-proof.tsv",

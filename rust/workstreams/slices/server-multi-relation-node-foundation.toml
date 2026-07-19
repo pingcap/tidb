@@ -75,6 +75,7 @@ support_anchors = [
 rust_paths = [
   "rust/crates/tidb-server/src/node_config.rs",
   "rust/crates/tidb-server/src/real_tikv_node.rs",
+  "rust/crates/tidb-server/src/sql_node.rs",
   "rust/crates/tidb-server/tests/concurrent_mysql_sessions_source.rs",
   "rust/crates/tidb-server/tests/fallible_process_shutdown_source.rs",
   "rust/crates/tidb-server/tests/node_config_source.rs",
