@@ -82,7 +82,7 @@ evidence_prerequisites = [
 ]
 support_anchors = [
   "Campaign 25 stage F consumes exact PARTIAL source anchors from the shared Campaign 24 live harness and the bounded join path",
-  "Current source ownership is server-live-bigint-selection-topology-proof and the four RealTiKV tests are UNTRIAGED; transfer conservatively and keep partitions/index lookup outside the proof",
+  "Current RealTiKV lifecycle source ownership is server-live-sql-node-harness-foundation and the four pushdown tests are UNTRIAGED; transfer conservatively and keep partitions/index lookup outside the proof",
   "Acceptance must publish two table identities, one start timestamp, both scan range sets, join key FullSchema offsets, residual Selection counts, exact projected rows, and zero hidden in-memory fixture reads",
   "Replace the singular configured read table with one validated ordered table list across the existing NodeConfig, SQL-node tests, real-TiKV process authority, and new multi-relation session; do not add a second configuration or lifecycle path",
   "Preserve Campaign 22 authentication, connection accounting, blocked-query cancellation, fallible ordered shutdown, and tag-owned cleanup while widening only the configured read catalog",
@@ -98,7 +98,9 @@ rust_paths = [
   "rust/crates/tidb-server/tests/node_config_source.rs",
   "rust/crates/tidb-server/tests/real_tikv_multi_relation_node_source.rs",
   "rust/crates/tidb-server/tests/sql_node_lifecycle_source.rs",
+  "rust/scripts/lib/live-sql-node-harness.sh",
   "rust/scripts/run-campaign25-multi-relation-join-sql-node.sh",
+  "rust/scripts/test-live-sql-node-harness.sh",
   "rust/difftests/corpus/coverage/evidence/source/server-live-multi-relation-join-proof.tsv",
   "rust/difftests/corpus/coverage/evidence/tests/server-live-multi-relation-join-proof.tsv",
 ]
