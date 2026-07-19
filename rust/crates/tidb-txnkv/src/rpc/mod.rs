@@ -15,10 +15,10 @@ mod transport_runtime;
 mod unary;
 
 pub use async_completion::{
-    completion_pair, AsyncRequestDispatcher, CompletionCallback, CompletionCancellation,
-    CompletionCancellationReason, CompletionError, CompletionPull, CompletionRequest,
-    CompletionRunLoop, CompletionRunLoopState, CompletionRunOutcome, CompletionSpawner,
-    PendingRequest,
+    completion_pair, AsyncRequestDispatcher, AsyncRequestPublication, CompletionCallback,
+    CompletionCancellation, CompletionCancellationReason, CompletionError, CompletionPull,
+    CompletionRequest, CompletionRunLoop, CompletionRunLoopState, CompletionRunOutcome,
+    CompletionSpawner, PendingRequest,
 };
 pub use error::{
     DirectUnaryClientError, DirectUnaryConnectionError, DirectUnaryGrpcCode,

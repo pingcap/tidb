@@ -19,15 +19,20 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+use prost::Message;
 use tidb_proto::tikvpb::batch_commands_request::request::Cmd as RequestCmd;
 use tidb_proto::tikvpb::batch_commands_response::response::Cmd as ResponseCmd;
 use tidb_proto::tikvpb::tikv_server::{Tikv, TikvServer};
 use tidb_proto::tikvpb::{batch_commands_response, BatchCommandsRequest, BatchCommandsResponse};
 use tidb_proto::{CoprocessorRequest, CoprocessorResponse};
-use tidb_txnkv::rpc::{completion_pair, CompletionPull, CompletionRunLoop};
+use tidb_txnkv::rpc::{
+    completion_pair, AsyncRequestDispatcher, CompletionPull, CompletionRunLoop, PendingRequest,
+    UnaryCallContext,
+};
 use tidb_txnkv::{
-    BatchCommandEntry, BatchCommandTag, BatchInflightError, DirectUnaryClient,
-    DirectUnaryClientError, OpaqueBatchCommand,
+    BatchCommandEntry, BatchCommandTag, BatchInflightError, ClientReplicaReadType,
+    DirectUnaryClient, DirectUnaryClientError, DirectUnaryRequest, EndpointType,
+    OpaqueBatchCommand,
 };
 
 const FORWARD_METADATA_KEY: &str = "tikv-forwarded-host";
@@ -239,6 +244,25 @@ fn wait_for_completion(pull: &mut BatchPull) -> Result<OpaqueBatchCommand, Batch
         std::thread::sleep(Duration::from_millis(5));
     }
     panic!("BatchCommands completion did not become ready")
+}
+
+fn coprocessor_request(body: &[u8]) -> DirectUnaryRequest {
+    DirectUnaryRequest {
+        endpoint: EndpointType::TiKv,
+        replica_read_type: ClientReplicaReadType::Leader,
+        replica_read: false,
+        stale_read: false,
+        input_request_source: "campaign22_publication_evidence".to_owned(),
+        predicted_read_bytes: 0,
+        read_replica_scope: "global".to_owned(),
+        txn_scope: "global".to_owned(),
+        context: tidb_proto::KvrpcContext::default(),
+        encoded_request: CoprocessorRequest {
+            data: body.to_vec(),
+            ..CoprocessorRequest::default()
+        }
+        .encode_to_vec(),
+    }
 }
 
 fn wait_for_generation(
@@ -535,6 +559,48 @@ fn opening_generation_bounds_packets_and_isolates_sibling_cancellation() {
         wait_for_completion(opening_pull).unwrap();
     }
     assert!(cancelled_pull.try_complete().unwrap().is_none());
+    client.close().unwrap();
+}
+
+#[test]
+fn pending_exposes_publication_before_withheld_response_headers_complete() {
+    let (headers_started, headers_wait) = mpsc::channel();
+    let release_headers = Arc::new(AtomicBool::new(false));
+    let server = TestServer::start(StreamingTikv {
+        streams: Arc::new(AtomicUsize::new(0)),
+        metadata: Arc::new(Mutex::new(Vec::new())),
+        received_bodies: Arc::new(Mutex::new(Vec::new())),
+        hold_seen: Arc::new(Mutex::new(None)),
+        withhold_headers: true,
+        serve_after_headers_released: false,
+        headers_after_first_request: false,
+        close_before_request: false,
+        headers_started: Arc::new(Mutex::new(Some(headers_started))),
+        release_headers: Arc::clone(&release_headers),
+    });
+    let mut client = tidb_txnkv::rpc::TonicCoprocessorClient::new().unwrap();
+    let call = UnaryCallContext::with_timeout(Duration::from_secs(2));
+
+    let mut pending = client
+        .begin(
+            &server.address,
+            Some("logical-tikv:20160"),
+            &coprocessor_request(b"withheld"),
+            &call,
+        )
+        .unwrap();
+    let publication = pending
+        .publication()
+        .expect("begin must bind the BatchCommands receipt before returning");
+    assert_eq!(publication.physical_address(), server.address);
+    assert_eq!(publication.physical_channel_version(), 1);
+    assert_eq!(publication.batch_stream_generation(), 1);
+    assert_eq!(publication.forwarded_host(), Some("logical-tikv:20160"));
+    headers_wait.recv_timeout(Duration::from_secs(1)).unwrap();
+    assert!(pending.try_complete().unwrap().is_none());
+
+    pending.cancel();
+    release_headers.store(true, Ordering::Release);
     client.close().unwrap();
 }
 

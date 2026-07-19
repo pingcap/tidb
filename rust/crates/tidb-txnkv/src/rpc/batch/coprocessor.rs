@@ -18,21 +18,21 @@
 //! Its one completion is carried unchanged by [`BatchCommandEntry`] into the
 //! transport's sole route-scoped in-flight table.
 
-use crate::client::PhysicalChannelIdentity;
 use crate::{rpc::DirectUnaryClientError, DirectUnaryResponse};
 
 use super::{
-    BatchCommandEntry, BatchCommandTag, BatchInflightError, BatchPublicationReceipt,
+    BatchCommandEntry, BatchCommandTag, BatchInflightError, BatchPublicationReceipt, BatchRoute,
     OpaqueBatchCommand,
 };
 use crate::rpc::{
-    completion_pair, CompletionError, CompletionPull, CompletionRunLoop, PendingRequest,
+    completion_pair, AsyncRequestPublication, CompletionError, CompletionPull, CompletionRunLoop,
+    PendingRequest,
 };
 
 /// Pull-side owner of one concrete Coprocessor BatchCommands attempt.
 pub struct BatchCoprocessorPending {
     completion: CompletionPull<OpaqueBatchCommand, BatchInflightError>,
-    physical_channel: Option<PhysicalChannelIdentity>,
+    publication_route: Option<BatchRoute>,
 }
 
 impl BatchCoprocessorPending {
@@ -50,7 +50,7 @@ impl BatchCoprocessorPending {
             entry,
             Self {
                 completion: pull,
-                physical_channel: None,
+                publication_route: None,
             },
         )
     }
@@ -71,12 +71,12 @@ impl BatchCoprocessorPending {
                 receipt.request_ids().len()
             )));
         }
-        if self.physical_channel.is_some() {
+        if self.publication_route.is_some() {
             return Err(DirectUnaryClientError::InvalidRequest(
                 "Coprocessor pending attempt was bound to publication twice".to_owned(),
             ));
         }
-        self.physical_channel = Some(receipt.route().physical_channel().clone());
+        self.publication_route = Some(receipt.route().clone());
         Ok(())
     }
 
@@ -86,14 +86,14 @@ impl BatchCoprocessorPending {
     ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
         match result {
             Ok(command) if command.tag() == BatchCommandTag::Coprocessor => {
-                let physical_channel = self.physical_channel.clone().ok_or_else(|| {
+                let route = self.publication_route.as_ref().ok_or_else(|| {
                     DirectUnaryClientError::InvalidRequest(
                         "successful Coprocessor completion has no publication identity".to_owned(),
                     )
                 })?;
                 Ok(DirectUnaryResponse::from_physical_channel(
                     command.body().to_vec(),
-                    physical_channel,
+                    route.physical_channel().clone(),
                 ))
             }
             Ok(command) => Err(DirectUnaryClientError::InvalidRequest(format!(
@@ -111,6 +111,17 @@ impl BatchCoprocessorPending {
 }
 
 impl PendingRequest for BatchCoprocessorPending {
+    fn publication(&self) -> Option<AsyncRequestPublication> {
+        self.publication_route.as_ref().map(|route| {
+            AsyncRequestPublication::new(
+                route.physical_address(),
+                route.physical_channel_version(),
+                route.generation(),
+                route.forwarded_host().map(str::to_owned),
+            )
+        })
+    }
+
     fn try_complete(
         &mut self,
     ) -> Result<Option<Result<DirectUnaryResponse, DirectUnaryClientError>>, CompletionError> {

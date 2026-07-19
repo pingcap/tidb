@@ -15,7 +15,8 @@
 #![allow(missing_docs)]
 
 use tidb_txnkv::{
-    BatchRoute, DirectUnaryConnectionError, DirectUnaryResponse, DirectUnaryTransportClass,
+    rpc::AsyncRequestPublication, BatchRoute, DirectUnaryConnectionError, DirectUnaryResponse,
+    DirectUnaryTransportClass,
 };
 
 #[test]
@@ -49,6 +50,17 @@ fn batch_route_keeps_physical_version_distinct_from_stream_generation() {
     assert_eq!(forwarded.generation(), 29);
     assert_eq!(forwarded.physical_address(), "proxy:20160");
     assert_eq!(forwarded.forwarded_host(), Some("tikv:20160"));
+}
+
+#[test]
+fn publication_keeps_channel_and_batch_stream_generations_distinct() {
+    let publication =
+        AsyncRequestPublication::new("proxy:20160", 17, 23, Some("logical-tikv:20160".to_owned()));
+
+    assert_eq!(publication.physical_address(), "proxy:20160");
+    assert_eq!(publication.physical_channel_version(), 17);
+    assert_eq!(publication.batch_stream_generation(), 23);
+    assert_eq!(publication.forwarded_host(), Some("logical-tikv:20160"));
 }
 
 #[test]

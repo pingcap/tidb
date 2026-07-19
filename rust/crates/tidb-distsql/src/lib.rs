@@ -66,7 +66,8 @@ pub use cop_paging::{
     DirectUnaryRequest, DirectUnaryResponse, DirectUnaryRuntimeConfig, DirectUnaryTransportError,
     DirectUnaryTransportEvidence, DirectUnaryTransportEvidenceHandle, LockedResponseAction,
     LockedResponseDelegate, LockedResponseObservation, OptimisticLockRecovery,
-    ReadEngineGeneration, RegionRetryWaiter,
+    PublicationObserverAlreadyInstalled, PublishedDispatchEvidence, ReadEngineGeneration,
+    RegionRetryWaiter,
 };
 pub use copr_cache::{
     build_copr_cache_key, CoprCache, CoprCacheAdmission, CoprCacheConfig, CoprCacheError,

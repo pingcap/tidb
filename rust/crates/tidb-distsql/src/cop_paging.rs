@@ -29,7 +29,8 @@ pub use direct_unary_query_transport::{
     DirectUnaryClient, DirectUnaryClientError, DirectUnaryQueryResponse, DirectUnaryQueryTransport,
     DirectUnaryRequest, DirectUnaryResponse, DirectUnaryRuntimeConfig, DirectUnaryTransportError,
     DirectUnaryTransportEvidence, DirectUnaryTransportEvidenceHandle, LockedResponseAction,
-    LockedResponseDelegate, LockedResponseObservation, RegionRetryWaiter,
+    LockedResponseDelegate, LockedResponseObservation, PublicationObserverAlreadyInstalled,
+    PublishedDispatchEvidence, RegionRetryWaiter,
 };
 pub use lock_recovery::OptimisticLockRecovery;
 pub use tikv_rpc_contract::{

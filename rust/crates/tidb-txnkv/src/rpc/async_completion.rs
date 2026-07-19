@@ -29,6 +29,66 @@ use crate::client::{DirectUnaryRequest, DirectUnaryResponse};
 
 use super::{DirectUnaryClientError, UnaryCallContext};
 
+/// Immutable evidence that one async request was published on a concrete
+/// BatchCommands stream.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AsyncRequestPublication {
+    physical_address: String,
+    physical_channel_version: u64,
+    batch_stream_generation: u64,
+    forwarded_host: Option<String>,
+}
+
+impl AsyncRequestPublication {
+    /// Constructs evidence from one transport-owned publication receipt.
+    #[must_use]
+    pub fn new(
+        physical_address: impl Into<String>,
+        physical_channel_version: u64,
+        batch_stream_generation: u64,
+        forwarded_host: Option<String>,
+    ) -> Self {
+        assert!(
+            physical_channel_version > 0,
+            "published requests require a nonzero physical channel version"
+        );
+        assert!(
+            batch_stream_generation > 0,
+            "published requests require a nonzero BatchCommands stream generation"
+        );
+        Self {
+            physical_address: physical_address.into(),
+            physical_channel_version,
+            batch_stream_generation,
+            forwarded_host,
+        }
+    }
+
+    /// Physical address owning the channel which accepted the request.
+    #[must_use]
+    pub fn physical_address(&self) -> &str {
+        &self.physical_address
+    }
+
+    /// Exact address-local ChannelPool version used by the publication.
+    #[must_use]
+    pub const fn physical_channel_version(&self) -> u64 {
+        self.physical_channel_version
+    }
+
+    /// Exact BatchCommands stream generation used by the publication.
+    #[must_use]
+    pub const fn batch_stream_generation(&self) -> u64 {
+        self.batch_stream_generation
+    }
+
+    /// Logical TiKV target carried through a physical proxy, if any.
+    #[must_use]
+    pub fn forwarded_host(&self) -> Option<&str> {
+        self.forwarded_host.as_deref()
+    }
+}
+
 /// Failure in the local once-only completion driver.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CompletionError {
@@ -971,6 +1031,15 @@ impl PendingRequest for CompletionPull<DirectUnaryResponse, DirectUnaryClientErr
 
 /// One in-flight source request returned by [`AsyncRequestDispatcher::begin`].
 pub trait PendingRequest {
+    /// Returns publication evidence after the concrete transport has bound
+    /// this pending request to exactly one physical stream.
+    ///
+    /// Synchronous or injected pending implementations which cannot prove a
+    /// transport publication remain `None`; callers must not invent identity.
+    fn publication(&self) -> Option<AsyncRequestPublication> {
+        None
+    }
+
     /// Polls without blocking. `None` means the exact attempt is still pending.
     fn try_complete(
         &mut self,

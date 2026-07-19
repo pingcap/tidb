@@ -43,7 +43,10 @@ use tidb_txnkv::region::{
     Peer, PeerRole, RegionCache, RegionLoadError, RegionLoader, RegionLocation, RegionMetadata,
     RegionRecoveryLoader, RegionRouteError, RegionVerId, Store, StoreLiveness,
 };
-use tidb_txnkv::rpc::{completion_pair, AsyncRequestDispatcher, CompletionPull, CompletionRunLoop};
+use tidb_txnkv::rpc::{
+    completion_pair, AsyncRequestDispatcher, AsyncRequestPublication, CompletionError,
+    CompletionPull, CompletionRequest, CompletionRunLoop, PendingRequest,
+};
 use tidb_txnkv::UnaryCallContext;
 use tidb_txnkv::{
     ClientReplicaReadType, DirectUnaryConnectionError, DirectUnaryGrpcCode,
@@ -130,6 +133,49 @@ struct ScriptedClient {
     events: Rc<RefCell<Vec<ClientEvent>>>,
     liveness: RefCell<VecDeque<Result<StoreLiveness, DirectUnaryClientError>>>,
     batch_errors: RefCell<VecDeque<DirectUnaryClientError>>,
+    batch_completion_gate: Option<Rc<Cell<bool>>>,
+}
+
+struct ScriptedPending {
+    completion: CompletionPull<DirectUnaryResponse, DirectUnaryClientError>,
+    deferred: Option<(
+        CompletionRequest<DirectUnaryResponse, DirectUnaryClientError>,
+        Result<DirectUnaryResponse, DirectUnaryClientError>,
+    )>,
+    publication: Option<AsyncRequestPublication>,
+    completion_gate: Option<Rc<Cell<bool>>>,
+}
+
+impl PendingRequest for ScriptedPending {
+    fn publication(&self) -> Option<AsyncRequestPublication> {
+        self.publication.clone()
+    }
+
+    fn try_complete(
+        &mut self,
+    ) -> Result<Option<Result<DirectUnaryResponse, DirectUnaryClientError>>, CompletionError> {
+        self.completion.try_complete()
+    }
+
+    fn complete(
+        &mut self,
+        call: &UnaryCallContext,
+    ) -> Result<Result<DirectUnaryResponse, DirectUnaryClientError>, CompletionError> {
+        if let Some(gate) = &self.completion_gate {
+            assert!(
+                gate.get(),
+                "publication observer must run before pending completion"
+            );
+        }
+        if let Some((completion, result)) = self.deferred.take() {
+            completion.schedule(result);
+        }
+        self.completion.complete(call)
+    }
+
+    fn cancel(&mut self) {
+        self.completion.cancel();
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -248,22 +294,37 @@ impl DirectUnaryClient for ScriptedClient {
 }
 
 impl AsyncRequestDispatcher for ScriptedClient {
-    type Pending = CompletionPull<DirectUnaryResponse, DirectUnaryClientError>;
+    type Pending = ScriptedPending;
 
     fn begin(
         &mut self,
         physical_address: &str,
-        _forwarded_host: Option<&str>,
+        forwarded_host: Option<&str>,
         request: &DirectUnaryRequest,
         call: &UnaryCallContext,
     ) -> Result<Self::Pending, DirectUnaryClientError> {
         let (completion, pull) = completion_pair(CompletionRunLoop::new(), || {});
         if let Some(error) = self.batch_errors.borrow_mut().pop_front() {
             completion.schedule(Err(error));
-            return Ok(pull);
+            return Ok(ScriptedPending {
+                completion: pull,
+                deferred: None,
+                publication: None,
+                completion_gate: self.batch_completion_gate.clone(),
+            });
         }
-        completion.schedule(self.send_request_with_context(physical_address, request, call));
-        Ok(pull)
+        let result = self.send_request_with_context(physical_address, request, call);
+        Ok(ScriptedPending {
+            completion: pull,
+            deferred: Some((completion, result)),
+            publication: Some(AsyncRequestPublication::new(
+                physical_address,
+                7,
+                11,
+                forwarded_host.map(str::to_owned),
+            )),
+            completion_gate: self.batch_completion_gate.clone(),
+        })
     }
 }
 
@@ -598,6 +659,7 @@ fn transport_with_loader_calls_and_config(
             events: Rc::new(RefCell::new(Vec::new())),
             liveness: RefCell::new(VecDeque::new()),
             batch_errors: RefCell::new(VecDeque::new()),
+            batch_completion_gate: None,
         },
         RegionCache::new(ScriptedLoader {
             cluster_id,
@@ -625,6 +687,7 @@ fn transport_with_transport_failures(
             events,
             liveness: RefCell::new(liveness.into_iter().collect()),
             batch_errors: RefCell::new(VecDeque::new()),
+            batch_completion_gate: None,
         },
         RegionCache::new(ScriptedLoader {
             cluster_id: 9001,
@@ -2117,6 +2180,74 @@ fn caller_cancellation_is_terminal_before_failure_consumption_or_retry_mutation(
 }
 
 #[test]
+fn publication_observer_runs_before_pending_completion_and_resets_per_query() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let completion_gate = Rc::new(Cell::new(false));
+    let transport = DirectUnaryQueryTransport::new_injected_batch_first(
+        ScriptedClient {
+            calls: Rc::clone(&calls),
+            responses: VecDeque::from([
+                Ok(response(b"first-published")),
+                Ok(response(b"second-published")),
+            ]),
+            events: Rc::new(RefCell::new(Vec::new())),
+            liveness: RefCell::new(VecDeque::new()),
+            batch_errors: RefCell::new(VecDeque::new()),
+            batch_completion_gate: Some(Rc::clone(&completion_gate)),
+        },
+        RegionCache::new(ScriptedLoader {
+            cluster_id: 9001,
+            calls: Rc::new(RefCell::new(Vec::new())),
+            regions: VecDeque::from([location(1, "a", "z", "tikv-1:20160")]),
+        }),
+        DirectUnaryRuntimeConfig::default(),
+        tidb_txnkv::lock::FixedTimestampSource::new(1 << 18),
+    )
+    .unwrap();
+    let evidence = transport.evidence_handle();
+    let mut runtime = InjectedQueryRuntime::new(transport);
+
+    let mut first = select_result(&mut runtime, &transport_request(metadata("a", "z")));
+    let observed = Rc::new(RefCell::new(Vec::new()));
+    let first_observed = Rc::clone(&observed);
+    let first_gate = Rc::clone(&completion_gate);
+    evidence
+        .set_publication_observer(move |publication| {
+            first_observed.borrow_mut().push(publication.clone());
+            first_gate.set(true);
+        })
+        .unwrap();
+    assert!(evidence.set_publication_observer(|_| {}).is_err());
+    assert_eq!(first.next_raw().unwrap(), Some(b"first-published".to_vec()));
+    assert_eq!(first.next_raw().unwrap(), None);
+    drop(first);
+
+    let first_publication = observed.borrow()[0].clone();
+    assert_eq!(first_publication.region_id, 1);
+    assert_eq!(
+        first_publication.publication.physical_address(),
+        "tikv-1:20160"
+    );
+    assert_eq!(first_publication.publication.physical_channel_version(), 7);
+    assert_eq!(first_publication.publication.batch_stream_generation(), 11);
+    assert_eq!(first_publication.publication.forwarded_host(), None);
+    assert_eq!(evidence.snapshot().published_attempts, [first_publication]);
+
+    completion_gate.set(false);
+    let mut second = select_result(&mut runtime, &transport_request(metadata("a", "z")));
+    let second_gate = Rc::clone(&completion_gate);
+    evidence
+        .set_publication_observer(move |_| second_gate.set(true))
+        .expect("the next query bind must detach the previous observer");
+    assert_eq!(
+        second.next_raw().unwrap(),
+        Some(b"second-published".to_vec())
+    );
+    assert_eq!(second.next_raw().unwrap(), None);
+    assert_eq!(calls.borrow().len(), 2);
+}
+
+#[test]
 fn local_batch_admission_busy_falls_back_without_route_failure_feedback() {
     let calls = Rc::new(RefCell::new(Vec::new()));
     let events = Rc::new(RefCell::new(Vec::new()));
@@ -2130,6 +2261,7 @@ fn local_batch_admission_busy_falls_back_without_route_failure_feedback() {
             batch_errors: RefCell::new(VecDeque::from([DirectUnaryClientError::AdmissionBusy {
                 address: "tikv-1:20160".to_owned(),
             }])),
+            batch_completion_gate: None,
         },
         RegionCache::new(ScriptedLoader {
             cluster_id: 9001,
@@ -2200,6 +2332,7 @@ fn missing_cluster_loader_failure_and_empty_pd_address_fail_before_client_dispat
             events: Rc::new(RefCell::new(Vec::new())),
             liveness: RefCell::new(VecDeque::new()),
             batch_errors: RefCell::new(VecDeque::new()),
+            batch_completion_gate: None,
         },
         RegionCache::new(ScriptedLoader {
             cluster_id: 0,
