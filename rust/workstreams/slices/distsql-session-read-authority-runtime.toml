@@ -1,0 +1,44 @@
+schema = "1"
+slice = "distsql-session-read-authority-runtime"
+status = "ready"
+target = "tidb-distsql"
+ring = "transaction"
+consumer = "A Send+Sync process read authority retains the sole maintained RegionCache and cloneable TiKV command handle, while each worker opens a thread-local Rc-owned DirectUnary query runtime with independent selection seed, evidence, cancellation, retry, and lazy response state."
+test_target = "session_read_authority_source"
+go_sources = [
+  "pkg/store/copr/coprocessor.go",
+  "pkg/store/copr/batch_request_sender.go",
+]
+go_tests = [
+  "pkg/store/copr/copr_test/coprocessor_test.go:414:TestQueryWithConcurrentSmallCop",
+  "pkg/store/copr/coprocessor_test.go:902:TestBasicSmallTaskConc",
+  "pkg/store/copr/coprocessor_test.go:988:TestSmallTaskConcurrencyLimit",
+]
+module_sources = [
+  "client-go::internal/locate/region_cache.go",
+  "client-go::internal/locate/region_request.go",
+]
+module_tests = [
+  "client-go::internal/locate/region_cache_test.go:100:TestBackgroundRunner",
+  "client-go::internal/locate/region_cache_test.go:2579:TestRegionRequestToSingleStore/TestRefreshCacheConcurrency",
+  "client-go::internal/locate/region_cache_test.go:3429:TestRegionCache/TestUpdateBucketsConcurrently",
+  "client-go::internal/locate/region_request_test.go:78:TestRegionRequestToSingleStore",
+  "client-go::internal/locate/region_request_test.go:149:TestRegionRequestToSingleStore/TestOnRegionError",
+  "client-go::internal/locate/region_request_test.go:226:TestRegionRequestToSingleStore/TestOnSendFailedWithStoreRestartUsingAsyncAPI",
+  "client-go::internal/locate/region_request_test.go:270:TestRegionRequestToSingleStore/TestOnSendFailedWithCloseKnownStoreThenUseNewOneUsingAsyncAPI",
+  "client-go::internal/locate/region_request_test.go:314:TestRegionRequestToSingleStore/TestOnSendFailedWithCancelledUsingAsyncAPI",
+  "client-go::internal/locate/region_request_test.go:354:TestRegionRequestToSingleStore/TestNoReloadRegionWhenCtxCanceledUsingAsyncAPI",
+  "client-go::internal/locate/region_request_test.go:400:TestRegionRequestToSingleStore/TestSendReqAsync",
+  "client-go::internal/locate/region_request_test.go:798:TestRegionRequestToSingleStore/TestNoReloadRegionForGrpcWhenCtxCanceled",
+  "client-go::internal/locate/region_request_test.go:916:TestRegionRequestToSingleStore/TestCloseConnectionOnStoreNotMatch",
+  "client-go::internal/locate/region_request_test.go:950:TestRegionRequestToSingleStore/TestKVReadTimeoutWithDisableBatchClient",
+  "client-go::internal/locate/region_request_test.go:984:TestRegionRequestToSingleStore/TestBatchClientSendLoopPanic",
+]
+depends_on = []
+evidence_prerequisites = []
+rust_paths = [
+  "rust/crates/tidb-txnkv/src/read_runtime.rs",
+  "rust/crates/tidb-txnkv/tests/shared_read_runtime_source.rs",
+  "rust/crates/tidb-distsql/src/cop_paging/direct_unary_query_transport.rs",
+  "rust/crates/tidb-distsql/tests/session_read_authority_source.rs",
+]

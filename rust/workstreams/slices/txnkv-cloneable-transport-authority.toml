@@ -1,0 +1,44 @@
+schema = "1"
+slice = "txnkv-cloneable-transport-authority"
+status = "ready"
+target = "tidb-txnkv"
+ring = "transaction"
+consumer = "One process-owned tonic transport runtime exposes cloneable Send+Sync TiKV command handles to connection-local read sessions; handles cannot shut down or join the shared worker, and dropping or closing one session cannot retire another session's channels, BatchCommands streams, or pending requests."
+test_target = "transport_authority_concurrency_source"
+go_sources = []
+go_tests = []
+module_sources = [
+  "client-go::internal/client/client.go",
+  "client-go::internal/client/client_async.go",
+  "client-go::internal/client/client_batch.go",
+  "client-go::internal/client/conn_pool.go",
+]
+module_tests = [
+  "client-go::internal/client/client_async_test.go:38:TestSendRequestAsyncBasic",
+  "client-go::internal/client/client_async_test.go:104:TestSendRequestAsyncAttachContext",
+  "client-go::internal/client/client_async_test.go:239:TestSendRequestAsyncTimeout",
+  "client-go::internal/client/client_async_test.go:354:TestSendRequestAsyncAndCloseClientOnHandle",
+  "client-go::internal/client/client_async_test.go:406:TestSendRequestAsyncAndCloseClientBeforeSend",
+  "client-go::internal/client/client_test.go:68:TestConn",
+  "client-go::internal/client/client_test.go:103:TestGetConnAfterClose",
+  "client-go::internal/client/client_test.go:116:TestCancelTimeoutRetErr",
+  "client-go::internal/client/client_test.go:172:TestSendWhenReconnect",
+  "client-go::internal/client/client_test.go:406:TestForwardMetadataByBatchCommands",
+  "client-go::internal/client/client_test.go:941:TestBatchClientRecoverAfterServerRestart",
+  "client-go::internal/client/client_test.go:1018:TestLimitConcurrency",
+  "client-go::internal/client/client_test.go:1177:TestRandomRestartStoreAndForwarding",
+  "client-go::internal/client/client_test.go:1258:TestFastFailRequest",
+  "client-go::internal/client/client_test.go:1272:TestErrConn",
+  "client-go::internal/client/client_test.go:1303:TestFastFailWhenNoAvailableConn",
+  "client-go::internal/client/client_test.go:1335:TestConcurrentCloseConnPanic",
+]
+depends_on = []
+evidence_prerequisites = []
+rust_paths = [
+  "rust/crates/tidb-txnkv/src/client.rs",
+  "rust/crates/tidb-txnkv/src/rpc/async_completion.rs",
+  "rust/crates/tidb-txnkv/src/rpc/transport_runtime.rs",
+  "rust/crates/tidb-txnkv/src/rpc/unary.rs",
+  "rust/crates/tidb-txnkv/src/rpc/tonic_coprocessor.rs",
+  "rust/crates/tidb-txnkv/tests/transport_authority_concurrency_source.rs",
+]

@@ -1,0 +1,11 @@
+schema = "1"
+campaign = "2026-07-read-path-21"
+status = "planned"
+slices = [
+  "txnkv-cloneable-transport-authority",
+  "distsql-session-read-authority-runtime",
+  "executor-read-authority-session-runtime",
+  "server-native-password-user-store-runtime",
+  "server-concurrent-authenticated-session-runtime",
+  "server-live-concurrent-auth-tikv-proof",
+]
