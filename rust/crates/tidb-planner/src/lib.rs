@@ -29,8 +29,6 @@ pub mod columnar_index_extra;
 pub mod condition_binding;
 pub mod condition_to_dual;
 pub mod configured_join_plan;
-// Stage B is a source-included leaf whose public items predate crate routing.
-#[allow(missing_docs)]
 pub mod configured_relation_tree;
 pub mod cost_factors;
 pub mod derive_topn_from_window;

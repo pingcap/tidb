@@ -32,8 +32,8 @@ use crate::{
         UnsupportedJoinCondition,
     },
     read_only_scan::{
-        configured_catalog::ConfiguredCatalog, fold_identifier, ConfiguredColumn,
-        ReadOnlyScanError, ReadOnlyScanPlan,
+        configured_catalog::ConfiguredCatalog, fold_identifier, BoundBigIntComparison,
+        ConfiguredColumn, ReadOnlyScanError, ReadOnlyScanPlan,
     },
 };
 
@@ -128,7 +128,8 @@ pub struct ConfiguredJoinPlan {
 impl ConfiguredJoinPlan {
     /// Binds and lowers one configured two-relation query.
     pub fn lower(sql: &str, catalog: &ConfiguredCatalog) -> Result<Self, ConfiguredJoinPlanError> {
-        let relation_tree = bind_with_using_projection_coalescing(sql, catalog)?;
+        let relation_tree = ConfiguredRelationTree::bind_sql(sql, catalog)
+            .map_err(ConfiguredJoinPlanError::RelationBinding)?;
         let join_schema = join_schema(&relation_tree);
         let bound_join = bind_join_constraint(&relation_tree, &join_schema)?;
 
@@ -228,69 +229,6 @@ impl fmt::Display for ConfiguredJoinPlanError {
 }
 
 impl Error for ConfiguredJoinPlanError {}
-
-fn bind_with_using_projection_coalescing(
-    sql: &str,
-    catalog: &ConfiguredCatalog,
-) -> Result<ConfiguredRelationTree, ConfiguredJoinPlanError> {
-    match ConfiguredRelationTree::bind_sql(sql, catalog) {
-        Ok(tree) => Ok(tree),
-        Err(RelationBindError::AmbiguousColumn(path)) if path.len() == 1 => {
-            let stmt = tidb_parser::parse(sql).map_err(|error| {
-                ConfiguredJoinPlanError::RelationBinding(RelationBindError::Parse(error.message))
-            })?;
-            let rewritten = rewrite_using_projection(stmt, &path[0]).ok_or({
-                ConfiguredJoinPlanError::RelationBinding(RelationBindError::AmbiguousColumn(path))
-            })?;
-            ConfiguredRelationTree::bind_sql(&rewritten, catalog)
-                .map_err(ConfiguredJoinPlanError::RelationBinding)
-        }
-        Err(error) => Err(ConfiguredJoinPlanError::RelationBinding(error)),
-    }
-}
-
-fn rewrite_using_projection(mut stmt: tidb_ast::Stmt, ambiguous: &str) -> Option<String> {
-    let tidb_ast::Stmt::Query(query) = &mut stmt else {
-        return None;
-    };
-    let tidb_ast::QueryStmt::Select(select) = query.as_mut() else {
-        return None;
-    };
-    let join = select.from.as_ref()?;
-    if join.using.len() != 1 || fold_identifier(&join.using[0]) != fold_identifier(ambiguous) {
-        return None;
-    }
-    let qualifier = left_qualifier(&join.left)?;
-    let mut changed = false;
-    for field in &mut select.fields {
-        if let tidb_ast::SelectField::Expr {
-            expr: Expr::Column(path),
-            ..
-        } = field
-        {
-            if path.len() == 1 && fold_identifier(&path[0]) == fold_identifier(ambiguous) {
-                *path = vec![qualifier.clone(), path[0].clone()];
-                changed = true;
-            }
-        }
-    }
-    changed.then(|| stmt.restore())
-}
-
-fn left_qualifier(node: &tidb_ast::JoinNode) -> Option<String> {
-    match node {
-        tidb_ast::JoinNode::Table(table) => Some(
-            table
-                .alias
-                .as_deref()
-                .filter(|alias| !alias.is_empty())
-                .or_else(|| table.name.last().map(String::as_str))?
-                .to_owned(),
-        ),
-        tidb_ast::JoinNode::Join(join) if join.right.is_none() => left_qualifier(&join.left),
-        tidb_ast::JoinNode::Join(_) | tidb_ast::JoinNode::Derived { .. } => None,
-    }
-}
 
 fn join_schema(tree: &ConfiguredRelationTree) -> JoinSchema {
     JoinSchema::new(schema_columns(tree.left()), schema_columns(tree.right()))
@@ -432,9 +370,14 @@ fn resolve_join_column<'a>(
             UnsupportedJoinCondition::NonColumnOperand,
         ));
     };
-    let (qualifier, name) = match path.as_slice() {
-        [name] => (None, name.as_str()),
-        [qualifier, name] | [_, qualifier, name] => (Some(qualifier.as_str()), name.as_str()),
+    let (schema, qualifier, name) = match path.as_slice() {
+        [name] => (None, None, name.as_str()),
+        [qualifier, name] => (None, Some(qualifier.as_str()), name.as_str()),
+        [schema, qualifier, name] => (
+            Some(schema.as_str()),
+            Some(qualifier.as_str()),
+            name.as_str(),
+        ),
         _ => {
             return Err(ConfiguredJoinPlanError::UnsupportedJoinCondition(
                 UnsupportedJoinCondition::InvalidColumnPath,
@@ -447,7 +390,9 @@ fn resolve_join_column<'a>(
     ]
     .into_iter()
     .filter(|(_, relation)| {
-        qualifier.is_none_or(|qualifier| {
+        schema.is_none_or(|schema| {
+            fold_identifier(relation.table().schema()) == fold_identifier(schema)
+        }) && qualifier.is_none_or(|qualifier| {
             fold_identifier(relation.qualifier()) == fold_identifier(qualifier)
         })
     })
@@ -472,69 +417,83 @@ fn lower_relation_scan(
         RelationSide::Left => tree.left(),
         RelationSide::Right => tree.right(),
     };
-    let mut sql = String::from("SELECT ");
-    for (index, column) in relation.table().columns().iter().enumerate() {
-        if index > 0 {
-            sql.push_str(", ");
-        }
-        sql.push_str(&quoted(column.name()));
-    }
-    sql.push_str(" FROM ");
-    sql.push_str(&quoted(relation.table().schema()));
-    sql.push('.');
-    sql.push_str(&quoted(relation.table().table()));
-    sql.push_str(" AS ");
-    sql.push_str(&quoted(relation.qualifier()));
-
-    let predicates = tree
+    let projected_column_indices = (0..relation.table().columns().len()).collect::<Vec<_>>();
+    let comparisons = tree
         .local_predicates()
         .iter()
         .filter(|predicate| predicate.side() == side)
-        .map(|predicate| render_local_expression(predicate.expression()))
+        .map(|predicate| bound_comparison(predicate.expression(), relation))
         .collect::<Result<Vec<_>, _>>()?;
-    if !predicates.is_empty() {
-        sql.push_str(" WHERE ");
-        sql.push_str(&predicates.join(" AND "));
-    }
-    ReadOnlyScanPlan::lower(&sql, relation.table()).map_err(|error| match side {
+    ReadOnlyScanPlan::lower_bound_relation(
+        relation.table(),
+        &projected_column_indices,
+        &comparisons,
+    )
+    .map_err(|error| match side {
         RelationSide::Left => ConfiguredJoinPlanError::LeftScan(error),
         RelationSide::Right => ConfiguredJoinPlanError::RightScan(error),
     })
 }
 
-fn render_local_expression(expression: &Expr) -> Result<String, ConfiguredJoinPlanError> {
-    match expression {
-        Expr::Column(path) => Ok(path
-            .iter()
-            .map(|part| quoted(part))
-            .collect::<Vec<_>>()
-            .join(".")),
-        Expr::Int(text) => Ok(text.clone()),
-        Expr::Unary(UnaryOp::Plus, inner) => Ok(format!("+{}", render_local_expression(inner)?)),
-        Expr::Unary(UnaryOp::Minus, inner) => Ok(format!("-{}", render_local_expression(inner)?)),
-        Expr::Paren(inner) => Ok(format!("({})", render_local_expression(inner)?)),
-        Expr::Binary(operator, lhs, rhs) => {
-            let operator = match operator {
-                BinaryOp::Eq => "=",
-                BinaryOp::Ne => "!=",
-                BinaryOp::Lt => "<",
-                BinaryOp::Le => "<=",
-                BinaryOp::Gt => ">",
-                BinaryOp::Ge => ">=",
-                _ => return Err(ConfiguredJoinPlanError::InvalidLocalPredicate),
-            };
-            Ok(format!(
-                "{} {operator} {}",
-                render_local_expression(lhs)?,
-                render_local_expression(rhs)?
-            ))
-        }
+fn bound_comparison(
+    expression: &Expr,
+    relation: &BoundRelation,
+) -> Result<BoundBigIntComparison, ConfiguredJoinPlanError> {
+    let Expr::Binary(operator, lhs, rhs) = strip_parens(expression) else {
+        return Err(ConfiguredJoinPlanError::InvalidLocalPredicate);
+    };
+    let op = comparison_op(*operator).ok_or(ConfiguredJoinPlanError::InvalidLocalPredicate)?;
+    match (
+        bound_column_index(lhs, relation),
+        parse_signed_integer(rhs),
+        parse_signed_integer(lhs),
+        bound_column_index(rhs, relation),
+    ) {
+        (Some(column_index), Some(value), _, _) => Ok(BoundBigIntComparison::ColumnLeft {
+            column_index,
+            op,
+            value,
+        }),
+        (_, _, Some(value), Some(column_index)) => Ok(BoundBigIntComparison::LiteralLeft {
+            value,
+            op,
+            column_index,
+        }),
         _ => Err(ConfiguredJoinPlanError::InvalidLocalPredicate),
     }
 }
 
-fn quoted(identifier: &str) -> String {
-    format!("`{}`", identifier.replace('`', "``"))
+fn comparison_op(operator: BinaryOp) -> Option<crate::physical_selection::ComparisonOp> {
+    use crate::physical_selection::ComparisonOp;
+    match operator {
+        BinaryOp::Eq => Some(ComparisonOp::Eq),
+        BinaryOp::Ne => Some(ComparisonOp::Ne),
+        BinaryOp::Lt => Some(ComparisonOp::Lt),
+        BinaryOp::Le => Some(ComparisonOp::Le),
+        BinaryOp::Gt => Some(ComparisonOp::Gt),
+        BinaryOp::Ge => Some(ComparisonOp::Ge),
+        _ => None,
+    }
+}
+
+fn bound_column_index(expression: &Expr, relation: &BoundRelation) -> Option<usize> {
+    let Expr::Column(path) = strip_parens(expression) else {
+        return None;
+    };
+    let name = path.last()?;
+    find_column_offset(relation, name)
+}
+
+fn parse_signed_integer(expression: &Expr) -> Option<i64> {
+    fn parse(expression: &Expr) -> Option<i128> {
+        match expression {
+            Expr::Int(text) => text.parse().ok(),
+            Expr::Paren(inner) | Expr::Unary(UnaryOp::Plus, inner) => parse(inner),
+            Expr::Unary(UnaryOp::Minus, inner) => parse(inner)?.checked_neg(),
+            _ => None,
+        }
+    }
+    i64::try_from(parse(expression)?).ok()
 }
 
 fn full_schema(tree: &ConfiguredRelationTree) -> Vec<FullSchemaColumn> {

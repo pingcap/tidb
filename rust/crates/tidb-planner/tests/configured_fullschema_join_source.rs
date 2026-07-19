@@ -114,6 +114,44 @@ fn local_predicates_lower_through_existing_range_and_selection_planner() {
 }
 
 #[test]
+fn literal_left_local_predicate_lowers_without_reconstructing_sql() {
+    let plan = ConfiguredJoinPlan::lower(
+        "SELECT a.AccountID, o.Amount FROM Accounts a JOIN Orders o \
+         ON a.AccountID=o.AccountID WHERE 10 <= a.AccountID",
+        &catalog(),
+    )
+    .expect("literal-left predicate must retain its comparison direction");
+
+    assert_eq!(plan.left_scan().handle_ranges().len(), 1);
+    assert_eq!(plan.left_scan().handle_ranges()[0].start(), 10);
+    assert_eq!(plan.left_scan().handle_ranges()[0].end(), i64::MAX);
+    assert!(plan.left_scan().selection().is_none());
+}
+
+#[test]
+fn three_part_join_columns_validate_each_relation_schema() {
+    ConfiguredJoinPlan::lower(
+        "SELECT a.Balance, o.Amount FROM Sales.Accounts a JOIN Sales.Orders o \
+         ON Sales.a.AccountID = Sales.o.AccountID",
+        &catalog(),
+    )
+    .expect("matching configured schemas must bind");
+
+    assert_eq!(
+        ConfiguredJoinPlan::lower(
+            "SELECT a.Balance FROM Sales.Accounts a JOIN Sales.Orders o \
+             ON Archive.a.AccountID = Sales.o.AccountID",
+            &catalog(),
+        ),
+        Err(ConfiguredJoinPlanError::UnsupportedJoinCondition(
+            UnsupportedJoinCondition::UnknownColumn {
+                path: vec!["Archive".to_owned(), "a".to_owned(), "AccountID".to_owned(),]
+            }
+        ))
+    );
+}
+
+#[test]
 fn using_coalesces_visible_metadata_but_retains_both_physical_keys() {
     let plan = ConfiguredJoinPlan::lower(
         "SELECT AccountID, o.OrderID, a.Balance FROM Accounts a JOIN Orders o USING (AccountID)",
