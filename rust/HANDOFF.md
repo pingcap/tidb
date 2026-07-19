@@ -53,18 +53,20 @@ from the Campaign 07 baseline with the toolchain pinned in
 | `tidb-stats` | source-backed CMSketch/TopN/FMSketch/loading-status statistics primitives | `pkg/statistics/**` |
 | `tidb-codec` | byte-exact comparable scalar and datum-key encoding | dependency-closed paths in `pkg/util/codec/**` |
 | `tidb-txnkv` | transaction primitives plus the live address-keyed `tikvpb.Tikv/Coprocessor` RPC leaf, retained tonic BatchCommands duplex transport with concrete Coprocessor dispatch, API-v1 PD previous-region/region/store/label loader, unlocked optimistic metadata publication, exact region-error recovery, adaptive replica health/scoring, bounded region backoff, exact forwarding metadata, and one synchronized, maintained topology/store/proxy RegionCache authority | `pkg/kv/**`, pinned `tikv/client-go/v2` transport and locate paths |
-| `tidb-exec` | seed stateful execution leaves plus the bounded direct-column planner/DAG/real-PD-TSO/real-TiKV read engine and lazy result metadata bridge | `pkg/session/**`, `pkg/executor/**`, `pkg/server/**` |
-| `tidb-server` | source-shaped connection dispatch plus the executable serial loopback SQL node, bounded startup catalog, and stock-MySQL-to-real-TiKV lifecycle | `cmd/tidb-server/**`, `pkg/server/conn.go`, `pkg/server/server.go` |
+| `tidb-exec` | seed stateful execution leaves plus the bounded ordered-column planner/DAG/real-PD-TSO/real-TiKV read engine and lazy result metadata bridge | `pkg/session/**`, `pkg/executor/**`, `pkg/server/**` |
+| `tidb-server` | source-shaped connection dispatch plus the executable serial loopback SQL node, bounded ordered-column startup catalog, and stock-MySQL-to-real-TiKV lifecycle | `cmd/tidb-server/**`, `pkg/server/conn.go`, `pkg/server/server.go` |
 | `difftest` | shared differential library, Go helpers, corpora, inventory/ledger generators, and two infrastructure tests | — |
 | `difftest-parser-tests` | parser-only oracle replay, topology gate, and stable selector shards | `pkg/parser/**`, parser fixtures |
 | `difftest-result-tests` | expression/query/table result rings | `pkg/expression/**`, `pkg/executor/**` |
 | `difftest-transaction-tests` | source-translated transaction evidence plus owner-run PD/RealTiKV routing and movement proofs | `pkg/kv/**`, pinned client-go/PD/TiKV paths |
 
-`tidb-exec` is a **seed executor**: a flat in-memory catalog (no real TiKV,
-databases, views, or users), a deliberately incomplete `Datum` domain, and no
-planner. `Cluster`/`Session` establishes the multi-session ownership seam for
-bounded source tests, but it is not the `tidb-txnkv` protocol. The separate
-`tidb-proto`, `tidb-codec`, and `tidb-txnkv` now form a real dependency chain
+`tidb-exec` retains a **seed executor** for bounded source tests: a flat
+in-memory catalog with no databases, views, users, or complete `Datum` domain.
+That seed is not the deployable storage path. The separate read-only engine now
+owns planner/DAG lowering and real PD/TiKV execution; `Cluster`/`Session`
+remains only the multi-session seed seam and is not the `tidb-txnkv` protocol.
+The separate `tidb-proto`, `tidb-codec`, and `tidb-txnkv` now form a real
+dependency chain
 for generated request-tag wire contracts, comparable keys,
 `Int`/`Common`/`Partition` handles, a live TiKV Coprocessor unary RPC leaf, and
 source-shaped RegionCache/leader routing. Campaign 10 made that cache the sole
@@ -107,6 +109,18 @@ identities, one BatchCommands publication, no unary fallback, zero active
 connections, and complete TiUP cleanup. This milestone remains serial,
 loopback/root-empty-password-only, and static-catalog/direct-column-only; do
 not generalize it into claims of full session/catalog/planner/write parity.
+
+Campaign 20 removes the one-column/key-only assumption without creating a
+second runtime. Startup accepts an ordered, atomic list of signed-BIGINT column
+descriptors with exactly one clustered key. Planner resolution preserves
+source identity, aliases, and projection order; DAG lowering emits matching
+scan columns and output offsets; the real TiKV decoder materializes every row
+field; and the MySQL writer retains output and original names plus exact key
+flags. The live stock-client proof queried `SELECT balance AS amount, id` and
+returned exact stored/key pairs `(913,-7)`, `(-2048,0)`, and `(77,42)` through
+real PD TSO, region 16, and one BatchCommands attempt with no unary fallback.
+The stored values deliberately cannot be derived from their keys. The node is
+still serial, static-catalog, signed-BIGINT-only, and direct-projection-only.
 
 The first connected local read-only seam is now real: `tidb-protocol` frames
 and validates uncompressed MySQL packets, `Session::execute_framed_query`
