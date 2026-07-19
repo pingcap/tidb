@@ -783,6 +783,13 @@ def go_deps():
         version = "v1.3.0",
     )
     go_repository(
+        name = "com_github_bwesterb_go_ristretto",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/bwesterb/go-ristretto",
+        sum = "h1:1w53tCkGhCQ5djbat3+MH0BAQ5Kfgbt56UZQ/JMzngw=",
+        version = "v1.2.3",
+    )
+    go_repository(
         name = "com_github_cakturk_go_netstat",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/cakturk/go-netstat",
@@ -935,6 +942,13 @@ def go_deps():
         importpath = "github.com/client9/misspell",
         sum = "h1:ta993UF76GwbvJcIo3Y68y/M3WxlpEHPWIGDkJYwzJI=",
         version = "v0.3.4",
+    )
+    go_repository(
+        name = "com_github_cloudflare_circl",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/cloudflare/circl",
+        sum = "h1:hL7VBpHHKzrV5WTfHCaBsgx/HGbBYlgrwvNXEVDYYsQ=",
+        version = "v1.6.2",
     )
     go_repository(
         name = "com_github_cloudfoundry_gosigar",
@@ -3675,6 +3689,13 @@ def go_deps():
         importpath = "github.com/prometheus/prometheus",
         sum = "h1:N2L+DYrxqPh4WZStU+o1p/gQlBaqFbcLBTjlp3vpdXw=",
         version = "v0.50.1",
+    )
+    go_repository(
+        name = "com_github_protonmail_go_crypto",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/ProtonMail/go-crypto",
+        sum = "h1:9RfcZHqEQUvP8RzecWEUafnZVtEvrBVL9BiF67IQOfM=",
+        version = "v1.4.1",
     )
     go_repository(
         name = "com_github_pterm_pterm",

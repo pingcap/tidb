@@ -348,7 +348,7 @@ func TestPDSecurityOptionForGC(t *testing.T) {
 	}
 }
 
-func TestParseClusterSSLFlags(t *testing.T) {
+func TestParseSecurityFlags(t *testing.T) {
 	conf := DefaultConfig()
 	flags := pflag.NewFlagSet("dumpling", pflag.ContinueOnError)
 	conf.DefineFlags(flags)
@@ -362,12 +362,14 @@ func TestParseClusterSSLFlags(t *testing.T) {
 		"--cluster-ssl-ca", "/tmp/cluster-ca.pem",
 		"--cluster-ssl-cert", "/tmp/cluster-cert.pem",
 		"--cluster-ssl-key", "/tmp/cluster-key.pem",
+		"--gpg-key-file", "/tmp/gpg-public-key.asc",
 	}))
 	require.NoError(t, conf.ParseFromFlags(flags))
 	require.Equal(t, "pd1:2379", conf.PDAddr)
 	require.Equal(t, "/tmp/cluster-ca.pem", conf.ClusterSSLCA)
 	require.Equal(t, "/tmp/cluster-cert.pem", conf.ClusterSSLCert)
 	require.Equal(t, "/tmp/cluster-key.pem", conf.ClusterSSLKey)
+	require.Equal(t, "/tmp/gpg-public-key.asc", conf.GPGKeyFile)
 }
 
 // TestUpdateServiceSafePointRetryAndCancel verifies that the global-GC safe
