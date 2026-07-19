@@ -1,6 +1,6 @@
 schema = "1"
 slice = "server-column-list-config-runtime"
-status = "ready"
+status = "partial"
 target = "tidb-server"
 ring = "result"
 consumer = "Startup accepts a repeatable, validated signed-BIGINT column descriptor list, rejects duplicate names and IDs or any table without exactly one clustered key, and constructs the same planner catalog descriptor without parallel option arrays."

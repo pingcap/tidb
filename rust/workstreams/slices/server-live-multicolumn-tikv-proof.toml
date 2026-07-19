@@ -1,6 +1,6 @@
 schema = "1"
 slice = "server-live-multicolumn-tikv-proof"
-status = "ready"
+status = "partial"
 target = "result-tests"
 ring = "result"
 consumer = "A stock mysql client requests a reordered aliased projection from a real two-column TiKV table and receives exact clustered-key and stored signed-BIGINT values while the retained PD/BatchCommands and cleanup evidence remains nonzero and exact."

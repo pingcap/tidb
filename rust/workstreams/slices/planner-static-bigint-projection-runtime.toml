@@ -1,6 +1,6 @@
 schema = "1"
 slice = "planner-static-bigint-projection-runtime"
-status = "ready"
+status = "partial"
 target = "tidb-planner"
 ring = "plan"
 consumer = "One configured table exposes a source-ordered list of signed BIGINT columns with exactly one clustered primary key; direct projections preserve source identity, output alias, reorder, TiKV column ID, and key-versus-stored flags through the existing table-reader plan."

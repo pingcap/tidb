@@ -1,6 +1,6 @@
 schema = "1"
 slice = "server-multicolumn-mysql-result-runtime"
-status = "ready"
+status = "partial"
 target = "tidb-server"
 ring = "result"
 consumer = "The stock MySQL connection writer is regression-proven with two differently flagged BIGINT columns, reordered output, aliases, original names, signed stored values, and incremental row lifecycle without a one-column assumption."

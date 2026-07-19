@@ -1,6 +1,6 @@
 schema = "1"
 campaign = "2026-07-read-path-20"
-status = "planned"
+status = "integrated"
 slices = [
   "planner-static-bigint-projection-runtime",
   "executor-multicolumn-real-tikv-runtime",

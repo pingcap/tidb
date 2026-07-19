@@ -43,6 +43,9 @@ pkg/server/conn_test.go	2145	TestOkEof	protocol-resultset-source-wave
 pkg/server/conn_test.go	1378	TestTiFlashFallback	server-distsql-streaming-resultset
 pkg/server/conn_test.go	2425	TestEmptyOrgName	server-distsql-streaming-resultset
 pkg/server/conn_test.go	670	TestDispatch	server-compressed-command-io-runtime
+pkg/server/conn_test.go	789	TestDispatchClientProtocol41	server-multicolumn-mysql-result-runtime
+pkg/server/conn_test.go	909	TestQueryEndWithZero	server-multicolumn-mysql-result-runtime
+pkg/server/conn_test.go	2054	TestMaxAllowedPacket	server-multicolumn-mysql-result-runtime
 pkg/server/conn_test.go	2447	TestStats	server-compressed-command-io-runtime
 pkg/server/conn_test.go	427	TestMalformHandshakeHeader	server-handshake-listener-wave
 pkg/server/conn_test.go	434	TestParseHandshakeResponse	server-handshake-listener-wave
@@ -174,6 +177,7 @@ pkg/planner/core/logical_plans_test.go	93	TestEliminateProjectionUnderUnion	plan
 pkg/planner/core/logical_plans_test.go	202	TestSimplifyOuterJoin	planner-outer-to-inner-join-wave
 pkg/planner/core/logical_plans_test.go	241	TestAntiSemiJoinConstFalse	planner-condition-to-dual-wave
 pkg/planner/core/logical_plans_test.go	402	TestDupRandJoinCondsPushDown	planner-residual-condition-wave
+pkg/planner/core/logical_plans_test.go	568	TestPlanBuilder	planner-static-bigint-projection-runtime
 pkg/planner/core/logical_plans_test.go	652	TestColumnPruning	planner-column-pruning-wave
 pkg/planner/core/logical_plans_test.go	679	TestSortByItemsPruning	planner-by-item-wave
 pkg/planner/core/logical_plans_test.go	706	TestProjectionEliminator	planner-projection-elimination-wave
@@ -267,6 +271,7 @@ pkg/statistics/handle/cache/internal/lfu/lfu_cache_test.go	271	TestMemoryControl
 pkg/statistics/handle/cache/internal/lfu/lfu_cache_test.go	305	TestMemoryControlWithUpdate	stats-memory-cost-wave
 pkg/planner/core/physical_plan_test.go	151	TestRequestTypeSupportedOff	planner-physical-table-reader-wave
 pkg/planner/core/physical_plan_test.go	582	TestPhysicalPlanMemoryTrace	planner-physical-sort-wave
+pkg/planner/core/physical_plan_test.go	596	TestPhysicalTableScanExtractCorrelatedCols	planner-static-bigint-projection-runtime
 pkg/planner/core/planbuilder_test.go	277	TestDeepClone	planner-physical-sort-wave
 pkg/planner/core/planbuilder_test.go	312	TestTablePlansAndTablePlanInPhysicalTableReaderClone	planner-physical-table-reader-wave
 pkg/statistics/handle/util/util_test.go	75	TestCallSCtxFailed	stats-pool-wave

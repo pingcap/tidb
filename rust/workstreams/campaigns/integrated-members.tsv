@@ -76,3 +76,8 @@
 2026-07-read-path-19	executor-real-tikv-read-runtime
 2026-07-read-path-19	server-mysql-connection-runtime
 2026-07-read-path-19	server-live-mysql-tikv-proof
+2026-07-read-path-20	planner-static-bigint-projection-runtime
+2026-07-read-path-20	executor-multicolumn-real-tikv-runtime
+2026-07-read-path-20	server-column-list-config-runtime
+2026-07-read-path-20	server-multicolumn-mysql-result-runtime
+2026-07-read-path-20	server-live-multicolumn-tikv-proof

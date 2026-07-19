@@ -1,6 +1,6 @@
 schema = "1"
 slice = "executor-multicolumn-real-tikv-runtime"
-status = "ready"
+status = "partial"
 target = "tidb-exec"
 ring = "result"
 consumer = "The real-TiKV engine consumes resolved projection columns rather than synthesizing every output as the primary key, emits every scan column and DAG output offset in projection order, decodes N fields, and publishes exact MySQL output-name, original-name, and flag metadata."
