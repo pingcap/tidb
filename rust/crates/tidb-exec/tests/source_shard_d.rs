@@ -14,16 +14,22 @@
 
 //! Deterministic source-test shard; individual Go-owned test files remain the modules.
 
-// Campaign 25's module is source-included until the executor routing steward
-// exports it. Re-export the existing reader at the path used inside the crate.
-mod real_tikv_read {
-    pub use tidb_exec::real_tikv_read::*;
+// Campaign 25's modules are source-included until the executor routing steward
+// exports them. Bridge their two existing crate-local dependencies.
+mod dag_request {
+    pub use tidb_exec::dag_request::*;
+}
+mod distsql_recordset {
+    pub use tidb_exec::distsql_recordset::*;
 }
 
 #[path = "../src/real_tikv_multi_read.rs"]
 mod real_tikv_multi_read;
 #[path = "real_tikv_multi_relation_scan_source.rs"]
 mod real_tikv_multi_relation_scan_source;
+#[allow(dead_code)]
+#[path = "../src/real_tikv_read.rs"]
+mod real_tikv_read;
 
 #[path = "bit_live_aggregate_source.rs"]
 mod bit_live_aggregate_source;

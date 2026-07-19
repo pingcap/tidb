@@ -166,8 +166,32 @@ struct ReadSessionAdmission {
     next_session_id: u64,
 }
 
-struct ReadSessionLease {
+pub(crate) struct ReadSessionLease {
     leases: Arc<ReadSessionLeases>,
+}
+
+/// One connection-local two-relation session opened by the process authority.
+///
+/// The multi-read implementation lives in `real_tikv_multi_read`; this owner
+/// stays here so it can retain exactly one otherwise-private admission lease.
+pub struct RealTiKvMultiReadSession<T, S> {
+    pub(crate) readers: [RealTiKvReadSession<T, S>; 2],
+    pub(crate) timestamp_source: S,
+    _lease: ReadSessionLease,
+}
+
+impl<T, S> RealTiKvMultiReadSession<T, S> {
+    /// Returns the two readers retaining distinct query-local transports.
+    #[must_use]
+    pub const fn readers(&self) -> &[RealTiKvReadSession<T, S>; 2] {
+        &self.readers
+    }
+
+    /// Returns the process timestamp capability shared by both readers.
+    #[must_use]
+    pub const fn timestamp_source(&self) -> &S {
+        &self.timestamp_source
+    }
 }
 
 impl Drop for ReadSessionLease {
@@ -287,6 +311,38 @@ impl<F, S> RealTiKvReadSessionOpener<F, S> {
             Err(poisoned) => poisoned.into_inner().active,
         }
     }
+
+    fn acquire_session_lease(
+        &self,
+    ) -> Result<(RealTiKvReadSessionIdentity, ReadSessionLease), RealTiKvReadError> {
+        let mut admission = self.leases.admission.lock().map_err(|_| {
+            RealTiKvReadError::Transport("read session admission lock is poisoned".to_owned())
+        })?;
+        if !admission.accepting {
+            return Err(RealTiKvReadError::Transport(
+                "read session admission is closed".to_owned(),
+            ));
+        }
+        let session_id = admission.next_session_id;
+        if session_id == 0 {
+            return Err(RealTiKvReadError::Transport(
+                "read session identity space exhausted".to_owned(),
+            ));
+        }
+        admission.next_session_id = admission.next_session_id.wrapping_add(1);
+        admission.active = admission.active.checked_add(1).ok_or_else(|| {
+            RealTiKvReadError::Transport("read session lease space exhausted".to_owned())
+        })?;
+        Ok((
+            RealTiKvReadSessionIdentity {
+                authority_id: self.authority_id,
+                session_id,
+            },
+            ReadSessionLease {
+                leases: Arc::clone(&self.leases),
+            },
+        ))
+    }
 }
 
 impl<F, S> RealTiKvReadSessionOpener<F, S>
@@ -298,32 +354,7 @@ where
 {
     /// Opens one connection-local session inside the calling server worker.
     pub fn open_session(&self) -> Result<RealTiKvReadSession<F::Transport, S>, RealTiKvReadError> {
-        let (session_id, lease) = {
-            let mut admission = self.leases.admission.lock().map_err(|_| {
-                RealTiKvReadError::Transport("read session admission lock is poisoned".to_owned())
-            })?;
-            if !admission.accepting {
-                return Err(RealTiKvReadError::Transport(
-                    "read session admission is closed".to_owned(),
-                ));
-            }
-            let session_id = admission.next_session_id;
-            if session_id == 0 {
-                return Err(RealTiKvReadError::Transport(
-                    "read session identity space exhausted".to_owned(),
-                ));
-            }
-            admission.next_session_id = admission.next_session_id.wrapping_add(1);
-            admission.active = admission.active.checked_add(1).ok_or_else(|| {
-                RealTiKvReadError::Transport("read session lease space exhausted".to_owned())
-            })?;
-            (
-                session_id,
-                ReadSessionLease {
-                    leases: Arc::clone(&self.leases),
-                },
-            )
-        };
+        let (identity, lease) = self.acquire_session_lease()?;
         let transport = self
             .transport_factory
             .open_session_transport()
@@ -333,12 +364,52 @@ where
             transport,
             self.timestamp_source.clone(),
             self.cluster_id,
-            RealTiKvReadSessionIdentity {
-                authority_id: self.authority_id,
-                session_id,
-            },
+            identity,
             Some(lease),
         ))
+    }
+
+    /// Opens one connection-local session containing two table-bound readers.
+    ///
+    /// Both readers receive distinct query-local transports over the same
+    /// process factory and the same nonzero identity. One admission lease owns
+    /// the pair and remains active until the multi session is dropped.
+    pub fn open_multi_session(
+        &self,
+        tables: [ConfiguredTable; 2],
+    ) -> Result<RealTiKvMultiReadSession<F::Transport, S>, RealTiKvReadError> {
+        let (identity, lease) = self.acquire_session_lease()?;
+        let left_transport = self
+            .transport_factory
+            .open_session_transport()
+            .map_err(RealTiKvReadError::Transport)?;
+        let right_transport = self
+            .transport_factory
+            .open_session_transport()
+            .map_err(RealTiKvReadError::Transport)?;
+        let [left_table, right_table] = tables.map(Arc::new);
+        Ok(RealTiKvMultiReadSession {
+            readers: [
+                RealTiKvReadSession::from_authority(
+                    left_table,
+                    left_transport,
+                    self.timestamp_source.clone(),
+                    self.cluster_id,
+                    identity,
+                    None,
+                ),
+                RealTiKvReadSession::from_authority(
+                    right_table,
+                    right_transport,
+                    self.timestamp_source.clone(),
+                    self.cluster_id,
+                    identity,
+                    None,
+                ),
+            ],
+            timestamp_source: self.timestamp_source.clone(),
+            _lease: lease,
+        })
     }
 }
 

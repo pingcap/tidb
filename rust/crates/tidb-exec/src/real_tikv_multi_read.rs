@@ -16,18 +16,18 @@
 //!
 //! TiDB's executor builder resolves a statement snapshot once and gives it to
 //! every table reader. This authority follows the same order: lower both
-//! source scans, reject local contradictions, acquire one timestamp, open two
-//! transport instances from the same process factory, then call the existing
-//! single-reader supplied-snapshot seam. No row is materialized here.
+//! source scans, reject local contradictions, acquire one timestamp, then call
+//! the existing single-reader supplied-snapshot seam on two connection-local
+//! transports opened by [`RealTiKvReadSessionOpener::open_multi_session`]. No
+//! row is materialized here and repeated statements reuse those transports.
 
 use std::sync::Arc;
 
 use tidb_distsql::{CancelHandle, QueryTransport, TimestampSource};
-use tidb_planner::read_only_scan::{ConfiguredTable, ReadOnlyScanError, ReadOnlyScanPlan};
+use tidb_planner::read_only_scan::{ReadOnlyScanError, ReadOnlyScanPlan};
 
-use crate::real_tikv_read::{
-    RealTiKvQuery, RealTiKvReadError, RealTiKvReadSession, RealTiKvSessionTransportFactory,
-};
+pub use crate::real_tikv_read::RealTiKvMultiReadSession;
+use crate::real_tikv_read::{RealTiKvQuery, RealTiKvReadError};
 
 /// A source-identified failure while opening two physical table reads.
 #[derive(Debug)]
@@ -49,13 +49,6 @@ pub enum RealTiKvMultiReadError {
     Timestamp(String),
     /// The timestamp source returned an invalid zero timestamp.
     ZeroTimestamp,
-    /// One query-local transport could not be opened from the shared factory.
-    Transport {
-        /// Zero-based source relation.
-        relation: usize,
-        /// Factory failure.
-        message: String,
-    },
     /// One supplied-snapshot physical read failed.
     Read {
         /// Zero-based source relation.
@@ -76,9 +69,6 @@ impl std::fmt::Display for RealTiKvMultiReadError {
             }
             Self::Timestamp(message) => write!(formatter, "PD timestamp failed: {message}"),
             Self::ZeroTimestamp => formatter.write_str("PD returned a zero snapshot timestamp"),
-            Self::Transport { relation, message } => {
-                write!(formatter, "relation {relation} transport failed: {message}")
-            }
             Self::Read { relation, source } => {
                 write!(formatter, "relation {relation} read failed: {source}")
             }
@@ -91,64 +81,40 @@ impl std::error::Error for RealTiKvMultiReadError {
         match self {
             Self::Plan { source, .. } => Some(source),
             Self::Read { source, .. } => Some(source),
-            Self::Contradiction { .. }
-            | Self::Timestamp(_)
-            | Self::ZeroTimestamp
-            | Self::Transport { .. } => None,
+            Self::Contradiction { .. } | Self::Timestamp(_) | Self::ZeroTimestamp => None,
         }
     }
 }
 
-/// Reusable statement authority over one process transport factory.
-pub struct RealTiKvMultiReadSession<F, S> {
-    tables: [ConfiguredTable; 2],
-    transport_factory: F,
-    timestamp_source: S,
-}
-
-impl<F, S> RealTiKvMultiReadSession<F, S> {
-    /// Retains exactly two configured tables in source order.
-    #[must_use]
-    pub const fn new(
-        tables: [ConfiguredTable; 2],
-        transport_factory: F,
-        timestamp_source: S,
-    ) -> Self {
-        Self {
-            tables,
-            transport_factory,
-            timestamp_source,
-        }
-    }
-
+impl<T, S> RealTiKvMultiReadSession<T, S>
+where
+    T: QueryTransport,
+    T::Response: 'static,
+    S: TimestampSource,
+{
     /// Returns configured inputs in stable left-then-right order.
     #[must_use]
-    pub const fn configured_tables(&self) -> &[ConfiguredTable; 2] {
-        &self.tables
+    pub fn configured_tables(&self) -> [&tidb_planner::read_only_scan::ConfiguredTable; 2] {
+        [
+            self.readers[0].configured_table(),
+            self.readers[1].configured_table(),
+        ]
     }
-}
 
-impl<F, S> RealTiKvMultiReadSession<F, S>
-where
-    F: RealTiKvSessionTransportFactory,
-    F::Transport: QueryTransport,
-    <F::Transport as QueryTransport>::Response: 'static,
-    S: TimestampSource + Clone,
-{
-    /// Lowers and opens two physical scans with a fresh cancellation owner.
+    /// Lowers and starts two physical scans with a fresh cancellation owner.
     pub fn execute(
-        &self,
+        &mut self,
         relation_sql: [&str; 2],
-    ) -> Result<RealTiKvMultiQuery<F::Transport, S>, RealTiKvMultiReadError> {
+    ) -> Result<RealTiKvMultiQuery, RealTiKvMultiReadError> {
         self.execute_with_cancellation(relation_sql, Arc::new(CancelHandle::default()))
     }
 
-    /// Lowers and opens two physical scans under one caller cancellation.
+    /// Lowers and starts two physical scans under one caller cancellation.
     pub fn execute_with_cancellation(
-        &self,
+        &mut self,
         relation_sql: [&str; 2],
         cancellation: Arc<CancelHandle>,
-    ) -> Result<RealTiKvMultiQuery<F::Transport, S>, RealTiKvMultiReadError> {
+    ) -> Result<RealTiKvMultiQuery, RealTiKvMultiReadError> {
         let left_plan = self.lower_plan(0, relation_sql[0])?;
         let right_plan = self.lower_plan(1, relation_sql[1])?;
         if left_plan.is_contradiction() {
@@ -159,44 +125,21 @@ where
         }
 
         let snapshot_ts = self
-            .timestamp_source
+            .timestamp_source()
             .current_ts()
             .map_err(RealTiKvMultiReadError::Timestamp)?;
         if snapshot_ts == 0 {
             return Err(RealTiKvMultiReadError::ZeroTimestamp);
         }
 
-        let left_transport =
-            self.transport_factory
-                .open_session_transport()
-                .map_err(|message| RealTiKvMultiReadError::Transport {
-                    relation: 0,
-                    message,
-                })?;
-        let right_transport =
-            self.transport_factory
-                .open_session_transport()
-                .map_err(|message| RealTiKvMultiReadError::Transport {
-                    relation: 1,
-                    message,
-                })?;
-        let mut left_session = RealTiKvReadSession::new(
-            self.tables[0].clone(),
-            left_transport,
-            self.timestamp_source.clone(),
-        );
-        let mut right_session = RealTiKvReadSession::new(
-            self.tables[1].clone(),
-            right_transport,
-            self.timestamp_source.clone(),
-        );
-        let left = left_session
+        let [left_reader, right_reader] = &mut self.readers;
+        let left = left_reader
             .execute_plan_at_snapshot(left_plan, snapshot_ts, Arc::clone(&cancellation))
             .map_err(|source| RealTiKvMultiReadError::Read {
                 relation: 0,
                 source,
             })?;
-        let right = match right_session.execute_plan_at_snapshot(
+        let right = match right_reader.execute_plan_at_snapshot(
             right_plan,
             snapshot_ts,
             Arc::clone(&cancellation),
@@ -214,7 +157,6 @@ where
 
         Ok(RealTiKvMultiQuery {
             relations: [left, right],
-            sessions: [left_session, right_session],
             snapshot_ts,
         })
     }
@@ -224,19 +166,18 @@ where
         relation: usize,
         sql: &str,
     ) -> Result<ReadOnlyScanPlan, RealTiKvMultiReadError> {
-        ReadOnlyScanPlan::lower(sql, &self.tables[relation])
+        ReadOnlyScanPlan::lower(sql, self.readers[relation].configured_table())
             .map_err(|source| RealTiKvMultiReadError::Plan { relation, source })
     }
 }
 
-/// Two lazy response owners plus their distinct query-local transports.
-pub struct RealTiKvMultiQuery<T, S> {
+/// Two lazy response owners from the connection-local table readers.
+pub struct RealTiKvMultiQuery {
     relations: [RealTiKvQuery; 2],
-    sessions: [RealTiKvReadSession<T, S>; 2],
     snapshot_ts: u64,
 }
 
-impl<T, S> RealTiKvMultiQuery<T, S> {
+impl RealTiKvMultiQuery {
     /// Returns the single timestamp placed in both requests.
     #[must_use]
     pub const fn snapshot_ts(&self) -> u64 {
@@ -247,12 +188,6 @@ impl<T, S> RealTiKvMultiQuery<T, S> {
     #[must_use]
     pub const fn relations(&self) -> &[RealTiKvQuery; 2] {
         &self.relations
-    }
-
-    /// Returns the distinct table-bound sessions retaining transport evidence.
-    #[must_use]
-    pub const fn sessions(&self) -> &[RealTiKvReadSession<T, S>; 2] {
-        &self.sessions
     }
 
     /// Transfers both lazy response owners to the join runtime.

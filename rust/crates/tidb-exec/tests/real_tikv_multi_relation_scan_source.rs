@@ -23,8 +23,8 @@ use tidb_distsql::{
 };
 use tidb_planner::read_only_scan::{ConfiguredColumn, ConfiguredTable};
 
-use crate::real_tikv_multi_read::{RealTiKvMultiReadError, RealTiKvMultiReadSession};
-use crate::real_tikv_read::RealTiKvSessionTransportFactory;
+use crate::real_tikv_multi_read::RealTiKvMultiReadError;
+use crate::real_tikv_read::{RealTiKvReadSessionOpener, RealTiKvSessionTransportFactory};
 
 #[derive(Clone, Debug)]
 struct CountingTimestampSource {
@@ -190,10 +190,20 @@ fn both_physical_scans_share_one_timestamp_and_cancellation_authority() {
     let timestamps = CountingTimestampSource::new(7_777);
     let factory = CapturingTransportFactory::default();
     let state = Arc::clone(&factory.state);
-    let authority = RealTiKvMultiReadSession::new(configured_tables(), factory, timestamps.clone());
+    let tables = configured_tables();
+    let opener =
+        RealTiKvReadSessionOpener::new(tables[0].clone(), factory, timestamps.clone(), 123);
+    assert_eq!(opener.active_sessions(), 0);
+    let mut authority = opener.open_multi_session(tables).unwrap();
+    assert_eq!(opener.active_sessions(), 1);
     let cancellation = Arc::new(CancelHandle::default());
     assert_eq!(authority.configured_tables()[0].table_id(), 42);
     assert_eq!(authority.configured_tables()[1].table_id(), 84);
+    let left_identity = authority.readers()[0].identity();
+    let right_identity = authority.readers()[1].identity();
+    assert_eq!(left_identity, right_identity);
+    assert_ne!(left_identity.authority_id(), 0);
+    assert_ne!(left_identity.session_id(), 0);
 
     let query = authority
         .execute_with_cancellation(
@@ -227,8 +237,8 @@ fn both_physical_scans_share_one_timestamp_and_cancellation_authority() {
     assert_eq!(query.relations()[0].plan_evidence().handle_range_count(), 1);
     assert_eq!(query.relations()[1].plan_evidence().predicate_count(), 0);
     assert_eq!(query.relations()[1].plan_evidence().handle_range_count(), 2);
-    assert_eq!(query.sessions()[0].configured_table().table_id(), 42);
-    assert_eq!(query.sessions()[1].configured_table().table_id(), 84);
+    assert_eq!(authority.readers()[0].configured_table().table_id(), 42);
+    assert_eq!(authority.readers()[1].configured_table().table_id(), 84);
 
     let state = state.lock().unwrap();
     assert_eq!(state.opened, 2);
@@ -251,6 +261,9 @@ fn both_physical_scans_share_one_timestamp_and_cancellation_authority() {
     let relations = query.into_relations();
     assert_eq!(relations[0].table_id(), 42);
     assert_eq!(relations[1].table_id(), 84);
+    drop(relations);
+    drop(authority);
+    assert_eq!(opener.active_sessions(), 0);
 }
 
 #[test]
@@ -258,7 +271,10 @@ fn invalid_second_plan_fails_before_timestamp_transport_or_left_send() {
     let timestamps = CountingTimestampSource::new(8_888);
     let factory = CapturingTransportFactory::default();
     let state = Arc::clone(&factory.state);
-    let authority = RealTiKvMultiReadSession::new(configured_tables(), factory, timestamps.clone());
+    let tables = configured_tables();
+    let opener =
+        RealTiKvReadSessionOpener::new(tables[0].clone(), factory, timestamps.clone(), 123);
+    let mut authority = opener.open_multi_session(tables).unwrap();
 
     let error = authority
         .execute([
@@ -273,7 +289,7 @@ fn invalid_second_plan_fails_before_timestamp_transport_or_left_send() {
     ));
     assert_eq!(timestamps.calls(), 0);
     let state = state.lock().unwrap();
-    assert_eq!(state.opened, 0);
+    assert_eq!(state.opened, 2);
     assert!(state.requests.is_empty());
 }
 
@@ -282,7 +298,10 @@ fn zero_timestamp_fails_before_opening_or_sending_either_transport() {
     let timestamps = CountingTimestampSource::new(0);
     let factory = CapturingTransportFactory::default();
     let state = Arc::clone(&factory.state);
-    let authority = RealTiKvMultiReadSession::new(configured_tables(), factory, timestamps.clone());
+    let tables = configured_tables();
+    let opener =
+        RealTiKvReadSessionOpener::new(tables[0].clone(), factory, timestamps.clone(), 123);
+    let mut authority = opener.open_multi_session(tables).unwrap();
 
     let error = authority
         .execute(["SELECT id FROM accounts", "SELECT id FROM profiles"])
@@ -291,7 +310,7 @@ fn zero_timestamp_fails_before_opening_or_sending_either_transport() {
     assert!(matches!(error, RealTiKvMultiReadError::ZeroTimestamp));
     assert_eq!(timestamps.calls(), 1);
     let state = state.lock().unwrap();
-    assert_eq!(state.opened, 0);
+    assert_eq!(state.opened, 2);
     assert!(state.requests.is_empty());
 }
 
@@ -300,7 +319,10 @@ fn second_send_failure_cancels_and_closes_the_first_lazy_response() {
     let timestamps = CountingTimestampSource::new(9_999);
     let factory = CapturingTransportFactory::fail_second_send();
     let state = Arc::clone(&factory.state);
-    let authority = RealTiKvMultiReadSession::new(configured_tables(), factory, timestamps.clone());
+    let tables = configured_tables();
+    let opener =
+        RealTiKvReadSessionOpener::new(tables[0].clone(), factory, timestamps.clone(), 123);
+    let mut authority = opener.open_multi_session(tables).unwrap();
     let cancellation = Arc::new(CancelHandle::default());
 
     let error = authority
@@ -320,4 +342,41 @@ fn second_send_failure_cancels_and_closes_the_first_lazy_response() {
     assert_eq!(state.opened, 2);
     assert_eq!(state.requests.len(), 2);
     assert_eq!(state.closed_responses, [0]);
+}
+
+#[test]
+fn repeated_statements_reuse_the_two_connection_local_transports() {
+    let timestamps = CountingTimestampSource::new(10_101);
+    let factory = CapturingTransportFactory::default();
+    let state = Arc::clone(&factory.state);
+    let tables = configured_tables();
+    let opener =
+        RealTiKvReadSessionOpener::new(tables[0].clone(), factory, timestamps.clone(), 123);
+    let mut authority = opener.open_multi_session(tables).unwrap();
+
+    for _ in 0..2 {
+        let query = authority
+            .execute(["SELECT id FROM accounts", "SELECT id FROM profiles"])
+            .unwrap();
+        for relation in query.into_relations() {
+            let mut record_set = relation.into_record_set();
+            record_set.close().unwrap();
+        }
+    }
+
+    assert_eq!(timestamps.calls(), 2);
+    let state = state.lock().unwrap();
+    assert_eq!(state.opened, 2);
+    assert_eq!(
+        state
+            .requests
+            .iter()
+            .map(|request| request.transport_id)
+            .collect::<Vec<_>>(),
+        [0, 1, 0, 1]
+    );
+    assert_eq!(state.closed_responses, [0, 1, 0, 1]);
+    drop(state);
+    drop(authority);
+    assert_eq!(opener.active_sessions(), 0);
 }
