@@ -1,0 +1,37 @@
+schema = "1"
+slice = "distsql-store-not-match-exact-channel-runtime"
+status = "ready"
+target = "tidb-distsql"
+ring = "transaction"
+consumer = "DistSQL consumes the immutable physical dispatch identity carried by the BatchCommands pending request. A current direct StoreNotMatch closes only the observed physical ChannelPool version before retry; a stale direct response cannot close a newer replacement. A forwarded StoreNotMatch refreshes the logical target route and never closes the healthy shared physical proxy channel."
+test_target = "store_not_match_exact_channel_source direct_unary_client_runtime_source direct_unary_forwarding_source"
+go_sources = []
+go_tests = []
+module_sources = [
+  "client-go::internal/locate/region_request.go",
+  "client-go::internal/locate/replica_selector.go",
+]
+module_tests = [
+  "client-go::internal/locate/region_request3_test.go:216:TestRegionRequestToThreeStores/TestForwarding",
+  "client-go::internal/locate/region_request3_test.go:1634:TestRegionRequestToThreeStores/TestTiKVRecoveredFromDown",
+  "client-go::internal/locate/region_request_test.go:222:TestRegionRequestToSingleStore/TestOnSendFailedWithStoreRestart",
+  "client-go::internal/locate/region_request_test.go:226:TestRegionRequestToSingleStore/TestOnSendFailedWithStoreRestartUsingAsyncAPI",
+  "client-go::internal/locate/region_request_test.go:266:TestRegionRequestToSingleStore/TestOnSendFailedWithCloseKnownStoreThenUseNewOne",
+  "client-go::internal/locate/region_request_test.go:270:TestRegionRequestToSingleStore/TestOnSendFailedWithCloseKnownStoreThenUseNewOneUsingAsyncAPI",
+  "client-go::internal/locate/region_request_test.go:310:TestRegionRequestToSingleStore/TestOnSendFailedWithCancelled",
+  "client-go::internal/locate/region_request_test.go:314:TestRegionRequestToSingleStore/TestOnSendFailedWithCancelledUsingAsyncAPI",
+  "client-go::internal/locate/region_request_test.go:916:TestRegionRequestToSingleStore/TestCloseConnectionOnStoreNotMatch",
+]
+depends_on = []
+evidence_prerequisites = []
+support_anchors = [
+  "Campaign 22 DAG stage B: implement only after txnkv-physical-channel-evidence-runtime freezes the pending-request physical dispatch identity",
+  "Direct StoreNotMatch means the observed physical endpoint rejected its store identity, so close_address_version receives exactly the connection version carried by that attempt",
+  "Forwarded StoreNotMatch describes the logical forwarded target, not the proxy transport; refresh or invalidate the logical RegionCache route and preserve every direct or sibling-forwarded stream using the proxy",
+]
+rust_paths = [
+  "rust/crates/tidb-distsql/src/cop_paging/direct_unary_query_transport.rs",
+  "rust/crates/tidb-distsql/tests/direct_unary_client_runtime_source.rs",
+  "rust/crates/tidb-distsql/tests/direct_unary_forwarding_source.rs",
+  "rust/crates/tidb-distsql/tests/store_not_match_exact_channel_source.rs",
+]

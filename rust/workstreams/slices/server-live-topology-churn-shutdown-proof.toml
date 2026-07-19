@@ -1,0 +1,23 @@
+schema = "1"
+slice = "server-live-topology-churn-shutdown-proof"
+status = "ready"
+target = "tidb-server"
+ring = "result"
+consumer = "One tag-owned three-PD, three-TiKV topology proves that authenticated stock MySQL clients continue returning Campaign 21's exact rows while the table-region leader moves, the leader store is killed, a surviving peer is elected, the store restarts at the same address, and leadership moves back. The same run blocks one real TiKV query, sends SIGTERM, and proves bounded connection drain, ordered successful authority shutdown, zero exit status, and complete cleanup."
+test_target = "run-campaign22-topology-churn-sql-node"
+go_sources = [
+  "tests/realtikvtest/testkit.go",
+]
+go_tests = []
+module_sources = []
+module_tests = []
+depends_on = []
+evidence_prerequisites = []
+support_anchors = [
+  "Campaign 22 DAG stage E: run only after distsql-store-not-match-exact-channel-runtime and server-fallible-process-shutdown-runtime integrate",
+  "The live proof uses three PD and three TiKV nodes, Go TiDB only for fixture setup, the Rust SQL node for every asserted client query, and exact PD store, peer, leader, address, and process ownership checks",
+  "Leader churn proves the product path, while deterministic focused tests own current-versus-stale direct StoreNotMatch and forwarded-proxy preservation because ordinary leader movement cannot deterministically manufacture those exact response races",
+]
+rust_paths = [
+  "rust/scripts/run-campaign22-topology-churn-sql-node.sh",
+]

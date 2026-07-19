@@ -1,0 +1,53 @@
+schema = "1"
+slice = "txnkv-physical-channel-evidence-runtime"
+status = "ready"
+target = "tidb-txnkv"
+ring = "transaction"
+consumer = "Every BatchCommands attempt carries the immutable physical address, physical ChannelPool version, direct-or-forwarded BatchRoute generation, and logical forwarded target from publication through completion. The unique transport owner cancels, closes, and joins its worker through a fallible consuming API; request handles remain unable to shut down the process worker."
+test_target = "physical_channel_evidence_source transport_authority_concurrency_source batch_tonic_stream_source"
+go_sources = []
+go_tests = []
+module_sources = [
+  "client-go::internal/client/client.go",
+  "client-go::internal/client/client_async.go",
+  "client-go::internal/client/client_batch.go",
+  "client-go::internal/client/conn_pool.go",
+]
+module_tests = [
+  "client-go::internal/client/client_async_test.go:38:TestSendRequestAsyncBasic",
+  "client-go::internal/client/client_async_test.go:104:TestSendRequestAsyncAttachContext",
+  "client-go::internal/client/client_async_test.go:239:TestSendRequestAsyncTimeout",
+  "client-go::internal/client/client_async_test.go:354:TestSendRequestAsyncAndCloseClientOnHandle",
+  "client-go::internal/client/client_async_test.go:406:TestSendRequestAsyncAndCloseClientBeforeSend",
+  "client-go::internal/client/client_test.go:68:TestConn",
+  "client-go::internal/client/client_test.go:103:TestGetConnAfterClose",
+  "client-go::internal/client/client_test.go:116:TestCancelTimeoutRetErr",
+  "client-go::internal/client/client_test.go:172:TestSendWhenReconnect",
+  "client-go::internal/client/client_test.go:406:TestForwardMetadataByBatchCommands",
+  "client-go::internal/client/client_test.go:941:TestBatchClientRecoverAfterServerRestart",
+  "client-go::internal/client/client_test.go:1018:TestLimitConcurrency",
+  "client-go::internal/client/client_test.go:1177:TestRandomRestartStoreAndForwarding",
+  "client-go::internal/client/client_test.go:1258:TestFastFailRequest",
+  "client-go::internal/client/client_test.go:1272:TestErrConn",
+  "client-go::internal/client/client_test.go:1303:TestFastFailWhenNoAvailableConn",
+  "client-go::internal/client/client_test.go:1335:TestConcurrentCloseConnPanic",
+]
+depends_on = []
+evidence_prerequisites = []
+support_anchors = [
+  "Campaign 22 DAG stage A: this slice and pd-fallible-worker-lifecycle-runtime may run first in parallel",
+  "The completion identity must keep physical ChannelPool version distinct from BatchRoute stream generation and RegionCache route generation",
+  "A transport worker panic, closed command channel, lost close acknowledgement, or failed join must be returned by explicit shutdown instead of disappearing in Drop",
+]
+rust_paths = [
+  "rust/crates/tidb-txnkv/src/client.rs",
+  "rust/crates/tidb-txnkv/src/rpc/async_completion.rs",
+  "rust/crates/tidb-txnkv/src/rpc/batch/coprocessor.rs",
+  "rust/crates/tidb-txnkv/src/rpc/batch/transport.rs",
+  "rust/crates/tidb-txnkv/src/rpc/transport_runtime.rs",
+  "rust/crates/tidb-txnkv/src/rpc/unary.rs",
+  "rust/crates/tidb-txnkv/src/rpc/tonic_coprocessor.rs",
+  "rust/crates/tidb-txnkv/tests/batch_tonic_stream_source.rs",
+  "rust/crates/tidb-txnkv/tests/physical_channel_evidence_source.rs",
+  "rust/crates/tidb-txnkv/tests/transport_authority_concurrency_source.rs",
+]

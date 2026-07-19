@@ -1,0 +1,11 @@
+schema = "1"
+campaign = "2026-07-read-path-22"
+status = "planned"
+slices = [
+  "txnkv-physical-channel-evidence-runtime",
+  "pd-fallible-worker-lifecycle-runtime",
+  "distsql-store-not-match-exact-channel-runtime",
+  "executor-ordered-read-authority-shutdown-runtime",
+  "server-fallible-process-shutdown-runtime",
+  "server-live-topology-churn-shutdown-proof",
+]

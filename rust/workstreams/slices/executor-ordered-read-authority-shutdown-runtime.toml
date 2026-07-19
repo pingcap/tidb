@@ -1,0 +1,59 @@
+schema = "1"
+slice = "executor-ordered-read-authority-shutdown-runtime"
+status = "ready"
+target = "tidb-exec"
+ring = "transaction"
+consumer = "The production read path separates cloneable session handles from one unique process lifecycle owner. After all SQL sessions drain, explicit shutdown stops and joins RegionCache maintenance first, then closes and joins TiKV transport, then closes and joins PD. Every stage returns typed evidence or error; no Arc::try_unwrap or Drop-only success claim is permitted."
+test_target = "real_tikv_authority_shutdown_source background_runner_source real_tikv_session_authority_source"
+go_sources = [
+  "pkg/distsql/distsql.go",
+  "pkg/distsql/select_result.go",
+  "pkg/executor/builder.go",
+  "pkg/executor/table_reader.go",
+]
+go_tests = [
+  "pkg/distsql/distsql_test.go:42:TestSelectNormal",
+  "pkg/distsql/distsql_test.go:61:TestSelectMemTracker",
+  "pkg/distsql/distsql_test.go:73:TestSelectNormalChunkSize",
+  "pkg/distsql/distsql_test.go:82:TestSelectWithRuntimeStats",
+  "pkg/distsql/distsql_test.go:106:TestSelectResultRuntimeStats",
+  "pkg/distsql/select_result_test.go:37:TestUpdateCopRuntimeStats",
+  "pkg/distsql/select_result_test.go:77:TestNewSelRespChannelIter",
+  "pkg/distsql/select_result_test.go:183:TestSelRespChannelIterRead",
+  "pkg/distsql/select_result_test.go:288:TestSelectResultIter",
+  "pkg/executor/distsql_test.go:68:TestCopClientSend",
+  "pkg/executor/distsql_test.go:307:TestCoprocessorPagingSize",
+  "pkg/executor/distsql_test.go:365:TestAdaptiveClosestRead",
+  "pkg/executor/distsql_test.go:470:TestCoprocessorPagingReqKeyRangeSorted",
+  "pkg/executor/distsql_test.go:530:TestCoprocessorBatchByStore",
+  "pkg/executor/distsql_test.go:588:TestCoprCacheWithoutExecutionInfo",
+  "pkg/executor/distsql_test.go:610:TestIndexLookUpPushDownCopTask",
+]
+module_sources = [
+  "client-go::internal/locate/region_cache.go",
+  "client-go::internal/locate/store_cache.go",
+  "client-go::tikv/kv.go",
+]
+module_tests = [
+  "client-go::internal/locate/region_cache_test.go:100:TestBackgroundRunner",
+  "client-go::internal/locate/region_cache_test.go:1297:TestRegionCache/TestReconnect",
+  "client-go::internal/locate/region_cache_test.go:2317:TestRegionCache/TestHealthCheckWithAddressChange",
+  "client-go::internal/locate/region_cache_test.go:3187:TestRegionCache/TestStoreRestartWithNewLabels",
+  "client-go::tikv/kv_test.go:285:TestKVStoreCloseCheckRegionCacheClosedBeforePDClose",
+]
+depends_on = []
+evidence_prerequisites = []
+support_anchors = [
+  "Campaign 22 DAG stage C: implement after both txnkv-physical-channel-evidence-runtime and pd-fallible-worker-lifecycle-runtime freeze their owner/handle shutdown APIs",
+  "client-go tikv/kv.go:501-534 closes RegionCache before the TiKV RPC client and closes PD only after those dependents stop",
+  "Shutdown must reject active session leases, attempt every later stage that remains safe, retain the first failure plus stage context, and never use Arc::try_unwrap as normal lifecycle control flow",
+]
+rust_paths = [
+  "rust/crates/tidb-exec/src/real_tikv_read.rs",
+  "rust/crates/tidb-exec/tests/real_tikv_authority_shutdown_source.rs",
+  "rust/crates/tidb-exec/tests/real_tikv_read_source.rs",
+  "rust/crates/tidb-exec/tests/real_tikv_session_authority_source.rs",
+  "rust/crates/tidb-txnkv/src/read_runtime.rs",
+  "rust/crates/tidb-txnkv/src/region/background.rs",
+  "rust/crates/tidb-txnkv/tests/background_runner_source.rs",
+]
