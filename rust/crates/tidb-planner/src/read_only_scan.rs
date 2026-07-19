@@ -24,6 +24,9 @@
 //! stored-column comparisons remain in the physical TiKV Selection. Every
 //! other predicate shape fails closed.
 
+#[path = "configured_catalog.rs"]
+pub mod configured_catalog;
+
 use std::{
     collections::{HashMap, HashSet},
     error::Error,

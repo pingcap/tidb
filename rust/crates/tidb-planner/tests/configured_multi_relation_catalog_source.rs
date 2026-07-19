@@ -3,9 +3,9 @@
 
 //! Source-derived checks for the bounded immutable configured catalog.
 
-use tidb_planner::{
+use tidb_planner::read_only_scan::{
     configured_catalog::{ConfiguredCatalog, ConfiguredCatalogError, ConfiguredTableLookupError},
-    read_only_scan::{ConfiguredColumn, ConfiguredTable, ReadOnlyScanError, ReadOnlyScanPlan},
+    ConfiguredColumn, ConfiguredTable, ReadOnlyScanError, ReadOnlyScanPlan,
 };
 
 fn table(schema: &str, name: &str, table_id: i64, column_id: i64) -> ConfiguredTable {
