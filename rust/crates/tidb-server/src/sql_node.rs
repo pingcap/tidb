@@ -332,6 +332,13 @@ struct ConnectionWork {
     cancellation: ConnectionCancellation,
 }
 
+struct WorkerPool {
+    joins: Vec<JoinHandle<()>>,
+    work_senders: Vec<mpsc::Sender<ConnectionWork>>,
+    available_workers: mpsc::Receiver<usize>,
+    available_sender: mpsc::SyncSender<usize>,
+}
+
 fn acquire_worker(
     available: &mpsc::Receiver<usize>,
     shutdown: &ShutdownHandle,
@@ -492,7 +499,12 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
 
     fn run_accept_loop(self, limit: Option<usize>) -> Result<(), SqlNodeError> {
         let active_sockets = Arc::new(ActiveSockets::default());
-        let (workers, worker_senders, available_workers, available_sender) = spawn_workers(
+        let WorkerPool {
+            joins: workers,
+            work_senders: worker_senders,
+            available_workers,
+            available_sender,
+        } = spawn_workers(
             self.worker_count,
             &self.factory,
             &self.users,
@@ -577,15 +589,7 @@ fn spawn_workers<F: QuerySessionFactory>(
     tracker: &Arc<ConnectionTracker>,
     active_sockets: &Arc<ActiveSockets>,
     max_allowed_packet: usize,
-) -> Result<
-    (
-        Vec<JoinHandle<()>>,
-        Vec<mpsc::Sender<ConnectionWork>>,
-        mpsc::Receiver<usize>,
-        mpsc::SyncSender<usize>,
-    ),
-    SqlNodeError,
-> {
+) -> Result<WorkerPool, SqlNodeError> {
     let mut workers = Vec::with_capacity(count);
     let mut work_senders = Vec::with_capacity(count);
     let (available_sender, available_receiver) = mpsc::sync_channel(count);
@@ -629,7 +633,12 @@ fn spawn_workers<F: QuerySessionFactory>(
         work_senders.push(work_sender);
         workers.push(worker);
     }
-    Ok((workers, work_senders, available_receiver, available_sender))
+    Ok(WorkerPool {
+        joins: workers,
+        work_senders,
+        available_workers: available_receiver,
+        available_sender,
+    })
 }
 
 fn join_workers(workers: Vec<JoinHandle<()>>) -> Result<(), SqlNodeError> {

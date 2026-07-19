@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#![allow(dead_code, missing_docs)]
+
 #[path = "../src/auth_identity.rs"]
 mod auth_identity;
 #[path = "../src/configured_user_store.rs"]

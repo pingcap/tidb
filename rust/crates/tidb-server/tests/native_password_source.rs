@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#![allow(dead_code, missing_docs)]
+
 #[path = "../src/native_password.rs"]
 mod native_password;
 
