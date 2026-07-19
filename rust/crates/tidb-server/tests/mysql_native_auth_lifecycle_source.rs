@@ -16,9 +16,9 @@ use tidb_protocol::{
     DEFAULT_MAX_ALLOWED_PACKET, TYPE_LONGLONG,
 };
 use tidb_server::{
-    serve_mysql_connection, AuthSwitchRequest, ConfiguredUserStore, ConnectionExit,
-    ConnectionTracker, QueryResult, QuerySession, QuerySessionFactory, ResultSetSource,
-    SessionContext, SqlQueryError,
+    serve_mysql_connection, AuthSwitchRequest, ConfiguredUserStore, ConnectionCancellation,
+    ConnectionExit, ConnectionTracker, QueryResult, QuerySession, QuerySessionFactory,
+    ResultSetSource, SessionContext, SqlQueryError,
 };
 
 const CLIENT_PROTOCOL_41: u32 = 1 << 9;
@@ -164,6 +164,7 @@ fn native_nonroot_auth_query_ping_quit_publishes_canonical_session_identity() {
         serve_mysql_connection(
             stream,
             peer_addr,
+            ConnectionCancellation::default(),
             worker_factory.as_ref(),
             &users(),
             &worker_tracker,
@@ -233,6 +234,7 @@ fn nonnative_client_plugin_runs_real_auth_switch_packet_sequence() {
         serve_mysql_connection(
             stream,
             peer_addr,
+            ConnectionCancellation::default(),
             worker_factory.as_ref(),
             &users(),
             &worker_tracker,
@@ -280,6 +282,7 @@ fn rejected_packet(user: &str, password: Option<&[u8]>) -> Vec<u8> {
         serve_mysql_connection(
             stream,
             peer_addr,
+            ConnectionCancellation::default(),
             worker_factory.as_ref(),
             &users(),
             &worker_tracker,

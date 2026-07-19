@@ -24,11 +24,13 @@ use std::collections::HashSet;
 use std::fmt;
 use std::net::IpAddr;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET;
 
 const DEFAULT_MAX_CONNECTIONS: usize = 8;
 const MAX_CONNECTION_WORKERS: usize = 256;
+const DEFAULT_CONNECTION_TIMEOUT_MS: u64 = 30_000;
 
 /// Storage shape of one configured signed-BIGINT column.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -89,6 +91,8 @@ pub struct NodeConfig {
     pub auth_file: PathBuf,
     /// Fixed connection-worker count and accepted-socket queue capacity.
     pub max_connections: usize,
+    /// Handshake, idle-command, and socket-write deadline for one connection.
+    pub connection_timeout: Duration,
 }
 
 /// Startup configuration failure.
@@ -170,6 +174,7 @@ impl NodeConfig {
         let mut max_allowed_packet = None;
         let mut auth_file = None;
         let mut max_connections = None;
+        let mut connection_timeout_ms = None;
 
         while let Some(argument) = pending.next() {
             if argument == "--help" || argument == "-h" {
@@ -205,6 +210,9 @@ impl NodeConfig {
                 }
                 "--auth-file" => set_once(&mut auth_file, option, value)?,
                 "--max-connections" => set_once(&mut max_connections, option, value)?,
+                "--connection-timeout-ms" => {
+                    set_once(&mut connection_timeout_ms, option, value)?;
+                }
                 _ => return Err(NodeConfigError::UnknownOption(option.to_owned())),
             }
         }
@@ -235,6 +243,10 @@ impl NodeConfig {
         if max_connections > MAX_CONNECTION_WORKERS {
             return Err(invalid("--max-connections", "value must not exceed 256"));
         }
+        let connection_timeout = Duration::from_millis(match connection_timeout_ms {
+            Some(value) => parse_positive_number("--connection-timeout-ms", &value)?,
+            None => DEFAULT_CONNECTION_TIMEOUT_MS,
+        });
 
         Ok(Self {
             host,
@@ -249,6 +261,7 @@ impl NodeConfig {
             max_allowed_packet,
             auth_file,
             max_connections,
+            connection_timeout,
         })
     }
 
@@ -258,7 +271,8 @@ impl NodeConfig {
         "Usage: tidb-server --path <pd[,pd...]> --database <db> --table <table> \
 --table-id <id> --column <name>:<id>:<clustered-pk|stored-not-null> \
 [--column <name>:<id>:<clustered-pk|stored-not-null> ...] \
-[--max-connections <count>] --auth-file <mode-0600-tsv> \
+[--max-connections <count>] [--connection-timeout-ms <milliseconds>] \
+--auth-file <mode-0600-tsv> \
 [--host <loopback-ip>] [-P <port>|--port <port>] [--store tikv] \
 [--max-allowed-packet <bytes>]"
     }

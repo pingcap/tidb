@@ -17,13 +17,14 @@
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use prost::Message;
 use tidb_datatype::{Datum, FieldTypeCode};
 use tidb_distsql::query_runtime::{QueryResponse, QueryResponseError, QueryResultSubset};
 use tidb_distsql::{
-    CopPagingState, QueryDispatch, QueryOperation, QueryTransport, RequestKeyRange, RequestType,
-    TimestampSource, TransportRequest,
+    CancelHandle, CopPagingState, QueryDispatch, QueryOperation, QueryTransport, RequestKeyRange,
+    RequestType, TimestampSource, TransportRequest,
 };
 use tidb_exec::real_tikv_read::{RealTiKvReadError, RealTiKvReadSession};
 use tidb_planner::read_only_scan::{
@@ -359,6 +360,32 @@ fn exact_select_builds_one_timestamped_table_request_and_decodes_lazily() {
     assert_eq!(close_count.get(), 1);
     record_set.close().unwrap();
     assert_eq!(close_count.get(), 1, "close is idempotent");
+}
+
+#[test]
+fn caller_cancellation_remains_the_query_transport_authority() {
+    let state = Rc::new(SharedTransportState::default());
+    let mut engine = RealTiKvReadSession::new(
+        configured_table(),
+        transport(
+            [response(
+                &[21],
+                Rc::new(Cell::new(0)),
+                Rc::new(Cell::new(0)),
+            )],
+            Rc::clone(&state),
+        ),
+        ScriptedTimestampSource::new([4_242]),
+    );
+    let cancellation = Arc::new(CancelHandle::default());
+
+    let query = engine
+        .execute_with_cancellation("SELECT id FROM test.accounts", Arc::clone(&cancellation))
+        .unwrap();
+    assert!(!query.is_cancelled());
+    cancellation.cancel();
+    assert!(query.is_cancelled());
+    assert_eq!(state.sends.get(), 1);
 }
 
 #[test]

@@ -69,6 +69,9 @@ sha2 = "0.10"
 # obtains handshake entropy directly from the operating system.
 subtle = "2.6"
 getrandom = "0.3"
+# Safe process signal delivery for bounded SQL-node graceful shutdown.
+ctrlc = { version = "3.4", features = ["termination"] }
+rustix = { version = "1.1", features = ["process"] }
 # TiDB's `TIDB_SHARD` uses Vitess' exact DES-ECB/null-key hash. RustCrypto's
 # audited DES implementation preserves that algorithm without a hand-rolled
 # cryptographic primitive.

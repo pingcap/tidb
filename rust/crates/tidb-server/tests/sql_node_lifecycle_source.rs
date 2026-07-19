@@ -10,8 +10,9 @@ use std::sync::Arc;
 
 use tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET;
 use tidb_server::{
-    serve_mysql_connection, ConfiguredUserStore, ConnectionTracker, MysqlConnectionError,
-    QueryResult, QuerySession, QuerySessionFactory, SessionContext, SqlQueryError,
+    serve_mysql_connection, ConfiguredUserStore, ConnectionCancellation, ConnectionTracker,
+    MysqlConnectionError, QueryResult, QuerySession, QuerySessionFactory, SessionContext,
+    SqlQueryError,
 };
 
 struct UnusedSession;
@@ -51,6 +52,7 @@ fn framing_failure_releases_connection_lease_exactly_once() {
     let error = serve_mysql_connection(
         server,
         SocketAddr::from(([127, 0, 0, 1], 40000)),
+        ConnectionCancellation::default(),
         &UnusedFactory,
         &users,
         &tracker,

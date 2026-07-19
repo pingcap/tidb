@@ -16,8 +16,9 @@ use tidb_protocol::{
     DEFAULT_MAX_ALLOWED_PACKET, TYPE_LONGLONG,
 };
 use tidb_server::{
-    serve_mysql_connection, ConfiguredUserStore, ConnectionExit, ConnectionTracker, QueryResult,
-    QuerySession, QuerySessionFactory, ResultSetSource, SessionContext, SqlQueryError,
+    serve_mysql_connection, ConfiguredUserStore, ConnectionCancellation, ConnectionExit,
+    ConnectionTracker, QueryResult, QuerySession, QuerySessionFactory, ResultSetSource,
+    SessionContext, SqlQueryError,
 };
 
 const CLIENT_PROTOCOL_41: u32 = 1 << 9;
@@ -243,6 +244,7 @@ fn real_tcp_connection_runs_handshake_query_ping_quit_and_exact_cleanup() {
         serve_mysql_connection(
             stream,
             peer_addr,
+            ConnectionCancellation::default(),
             &factory,
             &users(),
             &worker_tracker,
@@ -327,6 +329,7 @@ fn query_error_is_written_as_err_and_connection_remains_command_aligned() {
         serve_mysql_connection(
             stream,
             peer_addr,
+            ConnectionCancellation::default(),
             &RejectingFactory,
             &users(),
             &worker_tracker,

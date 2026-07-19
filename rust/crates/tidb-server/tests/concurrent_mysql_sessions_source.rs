@@ -6,14 +6,20 @@
 #![allow(missing_docs)]
 
 use std::net::TcpStream;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Barrier, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Barrier, Condvar, Mutex};
+use std::time::{Duration, Instant};
 
 use sha1::{Digest, Sha1};
-use tidb_protocol::{PacketReader, PacketWriter, COM_PING, COM_QUIT, DEFAULT_MAX_ALLOWED_PACKET};
+use tidb_datatype::{Datum, FieldTypeCode};
+use tidb_protocol::{
+    ColumnInfo, PacketReader, PacketWriter, BINARY_DEFAULT_COLLATION_ID, COM_PING, COM_QUERY,
+    COM_QUIT, DEFAULT_MAX_ALLOWED_PACKET,
+};
 use tidb_server::{
-    ConcurrentSqlNode, ConfiguredUserStore, NodeConfig, QueryResult, QuerySession,
-    QuerySessionFactory, SessionContext, SqlQueryError,
+    ActiveQueryCancellation, ConcurrentSqlNode, ConfiguredUserStore, ConnectionCancellation,
+    NodeConfig, QueryCancellationLease, QueryResult, QuerySession, QuerySessionFactory,
+    ResultSetSource, SessionContext, SqlQueryError,
 };
 
 const CLIENT_PROTOCOL_41: u32 = 1 << 9;
@@ -148,6 +154,123 @@ fn authenticate_ping_quit(address: std::net::SocketAddr) -> u32 {
     connection_id
 }
 
+fn authenticate(address: std::net::SocketAddr) -> (TcpStream, PacketReader<TcpStream>) {
+    let mut client = TcpStream::connect(address).unwrap();
+    let mut reader = PacketReader::new(client.try_clone().unwrap());
+    reader.set_sequence(0);
+    let (_, salt) = handshake_fields(&reader.read_packet().unwrap());
+    let capabilities = CLIENT_PROTOCOL_41
+        | CLIENT_SECURE_CONNECTION
+        | CLIENT_PLUGIN_AUTH
+        | CLIENT_CONNECT_ATTRS
+        | CLIENT_DEPRECATE_EOF;
+    let auth = native_response(b"secret", &salt);
+    let mut response = Vec::new();
+    response.extend_from_slice(&capabilities.to_le_bytes());
+    response.extend_from_slice(&(DEFAULT_MAX_ALLOWED_PACKET as u32).to_le_bytes());
+    response.push(46);
+    response.extend_from_slice(&[0; 23]);
+    response.extend_from_slice(b"alice\0");
+    response.push(20);
+    response.extend_from_slice(&auth);
+    response.extend_from_slice(b"mysql_native_password\0");
+    response.push(0);
+    write_packet(&mut client, 1, &response);
+    reader.set_sequence(2);
+    assert_eq!(reader.read_packet().unwrap()[0], 0);
+    (client, reader)
+}
+
+struct BlockingQueryState {
+    entered: AtomicBool,
+    cancelled: Mutex<bool>,
+    wake: Condvar,
+}
+
+struct BlockingCancellation {
+    state: Arc<BlockingQueryState>,
+}
+
+impl ActiveQueryCancellation for BlockingCancellation {
+    fn cancel(&self) {
+        *self.state.cancelled.lock().unwrap() = true;
+        self.state.wake.notify_all();
+    }
+}
+
+struct BlockingResultSet {
+    state: Arc<BlockingQueryState>,
+    _cancellation_lease: QueryCancellationLease,
+}
+
+impl ResultSetSource for BlockingResultSet {
+    fn next_batch(&mut self, _max_rows: usize) -> Result<Vec<Vec<Datum>>, String> {
+        self.state.entered.store(true, Ordering::Release);
+        let mut cancelled = self.state.cancelled.lock().unwrap();
+        while !*cancelled {
+            cancelled = self.state.wake.wait(cancelled).unwrap();
+        }
+        Err("query cancelled by connection shutdown".to_owned())
+    }
+
+    fn columns(&mut self) -> Result<Vec<ColumnInfo>, String> {
+        Ok(vec![ColumnInfo {
+            schema: "campaign21".to_owned(),
+            table: "rows".to_owned(),
+            org_table: "rows".to_owned(),
+            name: "id".to_owned(),
+            org_name: "id".to_owned(),
+            column_length: 20,
+            charset: BINARY_DEFAULT_COLLATION_ID,
+            flag: 0x0003,
+            decimal: 0,
+            type_code: FieldTypeCode::LongLong.mysql_type(),
+            default_value: None,
+        }])
+    }
+
+    fn finish(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn close(&mut self) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+struct BlockingQuerySession {
+    cancellation: ConnectionCancellation,
+    state: Arc<BlockingQueryState>,
+}
+
+impl QuerySession for BlockingQuerySession {
+    fn execute<'a>(&'a mut self, _sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+        let cancellation = Arc::new(BlockingCancellation {
+            state: Arc::clone(&self.state),
+        });
+        let lease = self.cancellation.install(cancellation);
+        Ok(QueryResult::new(Box::new(BlockingResultSet {
+            state: Arc::clone(&self.state),
+            _cancellation_lease: lease,
+        })))
+    }
+}
+
+struct BlockingQueryFactory {
+    state: Arc<BlockingQueryState>,
+}
+
+impl QuerySessionFactory for BlockingQueryFactory {
+    type Session = BlockingQuerySession;
+
+    fn open_session(&self, context: SessionContext) -> Result<Self::Session, SqlQueryError> {
+        Ok(BlockingQuerySession {
+            cancellation: context.cancellation,
+            state: Arc::clone(&self.state),
+        })
+    }
+}
+
 #[test]
 fn fixed_workers_hold_three_authenticated_sessions_concurrently_and_drain_all() {
     // pkg/server/server.go:549-625 startNetworkListener
@@ -194,5 +317,85 @@ fn fixed_workers_hold_three_authenticated_sessions_concurrently_and_drain_all() 
     assert_eq!(tracker.accepted(), 3);
     assert_eq!(tracker.completed(), 3);
     assert_eq!(tracker.active(), 0);
+    assert_eq!(tracker.failed(), 0);
+}
+
+#[test]
+fn shutdown_stops_acceptance_and_forces_a_stalled_connection_after_grace() {
+    // pkg/server/server_test.go:238 TestServerShutdownFlags
+    // pkg/server/tests/commontest/tidb_test.go:1098 TestGracefulShutdown
+    let mut config = config();
+    config.max_connections = 1;
+    let factory = Arc::new(BarrierFactory {
+        barrier: Arc::new(Barrier::new(1)),
+        contexts: Mutex::new(Vec::new()),
+        opening: AtomicUsize::new(0),
+        max_opening: AtomicUsize::new(0),
+    });
+    let node = ConcurrentSqlNode::bind(&config, factory, Arc::new(users()))
+        .unwrap()
+        .with_shutdown_grace(Duration::from_millis(20));
+    let address = node.local_addr().unwrap();
+    let tracker = node.tracker();
+    let shutdown = node.shutdown_handle();
+    let server = std::thread::spawn(move || node.run().unwrap());
+
+    let client = TcpStream::connect(address).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while tracker.active() != 1 {
+        assert!(Instant::now() < deadline, "connection was not admitted");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    shutdown.shutdown();
+    server.join().unwrap();
+    drop(client);
+
+    assert_eq!(tracker.accepted(), 1);
+    assert_eq!(tracker.completed(), 1);
+    assert_eq!(tracker.active(), 0);
+    assert_eq!(tracker.failed(), 0);
+}
+
+#[test]
+fn forced_shutdown_cancels_an_inflight_com_query_before_joining_worker() {
+    // pkg/server/server_test.go:238 TestServerShutdownFlags
+    // pkg/server/tests/commontest/tidb_test.go:1098 TestGracefulShutdown
+    let mut config = config();
+    config.max_connections = 1;
+    let state = Arc::new(BlockingQueryState {
+        entered: AtomicBool::new(false),
+        cancelled: Mutex::new(false),
+        wake: Condvar::new(),
+    });
+    let factory = Arc::new(BlockingQueryFactory {
+        state: Arc::clone(&state),
+    });
+    let node = ConcurrentSqlNode::bind(&config, factory, Arc::new(users()))
+        .unwrap()
+        .with_shutdown_grace(Duration::from_millis(20));
+    let address = node.local_addr().unwrap();
+    let tracker = node.tracker();
+    let shutdown = node.shutdown_handle();
+    let server = std::thread::spawn(move || node.run().unwrap());
+
+    let (mut client, _reader) = authenticate(address);
+    let mut query = vec![COM_QUERY];
+    query.extend_from_slice(b"SELECT id FROM campaign21.rows");
+    write_packet(&mut client, 0, &query);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !state.entered.load(Ordering::Acquire) {
+        assert!(
+            Instant::now() < deadline,
+            "COM_QUERY did not enter result pulling"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+
+    shutdown.shutdown();
+    server.join().unwrap();
+    assert!(*state.cancelled.lock().unwrap());
+    assert_eq!(tracker.active(), 0);
+    assert_eq!(tracker.accepted(), 1);
+    assert_eq!(tracker.completed(), 1);
     assert_eq!(tracker.failed(), 0);
 }

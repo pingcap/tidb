@@ -488,6 +488,16 @@ where
 
     /// Parses, lowers, builds, and starts one lazy real-TiKV query.
     pub fn execute(&mut self, sql: &str) -> Result<RealTiKvQuery, RealTiKvReadError> {
+        self.execute_with_cancellation(sql, Arc::new(CancelHandle::default()))
+    }
+
+    /// Parses, lowers, builds, and starts one lazy real-TiKV query with the
+    /// caller's connection-visible cancellation authority.
+    pub fn execute_with_cancellation(
+        &mut self,
+        sql: &str,
+        cancellation: Arc<CancelHandle>,
+    ) -> Result<RealTiKvQuery, RealTiKvReadError> {
         let plan = ReadOnlyScanPlan::lower(sql, self.table.as_ref())?;
         let snapshot_ts = self
             .timestamp_source
@@ -523,7 +533,6 @@ where
                 RequestEnvelope::new(vec![ExecutorShape::new(ExecutorKind::TableScan)]),
                 dag_data,
             );
-        let cancellation = Arc::new(CancelHandle::default());
         let request = builder
             .build_transport_request(Arc::clone(&cancellation))
             .map_err(|error| RealTiKvReadError::Request(format!("{error:?}")))?;

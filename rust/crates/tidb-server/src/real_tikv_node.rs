@@ -14,10 +14,11 @@
 
 //! Server adapter for one process-owned real-PD/TiKV read authority.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use tidb_distsql::DirectUnaryTransportEvidenceHandle;
+use tidb_distsql::{CancelHandle, DirectUnaryTransportEvidenceHandle};
 use tidb_exec::distsql_recordset::DistSqlRecordSet;
 use tidb_exec::real_tikv_read::{
     PdTimestampSource, ProductionReadAuthority, ProductionReadTransport, RealTiKvReadSession,
@@ -28,13 +29,22 @@ use crate::configured_user_store::{ConfiguredUserStore, ConfiguredUserStoreError
 use crate::node_config::{ConfiguredReadColumnKind, NodeConfig};
 use crate::resultset_source::ResultSetSource;
 use crate::sql_node::{
-    ConcurrentSqlNode, QueryResult, QuerySession, QuerySessionFactory, SessionContext,
-    SqlNodeError, SqlQueryError,
+    ActiveQueryCancellation, ConcurrentSqlNode, QueryCancellationLease, QueryResult, QuerySession,
+    QuerySessionFactory, SessionContext, SqlNodeError, SqlQueryError,
 };
+
+const PRODUCTION_CONTROL_PLANE_TIMEOUT: Duration = Duration::from_secs(5);
+
+impl ActiveQueryCancellation for CancelHandle {
+    fn cancel(&self) {
+        CancelHandle::cancel(self);
+    }
+}
 
 /// Process-owned factory shared by the fixed connection workers.
 pub struct RealTiKvSessionFactory {
     authority: ProductionReadAuthority,
+    query_activity: Arc<QueryActivity>,
 }
 
 impl RealTiKvSessionFactory {
@@ -43,11 +53,14 @@ impl RealTiKvSessionFactory {
         let table = configured_table(config);
         let authority = ProductionReadAuthority::connect(
             config.pd_endpoints.clone(),
-            Duration::from_secs(60),
+            PRODUCTION_CONTROL_PLANE_TIMEOUT,
             table,
         )
         .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-        Ok(Self { authority })
+        Ok(Self {
+            authority,
+            query_activity: Arc::new(QueryActivity::default()),
+        })
     }
 
     /// Returns the PD cluster identity validated during process bootstrap.
@@ -77,7 +90,11 @@ impl QuerySessionFactory for RealTiKvSessionFactory {
             .authority
             .open_session()
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-        Ok(RealTiKvServerSession { inner, context })
+        Ok(RealTiKvServerSession {
+            inner,
+            context,
+            query_activity: Arc::clone(&self.query_activity),
+        })
     }
 }
 
@@ -85,13 +102,56 @@ impl QuerySessionFactory for RealTiKvSessionFactory {
 pub struct RealTiKvServerSession {
     inner: RealTiKvReadSession<ProductionReadTransport, PdTimestampSource>,
     context: SessionContext,
+    query_activity: Arc<QueryActivity>,
+}
+
+#[derive(Default)]
+struct QueryActivity {
+    active: AtomicUsize,
+    max_active: AtomicUsize,
+}
+
+impl QueryActivity {
+    fn begin(self: &Arc<Self>, connection_id: u64) -> QueryActivityLease {
+        let active = self.active.fetch_add(1, Ordering::AcqRel) + 1;
+        self.max_active.fetch_max(active, Ordering::AcqRel);
+        eprintln!(
+            "{{\"event\":\"query_activity\",\"phase\":\"begin\",\"connection_id\":{connection_id},\"active\":{active},\"max_active\":{}}}",
+            self.max_active.load(Ordering::Acquire)
+        );
+        QueryActivityLease {
+            activity: Arc::clone(self),
+            connection_id,
+        }
+    }
+}
+
+struct QueryActivityLease {
+    activity: Arc<QueryActivity>,
+    connection_id: u64,
+}
+
+impl Drop for QueryActivityLease {
+    fn drop(&mut self) {
+        let previous = self.activity.active.fetch_sub(1, Ordering::AcqRel);
+        debug_assert!(previous > 0, "query activity count underflow");
+        eprintln!(
+            "{{\"event\":\"query_activity\",\"phase\":\"end\",\"connection_id\":{},\"active\":{},\"max_active\":{}}}",
+            self.connection_id,
+            previous - 1,
+            self.activity.max_active.load(Ordering::Acquire)
+        );
+    }
 }
 
 impl QuerySession for RealTiKvServerSession {
     fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+        let query_activity = self.query_activity.begin(self.context.connection_id);
+        let cancellation = Arc::new(CancelHandle::default());
+        let cancellation_lease = self.context.cancellation.install(cancellation.clone());
         let query = self
             .inner
-            .execute(sql)
+            .execute_with_cancellation(sql, cancellation)
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
         let snapshot_ts = query.snapshot_ts();
         let table_id = query.table_id();
@@ -113,6 +173,8 @@ impl QuerySession for RealTiKvServerSession {
             authority_id: identity.authority_id(),
             session_id: identity.session_id(),
             emitted: false,
+            _cancellation_lease: cancellation_lease,
+            _query_activity: query_activity,
         })))
     }
 }
@@ -124,6 +186,8 @@ struct ObservedResultSet {
     authority_id: u64,
     session_id: u64,
     emitted: bool,
+    _cancellation_lease: QueryCancellationLease,
+    _query_activity: QueryActivityLease,
 }
 
 impl ObservedResultSet {
@@ -215,6 +279,8 @@ pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeEr
     let node = ConcurrentSqlNode::bind(&config, Arc::clone(&factory), Arc::clone(&users))
         .map_err(RunConfiguredNodeError::Node)?;
     let address = node.local_addr().map_err(RunConfiguredNodeError::Node)?;
+    let shutdown = node.shutdown_handle();
+    ctrlc::set_handler(move || shutdown.shutdown()).map_err(RunConfiguredNodeError::Signal)?;
     let column_descriptors = config
         .read_table
         .columns
@@ -247,6 +313,8 @@ pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeEr
 pub enum RunConfiguredNodeError {
     /// The required immutable account catalog was rejected.
     Auth(ConfiguredUserStoreError),
+    /// The process SIGINT/SIGTERM handler could not be installed.
+    Signal(ctrlc::Error),
     /// Production query-authority construction failed.
     Engine(SqlQueryError),
     /// Listener or connection runtime failed.
@@ -257,6 +325,7 @@ impl std::fmt::Display for RunConfiguredNodeError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Auth(error) => write!(formatter, "cannot load authentication catalog: {error}"),
+            Self::Signal(error) => write!(formatter, "cannot install shutdown handler: {error}"),
             Self::Engine(error) => {
                 write!(
                     formatter,
@@ -273,6 +342,7 @@ impl std::error::Error for RunConfiguredNodeError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Auth(error) => Some(error),
+            Self::Signal(error) => Some(error),
             Self::Node(error) => Some(error),
             Self::Engine(_) => None,
         }

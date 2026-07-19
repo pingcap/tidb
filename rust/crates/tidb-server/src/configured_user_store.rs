@@ -83,9 +83,12 @@ impl ConfiguredUserStore {
         }
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt;
+            use std::os::unix::fs::{MetadataExt, PermissionsExt};
             if metadata.permissions().mode() & 0o7777 != 0o600 {
                 return Err(ConfiguredUserStoreError::InvalidPermissions);
+            }
+            if metadata.uid() != rustix::process::getuid().as_raw() {
+                return Err(ConfiguredUserStoreError::InvalidOwner);
             }
         }
 
@@ -208,6 +211,8 @@ pub enum ConfiguredUserStoreError {
     NotRegularFile,
     /// Unix secret-file permissions are not exactly `0600`.
     InvalidPermissions,
+    /// The Unix secret file is not owned by the effective process user.
+    InvalidOwner,
     /// No account rows were present.
     EmptyStore,
     /// A record does not have four nonempty required fields.
@@ -239,6 +244,9 @@ impl std::fmt::Display for ConfiguredUserStoreError {
             Self::NotRegularFile => formatter.write_str("authentication file is not regular"),
             Self::InvalidPermissions => {
                 formatter.write_str("authentication file permissions must be 0600")
+            }
+            Self::InvalidOwner => {
+                formatter.write_str("authentication file must be owned by the process user")
             }
             Self::EmptyStore => formatter.write_str("authentication file contains no accounts"),
             Self::MalformedRecord { line } => {

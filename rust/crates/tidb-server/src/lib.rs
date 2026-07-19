@@ -109,8 +109,9 @@ pub use secure_transport::{
     SecureTransportError, SecureTransportPolicy, TransportDecision, TransportKind,
 };
 pub use sql_node::{
-    BoxedResultSetSource, ConcurrentSqlNode, ConnectionTracker, QueryResult, QuerySession,
-    QuerySessionFactory, SessionContext, SqlNodeError, SqlQueryError,
+    ActiveQueryCancellation, BoxedResultSetSource, ConcurrentSqlNode, ConnectionCancellation,
+    ConnectionTracker, QueryCancellationLease, QueryResult, QuerySession, QuerySessionFactory,
+    SessionContext, ShutdownHandle, SqlNodeError, SqlQueryError,
 };
 
 /// A response from the currently supported connection dispatch envelope.

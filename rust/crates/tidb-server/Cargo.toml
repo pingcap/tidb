@@ -12,6 +12,8 @@ workspace = true
 
 [dependencies]
 getrandom.workspace = true
+ctrlc.workspace = true
+rustix.workspace = true
 sha1.workspace = true
 subtle.workspace = true
 tidb-datatype = { path = "../tidb-datatype" }

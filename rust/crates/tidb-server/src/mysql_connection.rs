@@ -35,7 +35,8 @@ use crate::handshake::{
 use crate::native_password::generate_handshake_salt;
 use crate::resultset_writer::{ResultSetSink, SinkWriteError};
 use crate::sql_node::{
-    ConnectionTracker, QuerySession, QuerySessionFactory, SessionContext, SqlQueryError,
+    ConnectionCancellation, ConnectionTracker, QuerySession, QuerySessionFactory, SessionContext,
+    SqlQueryError,
 };
 
 const CLIENT_DEPRECATE_EOF: u32 = 1 << 24;
@@ -121,6 +122,7 @@ impl From<PacketError> for MysqlConnectionError {
 pub fn serve_mysql_connection<F: QuerySessionFactory>(
     stream: TcpStream,
     peer_addr: SocketAddr,
+    cancellation: ConnectionCancellation,
     factory: &F,
     users: &ConfiguredUserStore,
     tracker: &Arc<ConnectionTracker>,
@@ -133,15 +135,17 @@ pub fn serve_mysql_connection<F: QuerySessionFactory>(
         tracker.active(),
         tracker.accepted()
     );
+    let shutdown = cancellation.clone();
     let result = serve_connection_inner(
         stream,
         peer_addr,
+        cancellation,
         factory,
         users,
         lease.id(),
         max_allowed_packet,
     );
-    let failed = result.is_err();
+    let failed = result.is_err() && !shutdown.is_cancelled();
     if failed {
         lease.mark_failed();
     }
@@ -160,6 +164,7 @@ pub fn serve_mysql_connection<F: QuerySessionFactory>(
 fn serve_connection_inner<F: QuerySessionFactory>(
     stream: TcpStream,
     peer_addr: SocketAddr,
+    cancellation: ConnectionCancellation,
     factory: &F,
     users: &ConfiguredUserStore,
     connection_id: u64,
@@ -279,6 +284,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         connection_id,
         peer_addr,
         identity,
+        cancellation,
     }) {
         Ok(session) => session,
         Err(error) => {

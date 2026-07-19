@@ -6,6 +6,7 @@
 #![allow(missing_docs)]
 
 use std::net::{IpAddr, Ipv4Addr};
+use std::time::Duration;
 
 use tidb_server::{NodeConfig, NodeConfigError};
 
@@ -51,6 +52,7 @@ fn source_tikv_startup_surface_is_explicit_and_bounded() {
         std::path::Path::new("/tmp/campaign21-users.tsv")
     );
     assert_eq!(config.max_connections, 8);
+    assert_eq!(config.connection_timeout, Duration::from_secs(30));
 }
 
 #[test]
@@ -142,6 +144,24 @@ fn worker_count_is_positive_bounded_and_explicit() {
             Err(NodeConfigError::InvalidValue { option, .. }) if option == "--max-connections"
         ));
     }
+}
+
+#[test]
+fn connection_timeout_is_positive_explicit_and_documented() {
+    let mut args = required().to_vec();
+    args.extend(["--connection-timeout-ms", "1250"]);
+    assert_eq!(
+        NodeConfig::parse(args).unwrap().connection_timeout,
+        Duration::from_millis(1250)
+    );
+
+    let mut zero = required().to_vec();
+    zero.extend(["--connection-timeout-ms", "0"]);
+    assert!(matches!(
+        NodeConfig::parse(zero),
+        Err(NodeConfigError::InvalidValue { option, .. }) if option == "--connection-timeout-ms"
+    ));
+    assert!(NodeConfig::help_text().contains("--connection-timeout-ms"));
 }
 
 #[test]
