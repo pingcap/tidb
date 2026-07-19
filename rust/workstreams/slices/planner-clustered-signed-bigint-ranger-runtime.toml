@@ -50,5 +50,4 @@ rust_paths = [
   "rust/crates/tidb-planner/tests/clustered_signed_bigint_ranger_source.rs",
   "rust/difftests/corpus/coverage/evidence/source/planner-clustered-signed-bigint-ranger-runtime.tsv",
   "rust/difftests/corpus/coverage/evidence/tests/planner-clustered-signed-bigint-ranger-runtime.tsv",
-  "rust/difftests/corpus/coverage/evidence/transfers/planner-clustered-signed-bigint-ranger-runtime.tsv",
 ]
