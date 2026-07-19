@@ -9,7 +9,7 @@ the source or obligation still has explicit unported behavior.
 
 ## Queue
 
-- Active claims: 6
+- Active claims: 0
 - Active slices: 0
 - Declared ready slices: 0
 - Partial slices: 101

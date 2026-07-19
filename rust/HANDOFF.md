@@ -219,14 +219,14 @@ That self-test covers `0 -> 0`, `1 -> 2`, and `3 -> 4`. Live empty-result
 acceptance still requires server-side completion evidence, so zero client
 lines cannot hide a dropped query.
 
-Campaign 23 is live-proven but is not yet Ready-integrated. Freeze its exact
-evidence transfers and membership, run the one shared 12-job gate plus
-`make -j12 lint`, and consume all six integration receipts before releasing
-claims or reporting Ready. Meanwhile keep a twelve-slice pipeline: six current
-implementation/integration slices and six disjoint Campaign 24 slices
-pre-scoped for clustered-primary-key ranger detachment plus a reusable
-stock-client/real-TiKV live harness. Ranger narrows access ranges; Selection
-remains the semantic owner of residual predicates.
+Campaign 23 is Ready-integrated. Exact evidence transfers and six-member
+membership are frozen; the shared 12-job workspace gate issued
+`integration_receipt 6`, repository `make -j12 lint` passed, all six members
+consumed the receipt, and claims returned to zero. Keep a twelve-slice
+pipeline: six current implementation/integration slices and six disjoint
+successor slices. Campaign 24 is pre-scoped for clustered-primary-key ranger
+detachment plus a reusable stock-client/real-TiKV live harness. Ranger narrows
+access ranges; Selection remains the semantic owner of residual predicates.
 
 This completes the first topology-resilient bounded read-only SQL-node
 milestone, not the TiDB rewrite. The node remains loopback-only, plaintext,
@@ -557,11 +557,11 @@ cp /tmp/g.txt rust/difftests/corpus/query_golden.txt
 
 > **⚡ PARALLEL, SOURCE-FIRST MODE:** read **`rust/PARALLEL.md`** before dispatching. `difftests/corpus/coverage/go_test_inventory.tsv` makes every Go test entry point, lifecycle hook, shell program, SQL fixture/result, `testdata` file, and support artifact below repository test suites visible; `integration_parser_inventory.tsv` inventories every SQL input the fixture runner dispatches; and `integration_runner_directive_inventory.tsv` accounts for runner-only commands. These are obligations, not parity claims.
 
-The immediate critical path is Campaign 23 integration: freeze exact evidence
-transfers and membership, run one shared 12-job gate, run `make -j12 lint`,
-consume all six receipts, and only then release its claims. Do not rerun
-workspace-wide builds in individual slices and do not report the passing live
-proof as a Ready gate receipt.
+The immediate critical path is Campaign 24 dispatch: freeze six exact,
+disjoint ranger/harness manifests from the existing pre-scope, claim the whole
+batch, and start implementation without another audit pause. Do not rerun
+workspace-wide builds in individual slices; use focused leaf tests and one
+shared receipted campaign gate.
 
 Maintain a twelve-slice runway while that boundary closes. Six slices carry
 the current campaign through integration; six disjoint Campaign 24 slices are
