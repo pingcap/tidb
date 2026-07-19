@@ -91,3 +91,11 @@ path = "tests/direct_unary_cancellation_source.rs"
 [[test]]
 name = "real_tikv_read_source"
 path = "tests/real_tikv_read_source.rs"
+
+[[test]]
+name = "real_tikv_session_authority_source"
+path = "tests/real_tikv_session_authority_source.rs"
+
+[[test]]
+name = "real_tikv_authority_shutdown_source"
+path = "tests/real_tikv_authority_shutdown_source.rs"

@@ -49,6 +49,7 @@ support_anchors = [
   "Shutdown must reject active session leases, attempt every later stage that remains safe, retain the first failure plus stage context, and never use Arc::try_unwrap as normal lifecycle control flow",
 ]
 rust_paths = [
+  "rust/crates/tidb-exec/Cargo.toml",
   "rust/crates/tidb-exec/src/real_tikv_read.rs",
   "rust/crates/tidb-exec/tests/real_tikv_authority_shutdown_source.rs",
   "rust/crates/tidb-exec/tests/real_tikv_read_source.rs",
