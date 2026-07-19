@@ -65,6 +65,10 @@ tonic-prost-build = "0.14"
 md-5 = "0.10"
 sha1 = "0.10"
 sha2 = "0.10"
+# Authentication compares password-equivalent hashes in constant time and
+# obtains handshake entropy directly from the operating system.
+subtle = "2.6"
+getrandom = "0.3"
 # TiDB's `TIDB_SHARD` uses Vitess' exact DES-ECB/null-key hash. RustCrypto's
 # audited DES implementation preserves that algorithm without a hand-rolled
 # cryptographic primitive.

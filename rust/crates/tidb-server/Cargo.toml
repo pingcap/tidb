@@ -11,6 +11,9 @@ description = "Source-shaped TiDB SQL connection dispatch (Rust)."
 workspace = true
 
 [dependencies]
+getrandom.workspace = true
+sha1.workspace = true
+subtle.workspace = true
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-distsql = { path = "../tidb-distsql" }
 tidb-exec = { path = "../tidb-exec" }
