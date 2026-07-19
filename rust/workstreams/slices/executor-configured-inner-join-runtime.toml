@@ -1,0 +1,39 @@
+schema = "1"
+slice = "executor-configured-inner-join-runtime"
+status = "ready"
+target = "tidb-exec"
+ring = "result"
+consumer = "The production read executor consumes two same-snapshot real-TiKV scan streams and evaluates one planner-bound non-null signed BIGINT inner-join equality, emitting projected rows and metadata in deterministic left-then-right scan order."
+test_target = "configured_inner_join_source"
+go_sources = [
+  "pkg/executor/join/hash_join_v2.go",
+  "pkg/executor/join/inner_join_probe.go",
+  "pkg/executor/join/joiner.go",
+]
+go_tests = [
+  "pkg/executor/join/inner_join_probe_test.go:494:TestInnerJoinProbeBasic",
+  "pkg/executor/join/inner_join_probe_test.go:543:TestInnerJoinProbeAllJoinKeys",
+  "pkg/executor/join/inner_join_probe_test.go:632:TestInnerJoinProbeOtherCondition",
+  "pkg/executor/join/inner_join_probe_test.go:664:TestInnerJoinProbeWithSel",
+  "pkg/executor/join/joiner_test.go:46:TestJoinerOtherConditionChunkUsesInitChunkSize",
+  "pkg/executor/join/joiner_test.go:93:TestRequiredRows",
+]
+module_sources = []
+module_tests = []
+depends_on = [
+  "planner-configured-fullschema-join-runtime",
+  "executor-real-tikv-multi-relation-scan-runtime",
+]
+evidence_prerequisites = []
+support_anchors = [
+  "Campaign 25 stage E is the sole tidb-exec routing steward and exports both multi-read and configured join modules",
+  "Current source/test ownership overlaps planner-executor-typed-join-runtime and planner-executor-right-natural-join-runtime; preserve typed predicate evidence and transfer only the bounded non-null INNER subset",
+  "No client-side scan filtering, independent timestamps, NULL equality, outer/semi join, spill, hash partitioning, concurrency fleet, selection-vector reuse, or unordered output claim is allowed",
+]
+rust_paths = [
+  "rust/crates/tidb-exec/src/configured_inner_join.rs",
+  "rust/crates/tidb-exec/src/lib.rs",
+  "rust/crates/tidb-exec/tests/configured_inner_join_source.rs",
+  "rust/difftests/corpus/coverage/evidence/source/executor-configured-inner-join-runtime.tsv",
+  "rust/difftests/corpus/coverage/evidence/tests/executor-configured-inner-join-runtime.tsv",
+]

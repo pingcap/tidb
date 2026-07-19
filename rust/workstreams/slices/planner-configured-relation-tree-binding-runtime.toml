@@ -1,0 +1,38 @@
+schema = "1"
+slice = "planner-configured-relation-tree-binding-runtime"
+status = "ready"
+target = "tidb-planner"
+ring = "plan"
+consumer = "The read-only planner binds exactly two configured base relations with distinct visible aliases, direct projections, local signed BIGINT predicates, and INNER, CROSS, or comma relation syntax into two source-identified scan inputs."
+test_target = "configured_relation_tree_binding_source"
+go_sources = [
+  "pkg/planner/core/planbuilder.go",
+  "pkg/planner/core/logical_plan_builder.go",
+]
+go_tests = [
+  "pkg/planner/core/logical_plans_test.go:51:TestPredicatePushDown",
+  "pkg/planner/core/logical_plans_test.go:112:TestJoinPredicatePushDown",
+  "pkg/planner/core/logical_plans_test.go:153:TestOuterWherePredicatePushDown",
+  "pkg/planner/core/logical_plans_test.go:202:TestSimplifyOuterJoin",
+  "pkg/planner/core/logical_plans_test.go:272:TestDeriveNotNullConds",
+  "pkg/planner/core/logical_plans_test.go:402:TestDupRandJoinCondsPushDown",
+  "pkg/planner/core/logical_plans_test.go:568:TestPlanBuilder",
+  "pkg/planner/core/logical_plans_test.go:598:TestJoinReOrder",
+  "pkg/planner/core/logical_plans_test.go:1675:TestNameResolver",
+  "pkg/planner/core/logical_plans_test.go:1728:TestOuterJoinEliminator",
+]
+module_sources = []
+module_tests = []
+depends_on = ["planner-configured-multi-relation-catalog-runtime"]
+evidence_prerequisites = []
+support_anchors = [
+  "Campaign 25 stage B consumes the immutable configured catalog from stage A",
+  "Current ownership overlaps planner-read-only-bigint-selection-runtime and several conservative logical-rule owners; transfer only the bounded two-relation rows at PARTIAL",
+  "Reject self-join alias collisions, unknown or ambiguous names, derived tables, more than two relations, outer/semi joins, aggregation, ordering, limits, writes, and non-BIGINT types before runtime admission",
+]
+rust_paths = [
+  "rust/crates/tidb-planner/src/configured_relation_tree.rs",
+  "rust/crates/tidb-planner/tests/configured_relation_tree_binding_source.rs",
+  "rust/difftests/corpus/coverage/evidence/source/planner-configured-relation-tree-binding-runtime.tsv",
+  "rust/difftests/corpus/coverage/evidence/tests/planner-configured-relation-tree-binding-runtime.tsv",
+]

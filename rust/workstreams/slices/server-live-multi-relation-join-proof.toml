@@ -1,0 +1,36 @@
+schema = "1"
+slice = "server-live-multi-relation-join-proof"
+status = "ready"
+target = "tidb-server"
+ring = "result"
+consumer = "One authenticated stock MySQL connection proves a configured two-table signed BIGINT INNER JOIN against real TiKV at one snapshot, including aliases, projections from both sides, local range and residual predicates, no-match output, topology churn, blocked shutdown, and tag-owned cleanup."
+test_target = "run-campaign25-multi-relation-join-sql-node"
+go_sources = [
+  "tests/realtikvtest/testkit.go",
+]
+go_tests = [
+  "tests/realtikvtest/pushdowntest/index_lookup_pushdown_test.go:156:TestRealTiKVIndexLookUpPushDown",
+  "tests/realtikvtest/pushdowntest/index_lookup_pushdown_test.go:210:TestCorrelatedIndexLookUpPushDownPreservesParentIdx",
+  "tests/realtikvtest/pushdowntest/index_lookup_pushdown_test.go:240:TestRealTiKVCommonHandleIndexLookUpPushDown",
+  "tests/realtikvtest/pushdowntest/index_lookup_pushdown_test.go:352:TestRealTiKVPartitionIndexLookUpPushDown",
+]
+module_sources = []
+module_tests = []
+depends_on = [
+  "executor-configured-inner-join-runtime",
+  "server-live-sql-node-harness-foundation",
+]
+evidence_prerequisites = []
+support_anchors = [
+  "Campaign 25 stage F consumes the covered shared Campaign 24 live harness and the complete bounded join path",
+  "Current source ownership is server-live-bigint-selection-topology-proof and the four RealTiKV tests are UNTRIAGED; transfer conservatively and keep partitions/index lookup outside the proof",
+  "Acceptance must publish two table identities, one start timestamp, both scan range sets, join key FullSchema offsets, residual Selection counts, exact projected rows, and zero hidden in-memory fixture reads",
+]
+rust_paths = [
+  "rust/crates/tidb-server/src/lib.rs",
+  "rust/crates/tidb-server/src/real_tikv_multi_node.rs",
+  "rust/crates/tidb-server/tests/real_tikv_multi_relation_node_source.rs",
+  "rust/scripts/run-campaign25-multi-relation-join-sql-node.sh",
+  "rust/difftests/corpus/coverage/evidence/source/server-live-multi-relation-join-proof.tsv",
+  "rust/difftests/corpus/coverage/evidence/tests/server-live-multi-relation-join-proof.tsv",
+]

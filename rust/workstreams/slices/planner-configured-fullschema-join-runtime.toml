@@ -1,0 +1,35 @@
+schema = "1"
+slice = "planner-configured-fullschema-join-runtime"
+status = "ready"
+target = "tidb-planner"
+ring = "plan"
+consumer = "Two configured relation scans become one typed inner-join plan with stable FullSchema indices, direct cross-side equality for ON or USING, source-order visible projection offsets, and explicit left/right scan and residual predicates."
+test_target = "configured_fullschema_join_source"
+go_sources = [
+  "pkg/planner/core/operator/logicalop/logical_join.go",
+  "pkg/planner/core/operator/logicalop/logical_schema_producer.go",
+  "pkg/planner/core/rule/rule_join_key_type_cast.go",
+]
+go_tests = [
+  "pkg/planner/core/casetest/join/join_test.go:27:TestSemiJoinOrder",
+  "pkg/planner/core/casetest/join/join_test.go:96:TestJoinWithNullEQ",
+  "pkg/planner/core/casetest/join/join_test.go:146:TestJoinSimplifyCondition",
+  "pkg/planner/core/casetest/join/join_test.go:188:TestKeepingJoinKeys",
+  "pkg/planner/core/casetest/join/join_test.go:226:TestJoinRegression",
+]
+module_sources = []
+module_tests = []
+depends_on = ["planner-configured-relation-tree-binding-runtime"]
+evidence_prerequisites = []
+support_anchors = [
+  "Campaign 25 stage C consumes stage B and is the sole tidb-planner routing steward for the campaign",
+  "Current sources are split between planner-executor-typed-join-runtime, planner-logical-schema-producer-wave, and UNTRIAGED key casting; preserve all prior PARTIAL gaps in transfer evidence",
+  "Only non-null signed BIGINT equality is executable; NullEQ, compound ON, outer/semi joins, coercion, collation, reordering, statistics, and alternative physical joins remain typed rejections",
+]
+rust_paths = [
+  "rust/crates/tidb-planner/src/configured_join_plan.rs",
+  "rust/crates/tidb-planner/src/lib.rs",
+  "rust/crates/tidb-planner/tests/configured_fullschema_join_source.rs",
+  "rust/difftests/corpus/coverage/evidence/source/planner-configured-fullschema-join-runtime.tsv",
+  "rust/difftests/corpus/coverage/evidence/tests/planner-configured-fullschema-join-runtime.tsv",
+]
