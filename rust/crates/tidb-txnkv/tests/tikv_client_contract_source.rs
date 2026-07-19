@@ -42,9 +42,11 @@ impl DirectUnaryClient for RecordingUnaryClient {
     ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
         self.calls
             .push((address.to_owned(), request.clone(), timeout));
-        Ok(DirectUnaryResponse {
-            encoded_response: b"raw-response".to_vec(),
-        })
+        Ok(DirectUnaryResponse::new(
+            b"raw-response".to_vec(),
+            address,
+            7,
+        ))
     }
 
     fn send_request_with_context(
@@ -166,6 +168,8 @@ fn unary_client_contract_keeps_address_request_timeout_and_result_separate() {
     assert_eq!(request.context.region_id, 42);
     assert_eq!(request.predicted_read_bytes, 4096);
     assert_eq!(response.encoded_response, b"raw-response");
+    assert_eq!(response.physical_address(), "tikv-1:20160");
+    assert_eq!(response.physical_channel_version(), 7);
     assert_eq!(
         client.calls,
         [(

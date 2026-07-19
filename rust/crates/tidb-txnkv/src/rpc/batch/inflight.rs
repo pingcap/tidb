@@ -23,6 +23,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
+use crate::client::PhysicalChannelIdentity;
 use crate::rpc::{CompletionRequest, DirectUnaryClientError};
 
 use super::{BatchRequestProgress, BatchStreamState, ScheduledEntry};
@@ -35,7 +36,7 @@ use super::wire::{BatchWireError, BatchWireResponse, OpaqueBatchCommand};
 /// stream cannot touch a replacement stream at the same address and target.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct BatchRoute {
-    physical_address: String,
+    physical_channel: PhysicalChannelIdentity,
     forwarded_host: Option<String>,
     generation: u64,
 }
@@ -44,8 +45,18 @@ impl BatchRoute {
     /// Creates a direct route to one physical TiKV address.
     #[must_use]
     pub fn direct(physical_address: impl Into<String>, generation: u64) -> Self {
+        Self::direct_on_channel(
+            PhysicalChannelIdentity::new(physical_address, 1),
+            generation,
+        )
+    }
+
+    pub(crate) const fn direct_on_channel(
+        physical_channel: PhysicalChannelIdentity,
+        generation: u64,
+    ) -> Self {
         Self {
-            physical_address: physical_address.into(),
+            physical_channel,
             forwarded_host: None,
             generation,
         }
@@ -58,8 +69,20 @@ impl BatchRoute {
         forwarded_host: impl Into<String>,
         generation: u64,
     ) -> Self {
+        Self::forwarded_on_channel(
+            PhysicalChannelIdentity::new(physical_address, 1),
+            forwarded_host,
+            generation,
+        )
+    }
+
+    pub(crate) fn forwarded_on_channel(
+        physical_channel: PhysicalChannelIdentity,
+        forwarded_host: impl Into<String>,
+        generation: u64,
+    ) -> Self {
         Self {
-            physical_address: physical_address.into(),
+            physical_channel,
             forwarded_host: Some(forwarded_host.into()),
             generation,
         }
@@ -68,7 +91,17 @@ impl BatchRoute {
     /// Physical address owning the underlying channel.
     #[must_use]
     pub fn physical_address(&self) -> &str {
-        &self.physical_address
+        self.physical_channel.address()
+    }
+
+    /// Exact address-local ChannelPool version carrying this stream.
+    #[must_use]
+    pub const fn physical_channel_version(&self) -> u64 {
+        self.physical_channel.version()
+    }
+
+    pub(crate) const fn physical_channel(&self) -> &PhysicalChannelIdentity {
+        &self.physical_channel
     }
 
     /// TiKV target selected through forwarding metadata, if any.
@@ -429,20 +462,6 @@ impl BatchInflightTable {
             pending.completion.schedule_error(error.clone());
         }
         failed
-    }
-
-    /// Fails every stream generation owned by one physical address.
-    pub fn fail_address(&mut self, address: &str, error: BatchInflightError) -> usize {
-        let routes = self
-            .routes
-            .keys()
-            .filter(|route| route.physical_address() == address)
-            .cloned()
-            .collect::<Vec<_>>();
-        routes
-            .iter()
-            .map(|route| self.fail_route(route, error.clone()))
-            .sum()
     }
 
     /// Fails every remaining async request when the owning client closes.

@@ -162,23 +162,41 @@ impl TransportRuntime {
         self.cancellation.clone()
     }
 
-    pub(super) fn shutdown(&mut self) {
+    pub(super) fn shutdown(&mut self) -> Result<(), DirectUnaryClientError> {
         self.cancellation.cancel();
+        let mut shutdown_error = None;
         if let Some(commands) = self.commands.take() {
             let (reply, response) = mpsc::channel();
-            if commands.send(WorkerCommand::Close { reply }).is_ok() {
-                let _ = response.recv();
+            match commands.send(WorkerCommand::Close { reply }) {
+                Ok(()) => {
+                    if response.recv().is_err() {
+                        shutdown_error = Some(DirectUnaryClientError::Runtime(
+                            "TiKV transport worker exited without acknowledging close".to_owned(),
+                        ));
+                    }
+                }
+                Err(_) => {
+                    shutdown_error = Some(DirectUnaryClientError::Runtime(
+                        "TiKV transport command channel closed before shutdown".to_owned(),
+                    ));
+                }
             }
         }
         if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
+            if let Err(panic) = worker.join() {
+                return Err(DirectUnaryClientError::Runtime(format!(
+                    "TiKV transport worker panicked during shutdown: {}",
+                    panic_message(&panic)
+                )));
+            }
         }
+        shutdown_error.map_or(Ok(()), Err)
     }
 }
 
 impl Drop for TransportRuntime {
     fn drop(&mut self) {
-        self.shutdown();
+        let _ = self.shutdown();
     }
 }
 
@@ -365,8 +383,8 @@ fn run_worker(
                 runtime.block_on(batch.handle_event(&mut channels, &runtime, &commands, event))
             }
             WorkerCommand::CloseAddress { address, reply } => {
-                if channels.close_address(&address) {
-                    batch.close_address(&address);
+                if let Some(physical_channel) = channels.close_address(&address) {
+                    batch.close_physical_channel(&physical_channel);
                 }
                 let _ = reply.send(());
             }
@@ -375,8 +393,8 @@ fn run_worker(
                 version,
                 reply,
             } => {
-                if channels.close_address_version(&address, version) {
-                    batch.close_address(&address);
+                if let Some(physical_channel) = channels.close_address_version(&address, version) {
+                    batch.close_physical_channel(&physical_channel);
                 }
                 let _ = reply.send(());
             }
@@ -405,5 +423,76 @@ fn run_worker(
                 break;
             }
         }
+    }
+}
+
+fn panic_message(panic: &Box<dyn std::any::Any + Send + 'static>) -> &str {
+    panic
+        .downcast_ref::<&'static str>()
+        .copied()
+        .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("non-string panic payload")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cancellation() -> TransportShutdownCancellation {
+        let (shutdown, _) = watch::channel(false);
+        TransportShutdownCancellation { shutdown }
+    }
+
+    #[test]
+    fn shutdown_reports_closed_command_channel() {
+        let (commands, receiver) = mpsc::channel();
+        drop(receiver);
+        let worker = std::thread::spawn(|| {});
+        let mut runtime = TransportRuntime {
+            commands: Some(commands),
+            worker: Some(worker),
+            cancellation: cancellation(),
+        };
+
+        let error = runtime.shutdown().unwrap_err().to_string();
+        assert!(
+            error.contains("command channel closed before shutdown"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn shutdown_reports_lost_close_acknowledgement() {
+        let (commands, receiver) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            if let Ok(WorkerCommand::Close { reply }) = receiver.recv() {
+                drop(reply);
+            }
+        });
+        let mut runtime = TransportRuntime {
+            commands: Some(commands),
+            worker: Some(worker),
+            cancellation: cancellation(),
+        };
+
+        let error = runtime.shutdown().unwrap_err().to_string();
+        assert!(error.contains("without acknowledging close"), "{error}");
+    }
+
+    #[test]
+    fn shutdown_reports_worker_panic() {
+        let (commands, receiver) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            drop(receiver);
+            panic!("injected transport worker panic");
+        });
+        let mut runtime = TransportRuntime {
+            commands: Some(commands),
+            worker: Some(worker),
+            cancellation: cancellation(),
+        };
+
+        let error = runtime.shutdown().unwrap_err().to_string();
+        assert!(error.contains("injected transport worker panic"), "{error}");
     }
 }

@@ -282,6 +282,7 @@ fn duplex_stream_reuses_pool_isolates_forwarding_reconnects_and_drains_close() {
         .unwrap();
     assert_eq!(first_receipts.len(), 1);
     assert_eq!(first_receipts[0].route().generation(), 1);
+    assert_eq!(first_receipts[0].route().physical_channel_version(), 1);
     assert_eq!(first_receipts[0].request_ids().len(), 2);
     assert_eq!(
         wait_for_completion(&mut first_pull).unwrap().body(),
@@ -319,6 +320,7 @@ fn duplex_stream_reuses_pool_isolates_forwarding_reconnects_and_drains_close() {
         .submit_batch_commands(&server.address, vec![reconnect])
         .unwrap();
     assert_eq!(reconnect_receipts[0].route().generation(), 2);
+    assert_eq!(reconnect_receipts[0].route().physical_channel_version(), 1);
     assert_eq!(
         wait_for_completion(&mut reconnect_pull).unwrap().body(),
         b"reconnect"
@@ -329,6 +331,7 @@ fn duplex_stream_reuses_pool_isolates_forwarding_reconnects_and_drains_close() {
         .submit_batch_commands(&server.address, vec![forwarded])
         .unwrap();
     assert_eq!(forwarded_receipts[0].route().generation(), 1);
+    assert_eq!(forwarded_receipts[0].route().physical_channel_version(), 1);
     assert_eq!(
         forwarded_receipts[0].route().forwarded_host(),
         Some("logical-tikv:20160")
@@ -376,6 +379,67 @@ fn duplex_stream_reuses_pool_isolates_forwarding_reconnects_and_drains_close() {
             "a packet must never be ambiguously resent"
         );
     }
+}
+
+#[test]
+fn exact_channel_retirement_is_retryable_and_cannot_touch_a_replacement() {
+    let streams = Arc::new(AtomicUsize::new(0));
+    let metadata = Arc::new(Mutex::new(Vec::new()));
+    let received_bodies = Arc::new(Mutex::new(Vec::new()));
+    let (hold_seen, hold_wait) = mpsc::channel();
+    let server = TestServer::start(StreamingTikv {
+        streams,
+        metadata,
+        received_bodies,
+        hold_seen: Arc::new(Mutex::new(Some(hold_seen))),
+        withhold_headers: false,
+        serve_after_headers_released: false,
+        headers_after_first_request: false,
+        close_before_request: false,
+        headers_started: Arc::new(Mutex::new(None)),
+        release_headers: Arc::new(AtomicBool::new(false)),
+    });
+    let mut client = tidb_txnkv::rpc::TonicCoprocessorClient::new().unwrap();
+
+    let (direct, mut direct_pull) = entry(b"hold", None);
+    let direct_receipt = client
+        .submit_batch_commands(&server.address, vec![direct])
+        .unwrap();
+    let (forwarded, mut forwarded_pull) = entry(b"hold", Some("logical-tikv:20160"));
+    let forwarded_receipt = client
+        .submit_batch_commands(&server.address, vec![forwarded])
+        .unwrap();
+    hold_wait.recv_timeout(Duration::from_secs(1)).unwrap();
+    assert_eq!(direct_receipt[0].route().physical_channel_version(), 1);
+    assert_eq!(forwarded_receipt[0].route().physical_channel_version(), 1);
+
+    client.close_address_version(&server.address, 1).unwrap();
+    assert_eq!(client.connection_version(&server.address), None);
+    for result in [
+        wait_for_completion(&mut direct_pull),
+        wait_for_completion(&mut forwarded_pull),
+    ] {
+        let BatchInflightError::Transport(DirectUnaryClientError::Connection(error)) =
+            result.unwrap_err()
+        else {
+            panic!("channel retirement must publish a retryable connection error");
+        };
+        assert_eq!(error.address(), server.address);
+        assert_eq!(error.version(), 1);
+    }
+
+    let (replacement, mut replacement_pull) = entry(b"replacement", None);
+    let replacement_receipt = client
+        .submit_batch_commands(&server.address, vec![replacement])
+        .unwrap();
+    assert_eq!(replacement_receipt[0].route().physical_channel_version(), 2);
+    assert_eq!(
+        wait_for_completion(&mut replacement_pull).unwrap().body(),
+        b"replacement"
+    );
+    client.close_address_version(&server.address, 1).unwrap();
+    assert_eq!(client.connection_version(&server.address), Some(2));
+    client.close().unwrap();
 }
 
 #[test]

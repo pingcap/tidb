@@ -16,12 +16,20 @@ use std::collections::HashMap;
 
 use tonic::transport::{Channel, Endpoint};
 
+use crate::client::PhysicalChannelIdentity;
+
 use super::DirectUnaryClientError;
 
 #[derive(Clone)]
 pub(super) struct VersionedChannel {
-    pub(super) version: u64,
+    physical_channel: PhysicalChannelIdentity,
     pub(super) channel: Channel,
+}
+
+impl VersionedChannel {
+    pub(super) const fn physical_channel(&self) -> &PhysicalChannelIdentity {
+        &self.physical_channel
+    }
 }
 
 pub(super) struct ChannelPool {
@@ -71,29 +79,43 @@ impl ChannelPool {
             let _runtime = runtime.enter();
             endpoint.connect_lazy()
         };
-        let versioned = VersionedChannel { version, channel };
+        let versioned = VersionedChannel {
+            physical_channel: PhysicalChannelIdentity::new(address, version),
+            channel,
+        };
         self.versions.insert(address.to_owned(), version);
         self.channels.insert(address.to_owned(), versioned.clone());
         Ok(versioned)
     }
 
-    pub(super) fn close_address(&mut self, address: &str) -> bool {
-        !self.closed && self.channels.remove(address).is_some()
+    pub(super) fn close_address(&mut self, address: &str) -> Option<PhysicalChannelIdentity> {
+        if self.closed {
+            return None;
+        }
+        self.channels
+            .remove(address)
+            .map(|channel| channel.physical_channel)
     }
 
-    pub(super) fn close_address_version(&mut self, address: &str, version: u64) -> bool {
+    pub(super) fn close_address_version(
+        &mut self,
+        address: &str,
+        version: u64,
+    ) -> Option<PhysicalChannelIdentity> {
         if self.closed {
-            return false;
+            return None;
         }
         if self
             .channels
             .get(address)
-            .is_some_and(|channel| channel.version <= version)
+            .is_some_and(|channel| channel.physical_channel.version() == version)
         {
-            self.channels.remove(address);
-            return true;
+            return self
+                .channels
+                .remove(address)
+                .map(|channel| channel.physical_channel);
         }
-        false
+        None
     }
 
     pub(super) fn close(&mut self) {
@@ -102,7 +124,9 @@ impl ChannelPool {
     }
 
     pub(super) fn version(&self, address: &str) -> Option<u64> {
-        self.channels.get(address).map(|channel| channel.version)
+        self.channels
+            .get(address)
+            .map(|channel| channel.physical_channel.version())
     }
 
     pub(super) fn len(&self) -> usize {

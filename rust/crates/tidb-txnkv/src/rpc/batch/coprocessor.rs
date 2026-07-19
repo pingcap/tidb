@@ -18,9 +18,13 @@
 //! Its one completion is carried unchanged by [`BatchCommandEntry`] into the
 //! transport's sole route-scoped in-flight table.
 
+use crate::client::PhysicalChannelIdentity;
 use crate::{rpc::DirectUnaryClientError, DirectUnaryResponse};
 
-use super::{BatchCommandEntry, BatchCommandTag, BatchInflightError, OpaqueBatchCommand};
+use super::{
+    BatchCommandEntry, BatchCommandTag, BatchInflightError, BatchPublicationReceipt,
+    OpaqueBatchCommand,
+};
 use crate::rpc::{
     completion_pair, CompletionError, CompletionPull, CompletionRunLoop, PendingRequest,
 };
@@ -28,6 +32,7 @@ use crate::rpc::{
 /// Pull-side owner of one concrete Coprocessor BatchCommands attempt.
 pub struct BatchCoprocessorPending {
     completion: CompletionPull<OpaqueBatchCommand, BatchInflightError>,
+    physical_channel: Option<PhysicalChannelIdentity>,
 }
 
 impl BatchCoprocessorPending {
@@ -41,17 +46,55 @@ impl BatchCoprocessorPending {
         if let Some(forwarded_host) = forwarded_host {
             entry = entry.with_forwarded_host(forwarded_host);
         }
-        (entry, Self { completion: pull })
+        (
+            entry,
+            Self {
+                completion: pull,
+                physical_channel: None,
+            },
+        )
+    }
+
+    pub(in crate::rpc) fn bind_publication(
+        &mut self,
+        receipts: &[BatchPublicationReceipt],
+    ) -> Result<(), DirectUnaryClientError> {
+        let [receipt] = receipts else {
+            return Err(DirectUnaryClientError::InvalidRequest(format!(
+                "one Coprocessor command requires exactly one BatchCommands publication receipt, got {}",
+                receipts.len()
+            )));
+        };
+        if receipt.request_ids().len() != 1 {
+            return Err(DirectUnaryClientError::InvalidRequest(format!(
+                "one Coprocessor command requires exactly one published request ID, got {}",
+                receipt.request_ids().len()
+            )));
+        }
+        if self.physical_channel.is_some() {
+            return Err(DirectUnaryClientError::InvalidRequest(
+                "Coprocessor pending attempt was bound to publication twice".to_owned(),
+            ));
+        }
+        self.physical_channel = Some(receipt.route().physical_channel().clone());
+        Ok(())
     }
 
     fn map_result(
+        &self,
         result: Result<OpaqueBatchCommand, BatchInflightError>,
     ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
         match result {
             Ok(command) if command.tag() == BatchCommandTag::Coprocessor => {
-                Ok(DirectUnaryResponse {
-                    encoded_response: command.body().to_vec(),
-                })
+                let physical_channel = self.physical_channel.clone().ok_or_else(|| {
+                    DirectUnaryClientError::InvalidRequest(
+                        "successful Coprocessor completion has no publication identity".to_owned(),
+                    )
+                })?;
+                Ok(DirectUnaryResponse::from_physical_channel(
+                    command.body().to_vec(),
+                    physical_channel,
+                ))
             }
             Ok(command) => Err(DirectUnaryClientError::InvalidRequest(format!(
                 "BatchCommands Coprocessor attempt returned {:?}",
@@ -71,9 +114,8 @@ impl PendingRequest for BatchCoprocessorPending {
     fn try_complete(
         &mut self,
     ) -> Result<Option<Result<DirectUnaryResponse, DirectUnaryClientError>>, CompletionError> {
-        self.completion
-            .try_complete()
-            .map(|result| result.map(Self::map_result))
+        let result = self.completion.try_complete()?;
+        Ok(result.map(|result| self.map_result(result)))
     }
 
     fn cancel(&mut self) {
@@ -84,6 +126,7 @@ impl PendingRequest for BatchCoprocessorPending {
         &mut self,
         call: &crate::rpc::UnaryCallContext,
     ) -> Result<Result<DirectUnaryResponse, DirectUnaryClientError>, CompletionError> {
-        self.completion.complete(call).map(Self::map_result)
+        let result = self.completion.complete(call)?;
+        Ok(self.map_result(result))
     }
 }

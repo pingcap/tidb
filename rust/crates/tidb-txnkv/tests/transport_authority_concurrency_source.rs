@@ -234,7 +234,12 @@ fn cloned_handles_overlap_and_one_logical_close_does_not_retire_the_other() {
 
     let call = UnaryCallContext::with_timeout(Duration::from_secs(3));
     let mut first_pending = first
-        .begin(&first_server.address, None, &request(b"first"), &call)
+        .begin(
+            &first_server.address,
+            Some("logical-forwarded-tikv:20160"),
+            &request(b"first"),
+            &call,
+        )
         .unwrap();
     let mut second_pending = second
         .begin(&second_server.address, None, &request(b"second"), &call)
@@ -249,6 +254,10 @@ fn cloned_handles_overlap_and_one_logical_close_does_not_retire_the_other() {
     second_server.release();
     let first_response = first_pending.complete(&call).unwrap().unwrap();
     let second_response = second_pending.complete(&call).unwrap().unwrap();
+    assert_eq!(first_response.physical_address(), first_server.address);
+    assert_eq!(first_response.physical_channel_version(), 1);
+    assert_eq!(second_response.physical_address(), second_server.address);
+    assert_eq!(second_response.physical_channel_version(), 1);
     assert_eq!(
         CoprocessorResponse::decode(first_response.encoded_response.as_slice())
             .unwrap()
@@ -272,6 +281,8 @@ fn cloned_handles_overlap_and_one_logical_close_does_not_retire_the_other() {
         )
         .unwrap();
     let follow_up = follow_up.complete(&follow_up_call).unwrap().unwrap();
+    assert_eq!(follow_up.physical_address(), second_server.address);
+    assert_eq!(follow_up.physical_channel_version(), 1);
     assert_eq!(
         CoprocessorResponse::decode(follow_up.encoded_response.as_slice())
             .unwrap()
@@ -333,6 +344,10 @@ fn stalled_unary_does_not_block_batch_commands_admission_or_completion() {
         .expect("BatchCommands response must be observed before releasing unary")
         .expect("stalled unary must not occupy the shared transport command loop")
         .expect("independent BatchCommands request must succeed");
+    assert_eq!(unary_response.physical_address(), server.address);
+    assert_eq!(unary_response.physical_channel_version(), 1);
+    assert_eq!(batch_response.physical_address(), server.address);
+    assert_eq!(batch_response.physical_channel_version(), 1);
     assert_eq!(
         CoprocessorResponse::decode(unary_response.encoded_response.as_slice())
             .unwrap()

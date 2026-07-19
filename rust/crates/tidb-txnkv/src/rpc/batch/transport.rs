@@ -23,6 +23,7 @@ use tidb_proto::tikvpb::{tikv_client::TikvClient, BatchCommandsRequest};
 use tokio::sync::{mpsc, watch};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
+use crate::client::PhysicalChannelIdentity;
 use crate::rpc::channel_pool::{ChannelPool, VersionedChannel};
 use crate::rpc::forwarding;
 use crate::rpc::transport_runtime::WorkerCommand;
@@ -85,19 +86,18 @@ impl StreamKey {
         }
     }
 
-    fn route(&self, generation: u64) -> BatchRoute {
+    fn route(&self, physical_channel: PhysicalChannelIdentity, generation: u64) -> BatchRoute {
         match &self.forwarded_host {
             Some(host) => {
-                BatchRoute::forwarded(self.physical_address.clone(), host.clone(), generation)
+                BatchRoute::forwarded_on_channel(physical_channel, host.clone(), generation)
             }
-            None => BatchRoute::direct(self.physical_address.clone(), generation),
+            None => BatchRoute::direct_on_channel(physical_channel, generation),
         }
     }
 }
 
 struct ActiveStream {
     route: BatchRoute,
-    connection_version: u64,
     terminal: Arc<Mutex<Option<BatchInflightError>>>,
     open_state: Arc<Mutex<StreamOpenState>>,
     outbound: mpsc::UnboundedSender<BatchCommandsRequest>,
@@ -273,7 +273,6 @@ impl BatchTransportState {
         let terminal = Arc::clone(&stream.terminal);
         let open_state = Arc::clone(&stream.open_state);
         let outbound = stream.outbound.clone();
-        let connection_version = stream.connection_version;
         let mut terminal_guard = terminal
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -340,8 +339,8 @@ impl BatchTransportState {
         }
         let send_error = outbound.send(request.into_proto()).err().map(|_| {
             BatchInflightError::Transport(stream_error(
-                address,
-                connection_version,
+                route.physical_address(),
+                route.physical_channel_version(),
                 "BatchCommands request stream closed",
             ))
         });
@@ -367,7 +366,11 @@ impl BatchTransportState {
         Some(receipt)
     }
 
-    fn route_for_submission(&mut self, key: &StreamKey) -> BatchRoute {
+    fn route_for_submission(
+        &mut self,
+        key: &StreamKey,
+        physical_channel: PhysicalChannelIdentity,
+    ) -> BatchRoute {
         if let Some(stream) = self.streams.get(key) {
             return stream.route.clone();
         }
@@ -376,7 +379,7 @@ impl BatchTransportState {
             .entry(key.clone())
             .and_modify(|generation| *generation = generation.saturating_add(1))
             .or_insert(1);
-        key.route(*generation)
+        key.route(physical_channel, *generation)
     }
 
     pub(in crate::rpc) async fn handle_event(
@@ -405,8 +408,8 @@ impl BatchTransportState {
         if self.streams.contains_key(&key) {
             return Ok(());
         }
-        let route = self.route_for_submission(&key);
         let selected = channels.get_or_create(&key.physical_address, runtime)?;
+        let route = self.route_for_submission(&key, selected.physical_channel().clone());
         let stream = open_stream(
             &key,
             &route,
@@ -419,18 +422,30 @@ impl BatchTransportState {
         Ok(())
     }
 
-    pub(in crate::rpc) fn close_address(&mut self, address: &str) {
-        self.streams
-            .retain(|key, _| key.physical_address != address);
-        self.reconnect_budget
-            .retain(|key| key.physical_address != address);
-        self.inflight
+    pub(in crate::rpc) fn close_physical_channel(
+        &mut self,
+        physical_channel: &PhysicalChannelIdentity,
+    ) {
+        let retired = self
+            .streams
+            .iter()
+            .filter(|(_, stream)| stream.route.physical_channel() == physical_channel)
+            .map(|(key, stream)| (key.clone(), stream.route.clone()))
+            .collect::<Vec<_>>();
+        let failure = BatchInflightError::Transport(stream_error(
+            physical_channel.address(),
+            physical_channel.version(),
+            "physical channel generation invalidated",
+        ));
+        let mut inflight = self
+            .inflight
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .fail_address(
-                address,
-                BatchInflightError::Transport(DirectUnaryClientError::Closed),
-            );
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        for (key, route) in retired {
+            self.streams.remove(&key);
+            self.reconnect_budget.remove(&key);
+            inflight.fail_route(&route, failure.clone());
+        }
     }
 
     pub(in crate::rpc) fn close(&mut self) {
@@ -482,7 +497,9 @@ fn open_stream(
     let (outbound, receiver) = mpsc::unbounded_channel();
     let mut request = tonic::Request::new(UnboundedReceiverStream::new(receiver));
     forwarding::attach_forwarded_host(&mut request, key.forwarded_host.as_deref())?;
-    let version = selected.version;
+    let physical_channel = selected.physical_channel().clone();
+    debug_assert_eq!(route.physical_channel(), &physical_channel);
+    let version = physical_channel.version();
     let mut client =
         TikvClient::new(selected.channel).max_decoding_message_size(MAX_RECV_MESSAGE_SIZE);
     if *shutdown.borrow() {
@@ -592,7 +609,6 @@ fn open_stream(
     });
     Ok(ActiveStream {
         route: route.clone(),
-        connection_version: version,
         terminal,
         open_state,
         outbound,

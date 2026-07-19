@@ -28,6 +28,7 @@ use std::time::{Duration, Instant};
 use bytes::{Buf, BufMut};
 use tonic::codec::{Codec, DecodeBuf, Decoder, EncodeBuf, Encoder};
 
+use crate::client::PhysicalChannelIdentity;
 use crate::region::StoreLiveness;
 
 use super::async_completion::RunLoopSignal;
@@ -223,9 +224,10 @@ pub(super) struct RawUnaryRequest {
     pub(super) forwarded_host: Option<String>,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct RawUnaryResponse {
     pub(super) encoded_response: Vec<u8>,
+    pub(super) physical_channel: PhysicalChannelIdentity,
 }
 
 enum UnaryAttemptError {
@@ -340,11 +342,13 @@ impl RawTransportClient {
         self.shutdown_cancellation.clone()
     }
 
-    pub(super) fn shutdown(&mut self) {
+    pub(super) fn shutdown(&mut self) -> Result<(), DirectUnaryClientError> {
         self.shutdown_cancellation.cancel();
         self.handle.take();
         if let Some(mut owner) = self.owner.take() {
-            owner.shutdown();
+            owner.shutdown()
+        } else {
+            Ok(())
         }
     }
 
@@ -353,16 +357,9 @@ impl RawTransportClient {
     }
 }
 
-impl Drop for RawTransportClient {
-    fn drop(&mut self) {
-        self.shutdown();
-    }
-}
-
 /// Immutable in-flight ownership split from the worker-owned channel pool.
 pub(super) struct PreparedUnaryCall {
-    address: String,
-    connection_version: u64,
+    physical_channel: PhysicalChannelIdentity,
     timeout: Duration,
     request: tonic::Request<Vec<u8>>,
     channel: tonic::transport::Channel,
@@ -388,15 +385,14 @@ pub(super) fn prepare_unary(
     if timeout.is_zero() {
         return Err(timeout_error(
             address,
-            selected.version,
+            selected.physical_channel().version(),
             timeout,
             "absolute unary deadline elapsed",
         ));
     }
     rpc_request.set_timeout(timeout);
     Ok(PreparedUnaryCall {
-        address: address.to_owned(),
-        connection_version: selected.version,
+        physical_channel: selected.physical_channel().clone(),
         timeout,
         request: rpc_request,
         channel: selected.channel,
@@ -409,8 +405,7 @@ impl PreparedUnaryCall {
     /// Drives only this RPC, independently of the shared command receiver.
     pub(super) async fn execute(self) -> Result<RawUnaryResponse, DirectUnaryClientError> {
         let Self {
-            address,
-            connection_version,
+            physical_channel,
             timeout,
             request,
             channel,
@@ -438,22 +433,32 @@ impl PreparedUnaryCall {
             }
             UnaryCallOutcome::Completed(Ok(Ok(response))) => response.into_inner(),
             UnaryCallOutcome::Completed(Ok(Err(UnaryAttemptError::Connection(error)))) => {
-                return Err(connection_error(&address, connection_version, error));
+                return Err(connection_error(
+                    physical_channel.address(),
+                    physical_channel.version(),
+                    error,
+                ));
             }
             UnaryCallOutcome::Completed(Ok(Err(UnaryAttemptError::RemoteGrpc(error)))) => {
                 return Err(remote_grpc_error(
-                    &address,
-                    connection_version,
+                    physical_channel.address(),
+                    physical_channel.version(),
                     timeout,
                     error,
                 ));
             }
             UnaryCallOutcome::Completed(Err(error)) => {
-                return Err(timeout_error(&address, connection_version, timeout, error));
+                return Err(timeout_error(
+                    physical_channel.address(),
+                    physical_channel.version(),
+                    timeout,
+                    error,
+                ));
             }
         };
         Ok(RawUnaryResponse {
             encoded_response: response,
+            physical_channel,
         })
     }
 }

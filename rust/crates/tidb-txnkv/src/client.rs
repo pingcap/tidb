@@ -27,6 +27,35 @@ use tidb_proto::{KvrpcContext, KvrpcSourceStmt};
 use crate::region::StoreLiveness;
 use crate::rpc::{DirectUnaryClientError, UnaryCallContext};
 
+/// Immutable identity of one physical address-keyed transport channel.
+///
+/// This identity is deliberately distinct from RegionCache store epochs and
+/// BatchCommands stream generations. Version zero is reserved for failures
+/// observed before a channel was selected; every successful response carries
+/// a nonzero version selected by the sole channel pool.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub(crate) struct PhysicalChannelIdentity {
+    address: String,
+    version: u64,
+}
+
+impl PhysicalChannelIdentity {
+    pub(crate) fn new(address: impl Into<String>, version: u64) -> Self {
+        Self {
+            address: address.into(),
+            version,
+        }
+    }
+
+    pub(crate) fn address(&self) -> &str {
+        &self.address
+    }
+
+    pub(crate) const fn version(&self) -> u64 {
+        self.version
+    }
+}
+
 /// TiKV client-go replica-read values.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[repr(u8)]
@@ -115,11 +144,50 @@ pub struct DirectUnaryRequest {
     pub encoded_request: Vec<u8>,
 }
 
-/// Raw successful result from an address-directed unary TiKV client.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+/// Raw successful result and exact physical channel which carried it.
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DirectUnaryResponse {
     /// Exact encoded `coprocessor.Response` body.
     pub encoded_response: Vec<u8>,
+    physical_channel: PhysicalChannelIdentity,
+}
+
+impl DirectUnaryResponse {
+    /// Constructs a successful response after a physical channel was selected.
+    #[must_use]
+    pub fn new(encoded_response: Vec<u8>, physical_address: &str, channel_version: u64) -> Self {
+        assert!(
+            channel_version > 0,
+            "successful TiKV responses require a nonzero physical channel version"
+        );
+        Self::from_physical_channel(
+            encoded_response,
+            PhysicalChannelIdentity::new(physical_address, channel_version),
+        )
+    }
+
+    pub(crate) fn from_physical_channel(
+        encoded_response: Vec<u8>,
+        physical_channel: PhysicalChannelIdentity,
+    ) -> Self {
+        debug_assert!(physical_channel.version() > 0);
+        Self {
+            encoded_response,
+            physical_channel,
+        }
+    }
+
+    /// Physical address which carried this successful response.
+    #[must_use]
+    pub fn physical_address(&self) -> &str {
+        self.physical_channel.address()
+    }
+
+    /// Exact address-local channel-pool version which carried this response.
+    #[must_use]
+    pub const fn physical_channel_version(&self) -> u64 {
+        self.physical_channel.version()
+    }
 }
 
 /// Pinned client-go `Client.SendRequest` capability projection.

@@ -243,6 +243,8 @@ fn unary_rpc_attaches_context_once_reuses_address_and_recreates_after_close() {
         let raw = client
             .send_request(&server.address, &request(data), Duration::from_secs(2))
             .unwrap();
+        assert_eq!(raw.physical_address(), server.address);
+        assert_eq!(raw.physical_channel_version(), 1);
         let response = CoprocessorResponse::decode(raw.encoded_response.as_slice()).unwrap();
         assert_eq!(response.data, data);
     }
@@ -288,9 +290,11 @@ fn unary_rpc_attaches_context_once_reuses_address_and_recreates_after_close() {
     assert_eq!(client.connection_version(&server.address), Some(1));
     client.close_address(&server.address).unwrap();
     assert_eq!(client.active_address_count(), 0);
-    client
+    let third = client
         .send_request(&server.address, &request(b"third"), Duration::from_secs(2))
         .unwrap();
+    assert_eq!(third.physical_address(), server.address);
+    assert_eq!(third.physical_channel_version(), 2);
     assert_eq!(client.connection_version(&server.address), Some(2));
 
     client.close().unwrap();

@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::client::PhysicalChannelIdentity;
+
 /// Transport-neutral projection of tonic's gRPC status code.
 ///
 /// Keeping this enum outside the tonic leaf lets DistSQL distinguish protocol
@@ -78,10 +80,7 @@ enum DirectUnaryTransportFailure {
 /// status types remain private to the concrete RPC leaf.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DirectUnaryConnectionError {
-    /// Target address selected by the caller.
-    address: String,
-    /// Address-local connection generation.
-    version: u64,
+    physical_channel: PhysicalChannelIdentity,
     failure: DirectUnaryTransportFailure,
     /// Concrete connection or RPC failure text.
     message: String,
@@ -92,8 +91,7 @@ impl DirectUnaryConnectionError {
     #[must_use]
     pub fn connection(address: &str, version: u64, message: String) -> Self {
         Self {
-            address: address.to_owned(),
-            version,
+            physical_channel: PhysicalChannelIdentity::new(address, version),
             failure: DirectUnaryTransportFailure::Connection,
             message,
         }
@@ -103,8 +101,7 @@ impl DirectUnaryConnectionError {
     #[must_use]
     pub fn local_deadline(address: &str, version: u64, message: String) -> Self {
         Self {
-            address: address.to_owned(),
-            version,
+            physical_channel: PhysicalChannelIdentity::new(address, version),
             failure: DirectUnaryTransportFailure::LocalDeadline,
             message,
         }
@@ -119,8 +116,7 @@ impl DirectUnaryConnectionError {
         message: String,
     ) -> Self {
         Self {
-            address: address.to_owned(),
-            version,
+            physical_channel: PhysicalChannelIdentity::new(address, version),
             failure: DirectUnaryTransportFailure::RemoteGrpc(code),
             message,
         }
@@ -129,13 +125,13 @@ impl DirectUnaryConnectionError {
     /// Target address selected by the caller.
     #[must_use]
     pub fn address(&self) -> &str {
-        &self.address
+        self.physical_channel.address()
     }
 
     /// Address-local connection generation selected for the failed attempt.
     #[must_use]
     pub const fn version(&self) -> u64 {
-        self.version
+        self.physical_channel.version()
     }
 
     /// Failure origin without exposing tonic types.
@@ -169,7 +165,9 @@ impl std::fmt::Display for DirectUnaryConnectionError {
         write!(
             formatter,
             "TiKV connection {} version {} failed: {}",
-            self.address, self.version, self.message
+            self.address(),
+            self.version(),
+            self.message
         )
     }
 }
@@ -298,7 +296,8 @@ impl std::fmt::Display for DirectUnaryClientError {
             } => write!(
                 formatter,
                 "TiKV connection {} version {} timed out after {timeout_ms}ms",
-                connection.address, connection.version
+                connection.address(),
+                connection.version()
             ),
             Self::Runtime(message) => {
                 write!(formatter, "cannot create TiKV RPC runtime: {message}")

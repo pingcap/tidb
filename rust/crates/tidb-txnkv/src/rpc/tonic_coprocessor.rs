@@ -160,8 +160,8 @@ impl TonicCoprocessorClient {
         self.transport.inspect(address)
     }
 
-    fn shutdown(&mut self) {
-        self.transport.shutdown();
+    fn shutdown(&mut self) -> Result<(), DirectUnaryClientError> {
+        self.transport.shutdown()
     }
 
     /// Sends the exact pinned CheckTxnStatus command through the shared core.
@@ -251,9 +251,10 @@ impl DirectUnaryClient for TonicCoprocessorClient {
             },
             call,
         )?;
-        Ok(DirectUnaryResponse {
-            encoded_response: response.encoded_response,
-        })
+        Ok(DirectUnaryResponse::from_physical_channel(
+            response.encoded_response,
+            response.physical_channel,
+        ))
     }
 
     fn close_address(&mut self, address: &str) -> Result<(), DirectUnaryClientError> {
@@ -277,8 +278,7 @@ impl DirectUnaryClient for TonicCoprocessorClient {
     }
 
     fn close(&mut self) -> Result<(), DirectUnaryClientError> {
-        self.shutdown();
-        Ok(())
+        self.shutdown()
     }
 }
 
@@ -297,23 +297,25 @@ impl AsyncRequestDispatcher for TonicCoprocessorClient {
         }
         let body = replace_top_level_context(&request.encoded_request, &request.context)?;
         let (entry, mut pending) = BatchCoprocessorPending::entry(body, forwarded_host);
-        if let Err(error) =
-            self.submit_batch_commands_with_call(physical_address, vec![entry], call)
-        {
-            pending.cancel();
-            return Err(error);
+        let receipts =
+            match self.submit_batch_commands_with_call(physical_address, vec![entry], call) {
+                Ok(receipts) => receipts,
+                Err(error) => {
+                    pending.cancel();
+                    return Err(error);
+                }
+            };
+        if !receipts.is_empty() {
+            if let Err(error) = pending.bind_publication(&receipts) {
+                pending.cancel();
+                return Err(error);
+            }
         }
         if call.cancellation().is_cancelled() {
             pending.cancel();
             return Err(DirectUnaryClientError::CallerCancelled);
         }
         Ok(pending)
-    }
-}
-
-impl Drop for TonicCoprocessorClient {
-    fn drop(&mut self) {
-        self.shutdown();
     }
 }
 
