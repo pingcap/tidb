@@ -1,6 +1,6 @@
 schema = "1"
 slice = "planner-configured-multi-relation-catalog-runtime"
-status = "ready"
+status = "partial"
 target = "tidb-planner"
 ring = "plan"
 consumer = "An immutable configured catalog resolves multiple nonpartitioned tables and source-ordered non-null signed BIGINT columns by schema, table, alias, stable table ID, and column ID without inventing dynamic InfoSchema behavior."

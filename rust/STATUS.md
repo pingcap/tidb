@@ -9,10 +9,10 @@ the source or obligation still has explicit unported behavior.
 
 ## Queue
 
-- Active claims: 0
+- Active claims: 2
 - Active slices: 0
-- Declared ready slices: 6
-- Partial slices: 107
+- Declared ready slices: 5
+- Partial slices: 108
 - Covered slices: 2
 - Blocked slices: 1
 
@@ -70,8 +70,8 @@ External module counts are pinned porting obligations and are not included in Ti
 
 | State | Count |
 | --- | --- |
-| UNTRIAGED | 1890 |
-| PARTIAL | 464 |
+| UNTRIAGED | 1887 |
+| PARTIAL | 467 |
 | COVERED | 36 |
 | BLOCKED | 0 |
 
@@ -84,7 +84,7 @@ External module counts are pinned porting obligations and are not included in Ti
 | tidb-server | 249 | 4 | 0 | 0 |
 | tidb-exec | 178 | 63 | 0 | 0 |
 | tidb-txnkv | 123 | 26 | 9 | 0 |
-| tidb-catalog | 126 | 1 | 0 | 0 |
+| tidb-catalog | 123 | 4 | 0 | 0 |
 | tidb-expr | 95 | 27 | 0 | 0 |
 | tidb-ddl | 119 | 2 | 0 | 0 |
 | tidb-session | 44 | 45 | 0 | 0 |
@@ -106,8 +106,8 @@ External module counts are pinned porting obligations and are not included in Ti
 
 | State | Count |
 | --- | --- |
-| UNTRIAGED | 15291 |
-| PARTIAL | 1127 |
+| UNTRIAGED | 15276 |
+| PARTIAL | 1142 |
 | COVERED | 288 |
 | BLOCKED | 14 |
 
@@ -115,7 +115,7 @@ External module counts are pinned porting obligations and are not included in Ti
 
 | Ring | Untriaged | Partial | Covered | Blocked |
 | --- | --- | --- | --- | --- |
-| unassigned | 4801 | 374 | 124 | 0 |
+| unassigned | 4786 | 389 | 124 | 0 |
 | result | 4257 | 475 | 29 | 3 |
 | deferred-external | 3042 | 0 | 0 | 0 |
 | plan | 1748 | 159 | 5 | 0 |

@@ -963,9 +963,9 @@ pkg/infoschema/cache.go	413	tidb-catalog	false	UNTRIAGED	-	-	-
 pkg/infoschema/cluster.go	187	tidb-catalog	false	UNTRIAGED	-	-	-
 pkg/infoschema/context/infoschema.go	165	tidb-catalog	false	UNTRIAGED	-	-	-
 pkg/infoschema/error.go	115	tidb-catalog	false	UNTRIAGED	-	-	-
-pkg/infoschema/infoschema.go	1374	tidb-catalog	false	UNTRIAGED	-	-	-
+pkg/infoschema/infoschema.go	1374	tidb-catalog	false	PARTIAL	planner-configured-multi-relation-catalog-runtime	rust/crates/tidb-planner/src/configured_catalog.rs	ConfiguredCatalog preserves source table order, fully qualified case-insensitive lookup, unqualified ambiguity, and stable physical IDs using the shared ConfiguredTable validator; runtime schema lease, cache refill, temporary and MDL overlays, InfoSchema v2, virtual schemas, and mutation remain open.
 pkg/infoschema/infoschema_v2.go	1792	tidb-catalog	false	UNTRIAGED	-	-	-
-pkg/infoschema/interface.go	48	tidb-catalog	false	UNTRIAGED	-	-	-
+pkg/infoschema/interface.go	48	tidb-catalog	false	PARTIAL	planner-configured-multi-relation-catalog-runtime	rust/crates/tidb-planner/src/configured_catalog.rs	The immutable configured catalog exposes checked case-insensitive table lookup by qualified name and stable ID plus explicit unknown and ambiguous outcomes; dynamic InfoSchema interfaces, schema versions, allocators, policies, bundles, partitions, views, sequences, temporary tables, and DDL visibility remain open.
 pkg/infoschema/internal/sizer.go	149	tidb-catalog	false	UNTRIAGED	-	-	-
 pkg/infoschema/internal/testkit.go	368	tidb-catalog	false	UNTRIAGED	-	-	-
 pkg/infoschema/issyncer/deferfn.go	55	tidb-catalog	false	UNTRIAGED	-	-	-
@@ -983,7 +983,7 @@ pkg/infoschema/perfschema/const.go	581	tidb-catalog	false	UNTRIAGED	-	-	-
 pkg/infoschema/perfschema/init.go	81	tidb-catalog	false	UNTRIAGED	-	-	-
 pkg/infoschema/perfschema/tables.go	429	tidb-catalog	false	UNTRIAGED	-	-	-
 pkg/infoschema/sieve.go	276	tidb-catalog	false	UNTRIAGED	-	-	-
-pkg/infoschema/tables.go	2938	tidb-catalog	false	UNTRIAGED	-	-	-
+pkg/infoschema/tables.go	2938	tidb-catalog	false	PARTIAL	planner-configured-multi-relation-catalog-runtime	rust/crates/tidb-planner/src/configured_catalog.rs	The bounded catalog admits only validated nonpartitioned signed-BIGINT base-table descriptors and deliberately does not claim TiDB table construction, virtual system tables, partition metadata, generated columns, constraints, or statistics behavior.
 pkg/infoschema/validatorapi/interface.go	50	tidb-catalog	false	UNTRIAGED	-	-	-
 pkg/ingestor/doc.go	24	tidb-txnkv	false	UNTRIAGED	-	-	-
 pkg/ingestor/engineapi/engine.go	126	tidb-txnkv	false	UNTRIAGED	-	-	-
