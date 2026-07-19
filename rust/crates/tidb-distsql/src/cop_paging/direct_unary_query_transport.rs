@@ -423,7 +423,7 @@ impl ReplicaReadSeed {
 
 impl<C, L: RegionLoader> DirectUnaryQueryTransport<C, L> {
     /// Constructs an explicitly injected, workerless transport runtime.
-    /// Production PD-backed callers use [`Self::new_production`].
+    /// Production PD-backed callers use [`Self::from_read_authority`].
     pub fn new_injected<S>(
         client: C,
         region_cache: RegionCache<L>,
@@ -564,25 +564,6 @@ where
         let runtime = authority
             .open_session()
             .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle)?;
-        Self::with_shared_runtime_batch_first(runtime, config, timestamp_source)
-    }
-
-    /// Starts the sole store-maintenance and cache-GC worker over the same
-    /// cache authority consumed by foreground reads and lock recovery.
-    pub fn new_production<S>(
-        client: C,
-        region_cache: RegionCache<L>,
-        config: DirectUnaryRuntimeConfig,
-        timestamp_source: S,
-    ) -> Result<Self, DirectUnaryTransportError>
-    where
-        C: tidb_txnkv::lock::LockRecoveryClient + AsyncRequestDispatcher,
-        C::Pending: 'static,
-        S: tidb_txnkv::lock::TimestampSource + 'static,
-    {
-        let runtime = SharedReadRuntime::new_with_maintenance(client, region_cache)
-            .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle)?;
-        debug_assert!(runtime.is_maintained());
         Self::with_shared_runtime_batch_first(runtime, config, timestamp_source)
     }
 }

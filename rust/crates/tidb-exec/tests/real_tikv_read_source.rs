@@ -25,7 +25,7 @@ use tidb_distsql::{
     CopPagingState, QueryDispatch, QueryOperation, QueryTransport, RequestKeyRange, RequestType,
     TimestampSource, TransportRequest,
 };
-use tidb_exec::real_tikv_read::{RealTiKvReadEngine, RealTiKvReadError};
+use tidb_exec::real_tikv_read::{RealTiKvReadError, RealTiKvReadSession};
 use tidb_planner::read_only_scan::{
     ConfiguredColumn, ConfiguredTable, ReadOnlyScanError, UnsupportedReadOnlyFeature,
 };
@@ -217,7 +217,7 @@ fn reordered_two_column_projection_preserves_scan_decode_and_mysql_metadata() {
         Rc::clone(&next_count),
         Rc::clone(&close_count),
     );
-    let mut engine = RealTiKvReadEngine::new(
+    let mut engine = RealTiKvReadSession::new(
         configured_table(),
         transport([scripted_response], Rc::clone(&state)),
         timestamps,
@@ -296,7 +296,7 @@ fn exact_select_builds_one_timestamped_table_request_and_decodes_lazily() {
     let next_count = Rc::new(Cell::new(0));
     let close_count = Rc::new(Cell::new(0));
     let scripted_response = response(&[21], Rc::clone(&next_count), Rc::clone(&close_count));
-    let mut engine = RealTiKvReadEngine::new(
+    let mut engine = RealTiKvReadSession::new(
         configured_table(),
         transport([scripted_response], Rc::clone(&state)),
         timestamps.clone(),
@@ -365,7 +365,7 @@ fn exact_select_builds_one_timestamped_table_request_and_decodes_lazily() {
 fn unsupported_where_and_write_fail_before_tso_or_send() {
     let timestamps = ScriptedTimestampSource::new([99]);
     let state = Rc::new(SharedTransportState::default());
-    let mut engine = RealTiKvReadEngine::new(
+    let mut engine = RealTiKvReadSession::new(
         configured_table(),
         transport([], Rc::clone(&state)),
         timestamps.clone(),
@@ -393,7 +393,7 @@ fn unsupported_where_and_write_fail_before_tso_or_send() {
 fn zero_timestamp_fails_before_send() {
     let timestamps = ScriptedTimestampSource::new([0]);
     let state = Rc::new(SharedTransportState::default());
-    let mut engine = RealTiKvReadEngine::new(
+    let mut engine = RealTiKvReadSession::new(
         configured_table(),
         transport([], Rc::clone(&state)),
         timestamps.clone(),
@@ -419,7 +419,7 @@ fn one_transport_is_retained_across_two_queries() {
     let state = Rc::new(SharedTransportState::default());
     let first_close = Rc::new(Cell::new(0));
     let second_close = Rc::new(Cell::new(0));
-    let mut engine = RealTiKvReadEngine::new(
+    let mut engine = RealTiKvReadSession::new(
         configured_table(),
         transport(
             [

@@ -25,7 +25,7 @@ use tidb_txnkv::region::{
     RegionQueryOptions, RegionVerId, RequestSelection, Store, StoreFailureOutcome, StoreLiveness,
     StoreMetadata, StoreResolveState,
 };
-use tidb_txnkv::SharedReadRuntime;
+use tidb_txnkv::SharedReadAuthority;
 
 struct Loader {
     location: Option<RegionLocation>,
@@ -296,7 +296,7 @@ fn periodic_tombstone_refresh_expires_dependent_regions_without_replacing_store(
 
 #[test]
 fn production_failure_triggers_in_place_maintenance_on_the_shared_cache() {
-    let runtime = SharedReadRuntime::new_with_maintenance(
+    let authority = SharedReadAuthority::start(
         (),
         RegionCache::with_ttl(
             Loader {
@@ -313,6 +313,7 @@ fn production_failure_triggers_in_place_maintenance_on_the_shared_cache() {
         ),
     )
     .unwrap();
+    let runtime = authority.open_session().unwrap();
     let background = runtime.region_cache_handle();
     let outcome = runtime
         .with_region_cache(|cache| {
@@ -348,5 +349,6 @@ fn production_failure_triggers_in_place_maintenance_on_the_shared_cache() {
         })
         .unwrap();
     drop(background);
-    runtime.shutdown().unwrap();
+    drop(runtime);
+    authority.shutdown().unwrap();
 }

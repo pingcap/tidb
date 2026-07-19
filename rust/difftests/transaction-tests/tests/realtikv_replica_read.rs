@@ -35,7 +35,7 @@ use tidb_txnkv::rpc::{
 };
 use tidb_txnkv::{
     BatchCommandEntry, BatchCommandTag, ClientReplicaReadType, EndpointType, OpaqueBatchCommand,
-    PdRegionLoader, SharedReadRuntime, UnaryCallContext,
+    PdRegionLoader, SharedReadAuthority, UnaryCallContext,
 };
 
 const TABLE_START: &[u8] = b"t\x80\0\0\0\0\0\0*_r";
@@ -55,6 +55,7 @@ struct ObservedDispatch {
     stale_read: bool,
 }
 
+#[derive(Clone)]
 struct RecordingClient {
     inner: TonicCoprocessorClient,
     dispatches: Rc<RefCell<Vec<ObservedDispatch>>>,
@@ -250,7 +251,7 @@ fn follower_policy_reaches_a_live_nonleader_voter() {
     );
 
     let dispatches = Rc::new(RefCell::new(Vec::new()));
-    let shared_runtime = SharedReadRuntime::new_with_maintenance(
+    let read_authority = SharedReadAuthority::start(
         RecordingClient {
             inner: TonicCoprocessorClient::new().expect("construct live unary client"),
             dispatches: Rc::clone(&dispatches),
@@ -258,6 +259,7 @@ fn follower_policy_reaches_a_live_nonleader_voter() {
         cache,
     )
     .expect("start production region-cache maintenance");
+    let shared_runtime = read_authority.open_session().expect("open read session");
     let inspection_runtime = shared_runtime.clone();
     let transport = DirectUnaryQueryTransport::with_shared_runtime(
         shared_runtime,
@@ -480,7 +482,7 @@ fn adaptive_forwarding_reuses_proxy_then_recovers_direct() {
     let target_address = direct.target().address.clone();
 
     let dispatches = Rc::new(RefCell::new(Vec::new()));
-    let shared_runtime = SharedReadRuntime::new_with_maintenance(
+    let read_authority = SharedReadAuthority::start(
         RecordingClient {
             inner: TonicCoprocessorClient::new().expect("construct live unary client"),
             dispatches: Rc::clone(&dispatches),
@@ -488,6 +490,7 @@ fn adaptive_forwarding_reuses_proxy_then_recovers_direct() {
         cache,
     )
     .expect("start production region-cache maintenance");
+    let shared_runtime = read_authority.open_session().expect("open read session");
     let inspection_runtime = shared_runtime.clone();
     let transport = DirectUnaryQueryTransport::with_shared_runtime(
         shared_runtime,

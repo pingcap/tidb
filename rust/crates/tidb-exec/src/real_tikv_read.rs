@@ -407,53 +407,7 @@ pub struct RealTiKvReadSession<T = ProductionReadTransport, S = PdTimestampSourc
     last_snapshot_ts: Option<u64>,
 }
 
-/// Compatibility name for callers migrating to the authority/session split.
-///
-/// New server code must own [`RealTiKvReadAuthority`] and call
-/// [`RealTiKvReadAuthority::open_session`] inside a fixed worker.
-pub type RealTiKvReadEngine<T = ProductionReadTransport, S = PdTimestampSource> =
-    RealTiKvReadSession<T, S>;
-
 impl RealTiKvReadSession<ProductionReadTransport, PdTimestampSource> {
-    /// Legacy single-session bootstrap retained only until server integration.
-    ///
-    /// Concurrent server code must not call this per connection: it creates
-    /// PD, cache-maintenance, and tonic owners. Production Campaign 21 wiring
-    /// instead constructs those once below this layer and supplies a
-    /// [`RealTiKvSessionTransportFactory`] to [`RealTiKvReadAuthority`].
-    pub fn connect<I, E>(
-        pd_endpoints: I,
-        timeout: Duration,
-        table: ConfiguredTable,
-    ) -> Result<Self, RealTiKvReadError>
-    where
-        I: IntoIterator<Item = E>,
-        E: Into<String>,
-    {
-        let pd = PdClient::connect_seeds(pd_endpoints, timeout)?;
-        let cluster_id = pd.cluster_id();
-        let timestamp_source = PdTimestampSource::new(pd.clone());
-        let lock_timestamp_source = timestamp_source.clone();
-        let loader = PdRegionLoader::from_client(pd);
-        let cache = RegionCache::new(loader);
-        let client = TonicCoprocessorClient::new()
-            .map_err(|error| RealTiKvReadError::Transport(error.to_string()))?;
-        let config = DirectUnaryRuntimeConfig {
-            default_timeout: timeout,
-            ..DirectUnaryRuntimeConfig::default()
-        };
-        let transport =
-            DirectUnaryQueryTransport::new_production(client, cache, config, lock_timestamp_source)
-                .map_err(|error| RealTiKvReadError::Transport(error.to_string()))?;
-        let mut session = Self::new(table, transport, timestamp_source);
-        session.cluster_id = cluster_id;
-        session.identity = RealTiKvReadSessionIdentity {
-            authority_id: next_read_authority_id(),
-            session_id: 1,
-        };
-        Ok(session)
-    }
-
     /// Returns real region and physical transport observations for the most
     /// recently bound query.
     #[must_use]

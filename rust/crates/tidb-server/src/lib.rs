@@ -23,7 +23,6 @@
 //! and every unsupported command remain explicit boundaries instead of
 //! becoming fake success paths.
 
-mod accept_loop;
 mod auth_exchange;
 mod auth_identity;
 mod auth_plugin_registry;
@@ -55,9 +54,6 @@ use tidb_protocol::{
     ResultSetOptions,
 };
 
-pub use accept_loop::{
-    AcceptListener, AcceptLoop, AcceptLoopError, AcceptLoopExit, ShutdownHandle,
-};
 pub use auth_exchange::{
     decode_client_packet, AuthClientResponse, AuthExchangeError, AuthMoreData, AuthSwitchRequest,
     AUTH_MORE_DATA_PREFIX, AUTH_SWITCH_REQUEST,

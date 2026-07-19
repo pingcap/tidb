@@ -17,11 +17,10 @@
 use std::time::Duration;
 
 use tidb_txnkv::region::{
-    BackgroundRegionCache, BackgroundRegionCacheError, KeyRange, RegionCache, RegionLoadError,
-    RegionLoader, RegionLocation, RegionQuery, RegionQueryLoader, RegionQueryOptions,
-    StoreMetadata,
+    BackgroundRegionCache, KeyRange, RegionCache, RegionLoadError, RegionLoader, RegionLocation,
+    RegionQuery, RegionQueryLoader, RegionQueryOptions, StoreMetadata,
 };
-use tidb_txnkv::SharedReadRuntime;
+use tidb_txnkv::SharedReadAuthority;
 
 struct Loader;
 
@@ -86,12 +85,12 @@ fn trigger_wakes_the_single_driver_and_shutdown_waits_for_close() {
 }
 
 #[test]
-fn shared_runtime_clones_one_maintained_cache_and_cannot_stop_each_other() {
-    let runtime = SharedReadRuntime::new_with_maintenance((), RegionCache::new(Loader)).unwrap();
-    assert!(runtime.is_maintained());
-    let clone = runtime.clone();
-    let background = runtime.region_cache_handle();
-    let runtime_cache = runtime
+fn sessions_share_one_maintained_cache_but_cannot_stop_its_authority() {
+    let authority = SharedReadAuthority::start((), RegionCache::new(Loader)).unwrap();
+    let first = authority.open_session().unwrap();
+    let second = authority.open_session().unwrap();
+    let background = first.region_cache_handle();
+    let runtime_cache = first
         .with_region_cache(|cache| std::ptr::from_mut(cache).addr())
         .unwrap();
     let background_cache = background
@@ -99,10 +98,8 @@ fn shared_runtime_clones_one_maintained_cache_and_cannot_stop_each_other() {
         .unwrap();
     assert_eq!(runtime_cache, background_cache);
 
-    assert!(matches!(
-        clone.shutdown(),
-        Err(BackgroundRegionCacheError::SharedOwners { owners }) if owners >= 2
-    ));
+    drop(first);
+    drop(second);
     assert!(!background.is_closed().unwrap());
     let completed = background.completed_rounds().unwrap();
     assert!(background.trigger_store_check().unwrap());
@@ -115,5 +112,5 @@ fn shared_runtime_clones_one_maintained_cache_and_cannot_stop_each_other() {
     assert!(background.completed_rounds().unwrap() > completed);
 
     drop(background);
-    runtime.shutdown().unwrap();
+    authority.shutdown().unwrap();
 }

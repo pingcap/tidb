@@ -299,7 +299,6 @@ fn pre_cancelled_query_never_reaches_pd_selector_cache_or_client() {
             regions: [location(1, "a", "z")].into_iter().collect(),
         }),
     );
-    assert!(!shared.is_maintained());
     let transport = DirectUnaryQueryTransport::with_locked_response_delegate(
         shared,
         DirectUnaryRuntimeConfig::default(),

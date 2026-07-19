@@ -109,7 +109,6 @@ pub struct SharedReadRuntime<C, L> {
     region_cache: BackgroundRegionCache<L>,
     cluster_id: u64,
     authority_id: u64,
-    maintained: bool,
 }
 
 impl<C, L> Clone for SharedReadRuntime<C, L> {
@@ -119,7 +118,6 @@ impl<C, L> Clone for SharedReadRuntime<C, L> {
             region_cache: self.region_cache.clone(),
             cluster_id: self.cluster_id,
             authority_id: self.authority_id,
-            maintained: self.maintained,
         }
     }
 }
@@ -134,7 +132,6 @@ impl<C, L: RegionLoader> SharedReadRuntime<C, L> {
             region_cache: BackgroundRegionCache::without_worker(region_cache),
             cluster_id,
             authority_id: next_read_authority_id(),
-            maintained: false,
         }
     }
 
@@ -150,7 +147,6 @@ impl<C, L: RegionLoader> SharedReadRuntime<C, L> {
             region_cache,
             cluster_id,
             authority_id,
-            maintained: true,
         })
     }
 
@@ -201,17 +197,6 @@ impl<C, L: RegionLoader> SharedReadRuntime<C, L> {
         self.region_cache.trigger_store_check()
     }
 
-    /// Cancels and joins the sole maintenance worker exactly once.
-    pub fn shutdown(self) -> Result<(), BackgroundRegionCacheError> {
-        self.region_cache.shutdown()
-    }
-
-    /// Whether this runtime owns the production maintenance worker.
-    #[must_use]
-    pub const fn is_maintained(&self) -> bool {
-        self.maintained
-    }
-
     /// Cluster identity owned by the sole region cache.
     #[must_use]
     pub const fn cluster_id(&self) -> u64 {
@@ -222,30 +207,5 @@ impl<C, L: RegionLoader> SharedReadRuntime<C, L> {
     #[must_use]
     pub const fn authority_id(&self) -> u64 {
         self.authority_id
-    }
-}
-
-impl<C, L> SharedReadRuntime<C, L>
-where
-    L: RegionQueryLoader + Send + 'static,
-{
-    /// Creates the production cache authority with store refresh and cache GC.
-    pub fn new_with_maintenance(
-        client: C,
-        region_cache: RegionCache<L>,
-    ) -> Result<Self, BackgroundRegionCacheError> {
-        let cluster_id = region_cache.cluster_id();
-        let region_cache = BackgroundRegionCache::start(
-            region_cache,
-            DEFAULT_MAINTENANCE_INTERVAL,
-            DEFAULT_GC_LIMIT,
-        )?;
-        Ok(Self {
-            client: Rc::new(RefCell::new(client)),
-            region_cache,
-            cluster_id,
-            authority_id: next_read_authority_id(),
-            maintained: true,
-        })
     }
 }
