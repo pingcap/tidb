@@ -370,6 +370,64 @@ class WorkUnitQueueTest(unittest.TestCase):
         result = self.run_tool("check")
         self.assertIn("campaigns\t1", result.stdout)
 
+    def test_planned_campaign_assigns_registration_for_disabled_autotests(self) -> None:
+        slices = self.root / "workstreams/slices"
+        campaigns = self.root / "workstreams/campaigns"
+        crate = self.root / "crates/tidb-exec"
+        slices.mkdir(parents=True)
+        campaigns.mkdir(parents=True)
+        crate.mkdir(parents=True)
+        (crate / "Cargo.toml").write_text(
+            '[package]\nname = "tidb-exec"\nversion = "0.0.0"\n'
+            'autotests = false\n',
+            encoding="utf-8",
+        )
+        for member, source_range, test_range in (
+            ("exec-a", range(5), range(25)),
+            ("exec-b", range(5, 9), range(25, 50)),
+        ):
+            module_sources = ", ".join(
+                f'"client-go::internal/client/client{index}.go"'
+                for index in source_range
+            )
+            module_tests = ", ".join(
+                f'"client-go::internal/client/client_test.go:{20 + index}:TestSend{index}"'
+                for index in test_range
+            )
+            (slices / f"{member}.toml").write_text(
+                f'schema = "1"\nslice = "{member}"\nstatus = "ready"\n'
+                'target = "tidb-exec"\nring = "result"\n'
+                f'consumer = "{member}"\ntest_target = "{member}_source"\n'
+                'go_sources = []\ngo_tests = []\n'
+                f'module_sources = [{module_sources}]\n'
+                f'module_tests = [{module_tests}]\n'
+                f'depends_on = []\nrust_paths = ["rust/{member}.rs"]\n',
+                encoding="utf-8",
+            )
+        (campaigns / "exec-campaign.toml").write_text(
+            'schema = "1"\ncampaign = "exec-campaign"\nstatus = "planned"\n'
+            'slices = ["exec-a", "exec-b"]\n',
+            encoding="utf-8",
+        )
+
+        failure = self.run_tool("check", success=False)
+        self.assertIn("campaign adds unregistered tidb-exec test targets", failure.stderr)
+        self.assertIn(
+            "exactly one member must own rust/crates/tidb-exec/Cargo.toml",
+            failure.stderr,
+        )
+
+        manifest = slices / "exec-b.toml"
+        manifest.write_text(
+            manifest.read_text(encoding="utf-8").replace(
+                'rust_paths = ["rust/exec-b.rs"]',
+                'rust_paths = ["rust/exec-b.rs", "rust/crates/tidb-exec/Cargo.toml"]',
+            ),
+            encoding="utf-8",
+        )
+        result = self.run_tool("check")
+        self.assertIn("campaigns\t1", result.stdout)
+
     def test_partial_slice_claim_must_exactly_match_its_manifest(self) -> None:
         slices = self.root / "workstreams/slices"
         slices.mkdir(parents=True)

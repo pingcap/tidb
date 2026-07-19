@@ -464,6 +464,34 @@ def load_campaigns(
                             f"{seen[value]} and {member}"
                         )
                     seen[value] = member
+        if status != "integrated":
+            unregistered_targets: dict[str, set[str]] = {}
+            for member in members:
+                slice_record = slices[member]
+                target = str(slice_record["target"])
+                cargo_path = root / "crates" / target / "Cargo.toml"
+                if not cargo_path.is_file():
+                    continue
+                with cargo_path.open("rb") as cargo_source:
+                    cargo = tomllib.load(cargo_source)
+                if cargo.get("package", {}).get("autotests", True) is not False:
+                    continue
+                registered = {
+                    str(test["name"])
+                    for test in cargo.get("test", [])
+                    if isinstance(test, dict) and isinstance(test.get("name"), str)
+                }
+                test_target = str(slice_record["test_target"])
+                if test_target not in registered:
+                    unregistered_targets.setdefault(target, set()).add(test_target)
+            for target, test_targets in sorted(unregistered_targets.items()):
+                cargo_rust_path = f"rust/crates/{target}/Cargo.toml"
+                if cargo_rust_path not in seen_rust_paths:
+                    raise ValueError(
+                        f"{path}: campaign adds unregistered {target} test targets "
+                        f"{sorted(test_targets)} while autotests is disabled; exactly one "
+                        f"member must own {cargo_rust_path}"
+                    )
         # The batch floor is an admission rule, not a mutable property of a
         # historical receipt. Later ownership consolidation can move exact
         # anchors out of an integrated member without changing what its gate
