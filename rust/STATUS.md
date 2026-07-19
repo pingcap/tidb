@@ -9,10 +9,10 @@ the source or obligation still has explicit unported behavior.
 
 ## Queue
 
-- Active claims: 2
+- Active claims: 3
 - Active slices: 0
-- Declared ready slices: 5
-- Partial slices: 108
+- Declared ready slices: 4
+- Partial slices: 109
 - Covered slices: 2
 - Blocked slices: 1
 
@@ -106,8 +106,8 @@ External module counts are pinned porting obligations and are not included in Ti
 
 | State | Count |
 | --- | --- |
-| UNTRIAGED | 15276 |
-| PARTIAL | 1142 |
+| UNTRIAGED | 15269 |
+| PARTIAL | 1149 |
 | COVERED | 288 |
 | BLOCKED | 14 |
 
@@ -118,7 +118,7 @@ External module counts are pinned porting obligations and are not included in Ti
 | unassigned | 4786 | 389 | 124 | 0 |
 | result | 4257 | 475 | 29 | 3 |
 | deferred-external | 3042 | 0 | 0 | 0 |
-| plan | 1748 | 159 | 5 | 0 |
+| plan | 1741 | 166 | 5 | 0 |
 | transaction | 1133 | 83 | 54 | 6 |
 | parser | 310 | 36 | 76 | 5 |
 

@@ -1399,7 +1399,7 @@ pkg/planner/core/joinorder/join_order.go	997	tidb-planner	false	UNTRIAGED	-	-	-
 pkg/planner/core/joinorder/ordered_leading.go	383	tidb-planner	false	UNTRIAGED	-	-	-
 pkg/planner/core/joinorder/util.go	519	tidb-planner	false	UNTRIAGED	-	-	-
 pkg/planner/core/logical_initialize.go	15	tidb-planner	false	UNTRIAGED	-	-	-
-pkg/planner/core/logical_plan_builder.go	8060	tidb-planner	false	PARTIAL	planner-read-only-bigint-selection-runtime	rust/crates/tidb-planner/src/read_only_scan.rs	The bounded planner builds one physical Selection above one table scan, retains projection columns first, appends deduplicated predicate-only columns, and publishes stable output offsets; general logical operators, optimizer rules, correlated plans, and property or statistics derivation remain open.
+pkg/planner/core/logical_plan_builder.go	8060	tidb-planner	false	PARTIAL	planner-configured-relation-tree-binding-runtime	rust/crates/tidb-planner/src/configured_relation_tree.rs	The bounded relation tree preserves left/right source identity, projection order, and local predicate ownership for INNER, CROSS, and comma syntax; logical optimization, predicate derivation, outer-join simplification, join reorder, statistics, and physical implementation selection remain open.
 pkg/planner/core/memtable_infoschema_extractor.go	1042	tidb-planner	false	UNTRIAGED	-	-	-
 pkg/planner/core/memtable_predicate_extractor.go	1755	tidb-planner	false	UNTRIAGED	-	-	-
 pkg/planner/core/metrics/metrics.go	118	tidb-planner	false	UNTRIAGED	-	-	-
@@ -1503,7 +1503,7 @@ pkg/planner/core/plan_cacheable_checker.go	722	tidb-planner	false	UNTRIAGED	-	-	
 pkg/planner/core/plan_clone_utils.go	295	tidb-planner	false	UNTRIAGED	-	-	-
 pkg/planner/core/plan_cost_ver1.go	1239	tidb-planner	false	UNTRIAGED	-	-	-
 pkg/planner/core/plan_cost_ver2.go	1397	tidb-planner	false	PARTIAL	planner-tikv-table-read-task-runtime	rust/crates/tidb-planner/src/logical_data_source_task.rs	Existing index scan cost choice is preserved; table/index or multiple-table candidate sets reject until their shared cost tree is ported.
-pkg/planner/core/planbuilder.go	6486	tidb-planner	false	PARTIAL	planner-read-only-bigint-selection-runtime	rust/crates/tidb-planner/src/read_only_scan.rs	The configured single-table SELECT boundary parses and binds signed-BIGINT column-to-integer and integer-to-column comparisons joined by AND and rejects unsupported shapes before runtime admission; general catalogs, joins, subqueries, aggregates, windows, ordering, limits, DML, hints, and the complete PlanBuilder surface remain open.
+pkg/planner/core/planbuilder.go	6486	tidb-planner	false	PARTIAL	planner-configured-relation-tree-binding-runtime	rust/crates/tidb-planner/src/configured_relation_tree.rs	ConfiguredRelationTree binds exactly two configured base tables, alias-visible direct projections, and source-owned signed-BIGINT comparisons before runtime while retaining ON or USING for typed join planning; general PlanBuilder statements, subqueries, derived tables, CTEs, aggregation, outer or semi joins, more relations, and non-BIGINT expressions remain open.
 pkg/planner/core/point_get_plan.go	1468	tidb-planner	false	UNTRIAGED	-	-	-
 pkg/planner/core/preprocess.go	2403	tidb-planner	false	UNTRIAGED	-	-	-
 pkg/planner/core/property_cols_prune.go	37	tidb-planner	false	UNTRIAGED	-	-	-

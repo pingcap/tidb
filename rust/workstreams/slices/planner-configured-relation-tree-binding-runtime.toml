@@ -1,6 +1,6 @@
 schema = "1"
 slice = "planner-configured-relation-tree-binding-runtime"
-status = "ready"
+status = "partial"
 target = "tidb-planner"
 ring = "plan"
 consumer = "The read-only planner binds exactly two configured base relations with distinct visible aliases, direct projections, local signed BIGINT predicates, and INNER, CROSS, or comma relation syntax into two source-identified scan inputs."
