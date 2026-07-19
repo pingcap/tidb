@@ -21,6 +21,7 @@ import (
 	"maps"
 	"math"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -28,7 +29,7 @@ const (
 	// DefaultHTTPClientTimeout bounds embedding provider requests when the caller context is not cancelled.
 	DefaultHTTPClientTimeout = 30 * time.Second
 
-	maxLoggedErrorBodyBytes = 4096
+	maxSanitizedErrorTextBytes = 4096
 )
 
 var (
@@ -68,14 +69,20 @@ func JSONFieldsWithOptions(fields map[string]any, opts map[string]any) map[strin
 	return merged
 }
 
-// SanitizeErrorBodyForLog redacts common credential fields from a provider error response body before logging.
-func SanitizeErrorBodyForLog(body []byte) string {
-	s := string(body)
+// SanitizeErrorText redacts common credential patterns and the provided exact
+// secrets from decoded provider error text before logging or returning it.
+func SanitizeErrorText(text string, secrets ...string) string {
+	s := text
+	for _, secret := range secrets {
+		if secret != "" {
+			s = strings.ReplaceAll(s, secret, "[REDACTED]")
+		}
+	}
 	s = sensitiveJSONFieldPattern.ReplaceAllString(s, `$1[REDACTED]$3`)
 	s = bearerTokenPattern.ReplaceAllString(s, "Bearer [REDACTED]")
 	s = openAIAPIKeyPattern.ReplaceAllString(s, "[REDACTED]")
-	if len(s) > maxLoggedErrorBodyBytes {
-		s = s[:maxLoggedErrorBodyBytes] + "...[truncated]"
+	if len(s) > maxSanitizedErrorTextBytes {
+		s = s[:maxSanitizedErrorTextBytes] + "...[truncated]"
 	}
 	return s
 }

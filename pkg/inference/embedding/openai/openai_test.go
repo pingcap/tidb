@@ -24,7 +24,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/log"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 type capturedHTTPRequest struct {
@@ -199,9 +202,13 @@ func TestOpenAIEmbedder_WithOptions(t *testing.T) {
 }
 
 func TestOpenAIEmbedderBaseURL(t *testing.T) {
-	requestPathCh := make(chan string, 4)
+	type requestURL struct {
+		path     string
+		rawQuery string
+	}
+	requestURLCh := make(chan requestURL, 7)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requestPathCh <- r.URL.Path
+		requestURLCh <- requestURL{path: r.URL.Path, rawQuery: r.URL.RawQuery}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"data":[{"index":0,"embedding":"AACAPw=="}],
@@ -210,16 +217,38 @@ func TestOpenAIEmbedderBaseURL(t *testing.T) {
 	}))
 	defer server.Close()
 
-	for _, suffix := range []string{"", "/", "/embeddings", "/embeddings/"} {
+	testCases := []struct {
+		suffix   string
+		path     string
+		rawQuery string
+	}{
+		{suffix: "", path: "/embeddings"},
+		{suffix: "/", path: "/embeddings"},
+		{suffix: "/embeddings", path: "/embeddings"},
+		{suffix: "/embeddings/", path: "/embeddings"},
+		{suffix: "/v1?api-version=x", path: "/v1/embeddings", rawQuery: "api-version=x"},
+		{suffix: "/v1/embeddings?api-version=x", path: "/v1/embeddings", rawQuery: "api-version=x"},
+		{suffix: "/v1/embeddings/?api-version=x#section", path: "/v1/embeddings", rawQuery: "api-version=x"},
+	}
+	for _, tt := range testCases {
 		embedder := NewOpenAIEmbedder(EmbedderConfig{
 			GetAPIKey:  func() string { return "test-api-key" },
-			GetBaseURL: func() string { return server.URL + suffix },
+			GetBaseURL: func() string { return server.URL + tt.suffix },
 		})
 		embeddings, err := embedder.CreateEmbeddings(context.Background(), "text-embedding-3-small", []string{"test"}, nil)
 		require.NoError(t, err)
-		require.Equal(t, "/embeddings", receiveRequestPath(t, requestPathCh))
+		request := <-requestURLCh
+		require.Equal(t, tt.path, request.path)
+		require.Equal(t, tt.rawQuery, request.rawQuery)
 		require.Equal(t, [][]float32{{1}}, embeddings)
 	}
+
+	embedder := NewOpenAIEmbedder(EmbedderConfig{
+		GetAPIKey:  func() string { return "test-api-key" },
+		GetBaseURL: func() string { return "://invalid" },
+	})
+	_, err := embedder.CreateEmbeddings(context.Background(), "text-embedding-3-small", []string{"test"}, nil)
+	require.ErrorContains(t, err, "invalid OpenAI API base URL")
 }
 
 func TestOpenAIEmbedderHTTPClientTimeout(t *testing.T) {
@@ -369,6 +398,34 @@ func TestOpenAIEmbedder_UnauthorizedAPIKey(t *testing.T) {
 	require.Nil(t, embeddings)
 	require.Error(t, err)
 	require.ErrorContains(t, err, "check API key")
+
+	core, observedLogs := observer.New(zap.ErrorLevel)
+	restore := log.ReplaceGlobals(zap.New(core), &log.ZapProperties{})
+	t.Cleanup(restore)
+
+	providerKey := `dash"secret`
+	badRequestServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"message":"invalid api key: dash\"secret"}}`))
+	}))
+	defer badRequestServer.Close()
+
+	embedder = NewOpenAIEmbedder(EmbedderConfig{
+		GetAPIKey:  func() string { return providerKey },
+		GetBaseURL: func() string { return badRequestServer.URL },
+	})
+	_, err = embedder.CreateEmbeddings(context.Background(), "text-embedding-3-small", texts, nil)
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), providerKey)
+	require.ErrorContains(t, err, "invalid api key: [REDACTED]")
+
+	entries := observedLogs.FilterMessage("OpenAI API request failed").All()
+	require.Len(t, entries, 1)
+	fields := entries[0].ContextMap()
+	require.Equal(t, int64(http.StatusBadRequest), fields["status"])
+	require.Equal(t, "invalid api key: [REDACTED]", fields["message"])
+	require.NotContains(t, fields, "body")
 }
 
 func TestOpenAIEmbedder_InvalidModel(t *testing.T) {

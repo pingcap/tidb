@@ -32,7 +32,8 @@ const (
 	// DefaultBatchWindow is the default time window for batching requests.
 	DefaultBatchWindow = 100 * time.Millisecond
 
-	// DefaultMaxBatchSize is the default maximum number of requests to batch together.
+	// DefaultMaxBatchSize is the default maximum number of texts sent in each
+	// request to an underlying embedding provider.
 	DefaultMaxBatchSize = 16
 )
 
@@ -44,8 +45,8 @@ type Batch struct {
 	batchWindow  time.Duration
 	maxBatchSize int
 
-	mu sync.Mutex                 // protects m
-	m  map[batchKey]*batchedCalls // key -> call
+	mu sync.Mutex                   // protects m
+	m  map[batchKey][]*batchedCalls // key -> batches with the same JSON options digest
 }
 
 var _ base.Embedder = (*Batch)(nil)
@@ -61,6 +62,7 @@ type batchedCalls struct {
 	calls         []*call
 	timer         *time.Timer // For early trigger
 	batchedTextsN int
+	opts          map[string]any
 }
 
 // call represents a single request waiting to be batched.
@@ -84,7 +86,7 @@ func New() *Batch {
 
 // NewWithConfig creates a batch embedder with the given configuration.
 // batchWindow: how long to wait for more requests before processing the batch
-// maxBatchSize: maximum number of requests to batch together
+// maxBatchSize: maximum number of texts in each underlying provider request
 func NewWithConfig(batchWindow time.Duration, maxBatchSize int) *Batch {
 	if batchWindow <= 0 {
 		batchWindow = DefaultBatchWindow
@@ -94,7 +96,7 @@ func NewWithConfig(batchWindow time.Duration, maxBatchSize int) *Batch {
 	}
 	return &Batch{
 		embedders:    make(map[string]base.Embedder),
-		m:            make(map[batchKey]*batchedCalls),
+		m:            make(map[batchKey][]*batchedCalls),
 		batchWindow:  batchWindow,
 		maxBatchSize: maxBatchSize,
 	}
@@ -178,10 +180,54 @@ func newBatchKey(provider, model string, opts map[string]any) (batchKey, error) 
 	}, nil
 }
 
+func (b *Batch) removeBatchLocked(key batchKey, target *batchedCalls) {
+	batches := b.m[key]
+	for i, batch := range batches {
+		if batch != target {
+			continue
+		}
+		last := len(batches) - 1
+		batches[i] = batches[last]
+		batches[last] = nil
+		batches = batches[:last]
+		if len(batches) == 0 {
+			delete(b.m, key)
+		} else {
+			b.m[key] = batches
+		}
+		return
+	}
+}
+
+func resolveBatchResult(ctx context.Context, result *batchResult) ([][]float32, error) {
+	// Once the caller context is canceled, preserve its cause even if a provider
+	// result is also ready. The aggregated provider context cannot preserve each
+	// caller's custom cause.
+	if ctx.Err() != nil {
+		return nil, context.Cause(ctx)
+	}
+	if result.err != nil {
+		return nil, result.err
+	}
+	return result.embeddings, nil
+}
+
+func waitForBatchResult(ctx context.Context, resultCh <-chan *batchResult) ([][]float32, error) {
+	select {
+	case result := <-resultCh:
+		return resolveBatchResult(ctx, result)
+	case <-ctx.Done():
+		return nil, context.Cause(ctx)
+	}
+}
+
 // CreateEmbeddings batches requests with the same model/opts combination within the batch window.
 func (b *Batch) CreateEmbeddings(ctx context.Context, modelWithProvider string, texts []string, opts map[string]any) ([][]float32, error) {
 	if len(texts) == 0 {
 		return [][]float32{}, nil
+	}
+	if ctx.Err() != nil {
+		return nil, context.Cause(ctx)
 	}
 
 	embedderName, actualModel, err := b.parseModelWithProvider(modelWithProvider)
@@ -192,7 +238,7 @@ func (b *Batch) CreateEmbeddings(ctx context.Context, modelWithProvider string, 
 
 	// A batch key includes the provider, actual model, and a fixed-size digest
 	// of the serialized options, so different inputs create different batches
-	// without retaining potentially large option strings in the batch map.
+	// without embedding potentially large serialized options in the map key.
 	key, err := newBatchKey(embedderName, actualModel, opts)
 	if err != nil {
 		return nil, err
@@ -208,19 +254,29 @@ func (b *Batch) CreateEmbeddings(ctx context.Context, modelWithProvider string, 
 		bc := &batchedCalls{
 			calls:         []*call{thisCall},
 			batchedTextsN: len(texts),
+			opts:          opts,
 		}
 		bc.timer = time.AfterFunc(b.batchWindow, func() {
-			b.processBatch(key, bc, embedder, actualModel, opts)
+			b.processBatch(key, bc, embedder, actualModel)
 		})
 		return bc
 	}
 
 	// Add to batch
 	b.mu.Lock()
-	currentBatch, exists := b.m[key]
-	if !exists {
+	var currentBatch *batchedCalls
+	for _, candidate := range b.m[key] {
+		// JSON serialization intentionally provides a stable, fixed-size first-level
+		// key. It is not sufficient for semantic equality because values with
+		// different Go types can have the same JSON representation.
+		if reflect.DeepEqual(candidate.opts, opts) {
+			currentBatch = candidate
+			break
+		}
+	}
+	if currentBatch == nil {
 		currentBatch = createNewBatch()
-		b.m[key] = currentBatch
+		b.m[key] = append(b.m[key], currentBatch)
 	} else {
 		currentBatch.calls = append(currentBatch.calls, thisCall)
 		currentBatch.batchedTextsN += len(texts)
@@ -229,7 +285,7 @@ func (b *Batch) CreateEmbeddings(ctx context.Context, modelWithProvider string, 
 	// Sealing is done by simply dropping the reference to the current batch
 	// so that no one else can modify it any more.
 	if currentBatch.batchedTextsN >= b.maxBatchSize {
-		delete(b.m, key)
+		b.removeBatchLocked(key, currentBatch)
 		// currentBatch is now sealed, let's trigger it immediately without waiting for the timer.
 		// For an AfterFunc timer, Stop returning false means its callback has already started.
 		// Resetting in that case could schedule a second concurrent processBatch call.
@@ -239,29 +295,17 @@ func (b *Batch) CreateEmbeddings(ctx context.Context, modelWithProvider string, 
 	}
 	b.mu.Unlock()
 
-	// Wait result
-	select {
-	case result := <-thisCall.resultCh:
-		if result.err != nil {
-			return nil, result.err
-		}
-		return result.embeddings, nil
-	case <-ctx.Done():
-		return nil, context.Cause(ctx)
-	}
+	return waitForBatchResult(ctx, thisCall.resultCh)
 }
 
 // processBatch processes a batch of requests.
-func (b *Batch) processBatch(key batchKey, thisBatch *batchedCalls, embedder base.Embedder, model string, opts map[string]any) {
+func (b *Batch) processBatch(key batchKey, thisBatch *batchedCalls, embedder base.Embedder, model string) {
 	// Take out the current batch from the map to gain ownership. After this point,
 	// no other goroutine can modify this batch.
 	// Note that the current batch may be already taken out if there are too many requests.
 	{
 		b.mu.Lock()
-		activeBatch, exists := b.m[key]
-		if exists && thisBatch == activeBatch {
-			delete(b.m, key)
-		}
+		b.removeBatchLocked(key, thisBatch)
 		b.mu.Unlock()
 	}
 
@@ -313,33 +357,32 @@ func (b *Batch) processBatch(key batchKey, thisBatch *batchedCalls, embedder bas
 			cancelReq()
 			watcherWG.Wait()
 		}()
-		return embedder.CreateEmbeddings(reqCtx, model, allTexts, opts)
+
+		embeddings := make([][]float32, 0, len(allTexts))
+		for start := 0; start < len(allTexts); start += b.maxBatchSize {
+			end := min(start+b.maxBatchSize, len(allTexts))
+			chunkEmbeddings, err := embedder.CreateEmbeddings(reqCtx, model, allTexts[start:end], thisBatch.opts)
+			if err != nil {
+				return nil, err
+			}
+			if len(chunkEmbeddings) != end-start {
+				if len(chunkEmbeddings) == 0 {
+					return nil, fmt.Errorf("no embeddings returned for model %s", model)
+				}
+				return nil, fmt.Errorf("embedding provider returned %d embeddings for %d texts", len(chunkEmbeddings), end-start)
+			}
+			embeddings = append(embeddings, chunkEmbeddings...)
+		}
+		return embeddings, nil
 	}()
 
 	// Send results back to all requests
 
 	if err != nil {
 		for _, call := range activeCalls {
-			select {
-			case call.resultCh <- &batchResult{err: err}:
-			case <-call.ctx.Done():
-				// Request was cancelled, don't block
-			}
-		}
-		return
-	}
-	if len(embeddings) != len(allTexts) {
-		if len(embeddings) == 0 {
-			err = fmt.Errorf("no embeddings returned for model %s", model)
-		} else {
-			err = fmt.Errorf("embedding provider returned %d embeddings for %d texts", len(embeddings), len(allTexts))
-		}
-		for _, call := range activeCalls {
-			select {
-			case call.resultCh <- &batchResult{err: err}:
-			case <-call.ctx.Done():
-				// Request was cancelled, don't block
-			}
+			// resultCh is buffered and receives exactly once, so delivery cannot
+			// block even if the canceled caller has already returned.
+			call.resultCh <- &batchResult{err: err}
 		}
 		return
 	}
@@ -348,10 +391,6 @@ func (b *Batch) processBatch(key batchKey, thisBatch *batchedCalls, embedder bas
 		result := &batchResult{
 			embeddings: embeddings[startIdx : startIdx+len(call.texts)],
 		}
-		select {
-		case call.resultCh <- result:
-		case <-call.ctx.Done():
-			// Request was cancelled, don't block
-		}
+		call.resultCh <- result
 	}
 }

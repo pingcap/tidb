@@ -85,22 +85,30 @@ func TestJSONFieldsWithOptions(t *testing.T) {
 	require.Equal(t, 512, merged["dimensions"])
 }
 
-func TestSanitizeErrorBodyForLog(t *testing.T) {
-	body := []byte(`{"authorization":"Bearer secret-token","api_key":"plain-key","message":"Bearer another-secret"}`)
-	sanitized := SanitizeErrorBodyForLog(body)
+func TestSanitizeErrorText(t *testing.T) {
+	text := `{"authorization":"Bearer secret-token","api_key":"plain-key","message":"Bearer another-secret"}`
+	sanitized := SanitizeErrorText(text)
 	require.NotContains(t, sanitized, "secret-token")
 	require.NotContains(t, sanitized, "plain-key")
 	require.NotContains(t, sanitized, "another-secret")
 	require.Contains(t, sanitized, "[REDACTED]")
 
 	openAIKey := "sk-proj-super-secret-value"
-	sanitized = SanitizeErrorBodyForLog([]byte(`{"message":"Incorrect API key provided: ` + openAIKey + `"}`))
+	sanitized = SanitizeErrorText(`{"message":"Incorrect API key provided: ` + openAIKey + `"}`)
 	require.NotContains(t, sanitized, openAIKey)
 	require.Contains(t, sanitized, "[REDACTED]")
 
-	longKey := strings.Repeat("s", maxLoggedErrorBodyBytes+128)
-	sanitized = SanitizeErrorBodyForLog([]byte(`{"api_key":"` + longKey + `"}`))
-	require.NotContains(t, sanitized, longKey[:maxLoggedErrorBodyBytes/2])
+	providerKey := "dashscope-secret-value"
+	sanitized = SanitizeErrorText(
+		`{"error":{"message":"invalid api key: `+providerKey+`"}}`,
+		providerKey,
+	)
+	require.NotContains(t, sanitized, providerKey)
+	require.Contains(t, sanitized, "invalid api key: [REDACTED]")
+
+	longKey := strings.Repeat("s", maxSanitizedErrorTextBytes+128)
+	sanitized = SanitizeErrorText(`{"api_key":"` + longKey + `"}`)
+	require.NotContains(t, sanitized, longKey[:maxSanitizedErrorTextBytes/2])
 	require.Contains(t, sanitized, "[REDACTED]")
-	require.LessOrEqual(t, len(sanitized), maxLoggedErrorBodyBytes+len("...[truncated]"))
+	require.LessOrEqual(t, len(sanitized), maxSanitizedErrorTextBytes+len("...[truncated]"))
 }

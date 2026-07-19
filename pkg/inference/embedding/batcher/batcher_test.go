@@ -16,6 +16,7 @@ package batcher
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -193,9 +194,18 @@ func createEmbeddingsAsync(ctx context.Context, batcher *Batch, text string) <-c
 }
 
 func createEmbeddingBatchAsync(ctx context.Context, batcher *Batch, texts []string) <-chan asyncEmbeddingResult {
+	return createEmbeddingBatchWithOptsAsync(ctx, batcher, texts, nil)
+}
+
+func createEmbeddingBatchWithOptsAsync(
+	ctx context.Context,
+	batcher *Batch,
+	texts []string,
+	opts map[string]any,
+) <-chan asyncEmbeddingResult {
 	resultCh := make(chan asyncEmbeddingResult, 1)
 	go func() {
-		embeddings, err := batcher.CreateEmbeddings(ctx, "test/model", texts, nil)
+		embeddings, err := batcher.CreateEmbeddings(ctx, "test/model", texts, opts)
 		resultCh <- asyncEmbeddingResult{embeddings: embeddings, err: err}
 	}()
 	return resultCh
@@ -206,13 +216,49 @@ func waitForPendingCalls(t *testing.T, batcher *Batch, expected int) {
 	require.Eventually(t, func() bool {
 		batcher.mu.Lock()
 		defer batcher.mu.Unlock()
-		for _, batch := range batcher.m {
-			if len(batch.calls) == expected {
-				return true
+		for _, batches := range batcher.m {
+			for _, batch := range batches {
+				if len(batch.calls) == expected {
+					return true
+				}
 			}
 		}
 		return false
 	}, time.Second, time.Millisecond)
+}
+
+func waitForTotalPendingCalls(t *testing.T, batcher *Batch, expected int) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		batcher.mu.Lock()
+		defer batcher.mu.Unlock()
+		count := 0
+		for _, batches := range batcher.m {
+			for _, batch := range batches {
+				count += len(batch.calls)
+			}
+		}
+		return count == expected
+	}, time.Second, time.Millisecond)
+}
+
+type pendingBatch struct {
+	key   batchKey
+	batch *batchedCalls
+}
+
+func takePendingBatches(t *testing.T, batcher *Batch) []pendingBatch {
+	t.Helper()
+	batcher.mu.Lock()
+	defer batcher.mu.Unlock()
+	var pending []pendingBatch
+	for key, batches := range batcher.m {
+		for _, batch := range batches {
+			require.True(t, batch.timer.Stop())
+			pending = append(pending, pendingBatch{key: key, batch: batch})
+		}
+	}
+	return pending
 }
 
 func takePendingBatch(t *testing.T, batcher *Batch) (batchKey, *batchedCalls) {
@@ -220,7 +266,9 @@ func takePendingBatch(t *testing.T, batcher *Batch) (batchKey, *batchedCalls) {
 	batcher.mu.Lock()
 	defer batcher.mu.Unlock()
 	require.Len(t, batcher.m, 1)
-	for key, batch := range batcher.m {
+	for key, batches := range batcher.m {
+		require.Len(t, batches, 1)
+		batch := batches[0]
 		require.True(t, batch.timer.Stop())
 		return key, batch
 	}
@@ -412,7 +460,7 @@ func TestBatchCancellationAcrossCallers(t *testing.T) {
 		require.ErrorIs(t, (<-secondResult).err, context.Canceled)
 
 		key, pendingBatch := takePendingBatch(t, batcher)
-		batcher.processBatch(key, pendingBatch, embedder, "model", nil)
+		batcher.processBatch(key, pendingBatch, embedder, "model")
 		require.Equal(t, int64(0), embedder.getCallCount())
 	})
 
@@ -433,7 +481,7 @@ func TestBatchCancellationAcrossCallers(t *testing.T) {
 
 		ctx.panicOnDone.Store(true)
 		key, pendingBatch := takePendingBatch(t, batcher)
-		batcher.processBatch(key, pendingBatch, embedder, "model", nil)
+		batcher.processBatch(key, pendingBatch, embedder, "model")
 
 		result := <-resultCh
 		require.ErrorIs(t, result.err, context.Canceled)
@@ -549,6 +597,46 @@ func TestBatch_DifferentOptionsNotBatched(t *testing.T) {
 
 	// Should have made 2 API calls since options are different
 	require.Equal(t, int64(2), mockEmb.getCallCount())
+
+	// JSON-equivalent values with different Go types must not be merged. The
+	// provider receives the original options, so merging them would make behavior
+	// depend on which goroutine created the batch first.
+	intOpts := map[string]any{"plus": int(1)}
+	floatOpts := map[string]any{"plus": float64(1)}
+	intKey, err := newBatchKey("test", "model", intOpts)
+	require.NoError(t, err)
+	floatKey, err := newBatchKey("test", "model", floatOpts)
+	require.NoError(t, err)
+	require.Equal(t, intKey, floatKey)
+
+	typedMockEmb := newMockEmbedder()
+	typedBatcher := NewWithConfig(time.Hour, 10)
+	typedBatcher.Register("test", typedMockEmb)
+	intResult := createEmbeddingBatchWithOptsAsync(context.Background(), typedBatcher, []string{"int"}, intOpts)
+	floatResult := createEmbeddingBatchWithOptsAsync(context.Background(), typedBatcher, []string{"float"}, floatOpts)
+	waitForTotalPendingCalls(t, typedBatcher, 2)
+	pending := takePendingBatches(t, typedBatcher)
+	require.Len(t, pending, 2)
+	for _, item := range pending {
+		typedBatcher.processBatch(item.key, item.batch, typedMockEmb, "model")
+	}
+	require.NoError(t, (<-intResult).err)
+	require.NoError(t, (<-floatResult).err)
+
+	calls := typedMockEmb.getCalls()
+	require.Len(t, calls, 2)
+	seenInt := false
+	seenFloat := false
+	for _, call := range calls {
+		switch call.opts["plus"].(type) {
+		case int:
+			seenInt = true
+		case float64:
+			seenFloat = true
+		}
+	}
+	require.True(t, seenInt)
+	require.True(t, seenFloat)
 }
 
 func TestBatch_SameOptionsAreBatched(t *testing.T) {
@@ -661,16 +749,25 @@ func TestBatch_EmptyTexts(t *testing.T) {
 func TestBatch_ContextCancellation1(t *testing.T) {
 	mockEmb := newMockEmbedder()
 
-	batcher := New()
+	batcher := NewWithConfig(time.Hour, DefaultMaxBatchSize)
 	batcher.Register("test", mockEmb)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	cancel() // make sure ctx is cancelled before making the request
+	customCause := errors.New("custom cancellation cause")
+	ctx, cancel := context.WithCancelCause(context.Background())
+	cancel(customCause) // make sure ctx is cancelled before making the request
 
 	_, err := batcher.CreateEmbeddings(ctx, "test/model1", []string{"hello"}, nil)
 
-	require.Error(t, err)
-	require.Equal(t, context.Canceled, err)
+	require.ErrorIs(t, err, customCause)
+	require.Equal(t, int64(0), mockEmb.getCallCount())
+	batcher.mu.Lock()
+	require.Empty(t, batcher.m)
+	batcher.mu.Unlock()
+
+	// Directly resolve a ready provider result to deterministically verify that
+	// its generic context error cannot replace the caller's custom cause.
+	_, err = resolveBatchResult(ctx, &batchResult{err: context.Canceled})
+	require.ErrorIs(t, err, customCause)
 }
 
 func TestBatch_ContextCancellation2(t *testing.T) {
@@ -769,28 +866,46 @@ func TestBatch_MaxBatchSize_ExactLimit(t *testing.T) {
 	require.Equal(t, texts, calls[0].texts)
 }
 
-func TestBatch_MaxBatchSize_ExceedsInSingleRequest(t *testing.T) {
-	mockEmb := newMockEmbedder()
-	batcher := NewWithConfig(time.Hour, 3)
-	batcher.Register("test", mockEmb)
+func TestBatch_MaxBatchSize_ChunksProviderRequests(t *testing.T) {
+	t.Run("single caller exceeds the limit", func(t *testing.T) {
+		mockEmb := newMockEmbedder()
+		batcher := NewWithConfig(time.Hour, 3)
+		batcher.Register("test", mockEmb)
 
-	// Create a request with more texts than maxBatchSize
-	texts := []string{"text1", "text2", "text3", "text4", "text5"} // 5 texts > maxBatchSize(3)
+		texts := []string{"text1", "text2", "text3", "text4", "text5"}
+		result := <-createEmbeddingBatchAsync(context.Background(), batcher, texts)
 
-	resultCh := createEmbeddingBatchAsync(context.Background(), batcher, texts)
-	select {
-	case <-mockEmb.started:
-	case <-time.After(time.Second):
-		require.FailNow(t, "provider request did not start after the batch exceeded its limit")
-	}
-	result := <-resultCh
+		require.NoError(t, result.err)
+		require.Len(t, result.embeddings, 5)
+		require.Equal(t, int64(2), mockEmb.getCallCount())
 
-	require.NoError(t, result.err)
-	require.Len(t, result.embeddings, 5)
-	// Should still make only 1 call because it's a single request
-	require.Equal(t, int64(1), mockEmb.getCallCount())
+		calls := mockEmb.getCalls()
+		require.Len(t, calls, 2)
+		require.Equal(t, texts[:3], calls[0].texts)
+		require.Equal(t, texts[3:], calls[1].texts)
+	})
 
-	calls := mockEmb.getCalls()
-	require.Len(t, calls, 1)
-	require.Equal(t, texts, calls[0].texts)
+	t.Run("batched callers cross a chunk boundary", func(t *testing.T) {
+		mockEmb := newMockEmbedder()
+		batcher := NewWithConfig(time.Hour, 3)
+		batcher.Register("test", mockEmb)
+
+		firstTexts := []string{"first1", "first2"}
+		secondTexts := []string{"second1", "second2"}
+		firstResult := createEmbeddingBatchAsync(context.Background(), batcher, firstTexts)
+		waitForPendingCalls(t, batcher, 1)
+		secondResult := createEmbeddingBatchAsync(context.Background(), batcher, secondTexts)
+
+		first := <-firstResult
+		second := <-secondResult
+		require.NoError(t, first.err)
+		require.NoError(t, second.err)
+		require.Len(t, first.embeddings, len(firstTexts))
+		require.Len(t, second.embeddings, len(secondTexts))
+
+		calls := mockEmb.getCalls()
+		require.Len(t, calls, 2)
+		require.Equal(t, []string{"first1", "first2", "second1"}, calls[0].texts)
+		require.Equal(t, []string{"second2"}, calls[1].texts)
+	})
 }
