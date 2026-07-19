@@ -116,13 +116,24 @@ fn table_scan_preserves_pre_resolved_column_and_common_handle_metadata() {
         pk_handle: true,
         array: false,
     };
-    let mut spec = TiKvTableScanSpec::new(42, vec![column]);
+    let stored_column = ScanColumnInfo {
+        column_id: 8,
+        tp: 8,
+        collation: 63,
+        column_len: 20,
+        decimal: 0,
+        flag: 1,
+        pk_handle: false,
+        ..ScanColumnInfo::default()
+    };
+    let mut spec = TiKvTableScanSpec::new(42, vec![column, stored_column]);
     spec.desc = true;
     spec.keep_order = true;
     spec.primary_column_ids = vec![7, 9];
     spec.primary_prefix_column_ids = vec![7];
     let table = PhysicalTableScanPlan::init(2, 0, spec);
     let request = construct_dag_req(&default_context(), &[TiKvScanPlan::Table(&table)]).unwrap();
+    assert_eq!(request.output_offsets, [0, 1]);
     let scan = request.executors[0].tbl_scan.as_ref().unwrap();
 
     assert_eq!(scan.desc, Some(true));
@@ -140,6 +151,10 @@ fn table_scan_preserves_pre_resolved_column_and_common_handle_metadata() {
     assert_eq!(column.default_val.as_deref(), Some([1, 42].as_slice()));
     assert_eq!(column.pk_handle, Some(true));
     assert_eq!(column.array, Some(false));
+    let stored_column = &scan.columns[1];
+    assert_eq!(stored_column.column_id, Some(8));
+    assert_eq!(stored_column.flag, Some(1));
+    assert_eq!(stored_column.pk_handle, Some(false));
     assert_eq!(
         DagRequest::decode(request.encode_to_vec().as_slice()).unwrap(),
         request

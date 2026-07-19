@@ -36,7 +36,9 @@ use tidb_distsql::{
     RequestEnvelope, SelectInput, TimestampSource, WarningCollector,
 };
 use tidb_pd_client::{PdClient, PdClientError};
-use tidb_planner::read_only_scan::{ConfiguredTable, ReadOnlyScanError, ReadOnlyScanPlan};
+use tidb_planner::read_only_scan::{
+    ConfiguredColumnKind, ConfiguredTable, ReadOnlyScanError, ReadOnlyScanPlan,
+};
 use tidb_protocol::{ColumnInfo, BINARY_DEFAULT_COLLATION_ID};
 use tidb_txnkv::{rpc::TonicCoprocessorClient, PdRegionLoader};
 
@@ -297,17 +299,20 @@ where
             .map(|_| FieldType::new(FieldTypeCode::LongLong))
             .collect::<Vec<_>>();
         let protocol_columns = plan
-            .projected_column_names()
+            .projected_columns()
             .iter()
-            .map(|name| ColumnInfo {
+            .map(|column| ColumnInfo {
                 schema: self.table.schema().to_owned(),
                 table: self.table.table().to_owned(),
                 org_table: self.table.table().to_owned(),
-                name: name.clone(),
-                org_name: name.clone(),
+                name: column.output_name().to_owned(),
+                org_name: column.source_name().to_owned(),
                 column_length: 20,
                 charset: BINARY_DEFAULT_COLLATION_ID,
-                flag: 0x0003,
+                flag: match column.kind() {
+                    ConfiguredColumnKind::ClusteredPrimaryKey => 0x0003,
+                    ConfiguredColumnKind::StoredNotNull => 0x0001,
+                },
                 decimal: 0,
                 type_code: FieldTypeCode::LongLong.mysql_type(),
                 default_value: None,

@@ -19,7 +19,7 @@ use std::collections::VecDeque;
 use std::rc::Rc;
 
 use prost::Message;
-use tidb_datatype::Datum;
+use tidb_datatype::{Datum, FieldTypeCode};
 use tidb_distsql::query_runtime::{QueryResponse, QueryResponseError, QueryResultSubset};
 use tidb_distsql::{
     CopPagingState, QueryDispatch, QueryOperation, QueryTransport, RequestKeyRange, RequestType,
@@ -27,7 +27,7 @@ use tidb_distsql::{
 };
 use tidb_exec::real_tikv_read::{RealTiKvReadEngine, RealTiKvReadError};
 use tidb_planner::read_only_scan::{
-    ConfiguredTable, ReadOnlyScanError, UnsupportedReadOnlyFeature,
+    ConfiguredColumn, ConfiguredTable, ReadOnlyScanError, UnsupportedReadOnlyFeature,
 };
 use tidb_proto::tipb::{Chunk, DagRequest, SelectResponse};
 
@@ -141,14 +141,36 @@ impl QueryTransport for ScriptedTransport {
 }
 
 fn configured_table() -> ConfiguredTable {
-    ConfiguredTable::new("test", "accounts", 42, "id", 7)
+    ConfiguredTable::new(
+        "test",
+        "accounts",
+        42,
+        vec![
+            ConfiguredColumn::clustered_primary_key("id", 7),
+            ConfiguredColumn::stored_not_null("balance", 8),
+        ],
+    )
 }
 
-fn encoded_rows(values: &[i64]) -> Vec<u8> {
-    let mut rows_data = Vec::with_capacity(values.len() * 2);
-    for value in values {
-        assert!((0..64).contains(value));
-        rows_data.extend_from_slice(&[8, u8::try_from(value * 2).unwrap()]);
+fn encode_signed_varint(output: &mut Vec<u8>, value: i64) {
+    let mut unsigned = (value as u64) << 1;
+    if value < 0 {
+        unsigned = !unsigned;
+    }
+    while unsigned >= 0x80 {
+        output.push((unsigned as u8) | 0x80);
+        unsigned >>= 7;
+    }
+    output.push(unsigned as u8);
+}
+
+fn encoded_rows(rows: &[&[i64]]) -> Vec<u8> {
+    let mut rows_data = Vec::new();
+    for row in rows {
+        for value in *row {
+            rows_data.push(8);
+            encode_signed_varint(&mut rows_data, *value);
+        }
     }
     SelectResponse {
         chunks: vec![Chunk {
@@ -165,14 +187,96 @@ fn response(
     next_count: Rc<Cell<usize>>,
     close_count: Rc<Cell<usize>>,
 ) -> ScriptedResponse {
+    let rows = values.iter().map(std::slice::from_ref).collect::<Vec<_>>();
+    response_rows(&rows, next_count, close_count)
+}
+
+fn response_rows(
+    rows: &[&[i64]],
+    next_count: Rc<Cell<usize>>,
+    close_count: Rc<Cell<usize>>,
+) -> ScriptedResponse {
     ScriptedResponse {
         subsets: VecDeque::from([QueryResultSubset {
-            data: encoded_rows(values),
+            data: encoded_rows(rows),
             runtime: None,
         }]),
         next_count,
         close_count,
     }
+}
+
+#[test]
+fn reordered_two_column_projection_preserves_scan_decode_and_mysql_metadata() {
+    let timestamps = ScriptedTimestampSource::new([5_252]);
+    let state = Rc::new(SharedTransportState::default());
+    let next_count = Rc::new(Cell::new(0));
+    let close_count = Rc::new(Cell::new(0));
+    let scripted_response = response_rows(
+        &[&[-7, 21]],
+        Rc::clone(&next_count),
+        Rc::clone(&close_count),
+    );
+    let mut engine = RealTiKvReadEngine::new(
+        configured_table(),
+        transport([scripted_response], Rc::clone(&state)),
+        timestamps,
+    );
+
+    let query = engine
+        .execute("SELECT balance AS amount, id FROM test.accounts")
+        .expect("direct stored-column projection must reach the transport");
+    let requests = state.requests.borrow();
+    let [request] = requests.as_slice() else {
+        panic!("exactly one two-column request must be sent");
+    };
+    let dag = DagRequest::decode(request.data.as_slice()).expect("request data is a TiDB DAG");
+    assert_eq!(dag.output_offsets, [0, 1]);
+    let scan = dag.executors[0]
+        .tbl_scan
+        .as_ref()
+        .expect("projection lowers to a table scan");
+    assert_eq!(
+        scan.columns
+            .iter()
+            .map(|column| column.column_id)
+            .collect::<Vec<_>>(),
+        [Some(8), Some(7)]
+    );
+    assert_eq!(
+        scan.columns
+            .iter()
+            .map(|column| column.pk_handle)
+            .collect::<Vec<_>>(),
+        [Some(false), Some(true)]
+    );
+    assert_eq!(
+        scan.columns
+            .iter()
+            .map(|column| column.flag)
+            .collect::<Vec<_>>(),
+        [Some(0x0001), Some(0x0003)]
+    );
+    drop(requests);
+
+    let mut record_set = query.into_record_set();
+    let columns = record_set.columns();
+    assert_eq!(columns.len(), 2);
+    assert_eq!(columns[0].name, "amount");
+    assert_eq!(columns[0].org_name, "balance");
+    assert_eq!(columns[0].flag, 0x0001);
+    assert_eq!(columns[0].type_code, FieldTypeCode::LongLong.mysql_type());
+    assert_eq!(columns[1].name, "id");
+    assert_eq!(columns[1].org_name, "id");
+    assert_eq!(columns[1].flag, 0x0003);
+    assert_eq!(columns[1].type_code, FieldTypeCode::LongLong.mysql_type());
+    assert_eq!(
+        record_set.next_batch(1).unwrap(),
+        vec![vec![Datum::Int(-7), Datum::Int(21)]]
+    );
+    assert_eq!(next_count.get(), 1);
+    record_set.close().unwrap();
+    assert_eq!(close_count.get(), 1);
 }
 
 fn transport(
