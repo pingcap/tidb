@@ -174,6 +174,50 @@ impl std::fmt::Display for DirectUnaryConnectionError {
 
 impl std::error::Error for DirectUnaryConnectionError {}
 
+/// Exact failure observed while explicitly stopping the sole transport owner.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TransportShutdownError {
+    /// The worker command receiver was already gone before close publication.
+    CommandChannelClosed,
+    /// The worker exited after accepting close but before acknowledging it.
+    CloseAcknowledgementLost,
+    /// Joining the transport worker observed a panic payload.
+    WorkerPanicked {
+        /// Rendered string panic payload, or a stable non-string fallback.
+        message: String,
+    },
+    /// Ordered failures observed while still attempting every shutdown step.
+    Multiple(Vec<TransportShutdownError>),
+}
+
+impl std::fmt::Display for TransportShutdownError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::CommandChannelClosed => {
+                formatter.write_str("TiKV transport command channel closed before shutdown")
+            }
+            Self::CloseAcknowledgementLost => {
+                formatter.write_str("TiKV transport worker exited without acknowledging close")
+            }
+            Self::WorkerPanicked { message } => {
+                write!(
+                    formatter,
+                    "TiKV transport worker panicked during shutdown: {message}"
+                )
+            }
+            Self::Multiple(errors) => {
+                formatter.write_str("multiple TiKV transport shutdown failures")?;
+                for error in errors {
+                    write!(formatter, "; {error}")?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+impl std::error::Error for TransportShutdownError {}
+
 /// Typed failures at the KV-owned direct unary boundary.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DirectUnaryClientError {
@@ -206,6 +250,8 @@ pub enum DirectUnaryClientError {
     },
     /// The local Tokio runtime could not be constructed.
     Runtime(String),
+    /// Explicit owner shutdown could not prove worker termination cleanly.
+    Shutdown(TransportShutdownError),
 }
 
 impl DirectUnaryClientError {
@@ -221,6 +267,7 @@ impl DirectUnaryClientError {
             Self::Connection(_) => "connection",
             Self::Timeout { .. } => "timeout",
             Self::Runtime(_) => "runtime",
+            Self::Shutdown(_) => "shutdown",
         }
     }
 
@@ -302,6 +349,7 @@ impl std::fmt::Display for DirectUnaryClientError {
             Self::Runtime(message) => {
                 write!(formatter, "cannot create TiKV RPC runtime: {message}")
             }
+            Self::Shutdown(error) => error.fmt(formatter),
         }
     }
 }
@@ -313,6 +361,7 @@ impl std::error::Error for DirectUnaryClientError {
             | Self::Timeout {
                 connection: error, ..
             } => Some(error),
+            Self::Shutdown(error) => Some(error),
             _ => None,
         }
     }

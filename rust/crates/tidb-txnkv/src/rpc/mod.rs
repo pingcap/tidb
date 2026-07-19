@@ -22,7 +22,7 @@ pub use async_completion::{
 };
 pub use error::{
     DirectUnaryClientError, DirectUnaryConnectionError, DirectUnaryGrpcCode,
-    DirectUnaryTransportClass,
+    DirectUnaryTransportClass, TransportShutdownError,
 };
 pub use liveness::DEFAULT_STORE_LIVENESS_TIMEOUT;
 pub use tonic_coprocessor::TonicCoprocessorClient;

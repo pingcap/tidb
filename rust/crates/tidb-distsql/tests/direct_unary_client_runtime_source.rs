@@ -78,6 +78,7 @@ impl RegionRetryWaiter for RecordingRetryControl {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ObservedCall {
     address: String,
+    forwarded_host: Option<String>,
     timeout: Duration,
     region_id: u64,
     data: Vec<u8>,
@@ -193,38 +194,7 @@ impl DirectUnaryClient for ScriptedClient {
         request: &DirectUnaryRequest,
         timeout: Duration,
     ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
-        self.events
-            .borrow_mut()
-            .push(ClientEvent::Send(address.to_owned()));
-        let wire = CoprocessorRequest::decode(request.encoded_request.as_slice()).unwrap();
-        assert!(wire.context.is_none());
-        let epoch = request.context.region_epoch.as_ref().unwrap();
-        let peer = request.context.peer.as_ref().unwrap();
-        self.calls.borrow_mut().push(ObservedCall {
-            address: address.to_owned(),
-            timeout,
-            region_id: request.context.region_id,
-            data: wire.data,
-            paging_size: wire.paging_size,
-            predicted_read_bytes: request.predicted_read_bytes,
-            cluster_id: request.context.cluster_id,
-            conf_ver: epoch.conf_ver,
-            version: epoch.version,
-            peer_id: peer.id,
-            store_id: peer.store_id,
-            peer_role: peer.role,
-            is_witness: peer.is_witness,
-            task_id: request.context.task_id,
-            request_source: request.context.request_source.clone(),
-            not_fill_cache: request.context.not_fill_cache,
-            replica_read_type: request.replica_read_type,
-            replica_read: request.context.replica_read,
-            stale_read: request.context.stale_read,
-        });
-        self.responses
-            .pop_front()
-            .expect("one scripted response per client call")
-            .map(|encoded_response| DirectUnaryResponse::new(encoded_response, address, 1))
+        self.send_request_recorded(address, None, request, timeout)
     }
 
     fn send_request_with_context(
@@ -236,7 +206,7 @@ impl DirectUnaryClient for ScriptedClient {
         if call.cancellation().is_cancelled() {
             return Err(DirectUnaryClientError::CallerCancelled);
         }
-        let result = self.send_request(address, request, call.timeout());
+        let result = self.send_request_recorded(address, None, request, call.timeout());
         if call.cancellation().is_cancelled() {
             Err(DirectUnaryClientError::CallerCancelled)
         } else {
@@ -247,11 +217,19 @@ impl DirectUnaryClient for ScriptedClient {
     fn send_request_with_route(
         &mut self,
         address: &str,
-        _forwarded_host: Option<&str>,
+        forwarded_host: Option<&str>,
         request: &DirectUnaryRequest,
         call: &UnaryCallContext,
     ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
-        self.send_request_with_context(address, request, call)
+        if call.cancellation().is_cancelled() {
+            return Err(DirectUnaryClientError::CallerCancelled);
+        }
+        let result = self.send_request_recorded(address, forwarded_host, request, call.timeout());
+        if call.cancellation().is_cancelled() {
+            Err(DirectUnaryClientError::CallerCancelled)
+        } else {
+            result
+        }
     }
 
     fn close_address(&mut self, address: &str) -> Result<(), DirectUnaryClientError> {
@@ -290,6 +268,50 @@ impl DirectUnaryClient for ScriptedClient {
 
     fn close(&mut self) -> Result<(), DirectUnaryClientError> {
         Ok(())
+    }
+}
+
+impl ScriptedClient {
+    fn send_request_recorded(
+        &mut self,
+        address: &str,
+        forwarded_host: Option<&str>,
+        request: &DirectUnaryRequest,
+        timeout: Duration,
+    ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
+        self.events
+            .borrow_mut()
+            .push(ClientEvent::Send(address.to_owned()));
+        let wire = CoprocessorRequest::decode(request.encoded_request.as_slice()).unwrap();
+        assert!(wire.context.is_none());
+        let epoch = request.context.region_epoch.as_ref().unwrap();
+        let peer = request.context.peer.as_ref().unwrap();
+        self.calls.borrow_mut().push(ObservedCall {
+            address: address.to_owned(),
+            forwarded_host: forwarded_host.map(str::to_owned),
+            timeout,
+            region_id: request.context.region_id,
+            data: wire.data,
+            paging_size: wire.paging_size,
+            predicted_read_bytes: request.predicted_read_bytes,
+            cluster_id: request.context.cluster_id,
+            conf_ver: epoch.conf_ver,
+            version: epoch.version,
+            peer_id: peer.id,
+            store_id: peer.store_id,
+            peer_role: peer.role,
+            is_witness: peer.is_witness,
+            task_id: request.context.task_id,
+            request_source: request.context.request_source.clone(),
+            not_fill_cache: request.context.not_fill_cache,
+            replica_read_type: request.replica_read_type,
+            replica_read: request.context.replica_read,
+            stale_read: request.context.stale_read,
+        });
+        self.responses
+            .pop_front()
+            .expect("one scripted response per client call")
+            .map(|encoded_response| DirectUnaryResponse::new(encoded_response, address, 1))
     }
 }
 
@@ -756,6 +778,7 @@ fn client_go_shaped_dispatch_is_lazy_address_directed_and_logically_ordered() {
         [
             ObservedCall {
                 address: "tikv-1:20160".to_owned(),
+                forwarded_host: None,
                 timeout: Duration::from_millis(777),
                 region_id: 1,
                 data: b"dag-read".to_vec(),
@@ -777,6 +800,7 @@ fn client_go_shaped_dispatch_is_lazy_address_directed_and_logically_ordered() {
             },
             ObservedCall {
                 address: "tikv-2:20160".to_owned(),
+                forwarded_host: None,
                 timeout: Duration::from_millis(777),
                 region_id: 2,
                 data: b"dag-read".to_vec(),
@@ -1834,6 +1858,7 @@ struct DelayedStoreMismatchState {
 struct DelayedStoreMismatchClient {
     state: Rc<RefCell<DelayedStoreMismatchState>>,
     replace_before_first_response: bool,
+    cancel_after_first_response: bool,
 }
 
 impl DirectUnaryClient for DelayedStoreMismatchClient {
@@ -1884,7 +1909,11 @@ impl DirectUnaryClient for DelayedStoreMismatchClient {
         request: &DirectUnaryRequest,
         call: &UnaryCallContext,
     ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
-        self.send_request(address, request, call.timeout())
+        let result = self.send_request(address, request, call.timeout());
+        if self.cancel_after_first_response && self.state.borrow().sent_generations.len() == 1 {
+            call.cancellation().cancel();
+        }
+        result
     }
 
     fn close_address(&mut self, address: &str) -> Result<(), DirectUnaryClientError> {
@@ -1953,6 +1982,139 @@ impl tidb_txnkv::lock::LockRecoveryClient for DelayedStoreMismatchClient {
     }
 }
 
+#[derive(Debug, Default)]
+struct ForwardedStaleMismatchState {
+    calls: Vec<(String, Option<String>)>,
+    close_requests: Vec<(String, u64)>,
+    active_proxy_version: u64,
+}
+
+struct ForwardedStaleMismatchClient {
+    state: Rc<RefCell<ForwardedStaleMismatchState>>,
+}
+
+impl DirectUnaryClient for ForwardedStaleMismatchClient {
+    fn send_request(
+        &mut self,
+        address: &str,
+        request: &DirectUnaryRequest,
+        timeout: Duration,
+    ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
+        self.send_request_with_route(
+            address,
+            None,
+            request,
+            &UnaryCallContext::with_timeout(timeout),
+        )
+    }
+
+    fn send_request_with_context(
+        &mut self,
+        address: &str,
+        request: &DirectUnaryRequest,
+        call: &UnaryCallContext,
+    ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
+        self.send_request_with_route(address, None, request, call)
+    }
+
+    fn send_request_with_route(
+        &mut self,
+        address: &str,
+        forwarded_host: Option<&str>,
+        _request: &DirectUnaryRequest,
+        _call: &UnaryCallContext,
+    ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
+        let mut state = self.state.borrow_mut();
+        state
+            .calls
+            .push((address.to_owned(), forwarded_host.map(str::to_owned)));
+        match state.calls.len() {
+            1 => Err(DirectUnaryClientError::Connection(
+                DirectUnaryConnectionError::connection(
+                    "logical-target:20160",
+                    1,
+                    "force forwarding".to_owned(),
+                ),
+            )),
+            2 => {
+                assert_eq!(address, "shared-proxy:20160");
+                assert_eq!(forwarded_host, Some("logical-target:20160"));
+                state.active_proxy_version = 2;
+                Ok(DirectUnaryResponse::new(store_not_match(1), address, 1))
+            }
+            3 => {
+                assert_eq!(address, "shared-proxy:20160");
+                assert_eq!(forwarded_host, Some("logical-target:20160"));
+                Ok(DirectUnaryResponse::new(
+                    response(b"stale-forwarded-route-reloaded"),
+                    address,
+                    state.active_proxy_version,
+                ))
+            }
+            calls => panic!("unexpected forwarded stale call {calls}"),
+        }
+    }
+
+    fn close_address(&mut self, address: &str) -> Result<(), DirectUnaryClientError> {
+        self.state
+            .borrow_mut()
+            .close_requests
+            .push((address.to_owned(), 0));
+        Ok(())
+    }
+
+    fn close_address_version(
+        &mut self,
+        address: &str,
+        version: u64,
+    ) -> Result<(), DirectUnaryClientError> {
+        self.state
+            .borrow_mut()
+            .close_requests
+            .push((address.to_owned(), version));
+        Ok(())
+    }
+
+    fn liveness(
+        &self,
+        address: &str,
+        _timeout: Duration,
+    ) -> Result<StoreLiveness, DirectUnaryClientError> {
+        assert_eq!(address, "logical-target:20160");
+        Ok(StoreLiveness::Unreachable)
+    }
+
+    fn close(&mut self) -> Result<(), DirectUnaryClientError> {
+        Ok(())
+    }
+}
+
+impl tidb_txnkv::lock::LockRecoveryClient for ForwardedStaleMismatchClient {
+    fn check_txn_status_for_lock(
+        &mut self,
+        _address: &str,
+        _request: &tidb_proto::KvrpcCheckTxnStatusRequest,
+        _context: &tidb_proto::KvrpcContext,
+        _call: &UnaryCallContext,
+    ) -> Result<tidb_proto::KvrpcCheckTxnStatusResponse, DirectUnaryClientError> {
+        Err(DirectUnaryClientError::InvalidRequest(
+            "unexpected lock in forwarded stale read".to_owned(),
+        ))
+    }
+
+    fn resolve_lock_for_read(
+        &mut self,
+        _address: &str,
+        _request: &tidb_proto::KvrpcResolveLockRequest,
+        _context: &tidb_proto::KvrpcContext,
+        _call: &UnaryCallContext,
+    ) -> Result<tidb_proto::KvrpcResolveLockResponse, DirectUnaryClientError> {
+        Err(DirectUnaryClientError::InvalidRequest(
+            "unexpected lock in forwarded stale read".to_owned(),
+        ))
+    }
+}
+
 fn run_store_not_match_with_channel_replacement(
     replace_before_first_response: bool,
 ) -> Rc<RefCell<DelayedStoreMismatchState>> {
@@ -1965,6 +2127,7 @@ fn run_store_not_match_with_channel_replacement(
         DelayedStoreMismatchClient {
             state: Rc::clone(&state),
             replace_before_first_response,
+            cancel_after_first_response: false,
         },
         RegionCache::new(ScriptedLoader {
             cluster_id: 9001,
@@ -2019,6 +2182,213 @@ fn delayed_store_not_match_cannot_close_a_replacement_channel() {
     assert_eq!(state.close_requests, [1]);
     assert!(state.force_closed_generations.is_empty());
     assert_eq!(state.active_generation, Some(2));
+}
+
+#[test]
+fn caller_cancellation_wins_before_store_not_match_mutates_channel_or_route() {
+    let state = Rc::new(RefCell::new(DelayedStoreMismatchState {
+        active_generation: Some(1),
+        next_generation: 1,
+        ..DelayedStoreMismatchState::default()
+    }));
+    let loader_calls = Rc::new(RefCell::new(Vec::new()));
+    let transport = DirectUnaryQueryTransport::new_injected(
+        DelayedStoreMismatchClient {
+            state: Rc::clone(&state),
+            replace_before_first_response: false,
+            cancel_after_first_response: true,
+        },
+        RegionCache::new(ScriptedLoader {
+            cluster_id: 9001,
+            calls: Rc::clone(&loader_calls),
+            regions: VecDeque::from([location(1, "a", "z", "shared-tikv:20160")]),
+        }),
+        DirectUnaryRuntimeConfig::default(),
+        tidb_txnkv::lock::FixedTimestampSource::new(1 << 18),
+    )
+    .unwrap();
+    let mut runtime = InjectedQueryRuntime::new(transport);
+    let mut result = runtime
+        .select_with_runtime_stats(
+            &transport_request(metadata("a", "z")),
+            SelectInput::default(),
+            QueryResultContext::new(Vec::<FieldType>::new(), WarningCollector::new()),
+            vec![1],
+            2,
+            true,
+        )
+        .unwrap();
+
+    let error = result.next_raw().unwrap_err().to_string();
+    assert!(error.contains("cancelled by caller"), "{error}");
+    assert_eq!(result.next_raw().unwrap(), None);
+    let state = state.borrow();
+    assert_eq!(state.sent_generations, [1]);
+    assert!(state.close_requests.is_empty());
+    assert!(state.force_closed_generations.is_empty());
+    assert_eq!(state.active_generation, Some(1));
+    assert_eq!(loader_calls.borrow().as_slice(), &[b"a".to_vec()]);
+}
+
+#[test]
+fn stale_forwarded_store_not_match_preserves_replacement_proxy_channel() {
+    let state = Rc::new(RefCell::new(ForwardedStaleMismatchState {
+        active_proxy_version: 1,
+        ..ForwardedStaleMismatchState::default()
+    }));
+    let loader_calls = Rc::new(RefCell::new(Vec::new()));
+    let location =
+        location_with_second_peer(1, "a", "z", "logical-target:20160", "shared-proxy:20160");
+    let transport = DirectUnaryQueryTransport::new_injected(
+        ForwardedStaleMismatchClient {
+            state: Rc::clone(&state),
+        },
+        RegionCache::new(ScriptedLoader {
+            cluster_id: 9001,
+            calls: Rc::clone(&loader_calls),
+            regions: VecDeque::from([location.clone(), location]),
+        }),
+        DirectUnaryRuntimeConfig {
+            enable_forwarding: true,
+            region_retry_waiter: Rc::new(RecordingRetryControl::default()),
+            ..DirectUnaryRuntimeConfig::default()
+        },
+        tidb_txnkv::lock::FixedTimestampSource::new(1 << 18),
+    )
+    .unwrap();
+    let mut runtime = InjectedQueryRuntime::new(transport);
+    let mut result = runtime
+        .select_with_runtime_stats(
+            &transport_request(metadata("a", "z")),
+            SelectInput::default(),
+            QueryResultContext::new(Vec::<FieldType>::new(), WarningCollector::new()),
+            vec![1],
+            2,
+            true,
+        )
+        .unwrap();
+
+    assert_eq!(
+        result.next_raw().unwrap(),
+        Some(b"stale-forwarded-route-reloaded".to_vec())
+    );
+    assert_eq!(result.next_raw().unwrap(), None);
+    let state = state.borrow();
+    assert_eq!(
+        state.calls,
+        [
+            ("logical-target:20160".to_owned(), None),
+            (
+                "shared-proxy:20160".to_owned(),
+                Some("logical-target:20160".to_owned()),
+            ),
+            (
+                "shared-proxy:20160".to_owned(),
+                Some("logical-target:20160".to_owned()),
+            ),
+        ]
+    );
+    assert!(
+        state.close_requests.is_empty(),
+        "StoreNotMatch must not close the shared proxy's replacement channel"
+    );
+    assert_eq!(state.active_proxy_version, 2);
+    assert_eq!(
+        loader_calls.borrow().as_slice(),
+        &[b"a".to_vec(), b"a".to_vec()]
+    );
+}
+
+#[test]
+fn shared_proxy_store_not_match_refreshes_only_affected_logical_target() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let loader_calls = Rc::new(RefCell::new(Vec::new()));
+    let mut left = location_with_second_peer(1, "a", "m", "target-a:20160", "shared-proxy:20160");
+    let mut right = location_with_second_peer(2, "m", "z", "target-b:20160", "shared-proxy:20160");
+    for location in [&mut left, &mut right] {
+        location.peers[1].store_id = 999;
+        location.stores[1].id = 999;
+    }
+    let transport = DirectUnaryQueryTransport::new_injected(
+        ScriptedClient {
+            calls: Rc::clone(&calls),
+            responses: VecDeque::from([
+                Err(connection_failure(
+                    "target-a:20160",
+                    1,
+                    DirectUnaryTransportClass::Connection,
+                    None,
+                )),
+                Ok(store_not_match(1)),
+                Ok(response(b"left-after-refresh")),
+                Err(connection_failure(
+                    "target-b:20160",
+                    1,
+                    DirectUnaryTransportClass::Connection,
+                    None,
+                )),
+                Ok(response(b"right-without-refresh")),
+            ]),
+            events: Rc::clone(&events),
+            liveness: RefCell::new(VecDeque::from([
+                Ok(StoreLiveness::Unreachable),
+                Ok(StoreLiveness::Unreachable),
+            ])),
+            batch_errors: RefCell::new(VecDeque::new()),
+            batch_completion_gate: None,
+        },
+        RegionCache::new(ScriptedLoader {
+            cluster_id: 9001,
+            calls: Rc::clone(&loader_calls),
+            regions: VecDeque::from([left.clone(), right, left]),
+        }),
+        DirectUnaryRuntimeConfig {
+            enable_forwarding: true,
+            region_retry_waiter: Rc::new(RecordingRetryControl::default()),
+            ..DirectUnaryRuntimeConfig::default()
+        },
+        tidb_txnkv::lock::FixedTimestampSource::new(1 << 18),
+    )
+    .unwrap();
+    let mut runtime = InjectedQueryRuntime::new(transport);
+    let mut result = select_result(&mut runtime, &transport_request(metadata("a", "z")));
+
+    assert_eq!(
+        result.next_raw().unwrap(),
+        Some(b"left-after-refresh".to_vec())
+    );
+    assert_eq!(
+        result.next_raw().unwrap(),
+        Some(b"right-without-refresh".to_vec())
+    );
+    assert_eq!(result.next_raw().unwrap(), None);
+    assert_eq!(
+        calls
+            .borrow()
+            .iter()
+            .map(|call| (call.address.as_str(), call.forwarded_host.as_deref()))
+            .collect::<Vec<_>>(),
+        [
+            ("target-a:20160", None),
+            ("shared-proxy:20160", Some("target-a:20160")),
+            ("shared-proxy:20160", Some("target-a:20160")),
+            ("target-b:20160", None),
+            ("shared-proxy:20160", Some("target-b:20160")),
+        ]
+    );
+    assert_eq!(
+        loader_calls.borrow().as_slice(),
+        &[b"a".to_vec(), b"m".to_vec(), b"a".to_vec()]
+    );
+    assert!(events.borrow().iter().all(|event| {
+        !matches!(
+            event,
+            ClientEvent::ForceClose(address)
+                | ClientEvent::CloseGeneration { address, .. }
+                if address == "shared-proxy:20160"
+        )
+    }));
 }
 
 #[test]

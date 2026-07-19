@@ -28,7 +28,7 @@ use super::batch::{
 use super::channel_pool::ChannelPool;
 use super::liveness::check_liveness;
 use super::unary::{prepare_unary, RawUnaryRequest, RawUnaryResponse, UnaryCallContext};
-use super::DirectUnaryClientError;
+use super::{DirectUnaryClientError, TransportShutdownError};
 
 pub(super) enum WorkerCommand {
     UnarySend {
@@ -164,33 +164,36 @@ impl TransportRuntime {
 
     pub(super) fn shutdown(&mut self) -> Result<(), DirectUnaryClientError> {
         self.cancellation.cancel();
-        let mut shutdown_error = None;
+        let mut shutdown_errors = Vec::new();
         if let Some(commands) = self.commands.take() {
             let (reply, response) = mpsc::channel();
             match commands.send(WorkerCommand::Close { reply }) {
                 Ok(()) => {
                     if response.recv().is_err() {
-                        shutdown_error = Some(DirectUnaryClientError::Runtime(
-                            "TiKV transport worker exited without acknowledging close".to_owned(),
-                        ));
+                        shutdown_errors.push(TransportShutdownError::CloseAcknowledgementLost);
                     }
                 }
                 Err(_) => {
-                    shutdown_error = Some(DirectUnaryClientError::Runtime(
-                        "TiKV transport command channel closed before shutdown".to_owned(),
-                    ));
+                    shutdown_errors.push(TransportShutdownError::CommandChannelClosed);
                 }
             }
         }
         if let Some(worker) = self.worker.take() {
             if let Err(panic) = worker.join() {
-                return Err(DirectUnaryClientError::Runtime(format!(
-                    "TiKV transport worker panicked during shutdown: {}",
-                    panic_message(&panic)
-                )));
+                shutdown_errors.push(TransportShutdownError::WorkerPanicked {
+                    message: panic_message(&panic).to_owned(),
+                });
             }
         }
-        shutdown_error.map_or(Ok(()), Err)
+        match shutdown_errors.len() {
+            0 => Ok(()),
+            1 => Err(DirectUnaryClientError::Shutdown(
+                shutdown_errors.pop().expect("one shutdown error"),
+            )),
+            _ => Err(DirectUnaryClientError::Shutdown(
+                TransportShutdownError::Multiple(shutdown_errors),
+            )),
+        }
     }
 }
 
@@ -454,10 +457,11 @@ mod tests {
             cancellation: cancellation(),
         };
 
-        let error = runtime.shutdown().unwrap_err().to_string();
-        assert!(
-            error.contains("command channel closed before shutdown"),
-            "{error}"
+        assert_eq!(
+            runtime.shutdown(),
+            Err(DirectUnaryClientError::Shutdown(
+                TransportShutdownError::CommandChannelClosed
+            ))
         );
     }
 
@@ -475,15 +479,21 @@ mod tests {
             cancellation: cancellation(),
         };
 
-        let error = runtime.shutdown().unwrap_err().to_string();
-        assert!(error.contains("without acknowledging close"), "{error}");
+        assert_eq!(
+            runtime.shutdown(),
+            Err(DirectUnaryClientError::Shutdown(
+                TransportShutdownError::CloseAcknowledgementLost
+            ))
+        );
     }
 
     #[test]
     fn shutdown_reports_worker_panic() {
         let (commands, receiver) = mpsc::channel();
         let worker = std::thread::spawn(move || {
-            drop(receiver);
+            if let Ok(WorkerCommand::Close { reply }) = receiver.recv() {
+                reply.send(()).unwrap();
+            }
             panic!("injected transport worker panic");
         });
         let mut runtime = TransportRuntime {
@@ -492,7 +502,41 @@ mod tests {
             cancellation: cancellation(),
         };
 
-        let error = runtime.shutdown().unwrap_err().to_string();
-        assert!(error.contains("injected transport worker panic"), "{error}");
+        assert_eq!(
+            runtime.shutdown(),
+            Err(DirectUnaryClientError::Shutdown(
+                TransportShutdownError::WorkerPanicked {
+                    message: "injected transport worker panic".to_owned(),
+                }
+            ))
+        );
+    }
+
+    #[test]
+    fn shutdown_retains_lost_acknowledgement_and_worker_panic() {
+        let (commands, receiver) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            if let Ok(WorkerCommand::Close { reply }) = receiver.recv() {
+                drop(reply);
+            }
+            panic!("panic after dropping close acknowledgement");
+        });
+        let mut runtime = TransportRuntime {
+            commands: Some(commands),
+            worker: Some(worker),
+            cancellation: cancellation(),
+        };
+
+        assert_eq!(
+            runtime.shutdown(),
+            Err(DirectUnaryClientError::Shutdown(
+                TransportShutdownError::Multiple(vec![
+                    TransportShutdownError::CloseAcknowledgementLost,
+                    TransportShutdownError::WorkerPanicked {
+                        message: "panic after dropping close acknowledgement".to_owned(),
+                    },
+                ])
+            ))
+        );
     }
 }

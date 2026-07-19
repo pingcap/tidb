@@ -15,7 +15,8 @@
 #![allow(missing_docs)]
 
 use tidb_txnkv::{
-    rpc::AsyncRequestPublication, BatchRoute, DirectUnaryConnectionError, DirectUnaryResponse,
+    rpc::{AsyncRequestPublication, TransportShutdownError},
+    BatchRoute, DirectUnaryClientError, DirectUnaryConnectionError, DirectUnaryResponse,
     DirectUnaryTransportClass,
 };
 
@@ -80,5 +81,29 @@ fn explicit_shutdown_has_one_fallible_owner_and_one_drop_safety_net() {
     assert_eq!(runtime.matches("impl Drop for TransportRuntime").count(), 1);
     assert!(runtime.contains("response.recv().is_err()"));
     assert!(runtime.contains("worker.join()"));
-    assert!(runtime.contains("worker panicked during shutdown"));
+    assert!(runtime.contains("TransportShutdownError::WorkerPanicked"));
+}
+
+#[test]
+fn shutdown_failures_are_public_typed_and_aggregate_without_loss() {
+    let error = DirectUnaryClientError::Shutdown(TransportShutdownError::Multiple(vec![
+        TransportShutdownError::CommandChannelClosed,
+        TransportShutdownError::WorkerPanicked {
+            message: "injected panic".to_owned(),
+        },
+    ]));
+
+    assert_eq!(error.kind(), "shutdown");
+    let DirectUnaryClientError::Shutdown(TransportShutdownError::Multiple(failures)) = error else {
+        panic!("shutdown must retain typed failures");
+    };
+    assert_eq!(
+        failures,
+        [
+            TransportShutdownError::CommandChannelClosed,
+            TransportShutdownError::WorkerPanicked {
+                message: "injected panic".to_owned(),
+            },
+        ]
+    );
 }
