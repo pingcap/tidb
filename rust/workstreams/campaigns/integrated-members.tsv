@@ -93,3 +93,9 @@
 2026-07-read-path-22	executor-ordered-read-authority-shutdown-runtime
 2026-07-read-path-22	server-fallible-process-shutdown-runtime
 2026-07-read-path-22	server-live-topology-churn-shutdown-proof
+2026-07-read-path-23	proto-tipb-selection-expression-wire
+2026-07-read-path-23	planner-read-only-bigint-selection-runtime
+2026-07-read-path-23	planner-physical-bigint-selection-runtime
+2026-07-read-path-23	executor-tikv-selection-dag-runtime
+2026-07-read-path-23	executor-real-tikv-bigint-selection-runtime
+2026-07-read-path-23	server-live-bigint-selection-topology-proof

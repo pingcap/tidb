@@ -1,6 +1,6 @@
 schema = "1"
 campaign = "2026-07-read-path-23"
-status = "planned"
+status = "integrated"
 slices = [
   "proto-tipb-selection-expression-wire",
   "planner-read-only-bigint-selection-runtime",

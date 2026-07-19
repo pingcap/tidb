@@ -192,11 +192,48 @@ The shared 12-job workspace gate issued `integration_receipt 6`, repository
 `make -j12 lint` passed, all six receipts were consumed, exact membership is
 archived, claims returned to zero, and generated status is current.
 
+Campaign 23 widens the real node from direct projection to the six signed
+`BIGINT` comparisons (`=`, `!=`, `<`, `<=`, `>`, `>=`) in either operand
+order plus flattened `AND`. Planner-owned scan layout keeps projection columns
+as a stable prefix, appends predicate-only columns once, and uses explicit
+output offsets so predicates cannot leak extra columns. The real TiKV DAG is
+`[TableScan, Selection]` over a full table range; there is no Rust row filter.
+
+The passing live run kept Rust PID `16712`, authenticated MySQL connection
+`1`, and read session `1` through leader stores `1 -> 2 -> 3 -> 2` at
+`127.0.0.1:63160 -> 127.0.0.1:63162 -> 127.0.0.1:63161 -> 127.0.0.1:63162`.
+The stored-column predicate published `[TableScan, Selection]`. Restarted B
+retained ChannelPool version `1` while its BatchCommands stream advanced
+`1 -> 5`. Real query ID `15` was blocked at the prewrite barrier before
+SIGTERM; ordered shutdown completed in `123 ms`, and tag-owned cleanup passed.
+
+The first live attempt timed out only because persistent stock `mysql` batch
+mode emits zero stdout lines for an empty result. Rust had already published
+that query's snapshot, transport, and activity end; the runner incorrectly
+expected a header and then mistook the next result's header for it. The root
+fix advances by the actual client-line count and adds a focused harness check:
+
+    bash rust/scripts/run-campaign23-bigint-selection-sql-node.sh --self-test-empty-result-framing
+
+That self-test covers `0 -> 0`, `1 -> 2`, and `3 -> 4`. Live empty-result
+acceptance still requires server-side completion evidence, so zero client
+lines cannot hide a dropped query.
+
+Campaign 23 is live-proven but is not yet Ready-integrated. Freeze its exact
+evidence transfers and membership, run the one shared 12-job gate plus
+`make -j12 lint`, and consume all six integration receipts before releasing
+claims or reporting Ready. Meanwhile keep a twelve-slice pipeline: six current
+implementation/integration slices and six disjoint Campaign 24 slices
+pre-scoped for clustered-primary-key ranger detachment plus a reusable
+stock-client/real-TiKV live harness. Ranger narrows access ranges; Selection
+remains the semantic owner of residual predicates.
+
 This completes the first topology-resilient bounded read-only SQL-node
 milestone, not the TiDB rewrite. The node remains loopback-only, plaintext,
-static-catalog, signed-BIGINT-only, and direct-projection-only. Dynamic
-catalog/infoschema, general planning and expressions, the full Datum/type
-domain, TLS, grants, prepared statements, writes and transaction protocols,
+static-catalog, signed-BIGINT-only, and limited to direct projections plus the
+six comparisons/`AND`. Dynamic catalog/infoschema, general planning and
+expressions, the full Datum/type domain, TLS, grants, prepared statements,
+writes and transaction protocols,
 DDL, statistics integration, bootstrap and cluster services,
 plan/result/transaction zero-diff gates, shadow traffic, performance gates,
 and Jepsen coverage remain open. Phase 2 is incomplete; Phases 3 and 4 have not
@@ -519,6 +556,21 @@ cp /tmp/g.txt rust/difftests/corpus/query_golden.txt
 ## 5. Current phase & immediate next work
 
 > **⚡ PARALLEL, SOURCE-FIRST MODE:** read **`rust/PARALLEL.md`** before dispatching. `difftests/corpus/coverage/go_test_inventory.tsv` makes every Go test entry point, lifecycle hook, shell program, SQL fixture/result, `testdata` file, and support artifact below repository test suites visible; `integration_parser_inventory.tsv` inventories every SQL input the fixture runner dispatches; and `integration_runner_directive_inventory.tsv` accounts for runner-only commands. These are obligations, not parity claims.
+
+The immediate critical path is Campaign 23 integration: freeze exact evidence
+transfers and membership, run one shared 12-job gate, run `make -j12 lint`,
+consume all six receipts, and only then release its claims. Do not rerun
+workspace-wide builds in individual slices and do not report the passing live
+proof as a Ready gate receipt.
+
+Maintain a twelve-slice runway while that boundary closes. Six slices carry
+the current campaign through integration; six disjoint Campaign 24 slices are
+pre-scoped with exact Go ranger sources/tests, Rust owners, manifests, and
+write sets. Campaign 24 should detach clustered-primary-key access conditions
+while preserving Selection for residual semantics, and factor the live runner
+into a reusable stock-MySQL-client/real-TiKV harness that retains topology,
+blocked-query shutdown, and cleanup evidence. Pre-scope is not implementation
+and must not overlap Campaign 23's frozen ownership.
 
 The active high-throughput work is split across six non-overlapping lanes:
 

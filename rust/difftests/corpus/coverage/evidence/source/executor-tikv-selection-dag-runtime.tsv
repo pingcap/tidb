@@ -1,0 +1,3 @@
+# Campaign 23 source evidence for executor-tikv-selection-dag-runtime.
+# source_path	status	owner	evidence_artifact	note
+pkg/executor/internal/builder/builder_utils.go	PARTIAL	executor-tikv-selection-dag-runtime	rust/crates/tidb-exec/src/dag_request.rs	The bounded TiKV list DAG now lowers one validated TableScan followed by one Selection with no child, exact signed-BIGINT comparison expressions, source request context, and caller projection offsets. General physical-plan flattening, non-Selection executor families, TiFlash tree DAGs, runtime range construction, region routing, and RPC remain external.

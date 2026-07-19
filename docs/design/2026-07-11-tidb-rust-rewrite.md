@@ -38,10 +38,10 @@ finished subsystem.
 |---|---|---|
 | Workspace | An in-repo `rust/` Cargo workspace with lexer, AST, parser, proto, protocol framing/command/result/charset plus ERR-packet primitives, distsql context/request metadata and response iterators, planner, dependency-closed `tidb-stats` CMSketch/TopN/FMSketch geometry and loading-status metadata, datatype, codec, transaction-key, expression, seed-executor status/schema/result bridge leaves, and an executable bounded-concurrent `tidb-server` SQL node with native-password authentication and a real PD/TiKV read path, plus parser/planner/result/transaction differential packages | Dynamic catalog/session lifecycle, broad SQL planning/execution, TLS/grants, writes/transactions, DDL, statistics integration/lifecycle, and cluster services |
 | Parser | 51,488 exact accepted single-statement restores, 10 exact multi-statement restores, 99 explicit dual rejections, and one pinned Go restore failure; 520 parser unit tests pass; geometry aliases, FieldType compatibility, and duplicate-COLLATE ordering rows are source-owned | Close the remaining source/test ledger and keep the pinned Go failure separate from Rust regressions |
-| Planner | Narrow source-owned pseudo-cardinality/equality/less/between/range and exponential-backoff leaves, a typed physical-plan metadata tree, and bounded direct projection of an ordered static signed-BIGINT table descriptor into a real table-reader/tipb DAG path | Dynamic infoschema/catalog resolution, predicates, joins, aggregation, ordering/limit, partitions/common handles, the full logical/physical rule pipeline, session/statistics-aware `pseudoSelectivity`, cost model, hints, bindings, SQL normalization/digest, and plan-digest ring |
+| Planner | Narrow source-owned pseudo-cardinality/equality/less/between/range and exponential-backoff leaves, a typed physical-plan metadata tree, bounded projection of an ordered static signed-BIGINT table descriptor, and source-shaped physical Selection for the six signed-BIGINT comparisons plus flattened `AND`; projection columns remain a stable prefix and predicate-only scan columns are addressed through explicit offsets | Dynamic infoschema/catalog resolution, typed predicates beyond the bounded comparison/`AND` subset, NULL/coercion/unsigned semantics, `OR`/functions/arithmetic, clustered-primary-key ranger detachment, joins, aggregation, ordering/limit, partitions/common handles, the full logical/physical rule pipeline, session/statistics-aware `pseudoSelectivity`, cost model, hints, bindings, SQL normalization/digest, and plan-digest ring |
 | Result/expression | Source-shaped scalar leaves, bounded table-less/single-table/multi-relation ResultField binding, planner-owned LEFT/INNER/CROSS join output metadata (including USING order/coalescing and nullable-side declarations), bounded FullSchema-to-visible USING indices, direct-column/wildcard/alias projection metadata wired through the automatic row owner, direct cross-side equality ON/USING with NULL non-match semantics, a planner-owned `ON`/`USING` equality classifier, explicit residual `AND`/`OR`/`NOT` shape metadata with deferred typed evaluation, deferred residual column bindings into `FullSchema`, conservative left/right/join/deferred predicate dependency routing with typed-safety gates, native scalar/default-row Datum decoding, and static Go-backed query/expression rings | General planner ON/USING predicate typing and join algorithms, typed expression projection and nested/FullSchema execution mappings, full temporal SQL semantics and Duration/session policy, decimal/JSON/enum/set/vector Datum and native CHBlock codecs, full FieldType/session/collation context, vectorized execution, and real-cluster shadow traffic |
 | Transaction/storage | Portable key, handle, version, iterator, and request-tag contracts; a bounded plaintext PD gRPC client with discovered membership, foreground refresh, role-aware direct-endpoint failover, exact previous-region/region/batch-scan/bucket wire projection, and response-owned bucket clearing; API-v1 region loading with exact Store labels and loader I/O outside the coarse mutex through full-plan optimistic publication; exact nested NotLeader/EpochNotMatch/BucketVersionNotMatch payloads; one synchronized RegionCache topology/recovery/store/health/proxy authority shared by foreground reads and a coalesced, joined maintenance worker, with strict TTL, reload state, ordered overlap replacement, bucket inheritance/clamping, bounded batch loading, caller-owned gap retry, cached/fresh merging, and selection-time peer-vector guards before failure mutation; request-scoped leader/follower/stale/learner voter selection with exact label/leader/attempt/slow/load scoring and busy diversion; source-shaped per-region backoff; failed-task-only 1:N region and transport retry/rebuild; structured generation-aware TiKV failures with foreground gRPC health; exact synchronous unary `tikv-forwarded-host` proxy dispatch, feedback, reuse, rotation, metrics, and direct recovery; one command-neutral unary core; request-owned active cancellation from query binding; bounded optimistic CheckTxnStatus/ResolveLock read recovery; source-shaped once-only async completion and BatchCommands scheduling/observability authorities; a retained tonic BatchCommands duplex transport with route generations, pending-before-send publication, response-ID demultiplexing, forwarding isolation, bounded demand-budgeted reconnect, cancellation retirement, and close drainage; a concrete BatchCommands-first Coprocessor RegionRequest adapter using the same DistSQL selector/backoff/fallback authority; lazy address-keyed TiKV RPC; and live movement, failure, nonleader-read, committed-primary lock, adaptive-forwarding, and restarted-follower BatchCommands proofs | PD router service, TLS, and cancellation-aware discovery/failover backoff; pessimistic and async-commit lock recovery; TxnNotFound retry; the Go prolonged-outage BatchCommands reconnect loop; batch/stream/TiFlash and flashback routing; concurrent live foreground/maintenance proof and coalesced bucket refresh; 2PC, async commit, 1PC, and general table/DAG/COM_QUERY integration beyond the bounded static read path |
-| Server/cluster | The executable loopback SQL node owns strict mode-0600 `mysql_native_password` users, OS-random handshake salts, stock-client authentication, a fixed worker pool with an exact connection bound, socket deadlines, SIGINT/SIGTERM drain, connection/query cancellation, structured lifecycle accounting, and per-worker read sessions over one process PD/RegionCache/transport authority. `COM_QUERY` crosses parser, bounded planner/table-range/tipb DAG lowering, fresh PD TSO, BatchCommands-first TiKV dispatch, row decoding, and MySQL text-result framing. Exact physical dispatch identity, direct-versus-forwarded `StoreNotMatch` handling, stale-safe same-address store recovery, and explicit fallible shutdown in connections→RegionCache→TiKV→PD order are integrated. Eight concurrent clients and a separate persistent-client A→B→C→restarted-B topology/shutdown proof have passed against real PD/TiKV. | Dynamic infoschema/catalog and grants, general expressions/predicates/joins/aggregation/order/limit, prepared statements, TLS/compression/Unix sockets/PROXY, MPP/TiFlash, writes/transactions, schema lease/MDL, DDL ownership, stats, bootstrap, mixed-cluster routing, broader chaos/longevity, and full compatibility/performance gates |
+| Server/cluster | The executable loopback SQL node owns strict mode-0600 `mysql_native_password` users, OS-random handshake salts, stock-client authentication, a fixed worker pool with an exact connection bound, socket deadlines, SIGINT/SIGTERM drain, connection/query cancellation, structured lifecycle accounting, and per-worker read sessions over one process PD/RegionCache/transport authority. `COM_QUERY` crosses parser, bounded planner/table-range/tipb `[TableScan, Selection]` lowering for signed-BIGINT comparisons/`AND`, fresh PD TSO, BatchCommands-first TiKV dispatch, row decoding, and MySQL text-result framing without Rust post-filtering. Exact physical dispatch identity, direct-versus-forwarded `StoreNotMatch` handling, stale-safe same-address store recovery, and explicit fallible shutdown in connections→RegionCache→TiKV→PD order are integrated. Eight concurrent clients, a direct-projection topology proof, and a bounded filtered-read topology proof have passed against real PD/TiKV. | Dynamic infoschema/catalog and grants, general typed expressions/predicates/joins/aggregation/order/limit, NULL/coercion/unsigned semantics, prepared statements, TLS/compression/Unix sockets/PROXY, MPP/TiFlash, writes/transactions, schema lease/MDL, DDL ownership, stats, bootstrap, mixed-cluster routing, broader chaos/longevity, and full compatibility/performance gates |
 
 Campaign `2026-07-read-path-07` adds the first bounded connected read path from
 a validated TiKV table/index scan to an exact tipb DAG, through an ordered
@@ -504,6 +504,47 @@ and establishes the deterministic prewrite barrier; every asserted read goes
 through the Rust SQL node. The shared workspace gate issued
 `integration_receipt 6`, `make -j12 lint` passed, all six receipts were
 consumed, membership is archived, and claims returned to zero.
+
+### Campaign 23 real TiKV signed-BIGINT Selection
+
+Campaign `2026-07-read-path-23` widens that deployable node from direct
+projection to a bounded, source-shaped filtered read. The planner binds the
+six signed `BIGINT` comparisons (`=`, `!=`, `<`, `<=`, `>`, `>=`) in either
+operand order and flattens `AND`. Projection columns remain the stable scan
+prefix, predicate-only columns are appended once, and explicit output offsets
+prevent them from leaking to the client. The TiKV DAG is exactly
+`[TableScan, Selection]` over a full table range; filtering happens in real
+TiKV, not as a Rust post-filter. `NULL`, unsigned/coercion semantics, `OR`,
+functions, arithmetic, and general typed expressions remain out of scope.
+
+The passing live proof kept Rust PID `16712`, MySQL connection `1`, and read
+session `1` across leader stores `1 -> 2 -> 3 -> 2` at
+`127.0.0.1:63160 -> 127.0.0.1:63162 -> 127.0.0.1:63161 -> 127.0.0.1:63162`.
+The stored-column predicate published `[TableScan, Selection]`. Restarted B
+retained physical ChannelPool version `1` while its BatchCommands stream
+generation advanced `1 -> 5`. Query ID `15` was blocked at the real prewrite
+barrier before SIGTERM; ordered shutdown completed in `123 ms`, and the
+tag-owned cleanup audit passed.
+
+The first live attempt exposed a harness assumption rather than a product
+failure: persistent stock `mysql` batch mode emits zero stdout lines for an
+empty result, even though the Rust query had already published its snapshot,
+transport record, and activity end. The runner now advances by the result's
+actual client-line count and has a focused
+`--self-test-empty-result-framing` mode covering `0 -> 0`, `1 -> 2`, and
+`3 -> 4`. Empty-result acceptance still requires the server-side completion
+evidence, so the fix cannot hide a dropped request.
+
+This is a passing product-level live proof, not a Ready integration claim or
+an integration receipt. Exact evidence transfers and integrated membership
+still need to be frozen; the
+shared 12-job gate, repository `make -j12 lint`, and six Campaign 23
+integration receipts remain pending. Throughput now uses a twelve-slice
+pipeline: six current implementation/integration slices plus six disjoint
+Campaign 24 slices pre-scoped for clustered-primary-key ranger detachment and
+a reusable stock-client/real-TiKV live harness. Campaign 24 must optimize the
+same Selection semantics and may not replace them with a key-only special
+case.
 
 This completes the first topology-resilient bounded read-only SQL-node
 milestone, not the TiDB rewrite. Phase 2 remains incomplete and Phases 3 and 4
@@ -3225,26 +3266,31 @@ Ordered by (value ÷ risk), each phase gated by its differential ring:
 |---|---|---|---|---|---|
 | 0 | `tidb-parser` + `tidb-ast` + `tidb-datatype` extraction | hparser design 1:1; TiKV datatype crate | 60-80k | Zero Rust regressions on accepted inputs, explicit rejection parity, and documented oracle failures | In progress: parser ring is clean except the pinned Go `json_memberof()` failure; source/test obligations remain |
 | 1 | `tidb-txnkv` + `tidb-codec` + `tidb-catalog` (read) | client-rust skeleton; client-go as spec | 50-70k | Transaction ring (read path); Jepsen for reads/stale reads | A production bounded read client now owns real PD TSO/region/store discovery, RegionCache routing/recovery, BatchCommands-first TiKV Coprocessor dispatch, and table-key/row decoding. Dynamic catalog discovery plus broad read/stale-read and Jepsen parity remain open. |
-| 2 | Read-only compute node: protocol + session (read subset) + planner + exec + distsql | tidb_query_executors patterns; tipb | 250-350k | Plan ring zero-diff; shadow → read traffic in staging; perf ≥ Go on sysbench read + TPC-H | The first topology-resilient bounded vertical slice is live: authenticated stock MySQL clients → Rust COM_QUERY → parser/planner/table range/tipb DAG → real PD TSO/RegionCache → BatchCommands-first real TiKV → exact clustered-key and stored-column rows. Eight sessions overlap through a fixed worker pool and one process authority; one persistent session also survives A→B→C→same-address-restarted-B leader churn, exact channel/stream identity is observable, and blocked-query SIGTERM shuts connections→RegionCache→TiKV→PD down fallibly. Phase 2 remains incomplete: the executable is loopback/plaintext and static-catalog/direct-projection only; temporal SQL/Duration, decimal/enum/set/vector/native CHBlock, typed expression/nested FullSchema mappings, predicates/joins/aggregation/order/limit, grants/TLS/prepared statements, plan-ring zero-diff, shadow traffic, and performance gates remain open. |
+| 2 | Read-only compute node: protocol + session (read subset) + planner + exec + distsql | tidb_query_executors patterns; tipb | 250-350k | Plan ring zero-diff; shadow → read traffic in staging; perf ≥ Go on sysbench read + TPC-H | The first topology-resilient bounded vertical slice is live: authenticated stock MySQL clients → Rust COM_QUERY → parser/planner/full table range/tipb `[TableScan, Selection]` → real PD TSO/RegionCache → BatchCommands-first real TiKV → exact clustered-key and stored-column rows for direct projections and the six signed-BIGINT comparisons/`AND`. Eight sessions overlap through a fixed worker pool and one process authority; persistent sessions survive A→B→C→same-address-restarted-B leader churn, exact channel/stream identity is observable, and blocked-query SIGTERM shuts connections→RegionCache→TiKV→PD down fallibly. Phase 2 remains incomplete: the executable is loopback/plaintext and static-catalog with only bounded signed-BIGINT predicates; temporal SQL/Duration, decimal/enum/set/vector/native CHBlock, typed expression/nested FullSchema mappings, NULL/coercion/unsigned semantics, `OR`/functions/arithmetic, ranger access-condition detachment, joins/aggregation/order/limit, grants/TLS/prepared statements, plan-ring zero-diff, shadow traffic, and performance gates remain open. Campaign 23's live proof has passed, but its shared gate, lint, evidence freeze, and integration receipts remain pending. |
 | 3 | Read-write: full txn lifecycle, DML, `tidb-stats` write path | Phase 1 client | 80-120k | Jepsen full; TPC-C parity; shadow-write comparison | Not started |
 | 4 | Full peer: `tidb-ddl`, background ownership, bootstrap | — | 80-120k | Mixed-cluster DDL suite; ownership handover drills; long-run canary | Not started |
 
 Estimated total: 500-700k Rust LOC (Rust runs denser than Go for this code; enum-based AST/plan nodes and macro-generated variable/function registries remove much of Go's repetition). The staffing and calendar numbers are planning estimates, not commitments; they must be re-estimated after the first connected read-only vertical slice. A calendar-parallel Go tree means the corpus-sync CI (above) is not optional at any point.
 
-The next milestone is deliberately integration-first: carry the bounded
-multi-relation catalog binding beyond direct-column/wildcard join output into
-typed expressions, FullSchema redundant-column mappings, and typed ON/USING
-semantics, and extend
-the local uncompressed COM_QUERY → server dispatch → session → DistSQL →
-adapted metadata/row/EOF seam beyond the connected table-less and single-table
-paths. Attach the now-ported response events and status snapshots to the real
-session/error-context and wire writers, then complete typed default/columnar/
-CHBlock codecs and intermediate-output routing on top of the now-validated raw
-tipb/chunk boundary, complete temporal/JSON/enum/set/vector Datum and full
-charset/session formatting around the now-ported protocol text-row leaf,
-planner dispatch, expression/datatype, and a read-only TiKV path into one
-shadowable statement flow. Do not treat another collection of isolated leaf
-ports as a substitute for this end-to-end gate.
+The immediate milestone remains integration-first: freeze Campaign 23's exact
+evidence and membership, run its one shared 12-job gate plus repository lint,
+and consume all six receipts before making a Ready claim. In parallel, keep a
+twelve-slice runway by pre-scoping six disjoint Campaign 24 ranger/harness
+slices. The ranger must detach clustered-primary-key access conditions as an
+optimization of the same Selection semantics; the harness extraction must
+retain stock MySQL, real PD/TiKV, topology churn, blocked-query shutdown, and
+cleanup evidence without cloning the full orchestration for every read
+feature.
+
+After that boundary, carry the bounded multi-relation catalog binding into
+general typed expressions, FullSchema redundant-column mappings, typed
+ON/USING semantics, and the broader uncompressed COM_QUERY → server dispatch
+→ session → DistSQL → metadata/row/EOF statement flow. Attach response events
+and status snapshots to the real session/error-context and wire writers;
+complete typed default/columnar/CHBlock codecs, temporal/JSON/enum/set/vector
+Datum, full charset/session formatting, and intermediate-output routing. Do
+not treat another collection of isolated leaf ports as a substitute for the
+end-to-end gate.
 
 DDL is deliberately last: it is the only subsystem where a bug destroys user data through a background process (reorg backfill), it has the deepest coupling to cluster-wide invariants (schema lease, MDL), and it benefits most from the longest shadow period.
 

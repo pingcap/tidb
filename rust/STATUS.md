@@ -9,10 +9,10 @@ the source or obligation still has explicit unported behavior.
 
 ## Queue
 
-- Active claims: 0
+- Active claims: 6
 - Active slices: 0
 - Declared ready slices: 0
-- Partial slices: 95
+- Partial slices: 101
 - Covered slices: 2
 - Blocked slices: 1
 
@@ -38,6 +38,7 @@ the source or obligation still has explicit unported behavior.
 | 2026-07-read-path-20 | integrated | 5 |
 | 2026-07-read-path-21 | integrated | 6 |
 | 2026-07-read-path-22 | integrated | 6 |
+| 2026-07-read-path-23 | integrated | 6 |
 | 2026-07-runtime-closure-03 | integrated | 6 |
 | 2026-07-runtime-closure-04 | integrated | 6 |
 | 2026-07-runtime-closure-05 | integrated | 6 |
@@ -67,8 +68,8 @@ External module counts are pinned porting obligations and are not included in Ti
 
 | State | Count |
 | --- | --- |
-| UNTRIAGED | 1896 |
-| PARTIAL | 458 |
+| UNTRIAGED | 1894 |
+| PARTIAL | 460 |
 | COVERED | 36 |
 | BLOCKED | 0 |
 
@@ -77,12 +78,12 @@ External module counts are pinned porting obligations and are not included in Ti
 | Target | Untriaged | Partial | Covered | Blocked |
 | --- | --- | --- | --- | --- |
 | deferred-external | 390 | 0 | 0 | 0 |
-| tidb-planner | 205 | 108 | 1 | 0 |
+| tidb-planner | 204 | 109 | 1 | 0 |
 | tidb-server | 249 | 4 | 0 | 0 |
 | tidb-exec | 178 | 63 | 0 | 0 |
 | tidb-txnkv | 123 | 26 | 9 | 0 |
 | tidb-catalog | 126 | 1 | 0 | 0 |
-| tidb-expr | 96 | 26 | 0 | 0 |
+| tidb-expr | 95 | 27 | 0 | 0 |
 | tidb-ddl | 119 | 2 | 0 | 0 |
 | tidb-session | 44 | 45 | 0 | 0 |
 | test-support | 83 | 1 | 0 | 0 |
@@ -103,8 +104,8 @@ External module counts are pinned porting obligations and are not included in Ti
 
 | State | Count |
 | --- | --- |
-| UNTRIAGED | 15336 |
-| PARTIAL | 1073 |
+| UNTRIAGED | 15311 |
+| PARTIAL | 1098 |
 | COVERED | 296 |
 | BLOCKED | 14 |
 
@@ -113,9 +114,9 @@ External module counts are pinned porting obligations and are not included in Ti
 | Ring | Untriaged | Partial | Covered | Blocked |
 | --- | --- | --- | --- | --- |
 | unassigned | 4800 | 366 | 132 | 0 |
-| result | 4280 | 452 | 29 | 3 |
+| result | 4257 | 475 | 29 | 3 |
 | deferred-external | 3042 | 0 | 0 | 0 |
-| plan | 1771 | 136 | 5 | 0 |
+| plan | 1769 | 138 | 5 | 0 |
 | transaction | 1133 | 83 | 54 | 6 |
 | parser | 310 | 36 | 76 | 5 |
 
