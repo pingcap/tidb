@@ -196,11 +196,13 @@ func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(ctx context.Context, exprNo
 	rewriter.asScalar = true
 	rewriter.allowBuildCastArray = b.allowBuildCastArray
 	if onDupMemo != nil {
+		onDupMemo.resetPerAssignmentState()
+		onDupMemo.prepareAssignment(exprNode)
 		rewriter.onDuplicateMemo = onDupMemo
 		defer func() {
 			rewriter.onDuplicateMemo = nil
 			rewriter.onDuplicateMemoDisableDepth = 0
-			onDupMemo.resetFrames()
+			onDupMemo.resetPerAssignmentState()
 		}()
 	}
 
@@ -388,7 +390,12 @@ type onDuplicateExprMemo struct {
 	frames     []onDuplicateMemoFrame
 	restoreBuf bytes.Buffer
 	restoreCtx *format.RestoreCtx
+
+	keyableNodes map[ast.Node]struct{}
+	depthFrames  []onDuplicateExprDepthFrame
 }
+
+const maxOnDuplicateExprReuseKeyDepth = 16
 
 type onDuplicateMemoFrame struct {
 	key         string
@@ -398,14 +405,62 @@ type onDuplicateMemoFrame struct {
 	disableMemo bool
 }
 
+type onDuplicateExprDepthFrame struct {
+	maxChildDepth int
+}
+
 func newOnDuplicateExprMemo() *onDuplicateExprMemo {
 	return &onDuplicateExprMemo{
-		cache: make(map[string]expression.Expression),
+		cache:        make(map[string]expression.Expression),
+		keyableNodes: make(map[ast.Node]struct{}),
 	}
 }
 
-func (m *onDuplicateExprMemo) resetFrames() {
+func (m *onDuplicateExprMemo) resetPerAssignmentState() {
 	m.frames = m.frames[:0]
+	m.depthFrames = m.depthFrames[:0]
+	clear(m.keyableNodes)
+}
+
+func (m *onDuplicateExprMemo) prepareAssignment(expr ast.ExprNode) {
+	if expr == nil {
+		return
+	}
+	preparer := onDuplicateExprReusePreparer{memo: m}
+	expr.Accept(&preparer)
+	m.depthFrames = m.depthFrames[:0]
+}
+
+type onDuplicateExprReusePreparer struct {
+	memo *onDuplicateExprMemo
+}
+
+func (p *onDuplicateExprReusePreparer) Enter(in ast.Node) (ast.Node, bool) {
+	p.memo.depthFrames = append(p.memo.depthFrames, onDuplicateExprDepthFrame{})
+	return in, false
+}
+
+func (p *onDuplicateExprReusePreparer) Leave(in ast.Node) (ast.Node, bool) {
+	frame := p.memo.depthFrames[len(p.memo.depthFrames)-1]
+	p.memo.depthFrames = p.memo.depthFrames[:len(p.memo.depthFrames)-1]
+
+	depth := frame.maxChildDepth
+	if _, ok := in.(ast.ExprNode); ok {
+		depth++
+	}
+	if depth > maxOnDuplicateExprReuseKeyDepth+1 {
+		depth = maxOnDuplicateExprReuseKeyDepth + 1
+	}
+	if depth <= maxOnDuplicateExprReuseKeyDepth && isOnDuplicateFunctionLikeExprNode(in) {
+		p.memo.keyableNodes[in] = struct{}{}
+	}
+	if len(p.memo.depthFrames) > 0 {
+		parentFrame := &p.memo.depthFrames[len(p.memo.depthFrames)-1]
+		if depth > parentFrame.maxChildDepth {
+			parentFrame.maxChildDepth = depth
+		}
+	}
+	return in, true
 }
 
 func (m *onDuplicateExprMemo) pushFrame(frame onDuplicateMemoFrame) {
@@ -421,6 +476,9 @@ func (m *onDuplicateExprMemo) popFrame() onDuplicateMemoFrame {
 func (m *onDuplicateExprMemo) buildKey(node ast.Node) (string, bool) {
 	exprNode, ok := node.(ast.ExprNode)
 	if !ok {
+		return "", false
+	}
+	if _, ok := m.keyableNodes[node]; !ok {
 		return "", false
 	}
 	switch v := node.(type) {

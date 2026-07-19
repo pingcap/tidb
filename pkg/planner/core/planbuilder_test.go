@@ -328,6 +328,58 @@ func TestInsertOnDuplicateUpdateExpressionReuseComplexityGate(t *testing.T) {
 	}))
 }
 
+func TestOnDuplicateExprMemoBuildKeySkipsSimpleNodes(t *testing.T) {
+	parseAssignment := func(exprSQL string) *ast.Assignment {
+		stmt, err := parser.New().ParseOneStmt("insert into t values (1) on duplicate key update c1 = "+exprSQL, "", "")
+		require.NoError(t, err)
+		return stmt.(*ast.InsertStmt).OnDuplicate[0]
+	}
+
+	memo := newOnDuplicateExprMemo()
+	buildKey := func(exprSQL string) (string, bool) {
+		assign := parseAssignment(exprSQL)
+		memo.resetPerAssignmentState()
+		memo.prepareAssignment(assign.Expr)
+		return memo.buildKey(assign.Expr)
+	}
+
+	_, ok := buildKey("values(c1)")
+	require.False(t, ok)
+	_, ok = buildKey("c1")
+	require.False(t, ok)
+	_, ok = buildKey("1")
+	require.False(t, ok)
+
+	key, ok := buildKey("if(c1 > 1, values(c1), c1)")
+	require.True(t, ok)
+	require.NotEmpty(t, key)
+	_, ok = buildKey("if(c1 > ?, values(c1), c1)")
+	require.False(t, ok)
+}
+
+func TestOnDuplicateExprMemoBuildKeySkipsDeepNodes(t *testing.T) {
+	exprSQL := "c1"
+	for range maxOnDuplicateExprReuseKeyDepth {
+		exprSQL = "if(c1 > 1, " + exprSQL + ", c1)"
+	}
+	stmt, err := parser.New().ParseOneStmt("insert into t values (1) on duplicate key update c1 = "+exprSQL, "", "")
+	require.NoError(t, err)
+	rootExpr := stmt.(*ast.InsertStmt).OnDuplicate[0].Expr
+
+	memo := newOnDuplicateExprMemo()
+	memo.prepareAssignment(rootExpr)
+	_, ok := memo.buildKey(rootExpr)
+	require.False(t, ok)
+
+	shallowExpr := rootExpr
+	for range 2 {
+		shallowExpr = shallowExpr.(*ast.FuncCallExpr).Args[1]
+	}
+	key, ok := memo.buildKey(shallowExpr)
+	require.True(t, ok)
+	require.NotEmpty(t, key)
+}
+
 func TestInsertOnDuplicateUpdateExpressionReuseSetVarHint(t *testing.T) {
 	testCases := []struct {
 		name                string

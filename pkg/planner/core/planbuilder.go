@@ -4844,16 +4844,24 @@ func isSimpleOnDuplicateExprForExpressionReuse(expr ast.ExprNode) bool {
 	}
 }
 
+func isOnDuplicateFunctionLikeExprNode(node ast.Node) bool {
+	switch node.(type) {
+	case *ast.BetweenExpr, *ast.BinaryOperationExpr, *ast.CaseExpr, *ast.FuncCallExpr,
+		*ast.FuncCastExpr, *ast.IsNullExpr, *ast.IsTruthExpr, *ast.PatternInExpr,
+		*ast.PatternLikeOrIlikeExpr, *ast.PatternRegexpExpr, *ast.RowExpr,
+		*ast.UnaryOperationExpr:
+		return true
+	default:
+		return false
+	}
+}
+
 type onDuplicateFunctionCounter struct {
 	count int
 }
 
 func (c *onDuplicateFunctionCounter) Enter(in ast.Node) (ast.Node, bool) {
-	switch in.(type) {
-	case *ast.BetweenExpr, *ast.BinaryOperationExpr, *ast.CaseExpr, *ast.FuncCallExpr,
-		*ast.FuncCastExpr, *ast.IsNullExpr, *ast.IsTruthExpr, *ast.PatternInExpr,
-		*ast.PatternLikeOrIlikeExpr, *ast.PatternRegexpExpr, *ast.RowExpr,
-		*ast.UnaryOperationExpr:
+	if isOnDuplicateFunctionLikeExprNode(in) {
 		c.count++
 	}
 	return in, c.count >= minOnDuplicateFunctionCountForExpressionReuse
