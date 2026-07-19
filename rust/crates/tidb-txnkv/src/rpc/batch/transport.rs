@@ -40,6 +40,9 @@ const MAX_RECV_MESSAGE_SIZE: usize = (i64::MAX as usize).saturating_sub(1);
 // Pinned client-go internal/client/client.go uses dialTimeout = 5s for
 // waitConnReady before BatchCommands stream creation.
 const STREAM_OPEN_TIMEOUT: Duration = Duration::from_secs(5);
+// Pinned client-go's default TiKV MaxBatchSize bounds the per-connection
+// BatchCommands admission channel at 128 requests.
+const MAX_STREAM_OPENING_PACKETS: usize = 128;
 
 /// The original once-only completion carried from admission through receive.
 pub type BatchCommandCompletion = CompletionRequest<OpaqueBatchCommand, BatchInflightError>;
@@ -102,7 +105,7 @@ struct ActiveStream {
 
 struct StreamOpenState {
     waiting_for_headers: bool,
-    packet_admitted: bool,
+    packets_admitted: usize,
 }
 
 /// Stream-map bookkeeping returned after the receive task retires in-flight work.
@@ -285,11 +288,13 @@ impl BatchTransportState {
             let mut open_state = open_state
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            if open_state.waiting_for_headers && open_state.packet_admitted {
+            if open_state.waiting_for_headers
+                && open_state.packets_admitted == MAX_STREAM_OPENING_PACKETS
+            {
                 false
             } else {
                 if open_state.waiting_for_headers {
-                    open_state.packet_admitted = true;
+                    open_state.packets_admitted += 1;
                 }
                 true
             }
@@ -314,7 +319,7 @@ impl BatchTransportState {
                         .lock()
                         .unwrap_or_else(|poisoned| poisoned.into_inner());
                     if open_state.waiting_for_headers {
-                        open_state.packet_admitted = false;
+                        open_state.packets_admitted = open_state.packets_admitted.saturating_sub(1);
                     }
                     drop(terminal_guard);
                     for request in pending {
@@ -328,7 +333,7 @@ impl BatchTransportState {
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             if open_state.waiting_for_headers {
-                open_state.packet_admitted = false;
+                open_state.packets_admitted = open_state.packets_admitted.saturating_sub(1);
             }
             drop(terminal_guard);
             return None;
@@ -489,7 +494,7 @@ fn open_stream(
     let receive_terminal = Arc::clone(&terminal);
     let open_state = Arc::new(Mutex::new(StreamOpenState {
         waiting_for_headers: true,
-        packet_admitted: false,
+        packets_admitted: 0,
     }));
     let receive_open_state = Arc::clone(&open_state);
     tokio::spawn(async move {

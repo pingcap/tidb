@@ -94,6 +94,7 @@ impl QuerySessionFactory for RealTiKvSessionFactory {
             inner,
             context,
             query_activity: Arc::clone(&self.query_activity),
+            next_query_id: 1,
         })
     }
 }
@@ -103,6 +104,7 @@ pub struct RealTiKvServerSession {
     inner: RealTiKvReadSession<ProductionReadTransport, PdTimestampSource>,
     context: SessionContext,
     query_activity: Arc<QueryActivity>,
+    next_query_id: u64,
 }
 
 #[derive(Default)]
@@ -112,16 +114,17 @@ struct QueryActivity {
 }
 
 impl QueryActivity {
-    fn begin(self: &Arc<Self>, connection_id: u64) -> QueryActivityLease {
+    fn begin(self: &Arc<Self>, connection_id: u64, query_id: u64) -> QueryActivityLease {
         let active = self.active.fetch_add(1, Ordering::AcqRel) + 1;
         self.max_active.fetch_max(active, Ordering::AcqRel);
         eprintln!(
-            "{{\"event\":\"query_activity\",\"phase\":\"begin\",\"connection_id\":{connection_id},\"active\":{active},\"max_active\":{}}}",
+            "{{\"event\":\"query_activity\",\"phase\":\"begin\",\"connection_id\":{connection_id},\"query_id\":{query_id},\"active\":{active},\"max_active\":{}}}",
             self.max_active.load(Ordering::Acquire)
         );
         QueryActivityLease {
             activity: Arc::clone(self),
             connection_id,
+            query_id,
         }
     }
 }
@@ -129,6 +132,7 @@ impl QueryActivity {
 struct QueryActivityLease {
     activity: Arc<QueryActivity>,
     connection_id: u64,
+    query_id: u64,
 }
 
 impl Drop for QueryActivityLease {
@@ -136,8 +140,9 @@ impl Drop for QueryActivityLease {
         let previous = self.activity.active.fetch_sub(1, Ordering::AcqRel);
         debug_assert!(previous > 0, "query activity count underflow");
         eprintln!(
-            "{{\"event\":\"query_activity\",\"phase\":\"end\",\"connection_id\":{},\"active\":{},\"max_active\":{}}}",
+            "{{\"event\":\"query_activity\",\"phase\":\"end\",\"connection_id\":{},\"query_id\":{},\"active\":{},\"max_active\":{}}}",
             self.connection_id,
+            self.query_id,
             previous - 1,
             self.activity.max_active.load(Ordering::Acquire)
         );
@@ -146,7 +151,14 @@ impl Drop for QueryActivityLease {
 
 impl QuerySession for RealTiKvServerSession {
     fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
-        let query_activity = self.query_activity.begin(self.context.connection_id);
+        let query_id = self.next_query_id;
+        self.next_query_id = self
+            .next_query_id
+            .checked_add(1)
+            .ok_or_else(|| SqlQueryError::unknown("query identity space exhausted"))?;
+        let query_activity = self
+            .query_activity
+            .begin(self.context.connection_id, query_id);
         let cancellation = Arc::new(CancelHandle::default());
         let cancellation_lease = self.context.cancellation.install(cancellation.clone());
         let query = self
@@ -159,7 +171,7 @@ impl QuerySession for RealTiKvServerSession {
         let identity = query.session_identity();
         let evidence = self.inner.transport_evidence_handle();
         eprintln!(
-            "{{\"event\":\"query_snapshot\",\"connection_id\":{},\"authority_id\":{},\"session_id\":{},\"cluster_id\":{cluster_id},\"snapshot_ts\":{snapshot_ts},\"table_id\":{table_id},\"user\":{:?},\"host\":{:?}}}",
+            "{{\"event\":\"query_snapshot\",\"connection_id\":{},\"query_id\":{query_id},\"authority_id\":{},\"session_id\":{},\"cluster_id\":{cluster_id},\"snapshot_ts\":{snapshot_ts},\"table_id\":{table_id},\"user\":{:?},\"host\":{:?}}}",
             self.context.connection_id,
             identity.authority_id(),
             identity.session_id(),
@@ -170,6 +182,7 @@ impl QuerySession for RealTiKvServerSession {
             inner: query.into_record_set(),
             evidence,
             connection_id: self.context.connection_id,
+            query_id,
             authority_id: identity.authority_id(),
             session_id: identity.session_id(),
             emitted: false,
@@ -183,6 +196,7 @@ struct ObservedResultSet {
     inner: DistSqlRecordSet,
     evidence: DirectUnaryTransportEvidenceHandle,
     connection_id: u64,
+    query_id: u64,
     authority_id: u64,
     session_id: u64,
     emitted: bool,
@@ -210,8 +224,9 @@ impl ObservedResultSet {
             .collect::<Vec<_>>()
             .join(",");
         eprintln!(
-            "{{\"event\":\"query_transport\",\"connection_id\":{},\"authority_id\":{},\"session_id\":{},\"located_region_ids\":[{located_regions}],\"dispatched_region_ids\":[{dispatched_regions}],\"batch_attempts\":{},\"unary_attempts\":{}}}",
+            "{{\"event\":\"query_transport\",\"connection_id\":{},\"query_id\":{},\"authority_id\":{},\"session_id\":{},\"located_region_ids\":[{located_regions}],\"dispatched_region_ids\":[{dispatched_regions}],\"batch_attempts\":{},\"unary_attempts\":{}}}",
             self.connection_id,
+            self.query_id,
             self.authority_id,
             self.session_id,
             evidence.batch_attempts,

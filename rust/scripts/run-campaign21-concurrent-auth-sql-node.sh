@@ -149,14 +149,14 @@ release_client_query() {
   local index=$1
   local query='SELECT balance AS amount, id FROM campaign20.rows;'
   case "${index}" in
-    0) printf '%s\nquit\n' "${query}" >&10; exec 10>&- ;;
-    1) printf '%s\nquit\n' "${query}" >&11; exec 11>&- ;;
-    2) printf '%s\nquit\n' "${query}" >&12; exec 12>&- ;;
-    3) printf '%s\nquit\n' "${query}" >&13; exec 13>&- ;;
-    4) printf '%s\nquit\n' "${query}" >&14; exec 14>&- ;;
-    5) printf '%s\nquit\n' "${query}" >&15; exec 15>&- ;;
-    6) printf '%s\nquit\n' "${query}" >&16; exec 16>&- ;;
-    7) printf '%s\nquit\n' "${query}" >&17; exec 17>&- ;;
+    0) printf '%s\n' "${query}" >&10; exec 10>&- ;;
+    1) printf '%s\n' "${query}" >&11; exec 11>&- ;;
+    2) printf '%s\n' "${query}" >&12; exec 12>&- ;;
+    3) printf '%s\n' "${query}" >&13; exec 13>&- ;;
+    4) printf '%s\n' "${query}" >&14; exec 14>&- ;;
+    5) printf '%s\n' "${query}" >&15; exec 15>&- ;;
+    6) printf '%s\n' "${query}" >&16; exec 16>&- ;;
+    7) printf '%s\n' "${query}" >&17; exec 17>&- ;;
     *) echo "invalid successful Campaign 21 client index ${index}" >&2; return 1 ;;
   esac
 }
@@ -635,6 +635,7 @@ if ! printf '%s\n' "${SNAPSHOTS_JSON}" | jq -e \
   --arg authority_id "${AUTHORITY_ID}" --arg user "${AUTH_USER}" \
   'length == 8
    and all(.[]; (.snapshot_ts | type) == "number" and .snapshot_ts > 0
+     and (.query_id | type) == "number" and .query_id > 0
      and (.table_id | tostring) == $table_id
      and (.cluster_id | tostring) == $cluster_id
      and (.authority_id | tostring) == $authority_id
@@ -649,6 +650,7 @@ if ! printf '%s\n' "${TRANSPORTS_JSON}" | jq -e \
   --arg authority_id "${AUTHORITY_ID}" \
   'length == 8
    and all(.[]; (.authority_id | tostring) == $authority_id
+     and (.query_id | type) == "number" and .query_id > 0
      and (.located_region_ids | type) == "array" and (.located_region_ids | length) > 0
      and (.dispatched_region_ids | type) == "array" and (.dispatched_region_ids | length) > 0
      and .batch_attempts >= 1 and .unary_attempts == 0)
@@ -659,36 +661,52 @@ if ! printf '%s\n' "${TRANSPORTS_JSON}" | jq -e \
   exit 1
 fi
 SNAPSHOT_CONNECTION_IDS=$(printf '%s\n' "${SNAPSHOTS_JSON}" \
-  | jq -r '.[].connection_id' | sort -n | tr '\n' ',')
+  | jq -r '.[] | "\(.connection_id):\(.query_id)"' | sort | tr '\n' ',')
 TRANSPORT_CONNECTION_IDS=$(printf '%s\n' "${TRANSPORTS_JSON}" \
-  | jq -r '.[].connection_id' | sort -n | tr '\n' ',')
+  | jq -r '.[] | "\(.connection_id):\(.query_id)"' | sort | tr '\n' ',')
 if [[ "${SNAPSHOT_CONNECTION_IDS}" != "${TRANSPORT_CONNECTION_IDS}" ]]; then
   echo "Campaign 21 snapshot and transport evidence came from different connections" >&2
   exit 1
 fi
 if ! printf '%s\n' "${QUERY_ACTIVITY_JSON}" | jq -e \
+  --argjson snapshots "${SNAPSHOTS_JSON}" \
   '([.[] | select(.phase == "begin")]) as $begins
    | ([.[] | select(.phase == "end")]) as $ends
-   | length == 16
-     and ($begins | length) == 8 and ($ends | length) == 8
-     and ([$begins[].connection_id] | unique | length) == 8
-     and ([$ends[].connection_id] | unique | length) == 8
-     and (([$begins[].connection_id] | sort) == ([$ends[].connection_id] | sort))
-     and (([$begins[].max_active] | max) >= 2)
+   | ($begins | map("\(.connection_id):\(.query_id)")) as $begin_keys
+   | ($ends | map("\(.connection_id):\(.query_id)")) as $end_keys
+   | ($snapshots | map("\(.connection_id):\(.query_id)")) as $real_keys
+   | ($begins | map(select(("\(.connection_id):\(.query_id)") as $key
+       | $real_keys | index($key)))) as $real_begins
+   | ($begins | length) >= 8 and ($begins | length) == ($ends | length)
+     and ($begin_keys | unique | length) == ($begin_keys | length)
+     and ($end_keys | unique | length) == ($end_keys | length)
+     and (($begin_keys | sort) == ($end_keys | sort))
+     and (($real_keys - $begin_keys) | length) == 0
+     and (($real_keys - $end_keys) | length) == 0
+     and ($real_begins | length) == 8
+     and (([$real_begins[].active] | max) >= 2)
      and ($ends[-1].active == 0)' >/dev/null; then
   echo "Campaign 21 did not prove overlapping queries with balanced begin/end activity" >&2
   printf '%s\n' "${QUERY_ACTIVITY_JSON}" >&2
   exit 1
 fi
 QUERY_ACTIVITY_CONNECTION_IDS=$(printf '%s\n' "${QUERY_ACTIVITY_JSON}" \
-  | jq -r '.[] | select(.phase == "begin") | .connection_id' \
-  | sort -n | tr '\n' ',')
+  | jq -r --argjson snapshots "${SNAPSHOTS_JSON}" \
+    '($snapshots | map("\(.connection_id):\(.query_id)")) as $keys
+     | .[] | select(.phase == "begin")
+     | "\(.connection_id):\(.query_id)" as $key
+     | select($keys | index($key)) | $key' \
+  | sort | tr '\n' ',')
 if [[ "${SNAPSHOT_CONNECTION_IDS}" != "${QUERY_ACTIVITY_CONNECTION_IDS}" ]]; then
   echo "Campaign 21 query activity and real-TiKV evidence came from different connections" >&2
   exit 1
 fi
 MAX_QUERY_ACTIVE=$(printf '%s\n' "${QUERY_ACTIVITY_JSON}" \
-  | jq -r '[.[] | select(.phase == "begin") | .max_active] | max')
+  | jq -r --argjson snapshots "${SNAPSHOTS_JSON}" \
+    '($snapshots | map("\(.connection_id):\(.query_id)")) as $keys
+     | [.[] | select(.phase == "begin")
+       | "\(.connection_id):\(.query_id)" as $key
+       | select($keys | index($key)) | .active] | max')
 
 MAX_ACTIVE=$(grep -F '"event":"connection_begin"' "${RUST_LOG}" \
   | jq -r '.active' | sort -n | tail -1)

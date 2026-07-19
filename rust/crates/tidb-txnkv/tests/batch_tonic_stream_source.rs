@@ -438,6 +438,18 @@ fn opening_generation_bounds_packets_and_isolates_sibling_cancellation() {
     headers_wait.recv_timeout(Duration::from_secs(1)).unwrap();
 
     cancelled_pull.cancel();
+    let mut opening_pulls = Vec::new();
+    for _ in 1..128 {
+        let (opening, opening_pull) = entry(b"opening-sibling", None);
+        assert_eq!(
+            client
+                .submit_batch_commands(&server.address, vec![opening])
+                .unwrap()
+                .len(),
+            1
+        );
+        opening_pulls.push(opening_pull);
+    }
     let (overflow, mut overflow_pull) = entry(b"opening-overflow", None);
     assert!(client
         .submit_batch_commands(&server.address, vec![overflow])
@@ -455,6 +467,9 @@ fn opening_generation_bounds_packets_and_isolates_sibling_cancellation() {
         wait_for_completion(&mut surviving_pull).unwrap().body(),
         b"surviving-sibling"
     );
+    for opening_pull in &mut opening_pulls {
+        wait_for_completion(opening_pull).unwrap();
+    }
     assert!(cancelled_pull.try_complete().unwrap().is_none());
     client.close().unwrap();
 }
