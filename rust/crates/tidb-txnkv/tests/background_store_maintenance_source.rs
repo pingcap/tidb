@@ -186,7 +186,7 @@ fn blocked_store_load_keeps_cache_available_and_discards_stale_publication() {
         10,
         0,
     );
-    cache.locate_key_at(b"a", 0).unwrap();
+    cache.locate_key(b"a").unwrap();
     let state_address = cache.store_state(101).unwrap() as *const _ as usize;
     let background = BackgroundRegionCache::start(cache, Duration::from_millis(200), 50).unwrap();
     started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
