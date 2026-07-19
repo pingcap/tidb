@@ -1,6 +1,6 @@
 schema = "1"
 slice = "server-live-bigint-selection-topology-proof"
-status = "ready"
+status = "partial"
 target = "tidb-server"
 ring = "result"
 consumer = "One authenticated stock MySQL connection proves all six signed BIGINT comparisons, predicate-only scan inputs, empty results, real TiKV Selection execution, topology churn, blocked-query cancellation, ordered process shutdown, and tag-owned cleanup through one retained Rust SQL-node process."
