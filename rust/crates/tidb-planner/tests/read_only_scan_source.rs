@@ -6,12 +6,21 @@
 use tidb_planner::{
     access_path::ResolvedTableScanKind,
     read_only_scan::{
-        ConfiguredTable, ReadOnlyScanError, ReadOnlyScanPlan, UnsupportedReadOnlyFeature,
+        ConfiguredColumn, ConfiguredColumnKind, ConfiguredTable, ReadOnlyScanError,
+        ReadOnlyScanPlan, UnsupportedReadOnlyFeature,
     },
 };
 
 fn table() -> ConfiguredTable {
-    ConfiguredTable::new("test", "accounts", 42, "id", 7)
+    ConfiguredTable::new(
+        "test",
+        "accounts",
+        42,
+        [
+            ConfiguredColumn::clustered_primary_key("id", 7),
+            ConfiguredColumn::stored_not_null("balance", 9),
+        ],
+    )
 }
 
 fn unsupported(sql: &str, feature: UnsupportedReadOnlyFeature) {
@@ -22,15 +31,14 @@ fn unsupported(sql: &str, feature: UnsupportedReadOnlyFeature) {
 }
 
 #[test]
-fn direct_clustered_pk_projection_lowers_to_existing_table_reader_scan() {
+fn direct_projection_preserves_alias_source_identity_and_scan_order() {
     let plan = ReadOnlyScanPlan::lower(
-        "SELECT accounts.id AS account_id, id FROM test.accounts",
+        "SELECT accounts.balance AS amount, id FROM test.accounts",
         &table(),
     )
-    .expect("one configured direct projection must lower");
+    .expect("configured direct columns must lower in projection order");
 
     assert_eq!(plan.table_id(), 42);
-    assert_eq!(plan.projected_column_names(), ["account_id", "id"]);
     assert_eq!(
         plan.table_scan().scan_kind(),
         Some(ResolvedTableScanKind::Full)
@@ -39,22 +47,41 @@ fn direct_clustered_pk_projection_lowers_to_existing_table_reader_scan() {
         plan.table_scan().explain_id().as_deref(),
         Some("TableFullScan_1")
     );
-    assert_eq!(plan.projected_columns().len(), 2);
+    let [balance, id] = plan.projected_columns() else {
+        panic!("the two direct projections must remain distinct");
+    };
+    assert_eq!(balance.output_name(), "amount");
+    assert_eq!(balance.source_name(), "balance");
+    assert_eq!(balance.kind(), ConfiguredColumnKind::StoredNotNull);
+    assert_eq!(balance.scan_column().column_id, 9);
+    assert_eq!(balance.scan_column().flag, 1);
+    assert!(!balance.scan_column().pk_handle);
+
+    assert_eq!(id.output_name(), "id");
+    assert_eq!(id.source_name(), "id");
+    assert_eq!(id.kind(), ConfiguredColumnKind::ClusteredPrimaryKey);
+    assert_eq!(id.scan_column().column_id, 7);
+    assert_eq!(id.scan_column().flag, 3);
+    assert!(id.scan_column().pk_handle);
+
+    assert_eq!(
+        plan.table_scan().pushdown().columns,
+        [balance.scan_column().clone(), id.scan_column().clone()]
+    );
     for column in plan.projected_columns() {
-        assert_eq!(column.column_id, 7);
-        assert_eq!(column.tp, 8);
-        assert_eq!(column.collation, 63);
-        assert_eq!(column.column_len, 20);
-        assert_eq!(column.flag, 2);
-        assert!(column.pk_handle);
-        assert!(!column.array);
+        assert_eq!(column.scan_column().tp, 8);
+        assert_eq!(column.scan_column().collation, 63);
+        assert_eq!(column.scan_column().column_len, 20);
+        assert_eq!(column.scan_column().decimal, 0);
+        assert!(!column.scan_column().array);
     }
 }
 
 #[test]
 fn table_alias_is_the_only_visible_two_part_qualifier() {
-    ReadOnlyScanPlan::lower("SELECT a.id FROM accounts AS a", &table())
+    let plan = ReadOnlyScanPlan::lower("SELECT a.balance, a.id FROM accounts AS a", &table())
         .expect("configured table aliases remain direct one-table reads");
+    assert_eq!(plan.projected_columns()[0].source_name(), "balance");
     assert_eq!(
         ReadOnlyScanPlan::lower("SELECT accounts.id FROM accounts AS a", &table()),
         Err(ReadOnlyScanError::UnknownColumn("accounts.id".to_owned()))
@@ -114,16 +141,97 @@ fn unknown_catalog_names_and_invalid_configuration_fail_explicitly() {
         Err(ReadOnlyScanError::UnknownTable("missing".to_owned()))
     );
     assert_eq!(
-        ReadOnlyScanPlan::lower("SELECT balance FROM accounts", &table()),
-        Err(ReadOnlyScanError::UnknownColumn("balance".to_owned()))
+        ReadOnlyScanPlan::lower("SELECT missing FROM accounts", &table()),
+        Err(ReadOnlyScanError::UnknownColumn("missing".to_owned()))
     );
     assert_eq!(
         ReadOnlyScanPlan::lower(
             "SELECT id FROM accounts",
-            &ConfiguredTable::new("test", "accounts", 0, "id", 7),
+            &ConfiguredTable::new(
+                "test",
+                "accounts",
+                0,
+                [ConfiguredColumn::clustered_primary_key("id", 7)],
+            ),
         ),
         Err(ReadOnlyScanError::InvalidConfiguration(
             "table ID must be positive"
         ))
     );
+}
+
+#[test]
+fn invalid_column_catalogs_fail_before_sql_lowering() {
+    let invalid = [
+        (
+            ConfiguredTable::new(
+                "test",
+                "accounts",
+                42,
+                [ConfiguredColumn::clustered_primary_key("", 7)],
+            ),
+            "column names must be nonempty",
+        ),
+        (
+            ConfiguredTable::new(
+                "test",
+                "accounts",
+                42,
+                [ConfiguredColumn::clustered_primary_key("id", 0)],
+            ),
+            "column IDs must be positive",
+        ),
+        (
+            ConfiguredTable::new(
+                "test",
+                "accounts",
+                42,
+                [
+                    ConfiguredColumn::clustered_primary_key("id", 7),
+                    ConfiguredColumn::stored_not_null("ID", 9),
+                ],
+            ),
+            "column names must be unique",
+        ),
+        (
+            ConfiguredTable::new(
+                "test",
+                "accounts",
+                42,
+                [
+                    ConfiguredColumn::clustered_primary_key("id", 7),
+                    ConfiguredColumn::stored_not_null("balance", 7),
+                ],
+            ),
+            "column IDs must be unique",
+        ),
+        (
+            ConfiguredTable::new(
+                "test",
+                "accounts",
+                42,
+                [ConfiguredColumn::stored_not_null("balance", 9)],
+            ),
+            "exactly one clustered primary key is required",
+        ),
+        (
+            ConfiguredTable::new(
+                "test",
+                "accounts",
+                42,
+                [
+                    ConfiguredColumn::clustered_primary_key("id", 7),
+                    ConfiguredColumn::clustered_primary_key("other_id", 9),
+                ],
+            ),
+            "exactly one clustered primary key is required",
+        ),
+    ];
+
+    for (table, reason) in invalid {
+        assert_eq!(
+            ReadOnlyScanPlan::lower("SELECT id FROM accounts", &table),
+            Err(ReadOnlyScanError::InvalidConfiguration(reason))
+        );
+    }
 }

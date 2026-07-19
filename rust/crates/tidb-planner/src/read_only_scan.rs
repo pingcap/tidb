@@ -15,11 +15,12 @@
 //! Narrow SQL-to-TiKV table-scan lowering for the first read-only node.
 //!
 //! This boundary intentionally accepts exactly one configured,
-//! non-partitioned table with one signed `BIGINT` clustered primary key. It
+//! non-partitioned table with signed `BIGINT` columns and exactly one clustered
+//! primary key. It
 //! validates the complete parsed query envelope before entering the existing
 //! `LogicalDataSource -> TableAccessPath -> PhysicalTableReaderPlan` path.
 
-use std::{error::Error, fmt};
+use std::{collections::HashSet, error::Error, fmt};
 
 use tidb_ast::{
     Expr, JoinNode, JoinType, QueryStmt, SelectField, SelectStatementKind, SelectStmt, Stmt,
@@ -41,8 +42,83 @@ use crate::{
 
 const MYSQL_TYPE_LONGLONG: i32 = 8;
 const BINARY_COLLATION_ID: i32 = 63;
+const NOT_NULL_FLAG: i32 = 1;
 const PRI_KEY_FLAG: i32 = 1 << 1;
 const PHYSICAL_PLAN_ID: i32 = 1;
+
+/// The two signed-`BIGINT` storage roles admitted by the read-only catalog.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ConfiguredColumnKind {
+    /// The table's sole signed integer row handle.
+    ClusteredPrimaryKey,
+    /// A signed stored value that cannot be `NULL`.
+    StoredNotNull,
+}
+
+/// One source-ordered column in the configured read-only catalog.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConfiguredColumn {
+    name: String,
+    id: i64,
+    kind: ConfiguredColumnKind,
+}
+
+impl ConfiguredColumn {
+    /// Configures the table's signed `BIGINT PRIMARY KEY CLUSTERED` column.
+    #[must_use]
+    pub fn clustered_primary_key(name: impl Into<String>, id: i64) -> Self {
+        Self {
+            name: name.into(),
+            id,
+            kind: ConfiguredColumnKind::ClusteredPrimaryKey,
+        }
+    }
+
+    /// Configures one signed stored `BIGINT NOT NULL` column.
+    #[must_use]
+    pub fn stored_not_null(name: impl Into<String>, id: i64) -> Self {
+        Self {
+            name: name.into(),
+            id,
+            kind: ConfiguredColumnKind::StoredNotNull,
+        }
+    }
+
+    /// Returns the source catalog name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Returns the stable TiDB column identity.
+    #[must_use]
+    pub const fn id(&self) -> i64 {
+        self.id
+    }
+
+    /// Returns the column's unambiguous storage role.
+    #[must_use]
+    pub const fn kind(&self) -> ConfiguredColumnKind {
+        self.kind
+    }
+
+    fn scan_column(&self) -> ScanColumnInfo {
+        let (flag, pk_handle) = match self.kind {
+            ConfiguredColumnKind::ClusteredPrimaryKey => (NOT_NULL_FLAG | PRI_KEY_FLAG, true),
+            ConfiguredColumnKind::StoredNotNull => (NOT_NULL_FLAG, false),
+        };
+        ScanColumnInfo {
+            column_id: self.id,
+            tp: MYSQL_TYPE_LONGLONG,
+            collation: BINARY_COLLATION_ID,
+            column_len: 20,
+            decimal: 0,
+            flag,
+            pk_handle,
+            ..ScanColumnInfo::default()
+        }
+    }
+}
 
 /// The complete catalog input admitted by the first read-only SQL node.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -50,27 +126,23 @@ pub struct ConfiguredTable {
     schema: String,
     table: String,
     table_id: i64,
-    pk_column_name: String,
-    pk_column_id: i64,
+    columns: Vec<ConfiguredColumn>,
 }
 
 impl ConfiguredTable {
-    /// Configures one non-partitioned table whose sole visible column is a
-    /// signed `BIGINT PRIMARY KEY CLUSTERED` integer handle.
+    /// Configures one non-partitioned table with source-ordered signed columns.
     #[must_use]
     pub fn new(
         schema: impl Into<String>,
         table: impl Into<String>,
         table_id: i64,
-        pk_column_name: impl Into<String>,
-        pk_column_id: i64,
+        columns: impl IntoIterator<Item = ConfiguredColumn>,
     ) -> Self {
         Self {
             schema: schema.into(),
             table: table.into(),
             table_id,
-            pk_column_name: pk_column_name.into(),
-            pk_column_id,
+            columns: columns.into_iter().collect(),
         }
     }
 
@@ -92,16 +164,10 @@ impl ConfiguredTable {
         self.table_id
     }
 
-    /// Returns the clustered integer-handle column name.
+    /// Returns columns in configured source order.
     #[must_use]
-    pub fn pk_column_name(&self) -> &str {
-        &self.pk_column_name
-    }
-
-    /// Returns the clustered integer-handle column ID.
-    #[must_use]
-    pub const fn pk_column_id(&self) -> i64 {
-        self.pk_column_id
+    pub fn columns(&self) -> &[ConfiguredColumn] {
+        &self.columns
     }
 
     fn validate(&self) -> Result<(), ReadOnlyScanError> {
@@ -111,35 +177,89 @@ impl ConfiguredTable {
         if self.table.is_empty() {
             return Err(ReadOnlyScanError::InvalidConfiguration("empty table name"));
         }
-        if self.pk_column_name.is_empty() {
-            return Err(ReadOnlyScanError::InvalidConfiguration(
-                "empty primary-key column name",
-            ));
-        }
         if self.table_id <= 0 {
             return Err(ReadOnlyScanError::InvalidConfiguration(
                 "table ID must be positive",
             ));
         }
-        if self.pk_column_id <= 0 {
+        let mut names = HashSet::with_capacity(self.columns.len());
+        let mut ids = HashSet::with_capacity(self.columns.len());
+        let mut primary_keys = 0;
+        for column in &self.columns {
+            if column.name.is_empty() {
+                return Err(ReadOnlyScanError::InvalidConfiguration(
+                    "column names must be nonempty",
+                ));
+            }
+            if column.id <= 0 {
+                return Err(ReadOnlyScanError::InvalidConfiguration(
+                    "column IDs must be positive",
+                ));
+            }
+            if !names.insert(column.name.to_ascii_lowercase()) {
+                return Err(ReadOnlyScanError::InvalidConfiguration(
+                    "column names must be unique",
+                ));
+            }
+            if !ids.insert(column.id) {
+                return Err(ReadOnlyScanError::InvalidConfiguration(
+                    "column IDs must be unique",
+                ));
+            }
+            if column.kind == ConfiguredColumnKind::ClusteredPrimaryKey {
+                primary_keys += 1;
+            }
+        }
+        if primary_keys != 1 {
             return Err(ReadOnlyScanError::InvalidConfiguration(
-                "column ID must be positive",
+                "exactly one clustered primary key is required",
             ));
         }
         Ok(())
     }
+}
 
-    fn pk_scan_column(&self) -> ScanColumnInfo {
-        ScanColumnInfo {
-            column_id: self.pk_column_id,
-            tp: MYSQL_TYPE_LONGLONG,
-            collation: BINARY_COLLATION_ID,
-            column_len: 20,
-            decimal: 0,
-            flag: PRI_KEY_FLAG,
-            pk_handle: true,
-            ..ScanColumnInfo::default()
+/// One direct projection after catalog resolution and alias preservation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolvedProjectionColumn {
+    output_name: String,
+    source_name: String,
+    scan_column: ScanColumnInfo,
+    kind: ConfiguredColumnKind,
+}
+
+impl ResolvedProjectionColumn {
+    fn new(output_name: String, column: &ConfiguredColumn) -> Self {
+        Self {
+            output_name,
+            source_name: column.name.clone(),
+            scan_column: column.scan_column(),
+            kind: column.kind,
         }
+    }
+
+    /// Returns the MySQL-visible alias or source name.
+    #[must_use]
+    pub fn output_name(&self) -> &str {
+        &self.output_name
+    }
+
+    /// Returns the original configured catalog name.
+    #[must_use]
+    pub fn source_name(&self) -> &str {
+        &self.source_name
+    }
+
+    /// Returns the exact TiKV scan descriptor.
+    #[must_use]
+    pub const fn scan_column(&self) -> &ScanColumnInfo {
+        &self.scan_column
+    }
+
+    /// Returns the resolved source column's storage role.
+    #[must_use]
+    pub const fn kind(&self) -> ConfiguredColumnKind {
+        self.kind
     }
 }
 
@@ -203,7 +323,7 @@ pub enum ReadOnlyScanError {
     Unsupported(UnsupportedReadOnlyFeature),
     /// The query names a table other than the configured table.
     UnknownTable(String),
-    /// The query names a column other than the configured clustered key.
+    /// The query names a column outside the configured table.
     UnknownColumn(String),
     /// The existing datasource task builder rejected the validated path.
     PlannerRejected(ScanReadTaskRejection),
@@ -245,7 +365,7 @@ impl Error for ReadOnlyScanError {}
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReadOnlyScanPlan {
     reader: crate::physical_table_reader::PhysicalTableReaderPlan,
-    projected_column_names: Vec<String>,
+    projected_columns: Vec<ResolvedProjectionColumn>,
 }
 
 impl ReadOnlyScanPlan {
@@ -271,12 +391,12 @@ impl ReadOnlyScanPlan {
             }
         };
 
-        let projected_column_names = validate_select(&select, table)?;
-        let projected_columns = projected_column_names
+        let projected_columns = validate_select(&select, table)?;
+        let scan_columns = projected_columns
             .iter()
-            .map(|_| table.pk_scan_column())
+            .map(|column| column.scan_column.clone())
             .collect();
-        let pushdown = TiKvTableScanSpec::new(table.table_id, projected_columns);
+        let pushdown = TiKvTableScanSpec::new(table.table_id, scan_columns);
         let descriptor = ResolvedTableDescriptor::new(
             table.table_id,
             false,
@@ -305,7 +425,7 @@ impl ReadOnlyScanPlan {
         };
         Ok(Self {
             reader,
-            projected_column_names,
+            projected_columns,
         })
     }
 
@@ -323,23 +443,17 @@ impl ReadOnlyScanPlan {
         self.table_scan().pushdown().table_id
     }
 
-    /// Returns MySQL result-column labels in projection order.
+    /// Returns resolved source/output metadata in projection order.
     #[must_use]
-    pub fn projected_column_names(&self) -> &[String] {
-        &self.projected_column_names
-    }
-
-    /// Returns the exact TiKV column descriptors in projection order.
-    #[must_use]
-    pub fn projected_columns(&self) -> &[ScanColumnInfo] {
-        &self.table_scan().pushdown().columns
+    pub fn projected_columns(&self) -> &[ResolvedProjectionColumn] {
+        &self.projected_columns
     }
 }
 
 fn validate_select(
     select: &SelectStmt,
     table: &ConfiguredTable,
-) -> Result<Vec<String>, ReadOnlyScanError> {
+) -> Result<Vec<ResolvedProjectionColumn>, ReadOnlyScanError> {
     if select.kind != SelectStatementKind::Select
         || select.is_in_braces
         || !select.values.is_empty()
@@ -394,7 +508,7 @@ fn validate_select(
         return unsupported(UnsupportedReadOnlyFeature::IntoOutfile);
     }
 
-    let mut names = Vec::with_capacity(select.fields.len());
+    let mut columns = Vec::with_capacity(select.fields.len());
     for field in &select.fields {
         let (path, alias) = match field {
             SelectField::Wildcard(_) => return unsupported(UnsupportedReadOnlyFeature::Wildcard),
@@ -418,16 +532,15 @@ fn validate_select(
                 return unsupported(UnsupportedReadOnlyFeature::ProjectionExpression);
             }
         };
-        validate_column_path(path, table_ref, table)?;
-        names.push(
-            alias
-                .as_deref()
-                .filter(|alias| !alias.is_empty())
-                .unwrap_or(&table.pk_column_name)
-                .to_owned(),
-        );
+        let column = resolve_column_path(path, table_ref, table)?;
+        let output_name = alias
+            .as_deref()
+            .filter(|alias| !alias.is_empty())
+            .unwrap_or(&column.name)
+            .to_owned();
+        columns.push(ResolvedProjectionColumn::new(output_name, column));
     }
-    Ok(names)
+    Ok(columns)
 }
 
 fn validate_table_ref(
@@ -459,30 +572,31 @@ fn validate_table_ref(
     }
 }
 
-fn validate_column_path(
+fn resolve_column_path<'a>(
     path: &[String],
     table_ref: &TableRef,
-    table: &ConfiguredTable,
-) -> Result<(), ReadOnlyScanError> {
+    table: &'a ConfiguredTable,
+) -> Result<&'a ConfiguredColumn, ReadOnlyScanError> {
     let alias = table_ref.alias.as_deref().filter(|alias| !alias.is_empty());
-    let matches = match path {
-        [column] => identifier_eq(column, &table.pk_column_name),
+    let column_name = match path {
+        [column] => Some(column.as_str()),
         [qualifier, column] => {
             let visible_table = alias.unwrap_or(&table.table);
-            identifier_eq(qualifier, visible_table) && identifier_eq(column, &table.pk_column_name)
+            identifier_eq(qualifier, visible_table).then_some(column.as_str())
         }
-        [schema, table_name, column] if alias.is_none() => {
-            identifier_eq(schema, &table.schema)
-                && identifier_eq(table_name, &table.table)
-                && identifier_eq(column, &table.pk_column_name)
-        }
-        _ => false,
+        [schema, table_name, column] if alias.is_none() => (identifier_eq(schema, &table.schema)
+            && identifier_eq(table_name, &table.table))
+        .then_some(column.as_str()),
+        _ => None,
     };
-    if matches {
-        Ok(())
-    } else {
-        Err(ReadOnlyScanError::UnknownColumn(path.join(".")))
-    }
+    column_name
+        .and_then(|name| {
+            table
+                .columns
+                .iter()
+                .find(|column| identifier_eq(name, &column.name))
+        })
+        .ok_or_else(|| ReadOnlyScanError::UnknownColumn(path.join(".")))
 }
 
 fn identifier_eq(left: &str, right: &str) -> bool {
