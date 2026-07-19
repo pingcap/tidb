@@ -211,13 +211,25 @@ pub enum ConfiguredUserStoreError {
     /// No account rows were present.
     EmptyStore,
     /// A record does not have four nonempty required fields.
-    MalformedRecord { line: usize },
+    MalformedRecord {
+        /// One-based record line.
+        line: usize,
+    },
     /// A record selects a plugin outside this milestone.
-    UnsupportedPlugin { line: usize },
+    UnsupportedPlugin {
+        /// One-based record line.
+        line: usize,
+    },
     /// An exact username/host row occurs more than once.
-    DuplicateIdentity { line: usize },
+    DuplicateIdentity {
+        /// One-based record line.
+        line: usize,
+    },
     /// A stored password is not a strict native stage-two hash.
-    InvalidPasswordHash { line: usize },
+    InvalidPasswordHash {
+        /// One-based record line.
+        line: usize,
+    },
 }
 
 impl std::fmt::Display for ConfiguredUserStoreError {

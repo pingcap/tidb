@@ -42,7 +42,7 @@ use tidb_planner::read_only_scan::{
     ConfiguredColumnKind, ConfiguredTable, ReadOnlyScanError, ReadOnlyScanPlan,
 };
 use tidb_protocol::{ColumnInfo, BINARY_DEFAULT_COLLATION_ID};
-use tidb_txnkv::{rpc::TonicCoprocessorClient, PdRegionLoader};
+use tidb_txnkv::{rpc::TonicCoprocessorClient, PdRegionLoader, SharedReadAuthority};
 
 use crate::dag_request::{
     construct_dag_req, DagRequestBuildError, DagRequestContext, TiKvScanPlan,
@@ -52,6 +52,38 @@ use crate::distsql_recordset::DistSqlRecordSet;
 /// Concrete retained production transport used by the first SQL node.
 pub type ProductionReadTransport =
     DirectUnaryQueryTransport<TonicCoprocessorClient, PdRegionLoader>;
+
+/// Process-owned production transport and maintained region-cache authority.
+///
+/// Field order is deliberate: the read authority is dropped before the tonic
+/// owner, so the maintenance worker and its client handles cannot outlive the
+/// command worker they use.
+pub struct ProductionReadSessionFactory {
+    read_authority: SharedReadAuthority<TonicCoprocessorClient, PdRegionLoader>,
+    transport_owner: TonicCoprocessorClient,
+    default_timeout: Duration,
+    lock_timestamp_source: PdTimestampSource,
+}
+
+impl RealTiKvSessionTransportFactory for ProductionReadSessionFactory {
+    type Transport = ProductionReadTransport;
+
+    fn open_session_transport(&self) -> Result<Self::Transport, String> {
+        DirectUnaryQueryTransport::from_read_authority(
+            &self.read_authority,
+            DirectUnaryRuntimeConfig {
+                default_timeout: self.default_timeout,
+                ..DirectUnaryRuntimeConfig::default()
+            },
+            self.lock_timestamp_source.clone(),
+        )
+        .map_err(|error| error.to_string())
+    }
+}
+
+/// One process authority for the deployable real-PD/TiKV read path.
+pub type ProductionReadAuthority =
+    RealTiKvReadAuthority<ProductionReadSessionFactory, PdTimestampSource>;
 
 static NEXT_READ_AUTHORITY_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -191,6 +223,49 @@ where
                 session_id,
             },
         ))
+    }
+}
+
+impl RealTiKvReadAuthority<ProductionReadSessionFactory, PdTimestampSource> {
+    /// Bootstraps PD, region maintenance, and tonic exactly once per process.
+    pub fn connect<I, E>(
+        pd_endpoints: I,
+        timeout: Duration,
+        table: ConfiguredTable,
+    ) -> Result<Self, RealTiKvReadError>
+    where
+        I: IntoIterator<Item = E>,
+        E: Into<String>,
+    {
+        let pd = PdClient::connect_seeds(pd_endpoints, timeout)?;
+        let cluster_id = pd.cluster_id();
+        let timestamp_source = PdTimestampSource::new(pd.clone());
+        let loader = PdRegionLoader::from_client(pd);
+        let cache = RegionCache::new(loader);
+        let transport_owner = TonicCoprocessorClient::new()
+            .map_err(|error| RealTiKvReadError::Transport(error.to_string()))?;
+        debug_assert!(transport_owner.is_transport_owner());
+        let read_authority = SharedReadAuthority::start(transport_owner.clone(), cache)
+            .map_err(|error| RealTiKvReadError::Transport(error.to_string()))?;
+        let factory = ProductionReadSessionFactory {
+            read_authority,
+            transport_owner,
+            default_timeout: timeout,
+            lock_timestamp_source: timestamp_source.clone(),
+        };
+        Ok(Self::new(table, factory, timestamp_source, cluster_id))
+    }
+
+    /// Stable identity of the sole maintained read authority.
+    #[must_use]
+    pub const fn read_authority_id(&self) -> u64 {
+        self.transport_factory.read_authority.authority_id()
+    }
+
+    /// Whether the retained transport value is the unique worker owner.
+    #[must_use]
+    pub const fn owns_transport_worker(&self) -> bool {
+        self.transport_factory.transport_owner.is_transport_owner()
     }
 }
 

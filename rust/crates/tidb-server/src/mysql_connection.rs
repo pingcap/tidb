@@ -16,21 +16,27 @@
 
 use std::fmt;
 use std::io::Write;
-use std::net::TcpStream;
+use std::net::{SocketAddr, TcpStream};
+use std::sync::Arc;
 
 use tidb_protocol::{
     decode_command, encode_error_packet, encode_ok_packet, Command, ErrorPacket, OkPacket,
     PacketError, PacketReader, PacketWriter, ResultSetOptions,
 };
 
+use crate::auth_exchange::AuthSwitchRequest;
+use crate::configured_user_store::ConfiguredUserStore;
 use crate::connection_resultset::write_connection_result_set_to_sink;
 use crate::handshake::{
     negotiate_capabilities, parse_response, InitialHandshake, AUTH_NATIVE_PASSWORD,
     CLIENT_CONNECT_ATTRS, CLIENT_PLUGIN_AUTH, CLIENT_PROTOCOL_41, CLIENT_SECURE_CONNECTION,
     DEFAULT_COLLATION_ID, SERVER_STATUS_AUTOCOMMIT,
 };
+use crate::native_password::generate_handshake_salt;
 use crate::resultset_writer::{ResultSetSink, SinkWriteError};
-use crate::sql_node::{ConnectionTracker, SerialQueryEngine, SqlQueryError};
+use crate::sql_node::{
+    ConnectionTracker, QuerySession, QuerySessionFactory, SessionContext, SqlQueryError,
+};
 
 const CLIENT_DEPRECATE_EOF: u32 = 1 << 24;
 const SERVER_CAPABILITIES: u32 = CLIENT_PROTOCOL_41
@@ -53,6 +59,8 @@ pub enum ConnectionExit {
     PeerClosed,
     /// Authentication was rejected after an ERR packet was written.
     AuthenticationRejected,
+    /// Authentication succeeded but a worker-local query session could not open.
+    SessionRejected,
 }
 
 /// Successful lifecycle report.
@@ -110,10 +118,12 @@ impl From<PacketError> for MysqlConnectionError {
 
 /// Serves one accepted socket through handshake, authentication, commands,
 /// result/error writes, and exactly-once connection cleanup.
-pub fn serve_mysql_connection<E: SerialQueryEngine>(
+pub fn serve_mysql_connection<F: QuerySessionFactory>(
     stream: TcpStream,
-    engine: &mut E,
-    tracker: &ConnectionTracker,
+    peer_addr: SocketAddr,
+    factory: &F,
+    users: &ConfiguredUserStore,
+    tracker: &Arc<ConnectionTracker>,
     max_allowed_packet: usize,
 ) -> Result<ConnectionReport, MysqlConnectionError> {
     let mut lease = tracker.begin();
@@ -123,7 +133,14 @@ pub fn serve_mysql_connection<E: SerialQueryEngine>(
         tracker.active(),
         tracker.accepted()
     );
-    let result = serve_connection_inner(stream, engine, lease.id(), max_allowed_packet);
+    let result = serve_connection_inner(
+        stream,
+        peer_addr,
+        factory,
+        users,
+        lease.id(),
+        max_allowed_packet,
+    );
     let failed = result.is_err();
     if failed {
         lease.mark_failed();
@@ -140,17 +157,21 @@ pub fn serve_mysql_connection<E: SerialQueryEngine>(
     result
 }
 
-fn serve_connection_inner<E: SerialQueryEngine>(
+fn serve_connection_inner<F: QuerySessionFactory>(
     stream: TcpStream,
-    engine: &mut E,
+    peer_addr: SocketAddr,
+    factory: &F,
+    users: &ConfiguredUserStore,
     connection_id: u64,
     max_allowed_packet: usize,
 ) -> Result<ConnectionReport, MysqlConnectionError> {
     stream.set_nodelay(true).map_err(MysqlConnectionError::Io)?;
     let mut output = stream.try_clone().map_err(MysqlConnectionError::Io)?;
+    let salt = generate_handshake_salt()
+        .map_err(|error| MysqlConnectionError::Handshake(error.to_string()))?;
     let handshake = InitialHandshake {
         connection_id: u32::try_from(connection_id).unwrap_or(u32::MAX),
-        salt: connection_salt(connection_id),
+        salt: salt.to_vec(),
         capability: SERVER_CAPABILITIES,
         collation: DEFAULT_COLLATION_ID,
         status_flags: SERVER_STATUS_AUTOCOMMIT,
@@ -171,13 +192,13 @@ fn serve_connection_inner<E: SerialQueryEngine>(
     let auth_payload = reader.read_packet()?;
     let response = match parse_response(&auth_payload) {
         Ok(response) => response,
-        Err(error) => {
+        Err(_error) => {
             write_error(
                 &mut output,
                 2,
                 ER_ACCESS_DENIED_ERROR,
                 *b"28000",
-                format!("Access denied: malformed handshake response: {error}"),
+                "Access denied",
                 true,
             )?;
             return Ok(ConnectionReport {
@@ -189,13 +210,13 @@ fn serve_connection_inner<E: SerialQueryEngine>(
     };
     let capabilities = match negotiate_capabilities(response.capability, SERVER_CAPABILITIES) {
         Ok(capabilities) => capabilities,
-        Err(error) => {
+        Err(_error) => {
             write_error(
                 &mut output,
                 2,
                 ER_ACCESS_DENIED_ERROR,
                 *b"28000",
-                format!("Access denied: incompatible handshake response: {error}"),
+                "Access denied",
                 response.capability & CLIENT_PROTOCOL_41 != 0,
             )?;
             return Ok(ConnectionReport {
@@ -206,13 +227,13 @@ fn serve_connection_inner<E: SerialQueryEngine>(
         }
     };
     let protocol_41 = capabilities & CLIENT_PROTOCOL_41 != 0;
-    if !protocol_41 || !empty_root_is_admitted(&response) {
+    if !protocol_41 {
         write_error(
             &mut output,
             2,
             ER_ACCESS_DENIED_ERROR,
             *b"28000",
-            "Access denied for user; this milestone admits only root with an empty password",
+            "Access denied",
             protocol_41,
         )?;
         return Ok(ConnectionReport {
@@ -221,7 +242,55 @@ fn serve_connection_inner<E: SerialQueryEngine>(
             exit: ConnectionExit::AuthenticationRejected,
         });
     }
-    write_ok(&mut output, 2, protocol_41)?;
+    let (auth_response, response_sequence) = if capabilities & CLIENT_PLUGIN_AUTH != 0
+        && !response.auth_plugin.is_empty()
+        && response.auth_plugin != AUTH_NATIVE_PASSWORD
+    {
+        let request = AuthSwitchRequest::new(AUTH_NATIVE_PASSWORD, salt.to_vec())
+            .map_err(|error| MysqlConnectionError::Handshake(error.to_string()))?;
+        write_payload(&mut output, 2, &request.encode_payload())?;
+        reader.set_sequence(3);
+        (reader.read_packet()?, 4)
+    } else {
+        (response.auth, 2)
+    };
+    let identity = users.authenticate_native(
+        &response.user,
+        &peer_addr.ip().to_string(),
+        &salt,
+        &auth_response,
+    );
+    let Some(identity) = identity else {
+        write_error(
+            &mut output,
+            response_sequence,
+            ER_ACCESS_DENIED_ERROR,
+            *b"28000",
+            "Access denied",
+            protocol_41,
+        )?;
+        return Ok(ConnectionReport {
+            connection_id,
+            queries: 0,
+            exit: ConnectionExit::AuthenticationRejected,
+        });
+    };
+    let mut engine = match factory.open_session(SessionContext {
+        connection_id,
+        peer_addr,
+        identity,
+    }) {
+        Ok(session) => session,
+        Err(error) => {
+            write_query_error_at(&mut output, response_sequence, &error, protocol_41)?;
+            return Ok(ConnectionReport {
+                connection_id,
+                queries: 0,
+                exit: ConnectionExit::SessionRejected,
+            });
+        }
+    };
+    write_ok(&mut output, response_sequence, protocol_41)?;
 
     let options = ResultSetOptions {
         status_flags: SERVER_STATUS_AUTOCOMMIT,
@@ -336,27 +405,6 @@ fn serve_connection_inner<E: SerialQueryEngine>(
     }
 }
 
-fn empty_root_is_admitted(response: &crate::handshake::HandshakeResponse) -> bool {
-    response.user == "root"
-        && response.auth.is_empty()
-        && response.db_name.is_empty()
-        && (response.auth_plugin.is_empty() || response.auth_plugin == AUTH_NATIVE_PASSWORD)
-}
-
-fn connection_salt(connection_id: u64) -> Vec<u8> {
-    let mut state = connection_id ^ 0x9e37_79b9_7f4a_7c15;
-    let mut salt = Vec::with_capacity(20);
-    for _ in 0..20 {
-        state ^= state << 7;
-        state ^= state >> 9;
-        state ^= state << 8;
-        // Salt bytes must not contain NUL because the handshake terminates
-        // each salt part with its own NUL byte.
-        salt.push(u8::try_from(state & 0x7f).unwrap().max(1));
-    }
-    salt
-}
-
 fn write_ok(
     output: &mut TcpStream,
     sequence: u8,
@@ -375,9 +423,18 @@ fn write_query_error(
     error: &SqlQueryError,
     protocol_41: bool,
 ) -> Result<(), MysqlConnectionError> {
+    write_query_error_at(output, 1, error, protocol_41)
+}
+
+fn write_query_error_at(
+    output: &mut TcpStream,
+    sequence: u8,
+    error: &SqlQueryError,
+    protocol_41: bool,
+) -> Result<(), MysqlConnectionError> {
     write_error(
         output,
-        1,
+        sequence,
         error.code,
         error.state,
         error.message.as_bytes(),

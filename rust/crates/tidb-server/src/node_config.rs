@@ -23,8 +23,12 @@
 use std::collections::HashSet;
 use std::fmt;
 use std::net::IpAddr;
+use std::path::PathBuf;
 
 use tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET;
+
+const DEFAULT_MAX_CONNECTIONS: usize = 8;
+const MAX_CONNECTION_WORKERS: usize = 256;
 
 /// Storage shape of one configured signed-BIGINT column.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -68,7 +72,7 @@ pub struct ConfiguredReadTable {
     pub columns: Vec<ConfiguredReadColumn>,
 }
 
-/// Complete startup input consumed by the serial SQL node.
+/// Complete startup input consumed by the concurrent SQL node.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NodeConfig {
     /// Loopback address on which MySQL protocol connections are accepted.
@@ -81,6 +85,10 @@ pub struct NodeConfig {
     pub read_table: ConfiguredReadTable,
     /// Maximum accepted logical MySQL packet size.
     pub max_allowed_packet: usize,
+    /// Required immutable native-password account file.
+    pub auth_file: PathBuf,
+    /// Fixed connection-worker count and accepted-socket queue capacity.
+    pub max_connections: usize,
 }
 
 /// Startup configuration failure.
@@ -105,7 +113,7 @@ pub enum NodeConfigError {
     },
     /// Only the real TiKV store is supported by this executable.
     UnsupportedStore(String),
-    /// The empty-password milestone must never bind a non-loopback address.
+    /// Native password without TLS must never bind a non-loopback address.
     NonLoopbackHost(IpAddr),
 }
 
@@ -121,11 +129,14 @@ impl fmt::Display for NodeConfigError {
                 write!(formatter, "invalid value for {option}: {reason}")
             }
             Self::UnsupportedStore(store) => {
-                write!(formatter, "unsupported store {store:?}; only tikv is executable")
+                write!(
+                    formatter,
+                    "unsupported store {store:?}; only tikv is executable"
+                )
             }
             Self::NonLoopbackHost(host) => write!(
                 formatter,
-                "refusing non-loopback MySQL listener {host} while only empty-password root authentication is implemented"
+                "refusing non-loopback MySQL listener {host} while TLS is not implemented"
             ),
         }
     }
@@ -157,6 +168,8 @@ impl NodeConfig {
         let mut table_id = None;
         let mut columns = Vec::new();
         let mut max_allowed_packet = None;
+        let mut auth_file = None;
+        let mut max_connections = None;
 
         while let Some(argument) = pending.next() {
             if argument == "--help" || argument == "-h" {
@@ -190,6 +203,8 @@ impl NodeConfig {
                 "--max-allowed-packet" => {
                     set_once(&mut max_allowed_packet, option, value)?;
                 }
+                "--auth-file" => set_once(&mut auth_file, option, value)?,
+                "--max-connections" => set_once(&mut max_connections, option, value)?,
                 _ => return Err(NodeConfigError::UnknownOption(option.to_owned())),
             }
         }
@@ -212,6 +227,14 @@ impl NodeConfig {
             Some(value) => parse_positive_number("--max-allowed-packet", &value)?,
             None => DEFAULT_MAX_ALLOWED_PACKET,
         };
+        let auth_file = PathBuf::from(required(auth_file, "--auth-file")?);
+        let max_connections = match max_connections {
+            Some(value) => parse_positive_number("--max-connections", &value)?,
+            None => DEFAULT_MAX_CONNECTIONS,
+        };
+        if max_connections > MAX_CONNECTION_WORKERS {
+            return Err(invalid("--max-connections", "value must not exceed 256"));
+        }
 
         Ok(Self {
             host,
@@ -224,6 +247,8 @@ impl NodeConfig {
                 columns,
             },
             max_allowed_packet,
+            auth_file,
+            max_connections,
         })
     }
 
@@ -233,6 +258,7 @@ impl NodeConfig {
         "Usage: tidb-server --path <pd[,pd...]> --database <db> --table <table> \
 --table-id <id> --column <name>:<id>:<clustered-pk|stored-not-null> \
 [--column <name>:<id>:<clustered-pk|stored-not-null> ...] \
+[--max-connections <count>] --auth-file <mode-0600-tsv> \
 [--host <loopback-ip>] [-P <port>|--port <port>] [--store tikv] \
 [--max-allowed-packet <bytes>]"
     }

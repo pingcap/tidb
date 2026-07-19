@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#![allow(missing_docs)]
+
 use std::sync::{Arc, Barrier};
 
 use tidb_txnkv::region::{
@@ -105,7 +107,8 @@ fn authority_is_send_and_sync_while_sessions_are_opened_in_workers() {
         workers.push(std::thread::spawn(move || {
             let session = authority.open_session().expect("worker session");
             barrier.wait();
-            (session.authority_id(), session.client().borrow().0)
+            let client_id = session.client().borrow().0;
+            (session.authority_id(), client_id)
         }));
     }
     barrier.wait();

@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#![allow(missing_docs)]
+
 #[test]
 fn production_constructor_opens_a_session_from_the_process_authority() {
     let source = include_str!("../src/cop_paging/direct_unary_query_transport.rs");

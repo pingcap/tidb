@@ -4,7 +4,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-// http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -12,67 +12,83 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Final server-local adapter for the production read engine.
+//! Server adapter for one process-owned real-PD/TiKV read authority.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use tidb_distsql::DirectUnaryTransportEvidenceHandle;
 use tidb_exec::distsql_recordset::DistSqlRecordSet;
-use tidb_exec::real_tikv_read::{PdTimestampSource, ProductionReadTransport, RealTiKvReadEngine};
+use tidb_exec::real_tikv_read::{
+    PdTimestampSource, ProductionReadAuthority, ProductionReadTransport, RealTiKvReadSession,
+};
 use tidb_planner::read_only_scan::{ConfiguredColumn, ConfiguredTable};
 
+use crate::configured_user_store::{ConfiguredUserStore, ConfiguredUserStoreError};
 use crate::node_config::{ConfiguredReadColumnKind, NodeConfig};
 use crate::resultset_source::ResultSetSource;
 use crate::sql_node::{
-    SerialQueryEngine, SerialQueryResult, SerialSqlNode, SqlNodeError, SqlQueryError,
+    ConcurrentSqlNode, QueryResult, QuerySession, QuerySessionFactory, SessionContext,
+    SqlNodeError, SqlQueryError,
 };
 
-/// Server-local owner that adapts the execution crate without reversing its
-/// dependency into MySQL protocol code.
-pub struct RealTiKvSerialEngine {
-    inner: RealTiKvReadEngine<ProductionReadTransport, PdTimestampSource>,
+/// Process-owned factory shared by the fixed connection workers.
+pub struct RealTiKvSessionFactory {
+    authority: ProductionReadAuthority,
 }
 
-impl RealTiKvSerialEngine {
-    /// Connects the real engine from validated node configuration.
+impl RealTiKvSessionFactory {
+    /// Connects all process authorities exactly once from validated config.
     pub fn connect(config: &NodeConfig) -> Result<Self, SqlQueryError> {
-        let columns: Vec<_> = config
-            .read_table
-            .columns
-            .iter()
-            .map(|column| match column.kind {
-                ConfiguredReadColumnKind::ClusteredPrimaryKey => {
-                    ConfiguredColumn::clustered_primary_key(&column.name, column.id)
-                }
-                ConfiguredReadColumnKind::StoredNotNull => {
-                    ConfiguredColumn::stored_not_null(&column.name, column.id)
-                }
-            })
-            .collect();
-        let table = ConfiguredTable::new(
-            &config.read_table.database,
-            &config.read_table.table,
-            config.read_table.table_id,
-            columns,
-        );
-        let inner = RealTiKvReadEngine::connect(
+        let table = configured_table(config);
+        let authority = ProductionReadAuthority::connect(
             config.pd_endpoints.clone(),
             Duration::from_secs(60),
             table,
         )
         .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-        Ok(Self { inner })
+        Ok(Self { authority })
     }
 
-    /// Returns the PD cluster identity validated during engine bootstrap.
+    /// Returns the PD cluster identity validated during process bootstrap.
     #[must_use]
     pub const fn cluster_id(&self) -> u64 {
-        self.inner.cluster_id()
+        self.authority.cluster_id()
+    }
+
+    /// Stable executor process-authority identity.
+    #[must_use]
+    pub const fn authority_id(&self) -> u64 {
+        self.authority.authority_id()
+    }
+
+    /// Stable maintained read-authority identity.
+    #[must_use]
+    pub const fn read_authority_id(&self) -> u64 {
+        self.authority.read_authority_id()
     }
 }
 
-impl SerialQueryEngine for RealTiKvSerialEngine {
-    fn execute<'a>(&'a mut self, sql: &str) -> Result<SerialQueryResult<'a>, SqlQueryError> {
+impl QuerySessionFactory for RealTiKvSessionFactory {
+    type Session = RealTiKvServerSession;
+
+    fn open_session(&self, context: SessionContext) -> Result<Self::Session, SqlQueryError> {
+        let inner = self
+            .authority
+            .open_session()
+            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+        Ok(RealTiKvServerSession { inner, context })
+    }
+}
+
+/// Worker-local server session around the executor session.
+pub struct RealTiKvServerSession {
+    inner: RealTiKvReadSession<ProductionReadTransport, PdTimestampSource>,
+    context: SessionContext,
+}
+
+impl QuerySession for RealTiKvServerSession {
+    fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
         let query = self
             .inner
             .execute(sql)
@@ -80,13 +96,22 @@ impl SerialQueryEngine for RealTiKvSerialEngine {
         let snapshot_ts = query.snapshot_ts();
         let table_id = query.table_id();
         let cluster_id = self.inner.cluster_id();
+        let identity = query.session_identity();
         let evidence = self.inner.transport_evidence_handle();
         eprintln!(
-            "{{\"event\":\"query_snapshot\",\"cluster_id\":{cluster_id},\"snapshot_ts\":{snapshot_ts},\"table_id\":{table_id}}}"
+            "{{\"event\":\"query_snapshot\",\"connection_id\":{},\"authority_id\":{},\"session_id\":{},\"cluster_id\":{cluster_id},\"snapshot_ts\":{snapshot_ts},\"table_id\":{table_id},\"user\":{:?},\"host\":{:?}}}",
+            self.context.connection_id,
+            identity.authority_id(),
+            identity.session_id(),
+            self.context.identity.username(),
+            self.context.identity.host(),
         );
-        Ok(SerialQueryResult::new(Box::new(ObservedResultSet {
+        Ok(QueryResult::new(Box::new(ObservedResultSet {
             inner: query.into_record_set(),
             evidence,
+            connection_id: self.context.connection_id,
+            authority_id: identity.authority_id(),
+            session_id: identity.session_id(),
             emitted: false,
         })))
     }
@@ -95,6 +120,9 @@ impl SerialQueryEngine for RealTiKvSerialEngine {
 struct ObservedResultSet {
     inner: DistSqlRecordSet,
     evidence: DirectUnaryTransportEvidenceHandle,
+    connection_id: u64,
+    authority_id: u64,
+    session_id: u64,
     emitted: bool,
 }
 
@@ -118,8 +146,12 @@ impl ObservedResultSet {
             .collect::<Vec<_>>()
             .join(",");
         eprintln!(
-            "{{\"event\":\"query_transport\",\"located_region_ids\":[{located_regions}],\"dispatched_region_ids\":[{dispatched_regions}],\"batch_attempts\":{},\"unary_attempts\":{}}}",
-            evidence.batch_attempts, evidence.unary_attempts
+            "{{\"event\":\"query_transport\",\"connection_id\":{},\"authority_id\":{},\"session_id\":{},\"located_region_ids\":[{located_regions}],\"dispatched_region_ids\":[{dispatched_regions}],\"batch_attempts\":{},\"unary_attempts\":{}}}",
+            self.connection_id,
+            self.authority_id,
+            self.session_id,
+            evidence.batch_attempts,
+            evidence.unary_attempts
         );
     }
 }
@@ -148,11 +180,40 @@ impl ResultSetSource for ObservedResultSet {
     }
 }
 
-/// Starts the first bounded production Rust SQL node.
+fn configured_table(config: &NodeConfig) -> ConfiguredTable {
+    let columns: Vec<_> = config
+        .read_table
+        .columns
+        .iter()
+        .map(|column| match column.kind {
+            ConfiguredReadColumnKind::ClusteredPrimaryKey => {
+                ConfiguredColumn::clustered_primary_key(&column.name, column.id)
+            }
+            ConfiguredReadColumnKind::StoredNotNull => {
+                ConfiguredColumn::stored_not_null(&column.name, column.id)
+            }
+        })
+        .collect();
+    ConfiguredTable::new(
+        &config.read_table.database,
+        &config.read_table.table,
+        config.read_table.table_id,
+        columns,
+    )
+}
+
+/// Starts the bounded concurrent production Rust SQL node.
 pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeError> {
-    let engine = RealTiKvSerialEngine::connect(&config).map_err(RunConfiguredNodeError::Engine)?;
-    let cluster_id = engine.cluster_id();
-    let mut node = SerialSqlNode::bind(&config, engine).map_err(RunConfiguredNodeError::Node)?;
+    let users = Arc::new(
+        ConfiguredUserStore::load(&config.auth_file).map_err(RunConfiguredNodeError::Auth)?,
+    );
+    let factory =
+        Arc::new(RealTiKvSessionFactory::connect(&config).map_err(RunConfiguredNodeError::Engine)?);
+    let cluster_id = factory.cluster_id();
+    let authority_id = factory.authority_id();
+    let read_authority_id = factory.read_authority_id();
+    let node = ConcurrentSqlNode::bind(&config, Arc::clone(&factory), Arc::clone(&users))
+        .map_err(RunConfiguredNodeError::Node)?;
     let address = node.local_addr().map_err(RunConfiguredNodeError::Node)?;
     let column_descriptors = config
         .read_table
@@ -168,13 +229,15 @@ pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeEr
         })
         .collect::<Vec<_>>();
     eprintln!(
-        "{{\"event\":\"sql_node_ready\",\"address\":\"{address}\",\"pd_endpoints\":{},\"cluster_id\":{cluster_id},\"database\":\"{}\",\"table\":\"{}\",\"table_id\":{},\"column_count\":{},\"columns\":{:?}}}",
+        "{{\"event\":\"sql_node_ready\",\"address\":\"{address}\",\"pd_endpoints\":{},\"cluster_id\":{cluster_id},\"authority_id\":{authority_id},\"read_authority_id\":{read_authority_id},\"database\":{:?},\"table\":{:?},\"table_id\":{},\"column_count\":{},\"columns\":{:?},\"max_connections\":{},\"account_count\":{}}}",
         config.pd_endpoints.len(),
         config.read_table.database,
         config.read_table.table,
         config.read_table.table_id,
         column_descriptors.len(),
         column_descriptors,
+        config.max_connections,
+        users.len(),
     );
     node.run().map_err(RunConfiguredNodeError::Node)
 }
@@ -182,7 +245,9 @@ pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeEr
 /// Startup/runtime failure from the fully composed node.
 #[derive(Debug)]
 pub enum RunConfiguredNodeError {
-    /// Production query-engine construction failed.
+    /// The required immutable account catalog was rejected.
+    Auth(ConfiguredUserStoreError),
+    /// Production query-authority construction failed.
     Engine(SqlQueryError),
     /// Listener or connection runtime failed.
     Node(SqlNodeError),
@@ -191,12 +256,25 @@ pub enum RunConfiguredNodeError {
 impl std::fmt::Display for RunConfiguredNodeError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Auth(error) => write!(formatter, "cannot load authentication catalog: {error}"),
             Self::Engine(error) => {
-                write!(formatter, "cannot construct read engine: {}", error.message)
+                write!(
+                    formatter,
+                    "cannot construct read authority: {}",
+                    error.message
+                )
             }
             Self::Node(error) => error.fmt(formatter),
         }
     }
 }
 
-impl std::error::Error for RunConfiguredNodeError {}
+impl std::error::Error for RunConfiguredNodeError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Auth(error) => Some(error),
+            Self::Node(error) => Some(error),
+            Self::Engine(_) => None,
+        }
+    }
+}

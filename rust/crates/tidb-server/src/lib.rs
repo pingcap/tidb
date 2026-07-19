@@ -31,11 +31,13 @@ mod auth_session;
 mod auth_token;
 mod bootstrap;
 mod compressed_command_io;
+mod configured_user_store;
 pub mod connection_resultset;
 mod error_response;
 pub mod handshake;
 mod listener;
 mod mysql_connection;
+mod native_password;
 mod node_config;
 mod real_tikv_node;
 pub mod resultset_source;
@@ -85,6 +87,9 @@ pub use bootstrap::{
 pub use compressed_command_io::{
     CommandIoError, CommandIoOutcome, CompressedCommandIo, NegotiatedCompression, CLIENT_COMPRESS,
 };
+pub use configured_user_store::{
+    AuthenticatedIdentity, ConfiguredUserStore, ConfiguredUserStoreError,
+};
 pub use error_response::{frame_execution_error_response, frame_rendered_error_response};
 pub use handshake::{
     negotiate_capabilities, parse_response, parse_response_body, parse_response_header,
@@ -95,15 +100,21 @@ pub use listener::{ListenerConfig, ListenerError, ListenerLifecycle, ListenerSta
 pub use mysql_connection::{
     serve_mysql_connection, ConnectionExit, ConnectionReport, MysqlConnectionError,
 };
+pub use native_password::{
+    generate_handshake_salt, verify_candidate, HandshakeSaltError, NativePasswordHash,
+    NativePasswordHashError, HANDSHAKE_SALT_LEN, NATIVE_PASSWORD_HASH_LEN,
+};
 pub use node_config::{ConfiguredReadTable, NodeConfig, NodeConfigError};
-pub use real_tikv_node::{run_configured_node, RealTiKvSerialEngine, RunConfiguredNodeError};
+pub use real_tikv_node::{
+    run_configured_node, RealTiKvServerSession, RealTiKvSessionFactory, RunConfiguredNodeError,
+};
 pub use resultset_source::ResultSetSource;
 pub use secure_transport::{
     SecureTransportError, SecureTransportPolicy, TransportDecision, TransportKind,
 };
 pub use sql_node::{
-    BoxedResultSetSource, ConnectionTracker, SerialQueryEngine, SerialQueryResult, SerialSqlNode,
-    SqlNodeError, SqlQueryError,
+    BoxedResultSetSource, ConcurrentSqlNode, ConnectionTracker, QueryResult, QuerySession,
+    QuerySessionFactory, SessionContext, SqlNodeError, SqlQueryError,
 };
 
 /// A response from the currently supported connection dispatch envelope.
