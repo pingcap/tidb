@@ -1,6 +1,6 @@
 schema = "1"
 slice = "planner-physical-bigint-selection-runtime"
-status = "ready"
+status = "partial"
 target = "tidb-planner"
 ring = "plan"
 consumer = "A source-shaped physical Selection owns one or more resolved signed BIGINT conditions above the bounded table scan and exposes the exact condition input offsets and TiKV-list pushdown contract consumed by DAG lowering."
