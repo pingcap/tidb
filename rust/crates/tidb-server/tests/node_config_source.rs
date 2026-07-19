@@ -9,7 +9,7 @@ use std::net::{IpAddr, Ipv4Addr};
 
 use tidb_server::{NodeConfig, NodeConfigError};
 
-fn required() -> [&'static str; 13] {
+fn required() -> [&'static str; 15] {
     [
         "tidb-server",
         "--path",
@@ -24,6 +24,8 @@ fn required() -> [&'static str; 13] {
         "id:1:clustered-pk",
         "--column",
         "balance:2:stored-not-null",
+        "--auth-file",
+        "/tmp/campaign21-users.tsv",
     ]
 }
 
@@ -44,6 +46,11 @@ fn source_tikv_startup_surface_is_explicit_and_bounded() {
     assert_eq!(config.read_table.columns[0].id, 1);
     assert_eq!(config.read_table.columns[1].name, "balance");
     assert_eq!(config.read_table.columns[1].id, 2);
+    assert_eq!(
+        config.auth_file,
+        std::path::Path::new("/tmp/campaign21-users.tsv")
+    );
+    assert_eq!(config.max_connections, 8);
 }
 
 #[test]
@@ -93,7 +100,7 @@ fn unsupported_or_ambiguous_startup_options_fail_closed() {
 }
 
 #[test]
-fn empty_password_boundary_cannot_bind_a_public_address() {
+fn plaintext_native_password_boundary_cannot_bind_a_public_address() {
     // pkg/config/config_test.go:1850 TestTcpNoDelay
     let mut public = required().to_vec();
     public.extend(["--host", "0.0.0.0"]);
@@ -101,6 +108,40 @@ fn empty_password_boundary_cannot_bind_a_public_address() {
         NodeConfig::parse(public),
         Err(NodeConfigError::NonLoopbackHost(address)) if address == IpAddr::V4(Ipv4Addr::UNSPECIFIED)
     ));
+}
+
+#[test]
+fn authentication_file_is_required_before_startup() {
+    let mut missing = required().to_vec();
+    let option = missing
+        .iter()
+        .position(|argument| *argument == "--auth-file")
+        .unwrap();
+    missing.drain(option..=option + 1);
+    assert_eq!(
+        NodeConfig::parse(missing),
+        Err(NodeConfigError::MissingOption("--auth-file"))
+    );
+}
+
+#[test]
+fn worker_count_is_positive_bounded_and_explicit() {
+    for count in ["1", "256"] {
+        let mut args = required().to_vec();
+        args.extend(["--max-connections", count]);
+        assert_eq!(
+            NodeConfig::parse(args).unwrap().max_connections,
+            count.parse::<usize>().unwrap()
+        );
+    }
+    for count in ["0", "257"] {
+        let mut args = required().to_vec();
+        args.extend(["--max-connections", count]);
+        assert!(matches!(
+            NodeConfig::parse(args),
+            Err(NodeConfigError::InvalidValue { option, .. }) if option == "--max-connections"
+        ));
+    }
 }
 
 #[test]

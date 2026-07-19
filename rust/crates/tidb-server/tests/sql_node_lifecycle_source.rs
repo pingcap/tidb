@@ -5,19 +5,30 @@
 
 #![allow(missing_docs)]
 
-use std::net::TcpStream;
+use std::net::{SocketAddr, TcpStream};
+use std::sync::Arc;
 
 use tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET;
 use tidb_server::{
-    serve_mysql_connection, ConnectionTracker, MysqlConnectionError, SerialQueryEngine,
-    SerialQueryResult, SqlQueryError,
+    serve_mysql_connection, ConfiguredUserStore, ConnectionTracker, MysqlConnectionError,
+    QueryResult, QuerySession, QuerySessionFactory, SessionContext, SqlQueryError,
 };
 
-struct UnusedEngine;
+struct UnusedSession;
 
-impl SerialQueryEngine for UnusedEngine {
-    fn execute<'a>(&'a mut self, _sql: &str) -> Result<SerialQueryResult<'a>, SqlQueryError> {
+impl QuerySession for UnusedSession {
+    fn execute<'a>(&'a mut self, _sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
         panic!("malformed connection must not reach query execution")
+    }
+}
+
+struct UnusedFactory;
+
+impl QuerySessionFactory for UnusedFactory {
+    type Session = UnusedSession;
+
+    fn open_session(&self, _context: SessionContext) -> Result<Self::Session, SqlQueryError> {
+        panic!("malformed connection must not reach session creation")
     }
 }
 
@@ -32,10 +43,16 @@ fn framing_failure_releases_connection_lease_exactly_once() {
     let (server, _) = listener.accept().unwrap();
     drop(client);
 
-    let tracker = ConnectionTracker::default();
+    let tracker = Arc::new(ConnectionTracker::default());
+    let users = ConfiguredUserStore::parse(
+        "alice\t%\tmysql_native_password\t*14E65567ABDB5135D0CFD9A70B3032C179A49EE7\n",
+    )
+    .unwrap();
     let error = serve_mysql_connection(
         server,
-        &mut UnusedEngine,
+        SocketAddr::from(([127, 0, 0, 1], 40000)),
+        &UnusedFactory,
+        &users,
         &tracker,
         DEFAULT_MAX_ALLOWED_PACKET,
     )

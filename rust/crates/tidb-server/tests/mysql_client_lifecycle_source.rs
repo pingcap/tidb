@@ -9,14 +9,15 @@ use std::collections::VecDeque;
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 
+use sha1::{Digest, Sha1};
 use tidb_datatype::Datum;
 use tidb_protocol::{
     ColumnInfo, PacketReader, PacketWriter, COM_INIT_DB, COM_PING, COM_QUERY, COM_QUIT,
     DEFAULT_MAX_ALLOWED_PACKET, TYPE_LONGLONG,
 };
 use tidb_server::{
-    serve_mysql_connection, ConnectionExit, ConnectionTracker, ResultSetSource, SerialQueryEngine,
-    SerialQueryResult, SqlQueryError,
+    serve_mysql_connection, ConfiguredUserStore, ConnectionExit, ConnectionTracker, QueryResult,
+    QuerySession, QuerySessionFactory, ResultSetSource, SessionContext, SqlQueryError,
 };
 
 const CLIENT_PROTOCOL_41: u32 = 1 << 9;
@@ -83,15 +84,15 @@ impl ResultSetSource for Rows {
     }
 }
 
-struct Engine {
+struct Session {
     queries: Arc<Mutex<Vec<String>>>,
     lifecycle: Arc<Mutex<Lifecycle>>,
 }
 
-impl SerialQueryEngine for Engine {
-    fn execute<'a>(&'a mut self, sql: &str) -> Result<SerialQueryResult<'a>, SqlQueryError> {
+impl QuerySession for Session {
+    fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
         self.queries.lock().unwrap().push(sql.to_owned());
-        Ok(SerialQueryResult::new(Box::new(Rows {
+        Ok(QueryResult::new(Box::new(Rows {
             rows: [
                 vec![Datum::Int(-11), Datum::Int(7)],
                 vec![Datum::Int(25), Datum::Int(8)],
@@ -102,21 +103,73 @@ impl SerialQueryEngine for Engine {
     }
 }
 
+struct Factory {
+    queries: Arc<Mutex<Vec<String>>>,
+    lifecycle: Arc<Mutex<Lifecycle>>,
+}
+
+impl QuerySessionFactory for Factory {
+    type Session = Session;
+
+    fn open_session(&self, _context: SessionContext) -> Result<Self::Session, SqlQueryError> {
+        Ok(Session {
+            queries: Arc::clone(&self.queries),
+            lifecycle: Arc::clone(&self.lifecycle),
+        })
+    }
+}
+
+fn users() -> ConfiguredUserStore {
+    ConfiguredUserStore::parse(
+        "alice\t%\tmysql_native_password\t*14E65567ABDB5135D0CFD9A70B3032C179A49EE7\n",
+    )
+    .unwrap()
+}
+
 fn write_packet(stream: &mut TcpStream, sequence: u8, payload: &[u8]) {
     let mut writer = PacketWriter::with_sequence(stream, sequence);
     writer.write_packet(payload).unwrap();
     writer.flush().unwrap();
 }
 
+fn handshake_salt(initial: &[u8]) -> [u8; 20] {
+    assert_eq!(initial[0], 10);
+    let version_end = initial[1..]
+        .iter()
+        .position(|byte| *byte == 0)
+        .map(|offset| offset + 1)
+        .unwrap();
+    let first = version_end + 1 + 4;
+    let second = first + 8 + 1 + 2 + 1 + 2 + 2 + 1 + 10;
+    let mut salt = [0; 20];
+    salt[..8].copy_from_slice(&initial[first..first + 8]);
+    salt[8..].copy_from_slice(&initial[second..second + 12]);
+    salt
+}
+
+fn native_response(password: &[u8], salt: &[u8]) -> [u8; 20] {
+    let stage_one = Sha1::digest(password);
+    let stage_two = Sha1::digest(stage_one);
+    let mut challenge = Sha1::new();
+    challenge.update(salt);
+    challenge.update(stage_two);
+    let challenge = challenge.finalize();
+    let mut response = [0; 20];
+    for index in 0..response.len() {
+        response[index] = stage_one[index] ^ challenge[index];
+    }
+    response
+}
+
 fn authenticate(
     client: &mut TcpStream,
     reader: &mut PacketReader<TcpStream>,
     user: &str,
-    auth: &[u8],
+    password: &[u8],
 ) {
     reader.set_sequence(0);
     let initial = reader.read_packet().unwrap();
-    assert_eq!(initial[0], 10);
+    let salt = handshake_salt(&initial);
     let version_end = initial[1..]
         .iter()
         .position(|byte| *byte == 0)
@@ -136,8 +189,9 @@ fn authenticate(
     response.extend_from_slice(&[0; 23]);
     response.extend_from_slice(user.as_bytes());
     response.push(0);
+    let auth = native_response(password, &salt);
     response.push(u8::try_from(auth.len()).unwrap());
-    response.extend_from_slice(auth);
+    response.extend_from_slice(&auth);
     response.extend_from_slice(b"mysql_native_password\0");
     response.push(0); // zero connection attributes
     write_packet(client, 1, &response);
@@ -181,14 +235,16 @@ fn real_tcp_connection_runs_handshake_query_ping_quit_and_exact_cleanup() {
     let worker_lifecycle = Arc::clone(&lifecycle);
     let worker_tracker = Arc::clone(&tracker);
     let worker = std::thread::spawn(move || {
-        let (stream, _) = listener.accept().unwrap();
-        let mut engine = Engine {
+        let (stream, peer_addr) = listener.accept().unwrap();
+        let factory = Factory {
             queries: worker_queries,
             lifecycle: worker_lifecycle,
         };
         serve_mysql_connection(
             stream,
-            &mut engine,
+            peer_addr,
+            &factory,
+            &users(),
             &worker_tracker,
             DEFAULT_MAX_ALLOWED_PACKET,
         )
@@ -198,7 +254,7 @@ fn real_tcp_connection_runs_handshake_query_ping_quit_and_exact_cleanup() {
     let mut client = TcpStream::connect(address).unwrap();
     let read_side = client.try_clone().unwrap();
     let mut reader = PacketReader::new(read_side);
-    authenticate(&mut client, &mut reader, "root", &[]);
+    authenticate(&mut client, &mut reader, "alice", b"secret");
     reader.set_sequence(2);
     assert_eq!(reader.read_packet().unwrap()[0], 0);
 
@@ -241,54 +297,21 @@ fn real_tcp_connection_runs_handshake_query_ping_quit_and_exact_cleanup() {
     assert_eq!(tracker.failed(), 0);
 }
 
-fn assert_auth_rejected(user: &str, auth: &[u8]) {
-    let user = user.to_owned();
-    let auth = auth.to_vec();
-    // pkg/server/conn_test.go:72 TestMatchIdentityWithVariantsStarter
-    // pkg/server/conn_test.go:1532 TestHandleAuthPlugin
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let address = listener.local_addr().unwrap();
-    let tracker = Arc::new(ConnectionTracker::default());
-    let worker_tracker = Arc::clone(&tracker);
-    let worker = std::thread::spawn(move || {
-        let (stream, _) = listener.accept().unwrap();
-        let mut engine = Engine {
-            queries: Arc::new(Mutex::new(Vec::new())),
-            lifecycle: Arc::new(Mutex::new(Lifecycle::default())),
-        };
-        serve_mysql_connection(
-            stream,
-            &mut engine,
-            &worker_tracker,
-            DEFAULT_MAX_ALLOWED_PACKET,
-        )
-        .unwrap()
-    });
-    let mut client = TcpStream::connect(address).unwrap();
-    let mut reader = PacketReader::new(client.try_clone().unwrap());
-    authenticate(&mut client, &mut reader, &user, &auth);
-    reader.set_sequence(2);
-    assert_eq!(reader.read_packet().unwrap()[0], 0xff);
-    assert_eq!(
-        worker.join().unwrap().exit,
-        ConnectionExit::AuthenticationRejected
-    );
-    assert_eq!(tracker.active(), 0);
-    assert_eq!(tracker.accepted(), 1);
-    assert_eq!(tracker.completed(), 1);
-}
+struct RejectingSession;
 
-#[test]
-fn nonempty_or_nonroot_auth_is_rejected_without_leaking_connection_count() {
-    assert_auth_rejected("other", &[]);
-    assert_auth_rejected("root", b"not-empty");
-}
-
-struct RejectingEngine;
-
-impl SerialQueryEngine for RejectingEngine {
-    fn execute<'a>(&'a mut self, _sql: &str) -> Result<SerialQueryResult<'a>, SqlQueryError> {
+impl QuerySession for RejectingSession {
+    fn execute<'a>(&'a mut self, _sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
         Err(SqlQueryError::new(1142, *b"42000", "read denied"))
+    }
+}
+
+struct RejectingFactory;
+
+impl QuerySessionFactory for RejectingFactory {
+    type Session = RejectingSession;
+
+    fn open_session(&self, _context: SessionContext) -> Result<Self::Session, SqlQueryError> {
+        Ok(RejectingSession)
     }
 }
 
@@ -300,10 +323,12 @@ fn query_error_is_written_as_err_and_connection_remains_command_aligned() {
     let tracker = Arc::new(ConnectionTracker::default());
     let worker_tracker = Arc::clone(&tracker);
     let worker = std::thread::spawn(move || {
-        let (stream, _) = listener.accept().unwrap();
+        let (stream, peer_addr) = listener.accept().unwrap();
         serve_mysql_connection(
             stream,
-            &mut RejectingEngine,
+            peer_addr,
+            &RejectingFactory,
+            &users(),
             &worker_tracker,
             DEFAULT_MAX_ALLOWED_PACKET,
         )
@@ -312,7 +337,7 @@ fn query_error_is_written_as_err_and_connection_remains_command_aligned() {
 
     let mut client = TcpStream::connect(address).unwrap();
     let mut reader = PacketReader::new(client.try_clone().unwrap());
-    authenticate(&mut client, &mut reader, "root", &[]);
+    authenticate(&mut client, &mut reader, "alice", b"secret");
     reader.set_sequence(2);
     assert_eq!(reader.read_packet().unwrap()[0], 0);
 
