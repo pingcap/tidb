@@ -19,9 +19,9 @@ use std::time::Duration;
 use tidb_distsql::DirectUnaryTransportEvidenceHandle;
 use tidb_exec::distsql_recordset::DistSqlRecordSet;
 use tidb_exec::real_tikv_read::{PdTimestampSource, ProductionReadTransport, RealTiKvReadEngine};
-use tidb_planner::read_only_scan::ConfiguredTable;
+use tidb_planner::read_only_scan::{ConfiguredColumn, ConfiguredTable};
 
-use crate::node_config::NodeConfig;
+use crate::node_config::{ConfiguredReadColumnKind, NodeConfig};
 use crate::resultset_source::ResultSetSource;
 use crate::sql_node::{
     SerialQueryEngine, SerialQueryResult, SerialSqlNode, SqlNodeError, SqlQueryError,
@@ -36,12 +36,24 @@ pub struct RealTiKvSerialEngine {
 impl RealTiKvSerialEngine {
     /// Connects the real engine from validated node configuration.
     pub fn connect(config: &NodeConfig) -> Result<Self, SqlQueryError> {
+        let columns = config
+            .read_table
+            .columns
+            .iter()
+            .map(|column| match column.kind {
+                ConfiguredReadColumnKind::ClusteredPrimaryKey => {
+                    ConfiguredColumn::clustered_primary_key(&column.name, column.id)
+                }
+                ConfiguredReadColumnKind::StoredNotNull => {
+                    ConfiguredColumn::stored_not_null(&column.name, column.id)
+                }
+            })
+            .collect();
         let table = ConfiguredTable::new(
             &config.read_table.database,
             &config.read_table.table,
             config.read_table.table_id,
-            &config.read_table.column,
-            config.read_table.column_id,
+            columns,
         );
         let inner = RealTiKvReadEngine::connect(
             config.pd_endpoints.clone(),
@@ -142,14 +154,27 @@ pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeEr
     let cluster_id = engine.cluster_id();
     let mut node = SerialSqlNode::bind(&config, engine).map_err(RunConfiguredNodeError::Node)?;
     let address = node.local_addr().map_err(RunConfiguredNodeError::Node)?;
+    let column_descriptors = config
+        .read_table
+        .columns
+        .iter()
+        .map(|column| {
+            format!(
+                "{}:{}:{}",
+                column.name,
+                column.id,
+                column.kind.descriptor_name()
+            )
+        })
+        .collect::<Vec<_>>();
     eprintln!(
-        "{{\"event\":\"sql_node_ready\",\"address\":\"{address}\",\"pd_endpoints\":{},\"cluster_id\":{cluster_id},\"database\":\"{}\",\"table\":\"{}\",\"table_id\":{},\"column\":\"{}\",\"column_id\":{}}}",
+        "{{\"event\":\"sql_node_ready\",\"address\":\"{address}\",\"pd_endpoints\":{},\"cluster_id\":{cluster_id},\"database\":\"{}\",\"table\":\"{}\",\"table_id\":{},\"column_count\":{},\"columns\":{:?}}}",
         config.pd_endpoints.len(),
         config.read_table.database,
         config.read_table.table,
         config.read_table.table_id,
-        config.read_table.column,
-        config.read_table.column_id
+        column_descriptors.len(),
+        column_descriptors,
     );
     node.run().map_err(RunConfiguredNodeError::Node)
 }

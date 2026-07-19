@@ -16,14 +16,44 @@
 //!
 //! The source TiDB binary accepts a much larger configuration surface. This
 //! milestone admits only the values consumed by the executable read path: one
-//! loopback TCP listener, plaintext PD seeds, and one source-resolved clustered
-//! signed-BIGINT table column. Unknown or duplicate options fail startup so an
+//! loopback TCP listener, plaintext PD seeds, and one ordered signed-BIGINT
+//! table-column catalog. Unknown or duplicate options fail startup so an
 //! operator cannot believe an unsupported TiDB setting was applied.
 
+use std::collections::HashSet;
 use std::fmt;
 use std::net::IpAddr;
 
 use tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET;
+
+/// Storage shape of one configured signed-BIGINT column.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ConfiguredReadColumnKind {
+    /// The table's sole signed integer clustered primary key.
+    ClusteredPrimaryKey,
+    /// A signed stored non-null column decoded from the TiKV row payload.
+    StoredNotNull,
+}
+
+impl ConfiguredReadColumnKind {
+    pub(crate) const fn descriptor_name(self) -> &'static str {
+        match self {
+            Self::ClusteredPrimaryKey => "clustered-pk",
+            Self::StoredNotNull => "stored-not-null",
+        }
+    }
+}
+
+/// One atomic configured column descriptor.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConfiguredReadColumn {
+    /// Table-visible column name.
+    pub name: String,
+    /// Stable column identifier from TiDB schema metadata.
+    pub id: i64,
+    /// Physical storage role admitted by this milestone.
+    pub kind: ConfiguredReadColumnKind,
+}
 
 /// The sole table shape admitted by the first deployable read-only node.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -34,10 +64,8 @@ pub struct ConfiguredReadTable {
     pub table: String,
     /// Physical TiKV table identifier resolved by the fixture/owner.
     pub table_id: i64,
-    /// Clustered signed-BIGINT primary-key column name.
-    pub column: String,
-    /// Stable column identifier from TiDB schema metadata.
-    pub column_id: i64,
+    /// Checked columns in configured order.
+    pub columns: Vec<ConfiguredReadColumn>,
 }
 
 /// Complete startup input consumed by the serial SQL node.
@@ -127,8 +155,7 @@ impl NodeConfig {
         let mut database = None;
         let mut table = None;
         let mut table_id = None;
-        let mut column = None;
-        let mut column_id = None;
+        let mut columns = Vec::new();
         let mut max_allowed_packet = None;
 
         while let Some(argument) = pending.next() {
@@ -159,8 +186,7 @@ impl NodeConfig {
                 "--database" => set_once(&mut database, option, value)?,
                 "--table" => set_once(&mut table, option, value)?,
                 "--table-id" => set_once(&mut table_id, option, value)?,
-                "--column" => set_once(&mut column, option, value)?,
-                "--column-id" => set_once(&mut column_id, option, value)?,
+                "--column" => columns.push(parse_column_descriptor(value)?),
                 "--max-allowed-packet" => {
                     set_once(&mut max_allowed_packet, option, value)?;
                 }
@@ -180,9 +206,8 @@ impl NodeConfig {
         let pd_endpoints = parse_pd_endpoints(required(path, "--path")?)?;
         let database = parse_identifier("--database", required(database, "--database")?)?;
         let table = parse_identifier("--table", required(table, "--table")?)?;
-        let column = parse_identifier("--column", required(column, "--column")?)?;
         let table_id = parse_positive_id("--table-id", required(table_id, "--table-id")?)?;
-        let column_id = parse_positive_id("--column-id", required(column_id, "--column-id")?)?;
+        validate_columns(&columns)?;
         let max_allowed_packet = match max_allowed_packet {
             Some(value) => parse_positive_number("--max-allowed-packet", &value)?,
             None => DEFAULT_MAX_ALLOWED_PACKET,
@@ -196,8 +221,7 @@ impl NodeConfig {
                 database,
                 table,
                 table_id,
-                column,
-                column_id,
+                columns,
             },
             max_allowed_packet,
         })
@@ -207,7 +231,8 @@ impl NodeConfig {
     #[must_use]
     pub const fn help_text() -> &'static str {
         "Usage: tidb-server --path <pd[,pd...]> --database <db> --table <table> \
---table-id <id> --column <signed-bigint-pk> --column-id <id> \
+--table-id <id> --column <name>:<id>:<clustered-pk|stored-not-null> \
+[--column <name>:<id>:<clustered-pk|stored-not-null> ...] \
 [--host <loopback-ip>] [-P <port>|--port <port>] [--store tikv] \
 [--max-allowed-packet <bytes>]"
     }
@@ -279,6 +304,62 @@ fn parse_identifier(option: &str, value: String) -> Result<String, NodeConfigErr
         ));
     }
     Ok(value)
+}
+
+fn parse_column_descriptor(value: String) -> Result<ConfiguredReadColumn, NodeConfigError> {
+    let mut fields = value.split(':');
+    let (Some(name), Some(id), Some(kind), None) =
+        (fields.next(), fields.next(), fields.next(), fields.next())
+    else {
+        return Err(invalid(
+            "--column",
+            "expected <name>:<id>:<clustered-pk|stored-not-null>",
+        ));
+    };
+    let name = parse_identifier("--column", name.to_owned())?;
+    let id = parse_positive_id("--column", id.to_owned())?;
+    let kind = match kind {
+        "clustered-pk" => ConfiguredReadColumnKind::ClusteredPrimaryKey,
+        "stored-not-null" => ConfiguredReadColumnKind::StoredNotNull,
+        _ => {
+            return Err(invalid(
+                "--column",
+                "column kind must be clustered-pk or stored-not-null",
+            ));
+        }
+    };
+    Ok(ConfiguredReadColumn { name, id, kind })
+}
+
+fn validate_columns(columns: &[ConfiguredReadColumn]) -> Result<(), NodeConfigError> {
+    if columns.is_empty() {
+        return Err(NodeConfigError::MissingOption("--column"));
+    }
+
+    let mut names = HashSet::with_capacity(columns.len());
+    let mut ids = HashSet::with_capacity(columns.len());
+    let mut clustered_primary_keys = 0;
+    for column in columns {
+        if !names.insert(column.name.to_lowercase()) {
+            return Err(invalid(
+                "--column",
+                "column names must be unique case-insensitively",
+            ));
+        }
+        if !ids.insert(column.id) {
+            return Err(invalid("--column", "column IDs must be unique"));
+        }
+        if column.kind == ConfiguredReadColumnKind::ClusteredPrimaryKey {
+            clustered_primary_keys += 1;
+        }
+    }
+    if clustered_primary_keys != 1 {
+        return Err(invalid(
+            "--column",
+            "exactly one column must be clustered-pk",
+        ));
+    }
+    Ok(())
 }
 
 fn parse_pd_endpoints(value: String) -> Result<Vec<String>, NodeConfigError> {
