@@ -18,11 +18,13 @@
 //! physical scan selection stay in `tidb-planner`; DAG construction stays in
 //! [`crate::dag_request`]; ranges and request metadata stay in
 //! `tidb-distsql`; PD, region selection, BatchCommands-first dispatch, retry,
-//! and lock recovery stay in the production transport. The engine retains one
-//! serial transport across statements and obtains a fresh PD timestamp for
-//! each request.
+//! and lock recovery stay in the production transport. A process authority
+//! owns the shared cluster capabilities while [`RealTiKvReadSession`] keeps
+//! one connection's transport, cancellation, and lazy result state local to
+//! the worker that admitted it.
 
 use std::fmt;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -50,6 +52,147 @@ use crate::distsql_recordset::DistSqlRecordSet;
 /// Concrete retained production transport used by the first SQL node.
 pub type ProductionReadTransport =
     DirectUnaryQueryTransport<TonicCoprocessorClient, PdRegionLoader>;
+
+static NEXT_READ_AUTHORITY_ID: AtomicU64 = AtomicU64::new(1);
+
+fn next_read_authority_id() -> u64 {
+    let id = NEXT_READ_AUTHORITY_ID.fetch_add(1, Ordering::Relaxed);
+    assert_ne!(id, 0, "read authority identity space exhausted");
+    id
+}
+
+/// Builds one worker-local query transport from process-owned shared handles.
+///
+/// An implementation may retain the unique process lifecycle owners together
+/// with their cloneable request/cache handles, but it must give a session only
+/// the handles. In particular, opening a session must not connect another PD
+/// client, create a region cache, start a maintenance worker, or start a tonic
+/// runtime. The returned transport deliberately has no `Send` bound because
+/// the fixed server worker creates and consumes it on one thread.
+///
+/// Campaign 21's production implementation owns one
+/// `TonicCoprocessorRuntime` and one
+/// `tidb_txnkv::SharedReadAuthority<TonicCoprocessorClient, PdRegionLoader>`.
+/// This method calls `DirectUnaryQueryTransport::from_read_authority`; it does
+/// not call either authority's startup constructor.
+pub trait RealTiKvSessionTransportFactory: Send + Sync {
+    /// Worker-local transport type created for one admitted connection.
+    type Transport: QueryTransport;
+
+    /// Creates query-local state over the already-running process authority.
+    fn open_session_transport(&self) -> Result<Self::Transport, String>;
+}
+
+/// Stable process/session identity carried into query evidence.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RealTiKvReadSessionIdentity {
+    authority_id: u64,
+    session_id: u64,
+}
+
+impl RealTiKvReadSessionIdentity {
+    /// Identifies the process authority that minted this session.
+    #[must_use]
+    pub const fn authority_id(self) -> u64 {
+        self.authority_id
+    }
+
+    /// Identifies this connection-local session within the authority.
+    #[must_use]
+    pub const fn session_id(self) -> u64 {
+        self.session_id
+    }
+}
+
+/// Process authority that opens worker-local real-TiKV sessions.
+///
+/// `F` owns the sole process transport/cache authorities and opens sessions
+/// from their handles. `S` is the cloneable PD timestamp capability.
+/// Consequently this type is `Send + Sync` whenever those two process
+/// capabilities are `Send + Sync`, while `F::Transport` may remain
+/// thread-local.
+pub struct RealTiKvReadAuthority<F, S> {
+    table: Arc<ConfiguredTable>,
+    transport_factory: F,
+    timestamp_source: S,
+    cluster_id: u64,
+    authority_id: u64,
+    next_session_id: AtomicU64,
+}
+
+impl<F, S> RealTiKvReadAuthority<F, S> {
+    /// Retains already-bootstrapped process capabilities.
+    ///
+    /// Construction is intentionally generic until the lower DistSQL layer
+    /// supplies its cloneable production handle. This executor boundary must
+    /// not guess at, or recreate, transport lifecycle ownership.
+    #[must_use]
+    pub fn new(
+        table: ConfiguredTable,
+        transport_factory: F,
+        timestamp_source: S,
+        cluster_id: u64,
+    ) -> Self {
+        Self {
+            table: Arc::new(table),
+            transport_factory,
+            timestamp_source,
+            cluster_id,
+            authority_id: next_read_authority_id(),
+            next_session_id: AtomicU64::new(1),
+        }
+    }
+
+    /// Returns the real PD cluster identity, or zero for an injected authority.
+    #[must_use]
+    pub const fn cluster_id(&self) -> u64 {
+        self.cluster_id
+    }
+
+    /// Returns the stable identity shared by every session from this authority.
+    #[must_use]
+    pub const fn authority_id(&self) -> u64 {
+        self.authority_id
+    }
+
+    /// Returns the exact configured table admitted by every opened session.
+    #[must_use]
+    pub fn configured_table(&self) -> &ConfiguredTable {
+        self.table.as_ref()
+    }
+}
+
+impl<F, S> RealTiKvReadAuthority<F, S>
+where
+    F: RealTiKvSessionTransportFactory,
+    F::Transport: QueryTransport,
+    <F::Transport as QueryTransport>::Response: 'static,
+    S: TimestampSource + Clone,
+{
+    /// Opens one connection-local session inside the calling server worker.
+    pub fn open_session(&self) -> Result<RealTiKvReadSession<F::Transport, S>, RealTiKvReadError> {
+        let session_id = self.next_session_id.fetch_add(1, Ordering::Relaxed);
+        if session_id == 0 {
+            return Err(RealTiKvReadError::Transport(
+                "read session identity space exhausted".to_owned(),
+            ));
+        }
+        let transport = self
+            .transport_factory
+            .open_session_transport()
+            .map_err(RealTiKvReadError::Transport)?;
+        Ok(RealTiKvReadSession::from_authority(
+            Arc::clone(&self.table),
+            transport,
+            self.timestamp_source.clone(),
+            self.cluster_id,
+            RealTiKvReadSessionIdentity {
+                authority_id: self.authority_id,
+                session_id,
+            },
+        ))
+    }
+}
 
 /// A clone of the sole PD worker used as TiDB's timestamp-oracle capability.
 #[derive(Clone)]
@@ -88,6 +231,8 @@ pub struct RealTiKvQuery {
     record_set: DistSqlRecordSet,
     snapshot_ts: u64,
     table_id: i64,
+    session_identity: RealTiKvReadSessionIdentity,
+    cancellation: Arc<CancelHandle>,
 }
 
 impl RealTiKvQuery {
@@ -101,6 +246,23 @@ impl RealTiKvQuery {
     #[must_use]
     pub const fn table_id(&self) -> i64 {
         self.table_id
+    }
+
+    /// Returns the process/session identity attached to this query evidence.
+    #[must_use]
+    pub const fn session_identity(&self) -> RealTiKvReadSessionIdentity {
+        self.session_identity
+    }
+
+    /// Cancels only this query and its transport-owned request children.
+    pub fn cancel(&self) {
+        self.cancellation.cancel();
+    }
+
+    /// Returns whether this query-local cancellation has fired.
+    #[must_use]
+    pub fn is_cancelled(&self) -> bool {
+        self.cancellation.is_cancelled()
     }
 
     /// Transfers the sole lazy response owner to the MySQL connection.
@@ -160,18 +322,30 @@ impl From<DagRequestBuildError> for RealTiKvReadError {
     }
 }
 
-/// Serial query engine retaining one production transport and one PD worker.
-pub struct RealTiKvReadEngine<T = ProductionReadTransport, S = PdTimestampSource> {
-    table: ConfiguredTable,
+/// One worker-local read session retaining query and lazy response state.
+pub struct RealTiKvReadSession<T = ProductionReadTransport, S = PdTimestampSource> {
+    table: Arc<ConfiguredTable>,
     transport: T,
     timestamp_source: S,
     cluster_id: u64,
+    identity: RealTiKvReadSessionIdentity,
     last_snapshot_ts: Option<u64>,
 }
 
-impl RealTiKvReadEngine<ProductionReadTransport, PdTimestampSource> {
-    /// Bootstraps PD once and builds Campaign 18's maintained,
-    /// BatchCommands-first production read runtime over the same worker.
+/// Compatibility name for callers migrating to the authority/session split.
+///
+/// New server code must own [`RealTiKvReadAuthority`] and call
+/// [`RealTiKvReadAuthority::open_session`] inside a fixed worker.
+pub type RealTiKvReadEngine<T = ProductionReadTransport, S = PdTimestampSource> =
+    RealTiKvReadSession<T, S>;
+
+impl RealTiKvReadSession<ProductionReadTransport, PdTimestampSource> {
+    /// Legacy single-session bootstrap retained only until server integration.
+    ///
+    /// Concurrent server code must not call this per connection: it creates
+    /// PD, cache-maintenance, and tonic owners. Production Campaign 21 wiring
+    /// instead constructs those once below this layer and supplies a
+    /// [`RealTiKvSessionTransportFactory`] to [`RealTiKvReadAuthority`].
     pub fn connect<I, E>(
         pd_endpoints: I,
         timeout: Duration,
@@ -196,9 +370,13 @@ impl RealTiKvReadEngine<ProductionReadTransport, PdTimestampSource> {
         let transport =
             DirectUnaryQueryTransport::new_production(client, cache, config, lock_timestamp_source)
                 .map_err(|error| RealTiKvReadError::Transport(error.to_string()))?;
-        let mut engine = Self::new(table, transport, timestamp_source);
-        engine.cluster_id = cluster_id;
-        Ok(engine)
+        let mut session = Self::new(table, transport, timestamp_source);
+        session.cluster_id = cluster_id;
+        session.identity = RealTiKvReadSessionIdentity {
+            authority_id: next_read_authority_id(),
+            session_id: 1,
+        };
+        Ok(session)
     }
 
     /// Returns real region and physical transport observations for the most
@@ -215,7 +393,7 @@ impl RealTiKvReadEngine<ProductionReadTransport, PdTimestampSource> {
     }
 }
 
-impl<T, S> RealTiKvReadEngine<T, S>
+impl<T, S> RealTiKvReadSession<T, S>
 where
     T: QueryTransport,
     T::Response: 'static,
@@ -224,12 +402,33 @@ where
     /// Injects an already-built transport and timestamp source for focused
     /// tests without changing production ownership.
     #[must_use]
-    pub const fn new(table: ConfiguredTable, transport: T, timestamp_source: S) -> Self {
+    pub fn new(table: ConfiguredTable, transport: T, timestamp_source: S) -> Self {
+        Self {
+            table: Arc::new(table),
+            transport,
+            timestamp_source,
+            cluster_id: 0,
+            identity: RealTiKvReadSessionIdentity {
+                authority_id: 0,
+                session_id: 0,
+            },
+            last_snapshot_ts: None,
+        }
+    }
+
+    fn from_authority(
+        table: Arc<ConfiguredTable>,
+        transport: T,
+        timestamp_source: S,
+        cluster_id: u64,
+        identity: RealTiKvReadSessionIdentity,
+    ) -> Self {
         Self {
             table,
             transport,
             timestamp_source,
-            cluster_id: 0,
+            cluster_id,
+            identity,
             last_snapshot_ts: None,
         }
     }
@@ -242,8 +441,14 @@ where
 
     /// Returns the exact configured table admitted by the planner.
     #[must_use]
-    pub const fn configured_table(&self) -> &ConfiguredTable {
-        &self.table
+    pub fn configured_table(&self) -> &ConfiguredTable {
+        self.table.as_ref()
+    }
+
+    /// Returns this worker-local session's process/session identity.
+    #[must_use]
+    pub const fn identity(&self) -> RealTiKvReadSessionIdentity {
+        self.identity
     }
 
     /// Returns the most recent real snapshot accepted for a statement.
@@ -254,7 +459,7 @@ where
 
     /// Parses, lowers, builds, and starts one lazy real-TiKV query.
     pub fn execute(&mut self, sql: &str) -> Result<RealTiKvQuery, RealTiKvReadError> {
-        let plan = ReadOnlyScanPlan::lower(sql, &self.table)?;
+        let plan = ReadOnlyScanPlan::lower(sql, self.table.as_ref())?;
         let snapshot_ts = self
             .timestamp_source
             .current_ts()
@@ -289,8 +494,9 @@ where
                 RequestEnvelope::new(vec![ExecutorShape::new(ExecutorKind::TableScan)]),
                 dag_data,
             );
+        let cancellation = Arc::new(CancelHandle::default());
         let request = builder
-            .build_transport_request(Arc::new(CancelHandle::default()))
+            .build_transport_request(Arc::clone(&cancellation))
             .map_err(|error| RealTiKvReadError::Request(format!("{error:?}")))?;
 
         let field_types = plan
@@ -337,6 +543,8 @@ where
             record_set,
             snapshot_ts,
             table_id,
+            session_identity: self.identity,
+            cancellation,
         })
     }
 }
