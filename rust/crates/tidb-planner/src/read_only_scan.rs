@@ -367,6 +367,13 @@ pub enum ReadOnlyScanError {
     UnknownTable(String),
     /// The query names a column outside the configured table.
     UnknownColumn(String),
+    /// A structured bound input names no configured source column.
+    InvalidColumnIndex {
+        /// Invalid zero-based configured column index.
+        index: usize,
+        /// Number of configured source columns available on the table.
+        column_count: usize,
+    },
     /// The existing datasource task builder rejected the validated path.
     PlannerRejected(ScanReadTaskRejection),
     /// The datasource returned a non-reader task after all admissions passed.
@@ -397,6 +404,13 @@ impl fmt::Display for ReadOnlyScanError {
             }
             Self::UnknownTable(table) => write!(formatter, "unknown table: {table}"),
             Self::UnknownColumn(column) => write!(formatter, "unknown column: {column}"),
+            Self::InvalidColumnIndex {
+                index,
+                column_count,
+            } => write!(
+                formatter,
+                "configured column index {index} is outside column count {column_count}"
+            ),
             Self::PlannerRejected(reason) => {
                 write!(
                     formatter,
@@ -423,6 +437,57 @@ pub struct ReadOnlyScanPlan {
     selection: Option<PhysicalSelectionPlan>,
 }
 
+/// One already-bound signed-`BIGINT` column-versus-literal comparison.
+///
+/// The variants retain operand order exactly. `ColumnLeft` represents
+/// `column <op> value`; `LiteralLeft` represents `value <op> column`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BoundBigIntComparison {
+    /// The configured column is the left operand.
+    ColumnLeft {
+        /// Zero-based source column index in [`ConfiguredTable::columns`].
+        column_index: usize,
+        /// Typed ordinary comparison operator.
+        op: ComparisonOp,
+        /// Signed integer literal on the right.
+        value: i64,
+    },
+    /// The signed integer literal is the left operand.
+    LiteralLeft {
+        /// Signed integer literal on the left.
+        value: i64,
+        /// Typed ordinary comparison operator.
+        op: ComparisonOp,
+        /// Zero-based source column index in [`ConfiguredTable::columns`].
+        column_index: usize,
+    },
+}
+
+impl BoundBigIntComparison {
+    fn into_unbound(self) -> UnboundComparison {
+        match self {
+            Self::ColumnLeft {
+                column_index,
+                op,
+                value,
+            } => UnboundComparison {
+                op,
+                lhs: UnboundComparisonOperand::Column(column_index),
+                rhs: UnboundComparisonOperand::Int(value),
+            },
+            Self::LiteralLeft {
+                value,
+                op,
+                column_index,
+            } => UnboundComparison {
+                op,
+                lhs: UnboundComparisonOperand::Int(value),
+                rhs: UnboundComparisonOperand::Column(column_index),
+            },
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum UnboundComparisonOperand {
     Column(usize),
@@ -437,8 +502,14 @@ struct UnboundComparison {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+struct UnboundProjection {
+    column_index: usize,
+    output_name: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct ValidatedReadOnlySelect {
-    projected_columns: Vec<ResolvedProjectionColumn>,
+    projections: Vec<UnboundProjection>,
     comparisons: Vec<UnboundComparison>,
 }
 
@@ -467,7 +538,55 @@ impl ReadOnlyScanPlan {
         };
 
         let validated = validate_select(&select, table)?;
-        let projected_columns = validated.projected_columns;
+        Self::lower_validated(table, validated)
+    }
+
+    /// Lowers one already-bound configured relation without parsing SQL.
+    ///
+    /// `projected_column_indices` are zero-based indices into
+    /// [`ConfiguredTable::columns`] and remain in caller order, including
+    /// duplicates. `comparisons` must already be local to this relation and
+    /// retain exact column/literal operand order. Both inputs enter the same
+    /// range-detachment, residual Selection, scan-column, and physical-reader
+    /// lowering core used by [`Self::lower`].
+    pub fn lower_bound_relation(
+        table: &ConfiguredTable,
+        projected_column_indices: &[usize],
+        comparisons: &[BoundBigIntComparison],
+    ) -> Result<Self, ReadOnlyScanError> {
+        let validated = ValidatedReadOnlySelect {
+            projections: projected_column_indices
+                .iter()
+                .map(|column_index| UnboundProjection {
+                    column_index: *column_index,
+                    output_name: None,
+                })
+                .collect(),
+            comparisons: comparisons
+                .iter()
+                .copied()
+                .map(BoundBigIntComparison::into_unbound)
+                .collect(),
+        };
+        Self::lower_validated(table, validated)
+    }
+
+    fn lower_validated(
+        table: &ConfiguredTable,
+        validated: ValidatedReadOnlySelect,
+    ) -> Result<Self, ReadOnlyScanError> {
+        table.validate()?;
+        let projected_columns = validated
+            .projections
+            .into_iter()
+            .map(|projection| {
+                let column = configured_column(table, projection.column_index)?;
+                let output_name = projection
+                    .output_name
+                    .unwrap_or_else(|| column.name.clone());
+                Ok(ResolvedProjectionColumn::new(output_name, column))
+            })
+            .collect::<Result<Vec<_>, ReadOnlyScanError>>()?;
         let mut scan_columns = projected_columns
             .iter()
             .map(|column| column.scan_column.clone())
@@ -633,7 +752,7 @@ fn bind_comparison_operand(
     match operand {
         UnboundComparisonOperand::Int(value) => Ok(ComparisonOperand::Int(value)),
         UnboundComparisonOperand::Column(column_index) => {
-            let column = &table.columns[column_index];
+            let column = configured_column(table, column_index)?;
             let offset = match scan_offsets.get(&column.id) {
                 Some(offset) => *offset,
                 None => {
@@ -650,6 +769,19 @@ fn bind_comparison_operand(
             Ok(ComparisonOperand::InputOffset(offset))
         }
     }
+}
+
+fn configured_column(
+    table: &ConfiguredTable,
+    column_index: usize,
+) -> Result<&ConfiguredColumn, ReadOnlyScanError> {
+    table
+        .columns
+        .get(column_index)
+        .ok_or(ReadOnlyScanError::InvalidColumnIndex {
+            index: column_index,
+            column_count: table.columns.len(),
+        })
 }
 
 fn validate_select(
@@ -737,16 +869,19 @@ fn validate_select(
                 return unsupported(UnsupportedReadOnlyFeature::ProjectionExpression);
             }
         };
-        let (_, column) = resolve_column_path(path, table_ref, table)?;
+        let (column_index, column) = resolve_column_path(path, table_ref, table)?;
         let output_name = alias
             .as_deref()
             .filter(|alias| !alias.is_empty())
             .unwrap_or(&column.name)
             .to_owned();
-        columns.push(ResolvedProjectionColumn::new(output_name, column));
+        columns.push(UnboundProjection {
+            column_index,
+            output_name: Some(output_name),
+        });
     }
     Ok(ValidatedReadOnlySelect {
-        projected_columns: columns,
+        projections: columns,
         comparisons,
     })
 }

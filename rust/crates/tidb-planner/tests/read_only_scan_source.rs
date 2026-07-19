@@ -5,9 +5,10 @@
 
 use tidb_planner::{
     access_path::ResolvedTableScanKind,
+    physical_selection::{ComparisonOp, ComparisonOperand},
     read_only_scan::{
-        ConfiguredColumn, ConfiguredColumnKind, ConfiguredTable, ReadOnlyScanError,
-        ReadOnlyScanPlan, UnsupportedReadOnlyFeature,
+        BoundBigIntComparison, ConfiguredColumn, ConfiguredColumnKind, ConfiguredTable,
+        ReadOnlyScanError, ReadOnlyScanPlan, UnsupportedReadOnlyFeature,
     },
 };
 
@@ -85,6 +86,77 @@ fn table_alias_is_the_only_visible_two_part_qualifier() {
     assert_eq!(
         ReadOnlyScanPlan::lower("SELECT accounts.id FROM accounts AS a", &table()),
         Err(ReadOnlyScanError::UnknownColumn("accounts.id".to_owned()))
+    );
+}
+
+#[test]
+fn bound_relation_reuses_sql_lowering_for_all_columns_ranges_and_residuals() {
+    let table = table();
+    let structured = ReadOnlyScanPlan::lower_bound_relation(
+        &table,
+        &[0, 1],
+        &[
+            BoundBigIntComparison::LiteralLeft {
+                value: -5,
+                op: ComparisonOp::Le,
+                column_index: 0,
+            },
+            BoundBigIntComparison::ColumnLeft {
+                column_index: 1,
+                op: ComparisonOp::Gt,
+                value: 10,
+            },
+        ],
+    )
+    .expect("bound local predicates must enter the canonical scan lowering");
+    let sql = ReadOnlyScanPlan::lower(
+        "SELECT id, balance FROM accounts WHERE -5 <= id AND balance > 10",
+        &table,
+    )
+    .unwrap();
+
+    assert_eq!(structured, sql);
+    assert_eq!(structured.projection_output_offsets(), [0, 1]);
+    assert_eq!(
+        structured
+            .projected_columns()
+            .iter()
+            .map(|column| column.source_name())
+            .collect::<Vec<_>>(),
+        ["id", "balance"]
+    );
+    assert_eq!(structured.handle_ranges().len(), 1);
+    assert_eq!(structured.handle_ranges()[0].start(), -5);
+    assert_eq!(structured.handle_ranges()[0].end(), i64::MAX);
+    let conditions = structured.selection().unwrap().conditions();
+    assert_eq!(conditions.len(), 1);
+    assert_eq!(conditions[0].op(), ComparisonOp::Gt);
+    assert_eq!(conditions[0].lhs(), ComparisonOperand::InputOffset(1));
+    assert_eq!(conditions[0].rhs(), ComparisonOperand::Int(10));
+}
+
+#[test]
+fn bound_relation_rejects_projection_and_predicate_offsets() {
+    let table = table();
+    let invalid = ReadOnlyScanError::InvalidColumnIndex {
+        index: 2,
+        column_count: 2,
+    };
+    assert_eq!(
+        ReadOnlyScanPlan::lower_bound_relation(&table, &[0, 2], &[]),
+        Err(invalid.clone())
+    );
+    assert_eq!(
+        ReadOnlyScanPlan::lower_bound_relation(
+            &table,
+            &[0],
+            &[BoundBigIntComparison::ColumnLeft {
+                column_index: 2,
+                op: ComparisonOp::Eq,
+                value: 1,
+            }],
+        ),
+        Err(invalid)
     );
 }
 
