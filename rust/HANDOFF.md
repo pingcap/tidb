@@ -123,9 +123,8 @@ Current state:
 - D, real-TiKV multi-read: implemented and promoted `PARTIAL`; one read
   session, one nonzero snapshot per statement, two transports, shared
   cancellation, and contradiction-before-TSO behavior are covered by focused
-  evidence. Reviewed worktree commit `2d484bd183` adds the supplied-plan APIs
-  E requires, but that follow-up is not yet integrated into the primary
-  branch.
+  evidence. Commit `55485d1b3b` integrates the supplied-plan APIs E requires
+  without adding another planner or reader authority.
 - E, configured inner-join runtime: claimed and active in
   `rust/.worktrees/executor-configured-inner-join-runtime`. It is the immediate
   implementation critical path and the sole Campaign 25 `tidb-exec` routing
@@ -246,28 +245,25 @@ owned process and data artifact.
 
 ## Immediate next work
 
-1. Integrate reviewed D follow-up `2d484bd183` into the primary branch; it
-   exposes the supplied-plan entrypoints required by E without adding another
-   planner or reader authority.
-2. Finish E in its current worktree: consume C's typed plan and D's two
+1. Finish E in its current worktree: consume C's typed plan and D's two
    same-snapshot real-TiKV results, implement deterministic bounded inner-join
    materialization/projection/cancellation, and preserve required-row limits
    without over-reading or client-side scan filtering.
-3. Review E against its complete claimed Go sources/tests, integrate its
+2. Review E against its complete claimed Go sources/tests, integrate its
    focused evidence, and promote it atomically to exact `PARTIAL` so F unlocks.
-4. Freeze the final F server/live slice split in the campaign manifest, claim
+3. Freeze the final F server/live slice split in the campaign manifest, claim
    the dependency-ready members, and create their writable worktrees. Connect
    the existing server configuration/session/lifecycle authority to the
    two-table runtime, extending the shared live harness instead of copying its
    lifecycle code.
-5. Run the Campaign 25 stock-client proof against real PD/TiKV: aliases, ON,
+4. Run the Campaign 25 stock-client proof against real PD/TiKV: aliases, ON,
    USING, CROSS/comma, local range and residual predicates, projections from
    both sides, no-match output, one snapshot, topology churn, blocked shutdown,
    zero exit, and tag-owned cleanup.
-6. Freeze every final campaign member, run the one shared integration gate and
+5. Freeze every final campaign member, run the one shared integration gate and
    repository lint, consume/release every receipt-backed claim, and regenerate
    status.
-7. In parallel when a slot opens, scope the next six disjoint slices so the
+6. In parallel when a slot opens, scope the next six disjoint slices so the
    dispatcher does not return to an empty ready frontier after Campaign 25.
 
 ## Durable environment facts
