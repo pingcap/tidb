@@ -162,7 +162,7 @@ class CampaignCloseTest(unittest.TestCase):
                 encoding="utf-8",
             )
         self.campaign_path.write_text(
-            'schema = "1"\ncampaign = "campaign-x"\nstatus = "active"\n'
+            'schema = "1"\ncampaign = "campaign-x"\nstatus = "planned"\n'
             'slices = ["member-a", "member-b"]\n',
             encoding="utf-8",
         )
@@ -197,7 +197,7 @@ class CampaignCloseTest(unittest.TestCase):
         # Dry-run/preflight computes the complete mutation but changes nothing.
         self.assertEqual(self.old_source.read_text(encoding="utf-8"), before_source)
         self.assertEqual(self.old_test.read_text(encoding="utf-8"), before_test)
-        self.assertIn('status = "active"', self.campaign_path.read_text())
+        self.assertIn('status = "planned"', self.campaign_path.read_text())
         self.assertFalse(self.archive_path.exists())
 
     def test_apply_rolls_back_all_bookkeeping_when_a_generator_fails(self) -> None:

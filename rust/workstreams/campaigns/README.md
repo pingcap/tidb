@@ -15,7 +15,8 @@ slice contracts, so the batch cannot be silently shrunk after validation.
 After the receipt is consumed, `integrated-members.tsv` preserves that exact
 membership and the queue rejects any later addition, removal, or substitution.
 
-Close a frozen active campaign through the transactional steward command:
+Close a frozen planned or active campaign through the transactional steward
+command once its exact member claims are active:
 
 ```sh
 # Read-only: validate members, claims, transfer chains, terminal evidence, and

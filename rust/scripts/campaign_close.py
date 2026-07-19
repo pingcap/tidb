@@ -178,9 +178,9 @@ def _evidence_owners(
     return owners
 
 
-def _integrated_campaign_text(path: Path) -> str:
+def _integrated_campaign_text(path: Path, current_status: str) -> str:
     text = path.read_text(encoding="utf-8")
-    old = 'status = "active"'
+    old = f'status = "{current_status}"'
     if text.count(old) != 1:
         raise ValueError(f"{path}: expected exactly one {old!r}")
     return text.replace(old, 'status = "integrated"', 1)
@@ -259,9 +259,10 @@ def build_close_plan(root: Path, campaign_name: str) -> ClosePlan:
     campaign = campaigns.get(campaign_name)
     if campaign is None:
         raise ValueError(f"unknown campaign {campaign_name}")
-    if campaign["status"] != "active":
+    if campaign["status"] not in {"planned", "active"}:
         raise ValueError(
-            f"campaign {campaign_name} must be active before close; found {campaign['status']}"
+            f"campaign {campaign_name} must be planned or active before close; "
+            f"found {campaign['status']}"
         )
     members = tuple(str(member) for member in campaign["slices"])
     claims = {str(claim["owner"]): claim for claim in queue.load_claims(root)}
@@ -388,7 +389,9 @@ def build_close_plan(root: Path, campaign_name: str) -> ClosePlan:
 
     campaign_path = Path(campaign["_path"])
     archive_path = root / queue.INTEGRATED_CAMPAIGN_MEMBERS
-    writes[campaign_path] = _integrated_campaign_text(campaign_path)
+    writes[campaign_path] = _integrated_campaign_text(
+        campaign_path, str(campaign["status"])
+    )
     writes[archive_path] = _archived_members_text(
         archive_path, campaign_name, members
     )
