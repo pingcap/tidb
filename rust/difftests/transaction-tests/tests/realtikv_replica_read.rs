@@ -30,7 +30,9 @@ use tidb_distsql::{
 };
 use tidb_txnkv::region::{PeerRole, RegionCache, StoreLiveness};
 use tidb_txnkv::region::{ReadPolicy, RequestSelection, StoreFailureOutcome};
-use tidb_txnkv::rpc::{completion_pair, CompletionRunLoop, TonicCoprocessorClient};
+use tidb_txnkv::rpc::{
+    completion_pair, CompletionError, CompletionRunLoop, TonicCoprocessorClient,
+};
 use tidb_txnkv::{
     BatchCommandEntry, BatchCommandTag, ClientReplicaReadType, EndpointType, OpaqueBatchCommand,
     PdRegionLoader, SharedReadRuntime, UnaryCallContext,
@@ -852,10 +854,22 @@ fn live_pd_prev_region_and_forwarded_batch_survive_same_address_restart() {
         let readiness_result =
             match readiness_client.begin(&logical_store.address, None, &request, &readiness_call) {
                 Ok(mut pending) => match pending.complete(&readiness_call) {
-                    Ok(result) => result,
-                    Err(error) => Err(DirectUnaryClientError::Runtime(error.to_string())),
+                    Ok(Ok(response)) => Ok(response),
+                    Ok(Err(error)) => Err((
+                        error.connection().is_some()
+                            || matches!(error, DirectUnaryClientError::Timeout { .. }),
+                        error.to_string(),
+                    )),
+                    Err(CompletionError::DeadlineExceeded) => {
+                        Err((true, "direct readiness attempt timed out".to_owned()))
+                    }
+                    Err(error) => Err((false, error.to_string())),
                 },
-                Err(error) => Err(error),
+                Err(error) => Err((
+                    error.connection().is_some()
+                        || matches!(error, DirectUnaryClientError::Timeout { .. }),
+                    error.to_string(),
+                )),
             };
         readiness_client
             .close()
@@ -873,13 +887,10 @@ fn live_pd_prev_region_and_forwarded_batch_survive_same_address_restart() {
                     break;
                 }
             }
-            Err(error)
-                if error.connection().is_some()
-                    || matches!(error, DirectUnaryClientError::Timeout { .. }) =>
-            {
-                Some(error.to_string())
+            Err((true, reason)) => Some(reason),
+            Err((false, reason)) => {
+                panic!("restarted-peer readiness failed permanently: {reason}")
             }
-            Err(error) => panic!("restarted-peer readiness failed permanently: {error}"),
         };
         assert!(
             Instant::now() < readiness_deadline,
