@@ -12,7 +12,7 @@ the source or obligation still has explicit unported behavior.
 - Active claims: 0
 - Active slices: 0
 - Declared ready slices: 0
-- Partial slices: 89
+- Partial slices: 95
 - Covered slices: 2
 - Blocked slices: 1
 
@@ -37,6 +37,7 @@ the source or obligation still has explicit unported behavior.
 | 2026-07-read-path-19 | integrated | 7 |
 | 2026-07-read-path-20 | integrated | 5 |
 | 2026-07-read-path-21 | integrated | 6 |
+| 2026-07-read-path-22 | integrated | 6 |
 | 2026-07-runtime-closure-03 | integrated | 6 |
 | 2026-07-runtime-closure-04 | integrated | 6 |
 | 2026-07-runtime-closure-05 | integrated | 6 |
@@ -53,12 +54,12 @@ the source or obligation still has explicit unported behavior.
 
 | Universe | Untriaged | Partial | Covered | Blocked |
 | --- | --- | --- | --- | --- |
-| client-go production sources | 126 | 25 | 0 | 0 |
+| client-go production sources | 125 | 26 | 0 | 0 |
 | pd-client production sources | 50 | 8 | 0 | 0 |
-| client-go runner obligations | 314 | 160 | 0 | 0 |
-| pd-client runner obligations | 150 | 20 | 0 | 0 |
-| All external production sources | 176 | 33 | 0 | 0 |
-| All external runner obligations | 464 | 180 | 0 | 0 |
+| client-go runner obligations | 313 | 161 | 0 | 0 |
+| pd-client runner obligations | 147 | 23 | 0 | 0 |
+| All external production sources | 175 | 34 | 0 | 0 |
+| All external runner obligations | 460 | 184 | 0 | 0 |
 
 External module counts are pinned porting obligations and are not included in TiDB product-parity totals.
 

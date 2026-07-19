@@ -148,11 +148,59 @@ static ledger; its one shared receipt covered six claims, all six claim entries
 were consumed, all claims were released as `PARTIAL`, membership is archived,
 generated status is current, and repository `make -j12 lint` passed.
 
-This is deployable only within the bounded milestone contract: loopback-only,
-plaintext, static catalog, signed-BIGINT columns, and direct projections. TLS,
-grants, prepared statements, general expressions/plans, writes/transactions,
-topology-churn-complete exact channel invalidation, and fallible background
-authority shutdown remain open.
+Campaign 22 closes the next production-shape resilience boundary without
+widening that SQL subset. Immutable request evidence keeps physical address,
+ChannelPool version, BatchCommands stream generation, and logical forwarded
+target separate. Current direct `StoreNotMatch` retires only the observed
+physical generation; stale direct responses preserve replacements and
+forwarded responses preserve the shared proxy. RegionCache now probes TiKV
+outside its lock and restores a failed same-address store only when an exact,
+unchanged store/address/epoch observation returns `Reachable`.
+
+Process shutdown is explicit and fallible in dependency order: connections,
+RegionCache maintenance, TiKV transport, then PD. Worker construction, drain,
+close acknowledgement, and join failures reach the executable result. The
+Campaign 22 live run kept one Rust PID and one authenticated stock MySQL
+connection through leader stores `1 -> 5 -> 2 -> 5`, returned exact rows
+`[(913,-7),(-2048,0),(77,42)]`, and routed through
+`127.0.0.1:63161 -> 127.0.0.1:63160 -> 127.0.0.1:63162 -> 127.0.0.1:63160`.
+Restarted B retained physical ChannelPool version `1` while its stream
+generation advanced `1 -> 5`. A real prewrite-blocked query published on B
+before SIGTERM; shutdown completed
+`connections,region_cache,tikv_transport,pd,sql_node_stopped` in 118 ms,
+exited zero, balanced `accepted=1 completed=1 failed=0 active=0`, and removed
+all owned processes, endpoints, registry entries, authentication files, runtime
+directories, and data.
+
+Campaign 22's owner runner requires `C22_GO_TIDB_SERVER` to point to a
+failpoint-enabled binary built from the exact `v8.5.6` tag with Go 1.25.8.
+Build it in a detached fixture worktree:
+
+    git worktree add --detach <fixture-worktree> v8.5.6
+    cd <fixture-worktree>
+    make -j12 failpoint-enable
+    GOTOOLCHAIN=go1.25.8 GOMAXPROCS=12 make -j12 server
+    ./bin/tidb-server -V
+
+The binary must contain `enableTestAPI`, `beforeCommitSecondaries`, and
+`prewriteSecondary`. `v8.5.6-dirty` is expected after failpoint rewriting.
+Do not check this fixture binary into the repository or treat it as a runtime
+dependency: Go TiDB creates the fixture and deterministic lock barrier only;
+every asserted read goes through Rust.
+
+The shared 12-job workspace gate issued `integration_receipt 6`, repository
+`make -j12 lint` passed, all six receipts were consumed, exact membership is
+archived, claims returned to zero, and generated status is current.
+
+This completes the first topology-resilient bounded read-only SQL-node
+milestone, not the TiDB rewrite. The node remains loopback-only, plaintext,
+static-catalog, signed-BIGINT-only, and direct-projection-only. Dynamic
+catalog/infoschema, general planning and expressions, the full Datum/type
+domain, TLS, grants, prepared statements, writes and transaction protocols,
+DDL, statistics integration, bootstrap and cluster services,
+plan/result/transaction zero-diff gates, shadow traffic, performance gates,
+and Jepsen coverage remain open. Phase 2 is incomplete; Phases 3 and 4 have not
+started. `STATUS.md` ownership states are not product-parity percentages.
 
 The first connected local read-only seam is now real: `tidb-protocol` frames
 and validates uncompressed MySQL packets, `Session::execute_framed_query`
