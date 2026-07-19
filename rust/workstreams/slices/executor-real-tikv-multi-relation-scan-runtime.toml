@@ -27,10 +27,12 @@ go_tests = [
 ]
 module_sources = []
 module_tests = []
-depends_on = ["executor-real-tikv-clustered-pk-range-runtime"]
-evidence_prerequisites = []
+depends_on = []
+evidence_prerequisites = [
+  { capability = "real-tikv-clustered-pk-range-read", evidence_owner = "executor-real-tikv-clustered-pk-range-runtime", kind = "source", anchor = "pkg/executor/table_reader.go", minimum_status = "PARTIAL" },
+]
 support_anchors = [
-  "Campaign 25 root D starts only after Campaign 24's real range executor is covered",
+  "Campaign 25 root D starts after Campaign 24's real range executor owns the exact table-reader source anchor at PARTIAL",
   "Current source and test ownership is executor-real-tikv-bigint-selection-runtime; transfer at PARTIAL without weakening paging, partitions, indexes, statistics, or result-iteration gaps",
   "Both scans share exactly one start timestamp and cancellation authority; acquiring independent snapshots or materializing through an in-memory catalog is forbidden",
 ]

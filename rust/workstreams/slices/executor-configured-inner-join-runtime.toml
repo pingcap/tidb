@@ -20,11 +20,11 @@ go_tests = [
 ]
 module_sources = []
 module_tests = []
-depends_on = [
-  "planner-configured-fullschema-join-runtime",
-  "executor-real-tikv-multi-relation-scan-runtime",
+depends_on = []
+evidence_prerequisites = [
+  { capability = "configured-fullschema-join-plan", evidence_owner = "planner-configured-fullschema-join-runtime", kind = "source", anchor = "pkg/planner/core/operator/logicalop/logical_join.go", minimum_status = "PARTIAL" },
+  { capability = "same-snapshot-real-tikv-multi-scan", evidence_owner = "executor-real-tikv-multi-relation-scan-runtime", kind = "source", anchor = "pkg/distsql/select_result.go", minimum_status = "PARTIAL" },
 ]
-evidence_prerequisites = []
 support_anchors = [
   "Campaign 25 stage E is the sole tidb-exec routing steward and exports both multi-read and configured join modules",
   "Current source/test ownership overlaps planner-executor-typed-join-runtime and planner-executor-right-natural-join-runtime; preserve typed predicate evidence and transfer only the bounded non-null INNER subset",

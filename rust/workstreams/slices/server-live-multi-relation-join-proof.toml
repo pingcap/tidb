@@ -16,13 +16,13 @@ go_tests = [
 ]
 module_sources = []
 module_tests = []
-depends_on = [
-  "executor-configured-inner-join-runtime",
-  "server-live-sql-node-harness-foundation",
+depends_on = []
+evidence_prerequisites = [
+  { capability = "configured-inner-join-runtime", evidence_owner = "executor-configured-inner-join-runtime", kind = "source", anchor = "pkg/executor/join/inner_join_probe.go", minimum_status = "PARTIAL" },
+  { capability = "shared-live-sql-node-harness", evidence_owner = "server-live-sql-node-harness-foundation", kind = "source", anchor = "tests/realtikvtest/testkit.go", minimum_status = "PARTIAL" },
 ]
-evidence_prerequisites = []
 support_anchors = [
-  "Campaign 25 stage F consumes the covered shared Campaign 24 live harness and the complete bounded join path",
+  "Campaign 25 stage F consumes exact PARTIAL source anchors from the shared Campaign 24 live harness and the bounded join path",
   "Current source ownership is server-live-bigint-selection-topology-proof and the four RealTiKV tests are UNTRIAGED; transfer conservatively and keep partitions/index lookup outside the proof",
   "Acceptance must publish two table identities, one start timestamp, both scan range sets, join key FullSchema offsets, residual Selection counts, exact projected rows, and zero hidden in-memory fixture reads",
 ]

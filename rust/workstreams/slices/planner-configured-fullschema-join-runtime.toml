@@ -19,8 +19,10 @@ go_tests = [
 ]
 module_sources = []
 module_tests = []
-depends_on = ["planner-configured-relation-tree-binding-runtime"]
-evidence_prerequisites = []
+depends_on = []
+evidence_prerequisites = [
+  { capability = "configured-relation-tree-binding", evidence_owner = "planner-configured-relation-tree-binding-runtime", kind = "source", anchor = "pkg/planner/core/planbuilder.go", minimum_status = "PARTIAL" },
+]
 support_anchors = [
   "Campaign 25 stage C consumes stage B and is the sole tidb-planner routing steward for the campaign",
   "Current sources are split between planner-executor-typed-join-runtime, planner-logical-schema-producer-wave, and UNTRIAGED key casting; preserve all prior PARTIAL gaps in transfer evidence",
