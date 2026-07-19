@@ -101,34 +101,48 @@ fn locked_response_carries_the_exact_cop_call_context() {
 }
 
 #[test]
-fn one_shared_runtime_carries_client_and_region_cache_handles() {
+fn process_owner_issues_openers_and_sessions_without_sharing_shutdown_authority() {
     let runtime = include_str!("../../tidb-txnkv/src/read_runtime.rs");
     let authority = &runtime[runtime
         .find("pub struct SharedReadAuthority")
         .expect("process read authority")..];
-    let authority = &authority[..authority.find("}\n\nimpl").expect("authority fields")];
-    assert!(authority.contains("client: C"));
-    assert!(authority.contains("region_cache: BackgroundRegionCache<L>"));
+    let authority = &authority[..authority.find("\n}").expect("authority fields")];
+    assert!(authority.contains("opener: SharedReadOpener<C, L>"));
+    assert!(authority.contains("region_cache: BackgroundRegionCacheOwner<L>"));
     assert!(authority.contains("authority_id: u64"));
+    assert!(!authority.contains("client: C"));
     assert!(!authority.contains("Rc<RefCell"));
+
+    let opener = &runtime[runtime
+        .find("pub struct SharedReadOpener")
+        .expect("session opener")..];
+    let opener = &opener[..opener.find("\n}").expect("opener fields")];
+    assert!(opener.contains("client: C"));
+    assert!(opener.contains("region_cache: BackgroundRegionCache<L>"));
+    assert!(opener.contains("authority_id: u64"));
+    assert!(!opener.contains("BackgroundRegionCacheOwner"));
+    assert!(!opener.contains("Rc<RefCell"));
     let session = &runtime[runtime
         .find("pub struct SharedReadRuntime")
         .expect("session read runtime")..];
-    let session = &session[..session.find("}\n\nimpl").expect("session fields")];
+    let session = &session[..session.find("\n}").expect("session fields")];
     assert!(session.contains("client: Rc<RefCell<C>>"));
     assert!(session.contains("region_cache: BackgroundRegionCache<L>"));
     assert!(session.contains("authority_id: u64"));
     assert!(!runtime.contains("region_cache: Rc<RefCell<RegionCache<L>>>"));
 
-    let open_session = &runtime[runtime
+    let opener_impl = &runtime[runtime
+        .find("impl<C, L> SharedReadOpener")
+        .expect("session opener implementation")..];
+    let open_session = &opener_impl[opener_impl
         .find("pub fn open_session")
         .expect("session factory")..];
     let open_session = &open_session[..open_session
-        .find("    /// Cluster identity")
+        .find("    /// Stable process authority identity")
         .expect("end of session factory")];
     assert!(open_session.contains("SharedReadRuntime::from_shared_authorities"));
     assert!(open_session.contains("self.client.clone()"));
-    assert!(open_session.contains("self.region_cache.clone()"));
+    assert!(open_session.contains("self.region_cache.open_lease()?"));
     assert!(open_session.contains("self.authority_id"));
     assert_eq!(runtime.matches("pub fn shutdown").count(), 1);
     assert!(
@@ -137,6 +151,7 @@ fn one_shared_runtime_carries_client_and_region_cache_handles() {
     );
 
     let direct = include_str!("../src/cop_paging/direct_unary_query_transport.rs");
+    assert!(direct.contains("authority: &SharedReadOpener<C, L>"));
     assert!(direct.contains("shared_runtime: SharedReadRuntime<C, L>"));
     assert!(!direct.contains("client: Rc<RefCell<C>>"));
     assert!(!direct.contains("region_cache: Rc<RefCell<RegionCache<L>>>"));

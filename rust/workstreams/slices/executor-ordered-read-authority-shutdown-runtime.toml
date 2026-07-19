@@ -4,7 +4,7 @@ status = "partial"
 target = "tidb-exec"
 ring = "transaction"
 consumer = "The production read path separates cloneable session handles from one unique process lifecycle owner. RegionCache maintenance restores an exact same-address store generation only after a real TiKV health probe reports it reachable. After all SQL sessions drain, explicit shutdown stops and joins RegionCache maintenance first, then closes and joins TiKV transport, then closes and joins PD. Every stage returns typed evidence or error; no Arc::try_unwrap or Drop-only success claim is permitted."
-test_target = "real_tikv_authority_shutdown_source background_runner_source background_store_maintenance_source real_tikv_session_authority_source"
+test_target = "real_tikv_authority_shutdown_source background_runner_source background_store_maintenance_source real_tikv_session_authority_source direct_unary_delegation_source"
 go_sources = [
   "pkg/distsql/distsql.go",
   "pkg/distsql/select_result.go",
@@ -63,4 +63,5 @@ rust_paths = [
   "rust/crates/tidb-txnkv/src/region/mod.rs",
   "rust/crates/tidb-txnkv/tests/background_runner_source.rs",
   "rust/crates/tidb-txnkv/tests/background_store_maintenance_source.rs",
+  "rust/crates/tidb-distsql/tests/direct_unary_delegation_source.rs",
 ]
