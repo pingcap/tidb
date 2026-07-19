@@ -27,7 +27,7 @@ use super::batch::{
 };
 use super::channel_pool::ChannelPool;
 use super::liveness::check_liveness;
-use super::unary::{send_unary, RawUnaryRequest, RawUnaryResponse, UnaryCallContext};
+use super::unary::{prepare_unary, RawUnaryRequest, RawUnaryResponse, UnaryCallContext};
 use super::DirectUnaryClientError;
 
 pub(super) enum WorkerCommand {
@@ -332,10 +332,19 @@ fn run_worker(
                 request,
                 call,
                 reply,
-            } => {
-                let result = send_unary(&runtime, &mut channels, &address, request, &call);
-                let _ = reply.send(result);
-            }
+            } => match prepare_unary(&runtime, &mut channels, &address, request, &call) {
+                Ok(prepared) => {
+                    // The runtime, not an unbounded per-call OS thread, owns
+                    // the wait. The worker immediately resumes command
+                    // dispatch while channel-pool mutation remains serialized.
+                    runtime.spawn(async move {
+                        let _ = reply.send(prepared.execute().await);
+                    });
+                }
+                Err(error) => {
+                    let _ = reply.send(Err(error));
+                }
+            },
             WorkerCommand::BatchSubmit {
                 address,
                 entries,

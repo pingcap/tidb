@@ -31,8 +31,10 @@ use tidb_txnkv::{ClientReplicaReadType, DirectUnaryClient, DirectUnaryRequest, E
 
 #[derive(Clone)]
 struct HeldBatchService {
-    seen: mpsc::Sender<()>,
-    release: tokio::sync::watch::Receiver<bool>,
+    batch_seen: mpsc::Sender<()>,
+    batch_release: tokio::sync::watch::Receiver<bool>,
+    unary_seen: mpsc::Sender<()>,
+    unary_release: tokio::sync::watch::Receiver<bool>,
 }
 
 #[tonic::async_trait]
@@ -42,11 +44,21 @@ impl Tikv for HeldBatchService {
 
     async fn coprocessor(
         &self,
-        _request: tonic::Request<CoprocessorRequest>,
+        request: tonic::Request<CoprocessorRequest>,
     ) -> Result<tonic::Response<CoprocessorResponse>, tonic::Status> {
-        Err(tonic::Status::unimplemented(
-            "fixture requires BatchCommands",
-        ))
+        let request = request.into_inner();
+        self.unary_seen.send(()).unwrap();
+        let mut release = self.unary_release.clone();
+        while !*release.borrow() {
+            release
+                .changed()
+                .await
+                .map_err(|_| tonic::Status::cancelled("unary release authority was dropped"))?;
+        }
+        Ok(tonic::Response::new(CoprocessorResponse {
+            data: request.data,
+            ..CoprocessorResponse::default()
+        }))
     }
 
     async fn batch_commands(
@@ -55,8 +67,8 @@ impl Tikv for HeldBatchService {
     ) -> Result<tonic::Response<Self::BatchCommandsStream>, tonic::Status> {
         let mut inbound = request.into_inner();
         let (responses, response_rx) = tokio::sync::mpsc::channel(2);
-        let seen = self.seen.clone();
-        let mut release = self.release.clone();
+        let seen = self.batch_seen.clone();
+        let mut release = self.batch_release.clone();
         tokio::spawn(async move {
             while let Ok(Some(packet)) = inbound.message().await {
                 for (request_id, request) in packet.request_ids.into_iter().zip(packet.requests) {
@@ -99,18 +111,21 @@ impl Tikv for HeldBatchService {
 
 struct TestServer {
     address: String,
-    release: tokio::sync::watch::Sender<bool>,
+    batch_release: tokio::sync::watch::Sender<bool>,
+    unary_release: tokio::sync::watch::Sender<bool>,
     shutdown: Option<tokio::sync::oneshot::Sender<()>>,
     thread: Option<JoinHandle<()>>,
 }
 
 impl TestServer {
-    fn start() -> (Self, mpsc::Receiver<()>) {
+    fn start() -> (Self, mpsc::Receiver<()>, mpsc::Receiver<()>) {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         drop(listener);
-        let (seen, seen_rx) = mpsc::channel();
-        let (release, release_rx) = tokio::sync::watch::channel(false);
+        let (batch_seen, batch_seen_rx) = mpsc::channel();
+        let (batch_release, batch_release_rx) = tokio::sync::watch::channel(false);
+        let (unary_seen, unary_seen_rx) = mpsc::channel();
+        let (unary_release, unary_release_rx) = tokio::sync::watch::channel(false);
         let (shutdown, shutdown_rx) = tokio::sync::oneshot::channel();
         let (started, started_rx) = mpsc::channel();
         let thread = std::thread::spawn(move || {
@@ -121,8 +136,10 @@ impl TestServer {
                 .block_on(async move {
                     let server = tonic::transport::Server::builder()
                         .add_service(TikvServer::new(HeldBatchService {
-                            seen,
-                            release: release_rx,
+                            batch_seen,
+                            batch_release: batch_release_rx,
+                            unary_seen,
+                            unary_release: unary_release_rx,
                         }))
                         .serve_with_shutdown(address, async {
                             let _ = shutdown_rx.await;
@@ -137,11 +154,13 @@ impl TestServer {
                 return (
                     Self {
                         address: address.to_string(),
-                        release,
+                        batch_release,
+                        unary_release,
                         shutdown: Some(shutdown),
                         thread: Some(thread),
                     },
-                    seen_rx,
+                    batch_seen_rx,
+                    unary_seen_rx,
                 );
             }
             assert!(attempt < 99, "test gRPC server did not accept connections");
@@ -151,12 +170,18 @@ impl TestServer {
     }
 
     fn release(&self) {
-        self.release.send_replace(true);
+        self.batch_release.send_replace(true);
+    }
+
+    fn release_unary(&self) {
+        self.unary_release.send_replace(true);
     }
 }
 
 impl Drop for TestServer {
     fn drop(&mut self) {
+        self.batch_release.send_replace(true);
+        self.unary_release.send_replace(true);
         if let Some(shutdown) = self.shutdown.take() {
             let _ = shutdown.send(());
         }
@@ -197,8 +222,8 @@ fn cloned_handles_overlap_and_one_logical_close_does_not_retire_the_other() {
     fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<TonicCoprocessorClient>();
 
-    let (first_server, first_seen) = TestServer::start();
-    let (second_server, second_seen) = TestServer::start();
+    let (first_server, first_seen, _) = TestServer::start();
+    let (second_server, second_seen, _) = TestServer::start();
     let mut authority = TonicCoprocessorClient::new().unwrap();
     let mut first = authority.clone();
     let mut second = authority.clone();
@@ -255,5 +280,71 @@ fn cloned_handles_overlap_and_one_logical_close_does_not_retire_the_other() {
     );
 
     second.close().unwrap();
+    authority.close().unwrap();
+}
+
+#[test]
+fn stalled_unary_does_not_block_batch_commands_admission_or_completion() {
+    let (server, batch_seen, unary_seen) = TestServer::start();
+    server.release();
+
+    let mut authority = TonicCoprocessorClient::new().unwrap();
+    let mut unary_client = authority.clone();
+    let unary_address = server.address.clone();
+    let unary = std::thread::spawn(move || {
+        unary_client.send_request_with_context(
+            &unary_address,
+            &request(b"stalled-unary"),
+            &UnaryCallContext::with_timeout(Duration::from_secs(5)),
+        )
+    });
+    unary_seen
+        .recv_timeout(Duration::from_secs(1))
+        .expect("unary fixture must stall after the request reaches TiKV");
+
+    let mut batch_client = authority.clone();
+    let batch_address = server.address.clone();
+    let (batch_done, batch_result) = mpsc::channel();
+    let batch = std::thread::spawn(move || {
+        let call = UnaryCallContext::with_timeout(Duration::from_secs(3));
+        let result = (|| {
+            let mut pending = batch_client
+                .begin(&batch_address, None, &request(b"independent-batch"), &call)
+                .map_err(|error| error.to_string())?;
+            pending
+                .complete(&call)
+                .map_err(|error| format!("batch completion driver failed: {error}"))?
+                .map_err(|error| error.to_string())
+        })();
+        batch_done.send(result).unwrap();
+    });
+
+    let batch_reached_tikv = batch_seen.recv_timeout(Duration::from_secs(1));
+    let independent_result = batch_reached_tikv
+        .as_ref()
+        .ok()
+        .map(|_| batch_result.recv_timeout(Duration::from_secs(1)));
+
+    server.release_unary();
+    let unary_response = unary.join().unwrap().unwrap();
+    batch.join().unwrap();
+    batch_reached_tikv.expect("BatchCommands must reach TiKV while unary remains stalled");
+    let batch_response = independent_result
+        .expect("BatchCommands response must be observed before releasing unary")
+        .expect("stalled unary must not occupy the shared transport command loop")
+        .expect("independent BatchCommands request must succeed");
+    assert_eq!(
+        CoprocessorResponse::decode(unary_response.encoded_response.as_slice())
+            .unwrap()
+            .data,
+        b"stalled-unary"
+    );
+    assert_eq!(
+        CoprocessorResponse::decode(batch_response.encoded_response.as_slice())
+            .unwrap()
+            .data,
+        b"independent-batch"
+    );
+
     authority.close().unwrap();
 }

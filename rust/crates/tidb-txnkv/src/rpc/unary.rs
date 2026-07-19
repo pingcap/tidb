@@ -14,8 +14,10 @@
 
 //! Command-neutral address-directed unary TiKV transport.
 //!
-//! One worker owns the Tokio runtime, the sole address-keyed channel pool,
-//! connection generations, deadlines, and the in-flight cancellation wait.
+//! One worker owns the Tokio runtime, the sole address-keyed channel pool, and
+//! connection generations. Each admitted call moves an immutable channel
+//! snapshot, deadline, and cancellation carrier into a runtime-owned task so
+//! one stalled RPC cannot occupy the command-dispatch authority.
 //! Command adapters provide only a static gRPC path and encoded protobuf body;
 //! region routing, retry, lock policy, and response interpretation stay above
 //! this transport authority.
@@ -357,13 +359,25 @@ impl Drop for RawTransportClient {
     }
 }
 
-pub(super) fn send_unary(
+/// Immutable in-flight ownership split from the worker-owned channel pool.
+pub(super) struct PreparedUnaryCall {
+    address: String,
+    connection_version: u64,
+    timeout: Duration,
+    request: tonic::Request<Vec<u8>>,
+    channel: tonic::transport::Channel,
+    path: tonic::codegen::http::uri::PathAndQuery,
+    cancellation: UnaryCancellation,
+}
+
+/// Resolves the versioned channel while the sole command worker owns the pool.
+pub(super) fn prepare_unary(
     runtime: &tokio::runtime::Runtime,
     channels: &mut ChannelPool,
     address: &str,
     request: RawUnaryRequest,
     call: &UnaryCallContext,
-) -> Result<RawUnaryResponse, DirectUnaryClientError> {
+) -> Result<PreparedUnaryCall, DirectUnaryClientError> {
     if call.cancellation().is_cancelled() {
         return Err(DirectUnaryClientError::CallerCancelled);
     }
@@ -380,12 +394,32 @@ pub(super) fn send_unary(
         ));
     }
     rpc_request.set_timeout(timeout);
-    let mut client =
-        tonic::client::Grpc::new(selected.channel).max_decoding_message_size(MAX_RECV_MESSAGE_SIZE);
-    let path = tonic::codegen::http::uri::PathAndQuery::from_static(request.path);
-    let cancellation = call.cancellation().clone();
-    let result = runtime.block_on(async {
-        tokio::select! {
+    Ok(PreparedUnaryCall {
+        address: address.to_owned(),
+        connection_version: selected.version,
+        timeout,
+        request: rpc_request,
+        channel: selected.channel,
+        path: tonic::codegen::http::uri::PathAndQuery::from_static(request.path),
+        cancellation: call.cancellation().clone(),
+    })
+}
+
+impl PreparedUnaryCall {
+    /// Drives only this RPC, independently of the shared command receiver.
+    pub(super) async fn execute(self) -> Result<RawUnaryResponse, DirectUnaryClientError> {
+        let Self {
+            address,
+            connection_version,
+            timeout,
+            request,
+            channel,
+            path,
+            cancellation,
+        } = self;
+        let mut client =
+            tonic::client::Grpc::new(channel).max_decoding_message_size(MAX_RECV_MESSAGE_SIZE);
+        let result = tokio::select! {
             biased;
             () = cancellation.cancelled() => UnaryCallOutcome::CallerCancelled,
             result = tokio::time::timeout(timeout, async {
@@ -393,30 +427,35 @@ pub(super) fn send_unary(
                     UnaryAttemptError::Connection(format!("TiKV gRPC service is not ready: {error}"))
                 })?;
                 client
-                    .unary(rpc_request, path, RawProtobufCodec)
+                    .unary(request, path, RawProtobufCodec)
                     .await
                     .map_err(UnaryAttemptError::RemoteGrpc)
             }) => UnaryCallOutcome::Completed(result),
-        }
-    });
-    let response = match result {
-        UnaryCallOutcome::CallerCancelled => {
-            return Err(DirectUnaryClientError::CallerCancelled);
-        }
-        UnaryCallOutcome::Completed(Ok(Ok(response))) => response.into_inner(),
-        UnaryCallOutcome::Completed(Ok(Err(UnaryAttemptError::Connection(error)))) => {
-            return Err(connection_error(address, selected.version, error));
-        }
-        UnaryCallOutcome::Completed(Ok(Err(UnaryAttemptError::RemoteGrpc(error)))) => {
-            return Err(remote_grpc_error(address, selected.version, timeout, error));
-        }
-        UnaryCallOutcome::Completed(Err(error)) => {
-            return Err(timeout_error(address, selected.version, timeout, error));
-        }
-    };
-    Ok(RawUnaryResponse {
-        encoded_response: response,
-    })
+        };
+        let response = match result {
+            UnaryCallOutcome::CallerCancelled => {
+                return Err(DirectUnaryClientError::CallerCancelled);
+            }
+            UnaryCallOutcome::Completed(Ok(Ok(response))) => response.into_inner(),
+            UnaryCallOutcome::Completed(Ok(Err(UnaryAttemptError::Connection(error)))) => {
+                return Err(connection_error(&address, connection_version, error));
+            }
+            UnaryCallOutcome::Completed(Ok(Err(UnaryAttemptError::RemoteGrpc(error)))) => {
+                return Err(remote_grpc_error(
+                    &address,
+                    connection_version,
+                    timeout,
+                    error,
+                ));
+            }
+            UnaryCallOutcome::Completed(Err(error)) => {
+                return Err(timeout_error(&address, connection_version, timeout, error));
+            }
+        };
+        Ok(RawUnaryResponse {
+            encoded_response: response,
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
