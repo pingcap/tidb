@@ -222,11 +222,37 @@ lines cannot hide a dropped query.
 Campaign 23 is Ready-integrated. Exact evidence transfers and six-member
 membership are frozen; the shared 12-job workspace gate issued
 `integration_receipt 6`, repository `make -j12 lint` passed, all six members
-consumed the receipt, and claims returned to zero. Keep a twelve-slice
-pipeline: six current implementation/integration slices and six disjoint
-successor slices. Campaign 24 is pre-scoped for clustered-primary-key ranger
-detachment plus a reusable stock-client/real-TiKV live harness. Ranger narrows
-access ranges; Selection remains the semantic owner of residual predicates.
+consumed the receipt, and claims returned to zero.
+
+Campaign 24 is implementation- and live-complete. Its source-shaped signed
+`BIGINT` ranger detaches clustered-primary-key access conditions for `=`,
+`!=`, `<`, `<=`, `>`, `>=`, reversed operands, flattened conjunctions,
+MIN/MAX, contradictions, and access-plus-residual predicates. Planner-owned
+logical ranges flow through exact DistSQL record-key encoding into the existing
+real-TiKV reader. Contradictions return before PD TSO or transport; residual
+stored-column predicates remain in TiKV `[TableScan, Selection]` with no Rust
+post-filter or key-only special path.
+
+Campaigns 22, 23, and 24 now share one live lifecycle engine for tag-safe
+PD/TiKV startup, persistent stock-MySQL admission, A→B→C→same-address-B churn,
+the real prewrite barrier, ordered shutdown, and cleanup. The three scenario
+runners contain only query data and assertions. A static test rejects copied
+lifecycle code and caps scenario size. An injected early-failure regression
+proves cleanup contains an exact tag-owned supervisor after descendants drain
+while still rejecting an unowned process; cleanup no longer depends on a
+happy-path detached-child flag.
+
+The live proof kept Rust PID `40428`, authenticated MySQL connection `1`, and
+read session `1` through leader stores `1 -> 4 -> 5 -> 4` at
+`127.0.0.1:63160 -> 127.0.0.1:63162 -> 127.0.0.1:63161 -> 127.0.0.1:63162`.
+It covered `eq,ne,lt,le,gt,ge,reversed,bounded,min,max,contradiction,residual`.
+The contradiction published `snapshot_ts=null` and no transport; the residual
+plan stayed `[TableScan, Selection]`. Restarted B kept channel version `1`
+while stream generation advanced `1 -> 5`. Query `19` blocked before SIGTERM;
+ordered shutdown completed in `125 ms`, exited zero, balanced
+`accepted=1 completed=1 failed=0 active=0`, and passed complete cleanup.
+Campaign 24's shared Ready gate, repository lint, receipt consumption, claim
+release, and generated-status refresh remain pending.
 
 This completes the first topology-resilient bounded read-only SQL-node
 milestone, not the TiDB rewrite. The node remains loopback-only, plaintext,
@@ -557,20 +583,13 @@ cp /tmp/g.txt rust/difftests/corpus/query_golden.txt
 
 > **⚡ PARALLEL, SOURCE-FIRST MODE:** read **`rust/PARALLEL.md`** before dispatching. `difftests/corpus/coverage/go_test_inventory.tsv` makes every Go test entry point, lifecycle hook, shell program, SQL fixture/result, `testdata` file, and support artifact below repository test suites visible; `integration_parser_inventory.tsv` inventories every SQL input the fixture runner dispatches; and `integration_runner_directive_inventory.tsv` accounts for runner-only commands. These are obligations, not parity claims.
 
-The immediate critical path is Campaign 24 dispatch: freeze six exact,
-disjoint ranger/harness manifests from the existing pre-scope, claim the whole
-batch, and start implementation without another audit pause. Do not rerun
-workspace-wide builds in individual slices; use focused leaf tests and one
-shared receipted campaign gate.
-
-Maintain a twelve-slice runway while that boundary closes. Six slices carry
-the current campaign through integration; six disjoint Campaign 24 slices are
-pre-scoped with exact Go ranger sources/tests, Rust owners, manifests, and
-write sets. Campaign 24 should detach clustered-primary-key access conditions
-while preserving Selection for residual semantics, and factor the live runner
-into a reusable stock-MySQL-client/real-TiKV harness that retains topology,
-blocked-query shutdown, and cleanup evidence. Pre-scope is not implementation
-and must not overlap Campaign 23's frozen ownership.
+The immediate critical path is Campaign 24 Ready integration. Its six
+implementation slices and real-cluster proof pass; run exactly one shared
+12-job gate, repository `make -j12 lint`, consume the frozen receipt for all
+six members, release every claim, and refresh generated status. Do not rerun
+the live topology or individual workspace-wide builds as a substitute for the
+one receipted batch gate. Keep the disjoint successor runway moving in
+parallel without editing Campaign 24 ownership.
 
 The active high-throughput work is split across six non-overlapping lanes:
 
