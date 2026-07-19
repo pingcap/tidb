@@ -1,0 +1,54 @@
+schema = "1"
+slice = "planner-configured-order-limit-runtime"
+status = "ready"
+target = "tidb-planner"
+ring = "plan"
+consumer = "The configured two-relation planner parses once, lowers the Campaign 25 join input structurally, binds ordered signed-BIGINT keys to stable FullSchema offsets, and admits only checked explicit LIMIT windows."
+test_target = "configured_order_limit_source"
+go_sources = [
+  "pkg/planner/core/logical_plan_builder.go",
+  "pkg/planner/core/operator/physicalop/physical_limit.go",
+  "pkg/planner/core/operator/physicalop/physical_sort.go",
+  "pkg/planner/core/operator/physicalop/physical_topn.go",
+  "pkg/planner/core/rule_topn_push_down.go",
+  "pkg/planner/implementation/sort.go",
+]
+go_tests = [
+  "pkg/planner/cascades/old/transformation_rules_test.go:169:TestTopNRules",
+  "pkg/planner/cascades/old/transformation_rules_test.go:266:TestMergeAdjacentTopN",
+  "pkg/planner/cascades/old/transformation_rules_test.go:292:TestMergeAdjacentLimit",
+  "pkg/planner/cascades/old/transformation_rules_test.go:312:TestTransformLimitToTableDual",
+  "pkg/planner/cascades/old/transformation_rules_test.go:350:TestPushLimitDownTiKVSingleGather",
+  "pkg/planner/core/casetest/dag/dag_test.go:170:TestDAGPlanTopN",
+  "pkg/planner/core/casetest/physicalplantest/physical_plan_test.go:1600:TestLimitPushdown",
+  "pkg/planner/core/integration_test.go:1897:TestVirtualExprPushDown",
+  "pkg/planner/core/logical_plans_test.go:1640:TestTopNPushDown",
+  "pkg/planner/core/operator/logicalop/logicalop_test/logical_operator_test.go:199:TestLogicalProjectionPushDownTopN",
+  "pkg/planner/core/operator/logicalop/logicalop_test/logical_operator_test.go:242:TestLogicalTopNPruneColumnsRefreshesSchemaBeforeInlineProjection",
+  "pkg/planner/core/operator/physicalop/physical_utils_test.go:46:TestFlattenTreePushDownPlan",
+  "pkg/planner/core/physical_plan_test.go:582:TestPhysicalPlanMemoryTrace",
+  "pkg/planner/core/planbuilder_test.go:340:TestPhysicalPlanClone",
+]
+module_sources = []
+module_tests = []
+depends_on = []
+evidence_prerequisites = [
+  { capability = "configured-order-limit-contract", evidence_owner = "planner-configured-order-limit-contract", kind = "source", anchor = "pkg/planner/util/byitem.go", minimum_status = "PARTIAL" },
+  { capability = "configured-fullschema-join-plan", evidence_owner = "planner-configured-fullschema-join-runtime", kind = "source", anchor = "pkg/planner/core/operator/logicalop/logical_join.go", minimum_status = "PARTIAL" },
+]
+support_anchors = [
+  "Add ConfiguredJoinPlan::lower_select or an equivalent typed AST entrypoint and make the existing SQL wrapper delegate to it; parse exactly once and never restore/reparse SQL",
+  "ORDER BY admits one or more direct configured signed-BIGINT columns, unique select aliases, or positive ordinals; each key resolves to a pre-projection FullSchema offset so ordering by an unprojected column remains normal",
+  "LIMIT count, LIMIT offset,count, and LIMIT count OFFSET offset use checked nonnegative integer literals; LIMIT 0 is a planner-known empty result before PD or TiKV side effects",
+  "ORDER BY without explicit LIMIT, expressions, ambiguous aliases, ordinal zero/out-of-range, overflow, NULL, unsigned/coercion/collation, partition TopN, and storage pushdown fail closed with typed errors",
+  "Retain all predecessor physical/logical identity gaps and do not create a second relation binder or scan planner",
+]
+rust_paths = [
+  "rust/crates/tidb-planner/src/configured_join_plan.rs",
+  "rust/crates/tidb-planner/src/configured_order_limit.rs",
+  "rust/crates/tidb-planner/src/configured_relation_tree.rs",
+  "rust/crates/tidb-planner/src/lib.rs",
+  "rust/crates/tidb-planner/tests/configured_order_limit_source.rs",
+  "rust/difftests/corpus/coverage/evidence/source/planner-configured-order-limit-runtime.tsv",
+  "rust/difftests/corpus/coverage/evidence/tests/planner-configured-order-limit-runtime.tsv",
+]

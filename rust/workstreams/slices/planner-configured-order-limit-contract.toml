@@ -1,0 +1,35 @@
+schema = "1"
+slice = "planner-configured-order-limit-contract"
+status = "ready"
+target = "tidb-planner"
+ring = "plan"
+consumer = "One shared typed contract represents source-resolved signed-BIGINT ORDER BY keys and checked LIMIT/OFFSET windows for configured query plans before planner and executor slices branch in parallel."
+test_target = "configured_order_limit_contract_source"
+go_sources = [
+  "pkg/planner/core/operator/logicalop/logical_limit.go",
+  "pkg/planner/core/operator/logicalop/logical_sort.go",
+  "pkg/planner/core/operator/logicalop/logical_top_n.go",
+  "pkg/planner/util/byitem.go",
+]
+go_tests = [
+  "pkg/planner/core/logical_plans_test.go:679:TestSortByItemsPruning",
+  "pkg/planner/core/operator/logicalop/logicalop_test/hash64_equals_test.go:36:TestLogicalTopNHash64Equals",
+  "pkg/planner/core/operator/logicalop/logicalop_test/hash64_equals_test.go:158:TestLogicalSortHash64Equals",
+  "pkg/planner/core/operator/logicalop/logicalop_test/hash64_equals_test.go:530:TestLogicalLimitHash64Equals",
+]
+module_sources = []
+module_tests = []
+depends_on = []
+evidence_prerequisites = []
+support_anchors = [
+  "Campaign 26 root A freezes the public contract before any binder, heap, server, or live slice starts",
+  "Define ConfiguredOrderDirection, ConfiguredOrderKey with a FullSchema offset, ConfiguredLimitWindow with checked offset/count/end, and ConfiguredOrderLimitSpec without parsing SQL or executing rows",
+  "Preserve the predecessor logical identity and ByItem gaps: arbitrary expressions, NULL/coercion/collation, property enumeration, pushdown, spill, and runtime behavior remain open",
+  "Do not duplicate direction, offset/count, or capacity policy in downstream crates; every Campaign 26 slice consumes this contract",
+]
+rust_paths = [
+  "rust/crates/tidb-planner/src/configured_order_limit_contract.rs",
+  "rust/crates/tidb-planner/tests/configured_order_limit_contract_source.rs",
+  "rust/difftests/corpus/coverage/evidence/source/planner-configured-order-limit-contract.tsv",
+  "rust/difftests/corpus/coverage/evidence/tests/planner-configured-order-limit-contract.tsv",
+]

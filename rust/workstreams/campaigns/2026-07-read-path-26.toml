@@ -1,0 +1,13 @@
+schema = "1"
+campaign = "2026-07-read-path-26"
+status = "planned"
+slices = [
+  "planner-configured-order-limit-contract",
+  "planner-configured-order-limit-runtime",
+  "executor-configured-stable-order-runtime",
+  "executor-configured-bounded-topn-runtime",
+  "executor-configured-ordered-query-runtime",
+  "server-configured-topn-cap-runtime",
+  "server-configured-ordered-query-routing-runtime",
+  "server-live-ordered-join-proof",
+]

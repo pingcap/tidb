@@ -1,0 +1,65 @@
+schema = "1"
+slice = "server-configured-ordered-query-routing-runtime"
+status = "ready"
+target = "tidb-server"
+ring = "result"
+consumer = "The existing multi-relation SQL-node dispatcher routes configured ORDER BY LIMIT and LIMIT-only queries through the Campaign 26 executor while preserving authentication, connection ownership, cancellation, and ordered shutdown."
+test_target = "configured_ordered_query_node_source"
+go_sources = [
+  "pkg/server/conn.go",
+  "pkg/server/driver.go",
+  "pkg/server/driver_tidb.go",
+  "pkg/server/internal/parse/parse.go",
+  "pkg/server/server.go",
+  "pkg/server/user_connections.go",
+]
+go_tests = [
+  "pkg/server/conn_test.go:595:TestIssue1768",
+  "pkg/server/conn_test.go:621:TestInitialHandshake",
+  "pkg/server/conn_test.go:670:TestDispatch",
+  "pkg/server/conn_test.go:789:TestDispatchClientProtocol41",
+  "pkg/server/conn_test.go:909:TestQueryEndWithZero",
+  "pkg/server/conn_test.go:991:TestGetSessionVarsWaitTimeout",
+  "pkg/server/conn_test.go:1024:TestConnExecutionTimeout",
+  "pkg/server/conn_test.go:1108:TestShutDown",
+  "pkg/server/conn_test.go:1168:TestCommitWaitGroup",
+  "pkg/server/conn_test.go:1532:TestHandleAuthPlugin",
+  "pkg/server/conn_test.go:1879:TestChangeUserAuth",
+  "pkg/server/conn_test.go:1927:TestAuthPlugin2",
+  "pkg/server/conn_test.go:2054:TestMaxAllowedPacket",
+  "pkg/server/conn_test.go:2145:TestOkEof",
+  "pkg/server/conn_test.go:2358:TestProcessInfoForExecuteCommand",
+  "pkg/server/conn_test.go:2479:TestCloseConn",
+  "pkg/server/conn_test.go:2518:TestConnAddMetrics",
+  "pkg/server/server_test.go:116:TestGetConAttrs",
+  "pkg/server/server_test.go:192:TestSeverHealth",
+  "pkg/server/server_test.go:214:TestInitTiDBListenerIsIdempotent",
+  "pkg/server/server_test.go:238:TestServerShutdownFlags",
+  "pkg/server/server_test.go:276:TestStartShutdownMarksUnhealthyBeforeStarterCallback",
+  "pkg/server/tests/commontest/tidb_test.go:1098:TestGracefulShutdown",
+  "pkg/server/tests/commontest/tidb_test.go:3206:TestConnectionWillNotLeak",
+  "pkg/server/tests/commontest/tidb_test.go:3295:TestConnectionCount",
+  "pkg/server/user_connections_test.go:32:TestUserConnectionCount",
+]
+module_sources = []
+module_tests = []
+depends_on = []
+evidence_prerequisites = [
+  { capability = "configured-ordered-query-runtime", evidence_owner = "executor-configured-ordered-query-runtime", kind = "source", anchor = "pkg/executor/builder.go", minimum_status = "PARTIAL" },
+  { capability = "configured-topn-cap", evidence_owner = "server-configured-topn-cap-runtime", kind = "source", anchor = "pkg/config/config.go", minimum_status = "PARTIAL" },
+  { capability = "live-multi-relation-join", evidence_owner = "server-live-multi-relation-join-proof", kind = "source", anchor = "pkg/server/conn.go", minimum_status = "PARTIAL" },
+]
+support_anchors = [
+  "Extend the Campaign 25 real_tikv_multi_node and sql_node path in place; do not retain a separate ordered server, listener, session opener, worker pool, or MySQL encoder",
+  "Validate TopN capacity and LIMIT 0 before opening a query; route one cancellation owner through join and ordering and close it on disconnect or early LIMIT completion",
+  "Preserve persistent connection reuse, connection counters, blocked-query shutdown, fallible process shutdown, and existing unordered Campaign 25 behavior",
+  "The server publishes order-key FullSchema offsets, directions, offset/count, retained heap high-water mark, consumed rows, emitted rows, and upstream cancellation evidence",
+]
+rust_paths = [
+  "rust/crates/tidb-server/src/lib.rs",
+  "rust/crates/tidb-server/src/real_tikv_multi_node.rs",
+  "rust/crates/tidb-server/src/sql_node.rs",
+  "rust/crates/tidb-server/tests/configured_ordered_query_node_source.rs",
+  "rust/difftests/corpus/coverage/evidence/source/server-configured-ordered-query-routing-runtime.tsv",
+  "rust/difftests/corpus/coverage/evidence/tests/server-configured-ordered-query-routing-runtime.tsv",
+]

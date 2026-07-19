@@ -1,0 +1,49 @@
+schema = "1"
+slice = "executor-configured-bounded-topn-runtime"
+status = "ready"
+target = "tidb-exec"
+ring = "result"
+consumer = "A bounded executor retains at most offset plus count ordered rows for ORDER BY LIMIT and streams LIMIT-only windows without materializing the complete Campaign 25 input."
+test_target = "source_shard_b"
+go_sources = [
+  "pkg/executor/internal/testutil/limit.go",
+  "pkg/executor/sortexec/topn.go",
+  "pkg/executor/sortexec/topn_chunk_heap.go",
+  "pkg/executor/sortexec/topn_worker.go",
+]
+go_tests = [
+  "pkg/executor/chunk_size_control_test.go:99:TestLimitAndTableScan",
+  "pkg/executor/chunk_size_control_test.go:130:TestLimitAndIndexScan",
+  "pkg/executor/executor_required_rows_test.go:131:TestLimitRequiredRows",
+  "pkg/executor/executor_required_rows_test.go:321:TestTopNRequiredRows",
+  "pkg/executor/partition_table_test.go:169:TestOrderByAndLimit",
+  "pkg/executor/sortexec/rank_topn_test.go:0:rank_topn_test.go",
+  "pkg/executor/sortexec/rank_topn_test.go:148:TestRankTopN",
+  "pkg/executor/sortexec/topn_spill_test.go:0:topn_spill_test.go",
+  "pkg/executor/sortexec/topn_spill_test.go:383:TestGenerateTopNResultsWhenSpillOnlyOnce",
+  "pkg/executor/sortexec/topn_spill_test.go:400:TestTopNSpillDisk",
+  "pkg/executor/sortexec/topn_spill_test.go:454:TestTopNSpillDiskFailpoint",
+  "pkg/executor/sortexec/topn_spill_test.go:514:TestIssue54206",
+  "pkg/executor/sortexec/topn_spill_test.go:527:TestIssue54541",
+  "pkg/executor/sortexec/topn_spill_test.go:556:TestTopNFallBackAction",
+]
+module_sources = []
+module_tests = []
+depends_on = []
+evidence_prerequisites = [
+  { capability = "configured-order-limit-contract", evidence_owner = "planner-configured-order-limit-contract", kind = "source", anchor = "pkg/planner/core/operator/logicalop/logical_limit.go", minimum_status = "PARTIAL" },
+  { capability = "configured-stable-order", evidence_owner = "executor-configured-stable-order-runtime", kind = "source", anchor = "pkg/executor/sortexec/sort.go", minimum_status = "PARTIAL" },
+]
+support_anchors = [
+  "ORDER BY LIMIT uses one max-heap bounded by checked offset plus count and performs one final canonical stable ordering; full materialization followed by truncation is forbidden",
+  "LIMIT without ORDER BY skips offset and stops after count, then cancels and closes the upstream query so the client does not drain hidden rows",
+  "LIMIT 0 constructs an empty result without opening PD/TiKV work; capacity rejection occurs before consuming an input row",
+  "Spill, partition TopN, rank TopN, vectorized chunks, parallel workers, memory trackers, and arbitrary datum types remain explicit gaps",
+]
+rust_paths = [
+  "rust/crates/tidb-exec/src/configured_topn.rs",
+  "rust/crates/tidb-exec/tests/configured_topn_source.rs",
+  "rust/crates/tidb-exec/tests/source_shard_b.rs",
+  "rust/difftests/corpus/coverage/evidence/source/executor-configured-bounded-topn-runtime.tsv",
+  "rust/difftests/corpus/coverage/evidence/tests/executor-configured-bounded-topn-runtime.tsv",
+]
