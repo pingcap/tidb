@@ -47,12 +47,29 @@ pub struct TonicCoprocessorClient {
     transport: RawTransportClient,
 }
 
+impl Clone for TonicCoprocessorClient {
+    /// Creates a non-owning command capability for the same transport worker.
+    ///
+    /// Closing or dropping the clone invalidates only that clone. The original
+    /// client returned by [`Self::new`] retains the unique worker lifecycle.
+    fn clone(&self) -> Self {
+        let transport = self.transport.clone();
+        Self { transport }
+    }
+}
+
 impl TonicCoprocessorClient {
     /// Constructs a live client without opening a socket.
     pub fn new() -> Result<Self, DirectUnaryClientError> {
         Ok(Self {
             transport: RawTransportClient::new()?,
         })
+    }
+
+    /// Whether this value retains the unique worker shutdown and join authority.
+    #[must_use]
+    pub const fn is_transport_owner(&self) -> bool {
+        self.transport.is_owner()
     }
 
     /// Admits opaque commands to the retained scheduler and tonic duplex stream.
@@ -102,10 +119,12 @@ impl TonicCoprocessorClient {
         self.transport.inspect_batch("", None).1
     }
 
-    /// Returns the runtime cancellation fired before orderly close is queued.
+    /// Returns the value-local cancellation fired before orderly close is queued.
     ///
     /// Embedders coordinating a concurrent blocking call may fire this handle
-    /// before the owner thread invokes [`DirectUnaryClient::close`].
+    /// before the owner thread invokes [`DirectUnaryClient::close`]. A cloned
+    /// request capability receives detached cancellation state and therefore
+    /// cannot cancel the process-owned worker.
     #[must_use]
     pub fn shutdown_cancellation(&self) -> TransportShutdownCancellation {
         self.transport.shutdown_cancellation()

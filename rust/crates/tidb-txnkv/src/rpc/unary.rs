@@ -32,7 +32,7 @@ use super::async_completion::RunLoopSignal;
 use super::batch::{BatchCommandEntry, BatchPublicationReceipt};
 use super::channel_pool::ChannelPool;
 use super::forwarding;
-use super::transport_runtime::{TransportRuntime, TransportShutdownCancellation};
+use super::transport_runtime::{TransportHandle, TransportRuntime, TransportShutdownCancellation};
 use super::{DirectUnaryClientError, DirectUnaryConnectionError, DirectUnaryGrpcCode};
 
 // client-go internal/client sets MaxRecvMsgSize to math.MaxInt64-1. Tonic's
@@ -238,16 +238,35 @@ enum UnaryCallOutcome {
     ),
 }
 
-/// Synchronous handle to the sole shared unary and BatchCommands transport.
+/// Synchronous capability for the sole shared unary and BatchCommands transport.
 pub(super) struct RawTransportClient {
-    transport: TransportRuntime,
+    handle: Option<TransportHandle>,
+    owner: Option<TransportRuntime>,
+    shutdown_cancellation: TransportShutdownCancellation,
+}
+
+impl Clone for RawTransportClient {
+    fn clone(&self) -> Self {
+        Self {
+            handle: self.handle.clone(),
+            owner: None,
+            shutdown_cancellation: TransportShutdownCancellation::detached(),
+        }
+    }
 }
 
 impl RawTransportClient {
     pub(super) fn new() -> Result<Self, DirectUnaryClientError> {
+        let owner = TransportRuntime::new()?;
         Ok(Self {
-            transport: TransportRuntime::new()?,
+            handle: Some(owner.handle()),
+            shutdown_cancellation: owner.shutdown_cancellation(),
+            owner: Some(owner),
         })
+    }
+
+    pub(super) const fn is_owner(&self) -> bool {
+        self.owner.is_some()
     }
 
     pub(super) fn send(
@@ -259,7 +278,7 @@ impl RawTransportClient {
         if call.cancellation().is_cancelled() {
             return Err(DirectUnaryClientError::CallerCancelled);
         }
-        self.transport.unary_send(address, request, call)
+        self.handle()?.unary_send(address, request, call)
     }
 
     pub(super) fn submit_batch(
@@ -267,7 +286,7 @@ impl RawTransportClient {
         address: &str,
         entries: Vec<BatchCommandEntry>,
     ) -> Result<Vec<BatchPublicationReceipt>, DirectUnaryClientError> {
-        self.transport.batch_submit(address, entries)
+        self.handle()?.batch_submit(address, entries)
     }
 
     pub(super) fn submit_batch_with_call(
@@ -276,12 +295,12 @@ impl RawTransportClient {
         entries: Vec<BatchCommandEntry>,
         call: &UnaryCallContext,
     ) -> Result<Vec<BatchPublicationReceipt>, DirectUnaryClientError> {
-        self.transport
+        self.handle()?
             .batch_submit_with_call(address, entries, call)
     }
 
     pub(super) fn close_address(&mut self, address: &str) -> Result<(), DirectUnaryClientError> {
-        self.transport.close_address(address)
+        self.handle()?.close_address(address)
     }
 
     pub(super) fn close_address_version(
@@ -289,7 +308,7 @@ impl RawTransportClient {
         address: &str,
         version: u64,
     ) -> Result<(), DirectUnaryClientError> {
-        self.transport.close_address_version(address, version)
+        self.handle()?.close_address_version(address, version)
     }
 
     pub(super) fn liveness(
@@ -297,11 +316,12 @@ impl RawTransportClient {
         address: &str,
         timeout: Duration,
     ) -> Result<StoreLiveness, DirectUnaryClientError> {
-        self.transport.liveness(address, timeout)
+        self.handle()?.liveness(address, timeout)
     }
 
     pub(super) fn inspect(&self, address: &str) -> (Option<u64>, usize) {
-        self.transport.inspect(address)
+        self.handle()
+            .map_or((None, 0), |handle| handle.inspect(address))
     }
 
     pub(super) fn inspect_batch(
@@ -309,15 +329,25 @@ impl RawTransportClient {
         address: &str,
         forwarded_host: Option<&str>,
     ) -> (Option<u64>, u64) {
-        self.transport.inspect_batch(address, forwarded_host)
+        self.handle().map_or((None, 0), |handle| {
+            handle.inspect_batch(address, forwarded_host)
+        })
     }
 
     pub(super) fn shutdown_cancellation(&self) -> TransportShutdownCancellation {
-        self.transport.shutdown_cancellation()
+        self.shutdown_cancellation.clone()
     }
 
     pub(super) fn shutdown(&mut self) {
-        self.transport.shutdown();
+        self.shutdown_cancellation.cancel();
+        self.handle.take();
+        if let Some(mut owner) = self.owner.take() {
+            owner.shutdown();
+        }
+    }
+
+    fn handle(&self) -> Result<&TransportHandle, DirectUnaryClientError> {
+        self.handle.as_ref().ok_or(DirectUnaryClientError::Closed)
     }
 }
 

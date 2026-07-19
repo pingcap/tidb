@@ -72,11 +72,21 @@ pub(super) enum WorkerCommand {
     },
 }
 
-/// Synchronous handle to the one retained transport worker.
+/// Unique owner of the one retained transport worker.
 pub(super) struct TransportRuntime {
     commands: Option<mpsc::Sender<WorkerCommand>>,
     worker: Option<JoinHandle<()>>,
     cancellation: TransportShutdownCancellation,
+}
+
+/// Cloneable request capability for the retained transport worker.
+///
+/// This handle deliberately contains neither the worker join handle nor its
+/// shutdown cancellation. Dropping every request handle does not stop the
+/// worker, and no request handle can join it.
+#[derive(Clone)]
+pub(super) struct TransportHandle {
+    commands: mpsc::Sender<WorkerCommand>,
 }
 
 /// Cloneable direct cancellation for interrupting a blocked transport open.
@@ -89,6 +99,11 @@ impl TransportShutdownCancellation {
     /// Interrupts runtime-owned operations before orderly close is queued.
     pub fn cancel(&self) {
         let _ = self.shutdown.send(true);
+    }
+
+    pub(super) fn detached() -> Self {
+        let (shutdown, _) = watch::channel(false);
+        Self { shutdown }
     }
 }
 
@@ -133,15 +148,49 @@ impl TransportRuntime {
         }
     }
 
+    pub(super) fn handle(&self) -> TransportHandle {
+        TransportHandle {
+            commands: self
+                .commands
+                .as_ref()
+                .expect("live transport owner must retain its command sender")
+                .clone(),
+        }
+    }
+
+    pub(super) fn shutdown_cancellation(&self) -> TransportShutdownCancellation {
+        self.cancellation.clone()
+    }
+
+    pub(super) fn shutdown(&mut self) {
+        self.cancellation.cancel();
+        if let Some(commands) = self.commands.take() {
+            let (reply, response) = mpsc::channel();
+            if commands.send(WorkerCommand::Close { reply }).is_ok() {
+                let _ = response.recv();
+            }
+        }
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
+impl Drop for TransportRuntime {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
+}
+
+impl TransportHandle {
     pub(super) fn unary_send(
         &self,
         address: &str,
         request: RawUnaryRequest,
         call: &UnaryCallContext,
     ) -> Result<RawUnaryResponse, DirectUnaryClientError> {
-        let commands = self.sender()?;
         let (reply, response) = mpsc::channel();
-        commands
+        self.commands
             .send(WorkerCommand::UnarySend {
                 address: address.to_owned(),
                 request,
@@ -177,9 +226,8 @@ impl TransportRuntime {
         entries: Vec<BatchCommandEntry>,
         call: Option<UnaryCallContext>,
     ) -> Result<Vec<BatchPublicationReceipt>, DirectUnaryClientError> {
-        let commands = self.sender()?;
         let (reply, response) = mpsc::channel();
-        commands
+        self.commands
             .send(WorkerCommand::BatchSubmit {
                 address: address.to_owned(),
                 entries,
@@ -191,11 +239,8 @@ impl TransportRuntime {
     }
 
     pub(super) fn close_address(&self, address: &str) -> Result<(), DirectUnaryClientError> {
-        let Some(commands) = &self.commands else {
-            return Ok(());
-        };
         let (reply, response) = mpsc::channel();
-        commands
+        self.commands
             .send(WorkerCommand::CloseAddress {
                 address: address.to_owned(),
                 reply,
@@ -209,11 +254,8 @@ impl TransportRuntime {
         address: &str,
         version: u64,
     ) -> Result<(), DirectUnaryClientError> {
-        let Some(commands) = &self.commands else {
-            return Ok(());
-        };
         let (reply, response) = mpsc::channel();
-        commands
+        self.commands
             .send(WorkerCommand::CloseAddressVersion {
                 address: address.to_owned(),
                 version,
@@ -228,9 +270,8 @@ impl TransportRuntime {
         address: &str,
         timeout: Duration,
     ) -> Result<StoreLiveness, DirectUnaryClientError> {
-        let commands = self.sender()?;
         let (reply, response) = mpsc::channel();
-        commands
+        self.commands
             .send(WorkerCommand::Liveness {
                 address: address.to_owned(),
                 timeout,
@@ -241,11 +282,9 @@ impl TransportRuntime {
     }
 
     pub(super) fn inspect(&self, address: &str) -> (Option<u64>, usize) {
-        let Ok(commands) = self.sender() else {
-            return (None, 0);
-        };
         let (reply, response) = mpsc::channel();
-        if commands
+        if self
+            .commands
             .send(WorkerCommand::Inspect {
                 address: address.to_owned(),
                 reply,
@@ -262,11 +301,9 @@ impl TransportRuntime {
         address: &str,
         forwarded_host: Option<&str>,
     ) -> (Option<u64>, u64) {
-        let Ok(commands) = self.sender() else {
-            return (None, 0);
-        };
         let (reply, response) = mpsc::channel();
-        if commands
+        if self
+            .commands
             .send(WorkerCommand::InspectBatch {
                 address: address.to_owned(),
                 forwarded_host: forwarded_host.map(str::to_owned),
@@ -277,33 +314,6 @@ impl TransportRuntime {
             return (None, 0);
         }
         response.recv().unwrap_or((None, 0))
-    }
-
-    pub(super) fn shutdown_cancellation(&self) -> TransportShutdownCancellation {
-        self.cancellation.clone()
-    }
-
-    pub(super) fn shutdown(&mut self) {
-        self.cancellation.cancel();
-        if let Some(commands) = self.commands.take() {
-            let (reply, response) = mpsc::channel();
-            if commands.send(WorkerCommand::Close { reply }).is_ok() {
-                let _ = response.recv();
-            }
-        }
-        if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
-        }
-    }
-
-    fn sender(&self) -> Result<&mpsc::Sender<WorkerCommand>, DirectUnaryClientError> {
-        self.commands.as_ref().ok_or(DirectUnaryClientError::Closed)
-    }
-}
-
-impl Drop for TransportRuntime {
-    fn drop(&mut self) {
-        self.shutdown();
     }
 }
 
