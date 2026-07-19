@@ -42,19 +42,34 @@ impl ResultSetSource for Rows {
     }
 
     fn columns(&mut self) -> Result<Vec<ColumnInfo>, String> {
-        Ok(vec![ColumnInfo {
-            schema: "campaign19".to_owned(),
-            table: "rows".to_owned(),
-            org_table: "rows".to_owned(),
-            name: "id".to_owned(),
-            org_name: "id".to_owned(),
-            column_length: 20,
-            charset: 63,
-            flag: 0,
-            decimal: 0,
-            type_code: TYPE_LONGLONG,
-            default_value: None,
-        }])
+        Ok(vec![
+            ColumnInfo {
+                schema: "campaign20".to_owned(),
+                table: "rows".to_owned(),
+                org_table: "rows".to_owned(),
+                name: "amount".to_owned(),
+                org_name: "balance".to_owned(),
+                column_length: 20,
+                charset: 63,
+                flag: 0x0001,
+                decimal: 0,
+                type_code: TYPE_LONGLONG,
+                default_value: None,
+            },
+            ColumnInfo {
+                schema: "campaign20".to_owned(),
+                table: "rows".to_owned(),
+                org_table: "rows".to_owned(),
+                name: "id".to_owned(),
+                org_name: "id".to_owned(),
+                column_length: 20,
+                charset: 63,
+                flag: 0x0003,
+                decimal: 0,
+                type_code: TYPE_LONGLONG,
+                default_value: None,
+            },
+        ])
     }
 
     fn finish(&mut self) -> Result<(), String> {
@@ -77,7 +92,11 @@ impl SerialQueryEngine for Engine {
     fn execute<'a>(&'a mut self, sql: &str) -> Result<SerialQueryResult<'a>, SqlQueryError> {
         self.queries.lock().unwrap().push(sql.to_owned());
         Ok(SerialQueryResult::new(Box::new(Rows {
-            rows: [vec![Datum::Int(7)], vec![Datum::Int(8)]].into(),
+            rows: [
+                vec![Datum::Int(-11), Datum::Int(7)],
+                vec![Datum::Int(25), Datum::Int(8)],
+            ]
+            .into(),
             lifecycle: Arc::clone(&self.lifecycle),
         })))
     }
@@ -124,6 +143,29 @@ fn authenticate(
     write_packet(client, 1, &response);
 }
 
+fn read_length_encoded_string<'a>(packet: &mut &'a [u8]) -> &'a [u8] {
+    let length = usize::from(packet[0]);
+    assert!(length < 0xfb, "test metadata uses one-byte lengths");
+    *packet = &packet[1..];
+    let (value, remaining) = packet.split_at(length);
+    *packet = remaining;
+    value
+}
+
+fn assert_column_packet(packet: &[u8], name: &[u8], org_name: &[u8], flags: u16) {
+    let mut remaining = packet;
+    assert_eq!(read_length_encoded_string(&mut remaining), b"def");
+    assert_eq!(read_length_encoded_string(&mut remaining), b"campaign20");
+    assert_eq!(read_length_encoded_string(&mut remaining), b"rows");
+    assert_eq!(read_length_encoded_string(&mut remaining), b"rows");
+    assert_eq!(read_length_encoded_string(&mut remaining), name);
+    assert_eq!(read_length_encoded_string(&mut remaining), org_name);
+    assert_eq!(remaining[0], 0x0c);
+    assert_eq!(u16::from_le_bytes([remaining[1], remaining[2]]), 63);
+    assert_eq!(remaining[7], TYPE_LONGLONG);
+    assert_eq!(u16::from_le_bytes([remaining[8], remaining[9]]), flags);
+}
+
 #[test]
 fn real_tcp_connection_runs_handshake_query_ping_quit_and_exact_cleanup() {
     // pkg/server/conn_test.go:789 TestDispatchClientProtocol41
@@ -165,17 +207,18 @@ fn real_tcp_connection_runs_handshake_query_ping_quit_and_exact_cleanup() {
     assert_eq!(reader.read_packet().unwrap()[0], 0xff);
 
     let mut query = vec![COM_QUERY];
-    query.extend_from_slice(b"select id from campaign19.rows\0\0");
+    query.extend_from_slice(b"select balance as amount, id from campaign20.rows\0\0");
     write_packet(&mut client, 0, &query);
     reader.set_sequence(1);
-    let payloads = (0..5)
+    let payloads = (0..6)
         .map(|_| reader.read_packet().unwrap())
         .collect::<Vec<_>>();
-    assert_eq!(payloads[0].as_slice(), [1]);
-    assert!(payloads[1].windows(2).any(|part| part == b"id"));
-    assert_eq!(payloads[2].as_slice(), b"\x017");
-    assert_eq!(payloads[3].as_slice(), b"\x018");
-    assert_eq!(payloads[4][0], 0xfe);
+    assert_eq!(payloads[0].as_slice(), [2]);
+    assert_column_packet(&payloads[1], b"amount", b"balance", 0x0001);
+    assert_column_packet(&payloads[2], b"id", b"id", 0x0003);
+    assert_eq!(payloads[3].as_slice(), b"\x03-11\x017");
+    assert_eq!(payloads[4].as_slice(), b"\x0225\x018");
+    assert_eq!(payloads[5][0], 0xfe);
 
     write_packet(&mut client, 0, &[COM_PING]);
     reader.set_sequence(1);
@@ -187,7 +230,7 @@ fn real_tcp_connection_runs_handshake_query_ping_quit_and_exact_cleanup() {
     assert_eq!(report.queries, 1);
     assert_eq!(
         queries.lock().unwrap().as_slice(),
-        ["select id from campaign19.rows\0"]
+        ["select balance as amount, id from campaign20.rows\0"]
     );
     let lifecycle = lifecycle.lock().unwrap();
     assert_eq!(lifecycle.finished, 1);
