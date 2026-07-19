@@ -426,7 +426,7 @@ fn run_worker(
     }
 }
 
-fn panic_message(panic: &Box<dyn std::any::Any + Send + 'static>) -> &str {
+fn panic_message<'a>(panic: &'a Box<dyn std::any::Any + Send + 'static>) -> &'a str {
     panic
         .downcast_ref::<&'static str>()
         .copied()
