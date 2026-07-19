@@ -1,0 +1,26 @@
+schema = "1"
+slice = "server-multicolumn-mysql-result-runtime"
+status = "ready"
+target = "tidb-server"
+ring = "result"
+consumer = "The stock MySQL connection writer is regression-proven with two differently flagged BIGINT columns, reordered output, aliases, original names, signed stored values, and incremental row lifecycle without a one-column assumption."
+test_target = "mysql_client_lifecycle_source"
+go_sources = [
+  "pkg/server/conn.go",
+  "pkg/server/driver_tidb.go",
+]
+go_tests = [
+  "pkg/server/conn_test.go:0:conn_test.go",
+  "pkg/server/conn_test.go:670:TestDispatch",
+  "pkg/server/conn_test.go:789:TestDispatchClientProtocol41",
+  "pkg/server/conn_test.go:909:TestQueryEndWithZero",
+  "pkg/server/conn_test.go:2054:TestMaxAllowedPacket",
+  "pkg/server/conn_test.go:2145:TestOkEof",
+  "pkg/server/driver_tidb_test.go:0:driver_tidb_test.go",
+  "pkg/server/driver_tidb_test.go:45:TestConvertColumnInfo",
+]
+depends_on = []
+evidence_prerequisites = []
+rust_paths = [
+  "rust/crates/tidb-server/tests/mysql_client_lifecycle_source.rs",
+]
