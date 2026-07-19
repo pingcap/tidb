@@ -16,6 +16,7 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use crate::region::{
@@ -25,6 +26,79 @@ use crate::region::{
 
 const DEFAULT_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(1);
 const DEFAULT_GC_LIMIT: usize = 50;
+static NEXT_READ_AUTHORITY_ID: AtomicU64 = AtomicU64::new(1);
+
+fn next_read_authority_id() -> u64 {
+    NEXT_READ_AUTHORITY_ID.fetch_add(1, Ordering::Relaxed)
+}
+
+/// Process-owned region-cache and TiKV-client capability authority.
+///
+/// This value is intentionally not `Clone`: it owns the lifetime of the sole
+/// maintenance worker. A server shares it behind `Arc` and calls
+/// [`Self::open_session`] inside each connection worker. The returned session
+/// runtime clones only the cheap client capability and cache handle, so it
+/// cannot create or terminate a process worker.
+pub struct SharedReadAuthority<C, L> {
+    client: C,
+    region_cache: BackgroundRegionCache<L>,
+    cluster_id: u64,
+    authority_id: u64,
+}
+
+impl<C, L> SharedReadAuthority<C, L>
+where
+    C: Clone,
+    L: RegionQueryLoader + Send + 'static,
+{
+    /// Starts the one production maintenance worker over the canonical cache.
+    pub fn start(
+        client: C,
+        region_cache: RegionCache<L>,
+    ) -> Result<Self, BackgroundRegionCacheError> {
+        let cluster_id = region_cache.cluster_id();
+        let region_cache = BackgroundRegionCache::start(
+            region_cache,
+            DEFAULT_MAINTENANCE_INTERVAL,
+            DEFAULT_GC_LIMIT,
+        )?;
+        Ok(Self {
+            client,
+            region_cache,
+            cluster_id,
+            authority_id: next_read_authority_id(),
+        })
+    }
+
+    /// Creates one thread-local session from process-owned capabilities.
+    ///
+    /// The `Rc<RefCell<_>>` is allocated here, on the calling worker. It is
+    /// never stored in the process authority or moved between workers.
+    pub fn open_session(&self) -> Result<SharedReadRuntime<C, L>, BackgroundRegionCacheError> {
+        SharedReadRuntime::from_shared_authorities(
+            self.client.clone(),
+            self.region_cache.clone(),
+            self.authority_id,
+        )
+    }
+
+    /// Cluster identity owned by the canonical region cache.
+    #[must_use]
+    pub const fn cluster_id(&self) -> u64 {
+        self.cluster_id
+    }
+
+    /// Stable process authority identity for lifecycle evidence.
+    #[must_use]
+    pub const fn authority_id(&self) -> u64 {
+        self.authority_id
+    }
+
+    /// Stops and joins the maintenance worker after every session is drained.
+    pub fn shutdown(self) -> Result<(), BackgroundRegionCacheError> {
+        self.region_cache.shutdown()
+    }
+}
 
 /// One client handle and one region-cache handle shared by read-path policies.
 ///
@@ -34,6 +108,7 @@ pub struct SharedReadRuntime<C, L> {
     client: Rc<RefCell<C>>,
     region_cache: BackgroundRegionCache<L>,
     cluster_id: u64,
+    authority_id: u64,
     maintained: bool,
 }
 
@@ -43,6 +118,7 @@ impl<C, L> Clone for SharedReadRuntime<C, L> {
             client: Rc::clone(&self.client),
             region_cache: self.region_cache.clone(),
             cluster_id: self.cluster_id,
+            authority_id: self.authority_id,
             maintained: self.maintained,
         }
     }
@@ -57,8 +133,25 @@ impl<C, L: RegionLoader> SharedReadRuntime<C, L> {
             client: Rc::new(RefCell::new(client)),
             region_cache: BackgroundRegionCache::without_worker(region_cache),
             cluster_id,
+            authority_id: next_read_authority_id(),
             maintained: false,
         }
+    }
+
+    /// Creates a worker-local session over already-owned process authorities.
+    fn from_shared_authorities(
+        client: C,
+        region_cache: BackgroundRegionCache<L>,
+        authority_id: u64,
+    ) -> Result<Self, BackgroundRegionCacheError> {
+        let cluster_id = region_cache.with_cache(|cache| cache.cluster_id())?;
+        Ok(Self {
+            client: Rc::new(RefCell::new(client)),
+            region_cache,
+            cluster_id,
+            authority_id,
+            maintained: true,
+        })
     }
 
     /// Returns a handle to the same client authority.
@@ -124,6 +217,12 @@ impl<C, L: RegionLoader> SharedReadRuntime<C, L> {
     pub const fn cluster_id(&self) -> u64 {
         self.cluster_id
     }
+
+    /// Stable identity of the process authority that opened this session.
+    #[must_use]
+    pub const fn authority_id(&self) -> u64 {
+        self.authority_id
+    }
 }
 
 impl<C, L> SharedReadRuntime<C, L>
@@ -145,6 +244,7 @@ where
             client: Rc::new(RefCell::new(client)),
             region_cache,
             cluster_id,
+            authority_id: next_read_authority_id(),
             maintained: true,
         })
     }

@@ -104,7 +104,7 @@ pub use mvcc_metadata::{
 };
 pub use pd_loader::PdRegionLoader;
 pub use prefix_ops::{del_key_with_prefix, scan_meta_with_prefix};
-pub use read_runtime::SharedReadRuntime;
+pub use read_runtime::{SharedReadAuthority, SharedReadRuntime};
 pub use resource_group::ResourceGroupTagBuilder;
 pub use retry::{
     retry_backoff_upper_bound_ms, should_retry_after_failure, RETRY_BACKOFF_BASE_MS,

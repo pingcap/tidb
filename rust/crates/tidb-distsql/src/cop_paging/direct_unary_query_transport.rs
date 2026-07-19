@@ -46,8 +46,8 @@ use tidb_txnkv::region::{
 };
 use tidb_txnkv::{
     rpc::{AsyncRequestDispatcher, CompletionError, PendingRequest},
-    EndpointType, SharedReadRuntime, TraceInfo, UnaryCallContext, UnaryCancellation,
-    DEFAULT_STORE_LIVENESS_TIMEOUT,
+    EndpointType, SharedReadAuthority, SharedReadRuntime, TraceInfo, UnaryCallContext,
+    UnaryCancellation, DEFAULT_STORE_LIVENESS_TIMEOUT,
 };
 pub use tidb_txnkv::{
     DirectUnaryClient, DirectUnaryClientError, DirectUnaryRequest, DirectUnaryResponse,
@@ -546,6 +546,27 @@ impl<C, L> DirectUnaryQueryTransport<C, L>
 where
     L: RegionQueryLoader + RegionRecoveryLoader + Send + 'static,
 {
+    /// Opens one worker-local query transport from the process read authority.
+    ///
+    /// The authority retains maintenance ownership. This transport receives a
+    /// cloneable TiKV command capability and a cache handle, but no shutdown or
+    /// worker-join capability.
+    pub fn from_read_authority<S>(
+        authority: &SharedReadAuthority<C, L>,
+        config: DirectUnaryRuntimeConfig,
+        timestamp_source: S,
+    ) -> Result<Self, DirectUnaryTransportError>
+    where
+        C: Clone + tidb_txnkv::lock::LockRecoveryClient + AsyncRequestDispatcher,
+        C::Pending: 'static,
+        S: tidb_txnkv::lock::TimestampSource + 'static,
+    {
+        let runtime = authority
+            .open_session()
+            .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle)?;
+        Self::with_shared_runtime_batch_first(runtime, config, timestamp_source)
+    }
+
     /// Starts the sole store-maintenance and cache-GC worker over the same
     /// cache authority consumed by foreground reads and lock recovery.
     pub fn new_production<S>(
