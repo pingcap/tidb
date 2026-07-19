@@ -97,6 +97,7 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode, info *Bindi
 func mayHaveSQLBinding(stmtNode ast.StmtNode) bool {
 	switch stmt := stmtNode.(type) {
 	case *ast.InsertStmt:
+		// REPLACE also uses InsertStmt with IsReplace set.
 		return stmt.Select != nil
 	case *ast.ExplainStmt:
 		return stmt.Stmt != nil && mayHaveSQLBinding(stmt.Stmt)
