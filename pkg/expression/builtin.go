@@ -25,7 +25,6 @@
 package expression
 
 import (
-	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -432,34 +431,19 @@ func (b *baseBuiltinFunc) cloneFrom(from *baseBuiltinFunc) {
 	}
 }
 
-func (b *baseBuiltinFunc) resetForCloneWithArgs(args []Expression) {
-	b.args = make([]Expression, len(args))
-	copy(b.args, args)
-	b.bufAllocator = nil
+func (b *baseBuiltinFunc) cloneFromWithArgs(from *baseBuiltinFunc, args []Expression) {
+	b.args = slices.Clone(args)
+	b.tp = from.tp
+	b.pbCode = from.pbCode
 	b.childrenVectorized = false
 	b.childrenVectorizedOnce = new(sync.Once)
-	if b.ctor != nil {
-		b.ctor = b.ctor.Clone()
+	if from.ctor != nil {
+		b.ctor = from.ctor.Clone()
 	}
 }
 
 func (*baseBuiltinFunc) Clone() builtinFunc {
 	panic("you should not call this method.")
-}
-
-func cloneBuiltinFuncWithArgs(fun builtinFunc, args []Expression) builtinFunc {
-	if fun == nil {
-		return nil
-	}
-	v := reflect.ValueOf(fun)
-	if v.Kind() != reflect.Ptr || v.IsNil() {
-		panic("unexpected non-pointer builtinFunc")
-	}
-	cloned := reflect.New(v.Elem().Type())
-	cloned.Elem().Set(v.Elem())
-	clonedFun := cloned.Interface().(builtinFunc)
-	clonedFun.(interface{ resetForCloneWithArgs([]Expression) }).resetForCloneWithArgs(args)
-	return clonedFun
 }
 
 // baseBuiltinCastFunc will be contained in every struct that implement cast builtinFunc.
@@ -480,6 +464,11 @@ func (b *baseBuiltinCastFunc) metadata() proto.Message {
 
 func (b *baseBuiltinCastFunc) cloneFrom(from *baseBuiltinCastFunc) {
 	b.baseBuiltinFunc.cloneFrom(&from.baseBuiltinFunc)
+	b.inUnion = from.inUnion
+}
+
+func (b *baseBuiltinCastFunc) cloneFromWithArgs(from *baseBuiltinCastFunc, args []Expression) {
+	b.baseBuiltinFunc.cloneFromWithArgs(&from.baseBuiltinFunc, args)
 	b.inUnion = from.inUnion
 }
 
@@ -591,6 +580,8 @@ type builtinFunc interface {
 	metadata() proto.Message
 	// Clone returns a copy of itself.
 	Clone() builtinFunc
+	// CloneWithArgs clones itself and uses the provided arguments without cloning them.
+	CloneWithArgs(args []Expression) builtinFunc
 
 	MemoryUsage() int64
 

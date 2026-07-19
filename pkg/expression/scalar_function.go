@@ -371,17 +371,9 @@ func (sf *ScalarFunction) CloneWithArgs(args []Expression) Expression {
 	c := &ScalarFunction{
 		FuncName: sf.FuncName,
 		RetType:  sf.RetType,
-		Function: cloneBuiltinFuncWithArgs(sf.Function, args),
+		Function: sf.Function.CloneWithArgs(args),
 	}
 	// An implicit assumption: ScalarFunc.RetType == ScalarFunc.builtinFunc.RetType
-	if sf.hashcode != nil {
-		c.hashcode = make([]byte, len(sf.hashcode))
-		copy(c.hashcode, sf.hashcode)
-	}
-	if sf.canonicalhashcode != nil {
-		c.canonicalhashcode = make([]byte, len(sf.canonicalhashcode))
-		copy(c.canonicalhashcode, sf.canonicalhashcode)
-	}
 	c.SetCharsetAndCollation(sf.CharsetAndCollation())
 	c.SetCoercibility(sf.Coercibility())
 	c.SetRepertoire(sf.Repertoire())

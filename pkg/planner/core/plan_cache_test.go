@@ -265,6 +265,37 @@ func TestIssue53872(t *testing.T) {
 	tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows())
 }
 
+func TestPlanCacheKeyIncludesODKUExpressionReuse(t *testing.T) {
+	ctx := plannercore.MockContext()
+	sql := `insert into t values (?, ?, ?) on duplicate key update
+		c2 = if(values(c2) > c2 and values(c3) > 0, values(c2), c2),
+		c3 = if(values(c2) > c2 and values(c3) > 0, values(c3), c3)`
+	stmtNode, err := parser.New().ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+	stmt := &plannercore.PlanCacheStmt{
+		PreparedAst:   &ast.Prepared{Stmt: stmtNode},
+		StmtDB:        "test",
+		StmtText:      sql,
+		SchemaVersion: 1,
+		RelateVersion: map[int64]uint64{},
+		StmtCacheable: true,
+	}
+
+	buildKey := func(enableODKUExpressionReuse bool) string {
+		ctx.GetSessionVars().EnableODKUExpressionReuse = enableODKUExpressionReuse
+		key, _, cacheable, reason, err := plannercore.NewPlanCacheKey(ctx, stmt)
+		require.NoError(t, err)
+		require.True(t, cacheable)
+		require.Empty(t, reason)
+		return key
+	}
+
+	keyWithReuse := buildKey(true)
+	keyWithoutReuse := buildKey(false)
+	require.NotEqual(t, keyWithReuse, keyWithoutReuse)
+	require.Equal(t, keyWithReuse, buildKey(true))
+}
+
 func TestIssue38269(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

@@ -4,7 +4,7 @@
 
 本文档基于当前工作区相对 `origin/feature/release-8.5-materialized-view` 的完整 diff 总结。
 
-当前代码改动覆盖 12 个文件，另有本文档记录设计、验证和风险：
+当前 diff 覆盖 planner、expression、session variable、测试和文档几个部分：
 
 | 文件 | 作用 |
 | --- | --- |
@@ -16,10 +16,12 @@
 | `pkg/planner/core/expression_rewriter.go` | 在 AST rewrite 阶段复用公共表达式 |
 | `pkg/planner/core/resolve_indices.go` | 在 ResolveIndices 阶段复用 expression 子树 |
 | `pkg/planner/core/common_plans.go` | 在 `Insert` 计划上记录当前语句是否实际启用复用 |
-| `pkg/expression/scalar_function.go` | 新增按已解析参数重建 `ScalarFunction` 的 helper |
-| `pkg/expression/builtin.go` | 新增 builtin signature 按参数重建的内部 helper |
-| `pkg/expression/scalar_function_test.go` | 覆盖 `CloneWithArgs` 的语义 |
+| `pkg/planner/core/plan_cache_utils.go` | 将 ODKU expression reuse 开关纳入 plan cache key |
+| `pkg/expression/builtin.go` | 为 builtin signature clone 提供 `cloneFromWithArgs` 基础能力 |
+| `pkg/expression/builtin_clone_with_args.go` | 为每个 concrete builtin signature 提供显式 `CloneWithArgs` |
+| `pkg/expression/scalar_function.go` | 提供 `ScalarFunction.CloneWithArgs`，用于按 resolved args 重建函数 shell |
 | `pkg/planner/core/planbuilder_test.go` | 覆盖 ODKU 表达式复用行为并新增 benchmark |
+| `pkg/planner/core/plan_cache_test.go` | 覆盖 plan cache key 随 ODKU expression reuse 开关变化 |
 
 整体 diff 规模会随 benchmark 和文档调整略有浮动。
 
@@ -146,44 +148,35 @@ onDupResolveMemo
 
 `resolveExprIndicesWithMemo` 使用 expression 指针作为 key。也就是说：
 
-- AST rewrite 阶段已经共享出来的 expression 子树，在 resolve 阶段会命中同一个 memo。
+- AST rewrite 阶段已经共享出来、并作为 `ResolveIndices` 入口出现的 expression，会在 resolve 阶段命中同一个 memo。
 - 没有共享出来的 expression 子树，不会额外通过文本或 hash 做跨树匹配。
 
 这个边界比较保守，能避免 resolve 阶段引入新的语义匹配逻辑。
 
 ## 避免 ScalarFunction 深拷贝开销
 
-最初的 resolve memo 仍然有一个明显问题：遇到 `ScalarFunction` 时，如果先调用 `ScalarFunction.Clone()`，会通过 builtin 的 `Clone()` 深拷贝旧的 `args` 子树，然后再把子节点替换成 resolve 后的结果。
+普通 `Expression.ResolveIndices` 的语义是先 clone expression，再在 clone 出来的树上解析 column index。这个语义对通用调用方更安全，但在 ODKU expression reuse 的场景里会抵消一部分收益：
 
-也就是说，即使子节点已经通过 memo 复用了，外层函数 clone 仍然会先复制一遍旧参数树。
+- AST rewrite 阶段已经让多个 assignment 共享相同 expression。
+- 如果 resolve 阶段继续 clone，`ScalarFunction.Clone()` 会通过 builtin 的 `Clone()` 深拷贝旧的 `args` 子树。
+- 对大量重复条件来说，这会重新产生一批本来可以避免的临时 expression 分配。
 
-这次改成：
+当前实现为每个 concrete builtin signature 提供显式 `CloneWithArgs` 能力：
 
-1. 先递归 resolve 子节点。
-2. 再调用 `ScalarFunction.CloneWithArgs`，用已经 resolve 好的 args 重建函数节点。
+```go
+func (sf *ScalarFunction) CloneWithArgs(args []Expression) Expression
+```
 
-### `ScalarFunction.CloneWithArgs`
+这个入口会 clone 当前 `ScalarFunction` 和 builtin signature 的 metadata，但不会 deep clone 原来的旧 `args` 子树；它会 shallow-copy 调用方传入的 resolved args slice。`resolveExprIndicesWithMemo` 因此可以按以下方式工作：
 
-新增 helper 的目标是：
+- memo key 使用原始 expression 指针。
+- memo value 是 clone-and-resolved 后的新 expression。
+- 遇到 `ScalarFunction` 时，先递归 resolve children，并在递归过程中查询 memo。
+- 当前 scalar function 只 clone 自己的 shell/metadata，children 使用递归返回的 resolved args。
 
-- 保留原函数名。
-- 保留返回类型。
-- 保留 hash code / canonical hash code。
-- 保留 charset / collation / coercibility / repertoire。
-- 不复制旧参数树。
-- 使用传入的新 args 作为函数参数。
+这样可以保留普通 `Expression.ResolveIndices` 不修改输入 expression tree 的语义，同时避免 `ScalarFunction.Clone()` 对已经共享的旧 child subtree 做重复深拷贝。
 
-### builtin signature 重建
-
-builtin signature 不能简单复用原对象，因为原对象包含 `args` 和一些依赖参数的缓存状态。当前实现通过内部 helper：
-
-- 浅拷贝 concrete builtin signature。
-- 替换 args。
-- 重置 `bufAllocator`。
-- 重置 `childrenVectorized` 和 `childrenVectorizedOnce`。
-- clone collator，避免共享内部可变状态。
-
-这样能避免重新走 `NewFunction` 路径，因为 `NewFunction` 会重新做类型推导、collation 推导、NULL flag 调整、constant folding 和特殊函数初始化，既更贵，也可能改变语义。
+`CloneWithArgs` 的 concrete builtin signature 方法集中放在 `builtin_clone_with_args.go`，每个方法复用对应 signature 的现有 clone metadata 逻辑，并把 `cloneFrom` 替换成 `cloneFromWithArgs`。这样能避免反射式浅拷贝，同时保留各 builtin signature 对特殊字段的显式处理。
 
 ## 开关与兼容性
 
@@ -207,6 +200,8 @@ tidb_enable_odku_expression_reuse
 - `Insert.ResolveIndices` 走原始逐表达式 `ResolveIndices` 逻辑。
 - 尽量不引入额外 map / memo / key 构造成本。
 
+该开关也会进入 plan cache key。这样当用户切换 `tidb_enable_odku_expression_reuse` 时，prepared plan cache / non-prepared plan cache 不会继续命中另一种开关状态下生成的 cached plan。
+
 ## 测试与 Benchmark
 
 ### 单元测试
@@ -221,29 +216,28 @@ tidb_enable_odku_expression_reuse
 - `ResolveIndices` 后，共享关系仍然保留。
 - 开关关闭时，不发生共享，行为回到原路径。
 
-2. `TestScalarFunctionCloneWithArgs`
-
-覆盖：
-
-- `CloneWithArgs` 保持函数语义。
-- clone 后的 args slice 不受调用方后续修改影响。
-- 原始 expression 不被污染。
-- hash code 和 canonical hash code 保持一致。
-
-3. `TestInsertOnDuplicateUpdateExpressionReuseComplexityGate`
+2. `TestInsertOnDuplicateUpdateExpressionReuseComplexityGate`
 
 覆盖：
 
 - 纯 `VALUES(col)` 赋值不会启用复用。
 - 带重复复杂条件的 ODKU assignment 会达到复杂度阈值并启用复用。
 
-4. `TestInsertOnDuplicateUpdateExpressionReuseSetVarHint`
+3. `TestInsertOnDuplicateUpdateExpressionReuseSetVarHint`
 
 覆盖：
 
 - `INSERT /*+ SET_VAR(tidb_enable_odku_expression_reuse=off) */ ... ON DUPLICATE KEY UPDATE` 能对当前语句关闭复用。
 - `INSERT /*+ SET_VAR(tidb_enable_odku_expression_reuse=on) */ ... ON DUPLICATE KEY UPDATE` 能对当前语句开启复用。
 - `SET_VAR` hint 生效后会恢复原 session 变量值。
+
+4. `TestPlanCacheKeyIncludesODKUExpressionReuse`
+
+覆盖：
+
+- `tidb_enable_odku_expression_reuse=ON` 和 `OFF` 会生成不同 plan cache key。
+- 切回相同开关值时 key 保持稳定。
+- `NewPlanCacheKey` 在 `intest.InTest` 下不会因为新增 key 字段导致 hash buffer 重新分配。
 
 ### Benchmark
 
@@ -255,19 +249,19 @@ BenchmarkInsertOnDuplicateUpdateCompile
 
 benchmark 使用匿名化的表结构和 ODKU 语句，包含大量重复 `IF(common_condition, values(col), col)` assignment，用来衡量 planner 编译阶段的耗时和分配。
 
-本地最新结果：
+以下是一组本地 `-count=5` benchmark 结果均值。耗时会受机器负载影响，`B/op` 和 `allocs/op` 更稳定：
 
 | 模式 | 时间 | 内存 | allocs |
 | --- | ---: | ---: | ---: |
-| `reuse_off` | `1,138,725 ns/op` | `653,013 B/op` | `7,373 allocs/op` |
-| `reuse_on` | `458,384 ns/op` | `267,122 B/op` | `2,175 allocs/op` |
+| `reuse_off` | `1,061,630 ns/op` | `653,008 B/op` | `7,373 allocs/op` |
+| `reuse_on` | `453,506 ns/op` | `267,120 B/op` | `2,175 allocs/op` |
 
 对比收益：
 
-- 时间减少 `680,341 ns/op`，约 `59.7%`。
-- 内存分配减少 `385,891 B/op`，约 `59.1%`。
+- 时间减少约 `608,124 ns/op`，约 `57.3%`。
+- 内存分配减少 `385,888 B/op`，约 `59.1%`。
 - 分配次数减少 `5,198 allocs/op`，约 `70.5%`。
-- 整体编译耗时约提升 `2.5x`。
+- 整体编译耗时约提升 `2.3x`。
 
 针对纯 `VALUES(col)` assignment 的简单 ODKU case，新增了独立 benchmark：
 
@@ -275,36 +269,47 @@ benchmark 使用匿名化的表结构和 ODKU 语句，包含大量重复 `IF(co
 BenchmarkInsertOnDuplicateUpdateCompileValuesOnly
 ```
 
-在复杂度门控前，本地曾观察到这类 case 开启复用会略有回退：
+在复杂度门控前，本地曾观察到这类 case 如果强行开启复用会略有回退：
 
 | 模式 | 时间 | 内存 | allocs |
 | --- | ---: | ---: | ---: |
 | `reuse_off` | `16,400 ns/op` | `19,088 B/op` | `164 allocs/op` |
 | `reuse_on` | `20,667 ns/op` | `19,848 B/op` | `177 allocs/op` |
 
-这个结果说明，简单 `VALUES(col)` ODKU 没有足够的公共子表达式收益，应该通过复杂度门控回到原始路径。
+这个结果只用于说明为什么需要复杂度门控，不代表当前实现下的最新 on/off 对比。简单 `VALUES(col)` ODKU 没有足够的公共子表达式收益，应该通过复杂度门控回到原始路径。
 
-复杂度门控后，同一个 benchmark 的最新结果为：
+复杂度门控后，同一个 benchmark 的一组本地 `-count=5` 结果均值为：
 
 | 模式 | 时间 | 内存 | allocs |
 | --- | ---: | ---: | ---: |
-| `reuse_off` | `15,332 ns/op` | `19,112 B/op` | `165 allocs/op` |
-| `reuse_on` | `15,461 ns/op` | `19,112 B/op` | `165 allocs/op` |
+| `reuse_off` | `16,586 ns/op` | `19,112 B/op` | `165 allocs/op` |
+| `reuse_on` | `16,781 ns/op` | `19,112 B/op` | `165 allocs/op` |
+
+`reuse_on` 对比 `reuse_off` 时间约增加 `1.2%`，但内存和 alloc 次数完全一致，属于噪声级波动。
+这组才是当前实现的有效对比；`reuse_on` 因复杂度门控没有进入 memoized rewrite / resolve 路径，所以 alloc 次数没有增加。
 
 ## 已执行验证
 
 本地执行过：
 
 ```bash
-go test ./pkg/expression -run TestScalarFunctionCloneWithArgs -tags=intest,deadlock -count=1
+GOCACHE=/tmp/go-build go test ./pkg/expression -run TestScalarFunctionCloneWithArgs -tags=intest,deadlock -count=1
 ```
 
 ```bash
-GOCACHE=/tmp/go-build go test ./pkg/planner/core -run 'TestInsertOnDuplicateUpdate(ReusesCommonSubExpressions|ExpressionReuseComplexityGate)' -tags=intest,deadlock -count=1
+GOCACHE=/tmp/go-build go test ./pkg/planner/core -run 'TestInsertOnDuplicateUpdateExpressionReuse(SetVarHint|ComplexityGate)|TestInsertOnDuplicateUpdateReusesCommonSubExpressions' -tags=intest,deadlock -count=1
 ```
 
 ```bash
-GOCACHE=/tmp/go-build go test ./pkg/planner/core -run '^$' -bench 'BenchmarkInsertOnDuplicateUpdateCompile($|ValuesOnly)' -benchmem -tags=intest,deadlock -count=1
+GOCACHE=/tmp/go-build go test ./pkg/planner/core -run 'TestInsertOnDuplicateUpdateExpressionReuse(SetVarHint|ComplexityGate)|TestInsertOnDuplicateUpdateReusesCommonSubExpressions|TestPlanCacheKeyIncludesODKUExpressionReuse' -tags=intest,deadlock -count=1
+```
+
+```bash
+GOCACHE=/tmp/go-build go test ./pkg/planner/core -run '^$' -bench 'BenchmarkInsertOnDuplicateUpdateCompile' -benchmem -count=5 -tags=intest,deadlock
+```
+
+```bash
+GOCACHE=/tmp/go-build make bazel_prepare
 ```
 
 ```bash
@@ -323,13 +328,11 @@ git fetch origin feature/release-8.5-materialized-view
 
 AST rewrite 阶段通过 restore text 判断相同子树，因此必须确保不会复用带上下文依赖或副作用的表达式。当前已经过滤参数、变量、子查询、聚合、窗口函数、mutable effects 和特殊 collation 子树，但后续如果新增特殊表达式类型，需要考虑是否也应该加入过滤。
 
-### 内部结构依赖
+### CloneWithArgs 覆盖风险
 
-`CloneWithArgs` 依赖当前 builtin signature 的结构约定，即 concrete builtin 内部包含 `baseBuiltinFunc`，并且参数和 vectorized 缓存状态可以通过统一 helper 重置。如果后续 builtin 增加更多与 args 强相关的内部缓存，需要同步检查该 helper。
+`builtinFunc` 新增了 `CloneWithArgs` 方法。如果后续新增 concrete builtin signature，只实现 `Clone()` 但没有实现 `CloneWithArgs()`，编译会失败。这是有意设计，用于避免新增 builtin signature 时漏掉 ODKU memoized resolve 所需的低分配 clone path。
 
-### HashCode 风险
-
-`CloneWithArgs` 目前会复制原函数已有的 hash code / canonical hash code。这个在当前使用场景下是合理的，因为 resolve 只改变 column 的 `Index`，不改变表达式语义和 `UniqueID`，hash code 本身也主要基于语义身份。但如果未来某个调用点用 `CloneWithArgs` 替换成语义不同的 args，就不能沿用这一假设。
+`ScalarFunction.CloneWithArgs` 不复制原来的 `hashcode` / `canonicalhashcode` 缓存，因为传入 args 从 API 角度不一定与旧 args 完全等价。新 expression 会在需要 hash 时基于新 args 重新计算。
 
 ### 默认开启风险
 
@@ -344,6 +347,6 @@ AST rewrite 阶段通过 restore text 判断相同子树，因此必须确保不
 这套改动的核心目标是降低 ODKU 大量重复 assignment 表达式带来的 planner 编译成本。实现上分为两层：
 
 1. AST rewrite 阶段用 restore text memo 复用重复 SQL 子表达式。
-2. ResolveIndices 阶段用 expression pointer memo 保留共享子树，并通过 `CloneWithArgs` 避免不必要的深拷贝。
+2. ResolveIndices 阶段用 expression pointer memo 保留共享表达式，并通过显式 `CloneWithArgs` 避免对旧 child subtree 做不必要的深拷贝。
 
-从当前 benchmark 看，优化后 ODKU 编译时间、内存分配和分配次数都有明显下降，收益主要来自重复表达式 rewrite 减少，以及 resolve 阶段避免重复 clone / resolve 公共子树。
+从当前 benchmark 看，优化后 ODKU 编译时间、内存分配和分配次数都有明显下降，收益主要来自重复表达式 rewrite 减少，以及 resolve 阶段避免重复 deep clone 已经共享出来的 expression subtree。

@@ -951,7 +951,6 @@ func resolveExprIndicesWithMemo(expr expression.Expression, schema *expression.S
 	if resolved, ok := memo[expr]; ok {
 		return resolved, nil
 	}
-
 	var (
 		resolved expression.Expression
 		err      error

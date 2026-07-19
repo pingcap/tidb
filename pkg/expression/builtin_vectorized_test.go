@@ -412,6 +412,15 @@ func (p *mockBuiltinDouble) evalJSON(ctx EvalContext, row chunk.Row) (types.Bina
 	return j, false, nil
 }
 
+func (p *mockBuiltinDouble) CloneWithArgs(args []Expression) builtinFunc {
+	newSig := &mockBuiltinDouble{
+		evalType:  p.evalType,
+		enableVec: p.enableVec,
+	}
+	newSig.cloneFromWithArgs(&p.baseBuiltinFunc, args)
+	return newSig
+}
+
 func convertETType(eType types.EvalType) (mysqlType byte) {
 	switch eType {
 	case types.ETInt:
