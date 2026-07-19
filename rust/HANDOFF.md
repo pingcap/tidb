@@ -251,8 +251,15 @@ plan stayed `[TableScan, Selection]`. Restarted B kept channel version `1`
 while stream generation advanced `1 -> 5`. Query `19` blocked before SIGTERM;
 ordered shutdown completed in `125 ms`, exited zero, balanced
 `accepted=1 completed=1 failed=0 active=0`, and passed complete cleanup.
-Campaign 24's shared Ready gate, repository lint, receipt consumption, claim
-release, and generated-status refresh remain pending.
+Campaign 24 is Ready-integrated. The shared 12-job gate passed workspace
+Clippy, the complete Rust test matrix, 49 governance tests, every checked
+inventory, parser isolation, formatting, and diff validation, and issued
+`integration_receipt 6`. Repository `make -j12 lint` passed, all six members
+consumed the receipt, claims returned to zero, and generated status is current.
+The gate also repaired two process defects: dry-run now rejects omitted
+ownership transfers that would leave duplicate evidence owners, and generic
+Go-compatible `DatumRange` encoding preserves source-shaped empty physical
+intervals without weakening the normalized planner range type.
 
 This completes the first topology-resilient bounded read-only SQL-node
 milestone, not the TiDB rewrite. The node remains loopback-only, plaintext,
@@ -583,13 +590,12 @@ cp /tmp/g.txt rust/difftests/corpus/query_golden.txt
 
 > **⚡ PARALLEL, SOURCE-FIRST MODE:** read **`rust/PARALLEL.md`** before dispatching. `difftests/corpus/coverage/go_test_inventory.tsv` makes every Go test entry point, lifecycle hook, shell program, SQL fixture/result, `testdata` file, and support artifact below repository test suites visible; `integration_parser_inventory.tsv` inventories every SQL input the fixture runner dispatches; and `integration_runner_directive_inventory.tsv` accounts for runner-only commands. These are obligations, not parity claims.
 
-The immediate critical path is Campaign 24 Ready integration. Its six
-implementation slices and real-cluster proof pass; run exactly one shared
-12-job gate, repository `make -j12 lint`, consume the frozen receipt for all
-six members, release every claim, and refresh generated status. Do not rerun
-the live topology or individual workspace-wide builds as a substitute for the
-one receipted batch gate. Keep the disjoint successor runway moving in
-parallel without editing Campaign 24 ownership.
+Campaign 24 is Ready-integrated with zero active claims. Campaign 25 is the
+immediate critical path: its configured multi-relation catalog and same-snapshot
+real-TiKV multi-scan roots are both mechanically ready and can run in parallel.
+Their downstream relation binding, FullSchema join planning, join execution,
+and live stock-client proof unlock through exact `PARTIAL` evidence anchors;
+they do not wait for broad provider slices to become falsely `COVERED`.
 
 The active high-throughput work is split across six non-overlapping lanes:
 

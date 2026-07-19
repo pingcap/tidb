@@ -1,6 +1,6 @@
 schema = "1"
 campaign = "2026-07-read-path-24"
-status = "planned"
+status = "integrated"
 slices = [
   "planner-clustered-signed-bigint-ranger-runtime",
   "planner-read-only-clustered-pk-range-runtime",

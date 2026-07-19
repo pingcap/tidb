@@ -568,8 +568,13 @@ residual plan remained `[TableScan, Selection]`. Restarted B kept channel
 version `1` and advanced stream generation `1 -> 5`. Query `19` blocked before
 SIGTERM; ordered shutdown finished in `125 ms`, exited zero, balanced
 `accepted=1 completed=1 failed=0 active=0`, and passed tag-owned cleanup.
-Implementation and live acceptance are complete; the shared Ready gate,
-repository lint, receipt consumption, and release are still pending.
+The shared 12-job Ready gate passed workspace Clippy, the complete Rust test
+matrix, 49 governance tests, every checked inventory, parser isolation,
+formatting, and diff validation, and issued `integration_receipt 6`.
+Repository `make -j12 lint` passed, all six members consumed the receipt,
+claims returned to zero, and generated status is current. Campaign 25 now has
+two mechanically ready, disjoint roots: configured multi-relation catalog and
+same-snapshot real-TiKV multi-scan.
 
 This completes the first topology-resilient bounded read-only SQL-node
 milestone, not the TiDB rewrite. Phase 2 remains incomplete and Phases 3 and 4
@@ -3291,16 +3296,17 @@ Ordered by (value ÷ risk), each phase gated by its differential ring:
 |---|---|---|---|---|---|
 | 0 | `tidb-parser` + `tidb-ast` + `tidb-datatype` extraction | hparser design 1:1; TiKV datatype crate | 60-80k | Zero Rust regressions on accepted inputs, explicit rejection parity, and documented oracle failures | In progress: parser ring is clean except the pinned Go `json_memberof()` failure; source/test obligations remain |
 | 1 | `tidb-txnkv` + `tidb-codec` + `tidb-catalog` (read) | client-rust skeleton; client-go as spec | 50-70k | Transaction ring (read path); Jepsen for reads/stale reads | A production bounded read client now owns real PD TSO/region/store discovery, RegionCache routing/recovery, BatchCommands-first TiKV Coprocessor dispatch, and table-key/row decoding. Dynamic catalog discovery plus broad read/stale-read and Jepsen parity remain open. |
-| 2 | Read-only compute node: protocol + session (read subset) + planner + exec + distsql | tidb_query_executors patterns; tipb | 250-350k | Plan ring zero-diff; shadow → read traffic in staging; perf ≥ Go on sysbench read + TPC-H | The first topology-resilient bounded vertical slice is live: authenticated stock MySQL clients → Rust COM_QUERY → parser/planner/clustered signed-BIGINT range detachment/tipb `[TableScan, Selection]` → real PD TSO/RegionCache → BatchCommands-first real TiKV → exact clustered-key and stored-column rows. Direct projections, all six comparisons, reversed operands, conjunctions, signed extremes, split `!=`, contradictions, and access-plus-residual predicates are proven; zero ranges avoid TSO/transport. Eight sessions overlap through a fixed worker pool and one process authority; persistent sessions survive A→B→C→same-address-restarted-B leader churn, exact channel/stream identity is observable, and blocked-query SIGTERM shuts connections→RegionCache→TiKV→PD down fallibly. Phase 2 remains incomplete: the executable is loopback/plaintext and static-catalog with only bounded signed-BIGINT predicates; temporal SQL/Duration, decimal/enum/set/vector/native CHBlock, typed expression/nested FullSchema mappings, NULL/coercion/unsigned semantics, `OR`/functions/arithmetic, index/common-handle/partition ranges, joins/aggregation/order/limit, grants/TLS/prepared statements, plan-ring zero-diff, shadow traffic, and performance gates remain open. Campaign 23 is Ready-integrated; Campaign 24 implementation and live acceptance pass, with its shared Ready gate and release pending. |
+| 2 | Read-only compute node: protocol + session (read subset) + planner + exec + distsql | tidb_query_executors patterns; tipb | 250-350k | Plan ring zero-diff; shadow → read traffic in staging; perf ≥ Go on sysbench read + TPC-H | The first topology-resilient bounded vertical slice is live: authenticated stock MySQL clients → Rust COM_QUERY → parser/planner/clustered signed-BIGINT range detachment/tipb `[TableScan, Selection]` → real PD TSO/RegionCache → BatchCommands-first real TiKV → exact clustered-key and stored-column rows. Direct projections, all six comparisons, reversed operands, conjunctions, signed extremes, split `!=`, contradictions, and access-plus-residual predicates are proven; zero ranges avoid TSO/transport. Eight sessions overlap through a fixed worker pool and one process authority; persistent sessions survive A→B→C→same-address-restarted-B leader churn, exact channel/stream identity is observable, and blocked-query SIGTERM shuts connections→RegionCache→TiKV→PD down fallibly. Phase 2 remains incomplete: the executable is loopback/plaintext and static-catalog with only bounded signed-BIGINT predicates; temporal SQL/Duration, decimal/enum/set/vector/native CHBlock, typed expression/nested FullSchema mappings, NULL/coercion/unsigned semantics, `OR`/functions/arithmetic, index/common-handle/partition ranges, joins/aggregation/order/limit, grants/TLS/prepared statements, plan-ring zero-diff, shadow traffic, and performance gates remain open. Campaigns 23 and 24 are Ready-integrated; Campaign 25 has two disjoint roots ready for parallel implementation. |
 | 3 | Read-write: full txn lifecycle, DML, `tidb-stats` write path | Phase 1 client | 80-120k | Jepsen full; TPC-C parity; shadow-write comparison | Not started |
 | 4 | Full peer: `tidb-ddl`, background ownership, bootstrap | — | 80-120k | Mixed-cluster DDL suite; ownership handover drills; long-run canary | Not started |
 
 Estimated total: 500-700k Rust LOC (Rust runs denser than Go for this code; enum-based AST/plan nodes and macro-generated variable/function registries remove much of Go's repetition). The staffing and calendar numbers are planning estimates, not commitments; they must be re-estimated after the first connected read-only vertical slice. A calendar-parallel Go tree means the corpus-sync CI (above) is not optional at any point.
 
-Campaign 24's implementation and live milestone is complete. Its remaining
-integration step is one shared Ready gate, repository lint, six receipt
-consumptions, claim release, and generated-status refresh. Do not rerun the
-live topology as a substitute for that frozen batch gate.
+Campaign 24 is Ready-integrated: the shared gate and repository lint passed,
+all six receipt-backed members were released, and generated status is current.
+Campaign 25 should now dispatch its two ready roots in parallel, then unlock
+relation binding, FullSchema join planning, join execution, and the live
+two-relation proof through exact evidence prerequisites.
 
 After that boundary, carry the bounded multi-relation catalog binding into
 general typed expressions, FullSchema redundant-column mappings, typed

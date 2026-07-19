@@ -11,8 +11,8 @@ the source or obligation still has explicit unported behavior.
 
 - Active claims: 0
 - Active slices: 0
-- Declared ready slices: 0
-- Partial slices: 101
+- Declared ready slices: 6
+- Partial slices: 107
 - Covered slices: 2
 - Blocked slices: 1
 
@@ -39,6 +39,8 @@ the source or obligation still has explicit unported behavior.
 | 2026-07-read-path-21 | integrated | 6 |
 | 2026-07-read-path-22 | integrated | 6 |
 | 2026-07-read-path-23 | integrated | 6 |
+| 2026-07-read-path-24 | integrated | 6 |
+| 2026-07-read-path-25 | planned | 6 |
 | 2026-07-runtime-closure-03 | integrated | 6 |
 | 2026-07-runtime-closure-04 | integrated | 6 |
 | 2026-07-runtime-closure-05 | integrated | 6 |
@@ -68,8 +70,8 @@ External module counts are pinned porting obligations and are not included in Ti
 
 | State | Count |
 | --- | --- |
-| UNTRIAGED | 1894 |
-| PARTIAL | 460 |
+| UNTRIAGED | 1890 |
+| PARTIAL | 464 |
 | COVERED | 36 |
 | BLOCKED | 0 |
 
@@ -78,7 +80,7 @@ External module counts are pinned porting obligations and are not included in Ti
 | Target | Untriaged | Partial | Covered | Blocked |
 | --- | --- | --- | --- | --- |
 | deferred-external | 390 | 0 | 0 | 0 |
-| tidb-planner | 204 | 109 | 1 | 0 |
+| tidb-planner | 201 | 112 | 1 | 0 |
 | tidb-server | 249 | 4 | 0 | 0 |
 | tidb-exec | 178 | 63 | 0 | 0 |
 | tidb-txnkv | 123 | 26 | 9 | 0 |
@@ -86,7 +88,7 @@ External module counts are pinned porting obligations and are not included in Ti
 | tidb-expr | 95 | 27 | 0 | 0 |
 | tidb-ddl | 119 | 2 | 0 | 0 |
 | tidb-session | 44 | 45 | 0 | 0 |
-| test-support | 83 | 1 | 0 | 0 |
+| test-support | 82 | 2 | 0 | 0 |
 | tooling | 83 | 0 | 0 | 0 |
 | tidb-stats | 1 | 77 | 2 | 0 |
 | tidb-parser | 22 | 45 | 8 | 0 |
@@ -104,19 +106,19 @@ External module counts are pinned porting obligations and are not included in Ti
 
 | State | Count |
 | --- | --- |
-| UNTRIAGED | 15311 |
-| PARTIAL | 1098 |
-| COVERED | 296 |
+| UNTRIAGED | 15291 |
+| PARTIAL | 1127 |
+| COVERED | 288 |
 | BLOCKED | 14 |
 
 ### By differential ring
 
 | Ring | Untriaged | Partial | Covered | Blocked |
 | --- | --- | --- | --- | --- |
-| unassigned | 4800 | 366 | 132 | 0 |
+| unassigned | 4801 | 374 | 124 | 0 |
 | result | 4257 | 475 | 29 | 3 |
 | deferred-external | 3042 | 0 | 0 | 0 |
-| plan | 1769 | 138 | 5 | 0 |
+| plan | 1748 | 159 | 5 | 0 |
 | transaction | 1133 | 83 | 54 | 6 |
 | parser | 310 | 36 | 76 | 5 |
 

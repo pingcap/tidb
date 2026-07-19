@@ -99,3 +99,9 @@
 2026-07-read-path-23	executor-tikv-selection-dag-runtime
 2026-07-read-path-23	executor-real-tikv-bigint-selection-runtime
 2026-07-read-path-23	server-live-bigint-selection-topology-proof
+2026-07-read-path-24	planner-clustered-signed-bigint-ranger-runtime
+2026-07-read-path-24	planner-read-only-clustered-pk-range-runtime
+2026-07-read-path-24	distsql-signed-handle-range-request-runtime
+2026-07-read-path-24	executor-real-tikv-clustered-pk-range-runtime
+2026-07-read-path-24	server-live-sql-node-harness-foundation
+2026-07-read-path-24	server-live-clustered-pk-range-proof
