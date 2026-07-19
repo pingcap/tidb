@@ -1,6 +1,6 @@
 schema = "1"
 slice = "distsql-store-not-match-exact-channel-runtime"
-status = "ready"
+status = "partial"
 target = "tidb-distsql"
 ring = "transaction"
 consumer = "DistSQL consumes the immutable physical dispatch identity carried by the BatchCommands pending request. A current direct StoreNotMatch closes only the observed physical ChannelPool version before retry; a stale direct response cannot close a newer replacement. A forwarded StoreNotMatch refreshes the logical target route and never closes the healthy shared physical proxy channel."

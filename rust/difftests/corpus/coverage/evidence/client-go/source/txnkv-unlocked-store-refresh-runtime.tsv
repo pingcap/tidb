@@ -1,3 +1,0 @@
-# client-go source evidence for Campaign 18 txnkv-unlocked-store-refresh-runtime.
-# source_path	status	owner	evidence_artifact	note
-internal/locate/store_cache.go	PARTIAL	txnkv-unlocked-store-refresh-runtime	rust/crates/tidb-txnkv/src/region/cache.rs	Campaign 18 moves region and store metadata I/O outside the canonical cache mutex, revalidates complete publication snapshots, and restarts whole range accumulation on topology revision changes. Production timing, exhaustive health transitions, TLS, and complete live concurrent stress remain external.

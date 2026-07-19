@@ -87,3 +87,9 @@
 2026-07-read-path-21	server-native-password-user-store-runtime
 2026-07-read-path-21	server-concurrent-authenticated-session-runtime
 2026-07-read-path-21	server-live-concurrent-auth-tikv-proof
+2026-07-read-path-22	txnkv-physical-channel-evidence-runtime
+2026-07-read-path-22	pd-fallible-worker-lifecycle-runtime
+2026-07-read-path-22	distsql-store-not-match-exact-channel-runtime
+2026-07-read-path-22	executor-ordered-read-authority-shutdown-runtime
+2026-07-read-path-22	server-fallible-process-shutdown-runtime
+2026-07-read-path-22	server-live-topology-churn-shutdown-proof

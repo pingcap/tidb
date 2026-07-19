@@ -1,6 +1,6 @@
 schema = "1"
 campaign = "2026-07-read-path-22"
-status = "planned"
+status = "integrated"
 slices = [
   "txnkv-physical-channel-evidence-runtime",
   "pd-fallible-worker-lifecycle-runtime",

@@ -1,6 +1,6 @@
 schema = "1"
 slice = "txnkv-physical-channel-evidence-runtime"
-status = "ready"
+status = "partial"
 target = "tidb-txnkv"
 ring = "transaction"
 consumer = "Every BatchCommands attempt carries the immutable physical address, physical ChannelPool version, direct-or-forwarded BatchRoute generation, and logical forwarded target from publication through completion. The unique transport owner cancels, closes, and joins its worker through a fallible consuming API; request handles remain unable to shut down the process worker."

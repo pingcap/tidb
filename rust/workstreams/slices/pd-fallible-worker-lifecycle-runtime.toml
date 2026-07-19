@@ -1,6 +1,6 @@
 schema = "1"
 slice = "pd-fallible-worker-lifecycle-runtime"
-status = "ready"
+status = "partial"
 target = "tidb-pd-client"
 ring = "transaction"
 consumer = "The sole production PD worker has a unique lifecycle owner and cloneable request handles. Explicit shutdown cancels retained TSO and discovery work, closes the command loop, joins the worker exactly once, and reports poisoned state, missing acknowledgement, or worker panic instead of hiding it in Arc Drop."
