@@ -53,7 +53,9 @@ rust_paths = [
   "rust/crates/tidb-exec/tests/real_tikv_authority_shutdown_source.rs",
   "rust/crates/tidb-exec/tests/real_tikv_read_source.rs",
   "rust/crates/tidb-exec/tests/real_tikv_session_authority_source.rs",
+  "rust/crates/tidb-txnkv/src/lib.rs",
   "rust/crates/tidb-txnkv/src/read_runtime.rs",
   "rust/crates/tidb-txnkv/src/region/background.rs",
+  "rust/crates/tidb-txnkv/src/region/mod.rs",
   "rust/crates/tidb-txnkv/tests/background_runner_source.rs",
 ]
