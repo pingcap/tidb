@@ -1,5 +1,4 @@
 # Exact pinned client-go test evidence for Campaign 15 BatchCommands scheduler core.
 # kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-Test	internal/client/client_test.go	1018	TestLimitConcurrency	PARTIAL	txnkv-batch-scheduler-core	rust/crates/tidb-txnkv/tests/batch_scheduler_source.rs	Build admission, high-priority bypass, and queue reset preserve the source concurrency-limit state transitions; live connection lifecycle and stream backpressure remain external.
 Test	internal/client/priority_queue_test.go	37	TestPriority	PARTIAL	txnkv-batch-scheduler-core	rust/crates/tidb-txnkv/tests/batch_priority_queue_source.rs	Partial Take pops by priority while full Take exposes the heap's raw layout and clears queue-owned references; live channel integration remains external.
 Test	internal/client/priority_queue_test.go	80	TestPriorityQueueTakeAllLeavesReferencesInBackingArray	PARTIAL	txnkv-batch-scheduler-core	rust/crates/tidb-txnkv/tests/batch_priority_queue_source.rs	Full Take and Clean release queue-owned backing-array references without inventing stable equal-priority ordering; live channel integration remains external.

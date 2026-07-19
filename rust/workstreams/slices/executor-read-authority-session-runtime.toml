@@ -1,6 +1,6 @@
 schema = "1"
 slice = "executor-read-authority-session-runtime"
-status = "ready"
+status = "partial"
 target = "tidb-exec"
 ring = "result"
 consumer = "Real TiKV bootstrap becomes a process authority with one PD worker, one maintained RegionCache, and one tonic transport owner; open_session creates independent worker-local SQL/DAG/result state without opening topology or transport resources per connection."

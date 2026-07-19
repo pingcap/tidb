@@ -1,3 +1,0 @@
-# Source-owned exact privilege-row admission fragment for server-privilege-row-admission-wave.
-# source_path	status	owner	evidence_artifact	note
-pkg/privilege/privilege.go	PARTIAL	server-privilege-row-admission-wave	rust/crates/tidb-server/src/auth_identity.rs	PrivilegeRowAdmission mirrors Manager.ConnectionVerification's exact username/host row requirement after MatchIdentity; AuthPluginHandoff retains the selected plugin/stored-authentication metadata (or SkipWithGrant's native default) without plugin validation, password checks, privilege loading, account policy, or authenticated-session publication.

@@ -1,6 +1,6 @@
 schema = "1"
 slice = "server-concurrent-authenticated-session-runtime"
-status = "ready"
+status = "partial"
 target = "tidb-server"
 ring = "result"
 consumer = "The production listener admits authenticated MySQL connections through a fixed-size bounded worker pool; every worker creates a thread-local query session from one process-owned PD/TiKV authority, preserves the canonical authenticated identity for the connection lifetime, assigns distinct nondeterministic-handshake connection IDs, and drains active sessions exactly once during shutdown."
@@ -59,7 +59,6 @@ rust_paths = [
   "rust/crates/tidb-server/src/mysql_connection.rs",
   "rust/crates/tidb-server/src/real_tikv_node.rs",
   "rust/crates/tidb-server/src/listener.rs",
-  "rust/crates/tidb-server/src/accept_loop.rs",
   "rust/crates/tidb-server/src/node_config.rs",
   "rust/crates/tidb-server/src/lib.rs",
   "rust/crates/tidb-server/tests/mysql_client_lifecycle_source.rs",

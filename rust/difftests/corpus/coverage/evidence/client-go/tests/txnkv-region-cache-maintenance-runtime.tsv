@@ -1,4 +1,0 @@
-# Exact pinned client-go test evidence for Campaign 16 region-cache maintenance.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-Test	internal/client/client_test.go	68	TestConn	PARTIAL	txnkv-region-cache-maintenance-runtime	rust/crates/tidb-txnkv/tests/tikv_tonic_coprocessor_source.rs	The retained generation-aware channel is reused and can be replaced while maintenance stays single-owner; multi-connection selection, batch enablement, TLS, and live client-go parity remain external.
-Test	internal/client/client_test.go	103	TestGetConnAfterClose	PARTIAL	txnkv-region-cache-maintenance-runtime	rust/crates/tidb-txnkv/tests/tikv_tonic_coprocessor_source.rs	Address close permits generation-safe recreation and terminal close prevents reuse; tonic shutdown observation, in-flight cancellation, and live sockets remain external.

@@ -1,3 +1,0 @@
-# First real MySQL TCP connection source evidence.
-# source_path	status	owner	evidence_artifact	note
-pkg/server/server.go	PARTIAL	server-mysql-connection-runtime	rust/crates/tidb-server/src/sql_node.rs	The existing TCP bind/listener authority now accepts and completely serves one serial MySQL connection through an injected query engine with connection accounting. Unix sockets, PROXY protocol, status HTTP, graceful process shutdown, admission controls, and concurrent serving remain open.

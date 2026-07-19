@@ -1,3 +1,0 @@
-# Campaign 20 source evidence.
-# source_path	status	owner	evidence_artifact	note
-tests/realtikvtest/testkit.go	PARTIAL	server-live-multicolumn-tikv-proof	rust/scripts/run-campaign20-multicolumn-sql-node.sh	Campaign 20 uses the stock MySQL client to read exact clustered-key and stored signed-BIGINT pairs from a real TiKV table through real PD TSO, region discovery, and BatchCommands-first dispatch; the broader RealTiKV testkit and TiDB SQL matrix remain open.

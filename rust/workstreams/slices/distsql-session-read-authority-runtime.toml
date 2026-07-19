@@ -1,6 +1,6 @@
 schema = "1"
 slice = "distsql-session-read-authority-runtime"
-status = "ready"
+status = "partial"
 target = "tidb-distsql"
 ring = "transaction"
 consumer = "A Send+Sync process read authority retains the sole maintained RegionCache and cloneable TiKV command handle, while each worker opens a thread-local Rc-owned DirectUnary query runtime with independent selection seed, evidence, cancellation, retry, and lazy response state."

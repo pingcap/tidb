@@ -1,6 +1,6 @@
 schema = "1"
 slice = "txnkv-cloneable-transport-authority"
-status = "ready"
+status = "partial"
 target = "tidb-txnkv"
 ring = "transaction"
 consumer = "One process-owned tonic transport runtime exposes cloneable Send+Sync TiKV command handles to connection-local read sessions; handles cannot shut down or join the shared worker, and dropping or closing one session cannot retire another session's channels, BatchCommands streams, or pending requests."

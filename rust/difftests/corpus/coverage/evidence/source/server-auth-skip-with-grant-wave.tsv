@@ -1,3 +1,0 @@
-# Source-owned SkipWithGrant identity-admission fragment for server-auth-skip-with-grant-wave.
-# source_path	status	owner	evidence_artifact	note
-pkg/privilege/privileges/privileges.go	PARTIAL	server-auth-skip-with-grant-wave	rust/crates/tidb-server/src/auth_identity.rs	IdentityLookupPolicy/IdentityLookupResult::Bypassed preserve MatchIdentity's SkipWithGrant early return of the requested user/host without privilege-row lookup; full privilege bypass across verification/role/privilege APIs and authenticated-session publication remain external.

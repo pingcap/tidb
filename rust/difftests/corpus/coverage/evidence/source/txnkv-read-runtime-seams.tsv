@@ -1,3 +1,0 @@
-# Source evidence for the Campaign 13 shared read-runtime seam.
-# source_path	status	owner	evidence_artifact	note
-pkg/store/copr/coprocessor.go	PARTIAL	txnkv-read-runtime-seams	rust/crates/tidb-distsql/src/cop_paging/direct_unary_query_transport.rs	The retained response owner now delegates Cop, CheckTxnStatus, and ResolveLock through one command-neutral unary worker and one shared RegionCache/client pair while preserving route-success-before-lock and deferring response mutation until a usable Cop response. Batch, stream, TiFlash, async dispatch, background recovery, and the rest of the 3061-line Go source remain outside this bounded seam.

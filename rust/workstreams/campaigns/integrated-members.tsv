@@ -81,3 +81,9 @@
 2026-07-read-path-20	server-column-list-config-runtime
 2026-07-read-path-20	server-multicolumn-mysql-result-runtime
 2026-07-read-path-20	server-live-multicolumn-tikv-proof
+2026-07-read-path-21	txnkv-cloneable-transport-authority
+2026-07-read-path-21	distsql-session-read-authority-runtime
+2026-07-read-path-21	executor-read-authority-session-runtime
+2026-07-read-path-21	server-native-password-user-store-runtime
+2026-07-read-path-21	server-concurrent-authenticated-session-runtime
+2026-07-read-path-21	server-live-concurrent-auth-tikv-proof

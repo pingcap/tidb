@@ -1,3 +1,0 @@
-# Source-owned test-evidence fragment for server-privilege-row-admission-wave.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/privilege/privileges/privileges_test.go	2106	TestNilHandleInSkipWithGrant	PARTIAL	server-privilege-row-admission-wave	rust/crates/tidb-server/tests/auth_identity_source.rs	Covers exact canonical-row selection and rejection of an unresolved concrete host despite a wildcard row; Go ConnectionVerification password/plugin/account-resource behavior remains outside this leaf.

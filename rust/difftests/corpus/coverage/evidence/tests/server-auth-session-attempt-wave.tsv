@@ -1,3 +1,0 @@
-# Source-owned test-evidence fragment for server-auth-session-attempt-wave.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/session/test/privileges/privileges_test.go	47	TestSessionAuth	PARTIAL	server-auth-session-attempt-wave	rust/crates/tidb-server/tests/auth_session_source.rs	Covers opaque auth-input retention, empty/non-empty password presence, auth_socket Unix-only admission, and an explicit pre-verification rejection state; Go privilege-table lookup and password/plugin/account-locking execution remain outside this boundary.

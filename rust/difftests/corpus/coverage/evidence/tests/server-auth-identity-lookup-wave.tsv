@@ -1,3 +1,0 @@
-# Source-owned test-evidence fragment for server-auth-identity-lookup-wave.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/session/test/session_test.go	578	TestMatchIdentity	PARTIAL	server-auth-identity-lookup-wave	rust/crates/tidb-server/tests/auth_identity_source.rs	Covers exact/most-specific wildcard host selection, localhost loopback, IPv4 network matching, injected reverse-DNS fallback, skip-name-resolve suppression, canonical rows, and not-found; real privilege storage/DNS and password/session authentication remain outside this leaf.

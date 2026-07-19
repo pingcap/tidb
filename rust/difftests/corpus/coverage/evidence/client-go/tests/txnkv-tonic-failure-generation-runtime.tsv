@@ -1,2 +1,0 @@
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-Test	internal/client/client_test.go	1272	TestErrConn	PARTIAL	txnkv-tonic-failure-generation-runtime	rust/crates/tidb-txnkv/tests/tikv_tonic_coprocessor_source.rs	Zero and delayed caller deadlines return a transport-neutral typed timeout with the exact selected address and generation; malformed bodies and invalid addresses fail in their own typed families. Go pointer identity and arbitrary wrapped-cause traversal remain open.
