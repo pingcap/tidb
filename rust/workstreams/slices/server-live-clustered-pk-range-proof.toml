@@ -1,6 +1,6 @@
 schema = "1"
 slice = "server-live-clustered-pk-range-proof"
-status = "ready"
+status = "partial"
 target = "tidb-server"
 ring = "result"
 consumer = "A small Campaign 24 scenario proves clustered-primary-key range pruning, residual stored-column Selection, empty contradictions, persistent topology churn, blocked shutdown, and complete cleanup through the shared live harness."
