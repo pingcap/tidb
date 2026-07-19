@@ -387,3 +387,6 @@ pkg/planner/core/casetest/join/join_test.go	27	TestSemiJoinOrder	planner-configu
 pkg/planner/core/casetest/join/join_test.go	146	TestJoinSimplifyCondition	planner-configured-fullschema-join-runtime
 pkg/planner/core/casetest/join/join_test.go	188	TestKeepingJoinKeys	planner-configured-fullschema-join-runtime
 pkg/planner/core/casetest/join/join_test.go	226	TestJoinRegression	planner-configured-fullschema-join-runtime
+pkg/executor/join/inner_join_probe_test.go	494	TestInnerJoinProbeBasic	executor-configured-inner-join-runtime
+pkg/executor/join/inner_join_probe_test.go	543	TestInnerJoinProbeAllJoinKeys	executor-configured-inner-join-runtime
+pkg/executor/join/inner_join_probe_test.go	664	TestInnerJoinProbeWithSel	executor-configured-inner-join-runtime

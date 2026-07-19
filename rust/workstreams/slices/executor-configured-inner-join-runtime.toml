@@ -1,6 +1,6 @@
 schema = "1"
 slice = "executor-configured-inner-join-runtime"
-status = "ready"
+status = "partial"
 target = "tidb-exec"
 ring = "result"
 consumer = "The production read executor consumes two same-snapshot real-TiKV scan streams and evaluates one planner-bound non-null signed BIGINT inner-join equality, emitting projected rows and metadata in deterministic left-then-right scan order."

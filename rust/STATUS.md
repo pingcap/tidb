@@ -9,10 +9,10 @@ the source or obligation still has explicit unported behavior.
 
 ## Queue
 
-- Active claims: 4
+- Active claims: 7
 - Active slices: 0
-- Declared ready slices: 2
-- Partial slices: 111
+- Declared ready slices: 10
+- Partial slices: 112
 - Covered slices: 2
 - Blocked slices: 1
 
@@ -40,7 +40,8 @@ the source or obligation still has explicit unported behavior.
 | 2026-07-read-path-22 | integrated | 6 |
 | 2026-07-read-path-23 | integrated | 6 |
 | 2026-07-read-path-24 | integrated | 6 |
-| 2026-07-read-path-25 | planned | 6 |
+| 2026-07-read-path-25 | planned | 7 |
+| 2026-07-read-path-26 | planned | 8 |
 | 2026-07-runtime-closure-03 | integrated | 6 |
 | 2026-07-runtime-closure-04 | integrated | 6 |
 | 2026-07-runtime-closure-05 | integrated | 6 |
@@ -70,8 +71,8 @@ External module counts are pinned porting obligations and are not included in Ti
 
 | State | Count |
 | --- | --- |
-| UNTRIAGED | 1886 |
-| PARTIAL | 468 |
+| UNTRIAGED | 1885 |
+| PARTIAL | 469 |
 | COVERED | 36 |
 | BLOCKED | 0 |
 
@@ -82,7 +83,7 @@ External module counts are pinned porting obligations and are not included in Ti
 | deferred-external | 390 | 0 | 0 | 0 |
 | tidb-planner | 200 | 113 | 1 | 0 |
 | tidb-server | 249 | 4 | 0 | 0 |
-| tidb-exec | 178 | 63 | 0 | 0 |
+| tidb-exec | 177 | 64 | 0 | 0 |
 | tidb-txnkv | 123 | 26 | 9 | 0 |
 | tidb-catalog | 123 | 4 | 0 | 0 |
 | tidb-expr | 95 | 27 | 0 | 0 |
@@ -106,8 +107,8 @@ External module counts are pinned porting obligations and are not included in Ti
 
 | State | Count |
 | --- | --- |
-| UNTRIAGED | 15265 |
-| PARTIAL | 1153 |
+| UNTRIAGED | 15262 |
+| PARTIAL | 1156 |
 | COVERED | 288 |
 | BLOCKED | 14 |
 
@@ -116,7 +117,7 @@ External module counts are pinned porting obligations and are not included in Ti
 | Ring | Untriaged | Partial | Covered | Blocked |
 | --- | --- | --- | --- | --- |
 | unassigned | 4786 | 389 | 124 | 0 |
-| result | 4257 | 475 | 29 | 3 |
+| result | 4254 | 478 | 29 | 3 |
 | deferred-external | 3042 | 0 | 0 | 0 |
 | plan | 1737 | 170 | 5 | 0 |
 | transaction | 1133 | 83 | 54 | 6 |
