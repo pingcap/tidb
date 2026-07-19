@@ -1,0 +1,25 @@
+schema = "1"
+slice = "server-live-sql-node-harness-foundation"
+status = "partial"
+target = "tidb-server"
+ring = "result"
+consumer = "One reusable shell harness owns tag-safe real PD/TiKV startup, stock-MySQL persistence, topology churn, blocked-query shutdown, diagnostics, and cleanup so feature scenarios contain only queries and evidence assertions."
+test_target = "live-sql-node-harness-self-test"
+go_sources = [
+  "tests/realtikvtest/testkit.go",
+]
+go_tests = []
+module_sources = []
+module_tests = []
+depends_on = []
+evidence_prerequisites = []
+support_anchors = [
+  "Campaign 24 stage A extracts the common Campaign 22 and 23 lifecycle without changing either scenario",
+  "The harness owns infrastructure only; SQL semantics and plan evidence remain scenario-owned callbacks",
+  "Focused self-tests cover PID ownership, result-line accounting, bounded termination, and cleanup guards without starting TiUP",
+]
+rust_paths = [
+  "rust/scripts/lib/live-sql-node-harness.sh",
+  "rust/scripts/run-campaign22-topology-churn-sql-node.sh",
+  "rust/scripts/run-campaign23-bigint-selection-sql-node.sh",
+]

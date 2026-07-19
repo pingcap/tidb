@@ -1,0 +1,23 @@
+schema = "1"
+slice = "server-live-clustered-pk-range-proof"
+status = "ready"
+target = "tidb-server"
+ring = "result"
+consumer = "A small Campaign 24 scenario proves clustered-primary-key range pruning, residual stored-column Selection, empty contradictions, persistent topology churn, blocked shutdown, and complete cleanup through the shared live harness."
+test_target = "run-campaign24-clustered-pk-range-sql-node"
+go_sources = [
+  "tests/realtikvtest/testutils/common.go",
+]
+go_tests = []
+module_sources = []
+module_tests = []
+depends_on = []
+evidence_prerequisites = []
+support_anchors = [
+  "Campaign 24 final stage starts only after executor range evidence and the shared harness freeze",
+  "Prove point, bounded, disjoint !=, reversed, MIN/MAX, contradiction, and PK-plus-stored residual predicates against real TiKV",
+  "Published request ranges must be narrower than the full table range while executor kinds retain Selection for residual predicates",
+]
+rust_paths = [
+  "rust/scripts/run-campaign24-clustered-pk-range-sql-node.sh",
+]

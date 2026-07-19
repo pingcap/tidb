@@ -1,0 +1,54 @@
+schema = "1"
+slice = "planner-clustered-signed-bigint-ranger-runtime"
+status = "partial"
+target = "tidb-planner"
+ring = "plan"
+consumer = "A source-shaped signed BIGINT ranger converts ordered clustered-primary-key comparison access conditions into normalized logical ranges while returning residual Selection conditions unchanged."
+test_target = "clustered_signed_bigint_ranger_source"
+go_sources = [
+  "pkg/util/ranger/checker.go",
+  "pkg/util/ranger/ranger.go",
+  "pkg/util/ranger/types.go",
+]
+go_tests = [
+  "pkg/util/ranger/ranger_test.go:45:TestTableRange",
+  "pkg/util/ranger/ranger_test.go:314:TestIndexRangeForUnsignedAndOverflow",
+  "pkg/util/ranger/ranger_test.go:512:TestColumnRange",
+  "pkg/util/ranger/ranger_test.go:876:TestIndexRangeForYear",
+  "pkg/util/ranger/ranger_test.go:1037:TestPrefixIndexRangeScan",
+  "pkg/util/ranger/ranger_test.go:1107:TestIndexRange",
+  "pkg/util/ranger/ranger_test.go:1472:TestTableShardIndex",
+  "pkg/util/ranger/ranger_test.go:1752:TestShardIndexFuncSuites",
+  "pkg/util/ranger/ranger_test.go:1917:TestRangeFallbackForDetachCondAndBuildRangeForIndex",
+  "pkg/util/ranger/ranger_test.go:2246:TestRangeFallbackForBuildTableRange",
+  "pkg/util/ranger/ranger_test.go:2282:TestRangeFallbackForBuildColumnRange",
+  "pkg/util/ranger/ranger_test.go:2342:TestPrefixIndexRange",
+  "pkg/util/ranger/ranger_test.go:2473:TestIssue40997",
+  "pkg/util/ranger/ranger_test.go:2513:TestIssue50051",
+  "pkg/util/ranger/ranger_test.go:2532:TestMinAccessCondsForDNFCond",
+  "pkg/util/ranger/ranger_test.go:2636:TestBinCollationRangeForIndex",
+  "pkg/util/ranger/types_test.go:93:TestRange",
+  "pkg/util/ranger/types_test.go:161:TestIsFullRange",
+  "pkg/util/ranger/types_test.go:238:TestRangeMemUsage",
+  "pkg/util/ranger/types_test.go:282:TestIntersectionList",
+  "pkg/util/ranger/types_test.go:318:TestIntersectionEmpty",
+  "pkg/util/ranger/types_test.go:387:TestIntersectionSubset",
+  "pkg/util/ranger/types_test.go:443:TestIntersectionOverlap",
+]
+module_sources = []
+module_tests = []
+depends_on = []
+evidence_prerequisites = []
+support_anchors = [
+  "Campaign 24 stage A; translate Go BuildTableRange and Range boundary behavior directly for one non-null signed BIGINT clustered handle",
+  "Support =, !=, <, <=, >, >=, reversed operands, conjunction intersection, MIN/MAX, contradictions, and disjoint != ranges",
+  "Return access and residual conditions separately; ranger is an optimization and Selection remains semantic authority",
+]
+rust_paths = [
+  "rust/crates/tidb-planner/src/lib.rs",
+  "rust/crates/tidb-planner/src/signed_bigint_ranger.rs",
+  "rust/crates/tidb-planner/tests/clustered_signed_bigint_ranger_source.rs",
+  "rust/difftests/corpus/coverage/evidence/source/planner-clustered-signed-bigint-ranger-runtime.tsv",
+  "rust/difftests/corpus/coverage/evidence/tests/planner-clustered-signed-bigint-ranger-runtime.tsv",
+  "rust/difftests/corpus/coverage/evidence/transfers/planner-clustered-signed-bigint-ranger-runtime.tsv",
+]
