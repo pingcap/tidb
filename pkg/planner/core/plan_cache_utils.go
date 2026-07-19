@@ -322,7 +322,7 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	// latestSchemaVersion + sqlMode + timeZoneOffset + isolationReadEngines + selectLimit
 	hashLen += 8 + 8 + 8 + 4 /*len(kv.TiDB.Name())*/ + 4 /*len(kv.TiKV.Name())*/ + 7 /*len(kv.TiFlash.Name())*/ + 8
 	// binding + connCharset + connCollation + inRestrictedSQL + readOnly + superReadOnly +
-	// exprPushdownBlacklistReloadTimeStamp + hasSubquery + foreignKeyChecks + enableODKUExpressionReuse
+	// exprPushdownBlacklistReloadTimeStamp + hasSubquery + foreignKeyChecks + enableOnDuplicateExpressionReuse
 	hashLen += len(binding) + len(connCharset) + len(connCollation) + 3*5 + 8 + 3
 	if len(stmt.limits) > 0 {
 		// '|' + each limit count/offset takes 8 bytes + '|'
@@ -380,7 +380,7 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	hash = append(hash, bool2Byte(vars.ForeignKeyChecks))
 
 	// this variable affects INSERT ... ON DUPLICATE KEY UPDATE expression sharing
-	hash = append(hash, bool2Byte(vars.EnableODKUExpressionReuse))
+	hash = append(hash, bool2Byte(vars.EnableOnDuplicateExprReuse))
 
 	// "limit ?" can affect the cached plan: "limit 1" and "limit 10000" should use different plans.
 	if len(stmt.limits) > 0 {

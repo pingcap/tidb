@@ -265,7 +265,7 @@ func TestIssue53872(t *testing.T) {
 	tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows())
 }
 
-func TestPlanCacheKeyIncludesODKUExpressionReuse(t *testing.T) {
+func TestPlanCacheKeyIncludesOnDuplicateUpdateExpressionReuse(t *testing.T) {
 	ctx := plannercore.MockContext()
 	sql := `insert into t values (?, ?, ?) on duplicate key update
 		c2 = if(values(c2) > c2 and values(c3) > 0, values(c2), c2),
@@ -281,8 +281,8 @@ func TestPlanCacheKeyIncludesODKUExpressionReuse(t *testing.T) {
 		StmtCacheable: true,
 	}
 
-	buildKey := func(enableODKUExpressionReuse bool) string {
-		ctx.GetSessionVars().EnableODKUExpressionReuse = enableODKUExpressionReuse
+	buildKey := func(enableOnDuplicateExpressionReuse bool) string {
+		ctx.GetSessionVars().EnableOnDuplicateExprReuse = enableOnDuplicateExpressionReuse
 		key, _, cacheable, reason, err := plannercore.NewPlanCacheKey(ctx, stmt)
 		require.NoError(t, err)
 		require.True(t, cacheable)

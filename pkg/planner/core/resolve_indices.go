@@ -870,7 +870,7 @@ func (p *Insert) ResolveIndices() (err error) {
 	if err != nil {
 		return err
 	}
-	if !p.isODKUExpressionReuseEnabled() {
+	if !p.isOnDuplicateExpressionReuseEnabled() {
 		for _, asgn := range p.OnDuplicate {
 			newCol, err := asgn.Col.ResolveIndices(p.tableSchema)
 			if err != nil {
@@ -940,8 +940,8 @@ func (p *Insert) ResolveIndices() (err error) {
 	return
 }
 
-func (p *Insert) isODKUExpressionReuseEnabled() bool {
-	return p.odkuExpressionReuseEnabled
+func (p *Insert) isOnDuplicateExpressionReuseEnabled() bool {
+	return p.onDuplicateExpressionReuseEnabled
 }
 
 func resolveExprIndicesWithMemo(expr expression.Expression, schema *expression.Schema, memo map[expression.Expression]expression.Expression) (expression.Expression, error) {

@@ -215,8 +215,8 @@ func TestInsertOnDuplicateUpdateReusesCommonSubExpressions(t *testing.T) {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
 
-	rewritePair := func(enableODKUExpressionReuse bool) (*Insert, expression.Expression, expression.Expression) {
-		ctx.GetSessionVars().EnableODKUExpressionReuse = enableODKUExpressionReuse
+	rewritePair := func(enableOnDuplicateExpressionReuse bool) (*Insert, expression.Expression, expression.Expression) {
+		ctx.GetSessionVars().EnableOnDuplicateExprReuse = enableOnDuplicateExpressionReuse
 
 		colNames := []string{"c1", "c2", "c3"}
 		cols := make([]*expression.Column, 0, len(colNames))
@@ -234,11 +234,11 @@ func TestInsertOnDuplicateUpdateReusesCommonSubExpressions(t *testing.T) {
 		schema := expression.NewSchema(cols...)
 
 		insertPlan := Insert{
-			tableSchema:                schema,
-			tableColNames:              names,
-			Schema4OnDuplicate:         schema,
-			names4OnDuplicate:          names,
-			odkuExpressionReuseEnabled: enableODKUExpressionReuse,
+			tableSchema:                       schema,
+			tableColNames:                     names,
+			Schema4OnDuplicate:                schema,
+			names4OnDuplicate:                 names,
+			onDuplicateExpressionReuseEnabled: enableOnDuplicateExpressionReuse,
 		}.Init(ctx)
 		mockTablePlan := logicalop.LogicalTableDual{}.Init(ctx, 0)
 		mockTablePlan.SetSchema(schema)
@@ -251,16 +251,16 @@ func TestInsertOnDuplicateUpdateReusesCommonSubExpressions(t *testing.T) {
 		}
 
 		builder, _ := NewPlanBuilder().Init(ctx, nil, hint.NewQBHintHandler(nil))
-		var odkuMemo *odkuExprMemo
-		if ctx.GetSessionVars().EnableODKUExpressionReuse {
-			odkuMemo = newODKUExprMemo()
+		var onDupMemo *onDuplicateExprMemo
+		if ctx.GetSessionVars().EnableOnDuplicateExprReuse {
+			onDupMemo = newOnDuplicateExprMemo()
 		}
 		expr1, err := builder.rewriteInsertOnDuplicateUpdate(
 			context.Background(),
 			parseExpr("if(values(c1) is not null and c2 = 1, values(c1), c1)"),
 			mockTablePlan,
 			insertPlan,
-			odkuMemo,
+			onDupMemo,
 		)
 		require.NoError(t, err)
 		expr2, err := builder.rewriteInsertOnDuplicateUpdate(
@@ -268,7 +268,7 @@ func TestInsertOnDuplicateUpdateReusesCommonSubExpressions(t *testing.T) {
 			parseExpr("if(values(c1) is not null and c2 = 1, values(c2), c2)"),
 			mockTablePlan,
 			insertPlan,
-			odkuMemo,
+			onDupMemo,
 		)
 		require.NoError(t, err)
 
@@ -313,7 +313,7 @@ func TestInsertOnDuplicateUpdateExpressionReuseComplexityGate(t *testing.T) {
 		return stmt.(*ast.InsertStmt).OnDuplicate[0]
 	}
 
-	require.False(t, hasEnoughODKUFunctionsForExpressionReuse([]*ast.Assignment{
+	require.False(t, hasEnoughOnDuplicateFunctionsForExpressionReuse([]*ast.Assignment{
 		parseAssignment("values(c1)"),
 		parseAssignment("values(c2)"),
 		parseAssignment("values(c3)"),
@@ -322,7 +322,7 @@ func TestInsertOnDuplicateUpdateExpressionReuseComplexityGate(t *testing.T) {
 		parseAssignment("values(c6)"),
 		parseAssignment("values(c7)"),
 	}))
-	require.True(t, hasEnoughODKUFunctionsForExpressionReuse([]*ast.Assignment{
+	require.True(t, hasEnoughOnDuplicateFunctionsForExpressionReuse([]*ast.Assignment{
 		parseAssignment("if(values(c1) is not null and (c1 <= values(c1) or c1 = '2100-01-01 00:00:00') and values(c2) != 1, values(c3), c3)"),
 		parseAssignment("if(values(c1) is not null and (c1 <= values(c1) or c1 = '2100-01-01 00:00:00') and values(c2) != 1, values(c4), c4)"),
 	}))
@@ -356,18 +356,18 @@ func TestInsertOnDuplicateUpdateExpressionReuseSetVarHint(t *testing.T) {
 				domain.GetDomain(ctx).StatsHandle().Close()
 			}()
 			ctx.GetSessionVars().CurrentDB = "test"
-			err := ctx.GetSessionVars().SetSystemVar(variable.TiDBEnableODKUExpressionReuse, variable.BoolToOnOff(tc.sessionReuseEnabled))
+			err := ctx.GetSessionVars().SetSystemVar(variable.TiDBEnableOnDuplicateExpressionReuse, variable.BoolToOnOff(tc.sessionReuseEnabled))
 			require.NoError(t, err)
 
 			insertSQL := strings.Replace(
-				benchmarkODKUInsertSQL(),
+				benchmarkOnDuplicateUpdateInsertSQL(),
 				"insert into",
-				fmt.Sprintf("insert /*+ SET_VAR(%s=%s) */ into", variable.TiDBEnableODKUExpressionReuse, tc.hintValue),
+				fmt.Sprintf("insert /*+ SET_VAR(%s=%s) */ into", variable.TiDBEnableOnDuplicateExpressionReuse, tc.hintValue),
 				1,
 			)
-			insertPlan := buildInsertPlanWithSetVarHint(t, ctx, benchmarkODKUTableInfo(), insertSQL)
-			require.Equal(t, tc.expectedEnabled, insertPlan.odkuExpressionReuseEnabled)
-			require.Equal(t, tc.sessionReuseEnabled, ctx.GetSessionVars().EnableODKUExpressionReuse)
+			insertPlan := buildInsertPlanWithSetVarHint(t, ctx, benchmarkOnDuplicateUpdateTableInfo(), insertSQL)
+			require.Equal(t, tc.expectedEnabled, insertPlan.onDuplicateExpressionReuseEnabled)
+			require.Equal(t, tc.sessionReuseEnabled, ctx.GetSessionVars().EnableOnDuplicateExprReuse)
 		})
 	}
 }
@@ -404,7 +404,7 @@ func applySetVarHintForTest(t *testing.T, ctx *mock.Context, stmt ast.StmtNode) 
 	}, nil, ctx.GetSessionVars().CurrentDB, byte(kv.ReplicaReadFollower))
 	require.Empty(t, warns)
 	require.Len(t, stmtHints.SetVars, 1)
-	require.Contains(t, stmtHints.SetVars, variable.TiDBEnableODKUExpressionReuse)
+	require.Contains(t, stmtHints.SetVars, variable.TiDBEnableOnDuplicateExpressionReuse)
 	ctx.GetSessionVars().StmtCtx.StmtHints = stmtHints
 
 	oldValues := make(map[string]string, len(stmtHints.SetVars))
@@ -421,7 +421,7 @@ func applySetVarHintForTest(t *testing.T, ctx *mock.Context, stmt ast.StmtNode) 
 	}
 }
 
-func mockBenchmarkODKUTableInfo(name string, colTypes []byte) *model.TableInfo {
+func mockBenchmarkOnDuplicateUpdateTableInfo(name string, colTypes []byte) *model.TableInfo {
 	columns := make([]*model.ColumnInfo, 0, len(colTypes))
 	for i, tp := range colTypes {
 		colName := fmt.Sprintf("c%d", i+1)
@@ -429,7 +429,7 @@ func mockBenchmarkODKUTableInfo(name string, colTypes []byte) *model.TableInfo {
 			ID:        int64(i + 1),
 			Name:      pmodel.NewCIStr(colName),
 			Offset:    i,
-			FieldType: benchmarkODKUFieldType(tp),
+			FieldType: benchmarkOnDuplicateUpdateFieldType(tp),
 			State:     model.StatePublic,
 		}
 		if i == 0 {
@@ -446,7 +446,7 @@ func mockBenchmarkODKUTableInfo(name string, colTypes []byte) *model.TableInfo {
 	}
 }
 
-func benchmarkODKUFieldType(tp byte) types.FieldType {
+func benchmarkOnDuplicateUpdateFieldType(tp byte) types.FieldType {
 	fieldType := types.NewFieldType(tp)
 	switch tp {
 	case mysql.TypeVarchar:
@@ -460,8 +460,8 @@ func benchmarkODKUFieldType(tp byte) types.FieldType {
 	return *fieldType
 }
 
-func benchmarkODKUTableInfo() *model.TableInfo {
-	return mockBenchmarkODKUTableInfo("t_odku_complex", []byte{
+func benchmarkOnDuplicateUpdateTableInfo() *model.TableInfo {
+	return mockBenchmarkOnDuplicateUpdateTableInfo("t_on_duplicate_update_complex", []byte{
 		mysql.TypeLonglong,
 		mysql.TypeVarchar,
 		mysql.TypeVarchar,
@@ -510,7 +510,7 @@ func benchmarkODKUTableInfo() *model.TableInfo {
 	})
 }
 
-func benchmarkODKUInsertSQL() string {
+func benchmarkOnDuplicateUpdateInsertSQL() string {
 	values := []string{
 		"1",
 		"'v2'",
@@ -601,11 +601,11 @@ c21 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00
 c45 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, DATE(values(c36)), c45)
 `)
 
-	return "insert into t_odku_complex values (" + strings.Join(values, ", ") + ") " + tail
+	return "insert into t_on_duplicate_update_complex values (" + strings.Join(values, ", ") + ") " + tail
 }
 
-func benchmarkODKUValuesOnlyTableInfo() *model.TableInfo {
-	return mockBenchmarkODKUTableInfo("t_odku_values_only", []byte{
+func benchmarkOnDuplicateUpdateValuesOnlyTableInfo() *model.TableInfo {
+	return mockBenchmarkOnDuplicateUpdateTableInfo("t_on_duplicate_update_values_only", []byte{
 		mysql.TypeLonglong,
 		mysql.TypeVarchar,
 		mysql.TypeVarchar,
@@ -617,9 +617,9 @@ func benchmarkODKUValuesOnlyTableInfo() *model.TableInfo {
 	})
 }
 
-func benchmarkODKUValuesOnlyInsertSQL() string {
+func benchmarkOnDuplicateUpdateValuesOnlyInsertSQL() string {
 	return strings.TrimSpace(`
-insert into t_odku_values_only values (
+insert into t_on_duplicate_update_values_only values (
 	1,
 	'2026-06-01',
 	'v3',
@@ -640,10 +640,10 @@ insert into t_odku_values_only values (
 }
 
 func runInsertOnDuplicateUpdateCompileBenchmark(b *testing.B, tableInfo *model.TableInfo, insertSQL string) {
-	run := func(b *testing.B, enableODKUExpressionReuse bool) {
+	run := func(b *testing.B, enableOnDuplicateExpressionReuse bool) {
 		ctx := MockContext()
 		ctx.GetSessionVars().CurrentDB = "test"
-		ctx.GetSessionVars().EnableODKUExpressionReuse = enableODKUExpressionReuse
+		ctx.GetSessionVars().EnableOnDuplicateExprReuse = enableOnDuplicateExpressionReuse
 
 		is := infoschema.MockInfoSchema([]*model.TableInfo{tableInfo})
 
@@ -673,11 +673,11 @@ func runInsertOnDuplicateUpdateCompileBenchmark(b *testing.B, tableInfo *model.T
 }
 
 func BenchmarkInsertOnDuplicateUpdateCompile(b *testing.B) {
-	runInsertOnDuplicateUpdateCompileBenchmark(b, benchmarkODKUTableInfo(), benchmarkODKUInsertSQL())
+	runInsertOnDuplicateUpdateCompileBenchmark(b, benchmarkOnDuplicateUpdateTableInfo(), benchmarkOnDuplicateUpdateInsertSQL())
 }
 
 func BenchmarkInsertOnDuplicateUpdateCompileValuesOnly(b *testing.B) {
-	runInsertOnDuplicateUpdateCompileBenchmark(b, benchmarkODKUValuesOnlyTableInfo(), benchmarkODKUValuesOnlyInsertSQL())
+	runInsertOnDuplicateUpdateCompileBenchmark(b, benchmarkOnDuplicateUpdateValuesOnlyTableInfo(), benchmarkOnDuplicateUpdateValuesOnlyInsertSQL())
 }
 
 func TestDeepClone(t *testing.T) {

@@ -4773,13 +4773,13 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	mockTablePlan.SetSchema(insertPlan.Schema4OnDuplicate)
 	mockTablePlan.SetOutputNames(insertPlan.names4OnDuplicate)
 
-	var odkuMemo *odkuExprMemo
-	if b.ctx.GetSessionVars().EnableODKUExpressionReuse && hasEnoughODKUFunctionsForExpressionReuse(insert.OnDuplicate) {
-		odkuMemo = newODKUExprMemo()
-		insertPlan.odkuExpressionReuseEnabled = true
+	var onDupMemo *onDuplicateExprMemo
+	if b.ctx.GetSessionVars().EnableOnDuplicateExprReuse && hasEnoughOnDuplicateFunctionsForExpressionReuse(insert.OnDuplicate) {
+		onDupMemo = newOnDuplicateExprMemo()
+		insertPlan.onDuplicateExpressionReuseEnabled = true
 	}
 	onDupColSet, err := insertPlan.resolveOnDuplicate(insert.OnDuplicate, tableInfo, func(node ast.ExprNode) (expression.Expression, error) {
-		return b.rewriteInsertOnDuplicateUpdate(ctx, node, mockTablePlan, insertPlan, odkuMemo)
+		return b.rewriteInsertOnDuplicateUpdate(ctx, node, mockTablePlan, insertPlan, onDupMemo)
 	})
 	if err != nil {
 		return nil, err
@@ -4801,12 +4801,12 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	return insertPlan, err
 }
 
-const minODKUFunctionCountForExpressionReuse = 8
+const minOnDuplicateFunctionCountForExpressionReuse = 8
 
-func hasEnoughODKUFunctionsForExpressionReuse(onDup []*ast.Assignment) bool {
+func hasEnoughOnDuplicateFunctionsForExpressionReuse(onDup []*ast.Assignment) bool {
 	hasNonSimpleExpr := false
 	for _, assign := range onDup {
-		if assign.Expr != nil && !isSimpleODKUExprForExpressionReuse(assign.Expr) {
+		if assign.Expr != nil && !isSimpleOnDuplicateExprForExpressionReuse(assign.Expr) {
 			hasNonSimpleExpr = true
 			break
 		}
@@ -4815,20 +4815,20 @@ func hasEnoughODKUFunctionsForExpressionReuse(onDup []*ast.Assignment) bool {
 		return false
 	}
 
-	counter := odkuFunctionCounter{}
+	counter := onDuplicateFunctionCounter{}
 	for _, assign := range onDup {
 		if assign.Expr == nil {
 			continue
 		}
 		assign.Expr.Accept(&counter)
-		if counter.count >= minODKUFunctionCountForExpressionReuse {
+		if counter.count >= minOnDuplicateFunctionCountForExpressionReuse {
 			return true
 		}
 	}
 	return false
 }
 
-func isSimpleODKUExprForExpressionReuse(expr ast.ExprNode) bool {
+func isSimpleOnDuplicateExprForExpressionReuse(expr ast.ExprNode) bool {
 	for {
 		parentheses, ok := expr.(*ast.ParenthesesExpr)
 		if !ok {
@@ -4844,11 +4844,11 @@ func isSimpleODKUExprForExpressionReuse(expr ast.ExprNode) bool {
 	}
 }
 
-type odkuFunctionCounter struct {
+type onDuplicateFunctionCounter struct {
 	count int
 }
 
-func (c *odkuFunctionCounter) Enter(in ast.Node) (ast.Node, bool) {
+func (c *onDuplicateFunctionCounter) Enter(in ast.Node) (ast.Node, bool) {
 	switch in.(type) {
 	case *ast.BetweenExpr, *ast.BinaryOperationExpr, *ast.CaseExpr, *ast.FuncCallExpr,
 		*ast.FuncCastExpr, *ast.IsNullExpr, *ast.IsTruthExpr, *ast.PatternInExpr,
@@ -4856,10 +4856,10 @@ func (c *odkuFunctionCounter) Enter(in ast.Node) (ast.Node, bool) {
 		*ast.UnaryOperationExpr:
 		c.count++
 	}
-	return in, c.count >= minODKUFunctionCountForExpressionReuse
+	return in, c.count >= minOnDuplicateFunctionCountForExpressionReuse
 }
 
-func (*odkuFunctionCounter) Leave(in ast.Node) (ast.Node, bool) {
+func (*onDuplicateFunctionCounter) Leave(in ast.Node) (ast.Node, bool) {
 	return in, true
 }
 

@@ -178,7 +178,7 @@ func buildSimpleExpr(ctx expression.BuildContext, node ast.ExprNode, opts ...exp
 	return expr, err
 }
 
-func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(ctx context.Context, exprNode ast.ExprNode, mockPlan base.LogicalPlan, insertPlan *Insert, odkuMemo *odkuExprMemo) (expression.Expression, error) {
+func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(ctx context.Context, exprNode ast.ExprNode, mockPlan base.LogicalPlan, insertPlan *Insert, onDupMemo *onDuplicateExprMemo) (expression.Expression, error) {
 	b.rewriterCounter++
 	defer func() { b.rewriterCounter-- }()
 
@@ -195,12 +195,12 @@ func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(ctx context.Context, exprNo
 	rewriter.planCtx.insertPlan = insertPlan
 	rewriter.asScalar = true
 	rewriter.allowBuildCastArray = b.allowBuildCastArray
-	if odkuMemo != nil {
-		rewriter.odkuMemo = odkuMemo
+	if onDupMemo != nil {
+		rewriter.onDuplicateMemo = onDupMemo
 		defer func() {
-			rewriter.odkuMemo = nil
-			rewriter.odkuMemoDisableDepth = 0
-			odkuMemo.resetFrames()
+			rewriter.onDuplicateMemo = nil
+			rewriter.onDuplicateMemoDisableDepth = 0
+			onDupMemo.resetFrames()
 		}()
 	}
 
@@ -276,8 +276,8 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p base.LogicalP
 	rewriter.ctxNameStk = rewriter.ctxNameStk[:0]
 	rewriter.ctx = ctx
 	rewriter.err = nil
-	rewriter.odkuMemo = nil
-	rewriter.odkuMemoDisableDepth = 0
+	rewriter.onDuplicateMemo = nil
+	rewriter.onDuplicateMemoDisableDepth = 0
 	rewriter.planCtx.plan = p
 	rewriter.planCtx.curClause = b.curClause
 	rewriter.planCtx.aggrMap = nil
@@ -378,19 +378,19 @@ type expressionRewriter struct {
 	disableFoldCounter int
 	tryFoldCounter     int
 
-	planCtx              *exprRewriterPlanCtx
-	odkuMemo             *odkuExprMemo
-	odkuMemoDisableDepth int
+	planCtx                     *exprRewriterPlanCtx
+	onDuplicateMemo             *onDuplicateExprMemo
+	onDuplicateMemoDisableDepth int
 }
 
-type odkuExprMemo struct {
+type onDuplicateExprMemo struct {
 	cache      map[string]expression.Expression
-	frames     []odkuMemoFrame
+	frames     []onDuplicateMemoFrame
 	restoreBuf bytes.Buffer
 	restoreCtx *format.RestoreCtx
 }
 
-type odkuMemoFrame struct {
+type onDuplicateMemoFrame struct {
 	key         string
 	stackLen    int
 	hit         bool
@@ -398,27 +398,27 @@ type odkuMemoFrame struct {
 	disableMemo bool
 }
 
-func newODKUExprMemo() *odkuExprMemo {
-	return &odkuExprMemo{
+func newOnDuplicateExprMemo() *onDuplicateExprMemo {
+	return &onDuplicateExprMemo{
 		cache: make(map[string]expression.Expression),
 	}
 }
 
-func (m *odkuExprMemo) resetFrames() {
+func (m *onDuplicateExprMemo) resetFrames() {
 	m.frames = m.frames[:0]
 }
 
-func (m *odkuExprMemo) pushFrame(frame odkuMemoFrame) {
+func (m *onDuplicateExprMemo) pushFrame(frame onDuplicateMemoFrame) {
 	m.frames = append(m.frames, frame)
 }
 
-func (m *odkuExprMemo) popFrame() odkuMemoFrame {
+func (m *onDuplicateExprMemo) popFrame() onDuplicateMemoFrame {
 	frame := m.frames[len(m.frames)-1]
 	m.frames = m.frames[:len(m.frames)-1]
 	return frame
 }
 
-func (m *odkuExprMemo) buildKey(node ast.Node) (string, bool) {
+func (m *onDuplicateExprMemo) buildKey(node ast.Node) (string, bool) {
 	exprNode, ok := node.(ast.ExprNode)
 	if !ok {
 		return "", false
@@ -605,34 +605,34 @@ func (er *expressionRewriter) requirePlanCtx(inNode ast.Node, detail string) (ct
 
 // Enter implements Visitor interface.
 func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
-	if er.odkuMemo != nil {
-		frame := odkuMemoFrame{stackLen: er.ctxStackLen()}
+	if er.onDuplicateMemo != nil {
+		frame := onDuplicateMemoFrame{stackLen: er.ctxStackLen()}
 		if _, ok := inNode.(*ast.SetCollationExpr); ok {
 			frame.disableMemo = true
-			er.odkuMemoDisableDepth++
+			er.onDuplicateMemoDisableDepth++
 		}
-		if er.odkuMemoDisableDepth == 0 {
-			key, ok := er.odkuMemo.buildKey(inNode)
+		if er.onDuplicateMemoDisableDepth == 0 {
+			key, ok := er.onDuplicateMemo.buildKey(inNode)
 			if !ok {
-				er.odkuMemo.pushFrame(frame)
-				return er.enterWithoutODKUMemo(inNode)
+				er.onDuplicateMemo.pushFrame(frame)
+				return er.enterWithoutOnDuplicateMemo(inNode)
 			}
 			frame.valid = true
 			frame.key = key
-			if expr, ok := er.odkuMemo.cache[key]; ok {
+			if expr, ok := er.onDuplicateMemo.cache[key]; ok {
 				frame.hit = true
 				er.ctxStackAppend(expr, types.EmptyName)
-				er.odkuMemo.pushFrame(frame)
+				er.onDuplicateMemo.pushFrame(frame)
 				return inNode, true
 			}
 		}
-		er.odkuMemo.pushFrame(frame)
+		er.onDuplicateMemo.pushFrame(frame)
 	}
 
-	return er.enterWithoutODKUMemo(inNode)
+	return er.enterWithoutOnDuplicateMemo(inNode)
 }
 
-func (er *expressionRewriter) enterWithoutODKUMemo(inNode ast.Node) (ast.Node, bool) {
+func (er *expressionRewriter) enterWithoutOnDuplicateMemo(inNode ast.Node) (ast.Node, bool) {
 	enterWithPlanCtx := func(fn func(*exprRewriterPlanCtx) (ast.Node, bool)) (ast.Node, bool) {
 		planCtx, err := er.requirePlanCtx(inNode, "")
 		if err != nil {
@@ -1555,15 +1555,15 @@ func (er *expressionRewriter) adjustUTF8MB4Collation(tp *types.FieldType) {
 
 // Leave implements Visitor interface.
 func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok bool) {
-	var odkuFrame odkuMemoFrame
-	var hasODKUFrame bool
-	if er.odkuMemo != nil {
-		odkuFrame = er.odkuMemo.popFrame()
-		hasODKUFrame = true
-		if odkuFrame.disableMemo {
-			er.odkuMemoDisableDepth--
+	var onDupFrame onDuplicateMemoFrame
+	var hasOnDupFrame bool
+	if er.onDuplicateMemo != nil {
+		onDupFrame = er.onDuplicateMemo.popFrame()
+		hasOnDupFrame = true
+		if onDupFrame.disableMemo {
+			er.onDuplicateMemoDisableDepth--
 		}
-		if odkuFrame.hit {
+		if onDupFrame.hit {
 			return originInNode, true
 		}
 	}
@@ -1778,10 +1778,10 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 	if er.err != nil {
 		return retNode, false
 	}
-	if hasODKUFrame && odkuFrame.valid && er.ctxStackLen() == odkuFrame.stackLen+1 {
+	if hasOnDupFrame && onDupFrame.valid && er.ctxStackLen() == onDupFrame.stackLen+1 {
 		expr := er.ctxStack[len(er.ctxStack)-1]
 		if !expression.IsMutableEffectsExpr(expr) {
-			er.odkuMemo.cache[odkuFrame.key] = expr
+			er.onDuplicateMemo.cache[onDupFrame.key] = expr
 		}
 	}
 	return originInNode, true
