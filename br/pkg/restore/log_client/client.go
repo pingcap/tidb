@@ -62,9 +62,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/objstore"
@@ -1553,6 +1555,85 @@ func (rc *LogClient) SetTableModeToNormal(ctx context.Context, schemaReplace *st
 			}
 		}
 	}
+	return nil
+}
+
+// RebaseAutoIncrementIDForSepAutoIncTables syncs the autoid service's in-memory
+// allocator to the persisted TiKV value for every restored AUTO_ID_CACHE=1 table.
+//
+// Tables with AUTO_ID_CACHE=1 (TableInfo.SepAutoInc()) have their auto-increment
+// counter served by the centralized autoid service. PiTR log replay restores the
+// persisted counter via raw KV writes but never notifies the autoid service, so
+// its cached in-memory base can remain stale and hand out already-restored IDs,
+// producing duplicate-key errors on the first insert after restore. Reading the
+// persisted value and force-rebasing the allocator repairs the stale cache.
+// See https://github.com/pingcap/tidb/issues/69485.
+func (rc *LogClient) RebaseAutoIncrementIDForSepAutoIncTables(ctx context.Context, schemaReplace *stream.SchemasReplace) error {
+	infoSchema := rc.dom.InfoSchema()
+	store := rc.dom.Store()
+	for _, dbReplace := range schemaReplace.DbReplaceMap {
+		if dbReplace.FilteredOut {
+			continue
+		}
+		for _, tableReplace := range dbReplace.TableMap {
+			if tableReplace.FilteredOut {
+				continue
+			}
+			if err := rc.rebaseAutoIncrementIDForTable(ctx, store, infoSchema, dbReplace.DbID, tableReplace.TableID); err != nil {
+				// Best effort: a single table failing to rebase must not abort the
+				// whole restore, so log and continue.
+				log.Warn("failed to rebase auto-increment allocator after PiTR log replay",
+					zap.Int64("schemaID", dbReplace.DbID),
+					zap.Int64("tableID", tableReplace.TableID),
+					zap.String("tableName", tableReplace.Name),
+					zap.Error(err))
+			}
+		}
+	}
+	return nil
+}
+
+// rebaseAutoIncrementIDForTable force-rebases the autoid service for a single
+// AUTO_ID_CACHE=1 table to the auto-increment counter currently persisted in
+// TiKV. It is a no-op for tables that do not use a separated auto-increment
+// allocator or that no longer exist in the info schema.
+func (rc *LogClient) rebaseAutoIncrementIDForTable(ctx context.Context, store kv.Storage, infoSchema infoschema.InfoSchema, dbID, tableID int64) error {
+	tbl, ok := infoSchema.TableByID(ctx, tableID)
+	if !ok {
+		return nil
+	}
+	tblInfo := tbl.Meta()
+	if !tblInfo.SepAutoInc() {
+		return nil
+	}
+	alloc := tbl.Allocators(nil).Get(autoid.AutoIncrementType)
+	if alloc == nil {
+		return nil
+	}
+	// Read the persisted auto-increment counter directly from TiKV, bypassing the
+	// autoid service cache which is exactly the stale state we want to repair.
+	var persisted int64
+	if err := kv.RunInNewTxn(ctx, store, false, func(_ context.Context, txn kv.Transaction) error {
+		var err error
+		persisted, err = meta.NewMutator(txn).GetAutoIDAccessors(dbID, tableID).IncrementID(model.TableInfoVersion5).Get()
+		return err
+	}); err != nil {
+		return errors.Trace(err)
+	}
+	if persisted <= 0 {
+		return nil
+	}
+	// The persisted value is the last allocated ID, so ForceRebase makes the next
+	// allocation persisted+1. It is idempotent when the service already sits at
+	// this value: the persisted counter is untouched and only the in-memory base
+	// is refreshed.
+	if err := alloc.ForceRebase(persisted); err != nil {
+		return errors.Trace(err)
+	}
+	log.Info("rebased auto-increment allocator after PiTR log replay",
+		zap.Int64("schemaID", dbID),
+		zap.Int64("tableID", tableID),
+		zap.Int64("persistedBase", persisted))
 	return nil
 }
 

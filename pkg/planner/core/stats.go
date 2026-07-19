@@ -40,6 +40,7 @@ import (
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
+	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 	"go.uber.org/zap"
 )
 
@@ -195,9 +196,59 @@ func fillIndexPath(ds *logicalop.DataSource, path *util.AccessPath, conds []expr
 				}
 			}
 		}
+		tryAppendCommonHandleColsToIndexPath(ds, path)
 	}
 	err := detachCondAndBuildRangeForPath(ds.SCtx(), path, conds, ds.TableStats.HistColl)
 	return err
+}
+
+// tryAppendCommonHandleColsToIndexPath is the common-handle counterpart of the int-handle
+// append in fillIndexPath. The key of a non-unique secondary index on a clustered table
+// physically ends with the full common handle, so appending the primary key columns to the
+// path lets ranger turn predicates on them into tighter scan ranges instead of filters.
+// The caller must have checked that the index is non-unique, non-primary, and that all
+// declared index columns are resolved (len(path.Index.Columns) == len(path.IdxCols)).
+func tryAppendCommonHandleColsToIndexPath(ds *logicalop.DataSource, path *util.AccessPath) {
+	if !ds.TableInfo.IsCommonHandle || len(ds.CommonHandleCols) == 0 ||
+		len(ds.CommonHandleLens) != len(ds.CommonHandleCols) {
+		return
+	}
+	// Global indexes (V1+) encode the partition ID between the index columns and the handle,
+	// and MV/columnar indexes build their ranges specially, so appended columns would not
+	// align with the physical key layout.
+	if path.Index.Global || path.Index.MVIndex || path.Index.IsColumnarIndex() {
+		return
+	}
+	// In CommonHandleVersion 0 with new collation, string handle columns are stored as
+	// collation sortKey bytes without restored data. Skip them to stay consistent with the
+	// coverage check (indexCoveringColumn) and the ordering check (matchProperty).
+	if hasV0NewCollationStringHandle(ds) {
+		return
+	}
+	for _, handleCol := range ds.CommonHandleCols {
+		if handleCol == nil {
+			return
+		}
+		// If a primary key column is already among the declared index columns, the physical
+		// key contains it twice: once in the index columns and once in the handle suffix.
+		// Appending only the missing columns would misalign the ranges with the key layout,
+		// and repeating a column breaks range building, so skip the append entirely.
+		for _, col := range path.IdxCols {
+			if col.EqualColumn(handleCol) {
+				return
+			}
+		}
+	}
+	path.FullIdxCols = append(path.FullIdxCols, ds.CommonHandleCols...)
+	path.FullIdxColLens = append(path.FullIdxColLens, ds.CommonHandleLens...)
+	path.IdxCols = append(path.IdxCols, ds.CommonHandleCols...)
+	path.IdxColLens = append(path.IdxColLens, ds.CommonHandleLens...)
+	// Also updates the map that maps the index id to its prefix column ids.
+	if len(ds.TableStats.HistColl.Idx2ColUniqueIDs[path.Index.ID]) == len(path.Index.Columns) {
+		for _, handleCol := range ds.CommonHandleCols {
+			ds.TableStats.HistColl.Idx2ColUniqueIDs[path.Index.ID] = append(ds.TableStats.HistColl.Idx2ColUniqueIDs[path.Index.ID], handleCol.UniqueID)
+		}
+	}
 }
 
 // adjustCountAfterAccess adjusts the CountAfterAccess when it's less than the estimated table row count.
@@ -435,28 +486,35 @@ func detachCondAndBuildRangeForPath(
 			}
 		}
 	}
-	var estimateRanges []*ranger.Range
+	estimateRanges := path.Ranges
 	if needPruneEstimateRange {
 		// Non-unique index paths may append handle columns in `path.IdxCols` for execution ranges.
 		// Rebuild estimation ranges with the same column set used in row-count estimation.
-		estimateRanges = pruneEstimateRange(path.Ranges, len(indexCols))
-	} else {
-		estimateRanges = path.Ranges
+		estimateRanges, err = pruneEstimateRange(sctx.GetRangerCtx(), path.Ranges, len(indexCols))
+		if err != nil {
+			return err
+		}
 	}
 	count, err := cardinality.GetRowCountByIndexRanges(sctx, histColl, path.Index.ID, estimateRanges, indexCols)
 	path.CountAfterAccess, path.MinCountAfterAccess, path.MaxCountAfterAccess = count.Est, count.MinEst, count.MaxEst
 	return err
 }
 
-func pruneEstimateRange(ranges []*ranger.Range, keepColCnt int) []*ranger.Range {
-	estimateRanges := make([]*ranger.Range, 0, len(ranges))
+// pruneEstimateRange truncates ranges built over the index columns plus the appended handle
+// columns down to keepColCnt columns, so that they align with the index statistics, which
+// only cover the declared index columns. Truncating a bound widens it to the whole prefix:
+// a bound that lost values must become inclusive (otherwise a range like (10 1, 10 +inf]
+// would collapse to the empty (10, 10]), and ranges that collapse to the same prefix must
+// be merged so the prefix rows are not counted once per pruned range.
+func pruneEstimateRange(rctx *rangerctx.RangerContext, ranges []*ranger.Range, keepColCnt int) ([]*ranger.Range, error) {
+	estimateRanges := make(ranger.Ranges, 0, len(ranges))
 	for _, ran := range ranges {
 		newRange := &ranger.Range{
 			LowVal:      make([]types.Datum, 0, keepColCnt),
 			HighVal:     make([]types.Datum, 0, keepColCnt),
 			Collators:   make([]collate.Collator, 0, keepColCnt),
-			LowExclude:  ran.LowExclude,
-			HighExclude: ran.HighExclude,
+			LowExclude:  ran.LowExclude && len(ran.LowVal) <= keepColCnt,
+			HighExclude: ran.HighExclude && len(ran.HighVal) <= keepColCnt,
 		}
 		for idx := range min(keepColCnt, len(ran.LowVal)) {
 			newRange.LowVal = append(newRange.LowVal, ran.LowVal[idx])
@@ -465,7 +523,7 @@ func pruneEstimateRange(ranges []*ranger.Range, keepColCnt int) []*ranger.Range 
 		}
 		estimateRanges = append(estimateRanges, newRange)
 	}
-	return estimateRanges
+	return ranger.UnionRanges(rctx, estimateRanges, false)
 }
 
 func getGeneralAttributesFromPaths(paths []*util.AccessPath, totalRowCount float64) (float64, bool) {
@@ -503,7 +561,9 @@ func getGroupNDVs(ds *logicalop.DataSource) []property.GroupNDV {
 		if colsLen < len(idx.Info.Columns) {
 			return false
 		} else if colsLen > len(idx.Info.Columns) {
-			colsLen--
+			// Ignore the appended handle columns: one column for an int handle, and
+			// possibly several for a common handle.
+			colsLen = len(idx.Info.Columns)
 		}
 		idxCols := make([]int64, colsLen)
 		copy(idxCols, tbl.Idx2ColUniqueIDs[idxID])

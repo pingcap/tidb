@@ -27,7 +27,7 @@ import (
 
 // TaskManager defines the interface to access task table.
 type TaskManager interface {
-	// GetTopUnfinishedTasks returns unfinished tasks, limited by MaxConcurrentTask*2,
+	// GetTopUnfinishedTasks returns unfinished tasks, limited by GetMaxConcurrentTask()*2,
 	// to make sure low ranking tasks can be scheduled if resource is enough.
 	// The returned tasks are sorted by task order, see proto.Task.
 	GetTopUnfinishedTasks(ctx context.Context) ([]*proto.TaskBase, error)
@@ -40,7 +40,8 @@ type TaskManager interface {
 	GetAllTasks(ctx context.Context) ([]*proto.TaskBase, error)
 	// GetAllSubtasks gets all subtasks with basic columns.
 	GetAllSubtasks(ctx context.Context) ([]*proto.SubtaskBase, error)
-	GetTasksInStates(ctx context.Context, states ...any) (task []*proto.Task, err error)
+	// GetCleanupTasks gets finished tasks, limited by the configured cleanup batch size.
+	GetCleanupTasks(ctx context.Context) (task []*proto.Task, err error)
 	GetTaskByID(ctx context.Context, taskID int64) (task *proto.Task, err error)
 	GetTaskBaseByID(ctx context.Context, taskID int64) (task *proto.TaskBase, err error)
 	GCSubtasks(ctx context.Context) error
@@ -60,6 +61,8 @@ type TaskManager interface {
 	RevertedTask(ctx context.Context, taskID int64) error
 	// PauseTask updated task state to pausing.
 	PauseTask(ctx context.Context, taskKey string) (bool, error)
+	// PauseTaskOnError updates task state to pausing and records the task error.
+	PauseTaskOnError(ctx context.Context, taskID int64, taskState proto.TaskState, step proto.Step, taskErr error) error
 	// PausedTask updated task state to 'paused'.
 	PausedTask(ctx context.Context, taskID int64) error
 	// ResumedTask updated task state from resuming to running.
@@ -98,6 +101,8 @@ type TaskManager interface {
 	GetActiveSubtasks(ctx context.Context, taskID int64) ([]*proto.SubtaskBase, error)
 	// GetSubtaskCntGroupByStates returns the count of subtasks of some step group by state.
 	GetSubtaskCntGroupByStates(ctx context.Context, taskID int64, step proto.Step) (map[proto.SubtaskState]int64, error)
+	// GetSubtaskStateCntAndErrorsByStep returns the subtask count by state and failed/canceled errors of some step.
+	GetSubtaskStateCntAndErrorsByStep(ctx context.Context, taskID int64, step proto.Step) (map[proto.SubtaskState]int64, []error, error)
 	ResumeSubtasks(ctx context.Context, taskID int64) error
 	GetSubtaskErrors(ctx context.Context, taskID int64) ([]error, error)
 	UpdateSubtasksExecIDs(ctx context.Context, subtasks []*proto.SubtaskBase) error

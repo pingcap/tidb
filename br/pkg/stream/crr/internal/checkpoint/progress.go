@@ -19,8 +19,8 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"math"
 	"path"
+	"slices"
 	"sync"
 	"time"
 
@@ -122,6 +122,10 @@ func (c *Calculator) planRound(ctx context.Context) (roundPlan, error) {
 			cancel()
 			break
 		}
+		if syncedTS, ok := c.state.syncedByStore[metaFile.storeID]; ok && metaFile.flushTS <= syncedTS {
+			plan.statistic.SkippedStoreSyncedMetaFileCount++
+			continue
+		}
 
 		eg.Go(func() error {
 			failpoint.InjectCall("before-read-meta", metaFile.path)
@@ -190,58 +194,39 @@ func (c *Calculator) advanceSyncedState(
 		}
 	}
 
-	missingStores := make([]uint64, 0)
-	for storeID := range aliveStores {
-		if _, ok := c.state.syncedByStore[storeID]; !ok {
-			missingStores = append(missingStores, storeID)
-		}
-	}
-	if len(missingStores) > 0 {
-		c.warnUnsafeSyncedTS(missingStores, "alive store has no observed flush ts yet")
+	syncedByStoreBeforePrune := maps.Clone(c.state.syncedByStore)
+	maps.DeleteFunc(c.state.syncedByStore, func(storeID uint64, _ uint64) bool {
+		_, ok := aliveStores[storeID]
+		return !ok
+	})
+
+	if ok := c.checkMissingStore(aliveStores); !ok {
 		return
 	}
 
-	if len(c.state.syncedByStore) == 0 {
+	storeSyncedTSs := slices.Collect(maps.Values(syncedByStoreBeforePrune))
+	if len(storeSyncedTSs) == 0 {
 		return
 	}
-
-	syncedCandidate := uint64(math.MaxUint64)
-	for _, storeSyncedTS := range c.state.syncedByStore {
-		if storeSyncedTS < syncedCandidate {
-			syncedCandidate = storeSyncedTS
-		}
-	}
-
-	if syncedCandidate < c.state.syncedTS {
-		behindStores := make([]uint64, 0)
-		for storeID, storeSyncedTS := range c.state.syncedByStore {
-			if storeSyncedTS < c.state.syncedTS {
-				behindStores = append(behindStores, storeID)
-			}
-		}
-		c.warnUnsafeSyncedTS(behindStores, "observed store flush ts is behind current synced-ts")
-		return
-	}
+	syncedCandidate := slices.Min(storeSyncedTSs)
 	if syncedCandidate > c.state.syncedTS {
 		c.state.syncedTS = syncedCandidate
 	}
 }
 
-func (c *Calculator) warnUnsafeSyncedTS(storeIDs []uint64, reason string) {
-	if c.state.syncedTS == 0 {
-		return
+func (c *Calculator) checkMissingStore(aliveStores map[uint64]struct{}) bool {
+	missingStores := slices.DeleteFunc(slices.Collect(maps.Keys(aliveStores)), func(storeID uint64) bool {
+		_, ok := c.state.syncedByStore[storeID]
+		return ok
+	})
+	if len(missingStores) == 0 {
+		return true
 	}
-	if len(storeIDs) == 0 {
-		return
-	}
-	log.Warn(
-		"crr checkpoint calculator cannot safely advance synced-ts",
-		zap.String("category", "crr checkpoint"),
-		zap.String("task", c.cfg.TaskName),
-		zap.Uint64s("store-ids", storeIDs),
-		zap.Uint64("synced-ts", c.state.syncedTS),
-		zap.String("reason", reason),
-	)
+	log.Warn("crr checkpoint calculator cannot safely advance synced-ts",
+		zap.String("category", "crr checkpoint"), zap.String("task", c.cfg.TaskName),
+		zap.Uint64s("store-ids", missingStores), zap.Uint64("synced-ts", c.state.syncedTS),
+		zap.String("reason", "alive store has no observed flush ts yet"))
+	return false
 }
 
 func sleepWithContext(ctx context.Context, d time.Duration) error {
@@ -258,6 +243,7 @@ func sleepWithContext(ctx context.Context, d time.Duration) error {
 func (s FileStatistic) snapshot() *FileStatistic {
 	cloned := FileStatistic{
 		UpstreamReadMetaFileCount:       s.UpstreamReadMetaFileCount,
+		SkippedStoreSyncedMetaFileCount: s.SkippedStoreSyncedMetaFileCount,
 		EstimatedSyncLogFileCount:       s.EstimatedSyncLogFileCount,
 		DownstreamCheckFileCount:        s.DownstreamCheckFileCount,
 		PlannedFileSuffixCounts:         maps.Clone(s.PlannedFileSuffixCounts),

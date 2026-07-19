@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/stretchr/testify/require"
 )
 
@@ -41,6 +42,42 @@ func prepareCollationData() (int, *chunk.Chunk, *chunk.Chunk) {
 	chk1.Column(0).AppendString("À")
 	chk2.Column(0).AppendString("A")
 	return 3, chk1, chk2
+}
+
+func TestEncoderNewCollationEnabled(t *testing.T) {
+	origin := collate.NewCollationEnabled()
+	defer collate.SetNewCollationEnabledForTest(origin)
+
+	lower := types.NewCollationStringDatum("aaa", "utf8_general_ci")
+	upper := types.NewCollationStringDatum("AAA", "utf8_general_ci")
+	enabledEncoder := Encoder{useNewCollate: true}
+	disabledEncoder := Encoder{useNewCollate: false}
+
+	collate.SetNewCollationEnabledForTest(true)
+	enabledLower, err := enabledEncoder.EncodeKey(time.Local, nil, lower)
+	require.NoError(t, err)
+	enabledUpper, err := enabledEncoder.EncodeKey(time.Local, nil, upper)
+	require.NoError(t, err)
+	require.Equal(t, enabledLower, enabledUpper)
+
+	disabledLower, err := disabledEncoder.EncodeKey(time.Local, nil, lower)
+	require.NoError(t, err)
+	disabledUpper, err := disabledEncoder.EncodeKey(time.Local, nil, upper)
+	require.NoError(t, err)
+	require.NotEqual(t, disabledLower, disabledUpper)
+
+	exportedEnabledLower, err := EncodeKey(time.Local, nil, lower)
+	require.NoError(t, err)
+	require.Equal(t, enabledLower, exportedEnabledLower)
+
+	collate.SetNewCollationEnabledForTest(false)
+	exportedDisabledLower, err := EncodeKey(time.Local, nil, lower)
+	require.NoError(t, err)
+	require.Equal(t, disabledLower, exportedDisabledLower)
+
+	enabledHash := enabledEncoder.HashCode(nil, lower)
+	disabledHash := disabledEncoder.HashCode(nil, lower)
+	require.Equal(t, enabledHash, disabledHash)
 }
 
 func TestHashGroupKeyCollation(t *testing.T) {

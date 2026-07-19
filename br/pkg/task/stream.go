@@ -1908,6 +1908,15 @@ func restoreStream(
 		return errors.Trace(err)
 	}
 
+	// PiTR log replay writes auto-increment counters straight to TiKV without
+	// notifying the autoid service, leaving its in-memory cache stale for
+	// AUTO_ID_CACHE=1 tables. Now that the schema is reloaded and the persisted
+	// counters are final, sync the service to avoid duplicate-key errors on the
+	// first post-restore insert (issue #69485).
+	if err = client.RebaseAutoIncrementIDForSepAutoIncTables(ctx, schemasReplace); err != nil {
+		return errors.Trace(err)
+	}
+
 	if err = client.CleanUpKVFiles(ctx); err != nil {
 		return errors.Annotate(err, "failed to clean up")
 	}

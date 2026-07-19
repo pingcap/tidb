@@ -255,6 +255,9 @@ func (s *Server) startHTTPServer() {
 		router.Handle("/dxf/schedule/tune", tikvhandler.NewDXFScheduleTuneHandler(tikvHandlerTool.Store.(kv.Storage))).Name("DXF_Schedule_Tune")
 		router.Handle("/dxf/task/active", tikvhandler.NewDXFActiveTaskHandler()).Name("DXF_Task_Active")
 		router.Handle("/dxf/task/history", tikvhandler.NewDXFTaskHistoryHandler()).Name("DXF_Task_History")
+		// These APIs update only the TiDB process that handles the request and are not persisted.
+		router.Handle("/dxf/schedule/max_concurrent_task", tikvhandler.NewDXFTaskMaxConcurrentHandler()).Name("DXF_Schedule_Max_Concurrent_Task")
+		router.Handle("/dxf/schedule/task_cleanup_batch_size", tikvhandler.NewDXFTaskCleanupBatchSizeHandler()).Name("DXF_Schedule_Task_Cleanup_Batch_Size")
 		router.Handle("/dxf/import-into/history/job/{keyspace}/{job_id}", tikvhandler.NewDXFImportIntoHistoryJobInfoHandler()).Name("DXF_Import_Into_History_Job_Info")
 		router.Handle("/dxf/task/{taskID}/max_runtime_slots", tikvhandler.NewDXFTaskMaxRuntimeSlotsHandler()).Name("DXF_Task_Max_Runtime_Slots")
 	}

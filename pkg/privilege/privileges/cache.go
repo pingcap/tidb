@@ -116,6 +116,10 @@ type UserRecord struct {
 	UserAttributesInfo
 
 	AuthenticationString string
+	// AdditionalAuthString holds the MySQL-compatible secondary
+	// ("additional") password hash decoded from user_attributes.$.additional_password.
+	// Empty when the user has no secondary password.
+	AdditionalAuthString string
 	Privileges           mysql.PrivilegeType
 	AccountLocked        bool // A role record when this field is true
 	AuthPlugin           string
@@ -1057,6 +1061,17 @@ func (p *MySQLPrivilege) decodeUserTableRow(userList map[string]struct{}) func(c
 						return err
 					}
 					value.ResourceGroup = strings.Clone(resourceGroup)
+				}
+				pathExpr, err = types.ParseJSONPathExpr("$.additional_password")
+				if err != nil {
+					return err
+				}
+				if additionalBJ, found := bj.Extract([]types.JSONPathExpression{pathExpr}); found {
+					additional, err := additionalBJ.Unquote()
+					if err != nil {
+						return err
+					}
+					value.AdditionalAuthString = strings.Clone(additional)
 				}
 				passwordLocking := PasswordLocking{}
 				if err := passwordLocking.ParseJSON(bj); err != nil {
@@ -2192,6 +2207,13 @@ func (h *Handle) Get() *MySQLPrivilege {
 // UpdateAll loads all the users' privilege info from kv storage.
 func (h *Handle) UpdateAll() error {
 	priv := newMySQLPrivilege()
+	// Propagate the sysvar accessor like updateUsers does: decodeUserTableRow
+	// resolves legacy empty-plugin rows via default_authentication_plugin, and
+	// without the accessor a full reload (e.g. FLUSH PRIVILEGES) would resolve
+	// those rows as mysql_native_password while the lazy per-user path resolves
+	// them via the configured default — the same row would authenticate
+	// differently depending on which path loaded it.
+	priv.globalVars = h.globalVars
 	res, err := h.sctx.Get()
 	if err != nil {
 		return errors.Trace(err)

@@ -69,6 +69,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -1261,6 +1262,16 @@ func (do *Domain) SysSessionPool() util.DestroyableSessionPool {
 	return do.sysSessionPool
 }
 
+// AlterTableMode implements sqlsvrapi.Runtime.
+func (do *Domain) AlterTableMode(_ context.Context, target model.AlterTableModeTarget) error {
+	se, err := do.sysSessionPool.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer do.sysSessionPool.Put(se)
+	return ddl.AlterTableMode(do.ddlExecutor, se.(sessionctx.Context), target.TargetMode, target.SchemaID, target.TableID)
+}
+
 // AdvancedSysSessionPool is a more powerful session pool that returns a wrapped session which can detect
 // some misuse of the session to avoid potential bugs.
 // It is recommended to use this pool instead of `sysSessionPool`.
@@ -1695,7 +1706,7 @@ func (do *Domain) TelemetryLoop(ctx sessionctx.Context) {
 
 // SetupPlanReplayerHandle setup plan replayer handle
 func (do *Domain) SetupPlanReplayerHandle(collectorSctx sessionctx.Context, workersSctxs []sessionctx.Context) {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsForegroundPriority)
 	do.planReplayerHandle = &planReplayerHandle{}
 	do.planReplayerHandle.planReplayerTaskCollectorHandle = &planReplayerTaskCollectorHandle{
 		ctx:  ctx,

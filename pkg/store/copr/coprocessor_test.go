@@ -700,6 +700,68 @@ func TestBuildPagingTasksDisablePagingForSmallLimit(t *testing.T) {
 	taskEqual(t, tasks[0], regionIDs[0], 0, "a", "c")
 	require.False(t, tasks[0].paging)
 	require.Equal(t, tasks[0].pagingSize, uint64(0))
+
+	ema := newRUEMA(0)
+	ema.Observe(1_048_576, time.Now())
+	worker := &copIteratorWorker{req: req, ema: ema}
+	require.Zero(t, worker.predictedReadBytesForTask(tasks[0]))
+}
+
+func TestBuildCopTasksWithPagingSizeBytes(t *testing.T) {
+	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	defer func() {
+		pdClient.Close()
+		err = mockClient.Close()
+		require.NoError(t, err)
+	}()
+	_, regionIDs, _ := testutils.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
+
+	pdCli := tikv.NewCodecPDClient(tikv.ModeTxn, pdClient)
+	defer pdCli.Close()
+	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
+	defer cache.Close()
+	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
+
+	// A byte budget lives on the request and is the single source of truth.
+	req := &kv.Request{KeepOrder: true}
+	req.Paging.PagingSizeBytes = uint64(4 * 1024 * 1024)
+	tasks, err := buildCopTasks(bo, buildCopRanges("a", "c"), &buildCopTaskOpt{
+		req:      req,
+		cache:    cache,
+		respChan: true,
+	})
+	require.NoError(t, err)
+	require.Len(t, tasks, 1)
+	taskEqual(t, tasks[0], regionIDs[0], 0, "a", "c")
+	// A byte budget alone must not turn on row-count paging at the task level,
+	// but it still enlarges the response channel like row-count paging does.
+	require.False(t, tasks[0].paging)
+	require.Equal(t, uint64(0), tasks[0].pagingSize)
+	require.Equal(t, 18, cap(tasks[0].respChan))
+
+	ema := newRUEMA(req.Paging.PagingSizeBytes)
+	worker := &copIteratorWorker{req: req, ema: ema}
+	require.Equal(t, uint64(4*1024*1024), worker.predictedReadBytesForTask(tasks[0]))
+
+	// Row-count paging with a tiny limit downgrades independently; the byte
+	// budget on the request is untouched by that downgrade.
+	req.Paging.Enable = true
+	req.Paging.MinPagingSize = paging.MinPagingSize
+	req.LimitSize = 1
+	tasks, err = buildCopTasks(bo, buildCopRanges("a", "c"), &buildCopTaskOpt{
+		req:      req,
+		cache:    cache,
+		respChan: true,
+	})
+	require.NoError(t, err)
+	require.Len(t, tasks, 1)
+	require.False(t, tasks[0].paging)
+	require.Equal(t, uint64(0), tasks[0].pagingSize)
+	require.Equal(t, uint64(4*1024*1024), req.Paging.PagingSizeBytes)
+	require.Equal(t, 18, cap(tasks[0].respChan))
+	worker = &copIteratorWorker{req: req, ema: newRUEMA(req.Paging.PagingSizeBytes)}
+	require.Equal(t, uint64(4*1024*1024), worker.predictedReadBytesForTask(tasks[0]))
 }
 
 func toCopRange(r kv.KeyRange) *coprocessor.KeyRange {
