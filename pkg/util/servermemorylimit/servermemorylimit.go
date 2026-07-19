@@ -210,7 +210,7 @@ type memoryOpsHistory struct {
 	killTime         time.Time
 	memoryLimit      uint64
 	memoryCurrent    uint64
-	processInfoDatum []types.Datum // id,user,host,db,command,time,state,info,digest,mem,disk,txnStart
+	processInfoDatum []types.Datum // id,user,host,db,command,time,state,info,digest,mem,memArbitration,memWaitArbitrateStartTime,memWaitArbitrateBytes,disk
 }
 
 func (m *memoryOpsHistoryManager) init() {
@@ -230,10 +230,10 @@ func (m *memoryOpsHistoryManager) recordOne(info *sessmgr.ProcessInfo, killTime 
 	if info.DiskTracker != nil {
 		diskConsumed = info.DiskTracker.BytesConsumed()
 	}
+	// The trailing fields align with sessmgr.ProcessInfo.ToRow(): mem arbitration (3 cols) then disk.
+	var memArbitration, memWaitArbitrateStartTime, memWaitArbitrateBytes any
 	processInfo := append(info.ToRowForShow(true), info.Digest,
-		bytesConsumed,
-		nil, nil, nil,
-		diskConsumed,
+		bytesConsumed, memArbitration, memWaitArbitrateStartTime, memWaitArbitrateBytes, diskConsumed,
 	)
 	op := memoryOpsHistory{killTime: killTime, memoryLimit: memoryLimit, memoryCurrent: memoryCurrent, processInfoDatum: types.MakeDatums(processInfo...)}
 	sqlInfo := op.processInfoDatum[7]
