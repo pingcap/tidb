@@ -85,12 +85,20 @@ name = "tikv_scan_dag_lowering_source"
 path = "tests/tikv_scan_dag_lowering_source.rs"
 
 [[test]]
+name = "tikv_selection_dag_lowering_source"
+path = "tests/tikv_selection_dag_lowering_source.rs"
+
+[[test]]
 name = "direct_unary_cancellation_source"
 path = "tests/direct_unary_cancellation_source.rs"
 
 [[test]]
 name = "real_tikv_read_source"
 path = "tests/real_tikv_read_source.rs"
+
+[[test]]
+name = "real_tikv_bigint_selection_source"
+path = "tests/real_tikv_bigint_selection_source.rs"
 
 [[test]]
 name = "real_tikv_session_authority_source"

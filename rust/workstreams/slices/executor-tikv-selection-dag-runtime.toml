@@ -1,6 +1,6 @@
 schema = "1"
 slice = "executor-tikv-selection-dag-runtime"
-status = "ready"
+status = "partial"
 target = "tidb-exec"
 ring = "plan"
 consumer = "ConstructDAGReq lowers a bounded TiKV physical plan list as TableScan followed by Selection with child absent, exact condition expressions, and caller-supplied projection output offsets while retaining the existing request context and encoding contract."
@@ -22,6 +22,7 @@ support_anchors = [
   "Output offsets are the planner's projection offsets rather than every scan column, so a predicate-only input never leaks into the MySQL row",
 ]
 rust_paths = [
+  "rust/crates/tidb-exec/Cargo.toml",
   "rust/crates/tidb-exec/src/dag_request.rs",
   "rust/crates/tidb-exec/tests/tikv_selection_dag_lowering_source.rs",
 ]
