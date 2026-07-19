@@ -95,7 +95,13 @@ struct ActiveStream {
     route: BatchRoute,
     connection_version: u64,
     terminal: Arc<Mutex<Option<BatchInflightError>>>,
+    open_state: Arc<Mutex<StreamOpenState>>,
     outbound: mpsc::UnboundedSender<BatchCommandsRequest>,
+}
+
+struct StreamOpenState {
+    waiting_for_headers: bool,
+    packet_admitted: bool,
 }
 
 /// Stream-map bookkeeping returned after the receive task retires in-flight work.
@@ -112,7 +118,6 @@ struct PreparedBatch {
 struct BatchSubmitContext<'a> {
     channels: &'a mut ChannelPool,
     runtime: &'a tokio::runtime::Runtime,
-    call: Option<&'a UnaryCallContext>,
     commands: &'a std_mpsc::Sender<WorkerCommand>,
 }
 
@@ -169,7 +174,7 @@ impl BatchTransportState {
         runtime: &tokio::runtime::Runtime,
         address: &str,
         entries: Vec<BatchCommandEntry>,
-        call: Option<&UnaryCallContext>,
+        _call: Option<&UnaryCallContext>,
         commands: &std_mpsc::Sender<WorkerCommand>,
     ) -> Vec<BatchPublicationReceipt> {
         for entry in entries {
@@ -179,7 +184,6 @@ impl BatchTransportState {
         let mut context = BatchSubmitContext {
             channels,
             runtime,
-            call,
             commands,
         };
         let mut receipts =
@@ -228,7 +232,6 @@ impl BatchTransportState {
                     context.channels,
                     context.runtime,
                     key.clone(),
-                    context.call,
                     context.commands,
                 )
                 .await
@@ -244,6 +247,7 @@ impl BatchTransportState {
             .expect("stream recreation succeeded before publication");
         let route = stream.route.clone();
         let terminal = Arc::clone(&stream.terminal);
+        let open_state = Arc::clone(&stream.open_state);
         let outbound = stream.outbound.clone();
         let connection_version = stream.connection_version;
         let mut terminal_guard = terminal
@@ -254,6 +258,27 @@ impl BatchTransportState {
             self.remove_stream_if_current(&key, &route);
             self.reconnect_budget.remove(&key);
             prepared.fail(error);
+            return None;
+        }
+        let claimed_opening_slot = {
+            let mut open_state = open_state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if open_state.waiting_for_headers && open_state.packet_admitted {
+                false
+            } else {
+                if open_state.waiting_for_headers {
+                    open_state.packet_admitted = true;
+                }
+                true
+            }
+        };
+        if !claimed_opening_slot {
+            drop(terminal_guard);
+            prepared.fail(BatchInflightError::Transport(stream_opening_busy(
+                address,
+                connection_version,
+            )));
             return None;
         }
 
@@ -267,6 +292,12 @@ impl BatchTransportState {
             {
                 Ok(request) => request,
                 Err(error) => {
+                    let mut open_state = open_state
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    if open_state.waiting_for_headers {
+                        open_state.packet_admitted = false;
+                    }
                     drop(terminal_guard);
                     for request in pending {
                         request.fail(BatchInflightError::Protocol(error.clone()));
@@ -275,6 +306,12 @@ impl BatchTransportState {
                 }
             };
         if BatchInflightTable::publish_shared(&self.inflight, route.clone(), pending).is_err() {
+            let mut open_state = open_state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if open_state.waiting_for_headers {
+                open_state.packet_admitted = false;
+            }
             drop(terminal_guard);
             return None;
         }
@@ -329,9 +366,7 @@ impl BatchTransportState {
         let BatchStreamEvent::Retired { route } = event;
         let key = StreamKey::new(route.physical_address(), route.forwarded_host());
         if self.remove_stream_if_current(&key, &route) && self.reconnect_budget.remove(&key) {
-            let _ = self
-                .recreate_stream(channels, runtime, key, None, commands)
-                .await;
+            let _ = self.recreate_stream(channels, runtime, key, commands).await;
         }
     }
 
@@ -340,7 +375,6 @@ impl BatchTransportState {
         channels: &mut ChannelPool,
         runtime: &tokio::runtime::Runtime,
         key: StreamKey,
-        call: Option<&UnaryCallContext>,
         commands: &std_mpsc::Sender<WorkerCommand>,
     ) -> Result<(), DirectUnaryClientError> {
         // PARTIAL: open is bounded and shutdown-cancelable, but prolonged
@@ -357,9 +391,7 @@ impl BatchTransportState {
             commands.clone(),
             Arc::clone(&self.inflight),
             self.shutdown.clone(),
-            call,
-        )
-        .await?;
+        )?;
         self.streams.insert(key, stream);
         Ok(())
     }
@@ -416,14 +448,13 @@ impl BatchTransportState {
     }
 }
 
-async fn open_stream(
+fn open_stream(
     key: &StreamKey,
     route: &BatchRoute,
     selected: VersionedChannel,
     commands: std_mpsc::Sender<WorkerCommand>,
     inflight: Arc<Mutex<BatchInflightTable>>,
     mut shutdown: watch::Receiver<bool>,
-    call: Option<&UnaryCallContext>,
 ) -> Result<ActiveStream, DirectUnaryClientError> {
     let (outbound, receiver) = mpsc::unbounded_channel();
     let mut request = tonic::Request::new(UnboundedReceiverStream::new(receiver));
@@ -434,47 +465,52 @@ async fn open_stream(
     if *shutdown.borrow() {
         return Err(DirectUnaryClientError::Closed);
     }
-    let response = match call {
-        Some(call) => {
-            if call.cancellation().is_cancelled() {
-                return Err(DirectUnaryClientError::CallerCancelled);
-            }
-            let timeout = call.timeout().min(STREAM_OPEN_TIMEOUT);
-            if timeout.is_zero() {
-                return Err(stream_open_timeout(&key.physical_address, version, timeout));
-            }
-            let cancellation = call.cancellation().clone();
-            tokio::select! {
-                biased;
-                () = cancellation.cancelled() => {
-                    return Err(DirectUnaryClientError::CallerCancelled);
-                }
-                _ = shutdown.changed() => return Err(DirectUnaryClientError::Closed),
-                result = tokio::time::timeout(timeout, client.batch_commands(request)) => {
-                    open_stream_response(&key.physical_address, version, timeout, result)?
-                }
-            }
-        }
-        None => {
-            tokio::select! {
-                _ = shutdown.changed() => return Err(DirectUnaryClientError::Closed),
-                result = tokio::time::timeout(STREAM_OPEN_TIMEOUT, client.batch_commands(request)) => {
-                    open_stream_response(
-                        &key.physical_address,
-                        version,
-                        STREAM_OPEN_TIMEOUT,
-                        result,
-                    )?
-                }
-            }
-        }
-    };
-    let mut inbound = response.into_inner();
     let receive_route = route.clone();
     let receive_address = key.physical_address.clone();
     let terminal = Arc::new(Mutex::new(None));
     let receive_terminal = Arc::clone(&terminal);
+    let open_state = Arc::new(Mutex::new(StreamOpenState {
+        waiting_for_headers: true,
+        packet_admitted: false,
+    }));
+    let receive_open_state = Arc::clone(&open_state);
     tokio::spawn(async move {
+        // A BatchCommands server is allowed to wait for the first inbound
+        // packet before returning response headers. Publish through `outbound`
+        // while this task opens the response half, matching grpc-go's
+        // send-capable stream creation and avoiding an open-before-send cycle.
+        let response = tokio::select! {
+            _ = shutdown.changed() => Err(DirectUnaryClientError::Closed),
+            result = tokio::time::timeout(STREAM_OPEN_TIMEOUT, client.batch_commands(request)) => {
+                open_stream_response(
+                    &receive_address,
+                    version,
+                    STREAM_OPEN_TIMEOUT,
+                    result,
+                )
+            }
+        };
+        let mut inbound = match response {
+            Ok(response) => {
+                receive_open_state
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .waiting_for_headers = false;
+                response.into_inner()
+            }
+            Err(error) => {
+                retire_stream(
+                    &receive_terminal,
+                    &inflight,
+                    &receive_route,
+                    BatchInflightError::Transport(error),
+                );
+                let _ = commands.send(WorkerCommand::BatchEvent(BatchStreamEvent::Retired {
+                    route: receive_route,
+                }));
+                return;
+            }
+        };
         loop {
             match inbound.message().await {
                 Ok(Some(response)) => match BatchWireResponse::try_from(response) {
@@ -535,6 +571,7 @@ async fn open_stream(
         route: route.clone(),
         connection_version: version,
         terminal,
+        open_state,
         outbound,
     })
 }
@@ -561,6 +598,14 @@ fn stream_open_timeout(address: &str, version: u64, timeout: Duration) -> Direct
         ),
         timeout_ms: u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX),
     }
+}
+
+fn stream_opening_busy(address: &str, version: u64) -> DirectUnaryClientError {
+    DirectUnaryClientError::Connection(DirectUnaryConnectionError::connection(
+        address,
+        version,
+        "BatchCommands stream is still opening".to_owned(),
+    ))
 }
 
 fn retire_stream(

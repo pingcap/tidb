@@ -281,51 +281,52 @@ ROUTE_PHASE="${PHASE_DIR}/route-ready"
 PHYSICAL_ADDRESS=$(phase_values "${ROUTE_PHASE}" physical_address)
 PHYSICAL_STORE_ID=$(phase_values "${ROUTE_PHASE}" physical_store_id)
 LOGICAL_ADDRESS=$(phase_values "${ROUTE_PHASE}" logical_address)
+LOGICAL_STORE_ID=$(phase_values "${ROUTE_PHASE}" logical_store_id)
 GENERATION_N=$(phase_values "${ROUTE_PHASE}" generation_n)
 DIRECT_GENERATION=$(phase_values "${ROUTE_PHASE}" direct_generation)
 if [[ -z "${PHYSICAL_ADDRESS}" || -z "${PHYSICAL_STORE_ID}" \
-  || -z "${LOGICAL_ADDRESS}" || -z "${GENERATION_N}" \
+  || -z "${LOGICAL_ADDRESS}" || -z "${LOGICAL_STORE_ID}" || -z "${GENERATION_N}" \
   || -z "${DIRECT_GENERATION}" \
   || "${PHYSICAL_ADDRESS}" == "${LOGICAL_ADDRESS}" ]]; then
-  echo "Rust route phase did not prove a nonleader physical forwarding route" >&2
+  echo "Rust route phase did not prove distinct physical-proxy and logical-follower endpoints" >&2
   cat "${ROUTE_PHASE}" >&2
   exit 1
 fi
-PHYSICAL_PORT=$(address_port "${PHYSICAL_ADDRESS}")
-STOPPED_PID=$(lsof -nP -iTCP:"${PHYSICAL_PORT}" -sTCP:LISTEN -t | head -1 || true)
+LOGICAL_PORT=$(address_port "${LOGICAL_ADDRESS}")
+STOPPED_PID=$(lsof -nP -iTCP:"${LOGICAL_PORT}" -sTCP:LISTEN -t | head -1 || true)
 if [[ -z "${STOPPED_PID}" ]] \
   || ! ps -ww -p "${STOPPED_PID}" -o command= | grep -F "${TAG_DIR}" >/dev/null \
   || ! ps -ww -p "${STOPPED_PID}" -o command= | grep -F tikv-server >/dev/null; then
-  echo "refusing to freeze TiKV not owned by ${TAG}: ${PHYSICAL_ADDRESS}" >&2
+  echo "refusing to freeze TiKV not owned by ${TAG}: ${LOGICAL_ADDRESS}" >&2
   exit 1
 fi
 TIKV_COMMAND=$(ps -ww -p "${STOPPED_PID}" -o command=)
 if [[ -z "${TIKV_COMMAND}" || "${TIKV_COMMAND}" == *$'\n'* \
   || "${TIKV_COMMAND}" != *"${TAG_DIR}"* \
-  || "${TIKV_COMMAND}" != *"${PHYSICAL_PORT}"* \
+  || "${TIKV_COMMAND}" != *"${LOGICAL_PORT}"* \
   || "${TIKV_COMMAND}" =~ [^[:alnum:][:space:]/._:=,@%+-] ]]; then
   echo "cannot capture a deterministic same-address tag-owned TiKV command" >&2
   exit 1
 fi
 kill -STOP "${STOPPED_PID}"
-: >"${PHASE_DIR}/proxy-frozen"
+: >"${PHASE_DIR}/logical-target-frozen"
 
 wait_for_phase request-published
 kill -KILL "${STOPPED_PID}"
 for _ in $(seq 1 60); do
   if ! kill -0 "${STOPPED_PID}" 2>/dev/null \
-    && ! nc -z -w 1 127.0.0.1 "${PHYSICAL_PORT}" >/dev/null 2>&1; then
+    && ! nc -z -w 1 127.0.0.1 "${LOGICAL_PORT}" >/dev/null 2>&1; then
     break
   fi
   sleep 0.5
 done
 if kill -0 "${STOPPED_PID}" 2>/dev/null \
-  || nc -z -w 1 127.0.0.1 "${PHYSICAL_PORT}" >/dev/null 2>&1; then
-  echo "frozen physical TiKV ${PHYSICAL_ADDRESS} did not stop" >&2
+  || nc -z -w 1 127.0.0.1 "${LOGICAL_PORT}" >/dev/null 2>&1; then
+  echo "frozen logical TiKV ${LOGICAL_ADDRESS} did not stop" >&2
   exit 1
 fi
 STOPPED_PID=
-: >"${PHASE_DIR}/physical-stopped"
+: >"${PHASE_DIR}/logical-target-stopped"
 
 wait_for_phase failure-observed
 FAILED_GENERATION=$(phase_values "${PHASE_DIR}/failure-observed" failed_generation)
@@ -354,12 +355,12 @@ for _ in $(seq 1 120); do
     exit 1
   fi
   STORE_STATE=$(curl -sf --max-time 2 "http://${PD_SEED}/pd/api/v1/stores" \
-    | jq -r --argjson id "${PHYSICAL_STORE_ID}" \
+    | jq -r --argjson id "${LOGICAL_STORE_ID}" \
       '.stores[] | select(.store.id == $id) | [.store.state_name, (.store.node_state_name // "Serving"), .store.address] | @tsv' \
       2>/dev/null) || true
-  if nc -z -w 1 127.0.0.1 "${PHYSICAL_PORT}" >/dev/null 2>&1 \
-    && [[ "${STORE_STATE}" == $'Up\tServing\t'"${PHYSICAL_ADDRESS}" ]]; then
-    LISTENER_PID=$(lsof -nP -iTCP:"${PHYSICAL_PORT}" -sTCP:LISTEN -t | head -1 || true)
+  if nc -z -w 1 127.0.0.1 "${LOGICAL_PORT}" >/dev/null 2>&1 \
+    && [[ "${STORE_STATE}" == $'Up\tServing\t'"${LOGICAL_ADDRESS}" ]]; then
+    LISTENER_PID=$(lsof -nP -iTCP:"${LOGICAL_PORT}" -sTCP:LISTEN -t | head -1 || true)
     if [[ "${LISTENER_PID}" == "${RESTART_PID}" ]]; then
       restarted=true
       break
@@ -368,7 +369,7 @@ for _ in $(seq 1 120); do
   sleep 0.5
 done
 if [[ "${restarted}" != true ]]; then
-  echo "same-address TiKV ${PHYSICAL_ADDRESS} did not return Up/Serving" >&2
+  echo "same-address TiKV ${LOGICAL_ADDRESS} did not return Up/Serving" >&2
   tail -160 "${RESTART_LOG}" >&2
   exit 1
 fi
@@ -376,7 +377,7 @@ if ! ps -ww -p "${RESTART_PID}" -o command= | grep -F "${TAG_DIR}" >/dev/null; t
   echo "restarted TiKV is not tag-owned" >&2
   exit 1
 fi
-printf 'restart_pid=%s\naddress=%s\n' "${RESTART_PID}" "${PHYSICAL_ADDRESS}" \
+printf 'restart_pid=%s\naddress=%s\n' "${RESTART_PID}" "${LOGICAL_ADDRESS}" \
   >"${PHASE_DIR}/tikv-restarted"
 
 wait "${RUST_PID}" || {

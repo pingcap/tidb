@@ -41,6 +41,8 @@ struct StreamingTikv {
     received_bodies: Arc<Mutex<Vec<Vec<u8>>>>,
     hold_seen: Arc<Mutex<Option<mpsc::Sender<()>>>>,
     withhold_headers: bool,
+    serve_after_headers_released: bool,
+    headers_after_first_request: bool,
     close_before_request: bool,
     headers_started: Arc<Mutex<Option<mpsc::Sender<()>>>>,
     release_headers: Arc<AtomicBool>,
@@ -77,7 +79,9 @@ impl Tikv for StreamingTikv {
             while !self.release_headers.load(Ordering::Acquire) {
                 tokio::time::sleep(Duration::from_millis(5)).await;
             }
-            return Err(tonic::Status::cancelled("withheld header test released"));
+            if !self.serve_after_headers_released {
+                return Err(tonic::Status::cancelled("withheld header test released"));
+            }
         }
         if self.close_before_request {
             let (responses, response_rx) = tokio::sync::mpsc::channel(1);
@@ -90,8 +94,13 @@ impl Tikv for StreamingTikv {
         let hold_seen = Arc::clone(&self.hold_seen);
         let mut inbound = request.into_inner();
         let (responses, response_rx) = tokio::sync::mpsc::channel(8);
+        let (first_request_seen, first_request_wait) = tokio::sync::oneshot::channel();
+        let mut first_request_seen = Some(first_request_seen);
         tokio::spawn(async move {
             while let Ok(Some(packet)) = inbound.message().await {
+                if let Some(first_request_seen) = first_request_seen.take() {
+                    let _ = first_request_seen.send(());
+                }
                 let mut pairs = Vec::with_capacity(packet.request_ids.len());
                 let mut fail_stream = false;
                 for (request_id, request) in packet.request_ids.into_iter().zip(packet.requests) {
@@ -135,6 +144,9 @@ impl Tikv for StreamingTikv {
                 }
             }
         });
+        if self.headers_after_first_request {
+            let _ = first_request_wait.await;
+        }
         Ok(tonic::Response::new(
             tokio_stream::wrappers::ReceiverStream::new(response_rx),
         ))
@@ -255,6 +267,8 @@ fn duplex_stream_reuses_pool_isolates_forwarding_reconnects_and_drains_close() {
         received_bodies: Arc::clone(&received_bodies),
         hold_seen: Arc::new(Mutex::new(Some(hold_seen))),
         withhold_headers: false,
+        serve_after_headers_released: false,
+        headers_after_first_request: false,
         close_before_request: false,
         headers_started: Arc::new(Mutex::new(None)),
         release_headers: Arc::new(AtomicBool::new(false)),
@@ -365,6 +379,87 @@ fn duplex_stream_reuses_pool_isolates_forwarding_reconnects_and_drains_close() {
 }
 
 #[test]
+fn first_batch_is_published_before_response_headers() {
+    let received_bodies = Arc::new(Mutex::new(Vec::new()));
+    let server = TestServer::start(StreamingTikv {
+        streams: Arc::new(AtomicUsize::new(0)),
+        metadata: Arc::new(Mutex::new(Vec::new())),
+        received_bodies: Arc::clone(&received_bodies),
+        hold_seen: Arc::new(Mutex::new(None)),
+        withhold_headers: false,
+        serve_after_headers_released: false,
+        headers_after_first_request: true,
+        close_before_request: false,
+        headers_started: Arc::new(Mutex::new(None)),
+        release_headers: Arc::new(AtomicBool::new(false)),
+    });
+    let mut client = tidb_txnkv::rpc::TonicCoprocessorClient::new().unwrap();
+    let (request, mut pull) = entry(b"first-before-headers", None);
+
+    let receipts = client
+        .submit_batch_commands(&server.address, vec![request])
+        .unwrap();
+
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(
+        wait_for_completion(&mut pull).unwrap().body(),
+        b"first-before-headers"
+    );
+    assert_eq!(
+        received_bodies.lock().unwrap().as_slice(),
+        [b"first-before-headers".to_vec()]
+    );
+    client.close().unwrap();
+}
+
+#[test]
+fn opening_generation_bounds_packets_and_isolates_sibling_cancellation() {
+    let (headers_started, headers_wait) = mpsc::channel();
+    let release_headers = Arc::new(AtomicBool::new(false));
+    let server = TestServer::start(StreamingTikv {
+        streams: Arc::new(AtomicUsize::new(0)),
+        metadata: Arc::new(Mutex::new(Vec::new())),
+        received_bodies: Arc::new(Mutex::new(Vec::new())),
+        hold_seen: Arc::new(Mutex::new(None)),
+        withhold_headers: true,
+        serve_after_headers_released: true,
+        headers_after_first_request: false,
+        close_before_request: false,
+        headers_started: Arc::new(Mutex::new(Some(headers_started))),
+        release_headers: Arc::clone(&release_headers),
+    });
+    let mut client = tidb_txnkv::rpc::TonicCoprocessorClient::new().unwrap();
+    let (cancelled, mut cancelled_pull) = entry(b"cancelled-sibling", None);
+    let (surviving, mut surviving_pull) = entry(b"surviving-sibling", None);
+    let first_receipts = client
+        .submit_batch_commands(&server.address, vec![cancelled, surviving])
+        .unwrap();
+    assert_eq!(first_receipts.len(), 1);
+    headers_wait.recv_timeout(Duration::from_secs(1)).unwrap();
+
+    cancelled_pull.cancel();
+    let (overflow, mut overflow_pull) = entry(b"opening-overflow", None);
+    assert!(client
+        .submit_batch_commands(&server.address, vec![overflow])
+        .unwrap()
+        .is_empty());
+    assert!(matches!(
+        wait_for_completion(&mut overflow_pull),
+        Err(BatchInflightError::Transport(
+            DirectUnaryClientError::Connection(_)
+        ))
+    ));
+    release_headers.store(true, Ordering::Release);
+
+    assert_eq!(
+        wait_for_completion(&mut surviving_pull).unwrap().body(),
+        b"surviving-sibling"
+    );
+    assert!(cancelled_pull.try_complete().unwrap().is_none());
+    client.close().unwrap();
+}
+
+#[test]
 fn shutdown_cancellation_interrupts_withheld_stream_headers_and_joins_promptly() {
     let (headers_started, headers_wait) = mpsc::channel();
     let release_headers = Arc::new(AtomicBool::new(false));
@@ -374,6 +469,8 @@ fn shutdown_cancellation_interrupts_withheld_stream_headers_and_joins_promptly()
         received_bodies: Arc::new(Mutex::new(Vec::new())),
         hold_seen: Arc::new(Mutex::new(None)),
         withhold_headers: true,
+        serve_after_headers_released: false,
+        headers_after_first_request: false,
         close_before_request: false,
         headers_started: Arc::new(Mutex::new(Some(headers_started))),
         release_headers: Arc::clone(&release_headers),
@@ -382,32 +479,38 @@ fn shutdown_cancellation_interrupts_withheld_stream_headers_and_joins_promptly()
     let cancellation = client.shutdown_cancellation();
     let (request, mut pull) = entry(b"withheld-headers", None);
     let address = server.address.clone();
+    let (submitted, submitted_wait) = mpsc::channel();
+    let (allow_close, close_wait) = mpsc::channel();
     let (finished, finished_wait) = mpsc::channel();
     let thread = std::thread::spawn(move || {
         let receipts = client.submit_batch_commands(&address, vec![request]);
+        let _ = submitted.send(receipts);
+        let _ = close_wait.recv();
         let close_started = Instant::now();
         let close = client.close();
-        let _ = finished.send((receipts, close, close_started.elapsed()));
+        let _ = finished.send((close, close_started.elapsed()));
     });
 
+    let receipts = submitted_wait.recv_timeout(Duration::from_secs(1)).unwrap();
     headers_wait.recv_timeout(Duration::from_secs(1)).unwrap();
     let cancel_started = Instant::now();
     cancellation.cancel();
-    let outcome = finished_wait.recv_timeout(Duration::from_secs(1));
-    release_headers.store(true, Ordering::Release);
-    let (receipts, close, close_elapsed) = outcome.unwrap();
-    thread.join().unwrap();
-
-    assert!(receipts.unwrap().is_empty());
-    close.unwrap();
-    assert!(cancel_started.elapsed() < Duration::from_secs(1));
-    assert!(close_elapsed < Duration::from_secs(1));
     assert_eq!(
         wait_for_completion(&mut pull),
         Err(BatchInflightError::Transport(
             DirectUnaryClientError::Closed
         ))
     );
+    allow_close.send(()).unwrap();
+    let outcome = finished_wait.recv_timeout(Duration::from_secs(1));
+    release_headers.store(true, Ordering::Release);
+    let (close, close_elapsed) = outcome.unwrap();
+    thread.join().unwrap();
+
+    assert_eq!(receipts.unwrap().len(), 1);
+    close.unwrap();
+    assert!(cancel_started.elapsed() < Duration::from_secs(1));
+    assert!(close_elapsed < Duration::from_secs(1));
 }
 
 #[test]
@@ -419,6 +522,8 @@ fn immediate_close_before_request_fails_once_without_on_demand_open_spin() {
         received_bodies: Arc::new(Mutex::new(Vec::new())),
         hold_seen: Arc::new(Mutex::new(None)),
         withhold_headers: false,
+        serve_after_headers_released: false,
+        headers_after_first_request: false,
         close_before_request: true,
         headers_started: Arc::new(Mutex::new(None)),
         release_headers: Arc::new(AtomicBool::new(false)),

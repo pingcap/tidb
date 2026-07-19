@@ -383,7 +383,28 @@ fn exact_call_deadline_bounds_the_same_completion_condvar_wait() {
 }
 
 #[test]
-fn canonical_cancellation_interrupts_cold_stream_open_and_releases_the_worker() {
+fn elapsed_deadline_rejects_before_stream_or_wire_admission() {
+    let (server, received, seen, _release) = fixture(ResponseMode::Echo);
+    let mut client = TonicCoprocessorClient::new().unwrap();
+    let call = UnaryCallContext::with_timeout(Duration::ZERO);
+
+    let error = client
+        .begin(&server.address, None, &request(b"must-not-publish"), &call)
+        .err()
+        .expect("elapsed deadline must reject before admission");
+
+    assert!(matches!(error, DirectUnaryClientError::Timeout { .. }));
+    assert!(received.lock().unwrap().is_empty());
+    assert!(matches!(
+        seen.recv_timeout(Duration::from_millis(50)),
+        Err(mpsc::RecvTimeoutError::Timeout)
+    ));
+    assert_eq!(client.connection_version(&server.address), None);
+    client.close().unwrap();
+}
+
+#[test]
+fn canonical_cancellation_cancels_cold_request_without_blocking_the_worker() {
     let (blocked_server, _received, headers_started, release_headers) =
         fixture(ResponseMode::WithholdHeaders);
     let (echo_server, _received, _seen, _release) = fixture(ResponseMode::Echo);
@@ -396,10 +417,10 @@ fn canonical_cancellation_interrupts_cold_stream_open_and_releases_the_worker() 
         let mut client = TonicCoprocessorClient::new().unwrap();
         let call = UnaryCallContext::new(Duration::from_secs(2), thread_cancellation);
         let started = std::time::Instant::now();
-        let blocked = client
+        let mut blocked = client
             .begin(&blocked_address, None, &request(b"cancel-open"), &call)
-            .err()
-            .expect("canonical cancellation must reject cold stream admission");
+            .expect("cold stream admission publishes before response headers");
+        let blocked = blocked.complete(&call);
         let blocked_elapsed = started.elapsed();
 
         let echo_call = UnaryCallContext::with_timeout(Duration::from_secs(2));
@@ -428,7 +449,7 @@ fn canonical_cancellation_interrupts_cold_stream_open_and_releases_the_worker() 
     release_headers.send(true).unwrap();
     thread.join().unwrap();
 
-    assert_eq!(blocked, DirectUnaryClientError::CallerCancelled);
+    assert_eq!(blocked, Err(CompletionError::Cancelled));
     assert!(cancelled_at.elapsed() < Duration::from_secs(1));
     assert!(blocked_elapsed < Duration::from_secs(1));
     assert_eq!(

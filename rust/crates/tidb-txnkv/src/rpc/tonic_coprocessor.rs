@@ -27,7 +27,8 @@ use super::batch::{BatchCommandEntry, BatchCoprocessorPending, BatchPublicationR
 use super::liveness::DEFAULT_STORE_LIVENESS_TIMEOUT;
 use super::unary::{RawTransportClient, RawUnaryRequest, UnaryCallContext};
 use super::{
-    AsyncRequestDispatcher, DirectUnaryClientError, PendingRequest, TransportShutdownCancellation,
+    AsyncRequestDispatcher, DirectUnaryClientError, DirectUnaryConnectionError, PendingRequest,
+    TransportShutdownCancellation,
 };
 
 pub(super) use super::unary::RawProtobufCodec;
@@ -275,6 +276,17 @@ impl AsyncRequestDispatcher for TonicCoprocessorClient {
     ) -> Result<Self::Pending, DirectUnaryClientError> {
         if call.cancellation().is_cancelled() {
             return Err(DirectUnaryClientError::CallerCancelled);
+        }
+        let timeout = call.timeout();
+        if timeout.is_zero() {
+            return Err(DirectUnaryClientError::Timeout {
+                connection: DirectUnaryConnectionError::local_deadline(
+                    physical_address,
+                    self.connection_version(physical_address).unwrap_or(0),
+                    "BatchCommands deadline elapsed before admission".to_owned(),
+                ),
+                timeout_ms: 0,
+            });
         }
         let body = replace_top_level_context(&request.encoded_request, &request.context)?;
         let (entry, mut pending) = BatchCoprocessorPending::entry(body, forwarded_host);

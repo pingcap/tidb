@@ -30,9 +30,10 @@ use tidb_distsql::{
 };
 use tidb_txnkv::region::{PeerRole, RegionCache, StoreLiveness};
 use tidb_txnkv::region::{ReadPolicy, RequestSelection, StoreFailureOutcome};
-use tidb_txnkv::rpc::TonicCoprocessorClient;
+use tidb_txnkv::rpc::{completion_pair, CompletionRunLoop, TonicCoprocessorClient};
 use tidb_txnkv::{
-    ClientReplicaReadType, EndpointType, PdRegionLoader, SharedReadRuntime, UnaryCallContext,
+    BatchCommandEntry, BatchCommandTag, ClientReplicaReadType, EndpointType, OpaqueBatchCommand,
+    PdRegionLoader, SharedReadRuntime, UnaryCallContext,
 };
 
 const TABLE_START: &[u8] = b"t\x80\0\0\0\0\0\0*_r";
@@ -628,12 +629,7 @@ fn live_pd_prev_region_and_forwarded_batch_survive_same_address_restart() {
         .iter()
         .find(|peer| peer.id == leader_peer_id)
         .expect("PD leader must be one projected peer");
-    let logical_store = left
-        .stores
-        .iter()
-        .find(|store| store.id == leader.store_id)
-        .expect("leader store must have a resolved address");
-    let proxy_peer = left
+    let logical_peer = left
         .peers
         .iter()
         .find(|peer| {
@@ -644,11 +640,16 @@ fn live_pd_prev_region_and_forwarded_batch_survive_same_address_restart() {
                 )
                 && !peer.is_witness
         })
-        .expect("three-TiKV topology must expose a nonleader physical proxy");
+        .expect("three-TiKV topology must expose a nonleader follower target");
+    let logical_store = left
+        .stores
+        .iter()
+        .find(|store| store.id == logical_peer.store_id)
+        .expect("follower store must have a resolved address");
     let physical_store = left
         .stores
         .iter()
-        .find(|store| store.id == proxy_peer.store_id)
+        .find(|store| store.id == leader.store_id)
         .expect("proxy store must have a resolved address");
     assert_ne!(physical_store.address, logical_store.address);
 
@@ -659,19 +660,20 @@ fn live_pd_prev_region_and_forwarded_batch_survive_same_address_restart() {
             version: left.region.epoch.version,
         }),
         peer: Some(KvrpcPeer {
-            id: leader.id,
-            store_id: leader.store_id,
-            role: leader.role.as_i32(),
-            is_witness: leader.is_witness,
+            id: logical_peer.id,
+            store_id: logical_peer.store_id,
+            role: logical_peer.role.as_i32(),
+            is_witness: logical_peer.is_witness,
         }),
+        replica_read: true,
         cluster_id,
         request_source: "campaign18-live-pd-batch".to_owned(),
         ..KvrpcContext::default()
     };
     let request = DirectUnaryRequest {
         endpoint: EndpointType::TiKv,
-        replica_read_type: ClientReplicaReadType::Leader,
-        replica_read: false,
+        replica_read_type: ClientReplicaReadType::Follower,
+        replica_read: true,
         stale_read: false,
         input_request_source: "campaign18-live-pd-batch".to_owned(),
         predicted_read_bytes: 0,
@@ -694,16 +696,24 @@ fn live_pd_prev_region_and_forwarded_batch_survive_same_address_restart() {
 
     let mut client = TonicCoprocessorClient::new().expect("construct production tonic client");
     let direct_call = UnaryCallContext::with_timeout(Duration::from_secs(10));
-    let mut direct = client
-        .begin(&logical_store.address, None, &request, &direct_call)
-        .expect("begin production direct BatchCommands request");
-    let direct_raw = direct
+    let (direct_completion, mut direct_pull) = completion_pair(CompletionRunLoop::new(), || {});
+    let direct_receipts = client
+        .submit_batch_commands(
+            &physical_store.address,
+            vec![BatchCommandEntry::new(
+                OpaqueBatchCommand::new(BatchCommandTag::Empty, Vec::new()),
+                direct_completion,
+            )],
+        )
+        .expect("publish production direct BatchCommands request");
+    assert_eq!(direct_receipts.len(), 1);
+    let direct_raw = direct_pull
         .complete(&direct_call)
         .expect("drive production direct BatchCommands completion")
         .expect("direct BatchCommands request must succeed");
-    assert_usable_campaign18_response(&direct_raw);
+    assert_eq!(direct_raw.tag(), BatchCommandTag::Empty);
     let direct_generation = client
-        .batch_stream_generation(&logical_store.address, None)
+        .batch_stream_generation(&physical_store.address, None)
         .expect("successful direct request must retain its independent stream");
 
     let first_call = UnaryCallContext::with_timeout(Duration::from_secs(10));
@@ -740,10 +750,11 @@ fn live_pd_prev_region_and_forwarded_batch_survive_same_address_restart() {
         route_phase.push_str(&format!("store_address={}\n", store.address));
     }
     write_campaign18_phase(&phase_dir, "route-ready", &route_phase);
-    wait_for_campaign18_phase(&phase_dir, "proxy-frozen");
+    wait_for_campaign18_phase(&phase_dir, "logical-target-frozen");
 
-    // The runner freezes the exact physical process, so begin publishes into
-    // generation N but cannot receive a response before the runner kills it.
+    // The runner freezes the exact logical target process, so begin publishes
+    // through the live physical proxy into generation N but cannot receive a
+    // response before the runner kills that target.
     let failed_call = UnaryCallContext::with_timeout(Duration::from_secs(15));
     let mut failed = client
         .begin(
@@ -764,7 +775,7 @@ fn live_pd_prev_region_and_forwarded_batch_survive_same_address_restart() {
         .complete(&failed_call)
         .expect("generation failure must use the pending completion")
     {
-        Ok(_) => panic!("killed physical proxy must fail generation N"),
+        Ok(_) => panic!("killed logical target must fail forwarded generation N"),
         Err(error) => {
             failure_count += 1;
             error
@@ -779,36 +790,43 @@ fn live_pd_prev_region_and_forwarded_batch_survive_same_address_restart() {
         .try_complete()
         .expect("duplicate completion probe")
         .is_none());
-    let post_failure_watermark = client.batch_request_id_watermark();
-    let transport_scheduled_resends =
-        post_failure_watermark.saturating_sub(failed_request_watermark);
     assert_eq!(failure_count, 1);
-    assert_eq!(transport_scheduled_resends, 0);
 
     let direct_survival_call = UnaryCallContext::with_timeout(Duration::from_secs(10));
-    let mut direct_survival = client
-        .begin(
-            &logical_store.address,
-            None,
-            &request,
-            &direct_survival_call,
+    let (direct_survival_completion, mut direct_survival_pull) =
+        completion_pair(CompletionRunLoop::new(), || {});
+    let direct_survival_receipts = client
+        .submit_batch_commands(
+            &physical_store.address,
+            vec![BatchCommandEntry::new(
+                OpaqueBatchCommand::new(BatchCommandTag::Empty, Vec::new()),
+                direct_survival_completion,
+            )],
         )
-        .expect("forwarded failure must not retire the direct stream");
-    let direct_survival_raw = direct_survival
+        .expect("forwarded failure must not retire the sibling direct stream");
+    assert_eq!(direct_survival_receipts.len(), 1);
+    let direct_survival_raw = direct_survival_pull
         .complete(&direct_survival_call)
         .expect("drive direct isolation completion")
         .expect("direct stream must survive forwarded stream failure");
-    assert_usable_campaign18_response(&direct_survival_raw);
+    assert_eq!(direct_survival_raw.tag(), BatchCommandTag::Empty);
     assert_eq!(
-        client.batch_stream_generation(&logical_store.address, None),
+        client.batch_stream_generation(&physical_store.address, None),
         Some(direct_generation),
-        "forwarded failure must preserve the direct route generation",
+        "forwarded-host failure must preserve the same-physical direct route generation",
     );
     assert_ne!(
         client.batch_stream_generation(&physical_store.address, Some(&logical_store.address)),
         Some(generation_n),
         "failed forwarded generation must retire before caller retry",
     );
+    let post_isolation_watermark = client.batch_request_id_watermark();
+    let scheduled_after_failure = post_isolation_watermark.saturating_sub(failed_request_watermark);
+    assert_eq!(
+        scheduled_after_failure, 1,
+        "only the explicit direct-survival request may allocate after failure",
+    );
+    let transport_scheduled_resends = scheduled_after_failure.saturating_sub(1);
     write_campaign18_phase(
         &phase_dir,
         "failure-observed",
