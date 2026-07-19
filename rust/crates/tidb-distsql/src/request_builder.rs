@@ -28,8 +28,8 @@ use tidb_txnkv::{Handle, Key, ResourceGroupTagBuilder};
 use crate::{
     DistSqlContext, IsolationLevel, KvPriority, KvRequestMetadata, PartitionIdAndRanges,
     ReadRequestBuilder, ReplicaReadType, RequestEnvelope, RequestKeyRange, RequestKeyRanges,
-    RequestSource, RequestType, SignedHandleRange, StoreLabel, StoreType, TransportRequest,
-    DC_LABEL_KEY, DEFAULT_DIST_SQL_CONCURRENCY, GLOBAL_REPLICA_SCOPE,
+    RequestSource, RequestType, StoreLabel, StoreType, TransportRequest, DC_LABEL_KEY,
+    DEFAULT_DIST_SQL_CONCURRENCY, GLOBAL_REPLICA_SCOPE,
 };
 
 /// One source ranger boundary represented by already typed Datum values.
@@ -494,7 +494,7 @@ pub fn table_ranges_to_kv_ranges(
     table_id: i64,
     ranges: &[DatumRange],
 ) -> Result<Vec<RequestKeyRange>, KvRequestBuildError> {
-    let ranges = ranges
+    ranges
         .iter()
         .map(|range| {
             let low = range
@@ -507,10 +507,15 @@ pub fn table_ranges_to_kv_ranges(
                 .first()
                 .and_then(int_bits)
                 .ok_or(KvRequestBuildError::RangeEncoding)?;
-            SignedHandleRange::new(low, high, range.low_exclude, range.high_exclude)
+            Ok(crate::signed_handle_range::encode_signed_handle_range(
+                table_id,
+                low,
+                high,
+                range.low_exclude,
+                range.high_exclude,
+            ))
         })
-        .collect::<Result<Vec<_>, KvRequestBuildError>>()?;
-    Ok(crate::signed_handle_ranges_to_kv_ranges(table_id, &ranges))
+        .collect()
 }
 
 /// Encodes index ranges for every physical table without flattening groups.

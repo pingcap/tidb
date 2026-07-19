@@ -91,22 +91,43 @@ pub fn signed_handle_ranges_to_kv_ranges(
     ranges
         .iter()
         .map(|range| {
-            let mut low = Vec::with_capacity(8);
-            encode_int(&mut low, range.low);
-            if range.low_exclude {
-                low = Key::from_bytes(low).prefix_next().into_bytes();
-            }
-
-            let mut high = Vec::with_capacity(8);
-            encode_int(&mut high, range.high);
-            if !range.high_exclude {
-                high = Key::from_bytes(high).prefix_next().into_bytes();
-            }
-
-            RequestKeyRange {
-                start_key: encode_row_key(table_id, &low),
-                end_key: encode_row_key(table_id, &high),
-            }
+            encode_signed_handle_range(
+                table_id,
+                range.low,
+                range.high,
+                range.low_exclude,
+                range.high_exclude,
+            )
         })
         .collect()
+}
+
+/// Encodes source boundaries without imposing a logical non-empty invariant.
+///
+/// [`SignedHandleRange`] validates planner-normalized ranges. The generic
+/// `DatumRange` request-builder path also preserves Go's empty half-open range
+/// vectors, so both paths share only this physical boundary encoder.
+pub(crate) fn encode_signed_handle_range(
+    table_id: i64,
+    low: i64,
+    high: i64,
+    low_exclude: bool,
+    high_exclude: bool,
+) -> RequestKeyRange {
+    let mut low_encoded = Vec::with_capacity(8);
+    encode_int(&mut low_encoded, low);
+    if low_exclude {
+        low_encoded = Key::from_bytes(low_encoded).prefix_next().into_bytes();
+    }
+
+    let mut high_encoded = Vec::with_capacity(8);
+    encode_int(&mut high_encoded, high);
+    if !high_exclude {
+        high_encoded = Key::from_bytes(high_encoded).prefix_next().into_bytes();
+    }
+
+    RequestKeyRange {
+        start_key: encode_row_key(table_id, &low_encoded),
+        end_key: encode_row_key(table_id, &high_encoded),
+    }
 }
