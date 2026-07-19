@@ -498,7 +498,7 @@ func (m *onDuplicateExprMemo) buildKey(node ast.Node) (string, bool) {
 		return "", false
 	}
 	m.restoreBuf.Reset()
-	const restoreFlags = format.DefaultRestoreFlags | format.RestoreWithoutSchemaName
+	const restoreFlags = format.DefaultRestoreFlags
 	if m.restoreCtx == nil {
 		m.restoreCtx = format.NewRestoreCtx(restoreFlags, &m.restoreBuf)
 	} else {

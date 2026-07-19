@@ -456,7 +456,7 @@ func (p *Insert) MemoryUsage() (sum int64) {
 
 	sum = p.baseSchemaProducer.MemoryUsage() + size.SizeOfInterface + size.SizeOfSlice*7 + int64(cap(p.tableColNames)+
 		cap(p.Columns)+cap(p.OnDuplicate)+cap(p.names4OnDuplicate)+cap(p.FKChecks))*size.SizeOfPointer +
-		p.GenCols.MemoryUsage() + size.SizeOfInterface + size.SizeOfBool*4 + size.SizeOfInt
+		p.GenCols.MemoryUsage() + size.SizeOfInterface + size.SizeOfBool*5 + size.SizeOfInt
 	if p.tableSchema != nil {
 		sum += p.tableSchema.MemoryUsage()
 	}

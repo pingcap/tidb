@@ -637,6 +637,7 @@ func (b *builtinLeastVectorFloat32Sig) CloneWithArgs(args []Expression) builtinF
 func (b *builtinIntervalIntSig) CloneWithArgs(args []Expression) builtinFunc {
 	newSig := &builtinIntervalIntSig{}
 	newSig.cloneFromWithArgs(&b.baseBuiltinFunc, args)
+	newSig.hasNullable = b.hasNullable
 	return newSig
 }
 

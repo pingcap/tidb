@@ -282,6 +282,47 @@ func TestIntervalFunc(t *testing.T) {
 	}
 }
 
+func TestIntervalClonePreservesNullable(t *testing.T) {
+	ctx := createContext(t)
+
+	intConstant := func(value any) Expression {
+		retType := types.NewFieldType(mysql.TypeLonglong)
+		if value != nil {
+			retType.AddFlag(mysql.NotNullFlag)
+		}
+		return &Constant{Value: types.NewDatum(value), RetType: retType}
+	}
+	args := []Expression{
+		intConstant(1),
+		intConstant(nil),
+		intConstant(nil),
+		intConstant(nil),
+		intConstant(2),
+	}
+	f, err := funcs[ast.Interval].getFunction(ctx, args)
+	require.NoError(t, err)
+	intSig, ok := f.(*builtinIntervalIntSig)
+	require.True(t, ok)
+	require.True(t, intSig.hasNullable)
+
+	eval := func(f builtinFunc) int64 {
+		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		require.NoError(t, err)
+		return v.GetInt64()
+	}
+	require.Equal(t, int64(3), eval(f))
+
+	cloned, ok := f.Clone().(*builtinIntervalIntSig)
+	require.True(t, ok)
+	require.True(t, cloned.hasNullable)
+	require.Equal(t, int64(3), eval(cloned))
+
+	clonedWithArgs, ok := f.CloneWithArgs(f.getArgs()).(*builtinIntervalIntSig)
+	require.True(t, ok)
+	require.True(t, clonedWithArgs.hasNullable)
+	require.Equal(t, int64(3), eval(clonedWithArgs))
+}
+
 // greatest/least function is compatible with MySQL 8.0
 func TestGreatestLeastFunc(t *testing.T) {
 	ctx := createContext(t)

@@ -357,6 +357,30 @@ func TestOnDuplicateExprMemoBuildKeySkipsSimpleNodes(t *testing.T) {
 	require.False(t, ok)
 }
 
+func TestOnDuplicateExprMemoBuildKeyKeepsSchemaName(t *testing.T) {
+	parseAssignment := func(exprSQL string) *ast.Assignment {
+		stmt, err := parser.New().ParseOneStmt("insert into t values (1) on duplicate key update c1 = "+exprSQL, "", "")
+		require.NoError(t, err)
+		return stmt.(*ast.InsertStmt).OnDuplicate[0]
+	}
+
+	memo := newOnDuplicateExprMemo()
+	buildKey := func(exprSQL string) (string, bool) {
+		assign := parseAssignment(exprSQL)
+		memo.resetPerAssignmentState()
+		memo.prepareAssignment(assign.Expr)
+		return memo.buildKey(assign.Expr)
+	}
+
+	key1, ok := buildKey("if(d1.t.c > 0, values(c1), c1)")
+	require.True(t, ok)
+	key2, ok := buildKey("if(d2.t.c > 0, values(c1), c1)")
+	require.True(t, ok)
+	require.Contains(t, key1, "`d1`.`t`.`c`")
+	require.Contains(t, key2, "`d2`.`t`.`c`")
+	require.NotEqual(t, key1, key2)
+}
+
 func TestOnDuplicateExprMemoBuildKeySkipsDeepNodes(t *testing.T) {
 	exprSQL := "c1"
 	for range maxOnDuplicateExprReuseKeyDepth {
