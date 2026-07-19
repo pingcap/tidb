@@ -1,0 +1,11 @@
+schema = "1"
+campaign = "2026-07-read-path-23"
+status = "planned"
+slices = [
+  "proto-tipb-selection-expression-wire",
+  "planner-read-only-bigint-selection-runtime",
+  "planner-physical-bigint-selection-runtime",
+  "executor-tikv-selection-dag-runtime",
+  "executor-real-tikv-bigint-selection-runtime",
+  "server-live-bigint-selection-topology-proof",
+]

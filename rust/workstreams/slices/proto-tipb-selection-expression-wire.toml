@@ -1,0 +1,54 @@
+schema = "1"
+slice = "proto-tipb-selection-expression-wire"
+status = "ready"
+target = "tidb-expr"
+ring = "protocol"
+consumer = "The bounded TiPB projection and expression owner encode and decode TiKV list-DAG Selection conditions containing signed BIGINT constants, zero-based column references, and all six ordinary comparison scalar functions with exact upstream types, flags, field numbers, enum values, and operand order."
+test_target = "tipb_selection_expression_source pb_signed_bigint_comparison_source"
+go_sources = [
+  "pkg/expression/expr_to_pb.go",
+]
+go_tests = [
+  "pkg/expression/expr_to_pb_test.go:44:TestConstant2Pb",
+  "pkg/expression/expr_to_pb_test.go:129:TestColumn2Pb",
+  "pkg/expression/expr_to_pb_test.go:222:TestCompareFunc2Pb",
+  "pkg/expression/expr_to_pb_test.go:259:TestLikeFunc2Pb",
+  "pkg/expression/expr_to_pb_test.go:296:TestArithmeticalFunc2Pb",
+  "pkg/expression/expr_to_pb_test.go:345:TestDateFunc2Pb",
+  "pkg/expression/expr_to_pb_test.go:365:TestLogicalFunc2Pb",
+  "pkg/expression/expr_to_pb_test.go:401:TestBitwiseFunc2Pb",
+  "pkg/expression/expr_to_pb_test.go:439:TestControlFunc2Pb",
+  "pkg/expression/expr_to_pb_test.go:480:TestOtherFunc2Pb",
+  "pkg/expression/expr_to_pb_test.go:509:TestJsonPushDownToFlash",
+  "pkg/expression/expr_to_pb_test.go:668:TestExprPushDownToFlash",
+  "pkg/expression/expr_to_pb_test.go:1488:TestExprOnlyPushDownToFlash",
+  "pkg/expression/expr_to_pb_test.go:1547:TestExprPushDownToTiKV",
+  "pkg/expression/expr_to_pb_test.go:1914:TestExprOnlyPushDownToTiKV",
+  "pkg/expression/expr_to_pb_test.go:1941:TestGroupByItem2Pb",
+  "pkg/expression/expr_to_pb_test.go:1958:TestSortByItem2Pb",
+  "pkg/expression/expr_to_pb_test.go:1981:TestPushCollationDown",
+  "pkg/expression/expr_to_pb_test.go:2005:TestNewCollationsEnabled",
+  "pkg/expression/expr_to_pb_test.go:2046:TestMetadata",
+  "pkg/expression/expr_to_pb_test.go:2087:TestPushDownSwitcher",
+  "pkg/expression/expr_to_pb_test.go:2183:TestPanicIfPbCodeUnspecified",
+  "pkg/expression/expr_to_pb_test.go:2204:TestProjectionColumn2Pb",
+]
+module_sources = []
+module_tests = []
+depends_on = []
+evidence_prerequisites = []
+support_anchors = [
+  "Campaign 23 DAG stage A: freeze the exact upstream expression.proto and executor.proto dependency closure before converter or DAG work",
+  "FieldType, ExprType, ScalarFuncSig, Expr, Selection, Executor.selection, and ExecType.TypeSelection preserve upstream tags and numeric values",
+  "Support exactly LTInt, LEInt, GTInt, GEInt, EQInt, and NEInt over signed BIGINT operands; unsupported types and expressions fail closed",
+  "Integer constants and ColumnRef offsets use TiDB codec.EncodeInt-compatible bytes, FieldType preserves source flags, and compare children retain source order",
+  "This dependency-closed projection is deliberately partial and does not claim unrelated aggregate, window, RPN, TiFlash, or executor messages",
+]
+rust_paths = [
+  "rust/crates/tidb-proto/proto/select.proto",
+  "rust/crates/tidb-proto/tests/tipb_selection_expression_source.rs",
+  "rust/crates/tidb-expr/Cargo.toml",
+  "rust/crates/tidb-expr/src/lib.rs",
+  "rust/crates/tidb-expr/src/pb_comparison.rs",
+  "rust/crates/tidb-expr/tests/pb_signed_bigint_comparison_source.rs",
+]
