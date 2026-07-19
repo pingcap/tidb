@@ -54,7 +54,7 @@ from the Campaign 07 baseline with the toolchain pinned in
 | `tidb-codec` | byte-exact comparable scalar and datum-key encoding | dependency-closed paths in `pkg/util/codec/**` |
 | `tidb-txnkv` | transaction primitives plus the live address-keyed `tikvpb.Tikv/Coprocessor` RPC leaf, retained tonic BatchCommands duplex transport with concrete Coprocessor dispatch, API-v1 PD previous-region/region/store/label loader, unlocked optimistic metadata publication, exact region-error recovery, adaptive replica health/scoring, bounded region backoff, exact forwarding metadata, and one synchronized, maintained topology/store/proxy RegionCache authority | `pkg/kv/**`, pinned `tikv/client-go/v2` transport and locate paths |
 | `tidb-exec` | seed stateful execution leaves plus the bounded ordered-column planner/DAG/real-PD-TSO/real-TiKV read engine and lazy result metadata bridge | `pkg/session/**`, `pkg/executor/**`, `pkg/server/**` |
-| `tidb-server` | source-shaped connection dispatch plus the executable serial loopback SQL node, bounded ordered-column startup catalog, and stock-MySQL-to-real-TiKV lifecycle | `cmd/tidb-server/**`, `pkg/server/conn.go`, `pkg/server/server.go` |
+| `tidb-server` | source-shaped connection dispatch plus the executable bounded-concurrent loopback SQL node, strict native-password user store, fixed worker pool, ordered-column startup catalog, cancellation/drain authority, and stock-MySQL-to-real-TiKV lifecycle | `cmd/tidb-server/**`, `pkg/server/conn.go`, `pkg/server/server.go` |
 | `difftest` | shared differential library, Go helpers, corpora, inventory/ledger generators, and two infrastructure tests | — |
 | `difftest-parser-tests` | parser-only oracle replay, topology gate, and stable selector shards | `pkg/parser/**`, parser fixtures |
 | `difftest-result-tests` | expression/query/table result rings | `pkg/expression/**`, `pkg/executor/**` |
@@ -121,6 +121,38 @@ returned exact stored/key pairs `(913,-7)`, `(-2048,0)`, and `(77,42)` through
 real PD TSO, region 16, and one BatchCommands attempt with no unary fallback.
 The stored values deliberately cannot be derived from their keys. The node is
 still serial, static-catalog, signed-BIGINT-only, and direct-projection-only.
+
+Campaign 21 removes that serial and empty-password boundary. Startup now
+requires a mode-0600 `mysql_native_password` user file and uses an OS-random
+handshake salt, AuthSwitch-compatible verification, and a dummy unknown-user
+path. A fixed-size worker pool enforces the configured connection bound. Each
+worker opens a thread-confined read session over one process-owned PD client,
+maintained RegionCache, and cloneable TiKV transport authority; socket
+deadlines, query cancellation, SIGINT/SIGTERM drain, and final lifecycle
+accounting are explicit. Unary fallback no longer blocks the transport command
+loop, the cold BatchCommands stream accepts the client-go 128-packet
+publication window, and delayed StoreNotMatch feedback cannot close a newer
+address-reused channel generation.
+
+The Campaign 21 live runner authenticated eight overlapping stock MySQL
+clients against the Rust binary and returned exact `(amount,id)` pairs
+`(913,-7)`, `(-2048,0)`, and `(77,42)` through real PD/TiKV for every client.
+It recorded eight distinct snapshot TSOs, `max_query_active=8`, eight
+BatchCommands records, zero unary fallback, and final
+`accepted=9 completed=9 active=0` after a separate ninth early-disconnect
+client. Cleanup stopped all tagged processes and removed the cluster data and
+authentication file. The six Campaign 21 slices own 28 production sources and
+86 translated Go obligations through checked transfer chains. The shared
+12-job gate passed workspace Clippy/tests, 49 governance tests, and every
+static ledger; its one shared receipt covered six claims, all six claim entries
+were consumed, all claims were released as `PARTIAL`, membership is archived,
+generated status is current, and repository `make -j12 lint` passed.
+
+This is deployable only within the bounded milestone contract: loopback-only,
+plaintext, static catalog, signed-BIGINT columns, and direct projections. TLS,
+grants, prepared statements, general expressions/plans, writes/transactions,
+topology-churn-complete exact channel invalidation, and fallible background
+authority shutdown remain open.
 
 The first connected local read-only seam is now real: `tidb-protocol` frames
 and validates uncompressed MySQL packets, `Session::execute_framed_query`
