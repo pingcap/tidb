@@ -1749,39 +1749,165 @@ fn one_store_failure_stales_later_bound_regions_without_reordering_them() {
     );
 }
 
+#[derive(Debug, Default)]
+struct DelayedStoreMismatchState {
+    active_generation: Option<u64>,
+    force_closed_generations: Vec<u64>,
+    sent_generations: Vec<u64>,
+}
+
+struct DelayedStoreMismatchClient {
+    state: Rc<RefCell<DelayedStoreMismatchState>>,
+}
+
+impl DirectUnaryClient for DelayedStoreMismatchClient {
+    fn send_request(
+        &mut self,
+        address: &str,
+        _request: &DirectUnaryRequest,
+        _timeout: Duration,
+    ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
+        assert_eq!(address, "shared-tikv:20160");
+        let mut state = self.state.borrow_mut();
+        let generation = state.active_generation.ok_or_else(|| {
+            DirectUnaryClientError::InvalidRequest("replacement channel was closed".to_owned())
+        })?;
+        state.sent_generations.push(generation);
+        if state.sent_generations.len() == 1 {
+            assert_eq!(generation, 1);
+            // Session B replaces the channel while session A's request is in
+            // flight. The delayed StoreNotMatch below still belongs to
+            // generation 1 and must not close this replacement.
+            state.active_generation = Some(2);
+            return Ok(DirectUnaryResponse {
+                encoded_response: store_not_match(1),
+            });
+        }
+        assert_eq!(generation, 2);
+        Ok(DirectUnaryResponse {
+            encoded_response: response(b"replacement-survived"),
+        })
+    }
+
+    fn send_request_with_context(
+        &mut self,
+        address: &str,
+        request: &DirectUnaryRequest,
+        call: &UnaryCallContext,
+    ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
+        self.send_request(address, request, call.timeout())
+    }
+
+    fn close_address(&mut self, address: &str) -> Result<(), DirectUnaryClientError> {
+        assert_eq!(address, "shared-tikv:20160");
+        let mut state = self.state.borrow_mut();
+        if let Some(generation) = state.active_generation.take() {
+            state.force_closed_generations.push(generation);
+        }
+        Ok(())
+    }
+
+    fn close_address_version(
+        &mut self,
+        address: &str,
+        version: u64,
+    ) -> Result<(), DirectUnaryClientError> {
+        assert_eq!(address, "shared-tikv:20160");
+        let mut state = self.state.borrow_mut();
+        if state
+            .active_generation
+            .is_some_and(|generation| generation <= version)
+        {
+            let generation = state.active_generation.take().unwrap();
+            state.force_closed_generations.push(generation);
+        }
+        Ok(())
+    }
+
+    fn liveness(
+        &self,
+        _address: &str,
+        _timeout: Duration,
+    ) -> Result<StoreLiveness, DirectUnaryClientError> {
+        Ok(StoreLiveness::Reachable)
+    }
+
+    fn close(&mut self) -> Result<(), DirectUnaryClientError> {
+        Ok(())
+    }
+}
+
+impl tidb_txnkv::lock::LockRecoveryClient for DelayedStoreMismatchClient {
+    fn check_txn_status_for_lock(
+        &mut self,
+        _address: &str,
+        _request: &tidb_proto::KvrpcCheckTxnStatusRequest,
+        _context: &tidb_proto::KvrpcContext,
+        _call: &UnaryCallContext,
+    ) -> Result<tidb_proto::KvrpcCheckTxnStatusResponse, DirectUnaryClientError> {
+        Err(DirectUnaryClientError::InvalidRequest(
+            "unexpected lock in delayed StoreNotMatch read".to_owned(),
+        ))
+    }
+
+    fn resolve_lock_for_read(
+        &mut self,
+        _address: &str,
+        _request: &tidb_proto::KvrpcResolveLockRequest,
+        _context: &tidb_proto::KvrpcContext,
+        _call: &UnaryCallContext,
+    ) -> Result<tidb_proto::KvrpcResolveLockResponse, DirectUnaryClientError> {
+        Err(DirectUnaryClientError::InvalidRequest(
+            "unexpected lock in delayed StoreNotMatch read".to_owned(),
+        ))
+    }
+}
+
 #[test]
-fn store_not_match_force_closes_the_address_before_region_miss_rebuild() {
-    let calls = Rc::new(RefCell::new(Vec::new()));
-    let events = Rc::new(RefCell::new(Vec::new()));
-    let mut runtime = InjectedQueryRuntime::new(transport_with_transport_failures(
-        Rc::clone(&calls),
-        [
-            Ok(store_not_match(1)),
-            Ok(response(b"reloaded-after-store-mismatch")),
-        ],
-        [],
-        Rc::clone(&events),
-        [
-            location(1, "a", "z", "tikv-old:20160"),
-            location(1, "a", "z", "tikv-new:20160"),
-        ],
+fn delayed_store_not_match_cannot_close_a_replacement_channel() {
+    let state = Rc::new(RefCell::new(DelayedStoreMismatchState {
+        active_generation: Some(1),
+        ..DelayedStoreMismatchState::default()
+    }));
+    let transport = DirectUnaryQueryTransport::new_injected(
+        DelayedStoreMismatchClient {
+            state: Rc::clone(&state),
+        },
+        RegionCache::new(ScriptedLoader {
+            cluster_id: 9001,
+            calls: Rc::new(RefCell::new(Vec::new())),
+            regions: [
+                location(1, "a", "z", "shared-tikv:20160"),
+                location(1, "a", "z", "shared-tikv:20160"),
+            ]
+            .into_iter()
+            .collect(),
+        }),
         DirectUnaryRuntimeConfig::default(),
-    ));
-    let mut result = select_result(&mut runtime, &transport_request(metadata("a", "z")));
+        tidb_txnkv::lock::FixedTimestampSource::new(1 << 18),
+    )
+    .unwrap();
+    let mut runtime = InjectedQueryRuntime::new(transport);
+    let mut result = runtime
+        .select_with_runtime_stats(
+            &transport_request(metadata("a", "z")),
+            SelectInput::default(),
+            QueryResultContext::new(Vec::<FieldType>::new(), WarningCollector::new()),
+            vec![1],
+            2,
+            true,
+        )
+        .unwrap();
 
     assert_eq!(
         result.next_raw().unwrap(),
-        Some(b"reloaded-after-store-mismatch".to_vec())
+        Some(b"replacement-survived".to_vec())
     );
     assert_eq!(result.next_raw().unwrap(), None);
-    assert_eq!(
-        events.borrow().as_slice(),
-        [
-            ClientEvent::Send("tikv-old:20160".to_owned()),
-            ClientEvent::ForceClose("tikv-old:20160".to_owned()),
-            ClientEvent::Send("tikv-new:20160".to_owned()),
-        ]
-    );
+    let state = state.borrow();
+    assert_eq!(state.sent_generations, [1, 2]);
+    assert!(state.force_closed_generations.is_empty());
+    assert_eq!(state.active_generation, Some(2));
 }
 
 #[test]

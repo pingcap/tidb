@@ -103,14 +103,38 @@ fn locked_response_carries_the_exact_cop_call_context() {
 #[test]
 fn one_shared_runtime_carries_client_and_region_cache_handles() {
     let runtime = include_str!("../../tidb-txnkv/src/read_runtime.rs");
-    assert_eq!(runtime.matches("    client: Rc<RefCell<C>>").count(), 1);
-    assert_eq!(
-        runtime
-            .matches("    region_cache: BackgroundRegionCache<L>")
-            .count(),
-        1
-    );
+    let authority = &runtime[runtime
+        .find("pub struct SharedReadAuthority")
+        .expect("process read authority")..];
+    let authority = &authority[..authority.find("}\n\nimpl").expect("authority fields")];
+    assert!(authority.contains("client: C"));
+    assert!(authority.contains("region_cache: BackgroundRegionCache<L>"));
+    assert!(authority.contains("authority_id: u64"));
+    assert!(!authority.contains("Rc<RefCell"));
+    let session = &runtime[runtime
+        .find("pub struct SharedReadRuntime")
+        .expect("session read runtime")..];
+    let session = &session[..session.find("}\n\nimpl").expect("session fields")];
+    assert!(session.contains("client: Rc<RefCell<C>>"));
+    assert!(session.contains("region_cache: BackgroundRegionCache<L>"));
+    assert!(session.contains("authority_id: u64"));
     assert!(!runtime.contains("region_cache: Rc<RefCell<RegionCache<L>>>"));
+
+    let open_session = &runtime[runtime
+        .find("pub fn open_session")
+        .expect("session factory")..];
+    let open_session = &open_session[..open_session
+        .find("    /// Cluster identity")
+        .expect("end of session factory")];
+    assert!(open_session.contains("SharedReadRuntime::from_shared_authorities"));
+    assert!(open_session.contains("self.client.clone()"));
+    assert!(open_session.contains("self.region_cache.clone()"));
+    assert!(open_session.contains("self.authority_id"));
+    assert_eq!(runtime.matches("pub fn shutdown").count(), 1);
+    assert!(
+        !runtime[runtime.find("pub struct SharedReadRuntime").unwrap()..]
+            .contains("pub fn shutdown")
+    );
 
     let direct = include_str!("../src/cop_paging/direct_unary_query_transport.rs");
     assert!(direct.contains("shared_runtime: SharedReadRuntime<C, L>"));

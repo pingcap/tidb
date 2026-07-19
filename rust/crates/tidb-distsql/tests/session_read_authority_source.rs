@@ -17,8 +17,15 @@
 #[test]
 fn production_constructor_opens_a_session_from_the_process_authority() {
     let source = include_str!("../src/cop_paging/direct_unary_query_transport.rs");
-    assert!(source.contains("pub fn from_read_authority<S>"));
-    assert!(source.contains("authority.open_session()"));
-    assert!(!source.contains("Arc<Mutex<DirectUnaryQueryTransport"));
-    assert!(!source.contains("Arc<Mutex<SharedReadRuntime"));
+    let constructor = &source[source
+        .find("pub fn from_read_authority<S>")
+        .expect("process-authority constructor")..];
+    let constructor = &constructor[..constructor
+        .find("impl<C: DirectUnaryClient")
+        .expect("end of process-authority constructor")];
+    assert!(constructor.contains("let runtime = authority"));
+    assert!(constructor.contains(".open_session()"));
+    assert!(constructor.contains("with_shared_runtime_batch_first(runtime"));
+    assert!(!constructor.contains("SharedReadAuthority::start"));
+    assert!(!constructor.contains("Arc<Mutex"));
 }

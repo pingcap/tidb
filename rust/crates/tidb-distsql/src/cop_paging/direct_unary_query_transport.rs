@@ -1478,11 +1478,13 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                 return self.install_same_task_retry(replacement);
             }
         }
-        if region_error.store_not_match.is_some() {
-            try_borrow_client(self.shared_runtime.client())?
-                .close_address(&observed_attempt.address)
-                .map_err(DirectUnaryTransportError::Client)?;
-        }
+        // StoreNotMatch belongs to this cache-issued route generation, not to
+        // every transport channel currently using the same address. A delayed
+        // response may arrive after another session has already installed a
+        // replacement channel, and this response does not carry the channel
+        // pool version needed by `close_address_version`. Let the canonical
+        // region-error owner below apply the exact `observed_attempt`; never
+        // turn this stale route fact into an address-wide transport mutation.
         let region_id = observed_attempt.region.id;
         let region_retry_max_sleep = self.config.region_retry_max_sleep;
         let disposition = {
