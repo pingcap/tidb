@@ -4,7 +4,7 @@ status = "ready"
 target = "tidb-exec"
 ring = "result"
 consumer = "One read authority acquires one real PD timestamp and executes two planner-owned configured table scans at that same snapshot through the existing range, RegionCache, BatchCommands, retry, cancellation, and decoding path."
-test_target = "real_tikv_multi_relation_scan_source"
+test_target = "source_shard_d"
 go_sources = [
   "pkg/distsql/select_result.go",
   "pkg/executor/builder.go",
@@ -41,6 +41,7 @@ rust_paths = [
   "rust/crates/tidb-exec/src/real_tikv_read.rs",
   "rust/crates/tidb-exec/src/real_tikv_multi_read.rs",
   "rust/crates/tidb-exec/tests/real_tikv_multi_relation_scan_source.rs",
+  "rust/crates/tidb-exec/tests/source_shard_d.rs",
   "rust/difftests/corpus/coverage/evidence/source/executor-real-tikv-multi-relation-scan-runtime.tsv",
   "rust/difftests/corpus/coverage/evidence/tests/executor-real-tikv-multi-relation-scan-runtime.tsv",
 ]

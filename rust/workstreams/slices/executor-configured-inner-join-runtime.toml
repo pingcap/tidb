@@ -26,7 +26,7 @@ evidence_prerequisites = [
   { capability = "same-snapshot-real-tikv-multi-scan", evidence_owner = "executor-real-tikv-multi-relation-scan-runtime", kind = "source", anchor = "pkg/distsql/select_result.go", minimum_status = "PARTIAL" },
 ]
 support_anchors = [
-  "Campaign 25 stage E is the sole tidb-exec routing steward, exports both multi-read and configured join modules, and registers both focused tests because tidb-exec has autotests disabled",
+  "Campaign 25 stage E is the sole tidb-exec routing steward, exports both multi-read and configured join modules, and registers its focused join test because tidb-exec has autotests disabled; stage D compiles earlier through source_shard_d",
   "Current source/test ownership overlaps planner-executor-typed-join-runtime and planner-executor-right-natural-join-runtime; preserve typed predicate evidence and transfer only the bounded non-null INNER subset",
   "No client-side scan filtering, independent timestamps, NULL equality, outer/semi join, spill, hash partitioning, concurrency fleet, selection-vector reuse, or unordered output claim is allowed",
 ]
