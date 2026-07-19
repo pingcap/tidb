@@ -222,6 +222,53 @@ class CampaignCloseTest(unittest.TestCase):
             encoding="utf-8",
         )
 
+    def prepare_split_member_a_test_file(self) -> tuple[Path, list[str]]:
+        self.prepare_complete_member_a_evidence()
+        replacements = []
+        for index in (2, 3):
+            old_path = f"pkg/planner/source{index}_test.go"
+            new_path = "pkg/planner/source1_test.go"
+            line = 10 + index
+            name = f"Test{index}"
+            replacements.append(
+                (old_path, new_path, line, name)
+            )
+        for path in (
+            self.root / "difftests/corpus/coverage/go_test_inventory.tsv",
+            self.new_test,
+            self.root / "workstreams/slices/member-a.toml",
+        ):
+            text = path.read_text(encoding="utf-8")
+            for old_path, new_path, _line, _name in replacements:
+                text = text.replace(old_path, new_path)
+            path.write_text(text, encoding="utf-8")
+
+        claim_path = self.root / "workstreams/claims/member-a.claim.json"
+        claim = json.loads(claim_path.read_text(encoding="utf-8"))
+        for old_path, new_path, line, name in replacements:
+            old_anchor = f"{old_path}:{line}:{name}"
+            new_anchor = f"{new_path}:{line}:{name}"
+            index = claim["tests"].index(old_anchor)
+            claim["tests"][index] = new_anchor
+            member_index = self.member_anchors["member-a"][1].index(old_anchor)
+            self.member_anchors["member-a"][1][member_index] = new_anchor
+        claim_path.write_text(json.dumps(claim), encoding="utf-8")
+
+        manifest = (
+            self.root
+            / "difftests/corpus/coverage/go_test_domain_manifest.tsv"
+        )
+        manifest.write_text(
+            "# source_path\tsource_line\ttest_name\ttest_domain\n"
+            "pkg/planner/source1_test.go\t11\tTest1\tstable-existing-domain\n",
+            encoding="utf-8",
+        )
+        additions = [
+            f"pkg/planner/source1_test.go:{line}:{name}"
+            for _old_path, _new_path, line, name in replacements
+        ]
+        return manifest, additions
+
     def regenerate_member_a(self, command: list[str], root: Path) -> None:
         if "go_source_ledger" in command:
             path = root / "difftests/corpus/coverage/go_source_inventory.tsv"
@@ -480,6 +527,48 @@ class CampaignCloseTest(unittest.TestCase):
                 self.root, "campaign-x", "member-a"
             )
 
+    def test_member_promotion_adds_only_missing_rows_in_split_test_file(self) -> None:
+        manifest, additions = self.prepare_split_member_a_test_file()
+
+        def regenerate_with_domain_gate(command: list[str], root: Path) -> None:
+            if "go_test_ledger" in command:
+                manifest_text = manifest.read_text(encoding="utf-8")
+                for anchor in additions:
+                    test_path, line, name = anchor.rsplit(":", 2)
+                    expected = f"{test_path}\t{line}\t{name}\tmember-a"
+                    if expected not in manifest_text:
+                        raise RuntimeError(f"missing exact test-domain row {anchor}")
+            self.regenerate_member_a(command, root)
+
+        with self.assertRaisesRegex(RuntimeError, "missing exact test-domain row"):
+            regenerate_with_domain_gate(["go_test_ledger"], self.root)
+
+        plan = campaign_close.build_member_promotion_plan(
+            self.root, "campaign-x", "member-a"
+        )
+        planned = plan.writes[manifest].splitlines()
+        self.assertIn(
+            "pkg/planner/source1_test.go\t11\tTest1\tstable-existing-domain",
+            planned,
+        )
+        self.assertEqual(
+            planned[-2:],
+            [
+                "pkg/planner/source1_test.go\t12\tTest2\tmember-a",
+                "pkg/planner/source1_test.go\t13\tTest3\tmember-a",
+            ],
+        )
+        self.assertFalse(any("source0_test.go" in line for line in planned))
+
+        campaign_close.apply_member_promotion_plan(
+            self.root,
+            plan,
+            command_runner=regenerate_with_domain_gate,
+            validate=True,
+        )
+
+        self.assertEqual(manifest.read_text(encoding="utf-8"), plan.writes[manifest])
+
     def test_member_promotion_allows_direct_evidence_without_transfer_file(self) -> None:
         self.prepare_complete_member_a_evidence()
         self.old_source.unlink()
@@ -536,10 +625,12 @@ class CampaignCloseTest(unittest.TestCase):
             )
 
     def test_member_promotion_rolls_back_status_and_transfers_on_failure(self) -> None:
-        self.prepare_complete_member_a_evidence()
+        manifest, _additions = self.prepare_split_member_a_test_file()
+        before_manifest = manifest.read_bytes()
         plan = campaign_close.build_member_promotion_plan(
             self.root, "campaign-x", "member-a"
         )
+        self.assertIn(manifest, plan.touched_paths)
         before = {
             path: path.read_bytes() if path.exists() else None
             for path in plan.touched_paths
@@ -558,6 +649,7 @@ class CampaignCloseTest(unittest.TestCase):
 
         for path, content in before.items():
             self.assertEqual(path.read_bytes() if path.exists() else None, content)
+        self.assertEqual(manifest.read_bytes(), before_manifest)
         self.assertTrue(
             (self.root / "workstreams/claims/member-a.claim.json").is_file()
         )

@@ -24,7 +24,10 @@ scripts/campaign_close.py --campaign <campaign> --promote-member <slice> --apply
 The member transaction requires exact PARTIAL-or-better evidence for every
 frozen obligation, applies only checked ownership transfers for that member or
 members promoted earlier, regenerates the ledgers under the claim lock, and
-leaves campaign close and claim release untouched. The campaign still ends
+leaves campaign close and claim release untouched. When a promoted test belongs
+to a Go test file already opted into exact split ownership, the same transaction
+adds any missing exact domain row under the promoted member; existing domain
+labels remain stable, and unsplit files stay unsplit. The campaign still ends
 with one `campaign_close.py --campaign <campaign> --gate` shared gate and its
 exact-membership receipt.
 

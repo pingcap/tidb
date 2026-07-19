@@ -55,6 +55,9 @@ queue = _load_queue_module()
 
 SOURCE_EVIDENCE = Path("difftests/corpus/coverage/evidence/source")
 TEST_EVIDENCE = Path("difftests/corpus/coverage/evidence/tests")
+TEST_DOMAIN_MANIFEST = Path(
+    "difftests/corpus/coverage/go_test_domain_manifest.tsv"
+)
 GENERATED_PATHS = (
     Path("difftests/corpus/coverage/go_source_inventory.tsv"),
     Path("difftests/corpus/coverage/go_test_declaration_inventory.tsv"),
@@ -592,6 +595,58 @@ def _member_has_promoted_ledger_evidence(
     return True
 
 
+def _promoted_test_domain_manifest_text(
+    root: Path, member: str, test_anchors: Iterable[str]
+) -> str | None:
+    """Add missing exact rows only for Go test files already split.
+
+    Existing rows are immutable partition history. New rows are appended in
+    deterministic anchor order and use the promoted member as their domain.
+    """
+    path = root / TEST_DOMAIN_MANIFEST
+    if not path.is_file():
+        return None
+    text = path.read_text(encoding="utf-8")
+    existing: set[tuple[str, int, str]] = set()
+    split_paths: set[str] = set()
+    for number, line in enumerate(text.splitlines(), start=1):
+        if not line or line.startswith("#"):
+            continue
+        fields = line.split("\t")
+        if len(fields) != 4:
+            raise ValueError(
+                f"{path}:{number}: expected 4 fields, got {len(fields)}"
+            )
+        try:
+            anchor = (fields[0], int(fields[1]), fields[2])
+        except ValueError as error:
+            raise ValueError(
+                f"{path}:{number}: invalid test line {fields[1]!r}"
+            ) from error
+        if anchor in existing:
+            raise ValueError(
+                f"{path}:{number}: duplicate test-domain anchor "
+                f"{anchor[0]}:{anchor[1]}:{anchor[2]}"
+            )
+        existing.add(anchor)
+        split_paths.add(anchor[0])
+
+    promoted = []
+    for value in test_anchors:
+        test_path, line, name = str(value).rsplit(":", 2)
+        anchor = (test_path, int(line), name)
+        if test_path in split_paths and anchor not in existing:
+            promoted.append(anchor)
+    if not promoted:
+        return None
+    promoted.sort(key=lambda anchor: (anchor[0], anchor[1], anchor[2]))
+    suffix = "" if not text or text.endswith("\n") else "\n"
+    return text + suffix + "".join(
+        f"{test_path}\t{line}\t{name}\t{member}\n"
+        for test_path, line, name in promoted
+    )
+
+
 def build_member_promotion_plan(
     root: Path, campaign_name: str, member: str
 ) -> MemberPromotionPlan:
@@ -656,6 +711,11 @@ def build_member_promotion_plan(
         root, transfer_path, transfer_rows, slices, eligible_members
     )
     _validate_exact_member_evidence(root, member, record, writes, deletes)
+    domain_manifest = _promoted_test_domain_manifest_text(
+        root, member, record["go_tests"]
+    )
+    if domain_manifest is not None:
+        writes[root / TEST_DOMAIN_MANIFEST] = domain_manifest
     slice_path = Path(record["_path"])
     writes[slice_path] = _partial_slice_text(slice_path, str(record["status"]))
     return MemberPromotionPlan(
