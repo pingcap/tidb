@@ -43,6 +43,8 @@ use tidb_txnkv::region::{
     Peer, PeerRole, RegionCache, RegionLoadError, RegionLoader, RegionLocation, RegionMetadata,
     RegionRecoveryLoader, RegionRouteError, RegionVerId, Store, StoreLiveness,
 };
+use tidb_txnkv::rpc::{completion_pair, AsyncRequestDispatcher, CompletionPull, CompletionRunLoop};
+use tidb_txnkv::UnaryCallContext;
 use tidb_txnkv::{
     ClientReplicaReadType, DirectUnaryConnectionError, DirectUnaryGrpcCode,
     DirectUnaryTransportClass,
@@ -127,6 +129,7 @@ struct ScriptedClient {
     responses: VecDeque<Result<Vec<u8>, DirectUnaryClientError>>,
     events: Rc<RefCell<Vec<ClientEvent>>>,
     liveness: RefCell<VecDeque<Result<StoreLiveness, DirectUnaryClientError>>>,
+    batch_errors: RefCell<VecDeque<DirectUnaryClientError>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -231,6 +234,26 @@ impl DirectUnaryClient for ScriptedClient {
 
     fn close(&mut self) -> Result<(), DirectUnaryClientError> {
         Ok(())
+    }
+}
+
+impl AsyncRequestDispatcher for ScriptedClient {
+    type Pending = CompletionPull<DirectUnaryResponse, DirectUnaryClientError>;
+
+    fn begin(
+        &mut self,
+        physical_address: &str,
+        _forwarded_host: Option<&str>,
+        request: &DirectUnaryRequest,
+        call: &UnaryCallContext,
+    ) -> Result<Self::Pending, DirectUnaryClientError> {
+        let (completion, pull) = completion_pair(CompletionRunLoop::new(), || {});
+        if let Some(error) = self.batch_errors.borrow_mut().pop_front() {
+            completion.schedule(Err(error));
+            return Ok(pull);
+        }
+        completion.schedule(self.send_request_with_context(physical_address, request, call));
+        Ok(pull)
     }
 }
 
@@ -564,6 +587,7 @@ fn transport_with_loader_calls_and_config(
                 .collect(),
             events: Rc::new(RefCell::new(Vec::new())),
             liveness: RefCell::new(VecDeque::new()),
+            batch_errors: RefCell::new(VecDeque::new()),
         },
         RegionCache::new(ScriptedLoader {
             cluster_id,
@@ -590,6 +614,7 @@ fn transport_with_transport_failures(
             responses: responses.into_iter().collect(),
             events,
             liveness: RefCell::new(liveness.into_iter().collect()),
+            batch_errors: RefCell::new(VecDeque::new()),
         },
         RegionCache::new(ScriptedLoader {
             cluster_id: 9001,
@@ -1862,6 +1887,49 @@ fn caller_cancellation_is_terminal_before_failure_consumption_or_retry_mutation(
 }
 
 #[test]
+fn local_batch_admission_busy_falls_back_without_route_failure_feedback() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let retry_control = Rc::new(RecordingRetryControl::default());
+    let transport = DirectUnaryQueryTransport::new_injected_batch_first(
+        ScriptedClient {
+            calls: Rc::clone(&calls),
+            responses: VecDeque::from([Ok(response(b"sync-after-local-admission"))]),
+            events: Rc::clone(&events),
+            liveness: RefCell::new(VecDeque::new()),
+            batch_errors: RefCell::new(VecDeque::from([DirectUnaryClientError::AdmissionBusy {
+                address: "tikv-1:20160".to_owned(),
+            }])),
+        },
+        RegionCache::new(ScriptedLoader {
+            cluster_id: 9001,
+            calls: Rc::new(RefCell::new(Vec::new())),
+            regions: VecDeque::from([location(1, "a", "z", "tikv-1:20160")]),
+        }),
+        DirectUnaryRuntimeConfig {
+            region_retry_waiter: retry_control.clone(),
+            ..DirectUnaryRuntimeConfig::default()
+        },
+        tidb_txnkv::lock::FixedTimestampSource::new(1 << 18),
+    )
+    .unwrap();
+    let mut runtime = InjectedQueryRuntime::new(transport);
+    let mut result = select_result(&mut runtime, &transport_request(metadata("a", "z")));
+
+    assert_eq!(
+        result.next_raw().unwrap(),
+        Some(b"sync-after-local-admission".to_vec())
+    );
+    assert_eq!(result.next_raw().unwrap(), None);
+    assert_eq!(calls.borrow().len(), 1);
+    assert_eq!(
+        events.borrow().as_slice(),
+        [ClientEvent::Send("tikv-1:20160".to_owned())]
+    );
+    assert!(retry_control.sleeps.borrow().is_empty());
+}
+
+#[test]
 fn return_region_error_and_non_connection_failures_close_without_future_dispatch() {
     let cases = [
         (
@@ -1901,6 +1969,7 @@ fn missing_cluster_loader_failure_and_empty_pd_address_fail_before_client_dispat
             responses: VecDeque::new(),
             events: Rc::new(RefCell::new(Vec::new())),
             liveness: RefCell::new(VecDeque::new()),
+            batch_errors: RefCell::new(VecDeque::new()),
         },
         RegionCache::new(ScriptedLoader {
             cluster_id: 0,

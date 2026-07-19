@@ -274,18 +274,35 @@ if [[ "${split_ready}" != true ]]; then
   printf '%s\n' "${SPLIT_OUTPUT}" >&2
   exit 1
 fi
+# The proof kills a follower, not a leader. Disable PD-initiated leader
+# scheduling before the Rust side snapshots its exact leader/follower route so
+# equal before/after leader IDs cannot hide a scheduler-driven ABA transfer.
+tiup ctl:v8.5.6 pd -u "http://${PD_SEED}" \
+  config set leader-schedule-limit 0 >/dev/null
+LEADER_SCHEDULE_LIMIT=$(curl -sf --max-time 2 \
+  "http://${PD_SEED}/pd/api/v1/config/schedule" \
+  | jq -r '."leader-schedule-limit" // -1' 2>/dev/null) || true
+if [[ "${LEADER_SCHEDULE_LIMIT}" != 0 ]]; then
+  echo "failed to disable PD leader scheduling for Campaign 18" >&2
+  exit 1
+fi
 : >"${PHASE_DIR}/split-complete"
 
 wait_for_phase route-ready
 ROUTE_PHASE="${PHASE_DIR}/route-ready"
+LEFT_REGION_ID=$(phase_values "${ROUTE_PHASE}" left_region_id)
 PHYSICAL_ADDRESS=$(phase_values "${ROUTE_PHASE}" physical_address)
 PHYSICAL_STORE_ID=$(phase_values "${ROUTE_PHASE}" physical_store_id)
 LOGICAL_ADDRESS=$(phase_values "${ROUTE_PHASE}" logical_address)
 LOGICAL_STORE_ID=$(phase_values "${ROUTE_PHASE}" logical_store_id)
+LOGICAL_PEER_ID=$(phase_values "${ROUTE_PHASE}" logical_peer_id)
 GENERATION_N=$(phase_values "${ROUTE_PHASE}" generation_n)
+FORWARDED_CHANNEL_VERSION=$(phase_values "${ROUTE_PHASE}" forwarded_channel_version)
 DIRECT_GENERATION=$(phase_values "${ROUTE_PHASE}" direct_generation)
-if [[ -z "${PHYSICAL_ADDRESS}" || -z "${PHYSICAL_STORE_ID}" \
-  || -z "${LOGICAL_ADDRESS}" || -z "${LOGICAL_STORE_ID}" || -z "${GENERATION_N}" \
+if [[ -z "${LEFT_REGION_ID}" || -z "${PHYSICAL_ADDRESS}" || -z "${PHYSICAL_STORE_ID}" \
+  || -z "${LOGICAL_ADDRESS}" || -z "${LOGICAL_STORE_ID}" || -z "${LOGICAL_PEER_ID}" \
+  || -z "${GENERATION_N}" \
+  || -z "${FORWARDED_CHANNEL_VERSION}" \
   || -z "${DIRECT_GENERATION}" \
   || "${PHYSICAL_ADDRESS}" == "${LOGICAL_ADDRESS}" ]]; then
   echo "Rust route phase did not prove distinct physical-proxy and logical-follower endpoints" >&2
@@ -308,10 +325,37 @@ if [[ -z "${TIKV_COMMAND}" || "${TIKV_COMMAND}" == *$'\n'* \
   echo "cannot capture a deterministic same-address tag-owned TiKV command" >&2
   exit 1
 fi
+REGION_ENDPOINT="http://${PD_SEED}/pd/api/v1/region/id/${LEFT_REGION_ID}"
+BASELINE_LEADER_STORE_ID=$(curl -sf --max-time 2 "${REGION_ENDPOINT}" \
+  | jq -r '.leader.store_id // 0' 2>/dev/null) || true
+if [[ "${BASELINE_LEADER_STORE_ID:-0}" == 0 \
+  || "${BASELINE_LEADER_STORE_ID}" == "${LOGICAL_STORE_ID}" ]]; then
+  echo "left region ${LEFT_REGION_ID} has no stable non-target leader before follower freeze" >&2
+  curl -sf --max-time 2 "${REGION_ENDPOINT}" >&2 || true
+  exit 1
+fi
 kill -STOP "${STOPPED_PID}"
+FROZEN_LEADER_STORE_ID=$(curl -sf --max-time 2 "${REGION_ENDPOINT}" \
+  | jq -r '.leader.store_id // 0' 2>/dev/null) || true
+if [[ "${FROZEN_LEADER_STORE_ID:-0}" != "${BASELINE_LEADER_STORE_ID}" \
+  || "${FROZEN_LEADER_STORE_ID}" == "${LOGICAL_STORE_ID}" ]]; then
+  kill -CONT "${STOPPED_PID}" 2>/dev/null || true
+  echo "left region ${LEFT_REGION_ID} leader changed while freezing logical follower" >&2
+  curl -sf --max-time 2 "${REGION_ENDPOINT}" >&2 || true
+  exit 1
+fi
 : >"${PHASE_DIR}/logical-target-frozen"
 
 wait_for_phase request-published
+PRE_KILL_LEADER_STORE_ID=$(curl -sf --max-time 2 "${REGION_ENDPOINT}" \
+  | jq -r '.leader.store_id // 0' 2>/dev/null) || true
+if [[ "${PRE_KILL_LEADER_STORE_ID:-0}" != "${BASELINE_LEADER_STORE_ID}" \
+  || "${PRE_KILL_LEADER_STORE_ID}" == "${LOGICAL_STORE_ID}" ]]; then
+  kill -CONT "${STOPPED_PID}" 2>/dev/null || true
+  echo "left region ${LEFT_REGION_ID} leader changed before logical follower kill" >&2
+  curl -sf --max-time 2 "${REGION_ENDPOINT}" >&2 || true
+  exit 1
+fi
 kill -KILL "${STOPPED_PID}"
 for _ in $(seq 1 60); do
   if ! kill -0 "${STOPPED_PID}" 2>/dev/null \
@@ -328,13 +372,24 @@ fi
 STOPPED_PID=
 : >"${PHASE_DIR}/logical-target-stopped"
 
+STOPPED_LEADER_STORE_ID=$(curl -sf --max-time 2 "${REGION_ENDPOINT}" \
+  | jq -r '.leader.store_id // 0' 2>/dev/null) || true
+if [[ "${STOPPED_LEADER_STORE_ID:-0}" != "${BASELINE_LEADER_STORE_ID}" \
+  || "${STOPPED_LEADER_STORE_ID}" == "${LOGICAL_STORE_ID}" ]]; then
+  echo "killing logical follower changed leader for left region ${LEFT_REGION_ID}" >&2
+  curl -sf --max-time 2 "${REGION_ENDPOINT}" >&2 || true
+  exit 1
+fi
+
 wait_for_phase failure-observed
-FAILED_GENERATION=$(phase_values "${PHASE_DIR}/failure-observed" failed_generation)
+FAILED_ROUTE_GENERATION=$(phase_values "${PHASE_DIR}/failure-observed" failed_route_generation)
+FAILED_CHANNEL_VERSION=$(phase_values "${PHASE_DIR}/failure-observed" failed_channel_version)
 FAILURE_COUNT=$(phase_values "${PHASE_DIR}/failure-observed" failure_count)
 TRANSPORT_SCHEDULED_RESENDS=$(phase_values "${PHASE_DIR}/failure-observed" transport_scheduled_resends)
 SURVIVING_DIRECT_GENERATION=$(phase_values "${PHASE_DIR}/failure-observed" direct_generation)
 DIRECT_SURVIVED=$(phase_values "${PHASE_DIR}/failure-observed" direct_survived)
-if [[ "${FAILED_GENERATION}" != "${GENERATION_N}" \
+if [[ "${FAILED_ROUTE_GENERATION}" != "${GENERATION_N}" \
+  || "${FAILED_CHANNEL_VERSION}" != "${FORWARDED_CHANNEL_VERSION}" \
   || "${FAILURE_COUNT}" != 1 || "${TRANSPORT_SCHEDULED_RESENDS}" != 0 \
   || "${DIRECT_SURVIVED}" != true \
   || "${SURVIVING_DIRECT_GENERATION}" != "${DIRECT_GENERATION}" ]]; then
@@ -358,8 +413,13 @@ for _ in $(seq 1 120); do
     | jq -r --argjson id "${LOGICAL_STORE_ID}" \
       '.stores[] | select(.store.id == $id) | [.store.state_name, (.store.node_state_name // "Serving"), .store.address] | @tsv' \
       2>/dev/null) || true
+  REGION_STATE=$(curl -sf --max-time 2 "${REGION_ENDPOINT}" \
+    | jq -r --argjson store_id "${LOGICAL_STORE_ID}" --argjson peer_id "${LOGICAL_PEER_ID}" \
+      '[.leader.store_id // 0, (any(.peers[]?; .store_id == $store_id and .id == $peer_id and .role_name == "Voter")), (any(.pending_peers[]?; .store_id == $store_id or .id == $peer_id)), (any(.down_peers[]?; .peer.store_id == $store_id or .peer.id == $peer_id))] | @tsv' \
+      2>/dev/null) || true
   if nc -z -w 1 127.0.0.1 "${LOGICAL_PORT}" >/dev/null 2>&1 \
-    && [[ "${STORE_STATE}" == $'Up\tServing\t'"${LOGICAL_ADDRESS}" ]]; then
+    && [[ "${STORE_STATE}" == $'Up\tServing\t'"${LOGICAL_ADDRESS}" ]] \
+    && [[ "${REGION_STATE}" == "${BASELINE_LEADER_STORE_ID}"$'\ttrue\tfalse\tfalse' ]]; then
     LISTENER_PID=$(lsof -nP -iTCP:"${LOGICAL_PORT}" -sTCP:LISTEN -t | head -1 || true)
     if [[ "${LISTENER_PID}" == "${RESTART_PID}" ]]; then
       restarted=true
@@ -369,15 +429,23 @@ for _ in $(seq 1 120); do
   sleep 0.5
 done
 if [[ "${restarted}" != true ]]; then
-  echo "same-address TiKV ${LOGICAL_ADDRESS} did not return Up/Serving" >&2
+  echo "same-address TiKV ${LOGICAL_ADDRESS} did not return as a ready peer under unchanged leader ${BASELINE_LEADER_STORE_ID}" >&2
   tail -160 "${RESTART_LOG}" >&2
+  exit 1
+fi
+RESTARTED_LEADER_STORE_ID=$(curl -sf --max-time 2 "${REGION_ENDPOINT}" \
+  | jq -r '.leader.store_id // 0' 2>/dev/null) || true
+if [[ "${RESTARTED_LEADER_STORE_ID:-0}" != "${BASELINE_LEADER_STORE_ID}" ]]; then
+  echo "left region ${LEFT_REGION_ID} leader changed after logical follower restart" >&2
+  curl -sf --max-time 2 "${REGION_ENDPOINT}" >&2 || true
   exit 1
 fi
 if ! ps -ww -p "${RESTART_PID}" -o command= | grep -F "${TAG_DIR}" >/dev/null; then
   echo "restarted TiKV is not tag-owned" >&2
   exit 1
 fi
-printf 'restart_pid=%s\naddress=%s\n' "${RESTART_PID}" "${LOGICAL_ADDRESS}" \
+printf 'restart_pid=%s\naddress=%s\nleader_store_id=%s\n' \
+  "${RESTART_PID}" "${LOGICAL_ADDRESS}" "${BASELINE_LEADER_STORE_ID}" \
   >"${PHASE_DIR}/tikv-restarted"
 
 wait "${RUST_PID}" || {
@@ -387,21 +455,38 @@ wait "${RUST_PID}" || {
 }
 RUST_PID=
 wait_for_phase completed
+COMPLETED_LEADER_STORE_ID=$(curl -sf --max-time 2 "${REGION_ENDPOINT}" \
+  | jq -r '.leader.store_id // 0' 2>/dev/null) || true
+if [[ "${COMPLETED_LEADER_STORE_ID:-0}" != "${BASELINE_LEADER_STORE_ID}" ]]; then
+  echo "left region ${LEFT_REGION_ID} leader changed during restarted-follower retry" >&2
+  curl -sf --max-time 2 "${REGION_ENDPOINT}" >&2 || true
+  exit 1
+fi
 COMPLETED="${PHASE_DIR}/completed"
-INITIAL_GENERATION=$(phase_values "${COMPLETED}" initial_generation)
-RETRY_GENERATION=$(phase_values "${COMPLETED}" retry_generation)
+INITIAL_ROUTE_GENERATION=$(phase_values "${COMPLETED}" initial_route_generation)
+COMPLETED_FAILED_ROUTE_GENERATION=$(phase_values "${COMPLETED}" failed_route_generation)
+RETRY_ROUTE_GENERATION=$(phase_values "${COMPLETED}" retry_route_generation)
+INITIAL_CHANNEL_VERSION=$(phase_values "${COMPLETED}" initial_channel_version)
+COMPLETED_FAILED_CHANNEL_VERSION=$(phase_values "${COMPLETED}" failed_channel_version)
+RETRY_CHANNEL_VERSION=$(phase_values "${COMPLETED}" retry_channel_version)
 ADJACENT=$(phase_values "${COMPLETED}" adjacent)
 RETRY_USABLE=$(phase_values "${COMPLETED}" retry_usable)
 PLAINTEXT_ONLY=$(phase_values "${COMPLETED}" plaintext_only)
 COMPLETED_DIRECT_SURVIVED=$(phase_values "${COMPLETED}" direct_survived)
+EXACT_PEER_READINESS=$(phase_values "${COMPLETED}" exact_peer_readiness)
 COMPLETED_SCHEDULED_RESENDS=$(phase_values "${COMPLETED}" transport_scheduled_resends)
 if [[ "${ADJACENT}" != true || "${RETRY_USABLE}" != true \
   || "${PLAINTEXT_ONLY}" != true || "${COMPLETED_DIRECT_SURVIVED}" != true \
+  || "${EXACT_PEER_READINESS}" != true \
   || "${COMPLETED_SCHEDULED_RESENDS}" != 0 \
-  || "${INITIAL_GENERATION}" != "${GENERATION_N}" \
-  || "${RETRY_GENERATION:-0}" -le "${INITIAL_GENERATION:-0}" ]]; then
+  || "${INITIAL_ROUTE_GENERATION}" != "${GENERATION_N}" \
+  || "${COMPLETED_FAILED_ROUTE_GENERATION}" != "${GENERATION_N}" \
+  || "${RETRY_ROUTE_GENERATION:-0}" -le "${INITIAL_ROUTE_GENERATION:-0}" \
+  || "${INITIAL_CHANNEL_VERSION}" != "${FORWARDED_CHANNEL_VERSION}" \
+  || "${COMPLETED_FAILED_CHANNEL_VERSION}" != "${FORWARDED_CHANNEL_VERSION}" \
+  || "${RETRY_CHANNEL_VERSION}" != "${FORWARDED_CHANNEL_VERSION}" ]]; then
   echo "Campaign 18 completion marker is incomplete" >&2
   cat "${COMPLETED}" >&2
   exit 1
 fi
-echo "Campaign 18 live proof passed: GetPrevRegion adjacency; forwarded ${PHYSICAL_ADDRESS} -> ${LOGICAL_ADDRESS}; generation ${INITIAL_GENERATION} failed once; caller retry generation ${RETRY_GENERATION} succeeded"
+echo "Campaign 18 live proof passed: GetPrevRegion adjacency; forwarded ${PHYSICAL_ADDRESS} -> follower ${LOGICAL_ADDRESS} under unchanged leader store ${BASELINE_LEADER_STORE_ID}; route generation ${INITIAL_ROUTE_GENERATION} failed once on channel ${INITIAL_CHANNEL_VERSION}; caller retry route generation ${RETRY_ROUTE_GENERATION} succeeded"

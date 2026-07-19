@@ -192,6 +192,11 @@ pub enum DirectUnaryClientError {
     },
     /// The encoded coprocessor body is malformed or already contains context.
     InvalidRequest(String),
+    /// A bounded local BatchCommands opening slot is already occupied.
+    AdmissionBusy {
+        /// Physical address whose stream is still opening.
+        address: String,
+    },
     /// A connection generation was selected before the send failed.
     Connection(DirectUnaryConnectionError),
     /// The caller's exact unary deadline elapsed.
@@ -214,6 +219,7 @@ impl DirectUnaryClientError {
             Self::Closed => "closed",
             Self::InvalidAddress { .. } => "invalid_address",
             Self::InvalidRequest(_) => "invalid_request",
+            Self::AdmissionBusy { .. } => "admission_busy",
             Self::Connection(_) => "connection",
             Self::Timeout { .. } => "timeout",
             Self::Runtime(_) => "runtime",
@@ -279,6 +285,12 @@ impl std::fmt::Display for DirectUnaryClientError {
                 write!(formatter, "invalid TiKV address {address:?}: {message}")
             }
             Self::InvalidRequest(message) => write!(formatter, "invalid TiKV request: {message}"),
+            Self::AdmissionBusy { address } => {
+                write!(
+                    formatter,
+                    "TiKV BatchCommands stream {address} is still opening"
+                )
+            }
             Self::Connection(error) => error.fmt(formatter),
             Self::Timeout {
                 connection,

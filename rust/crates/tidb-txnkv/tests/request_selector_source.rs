@@ -141,6 +141,23 @@ fn complete(selector: &mut tidb_txnkv::region::RequestSelector, request: &Leader
 }
 
 #[test]
+fn unsent_attempt_rollback_releases_pending_slot_without_consuming_peer_budget() {
+    let mut cache = cache();
+    let region = location().region;
+    let mut selector = cache
+        .request_selector(region, policy(ReplicaReadMode::Leader))
+        .unwrap();
+
+    let unsent = select(&mut cache, &mut selector);
+    assert!(selector.abort_unsent_attempt(&unsent.attempt, unsent.proxy()));
+    assert!(!selector.abort_unsent_attempt(&unsent.attempt, unsent.proxy()));
+
+    let retry = select(&mut cache, &mut selector);
+    assert_eq!(retry, unsent);
+    complete(&mut selector, &retry);
+}
+
+#[test]
 fn follower_policy_visits_nonleaders_before_leader_with_replica_flags() {
     let mut cache = cache();
     let region = location().region;

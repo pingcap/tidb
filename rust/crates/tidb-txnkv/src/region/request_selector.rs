@@ -362,6 +362,57 @@ impl RequestSelector {
         true
     }
 
+    /// Rolls back one exact route selection which never reached the wire.
+    ///
+    /// Local admission pressure is not a replica attempt. It must release the
+    /// pending selector slot without consuming peer-attempt budget or creating
+    /// a completed attempt that later recovery could misinterpret.
+    #[must_use]
+    pub fn abort_unsent_attempt(
+        &mut self,
+        attempt: &RegionAttempt,
+        proxy: Option<&RegionAttempt>,
+    ) -> bool {
+        if self.pending_attempt.as_ref() != Some(attempt) || self.completed_attempt.is_some() {
+            return false;
+        }
+        let target_decrements =
+            1 + usize::from(proxy.is_some_and(|proxy| proxy.peer_id == attempt.peer_id));
+        if self
+            .attempts_by_peer
+            .get(&attempt.peer_id)
+            .is_none_or(|state| usize::from(state.attempts) < target_decrements)
+        {
+            return false;
+        }
+        if let Some(proxy) = proxy.filter(|proxy| proxy.peer_id != attempt.peer_id) {
+            if self
+                .attempts_by_peer
+                .get(&proxy.peer_id)
+                .is_none_or(|state| state.attempts == 0)
+            {
+                return false;
+            }
+        }
+        if self.dispatches == 0 {
+            return false;
+        }
+
+        self.attempts_by_peer
+            .get_mut(&attempt.peer_id)
+            .expect("validated target attempt state")
+            .attempts -= u8::try_from(target_decrements).expect("at most target and proxy");
+        if let Some(proxy) = proxy.filter(|proxy| proxy.peer_id != attempt.peer_id) {
+            self.attempts_by_peer
+                .get_mut(&proxy.peer_id)
+                .expect("validated proxy attempt state")
+                .attempts -= 1;
+        }
+        self.pending_attempt = None;
+        self.dispatches -= 1;
+        true
+    }
+
     /// Marks an exact completed attempt in a stale-read selector flow as
     /// `DataIsNotReady`.
     ///

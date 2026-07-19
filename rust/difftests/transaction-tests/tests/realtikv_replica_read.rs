@@ -632,15 +632,8 @@ fn live_pd_prev_region_and_forwarded_batch_survive_same_address_restart() {
     let logical_peer = left
         .peers
         .iter()
-        .find(|peer| {
-            peer.id != leader_peer_id
-                && matches!(
-                    peer.role,
-                    PeerRole::Voter | PeerRole::IncomingVoter | PeerRole::DemotingVoter
-                )
-                && !peer.is_witness
-        })
-        .expect("three-TiKV topology must expose a nonleader follower target");
+        .find(|peer| peer.id != leader_peer_id && peer.role == PeerRole::Voter && !peer.is_witness)
+        .expect("three-TiKV topology must expose a stable nonleader voter target");
     let logical_store = left
         .stores
         .iter()
@@ -733,17 +726,22 @@ fn live_pd_prev_region_and_forwarded_batch_survive_same_address_restart() {
     let generation_n = client
         .batch_stream_generation(&physical_store.address, Some(&logical_store.address))
         .expect("successful forwarded request must retain generation N");
+    let forwarded_channel_version = client
+        .connection_version(&physical_store.address)
+        .expect("forwarded request must retain its physical channel");
 
     let mut route_phase = format!(
-        "left_region_id={}\nright_region_id={}\nboundary_hex={}\nphysical_store_id={}\nphysical_address={}\nlogical_store_id={}\nlogical_address={}\ngeneration_n={}\ndirect_generation={}\n",
+        "left_region_id={}\nright_region_id={}\nboundary_hex={}\nphysical_store_id={}\nphysical_address={}\nlogical_store_id={}\nlogical_peer_id={}\nlogical_address={}\ngeneration_n={}\nforwarded_channel_version={}\ndirect_generation={}\n",
         left.region.id,
         right.region.id,
         hex_bytes(CAMPAIGN18_SPLIT_KEY),
         physical_store.id,
         physical_store.address,
         logical_store.id,
+        logical_peer.id,
         logical_store.address,
         generation_n,
+        forwarded_channel_version,
         direct_generation,
     );
     for store in &left.stores {
@@ -785,7 +783,7 @@ fn live_pd_prev_region_and_forwarded_batch_survive_same_address_restart() {
         .connection()
         .expect("BatchCommands stream failure must retain address generation");
     assert_eq!(connection.address(), physical_store.address);
-    assert_eq!(connection.version(), generation_n);
+    assert_eq!(connection.version(), forwarded_channel_version);
     assert!(failed
         .try_complete()
         .expect("duplicate completion probe")
@@ -831,8 +829,9 @@ fn live_pd_prev_region_and_forwarded_batch_survive_same_address_restart() {
         &phase_dir,
         "failure-observed",
         &format!(
-            "failed_address={}\nfailed_generation={}\nfailure_count={}\ntransport_scheduled_resends={}\ndirect_generation={}\ndirect_survived=true\n",
+            "failed_address={}\nfailed_route_generation={}\nfailed_channel_version={}\nfailure_count={}\ntransport_scheduled_resends={}\ndirect_generation={}\ndirect_survived=true\n",
             connection.address(),
+            generation_n,
             connection.version(),
             failure_count,
             transport_scheduled_resends,
@@ -840,6 +839,55 @@ fn live_pd_prev_region_and_forwarded_batch_survive_same_address_restart() {
         ),
     );
     wait_for_campaign18_phase(&phase_dir, "tikv-restarted");
+
+    // Separate direct clients prove that the exact restarted peer can serve
+    // this follower read without warming the measured physical proxy's
+    // forwarding path. The main-client call below remains the first forwarded
+    // attempt after restart.
+    let readiness_deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        let mut readiness_client =
+            TonicCoprocessorClient::new().expect("construct restarted-peer readiness client");
+        let readiness_call = UnaryCallContext::with_timeout(Duration::from_secs(2));
+        let readiness_result =
+            match readiness_client.begin(&logical_store.address, None, &request, &readiness_call) {
+                Ok(mut pending) => match pending.complete(&readiness_call) {
+                    Ok(result) => result,
+                    Err(error) => Err(DirectUnaryClientError::Runtime(error.to_string())),
+                },
+                Err(error) => Err(error),
+            };
+        readiness_client
+            .close()
+            .expect("close restarted-peer readiness client");
+
+        let retry_reason = match readiness_result {
+            Ok(response) => {
+                let response =
+                    tidb_proto::CoprocessorResponse::decode(response.encoded_response.as_slice())
+                        .expect("decode restarted-peer readiness response");
+                if let Some(region_error) = response.region_error {
+                    Some(format!("region not ready: {region_error:?}"))
+                } else {
+                    assert!(response.other_error.is_empty());
+                    break;
+                }
+            }
+            Err(error)
+                if error.connection().is_some()
+                    || matches!(error, DirectUnaryClientError::Timeout { .. }) =>
+            {
+                Some(error.to_string())
+            }
+            Err(error) => panic!("restarted-peer readiness failed permanently: {error}"),
+        };
+        assert!(
+            Instant::now() < readiness_deadline,
+            "restarted follower did not become ready: {}",
+            retry_reason.expect("every readiness retry retains a reason"),
+        );
+        thread::sleep(Duration::from_millis(100));
+    }
 
     let retry_call = UnaryCallContext::with_timeout(Duration::from_secs(15));
     let mut retry = client
@@ -859,13 +907,16 @@ fn live_pd_prev_region_and_forwarded_batch_survive_same_address_restart() {
         .batch_stream_generation(&physical_store.address, Some(&logical_store.address))
         .expect("caller retry must retain its new generation");
     assert!(retry_generation > generation_n);
+    let retry_channel_version = client
+        .connection_version(&physical_store.address)
+        .expect("caller retry must retain its physical channel");
     client.close().expect("close production tonic client");
 
     write_campaign18_phase(
         &phase_dir,
         "completed",
         &format!(
-            "left_region_id={}\nright_region_id={}\nadjacent=true\nphysical_address={}\nlogical_address={}\ninitial_generation={}\nfailed_generation={}\nretry_generation={}\nfailure_count={}\ntransport_scheduled_resends={}\ndirect_generation={}\ndirect_survived=true\nretry_usable=true\nplaintext_only=true\n",
+            "left_region_id={}\nright_region_id={}\nadjacent=true\nphysical_address={}\nlogical_address={}\ninitial_route_generation={}\nfailed_route_generation={}\nretry_route_generation={}\ninitial_channel_version={}\nfailed_channel_version={}\nretry_channel_version={}\nfailure_count={}\ntransport_scheduled_resends={}\ndirect_generation={}\ndirect_survived=true\nexact_peer_readiness=true\nretry_usable=true\nplaintext_only=true\n",
             left.region.id,
             right.region.id,
             physical_store.address,
@@ -873,6 +924,9 @@ fn live_pd_prev_region_and_forwarded_batch_survive_same_address_restart() {
             generation_n,
             generation_n,
             retry_generation,
+            forwarded_channel_version,
+            forwarded_channel_version,
+            retry_channel_version,
             failure_count,
             transport_scheduled_resends,
             direct_generation,

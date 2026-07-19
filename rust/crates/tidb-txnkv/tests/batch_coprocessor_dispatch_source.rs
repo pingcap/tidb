@@ -388,10 +388,45 @@ fn elapsed_deadline_rejects_before_stream_or_wire_admission() {
     let mut client = TonicCoprocessorClient::new().unwrap();
     let call = UnaryCallContext::with_timeout(Duration::ZERO);
 
-    let error = client
+    let mut pending = client
         .begin(&server.address, None, &request(b"must-not-publish"), &call)
-        .err()
-        .expect("elapsed deadline must reject before admission");
+        .expect("worker publishes elapsed deadline through the original completion");
+    let error = pending
+        .try_complete()
+        .unwrap()
+        .expect("worker deadline result")
+        .unwrap_err();
+
+    assert!(matches!(error, DirectUnaryClientError::Timeout { .. }));
+    assert!(received.lock().unwrap().is_empty());
+    assert!(matches!(
+        seen.recv_timeout(Duration::from_millis(50)),
+        Err(mpsc::RecvTimeoutError::Timeout)
+    ));
+    assert_eq!(client.connection_version(&server.address), None);
+    client.close().unwrap();
+}
+
+#[test]
+fn positive_deadline_expiring_before_worker_admission_never_reaches_the_wire() {
+    let (server, received, seen, _release) = fixture(ResponseMode::Echo);
+    let mut client = TonicCoprocessorClient::new().unwrap();
+    let call = UnaryCallContext::with_timeout(Duration::from_millis(1));
+    std::thread::sleep(Duration::from_millis(10));
+
+    let mut pending = client
+        .begin(
+            &server.address,
+            None,
+            &request(b"expired-before-worker"),
+            &call,
+        )
+        .expect("worker publishes its final admission decision through the completion");
+    let error = pending
+        .try_complete()
+        .unwrap()
+        .expect("worker deadline result")
+        .unwrap_err();
 
     assert!(matches!(error, DirectUnaryClientError::Timeout { .. }));
     assert!(received.lock().unwrap().is_empty());

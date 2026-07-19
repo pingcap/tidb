@@ -300,6 +300,13 @@ fn forwarding_runtime_preserves_target_rotates_proxy_reuses_and_recovers_direct(
     assert_eq!(first_proxy.proxy().map(|proxy| proxy.store_id), Some(502));
     assert_eq!(first_proxy.dispatch_address(), "store-502");
     assert_eq!(first_proxy.forwarded_host(), Some("store-501"));
+    assert!(selector.abort_unsent_attempt(first_proxy.target(), first_proxy.proxy()));
+    let RequestSelection::Attempt(first_proxy_retry) = cache.select_request(&mut selector).unwrap()
+    else {
+        panic!("unsent forwarding rollback must restore target and proxy budget")
+    };
+    assert_eq!(first_proxy_retry, first_proxy);
+    let first_proxy = first_proxy_retry;
     assert!(selector.record_attempt_result(first_proxy.target(), Duration::from_millis(1)));
     cache
         .on_route_send_failure(&first_proxy, StoreLiveness::Unreachable)

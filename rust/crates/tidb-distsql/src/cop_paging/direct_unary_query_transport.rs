@@ -730,6 +730,7 @@ struct PreparedRegionDispatch {
     request_bytes: usize,
     traffic_location: UnaryTrafficLocation,
     batch_attempt: bool,
+    pre_batch_network_metrics: Option<UnaryNetworkMetrics>,
 }
 
 struct PendingBatchAttempt {
@@ -963,6 +964,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             request_bytes,
             traffic_location,
             batch_attempt: false,
+            pre_batch_network_metrics: None,
         };
         self.check_retry_active()?;
         let dispatch_started = Instant::now();
@@ -974,6 +976,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         }) {
             let mut prepared_dispatch = prepared_dispatch;
             prepared_dispatch.batch_attempt = true;
+            prepared_dispatch.pre_batch_network_metrics = Some(self.network_metrics.clone());
             let mut begin_result = begin(
                 self.shared_runtime.client(),
                 &prepared_dispatch.selected,
@@ -1089,6 +1092,7 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             request_bytes,
             traffic_location,
             batch_attempt,
+            pre_batch_network_metrics,
         } = dispatch;
         // Go checks ctx.Err after SendRequest returns. Caller cancellation has
         // precedence over a simultaneous transport error or successful reply.
@@ -1107,6 +1111,31 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         let raw_response = match send_result {
             Ok(response) => response,
             Err(error) => {
+                if batch_attempt && matches!(&error, DirectUnaryClientError::AdmissionBusy { .. }) {
+                    self.sync_only_chains.insert(logical_task_id);
+                    self.network_metrics = pre_batch_network_metrics.ok_or(
+                        DirectUnaryTransportError::ResponseState(
+                            "local admission rollback has no network-metric snapshot",
+                        ),
+                    )?;
+                    if !self
+                        .request_selectors
+                        .get_mut(&logical_task_id)
+                        .ok_or(DirectUnaryTransportError::ResponseState(
+                            "request selector disappeared during local admission rollback",
+                        ))?
+                        .abort_unsent_attempt(&selected.attempt, selected.proxy())
+                    {
+                        return Err(DirectUnaryTransportError::RegionRecovery(
+                            "local admission rollback did not match the selector's pending attempt"
+                                .to_owned(),
+                        ));
+                    }
+                    let failed = self.runtime.consume_failed_attempt(attempt_id)?;
+                    let replacement = self.runtime.retry_transport_attempt(failed)?;
+                    self.install_same_task_retry(replacement)?;
+                    return Ok(());
+                }
                 if batch_attempt {
                     self.sync_only_chains.insert(logical_task_id);
                 }

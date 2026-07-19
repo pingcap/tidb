@@ -31,8 +31,9 @@ use crate::rpc::{
 };
 
 use super::{
-    BatchEntry, BatchGroup, BatchInflightError, BatchInflightTable, BatchRoute, BatchScheduler,
-    BatchWireRequest, BatchWireResponse, OpaqueBatchCommand, PendingBatchCommand,
+    BatchEntry, BatchEntryCompletion, BatchGroup, BatchInflightError, BatchInflightTable,
+    BatchRoute, BatchScheduler, BatchWireRequest, BatchWireResponse, OpaqueBatchCommand,
+    PendingBatchCommand,
 };
 
 const MAX_RECV_MESSAGE_SIZE: usize = (i64::MAX as usize).saturating_sub(1);
@@ -174,9 +175,29 @@ impl BatchTransportState {
         runtime: &tokio::runtime::Runtime,
         address: &str,
         entries: Vec<BatchCommandEntry>,
-        _call: Option<&UnaryCallContext>,
+        call: Option<&UnaryCallContext>,
         commands: &std_mpsc::Sender<WorkerCommand>,
     ) -> Vec<BatchPublicationReceipt> {
+        if let Some(call) = call {
+            let error = if call.cancellation().is_cancelled() {
+                Some(DirectUnaryClientError::CallerCancelled)
+            } else if call.timeout().is_zero() {
+                Some(call_deadline_elapsed(
+                    address,
+                    channels.version(address).unwrap_or(0),
+                ))
+            } else {
+                None
+            };
+            if let Some(error) = error {
+                for entry in entries {
+                    entry
+                        .completion()
+                        .fail(BatchInflightError::Transport(error.clone()));
+                }
+                return Vec::new();
+            }
+        }
         for entry in entries {
             self.scheduler.push(entry);
         }
@@ -275,10 +296,7 @@ impl BatchTransportState {
         };
         if !claimed_opening_slot {
             drop(terminal_guard);
-            prepared.fail(BatchInflightError::Transport(stream_opening_busy(
-                address,
-                connection_version,
-            )));
+            prepared.fail(BatchInflightError::Transport(stream_opening_busy(address)));
             return None;
         }
 
@@ -600,12 +618,21 @@ fn stream_open_timeout(address: &str, version: u64, timeout: Duration) -> Direct
     }
 }
 
-fn stream_opening_busy(address: &str, version: u64) -> DirectUnaryClientError {
-    DirectUnaryClientError::Connection(DirectUnaryConnectionError::connection(
-        address,
-        version,
-        "BatchCommands stream is still opening".to_owned(),
-    ))
+fn stream_opening_busy(address: &str) -> DirectUnaryClientError {
+    DirectUnaryClientError::AdmissionBusy {
+        address: address.to_owned(),
+    }
+}
+
+fn call_deadline_elapsed(address: &str, version: u64) -> DirectUnaryClientError {
+    DirectUnaryClientError::Timeout {
+        connection: DirectUnaryConnectionError::local_deadline(
+            address,
+            version,
+            "BatchCommands deadline elapsed before worker admission".to_owned(),
+        ),
+        timeout_ms: 0,
+    }
 }
 
 fn retire_stream(

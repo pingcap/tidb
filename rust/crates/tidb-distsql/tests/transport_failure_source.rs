@@ -89,6 +89,9 @@ fn errors_without_an_observed_connection_are_terminal() {
             message: "invalid".to_owned(),
         },
         DirectUnaryClientError::InvalidRequest("invalid".to_owned()),
+        DirectUnaryClientError::AdmissionBusy {
+            address: "tikv-1:20160".to_owned(),
+        },
         DirectUnaryClientError::Runtime("runtime".to_owned()),
     ] {
         assert_eq!(

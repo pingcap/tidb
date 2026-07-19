@@ -446,7 +446,7 @@ fn opening_generation_bounds_packets_and_isolates_sibling_cancellation() {
     assert!(matches!(
         wait_for_completion(&mut overflow_pull),
         Err(BatchInflightError::Transport(
-            DirectUnaryClientError::Connection(_)
+            DirectUnaryClientError::AdmissionBusy { .. }
         ))
     ));
     release_headers.store(true, Ordering::Release);
