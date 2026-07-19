@@ -313,7 +313,7 @@ fn exact_select_builds_one_timestamped_table_request_and_decodes_lazily() {
     );
     assert_eq!(query.plan_evidence().predicate_count(), 0);
     assert_eq!(query.plan_evidence().output_offsets(), [0]);
-    assert_eq!(query.snapshot_ts(), 4_242);
+    assert_eq!(query.snapshot_ts(), Some(4_242));
     assert_eq!(query.table_id(), 42);
     assert_eq!(engine.last_snapshot_ts(), Some(4_242));
     assert_eq!(timestamps.calls(), 1);

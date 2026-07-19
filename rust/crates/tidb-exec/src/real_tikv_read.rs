@@ -29,13 +29,14 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use prost::Message;
-use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+use tidb_datatype::{FieldType, FieldTypeCode};
 use tidb_distsql::region::RegionCache;
 use tidb_distsql::{
-    CancelHandle, DatumRange, DirectUnaryQueryTransport, DirectUnaryRuntimeConfig,
-    DirectUnaryTransportEvidence, DirectUnaryTransportEvidenceHandle, EncodeType, ExecutorKind,
-    ExecutorShape, InjectedQueryRuntime, QueryResultContext, QueryTransport, RequestBuilder,
-    RequestEnvelope, SelectInput, TimestampSource, WarningCollector,
+    signed_handle_ranges_to_kv_ranges, CancelHandle, DirectUnaryQueryTransport,
+    DirectUnaryRuntimeConfig, DirectUnaryTransportEvidence, DirectUnaryTransportEvidenceHandle,
+    EncodeType, ExecutorKind, ExecutorShape, InjectedQueryRuntime, QueryResultContext,
+    QueryTransport, RequestBuilder, RequestEnvelope, ResponseChannel, SelectInput,
+    SignedHandleRange, TimestampSource, WarningCollector,
 };
 use tidb_pd_client::{PdClient, PdClientError};
 use tidb_planner::read_only_scan::{
@@ -651,7 +652,7 @@ impl TimestampSource for PdTimestampSource {
 /// One admitted query and its lazy response owner.
 pub struct RealTiKvQuery {
     record_set: DistSqlRecordSet,
-    snapshot_ts: u64,
+    snapshot_ts: Option<u64>,
     table_id: i64,
     session_identity: RealTiKvReadSessionIdentity,
     plan_evidence: RealTiKvQueryPlanEvidence,
@@ -694,6 +695,40 @@ pub struct RealTiKvQueryPlanEvidence {
     executor_kinds: Vec<RealTiKvPlanExecutorKind>,
     predicate_count: usize,
     output_offsets: Vec<u32>,
+    handle_ranges: Vec<RealTiKvHandleRangeEvidence>,
+}
+
+/// One immutable inclusive signed-handle boundary published with a query.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RealTiKvHandleRangeEvidence {
+    low: i64,
+    high: i64,
+}
+
+impl RealTiKvHandleRangeEvidence {
+    /// Returns the inclusive signed low handle.
+    #[must_use]
+    pub const fn low(self) -> i64 {
+        self.low
+    }
+
+    /// Returns the inclusive signed high handle.
+    #[must_use]
+    pub const fn high(self) -> i64 {
+        self.high
+    }
+
+    /// Planner normalization converts strict bounds to adjacent integers.
+    #[must_use]
+    pub const fn low_exclude(self) -> bool {
+        false
+    }
+
+    /// Planner normalization converts strict bounds to adjacent integers.
+    #[must_use]
+    pub const fn high_exclude(self) -> bool {
+        false
+    }
 }
 
 impl RealTiKvQueryPlanEvidence {
@@ -709,6 +744,14 @@ impl RealTiKvQueryPlanEvidence {
             executor_kinds,
             predicate_count,
             output_offsets: plan.projection_output_offsets().to_vec(),
+            handle_ranges: plan
+                .handle_ranges()
+                .iter()
+                .map(|range| RealTiKvHandleRangeEvidence {
+                    low: range.start(),
+                    high: range.end(),
+                })
+                .collect(),
         }
     }
 
@@ -730,6 +773,18 @@ impl RealTiKvQueryPlanEvidence {
         &self.output_offsets
     }
 
+    /// Returns the number of physical table-handle ranges in the request.
+    #[must_use]
+    pub fn handle_range_count(&self) -> usize {
+        self.handle_ranges.len()
+    }
+
+    /// Returns immutable inclusive handle boundaries in request order.
+    #[must_use]
+    pub fn handle_ranges(&self) -> &[RealTiKvHandleRangeEvidence] {
+        &self.handle_ranges
+    }
+
     fn request_envelope(&self) -> RequestEnvelope {
         RequestEnvelope::new(
             self.executor_kinds
@@ -742,8 +797,11 @@ impl RealTiKvQueryPlanEvidence {
 
 impl RealTiKvQuery {
     /// Returns the real PD timestamp placed in the TiKV request.
+    ///
+    /// A planner-proven contradiction returns `None` because it is satisfied
+    /// locally before any PD timestamp acquisition.
     #[must_use]
-    pub const fn snapshot_ts(&self) -> u64 {
+    pub const fn snapshot_ts(&self) -> Option<u64> {
         self.snapshot_ts
     }
 
@@ -940,43 +998,6 @@ where
     ) -> Result<RealTiKvQuery, RealTiKvReadError> {
         let plan = ReadOnlyScanPlan::lower(sql, self.table.as_ref())?;
         let plan_evidence = RealTiKvQueryPlanEvidence::from_plan(&plan);
-        let snapshot_ts = self
-            .timestamp_source
-            .current_ts()
-            .map_err(RealTiKvReadError::Query)?;
-        if snapshot_ts == 0 {
-            return Err(RealTiKvReadError::Query(
-                "PD returned a zero snapshot timestamp".to_owned(),
-            ));
-        }
-
-        let dag = construct_read_only_dag_req(
-            &DagRequestContext::new("UTC", 0, 0, EncodeType::Default),
-            TiKvScanPlan::Table(plan.table_scan()),
-            plan.selection(),
-            plan.projection_output_offsets(),
-        )?;
-        let dag_data = dag.encode_to_vec();
-        let table_id = plan.table_id();
-        let mut builder = RequestBuilder::new();
-        builder
-            .set_start_ts(snapshot_ts)
-            // The retained response runtime publishes one logical region at
-            // a time and deliberately has no unordered merge authority.
-            // SQL without ORDER BY permits this stronger deterministic order.
-            .set_keep_order(true)
-            .set_table_ranges(
-                table_id,
-                &[DatumRange::inclusive(
-                    vec![Datum::Int(i64::MIN)],
-                    vec![Datum::Int(i64::MAX)],
-                )],
-            )
-            .set_dag_request(plan_evidence.request_envelope(), dag_data);
-        let request = builder
-            .build_transport_request(Arc::clone(&cancellation))
-            .map_err(|error| RealTiKvReadError::Request(format!("{error:?}")))?;
-
         let field_types = plan
             .projected_columns()
             .iter()
@@ -1003,6 +1024,64 @@ where
             })
             .collect();
 
+        if plan.is_contradiction() {
+            let mut response = ResponseChannel::<Vec<u8>>::new();
+            response
+                .finish()
+                .map_err(|error| RealTiKvReadError::Query(error.to_string()))?;
+            let record_set = DistSqlRecordSet::new(
+                response.into_select_iter(field_types, Vec::new(), WarningCollector::new()),
+                protocol_columns,
+            );
+            self.last_snapshot_ts = None;
+            return Ok(RealTiKvQuery {
+                record_set,
+                snapshot_ts: None,
+                table_id: plan.table_id(),
+                session_identity: self.identity,
+                plan_evidence,
+                cancellation,
+            });
+        }
+
+        let handle_ranges = plan
+            .handle_ranges()
+            .iter()
+            .map(|range| SignedHandleRange::inclusive(range.start(), range.end()))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| RealTiKvReadError::Request(format!("{error:?}")))?;
+        let table_id = plan.table_id();
+        let key_ranges = signed_handle_ranges_to_kv_ranges(table_id, &handle_ranges);
+        let snapshot_ts = self
+            .timestamp_source
+            .current_ts()
+            .map_err(RealTiKvReadError::Query)?;
+        if snapshot_ts == 0 {
+            return Err(RealTiKvReadError::Query(
+                "PD returned a zero snapshot timestamp".to_owned(),
+            ));
+        }
+
+        let dag = construct_read_only_dag_req(
+            &DagRequestContext::new("UTC", 0, 0, EncodeType::Default),
+            TiKvScanPlan::Table(plan.table_scan()),
+            plan.selection(),
+            plan.projection_output_offsets(),
+        )?;
+        let dag_data = dag.encode_to_vec();
+        let mut builder = RequestBuilder::new();
+        builder
+            .set_start_ts(snapshot_ts)
+            // The retained response runtime publishes one logical region at
+            // a time and deliberately has no unordered merge authority.
+            // SQL without ORDER BY permits this stronger deterministic order.
+            .set_keep_order(true)
+            .set_non_partitioned_key_ranges(key_ranges)
+            .set_dag_request(plan_evidence.request_envelope(), dag_data);
+        let request = builder
+            .build_transport_request(Arc::clone(&cancellation))
+            .map_err(|error| RealTiKvReadError::Request(format!("{error:?}")))?;
+
         let mut runtime = InjectedQueryRuntime::new(&mut self.transport);
         let result = runtime
             .select_with_runtime_stats(
@@ -1019,7 +1098,7 @@ where
         self.last_snapshot_ts = Some(snapshot_ts);
         Ok(RealTiKvQuery {
             record_set,
-            snapshot_ts,
+            snapshot_ts: Some(snapshot_ts),
             table_id,
             session_identity: self.identity,
             plan_evidence,

@@ -232,8 +232,8 @@ fn process_authority_opens_isolated_worker_local_sessions() {
 
     let first_query = first.execute("SELECT id FROM accounts").unwrap();
     let second_query = second.execute("SELECT id FROM accounts").unwrap();
-    assert_eq!(first_query.snapshot_ts(), 700);
-    assert_eq!(second_query.snapshot_ts(), 701);
+    assert_eq!(first_query.snapshot_ts(), Some(700));
+    assert_eq!(second_query.snapshot_ts(), Some(701));
     assert_eq!(first.last_snapshot_ts(), Some(700));
     assert_eq!(second.last_snapshot_ts(), Some(701));
     assert_eq!(

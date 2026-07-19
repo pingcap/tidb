@@ -224,7 +224,7 @@ fn predicate_only_column_lowers_to_selection_without_leaking_into_result() {
     );
     assert_eq!(query.plan_evidence().predicate_count(), 2);
     assert_eq!(query.plan_evidence().output_offsets(), [0]);
-    assert_eq!(query.snapshot_ts(), 7_777);
+    assert_eq!(query.snapshot_ts(), Some(7_777));
     assert_eq!(timestamps.calls(), 1);
     assert_eq!(state.sends.get(), 1);
 

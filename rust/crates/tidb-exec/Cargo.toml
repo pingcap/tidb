@@ -101,6 +101,10 @@ name = "real_tikv_bigint_selection_source"
 path = "tests/real_tikv_bigint_selection_source.rs"
 
 [[test]]
+name = "real_tikv_clustered_pk_range_source"
+path = "tests/real_tikv_clustered_pk_range_source.rs"
+
+[[test]]
 name = "real_tikv_session_authority_source"
 path = "tests/real_tikv_session_authority_source.rs"
 

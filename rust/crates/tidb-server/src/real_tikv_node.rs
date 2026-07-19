@@ -172,7 +172,9 @@ impl QuerySession for RealTiKvServerSession {
             .inner
             .execute_with_cancellation(sql, cancellation)
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-        let snapshot_ts = query.snapshot_ts();
+        let snapshot_ts = query
+            .snapshot_ts()
+            .map_or_else(|| "null".to_owned(), |timestamp| timestamp.to_string());
         let table_id = query.table_id();
         let cluster_id = self.inner.cluster_id();
         let identity = query.session_identity();
@@ -184,6 +186,22 @@ impl QuerySession for RealTiKvServerSession {
             .collect::<Vec<_>>();
         let predicate_count = query.plan_evidence().predicate_count();
         let output_offsets = query.plan_evidence().output_offsets().to_vec();
+        let handle_range_count = query.plan_evidence().handle_range_count();
+        let handle_ranges = query
+            .plan_evidence()
+            .handle_ranges()
+            .iter()
+            .map(|range| {
+                format!(
+                    "{{\"low\":{},\"high\":{},\"low_exclude\":{},\"high_exclude\":{}}}",
+                    range.low(),
+                    range.high(),
+                    range.low_exclude(),
+                    range.high_exclude(),
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
         let evidence = self.inner.transport_evidence_handle();
         let connection_id = self.context.connection_id;
         let authority_id = identity.authority_id();
@@ -200,7 +218,7 @@ impl QuerySession for RealTiKvServerSession {
             })
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
         eprintln!(
-            "{{\"event\":\"query_snapshot\",\"connection_id\":{},\"query_id\":{query_id},\"authority_id\":{},\"session_id\":{},\"cluster_id\":{cluster_id},\"snapshot_ts\":{snapshot_ts},\"table_id\":{table_id},\"executor_kinds\":{executor_kinds:?},\"predicate_count\":{predicate_count},\"output_offsets\":{output_offsets:?},\"user\":{:?},\"host\":{:?}}}",
+            "{{\"event\":\"query_snapshot\",\"connection_id\":{},\"query_id\":{query_id},\"authority_id\":{},\"session_id\":{},\"cluster_id\":{cluster_id},\"snapshot_ts\":{snapshot_ts},\"table_id\":{table_id},\"executor_kinds\":{executor_kinds:?},\"predicate_count\":{predicate_count},\"output_offsets\":{output_offsets:?},\"handle_range_count\":{handle_range_count},\"handle_ranges\":[{handle_ranges}],\"user\":{:?},\"host\":{:?}}}",
             connection_id,
             authority_id,
             session_id,
