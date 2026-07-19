@@ -338,6 +338,7 @@ mod grouping;
 mod like;
 mod math_fn;
 mod ops;
+pub mod pb_comparison;
 mod regexp;
 mod rng;
 mod row;

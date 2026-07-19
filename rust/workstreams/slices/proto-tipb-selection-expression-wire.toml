@@ -1,6 +1,6 @@
 schema = "1"
 slice = "proto-tipb-selection-expression-wire"
-status = "ready"
+status = "partial"
 target = "tidb-expr"
 ring = "protocol"
 consumer = "The bounded TiPB projection and expression owner encode and decode TiKV list-DAG Selection conditions containing signed BIGINT constants, zero-based column references, and all six ordinary comparison scalar functions with exact upstream types, flags, field numbers, enum values, and operand order."
@@ -45,6 +45,7 @@ support_anchors = [
   "This dependency-closed projection is deliberately partial and does not claim unrelated aggregate, window, RPN, TiFlash, or executor messages",
 ]
 rust_paths = [
+  "rust/Cargo.lock",
   "rust/crates/tidb-proto/proto/select.proto",
   "rust/crates/tidb-proto/tests/tipb_selection_expression_source.rs",
   "rust/crates/tidb-expr/Cargo.toml",

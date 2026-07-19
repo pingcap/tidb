@@ -12,8 +12,10 @@ workspace = true
 
 [dependencies]
 tidb-ast = { path = "../tidb-ast" }
+tidb-codec = { path = "../tidb-codec" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-error = { path = "../tidb-error" }
+tidb-proto = { path = "../tidb-proto" }
 regex = { workspace = true }
 md-5 = { workspace = true }
 sha1 = { workspace = true }

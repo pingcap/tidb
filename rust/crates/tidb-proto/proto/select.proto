@@ -9,10 +9,12 @@ syntax = "proto2";
 
 package tipb;
 
-// The two executor kinds admitted by the bounded TiKV scan lowering path.
+// The executor kinds admitted by the bounded TiKV scan and Selection lowering
+// path. Numeric values are copied from executor.proto.
 enum ExecType {
   TypeTableScan = 0;
   TypeIndexScan = 1;
+  TypeSelection = 2;
 }
 
 enum EngineType {
@@ -58,10 +60,63 @@ message IndexScan {
   repeated int64 primary_column_ids = 6;
 }
 
+// Dependency-closed projection of expression.proto FieldType. The upstream
+// nullable=false options are represented as optional proto2 fields here so
+// callers can preserve their required wire presence, including zero values.
+message FieldType {
+  optional int32 tp = 1;
+  optional uint32 flag = 2;
+  optional int32 flen = 3;
+  optional int32 decimal = 4;
+  optional int32 collate = 5;
+  optional string charset = 6;
+  repeated string elems = 7;
+  optional bool array = 8;
+}
+
+// The scalar expression kinds admitted by the bounded signed-BIGINT
+// comparison path. Values are copied from expression.proto.
+enum ExprType {
+  Null = 0;
+  Int64 = 1;
+  ColumnRef = 201;
+  ScalarFunc = 10000;
+}
+
+// The ordinary signed-integer comparison signatures admitted by this path.
+// NULL-safe equality remains outside the six-operator product boundary.
+enum ScalarFuncSig {
+  Unspecified = 0;
+  LTInt = 100;
+  LEInt = 110;
+  GTInt = 120;
+  GEInt = 130;
+  EQInt = 140;
+  NEInt = 150;
+}
+
+// Dependency-closed projection of expression.proto Expr. RPN, aggregate, and
+// order-by fields are intentionally outside this bounded scalar path.
+message Expr {
+  optional ExprType tp = 1;
+  optional bytes val = 2;
+  repeated Expr children = 3;
+  optional ScalarFuncSig sig = 4;
+  optional FieldType field_type = 5;
+  optional bool has_distinct = 7;
+}
+
+// TiKV's list-based Selection carries no child: its input is the preceding
+// executor in DAGRequest.executors. RPN and TiFlash's tree child are external.
+message Selection {
+  repeated Expr conditions = 1;
+}
+
 message Executor {
   optional ExecType tp = 1;
   optional TableScan tbl_scan = 2;
   optional IndexScan idx_scan = 3;
+  optional Selection selection = 4;
   optional string executor_id = 10;
   optional uint32 parent_idx = 25;
 }

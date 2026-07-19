@@ -1110,9 +1110,11 @@ dependencies = [
  "sha1",
  "sha2",
  "tidb-ast",
+ "tidb-codec",
  "tidb-datatype",
  "tidb-error",
  "tidb-parser",
+ "tidb-proto",
 ]
 
 [[package]]
