@@ -183,7 +183,12 @@ impl ConfiguredTable {
         &self.columns
     }
 
-    fn validate(&self) -> Result<(), ReadOnlyScanError> {
+    /// Validates the complete bounded table descriptor without parsing SQL.
+    ///
+    /// Multi-table catalog construction uses this same admission seam as the
+    /// original single-table lowering, so the two paths cannot disagree about
+    /// physical identities or column shape.
+    pub fn validate(&self) -> Result<(), ReadOnlyScanError> {
         if self.schema.is_empty() {
             return Err(ReadOnlyScanError::InvalidConfiguration("empty schema name"));
         }
@@ -209,7 +214,7 @@ impl ConfiguredTable {
                     "column IDs must be positive",
                 ));
             }
-            if !names.insert(column.name.to_ascii_lowercase()) {
+            if !names.insert(fold_identifier(&column.name)) {
                 return Err(ReadOnlyScanError::InvalidConfiguration(
                     "column names must be unique",
                 ));
@@ -910,8 +915,12 @@ fn resolve_column_path<'a>(
         .ok_or_else(|| ReadOnlyScanError::UnknownColumn(path.join(".")))
 }
 
+pub(crate) fn fold_identifier(identifier: &str) -> String {
+    identifier.to_lowercase()
+}
+
 fn identifier_eq(left: &str, right: &str) -> bool {
-    left.eq_ignore_ascii_case(right)
+    fold_identifier(left) == fold_identifier(right)
 }
 
 fn unsupported<T>(feature: UnsupportedReadOnlyFeature) -> Result<T, ReadOnlyScanError> {

@@ -28,6 +28,7 @@ pub mod column_pruning;
 pub mod columnar_index_extra;
 pub mod condition_binding;
 pub mod condition_to_dual;
+pub mod configured_catalog;
 pub mod cost_factors;
 pub mod derive_topn_from_window;
 pub mod eliminate_empty_selection;
