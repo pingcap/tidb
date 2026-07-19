@@ -102,7 +102,8 @@ pub use native_password::{
 };
 pub use node_config::{ConfiguredReadTable, NodeConfig, NodeConfigError};
 pub use real_tikv_node::{
-    run_configured_node, RealTiKvServerSession, RealTiKvSessionFactory, RunConfiguredNodeError,
+    run_configured_node, run_with_process_shutdown, ProcessReadAuthority, RealTiKvServerSession,
+    RealTiKvSessionFactory, RunConfiguredNodeError,
 };
 pub use resultset_source::ResultSetSource;
 pub use secure_transport::{

@@ -18,15 +18,19 @@ use std::process::ExitCode;
 
 use tidb_server::{run_configured_node, NodeConfig, NodeConfigError};
 
+fn runtime_exit_code<E: std::fmt::Display>(result: Result<(), E>) -> ExitCode {
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("tidb-server startup/runtime failure: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 fn main() -> ExitCode {
     match NodeConfig::parse(std::env::args()) {
-        Ok(config) => match run_configured_node(config) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(error) => {
-                eprintln!("tidb-server startup/runtime failure: {error}");
-                ExitCode::FAILURE
-            }
-        },
+        Ok(config) => runtime_exit_code(run_configured_node(config)),
         Err(NodeConfigError::HelpRequested) => {
             println!("{}", NodeConfig::help_text());
             ExitCode::SUCCESS
@@ -35,5 +39,18 @@ fn main() -> ExitCode {
             eprintln!("tidb-server configuration failure: {error}");
             ExitCode::from(2)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn runtime_failure_is_a_nonzero_process_result() {
+        assert_eq!(
+            runtime_exit_code(Err("injected shutdown failure")),
+            ExitCode::FAILURE
+        );
     }
 }

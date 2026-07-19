@@ -328,24 +328,72 @@ impl Drop for ConnectionLease {
 struct ConnectionWork {
     stream: TcpStream,
     peer_addr: SocketAddr,
-    connection_key: u64,
     cancellation: ConnectionCancellation,
+    registration: ActiveSocketRegistration,
 }
 
 struct WorkerPool {
-    joins: Vec<JoinHandle<()>>,
+    workers: Vec<WorkerHandle>,
     work_senders: Vec<mpsc::Sender<ConnectionWork>>,
     available_workers: mpsc::Receiver<usize>,
     available_sender: mpsc::SyncSender<usize>,
+    terminal_workers: mpsc::Receiver<WorkerTerminal>,
+}
+
+struct WorkerHandle {
+    index: usize,
+    join: JoinHandle<()>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WorkerTerminalKind {
+    Returned,
+    Panicked,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct WorkerTerminal {
+    index: usize,
+    kind: WorkerTerminalKind,
+}
+
+struct WorkerTerminalGuard {
+    index: usize,
+    terminal: mpsc::Sender<WorkerTerminal>,
+}
+
+impl Drop for WorkerTerminalGuard {
+    fn drop(&mut self) {
+        let kind = if std::thread::panicking() {
+            WorkerTerminalKind::Panicked
+        } else {
+            WorkerTerminalKind::Returned
+        };
+        let _ = self.terminal.send(WorkerTerminal {
+            index: self.index,
+            kind,
+        });
+    }
 }
 
 fn acquire_worker(
     available: &mpsc::Receiver<usize>,
+    terminal: &mpsc::Receiver<WorkerTerminal>,
     shutdown: &ShutdownHandle,
 ) -> Result<Option<usize>, SqlNodeError> {
     loop {
         if shutdown.is_shutdown_requested() {
             return Ok(None);
+        }
+        match terminal.try_recv() {
+            Ok(worker) => {
+                return Err(SqlNodeError::WorkerTerminated {
+                    index: worker.index,
+                    panicked: worker.kind == WorkerTerminalKind::Panicked,
+                })
+            }
+            Err(mpsc::TryRecvError::Empty) => {}
+            Err(mpsc::TryRecvError::Disconnected) => return Err(SqlNodeError::WorkerQueueClosed),
         }
         match available.recv_timeout(ACCEPT_POLL_INTERVAL) {
             Ok(worker) => return Ok(Some(worker)),
@@ -360,6 +408,7 @@ fn acquire_worker(
 #[derive(Default)]
 struct ActiveSockets {
     streams: Mutex<Vec<ActiveSocket>>,
+    poisoned: AtomicBool,
 }
 
 struct ActiveSocket {
@@ -368,7 +417,40 @@ struct ActiveSocket {
     cancellation: ConnectionCancellation,
 }
 
+struct ActiveSocketRegistration {
+    key: u64,
+    sockets: Arc<ActiveSockets>,
+}
+
+impl ActiveSocketRegistration {
+    fn new(key: u64, sockets: Arc<ActiveSockets>) -> Self {
+        Self { key, sockets }
+    }
+}
+
+impl Drop for ActiveSocketRegistration {
+    fn drop(&mut self) {
+        self.sockets.remove(self.key);
+    }
+}
+
 impl ActiveSockets {
+    fn lock_streams(&self) -> (std::sync::MutexGuard<'_, Vec<ActiveSocket>>, bool) {
+        match self.streams.lock() {
+            Ok(streams) => (streams, false),
+            Err(poisoned) => {
+                self.poisoned.store(true, Ordering::Release);
+                self.streams.clear_poison();
+                (poisoned.into_inner(), true)
+            }
+        }
+    }
+
+    fn take_poisoned(&self, observed: bool) -> bool {
+        let recorded = self.poisoned.swap(false, Ordering::AcqRel);
+        observed || recorded
+    }
+
     fn register(
         &self,
         key: u64,
@@ -387,39 +469,48 @@ impl ActiveSockets {
     }
 
     fn remove(&self, key: u64) {
-        if let Ok(mut streams) = self.streams.lock() {
-            streams.retain(|socket| socket.key != key);
-        }
+        let (mut streams, _) = self.lock_streams();
+        streams.retain(|socket| socket.key != key);
     }
 
     fn len(&self) -> Result<usize, SqlNodeError> {
-        self.streams
-            .lock()
-            .map(|streams| streams.len())
-            .map_err(|_| SqlNodeError::WorkerStatePoisoned)
+        let (streams, observed) = self.lock_streams();
+        let len = streams.len();
+        drop(streams);
+        if self.take_poisoned(observed) {
+            Err(SqlNodeError::WorkerStatePoisoned)
+        } else {
+            Ok(len)
+        }
     }
 
-    fn shutdown_all(&self) -> Result<usize, SqlNodeError> {
-        let streams = self
-            .streams
-            .lock()
-            .map_err(|_| SqlNodeError::WorkerStatePoisoned)?;
+    fn shutdown_all(&self) -> (usize, Option<SqlNodeError>) {
+        let (streams, observed) = self.lock_streams();
+        let forced = streams.len();
         for socket in streams.iter() {
             socket.cancellation.cancel();
             let _ = socket.stream.shutdown(Shutdown::Both);
         }
-        Ok(streams.len())
+        drop(streams);
+        let error = if self.take_poisoned(observed) {
+            Some(SqlNodeError::WorkerStatePoisoned)
+        } else {
+            None
+        };
+        (forced, error)
     }
 
     fn cancel_queries(&self) -> Result<(), SqlNodeError> {
-        let streams = self
-            .streams
-            .lock()
-            .map_err(|_| SqlNodeError::WorkerStatePoisoned)?;
+        let (streams, observed) = self.lock_streams();
         for socket in streams.iter() {
             socket.cancellation.cancel();
         }
-        Ok(())
+        drop(streams);
+        if self.take_poisoned(observed) {
+            Err(SqlNodeError::WorkerStatePoisoned)
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -477,6 +568,12 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
         self.shutdown.clone()
     }
 
+    /// Returns the configured bound on graceful connection drain.
+    #[must_use]
+    pub fn shutdown_grace_ms(&self) -> u128 {
+        self.shutdown_grace.as_millis()
+    }
+
     /// Overrides the graceful drain interval for deterministic lifecycle tests.
     #[must_use]
     pub fn with_shutdown_grace(mut self, grace: Duration) -> Self {
@@ -521,16 +618,16 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
     {
         let active_sockets = Arc::new(ActiveSockets::default());
         let WorkerPool {
-            joins: workers,
+            workers,
             work_senders: worker_senders,
             available_workers,
             available_sender,
+            terminal_workers,
         } = spawn_workers(
             self.worker_count,
             &self.factory,
             &self.users,
             &self.tracker,
-            &active_sockets,
             self.max_allowed_packet,
         )?;
 
@@ -540,7 +637,9 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
             if limit == Some(accepted) || self.shutdown.is_shutdown_requested() {
                 break Ok(());
             }
-            let Some(worker_index) = acquire_worker(&available_workers, &self.shutdown)? else {
+            let Some(worker_index) =
+                acquire_worker(&available_workers, &terminal_workers, &self.shutdown)?
+            else {
                 break Ok(());
             };
             let (stream, peer_addr) = match self.listener.accept() {
@@ -572,16 +671,17 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
                 stream.try_clone().map_err(SqlNodeError::Listener)?,
                 cancellation.clone(),
             )?;
+            let registration =
+                ActiveSocketRegistration::new(connection_key, Arc::clone(&active_sockets));
             if worker_senders[worker_index]
                 .send(ConnectionWork {
                     stream,
                     peer_addr,
-                    connection_key,
                     cancellation,
+                    registration,
                 })
                 .is_err()
             {
-                active_sockets.remove(connection_key);
                 break Err(SqlNodeError::WorkerQueueClosed);
             }
             accepted += 1;
@@ -589,9 +689,35 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
 
         drop(worker_senders);
         drop(available_sender);
-        let join_result =
+        let drain_result =
             drain_workers(workers, &active_sockets, self.shutdown_grace, &self.tracker);
-        accept_result.and(join_result)
+        combine_node_results(accept_result, drain_result)
+    }
+}
+
+type WorkerJob = Box<dyn FnOnce() + Send + 'static>;
+
+fn run_worker<S>(
+    index: usize,
+    work_receiver: mpsc::Receiver<ConnectionWork>,
+    available: mpsc::SyncSender<usize>,
+    terminal: mpsc::Sender<WorkerTerminal>,
+    mut serve: S,
+) where
+    S: FnMut(ConnectionWork),
+{
+    let _terminal = WorkerTerminalGuard { index, terminal };
+    if available.send(index).is_err() {
+        return;
+    }
+    loop {
+        let Ok(work) = work_receiver.recv() else {
+            return;
+        };
+        serve(work);
+        if available.send(index).is_err() {
+            return;
+        }
     }
 }
 
@@ -600,92 +726,190 @@ fn spawn_workers<F: QuerySessionFactory>(
     factory: &Arc<F>,
     users: &Arc<ConfiguredUserStore>,
     tracker: &Arc<ConnectionTracker>,
-    active_sockets: &Arc<ActiveSockets>,
     max_allowed_packet: usize,
 ) -> Result<WorkerPool, SqlNodeError> {
+    spawn_workers_with(
+        count,
+        factory,
+        users,
+        tracker,
+        max_allowed_packet,
+        |index, job| {
+            std::thread::Builder::new()
+                .name(format!("tidb-sql-connection-{index}"))
+                .spawn(job)
+        },
+    )
+}
+
+fn spawn_workers_with<F, S>(
+    count: usize,
+    factory: &Arc<F>,
+    users: &Arc<ConfiguredUserStore>,
+    tracker: &Arc<ConnectionTracker>,
+    max_allowed_packet: usize,
+    mut spawn: S,
+) -> Result<WorkerPool, SqlNodeError>
+where
+    F: QuerySessionFactory,
+    S: FnMut(usize, WorkerJob) -> std::io::Result<JoinHandle<()>>,
+{
     let mut workers = Vec::with_capacity(count);
     let mut work_senders = Vec::with_capacity(count);
     let (available_sender, available_receiver) = mpsc::sync_channel(count);
+    let (terminal_sender, terminal_receiver) = mpsc::channel();
     for index in 0..count {
         let (work_sender, work_receiver) = mpsc::channel::<ConnectionWork>();
         let factory = Arc::clone(factory);
         let users = Arc::clone(users);
-        let tracker = Arc::clone(tracker);
-        let active_sockets = Arc::clone(active_sockets);
+        let worker_tracker = Arc::clone(tracker);
         let worker_available = available_sender.clone();
-        let worker = std::thread::Builder::new()
-            .name(format!("tidb-sql-connection-{index}"))
-            .spawn(move || {
-                if worker_available.send(index).is_err() {
-                    return;
-                }
-                loop {
-                    let Ok(work) = work_receiver.recv() else {
-                        return;
-                    };
-                    let connection_key = work.connection_key;
+        let worker_terminal = terminal_sender.clone();
+        let job: WorkerJob = Box::new(move || {
+            run_worker(
+                index,
+                work_receiver,
+                worker_available,
+                worker_terminal,
+                move |work| {
+                    let ConnectionWork {
+                        stream,
+                        peer_addr,
+                        cancellation,
+                        registration: _registration,
+                    } = work;
                     if let Err(error) = serve_mysql_connection(
-                        work.stream,
-                        work.peer_addr,
-                        work.cancellation.clone(),
+                        stream,
+                        peer_addr,
+                        cancellation,
                         factory.as_ref(),
                         users.as_ref(),
-                        &tracker,
+                        &worker_tracker,
                         max_allowed_packet,
                     ) {
                         let message = error.to_string();
                         eprintln!("{{\"event\":\"connection_error\",\"error\":{message:?}}}");
                     }
-                    active_sockets.remove(connection_key);
-                    if worker_available.send(index).is_err() {
-                        return;
-                    }
-                }
-            })
-            .map_err(SqlNodeError::WorkerSpawn)?;
+                },
+            );
+        });
+        let worker = match spawn(index, job) {
+            Ok(worker) => worker,
+            Err(error) => {
+                drop(work_sender);
+                drop(work_senders);
+                drop(available_receiver);
+                drop(available_sender);
+                drop(terminal_sender);
+                let mut failures = vec![SqlNodeError::WorkerSpawn(error)];
+                failures.extend(join_worker_failures(workers));
+                eprintln!(
+                    "{{\"event\":\"process_shutdown_stage\",\"stage\":\"connections\",\"outcome\":\"error\",\"active\":{},\"accepted\":{},\"completed\":{},\"failed\":{},\"forced_connections\":0}}",
+                    tracker.active(), tracker.accepted(), tracker.completed(), tracker.failed(),
+                );
+                return Err(collapse_node_failures(failures));
+            }
+        };
         work_senders.push(work_sender);
-        workers.push(worker);
+        workers.push(WorkerHandle {
+            index,
+            join: worker,
+        });
     }
+    drop(terminal_sender);
     Ok(WorkerPool {
-        joins: workers,
+        workers,
         work_senders,
         available_workers: available_receiver,
         available_sender,
+        terminal_workers: terminal_receiver,
     })
 }
 
-fn join_workers(workers: Vec<JoinHandle<()>>) -> Result<(), SqlNodeError> {
+fn join_worker_failures(workers: Vec<WorkerHandle>) -> Vec<SqlNodeError> {
+    let mut panicked = Vec::new();
     for worker in workers {
-        worker.join().map_err(|_| SqlNodeError::WorkerPanicked)?;
+        if worker.join.join().is_err() {
+            panicked.push(worker.index);
+        }
     }
-    Ok(())
+    if panicked.is_empty() {
+        Vec::new()
+    } else {
+        vec![SqlNodeError::WorkersPanicked { indexes: panicked }]
+    }
 }
 
 fn drain_workers(
-    workers: Vec<JoinHandle<()>>,
+    workers: Vec<WorkerHandle>,
     active_sockets: &ActiveSockets,
     grace: Duration,
     tracker: &ConnectionTracker,
 ) -> Result<(), SqlNodeError> {
-    active_sockets.cancel_queries()?;
-    let deadline = Instant::now() + grace;
-    while active_sockets.len()? > 0 && Instant::now() < deadline {
-        std::thread::sleep(ACCEPT_POLL_INTERVAL);
+    let mut failures = Vec::new();
+    if let Err(error) = active_sockets.cancel_queries() {
+        failures.push(error);
     }
-    let forced = if active_sockets.len()? == 0 {
-        0
-    } else {
-        active_sockets.shutdown_all()?
+    let deadline = Instant::now() + grace;
+    loop {
+        match active_sockets.len() {
+            Ok(0) => break,
+            Ok(_) if Instant::now() < deadline => std::thread::sleep(ACCEPT_POLL_INTERVAL),
+            Ok(_) => break,
+            Err(error) => {
+                failures.push(error);
+                break;
+            }
+        }
+    }
+    let forced = match active_sockets.len() {
+        Ok(0) => 0,
+        Ok(_) => {
+            let (forced, error) = active_sockets.shutdown_all();
+            failures.extend(error);
+            forced
+        }
+        Err(error) => {
+            failures.push(error);
+            let (forced, error) = active_sockets.shutdown_all();
+            failures.extend(error);
+            forced
+        }
     };
-    join_workers(workers)?;
+    failures.extend(join_worker_failures(workers));
+    let outcome = if failures.is_empty() {
+        "success"
+    } else {
+        "error"
+    };
     eprintln!(
-        "{{\"event\":\"sql_node_stopped\",\"active\":{},\"accepted\":{},\"completed\":{},\"failed\":{},\"forced_connections\":{forced}}}",
-        tracker.active(),
-        tracker.accepted(),
-        tracker.completed(),
-        tracker.failed(),
+        "{{\"event\":\"process_shutdown_stage\",\"stage\":\"connections\",\"outcome\":\"{outcome}\",\"active\":{},\"accepted\":{},\"completed\":{},\"failed\":{},\"forced_connections\":{forced}}}",
+        tracker.active(), tracker.accepted(), tracker.completed(), tracker.failed(),
     );
-    Ok(())
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(collapse_node_failures(failures))
+    }
+}
+
+fn combine_node_results(
+    first: Result<(), SqlNodeError>,
+    second: Result<(), SqlNodeError>,
+) -> Result<(), SqlNodeError> {
+    match (first, second) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+        (Err(first), Err(second)) => Err(collapse_node_failures(vec![first, second])),
+    }
+}
+
+fn collapse_node_failures(mut failures: Vec<SqlNodeError>) -> SqlNodeError {
+    if failures.len() == 1 {
+        failures.pop().expect("one SQL node failure")
+    } else {
+        SqlNodeError::Multiple(failures)
+    }
 }
 
 /// Startup or runtime failure from [`ConcurrentSqlNode`].
@@ -699,14 +923,26 @@ pub enum SqlNodeError {
     WorkerSpawn(std::io::Error),
     /// Every fixed worker exited before the accepted socket was handed off.
     WorkerQueueClosed,
-    /// A fixed worker panicked during an orderly test drain.
-    WorkerPanicked,
+    /// A worker exited while the accept loop still expected it to serve.
+    WorkerTerminated {
+        /// Fixed worker index.
+        index: usize,
+        /// Whether unwind caused the terminal observation.
+        panicked: bool,
+    },
+    /// Every worker was joined; these indexes panicked.
+    WorkersPanicked {
+        /// Worker indexes whose join handles carried panics.
+        indexes: Vec<usize>,
+    },
     /// Shared admission or active-socket state was poisoned.
     WorkerStatePoisoned,
     /// The bounded connection identity counter wrapped.
     ConnectionIdentityExhausted,
     /// One accepted connection failed in a direct lifecycle proof.
     Connection(MysqlConnectionError),
+    /// Independent node or drain failures retained after all cleanup attempts.
+    Multiple(Vec<SqlNodeError>),
 }
 
 impl fmt::Display for SqlNodeError {
@@ -716,12 +952,25 @@ impl fmt::Display for SqlNodeError {
             Self::Listener(error) => write!(formatter, "SQL listener failed: {error}"),
             Self::WorkerSpawn(error) => write!(formatter, "failed to spawn SQL worker: {error}"),
             Self::WorkerQueueClosed => formatter.write_str("SQL worker queue closed"),
-            Self::WorkerPanicked => formatter.write_str("SQL worker panicked"),
+            Self::WorkerTerminated { index, panicked } => write!(
+                formatter,
+                "SQL worker {index} terminated while admission was active (panicked={panicked})"
+            ),
+            Self::WorkersPanicked { indexes } => {
+                write!(formatter, "SQL workers panicked during join: {indexes:?}")
+            }
             Self::WorkerStatePoisoned => formatter.write_str("SQL worker state is poisoned"),
             Self::ConnectionIdentityExhausted => {
                 formatter.write_str("SQL connection identity space exhausted")
             }
             Self::Connection(error) => write!(formatter, "MySQL connection failed: {error}"),
+            Self::Multiple(failures) => {
+                formatter.write_str("multiple SQL node failures")?;
+                for failure in failures {
+                    write!(formatter, "; {failure}")?;
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -732,9 +981,11 @@ impl std::error::Error for SqlNodeError {
             Self::Bind(error) | Self::Listener(error) | Self::WorkerSpawn(error) => Some(error),
             Self::Connection(error) => Some(error),
             Self::WorkerQueueClosed
-            | Self::WorkerPanicked
+            | Self::WorkerTerminated { .. }
+            | Self::WorkersPanicked { .. }
             | Self::WorkerStatePoisoned
-            | Self::ConnectionIdentityExhausted => None,
+            | Self::ConnectionIdentityExhausted
+            | Self::Multiple(_) => None,
         }
     }
 }
@@ -743,8 +994,10 @@ impl std::error::Error for SqlNodeError {
 mod tests {
     use super::*;
     use crate::node_config::{ConfiguredReadColumn, ConfiguredReadColumnKind, ConfiguredReadTable};
+    use std::io::Read;
     use std::net::{IpAddr, Ipv4Addr};
     use std::path::PathBuf;
+    use std::sync::atomic::AtomicUsize;
 
     struct UnusedSession;
 
@@ -796,6 +1049,7 @@ mod tests {
             ConcurrentSqlNode::bind(&test_config(), Arc::new(UnusedFactory), Arc::new(users))
                 .unwrap()
                 .with_shutdown_grace(Duration::from_millis(20));
+        assert_eq!(node.shutdown_grace_ms(), 20);
         let address = node.local_addr().unwrap();
         let tracker = node.tracker();
         let server = std::thread::spawn(move || {
@@ -838,5 +1092,246 @@ mod tests {
         );
         drop(failed_setup_client);
         drop(stalled_client);
+    }
+
+    #[test]
+    fn partial_worker_spawn_failure_joins_every_spawned_prefix() {
+        let users = Arc::new(
+            ConfiguredUserStore::parse(
+                "root\t127.0.0.1\tmysql_native_password\t*0000000000000000000000000000000000000000\n",
+            )
+            .unwrap(),
+        );
+        let factory = Arc::new(UnusedFactory);
+        let tracker = Arc::new(ConnectionTracker::default());
+        let joined = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&joined);
+
+        let result = spawn_workers_with(
+            3,
+            &factory,
+            &users,
+            &tracker,
+            tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET,
+            move |index, job| {
+                if index == 1 {
+                    return Err(std::io::Error::other("injected second spawn failure"));
+                }
+                let observed = Arc::clone(&observed);
+                std::thread::Builder::new().spawn(move || {
+                    job();
+                    observed.fetch_add(1, Ordering::AcqRel);
+                })
+            },
+        );
+        let error = match result {
+            Ok(_) => panic!("injected worker spawn failure unexpectedly succeeded"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(error, SqlNodeError::WorkerSpawn(_)));
+        assert_eq!(joined.load(Ordering::Acquire), 1);
+    }
+
+    #[test]
+    fn worker_join_collects_every_panic_index() {
+        let workers = vec![
+            WorkerHandle {
+                index: 0,
+                join: std::thread::spawn(|| panic!("first worker panic")),
+            },
+            WorkerHandle {
+                index: 1,
+                join: std::thread::spawn(|| {}),
+            },
+            WorkerHandle {
+                index: 2,
+                join: std::thread::spawn(|| panic!("last worker panic")),
+            },
+        ];
+
+        let failures = join_worker_failures(workers);
+        let [SqlNodeError::WorkersPanicked { indexes }] = failures.as_slice() else {
+            panic!("one aggregate worker panic failure");
+        };
+        assert_eq!(indexes, &[0, 2]);
+    }
+
+    #[test]
+    fn worker_panic_before_availability_stops_admission() {
+        let (_available_tx, available_rx) = mpsc::sync_channel(1);
+        let (terminal_tx, terminal_rx) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let _terminal = WorkerTerminalGuard {
+                index: 3,
+                terminal: terminal_tx,
+            };
+            panic!("injected pre-availability worker panic");
+        });
+
+        assert!(matches!(
+            acquire_worker(&available_rx, &terminal_rx, &ShutdownHandle::default()),
+            Err(SqlNodeError::WorkerTerminated {
+                index: 3,
+                panicked: true,
+            })
+        ));
+        assert!(worker.join().is_err());
+    }
+
+    #[test]
+    fn worker_panic_after_admission_releases_socket_and_stops_admission() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let _client = TcpStream::connect(address).unwrap();
+        let (server, peer_addr) = listener.accept().unwrap();
+        let sockets = Arc::new(ActiveSockets::default());
+        let cancellation = ConnectionCancellation::default();
+        let connection_key = 11;
+        sockets
+            .register(
+                connection_key,
+                server.try_clone().unwrap(),
+                cancellation.clone(),
+            )
+            .unwrap();
+        let registration = ActiveSocketRegistration::new(connection_key, Arc::clone(&sockets));
+        let (work_tx, work_rx) = mpsc::channel();
+        let (available_tx, available_rx) = mpsc::sync_channel(1);
+        let (terminal_tx, terminal_rx) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            run_worker(2, work_rx, available_tx, terminal_tx, |_work| {
+                panic!("injected post-admission worker panic");
+            });
+        });
+        assert_eq!(available_rx.recv().unwrap(), 2);
+        work_tx
+            .send(ConnectionWork {
+                stream: server,
+                peer_addr,
+                cancellation,
+                registration,
+            })
+            .unwrap();
+
+        let terminal = terminal_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+
+        assert_eq!(
+            terminal,
+            WorkerTerminal {
+                index: 2,
+                kind: WorkerTerminalKind::Panicked,
+            }
+        );
+        assert_eq!(sockets.len().unwrap(), 0);
+        assert!(worker.join().is_err());
+    }
+
+    #[test]
+    fn simultaneous_accept_and_drain_failures_are_both_retained() {
+        let error = combine_node_results(
+            Err(SqlNodeError::Listener(std::io::Error::other(
+                "injected accept failure",
+            ))),
+            Err(SqlNodeError::WorkersPanicked {
+                indexes: vec![1, 4],
+            }),
+        )
+        .unwrap_err();
+
+        let SqlNodeError::Multiple(failures) = error else {
+            panic!("independent accept and drain failures must be aggregated");
+        };
+        assert!(matches!(failures[0], SqlNodeError::Listener(_)));
+        assert!(matches!(
+            &failures[1],
+            SqlNodeError::WorkersPanicked { indexes } if indexes == &[1, 4]
+        ));
+    }
+
+    #[test]
+    fn repeated_shutdown_signals_are_idempotent_and_stop_admission() {
+        let shutdown = ShutdownHandle::default();
+        shutdown.shutdown();
+        shutdown.shutdown();
+        shutdown.shutdown();
+        let (available_tx, available_rx) = mpsc::sync_channel(1);
+        available_tx.send(0).unwrap();
+        let (_terminal_tx, terminal_rx) = mpsc::channel();
+
+        assert!(matches!(
+            acquire_worker(&available_rx, &terminal_rx, &shutdown),
+            Ok(None)
+        ));
+    }
+
+    #[test]
+    fn queued_connection_receiver_death_releases_active_socket() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let _client = TcpStream::connect(address).unwrap();
+        let (server, peer_addr) = listener.accept().unwrap();
+        let sockets = Arc::new(ActiveSockets::default());
+        let cancellation = ConnectionCancellation::default();
+        let connection_key = 17;
+        sockets
+            .register(
+                connection_key,
+                server.try_clone().unwrap(),
+                cancellation.clone(),
+            )
+            .unwrap();
+        let registration = ActiveSocketRegistration::new(connection_key, Arc::clone(&sockets));
+        let (sender, receiver) = mpsc::channel();
+        sender
+            .send(ConnectionWork {
+                stream: server,
+                peer_addr,
+                cancellation,
+                registration,
+            })
+            .unwrap();
+
+        drop(receiver);
+
+        assert_eq!(sockets.len().unwrap(), 0);
+    }
+
+    #[test]
+    fn poisoned_active_socket_state_still_cancels_and_forces_shutdown() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let mut client = TcpStream::connect(address).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        let (server, _) = listener.accept().unwrap();
+        let sockets = Arc::new(ActiveSockets::default());
+        let cancellation = ConnectionCancellation::default();
+        sockets.register(23, server, cancellation.clone()).unwrap();
+        let poisoned_sockets = Arc::clone(&sockets);
+        assert!(std::thread::spawn(move || {
+            let _guard = poisoned_sockets.streams.lock().unwrap();
+            panic!("injected active-socket state poison");
+        })
+        .join()
+        .is_err());
+        let workers = vec![WorkerHandle {
+            index: 0,
+            join: std::thread::spawn(|| {}),
+        }];
+
+        let error = drain_workers(
+            workers,
+            sockets.as_ref(),
+            Duration::ZERO,
+            &ConnectionTracker::default(),
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, SqlNodeError::WorkerStatePoisoned));
+        assert!(cancellation.is_cancelled());
+        let mut byte = [0_u8; 1];
+        assert_eq!(client.read(&mut byte).unwrap(), 0);
     }
 }
