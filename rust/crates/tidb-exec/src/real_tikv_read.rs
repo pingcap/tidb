@@ -997,6 +997,42 @@ where
         cancellation: Arc<CancelHandle>,
     ) -> Result<RealTiKvQuery, RealTiKvReadError> {
         let plan = ReadOnlyScanPlan::lower(sql, self.table.as_ref())?;
+        if plan.is_contradiction() {
+            return self.execute_plan(plan, None, cancellation);
+        }
+        let snapshot_ts = self
+            .timestamp_source
+            .current_ts()
+            .map_err(RealTiKvReadError::Query)?;
+        self.execute_plan_at_snapshot(plan, snapshot_ts, cancellation)
+    }
+
+    /// Executes an already-lowered physical scan at a caller-owned snapshot.
+    ///
+    /// Multi-relation statements acquire one timestamp before opening either
+    /// table reader and use this seam for both inputs. Range conversion,
+    /// Selection/DAG lowering, request construction, decoding, cancellation,
+    /// and evidence therefore stay identical to the single-table path.
+    pub(crate) fn execute_plan_at_snapshot(
+        &mut self,
+        plan: ReadOnlyScanPlan,
+        snapshot_ts: u64,
+        cancellation: Arc<CancelHandle>,
+    ) -> Result<RealTiKvQuery, RealTiKvReadError> {
+        if snapshot_ts == 0 {
+            return Err(RealTiKvReadError::Query(
+                "PD returned a zero snapshot timestamp".to_owned(),
+            ));
+        }
+        self.execute_plan(plan, Some(snapshot_ts), cancellation)
+    }
+
+    fn execute_plan(
+        &mut self,
+        plan: ReadOnlyScanPlan,
+        snapshot_ts: Option<u64>,
+        cancellation: Arc<CancelHandle>,
+    ) -> Result<RealTiKvQuery, RealTiKvReadError> {
         let plan_evidence = RealTiKvQueryPlanEvidence::from_plan(&plan);
         let field_types = plan
             .projected_columns()
@@ -1025,6 +1061,7 @@ where
             .collect();
 
         if plan.is_contradiction() {
+            debug_assert!(snapshot_ts.is_none());
             let mut response = ResponseChannel::<Vec<u8>>::new();
             response
                 .finish()
@@ -1052,15 +1089,7 @@ where
             .map_err(|error| RealTiKvReadError::Request(format!("{error:?}")))?;
         let table_id = plan.table_id();
         let key_ranges = signed_handle_ranges_to_kv_ranges(table_id, &handle_ranges);
-        let snapshot_ts = self
-            .timestamp_source
-            .current_ts()
-            .map_err(RealTiKvReadError::Query)?;
-        if snapshot_ts == 0 {
-            return Err(RealTiKvReadError::Query(
-                "PD returned a zero snapshot timestamp".to_owned(),
-            ));
-        }
+        let snapshot_ts = snapshot_ts.expect("nonempty plans require a supplied snapshot");
 
         let dag = construct_read_only_dag_req(
             &DagRequestContext::new("UTC", 0, 0, EncodeType::Default),
