@@ -36,7 +36,7 @@ pub struct RealTiKvSerialEngine {
 impl RealTiKvSerialEngine {
     /// Connects the real engine from validated node configuration.
     pub fn connect(config: &NodeConfig) -> Result<Self, SqlQueryError> {
-        let columns = config
+        let columns: Vec<_> = config
             .read_table
             .columns
             .iter()
