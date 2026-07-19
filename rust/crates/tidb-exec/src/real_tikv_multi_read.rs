@@ -228,7 +228,9 @@ pub enum RealTiKvMultiQuery {
     Empty,
     /// Two lazy response owners at one shared physical snapshot.
     Scans {
+        /// Source-ordered left and right physical queries.
         relations: Box<[RealTiKvQuery; 2]>,
+        /// The one nonzero PD timestamp placed in both requests.
         snapshot_ts: u64,
     },
 }
