@@ -12,19 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Narrow SQL-to-TiKV table-scan lowering for the first read-only node.
+//! Narrow SQL-to-TiKV scan/Selection lowering for the read-only node.
 //!
 //! This boundary intentionally accepts exactly one configured,
 //! non-partitioned table with signed `BIGINT` columns and exactly one clustered
 //! primary key. It
 //! validates the complete parsed query envelope before entering the existing
 //! `LogicalDataSource -> TableAccessPath -> PhysicalTableReaderPlan` path.
+//! Ordinary signed-`BIGINT` comparisons joined by `AND` are bound to a
+//! physical TiKV Selection; every other predicate shape fails closed.
 
-use std::{collections::HashSet, error::Error, fmt};
+use std::{
+    collections::{HashMap, HashSet},
+    error::Error,
+    fmt,
+};
 
 use tidb_ast::{
-    Expr, JoinNode, JoinType, QueryStmt, SelectField, SelectStatementKind, SelectStmt, Stmt,
-    TableRef,
+    BinaryOp, Expr, JoinNode, JoinType, QueryStmt, SelectField, SelectStatementKind, SelectStmt,
+    Stmt, TableRef, UnaryOp,
 };
 
 use crate::{
@@ -35,6 +41,10 @@ use crate::{
     index_task::{ScanReadTask, ScanReadTaskRejection},
     logical_data_source::LogicalDataSource,
     logical_data_source_task::IndexTaskProperty,
+    physical_selection::{
+        BigIntComparison, ComparisonOp, ComparisonOperand, PhysicalSelectionError,
+        PhysicalSelectionPlan,
+    },
     physical_table_scan::PhysicalTableScanPlan,
     scan_pushdown::{ScanColumnInfo, TiKvTableScanSpec},
     task_type::TaskType,
@@ -280,8 +290,6 @@ pub enum UnsupportedReadOnlyFeature {
     MissingTable,
     /// More than one table or a nested join tree is present.
     Join,
-    /// The `WHERE` clause requires predicate/range planning.
-    Predicate,
     /// Grouping or `HAVING` is present.
     Grouping,
     /// A window definition is present.
@@ -312,6 +320,24 @@ pub enum UnsupportedReadOnlyFeature {
     ProjectionExpression,
 }
 
+/// A predicate shape outside the bounded signed-`BIGINT` Selection contract.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum UnsupportedReadOnlyPredicate {
+    /// A boolean operator other than `AND` would require a scalar boolean PB
+    /// expression rather than another source Selection condition.
+    BooleanOperator,
+    /// The predicate root is not one of the six ordinary comparisons.
+    ComparisonOperator,
+    /// A comparison operand is neither a configured column nor an integer
+    /// literal (with optional parentheses and unary sign).
+    Operand,
+    /// Both operands have the same role; this boundary requires exactly one
+    /// configured column and one integer literal.
+    ColumnIntegerPair,
+    /// An integer literal does not fit the configured signed `BIGINT` domain.
+    IntegerOutOfRange,
+}
+
 /// Why a SQL statement cannot become the first read-only table scan.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ReadOnlyScanError {
@@ -321,6 +347,11 @@ pub enum ReadOnlyScanError {
     InvalidConfiguration(&'static str),
     /// A parsed feature has no owner in this milestone.
     Unsupported(UnsupportedReadOnlyFeature),
+    /// A `WHERE` clause is present but is outside the bounded signed-`BIGINT`
+    /// Selection grammar.
+    UnsupportedPredicate(UnsupportedReadOnlyPredicate),
+    /// The resolved predicate violated the physical Selection contract.
+    PhysicalSelection(PhysicalSelectionError),
     /// The query names a table other than the configured table.
     UnknownTable(String),
     /// The query names a column outside the configured table.
@@ -344,6 +375,15 @@ impl fmt::Display for ReadOnlyScanError {
             Self::Unsupported(feature) => {
                 write!(formatter, "unsupported read-only SQL feature: {feature:?}")
             }
+            Self::UnsupportedPredicate(predicate) => {
+                write!(
+                    formatter,
+                    "unsupported read-only WHERE predicate: {predicate:?}"
+                )
+            }
+            Self::PhysicalSelection(error) => {
+                write!(formatter, "invalid physical Selection: {error}")
+            }
             Self::UnknownTable(table) => write!(formatter, "unknown table: {table}"),
             Self::UnknownColumn(column) => write!(formatter, "unknown column: {column}"),
             Self::PlannerRejected(reason) => {
@@ -361,15 +401,37 @@ impl fmt::Display for ReadOnlyScanError {
 
 impl Error for ReadOnlyScanError {}
 
-/// One validated direct projection lowered to the existing physical scan.
+/// One validated direct projection plus optional signed-`BIGINT` Selection.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReadOnlyScanPlan {
     reader: crate::physical_table_reader::PhysicalTableReaderPlan,
     projected_columns: Vec<ResolvedProjectionColumn>,
+    projection_output_offsets: Vec<u32>,
+    selection: Option<PhysicalSelectionPlan>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum UnboundComparisonOperand {
+    Column(usize),
+    Int(i64),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct UnboundComparison {
+    op: ComparisonOp,
+    lhs: UnboundComparisonOperand,
+    rhs: UnboundComparisonOperand,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ValidatedReadOnlySelect {
+    projected_columns: Vec<ResolvedProjectionColumn>,
+    comparisons: Vec<UnboundComparison>,
 }
 
 impl ReadOnlyScanPlan {
-    /// Parses and lowers one direct-column `SELECT` against `table`.
+    /// Parses and lowers one direct-column `SELECT` against `table`, including
+    /// the bounded signed-`BIGINT` `WHERE` grammar.
     pub fn lower(sql: &str, table: &ConfiguredTable) -> Result<Self, ReadOnlyScanError> {
         table.validate()?;
         let statement = tidb_parser::parse(sql).map_err(|error| {
@@ -391,11 +453,60 @@ impl ReadOnlyScanPlan {
             }
         };
 
-        let projected_columns = validate_select(&select, table)?;
-        let scan_columns = projected_columns
+        let validated = validate_select(&select, table)?;
+        let projected_columns = validated.projected_columns;
+        let mut scan_columns = projected_columns
             .iter()
             .map(|column| column.scan_column.clone())
-            .collect();
+            .collect::<Vec<_>>();
+        let projection_output_offsets = (0..projected_columns.len())
+            .map(|offset| {
+                u32::try_from(offset).map_err(|_| {
+                    ReadOnlyScanError::InvalidConfiguration(
+                        "projected column count exceeds TiKV output-offset capacity",
+                    )
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut scan_offsets = HashMap::with_capacity(table.columns.len());
+        for (offset, column) in scan_columns.iter().enumerate() {
+            let offset = u32::try_from(offset).map_err(|_| {
+                ReadOnlyScanError::InvalidConfiguration(
+                    "scan column count exceeds TiKV input-offset capacity",
+                )
+            })?;
+            scan_offsets.entry(column.column_id).or_insert(offset);
+        }
+        let comparisons = validated
+            .comparisons
+            .into_iter()
+            .map(|comparison| {
+                BigIntComparison::new(
+                    comparison.op,
+                    bind_comparison_operand(
+                        comparison.lhs,
+                        table,
+                        &mut scan_columns,
+                        &mut scan_offsets,
+                    )?,
+                    bind_comparison_operand(
+                        comparison.rhs,
+                        table,
+                        &mut scan_columns,
+                        &mut scan_offsets,
+                    )?,
+                )
+                .map_err(ReadOnlyScanError::PhysicalSelection)
+            })
+            .collect::<Result<Vec<_>, ReadOnlyScanError>>()?;
+        let selection = if comparisons.is_empty() {
+            None
+        } else {
+            Some(
+                PhysicalSelectionPlan::from_bigint_conditions(comparisons)
+                    .map_err(ReadOnlyScanError::PhysicalSelection)?,
+            )
+        };
         let pushdown = TiKvTableScanSpec::new(table.table_id, scan_columns);
         let descriptor = ResolvedTableDescriptor::new(
             table.table_id,
@@ -426,6 +537,8 @@ impl ReadOnlyScanPlan {
         Ok(Self {
             reader,
             projected_columns,
+            projection_output_offsets,
+            selection,
         })
     }
 
@@ -448,12 +561,54 @@ impl ReadOnlyScanPlan {
     pub fn projected_columns(&self) -> &[ResolvedProjectionColumn] {
         &self.projected_columns
     }
+
+    /// Returns the exact TableScan result offsets exposed to the MySQL row.
+    /// Predicate-only input columns are deliberately absent.
+    #[must_use]
+    pub fn projection_output_offsets(&self) -> &[u32] {
+        &self.projection_output_offsets
+    }
+
+    /// Returns the physical signed-`BIGINT` Selection above the table scan,
+    /// when the query has a bounded `WHERE` clause.
+    #[must_use]
+    pub const fn selection(&self) -> Option<&PhysicalSelectionPlan> {
+        self.selection.as_ref()
+    }
+}
+
+fn bind_comparison_operand(
+    operand: UnboundComparisonOperand,
+    table: &ConfiguredTable,
+    scan_columns: &mut Vec<ScanColumnInfo>,
+    scan_offsets: &mut HashMap<i64, u32>,
+) -> Result<ComparisonOperand, ReadOnlyScanError> {
+    match operand {
+        UnboundComparisonOperand::Int(value) => Ok(ComparisonOperand::Int(value)),
+        UnboundComparisonOperand::Column(column_index) => {
+            let column = &table.columns[column_index];
+            let offset = match scan_offsets.get(&column.id) {
+                Some(offset) => *offset,
+                None => {
+                    let offset = u32::try_from(scan_columns.len()).map_err(|_| {
+                        ReadOnlyScanError::InvalidConfiguration(
+                            "scan column count exceeds TiKV input-offset capacity",
+                        )
+                    })?;
+                    scan_columns.push(column.scan_column());
+                    scan_offsets.insert(column.id, offset);
+                    offset
+                }
+            };
+            Ok(ComparisonOperand::InputOffset(offset))
+        }
+    }
 }
 
 fn validate_select(
     select: &SelectStmt,
     table: &ConfiguredTable,
-) -> Result<Vec<ResolvedProjectionColumn>, ReadOnlyScanError> {
+) -> Result<ValidatedReadOnlySelect, ReadOnlyScanError> {
     if select.kind != SelectStatementKind::Select
         || select.is_in_braces
         || !select.values.is_empty()
@@ -486,9 +641,12 @@ fn validate_select(
     };
     validate_table_ref(table_ref, table)?;
 
-    if select.where_clause.is_some() {
-        return unsupported(UnsupportedReadOnlyFeature::Predicate);
-    }
+    let comparisons = select
+        .where_clause
+        .as_ref()
+        .map(|predicate| bind_where_comparisons(predicate, table_ref, table))
+        .transpose()?
+        .unwrap_or_default();
     if !select.group_by.is_empty() || select.rollup || select.having.is_some() {
         return unsupported(UnsupportedReadOnlyFeature::Grouping);
     }
@@ -532,7 +690,7 @@ fn validate_select(
                 return unsupported(UnsupportedReadOnlyFeature::ProjectionExpression);
             }
         };
-        let column = resolve_column_path(path, table_ref, table)?;
+        let (_, column) = resolve_column_path(path, table_ref, table)?;
         let output_name = alias
             .as_deref()
             .filter(|alias| !alias.is_empty())
@@ -540,7 +698,120 @@ fn validate_select(
             .to_owned();
         columns.push(ResolvedProjectionColumn::new(output_name, column));
     }
-    Ok(columns)
+    Ok(ValidatedReadOnlySelect {
+        projected_columns: columns,
+        comparisons,
+    })
+}
+
+fn bind_where_comparisons(
+    predicate: &Expr,
+    table_ref: &TableRef,
+    table: &ConfiguredTable,
+) -> Result<Vec<UnboundComparison>, ReadOnlyScanError> {
+    let mut comparisons = Vec::new();
+    flatten_and_bind(predicate, table_ref, table, &mut comparisons)?;
+    Ok(comparisons)
+}
+
+fn flatten_and_bind(
+    predicate: &Expr,
+    table_ref: &TableRef,
+    table: &ConfiguredTable,
+    comparisons: &mut Vec<UnboundComparison>,
+) -> Result<(), ReadOnlyScanError> {
+    match strip_parens(predicate) {
+        Expr::Binary(BinaryOp::LogicAnd, left, right) => {
+            flatten_and_bind(left, table_ref, table, comparisons)?;
+            flatten_and_bind(right, table_ref, table, comparisons)
+        }
+        Expr::Binary(BinaryOp::LogicOr | BinaryOp::LogicXor, _, _) => {
+            unsupported_predicate(UnsupportedReadOnlyPredicate::BooleanOperator)
+        }
+        Expr::Binary(operator, left, right) => {
+            let op = comparison_op(*operator).ok_or(ReadOnlyScanError::UnsupportedPredicate(
+                UnsupportedReadOnlyPredicate::ComparisonOperator,
+            ))?;
+            let lhs = bind_unbound_operand(left, table_ref, table)?;
+            let rhs = bind_unbound_operand(right, table_ref, table)?;
+            if !matches!(
+                (lhs, rhs),
+                (
+                    UnboundComparisonOperand::Column(_),
+                    UnboundComparisonOperand::Int(_)
+                ) | (
+                    UnboundComparisonOperand::Int(_),
+                    UnboundComparisonOperand::Column(_)
+                )
+            ) {
+                return unsupported_predicate(UnsupportedReadOnlyPredicate::ColumnIntegerPair);
+            }
+            comparisons.push(UnboundComparison { op, lhs, rhs });
+            Ok(())
+        }
+        _ => unsupported_predicate(UnsupportedReadOnlyPredicate::ComparisonOperator),
+    }
+}
+
+fn comparison_op(operator: BinaryOp) -> Option<ComparisonOp> {
+    match operator {
+        BinaryOp::Lt => Some(ComparisonOp::Lt),
+        BinaryOp::Le => Some(ComparisonOp::Le),
+        BinaryOp::Gt => Some(ComparisonOp::Gt),
+        BinaryOp::Ge => Some(ComparisonOp::Ge),
+        BinaryOp::Eq => Some(ComparisonOp::Eq),
+        BinaryOp::Ne => Some(ComparisonOp::Ne),
+        _ => None,
+    }
+}
+
+fn bind_unbound_operand(
+    operand: &Expr,
+    table_ref: &TableRef,
+    table: &ConfiguredTable,
+) -> Result<UnboundComparisonOperand, ReadOnlyScanError> {
+    match strip_parens(operand) {
+        Expr::Column(path) => {
+            let (column_index, _) = resolve_column_path(path, table_ref, table)?;
+            Ok(UnboundComparisonOperand::Column(column_index))
+        }
+        literal if is_integer_literal_shape(literal) => parse_signed_integer(literal)
+            .map(UnboundComparisonOperand::Int)
+            .ok_or(ReadOnlyScanError::UnsupportedPredicate(
+                UnsupportedReadOnlyPredicate::IntegerOutOfRange,
+            )),
+        _ => unsupported_predicate(UnsupportedReadOnlyPredicate::Operand),
+    }
+}
+
+fn is_integer_literal_shape(expr: &Expr) -> bool {
+    match expr {
+        Expr::Int(_) => true,
+        Expr::Paren(inner) | Expr::Unary(UnaryOp::Plus | UnaryOp::Minus, inner) => {
+            is_integer_literal_shape(inner)
+        }
+        _ => false,
+    }
+}
+
+fn parse_signed_integer(expr: &Expr) -> Option<i64> {
+    fn parse(expr: &Expr) -> Option<i128> {
+        match expr {
+            Expr::Int(value) => value.parse::<i128>().ok(),
+            Expr::Paren(inner) | Expr::Unary(UnaryOp::Plus, inner) => parse(inner),
+            Expr::Unary(UnaryOp::Minus, inner) => parse(inner)?.checked_neg(),
+            _ => None,
+        }
+    }
+
+    i64::try_from(parse(expr)?).ok()
+}
+
+fn strip_parens(mut expr: &Expr) -> &Expr {
+    while let Expr::Paren(inner) = expr {
+        expr = inner;
+    }
+    expr
 }
 
 fn validate_table_ref(
@@ -576,7 +847,7 @@ fn resolve_column_path<'a>(
     path: &[String],
     table_ref: &TableRef,
     table: &'a ConfiguredTable,
-) -> Result<&'a ConfiguredColumn, ReadOnlyScanError> {
+) -> Result<(usize, &'a ConfiguredColumn), ReadOnlyScanError> {
     let alias = table_ref.alias.as_deref().filter(|alias| !alias.is_empty());
     let column_name = match path {
         [column] => Some(column.as_str()),
@@ -594,7 +865,8 @@ fn resolve_column_path<'a>(
             table
                 .columns
                 .iter()
-                .find(|column| identifier_eq(name, &column.name))
+                .enumerate()
+                .find(|(_, column)| identifier_eq(name, &column.name))
         })
         .ok_or_else(|| ReadOnlyScanError::UnknownColumn(path.join(".")))
 }
@@ -605,4 +877,10 @@ fn identifier_eq(left: &str, right: &str) -> bool {
 
 fn unsupported<T>(feature: UnsupportedReadOnlyFeature) -> Result<T, ReadOnlyScanError> {
     Err(ReadOnlyScanError::Unsupported(feature))
+}
+
+fn unsupported_predicate<T>(
+    predicate: UnsupportedReadOnlyPredicate,
+) -> Result<T, ReadOnlyScanError> {
+    Err(ReadOnlyScanError::UnsupportedPredicate(predicate))
 }

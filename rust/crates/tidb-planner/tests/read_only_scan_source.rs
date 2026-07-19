@@ -96,10 +96,10 @@ fn unsupported_plan_shapes_fail_before_physical_lowering() {
         "UPDATE accounts SET id = 2",
         UnsupportedReadOnlyFeature::WriteOrNonQueryStatement,
     );
-    unsupported(
-        "SELECT id FROM accounts WHERE id = 1",
-        UnsupportedReadOnlyFeature::Predicate,
-    );
+    let filtered = ReadOnlyScanPlan::lower("SELECT id FROM accounts WHERE id = 1", &table())
+        .expect("bounded signed-BIGINT predicates now lower to Selection");
+    assert!(filtered.selection().is_some());
+    assert_eq!(filtered.projection_output_offsets(), [0]);
     unsupported(
         "SELECT accounts.id FROM accounts JOIN other ON accounts.id = other.id",
         UnsupportedReadOnlyFeature::Join,

@@ -1,6 +1,6 @@
 schema = "1"
 slice = "planner-read-only-bigint-selection-runtime"
-status = "ready"
+status = "partial"
 target = "tidb-planner"
 ring = "plan"
 consumer = "The configured-table read-only planner binds signed BIGINT WHERE comparisons and AND conjunctions into a physical Selection above its table scan, scans projection columns first plus deduplicated predicate-only columns, and publishes projection output offsets without weakening rejection of unsupported SQL."
@@ -35,4 +35,5 @@ support_anchors = [
 rust_paths = [
   "rust/crates/tidb-planner/src/read_only_scan.rs",
   "rust/crates/tidb-planner/tests/read_only_bigint_selection_source.rs",
+  "rust/crates/tidb-planner/tests/read_only_scan_source.rs",
 ]
