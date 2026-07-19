@@ -15,6 +15,27 @@ slice contracts, so the batch cannot be silently shrunk after validation.
 After the receipt is consumed, `integrated-members.tsv` preserves that exact
 membership and the queue rejects any later addition, removal, or substitution.
 
+Close a frozen active campaign through the transactional steward command:
+
+```sh
+# Read-only: validate members, claims, transfer chains, terminal evidence, and
+# the exact predecessor-fragment row edits.
+python3 scripts/campaign_close.py --campaign <campaign>
+
+# Apply bookkeeping and regenerate source/test inventories plus STATUS.md.
+python3 scripts/campaign_close.py --campaign <campaign> --apply
+
+# Apply, run exactly one shared integration gate, receipt-release every exact
+# member, and regenerate the final post-release STATUS.md.
+python3 scripts/campaign_close.py --campaign <campaign> --gate
+```
+
+The command removes only transferred rows from predecessor evidence fragments,
+deletes a fragment only when no evidence rows remain, and treats a transfer's
+`retired_artifacts = "-"` as an empty set rather than a path. Preflight is
+read-only. Apply snapshots every file the generators, campaign archive, gate,
+and releases can mutate and restores them if any step fails.
+
 Campaigns form a pipeline, not a sequence of planning pauses. Before the
 current campaign consumes its final ready batch, root freezes the next
 campaign's consumer boundary, public interfaces, original obligations, and
