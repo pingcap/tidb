@@ -1021,9 +1021,11 @@ dependencies = [
  "tidb-error",
  "tidb-expr",
  "tidb-parser",
+ "tidb-pd-client",
  "tidb-planner",
  "tidb-proto",
  "tidb-protocol",
+ "tidb-txnkv",
 ]
 
 [[package]]
@@ -1061,6 +1063,7 @@ dependencies = [
  "prost",
  "tidb-proto",
  "tokio",
+ "tokio-stream",
  "tonic",
 ]
 
@@ -1103,6 +1106,7 @@ dependencies = [
  "tidb-datatype",
  "tidb-distsql",
  "tidb-exec",
+ "tidb-planner",
  "tidb-proto",
  "tidb-protocol",
 ]

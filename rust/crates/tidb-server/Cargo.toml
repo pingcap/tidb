@@ -14,6 +14,7 @@ workspace = true
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-distsql = { path = "../tidb-distsql" }
 tidb-exec = { path = "../tidb-exec" }
+tidb-planner = { path = "../tidb-planner" }
 tidb-protocol = { path = "../tidb-protocol" }
 
 [dev-dependencies]

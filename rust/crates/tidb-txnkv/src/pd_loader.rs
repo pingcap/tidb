@@ -49,6 +49,18 @@ impl PdRegionLoader {
         })
     }
 
+    /// Reuses an already-bootstrapped PD worker.
+    ///
+    /// The read-only SQL node uses this constructor so region discovery and
+    /// TSO share one membership, leader, deadline, and shutdown authority.
+    #[must_use]
+    pub fn from_client(client: PdClient) -> Self {
+        Self {
+            client,
+            store_labels: HashMap::new(),
+        }
+    }
+
     /// Returns the first configured seed for diagnostics, not route authority.
     #[must_use]
     pub fn endpoint(&self) -> &str {

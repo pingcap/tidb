@@ -73,6 +73,7 @@ message DAGRequest {
   repeated Executor executors = 2;
   optional int64 time_zone_offset = 3;
   optional uint64 flags = 4;
+  repeated uint32 output_offsets = 5;
   optional EncodeType encode_type = 8;
   optional string time_zone_name = 11;
   optional bool collect_execution_summaries = 12;

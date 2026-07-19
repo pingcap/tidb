@@ -1,4 +1,3 @@
 # Source-owned server connection-phase and listener lifecycle evidence.
 # source_path	status	owner	evidence_artifact	note
 pkg/server/internal/parse/parse.go	PARTIAL	server-handshake-listener-wave	rust/crates/tidb-server/src/handshake.rs	The dependency-closed response parser preserves capability, collation, user, database, auth, plugin, zstd, and connection-attribute fields with explicit truncated/oversized errors; Go policy hooks and auth execution remain open.
-pkg/server/server.go	PARTIAL	server-handshake-listener-wave	rust/crates/tidb-server/src/listener.rs	The Rust lifecycle owns actual TCP bind, ephemeral address publication, idempotent initialization, activation health ordering, shutdown flags, idempotent close, and a generic injected accept-loop leaf; Unix sockets, PROXY protocol, HTTP/status, connection admission, and bootstrap remain open.

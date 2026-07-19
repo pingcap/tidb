@@ -96,6 +96,7 @@ pub mod predicate_partition;
 pub mod projection_elimination;
 pub mod push_down_sequence;
 pub mod range_detacher;
+pub mod read_only_scan;
 pub mod residual_condition;
 pub mod resolve_grouping_expand;
 pub mod rule_set;

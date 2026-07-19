@@ -34,6 +34,7 @@ use tidb_txnkv::region::{
     PeerRole, RegionMetadata, RegionMetadataPeer, RegionRecoveryLoader, RegionVerId,
 };
 use tidb_txnkv::PdRegionLoader;
+use tokio_stream::wrappers::ReceiverStream;
 
 const CLUSTER_ID: u64 = 84;
 
@@ -87,6 +88,17 @@ struct State {
 
 #[tonic::async_trait]
 impl Pd for MockPd {
+    type TsoStream = ReceiverStream<Result<pdpb::TsoResponse, tonic::Status>>;
+
+    async fn tso(
+        &self,
+        _request: tonic::Request<tonic::Streaming<pdpb::TsoRequest>>,
+    ) -> Result<tonic::Response<Self::TsoStream>, tonic::Status> {
+        Err(tonic::Status::unimplemented(
+            "this region-loader fixture does not serve TSO",
+        ))
+    }
+
     async fn get_members(
         &self,
         request: tonic::Request<pdpb::GetMembersRequest>,

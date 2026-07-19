@@ -1,0 +1,3 @@
+# Bounded configured-catalog single-table read lowering source evidence.
+# source_path	status	owner	evidence_artifact	note
+pkg/planner/core/planbuilder.go	PARTIAL	planner-single-table-read-lowering	rust/crates/tidb-planner/src/read_only_scan.rs	A fully parsed direct projection from one configured non-partitioned table lowers through the existing LogicalDataSource, table access path, and PhysicalTableReader authority with explicit rejection of unsupported predicates, joins, aggregates, subqueries, partitions, writes, and unknown catalog objects. TiDB's general catalog resolution, privilege hooks, hint processing, full logical builder, optimizer search, and broad statement family remain open.

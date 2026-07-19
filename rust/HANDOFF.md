@@ -45,7 +45,7 @@ from the Campaign 07 baseline with the toolchain pinned in
 | `tidb-ast` | AST nodes + `restore_into` (SQL text regeneration) | `pkg/parser/ast/*` |
 | `tidb-parser` | recursive-descent parser | `pkg/parser/*_parser.go` |
 | `tidb-proto` | generated prost protocol leaves shared by real consumers | `tipb`/`kvproto` serialized contracts |
-| `tidb-pd-client` | bounded plaintext PD gRPC control plane with discovered-member retention, foreground refresh, role-aware direct-endpoint failover, and cluster/previous-region/region/store metadata | pinned `github.com/tikv/pd/client` GetMembers/GetPrevRegion/GetRegion/GetStore and service-discovery paths |
+| `tidb-pd-client` | bounded plaintext PD gRPC control plane with discovered-member retention, foreground refresh, role-aware direct-endpoint failover, cluster/region/store metadata, and a retained leader-routed real TSO stream | pinned `github.com/tikv/pd/client` membership, region/store, service-discovery, and TSO paths |
 | `tidb-protocol` | source-backed uncompressed MySQL framing, result packets, column metadata projection, and dependency-closed typed text-row scalar formatting | `pkg/server/internal/packetio.go`, `pkg/server/internal/column/**`, `pkg/format/textrow/**` |
 | `tidb-distsql` | request/response metadata plus the lazy BatchCommands-first/direct-unary task, one selector-owned synchronous fallback, retry/rebuild, paging, warning, request-owned active cancellation, bounded optimistic lock recovery, forwarding/route metrics, and detach-state runtime | `pkg/distsql/**`, `pkg/store/copr/**` |
 | `tidb-expr` | typed expression construction, evaluation, and builtins | `pkg/expression/*` |
@@ -53,8 +53,8 @@ from the Campaign 07 baseline with the toolchain pinned in
 | `tidb-stats` | source-backed CMSketch/TopN/FMSketch/loading-status statistics primitives | `pkg/statistics/**` |
 | `tidb-codec` | byte-exact comparable scalar and datum-key encoding | dependency-closed paths in `pkg/util/codec/**` |
 | `tidb-txnkv` | transaction primitives plus the live address-keyed `tikvpb.Tikv/Coprocessor` RPC leaf, retained tonic BatchCommands duplex transport with concrete Coprocessor dispatch, API-v1 PD previous-region/region/store/label loader, unlocked optimistic metadata publication, exact region-error recovery, adaptive replica health/scoring, bounded region backoff, exact forwarding metadata, and one synchronized, maintained topology/store/proxy RegionCache authority | `pkg/kv/**`, pinned `tikv/client-go/v2` transport and locate paths |
-| `tidb-exec` | a seed stateful executor plus shared-cluster/session, aggregate leaves, result metadata bridge, typed scalar result encoding, and framed COM_QUERY boundary | `pkg/session/**`, `pkg/executor/**`, `pkg/server/**` |
-| `tidb-server` | source-shaped unframed and framed connection dispatch over protocol, DistSQL, and the seed session | `pkg/server/conn.go`, `pkg/server/conn_stmt.go` |
+| `tidb-exec` | seed stateful execution leaves plus the bounded direct-column planner/DAG/real-PD-TSO/real-TiKV read engine and lazy result metadata bridge | `pkg/session/**`, `pkg/executor/**`, `pkg/server/**` |
+| `tidb-server` | source-shaped connection dispatch plus the executable serial loopback SQL node, bounded startup catalog, and stock-MySQL-to-real-TiKV lifecycle | `cmd/tidb-server/**`, `pkg/server/conn.go`, `pkg/server/server.go` |
 | `difftest` | shared differential library, Go helpers, corpora, inventory/ledger generators, and two infrastructure tests | — |
 | `difftest-parser-tests` | parser-only oracle replay, topology gate, and stable selector shards | `pkg/parser/**`, parser fixtures |
 | `difftest-result-tests` | expression/query/table result rings | `pkg/expression/**`, `pkg/executor/**` |
@@ -96,6 +96,18 @@ statements are honestly `Unsupported`
 at execution while being fully
 parse+restore-faithful. That's intentional — don't fake success.
 
+Campaign 19 connects the first deployable read-only vertical slice. The
+`tidb-server` binary accepts bounded loopback/TiKV/static-table configuration,
+owns a real MySQL handshake plus PING/QUERY/QUIT lifecycle, lowers one direct
+clustered-key column through the parser/planner and tipb DAG, obtains a fresh
+snapshot from the shared PD worker, and executes through Campaign 18's retained
+BatchCommands-first transport. The stock-client live proof returned
+`[-7,0,42]` from real TiKV with nonzero PD cluster/table/snapshot/region
+identities, one BatchCommands publication, no unary fallback, zero active
+connections, and complete TiUP cleanup. This milestone remains serial,
+loopback/root-empty-password-only, and static-catalog/direct-column-only; do
+not generalize it into claims of full session/catalog/planner/write parity.
+
 The first connected local read-only seam is now real: `tidb-protocol` frames
 and validates uncompressed MySQL packets, `Session::execute_framed_query`
 accepts only `COM_QUERY`, `tidb-parser` and the shared session execute the SQL,
@@ -134,7 +146,7 @@ protocol descriptor. `tidb-server::error_response` now attaches those
 caller-rendered errors to sequence-one ERR frames without synthesizing
 context, and `tidb-codec::value` validates default-row tagged boundaries while
 leaving typed Datum conversion explicit. These are
-still bounded leaves: typed default/columnar/CHBlock codecs, general planner
+still bounded leaves around the new executable slice: typed default/columnar/CHBlock codecs, general planner
 ON/USING typing and explicit projection output names, and full
 session/error-context attachment remain open alongside authentication,
 TLS/compression, temporal/JSON/enum/set/vector and full session charset
@@ -142,7 +154,7 @@ conversion, Unix sockets/PROXY/connection admission, background PD/store health,
 router service, production cache TTL/concurrency/buckets, async/batch/stream
 forwarding, background health/fetch feedback, initial PD-discovery
 cancellation, pessimistic/async-commit lock recovery, TLS policy, TiFlash and
-flashback routing, and deployable bootstrap.
+flashback routing, and general multi-session/catalog bootstrap.
 
 ### Historical Campaign 10-14 boundary
 

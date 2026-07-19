@@ -30,6 +30,7 @@ use tidb_proto::pdpb::{
     self,
     pd_server::{Pd, PdServer},
 };
+use tokio_stream::wrappers::ReceiverStream;
 
 const CLUSTER_ID: u64 = 42;
 const SELF_URL: &str = "http://127.0.0.1:0";
@@ -100,6 +101,17 @@ struct MockPd {
 
 #[tonic::async_trait]
 impl Pd for MockPd {
+    type TsoStream = ReceiverStream<Result<pdpb::TsoResponse, tonic::Status>>;
+
+    async fn tso(
+        &self,
+        _request: tonic::Request<tonic::Streaming<pdpb::TsoRequest>>,
+    ) -> Result<tonic::Response<Self::TsoStream>, tonic::Status> {
+        Err(tonic::Status::unimplemented(
+            "this membership fixture does not serve TSO",
+        ))
+    }
+
     async fn get_members(
         &self,
         request: tonic::Request<pdpb::GetMembersRequest>,
@@ -519,7 +531,7 @@ fn exact_methods_headers_wire_key_roles_and_store_states_are_preserved_once() {
         },
     ];
     let server = Server::start(state);
-    let mut client = PdClient::connect(&server.address, Duration::from_secs(2)).unwrap();
+    let client = PdClient::connect(&server.address, Duration::from_secs(2)).unwrap();
     assert_eq!(client.cluster_id(), CLUSTER_ID);
     assert_eq!(client.endpoint(), server.address);
     assert_eq!(client.member_set().leader_url, http_url(&server));
@@ -617,7 +629,7 @@ fn by_id_scan_and_batch_scan_preserve_flags_ranges_limits_and_response_order() {
     // pd-client/client.go:GetRegionByID, ScanRegions, BatchScanRegions.
     // pd-client/clients/router/client.go:handleRegionsResponse.
     let server = Server::start(valid_state());
-    let mut client = PdClient::connect(&server.address, Duration::from_secs(2)).unwrap();
+    let client = PdClient::connect(&server.address, Duration::from_secs(2)).unwrap();
 
     let by_id_without_buckets = client.get_region_by_id(7, false).unwrap();
     assert_eq!(by_id_without_buckets.id, 7);
@@ -697,7 +709,7 @@ fn bounded_worker_keeps_each_bucket_flag_and_owned_response_isolated() {
     // This retained worker does not batch QueryRegion requests, so it enforces
     // the same per-request bucket filtering at its one owned projection point.
     let server = Server::start(valid_state());
-    let mut client = PdClient::connect(&server.address, Duration::from_secs(2)).unwrap();
+    let client = PdClient::connect(&server.address, Duration::from_secs(2)).unwrap();
 
     let mut first = client.get_region_with_buckets(b"first", true).unwrap();
     first.buckets.as_mut().unwrap().keys[0].push(b'!');
@@ -727,7 +739,7 @@ fn legacy_scan_fallback_keeps_meta_order_and_missing_leader() {
         regions: Vec::new(),
     });
     let server = Server::start(state);
-    let mut client = PdClient::connect(&server.address, Duration::from_secs(2)).unwrap();
+    let client = PdClient::connect(&server.address, Duration::from_secs(2)).unwrap();
 
     let regions = client.scan_regions(b"a", b"z", 2).unwrap();
     assert_eq!(
@@ -865,7 +877,7 @@ fn membership_refresh_replaces_urls_and_normalizes_duplicates() {
         leader: Some(pd_member(1, [first_url.as_str()])),
         ..pdpb::GetMembersResponse::default()
     });
-    let mut client = PdClient::connect(&first.address, Duration::from_secs(2)).unwrap();
+    let client = PdClient::connect(&first.address, Duration::from_secs(2)).unwrap();
     let mut expected_urls = vec![first_url.clone(), survivor_url.clone()];
     expected_urls.sort();
     assert_eq!(client.member_set().member_urls, expected_urls);
@@ -885,7 +897,7 @@ fn membership_refresh_replaces_urls_and_normalizes_duplicates() {
 fn membership_refresh_rejects_cluster_mismatch_without_mutation() {
     // servicediscovery/service_discovery.go:840-864 same-cluster identity.
     let server = Server::start(valid_state());
-    let mut client = PdClient::connect(&server.address, Duration::from_secs(2)).unwrap();
+    let client = PdClient::connect(&server.address, Duration::from_secs(2)).unwrap();
     let original = client.member_set();
     server.state.lock().unwrap().members = Reply::Value(membership_response(
         CLUSTER_ID + 1,
@@ -915,7 +927,7 @@ fn failed_active_endpoint_refreshes_through_survivor_for_region() {
         &[(2, survivor_url.clone())],
         2,
     ));
-    let mut client = PdClient::connect(&active.address, Duration::from_millis(50)).unwrap();
+    let client = PdClient::connect(&active.address, Duration::from_millis(50)).unwrap();
     active.state.lock().unwrap().region = Reply::Status(tonic::Code::Unavailable, "removed");
     active.state.lock().unwrap().members = Reply::Status(tonic::Code::Unavailable, "removed");
 
@@ -944,7 +956,7 @@ fn failed_active_endpoint_refreshes_through_survivor_for_previous_region() {
         &[(2, survivor_url.clone())],
         2,
     ));
-    let mut client = PdClient::connect(&active.address, Duration::from_millis(50)).unwrap();
+    let client = PdClient::connect(&active.address, Duration::from_millis(50)).unwrap();
     active.state.lock().unwrap().prev_region = Reply::Status(tonic::Code::Unavailable, "removed");
     active.state.lock().unwrap().members = Reply::Status(tonic::Code::Unavailable, "removed");
 
@@ -967,7 +979,7 @@ fn leader_only_previous_region_bypasses_the_active_follower() {
     );
     leader.state.lock().unwrap().members = Reply::Value(members.clone());
     follower.state.lock().unwrap().members = Reply::Value(members);
-    let mut client = PdClient::connect(&leader.address, Duration::from_millis(50)).unwrap();
+    let client = PdClient::connect(&leader.address, Duration::from_millis(50)).unwrap();
 
     leader.state.lock().unwrap().region =
         Reply::Status(tonic::Code::Unavailable, "stale active endpoint");
@@ -997,7 +1009,7 @@ fn failed_auxiliary_refresh_preserves_known_survivor_for_region() {
         &[(1, active_url), (2, survivor_url.clone())],
         1,
     ));
-    let mut client = PdClient::connect(&active.address, Duration::from_secs(2)).unwrap();
+    let client = PdClient::connect(&active.address, Duration::from_secs(2)).unwrap();
     let member_error = Reply::Value(pdpb::GetMembersResponse {
         header: Some(pdpb::ResponseHeader {
             cluster_id: CLUSTER_ID,
@@ -1037,7 +1049,7 @@ fn failed_active_endpoint_refreshes_through_survivor_for_store() {
         &[(2, survivor_url.clone())],
         2,
     ));
-    let mut client = PdClient::connect(&active.address, Duration::from_millis(50)).unwrap();
+    let client = PdClient::connect(&active.address, Duration::from_millis(50)).unwrap();
     active
         .state
         .lock()
@@ -1065,7 +1077,7 @@ fn grpc_application_status_is_terminal_after_confirming_the_endpoint_is_still_le
         &[(1, active_url), (2, survivor_url)],
         1,
     ));
-    let mut client = PdClient::connect(&active.address, Duration::from_secs(2)).unwrap();
+    let client = PdClient::connect(&active.address, Duration::from_secs(2)).unwrap();
     for (code, expected) in [
         (tonic::Code::InvalidArgument, "InvalidArgument"),
         (tonic::Code::PermissionDenied, "PermissionDenied"),
@@ -1102,7 +1114,7 @@ fn reachable_old_leader_header_errors_refresh_and_retry_the_new_leader() {
             &[(1, old_url.clone()), (2, new_url.clone())],
             1,
         ));
-        let mut client = PdClient::connect(&old_leader.address, Duration::from_secs(2)).unwrap();
+        let client = PdClient::connect(&old_leader.address, Duration::from_secs(2)).unwrap();
 
         old_leader.state.lock().unwrap().members = Reply::Value(membership_response(
             CLUSTER_ID,
@@ -1173,7 +1185,7 @@ fn sync_client_is_safe_inside_an_existing_tokio_runtime() {
         .build()
         .unwrap();
     runtime.block_on(async {
-        let mut client = PdClient::connect(&server.address, Duration::from_secs(2)).unwrap();
+        let client = PdClient::connect(&server.address, Duration::from_secs(2)).unwrap();
         client.get_region(b"already-encoded").unwrap();
     });
     let state = server.state.lock().unwrap();
@@ -1191,7 +1203,7 @@ fn present_zero_epoch_is_preserved_without_invented_validation() {
     let mut state = valid_state();
     state.region = Reply::Value(response);
     let server = Server::start(state);
-    let mut client = PdClient::connect(&server.address, Duration::from_secs(2)).unwrap();
+    let client = PdClient::connect(&server.address, Duration::from_secs(2)).unwrap();
     let region = client.get_region(b"wire").unwrap();
     assert_eq!(region.epoch.conf_ver, 0);
     assert_eq!(region.epoch.version, 0);
@@ -1258,7 +1270,7 @@ fn bootstrap_timeout_transport_header_and_zero_cluster_never_retry() {
 #[test]
 fn region_header_and_topology_errors_fail_after_exactly_one_attempt() {
     let server = Server::start(valid_state());
-    let mut client = PdClient::connect(&server.address, Duration::from_secs(2)).unwrap();
+    let client = PdClient::connect(&server.address, Duration::from_secs(2)).unwrap();
     let cases = [
         (
             pdpb::GetRegionResponse {
@@ -1347,7 +1359,7 @@ fn region_header_and_topology_errors_fail_after_exactly_one_attempt() {
 #[test]
 fn previous_region_reuses_header_and_topology_validation_without_retry() {
     let server = Server::start(valid_state());
-    let mut client = PdClient::connect(&server.address, Duration::from_secs(2)).unwrap();
+    let client = PdClient::connect(&server.address, Duration::from_secs(2)).unwrap();
     let cases = [
         (
             pdpb::GetRegionResponse {
@@ -1393,7 +1405,7 @@ fn leaderless_get_region_preserves_ordered_peers() {
     };
     response.leader = None;
     let server = Server::start(state);
-    let mut client = PdClient::connect(&server.address, Duration::from_secs(2)).unwrap();
+    let client = PdClient::connect(&server.address, Duration::from_secs(2)).unwrap();
 
     let region = client.get_region(b"wire").unwrap();
     assert!(region.leader.is_none());
@@ -1414,7 +1426,7 @@ fn unknown_peer_role_is_preserved_for_forward_compatible_routing() {
     response.region.as_mut().unwrap().peers[0].role = 99;
     response.leader.as_mut().unwrap().role = 99;
     let server = Server::start(state);
-    let mut client = PdClient::connect(&server.address, Duration::from_secs(2)).unwrap();
+    let client = PdClient::connect(&server.address, Duration::from_secs(2)).unwrap();
 
     let region = client.get_region(b"wire").unwrap();
     assert_eq!(region.peers[0].role, 99);
@@ -1424,7 +1436,7 @@ fn unknown_peer_role_is_preserved_for_forward_compatible_routing() {
 #[test]
 fn store_mismatch_unusable_and_unknown_states_fail_closed_without_retry() {
     let server = Server::start(valid_state());
-    let mut client = PdClient::connect(&server.address, Duration::from_secs(2)).unwrap();
+    let client = PdClient::connect(&server.address, Duration::from_secs(2)).unwrap();
     for error in [
         pdpb::Error {
             r#type: pdpb::ErrorType::StoreTombstone as i32,
@@ -1561,7 +1573,7 @@ fn store_mismatch_unusable_and_unknown_states_fail_closed_without_retry() {
 #[test]
 fn region_and_store_transport_or_timeout_make_one_attempt_only() {
     let server = Server::start(valid_state());
-    let mut client = PdClient::connect(&server.address, Duration::from_millis(20)).unwrap();
+    let client = PdClient::connect(&server.address, Duration::from_millis(20)).unwrap();
 
     server.state.lock().unwrap().region =
         Reply::Status(tonic::Code::Unavailable, "region unavailable");

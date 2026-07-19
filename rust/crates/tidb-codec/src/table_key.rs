@@ -138,6 +138,19 @@ pub fn encode_row_key_with_handle(table_id: i64, handle: &RecordHandle) -> Vec<u
     encode_row_key(table_id, &encode_handle(handle))
 }
 
+/// Returns the exact integer-handle key range for one physical table.
+///
+/// This is the direct equivalent of Go's `GetTableHandleKeyRange`: the lower
+/// and upper keys are the table's record prefix followed by the
+/// memcomparable encodings of `math.MinInt64` and `math.MaxInt64`.
+#[must_use]
+pub fn get_table_handle_key_range(table_id: i64) -> (Vec<u8>, Vec<u8>) {
+    (
+        encode_row_key_with_handle(table_id, &RecordHandle::Int(i64::MIN)),
+        encode_row_key_with_handle(table_id, &RecordHandle::Int(i64::MAX)),
+    )
+}
+
 /// Appends a source handle to an already encoded table-record prefix.
 ///
 /// Partition-handle prefix substitution remains outside this dependency-closed

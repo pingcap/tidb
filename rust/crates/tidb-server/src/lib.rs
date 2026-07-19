@@ -35,9 +35,13 @@ pub mod connection_resultset;
 mod error_response;
 pub mod handshake;
 mod listener;
+mod mysql_connection;
+mod node_config;
+mod real_tikv_node;
 pub mod resultset_source;
 pub mod resultset_writer;
 mod secure_transport;
+mod sql_node;
 
 use std::io::Cursor;
 
@@ -88,8 +92,18 @@ pub use handshake::{
     HandshakeError, HandshakeResponse, HandshakeResponseHeader, InitialHandshake,
 };
 pub use listener::{ListenerConfig, ListenerError, ListenerLifecycle, ListenerState};
+pub use mysql_connection::{
+    serve_mysql_connection, ConnectionExit, ConnectionReport, MysqlConnectionError,
+};
+pub use node_config::{ConfiguredReadTable, NodeConfig, NodeConfigError};
+pub use real_tikv_node::{run_configured_node, RealTiKvSerialEngine, RunConfiguredNodeError};
+pub use resultset_source::ResultSetSource;
 pub use secure_transport::{
     SecureTransportError, SecureTransportPolicy, TransportDecision, TransportKind,
+};
+pub use sql_node::{
+    BoxedResultSetSource, ConnectionTracker, SerialQueryEngine, SerialQueryResult, SerialSqlNode,
+    SqlNodeError, SqlQueryError,
 };
 
 /// A response from the currently supported connection dispatch envelope.

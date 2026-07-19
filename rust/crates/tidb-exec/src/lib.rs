@@ -622,6 +622,7 @@ pub mod privilege_set;
 pub mod process_info;
 pub mod read_consistency;
 pub mod readable_size;
+pub mod real_tikv_read;
 pub mod recordset_lifecycle;
 mod recursive_cte;
 pub mod removed_sysvar;

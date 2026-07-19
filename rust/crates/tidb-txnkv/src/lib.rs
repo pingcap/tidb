@@ -17,9 +17,11 @@
 //! `pkg/kv/{key,version,keyflags,assertion,error,checker}.go` plus the bounded
 //! transaction-source bitfield in `pkg/kv/option.go`. The bounded RPC and
 //! region modules now provide one real unary Coprocessor transport and one
-//! injected single-region leader route. Concrete PD discovery, timestamp
-//! oracle, MVCC transaction protocol, lock resolution, automatic retry, TLS,
-//! and commit remain outside this crate's implemented boundary.
+//! PD-backed region route. The read-only SQL node shares one concrete PD
+//! worker for region discovery and the timestamp oracle, while this crate
+//! retains the maintained RegionCache, lock-recovery, and BatchCommands/unary
+//! transport authorities. MVCC write transactions, pessimistic/async-commit
+//! completion, TLS, and commit remain outside the implemented boundary.
 
 mod assertion;
 mod batch_getter;

@@ -16,12 +16,12 @@
 //!
 //! This crate now owns bounded request construction, protobuf encoding,
 //! checked caller-supplied region-task projection, response decoding, and
-//! result iteration. It deliberately stops before live TiKV RPC: there is no
-//! socket or gRPC client, PD-backed region discovery, address or replica
-//! selection, lock resolution, retry scheduler, or cancellation owner. The
-//! shared [`DistSqlContext::request`] remains the single source of session
-//! request metadata rather than inventing a second replica-read or paging
-//! contract.
+//! result iteration. Its production adapter now retains the PD-backed region
+//! cache and BatchCommands-first TiKV transport used by the bounded read-only
+//! SQL node; topology, selection, retry, lock recovery, and cancellation stay
+//! in their existing single owners. The shared [`DistSqlContext::request`]
+//! remains the single source of session request metadata rather than
+//! inventing a second replica-read or paging contract.
 
 mod channel_iter;
 mod chblock;
@@ -64,8 +64,9 @@ pub use cop_paging::{
     BatchBucketVersionUpdate, CopPagingError, CopPagingOutcome, CopPagingState, DirectUnaryClient,
     DirectUnaryClientError, DirectUnaryQueryResponse, DirectUnaryQueryTransport,
     DirectUnaryRequest, DirectUnaryResponse, DirectUnaryRuntimeConfig, DirectUnaryTransportError,
-    LockedResponseAction, LockedResponseDelegate, LockedResponseObservation,
-    OptimisticLockRecovery, ReadEngineGeneration, RegionRetryWaiter,
+    DirectUnaryTransportEvidence, DirectUnaryTransportEvidenceHandle, LockedResponseAction,
+    LockedResponseDelegate, LockedResponseObservation, OptimisticLockRecovery,
+    ReadEngineGeneration, RegionRetryWaiter,
 };
 pub use copr_cache::{
     build_copr_cache_key, CoprCache, CoprCacheAdmission, CoprCacheConfig, CoprCacheError,

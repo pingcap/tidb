@@ -29,6 +29,8 @@ bin
 # exception narrow so Go/tool build directories named `bin` stay ignored.
 !rust/difftests/src/bin/
 !rust/difftests/src/bin/*.rs
+!rust/crates/tidb-server/src/bin/
+!rust/crates/tidb-server/src/bin/*.rs
 # Agent domain claims are local leases. The checked domain records remain the
 # only source of ownership truth; local claims must never become stale shared
 # state.

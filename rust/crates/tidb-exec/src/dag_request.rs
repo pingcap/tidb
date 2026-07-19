@@ -127,10 +127,22 @@ pub fn construct_dag_req(
         });
     };
 
-    let executor = match plan {
-        TiKvScanPlan::Table(plan) => table_scan_to_pb(plan.pushdown())?,
-        TiKvScanPlan::Index(plan) => index_scan_to_pb(plan)?,
+    let (executor, output_width) = match plan {
+        TiKvScanPlan::Table(plan) => (
+            table_scan_to_pb(plan.pushdown())?,
+            plan.pushdown().columns.len(),
+        ),
+        TiKvScanPlan::Index(plan) => (
+            index_scan_to_pb(plan)?,
+            plan.pushdown()
+                .ok_or(DagRequestBuildError::MissingIndexPushdown)?
+                .columns
+                .len(),
+        ),
     };
+    let output_offsets = (0..output_width)
+        .map(|offset| u32::try_from(offset).expect("executor output width fits TiKV u32 offsets"))
+        .collect();
     let (encode_type, chunk_memory_layout) = match context.encode_type {
         DistSqlEncodeType::Default => (EncodeType::TypeDefault, None),
         DistSqlEncodeType::Chunk => {
@@ -151,6 +163,7 @@ pub fn construct_dag_req(
         executors: vec![executor],
         time_zone_offset: Some(context.time_zone_offset),
         flags: Some(context.push_down_flags),
+        output_offsets,
         encode_type: Some(encode_type as i32),
         time_zone_name: Some(context.time_zone_name.clone()),
         collect_execution_summaries: context.collect_execution_summaries.then_some(true),

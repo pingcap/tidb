@@ -18,13 +18,15 @@ tidb-distsql = { path = "../tidb-distsql" }
 tidb-expr = { path = "../tidb-expr" }
 tidb-error = { path = "../tidb-error" }
 tidb-parser = { path = "../tidb-parser" }
+tidb-pd-client = { path = "../tidb-pd-client" }
 tidb-planner = { path = "../tidb-planner" }
 tidb-proto = { path = "../tidb-proto" }
 tidb-protocol = { path = "../tidb-protocol" }
+tidb-txnkv = { path = "../tidb-txnkv" }
+prost.workspace = true
 serde_json = { workspace = true }
 
 [dev-dependencies]
-prost.workspace = true
 
 [[test]]
 name = "source_shard_a"
@@ -85,3 +87,7 @@ path = "tests/tikv_scan_dag_lowering_source.rs"
 [[test]]
 name = "direct_unary_cancellation_source"
 path = "tests/direct_unary_cancellation_source.rs"
+
+[[test]]
+name = "real_tikv_read_source"
+path = "tests/real_tikv_read_source.rs"

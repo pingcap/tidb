@@ -69,3 +69,10 @@
 2026-07-read-path-18	txnkv-batch-coprocessor-dispatch-runtime
 2026-07-read-path-18	distsql-batchcommands-region-request-runtime
 2026-07-read-path-18	txnkv-live-pd-batch-topology
+2026-07-read-path-19	server-node-bootstrap-runtime
+2026-07-read-path-19	pd-read-tso-runtime
+2026-07-read-path-19	codec-table-key-range-runtime
+2026-07-read-path-19	planner-single-table-read-lowering
+2026-07-read-path-19	executor-real-tikv-read-runtime
+2026-07-read-path-19	server-mysql-connection-runtime
+2026-07-read-path-19	server-live-mysql-tikv-proof

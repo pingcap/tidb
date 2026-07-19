@@ -100,6 +100,28 @@ fn test_cut_prefix() {
 }
 
 #[test]
+fn test_range() {
+    // pkg/tablecodec/tablecodec_test.go:523 TestRange
+    let (start_22, end_22) = get_table_handle_key_range(22);
+    let (start_23, end_23) = get_table_handle_key_range(23);
+
+    assert!(start_22 < end_22);
+    assert!(end_22 < start_23);
+    assert!(start_23 < end_23);
+    assert_eq!(
+        start_22,
+        [b't', 0x80, 0, 0, 0, 0, 0, 0, 22, b'_', b'r', 0, 0, 0, 0, 0, 0, 0, 0,]
+    );
+    assert_eq!(
+        end_22,
+        [
+            b't', 0x80, 0, 0, 0, 0, 0, 0, 22, b'_', b'r', 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+            0xff,
+        ]
+    );
+}
+
+#[test]
 fn test_decode_auto_id_meta() {
     let key = [
         0x6d, 0x44, 0x42, 0x3a, 0x35, 0x36, 0, 0, 0, 0xfc, 0, 0, 0, 0, 0, 0, 0, 0x68, 0x54, 0x49,

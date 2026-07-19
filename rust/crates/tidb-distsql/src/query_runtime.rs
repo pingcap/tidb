@@ -98,6 +98,18 @@ pub trait QueryTransport {
     ) -> Result<Option<Self::Response>, String>;
 }
 
+impl<T: QueryTransport + ?Sized> QueryTransport for &mut T {
+    type Response = T::Response;
+
+    fn send(
+        &mut self,
+        request: &TransportRequest,
+        dispatch: &QueryDispatch,
+    ) -> Result<Option<Self::Response>, String> {
+        (**self).send(request, dispatch)
+    }
+}
+
 /// Errors returned by the injected query runtime.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum QueryRuntimeError {

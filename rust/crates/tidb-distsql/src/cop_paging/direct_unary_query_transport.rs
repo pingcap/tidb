@@ -321,6 +321,54 @@ pub struct DirectUnaryQueryTransport<C, L> {
     async_begin: Option<AsyncBegin<C>>,
     replica_read_seed: ReplicaReadSeed,
     config: DirectUnaryRuntimeConfig,
+    evidence: Rc<RefCell<DirectUnaryTransportEvidence>>,
+}
+
+/// Structured observations from the most recently bound production query.
+///
+/// This is evidence, not policy: selection, retry, and terminal ownership stay
+/// in the existing response runtime. The deployable SQL-node proof uses these
+/// counters to distinguish a real located BatchCommands-first request from an
+/// empty or unary-only fixture.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct DirectUnaryTransportEvidence {
+    /// Region identities returned by the canonical cache/PD lookup.
+    pub located_region_ids: Vec<u64>,
+    /// Logical region identities attached to actual physical sends.
+    pub dispatched_region_ids: Vec<u64>,
+    /// Physical BatchCommands requests published for the query.
+    pub batch_attempts: u64,
+    /// Physical unary attempts begun after BatchCommands was unavailable or failed.
+    pub unary_attempts: u64,
+}
+
+/// Cloneable read-only view of production transport evidence.
+#[derive(Clone, Debug)]
+pub struct DirectUnaryTransportEvidenceHandle {
+    evidence: Rc<RefCell<DirectUnaryTransportEvidence>>,
+}
+
+impl DirectUnaryTransportEvidenceHandle {
+    /// Returns a point-in-time copy without transferring runtime ownership.
+    #[must_use]
+    pub fn snapshot(&self) -> DirectUnaryTransportEvidence {
+        self.evidence.borrow().clone()
+    }
+}
+
+fn record_physical_dispatch(
+    evidence: &mut DirectUnaryTransportEvidence,
+    region_id: u64,
+    batch: bool,
+) {
+    if !evidence.dispatched_region_ids.contains(&region_id) {
+        evidence.dispatched_region_ids.push(region_id);
+    }
+    if batch {
+        evidence.batch_attempts += 1;
+    } else {
+        evidence.unary_attempts += 1;
+    }
 }
 
 type AsyncBegin<C> = fn(
@@ -473,7 +521,24 @@ impl<C, L: RegionLoader> DirectUnaryQueryTransport<C, L> {
             async_begin: None,
             replica_read_seed: ReplicaReadSeed::new(),
             config,
+            evidence: Rc::new(RefCell::new(DirectUnaryTransportEvidence::default())),
         })
+    }
+}
+
+impl<C, L> DirectUnaryQueryTransport<C, L> {
+    /// Snapshots observations from the most recently bound query.
+    #[must_use]
+    pub fn evidence(&self) -> DirectUnaryTransportEvidence {
+        self.evidence.borrow().clone()
+    }
+
+    /// Returns a read-only observation handle for the lazy result lifecycle.
+    #[must_use]
+    pub fn evidence_handle(&self) -> DirectUnaryTransportEvidenceHandle {
+        DirectUnaryTransportEvidenceHandle {
+            evidence: Rc::clone(&self.evidence),
+        }
     }
 }
 
@@ -541,6 +606,13 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
             .map_err(|_| DirectUnaryTransportError::RegionCacheLifecycle.to_string())?
             .map_err(|error| DirectUnaryTransportError::Route(error).to_string())?;
         let topology = topology_from_locations(locations);
+        {
+            let mut evidence = self.evidence.borrow_mut();
+            evidence.located_region_ids = topology.iter().map(|task| task.region_id).collect();
+            evidence.dispatched_region_ids.clear();
+            evidence.batch_attempts = 0;
+            evidence.unary_attempts = 0;
+        }
         let cache = CoprCache::from_optional_config(self.config.cache.as_ref())
             .map_err(|error| DirectUnaryTransportError::Cache(error.to_string()).to_string())?;
         let runtime = CopPagingState::prepare_read_tasks(
@@ -601,6 +673,7 @@ impl<C: DirectUnaryClient + 'static, L: RegionRecoveryLoader + 'static> QueryTra
             sync_only_chains: BTreeSet::new(),
             pending_batch: None,
             network_metrics: UnaryNetworkMetrics::default(),
+            evidence: Rc::clone(&self.evidence),
         }))
     }
 }
@@ -719,6 +792,7 @@ pub struct DirectUnaryQueryResponse<C, L> {
     sync_only_chains: BTreeSet<u64>,
     pending_batch: Option<PendingBatchAttempt>,
     network_metrics: UnaryNetworkMetrics,
+    evidence: Rc<RefCell<DirectUnaryTransportEvidence>>,
 }
 
 struct PreparedRegionDispatch {
@@ -996,6 +1070,11 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             );
             match begin_result {
                 Ok(pending) => {
+                    record_physical_dispatch(
+                        &mut self.evidence.borrow_mut(),
+                        prepared_dispatch.selected.attempt.region.id,
+                        true,
+                    );
                     self.pending_batch = Some(PendingBatchAttempt {
                         dispatch: prepared_dispatch,
                         pending,
@@ -1020,12 +1099,19 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
             prepared_dispatch.traffic_location,
         );
         let dispatch = UnaryRouteDispatch::from_request(&prepared_dispatch.selected);
-        let send_result = try_borrow_client(self.shared_runtime.client())?.send_request_with_route(
+        let mut client = try_borrow_client(self.shared_runtime.client())?;
+        record_physical_dispatch(
+            &mut self.evidence.borrow_mut(),
+            prepared_dispatch.selected.attempt.region.id,
+            false,
+        );
+        let send_result = client.send_request_with_route(
             dispatch.physical_address(),
             dispatch.forwarded_host(),
             &prepared_dispatch.client_request,
             &call,
         );
+        drop(client);
         let dispatch_duration = dispatch_started.elapsed();
         self.settle_dispatch(prepared_dispatch, send_result, dispatch_duration)
     }

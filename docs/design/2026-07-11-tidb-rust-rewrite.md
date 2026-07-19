@@ -356,6 +356,45 @@ router streaming, cancellation-aware PD backoff, complete BatchCommands
 command and prolonged-outage parity, pessimistic/async-commit lock recovery,
 commit protocols, and whole-project product parity remain open.
 
+### Campaign 19 first deployable read-only SQL node
+
+Campaign `2026-07-read-path-19` connects the previously separated server,
+parser/planner, DAG, PD, RegionCache, and TiKV transport authorities into the
+first independently executable Rust SQL node. The binary owns a bounded
+loopback MySQL listener and configuration, empty-password root authentication,
+PING/QUERY/QUIT lifecycle, exact cleanup accounting, direct-column SQL
+admission, physical table-range and tipb DAG lowering, one fresh real PD TSO
+per statement, and Campaign 18's retained BatchCommands-first TiKV path. One
+cloneable PD worker remains the sole membership, region-discovery, TSO,
+deadline, and shutdown authority.
+
+The tag-owned live proof used Go TiDB only to create and seed a one-column
+`BIGINT PRIMARY KEY CLUSTERED` table and resolve physical table ID 114. A stock
+MySQL client then queried the Rust binary, which returned exactly
+`[-7, 0, 42]` from real TiKV. Structured evidence recorded PD cluster
+7664061674403258113, snapshot TSO 467777204928118785, region 16, one physical
+BatchCommands publication, no unary fallback, and zero active connections;
+cleanup removed the Rust process, TiUP processes, endpoints, registry row, and
+tag directory.
+
+The shared 12-job Rust integration gate issued seven immutable receipts;
+repository `make -j12 lint` passed, all claims were released as `PARTIAL`, and
+Campaign 19 membership is archived.
+
+The live loop exposed and closed three real integration gaps: tonic TSO
+open-before-send deadlock when PD withheld response headers, unordered request
+metadata rejected by the retained response coordinator, and a missing pinned
+tipb `DAGRequest.output_offsets` field that made TiKV project zero columns.
+Each fix lives at the source-shaped owner and has a focused regression.
+
+This is a deployable milestone, not general TiDB parity. The node is serial,
+loopback-only, root/empty-password-only, and exposes one statically configured,
+non-partitioned signed clustered-key table with one direct column projection.
+Infoschema/catalog discovery, predicates, joins, aggregation, ordering/limit,
+partitions/common handles, concurrent connections, TLS, full authentication,
+writes/transactions, DDL, and the remaining original Go test obligations stay
+explicitly open.
+
 The checked source/test totals and campaign queue are generated into
 `rust/STATUS.md` from the authoritative ledgers and manifests. Do not copy
 those counters into this design again: they change after every integrated
@@ -3068,7 +3107,7 @@ Ordered by (value ÷ risk), each phase gated by its differential ring:
 |---|---|---|---|---|---|
 | 0 | `tidb-parser` + `tidb-ast` + `tidb-datatype` extraction | hparser design 1:1; TiKV datatype crate | 60-80k | Zero Rust regressions on accepted inputs, explicit rejection parity, and documented oracle failures | In progress: parser ring is clean except the pinned Go `json_memberof()` failure; source/test obligations remain |
 | 1 | `tidb-txnkv` + `tidb-codec` + `tidb-catalog` (read) | client-rust skeleton; client-go as spec | 50-70k | Transaction ring (read path); Jepsen for reads/stale reads | Foundation only: portable key/handle/codec leaves exist; no production client or catalog read path |
-| 2 | Read-only compute node: protocol + session (read subset) + planner + exec + distsql | tidb_query_executors patterns; tipb | 250-350k | Plan ring zero-diff; shadow → read traffic in staging; perf ≥ Go on sysbench read + TPC-H | Foundation started: local uncompressed COM_QUERY/command decode → `tidb-server::Connection` → session → DistSQL metadata/request policy → adapted ResultField metadata → bounded row/EOF sequence, plus numeric text formatting, GBK policy, typed executor/protocol error conversion and sequence-one rendered-error/status framing, status snapshots with `exec_success`, KV-request construction with opaque payload/partition ranges, exact SelectResponse/StreamResponse/CoprocessorRequest/StoreBatchTask projections, raw SelectResponse/Chunk and StreamResponse envelope validation, raw default/TypeChunk framing, FieldType physical layout mapping, native scalar Datum decoding, BinaryJSON and packed-temporal physical boundaries, bounded FullSchema-to-visible USING indices, direct-column ON/USING equality with NULL semantics, a direct-column/wildcard/alias projection contract wired through the automatic row owner, automatic bare-wildcard catalog-backed INNER/CROSS/LEFT/USING metadata/rows, and explicit SSL/TLS/auth-plugin handshake phases; no deployable node, temporal SQL/Duration, decimal/enum/set/vector Datum or native CHBlock semantics, typed expression/nested FullSchema projection mappings, general planner ON/USING typing/join algorithms, full Go ErrCtx lifecycle, password/user store, TiKV path, or plan-ring gate yet |
+| 2 | Read-only compute node: protocol + session (read subset) + planner + exec + distsql | tidb_query_executors patterns; tipb | 250-350k | Plan ring zero-diff; shadow → read traffic in staging; perf ≥ Go on sysbench read + TPC-H | First deployable bounded vertical slice is live: stock MySQL → Rust COM_QUERY → parser/planner/table range/tipb DAG → real PD TSO/RegionCache → BatchCommands-first real TiKV → exact seeded rows. The broader foundation also owns typed protocol/result/error metadata, raw/default/TypeChunk response framing, scalar Datum decoding, and bounded local catalog/join leaves. Phase 2 remains incomplete: the executable is serial and static-catalog/direct-column only; temporal SQL/Duration, decimal/enum/set/vector/native CHBlock, typed expression/nested FullSchema mappings, general predicates/joins/aggregation, full Go ErrCtx/session/auth/TLS, plan-ring zero-diff, shadow traffic, and performance gates remain open. |
 | 3 | Read-write: full txn lifecycle, DML, `tidb-stats` write path | Phase 1 client | 80-120k | Jepsen full; TPC-C parity; shadow-write comparison | Not started |
 | 4 | Full peer: `tidb-ddl`, background ownership, bootstrap | — | 80-120k | Mixed-cluster DDL suite; ownership handover drills; long-run canary | Not started |
 

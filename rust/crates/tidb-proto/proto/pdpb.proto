@@ -4,6 +4,7 @@ package pdpb;
 import "metapb.proto";
 
 service PD {
+  rpc Tso(stream TsoRequest) returns (stream TsoResponse) {}
   rpc GetMembers(GetMembersRequest) returns (GetMembersResponse) {}
   rpc GetStore(GetStoreRequest) returns (GetStoreResponse) {}
   rpc GetRegion(GetRegionRequest) returns (GetRegionResponse) {}
@@ -11,6 +12,24 @@ service PD {
   rpc GetRegionByID(GetRegionByIDRequest) returns (GetRegionResponse) {}
   rpc ScanRegions(ScanRegionsRequest) returns (ScanRegionsResponse) {}
   rpc BatchScanRegions(BatchScanRegionsRequest) returns (BatchScanRegionsResponse) {}
+}
+
+message TsoRequest {
+  RequestHeader header = 1;
+  uint32 count = 2;
+  string dc_location = 3;
+}
+
+message Timestamp {
+  int64 physical = 1;
+  int64 logical = 2;
+  uint32 suffix_bits = 3;
+}
+
+message TsoResponse {
+  ResponseHeader header = 1;
+  uint32 count = 2;
+  Timestamp timestamp = 3;
 }
 
 message RequestHeader {

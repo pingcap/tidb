@@ -1,0 +1,12 @@
+schema = "1"
+campaign = "2026-07-read-path-19"
+status = "integrated"
+slices = [
+  "server-node-bootstrap-runtime",
+  "pd-read-tso-runtime",
+  "codec-table-key-range-runtime",
+  "planner-single-table-read-lowering",
+  "executor-real-tikv-read-runtime",
+  "server-mysql-connection-runtime",
+  "server-live-mysql-tikv-proof",
+]

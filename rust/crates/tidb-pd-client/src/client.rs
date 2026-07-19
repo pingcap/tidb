@@ -13,14 +13,18 @@
 // limitations under the License.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{mpsc, Arc, RwLock};
+use std::sync::{mpsc, Arc, Mutex, RwLock};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tidb_proto::metapb;
 use tidb_proto::pdpb::{self, pd_client::PdClient as TonicPdClient};
 use tonic::transport::{Channel, Endpoint};
 
+use crate::tso::{
+    is_retryable_tso_error, remaining as remaining_tso_time, retry_delay, RetainedTsoStream,
+    TimestampParts, MAX_TSO_RETRIES,
+};
 use crate::{
     PdBucketStats, PdBuckets, PdClientError, PdKeyRange, PdMemberSet, PdNodeState, PdOperation,
     PdPeer, PdRegion, PdRegionEpoch, PdStore, PdStoreState,
@@ -40,6 +44,8 @@ pub const SCAN_REGIONS_PATH: &str = "/pdpb.PD/ScanRegions";
 pub const BATCH_SCAN_REGIONS_PATH: &str = "/pdpb.PD/BatchScanRegions";
 /// Exact store lookup method path.
 pub const GET_STORE_PATH: &str = "/pdpb.PD/GetStore";
+/// Exact legacy PD timestamp-oracle stream method path.
+pub const TSO_PATH: &str = "/pdpb.PD/Tso";
 
 enum WorkerCommand {
     RefreshMembers {
@@ -76,6 +82,10 @@ enum WorkerCommand {
         store_id: u64,
         reply: mpsc::Sender<Result<Option<PdStore>, PdClientError>>,
     },
+    GetTimestamp {
+        deadline: Instant,
+        reply: mpsc::Sender<Result<u64, PdClientError>>,
+    },
     Close {
         reply: mpsc::Sender<()>,
     },
@@ -92,14 +102,31 @@ struct PdMemberObservation {
     projected: Result<PdMemberSet, PdClientError>,
 }
 
-/// Synchronous foreground PD client backed by a dedicated Tokio worker.
-pub struct PdClient {
+struct PdClientShared {
     bootstrap_endpoint: String,
     timeout: Duration,
     cluster_id: u64,
     state: Arc<RwLock<PdSharedState>>,
-    commands: Option<mpsc::Sender<WorkerCommand>>,
-    worker: Option<JoinHandle<()>>,
+    commands: mpsc::Sender<WorkerCommand>,
+    worker: Mutex<Option<JoinHandle<()>>>,
+}
+
+impl Drop for PdClientShared {
+    fn drop(&mut self) {
+        let (reply, response) = mpsc::channel();
+        if self.commands.send(WorkerCommand::Close { reply }).is_ok() {
+            let _ = response.recv();
+        }
+        if let Some(worker) = self.worker.lock().expect("PD worker lock poisoned").take() {
+            let _ = worker.join();
+        }
+    }
+}
+
+/// Cloneable synchronous foreground PD client backed by one shared Tokio worker.
+#[derive(Clone)]
+pub struct PdClient {
+    shared: Arc<PdClientShared>,
 }
 
 impl PdClient {
@@ -164,12 +191,14 @@ impl PdClient {
                     .members
                     .cluster_id;
                 Ok(Self {
-                    bootstrap_endpoint,
-                    timeout,
-                    cluster_id,
-                    state,
-                    commands: Some(commands),
-                    worker: Some(worker),
+                    shared: Arc::new(PdClientShared {
+                        bootstrap_endpoint,
+                        timeout,
+                        cluster_id,
+                        state,
+                        commands,
+                        worker: Mutex::new(Some(worker)),
+                    }),
                 })
             }
             Ok(Err(error)) => {
@@ -185,8 +214,8 @@ impl PdClient {
 
     /// Returns the cluster identity obtained from GetMembers.
     #[must_use]
-    pub const fn cluster_id(&self) -> u64 {
-        self.cluster_id
+    pub fn cluster_id(&self) -> u64 {
+        self.shared.cluster_id
     }
 
     /// Returns the first configured seed for backward-compatible diagnostics.
@@ -195,13 +224,14 @@ impl PdClient {
     /// [`Self::active_endpoint`] to inspect current discovery state.
     #[must_use]
     pub fn endpoint(&self) -> &str {
-        &self.bootstrap_endpoint
+        &self.shared.bootstrap_endpoint
     }
 
     /// Returns the latest validated membership snapshot.
     #[must_use]
     pub fn member_set(&self) -> PdMemberSet {
-        self.state
+        self.shared
+            .state
             .read()
             .expect("PD state lock poisoned")
             .members
@@ -211,39 +241,69 @@ impl PdClient {
     /// Returns the endpoint that most recently completed a foreground action.
     #[must_use]
     pub fn active_endpoint(&self) -> String {
-        self.state
+        self.shared
+            .state
             .read()
             .expect("PD state lock poisoned")
             .active_endpoint
             .clone()
     }
 
-    /// Returns the one-attempt deadline applied independently to each call.
+    /// Returns the configured PD deadline.
+    ///
+    /// Unary control-plane operations apply it per attempt. TSO applies it to
+    /// the complete bounded allocation, including membership refresh/retry.
     #[must_use]
-    pub const fn timeout(&self) -> Duration {
-        self.timeout
+    pub fn timeout(&self) -> Duration {
+        self.shared.timeout
     }
 
     /// Refreshes membership through the first reachable known endpoint.
-    pub fn refresh_members(&mut self) -> Result<PdMemberSet, PdClientError> {
-        let Some(commands) = &self.commands else {
-            return Err(PdClientError::Closed);
-        };
+    pub fn refresh_members(&self) -> Result<PdMemberSet, PdClientError> {
         let (reply, response) = mpsc::channel();
-        commands
+        self.shared
+            .commands
             .send(WorkerCommand::RefreshMembers { reply })
             .map_err(|_| PdClientError::Closed)?;
         response.recv().unwrap_or(Err(PdClientError::Closed))
     }
 
+    /// Returns one current, strictly monotonic TiKV snapshot timestamp.
+    ///
+    /// The configured PD timeout is the total bound across stream creation,
+    /// request/response I/O, membership refresh, and every retry.
+    pub fn get_timestamp(&self) -> Result<u64, PdClientError> {
+        let timeout = self.shared.timeout;
+        let deadline = Instant::now().checked_add(timeout).ok_or_else(|| {
+            invalid_topology(
+                "invalid_tso_deadline",
+                format!("PD Tso timeout {timeout:?} exceeds Instant range"),
+            )
+        })?;
+        let (reply, response) = mpsc::channel();
+        self.shared
+            .commands
+            .send(WorkerCommand::GetTimestamp { deadline, reply })
+            .map_err(|_| PdClientError::Closed)?;
+        match response.recv_timeout(timeout) {
+            Ok(result) => result,
+            Err(mpsc::RecvTimeoutError::Disconnected) => Err(PdClientError::Closed),
+            Err(mpsc::RecvTimeoutError::Timeout) => Err(PdClientError::Timeout {
+                operation: PdOperation::Tso,
+                endpoint: self.member_set().leader_url,
+                timeout_ms: u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX),
+            }),
+        }
+    }
+
     /// Loads the region containing one already encoded PD wire key.
-    pub fn get_region(&mut self, encoded_key: &[u8]) -> Result<PdRegion, PdClientError> {
+    pub fn get_region(&self, encoded_key: &[u8]) -> Result<PdRegion, PdClientError> {
         self.get_region_with_buckets(encoded_key, true)
     }
 
     /// Loads a region while preserving the caller's exact bucket request flag.
     pub fn get_region_with_buckets(
-        &mut self,
+        &self,
         encoded_key: &[u8],
         need_buckets: bool,
     ) -> Result<PdRegion, PdClientError> {
@@ -253,16 +313,14 @@ impl PdClient {
     /// Loads a region through either the active endpoint or the discovered PD
     /// leader. `leader_only` is per-attempt and never changes global routing.
     pub fn get_region_routed(
-        &mut self,
+        &self,
         encoded_key: &[u8],
         need_buckets: bool,
         leader_only: bool,
     ) -> Result<PdRegion, PdClientError> {
-        let Some(commands) = &self.commands else {
-            return Err(PdClientError::Closed);
-        };
         let (reply, response) = mpsc::channel();
-        commands
+        self.shared
+            .commands
             .send(WorkerCommand::GetRegion {
                 encoded_key: encoded_key.to_vec(),
                 need_buckets,
@@ -274,13 +332,13 @@ impl PdClient {
     }
 
     /// Loads the region immediately before one already encoded PD wire key.
-    pub fn get_prev_region(&mut self, encoded_key: &[u8]) -> Result<PdRegion, PdClientError> {
+    pub fn get_prev_region(&self, encoded_key: &[u8]) -> Result<PdRegion, PdClientError> {
         self.get_prev_region_with_buckets(encoded_key, true)
     }
 
     /// Loads the previous region with the caller's exact bucket request flag.
     pub fn get_prev_region_with_buckets(
-        &mut self,
+        &self,
         encoded_key: &[u8],
         need_buckets: bool,
     ) -> Result<PdRegion, PdClientError> {
@@ -289,16 +347,14 @@ impl PdClient {
 
     /// Loads the previous region through the active endpoint or only the PD leader.
     pub fn get_prev_region_routed(
-        &mut self,
+        &self,
         encoded_key: &[u8],
         need_buckets: bool,
         leader_only: bool,
     ) -> Result<PdRegion, PdClientError> {
-        let Some(commands) = &self.commands else {
-            return Err(PdClientError::Closed);
-        };
         let (reply, response) = mpsc::channel();
-        commands
+        self.shared
+            .commands
             .send(WorkerCommand::GetPrevRegion {
                 encoded_key: encoded_key.to_vec(),
                 need_buckets,
@@ -311,7 +367,7 @@ impl PdClient {
 
     /// Loads one region identity with the exact bucket request flag.
     pub fn get_region_by_id(
-        &mut self,
+        &self,
         region_id: u64,
         need_buckets: bool,
     ) -> Result<PdRegion, PdClientError> {
@@ -320,16 +376,14 @@ impl PdClient {
 
     /// Loads one region identity through the active endpoint or PD leader.
     pub fn get_region_by_id_routed(
-        &mut self,
+        &self,
         region_id: u64,
         need_buckets: bool,
         leader_only: bool,
     ) -> Result<PdRegion, PdClientError> {
-        let Some(commands) = &self.commands else {
-            return Err(PdClientError::Closed);
-        };
         let (reply, response) = mpsc::channel();
-        commands
+        self.shared
+            .commands
             .send(WorkerCommand::GetRegionById {
                 region_id,
                 need_buckets,
@@ -342,7 +396,7 @@ impl PdClient {
 
     /// Scans one contiguous encoded key interval through the pinned legacy RPC.
     pub fn scan_regions(
-        &mut self,
+        &self,
         start_key: &[u8],
         end_key: &[u8],
         limit: i32,
@@ -352,17 +406,15 @@ impl PdClient {
 
     /// Scans one interval through the active endpoint or only the PD leader.
     pub fn scan_regions_routed(
-        &mut self,
+        &self,
         start_key: &[u8],
         end_key: &[u8],
         limit: i32,
         leader_only: bool,
     ) -> Result<Vec<PdRegion>, PdClientError> {
-        let Some(commands) = &self.commands else {
-            return Err(PdClientError::Closed);
-        };
         let (reply, response) = mpsc::channel();
-        commands
+        self.shared
+            .commands
             .send(WorkerCommand::ScanRegions {
                 request: pdpb::ScanRegionsRequest {
                     header: None,
@@ -379,17 +431,15 @@ impl PdClient {
 
     /// Batch-scans ordered encoded ranges with exact source request options.
     pub fn batch_scan_regions(
-        &mut self,
+        &self,
         ranges: &[PdKeyRange],
         limit: i32,
         need_buckets: bool,
         contain_all_key_range: bool,
     ) -> Result<Vec<PdRegion>, PdClientError> {
-        let Some(commands) = &self.commands else {
-            return Err(PdClientError::Closed);
-        };
         let (reply, response) = mpsc::channel();
-        commands
+        self.shared
+            .commands
             .send(WorkerCommand::BatchScanRegions {
                 request: pdpb::BatchScanRegionsRequest {
                     header: None,
@@ -411,39 +461,19 @@ impl PdClient {
     }
 
     /// Loads a store. None means PD marked it tombstone or removed.
-    pub fn get_store(&mut self, store_id: u64) -> Result<Option<PdStore>, PdClientError> {
+    pub fn get_store(&self, store_id: u64) -> Result<Option<PdStore>, PdClientError> {
         if store_id == 0 {
             return Err(invalid_topology(
                 "zero_store_id",
                 "requested store ID is zero",
             ));
         }
-        let Some(commands) = &self.commands else {
-            return Err(PdClientError::Closed);
-        };
         let (reply, response) = mpsc::channel();
-        commands
+        self.shared
+            .commands
             .send(WorkerCommand::GetStore { store_id, reply })
             .map_err(|_| PdClientError::Closed)?;
         response.recv().unwrap_or(Err(PdClientError::Closed))
-    }
-
-    fn shutdown(&mut self) {
-        if let Some(commands) = self.commands.take() {
-            let (reply, response) = mpsc::channel();
-            if commands.send(WorkerCommand::Close { reply }).is_ok() {
-                let _ = response.recv();
-            }
-        }
-        if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
-        }
-    }
-}
-
-impl Drop for PdClient {
-    fn drop(&mut self) {
-        self.shutdown();
     }
 }
 
@@ -454,10 +484,24 @@ fn run_worker(
     timeout: Duration,
     state: Arc<RwLock<PdSharedState>>,
 ) {
+    let mut tso_stream = None;
+    let mut last_timestamp = None;
     while let Ok(command) = receiver.recv() {
         match command {
             WorkerCommand::RefreshMembers { reply } => {
+                let previous_leader = state
+                    .read()
+                    .expect("PD state lock poisoned")
+                    .members
+                    .leader_url
+                    .clone();
                 let result = refresh_membership(&runtime, &mut clients, timeout, &state);
+                if result
+                    .as_ref()
+                    .is_ok_and(|members| members.leader_url != previous_leader)
+                {
+                    tso_stream = None;
+                }
                 let _ = reply.send(result);
             }
             WorkerCommand::GetRegion {
@@ -599,12 +643,143 @@ fn run_worker(
                     get_store_with_failover(&runtime, &mut clients, timeout, &state, store_id);
                 let _ = reply.send(result);
             }
+            WorkerCommand::GetTimestamp { deadline, reply } => {
+                let result = get_timestamp_with_retry(
+                    &runtime,
+                    &mut clients,
+                    timeout,
+                    deadline,
+                    &state,
+                    &mut tso_stream,
+                    &mut last_timestamp,
+                );
+                let _ = reply.send(result);
+            }
             WorkerCommand::Close { reply } => {
+                drop(tso_stream.take());
                 let _ = reply.send(());
                 break;
             }
         }
     }
+}
+
+fn get_timestamp_with_retry(
+    runtime: &tokio::runtime::Runtime,
+    clients: &mut HashMap<String, TonicPdClient<Channel>>,
+    timeout: Duration,
+    deadline: Instant,
+    state: &Arc<RwLock<PdSharedState>>,
+    stream: &mut Option<RetainedTsoStream>,
+    last_timestamp: &mut Option<TimestampParts>,
+) -> Result<u64, PdClientError> {
+    let mut last_error = None;
+    for attempt in 0..MAX_TSO_RETRIES {
+        let snapshot = state.read().expect("PD state lock poisoned").clone();
+        let leader = snapshot.members.leader_url;
+        if stream
+            .as_ref()
+            .is_some_and(|stream| stream.endpoint() != leader.as_str())
+        {
+            *stream = None;
+        }
+
+        let result = (|| {
+            let timestamp = if stream.is_none() {
+                let client = tonic_client(runtime, clients, &leader)?;
+                let (opened, timestamp) = RetainedTsoStream::open_and_request(
+                    runtime,
+                    client,
+                    &leader,
+                    snapshot.members.cluster_id,
+                    deadline,
+                )?;
+                *stream = Some(opened);
+                timestamp
+            } else {
+                stream
+                    .as_mut()
+                    .expect("TSO stream exists before retained request")
+                    .request(runtime, snapshot.members.cluster_id, deadline)?
+            };
+            timestamp.ensure_after(*last_timestamp)?;
+            let composed = timestamp.compose()?;
+            *last_timestamp = Some(timestamp);
+            Ok(composed)
+        })();
+
+        match result {
+            Ok(timestamp) => return Ok(timestamp),
+            Err(error) => {
+                *stream = None;
+                if !is_retryable_tso_error(&error) || attempt + 1 == MAX_TSO_RETRIES {
+                    return Err(error);
+                }
+                last_error = Some(error);
+            }
+        }
+
+        match refresh_membership_before_deadline(runtime, clients, timeout, deadline, state) {
+            Ok(_) => {}
+            Err(error @ PdClientError::ClusterMismatch { .. }) => return Err(error),
+            Err(error @ PdClientError::Timeout { .. }) => return Err(error),
+            Err(_) => {}
+        }
+
+        let delay = retry_delay(attempt);
+        if !delay.is_zero() {
+            let leader = state
+                .read()
+                .expect("PD state lock poisoned")
+                .members
+                .leader_url
+                .clone();
+            let remaining = remaining_tso_time(deadline, &leader)?;
+            std::thread::sleep(delay.min(remaining));
+        }
+    }
+    Err(last_error.expect("bounded TSO retry loop records every failure"))
+}
+
+fn refresh_membership_before_deadline(
+    runtime: &tokio::runtime::Runtime,
+    clients: &mut HashMap<String, TonicPdClient<Channel>>,
+    timeout: Duration,
+    deadline: Instant,
+    state: &Arc<RwLock<PdSharedState>>,
+) -> Result<PdMemberSet, PdClientError> {
+    let snapshot = state.read().expect("PD state lock poisoned").clone();
+    let mut last_error = None;
+    let mut cluster_mismatch = None;
+    for endpoint in endpoint_attempt_order(&snapshot) {
+        let attempt_timeout = timeout.min(remaining_tso_time(deadline, &endpoint)?);
+        match get_members(
+            runtime,
+            clients,
+            &endpoint,
+            attempt_timeout,
+            Some(snapshot.members.cluster_id),
+        ) {
+            Ok(observation) => match observation.projected {
+                Ok(members) => {
+                    retain_member_clients(clients, &members);
+                    let mut current = state.write().expect("PD state lock poisoned");
+                    current.active_endpoint = members.leader_url.clone();
+                    current.members = members.clone();
+                    return Ok(members);
+                }
+                Err(error) => last_error = Some(error),
+            },
+            Err(error @ PdClientError::ClusterMismatch { .. }) => cluster_mismatch = Some(error),
+            Err(error) => last_error = Some(error),
+        }
+    }
+    Err(cluster_mismatch.or(last_error).unwrap_or_else(|| {
+        invalid_topology(
+            "missing_pd_member",
+            "membership contains no usable endpoint",
+        )
+    }))
 }
 
 fn bootstrap_members(

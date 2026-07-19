@@ -12,7 +12,7 @@ the source or obligation still has explicit unported behavior.
 - Active claims: 0
 - Active slices: 0
 - Declared ready slices: 0
-- Partial slices: 71
+- Partial slices: 78
 - Covered slices: 2
 - Blocked slices: 1
 
@@ -34,6 +34,7 @@ the source or obligation still has explicit unported behavior.
 | 2026-07-read-path-16 | integrated | 3 |
 | 2026-07-read-path-17 | integrated | 3 |
 | 2026-07-read-path-18 | integrated | 4 |
+| 2026-07-read-path-19 | integrated | 7 |
 | 2026-07-runtime-closure-03 | integrated | 6 |
 | 2026-07-runtime-closure-04 | integrated | 6 |
 | 2026-07-runtime-closure-05 | integrated | 6 |
@@ -51,11 +52,11 @@ the source or obligation still has explicit unported behavior.
 | Universe | Untriaged | Partial | Covered | Blocked |
 | --- | --- | --- | --- | --- |
 | client-go production sources | 126 | 25 | 0 | 0 |
-| pd-client production sources | 53 | 5 | 0 | 0 |
+| pd-client production sources | 50 | 8 | 0 | 0 |
 | client-go runner obligations | 318 | 156 | 0 | 0 |
-| pd-client runner obligations | 164 | 6 | 0 | 0 |
-| All external production sources | 179 | 30 | 0 | 0 |
-| All external runner obligations | 482 | 162 | 0 | 0 |
+| pd-client runner obligations | 150 | 20 | 0 | 0 |
+| All external production sources | 176 | 33 | 0 | 0 |
+| All external runner obligations | 468 | 176 | 0 | 0 |
 
 External module counts are pinned porting obligations and are not included in TiDB product-parity totals.
 
@@ -63,8 +64,8 @@ External module counts are pinned porting obligations and are not included in Ti
 
 | State | Count |
 | --- | --- |
-| UNTRIAGED | 1907 |
-| PARTIAL | 447 |
+| UNTRIAGED | 1902 |
+| PARTIAL | 452 |
 | COVERED | 36 |
 | BLOCKED | 0 |
 
@@ -73,9 +74,9 @@ External module counts are pinned porting obligations and are not included in Ti
 | Target | Untriaged | Partial | Covered | Blocked |
 | --- | --- | --- | --- | --- |
 | deferred-external | 390 | 0 | 0 | 0 |
-| tidb-planner | 206 | 107 | 1 | 0 |
-| tidb-server | 252 | 1 | 0 | 0 |
-| tidb-exec | 179 | 62 | 0 | 0 |
+| tidb-planner | 205 | 108 | 1 | 0 |
+| tidb-server | 249 | 4 | 0 | 0 |
+| tidb-exec | 178 | 63 | 0 | 0 |
 | tidb-txnkv | 124 | 25 | 9 | 0 |
 | tidb-catalog | 126 | 1 | 0 | 0 |
 | tidb-expr | 96 | 26 | 0 | 0 |
@@ -99,8 +100,8 @@ External module counts are pinned porting obligations and are not included in Ti
 
 | State | Count |
 | --- | --- |
-| UNTRIAGED | 15417 |
-| PARTIAL | 990 |
+| UNTRIAGED | 15392 |
+| PARTIAL | 1015 |
 | COVERED | 298 |
 | BLOCKED | 14 |
 
@@ -108,11 +109,11 @@ External module counts are pinned porting obligations and are not included in Ti
 
 | Ring | Untriaged | Partial | Covered | Blocked |
 | --- | --- | --- | --- | --- |
-| unassigned | 4848 | 316 | 134 | 0 |
-| result | 4295 | 437 | 29 | 3 |
+| unassigned | 4840 | 324 | 134 | 0 |
+| result | 4287 | 445 | 29 | 3 |
 | deferred-external | 3042 | 0 | 0 | 0 |
-| plan | 1784 | 123 | 5 | 0 |
-| transaction | 1135 | 81 | 54 | 6 |
+| plan | 1776 | 131 | 5 | 0 |
+| transaction | 1134 | 82 | 54 | 6 |
 | parser | 313 | 33 | 76 | 5 |
 
 ## Blocked slices

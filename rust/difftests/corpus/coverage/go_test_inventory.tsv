@@ -1269,9 +1269,9 @@ go_test	cmd/ddltest/ddl_test.go	1027	TestSimpleDelete	unassigned	UNTRIAGED	-	-	-
 go_test	cmd/ddltest/index_test.go	52	TestIndex	unassigned	UNTRIAGED	-	-	-
 go_test	cmd/ddltest/main_test.go	28	TestMain	unassigned	UNTRIAGED	-	-	-
 go_test	cmd/importer/db_test.go	21	TestIntToDecimalString	unassigned	UNTRIAGED	-	-	-
-go_test	cmd/tidb-server/main_test.go	36	TestMain	unassigned	UNTRIAGED	-	-	-
-go_test	cmd/tidb-server/main_test.go	50	TestRunMain	unassigned	UNTRIAGED	-	-	-
-go_test	cmd/tidb-server/main_test.go	56	TestExitCodeForSignal	unassigned	UNTRIAGED	-	-	-
+go_test	cmd/tidb-server/main_test.go	36	TestMain	unassigned	PARTIAL	server-node-bootstrap-runtime	rust/crates/tidb-server/tests/node_config_source.rs	The executable's bounded argument surface parses into one validated node configuration; full process integration remains open pending the live milestone proof.
+go_test	cmd/tidb-server/main_test.go	50	TestRunMain	unassigned	PARTIAL	server-node-bootstrap-runtime	rust/crates/tidb-server/tests/node_config_source.rs	Configuration errors are returned before binding or connecting; the original RunMain operational matrix remains open.
+go_test	cmd/tidb-server/main_test.go	56	TestExitCodeForSignal	unassigned	PARTIAL	server-node-bootstrap-runtime	rust/crates/tidb-server/tests/node_config_source.rs	Startup failures map to a nonzero executable exit; signal-specific exit behavior remains open.
 go_test	cmd/tidb-server/main_test.go	76	TestOverrideConfigKeyspaceActivateMode	unassigned	UNTRIAGED	-	-	-
 go_test	cmd/tidb-server/main_test.go	97	TestSetGlobalVars	unassigned	UNTRIAGED	-	-	-
 go_test	cmd/tidb-server/main_test.go	139	TestInitDeployMode	unassigned	UNTRIAGED	-	-	-
@@ -1644,9 +1644,9 @@ go_test	pkg/config/config_test.go	173	TestErrorMessageExtensionConfig	unassigned
 go_test	pkg/config/config_test.go	211	TestErrorMessageExtensionInvalidRegexp	unassigned	UNTRIAGED	-	-	-
 go_test	pkg/config/config_test.go	262	TestKeyspaceObservability	unassigned	UNTRIAGED	-	-	-
 go_test	pkg/config/config_test.go	294	TestKeyspaceObservabilityInvalid	unassigned	UNTRIAGED	-	-	-
-go_test	pkg/config/config_test.go	457	TestRemovedVariableCheck	unassigned	UNTRIAGED	-	-	-
-go_test	pkg/config/config_test.go	960	TestConfig	unassigned	UNTRIAGED	-	-	-
-go_test	pkg/config/config_test.go	1317	TestTxnTotalSizeLimitValid	unassigned	UNTRIAGED	-	-	-
+go_test	pkg/config/config_test.go	457	TestRemovedVariableCheck	unassigned	PARTIAL	server-node-bootstrap-runtime	rust/crates/tidb-server/tests/node_config_source.rs	Unknown and unsupported configuration is rejected explicitly; the historical removed-variable registry remains open.
+go_test	pkg/config/config_test.go	960	TestConfig	unassigned	PARTIAL	server-node-bootstrap-runtime	rust/crates/tidb-server/tests/node_config_source.rs	The bounded host, port, store, PD path, catalog, column, and packet settings parse and validate; the full configuration surface remains open.
+go_test	pkg/config/config_test.go	1317	TestTxnTotalSizeLimitValid	unassigned	PARTIAL	server-node-bootstrap-runtime	rust/crates/tidb-server/tests/node_config_source.rs	Invalid numeric bounds fail configuration validation; transaction-size configuration remains open in the read-only milestone.
 go_test	pkg/config/config_test.go	1336	TestDeployModeConfig	unassigned	UNTRIAGED	-	-	-
 go_test	pkg/config/config_test.go	1537	TestKeyspaceActivateModeConfig	unassigned	UNTRIAGED	-	-	-
 go_test	pkg/config/config_test.go	1555	TestConflictInstanceConfig	unassigned	UNTRIAGED	-	-	-
@@ -1659,7 +1659,7 @@ go_test	pkg/config/config_test.go	1732	TestTokenLimit	unassigned	UNTRIAGED	-	-	-
 go_test	pkg/config/config_test.go	1770	TestEncodeDefTempStorageDir	unassigned	UNTRIAGED	-	-	-
 go_test	pkg/config/config_test.go	1798	TestModifyThroughLDFlags	unassigned	UNTRIAGED	-	-	-
 go_test	pkg/config/config_test.go	1832	TestSecurityValid	unassigned	UNTRIAGED	-	-	-
-go_test	pkg/config/config_test.go	1850	TestTcpNoDelay	unassigned	UNTRIAGED	-	-	-
+go_test	pkg/config/config_test.go	1850	TestTcpNoDelay	unassigned	PARTIAL	server-node-bootstrap-runtime	rust/crates/tidb-server/tests/node_config_source.rs	The TCP node configuration is explicit and bounded; TCP_NODELAY configurability remains open.
 go_test	pkg/config/config_test.go	1856	TestGetJSONConfig	unassigned	UNTRIAGED	-	-	-
 go_test	pkg/config/config_test.go	1871	TestConfigExample	unassigned	UNTRIAGED	-	-	-
 go_test	pkg/config/config_test.go	1884	TestStatsLoadLimit	unassigned	UNTRIAGED	-	-	-
@@ -1682,7 +1682,7 @@ go_test	pkg/config/deploymode/mode_test.go	70	TestCurrentMode	unassigned	UNTRIAG
 go_test	pkg/config/kerneltype/type_test.go	23	TestKernelType	unassigned	UNTRIAGED	-	-	-
 go_test	pkg/config/kerneltype/type_test.go	28	TestIsMatch	unassigned	UNTRIAGED	-	-	-
 go_test	pkg/config/main_test.go	24	TestMain	unassigned	UNTRIAGED	-	-	-
-go_test	pkg/config/store_test.go	23	TestStoreType	unassigned	UNTRIAGED	-	-	-
+go_test	pkg/config/store_test.go	23	TestStoreType	unassigned	PARTIAL	server-node-bootstrap-runtime	rust/crates/tidb-server/tests/node_config_source.rs	TiKV is the only accepted deployable store and unsupported stores fail explicitly; the complete historical store-type matrix remains open.
 go_test	pkg/ddl/affinity_test.go	46	TestAffinityBuildGroupDefinitionsTable	result	PARTIAL	ddl-affinity-metadata	rust/crates/tidb-exec/src/tests/ddl_affinity.rs	Stable table group identity and one-group metadata are covered; TiKV table-prefix encoding and PD interaction remain outside the dependency-closed leaf.
 go_test	pkg/ddl/affinity_test.go	64	TestAffinityBuildGroupDefinitionsPartition	result	PARTIAL	ddl-affinity-metadata	rust/crates/tidb-exec/src/tests/ddl_affinity.rs	Partition group IDs, physical partition IDs, deterministic ordering, and duplicate collapse are covered; table metadata and codec/PD lifecycle remain open.
 go_test	pkg/ddl/affinity_test.go	91	TestAffinityBuildGroupDefinitionsPartitionMissing	result	PARTIAL	ddl-affinity-metadata	rust/crates/tidb-exec/src/tests/ddl_affinity.rs	Missing partition-definition validation is covered as a typed metadata error; source catalog-corruption context and DDL error plumbing remain open.
@@ -3016,7 +3016,7 @@ go_test	pkg/executor/adapter_internal_test.go	333	TestObserveStmtFinishedOnTopPr
 go_test	pkg/executor/adapter_internal_test.go	368	TestObserveStmtFinishedOnTopProfilingDoes	result	UNTRIAGED	-	-	-
 go_test	pkg/executor/adapter_internal_test.go	407	TestObserveStmtFinishedOnTopProfilingKeeps	result	UNTRIAGED	-	-	-
 go_test	pkg/executor/adapter_internal_test.go	433	TestObserveStmtFinishedOnTopProfilingIgnores	result	UNTRIAGED	-	-	-
-go_test	pkg/executor/adapter_test.go	82	TestFormatSQL	result	UNTRIAGED	-	-	-
+go_test	pkg/executor/adapter_test.go	82	TestFormatSQL	result	PARTIAL	executor-real-tikv-read-runtime	rust/crates/tidb-exec/tests/real_tikv_read_source.rs	Supported SELECT text is parsed and lowered without rewriting its SQL semantics; the original formatting and redaction matrix remains open.
 go_test	pkg/executor/adapter_test.go	93	TestContextCancelWhenReadFromCopIterator	result	PARTIAL	distsql-unary-active-cancel-runtime	rust/crates/tidb-exec/tests/direct_unary_cancellation_source.rs	Executor close and response close share the request-owned cancellation carrier, so a dispatched unary call terminates before retry or success mutation. The full TiDB session, tracker, goroutine, and mock-store lifecycle in the original test remains external.
 go_test	pkg/executor/adapter_test.go	128	TestPrepareAndCompleteSlowLogItemsForRules	result	UNTRIAGED	-	-	-
 go_test	pkg/executor/adapter_test.go	206	TestShouldWriteSlowLog	result	PARTIAL	executor-slow-log-match-wave	rust/crates/tidb-exec/tests/slow_log_match_source.rs	Rust vectors cover no-rule false, AND/OR truth tables, empty-rule behavior, session precedence, specific connection fallback, global sentinel fallback, and all-miss false; Go field accessors, rule parsing, session/global state, and metric/log side effects remain external.
@@ -3026,7 +3026,7 @@ go_test	pkg/executor/adapter_test.go	649	TestSlowLogMaxPerSec	result	UNTRIAGED	-
 go_test	pkg/executor/adapter_test.go	704	BenchmarkCheckSlowThreshold	result	UNTRIAGED	-	-	-
 go_test	pkg/executor/adapter_test.go	731	BenchmarkCheckSlowLogRulesLazy	result	UNTRIAGED	-	-	-
 go_test	pkg/executor/adapter_test.go	769	BenchmarkCheckSlowLogRulesPreAlloc	result	UNTRIAGED	-	-	-
-go_test	pkg/executor/adapter_test.go	806	TestMaxExecutionTimeIncludesTSOWaitTime	result	UNTRIAGED	-	-	-
+go_test	pkg/executor/adapter_test.go	806	TestMaxExecutionTimeIncludesTSOWaitTime	result	PARTIAL	executor-real-tikv-read-runtime	rust/crates/tidb-exec/tests/real_tikv_read_source.rs	Each query obtains its snapshot from the real timestamp source before sending and the configured deadline bounds the operation; session max-execution-time behavior remains open.
 go_test	pkg/executor/adapter_test.go	892	TestInsertRowsColMultiplyRUV2SQLPath	result	UNTRIAGED	-	-	-
 go_test	pkg/executor/adapter_test.go	934	TestDMLRowsColMultiplyRUV2SQLPath	result	PARTIAL	executor-delete-rows-col-multiply-wave	rust/crates/tidb-exec/tests/delete_rows_col_multiply_source.rs	Rust covers the helper's ordinary, non-positive, already-saturated, and overflow boundaries; the Go SQL-path metric assertions remain represented while session metrics, storage mutation, and multi-table DELETE lifecycle stay external.
 go_test	pkg/executor/aggfuncs/aggfunc_test.go	1331	TestAggApproxCountDistinctPushDown	result	UNTRIAGED	-	-	-
@@ -3211,16 +3211,16 @@ go_test	pkg/executor/distribute_table_test.go	86	TestShowDistributionJobs	result
 go_test	pkg/executor/distribute_table_test.go	125	TestDistributeTable	result	UNTRIAGED	-	-	-
 go_test	pkg/executor/distribute_table_test.go	227	TestShowTableDistributions	result	UNTRIAGED	-	-	-
 go_test	pkg/executor/distribute_table_test.go	289	TestCancelDistributionJob	result	UNTRIAGED	-	-	-
-go_test	pkg/executor/distsql_test.go	68	TestCopClientSend	result	UNTRIAGED	-	-	-
+go_test	pkg/executor/distsql_test.go	68	TestCopClientSend	result	PARTIAL	executor-real-tikv-read-runtime	rust/crates/tidb-exec/tests/real_tikv_read_source.rs	A supported query produces a real coprocessor request through the retained transport and lazy record set; the original mock-client matrix remains open.
 go_test	pkg/executor/distsql_test.go	140	TestGetLackHandles	result	PARTIAL	distsql-unary-transport-retry-runtime	rust/crates/tidb-exec/tests/lack_handles_source.rs	Rust vectors retain all-obtained and ordered missing 2/5/10 cases, consumed matches, plus duplicate expected keys while ownership moves intact. KV handle-map implementation and distributed lookup/consistency integration remain external.
-go_test	pkg/executor/distsql_test.go	166	TestInconsistentIndex	result	UNTRIAGED	-	-	-
+go_test	pkg/executor/distsql_test.go	166	TestInconsistentIndex	result	PARTIAL	executor-real-tikv-read-runtime	rust/crates/tidb-exec/tests/real_tikv_read_source.rs	Malformed decode and transport failures remain explicit query errors; index/table consistency checking remains open.
 go_test	pkg/executor/distsql_test.go	218	TestPartitionTableRandomlyIndexLookUpReader	result	UNTRIAGED	-	-	-
 go_test	pkg/executor/distsql_test.go	254	TestIndexLookUpStats	result	UNTRIAGED	-	-	-
 go_test	pkg/executor/distsql_test.go	276	TestPartitionTableIndexJoinIndexLookUp	result	UNTRIAGED	-	-	-
-go_test	pkg/executor/distsql_test.go	307	TestCoprocessorPagingSize	result	UNTRIAGED	-	-	-
-go_test	pkg/executor/distsql_test.go	365	TestAdaptiveClosestRead	result	UNTRIAGED	-	-	-
-go_test	pkg/executor/distsql_test.go	470	TestCoprocessorPagingReqKeyRangeSorted	result	UNTRIAGED	-	-	-
-go_test	pkg/executor/distsql_test.go	530	TestCoprocessorBatchByStore	result	UNTRIAGED	-	-	-
+go_test	pkg/executor/distsql_test.go	307	TestCoprocessorPagingSize	result	PARTIAL	executor-real-tikv-read-runtime	rust/crates/tidb-exec/tests/real_tikv_read_source.rs	The DAG request and lazy result lifecycle preserve the existing paging-capable transport envelope; adaptive paging policy remains open.
+go_test	pkg/executor/distsql_test.go	365	TestAdaptiveClosestRead	result	PARTIAL	executor-real-tikv-read-runtime	rust/crates/tidb-exec/tests/real_tikv_read_source.rs	The production region cache chooses the real region/store route; closest-read policy and topology labels remain open.
+go_test	pkg/executor/distsql_test.go	470	TestCoprocessorPagingReqKeyRangeSorted	result	PARTIAL	executor-real-tikv-read-runtime	rust/crates/tidb-exec/tests/real_tikv_read_source.rs	The canonical single full-table key range is ordered and source-shaped before transport; multi-range paging ordering remains open.
+go_test	pkg/executor/distsql_test.go	530	TestCoprocessorBatchByStore	result	PARTIAL	executor-real-tikv-read-runtime	rust/crates/tidb-exec/tests/real_tikv_read_source.rs	Production dispatch records the selected region IDs and attempts BatchCommands before unary fallback; multi-store batching and concurrency remain open.
 go_test	pkg/executor/distsql_test.go	588	TestCoprCacheWithoutExecutionInfo	result	UNTRIAGED	-	-	-
 go_test	pkg/executor/distsql_test.go	610	TestIndexLookUpPushDownCopTask	result	UNTRIAGED	-	-	-
 go_test	pkg/executor/distsql_test.go	659	TestPartitionIndexLookUpMergeWithSkewedPartitions	result	UNTRIAGED	-	-	-
@@ -6516,15 +6516,15 @@ go_test	pkg/planner/core/casetest/correlated/correlated_test.go	28	TestCorrelate
 go_test	pkg/planner/core/casetest/correlated/correlated_test.go	79	TestNaturalJoinWithCorrelatedSubquery	plan	PARTIAL	session-alternative-plan-signals-wave	rust/crates/tidb-exec/tests/alternative_plan_signals_source.rs	The AlternativeLogicalPlansChooseApply subtests continue through line 164; direct tests cover source mark/readback and full eight-field reset while planner execution, cost choice, failpoints, and session attachment remain external
 go_test	pkg/planner/core/casetest/correlated/correlated_test.go	170	TestWrongDecorrelate	plan	UNTRIAGED	-	-	-
 go_test	pkg/planner/core/casetest/correlated/main_test.go	29	TestMain	plan	UNTRIAGED	-	-	-
-go_test	pkg/planner/core/casetest/dag/dag_test.go	82	TestDAGPlanBuilderSimpleCase	plan	UNTRIAGED	-	-	-
-go_test	pkg/planner/core/casetest/dag/dag_test.go	90	TestDAGPlanBuilderSimpleCaseForNextGen	plan	UNTRIAGED	-	-	-
-go_test	pkg/planner/core/casetest/dag/dag_test.go	98	TestDAGPlanBuilderJoin	plan	UNTRIAGED	-	-	-
-go_test	pkg/planner/core/casetest/dag/dag_test.go	133	TestDAGPlanBuilderSubquery	plan	UNTRIAGED	-	-	-
-go_test	pkg/planner/core/casetest/dag/dag_test.go	170	TestDAGPlanTopN	plan	UNTRIAGED	-	-	-
-go_test	pkg/planner/core/casetest/dag/dag_test.go	200	TestDAGPlanBuilderBasePhysicalPlan	plan	UNTRIAGED	-	-	-
-go_test	pkg/planner/core/casetest/dag/dag_test.go	244	TestDAGPlanBuilderUnion	plan	UNTRIAGED	-	-	-
+go_test	pkg/planner/core/casetest/dag/dag_test.go	82	TestDAGPlanBuilderSimpleCase	plan	PARTIAL	planner-single-table-read-lowering	rust/crates/tidb-planner/tests/read_only_scan_source.rs	A direct configured-table column projection lowers to the existing table-reader path; the original case corpus and optimizer variants remain open.
+go_test	pkg/planner/core/casetest/dag/dag_test.go	90	TestDAGPlanBuilderSimpleCaseForNextGen	plan	PARTIAL	planner-single-table-read-lowering	rust/crates/tidb-planner/tests/read_only_scan_source.rs	The bounded direct projection is source-shaped and deterministic; next-generation engine selection remains open.
+go_test	pkg/planner/core/casetest/dag/dag_test.go	98	TestDAGPlanBuilderJoin	plan	PARTIAL	planner-single-table-read-lowering	rust/crates/tidb-planner/tests/read_only_scan_source.rs	Joins are rejected explicitly before lowering rather than silently misplanned; join planning remains open.
+go_test	pkg/planner/core/casetest/dag/dag_test.go	133	TestDAGPlanBuilderSubquery	plan	PARTIAL	planner-single-table-read-lowering	rust/crates/tidb-planner/tests/read_only_scan_source.rs	Subqueries are rejected explicitly before lowering; subquery decorrelation and execution remain open.
+go_test	pkg/planner/core/casetest/dag/dag_test.go	170	TestDAGPlanTopN	plan	PARTIAL	planner-single-table-read-lowering	rust/crates/tidb-planner/tests/read_only_scan_source.rs	Unsupported ordering and TopN shapes fail explicitly; TopN lowering remains open.
+go_test	pkg/planner/core/casetest/dag/dag_test.go	200	TestDAGPlanBuilderBasePhysicalPlan	plan	PARTIAL	planner-single-table-read-lowering	rust/crates/tidb-planner/tests/read_only_scan_source.rs	The supported path yields the existing PhysicalTableReader authority; the original physical-plan matrix remains open.
+go_test	pkg/planner/core/casetest/dag/dag_test.go	244	TestDAGPlanBuilderUnion	plan	PARTIAL	planner-single-table-read-lowering	rust/crates/tidb-planner/tests/read_only_scan_source.rs	UNION is rejected explicitly before lowering; union planning remains open.
 go_test	pkg/planner/core/casetest/dag/dag_test.go	274	TestDAGPlanBuilderUnionScan	plan	PARTIAL	planner-physical-union-scan-wave	rust/difftests/planner-tests/tests/physical_union_scan.rs	Rust vectors preserve the UnionScan plan emission/rejection boundary and initialization metadata used by the DAG plan; full transaction-buffer setup, SQL planning, child property/task wiring, and plan output remain external.
-go_test	pkg/planner/core/casetest/dag/dag_test.go	311	TestDAGPlanBuilderAgg	plan	UNTRIAGED	-	-	-
+go_test	pkg/planner/core/casetest/dag/dag_test.go	311	TestDAGPlanBuilderAgg	plan	PARTIAL	planner-single-table-read-lowering	rust/crates/tidb-planner/tests/read_only_scan_source.rs	Aggregates are rejected explicitly before lowering; aggregate planning remains open.
 go_test	pkg/planner/core/casetest/dag/dag_test.go	381	TestDAGPlanBuilderWindow	plan	UNTRIAGED	-	-	-
 go_test	pkg/planner/core/casetest/dag/dag_test.go	395	TestDAGPlanBuilderWindowParallel	plan	UNTRIAGED	-	-	-
 go_test	pkg/planner/core/casetest/dag/main_test.go	29	TestMain	plan	UNTRIAGED	-	-	-
@@ -9335,7 +9335,7 @@ go_test	pkg/tablecodec/tablecodec_test.go	429	TestRecordKey	transaction	PARTIAL	
 go_test	pkg/tablecodec/tablecodec_test.go	456	TestPrefix	transaction	PARTIAL	txnkv-write-conflict-table-key-diagnostics	rust/crates/tidb-codec/tests/table_key_source.rs	The complete table/index prefix and row-key truncation assertions are consolidated from the earlier DecodeTableID-only partial leaf; promotion awaits the shared batch build gate.
 go_test	pkg/tablecodec/tablecodec_test.go	481	TestDecodeIndexKey	transaction	PARTIAL	txnkv-write-conflict-table-key-diagnostics	rust/crates/tidb-codec/tests/table_key_source.rs	Integer, bytes, and float datum strings decode from the exact schema-independent index-key path; promotion awaits the shared batch build gate.
 go_test	pkg/tablecodec/tablecodec_test.go	515	TestCutPrefix	transaction	PARTIAL	txnkv-write-conflict-table-key-diagnostics	rust/crates/tidb-codec/tests/table_key_source.rs	Row and index prefix cuts preserve the exact encoded index ID bytes and empty suffix; promotion awaits the shared batch build gate.
-go_test	pkg/tablecodec/tablecodec_test.go	523	TestRange	transaction	UNTRIAGED	-	-	-
+go_test	pkg/tablecodec/tablecodec_test.go	523	TestRange	transaction	PARTIAL	codec-table-key-range-runtime	rust/crates/tidb-codec/tests/table_key_source.rs	The exact minimum-to-maximum signed integer-handle table-record range and boundary ordering are translated through the canonical codec; the original index-range half remains open.
 go_test	pkg/tablecodec/tablecodec_test.go	537	TestDecodeAutoIDMeta	transaction	PARTIAL	txnkv-write-conflict-table-key-diagnostics	rust/crates/tidb-codec/tests/table_key_source.rs	The exact auto-ID meta vector decodes DB:56 and TID:108 through hash-data flag validation; promotion awaits the shared batch build gate.
 go_test	pkg/tablecodec/tablecodec_test.go	545	BenchmarkHasTablePrefix	transaction	UNTRIAGED	-	-	-
 go_test	pkg/tablecodec/tablecodec_test.go	552	BenchmarkHasTablePrefixBuiltin	transaction	UNTRIAGED	-	-	-

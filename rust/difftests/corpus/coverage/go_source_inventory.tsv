@@ -283,7 +283,7 @@ cmd/importer/stats.go	151	tooling	false	UNTRIAGED	-	-	-
 cmd/mirror/mirror.go	334	tooling	false	UNTRIAGED	-	-	-
 cmd/pluginpkg/pluginpkg.go	188	tooling	false	UNTRIAGED	-	-	-
 cmd/tidb-server/fips.go	19	tidb-server	false	UNTRIAGED	-	-	-
-cmd/tidb-server/main.go	1495	tidb-server	false	UNTRIAGED	-	-	-
+cmd/tidb-server/main.go	1495	tidb-server	false	PARTIAL	server-node-bootstrap-runtime	rust/crates/tidb-server/src/bin/tidb-server.rs	An executable tidb-server parses the bounded read-only configuration, constructs the real TiKV query engine, binds the serial SQL node, reports readiness, and returns startup failure instead of silently selecting the seed executor. Signal handling, daemonization, logging configuration, status services, tracing, and broad operational flags remain open.
 dumpling/cli/versions.go	60	deferred-external	false	UNTRIAGED	-	-	-
 dumpling/cmd/dumpling/main.go	83	deferred-external	false	UNTRIAGED	-	-	-
 dumpling/context/context.go	64	deferred-external	false	UNTRIAGED	-	-	-
@@ -355,7 +355,7 @@ pkg/bindinfo/binding_plan_evolution.go	109	tidb-planner	false	UNTRIAGED	-	-	-
 pkg/bindinfo/binding_plan_generation.go	997	tidb-planner	false	UNTRIAGED	-	-	-
 pkg/bindinfo/session_handle.go	217	tidb-planner	false	UNTRIAGED	-	-	-
 pkg/bindinfo/utils.go	347	tidb-planner	false	UNTRIAGED	-	-	-
-pkg/config/config.go	2005	tidb-server	false	UNTRIAGED	-	-	-
+pkg/config/config.go	2005	tidb-server	false	PARTIAL	server-node-bootstrap-runtime	rust/crates/tidb-server/src/node_config.rs	The milestone validates loopback host, port, PD endpoints, configured catalog identifiers, and packet bounds with explicit duplicate, unknown, and unsupported-value errors. TiDB's full TOML surface, dynamic config, defaults, validation matrix, and compatibility aliases remain open.
 pkg/config/config_util.go	130	tidb-server	false	UNTRIAGED	-	-	-
 pkg/config/configtypes/types.go	97	tidb-server	false	UNTRIAGED	-	-	-
 pkg/config/const.go	18	tidb-server	false	UNTRIAGED	-	-	-
@@ -367,7 +367,7 @@ pkg/config/kerneltype/doc.go	40	tidb-server	false	UNTRIAGED	-	-	-
 pkg/config/kerneltype/nextgen.go	28	tidb-server	false	UNTRIAGED	-	-	-
 pkg/config/kerneltype/type.go	41	tidb-server	false	UNTRIAGED	-	-	-
 pkg/config/keyspace_observability.go	177	tidb-server	false	UNTRIAGED	-	-	-
-pkg/config/store.go	48	tidb-server	false	UNTRIAGED	-	-	-
+pkg/config/store.go	48	tidb-server	false	PARTIAL	server-node-bootstrap-runtime	rust/crates/tidb-server/src/node_config.rs	Only the real TiKV store mode is accepted and the seed in-memory executor is unavailable from deployment configuration. Other historical stores and the complete store-driver registry remain open.
 pkg/config/tiflash.go	70	tidb-server	false	UNTRIAGED	-	-	-
 pkg/ddl/add_column.go	1349	tidb-ddl	false	UNTRIAGED	-	-	-
 pkg/ddl/affinity.go	197	tidb-ddl	false	PARTIAL	ddl-affinity-metadata	rust/crates/tidb-exec/src/ddl/affinity.rs	Rust ports affinity-level normalization, stable table/partition group IDs, deterministic deduplication, and missing-partition validation; TiKV key encoding, PD calls, catalog mutation, coordinator ordering, and cleanup remain open.
@@ -674,7 +674,7 @@ pkg/executor/batch_point_get.go	589	tidb-exec	false	UNTRIAGED	-	-	-
 pkg/executor/bind.go	170	tidb-exec	false	UNTRIAGED	-	-	-
 pkg/executor/brie.go	875	tidb-exec	false	UNTRIAGED	-	-	-
 pkg/executor/brie_utils.go	186	tidb-exec	false	UNTRIAGED	-	-	-
-pkg/executor/builder.go	6294	tidb-exec	false	UNTRIAGED	-	-	-
+pkg/executor/builder.go	6294	tidb-exec	false	PARTIAL	executor-real-tikv-read-runtime	rust/crates/tidb-exec/src/real_tikv_read.rs	One retained serial engine connects configured planner output, real PD TSO, the canonical full table range, DAG serialization, Campaign 18 region discovery and BatchCommands-first transport, and lazy result decoding without constructing the seed in-memory Cluster. General executor building, statement families, schema snapshots, transaction state, memory quotas, tracing, runtime stats, and concurrent execution remain open.
 pkg/executor/check_table_index.go	938	tidb-exec	false	UNTRIAGED	-	-	-
 pkg/executor/checksum.go	336	tidb-exec	false	UNTRIAGED	-	-	-
 pkg/executor/compact_table.go	367	tidb-exec	false	UNTRIAGED	-	-	-
@@ -1503,7 +1503,7 @@ pkg/planner/core/plan_cacheable_checker.go	722	tidb-planner	false	UNTRIAGED	-	-	
 pkg/planner/core/plan_clone_utils.go	295	tidb-planner	false	UNTRIAGED	-	-	-
 pkg/planner/core/plan_cost_ver1.go	1239	tidb-planner	false	UNTRIAGED	-	-	-
 pkg/planner/core/plan_cost_ver2.go	1397	tidb-planner	false	PARTIAL	planner-tikv-table-read-task-runtime	rust/crates/tidb-planner/src/logical_data_source_task.rs	Existing index scan cost choice is preserved; table/index or multiple-table candidate sets reject until their shared cost tree is ported.
-pkg/planner/core/planbuilder.go	6486	tidb-planner	false	UNTRIAGED	-	-	-
+pkg/planner/core/planbuilder.go	6486	tidb-planner	false	PARTIAL	planner-single-table-read-lowering	rust/crates/tidb-planner/src/read_only_scan.rs	A fully parsed direct projection from one configured non-partitioned table lowers through the existing LogicalDataSource, table access path, and PhysicalTableReader authority with explicit rejection of unsupported predicates, joins, aggregates, subqueries, partitions, writes, and unknown catalog objects. TiDB's general catalog resolution, privilege hooks, hint processing, full logical builder, optimizer search, and broad statement family remain open.
 pkg/planner/core/point_get_plan.go	1468	tidb-planner	false	UNTRIAGED	-	-	-
 pkg/planner/core/preprocess.go	2403	tidb-planner	false	UNTRIAGED	-	-	-
 pkg/planner/core/property_cols_prune.go	37	tidb-planner	false	UNTRIAGED	-	-	-
@@ -1644,7 +1644,7 @@ pkg/resourcemanager/scheduler/scheduler.go	36	tidb-server	false	UNTRIAGED	-	-	-
 pkg/resourcemanager/util/mock_gpool.go	104	test-support	false	UNTRIAGED	-	-	-
 pkg/resourcemanager/util/shard_pool_map.go	92	tidb-server	false	UNTRIAGED	-	-	-
 pkg/resourcemanager/util/util.go	62	tidb-server	false	UNTRIAGED	-	-	-
-pkg/server/conn.go	2957	tidb-protocol	false	PARTIAL	server-compressed-command-io-runtime	rust/crates/tidb-server/src/compressed_command_io.rs	A parsed handshake compression snapshot now drives generic packet I/O around Connection::dispatch_framed_auto for COM_QUERY, COM_PING, and COM_QUIT, preserving zlib-before-zstd selection, response sequence one, no-response quit, and command-boundary reset. Earlier result-set, error, auth/session, and bounded catalog dispatch artifacts remain intact. Live sockets, TLS/auth execution, run-loop status and kill handling, ERR response writing, incremental result streaming, unsupported commands, prepared statements, metrics, and full lifecycle remain external.
+pkg/server/conn.go	2957	tidb-protocol	false	PARTIAL	server-mysql-connection-runtime	rust/crates/tidb-server/src/mysql_connection.rs	One serial real TcpStream lifecycle performs the initial handshake, bounded root empty-password admission, COM_PING, COM_QUERY, COM_QUIT, incremental result or ERR writing, protocol sequence reset, peer-close isolation, and exactly-once cleanup. TLS, compression on the live socket, prepared statements, public authentication, kill state, metrics, deadlines, and concurrent connection execution remain open.
 pkg/server/conn_stmt.go	722	tidb-protocol	false	UNTRIAGED	-	-	-
 pkg/server/conn_stmt_params.go	153	tidb-protocol	false	UNTRIAGED	-	-	-
 pkg/server/driver.go	80	tidb-protocol	false	UNTRIAGED	-	-	-
@@ -1680,7 +1680,7 @@ pkg/server/internal/util/util.go	188	tidb-protocol	false	UNTRIAGED	-	-	-
 pkg/server/metrics/metrics.go	121	tidb-protocol	false	UNTRIAGED	-	-	-
 pkg/server/mock_conn.go	152	tidb-protocol	false	UNTRIAGED	-	-	-
 pkg/server/rpc_server.go	256	tidb-protocol	false	UNTRIAGED	-	-	-
-pkg/server/server.go	1365	tidb-protocol	false	PARTIAL	server-handshake-listener-wave	rust/crates/tidb-server/src/listener.rs	The Rust lifecycle owns actual TCP bind, ephemeral address publication, idempotent initialization, activation health ordering, shutdown flags, idempotent close, and a generic injected accept-loop leaf; Unix sockets, PROXY protocol, HTTP/status, connection admission, and bootstrap remain open.
+pkg/server/server.go	1365	tidb-protocol	false	PARTIAL	server-mysql-connection-runtime	rust/crates/tidb-server/src/sql_node.rs	The existing TCP bind/listener authority now accepts and completely serves one serial MySQL connection through an injected query engine with connection accounting. Unix sockets, PROXY protocol, status HTTP, graceful process shutdown, admission controls, and concurrent serving remain open.
 pkg/server/standby.go	57	tidb-protocol	false	UNTRIAGED	-	-	-
 pkg/server/stat.go	91	tidb-protocol	false	UNTRIAGED	-	-	-
 pkg/server/tests/servertestkit/testkit.go	206	tidb-protocol	false	UNTRIAGED	-	-	-
@@ -1937,7 +1937,7 @@ pkg/table/temptable/ddl.go	197	tidb-catalog	false	UNTRIAGED	-	-	-
 pkg/table/temptable/infoschema.go	68	tidb-catalog	false	UNTRIAGED	-	-	-
 pkg/table/temptable/interceptor.go	265	tidb-catalog	false	UNTRIAGED	-	-	-
 pkg/tablecodec/rowindexcodec/rowindexcodec.go	57	tidb-codec	false	COVERED	codec-rowindex-source-wave	rust/crates/tidb-codec/src/row_index.rs	Complete production file executes through a closed KeyKind and bounds-safe minimal table-prefix classifier; length table marker opaque table ID wrong-offset and opaque-suffix boundaries are explicit
-pkg/tablecodec/tablecodec.go	2094	tidb-codec	false	PARTIAL	txnkv-write-conflict-table-key-diagnostics	rust/crates/tidb-codec/src/table_key.rs	Canonical table, record, index, and meta prefix construction plus EncodeRowKeyWithHandle, non-partition EncodeRecordKey, key-head, integer/common record handle, schema-independent index datum, meta hash with Go's trailing-byte tolerance, prefix cutting, truncation, and legacy table-ID decoding are consolidated here and consumed by transaction diagnostics. Partition-handle record-prefix substitution, API-V2 keyspace removal, table/index range APIs, and the broad row/index value, restored-data, collation, schema, checksum, and generated-column portions of the 2094-line Go authority remain unported.
+pkg/tablecodec/tablecodec.go	2094	tidb-codec	false	PARTIAL	codec-table-key-range-runtime	rust/crates/tidb-codec/src/table_key.rs	The canonical codec now constructs the exact signed integer-handle record range for a physical table and preserves the previously translated table, record, index, and meta key authorities. Partition handles, API-V2 keyspace stripping, index ranges, and the broad row/index value, schema, checksum, collation, restored-data, and generated-column portions of the Go source remain open.
 pkg/telemetry/data.go	63	tidb-server	false	UNTRIAGED	-	-	-
 pkg/telemetry/data_feature_usage.go	466	tidb-server	false	UNTRIAGED	-	-	-
 pkg/telemetry/data_window.go	215	tidb-server	false	UNTRIAGED	-	-	-

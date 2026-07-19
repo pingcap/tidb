@@ -29,6 +29,8 @@ pub enum PdOperation {
     BatchScanRegions,
     /// Store lookup by ID.
     GetStore,
+    /// Current timestamp allocation from the PD leader stream.
+    Tso,
 }
 
 impl std::fmt::Display for PdOperation {
@@ -41,6 +43,7 @@ impl std::fmt::Display for PdOperation {
             Self::ScanRegions => formatter.write_str("ScanRegions"),
             Self::BatchScanRegions => formatter.write_str("BatchScanRegions"),
             Self::GetStore => formatter.write_str("GetStore"),
+            Self::Tso => formatter.write_str("Tso"),
         }
     }
 }
