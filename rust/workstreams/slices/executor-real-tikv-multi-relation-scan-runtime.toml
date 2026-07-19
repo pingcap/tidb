@@ -1,6 +1,6 @@
 schema = "1"
 slice = "executor-real-tikv-multi-relation-scan-runtime"
-status = "ready"
+status = "partial"
 target = "tidb-exec"
 ring = "result"
 consumer = "One read authority acquires one real PD timestamp and executes two planner-owned configured table scans at that same snapshot through the existing range, RegionCache, BatchCommands, retry, cancellation, and decoding path."
@@ -33,7 +33,7 @@ evidence_prerequisites = [
 ]
 support_anchors = [
   "Campaign 25 root D starts after Campaign 24's real range executor owns the exact table-reader source anchor at PARTIAL",
-  "Current source and test ownership is executor-real-tikv-bigint-selection-runtime; transfer at PARTIAL without weakening paging, partitions, indexes, statistics, or result-iteration gaps",
+  "Current select-result ownership is executor-real-tikv-bigint-selection-runtime; builder, table-reader, and test ownership is executor-real-tikv-clustered-pk-range-runtime. Transfer at PARTIAL without weakening paging, partitions, indexes, statistics, or result-iteration gaps",
   "Both scans share exactly one start timestamp and cancellation authority; acquiring independent snapshots or materializing through an in-memory catalog is forbidden",
   "Refactor the existing reader into one internal execute-plan-at-supplied-snapshot seam; calling the public SQL entrypoint twice or copying Campaign 24 request/DAG logic is forbidden",
 ]

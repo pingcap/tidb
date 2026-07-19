@@ -189,11 +189,11 @@ pkg/planner/core/logical_plans_test.go	51	TestPredicatePushDown	planner-configur
 pkg/planner/core/logical_plans_test.go	93	TestEliminateProjectionUnderUnion	planner-executor-typed-join-runtime
 pkg/planner/core/logical_plans_test.go	112	TestJoinPredicatePushDown	planner-configured-relation-tree-binding-runtime
 pkg/planner/core/logical_plans_test.go	153	TestOuterWherePredicatePushDown	planner-configured-relation-tree-binding-runtime
-pkg/planner/core/logical_plans_test.go	202	TestSimplifyOuterJoin	planner-configured-relation-tree-binding-runtime
+pkg/planner/core/logical_plans_test.go	202	TestSimplifyOuterJoin	planner-outer-to-inner-join-wave
 pkg/planner/core/logical_plans_test.go	241	TestAntiSemiJoinConstFalse	planner-condition-to-dual-wave
 pkg/planner/core/logical_plans_test.go	272	TestDeriveNotNullConds	planner-configured-relation-tree-binding-runtime
-pkg/planner/core/logical_plans_test.go	402	TestDupRandJoinCondsPushDown	planner-configured-relation-tree-binding-runtime
-pkg/planner/core/logical_plans_test.go	568	TestPlanBuilder	planner-configured-relation-tree-binding-runtime
+pkg/planner/core/logical_plans_test.go	402	TestDupRandJoinCondsPushDown	planner-residual-condition-wave
+pkg/planner/core/logical_plans_test.go	568	TestPlanBuilder	planner-static-bigint-projection-runtime
 pkg/planner/core/logical_plans_test.go	598	TestJoinReOrder	planner-configured-relation-tree-binding-runtime
 pkg/planner/core/logical_plans_test.go	652	TestColumnPruning	planner-column-pruning-wave
 pkg/planner/core/logical_plans_test.go	679	TestSortByItemsPruning	planner-by-item-wave
