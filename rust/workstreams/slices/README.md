@@ -6,8 +6,12 @@ but an agent should not receive one until a steward has converted it into a
 vertical slice here.
 
 For sustained campaign work, the steward keeps at least six disjoint slices
-ready (two three-agent batches). Empty `ready` output is a backlog-preparation
-failure; do not make feature agents wait while root scopes the next slice.
+ready **while the current six-slice campaign is active**. The steady-state
+pipeline is therefore twelve visible slices: six claimed/frozen in the current
+campaign and six dependency-ready in the next campaign. Scope the successor
+before dispatching the last current batch. Empty `ready` output is a
+backlog-preparation failure; do not make feature agents wait while root audits
+or invents the next slice.
 
 A slice may own several Go source files atomically. It must name an immediate
 consumer, the exact original test obligations, a focused Rust test target, and
@@ -86,3 +90,27 @@ source nor a test anchor is invalid.
 schema-2 claims cannot share a listed Rust path, and the ready queue suppresses
 such work until the current owner releases it. List every file the slice may
 edit so parallel agents cannot collide through a shared crate root or consumer.
+
+## Dispatch preflight
+
+Before a campaign becomes `planned`, root performs this mechanical preflight
+once for all of its slices. Do not rediscover these facts after agents start:
+
+- Freeze every cross-slice public type/function signature in the ExecPlan.
+- Search every existing caller and negative regression for the API or behavior
+  being widened; include all stale tests in an owning write set.
+- Inspect each target crate's `autotests` setting. If it is `false`, either
+  assign its `Cargo.toml` registration to the slice or place the test in an
+  already-registered shard.
+- If a dependency edge changes, assign `Cargo.toml` and `rust/Cargo.lock` to
+  exactly one foundation slice before claiming it.
+- Trace acceptance evidence to its last observable consumer. If a live script
+  needs a server event, assign the server emission file and freeze exact event
+  fields before implementation.
+- Run `work-unit-queue.py check`, then claim and dispatch the whole independent
+  frontier in one batch. Agents implement immediately; source auditing is a
+  bounded root preflight, not an agent phase.
+
+Feature agents run focused tests only. Root batches cross-crate compilation,
+the live proof, and the one expensive integration gate after the full vertical
+path freezes.

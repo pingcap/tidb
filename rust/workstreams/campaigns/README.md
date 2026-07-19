@@ -14,3 +14,9 @@ all members freeze. The gate receipt hashes campaign membership as well as the
 slice contracts, so the batch cannot be silently shrunk after validation.
 After the receipt is consumed, `integrated-members.tsv` preserves that exact
 membership and the queue rejects any later addition, removal, or substitution.
+
+Campaigns form a pipeline, not a sequence of planning pauses. Before the
+current campaign consumes its final ready batch, root freezes the next
+campaign's consumer boundary, public interfaces, original obligations, and
+disjoint write sets. At least one complete successor campaign remains `planned`
+and ready for dispatch during implementation of the current campaign.
