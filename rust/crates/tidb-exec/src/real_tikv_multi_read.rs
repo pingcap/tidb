@@ -39,12 +39,6 @@ pub enum RealTiKvMultiReadError {
         /// Existing planner error.
         source: ReadOnlyScanError,
     },
-    /// A contradiction would not publish the two physical scans required by
-    /// the bounded Campaign 25 join runtime.
-    Contradiction {
-        /// Zero-based contradictory relation.
-        relation: usize,
-    },
     /// The statement timestamp source failed.
     Timestamp(String),
     /// The timestamp source returned an invalid zero timestamp.
@@ -64,9 +58,6 @@ impl std::fmt::Display for RealTiKvMultiReadError {
             Self::Plan { relation, source } => {
                 write!(formatter, "relation {relation} planning failed: {source}")
             }
-            Self::Contradiction { relation } => {
-                write!(formatter, "relation {relation} is locally contradictory")
-            }
             Self::Timestamp(message) => write!(formatter, "PD timestamp failed: {message}"),
             Self::ZeroTimestamp => formatter.write_str("PD returned a zero snapshot timestamp"),
             Self::Read { relation, source } => {
@@ -81,7 +72,7 @@ impl std::error::Error for RealTiKvMultiReadError {
         match self {
             Self::Plan { source, .. } => Some(source),
             Self::Read { source, .. } => Some(source),
-            Self::Contradiction { .. } | Self::Timestamp(_) | Self::ZeroTimestamp => None,
+            Self::Timestamp(_) | Self::ZeroTimestamp => None,
         }
     }
 }
@@ -117,11 +108,8 @@ where
     ) -> Result<RealTiKvMultiQuery, RealTiKvMultiReadError> {
         let left_plan = self.lower_plan(0, relation_sql[0])?;
         let right_plan = self.lower_plan(1, relation_sql[1])?;
-        if left_plan.is_contradiction() {
-            return Err(RealTiKvMultiReadError::Contradiction { relation: 0 });
-        }
-        if right_plan.is_contradiction() {
-            return Err(RealTiKvMultiReadError::Contradiction { relation: 1 });
+        if left_plan.is_contradiction() || right_plan.is_contradiction() {
+            return Ok(RealTiKvMultiQuery::Empty);
         }
 
         let snapshot_ts = self
@@ -155,8 +143,8 @@ where
             }
         };
 
-        Ok(RealTiKvMultiQuery {
-            relations: [left, right],
+        Ok(RealTiKvMultiQuery::Scans {
+            relations: Box::new([left, right]),
             snapshot_ts,
         })
     }
@@ -171,29 +159,49 @@ where
     }
 }
 
-/// Two lazy response owners from the connection-local table readers.
-pub struct RealTiKvMultiQuery {
-    relations: [RealTiKvQuery; 2],
-    snapshot_ts: u64,
+/// Physical read outcome for a validated two-relation statement.
+pub enum RealTiKvMultiQuery {
+    /// One local scan contradiction makes the complete join result empty.
+    Empty,
+    /// Two lazy response owners at one shared physical snapshot.
+    Scans {
+        relations: Box<[RealTiKvQuery; 2]>,
+        snapshot_ts: u64,
+    },
 }
 
 impl RealTiKvMultiQuery {
-    /// Returns the single timestamp placed in both requests.
+    /// Returns whether planning proved the complete result empty locally.
     #[must_use]
-    pub const fn snapshot_ts(&self) -> u64 {
-        self.snapshot_ts
+    pub const fn is_empty(&self) -> bool {
+        matches!(self, Self::Empty)
     }
 
-    /// Returns immutable per-relation query and plan evidence in source order.
+    /// Returns the single timestamp placed in both physical requests.
     #[must_use]
-    pub const fn relations(&self) -> &[RealTiKvQuery; 2] {
-        &self.relations
+    pub const fn snapshot_ts(&self) -> Option<u64> {
+        match self {
+            Self::Empty => None,
+            Self::Scans { snapshot_ts, .. } => Some(*snapshot_ts),
+        }
     }
 
-    /// Transfers both lazy response owners to the join runtime.
+    /// Returns immutable per-relation evidence in source order when physical.
     #[must_use]
-    pub fn into_relations(self) -> [RealTiKvQuery; 2] {
-        self.relations
+    pub fn relations(&self) -> Option<&[RealTiKvQuery; 2]> {
+        match self {
+            Self::Empty => None,
+            Self::Scans { relations, .. } => Some(relations.as_ref()),
+        }
+    }
+
+    /// Transfers both lazy response owners to the join runtime when physical.
+    #[must_use]
+    pub fn into_relations(self) -> Option<[RealTiKvQuery; 2]> {
+        match self {
+            Self::Empty => None,
+            Self::Scans { relations, .. } => Some(*relations),
+        }
     }
 }
 

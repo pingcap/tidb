@@ -216,27 +216,27 @@ fn both_physical_scans_share_one_timestamp_and_cancellation_authority() {
         .unwrap();
 
     assert_eq!(timestamps.calls(), 1);
-    assert_eq!(query.snapshot_ts(), 7_777);
+    assert!(!query.is_empty());
+    assert_eq!(query.snapshot_ts(), Some(7_777));
+    let relations = query.relations().unwrap();
     assert_eq!(
-        query
-            .relations()
+        relations
             .iter()
             .map(|relation| relation.snapshot_ts())
             .collect::<Vec<_>>(),
         [Some(7_777), Some(7_777)]
     );
     assert_eq!(
-        query
-            .relations()
+        relations
             .iter()
             .map(|relation| relation.table_id())
             .collect::<Vec<_>>(),
         [42, 84]
     );
-    assert_eq!(query.relations()[0].plan_evidence().predicate_count(), 1);
-    assert_eq!(query.relations()[0].plan_evidence().handle_range_count(), 1);
-    assert_eq!(query.relations()[1].plan_evidence().predicate_count(), 0);
-    assert_eq!(query.relations()[1].plan_evidence().handle_range_count(), 2);
+    assert_eq!(relations[0].plan_evidence().predicate_count(), 1);
+    assert_eq!(relations[0].plan_evidence().handle_range_count(), 1);
+    assert_eq!(relations[1].plan_evidence().predicate_count(), 0);
+    assert_eq!(relations[1].plan_evidence().handle_range_count(), 2);
     assert_eq!(authority.readers()[0].configured_table().table_id(), 42);
     assert_eq!(authority.readers()[1].configured_table().table_id(), 84);
 
@@ -256,9 +256,10 @@ fn both_physical_scans_share_one_timestamp_and_cancellation_authority() {
     cancellation.cancel();
     assert!(query
         .relations()
+        .unwrap()
         .iter()
         .all(|relation| relation.is_cancelled()));
-    let relations = query.into_relations();
+    let relations = query.into_relations().unwrap();
     assert_eq!(relations[0].table_id(), 42);
     assert_eq!(relations[1].table_id(), 84);
     drop(relations);
@@ -294,7 +295,45 @@ fn invalid_second_plan_fails_before_timestamp_transport_or_left_send() {
 }
 
 #[test]
-fn zero_timestamp_fails_before_opening_or_sending_either_transport() {
+fn left_contradiction_returns_empty_before_timestamp_or_send() {
+    assert_contradiction_is_empty([
+        "SELECT id FROM accounts WHERE id > 10 AND id < 0",
+        "SELECT id FROM profiles",
+    ]);
+}
+
+#[test]
+fn right_contradiction_returns_empty_before_timestamp_or_send() {
+    assert_contradiction_is_empty([
+        "SELECT id FROM accounts",
+        "SELECT id FROM profiles WHERE id > 10 AND id < 0",
+    ]);
+}
+
+fn assert_contradiction_is_empty(relation_sql: [&str; 2]) {
+    let timestamps = CountingTimestampSource::new(8_999);
+    let factory = CapturingTransportFactory::default();
+    let state = Arc::clone(&factory.state);
+    let tables = configured_tables();
+    let opener =
+        RealTiKvReadSessionOpener::new(tables[0].clone(), factory, timestamps.clone(), 123);
+    let mut authority = opener.open_multi_session(tables).unwrap();
+
+    let query = authority
+        .execute(relation_sql)
+        .expect("a valid contradiction is a successful empty result");
+    assert!(query.is_empty());
+    assert_eq!(query.snapshot_ts(), None);
+    assert!(query.relations().is_none());
+    assert!(query.into_relations().is_none());
+    assert_eq!(timestamps.calls(), 0);
+    let state = state.lock().unwrap();
+    assert_eq!(state.opened, 2);
+    assert!(state.requests.is_empty());
+}
+
+#[test]
+fn zero_timestamp_fails_before_sending_either_transport() {
     let timestamps = CountingTimestampSource::new(0);
     let factory = CapturingTransportFactory::default();
     let state = Arc::clone(&factory.state);
@@ -358,7 +397,7 @@ fn repeated_statements_reuse_the_two_connection_local_transports() {
         let query = authority
             .execute(["SELECT id FROM accounts", "SELECT id FROM profiles"])
             .unwrap();
-        for relation in query.into_relations() {
+        for relation in query.into_relations().unwrap() {
             let mut record_set = relation.into_record_set();
             record_set.close().unwrap();
         }
