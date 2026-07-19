@@ -590,12 +590,19 @@ cp /tmp/g.txt rust/difftests/corpus/query_golden.txt
 
 > **⚡ PARALLEL, SOURCE-FIRST MODE:** read **`rust/PARALLEL.md`** before dispatching. `difftests/corpus/coverage/go_test_inventory.tsv` makes every Go test entry point, lifecycle hook, shell program, SQL fixture/result, `testdata` file, and support artifact below repository test suites visible; `integration_parser_inventory.tsv` inventories every SQL input the fixture runner dispatches; and `integration_runner_directive_inventory.tsv` accounts for runner-only commands. These are obligations, not parity claims.
 
-Campaign 24 is Ready-integrated with zero active claims. Campaign 25 is the
-immediate critical path: its configured multi-relation catalog and same-snapshot
-real-TiKV multi-scan roots are both mechanically ready and can run in parallel.
-Their downstream relation binding, FullSchema join planning, join execution,
-and live stock-client proof unlock through exact `PARTIAL` evidence anchors;
-they do not wait for broad provider slices to become falsely `COVERED`.
+Campaign 24 is Ready-integrated. Campaign 25 is the immediate critical path.
+Its configured multi-relation catalog is implemented and promoted at exact
+`PARTIAL` evidence, so relation binding is active while the same-snapshot real-
+TiKV multi-scan runs in parallel. FullSchema join planning, join execution, and
+the live stock-client proof unlock through incremental exact evidence anchors;
+they do not wait for broad provider slices to become falsely `COVERED` or for
+the final shared campaign gate.
+
+All agent worktrees MUST be created by `python3 rust/scripts/slice-worktree.py
+--slice <slice>`. The helper places them under the ignored, writable
+`rust/.worktrees/` root and probes a real write. Sibling worktrees under
+`../tidb-rust-worktrees` are readable but not writable by desktop subagents;
+that earlier layout caused long analysis turns with zero possible edits.
 
 The active high-throughput work is split across six non-overlapping lanes:
 
