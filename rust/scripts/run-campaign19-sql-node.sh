@@ -277,7 +277,7 @@ fi
 "${RUST_SERVER}" --path "${PD_ADDR}" --store tikv \
   --host 127.0.0.1 --port "${RUST_SQL_PORT}" \
   --database campaign19 --table rows --table-id "${TABLE_ID}" \
-  --column id --column-id 1 >"${RUST_LOG}" 2>&1 &
+  --column id:1:clustered-pk >"${RUST_LOG}" 2>&1 &
 RUST_PID=$!
 
 READY_JSON=
@@ -302,7 +302,7 @@ if ! printf '%s\n' "${READY_JSON}" | jq -e \
   --arg table_id "${TABLE_ID}" --arg cluster_id "${PD_CLUSTER_ID}" \
   '(.table_id | tostring) == $table_id and (.cluster_id | tostring) == $cluster_id
    and .database == "campaign19" and .table == "rows"
-   and .column == "id" and .column_id == 1' \
+   and .column_count == 1 and .columns == ["id:1:clustered-pk"]' \
   >/dev/null; then
   echo "Rust readiness did not retain the Go-resolved table ID and real PD cluster identity" >&2
   printf '%s\n' "${READY_JSON}" >&2
