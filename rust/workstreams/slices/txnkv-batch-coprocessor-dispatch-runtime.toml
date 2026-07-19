@@ -1,6 +1,6 @@
 schema = "1"
 slice = "txnkv-batch-coprocessor-dispatch-runtime"
-status = "ready" # ready | active | partial | covered | blocked
+status = "partial" # ready | active | partial | covered | blocked
 target = "tidb-txnkv"
 ring = "transaction"
 consumer = "Bind DirectUnaryRequest to one real Coprocessor BatchCommands entry and expose one concrete nonblocking pending attempt from TonicCoprocessorClient. Reuse the sole retained stream, scheduler, in-flight table, completion, runtime, channel pool, forwarding route, and cancellation hook; own no selector, retry budget, fallback loop, or second completion gate."

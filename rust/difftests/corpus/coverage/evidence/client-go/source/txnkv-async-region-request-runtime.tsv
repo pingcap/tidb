@@ -1,3 +1,0 @@
-# client-go source evidence for Campaign 16 asynchronous RegionRequest policy.
-# source_path	status	owner	evidence_artifact	note
-internal/locate/accessmode.go	PARTIAL	txnkv-async-region-request-runtime	rust/crates/tidb-distsql/src/cop_paging/direct_unary_query_transport.rs	The production coordinator copies the immutable route's replica and stale-read decisions without creating another access-mode authority. Complete live selector transitions, TiFlash, and flashback remain external.

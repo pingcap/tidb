@@ -1,0 +1,3 @@
+# pd-client source evidence for Campaign 18 txnkv-live-pd-batch-topology.
+# source_path	status	owner	evidence_artifact	note
+client.go	PARTIAL	txnkv-live-pd-batch-topology	rust/difftests/transaction-tests/tests/realtikv_replica_read.rs	Campaign 18 live TiUP proof exercises GetPrevRegion split adjacency, forwarded BatchCommands, same-address proxy restart, generation retirement, exactly-once failure, and explicit caller retry with tag-owned cleanup. TLS, router streaming, full command coverage, and randomized prolonged stress remain external.

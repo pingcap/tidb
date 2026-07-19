@@ -1,6 +1,6 @@
 schema = "1"
 slice = "txnkv-live-pd-batch-topology"
-status = "ready" # ready | active | partial | covered | blocked
+status = "partial" # ready | active | partial | covered | blocked
 target = "transaction-tests"
 ring = "transaction"
 consumer = "Prove production GetPrevRegion boundary projection and real forwarded BatchCommands restart behavior on one tag-owned three-PD, three-TiKV TiUP topology. The runner must prove endpoint ownership and cleanup; it must never replace an unavailable live transition with a mock or claim plaintext transport as TLS coverage."

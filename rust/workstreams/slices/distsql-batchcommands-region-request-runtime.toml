@@ -1,6 +1,6 @@
 schema = "1"
 slice = "distsql-batchcommands-region-request-runtime"
-status = "ready" # ready | active | partial | covered | blocked
+status = "partial" # ready | active | partial | covered | blocked
 target = "tidb-distsql"
 ring = "result"
 consumer = "Make the production DistSQL region-request coordinator use one BatchCommands attempt first, then settle its result through the existing selector, cache observation, backoff, region-error, and synchronous retry authorities. Delete the parallel async policy/retry/terminal state so later fallback re-enters the same synchronous loop without duplicating selection or retry ownership."

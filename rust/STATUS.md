@@ -9,10 +9,10 @@ the source or obligation still has explicit unported behavior.
 
 ## Queue
 
-- Active claims: 4
+- Active claims: 0
 - Active slices: 0
-- Declared ready slices: 4
-- Partial slices: 67
+- Declared ready slices: 0
+- Partial slices: 71
 - Covered slices: 2
 - Blocked slices: 1
 
@@ -33,7 +33,7 @@ the source or obligation still has explicit unported behavior.
 | 2026-07-read-path-15 | integrated | 4 |
 | 2026-07-read-path-16 | integrated | 3 |
 | 2026-07-read-path-17 | integrated | 3 |
-| 2026-07-read-path-18 | planned | 4 |
+| 2026-07-read-path-18 | integrated | 4 |
 | 2026-07-runtime-closure-03 | integrated | 6 |
 | 2026-07-runtime-closure-04 | integrated | 6 |
 | 2026-07-runtime-closure-05 | integrated | 6 |

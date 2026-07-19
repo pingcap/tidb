@@ -1,6 +1,6 @@
 schema = "1"
 slice = "txnkv-unlocked-store-refresh-runtime"
-status = "ready" # ready | active | partial | covered | blocked
+status = "partial" # ready | active | partial | covered | blocked
 target = "tidb-txnkv"
 ring = "transaction"
 consumer = "Replace every production PD metadata operation under the canonical region-cache mutex with select, fetch, revalidate, and publish pipelines. Cache hits and plans run under the cache lock; region and store fetches run through the sole loader with that lock released; guarded merge discards stale results without overwriting newer topology. Keep one cache, loader, worker, trigger, and publication authority."
