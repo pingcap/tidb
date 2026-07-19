@@ -383,3 +383,7 @@ pkg/store/copr/coprocessor_test.go	913	TestBuildCopTasksWithRowCountHint	txnkv-r
 pkg/store/copr/coprocessor_test.go	1005	TestBatchStoreCoprOnlySendToLeader	txnkv-read-runtime-seams
 pkg/store/copr/coprocessor_test.go	1055	TestStoreBatchTasksPreserveChildBucketsVersion	txnkv-read-runtime-seams
 pkg/store/copr/coprocessor_test.go	1096	TestHandleBatchCopResponseUpdatesChildBucketsOnVersionNotMatch	txnkv-read-runtime-seams
+pkg/planner/core/casetest/join/join_test.go	27	TestSemiJoinOrder	planner-configured-fullschema-join-runtime
+pkg/planner/core/casetest/join/join_test.go	146	TestJoinSimplifyCondition	planner-configured-fullschema-join-runtime
+pkg/planner/core/casetest/join/join_test.go	188	TestKeepingJoinKeys	planner-configured-fullschema-join-runtime
+pkg/planner/core/casetest/join/join_test.go	226	TestJoinRegression	planner-configured-fullschema-join-runtime

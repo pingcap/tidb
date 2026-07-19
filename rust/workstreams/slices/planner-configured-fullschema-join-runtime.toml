@@ -1,6 +1,6 @@
 schema = "1"
 slice = "planner-configured-fullschema-join-runtime"
-status = "ready"
+status = "partial"
 target = "tidb-planner"
 ring = "plan"
 consumer = "Two configured relation scans become one typed inner-join plan with stable FullSchema indices, direct cross-side equality for ON or USING, source-order visible projection offsets, and explicit left/right scan and residual predicates."

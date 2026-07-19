@@ -1,3 +1,0 @@
-# Source-owned evidence fragment for planner-logical-schema-producer-wave.
-# source_path	status	owner	evidence_artifact	note
-pkg/planner/core/operator/logicalop/logical_schema_producer.go	PARTIAL	planner-logical-schema-producer-wave	rust/crates/tidb-planner/src/logical_schema_producer.rs	Ports LogicalSchemaProducer Hash64/Equals identity: nil/present ordered schema framing and normalized column identity; schema propagation, names, BaseLogicalPlan/children, full FieldType/collation/VirtualExpr metadata, and DataSource integration remain external.
