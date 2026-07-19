@@ -49,6 +49,18 @@ scripts/work-unit-queue.py claim-slice \
   --owner planner-example-consumer --slice planner-example-consumer
 ```
 
+Create every agent worktree below the repository's writable boundary. The
+helper uses the ignored `rust/.worktrees/<slice>` layout, creates or reuses the
+`codex/<slice>` branch, and verifies a real write before returning the path:
+
+```sh
+python3 scripts/slice-worktree.py --slice <slice>
+```
+
+Do not place agent worktrees in a sibling such as `../tidb-rust-worktrees`:
+desktop agent sandboxes can read those paths while rejecting every edit, which
+looks like slow implementation until the first write is attempted.
+
 When a schema-2 claim owner is also a checked slice name, its source and test
 sets must exactly match that slice even after the slice becomes `partial` or
 otherwise freezes. After the shared integration gate, use `release --owner

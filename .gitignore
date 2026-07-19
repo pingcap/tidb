@@ -36,6 +36,8 @@ bin
 # state.
 /rust/workstreams/claims/*.claim.toml
 /rust/workstreams/claims/*.claim.json
+# Agent slice worktrees must stay below the writable workspace root.
+/rust/.worktrees/
 /tidb-server/tidb-server
 /tidb-server/debug
 tools/bin/
