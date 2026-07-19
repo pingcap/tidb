@@ -13,12 +13,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Close one rewrite campaign without hand-editing ownership bookkeeping.
+"""Promote campaign members and close campaigns without manual bookkeeping.
 
-The default mode is a read-only preflight. ``--apply`` promotes evidence,
-regenerates the two Go inventories and STATUS.md, and validates the resulting
-queue. ``--gate`` additionally runs the one shared integration gate and then
-releases every campaign member using that gate's receipt.
+The default mode is a read-only preflight. ``--promote-member`` selects one
+completed member whose exact evidence and slice status should advance to
+PARTIAL while its claim remains active; add ``--apply`` to commit that
+transaction. Without ``--promote-member``, ``--apply`` closes the campaign's
+bookkeeping. ``--gate`` additionally runs the one shared integration gate and
+then releases every campaign member using that gate's receipt.
 """
 
 from __future__ import annotations
@@ -82,6 +84,21 @@ class ClosePlan:
     @property
     def touched_paths(self) -> set[Path]:
         return set(self.writes) | self.deletes
+
+
+class MemberPromotionPlan(ClosePlan):
+    """One campaign member's checked evidence/status promotion."""
+
+    def __init__(
+        self,
+        campaign: str,
+        member: str,
+        writes: dict[Path, str],
+        deletes: set[Path],
+        transfer_count: int,
+    ) -> None:
+        super().__init__(campaign, (member,), writes, deletes, transfer_count)
+        self.member = member
 
 
 def _repository_path(root: Path, artifact: str) -> Path:
@@ -180,11 +197,11 @@ def _render_transfer_retirements(
     return "\n".join(rendered) + "\n"
 
 
-def _evidence_owners(
+def _evidence_records(
     root: Path, planned_writes: dict[Path, str], planned_deletes: set[Path], kind: str
-) -> dict[str, list[str]]:
+) -> dict[str, list[tuple[str, str]]]:
     directory = root / (SOURCE_EVIDENCE if kind == "source" else TEST_EVIDENCE)
-    owners: dict[str, list[str]] = {}
+    records: dict[str, list[tuple[str, str]]] = {}
     for path in sorted(directory.glob("*.tsv")):
         if path in planned_deletes:
             continue
@@ -197,9 +214,23 @@ def _evidence_owners(
                 anchor = _row_anchor(fields, kind)
             except (ValueError, IndexError) as error:
                 raise ValueError(f"{path}:{number}: {error}") from error
+            status_index = 1 if kind == "source" else 4
             owner_index = 2 if kind == "source" else 5
-            owners.setdefault(anchor, []).append(fields[owner_index])
-    return owners
+            records.setdefault(anchor, []).append(
+                (fields[status_index], fields[owner_index])
+            )
+    return records
+
+
+def _evidence_owners(
+    root: Path, planned_writes: dict[Path, str], planned_deletes: set[Path], kind: str
+) -> dict[str, list[str]]:
+    return {
+        anchor: [owner for _status, owner in records]
+        for anchor, records in _evidence_records(
+            root, planned_writes, planned_deletes, kind
+        ).items()
+    }
 
 
 def _integrated_campaign_text(path: Path, current_status: str) -> str:
@@ -208,6 +239,14 @@ def _integrated_campaign_text(path: Path, current_status: str) -> str:
     if text.count(old) != 1:
         raise ValueError(f"{path}: expected exactly one {old!r}")
     return text.replace(old, 'status = "integrated"', 1)
+
+
+def _partial_slice_text(path: Path, current_status: str) -> str:
+    text = path.read_text(encoding="utf-8")
+    old = f'status = "{current_status}"'
+    if text.count(old) != 1:
+        raise ValueError(f"{path}: expected exactly one {old!r}")
+    return text.replace(old, 'status = "partial"', 1)
 
 
 def _archived_members_text(path: Path, campaign: str, members: Iterable[str]) -> str:
@@ -274,6 +313,133 @@ def _validate_transfer_topology(
             )
 
 
+def _build_evidence_transition(
+    root: Path,
+    transfer_path: Path,
+    transfer_rows: list[list[str]],
+    slices: dict[str, dict[str, object]],
+    eligible_members: set[str],
+) -> tuple[dict[Path, str], set[Path], list[tuple[str, str, str]]]:
+    """Build one checked ownership mutation for the eligible terminal owners.
+
+    A campaign transfer file may contain rows for members already promoted and
+    for the member being promoted now. Rows for a future member are rejected:
+    publishing that transfer early would make the global transfer ledger claim
+    an ownership change which the generated inventories do not yet contain.
+    """
+    removals: dict[Path, set[str]] = {}
+    terminal_anchors: list[tuple[str, str, str]] = []
+    all_retired_artifacts = {
+        artifact for row in transfer_rows for artifact in _split_artifacts(row[6])
+    }
+    for row in transfer_rows:
+        old_owner, new_owner = row[0], row[1]
+        if not queue.OWNER_RE.fullmatch(old_owner) or not queue.OWNER_RE.fullmatch(new_owner):
+            raise ValueError(f"{transfer_path}: invalid transfer owner")
+        if old_owner == new_owner:
+            raise ValueError(f"{transfer_path}: transfer owners must differ")
+        if new_owner not in eligible_members:
+            raise ValueError(
+                f"{transfer_path}: transfer terminal {new_owner} has not been "
+                "selected or previously promoted"
+            )
+        source_anchor = _transfer_anchor(row, "source")
+        test_anchor = _transfer_anchor(row, "test")
+        if source_anchor is None and test_anchor is None:
+            raise ValueError(f"{transfer_path}: transfer must contain an anchor")
+        if (
+            source_anchor is not None
+            and source_anchor not in slices[new_owner]["go_sources"]
+        ):
+            raise ValueError(
+                f"{transfer_path}: source {source_anchor} is not frozen in {new_owner}"
+            )
+        if (
+            test_anchor is not None
+            and test_anchor not in slices[new_owner]["go_tests"]
+        ):
+            raise ValueError(
+                f"{transfer_path}: test {test_anchor} is not frozen in {new_owner}"
+            )
+        for kind, anchor in (("source", source_anchor), ("test", test_anchor)):
+            if anchor is not None:
+                terminal_anchors.append((kind, anchor, new_owner))
+        for artifact in _split_artifacts(row[6]):
+            path = _repository_path(root, artifact)
+            kind = _fragment_kind(root, path)
+            if kind is None:
+                if path.exists():
+                    raise ValueError(
+                        f"{transfer_path}: non-evidence retired artifact still exists: {artifact}"
+                    )
+                continue
+            anchor = source_anchor if kind == "source" else test_anchor
+            if anchor is None:
+                raise ValueError(
+                    f"{transfer_path}: {artifact} has no matching {kind} anchor"
+                )
+            # A prior member promotion may already have deleted this exact
+            # fragment. Its continued absence is the transfer assertion; the
+            # terminal evidence and topology checks below still prove the move.
+            if path.is_file():
+                removals.setdefault(path, set()).add(anchor)
+        for artifact in _split_artifacts(row[7]):
+            path = _repository_path(root, artifact)
+            if not path.is_file() and artifact not in all_retired_artifacts:
+                raise ValueError(f"{transfer_path}: replacement artifact is missing: {artifact}")
+
+    if terminal_anchors:
+        _validate_transfer_topology(
+            root, {(kind, anchor): owner for kind, anchor, owner in terminal_anchors}
+        )
+
+    writes: dict[Path, str] = {}
+    deletes: set[Path] = set()
+    for path, anchors in removals.items():
+        kind = _fragment_kind(root, path)
+        assert kind is not None
+        rendered, removed = _remove_fragment_rows(path, kind, anchors)
+        missing = sorted(anchors - removed)
+        if missing:
+            raise ValueError(f"{path}: retired evidence row is missing: {missing[0]}")
+        if rendered is None:
+            deletes.add(path)
+        else:
+            writes[path] = rendered
+
+    retained_retirements: list[tuple[str, ...]] = []
+    for row in transfer_rows:
+        retained = []
+        for artifact in _split_artifacts(row[6]):
+            path = _repository_path(root, artifact)
+            if path in deletes or not path.exists():
+                retained.append(artifact)
+        retained_retirements.append(tuple(retained))
+    if transfer_rows:
+        writes[transfer_path] = _render_transfer_retirements(
+            transfer_path, retained_retirements
+        )
+
+    for kind in ("source", "test"):
+        owners = _evidence_owners(root, writes, deletes, kind)
+        for anchor, found in sorted(owners.items()):
+            if len(found) > 1 and any(owner in eligible_members for owner in found):
+                raise ValueError(
+                    f"campaign post-close {kind} evidence {anchor} has duplicate "
+                    f"owners {found}"
+                )
+        for anchor_kind, anchor, new_owner in terminal_anchors:
+            if anchor_kind != kind:
+                continue
+            found = owners.get(anchor, [])
+            if found != [new_owner]:
+                raise ValueError(
+                    f"campaign transfer terminal {kind} evidence {anchor} must have "
+                    f"exact owner {new_owner}; found {found}"
+                )
+    return writes, deletes, terminal_anchors
+
+
 def build_close_plan(root: Path, campaign_name: str) -> ClosePlan:
     """Preflight every input and return an in-memory mutation plan."""
     if not queue.OWNER_RE.fullmatch(campaign_name):
@@ -329,109 +495,9 @@ def build_close_plan(root: Path, campaign_name: str) -> ClosePlan:
     if not transfer_rows:
         raise ValueError(f"campaign transfer file is empty: {transfer_path}")
 
-    removals: dict[Path, set[str]] = {}
-    terminal_anchors: list[tuple[str, str, str]] = []
-    all_retired_artifacts = {
-        artifact for row in transfer_rows for artifact in _split_artifacts(row[6])
-    }
-    for row in transfer_rows:
-        old_owner, new_owner = row[0], row[1]
-        if not queue.OWNER_RE.fullmatch(old_owner) or not queue.OWNER_RE.fullmatch(new_owner):
-            raise ValueError(f"{transfer_path}: invalid transfer owner")
-        if old_owner == new_owner:
-            raise ValueError(f"{transfer_path}: transfer owners must differ")
-        if new_owner not in members:
-            raise ValueError(
-                f"{transfer_path}: terminal owner {new_owner} is not a campaign member"
-            )
-        source_anchor = _transfer_anchor(row, "source")
-        test_anchor = _transfer_anchor(row, "test")
-        if source_anchor is None and test_anchor is None:
-            raise ValueError(f"{transfer_path}: transfer must contain an anchor")
-        if source_anchor is not None and source_anchor not in slices[new_owner]["go_sources"]:
-            raise ValueError(
-                f"{transfer_path}: source {source_anchor} is not frozen in {new_owner}"
-            )
-        if test_anchor is not None and test_anchor not in slices[new_owner]["go_tests"]:
-            raise ValueError(
-                f"{transfer_path}: test {test_anchor} is not frozen in {new_owner}"
-            )
-        for kind, anchor in (("source", source_anchor), ("test", test_anchor)):
-            if anchor is not None:
-                terminal_anchors.append((kind, anchor, new_owner))
-        for artifact in _split_artifacts(row[6]):
-            path = _repository_path(root, artifact)
-            kind = _fragment_kind(root, path)
-            if kind is None:
-                if path.exists():
-                    raise ValueError(
-                        f"{transfer_path}: non-evidence retired artifact still exists: {artifact}"
-                    )
-                continue
-            anchor = source_anchor if kind == "source" else test_anchor
-            if anchor is None:
-                raise ValueError(
-                    f"{transfer_path}: {artifact} has no matching {kind} anchor"
-                )
-            if not path.is_file():
-                raise ValueError(f"{transfer_path}: retired evidence fragment is missing: {artifact}")
-            removals.setdefault(path, set()).add(anchor)
-        for artifact in _split_artifacts(row[7]):
-            path = _repository_path(root, artifact)
-            if not path.is_file() and artifact not in all_retired_artifacts:
-                raise ValueError(f"{transfer_path}: replacement artifact is missing: {artifact}")
-
-    _validate_transfer_topology(
-        root, {(kind, anchor): owner for kind, anchor, owner in terminal_anchors}
+    writes, deletes, _terminal_anchors = _build_evidence_transition(
+        root, transfer_path, transfer_rows, slices, set(members)
     )
-
-    writes: dict[Path, str] = {}
-    deletes: set[Path] = set()
-    for path, anchors in removals.items():
-        kind = _fragment_kind(root, path)
-        assert kind is not None
-        rendered, removed = _remove_fragment_rows(path, kind, anchors)
-        missing = sorted(anchors - removed)
-        if missing:
-            raise ValueError(f"{path}: retired evidence row is missing: {missing[0]}")
-        if rendered is None:
-            deletes.add(path)
-        else:
-            writes[path] = rendered
-
-    # A transfer's retired_artifacts field is an absence assertion checked by
-    # work-unit-queue, not a row-edit instruction. Partial predecessor
-    # fragments survive and therefore must no longer be named there; fragments
-    # deleted by this transaction and already-absent non-evidence history stay.
-    retained_retirements: list[tuple[str, ...]] = []
-    for row in transfer_rows:
-        retained = []
-        for artifact in _split_artifacts(row[6]):
-            path = _repository_path(root, artifact)
-            if path in deletes or (_fragment_kind(root, path) is None and not path.exists()):
-                retained.append(artifact)
-        retained_retirements.append(tuple(retained))
-    writes[transfer_path] = _render_transfer_retirements(
-        transfer_path, retained_retirements
-    )
-
-    for kind in ("source", "test"):
-        owners = _evidence_owners(root, writes, deletes, kind)
-        for anchor, found in sorted(owners.items()):
-            if len(found) > 1 and any(owner in members for owner in found):
-                raise ValueError(
-                    f"campaign post-close {kind} evidence {anchor} has duplicate "
-                    f"owners {found}"
-                )
-        for anchor_kind, anchor, new_owner in terminal_anchors:
-            if anchor_kind != kind:
-                continue
-            found = owners.get(anchor, [])
-            if found != [new_owner]:
-                raise ValueError(
-                    f"campaign transfer terminal {kind} evidence {anchor} must have "
-                    f"exact owner {new_owner}; found {found}"
-                )
 
     campaign_path = Path(campaign["_path"])
     archive_path = root / queue.INTEGRATED_CAMPAIGN_MEMBERS
@@ -442,6 +508,159 @@ def build_close_plan(root: Path, campaign_name: str) -> ClosePlan:
         archive_path, campaign_name, members
     )
     return ClosePlan(campaign_name, members, writes, deletes, len(transfer_rows))
+
+
+def _validate_exact_member_evidence(
+    root: Path,
+    member: str,
+    record: dict[str, object],
+    writes: dict[Path, str],
+    deletes: set[Path],
+) -> None:
+    for kind, anchors in (
+        ("source", record["go_sources"]),
+        ("test", record["go_tests"]),
+    ):
+        evidence = _evidence_records(root, writes, deletes, kind)
+        for anchor in anchors:
+            found = evidence.get(str(anchor), [])
+            if len(found) != 1:
+                raise ValueError(
+                    f"campaign member {member} requires exact {kind} evidence "
+                    f"{anchor}; found {found}"
+                )
+            status, owner = found[0]
+            if (
+                owner != member
+                or queue.EVIDENCE_STATUS_RANK.get(status, -1)
+                < queue.EVIDENCE_STATUS_RANK["PARTIAL"]
+            ):
+                raise ValueError(
+                    f"campaign member {member} requires {kind} evidence {anchor} "
+                    f"owned by {member} at PARTIAL or better; found {owner}@{status}"
+                )
+
+    for kind, anchors, evidence in (
+        (
+            "module source",
+            record["module_sources"],
+            queue.load_module_source_rows(root),
+        ),
+        (
+            "module test",
+            record["module_tests"],
+            queue.load_module_test_rows(root),
+        ),
+    ):
+        for anchor in anchors:
+            found = evidence[str(anchor)]
+            if (
+                found["owner"] != member
+                or queue.EVIDENCE_STATUS_RANK.get(found["status"], -1)
+                < queue.EVIDENCE_STATUS_RANK["PARTIAL"]
+            ):
+                raise ValueError(
+                    f"campaign member {member} requires {kind} evidence {anchor} "
+                    f"owned by {member} at PARTIAL or better; found "
+                    f"{found['owner']}@{found['status']}"
+                )
+
+
+def _member_has_promoted_ledger_evidence(
+    root: Path, member: str, record: dict[str, object]
+) -> bool:
+    source_rows = {str(row["path"]): row for row in queue.load_source_rows(root)}
+    test_rows = {
+        queue.test_key(row): row for row in queue.load_test_rows(root)
+    }
+    module_source_rows = queue.load_module_source_rows(root)
+    module_test_rows = queue.load_module_test_rows(root)
+    for anchors, evidence in (
+        (record["go_sources"], source_rows),
+        (record["go_tests"], test_rows),
+        (record["module_sources"], module_source_rows),
+        (record["module_tests"], module_test_rows),
+    ):
+        for anchor in anchors:
+            found = evidence[str(anchor)]
+            if (
+                found["owner"] != member
+                or queue.EVIDENCE_STATUS_RANK.get(found["status"], -1)
+                < queue.EVIDENCE_STATUS_RANK["PARTIAL"]
+            ):
+                return False
+    return True
+
+
+def build_member_promotion_plan(
+    root: Path, campaign_name: str, member: str
+) -> MemberPromotionPlan:
+    """Preflight one member's PARTIAL promotion without releasing its claim."""
+    if not queue.OWNER_RE.fullmatch(campaign_name):
+        raise ValueError("invalid campaign name")
+    if not queue.OWNER_RE.fullmatch(member):
+        raise ValueError("invalid campaign member")
+    slices = queue.load_slices(root)
+    campaigns = queue.load_campaigns(root, slices)
+    campaign = campaigns.get(campaign_name)
+    if campaign is None:
+        raise ValueError(f"unknown campaign {campaign_name}")
+    if campaign["status"] not in {"planned", "active"}:
+        raise ValueError(
+            f"campaign {campaign_name} must be planned or active before member promotion; "
+            f"found {campaign['status']}"
+        )
+    campaign_members = tuple(str(item) for item in campaign["slices"])
+    if member not in campaign_members:
+        raise ValueError(f"{member} is not a member of campaign {campaign_name}")
+    record = slices[member]
+    if record["status"] not in {"ready", "active"}:
+        raise ValueError(
+            f"campaign member {member} must be ready or active before promotion; "
+            f"found {record['status']}"
+        )
+
+    claims = {str(claim["owner"]): claim for claim in queue.load_claims(root)}
+    claim = claims.get(member)
+    if claim is None:
+        raise ValueError(f"campaign member {member} has no active claim")
+    if claim.get("schema") != 2:
+        raise ValueError(f"campaign member {member} requires a schema-2 slice claim")
+    expected = (
+        list(record["go_sources"]),
+        list(record["go_tests"]),
+        list(record["module_sources"]),
+        list(record["module_tests"]),
+    )
+    actual = (
+        sorted(set(claim.get("sources", []))),
+        sorted(set(claim.get("tests", []))),
+        sorted(set(claim.get("module_sources", []))),
+        sorted(set(claim.get("module_tests", []))),
+    )
+    if actual != expected:
+        raise ValueError(f"campaign member {member} claim differs from its frozen slice")
+
+    eligible_members = {
+        item
+        for item in campaign_members
+        if item == member
+        or (
+            slices[item]["status"] in {"partial", "covered"}
+            and _member_has_promoted_ledger_evidence(root, item, slices[item])
+        )
+    }
+    transfer_path = root / queue.TRANSFERS_DIR / f"{campaign_name}.tsv"
+    transfer_rows = queue.read_tsv(transfer_path, 9) if transfer_path.is_file() else []
+    writes, deletes, _terminal_anchors = _build_evidence_transition(
+        root, transfer_path, transfer_rows, slices, eligible_members
+    )
+    _validate_exact_member_evidence(root, member, record, writes, deletes)
+    slice_path = Path(record["_path"])
+    writes[slice_path] = _partial_slice_text(slice_path, str(record["status"]))
+    return MemberPromotionPlan(
+        campaign_name, member, writes, deletes, len(transfer_rows)
+    )
 
 
 def _atomic_write(path: Path, content: str) -> None:
@@ -473,6 +692,48 @@ def _run(command: list[str], root: Path) -> None:
     subprocess.run(command, cwd=root, check=True)
 
 
+def _apply_bookkeeping_plan(
+    root: Path,
+    plan: ClosePlan,
+    rebuild: Callable[[], ClosePlan],
+    command_runner: CommandRunner,
+    validate: bool,
+) -> None:
+    """Apply and regenerate one plan while holding the shared claim lock."""
+    with queue.claim_lock(root):
+        current = rebuild()
+        if (
+            current.members != plan.members
+            or current.writes != plan.writes
+            or current.deletes != plan.deletes
+            or current.transfer_count != plan.transfer_count
+        ):
+            raise ValueError("campaign bookkeeping inputs changed after preflight")
+        for path, content in plan.writes.items():
+            _atomic_write(path, content)
+        for path in plan.deletes:
+            path.unlink()
+        command_runner(
+            [
+                "cargo", "run", "--offline", "--locked", "-j12", "-p", "difftest",
+                "--bin", "go_source_ledger", "--", "--write",
+            ],
+            root,
+        )
+        command_runner(
+            [
+                "cargo", "run", "--offline", "--locked", "-j12", "-p", "difftest",
+                "--bin", "go_test_ledger", "--", "--write",
+            ],
+            root,
+        )
+        command_runner(
+            [sys.executable, "scripts/status-dashboard.py", "--write"], root
+        )
+        if validate:
+            queue.validate_claims(root)
+
+
 def apply_close_plan(
     root: Path,
     plan: ClosePlan,
@@ -496,37 +757,13 @@ def apply_close_plan(
     try:
         # Share the queue's lock for the complete bookkeeping transaction so a
         # claim cannot change between preflight and generated-ledger validation.
-        with queue.claim_lock(root):
-            current = build_close_plan(root, plan.campaign)
-            if (
-                current.members != plan.members
-                or current.writes != plan.writes
-                or current.deletes != plan.deletes
-            ):
-                raise ValueError("campaign close inputs changed after preflight")
-            for path, content in plan.writes.items():
-                _atomic_write(path, content)
-            for path in plan.deletes:
-                path.unlink()
-            command_runner(
-                [
-                    "cargo", "run", "--offline", "--locked", "-j12", "-p", "difftest",
-                    "--bin", "go_source_ledger", "--", "--write",
-                ],
-                root,
-            )
-            command_runner(
-                [
-                    "cargo", "run", "--offline", "--locked", "-j12", "-p", "difftest",
-                    "--bin", "go_test_ledger", "--", "--write",
-                ],
-                root,
-            )
-            command_runner(
-                [sys.executable, "scripts/status-dashboard.py", "--write"], root
-            )
-            if validate:
-                queue.validate_claims(root)
+        _apply_bookkeeping_plan(
+            root,
+            plan,
+            lambda: build_close_plan(root, plan.campaign),
+            command_runner,
+            validate,
+        )
         if run_gate:
             command_runner(["scripts/rewrite-gate.sh", "integrate"], root)
             receipt = queue.load_integration_state(root, queue.INTEGRATION_RECEIPT)
@@ -547,9 +784,40 @@ def apply_close_plan(
         raise
 
 
+def apply_member_promotion_plan(
+    root: Path,
+    plan: MemberPromotionPlan,
+    *,
+    command_runner: CommandRunner = _run,
+    validate: bool = True,
+) -> None:
+    """Promote one member atomically while preserving every active claim."""
+    paths = plan.touched_paths | {root / path for path in GENERATED_PATHS}
+    claim_path = root / queue.CLAIMS_DIR / f"{plan.member}.claim.json"
+    paths.add(claim_path)
+    before = _snapshot(paths)
+    try:
+        _apply_bookkeeping_plan(
+            root,
+            plan,
+            lambda: build_member_promotion_plan(
+                root, plan.campaign, plan.member
+            ),
+            command_runner,
+            validate,
+        )
+    except BaseException:
+        _restore(before)
+        raise
+
+
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument("--campaign", required=True)
+    result.add_argument(
+        "--promote-member",
+        help="preflight one member's exact PARTIAL evidence/status promotion",
+    )
     mode = result.add_mutually_exclusive_group()
     mode.add_argument("--apply", action="store_true")
     mode.add_argument(
@@ -563,12 +831,27 @@ def parser() -> argparse.ArgumentParser:
 def main() -> int:
     arguments = parser().parse_args()
     try:
-        plan = build_close_plan(RUST_ROOT, arguments.campaign)
-        if arguments.apply or arguments.gate:
-            apply_close_plan(RUST_ROOT, plan, run_gate=arguments.gate)
-            action = "gated-and-released" if arguments.gate else "applied"
+        if arguments.promote_member is not None:
+            if arguments.gate:
+                raise ValueError(
+                    "--promote-member cannot run the shared gate; close the whole "
+                    "campaign with --gate"
+                )
+            plan = build_member_promotion_plan(
+                RUST_ROOT, arguments.campaign, arguments.promote_member
+            )
+            if arguments.apply:
+                apply_member_promotion_plan(RUST_ROOT, plan)
+                action = "member-promoted"
+            else:
+                action = "member-promotion-dry-run"
         else:
-            action = "dry-run"
+            plan = build_close_plan(RUST_ROOT, arguments.campaign)
+            if arguments.apply or arguments.gate:
+                apply_close_plan(RUST_ROOT, plan, run_gate=arguments.gate)
+                action = "gated-and-released" if arguments.gate else "applied"
+            else:
+                action = "dry-run"
         print(
             f"campaign_close\t{action}\t{plan.campaign}\t"
             f"members={len(plan.members)}\ttransfers={plan.transfer_count}\t"

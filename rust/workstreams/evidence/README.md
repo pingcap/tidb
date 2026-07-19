@@ -12,6 +12,22 @@ promoted per full gate, not as wave count or Rust LOC. Ordinary batches should
 reach nine production files or fifty original obligations unless a named
 correctness/dependency boundary requires an earlier gate.
 
+A completed campaign root does not wait for the whole campaign before its
+exact evidence prerequisites become usable. Preflight and then atomically
+promote that member while retaining its active claim:
+
+```sh
+scripts/campaign_close.py --campaign <campaign> --promote-member <slice>
+scripts/campaign_close.py --campaign <campaign> --promote-member <slice> --apply
+```
+
+The member transaction requires exact PARTIAL-or-better evidence for every
+frozen obligation, applies only checked ownership transfers for that member or
+members promoted earlier, regenerates the ledgers under the claim lock, and
+leaves campaign close and claim release untouched. The campaign still ends
+with one `campaign_close.py --campaign <campaign> --gate` shared gate and its
+exact-membership receipt.
+
 Every upstream obligation remains generated in
 `difftests/corpus/coverage/go_test_inventory.tsv`. Dispatch exact,
 non-overlapping source units with:

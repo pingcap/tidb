@@ -182,6 +182,84 @@ class CampaignCloseTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
+    def prepare_complete_member_a_evidence(self) -> None:
+        for member in ("member-a", "member-b"):
+            path = self.root / f"workstreams/slices/{member}.toml"
+            path.write_text(
+                path.read_text(encoding="utf-8").replace(
+                    'status = "partial"', 'status = "ready"', 1
+                ),
+                encoding="utf-8",
+            )
+        self.new_source.write_text(
+            self.new_source.read_text(encoding="utf-8")
+            + "".join(
+                f"pkg/planner/source{index}.go\tPARTIAL\tmember-a\t"
+                "rust/impl.rs\tported\n"
+                for index in range(1, 5)
+            ),
+            encoding="utf-8",
+        )
+        self.new_test.write_text(
+            self.new_test.read_text(encoding="utf-8")
+            + "".join(
+                f"go_test\tpkg/planner/source{index}_test.go\t{10 + index}\t"
+                f"Test{index}\tPARTIAL\tmember-a\trust/impl.rs\tported\n"
+                for index in range(2, 25)
+            ),
+            encoding="utf-8",
+        )
+        transfer_path = (
+            self.root
+            / "difftests/corpus/coverage/evidence/transfers/campaign-x.tsv"
+        )
+        transfer_path.write_text(
+            transfer_path.read_text(encoding="utf-8")
+            + "old-owner\tmember-a\tpkg/planner/source1.go\t-\t-\t-\t"
+            "rust/difftests/corpus/coverage/evidence/source/old-owner.tsv\t"
+            "rust/difftests/corpus/coverage/evidence/source/member-a.tsv,"
+            "rust/impl.rs\tmove remaining source row\n",
+            encoding="utf-8",
+        )
+
+    def regenerate_member_a(self, command: list[str], root: Path) -> None:
+        if "go_source_ledger" in command:
+            path = root / "difftests/corpus/coverage/go_source_inventory.tsv"
+            rendered = []
+            for line in path.read_text(encoding="utf-8").splitlines():
+                fields = line.split("\t")
+                if fields[0] in self.member_anchors["member-a"][0]:
+                    fields[4:] = [
+                        "PARTIAL",
+                        "member-a",
+                        "rust/difftests/corpus/coverage/evidence/source/member-a.tsv",
+                        "ported",
+                    ]
+                rendered.append("\t".join(fields))
+            path.write_text("\n".join(rendered) + "\n", encoding="utf-8")
+        elif "go_test_ledger" in command:
+            path = root / "difftests/corpus/coverage/go_test_inventory.tsv"
+            anchors = set(self.member_anchors["member-a"][1])
+            rendered = []
+            for line in path.read_text(encoding="utf-8").splitlines():
+                fields = line.split("\t")
+                anchor = (
+                    f"{fields[1]}:{int(fields[2])}:{fields[3]}"
+                    if len(fields) == 9 and not line.startswith("#")
+                    else None
+                )
+                if anchor in anchors:
+                    fields[5:] = [
+                        "PARTIAL",
+                        "member-a",
+                        "rust/difftests/corpus/coverage/evidence/tests/member-a.tsv",
+                        "ported",
+                    ]
+                rendered.append("\t".join(fields))
+            path.write_text("\n".join(rendered) + "\n", encoding="utf-8")
+        else:
+            (root / "STATUS.md").write_text("generated\n", encoding="utf-8")
+
     def test_preflight_preserves_partial_fragment_and_treats_dash_as_no_path(self) -> None:
         before_source = self.old_source.read_text(encoding="utf-8")
         before_test = self.old_test.read_text(encoding="utf-8")
@@ -316,6 +394,173 @@ class CampaignCloseTest(unittest.TestCase):
 
         for path, content in before.items():
             self.assertEqual(path.read_bytes() if path.exists() else None, content)
+
+    def test_member_promotion_retains_claim_and_does_not_close_campaign(self) -> None:
+        self.prepare_complete_member_a_evidence()
+        claim_path = self.root / "workstreams/claims/member-a.claim.json"
+        before_claim = claim_path.read_bytes()
+        plan = campaign_close.build_member_promotion_plan(
+            self.root, "campaign-x", "member-a"
+        )
+
+        slice_path = Path(
+            campaign_close.queue.load_slices(self.root)["member-a"]["_path"]
+        )
+        self.assertIn('status = "partial"', plan.writes[slice_path])
+        self.assertIn(
+            'status = "ready"',
+            (self.root / "workstreams/slices/member-a.toml").read_text(
+                encoding="utf-8"
+            ),
+        )
+
+        commands: list[list[str]] = []
+
+        def regenerate(command: list[str], root: Path) -> None:
+            commands.append(command)
+            self.regenerate_member_a(command, root)
+
+        campaign_close.apply_member_promotion_plan(
+            self.root, plan, command_runner=regenerate, validate=True
+        )
+
+        self.assertEqual(claim_path.read_bytes(), before_claim)
+        self.assertIn(
+            'status = "partial"',
+            (self.root / "workstreams/slices/member-a.toml").read_text(
+                encoding="utf-8"
+            ),
+        )
+        self.assertIn(
+            'status = "ready"',
+            (self.root / "workstreams/slices/member-b.toml").read_text(
+                encoding="utf-8"
+            ),
+        )
+        self.assertIn('status = "planned"', self.campaign_path.read_text())
+        self.assertNotIn(["scripts/rewrite-gate.sh", "integrate"], commands)
+        with self.assertRaisesRegex(
+            ValueError, "campaign member member-b must be partial or covered"
+        ):
+            campaign_close.build_close_plan(self.root, "campaign-x")
+        member_b_path = self.root / "workstreams/slices/member-b.toml"
+        member_b_path.write_text(
+            member_b_path.read_text(encoding="utf-8").replace(
+                'status = "ready"', 'status = "partial"', 1
+            ),
+            encoding="utf-8",
+        )
+        # Reprocessing the already-applied transfer history remains a valid
+        # close preflight; deleted predecessor fragments stay declared retired.
+        close_plan = campaign_close.build_close_plan(self.root, "campaign-x")
+        transfer_path = (
+            self.root
+            / "difftests/corpus/coverage/evidence/transfers/campaign-x.tsv"
+        )
+        transfer_rows = campaign_close.queue.read_tsv(transfer_path, 9)
+        planned_rows = [
+            line.split("\t")
+            for line in close_plan.writes[transfer_path].splitlines()
+            if line and not line.startswith("#")
+        ]
+        self.assertEqual(planned_rows[0][6], transfer_rows[0][6])
+
+    def test_member_promotion_rejects_incomplete_exact_evidence(self) -> None:
+        member_a = self.root / "workstreams/slices/member-a.toml"
+        member_a.write_text(
+            member_a.read_text(encoding="utf-8").replace(
+                'status = "partial"', 'status = "ready"', 1
+            ),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(
+            ValueError, "requires source evidence pkg/planner/source1.go owned"
+        ):
+            campaign_close.build_member_promotion_plan(
+                self.root, "campaign-x", "member-a"
+            )
+
+    def test_member_promotion_allows_direct_evidence_without_transfer_file(self) -> None:
+        self.prepare_complete_member_a_evidence()
+        self.old_source.unlink()
+        self.old_test.unlink()
+        transfer_path = (
+            self.root
+            / "difftests/corpus/coverage/evidence/transfers/campaign-x.tsv"
+        )
+        transfer_path.unlink()
+        source_inventory = (
+            self.root / "difftests/corpus/coverage/go_source_inventory.tsv"
+        )
+        source_inventory.write_text(
+            source_inventory.read_text(encoding="utf-8").replace(
+                "PARTIAL\told-owner\t"
+                "rust/difftests/corpus/coverage/evidence/source/old-owner.tsv\told",
+                "UNTRIAGED\t-\t-\t-",
+            ),
+            encoding="utf-8",
+        )
+        test_inventory = self.root / "difftests/corpus/coverage/go_test_inventory.tsv"
+        test_inventory.write_text(
+            test_inventory.read_text(encoding="utf-8").replace(
+                "PARTIAL\told-owner\t"
+                "rust/difftests/corpus/coverage/evidence/tests/old-owner.tsv\told",
+                "UNTRIAGED\t-\t-\t-",
+            ),
+            encoding="utf-8",
+        )
+
+        plan = campaign_close.build_member_promotion_plan(
+            self.root, "campaign-x", "member-a"
+        )
+
+        self.assertEqual(plan.transfer_count, 0)
+        self.assertNotIn(transfer_path, plan.touched_paths)
+
+    def test_member_promotion_rejects_future_member_transfer(self) -> None:
+        self.prepare_complete_member_a_evidence()
+        transfer_path = (
+            self.root
+            / "difftests/corpus/coverage/evidence/transfers/campaign-x.tsv"
+        )
+        transfer_path.write_text(
+            transfer_path.read_text(encoding="utf-8")
+            + "old-owner\tmember-b\tpkg/planner/source5.go\t-\t-\t-\t-\t"
+            "rust/impl.rs\tfuture transfer\n",
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(ValueError, "member-b has not been selected"):
+            campaign_close.build_member_promotion_plan(
+                self.root, "campaign-x", "member-a"
+            )
+
+    def test_member_promotion_rolls_back_status_and_transfers_on_failure(self) -> None:
+        self.prepare_complete_member_a_evidence()
+        plan = campaign_close.build_member_promotion_plan(
+            self.root, "campaign-x", "member-a"
+        )
+        before = {
+            path: path.read_bytes() if path.exists() else None
+            for path in plan.touched_paths
+        }
+
+        def fail(_command: list[str], _root: Path) -> None:
+            raise RuntimeError("generator failed")
+
+        with self.assertRaisesRegex(RuntimeError, "generator failed"):
+            campaign_close.apply_member_promotion_plan(
+                self.root,
+                plan,
+                command_runner=fail,
+                validate=False,
+            )
+
+        for path, content in before.items():
+            self.assertEqual(path.read_bytes() if path.exists() else None, content)
+        self.assertTrue(
+            (self.root / "workstreams/claims/member-a.claim.json").is_file()
+        )
 
     def test_gate_releases_exact_members_only_after_exact_receipt(self) -> None:
         plan = campaign_close.build_close_plan(self.root, "campaign-x")
