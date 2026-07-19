@@ -103,7 +103,7 @@ fn binds_two_relations_projections_and_local_predicates_in_source_order() {
 #[test]
 fn using_cross_and_comma_syntax_retain_their_join_boundary() {
     let using = ConfiguredRelationTree::bind_sql(
-        "SELECT a.Balance, o.Amount FROM Accounts a JOIN Orders o USING (AccountID)",
+        "SELECT AccountID, a.Balance, o.Amount FROM Accounts a JOIN Orders o USING (AccountID)",
         &catalog(),
     )
     .expect("USING remains for typed join planning");
@@ -111,6 +111,9 @@ fn using_cross_and_comma_syntax_retain_their_join_boundary() {
         using.join_constraint(),
         &BoundJoinConstraint::Using(vec!["AccountID".to_owned()])
     );
+    assert_eq!(using.projections()[0].side(), RelationSide::Left);
+    assert_eq!(using.projections()[0].column_offset(), 0);
+    assert_eq!(using.projections()[0].output_name(), "AccountID");
 
     for sql in [
         "SELECT a.Balance, o.Amount FROM Accounts a CROSS JOIN Orders o",

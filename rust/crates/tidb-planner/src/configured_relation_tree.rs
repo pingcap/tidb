@@ -35,7 +35,9 @@ use crate::read_only_scan::{
 /// The owning input of a bound projection or local predicate.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RelationSide {
+    /// The first relation in source order.
     Left,
+    /// The second relation in source order.
     Right,
 }
 
@@ -47,11 +49,13 @@ pub struct BoundRelation {
 }
 
 impl BoundRelation {
+    /// Returns the immutable configured table descriptor.
     #[must_use]
     pub const fn table(&self) -> &ConfiguredTable {
         &self.table
     }
 
+    /// Returns the SQL-visible alias, or the source table name when unaliased.
     #[must_use]
     pub fn qualifier(&self) -> &str {
         &self.qualifier
@@ -67,16 +71,19 @@ pub struct BoundProjection {
 }
 
 impl BoundProjection {
+    /// Returns the physical relation that owns this result column.
     #[must_use]
     pub const fn side(&self) -> RelationSide {
         self.side
     }
 
+    /// Returns the source-order column offset within the owning relation.
     #[must_use]
     pub const fn column_offset(&self) -> usize {
         self.column_offset
     }
 
+    /// Returns the explicit result alias or original column spelling.
     #[must_use]
     pub fn output_name(&self) -> &str {
         &self.output_name
@@ -86,8 +93,11 @@ impl BoundProjection {
 /// Join syntax retained for typed classification by Stage C.
 #[derive(Clone, Debug, PartialEq)]
 pub enum BoundJoinConstraint {
+    /// CROSS or comma syntax without a join key.
     Cross,
+    /// An ON expression retained for typed classification by Stage C.
     On(Expr),
+    /// USING names retained in written order for Stage C.
     Using(Vec<String>),
 }
 
@@ -99,11 +109,13 @@ pub struct BoundLocalPredicate {
 }
 
 impl BoundLocalPredicate {
+    /// Returns the physical relation that owns this predicate.
     #[must_use]
     pub const fn side(&self) -> RelationSide {
         self.side
     }
 
+    /// Returns the original validated comparison expression.
     #[must_use]
     pub const fn expression(&self) -> &Expr {
         &self.expression
@@ -135,26 +147,31 @@ impl ConfiguredRelationTree {
         bind_select(&select, catalog)
     }
 
+    /// Returns the first source relation.
     #[must_use]
     pub const fn left(&self) -> &BoundRelation {
         &self.left
     }
 
+    /// Returns the second source relation.
     #[must_use]
     pub const fn right(&self) -> &BoundRelation {
         &self.right
     }
 
+    /// Returns direct result projections in written field order.
     #[must_use]
     pub fn projections(&self) -> &[BoundProjection] {
         &self.projections
     }
 
+    /// Returns local predicates in source AND traversal order.
     #[must_use]
     pub fn local_predicates(&self) -> &[BoundLocalPredicate] {
         &self.local_predicates
     }
 
+    /// Returns the retained join syntax.
     #[must_use]
     pub const fn join_constraint(&self) -> &BoundJoinConstraint {
         &self.join_constraint
@@ -164,20 +181,35 @@ impl ConfiguredRelationTree {
 /// Explicit failures at the two-relation binding boundary.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RelationBindError {
+    /// The SQL parser rejected the statement.
     Parse(String),
+    /// A statement or SELECT envelope lies outside the bounded query shape.
     UnsupportedQueryShape,
+    /// The FROM tree does not contain exactly two plain base tables.
     ExactlyTwoBaseRelationsRequired,
+    /// The join is not INNER/CROSS/comma syntax.
     UnsupportedJoin,
+    /// A table uses partition, stale-read, hint, or sample syntax.
     UnsupportedTableOption,
+    /// A table identifier is not one- or two-part.
     InvalidTablePath(Vec<String>),
+    /// The immutable catalog could not resolve a table.
     TableLookup(ConfiguredTableLookupError),
+    /// Both relations expose the same folded qualifier.
     DuplicateQualifier(String),
+    /// A column identifier path has an unsupported segment count.
     InvalidColumnPath(Vec<String>),
+    /// A qualified column names neither visible relation.
     UnknownQualifier(String),
+    /// No configured column matches the requested path.
     UnknownColumn(Vec<String>),
+    /// More than one configured column matches the requested path.
     AmbiguousColumn(Vec<String>),
+    /// A result field is not a direct configured column.
     UnsupportedProjection,
+    /// A WHERE term is not a bounded column-to-signed-integer comparison.
     UnsupportedPredicate,
+    /// A WHERE term compares columns from both relations.
     CrossRelationWherePredicate,
 }
 
@@ -219,7 +251,7 @@ fn bind_select(
     let projections = select
         .fields
         .iter()
-        .map(|field| bind_projection(field, &left, &right))
+        .map(|field| bind_projection(field, &left, &right, &from.using))
         .collect::<Result<Vec<_>, _>>()?;
     let mut local_predicates = Vec::new();
     if let Some(predicate) = &select.where_clause {
@@ -311,6 +343,7 @@ fn bind_projection(
     field: &SelectField,
     left: &BoundRelation,
     right: &BoundRelation,
+    using: &[String],
 ) -> Result<BoundProjection, RelationBindError> {
     let SelectField::Expr {
         expr: Expr::Column(path),
@@ -319,7 +352,22 @@ fn bind_projection(
     else {
         return Err(RelationBindError::UnsupportedProjection);
     };
-    let (side, offset, column) = resolve_column(path, left, right)?;
+    let (side, offset, column) = match resolve_column(path, left, right) {
+        Ok(resolved) => resolved,
+        Err(RelationBindError::AmbiguousColumn(_))
+            if path.len() == 1
+                && using.iter().any(|name| {
+                    fold_identifier(name) == fold_identifier(&path[0])
+                        && find_column(left, name).is_some()
+                        && find_column(right, name).is_some()
+                }) =>
+        {
+            let (offset, column) = find_column(left, &path[0])
+                .expect("USING projection guard verified the left column");
+            (RelationSide::Left, offset, column)
+        }
+        Err(error) => return Err(error),
+    };
     Ok(BoundProjection {
         side,
         column_offset: offset,
