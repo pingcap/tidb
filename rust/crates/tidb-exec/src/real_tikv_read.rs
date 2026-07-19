@@ -527,8 +527,9 @@ impl ProductionReadProcessAuthority {
         let transport_owner = TonicCoprocessorClient::new()
             .map_err(|error| RealTiKvReadError::Transport(error.to_string()))?;
         debug_assert!(transport_owner.is_transport_owner());
-        let read_authority = SharedReadAuthority::start(transport_owner.clone(), cache)
-            .map_err(|error| RealTiKvReadError::Transport(error.to_string()))?;
+        let read_authority =
+            SharedReadAuthority::start_with_store_liveness(transport_owner.clone(), cache)
+                .map_err(|error| RealTiKvReadError::Transport(error.to_string()))?;
         let factory = ProductionReadSessionFactory {
             read_opener: read_authority.opener(),
             default_timeout: timeout,

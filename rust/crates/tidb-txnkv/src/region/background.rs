@@ -18,7 +18,8 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use super::cache::{
-    RegionLookupApplication, RegionLookupSelection, SharedRegionLoader, StoreRefreshApplication,
+    RegionLookupApplication, RegionLookupSelection, SharedRegionLoader, StoreLivenessApplication,
+    StoreLivenessResult, StoreRefreshApplication,
 };
 use super::recovery::RegionErrorRecoveryPlan;
 use super::{
@@ -26,6 +27,16 @@ use super::{
     RegionGcRound, RegionLoader, RegionLocation, RegionQueryLoader, RegionRecoveryError,
     RegionRecoveryLoader, RegionRouteError, RegionVerId, StoreMaintenanceRound,
 };
+
+/// One-shot TiKV health capability used by the bounded maintenance worker.
+///
+/// The worker plans immutable address/generation observations under the cache
+/// lock, releases the lock for this call, and stale-checks the result before
+/// publishing it back to the canonical store.
+pub trait StoreLivenessProbe: Send + 'static {
+    /// Checks one resolved TiKV address without mutating RegionCache state.
+    fn probe(&self, address: &str, timeout: Duration) -> super::StoreLiveness;
+}
 
 /// One complete pass performed by the single maintenance driver.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -45,6 +56,8 @@ pub enum BackgroundRegionCacheError {
     ZeroInterval,
     /// A zero GC limit cannot inspect an entry.
     ZeroGcLimit,
+    /// A zero health-check timeout would classify every store as unavailable.
+    ZeroLivenessTimeout,
     /// The sole maintenance thread could not be created.
     Spawn(String),
     /// A previous panic poisoned the canonical cache lock.
@@ -73,6 +86,9 @@ impl std::fmt::Display for BackgroundRegionCacheError {
         match self {
             Self::ZeroInterval => formatter.write_str("background interval must be nonzero"),
             Self::ZeroGcLimit => formatter.write_str("background GC limit must be nonzero"),
+            Self::ZeroLivenessTimeout => {
+                formatter.write_str("background liveness timeout must be nonzero")
+            }
             Self::Spawn(message) => {
                 write!(formatter, "failed to spawn maintenance driver: {message}")
             }
@@ -521,6 +537,38 @@ where
         interval: Duration,
         gc_limit: usize,
     ) -> Result<BackgroundRegionCacheOwner<L>, BackgroundRegionCacheError> {
+        Self::start_store_maintenance(cache, interval, gc_limit, None)
+    }
+
+    /// Starts metadata refresh, stale-safe TiKV health recovery, and bounded
+    /// cache GC over one cache allocation.
+    pub fn start_with_liveness<P>(
+        cache: RegionCache<L>,
+        probe: P,
+        interval: Duration,
+        gc_limit: usize,
+        liveness_timeout: Duration,
+    ) -> Result<BackgroundRegionCacheOwner<L>, BackgroundRegionCacheError>
+    where
+        P: StoreLivenessProbe,
+    {
+        if liveness_timeout.is_zero() {
+            return Err(BackgroundRegionCacheError::ZeroLivenessTimeout);
+        }
+        Self::start_store_maintenance(
+            cache,
+            interval,
+            gc_limit,
+            Some((Box::new(probe), liveness_timeout)),
+        )
+    }
+
+    fn start_store_maintenance(
+        cache: RegionCache<L>,
+        interval: Duration,
+        gc_limit: usize,
+        liveness: Option<(Box<dyn StoreLivenessProbe>, Duration)>,
+    ) -> Result<BackgroundRegionCacheOwner<L>, BackgroundRegionCacheError> {
         let loader = cache.loader_handle();
         Self::start_with_round(
             cache,
@@ -541,20 +589,53 @@ where
                     .into_iter()
                     .map(|plan| loader.load_store(plan))
                     .collect::<Vec<_>>();
-                let mut stores = StoreMaintenanceRound {
-                    attempted,
-                    ..StoreMaintenanceRound::default()
+                let (mut stores, liveness_plans) = {
+                    let mut stores = StoreMaintenanceRound {
+                        attempted,
+                        ..StoreMaintenanceRound::default()
+                    };
+                    let mut cache = shared
+                        .lock()
+                        .map_err(|_| BackgroundRegionCacheError::CachePoisoned)?;
+                    for observation in observations {
+                        match cache.publish_store_refresh(observation) {
+                            StoreRefreshApplication::Unchanged => {}
+                            StoreRefreshApplication::Refreshed => stores.refreshed += 1,
+                            StoreRefreshApplication::Removed => stores.removed += 1,
+                            StoreRefreshApplication::Failed => stores.failed += 1,
+                            StoreRefreshApplication::StaleDiscarded => {
+                                stores.stale_discarded += 1;
+                            }
+                        }
+                    }
+                    let liveness_plans = if liveness.is_some() {
+                        cache.plan_store_liveness_checks()
+                    } else {
+                        Vec::new()
+                    };
+                    (stores, liveness_plans)
                 };
+                let liveness_results = liveness_plans
+                    .into_iter()
+                    .map(|plan| {
+                        let (probe, timeout) = liveness
+                            .as_ref()
+                            .expect("liveness plans require an enabled probe");
+                        let observed = probe.probe(&plan.address, *timeout);
+                        StoreLivenessResult {
+                            plan,
+                            liveness: observed,
+                        }
+                    })
+                    .collect::<Vec<_>>();
                 let mut cache = shared
                     .lock()
                     .map_err(|_| BackgroundRegionCacheError::CachePoisoned)?;
-                for observation in observations {
-                    match cache.publish_store_refresh(observation) {
-                        StoreRefreshApplication::Unchanged => {}
-                        StoreRefreshApplication::Refreshed => stores.refreshed += 1,
-                        StoreRefreshApplication::Removed => stores.removed += 1,
-                        StoreRefreshApplication::Failed => stores.failed += 1,
-                        StoreRefreshApplication::StaleDiscarded => stores.stale_discarded += 1,
+                for result in liveness_results {
+                    if cache.publish_store_liveness(result)
+                        == StoreLivenessApplication::StaleDiscarded
+                    {
+                        stores.stale_discarded += 1;
                     }
                 }
                 Ok(BackgroundMaintenanceRound {

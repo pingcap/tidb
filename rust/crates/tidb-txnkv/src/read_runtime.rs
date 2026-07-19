@@ -21,12 +21,27 @@ use std::time::Duration;
 
 use crate::region::{
     BackgroundRegionCache, BackgroundRegionCacheError, BackgroundRegionCacheOwner, KeyRange,
-    RegionCache, RegionLoader, RegionLocation, RegionQueryLoader, RegionRouteError,
+    RegionCache, RegionLoader, RegionLocation, RegionQueryLoader, RegionRouteError, StoreLiveness,
+    StoreLivenessProbe,
 };
+use crate::{DirectUnaryClient, DEFAULT_STORE_LIVENESS_TIMEOUT};
 
 const DEFAULT_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(1);
 const DEFAULT_GC_LIMIT: usize = 50;
 static NEXT_READ_AUTHORITY_ID: AtomicU64 = AtomicU64::new(1);
+
+struct DirectUnaryStoreLivenessProbe<C>(C);
+
+impl<C> StoreLivenessProbe for DirectUnaryStoreLivenessProbe<C>
+where
+    C: DirectUnaryClient + Send + 'static,
+{
+    fn probe(&self, address: &str, timeout: Duration) -> StoreLiveness {
+        self.0
+            .liveness(address, timeout)
+            .unwrap_or(StoreLiveness::Unknown)
+    }
+}
 
 fn next_read_authority_id() -> u64 {
     NEXT_READ_AUTHORITY_ID.fetch_add(1, Ordering::Relaxed)
@@ -79,18 +94,26 @@ where
             DEFAULT_MAINTENANCE_INTERVAL,
             DEFAULT_GC_LIMIT,
         )?;
+        Ok(Self::from_started(client, region_cache, cluster_id))
+    }
+
+    fn from_started(
+        client: C,
+        region_cache: BackgroundRegionCacheOwner<L>,
+        cluster_id: u64,
+    ) -> Self {
         let authority_id = next_read_authority_id();
         let opener = SharedReadOpener {
             client,
             region_cache: region_cache.opener_handle(),
             authority_id,
         };
-        Ok(Self {
+        Self {
             opener,
             region_cache,
             cluster_id,
             authority_id,
-        })
+        }
     }
 
     /// Creates one thread-local session from process-owned capabilities.
@@ -122,6 +145,30 @@ where
     /// Stops and joins the maintenance worker after every session is drained.
     pub fn shutdown(&self) -> Result<(), BackgroundRegionCacheError> {
         self.region_cache.shutdown()
+    }
+}
+
+impl<C, L> SharedReadAuthority<C, L>
+where
+    C: Clone + DirectUnaryClient + Send + 'static,
+    L: RegionQueryLoader + Send + 'static,
+{
+    /// Starts production maintenance with the same retained TiKV transport as
+    /// the foreground sessions, including stale-safe recovery of stores that
+    /// become reachable again at the same address.
+    pub fn start_with_store_liveness(
+        client: C,
+        region_cache: RegionCache<L>,
+    ) -> Result<Self, BackgroundRegionCacheError> {
+        let cluster_id = region_cache.cluster_id();
+        let region_cache = BackgroundRegionCache::start_with_liveness(
+            region_cache,
+            DirectUnaryStoreLivenessProbe(client.clone()),
+            DEFAULT_MAINTENANCE_INTERVAL,
+            DEFAULT_GC_LIMIT,
+            DEFAULT_STORE_LIVENESS_TIMEOUT,
+        )?;
+        Ok(Self::from_started(client, region_cache, cluster_id))
     }
 }
 

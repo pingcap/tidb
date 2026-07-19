@@ -165,7 +165,8 @@ pub struct StoreMaintenanceRound {
     pub removed: usize,
     /// Bounded loader failures deferred to a later round.
     pub failed: usize,
-    /// Results discarded because the canonical store changed during PD I/O.
+    /// Results discarded because the canonical store changed during metadata
+    /// or liveness I/O.
     pub stale_discarded: usize,
 }
 
@@ -282,12 +283,33 @@ pub(super) struct StoreRefreshResult {
     metadata: Result<Option<StoreMetadata>, RegionLoadError>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct StoreLivenessPlan {
+    pub(super) store_id: u64,
+    pub(super) observed_epoch: u64,
+    pub(super) observed_resolve_state: StoreResolveState,
+    pub(super) observed_liveness: StoreLiveness,
+    pub(super) address: String,
+}
+
+pub(super) struct StoreLivenessResult {
+    pub(super) plan: StoreLivenessPlan,
+    pub(super) liveness: StoreLiveness,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum StoreRefreshApplication {
     Unchanged,
     Refreshed,
     Removed,
     Failed,
+    StaleDiscarded,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum StoreLivenessApplication {
+    Unchanged,
+    Updated,
     StaleDiscarded,
 }
 
@@ -573,6 +595,55 @@ where
                 observed_labels: store.labels().to_vec(),
             })
             .collect()
+    }
+
+    /// Selects immutable health-check inputs without lending canonical stores
+    /// across transport I/O.
+    pub(super) fn plan_store_liveness_checks(&self) -> Vec<StoreLivenessPlan> {
+        self.stores
+            .values()
+            .filter(|store| {
+                store.resolve_state == StoreResolveState::Resolved
+                    && store.liveness != StoreLiveness::Reachable
+            })
+            .map(|store| StoreLivenessPlan {
+                store_id: store.id,
+                observed_epoch: store.epoch,
+                observed_resolve_state: store.resolve_state,
+                observed_liveness: store.liveness,
+                address: store.address.clone(),
+            })
+            .collect()
+    }
+
+    /// Publishes one health result only onto the exact store generation that
+    /// was probed. Delayed success can never revive a replaced address or a
+    /// newer failure generation.
+    pub(super) fn publish_store_liveness(
+        &mut self,
+        result: StoreLivenessResult,
+    ) -> StoreLivenessApplication {
+        let StoreLivenessResult { plan, liveness } = result;
+        let Some(store) = self.stores.get_mut(&plan.store_id) else {
+            return StoreLivenessApplication::StaleDiscarded;
+        };
+        if store.epoch != plan.observed_epoch
+            || store.resolve_state != plan.observed_resolve_state
+            || store.liveness != plan.observed_liveness
+            || store.address != plan.address
+        {
+            return StoreLivenessApplication::StaleDiscarded;
+        }
+        // Foreground failure handling owns degradation. A periodic probe may
+        // only restore a store after an explicit serving response; timeout,
+        // transport failure, and health `Unknown` must not turn a known-dead
+        // store into a selector candidate.
+        if liveness != StoreLiveness::Reachable || store.liveness == liveness {
+            return StoreLivenessApplication::Unchanged;
+        }
+        store.liveness = liveness;
+        self.advance_store_revision();
+        StoreLivenessApplication::Updated
     }
 
     /// Publishes one PD observation only if its complete selection snapshot is current.
