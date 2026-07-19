@@ -47,6 +47,7 @@ rust_paths = [
   "rust/crates/tidb-txnkv/src/rpc/batch/transport.rs",
   "rust/crates/tidb-txnkv/src/rpc/channel_pool.rs",
   "rust/crates/tidb-txnkv/src/rpc/error.rs",
+  "rust/crates/tidb-txnkv/src/rpc/mod.rs",
   "rust/crates/tidb-txnkv/src/rpc/transport_runtime.rs",
   "rust/crates/tidb-txnkv/src/rpc/unary.rs",
   "rust/crates/tidb-txnkv/src/rpc/tonic_coprocessor.rs",
