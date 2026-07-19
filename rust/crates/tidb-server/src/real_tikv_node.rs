@@ -142,6 +142,16 @@ struct QueryActivityLease {
     query_id: u64,
 }
 
+fn install_remote_publication_observer<E>(
+    snapshot_ts: Option<u64>,
+    install: impl FnOnce() -> Result<(), E>,
+) -> Result<(), E> {
+    if snapshot_ts.is_some() {
+        install()?;
+    }
+    Ok(())
+}
+
 impl Drop for QueryActivityLease {
     fn drop(&mut self) {
         let previous = self.activity.active.fetch_sub(1, Ordering::AcqRel);
@@ -172,9 +182,9 @@ impl QuerySession for RealTiKvServerSession {
             .inner
             .execute_with_cancellation(sql, cancellation)
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-        let snapshot_ts = query
-            .snapshot_ts()
-            .map_or_else(|| "null".to_owned(), |timestamp| timestamp.to_string());
+        let snapshot_ts = query.snapshot_ts();
+        let snapshot_ts_json =
+            snapshot_ts.map_or_else(|| "null".to_owned(), |timestamp| timestamp.to_string());
         let table_id = query.table_id();
         let cluster_id = self.inner.cluster_id();
         let identity = query.session_identity();
@@ -206,8 +216,8 @@ impl QuerySession for RealTiKvServerSession {
         let connection_id = self.context.connection_id;
         let authority_id = identity.authority_id();
         let session_id = identity.session_id();
-        evidence
-            .set_publication_observer(move |published| {
+        install_remote_publication_observer(snapshot_ts, || {
+            evidence.set_publication_observer(move |published| {
                 emit_query_transport_publication(
                     connection_id,
                     query_id,
@@ -216,9 +226,10 @@ impl QuerySession for RealTiKvServerSession {
                     published,
                 );
             })
-            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+        })
+        .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
         eprintln!(
-            "{{\"event\":\"query_snapshot\",\"connection_id\":{},\"query_id\":{query_id},\"authority_id\":{},\"session_id\":{},\"cluster_id\":{cluster_id},\"snapshot_ts\":{snapshot_ts},\"table_id\":{table_id},\"executor_kinds\":{executor_kinds:?},\"predicate_count\":{predicate_count},\"output_offsets\":{output_offsets:?},\"handle_range_count\":{handle_range_count},\"handle_ranges\":[{handle_ranges}],\"user\":{:?},\"host\":{:?}}}",
+            "{{\"event\":\"query_snapshot\",\"connection_id\":{},\"query_id\":{query_id},\"authority_id\":{},\"session_id\":{},\"cluster_id\":{cluster_id},\"snapshot_ts\":{snapshot_ts_json},\"table_id\":{table_id},\"executor_kinds\":{executor_kinds:?},\"predicate_count\":{predicate_count},\"output_offsets\":{output_offsets:?},\"handle_range_count\":{handle_range_count},\"handle_ranges\":[{handle_ranges}],\"user\":{:?},\"host\":{:?}}}",
             connection_id,
             authority_id,
             session_id,
@@ -568,7 +579,32 @@ impl std::error::Error for RunConfiguredNodeError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
     use std::sync::Mutex;
+
+    #[test]
+    fn contradiction_then_remote_query_leaves_no_stale_publication_observer() {
+        let installed = Cell::new(false);
+        let install_calls = Cell::new(0);
+        let install_once = || {
+            install_calls.set(install_calls.get() + 1);
+            if installed.replace(true) {
+                Err("a publication observer is already installed for this query")
+            } else {
+                Ok(())
+            }
+        };
+
+        install_remote_publication_observer(None, install_once)
+            .expect("a local contradiction has no physical publication to observe");
+        assert!(!installed.get());
+        assert_eq!(install_calls.get(), 0);
+
+        install_remote_publication_observer(Some(42), install_once)
+            .expect("the next remote query must own the sole observer slot");
+        assert!(installed.get());
+        assert_eq!(install_calls.get(), 1);
+    }
 
     struct FactoryEvent(Arc<Mutex<Vec<&'static str>>>);
 
