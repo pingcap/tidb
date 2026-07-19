@@ -12,6 +12,103 @@ RUNNERS=(
 MAX_LINES=(220 320 470)
 
 bash -n "${HARNESS}"
+source "${HARNESS}"
+
+start_stubborn_supervisor() {
+  TAG=$1
+  TAG_DIR="${TMPDIR:-/tmp}/${TAG}"
+  PROCESS_STOP_TIMEOUT=1
+  TEST_READY_FILE=$(mktemp "${TMPDIR:-/tmp}/${TAG}.XXXXXX")
+  rm -f -- "${TEST_READY_FILE}"
+  perl -e '
+    $SIG{TERM} = "IGNORE";
+    open(my $ready, ">", $ARGV[0]) or die $!;
+    print {$ready} "ready\n";
+    close($ready);
+    sleep 10;
+  ' "${TEST_READY_FILE}" "${TAG}" &
+  TEST_SUPERVISOR_PID=$!
+  for _ in $(seq 1 100); do
+    if [[ -s "${TEST_READY_FILE}" ]]; then
+      break
+    fi
+    if ! kill -0 "${TEST_SUPERVISOR_PID}" 2>/dev/null; then
+      break
+    fi
+    sleep 0.01
+  done
+  if [[ ! -s "${TEST_READY_FILE}" ]]; then
+    kill -KILL "${TEST_SUPERVISOR_PID}" 2>/dev/null || true
+    wait "${TEST_SUPERVISOR_PID}" 2>/dev/null || true
+    rm -f -- "${TEST_READY_FILE}"
+    echo "failed-scenario cleanup fixture did not become ready" >&2
+    return 1
+  fi
+}
+
+stop_stubborn_supervisor() {
+  kill -KILL "${TEST_SUPERVISOR_PID}" 2>/dev/null || true
+  wait "${TEST_SUPERVISOR_PID}" 2>/dev/null || true
+  rm -f -- "${TEST_READY_FILE}"
+}
+
+install_process_enumeration_fixture() {
+  # Process enumeration is sandbox-dependent. Keep the production kill(2)
+  # liveness check, but inject supervisor identity and an empty child snapshot.
+  ps() {
+    if [[ " $* " == *" -o stat= "* ]]; then
+      printf 'S\n'
+    else
+      printf '%s\n' "${TEST_PROCESS_COMMAND}"
+    fi
+  }
+  pgrep() {
+    return 1
+  }
+}
+
+test_failed_scenario_cleanup() {
+  CAMPAIGN_LABEL="failed-scenario cleanup self-test"
+  start_stubborn_supervisor campaign-failed-scenario-cleanup
+  TEST_PROCESS_COMMAND="tiup playground --tag ${TAG}"
+  install_process_enumeration_fixture
+  if ! terminate_playground_supervisor "${TEST_SUPERVISOR_PID}"; then
+    stop_stubborn_supervisor
+    unset -f ps pgrep
+    echo "failed-scenario cleanup rejected its exact tag-owned supervisor" >&2
+    return 1
+  fi
+  unset -f ps pgrep
+  rm -f -- "${TEST_READY_FILE}"
+  if kill -0 "${TEST_SUPERVISOR_PID}" 2>/dev/null; then
+    stop_stubborn_supervisor
+    echo "failed-scenario cleanup left its exact tag-owned supervisor alive" >&2
+    return 1
+  fi
+}
+
+test_unowned_supervisor_is_rejected() {
+  CAMPAIGN_LABEL="unowned-supervisor cleanup self-test"
+  start_stubborn_supervisor campaign-unowned-supervisor-cleanup
+  TEST_PROCESS_COMMAND="tiup playground --tag unrelated-campaign"
+  install_process_enumeration_fixture
+  if terminate_playground_supervisor "${TEST_SUPERVISOR_PID}" 2>/dev/null; then
+    unset -f ps pgrep
+    stop_stubborn_supervisor
+    echo "cleanup accepted a supervisor without exact tag ownership" >&2
+    return 1
+  fi
+  unset -f ps pgrep
+  if ! kill -0 "${TEST_SUPERVISOR_PID}" 2>/dev/null; then
+    rm -f -- "${TEST_READY_FILE}"
+    echo "cleanup signaled an unowned supervisor beyond bounded TERM" >&2
+    return 1
+  fi
+  stop_stubborn_supervisor
+}
+
+test_failed_scenario_cleanup
+test_unowned_supervisor_is_rejected
 
 for index in "${!RUNNERS[@]}"; do
   runner=${RUNNERS[${index}]}

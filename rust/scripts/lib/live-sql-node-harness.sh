@@ -183,8 +183,7 @@ terminate_playground_supervisor() {
       fi
       descendants=$(collect_descendant_pids "${pid}")
     fi
-    if [[ "${PLAYGROUND_CHILD_DETACHED}" != true \
-      || "${command}" != *"${TAG}"* || -n "${descendants}" ]]; then
+    if [[ "${command}" != *"${TAG}"* || -n "${descendants}" ]]; then
       echo "${CAMPAIGN_LABEL} cleanup failed: TiUP supervisor could not be safely contained" >&2
       return 1
     fi
@@ -690,7 +689,6 @@ initialize_live_sql_node_scenario() {
   AUTH_USER=${SCENARIO_AUTH_USER}
   AUTH_PASSWORD=$(scenario_environment_value AUTH_PASSWORD "${SCENARIO_AUTH_DEFAULT_PASSWORD}")
   PLAYGROUND_PID=
-  PLAYGROUND_CHILD_DETACHED=false
   RUST_PID=
   RESTART_PID=
   STOPPED_PIDS=()
@@ -1092,7 +1090,6 @@ SQL
     echo "tag-owned TiKV B ${ADDRESS_B} did not stop" >&2
     exit 1
   fi
-  PLAYGROUND_CHILD_DETACHED=true
 
   survivor_ready=false
   for _ in $(seq 1 $((PHASE_TIMEOUT * 2))); do
