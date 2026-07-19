@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-for prerequisite in tiup cargo curl jq nc pgrep ps awk sed seq grep sort tail mktemp mkfifo openssl chmod; do
+for prerequisite in tiup cargo curl jq nc pgrep ps awk sed seq grep sort tail mktemp mkfifo openssl chmod date kill; do
   if ! command -v "${prerequisite}" >/dev/null 2>&1; then
     echo "missing Campaign 21 prerequisite: ${prerequisite}" >&2
     exit 1
@@ -63,6 +63,16 @@ OWNED_PIDS=
 STORE_ADDRESSES=
 CLIENT_PIDS=()
 CLIENT_LOGS_ARCHIVED=false
+CLIENT_COMPLETION_TIMEOUT=${C21_CLIENT_COMPLETION_TIMEOUT:-60}
+PROCESS_STOP_TIMEOUT=${C21_PROCESS_STOP_TIMEOUT:-15}
+
+for timeout_name in CLIENT_COMPLETION_TIMEOUT PROCESS_STOP_TIMEOUT; do
+  timeout_value=${!timeout_name}
+  if [[ ! "${timeout_value}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "${timeout_name} must be a positive integer number of seconds" >&2
+    exit 1
+  fi
+done
 
 tag_status_rows() {
   tiup status | awk -v tag="${TAG}" \
@@ -115,6 +125,7 @@ close_hold_fds() {
   exec 15>&-
   exec 16>&-
   exec 17>&-
+  exec 18>&-
 }
 
 open_hold_fd() {
@@ -129,6 +140,7 @@ open_hold_fd() {
     5) exec 15<>"${fifo}" ;;
     6) exec 16<>"${fifo}" ;;
     7) exec 17<>"${fifo}" ;;
+    8) exec 18<>"${fifo}" ;;
     *) echo "invalid Campaign 21 client index ${index}" >&2; return 1 ;;
   esac
 }
@@ -144,12 +156,92 @@ release_client_query() {
     4) printf '%s\nquit\n' "${query}" >&14; exec 14>&- ;;
     5) printf '%s\nquit\n' "${query}" >&15; exec 15>&- ;;
     6) printf '%s\nquit\n' "${query}" >&16; exec 16>&- ;;
+    7) printf '%s\nquit\n' "${query}" >&17; exec 17>&- ;;
     *) echo "invalid successful Campaign 21 client index ${index}" >&2; return 1 ;;
   esac
 }
 
 close_early_client_fd() {
-  exec 17>&-
+  exec 18>&-
+}
+
+pid_is_running() {
+  local pid=$1
+  if ! kill -0 "${pid}" 2>/dev/null; then
+    return 1
+  fi
+  local state
+  state=$(ps -o stat= -p "${pid}" 2>/dev/null | awk 'NR == 1 { print $1 }')
+  [[ -n "${state}" && "${state}" != Z* ]]
+}
+
+wait_for_pids_until() {
+  local deadline=$1
+  shift
+  while true; do
+    local running=false
+    local pid
+    for pid in "$@"; do
+      if [[ -n "${pid}" ]] && pid_is_running "${pid}"; then
+        running=true
+        break
+      fi
+    done
+    if [[ "${running}" == false ]]; then
+      return 0
+    fi
+    if [[ $(date +%s) -ge "${deadline}" ]]; then
+      return 1
+    fi
+    sleep 0.1
+  done
+}
+
+terminate_pid_group() {
+  local label=$1
+  shift
+  local pid
+  local running_pids=()
+  for pid in "$@"; do
+    if [[ -n "${pid}" ]] && pid_is_running "${pid}"; then
+      running_pids+=("${pid}")
+      kill -TERM "${pid}" 2>/dev/null || true
+    fi
+  done
+  if [[ ${#running_pids[@]} -eq 0 ]]; then
+    for pid in "$@"; do
+      if [[ -n "${pid}" ]]; then
+        wait "${pid}" 2>/dev/null || true
+      fi
+    done
+    return 0
+  fi
+
+  local deadline=$(( $(date +%s) + PROCESS_STOP_TIMEOUT ))
+  local forced=false
+  if ! wait_for_pids_until "${deadline}" "${running_pids[@]}"; then
+    forced=true
+    for pid in "${running_pids[@]}"; do
+      if pid_is_running "${pid}"; then
+        kill -KILL "${pid}" 2>/dev/null || true
+      fi
+    done
+    deadline=$(( $(date +%s) + PROCESS_STOP_TIMEOUT ))
+    if ! wait_for_pids_until "${deadline}" "${running_pids[@]}"; then
+      echo "Campaign 21 cleanup failed: ${label} remained alive after SIGKILL" >&2
+      return 1
+    fi
+  fi
+  for pid in "$@"; do
+    if [[ -n "${pid}" ]]; then
+      wait "${pid}" 2>/dev/null || true
+    fi
+  done
+  if [[ "${forced}" == true ]]; then
+    echo "Campaign 21 cleanup failed: ${label} required SIGKILL after ${PROCESS_STOP_TIMEOUT}s" >&2
+    return 1
+  fi
+  return 0
 }
 
 archive_client_logs() {
@@ -161,7 +253,7 @@ archive_client_logs() {
     return
   fi
   local index
-  for index in $(seq 0 7); do
+  for index in $(seq 0 8); do
     if [[ -f "${RUNTIME_DIR}/client-${index}.out" ]]; then
       printf 'client_%s_output_begin\n' "${index}" >>"${MYSQL_LOG}"
       sed -n '1,200p' "${RUNTIME_DIR}/client-${index}.out" >>"${MYSQL_LOG}"
@@ -181,22 +273,15 @@ cleanup() {
   trap - EXIT INT TERM
 
   close_hold_fds
-  local client_pid
-  for client_pid in "${CLIENT_PIDS[@]:-}"; do
-    if [[ -n "${client_pid}" ]] && kill -0 "${client_pid}" 2>/dev/null; then
-      kill "${client_pid}" 2>/dev/null || true
-    fi
-  done
-  for client_pid in "${CLIENT_PIDS[@]:-}"; do
-    if [[ -n "${client_pid}" ]]; then
-      wait "${client_pid}" 2>/dev/null || true
-    fi
-  done
+  if [[ ${#CLIENT_PIDS[@]} -gt 0 ]] \
+    && ! terminate_pid_group "stock MySQL client process" "${CLIENT_PIDS[@]}"; then
+    cleanup_failed=true
+  fi
   archive_client_logs
 
-  if [[ -n "${RUST_PID}" ]] && kill -0 "${RUST_PID}" 2>/dev/null; then
-    kill "${RUST_PID}" 2>/dev/null || true
-    wait "${RUST_PID}" 2>/dev/null || true
+  if [[ -n "${RUST_PID}" ]] \
+    && ! terminate_pid_group "Rust SQL node ${RUST_PID}" "${RUST_PID}"; then
+    cleanup_failed=true
   fi
   if nc -z -w 1 127.0.0.1 "${RUST_SQL_PORT}" >/dev/null 2>&1; then
     echo "Campaign 21 cleanup failed: Rust SQL node ${RUST_SQL_ADDR} remains reachable" >&2
@@ -204,9 +289,9 @@ cleanup() {
   fi
 
   OWNED_PIDS=$(merge_owned_pids)
-  if [[ -n "${PLAYGROUND_PID}" ]] && kill -0 "${PLAYGROUND_PID}" 2>/dev/null; then
-    kill "${PLAYGROUND_PID}" 2>/dev/null || true
-    wait "${PLAYGROUND_PID}" 2>/dev/null || true
+  if [[ -n "${PLAYGROUND_PID}" ]] \
+    && ! terminate_pid_group "TiUP playground ${PLAYGROUND_PID}" "${PLAYGROUND_PID}"; then
+    cleanup_failed=true
   fi
   local registered_rows
   registered_rows=$(tag_status_rows 2>/dev/null || true)
@@ -457,7 +542,6 @@ for index in $(seq 0 7); do
   ) &
   CLIENT_PIDS[${index}]=$!
 done
-unset AUTH_PASSWORD
 
 ACTIVE_EIGHT=false
 for _ in $(seq 1 300); do
@@ -482,44 +566,27 @@ if [[ "${ACTIVE_EIGHT}" != true ]]; then
   exit 1
 fi
 
-EARLY_PID=${CLIENT_PIDS[7]}
-if ! kill -0 "${EARLY_PID}" 2>/dev/null; then
-  echo "Campaign 21 early-termination client exited before the deliberate close" >&2
-  exit 1
-fi
-kill "${EARLY_PID}"
-close_early_client_fd
-wait "${EARLY_PID}" 2>/dev/null || true
-
-EARLY_RELEASED=false
-for _ in $(seq 1 100); do
-  LAST_CLOSED=$(grep -F '"event":"connection_closed"' "${RUST_LOG}" | tail -1 || true)
-  if [[ -n "${LAST_CLOSED}" ]] \
-    && printf '%s\n' "${LAST_CLOSED}" | jq -e '.active == 7' >/dev/null 2>&1; then
-    EARLY_RELEASED=true
-    break
-  fi
-  sleep 0.1
-done
-if [[ "${EARLY_RELEASED}" != true ]]; then
-  echo "Rust SQL node did not release the deliberately terminated client" >&2
-  tail -240 "${RUST_LOG}" >&2
-  exit 1
-fi
-
-for index in $(seq 0 6); do
+for index in $(seq 0 7); do
   release_client_query "${index}"
 done
 
-for index in $(seq 0 6); do
+CLIENT_DEADLINE=$(( $(date +%s) + CLIENT_COMPLETION_TIMEOUT ))
+if ! wait_for_pids_until "${CLIENT_DEADLINE}" "${CLIENT_PIDS[@]}"; then
+  echo "Campaign 21 eight-client query phase exceeded ${CLIENT_COMPLETION_TIMEOUT}s" >&2
+  tail -260 "${RUST_LOG}" >&2
+  exit 1
+fi
+for index in $(seq 0 7); do
   if ! wait "${CLIENT_PIDS[${index}]}"; then
+    CLIENT_PIDS[${index}]=
     echo "Campaign 21 successful client ${index} exited unsuccessfully" >&2
     sed -n '1,200p' "${RUNTIME_DIR}/client-${index}.err" >&2
     exit 1
   fi
+  CLIENT_PIDS[${index}]=
 done
 
-for index in $(seq 0 6); do
+for index in $(seq 0 7); do
   QUERY_OUTPUT=$(sed -n '1,20p' "${RUNTIME_DIR}/client-${index}.out")
   QUERY_HEADER=$(printf '%s\n' "${QUERY_OUTPUT}" | sed -n '1p')
   if [[ "${QUERY_HEADER}" != $'amount\tid' ]]; then
@@ -534,14 +601,18 @@ for index in $(seq 0 6); do
     exit 1
   fi
 done
-archive_client_logs
 
 EVIDENCE_READY=false
 for _ in $(seq 1 300); do
   SNAPSHOT_COUNT=$(grep -c -F '"event":"query_snapshot"' "${RUST_LOG}" || true)
   TRANSPORT_COUNT=$(grep -c -F '"event":"query_transport"' "${RUST_LOG}" || true)
+  QUERY_BEGIN_COUNT=$(grep -F '"event":"query_activity"' "${RUST_LOG}" \
+    | grep -c -F '"phase":"begin"' || true)
+  QUERY_END_COUNT=$(grep -F '"event":"query_activity"' "${RUST_LOG}" \
+    | grep -c -F '"phase":"end"' || true)
   FINAL_CONNECTION_JSON=$(grep -F '"event":"connection_closed"' "${RUST_LOG}" | tail -1 || true)
-  if [[ "${SNAPSHOT_COUNT}" -ge 7 ]] && [[ "${TRANSPORT_COUNT}" -ge 7 ]] \
+  if [[ "${SNAPSHOT_COUNT}" -ge 8 ]] && [[ "${TRANSPORT_COUNT}" -ge 8 ]] \
+    && [[ "${QUERY_BEGIN_COUNT}" -ge 8 ]] && [[ "${QUERY_END_COUNT}" -ge 8 ]] \
     && [[ -n "${FINAL_CONNECTION_JSON}" ]] \
     && printf '%s\n' "${FINAL_CONNECTION_JSON}" \
       | jq -e '.active == 0 and .accepted == 8 and .completed == 8' >/dev/null 2>&1; then
@@ -558,30 +629,31 @@ fi
 
 SNAPSHOTS_JSON=$(grep -F '"event":"query_snapshot"' "${RUST_LOG}" | jq -s '.')
 TRANSPORTS_JSON=$(grep -F '"event":"query_transport"' "${RUST_LOG}" | jq -s '.')
+QUERY_ACTIVITY_JSON=$(grep -F '"event":"query_activity"' "${RUST_LOG}" | jq -s '.')
 if ! printf '%s\n' "${SNAPSHOTS_JSON}" | jq -e \
   --arg table_id "${TABLE_ID}" --arg cluster_id "${PD_CLUSTER_ID}" \
   --arg authority_id "${AUTHORITY_ID}" --arg user "${AUTH_USER}" \
-  'length == 7
+  'length == 8
    and all(.[]; (.snapshot_ts | type) == "number" and .snapshot_ts > 0
      and (.table_id | tostring) == $table_id
      and (.cluster_id | tostring) == $cluster_id
      and (.authority_id | tostring) == $authority_id
      and .user == $user and .host == "127.0.0.1")
-   and ([.[].connection_id] | unique | length) == 7
-   and ([.[].session_id] | unique | length) == 7' >/dev/null; then
+   and ([.[].connection_id] | unique | length) == 8
+   and ([.[].session_id] | unique | length) == 8' >/dev/null; then
   echo "Campaign 21 snapshots did not share one nonzero cluster/authority with distinct sessions" >&2
   printf '%s\n' "${SNAPSHOTS_JSON}" >&2
   exit 1
 fi
 if ! printf '%s\n' "${TRANSPORTS_JSON}" | jq -e \
   --arg authority_id "${AUTHORITY_ID}" \
-  'length == 7
+  'length == 8
    and all(.[]; (.authority_id | tostring) == $authority_id
      and (.located_region_ids | type) == "array" and (.located_region_ids | length) > 0
      and (.dispatched_region_ids | type) == "array" and (.dispatched_region_ids | length) > 0
      and .batch_attempts >= 1 and .unary_attempts == 0)
-   and ([.[].connection_id] | unique | length) == 7
-   and ([.[].session_id] | unique | length) == 7' >/dev/null; then
+   and ([.[].connection_id] | unique | length) == 8
+   and ([.[].session_id] | unique | length) == 8' >/dev/null; then
   echo "Campaign 21 queries did not each prove BatchCommands-only real-TiKV dispatch" >&2
   printf '%s\n' "${TRANSPORTS_JSON}" >&2
   exit 1
@@ -594,11 +666,34 @@ if [[ "${SNAPSHOT_CONNECTION_IDS}" != "${TRANSPORT_CONNECTION_IDS}" ]]; then
   echo "Campaign 21 snapshot and transport evidence came from different connections" >&2
   exit 1
 fi
+if ! printf '%s\n' "${QUERY_ACTIVITY_JSON}" | jq -e \
+  '([.[] | select(.phase == "begin")]) as $begins
+   | ([.[] | select(.phase == "end")]) as $ends
+   | length == 16
+     and ($begins | length) == 8 and ($ends | length) == 8
+     and ([$begins[].connection_id] | unique | length) == 8
+     and ([$ends[].connection_id] | unique | length) == 8
+     and (([$begins[].connection_id] | sort) == ([$ends[].connection_id] | sort))
+     and (([$begins[].max_active] | max) >= 2)
+     and ($ends[-1].active == 0)' >/dev/null; then
+  echo "Campaign 21 did not prove overlapping queries with balanced begin/end activity" >&2
+  printf '%s\n' "${QUERY_ACTIVITY_JSON}" >&2
+  exit 1
+fi
+QUERY_ACTIVITY_CONNECTION_IDS=$(printf '%s\n' "${QUERY_ACTIVITY_JSON}" \
+  | jq -r '.[] | select(.phase == "begin") | .connection_id' \
+  | sort -n | tr '\n' ',')
+if [[ "${SNAPSHOT_CONNECTION_IDS}" != "${QUERY_ACTIVITY_CONNECTION_IDS}" ]]; then
+  echo "Campaign 21 query activity and real-TiKV evidence came from different connections" >&2
+  exit 1
+fi
+MAX_QUERY_ACTIVE=$(printf '%s\n' "${QUERY_ACTIVITY_JSON}" \
+  | jq -r '[.[] | select(.phase == "begin") | .max_active] | max')
 
 MAX_ACTIVE=$(grep -F '"event":"connection_begin"' "${RUST_LOG}" \
   | jq -r '.active' | sort -n | tail -1)
-if [[ ! "${MAX_ACTIVE}" =~ ^[0-9]+$ ]] || [[ "${MAX_ACTIVE}" -lt 2 ]]; then
-  echo "Campaign 21 did not prove more than one simultaneous connection" >&2
+if [[ "${MAX_ACTIVE}" != 8 ]]; then
+  echo "Campaign 21 did not prove eight simultaneous connections that subsequently authenticated" >&2
   exit 1
 fi
 if ! printf '%s\n' "${FINAL_CONNECTION_JSON}" | jq -e \
@@ -609,6 +704,72 @@ if ! printf '%s\n' "${FINAL_CONNECTION_JSON}" | jq -e \
   exit 1
 fi
 
+EARLY_INDEX=8
+EARLY_FIFO="${RUNTIME_DIR}/client-${EARLY_INDEX}.fifo"
+mkfifo "${EARLY_FIFO}"
+open_hold_fd "${EARLY_INDEX}" "${EARLY_FIFO}"
+(
+  close_hold_fds
+  export MYSQL_PWD="${AUTH_PASSWORD}"
+  export MARIADB_PWD="${AUTH_PASSWORD}"
+  exec "${MYSQL_CLIENT}" --protocol=tcp -h 127.0.0.1 -P "${RUST_SQL_PORT}" \
+    -u"${AUTH_USER}" --connect-timeout=5 "${MYSQL_PLUGIN_ARGS[@]}" -B \
+    <"${EARLY_FIFO}" >"${RUNTIME_DIR}/client-${EARLY_INDEX}.out" \
+    2>"${RUNTIME_DIR}/client-${EARLY_INDEX}.err"
+) &
+CLIENT_PIDS[${EARLY_INDEX}]=$!
+unset AUTH_PASSWORD
+
+NINTH_ADMITTED=false
+NINTH_ADMISSION_DEADLINE=$(( $(date +%s) + CLIENT_COMPLETION_TIMEOUT ))
+while [[ $(date +%s) -lt "${NINTH_ADMISSION_DEADLINE}" ]]; do
+  LAST_BEGIN=$(grep -F '"event":"connection_begin"' "${RUST_LOG}" | tail -1 || true)
+  if [[ -n "${LAST_BEGIN}" ]] \
+    && pid_is_running "${CLIENT_PIDS[${EARLY_INDEX}]}" \
+    && printf '%s\n' "${LAST_BEGIN}" \
+      | jq -e '.active == 1 and .accepted == 9' >/dev/null 2>&1; then
+    NINTH_ADMITTED=true
+    break
+  fi
+  sleep 0.1
+done
+if [[ "${NINTH_ADMITTED}" != true ]]; then
+  echo "Campaign 21 ninth lifecycle client was not admitted after the eight-query proof" >&2
+  tail -260 "${RUST_LOG}" >&2
+  exit 1
+fi
+
+EARLY_PID=${CLIENT_PIDS[${EARLY_INDEX}]}
+kill -TERM "${EARLY_PID}" 2>/dev/null || true
+close_early_client_fd
+EARLY_DEADLINE=$(( $(date +%s) + CLIENT_COMPLETION_TIMEOUT ))
+if ! wait_for_pids_until "${EARLY_DEADLINE}" "${EARLY_PID}"; then
+  echo "Campaign 21 ninth lifecycle client did not terminate within ${CLIENT_COMPLETION_TIMEOUT}s" >&2
+  exit 1
+fi
+wait "${EARLY_PID}" 2>/dev/null || true
+CLIENT_PIDS[${EARLY_INDEX}]=
+
+EARLY_RELEASED=false
+EARLY_RELEASE_DEADLINE=$(( $(date +%s) + CLIENT_COMPLETION_TIMEOUT ))
+while [[ $(date +%s) -lt "${EARLY_RELEASE_DEADLINE}" ]]; do
+  FINAL_CONNECTION_JSON=$(grep -F '"event":"connection_closed"' "${RUST_LOG}" | tail -1 || true)
+  if [[ -n "${FINAL_CONNECTION_JSON}" ]] \
+    && printf '%s\n' "${FINAL_CONNECTION_JSON}" \
+      | jq -e '.active == 0 and .accepted == 9 and .completed == 9 and .failed == 0' \
+        >/dev/null 2>&1; then
+    EARLY_RELEASED=true
+    break
+  fi
+  sleep 0.1
+done
+if [[ "${EARLY_RELEASED}" != true ]]; then
+  echo "Rust SQL node did not release the separate ninth lifecycle client exactly once" >&2
+  tail -260 "${RUST_LOG}" >&2
+  exit 1
+fi
+archive_client_logs
+
 SNAPSHOT_TSOS=$(printf '%s\n' "${SNAPSHOTS_JSON}" \
   | jq -r 'map(.snapshot_ts | tostring) | join(",")')
-echo "Campaign 21 live concurrent authenticated SQL-node proof passed: seven stock clients read exact (amount,id) pairs [(913,-7),(-2048,0),(77,42)] from real TiKV after eight authenticated clients reached active=8 and one was deliberately terminated; table_id=${TABLE_ID}; pd_cluster_id=${PD_CLUSTER_ID}; authority_id=${AUTHORITY_ID}; read_authority_id=${READ_AUTHORITY_ID}; snapshot_tsos=${SNAPSHOT_TSOS}; max_active=${MAX_ACTIVE}; accepted=8; completed=8; active=0"
+echo "Campaign 21 live concurrent authenticated SQL-node proof passed: eight concurrently connected stock clients authenticated and read exact (amount,id) pairs [(913,-7),(-2048,0),(77,42)] from real TiKV with max_query_active=${MAX_QUERY_ACTIVE}; a separate ninth lifecycle client was deliberately terminated and released exactly once; table_id=${TABLE_ID}; pd_cluster_id=${PD_CLUSTER_ID}; authority_id=${AUTHORITY_ID}; read_authority_id=${READ_AUTHORITY_ID}; snapshot_tsos=${SNAPSHOT_TSOS}; max_connection_active=${MAX_ACTIVE}; accepted=9; completed=9; active=0"
