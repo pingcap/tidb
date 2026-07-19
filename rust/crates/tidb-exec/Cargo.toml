@@ -44,6 +44,10 @@ path = "tests/source_shard_c.rs"
 name = "source_shard_d"
 path = "tests/source_shard_d.rs"
 
+[[test]]
+name = "configured_inner_join_source"
+path = "tests/configured_inner_join_source.rs"
+
 # These schema tests intentionally stay standalone: their source-backed test
 # modules compile several implementation files at the integration crate root,
 # and those files use `crate::...` imports. Nesting them under a shard would
