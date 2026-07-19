@@ -56,7 +56,7 @@ StreamAgg	root		funcs:group_concat(distinct Column separator ",")->Column
 explain format='plan_tree' select count(distinct value) from t order by count(distinct value);
 id	task	access object	operator info
 Sort	root		Column
-└─HashAgg	root		funcs:count(distinct collation_agg_func.t.value)->Column
+└─StreamAgg	root		funcs:count(distinct collation_agg_func.t.value)->Column
   └─TableReader	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 select count(distinct value) from t order by count(distinct value);
@@ -65,7 +65,7 @@ count(distinct value)
 explain format='plan_tree' select count(distinct value collate utf8mb4_bin) from t order by count(distinct value collate utf8mb4_bin);
 id	task	access object	operator info
 Sort	root		Column
-└─HashAgg	root		funcs:count(distinct Column)->Column
+└─StreamAgg	root		funcs:count(distinct Column)->Column
   └─Projection	root		cast(collation_agg_func.t.value, varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column
     └─TableReader	root		data:TableFullScan
       └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
@@ -75,7 +75,7 @@ count(distinct value collate utf8mb4_bin)
 explain format='plan_tree' select count(distinct value, value1) from t order by count(distinct value, value1);
 id	task	access object	operator info
 Sort	root		Column
-└─HashAgg	root		funcs:count(distinct collation_agg_func.t.value, collation_agg_func.t.value1)->Column
+└─StreamAgg	root		funcs:count(distinct collation_agg_func.t.value, collation_agg_func.t.value1)->Column
   └─TableReader	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 select count(distinct value, value1) from t order by count(distinct value, value1);
@@ -84,7 +84,7 @@ count(distinct value, value1)
 explain format='plan_tree' select count(distinct value collate utf8mb4_bin, value1) from t order by count(distinct value collate utf8mb4_bin, value1);
 id	task	access object	operator info
 Sort	root		Column
-└─HashAgg	root		funcs:count(distinct Column, Column)->Column
+└─StreamAgg	root		funcs:count(distinct Column, Column)->Column
   └─Projection	root		cast(collation_agg_func.t.value, varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column, collation_agg_func.t.value1->Column
     └─TableReader	root		data:TableFullScan
       └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo

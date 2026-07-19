@@ -679,10 +679,11 @@
           "  ├─TableReader(Build) root  data:TableFullScan",
           "  │ └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
           "  └─Selection(Probe) root  gt(Column, 0)",
-          "    └─HashAgg root  group by:test.t2.a2, funcs:count(1)->Column, funcs:firstrow(test.t2.a2)->test.t2.a2",
-          "      └─TableReader root  data:Selection",
-          "        └─Selection cop[tikv]  eq(test.t2.b2, test.t1.a1)",
-          "          └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "    └─HashAgg root  group by:test.t2.a2, funcs:count(Column)->Column, funcs:firstrow(test.t2.a2)->test.t2.a2",
+          "      └─TableReader root  data:HashAgg",
+          "        └─HashAgg cop[tikv]  group by:test.t2.a2, funcs:count(1)->Column",
+          "          └─Selection cop[tikv]  eq(test.t2.b2, test.t1.a1)",
+          "            └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo"
         ]
       }
     ]

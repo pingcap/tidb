@@ -630,10 +630,11 @@ func getPlanCostVer24PhysicalStreamAgg(pp base.PhysicalPlan, taskType property.T
 // low, and we accept the small over-count to avoid threading TableInfo
 // through the cost path.
 //
-// MPP-backed PhysicalTableReader is excluded: TiFlash MPP scans do not preserve
-// row order, so StreamAgg cannot consume that output without an explicit Sort.
-// Treating an MPP child as "free ordering" would let the cost-model changes
-// (memory penalty + agg/group placement) wrongly disfavor HashAgg over MPP
+// TiFlash-backed PhysicalTableReader is excluded regardless of read protocol
+// (MPP, BatchCop, or cop-on-TiFlash): TiFlash scans do not preserve row order,
+// so StreamAgg cannot consume that output without an explicit Sort. Treating a
+// TiFlash child as "free ordering" would let the cost-model changes (memory
+// penalty + agg/group placement) wrongly disfavor a TiFlash-backed HashAgg
 // versus a cop[tikv]+StreamAgg alternative.
 func childCanProvideOrderForStreamAgg(child base.PhysicalPlan) bool {
 	for cur := child; cur != nil; {
@@ -646,7 +647,7 @@ func childCanProvideOrderForStreamAgg(child base.PhysicalPlan) bool {
 			}
 			cur = children[0]
 		case *physicalop.PhysicalTableReader:
-			return v.ReadReqType != physicalop.MPP
+			return v.StoreType == kv.TiKV
 		case *physicalop.PhysicalIndexReader, *physicalop.PhysicalIndexLookUpReader,
 			*physicalop.PhysicalIndexMergeReader:
 			return true
@@ -659,7 +660,8 @@ func childCanProvideOrderForStreamAgg(child base.PhysicalPlan) bool {
 
 // getPlanCostVer24PhysicalHashAgg returns the plan-cost of this sub-plan.
 //
-// For TiDB root tasks WITH a GROUP BY:
+// For TiDB root tasks with a GROUP BY or a DISTINCT aggregate, when the child can
+// provide ordered input (see the guard conditions in the function body):
 //
 //	plan-cost = child-cost + hash-mem-cost + agg-cost + group-cost + (hash-build-cpu-cost + hash-probe-cost) / concurrency
 //
@@ -679,15 +681,17 @@ func childCanProvideOrderForStreamAgg(child base.PhysicalPlan) bool {
 // the memory penalty here would double-count and steer the optimizer toward
 // Sort+StreamAgg even when HashAgg is genuinely cheaper.
 //
-// For TiDB root tasks WITHOUT a GROUP BY (single-result aggregation), and for TiFlash
-// MPP and TiKV cop tasks, all costs use the original formula:
+// For all other cases — ungrouped non-DISTINCT aggregation, children that cannot
+// provide ordered input, TiFlash MPP, and TiKV cop tasks — all costs use the
+// original formula:
 //
 //	plan-cost = child-cost + (agg-cost + group-cost + hash-build-cost + hash-probe-cost) / concurrency
 //
-// Ungrouped aggregations produce a single output row, so neither the agg+group
-// placement nor the hash-table memory penalty change the qualitative comparison
-// between HashAgg and StreamAgg there. MPP partitions data across nodes and cop runs
-// single-threaded on TiKV, so the TiDB root concurrency factor does not apply.
+// Ungrouped non-DISTINCT aggregations produce a single result with O(1) state, so
+// neither the agg+group placement nor the hash-table memory penalty change the
+// qualitative comparison between HashAgg and StreamAgg there. MPP partitions data
+// across nodes and cop runs single-threaded on TiKV, so the TiDB root concurrency
+// factor does not apply.
 func getPlanCostVer24PhysicalHashAgg(pp base.PhysicalPlan, taskType property.TaskType, option *costusage.PlanCostOption, isChildOfINL ...bool) (costusage.CostVer2, error) {
 	p := pp.(*physicalop.PhysicalHashAgg)
 	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
@@ -722,11 +726,16 @@ func getPlanCostVer24PhysicalHashAgg(pp base.PhysicalPlan, taskType property.Tas
 		// only apply when:
 		//   - the HashAgg has at least one GROUP BY item OR at least one
 		//     DISTINCT aggregate (count(DISTINCT a), group_concat(DISTINCT a),
-		//     ...). DISTINCT aggregates internally deduplicate values into a
-		//     hash set whose size scales with NDV, so the same memory/CPU
-		//     argument applies even when GroupByItems is empty. Ungrouped
-		//     non-DISTINCT aggregation produces a single result with O(1)
-		//     state and can use the original formula, AND
+		//     ...). DISTINCT aggregates deduplicate values per input row, so
+		//     the agg-cost placement outside /concurrency applies even when
+		//     GroupByItems is empty. Note this is a CPU-only approximation for
+		//     that case: with no GROUP BY, outputRows is ~1, so hashMemCost
+		//     and hashBuildCPUCost below degenerate to small constants rather
+		//     than scaling with the NDV of the DISTINCT arguments (sizing the
+		//     distinct hash set from that NDV is a possible future
+		//     refinement). Ungrouped non-DISTINCT aggregation produces a
+		//     single result with O(1) state and can use the original formula,
+		//     AND
 		//   - the child can actually deliver ordered input that StreamAgg could
 		//     consume (cop[tikv] base-table path; MPP scans don't preserve order).
 		// In other configurations (single-result non-DISTINCT, MPP-backed,
