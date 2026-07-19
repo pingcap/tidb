@@ -105,6 +105,7 @@ pub mod scan_pushdown;
 pub mod scheduler_contract;
 pub mod schema_table_key;
 pub mod selectivity_greedy;
+pub mod signed_bigint_ranger;
 pub mod stack_contract;
 pub mod stats_info;
 pub mod string_writer;
