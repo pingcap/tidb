@@ -498,6 +498,27 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
     }
 
     fn run_accept_loop(self, limit: Option<usize>) -> Result<(), SqlNodeError> {
+        self.run_accept_loop_with(limit, |stream, timeout| {
+            stream
+                .set_nonblocking(false)
+                .map_err(SqlNodeError::Listener)?;
+            stream
+                .set_read_timeout(Some(timeout))
+                .map_err(SqlNodeError::Listener)?;
+            stream
+                .set_write_timeout(Some(timeout))
+                .map_err(SqlNodeError::Listener)
+        })
+    }
+
+    fn run_accept_loop_with<P>(
+        self,
+        limit: Option<usize>,
+        mut prepare_stream: P,
+    ) -> Result<(), SqlNodeError>
+    where
+        P: FnMut(&TcpStream, Duration) -> Result<(), SqlNodeError>,
+    {
         let active_sockets = Arc::new(ActiveSockets::default());
         let WorkerPool {
             joins: workers,
@@ -515,7 +536,7 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
 
         let mut accepted = 0_usize;
         let mut next_connection_key = 1_u64;
-        let accept_result = loop {
+        let accept_result = (|| loop {
             if limit == Some(accepted) || self.shutdown.is_shutdown_requested() {
                 break Ok(());
             }
@@ -536,15 +557,7 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
                     break Err(SqlNodeError::Listener(error));
                 }
             };
-            stream
-                .set_nonblocking(false)
-                .map_err(SqlNodeError::Listener)?;
-            stream
-                .set_read_timeout(Some(self.connection_timeout))
-                .map_err(SqlNodeError::Listener)?;
-            stream
-                .set_write_timeout(Some(self.connection_timeout))
-                .map_err(SqlNodeError::Listener)?;
+            prepare_stream(&stream, self.connection_timeout)?;
             let connection_key = next_connection_key;
             next_connection_key = next_connection_key.wrapping_add(1);
             if next_connection_key == 0 {
@@ -552,8 +565,8 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
             }
             let cancellation = ConnectionCancellation::default();
             eprintln!(
-                "{{\"event\":\"connection_dispatch\",\"connection_key\":{connection_key},\"worker_index\":{worker_index}}}"
-            );
+                    "{{\"event\":\"connection_dispatch\",\"connection_key\":{connection_key},\"worker_index\":{worker_index}}}"
+                );
             active_sockets.register(
                 connection_key,
                 stream.try_clone().map_err(SqlNodeError::Listener)?,
@@ -572,7 +585,7 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
                 break Err(SqlNodeError::WorkerQueueClosed);
             }
             accepted += 1;
-        };
+        })();
 
         drop(worker_senders);
         drop(available_sender);
@@ -723,5 +736,107 @@ impl std::error::Error for SqlNodeError {
             | Self::WorkerStatePoisoned
             | Self::ConnectionIdentityExhausted => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::node_config::{ConfiguredReadColumn, ConfiguredReadColumnKind, ConfiguredReadTable};
+    use std::net::{IpAddr, Ipv4Addr};
+    use std::path::PathBuf;
+
+    struct UnusedSession;
+
+    impl QuerySession for UnusedSession {
+        fn execute<'a>(&'a mut self, _sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+            panic!("the drain regression never completes authentication")
+        }
+    }
+
+    struct UnusedFactory;
+
+    impl QuerySessionFactory for UnusedFactory {
+        type Session = UnusedSession;
+
+        fn open_session(&self, _context: SessionContext) -> Result<Self::Session, SqlQueryError> {
+            panic!("the drain regression never completes authentication")
+        }
+    }
+
+    fn test_config() -> NodeConfig {
+        NodeConfig {
+            host: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            port: 0,
+            pd_endpoints: vec!["127.0.0.1:2379".to_owned()],
+            read_table: ConfiguredReadTable {
+                database: "test".to_owned(),
+                table: "rows".to_owned(),
+                table_id: 42,
+                columns: vec![ConfiguredReadColumn {
+                    name: "id".to_owned(),
+                    id: 1,
+                    kind: ConfiguredReadColumnKind::ClusteredPrimaryKey,
+                }],
+            },
+            max_allowed_packet: tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET,
+            auth_file: PathBuf::from("unused"),
+            max_connections: 2,
+            connection_timeout: Duration::from_secs(5),
+        }
+    }
+
+    #[test]
+    fn accepted_socket_setup_error_still_drains_and_joins_workers() {
+        let users = ConfiguredUserStore::parse(
+            "root\t127.0.0.1\tmysql_native_password\t*0000000000000000000000000000000000000000\n",
+        )
+        .unwrap();
+        let node =
+            ConcurrentSqlNode::bind(&test_config(), Arc::new(UnusedFactory), Arc::new(users))
+                .unwrap()
+                .with_shutdown_grace(Duration::from_millis(20));
+        let address = node.local_addr().unwrap();
+        let tracker = node.tracker();
+        let server = std::thread::spawn(move || {
+            let mut prepared = 0;
+            node.run_accept_loop_with(Some(2), move |stream, timeout| {
+                prepared += 1;
+                if prepared == 2 {
+                    return Err(SqlNodeError::Listener(std::io::Error::other(
+                        "injected accepted-socket setup failure",
+                    )));
+                }
+                stream
+                    .set_nonblocking(false)
+                    .map_err(SqlNodeError::Listener)?;
+                stream
+                    .set_read_timeout(Some(timeout))
+                    .map_err(SqlNodeError::Listener)?;
+                stream
+                    .set_write_timeout(Some(timeout))
+                    .map_err(SqlNodeError::Listener)
+            })
+        });
+
+        let stalled_client = TcpStream::connect(address).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while tracker.active() != 1 {
+            assert!(Instant::now() < deadline, "first worker did not start");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let failed_setup_client = TcpStream::connect(address).unwrap();
+        let error = server.join().unwrap().unwrap_err();
+
+        assert!(matches!(error, SqlNodeError::Listener(_)));
+        assert_eq!(tracker.accepted(), 1);
+        assert_eq!(tracker.completed(), 1);
+        assert_eq!(
+            tracker.active(),
+            0,
+            "all workers must be joined before return"
+        );
+        drop(failed_setup_client);
+        drop(stalled_client);
     }
 }
