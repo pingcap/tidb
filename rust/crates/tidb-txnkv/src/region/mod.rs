@@ -25,6 +25,7 @@ mod topology;
 pub use crate::retry::{RegionBackoffBudget, RegionBackoffExhausted, RegionBackoffKind};
 pub use background::{
     BackgroundMaintenanceRound, BackgroundRegionCache, BackgroundRegionCacheError,
+    BackgroundRegionCacheOwner,
 };
 pub use batch_locate::{
     merge_loaded_and_cached, ranges_after_key, regions_have_gap, regions_intersecting_ranges,

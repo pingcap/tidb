@@ -91,9 +91,11 @@ impl DirectUnaryClient for ReaderUnaryClient {
         assert!(timeout <= Duration::from_secs(9));
         assert!(timeout > Duration::from_secs(8));
         self.sends.set(self.sends.get() + 1);
-        Ok(DirectUnaryResponse {
-            encoded_response: self.responses.pop_front().expect("one unary response"),
-        })
+        Ok(DirectUnaryResponse::new(
+            self.responses.pop_front().expect("one unary response"),
+            address,
+            1,
+        ))
     }
 
     fn send_request_with_context(

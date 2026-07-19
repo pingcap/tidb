@@ -20,8 +20,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use crate::region::{
-    BackgroundRegionCache, BackgroundRegionCacheError, KeyRange, RegionCache, RegionLoader,
-    RegionLocation, RegionQueryLoader, RegionRouteError,
+    BackgroundRegionCache, BackgroundRegionCacheError, BackgroundRegionCacheOwner, KeyRange,
+    RegionCache, RegionLoader, RegionLocation, RegionQueryLoader, RegionRouteError,
 };
 
 const DEFAULT_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(1);
@@ -35,15 +35,32 @@ fn next_read_authority_id() -> u64 {
 /// Process-owned region-cache and TiKV-client capability authority.
 ///
 /// This value is intentionally not `Clone`: it owns the lifetime of the sole
-/// maintenance worker. A server shares it behind `Arc` and calls
-/// [`Self::open_session`] inside each connection worker. The returned session
-/// runtime clones only the cheap client capability and cache handle, so it
-/// cannot create or terminate a process worker.
+/// maintenance worker. A server distributes [`SharedReadOpener`] values to
+/// connection workers. Returned session runtimes contain only the cheap client
+/// capability and a counted cache lease, so they cannot terminate a process
+/// worker.
 pub struct SharedReadAuthority<C, L> {
-    client: C,
-    region_cache: BackgroundRegionCache<L>,
+    opener: SharedReadOpener<C, L>,
+    region_cache: BackgroundRegionCacheOwner<L>,
     cluster_id: u64,
     authority_id: u64,
+}
+
+/// Cloneable session-opening capability without process shutdown authority.
+pub struct SharedReadOpener<C, L> {
+    client: C,
+    region_cache: BackgroundRegionCache<L>,
+    authority_id: u64,
+}
+
+impl<C: Clone, L> Clone for SharedReadOpener<C, L> {
+    fn clone(&self) -> Self {
+        Self {
+            client: self.client.clone(),
+            region_cache: self.region_cache.clone_opener(),
+            authority_id: self.authority_id,
+        }
+    }
 }
 
 impl<C, L> SharedReadAuthority<C, L>
@@ -62,11 +79,17 @@ where
             DEFAULT_MAINTENANCE_INTERVAL,
             DEFAULT_GC_LIMIT,
         )?;
-        Ok(Self {
+        let authority_id = next_read_authority_id();
+        let opener = SharedReadOpener {
             client,
+            region_cache: region_cache.opener_handle(),
+            authority_id,
+        };
+        Ok(Self {
+            opener,
             region_cache,
             cluster_id,
-            authority_id: next_read_authority_id(),
+            authority_id,
         })
     }
 
@@ -75,11 +98,13 @@ where
     /// The `Rc<RefCell<_>>` is allocated here, on the calling worker. It is
     /// never stored in the process authority or moved between workers.
     pub fn open_session(&self) -> Result<SharedReadRuntime<C, L>, BackgroundRegionCacheError> {
-        SharedReadRuntime::from_shared_authorities(
-            self.client.clone(),
-            self.region_cache.clone(),
-            self.authority_id,
-        )
+        self.opener.open_session()
+    }
+
+    /// Returns a cloneable opener with no worker shutdown or join authority.
+    #[must_use]
+    pub fn opener(&self) -> SharedReadOpener<C, L> {
+        self.opener.clone()
     }
 
     /// Cluster identity owned by the canonical region cache.
@@ -95,8 +120,29 @@ where
     }
 
     /// Stops and joins the maintenance worker after every session is drained.
-    pub fn shutdown(self) -> Result<(), BackgroundRegionCacheError> {
+    pub fn shutdown(&self) -> Result<(), BackgroundRegionCacheError> {
         self.region_cache.shutdown()
+    }
+}
+
+impl<C, L> SharedReadOpener<C, L>
+where
+    C: Clone,
+    L: RegionLoader,
+{
+    /// Creates one thread-local session lease over process-owned capabilities.
+    pub fn open_session(&self) -> Result<SharedReadRuntime<C, L>, BackgroundRegionCacheError> {
+        SharedReadRuntime::from_shared_authorities(
+            self.client.clone(),
+            self.region_cache.open_lease()?,
+            self.authority_id,
+        )
+    }
+
+    /// Stable process authority identity for lifecycle evidence.
+    #[must_use]
+    pub const fn authority_id(&self) -> u64 {
+        self.authority_id
     }
 }
 

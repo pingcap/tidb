@@ -25,7 +25,7 @@
 
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use prost::Message;
@@ -42,7 +42,10 @@ use tidb_planner::read_only_scan::{
     ConfiguredColumnKind, ConfiguredTable, ReadOnlyScanError, ReadOnlyScanPlan,
 };
 use tidb_protocol::{ColumnInfo, BINARY_DEFAULT_COLLATION_ID};
-use tidb_txnkv::{rpc::TonicCoprocessorClient, PdRegionLoader, SharedReadAuthority};
+use tidb_txnkv::{
+    rpc::TonicCoprocessorClient, DirectUnaryClient, PdRegionLoader, SharedReadAuthority,
+    SharedReadOpener,
+};
 
 use crate::dag_request::{
     construct_dag_req, DagRequestBuildError, DagRequestContext, TiKvScanPlan,
@@ -53,14 +56,12 @@ use crate::distsql_recordset::DistSqlRecordSet;
 pub type ProductionReadTransport =
     DirectUnaryQueryTransport<TonicCoprocessorClient, PdRegionLoader>;
 
-/// Process-owned production transport and maintained region-cache authority.
+/// Cloneable production session opener over process-owned capabilities.
 ///
-/// Field order is deliberate: the read authority is dropped before the tonic
-/// owner, so the maintenance worker and its client handles cannot outlive the
-/// command worker they use.
+/// This value contains no worker join authority. The unique process authority
+/// retains RegionCache, TiKV transport, and PD lifecycle owners separately.
 pub struct ProductionReadSessionFactory {
-    read_authority: SharedReadAuthority<TonicCoprocessorClient, PdRegionLoader>,
-    transport_owner: TonicCoprocessorClient,
+    read_opener: SharedReadOpener<TonicCoprocessorClient, PdRegionLoader>,
     default_timeout: Duration,
     lock_timestamp_source: PdTimestampSource,
 }
@@ -70,7 +71,7 @@ impl RealTiKvSessionTransportFactory for ProductionReadSessionFactory {
 
     fn open_session_transport(&self) -> Result<Self::Transport, String> {
         DirectUnaryQueryTransport::from_read_authority(
-            &self.read_authority,
+            &self.read_opener,
             DirectUnaryRuntimeConfig {
                 default_timeout: self.default_timeout,
                 ..DirectUnaryRuntimeConfig::default()
@@ -81,9 +82,8 @@ impl RealTiKvSessionTransportFactory for ProductionReadSessionFactory {
     }
 }
 
-/// One process authority for the deployable real-PD/TiKV read path.
-pub type ProductionReadAuthority =
-    RealTiKvReadAuthority<ProductionReadSessionFactory, PdTimestampSource>;
+/// Backward-compatible name for the unique production process authority.
+pub type ProductionReadAuthority = ProductionReadProcessAuthority;
 
 static NEXT_READ_AUTHORITY_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -138,21 +138,87 @@ impl RealTiKvReadSessionIdentity {
 
 /// Process authority that opens worker-local real-TiKV sessions.
 ///
-/// `F` owns the sole process transport/cache authorities and opens sessions
-/// from their handles. `S` is the cloneable PD timestamp capability.
+/// `F` opens sessions from process-owned transport/cache handles. `S` is the
+/// cloneable PD timestamp capability.
 /// Consequently this type is `Send + Sync` whenever those two process
 /// capabilities are `Send + Sync`, while `F::Transport` may remain
 /// thread-local.
-pub struct RealTiKvReadAuthority<F, S> {
+pub struct RealTiKvReadSessionOpener<F, S> {
     table: Arc<ConfiguredTable>,
-    transport_factory: F,
+    transport_factory: Arc<F>,
     timestamp_source: S,
     cluster_id: u64,
     authority_id: u64,
-    next_session_id: AtomicU64,
+    leases: Arc<ReadSessionLeases>,
 }
 
-impl<F, S> RealTiKvReadAuthority<F, S> {
+/// Compatibility alias for callers that only need a cloneable session opener.
+pub type RealTiKvReadAuthority<F, S> = RealTiKvReadSessionOpener<F, S>;
+
+struct ReadSessionLeases {
+    admission: Mutex<ReadSessionAdmission>,
+}
+
+struct ReadSessionAdmission {
+    accepting: bool,
+    active: usize,
+    next_session_id: u64,
+}
+
+struct ReadSessionLease {
+    leases: Arc<ReadSessionLeases>,
+}
+
+impl Drop for ReadSessionLease {
+    fn drop(&mut self) {
+        let mut admission = match self.leases.admission.lock() {
+            Ok(admission) => admission,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        admission.active = admission
+            .active
+            .checked_sub(1)
+            .expect("read session lease count underflow");
+    }
+}
+
+/// Unique authority that closes session admission before process shutdown.
+pub struct ReadSessionAdmissionOwner {
+    leases: Arc<ReadSessionLeases>,
+}
+
+impl ReadSessionAdmissionOwner {
+    /// Linearizes admission closure with the zero-active-session check.
+    pub fn close_admission(&self) -> Result<(), ReadProcessShutdownError> {
+        let mut admission = self
+            .leases
+            .admission
+            .lock()
+            .map_err(|_| ReadProcessShutdownError::AdmissionPoisoned)?;
+        admission.accepting = false;
+        if admission.active == 0 {
+            return Ok(());
+        }
+        let active = admission.active;
+        admission.accepting = true;
+        Err(ReadProcessShutdownError::ActiveSessions { active })
+    }
+}
+
+impl<F, S: Clone> Clone for RealTiKvReadSessionOpener<F, S> {
+    fn clone(&self) -> Self {
+        Self {
+            table: Arc::clone(&self.table),
+            transport_factory: Arc::clone(&self.transport_factory),
+            timestamp_source: self.timestamp_source.clone(),
+            cluster_id: self.cluster_id,
+            authority_id: self.authority_id,
+            leases: Arc::clone(&self.leases),
+        }
+    }
+}
+
+impl<F, S> RealTiKvReadSessionOpener<F, S> {
     /// Retains already-bootstrapped process capabilities.
     ///
     /// Construction is intentionally generic until the lower DistSQL layer
@@ -165,14 +231,33 @@ impl<F, S> RealTiKvReadAuthority<F, S> {
         timestamp_source: S,
         cluster_id: u64,
     ) -> Self {
-        Self {
+        Self::new_with_admission_owner(table, transport_factory, timestamp_source, cluster_id).0
+    }
+
+    /// Retains a cloneable opener plus one non-cloneable admission authority.
+    #[must_use]
+    pub fn new_with_admission_owner(
+        table: ConfiguredTable,
+        transport_factory: F,
+        timestamp_source: S,
+        cluster_id: u64,
+    ) -> (Self, ReadSessionAdmissionOwner) {
+        let leases = Arc::new(ReadSessionLeases {
+            admission: Mutex::new(ReadSessionAdmission {
+                accepting: true,
+                active: 0,
+                next_session_id: 1,
+            }),
+        });
+        let opener = Self {
             table: Arc::new(table),
-            transport_factory,
+            transport_factory: Arc::new(transport_factory),
             timestamp_source,
             cluster_id,
             authority_id: next_read_authority_id(),
-            next_session_id: AtomicU64::new(1),
-        }
+            leases: Arc::clone(&leases),
+        };
+        (opener, ReadSessionAdmissionOwner { leases })
     }
 
     /// Returns the real PD cluster identity, or zero for an injected authority.
@@ -192,9 +277,18 @@ impl<F, S> RealTiKvReadAuthority<F, S> {
     pub fn configured_table(&self) -> &ConfiguredTable {
         self.table.as_ref()
     }
+
+    /// Number of connection-local sessions that have not drained yet.
+    #[must_use]
+    pub fn active_sessions(&self) -> usize {
+        match self.leases.admission.lock() {
+            Ok(admission) => admission.active,
+            Err(poisoned) => poisoned.into_inner().active,
+        }
+    }
 }
 
-impl<F, S> RealTiKvReadAuthority<F, S>
+impl<F, S> RealTiKvReadSessionOpener<F, S>
 where
     F: RealTiKvSessionTransportFactory,
     F::Transport: QueryTransport,
@@ -203,12 +297,32 @@ where
 {
     /// Opens one connection-local session inside the calling server worker.
     pub fn open_session(&self) -> Result<RealTiKvReadSession<F::Transport, S>, RealTiKvReadError> {
-        let session_id = self.next_session_id.fetch_add(1, Ordering::Relaxed);
-        if session_id == 0 {
-            return Err(RealTiKvReadError::Transport(
-                "read session identity space exhausted".to_owned(),
-            ));
-        }
+        let (session_id, lease) = {
+            let mut admission = self.leases.admission.lock().map_err(|_| {
+                RealTiKvReadError::Transport("read session admission lock is poisoned".to_owned())
+            })?;
+            if !admission.accepting {
+                return Err(RealTiKvReadError::Transport(
+                    "read session admission is closed".to_owned(),
+                ));
+            }
+            let session_id = admission.next_session_id;
+            if session_id == 0 {
+                return Err(RealTiKvReadError::Transport(
+                    "read session identity space exhausted".to_owned(),
+                ));
+            }
+            admission.next_session_id = admission.next_session_id.wrapping_add(1);
+            admission.active = admission.active.checked_add(1).ok_or_else(|| {
+                RealTiKvReadError::Transport("read session lease space exhausted".to_owned())
+            })?;
+            (
+                session_id,
+                ReadSessionLease {
+                    leases: Arc::clone(&self.leases),
+                },
+            )
+        };
         let transport = self
             .transport_factory
             .open_session_transport()
@@ -222,11 +336,179 @@ where
                 authority_id: self.authority_id,
                 session_id,
             },
+            Some(lease),
         ))
     }
 }
 
-impl RealTiKvReadAuthority<ProductionReadSessionFactory, PdTimestampSource> {
+/// Unique lifecycle owner for production PD, RegionCache, and TiKV transport.
+pub struct ProductionReadProcessAuthority {
+    opener: ProductionOpener,
+    admission: ReadSessionAdmissionOwner,
+    lifecycle: ProductionReadLifecycle,
+}
+
+enum ProductionOpener {
+    Open(RealTiKvReadSessionOpener<ProductionReadSessionFactory, PdTimestampSource>),
+    Closed,
+}
+
+struct ProductionReadLifecycle {
+    region_cache: ProductionRegionLifecycle,
+    transport: ProductionTransportLifecycle,
+    pd: ProductionPdLifecycle,
+}
+
+enum ProductionRegionLifecycle {
+    Running(SharedReadAuthority<TonicCoprocessorClient, PdRegionLoader>),
+    Closed,
+}
+
+enum ProductionTransportLifecycle {
+    Running(TonicCoprocessorClient),
+    Closed,
+}
+
+enum ProductionPdLifecycle {
+    Running(PdClient),
+    Closed,
+}
+
+/// One stage in the dependency-ordered production read shutdown.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ReadProcessShutdownStage {
+    /// Stop and join RegionCache maintenance before its dependencies.
+    RegionCache,
+    /// Stop and join the TiKV transport after RegionCache.
+    TikvTransport,
+    /// Stop and join PD only after every dependent worker has stopped.
+    Pd,
+}
+
+/// One stage-specific failure retained without skipping later stages.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReadProcessShutdownFailure {
+    /// Stage that returned the failure.
+    pub stage: ReadProcessShutdownStage,
+    /// Typed stage error rendered at the composition boundary.
+    pub message: String,
+}
+
+/// Rejection or aggregate failure from explicit process shutdown.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ReadProcessShutdownError {
+    /// Connection-local sessions must drain before any process stage stops.
+    ActiveSessions {
+        /// Number of live session leases observed by the unique authority.
+        active: usize,
+    },
+    /// The internal admission lock was poisoned before shutdown linearized.
+    AdmissionPoisoned,
+    /// Every stage was attempted in order; these stages failed.
+    StageFailures(Vec<ReadProcessShutdownFailure>),
+}
+
+impl fmt::Display for ReadProcessShutdownError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ActiveSessions { active } => {
+                write!(
+                    formatter,
+                    "cannot shut down with {active} active read sessions"
+                )
+            }
+            Self::AdmissionPoisoned => {
+                formatter.write_str("read session admission lock is poisoned")
+            }
+            Self::StageFailures(failures) => {
+                formatter.write_str("read process shutdown failed")?;
+                for failure in failures {
+                    write!(formatter, "; {:?}: {}", failure.stage, failure.message)?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+impl std::error::Error for ReadProcessShutdownError {}
+
+/// Fallible process lifecycle used by production and deterministic order tests.
+pub trait ReadProcessShutdownStages {
+    /// Stops and joins RegionCache maintenance.
+    fn shutdown_region_cache(&mut self) -> Result<(), String>;
+    /// Stops and joins the TiKV transport.
+    fn shutdown_tikv_transport(&mut self) -> Result<(), String>;
+    /// Stops and joins PD.
+    fn shutdown_pd(&mut self) -> Result<(), String>;
+}
+
+/// Attempts every process stage in dependency order and aggregates failures.
+pub fn shutdown_read_process(
+    active_sessions: usize,
+    stages: &mut impl ReadProcessShutdownStages,
+) -> Result<(), ReadProcessShutdownError> {
+    if active_sessions != 0 {
+        return Err(ReadProcessShutdownError::ActiveSessions {
+            active: active_sessions,
+        });
+    }
+    let mut failures = Vec::new();
+    for (stage, result) in [
+        (
+            ReadProcessShutdownStage::RegionCache,
+            stages.shutdown_region_cache(),
+        ),
+        (
+            ReadProcessShutdownStage::TikvTransport,
+            stages.shutdown_tikv_transport(),
+        ),
+        (ReadProcessShutdownStage::Pd, stages.shutdown_pd()),
+    ] {
+        if let Err(message) = result {
+            failures.push(ReadProcessShutdownFailure { stage, message });
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(ReadProcessShutdownError::StageFailures(failures))
+    }
+}
+
+impl ReadProcessShutdownStages for ProductionReadLifecycle {
+    fn shutdown_region_cache(&mut self) -> Result<(), String> {
+        let authority =
+            std::mem::replace(&mut self.region_cache, ProductionRegionLifecycle::Closed);
+        match authority {
+            ProductionRegionLifecycle::Running(authority) => {
+                authority.shutdown().map_err(|error| error.to_string())
+            }
+            ProductionRegionLifecycle::Closed => Ok(()),
+        }
+    }
+
+    fn shutdown_tikv_transport(&mut self) -> Result<(), String> {
+        let transport =
+            std::mem::replace(&mut self.transport, ProductionTransportLifecycle::Closed);
+        match transport {
+            ProductionTransportLifecycle::Running(mut transport) => {
+                transport.close().map_err(|error| error.to_string())
+            }
+            ProductionTransportLifecycle::Closed => Ok(()),
+        }
+    }
+
+    fn shutdown_pd(&mut self) -> Result<(), String> {
+        let pd = std::mem::replace(&mut self.pd, ProductionPdLifecycle::Closed);
+        match pd {
+            ProductionPdLifecycle::Running(pd) => pd.shutdown().map_err(|error| error.to_string()),
+            ProductionPdLifecycle::Closed => Ok(()),
+        }
+    }
+}
+
+impl ProductionReadProcessAuthority {
     /// Bootstraps PD, region maintenance, and tonic exactly once per process.
     pub fn connect<I, E>(
         pd_endpoints: I,
@@ -240,7 +522,7 @@ impl RealTiKvReadAuthority<ProductionReadSessionFactory, PdTimestampSource> {
         let pd = PdClient::connect_seeds(pd_endpoints, timeout)?;
         let cluster_id = pd.cluster_id();
         let timestamp_source = PdTimestampSource::new(pd.clone());
-        let loader = PdRegionLoader::from_client(pd);
+        let loader = PdRegionLoader::from_client(pd.clone());
         let cache = RegionCache::new(loader);
         let transport_owner = TonicCoprocessorClient::new()
             .map_err(|error| RealTiKvReadError::Transport(error.to_string()))?;
@@ -248,24 +530,88 @@ impl RealTiKvReadAuthority<ProductionReadSessionFactory, PdTimestampSource> {
         let read_authority = SharedReadAuthority::start(transport_owner.clone(), cache)
             .map_err(|error| RealTiKvReadError::Transport(error.to_string()))?;
         let factory = ProductionReadSessionFactory {
-            read_authority,
-            transport_owner,
+            read_opener: read_authority.opener(),
             default_timeout: timeout,
             lock_timestamp_source: timestamp_source.clone(),
         };
-        Ok(Self::new(table, factory, timestamp_source, cluster_id))
+        let (opener, admission) = RealTiKvReadSessionOpener::new_with_admission_owner(
+            table,
+            factory,
+            timestamp_source,
+            cluster_id,
+        );
+        Ok(Self {
+            opener: ProductionOpener::Open(opener),
+            admission,
+            lifecycle: ProductionReadLifecycle {
+                region_cache: ProductionRegionLifecycle::Running(read_authority),
+                transport: ProductionTransportLifecycle::Running(transport_owner),
+                pd: ProductionPdLifecycle::Running(pd),
+            },
+        })
+    }
+
+    /// Cloneable session-opening capability without process shutdown authority.
+    #[must_use]
+    pub fn opener(
+        &self,
+    ) -> RealTiKvReadSessionOpener<ProductionReadSessionFactory, PdTimestampSource> {
+        self.opener_ref().clone()
+    }
+
+    /// Opens one connection-local production session.
+    pub fn open_session(
+        &self,
+    ) -> Result<RealTiKvReadSession<ProductionReadTransport, PdTimestampSource>, RealTiKvReadError>
+    {
+        self.opener_ref().open_session()
+    }
+
+    /// Real PD cluster identity retained by this process.
+    #[must_use]
+    pub const fn cluster_id(&self) -> u64 {
+        self.opener_ref().cluster_id()
+    }
+
+    /// Stable executor process-authority identity.
+    #[must_use]
+    pub const fn authority_id(&self) -> u64 {
+        self.opener_ref().authority_id()
     }
 
     /// Stable identity of the sole maintained read authority.
     #[must_use]
     pub const fn read_authority_id(&self) -> u64 {
-        self.transport_factory.read_authority.authority_id()
+        match &self.lifecycle.region_cache {
+            ProductionRegionLifecycle::Running(authority) => authority.authority_id(),
+            ProductionRegionLifecycle::Closed => 0,
+        }
     }
 
     /// Whether the retained transport value is the unique worker owner.
     #[must_use]
     pub const fn owns_transport_worker(&self) -> bool {
-        self.transport_factory.transport_owner.is_transport_owner()
+        match &self.lifecycle.transport {
+            ProductionTransportLifecycle::Running(transport) => transport.is_transport_owner(),
+            ProductionTransportLifecycle::Closed => false,
+        }
+    }
+
+    /// Rejects active sessions, then always attempts RegionCache, TiKV, and PD.
+    pub fn shutdown(&mut self) -> Result<(), ReadProcessShutdownError> {
+        self.admission.close_admission()?;
+        let opener = std::mem::replace(&mut self.opener, ProductionOpener::Closed);
+        drop(opener);
+        shutdown_read_process(0, &mut self.lifecycle)
+    }
+
+    const fn opener_ref(
+        &self,
+    ) -> &RealTiKvReadSessionOpener<ProductionReadSessionFactory, PdTimestampSource> {
+        match &self.opener {
+            ProductionOpener::Open(opener) => opener,
+            ProductionOpener::Closed => panic!("production read authority is closed"),
+        }
     }
 }
 
@@ -405,6 +751,7 @@ pub struct RealTiKvReadSession<T = ProductionReadTransport, S = PdTimestampSourc
     cluster_id: u64,
     identity: RealTiKvReadSessionIdentity,
     last_snapshot_ts: Option<u64>,
+    _lease: Option<ReadSessionLease>,
 }
 
 impl RealTiKvReadSession<ProductionReadTransport, PdTimestampSource> {
@@ -442,6 +789,7 @@ where
                 session_id: 0,
             },
             last_snapshot_ts: None,
+            _lease: None,
         }
     }
 
@@ -451,6 +799,7 @@ where
         timestamp_source: S,
         cluster_id: u64,
         identity: RealTiKvReadSessionIdentity,
+        lease: Option<ReadSessionLease>,
     ) -> Self {
         Self {
             table,
@@ -459,6 +808,7 @@ where
             cluster_id,
             identity,
             last_snapshot_ts: None,
+            _lease: lease,
         }
     }
 

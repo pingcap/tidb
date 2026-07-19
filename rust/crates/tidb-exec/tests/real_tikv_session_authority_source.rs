@@ -16,13 +16,16 @@
 
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
 use prost::Message;
 use tidb_datatype::Datum;
 use tidb_distsql::query_runtime::{QueryResponse, QueryResponseError, QueryResultSubset};
 use tidb_distsql::{QueryDispatch, QueryTransport, TimestampSource, TransportRequest};
-use tidb_exec::real_tikv_read::{RealTiKvReadAuthority, RealTiKvSessionTransportFactory};
+use tidb_exec::real_tikv_read::{
+    ReadProcessShutdownError, RealTiKvReadAuthority, RealTiKvSessionTransportFactory,
+};
 use tidb_planner::read_only_scan::{ConfiguredColumn, ConfiguredTable};
 use tidb_proto::tipb::{Chunk, SelectResponse};
 
@@ -104,6 +107,28 @@ struct ProcessTransportFactory {
     evidence: EvidenceRegistry,
 }
 
+struct BlockingTransportFactory {
+    entered: mpsc::SyncSender<()>,
+    release: Mutex<mpsc::Receiver<()>>,
+}
+
+impl RealTiKvSessionTransportFactory for BlockingTransportFactory {
+    type Transport = IsolatedTransport;
+
+    fn open_session_transport(&self) -> Result<Self::Transport, String> {
+        self.entered.send(()).map_err(|error| error.to_string())?;
+        self.release
+            .lock()
+            .map_err(|_| "release lock poisoned".to_owned())?
+            .recv()
+            .map_err(|error| error.to_string())?;
+        Ok(IsolatedTransport {
+            session: 1,
+            evidence: Arc::new(SessionEvidence::default()),
+        })
+    }
+}
+
 impl ProcessTransportFactory {
     fn new(evidence: EvidenceRegistry) -> Self {
         Self {
@@ -124,7 +149,7 @@ impl RealTiKvSessionTransportFactory for ProcessTransportFactory {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct ProcessTimestampSource {
     next: Arc<AtomicU64>,
 }
@@ -183,9 +208,12 @@ fn process_authority_opens_isolated_worker_local_sessions() {
         9_001,
     );
     assert_send_sync::<RealTiKvReadAuthority<ProcessTransportFactory, ProcessTimestampSource>>();
+    let cloned_opener = authority.clone();
 
     let mut first = authority.open_session().expect("first local session");
     let mut second = authority.open_session().expect("second local session");
+    let third = cloned_opener.open_session().expect("cloned opener session");
+    assert_eq!(authority.active_sessions(), 3);
     assert_eq!(authority.cluster_id(), 9_001);
     assert_eq!(first.cluster_id(), 9_001);
     assert_eq!(second.cluster_id(), 9_001);
@@ -195,6 +223,12 @@ fn process_authority_opens_isolated_worker_local_sessions() {
         first.identity().session_id(),
         second.identity().session_id()
     );
+    assert_ne!(
+        second.identity().session_id(),
+        third.identity().session_id()
+    );
+    drop(third);
+    assert_eq!(authority.active_sessions(), 2);
 
     let first_query = first.execute("SELECT id FROM accounts").unwrap();
     let second_query = second.execute("SELECT id FROM accounts").unwrap();
@@ -241,4 +275,70 @@ fn process_authority_opens_isolated_worker_local_sessions() {
     second_record_set.close().unwrap();
     assert_eq!(second_evidence.nexts.load(Ordering::Relaxed), 1);
     assert_eq!(second_evidence.closes.load(Ordering::Relaxed), 1);
+    drop(first);
+    drop(second);
+    assert_eq!(authority.active_sessions(), 0);
+}
+
+#[test]
+fn admission_close_is_linearized_against_every_cloned_opener() {
+    let evidence = EvidenceRegistry::default();
+    let (opener, admission) = RealTiKvReadAuthority::new_with_admission_owner(
+        configured_table(),
+        ProcessTransportFactory::new(evidence),
+        ProcessTimestampSource {
+            next: Arc::new(AtomicU64::new(900)),
+        },
+        9_002,
+    );
+    let external_opener = opener.clone();
+    let active = external_opener.open_session().expect("active session");
+
+    assert_eq!(
+        admission.close_admission(),
+        Err(ReadProcessShutdownError::ActiveSessions { active: 1 })
+    );
+    let admitted_after_rejection = opener
+        .open_session()
+        .expect("rejected shutdown reopens admission");
+    drop(active);
+    drop(admitted_after_rejection);
+
+    admission.close_admission().unwrap();
+    let error = match external_opener.open_session() {
+        Ok(_) => panic!("closed admission accepted a session"),
+        Err(error) => error.to_string(),
+    };
+    assert!(error.contains("admission is closed"), "{error}");
+}
+
+#[test]
+fn session_reservation_wins_before_blocking_transport_creation() {
+    let (entered_tx, entered_rx) = mpsc::sync_channel(0);
+    let (release_tx, release_rx) = mpsc::sync_channel(0);
+    let (opener, admission) = RealTiKvReadAuthority::new_with_admission_owner(
+        configured_table(),
+        BlockingTransportFactory {
+            entered: entered_tx,
+            release: Mutex::new(release_rx),
+        },
+        ProcessTimestampSource {
+            next: Arc::new(AtomicU64::new(1_000)),
+        },
+        9_003,
+    );
+
+    let open = std::thread::spawn(move || opener.open_session());
+    entered_rx
+        .recv()
+        .expect("transport creation started after reserving a lease");
+    assert_eq!(
+        admission.close_admission(),
+        Err(ReadProcessShutdownError::ActiveSessions { active: 1 })
+    );
+
+    release_tx.send(()).unwrap();
+    let session = open.join().unwrap().unwrap();
+    drop(session);
+    admission.close_admission().unwrap();
 }

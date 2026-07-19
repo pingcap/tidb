@@ -87,6 +87,7 @@ fn trigger_wakes_the_single_driver_and_shutdown_waits_for_close() {
 #[test]
 fn sessions_share_one_maintained_cache_but_cannot_stop_its_authority() {
     let authority = SharedReadAuthority::start((), RegionCache::new(Loader)).unwrap();
+    let opener = authority.opener();
     let first = authority.open_session().unwrap();
     let second = authority.open_session().unwrap();
     let background = first.region_cache_handle();
@@ -113,4 +114,51 @@ fn sessions_share_one_maintained_cache_but_cannot_stop_its_authority() {
 
     drop(background);
     authority.shutdown().unwrap();
+    assert_eq!(
+        opener.open_session().err(),
+        Some(tidb_txnkv::region::BackgroundRegionCacheError::LeaseAdmissionClosed)
+    );
+}
+
+#[test]
+fn active_cache_lease_rejects_shutdown_without_stopping_the_worker() {
+    let owner =
+        BackgroundRegionCache::start(RegionCache::new(Loader), Duration::from_secs(3600), 50)
+            .unwrap();
+    let lease = owner.handle().unwrap();
+
+    assert_eq!(
+        owner.shutdown(),
+        Err(tidb_txnkv::region::BackgroundRegionCacheError::SharedOwners { owners: 1 })
+    );
+    assert!(!owner.is_closed().unwrap());
+    assert!(lease.trigger_store_check().unwrap());
+
+    drop(lease);
+    owner.shutdown().unwrap();
+    assert!(owner.is_closed().unwrap());
+}
+
+#[test]
+fn poisoned_cache_is_returned_by_the_fallible_worker_join() {
+    let owner =
+        BackgroundRegionCache::start(RegionCache::new(Loader), Duration::from_secs(3600), 50)
+            .unwrap();
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = owner.with_cache::<()>(|_| panic!("poison canonical cache"));
+    }));
+    assert!(panic.is_err());
+    assert!(owner.trigger_store_check().unwrap());
+
+    for _ in 0..100 {
+        if owner.is_closed().unwrap() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(owner.is_closed().unwrap());
+    assert_eq!(
+        owner.shutdown(),
+        Err(tidb_txnkv::region::BackgroundRegionCacheError::CachePoisoned)
+    );
 }

@@ -51,13 +51,21 @@ pub enum BackgroundRegionCacheError {
     CachePoisoned,
     /// A previous panic poisoned the driver-state lock.
     DriverPoisoned,
+    /// The foreground lease admission state was poisoned.
+    LeaseStatePoisoned,
+    /// The unique owner already closed foreground lease admission.
+    LeaseAdmissionClosed,
+    /// The foreground lease counter cannot represent another session.
+    LeaseLimit,
     /// The maintenance thread panicked during shutdown.
     WorkerPanicked,
     /// Explicit shutdown requires the last handle to the shared authority.
     SharedOwners {
-        /// Number of live handles observed by the consumed shutdown handle.
+        /// Number of live foreground leases observed by the unique owner.
         owners: usize,
     },
+    /// More than one independent shutdown action failed.
+    Multiple(Vec<BackgroundRegionCacheError>),
 }
 
 impl std::fmt::Display for BackgroundRegionCacheError {
@@ -70,11 +78,25 @@ impl std::fmt::Display for BackgroundRegionCacheError {
             }
             Self::CachePoisoned => formatter.write_str("canonical region cache lock is poisoned"),
             Self::DriverPoisoned => formatter.write_str("maintenance driver lock is poisoned"),
+            Self::LeaseStatePoisoned => {
+                formatter.write_str("background cache lease state is poisoned")
+            }
+            Self::LeaseAdmissionClosed => {
+                formatter.write_str("background cache lease admission is closed")
+            }
+            Self::LeaseLimit => formatter.write_str("background cache lease limit reached"),
             Self::WorkerPanicked => formatter.write_str("maintenance driver panicked"),
             Self::SharedOwners { owners } => write!(
                 formatter,
                 "explicit shutdown requires unique ownership; observed {owners} live handles"
             ),
+            Self::Multiple(failures) => {
+                formatter.write_str("multiple background cache shutdown failures")?;
+                for failure in failures {
+                    write!(formatter, "; {failure}")?;
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -90,28 +112,97 @@ struct DriverState {
     last_round: Option<BackgroundMaintenanceRound>,
 }
 
-/// Sole synchronized owner and cancellable maintenance task for RegionCache.
-struct BackgroundRegionCacheInner<L> {
+/// Shared cache state borrowed by foreground session leases and the worker.
+struct BackgroundRegionCacheShared<L> {
     cache: Arc<Mutex<RegionCache<L>>>,
     loader: SharedRegionLoader<L>,
     driver: Arc<(Mutex<DriverState>, Condvar)>,
-    worker: Mutex<Option<JoinHandle<()>>>,
+    leases: Mutex<CacheLeaseAdmission>,
 }
 
-/// Cloneable handle to the sole synchronized cache and maintenance task.
+struct CacheLeaseAdmission {
+    accepting: bool,
+    active: usize,
+}
+
+/// Cloneable foreground lease over the sole synchronized cache.
 pub struct BackgroundRegionCache<L> {
-    inner: Arc<BackgroundRegionCacheInner<L>>,
+    shared: Arc<BackgroundRegionCacheShared<L>>,
+    counted_lease: bool,
+}
+
+enum MaintenanceWorker {
+    Running(JoinHandle<Result<(), BackgroundRegionCacheError>>),
+    Joined,
+}
+
+/// Unique shutdown and join authority for one background cache worker.
+///
+/// Foreground code receives only [`BackgroundRegionCache`] leases. Keeping the
+/// join handle here makes explicit shutdown independent of `Arc` uniqueness.
+pub struct BackgroundRegionCacheOwner<L> {
+    handle: BackgroundRegionCache<L>,
+    worker: Mutex<MaintenanceWorker>,
 }
 
 impl<L> Clone for BackgroundRegionCache<L> {
     fn clone(&self) -> Self {
-        Self {
-            inner: Arc::clone(&self.inner),
+        self.open_lease()
+            .expect("cannot clone a background cache lease after admission closes")
+    }
+}
+
+impl<L> Drop for BackgroundRegionCache<L> {
+    fn drop(&mut self) {
+        if self.counted_lease {
+            let mut leases = match self.shared.leases.lock() {
+                Ok(leases) => leases,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            leases.active = leases
+                .active
+                .checked_sub(1)
+                .expect("background cache lease count underflow");
         }
     }
 }
 
+impl<L> std::ops::Deref for BackgroundRegionCacheOwner<L> {
+    type Target = BackgroundRegionCache<L>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.handle
+    }
+}
+
 impl<L> BackgroundRegionCache<L> {
+    pub(crate) fn open_lease(&self) -> Result<Self, BackgroundRegionCacheError> {
+        let mut leases = self
+            .shared
+            .leases
+            .lock()
+            .map_err(|_| BackgroundRegionCacheError::LeaseStatePoisoned)?;
+        if !leases.accepting {
+            return Err(BackgroundRegionCacheError::LeaseAdmissionClosed);
+        }
+        leases.active = leases
+            .active
+            .checked_add(1)
+            .ok_or(BackgroundRegionCacheError::LeaseLimit)?;
+        drop(leases);
+        Ok(Self {
+            shared: Arc::clone(&self.shared),
+            counted_lease: true,
+        })
+    }
+
+    pub(crate) fn clone_opener(&self) -> Self {
+        Self {
+            shared: Arc::clone(&self.shared),
+            counted_lease: false,
+        }
+    }
+
     /// Wraps one canonical cache without starting a worker.
     ///
     /// This is the injection seam for non-Send test loaders. Production
@@ -120,7 +211,7 @@ impl<L> BackgroundRegionCache<L> {
     pub(crate) fn without_worker(cache: RegionCache<L>) -> Self {
         let loader = cache.loader_handle();
         Self {
-            inner: Arc::new(BackgroundRegionCacheInner {
+            shared: Arc::new(BackgroundRegionCacheShared {
                 cache: Arc::new(Mutex::new(cache)),
                 loader,
                 driver: Arc::new((
@@ -131,8 +222,12 @@ impl<L> BackgroundRegionCache<L> {
                     }),
                     Condvar::new(),
                 )),
-                worker: Mutex::new(None),
+                leases: Mutex::new(CacheLeaseAdmission {
+                    accepting: true,
+                    active: 0,
+                }),
             }),
+            counted_lease: false,
         }
     }
 
@@ -141,13 +236,15 @@ impl<L> BackgroundRegionCache<L> {
         cache: RegionCache<L>,
         interval: Duration,
         gc_limit: usize,
-    ) -> Result<Self, BackgroundRegionCacheError>
+    ) -> Result<BackgroundRegionCacheOwner<L>, BackgroundRegionCacheError>
     where
         L: RegionLoader + Send + 'static,
     {
         Self::start_with_round(cache, interval, gc_limit, |shared, triggered, gc_limit| {
-            let mut cache = shared.lock().ok()?;
-            Some(BackgroundMaintenanceRound {
+            let mut cache = shared
+                .lock()
+                .map_err(|_| BackgroundRegionCacheError::CachePoisoned)?;
+            Ok(BackgroundMaintenanceRound {
                 triggered,
                 regions: cache.maintain_entries_bounded(gc_limit),
                 stores: StoreMaintenanceRound::default(),
@@ -160,10 +257,14 @@ impl<L> BackgroundRegionCache<L> {
         interval: Duration,
         gc_limit: usize,
         round: F,
-    ) -> Result<Self, BackgroundRegionCacheError>
+    ) -> Result<BackgroundRegionCacheOwner<L>, BackgroundRegionCacheError>
     where
         L: RegionLoader + Send + 'static,
-        F: FnMut(&Arc<Mutex<RegionCache<L>>>, bool, usize) -> Option<BackgroundMaintenanceRound>
+        F: FnMut(
+                &Arc<Mutex<RegionCache<L>>>,
+                bool,
+                usize,
+            ) -> Result<BackgroundMaintenanceRound, BackgroundRegionCacheError>
             + Send
             + 'static,
     {
@@ -182,13 +283,21 @@ impl<L> BackgroundRegionCache<L> {
             .name("tidb-region-maintenance".to_owned())
             .spawn(move || maintenance_loop(worker_cache, worker_driver, interval, gc_limit, round))
             .map_err(|error| BackgroundRegionCacheError::Spawn(error.to_string()))?;
-        Ok(Self {
-            inner: Arc::new(BackgroundRegionCacheInner {
-                cache,
-                loader,
-                driver,
-                worker: Mutex::new(Some(worker)),
+        let shared = Arc::new(BackgroundRegionCacheShared {
+            cache,
+            loader,
+            driver,
+            leases: Mutex::new(CacheLeaseAdmission {
+                accepting: true,
+                active: 0,
             }),
+        });
+        Ok(BackgroundRegionCacheOwner {
+            handle: Self {
+                shared,
+                counted_lease: false,
+            },
+            worker: Mutex::new(MaintenanceWorker::Running(worker)),
         })
     }
 
@@ -255,7 +364,7 @@ impl<L> BackgroundRegionCache<L> {
     }
 
     fn topology_revision(&self) -> Result<u64, BackgroundRegionCacheError> {
-        self.inner
+        self.shared
             .cache
             .lock()
             .map(|cache| cache.topology_revision())
@@ -273,7 +382,7 @@ impl<L> BackgroundRegionCache<L> {
         loop {
             let selection = {
                 let mut cache = self
-                    .inner
+                    .shared
                     .cache
                     .lock()
                     .map_err(|_| BackgroundRegionCacheError::CachePoisoned)?;
@@ -284,10 +393,10 @@ impl<L> BackgroundRegionCache<L> {
                 Ok(RegionLookupSelection::Load(plan)) => plan,
                 Err(error) => return Ok(Err(error)),
             };
-            let loaded = self.inner.loader.load_region(plan);
+            let loaded = self.shared.loader.load_region(plan);
             let publication = {
                 let mut cache = self
-                    .inner
+                    .shared
                     .cache
                     .lock()
                     .map_err(|_| BackgroundRegionCacheError::CachePoisoned)?;
@@ -307,7 +416,7 @@ impl<L> BackgroundRegionCache<L> {
         operation: impl FnOnce(&mut RegionCache<L>) -> R,
     ) -> Result<R, BackgroundRegionCacheError> {
         let mut cache = self
-            .inner
+            .shared
             .cache
             .lock()
             .map_err(|_| BackgroundRegionCacheError::CachePoisoned)?;
@@ -316,7 +425,7 @@ impl<L> BackgroundRegionCache<L> {
 
     /// Coalesces any number of pending store-check wakeups into one pass.
     pub fn trigger_store_check(&self) -> Result<bool, BackgroundRegionCacheError> {
-        let (state, wake) = &*self.inner.driver;
+        let (state, wake) = &*self.shared.driver;
         let mut state = state
             .lock()
             .map_err(|_| BackgroundRegionCacheError::DriverPoisoned)?;
@@ -331,7 +440,7 @@ impl<L> BackgroundRegionCache<L> {
 
     /// Returns the number of fully completed maintenance passes.
     pub fn completed_rounds(&self) -> Result<u64, BackgroundRegionCacheError> {
-        let (state, _) = &*self.inner.driver;
+        let (state, _) = &*self.shared.driver;
         state
             .lock()
             .map(|state| state.completed_rounds)
@@ -342,28 +451,16 @@ impl<L> BackgroundRegionCache<L> {
     pub fn last_round(
         &self,
     ) -> Result<Option<BackgroundMaintenanceRound>, BackgroundRegionCacheError> {
-        let (state, _) = &*self.inner.driver;
+        let (state, _) = &*self.shared.driver;
         state
             .lock()
             .map(|state| state.last_round)
             .map_err(|_| BackgroundRegionCacheError::DriverPoisoned)
     }
 
-    /// Consumes the unique owner, cancels the sole worker, and joins it once.
-    ///
-    /// Dropping the last handle performs the same shutdown automatically. A
-    /// shared handle cannot terminate the worker while another owner uses it.
-    pub fn shutdown(self) -> Result<(), BackgroundRegionCacheError> {
-        let inner = Arc::try_unwrap(self.inner).map_err(|inner| {
-            let owners = Arc::strong_count(&inner);
-            BackgroundRegionCacheError::SharedOwners { owners }
-        })?;
-        shutdown_inner(&inner)
-    }
-
     /// Whether shutdown has completed and no worker remains.
     pub fn is_closed(&self) -> Result<bool, BackgroundRegionCacheError> {
-        let (state, _) = &*self.inner.driver;
+        let (state, _) = &*self.shared.driver;
         state
             .lock()
             .map(|state| state.closed)
@@ -383,7 +480,7 @@ impl<L: RegionRecoveryLoader> BackgroundRegionCache<L> {
     {
         let recovery = {
             let mut cache = self
-                .inner
+                .shared
                 .cache
                 .lock()
                 .map_err(|_| BackgroundRegionCacheError::CachePoisoned)?;
@@ -398,7 +495,7 @@ impl<L: RegionRecoveryLoader> BackgroundRegionCache<L> {
             RegionErrorRecoveryPlan::HydrateEpochNotMatch(plan) => *plan,
         };
         let replacements = match self
-            .inner
+            .shared
             .loader
             .hydrate_regions(&plan.metadata, plan.attempt.store_id)
         {
@@ -406,7 +503,7 @@ impl<L: RegionRecoveryLoader> BackgroundRegionCache<L> {
             Err(error) => return Ok(Err(error)),
         };
         let mut cache = self
-            .inner
+            .shared
             .cache
             .lock()
             .map_err(|_| BackgroundRegionCacheError::CachePoisoned)?;
@@ -423,7 +520,7 @@ where
         cache: RegionCache<L>,
         interval: Duration,
         gc_limit: usize,
-    ) -> Result<Self, BackgroundRegionCacheError> {
+    ) -> Result<BackgroundRegionCacheOwner<L>, BackgroundRegionCacheError> {
         let loader = cache.loader_handle();
         Self::start_with_round(
             cache,
@@ -431,7 +528,9 @@ where
             gc_limit,
             move |shared, triggered, gc_limit| {
                 let (plans, regions) = {
-                    let mut cache = shared.lock().ok()?;
+                    let mut cache = shared
+                        .lock()
+                        .map_err(|_| BackgroundRegionCacheError::CachePoisoned)?;
                     (
                         cache.plan_store_refreshes(triggered),
                         cache.maintain_entries_bounded(gc_limit),
@@ -446,7 +545,9 @@ where
                     attempted,
                     ..StoreMaintenanceRound::default()
                 };
-                let mut cache = shared.lock().ok()?;
+                let mut cache = shared
+                    .lock()
+                    .map_err(|_| BackgroundRegionCacheError::CachePoisoned)?;
                 for observation in observations {
                     match cache.publish_store_refresh(observation) {
                         StoreRefreshApplication::Unchanged => {}
@@ -456,7 +557,7 @@ where
                         StoreRefreshApplication::StaleDiscarded => stores.stale_discarded += 1,
                     }
                 }
-                Some(BackgroundMaintenanceRound {
+                Ok(BackgroundMaintenanceRound {
                     triggered,
                     regions,
                     stores,
@@ -466,44 +567,94 @@ where
     }
 }
 
-impl<L> Drop for BackgroundRegionCacheInner<L> {
-    fn drop(&mut self) {
-        let (state, wake) = &*self.driver;
-        if let Ok(mut state) = state.lock() {
-            state.shutdown = true;
-            wake.notify_one();
+impl<L> BackgroundRegionCacheOwner<L> {
+    /// Returns a foreground lease that cannot stop or join the worker.
+    pub fn handle(&self) -> Result<BackgroundRegionCache<L>, BackgroundRegionCacheError> {
+        self.handle.open_lease()
+    }
+
+    pub(crate) fn opener_handle(&self) -> BackgroundRegionCache<L> {
+        self.handle.clone_opener()
+    }
+
+    /// Number of foreground cache leases that must drain before shutdown.
+    #[must_use]
+    pub fn active_leases(&self) -> usize {
+        match self.handle.shared.leases.lock() {
+            Ok(leases) => leases.active,
+            Err(poisoned) => poisoned.into_inner().active,
         }
-        let worker = match self.worker.get_mut() {
-            Ok(worker) => worker,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        if let Some(worker) = worker.take() {
-            let _ = worker.join();
+    }
+
+    /// Cancels and explicitly joins the maintenance worker exactly once.
+    pub fn shutdown(&self) -> Result<(), BackgroundRegionCacheError> {
+        {
+            let mut leases = self
+                .handle
+                .shared
+                .leases
+                .lock()
+                .map_err(|_| BackgroundRegionCacheError::LeaseStatePoisoned)?;
+            leases.accepting = false;
+            if leases.active != 0 {
+                let owners = leases.active;
+                leases.accepting = true;
+                return Err(BackgroundRegionCacheError::SharedOwners { owners });
+            }
         }
+        shutdown_worker(&self.handle.shared, &self.worker)
     }
 }
 
-fn shutdown_inner<L>(
-    inner: &BackgroundRegionCacheInner<L>,
+impl<L> Drop for BackgroundRegionCacheOwner<L> {
+    fn drop(&mut self) {
+        let mut leases = match self.handle.shared.leases.lock() {
+            Ok(leases) => leases,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        leases.accepting = false;
+        drop(leases);
+        let _ = shutdown_worker(&self.handle.shared, &self.worker);
+    }
+}
+
+fn shutdown_worker<L>(
+    shared: &BackgroundRegionCacheShared<L>,
+    worker: &Mutex<MaintenanceWorker>,
 ) -> Result<(), BackgroundRegionCacheError> {
-    let (state, wake) = &*inner.driver;
+    let mut failures = Vec::new();
+    let (state, wake) = &*shared.driver;
     {
-        let mut state = state
-            .lock()
-            .map_err(|_| BackgroundRegionCacheError::DriverPoisoned)?;
+        let mut state = match state.lock() {
+            Ok(state) => state,
+            Err(poisoned) => {
+                failures.push(BackgroundRegionCacheError::DriverPoisoned);
+                poisoned.into_inner()
+            }
+        };
         state.shutdown = true;
         wake.notify_one();
     }
-    let mut worker = inner
-        .worker
-        .lock()
-        .map_err(|_| BackgroundRegionCacheError::DriverPoisoned)?;
-    if let Some(worker) = worker.take() {
-        worker
-            .join()
-            .map_err(|_| BackgroundRegionCacheError::WorkerPanicked)?;
+    let mut worker = match worker.lock() {
+        Ok(worker) => worker,
+        Err(poisoned) => {
+            failures.push(BackgroundRegionCacheError::DriverPoisoned);
+            poisoned.into_inner()
+        }
+    };
+    let owned = std::mem::replace(&mut *worker, MaintenanceWorker::Joined);
+    if let MaintenanceWorker::Running(worker) = owned {
+        match worker.join() {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => failures.push(error),
+            Err(_) => failures.push(BackgroundRegionCacheError::WorkerPanicked),
+        }
     }
-    Ok(())
+    match failures.len() {
+        0 => Ok(()),
+        1 => Err(failures.pop().expect("one shutdown failure")),
+        _ => Err(BackgroundRegionCacheError::Multiple(failures)),
+    }
 }
 
 fn maintenance_loop<L, F>(
@@ -512,37 +663,46 @@ fn maintenance_loop<L, F>(
     interval: Duration,
     gc_limit: usize,
     mut round: F,
-) where
+) -> Result<(), BackgroundRegionCacheError>
+where
     L: RegionLoader + Send + 'static,
-    F: FnMut(&Arc<Mutex<RegionCache<L>>>, bool, usize) -> Option<BackgroundMaintenanceRound>,
+    F: FnMut(
+        &Arc<Mutex<RegionCache<L>>>,
+        bool,
+        usize,
+    ) -> Result<BackgroundMaintenanceRound, BackgroundRegionCacheError>,
 {
     loop {
         let (state, wake) = &*driver;
-        let Ok(state_guard) = state.lock() else {
-            return;
-        };
-        let Ok((mut state_guard, _)) = wake.wait_timeout_while(state_guard, interval, |state| {
-            !state.shutdown && !state.triggered
-        }) else {
-            return;
-        };
+        let state_guard = state
+            .lock()
+            .map_err(|_| BackgroundRegionCacheError::DriverPoisoned)?;
+        let (mut state_guard, _) = wake
+            .wait_timeout_while(state_guard, interval, |state| {
+                !state.shutdown && !state.triggered
+            })
+            .map_err(|_| BackgroundRegionCacheError::DriverPoisoned)?;
         if state_guard.shutdown {
             state_guard.closed = true;
-            return;
+            return Ok(());
         }
         let triggered = std::mem::take(&mut state_guard.triggered);
         drop(state_guard);
 
-        let Some(completed) = round(&cache, triggered, gc_limit) else {
-            if let Ok(mut state) = state.lock() {
+        let completed = match round(&cache, triggered, gc_limit) {
+            Ok(completed) => completed,
+            Err(error) => {
+                let mut state = state
+                    .lock()
+                    .map_err(|_| BackgroundRegionCacheError::DriverPoisoned)?;
                 state.closed = true;
+                return Err(error);
             }
-            return;
         };
 
-        let Ok(mut state) = state.lock() else {
-            return;
-        };
+        let mut state = state
+            .lock()
+            .map_err(|_| BackgroundRegionCacheError::DriverPoisoned)?;
         state.completed_rounds = state.completed_rounds.saturating_add(1);
         state.last_round = Some(completed);
     }
