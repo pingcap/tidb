@@ -35,8 +35,10 @@ support_anchors = [
   "Campaign 25 root D starts after Campaign 24's real range executor owns the exact table-reader source anchor at PARTIAL",
   "Current source and test ownership is executor-real-tikv-bigint-selection-runtime; transfer at PARTIAL without weakening paging, partitions, indexes, statistics, or result-iteration gaps",
   "Both scans share exactly one start timestamp and cancellation authority; acquiring independent snapshots or materializing through an in-memory catalog is forbidden",
+  "Refactor the existing reader into one internal execute-plan-at-supplied-snapshot seam; calling the public SQL entrypoint twice or copying Campaign 24 request/DAG logic is forbidden",
 ]
 rust_paths = [
+  "rust/crates/tidb-exec/src/real_tikv_read.rs",
   "rust/crates/tidb-exec/src/real_tikv_multi_read.rs",
   "rust/crates/tidb-exec/tests/real_tikv_multi_relation_scan_source.rs",
   "rust/difftests/corpus/coverage/evidence/source/executor-real-tikv-multi-relation-scan-runtime.tsv",
