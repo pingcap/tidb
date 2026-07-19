@@ -1240,6 +1240,7 @@ func (b *builtinValidatePasswordStrengthSig) CloneWithArgs(args []Expression) bu
 	return newSig
 }
 
+// CloneWithArgs clones BuiltinGroupingImplSig with the specified arguments.
 func (b *BuiltinGroupingImplSig) CloneWithArgs(args []Expression) builtinFunc {
 	newSig := &BuiltinGroupingImplSig{}
 	newSig.cloneFromWithArgs(&b.baseBuiltinFunc, args)
