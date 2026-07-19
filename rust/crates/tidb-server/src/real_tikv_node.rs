@@ -25,10 +25,12 @@ use tidb_exec::real_tikv_read::{
     ProductionReadTransport, ReadProcessShutdownError, ReadProcessShutdownStage,
     RealTiKvReadSession, RealTiKvReadSessionOpener,
 };
-use tidb_planner::read_only_scan::{ConfiguredColumn, ConfiguredTable};
+use tidb_planner::read_only_scan::{
+    configured_catalog::ConfiguredCatalog, ConfiguredColumn, ConfiguredTable,
+};
 
 use crate::configured_user_store::{ConfiguredUserStore, ConfiguredUserStoreError};
-use crate::node_config::{ConfiguredReadColumnKind, NodeConfig};
+use crate::node_config::{ConfiguredReadColumnKind, ConfiguredReadTable, NodeConfig};
 use crate::resultset_source::ResultSetSource;
 use crate::sql_node::{
     ActiveQueryCancellation, ConcurrentSqlNode, QueryCancellationLease, QueryResult, QuerySession,
@@ -55,11 +57,16 @@ impl RealTiKvSessionFactory {
     pub fn connect(
         config: &NodeConfig,
     ) -> Result<(Self, ProductionReadProcessAuthority), SqlQueryError> {
-        let table = configured_table(config);
+        let catalog = configured_catalog(config)?;
+        let [table] = catalog.tables() else {
+            return Err(SqlQueryError::unknown(
+                "multiple configured tables require the multi-relation dispatcher",
+            ));
+        };
         let authority = ProductionReadProcessAuthority::connect(
             config.pd_endpoints.clone(),
             PRODUCTION_CONTROL_PLANE_TIMEOUT,
-            table,
+            table.clone(),
         )
         .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
         let factory = Self {
@@ -115,13 +122,13 @@ pub struct RealTiKvServerSession {
 }
 
 #[derive(Default)]
-struct QueryActivity {
+pub(crate) struct QueryActivity {
     active: AtomicUsize,
     max_active: AtomicUsize,
 }
 
 impl QueryActivity {
-    fn begin(self: &Arc<Self>, connection_id: u64, query_id: u64) -> QueryActivityLease {
+    pub(crate) fn begin(self: &Arc<Self>, connection_id: u64, query_id: u64) -> QueryActivityLease {
         let active = self.active.fetch_add(1, Ordering::AcqRel) + 1;
         self.max_active.fetch_max(active, Ordering::AcqRel);
         eprintln!(
@@ -136,13 +143,13 @@ impl QueryActivity {
     }
 }
 
-struct QueryActivityLease {
+pub(crate) struct QueryActivityLease {
     activity: Arc<QueryActivity>,
     connection_id: u64,
     query_id: u64,
 }
 
-fn install_remote_publication_observer<E>(
+pub(crate) fn install_remote_publication_observer<E>(
     snapshot_ts: Option<u64>,
     install: impl FnOnce() -> Result<(), E>,
 ) -> Result<(), E> {
@@ -244,8 +251,7 @@ impl QuerySession for RealTiKvServerSession {
             authority_id,
             session_id,
             emitted: false,
-            _cancellation_lease: cancellation_lease,
-            _query_activity: query_activity,
+            _completion: QueryCompletion::new(cancellation_lease, query_activity),
         })))
     }
 }
@@ -278,8 +284,27 @@ struct ObservedResultSet {
     authority_id: u64,
     session_id: u64,
     emitted: bool,
+    _completion: QueryCompletion,
+}
+
+/// Keeps cancellation registration and activity accounting alive until one
+/// query result is finished or dropped. Multi-relation sessions reuse this
+/// guard instead of creating a second lifecycle authority.
+pub(crate) struct QueryCompletion {
     _cancellation_lease: QueryCancellationLease,
     _query_activity: QueryActivityLease,
+}
+
+impl QueryCompletion {
+    pub(crate) const fn new(
+        cancellation_lease: QueryCancellationLease,
+        query_activity: QueryActivityLease,
+    ) -> Self {
+        Self {
+            _cancellation_lease: cancellation_lease,
+            _query_activity: query_activity,
+        }
+    }
 }
 
 impl ObservedResultSet {
@@ -337,9 +362,8 @@ impl ResultSetSource for ObservedResultSet {
     }
 }
 
-fn configured_table(config: &NodeConfig) -> ConfiguredTable {
-    let columns: Vec<_> = config
-        .read_table
+pub(crate) fn configured_table(table: &ConfiguredReadTable) -> ConfiguredTable {
+    let columns: Vec<_> = table
         .columns
         .iter()
         .map(|column| match column.kind {
@@ -351,12 +375,14 @@ fn configured_table(config: &NodeConfig) -> ConfiguredTable {
             }
         })
         .collect();
-    ConfiguredTable::new(
-        &config.read_table.database,
-        &config.read_table.table,
-        config.read_table.table_id,
-        columns,
-    )
+    ConfiguredTable::new(&table.database, &table.table, table.table_id, columns)
+}
+
+/// Converts the one canonical startup list into the planner's immutable
+/// catalog, preserving source order and shared identity validation.
+pub(crate) fn configured_catalog(config: &NodeConfig) -> Result<ConfiguredCatalog, SqlQueryError> {
+    ConfiguredCatalog::new(config.read_tables.iter().map(configured_table))
+        .map_err(|error| SqlQueryError::unknown(error.to_string()))
 }
 
 /// Starts the bounded concurrent production Rust SQL node.
@@ -386,27 +412,32 @@ pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeEr
             emit_connections_startup_failure(&error);
             RunConfiguredNodeError::Signal(error)
         })?;
-        let column_descriptors = config
-            .read_table
-            .columns
+        let table_descriptors = config
+            .read_tables
             .iter()
-            .map(|column| {
+            .map(|table| {
+                let columns = table
+                    .columns
+                    .iter()
+                    .map(|column| {
+                        format!(
+                            "{}:{}:{}",
+                            column.name,
+                            column.id,
+                            column.kind.descriptor_name()
+                        )
+                    })
+                    .collect::<Vec<_>>();
                 format!(
-                    "{}:{}:{}",
-                    column.name,
-                    column.id,
-                    column.kind.descriptor_name()
+                    "{{\"database\":{:?},\"table\":{:?},\"table_id\":{},\"columns\":{:?}}}",
+                    table.database, table.table, table.table_id, columns
                 )
             })
-            .collect::<Vec<_>>();
+            .collect::<Vec<_>>()
+            .join(",");
         eprintln!(
-            "{{\"event\":\"sql_node_ready\",\"address\":\"{address}\",\"pd_endpoints\":{},\"cluster_id\":{cluster_id},\"authority_id\":{authority_id},\"read_authority_id\":{read_authority_id},\"database\":{:?},\"table\":{:?},\"table_id\":{},\"column_count\":{},\"columns\":{:?},\"max_connections\":{},\"account_count\":{},\"shutdown_grace_ms\":{shutdown_grace_ms}}}",
+            "{{\"event\":\"sql_node_ready\",\"address\":\"{address}\",\"pd_endpoints\":{},\"cluster_id\":{cluster_id},\"authority_id\":{authority_id},\"read_authority_id\":{read_authority_id},\"tables\":[{table_descriptors}],\"max_connections\":{},\"account_count\":{},\"shutdown_grace_ms\":{shutdown_grace_ms}}}",
             config.pd_endpoints.len(),
-            config.read_table.database,
-            config.read_table.table,
-            config.read_table.table_id,
-            column_descriptors.len(),
-            column_descriptors,
             config.max_connections,
             users.len(),
         );
@@ -414,7 +445,7 @@ pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeEr
     })
 }
 
-fn emit_connections_startup_failure(error: &impl std::fmt::Display) {
+pub(crate) fn emit_connections_startup_failure(error: &impl std::fmt::Display) {
     eprintln!(
         "{{\"event\":\"process_shutdown_stage\",\"stage\":\"connections\",\"outcome\":\"error\",\"active\":0,\"accepted\":0,\"completed\":0,\"failed\":0,\"forced_connections\":0,\"error\":{:?}}}",
         error.to_string()
@@ -604,6 +635,63 @@ mod tests {
             .expect("the next remote query must own the sole observer slot");
         assert!(installed.get());
         assert_eq!(install_calls.get(), 1);
+    }
+
+    #[test]
+    fn canonical_configuration_conversion_preserves_order_and_rejects_unwired_multi_dispatch() {
+        let config = NodeConfig::parse([
+            "tidb-server",
+            "--path",
+            "127.0.0.1:2379",
+            "--read-table",
+            "campaign25",
+            "orders",
+            "42",
+            "2",
+            "id:1:clustered-pk",
+            "account_id:2:stored-not-null",
+            "--read-table",
+            "campaign25",
+            "accounts",
+            "43",
+            "2",
+            "id:1:clustered-pk",
+            "balance:2:stored-not-null",
+            "--auth-file",
+            "/tmp/campaign25-users.tsv",
+        ])
+        .unwrap();
+        let catalog = configured_catalog(&config).unwrap();
+        assert_eq!(
+            catalog
+                .tables()
+                .iter()
+                .map(|table| (table.schema(), table.table(), table.table_id()))
+                .collect::<Vec<_>>(),
+            [("campaign25", "orders", 42), ("campaign25", "accounts", 43)]
+        );
+
+        let error = RealTiKvSessionFactory::connect(&config)
+            .err()
+            .expect("F0 must fail before attempting PD/TiKV multi-table dispatch");
+        assert_eq!(
+            error.message,
+            "multiple configured tables require the multi-relation dispatcher"
+        );
+    }
+
+    #[test]
+    fn shared_query_completion_owns_activity_and_cancellation_leases() {
+        let activity = Arc::new(QueryActivity::default());
+        let cancellation = crate::sql_node::ConnectionCancellation::default();
+        let cancellation_lease = cancellation.install(Arc::new(CancelHandle::default()));
+        let activity_lease = activity.begin(7, 11);
+        assert_eq!(activity.active.load(Ordering::Acquire), 1);
+
+        let completion = QueryCompletion::new(cancellation_lease, activity_lease);
+        assert_eq!(activity.active.load(Ordering::Acquire), 1);
+        drop(completion);
+        assert_eq!(activity.active.load(Ordering::Acquire), 0);
     }
 
     struct FactoryEvent(Arc<Mutex<Vec<&'static str>>>);

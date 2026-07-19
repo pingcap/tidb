@@ -16,8 +16,8 @@
 //!
 //! The source TiDB binary accepts a much larger configuration surface. This
 //! milestone admits only the values consumed by the executable read path: one
-//! loopback TCP listener, plaintext PD seeds, and one ordered signed-BIGINT
-//! table-column catalog. Unknown or duplicate options fail startup so an
+//! loopback TCP listener, plaintext PD seeds, and one ordered list of
+//! signed-BIGINT table-column catalogs. Unknown or duplicate options fail startup so an
 //! operator cannot believe an unsupported TiDB setting was applied.
 
 use std::collections::HashSet;
@@ -31,6 +31,8 @@ use tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET;
 const DEFAULT_MAX_CONNECTIONS: usize = 8;
 const MAX_CONNECTION_WORKERS: usize = 256;
 const DEFAULT_CONNECTION_TIMEOUT_MS: u64 = 30_000;
+const MAX_CONFIGURED_READ_TABLES: usize = 2;
+const MAX_CONFIGURED_READ_COLUMNS: usize = 4096;
 
 /// Storage shape of one configured signed-BIGINT column.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -61,7 +63,7 @@ pub struct ConfiguredReadColumn {
     pub kind: ConfiguredReadColumnKind,
 }
 
-/// The sole table shape admitted by the first deployable read-only node.
+/// One table shape admitted by the deployable read-only node.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ConfiguredReadTable {
     /// Schema name matched case-insensitively by the bounded planner.
@@ -83,8 +85,8 @@ pub struct NodeConfig {
     pub port: u16,
     /// Plaintext PD endpoints in configured order.
     pub pd_endpoints: Vec<String>,
-    /// One checked table exposed by the bounded planner.
-    pub read_table: ConfiguredReadTable,
+    /// Checked tables exposed to the bounded planner in command-line order.
+    pub read_tables: Vec<ConfiguredReadTable>,
     /// Maximum accepted logical MySQL packet size.
     pub max_allowed_packet: usize,
     /// Required immutable native-password account file.
@@ -167,10 +169,7 @@ impl NodeConfig {
         let mut port = None;
         let mut path = None;
         let mut store = None;
-        let mut database = None;
-        let mut table = None;
-        let mut table_id = None;
-        let mut columns = Vec::new();
+        let mut read_tables = Vec::new();
         let mut max_allowed_packet = None;
         let mut auth_file = None;
         let mut max_connections = None;
@@ -188,6 +187,10 @@ impl NodeConfig {
                 set_once(&mut port, "-P", value)?;
                 continue;
             }
+            if argument == "--read-table" {
+                read_tables.push(parse_read_table(&mut pending)?);
+                continue;
+            }
             let (option, inline_value) = split_option(&argument)?;
             let value = match inline_value {
                 Some(value) => value.to_owned(),
@@ -201,10 +204,12 @@ impl NodeConfig {
                 "--port" => set_once(&mut port, option, value)?,
                 "--path" => set_once(&mut path, option, value)?,
                 "--store" => set_once(&mut store, option, value)?,
-                "--database" => set_once(&mut database, option, value)?,
-                "--table" => set_once(&mut table, option, value)?,
-                "--table-id" => set_once(&mut table_id, option, value)?,
-                "--column" => columns.push(parse_column_descriptor(value)?),
+                "--read-table" => {
+                    return Err(invalid(
+                        option,
+                        "expected separate <database> <table> <table-id> <column-count> values",
+                    ));
+                }
                 "--max-allowed-packet" => {
                     set_once(&mut max_allowed_packet, option, value)?;
                 }
@@ -227,10 +232,7 @@ impl NodeConfig {
             return Err(NodeConfigError::UnsupportedStore(store.to_owned()));
         }
         let pd_endpoints = parse_pd_endpoints(required(path, "--path")?)?;
-        let database = parse_identifier("--database", required(database, "--database")?)?;
-        let table = parse_identifier("--table", required(table, "--table")?)?;
-        let table_id = parse_positive_id("--table-id", required(table_id, "--table-id")?)?;
-        validate_columns(&columns)?;
+        validate_read_tables(&read_tables)?;
         let max_allowed_packet = match max_allowed_packet {
             Some(value) => parse_positive_number("--max-allowed-packet", &value)?,
             None => DEFAULT_MAX_ALLOWED_PACKET,
@@ -252,12 +254,7 @@ impl NodeConfig {
             host,
             port,
             pd_endpoints,
-            read_table: ConfiguredReadTable {
-                database,
-                table,
-                table_id,
-                columns,
-            },
+            read_tables,
             max_allowed_packet,
             auth_file,
             max_connections,
@@ -268,13 +265,59 @@ impl NodeConfig {
     /// Stable usage text printed by the executable for `--help`.
     #[must_use]
     pub const fn help_text() -> &'static str {
-        "Usage: tidb-server --path <pd[,pd...]> --database <db> --table <table> \
---table-id <id> --column <name>:<id>:<clustered-pk|stored-not-null> \
-[--column <name>:<id>:<clustered-pk|stored-not-null> ...] \
+        "Usage: tidb-server --path <pd[,pd...]> \
+--read-table <database> <table> <table-id> <column-count> \
+<name>:<id>:<clustered-pk|stored-not-null> \
+[<name>:<id>:<clustered-pk|stored-not-null> ...] \
+[--read-table <database> <table> <table-id> <column-count> <column> ...] \
 [--max-connections <count>] [--connection-timeout-ms <milliseconds>] \
 --auth-file <mode-0600-tsv> \
 [--host <loopback-ip>] [-P <port>|--port <port>] [--store tikv] \
 [--max-allowed-packet <bytes>]"
+    }
+}
+
+fn parse_read_table<I>(
+    arguments: &mut std::iter::Peekable<I>,
+) -> Result<ConfiguredReadTable, NodeConfigError>
+where
+    I: Iterator<Item = String>,
+{
+    let database = parse_identifier("--read-table", next_read_table_value(arguments)?)?;
+    let table = parse_identifier("--read-table", next_read_table_value(arguments)?)?;
+    let table_id = parse_positive_id("--read-table", next_read_table_value(arguments)?)?;
+    let column_count: usize =
+        parse_positive_number("--read-table", &next_read_table_value(arguments)?)?;
+    if column_count > MAX_CONFIGURED_READ_COLUMNS {
+        return Err(invalid("--read-table", "column count must not exceed 4096"));
+    }
+    let mut columns = Vec::with_capacity(column_count);
+    for _ in 0..column_count {
+        columns.push(parse_column_descriptor(
+            "--read-table",
+            next_read_table_value(arguments)?,
+        )?);
+    }
+    validate_columns("--read-table", &columns)?;
+    Ok(ConfiguredReadTable {
+        database,
+        table,
+        table_id,
+        columns,
+    })
+}
+
+fn next_read_table_value<I>(
+    arguments: &mut std::iter::Peekable<I>,
+) -> Result<String, NodeConfigError>
+where
+    I: Iterator<Item = String>,
+{
+    match arguments.peek() {
+        Some(value) if !value.starts_with('-') => Ok(arguments
+            .next()
+            .expect("peeked read-table value must remain available")),
+        _ => Err(NodeConfigError::MissingValue("--read-table".to_owned())),
     }
 }
 
@@ -346,24 +389,27 @@ fn parse_identifier(option: &str, value: String) -> Result<String, NodeConfigErr
     Ok(value)
 }
 
-fn parse_column_descriptor(value: String) -> Result<ConfiguredReadColumn, NodeConfigError> {
+fn parse_column_descriptor(
+    option: &str,
+    value: String,
+) -> Result<ConfiguredReadColumn, NodeConfigError> {
     let mut fields = value.split(':');
     let (Some(name), Some(id), Some(kind), None) =
         (fields.next(), fields.next(), fields.next(), fields.next())
     else {
         return Err(invalid(
-            "--column",
+            option,
             "expected <name>:<id>:<clustered-pk|stored-not-null>",
         ));
     };
-    let name = parse_identifier("--column", name.to_owned())?;
-    let id = parse_positive_id("--column", id.to_owned())?;
+    let name = parse_identifier(option, name.to_owned())?;
+    let id = parse_positive_id(option, id.to_owned())?;
     let kind = match kind {
         "clustered-pk" => ConfiguredReadColumnKind::ClusteredPrimaryKey,
         "stored-not-null" => ConfiguredReadColumnKind::StoredNotNull,
         _ => {
             return Err(invalid(
-                "--column",
+                option,
                 "column kind must be clustered-pk or stored-not-null",
             ));
         }
@@ -371,9 +417,9 @@ fn parse_column_descriptor(value: String) -> Result<ConfiguredReadColumn, NodeCo
     Ok(ConfiguredReadColumn { name, id, kind })
 }
 
-fn validate_columns(columns: &[ConfiguredReadColumn]) -> Result<(), NodeConfigError> {
+fn validate_columns(option: &str, columns: &[ConfiguredReadColumn]) -> Result<(), NodeConfigError> {
     if columns.is_empty() {
-        return Err(NodeConfigError::MissingOption("--column"));
+        return Err(invalid(option, "at least one column is required"));
     }
 
     let mut names = HashSet::with_capacity(columns.len());
@@ -382,22 +428,45 @@ fn validate_columns(columns: &[ConfiguredReadColumn]) -> Result<(), NodeConfigEr
     for column in columns {
         if !names.insert(column.name.to_lowercase()) {
             return Err(invalid(
-                "--column",
+                option,
                 "column names must be unique case-insensitively",
             ));
         }
         if !ids.insert(column.id) {
-            return Err(invalid("--column", "column IDs must be unique"));
+            return Err(invalid(option, "column IDs must be unique"));
         }
         if column.kind == ConfiguredReadColumnKind::ClusteredPrimaryKey {
             clustered_primary_keys += 1;
         }
     }
     if clustered_primary_keys != 1 {
+        return Err(invalid(option, "exactly one column must be clustered-pk"));
+    }
+    Ok(())
+}
+
+fn validate_read_tables(tables: &[ConfiguredReadTable]) -> Result<(), NodeConfigError> {
+    if tables.is_empty() {
+        return Err(NodeConfigError::MissingOption("--read-table"));
+    }
+    if tables.len() > MAX_CONFIGURED_READ_TABLES {
         return Err(invalid(
-            "--column",
-            "exactly one column must be clustered-pk",
+            "--read-table",
+            "configured table count must not exceed two",
         ));
+    }
+    let mut names = HashSet::with_capacity(tables.len());
+    let mut ids = HashSet::with_capacity(tables.len());
+    for table in tables {
+        if !names.insert((table.database.to_lowercase(), table.table.to_lowercase())) {
+            return Err(invalid(
+                "--read-table",
+                "table names must be unique case-insensitively within each database",
+            ));
+        }
+        if !ids.insert(table.table_id) {
+            return Err(invalid("--read-table", "table IDs must be unique"));
+        }
     }
     Ok(())
 }

@@ -10,20 +10,17 @@ use std::time::Duration;
 
 use tidb_server::{NodeConfig, NodeConfigError};
 
-fn required() -> [&'static str; 15] {
-    [
+fn required() -> Vec<&'static str> {
+    vec![
         "tidb-server",
         "--path",
         "127.0.0.1:2379,127.0.0.1:2380",
-        "--database",
+        "--read-table",
         "campaign19",
-        "--table",
         "rows",
-        "--table-id",
         "42",
-        "--column",
+        "2",
         "id:1:clustered-pk",
-        "--column",
         "balance:2:stored-not-null",
         "--auth-file",
         "/tmp/campaign21-users.tsv",
@@ -39,14 +36,15 @@ fn source_tikv_startup_surface_is_explicit_and_bounded() {
     assert_eq!(config.host, IpAddr::V4(Ipv4Addr::LOCALHOST));
     assert_eq!(config.port, 4000);
     assert_eq!(config.pd_endpoints, ["127.0.0.1:2379", "127.0.0.1:2380"]);
-    assert_eq!(config.read_table.database, "campaign19");
-    assert_eq!(config.read_table.table, "rows");
-    assert_eq!(config.read_table.table_id, 42);
-    assert_eq!(config.read_table.columns.len(), 2);
-    assert_eq!(config.read_table.columns[0].name, "id");
-    assert_eq!(config.read_table.columns[0].id, 1);
-    assert_eq!(config.read_table.columns[1].name, "balance");
-    assert_eq!(config.read_table.columns[1].id, 2);
+    assert_eq!(config.read_tables.len(), 1);
+    assert_eq!(config.read_tables[0].database, "campaign19");
+    assert_eq!(config.read_tables[0].table, "rows");
+    assert_eq!(config.read_tables[0].table_id, 42);
+    assert_eq!(config.read_tables[0].columns.len(), 2);
+    assert_eq!(config.read_tables[0].columns[0].name, "id");
+    assert_eq!(config.read_tables[0].columns[0].id, 1);
+    assert_eq!(config.read_tables[0].columns[1].name, "balance");
+    assert_eq!(config.read_tables[0].columns[1].id, 2);
     assert_eq!(
         config.auth_file,
         std::path::Path::new("/tmp/campaign21-users.tsv")
@@ -57,11 +55,11 @@ fn source_tikv_startup_surface_is_explicit_and_bounded() {
 
 #[test]
 fn source_port_alias_and_long_option_share_one_value_slot() {
-    let mut source_alias = required().to_vec();
+    let mut source_alias = required();
     source_alias.extend(["-P", "4406"]);
     assert_eq!(NodeConfig::parse(source_alias).unwrap().port, 4406);
 
-    let mut ambiguous = required().to_vec();
+    let mut ambiguous = required();
     ambiguous.extend(["-P", "4406", "--port", "4407"]);
     assert!(matches!(
         NodeConfig::parse(ambiguous),
@@ -72,28 +70,28 @@ fn source_port_alias_and_long_option_share_one_value_slot() {
 #[test]
 fn unsupported_or_ambiguous_startup_options_fail_closed() {
     // pkg/config/config_test.go:457 TestRemovedVariableCheck
-    let mut duplicate = required().to_vec();
+    let mut duplicate = required();
     duplicate.extend(["--store", "tikv", "--store", "tikv"]);
     assert!(matches!(
         NodeConfig::parse(duplicate),
         Err(NodeConfigError::DuplicateOption(option)) if option == "--store"
     ));
 
-    let mut mock = required().to_vec();
+    let mut mock = required();
     mock.extend(["--store", "mocktikv"]);
     assert!(matches!(
         NodeConfig::parse(mock),
         Err(NodeConfigError::UnsupportedStore(store)) if store == "mocktikv"
     ));
 
-    let mut config_file = required().to_vec();
+    let mut config_file = required();
     config_file.extend(["--config", "tidb.toml"]);
     assert!(matches!(
         NodeConfig::parse(config_file),
         Err(NodeConfigError::UnknownOption(option)) if option == "--config"
     ));
 
-    let mut removed_parallel_id = required().to_vec();
+    let mut removed_parallel_id = required();
     removed_parallel_id.extend(["--column-id", "3"]);
     assert!(matches!(
         NodeConfig::parse(removed_parallel_id),
@@ -104,7 +102,7 @@ fn unsupported_or_ambiguous_startup_options_fail_closed() {
 #[test]
 fn plaintext_native_password_boundary_cannot_bind_a_public_address() {
     // pkg/config/config_test.go:1850 TestTcpNoDelay
-    let mut public = required().to_vec();
+    let mut public = required();
     public.extend(["--host", "0.0.0.0"]);
     assert!(matches!(
         NodeConfig::parse(public),
@@ -114,7 +112,7 @@ fn plaintext_native_password_boundary_cannot_bind_a_public_address() {
 
 #[test]
 fn authentication_file_is_required_before_startup() {
-    let mut missing = required().to_vec();
+    let mut missing = required();
     let option = missing
         .iter()
         .position(|argument| *argument == "--auth-file")
@@ -129,7 +127,7 @@ fn authentication_file_is_required_before_startup() {
 #[test]
 fn worker_count_is_positive_bounded_and_explicit() {
     for count in ["1", "256"] {
-        let mut args = required().to_vec();
+        let mut args = required();
         args.extend(["--max-connections", count]);
         assert_eq!(
             NodeConfig::parse(args).unwrap().max_connections,
@@ -137,7 +135,7 @@ fn worker_count_is_positive_bounded_and_explicit() {
         );
     }
     for count in ["0", "257"] {
-        let mut args = required().to_vec();
+        let mut args = required();
         args.extend(["--max-connections", count]);
         assert!(matches!(
             NodeConfig::parse(args),
@@ -148,14 +146,14 @@ fn worker_count_is_positive_bounded_and_explicit() {
 
 #[test]
 fn connection_timeout_is_positive_explicit_and_documented() {
-    let mut args = required().to_vec();
+    let mut args = required();
     args.extend(["--connection-timeout-ms", "1250"]);
     assert_eq!(
         NodeConfig::parse(args).unwrap().connection_timeout,
         Duration::from_millis(1250)
     );
 
-    let mut zero = required().to_vec();
+    let mut zero = required();
     zero.extend(["--connection-timeout-ms", "0"]);
     assert!(matches!(
         NodeConfig::parse(zero),
@@ -168,10 +166,10 @@ fn connection_timeout_is_positive_explicit_and_documented() {
 fn topology_ids_packet_limit_and_help_are_checked_before_startup() {
     // cmd/tidb-server/main_test.go:56 TestExitCodeForSignal
     // pkg/config/config_test.go:1317 TestTxnTotalSizeLimitValid
-    for (option, value) in [("--table-id", "0"), ("--max-allowed-packet", "0")] {
-        let mut args = required().to_vec();
-        if let Some(position) = args.iter().position(|arg| *arg == option) {
-            args[position + 1] = value;
+    for (position, option, value) in [(6, "--read-table", "0"), (0, "--max-allowed-packet", "0")] {
+        let mut args = required();
+        if option == "--read-table" {
+            args[position] = value;
         } else {
             args.extend([option, value]);
         }
@@ -185,6 +183,7 @@ fn topology_ids_packet_limit_and_help_are_checked_before_startup() {
         Err(NodeConfigError::HelpRequested)
     );
     assert!(NodeConfig::help_text().contains("--store tikv"));
+    assert!(NodeConfig::help_text().contains("--read-table"));
     assert!(!NodeConfig::help_text().contains("--column-id"));
     assert!(NodeConfig::help_text().contains("stored-not-null"));
 }
@@ -194,8 +193,7 @@ fn repeated_column_descriptors_are_atomic_ordered_and_complete() {
     // pkg/config/config_test.go:1701 TestTableColumnCountLimit
     let config = NodeConfig::parse(required()).unwrap();
     assert_eq!(
-        config
-            .read_table
+        config.read_tables[0]
             .columns
             .iter()
             .map(|column| (column.name.as_str(), column.id))
@@ -211,7 +209,7 @@ fn repeated_column_descriptors_are_atomic_ordered_and_complete() {
         "id:not-an-id:clustered-pk",
         "id:1:nullable",
     ] {
-        let mut args = required().to_vec();
+        let mut args = required();
         let position = args
             .iter()
             .position(|argument| *argument == "id:1:clustered-pk")
@@ -219,28 +217,32 @@ fn repeated_column_descriptors_are_atomic_ordered_and_complete() {
         args[position] = descriptor;
         assert!(matches!(
             NodeConfig::parse(args),
-            Err(NodeConfigError::InvalidValue { option, .. }) if option == "--column"
+            Err(NodeConfigError::InvalidValue { option, .. }) if option == "--read-table"
         ));
     }
 }
 
 #[test]
 fn invalid_column_catalogs_fail_before_startup() {
-    let cases = [
-        ["--column", "ID:3:stored-not-null"].as_slice(),
-        ["--column", "other:2:stored-not-null"].as_slice(),
-        ["--column", "other:3:clustered-pk"].as_slice(),
-    ];
-    for extra in cases {
-        let mut args = required().to_vec();
-        args.extend_from_slice(extra);
+    for extra in [
+        "ID:3:stored-not-null",
+        "other:2:stored-not-null",
+        "other:3:clustered-pk",
+    ] {
+        let mut args = required();
+        args[7] = "3";
+        let auth_file = args
+            .iter()
+            .position(|argument| *argument == "--auth-file")
+            .unwrap();
+        args.insert(auth_file, extra);
         assert!(matches!(
             NodeConfig::parse(args),
-            Err(NodeConfigError::InvalidValue { option, .. }) if option == "--column"
+            Err(NodeConfigError::InvalidValue { option, .. }) if option == "--read-table"
         ));
     }
 
-    let mut no_primary_key = required().to_vec();
+    let mut no_primary_key = required();
     let primary = no_primary_key
         .iter()
         .position(|argument| *argument == "id:1:clustered-pk")
@@ -248,22 +250,132 @@ fn invalid_column_catalogs_fail_before_startup() {
     no_primary_key[primary] = "id:1:stored-not-null";
     assert!(matches!(
         NodeConfig::parse(no_primary_key),
-        Err(NodeConfigError::InvalidValue { option, .. }) if option == "--column"
+        Err(NodeConfigError::InvalidValue { option, .. }) if option == "--read-table"
     ));
 
-    let mut missing = required().to_vec();
-    let option = missing
-        .iter()
-        .position(|argument| *argument == "--column")
-        .unwrap();
-    missing.drain(option..=option + 1);
-    let option = missing
-        .iter()
-        .position(|argument| *argument == "--column")
-        .unwrap();
-    missing.drain(option..=option + 1);
-    assert_eq!(
+    let mut missing = required();
+    missing[7] = "0";
+    assert!(matches!(
         NodeConfig::parse(missing),
-        Err(NodeConfigError::MissingOption("--column"))
+        Err(NodeConfigError::InvalidValue { option, .. }) if option == "--read-table"
+    ));
+}
+
+#[test]
+fn configured_read_tables_are_atomic_ordered_and_globally_unique() {
+    let mut args = required();
+    args.extend([
+        "--read-table",
+        "campaign19",
+        "accounts",
+        "43",
+        "2",
+        "account_id:1:clustered-pk",
+        "balance:2:stored-not-null",
+    ]);
+    let config = NodeConfig::parse(args).unwrap();
+    assert_eq!(
+        config
+            .read_tables
+            .iter()
+            .map(|table| (
+                table.database.as_str(),
+                table.table.as_str(),
+                table.table_id
+            ))
+            .collect::<Vec<_>>(),
+        [("campaign19", "rows", 42), ("campaign19", "accounts", 43)]
     );
+
+    for duplicate in [
+        [
+            "--read-table",
+            "CAMPAIGN19",
+            "ROWS",
+            "43",
+            "1",
+            "id:1:clustered-pk",
+        ],
+        [
+            "--read-table",
+            "campaign19",
+            "accounts",
+            "42",
+            "1",
+            "id:1:clustered-pk",
+        ],
+    ] {
+        let mut args = required();
+        args.extend(duplicate);
+        assert!(matches!(
+            NodeConfig::parse(args),
+            Err(NodeConfigError::InvalidValue { option, .. }) if option == "--read-table"
+        ));
+    }
+
+    let mut truncated = required();
+    truncated.extend([
+        "--read-table",
+        "campaign19",
+        "accounts",
+        "43",
+        "2",
+        "id:1:clustered-pk",
+        "--max-connections",
+        "3",
+    ]);
+    assert_eq!(
+        NodeConfig::parse(truncated),
+        Err(NodeConfigError::MissingValue("--read-table".to_owned()))
+    );
+
+    let mut truncated_before_short_option = required();
+    truncated_before_short_option.extend([
+        "--read-table",
+        "campaign19",
+        "accounts",
+        "43",
+        "2",
+        "id:1:clustered-pk",
+        "-P",
+        "4406",
+    ]);
+    assert_eq!(
+        NodeConfig::parse(truncated_before_short_option),
+        Err(NodeConfigError::MissingValue("--read-table".to_owned()))
+    );
+
+    let mut oversized = required();
+    oversized.extend(["--read-table", "campaign19", "accounts", "43", "4097"]);
+    assert!(matches!(
+        NodeConfig::parse(oversized),
+        Err(NodeConfigError::InvalidValue { option, .. }) if option == "--read-table"
+    ));
+
+    let mut too_many = required();
+    too_many.extend([
+        "--read-table",
+        "campaign19",
+        "accounts",
+        "43",
+        "1",
+        "id:1:clustered-pk",
+        "--read-table",
+        "campaign19",
+        "profiles",
+        "44",
+        "1",
+        "id:1:clustered-pk",
+    ]);
+    assert!(matches!(
+        NodeConfig::parse(too_many),
+        Err(NodeConfigError::InvalidValue { option, .. }) if option == "--read-table"
+    ));
+
+    let mut legacy = required();
+    legacy.extend(["--database", "parallel-singular-path"]);
+    assert!(matches!(
+        NodeConfig::parse(legacy),
+        Err(NodeConfigError::UnknownOption(option)) if option == "--database"
+    ));
 }

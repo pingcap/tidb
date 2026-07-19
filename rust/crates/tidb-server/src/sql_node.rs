@@ -1022,7 +1022,7 @@ mod tests {
             host: IpAddr::V4(Ipv4Addr::LOCALHOST),
             port: 0,
             pd_endpoints: vec!["127.0.0.1:2379".to_owned()],
-            read_table: ConfiguredReadTable {
+            read_tables: vec![ConfiguredReadTable {
                 database: "test".to_owned(),
                 table: "rows".to_owned(),
                 table_id: 42,
@@ -1031,7 +1031,7 @@ mod tests {
                     id: 1,
                     kind: ConfiguredReadColumnKind::ClusteredPrimaryKey,
                 }],
-            },
+            }],
             max_allowed_packet: tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET,
             auth_file: PathBuf::from("unused"),
             max_connections: 2,

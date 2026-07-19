@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 
 # Shared, source-only helpers for the live SQL-node campaigns. Callers own the
-# SQL fixture and feature-specific assertions; this file owns process identity,
-# persistent-client framing, topology observation, and bounded cleanup.
+# SQL fixture extensions and feature-specific assertions; this file owns the
+# default fixture and server contract, process identity, persistent-client
+# framing, topology observation, and bounded cleanup.
 
 expected_persistent_client_output_lines() {
   local row_count=$1
@@ -581,6 +582,60 @@ transfer_leader() {
   return 1
 }
 
+default_live_sql_node_fixture() {
+  mysql_go <<SQL
+  DROP DATABASE IF EXISTS ${SCENARIO_DATABASE};
+  CREATE DATABASE ${SCENARIO_DATABASE};
+  CREATE TABLE ${SCENARIO_DATABASE}.rows (
+    id BIGINT PRIMARY KEY CLUSTERED,
+    balance BIGINT NOT NULL
+  );
+  INSERT INTO ${SCENARIO_DATABASE}.rows VALUES (-7, 913), (0, -2048), (42, 77);
+  CREATE TABLE ${SCENARIO_DATABASE}.lock_secondary (
+    id BIGINT PRIMARY KEY CLUSTERED,
+    value BIGINT NOT NULL
+  );
+  INSERT INTO ${SCENARIO_DATABASE}.lock_secondary VALUES (1, 1);
+  SET SESSION tidb_wait_split_region_finish = 1;
+  SPLIT TABLE ${SCENARIO_DATABASE}.lock_secondary BY (1);
+SQL
+}
+
+scenario_prepare_fixture() {
+  default_live_sql_node_fixture
+}
+
+default_live_sql_node_server_arguments() {
+  RUST_SERVER_ARGS=(
+    --path "${PD_ADDR}" --store tikv
+    --host 127.0.0.1 --port "${RUST_SQL_PORT}"
+    --read-table "${SCENARIO_DATABASE}" rows "${TABLE_ID}" 2
+    id:1:clustered-pk balance:2:stored-not-null
+    --auth-file "${AUTH_FILE}" --max-connections 4
+    --connection-timeout-ms "${CONNECTION_TIMEOUT_MS}"
+  )
+}
+
+scenario_configure_server_arguments() {
+  default_live_sql_node_server_arguments
+}
+
+default_validate_live_sql_node_ready() {
+  local ready_json=$1
+  printf '%s\n' "${ready_json}" | jq -e \
+    --arg table_id "${TABLE_ID}" --arg database "${SCENARIO_DATABASE}" \
+    '.tables == [{
+       database: $database,
+       table: "rows",
+       table_id: ($table_id | tonumber),
+       columns: ["id:1:clustered-pk", "balance:2:stored-not-null"]
+     }]' >/dev/null
+}
+
+scenario_validate_ready_json() {
+  default_validate_live_sql_node_ready "$1"
+}
+
 live_sql_node_harness_self_test() {
   [[ $(expected_persistent_client_output_lines 0) == 0 ]]
   [[ $(expected_persistent_client_output_lines 1) == 2 ]]
@@ -605,6 +660,18 @@ live_sql_node_harness_self_test() {
   : >"${fixture}"
   query_output_is_exact "${fixture}" $'amount\tid' ''
   rm -f -- "${fixture}"
+
+  PD_ADDR=127.0.0.1:2379
+  RUST_SQL_PORT=12000
+  SCENARIO_DATABASE=campaign_self_test
+  TABLE_ID=42
+  AUTH_FILE=/tmp/campaign-self-test-auth.tsv
+  CONNECTION_TIMEOUT_MS=120000
+  default_live_sql_node_server_arguments
+  [[ "${RUST_SERVER_ARGS[*]}" == \
+    '--path 127.0.0.1:2379 --store tikv --host 127.0.0.1 --port 12000 --read-table campaign_self_test rows 42 2 id:1:clustered-pk balance:2:stored-not-null --auth-file /tmp/campaign-self-test-auth.tsv --max-connections 4 --connection-timeout-ms 120000' ]]
+  default_validate_live_sql_node_ready \
+    '{"tables":[{"database":"campaign_self_test","table":"rows","table_id":42,"columns":["id:1:clustered-pk","balance:2:stored-not-null"]}]}'
 
   terminate_pid_group "self-test absent child" 999999999
   TAG=${previous_tag}
@@ -868,22 +935,7 @@ run_live_sql_node_topology_scenario() {
     exit 1
   fi
 
-  mysql_go <<SQL
-  DROP DATABASE IF EXISTS ${SCENARIO_DATABASE};
-  CREATE DATABASE ${SCENARIO_DATABASE};
-  CREATE TABLE ${SCENARIO_DATABASE}.rows (
-    id BIGINT PRIMARY KEY CLUSTERED,
-    balance BIGINT NOT NULL
-  );
-  INSERT INTO ${SCENARIO_DATABASE}.rows VALUES (-7, 913), (0, -2048), (42, 77);
-  CREATE TABLE ${SCENARIO_DATABASE}.lock_secondary (
-    id BIGINT PRIMARY KEY CLUSTERED,
-    value BIGINT NOT NULL
-  );
-  INSERT INTO ${SCENARIO_DATABASE}.lock_secondary VALUES (1, 1);
-  SET SESSION tidb_wait_split_region_finish = 1;
-  SPLIT TABLE ${SCENARIO_DATABASE}.lock_secondary BY (1);
-SQL
+  scenario_prepare_fixture
   TABLE_ID=$(mysql_go -Nse \
     "select tidb_table_id from information_schema.tables where table_schema='${SCENARIO_DATABASE}' and table_name='rows'")
   if [[ ! "${TABLE_ID}" =~ ^[0-9]+$ ]] || [[ "${TABLE_ID}" =~ ^0+$ ]]; then
@@ -899,13 +951,13 @@ SQL
     exit 1
   fi
 
-  "${RUST_SERVER}" --path "${PD_ADDR}" --store tikv \
-    --host 127.0.0.1 --port "${RUST_SQL_PORT}" \
-    --database "${SCENARIO_DATABASE}" --table rows --table-id "${TABLE_ID}" \
-    --column id:1:clustered-pk \
-    --column balance:2:stored-not-null \
-    --auth-file "${AUTH_FILE}" --max-connections 4 \
-    --connection-timeout-ms "${CONNECTION_TIMEOUT_MS}" >"${RUST_LOG}" 2>&1 &
+  RUST_SERVER_ARGS=()
+  scenario_configure_server_arguments
+  if [[ ${#RUST_SERVER_ARGS[@]} -eq 0 ]]; then
+    echo "${CAMPAIGN_LABEL} server-argument hook produced no arguments" >&2
+    exit 1
+  fi
+  "${RUST_SERVER}" "${RUST_SERVER_ARGS[@]}" >"${RUST_LOG}" 2>&1 &
   RUST_PID=$!
   ORIGINAL_RUST_PID=${RUST_PID}
 
@@ -926,13 +978,11 @@ SQL
     sleep 0.1
   done
   if [[ -z "${READY_JSON}" ]] || ! printf '%s\n' "${READY_JSON}" | jq -e \
-    --arg table_id "${TABLE_ID}" --arg cluster_id "${PD_CLUSTER_ID}" \
-    --arg database "${SCENARIO_DATABASE}" \
-    '(.table_id | tostring) == $table_id and (.cluster_id | tostring) == $cluster_id
-     and .database == $database and .table == "rows"
-     and .columns == ["id:1:clustered-pk", "balance:2:stored-not-null"]
+    --arg cluster_id "${PD_CLUSTER_ID}" \
+    '(.cluster_id | tostring) == $cluster_id
      and .max_connections == 4 and .account_count == 1
-     and .authority_id > 0 and .read_authority_id > 0' >/dev/null; then
+     and .authority_id > 0 and .read_authority_id > 0' >/dev/null \
+    || ! scenario_validate_ready_json "${READY_JSON}"; then
     echo "Rust readiness omitted ${CAMPAIGN_LABEL} process identity" >&2
     printf '%s\n' "${READY_JSON}" >&2
     exit 1

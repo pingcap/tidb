@@ -140,6 +140,25 @@ if [[ $(printf '%s\n' "${LIFECYCLE_OWNERS}" | sed '/^$/d' | awk 'END { print NR 
   exit 1
 fi
 
+for hook in \
+  scenario_prepare_fixture \
+  scenario_configure_server_arguments \
+  scenario_validate_ready_json; do
+  HOOK_OWNERS=$(rg -l "^${hook}\\(\\)" "${HARNESS}" "${RUNNERS[@]}")
+  HOOK_REFERENCES=$(rg -c "${hook}" "${HARNESS}")
+  if [[ "${HOOK_OWNERS}" != "${HARNESS}" ]] \
+    || [[ "${HOOK_REFERENCES}" -lt 2 ]]; then
+    echo "Campaigns 22-24 must consume the shared default ${hook} hook" >&2
+    printf '%s\n' "${HOOK_OWNERS}" >&2
+    exit 1
+  fi
+done
+
+if rg -n -- '--database|--table-id|--column([[:space:]]|$)' "${HARNESS}" >/dev/null; then
+  echo "shared live SQL-node harness retained the removed singular table grammar" >&2
+  exit 1
+fi
+
 "${RUNNERS[0]}" --self-test-live-harness
 "${RUNNERS[1]}" --self-test-empty-result-framing
 "${RUNNERS[1]}" --self-test-live-harness
