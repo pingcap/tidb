@@ -360,6 +360,7 @@ func (p partLimitSink) Write(b []byte) (int, error) {
 
 func buildFileWriter(tctx *tcontext.Context, s storeapi.Storage, fileName string, compressType compressedio.CompressType) (objectio.Writer, func(ctx context.Context) error, error) {
 	fileName += compressType.FileSuffix()
+	fileName += encryptedFileSuffix(s)
 	fullPath := s.URI() + "/" + fileName
 	writer, err := objstore.WithCompression(s, compressType, compressedio.DecompressConfig{}).Create(tctx, fileName, nil)
 	if err != nil {
@@ -388,6 +389,7 @@ func buildFileWriter(tctx *tcontext.Context, s storeapi.Storage, fileName string
 
 func buildInterceptFileWriter(pCtx *tcontext.Context, s storeapi.Storage, fileName string, compressType compressedio.CompressType, wo *storeapi.WriterOption) (objectio.Writer, func(context.Context) error) {
 	fileName += compressType.FileSuffix()
+	fileName += encryptedFileSuffix(s)
 	var writer objectio.Writer
 	fullPath := s.URI() + "/" + fileName
 	fileWriter := &InterceptFileWriter{}
@@ -425,6 +427,17 @@ func buildInterceptFileWriter(pCtx *tcontext.Context, s storeapi.Storage, fileNa
 		return err
 	}
 	return fileWriter, tearDownRoutine
+}
+
+type encryptedFileSuffixer interface {
+	EncryptedFileSuffix() string
+}
+
+func encryptedFileSuffix(storage storeapi.Storage) string {
+	if encrypted, ok := storage.(encryptedFileSuffixer); ok {
+		return encrypted.EncryptedFileSuffix()
+	}
+	return ""
 }
 
 // LazyStringWriter is an interceptor of io.StringWriter,
