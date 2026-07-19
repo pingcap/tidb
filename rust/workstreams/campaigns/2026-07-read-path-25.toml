@@ -7,5 +7,6 @@ slices = [
   "planner-configured-fullschema-join-runtime",
   "executor-real-tikv-multi-relation-scan-runtime",
   "executor-configured-inner-join-runtime",
+  "server-multi-relation-node-foundation",
   "server-live-multi-relation-join-proof",
 ]
