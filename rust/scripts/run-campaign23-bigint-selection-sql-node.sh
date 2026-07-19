@@ -2,6 +2,28 @@
 
 set -euo pipefail
 
+# The stock mysql client used in persistent batch mode emits no stdout lines
+# for an empty result set. Non-empty results emit one header plus one line per
+# row. Keep that client-facing framing separate from the server's MySQL packet
+# framing: query_snapshot/query_transport/query_activity prove the empty query
+# itself completed.
+expected_persistent_client_output_lines() {
+  local row_count=$1
+  if [[ "${row_count}" -eq 0 ]]; then
+    printf '0\n'
+  else
+    printf '%s\n' "$((row_count + 1))"
+  fi
+}
+
+if [[ "${1:-}" == --self-test-empty-result-framing ]]; then
+  [[ $(expected_persistent_client_output_lines 0) == 0 ]]
+  [[ $(expected_persistent_client_output_lines 1) == 2 ]]
+  [[ $(expected_persistent_client_output_lines 3) == 4 ]]
+  echo "Campaign 23 empty-result framing self-test passed"
+  exit 0
+fi
+
 for prerequisite in tiup cargo curl jq nc lsof pgrep ps awk sed seq grep sort tail mktemp mkfifo openssl chmod date kill perl; do
   if ! command -v "${prerequisite}" >/dev/null 2>&1; then
     echo "missing Campaign 23 prerequisite: ${prerequisite}" >&2
@@ -525,6 +547,10 @@ query_output_is_exact() {
   local expected_header=$2
   local expected_rows=$3
   [[ -f "${output}" ]] || return 1
+  if [[ -z "${expected_rows}" ]]; then
+    [[ ! -s "${output}" ]]
+    return
+  fi
   local header
   header=$(sed -n '1p' "${output}")
   [[ "${header}" == "${expected_header}" ]] || return 1
@@ -706,7 +732,8 @@ run_exact_query_phase() {
   local expected_row_count
   expected_row_count=$(printf '%s\n' "${expected_rows}" \
     | sed '/^[[:space:]]*$/d' | awk 'END { print NR + 0 }')
-  local expected_output_lines=$((expected_row_count + 1))
+  local expected_output_lines
+  expected_output_lines=$(expected_persistent_client_output_lines "${expected_row_count}")
   printf '%s\n' "${query}" >&9
   wait_for_new_event_count query_snapshot "${before_snapshots}" "${before_error_lines}"
   wait_for_new_event_count query_transport_published "${before_publications}" "${before_error_lines}"
@@ -744,8 +771,12 @@ run_exact_query_phase() {
     sed -n '1,160p' "${PERSISTENT_CLIENT_ERROR}" >&2
     return 1
   fi
-  sed -n "$((before_output_lines + 1)),$((before_output_lines + expected_output_lines))p" \
-    "${PERSISTENT_CLIENT_OUTPUT}" >"${output}"
+  if [[ "${expected_output_lines}" -eq 0 ]]; then
+    : >"${output}"
+  else
+    sed -n "$((before_output_lines + 1)),$((before_output_lines + expected_output_lines))p" \
+      "${PERSISTENT_CLIENT_OUTPUT}" >"${output}"
+  fi
   if ! query_output_is_exact "${output}" "${expected_header}" "${expected_rows}"; then
     echo "Campaign 23 ${phase} did not return the exact filtered rows" >&2
     sed -n '1,40p' "${output}" >&2
