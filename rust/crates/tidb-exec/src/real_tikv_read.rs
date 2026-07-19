@@ -1013,12 +1013,22 @@ where
     /// table reader and use this seam for both inputs. Range conversion,
     /// Selection/DAG lowering, request construction, decoding, cancellation,
     /// and evidence therefore stay identical to the single-table path.
-    pub(crate) fn execute_plan_at_snapshot(
+    pub fn execute_plan_at_snapshot(
         &mut self,
         plan: ReadOnlyScanPlan,
         snapshot_ts: u64,
         cancellation: Arc<CancelHandle>,
     ) -> Result<RealTiKvQuery, RealTiKvReadError> {
+        if plan.table_id() != self.table.table_id() {
+            return Err(RealTiKvReadError::Request(
+                "supplied scan plan does not belong to this configured table".to_owned(),
+            ));
+        }
+        if plan.is_contradiction() {
+            return Err(RealTiKvReadError::Request(
+                "supplied-snapshot execution requires a physical scan".to_owned(),
+            ));
+        }
         if snapshot_ts == 0 {
             return Err(RealTiKvReadError::Query(
                 "PD returned a zero snapshot timestamp".to_owned(),
