@@ -3334,6 +3334,10 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 				ruConsumptionReporter = rgCtl
 			}
 		}
+		pagingSizeBytes := vars.PagingSizeBytes
+		if pagingSizeBytes > 0 && (!vardef.EnableResourceControl.Load() || !resourceGroupAllowsPagingSizeBytes(dom, sc.ResourceGroupName)) {
+			pagingSizeBytes = 0
+		}
 		return &distsqlctx.DistSQLContext{
 			WarnHandler:     sc.WarnHandler,
 			InRestrictedSQL: sc.InRestrictedSQL,
@@ -3373,6 +3377,7 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 			EnablePaging:                  vars.EnablePaging,
 			MinPagingSize:                 vars.MinPagingSize,
 			MaxPagingSize:                 vars.MaxPagingSize,
+			PagingSizeBytes:               pagingSizeBytes,
 			RequestSourceType:             vars.RequestSourceType,
 			ExplicitRequestSourceType:     vars.ExplicitRequestSourceType,
 			StoreBatchSize:                vars.StoreBatchSize,
@@ -3403,6 +3408,19 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 	}
 
 	return dctx
+}
+
+func resourceGroupAllowsPagingSizeBytes(dom *domain.Domain, resourceGroupName string) bool {
+	if dom == nil || resourceGroupName == "" {
+		return false
+	}
+	if rgCtl := dom.ResourceGroupsController(); rgCtl != nil {
+		if state, ok := rgCtl.GetResourceGroupRuntimeState(resourceGroupName); ok {
+			return state.HasLimitedBurst
+		}
+	}
+	rg, ok := dom.InfoSchema().ResourceGroupByName(ast.NewCIStr(resourceGroupName))
+	return ok && rg.GetBurstLimitAdjusted() >= 0
 }
 
 // GetRangerCtx returns the context used in `ranger` related functions

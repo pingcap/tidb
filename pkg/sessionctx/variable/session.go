@@ -1733,6 +1733,10 @@ type SessionVars struct {
 	// NOTE: please don't change it directly. Use `SetResourceGroupName`, because it'll need to inc/dec the metrics
 	ResourceGroupName string
 
+	// PagingSizeBytes is the byte budget per page.
+	// 0 means disabled.
+	PagingSizeBytes int
+
 	// PessimisticTransactionFairLocking controls whether fair locking for pessimistic transaction
 	// is enabled.
 	PessimisticTransactionFairLocking bool
@@ -2446,6 +2450,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableLateMaterialization:        vardef.DefTiDBOptEnableLateMaterialization,
 		TiFlashComputeDispatchPolicy:     tiflashcompute.DispatchPolicyConsistentHash,
 		ResourceGroupName:                resourcegroup.DefaultResourceGroupName,
+		PagingSizeBytes:                  vardef.DefPagingSizeBytes,
 		DefaultCollationForUTF8MB4:       mysql.DefaultCollationName,
 		GroupConcatMaxLen:                vardef.DefGroupConcatMaxLen,
 		EnableRedactLog:                  vardef.DefTiDBRedactLog,

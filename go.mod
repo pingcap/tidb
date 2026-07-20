@@ -100,7 +100,7 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20260508054701-306e305bcf41
 	github.com/pingcap/failpoint v0.0.0-20240528011301-b51a646c7c86
 	github.com/pingcap/fn v1.0.0
-	github.com/pingcap/kvproto v0.0.0-20260703015547-e800f9e5a427
+	github.com/pingcap/kvproto v0.0.0-20260716111302-363178052f57
 	github.com/pingcap/log v1.1.1-0.20250917021125-19901e015dc9
 	github.com/pingcap/metering_sdk v0.0.0-20260324055927-14fead745f1d
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
@@ -123,8 +123,8 @@ require (
 	github.com/stathat/consistent v1.0.0
 	github.com/stretchr/testify v1.11.1
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.8-0.20260617064024-5526ae2a8546
-	github.com/tikv/pd/client v0.0.0-20260714045825-19ee324ee9d8
+	github.com/tikv/client-go/v2 v2.0.8-0.20260716132210-520a5635e5e3
+	github.com/tikv/pd/client v0.0.0-20260716095117-1636e69a936b
 	github.com/timakin/bodyclose v0.0.0-20241222091800-1db5c5ca4d67
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
