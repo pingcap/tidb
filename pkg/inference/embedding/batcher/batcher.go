@@ -18,12 +18,15 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/mitchellh/copystructure"
 	"github.com/pingcap/tidb/pkg/inference/embedding/base"
 	"github.com/pingcap/tidb/pkg/util"
 )
@@ -142,6 +145,7 @@ func (b *Batch) parseModelWithProvider(modelWithProvider string) (string, string
 		for key := range b.embedders {
 			p = append(p, key)
 		}
+		sort.Strings(p)
 		availableProviders := strings.Join(p, ", ")
 		return "", "", fmt.Errorf(
 			"unknown embedding provider '%s', available providers: %s",
@@ -178,6 +182,23 @@ func newBatchKey(provider, model string, opts map[string]any) (batchKey, error) 
 		model:      model,
 		optsDigest: sha256.Sum256(optsJSON),
 	}, nil
+}
+
+// snapshotOptions detaches a batch from caller-owned mutable option values.
+// A canceled caller can return before the shared provider request is dispatched.
+func snapshotOptions(opts map[string]any) (map[string]any, error) {
+	if opts == nil {
+		return nil, nil
+	}
+	snapshot, err := copystructure.Copy(opts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to snapshot opts: %w", err)
+	}
+	clonedOpts, ok := snapshot.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("failed to snapshot opts: unexpected copy type %T", snapshot)
+	}
+	return clonedOpts, nil
 }
 
 func (b *Batch) removeBatchLocked(key batchKey, target *batchedCalls) {
@@ -221,6 +242,31 @@ func waitForBatchResult(ctx context.Context, resultCh <-chan *batchResult) ([][]
 	}
 }
 
+func trySendBatchResult(call *call, result *batchResult) {
+	select {
+	case call.resultCh <- result:
+	default:
+	}
+}
+
+func (b *Batch) processBatchWithRecovery(key batchKey, thisBatch *batchedCalls, embedder base.Embedder, model string) {
+	util.WithRecovery(func() {
+		b.processBatch(key, thisBatch, embedder, model)
+	}, func(r any) {
+		if r == nil {
+			return
+		}
+		result := &batchResult{
+			err: errors.New("embedding batch processing panicked"),
+		}
+		for _, call := range thisBatch.calls {
+			// A panic can occur after another result was delivered. Never block or
+			// overwrite that result while completing callers that are still waiting.
+			trySendBatchResult(call, result)
+		}
+	})
+}
+
 // CreateEmbeddings batches requests with the same model/opts combination within the batch window.
 func (b *Batch) CreateEmbeddings(ctx context.Context, modelWithProvider string, texts []string, opts map[string]any) ([][]float32, error) {
 	if len(texts) == 0 {
@@ -243,6 +289,10 @@ func (b *Batch) CreateEmbeddings(ctx context.Context, modelWithProvider string, 
 	if err != nil {
 		return nil, err
 	}
+	optsSnapshot, err := snapshotOptions(opts)
+	if err != nil {
+		return nil, err
+	}
 
 	thisCall := &call{
 		ctx:      ctx,
@@ -254,10 +304,10 @@ func (b *Batch) CreateEmbeddings(ctx context.Context, modelWithProvider string, 
 		bc := &batchedCalls{
 			calls:         []*call{thisCall},
 			batchedTextsN: len(texts),
-			opts:          opts,
+			opts:          optsSnapshot,
 		}
 		bc.timer = time.AfterFunc(b.batchWindow, func() {
-			b.processBatch(key, bc, embedder, actualModel)
+			b.processBatchWithRecovery(key, bc, embedder, actualModel)
 		})
 		return bc
 	}
@@ -269,7 +319,7 @@ func (b *Batch) CreateEmbeddings(ctx context.Context, modelWithProvider string, 
 		// JSON serialization intentionally provides a stable, fixed-size first-level
 		// key. It is not sufficient for semantic equality because values with
 		// different Go types can have the same JSON representation.
-		if reflect.DeepEqual(candidate.opts, opts) {
+		if reflect.DeepEqual(candidate.opts, optsSnapshot) {
 			currentBatch = candidate
 			break
 		}
@@ -388,8 +438,10 @@ func (b *Batch) processBatch(key batchKey, thisBatch *batchedCalls, embedder bas
 	}
 	for i, call := range activeCalls {
 		startIdx := startIndices[i]
+		endIdx := startIdx + len(call.texts)
 		result := &batchResult{
-			embeddings: embeddings[startIdx : startIdx+len(call.texts)],
+			// Cap the outer slice so appending cannot overwrite the next caller's result.
+			embeddings: embeddings[startIdx:endIdx:endIdx],
 		}
 		call.resultCh <- result
 	}

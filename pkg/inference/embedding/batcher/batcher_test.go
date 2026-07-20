@@ -133,10 +133,26 @@ type panicDoneContext struct {
 	panicOnDone   atomic.Bool
 }
 
+type observedDoneContext struct {
+	context.Context
+	targetCalls int32
+	doneCalls   atomic.Int32
+	observed    chan struct{}
+	observeOnce sync.Once
+}
+
 func newPanicDoneContext() *panicDoneContext {
 	return &panicDoneContext{
 		Context:   context.Background(),
 		firstDone: make(chan struct{}),
+	}
+}
+
+func newObservedDoneContext(ctx context.Context, targetCalls int32) *observedDoneContext {
+	return &observedDoneContext{
+		Context:     ctx,
+		targetCalls: targetCalls,
+		observed:    make(chan struct{}),
 	}
 }
 
@@ -146,6 +162,19 @@ func (c *panicDoneContext) Done() <-chan struct{} {
 	}
 	c.firstDoneOnce.Do(func() { close(c.firstDone) })
 	return c.Context.Done()
+}
+
+func (c *observedDoneContext) Done() <-chan struct{} {
+	if c.doneCalls.Add(1) >= c.targetCalls {
+		c.observeOnce.Do(func() { close(c.observed) })
+	}
+	return c.Context.Done()
+}
+
+type panickingEmbedder struct{}
+
+func (*panickingEmbedder) CreateEmbeddings(context.Context, string, []string, map[string]any) ([][]float32, error) {
+	panic("injected embedder panic")
 }
 
 func newBlockingEmbedder() *blockingEmbedder {
@@ -500,15 +529,22 @@ func TestBatchCancellationAcrossCallers(t *testing.T) {
 
 		canceledCtx, cancel := context.WithCancel(context.Background())
 		canceledResult := createEmbeddingsAsync(canceledCtx, batcher, "first")
-		activeResult := createEmbeddingsAsync(context.Background(), batcher, "second")
+		waitForPendingCalls(t, batcher, 1)
+		activeCtx := newObservedDoneContext(context.Background(), 2)
+		activeResult := createEmbeddingsAsync(activeCtx, batcher, "second")
 		<-embedder.started
 
 		cancel()
 		require.ErrorIs(t, (<-canceledResult).err, context.Canceled)
 		select {
+		case <-activeCtx.observed:
+		case <-time.After(time.Second):
+			require.FailNow(t, "watcher did not advance to the active caller")
+		}
+		select {
 		case <-embedder.canceled:
-			require.Fail(t, "provider request was canceled while one caller remained active")
-		case <-time.After(20 * time.Millisecond):
+			require.FailNow(t, "provider request was canceled while one caller remained active")
+		default:
 		}
 
 		embedder.finish()
@@ -639,6 +675,76 @@ func TestBatch_DifferentOptionsNotBatched(t *testing.T) {
 	require.True(t, seenFloat)
 }
 
+func TestBatchOptionsAreSnapshotted(t *testing.T) {
+	embedder := newMockEmbedder()
+	batcher := NewWithConfig(time.Hour, 3)
+	batcher.Register("test", embedder)
+
+	firstOpts := map[string]any{
+		"nested": map[string]any{"dimensions": int(128)},
+	}
+	secondOpts := map[string]any{
+		"nested": map[string]any{"dimensions": int(128)},
+	}
+	firstCtx, cancelFirst := context.WithCancel(context.Background())
+	firstResult := createEmbeddingBatchWithOptsAsync(firstCtx, batcher, []string{"first"}, firstOpts)
+	waitForPendingCalls(t, batcher, 1)
+	secondResult := createEmbeddingBatchWithOptsAsync(context.Background(), batcher, []string{"second"}, secondOpts)
+	waitForPendingCalls(t, batcher, 2)
+
+	cancelFirst()
+	require.ErrorIs(t, (<-firstResult).err, context.Canceled)
+	firstOpts["nested"].(map[string]any)["dimensions"] = int(512)
+
+	key, pendingBatch := takePendingBatch(t, batcher)
+	batcher.processBatch(key, pendingBatch, embedder, "model")
+	result := <-secondResult
+	require.NoError(t, result.err)
+
+	calls := embedder.getCalls()
+	require.Len(t, calls, 1)
+	require.Equal(t, []string{"second"}, calls[0].texts)
+	require.Equal(t, secondOpts, calls[0].opts)
+	require.IsType(t, int(0), calls[0].opts["nested"].(map[string]any)["dimensions"])
+}
+
+func TestBatchCallerResultsAreIsolated(t *testing.T) {
+	embedder := newMockEmbedder()
+	batcher := NewWithConfig(time.Hour, 2)
+	batcher.Register("test", embedder)
+
+	firstResultCh := createEmbeddingsAsync(context.Background(), batcher, "first")
+	waitForPendingCalls(t, batcher, 1)
+	secondResultCh := createEmbeddingsAsync(context.Background(), batcher, "second")
+	firstResult := <-firstResultCh
+	secondResult := <-secondResultCh
+	require.NoError(t, firstResult.err)
+	require.NoError(t, secondResult.err)
+	require.Equal(t, len(firstResult.embeddings), cap(firstResult.embeddings))
+
+	secondEmbedding := append([]float32(nil), secondResult.embeddings[0]...)
+	_ = append(firstResult.embeddings, []float32{999})
+	require.Equal(t, secondEmbedding, secondResult.embeddings[0])
+}
+
+func TestBatchPanickingEmbedderReturnsError(t *testing.T) {
+	batcher := NewWithConfig(time.Hour, 2)
+	batcher.Register("test", &panickingEmbedder{})
+
+	firstResultCh := createEmbeddingsAsync(context.Background(), batcher, "first")
+	waitForPendingCalls(t, batcher, 1)
+	secondResultCh := createEmbeddingsAsync(context.Background(), batcher, "second")
+	for _, resultCh := range []<-chan asyncEmbeddingResult{firstResultCh, secondResultCh} {
+		select {
+		case result := <-resultCh:
+			require.Nil(t, result.embeddings)
+			require.EqualError(t, result.err, "embedding batch processing panicked")
+		case <-time.After(time.Second):
+			require.FailNow(t, "panicking provider did not produce a terminal result for every caller")
+		}
+	}
+}
+
 func TestBatch_SameOptionsAreBatched(t *testing.T) {
 	mockEmb := newMockEmbedder()
 	batcher := New()
@@ -707,14 +813,14 @@ func TestBatch_ErrorPropagation(t *testing.T) {
 func TestBatch_UnknownPrefix(t *testing.T) {
 	mockEmb := newMockEmbedder()
 	batcher := New()
-	batcher.Register("test", mockEmb)
+	batcher.Register("zeta", mockEmb)
+	batcher.Register("alpha", mockEmb)
 
 	ctx := context.Background()
 
 	_, err := batcher.CreateEmbeddings(ctx, "unknown/model1", []string{"hello"}, nil)
 
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "unknown embedding provider")
+	require.EqualError(t, err, "unknown embedding provider 'unknown', available providers: alpha, zeta")
 	require.Equal(t, int64(0), mockEmb.getCallCount())
 }
 
