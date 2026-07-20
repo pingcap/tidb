@@ -56,9 +56,7 @@ func preSplitIndexRegions(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if reorgMeta != nil {
-		reorgMeta.AutoSplitHotRegionResults = nil
-	}
+	reorgMeta.AutoSplitHotRegionResults = nil
 	// Preserve the target keyspace used by explicit PRE_SPLIT_REGIONS: txn reorg
 	// splits normal index keys, while ingest and txn-merge split temporary index
 	// keys used by concurrent DML. Fast reorg does not additionally split the
@@ -66,7 +64,7 @@ func preSplitIndexRegions(
 	splitOnTempIdx := reorgMeta.ReorgTp == model.ReorgTypeIngest ||
 		reorgMeta.ReorgTp == model.ReorgTypeTxnMerge
 	for i, idxInfo := range allIndexInfos {
-		if err := parentContextError(ctx); err != nil {
+		if err := context.Cause(ctx); err != nil {
 			return err
 		}
 		idxArg := args.IndexArgs[i]
@@ -83,7 +81,8 @@ func preSplitIndexRegions(
 			if err != nil {
 				return err
 			}
-			appendAutoSplitHotRegionResult(reorgMeta, idxInfo, result)
+			result.IndexName = idxInfo.Name.L
+			reorgMeta.AutoSplitHotRegionResults = append(reorgMeta.AutoSplitHotRegionResults, result)
 			continue
 		}
 
@@ -94,7 +93,7 @@ func preSplitIndexRegions(
 		convertIndexSplitKeysForReorg(splitKeys, splitOnTempIdx)
 		failpoint.InjectCall("beforePresplitIndex", splitKeys)
 		splitResult, err := splitIndexRegionAndWait(ctx, sctx, store, tblInfo, idxInfo, splitKeys)
-		if ctxErr := parentContextError(ctx); ctxErr != nil {
+		if ctxErr := context.Cause(ctx); ctxErr != nil {
 			return ctxErr
 		}
 		if err != nil {
@@ -112,7 +111,7 @@ func preSplitIndexRegions(
 				zap.Int("scatterRegions", splitResult.scatterRegions))
 		}
 	}
-	return parentContextError(ctx)
+	return context.Cause(ctx)
 }
 
 func autoSplitIndexRegion(
@@ -126,7 +125,7 @@ func autoSplitIndexRegion(
 ) (model.AutoSplitHotRegionResult, error) {
 	splitKeys, reason, err := planAutoSplitIndexRegions(
 		ctx, sctx, statsProvider, tblInfo, idxInfo, getAutoSplitHotRegionConfig())
-	if ctxErr := parentContextError(ctx); ctxErr != nil {
+	if ctxErr := context.Cause(ctx); ctxErr != nil {
 		return model.AutoSplitHotRegionResult{}, ctxErr
 	}
 	if err != nil {
@@ -159,7 +158,7 @@ func autoSplitIndexRegion(
 	convertIndexSplitKeysForReorg(splitKeys, splitOnTempIdx)
 	failpoint.InjectCall("beforePresplitIndex", splitKeys)
 	splitResult, err := splitIndexRegionAndWait(ctx, sctx, store, tblInfo, idxInfo, splitKeys)
-	if ctxErr := parentContextError(ctx); ctxErr != nil {
+	if ctxErr := context.Cause(ctx); ctxErr != nil {
 		return model.AutoSplitHotRegionResult{}, ctxErr
 	}
 	result := model.AutoSplitHotRegionResult{
@@ -195,13 +194,6 @@ func autoSplitIndexRegion(
 	return result, nil
 }
 
-func parentContextError(ctx context.Context) error {
-	if ctx.Err() == nil {
-		return nil
-	}
-	return context.Cause(ctx)
-}
-
 func convertIndexSplitKeysForReorg(splitKeys [][]byte, splitOnTempIdx bool) {
 	if !splitOnTempIdx {
 		return
@@ -209,18 +201,6 @@ func convertIndexSplitKeysForReorg(splitKeys [][]byte, splitOnTempIdx bool) {
 	for i := range splitKeys {
 		tablecodec.IndexKey2TempIndexKey(splitKeys[i])
 	}
-}
-
-func appendAutoSplitHotRegionResult(
-	reorgMeta *model.DDLReorgMeta,
-	idxInfo *model.IndexInfo,
-	result model.AutoSplitHotRegionResult,
-) {
-	if reorgMeta == nil {
-		return
-	}
-	result.IndexName = idxInfo.Name.L
-	reorgMeta.AutoSplitHotRegionResults = append(reorgMeta.AutoSplitHotRegionResults, result)
 }
 
 type splitArgs struct {

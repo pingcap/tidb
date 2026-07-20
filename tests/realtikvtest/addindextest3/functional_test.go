@@ -294,10 +294,7 @@ func TestAddIndexPresplitFunctional(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("set @@global.tidb_enable_dist_task = %q", fmt.Sprint(originalDistTask)))
 	})
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mockAutoSplitHotRegionConfig",
-		func(_ any, setMinRows func(int)) {
-			setMinRows(10)
-		})
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockAutoSplitHotRegionConfig", "return(10)")
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = off")
 	tk.MustExec("set @@global.tidb_enable_dist_task = off")
 	tk.MustExec("set @@session.tidb_ddl_enable_auto_split_hot_region = on")
