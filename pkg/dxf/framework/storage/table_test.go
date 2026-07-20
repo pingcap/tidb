@@ -329,7 +329,7 @@ func TestSwitchTaskStep(t *testing.T) {
 		require.Equal(t, proto.ExtraParams{}, persistedTask.ExtraParams)
 		require.Zero(t, persistedTask.StartTime)
 		require.GreaterOrEqual(t, persistedTask.StateUpdateTime, switchTime)
-		tk.MustQuery(fmt.Sprintf("select count(1) from mysql.tidb_background_subtask where task_key = %d", prepareTaskID)).
+		tk.MustQuery(fmt.Sprintf("select count(1) from mysql.tidb_background_subtask where task_key = '%d'", prepareTaskID)).
 			Check(testkit.Rows("0"))
 
 		prepareTask.Meta = []byte(`{"prepare":"stale-owner"}`)
@@ -376,7 +376,7 @@ func TestGetSubtaskSummaries(t *testing.T) {
 	bytes, err := json.Marshal(summary)
 	require.NoError(t, err)
 
-	tk.MustExec(fmt.Sprintf("update mysql.tidb_background_subtask set summary = '%s' where task_key = %d", string(bytes), task.ID))
+	tk.MustExec(fmt.Sprintf("update mysql.tidb_background_subtask set summary = '%s' where task_key = '%d'", string(bytes), task.ID))
 	summaries, err := tm.GetAllSubtaskSummaryByStep(ctx, subtasks[0].TaskID, proto.StepOne)
 	require.NoError(t, err)
 	require.Len(t, summaries, len(subtasks))
@@ -388,7 +388,7 @@ func TestGetSubtaskSummaries(t *testing.T) {
 	// If the JSON value is wrong, we still get an empty summary.
 	// This can only happen if the summary field is manually updated.
 	// It's acceptable, as the correct summary will be set by the executor later.
-	tk.MustExec(fmt.Sprintf(`update mysql.tidb_background_subtask set summary = '{"wrong_key": 123}' where task_key = %d`, task.ID))
+	tk.MustExec(fmt.Sprintf(`update mysql.tidb_background_subtask set summary = '{"wrong_key": 123}' where task_key = '%d'`, task.ID))
 	summaries, err = tm.GetAllSubtaskSummaryByStep(ctx, subtasks[0].TaskID, proto.StepOne)
 	require.NoError(t, err)
 	for _, summary := range summaries {
@@ -613,6 +613,26 @@ func TestGetActiveSubtasks(t *testing.T) {
 	require.Equal(t, proto.SubtaskStateRunning, activeSubtasks[0].State)
 	require.Equal(t, int64(3), activeSubtasks[1].ID)
 	require.Equal(t, proto.SubtaskStatePending, activeSubtasks[1].State)
+
+	const (
+		adjacentTaskID = int64(9007199254740992)
+		targetTaskID   = int64(9007199254740993)
+		largeIDExec    = "large-id-exec"
+	)
+	testutil.InsertSubtask(t, tm, adjacentTaskID, proto.StepOne, largeIDExec, nil, proto.SubtaskStatePending, proto.TaskTypeExample, 8)
+	testutil.InsertSubtask(t, tm, targetTaskID, proto.StepOne, largeIDExec, nil, proto.SubtaskStatePending, proto.TaskTypeExample, 8)
+
+	activeSubtasks, err = tm.GetActiveSubtasks(ctx, targetTaskID)
+	require.NoError(t, err)
+	require.Len(t, activeSubtasks, 1)
+	require.Equal(t, targetTaskID, activeSubtasks[0].TaskID)
+
+	filteredSubtasks, err := tm.GetSubtasksByExecIDAndStepAndStates(
+		ctx, largeIDExec, targetTaskID, proto.StepOne, proto.SubtaskStatePending,
+	)
+	require.NoError(t, err)
+	require.Len(t, filteredSubtasks, 1)
+	require.Equal(t, targetTaskID, filteredSubtasks[0].TaskID)
 }
 
 func TestSubTaskTable(t *testing.T) {
@@ -1264,8 +1284,10 @@ func TestTaskHistoryTable(t *testing.T) {
 		require.Equal(t, "history-task-5", firstPage.Items[0].Key)
 		require.Equal(t, "ks1", firstPage.Items[0].Keyspace)
 		require.Equal(t, proto.TaskStateFailed, firstPage.Items[0].State)
-		require.Contains(t, firstPage.Items[0].Error, "history task failed")
-		require.Empty(t, firstPage.Items[1].Error)
+		require.Empty(t, firstPage.Items[0].ErrorCode)
+		require.Equal(t, "failed", firstPage.Items[0].ErrorCategory)
+		require.Empty(t, firstPage.Items[1].ErrorCode)
+		require.Empty(t, firstPage.Items[1].ErrorCategory)
 		require.NotZero(t, firstPage.Items[0].CreateTime)
 		require.NotZero(t, firstPage.Items[0].StartTime)
 		require.NotZero(t, firstPage.Items[0].StateUpdateTime)
@@ -1307,6 +1329,106 @@ func TestTaskHistoryTable(t *testing.T) {
 		require.ErrorContains(t, err2, "page size should be within")
 		_, err2 = gm.ListHistoryTasks(ctx, 201, 0, "")
 		require.ErrorContains(t, err2, "page size should be within")
+	})
+
+	t.Run("classify history task errors without messages", func(t *testing.T) {
+		for _, sql := range []string{
+			"delete from mysql.tidb_global_task",
+			"delete from mysql.tidb_global_task_history",
+		} {
+			_, err = gm.ExecuteSQLWithNewSession(ctx, sql)
+			require.NoError(t, err)
+		}
+
+		taskSpecs := []struct {
+			key      string
+			taskErr  error
+			reverted bool
+		}{
+			{
+				key: "named-failure",
+				taskErr: errors.Annotate(
+					errors.Normalize("sensitive named failure", errors.RFCCodeText("DXF:History:Named")).
+						Wrap(errors.New("sensitive inner failure")),
+					"sensitive annotated context",
+				),
+			},
+			{
+				key:     "two-part-code",
+				taskErr: errors.Normalize("sensitive two-part failure", errors.RFCCodeText("kv:1062")),
+			},
+			{key: "code-less-normalized", taskErr: errors.Normalize("sensitive code-less failure")},
+			{key: "plain-failure", taskErr: fmt.Errorf("sensitive plain failure")},
+			{
+				key:     "legacy-kv-code",
+				taskErr: errors.Normalize("sensitive legacy kv failure", errors.MySQLErrorCode(1062)),
+			},
+			{
+				key:     "numeric-code-only",
+				taskErr: errors.Normalize("sensitive numeric-only failure", errors.MySQLErrorCode(1062)),
+			},
+			{key: "cancelled", taskErr: fmt.Errorf("cancelled by user"), reverted: true},
+			{
+				key:      "data-error",
+				taskErr:  fmt.Errorf("[Lightning:Restore:ErrEncodeKV]Value conversion failed for column 'a'"),
+				reverted: true,
+			},
+			{key: "ordinary-revert", taskErr: fmt.Errorf("sensitive ordinary failure"), reverted: true},
+		}
+		tasksToTransfer := make([]*proto.Task, 0, len(taskSpecs))
+		for _, spec := range taskSpecs {
+			id, err2 := gm.CreateTask(ctx, spec.key, proto.ImportInto, "ks1", 8, "", 0, proto.ExtraParams{}, nil)
+			require.NoError(t, err2)
+			task, err2 := gm.GetTaskByID(ctx, id)
+			require.NoError(t, err2)
+			require.NoError(t, gm.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.StepOne, nil))
+			if spec.reverted {
+				require.NoError(t, gm.RevertTask(ctx, id, proto.TaskStateRunning, spec.taskErr))
+				require.NoError(t, gm.RevertedTask(ctx, id))
+			} else {
+				require.NoError(t, gm.FailTask(ctx, id, proto.TaskStateRunning, spec.taskErr))
+			}
+			task, err2 = gm.GetTaskByID(ctx, id)
+			require.NoError(t, err2)
+			tasksToTransfer = append(tasksToTransfer, task)
+		}
+		require.NoError(t, gm.TransferTasks2History(ctx, tasksToTransfer))
+		legacyErrors := map[string][]byte{
+			"legacy-kv-code":    []byte(`{"class":8,"code":1062,"message":"sensitive legacy kv failure","rfccode":""}`),
+			"numeric-code-only": []byte(`{"class":0,"code":1062,"message":"sensitive legacy numeric failure","rfccode":""}`),
+		}
+		for key, errorData := range legacyErrors {
+			_, err2 := gm.ExecuteSQLWithNewSession(ctx, `
+				update mysql.tidb_global_task_history
+				set error = %?
+				where task_key = %?`,
+				errorData,
+				key,
+			)
+			require.NoError(t, err2)
+		}
+
+		page, err2 := gm.ListHistoryTasks(ctx, len(taskSpecs), 0, "")
+		require.NoError(t, err2)
+		require.Len(t, page.Items, len(taskSpecs))
+		itemsByKey := make(map[string]*storage.HistoryTaskSummary, len(page.Items))
+		for _, item := range page.Items {
+			itemsByKey[item.Key] = item
+		}
+		require.Equal(t, "DXF:History:Named", itemsByKey["named-failure"].ErrorCode)
+		require.Equal(t, "failed", itemsByKey["named-failure"].ErrorCategory)
+		require.Equal(t, "kv:1062", itemsByKey["two-part-code"].ErrorCode)
+		require.Equal(t, "failed", itemsByKey["two-part-code"].ErrorCategory)
+		require.Empty(t, itemsByKey["code-less-normalized"].ErrorCode)
+		require.Empty(t, itemsByKey["plain-failure"].ErrorCode)
+		require.Equal(t, "failed", itemsByKey["plain-failure"].ErrorCategory)
+		require.Equal(t, "kv:1062", itemsByKey["legacy-kv-code"].ErrorCode)
+		require.Equal(t, "failed", itemsByKey["legacy-kv-code"].ErrorCategory)
+		require.Equal(t, "1062", itemsByKey["numeric-code-only"].ErrorCode)
+		require.Equal(t, "failed", itemsByKey["numeric-code-only"].ErrorCategory)
+		require.Equal(t, "cancelled", itemsByKey["cancelled"].ErrorCategory)
+		require.Equal(t, "data-error", itemsByKey["data-error"].ErrorCategory)
+		require.Equal(t, "failed", itemsByKey["ordinary-revert"].ErrorCategory)
 	})
 }
 

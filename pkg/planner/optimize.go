@@ -230,6 +230,15 @@ func optimizeNoCache(ctx context.Context, sctx sessionctx.Context, node *resolve
 	sessVars := sctx.GetSessionVars()
 
 	tableHints := hint.ExtractTableHintsFromStmtNode(node.Node, sessVars.StmtCtx)
+	// ExtractTableHintsFromStmtNode does not recurse into ExplainStmt, but
+	// MatchSQLBinding unwraps it (see NormalizeStmtForBinding) so the binding
+	// is applied to the inner stmt and rewrites its /*+ ... */ hints. Capture
+	// the inner stmt's hints up-front so the "binding overrides hints" warning
+	// below still fires for `EXPLAIN SELECT /*+ ... */ ...`.
+	var wrappedInnerHints []*ast.TableOptimizerHint
+	if explain, ok := node.Node.(*ast.ExplainStmt); ok && explain.Stmt != nil {
+		wrappedInnerHints = hint.ExtractTableHintsFromStmtNode(explain.Stmt, sessVars.StmtCtx)
+	}
 	originStmtHints, _, warns := hint.ParseStmtHints(tableHints,
 		setVarHintChecker, hypoIndexChecker(ctx, is),
 		sessVars.CurrentDB, byte(kv.ReplicaReadFollower))
@@ -339,7 +348,7 @@ func optimizeNoCache(ctx context.Context, sctx sessionctx.Context, node *resolve
 			} else {
 				sessVars.StmtCtx.AppendExtraNote(errors.NewNoStackErrorf("Using the bindSQL: %v", chosenBinding.BindSQL))
 			}
-			if originStmtHints.QueryHasHints {
+			if originStmtHints.QueryHasHints || len(wrappedInnerHints) > 0 {
 				sessVars.StmtCtx.AppendWarning(errors.NewNoStackErrorf("The system ignores the hints in the current query and uses the hints specified in the bindSQL: %v", chosenBinding.BindSQL))
 			}
 		}

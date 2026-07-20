@@ -1713,6 +1713,55 @@ func TestIndexRangeEstimationWithAppendedHandleColumn(t *testing.T) {
 	})
 }
 
+// TestIndexRangeEstimationWithTruncatedHandleRange verifies that estimation ranges pruned
+// back to the declared index columns keep valid bounds. Truncating the appended handle
+// dimensions widens a bound to the whole prefix, so an exclusive bound from a dropped
+// dimension must become inclusive (otherwise (5 10, 5 +inf] collapses to the empty (5, 5]
+// and estimates ~0 rows), and ranges collapsing to the same prefix must be merged instead
+// of each contributing the full prefix row count.
+func TestIndexRangeEstimationWithTruncatedHandleRange(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id bigint primary key clustered, a int, key ia(a))")
+	vals := make([]string, 0, 100)
+	for i := 1; i <= 100; i++ {
+		vals = append(vals, fmt.Sprintf("(%d, %d)", i, i%10))
+	}
+	tk.MustExec("insert into t values " + strings.Join(vals, ","))
+	tk.MustExec("analyze table t all columns")
+
+	// Returns the estRows and operator info of the IndexRangeScan in the plan.
+	indexScanRow := func(sql string) (estRows, operatorInfo string) {
+		rows := tk.MustQuery("explain format='brief' " + sql).Rows()
+		for _, row := range rows {
+			if strings.Contains(row[0].(string), "IndexRangeScan") {
+				return row[1].(string), row[4].(string)
+			}
+		}
+		t.Fatalf("no IndexRangeScan in plan for %q", sql)
+		return "", ""
+	}
+
+	// Each distinct value of a has 10 rows; the handle predicates below must estimate as if
+	// the handle dimension were absent, i.e. the 10 rows of a = 5.
+
+	// Handle range with an exclusive low bound.
+	estRows, opInfo := indexScanRow("select * from t use index(ia) where a = 5 and id > 10")
+	require.Contains(t, opInfo, "range:(5 10,5 +inf]", "execution range must keep the handle dimension")
+	require.Equal(t, "10.00", estRows)
+
+	// Handle range with an exclusive high bound.
+	estRows, opInfo = indexScanRow("select * from t use index(ia) where a = 5 and id < 10")
+	require.Contains(t, opInfo, "range:[5 -inf,5 10)", "execution range must keep the handle dimension")
+	require.Equal(t, "10.00", estRows)
+
+	// Multiple handle points under the same prefix must not double count.
+	estRows, opInfo = indexScanRow("select * from t use index(ia) where a = 5 and id in (11, 22)")
+	require.Contains(t, opInfo, "range:[5 11,5 11], [5 22,5 22]", "execution range must keep the handle dimension")
+	require.Equal(t, "10.00", estRows)
+}
+
 func TestDeriveTablePathStatsNoAccessConds(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)

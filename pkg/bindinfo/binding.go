@@ -142,7 +142,7 @@ func MatchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (binding *B
 func MatchSQLBindingWithCache(sctx sessionctx.Context, stmtNode ast.StmtNode, info *BindingMatchInfo) (binding *Binding, matched bool, scope string) {
 	sessionVars := sctx.GetSessionVars()
 	useBinding := sessionVars.UsePlanBaselines
-	if !useBinding || stmtNode == nil {
+	if !useBinding || !mayHaveSQLBinding(stmtNode) {
 		return
 	}
 	// When the domain is initializing, the bind will be nil.
@@ -163,6 +163,27 @@ func MatchSQLBindingWithCache(sctx sessionctx.Context, stmtNode ast.StmtNode, in
 		return cache.binding, cache.matched, cache.scope
 	}
 	return matchSQLBindingCore(sctx, sessionVars, stmtNode, info)
+}
+
+func mayHaveSQLBinding(stmtNode ast.StmtNode) bool {
+	if stmtNode == nil {
+		return false
+	}
+	switch stmt := stmtNode.(type) {
+	case *ast.InsertStmt:
+		// REPLACE uses InsertStmt with IsReplace set. SQL bindings currently only
+		// support INSERT/REPLACE ... SELECT, not VALUES/SET forms.
+		return stmt.Select != nil
+	case *ast.ExplainStmt:
+		if stmt.Stmt == nil {
+			// EXPLAIN forms such as EXPLAIN <plan_digest> have no underlying statement.
+			// Keep the old behavior and do not use this as an early-negative filter.
+			return true
+		}
+		return mayHaveSQLBinding(stmt.Stmt)
+	default:
+		return true
+	}
 }
 
 func getMatchSQLBindingCache(sessionVars *variable.SessionVars, stmtNode ast.StmtNode) (cache *BindingCacheItem) {

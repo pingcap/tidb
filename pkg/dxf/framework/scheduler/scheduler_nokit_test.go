@@ -877,17 +877,17 @@ func TestOnTaskFinished(t *testing.T) {
 	require.EqualValues(t, map[string]int{metricStateAll: 2, "succeed": 1, "failed": 1}, collectMetricsFn())
 	onTaskFinished(proto.TaskStateReverted, errors.New("some err"))
 	require.EqualValues(t, map[string]int{metricStateAll: 3, "succeed": 1, "failed": 2}, collectMetricsFn())
-	onTaskFinished(proto.TaskStateReverted, errors.New(taskCancelMsg))
-	require.EqualValues(t, map[string]int{metricStateAll: 4, "succeed": 1, "failed": 2, metricStateCancelled: 1}, collectMetricsFn())
+	onTaskFinished(proto.TaskStateReverted, errors.New(storage.TaskCancelMessage))
+	require.EqualValues(t, map[string]int{metricStateAll: 4, "succeed": 1, "failed": 2, "cancelled": 1}, collectMetricsFn())
 	onTaskFinished(proto.TaskStateFailed, errors.New("some err"))
-	require.EqualValues(t, map[string]int{metricStateAll: 5, "succeed": 1, "failed": 3, metricStateCancelled: 1}, collectMetricsFn())
+	require.EqualValues(t, map[string]int{metricStateAll: 5, "succeed": 1, "failed": 3, "cancelled": 1}, collectMetricsFn())
 	valueConversionErr := "[Lightning:Restore:ErrEncodeKV]when encoding 1-th data row in this chunk: " +
 		"encode kv error in file orderlab/orderlab.shipment_events.000000000.csv.gz:0 at offset 0: " +
 		"Value conversion failed for column 'event_id'. Expected type: bigint, received value: ?. " +
 		"Reason: [types:1292]Truncated incorrect DOUBLE value: '?'."
 	onTaskFinished(proto.TaskStateReverted, errors.New(valueConversionErr))
 	require.EqualValues(t, map[string]int{
-		metricStateAll: 6, "succeed": 1, "failed": 3, metricStateCancelled: 1, metricStateDataError: 1,
+		metricStateAll: 6, "succeed": 1, "failed": 3, "cancelled": 1, "data-error": 1,
 	}, collectMetricsFn())
 	datetimeConversionErr := "[Lightning:Restore:ErrEncodeKV]when encoding 1-th data row in this chunk: " +
 		"encode kv error in file orderlab/orderlab.shipment_events.000000000.csv.gz:0 at offset 0: " +
@@ -895,7 +895,7 @@ func TestOnTaskFinished(t *testing.T) {
 		"Reason: [types:1292]Incorrect datetime value: 'invalid' for column 'created_at' at row 1."
 	onTaskFinished(proto.TaskStateReverted, errors.New(datetimeConversionErr))
 	require.EqualValues(t, map[string]int{
-		metricStateAll: 7, "succeed": 1, "failed": 3, metricStateCancelled: 1, metricStateDataError: 2,
+		metricStateAll: 7, "succeed": 1, "failed": 3, "cancelled": 1, "data-error": 2,
 	}, collectMetricsFn())
 	roundTripImportCastErr := func(column, columnType, value, reason string) error {
 		castErr := common.ErrCastValue.FastGenByArgs(column, columnType, value, reason)
@@ -912,23 +912,23 @@ func TestOnTaskFinished(t *testing.T) {
 	dataTooLongErr := roundTripImportCastErr("name", "varchar(3)", "abcd",
 		"[types:1406]Data Too Long, field len 3, data len 4")
 	require.NotContains(t, dataTooLongErr.Error(), "ErrCastValue")
-	require.Equal(t, metricStateDataError, getMetricState(proto.TaskStateReverted, dataTooLongErr))
+	require.Equal(t, "data-error", getMetricState(proto.TaskStateReverted, dataTooLongErr))
 	notNullErr := roundTripImportCastErr("name", "varchar(10)", "NULL",
 		"[table:1048]Column 'name' cannot be null")
-	require.Equal(t, metricStateDataError, getMetricState(proto.TaskStateReverted, notNullErr))
+	require.Equal(t, "data-error", getMetricState(proto.TaskStateReverted, notNullErr))
 	checkConstraintErr := "[Lightning:Restore:ErrEncodeKV]when encoding 1-th data row in this chunk: " +
 		"encode kv error in file data.csv:0 at offset 0: " +
 		"Check constraint 'positive_id' is violated."
-	require.Equal(t, metricStateDataError, getMetricState(proto.TaskStateReverted, errors.New(checkConstraintErr)))
+	require.Equal(t, "data-error", getMetricState(proto.TaskStateReverted, errors.New(checkConstraintErr)))
 	noPartitionErr := "[Lightning:Restore:ErrEncodeKV]when encoding 1-th data row in this chunk: " +
 		"encode kv error in file data.csv:0 at offset 0: " +
 		"Table has no partition for value 42"
-	require.Equal(t, metricStateDataError, getMetricState(proto.TaskStateReverted, errors.New(noPartitionErr)))
-	require.Equal(t, metricStateDataError, getMetricState(proto.TaskStateReverted,
+	require.Equal(t, "data-error", getMetricState(proto.TaskStateReverted, errors.New(noPartitionErr)))
+	require.Equal(t, "data-error", getMetricState(proto.TaskStateReverted,
 		errors.New("[executor:8167]Duplicate key conflict found. Please resolve conflicts in the input dataset")))
-	require.Equal(t, metricStateDataError, getMetricState(proto.TaskStateReverted,
+	require.Equal(t, "data-error", getMetricState(proto.TaskStateReverted,
 		errors.New("[Lightning:Restore:ErrFoundDataConflictRecords]found data conflict records in table t")))
-	require.Equal(t, metricStateDataError, getMetricState(proto.TaskStateReverted,
+	require.Equal(t, "data-error", getMetricState(proto.TaskStateReverted,
 		errors.New("[Lightning:Restore:ErrFoundIndexConflictRecords]found index conflict records in table t")))
 	parseErr := "[Lightning:Restore:ErrEncodeKV]encode kv error in file data.csv:0 at offset 0: " +
 		"column count mismatch, expected 3, got 2"
@@ -937,11 +937,11 @@ func TestOnTaskFinished(t *testing.T) {
 		errors.New("Value conversion failed for column 'name'")))
 	onTaskFinished(proto.TaskStateReverted, errors.New("[kv:1062]Duplicate entry '1' for key 't.idx'"))
 	require.EqualValues(t, map[string]int{
-		metricStateAll: 8, "succeed": 1, "failed": 3, metricStateCancelled: 1, metricStateDataError: 3,
+		metricStateAll: 8, "succeed": 1, "failed": 3, "cancelled": 1, "data-error": 3,
 	}, collectMetricsFn())
 	// noop for non-finished state.
 	onTaskFinished(proto.TaskStateRunning, nil)
 	require.EqualValues(t, map[string]int{
-		metricStateAll: 8, "succeed": 1, "failed": 3, metricStateCancelled: 1, metricStateDataError: 3,
+		metricStateAll: 8, "succeed": 1, "failed": 3, "cancelled": 1, "data-error": 3,
 	}, collectMetricsFn())
 }
