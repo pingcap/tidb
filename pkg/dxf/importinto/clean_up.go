@@ -55,11 +55,6 @@ func (c *ImportCleanUp) CleanUp(ctx context.Context, task *proto.Task) error {
 	return c.CleanUpBatch(ctx, []*proto.Task{task})
 }
 
-type cleanUpTaskInfo struct {
-	task            *proto.Task
-	needFileCleanUp bool
-}
-
 type cleanUpFileGroup struct {
 	cloudStorageURI    string
 	nonPartitionedDirs []string
@@ -74,61 +69,51 @@ func (*ImportCleanUp) CleanUpBatch(ctx context.Context, tasks []*proto.Task) err
 
 	// we can only clean up files after all write&ingest subtasks are finished,
 	// since they might share the same file.
-	cleanUpTasks := make([]cleanUpTaskInfo, 0, len(tasks))
-	fileGroupIdx := make(map[string]int)
-	fileGroups := make([]cleanUpFileGroup, 0, len(tasks))
+	meterTasks := make([]*proto.Task, 0, len(tasks))
+	fileGroups := make(map[string]*cleanUpFileGroup, len(tasks))
 	for _, task := range tasks {
 		taskMeta := &TaskMeta{}
 		err := json.Unmarshal(task.Meta, taskMeta)
 		if err != nil {
 			return err
 		}
-		defer redactSensitiveInfo(task, taskMeta)
+		redactSensitiveInfo(task, taskMeta)
 
 		if err = cleanUpTableMode(ctx, taskMeta); err != nil {
 			return err
 		}
-
 		failpoint.InjectCall("mockCleanupError", &err)
 		if err != nil {
 			return err
 		}
 
-		// Not use cloud storage, no need to cleanUp.
-		needFileCleanUp := taskMeta.Plan.CloudStorageURI != ""
-		cleanUpTasks = append(cleanUpTasks, cleanUpTaskInfo{
-			task:            task,
-			needFileCleanUp: needFileCleanUp,
-		})
-		if !needFileCleanUp {
-			continue
+		if taskMeta.Plan.IsGlobalSort() {
+			fileGroup, ok := fileGroups[taskMeta.Plan.CloudStorageURI]
+			if !ok {
+				fileGroup = &cleanUpFileGroup{
+					cloudStorageURI: taskMeta.Plan.CloudStorageURI,
+				}
+				fileGroups[taskMeta.Plan.CloudStorageURI] = fileGroup
+			}
+			fileGroup.nonPartitionedDirs = append(fileGroup.nonPartitionedDirs, strconv.Itoa(int(task.ID)))
+			fileGroup.taskIDs = append(fileGroup.taskIDs, task.ID)
+			if kerneltype.IsNextGen() && task.State == proto.TaskStateSucceed {
+				meterTasks = append(meterTasks, task)
+			}
 		}
-		idx, ok := fileGroupIdx[taskMeta.Plan.CloudStorageURI]
-		if !ok {
-			idx = len(fileGroups)
-			fileGroupIdx[taskMeta.Plan.CloudStorageURI] = idx
-			fileGroups = append(fileGroups, cleanUpFileGroup{
-				cloudStorageURI: taskMeta.Plan.CloudStorageURI,
-			})
-		}
-		fileGroups[idx].nonPartitionedDirs = append(fileGroups[idx].nonPartitionedDirs, strconv.Itoa(int(task.ID)))
-		fileGroups[idx].taskIDs = append(fileGroups[idx].taskIDs, task.ID)
 	}
 
 	for _, fileGroup := range fileGroups {
-		if err := cleanUpExternalFiles(ctx, fileGroup); err != nil {
+		if err := cleanUpExternalFiles(ctx, *fileGroup); err != nil {
 			return err
 		}
 	}
 
-	for _, cleanUpTask := range cleanUpTasks {
-		// send metering data for nextgen kernel, only for succeed tasks
-		if cleanUpTask.needFileCleanUp && kerneltype.IsNextGen() && cleanUpTask.task.State == proto.TaskStateSucceed {
-			logger := logutil.BgLogger().With(zap.Int64("task-id", cleanUpTask.task.ID))
-			if err := sendMeterOnCleanUp(ctx, cleanUpTask.task, logger); err != nil {
-				logger.Warn("failed to send metering data on cleanup", zap.Error(err))
-				return err
-			}
+	for _, task := range meterTasks {
+		logger := logutil.BgLogger().With(zap.Int64("task-id", task.ID))
+		if err := sendMeterOnCleanUp(ctx, task, logger); err != nil {
+			logger.Warn("failed to send metering data on cleanup", zap.Error(err))
+			return err
 		}
 	}
 	return nil

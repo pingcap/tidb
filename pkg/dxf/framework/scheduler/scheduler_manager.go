@@ -52,6 +52,9 @@ var (
 )
 
 type batchCleanUpRoutine interface {
+	// CleanUpBatch cleans up tasks as a single unit. All tasks in the batch must
+	// be cleaned up successfully before any of them are transferred to the
+	// history table.
 	CleanUpBatch(ctx context.Context, tasks []*proto.Task) error
 }
 
@@ -460,7 +463,7 @@ func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) error {
 
 	singleCleanUpTasks := make([]singleCleanUpTask, 0)
 	batchCleanUpTaskGroups := make(map[proto.TaskType]*batchCleanUpTaskGroup)
-	cleanedTaskSet := make(map[*proto.Task]struct{}, len(tasks))
+	cleanedTasks := make([]*proto.Task, 0, len(tasks))
 	var firstErr error
 	for _, task := range tasks {
 		sm.logger.Info("cleanup task", zap.Int64("task-id", task.ID), zap.String("task-key", task.Key))
@@ -471,7 +474,7 @@ func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) error {
 
 		cleanUpFactory := getSchedulerCleanUpFactory(task.Type)
 		if cleanUpFactory == nil {
-			cleanedTaskSet[task] = struct{}{}
+			cleanedTasks = append(cleanedTasks, task)
 			continue
 		}
 		cleanUp := cleanUpFactory()
@@ -493,7 +496,7 @@ func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) error {
 			firstErr = err
 			break
 		}
-		cleanedTaskSet[cleanUpTask.task] = struct{}{}
+		cleanedTasks = append(cleanedTasks, cleanUpTask.task)
 	}
 	if firstErr == nil {
 		for _, group := range batchCleanUpTaskGroups {
@@ -501,9 +504,7 @@ func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) error {
 				firstErr = err
 				break
 			}
-			for _, task := range group.tasks {
-				cleanedTaskSet[task] = struct{}{}
-			}
+			cleanedTasks = append(cleanedTasks, group.tasks...)
 		}
 	}
 	if firstErr != nil {
@@ -518,10 +519,6 @@ func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) error {
 		failpoint.Return(errors.New("transfer err"))
 	})
 
-	cleanedTasks := make([]*proto.Task, 0, len(cleanedTaskSet))
-	for task := range cleanedTaskSet {
-		cleanedTasks = append(cleanedTasks, task)
-	}
 	return sm.taskMgr.TransferTasks2History(sm.ctx, cleanedTasks)
 }
 
