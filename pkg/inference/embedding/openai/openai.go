@@ -49,9 +49,13 @@ type EmbedderConfig struct {
 	GetAPIKey func() string
 	// GetBaseURL returns an OpenAI-compatible API base URL. A trailing
 	// /embeddings path is optional and is normalized by the embedder.
-	GetBaseURL       func() string
-	ErrMissingAPIKey error // The error to return when API key is missing
-	ErrUnauthorized  error // The error to return when API key is invalid
+	GetBaseURL func() string
+	// ErrMissingAPIKey optionally overrides the default missing-key error so
+	// callers can include deployment-specific configuration guidance.
+	ErrMissingAPIKey error
+	// ErrUnauthorized optionally overrides the default unauthorized error so
+	// callers can include deployment-specific configuration guidance.
+	ErrUnauthorized error
 	// MaxResponseBodyBytes limits both successful and error response bodies.
 	// Non-positive values use DefaultMaxResponseBodyBytes.
 	MaxResponseBodyBytes int64
@@ -83,6 +87,10 @@ func readResponseBody(reader io.Reader, maxBytes int64) ([]byte, error) {
 	return body, nil
 }
 
+// embeddingsEndpoint resolves an OpenAI-compatible base URL to the embeddings endpoint.
+// The OpenAI API defines the endpoint as POST /v1/embeddings:
+// https://platform.openai.com/docs/api-reference/embeddings/create
+// For compatibility with existing callers, baseURL may already end in /embeddings.
 func embeddingsEndpoint(baseURL string) (string, error) {
 	u, err := url.Parse(baseURL)
 	if err != nil {
@@ -166,13 +174,19 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 	if resp.StatusCode != http.StatusOK {
 		var errResp ErrorResponse
 		message := ""
-		if err := json.Unmarshal(body, &errResp); err == nil && errResp.Error.Message != "" {
+		var parseErr error
+		if err := json.Unmarshal(body, &errResp); err != nil {
+			parseErr = err
+		} else if errResp.Error.Message != "" {
 			message = base.SanitizeErrorText(errResp.Error.Message, apiKey)
 		}
 
 		logFields := []zap.Field{zap.Int("status", resp.StatusCode)}
 		if message != "" {
 			logFields = append(logFields, zap.String("message", message))
+		}
+		if parseErr != nil {
+			logFields = append(logFields, zap.String("parse_error", base.SanitizeErrorText(parseErr.Error(), apiKey)))
 		}
 		logutil.BgLogger().Error("OpenAI API request failed",
 			logFields...,

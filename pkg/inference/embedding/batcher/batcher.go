@@ -134,9 +134,9 @@ func (b *Batch) parseModelWithProvider(modelWithProvider string) (string, string
 	if len(parts) != 2 {
 		return "", "", fmt.Errorf("model name must be in format 'provider/model', got: %s", modelWithProvider)
 	}
-	embedderName := normalizeProviderName(parts[0])
+	provider := normalizeProviderName(parts[0])
 	actualModel := strings.TrimSpace(parts[1])
-	_, exists := b.embedders[embedderName]
+	_, exists := b.embedders[provider]
 	if !exists {
 		p := []string{}
 		for key := range b.embedders {
@@ -145,10 +145,10 @@ func (b *Batch) parseModelWithProvider(modelWithProvider string) (string, string
 		availableProviders := strings.Join(p, ", ")
 		return "", "", fmt.Errorf(
 			"unknown embedding provider '%s', available providers: %s",
-			embedderName,
+			provider,
 			availableProviders)
 	}
-	return embedderName, actualModel, nil
+	return provider, actualModel, nil
 }
 
 func normalizeProviderName(provider string) string {
@@ -230,16 +230,16 @@ func (b *Batch) CreateEmbeddings(ctx context.Context, modelWithProvider string, 
 		return nil, context.Cause(ctx)
 	}
 
-	embedderName, actualModel, err := b.parseModelWithProvider(modelWithProvider)
+	provider, actualModel, err := b.parseModelWithProvider(modelWithProvider)
 	if err != nil {
 		return nil, err
 	}
-	embedder := b.embedders[embedderName]
+	embedder := b.embedders[provider]
 
 	// A batch key includes the provider, actual model, and a fixed-size digest
 	// of the serialized options, so different inputs create different batches
 	// without embedding potentially large serialized options in the map key.
-	key, err := newBatchKey(embedderName, actualModel, opts)
+	key, err := newBatchKey(provider, actualModel, opts)
 	if err != nil {
 		return nil, err
 	}

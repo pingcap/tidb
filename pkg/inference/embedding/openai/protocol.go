@@ -14,6 +14,9 @@
 
 package openai
 
+// OpenAI embeddings protocol reference:
+// https://platform.openai.com/docs/api-reference/embeddings/create
+
 // Request is the model for OpenAI embeddings API request.
 type Request struct {
 	Input          []string `json:"input"`

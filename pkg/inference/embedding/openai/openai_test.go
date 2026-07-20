@@ -426,6 +426,27 @@ func TestOpenAIEmbedder_UnauthorizedAPIKey(t *testing.T) {
 	require.Equal(t, int64(http.StatusBadRequest), fields["status"])
 	require.Equal(t, "invalid api key: [REDACTED]", fields["message"])
 	require.NotContains(t, fields, "body")
+
+	malformedResponseServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(`{"error":`))
+	}))
+	defer malformedResponseServer.Close()
+
+	embedder = NewOpenAIEmbedder(EmbedderConfig{
+		GetAPIKey:  func() string { return "test-api-key" },
+		GetBaseURL: func() string { return malformedResponseServer.URL },
+	})
+	_, err = embedder.CreateEmbeddings(context.Background(), "text-embedding-3-small", texts, nil)
+	require.EqualError(t, err, "OpenAI: status code 502")
+
+	entries = observedLogs.FilterMessage("OpenAI API request failed").All()
+	require.Len(t, entries, 2)
+	fields = entries[1].ContextMap()
+	require.Equal(t, int64(http.StatusBadGateway), fields["status"])
+	require.NotEmpty(t, fields["parse_error"])
+	require.NotContains(t, fields, "body")
 }
 
 func TestOpenAIEmbedder_InvalidModel(t *testing.T) {
