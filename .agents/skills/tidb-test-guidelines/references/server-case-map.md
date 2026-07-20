@@ -38,8 +38,8 @@
 
 ### Tests
 - `pkg/server/handler/tests/dxf_test.go` - server/handler: Tests DXF API.
-- `pkg/server/handler/tests/http_handler_serial_test.go` - server/handler: Tests settings and pprof route logging.
-- `pkg/server/handler/tests/http_handler_test.go` - server/handler: Tests HTTP handlers, including debug zip logging.
+- `pkg/server/handler/tests/http_handler_serial_test.go` - server/handler: Tests serial HTTP handlers, including pprof request logging.
+- `pkg/server/handler/tests/http_handler_test.go` - server/handler: Tests HTTP handlers, including `/debug/zip` request logging.
 - `pkg/server/handler/tests/main_test.go` - Configures default goleak settings and registers testdata.
 
 ## pkg/server/handler/tikvhandler
