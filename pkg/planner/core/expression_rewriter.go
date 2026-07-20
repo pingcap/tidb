@@ -385,27 +385,39 @@ type expressionRewriter struct {
 	onDuplicateMemoDisableDepth int
 }
 
+// onDuplicateExprMemo caches rewritten expression subtrees across ON DUPLICATE KEY UPDATE assignments.
 type onDuplicateExprMemo struct {
-	cache      map[string]expression.Expression
-	frames     []onDuplicateMemoFrame
+	// cache maps a restored AST subtree key to the expression produced by the expression rewriter.
+	cache map[string]expression.Expression
+	// frames mirrors the AST visitor stack and carries memo state from Enter to Leave.
+	frames []onDuplicateMemoFrame
+	// restoreBuf and restoreCtx are reused to build memo keys without per-node RestoreCtx allocations.
 	restoreBuf bytes.Buffer
 	restoreCtx *format.RestoreCtx
 
+	// keyableNodes contains subtrees that are worth building keys for in the current assignment.
 	keyableNodes map[ast.Node]struct{}
-	depthFrames  []onDuplicateExprDepthFrame
+	// depthFrames is a temporary stack used by prepareAssignment to calculate subtree depths.
+	depthFrames []onDuplicateExprDepthFrame
 }
 
 const maxOnDuplicateExprReuseKeyDepth = 16
 
 type onDuplicateMemoFrame struct {
-	key         string
-	stackLen    int
-	hit         bool
-	valid       bool
+	// key is the memo key for the current node if valid is true.
+	key string
+	// stackLen records ctxStack length before entering the node, so Leave can validate the rewrite result.
+	stackLen int
+	// hit means the current node has already been rewritten and pushed from cache in Enter.
+	hit bool
+	// valid means the current node has a usable memo key and can populate cache after Leave.
+	valid bool
+	// disableMemo marks nodes such as SetCollationExpr that disable memo for their whole subtree.
 	disableMemo bool
 }
 
 type onDuplicateExprDepthFrame struct {
+	// maxChildDepth tracks the largest child expression depth while walking bottom-up.
 	maxChildDepth int
 }
 
@@ -666,6 +678,12 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 	if er.onDuplicateMemo != nil {
 		frame := onDuplicateMemoFrame{stackLen: er.ctxStackLen()}
 		if _, ok := inNode.(*ast.SetCollationExpr); ok {
+			// SetCollationExpr is produced by expressions like `expr COLLATE utf8mb4_bin`.
+			// Its Leave mutates or wraps the rewritten child expression with explicit collation and
+			// coercibility. If assignments such as `(if(...) COLLATE utf8mb4_bin)` and
+			// `(if(...) COLLATE utf8mb4_general_ci)` shared the same cached inner `if(...)`, one
+			// assignment could overwrite the other's FieldType collation. Disable memo for the
+			// whole COLLATE subtree so those side effects stay local to each assignment.
 			frame.disableMemo = true
 			er.onDuplicateMemoDisableDepth++
 		}

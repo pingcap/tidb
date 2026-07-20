@@ -870,42 +870,11 @@ func (p *Insert) ResolveIndices() (err error) {
 	if err != nil {
 		return err
 	}
-	if !p.isOnDuplicateExpressionReuseEnabled() {
-		for _, asgn := range p.OnDuplicate {
-			newCol, err := asgn.Col.ResolveIndices(p.tableSchema)
-			if err != nil {
-				return err
-			}
-			asgn.Col = newCol.(*expression.Column)
-			// Once the asgn.lazyErr exists, asgn.Expr here is nil.
-			if asgn.Expr != nil {
-				asgn.Expr, err = asgn.Expr.ResolveIndices(p.Schema4OnDuplicate)
-				if err != nil {
-					return err
-				}
-			}
-		}
-		for i, expr := range p.GenCols.Exprs {
-			p.GenCols.Exprs[i], err = expr.ResolveIndices(p.tableSchema)
-			if err != nil {
-				return err
-			}
-		}
-		for _, asgn := range p.GenCols.OnDuplicates {
-			newCol, err := asgn.Col.ResolveIndices(p.tableSchema)
-			if err != nil {
-				return err
-			}
-			asgn.Col = newCol.(*expression.Column)
-			asgn.Expr, err = asgn.Expr.ResolveIndices(p.Schema4OnDuplicate)
-			if err != nil {
-				return err
-			}
-		}
-		return nil
+	var tableResolveMemo, onDupResolveMemo map[expression.Expression]expression.Expression
+	if p.isOnDuplicateExpressionReuseEnabled() {
+		tableResolveMemo = make(map[expression.Expression]expression.Expression)
+		onDupResolveMemo = make(map[expression.Expression]expression.Expression)
 	}
-	tableResolveMemo := make(map[expression.Expression]expression.Expression)
-	onDupResolveMemo := make(map[expression.Expression]expression.Expression)
 	for _, asgn := range p.OnDuplicate {
 		newCol, err := resolveExprIndicesWithMemo(asgn.Col, p.tableSchema, tableResolveMemo)
 		if err != nil {
@@ -947,6 +916,9 @@ func (p *Insert) isOnDuplicateExpressionReuseEnabled() bool {
 func resolveExprIndicesWithMemo(expr expression.Expression, schema *expression.Schema, memo map[expression.Expression]expression.Expression) (expression.Expression, error) {
 	if expr == nil {
 		return nil, nil
+	}
+	if memo == nil {
+		return expr.ResolveIndices(schema)
 	}
 	if resolved, ok := memo[expr]; ok {
 		return resolved, nil
