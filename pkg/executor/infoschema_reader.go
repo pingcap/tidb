@@ -631,15 +631,21 @@ func (e *memtableRetriever) setDataFromReferConst(ctx context.Context, sctx sess
 }
 
 func (e *memtableRetriever) updateStatsCacheIfNeed(sctx sessionctx.Context, tbls []*model.TableInfo) {
-	needUpdate := false
+	needRowCount := false
+	needColLength := false
 	for _, col := range e.columns {
 		// only the following columns need stats cache.
-		if col.Name.O == "AVG_ROW_LENGTH" || col.Name.O == "DATA_LENGTH" || col.Name.O == "INDEX_LENGTH" || col.Name.O == "TABLE_ROWS" {
-			needUpdate = true
-			break
+		switch col.Name.O {
+		case "TABLE_ROWS":
+			needRowCount = true
+		case "AVG_ROW_LENGTH", "DATA_LENGTH", "INDEX_LENGTH":
+			// The size columns are derived from both the row counts and the
+			// column lengths.
+			needRowCount = true
+			needColLength = true
 		}
 	}
-	if !needUpdate {
+	if !needRowCount {
 		return
 	}
 
@@ -655,7 +661,14 @@ func (e *memtableRetriever) updateStatsCacheIfNeed(sctx sessionctx.Context, tbls
 	// Even for partitioned tables, we must update the stats cache for the main table itself.
 	// This is necessary because the global index length from the table also needs to be included.
 	// For further details, see: https://github.com/pingcap/tidb/issues/54173
-	err := cache.TableRowStatsCache.UpdateByID(sctx, tableIDs...)
+	var err error
+	if needColLength {
+		err = cache.TableRowStatsCache.UpdateByID(sctx, tableIDs...)
+	} else {
+		// Skip reading mysql.stats_histograms when no size related column is
+		// requested. See: https://github.com/pingcap/tidb/issues/69818
+		err = cache.TableRowStatsCache.UpdateRowCountsByID(sctx, tableIDs...)
+	}
 	if err != nil {
 		logutil.BgLogger().Warn("cannot update stats cache for tables", zap.Error(err))
 	}

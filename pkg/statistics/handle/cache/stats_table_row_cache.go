@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
@@ -61,15 +62,30 @@ func (c *StatsTableRowCache) GetColLength(id tableHistID) uint64 {
 	return c.colLength[id]
 }
 
-// UpdateByID tries to update the cache by table ID.
+// UpdateByID updates the cached row counts and column lengths for the given table IDs.
 func (c *StatsTableRowCache) UpdateByID(sctx sessionctx.Context, ids ...int64) error {
+	return c.update(sctx, true, ids)
+}
+
+// UpdateRowCountsByID updates only the cached row counts for the given table IDs,
+// skipping the read of mysql.stats_histograms, which can be expensive on
+// clusters with many tables. Use it when the column lengths are not needed,
+// e.g. when only TABLE_ROWS is queried from information_schema.tables.
+func (c *StatsTableRowCache) UpdateRowCountsByID(sctx sessionctx.Context, ids ...int64) error {
+	return c.update(sctx, false, ids)
+}
+
+func (c *StatsTableRowCache) update(sctx sessionctx.Context, needColLength bool, ids []int64) error {
 	tableRows, err := getRowCountTables(sctx, ids...)
 	if err != nil {
 		return err
 	}
-	colLength, err := getColLengthTables(sctx, ids...)
-	if err != nil {
-		return err
+	var colLength map[tableHistID]uint64
+	if needColLength {
+		colLength, err = getColLengthTables(sctx, ids...)
+		if err != nil {
+			return err
+		}
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -145,6 +161,9 @@ func buildInTableIDsString(tableIDs []int64) string {
 }
 
 func getColLengthTables(sctx sessionctx.Context, tableIDs ...int64) (map[tableHistID]uint64, error) {
+	// Signals that mysql.stats_histograms is about to be read, letting tests
+	// assert that TABLE_ROWS-only queries skip this read. See issue #69818.
+	failpoint.InjectCall("getColLengthTables")
 	var rows []chunk.Row
 	var err error
 	if len(tableIDs) == 0 {
