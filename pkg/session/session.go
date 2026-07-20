@@ -4192,9 +4192,9 @@ func InitDDLTables(store kv.Storage) error {
 // initBootstrapDependentTables creates system tables that classic kernel upgrade
 // DDL may consult before the ordinary upgrade DDL reaches their creation step.
 func initBootstrapDependentTables(store kv.Storage, ver int64) error {
-	// This is only for classic upgrades from below version260. Fresh bootstrap and
-	// next-gen create the table elsewhere. After version260, the table may have been renamed.
-	if !kerneltype.IsClassic() || ver <= notBootstrapped || ver >= version260 || currentBootstrapVersion < version260 {
+	// This is only for classic upgrades from below version280. Fresh bootstrap and
+	// next-gen create the table elsewhere. After version280, the table may have been renamed.
+	if !kerneltype.IsClassic() || ver <= notBootstrapped || ver >= version280 || currentBootstrapVersion < version280 {
 		return nil
 	}
 
