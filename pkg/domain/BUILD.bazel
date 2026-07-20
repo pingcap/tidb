@@ -157,7 +157,7 @@ go_test(
     ],
     embed = [":domain"],
     flaky = True,
-    shard_count = 34,
+    shard_count = 33,
     deps = [
         "//pkg/config",
         "//pkg/config/deploymode",
@@ -209,6 +209,8 @@ go_test(
         "@com_github_tikv_pd_client//opt",
         "@com_github_tikv_pd_client//resource_group/controller",
         "@io_etcd_go_etcd_tests_v3//integration",
+        "@org_golang_google_grpc//codes",
+        "@org_golang_google_grpc//status",
         "@org_uber_go_goleak//:goleak",
     ],
 )
