@@ -773,6 +773,7 @@ type CDCPITRCheckItem struct {
 	cfg           *config.Config
 	Instruction   string
 	pdAddrsGetter func(context.Context) []string
+	keyspaceName  string
 	// used in test
 	etcdCli *clientv3.Client
 }
@@ -781,10 +782,19 @@ var newPDClientWithAPIContext = pd.NewClientWithAPIContext
 
 // NewCDCPITRCheckItem creates a checker to check downstream has enabled CDC or PiTR.
 func NewCDCPITRCheckItem(cfg *config.Config, pdAddrsGetter func(context.Context) []string) precheck.Checker {
+	return newCDCPITRCheckItemWithKeyspaceName(cfg, pdAddrsGetter, cfg.TikvImporter.KeyspaceName)
+}
+
+func newCDCPITRCheckItemWithKeyspaceName(
+	cfg *config.Config,
+	pdAddrsGetter func(context.Context) []string,
+	keyspaceName string,
+) precheck.Checker {
 	return &CDCPITRCheckItem{
 		cfg:           cfg,
 		Instruction:   "local backend is not compatible with them. Please switch to tidb backend then try again.",
 		pdAddrsGetter: pdAddrsGetter,
+		keyspaceName:  keyspaceName,
 	}
 }
 
@@ -797,6 +807,7 @@ func dialEtcdWithCfg(
 	ctx context.Context,
 	cfg *config.Config,
 	addrs []string,
+	keyspaceName string,
 ) (*clientv3.Client, error) {
 	tlsCfg, err := cfg.ToTLS()
 	if err != nil {
@@ -813,7 +824,7 @@ func dialEtcdWithCfg(
 		},
 	}
 	return metaservice.DialEtcdClient(
-		ctx, cfg.TikvImporter.KeyspaceName, addrs, tlsCfg.ToPDSecurityOption(),
+		ctx, keyspaceName, addrs, tlsCfg.ToPDSecurityOption(),
 		newPDClientWithAPIContext, componentName, nil, etcdCfg,
 	)
 }
@@ -833,7 +844,7 @@ func (ci *CDCPITRCheckItem) Check(ctx context.Context) (*precheck.CheckResult, e
 
 	if ci.etcdCli == nil {
 		var err error
-		ci.etcdCli, err = dialEtcdWithCfg(ctx, ci.cfg, ci.pdAddrsGetter(ctx))
+		ci.etcdCli, err = dialEtcdWithCfg(ctx, ci.cfg, ci.pdAddrsGetter(ctx), ci.keyspaceName)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

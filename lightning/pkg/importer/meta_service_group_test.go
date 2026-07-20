@@ -41,16 +41,21 @@ import (
 
 type metaServiceGroupPDClient struct {
 	pd.Client
-	members      []*pdpb.Member
-	keyspaceMeta *keyspacepb.KeyspaceMeta
+	members             []*pdpb.Member
+	keyspaceMeta        *keyspacepb.KeyspaceMeta
+	loadedKeyspaceNames []string
 }
 
 func (c *metaServiceGroupPDClient) GetAllMembers(context.Context) (*pdpb.GetMembersResponse, error) {
 	return &pdpb.GetMembersResponse{Members: c.members}, nil
 }
 
-func (c *metaServiceGroupPDClient) LoadKeyspace(context.Context, string) (*keyspacepb.KeyspaceMeta, error) {
-	return c.keyspaceMeta, nil
+func (c *metaServiceGroupPDClient) LoadKeyspace(_ context.Context, name string) (*keyspacepb.KeyspaceMeta, error) {
+	c.loadedKeyspaceNames = append(c.loadedKeyspaceNames, name)
+	if c.keyspaceMeta != nil && c.keyspaceMeta.Name == name {
+		return c.keyspaceMeta, nil
+	}
+	return nil, nil
 }
 
 func (*metaServiceGroupPDClient) Close() {}
@@ -103,11 +108,19 @@ func TestDialEtcdWithCfgUsesMetaServiceGroup(t *testing.T) {
 	})
 
 	cfg := config.NewConfig()
-	cfg.TikvImporter.KeyspaceName = keyspaceMeta.Name
+	cfg.TikvImporter.KeyspaceName = "wrong-keyspace"
 
-	etcdCli, err := dialEtcdWithCfg(context.Background(), cfg, []string{"127.0.0.1:2379"})
+	builder := newPrecheckItemBuilderWithKeyspaceName(
+		cfg, nil, nil, nil, nil, nil, keyspaceMeta.Name,
+	)
+	checker, err := builder.BuildPrecheckItem((&CDCPITRCheckItem{}).GetCheckItemID())
+	require.NoError(t, err)
+	require.Equal(t, keyspaceMeta.Name, checker.(*CDCPITRCheckItem).keyspaceName)
+
+	etcdCli, err := dialEtcdWithCfg(context.Background(), cfg, []string{"127.0.0.1:2379"}, keyspaceMeta.Name)
 	require.NoError(t, err)
 	defer etcdCli.Close()
+	require.Equal(t, []string{keyspaceMeta.Name}, mockPD.loadedKeyspaceNames)
 
 	register := utils.NewTaskRegisterWithTTL(etcdCli, time.Minute, utils.RegisterLightning, "lightning-test")
 	require.NoError(t, register.RegisterTaskOnce(context.Background()))

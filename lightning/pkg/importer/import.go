@@ -509,8 +509,8 @@ func NewImportControllerWithPauser(
 		return nil, errors.Trace(err)
 	}
 
-	preCheckBuilder := NewPrecheckItemBuilder(
-		cfg, p.DBMetas, preInfoGetter, cpdb, pdHTTPCli, db,
+	preCheckBuilder := newPrecheckItemBuilderWithKeyspaceName(
+		cfg, p.DBMetas, preInfoGetter, cpdb, pdHTTPCli, db, p.KeyspaceName,
 	)
 
 	rc := &Controller{
@@ -1623,7 +1623,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 }
 
 func (rc *Controller) registerTaskToPD(ctx context.Context) (undo func(), _ error) {
-	etcdCli, err := dialEtcdWithCfg(ctx, rc.cfg, rc.pdCli.GetServiceDiscovery().GetServiceURLs())
+	etcdCli, err := dialEtcdWithCfg(ctx, rc.cfg, rc.pdCli.GetServiceDiscovery().GetServiceURLs(), rc.keyspaceName)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
