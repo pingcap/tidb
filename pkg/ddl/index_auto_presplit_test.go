@@ -205,6 +205,14 @@ func TestPlanAutoSplitIndexRegionsSkipUnreliableStats(t *testing.T) {
 		require.Empty(t, keys, tc.name)
 		require.Equal(t, "partitioned table", reason, tc.name)
 	}
+
+	partialTblInfo, partialIdxInfo := buildAutoSplitTestTableInfoFromSQL(t,
+		"create table t(a bigint, b bigint, index idx(b) where a = 1)")
+	require.True(t, partialIdxInfo.HasCondition())
+	keys, reason, err := planAutoSplitIndexRegions(sctx, nil, partialTblInfo, partialIdxInfo, cfg)
+	require.NoError(t, err)
+	require.Empty(t, keys)
+	require.Equal(t, "partial index", reason)
 }
 
 func TestPreSplitIndexRegionsAutoGateAndManualOverride(t *testing.T) {
@@ -291,6 +299,28 @@ func TestPreSplitIndexRegionsAutoGateAndManualOverride(t *testing.T) {
 		reorgMeta, manualArgs, nil, true)
 	require.NoError(t, err)
 	require.Equal(t, 3, countSplitKeysForIndex(t, capturedKeys, idxInfo.ID))
+	require.Empty(t, reorgMeta.AutoSplitHotRegionResults)
+
+	partialTblInfo, partialIdxInfo := buildAutoSplitTestTableInfoFromSQL(t,
+		"create table t(a bigint, b bigint, index idx(b) where a = 1)")
+	capturedKeys = nil
+	err = preSplitIndexRegions(
+		context.Background(), sctx, nil, partialTblInfo, []*model.IndexInfo{partialIdxInfo},
+		reorgMeta, args, nil, true)
+	require.NoError(t, err)
+	require.Empty(t, capturedKeys)
+	require.Equal(t, []model.AutoSplitHotRegionResult{{
+		IndexName: "idx",
+		Status:    model.AutoSplitHotRegionStatusSkipped,
+		Reason:    "partial index",
+	}}, reorgMeta.AutoSplitHotRegionResults)
+
+	capturedKeys = nil
+	err = preSplitIndexRegions(
+		context.Background(), sctx, nil, partialTblInfo, []*model.IndexInfo{partialIdxInfo},
+		reorgMeta, manualArgs, nil, true)
+	require.NoError(t, err)
+	require.Equal(t, 3, countSplitKeysForIndex(t, capturedKeys, partialIdxInfo.ID))
 	require.Empty(t, reorgMeta.AutoSplitHotRegionResults)
 
 	tblInfo, idxInfo = buildPartitionedAutoSplitTestTableInfo(t)

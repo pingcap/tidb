@@ -74,6 +74,11 @@ func planAutoSplitIndexRegions(
 	if tblInfo.GetPartitionInfo() != nil {
 		return nil, "partitioned table", nil
 	}
+	// Ordinary column statistics describe the full table rather than the
+	// predicate-filtered row set represented by a partial index.
+	if idxInfo.HasCondition() {
+		return nil, "partial index", nil
+	}
 	if statsProvider == nil {
 		return nil, "stats handle is nil", nil
 	}
