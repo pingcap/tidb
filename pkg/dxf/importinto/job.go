@@ -355,7 +355,7 @@ func GetJobLastUpdateTime(ctx context.Context, jobID int64) (types.Time, error) 
 					union
 				select state_update_time from mysql.tidb_background_subtask_history where task_key = %?
 			) t`,
-			task.ID, task.ID,
+			storage.TaskIDToKey(task.ID), storage.TaskIDToKey(task.ID),
 		)
 		return err
 	})
