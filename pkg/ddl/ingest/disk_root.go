@@ -60,7 +60,7 @@ type DiskRoot interface {
 const (
 	capacityThreshold = 0.9
 	// LocalSortBytesPerSlot is the fixed disk reservation per slot for local sort.
-	LocalSortBytesPerSlot = 1024 * size.MB
+	LocalSortBytesPerSlot = 2048 * size.MB
 )
 
 // diskRootImpl implements DiskRoot interface.
