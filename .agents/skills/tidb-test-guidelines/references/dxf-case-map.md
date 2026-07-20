@@ -68,7 +68,7 @@
 - `pkg/dxf/framework/scheduler/scheduler_manager_nokit_test.go` - dxf/framework/scheduler: Tests manager scheduler ordering and batched cleanup dispatch.
 - `pkg/dxf/framework/scheduler/scheduler_manager_test.go` - dxf/framework/scheduler: Tests cleanup routine and bounded cleanup-batch draining.
 - `pkg/dxf/framework/scheduler/scheduler_nokit_test.go` - dxf/framework/scheduler: Tests scheduler on next stage.
-- `pkg/dxf/framework/scheduler/scheduler_test.go` - dxf/framework/scheduler: Tests task fail in manager and exported batch-cleanup capability conformance.
+- `pkg/dxf/framework/scheduler/scheduler_test.go` - dxf/framework/scheduler: Tests task fail in manager.
 - `pkg/dxf/framework/scheduler/slots_test.go` - dxf/framework/scheduler: Tests slot manager reserve next-gen.
 
 ## pkg/dxf/framework/schstatus
@@ -102,7 +102,7 @@
 ## pkg/dxf/importinto
 
 ### Tests
-- `pkg/dxf/importinto/clean_up_test.go` - dxf/importinto: Tests batch cleanup groups task files into one scan per storage URI, uses live credentials, and redacts persisted task metadata.
+- `pkg/dxf/importinto/clean_up_test.go` - dxf/importinto: Tests batch cleanup groups task files into one scan per storage URI, uses live credentials, and redacts task metadata.
 - `pkg/dxf/importinto/collect_conflicts_test.go` - dxf/importinto: Tests collect conflicts step executor.
 - `pkg/dxf/importinto/conflict_resolution_test.go` - dxf/importinto: Tests conflict resolution step executor.
 - `pkg/dxf/importinto/encode_and_sort_operator_test.go` - dxf/importinto: Tests encode and sort operator.
