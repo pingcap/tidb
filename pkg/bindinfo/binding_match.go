@@ -55,7 +55,7 @@ func MatchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (binding Bi
 
 func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode, info *BindingMatchInfo) (binding Binding, matched bool, scope string) {
 	useBinding := sctx.GetSessionVars().UsePlanBaselines
-	if !useBinding || stmtNode == nil {
+	if !useBinding || stmtNode == nil || !mayHaveSQLBinding(stmtNode) {
 		return
 	}
 	// When the domain is initializing, the bind will be nil.
@@ -92,6 +92,18 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode, info *Bindi
 	}
 
 	return
+}
+
+func mayHaveSQLBinding(stmtNode ast.StmtNode) bool {
+	switch stmt := stmtNode.(type) {
+	case *ast.InsertStmt:
+		// REPLACE also uses InsertStmt with IsReplace set.
+		return stmt.Select != nil
+	case *ast.ExplainStmt:
+		return stmt.Stmt != nil && mayHaveSQLBinding(stmt.Stmt)
+	default:
+		return true
+	}
 }
 
 func fuzzyMatchBindingTableName(currentDB string, stmtTableNames, bindingTableNames []*ast.TableName) (numWildcards int, matched bool) {
