@@ -486,6 +486,7 @@ func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) error {
 
 	for _, cleanUpTask := range singleCleanUpTasks {
 		if err := cleanUpTask.cleanUp.CleanUp(sm.ctx, cleanUpTask.task); err != nil {
+			// maybe consider continue cleaning other tasks on error later.
 			firstErr = err
 			break
 		}
