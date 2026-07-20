@@ -130,12 +130,22 @@ impl ConfiguredJoinPlan {
     pub fn lower(sql: &str, catalog: &ConfiguredCatalog) -> Result<Self, ConfiguredJoinPlanError> {
         let relation_tree = ConfiguredRelationTree::bind_sql(sql, catalog)
             .map_err(ConfiguredJoinPlanError::RelationBinding)?;
-        let join_schema = join_schema(&relation_tree);
-        let bound_join = bind_join_constraint(&relation_tree, &join_schema)?;
+        Self::lower_relation_tree(&relation_tree)
+    }
 
-        let left_scan = lower_relation_scan(&relation_tree, RelationSide::Left)?;
-        let right_scan = lower_relation_scan(&relation_tree, RelationSide::Right)?;
-        let full_schema = full_schema(&relation_tree);
+    /// Lowers one already-parsed, fully bound configured relation tree.
+    ///
+    /// ORDER BY/LIMIT lowering uses this seam after it has consumed the query
+    /// tail from the same parsed SELECT, avoiding a text restore/reparse loop.
+    pub(crate) fn lower_relation_tree(
+        relation_tree: &ConfiguredRelationTree,
+    ) -> Result<Self, ConfiguredJoinPlanError> {
+        let join_schema = join_schema(relation_tree);
+        let bound_join = bind_join_constraint(relation_tree, &join_schema)?;
+
+        let left_scan = lower_relation_scan(relation_tree, RelationSide::Left)?;
+        let right_scan = lower_relation_scan(relation_tree, RelationSide::Right)?;
+        let full_schema = full_schema(relation_tree);
         let left_width = relation_tree.left().table().columns().len();
         let visible_full_offsets = match bound_join.using_full_offsets {
             Some((left_key, right_key)) => std::iter::once(left_key)
@@ -381,7 +391,7 @@ fn resolve_join_column<'a>(
         _ => {
             return Err(ConfiguredJoinPlanError::UnsupportedJoinCondition(
                 UnsupportedJoinCondition::InvalidColumnPath,
-            ))
+            ));
         }
     };
     let candidates = [

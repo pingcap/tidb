@@ -317,6 +317,12 @@ impl Parser {
     fn parse_prefix(&mut self, min_prec: u8) -> PResult<Expr> {
         let t = self.peek().clone();
         match t.kind {
+            TokenKind::Op if t.text == "?" => {
+                self.bump();
+                Ok(Expr::ParamMarker {
+                    position: self.next_param_marker_position(),
+                })
+            }
             TokenKind::IntLit => {
                 self.bump();
                 Ok(Expr::Int(t.text))

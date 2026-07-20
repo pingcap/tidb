@@ -16,12 +16,13 @@
 //!
 //! This is the first server-layer consumer of `tidb-protocol`'s command
 //! decoder and `tidb-exec`'s shared session. It owns the currently executable
-//! `COM_QUERY`, `COM_PING`, and `COM_QUIT` lifecycle, plus the bounded
-//! table-less automatic result-metadata path, source-shaped handshake
-//! primitives, negotiated compressed command I/O, and TCP listener lifecycle. Authentication, TLS,
-//! database selection, prepared statements, catalog-backed schema binding,
-//! and every unsupported command remain explicit boundaries instead of
-//! becoming fake success paths.
+//! `COM_QUERY`, `COM_PING`, and `COM_QUIT` lifecycle, plus one authenticated
+//! configured signed-BIGINT `COM_STMT_PREPARE`/`EXECUTE`/`CLOSE` point-read
+//! path, the bounded table-less automatic result-metadata path, source-shaped
+//! handshake primitives, negotiated compressed command I/O, and TCP listener
+//! lifecycle. TLS, database selection, general prepared statements, broad
+//! catalog-backed schema binding, and every unsupported command remain
+//! explicit boundaries instead of becoming fake success paths.
 
 mod auth_exchange;
 mod auth_identity;
@@ -38,6 +39,7 @@ mod listener;
 mod mysql_connection;
 mod native_password;
 mod node_config;
+mod real_tikv_multi_node;
 mod real_tikv_node;
 pub mod resultset_source;
 pub mod resultset_writer;
@@ -94,16 +96,20 @@ pub use handshake::{
 };
 pub use listener::{ListenerConfig, ListenerError, ListenerLifecycle, ListenerState};
 pub use mysql_connection::{
-    serve_mysql_connection, ConnectionExit, ConnectionReport, MysqlConnectionError,
+    serve_mysql_connection, ConnectionCommandCounts, ConnectionExit, ConnectionReport,
+    MysqlConnectionError,
 };
 pub use native_password::{
     generate_handshake_salt, verify_candidate, HandshakeSaltError, NativePasswordHash,
     NativePasswordHashError, HANDSHAKE_SALT_LEN, NATIVE_PASSWORD_HASH_LEN,
 };
 pub use node_config::{ConfiguredReadTable, NodeConfig, NodeConfigError};
+pub use real_tikv_multi_node::{
+    run_configured_multi_node, RealTiKvMultiServerSession, RealTiKvMultiSessionFactory,
+};
 pub use real_tikv_node::{
-    run_configured_node, run_with_process_shutdown, ProcessReadAuthority, RealTiKvServerSession,
-    RealTiKvSessionFactory, RunConfiguredNodeError,
+    run_configured_node as run_single_configured_node, run_with_process_shutdown,
+    ProcessReadAuthority, RealTiKvServerSession, RealTiKvSessionFactory, RunConfiguredNodeError,
 };
 pub use resultset_source::ResultSetSource;
 pub use secure_transport::{
@@ -111,9 +117,24 @@ pub use secure_transport::{
 };
 pub use sql_node::{
     ActiveQueryCancellation, BoxedResultSetSource, ConcurrentSqlNode, ConnectionCancellation,
-    ConnectionTracker, QueryCancellationLease, QueryResult, QuerySession, QuerySessionFactory,
-    SessionContext, ShutdownHandle, SqlNodeError, SqlQueryError,
+    ConnectionTracker, PreparedPointRead, QueryCancellationLease, QueryResult, QuerySession,
+    QuerySessionFactory, SessionContext, ShutdownHandle, SqlNodeError, SqlQueryError,
 };
+
+/// Starts the one configured SQL-node authority for its admitted table shape.
+///
+/// One table keeps the established single-reader path. Exactly two tables use
+/// the connected same-snapshot join path; no fallback can silently execute a
+/// multi-table query against an in-memory or single-table authority.
+pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeError> {
+    match config.read_tables.len() {
+        1 => run_single_configured_node(config),
+        2 => run_configured_multi_node(config),
+        count => Err(RunConfiguredNodeError::Engine(SqlQueryError::unknown(
+            format!("configured SQL node requires one or two tables, got {count}"),
+        ))),
+    }
+}
 
 /// A response from the currently supported connection dispatch envelope.
 #[derive(Debug, PartialEq)]

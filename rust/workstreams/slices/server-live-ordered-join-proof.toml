@@ -1,6 +1,6 @@
 schema = "1"
 slice = "server-live-ordered-join-proof"
-status = "ready"
+status = "partial"
 target = "tidb-server"
 ring = "result"
 consumer = "One persistent authenticated stock MySQL connection proves multi-key ASC/DESC ORDER BY LIMIT and LIMIT-only windows over the Campaign 25 two-table real-TiKV join through topology churn and bounded shutdown."
@@ -44,6 +44,8 @@ support_anchors = [
   "ORDER BY without LIMIT, overflow/cap excess, expressions, NULL/coercion/collation, spill, partitions, index ordering, and TiKV TopN pushdown remain explicit gaps",
 ]
 rust_paths = [
+  "rust/scripts/lib/live-sql-node-harness.sh",
+  "rust/scripts/test-live-sql-node-harness.sh",
   "rust/scripts/run-campaign26-ordered-join-sql-node.sh",
   "rust/difftests/corpus/coverage/evidence/source/server-live-ordered-join-proof.tsv",
   "rust/difftests/corpus/coverage/evidence/tests/server-live-ordered-join-proof.tsv",

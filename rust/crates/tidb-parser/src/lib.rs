@@ -359,6 +359,7 @@ pub fn parse_multi_with_mariadb(sql: &str, enable_mariadb: bool) -> PResult<Vec<
     let mut statements = Vec::new();
     p.skip_semicolons();
     while !p.at_eof() {
+        p.reset_param_marker_positions();
         statements.push(p.parse_statement()?);
         p.skip_semicolons();
     }
@@ -369,6 +370,7 @@ struct Parser {
     toks: Vec<Token>,
     pos: usize,
     enable_mariadb: bool,
+    param_marker_position: usize,
 }
 
 impl Parser {
@@ -382,7 +384,21 @@ impl Parser {
             toks: Lexer::new(sql).tokenize(),
             pos: 0,
             enable_mariadb,
+            param_marker_position: 0,
         }
+    }
+
+    fn reset_param_marker_positions(&mut self) {
+        self.param_marker_position = 0;
+    }
+
+    fn next_param_marker_position(&mut self) -> usize {
+        let position = self.param_marker_position;
+        self.param_marker_position = self
+            .param_marker_position
+            .checked_add(1)
+            .expect("parameter marker position overflowed usize");
+        position
     }
 
     /// Constructs the nested parser for an optimizer-hint comment. Real
@@ -393,6 +409,7 @@ impl Parser {
             toks: Lexer::new(sql).with_hint_mode().tokenize(),
             pos: 0,
             enable_mariadb: false,
+            param_marker_position: 0,
         }
     }
 

@@ -55,14 +55,23 @@ pub use coprocessor::{
 pub use errorpb::Error as RegionError;
 
 pub use kvrpcpb::{
-    Action as KvrpcTxnAction, CheckTxnStatusRequest as KvrpcCheckTxnStatusRequest,
+    Action as KvrpcTxnAction, AlreadyExist as KvrpcAlreadyExist, Assertion as KvrpcAssertion,
+    AssertionFailed as KvrpcAssertionFailed, AssertionLevel as KvrpcAssertionLevel,
+    BatchRollbackRequest as KvrpcBatchRollbackRequest,
+    BatchRollbackResponse as KvrpcBatchRollbackResponse,
+    CheckTxnStatusRequest as KvrpcCheckTxnStatusRequest,
     CheckTxnStatusResponse as KvrpcCheckTxnStatusResponse, CommandPri as KvrpcCommandPriority,
-    Context as KvrpcContext, IsolationLevel as KvrpcIsolationLevel, KeyError as KvrpcKeyError,
-    LockInfo as KvrpcLockInfo, Peer as KvrpcPeer, RegionEpoch as KvrpcRegionEpoch,
-    RequestOrigin as KvrpcRequestOrigin, ResolveLockRequest as KvrpcResolveLockRequest,
-    ResolveLockResponse as KvrpcResolveLockResponse,
+    CommitRequest as KvrpcCommitRequest, CommitResponse as KvrpcCommitResponse,
+    CommitRole as KvrpcCommitRole, CommitTsExpired as KvrpcCommitTsExpired,
+    CommitTsTooLarge as KvrpcCommitTsTooLarge, Context as KvrpcContext,
+    GetRequest as KvrpcGetRequest, GetResponse as KvrpcGetResponse,
+    IsolationLevel as KvrpcIsolationLevel, KeyError as KvrpcKeyError, LockInfo as KvrpcLockInfo,
+    Mutation as KvrpcMutation, Op as KvrpcOp, Peer as KvrpcPeer,
+    PrewriteRequest as KvrpcPrewriteRequest, PrewriteResponse as KvrpcPrewriteResponse,
+    RegionEpoch as KvrpcRegionEpoch, RequestOrigin as KvrpcRequestOrigin,
+    ResolveLockRequest as KvrpcResolveLockRequest, ResolveLockResponse as KvrpcResolveLockResponse,
     ResourceControlContext as KvrpcResourceControlContext, SourceStmt as KvrpcSourceStmt,
-    TxnInfo as KvrpcTxnInfo,
+    TxnInfo as KvrpcTxnInfo, WriteConflict as KvrpcWriteConflict,
 };
 
 pub use tipb::{

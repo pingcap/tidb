@@ -21,6 +21,9 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+use tidb_planner::read_only_scan::ConfiguredPreparedPointReadTemplate;
+use tidb_protocol::ColumnInfo;
+
 use crate::configured_user_store::{AuthenticatedIdentity, ConfiguredUserStore};
 use crate::mysql_connection::{serve_mysql_connection, MysqlConnectionError};
 use crate::node_config::NodeConfig;
@@ -179,6 +182,44 @@ pub struct QueryResult<'a> {
     source: BoxedResultSetSource<'a>,
 }
 
+/// One connection-owned, typed prepared point-read definition.
+///
+/// It contains no storage response, snapshot, or interpolated SQL. The
+/// immutable planner template is bound afresh for each execute, while result
+/// metadata is derived from that same plan during prepare without opening PD
+/// or TiKV.
+#[derive(Clone, Debug)]
+pub struct PreparedPointRead {
+    template: ConfiguredPreparedPointReadTemplate,
+    result_columns: Vec<ColumnInfo>,
+}
+
+impl PreparedPointRead {
+    /// Creates a concrete prepared definition after parser/catalog admission.
+    #[must_use]
+    pub fn new(
+        template: ConfiguredPreparedPointReadTemplate,
+        result_columns: Vec<ColumnInfo>,
+    ) -> Self {
+        Self {
+            template,
+            result_columns,
+        }
+    }
+
+    /// Returns the immutable typed template retained by this connection.
+    #[must_use]
+    pub const fn template(&self) -> &ConfiguredPreparedPointReadTemplate {
+        &self.template
+    }
+
+    /// Returns the exact signed-BIGINT result metadata sent at prepare time.
+    #[must_use]
+    pub fn result_columns(&self) -> &[ColumnInfo] {
+        &self.result_columns
+    }
+}
+
 impl<'a> QueryResult<'a> {
     /// Transfers one session-owned result source to the connection writer.
     #[must_use]
@@ -234,6 +275,27 @@ pub struct SessionContext {
 pub trait QuerySession {
     /// Starts one sequential query and returns its lazy result owner.
     fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError>;
+
+    /// Parses and types one bounded prepared point read without storage I/O.
+    /// Sessions that have no real configured catalog fail closed.
+    fn prepare_point_read(&mut self, _sql: &str) -> Result<PreparedPointRead, SqlQueryError> {
+        Err(SqlQueryError::unknown(
+            "prepared point reads require a configured real-TiKV session",
+        ))
+    }
+
+    /// Binds and starts one prepared point read through this session's
+    /// ordinary concrete executor. Sessions without that authority fail
+    /// closed and never synthesize rows.
+    fn execute_prepared_point_read<'a>(
+        &'a mut self,
+        _statement: &PreparedPointRead,
+        _parameters: &[i64],
+    ) -> Result<QueryResult<'a>, SqlQueryError> {
+        Err(SqlQueryError::unknown(
+            "prepared point reads require a configured real-TiKV session",
+        ))
+    }
 }
 
 /// Process-owned factory invoked only after authentication, inside a worker.
@@ -1036,6 +1098,7 @@ mod tests {
             auth_file: PathBuf::from("unused"),
             max_connections: 2,
             connection_timeout: Duration::from_secs(5),
+            max_topn_rows: 1_024,
         }
     }
 

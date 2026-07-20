@@ -1,6 +1,6 @@
 schema = "1"
 slice = "server-configured-ordered-query-routing-runtime"
-status = "ready"
+status = "partial"
 target = "tidb-server"
 ring = "result"
 consumer = "The existing multi-relation SQL-node dispatcher routes configured ORDER BY LIMIT and LIMIT-only queries through the Campaign 26 executor while preserving authentication, connection ownership, cancellation, and ordered shutdown."

@@ -1213,6 +1213,153 @@ fn known_leader_region_error_resends_immediately_in_the_same_query() {
 }
 
 #[test]
+fn batch_known_leader_region_error_republishes_the_recovered_route() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let loader_calls = Rc::new(RefCell::new(Vec::new()));
+    let transport = DirectUnaryQueryTransport::new_injected_batch_first(
+        ScriptedClient {
+            calls: Rc::clone(&calls),
+            responses: VecDeque::from([
+                Ok(not_leader(1, Some((102, 202)))),
+                Ok(response(b"fresh-batch-route")),
+            ]),
+            events: Rc::new(RefCell::new(Vec::new())),
+            liveness: RefCell::new(VecDeque::new()),
+            batch_errors: RefCell::new(VecDeque::new()),
+            batch_completion_gate: None,
+        },
+        RegionCache::new(ScriptedLoader {
+            cluster_id: 9001,
+            calls: Rc::clone(&loader_calls),
+            regions: VecDeque::from([location_with_second_peer(
+                1,
+                "a",
+                "z",
+                "tikv-old:20160",
+                "tikv-new:20160",
+            )]),
+        }),
+        DirectUnaryRuntimeConfig::default(),
+        tidb_txnkv::lock::FixedTimestampSource::new(1 << 18),
+    )
+    .unwrap();
+    let evidence = transport.evidence_handle();
+    let mut runtime = InjectedQueryRuntime::new(transport);
+    let mut result = select_result(&mut runtime, &transport_request(metadata("a", "z")));
+
+    assert_eq!(
+        result.next_raw().unwrap(),
+        Some(b"fresh-batch-route".to_vec())
+    );
+    assert_eq!(result.next_raw().unwrap(), None);
+    assert_eq!(loader_calls.borrow().as_slice(), [b"a".to_vec()]);
+    assert_eq!(
+        calls
+            .borrow()
+            .iter()
+            .map(|call| call.address.as_str())
+            .collect::<Vec<_>>(),
+        ["tikv-old:20160", "tikv-new:20160"]
+    );
+
+    let evidence = evidence.snapshot();
+    assert_eq!(evidence.batch_attempts, 2);
+    assert_eq!(evidence.unary_attempts, 0);
+    assert_eq!(
+        evidence
+            .published_attempts
+            .iter()
+            .map(|published| published.publication.physical_address())
+            .collect::<Vec<_>>(),
+        ["tikv-old:20160", "tikv-new:20160"],
+        "the cache-recovered leader must be sent and published through BatchCommands"
+    );
+}
+
+#[test]
+fn batch_connection_failure_republishes_the_cache_recovered_route() {
+    let calls = Rc::new(RefCell::new(Vec::new()));
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let retry_control = Rc::new(RecordingRetryControl::default());
+    let transport = DirectUnaryQueryTransport::new_injected_batch_first(
+        ScriptedClient {
+            calls: Rc::clone(&calls),
+            responses: VecDeque::from([
+                Err(connection_failure(
+                    "tikv-old:20160",
+                    9,
+                    DirectUnaryTransportClass::Connection,
+                    None,
+                )),
+                Ok(response(b"recovered-batch-route")),
+            ]),
+            events: Rc::clone(&events),
+            liveness: RefCell::new(VecDeque::from([Ok(StoreLiveness::Unreachable)])),
+            batch_errors: RefCell::new(VecDeque::new()),
+            batch_completion_gate: None,
+        },
+        RegionCache::new(ScriptedLoader {
+            cluster_id: 9001,
+            calls: Rc::new(RefCell::new(Vec::new())),
+            regions: VecDeque::from([location_with_second_peer(
+                1,
+                "a",
+                "z",
+                "tikv-old:20160",
+                "tikv-new:20160",
+            )]),
+        }),
+        DirectUnaryRuntimeConfig {
+            region_retry_waiter: retry_control.clone(),
+            ..DirectUnaryRuntimeConfig::default()
+        },
+        tidb_txnkv::lock::FixedTimestampSource::new(1 << 18),
+    )
+    .unwrap();
+    let evidence = transport.evidence_handle();
+    let mut runtime = InjectedQueryRuntime::new(transport);
+    let mut result = select_result(&mut runtime, &transport_request(metadata("a", "z")));
+
+    assert_eq!(
+        result.next_raw().unwrap(),
+        Some(b"recovered-batch-route".to_vec())
+    );
+    assert_eq!(result.next_raw().unwrap(), None);
+    assert_eq!(
+        calls
+            .borrow()
+            .iter()
+            .map(|call| call.address.as_str())
+            .collect::<Vec<_>>(),
+        ["tikv-old:20160", "tikv-new:20160"]
+    );
+    assert_eq!(
+        events.borrow()[..2],
+        [
+            ClientEvent::Send("tikv-old:20160".to_owned()),
+            ClientEvent::Liveness {
+                address: "tikv-old:20160".to_owned(),
+                timeout: Duration::from_secs(1),
+            },
+        ]
+    );
+    assert_eq!(retry_control.sleeps.borrow().len(), 1);
+
+    let evidence = evidence.snapshot();
+    assert_eq!(evidence.batch_attempts, 2);
+    assert_eq!(evidence.unary_attempts, 0);
+    assert_eq!(
+        evidence
+            .published_attempts
+            .iter()
+            .map(|published| published.publication.physical_address())
+            .collect::<Vec<_>>(),
+        ["tikv-old:20160", "tikv-new:20160"],
+        "a recoverable physical-route failure must republish the cache-selected route through BatchCommands"
+    );
+}
+
+#[test]
 fn nil_leader_sleeps_then_invalidates_reloads_and_resends() {
     let calls = Rc::new(RefCell::new(Vec::new()));
     let loader_calls = Rc::new(RefCell::new(Vec::new()));
@@ -2847,7 +2994,7 @@ fn unsupported_request_shape_fails_before_pd_or_tikv() {
 }
 
 #[test]
-fn batch_failure_retains_the_logical_request_selector_for_sync_fallback() {
+fn batch_transport_failure_retains_the_logical_request_selector_for_batch_retry() {
     let source = include_str!("../src/cop_paging/direct_unary_query_transport.rs");
     let settle = source
         .find("fn settle_dispatch(")

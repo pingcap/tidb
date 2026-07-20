@@ -31,6 +31,11 @@ use tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET;
 const DEFAULT_MAX_CONNECTIONS: usize = 8;
 const MAX_CONNECTION_WORKERS: usize = 256;
 const DEFAULT_CONNECTION_TIMEOUT_MS: u64 = 30_000;
+// The current configured reader only exposes fixed-width signed BIGINT rows.
+// Keep the first in-memory TopN vertical deliberately small until the executor
+// owns spill and general memory-quota semantics.
+const DEFAULT_MAX_TOPN_ROWS: usize = 1_024;
+const MAX_CONFIGURED_TOPN_ROWS: usize = 65_536;
 const MAX_CONFIGURED_READ_TABLES: usize = 2;
 const MAX_CONFIGURED_READ_COLUMNS: usize = 4096;
 
@@ -95,6 +100,8 @@ pub struct NodeConfig {
     pub max_connections: usize,
     /// Handshake, idle-command, and socket-write deadline for one connection.
     pub connection_timeout: Duration,
+    /// Process-wide maximum ORDER BY LIMIT heap cardinality for the bounded executor.
+    pub max_topn_rows: usize,
 }
 
 /// Startup configuration failure.
@@ -174,6 +181,7 @@ impl NodeConfig {
         let mut auth_file = None;
         let mut max_connections = None;
         let mut connection_timeout_ms = None;
+        let mut max_topn_rows = None;
 
         while let Some(argument) = pending.next() {
             if argument == "--help" || argument == "-h" {
@@ -218,6 +226,7 @@ impl NodeConfig {
                 "--connection-timeout-ms" => {
                     set_once(&mut connection_timeout_ms, option, value)?;
                 }
+                "--max-topn-rows" => set_once(&mut max_topn_rows, option, value)?,
                 _ => return Err(NodeConfigError::UnknownOption(option.to_owned())),
             }
         }
@@ -249,6 +258,13 @@ impl NodeConfig {
             Some(value) => parse_positive_number("--connection-timeout-ms", &value)?,
             None => DEFAULT_CONNECTION_TIMEOUT_MS,
         });
+        let max_topn_rows = match max_topn_rows {
+            Some(value) => parse_positive_number("--max-topn-rows", &value)?,
+            None => DEFAULT_MAX_TOPN_ROWS,
+        };
+        if max_topn_rows > MAX_CONFIGURED_TOPN_ROWS {
+            return Err(invalid("--max-topn-rows", "value must not exceed 65536"));
+        }
 
         Ok(Self {
             host,
@@ -259,6 +275,7 @@ impl NodeConfig {
             auth_file,
             max_connections,
             connection_timeout,
+            max_topn_rows,
         })
     }
 
@@ -271,6 +288,7 @@ impl NodeConfig {
 [<name>:<id>:<clustered-pk|stored-not-null> ...] \
 [--read-table <database> <table> <table-id> <column-count> <column> ...] \
 [--max-connections <count>] [--connection-timeout-ms <milliseconds>] \
+[--max-topn-rows <rows>] \
 --auth-file <mode-0600-tsv> \
 [--host <loopback-ip>] [-P <port>|--port <port>] [--store tikv] \
 [--max-allowed-packet <bytes>]"

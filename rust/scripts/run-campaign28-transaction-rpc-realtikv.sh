@@ -1,0 +1,253 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+RUST_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+TAG="campaign28-transaction-rpc-${$}"
+PORT_OFFSET=${C28_STAGE_A_PORT_OFFSET:-42000}
+PD_PORT=$((2379 + PORT_OFFSET))
+KV_PORT=$((20160 + PORT_OFFSET))
+PD_ADDR="127.0.0.1:${PD_PORT}"
+TAG_DIR="${TIUP_HOME:-${HOME}/.tiup}/data/${TAG}"
+PLAYGROUND_LOG="${TMPDIR:-/tmp}/${TAG}-playground.log"
+RUST_LOG="${TMPDIR:-/tmp}/${TAG}-rust.log"
+READINESS_ATTEMPTS=240
+PLAYGROUND_PID=
+STORE_ADDRESSES=
+TIUP_CLEAN_REQUIRED=true
+SELF_TEST_ROOT=
+
+tag_status_rows() {
+  tiup status 2>/dev/null | awk -v tag="${TAG}" \
+    'NR > 2 && ($1 == tag || index($0, "/data/" tag "/")) { print }'
+}
+
+tag_owned_pids() {
+  pgrep -f "${TAG_DIR}" || true
+}
+
+endpoint_reachable() {
+  local address=$1
+  local host=${address%:*}
+  local port=${address##*:}
+  nc -z -w 1 "${host}" "${port}" >/dev/null 2>&1
+}
+
+validate_owned_tag_dir() {
+  if [[ -n "${SELF_TEST_ROOT}" ]]; then
+    [[ "${TAG_DIR}" == "${SELF_TEST_ROOT}/"* ]]
+    return
+  fi
+  local tiup_data="${TIUP_HOME:-${HOME}/.tiup}/data"
+  [[ "${TAG_DIR}" == "${tiup_data}/${TAG}" ]] \
+    && [[ "${TAG}" == campaign28-transaction-rpc-* ]]
+}
+
+cleanup_resources() {
+  local cleanup_failed=false
+
+  if [[ -n "${PLAYGROUND_PID}" ]] && kill -0 "${PLAYGROUND_PID}" 2>/dev/null; then
+    kill "${PLAYGROUND_PID}" 2>/dev/null || true
+    wait "${PLAYGROUND_PID}" 2>/dev/null || true
+  fi
+  if [[ "${TIUP_CLEAN_REQUIRED}" == true ]] \
+    && ! tiup clean "${TAG}" --all >/dev/null 2>&1; then
+    echo "Campaign 28 Stage A cleanup failed: tiup clean failed for ${TAG}" >&2
+    cleanup_failed=true
+  fi
+
+  local cleaned=false
+  for _ in $(seq 1 30); do
+    local alive=false
+    local pid
+    for pid in $(tag_owned_pids); do
+      if kill -0 "${pid}" 2>/dev/null; then
+        alive=true
+        break
+      fi
+    done
+    local rows=
+    if [[ "${TIUP_CLEAN_REQUIRED}" == true ]]; then
+      rows=$(tag_status_rows || true)
+    fi
+    if [[ "${alive}" == false ]] && [[ -z "${rows}" ]]; then
+      cleaned=true
+      break
+    fi
+    sleep 1
+  done
+  if [[ "${cleaned}" != true ]]; then
+    echo "Campaign 28 Stage A cleanup failed: owned process or registry row remains" >&2
+    cleanup_failed=true
+  fi
+
+  local address
+  for address in ${STORE_ADDRESSES}; do
+    if endpoint_reachable "${address}"; then
+      echo "Campaign 28 Stage A cleanup failed: TiKV ${address} remains reachable" >&2
+      cleanup_failed=true
+    fi
+  done
+  if endpoint_reachable "127.0.0.1:${KV_PORT}"; then
+    echo "Campaign 28 Stage A cleanup failed: TiKV 127.0.0.1:${KV_PORT} remains reachable" >&2
+    cleanup_failed=true
+  fi
+  if curl -sf --max-time 1 "http://${PD_ADDR}/pd/api/v1/version" >/dev/null; then
+    echo "Campaign 28 Stage A cleanup failed: PD ${PD_ADDR} remains reachable" >&2
+    cleanup_failed=true
+  fi
+
+  if ! validate_owned_tag_dir; then
+    echo "Campaign 28 Stage A cleanup refused unsafe tag directory ${TAG_DIR}" >&2
+    cleanup_failed=true
+  elif [[ "${cleanup_failed}" == false ]]; then
+    rm -rf -- "${TAG_DIR}"
+  fi
+  [[ "${cleanup_failed}" == false ]]
+}
+
+cleanup() {
+  local original_status=$?
+  local cleanup_status=0
+  trap - EXIT INT TERM
+  cleanup_resources || cleanup_status=$?
+  if [[ "${cleanup_status}" -eq 0 ]] && [[ "${original_status}" -eq 0 ]]; then
+    rm -f -- "${PLAYGROUND_LOG}" "${RUST_LOG}"
+  else
+    echo "Campaign 28 Stage A retained logs: ${PLAYGROUND_LOG} ${RUST_LOG}" >&2
+  fi
+  if [[ "${cleanup_status}" -ne 0 ]]; then
+    exit "${cleanup_status}"
+  fi
+  exit "${original_status}"
+}
+
+self_test_cleanup() {
+  local unrelated_pid=
+  SELF_TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/c28-stage-a-self-test.XXXXXX")
+  TAG="campaign28-transaction-rpc-self-test-${$}"
+  TAG_DIR="${SELF_TEST_ROOT}/${TAG}"
+  mkdir -p "${TAG_DIR}"
+  TIUP_CLEAN_REQUIRED=false
+  STORE_ADDRESSES=
+  PD_PORT=1
+  KV_PORT=1
+  PD_ADDR="127.0.0.1:1"
+
+  bash -c "exec -a '${TAG_DIR}/owned' sleep 120" &
+  PLAYGROUND_PID=$!
+  sleep 120 &
+  unrelated_pid=$!
+  sleep 1
+  kill -0 "${PLAYGROUND_PID}"
+  kill -0 "${unrelated_pid}"
+
+  cleanup_resources
+  if kill -0 "${PLAYGROUND_PID}" 2>/dev/null; then
+    echo "Campaign 28 Stage A self-test left the owned process alive" >&2
+    kill "${unrelated_pid}" 2>/dev/null || true
+    return 1
+  fi
+  if ! kill -0 "${unrelated_pid}" 2>/dev/null; then
+    echo "Campaign 28 Stage A self-test killed an unrelated process" >&2
+    return 1
+  fi
+  kill "${unrelated_pid}" 2>/dev/null || true
+  wait "${unrelated_pid}" 2>/dev/null || true
+  if [[ -e "${TAG_DIR}" ]]; then
+    echo "Campaign 28 Stage A self-test left its owned directory" >&2
+    return 1
+  fi
+  rmdir "${SELF_TEST_ROOT}"
+  echo "Campaign 28 Stage A cleanup self-test passed"
+}
+
+if [[ "${1:-}" == "--self-test-cleanup" ]]; then
+  self_test_cleanup
+  exit 0
+fi
+if [[ $# -ne 0 ]]; then
+  echo "usage: $0 [--self-test-cleanup]" >&2
+  exit 2
+fi
+if [[ ! "${PORT_OFFSET}" =~ ^[0-9]+$ ]] \
+  || (( PORT_OFFSET < 1000 || PD_PORT > 65535 || KV_PORT > 65535 )); then
+  echo "C28_STAGE_A_PORT_OFFSET must be numeric, at least 1000, and keep endpoints below 65536" >&2
+  exit 2
+fi
+for command in tiup curl jq nc pgrep cargo; do
+  if ! command -v "${command}" >/dev/null 2>&1; then
+    echo "Campaign 28 Stage A requires ${command}" >&2
+    exit 1
+  fi
+done
+if endpoint_reachable "${PD_ADDR}" || endpoint_reachable "127.0.0.1:${KV_PORT}"; then
+  echo "refusing occupied Campaign 28 Stage A endpoints; set C28_STAGE_A_PORT_OFFSET" >&2
+  exit 1
+fi
+
+trap cleanup EXIT INT TERM
+tiup playground v8.5.6 --without-monitor --tag "${TAG}" \
+  --db 0 --pd 1 --kv 1 --tiflash 0 --port-offset "${PORT_OFFSET}" \
+  >"${PLAYGROUND_LOG}" 2>&1 &
+PLAYGROUND_PID=$!
+
+ready=false
+for _ in $(seq 1 "${READINESS_ATTEMPTS}"); do
+  if ! kill -0 "${PLAYGROUND_PID}" 2>/dev/null; then
+    echo "TiUP playground exited before readiness" >&2
+    tail -120 "${PLAYGROUND_LOG}" >&2
+    exit 1
+  fi
+  STORE_ADDRESSES=$(curl -sf --max-time 2 "http://${PD_ADDR}/pd/api/v1/stores" \
+    | jq -r '.stores[] | select(.store.state_name == "Up" and ((.store.node_state_name // "Serving") == "Serving")) | .store.address' \
+      2>/dev/null) || true
+  if [[ -n "${STORE_ADDRESSES}" ]]; then
+    ready=true
+    break
+  fi
+  sleep 1
+done
+if [[ "${ready}" != true ]]; then
+  echo "Campaign 28 Stage A PD/TiKV did not become ready" >&2
+  tail -120 "${PLAYGROUND_LOG}" >&2
+  exit 1
+fi
+if [[ -z "$(tag_owned_pids)" ]]; then
+  echo "TiUP did not publish tag-owned processes for ${TAG}" >&2
+  exit 1
+fi
+
+cd "${RUST_ROOT}"
+C28_STAGE_A_PD_ADDR="${PD_ADDR}" CARGO_BUILD_JOBS=12 \
+  cargo test --offline --locked -j12 -p tidb-txnkv \
+    --test tikv_transaction_rpc_realtikv_source \
+    typed_transaction_commands_reach_real_tikv_and_leave_no_lock \
+    -- --ignored --exact --nocapture >"${RUST_LOG}" 2>&1 || {
+      echo "Campaign 28 Stage A real transaction RPC proof failed" >&2
+      tail -180 "${RUST_LOG}" >&2
+      exit 1
+    }
+
+RECEIPTS=$(grep '^campaign28_transaction_rpc command=' "${RUST_LOG}" || true)
+MARKER=$(grep '^campaign28_transaction_rpc status=passed ' "${RUST_LOG}" | tail -1 || true)
+if [[ $(printf '%s\n' "${RECEIPTS}" | grep -c '^campaign28_transaction_rpc command=') -ne 6 ]] \
+  || [[ "${RECEIPTS}" != *"command=Prewrite tag=3"* ]] \
+  || [[ "${RECEIPTS}" != *"command=Commit tag=4"* ]] \
+  || [[ "${RECEIPTS}" != *"command=Get tag=1"* ]] \
+  || [[ "${RECEIPTS}" != *"command=BatchRollback tag=8"* ]] \
+  || [[ "${RECEIPTS}" != *"request_id="* ]] \
+  || [[ "${RECEIPTS}" != *"physical_address="* ]] \
+  || [[ "${RECEIPTS}" != *"channel_version="* ]] \
+  || [[ "${RECEIPTS}" != *"stream_generation="* ]] \
+  || [[ "${RECEIPTS}" != *"region_id="* ]] \
+  || [[ "${MARKER}" != *"cluster_id="* ]] \
+  || [[ "${MARKER}" != *"start_ts="* ]] \
+  || [[ "${MARKER}" != *"commit_ts="* ]] \
+  || [[ "${MARKER}" != *"rollback_start_ts="* ]]; then
+  echo "Campaign 28 Stage A receipt did not prove all real BatchCommands transaction RPCs" >&2
+  tail -180 "${RUST_LOG}" >&2
+  exit 1
+fi
+
+echo "Campaign 28 Stage A transaction RPC passed: ${MARKER}"

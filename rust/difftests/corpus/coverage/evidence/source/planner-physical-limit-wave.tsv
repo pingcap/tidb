@@ -1,2 +1,0 @@
-# source_path	status	owner	evidence_artifact	note
-pkg/planner/core/operator/physicalop/physical_limit.go	PARTIAL	planner-physical-limit-wave	rust/crates/tidb-planner/src/physical_limit.rs	Ports PhysicalLimit.Init plan type Limit/query-block offset and ExplainInfo offset/count redaction branches with caller-owned partition/prefix text; property enumeration, schema/stats, typed partition/prefix columns, cost/clone/PB/index/task/runtime remain external.

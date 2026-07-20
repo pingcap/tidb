@@ -1,6 +1,6 @@
 schema = "1"
 slice = "planner-configured-order-limit-runtime"
-status = "ready"
+status = "partial"
 target = "tidb-planner"
 ring = "plan"
 consumer = "The configured two-relation planner parses once, lowers the Campaign 25 join input structurally, binds ordered signed-BIGINT keys to stable FullSchema offsets, and admits only checked explicit LIMIT windows."

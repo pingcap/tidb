@@ -1,2 +1,0 @@
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/planner/core/casetest/physicalplantest/physical_plan_test.go	1600	TestLimitPushdown	PARTIAL	planner-physical-limit-wave	rust/difftests/planner-tests/tests/physical_limit.rs	Rust vectors preserve Limit plan identity/offset/count, disable/marker/enable redaction, and caller-owned partition/prefix explain metadata behind the source limit-pushdown family; full SQL/statistics/property planning and execution remain external.

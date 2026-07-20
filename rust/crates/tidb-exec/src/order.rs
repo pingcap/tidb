@@ -16,11 +16,12 @@
 //! Free functions only — no `Database` methods — called from
 //! `crate::select`, `crate::aggregate`, and `crate::setopr`.
 
-use std::cmp::Ordering;
+use std::{cmp::Ordering, error::Error, fmt};
 
 use tidb_ast::{CastExpr, Expr, Limit, OrderItem, SelectField};
-use tidb_datatype::Datum;
+use tidb_datatype::{Datum, DatumKind};
 use tidb_expr::eval;
+use tidb_planner::configured_order_limit_contract::ConfiguredOrderKey;
 
 use crate::{ExecError, Row};
 
@@ -352,13 +353,173 @@ pub(crate) fn output_index(item: &OrderItem, fields: &[SelectField]) -> Result<u
 
 /// Compares two rows by their precomputed sort keys, honoring per-key `DESC`.
 pub(crate) fn cmp_keys(a: &[Datum], b: &[Datum], descs: &[bool]) -> Ordering {
-    for ((av, bv), &desc) in a.iter().zip(b).zip(descs) {
+    cmp_key_pairs(
+        a.iter()
+            .zip(b)
+            .zip(descs)
+            .map(|((left, right), &desc)| (left, right, desc)),
+    )
+}
+
+/// Compares ordered key pairs through the executor's one total-order
+/// authority. Callers that restrict their datum domain must validate it before
+/// invoking this function; comparison itself remains shared with every other
+/// `ORDER BY` path.
+fn cmp_key_pairs<'a>(pairs: impl IntoIterator<Item = (&'a Datum, &'a Datum, bool)>) -> Ordering {
+    for (av, bv, desc) in pairs {
         let ord = sort_value_cmp(av, bv);
         if ord != Ordering::Equal {
             return if desc { ord.reverse() } else { ord };
         }
     }
     Ordering::Equal
+}
+
+/// A checked configured-order execution failure.
+///
+/// The planner contract represents only signed-BIGINT order keys. Keeping
+/// malformed physical rows distinct from an ordinary tie prevents a widened
+/// executor from inventing NULL/zero/coercion semantics before it owns them.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ConfiguredOrderError {
+    /// A planner-resolved key does not fit the promised physical FullSchema.
+    FullSchemaOffset {
+        /// The invalid planner-resolved physical key offset.
+        offset: usize,
+        /// The promised physical FullSchema width.
+        width: usize,
+    },
+    /// A materialized row is not the width promised by the planner.
+    RowWidth {
+        /// Zero-based position of the malformed materialized row.
+        row_index: usize,
+        /// Planner-promised physical FullSchema width.
+        expected: usize,
+        /// Actual number of decoded datum slots.
+        actual: usize,
+    },
+    /// A configured signed-BIGINT key decoded as another datum kind.
+    KeyDatum {
+        /// Zero-based position of the malformed materialized row.
+        row_index: usize,
+        /// Planner-resolved physical key offset.
+        offset: usize,
+        /// Actual datum kind at that physical key offset.
+        kind: DatumKind,
+    },
+}
+
+impl fmt::Display for ConfiguredOrderError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::FullSchemaOffset { offset, width } => {
+                write!(
+                    formatter,
+                    "configured ORDER BY offset {offset} exceeds FullSchema width {width}"
+                )
+            }
+            Self::RowWidth {
+                row_index,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "configured ORDER BY row {row_index} has width {actual}, expected {expected}"
+            ),
+            Self::KeyDatum {
+                row_index,
+                offset,
+                kind,
+            } => write!(
+                formatter,
+                "configured ORDER BY row {row_index} key at offset {offset} decoded as {kind:?}"
+            ),
+        }
+    }
+}
+
+impl Error for ConfiguredOrderError {}
+
+/// Stably orders materialized configured rows by planner-resolved FullSchema
+/// keys.
+///
+/// This is the first executable consumer of
+/// `ConfiguredOrderKey`: every key is a checked physical offset into a row of
+/// exactly `full_schema_width` signed-BIGINT datums. The full input is
+/// validated before mutation, then Rust's stable slice sort keeps source order
+/// for rows whose complete key tuple ties. NULLs, unsigned/mixed types,
+/// collations, spilling, and parallel merge execution intentionally belong to
+/// later owners rather than being guessed here.
+pub fn stable_order_configured_rows(
+    rows: &mut [Row],
+    full_schema_width: usize,
+    keys: &[ConfiguredOrderKey],
+) -> Result<(), ConfiguredOrderError> {
+    validate_configured_order_rows(rows, full_schema_width, keys)?;
+
+    rows.sort_by(|left, right| compare_configured_rows(left, right, keys));
+    Ok(())
+}
+
+/// Validates rows before a configured ordering consumer indexes their physical
+/// FullSchema offsets.
+///
+/// A bounded TopN validates each row before it enters its heap;
+/// [`compare_configured_rows`] can then stay allocation-free and infallible in
+/// the heap's hot comparison path. The contract intentionally accepts only
+/// signed-BIGINT key datums until a wider planner/executor contract owns the
+/// missing coercion and collation semantics.
+pub fn validate_configured_order_rows(
+    rows: &[Row],
+    full_schema_width: usize,
+    keys: &[ConfiguredOrderKey],
+) -> Result<(), ConfiguredOrderError> {
+    for key in keys {
+        if key.full_offset() >= full_schema_width {
+            return Err(ConfiguredOrderError::FullSchemaOffset {
+                offset: key.full_offset(),
+                width: full_schema_width,
+            });
+        }
+    }
+
+    for (row_index, row) in rows.iter().enumerate() {
+        if row.len() != full_schema_width {
+            return Err(ConfiguredOrderError::RowWidth {
+                row_index,
+                expected: full_schema_width,
+                actual: row.len(),
+            });
+        }
+        for key in keys {
+            let value = &row[key.full_offset()];
+            if !matches!(value, Datum::Int(_)) {
+                return Err(ConfiguredOrderError::KeyDatum {
+                    row_index,
+                    offset: key.full_offset(),
+                    kind: value.kind(),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Compares two already validated configured rows by their planner-resolved
+/// physical keys.
+///
+/// Callers must first run [`validate_configured_order_rows`] over every row
+/// they may pass here with the same `full_schema_width` and `keys`. This keeps
+/// the comparator suitable for a `BinaryHeap` without silently inventing a
+/// fallback ordering for malformed physical data.
+pub fn compare_configured_rows(left: &Row, right: &Row, keys: &[ConfiguredOrderKey]) -> Ordering {
+    cmp_key_pairs(keys.iter().map(|key| {
+        (
+            &left[key.full_offset()],
+            &right[key.full_offset()],
+            key.direction().is_descending(),
+        )
+    }))
 }
 
 /// A total order for `ORDER BY`: `NULL`s sort first (MySQL ascending default),
@@ -407,5 +568,80 @@ pub(crate) fn const_usize(e: &Expr) -> Result<usize, ExecError> {
     match eval(e)? {
         Datum::Int(i) if i >= 0 => Ok(i as usize),
         _ => Err(ExecError::Unsupported("non-constant LIMIT")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tidb_planner::configured_order_limit_contract::{
+        ConfiguredOrderDirection, ConfiguredOrderKey,
+    };
+
+    use super::{stable_order_configured_rows, ConfiguredOrderError, Datum, DatumKind, Row};
+
+    #[test]
+    fn configured_order_uses_fullschema_offsets_directions_and_stable_ties() {
+        let keys = [
+            ConfiguredOrderKey::new(2, ConfiguredOrderDirection::Ascending),
+            ConfiguredOrderKey::new(1, ConfiguredOrderDirection::Descending),
+        ];
+        let mut rows: Vec<Row> = vec![
+            vec![Datum::Int(100), Datum::Int(9), Datum::Int(2)],
+            vec![Datum::Int(200), Datum::Int(8), Datum::Int(2)],
+            vec![Datum::Int(300), Datum::Int(9), Datum::Int(2)],
+            vec![Datum::Int(400), Datum::Int(10), Datum::Int(1)],
+        ];
+
+        stable_order_configured_rows(&mut rows, 3, &keys).expect("configured signed BIGINT rows");
+
+        assert_eq!(
+            rows,
+            vec![
+                vec![Datum::Int(400), Datum::Int(10), Datum::Int(1)],
+                vec![Datum::Int(100), Datum::Int(9), Datum::Int(2)],
+                vec![Datum::Int(300), Datum::Int(9), Datum::Int(2)],
+                vec![Datum::Int(200), Datum::Int(8), Datum::Int(2)],
+            ],
+            "equal complete keys retain source order"
+        );
+    }
+
+    #[test]
+    fn configured_order_rejects_invalid_fullschema_rows_before_sorting() {
+        let key = ConfiguredOrderKey::new(1, ConfiguredOrderDirection::Ascending);
+        let mut wrong_width = vec![vec![Datum::Int(2), Datum::Int(1)], vec![Datum::Int(1)]];
+        assert_eq!(
+            stable_order_configured_rows(&mut wrong_width, 2, &[key]),
+            Err(ConfiguredOrderError::RowWidth {
+                row_index: 1,
+                expected: 2,
+                actual: 1,
+            })
+        );
+        assert_eq!(
+            wrong_width[0][0],
+            Datum::Int(2),
+            "validation precedes mutation"
+        );
+
+        let mut wrong_kind = vec![vec![Datum::Int(1), Datum::UInt(2)]];
+        assert_eq!(
+            stable_order_configured_rows(&mut wrong_kind, 2, &[key]),
+            Err(ConfiguredOrderError::KeyDatum {
+                row_index: 0,
+                offset: 1,
+                kind: DatumKind::UInt,
+            })
+        );
+
+        let mut rows = vec![vec![Datum::Int(1), Datum::Int(2)]];
+        let outside = ConfiguredOrderKey::new(2, ConfiguredOrderDirection::Descending);
+        assert_eq!(
+            stable_order_configured_rows(&mut rows, 2, &[outside]),
+            Err(ConfiguredOrderError::FullSchemaOffset {
+                offset: 2,
+                width: 2,
+            })
+        );
     }
 }

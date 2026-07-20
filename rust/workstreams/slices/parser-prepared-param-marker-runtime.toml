@@ -1,0 +1,31 @@
+schema = "1"
+slice = "parser-prepared-param-marker-runtime"
+status = "covered"
+target = "tidb-planner"
+ring = "plan"
+consumer = "A typed prepared point-read template accepts one parser-owned parameter marker in the existing configured signed-BIGINT primary-key equality, binds it before ReadOnlyScanPlan lowering, and leaves text COM_QUERY fail-closed."
+test_target = "prepared_param_marker_source"
+go_sources = [
+  "pkg/parser/parser.go",
+]
+go_tests = [
+  "pkg/parser/parser_test.go:5996:TestPrepare",
+  "pkg/parser/parser_test.go:6013:TestExecute",
+]
+depends_on = []
+evidence_prerequisites = []
+support_anchors = [
+  "Own only the typed parameter-marker AST/parser and configured prepared point-read template; do not implement SQL PREPARE/EXECUTE, server statement handles, binary packets, or string interpolation",
+  "Admit exactly one marker in a configured primary-key equality and bind exactly one signed BIGINT before the existing ReadOnlyScanPlan authority; all other marker expressions and text-query markers fail before PD/TiKV work",
+  "Preserve every existing literal predicate and parser result; marker numbering is left-to-right and statement-local",
+]
+rust_paths = [
+  "rust/crates/tidb-ast/src/expr.rs",
+  "rust/crates/tidb-parser/src/expr.rs",
+  "rust/crates/tidb-parser/src/lib.rs",
+  "rust/crates/tidb-planner/src/condition_binding.rs",
+  "rust/crates/tidb-planner/src/read_only_scan.rs",
+  "rust/crates/tidb-planner/src/residual_condition.rs",
+  "rust/crates/tidb-planner/tests/prepared_param_marker_source.rs",
+  "rust/crates/tidb-exec/src/select.rs",
+]

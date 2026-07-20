@@ -35,6 +35,16 @@ pub enum SysVarScope {
 pub enum Expr {
     /// A qualified column reference, e.g. `["t", "a"]`.
     Column(Vec<String>),
+    /// A prepared-statement parameter marker (`?`).
+    ///
+    /// The parser assigns positions from zero in left-to-right source order
+    /// and restarts numbering for every statement. A marker has no SQL-text
+    /// value: a prepared-statement owner must bind its typed execute value
+    /// before lowering the expression into an executable plan.
+    ParamMarker {
+        /// Zero-based, statement-local marker position.
+        position: usize,
+    },
     /// An integer literal (original digits).
     Int(String),
     /// A fixed-point decimal literal (original text).
@@ -734,6 +744,7 @@ impl Expr {
     pub(crate) fn restore_into_with_context(&self, out: &mut String, context: RestoreContext) {
         match self {
             Expr::Column(path) => restore_path_with_context(path, out, context),
+            Expr::ParamMarker { .. } => out.push('?'),
             // Integer literals restore as their decimal value, so leading
             // zeros are dropped (`0000` -> `0`, `01` -> `1`).
             Expr::Int(s) => out.push_str(&normalize_int(s)),

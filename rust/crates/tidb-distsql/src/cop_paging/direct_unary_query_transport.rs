@@ -882,9 +882,12 @@ pub struct DirectUnaryQueryResponse<C, L> {
     closed: bool,
     region_backoffs: BTreeMap<u64, RegionBackoffBudget>,
     request_selectors: BTreeMap<u64, RequestSelector>,
-    // Region/send failure keeps this logical request chain on the existing
-    // synchronous loop. Terminal success clears it so the next page can begin
-    // a fresh BatchCommands attempt, matching SendReqAsync-per-call behavior.
+    // A local BatchCommands admission rejection keeps this logical request
+    // chain on the synchronous loop. A TiKV RegionError or recoverable
+    // physical-route failure retries through BatchCommands after cache
+    // recovery, so its real publication remains observable. Terminal success
+    // clears this state so the next page can begin a fresh BatchCommands
+    // attempt, matching SendReqAsync-per-call behavior.
     sync_only_chains: BTreeSet<u64>,
     pending_batch: Option<PendingBatchAttempt>,
     network_metrics: UnaryNetworkMetrics,
@@ -1183,8 +1186,6 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                     return Ok(());
                 }
                 Err(error) => {
-                    self.sync_only_chains
-                        .insert(prepared_dispatch.logical_task_id);
                     return self.settle_dispatch(
                         prepared_dispatch,
                         Err(error),
@@ -1324,9 +1325,6 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
                     self.install_same_task_retry(replacement)?;
                     return Ok(());
                 }
-                if batch_attempt {
-                    self.sync_only_chains.insert(logical_task_id);
-                }
                 let feedback = UnaryRouteDispatch::from_request(&selected)
                     .feedback(&selected, tidb_txnkv::region::RouteOutcome::Failure);
                 let observation_current = match cache_operation(&self.shared_runtime, |cache| {
@@ -1367,9 +1365,6 @@ impl<C: DirectUnaryClient, L: RegionRecoveryLoader> DirectUnaryQueryResponse<C, 
         let response = decode_tikv_unary_response(&raw_response.encoded_response)
             .map_err(|error| DirectUnaryTransportError::Decode(error.to_string()))?;
         if let Some(region_error) = response.region_error_ref().cloned() {
-            if batch_attempt {
-                self.sync_only_chains.insert(logical_task_id);
-            }
             if selected.stale_read && region_error.data_is_not_ready.is_some() {
                 self.network_metrics.on_stale_read_result(false);
             }

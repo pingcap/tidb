@@ -202,7 +202,7 @@ impl JoinSchema {
             operator => {
                 return JoinCondition::Unsupported(UnsupportedJoinCondition::Compound {
                     operator: *operator,
-                })
+                });
             }
         };
 

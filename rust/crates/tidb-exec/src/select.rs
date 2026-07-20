@@ -709,6 +709,9 @@ fn join_condition_error(error: TypedConditionEvalError) -> ExecError {
         TypedConditionEvalError::Binding(ConditionBindingError::InvalidColumnPath) => {
             ExecError::UnknownColumn(String::new())
         }
+        TypedConditionEvalError::Binding(ConditionBindingError::UnboundParameterMarker {
+            ..
+        }) => ExecError::Unsupported("unbound parameter marker in join residual"),
         TypedConditionEvalError::UnsupportedShape(_) => {
             ExecError::Unsupported("join residual expression shape")
         }

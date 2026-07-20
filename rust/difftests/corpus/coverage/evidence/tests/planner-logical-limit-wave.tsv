@@ -1,3 +1,0 @@
-# Source-owned test-evidence fragment for planner-logical-limit-wave.
-# kind	source_path	source_line	test_name	status	owner	evidence_artifact	note
-go_test	pkg/planner/core/operator/logicalop/logicalop_test/hash64_equals_test.go	530	TestLogicalLimitHash64Equals	PARTIAL	planner-logical-limit-wave	rust/difftests/planner-tests/tests/logical_limit.rs	Rust vectors cover equal identity/hash, PartitionBy column/direction changes, Offset/Count changes, nil-versus-present PartitionBy framing, and basic offset/count ExplainInfo; full Go FieldType/collation/VirtualExpr/property formatting, plan context, and runtime limit semantics remain external.

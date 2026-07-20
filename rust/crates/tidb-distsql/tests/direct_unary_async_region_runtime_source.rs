@@ -43,15 +43,23 @@ fn batch_success_settles_through_the_existing_response_owner() {
 }
 
 #[test]
-fn first_batch_failure_reenters_the_same_sync_selector_loop() {
+fn only_local_batch_admission_failure_reenters_the_sync_selector_loop() {
     let dispatch = owner("fn dispatch_attempt(", "fn complete_batch_attempt(");
     let compact_dispatch = dispatch.split_whitespace().collect::<String>();
     assert!(compact_dispatch.contains("!self.sync_only_chains.contains"));
     assert!(dispatch.contains("send_request_with_route("));
-    assert!(compact_dispatch.contains("self.sync_only_chains.insert"));
     let settle = owner("fn settle_dispatch(", "fn record_attempt_result(");
     assert!(settle.contains("if batch_attempt"));
-    assert!(settle.contains("self.sync_only_chains.insert(logical_task_id)"));
+    let admission = settle
+        .find("DirectUnaryClientError::AdmissionBusy")
+        .unwrap();
+    let sync_only = settle
+        .find("self.sync_only_chains.insert(logical_task_id)")
+        .unwrap();
+    assert_eq!(settle.matches("self.sync_only_chains.insert").count(), 1);
+    assert!(admission < sync_only);
+    assert!(sync_only < settle.find("self.recover_transport_failure(").unwrap());
+    assert!(sync_only < settle.find("self.recover_region_error(").unwrap());
     assert!(SOURCE.contains("let sync_only_chain = self.sync_only_chains.contains"));
     assert!(SOURCE.contains("if sync_only_chain {"));
 }

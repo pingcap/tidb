@@ -14,19 +14,25 @@
 
 //! Live `TcpStream` ownership for the bounded MySQL connection lifecycle.
 
+use std::collections::HashMap;
 use std::fmt;
 use std::io::Write;
 use std::net::{SocketAddr, TcpStream};
 use std::sync::Arc;
 
 use tidb_protocol::{
-    decode_command, encode_error_packet, encode_ok_packet, Command, ErrorPacket, OkPacket,
-    PacketError, PacketReader, PacketWriter, ResultSetOptions,
+    decode_command, decode_prepared_statement_close, decode_prepared_statement_execute,
+    encode_error_packet, encode_ok_packet, encode_prepared_statement_prepare_response, ColumnInfo,
+    Command, ErrorPacket, OkPacket, PacketError, PacketReader, PacketWriter, PreparedParameterType,
+    PreparedParameterTypes, PreparedValue, ResultSetOptions, BINARY_DEFAULT_COLLATION_ID,
+    MYSQL_TYPE_LONGLONG,
 };
 
 use crate::auth_exchange::AuthSwitchRequest;
 use crate::configured_user_store::ConfiguredUserStore;
-use crate::connection_resultset::write_connection_result_set_to_sink;
+use crate::connection_resultset::{
+    write_connection_binary_result_set_to_sink, write_connection_result_set_to_sink,
+};
 use crate::handshake::{
     negotiate_capabilities, parse_response, InitialHandshake, AUTH_NATIVE_PASSWORD,
     CLIENT_CONNECT_ATTRS, CLIENT_PLUGIN_AUTH, CLIENT_PROTOCOL_41, CLIENT_SECURE_CONNECTION,
@@ -35,8 +41,8 @@ use crate::handshake::{
 use crate::native_password::generate_handshake_salt;
 use crate::resultset_writer::{ResultSetSink, SinkWriteError};
 use crate::sql_node::{
-    ConnectionCancellation, ConnectionTracker, QuerySession, QuerySessionFactory, SessionContext,
-    SqlQueryError,
+    ConnectionCancellation, ConnectionTracker, PreparedPointRead, QuerySession,
+    QuerySessionFactory, SessionContext, SqlQueryError,
 };
 
 const CLIENT_DEPRECATE_EOF: u32 = 1 << 24;
@@ -49,7 +55,65 @@ const ER_ACCESS_DENIED_ERROR: u16 = 1045;
 const ER_UNKNOWN_COM_ERROR: u16 = 1047;
 const ER_PARSE_ERROR: u16 = 1064;
 const ER_UNKNOWN_ERROR: u16 = 1105;
+const ER_WRONG_ARGUMENTS: u16 = 1210;
+const ER_UNKNOWN_STMT_HANDLER: u16 = 1243;
 const RESULT_BATCH_SIZE: usize = 128;
+
+#[derive(Clone, Debug)]
+struct ConnectionPreparedStatement {
+    point_read: PreparedPointRead,
+    parameter_types: Option<Vec<PreparedParameterType>>,
+}
+
+#[derive(Debug)]
+struct PreparedStatementRegistry {
+    next_id: Option<u32>,
+    statements: HashMap<u32, ConnectionPreparedStatement>,
+}
+
+impl Default for PreparedStatementRegistry {
+    fn default() -> Self {
+        Self {
+            next_id: Some(1),
+            statements: HashMap::new(),
+        }
+    }
+}
+
+impl PreparedStatementRegistry {
+    fn insert(&mut self, point_read: PreparedPointRead) -> Result<u32, &'static str> {
+        let statement_id = self
+            .next_id
+            .ok_or("prepared statement ID space exhausted")?;
+        self.next_id = statement_id.checked_add(1);
+        self.statements.insert(
+            statement_id,
+            ConnectionPreparedStatement {
+                point_read,
+                parameter_types: None,
+            },
+        );
+        Ok(statement_id)
+    }
+
+    fn get(&self, statement_id: u32) -> Option<&ConnectionPreparedStatement> {
+        self.statements.get(&statement_id)
+    }
+
+    fn remember_parameter_types(
+        &mut self,
+        statement_id: u32,
+        parameter_types: &[PreparedParameterType],
+    ) {
+        if let Some(statement) = self.statements.get_mut(&statement_id) {
+            statement.parameter_types = Some(parameter_types.to_vec());
+        }
+    }
+
+    fn remove(&mut self, statement_id: u32) {
+        self.statements.remove(&statement_id);
+    }
+}
 
 /// Observable terminal state of one accepted connection.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -64,15 +128,43 @@ pub enum ConnectionExit {
     SessionRejected,
 }
 
+/// MySQL command opcodes observed while serving one connection.
+///
+/// Command counts advance as soon as dispatch identifies the opcode. Success
+/// counts advance only after the complete success response has been written.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ConnectionCommandCounts {
+    /// Number of `COM_QUERY` commands, including rejected queries.
+    pub text_query_commands: u64,
+    /// Number of `COM_STMT_PREPARE` commands, including rejected prepares.
+    pub stmt_prepare_commands: u64,
+    /// Number of complete successful `COM_STMT_PREPARE` responses.
+    pub stmt_prepare_successes: u64,
+    /// Number of `COM_STMT_EXECUTE` commands, including rejected executes.
+    pub stmt_execute_commands: u64,
+    /// Number of complete successful `COM_STMT_EXECUTE` responses.
+    pub stmt_execute_successes: u64,
+    /// Number of `COM_STMT_CLOSE` commands, including malformed closes.
+    pub stmt_close_commands: u64,
+}
+
 /// Successful lifecycle report.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ConnectionReport {
     /// Stable server connection ID advertised in the handshake.
     pub connection_id: u64,
-    /// Number of admitted `COM_QUERY` commands.
+    /// Number of successful text-query or prepared-execute commands.
     pub queries: u64,
+    /// Exact command opcodes observed on this connection.
+    pub commands: ConnectionCommandCounts,
     /// Why the connection stopped.
     pub exit: ConnectionExit,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct AcceptedConnectionIdentity {
+    connection_id: u64,
+    peer_addr: SocketAddr,
 }
 
 /// Fatal socket/protocol failure that prevents orderly command continuation.
@@ -136,14 +228,18 @@ pub fn serve_mysql_connection<F: QuerySessionFactory>(
         tracker.accepted()
     );
     let shutdown = cancellation.clone();
+    let mut commands = ConnectionCommandCounts::default();
     let result = serve_connection_inner(
         stream,
-        peer_addr,
+        AcceptedConnectionIdentity {
+            connection_id: lease.id(),
+            peer_addr,
+        },
         cancellation,
         factory,
         users,
-        lease.id(),
         max_allowed_packet,
+        &mut commands,
     );
     let failed = result.is_err() && !shutdown.is_cancelled();
     if failed {
@@ -152,24 +248,34 @@ pub fn serve_mysql_connection<F: QuerySessionFactory>(
     let connection_id = lease.id();
     drop(lease);
     eprintln!(
-        "{{\"event\":\"connection_closed\",\"connection_id\":{connection_id},\"active\":{},\"accepted\":{},\"completed\":{},\"failed\":{}}}",
+        "{{\"event\":\"connection_closed\",\"connection_id\":{connection_id},\"active\":{},\"accepted\":{},\"completed\":{},\"failed\":{},\"text_query_commands\":{},\"stmt_prepare_commands\":{},\"stmt_prepare_successes\":{},\"stmt_execute_commands\":{},\"stmt_execute_successes\":{},\"stmt_close_commands\":{}}}",
         tracker.active(),
         tracker.accepted(),
         tracker.completed(),
-        tracker.failed()
+        tracker.failed(),
+        commands.text_query_commands,
+        commands.stmt_prepare_commands,
+        commands.stmt_prepare_successes,
+        commands.stmt_execute_commands,
+        commands.stmt_execute_successes,
+        commands.stmt_close_commands,
     );
     result
 }
 
 fn serve_connection_inner<F: QuerySessionFactory>(
     stream: TcpStream,
-    peer_addr: SocketAddr,
+    identity: AcceptedConnectionIdentity,
     cancellation: ConnectionCancellation,
     factory: &F,
     users: &ConfiguredUserStore,
-    connection_id: u64,
     max_allowed_packet: usize,
+    commands: &mut ConnectionCommandCounts,
 ) -> Result<ConnectionReport, MysqlConnectionError> {
+    let AcceptedConnectionIdentity {
+        connection_id,
+        peer_addr,
+    } = identity;
     stream.set_nodelay(true).map_err(MysqlConnectionError::Io)?;
     let mut output = stream.try_clone().map_err(MysqlConnectionError::Io)?;
     let salt = generate_handshake_salt()
@@ -209,6 +315,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             return Ok(ConnectionReport {
                 connection_id,
                 queries: 0,
+                commands: *commands,
                 exit: ConnectionExit::AuthenticationRejected,
             });
         }
@@ -227,6 +334,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             return Ok(ConnectionReport {
                 connection_id,
                 queries: 0,
+                commands: *commands,
                 exit: ConnectionExit::AuthenticationRejected,
             });
         }
@@ -244,6 +352,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         return Ok(ConnectionReport {
             connection_id,
             queries: 0,
+            commands: *commands,
             exit: ConnectionExit::AuthenticationRejected,
         });
     }
@@ -277,6 +386,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         return Ok(ConnectionReport {
             connection_id,
             queries: 0,
+            commands: *commands,
             exit: ConnectionExit::AuthenticationRejected,
         });
     };
@@ -292,6 +402,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             return Ok(ConnectionReport {
                 connection_id,
                 queries: 0,
+                commands: *commands,
                 exit: ConnectionExit::SessionRejected,
             });
         }
@@ -305,6 +416,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         protocol_41,
     };
     let mut queries = 0_u64;
+    let mut prepared = PreparedStatementRegistry::default();
     loop {
         reader.set_sequence(0);
         let payload = match reader.read_packet() {
@@ -313,6 +425,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 return Ok(ConnectionReport {
                     connection_id,
                     queries,
+                    commands: *commands,
                     exit: ConnectionExit::PeerClosed,
                 });
             }
@@ -337,11 +450,13 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 return Ok(ConnectionReport {
                     connection_id,
                     queries,
+                    commands: *commands,
                     exit: ConnectionExit::Quit,
                 });
             }
             Command::Ping => write_ok(&mut output, 1, protocol_41)?,
             Command::Query(bytes) => {
+                commands.text_query_commands += 1;
                 // `decode_command` has already trimmed exactly one terminal
                 // NUL for issue 1989. Embedded and repeated NUL bytes remain
                 // parser-visible here.
@@ -390,11 +505,173 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                     Err(error) => return Err(MysqlConnectionError::PartialResult(error.message)),
                 }
             }
+            Command::StmtPrepare(bytes) => {
+                commands.stmt_prepare_commands += 1;
+                let sql = match std::str::from_utf8(&bytes) {
+                    Ok(sql) => sql,
+                    Err(_) => {
+                        write_error(
+                            &mut output,
+                            1,
+                            ER_PARSE_ERROR,
+                            *b"42000",
+                            "COM_STMT_PREPARE is not valid UTF-8",
+                            protocol_41,
+                        )?;
+                        continue;
+                    }
+                };
+                let point_read = match engine.prepare_point_read(sql) {
+                    Ok(point_read) => point_read,
+                    Err(error) => {
+                        write_query_error(&mut output, &error, protocol_41)?;
+                        continue;
+                    }
+                };
+                let result_columns = point_read.result_columns().to_vec();
+                let statement_id = match prepared.insert(point_read) {
+                    Ok(statement_id) => statement_id,
+                    Err(message) => {
+                        write_error(
+                            &mut output,
+                            1,
+                            ER_UNKNOWN_ERROR,
+                            *b"HY000",
+                            message,
+                            protocol_41,
+                        )?;
+                        continue;
+                    }
+                };
+                let parameter_columns = [prepared_parameter_column()];
+                let packets = match encode_prepared_statement_prepare_response(
+                    statement_id,
+                    &parameter_columns,
+                    &result_columns,
+                    options,
+                ) {
+                    Ok(packets) => packets,
+                    Err(error) => {
+                        prepared.remove(statement_id);
+                        write_error(
+                            &mut output,
+                            1,
+                            ER_UNKNOWN_ERROR,
+                            *b"HY000",
+                            error.to_string(),
+                            protocol_41,
+                        )?;
+                        continue;
+                    }
+                };
+                let mut sink = TcpResultSetSink::new(&mut output, 1);
+                for packet in packets {
+                    sink.write_payload(&packet)
+                        .map_err(|error| MysqlConnectionError::PartialResult(error.message))?;
+                }
+                commands.stmt_prepare_successes += 1;
+            }
+            Command::StmtExecute(bytes) => {
+                commands.stmt_execute_commands += 1;
+                let statement_id = match prepared_statement_id(&bytes) {
+                    Ok(statement_id) => statement_id,
+                    Err(message) => {
+                        write_error(
+                            &mut output,
+                            1,
+                            ER_WRONG_ARGUMENTS,
+                            *b"HY000",
+                            message,
+                            protocol_41,
+                        )?;
+                        continue;
+                    }
+                };
+                let Some(statement) = prepared.get(statement_id) else {
+                    write_unknown_statement(&mut output, statement_id, protocol_41)?;
+                    continue;
+                };
+                let point_read = statement.point_read.clone();
+                let previous_types = statement.parameter_types.clone();
+                let execute =
+                    match decode_prepared_statement_execute(&bytes, 1, previous_types.as_deref()) {
+                        Ok(execute) => execute,
+                        Err(error) => {
+                            write_error(
+                                &mut output,
+                                1,
+                                ER_WRONG_ARGUMENTS,
+                                *b"HY000",
+                                error.to_string(),
+                                protocol_41,
+                            )?;
+                            continue;
+                        }
+                    };
+                if execute.statement_id != statement_id {
+                    write_error(
+                        &mut output,
+                        1,
+                        ER_WRONG_ARGUMENTS,
+                        *b"HY000",
+                        "prepared statement ID changed during decode",
+                        protocol_41,
+                    )?;
+                    continue;
+                }
+                if let PreparedParameterTypes::New(types) = &execute.parameter_types {
+                    prepared.remember_parameter_types(statement_id, types);
+                }
+                let parameters = execute
+                    .values
+                    .into_iter()
+                    .map(|value| match value {
+                        PreparedValue::SignedLongLong(value) => value,
+                    })
+                    .collect::<Vec<_>>();
+                let mut result = match engine.execute_prepared_point_read(&point_read, &parameters)
+                {
+                    Ok(result) => result,
+                    Err(error) => {
+                        write_query_error(&mut output, &error, protocol_41)?;
+                        continue;
+                    }
+                };
+                let write_result = {
+                    let mut sink = TcpResultSetSink::new(&mut output, 1);
+                    write_connection_binary_result_set_to_sink(
+                        result.source(),
+                        &mut sink,
+                        options,
+                        RESULT_BATCH_SIZE,
+                    )
+                };
+                match write_result {
+                    Ok(_) => {
+                        queries += 1;
+                        commands.stmt_execute_successes += 1;
+                    }
+                    Err(error) if !error.bytes_escaped => {
+                        write_error(
+                            &mut output,
+                            1,
+                            ER_UNKNOWN_ERROR,
+                            *b"HY000",
+                            error.message,
+                            protocol_41,
+                        )?;
+                    }
+                    Err(error) => return Err(MysqlConnectionError::PartialResult(error.message)),
+                }
+            }
+            Command::StmtClose(bytes) => {
+                commands.stmt_close_commands += 1;
+                if let Ok(statement_id) = decode_prepared_statement_close(&bytes) {
+                    prepared.remove(statement_id);
+                }
+            }
             Command::InitDb(_)
             | Command::FieldList(_)
-            | Command::StmtPrepare(_)
-            | Command::StmtExecute(_)
-            | Command::StmtClose(_)
             | Command::StmtReset(_)
             | Command::StmtFetch(_)
             | Command::SetOption(_)
@@ -409,6 +686,46 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             )?,
         }
     }
+}
+
+fn prepared_statement_id(payload: &[u8]) -> Result<u32, &'static str> {
+    let bytes = payload.get(..4).ok_or("truncated prepared statement ID")?;
+    let statement_id = u32::from_le_bytes(bytes.try_into().expect("four-byte statement ID"));
+    if statement_id == 0 {
+        return Err("prepared statement ID must be nonzero");
+    }
+    Ok(statement_id)
+}
+
+fn prepared_parameter_column() -> ColumnInfo {
+    ColumnInfo {
+        schema: String::new(),
+        table: String::new(),
+        org_table: String::new(),
+        name: "?".to_owned(),
+        org_name: String::new(),
+        column_length: 20,
+        charset: BINARY_DEFAULT_COLLATION_ID,
+        flag: 0,
+        decimal: 0,
+        type_code: MYSQL_TYPE_LONGLONG,
+        default_value: None,
+    }
+}
+
+fn write_unknown_statement(
+    output: &mut TcpStream,
+    statement_id: u32,
+    protocol_41: bool,
+) -> Result<(), MysqlConnectionError> {
+    write_error(
+        output,
+        1,
+        ER_UNKNOWN_STMT_HANDLER,
+        *b"HY000",
+        format!("Unknown prepared statement handler ({statement_id}) given to COM_STMT_EXECUTE"),
+        protocol_41,
+    )
 }
 
 fn write_ok(

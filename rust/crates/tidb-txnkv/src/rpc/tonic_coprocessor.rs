@@ -86,7 +86,7 @@ impl TonicCoprocessorClient {
         self.transport.submit_batch(address, entries)
     }
 
-    fn submit_batch_commands_with_call(
+    pub(in crate::rpc) fn submit_batch_commands_with_call(
         &mut self,
         address: &str,
         entries: Vec<BatchCommandEntry>,

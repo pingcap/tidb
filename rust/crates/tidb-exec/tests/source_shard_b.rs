@@ -14,6 +14,8 @@
 
 //! Deterministic source-test shard; individual Go-owned test files remain the modules.
 
+#[path = "configured_topn_source.rs"]
+mod configured_topn_source;
 #[path = "hash_join_version_source.rs"]
 mod hash_join_version_source;
 #[path = "hint_updatable_vars_source.rs"]

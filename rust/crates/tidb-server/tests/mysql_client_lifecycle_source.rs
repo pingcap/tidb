@@ -11,14 +11,18 @@ use std::sync::{Arc, Mutex};
 
 use sha1::{Digest, Sha1};
 use tidb_datatype::Datum;
+use tidb_exec::real_tikv_read::prepare_configured_point_read;
+use tidb_planner::read_only_scan::{
+    configured_catalog::ConfiguredCatalog, ConfiguredColumn, ConfiguredTable,
+};
 use tidb_protocol::{
     ColumnInfo, PacketReader, PacketWriter, COM_INIT_DB, COM_PING, COM_QUERY, COM_QUIT,
-    DEFAULT_MAX_ALLOWED_PACKET, TYPE_LONGLONG,
+    COM_STMT_CLOSE, COM_STMT_EXECUTE, COM_STMT_PREPARE, DEFAULT_MAX_ALLOWED_PACKET, TYPE_LONGLONG,
 };
 use tidb_server::{
     serve_mysql_connection, ConfiguredUserStore, ConnectionCancellation, ConnectionExit,
-    ConnectionTracker, QueryResult, QuerySession, QuerySessionFactory, ResultSetSource,
-    SessionContext, SqlQueryError,
+    ConnectionTracker, PreparedPointRead, QueryResult, QuerySession, QuerySessionFactory,
+    ResultSetSource, SessionContext, SqlQueryError,
 };
 
 const CLIENT_PROTOCOL_41: u32 = 1 << 9;
@@ -221,6 +225,162 @@ fn assert_column_packet(packet: &[u8], name: &[u8], org_name: &[u8], flags: u16)
     assert_eq!(u16::from_le_bytes([remaining[8], remaining[9]]), flags);
 }
 
+fn prepared_catalog() -> ConfiguredCatalog {
+    ConfiguredCatalog::new([ConfiguredTable::new(
+        "campaign27",
+        "rows",
+        42,
+        [
+            ConfiguredColumn::clustered_primary_key("id", 1),
+            ConfiguredColumn::stored_not_null("balance", 2),
+        ],
+    )])
+    .unwrap()
+}
+
+fn prepared_balance_column() -> ColumnInfo {
+    ColumnInfo {
+        schema: "campaign27".to_owned(),
+        table: "rows".to_owned(),
+        org_table: "rows".to_owned(),
+        name: "balance".to_owned(),
+        org_name: "balance".to_owned(),
+        column_length: 20,
+        charset: 63,
+        flag: 0x0001,
+        decimal: 0,
+        type_code: TYPE_LONGLONG,
+        default_value: None,
+    }
+}
+
+struct PreparedRows {
+    value: Option<i64>,
+    lifecycle: Arc<Mutex<Lifecycle>>,
+}
+
+impl ResultSetSource for PreparedRows {
+    fn next_batch(&mut self, _max_rows: usize) -> Result<Vec<Vec<Datum>>, String> {
+        Ok(self
+            .value
+            .take()
+            .map(|value| vec![vec![Datum::Int(value)]])
+            .unwrap_or_default())
+    }
+
+    fn columns(&mut self) -> Result<Vec<ColumnInfo>, String> {
+        Ok(vec![prepared_balance_column()])
+    }
+
+    fn finish(&mut self) -> Result<(), String> {
+        self.lifecycle.lock().unwrap().finished += 1;
+        Ok(())
+    }
+
+    fn close(&mut self) -> Result<(), String> {
+        self.lifecycle.lock().unwrap().closed += 1;
+        Ok(())
+    }
+}
+
+struct PreparedSession {
+    executed_parameters: Arc<Mutex<Vec<i64>>>,
+    lifecycle: Arc<Mutex<Lifecycle>>,
+}
+
+impl QuerySession for PreparedSession {
+    fn execute<'a>(&'a mut self, _sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+        Err(SqlQueryError::unknown(
+            "text execution is not part of this test",
+        ))
+    }
+
+    fn prepare_point_read(&mut self, sql: &str) -> Result<PreparedPointRead, SqlQueryError> {
+        let template = prepare_configured_point_read(sql, &prepared_catalog())
+            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+        Ok(PreparedPointRead::new(
+            template,
+            vec![prepared_balance_column()],
+        ))
+    }
+
+    fn execute_prepared_point_read<'a>(
+        &'a mut self,
+        statement: &PreparedPointRead,
+        parameters: &[i64],
+    ) -> Result<QueryResult<'a>, SqlQueryError> {
+        statement
+            .template()
+            .bind(parameters)
+            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+        let [value] = parameters else {
+            return Err(SqlQueryError::unknown("expected one prepared value"));
+        };
+        self.executed_parameters.lock().unwrap().push(*value);
+        Ok(QueryResult::new(Box::new(PreparedRows {
+            value: Some(*value + 100),
+            lifecycle: Arc::clone(&self.lifecycle),
+        })))
+    }
+}
+
+struct PreparedFactory {
+    executed_parameters: Arc<Mutex<Vec<i64>>>,
+    lifecycle: Arc<Mutex<Lifecycle>>,
+}
+
+impl QuerySessionFactory for PreparedFactory {
+    type Session = PreparedSession;
+
+    fn open_session(&self, _context: SessionContext) -> Result<Self::Session, SqlQueryError> {
+        Ok(PreparedSession {
+            executed_parameters: Arc::clone(&self.executed_parameters),
+            lifecycle: Arc::clone(&self.lifecycle),
+        })
+    }
+}
+
+fn prepare_statement(client: &mut TcpStream, reader: &mut PacketReader<TcpStream>) -> u32 {
+    let mut command = vec![COM_STMT_PREPARE];
+    command.extend_from_slice(b"SELECT balance FROM campaign27.rows WHERE id = ?");
+    write_packet(client, 0, &command);
+    reader.set_sequence(1);
+    let prepare_ok = reader.read_packet().unwrap();
+    assert_eq!(prepare_ok[0], 0);
+    assert_eq!(u16::from_le_bytes([prepare_ok[5], prepare_ok[6]]), 1);
+    assert_eq!(u16::from_le_bytes([prepare_ok[7], prepare_ok[8]]), 1);
+    assert_ne!(reader.read_packet().unwrap()[0], 0xff);
+    assert_ne!(reader.read_packet().unwrap()[0], 0xff);
+    u32::from_le_bytes(prepare_ok[1..5].try_into().unwrap())
+}
+
+fn prepared_execute_command(statement_id: u32, new_types: bool, value: i64) -> Vec<u8> {
+    let mut command = vec![COM_STMT_EXECUTE];
+    command.extend_from_slice(&statement_id.to_le_bytes());
+    command.push(0);
+    command.extend_from_slice(&1_u32.to_le_bytes());
+    command.push(0);
+    command.push(u8::from(new_types));
+    if new_types {
+        command.extend_from_slice(&[TYPE_LONGLONG, 0]);
+    }
+    command.extend_from_slice(&value.to_le_bytes());
+    command
+}
+
+fn assert_prepared_binary_result(reader: &mut PacketReader<TcpStream>, expected_value: i64) {
+    reader.set_sequence(1);
+    assert_eq!(reader.read_packet().unwrap(), [1]);
+    assert_ne!(reader.read_packet().unwrap()[0], 0xff);
+    let row = reader.read_packet().unwrap();
+    assert_eq!(&row[..2], [0, 0]);
+    assert_eq!(
+        i64::from_le_bytes(row[2..10].try_into().unwrap()),
+        expected_value
+    );
+    assert_eq!(reader.read_packet().unwrap()[0], 0xfe);
+}
+
 #[test]
 fn real_tcp_connection_runs_handshake_query_ping_quit_and_exact_cleanup() {
     // pkg/server/conn_test.go:789 TestDispatchClientProtocol41
@@ -286,6 +446,12 @@ fn real_tcp_connection_runs_handshake_query_ping_quit_and_exact_cleanup() {
     let report = worker.join().unwrap();
     assert_eq!(report.exit, ConnectionExit::Quit);
     assert_eq!(report.queries, 1);
+    assert_eq!(report.commands.text_query_commands, 1);
+    assert_eq!(report.commands.stmt_prepare_commands, 0);
+    assert_eq!(report.commands.stmt_prepare_successes, 0);
+    assert_eq!(report.commands.stmt_execute_commands, 0);
+    assert_eq!(report.commands.stmt_execute_successes, 0);
+    assert_eq!(report.commands.stmt_close_commands, 0);
     assert_eq!(
         queries.lock().unwrap().as_slice(),
         ["select balance as amount, id from campaign20.rows\0"]
@@ -293,6 +459,137 @@ fn real_tcp_connection_runs_handshake_query_ping_quit_and_exact_cleanup() {
     let lifecycle = lifecycle.lock().unwrap();
     assert_eq!(lifecycle.finished, 1);
     assert_eq!(lifecycle.closed, 1);
+    assert_eq!(tracker.accepted(), 1);
+    assert_eq!(tracker.completed(), 1);
+    assert_eq!(tracker.active(), 0);
+    assert_eq!(tracker.failed(), 0);
+}
+
+#[test]
+fn real_tcp_prepared_lifecycle_reports_exact_eight_binary_executes_and_type_reuse() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let executed_parameters = Arc::new(Mutex::new(Vec::new()));
+    let lifecycle = Arc::new(Mutex::new(Lifecycle::default()));
+    let tracker = Arc::new(ConnectionTracker::default());
+    let worker_parameters = Arc::clone(&executed_parameters);
+    let worker_lifecycle = Arc::clone(&lifecycle);
+    let worker_tracker = Arc::clone(&tracker);
+    let worker = std::thread::spawn(move || {
+        let (stream, peer_addr) = listener.accept().unwrap();
+        serve_mysql_connection(
+            stream,
+            peer_addr,
+            ConnectionCancellation::default(),
+            &PreparedFactory {
+                executed_parameters: worker_parameters,
+                lifecycle: worker_lifecycle,
+            },
+            &users(),
+            &worker_tracker,
+            DEFAULT_MAX_ALLOWED_PACKET,
+        )
+        .unwrap()
+    });
+
+    let mut client = TcpStream::connect(address).unwrap();
+    let mut reader = PacketReader::new(client.try_clone().unwrap());
+    authenticate(&mut client, &mut reader, "alice", b"secret");
+    reader.set_sequence(2);
+    assert_eq!(reader.read_packet().unwrap()[0], 0);
+
+    let statement_id = prepare_statement(&mut client, &mut reader);
+    for value in 1_i64..=8 {
+        write_packet(
+            &mut client,
+            0,
+            &prepared_execute_command(statement_id, value == 1, value),
+        );
+        assert_prepared_binary_result(&mut reader, value + 100);
+    }
+    let mut close = vec![COM_STMT_CLOSE];
+    close.extend_from_slice(&statement_id.to_le_bytes());
+    write_packet(&mut client, 0, &close);
+    write_packet(&mut client, 0, &[COM_QUIT]);
+
+    let report = worker.join().unwrap();
+    assert_eq!(report.exit, ConnectionExit::Quit);
+    assert_eq!(report.queries, 8);
+    assert_eq!(report.commands.text_query_commands, 0);
+    assert_eq!(report.commands.stmt_prepare_commands, 1);
+    assert_eq!(report.commands.stmt_prepare_successes, 1);
+    assert_eq!(report.commands.stmt_execute_commands, 8);
+    assert_eq!(report.commands.stmt_execute_successes, 8);
+    assert_eq!(report.commands.stmt_close_commands, 1);
+    assert_eq!(
+        executed_parameters.lock().unwrap().as_slice(),
+        [1, 2, 3, 4, 5, 6, 7, 8]
+    );
+    let lifecycle = lifecycle.lock().unwrap();
+    assert_eq!(lifecycle.finished, 8);
+    assert_eq!(lifecycle.closed, 8);
+    assert_eq!(tracker.accepted(), 1);
+    assert_eq!(tracker.completed(), 1);
+    assert_eq!(tracker.active(), 0);
+    assert_eq!(tracker.failed(), 0);
+}
+
+#[test]
+fn real_tcp_malformed_prepared_execute_counts_command_without_success() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let executed_parameters = Arc::new(Mutex::new(Vec::new()));
+    let lifecycle = Arc::new(Mutex::new(Lifecycle::default()));
+    let tracker = Arc::new(ConnectionTracker::default());
+    let worker_parameters = Arc::clone(&executed_parameters);
+    let worker_lifecycle = Arc::clone(&lifecycle);
+    let worker_tracker = Arc::clone(&tracker);
+    let worker = std::thread::spawn(move || {
+        let (stream, peer_addr) = listener.accept().unwrap();
+        serve_mysql_connection(
+            stream,
+            peer_addr,
+            ConnectionCancellation::default(),
+            &PreparedFactory {
+                executed_parameters: worker_parameters,
+                lifecycle: worker_lifecycle,
+            },
+            &users(),
+            &worker_tracker,
+            DEFAULT_MAX_ALLOWED_PACKET,
+        )
+        .unwrap()
+    });
+
+    let mut client = TcpStream::connect(address).unwrap();
+    let mut reader = PacketReader::new(client.try_clone().unwrap());
+    authenticate(&mut client, &mut reader, "alice", b"secret");
+    reader.set_sequence(2);
+    assert_eq!(reader.read_packet().unwrap()[0], 0);
+
+    let statement_id = prepare_statement(&mut client, &mut reader);
+    let mut malformed = vec![COM_STMT_EXECUTE];
+    malformed.extend_from_slice(&statement_id.to_le_bytes());
+    write_packet(&mut client, 0, &malformed);
+    reader.set_sequence(1);
+    let error = reader.read_packet().unwrap();
+    assert_eq!(error[0], 0xff);
+    assert_eq!(u16::from_le_bytes([error[1], error[2]]), 1210);
+    write_packet(&mut client, 0, &[COM_QUIT]);
+
+    let report = worker.join().unwrap();
+    assert_eq!(report.exit, ConnectionExit::Quit);
+    assert_eq!(report.queries, 0);
+    assert_eq!(report.commands.text_query_commands, 0);
+    assert_eq!(report.commands.stmt_prepare_commands, 1);
+    assert_eq!(report.commands.stmt_prepare_successes, 1);
+    assert_eq!(report.commands.stmt_execute_commands, 1);
+    assert_eq!(report.commands.stmt_execute_successes, 0);
+    assert_eq!(report.commands.stmt_close_commands, 0);
+    assert!(executed_parameters.lock().unwrap().is_empty());
+    let lifecycle = lifecycle.lock().unwrap();
+    assert_eq!(lifecycle.finished, 0);
+    assert_eq!(lifecycle.closed, 0);
     assert_eq!(tracker.accepted(), 1);
     assert_eq!(tracker.completed(), 1);
     assert_eq!(tracker.active(), 0);
@@ -360,6 +657,7 @@ fn query_error_is_written_as_err_and_connection_remains_command_aligned() {
     let report = worker.join().unwrap();
     assert_eq!(report.exit, ConnectionExit::Quit);
     assert_eq!(report.queries, 0);
+    assert_eq!(report.commands.text_query_commands, 1);
     assert_eq!(tracker.active(), 0);
     assert_eq!(tracker.completed(), 1);
     assert_eq!(tracker.failed(), 0);

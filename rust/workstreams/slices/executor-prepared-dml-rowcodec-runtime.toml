@@ -1,0 +1,70 @@
+schema = "1"
+slice = "executor-prepared-dml-rowcodec-runtime"
+status = "ready"
+target = "tidb-planner"
+ring = "result"
+consumer = "The configured planner and executor bind positional signed-BIGINT markers for the frozen one/two-row INSERT and point UPDATE forms, encode exact clustered record keys and rowcodec values, read UPDATE input through the real transaction snapshot, and produce typed mutations plus affected-row semantics without calling tidb_exec::Database."
+test_target = "prepared_dml_source"
+go_sources = [
+  "pkg/executor/insert.go",
+  "pkg/executor/update.go",
+]
+go_tests = [
+  "pkg/executor/test/seqtest/prepared_test.go:328:TestPreparedInsert",
+  "pkg/executor/test/seqtest/prepared_test.go:405:TestPreparedUpdate",
+  "pkg/tablecodec/tablecodec_test.go:46:TestTableCodec",
+  "pkg/tablecodec/tablecodec_test.go:59:TestTableCodecInvalid",
+  "pkg/tablecodec/tablecodec_test.go:78:TestRowCodec",
+  "pkg/tablecodec/tablecodec_test.go:174:TestDecodeColumnValue",
+  "pkg/tablecodec/tablecodec_test.go:238:TestUnflattenDatums",
+  "pkg/tablecodec/tablecodec_test.go:308:TestCutRow",
+  "pkg/tablecodec/tablecodec_test.go:360:TestCutKeyNew",
+  "pkg/tablecodec/tablecodec_test.go:382:TestCutKey",
+  "pkg/tablecodec/tablecodec_test.go:429:TestRecordKey",
+  "pkg/tablecodec/tablecodec_test.go:456:TestPrefix",
+  "pkg/tablecodec/tablecodec_test.go:515:TestCutPrefix",
+  "pkg/tablecodec/tablecodec_test.go:523:TestRange",
+  "pkg/util/rowcodec/rowcodec_test.go:48:TestEncodeLargeSmallReuseBug",
+  "pkg/util/rowcodec/rowcodec_test.go:86:TestDecodeRowWithHandle",
+  "pkg/util/rowcodec/rowcodec_test.go:278:TestTypesNewRowCodec",
+  "pkg/util/rowcodec/rowcodec_test.go:568:TestNilAndDefault",
+  "pkg/util/rowcodec/rowcodec_test.go:697:TestVarintCompatibility",
+  "pkg/util/rowcodec/rowcodec_test.go:752:TestCodecUtil",
+  "pkg/util/rowcodec/rowcodec_test.go:802:TestOldRowCodec",
+  "pkg/util/rowcodec/rowcodec_test.go:837:Test65535Bug",
+  "pkg/util/rowcodec/rowcodec_test.go:859:TestColumnEncode",
+]
+module_sources = []
+module_tests = []
+depends_on = [
+  "parser-prepared-param-marker-runtime",
+  "txnkv-real-optimistic-2pc-runtime",
+]
+evidence_prerequisites = [
+  { capability = "configured-table-record-key", evidence_owner = "codec-table-key-range-runtime", kind = "source", anchor = "pkg/tablecodec/tablecodec.go", minimum_status = "PARTIAL" },
+  { capability = "rowcodec-layout", evidence_owner = "codec-row-layout-wave", kind = "source", anchor = "pkg/util/rowcodec/common.go", minimum_status = "PARTIAL" },
+  { capability = "rowcodec-decoder", evidence_owner = "codec-rowcodec-decoder-wave", kind = "source", anchor = "pkg/util/rowcodec/decoder.go", minimum_status = "PARTIAL" },
+  { capability = "rowcodec-encoder", evidence_owner = "codec-rowcodec-encoder-wave", kind = "source", anchor = "pkg/util/rowcodec/encoder.go", minimum_status = "PARTIAL" },
+]
+support_anchors = [
+  "PARTIAL TestPreparedInsert scope is repeated positional signed-BIGINT VALUES rows and exact persisted clustered rows only; INSERT SELECT, plan-cache counters, defaults, indexes, generated columns, and unsupported statement forms remain open",
+  "PARTIAL TestPreparedUpdate scope is direct and checked-add signed-BIGINT point update with exact persisted rows only; general expressions, plan-cache counters, indexes, generated columns, and unsupported statement forms remain open",
+  "The tablecodec and rowcodec tests are exact original obligations for configured clustered signed-BIGINT record keys and compact signed stored-column bytes only; every unrelated type, index, checksum, timezone, default, NULL, old-row, or schema branch remains a named PARTIAL gap",
+  "Never call or wrap tidb_exec::Database for this path; UPDATE snapshot Get and every mutation must use txnkv-real-optimistic-2pc-runtime against real TiKV",
+  "Stage C proves exact planner/rowcodec behavior and concrete composition with the real-tested transaction API; actual TCP plus PD/TiKV plus independent Go TiDB acceptance belongs to the dependent Stage D/E live slices and may not be replaced by a mock executor or storage trait",
+]
+rust_paths = [
+  "rust/Cargo.lock",
+  "rust/crates/tidb-codec/src/configured_row_write.rs",
+  "rust/crates/tidb-codec/src/lib.rs",
+  "rust/crates/tidb-codec/tests/configured_bigint_row_write_source.rs",
+  "rust/crates/tidb-exec/Cargo.toml",
+  "rust/crates/tidb-exec/src/lib.rs",
+  "rust/crates/tidb-exec/src/real_tikv_dml.rs",
+  "rust/crates/tidb-exec/tests/prepared_dml_lowering_source.rs",
+  "rust/crates/tidb-planner/src/lib.rs",
+  "rust/crates/tidb-planner/src/prepared_dml.rs",
+  "rust/crates/tidb-planner/tests/prepared_dml_source.rs",
+  "rust/difftests/corpus/coverage/evidence/source/executor-prepared-dml-rowcodec-runtime.tsv",
+  "rust/difftests/corpus/coverage/evidence/tests/executor-prepared-dml-rowcodec-runtime.tsv",
+]

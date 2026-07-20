@@ -150,6 +150,11 @@ pub enum ResidualUnsupported {
 #[must_use]
 pub fn classify_residual(expr: &Expr) -> ResidualPredicate {
     match strip_parens(expr) {
+        Expr::ParamMarker { .. } => {
+            ResidualPredicate::Unsupported(ResidualUnsupported::AstVariant {
+                category: "param_marker",
+            })
+        }
         Expr::Binary(BinaryOp::LogicAnd, left, right) => {
             ResidualPredicate::All(vec![classify_residual(left), classify_residual(right)])
         }
@@ -219,6 +224,9 @@ pub fn classify_residual(expr: &Expr) -> ResidualPredicate {
 
 fn operand_shape(expr: &Expr) -> OperandShape {
     match strip_parens(expr) {
+        Expr::ParamMarker { .. } => OperandShape::Opaque {
+            category: "param_marker",
+        },
         Expr::Column(path) => OperandShape::Column { parts: path.len() },
         Expr::Int(_)
         | Expr::Decimal(_)
@@ -251,6 +259,7 @@ fn strip_parens(mut expr: &Expr) -> &Expr {
 
 fn ast_variant_category(expr: &Expr) -> &'static str {
     match expr {
+        Expr::ParamMarker { .. } => "param_marker",
         Expr::Assign { .. } => "assign",
         Expr::GroupConcat { .. } => "group_concat",
         Expr::Window { .. } => "window",

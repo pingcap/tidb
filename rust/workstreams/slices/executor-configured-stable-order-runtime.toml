@@ -1,6 +1,6 @@
 schema = "1"
 slice = "executor-configured-stable-order-runtime"
-status = "ready"
+status = "partial"
 target = "tidb-exec"
 ring = "result"
 consumer = "One canonical executor comparator orders materialized configured signed-BIGINT rows by multiple FullSchema keys and directions while preserving source order for ties."

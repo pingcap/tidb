@@ -207,6 +207,7 @@ fn native_nonroot_auth_query_ping_quit_publishes_canonical_session_identity() {
     let report = worker.join().unwrap();
     assert_eq!(report.exit, ConnectionExit::Quit);
     assert_eq!(report.queries, 1);
+    assert_eq!(report.commands.text_query_commands, 1);
     let contexts = factory.contexts.lock().unwrap();
     assert_eq!(contexts.len(), 1);
     assert_eq!(contexts[0].connection_id, report.connection_id);

@@ -18,9 +18,13 @@
 //! state. The exact streaming wire and connection lifecycle are added only
 //! after this authority and asynchronous completion are integrated.
 
+mod batch_rollback;
+mod commit;
 mod coprocessor;
+mod get;
 mod inflight;
 mod observability;
+mod prewrite;
 mod priority_queue;
 mod scheduler;
 mod transport;
@@ -29,6 +33,11 @@ mod wire;
 pub(in crate::rpc) use transport::{BatchStreamEvent, BatchTransportState};
 
 pub use coprocessor::BatchCoprocessorPending;
+
+pub(in crate::rpc) use batch_rollback::entry as batch_rollback_entry;
+pub(in crate::rpc) use commit::entry as commit_entry;
+pub(in crate::rpc) use get::entry as get_entry;
+pub(in crate::rpc) use prewrite::entry as prewrite_entry;
 
 pub use inflight::{
     BatchInflightError, BatchInflightTable, BatchPublishError, BatchRetirementReport, BatchRoute,

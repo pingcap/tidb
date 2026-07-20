@@ -390,3 +390,5 @@ pkg/planner/core/casetest/join/join_test.go	226	TestJoinRegression	planner-confi
 pkg/executor/join/inner_join_probe_test.go	494	TestInnerJoinProbeBasic	executor-configured-inner-join-runtime
 pkg/executor/join/inner_join_probe_test.go	543	TestInnerJoinProbeAllJoinKeys	executor-configured-inner-join-runtime
 pkg/executor/join/inner_join_probe_test.go	664	TestInnerJoinProbeWithSel	executor-configured-inner-join-runtime
+pkg/parser/parser_test.go	5996	TestPrepare	parser-prepared-param-marker-runtime
+pkg/parser/parser_test.go	6013	TestExecute	parser-prepared-param-marker-runtime

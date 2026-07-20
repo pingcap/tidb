@@ -349,6 +349,86 @@ pub enum UnsupportedReadOnlyPredicate {
     IntegerOutOfRange,
 }
 
+/// Why a parsed prepared point-read template cannot enter the configured
+/// read-only planner.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PreparedPlanError {
+    /// The ordinary configured SQL envelope rejected the statement before it
+    /// could become a typed prepared template.
+    ReadOnly(ReadOnlyScanError),
+    /// The statement's table name did not resolve to exactly one configured
+    /// catalog entry.
+    Catalog(configured_catalog::ConfiguredTableLookupError),
+    /// A prepared point read needs exactly one comparison in its `WHERE`.
+    ComparisonCount(usize),
+    /// The comparison must be an equality against the clustered primary key.
+    PrimaryKeyEquality,
+    /// The statement must contain one marker at statement-local position zero.
+    MarkerPosition(usize),
+}
+
+impl fmt::Display for PreparedPlanError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ReadOnly(error) => write!(formatter, "prepared point read rejected: {error}"),
+            Self::Catalog(error) => write!(formatter, "prepared point-read table rejected: {error}"),
+            Self::ComparisonCount(count) => write!(
+                formatter,
+                "prepared point read requires exactly one primary-key comparison, found {count}"
+            ),
+            Self::PrimaryKeyEquality => formatter.write_str(
+                "prepared point read requires one parameter marker in a clustered primary-key equality",
+            ),
+            Self::MarkerPosition(position) => write!(
+                formatter,
+                "prepared point read requires its only parameter marker at position zero, found {position}"
+            ),
+        }
+    }
+}
+
+impl Error for PreparedPlanError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::ReadOnly(error) => Some(error),
+            Self::Catalog(error) => Some(error),
+            Self::ComparisonCount(_) | Self::PrimaryKeyEquality | Self::MarkerPosition(_) => None,
+        }
+    }
+}
+
+/// Why a typed prepared point-read template cannot bind its execute values.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PreparedBindError {
+    /// This bounded template owns exactly one non-null signed `BIGINT`.
+    ParameterCount(usize),
+    /// The shared read-only planner rejected the fully typed bound plan.
+    ReadOnly(ReadOnlyScanError),
+}
+
+impl fmt::Display for PreparedBindError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ParameterCount(count) => write!(
+                formatter,
+                "prepared point read requires exactly one signed BIGINT parameter, found {count}"
+            ),
+            Self::ReadOnly(error) => {
+                write!(formatter, "prepared point-read binding rejected: {error}")
+            }
+        }
+    }
+}
+
+impl Error for PreparedBindError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::ReadOnly(error) => Some(error),
+            Self::ParameterCount(_) => None,
+        }
+    }
+}
+
 /// Why a SQL statement cannot become the first read-only table scan.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ReadOnlyScanError {
@@ -492,6 +572,7 @@ impl BoundBigIntComparison {
 enum UnboundComparisonOperand {
     Column(usize),
     Int(i64),
+    ParamMarker(usize),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -511,6 +592,142 @@ struct UnboundProjection {
 struct ValidatedReadOnlySelect {
     projections: Vec<UnboundProjection>,
     comparisons: Vec<UnboundComparison>,
+}
+
+/// A validated prepared template for the one configured signed-`BIGINT`
+/// clustered-primary-key point-read shape.
+///
+/// The template owns no untyped SQL text and no execution state. Binding a
+/// single typed value constructs the same [`ReadOnlyScanPlan`] lowering used
+/// by literal `COM_QUERY` reads.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConfiguredPreparedPointReadTemplate {
+    table: ConfiguredTable,
+    projections: Vec<UnboundProjection>,
+    comparison: PreparedPointReadComparison,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PreparedPointReadComparison {
+    ColumnLeft { column_index: usize },
+    ParameterLeft { column_index: usize },
+}
+
+impl ConfiguredPreparedPointReadTemplate {
+    /// Binds one non-null signed `BIGINT` execute parameter before the shared
+    /// configured read-only scan lowering opens any storage-facing path.
+    pub fn bind(&self, params: &[i64]) -> Result<ReadOnlyScanPlan, PreparedBindError> {
+        let [value] = params else {
+            return Err(PreparedBindError::ParameterCount(params.len()));
+        };
+        let comparison = match self.comparison {
+            PreparedPointReadComparison::ColumnLeft { column_index } => UnboundComparison {
+                op: ComparisonOp::Eq,
+                lhs: UnboundComparisonOperand::Column(column_index),
+                rhs: UnboundComparisonOperand::Int(*value),
+            },
+            PreparedPointReadComparison::ParameterLeft { column_index } => UnboundComparison {
+                op: ComparisonOp::Eq,
+                lhs: UnboundComparisonOperand::Int(*value),
+                rhs: UnboundComparisonOperand::Column(column_index),
+            },
+        };
+        ReadOnlyScanPlan::lower_validated(
+            &self.table,
+            ValidatedReadOnlySelect {
+                projections: self.projections.clone(),
+                comparisons: vec![comparison],
+            },
+        )
+        .map_err(PreparedBindError::ReadOnly)
+    }
+}
+
+/// Lowers an already-parsed prepared statement into one typed configured
+/// point-read template.
+///
+/// This accepts only `SELECT <configured columns> FROM <configured table>
+/// WHERE <clustered primary key> = ?` (or its operand-reversed equivalent).
+/// It never formats execute values into SQL text; callers must pass values to
+/// [`ConfiguredPreparedPointReadTemplate::bind`].
+pub fn lower_prepared_point_read(
+    statement: &SelectStmt,
+    catalog: &configured_catalog::ConfiguredCatalog,
+) -> Result<ConfiguredPreparedPointReadTemplate, PreparedPlanError> {
+    let table = resolve_prepared_table(statement, catalog)?;
+    let validated = validate_select(statement, table).map_err(PreparedPlanError::ReadOnly)?;
+    let [comparison] = validated.comparisons.as_slice() else {
+        return Err(PreparedPlanError::ComparisonCount(
+            validated.comparisons.len(),
+        ));
+    };
+    if comparison.op != ComparisonOp::Eq {
+        return Err(PreparedPlanError::PrimaryKeyEquality);
+    }
+    let comparison = match (comparison.lhs, comparison.rhs) {
+        (
+            UnboundComparisonOperand::Column(column_index),
+            UnboundComparisonOperand::ParamMarker(position),
+        ) => PreparedPointReadComparison::ColumnLeft {
+            column_index: prepared_primary_key_column(table, column_index, position)?,
+        },
+        (
+            UnboundComparisonOperand::ParamMarker(position),
+            UnboundComparisonOperand::Column(column_index),
+        ) => PreparedPointReadComparison::ParameterLeft {
+            column_index: prepared_primary_key_column(table, column_index, position)?,
+        },
+        _ => return Err(PreparedPlanError::PrimaryKeyEquality),
+    };
+    Ok(ConfiguredPreparedPointReadTemplate {
+        table: table.clone(),
+        projections: validated.projections,
+        comparison,
+    })
+}
+
+fn resolve_prepared_table<'a>(
+    statement: &SelectStmt,
+    catalog: &'a configured_catalog::ConfiguredCatalog,
+) -> Result<&'a ConfiguredTable, PreparedPlanError> {
+    let Some(from) = &statement.from else {
+        return Err(PreparedPlanError::ReadOnly(ReadOnlyScanError::Unsupported(
+            UnsupportedReadOnlyFeature::MissingTable,
+        )));
+    };
+    let JoinNode::Table(table_ref) = &from.left else {
+        return Err(PreparedPlanError::ReadOnly(ReadOnlyScanError::Unsupported(
+            UnsupportedReadOnlyFeature::Subquery,
+        )));
+    };
+    let (schema, table) = match table_ref.name.as_slice() {
+        [table] => (None, table.as_str()),
+        [schema, table] => (Some(schema.as_str()), table.as_str()),
+        _ => {
+            return Err(PreparedPlanError::ReadOnly(
+                ReadOnlyScanError::UnknownTable(table_ref.name.join(".")),
+            ));
+        }
+    };
+    catalog
+        .resolve_table(schema, table)
+        .map_err(PreparedPlanError::Catalog)
+}
+
+fn prepared_primary_key_column(
+    table: &ConfiguredTable,
+    column_index: usize,
+    position: usize,
+) -> Result<usize, PreparedPlanError> {
+    if position != 0 {
+        return Err(PreparedPlanError::MarkerPosition(position));
+    }
+    match table.columns.get(column_index) {
+        Some(column) if column.kind == ConfiguredColumnKind::ClusteredPrimaryKey => {
+            Ok(column_index)
+        }
+        Some(_) | None => Err(PreparedPlanError::PrimaryKeyEquality),
+    }
 }
 
 impl ReadOnlyScanPlan {
@@ -768,6 +985,9 @@ fn bind_comparison_operand(
             };
             Ok(ComparisonOperand::InputOffset(offset))
         }
+        UnboundComparisonOperand::ParamMarker(_) => {
+            unsupported_predicate(UnsupportedReadOnlyPredicate::Operand)
+        }
     }
 }
 
@@ -924,6 +1144,12 @@ fn flatten_and_bind(
                 ) | (
                     UnboundComparisonOperand::Int(_),
                     UnboundComparisonOperand::Column(_)
+                ) | (
+                    UnboundComparisonOperand::Column(_),
+                    UnboundComparisonOperand::ParamMarker(_)
+                ) | (
+                    UnboundComparisonOperand::ParamMarker(_),
+                    UnboundComparisonOperand::Column(_)
                 )
             ) {
                 return unsupported_predicate(UnsupportedReadOnlyPredicate::ColumnIntegerPair);
@@ -957,6 +1183,7 @@ fn bind_unbound_operand(
             let (column_index, _) = resolve_column_path(path, table_ref, table)?;
             Ok(UnboundComparisonOperand::Column(column_index))
         }
+        Expr::ParamMarker { position } => Ok(UnboundComparisonOperand::ParamMarker(*position)),
         literal if is_integer_literal_shape(literal) => parse_signed_integer(literal)
             .map(UnboundComparisonOperand::Int)
             .ok_or(ReadOnlyScanError::UnsupportedPredicate(

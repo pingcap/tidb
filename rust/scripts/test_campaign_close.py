@@ -339,6 +339,85 @@ class CampaignCloseTest(unittest.TestCase):
         self.assertIn('status = "planned"', self.campaign_path.read_text())
         self.assertFalse(self.archive_path.exists())
 
+    def test_preflight_accepts_covered_inactive_member_and_unrelated_claim(self) -> None:
+        member_b = self.root / "workstreams/slices/member-b.toml"
+        member_b.write_text(
+            member_b.read_text(encoding="utf-8").replace(
+                'status = "partial"', 'status = "covered"', 1
+            ),
+            encoding="utf-8",
+        )
+        (self.root / "workstreams/claims/member-b.claim.json").unlink()
+
+        source_inventory = (
+            self.root / "difftests/corpus/coverage/go_source_inventory.tsv"
+        )
+        source_inventory.write_text(
+            source_inventory.read_text(encoding="utf-8")
+            + "pkg/planner/source9.go\t100\ttidb-planner\tfalse\t"
+            "UNTRIAGED\t-\t-\t-\n",
+            encoding="utf-8",
+        )
+        (self.root / "unrelated.rs").write_text("unrelated", encoding="utf-8")
+        (self.root / "workstreams/slices/unrelated.toml").write_text(
+            'schema = "1"\nslice = "unrelated"\nstatus = "ready"\n'
+            'target = "tidb-planner"\nring = "plan"\nconsumer = "unrelated"\n'
+            'test_target = "unrelated"\ngo_sources = ["pkg/planner/source9.go"]\n'
+            'go_tests = []\ndepends_on = []\nrust_paths = ["rust/unrelated.rs"]\n',
+            encoding="utf-8",
+        )
+        (self.root / "workstreams/claims/unrelated.claim.json").write_text(
+            json.dumps(
+                {
+                    "schema": 2,
+                    "owner": "unrelated",
+                    "sources": ["pkg/planner/source9.go"],
+                    "tests": [],
+                    "module_sources": [],
+                    "module_tests": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        plan = campaign_close.build_close_plan(self.root, "campaign-x")
+
+        self.assertEqual(plan.members, ("member-a", "member-b"))
+        self.assertEqual(plan.active_members, ("member-a",))
+
+        releases: list[str] = []
+        with (
+            mock.patch.object(
+                campaign_close.queue,
+                "load_integration_state",
+                return_value={
+                    "schema": 1,
+                    "claims": {"member-a": {}, "unrelated": {}},
+                },
+            ),
+            mock.patch.object(
+                campaign_close.queue,
+                "release",
+                side_effect=lambda _root, member, integrated, abandon: releases.append(member),
+            ),
+        ):
+            campaign_close.apply_close_plan(
+                self.root,
+                plan,
+                run_gate=True,
+                command_runner=lambda _command, _root: None,
+                validate=False,
+            )
+        self.assertEqual(releases, ["member-a"])
+
+    def test_preflight_rejects_inactive_partial_member(self) -> None:
+        (self.root / "workstreams/claims/member-b.claim.json").unlink()
+
+        with self.assertRaisesRegex(
+            ValueError, "inactive campaign member member-b must already be covered"
+        ):
+            campaign_close.build_close_plan(self.root, "campaign-x")
+
     def test_preflight_rejects_omitted_transfer_with_duplicate_evidence_owner(self) -> None:
         self.new_source.write_text(
             self.new_source.read_text(encoding="utf-8")
@@ -486,6 +565,13 @@ class CampaignCloseTest(unittest.TestCase):
         )
         self.assertIn('status = "planned"', self.campaign_path.read_text())
         self.assertNotIn(["scripts/rewrite-gate.sh", "integrate"], commands)
+        self.assertIn(
+            [
+                "cargo", "run", "--offline", "--locked", "-j12", "-p", "difftest",
+                "--bin", "go_test_ledger", "--", "--write-evidence",
+            ],
+            commands,
+        )
         with self.assertRaisesRegex(
             ValueError, "campaign member member-b must be partial or covered"
         ):
@@ -568,6 +654,29 @@ class CampaignCloseTest(unittest.TestCase):
         )
 
         self.assertEqual(manifest.read_text(encoding="utf-8"), plan.writes[manifest])
+
+    def test_member_promotion_skips_non_top_level_test_domain_anchors(self) -> None:
+        manifest, _additions = self.prepare_split_member_a_test_file()
+        inventory = self.root / "difftests/corpus/coverage/go_test_inventory.tsv"
+        inventory.write_text(
+            inventory.read_text(encoding="utf-8")
+            + "go_test_file\tpkg/planner/source1_test.go\t0\tsource1_test.go\tplan\t"
+            "UNTRIAGED\t-\t-\t-\n",
+            encoding="utf-8",
+        )
+
+        rendered = campaign_close._promoted_test_domain_manifest_text(
+            self.root,
+            "member-a",
+            ["pkg/planner/source1_test.go:0:source1_test.go"],
+        )
+
+        self.assertIsNone(rendered)
+        self.assertEqual(
+            manifest.read_text(encoding="utf-8"),
+            "# source_path\tsource_line\ttest_name\ttest_domain\n"
+            "pkg/planner/source1_test.go\t11\tTest1\tstable-existing-domain\n",
+        )
 
     def test_member_promotion_allows_direct_evidence_without_transfer_file(self) -> None:
         self.prepare_complete_member_a_evidence()
@@ -707,7 +816,7 @@ class CampaignCloseTest(unittest.TestCase):
             ),
         ):
             with self.assertRaisesRegex(
-                ValueError, "receipt claims differ from exact campaign membership"
+                ValueError, "receipt claims differ from the exact active claim set"
             ):
                 campaign_close.apply_close_plan(
                     self.root,

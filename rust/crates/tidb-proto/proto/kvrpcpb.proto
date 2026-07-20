@@ -1,9 +1,9 @@
 // Source: github.com/pingcap/kvproto/proto/kvrpcpb.proto
 //
-// Dependency-closed projection of the request context and lock response used
-// by TiDB's unary coprocessor path. Field numbers and wire types are exact;
-// unrelated transaction commands and imported resource-manager payloads are
-// intentionally absent.
+// Dependency-closed projection of the request context plus the bounded
+// optimistic transaction commands used by the retained BatchCommands path.
+// Field numbers and wire types are exact; unrelated transaction commands and
+// imported resource-manager payloads are intentionally absent.
 syntax = "proto3";
 
 package kvrpcpb;
@@ -91,6 +91,24 @@ message Context {
   uint64 trace_control_flags = 37;
 }
 
+// Exact pinned transactional point read.
+message GetRequest {
+  Context context = 1;
+  bytes key = 2;
+  uint64 version = 3;
+  bool need_commit_ts = 4;
+}
+
+message GetResponse {
+  errorpb.Error region_error = 1;
+  KeyError error = 2;
+  bytes value = 3;
+  bool not_found = 4;
+  reserved 5;
+  // Upstream field 6 is ExecDetailsV2 and is outside this bounded owner.
+  uint64 commit_ts = 7;
+}
+
 message LockInfo {
   bytes primary_lock = 1;
   uint64 lock_version = 2;
@@ -125,9 +143,164 @@ message KeyError {
   LockInfo locked = 1;
   string retryable = 2;
   string abort = 3;
+  WriteConflict conflict = 4;
+  AlreadyExist already_exist = 5;
+  // Upstream field 6 is pessimistic deadlock metadata and remains outside
+  // this normal optimistic transaction owner.
+  CommitTsExpired commit_ts_expired = 7;
   TxnNotFound txn_not_found = 8;
+  CommitTsTooLarge commit_ts_too_large = 9;
+  AssertionFailed assertion_failed = 10;
   PrimaryMismatch primary_mismatch = 11;
   TxnLockNotFound txn_lock_not_found = 12;
+  // Upstream field 100 is debug-only MVCC metadata.
+}
+
+message WriteConflict {
+  enum Reason {
+    Unknown = 0;
+    Optimistic = 1;
+    PessimisticRetry = 2;
+    SelfRolledBack = 3;
+    RcCheckTs = 4;
+    LazyUniquenessCheck = 5;
+    NotLockedKeyConflict = 6;
+  }
+
+  uint64 start_ts = 1;
+  uint64 conflict_ts = 2;
+  bytes key = 3;
+  bytes primary = 4;
+  uint64 conflict_commit_ts = 5;
+  Reason reason = 6;
+}
+
+message AlreadyExist { bytes key = 1; }
+
+message CommitTsExpired {
+  uint64 start_ts = 1;
+  uint64 attempted_commit_ts = 2;
+  bytes key = 3;
+  uint64 min_commit_ts = 4;
+}
+
+message CommitTsTooLarge { uint64 commit_ts = 1; }
+
+message AssertionFailed {
+  uint64 start_ts = 1;
+  bytes key = 2;
+  Assertion assertion = 3;
+  uint64 existing_start_ts = 4;
+  uint64 existing_commit_ts = 5;
+}
+
+enum Op {
+  Put = 0;
+  Del = 1;
+  Lock = 2;
+  Rollback = 3;
+  Insert = 4;
+  PessimisticLock = 5;
+  CheckNotExists = 6;
+  SharedLock = 7;
+  SharedPessimisticLock = 8;
+}
+
+enum Assertion {
+  None = 0;
+  Exist = 1;
+  NotExist = 2;
+}
+
+enum AssertionLevel {
+  Off = 0;
+  Fast = 1;
+  Strict = 2;
+}
+
+message Mutation {
+  Op op = 1;
+  bytes key = 2;
+  bytes value = 3;
+  Assertion assertion = 4;
+}
+
+message PrewriteRequest {
+  enum PessimisticAction {
+    SKIP_PESSIMISTIC_CHECK = 0;
+    DO_PESSIMISTIC_CHECK = 1;
+    DO_CONSTRAINT_CHECK = 2;
+  }
+
+  message ForUpdateTSConstraint {
+    uint32 index = 1;
+    uint64 expected_for_update_ts = 2;
+  }
+
+  Context context = 1;
+  repeated Mutation mutations = 2;
+  bytes primary_lock = 3;
+  uint64 start_version = 4;
+  uint64 lock_ttl = 5;
+  bool skip_constraint_check = 6;
+  repeated PessimisticAction pessimistic_actions = 7;
+  uint64 txn_size = 8;
+  uint64 for_update_ts = 9;
+  uint64 min_commit_ts = 10;
+  bool use_async_commit = 11;
+  repeated bytes secondaries = 12;
+  bool try_one_pc = 13;
+  uint64 max_commit_ts = 14;
+  AssertionLevel assertion_level = 15;
+  repeated ForUpdateTSConstraint for_update_ts_constraints = 16;
+  repeated uint64 txn_file_chunks = 100;
+}
+
+message PrewriteResponse {
+  errorpb.Error region_error = 1;
+  repeated KeyError errors = 2;
+  uint64 min_commit_ts = 3;
+  uint64 one_pc_commit_ts = 4;
+  // Upstream field 5 is ExecDetailsV2 and is outside this bounded owner.
+}
+
+enum CommitRole {
+  Unknown = 0;
+  Primary = 1;
+  Secondary = 2;
+}
+
+message CommitRequest {
+  reserved 5;
+  reserved "binlog";
+  Context context = 1;
+  uint64 start_version = 2;
+  repeated bytes keys = 3;
+  uint64 commit_version = 4;
+  CommitRole commit_role = 6;
+  bytes primary_key = 7;
+  bool use_async_commit = 8;
+  bool is_txn_file = 100;
+}
+
+message CommitResponse {
+  errorpb.Error region_error = 1;
+  KeyError error = 2;
+  uint64 commit_version = 3;
+  // Upstream field 4 is ExecDetailsV2 and is outside this bounded owner.
+}
+
+message BatchRollbackRequest {
+  Context context = 1;
+  uint64 start_version = 2;
+  repeated bytes keys = 3;
+  bool is_txn_file = 100;
+}
+
+message BatchRollbackResponse {
+  errorpb.Error region_error = 1;
+  KeyError error = 2;
+  // Upstream field 3 is ExecDetailsV2 and is outside this bounded owner.
 }
 
 enum Action {

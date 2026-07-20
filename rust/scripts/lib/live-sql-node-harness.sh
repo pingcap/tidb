@@ -459,6 +459,203 @@ snapshot_count() {
   grep -c -F '"event":"query_snapshot"' "${RUST_LOG}" 2>/dev/null || true
 }
 
+multi_snapshot_count() {
+  grep -c -F '"event":"query_multi_snapshot"' "${RUST_LOG}" 2>/dev/null || true
+}
+
+multi_publication_count() {
+  grep -c -F '"event":"query_multi_transport_published"' "${RUST_LOG}" 2>/dev/null || true
+}
+
+multi_transport_count() {
+  grep -c -F '"event":"query_multi_transport"' "${RUST_LOG}" 2>/dev/null || true
+}
+
+require_multi_relation_table_names() {
+  local relation_names=()
+  local relation_name
+  while IFS= read -r relation_name; do
+    relation_names+=("${relation_name}")
+  done < <(scenario_relation_table_names)
+  if [[ ${#relation_names[@]} -ne 2 ]]; then
+    echo "${CAMPAIGN_LABEL} scenario_relation_table_names must print exactly two table names" >&2
+    return 1
+  fi
+  LEFT_TABLE_NAME=${relation_names[0]}
+  RIGHT_TABLE_NAME=${relation_names[1]}
+  local table_name
+  for table_name in "${LEFT_TABLE_NAME}" "${RIGHT_TABLE_NAME}"; do
+    if [[ ! "${table_name}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+      echo "${CAMPAIGN_LABEL} relation table is not a safe SQL identifier: ${table_name@Q}" >&2
+      return 1
+    fi
+  done
+  if [[ "${LEFT_TABLE_NAME}" == "${RIGHT_TABLE_NAME}" ]]; then
+    echo "${CAMPAIGN_LABEL} relation table names must be distinct" >&2
+    return 1
+  fi
+}
+
+validate_multi_relation_receipts_since() {
+  local snapshots_before=$1
+  local publications_before=$2
+  local transports_before=$3
+  local expected_relation_zero_address=${4:-}
+  local require_transport=${5:-true}
+  local require_recovered_batch=${6:-false}
+  local snapshots
+  local publications
+  local transports
+  snapshots=$(grep -F '"event":"query_multi_snapshot"' "${RUST_LOG}" \
+    | tail -n +$((snapshots_before + 1)) || true)
+  publications=$(grep -F '"event":"query_multi_transport_published"' "${RUST_LOG}" \
+    | tail -n +$((publications_before + 1)) || true)
+  transports=$(grep -F '"event":"query_multi_transport"' "${RUST_LOG}" \
+    | tail -n +$((transports_before + 1)) || true)
+
+  if [[ -z "${snapshots}" ]] || ! printf '%s\n' "${snapshots}" | jq -s -e \
+    --argjson left "${LEFT_TABLE_ID}" --argjson right "${RIGHT_TABLE_ID}" \
+    --arg connection "${PERSISTENT_CONNECTION_ID:-}" \
+    --arg authority "${AUTHORITY_ID}" --arg session "${PERSISTENT_SESSION_ID:-}" \
+    'length > 0
+     and all(.[];
+       ($connection == "" or (.connection_id | tostring) == $connection)
+       and (.authority_id | tostring) == $authority
+       and ($session == "" or (.session_id | tostring) == $session)
+       and (.query_id | type) == "number" and .query_id > 0
+       and (.relations | length) == 2
+       and .relations[0].table_id == $left
+       and .relations[1].table_id == $right)' >/dev/null; then
+    echo "${CAMPAIGN_LABEL} multi-relation phase omitted a correlated two-relation snapshot" >&2
+    printf '%s\n' "${snapshots}" >&2
+    return 1
+  fi
+
+  if [[ "${require_transport}" == true && -z "${publications}" ]]; then
+    echo "${CAMPAIGN_LABEL} multi-relation phase omitted transport publications" >&2
+    return 1
+  fi
+  if [[ -n "${publications}" ]] && ! printf '%s\n' "${publications}" | jq -s -e \
+    --argjson left "${LEFT_TABLE_ID}" --argjson right "${RIGHT_TABLE_ID}" \
+    --arg connection "${PERSISTENT_CONNECTION_ID:-}" \
+    --arg authority "${AUTHORITY_ID}" --arg session "${PERSISTENT_SESSION_ID:-}" \
+    --arg address "${expected_relation_zero_address}" \
+    --argjson require_transport "${require_transport}" \
+    'length > 0
+     and all(.[];
+       ($connection == "" or (.connection_id | tostring) == $connection)
+       and (.authority_id | tostring) == $authority
+       and ($session == "" or (.session_id | tostring) == $session)
+       and (.query_id | type) == "number" and .query_id > 0
+       and ((.relation == 0 and .table_id == $left)
+            or (.relation == 1 and .table_id == $right))
+       and (.physical_channel_version | type) == "number" and .physical_channel_version > 0
+       and (.stream_generation | type) == "number" and .stream_generation > 0
+       and .forwarded_host == null)
+     and ($require_transport == false or all(group_by([.connection_id, .query_id])[];
+       ([.[].relation] | unique | sort) == [0, 1]
+       and ($address == "" or any(.[]; .relation == 0 and .physical_address == $address))))' >/dev/null; then
+    echo "${CAMPAIGN_LABEL} multi-relation publications were not paired or did not retain relation identities" >&2
+    printf '%s\n' "${publications}" >&2
+    return 1
+  fi
+
+  if [[ "${require_transport}" == true && -z "${transports}" ]]; then
+    echo "${CAMPAIGN_LABEL} multi-relation phase omitted transport receipts" >&2
+    return 1
+  fi
+  if [[ -n "${transports}" ]] && ! printf '%s\n' "${transports}" | jq -s -e \
+    --argjson left "${LEFT_TABLE_ID}" --argjson right "${RIGHT_TABLE_ID}" \
+    --arg connection "${PERSISTENT_CONNECTION_ID:-}" \
+    --arg authority "${AUTHORITY_ID}" --arg session "${PERSISTENT_SESSION_ID:-}" \
+    'length > 0
+     and all(.[];
+       ($connection == "" or (.connection_id | tostring) == $connection)
+       and (.authority_id | tostring) == $authority
+       and ($session == "" or (.session_id | tostring) == $session)
+       and (.query_id | type) == "number" and .query_id > 0
+       and ((.relation == 0 and .table_id == $left)
+            or (.relation == 1 and .table_id == $right))
+       and (.located_region_ids | type) == "array"
+       and (.dispatched_region_ids | type) == "array"
+       and (.batch_attempts | type) == "number"
+       and (.unary_attempts | type) == "number")
+     and all(group_by([.connection_id, .query_id])[];
+       ([.[].relation] | unique | sort) == [0, 1])' >/dev/null; then
+    echo "${CAMPAIGN_LABEL} multi-relation transport receipts were not paired or did not retain relation identities" >&2
+    printf '%s\n' "${transports}" >&2
+    return 1
+  fi
+
+  PHASE_PUBLICATION=$(printf '%s\n' "${publications}" | jq -c \
+    --argjson left "${LEFT_TABLE_ID}" --arg address "${expected_relation_zero_address}" \
+    'select(.relation == 0 and .table_id == $left
+      and ($address == "" or .physical_address == $address))' | tail -1)
+  if [[ "${require_transport}" == true && -z "${PHASE_PUBLICATION}" ]]; then
+    echo "${CAMPAIGN_LABEL} multi-relation phase omitted a relation-0 publication" >&2
+    return 1
+  fi
+  if [[ -n "${PHASE_PUBLICATION}" ]]; then
+    PHASE_CONNECTION_ID=$(printf '%s\n' "${PHASE_PUBLICATION}" | jq -r '.connection_id')
+    PHASE_QUERY_ID=$(printf '%s\n' "${PHASE_PUBLICATION}" | jq -r '.query_id')
+    PHASE_SESSION_ID=$(printf '%s\n' "${PHASE_PUBLICATION}" | jq -r '.session_id')
+    if [[ -z "${PERSISTENT_CONNECTION_ID}" ]]; then
+      PERSISTENT_CONNECTION_ID=${PHASE_CONNECTION_ID}
+      PERSISTENT_SESSION_ID=${PHASE_SESSION_ID}
+    elif [[ "${PHASE_CONNECTION_ID}" != "${PERSISTENT_CONNECTION_ID}" \
+      || "${PHASE_SESSION_ID}" != "${PERSISTENT_SESSION_ID}" ]]; then
+      echo "${CAMPAIGN_LABEL} multi-relation phase left the persistent authenticated session" >&2
+      return 1
+    fi
+  fi
+  if [[ "${require_recovered_batch}" == true ]]; then
+    local final_relation_zero_publication
+    local recovered_relation_zero_transport
+    final_relation_zero_publication=$(printf '%s\n' "${publications}" | jq -c \
+      --argjson left "${LEFT_TABLE_ID}" --argjson query "${PHASE_QUERY_ID}" \
+      --argjson connection "${PHASE_CONNECTION_ID}" \
+      'select(.relation == 0 and .table_id == $left
+        and .query_id == $query and .connection_id == $connection)' | tail -1)
+    if [[ -z "${final_relation_zero_publication}" ]] \
+      || ! printf '%s\n' "${final_relation_zero_publication}" | jq -e \
+        --arg address "${expected_relation_zero_address}" \
+        '.physical_address == $address' >/dev/null; then
+      echo "${CAMPAIGN_LABEL} recovered relation-0 route did not finish on ${expected_relation_zero_address}" >&2
+      printf '%s\n' "${publications}" >&2
+      return 1
+    fi
+    recovered_relation_zero_transport=$(printf '%s\n' "${transports}" | jq -c \
+      --argjson left "${LEFT_TABLE_ID}" --argjson query "${PHASE_QUERY_ID}" \
+      --argjson connection "${PHASE_CONNECTION_ID}" \
+      'select(.relation == 0 and .table_id == $left
+        and .query_id == $query and .connection_id == $connection)' | tail -1)
+    if [[ -z "${recovered_relation_zero_transport}" ]] \
+      || ! printf '%s\n' "${recovered_relation_zero_transport}" | jq -e \
+        '(.unary_attempts == 0)
+         and (.batch_attempts > (.dispatched_region_ids | length))' >/dev/null; then
+      echo "${CAMPAIGN_LABEL} recovered relation-0 route did not retry through BatchCommands only" >&2
+      printf '%s\n' "${transports}" >&2
+      return 1
+    fi
+  fi
+}
+
+run_multi_relation_phase() {
+  local hook=$1
+  local expected_relation_zero_address=${2:-}
+  local require_recovered_batch=${3:-false}
+  local snapshots_before
+  local publications_before
+  local transports_before
+  snapshots_before=$(multi_snapshot_count)
+  publications_before=$(multi_publication_count)
+  transports_before=$(multi_transport_count)
+  "${hook}" "${expected_relation_zero_address}"
+  validate_multi_relation_receipts_since \
+    "${snapshots_before}" "${publications_before}" "${transports_before}" \
+    "${expected_relation_zero_address}" true "${require_recovered_batch}"
+}
+
 wait_for_new_event_count() {
   local event=$1
   local before=$2
@@ -636,6 +833,13 @@ scenario_validate_ready_json() {
   default_validate_live_sql_node_ready "$1"
 }
 
+# Scenarios that need an additional healthy-topology proof can override this
+# hook.  It runs after the A->B->C->B route has converged and before the shared
+# real-lock/cancellation phase mutates the fixture or freezes TiKV peers.
+scenario_pre_shutdown_proof() {
+  :
+}
+
 live_sql_node_harness_self_test() {
   [[ $(expected_persistent_client_output_lines 0) == 0 ]]
   [[ $(expected_persistent_client_output_lines 1) == 2 ]]
@@ -645,8 +849,12 @@ live_sql_node_harness_self_test() {
 
   local previous_tag=${TAG:-}
   local previous_tag_dir=${TAG_DIR:-}
+  local previous_phase_timeout=${PHASE_TIMEOUT:-}
+  local previous_persistent_client_error=${PERSISTENT_CLIENT_ERROR:-}
   TAG=campaign-self-test
   TAG_DIR=/tmp/campaign-self-test
+  PHASE_TIMEOUT=1
+  PERSISTENT_CLIENT_ERROR=/dev/null
   command_is_tag_owned 'tiup playground --tag campaign-self-test'
   command_is_tag_owned 'tikv-server --data-dir /tmp/campaign-self-test/data'
   ! command_is_tag_owned 'tikv-server --data-dir /tmp/unrelated/data'
@@ -673,9 +881,53 @@ live_sql_node_harness_self_test() {
   default_validate_live_sql_node_ready \
     '{"tables":[{"database":"campaign_self_test","table":"rows","table_id":42,"columns":["id:1:clustered-pk","balance:2:stored-not-null"]}]}'
 
+  scenario_relation_table_names() {
+    printf '%s\n' left_rows right_rows
+  }
+  require_multi_relation_table_names
+  [[ "${LEFT_TABLE_NAME}" == left_rows && "${RIGHT_TABLE_NAME}" == right_rows ]]
+  scenario_relation_table_names() {
+    printf '%s\n' left_rows left_rows
+  }
+  ! require_multi_relation_table_names 2>/dev/null
+
+  RUST_LOG=$(mktemp "${TMPDIR:-/tmp}/live-sql-node-multi-receipts.XXXXXX")
+  LEFT_TABLE_ID=101
+  RIGHT_TABLE_ID=202
+  PERSISTENT_CONNECTION_ID=
+  PERSISTENT_SESSION_ID=
+  AUTHORITY_ID=11
+  printf '%s\n' \
+    '{"event":"query_multi_snapshot","connection_id":7,"query_id":9,"authority_id":11,"session_id":13,"relations":[{"table_id":101},{"table_id":202}]}' \
+    '{"event":"query_multi_transport_published","connection_id":7,"query_id":9,"authority_id":11,"session_id":13,"relation":0,"table_id":101,"region_id":17,"physical_address":"127.0.0.1:20160","physical_channel_version":3,"stream_generation":5,"forwarded_host":null}' \
+    '{"event":"query_multi_transport_published","connection_id":7,"query_id":9,"authority_id":11,"session_id":13,"relation":1,"table_id":202,"region_id":19,"physical_address":"127.0.0.1:20161","physical_channel_version":3,"stream_generation":6,"forwarded_host":null}' \
+    '{"event":"query_multi_transport_published","connection_id":7,"query_id":9,"authority_id":11,"session_id":13,"relation":0,"table_id":101,"region_id":17,"physical_address":"127.0.0.1:20161","physical_channel_version":3,"stream_generation":7,"forwarded_host":null}' \
+    '{"event":"query_multi_transport","connection_id":7,"query_id":9,"authority_id":11,"session_id":13,"relation":0,"table_id":101,"located_region_ids":[17],"dispatched_region_ids":[17],"batch_attempts":2,"unary_attempts":0}' \
+    '{"event":"query_multi_transport","connection_id":7,"query_id":9,"authority_id":11,"session_id":13,"relation":1,"table_id":202,"located_region_ids":[19],"dispatched_region_ids":[19],"batch_attempts":1,"unary_attempts":0}' \
+    >"${RUST_LOG}"
+  validate_multi_relation_receipts_since 0 0 0 127.0.0.1:20161 true true
+  [[ "${PHASE_CONNECTION_ID}" == 7 && "${PHASE_QUERY_ID}" == 9 ]]
+  [[ "${PERSISTENT_CONNECTION_ID}" == 7 && "${PERSISTENT_SESSION_ID}" == 13 ]]
+  ! validate_multi_relation_receipts_since 1 3 2 127.0.0.1:20161 true true 2>/dev/null
+  printf '%s\n' \
+    '{"event":"query_multi_snapshot","connection_id":7,"query_id":10,"authority_id":11,"session_id":13,"relations":[{"table_id":101},{"table_id":202}]}' \
+    '{"event":"query_multi_transport_published","connection_id":7,"query_id":10,"authority_id":11,"session_id":13,"relation":0,"table_id":101,"region_id":17,"physical_address":"127.0.0.1:20161","physical_channel_version":3,"stream_generation":8,"forwarded_host":null}' \
+    >>"${RUST_LOG}"
+  validate_multi_relation_receipts_since 1 3 2 127.0.0.1:20161 false
+  [[ "${PHASE_QUERY_ID}" == 10 ]]
+  # An intentionally blocked query is allowed to expose its first relation-0
+  # publication without inventing a relation-1 or terminal receipt.
+  grep -F '"event":"query_multi_transport_published"' "${RUST_LOG}" \
+    | tail -n +4 | jq -s -e \
+      'length == 1 and .[0].query_id == 10 and .[0].relation == 0' >/dev/null
+  rm -f -- "${RUST_LOG}"
+  unset -f scenario_relation_table_names
+
   terminate_pid_group "self-test absent child" 999999999
   TAG=${previous_tag}
   TAG_DIR=${previous_tag_dir}
+  PHASE_TIMEOUT=${previous_phase_timeout}
+  PERSISTENT_CLIENT_ERROR=${previous_persistent_client_error}
 }
 
 scenario_environment_value() {
@@ -732,6 +984,13 @@ initialize_live_sql_node_scenario() {
     echo "${SCENARIO_ENV_PREFIX}_GO_TIDB_SERVER does not contain the required client-go commit failpoint" >&2
     return 1
   fi
+  GO_RELEASE_VERSION=$("${GO_TIDB_SERVER}" -V 2>/dev/null | sed -n 's/^Release Version: //p' | head -1)
+  GO_COMMIT_HASH=$("${GO_TIDB_SERVER}" -V 2>/dev/null | sed -n 's/^Git Commit Hash: //p' | head -1)
+  if [[ ! "${GO_RELEASE_VERSION}" =~ ^v8\.5\.6(-.*)?$ ]] \
+    || [[ "${GO_COMMIT_HASH}" != ae18096e023780bb56bfce33698abec0d4640d0a ]]; then
+    echo "${SCENARIO_ENV_PREFIX}_GO_TIDB_SERVER must be the v8.5.6 (ae18096e023780bb56bfce33698abec0d4640d0a) fixture matching the pinned TiUP playground; found release=${GO_RELEASE_VERSION:-<unavailable>} commit=${GO_COMMIT_HASH:-<unavailable>}" >&2
+    return 1
+  fi
   TAG="${SCENARIO_TAG_SLUG}-${$}-$(date +%s)"
   PORT_OFFSET=$(scenario_environment_value PORT_OFFSET 43000)
   if [[ ! "${PORT_OFFSET}" =~ ^[0-9]+$ ]] || [[ "${PORT_OFFSET}" -gt 44375 ]]; then
@@ -769,6 +1028,24 @@ initialize_live_sql_node_scenario() {
   PERSISTENT_CLIENT_FIFO=
   PERSISTENT_CLIENT_OUTPUT=
   PERSISTENT_CLIENT_ERROR=
+  # Keep the argv nonempty under Bash 3.2 + `set -u`; an empty array expansion
+  # is treated as an unbound variable on the macOS system shell.
+  PERSISTENT_CLIENT_ARGS=(--unbuffered -B)
+  PERSISTENT_CLIENT_FORCE=false
+  case "${SCENARIO_PERSISTENT_CLIENT_FORCE:-false}" in
+    false) ;;
+    true)
+      PERSISTENT_CLIENT_FORCE=true
+      # Batch input disables local mysql commands by default. Force mode needs
+      # an explicit local quit after the controlled-cancel error, so retain
+      # that parser contract when starting the client.
+      PERSISTENT_CLIENT_ARGS+=(--force --commands)
+      ;;
+    *)
+      echo "${CAMPAIGN_LABEL} SCENARIO_PERSISTENT_CLIENT_FORCE must be true or false" >&2
+      return 1
+      ;;
+  esac
   PERSISTENT_CLIENT_FD_OPEN=false
   PERSISTENT_CONNECTION_ID=
   PERSISTENT_SESSION_ID=
@@ -787,7 +1064,8 @@ initialize_live_sql_node_scenario() {
   SCENARIO_RUST_SERVER=$(scenario_environment_value RUST_SERVER)
 }
 
-run_live_sql_node_topology_scenario() {
+run_live_sql_node_scenario_common() {
+  local relation_mode=$1
   initialize_live_sql_node_scenario || exit 1
   local hook
   for hook in \
@@ -803,6 +1081,11 @@ run_live_sql_node_topology_scenario() {
       exit 1
     fi
   done
+  if [[ "${relation_mode}" == multi ]] \
+    && ! declare -F scenario_relation_table_names >/dev/null; then
+    echo "${CAMPAIGN_LABEL} multi-relation scenario is missing required hook scenario_relation_table_names" >&2
+    exit 1
+  fi
   if [[ ! "${SCENARIO_DATABASE}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
     echo "${CAMPAIGN_LABEL} scenario database is not a safe SQL identifier" >&2
     exit 1
@@ -846,16 +1129,21 @@ run_live_sql_node_topology_scenario() {
   unset AUTH_HASH_HEX
 
   export GO_FAILPOINTS='github.com/pingcap/tidb/pkg/server/enableTestAPI=return'
+  # Bootstrap TiKV against one stable PD leader. Starting all three PDs and
+  # TiKVs in one playground command races TiKV's first TSO request with the PD
+  # election on v8.5.6, and TiKV exits when that first endpoint is not leader.
+  # Add the two remaining PDs one at a time only after the storage cluster is
+  # serving; each join must become a complete member before the next begins.
   tiup playground v8.5.6 --without-monitor --tag "${TAG}" \
-    --db 1 --pd 3 --kv 3 --tiflash 0 --port-offset "${PORT_OFFSET}" \
+    --db 1 --pd 1 --kv 3 --tiflash 0 --port-offset "${PORT_OFFSET}" \
     --db.binpath "${GO_TIDB_SERVER}" \
     >"${PLAYGROUND_LOG}" 2>&1 &
   PLAYGROUND_PID=$!
   unset GO_FAILPOINTS
 
-  ready=false
+  bootstrap_ready=false
   PD_MEMBERS_JSON=
-  for _ in $(seq 1 240); do
+  for _ in $(seq 1 "${PHASE_TIMEOUT}"); do
     if ! kill -0 "${PLAYGROUND_PID}" 2>/dev/null; then
       echo "TiUP playground exited before readiness" >&2
       tail -160 "${PLAYGROUND_LOG}" >&2
@@ -867,6 +1155,67 @@ run_live_sql_node_topology_scenario() {
     TIKV_COUNT=$(printf '%s\n' "${STORES_JSON}" | jq -r \
       '[.stores[] | select(.store.state_name == "Up" and ((.store.node_state_name // "Serving") == "Serving"))] | length' \
       2>/dev/null) || true
+    if [[ "${PD_COUNT:-0}" == 1 ]] && [[ "${TIKV_COUNT:-0}" == 3 ]] \
+      && mysql_go -Nse 'select 1' >/dev/null 2>&1; then
+      bootstrap_ready=true
+      break
+    fi
+    sleep 1
+  done
+  if [[ "${bootstrap_ready}" != true ]]; then
+    echo "one-PD bootstrap, three TiKV, and Go TiDB did not become ready" >&2
+    tail -160 "${PLAYGROUND_LOG}" >&2
+    exit 1
+  fi
+  local expected_pd_count
+  for expected_pd_count in 2 3; do
+    if ! tiup playground scale-out --tag "${TAG}" --pd 1 \
+      >>"${PLAYGROUND_LOG}" 2>&1; then
+      echo "TiUP failed to request PD member ${expected_pd_count}" >&2
+      tail -160 "${PLAYGROUND_LOG}" >&2
+      exit 1
+    fi
+    pd_joined=false
+    for _ in $(seq 1 "${PHASE_TIMEOUT}"); do
+      if ! kill -0 "${PLAYGROUND_PID}" 2>/dev/null; then
+        echo "TiUP playground exited while adding PD member ${expected_pd_count}" >&2
+        tail -160 "${PLAYGROUND_LOG}" >&2
+        exit 1
+      fi
+      PD_MEMBERS_JSON=$(curl -sf --max-time 2 \
+        "http://${PD_ADDR}/pd/api/v1/members" 2>/dev/null) || true
+      if printf '%s\n' "${PD_MEMBERS_JSON}" | jq -e \
+        --argjson expected "${expected_pd_count}" \
+        '(.members | length) == $expected
+         and all(.members[];
+           (.name | length) > 0
+           and (.client_urls | length) > 0
+           and (.peer_urls | length) > 0)' >/dev/null 2>&1; then
+        pd_joined=true
+        break
+      fi
+      sleep 1
+    done
+    if [[ "${pd_joined}" != true ]]; then
+      echo "PD member ${expected_pd_count} did not complete its tagged TiUP join" >&2
+      tail -160 "${PLAYGROUND_LOG}" >&2
+      exit 1
+    fi
+  done
+  # Joining PD members can trigger a leader handoff. Do not snapshot topology
+  # from the first successful HTTP response: require the new three-PD quorum to
+  # expose all three serving stores and the same Go SQL path again.
+  ready=false
+  for _ in $(seq 1 "${PHASE_TIMEOUT}"); do
+    PD_MEMBERS_JSON=$(curl -sf --max-time 2 \
+      "http://${PD_ADDR}/pd/api/v1/members" 2>/dev/null) || true
+    STORES_JSON=$(curl -sf --max-time 2 \
+      "http://${PD_ADDR}/pd/api/v1/stores" 2>/dev/null) || true
+    PD_COUNT=$(printf '%s\n' "${PD_MEMBERS_JSON}" \
+      | jq -r '.members | length' 2>/dev/null) || true
+    TIKV_COUNT=$(printf '%s\n' "${STORES_JSON}" | jq -r \
+      '[.stores[] | select(.store.state_name == "Up" and ((.store.node_state_name // "Serving") == "Serving"))] | length' \
+      2>/dev/null) || true
     if [[ "${PD_COUNT:-0}" == 3 ]] && [[ "${TIKV_COUNT:-0}" == 3 ]] \
       && mysql_go -Nse 'select 1' >/dev/null 2>&1; then
       ready=true
@@ -875,7 +1224,7 @@ run_live_sql_node_topology_scenario() {
     sleep 1
   done
   if [[ "${ready}" != true ]]; then
-    echo "three PD, three TiKV, and Go TiDB did not become ready" >&2
+    echo "three-PD quorum did not republish three serving TiKV stores and Go TiDB" >&2
     tail -160 "${PLAYGROUND_LOG}" >&2
     exit 1
   fi
@@ -909,6 +1258,9 @@ run_live_sql_node_topology_scenario() {
     || $(printf '%s\n' "${STORE_ADDRESSES}" | sed '/^$/d' | awk 'END { print NR + 0 }') != 3 \
     || $(printf '%s\n' "${STORE_STATUS_ADDRESSES}" | sed '/^$/d' | awk 'END { print NR + 0 }') != 3 ]]; then
     echo "${CAMPAIGN_LABEL} topology did not expose exactly three unique PD client/peer and TiKV service/status endpoints" >&2
+    printf 'pd_client=%s\npd_peer=%s\ntikv_service=%s\ntikv_status=%s\n' \
+      "${PD_ENDPOINTS}" "${PD_PEER_ENDPOINTS}" "${STORE_ADDRESSES}" \
+      "${STORE_STATUS_ADDRESSES}" >&2
     exit 1
   fi
   for endpoint in ${PD_ENDPOINTS}; do
@@ -936,19 +1288,53 @@ run_live_sql_node_topology_scenario() {
   fi
 
   scenario_prepare_fixture
-  TABLE_ID=$(mysql_go -Nse \
-    "select tidb_table_id from information_schema.tables where table_schema='${SCENARIO_DATABASE}' and table_name='rows'")
-  if [[ ! "${TABLE_ID}" =~ ^[0-9]+$ ]] || [[ "${TABLE_ID}" =~ ^0+$ ]]; then
-    echo "Go TiDB did not resolve the physical table ID" >&2
-    exit 1
+  if [[ "${relation_mode}" == multi ]]; then
+    require_multi_relation_table_names || exit 1
+    LEFT_TABLE_ID=$(mysql_go -Nse \
+      "select tidb_table_id from information_schema.tables where table_schema='${SCENARIO_DATABASE}' and table_name='${LEFT_TABLE_NAME}'")
+    RIGHT_TABLE_ID=$(mysql_go -Nse \
+      "select tidb_table_id from information_schema.tables where table_schema='${SCENARIO_DATABASE}' and table_name='${RIGHT_TABLE_NAME}'")
+    if [[ ! "${LEFT_TABLE_ID}" =~ ^[0-9]+$ ]] || [[ "${LEFT_TABLE_ID}" =~ ^0+$ ]] \
+      || [[ ! "${RIGHT_TABLE_ID}" =~ ^[0-9]+$ ]] || [[ "${RIGHT_TABLE_ID}" =~ ^0+$ ]] \
+      || [[ "${LEFT_TABLE_ID}" == "${RIGHT_TABLE_ID}" ]]; then
+      echo "Go TiDB did not resolve two distinct configured relation table IDs" >&2
+      exit 1
+    fi
+    # The shared churn and blocked-shutdown lifecycle deliberately follows
+    # relation 0.  Keep its historical variable name for lower-level helpers.
+    TABLE_ID=${LEFT_TABLE_ID}
+    TOPOLOGY_TABLE_NAME=${LEFT_TABLE_NAME}
+  else
+    TABLE_ID=$(mysql_go -Nse \
+      "select tidb_table_id from information_schema.tables where table_schema='${SCENARIO_DATABASE}' and table_name='rows'")
+    if [[ ! "${TABLE_ID}" =~ ^[0-9]+$ ]] || [[ "${TABLE_ID}" =~ ^0+$ ]]; then
+      echo "Go TiDB did not resolve the physical table ID" >&2
+      exit 1
+    fi
+    TOPOLOGY_TABLE_NAME=rows
   fi
   LOCK_SECONDARY_TABLE_ID=$(mysql_go -Nse \
     "select tidb_table_id from information_schema.tables where table_schema='${SCENARIO_DATABASE}' and table_name='lock_secondary'")
   if [[ ! "${LOCK_SECONDARY_TABLE_ID}" =~ ^[0-9]+$ ]] \
     || [[ "${LOCK_SECONDARY_TABLE_ID}" =~ ^0+$ ]] \
     || [[ "${LOCK_SECONDARY_TABLE_ID}" -le "${TABLE_ID}" ]]; then
-    echo "Go TiDB did not preserve rows-before-lock_secondary physical table ordering" >&2
+    echo "Go TiDB did not preserve configured relation-before-lock_secondary physical table ordering" >&2
     exit 1
+  fi
+  if [[ "${relation_mode}" == multi ]] \
+    && [[ "${LOCK_SECONDARY_TABLE_ID}" -le "${RIGHT_TABLE_ID}" ]]; then
+    echo "Go TiDB did not preserve configured relation-before-lock_secondary physical table ordering" >&2
+    exit 1
+  fi
+  TOPOLOGY_LOCK_HANDLE=${SCENARIO_RELATION_ZERO_LOCK_HANDLE:--7}
+  if [[ ! "${TOPOLOGY_LOCK_HANDLE}" =~ ^-?[0-9]+$ ]]; then
+    echo "${CAMPAIGN_LABEL} relation-0 lock handle must be a signed integer" >&2
+    exit 1
+  fi
+  if [[ -n "${SCENARIO_RELATION_ZERO_LOCK_UPDATE_SQL:-}" ]]; then
+    TOPOLOGY_LOCK_UPDATE_SQL=${SCENARIO_RELATION_ZERO_LOCK_UPDATE_SQL}
+  else
+    TOPOLOGY_LOCK_UPDATE_SQL="UPDATE ${SCENARIO_DATABASE}.${TOPOLOGY_TABLE_NAME} SET balance = balance + 1 WHERE id = ${TOPOLOGY_LOCK_HANDLE};"
   fi
 
   RUST_SERVER_ARGS=()
@@ -1009,7 +1395,8 @@ run_live_sql_node_topology_scenario() {
     export MARIADB_PWD="${AUTH_PASSWORD}"
     exec "${MYSQL_CLIENT}" --protocol=tcp -h 127.0.0.1 -P "${RUST_SQL_PORT}" \
       -u"${AUTH_USER}" --connect-timeout=5 "${MYSQL_PLUGIN_ARGS[@]}" \
-      --unbuffered -B <"${PERSISTENT_CLIENT_FIFO}" \
+      "${PERSISTENT_CLIENT_ARGS[@]}" \
+      <"${PERSISTENT_CLIENT_FIFO}" \
       >"${PERSISTENT_CLIENT_OUTPUT}" 2>"${PERSISTENT_CLIENT_ERROR}"
   ) &
   PERSISTENT_CLIENT_PID=$!
@@ -1032,7 +1419,11 @@ run_live_sql_node_topology_scenario() {
     exit 1
   fi
 
-  scenario_pre_transfer_discovery
+  if [[ "${relation_mode}" == multi ]]; then
+    run_multi_relation_phase scenario_pre_transfer_discovery
+  else
+    scenario_pre_transfer_discovery
+  fi
   # The first request itself is the source of truth for the table region and
   # physical address. Validate both against PD rather than assuming store order.
   INITIAL_PUBLICATION=${PHASE_PUBLICATION}
@@ -1074,7 +1465,11 @@ run_live_sql_node_topology_scenario() {
   fi
   # Revalidate the exact rows now that the discovered region is part of every
   # publication assertion.
-  scenario_pre_transfer_verified "${ADDRESS_A}"
+  if [[ "${relation_mode}" == multi ]]; then
+    run_multi_relation_phase scenario_pre_transfer_verified "${ADDRESS_A}"
+  else
+    scenario_pre_transfer_verified "${ADDRESS_A}"
+  fi
 
   PEER_STORES=$(printf '%s\n' "${REGION}" | jq -r --argjson a "${STORE_A}" \
     '.peers[] | select(.store_id != $a) | .store_id')
@@ -1107,7 +1502,11 @@ run_live_sql_node_topology_scenario() {
 
   transfer_leader "${STORE_B}"
   wait_for_leader_serving "${STORE_B}" "${ADDRESS_B}" "${PEER_B}" transferred_to_b_stable
-  scenario_transferred_to_b "${ADDRESS_B}"
+  if [[ "${relation_mode}" == multi ]]; then
+    run_multi_relation_phase scenario_transferred_to_b "${ADDRESS_B}" true
+  else
+    scenario_transferred_to_b "${ADDRESS_B}"
+  fi
   B_VERSION_BEFORE=$(printf '%s\n' "${PHASE_PUBLICATION}" | jq -r '.physical_channel_version')
   B_GENERATION_BEFORE=$(printf '%s\n' "${PHASE_PUBLICATION}" | jq -r '.stream_generation')
 
@@ -1198,7 +1597,11 @@ run_live_sql_node_topology_scenario() {
     exit 1
   fi
   wait_for_leader_serving "${STORE_C}" "${ADDRESS_C}" "${PEER_C_EXPECTED}" failed_over_to_c_stable
-  scenario_failed_over_to_c "${ADDRESS_C}"
+  if [[ "${relation_mode}" == multi ]]; then
+    run_multi_relation_phase scenario_failed_over_to_c "${ADDRESS_C}"
+  else
+    scenario_failed_over_to_c "${ADDRESS_C}"
+  fi
 
   /bin/sh -c "exec ${TIKV_B_COMMAND}" >>"${RESTART_LOG}" 2>&1 &
   RESTART_PID=$!
@@ -1240,7 +1643,11 @@ run_live_sql_node_topology_scenario() {
 
   transfer_leader "${STORE_B}"
   wait_for_leader_serving "${STORE_B}" "${ADDRESS_B}" "${PEER_B}" returned_to_b_stable
-  scenario_returned_to_b "${ADDRESS_B}"
+  if [[ "${relation_mode}" == multi ]]; then
+    run_multi_relation_phase scenario_returned_to_b "${ADDRESS_B}"
+  else
+    scenario_returned_to_b "${ADDRESS_B}"
+  fi
   B_VERSION_AFTER=$(printf '%s\n' "${PHASE_PUBLICATION}" | jq -r '.physical_channel_version')
   B_GENERATION_AFTER=$(printf '%s\n' "${PHASE_PUBLICATION}" | jq -r '.stream_generation')
   if [[ "${B_VERSION_AFTER}" != "${B_VERSION_BEFORE}" \
@@ -1249,7 +1656,9 @@ run_live_sql_node_topology_scenario() {
     exit 1
   fi
 
-  # Leave the rows mutation as an exact prewritten secondary whose committed
+  scenario_pre_shutdown_proof
+
+  # Leave the relation-0 mutation as an exact prewritten secondary whose committed
   # primary lives in the separately split helper region. Freezing both non-B
   # stores later removes that helper region's quorum while the main region still
   # dispatches through B; this makes lock resolution deterministically in-flight.
@@ -1298,7 +1707,7 @@ run_live_sql_node_topology_scenario() {
     export MARIADB_PWD=
     exec "${MYSQL_CLIENT}" --protocol=tcp -h 127.0.0.1 -P "${GO_SQL_PORT}" \
       -uroot --connect-timeout=5 "${MYSQL_PLUGIN_ARGS[@]}" --unbuffered -Nse \
-      "SET SESSION tidb_enable_async_commit = 0; SET SESSION tidb_enable_1pc = 0; BEGIN PESSIMISTIC; UPDATE ${SCENARIO_DATABASE}.lock_secondary SET value = value + 1 WHERE id = 1; UPDATE ${SCENARIO_DATABASE}.rows SET balance = balance + 1 WHERE id = -7; SELECT '${LOCK_MARKER}'; COMMIT;"
+      "SET SESSION tidb_enable_async_commit = 0; SET SESSION tidb_enable_1pc = 0; BEGIN PESSIMISTIC; UPDATE ${SCENARIO_DATABASE}.lock_secondary SET value = value + 1 WHERE id = 1; ${TOPOLOGY_LOCK_UPDATE_SQL} SELECT '${LOCK_MARKER}'; COMMIT;"
   ) >"${LOCK_OUTPUT}" 2>"${LOCK_ERROR}" &
   LOCK_HOLDER_PID=$!
   CLIENT_PIDS=("${PERSISTENT_CLIENT_PID}" "${LOCK_HOLDER_PID}")
@@ -1339,7 +1748,7 @@ run_live_sql_node_topology_scenario() {
   SECONDARY_LOCK_READY=false
   for _ in $(seq 1 100); do
     MAIN_MVCC=$(mysql_go -Nse \
-      "SELECT tidb_mvcc_info(tidb_encode_record_key('${SCENARIO_DATABASE}', 'rows', -7));")
+      "SELECT tidb_mvcc_info(tidb_encode_record_key('${SCENARIO_DATABASE}', '${TOPOLOGY_TABLE_NAME}', ${TOPOLOGY_LOCK_HANDLE}));")
     HELPER_MVCC=$(mysql_go -Nse \
       "SELECT tidb_mvcc_info(tidb_encode_record_key('${SCENARIO_DATABASE}', 'lock_secondary', 1));")
     if printf '%s\n' "${MAIN_MVCC}" | jq -e \
@@ -1353,7 +1762,7 @@ run_live_sql_node_topology_scenario() {
     sleep 0.1
   done
   if [[ "${SECONDARY_LOCK_READY}" != true ]]; then
-    echo "fixture did not leave rows as a prewritten secondary of a committed helper primary" >&2
+    echo "fixture did not leave relation 0 as a prewritten secondary of a committed helper primary" >&2
     printf '%s\n%s\n' "${MAIN_MVCC}" "${HELPER_MVCC}" >&2
     exit 1
   fi
@@ -1382,7 +1791,7 @@ run_live_sql_node_topology_scenario() {
       export MARIADB_PWD=
       exec "${MYSQL_CLIENT}" --protocol=tcp -h 127.0.0.1 -P "${GO_SQL_PORT}" \
         -uroot --connect-timeout=5 "${MYSQL_PLUGIN_ARGS[@]}" -Nse \
-        "SELECT balance FROM ${SCENARIO_DATABASE}.rows WHERE id = -7;"
+        "SELECT 1 FROM ${SCENARIO_DATABASE}.${TOPOLOGY_TABLE_NAME} WHERE id = ${TOPOLOGY_LOCK_HANDLE};"
     ) >"${LOCK_PROBE_OUTPUT}" 2>"${LOCK_PROBE_ERROR}" &
     LOCK_PROBE_PID=$!
     CLIENT_PIDS=("${PERSISTENT_CLIENT_PID}" "${LOCK_PROBE_PID}")
@@ -1397,11 +1806,11 @@ run_live_sql_node_topology_scenario() {
     CLIENT_PIDS=("${PERSISTENT_CLIENT_PID}")
   done
   if [[ "${LOCK_BARRIER_READY}" != true ]]; then
-    echo "stock Go-MySQL probe did not block on the real ${SCENARIO_DATABASE}.rows primary prewrite" >&2
+    echo "stock Go-MySQL probe did not block on the real ${SCENARIO_DATABASE}.${TOPOLOGY_TABLE_NAME} primary prewrite" >&2
     sed -n '1,160p' "${LOCK_PROBE_OUTPUT}" >&2
     sed -n '1,160p' "${LOCK_PROBE_ERROR}" >&2
     mysql_go -Nse \
-      "SELECT tidb_mvcc_info(tidb_encode_record_key('${SCENARIO_DATABASE}', 'rows', -7));" \
+      "SELECT tidb_mvcc_info(tidb_encode_record_key('${SCENARIO_DATABASE}', '${TOPOLOGY_TABLE_NAME}', ${TOPOLOGY_LOCK_HANDLE}));" \
       >&2 || true
     mysql_go -Nse \
       "SELECT tidb_mvcc_info(tidb_encode_record_key('${SCENARIO_DATABASE}', 'lock_secondary', 1));" \
@@ -1414,20 +1823,55 @@ run_live_sql_node_topology_scenario() {
   LOCK_PROBE_PID=
   CLIENT_PIDS=("${PERSISTENT_CLIENT_PID}")
 
-  BLOCK_BEFORE_PUBLICATIONS=$(publication_count)
-  BLOCK_BEFORE_TRANSPORTS=$(transport_count)
-  BLOCK_BEFORE_SNAPSHOTS=$(snapshot_count)
+  if [[ "${relation_mode}" == multi ]]; then
+    BLOCK_BEFORE_PUBLICATIONS=$(multi_publication_count)
+    BLOCK_BEFORE_TRANSPORTS=$(multi_transport_count)
+    BLOCK_BEFORE_SNAPSHOTS=$(multi_snapshot_count)
+  else
+    BLOCK_BEFORE_PUBLICATIONS=$(publication_count)
+    BLOCK_BEFORE_TRANSPORTS=$(transport_count)
+    BLOCK_BEFORE_SNAPSHOTS=$(snapshot_count)
+  fi
   BLOCK_BEFORE_ACTIVITIES=$(grep -c -F '"event":"query_activity"' "${RUST_LOG}" 2>/dev/null || true)
   BLOCK_BEFORE_OUTPUT_LINES=$(awk 'END { print NR + 0 }' "${PERSISTENT_CLIENT_OUTPUT}")
   BLOCK_BEFORE_ERROR_LINES=$(awk 'END { print NR + 0 }' "${PERSISTENT_CLIENT_ERROR}")
   printf '%s\n' "${SCENARIO_BLOCK_QUERY}" >&9
-  if [[ "${SCENARIO_EXPECTS_QUERY_SNAPSHOT}" == true ]]; then
+  if [[ "${relation_mode}" == multi ]]; then
+    wait_for_new_event_count query_multi_snapshot "${BLOCK_BEFORE_SNAPSHOTS}" "${BLOCK_BEFORE_ERROR_LINES}"
+  elif [[ "${SCENARIO_EXPECTS_QUERY_SNAPSHOT}" == true ]]; then
     wait_for_new_event_count query_snapshot "${BLOCK_BEFORE_SNAPSHOTS}" "${BLOCK_BEFORE_ERROR_LINES}"
   fi
-  wait_for_new_event_count query_transport_published "${BLOCK_BEFORE_PUBLICATIONS}" "${BLOCK_BEFORE_ERROR_LINES}"
-  BLOCK_PUBLICATION=$(grep -F '"event":"query_transport_published"' "${RUST_LOG}" \
-    | tail -n +$((BLOCK_BEFORE_PUBLICATIONS + 1)) | head -1)
-  if ! printf '%s\n' "${BLOCK_PUBLICATION}" | jq -e \
+  if [[ "${relation_mode}" == multi ]]; then
+    wait_for_new_event_count query_multi_transport_published "${BLOCK_BEFORE_PUBLICATIONS}" "${BLOCK_BEFORE_ERROR_LINES}"
+    validate_multi_relation_receipts_since \
+      "${BLOCK_BEFORE_SNAPSHOTS}" "${BLOCK_BEFORE_PUBLICATIONS}" "${BLOCK_BEFORE_TRANSPORTS}" \
+      "" false
+    # This query is deliberately stopped while relation 0 waits on the real
+    # lock. Its first publication is proof of physical entry, not proof that
+    # relation 1 or terminal ordered execution was reached.
+    BLOCK_PUBLICATION=$(grep -F '"event":"query_multi_transport_published"' "${RUST_LOG}" \
+      | tail -n +$((BLOCK_BEFORE_PUBLICATIONS + 1)) | head -1)
+  else
+    wait_for_new_event_count query_transport_published "${BLOCK_BEFORE_PUBLICATIONS}" "${BLOCK_BEFORE_ERROR_LINES}"
+    BLOCK_PUBLICATION=$(grep -F '"event":"query_transport_published"' "${RUST_LOG}" \
+      | tail -n +$((BLOCK_BEFORE_PUBLICATIONS + 1)) | head -1)
+  fi
+  if [[ "${relation_mode}" == multi ]]; then
+    if ! printf '%s\n' "${BLOCK_PUBLICATION}" | jq -e \
+      --argjson left "${LEFT_TABLE_ID}" \
+      --arg connection "${PERSISTENT_CONNECTION_ID}" \
+      --arg authority "${AUTHORITY_ID}" --arg session "${PERSISTENT_SESSION_ID}" \
+      '(.relation == 0) and (.table_id == $left)
+       and (.connection_id | tostring) == $connection
+       and (.authority_id | tostring) == $authority
+       and (.session_id | tostring) == $session
+       and (.query_id | type) == "number" and .query_id > 0
+       and .forwarded_host == null' >/dev/null; then
+      echo "blocked query did not begin with one structurally valid relation-0 publication" >&2
+      printf '%s\n' "${BLOCK_PUBLICATION}" >&2
+      exit 1
+    fi
+  elif ! printf '%s\n' "${BLOCK_PUBLICATION}" | jq -e \
     --arg region "${REGION_ID}" --arg address "${ADDRESS_B}" \
     --arg connection "${PERSISTENT_CONNECTION_ID}" \
     --arg authority "${AUTHORITY_ID}" --arg session "${PERSISTENT_SESSION_ID}" \
@@ -1442,8 +1886,24 @@ run_live_sql_node_topology_scenario() {
     exit 1
   fi
   BLOCK_QUERY_ID=$(printf '%s\n' "${BLOCK_PUBLICATION}" | jq -r '.query_id')
+  if [[ "${relation_mode}" == multi ]] \
+    && ! grep -F '"event":"query_multi_transport_published"' "${RUST_LOG}" \
+      | tail -n +$((BLOCK_BEFORE_PUBLICATIONS + 1)) \
+      | jq -s -e --argjson query "${BLOCK_QUERY_ID}" --argjson left "${LEFT_TABLE_ID}" \
+        '[.[] | select(.query_id == $query)] as $publications
+         | ($publications | length) > 0
+           and all($publications[]; .relation == 0 and .table_id == $left)' >/dev/null; then
+    echo "blocked query reached relation 1 before its cancellation boundary" >&2
+    exit 1
+  fi
   BLOCK_SNAPSHOT=
-  if [[ "${SCENARIO_EXPECTS_QUERY_SNAPSHOT}" == true ]]; then
+  if [[ "${relation_mode}" == multi ]]; then
+    BLOCK_SNAPSHOT=$(grep -F '"event":"query_multi_snapshot"' "${RUST_LOG}" \
+      | tail -n +$((BLOCK_BEFORE_SNAPSHOTS + 1)) \
+      | jq -c --arg connection "${PERSISTENT_CONNECTION_ID}" --arg query "${BLOCK_QUERY_ID}" \
+        'select((.connection_id | tostring) == $connection and (.query_id | tostring) == $query)' \
+      | tail -1)
+  elif [[ "${SCENARIO_EXPECTS_QUERY_SNAPSHOT}" == true ]]; then
     BLOCK_SNAPSHOT=$(grep -F '"event":"query_snapshot"' "${RUST_LOG}" \
       | tail -n +$((BLOCK_BEFORE_SNAPSHOTS + 1)) \
       | jq -c --arg connection "${PERSISTENT_CONNECTION_ID}" --arg query "${BLOCK_QUERY_ID}" \
@@ -1473,15 +1933,26 @@ run_live_sql_node_topology_scenario() {
     echo "blocked query did not publish its correlated activity begin" >&2
     exit 1
   fi
+  if grep -E '"event":"query_ordered_(topn|limit)"' "${RUST_LOG}" \
+    | jq -e --argjson query "${BLOCK_QUERY_ID}" 'select(.query_id == $query)' >/dev/null; then
+    echo "blocked query completed ordered execution before cancellation" >&2
+    exit 1
+  fi
   kill -STOP "${RESTART_PID}"
   STOPPED_PIDS+=("${RESTART_PID}")
   sleep 0.5
-  BLOCK_TRANSPORTS=$(grep -F '"event":"query_transport"' "${RUST_LOG}" \
-    | tail -n +$((BLOCK_BEFORE_TRANSPORTS + 1)) | jq -s '.')
+  if [[ "${relation_mode}" == multi ]]; then
+    BLOCK_TRANSPORTS=$(grep -F '"event":"query_multi_transport"' "${RUST_LOG}" \
+      | tail -n +$((BLOCK_BEFORE_TRANSPORTS + 1)) | jq -s '.')
+  else
+    BLOCK_TRANSPORTS=$(grep -F '"event":"query_transport"' "${RUST_LOG}" \
+      | tail -n +$((BLOCK_BEFORE_TRANSPORTS + 1)) | jq -s '.')
+  fi
   BLOCK_ACTIVITIES=$(grep -F '"event":"query_activity"' "${RUST_LOG}" \
     | tail -n +$((BLOCK_BEFORE_ACTIVITIES + 1)) | jq -s '.')
   if ! pid_is_running "${PERSISTENT_CLIENT_PID}" \
     || [[ $(awk 'END { print NR + 0 }' "${PERSISTENT_CLIENT_OUTPUT}") -ge $((BLOCK_BEFORE_OUTPUT_LINES + 2)) ]] \
+    || [[ $(awk 'END { print NR + 0 }' "${PERSISTENT_CLIENT_ERROR}") -ne "${BLOCK_BEFORE_ERROR_LINES}" ]] \
     || ! printf '%s\n' "${BLOCK_TRANSPORTS}" | jq -e \
       --arg connection "${PERSISTENT_CONNECTION_ID}" --arg query "${BLOCK_QUERY_ID}" \
       'all(.[]; (.connection_id | tostring) != $connection or (.query_id | tostring) != $query)' >/dev/null \
@@ -1493,6 +1964,7 @@ run_live_sql_node_topology_scenario() {
     exit 1
   fi
 
+  BLOCK_ERROR_LINES_AT_TERM=$(awk 'END { print NR + 0 }' "${PERSISTENT_CLIENT_ERROR}")
   SHUTDOWN_STARTED_MS=$(now_millis)
   kill -TERM "${RUST_PID}"
   SHUTDOWN_BOUND_MS=$((SHUTDOWN_GRACE_MS + 2000))
@@ -1522,6 +1994,17 @@ run_live_sql_node_topology_scenario() {
     exit 1
   fi
 
+  # A forced persistent mysql client continues after the cancellation error and
+  # waits for its next input line. The FIFO writer can be inherited by helper
+  # processes, so EOF alone is not a reliable stop signal. Once the server has
+  # closed its side, send the client its explicit local quit command before closing
+  # our writer and waiting for the recorded cancellation to drain.
+  if [[ "${PERSISTENT_CLIENT_FD_OPEN}" == true ]]; then
+    printf '\\q\n' >&9
+    exec 9>&-
+    PERSISTENT_CLIENT_FD_OPEN=false
+  fi
+
   CLIENT_DEADLINE=$(( $(date +%s) + PROCESS_STOP_TIMEOUT ))
   if ! wait_for_pids_until "${CLIENT_DEADLINE}" "${PERSISTENT_CLIENT_PID}"; then
     echo "blocked stock client did not observe controlled cancellation" >&2
@@ -1531,13 +2014,17 @@ run_live_sql_node_topology_scenario() {
   wait "${PERSISTENT_CLIENT_PID}"
   BLOCK_CLIENT_STATUS=$?
   set -e
-  if [[ "${PERSISTENT_CLIENT_FD_OPEN}" == true ]]; then
-    exec 9>&-
-    PERSISTENT_CLIENT_FD_OPEN=false
-  fi
   CLIENT_PIDS=()
-  if [[ "${BLOCK_CLIENT_STATUS}" -eq 0 \
-    || $(awk 'END { print NR + 0 }' "${PERSISTENT_CLIENT_OUTPUT}") -ge $((BLOCK_BEFORE_OUTPUT_LINES + 2)) ]]; then
+  if [[ $(awk 'END { print NR + 0 }' "${PERSISTENT_CLIENT_OUTPUT}") -ge $((BLOCK_BEFORE_OUTPUT_LINES + 2)) ]]; then
+    echo "blocked stock client completed successfully instead of observing cancellation" >&2
+    exit 1
+  fi
+  if [[ "${PERSISTENT_CLIENT_FORCE}" == true ]]; then
+    if [[ $(awk 'END { print NR + 0 }' "${PERSISTENT_CLIENT_ERROR}") -le "${BLOCK_ERROR_LINES_AT_TERM}" ]]; then
+      echo "forced persistent stock client did not observe the blocked-query cancellation" >&2
+      exit 1
+    fi
+  elif [[ "${BLOCK_CLIENT_STATUS}" -eq 0 ]]; then
     echo "blocked stock client completed successfully instead of observing cancellation" >&2
     exit 1
   fi
@@ -1550,14 +2037,19 @@ run_live_sql_node_topology_scenario() {
   PREWRITE_FAILPOINT_ENABLED=false
 
   SHUTDOWN_EVENTS=$(grep -F '"event":"process_shutdown_stage"' "${RUST_LOG}" | jq -s '.')
+  EXPECTED_FORCED_CONNECTIONS=0
+  if [[ "${PERSISTENT_CLIENT_FORCE}" == true ]]; then
+    EXPECTED_FORCED_CONNECTIONS=1
+  fi
   if ! printf '%s\n' "${SHUTDOWN_EVENTS}" | jq -e \
+    --argjson forced_connections "${EXPECTED_FORCED_CONNECTIONS}" \
     'length == 4
      and [.[].stage] == ["connections", "region_cache", "tikv_transport", "pd"]
      and all(.[]; .outcome == "success")
      and .[0].active == 0
      and .[0].accepted == .[0].completed
      and .[0].failed == 0
-     and .[0].forced_connections == 0' >/dev/null; then
+     and .[0].forced_connections == $forced_connections' >/dev/null; then
     echo "${CAMPAIGN_LABEL} shutdown stages were not successful, ordered, and balanced" >&2
     printf '%s\n' "${SHUTDOWN_EVENTS}" >&2
     exit 1
@@ -1585,4 +2077,16 @@ run_live_sql_node_topology_scenario() {
   fi
   scenario_emit_success_receipt
 
+}
+
+# The original single-table runner remains the stable entry point for the
+# Campaign 22-24 scenarios. The two-relation entry point shares its process,
+# topology, cancellation, shutdown, and cleanup authority, but binds churn to
+# relation 0 and validates paired multi-relation receipts.
+run_live_sql_node_topology_scenario() {
+  run_live_sql_node_scenario_common single
+}
+
+run_live_sql_node_multi_relation_scenario() {
+  run_live_sql_node_scenario_common multi
 }

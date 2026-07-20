@@ -26,6 +26,7 @@ mod error;
 mod error_conversion;
 mod error_packet;
 mod packet;
+mod prepared_statement;
 mod result;
 mod result_encoder;
 mod resultset;
@@ -59,6 +60,13 @@ pub use error_packet::{encode_error_packet, ErrorPacket, ERR_HEADER};
 pub use packet::{
     PacketHeader, PacketIoReader, PacketIoWriter, PacketReader, PacketWriter,
     DEFAULT_MAX_ALLOWED_PACKET, MAX_PAYLOAD_LEN,
+};
+pub use prepared_statement::{
+    decode_prepared_statement_close, decode_prepared_statement_execute,
+    encode_binary_signed_longlong_row, encode_prepared_statement_prepare_response,
+    BinarySignedLongLongResultSetStream, PreparedParameterType, PreparedParameterTypes,
+    PreparedStatementError, PreparedStatementExecute, PreparedValue, MYSQL_TYPE_LONGLONG,
+    MYSQL_UNSIGNED_FLAG,
 };
 pub use result::{
     append_length_encoded_bytes, append_length_encoded_int, encode_text_row, is_string_column_type,

@@ -1,0 +1,50 @@
+schema = "1"
+slice = "server-live-prepared-point-read-proof"
+status = "covered"
+target = "tidb-server"
+ring = "result"
+consumer = "A pre-seeded one-thread custom prepared sysbench point-read run proves actual MySQL prepared traffic through the Rust TCP node to the C26-style real PD/TiKV topology and tag-owned cleanup."
+test_target = "run-campaign27-prepared-point-read-sql-node"
+go_sources = [
+  "cmd/tidb-server/main.go",
+  "pkg/server/internal/handshake/handshake.go",
+  "tests/realtikvtest/testkit.go",
+]
+go_tests = [
+  "cmd/tidb-server/main_test.go:0:main_test.go",
+  "cmd/tidb-server/main_test.go:36:TestMain",
+  "cmd/tidb-server/main_test.go:50:TestRunMain",
+  "cmd/tidb-server/main_test.go:56:TestExitCodeForSignal",
+  "cmd/tidb-server/main_test.go:70:TestExitCodeForSignal/<generated>",
+  "cmd/tidb-server/main_test.go:76:TestOverrideConfigKeyspaceActivateMode",
+  "cmd/tidb-server/main_test.go:97:TestSetGlobalVars",
+  "cmd/tidb-server/main_test.go:139:TestInitDeployMode",
+  "cmd/tidb-server/main_test.go:185:TestCreateMgrClientRequiresPodIdentityInStarter",
+  "cmd/tidb-server/main_test.go:235:TestSetVersionByConfigInNextGen",
+  "cmd/tidb-server/main_test.go:253:TestSetVersionByConfigInvalidNextGenReleaseVersion",
+  "cmd/tidb-server/main_test.go:267:TestSetVersionByConfigNormalizeLegacyPlaceholderForNextGen",
+  "cmd/tidb-server/main_test.go:277:TestSetupKeyspaceObservabilityForStarter",
+  "cmd/tidb-server/main_test.go:323:TestSetupKeyspaceObservabilityForStarterSkipsNonTiKV",
+  "tests/realtikvtest/pushdowntest/index_lookup_pushdown_test.go:156:TestRealTiKVIndexLookUpPushDown",
+  "tests/realtikvtest/pushdowntest/index_lookup_pushdown_test.go:210:TestCorrelatedIndexLookUpPushDownPreservesParentIdx",
+  "tests/realtikvtest/pushdowntest/index_lookup_pushdown_test.go:240:TestRealTiKVCommonHandleIndexLookUpPushDown",
+  "tests/realtikvtest/pushdowntest/index_lookup_pushdown_test.go:352:TestRealTiKVPartitionIndexLookUpPushDown",
+]
+depends_on = []
+evidence_prerequisites = [
+  { capability = "prepared-point-read-tcp", evidence_owner = "server-prepared-point-read-tcp-runtime", kind = "source", anchor = "pkg/server/conn.go", minimum_status = "PARTIAL" },
+]
+support_anchors = [
+  "Seed data through failpoint-enabled Go TiDB before Rust starts; the Rust binary must use actual PD/TiKV and a raw TCP prepared-statement client, never mock data or interfaces",
+  "Run exactly eight events through a single-thread custom prepared sysbench point read with a 30-second safety cap against the same Rust endpoint; prepared mode stays auto and no DDL/DML/setup or text-query fallback is part of this proof",
+  "Receipt correlates successful execute events with one real PD timestamp and TiKV transport, proves binary rows/type reuse/close and server event counts, then proves tag-owned process and runtime cleanup",
+]
+rust_paths = [
+  "rust/scripts/lib/live-sql-node-harness.sh",
+  "rust/scripts/mysql-prepared-client.py",
+  "rust/scripts/run-campaign27-prepared-point-read-sql-node.sh",
+  "rust/scripts/sysbench-prepared-point-select.lua",
+  "rust/scripts/test-live-sql-node-harness.sh",
+  "rust/difftests/corpus/coverage/evidence/source/server-live-prepared-point-read-proof.tsv",
+  "rust/difftests/corpus/coverage/evidence/tests/server-live-prepared-point-read-proof.tsv",
+]

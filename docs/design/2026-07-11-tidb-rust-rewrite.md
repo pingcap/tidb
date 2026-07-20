@@ -274,6 +274,12 @@ CI keeps both implementations honest during the multi-year overlap: every gramma
 
 Ordered by (value ÷ risk), each phase gated by its differential ring:
 
+### Completion bar for TLS and transactions
+
+The bounded plaintext read node and one normal optimistic 2PC path are stepping stones, not compatibility endpoints. Phase 2 includes a real MySQL TLS transport on the production listener: `CLIENT_SSL` negotiation upgrades the accepted socket before credentials are read, configured CA/certificate/key material is validated, TLS 1.2/1.3 policy and `require_secure_transport` match TiDB, certificate reload and AutoTLS have explicit lifecycle ownership, and stock MySQL clients prove plaintext rejection, encrypted authentication/query/prepared traffic, certificate verification, and reload. A parsed SSLRequest or an asserted `TransportKind::DirectTls` without a completed cryptographic handshake is not TLS support.
+
+Phase 3 includes the complete concrete TiDB/client-go transaction and batch-KV behavior required by the original source/test inventory, not only the currently admitted autocommit optimistic 2PC subset. This includes region-aware BatchGet/scan/write batching, explicit transaction state and statement staging, optimistic retries and cleanup, lock resolution and TTL heartbeats, pessimistic locks/rollback, primary and secondary recovery, 1PC and async commit eligibility/fallback, savepoint/option semantics used by TiDB, cancellation and undetermined-result boundaries, and the relevant failpoint/fault cases. All modes reuse one PD, RegionCache, lock resolver, BatchCommands transport, retry authority, and shutdown lifecycle. A second transaction client, an in-memory backend, or a mock transport cannot satisfy implementation or acceptance. Real-TiKV differential, fault-injection, Jepsen, sysbench, and TPC-C gates remain mandatory before the write phase is complete.
+
 | Phase | Deliverable | Reuses | New Rust LOC (est.) | Gate | Current status (2026-07-19) |
 |---|---|---|---|---|---|
 | 0 | `tidb-parser` + `tidb-ast` + `tidb-datatype` extraction | hparser design 1:1; TiKV datatype crate | 60-80k | Zero Rust regressions on accepted inputs, explicit rejection parity, and documented oracle failures | In progress: parser ring is clean except the pinned Go `json_memberof()` failure; source/test obligations remain |

@@ -1,0 +1,1840 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+use std::collections::VecDeque;
+use std::fmt;
+use std::time::{Duration, Instant};
+
+use tidb_pd_client::PdClient;
+use tidb_proto::{
+    KvrpcAssertionLevel, KvrpcBatchRollbackRequest, KvrpcCommitRequest, KvrpcCommitRole,
+    KvrpcCommitTsExpired, KvrpcGetRequest, KvrpcGetResponse, KvrpcKeyError, KvrpcPrewriteRequest,
+    KvrpcPrewriteResponse,
+};
+
+use crate::lock::{
+    decode_lock_observation, resolve_optimistic_locks, LockRecoveryResult, TimestampSource,
+};
+use crate::region::{RegionBackoffBudget, RegionErrorDisposition};
+use crate::rpc::{
+    TonicCoprocessorClient, TransactionBatchPublication, TransactionBatchResponse, UnaryCallContext,
+};
+use crate::{PdRegionLoader, SharedReadOpener, SharedReadRuntime};
+
+use super::mutation::{validate_and_sort, validate_plan, MutationSetError, OptimisticMutation};
+use super::region_batches::{
+    group_keys, group_mutations, point_route, RegionKeyBatch, RegionMutationBatch,
+};
+use super::state::{
+    CleanupBatchFailure, CleanupFailedTransaction, CommittedTransaction, CoordinatorState,
+    OptimisticCommitOutcome, OptimisticTransactionReceipt, OptimisticTransactionState,
+    ReadOnlyTransaction, RolledBackTransaction, SecondaryCommitFailure, SnapshotReadReceipt,
+    TransactionAttemptPhase, TransactionAttemptReceipt, TransactionAttemptResult, TransactionCause,
+    UndeterminedTransaction,
+};
+
+const DEFAULT_LOCK_TTL_MS: u64 = 3_000;
+const MAX_LOCK_ATTEMPTS: usize = 4;
+const TSO_LOGICAL_BITS: u32 = 18;
+const MAX_COMMIT_TS_DRIFT_MS: u64 = 60 * 60 * 1_000;
+
+/// Concrete process/session authority errors rejected before a transaction opens.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum OptimisticCoordinatorError {
+    /// PD and RegionCache must describe the same real cluster.
+    ClusterMismatch {
+        /// Cluster ID reported by the sole PD worker.
+        pd: u64,
+        /// Cluster ID reported by the shared RegionCache loader.
+        region_cache: u64,
+    },
+    /// Real cluster identity cannot be zero.
+    ZeroClusterId,
+    /// Real PD timestamp allocation failed.
+    Timestamp(String),
+    /// The caller supplied an invalid mutation set.
+    Mutations(MutationSetError),
+    /// A real snapshot Get could not produce a determinate result.
+    SnapshotGet(String),
+}
+
+impl fmt::Display for OptimisticCoordinatorError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ClusterMismatch { pd, region_cache } => write!(
+                formatter,
+                "PD cluster {pd} does not match RegionCache cluster {region_cache}"
+            ),
+            Self::ZeroClusterId => {
+                formatter.write_str("real optimistic 2PC requires a nonzero cluster ID")
+            }
+            Self::Timestamp(error) => write!(formatter, "PD timestamp allocation failed: {error}"),
+            Self::Mutations(error) => error.fmt(formatter),
+            Self::SnapshotGet(error) => write!(formatter, "snapshot Get failed: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for OptimisticCoordinatorError {}
+
+/// Result of one real transactional point Get at the transaction start timestamp.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SnapshotGetResult {
+    /// Real PD snapshot timestamp shared with later Prewrite.
+    pub start_ts: u64,
+    /// `None` means TiKV returned `not_found` at exactly `start_ts`.
+    pub value: Option<Vec<u8>>,
+    /// Exact region epoch that served the successful Get.
+    pub region: crate::region::RegionVerId,
+    /// Physical BatchCommands publication that produced the value.
+    pub publication: TransactionBatchPublication,
+}
+
+/// Process-level opener for concrete normal optimistic transactions.
+///
+/// It holds only a cloneable session opener and the cloneable capability for
+/// the already-running PD worker. The unique RegionCache maintenance and TiKV
+/// transport lifecycle owners remain with the process that supplied them.
+pub struct RealOptimisticTransactionOpener {
+    opener: crate::SharedReadOpener<TonicCoprocessorClient, PdRegionLoader>,
+    pd: PdClient,
+    timeout: Duration,
+}
+
+impl Clone for RealOptimisticTransactionOpener {
+    fn clone(&self) -> Self {
+        Self {
+            opener: self.opener.clone(),
+            pd: self.pd.clone(),
+            timeout: self.timeout,
+        }
+    }
+}
+
+impl RealOptimisticTransactionOpener {
+    /// Derives transaction-opening capability from the already-running shared
+    /// read authority. This starts no PD, RegionCache, or transport worker.
+    pub fn from_process_capabilities(
+        opener: SharedReadOpener<TonicCoprocessorClient, PdRegionLoader>,
+        pd: PdClient,
+        timeout: Duration,
+    ) -> Result<Self, OptimisticCoordinatorError> {
+        if pd.cluster_id() == 0 {
+            return Err(OptimisticCoordinatorError::ZeroClusterId);
+        }
+        Ok(Self {
+            opener,
+            pd,
+            timeout,
+        })
+    }
+
+    /// Stable shared process authority identity.
+    #[must_use]
+    pub fn authority_id(&self) -> u64 {
+        self.opener.authority_id()
+    }
+
+    /// Opens a worker-local transaction over the existing process authorities.
+    pub fn begin(
+        &self,
+        planned_mutation_count: usize,
+        planned_aggregate_bytes: usize,
+    ) -> Result<RealOptimisticTransaction, OptimisticCoordinatorError> {
+        validate_plan(planned_mutation_count, planned_aggregate_bytes)
+            .map_err(OptimisticCoordinatorError::Mutations)?;
+        let opened_at = Instant::now();
+        let runtime = self
+            .opener
+            .open_session()
+            .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+        if runtime.cluster_id() != self.pd.cluster_id() {
+            return Err(OptimisticCoordinatorError::ClusterMismatch {
+                pd: self.pd.cluster_id(),
+                region_cache: runtime.cluster_id(),
+            });
+        }
+        let start_ts = self
+            .pd
+            .get_timestamp()
+            .map_err(|error| OptimisticCoordinatorError::Timestamp(error.to_string()))?;
+        if start_ts == 0 {
+            return Err(OptimisticCoordinatorError::Timestamp(
+                "PD returned zero start timestamp".to_owned(),
+            ));
+        }
+        Ok(RealOptimisticTransaction {
+            runtime,
+            pd: self.pd.clone(),
+            timeout: self.timeout,
+            start_ts,
+            planned_mutation_count,
+            planned_aggregate_bytes,
+            state: CoordinatorState::New,
+            snapshot_reads: Vec::new(),
+            opened_at,
+            authority_id: self.opener.authority_id(),
+            forward_backoff: RegionBackoffBudget::campaign_default(),
+            secondary_backoff: RegionBackoffBudget::campaign_default(),
+            cleanup_backoff: RegionBackoffBudget::campaign_default(),
+        })
+    }
+}
+
+/// One concrete normal optimistic transaction fixed to a real PD `start_ts`.
+pub struct RealOptimisticTransaction {
+    runtime: SharedReadRuntime<TonicCoprocessorClient, PdRegionLoader>,
+    pd: PdClient,
+    timeout: Duration,
+    start_ts: u64,
+    planned_mutation_count: usize,
+    planned_aggregate_bytes: usize,
+    state: CoordinatorState,
+    snapshot_reads: Vec<SnapshotReadReceipt>,
+    opened_at: Instant,
+    authority_id: u64,
+    forward_backoff: RegionBackoffBudget,
+    secondary_backoff: RegionBackoffBudget,
+    cleanup_backoff: RegionBackoffBudget,
+}
+
+impl RealOptimisticTransaction {
+    /// Snapshot timestamp allocated before any read or write.
+    #[must_use]
+    pub const fn start_ts(&self) -> u64 {
+        self.start_ts
+    }
+
+    /// Shared process authority identity used by reads and writes.
+    #[must_use]
+    pub const fn authority_id(&self) -> u64 {
+        self.authority_id
+    }
+
+    /// Reads one encoded key at this transaction's exact start timestamp.
+    pub fn snapshot_get(
+        &mut self,
+        key: &[u8],
+        call: &UnaryCallContext,
+    ) -> Result<SnapshotGetResult, OptimisticCoordinatorError> {
+        if key.is_empty() {
+            return Err(OptimisticCoordinatorError::SnapshotGet(
+                "encoded key is empty".to_owned(),
+            ));
+        }
+        self.state
+            .transition(CoordinatorState::Reading)
+            .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+        let mut lock_attempts = 0usize;
+        loop {
+            let route = point_route(&self.runtime, key)
+                .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+            let request = KvrpcGetRequest {
+                key: key.to_vec(),
+                version: self.start_ts,
+                need_commit_ts: true,
+                ..KvrpcGetRequest::default()
+            };
+            let response = self.begin_get(&route, &request, call)?;
+            if let Some(region_error) = response.response.region_error.as_ref() {
+                self.recover_region_error(
+                    RecoveryPhase::Forward,
+                    region_error,
+                    route.attempt(),
+                    call,
+                )
+                .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+                continue;
+            }
+            if let Some(key_error) = response.response.error.as_ref() {
+                if let Some(lock_info) = key_error.locked.as_ref() {
+                    let locks = decode_lock_observation(lock_info).map_err(|error| {
+                        OptimisticCoordinatorError::SnapshotGet(error.to_string())
+                    })?;
+                    let timestamps = PdLockTimestampSource(self.pd.clone());
+                    match resolve_optimistic_locks(
+                        &self.runtime,
+                        &locks,
+                        self.start_ts,
+                        route.context(),
+                        call,
+                        &timestamps,
+                    )
+                    .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?
+                    {
+                        LockRecoveryResult::Resolved(_) if lock_attempts < MAX_LOCK_ATTEMPTS => {
+                            lock_attempts += 1;
+                            continue;
+                        }
+                        LockRecoveryResult::Resolved(_) => {
+                            return Err(OptimisticCoordinatorError::SnapshotGet(
+                                "snapshot lock retry budget exhausted".to_owned(),
+                            ));
+                        }
+                        LockRecoveryResult::Alive(wait) => {
+                            if lock_attempts >= MAX_LOCK_ATTEMPTS {
+                                return Err(OptimisticCoordinatorError::SnapshotGet(
+                                    "snapshot lock retry budget exhausted".to_owned(),
+                                ));
+                            }
+                            wait_with_call(call, alive_retry_delay(wait)).map_err(|error| {
+                                OptimisticCoordinatorError::SnapshotGet(error.to_string())
+                            })?;
+                            lock_attempts += 1;
+                            continue;
+                        }
+                    }
+                }
+                return Err(OptimisticCoordinatorError::SnapshotGet(format!(
+                    "TiKV key error: {key_error:?}"
+                )));
+            }
+            let value = if response.response.not_found {
+                None
+            } else {
+                Some(response.response.value)
+            };
+            let result = SnapshotGetResult {
+                start_ts: self.start_ts,
+                value,
+                region: route.region(),
+                publication: response.publication,
+            };
+            self.snapshot_reads.push(SnapshotReadReceipt {
+                key: key.to_vec(),
+                region: route.region(),
+                publication: result.publication.clone(),
+            });
+            return Ok(result);
+        }
+    }
+
+    /// Completes a missing or unchanged UPDATE with no write publication.
+    pub fn finish_without_writes(
+        mut self,
+    ) -> Result<ReadOnlyTransaction, OptimisticCoordinatorError> {
+        self.state
+            .transition(CoordinatorState::ReadOnly)
+            .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+        Ok(ReadOnlyTransaction {
+            authority_id: self.authority_id,
+            start_ts: self.start_ts,
+            state: OptimisticTransactionState::ReadOnly,
+            snapshot_reads: self.snapshot_reads,
+        })
+    }
+
+    /// Consumes this snapshot into one normal optimistic two-phase commit.
+    pub fn commit(
+        mut self,
+        mutations: Vec<OptimisticMutation>,
+        call: &UnaryCallContext,
+    ) -> Result<OptimisticCommitOutcome, OptimisticCoordinatorError> {
+        let mutations =
+            validate_and_sort(mutations).map_err(OptimisticCoordinatorError::Mutations)?;
+        let actual_bytes = mutations
+            .iter()
+            .try_fold(0usize, |size, mutation| {
+                size.checked_add(mutation.key().len())?
+                    .checked_add(mutation.value().len())
+            })
+            .unwrap_or(usize::MAX);
+        if mutations.len() > self.planned_mutation_count {
+            return Err(OptimisticCoordinatorError::Mutations(
+                MutationSetError::TooManyMutations {
+                    count: mutations.len(),
+                    limit: self.planned_mutation_count,
+                },
+            ));
+        }
+        if actual_bytes > self.planned_aggregate_bytes {
+            return Err(OptimisticCoordinatorError::Mutations(
+                MutationSetError::TransactionTooLarge {
+                    size: actual_bytes,
+                    limit: self.planned_aggregate_bytes,
+                },
+            ));
+        }
+        self.state
+            .transition(CoordinatorState::Prewriting)
+            .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+        let primary_key = mutations[0].key().to_vec();
+        let mut receipt = OptimisticTransactionReceipt::new(
+            self.authority_id,
+            self.start_ts,
+            primary_key.clone(),
+            mutations.len(),
+        );
+        let lock_ttl_ms = transaction_lock_ttl_ms(self.opened_at, actual_bytes);
+        receipt.lock_ttl_ms = lock_ttl_ms;
+        let mut possibly_prewrite_keys = Vec::<Vec<u8>>::new();
+        let mut min_commit_ts = self.start_ts.saturating_add(1);
+        let mut queue = match group_mutations(&self.runtime, &mutations) {
+            Ok(batches) => VecDeque::from(
+                batches
+                    .into_iter()
+                    .map(|batch| (batch, false))
+                    .collect::<Vec<_>>(),
+            ),
+            Err(error) => {
+                return Ok(self.rollback_after_failure(
+                    receipt,
+                    &[],
+                    TransactionCause::Region {
+                        detail: format!("initial region grouping failed: {error}"),
+                    },
+                ));
+            }
+        };
+        let mut lock_attempts = 0usize;
+
+        while let Some((batch, is_retry)) = queue.pop_front() {
+            receipt.region_attempts.push(batch.region());
+            let published_keys = batch.keys();
+            match self.prewrite_batch(
+                &batch,
+                &primary_key,
+                mutations.len(),
+                lock_ttl_ms,
+                is_retry,
+                call,
+            ) {
+                PublishedCommand::Response(response) => {
+                    possibly_prewrite_keys.extend(published_keys.iter().cloned());
+                    receipt
+                        .prewrite_attempt_publications
+                        .push(response.publication.clone());
+                    if let Some(region_error) = response.response.region_error.as_ref() {
+                        let region_cause = TransactionCause::Region {
+                            detail: format!("Prewrite region retry: {region_error:?}"),
+                        };
+                        if let Err(cause) = self.recover_region_error(
+                            RecoveryPhase::Forward,
+                            region_error,
+                            batch.attempt(),
+                            call,
+                        ) {
+                            record_attempt(
+                                &mut receipt,
+                                TransactionAttemptPhase::Prewrite,
+                                &published_keys,
+                                &batch,
+                                Some(response.publication.clone()),
+                                TransactionAttemptResult::DefinitiveFailure(cause.clone()),
+                            );
+                            return Ok(self.rollback_after_failure(
+                                receipt,
+                                &possibly_prewrite_keys,
+                                cause,
+                            ));
+                        }
+                        record_attempt(
+                            &mut receipt,
+                            TransactionAttemptPhase::Prewrite,
+                            &published_keys,
+                            &batch,
+                            Some(response.publication.clone()),
+                            TransactionAttemptResult::Retry(region_cause),
+                        );
+                        match group_mutations(&self.runtime, batch.mutations()) {
+                            Ok(regrouped) => {
+                                for regrouped_batch in regrouped.into_iter().rev() {
+                                    queue.push_front((regrouped_batch, true));
+                                }
+                                continue;
+                            }
+                            Err(error) => {
+                                return Ok(self.rollback_after_failure(
+                                    receipt,
+                                    &possibly_prewrite_keys,
+                                    TransactionCause::Region {
+                                        detail: format!("cannot regroup Prewrite keys: {error}"),
+                                    },
+                                ));
+                            }
+                        }
+                    }
+                    if !response.response.errors.is_empty() {
+                        match self.handle_prewrite_key_errors(
+                            &response.response.errors,
+                            batch.context(),
+                            call,
+                        ) {
+                            Ok(()) if lock_attempts < MAX_LOCK_ATTEMPTS => {
+                                record_attempt(
+                                    &mut receipt,
+                                    TransactionAttemptPhase::Prewrite,
+                                    &published_keys,
+                                    &batch,
+                                    Some(response.publication.clone()),
+                                    TransactionAttemptResult::Retry(TransactionCause::Lock {
+                                        key: primary_key.clone(),
+                                        detail: "Prewrite lock resolved or waited; retrying at the same start_ts".to_owned(),
+                                    }),
+                                );
+                                lock_attempts += 1;
+                                queue.push_front((batch, true));
+                                continue;
+                            }
+                            Ok(()) => {
+                                let cause = TransactionCause::Lock {
+                                    key: primary_key.clone(),
+                                    detail: "Prewrite lock retry budget exhausted".to_owned(),
+                                };
+                                record_attempt(
+                                    &mut receipt,
+                                    TransactionAttemptPhase::Prewrite,
+                                    &published_keys,
+                                    &batch,
+                                    Some(response.publication.clone()),
+                                    TransactionAttemptResult::DefinitiveFailure(cause.clone()),
+                                );
+                                return Ok(self.rollback_after_failure(
+                                    receipt,
+                                    &possibly_prewrite_keys,
+                                    cause,
+                                ));
+                            }
+                            Err(cause) => {
+                                record_attempt(
+                                    &mut receipt,
+                                    TransactionAttemptPhase::Prewrite,
+                                    &published_keys,
+                                    &batch,
+                                    Some(response.publication.clone()),
+                                    TransactionAttemptResult::DefinitiveFailure(cause.clone()),
+                                );
+                                return Ok(self.rollback_after_failure(
+                                    receipt,
+                                    &possibly_prewrite_keys,
+                                    cause,
+                                ));
+                            }
+                        }
+                    }
+                    min_commit_ts = min_commit_ts.max(response.response.min_commit_ts);
+                    record_attempt(
+                        &mut receipt,
+                        TransactionAttemptPhase::Prewrite,
+                        &published_keys,
+                        &batch,
+                        Some(response.publication.clone()),
+                        TransactionAttemptResult::Confirmed,
+                    );
+                    receipt.prewrite_publications.push(response.publication);
+                }
+                PublishedCommand::BeforePublication(error) => {
+                    let cause = TransactionCause::Transport {
+                        detail: format!("Prewrite failed before publication: {error}"),
+                    };
+                    record_attempt(
+                        &mut receipt,
+                        TransactionAttemptPhase::Prewrite,
+                        &published_keys,
+                        &batch,
+                        None,
+                        TransactionAttemptResult::DefinitiveFailure(cause.clone()),
+                    );
+                    return Ok(self.rollback_after_failure(
+                        receipt,
+                        &possibly_prewrite_keys,
+                        cause,
+                    ));
+                }
+                PublishedCommand::AfterPublication { publication, error } => {
+                    possibly_prewrite_keys.extend(published_keys.iter().cloned());
+                    receipt
+                        .prewrite_attempt_publications
+                        .push(publication.clone());
+                    let cause = TransactionCause::Transport {
+                        detail: format!("Prewrite completion failed after publication: {error}"),
+                    };
+                    record_attempt(
+                        &mut receipt,
+                        TransactionAttemptPhase::Prewrite,
+                        &published_keys,
+                        &batch,
+                        Some(publication),
+                        TransactionAttemptResult::DefinitiveFailure(cause.clone()),
+                    );
+                    return Ok(self.rollback_after_failure(
+                        receipt,
+                        &possibly_prewrite_keys,
+                        cause,
+                    ));
+                }
+            }
+        }
+
+        self.state
+            .transition(CoordinatorState::Prewritten)
+            .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+
+        let commit_ts = match self.commit_timestamp(min_commit_ts, call) {
+            Ok(timestamp) => timestamp,
+            Err(error) => {
+                return Ok(self.rollback_after_failure(receipt, &possibly_prewrite_keys, error));
+            }
+        };
+        receipt.commit_ts = commit_ts;
+
+        let all_mutation_keys = mutations
+            .iter()
+            .map(|mutation| mutation.key().to_vec())
+            .collect::<Vec<_>>();
+
+        self.state
+            .transition(CoordinatorState::PrimaryCommitting)
+            .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+
+        let committed_primary_batch_keys = match self.commit_primary(
+            &all_mutation_keys,
+            &primary_key,
+            commit_ts,
+            call,
+            &mut receipt,
+        ) {
+            PrimaryResult::Committed(keys) => keys,
+            PrimaryResult::DefinitiveFailure(error) => {
+                return Ok(self.rollback_after_failure(receipt, &possibly_prewrite_keys, error));
+            }
+            PrimaryResult::Undetermined(error) => {
+                self.state
+                    .transition(CoordinatorState::Undetermined)
+                    .map_err(|cause| OptimisticCoordinatorError::SnapshotGet(cause.to_string()))?;
+                return Ok(OptimisticCommitOutcome::Undetermined(
+                    UndeterminedTransaction {
+                        receipt,
+                        cause: error,
+                    },
+                ));
+            }
+        };
+        self.state
+            .transition(CoordinatorState::PrimaryCommitted)
+            .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+
+        let secondary_keys = mutations
+            .iter()
+            .filter(|mutation| {
+                !committed_primary_batch_keys
+                    .iter()
+                    .any(|key| key.as_slice() == mutation.key())
+            })
+            .map(|mutation| mutation.key().to_vec())
+            .collect::<Vec<_>>();
+        if !secondary_keys.is_empty() {
+            self.state
+                .transition(CoordinatorState::SecondariesCommitting)
+                .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+        }
+        let secondary_failures = self.commit_secondaries(
+            &secondary_keys,
+            &primary_key,
+            receipt.commit_ts,
+            &mut receipt,
+        );
+        self.state
+            .transition(CoordinatorState::Committed)
+            .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+        Ok(OptimisticCommitOutcome::Committed(CommittedTransaction {
+            receipt,
+            secondary_failures,
+        }))
+    }
+
+    fn begin_get(
+        &self,
+        route: &RegionKeyBatch,
+        request: &KvrpcGetRequest,
+        call: &UnaryCallContext,
+    ) -> Result<TransactionBatchResponse<KvrpcGetResponse>, OptimisticCoordinatorError> {
+        let mut pending = self
+            .runtime
+            .client()
+            .try_borrow_mut()
+            .map_err(|_| {
+                OptimisticCoordinatorError::SnapshotGet(
+                    "TiKV client is already borrowed".to_owned(),
+                )
+            })?
+            .begin_transaction_get(route.address(), None, request, route.context(), call)
+            .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+        pending
+            .complete(call)
+            .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?
+            .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))
+    }
+
+    fn prewrite_batch(
+        &self,
+        batch: &RegionMutationBatch,
+        primary_key: &[u8],
+        transaction_size: usize,
+        lock_ttl_ms: u64,
+        is_retry: bool,
+        call: &UnaryCallContext,
+    ) -> PublishedCommand<KvrpcPrewriteResponse> {
+        let mut request = KvrpcPrewriteRequest {
+            mutations: batch
+                .mutations()
+                .iter()
+                .map(OptimisticMutation::to_proto)
+                .collect(),
+            primary_lock: primary_key.to_vec(),
+            start_version: self.start_ts,
+            lock_ttl: lock_ttl_ms,
+            txn_size: u64::try_from(transaction_size).unwrap_or(u64::MAX),
+            use_async_commit: false,
+            try_one_pc: false,
+            assertion_level: KvrpcAssertionLevel::Strict as i32,
+            ..KvrpcPrewriteRequest::default()
+        };
+        request.context = None;
+        let mut context = batch.context().clone();
+        context.is_retry_request = is_retry;
+        let pending = self
+            .runtime
+            .client()
+            .try_borrow_mut()
+            .map_err(|_| "TiKV client is already borrowed while publishing Prewrite".to_owned())
+            .and_then(|mut client| {
+                client
+                    .begin_transaction_prewrite(batch.address(), None, &request, &context, call)
+                    .map_err(|error| error.to_string())
+            });
+        complete_published(pending, call)
+    }
+
+    fn handle_prewrite_key_errors(
+        &self,
+        errors: &[KvrpcKeyError],
+        context: &tidb_proto::KvrpcContext,
+        call: &UnaryCallContext,
+    ) -> Result<(), TransactionCause> {
+        let mut eligible_locks = Vec::new();
+        for error in errors {
+            let Some(lock_info) = error.locked.as_ref() else {
+                return Err(classify_key_error(error));
+            };
+            let locks = decode_lock_observation(lock_info).map_err(|error| {
+                TransactionCause::InvalidResponse {
+                    detail: format!("invalid Prewrite lock observation: {error}"),
+                }
+            })?;
+            for lock in locks {
+                if lock.txn_id > self.start_ts {
+                    return Err(TransactionCause::WriteConflict {
+                        detail: format!(
+                            "Prewrite observed newer optimistic lock txn_id={} start_ts={}",
+                            lock.txn_id, self.start_ts
+                        ),
+                    });
+                }
+                eligible_locks.push(lock);
+            }
+        }
+        if eligible_locks.is_empty() {
+            return Err(TransactionCause::InvalidResponse {
+                detail: "Prewrite returned an empty KeyError set".to_owned(),
+            });
+        }
+        let timestamps = PdLockTimestampSource(self.pd.clone());
+        match resolve_optimistic_locks(
+            &self.runtime,
+            &eligible_locks,
+            self.start_ts,
+            context,
+            call,
+            &timestamps,
+        )
+        .map_err(|error| TransactionCause::Lock {
+            key: eligible_locks[0].key.clone(),
+            detail: format!("Prewrite lock recovery failed: {error}"),
+        })? {
+            LockRecoveryResult::Resolved(_) => Ok(()),
+            LockRecoveryResult::Alive(wait) if alive_retry_delay(wait) <= call.timeout() => {
+                wait_with_call(call, alive_retry_delay(wait))?;
+                Ok(())
+            }
+            LockRecoveryResult::Alive(wait) => Err(TransactionCause::Lock {
+                key: eligible_locks[0].key.clone(),
+                detail: format!(
+                    "Prewrite lock remains alive for {wait:?}, beyond transaction deadline"
+                ),
+            }),
+        }
+    }
+
+    fn recover_region_error(
+        &mut self,
+        phase: RecoveryPhase,
+        error: &tidb_proto::RegionError,
+        attempt: &crate::region::RegionAttempt,
+        call: &UnaryCallContext,
+    ) -> Result<(), TransactionCause> {
+        let backoff = match phase {
+            RecoveryPhase::Forward => &mut self.forward_backoff,
+            RecoveryPhase::Secondary => &mut self.secondary_backoff,
+            RecoveryPhase::Cleanup => &mut self.cleanup_backoff,
+        };
+        let disposition = self
+            .runtime
+            .region_cache_handle()
+            .on_region_error(error, attempt.clone(), backoff)
+            .map_err(|error| TransactionCause::Region {
+                detail: format!("RegionCache recovery lifecycle failed: {error}"),
+            })?
+            .map_err(|error| TransactionCause::Region {
+                detail: format!("RegionCache rejected region error: {error}"),
+            })?;
+        let delay = match disposition {
+            RegionErrorDisposition::RetryRoute { delay, .. }
+            | RegionErrorDisposition::RetrySelector { delay, .. }
+            | RegionErrorDisposition::RebuildRanges { delay, .. } => delay,
+            RegionErrorDisposition::ReturnRegionError => {
+                return Err(TransactionCause::Region {
+                    detail: format!("TiKV returned non-retryable region error: {error:?}"),
+                });
+            }
+            RegionErrorDisposition::Terminal(terminal) => {
+                return Err(TransactionCause::Region {
+                    detail: format!("TiKV returned terminal region error: {terminal:?}"),
+                });
+            }
+        };
+        wait_with_call(call, delay)
+    }
+
+    fn commit_timestamp(
+        &self,
+        minimum: u64,
+        call: &UnaryCallContext,
+    ) -> Result<u64, TransactionCause> {
+        for _ in 0..MAX_LOCK_ATTEMPTS {
+            if call.cancellation().is_cancelled() || call.timeout().is_zero() {
+                return Err(TransactionCause::Transport {
+                    detail: "commit timestamp allocation was cancelled".to_owned(),
+                });
+            }
+            let timestamp =
+                self.pd
+                    .get_timestamp()
+                    .map_err(|error| TransactionCause::Timestamp {
+                        detail: format!("cannot allocate commit timestamp: {error}"),
+                    })?;
+            if call.cancellation().is_cancelled() || call.timeout().is_zero() {
+                return Err(TransactionCause::Transport {
+                    detail: "commit timestamp completed after cancellation".to_owned(),
+                });
+            }
+            if timestamp > self.start_ts && timestamp >= minimum {
+                return Ok(timestamp);
+            }
+        }
+        Err(TransactionCause::Timestamp {
+            detail: format!(
+                "PD did not return commit_ts >= {minimum} and > {}",
+                self.start_ts
+            ),
+        })
+    }
+
+    fn commit_primary(
+        &mut self,
+        primary_batch_keys: &[Vec<u8>],
+        primary_key: &[u8],
+        mut commit_ts: u64,
+        call: &UnaryCallContext,
+        receipt: &mut OptimisticTransactionReceipt,
+    ) -> PrimaryResult {
+        let mut attempt = 0usize;
+        loop {
+            let routes = match group_keys(&self.runtime, primary_batch_keys) {
+                Ok(routes) => routes,
+                Err(error) => {
+                    return PrimaryResult::DefinitiveFailure(TransactionCause::Region {
+                        detail: format!("primary Commit regroup failed: {error}"),
+                    });
+                }
+            };
+            let Some(route) = routes
+                .into_iter()
+                .find(|batch| batch.keys().iter().any(|key| key.as_slice() == primary_key))
+            else {
+                return PrimaryResult::DefinitiveFailure(TransactionCause::InvalidResponse {
+                    detail: "primary Commit regroup lost deterministic primary key".to_owned(),
+                });
+            };
+            receipt.region_attempts.push(route.region());
+            let request = KvrpcCommitRequest {
+                start_version: self.start_ts,
+                keys: route.keys().to_vec(),
+                commit_version: commit_ts,
+                commit_role: KvrpcCommitRole::Primary as i32,
+                primary_key: primary_key.to_vec(),
+                use_async_commit: false,
+                ..KvrpcCommitRequest::default()
+            };
+            let mut context = route.context().clone();
+            context.is_retry_request = attempt > 0;
+            let pending = self
+                .runtime
+                .client()
+                .try_borrow_mut()
+                .map_err(|_| {
+                    "TiKV client is already borrowed while publishing primary Commit".to_owned()
+                })
+                .and_then(|mut client| {
+                    client
+                        .begin_transaction_commit(route.address(), None, &request, &context, call)
+                        .map_err(|error| error.to_string())
+                });
+            match complete_published(pending, call) {
+                PublishedCommand::BeforePublication(error) => {
+                    let cause = TransactionCause::Transport {
+                        detail: format!("primary Commit failed before publication: {error}"),
+                    };
+                    record_attempt(
+                        receipt,
+                        TransactionAttemptPhase::PrimaryCommit,
+                        route.keys(),
+                        &route,
+                        None,
+                        TransactionAttemptResult::DefinitiveFailure(cause.clone()),
+                    );
+                    return PrimaryResult::DefinitiveFailure(cause);
+                }
+                PublishedCommand::AfterPublication { publication, error } => {
+                    receipt.primary_publications.push(publication.clone());
+                    let cause = TransactionCause::Transport {
+                        detail: format!(
+                            "primary Commit completion failed after publication: {error}"
+                        ),
+                    };
+                    record_attempt(
+                        receipt,
+                        TransactionAttemptPhase::PrimaryCommit,
+                        route.keys(),
+                        &route,
+                        Some(publication),
+                        TransactionAttemptResult::Ambiguous(cause.clone()),
+                    );
+                    return PrimaryResult::Undetermined(cause);
+                }
+                PublishedCommand::Response(response) => {
+                    receipt
+                        .primary_publications
+                        .push(response.publication.clone());
+                    if let Some(region_error) = response.response.region_error.as_ref() {
+                        if primary_region_response_is_ambiguous(region_error) {
+                            let cause = TransactionCause::Region {
+                                detail: format!("primary Commit returned undetermined region error: {region_error:?}"),
+                            };
+                            record_attempt(
+                                receipt,
+                                TransactionAttemptPhase::PrimaryCommit,
+                                route.keys(),
+                                &route,
+                                Some(response.publication.clone()),
+                                TransactionAttemptResult::Ambiguous(cause.clone()),
+                            );
+                            return PrimaryResult::Undetermined(cause);
+                        }
+                        if let Err(cause) = self.recover_region_error(
+                            RecoveryPhase::Forward,
+                            region_error,
+                            route.attempt(),
+                            call,
+                        ) {
+                            // A decoded region error definitively rejected this
+                            // publication. Later local recovery failure cannot
+                            // turn that rejected attempt into ambiguity.
+                            record_attempt(
+                                receipt,
+                                TransactionAttemptPhase::PrimaryCommit,
+                                route.keys(),
+                                &route,
+                                Some(response.publication.clone()),
+                                TransactionAttemptResult::DefinitiveFailure(cause.clone()),
+                            );
+                            return PrimaryResult::DefinitiveFailure(cause);
+                        }
+                        record_attempt(
+                            receipt,
+                            TransactionAttemptPhase::PrimaryCommit,
+                            route.keys(),
+                            &route,
+                            Some(response.publication.clone()),
+                            TransactionAttemptResult::Retry(TransactionCause::Region {
+                                detail: format!("primary Commit region retry: {region_error:?}"),
+                            }),
+                        );
+                        attempt = attempt.saturating_add(1);
+                        continue;
+                    }
+                    if let Some(error) = response.response.error.as_ref() {
+                        if let Some(expired) = error.commit_ts_expired.as_ref() {
+                            let minimum = match validate_commit_ts_expired(
+                                expired,
+                                self.start_ts,
+                                primary_key,
+                                commit_ts,
+                            ) {
+                                Ok(minimum) => minimum,
+                                Err(cause) => {
+                                    record_attempt(
+                                        receipt,
+                                        TransactionAttemptPhase::PrimaryCommit,
+                                        route.keys(),
+                                        &route,
+                                        Some(response.publication.clone()),
+                                        TransactionAttemptResult::DefinitiveFailure(cause.clone()),
+                                    );
+                                    return PrimaryResult::DefinitiveFailure(cause);
+                                }
+                            };
+                            record_attempt(
+                                receipt,
+                                TransactionAttemptPhase::PrimaryCommit,
+                                route.keys(),
+                                &route,
+                                Some(response.publication.clone()),
+                                TransactionAttemptResult::Retry(TransactionCause::Timestamp {
+                                    detail: format!(
+                                        "primary Commit retry requires min_commit_ts {minimum}"
+                                    ),
+                                }),
+                            );
+                            match self.commit_timestamp(minimum, call) {
+                                Ok(new_commit_ts) => {
+                                    commit_ts = new_commit_ts;
+                                    receipt.commit_ts = new_commit_ts;
+                                    attempt = attempt.saturating_add(1);
+                                    continue;
+                                }
+                                Err(cause) => return PrimaryResult::DefinitiveFailure(cause),
+                            }
+                        }
+                        let cause = classify_key_error(error);
+                        record_attempt(
+                            receipt,
+                            TransactionAttemptPhase::PrimaryCommit,
+                            route.keys(),
+                            &route,
+                            Some(response.publication.clone()),
+                            TransactionAttemptResult::DefinitiveFailure(cause.clone()),
+                        );
+                        return PrimaryResult::DefinitiveFailure(cause);
+                    }
+                    record_attempt(
+                        receipt,
+                        TransactionAttemptPhase::PrimaryCommit,
+                        route.keys(),
+                        &route,
+                        Some(response.publication.clone()),
+                        TransactionAttemptResult::Confirmed,
+                    );
+                    return PrimaryResult::Committed(route.keys().to_vec());
+                }
+            }
+        }
+    }
+
+    fn commit_secondaries(
+        &mut self,
+        secondary_keys: &[Vec<u8>],
+        primary_key: &[u8],
+        commit_ts: u64,
+        receipt: &mut OptimisticTransactionReceipt,
+    ) -> Vec<SecondaryCommitFailure> {
+        if secondary_keys.is_empty() {
+            return Vec::new();
+        }
+        let cleanup_call = UnaryCallContext::with_timeout(self.timeout);
+        let mut queue = match group_keys(&self.runtime, secondary_keys) {
+            Ok(batches) => VecDeque::from(batches),
+            Err(error) => {
+                return vec![SecondaryCommitFailure {
+                    keys: secondary_keys.to_vec(),
+                    region: None,
+                    address: None,
+                    publication: None,
+                    cause: TransactionCause::Region {
+                        detail: format!("secondary grouping failed: {error}"),
+                    },
+                }];
+            }
+        };
+        let mut failures = Vec::new();
+        while let Some(batch) = queue.pop_front() {
+            receipt.region_attempts.push(batch.region());
+            let request = KvrpcCommitRequest {
+                start_version: self.start_ts,
+                keys: batch.keys().to_vec(),
+                commit_version: commit_ts,
+                commit_role: KvrpcCommitRole::Secondary as i32,
+                primary_key: primary_key.to_vec(),
+                use_async_commit: false,
+                ..KvrpcCommitRequest::default()
+            };
+            let pending = self
+                .runtime
+                .client()
+                .try_borrow_mut()
+                .map_err(|_| {
+                    "TiKV client is already borrowed while publishing secondary Commit".to_owned()
+                })
+                .and_then(|mut client| {
+                    client
+                        .begin_transaction_commit(
+                            batch.address(),
+                            None,
+                            &request,
+                            batch.context(),
+                            &cleanup_call,
+                        )
+                        .map_err(|error| error.to_string())
+                });
+            match complete_published(pending, &cleanup_call) {
+                PublishedCommand::BeforePublication(error) => {
+                    let cause = TransactionCause::Transport {
+                        detail: format!("secondary Commit failed before publication: {error}"),
+                    };
+                    record_attempt(
+                        receipt,
+                        TransactionAttemptPhase::SecondaryCommit,
+                        batch.keys(),
+                        &batch,
+                        None,
+                        TransactionAttemptResult::DefinitiveFailure(cause.clone()),
+                    );
+                    failures.push(SecondaryCommitFailure {
+                        keys: batch.keys().to_vec(),
+                        region: Some(batch.region()),
+                        address: Some(batch.address().to_owned()),
+                        publication: None,
+                        cause,
+                    });
+                }
+                PublishedCommand::AfterPublication { publication, error } => {
+                    receipt
+                        .secondary_attempt_publications
+                        .push(publication.clone());
+                    let cause = TransactionCause::Transport {
+                        detail: format!(
+                            "secondary Commit completion failed after publication: {error}"
+                        ),
+                    };
+                    record_attempt(
+                        receipt,
+                        TransactionAttemptPhase::SecondaryCommit,
+                        batch.keys(),
+                        &batch,
+                        Some(publication.clone()),
+                        TransactionAttemptResult::Ambiguous(cause.clone()),
+                    );
+                    failures.push(SecondaryCommitFailure {
+                        keys: batch.keys().to_vec(),
+                        region: Some(batch.region()),
+                        address: Some(batch.address().to_owned()),
+                        publication: Some(publication),
+                        cause,
+                    });
+                }
+                PublishedCommand::Response(response) => {
+                    receipt
+                        .secondary_attempt_publications
+                        .push(response.publication.clone());
+                    if let Some(region_error) = response.response.region_error.as_ref() {
+                        match self.recover_region_error(
+                            RecoveryPhase::Secondary,
+                            region_error,
+                            batch.attempt(),
+                            &cleanup_call,
+                        ) {
+                            Ok(()) => match group_keys(&self.runtime, batch.keys()) {
+                                Ok(regrouped) => {
+                                    record_attempt(
+                                        receipt,
+                                        TransactionAttemptPhase::SecondaryCommit,
+                                        batch.keys(),
+                                        &batch,
+                                        Some(response.publication.clone()),
+                                        TransactionAttemptResult::Retry(TransactionCause::Region {
+                                            detail: format!(
+                                                "secondary Commit region retry: {region_error:?}"
+                                            ),
+                                        }),
+                                    );
+                                    for item in regrouped.into_iter().rev() {
+                                        queue.push_front(item);
+                                    }
+                                    continue;
+                                }
+                                Err(error) => {
+                                    let cause = TransactionCause::Region {
+                                        detail: format!("secondary Commit regroup failed: {error}"),
+                                    };
+                                    record_attempt(
+                                        receipt,
+                                        TransactionAttemptPhase::SecondaryCommit,
+                                        batch.keys(),
+                                        &batch,
+                                        Some(response.publication.clone()),
+                                        TransactionAttemptResult::DefinitiveFailure(cause.clone()),
+                                    );
+                                    failures.push(SecondaryCommitFailure {
+                                        keys: batch.keys().to_vec(),
+                                        region: Some(batch.region()),
+                                        address: Some(batch.address().to_owned()),
+                                        publication: Some(response.publication.clone()),
+                                        cause,
+                                    });
+                                }
+                            },
+                            Err(cause) => {
+                                record_attempt(
+                                    receipt,
+                                    TransactionAttemptPhase::SecondaryCommit,
+                                    batch.keys(),
+                                    &batch,
+                                    Some(response.publication.clone()),
+                                    TransactionAttemptResult::DefinitiveFailure(cause.clone()),
+                                );
+                                failures.push(SecondaryCommitFailure {
+                                    keys: batch.keys().to_vec(),
+                                    region: Some(batch.region()),
+                                    address: Some(batch.address().to_owned()),
+                                    publication: Some(response.publication.clone()),
+                                    cause,
+                                });
+                            }
+                        }
+                    } else if let Some(error) = response.response.error.as_ref() {
+                        let cause = classify_key_error(error);
+                        record_attempt(
+                            receipt,
+                            TransactionAttemptPhase::SecondaryCommit,
+                            batch.keys(),
+                            &batch,
+                            Some(response.publication.clone()),
+                            TransactionAttemptResult::DefinitiveFailure(cause.clone()),
+                        );
+                        failures.push(SecondaryCommitFailure {
+                            keys: batch.keys().to_vec(),
+                            region: Some(batch.region()),
+                            address: Some(batch.address().to_owned()),
+                            publication: Some(response.publication.clone()),
+                            cause,
+                        });
+                    } else {
+                        record_attempt(
+                            receipt,
+                            TransactionAttemptPhase::SecondaryCommit,
+                            batch.keys(),
+                            &batch,
+                            Some(response.publication.clone()),
+                            TransactionAttemptResult::Confirmed,
+                        );
+                        receipt.secondary_publications.push(response.publication);
+                    }
+                }
+            }
+        }
+        failures
+    }
+
+    fn rollback_after_failure(
+        &mut self,
+        mut receipt: OptimisticTransactionReceipt,
+        keys: &[Vec<u8>],
+        cause: TransactionCause,
+    ) -> OptimisticCommitOutcome {
+        if let Err(error) = self.state.transition(CoordinatorState::RollingBack) {
+            return OptimisticCommitOutcome::CleanupFailed(CleanupFailedTransaction {
+                receipt,
+                cause,
+                cleanup_failures: vec![CleanupBatchFailure {
+                    keys: keys.to_vec(),
+                    region: None,
+                    address: None,
+                    publication: None,
+                    cause: error,
+                }],
+            });
+        }
+        let cleanup_failures = self.rollback_keys(keys, &mut receipt);
+        if cleanup_failures.is_empty() {
+            if let Err(error) = self.state.transition(CoordinatorState::RolledBack) {
+                return OptimisticCommitOutcome::CleanupFailed(CleanupFailedTransaction {
+                    receipt,
+                    cause,
+                    cleanup_failures: vec![CleanupBatchFailure {
+                        keys: keys.to_vec(),
+                        region: None,
+                        address: None,
+                        publication: None,
+                        cause: error,
+                    }],
+                });
+            }
+            OptimisticCommitOutcome::RolledBack(RolledBackTransaction { receipt, cause })
+        } else {
+            let _ = self.state.transition(CoordinatorState::CleanupFailed);
+            OptimisticCommitOutcome::CleanupFailed(CleanupFailedTransaction {
+                receipt,
+                cause,
+                cleanup_failures,
+            })
+        }
+    }
+
+    fn rollback_keys(
+        &mut self,
+        keys: &[Vec<u8>],
+        receipt: &mut OptimisticTransactionReceipt,
+    ) -> Vec<CleanupBatchFailure> {
+        if keys.is_empty() {
+            return Vec::new();
+        }
+        let cleanup_call = UnaryCallContext::with_timeout(self.timeout);
+        let mut queue = match group_keys(&self.runtime, keys) {
+            Ok(batches) => VecDeque::from(batches),
+            Err(error) => {
+                return vec![CleanupBatchFailure {
+                    keys: keys.to_vec(),
+                    region: None,
+                    address: None,
+                    publication: None,
+                    cause: TransactionCause::Region {
+                        detail: format!("rollback grouping failed: {error}"),
+                    },
+                }];
+            }
+        };
+        let mut failures = Vec::new();
+        while let Some(batch) = queue.pop_front() {
+            receipt.region_attempts.push(batch.region());
+            let request = KvrpcBatchRollbackRequest {
+                start_version: self.start_ts,
+                keys: batch.keys().to_vec(),
+                ..KvrpcBatchRollbackRequest::default()
+            };
+            let pending = self
+                .runtime
+                .client()
+                .try_borrow_mut()
+                .map_err(|_| {
+                    "TiKV client is already borrowed while publishing BatchRollback".to_owned()
+                })
+                .and_then(|mut client| {
+                    client
+                        .begin_transaction_batch_rollback(
+                            batch.address(),
+                            None,
+                            &request,
+                            batch.context(),
+                            &cleanup_call,
+                        )
+                        .map_err(|error| error.to_string())
+                });
+            match complete_published(pending, &cleanup_call) {
+                PublishedCommand::BeforePublication(error) => {
+                    let cause = TransactionCause::Transport {
+                        detail: format!("BatchRollback failed before publication: {error}"),
+                    };
+                    record_attempt(
+                        receipt,
+                        TransactionAttemptPhase::BatchRollback,
+                        batch.keys(),
+                        &batch,
+                        None,
+                        TransactionAttemptResult::DefinitiveFailure(cause.clone()),
+                    );
+                    failures.push(CleanupBatchFailure {
+                        keys: batch.keys().to_vec(),
+                        region: Some(batch.region()),
+                        address: Some(batch.address().to_owned()),
+                        publication: None,
+                        cause,
+                    });
+                }
+                PublishedCommand::AfterPublication { publication, error } => {
+                    receipt
+                        .rollback_attempt_publications
+                        .push(publication.clone());
+                    let cause = TransactionCause::Transport {
+                        detail: format!(
+                            "BatchRollback completion failed after publication: {error}"
+                        ),
+                    };
+                    record_attempt(
+                        receipt,
+                        TransactionAttemptPhase::BatchRollback,
+                        batch.keys(),
+                        &batch,
+                        Some(publication.clone()),
+                        TransactionAttemptResult::Ambiguous(cause.clone()),
+                    );
+                    failures.push(CleanupBatchFailure {
+                        keys: batch.keys().to_vec(),
+                        region: Some(batch.region()),
+                        address: Some(batch.address().to_owned()),
+                        publication: Some(publication),
+                        cause,
+                    });
+                }
+                PublishedCommand::Response(response) => {
+                    receipt
+                        .rollback_attempt_publications
+                        .push(response.publication.clone());
+                    if let Some(region_error) = response.response.region_error.as_ref() {
+                        match self.recover_region_error(
+                            RecoveryPhase::Cleanup,
+                            region_error,
+                            batch.attempt(),
+                            &cleanup_call,
+                        ) {
+                            Ok(()) => match group_keys(&self.runtime, batch.keys()) {
+                                Ok(regrouped) => {
+                                    record_attempt(
+                                        receipt,
+                                        TransactionAttemptPhase::BatchRollback,
+                                        batch.keys(),
+                                        &batch,
+                                        Some(response.publication.clone()),
+                                        TransactionAttemptResult::Retry(TransactionCause::Region {
+                                            detail: format!(
+                                                "BatchRollback region retry: {region_error:?}"
+                                            ),
+                                        }),
+                                    );
+                                    for item in regrouped.into_iter().rev() {
+                                        queue.push_front(item);
+                                    }
+                                    continue;
+                                }
+                                Err(error) => {
+                                    let cause = TransactionCause::Region {
+                                        detail: format!("BatchRollback regroup failed: {error}"),
+                                    };
+                                    record_attempt(
+                                        receipt,
+                                        TransactionAttemptPhase::BatchRollback,
+                                        batch.keys(),
+                                        &batch,
+                                        Some(response.publication.clone()),
+                                        TransactionAttemptResult::DefinitiveFailure(cause.clone()),
+                                    );
+                                    failures.push(CleanupBatchFailure {
+                                        keys: batch.keys().to_vec(),
+                                        region: Some(batch.region()),
+                                        address: Some(batch.address().to_owned()),
+                                        publication: Some(response.publication.clone()),
+                                        cause,
+                                    });
+                                }
+                            },
+                            Err(cause) => {
+                                record_attempt(
+                                    receipt,
+                                    TransactionAttemptPhase::BatchRollback,
+                                    batch.keys(),
+                                    &batch,
+                                    Some(response.publication.clone()),
+                                    TransactionAttemptResult::DefinitiveFailure(cause.clone()),
+                                );
+                                failures.push(CleanupBatchFailure {
+                                    keys: batch.keys().to_vec(),
+                                    region: Some(batch.region()),
+                                    address: Some(batch.address().to_owned()),
+                                    publication: Some(response.publication.clone()),
+                                    cause,
+                                });
+                            }
+                        }
+                    } else if let Some(error) = response.response.error.as_ref() {
+                        let cause = classify_key_error(error);
+                        record_attempt(
+                            receipt,
+                            TransactionAttemptPhase::BatchRollback,
+                            batch.keys(),
+                            &batch,
+                            Some(response.publication.clone()),
+                            TransactionAttemptResult::DefinitiveFailure(cause.clone()),
+                        );
+                        failures.push(CleanupBatchFailure {
+                            keys: batch.keys().to_vec(),
+                            region: Some(batch.region()),
+                            address: Some(batch.address().to_owned()),
+                            publication: Some(response.publication.clone()),
+                            cause,
+                        });
+                    } else {
+                        record_attempt(
+                            receipt,
+                            TransactionAttemptPhase::BatchRollback,
+                            batch.keys(),
+                            &batch,
+                            Some(response.publication.clone()),
+                            TransactionAttemptResult::Confirmed,
+                        );
+                        receipt.rollback_publications.push(response.publication);
+                    }
+                }
+            }
+        }
+        failures
+    }
+}
+
+struct PdLockTimestampSource(PdClient);
+
+impl fmt::Debug for PdLockTimestampSource {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PdLockTimestampSource")
+            .finish_non_exhaustive()
+    }
+}
+
+impl TimestampSource for PdLockTimestampSource {
+    fn current_ts(&self) -> Result<u64, String> {
+        self.0.get_timestamp().map_err(|error| error.to_string())
+    }
+}
+
+enum PublishedCommand<R> {
+    BeforePublication(String),
+    AfterPublication {
+        publication: TransactionBatchPublication,
+        error: String,
+    },
+    Response(TransactionBatchResponse<R>),
+}
+
+fn complete_published<R>(
+    pending: Result<crate::rpc::TransactionBatchPending<R>, String>,
+    call: &UnaryCallContext,
+) -> PublishedCommand<R>
+where
+    R: prost::Message + Default,
+{
+    let mut pending = match pending {
+        Ok(pending) => pending,
+        Err(error) => return PublishedCommand::BeforePublication(error),
+    };
+    let publication = pending
+        .publication()
+        .expect("Stage A binds a nonzero publication before pending escapes")
+        .clone();
+    match pending.complete(call) {
+        Ok(Ok(response)) => PublishedCommand::Response(response),
+        Ok(Err(error)) => PublishedCommand::AfterPublication {
+            publication,
+            error: error.to_string(),
+        },
+        Err(error) => PublishedCommand::AfterPublication {
+            publication,
+            error: error.to_string(),
+        },
+    }
+}
+
+enum PrimaryResult {
+    Committed(Vec<Vec<u8>>),
+    DefinitiveFailure(TransactionCause),
+    Undetermined(TransactionCause),
+}
+
+trait AttemptRoute {
+    fn evidence_region(&self) -> crate::region::RegionVerId;
+    fn evidence_address(&self) -> &str;
+}
+
+impl AttemptRoute for RegionMutationBatch {
+    fn evidence_region(&self) -> crate::region::RegionVerId {
+        self.region()
+    }
+
+    fn evidence_address(&self) -> &str {
+        self.address()
+    }
+}
+
+impl AttemptRoute for RegionKeyBatch {
+    fn evidence_region(&self) -> crate::region::RegionVerId {
+        self.region()
+    }
+
+    fn evidence_address(&self) -> &str {
+        self.address()
+    }
+}
+
+fn record_attempt(
+    receipt: &mut OptimisticTransactionReceipt,
+    phase: TransactionAttemptPhase,
+    keys: &[Vec<u8>],
+    route: &impl AttemptRoute,
+    publication: Option<TransactionBatchPublication>,
+    result: TransactionAttemptResult,
+) {
+    receipt.attempt_history.push(TransactionAttemptReceipt {
+        phase,
+        keys: keys.to_vec(),
+        region: route.evidence_region(),
+        address: route.evidence_address().to_owned(),
+        publication,
+        result,
+    });
+}
+
+#[derive(Clone, Copy)]
+enum RecoveryPhase {
+    Forward,
+    Secondary,
+    Cleanup,
+}
+
+fn classify_key_error(error: &KvrpcKeyError) -> TransactionCause {
+    if let Some(already_exists) = error.already_exist.as_ref() {
+        return TransactionCause::AlreadyExists {
+            key: already_exists.key.clone(),
+            detail: format!("key already exists: {already_exists:?}"),
+        };
+    }
+    if let Some(assertion) = error.assertion_failed.as_ref() {
+        return TransactionCause::AssertionFailed {
+            key: assertion.key.clone(),
+            detail: format!("mutation assertion failed: {assertion:?}"),
+        };
+    }
+    if let Some(conflict) = error.conflict.as_ref() {
+        return TransactionCause::WriteConflict {
+            detail: format!("optimistic write conflict: {conflict:?}"),
+        };
+    }
+    if let Some(lock) = error.locked.as_ref() {
+        return TransactionCause::Lock {
+            key: lock.key.clone(),
+            detail: format!("key is locked: {lock:?}"),
+        };
+    }
+    TransactionCause::InvalidResponse {
+        detail: format!("unclassified TiKV key error: {error:?}"),
+    }
+}
+
+fn primary_region_response_is_ambiguous(error: &tidb_proto::RegionError) -> bool {
+    error.undetermined_result.is_some()
+}
+
+fn validate_commit_ts_expired(
+    expired: &KvrpcCommitTsExpired,
+    start_ts: u64,
+    primary_key: &[u8],
+    attempted_commit_ts: u64,
+) -> Result<u64, TransactionCause> {
+    let latest_pinned_min_commit_ts = attempted_commit_ts
+        .saturating_add(MAX_COMMIT_TS_DRIFT_MS.saturating_mul(1_u64 << TSO_LOGICAL_BITS));
+    if expired.start_ts != start_ts
+        || expired.attempted_commit_ts != attempted_commit_ts
+        || expired.key != primary_key
+        || expired.min_commit_ts <= attempted_commit_ts
+        || expired.min_commit_ts > latest_pinned_min_commit_ts
+    {
+        return Err(TransactionCause::InvalidResponse {
+            detail: format!(
+                "CommitTsExpired violates pinned primary retry contract: {expired:?}; attempted_commit_ts={attempted_commit_ts}, latest_min_commit_ts={latest_pinned_min_commit_ts}"
+            ),
+        });
+    }
+    Ok(expired.min_commit_ts)
+}
+
+fn transaction_lock_ttl_ms(opened_at: Instant, transaction_bytes: usize) -> u64 {
+    const BYTES_PER_MIB: f64 = (1024 * 1024) as f64;
+    const TTL_FACTOR_MS: f64 = 6_000.0;
+    const MANAGED_LOCK_TTL_MS: u64 = 20_000;
+    const SIZE_THRESHOLD_BYTES: usize = 16 * 1024;
+
+    let sized_ttl = if transaction_bytes >= SIZE_THRESHOLD_BYTES {
+        let size_mib = transaction_bytes as f64 / BYTES_PER_MIB;
+        (TTL_FACTOR_MS * size_mib.sqrt()) as u64
+    } else {
+        DEFAULT_LOCK_TTL_MS
+    };
+    let base = sized_ttl.clamp(DEFAULT_LOCK_TTL_MS, MANAGED_LOCK_TTL_MS);
+    let elapsed_ms = u64::try_from(opened_at.elapsed().as_millis()).unwrap_or(u64::MAX);
+    base.saturating_add(elapsed_ms)
+}
+
+fn wait_with_call(call: &UnaryCallContext, delay: Duration) -> Result<(), TransactionCause> {
+    if call.cancellation().is_cancelled() || delay > call.timeout() {
+        return Err(TransactionCause::Transport {
+            detail: "transaction wait exceeded its deadline or was cancelled".to_owned(),
+        });
+    }
+    if call.cancellation().wait_timeout(delay) {
+        return Err(TransactionCause::Transport {
+            detail: "transaction wait was cancelled".to_owned(),
+        });
+    }
+    if call.timeout().is_zero() && !delay.is_zero() {
+        return Err(TransactionCause::Transport {
+            detail: "transaction wait reached its absolute deadline".to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn alive_retry_delay(remaining_ttl: Duration) -> Duration {
+    remaining_ttl.max(Duration::from_millis(10))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tidb_proto::{
+        KvrpcAlreadyExist, KvrpcAssertion, KvrpcAssertionFailed, KvrpcLockInfo, KvrpcWriteConflict,
+    };
+
+    #[test]
+    fn lock_ttl_adds_read_time_and_scales_large_transactions() {
+        let recent = Instant::now();
+        assert!(transaction_lock_ttl_ms(recent, 1) >= DEFAULT_LOCK_TTL_MS);
+        let old = Instant::now() - Duration::from_millis(25);
+        assert!(transaction_lock_ttl_ms(old, 1) >= DEFAULT_LOCK_TTL_MS + 25);
+        assert!(transaction_lock_ttl_ms(recent, 4 * 1024 * 1024) >= 12_000);
+    }
+
+    #[test]
+    fn commit_ts_expired_retry_is_pinned_to_exact_attempt_and_one_hour() {
+        let start_ts = 10_u64 << TSO_LOGICAL_BITS;
+        let attempted_commit_ts = start_ts + ((2 * MAX_COMMIT_TS_DRIFT_MS) << TSO_LOGICAL_BITS);
+        let within_hour = attempted_commit_ts + ((MAX_COMMIT_TS_DRIFT_MS - 1) << TSO_LOGICAL_BITS);
+        let valid = KvrpcCommitTsExpired {
+            start_ts,
+            attempted_commit_ts,
+            key: b"primary".to_vec(),
+            min_commit_ts: within_hour,
+        };
+        assert_eq!(
+            validate_commit_ts_expired(&valid, start_ts, b"primary", attempted_commit_ts),
+            Ok(within_hour)
+        );
+
+        let mut wrong_attempt = valid.clone();
+        wrong_attempt.attempted_commit_ts += 1;
+        assert!(matches!(
+            validate_commit_ts_expired(&wrong_attempt, start_ts, b"primary", attempted_commit_ts),
+            Err(TransactionCause::InvalidResponse { .. })
+        ));
+
+        let mut beyond_pin = valid;
+        beyond_pin.min_commit_ts =
+            attempted_commit_ts + ((MAX_COMMIT_TS_DRIFT_MS + 1) << TSO_LOGICAL_BITS);
+        assert!(matches!(
+            validate_commit_ts_expired(&beyond_pin, start_ts, b"primary", attempted_commit_ts),
+            Err(TransactionCause::InvalidResponse { .. })
+        ));
+    }
+
+    #[test]
+    fn commit_key_errors_keep_executor_visible_identity() {
+        let already_exists = KvrpcKeyError {
+            already_exist: Some(KvrpcAlreadyExist { key: b"e".to_vec() }),
+            ..KvrpcKeyError::default()
+        };
+        assert!(matches!(
+            classify_key_error(&already_exists),
+            TransactionCause::AlreadyExists { key, .. } if key == b"e"
+        ));
+
+        let assertion = KvrpcKeyError {
+            assertion_failed: Some(KvrpcAssertionFailed {
+                start_ts: 7,
+                key: b"a".to_vec(),
+                assertion: KvrpcAssertion::Exist as i32,
+                ..KvrpcAssertionFailed::default()
+            }),
+            ..KvrpcKeyError::default()
+        };
+        assert!(matches!(
+            classify_key_error(&assertion),
+            TransactionCause::AssertionFailed { key, .. } if key == b"a"
+        ));
+
+        let conflict = KvrpcKeyError {
+            conflict: Some(KvrpcWriteConflict {
+                start_ts: 7,
+                conflict_ts: 9,
+                key: b"c".to_vec(),
+                ..KvrpcWriteConflict::default()
+            }),
+            ..KvrpcKeyError::default()
+        };
+        assert!(matches!(
+            classify_key_error(&conflict),
+            TransactionCause::WriteConflict { .. }
+        ));
+
+        let lock = KvrpcKeyError {
+            locked: Some(KvrpcLockInfo {
+                key: b"l".to_vec(),
+                ..KvrpcLockInfo::default()
+            }),
+            ..KvrpcKeyError::default()
+        };
+        assert!(matches!(
+            classify_key_error(&lock),
+            TransactionCause::Lock { key, .. } if key == b"l"
+        ));
+        assert!(matches!(
+            classify_key_error(&KvrpcKeyError::default()),
+            TransactionCause::InvalidResponse { .. }
+        ));
+    }
+
+    #[test]
+    fn waits_use_the_absolute_call_deadline_and_cancellation() {
+        assert_eq!(alive_retry_delay(Duration::ZERO), Duration::from_millis(10));
+        let expired = UnaryCallContext::with_timeout(Duration::ZERO);
+        assert!(matches!(
+            wait_with_call(&expired, Duration::from_millis(1)),
+            Err(TransactionCause::Transport { .. })
+        ));
+        let cancellation = crate::rpc::UnaryCancellation::new();
+        cancellation.cancel();
+        let cancelled = UnaryCallContext::new(Duration::from_secs(1), cancellation);
+        assert!(matches!(
+            wait_with_call(&cancelled, Duration::ZERO),
+            Err(TransactionCause::Transport { .. })
+        ));
+    }
+
+    #[test]
+    fn only_explicit_undetermined_primary_region_response_is_ambiguous() {
+        assert!(!primary_region_response_is_ambiguous(
+            &tidb_proto::RegionError::default()
+        ));
+        let undetermined = tidb_proto::RegionError {
+            undetermined_result: Some(tidb_proto::errorpb::UndeterminedResult::default()),
+            ..tidb_proto::RegionError::default()
+        };
+        assert!(primary_region_response_is_ambiguous(&undetermined));
+    }
+}

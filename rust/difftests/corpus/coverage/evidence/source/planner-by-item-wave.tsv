@@ -1,3 +1,0 @@
-# Source-owned source-port fragment for planner-by-item-wave.
-# source_path	status	owner	evidence_artifact	note
-pkg/planner/util/byitem.go	PARTIAL	planner-by-item-wave	rust/crates/tidb-planner/src/by_item.rs	Ports ByItems expression/direction identity, display text, clone/equality shape, list formatting, and bool-plus-expression memory accounting over opaque caller-owned expression text; expression hashing/evaluation, collation/redaction contexts, and physical sort/property integration remain external.

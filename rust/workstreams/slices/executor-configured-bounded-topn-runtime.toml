@@ -1,6 +1,6 @@
 schema = "1"
 slice = "executor-configured-bounded-topn-runtime"
-status = "ready"
+status = "partial"
 target = "tidb-exec"
 ring = "result"
 consumer = "A bounded executor retains at most offset plus count ordered rows for ORDER BY LIMIT and streams LIMIT-only windows without materializing the complete Campaign 25 input."

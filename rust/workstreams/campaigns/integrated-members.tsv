@@ -105,3 +105,11 @@
 2026-07-read-path-24	executor-real-tikv-clustered-pk-range-runtime
 2026-07-read-path-24	server-live-sql-node-harness-foundation
 2026-07-read-path-24	server-live-clustered-pk-range-proof
+2026-07-read-path-26	planner-configured-order-limit-contract
+2026-07-read-path-26	planner-configured-order-limit-runtime
+2026-07-read-path-26	executor-configured-stable-order-runtime
+2026-07-read-path-26	executor-configured-bounded-topn-runtime
+2026-07-read-path-26	executor-configured-ordered-query-runtime
+2026-07-read-path-26	server-configured-topn-cap-runtime
+2026-07-read-path-26	server-configured-ordered-query-routing-runtime
+2026-07-read-path-26	server-live-ordered-join-proof

@@ -29,6 +29,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use prost::Message;
+use tidb_ast::{QueryStmt, Stmt};
 use tidb_datatype::{FieldType, FieldTypeCode};
 use tidb_distsql::region::RegionCache;
 use tidb_distsql::{
@@ -40,7 +41,9 @@ use tidb_distsql::{
 };
 use tidb_pd_client::{PdClient, PdClientError};
 use tidb_planner::read_only_scan::{
-    ConfiguredColumnKind, ConfiguredTable, ReadOnlyScanError, ReadOnlyScanPlan,
+    configured_catalog::ConfiguredCatalog, lower_prepared_point_read, ConfiguredColumnKind,
+    ConfiguredPreparedPointReadTemplate, ConfiguredTable, PreparedPlanError, ReadOnlyScanError,
+    ReadOnlyScanPlan,
 };
 use tidb_protocol::{ColumnInfo, BINARY_DEFAULT_COLLATION_ID};
 use tidb_txnkv::{
@@ -52,6 +55,37 @@ use crate::dag_request::{
     construct_read_only_dag_req, DagRequestBuildError, DagRequestContext, TiKvScanPlan,
 };
 use crate::distsql_recordset::DistSqlRecordSet;
+
+/// Parses and types one configured prepared point read without opening PD or
+/// TiKV. The returned template retains the parser-owned marker and can only be
+/// executed after a typed bind constructs the ordinary [`ReadOnlyScanPlan`].
+pub fn prepare_configured_point_read(
+    sql: &str,
+    catalog: &ConfiguredCatalog,
+) -> Result<ConfiguredPreparedPointReadTemplate, PreparedPlanError> {
+    let statement = tidb_parser::parse(sql).map_err(|error| {
+        PreparedPlanError::ReadOnly(ReadOnlyScanError::Parse(format!(
+            "{} at byte {}",
+            error.message, error.offset
+        )))
+    })?;
+    let select = match statement {
+        Stmt::Query(query) => match *query {
+            QueryStmt::Select(select) => select,
+            QueryStmt::SetOpr(_) => {
+                return Err(PreparedPlanError::ReadOnly(ReadOnlyScanError::Unsupported(
+                    tidb_planner::read_only_scan::UnsupportedReadOnlyFeature::SetOperation,
+                )));
+            }
+        },
+        Stmt::Dml(_) | Stmt::Ddl(_) | Stmt::Admin(_) | Stmt::Session(_) => {
+            return Err(PreparedPlanError::ReadOnly(ReadOnlyScanError::Unsupported(
+                tidb_planner::read_only_scan::UnsupportedReadOnlyFeature::WriteOrNonQueryStatement,
+            )));
+        }
+    };
+    lower_prepared_point_read(&select, catalog)
+}
 
 /// Concrete retained production transport used by the first SQL node.
 pub type ProductionReadTransport =
@@ -1068,6 +1102,26 @@ where
         cancellation: Arc<CancelHandle>,
     ) -> Result<RealTiKvQuery, RealTiKvReadError> {
         let plan = ReadOnlyScanPlan::lower(sql, self.table.as_ref())?;
+        self.execute_lowered_plan_with_cancellation(plan, cancellation)
+    }
+
+    /// Starts one already-lowered configured scan with the connection's
+    /// cancellation authority.
+    ///
+    /// Prepared execution binds its typed parameter into the planner-owned
+    /// plan before entering this seam. The timestamp, DAG, range, transport,
+    /// decoder, and evidence owners are therefore exactly the same as for a
+    /// literal text query.
+    pub fn execute_lowered_plan_with_cancellation(
+        &mut self,
+        plan: ReadOnlyScanPlan,
+        cancellation: Arc<CancelHandle>,
+    ) -> Result<RealTiKvQuery, RealTiKvReadError> {
+        if plan.table_id() != self.table.table_id() {
+            return Err(RealTiKvReadError::Request(
+                "supplied scan plan does not belong to this configured table".to_owned(),
+            ));
+        }
         if plan.is_contradiction() {
             return self.execute_plan(plan, None, cancellation);
         }
@@ -1076,6 +1130,20 @@ where
             .current_ts()
             .map_err(RealTiKvReadError::Query)?;
         self.execute_plan_at_snapshot(plan, snapshot_ts, cancellation)
+    }
+
+    /// Derives prepare-time result metadata from an already-bound plan without
+    /// acquiring a timestamp or opening a transport request.
+    pub fn protocol_columns_for_plan(
+        &self,
+        plan: &ReadOnlyScanPlan,
+    ) -> Result<Vec<ColumnInfo>, RealTiKvReadError> {
+        if plan.table_id() != self.table.table_id() {
+            return Err(RealTiKvReadError::Request(
+                "supplied scan plan does not belong to this configured table".to_owned(),
+            ));
+        }
+        Ok(protocol_columns(self.table.as_ref(), plan))
     }
 
     /// Executes an already-lowered physical scan at a caller-owned snapshot.
@@ -1120,26 +1188,7 @@ where
             .iter()
             .map(|_| FieldType::new(FieldTypeCode::LongLong))
             .collect::<Vec<_>>();
-        let protocol_columns = plan
-            .projected_columns()
-            .iter()
-            .map(|column| ColumnInfo {
-                schema: self.table.schema().to_owned(),
-                table: self.table.table().to_owned(),
-                org_table: self.table.table().to_owned(),
-                name: column.output_name().to_owned(),
-                org_name: column.source_name().to_owned(),
-                column_length: 20,
-                charset: BINARY_DEFAULT_COLLATION_ID,
-                flag: match column.kind() {
-                    ConfiguredColumnKind::ClusteredPrimaryKey => 0x0003,
-                    ConfiguredColumnKind::StoredNotNull => 0x0001,
-                },
-                decimal: 0,
-                type_code: FieldTypeCode::LongLong.mysql_type(),
-                default_value: None,
-            })
-            .collect();
+        let protocol_columns = protocol_columns(self.table.as_ref(), &plan);
 
         if plan.is_contradiction() {
             debug_assert!(snapshot_ts.is_none());
@@ -1214,5 +1263,69 @@ where
             plan_evidence,
             cancellation,
         })
+    }
+}
+
+fn protocol_columns(table: &ConfiguredTable, plan: &ReadOnlyScanPlan) -> Vec<ColumnInfo> {
+    plan.projected_columns()
+        .iter()
+        .map(|column| ColumnInfo {
+            schema: table.schema().to_owned(),
+            table: table.table().to_owned(),
+            org_table: table.table().to_owned(),
+            name: column.output_name().to_owned(),
+            org_name: column.source_name().to_owned(),
+            column_length: 20,
+            charset: BINARY_DEFAULT_COLLATION_ID,
+            flag: match column.kind() {
+                ConfiguredColumnKind::ClusteredPrimaryKey => 0x0003,
+                ConfiguredColumnKind::StoredNotNull => 0x0001,
+            },
+            decimal: 0,
+            type_code: FieldTypeCode::LongLong.mysql_type(),
+            default_value: None,
+        })
+        .collect()
+}
+
+impl<T, S> RealTiKvMultiReadSession<T, S>
+where
+    T: QueryTransport,
+    T::Response: 'static,
+    S: TimestampSource,
+{
+    /// Starts one prepared single-relation plan on the matching reader while
+    /// retaining the multi-table session's concrete real-PD/TiKV authority.
+    pub fn execute_point_read_plan_with_cancellation(
+        &mut self,
+        plan: ReadOnlyScanPlan,
+        cancellation: Arc<CancelHandle>,
+    ) -> Result<RealTiKvQuery, RealTiKvReadError> {
+        let relation = self
+            .readers
+            .iter()
+            .position(|reader| reader.configured_table().table_id() == plan.table_id())
+            .ok_or_else(|| {
+                RealTiKvReadError::Request(
+                    "supplied prepared plan does not belong to a configured relation".to_owned(),
+                )
+            })?;
+        self.readers[relation].execute_lowered_plan_with_cancellation(plan, cancellation)
+    }
+
+    /// Derives prepare metadata from the exact reader selected by the plan.
+    pub fn protocol_columns_for_point_read_plan(
+        &self,
+        plan: &ReadOnlyScanPlan,
+    ) -> Result<Vec<ColumnInfo>, RealTiKvReadError> {
+        self.readers
+            .iter()
+            .find(|reader| reader.configured_table().table_id() == plan.table_id())
+            .ok_or_else(|| {
+                RealTiKvReadError::Request(
+                    "supplied prepared plan does not belong to a configured relation".to_owned(),
+                )
+            })?
+            .protocol_columns_for_plan(plan)
     }
 }

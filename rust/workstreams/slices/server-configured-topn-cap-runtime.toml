@@ -1,6 +1,6 @@
 schema = "1"
 slice = "server-configured-topn-cap-runtime"
-status = "ready"
+status = "partial"
 target = "tidb-server"
 ring = "result"
 consumer = "The existing SQL-node configuration exposes one validated process-wide maximum ORDER BY LIMIT heap size and rejects unsafe or duplicate values before startup."

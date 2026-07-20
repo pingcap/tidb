@@ -50,10 +50,15 @@ SHA-256 and starts `UNTRIAGED`. `external_go_ledger --check` resolves only the
 offline module cache and rejects direct-pin, replacement, exact Go-sum, file,
 declaration, runner, and duplicate qualified-key drift.
 
-The invariant is simple: no upstream test may be invisible. Run this from the
-Rust workspace after Go tests change:
+The invariant is simple: no upstream test may be invisible. The generated
+artifact baseline binds the bytes of every ledgered original test source,
+fixture, expected result, runner, target definition, and support file. It
+therefore catches assertion-body and expected-output edits even when a Go test
+name and line stay unchanged. Run this from the Rust workspace after Go tests
+change:
 
 ```sh
+cargo run --locked -j 12 -p difftest --bin go_test_ledger -- --check-inventory
 cargo run --locked -j 12 -p difftest --bin go_test_ledger -- --check
 ```
 
@@ -62,12 +67,19 @@ Regenerate only as part of an explicit porting/triage change:
 
 ```sh
 cargo run --locked -j 12 -p difftest --bin go_test_ledger -- --write
-git diff -- rust/difftests/corpus/coverage/go_test_inventory.tsv
+git diff -- rust/difftests/corpus/coverage/go_test_declaration_inventory.tsv \
+  rust/difftests/corpus/coverage/go_test_fixture_access_inventory.tsv \
+  rust/difftests/corpus/coverage/go_test_artifact_inventory.tsv
 ```
 
-Do not convert generated `UNTRIAGED` entries to a covered status by hand. Add
-a row to that wave's `evidence/tests/<owner>.tsv` fragment in the same change
-as the owning corpus/test, then run the ledger check. `PARTIAL` means only a
+`--write` and `--check-inventory` deliberately do not read sparse evidence,
+claims, or ownership manifests: they are safe while independent porting waves
+are editing those files. `--check` remains the complete reconciliation gate;
+it validates the byte baseline, evidence fragments, domain ownership, and the
+rendered `go_test_inventory.tsv` together. Do not convert generated
+`UNTRIAGED` entries to a covered status by hand. Add a row to that wave's
+`evidence/tests/<owner>.tsv` fragment in the same change as the owning
+corpus/test, then run the full ledger check. `PARTIAL` means only a
 bounded source slice is covered;
 `COVERED` means the entire anchored test/fixture is covered; `BLOCKED` requires
 an explicit nonempty reason. The status is deliberately conservative until

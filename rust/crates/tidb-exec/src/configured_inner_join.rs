@@ -253,6 +253,26 @@ impl ConfiguredInnerJoinRecordSet {
         &mut self,
         required_rows: usize,
     ) -> Result<Vec<Vec<Datum>>, ConfiguredInnerJoinError> {
+        self.next_full_batch(required_rows).map(|rows| {
+            rows.into_iter()
+                .map(|row| self.project_full_row(&row))
+                .collect()
+        })
+    }
+
+    /// Pulls unprojected `[left..., right...]` rows for an internal terminal
+    /// operator.
+    ///
+    /// The public record set intentionally retains its projected-row contract.
+    /// ORDER BY keys, however, are bound against the planner FullSchema and can
+    /// name a hidden `USING` column or an otherwise unprojected input column.
+    /// Keeping this stream private to `tidb-exec` lets the ordered adapter
+    /// apply its limit before this one projection boundary without opening a
+    /// second join or cancellation authority.
+    pub(crate) fn next_full_batch(
+        &mut self,
+        required_rows: usize,
+    ) -> Result<Vec<Vec<Datum>>, ConfiguredInnerJoinError> {
         self.lifecycle.mark_advanced();
         if required_rows == 0 || self.exhausted {
             return Ok(Vec::new());
@@ -290,7 +310,7 @@ impl ConfiguredInnerJoinRecordSet {
                     Ok(true) => {
                         let left = self.current_left.as_ref().expect("left row established");
                         let right = &self.right_rows[self.right_cursor - 1];
-                        output.push(self.layout.project(left, right));
+                        output.push(self.layout.full_row(left, right));
                     }
                     Ok(false) => {}
                     Err(error) => return Err(self.abort(error)),
@@ -315,6 +335,19 @@ impl ConfiguredInnerJoinRecordSet {
             self.right_cursor = 0;
         }
         Ok(output)
+    }
+
+    /// Projects one internally streamed full row into exact query metadata
+    /// order. `next_full_batch` constructs these rows, and the ordered adapter
+    /// retains them unchanged until after LIMIT/TopN has finished.
+    pub(crate) fn project_full_row(&self, row: &[Datum]) -> Vec<Datum> {
+        self.layout.project_full_row(row)
+    }
+
+    /// Returns the physical FullSchema width expected by the ordered adapter.
+    #[must_use]
+    pub(crate) const fn full_schema_width(&self) -> usize {
+        self.layout.widths[0] + self.layout.widths[1]
     }
 
     /// Finishes both child result sets exactly once.
@@ -401,6 +434,16 @@ impl ConfiguredInnerJoinRecordSet {
             None => Ok(()),
         }
     }
+}
+
+/// Builds the exact MySQL projection metadata for a configured join without
+/// opening any physical read. Local-empty terminal operators reuse this seam
+/// so their result metadata cannot drift from an opened join record set.
+pub fn configured_join_columns(
+    plan: &ConfiguredJoinPlan,
+    tables: [&ConfiguredTable; 2],
+) -> Result<Vec<ColumnInfo>, ConfiguredInnerJoinError> {
+    Ok(JoinLayout::from_plan(plan, tables)?.columns)
 }
 
 impl Drop for ConfiguredInnerJoinRecordSet {
@@ -526,12 +569,19 @@ impl JoinLayout {
         Ok(left_key == right_key)
     }
 
-    fn project(&self, left: &[Datum], right: &[Datum]) -> Vec<Datum> {
+    fn full_row(&self, left: &[Datum], right: &[Datum]) -> Vec<Datum> {
+        let mut row = Vec::with_capacity(left.len() + right.len());
+        row.extend(left.iter().cloned());
+        row.extend(right.iter().cloned());
+        row
+    }
+
+    fn project_full_row(&self, row: &[Datum]) -> Vec<Datum> {
         self.projections
             .iter()
             .map(|slot| match *slot {
-                ProjectionSlot::Left(offset) => left[offset].clone(),
-                ProjectionSlot::Right(offset) => right[offset].clone(),
+                ProjectionSlot::Left(offset) => row[offset].clone(),
+                ProjectionSlot::Right(offset) => row[self.widths[0] + offset].clone(),
             })
             .collect()
     }

@@ -1,0 +1,41 @@
+schema = "1"
+slice = "server-live-prepared-read-write-proof"
+status = "ready"
+target = "tidb-server"
+ring = "result"
+consumer = "One tag-owned live run starts three real PD and three real TiKV nodes plus independent Go TiDB and Rust SQL endpoints, runs an actual one-thread prepared sysbench mix containing reads and writes against Rust, verifies committed rows through Go TiDB before and after Rust restart, observes a Go write through Rust, and proves owned cleanup."
+test_target = "run-campaign28-prepared-read-write-sql-node"
+go_sources = [
+  "pkg/testkit/testkit.go",
+]
+go_tests = [
+  "pkg/server/tests/commontest/tidb_test.go:3507:TestClientDisconnectKillsAutocommitInsert",
+  "pkg/server/tests/commontest/tidb_test.go:3672:TestCloseConnForUndeterminedError",
+]
+module_sources = []
+module_tests = []
+depends_on = [
+  "server-live-prepared-point-read-proof",
+  "server-prepared-dml-tcp-runtime",
+]
+evidence_prerequisites = [
+  { capability = "live-sql-node-entrypoint", evidence_owner = "server-live-ordered-join-proof", kind = "source", anchor = "cmd/tidb-server/main.go", minimum_status = "PARTIAL" },
+  { capability = "tag-owned-realtikv-lifecycle", evidence_owner = "server-live-ordered-join-proof", kind = "source", anchor = "tests/realtikvtest/testkit.go", minimum_status = "PARTIAL" },
+]
+support_anchors = [
+  "Extend the shared tag-owned live SQL-node harness; start one real three-PD/three-TiKV topology, one independently running Go TiDB server, and one Rust server on distinct recorded endpoints, with no fixture-only or in-memory authority accepted",
+  "Go TiDB creates the configured clustered signed-BIGINT table and discovers physical IDs but never seeds Rust's expected final rows; a stock client sends prepared one-row and cross-region two-row INSERT, direct and arithmetic UPDATE, duplicate/overflow/cancellation cases, and C27 prepared reads to Rust",
+  "A separate stock client on Go TiDB verifies exact rows, Go changes one row and Rust reads it, then only Rust restarts and both endpoints re-read persisted state; receipts must correlate real PD timestamps, TiKV regions/stores, BatchCommands request IDs/routes, primary/secondary outcomes, affected rows, endpoint PIDs, and cleanup",
+  "Run rust/scripts/sysbench-prepared-read-write.lua with an actual sysbench binary, one thread, a checked small event bound, and prepared statements enabled; every event must execute at least one real prepared point read and one real prepared UPDATE or INSERT, and text-query fallback or db-ps-mode=disable is forbidden",
+  "pkg/testkit/testkit.go is an exact original Go oracle/support obligation only and cannot satisfy acceptance by itself; no mock store, fake client, expected-row fixture, injected interface, or same-process readback may replace the independent live Go TiDB proof",
+  "PARTIAL disconnect scope requires real pre-primary cancellation cleanup with no residual lock; PARTIAL undetermined scope requires no OK, no automatic SQL retry, and connection close at the primary-publication ambiguity boundary",
+]
+rust_paths = [
+  "rust/scripts/lib/live-sql-node-harness.sh",
+  "rust/scripts/mysql-prepared-client.py",
+  "rust/scripts/run-campaign28-prepared-read-write-sql-node.sh",
+  "rust/scripts/sysbench-prepared-read-write.lua",
+  "rust/scripts/test-campaign28-prepared-read-write-harness.sh",
+  "rust/difftests/corpus/coverage/evidence/source/server-live-prepared-read-write-proof.tsv",
+  "rust/difftests/corpus/coverage/evidence/tests/server-live-prepared-read-write-proof.tsv",
+]

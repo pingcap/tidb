@@ -14,6 +14,17 @@ MAX_LINES=(220 320 470)
 bash -n "${HARNESS}"
 source "${HARNESS}"
 
+for multi_relation_helper in \
+  run_live_sql_node_multi_relation_scenario \
+  require_multi_relation_table_names \
+  validate_multi_relation_receipts_since \
+  run_multi_relation_phase; do
+  if ! declare -F "${multi_relation_helper}" >/dev/null; then
+    echo "shared live SQL-node harness omitted multi-relation helper ${multi_relation_helper}" >&2
+    exit 1
+  fi
+done
+
 start_stubborn_supervisor() {
   TAG=$1
   TAG_DIR="${TMPDIR:-/tmp}/${TAG}"
@@ -131,6 +142,65 @@ for index in "${!RUNNERS[@]}"; do
   fi
 done
 
+# Campaign 26 is intentionally optional while its live scenario is being
+# assembled. Once present, it must use the paired-receipt runner rather than
+# reopening any TiUP/process/topology lifecycle ownership.
+MULTI_RELATION_RUNNER="${SCRIPT_DIR}/run-campaign26-ordered-join-sql-node.sh"
+if [[ -f "${MULTI_RELATION_RUNNER}" ]]; then
+  bash -n "${MULTI_RELATION_RUNNER}"
+  multi_line_count=$(awk 'END { print NR + 0 }' "${MULTI_RELATION_RUNNER}")
+  if [[ "${multi_line_count}" -gt 430 ]]; then
+    echo "Campaign 26 ordered scenario grew past its 430-line boundary: ${MULTI_RELATION_RUNNER} (${multi_line_count})" >&2
+    exit 1
+  fi
+  if ! grep -F 'source "${SCRIPT_DIR}/lib/live-sql-node-harness.sh"' \
+    "${MULTI_RELATION_RUNNER}" >/dev/null \
+    || ! grep -F 'run_live_sql_node_multi_relation_scenario' \
+      "${MULTI_RELATION_RUNNER}" >/dev/null; then
+    echo "Campaign 26 ordered scenario bypasses the shared multi-relation topology engine" >&2
+    exit 1
+  fi
+  if rg -n \
+    'tiup playground|TIKV_B_COMMAND|process_shutdown_stage|beforeCommitSecondaries|LOCK_SECONDARY_KEY|transfer_leader|SHUTDOWN_STARTED_MS' \
+    "${MULTI_RELATION_RUNNER}" >/dev/null; then
+    echo "Campaign 26 lifecycle leaked back into scenario-owned code" >&2
+    exit 1
+  fi
+fi
+
+# Campaign 27 owns a bounded prepared client/benchmark proof, but the shared
+# harness must remain the sole process/topology authority.
+PREPARED_RUNNER="${SCRIPT_DIR}/run-campaign27-prepared-point-read-sql-node.sh"
+if [[ -f "${PREPARED_RUNNER}" ]]; then
+  bash -n "${PREPARED_RUNNER}"
+  if ! grep -F 'source "${SCRIPT_DIR}/lib/live-sql-node-harness.sh"' \
+    "${PREPARED_RUNNER}" >/dev/null \
+    || ! grep -F 'run_live_sql_node_topology_scenario' \
+      "${PREPARED_RUNNER}" >/dev/null \
+    || ! grep -F 'scenario_pre_shutdown_proof()' "${PREPARED_RUNNER}" >/dev/null; then
+    echo "Campaign 27 prepared scenario bypasses the shared healthy-topology hook" >&2
+    exit 1
+  fi
+  if rg -n \
+    'tiup playground|TIKV_B_COMMAND|process_shutdown_stage|beforeCommitSecondaries|LOCK_SECONDARY_KEY|transfer_leader|SHUTDOWN_STARTED_MS' \
+    "${PREPARED_RUNNER}" >/dev/null; then
+    echo "Campaign 27 lifecycle leaked back into scenario-owned code" >&2
+    exit 1
+  fi
+fi
+
+PRE_SHUTDOWN_HOOK_LINE=$(rg -n '^  scenario_pre_shutdown_proof$' "${HARNESS}" \
+  | cut -d: -f1)
+RETURNED_TO_B_LINE=$(rg -n '^  B_GENERATION_AFTER=' "${HARNESS}" | cut -d: -f1)
+LOCK_SETUP_LINE=$(rg -n '^  LOCK_SECONDARY_KEY=' "${HARNESS}" | cut -d: -f1)
+if [[ -z "${PRE_SHUTDOWN_HOOK_LINE}" || -z "${RETURNED_TO_B_LINE}" \
+  || -z "${LOCK_SETUP_LINE}" \
+  || "${PRE_SHUTDOWN_HOOK_LINE}" -le "${RETURNED_TO_B_LINE}" \
+  || "${PRE_SHUTDOWN_HOOK_LINE}" -ge "${LOCK_SETUP_LINE}" ]]; then
+  echo "healthy-topology proof hook must run after B convergence and before lock setup" >&2
+  exit 1
+fi
+
 LIFECYCLE_OWNERS=$(rg -l \
   'tiup playground v8\.5\.6 --without-monitor' "${HARNESS}" "${RUNNERS[@]}")
 if [[ $(printf '%s\n' "${LIFECYCLE_OWNERS}" | sed '/^$/d' | awk 'END { print NR + 0 }') -ne 1 \
@@ -159,11 +229,44 @@ if rg -n -- '--database|--table-id|--column([[:space:]]|$)' "${HARNESS}" >/dev/n
   exit 1
 fi
 
+# In force mode mysql continues after a query error. The controlled-shutdown
+# path must therefore close its FIFO writer after the server stops but before
+# waiting for that client, or the client can wait forever for another line.
+SHUTDOWN_CLIENT_BLOCK=$(awk '
+  /wait "\$\{RUST_PID\}"/ { capture = 1 }
+  capture { print }
+  capture && /CLIENT_PIDS=\(\)/ { exit }
+' "${HARNESS}")
+FIFO_CLOSE_LINE=$(printf '%s\n' "${SHUTDOWN_CLIENT_BLOCK}" | nl -ba \
+  | awk '/exec 9>&-/ { print $1; exit }')
+CLIENT_EXIT_LINE=$(printf '%s\n' "${SHUTDOWN_CLIENT_BLOCK}" | nl -ba \
+  | awk '/printf/ && /q/ && />&9/ { print $1; exit }')
+CLIENT_WAIT_LINE=$(printf '%s\n' "${SHUTDOWN_CLIENT_BLOCK}" | nl -ba \
+  | awk '/wait_for_pids_until.*PERSISTENT_CLIENT_PID/ { print $1; exit }')
+if [[ -z "${CLIENT_EXIT_LINE}" || -z "${FIFO_CLOSE_LINE}" || -z "${CLIENT_WAIT_LINE}" \
+  || "${CLIENT_EXIT_LINE}" -ge "${FIFO_CLOSE_LINE}" \
+  || "${FIFO_CLOSE_LINE}" -ge "${CLIENT_WAIT_LINE}" ]]; then
+  echo "controlled shutdown must send local quit then close the persistent FIFO before waiting for forced mysql" >&2
+  exit 1
+fi
+
+if ! rg -F 'EXPECTED_FORCED_CONNECTIONS=0' "${HARNESS}" >/dev/null \
+  || ! rg -F '[[ "${PERSISTENT_CLIENT_FORCE}" == true ]]' "${HARNESS}" >/dev/null \
+  || ! rg -F 'EXPECTED_FORCED_CONNECTIONS=1' "${HARNESS}" >/dev/null \
+  || ! rg -F -- '--argjson forced_connections "${EXPECTED_FORCED_CONNECTIONS}"' "${HARNESS}" >/dev/null \
+  || ! rg -F '.[0].forced_connections == $forced_connections' "${HARNESS}" >/dev/null; then
+  echo "controlled shutdown must require exactly one forced connection only for force-mode clients" >&2
+  exit 1
+fi
+
 "${RUNNERS[0]}" --self-test-live-harness
 "${RUNNERS[1]}" --self-test-empty-result-framing
 "${RUNNERS[1]}" --self-test-live-harness
 "${RUNNERS[2]}" --self-test-empty-result-framing
 "${RUNNERS[2]}" --self-test-range-contract
 "${RUNNERS[2]}" --self-test-live-harness
+if [[ -f "${MULTI_RELATION_RUNNER}" ]]; then
+  bash "${MULTI_RELATION_RUNNER}" --self-test-live-harness
+fi
 
 echo "shared live SQL-node lifecycle architecture self-test passed"

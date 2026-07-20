@@ -124,6 +124,12 @@ pub enum ConditionBindingError {
         /// The source column path with multiple matches.
         path: Vec<String>,
     },
+    /// A prepared marker reached a generic residual path before its typed
+    /// prepared-statement owner bound an execute value.
+    UnboundParameterMarker {
+        /// Statement-local parameter marker position.
+        position: usize,
+    },
 }
 
 impl From<UnsupportedJoinCondition> for ConditionBindingError {
@@ -168,6 +174,11 @@ fn collect_known_columns(
     opaque_shapes: &mut Vec<OpaqueConditionShape>,
 ) -> Result<(), ConditionBindingError> {
     match expr {
+        Expr::ParamMarker { position } => {
+            return Err(ConditionBindingError::UnboundParameterMarker {
+                position: *position,
+            });
+        }
         Expr::Column(path) => {
             let column = schema
                 .bind_column_path(path)

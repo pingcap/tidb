@@ -1,6 +1,6 @@
 schema = "1"
 campaign = "2026-07-read-path-26"
-status = "planned"
+status = "integrated"
 slices = [
   "planner-configured-order-limit-contract",
   "planner-configured-order-limit-runtime",

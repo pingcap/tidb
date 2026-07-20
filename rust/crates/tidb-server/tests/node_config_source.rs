@@ -51,6 +51,7 @@ fn source_tikv_startup_surface_is_explicit_and_bounded() {
     );
     assert_eq!(config.max_connections, 8);
     assert_eq!(config.connection_timeout, Duration::from_secs(30));
+    assert_eq!(config.max_topn_rows, 1_024);
 }
 
 #[test]
@@ -160,6 +161,37 @@ fn connection_timeout_is_positive_explicit_and_documented() {
         Err(NodeConfigError::InvalidValue { option, .. }) if option == "--connection-timeout-ms"
     ));
     assert!(NodeConfig::help_text().contains("--connection-timeout-ms"));
+}
+
+#[test]
+fn topn_heap_cap_is_process_wide_positive_bounded_and_unambiguous() {
+    // pkg/config/config_test.go:960 TestConfig
+    // pkg/config/config_test.go:1317 TestTxnTotalSizeLimitValid
+    // pkg/config/config_test.go:1689 TestIndexLimit
+    let mut configured = required();
+    configured.extend(["--max-topn-rows", "65536"]);
+    assert_eq!(NodeConfig::parse(configured).unwrap().max_topn_rows, 65_536);
+
+    let mut inline = required();
+    inline.push("--max-topn-rows=16");
+    assert_eq!(NodeConfig::parse(inline).unwrap().max_topn_rows, 16);
+
+    for value in ["0", "65537", "18446744073709551616", "not-a-number"] {
+        let mut args = required();
+        args.extend(["--max-topn-rows", value]);
+        assert!(matches!(
+            NodeConfig::parse(args),
+            Err(NodeConfigError::InvalidValue { option, .. }) if option == "--max-topn-rows"
+        ));
+    }
+
+    let mut duplicate = required();
+    duplicate.extend(["--max-topn-rows=16", "--max-topn-rows", "32"]);
+    assert!(matches!(
+        NodeConfig::parse(duplicate),
+        Err(NodeConfigError::DuplicateOption(option)) if option == "--max-topn-rows"
+    ));
+    assert!(NodeConfig::help_text().contains("--max-topn-rows <rows>"));
 }
 
 #[test]

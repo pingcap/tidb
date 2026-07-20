@@ -21,9 +21,9 @@ use std::time::Duration;
 use tidb_distsql::{CancelHandle, DirectUnaryTransportEvidenceHandle, PublishedDispatchEvidence};
 use tidb_exec::distsql_recordset::DistSqlRecordSet;
 use tidb_exec::real_tikv_read::{
-    PdTimestampSource, ProductionReadProcessAuthority, ProductionReadSessionFactory,
-    ProductionReadTransport, ReadProcessShutdownError, ReadProcessShutdownStage,
-    RealTiKvReadSession, RealTiKvReadSessionOpener,
+    prepare_configured_point_read, PdTimestampSource, ProductionReadProcessAuthority,
+    ProductionReadSessionFactory, ProductionReadTransport, ReadProcessShutdownError,
+    ReadProcessShutdownStage, RealTiKvQuery, RealTiKvReadSession, RealTiKvReadSessionOpener,
 };
 use tidb_planner::read_only_scan::{
     configured_catalog::ConfiguredCatalog, ConfiguredColumn, ConfiguredTable,
@@ -33,8 +33,8 @@ use crate::configured_user_store::{ConfiguredUserStore, ConfiguredUserStoreError
 use crate::node_config::{ConfiguredReadColumnKind, ConfiguredReadTable, NodeConfig};
 use crate::resultset_source::ResultSetSource;
 use crate::sql_node::{
-    ActiveQueryCancellation, ConcurrentSqlNode, QueryCancellationLease, QueryResult, QuerySession,
-    QuerySessionFactory, SessionContext, SqlNodeError, SqlQueryError,
+    ActiveQueryCancellation, ConcurrentSqlNode, PreparedPointRead, QueryCancellationLease,
+    QueryResult, QuerySession, QuerySessionFactory, SessionContext, SqlNodeError, SqlQueryError,
 };
 
 const PRODUCTION_CONTROL_PLANE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -185,75 +185,146 @@ impl QuerySession for RealTiKvServerSession {
             .begin(self.context.connection_id, query_id);
         let cancellation = Arc::new(CancelHandle::default());
         let cancellation_lease = self.context.cancellation.install(cancellation.clone());
+        let cluster_id = self.inner.cluster_id();
+        let evidence = self.inner.transport_evidence_handle();
         let query = self
             .inner
             .execute_with_cancellation(sql, cancellation)
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-        let snapshot_ts = query.snapshot_ts();
-        let snapshot_ts_json =
-            snapshot_ts.map_or_else(|| "null".to_owned(), |timestamp| timestamp.to_string());
-        let table_id = query.table_id();
-        let cluster_id = self.inner.cluster_id();
-        let identity = query.session_identity();
-        let executor_kinds = query
-            .plan_evidence()
-            .executor_kinds()
-            .iter()
-            .map(|kind| kind.as_str())
-            .collect::<Vec<_>>();
-        let predicate_count = query.plan_evidence().predicate_count();
-        let output_offsets = query.plan_evidence().output_offsets().to_vec();
-        let handle_range_count = query.plan_evidence().handle_range_count();
-        let handle_ranges = query
-            .plan_evidence()
-            .handle_ranges()
-            .iter()
-            .map(|range| {
-                format!(
-                    "{{\"low\":{},\"high\":{},\"low_exclude\":{},\"high_exclude\":{}}}",
-                    range.low(),
-                    range.high(),
-                    range.low_exclude(),
-                    range.high_exclude(),
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(",");
-        let evidence = self.inner.transport_evidence_handle();
-        let connection_id = self.context.connection_id;
-        let authority_id = identity.authority_id();
-        let session_id = identity.session_id();
-        install_remote_publication_observer(snapshot_ts, || {
-            evidence.set_publication_observer(move |published| {
-                emit_query_transport_publication(
-                    connection_id,
-                    query_id,
-                    authority_id,
-                    session_id,
-                    published,
-                );
-            })
-        })
-        .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-        eprintln!(
-            "{{\"event\":\"query_snapshot\",\"connection_id\":{},\"query_id\":{query_id},\"authority_id\":{},\"session_id\":{},\"cluster_id\":{cluster_id},\"snapshot_ts\":{snapshot_ts_json},\"table_id\":{table_id},\"executor_kinds\":{executor_kinds:?},\"predicate_count\":{predicate_count},\"output_offsets\":{output_offsets:?},\"handle_range_count\":{handle_range_count},\"handle_ranges\":[{handle_ranges}],\"user\":{:?},\"host\":{:?}}}",
-            connection_id,
-            authority_id,
-            session_id,
-            self.context.identity.username(),
-            self.context.identity.host(),
-        );
-        Ok(QueryResult::new(Box::new(ObservedResultSet {
-            inner: query.into_record_set(),
-            evidence,
-            connection_id,
+        observe_real_tikv_query(
+            &self.context,
+            query,
             query_id,
-            authority_id,
-            session_id,
-            emitted: false,
-            _completion: QueryCompletion::new(cancellation_lease, query_activity),
-        })))
+            cancellation_lease,
+            query_activity,
+            cluster_id,
+            evidence,
+        )
     }
+
+    fn prepare_point_read(&mut self, sql: &str) -> Result<PreparedPointRead, SqlQueryError> {
+        let catalog = ConfiguredCatalog::new([self.inner.configured_table().clone()])
+            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+        let template = prepare_configured_point_read(sql, &catalog)
+            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+        let metadata_plan = template
+            .bind(&[0])
+            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+        let result_columns = self
+            .inner
+            .protocol_columns_for_plan(&metadata_plan)
+            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+        Ok(PreparedPointRead::new(template, result_columns))
+    }
+
+    fn execute_prepared_point_read<'a>(
+        &'a mut self,
+        statement: &PreparedPointRead,
+        parameters: &[i64],
+    ) -> Result<QueryResult<'a>, SqlQueryError> {
+        let plan = statement
+            .template()
+            .bind(parameters)
+            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+        let query_id = self.next_query_id;
+        self.next_query_id = self
+            .next_query_id
+            .checked_add(1)
+            .ok_or_else(|| SqlQueryError::unknown("query identity space exhausted"))?;
+        let query_activity = self
+            .query_activity
+            .begin(self.context.connection_id, query_id);
+        let cancellation = Arc::new(CancelHandle::default());
+        let cancellation_lease = self.context.cancellation.install(cancellation.clone());
+        let cluster_id = self.inner.cluster_id();
+        let evidence = self.inner.transport_evidence_handle();
+        let query = self
+            .inner
+            .execute_lowered_plan_with_cancellation(plan, cancellation)
+            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+        observe_real_tikv_query(
+            &self.context,
+            query,
+            query_id,
+            cancellation_lease,
+            query_activity,
+            cluster_id,
+            evidence,
+        )
+    }
+}
+
+pub(crate) fn observe_real_tikv_query<'a>(
+    context: &SessionContext,
+    query: RealTiKvQuery,
+    query_id: u64,
+    cancellation_lease: QueryCancellationLease,
+    query_activity: QueryActivityLease,
+    cluster_id: u64,
+    evidence: DirectUnaryTransportEvidenceHandle,
+) -> Result<QueryResult<'a>, SqlQueryError> {
+    let snapshot_ts = query.snapshot_ts();
+    let snapshot_ts_json =
+        snapshot_ts.map_or_else(|| "null".to_owned(), |timestamp| timestamp.to_string());
+    let table_id = query.table_id();
+    let identity = query.session_identity();
+    let executor_kinds = query
+        .plan_evidence()
+        .executor_kinds()
+        .iter()
+        .map(|kind| kind.as_str())
+        .collect::<Vec<_>>();
+    let predicate_count = query.plan_evidence().predicate_count();
+    let output_offsets = query.plan_evidence().output_offsets().to_vec();
+    let handle_range_count = query.plan_evidence().handle_range_count();
+    let handle_ranges = query
+        .plan_evidence()
+        .handle_ranges()
+        .iter()
+        .map(|range| {
+            format!(
+                "{{\"low\":{},\"high\":{},\"low_exclude\":{},\"high_exclude\":{}}}",
+                range.low(),
+                range.high(),
+                range.low_exclude(),
+                range.high_exclude(),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let connection_id = context.connection_id;
+    let authority_id = identity.authority_id();
+    let session_id = identity.session_id();
+    install_remote_publication_observer(snapshot_ts, || {
+        evidence.set_publication_observer(move |published| {
+            emit_query_transport_publication(
+                connection_id,
+                query_id,
+                authority_id,
+                session_id,
+                published,
+            );
+        })
+    })
+    .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+    eprintln!(
+        "{{\"event\":\"query_snapshot\",\"connection_id\":{},\"query_id\":{query_id},\"authority_id\":{},\"session_id\":{},\"cluster_id\":{cluster_id},\"snapshot_ts\":{snapshot_ts_json},\"table_id\":{table_id},\"executor_kinds\":{executor_kinds:?},\"predicate_count\":{predicate_count},\"output_offsets\":{output_offsets:?},\"handle_range_count\":{handle_range_count},\"handle_ranges\":[{handle_ranges}],\"user\":{:?},\"host\":{:?}}}",
+        connection_id,
+        authority_id,
+        session_id,
+        context.identity.username(),
+        context.identity.host(),
+    );
+    Ok(QueryResult::new(Box::new(ObservedResultSet {
+        inner: query.into_record_set(),
+        evidence,
+        connection_id,
+        query_id,
+        authority_id,
+        session_id,
+        emitted: false,
+        _completion: QueryCompletion::new(cancellation_lease, query_activity),
+    })))
 }
 
 fn emit_query_transport_publication(

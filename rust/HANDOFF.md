@@ -1,285 +1,232 @@
 # TiDB to Rust rewrite handoff
 
-_Current operating handoff. Updated 2026-07-19. This file intentionally does
-not preserve completed-campaign or wave history._
+_Current operating handoff. Updated 2026-07-20. This records the active
+frontier and verified receipts; generated ledger counters remain in
+[`STATUS.md`](STATUS.md)._
 
-## Standing goal
+## Standing goal and completion bar
 
-Rewrite TiDB's SQL layer in Rust without missing any behavior or test
-obligation owned by the original TiDB implementation. Organize the work as
-source-owned, dependency-closed slices that multiple agents can implement in
-parallel, then prove each integrated vertical against Go and, where required,
-real PD/TiKV.
+Rewrite TiDB's SQL layer in Rust without dropping any behavior or original
+test obligation. The target is a standalone Rust SQL process using the real
+MySQL, PD, TiKV, kvproto, and client-go contracts. Go may act as an independent
+oracle over network protocols; it is not an in-process backend.
 
-The target is a standalone Rust process tree. There is no cgo. Go and Rust
-communicate only through existing serialized network protocols during the
-strangler transition.
+The user has made these requirements explicit:
+
+- Support both reads and writes through real PD/TiKV. In-memory `Database`,
+  injected storage/transaction traits, synthetic rows, and mock transport are
+  not acceptance paths.
+- Support real MySQL prepared statements. Do not use text interpolation,
+  `--db-ps-mode=disable`, or a driver fallback from `COM_STMT_*` to
+  `COM_QUERY`.
+- Support actual small-scale sysbench and then the ordinary prepared write and
+  read/write workloads.
+- Implement TiDB-compatible TLS on the production listener, including the
+  cryptographic SSLRequest upgrade, certificate verification, secure-transport
+  policy, reload, and remaining original TLS tests. A parsed SSLRequest or an
+  asserted secure-transport enum is not TLS support.
+- Complete the transaction/KV implementation beyond normal optimistic 2PC:
+  region-aware BatchGet/Scan/write batching, explicit transaction lifecycle,
+  read-your-writes and savepoints, retry/cleanup, lock TTL and heartbeats,
+  pessimistic locks, async commit, 1PC, pipelined DML, and the full TiDB and
+  pinned client-go test inventory.
+- One process owns one PD worker, RegionCache, TiKV BatchCommands transport,
+  lock resolver, retry policy, background supervisor, and shutdown order for
+  reads and writes. Do not introduce a second transaction client or parallel
+  runtime.
+
+The design completion bar is recorded in
+[`../docs/design/2026-07-11-tidb-rust-rewrite.md`](../docs/design/2026-07-11-tidb-rust-rewrite.md).
 
 ## Read in this order
 
-1. [`STATUS.md`](STATUS.md) is the generated authority for current queue,
-   campaign, source-ledger, and original-test-ledger state. Regenerate it; do
-   not copy its counters here.
-2. [`workstreams/plans/2026-07-read-path-25.md`](workstreams/plans/2026-07-read-path-25.md)
-   is the living ExecPlan for the active Campaign 25 vertical and its frozen
-   acceptance boundary.
-3. [`../docs/design/2026-07-11-tidb-rust-rewrite.md`](../docs/design/2026-07-11-tidb-rust-rewrite.md)
-   defines the long-term architecture, migration order, and differential
-   verification model.
-4. [`PARALLEL.md`](PARALLEL.md) and
-   [`workstreams/slices/README.md`](workstreams/slices/README.md) define the
-   checked ownership, claim, worktree, promotion, and shared-gate protocol.
+1. [`STATUS.md`](STATUS.md) — generated queue and source/test ledger state.
+2. [`workstreams/plans/2026-07-read-path-27.md`](workstreams/plans/2026-07-read-path-27.md)
+   — prepared point-read proof and closure state.
+3. [`workstreams/plans/2026-07-read-path-28.md`](workstreams/plans/2026-07-read-path-28.md)
+   — first real prepared write vertical and normal optimistic 2PC.
+4. [`PARALLEL.md`](PARALLEL.md), [`workstreams/slices/README.md`](workstreams/slices/README.md),
+   root `AGENTS.md`, and `PLANS.md` — ownership and validation protocol.
 
-Also obey the repository root `AGENTS.md`, `PLANS.md`, and the closest package
-documentation before editing an owning subsystem.
+## Verified current frontier
 
-## Go is the source contract
+### Campaign 27: real prepared point reads
 
-Every Rust behavior is a port of an identified Go implementation and its
-complete relevant tests. Differential tools confirm a port; sampled outputs
-do not define semantics.
+Implementation and real acceptance pass. The production server owns a
+per-connection prepared registry, typed signed-BIGINT parameters with type
+reuse, binary rows, silent close, and exact command telemetry.
 
-For every slice:
+Final live receipt after the lint-driven production refactor:
 
-1. Locate and read the owning Go implementation, callers, tests, fixtures,
-   lifecycle hooks, and generated/support artifacts.
-2. Port the normal Go control flow, types, errors, and state transitions. Do
-   not infer a general rule from a few `godump` or `gorun` results.
-3. Record every source and exact original obligation in the checked slice and
-   evidence ledgers. An unported edge remains explicit `PARTIAL`, `BLOCKED`, or
-   `UNTRIAGED`; it is never hidden behind a broad parity claim.
-4. Use the parser, plan, result, or transaction differential ring to verify the
-   corresponding boundary. If Rust and a probe disagree, inspect the Go source
-   and environment; Go wins.
-5. Reject unsupported behavior before runtime side effects. Do not create an
-   approximate fallback, a second policy authority, or an in-memory substitute
-   for a promised real-cluster path.
+- Go TiDB fixture: v8.5.6-dirty, commit
+  `ae18096e023780bb56bfce33698abec0d4640d0a`, failpoint/test API enabled.
+- Rust server SHA-256:
+  `4475d17f451ee5921b37edc0560cb3bc9132a4d7e49c22c45776f0041781195c`.
+- Raw client: connection/session 4/4, two binary executes, type reuse, silent
+  close, sixteen negative cases with no storage work.
+- Actual sysbench 1.0.20 linked to Oracle
+  `libmysqlclient.24.dylib`: one thread, exactly eight events, 30-second cap.
+- Server wire counters on the sysbench connection:
+  `COM_QUERY=0`, `COM_STMT_PREPARE=1/1`,
+  `COM_STMT_EXECUTE=8/8`, `COM_STMT_CLOSE=1`.
+- Real table/region 114/1010, topology `4 -> 1 -> 5 -> 1`, shutdown 118 ms
+  inside a 10,000 ms grace, accepted/completed/failed/active `5/5/0/0`.
+- Tag-owned processes, endpoints, data, auth, and runtime state were removed.
 
-Primary Go entry points:
+Behavioral loopback regressions also prove exact eight-execute accounting and
+that a malformed execute increments command count without success. C27 still
+has one active live claim and needs the immutable shared gate plus campaign
+closure; unsupported cursor/reset/long-data/NULL/unsigned/type breadth remains
+explicit in the ledgers.
 
-| Domain | Go source of truth |
-| --- | --- |
-| Lexer, grammar, AST, restore | `pkg/parser/lexer.go`, `pkg/parser/parser.y`, `pkg/parser/ast/**` |
-| Expressions and SQL types | `pkg/expression/**`, `pkg/types/**`, `pkg/util/collate/**` |
-| Planner | `pkg/planner/**` |
-| Executor and session | `pkg/executor/**`, `pkg/session/**`, `pkg/sessionctx/**` |
-| Catalog and DDL | `pkg/infoschema/**`, `pkg/meta/**`, `pkg/ddl/**` |
-| Storage and distributed reads | `pkg/kv/**`, `pkg/store/**`, `pkg/distsql/**`, plus the pinned PD/client-go sources in the generated ledgers |
-| MySQL server | `cmd/tidb-server/**`, `pkg/server/**` |
+### Campaign 28 Stage A: transaction RPC leaf
 
-The untracked repo-root helpers are confirmation tools:
+Covered and receipt-released. The sole BatchCommands transport performs typed
+real `Get`, `Prewrite`, `Commit`, and `BatchRollback`. The live proof executed
+`Prewrite -> Commit -> Get` and `Prewrite -> BatchRollback -> Get(not_found)`
+using real PD timestamps, request IDs, routes, channel/stream identities, and
+cleanup. Cancellation after publication retains attempt identity.
 
-- `./godump restore` provides Go parser restore output.
-- `./gorun` provides mock-backed Go session result output.
+### Campaign 28 Stage B: normal optimistic 2PC
 
-Run them from the repository root. Cargo commands run from `rust/`; per-slice
-worktrees have their own `rust/` directory.
+Implemented, real-live passed, conservatively promoted, and claim retained for
+the shared immutable gate. The production transaction opener is capability
+only: it derives from an already-running concrete `SharedReadOpener` and
+cloned `PdClient`; the standalone second process authority was removed.
 
-## Current workspace map
+Final real receipt:
 
-The workspace is split by owning behavior rather than horizontal utility
-layers:
+- cluster `7664574949704693070`
+- start/commit TS `467808533790326785 / 467808533868969985`
+- primary/secondary regions `26 / 8`
+- rollback start TS `467808533868969987`
+- older lock TS `467808533868969995`
+- newer lock start/commit TS
+  `467808534013149188 / 467808534013149189`
 
-| Area | Rust packages | Responsibility |
-| --- | --- | --- |
-| Foundation | `tidb-error` | shared typed error boundary |
-| SQL syntax | `tidb-lexer`, `tidb-ast`, `tidb-parser` | tokens, typed AST, parsing, restore |
-| SQL semantics | `tidb-datatype`, `tidb-expr`, `tidb-planner`, `tidb-stats` | scalar authority, evaluation, binding/planning, statistics |
-| Storage path | `tidb-proto`, `tidb-codec`, `tidb-pd-client`, `tidb-txnkv`, `tidb-distsql` | wire types, keys, PD/TiKV transport, routing, distributed reads |
-| Runtime | `tidb-exec`, `tidb-protocol`, `tidb-server` | execution, MySQL protocol, deployable process lifecycle |
-| Evidence | `difftests` and its parser/planner/result/transaction packages | inventories, ledgers, oracles, selectors, and gates |
-| Coordination | `workstreams/**`, `scripts/**` | checked slices, campaigns, claims, worktrees, promotion, status, integration |
+The proof covers multi-region batching, primary-containing batch commit,
+stale-route regroup with exact old/new epoch and physical address, real older
+lock wait/resolve/same-start retry, newer-lock `WriteConflict` without
+resolution, rollback cleanup, PutExisting assertions, and independent
+readback. Commit ambiguity follows client-go: only an explicitly undetermined
+result or a published attempt with no decoded outcome is undetermined; decoded
+region/key rejection permits cleanup. `CommitTsExpired` is pinned to the exact
+attempted commit TS and one-hour delta. A real zero-duration-at-expiry bug was
+fixed with a bounded 10 ms retry delay.
 
-Protected routing files and shared manifests have one steward. Feature agents
-edit only the `rust_paths` declared by their claimed slice. A public seam must
-move with its first real consumer; do not add disconnected helper crates or
-duplicate catalog, scalar, planner, topology, transport, or session authority.
+Focused validation includes 64 txnkv library tests, real-target compilation,
+and txnkv Clippy with `-D warnings`. Remaining review caveat: secondary-commit
+and rollback regroup-failure branches are correct by inspection but still need
+direct regression tests before a Ready/PR claim.
 
-## Active Campaign 25
+### Campaign 28 remaining stages
 
-Campaign 25 builds the first configured two-relation read-only SQL-node
-vertical. One stock MySQL connection must execute bounded two-table signed
-`BIGINT` joins against real TiKV. Both scans use one PD timestamp, retain the
-existing range and residual-Selection path, and join decoded rows in the Rust
-TiDB executor.
+- Stage C: exact TiDB clustered record-key/rowcodec lowering and prepared
+  INSERT/UPDATE planning, with UPDATE reading at the transaction start TS.
+- Stage D: the single steward-owned rename/migration from the read-named
+  process authority to one KV-wide authority, then prepared DML TCP/OK/error
+  framing. No aliases or parallel workers.
+- Stage E: one-thread bounded prepared read/write sysbench against Rust,
+  independent Go TiDB verification before/after Rust restart, and no text
+  fallback. This proves the first write vertical, not full transaction parity.
 
-The implementation DAG is:
+## Required next campaigns
 
-```text
-A configured catalog -> B relation binding -> C FullSchema join plan --+
-                                                                    +-> E join runtime -> F live SQL-node proof
-Campaign 24 range path -> D same-snapshot real-TiKV multi-read -------+
-Campaign 24 live harness -----------------------------------------------> F
-```
+### Real MySQL TLS
 
-Current state:
+The pure SSLRequest state machine exists, but live MySQL does not advertise or
+complete TLS. `mysql_connection.rs` clones `TcpStream` into independent reader
+and writer owners, so rustls cannot be truthfully bolted on. First refactor to
+one bidirectional plaintext/rustls stream owner; retain a raw clone only for
+shutdown cancellation.
 
-- A, configured catalog: implemented and promoted with exact `PARTIAL`
-  source/test evidence; claim retained until the final campaign receipt.
-- B, relation binding: implemented and promoted `PARTIAL`, including visible
-  `USING` projection binding without a rewrite/reparse workaround.
-- C, FullSchema join planning: implemented and promoted `PARTIAL`; relation
-  scans lower through a structured planner seam, not reconstructed SQL.
-- D, real-TiKV multi-read: implemented and promoted `PARTIAL`; one read
-  session, one nonzero snapshot per statement, two transports, shared
-  cancellation, and contradiction-before-TSO behavior are covered by focused
-  evidence. Commit `55485d1b3b` integrates the supplied-plan APIs E requires
-  without adding another planner or reader authority.
-- E, configured inner-join runtime: claimed and active in
-  `rust/.worktrees/executor-configured-inner-join-runtime`. It is the immediate
-  implementation critical path and the sole Campaign 25 `tidb-exec` routing
-  steward.
-- F, server/live multi-relation proof: it cannot start until E's exact
-  join-runtime evidence is promoted. Its server write-set split is still being
-  prepared, so the current single checked slice is not yet the final dispatch
-  shape. The resulting members own server configuration/routing and the
-  stock-MySQL-to-real-TiKV live acceptance path.
+Dependency order:
 
-The bounded contract remains exactly two configured, nonpartitioned tables;
-direct signed `BIGINT` projections; local flattened-`AND` comparisons; one
-non-null cross-side equality for `INNER JOIN ... ON` or `USING`; plus
-`CROSS JOIN` and comma syntax. Dynamic InfoSchema, NULL/coercion/collation join
-semantics, outer/semi/anti joins, arbitrary join predicates, aggregates,
-ordering, limits, DML, and general write/transaction parity remain explicit
-gaps.
+1. `rustls 0.23` + `rustls-pemfile 2`, validated CA/cert/key config, TLS 1.2
+   default and TLS 1.3 option, fail-closed startup.
+2. Real `CLIENT_SSL` advertisement and SSLRequest socket upgrade before
+   credentials, exact packet sequence and pre-read preservation.
+3. Client-cert policy and account `REQUIRE SSL/X509/ISSUER/SUBJECT/SAN/CIPHER`.
+4. Live `require_secure_transport`, including secure-only dynamic enable.
+5. Atomic `ALTER INSTANCE RELOAD TLS [NO ROLLBACK ON ERROR]` retaining last
+   good config and established sessions.
+6. AutoTLS, status/observability, remaining status/cluster TLS suites, and a
+   stock MySQL `VERIFY_IDENTITY` real-PD/TiKV proof.
 
-## Agent workflow
+Primary Go tests include `TestTLSVerify`, `TestTLSBasic`,
+`TestErrorNoRollback`, `TestReloadTLS`, `TestInvalidTLS`, `TestTLSAuto`,
+`TestTLSVersion`, security config tests, and account TLS privilege cases.
 
-The root steward prepares dependency-ready, consumer-complete slices before an
-agent starts. Parallelism is constrained first by declared mutable Rust paths,
-then by semantic Go ownership.
+### Complete transactions and batch KV
 
-From the primary repository root:
+Use the following dependency order; C28 Stage B is only a reusable normal-2PC
+foundation:
 
-```sh
-python3 rust/scripts/work-unit-queue.py check
-python3 rust/scripts/work-unit-queue.py ready --target <crate> --ring <ring>
-python3 rust/scripts/work-unit-queue.py claim-slice \
-  --owner <slice> --slice <slice>
-python3 rust/scripts/slice-worktree.py --slice <slice>
-```
+1. Real snapshot BatchGet and forward/reverse Scan with region/size batching,
+   bounded concurrency, lock resolution, retry/regroup, and Go comparison.
+2. One concrete mutable KV transaction per SQL session: mem-buffer, staging,
+   tombstones, union reads/iteration, BEGIN/COMMIT/ROLLBACK, autocommit-off.
+3. Production normal 2PC completion: write batching, retry budgets, exact
+   outstanding cleanup, ambiguity/status recovery, secondary completion.
+4. TTL/minCommitTS/TxnHeartBeat, CheckTxnStatus/CheckSecondaryLocks,
+   ResolveLock/BatchResolveLocks, owned background lifecycle.
+5. Typed TiDB transaction options, session retry/replay, and real savepoints.
+6. Pessimistic transactions: lock/rollback, waits/timeouts/kills/deadlocks,
+   RC/RR/serializable, shared/fair/aggressive locking.
+7. Async commit eligibility, fallback, recovery, and secondaries.
+8. 1PC success plus structural fallback to normal 2PC.
+9. Pipelined DML flush generations, throttling, range cleanup, and crash
+   recovery.
+10. Parity/chaos closure plus prepared `oltp_write_only` and
+    `oltp_read_write`, verified independently through Go after Rust stops.
 
-`slice-worktree.py` creates or reuses `codex/<slice>` under the ignored,
-writable `rust/.worktrees/<slice>` root and probes a real write. Do not use the
-old sibling `../tidb-rust-worktrees` layout: desktop subagents can read it but
-cannot safely edit it.
+The primary closure set is 224 TiDB behavioral top-level transaction tests
+plus all nested cases, and six pinned client-go behavioral tests including
+`TestBufferBatchGetter`, `TestMinCommitTsManager`, `TestLockKeys`,
+`TestSharedLockCommitterIncompatibilities`, `TestLockResolverCache`, and
+`TestTryAsyncResolve`.
 
-Each feature agent must:
+## Immediate next actions
 
-- work only inside its slice worktree and declared `rust_paths`;
-- read all claimed Go source and original obligations before implementation;
-- preserve the frozen interface to downstream slices or report the exact seam
-  change before editing a shared owner;
-- add source-shaped focused tests and exact owner-named evidence;
-- prove a regression fails on the predecessor for the intended reason before
-  claiming a bug fix passes;
-- run focused validation only, then commit a narrow leaf change and report the
-  commit, files, tests, risks, and unverified surfaces;
-- leave the claim active and never run or release against the shared campaign
-  gate.
+1. Add direct secondary-commit and rollback regroup-failure regressions, then
+   freeze the current C27/C28 claims and run one shared integration gate.
+2. Receipt-release/close C27 and release C28 Stage B without consuming or
+   invalidating unrelated receipt entries; regenerate status.
+3. Implement C28 Stage C, then the sole KV-authority Stage D migration and the
+   real mixed read/write live proof.
+4. Freeze valid source/test-complete TLS and full-transaction campaigns before
+   claiming them. Campaign validation requires at least nine production source
+   files and fifty original obligations; do not leave partial draft manifests
+   in the tree.
+5. Continue ledger triage until every original TiDB and pinned client-go test
+   has an explicit honest disposition. Never convert broad source families to
+   COVERED from one bounded vertical.
 
-The root steward reviews and integrates leaf commits. When a completed member
-must unlock a downstream exact-evidence dependency, use the atomic incremental
-promotion flow without running or consuming the final campaign gate:
+## Validation and repository rules
 
-```sh
-python3 rust/scripts/campaign_close.py \
-  --campaign 2026-07-read-path-25 --promote-member <slice>
-python3 rust/scripts/campaign_close.py \
-  --campaign 2026-07-read-path-25 --promote-member <slice> --apply
-```
+- Use 12 jobs for every build.
+- WIP validation is appropriate while these campaigns remain open. Ready
+  requires the repository profile, including `make -j12 lint` for code changes.
+- Rust-only work does not require `make bazel_prepare`; follow the root gate if
+  any Go/import/Bazel/module trigger appears.
+- RealTiKV tests own their TiUP topology and must prove readiness, retain
+  diagnostics on failure, and remove only tagged state.
+- `campaign_close.py` now supports covered inactive historical members plus
+  unrelated active claims: the gate receipt must match the exact active claim
+  set, and only active members of the closing campaign are released.
+- Keep unsupported behavior fail-closed before PD/TiKV publication.
 
-Promotion retains the claim and honest `PARTIAL` gaps. Existing test-domain
-labels are stable partition identities and must not be rewritten during
-evidence transfer. The tool may add a missing exact row for an already-split
-test file atomically; it must roll back on failure.
+## Durable local facts
 
-Keep the pipeline full: while the current frontier executes, prepare the next
-six mutually writable slices and freeze their public seams. Prefer completing
-or consolidating existing `PARTIAL` families that unlock real consumers over
-creating isolated helpers. Do not make feature agents wait for root discovery,
-evidence repair, or shared-file design.
-
-## Verification contract
-
-Use the repository `WIP` profile while Campaign 25 is open.
-
-Feature-agent fast lane:
-
-- the narrow focused test or already-registered shard named by the slice;
-- focused package Clippy when the leaf needs Cargo integration;
-- `cargo fmt --all -- --check` or the narrow rustfmt equivalent;
-- exact evidence/anchor checks required by the slice;
-- `git diff --check`.
-
-Set `CARGO_BUILD_JOBS=12` for every Cargo build. Reuse one stable target per
-checkout; never share a target directory between worktrees because generated
-evidence embeds `CARGO_MANIFEST_DIR`. Do not run a workspace build after every
-leaf and do not let each agent create a throwaway full target.
-
-After the final campaign member set and live proof freeze, the root steward
-runs exactly one shared gate from `rust/`:
-
-```sh
-python3 scripts/work-unit-queue.py check
-CARGO_BUILD_JOBS=12 scripts/rewrite-gate.sh integrate
-```
-
-Then run from the repository root:
-
-```sh
-make -j12 lint
-```
-
-The campaign is not Ready until the stock-client live test passes against real
-PD/TiKV, the shared receipt covers every frozen claim, all members consume that
-receipt, claims are released with `--integrated`, campaign membership is
-archived, and generated `STATUS.md` is refreshed. A failed gate releases
-nothing; fix the owning leaf and rerun the frozen shared gate.
-
-`make bazel_prepare` is required only if the change triggers the root
-`AGENTS.md` Go/Bazel/module conditions. Do not run `make bazel_lint_changed`.
-Use the repository RealTiKV lifecycle rules for any real-cluster test: start in
-the background, prove readiness, retain failure diagnostics, and clean every
-owned process and data artifact.
-
-## Immediate next work
-
-1. Finish E in its current worktree: consume C's typed plan and D's two
-   same-snapshot real-TiKV results, implement deterministic bounded inner-join
-   materialization/projection/cancellation, and preserve required-row limits
-   without over-reading or client-side scan filtering.
-2. Review E against its complete claimed Go sources/tests, integrate its
-   focused evidence, and promote it atomically to exact `PARTIAL` so F unlocks.
-3. Freeze the final F server/live slice split in the campaign manifest, claim
-   the dependency-ready members, and create their writable worktrees. Connect
-   the existing server configuration/session/lifecycle authority to the
-   two-table runtime, extending the shared live harness instead of copying its
-   lifecycle code.
-4. Run the Campaign 25 stock-client proof against real PD/TiKV: aliases, ON,
-   USING, CROSS/comma, local range and residual predicates, projections from
-   both sides, no-match output, one snapshot, topology churn, blocked shutdown,
-   zero exit, and tag-owned cleanup.
-5. Freeze every final campaign member, run the one shared integration gate and
-   repository lint, consume/release every receipt-backed claim, and regenerate
-   status.
-6. In parallel when a slot opens, scope the next six disjoint slices so the
-   dispatcher does not return to an empty ready frontier after Campaign 25.
-
-## Durable environment facts
-
-- Primary checkout: `/Users/qiliu/projects/tidb`.
-- Primary integration branch: `hparser-integration`; feature branches use
-  `codex/<slice>` and are not pushed unless requested.
-- Rust toolchain is pinned by `rust-toolchain.toml`; the current workspace
-  requires Rust 1.97 and forbids unsafe code.
-- The workspace baseline is tracked. `rust/.worktrees/` is intentionally
-  ignored; claim leases under `rust/workstreams/claims/` are local coordination
-  state, not committed evidence.
-- `godump`, `gorun`, and `goeval` at the repository root are untracked helper
-  binaries. Do not commit them.
-- Existing unrelated user files and dirty changes must be preserved. Commit a
-  slice with explicit paths; never sweep unrelated files into a commit.
-- This handoff, generated status, checked manifests/ledgers, and living
-  ExecPlans are the complete shared context. Agents must not depend on private
-  chat history or machine-local notes.
+- Checkout: `/Users/qiliu/projects/tidb`
+- Integration branch: `hparser-integration`, tracking
+  `ngaut/hparser-integration`
+- Exact Go v8.5.6 fixture:
+  `/Users/qiliu/projects/tidb-rust-worktrees/campaign22-v856-fixture/bin/tidb-server`
+- Oracle-MySQL-linked sysbench:
+  `/Users/qiliu/projects/tidb/rust/target/sysbench-mysql-client/bin/sysbench`
+- Root `godump`, `gorun`, `goeval`, second-opinion outputs, and
+  `.agents/skills/second-opinion/` are local helpers/artifacts and must not be
+  staged with rewrite code.
+- Claims are local coordination state and remain uncommitted. Preserve all
+  unrelated user files and never use destructive Git cleanup.

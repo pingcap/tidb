@@ -11,6 +11,7 @@ mod error;
 mod forwarding;
 mod liveness;
 mod tonic_coprocessor;
+mod transaction;
 mod transport_runtime;
 mod unary;
 
@@ -26,6 +27,9 @@ pub use error::{
 };
 pub use liveness::DEFAULT_STORE_LIVENESS_TIMEOUT;
 pub use tonic_coprocessor::TonicCoprocessorClient;
+pub use transaction::{
+    TransactionBatchPending, TransactionBatchPublication, TransactionBatchResponse,
+};
 pub use transport_runtime::TransportShutdownCancellation;
 pub use unary::{UnaryCallContext, UnaryCancellation};
 

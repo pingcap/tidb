@@ -88,7 +88,12 @@ impl ConfiguredOrderKey {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ConfiguredLimitWindowError {
     /// `offset + count` cannot be represented by the executable index domain.
-    EndOverflow { offset: usize, count: usize },
+    EndOverflow {
+        /// The requested number of rows to skip.
+        offset: usize,
+        /// The requested number of rows to emit after the skip.
+        count: usize,
+    },
 }
 
 impl fmt::Display for ConfiguredLimitWindowError {

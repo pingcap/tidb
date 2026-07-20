@@ -19,8 +19,10 @@ The default mode is a read-only preflight. ``--promote-member`` selects one
 completed member whose exact evidence and slice status should advance to
 PARTIAL while its claim remains active; add ``--apply`` to commit that
 transaction. Without ``--promote-member``, ``--apply`` closes the campaign's
-bookkeeping. ``--gate`` additionally runs the one shared integration gate and
-then releases every campaign member using that gate's receipt.
+bookkeeping. Covered members that were receipt-released earlier may be
+inactive. ``--gate`` additionally runs one shared integration gate over the
+exact current active claim set, then receipt-releases only this campaign's
+active members while preserving unrelated claims and their receipt entries.
 """
 
 from __future__ import annotations
@@ -74,12 +76,14 @@ class ClosePlan:
         self,
         campaign: str,
         members: tuple[str, ...],
+        active_members: tuple[str, ...] | None,
         writes: dict[Path, str],
         deletes: set[Path],
         transfer_count: int,
     ) -> None:
         self.campaign = campaign
         self.members = members
+        self.active_members = members if active_members is None else active_members
         self.writes = writes
         self.deletes = deletes
         self.transfer_count = transfer_count
@@ -100,7 +104,7 @@ class MemberPromotionPlan(ClosePlan):
         deletes: set[Path],
         transfer_count: int,
     ) -> None:
-        super().__init__(campaign, (member,), writes, deletes, transfer_count)
+        super().__init__(campaign, (member,), None, writes, deletes, transfer_count)
         self.member = member
 
 
@@ -322,6 +326,7 @@ def _build_evidence_transition(
     transfer_rows: list[list[str]],
     slices: dict[str, dict[str, object]],
     eligible_members: set[str],
+    terminal_members: set[str],
 ) -> tuple[dict[Path, str], set[Path], list[tuple[str, str, str]]]:
     """Build one checked ownership mutation for the eligible terminal owners.
 
@@ -332,8 +337,16 @@ def _build_evidence_transition(
     """
     removals: dict[Path, set[str]] = {}
     terminal_anchors: list[tuple[str, str, str]] = []
+    # A successor artifact can be retired by a later campaign while this
+    # historical campaign is still open. Accept that absence only when the
+    # artifact is declared retired somewhere in the global append-only
+    # transfer history; transfer-topology validation below still proves the
+    # anchor itself reaches the current generated owner.
     all_retired_artifacts = {
-        artifact for row in transfer_rows for artifact in _split_artifacts(row[6])
+        artifact
+        for path in sorted((root / queue.TRANSFERS_DIR).glob("*.tsv"))
+        for row in queue.read_tsv(path, 9)
+        for artifact in _split_artifacts(row[6])
     }
     for row in transfer_rows:
         old_owner, new_owner = row[0], row[1]
@@ -365,7 +378,7 @@ def _build_evidence_transition(
                 f"{transfer_path}: test {test_anchor} is not frozen in {new_owner}"
             )
         for kind, anchor in (("source", source_anchor), ("test", test_anchor)):
-            if anchor is not None:
+            if anchor is not None and new_owner in terminal_members:
                 terminal_anchors.append((kind, anchor, new_owner))
         for artifact in _split_artifacts(row[6]):
             path = _repository_path(root, artifact)
@@ -459,13 +472,7 @@ def build_close_plan(root: Path, campaign_name: str) -> ClosePlan:
         )
     members = tuple(str(member) for member in campaign["slices"])
     claims = {str(claim["owner"]): claim for claim in queue.load_claims(root)}
-    if set(claims) != set(members):
-        missing = sorted(set(members) - set(claims))
-        extra = sorted(set(claims) - set(members))
-        raise ValueError(
-            f"campaign {campaign_name} active claims must exactly match members; "
-            f"missing={missing}, extra={extra}"
-        )
+    active_members = tuple(member for member in members if member in claims)
     for member in members:
         record = slices[member]
         if record["status"] not in {"partial", "covered"}:
@@ -473,7 +480,14 @@ def build_close_plan(root: Path, campaign_name: str) -> ClosePlan:
                 f"campaign member {member} must be partial or covered before close; "
                 f"found {record['status']}"
             )
-        claim = claims[member]
+        claim = claims.get(member)
+        if claim is None:
+            if record["status"] != "covered":
+                raise ValueError(
+                    f"inactive campaign member {member} must already be covered; "
+                    f"found {record['status']}"
+                )
+            continue
         if claim.get("schema") != 2:
             raise ValueError(f"campaign member {member} requires a schema-2 slice claim")
         expected = (
@@ -499,7 +513,7 @@ def build_close_plan(root: Path, campaign_name: str) -> ClosePlan:
         raise ValueError(f"campaign transfer file is empty: {transfer_path}")
 
     writes, deletes, _terminal_anchors = _build_evidence_transition(
-        root, transfer_path, transfer_rows, slices, set(members)
+        root, transfer_path, transfer_rows, slices, set(members), set(members)
     )
 
     campaign_path = Path(campaign["_path"])
@@ -510,7 +524,14 @@ def build_close_plan(root: Path, campaign_name: str) -> ClosePlan:
     writes[archive_path] = _archived_members_text(
         archive_path, campaign_name, members
     )
-    return ClosePlan(campaign_name, members, writes, deletes, len(transfer_rows))
+    return ClosePlan(
+        campaign_name,
+        members,
+        active_members,
+        writes,
+        deletes,
+        len(transfer_rows),
+    )
 
 
 def _validate_exact_member_evidence(
@@ -631,8 +652,15 @@ def _promoted_test_domain_manifest_text(
         existing.add(anchor)
         split_paths.add(anchor[0])
 
+    top_level_test_anchors = {
+        queue.test_key(row)
+        for row in queue.load_test_rows(root)
+        if row["kind"] == "go_test"
+    }
     promoted = []
     for value in test_anchors:
+        if str(value) not in top_level_test_anchors:
+            continue
         test_path, line, name = str(value).rsplit(":", 2)
         anchor = (test_path, int(line), name)
         if test_path in split_paths and anchor not in existing:
@@ -696,19 +724,22 @@ def build_member_promotion_plan(
     if actual != expected:
         raise ValueError(f"campaign member {member} claim differs from its frozen slice")
 
+    # A previously promoted member may have been superseded by a later
+    # campaign before this historical campaign closes. Its checked PARTIAL
+    # status is still sufficient to make the older transfer terminal
+    # available: `validate_transfers` below proves the full ownership chain
+    # reaches the current generated ledger owner. Requiring the predecessor
+    # to remain the terminal ledger owner would strand every unfinished
+    # campaign after a valid cross-campaign successor transfer.
     eligible_members = {
         item
         for item in campaign_members
-        if item == member
-        or (
-            slices[item]["status"] in {"partial", "covered"}
-            and _member_has_promoted_ledger_evidence(root, item, slices[item])
-        )
+        if item == member or slices[item]["status"] in {"partial", "covered"}
     }
     transfer_path = root / queue.TRANSFERS_DIR / f"{campaign_name}.tsv"
     transfer_rows = queue.read_tsv(transfer_path, 9) if transfer_path.is_file() else []
     writes, deletes, _terminal_anchors = _build_evidence_transition(
-        root, transfer_path, transfer_rows, slices, eligible_members
+        root, transfer_path, transfer_rows, slices, eligible_members, {member}
     )
     _validate_exact_member_evidence(root, member, record, writes, deletes)
     domain_manifest = _promoted_test_domain_manifest_text(
@@ -764,6 +795,7 @@ def _apply_bookkeeping_plan(
         current = rebuild()
         if (
             current.members != plan.members
+            or current.active_members != plan.active_members
             or current.writes != plan.writes
             or current.deletes != plan.deletes
             or current.transfer_count != plan.transfer_count
@@ -783,7 +815,7 @@ def _apply_bookkeeping_plan(
         command_runner(
             [
                 "cargo", "run", "--offline", "--locked", "-j12", "-p", "difftest",
-                "--bin", "go_test_ledger", "--", "--write",
+                "--bin", "go_test_ledger", "--", "--write-evidence",
             ],
             root,
         )
@@ -806,7 +838,8 @@ def apply_close_plan(
     campaign_path = root / queue.CAMPAIGNS_DIR / f"{plan.campaign}.toml"
     paths = plan.touched_paths | {root / path for path in GENERATED_PATHS}
     paths |= {
-        root / queue.CLAIMS_DIR / f"{member}.claim.json" for member in plan.members
+        root / queue.CLAIMS_DIR / f"{member}.claim.json"
+        for member in plan.active_members
     }
     paths |= {
         root / queue.INTEGRATION_ATTEMPT,
@@ -827,11 +860,18 @@ def apply_close_plan(
         if run_gate:
             command_runner(["scripts/rewrite-gate.sh", "integrate"], root)
             receipt = queue.load_integration_state(root, queue.INTEGRATION_RECEIPT)
-            if set(receipt["claims"]) != set(plan.members):
+            active_claims = {
+                str(claim["owner"]) for claim in queue.load_claims(root)
+            }
+            if set(receipt["claims"]) != active_claims:
                 raise ValueError(
-                    "shared gate receipt claims differ from exact campaign membership"
+                    "shared gate receipt claims differ from the exact active claim set"
                 )
-            for member in plan.members:
+            if not set(plan.active_members).issubset(active_claims):
+                raise ValueError(
+                    "shared gate receipt is missing an active campaign member"
+                )
+            for member in plan.active_members:
                 queue.release(root, member, integrated=True, abandon=False)
             # Receipt consumption changes the dashboard's active-claim count.
             # Regenerate only after the final member release so the shared
@@ -914,7 +954,8 @@ def main() -> int:
                 action = "dry-run"
         print(
             f"campaign_close\t{action}\t{plan.campaign}\t"
-            f"members={len(plan.members)}\ttransfers={plan.transfer_count}\t"
+            f"members={len(plan.members)}\tactive_members={len(plan.active_members)}\t"
+            f"transfers={plan.transfer_count}\t"
             f"writes={len(plan.writes)}\tdeletes={len(plan.deletes)}"
         )
         return 0

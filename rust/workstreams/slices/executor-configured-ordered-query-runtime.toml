@@ -1,6 +1,6 @@
 schema = "1"
 slice = "executor-configured-ordered-query-runtime"
-status = "ready"
+status = "partial"
 target = "tidb-exec"
 ring = "result"
 consumer = "The production configured join executor applies the typed LIMIT-only or bounded TopN operator to Campaign 25 real-TiKV rows, retains exact result metadata, and exposes one lazy cancellation-aware record-set authority."

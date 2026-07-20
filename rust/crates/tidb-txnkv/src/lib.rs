@@ -16,12 +16,11 @@
 //! This foundation translates complete dependency-closed contracts from
 //! `pkg/kv/{key,version,keyflags,assertion,error,checker}.go` plus the bounded
 //! transaction-source bitfield in `pkg/kv/option.go`. The bounded RPC and
-//! region modules now provide one real unary Coprocessor transport and one
-//! PD-backed region route. The read-only SQL node shares one concrete PD
-//! worker for region discovery and the timestamp oracle, while this crate
-//! retains the maintained RegionCache, lock-recovery, and BatchCommands/unary
-//! transport authorities. MVCC write transactions, pessimistic/async-commit
-//! completion, TLS, and commit remain outside the implemented boundary.
+//! region modules provide one real BatchCommands transport and one PD-backed
+//! region route. One concrete process authority now shares its PD worker,
+//! maintained RegionCache, lock resolver, and TiKV transport across reads and
+//! normal optimistic 2PC writes. Pessimistic transactions, async commit, 1PC,
+//! large-transaction TTL management, and TLS remain outside this boundary.
 
 mod assertion;
 mod batch_getter;
@@ -49,6 +48,7 @@ pub mod region;
 mod resource_group;
 mod retry;
 pub mod rpc;
+pub mod transaction;
 mod txn_scope;
 mod txn_source;
 mod union_iter;

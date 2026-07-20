@@ -68,6 +68,7 @@ pub struct BoundProjection {
     side: RelationSide,
     column_offset: usize,
     output_name: String,
+    explicit_alias: bool,
 }
 
 impl BoundProjection {
@@ -87,6 +88,13 @@ impl BoundProjection {
     #[must_use]
     pub fn output_name(&self) -> &str {
         &self.output_name
+    }
+
+    /// Returns whether the output name came from an explicit `AS` alias.
+    #[must_use]
+    #[allow(dead_code)] // Direct source-shard binder tests compile this module without tail lowering.
+    pub const fn has_explicit_alias(&self) -> bool {
+        self.explicit_alias
     }
 }
 
@@ -135,15 +143,7 @@ pub struct ConfiguredRelationTree {
 impl ConfiguredRelationTree {
     /// Parses and binds the complete bounded query before runtime admission.
     pub fn bind_sql(sql: &str, catalog: &ConfiguredCatalog) -> Result<Self, RelationBindError> {
-        let stmt =
-            tidb_parser::parse(sql).map_err(|error| RelationBindError::Parse(error.message))?;
-        let select = match stmt {
-            Stmt::Query(query) => match *query {
-                QueryStmt::Select(select) => select,
-                QueryStmt::SetOpr(_) => return Err(RelationBindError::UnsupportedQueryShape),
-            },
-            _ => return Err(RelationBindError::UnsupportedQueryShape),
-        };
+        let select = parse_select(sql)?;
         bind_select(&select, catalog)
     }
 
@@ -175,6 +175,21 @@ impl ConfiguredRelationTree {
     #[must_use]
     pub const fn join_constraint(&self) -> &BoundJoinConstraint {
         &self.join_constraint
+    }
+}
+
+/// Parses exactly one plain SELECT for a configured planner entrypoint.
+///
+/// The caller owns the parsed AST and must pass it to one of this module's
+/// typed binders; it must not restore and reparse the query text.
+pub(crate) fn parse_select(sql: &str) -> Result<SelectStmt, RelationBindError> {
+    let stmt = tidb_parser::parse(sql).map_err(|error| RelationBindError::Parse(error.message))?;
+    match stmt {
+        Stmt::Query(query) => match *query {
+            QueryStmt::Select(select) => Ok(*select),
+            QueryStmt::SetOpr(_) => Err(RelationBindError::UnsupportedQueryShape),
+        },
+        _ => Err(RelationBindError::UnsupportedQueryShape),
     }
 }
 
@@ -221,11 +236,31 @@ impl fmt::Display for RelationBindError {
 
 impl Error for RelationBindError {}
 
-fn bind_select(
+pub(crate) fn bind_select(
     select: &SelectStmt,
     catalog: &ConfiguredCatalog,
 ) -> Result<ConfiguredRelationTree, RelationBindError> {
     validate_query_envelope(select)?;
+    bind_select_core(select, catalog)
+}
+
+/// Binds a select whose ORDER BY/LIMIT tail is owned by a later typed stage.
+///
+/// This keeps base-relation and projection binding centralized while leaving
+/// ordinary configured join planning strict about unsupported query tails.
+#[allow(dead_code)] // Direct source-shard binder tests compile this module without tail lowering.
+pub(crate) fn bind_select_with_order_limit(
+    select: &SelectStmt,
+    catalog: &ConfiguredCatalog,
+) -> Result<ConfiguredRelationTree, RelationBindError> {
+    validate_query_envelope_core(select)?;
+    bind_select_core(select, catalog)
+}
+
+fn bind_select_core(
+    select: &SelectStmt,
+    catalog: &ConfiguredCatalog,
+) -> Result<ConfiguredRelationTree, RelationBindError> {
     let from = select
         .from
         .as_ref()
@@ -268,6 +303,14 @@ fn bind_select(
 }
 
 fn validate_query_envelope(select: &SelectStmt) -> Result<(), RelationBindError> {
+    validate_query_envelope_core(select)?;
+    if !select.order_by.is_empty() || select.limit.is_some() {
+        return Err(RelationBindError::UnsupportedQueryShape);
+    }
+    Ok(())
+}
+
+fn validate_query_envelope_core(select: &SelectStmt) -> Result<(), RelationBindError> {
     if select.kind != SelectStatementKind::Select
         || select.is_in_braces
         || select.with.is_some()
@@ -280,8 +323,6 @@ fn validate_query_envelope(select: &SelectStmt) -> Result<(), RelationBindError>
         || select.rollup
         || select.having.is_some()
         || !select.windows.is_empty()
-        || !select.order_by.is_empty()
-        || select.limit.is_some()
         || select.lock.is_some()
         || select.into_outfile.is_some()
     {
@@ -376,6 +417,7 @@ fn bind_projection(
             .filter(|alias| !alias.is_empty())
             .unwrap_or(column.name())
             .to_owned(),
+        explicit_alias: alias.as_deref().is_some_and(|alias| !alias.is_empty()),
     })
 }
 
@@ -398,7 +440,7 @@ fn bind_local_predicates(
             let side = match (bound_side(lhs, left, right)?, bound_side(rhs, left, right)?) {
                 (Some(side), None) | (None, Some(side)) => side,
                 (Some(left_side), Some(right_side)) if left_side != right_side => {
-                    return Err(RelationBindError::CrossRelationWherePredicate)
+                    return Err(RelationBindError::CrossRelationWherePredicate);
                 }
                 _ => return Err(RelationBindError::UnsupportedPredicate),
             };
@@ -424,7 +466,7 @@ fn bound_side(
     }
 }
 
-fn resolve_column<'a>(
+pub(crate) fn resolve_column<'a>(
     path: &[String],
     left: &'a BoundRelation,
     right: &'a BoundRelation,
