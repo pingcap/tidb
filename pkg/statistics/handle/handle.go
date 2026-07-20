@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/session/syssession"
@@ -193,6 +194,17 @@ func (h *Handle) GetPhysicalTableStats(physicalTableID int64, tblInfo *model.Tab
 	intest.Assert(tblStats != nil, "stats should not be nil")
 	intest.Assert(found, "stats should not be nil")
 	return tblStats
+}
+
+// LoadColumnTopN loads at most limit TopN values for one column.
+func (*Handle) LoadColumnTopN(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	physicalTableID, columnID int64,
+	limit int,
+) (*statistics.TopN, error) {
+	return storage.TopNFromStorageWithPriorityAndLimit(
+		ctx, sctx, physicalTableID, 0, columnID, kv.PriorityNormal, limit)
 }
 
 // GetNonPseudoPhysicalTableStats retrieves the statistics for a physical table from cache, but it will not return pseudo.
