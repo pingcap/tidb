@@ -1626,7 +1626,10 @@ func (local *Backend) doImport(
 	retryer := newRegionJobRetryer(workerCtx, jobToWorkerCh, &jobWg)
 	workGroup.Go(func() error {
 		retryer.run()
-		return nil
+		// OperatorErr reports only business errors. Its context is also canceled on
+		// normal exit, so reporting parent-context cancellation there would require
+		// distinguishing cancellation sources. Return the parent context error here.
+		return ctx.Err()
 	})
 
 	// dispatcher sends done jobs to retryer or marks them done.
