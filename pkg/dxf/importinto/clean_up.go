@@ -61,7 +61,15 @@ type cleanUpFileGroup struct {
 	taskIDs            []int64
 }
 
-// CleanUpBatch cleans up multiple import tasks in batch.
+// CleanUpBatch cleans up multiple import tasks together.
+// Global-sort files are partitioned by task ID, but finding them requires a scan
+// of the shared object store. Batching lets cleanup scan each store once instead
+// of once per task. The scheduler moves the tasks to history only after this
+// method succeeds, but the cleanup side effects themselves are not atomic: a
+// retry may repeat work that completed before an earlier failure.
+//
+// TODO: Move global-sort file management into DXF so task cleanup can remain
+// independent without giving up batched object-store scans.
 func (*ImportCleanUp) CleanUpBatch(ctx context.Context, tasks []*proto.Task) error {
 	if len(tasks) == 0 {
 		return nil
@@ -90,6 +98,8 @@ func (*ImportCleanUp) CleanUpBatch(ctx context.Context, tasks []*proto.Task) err
 		}
 
 		if isGlobalSort {
+			// in next-gen, and most cases of classic kernel, all tasks share the
+			// same cloud storage uri.
 			fileGroup, ok := fileGroups[cloudStorageURI]
 			if !ok {
 				fileGroup = &cleanUpFileGroup{

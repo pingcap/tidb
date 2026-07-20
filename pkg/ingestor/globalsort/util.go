@@ -43,6 +43,9 @@ func CleanUpFiles(ctx context.Context, store storeapi.Storage, nonPartitionedDir
 	if len(nonPartitionedDirs) == 0 {
 		return nil
 	}
+	// TODO: GetAllFileNames accumulates every matching file name in memory before
+	// deletion. Large imports can therefore consume excessive memory or cause an
+	// OOM. List and delete files in bounded batches to keep memory usage bounded.
 	names, err := simplesst.GetAllFileNames(ctx, store, nonPartitionedDirs...)
 	if err != nil {
 		return err
