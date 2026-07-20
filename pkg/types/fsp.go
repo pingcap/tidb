@@ -47,10 +47,10 @@ func CheckFsp(fsp int) (int, error) {
 	return fsp, nil
 }
 
-// ParseFrac parses the input string according to fsp, returns the microsecond,
+// ParseTimeFrac parses the input string according to fsp, returns the microsecond,
 // and also a bool value to indice overflow. eg:
 // "999" fsp=2 will overflow.
-func ParseFrac(s string, fsp int) (v int, overflow bool, err error) {
+func ParseTimeFrac(s string, fsp int, truncate bool) (v int, overflow bool, err error) {
 	if len(s) == 0 {
 		return 0, false, nil
 	}
@@ -69,7 +69,17 @@ func ParseFrac(s string, fsp int) (v int, overflow bool, err error) {
 		return
 	}
 
-	// Round when fsp < string length.
+	if truncate {
+		if fsp == 0 {
+			return 0, false, nil
+		}
+		tmp, e := strconv.ParseInt(s[:fsp], 10, 64)
+		if e != nil {
+			return 0, false, errors.Trace(e)
+		}
+		v = int(float64(tmp) * math.Pow10(MaxFsp-fsp))
+		return
+	}
 	tmp, e := strconv.ParseInt(s[:fsp+1], 10, 64)
 	if e != nil {
 		return 0, false, errors.Trace(e)
