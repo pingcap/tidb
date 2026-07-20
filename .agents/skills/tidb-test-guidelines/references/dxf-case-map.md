@@ -102,7 +102,7 @@
 ## pkg/dxf/importinto
 
 ### Tests
-- `pkg/dxf/importinto/clean_up_test.go` - dxf/importinto: Tests batch cleanup uses live storage credentials while redacting persisted task metadata.
+- `pkg/dxf/importinto/clean_up_test.go` - dxf/importinto: Tests batch cleanup groups task files into one scan per storage URI, uses live credentials, and redacts persisted task metadata.
 - `pkg/dxf/importinto/collect_conflicts_test.go` - dxf/importinto: Tests collect conflicts step executor.
 - `pkg/dxf/importinto/conflict_resolution_test.go` - dxf/importinto: Tests conflict resolution step executor.
 - `pkg/dxf/importinto/encode_and_sort_operator_test.go` - dxf/importinto: Tests encode and sort operator.
