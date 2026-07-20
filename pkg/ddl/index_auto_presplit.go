@@ -16,7 +16,6 @@ package ddl
 
 import (
 	"bytes"
-	"container/heap"
 	"context"
 	"fmt"
 	"slices"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/generic"
 )
 
 type autoSplitStatsProvider interface {
@@ -54,8 +54,8 @@ func getAutoSplitHotRegionConfig() autoSplitHotRegionConfig {
 		topNMinRatio:           0.01,
 		minStatsHealthy:        80,
 	}
-	failpoint.InjectCall("mockAutoSplitHotRegionConfig", &cfg, func(minRows int) {
-		if minRows > 0 {
+	failpoint.Inject("mockAutoSplitHotRegionConfig", func(val failpoint.Value) {
+		if minRows, ok := val.(int); ok && minRows > 0 {
 			cfg.applyTestConfigOverrides(minRows)
 		}
 	})
@@ -171,7 +171,10 @@ func buildAutoSplitTopNRows(
 		return nil, nil
 	}
 
-	topNCandidates := make(autoSplitTopNHeap, 0, min(cfg.maxTopNKeysPerPhysical, topN.Num()))
+	topNCandidates := generic.NewBoundedMinHeap(
+		cfg.maxTopNKeysPerPhysical,
+		func(a, b statistics.TopNMeta) int { return -statistics.TopnMetaCompare(a, b) },
+	)
 	for _, topNItem := range topN.TopN {
 		if topNItem.Count < cfg.topNMinCount {
 			continue
@@ -180,20 +183,15 @@ func buildAutoSplitTopNRows(
 			float64(topNItem.Count)/float64(statsTbl.RealtimeCount) < cfg.topNMinRatio {
 			continue
 		}
-		if len(topNCandidates) < cfg.maxTopNKeysPerPhysical {
-			heap.Push(&topNCandidates, topNItem)
-		} else if statistics.TopnMetaCompare(topNItem, topNCandidates[0]) < 0 {
-			topNCandidates[0] = topNItem
-			heap.Fix(&topNCandidates, 0)
-		}
+		topNCandidates.Add(topNItem)
 	}
-	if len(topNCandidates) == 0 {
+	selectedTopN := topNCandidates.ToSortedSlice()
+	if len(selectedTopN) == 0 {
 		return nil, nil
 	}
-	statistics.SortTopnMeta(topNCandidates)
 
-	topNRows := make([][]types.Datum, 0, min(cfg.maxTopNKeysPerPhysical, len(topNCandidates)))
-	for _, topNItem := range topNCandidates {
+	topNRows := make([][]types.Datum, 0, len(selectedTopN))
+	for _, topNItem := range selectedTopN {
 		datum, err := statistics.TopNColumnValueToDatum(
 			topNItem, colInfo.GetType(), sctx.GetSessionVars().Location())
 		if err != nil {
@@ -218,28 +216,6 @@ func buildAutoSplitTopNRows(
 		topNRows = append(topNRows, []types.Datum{splitDatum})
 	}
 	return topNRows, nil
-}
-
-// autoSplitTopNHeap keeps the worst selected candidate at the root.
-type autoSplitTopNHeap []statistics.TopNMeta
-
-func (h autoSplitTopNHeap) Len() int { return len(h) }
-
-func (h autoSplitTopNHeap) Less(i, j int) bool {
-	return statistics.TopnMetaCompare(h[i], h[j]) > 0
-}
-
-func (h autoSplitTopNHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
-
-func (h *autoSplitTopNHeap) Push(value any) {
-	*h = append(*h, value.(statistics.TopNMeta))
-}
-
-func (h *autoSplitTopNHeap) Pop() any {
-	old := *h
-	last := old[len(old)-1]
-	*h = old[:len(old)-1]
-	return last
 }
 
 func sortAndDedupeAutoSplitKeys(keys [][]byte) [][]byte {

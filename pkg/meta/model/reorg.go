@@ -114,8 +114,6 @@ type DDLReorgMeta struct {
 // ShallowCopy creates a shallow copy of DDLReorgMeta.
 func (dm *DDLReorgMeta) ShallowCopy() *DDLReorgMeta {
 	newMeta := *dm
-	newMeta.AutoSplitHotRegionResults = append(
-		[]AutoSplitHotRegionResult(nil), dm.AutoSplitHotRegionResults...)
 	return &newMeta
 }
 
