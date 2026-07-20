@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
+	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 )
 
@@ -49,9 +50,23 @@ const (
 	starterBootstrapVersionVar          = "starter_bootstrap_version"
 	starterBootstrapKeyspacePlaceholder = "<keyspace>"
 	starterBootstrapVersionComment      = "Starter bootstrap file version. Do not delete."
+	starterBranchConfigKey              = "serverless_is_branch"
+	starterBranchResetCompleteKey       = "serverless_is_branch_bootstrapped"
+	starterRestoreResetCompleteKey      = "serverless_is_bootstrapped_for_restore"
+	starterPrivilegeResetCompleteValue  = "True"
 )
 
-var starterBootstrapPlaceholderRe = regexp.MustCompile(`<[A-Za-z0-9_-]+>`)
+var (
+	starterBootstrapPlaceholderRe = regexp.MustCompile(`<[A-Za-z0-9_-]+>`)
+	starterPrivilegeResetSQL      = []string{
+		"DELETE FROM mysql.db",
+		"DELETE FROM mysql.default_roles",
+		"DELETE FROM mysql.global_grants",
+		"DELETE FROM mysql.global_priv",
+		"DELETE FROM mysql.role_edges",
+		"DELETE FROM mysql.user",
+	}
+)
 
 type starterBootstrapFileSpec struct {
 	Version            int64                         `json:"version"`
@@ -64,7 +79,24 @@ type starterBootstrapUpgradeSpec struct {
 	SQLBlocks []string `json:"sql,omitempty"`
 }
 
+type starterPrivilegeResetState struct {
+	keyspaceName  string
+	completionKey string
+	observedValue string
+}
+
 func runStarterBootstrapLocked(s sessionapi.Session, bootstrapFile *starterBootstrapFileSpec) error {
+	return runStarterBootstrapTransaction(s, bootstrapFile, false)
+}
+
+func runStarterPrivilegeResetLocked(s sessionapi.Session, bootstrapFile *starterBootstrapFileSpec) error {
+	if len(bootstrapFile.BootstrapSQLBlocks) == 0 {
+		return errors.New("starter bootstrap file must contain bootstrap SQL for privilege reset")
+	}
+	return runStarterBootstrapTransaction(s, bootstrapFile, true)
+}
+
+func runStarterBootstrapTransaction(s sessionapi.Session, bootstrapFile *starterBootstrapFileSpec, resetPrivileges bool) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	if _, err := s.ExecuteInternal(ctx, "BEGIN"); err != nil {
 		return errors.Annotate(err, "begin starter bootstrap file")
@@ -78,6 +110,11 @@ func runStarterBootstrapLocked(s sessionapi.Session, bootstrapFile *starterBoots
 			logutil.BgLogger().Warn("rollback starter bootstrap file failed", zap.Error(err))
 		}
 	}()
+	if resetPrivileges {
+		if err := executeStarterBootstrapSQLBlocks(s, starterPrivilegeResetSQL); err != nil {
+			return errors.Annotate(err, "reset starter privilege tables")
+		}
+	}
 	if err := executeStarterBootstrapSQLBlocks(s, bootstrapFile.BootstrapSQLBlocks); err != nil {
 		return err
 	}
@@ -98,17 +135,42 @@ func upgradeStarterBootstrap(store kv.Storage) error {
 		return err
 	}
 	if bootstrapFile == nil {
+		_, pending, err := readStarterPrivilegeResetState(store, false)
+		if err != nil {
+			return err
+		}
+		if pending {
+			return errors.New("starter bootstrap file is required for pending privilege reset")
+		}
 		return nil
 	}
 	return upgradeStarterBootstrapWithFile(store, bootstrapFile)
 }
 
 func upgradeStarterBootstrapWithFile(store kv.Storage, bootstrapFile *starterBootstrapFileSpec) error {
+	return upgradeStarterBootstrapWithFileAndReset(
+		store,
+		bootstrapFile,
+		readStarterPrivilegeResetState,
+		markStarterPrivilegeResetComplete,
+	)
+}
+
+func upgradeStarterBootstrapWithFileAndReset(
+	store kv.Storage,
+	bootstrapFile *starterBootstrapFileSpec,
+	readResetState func(kv.Storage, bool) (starterPrivilegeResetState, bool, error),
+	markResetComplete func(context.Context, starterPrivilegeResetState) error,
+) error {
+	resetState, privilegeResetPending, err := readResetState(store, false)
+	if err != nil {
+		return err
+	}
 	completedVersion, err := getStoreStarterBootstrapVersion(store)
 	if err != nil {
 		return err
 	}
-	if !needStarterBootstrapUpgrade(completedVersion, bootstrapFile) {
+	if !privilegeResetPending && !needStarterBootstrapUpgrade(completedVersion, bootstrapFile) {
 		return nil
 	}
 
@@ -119,11 +181,17 @@ func upgradeStarterBootstrapWithFile(store kv.Storage, bootstrapFile *starterBoo
 	}
 	defer releaseFn()
 
+	if privilegeResetPending {
+		resetState, privilegeResetPending, err = readResetState(store, true)
+		if err != nil {
+			return err
+		}
+	}
 	completedVersion, err = getStoreStarterBootstrapVersion(store)
 	if err != nil {
 		return err
 	}
-	if !needStarterBootstrapUpgrade(completedVersion, bootstrapFile) {
+	if !privilegeResetPending && !needStarterBootstrapUpgrade(completedVersion, bootstrapFile) {
 		return nil
 	}
 
@@ -152,6 +220,23 @@ func upgradeStarterBootstrapWithFile(store kv.Storage, bootstrapFile *starterBoo
 	if err != nil {
 		return err
 	}
+	if privilegeResetPending {
+		if err = runStarterPrivilegeResetLocked(s, bootstrapFile); err != nil {
+			return err
+		}
+		if err = finishStarterBootstrap(store, bootstrapFile.Version); err != nil {
+			return err
+		}
+		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+		if err = markResetComplete(ctx, resetState); err != nil {
+			return errors.Annotate(err, "complete starter privilege reset")
+		}
+		logutil.BgLogger().Info("starter privilege reset finished",
+			zap.String("keyspace", resetState.keyspaceName),
+			zap.Int64("version", bootstrapFile.Version),
+			zap.Duration("cost", time.Since(startTime)))
+		return nil
+	}
 	if !needStarterBootstrapUpgrade(storedVersion, bootstrapFile) {
 		// The SQL version can be ahead after a crash before the completion key is written.
 		return finishStarterBootstrap(store, storedVersion)
@@ -179,6 +264,67 @@ func upgradeStarterBootstrapWithFile(store kv.Storage, bootstrapFile *starterBoo
 		zap.Int64("version", bootstrapFile.Version),
 		zap.Duration("cost", time.Since(startTime)))
 	return nil
+}
+
+func pendingStarterPrivilegeReset(keyspaceConfig map[string]string) (starterPrivilegeResetState, bool) {
+	isBranch, _ := strconv.ParseBool(keyspaceConfig[starterBranchConfigKey])
+	if isBranch {
+		value, ok := keyspaceConfig[starterBranchResetCompleteKey]
+		if !ok || value == "" || value == starterPrivilegeResetCompleteValue {
+			return starterPrivilegeResetState{}, false
+		}
+		return starterPrivilegeResetState{
+			completionKey: starterBranchResetCompleteKey,
+			observedValue: value,
+		}, true
+	}
+
+	value, ok := keyspaceConfig[starterRestoreResetCompleteKey]
+	if !ok || value == "" {
+		return starterPrivilegeResetState{}, false
+	}
+	complete, _ := strconv.ParseBool(value)
+	if complete {
+		return starterPrivilegeResetState{}, false
+	}
+	return starterPrivilegeResetState{
+		completionKey: starterRestoreResetCompleteKey,
+		observedValue: value,
+	}, true
+}
+
+func readStarterPrivilegeResetState(store kv.Storage, refreshFromPD bool) (starterPrivilegeResetState, bool, error) {
+	keyspaceMeta := store.GetCodec().GetKeyspaceMeta()
+	if keyspaceMeta == nil {
+		return starterPrivilegeResetState{}, false, nil
+	}
+	if refreshFromPD {
+		if storeWithPD, ok := store.(kv.StorageWithPD); ok && storeWithPD.GetPDClient() != nil {
+			latestMeta, err := storeWithPD.GetPDClient().LoadKeyspace(context.Background(), keyspaceMeta.GetName())
+			if err != nil {
+				return starterPrivilegeResetState{}, false, errors.Annotate(err, "refresh starter privilege reset metadata")
+			}
+			if latestMeta != nil {
+				keyspaceMeta = latestMeta
+			}
+		}
+	}
+	state, pending := pendingStarterPrivilegeReset(keyspaceMeta.GetConfig())
+	state.keyspaceName = keyspaceMeta.GetName()
+	return state, pending, nil
+}
+
+func markStarterPrivilegeResetComplete(ctx context.Context, state starterPrivilegeResetState) error {
+	completeValue := starterPrivilegeResetCompleteValue
+	observedValue := state.observedValue
+	return infosync.SetKeyspaceConfig(ctx, state.keyspaceName, pdhttp.UpdateKeyspaceConfigParams{
+		Config: map[string]*string{
+			state.completionKey: &completeValue,
+		},
+		Preconditions: map[string]*string{
+			state.completionKey: &observedValue,
+		},
+	})
 }
 
 func getStoreStarterBootstrapVersion(store kv.Storage) (int64, error) {
