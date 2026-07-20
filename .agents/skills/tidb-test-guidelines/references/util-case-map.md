@@ -538,7 +538,7 @@
 - `pkg/util/stmtsummary/v2/reader_test.go` - util/stmtsummary/v2: Tests time range overlap.
 - `pkg/util/stmtsummary/v2/record_test.go` - util/stmtsummary/v2: Tests stmt record.
 - `pkg/util/stmtsummary/v2/stmtsummary_benchmark_test.go` - util/stmtsummary/v2: Tests stmt summary add single workload.
-- `pkg/util/stmtsummary/v2/stmtsummary_test.go` - util/stmtsummary/v2: Tests stmt window.
+- `pkg/util/stmtsummary/v2/stmtsummary_test.go` - util/stmtsummary/v2: Tests stmt window, internal-query cleanup, and LRU eviction order.
 
 ## pkg/util/stmtsummary/v2/tests
 

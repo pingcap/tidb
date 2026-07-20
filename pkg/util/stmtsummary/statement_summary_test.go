@@ -1271,16 +1271,29 @@ func TestDisablingInternalQueryPreservesLRUOrder(t *testing.T) {
 	ssMap := newStmtSummaryByDigestMap()
 	const capacity = 20
 	require.NoError(t, ssMap.SetMaxStmtCount(capacity))
+	require.NoError(t, ssMap.SetEnabledInternalQuery(true))
 
 	interval := ssMap.refreshInterval()
 	currentBegin := time.Now().Unix() + interval
 	ssMap.beginTimeForCurInterval = currentBegin
 
-	for i := range capacity {
+	for i := range capacity - 2 {
 		stmt := generateAnyExecInfo()
 		stmt.Digest = fmt.Sprintf("digest_%02d", i)
 		ssMap.AddStatement(stmt)
 	}
+	pureInternal := generateAnyExecInfo()
+	pureInternal.Digest = "pure_internal_digest"
+	pureInternal.IsInternal = true
+	ssMap.AddStatement(pureInternal)
+
+	mixedInternal := generateAnyExecInfo()
+	mixedInternal.Digest = "mixed_digest"
+	mixedInternal.IsInternal = true
+	ssMap.AddStatement(mixedInternal)
+	mixedExternal := generateAnyExecInfo()
+	mixedExternal.Digest = mixedInternal.Digest
+	ssMap.AddStatement(mixedExternal)
 
 	hotDigests := []string{"digest_00", "digest_01"}
 	for _, digest := range hotDigests {
@@ -1300,9 +1313,17 @@ func TestDisablingInternalQueryPreservesLRUOrder(t *testing.T) {
 
 	before := lruDigests()
 	require.NoError(t, ssMap.SetEnabledInternalQuery(false))
-	require.Equal(t, before, lruDigests())
+	expected := make([]string, 0, len(before)-1)
+	for _, digest := range before {
+		if digest != pureInternal.Digest {
+			expected = append(expected, digest)
+		}
+	}
+	require.Equal(t, expected, lruDigests())
+	require.NotContains(t, lruDigests(), pureInternal.Digest)
+	require.Contains(t, lruDigests(), mixedInternal.Digest)
 
-	for _, digest := range []string{"new_digest_0", "new_digest_1"} {
+	for _, digest := range []string{"new_digest_0", "new_digest_1", "new_digest_2"} {
 		stmt := generateAnyExecInfo()
 		stmt.Digest = digest
 		ssMap.AddStatement(stmt)
@@ -1329,6 +1350,8 @@ func TestDisablingInternalQueryPreservesLRUOrder(t *testing.T) {
 	require.Len(t, normalExecCounts, capacity)
 	require.Equal(t, int64(2), normalExecCounts[hotDigests[0]])
 	require.Equal(t, int64(2), normalExecCounts[hotDigests[1]])
+	require.Equal(t, int64(2), normalExecCounts[mixedInternal.Digest])
+	require.NotContains(t, normalExecCounts, pureInternal.Digest)
 	require.NotContains(t, normalExecCounts, "digest_02")
 	require.NotContains(t, normalExecCounts, "digest_03")
 	require.Equal(t, int64(2), othersExecCount)

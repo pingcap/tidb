@@ -377,7 +377,10 @@ func (s *StmtSummary) ClearInternal() {
 	s.windowLock.Lock()
 	defer s.windowLock.Unlock()
 	for _, k := range s.window.lru.Keys() {
-		v, _ := s.window.lru.Get(k)
+		v, ok := s.window.lru.Peek(k)
+		if !ok {
+			continue
+		}
 		if v.(*lockedStmtRecord).IsInternal {
 			s.window.lru.Delete(k)
 		}

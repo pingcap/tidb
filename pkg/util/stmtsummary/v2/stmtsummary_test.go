@@ -68,6 +68,61 @@ func TestStmtWindow(t *testing.T) {
 	require.Equal(t, 0, ss.window.evicted.count())
 	require.Equal(t, int64(0), ss.window.evicted.other.ExecCount)
 	require.Equal(t, int64(0), ss.window.evictedCount.Load())
+
+	t.Run("disabling internal query preserves LRU order", func(t *testing.T) {
+		ss := NewStmtSummary4Test(6)
+		defer ss.Close()
+		require.NoError(t, ss.SetEnableInternalQuery(true))
+
+		for _, digest := range []string{"digest_0", "digest_1", "digest_2", "digest_3"} {
+			ss.Add(GenerateStmtExecInfo4Test(digest))
+		}
+		pureInternal := GenerateStmtExecInfo4Test("pure_internal_digest")
+		pureInternal.IsInternal = true
+		ss.Add(pureInternal)
+
+		mixedInternal := GenerateStmtExecInfo4Test("mixed_digest")
+		mixedInternal.IsInternal = true
+		ss.Add(mixedInternal)
+		ss.Add(GenerateStmtExecInfo4Test(mixedInternal.Digest))
+
+		for _, digest := range []string{"digest_0", "digest_1"} {
+			ss.Add(GenerateStmtExecInfo4Test(digest))
+		}
+
+		lruDigests := func() []string {
+			values := ss.window.lru.Values()
+			digests := make([]string, 0, len(values))
+			for _, value := range values {
+				digests = append(digests, value.(*lockedStmtRecord).Digest)
+			}
+			return digests
+		}
+
+		before := lruDigests()
+		require.NoError(t, ss.SetEnableInternalQuery(false))
+		expected := make([]string, 0, len(before)-1)
+		for _, digest := range before {
+			if digest != pureInternal.Digest {
+				expected = append(expected, digest)
+			}
+		}
+		require.Equal(t, expected, lruDigests())
+		require.NotContains(t, lruDigests(), pureInternal.Digest)
+		require.Contains(t, lruDigests(), mixedInternal.Digest)
+
+		for _, digest := range []string{"new_digest_0", "new_digest_1", "new_digest_2"} {
+			ss.Add(GenerateStmtExecInfo4Test(digest))
+		}
+
+		require.Contains(t, lruDigests(), "digest_0")
+		require.Contains(t, lruDigests(), "digest_1")
+		require.Contains(t, lruDigests(), mixedInternal.Digest)
+		require.NotContains(t, lruDigests(), "digest_2")
+		require.NotContains(t, lruDigests(), "digest_3")
+		require.Equal(t, 2, ss.window.evicted.count())
+		require.Equal(t, int64(2), ss.window.evicted.other.ExecCount)
+	})
 }
 
 func TestStmtSummary(t *testing.T) {
