@@ -49,10 +49,16 @@ func TestTopNFromStorageWithPriorityAndLimit(t *testing.T) {
 	}
 
 	topN, err := storage.TopNFromStorageWithPriorityAndLimit(
-		tk.Session(), tableID, 0, histID, kv.PriorityNormal, 2)
+		context.Background(), tk.Session(), tableID, 0, histID, kv.PriorityNormal, 2)
 	require.NoError(t, err)
 	require.Len(t, topN.TopN, 2)
 	require.ElementsMatch(t, []uint64{50, 40}, []uint64{topN.TopN[0].Count, topN.TopN[1].Count})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = storage.TopNFromStorageWithPriorityAndLimit(
+		ctx, tk.Session(), tableID, 0, histID, kv.PriorityNormal, 2)
+	require.ErrorIs(t, err, context.Canceled)
 }
 
 func TestLoadStats(t *testing.T) {

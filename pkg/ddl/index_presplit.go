@@ -66,110 +66,161 @@ func preSplitIndexRegions(
 	splitOnTempIdx := reorgMeta.ReorgTp == model.ReorgTypeIngest ||
 		reorgMeta.ReorgTp == model.ReorgTypeTxnMerge
 	for i, idxInfo := range allIndexInfos {
+		if err := parentContextError(ctx); err != nil {
+			return err
+		}
 		idxArg := args.IndexArgs[i]
 		splitArgs, err := evalSplitDatumFromArgs(exprCtx, tblInfo, idxInfo, idxArg)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		isAutoSplit := splitArgs == nil
-		var splitKeys [][]byte
-		var reason string
-		if isAutoSplit {
+		if splitArgs == nil {
 			if !enableAutoSplitHotRegion {
 				continue
 			}
-			splitKeys, reason, err = planAutoSplitIndexRegions(
-				sctx, statsProvider, tblInfo, idxInfo, getAutoSplitHotRegionConfig())
+			result, err := autoSplitIndexRegion(
+				ctx, sctx, store, tblInfo, idxInfo, statsProvider, splitOnTempIdx)
 			if err != nil {
-				if reason == "" {
-					reason = err.Error()
-				} else {
-					reason += ": " + err.Error()
-				}
-				appendAutoSplitHotRegionResult(
-					reorgMeta, idxInfo, model.AutoSplitHotRegionStatusFailed, 0, 0, 0,
-					reason)
-				logutil.DDLLogger().Warn("auto split hot index region planning failed, continue add-index",
-					zap.String("table", tblInfo.Name.L),
-					zap.String("index", idxInfo.Name.L),
-					zap.String("reason", reason),
-					zap.Error(err))
-				continue
+				return err
 			}
-			if len(splitKeys) == 0 {
-				appendAutoSplitHotRegionResult(
-					reorgMeta, idxInfo, model.AutoSplitHotRegionStatusSkipped, 0, 0, 0, reason)
-				logutil.DDLLogger().Info("skip auto split hot index region",
-					zap.String("table", tblInfo.Name.L),
-					zap.String("index", idxInfo.Name.L),
-					zap.String("reason", reason))
-				continue
-			}
-		} else {
-			splitKeys, err = getSplitIdxKeys(sctx, tblInfo, idxInfo, splitArgs)
-			if err != nil {
-				return errors.Trace(err)
-			}
+			appendAutoSplitHotRegionResult(reorgMeta, idxInfo, result)
+			continue
 		}
-		if splitOnTempIdx {
-			for i := range splitKeys {
-				tablecodec.IndexKey2TempIndexKey(splitKeys[i])
-			}
+
+		splitKeys, err := getSplitIdxKeys(sctx, tblInfo, idxInfo, splitArgs)
+		if err != nil {
+			return errors.Trace(err)
 		}
+		convertIndexSplitKeysForReorg(splitKeys, splitOnTempIdx)
 		failpoint.InjectCall("beforePresplitIndex", splitKeys)
 		splitResult, err := splitIndexRegionAndWait(ctx, sctx, store, tblInfo, idxInfo, splitKeys)
-		if !isAutoSplit {
-			if err != nil {
-				return errors.Trace(err)
-			}
-			continue
-		}
-		if splitResult.unsupported {
-			appendAutoSplitHotRegionResult(
-				reorgMeta, idxInfo, model.AutoSplitHotRegionStatusUnsupported,
-				len(splitKeys), 0, 0, "storage does not support split regions")
-			continue
+		if ctxErr := parentContextError(ctx); ctxErr != nil {
+			return ctxErr
 		}
 		if err != nil {
-			appendAutoSplitHotRegionResult(
-				reorgMeta, idxInfo, model.AutoSplitHotRegionStatusFailed,
-				len(splitKeys), splitResult.splitRegions, splitResult.scatterRegions, err.Error())
-			logutil.DDLLogger().Warn("auto split hot index region failed, continue add-index",
+			logutil.DDLLogger().Error("split table index region failed",
 				zap.String("table", tblInfo.Name.L),
 				zap.String("index", idxInfo.Name.L),
-				zap.Int("splitKeys", len(splitKeys)),
 				zap.Error(err))
-			continue
+			return errors.Trace(err)
 		}
-		appendAutoSplitHotRegionResult(
-			reorgMeta, idxInfo, model.AutoSplitHotRegionStatusSplit,
-			len(splitKeys), splitResult.splitRegions, splitResult.scatterRegions, "")
-		logutil.DDLLogger().Info("auto split hot index region finished",
+		if !splitResult.unsupported {
+			logutil.DDLLogger().Info("split table index region finished",
+				zap.String("table", tblInfo.Name.L),
+				zap.String("index", idxInfo.Name.L),
+				zap.Int("splitRegions", splitResult.splitRegions),
+				zap.Int("scatterRegions", splitResult.scatterRegions))
+		}
+	}
+	return parentContextError(ctx)
+}
+
+func autoSplitIndexRegion(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	store kv.Storage,
+	tblInfo *model.TableInfo,
+	idxInfo *model.IndexInfo,
+	statsProvider autoSplitStatsProvider,
+	splitOnTempIdx bool,
+) (model.AutoSplitHotRegionResult, error) {
+	splitKeys, reason, err := planAutoSplitIndexRegions(
+		ctx, sctx, statsProvider, tblInfo, idxInfo, getAutoSplitHotRegionConfig())
+	if ctxErr := parentContextError(ctx); ctxErr != nil {
+		return model.AutoSplitHotRegionResult{}, ctxErr
+	}
+	if err != nil {
+		if reason == "" {
+			reason = err.Error()
+		} else {
+			reason += ": " + err.Error()
+		}
+		logutil.DDLLogger().Warn("auto split hot index region planning failed, continue add-index",
 			zap.String("table", tblInfo.Name.L),
 			zap.String("index", idxInfo.Name.L),
-			zap.Int("splitKeys", len(splitKeys)))
+			zap.String("reason", reason),
+			zap.Error(err))
+		return model.AutoSplitHotRegionResult{
+			Status: model.AutoSplitHotRegionStatusFailed,
+			Reason: reason,
+		}, nil
 	}
-	return nil
+	if len(splitKeys) == 0 {
+		logutil.DDLLogger().Info("skip auto split hot index region",
+			zap.String("table", tblInfo.Name.L),
+			zap.String("index", idxInfo.Name.L),
+			zap.String("reason", reason))
+		return model.AutoSplitHotRegionResult{
+			Status: model.AutoSplitHotRegionStatusSkipped,
+			Reason: reason,
+		}, nil
+	}
+
+	convertIndexSplitKeysForReorg(splitKeys, splitOnTempIdx)
+	failpoint.InjectCall("beforePresplitIndex", splitKeys)
+	splitResult, err := splitIndexRegionAndWait(ctx, sctx, store, tblInfo, idxInfo, splitKeys)
+	if ctxErr := parentContextError(ctx); ctxErr != nil {
+		return model.AutoSplitHotRegionResult{}, ctxErr
+	}
+	result := model.AutoSplitHotRegionResult{
+		SplitKeyCount:        len(splitKeys),
+		SplitRegionCount:     splitResult.splitRegions,
+		ScatteredRegionCount: splitResult.scatterRegions,
+	}
+	if splitResult.unsupported {
+		result.Status = model.AutoSplitHotRegionStatusUnsupported
+		result.Reason = "storage does not support split regions"
+		return result, nil
+	}
+	if err != nil {
+		result.Status = model.AutoSplitHotRegionStatusFailed
+		result.Reason = err.Error()
+		logutil.DDLLogger().Warn("auto split hot index region failed, continue add-index",
+			zap.String("table", tblInfo.Name.L),
+			zap.String("index", idxInfo.Name.L),
+			zap.Int("splitKeys", len(splitKeys)),
+			zap.Int("splitRegions", splitResult.splitRegions),
+			zap.Int("scatterRegions", splitResult.scatterRegions),
+			zap.Error(err))
+		return result, nil
+	}
+
+	result.Status = model.AutoSplitHotRegionStatusSplit
+	logutil.DDLLogger().Info("auto split hot index region finished",
+		zap.String("table", tblInfo.Name.L),
+		zap.String("index", idxInfo.Name.L),
+		zap.Int("splitKeys", len(splitKeys)),
+		zap.Int("splitRegions", splitResult.splitRegions),
+		zap.Int("scatterRegions", splitResult.scatterRegions))
+	return result, nil
+}
+
+func parentContextError(ctx context.Context) error {
+	if ctx.Err() == nil {
+		return nil
+	}
+	return context.Cause(ctx)
+}
+
+func convertIndexSplitKeysForReorg(splitKeys [][]byte, splitOnTempIdx bool) {
+	if !splitOnTempIdx {
+		return
+	}
+	for i := range splitKeys {
+		tablecodec.IndexKey2TempIndexKey(splitKeys[i])
+	}
 }
 
 func appendAutoSplitHotRegionResult(
 	reorgMeta *model.DDLReorgMeta,
 	idxInfo *model.IndexInfo,
-	status model.AutoSplitHotRegionStatus,
-	splitKeyCount, splitRegionCount, scatteredRegionCount int,
-	reason string,
+	result model.AutoSplitHotRegionResult,
 ) {
 	if reorgMeta == nil {
 		return
 	}
-	reorgMeta.AutoSplitHotRegionResults = append(reorgMeta.AutoSplitHotRegionResults, model.AutoSplitHotRegionResult{
-		IndexName:            idxInfo.Name.L,
-		Status:               status,
-		SplitKeyCount:        splitKeyCount,
-		SplitRegionCount:     splitRegionCount,
-		ScatteredRegionCount: scatteredRegionCount,
-		Reason:               reason,
-	})
+	result.IndexName = idxInfo.Name.L
+	reorgMeta.AutoSplitHotRegionResults = append(reorgMeta.AutoSplitHotRegionResults, result)
 }
 
 type splitArgs struct {
@@ -366,10 +417,6 @@ func splitIndexRegionAndWait(
 	regionIDs, err := s.SplitRegions(ctxWithTimeout, splitIdxKeys, true, &tblInfo.ID)
 	result := splitIndexRegionResult{splitRegions: len(regionIDs)}
 	if err != nil {
-		logutil.DDLLogger().Error("split table index region failed",
-			zap.String("table", tblInfo.Name.L),
-			zap.String("index", idxInfo.Name.L),
-			zap.Error(err))
 		return result, err
 	}
 	failpoint.Inject("mockSplitIndexRegionAndWaitErr", func(_ failpoint.Value) {
@@ -377,12 +424,6 @@ func splitIndexRegionAndWait(
 	})
 	finishScatterRegions := waitScatterRegionFinish(ctxWithTimeout, sctx, start, s, regionIDs, tblInfo.Name.L, idxInfo.Name.L)
 	result.scatterRegions = finishScatterRegions
-	logutil.DDLLogger().Info("split table index region finished",
-		zap.String("table", tblInfo.Name.L),
-		zap.String("index", idxInfo.Name.L),
-		zap.Int("splitRegions", len(regionIDs)),
-		zap.Int("scatterRegions", finishScatterRegions),
-	)
 	return result, nil
 }
 
