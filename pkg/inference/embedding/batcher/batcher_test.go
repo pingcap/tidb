@@ -446,6 +446,26 @@ func TestBatch_ConcurrentRequests(t *testing.T) {
 }
 
 func TestBatchCancellationAcrossCallers(t *testing.T) {
+	t.Run("caller can reuse texts after cancellation", func(t *testing.T) {
+		embedder := newMockEmbedder()
+		batcher := NewWithConfig(time.Hour, 2)
+		batcher.Register("test", embedder)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		texts := []string{"original"}
+		resultCh := createEmbeddingBatchAsync(ctx, batcher, texts)
+		waitForPendingCalls(t, batcher, 1)
+
+		cancel()
+		require.ErrorIs(t, (<-resultCh).err, context.Canceled)
+		texts[0] = "reused"
+
+		key, pendingBatch := takePendingBatch(t, batcher)
+		require.Equal(t, []string{"original"}, pendingBatch.calls[0].texts)
+		batcher.processBatch(key, pendingBatch, embedder, "model")
+		require.Equal(t, int64(0), embedder.getCallCount())
+	})
+
 	t.Run("caller canceled before dispatch is excluded", func(t *testing.T) {
 		embedder := newBlockingEmbedder()
 		t.Cleanup(embedder.finish)

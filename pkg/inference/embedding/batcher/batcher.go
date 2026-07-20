@@ -294,9 +294,12 @@ func (b *Batch) CreateEmbeddings(ctx context.Context, modelWithProvider string, 
 		return nil, err
 	}
 
+	// A canceled caller can return before the batch is dispatched, so keep an
+	// owned slice instead of retaining caller-owned mutable state.
+	textsSnapshot := append([]string(nil), texts...)
 	thisCall := &call{
 		ctx:      ctx,
-		texts:    texts,
+		texts:    textsSnapshot,
 		resultCh: make(chan *batchResult, 1),
 	}
 
