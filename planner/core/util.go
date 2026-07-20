@@ -16,6 +16,7 @@ package core
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/pingcap/tidb/expression"
@@ -129,10 +130,30 @@ func (s *logicalSchemaProducer) setSchemaAndNames(schema *expression.Schema, nam
 	s.names = names
 }
 
+func smallestColumnIndex(cols []*expression.Column) int {
+	if len(cols) == 0 {
+		return 0
+	}
+	minColLen := math.MaxInt
+	chosenPos := 0
+	for i, col := range cols {
+		flen := col.GetType().GetFlen()
+		if flen < minColLen {
+			chosenPos = i
+			minColLen = flen
+		}
+	}
+	return chosenPos
+}
+
 // inlineProjection prunes unneeded columns inline a executor.
 func (s *logicalSchemaProducer) inlineProjection(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) {
 	prunedColumns := make([]*expression.Column, 0)
 	used := expression.GetUsedList(parentUsedCols, s.Schema())
+	if len(parentUsedCols) == 0 && len(used) > 0 {
+		// Keep one harmless column so pruning does not create a zero-column layout.
+		used[smallestColumnIndex(s.schema.Columns)] = true
+	}
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
 			prunedColumns = append(prunedColumns, s.Schema().Columns[i])

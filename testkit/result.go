@@ -144,3 +144,19 @@ func (res *Result) CheckContain(expected string) {
 	comment := fmt.Sprintf("the result doesn't contain the exepected %s\n%s", expected, result.String())
 	res.require.Equal(true, false, comment)
 }
+
+func (res *Result) String() string {
+	var result strings.Builder
+	for i, row := range res.rows {
+		if i > 0 {
+			result.WriteString("\n")
+		}
+		for j, colValue := range row {
+			if j > 0 {
+				result.WriteString(" ")
+			}
+			result.WriteString(colValue)
+		}
+	}
+	return result.String()
+}
