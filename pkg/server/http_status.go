@@ -207,6 +207,24 @@ func (b *Ballast) GenHTTPHandler() func(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
+func withProfilingRequestLog(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		fields := []zap.Field{
+			zap.String("method", r.Method),
+			zap.String("path", r.URL.Path),
+			zap.String("remote-addr", r.RemoteAddr),
+		}
+		query := r.URL.Query()
+		for _, key := range []string{"seconds", "debug", "gc"} {
+			if value := query.Get(key); value != "" {
+				fields = append(fields, zap.String(key, value))
+			}
+		}
+		logutil.BgLogger().Info("profiling request received", fields...)
+		next(w, r)
+	}
+}
+
 func (s *Server) startHTTPServer() {
 	router := mux.NewRouter()
 
@@ -308,12 +326,85 @@ func (s *Server) startHTTPServer() {
 		router.PathPrefix("/static/").Handler(http.StripPrefix("/static", http.FileServer(static.Data)))
 	}
 
+<<<<<<< HEAD
 	router.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
 	router.HandleFunc("/debug/pprof/profile", cpuprofile.ProfileHTTPHandler)
 	router.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	router.HandleFunc("/debug/pprof/trace", pprof.Trace)
 	// Other /debug/pprof paths not covered above are redirected to pprof.Index.
 	router.PathPrefix("/debug/pprof/").HandlerFunc(pprof.Index)
+=======
+	if s.StandbyController != nil {
+		path, handler := s.StandbyController.Handler(s)
+		router.PathPrefix(path).Handler(handler)
+	}
+
+	router.HandleFunc("/debug/pprof/cmdline", withProfilingRequestLog(pprof.Cmdline))
+	router.HandleFunc("/debug/pprof/profile", withProfilingRequestLog(cpuprofile.ProfileHTTPHandler))
+	router.HandleFunc("/debug/pprof/symbol", withProfilingRequestLog(pprof.Symbol))
+	router.HandleFunc("/debug/pprof/trace", withProfilingRequestLog(pprof.Trace))
+	// Other /debug/pprof paths not covered above are redirected to pprof.Index.
+	router.PathPrefix("/debug/pprof/").HandlerFunc(withProfilingRequestLog(pprof.Index))
+	router.HandleFunc("/debug/traceevent", traceeventHandler)
+
+	router.HandleFunc("/covdata", func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/zip")
+		writer.Header().Set("Content-Disposition", "attachment; filename=files.zip")
+
+		dir := os.Getenv("TIDB_GOCOVERDIR")
+		if dir == "" {
+			serveError(writer, http.StatusInternalServerError, "TIDB_GOCOVERDIR is not set")
+			return
+		}
+		err := coverage.WriteMetaDir(dir)
+		if err != nil {
+			logutil.BgLogger().Warn("write coverage meta failed", zap.Error(err))
+			serveError(writer, http.StatusInternalServerError, "write coverage meta failed")
+			return
+		}
+		err = coverage.WriteCountersDir(dir)
+		if err != nil {
+			logutil.BgLogger().Warn("write coverage counters failed", zap.Error(err))
+			serveError(writer, http.StatusInternalServerError, "write coverage counters failed")
+			return
+		}
+
+		zipWriter := zip.NewWriter(writer)
+
+		err = filepath.Walk(dir, func(file string, fi os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if fi.IsDir() {
+				return nil
+			}
+			relPath, err := filepath.Rel(dir, file)
+			if err != nil {
+				return err
+			}
+			writer, err := zipWriter.Create(relPath)
+			if err != nil {
+				return err
+			}
+			srcFile, err := os.Open(filepath.Clean(file))
+			if err != nil {
+				return err
+			}
+			defer func() {
+				_ = srcFile.Close()
+			}()
+			_, err = io.Copy(writer, srcFile)
+			return err
+		})
+		if err != nil {
+			logutil.BgLogger().Warn("zip coverage files failed", zap.Error(err))
+			serveError(writer, http.StatusInternalServerError, "zip coverage files failed")
+			return
+		}
+		err = zipWriter.Close()
+		terror.Log(err)
+	})
+>>>>>>> 3332762af45 (server: add logging for profiling requests (#69897))
 
 	ballast := newBallast(s.cfg.MaxBallastObjectSize)
 	{
@@ -349,7 +440,7 @@ func (s *Server) startHTTPServer() {
 		}
 	})
 
-	router.HandleFunc("/debug/zip", func(w http.ResponseWriter, r *http.Request) {
+	router.HandleFunc("/debug/zip", withProfilingRequestLog(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Disposition", `attachment; filename="tidb_debug"`+time.Now().Format("20060102150405")+".zip")
 
 		// dump goroutine/heap/mutex
@@ -431,7 +522,7 @@ func (s *Server) startHTTPServer() {
 
 		err = zw.Close()
 		terror.Log(err)
-	})
+	}))
 
 	// failpoint is enabled only for tests so we can add some http APIs here for tests.
 	failpoint.Inject("enableTestAPI", func() {
