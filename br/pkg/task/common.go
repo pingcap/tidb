@@ -219,7 +219,7 @@ func dialEtcdWithCfg(ctx context.Context, cfg Config) (*clientv3.Client, error) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	log.Info("trying to connect to etcd", zap.Strings("addr", etcdCLI.Endpoints()))
+	log.Info("connected to etcd", zap.Strings("addr", etcdCLI.Endpoints()))
 	return etcdCLI, nil
 }
 

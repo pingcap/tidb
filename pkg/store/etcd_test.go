@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metaservice"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -81,9 +82,9 @@ func TestNewEtcdCliUsesMetaServiceGroupAndNamespace(t *testing.T) {
 		Id:   42,
 		Name: "ks1",
 		Config: map[string]string{
-			"gc_management_type":       "keyspace_level",
-			"meta_service_group_id":    "group1",
-			"meta_service_group_addrs": strings.Join(metaCluster.Client(0).Endpoints(), ","),
+			"gc_management_type":      "keyspace_level",
+			metaservice.GroupIDKey:    "group1",
+			metaservice.GroupAddrsKey: strings.Join(metaCluster.Client(0).Endpoints(), ","),
 		},
 	}
 	codec, err := tikv.NewCodecV2(tikv.ModeTxn, keyspaceMeta)
