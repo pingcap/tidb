@@ -50,10 +50,13 @@ const (
 	starterBootstrapVersionVar          = "starter_bootstrap_version"
 	starterBootstrapKeyspacePlaceholder = "<keyspace>"
 	starterBootstrapVersionComment      = "Starter bootstrap file version. Do not delete."
-	starterBranchConfigKey              = "serverless_is_branch"
-	starterBranchResetCompleteKey       = "serverless_is_branch_bootstrapped"
-	starterRestoreResetCompleteKey      = "serverless_is_bootstrapped_for_restore"
-	starterPrivilegeResetCompleteValue  = "True"
+)
+
+// These values are part of the existing PD keyspace metadata contract.
+const (
+	starterBranchConfigKey         = "serverless_is_branch"
+	starterBranchResetCompleteKey  = "serverless_is_branch_bootstrapped"
+	starterRestoreResetCompleteKey = "serverless_is_bootstrapped_for_restore"
 )
 
 var (
@@ -148,21 +151,7 @@ func upgradeStarterBootstrap(store kv.Storage) error {
 }
 
 func upgradeStarterBootstrapWithFile(store kv.Storage, bootstrapFile *starterBootstrapFileSpec) error {
-	return upgradeStarterBootstrapWithFileAndReset(
-		store,
-		bootstrapFile,
-		readStarterPrivilegeResetState,
-		markStarterPrivilegeResetComplete,
-	)
-}
-
-func upgradeStarterBootstrapWithFileAndReset(
-	store kv.Storage,
-	bootstrapFile *starterBootstrapFileSpec,
-	readResetState func(kv.Storage, bool) (starterPrivilegeResetState, bool, error),
-	markResetComplete func(context.Context, starterPrivilegeResetState) error,
-) error {
-	resetState, privilegeResetPending, err := readResetState(store, false)
+	resetState, privilegeResetPending, err := readStarterPrivilegeResetState(store, false)
 	if err != nil {
 		return err
 	}
@@ -182,7 +171,7 @@ func upgradeStarterBootstrapWithFileAndReset(
 	defer releaseFn()
 
 	if privilegeResetPending {
-		resetState, privilegeResetPending, err = readResetState(store, true)
+		resetState, privilegeResetPending, err = readStarterPrivilegeResetState(store, true)
 		if err != nil {
 			return err
 		}
@@ -228,7 +217,7 @@ func upgradeStarterBootstrapWithFileAndReset(
 			return err
 		}
 		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
-		if err = markResetComplete(ctx, resetState); err != nil {
+		if err = markStarterPrivilegeResetComplete(ctx, resetState); err != nil {
 			return errors.Annotate(err, "complete starter privilege reset")
 		}
 		logutil.BgLogger().Info("starter privilege reset finished",
@@ -267,19 +256,13 @@ func upgradeStarterBootstrapWithFileAndReset(
 }
 
 func pendingStarterPrivilegeReset(keyspaceConfig map[string]string) (starterPrivilegeResetState, bool) {
+	completionKey := starterRestoreResetCompleteKey
 	isBranch, _ := strconv.ParseBool(keyspaceConfig[starterBranchConfigKey])
 	if isBranch {
-		value, ok := keyspaceConfig[starterBranchResetCompleteKey]
-		if !ok || value == "" || value == starterPrivilegeResetCompleteValue {
-			return starterPrivilegeResetState{}, false
-		}
-		return starterPrivilegeResetState{
-			completionKey: starterBranchResetCompleteKey,
-			observedValue: value,
-		}, true
+		completionKey = starterBranchResetCompleteKey
 	}
 
-	value, ok := keyspaceConfig[starterRestoreResetCompleteKey]
+	value, ok := keyspaceConfig[completionKey]
 	if !ok || value == "" {
 		return starterPrivilegeResetState{}, false
 	}
@@ -288,7 +271,7 @@ func pendingStarterPrivilegeReset(keyspaceConfig map[string]string) (starterPriv
 		return starterPrivilegeResetState{}, false
 	}
 	return starterPrivilegeResetState{
-		completionKey: starterRestoreResetCompleteKey,
+		completionKey: completionKey,
 		observedValue: value,
 	}, true
 }
@@ -315,14 +298,13 @@ func readStarterPrivilegeResetState(store kv.Storage, refreshFromPD bool) (start
 }
 
 func markStarterPrivilegeResetComplete(ctx context.Context, state starterPrivilegeResetState) error {
-	completeValue := starterPrivilegeResetCompleteValue
-	observedValue := state.observedValue
+	completeValue := "True"
 	return infosync.SetKeyspaceConfig(ctx, state.keyspaceName, pdhttp.UpdateKeyspaceConfigParams{
 		Config: map[string]*string{
 			state.completionKey: &completeValue,
 		},
 		Preconditions: map[string]*string{
-			state.completionKey: &observedValue,
+			state.completionKey: &state.observedValue,
 		},
 	})
 }

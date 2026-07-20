@@ -409,7 +409,7 @@ func TestStarterPrivilegeResetMetadataState(t *testing.T) {
 		{
 			name: "restore complete",
 			config: map[string]string{
-				starterRestoreResetCompleteKey: starterPrivilegeResetCompleteValue,
+				starterRestoreResetCompleteKey: "true",
 			},
 		},
 		{
@@ -426,7 +426,7 @@ func TestStarterPrivilegeResetMetadataState(t *testing.T) {
 			name: "branch complete",
 			config: map[string]string{
 				starterBranchConfigKey:        "true",
-				starterBranchResetCompleteKey: starterPrivilegeResetCompleteValue,
+				starterBranchResetCompleteKey: "true",
 			},
 		},
 	}
@@ -456,22 +456,22 @@ func TestStarterPrivilegeReset(t *testing.T) {
 
 	store, dom := CreateStoreAndBootstrap(t)
 	t.Cleanup(func() {
-		if dom != nil {
-			dom.Close()
-		}
+		dom.Close()
 		require.NoError(t, store.Close())
 	})
 
 	se := CreateSessionAndSetID(t, store)
+	t.Cleanup(func() {
+		se.Close()
+	})
 	seedStarterPrivilegeRows(t, se, "source_keyspace.user")
 	require.NoError(t, updateStarterBootstrapVersion(se, 3))
 	MustExec(t, se, "COMMIT")
+	require.NoError(t, finishStarterBootstrap(store, 3))
 	require.ErrorContains(t, runStarterPrivilegeResetLocked(se, &starterBootstrapFileSpec{Version: 3}),
 		"must contain bootstrap SQL")
 	require.Equal(t, int64(1), mustCountStarterPrivilegeRows(t, se,
 		"SELECT COUNT(*) FROM mysql.user WHERE User = ?", "source_keyspace.user"))
-	se.Close()
-	require.NoError(t, finishStarterBootstrap(store, 3))
 
 	bootstrapFile, err := parseStarterBootstrapFile([]byte(`{
 		"version": 3,
@@ -481,48 +481,19 @@ func TestStarterPrivilegeReset(t *testing.T) {
 	}`))
 	require.NoError(t, err)
 
-	var completedState starterPrivilegeResetState
-	completionCalls := 0
-	readResetState := func(kv.Storage, bool) (starterPrivilegeResetState, bool, error) {
-		return starterPrivilegeResetState{
-			keyspaceName:  "restored_keyspace",
-			completionKey: starterRestoreResetCompleteKey,
-			observedValue: "False",
-		}, true, nil
-	}
-	markResetComplete := func(_ context.Context, state starterPrivilegeResetState) error {
-		completionCalls++
-		completedState = state
-		return nil
-	}
-
-	dom.Close()
-	dom = nil
-	require.NoError(t, upgradeStarterBootstrapWithFileAndReset(
-		store, bootstrapFile, readResetState, markResetComplete))
-	require.Equal(t, "restored_keyspace", completedState.keyspaceName)
-	require.Equal(t, starterRestoreResetCompleteKey, completedState.completionKey)
-	require.Equal(t, "False", completedState.observedValue)
-	require.Equal(t, 1, completionCalls)
-
-	dom, err = BootstrapSession(store)
-	require.NoError(t, err)
-	checkSe := CreateSessionAndSetID(t, store)
+	require.NoError(t, runStarterPrivilegeResetLocked(se, bootstrapFile))
 	for _, table := range []string{"db", "default_roles", "global_grants", "global_priv", "user"} {
-		require.Equal(t, int64(0), mustCountStarterPrivilegeRows(t, checkSe,
+		require.Equal(t, int64(0), mustCountStarterPrivilegeRows(t, se,
 			"SELECT COUNT(*) FROM mysql."+table+" WHERE User = ?", "source_keyspace.user"), table)
 	}
-	require.Equal(t, int64(0), mustCountStarterPrivilegeRows(t, checkSe,
+	require.Equal(t, int64(0), mustCountStarterPrivilegeRows(t, se,
 		"SELECT COUNT(*) FROM mysql.role_edges WHERE TO_USER = ?", "source_keyspace.user"), "role_edges")
-	require.Equal(t, int64(1), mustCountStarterPrivilegeRows(t, checkSe,
+	require.Equal(t, int64(1), mustCountStarterPrivilegeRows(t, se,
 		"SELECT COUNT(*) FROM mysql.tables_priv WHERE User = ?", "source_keyspace.user"))
-	require.Equal(t, int64(1), mustCountStarterPrivilegeRows(t, checkSe,
+	require.Equal(t, int64(1), mustCountStarterPrivilegeRows(t, se,
 		"SELECT COUNT(*) FROM mysql.user WHERE Host = '%' AND User = ? AND authentication_string = ''",
 		"restored_keyspace.root"))
-	require.Equal(t, "3", mustGetTiDBVarForStarterFile(t, checkSe, starterBootstrapVersionVar))
-	checkSe.Close()
-	dom.Close()
-	dom = nil
+	require.Equal(t, "3", mustGetTiDBVarForStarterFile(t, se, starterBootstrapVersionVar))
 
 	failingBootstrapFile, err := parseStarterBootstrapFile([]byte(`{
 		"version": 3,
@@ -532,19 +503,10 @@ func TestStarterPrivilegeReset(t *testing.T) {
 		]
 	}`))
 	require.NoError(t, err)
-	require.Error(t, upgradeStarterBootstrapWithFileAndReset(
-		store, failingBootstrapFile, readResetState, markResetComplete))
-	require.Equal(t, 1, completionCalls)
-
-	dom, err = BootstrapSession(store)
-	require.NoError(t, err)
-	checkSe = CreateSessionAndSetID(t, store)
-	t.Cleanup(func() {
-		checkSe.Close()
-	})
-	require.Equal(t, int64(1), mustCountStarterPrivilegeRows(t, checkSe,
+	require.Error(t, runStarterPrivilegeResetLocked(se, failingBootstrapFile))
+	require.Equal(t, int64(1), mustCountStarterPrivilegeRows(t, se,
 		"SELECT COUNT(*) FROM mysql.user WHERE Host = '%' AND User = ?", "restored_keyspace.root"))
-	require.Equal(t, int64(0), mustCountStarterPrivilegeRows(t, checkSe,
+	require.Equal(t, int64(0), mustCountStarterPrivilegeRows(t, se,
 		"SELECT COUNT(*) FROM mysql.user WHERE Host = '%' AND User = ?", "restored_keyspace.failed"))
 }
 
