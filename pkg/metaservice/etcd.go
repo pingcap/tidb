@@ -17,6 +17,7 @@ package metaservice
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/keyspace"
@@ -139,7 +140,7 @@ func DialEtcdClient(
 			return nil, err
 		}
 		if keyspaceMeta == nil {
-			return nil, errors.New("keyspace meta not found")
+			return nil, fmt.Errorf("keyspace meta not found for keyspace %q", keyspaceName)
 		}
 	}
 

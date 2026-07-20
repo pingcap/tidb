@@ -24,17 +24,29 @@ import (
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/tests/v3/integration"
 )
 
 type mockPDClient struct {
 	pd.Client
-	members []*pdpb.Member
+	members             []*pdpb.Member
+	keyspaceMeta        *keyspacepb.KeyspaceMeta
+	loadedKeyspaceNames []string
 }
 
 func (c *mockPDClient) GetAllMembers(context.Context) (*pdpb.GetMembersResponse, error) {
 	return &pdpb.GetMembersResponse{Members: c.members}, nil
 }
+
+func (c *mockPDClient) LoadKeyspace(_ context.Context, name string) (*keyspacepb.KeyspaceMeta, error) {
+	c.loadedKeyspaceNames = append(c.loadedKeyspaceNames, name)
+	return c.keyspaceMeta, nil
+}
+
+func (*mockPDClient) Close() {}
 
 // ETCD use ip:port as unix socket address, however this address is invalid on windows.
 // We have to skip some of the test in such case.
@@ -127,6 +139,32 @@ func TestGetPDAddrsPDOnlyClient(t *testing.T) {
 
 func TestNewClientReturnsNilWithoutClients(t *testing.T) {
 	require.Nil(t, newClient(nil, nil))
+}
+
+func TestDialEtcdClientMissingKeyspaceMetaIncludesKeyspaceName(t *testing.T) {
+	pdCli := &mockPDClient{}
+	_, err := DialEtcdClient(
+		context.Background(),
+		"missing-ks",
+		[]string{"127.0.0.1:2379"},
+		pd.SecurityOption{},
+		func(
+			context.Context,
+			pd.APIContext,
+			caller.Component,
+			[]string,
+			pd.SecurityOption,
+			...opt.ClientOption,
+		) (pd.Client, error) {
+			return pdCli, nil
+		},
+		caller.Component("test"),
+		nil,
+		clientv3.Config{},
+	)
+	require.Error(t, err)
+	require.EqualError(t, err, `keyspace meta not found for keyspace "missing-ks"`)
+	require.Equal(t, []string{"missing-ks"}, pdCli.loadedKeyspaceNames)
 }
 
 // TestGetPDAddrsWithRealClient tests the GetPDAddrs method with a real etcd client
