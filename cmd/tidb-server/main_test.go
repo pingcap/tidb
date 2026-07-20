@@ -85,7 +85,7 @@ func TestOverrideConfigKeyspaceActivateMode(t *testing.T) {
 	fset := initFlagSet()
 	require.NoError(t, fset.Parse([]string{
 		"--keyspace-activate=true",
-		"--starter-additional-params=pod-name=pod-1,pod-ip=10.0.0.1,pod-namespace=ns-1",
+		"--starter-additional-params=pod-name=pod-1,pod-ip=10.0.0.1,pod-namespace=ns-1,enable-get-resource-group-degraded=true",
 	}))
 
 	cfg := config.NewConfig()
@@ -95,7 +95,8 @@ func TestOverrideConfigKeyspaceActivateMode(t *testing.T) {
 	require.Equal(t, "pod-1", cfg.StarterParams.PodName)
 	require.Equal(t, "10.0.0.1", cfg.StarterParams.PodIP)
 	require.Equal(t, "ns-1", cfg.StarterParams.PodNamespace)
-	require.Equal(t, "pod-name=pod-1,pod-ip=10.0.0.1,pod-namespace=ns-1", *starterAdditionalParams)
+	require.True(t, cfg.StarterParams.EnableGetResourceGroupDegraded)
+	require.Equal(t, "pod-name=pod-1,pod-ip=10.0.0.1,pod-namespace=ns-1,enable-get-resource-group-degraded=true", *starterAdditionalParams)
 }
 
 func TestSetGlobalVars(t *testing.T) {
@@ -224,6 +225,10 @@ func TestCreateMgrClientRequiresPodIdentityInStarter(t *testing.T) {
 	unknownParam := "pod-name=pod-1,pod-ip=10.0.0.1,pod-namespace=ns-1,unknown=value"
 	err = applyStarterAdditionalParams(config.GetGlobalConfig(), unknownParam)
 	require.ErrorContains(t, err, `unknown starter additional param "unknown"`)
+
+	invalidBoolParam := "enable-get-resource-group-degraded=definitely"
+	err = applyStarterAdditionalParams(config.GetGlobalConfig(), invalidBoolParam)
+	require.ErrorContains(t, err, `starter additional param "enable-get-resource-group-degraded" must be a bool`)
 
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.StarterParams.ManagerAddr = ""

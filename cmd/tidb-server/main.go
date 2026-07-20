@@ -1351,10 +1351,11 @@ func prepareKeyspaceObservabilityForStarter(metadata map[string]string) error {
 }
 
 type starterParams struct {
-	managerNamespace string
-	podName          string
-	podIP            string
-	podNamespace     string
+	managerNamespace               string
+	podName                        string
+	podIP                          string
+	podNamespace                   string
+	enableGetResourceGroupDegraded bool
 }
 
 func parseStarterAdditionalParams(raw string) (starterParams, error) {
@@ -1397,6 +1398,12 @@ func parseStarterAdditionalParams(raw string) (starterParams, error) {
 			params.podIP = value
 		case "pod-namespace":
 			params.podNamespace = value
+		case "enable-get-resource-group-degraded":
+			enable, err := strconv.ParseBool(value)
+			if err != nil {
+				return params, fmt.Errorf("starter additional param %q must be a bool: %w", key, err)
+			}
+			params.enableGetResourceGroupDegraded = enable
 		default:
 			return params, fmt.Errorf("unknown starter additional param %q", key)
 		}
@@ -1413,6 +1420,7 @@ func applyStarterAdditionalParams(cfg *config.Config, raw string) error {
 	cfg.StarterParams.PodName = params.podName
 	cfg.StarterParams.PodIP = params.podIP
 	cfg.StarterParams.PodNamespace = params.podNamespace
+	cfg.StarterParams.EnableGetResourceGroupDegraded = params.enableGetResourceGroupDegraded
 	return nil
 }
 

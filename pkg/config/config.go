@@ -1106,6 +1106,9 @@ type StarterParams struct {
 	// PodNamespace captures the runtime pod namespace from --starter-additional-params.
 	// It is command-line derived runtime metadata rather than file-backed config.
 	PodNamespace string `toml:"-" json:"-"`
+	// EnableGetResourceGroupDegraded enables degraded GetResourceGroup handling for resource control.
+	// It is command-line derived runtime metadata rather than file-backed config.
+	EnableGetResourceGroupDegraded bool `toml:"-" json:"-"`
 	// MaxImportDataSize is the maximum total real source data size allowed for IMPORT INTO.
 	// Zero means unlimited.
 	MaxImportDataSize configtypes.ByteSize `toml:"max-import-data-size" json:"max-import-data-size,omitempty"`

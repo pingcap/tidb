@@ -15,7 +15,6 @@
 package domain
 
 import (
-	"strings"
 	"time"
 
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
@@ -48,16 +47,12 @@ func newResourceGroupsControllerOptions() []rmclient.ResourceControlCreateOption
 	opts := []rmclient.ResourceControlCreateOption{
 		rmclient.WithMaxWaitDuration(runaway.MaxWaitDuration),
 	}
-	if deploymode.IsStarter() {
+	if deploymode.IsStarter() && config.GetGlobalConfig().StarterParams.EnableGetResourceGroupDegraded {
 		opts = append(opts,
 			// Keep degraded-group synthesis inside the controller so degraded
 			// resource groups are not inserted into the controller cache.
 			rmclient.WithDegradedRUSettings(newDefaultDegradedRUSettings()),
 			rmclient.WithDegradedModeWaitDuration(defaultDegradedModeWaitTimeout),
-		)
-	}
-	if strings.Contains(config.GetGlobalConfig().StarterParams.PodNamespace, "vip") {
-		opts = append(opts,
 			rmclient.WithWaitRetryInterval(tokenWaitRetryInterval),
 			rmclient.WithWaitRetryTimes(tokenWaitRetryTimes),
 		)

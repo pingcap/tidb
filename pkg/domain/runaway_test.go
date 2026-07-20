@@ -16,10 +16,12 @@ package domain
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/meta_storagepb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
@@ -30,6 +32,7 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 	pd "github.com/tikv/pd/client"
 	pderr "github.com/tikv/pd/client/errs"
+	"github.com/tikv/pd/client/opt"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -37,8 +40,9 @@ import (
 
 type resourceGroupProviderStub struct {
 	rmclient.ResourceGroupProvider
-	resourceGroup *rmpb.ResourceGroup
-	resourceErr   error
+	resourceGroup    *rmpb.ResourceGroup
+	resourceErr      error
+	controllerConfig *rmclient.Config
 }
 
 func newResourceGroupProviderStub(t *testing.T, resourceGroup *rmpb.ResourceGroup, resourceErr error) *resourceGroupProviderStub {
@@ -57,6 +61,22 @@ func newResourceGroupProviderStub(t *testing.T, resourceGroup *rmpb.ResourceGrou
 // only for the editions that enable it.
 func (s *resourceGroupProviderStub) GetResourceGroup(context.Context, string, ...pd.GetResourceGroupOption) (*rmpb.ResourceGroup, error) {
 	return s.resourceGroup, s.resourceErr
+}
+
+func (s *resourceGroupProviderStub) Get(ctx context.Context, key []byte, opts ...opt.MetaStorageOption) (*meta_storagepb.GetResponse, error) {
+	if s.controllerConfig == nil {
+		return s.ResourceGroupProvider.Get(ctx, key, opts...)
+	}
+	value, err := json.Marshal(s.controllerConfig)
+	if err != nil {
+		return nil, err
+	}
+	return &meta_storagepb.GetResponse{
+		Kvs: []*meta_storagepb.KeyValue{{
+			Key:   key,
+			Value: value,
+		}},
+	}, nil
 }
 
 func newStarterControllerForTest(t *testing.T, provider rmclient.ResourceGroupProvider) *rmclient.ResourceGroupsController {
@@ -103,6 +123,8 @@ func newTransientGetResourceGroupErr(name string) error {
 }
 
 func TestResourceGroupsControllerOptionsProvideDegradedFallback(t *testing.T) {
+	restoreConfig := config.RestoreFunc()
+	t.Cleanup(restoreConfig)
 	if kerneltype.IsNextGen() {
 		// Preserve the process-wide deploy mode because deploymode.IsStarter reads
 		// it directly when newResourceGroupsControllerOptions builds controller options.
@@ -146,6 +168,9 @@ func TestResourceGroupsControllerOptionsProvideDegradedFallback(t *testing.T) {
 		return
 	}
 
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.StarterParams.EnableGetResourceGroupDegraded = true
+	})
 	controllerWithFallback := newStarterControllerForTest(t, provider)
 	group, err := controllerWithFallback.GetResourceGroup("test-group")
 	require.NoError(t, err)
@@ -192,11 +217,16 @@ func TestStarterSwitchGroupUsesDegradedGroupOnTransientLookupError(t *testing.T)
 	if !kerneltype.IsNextGen() {
 		t.Skip("Starter deploy mode is only available in NextGen builds")
 	}
+	restoreConfig := config.RestoreFunc()
+	t.Cleanup(restoreConfig)
 	originalDeployMode := deploymode.Get()
 	t.Cleanup(func() {
 		require.NoError(t, deploymode.Set(originalDeployMode))
 	})
 
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.StarterParams.EnableGetResourceGroupDegraded = true
+	})
 	provider := newResourceGroupProviderStub(t, nil, newTransientGetResourceGroupErr("target-switch-group"))
 	controller := newStarterControllerForTest(t, provider)
 	manager := runaway.NewRunawayManager(controller, "127.0.0.1:4000", nil, make(chan struct{}), nil, nil)
@@ -225,28 +255,72 @@ func TestStarterSwitchGroupUsesDegradedGroupOnTransientLookupError(t *testing.T)
 	require.Equal(t, "target-switch-group", req.GetResourceControlContext().GetResourceGroupName())
 }
 
-func TestResourceGroupsControllerOptionsUseStarterPodNamespaceForVIPWaitRetry(t *testing.T) {
+func TestResourceGroupsControllerOptionsUseExplicitGetResourceGroupDegraded(t *testing.T) {
+	if !kerneltype.IsNextGen() {
+		t.Skip("Starter deploy mode is only available in NextGen builds")
+	}
 	restoreConfig := config.RestoreFunc()
 	t.Cleanup(restoreConfig)
-	vipOptionCount := 3
-	standardOptionCount := 1
-	if kerneltype.IsNextGen() {
-		originalDeployMode := deploymode.Get()
-		t.Cleanup(func() {
-			require.NoError(t, deploymode.Set(originalDeployMode))
-		})
-		require.NoError(t, deploymode.Set(deploymode.Starter))
-		vipOptionCount = 5
-		standardOptionCount = 3
+	originalDeployMode := deploymode.Get()
+	t.Cleanup(func() {
+		require.NoError(t, deploymode.Set(originalDeployMode))
+	})
+
+	newController := func(t *testing.T) *rmclient.ResourceGroupsController {
+		t.Helper()
+		provider := newResourceGroupProviderStub(t, nil, nil)
+		provider.controllerConfig = rmclient.DefaultConfig()
+		provider.controllerConfig.WaitRetryInterval = rmclient.NewDuration(250 * time.Millisecond)
+		provider.controllerConfig.WaitRetryTimes = 4
+		provider.controllerConfig.LTBTokenRPCMaxDelay = rmclient.NewDuration(time.Second)
+
+		controller, err := rmclient.NewResourceGroupController(
+			context.Background(),
+			1,
+			provider,
+			nil,
+			0,
+			newResourceGroupsControllerOptions()...,
+		)
+		require.NoError(t, err)
+		return controller
 	}
 
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.StarterParams.PodNamespace = "starter-vip-ns"
-	})
-	require.Len(t, newResourceGroupsControllerOptions(), vipOptionCount)
+	t.Run("enabled explicitly in starter", func(t *testing.T) {
+		require.NoError(t, deploymode.Set(deploymode.Starter))
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.StarterParams.PodNamespace = "starter-standard-ns"
+			conf.StarterParams.EnableGetResourceGroupDegraded = true
+		})
 
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.StarterParams.PodNamespace = "starter-standard-ns"
+		ruConfig := newController(t).GetConfig()
+		require.Equal(t, tokenWaitRetryInterval, ruConfig.WaitRetryInterval)
+		require.Equal(t, tokenWaitRetryTimes, ruConfig.WaitRetryTimes)
+		require.Equal(t, defaultDegradedModeWaitTimeout, ruConfig.DegradedModeWaitDuration)
 	})
-	require.Len(t, newResourceGroupsControllerOptions(), standardOptionCount)
+
+	t.Run("namespace alone does not enable degraded mode", func(t *testing.T) {
+		require.NoError(t, deploymode.Set(deploymode.Starter))
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.StarterParams.PodNamespace = "starter-vip-ns"
+			conf.StarterParams.EnableGetResourceGroupDegraded = false
+		})
+
+		ruConfig := newController(t).GetConfig()
+		require.Equal(t, 250*time.Millisecond, ruConfig.WaitRetryInterval)
+		require.Equal(t, 4, ruConfig.WaitRetryTimes)
+		require.Zero(t, ruConfig.DegradedModeWaitDuration)
+	})
+
+	t.Run("ignored outside starter", func(t *testing.T) {
+		require.NoError(t, deploymode.Set(deploymode.Premium))
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.StarterParams.EnableGetResourceGroupDegraded = true
+		})
+
+		ruConfig := newController(t).GetConfig()
+		require.Equal(t, 250*time.Millisecond, ruConfig.WaitRetryInterval)
+		require.Equal(t, 4, ruConfig.WaitRetryTimes)
+		require.Zero(t, ruConfig.DegradedModeWaitDuration)
+	})
 }
