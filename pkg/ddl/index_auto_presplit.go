@@ -16,20 +16,26 @@ package ddl
 
 import (
 	"bytes"
+	"container/heap"
+	"context"
 	"fmt"
 	"slices"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/types"
 )
 
 type autoSplitStatsProvider interface {
 	GetPhysicalTableStats(physicalTableID int64, tblInfo *model.TableInfo) *statistics.Table
+	LoadColumnTopN(
+		ctx context.Context,
+		sctx sessionctx.Context,
+		physicalTableID, columnID int64,
+		limit int,
+	) (*statistics.TopN, error)
 }
 
 type autoSplitHotRegionConfig struct {
@@ -50,13 +56,13 @@ func getAutoSplitHotRegionConfig() autoSplitHotRegionConfig {
 	}
 	failpoint.InjectCall("mockAutoSplitHotRegionConfig", &cfg, func(minRows int) {
 		if minRows > 0 {
-			cfg.applyTestMinRows(minRows)
+			cfg.applyTestConfigOverrides(minRows)
 		}
 	})
 	return cfg
 }
 
-func (cfg *autoSplitHotRegionConfig) applyTestMinRows(minRows int) {
+func (cfg *autoSplitHotRegionConfig) applyTestConfigOverrides(minRows int) {
 	cfg.minTableRows = int64(minRows)
 	cfg.maxTopNKeysPerPhysical = 4
 	cfg.topNMinCount = uint64(minRows)
@@ -65,6 +71,7 @@ func (cfg *autoSplitHotRegionConfig) applyTestMinRows(minRows int) {
 }
 
 func planAutoSplitIndexRegions(
+	ctx context.Context,
 	sctx sessionctx.Context,
 	statsProvider autoSplitStatsProvider,
 	tblInfo *model.TableInfo,
@@ -128,8 +135,8 @@ func planAutoSplitIndexRegions(
 	var topN *statistics.TopN
 	if loadNeeded {
 		var err error
-		topN, err = storage.TopNFromStorageWithPriorityAndLimit(
-			sctx, tblInfo.ID, 0, leadingCol.ID, kv.PriorityNormal, cfg.maxTopNKeysPerPhysical)
+		topN, err = statsProvider.LoadColumnTopN(
+			ctx, sctx, tblInfo.ID, leadingCol.ID, cfg.maxTopNKeysPerPhysical)
 		if err != nil {
 			return nil, "failed to load leading column TopN from storage", err
 		}
@@ -164,7 +171,7 @@ func buildAutoSplitTopNRows(
 		return nil, nil
 	}
 
-	topNCandidates := make([]statistics.TopNMeta, 0, topN.Num())
+	topNCandidates := make(autoSplitTopNHeap, 0, min(cfg.maxTopNKeysPerPhysical, topN.Num()))
 	for _, topNItem := range topN.TopN {
 		if topNItem.Count < cfg.topNMinCount {
 			continue
@@ -173,7 +180,12 @@ func buildAutoSplitTopNRows(
 			float64(topNItem.Count)/float64(statsTbl.RealtimeCount) < cfg.topNMinRatio {
 			continue
 		}
-		topNCandidates = append(topNCandidates, topNItem)
+		if len(topNCandidates) < cfg.maxTopNKeysPerPhysical {
+			heap.Push(&topNCandidates, topNItem)
+		} else if statistics.TopnMetaCompare(topNItem, topNCandidates[0]) < 0 {
+			topNCandidates[0] = topNItem
+			heap.Fix(&topNCandidates, 0)
+		}
 	}
 	if len(topNCandidates) == 0 {
 		return nil, nil
@@ -182,8 +194,8 @@ func buildAutoSplitTopNRows(
 
 	topNRows := make([][]types.Datum, 0, min(cfg.maxTopNKeysPerPhysical, len(topNCandidates)))
 	for _, topNItem := range topNCandidates {
-		datum, err := statistics.TopNMetaToDatum(
-			topNItem, colInfo.GetType(), false, sctx.GetSessionVars().Location())
+		datum, err := statistics.TopNColumnValueToDatum(
+			topNItem, colInfo.GetType(), sctx.GetSessionVars().Location())
 		if err != nil {
 			return nil, err
 		}
@@ -204,11 +216,30 @@ func buildAutoSplitTopNRows(
 			}
 		}
 		topNRows = append(topNRows, []types.Datum{splitDatum})
-		if len(topNRows) >= cfg.maxTopNKeysPerPhysical {
-			break
-		}
 	}
 	return topNRows, nil
+}
+
+// autoSplitTopNHeap keeps the worst selected candidate at the root.
+type autoSplitTopNHeap []statistics.TopNMeta
+
+func (h autoSplitTopNHeap) Len() int { return len(h) }
+
+func (h autoSplitTopNHeap) Less(i, j int) bool {
+	return statistics.TopnMetaCompare(h[i], h[j]) > 0
+}
+
+func (h autoSplitTopNHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
+
+func (h *autoSplitTopNHeap) Push(value any) {
+	*h = append(*h, value.(statistics.TopNMeta))
+}
+
+func (h *autoSplitTopNHeap) Pop() any {
+	old := *h
+	last := old[len(old)-1]
+	*h = old[:len(old)-1]
+	return last
 }
 
 func sortAndDedupeAutoSplitKeys(keys [][]byte) [][]byte {

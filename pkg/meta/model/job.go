@@ -1004,7 +1004,7 @@ type SubJob struct {
 	ReorgTp      ReorgType       `json:"reorg_tp"`
 	ReorgStage   ReorgStage      `json:"reorg_stage"`
 	AnalyzeState int8            `json:"analyze_state"`
-	// AutoSplitHotRegionResults records per-subjob ADD INDEX auto split summaries.
+	// AutoSplitHotRegionResults records per-subjob ADD INDEX and ADD PRIMARY KEY auto split summaries.
 	AutoSplitHotRegionResults []AutoSplitHotRegionResult `json:"auto_split_hot_region_results,omitempty"`
 }
 

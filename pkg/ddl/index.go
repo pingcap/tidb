@@ -1220,6 +1220,9 @@ SwitchIndexState:
 			jobCtx.stepCtx, w.sess.Context, jobCtx.store, tblInfo, allIndexInfos,
 			job.ReorgMeta, args, w.ddlCtx.statsHandle, enableAutoSplitHotRegion)
 		if err != nil {
+			if dbterror.ErrPausedDDLJob.Equal(err) {
+				return ver, nil
+			}
 			if !isRetryableJobError(err, job.ErrorCount) {
 				job.State = model.JobStateCancelled
 			}

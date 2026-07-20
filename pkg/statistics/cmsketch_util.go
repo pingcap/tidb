@@ -73,7 +73,7 @@ func topNMetaToDatum(val TopNMeta,
 	return dat, err
 }
 
-// TopNMetaToDatum decodes a TopN value into a datum of the specified type.
-func TopNMetaToDatum(val TopNMeta, tp byte, isIndex bool, loc *time.Location) (types.Datum, error) {
-	return topNMetaToDatum(val, tp, isIndex, loc)
+// TopNColumnValueToDatum decodes a column TopN value into a datum of the specified type.
+func TopNColumnValueToDatum(val TopNMeta, tp byte, loc *time.Location) (types.Datum, error) {
+	return topNMetaToDatum(val, tp, false, loc)
 }
