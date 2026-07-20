@@ -20,6 +20,7 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
@@ -80,6 +81,48 @@ func TestGetPDAddrsPDOnlyClient(t *testing.T) {
 	unixHTTPAddrs, err := unixServiceClient.GetPDHttpAddrs(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, []string{"unix://localhost:m0"}, unixHTTPAddrs)
+
+	t.Run("dedicated meta service group ignores pd member urls", func(t *testing.T) {
+		pdCli := &mockPDClient{
+			members: []*pdpb.Member{{
+				ClientUrls: []string{"http://127.0.0.1"},
+			}},
+		}
+		keyspaceMeta := &keyspacepb.KeyspaceMeta{
+			Id:   42,
+			Name: "ks1",
+			Config: map[string]string{
+				"gc_management_type": "keyspace_level",
+				GroupIDKey:           "group1",
+				GroupAddrsKey:        "meta-service:2379",
+			},
+		}
+
+		dialInfo, err := ResolveEtcdDialInfo(context.Background(), pdCli, keyspaceMeta)
+		require.NoError(t, err)
+		require.Equal(t, []string{"meta-service:2379"}, dialInfo.Endpoints)
+		require.NotEmpty(t, dialInfo.Namespace)
+	})
+
+	t.Run("global meta service group uses caller provided endpoints", func(t *testing.T) {
+		pdCli := &mockPDClient{
+			members: []*pdpb.Member{{
+				ClientUrls: []string{"http://127.0.0.1"},
+			}},
+		}
+		keyspaceMeta := &keyspacepb.KeyspaceMeta{
+			Id:     43,
+			Name:   "ks2",
+			Config: map[string]string{"gc_management_type": "keyspace_level"},
+		}
+
+		dialInfo, err := resolveEtcdDialInfo(
+			context.Background(), pdCli, keyspaceMeta, []string{"pd-proxy:2379"},
+		)
+		require.NoError(t, err)
+		require.Equal(t, []string{"pd-proxy:2379"}, dialInfo.Endpoints)
+		require.NotEmpty(t, dialInfo.Namespace)
+	})
 }
 
 func TestNewClientReturnsNilWithoutClients(t *testing.T) {
@@ -128,8 +171,7 @@ func TestGetPDAddrsWithRealClient(t *testing.T) {
 	t.Run("malformed client urls are skipped when usable ones remain", func(t *testing.T) {
 		pdCli := &mockPDClient{
 			members: []*pdpb.Member{
-				{ClientUrls: []string{"http://127.0.0.1"}},
-				{ClientUrls: []string{"http://127.0.0.1:1111"}},
+				{ClientUrls: []string{"http://127.0.0.1", "http://127.0.0.1:1111"}},
 			},
 		}
 
