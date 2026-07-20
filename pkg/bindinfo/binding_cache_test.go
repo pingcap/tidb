@@ -21,8 +21,15 @@ import (
 
 	"github.com/pingcap/tidb/pkg/bindinfo/norm"
 	"github.com/pingcap/tidb/pkg/parser"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/hack"
+=======
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/format"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/util/mock"
+>>>>>>> 75ada2163c3 (bindinfo: skip binding match for insert values (#69937))
 	"github.com/stretchr/testify/require"
 )
 
@@ -142,6 +149,7 @@ func TestBindCache(t *testing.T) {
 	result = bindCache.get(key[2])
 	require.NotNil(t, result)
 
+<<<<<<< HEAD
 	// key[0] is not in the cache
 	result = bindCache.get(key[0])
 	require.Nil(t, result)
@@ -158,4 +166,178 @@ func TestBindCache(t *testing.T) {
 	require.NotNil(t, err)
 	result = bindCache.get(bigBindCacheKey)
 	require.Nil(t, result)
+=======
+	require.Eventually(t, func() bool {
+		hit := 0
+		for _, digest := range []string{"digest1", "digest2", "digest3"} {
+			if bindCache.GetBinding(digest) != nil {
+				hit++
+			}
+		}
+		return hit == 2
+	}, time.Second*5, time.Millisecond*100)
+}
+
+func TestBindingCacheEvictLog(t *testing.T) {
+	callbackCnt := 0
+	ctx := context.WithValue(context.Background(),
+		bindingCacheTestKey, func(binding *Binding) { callbackCnt++ })
+
+	largeBinding := &Binding{BindSQL: fmt.Sprintf("SELECT * FROM t1 WHERE c = '%v'", strings.Repeat("a", 200))}
+	binding := &Binding{BindSQL: "SELECT * FROM t1"}
+	bindingCache := newBindingCache(ctx, int64(binding.size())*3-1).(*bindingCache)
+	defer bindingCache.Close()
+
+	bindingCache.SetBinding("0", largeBinding)
+	require.Equal(t, callbackCnt, 1) // large binding, reject directly
+	bindingCache.SetBinding("0", largeBinding)
+	require.Equal(t, callbackCnt, 2) // large binding, reject directly
+	callbackCnt = 0                  // reset callback count
+
+	bindingCache.SetBinding("1", binding) // insert the first binding four times
+	bindingCache.SetBinding("1", binding)
+	bindingCache.SetBinding("1", binding)
+	bindingCache.SetBinding("1", binding)
+	require.Equal(t, bindingCache.Size(), 1)
+	require.Equal(t, bindingCache.GetMemUsage(), int64(binding.size()))
+	require.Equal(t, callbackCnt, 0) // duplicated binding should not trigger eviction
+
+	bindingCache.SetBinding("2", binding) // insert the second binding
+	bindingCache.SetBinding("2", binding)
+	require.Equal(t, callbackCnt, 0) // cache size is enough
+
+	bindingCache.SetBinding("3", binding) // insert the third binding, trigger eviction
+	require.Equal(t, callbackCnt, 1)
+
+	for i := 1; i <= 10; i++ {
+		bindingCache.SetBinding(fmt.Sprintf("3-%d", i), binding)
+		require.Equal(t, callbackCnt, 1+i)
+	}
+
+	require.Equal(t, callbackCnt, 11)
+	bindingCache.Close() // close doesn't trigger eviction log
+	require.Equal(t, callbackCnt, 11)
+}
+
+func TestExtractTableName(t *testing.T) {
+	tc := []struct {
+		sql    string
+		tables []string
+	}{
+		{
+			"select /*+ HASH_JOIN(t1, t2) */ * from t1 t1 join t1 t2 on t1.a=t2.a where t1.b is not null;",
+			[]string{"t1", "t1"},
+		},
+		{
+			"select * from t",
+			[]string{"t"},
+		},
+		{
+			"select * from t1, t2, t3;",
+			[]string{"t1", "t2", "t3"},
+		},
+		{
+			"select * from t1 where t1.a > (select max(a) from t2);",
+			[]string{"t1", "t2"},
+		},
+		{
+			"select * from t1 where t1.a > (select max(a) from t2 where t2.a > (select max(a) from t3));",
+			[]string{"t1", "t2", "t3"},
+		},
+		{
+			"select a,b,c,d,* from t1 where t1.a > (select max(a) from t2 where t2.a > (select max(a) from t3));",
+			[]string{"t1", "t2", "t3"},
+		},
+	}
+	for _, tt := range tc {
+		stmt, err := parser.New().ParseOneStmt(tt.sql, "", "")
+		require.NoErrorf(t, err, "sql: %s", tt.sql)
+		rs := CollectTableNames(stmt)
+		result, err := getTableName(rs)
+		require.NoErrorf(t, err, "sql: %s", tt.sql)
+		require.Equalf(t, tt.tables, result, "sql: %s", tt.sql)
+	}
+}
+
+func TestMayHaveSQLBinding(t *testing.T) {
+	require.False(t, mayHaveSQLBinding(nil))
+	require.True(t, mayHaveSQLBinding(&ast.ExplainStmt{}))
+
+	tests := []struct {
+		sql  string
+		want bool
+	}{
+		{"insert into t values (1)", false},
+		{"insert into t values (1) on duplicate key update a = values(a)", false},
+		{"insert into t set a = 1", false},
+		{"replace into t values (1)", false},
+		{"explain insert into t values (1)", false},
+		{"insert into t select * from s", true},
+		{"replace into t select * from s", true},
+		{"explain insert into t select * from s", true},
+		{"select * from t", true},
+		{"update t set a = 1", true},
+		{"delete from t where a = 1", true},
+	}
+
+	p := parser.New()
+	for _, tt := range tests {
+		stmt, err := p.ParseOneStmt(tt.sql, "", "")
+		require.NoError(t, err)
+		require.Equal(t, tt.want, mayHaveSQLBinding(stmt), tt.sql)
+	}
+}
+
+func TestMatchSQLBindingSkipsInsertValues(t *testing.T) {
+	tests := []string{
+		"insert into t values (1)",
+		"insert into t values (1) on duplicate key update a = values(a)",
+		"insert into t set a = 1",
+		"replace into t values (1)",
+		"explain insert into t values (1)",
+	}
+
+	originalGetBindingHandle := GetBindingHandle
+	getBindingHandleCalls := 0
+	GetBindingHandle = func(sctx sessionctx.Context) BindingHandle {
+		getBindingHandleCalls++
+		return nil
+	}
+	t.Cleanup(func() {
+		GetBindingHandle = originalGetBindingHandle
+	})
+
+	sctx := mock.NewContext()
+	sctx.GetSessionVars().UsePlanBaselines = true
+	sctx.SetValue(SessionBindInfoKeyType, NewSessionBindingHandle())
+
+	p := parser.New()
+	for _, sql := range tests {
+		stmt, err := p.ParseOneStmt(sql, "", "")
+		require.NoError(t, err)
+
+		info := &BindingMatchInfo{}
+		binding, matched, scope := MatchSQLBindingWithCache(sctx, stmt, info)
+		require.Nil(t, binding, sql)
+		require.False(t, matched, sql)
+		require.Empty(t, scope, sql)
+		require.Empty(t, info.NoDBDigest, sql)
+		require.Nil(t, info.TableNames, sql)
+	}
+	require.Zero(t, getBindingHandleCalls)
+}
+
+func getTableName(n []*ast.TableName) ([]string, error) {
+	result := make([]string, 0, len(n))
+	for _, v := range n {
+		var sb strings.Builder
+		restoreFlags := format.RestoreKeyWordLowercase
+		restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
+		if err := v.Restore(restoreCtx); err != nil {
+			return nil, err
+		}
+		result = append(result, sb.String())
+	}
+	return result, nil
+>>>>>>> 75ada2163c3 (bindinfo: skip binding match for insert values (#69937))
 }
