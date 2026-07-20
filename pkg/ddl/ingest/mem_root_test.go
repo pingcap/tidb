@@ -65,17 +65,17 @@ func TestRiskOfDiskFull(t *testing.T) {
 	require.True(t, RiskOfDiskFull(9, 100))
 
 	t.Run("check local sort free disk", func(t *testing.T) {
-		err := checkLocalSortFreeDisk("/tmp/local-sort", 10*size.GB, 10*size.GB, []LocalSortJobDiskRequirement{
+		err := checkLocalSortFreeDisk("/tmp/local-sort", 20*size.GB, 20*size.GB, []LocalSortJobDiskRequirement{
 			{RequiredSlots: 4, UsedBytes: size.GB},
 		}, 2)
 		require.NoError(t, err)
 
-		err = checkLocalSortFreeDisk("/tmp/local-sort", 6*size.GB, 10*size.GB, []LocalSortJobDiskRequirement{
+		err = checkLocalSortFreeDisk("/tmp/local-sort", 12*size.GB, 20*size.GB, []LocalSortJobDiskRequirement{
 			{RequiredSlots: 3, UsedBytes: 0},
 		}, 2)
 		require.NoError(t, err)
 
-		err = checkLocalSortFreeDisk("/tmp/local-sort", 4*size.GB, 10*size.GB, []LocalSortJobDiskRequirement{
+		err = checkLocalSortFreeDisk("/tmp/local-sort", 9*size.GB, 10*size.GB, []LocalSortJobDiskRequirement{
 			{RequiredSlots: 2, UsedBytes: 0},
 			{RequiredSlots: 2, UsedBytes: 2 * size.GB},
 		}, 1)
@@ -88,7 +88,7 @@ func TestRiskOfDiskFull(t *testing.T) {
 		require.ErrorContains(t, err, "local sort requires at least")
 		require.ErrorContains(t, err, "running local-sort job count 1")
 		require.ErrorContains(t, err, "new job required slots 1")
-		require.ErrorContains(t, err, "bytes per slot 1073741824")
-		require.EqualValues(t, 1024*size.MB, LocalSortBytesPerSlot)
+		require.ErrorContains(t, err, "bytes per slot 2147483648")
+		require.EqualValues(t, 2048*size.MB, LocalSortBytesPerSlot)
 	})
 }
