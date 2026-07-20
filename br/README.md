@@ -1,3 +1,4 @@
+# FOR DEMO ONLY
 # BR
 
 [![Build Status](https://internal.pingcap.net/idc-jenkins/job/build_br_multi_branch/job/master/badge/icon)](https://internal.pingcap.net/idc-jenkins/job/build_br_multi_branch/job/master/)
