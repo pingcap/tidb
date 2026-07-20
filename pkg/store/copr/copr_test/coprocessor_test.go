@@ -290,6 +290,25 @@ func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
 	require.Nil(t, errRes)
 	require.Zero(t, req.Paging.PagingSizeBytes)
 
+	// Analyze requests do not yet use store-batched coprocessor requests.
+	ranges = copr.BuildKeyRanges("a", "c", "d", "e", "h", "x", "y", "z")
+	req = &kv.Request{
+		Tp:             kv.ReqTypeAnalyze,
+		StoreType:      kv.TiKV,
+		KeyRanges:      kv.NewNonParitionedKeyRangesWithHint(ranges, nil),
+		Concurrency:    15,
+		StoreBatchSize: 3,
+	}
+	req.RequestSource.RequestSourceInternal = true
+	it, errRes = copClient.BuildCopIterator(ctx, req, vars, opt)
+	require.Nil(t, errRes)
+	tasks = it.GetTasks()
+	require.Len(t, tasks, 4)
+	for _, task := range tasks {
+		require.Empty(t, task.ToPBBatchTasks())
+		require.Equal(t, -1, task.RowCountHint)
+	}
+
 	// only small tasks will be batched.
 	ranges = copr.BuildKeyRanges("a", "b", "h", "i", "o", "p")
 	req = &kv.Request{
