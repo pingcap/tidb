@@ -51,13 +51,6 @@ var (
 	defaultCollectMetricsInterval = 15 * time.Second
 )
 
-type batchCleanUpRoutine interface {
-	// CleanUpBatch cleans up tasks as a single unit. All tasks in the batch must
-	// be cleaned up successfully before any of them are transferred to the
-	// history table.
-	CleanUpBatch(ctx context.Context, tasks []*proto.Task) error
-}
-
 func (sm *Manager) getSchedulerCount() int {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
@@ -457,7 +450,7 @@ func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) error {
 		cleanUp CleanUpRoutine
 	}
 	type batchCleanUpTaskGroup struct {
-		cleanUp batchCleanUpRoutine
+		cleanUp BatchCleanUpRoutine
 		tasks   []*proto.Task
 	}
 
@@ -478,7 +471,7 @@ func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) error {
 			continue
 		}
 		cleanUp := cleanUpFactory()
-		if batchCleanUp, ok := cleanUp.(batchCleanUpRoutine); ok {
+		if batchCleanUp, ok := cleanUp.(BatchCleanUpRoutine); ok {
 			batchCleanUpTaskGroups[task.Type] = &batchCleanUpTaskGroup{
 				cleanUp: batchCleanUp,
 				tasks:   []*proto.Task{task},

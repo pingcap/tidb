@@ -40,9 +40,12 @@ import (
 	"go.uber.org/zap"
 )
 
-var _ scheduler.CleanUpRoutine = (*ImportCleanUp)(nil)
+var (
+	_ scheduler.CleanUpRoutine      = (*ImportCleanUp)(nil)
+	_ scheduler.BatchCleanUpRoutine = (*ImportCleanUp)(nil)
+)
 
-// ImportCleanUp implements scheduler.CleanUpRoutine.
+// ImportCleanUp implements scheduler.BatchCleanUpRoutine.
 type ImportCleanUp struct {
 }
 
@@ -61,7 +64,7 @@ type cleanUpFileGroup struct {
 	taskIDs            []int64
 }
 
-// CleanUpBatch cleans up multiple import tasks together.
+// CleanUpBatch implements scheduler.BatchCleanUpRoutine.
 // Global-sort files are partitioned by task ID, but finding them requires a scan
 // of the shared object store. Batching lets cleanup scan each store once instead
 // of once per task. The scheduler moves the tasks to history only after this
