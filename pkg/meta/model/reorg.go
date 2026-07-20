@@ -101,7 +101,7 @@ type DDLReorgMeta struct {
 	// captured value instead of the executor process default. Nil means old metadata
 	// and should fall back to the caller-provided default.
 	UseNewCollate *bool `json:"use_new_collate,omitempty"`
-	// AutoSplitHotRegionResults records the best-effort auto split summary for ADD INDEX.
+	// AutoSplitHotRegionResults records the best-effort auto split summary for ADD INDEX and ADD PRIMARY KEY.
 	AutoSplitHotRegionResults []AutoSplitHotRegionResult `json:"auto_split_hot_region_results,omitempty"`
 	// These two variables are used to control the concurrency and batch size of the reorganization process.
 	// They can be adjusted dynamically through `admin alter ddl jobs` command.
@@ -119,7 +119,7 @@ func (dm *DDLReorgMeta) ShallowCopy() *DDLReorgMeta {
 	return &newMeta
 }
 
-// AutoSplitHotRegionStatus is the status of best-effort ADD INDEX auto split.
+// AutoSplitHotRegionStatus is the status of best-effort ADD INDEX and ADD PRIMARY KEY auto split.
 type AutoSplitHotRegionStatus string
 
 const (
