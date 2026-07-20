@@ -507,6 +507,12 @@ func (builder *RequestBuilder) SetConnIDAndConnAlias(connID uint64, connAlias st
 	return builder
 }
 
+// SetStoreBatchSize sets the store batch size for TiKV coprocessor requests.
+func (builder *RequestBuilder) SetStoreBatchSize(storeBatchSize int) *RequestBuilder {
+	builder.StoreBatchSize = storeBatchSize
+	return builder
+}
+
 // TableHandleRangesToKVRanges convert table handle ranges to "KeyRanges" for multiple tables.
 func TableHandleRangesToKVRanges(dctx *distsqlctx.DistSQLContext, tid []int64, isCommonHandle bool, ranges []*ranger.Range) (*kv.KeyRanges, error) {
 	if !isCommonHandle {
