@@ -77,6 +77,8 @@ func (*ImportCleanUp) CleanUpBatch(ctx context.Context, tasks []*proto.Task) err
 		if err != nil {
 			return err
 		}
+		cloudStorageURI := taskMeta.Plan.CloudStorageURI
+		isGlobalSort := taskMeta.Plan.IsGlobalSort()
 		redactSensitiveInfo(task, taskMeta)
 
 		if err = cleanUpTableMode(ctx, taskMeta); err != nil {
@@ -87,13 +89,13 @@ func (*ImportCleanUp) CleanUpBatch(ctx context.Context, tasks []*proto.Task) err
 			return err
 		}
 
-		if taskMeta.Plan.IsGlobalSort() {
-			fileGroup, ok := fileGroups[taskMeta.Plan.CloudStorageURI]
+		if isGlobalSort {
+			fileGroup, ok := fileGroups[cloudStorageURI]
 			if !ok {
 				fileGroup = &cleanUpFileGroup{
-					cloudStorageURI: taskMeta.Plan.CloudStorageURI,
+					cloudStorageURI: cloudStorageURI,
 				}
-				fileGroups[taskMeta.Plan.CloudStorageURI] = fileGroup
+				fileGroups[cloudStorageURI] = fileGroup
 			}
 			fileGroup.nonPartitionedDirs = append(fileGroup.nonPartitionedDirs, strconv.Itoa(int(task.ID)))
 			fileGroup.taskIDs = append(fileGroup.taskIDs, task.ID)
