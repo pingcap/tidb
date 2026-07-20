@@ -11,6 +11,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
@@ -45,7 +46,7 @@ func NewTableTracker(tbInfo *model.TableInfo, schemaInfo *model.DBInfo, sctx ses
 	}
 }
 
-func (t *TableTracker) checkColumnCanBeDroped(colName ast.CIStr, tableName ast.CIStr) error {
+func (t *TableTracker) checkColumnCanBeDroped(colName pmodel.CIStr, tableName pmodel.CIStr) error {
 	if _, ok := t.addedColumns[colName.L]; ok {
 		return dbterror.ErrCantDropFieldOrKey.GenWithStackByArgs(colName)
 	}
@@ -63,7 +64,7 @@ func (t *TableTracker) checkColumnCanBeDroped(colName ast.CIStr, tableName ast.C
 	return nil
 }
 
-func (t *TableTracker) checkColumnCanBeModified(colName ast.CIStr, tableName ast.CIStr) error {
+func (t *TableTracker) checkColumnCanBeModified(colName pmodel.CIStr, tableName pmodel.CIStr) error {
 	if _, ok := t.addedColumns[colName.L]; ok {
 		return dbterror.ErrBadField.GenWithStackByArgs(colName, tableName)
 	}
@@ -73,18 +74,18 @@ func (t *TableTracker) checkColumnCanBeModified(colName ast.CIStr, tableName ast
 	return nil
 }
 
-func (t *TableTracker) checkIndexCanBeDropped(indexName ast.CIStr) (skip bool, err error) {
+func (t *TableTracker) checkIndexCanBeDropped(indexName pmodel.CIStr) (skip bool, err error) {
 	if _, ok := t.addedIndexColumn[indexName.L]; !ok {
 		return false, nil
 	}
 	return false, dbterror.ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
 }
 
-func (t *TableTracker) markColumnAdded(colName ast.CIStr) {
+func (t *TableTracker) markColumnAdded(colName pmodel.CIStr) {
 	t.addedColumns[colName.L] = struct{}{}
 }
 
-func (t *TableTracker) markColumnModified(colNames ...ast.CIStr) {
+func (t *TableTracker) markColumnModified(colNames ...pmodel.CIStr) {
 	for _, colName := range colNames {
 		t.modifiedColumns[colName.L] = struct{}{}
 	}
@@ -97,7 +98,7 @@ func (t *TableTracker) addPositionColumn(pos *ast.ColumnPosition) {
 	t.positionColumns[pos.RelativeColumn.Name.L] = struct{}{}
 }
 
-func (t *TableTracker) markIndexAdded(indexName ast.CIStr, indexPartSpecifications []*ast.IndexPartSpecification, hiddenCols []*model.ColumnInfo) {
+func (t *TableTracker) markIndexAdded(indexName pmodel.CIStr, indexPartSpecifications []*ast.IndexPartSpecification, hiddenCols []*model.ColumnInfo) {
 	cols := make(map[string]struct{})
 	for _, part := range indexPartSpecifications {
 		if part == nil || part.Column == nil {
@@ -107,7 +108,7 @@ func (t *TableTracker) markIndexAdded(indexName ast.CIStr, indexPartSpecificatio
 	}
 	for _, hiddenCol := range hiddenCols {
 		for dep := range hiddenCol.Dependences {
-			cols[ast.NewCIStr(dep).L] = struct{}{}
+			cols[pmodel.NewCIStr(dep).L] = struct{}{}
 		}
 	}
 	t.addedIndexColumn[indexName.L] = cols
@@ -203,18 +204,18 @@ func (tracker *TableTracker) addIndex(spec *ast.AlterTableSpec) error {
 	if spec.Constraint == nil {
 		return nil
 	}
-	indexName := ast.NewCIStr(spec.Constraint.Name)
+	indexName := pmodel.NewCIStr(spec.Constraint.Name)
 	indexParts := cloneIndexPartSpecifications(spec.Constraint.Keys)
 	unique := spec.Constraint.Tp == ast.ConstraintUniq ||
 		spec.Constraint.Tp == ast.ConstraintUniqIndex ||
 		spec.Constraint.Tp == ast.ConstraintUniqKey
 	mockTbl := tables.MockTableFromMeta(tracker.tableInfo)
 	if len(indexName.L) == 0 {
-		colName := ast.NewCIStr("expression_index")
+		colName := pmodel.NewCIStr("expression_index")
 		if len(indexParts) > 0 && indexParts[0] != nil && indexParts[0].Column != nil {
 			colName = indexParts[0].Column.Name
 		}
-		indexName = GetName4AnonymousIndex(mockTbl, colName, ast.NewCIStr(""))
+		indexName = GetName4AnonymousIndex(mockTbl, colName, pmodel.NewCIStr(""))
 	}
 	hiddenCols, shardIndexVersion, err := BuildHiddenColumnInfo(
 		tracker.metaBuildCtx(),
@@ -237,7 +238,7 @@ func (tracker *TableTracker) addIndex(spec *ast.AlterTableSpec) error {
 		indexName,
 		false,
 		unique,
-		model.ColumnarIndexTypeNA,
+		false,
 		indexParts,
 		spec.Constraint.Option,
 		model.StatePublic,
@@ -264,7 +265,7 @@ func (tracker *TableTracker) addPrimaryKey(spec *ast.AlterTableSpec) error {
 	if _, err := CheckPKOnGeneratedColumn(tracker.tableInfo, spec.Constraint.Keys); err != nil {
 		return err
 	}
-	indexColumns, _, err := buildIndexColumns(tracker.metaBuildCtx(), tracker.tableInfo.Columns, spec.Constraint.Keys, model.ColumnarIndexTypeNA)
+	indexColumns, _, err := buildIndexColumns(tracker.metaBuildCtx(), tracker.tableInfo.Columns, spec.Constraint.Keys, false)
 	if err != nil {
 		return err
 	}
@@ -274,10 +275,10 @@ func (tracker *TableTracker) addPrimaryKey(spec *ast.AlterTableSpec) error {
 	indexInfo, err := BuildIndexInfo(
 		tracker.metaBuildCtx(),
 		tracker.tableInfo,
-		ast.NewCIStr(mysql.PrimaryKeyName),
+		pmodel.NewCIStr(mysql.PrimaryKeyName),
 		true,
 		true,
-		model.ColumnarIndexTypeNA,
+		false,
 		cloneIndexPartSpecifications(spec.Constraint.Keys),
 		spec.Constraint.Option,
 		model.StatePublic,
@@ -291,7 +292,7 @@ func (tracker *TableTracker) addPrimaryKey(spec *ast.AlterTableSpec) error {
 		return err
 	}
 	tracker.rebuildIndexColumnFlags()
-	tracker.markIndexAdded(ast.NewCIStr(mysql.PrimaryKeyName), spec.Constraint.Keys, nil)
+	tracker.markIndexAdded(pmodel.NewCIStr(mysql.PrimaryKeyName), spec.Constraint.Keys, nil)
 	return nil
 }
 
@@ -299,9 +300,9 @@ func (tracker *TableTracker) addForeignKey(spec *ast.AlterTableSpec) error {
 	if spec.Constraint == nil {
 		return nil
 	}
-	fkName := ast.NewCIStr(spec.Constraint.Name)
+	fkName := pmodel.NewCIStr(spec.Constraint.Name)
 	if len(fkName.L) == 0 {
-		fkName = ast.NewCIStr(fmt.Sprintf("fk_%d", tracker.tableInfo.MaxForeignKeyID+1))
+		fkName = pmodel.NewCIStr(fmt.Sprintf("fk_%d", tracker.tableInfo.MaxForeignKeyID+1))
 	}
 	fkInfo, err := buildFKInfo(fkName, spec.Constraint.Keys, spec.Constraint.Refer, tables.MockTableFromMeta(tracker.tableInfo).Cols())
 	if err != nil {
@@ -320,8 +321,8 @@ func (tracker *TableTracker) addForeignKey(spec *ast.AlterTableSpec) error {
 
 func (tracker *TableTracker) modifyColumn(spec *ast.AlterTableSpec) error {
 	var err error
-	var oldColName ast.CIStr
-	var newColName ast.CIStr
+	var oldColName pmodel.CIStr
+	var newColName pmodel.CIStr
 	switch spec.Tp {
 	case ast.AlterTableRenameColumn:
 		oldColName = spec.OldColumnName.Name
@@ -362,7 +363,7 @@ func (tracker *TableTracker) modifyColumn(spec *ast.AlterTableSpec) error {
 	return nil
 }
 
-func (tracker *TableTracker) renameColumn(oldColName, newColName ast.CIStr, pos *ast.ColumnPosition) error {
+func (tracker *TableTracker) renameColumn(oldColName, newColName pmodel.CIStr, pos *ast.ColumnPosition) error {
 	oldColInfo := model.FindColumnInfo(tracker.tableInfo.Columns, oldColName.L)
 	if oldColInfo == nil {
 		return infoschema.ErrColumnNotExists.GenWithStackByArgs(oldColName, tracker.tableInfo.Name)
@@ -394,14 +395,9 @@ func (tracker *TableTracker) renameColumn(oldColName, newColName ast.CIStr, pos 
 	return nil
 }
 
-func (tracker *TableTracker) updateRelatedIndexColumns(oldColName ast.CIStr, newColInfo *model.ColumnInfo) {
+func (tracker *TableTracker) updateRelatedIndexColumns(oldColName pmodel.CIStr, newColInfo *model.ColumnInfo) {
 	for _, idx := range tracker.tableInfo.Indices {
 		for _, idxCol := range idx.Columns {
-			if idxCol.Name.L == oldColName.L {
-				UpdateIndexCol(idxCol, newColInfo)
-			}
-		}
-		for _, idxCol := range idx.AffectColumn {
 			if idxCol.Name.L == oldColName.L {
 				UpdateIndexCol(idxCol, newColInfo)
 			}
@@ -409,7 +405,7 @@ func (tracker *TableTracker) updateRelatedIndexColumns(oldColName ast.CIStr, new
 	}
 }
 
-func (tracker *TableTracker) renameForeignKeyColumns(oldColName, newColName ast.CIStr) {
+func (tracker *TableTracker) renameForeignKeyColumns(oldColName, newColName pmodel.CIStr) {
 	for _, fk := range tracker.tableInfo.ForeignKeys {
 		for i := range fk.Cols {
 			if fk.Cols[i].L == oldColName.L {
@@ -459,7 +455,7 @@ func (tracker *TableTracker) modifyExistingColumn(newColDef *ast.ColumnDef, pos 
 	); err != nil {
 		return err
 	}
-	if err := ProcessModifyColumnOptions(tracker.sctx, newCol, newColDef.Options); err != nil {
+	if err := processModifyColumnOptions(tracker.sctx, newCol, newColDef.Options); err != nil {
 		return err
 	}
 	err := checkModifyTypes(oldCol.ColumnInfo, newCol.ColumnInfo, isColumnWithIndex(oldCol.Name.L, tracker.tableInfo.Indices))
@@ -482,7 +478,7 @@ func (tracker *TableTracker) modifyExistingColumn(newColDef *ast.ColumnDef, pos 
 	return adjustTableInfoAfterModifyColumn(tracker.tableInfo, newColInfo, oldColInfo.Clone(), pos)
 }
 
-func (tracker *TableTracker) changeExistingColumn(oldColName ast.CIStr, newColDef *ast.ColumnDef, pos *ast.ColumnPosition) error {
+func (tracker *TableTracker) changeExistingColumn(oldColName pmodel.CIStr, newColDef *ast.ColumnDef, pos *ast.ColumnPosition) error {
 	oldColInfo := model.FindColumnInfo(tracker.tableInfo.Columns, oldColName.L)
 	if oldColInfo == nil {
 		return infoschema.ErrColumnNotExists.GenWithStackByArgs(oldColName, tracker.tableInfo.Name)
@@ -518,7 +514,7 @@ func (tracker *TableTracker) changeExistingColumn(oldColName ast.CIStr, newColDe
 	); err != nil {
 		return err
 	}
-	if err := ProcessModifyColumnOptions(tracker.sctx, newCol, newColDef.Options); err != nil {
+	if err := processModifyColumnOptions(tracker.sctx, newCol, newColDef.Options); err != nil {
 		return err
 	}
 	err := checkModifyTypes(oldCol.ColumnInfo, newCol.ColumnInfo, isColumnWithIndex(oldCol.Name.L, tracker.tableInfo.Indices))
@@ -641,7 +637,7 @@ func (tracker *TableTracker) dropColumn(spec *ast.AlterTableSpec) error {
 	return nil
 }
 
-func (tracker *TableTracker) checkDropColumnWithLocalForeignKeyConstraint(colName ast.CIStr) error {
+func (tracker *TableTracker) checkDropColumnWithLocalForeignKeyConstraint(colName pmodel.CIStr) error {
 	for _, fkInfo := range tracker.tableInfo.ForeignKeys {
 		for _, col := range fkInfo.Cols {
 			if col.L == colName.L {
@@ -660,9 +656,9 @@ func (tracker *TableTracker) checkDropColumnWithLocalForeignKeyConstraint(colNam
 }
 
 func (tracker *TableTracker) dropIndex(spec *ast.AlterTableSpec) error {
-	indexName := ast.NewCIStr(spec.Name)
+	indexName := pmodel.NewCIStr(spec.Name)
 	if spec.Tp == ast.AlterTableDropPrimaryKey {
-		indexName = ast.NewCIStr(mysql.PrimaryKeyName)
+		indexName = pmodel.NewCIStr(mysql.PrimaryKeyName)
 	}
 	if skip, err := tracker.checkIndexCanBeDropped(indexName); skip || err != nil {
 		return err
@@ -731,7 +727,7 @@ func (tracker *TableTracker) checkIndexNeededInLocalForeignKey(idxInfo *model.In
 }
 
 func (tracker *TableTracker) dropForeignKey(spec *ast.AlterTableSpec) error {
-	fkName := ast.NewCIStr(spec.Name)
+	fkName := pmodel.NewCIStr(spec.Name)
 	fks := make([]*model.FKInfo, 0, len(tracker.tableInfo.ForeignKeys))
 	found := false
 	for _, fk := range tracker.tableInfo.ForeignKeys {

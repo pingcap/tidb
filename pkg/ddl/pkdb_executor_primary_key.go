@@ -35,7 +35,7 @@ func (e *executor) createPrimaryKeyWithTableInfo(
 	ctx sessionctx.Context,
 	schema *model.DBInfo,
 	tbl table.Table,
-	indexName ast.CIStr,
+	indexName pmodel.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification,
 	indexOption *ast.IndexOption,
 	spec *ast.AlterTableSpec,
@@ -51,12 +51,6 @@ func (e *executor) createPrimaryKeyWithTableInfo(
 	}
 
 	indexName = pmodel.NewCIStr(mysql.PrimaryKeyName)
-	if indexInfo := tblInfo.FindIndexByName(indexName.L); indexInfo != nil ||
-		// If the table's PKIsHandle is true, it also means that this table has a primary key.
-		tblInfo.PKIsHandle {
-		return infoschema.ErrMultiplePriKey
-	}
-	indexName = ast.NewCIStr(mysql.PrimaryKeyName)
 
 	// Primary keys cannot include expression index parts. A primary key requires the generated column to be stored,
 	// but expression index parts are implemented as virtual generated columns, not stored generated columns.
@@ -74,7 +68,7 @@ func (e *executor) createPrimaryKeyWithTableInfo(
 	if _, err := CheckPKOnGeneratedColumn(currentTblInfo, indexPartSpecifications); err != nil {
 		return err
 	}
-	indexColumns, _, err := buildIndexColumns(NewMetaBuildContextWithSctx(ctx), currentTblInfo.Columns, indexPartSpecifications, model.ColumnarIndexTypeNA)
+	indexColumns, _, err := buildIndexColumns(NewMetaBuildContextWithSctx(ctx), currentTblInfo.Columns, indexPartSpecifications, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -120,12 +114,15 @@ func (e *executor) createPrimaryKeyWithTableInfo(
 		OpType: model.OpAddIndex,
 	}
 
-	if err = initJobReorgMetaFromVariables(e.ctx, job, tbl, ctx); err != nil {
+	if err = initJobReorgMetaFromVariables(job, ctx); err != nil {
 		return err
 	}
 	err = e.doDDLJob2(ctx, job, args)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return tbTracker.AlterTable(spec)
+	if tbTracker != nil {
+		return tbTracker.AlterTable(spec)
+	}
+	return nil
 }
