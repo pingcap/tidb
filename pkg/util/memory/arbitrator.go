@@ -738,6 +738,10 @@ func (m *MemArbitrator) workMode() ArbitratorWorkMode {
 
 // GetDigestProfileCache returns the digest profile cache for a given digest-id and utime
 func (m *MemArbitrator) GetDigestProfileCache(digestID uint64, utimeSec int64) (int64, bool) {
+	if digestID == InvalidDigestID {
+		return 0, false
+	}
+
 	d := &m.digestProfileCache.shards[digestID&m.digestProfileCache.shardsMask]
 	e, ok := d.Load(digestID)
 	if !ok {
@@ -846,6 +850,10 @@ func (m *MemArbitrator) shrinkDigestProfile(utimeSec int64, limit, shrinkTo int6
 
 // UpdateDigestProfileCache updates the digest profile cache for a given digest-id
 func (m *MemArbitrator) UpdateDigestProfileCache(digestID uint64, memConsumed int64, utimeSec int64) {
+	if digestID == InvalidDigestID {
+		return
+	}
+
 	d := &m.digestProfileCache.shards[digestID&m.digestProfileCache.shardsMask]
 	var pf *digestProfile
 	if e, ok := d.Load(digestID); ok {

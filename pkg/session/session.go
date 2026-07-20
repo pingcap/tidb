@@ -2636,14 +2636,17 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 			}
 		}
 
-		digestKey := normalizedSQL
-		// digestKey := sessVars.StmtCtx.OriginalSQL
+		digestID := buildMemArbitratorDigestID(
+			normalizedSQL,
+			sessVars.StmtCtx.Tables,
+			sessVars.CurrentDB,
+		)
 
 		tracker := sessVars.StmtCtx.MemTracker
 		if !tracker.InitMemArbitrator(
 			globalMemArbitrator,
 			sessVars.MemTracker.Killer,
-			digestKey,
+			digestID,
 			memPriority,
 			sessVars.MemArbitrator.WaitAverse == variable.MemArbitratorWaitAverseEnable,
 			reserveSize,
@@ -2723,6 +2726,48 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 		}
 	}
 	return recordSet, nil
+}
+
+func buildMemArbitratorDigestID(
+	normalizedSQL string,
+	tables []stmtctx.TableEntry,
+	currentDB string,
+) uint64 {
+	if normalizedSQL == "" {
+		return memory.InvalidDigestID
+	}
+
+	builder := memory.NewDigestIDBuilder()
+	builder.AddString("v1")
+	builder.AddString(normalizedSQL)
+
+	// The planner already deduplicates StmtCtx.Tables. Keep its order here to
+	// avoid allocating and sorting a copy; an order change only causes a harmless
+	// profile cache miss.
+	hasResolvedTable := false
+	for _, tbl := range tables {
+		db := strings.ToLower(tbl.DB)
+		table := strings.ToLower(tbl.Table)
+		if db == "" && table == "" {
+			continue
+		}
+
+		if !hasResolvedTable {
+			builder.AddString("resolved-tables")
+			hasResolvedTable = true
+		}
+		builder.AddString(db)
+		builder.AddString(table)
+	}
+
+	if !hasResolvedTable {
+		// Some statements do not generate table visit information. Use the
+		// current DB as a conservative fallback.
+		builder.AddString("default-db")
+		builder.AddString(strings.ToLower(currentDB))
+	}
+
+	return builder.Sum64()
 }
 
 var isNextGenForRUV2 = kerneltype.IsNextGen

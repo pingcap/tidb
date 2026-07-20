@@ -1245,7 +1245,7 @@ func (m *memArbitrator) reset(exception bool, maxConsumed int64) bool {
 		globalArbitrator.metrics.pools.internal.Add(-1)
 	}
 
-	if !exception {
+	if !exception && m.digestID != InvalidDigestID {
 		m.UpdateDigestProfileCache(m.digestID, maxConsumed, m.approxUnixTimeSec())
 	}
 
@@ -1258,13 +1258,13 @@ func (m *memArbitrator) reset(exception bool, maxConsumed int64) bool {
 
 // InitMemArbitratorForTest is a simplified version of InitMemArbitrator for test usage.
 func (t *Tracker) InitMemArbitratorForTest() bool {
-	return t.InitMemArbitrator(GlobalMemArbitrator(), nil, "", ArbitrationPriorityMedium, false, 0, false)
+	return t.InitMemArbitrator(GlobalMemArbitrator(), nil, InvalidDigestID, ArbitrationPriorityMedium, false, 0, false)
 }
 
 // InitMemArbitrator attaches (not thread-safe) to the mem arbitrator and initializes the context
 // "m" is the mem-arbitrator.
 // "killer" is the sql killer.
-// "digestKey" is the digest key.
+// "digestID" identifies the digest profile. InvalidDigestID disables the profile cache.
 // "memPriority" is the memory priority for arbitration.
 // "waitAverse" represents the wait averse property.
 // "explicitReserveSize" is the explicit mem quota size to be reserved.
@@ -1272,7 +1272,7 @@ func (t *Tracker) InitMemArbitratorForTest() bool {
 func (t *Tracker) InitMemArbitrator(
 	g *MemArbitrator,
 	killer *sqlkiller.SQLKiller,
-	digestKey string,
+	digestID uint64,
 	memPriority ArbitrationPriority,
 	waitAverse bool,
 	explicitReserveSize int64,
@@ -1287,8 +1287,6 @@ func (t *Tracker) InitMemArbitrator(
 	}
 
 	uid := t.SessionID.Load()
-	digestID := HashStr(digestKey)
-
 	var cancelChan <-chan struct{}
 	if killer != nil {
 		cancelChan = killer.GetKillEventChan()
@@ -1313,7 +1311,7 @@ func (t *Tracker) InitMemArbitrator(
 	t.MemArbitrator = m
 	ctx.arbitrateHelper = m
 
-	if explicitReserveSize == 0 && len(digestKey) > 0 {
+	if explicitReserveSize == 0 && digestID != InvalidDigestID {
 		if maxMem, found := g.GetDigestProfileCache(digestID, g.approxUnixTimeSec()); found {
 			m.prevMaxMem = maxMem
 		}

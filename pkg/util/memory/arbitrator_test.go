@@ -36,6 +36,14 @@ const (
 
 var testState *testing.T
 
+func buildDigestIDForTest(parts ...string) uint64 {
+	builder := NewDigestIDBuilder()
+	for _, part := range parts {
+		builder.AddString(part)
+	}
+	return builder.Sum64()
+}
+
 func (m *MemArbitrator) removeEntryForTest(entry *rootPoolEntry) bool {
 	require.True(testState, m.removeRootPoolEntry(entry))
 	return true
@@ -1635,7 +1643,12 @@ func TestMemArbitrator(t *testing.T) {
 		m.SetLimit(10000)
 		require.Equal(t, PoolAllocProfile{10, 20, 100}, m.poolAllocStats.PoolAllocProfile)
 
-		digestID1 := HashStr("test")
+		_, ok := m.GetDigestProfileCache(InvalidDigestID, 1)
+		require.False(t, ok)
+		m.UpdateDigestProfileCache(InvalidDigestID, 1009, 1)
+		require.Equal(t, int64(0), m.digestProfileCache.num.Load())
+
+		digestID1 := buildDigestIDForTest("test")
 		digestID2 := digestID1 + 1
 		{
 			_, ok := m.GetDigestProfileCache(digestID1, 1)
@@ -2561,6 +2574,12 @@ func TestBasicUtils(t *testing.T) {
 	}()
 
 	testState = t
+
+	require.NotEqual(t, buildDigestIDForTest("ab", "c"), buildDigestIDForTest("a", "bc"))
+	require.NotEqual(t, buildDigestIDForTest(), buildDigestIDForTest(""))
+	require.NotEqual(t,
+		buildDigestIDForTest("db1", "t1", "db2", "t2"),
+		buildDigestIDForTest("db2", "t2", "db1", "t1"))
 
 	{
 		const cnt = 1 << 8
