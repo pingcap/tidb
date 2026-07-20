@@ -328,6 +328,17 @@ func TestPushDownNot(t *testing.T) {
 	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
 	ret = PushDownNot(ctx, notFunc)
 	require.True(t, ret.Equal(ctx, leFunc))
+
+	// Regression: NOT NOT NOT (a=1) should simplify to a!=1
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, col)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc)
+	notFunc = newFunctionWithMockCtx(ast.UnaryNot, notFunc) // 7 NOTs
+	ret = PushDownNot(ctx, notFunc)
+	require.True(t, ret.Equal(ctx, newFunctionWithMockCtx(ast.UnaryNot, newFunctionWithMockCtx(ast.IsTruthWithNull, col))))
 }
 
 func TestFilter(t *testing.T) {

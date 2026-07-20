@@ -1085,9 +1085,6 @@ func pushNotAcrossExpr(ctx BuildContext, expr Expression, not bool) (_ Expressio
 			}
 			var childExpr Expression
 			childExpr, changed = pushNotAcrossExpr(ctx, child, !not)
-			if !changed && !not {
-				return childExpr, true
-			}
 			return childExpr, true
 		case ast.LT, ast.GE, ast.GT, ast.LE, ast.EQ, ast.NE:
 			if not {
