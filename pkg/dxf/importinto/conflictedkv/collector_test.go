@@ -111,7 +111,7 @@ func (s *mockKVStore) GetCodec() tikv.Codec {
 	if kerneltype.IsClassic() {
 		return tikv.NewCodecV1(tikv.ModeTxn)
 	}
-	codec, _ := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Id: 1})
+	codec, _ := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 1}})
 	return codec
 }
 

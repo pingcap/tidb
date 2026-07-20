@@ -436,7 +436,7 @@ func buildDAG(reader *dbreader.DBReader, lockStore *lockstore.MemStore, req *cop
 		resolvedLocks: req.Context.ResolvedLocks,
 	}
 	if reqCtx := req.Context; reqCtx != nil {
-		ctx.keyspaceID = reqCtx.KeyspaceId
+		ctx.keyspaceID = reqCtx.GetKeyspaceId()
 	}
 	return ctx, dagReq, err
 }

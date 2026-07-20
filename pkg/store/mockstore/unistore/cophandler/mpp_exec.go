@@ -621,7 +621,7 @@ func (e *indexLookUpExec) fetchTableScans() (tableScans []*tableScanExec, counts
 	var codecV2 tikv.Codec
 	if kerneltype.IsNextGen() {
 		codecV2, err = tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{
-			Id: e.keyspaceID,
+			Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: e.keyspaceID},
 		})
 		if err != nil {
 			return nil, nil, nil, err

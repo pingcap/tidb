@@ -95,7 +95,7 @@ func TestManager(t *testing.T) {
 			}
 			// we will close the client.
 			cluster.TakeClient(i)
-			codec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Id: ksID, Name: ks})
+			codec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: ksID}, Name: ks})
 			require.NoError(t, err)
 			etcd.SetEtcdCliByNamespace(cli, keyspace.MakeKeyspaceEtcdNamespace(codec))
 			return cli
@@ -286,7 +286,7 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 				continue
 			}
 			cluster.TakeClient(i)
-			codec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Id: ksID, Name: ks})
+			codec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: ksID}, Name: ks})
 			require.NoError(t, err)
 			etcd.SetEtcdCliByNamespace(cli, keyspace.MakeKeyspaceEtcdNamespace(codec))
 			return cli
@@ -362,7 +362,7 @@ func TestDomainAlterTableModeInKeyspaceSubmitOnly(t *testing.T) {
 				continue
 			}
 			cluster.TakeClient(i)
-			codec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Id: ksID, Name: ks})
+			codec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: ksID}, Name: ks})
 			require.NoError(t, err)
 			etcd.SetEtcdCliByNamespace(cli, keyspace.MakeKeyspaceEtcdNamespace(codec))
 			return cli

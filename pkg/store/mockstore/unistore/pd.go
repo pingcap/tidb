@@ -24,6 +24,7 @@ import (
 
 	"github.com/asaskevich/govalidator"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/apipb"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/meta_storagepb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
@@ -198,6 +199,10 @@ func (c *mockPDServiceDiscovery) Close() {}
 func (c *mockPDServiceDiscovery) GetClusterID() uint64 { return 0 }
 
 func (c *mockPDServiceDiscovery) GetKeyspaceID() uint32 { return 0 }
+
+func (c *mockPDServiceDiscovery) GetKeyspaceIdentity() *apipb.KeyspaceIdentity { return nil }
+
+func (c *mockPDServiceDiscovery) SetKeyspaceIdentity(*apipb.KeyspaceIdentity) {}
 
 func (c *mockPDServiceDiscovery) SetKeyspaceID(uint32) {}
 
@@ -395,20 +400,21 @@ func newMockKeyspaceManager(keyspaces []*keyspacepb.KeyspaceMeta) (*mockKeyspace
 	}
 
 	slices.SortFunc(res.keyspaces, func(a, b *keyspacepb.KeyspaceMeta) int {
-		return int(a.Id) - int(b.Id)
+		return int(a.GetId()) - int(b.GetId())
 	})
 
 	for i, keyspace := range res.keyspaces {
-		if keyspace.Id > constants.MaxKeyspaceID {
+		keyspaceID := keyspace.GetId()
+		if keyspaceID > constants.MaxKeyspaceID {
 			return nil, errors.Errorf("invalid keyspace ID (note that null keyspace won't have meta), got keyspace meta: %v", keyspace.String())
 		}
-		if i > 0 && keyspace.Id == res.keyspaces[i-1].Id {
-			return nil, errors.Errorf("keyspace ID %v duplicated: keyspace meta %s, keyspace meta %s", keyspace.Id, keyspace.String(), res.keyspaces[i-1].String())
+		if i > 0 && keyspaceID == res.keyspaces[i-1].GetId() {
+			return nil, errors.Errorf("keyspace ID %v duplicated: keyspace meta %s, keyspace meta %s", keyspaceID, keyspace.String(), res.keyspaces[i-1].String())
 		}
 		if anotherID, exists := res.keyspaceNamesMap[keyspace.Name]; exists {
 			return nil, errors.Errorf("keyspace name %v duplicated: keyspace meta %s, keyspace meta %s", keyspace.Name, keyspace.String(), res.keyspaces[anotherID].String())
 		}
-		res.keyspaceNamesMap[keyspace.Name] = keyspace.Id
+		res.keyspaceNamesMap[keyspace.Name] = keyspaceID
 	}
 
 	return res, nil
@@ -420,7 +426,7 @@ func (m *mockKeyspaceManager) LoadKeyspace(ctx context.Context, name string) (*k
 
 	if id, ok := m.keyspaceNamesMap[name]; ok {
 		index, exists := slices.BinarySearchFunc(m.keyspaces, id, func(k *keyspacepb.KeyspaceMeta, idToSearch uint32) int {
-			return int(k.Id) - int(idToSearch)
+			return int(k.GetId()) - int(idToSearch)
 		})
 		if !exists {
 			panic(fmt.Sprintf("keyspace meta list and name map mismatches, id: %v, keyspace meta list: %v, keyspace name map: %v", id, m.keyspaces, m.keyspaceNamesMap))
@@ -436,7 +442,7 @@ func (m *mockKeyspaceManager) LoadKeyspaceByID(ctx context.Context, id uint32) (
 	defer m.mu.RUnlock()
 
 	index, exists := slices.BinarySearchFunc(m.keyspaces, id, func(k *keyspacepb.KeyspaceMeta, idToSearch uint32) int {
-		return int(k.Id) - int(idToSearch)
+		return int(k.GetId()) - int(idToSearch)
 	})
 	if exists {
 		return m.keyspaces[index], nil
@@ -458,7 +464,7 @@ func (m *mockKeyspaceManager) GetAllKeyspaces(ctx context.Context, startID uint3
 	defer m.mu.RUnlock()
 
 	startIndex, _ := slices.BinarySearchFunc(m.keyspaces, startID, func(k *keyspacepb.KeyspaceMeta, idToSearch uint32) int {
-		return int(k.Id) - int(idToSearch)
+		return int(k.GetId()) - int(idToSearch)
 	})
 
 	if limit == 0 {

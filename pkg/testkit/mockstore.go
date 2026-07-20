@@ -364,14 +364,14 @@ func CreateMockStoreAndDomainForKS(t testing.TB, ks string, opts ...mockstore.Mo
 	})
 
 	sysKSOpt := mockstore.WithCurrentKeyspaceMeta(&keyspacepb.KeyspaceMeta{
-		Id:   uint32(0xFFFFFF) - 1,
-		Name: keyspace.System,
+		Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: uint32(0xFFFFFF) - 1},
+		Name:     keyspace.System,
 	})
 	ksOpt := sysKSOpt
 	if ks != keyspace.System {
 		ksOpt = mockstore.WithCurrentKeyspaceMeta(&keyspacepb.KeyspaceMeta{
-			Id:   uint32(keyspaceIDAlloc.Add(1)),
-			Name: ks,
+			Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: uint32(keyspaceIDAlloc.Add(1))},
+			Name:     ks,
 		})
 	}
 

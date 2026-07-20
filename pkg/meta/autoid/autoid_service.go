@@ -170,7 +170,7 @@ retry:
 		Increment:  increment,
 		Offset:     offset,
 		IsUnsigned: sp.isUnsigned,
-		KeyspaceID: sp.keyspaceID,
+		Keyspace:   &autoid.AutoIDRequest_KeyspaceID{KeyspaceID: sp.keyspaceID},
 	})
 	metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDAlloc, metrics.RetLabel(err)).Observe(time.Since(clientStart).Seconds())
 	if err != nil {
