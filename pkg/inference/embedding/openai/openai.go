@@ -73,16 +73,12 @@ func NewOpenAIEmbedder(cfg EmbedderConfig) *Embedder {
 }
 
 func readResponseBody(reader io.Reader, maxBytes int64) ([]byte, error) {
-	limited := &io.LimitedReader{R: reader, N: maxBytes}
-	body, err := io.ReadAll(limited)
+	body, err := io.ReadAll(io.LimitReader(reader, maxBytes+1))
 	if err != nil {
 		return nil, err
 	}
-	var extra [1]byte
-	if _, err := io.ReadFull(reader, extra[:]); err == nil {
+	if int64(len(body)) > maxBytes {
 		return nil, fmt.Errorf("response body exceeds maximum size of %d bytes", maxBytes)
-	} else if err != io.EOF {
-		return nil, err
 	}
 	return body, nil
 }

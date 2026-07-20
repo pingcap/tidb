@@ -325,22 +325,31 @@ func TestBatchKeyUsesFixedSizeOptionsDigest(t *testing.T) {
 
 func TestBatchRegistrationRejectsNil(t *testing.T) {
 	batcher := New()
-	require.Panics(t, func() {
-		batcher.Register("nil", nil)
-	})
+	require.EqualError(t, batcher.Register("nil", nil), `embedding provider "nil" is nil`)
 	require.False(t, batcher.Has("nil"))
 
 	var typedNil *mockEmbedder
-	require.Panics(t, func() {
-		batcher.MustRegister("typed-nil", typedNil)
-	})
+	require.EqualError(t, batcher.Register("typed-nil", typedNil), `embedding provider "typed-nil" is nil`)
 	require.False(t, batcher.Has("typed-nil"))
+
+	embedder := newMockEmbedder()
+	require.EqualError(t, batcher.Register("", embedder), `invalid embedding provider: ""`)
+	require.EqualError(t, batcher.Register("invalid/name", embedder), `invalid embedding provider: "invalid/name"`)
+
+	require.NoError(t, batcher.Register("test", embedder))
+	require.True(t, batcher.Has(" TEST "))
+	replacement := newMockEmbedder()
+	require.EqualError(t, batcher.Register(" TEST ", replacement), `embedding provider "test" is already registered`)
+	require.Same(t, embedder, batcher.embedders["test"])
+	require.PanicsWithError(t, `embedding provider "test" is already registered`, func() {
+		batcher.MustRegister("test", replacement)
+	})
 }
 
 func TestBatch_SingleRequest(t *testing.T) {
 	mockEmb := newMockEmbedder()
 	batcher := New()
-	batcher.Register("test", mockEmb)
+	batcher.MustRegister("test", mockEmb)
 
 	ctx := context.Background()
 	texts := []string{"hello", "world"}
@@ -361,7 +370,7 @@ func TestBatch_SingleRequest(t *testing.T) {
 func TestBatch_BatchingSameModel(t *testing.T) {
 	mockEmb := newMockEmbedder()
 	batcher := NewWithConfig(time.Hour, 3)
-	batcher.Register("test", mockEmb)
+	batcher.MustRegister("test", mockEmb)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -419,7 +428,7 @@ func TestBatch_ConcurrentRequests(t *testing.T) {
 
 	mockEmb := newMockEmbedder()
 	batcher := NewWithConfig(5*time.Second, requestCount)
-	batcher.Register("test", mockEmb)
+	batcher.MustRegister("test", mockEmb)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -449,7 +458,7 @@ func TestBatchCancellationAcrossCallers(t *testing.T) {
 	t.Run("caller can reuse texts after cancellation", func(t *testing.T) {
 		embedder := newMockEmbedder()
 		batcher := NewWithConfig(time.Hour, 2)
-		batcher.Register("test", embedder)
+		batcher.MustRegister("test", embedder)
 
 		ctx, cancel := context.WithCancel(context.Background())
 		texts := []string{"original"}
@@ -470,7 +479,7 @@ func TestBatchCancellationAcrossCallers(t *testing.T) {
 		embedder := newBlockingEmbedder()
 		t.Cleanup(embedder.finish)
 		batcher := NewWithConfig(time.Hour, 2)
-		batcher.Register("test", embedder)
+		batcher.MustRegister("test", embedder)
 
 		canceledCtx, cancel := context.WithCancel(context.Background())
 		canceledResult := createEmbeddingsAsync(canceledCtx, batcher, "private")
@@ -495,7 +504,7 @@ func TestBatchCancellationAcrossCallers(t *testing.T) {
 	t.Run("all callers canceled before dispatch skip provider", func(t *testing.T) {
 		embedder := newMockEmbedder()
 		batcher := NewWithConfig(time.Hour, 3)
-		batcher.Register("test", embedder)
+		batcher.MustRegister("test", embedder)
 
 		firstCtx, cancelFirst := context.WithCancel(context.Background())
 		secondCtx, cancelSecond := context.WithCancel(context.Background())
@@ -517,7 +526,7 @@ func TestBatchCancellationAcrossCallers(t *testing.T) {
 		embedder := newBlockingEmbedder()
 		t.Cleanup(embedder.finish)
 		batcher := NewWithConfig(time.Hour, 2)
-		batcher.Register("test", embedder)
+		batcher.MustRegister("test", embedder)
 
 		ctx := newPanicDoneContext()
 		resultCh := createEmbeddingsAsync(ctx, batcher, "test")
@@ -545,7 +554,7 @@ func TestBatchCancellationAcrossCallers(t *testing.T) {
 		embedder := newBlockingEmbedder()
 		t.Cleanup(embedder.finish)
 		batcher := NewWithConfig(5*time.Second, 2)
-		batcher.Register("test", embedder)
+		batcher.MustRegister("test", embedder)
 
 		canceledCtx, cancel := context.WithCancel(context.Background())
 		canceledResult := createEmbeddingsAsync(canceledCtx, batcher, "first")
@@ -577,7 +586,7 @@ func TestBatchCancellationAcrossCallers(t *testing.T) {
 		embedder := newBlockingEmbedder()
 		t.Cleanup(embedder.finish)
 		batcher := NewWithConfig(5*time.Second, 2)
-		batcher.Register("test", embedder)
+		batcher.MustRegister("test", embedder)
 
 		firstCtx, cancelFirst := context.WithCancel(context.Background())
 		secondCtx, cancelSecond := context.WithCancel(context.Background())
@@ -600,7 +609,7 @@ func TestBatchCancellationAcrossCallers(t *testing.T) {
 func TestBatch_DifferentModelsNotBatched(t *testing.T) {
 	mockEmb := newMockEmbedder()
 	batcher := New()
-	batcher.Register("test", mockEmb)
+	batcher.MustRegister("test", mockEmb)
 
 	ctx := context.Background()
 
@@ -629,7 +638,7 @@ func TestBatch_DifferentModelsNotBatched(t *testing.T) {
 func TestBatch_DifferentOptionsNotBatched(t *testing.T) {
 	mockEmb := newMockEmbedder()
 	batcher := New()
-	batcher.Register("test", mockEmb)
+	batcher.MustRegister("test", mockEmb)
 
 	ctx := context.Background()
 
@@ -667,7 +676,7 @@ func TestBatch_DifferentOptionsNotBatched(t *testing.T) {
 
 	typedMockEmb := newMockEmbedder()
 	typedBatcher := NewWithConfig(time.Hour, 10)
-	typedBatcher.Register("test", typedMockEmb)
+	typedBatcher.MustRegister("test", typedMockEmb)
 	intResult := createEmbeddingBatchWithOptsAsync(context.Background(), typedBatcher, []string{"int"}, intOpts)
 	floatResult := createEmbeddingBatchWithOptsAsync(context.Background(), typedBatcher, []string{"float"}, floatOpts)
 	waitForTotalPendingCalls(t, typedBatcher, 2)
@@ -698,7 +707,7 @@ func TestBatch_DifferentOptionsNotBatched(t *testing.T) {
 func TestBatchOptionsAreSnapshotted(t *testing.T) {
 	embedder := newMockEmbedder()
 	batcher := NewWithConfig(time.Hour, 3)
-	batcher.Register("test", embedder)
+	batcher.MustRegister("test", embedder)
 
 	firstOpts := map[string]any{
 		"nested": map[string]any{"dimensions": int(128)},
@@ -731,7 +740,7 @@ func TestBatchOptionsAreSnapshotted(t *testing.T) {
 func TestBatchCallerResultsAreIsolated(t *testing.T) {
 	embedder := newMockEmbedder()
 	batcher := NewWithConfig(time.Hour, 2)
-	batcher.Register("test", embedder)
+	batcher.MustRegister("test", embedder)
 
 	firstResultCh := createEmbeddingsAsync(context.Background(), batcher, "first")
 	waitForPendingCalls(t, batcher, 1)
@@ -749,7 +758,7 @@ func TestBatchCallerResultsAreIsolated(t *testing.T) {
 
 func TestBatchPanickingEmbedderReturnsError(t *testing.T) {
 	batcher := NewWithConfig(time.Hour, 2)
-	batcher.Register("test", &panickingEmbedder{})
+	batcher.MustRegister("test", &panickingEmbedder{})
 
 	firstResultCh := createEmbeddingsAsync(context.Background(), batcher, "first")
 	waitForPendingCalls(t, batcher, 1)
@@ -768,7 +777,7 @@ func TestBatchPanickingEmbedderReturnsError(t *testing.T) {
 func TestBatch_SameOptionsAreBatched(t *testing.T) {
 	mockEmb := newMockEmbedder()
 	batcher := New()
-	batcher.Register("test", mockEmb)
+	batcher.MustRegister("test", mockEmb)
 
 	ctx := context.Background()
 
@@ -803,7 +812,7 @@ func TestBatch_ErrorPropagation(t *testing.T) {
 	mockEmb.setError(fmt.Errorf("API error"))
 
 	batcher := New()
-	batcher.Register("test", mockEmb)
+	batcher.MustRegister("test", mockEmb)
 
 	ctx := context.Background()
 
@@ -833,8 +842,8 @@ func TestBatch_ErrorPropagation(t *testing.T) {
 func TestBatch_UnknownPrefix(t *testing.T) {
 	mockEmb := newMockEmbedder()
 	batcher := New()
-	batcher.Register("zeta", mockEmb)
-	batcher.Register("alpha", mockEmb)
+	batcher.MustRegister("zeta", mockEmb)
+	batcher.MustRegister("alpha", mockEmb)
 
 	ctx := context.Background()
 
@@ -847,7 +856,7 @@ func TestBatch_UnknownPrefix(t *testing.T) {
 func TestBatch_InvalidModelFormat(t *testing.T) {
 	mockEmb := newMockEmbedder()
 	batcher := New()
-	batcher.Register("test", mockEmb)
+	batcher.MustRegister("test", mockEmb)
 
 	ctx := context.Background()
 
@@ -861,7 +870,7 @@ func TestBatch_InvalidModelFormat(t *testing.T) {
 func TestBatch_EmptyTexts(t *testing.T) {
 	mockEmb := newMockEmbedder()
 	batcher := New()
-	batcher.Register("test", mockEmb)
+	batcher.MustRegister("test", mockEmb)
 
 	ctx := context.Background()
 
@@ -876,7 +885,7 @@ func TestBatch_ContextCancellation1(t *testing.T) {
 	mockEmb := newMockEmbedder()
 
 	batcher := NewWithConfig(time.Hour, DefaultMaxBatchSize)
-	batcher.Register("test", mockEmb)
+	batcher.MustRegister("test", mockEmb)
 
 	customCause := errors.New("custom cancellation cause")
 	ctx, cancel := context.WithCancelCause(context.Background())
@@ -901,7 +910,7 @@ func TestBatch_ContextCancellation2(t *testing.T) {
 	mockEmb.setDelay(200 * time.Millisecond) // simulate a slow embedder
 
 	batcher := New()
-	batcher.Register("test", mockEmb)
+	batcher.MustRegister("test", mockEmb)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
@@ -917,8 +926,8 @@ func TestBatch_MultipleEmbedders(t *testing.T) {
 	mockEmb2 := newMockEmbedder()
 
 	batcher := New()
-	batcher.Register("test1", mockEmb1)
-	batcher.Register("test2", mockEmb2)
+	batcher.MustRegister("test1", mockEmb1)
+	batcher.MustRegister("test2", mockEmb2)
 
 	ctx := context.Background()
 
@@ -947,7 +956,7 @@ func TestBatch_MultipleEmbedders(t *testing.T) {
 func TestBatch_BatchWindow(t *testing.T) {
 	mockEmb := newMockEmbedder()
 	batcher := NewWithConfig(100*time.Millisecond, 10)
-	batcher.Register("test", mockEmb)
+	batcher.MustRegister("test", mockEmb)
 
 	ctx := context.Background()
 
@@ -967,7 +976,7 @@ func TestBatch_BatchWindow(t *testing.T) {
 func TestBatch_MaxBatchSize_ExactLimit(t *testing.T) {
 	mockEmb := newMockEmbedder()
 	batcher := NewWithConfig(time.Hour, 3)
-	batcher.Register("test", mockEmb)
+	batcher.MustRegister("test", mockEmb)
 
 	// Create exactly maxBatchSize texts in one request
 	texts := make([]string, 3)
@@ -996,7 +1005,7 @@ func TestBatch_MaxBatchSize_ChunksProviderRequests(t *testing.T) {
 	t.Run("single caller exceeds the limit", func(t *testing.T) {
 		mockEmb := newMockEmbedder()
 		batcher := NewWithConfig(time.Hour, 3)
-		batcher.Register("test", mockEmb)
+		batcher.MustRegister("test", mockEmb)
 
 		texts := []string{"text1", "text2", "text3", "text4", "text5"}
 		result := <-createEmbeddingBatchAsync(context.Background(), batcher, texts)
@@ -1014,7 +1023,7 @@ func TestBatch_MaxBatchSize_ChunksProviderRequests(t *testing.T) {
 	t.Run("batched callers cross a chunk boundary", func(t *testing.T) {
 		mockEmb := newMockEmbedder()
 		batcher := NewWithConfig(time.Hour, 3)
-		batcher.Register("test", mockEmb)
+		batcher.MustRegister("test", mockEmb)
 
 		firstTexts := []string{"first1", "first2"}
 		secondTexts := []string{"second1", "second2"}

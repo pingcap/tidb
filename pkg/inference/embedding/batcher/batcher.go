@@ -106,23 +106,28 @@ func NewWithConfig(batchWindow time.Duration, maxBatchSize int) *Batch {
 }
 
 // Register registers an embedder with the given provider name as the prefix.
+// It returns an error if the provider is invalid, duplicated, or the embedder is nil.
 // This is not concurrent-safe. It must be called before any CreateEmbeddings calls.
-func (b *Batch) Register(provider string, embedder base.Embedder) {
-	provider = normalizeProviderName(provider)
-	panicIfNilEmbedder(provider, embedder)
-	b.embedders[provider] = embedder
-}
-
-// MustRegister registers an embedder and panics if the provider is invalid or duplicated.
-func (b *Batch) MustRegister(provider string, embedder base.Embedder) {
+func (b *Batch) Register(provider string, embedder base.Embedder) error {
 	provider = normalizeProviderName(provider)
 	if provider == "" || strings.Contains(provider, "/") {
-		panic(fmt.Sprintf("invalid embedding provider: %q", provider))
+		return fmt.Errorf("invalid embedding provider: %q", provider)
+	}
+	if isNilEmbedder(embedder) {
+		return fmt.Errorf("embedding provider %q is nil", provider)
 	}
 	if _, ok := b.embedders[provider]; ok {
-		panic(fmt.Sprintf("embedding provider %q is already registered", provider))
+		return fmt.Errorf("embedding provider %q is already registered", provider)
 	}
-	b.Register(provider, embedder)
+	b.embedders[provider] = embedder
+	return nil
+}
+
+// MustRegister registers an embedder and panics if registration fails.
+func (b *Batch) MustRegister(provider string, embedder base.Embedder) {
+	if err := b.Register(provider, embedder); err != nil {
+		panic(err)
+	}
 }
 
 // Has returns whether a provider is registered.
@@ -159,17 +164,16 @@ func normalizeProviderName(provider string) string {
 	return strings.ToLower(strings.TrimSpace(provider))
 }
 
-func panicIfNilEmbedder(provider string, embedder base.Embedder) {
+func isNilEmbedder(embedder base.Embedder) bool {
 	if embedder == nil {
-		panic(fmt.Sprintf("embedding provider %q is nil", provider))
+		return true
 	}
 	value := reflect.ValueOf(embedder)
 	switch value.Kind() {
 	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice, reflect.UnsafePointer:
-		if value.IsNil() {
-			panic(fmt.Sprintf("embedding provider %q is nil", provider))
-		}
+		return value.IsNil()
 	}
+	return false
 }
 
 func newBatchKey(provider, model string, opts map[string]any) (batchKey, error) {
