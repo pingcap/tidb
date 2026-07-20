@@ -122,34 +122,86 @@ func newTransientGetResourceGroupErr(name string) error {
 	}
 }
 
-func TestResourceGroupsControllerOptionsProvideDegradedFallback(t *testing.T) {
+func restoreResourceGroupControllerTestState(t *testing.T) {
+	t.Helper()
 	restoreConfig := config.RestoreFunc()
 	t.Cleanup(restoreConfig)
-	if kerneltype.IsNextGen() {
-		// Preserve the process-wide deploy mode because deploymode.IsStarter reads
-		// it directly when newResourceGroupsControllerOptions builds controller options.
-		originalDeployMode := deploymode.Get()
-		t.Cleanup(func() {
-			require.NoError(t, deploymode.Set(originalDeployMode))
-		})
+	if !kerneltype.IsNextGen() {
+		return
 	}
+	// Preserve the process-wide deploy mode because deploymode.IsStarter reads
+	// it directly when newResourceGroupsControllerOptions builds controller options.
+	originalDeployMode := deploymode.Get()
+	t.Cleanup(func() {
+		require.NoError(t, deploymode.Set(originalDeployMode))
+	})
+}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	provider := newResourceGroupProviderStub(t, &rmpb.ResourceGroup{
-		Name: "test-group",
+func newTestResourceGroup(name string) *rmpb.ResourceGroup {
+	return &rmpb.ResourceGroup{
+		Name: name,
 		Mode: rmpb.GroupMode_RUMode,
 		RUSettings: &rmpb.GroupRequestUnitSettings{
 			RU: &rmpb.TokenBucket{
 				Settings: &rmpb.TokenLimitSettings{FillRate: 1},
 			},
 		},
-	}, newTransientGetResourceGroupErr("test-group"))
+	}
+}
 
+func TestStarterDegradedResourceGroup(t *testing.T) {
 	if !kerneltype.IsNextGen() {
+		t.Skip("Starter deploy mode is only available in NextGen builds")
+	}
+
+	t.Run("fallback", func(t *testing.T) {
+		restoreResourceGroupControllerTestState(t)
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.StarterParams.EnableGetResourceGroupDegraded = true
+		})
+
+		provider := newResourceGroupProviderStub(t, nil, newTransientGetResourceGroupErr("test-group"))
+		controller := newStarterControllerForTest(t, provider)
+		group, err := controller.GetResourceGroup("test-group")
+		require.NoError(t, err)
+		requireDegradedResourceGroup(t, group, "test-group")
+	})
+
+	t.Run("recovery does not cache degraded group", func(t *testing.T) {
+		restoreResourceGroupControllerTestState(t)
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.StarterParams.EnableGetResourceGroupDegraded = true
+		})
+
+		provider := newResourceGroupProviderStub(t, nil, newTransientGetResourceGroupErr("test-group"))
+		controller := newStarterControllerForTest(t, provider)
+		group, err := controller.GetResourceGroup("test-group")
+		require.NoError(t, err)
+		requireDegradedResourceGroup(t, group, "test-group")
+
+		provider.resourceGroup = newTestResourceGroup("test-group")
+		provider.resourceErr = nil
+		group, err = controller.GetResourceGroup("test-group")
+		require.NoError(t, err)
+		require.Equal(t, provider.resourceGroup, group)
+	})
+}
+
+func TestResourceGroupsControllerOptions(t *testing.T) {
+	if !kerneltype.IsNextGen() {
+		t.Skip("Starter deploy mode is only available in NextGen builds")
+	}
+
+	newController := func(t *testing.T) *rmclient.ResourceGroupsController {
+		t.Helper()
+		provider := newResourceGroupProviderStub(t, nil, nil)
+		provider.controllerConfig = rmclient.DefaultConfig()
+		provider.controllerConfig.WaitRetryInterval = rmclient.NewDuration(250 * time.Millisecond)
+		provider.controllerConfig.WaitRetryTimes = 4
+		provider.controllerConfig.LTBTokenRPCMaxDelay = rmclient.NewDuration(time.Second)
+
 		controller, err := rmclient.NewResourceGroupController(
-			ctx,
+			context.Background(),
 			1,
 			provider,
 			nil,
@@ -157,72 +209,56 @@ func TestResourceGroupsControllerOptionsProvideDegradedFallback(t *testing.T) {
 			newResourceGroupsControllerOptions()...,
 		)
 		require.NoError(t, err)
-		controller.Start(ctx)
-		defer func() {
-			require.NoError(t, controller.Stop())
-		}()
-
-		group, err := controller.GetResourceGroup("test-group")
-		require.Error(t, err)
-		require.Nil(t, group)
-		return
+		return controller
 	}
 
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.StarterParams.EnableGetResourceGroupDegraded = true
+	t.Run("starter enables degraded mode explicitly", func(t *testing.T) {
+		restoreResourceGroupControllerTestState(t)
+		require.NoError(t, deploymode.Set(deploymode.Starter))
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.StarterParams.PodNamespace = "starter-standard-ns"
+			conf.StarterParams.EnableGetResourceGroupDegraded = true
+		})
+
+		ruConfig := newController(t).GetConfig()
+		require.Equal(t, tokenWaitRetryInterval, ruConfig.WaitRetryInterval)
+		require.Equal(t, tokenWaitRetryTimes, ruConfig.WaitRetryTimes)
+		require.Equal(t, defaultDegradedModeWaitTimeout, ruConfig.DegradedModeWaitDuration)
 	})
-	controllerWithFallback := newStarterControllerForTest(t, provider)
-	group, err := controllerWithFallback.GetResourceGroup("test-group")
-	require.NoError(t, err)
-	requireDegradedResourceGroup(t, group, "test-group")
 
-	// The degraded group should not be cached. Once the provider recovers, the
-	// next lookup should observe the real resource-group metadata.
-	provider.resourceGroup = &rmpb.ResourceGroup{
-		Name: "test-group",
-		Mode: rmpb.GroupMode_RUMode,
-		RUSettings: &rmpb.GroupRequestUnitSettings{
-			RU: &rmpb.TokenBucket{
-				Settings: &rmpb.TokenLimitSettings{FillRate: 1},
-			},
-		},
-	}
-	provider.resourceErr = nil
-	group, err = controllerWithFallback.GetResourceGroup("test-group")
-	require.NoError(t, err)
-	require.Equal(t, provider.resourceGroup, group)
+	t.Run("starter namespace alone does not enable degraded mode", func(t *testing.T) {
+		restoreResourceGroupControllerTestState(t)
+		require.NoError(t, deploymode.Set(deploymode.Starter))
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.StarterParams.PodNamespace = "starter-vip-ns"
+			conf.StarterParams.EnableGetResourceGroupDegraded = false
+		})
 
-	require.NoError(t, deploymode.Set(deploymode.Premium))
-	provider = newResourceGroupProviderStub(t, nil, newTransientGetResourceGroupErr("test-group"))
-	controllerWithoutFallback, err := rmclient.NewResourceGroupController(
-		ctx,
-		2,
-		provider,
-		nil,
-		0,
-		newResourceGroupsControllerOptions()...,
-	)
-	require.NoError(t, err)
-	controllerWithoutFallback.Start(ctx)
-	defer func() {
-		require.NoError(t, controllerWithoutFallback.Stop())
-	}()
+		ruConfig := newController(t).GetConfig()
+		require.Equal(t, 250*time.Millisecond, ruConfig.WaitRetryInterval)
+		require.Equal(t, 4, ruConfig.WaitRetryTimes)
+		require.Zero(t, ruConfig.DegradedModeWaitDuration)
+	})
 
-	group, err = controllerWithoutFallback.GetResourceGroup("test-group")
-	require.Error(t, err)
-	require.Nil(t, group)
+	t.Run("non starter ignores degraded flag", func(t *testing.T) {
+		restoreResourceGroupControllerTestState(t)
+		require.NoError(t, deploymode.Set(deploymode.Premium))
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.StarterParams.EnableGetResourceGroupDegraded = true
+		})
+
+		ruConfig := newController(t).GetConfig()
+		require.Equal(t, 250*time.Millisecond, ruConfig.WaitRetryInterval)
+		require.Equal(t, 4, ruConfig.WaitRetryTimes)
+		require.Zero(t, ruConfig.DegradedModeWaitDuration)
+	})
 }
 
-func TestStarterSwitchGroupUsesDegradedGroupOnTransientLookupError(t *testing.T) {
+func TestStarterRunawaySwitchGroup(t *testing.T) {
 	if !kerneltype.IsNextGen() {
 		t.Skip("Starter deploy mode is only available in NextGen builds")
 	}
-	restoreConfig := config.RestoreFunc()
-	t.Cleanup(restoreConfig)
-	originalDeployMode := deploymode.Get()
-	t.Cleanup(func() {
-		require.NoError(t, deploymode.Set(originalDeployMode))
-	})
+	restoreResourceGroupControllerTestState(t)
 
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.StarterParams.EnableGetResourceGroupDegraded = true
@@ -253,74 +289,4 @@ func TestStarterSwitchGroupUsesDegradedGroupOnTransientLookupError(t *testing.T)
 	}
 	require.NoError(t, checker.BeforeCopRequest(req))
 	require.Equal(t, "target-switch-group", req.GetResourceControlContext().GetResourceGroupName())
-}
-
-func TestResourceGroupsControllerOptionsUseExplicitGetResourceGroupDegraded(t *testing.T) {
-	if !kerneltype.IsNextGen() {
-		t.Skip("Starter deploy mode is only available in NextGen builds")
-	}
-	restoreConfig := config.RestoreFunc()
-	t.Cleanup(restoreConfig)
-	originalDeployMode := deploymode.Get()
-	t.Cleanup(func() {
-		require.NoError(t, deploymode.Set(originalDeployMode))
-	})
-
-	newController := func(t *testing.T) *rmclient.ResourceGroupsController {
-		t.Helper()
-		provider := newResourceGroupProviderStub(t, nil, nil)
-		provider.controllerConfig = rmclient.DefaultConfig()
-		provider.controllerConfig.WaitRetryInterval = rmclient.NewDuration(250 * time.Millisecond)
-		provider.controllerConfig.WaitRetryTimes = 4
-		provider.controllerConfig.LTBTokenRPCMaxDelay = rmclient.NewDuration(time.Second)
-
-		controller, err := rmclient.NewResourceGroupController(
-			context.Background(),
-			1,
-			provider,
-			nil,
-			0,
-			newResourceGroupsControllerOptions()...,
-		)
-		require.NoError(t, err)
-		return controller
-	}
-
-	t.Run("enabled explicitly in starter", func(t *testing.T) {
-		require.NoError(t, deploymode.Set(deploymode.Starter))
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.StarterParams.PodNamespace = "starter-standard-ns"
-			conf.StarterParams.EnableGetResourceGroupDegraded = true
-		})
-
-		ruConfig := newController(t).GetConfig()
-		require.Equal(t, tokenWaitRetryInterval, ruConfig.WaitRetryInterval)
-		require.Equal(t, tokenWaitRetryTimes, ruConfig.WaitRetryTimes)
-		require.Equal(t, defaultDegradedModeWaitTimeout, ruConfig.DegradedModeWaitDuration)
-	})
-
-	t.Run("namespace alone does not enable degraded mode", func(t *testing.T) {
-		require.NoError(t, deploymode.Set(deploymode.Starter))
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.StarterParams.PodNamespace = "starter-vip-ns"
-			conf.StarterParams.EnableGetResourceGroupDegraded = false
-		})
-
-		ruConfig := newController(t).GetConfig()
-		require.Equal(t, 250*time.Millisecond, ruConfig.WaitRetryInterval)
-		require.Equal(t, 4, ruConfig.WaitRetryTimes)
-		require.Zero(t, ruConfig.DegradedModeWaitDuration)
-	})
-
-	t.Run("ignored outside starter", func(t *testing.T) {
-		require.NoError(t, deploymode.Set(deploymode.Premium))
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.StarterParams.EnableGetResourceGroupDegraded = true
-		})
-
-		ruConfig := newController(t).GetConfig()
-		require.Equal(t, 250*time.Millisecond, ruConfig.WaitRetryInterval)
-		require.Equal(t, 4, ruConfig.WaitRetryTimes)
-		require.Zero(t, ruConfig.DegradedModeWaitDuration)
-	})
 }
