@@ -47,9 +47,9 @@ func newResourceGroupsControllerOptions() []rmclient.ResourceControlCreateOption
 	opts := []rmclient.ResourceControlCreateOption{
 		rmclient.WithMaxWaitDuration(runaway.MaxWaitDuration),
 	}
-	if deploymode.IsStarter() && config.GetGlobalConfig().StarterParams.EnableGetResourceGroupDegraded {
+	if deploymode.IsStarter() && config.GetGlobalConfig().StarterParams.EnableRGFallback {
 		opts = append(opts,
-			// This Starter-only degraded path is a best-effort UX fallback for
+			// This Starter-only fallback path is a best-effort UX fallback for
 			// temporary GetResourceGroup failures. It provides a permissive
 			// group so user requests do not fail immediately; it is not intended
 			// to define a precise cross-RPC RU limit or response-side accounting

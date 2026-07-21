@@ -157,7 +157,7 @@ func TestStarterDegradedResourceGroup(t *testing.T) {
 	t.Run("fallback", func(t *testing.T) {
 		restoreResourceGroupControllerTestState(t)
 		config.UpdateGlobal(func(conf *config.Config) {
-			conf.StarterParams.EnableGetResourceGroupDegraded = true
+			conf.StarterParams.EnableRGFallback = true
 		})
 
 		provider := newResourceGroupProviderStub(t, nil, newTransientGetResourceGroupErr("test-group"))
@@ -170,7 +170,7 @@ func TestStarterDegradedResourceGroup(t *testing.T) {
 	t.Run("recovery does not cache degraded group", func(t *testing.T) {
 		restoreResourceGroupControllerTestState(t)
 		config.UpdateGlobal(func(conf *config.Config) {
-			conf.StarterParams.EnableGetResourceGroupDegraded = true
+			conf.StarterParams.EnableRGFallback = true
 		})
 
 		provider := newResourceGroupProviderStub(t, nil, newTransientGetResourceGroupErr("test-group"))
@@ -216,7 +216,7 @@ func TestResourceGroupsControllerOptions(t *testing.T) {
 		restoreResourceGroupControllerTestState(t)
 		require.NoError(t, deploymode.Set(deploymode.Starter))
 		config.UpdateGlobal(func(conf *config.Config) {
-			conf.StarterParams.EnableGetResourceGroupDegraded = true
+			conf.StarterParams.EnableRGFallback = true
 		})
 
 		ruConfig := newController(t).GetConfig()
@@ -229,7 +229,7 @@ func TestResourceGroupsControllerOptions(t *testing.T) {
 		restoreResourceGroupControllerTestState(t)
 		require.NoError(t, deploymode.Set(deploymode.Starter))
 		config.UpdateGlobal(func(conf *config.Config) {
-			conf.StarterParams.EnableGetResourceGroupDegraded = false
+			conf.StarterParams.EnableRGFallback = false
 		})
 
 		ruConfig := newController(t).GetConfig()
@@ -242,7 +242,7 @@ func TestResourceGroupsControllerOptions(t *testing.T) {
 		restoreResourceGroupControllerTestState(t)
 		require.NoError(t, deploymode.Set(deploymode.Premium))
 		config.UpdateGlobal(func(conf *config.Config) {
-			conf.StarterParams.EnableGetResourceGroupDegraded = true
+			conf.StarterParams.EnableRGFallback = true
 		})
 
 		ruConfig := newController(t).GetConfig()
@@ -259,7 +259,7 @@ func TestStarterRunawaySwitchGroup(t *testing.T) {
 	restoreResourceGroupControllerTestState(t)
 
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.StarterParams.EnableGetResourceGroupDegraded = true
+		conf.StarterParams.EnableRGFallback = true
 	})
 	provider := newResourceGroupProviderStub(t, nil, newTransientGetResourceGroupErr("target-switch-group"))
 	controller := newStarterControllerForTest(t, provider)
