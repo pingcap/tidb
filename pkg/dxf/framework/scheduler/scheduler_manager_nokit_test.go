@@ -159,11 +159,7 @@ func TestSchedulerCleanupTask(t *testing.T) {
 	tasks := []*proto.Task{
 		{TaskBase: proto.TaskBase{ID: 1}},
 	}
-	taskMgr.EXPECT().GetTasksInStates(
-		mgr.ctx,
-		proto.TaskStateFailed,
-		proto.TaskStateReverted,
-		proto.TaskStateSucceed).Return(tasks, nil)
+	taskMgr.EXPECT().GetCleanupTasks(mgr.ctx).Return(tasks, nil)
 
 	taskMgr.EXPECT().TransferTasks2History(mgr.ctx, tasks).Return(nil)
 	mgr.doCleanupTask()
@@ -171,20 +167,12 @@ func TestSchedulerCleanupTask(t *testing.T) {
 
 	// fail in transfer
 	mockErr := errors.New("transfer err")
-	taskMgr.EXPECT().GetTasksInStates(
-		mgr.ctx,
-		proto.TaskStateFailed,
-		proto.TaskStateReverted,
-		proto.TaskStateSucceed).Return(tasks, nil)
+	taskMgr.EXPECT().GetCleanupTasks(mgr.ctx).Return(tasks, nil)
 	taskMgr.EXPECT().TransferTasks2History(mgr.ctx, tasks).Return(mockErr)
 	mgr.doCleanupTask()
 	require.True(t, ctrl.Satisfied())
 
-	taskMgr.EXPECT().GetTasksInStates(
-		mgr.ctx,
-		proto.TaskStateFailed,
-		proto.TaskStateReverted,
-		proto.TaskStateSucceed).Return(tasks, nil)
+	taskMgr.EXPECT().GetCleanupTasks(mgr.ctx).Return(tasks, nil)
 	taskMgr.EXPECT().TransferTasks2History(mgr.ctx, tasks).Return(nil)
 	mgr.doCleanupTask()
 	require.True(t, ctrl.Satisfied())
@@ -363,11 +351,7 @@ func TestStartSchedulerCrossKeyspaceRuntime(t *testing.T) {
 }
 
 func TestFastRespondNoNeedResourceTaskWhenSchedulersReachLimit(t *testing.T) {
-	bak := proto.MaxConcurrentTask
-	t.Cleanup(func() {
-		proto.MaxConcurrentTask = bak
-	})
-	proto.MaxConcurrentTask = 1
+	t.Cleanup(proto.SetMaxConcurrentTaskForTest(1))
 
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()

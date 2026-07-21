@@ -344,6 +344,90 @@ func (h *DXFScheduleTuneHandler) ServeHTTP(w http.ResponseWriter, req *http.Requ
 	}
 }
 
+// DXFTaskMaxConcurrentHandler handles the in-memory DXF task concurrency limit.
+type DXFTaskMaxConcurrentHandler struct{}
+
+// NewDXFTaskMaxConcurrentHandler creates a new DXFTaskMaxConcurrentHandler.
+func NewDXFTaskMaxConcurrentHandler() *DXFTaskMaxConcurrentHandler {
+	return &DXFTaskMaxConcurrentHandler{}
+}
+
+// ServeHTTP implements http.Handler interface.
+//
+// The configured value is local to the TiDB process that handles the request
+// and is kept in memory only. Send the request to the current DXF owner when
+// tuning scheduler concurrency.
+func (*DXFTaskMaxConcurrentHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	switch req.Method {
+	case http.MethodGet:
+		writeMaxConcurrentTask(w)
+	case http.MethodPost:
+		valueStr := req.FormValue("value")
+		value, err := strconv.Atoi(valueStr)
+		if err != nil {
+			handler.WriteError(w, errors.Errorf("invalid value %s, error %v", valueStr, err))
+			return
+		}
+		if err := proto.SetMaxConcurrentTask(value); err != nil {
+			handler.WriteError(w, err)
+			return
+		}
+		logutil.BgLogger().Info("set in-memory DXF max concurrent task", zap.Int("maxConcurrentTask", value))
+		writeMaxConcurrentTask(w)
+	default:
+		handler.WriteError(w, errors.Errorf("This api only support GET and POST method"))
+	}
+}
+
+func writeMaxConcurrentTask(w http.ResponseWriter) {
+	handler.WriteData(w, map[string]any{
+		"max_concurrent_task": proto.GetMaxConcurrentTask(),
+		"persistence":         "memory_only",
+	})
+}
+
+// DXFTaskCleanupBatchSizeHandler handles the in-memory DXF task cleanup batch size.
+type DXFTaskCleanupBatchSizeHandler struct{}
+
+// NewDXFTaskCleanupBatchSizeHandler creates a new DXFTaskCleanupBatchSizeHandler.
+func NewDXFTaskCleanupBatchSizeHandler() *DXFTaskCleanupBatchSizeHandler {
+	return &DXFTaskCleanupBatchSizeHandler{}
+}
+
+// ServeHTTP implements http.Handler interface.
+//
+// The configured value is local to the TiDB process that handles the request
+// and is kept in memory only. Send the request to the current DXF owner when
+// tuning task cleanup.
+func (*DXFTaskCleanupBatchSizeHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	switch req.Method {
+	case http.MethodGet:
+		writeTaskCleanupBatchSize(w)
+	case http.MethodPost:
+		valueStr := req.FormValue("value")
+		value, err := strconv.Atoi(valueStr)
+		if err != nil {
+			handler.WriteError(w, errors.Errorf("invalid value %s, error %v", valueStr, err))
+			return
+		}
+		if err := proto.SetTaskCleanupBatchSize(value); err != nil {
+			handler.WriteError(w, err)
+			return
+		}
+		logutil.BgLogger().Info("set in-memory DXF task cleanup batch size", zap.Int("taskCleanupBatchSize", value))
+		writeTaskCleanupBatchSize(w)
+	default:
+		handler.WriteError(w, errors.Errorf("This api only support GET and POST method"))
+	}
+}
+
+func writeTaskCleanupBatchSize(w http.ResponseWriter) {
+	handler.WriteData(w, map[string]any{
+		"task_cleanup_batch_size": proto.GetTaskCleanupBatchSize(),
+		"persistence":             "memory_only",
+	})
+}
+
 // DXFTaskMaxRuntimeSlotsHandler handles changing max runtime slots of DXF task.
 type DXFTaskMaxRuntimeSlotsHandler struct{}
 

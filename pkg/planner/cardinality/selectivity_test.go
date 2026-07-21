@@ -1713,6 +1713,86 @@ func TestIndexRangeEstimationWithAppendedHandleColumn(t *testing.T) {
 	})
 }
 
+// TestIndexRangeEstimationWithTruncatedHandleRange verifies that estimation ranges pruned
+// back to the declared index columns keep valid bounds. Truncating the appended handle
+// dimensions widens a bound to the whole prefix, so an exclusive bound from a dropped
+// dimension must become inclusive (otherwise (5 10, 5 +inf] collapses to the empty (5, 5]
+// and estimates ~0 rows), and ranges collapsing to the same prefix must be merged instead
+// of each contributing the full prefix row count.
+func TestIndexRangeEstimationWithTruncatedHandleRange(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id bigint primary key clustered, a int, key ia(a))")
+	vals := make([]string, 0, 100)
+	for i := 1; i <= 100; i++ {
+		vals = append(vals, fmt.Sprintf("(%d, %d)", i, i%10))
+	}
+	tk.MustExec("insert into t values " + strings.Join(vals, ","))
+	tk.MustExec("analyze table t all columns")
+
+	// Returns the estRows and operator info of the IndexRangeScan in the plan.
+	indexScanRow := func(sql string) (estRows, operatorInfo string) {
+		rows := tk.MustQuery("explain format='brief' " + sql).Rows()
+		for _, row := range rows {
+			if strings.Contains(row[0].(string), "IndexRangeScan") {
+				return row[1].(string), row[4].(string)
+			}
+		}
+		t.Fatalf("no IndexRangeScan in plan for %q", sql)
+		return "", ""
+	}
+
+	// Each distinct value of a has 10 rows. The estimate starts from the 10 rows of the
+	// a = 5 prefix (index statistics only cover the declared column), is damped by the
+	// handle column's selectivity with exponential backoff, and is then aligned upward to
+	// stats.RowCount (the Selectivity() result over all predicates) for consistency —
+	// without the SelectionFactor penalty that adjustCountAfterAccess would otherwise add.
+
+	// Handle range with an exclusive low bound. Before the exclusion-flag fix the pruned
+	// range collapsed to the empty (5, 5] and the consistency penalty produced 12.50.
+	// Non-point handle predicates receive no net credit yet: Selectivity() floors the
+	// backoff result at 1/NDV of the declared index columns, so the aligned estimate
+	// stays at the prefix row count.
+	estRows, opInfo := indexScanRow("select * from t use index(ia) where a = 5 and id > 10")
+	require.Contains(t, opInfo, "range:(5 10,5 +inf]", "execution range must keep the handle dimension")
+	require.Equal(t, "10.00", estRows)
+
+	// Handle range with an exclusive high bound: same shape as above.
+	estRows, opInfo = indexScanRow("select * from t use index(ia) where a = 5 and id < 10")
+	require.Contains(t, opInfo, "range:[5 -inf,5 10)", "execution range must keep the handle dimension")
+	require.Equal(t, "10.00", estRows)
+
+	// Point-bound handle predicates get real credit. The damped estimate
+	// 10 * sqrt(sel(id in (11, 22))) = 1.41 aligns to the Selectivity() result of 2.00,
+	// instead of the uncredited 10.00 (or 12.50 with the consistency penalty).
+	estRows, opInfo = indexScanRow("select * from t use index(ia) where a = 5 and id in (11, 22)")
+	require.Contains(t, opInfo, "range:[5 11,5 11], [5 22,5 22]", "execution range must keep the handle dimension")
+	require.Equal(t, "2.00", estRows)
+
+	// A point over the index column plus the full handle matches at most one row, because
+	// the physical key of a non-unique index ends with the complete handle.
+	estRows, opInfo = indexScanRow("select * from t use index(ia) where a = 5 and id = 7")
+	require.Contains(t, opInfo, "range:[5 7,5 7]", "execution range must keep the handle dimension")
+	require.Equal(t, "1.00", estRows)
+
+	// An unsigned int handle is stored in the index key suffix in signed-encoded order,
+	// which wraps at the int64 boundary: values in [MaxInt64+1, MaxUint64] sort before
+	// [0, MaxInt64]. fillIndexPath therefore never appends an unsigned handle to the
+	// index columns, so unsigned handle predicates must stay out of the index ranges and
+	// receive no appended-handle credit: the estimate remains the prefix row count.
+	tk.MustExec("create table tu(id bigint unsigned primary key clustered, a int, key ia(a))")
+	tk.MustExec("insert into tu values " + strings.Join(vals, ","))
+	tk.MustExec("analyze table tu all columns")
+	estRows, opInfo = indexScanRow("select * from tu use index(ia) where a = 5 and id in (11, 22)")
+	require.Contains(t, opInfo, "range:[5,5]", "unsigned handle must not extend the execution range")
+	require.NotContains(t, opInfo, "5 11", "unsigned handle must not extend the execution range")
+	require.Equal(t, "10.00", estRows)
+	estRows, opInfo = indexScanRow("select * from tu use index(ia) where a = 5 and id > 10")
+	require.Contains(t, opInfo, "range:[5,5]", "unsigned handle must not extend the execution range")
+	require.Equal(t, "10.00", estRows)
+}
+
 func TestDeriveTablePathStatsNoAccessConds(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)

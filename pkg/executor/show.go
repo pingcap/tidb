@@ -645,7 +645,7 @@ func (e *ShowExec) fetchShowTableStatus(ctx context.Context) error {
 	}
 
 	exec := e.Ctx().GetRestrictedSQLExecutor()
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStatsForegroundPriority)
 
 	var snapshot uint64
 	txn, err := e.Ctx().Txn(false)
@@ -1344,6 +1344,19 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 	buf.WriteString("\n")
 
 	buf.WriteString(") ENGINE=InnoDB")
+
+	if len(tableInfo.EngineAttribute) > 0 {
+		tier, ok, err := ddl.GetSimpleTableStorageClassForShowCreate(tableInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if ok {
+			fmt.Fprintf(buf, " STORAGE_CLASS='%s'", tier)
+		} else {
+			fmt.Fprintf(buf, " ENGINE_ATTRIBUTE='%s'", format.OutputFormat(tableInfo.EngineAttribute))
+		}
+	}
+
 	// We need to explicitly set the default charset and collation
 	// to make it work on MySQL server which has default collate utf8_general_ci.
 	if len(tblCollate) == 0 || tblCollate == "binary" {

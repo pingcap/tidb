@@ -154,8 +154,11 @@ func NewManager(ctx context.Context, store kv.Storage, taskMgr TaskManager, serv
 			slotMgr:  slotMgr,
 			serverID: serverID,
 		}),
-		logger:   logger,
-		finishCh: make(chan struct{}, proto.MaxConcurrentTask),
+		logger: logger,
+		// finishCh must be able to buffer finish signals for the largest runtime
+		// value of maxConcurrentTask. Otherwise, raising the limit after startup
+		// can make non-blocking sends drop signals until the periodic cleanup loop runs.
+		finishCh: make(chan struct{}, proto.MaxConcurrentTaskUpperBound),
 		nodeRes:  nodeRes,
 	}
 	schedulerManager.mu.schedulerMap = make(map[int64]Scheduler)
@@ -244,7 +247,8 @@ func (sm *Manager) getSchedulableTasks(ctx context.Context) ([]*proto.TaskBase, 
 	defer r.End()
 	getTasksFn := sm.taskMgr.GetTopUnfinishedTasks
 	taskCnt := sm.getSchedulerCount()
-	if taskCnt >= proto.MaxConcurrentTask {
+	maxConcurrentTask := proto.GetMaxConcurrentTask()
+	if taskCnt >= maxConcurrentTask {
 		// when we have reached the limit of concurrent tasks, we only handle
 		// tasks in states that don't need resources, e.g. reverting/cancelling/
 		// pausing/modifying.
@@ -291,7 +295,7 @@ func (sm *Manager) startSchedulers(schedulableTasks []*proto.TaskBase) error {
 		switch task.State {
 		case proto.TaskStatePending, proto.TaskStateRunning, proto.TaskStateResuming:
 			taskCnt := sm.getSchedulerCount()
-			if taskCnt >= proto.MaxConcurrentTask {
+			if taskCnt >= proto.GetMaxConcurrentTask() {
 				continue
 			}
 			reservedExecID, ok = sm.slotMgr.canReserve(task)
@@ -422,14 +426,9 @@ func (sm *Manager) cleanupTaskLoop() {
 //	tasks with global sort should clean up tmp files stored on S3.
 func (sm *Manager) doCleanupTask() {
 	failpoint.InjectCall("doCleanupTask")
-	tasks, err := sm.taskMgr.GetTasksInStates(
-		sm.ctx,
-		proto.TaskStateFailed,
-		proto.TaskStateReverted,
-		proto.TaskStateSucceed,
-	)
+	tasks, err := sm.taskMgr.GetCleanupTasks(sm.ctx)
 	if err != nil {
-		sm.logger.Warn("get task in states failed", zap.Error(err))
+		sm.logger.Warn("get cleanup tasks failed", zap.Error(err))
 		return
 	}
 	if len(tasks) == 0 {
