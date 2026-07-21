@@ -37,22 +37,14 @@ func TestTopNFromStorageWithPriorityAndLimit(t *testing.T) {
 
 	const tableID int64 = 100
 	const histID int64 = 1
-	for value, count := range map[string]uint64{
-		"a": 10,
-		"b": 50,
-		"c": 30,
-		"d": 40,
-	} {
-		tk.MustExec(
-			"insert into mysql.stats_top_n(table_id, is_index, hist_id, value, count) values (?, 0, ?, ?, ?)",
-			tableID, histID, []byte(value), count)
-	}
+	tk.MustExec(`insert into mysql.stats_top_n(table_id, is_index, hist_id, value, count) values
+		(100, 0, 1, 'a', 10), (100, 0, 1, 'b', 50), (100, 0, 1, 'c', 30), (100, 0, 1, 'd', 40)`)
 
 	topN, err := storage.TopNFromStorageWithPriorityAndLimit(
 		context.Background(), tk.Session(), tableID, 0, histID, kv.PriorityNormal, 2)
 	require.NoError(t, err)
 	require.Len(t, topN.TopN, 2)
-	require.ElementsMatch(t, []uint64{50, 40}, []uint64{topN.TopN[0].Count, topN.TopN[1].Count})
+	require.Equal(t, []uint64{50, 40}, []uint64{topN.TopN[0].Count, topN.TopN[1].Count})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
