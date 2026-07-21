@@ -5646,14 +5646,8 @@ def go_deps():
         name = "com_github_pingcap_kvproto",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/kvproto",
-        sha256 = "f344381790869f7b6654340ec855ee2758abb0be9103d9e9146cad82f90b7d1f",
-        strip_prefix = "github.com/pingcap/kvproto@v0.0.0-20251212013835-ed676560b3b4",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20251212013835-ed676560b3b4.zip",
-            "http://ats.apps.svc/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20251212013835-ed676560b3b4.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20251212013835-ed676560b3b4.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20251212013835-ed676560b3b4.zip",
-        ],
+        sum = "h1:5zfNwsPoZaugwCdZWTJJcetvXn6teN+CP6HSxrO5O9A=",
+        version = "v0.0.0-20260330040622-13d81884357d",
     )
     go_repository(
         name = "com_github_pingcap_log",
@@ -6907,14 +6901,8 @@ def go_deps():
         name = "com_github_tikv_pd_client",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/pd/client",
-        sha256 = "af89b7a867ec8dd05ceaa0509c38d560d6dd619317aa1e5b1c7c725a7e59f2dc",
-        strip_prefix = "github.com/tikv/pd/client@v0.0.0-20260330105957-ebf9af006aac",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20260330105957-ebf9af006aac.zip",
-            "http://ats.apps.svc/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20260330105957-ebf9af006aac.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20260330105957-ebf9af006aac.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20260330105957-ebf9af006aac.zip",
-        ],
+        sum = "h1:mXRNSFPJRllMjsGdp3KUmvvPPOrEZemNlbsEw2UGv7w=",
+        version = "v0.0.0-20260717021404-4363de83f814",
     )
     go_repository(
         name = "com_github_timakin_bodyclose",
