@@ -2508,8 +2508,14 @@ func (cc *clientConn) upgradeToTLS(tlsConfig *tls.Config) error {
 }
 
 func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
+<<<<<<< HEAD
+=======
+	oldResourceGroup := cc.currentResourceGroupName()
+	oldUser, oldDBName, oldAuthPlugin := cc.user, cc.dbname, cc.authPlugin
+	oldCtx := cc.getCtx()
+>>>>>>> f1be26c3f1c (server: restore session on change user auth failure (#69692))
 	user, data := util2.ParseNullTermString(data)
-	cc.user = string(hack.String(user))
+	newUser := string(hack.String(user))
 	if len(data) < 1 {
 		return mysql.ErrMalformPacket
 	}
@@ -2521,7 +2527,7 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	pass := data[:passLen]
 	data = data[passLen:]
 	dbName, data := util2.ParseNullTermString(data)
-	cc.dbname = string(hack.String(dbName))
+	newDBName := string(hack.String(dbName))
 	pluginName := ""
 	if len(data) > 0 {
 		// skip character set
@@ -2534,13 +2540,25 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 		}
 	}
 
-	if err := cc.ctx.Close(); err != nil {
-		logutil.Logger(ctx).Debug("close old context failed", zap.Error(err))
-	}
-	// session was closed by `ctx.Close` and should `openSession` explicitly to renew session.
-	// `openSession` won't run again in `openSessionAndDoAuth` because ctx is not nil.
+	cc.user = newUser
+	cc.dbname = newDBName
 	err := cc.openSession()
+<<<<<<< HEAD
+=======
+	restoreOldSession := func() {
+		if newCtx := cc.getCtx(); newCtx != nil && newCtx != oldCtx {
+			if err := newCtx.Close(); err != nil {
+				logutil.Logger(ctx).Debug("close new context failed", zap.Error(err))
+			}
+		}
+		cc.SetCtx(oldCtx)
+		cc.user = oldUser
+		cc.dbname = oldDBName
+		cc.authPlugin = oldAuthPlugin
+	}
+>>>>>>> f1be26c3f1c (server: restore session on change user auth failure (#69692))
 	if err != nil {
+		restoreOldSession()
 		return err
 	}
 	fakeResp := &handshake.Response41{
@@ -2550,10 +2568,12 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	}
 	if fakeResp.AuthPlugin != "" {
 		failpoint.Inject("ChangeUserAuthSwitch", func(val failpoint.Value) {
+			restoreOldSession()
 			failpoint.Return(errors.Errorf("%v", val))
 		})
 		newpass, err := cc.checkAuthPlugin(ctx, fakeResp)
 		if err != nil {
+			restoreOldSession()
 			return err
 		}
 		if len(newpass) > 0 {
@@ -2561,8 +2581,15 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 		}
 	}
 	if err := cc.openSessionAndDoAuth(fakeResp.Auth, fakeResp.AuthPlugin, fakeResp.ZstdLevel); err != nil {
+		restoreOldSession()
 		return err
 	}
+	if oldCtx != nil {
+		if err := oldCtx.Close(); err != nil {
+			logutil.Logger(ctx).Debug("close old context failed", zap.Error(err))
+		}
+	}
+	cc.moveResourceGroupCounter(oldResourceGroup)
 	return cc.handleCommonConnectionReset(ctx)
 }
 
