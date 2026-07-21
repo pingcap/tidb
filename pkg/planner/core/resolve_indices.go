@@ -870,38 +870,81 @@ func (p *Insert) ResolveIndices() (err error) {
 	if err != nil {
 		return err
 	}
+	var tableResolveMemo, onDupResolveMemo map[expression.Expression]expression.Expression
+	if p.isOnDuplicateExpressionReuseEnabled() {
+		tableResolveMemo = make(map[expression.Expression]expression.Expression)
+		onDupResolveMemo = make(map[expression.Expression]expression.Expression)
+	}
 	for _, asgn := range p.OnDuplicate {
-		newCol, err := asgn.Col.ResolveIndices(p.tableSchema)
+		newCol, err := resolveExprIndicesWithMemo(asgn.Col, p.tableSchema, tableResolveMemo)
 		if err != nil {
 			return err
 		}
 		asgn.Col = newCol.(*expression.Column)
 		// Once the asgn.lazyErr exists, asgn.Expr here is nil.
 		if asgn.Expr != nil {
-			asgn.Expr, err = asgn.Expr.ResolveIndices(p.Schema4OnDuplicate)
+			asgn.Expr, err = resolveExprIndicesWithMemo(asgn.Expr, p.Schema4OnDuplicate, onDupResolveMemo)
 			if err != nil {
 				return err
 			}
 		}
 	}
 	for i, expr := range p.GenCols.Exprs {
-		p.GenCols.Exprs[i], err = expr.ResolveIndices(p.tableSchema)
+		p.GenCols.Exprs[i], err = resolveExprIndicesWithMemo(expr, p.tableSchema, tableResolveMemo)
 		if err != nil {
 			return err
 		}
 	}
 	for _, asgn := range p.GenCols.OnDuplicates {
-		newCol, err := asgn.Col.ResolveIndices(p.tableSchema)
+		newCol, err := resolveExprIndicesWithMemo(asgn.Col, p.tableSchema, tableResolveMemo)
 		if err != nil {
 			return err
 		}
 		asgn.Col = newCol.(*expression.Column)
-		asgn.Expr, err = asgn.Expr.ResolveIndices(p.Schema4OnDuplicate)
+		asgn.Expr, err = resolveExprIndicesWithMemo(asgn.Expr, p.Schema4OnDuplicate, onDupResolveMemo)
 		if err != nil {
 			return err
 		}
 	}
 	return
+}
+
+func (p *Insert) isOnDuplicateExpressionReuseEnabled() bool {
+	return p.onDuplicateExpressionReuseEnabled
+}
+
+func resolveExprIndicesWithMemo(expr expression.Expression, schema *expression.Schema, memo map[expression.Expression]expression.Expression) (expression.Expression, error) {
+	if expr == nil {
+		return nil, nil
+	}
+	if memo == nil {
+		return expr.ResolveIndices(schema)
+	}
+	if resolved, ok := memo[expr]; ok {
+		return resolved, nil
+	}
+	var (
+		resolved expression.Expression
+		err      error
+	)
+	switch x := expr.(type) {
+	case *expression.ScalarFunction:
+		args := make([]expression.Expression, len(x.GetArgs()))
+		for i, arg := range x.GetArgs() {
+			args[i], err = resolveExprIndicesWithMemo(arg, schema, memo)
+			if err != nil {
+				return nil, err
+			}
+		}
+		resolved = x.CloneWithArgs(args)
+	default:
+		resolved, err = expr.ResolveIndices(schema)
+		if err != nil {
+			return nil, err
+		}
+	}
+	memo[expr] = resolved
+	return resolved, nil
 }
 
 func (p *physicalSchemaProducer) ResolveIndices() (err error) {

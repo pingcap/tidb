@@ -72,6 +72,25 @@ func TestNoneAccessPathsFoundByIsolationRead(t *testing.T) {
 	tk.MustExec("select * from t")
 }
 
+func TestInsertSelectOnDuplicateUpdateExpressionReuseKeepsSchemaName(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("set @@tidb_enable_on_duplicate_expression_reuse=on")
+	tk.MustExec("create database d1")
+	tk.MustExec("create database d2")
+	tk.MustExec("create table d1.t(id int primary key, c int, c1 int, c2 int)")
+	tk.MustExec("create table d2.t(id int primary key, c int)")
+	tk.MustExec("insert into d1.t values (1, 0, 0, 0)")
+	tk.MustExec("insert into d2.t values (1, 1)")
+	tk.MustExec(`insert into d1.t(id, c, c1, c2)
+		select id, c, 100, 200 from d2.t
+		on duplicate key update
+			c1 = if(d1.t.c > 0 and d1.t.c + 1 > 0 and d1.t.c + 2 > 0 and d1.t.c + 3 > 0, values(c1), c1),
+			c2 = if(d2.t.c > 0 and d2.t.c + 1 > 0 and d2.t.c + 2 > 0 and d2.t.c + 3 > 0, values(c2), c2)`)
+	tk.MustQuery("select c1, c2 from d1.t where id = 1").Check(testkit.Rows("0 200"))
+}
+
 func TestAggPushDownEngine(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

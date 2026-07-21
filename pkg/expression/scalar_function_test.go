@@ -115,6 +115,44 @@ func TestScalarFunction(t *testing.T) {
 	require.True(t, ok)
 }
 
+func TestScalarFunctionCloneWithArgs(t *testing.T) {
+	a := &Column{
+		UniqueID: 1,
+		RetType:  types.NewFieldType(mysql.TypeDouble),
+	}
+	b := &Column{
+		UniqueID: 2,
+		RetType:  types.NewFieldType(mysql.TypeDouble),
+	}
+
+	sf := newFunctionWithMockCtx(ast.Plus, a, b).(*ScalarFunction)
+	sf.HashCode()
+	sf.CanonicalHashCode()
+
+	deepCloned := sf.Clone().(*ScalarFunction)
+	require.NotSame(t, sf.GetArgs()[0], deepCloned.GetArgs()[0])
+	require.NotSame(t, sf.GetArgs()[1], deepCloned.GetArgs()[1])
+	require.Equal(t, sf.HashCode(), deepCloned.HashCode())
+	require.Equal(t, sf.CanonicalHashCode(), deepCloned.CanonicalHashCode())
+
+	cloneArg0 := a.Clone()
+	cloneArg1 := b.Clone()
+	cloneArgs := []Expression{cloneArg0, cloneArg1}
+	cloned := sf.CloneWithArgs(cloneArgs).(*ScalarFunction)
+
+	cloneArgs[0] = b
+	require.Same(t, cloneArg0, cloned.GetArgs()[0])
+	require.Same(t, cloneArg1, cloned.GetArgs()[1])
+	require.Same(t, a, sf.GetArgs()[0])
+	require.Same(t, b, sf.GetArgs()[1])
+	require.Equal(t, sf.HashCode(), cloned.HashCode())
+	require.Equal(t, sf.CanonicalHashCode(), cloned.CanonicalHashCode())
+
+	differentArg := b.Clone()
+	different := sf.CloneWithArgs([]Expression{differentArg, b.Clone()}).(*ScalarFunction)
+	require.NotEqual(t, sf.HashCode(), different.HashCode())
+}
+
 func TestIssue23309(t *testing.T) {
 	a := &Column{
 		UniqueID: 1,

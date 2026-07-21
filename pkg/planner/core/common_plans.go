@@ -427,6 +427,8 @@ type Insert struct {
 	OnDuplicate        []*expression.Assignment
 	Schema4OnDuplicate *expression.Schema `plan-cache-clone:"shallow"`
 	names4OnDuplicate  types.NameSlice    `plan-cache-clone:"shallow"`
+	// onDuplicateExpressionReuseEnabled records whether this INSERT actually used ON DUPLICATE KEY UPDATE expression reuse.
+	onDuplicateExpressionReuseEnabled bool
 
 	GenCols InsertGeneratedColumns
 
@@ -454,7 +456,7 @@ func (p *Insert) MemoryUsage() (sum int64) {
 
 	sum = p.baseSchemaProducer.MemoryUsage() + size.SizeOfInterface + size.SizeOfSlice*7 + int64(cap(p.tableColNames)+
 		cap(p.Columns)+cap(p.OnDuplicate)+cap(p.names4OnDuplicate)+cap(p.FKChecks))*size.SizeOfPointer +
-		p.GenCols.MemoryUsage() + size.SizeOfInterface + size.SizeOfBool*4 + size.SizeOfInt
+		p.GenCols.MemoryUsage() + size.SizeOfInterface + size.SizeOfBool*5 + size.SizeOfInt
 	if p.tableSchema != nil {
 		sum += p.tableSchema.MemoryUsage()
 	}

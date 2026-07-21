@@ -365,6 +365,21 @@ func (sf *ScalarFunction) Clone() Expression {
 	return c
 }
 
+// CloneWithArgs clones the scalar function and replaces its arguments with the provided ones.
+// It keeps the original function signature metadata but avoids cloning the old argument tree.
+func (sf *ScalarFunction) CloneWithArgs(args []Expression) Expression {
+	c := &ScalarFunction{
+		FuncName: sf.FuncName,
+		RetType:  sf.RetType,
+		Function: sf.Function.CloneWithArgs(args),
+	}
+	// An implicit assumption: ScalarFunc.RetType == ScalarFunc.builtinFunc.RetType
+	c.SetCharsetAndCollation(sf.CharsetAndCollation())
+	c.SetCoercibility(sf.Coercibility())
+	c.SetRepertoire(sf.Repertoire())
+	return c
+}
+
 // GetType implements Expression interface.
 func (sf *ScalarFunction) GetType(_ EvalContext) *types.FieldType {
 	return sf.GetStaticType()

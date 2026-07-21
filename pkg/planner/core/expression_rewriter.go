@@ -15,6 +15,7 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strconv"
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
@@ -176,7 +178,7 @@ func buildSimpleExpr(ctx expression.BuildContext, node ast.ExprNode, opts ...exp
 	return expr, err
 }
 
-func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(ctx context.Context, exprNode ast.ExprNode, mockPlan base.LogicalPlan, insertPlan *Insert) (expression.Expression, error) {
+func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(ctx context.Context, exprNode ast.ExprNode, mockPlan base.LogicalPlan, insertPlan *Insert, onDupMemo *onDuplicateExprMemo) (expression.Expression, error) {
 	b.rewriterCounter++
 	defer func() { b.rewriterCounter-- }()
 
@@ -193,6 +195,16 @@ func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(ctx context.Context, exprNo
 	rewriter.planCtx.insertPlan = insertPlan
 	rewriter.asScalar = true
 	rewriter.allowBuildCastArray = b.allowBuildCastArray
+	if onDupMemo != nil {
+		onDupMemo.resetPerAssignmentState()
+		onDupMemo.prepareAssignment(exprNode)
+		rewriter.onDuplicateMemo = onDupMemo
+		defer func() {
+			rewriter.onDuplicateMemo = nil
+			rewriter.onDuplicateMemoDisableDepth = 0
+			onDupMemo.resetPerAssignmentState()
+		}()
+	}
 
 	expr, _, err := rewriteExprNode(rewriter, exprNode, true)
 	return expr, err
@@ -266,6 +278,8 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p base.LogicalP
 	rewriter.ctxNameStk = rewriter.ctxNameStk[:0]
 	rewriter.ctx = ctx
 	rewriter.err = nil
+	rewriter.onDuplicateMemo = nil
+	rewriter.onDuplicateMemoDisableDepth = 0
 	rewriter.planCtx.plan = p
 	rewriter.planCtx.curClause = b.curClause
 	rewriter.planCtx.aggrMap = nil
@@ -366,7 +380,149 @@ type expressionRewriter struct {
 	disableFoldCounter int
 	tryFoldCounter     int
 
-	planCtx *exprRewriterPlanCtx
+	planCtx                     *exprRewriterPlanCtx
+	onDuplicateMemo             *onDuplicateExprMemo
+	onDuplicateMemoDisableDepth int
+}
+
+// onDuplicateExprMemo caches rewritten expression subtrees across ON DUPLICATE KEY UPDATE assignments.
+type onDuplicateExprMemo struct {
+	// cache maps a restored AST subtree key to the expression produced by the expression rewriter.
+	cache map[string]expression.Expression
+	// frames mirrors the AST visitor stack and carries memo state from Enter to Leave.
+	frames []onDuplicateMemoFrame
+	// restoreBuf and restoreCtx are reused to build memo keys without per-node RestoreCtx allocations.
+	restoreBuf bytes.Buffer
+	restoreCtx *format.RestoreCtx
+
+	// keyableNodes contains subtrees that are worth building keys for in the current assignment.
+	keyableNodes map[ast.Node]struct{}
+	// depthFrames is a temporary stack used by prepareAssignment to calculate subtree depths.
+	depthFrames []onDuplicateExprDepthFrame
+}
+
+const maxOnDuplicateExprReuseKeyDepth = 16
+
+type onDuplicateMemoFrame struct {
+	// key is the memo key for the current node if valid is true.
+	key string
+	// stackLen records ctxStack length before entering the node, so Leave can validate the rewrite result.
+	stackLen int
+	// hit means the current node has already been rewritten and pushed from cache in Enter.
+	hit bool
+	// valid means the current node has a usable memo key and can populate cache after Leave.
+	valid bool
+	// disableMemo marks nodes such as SetCollationExpr that disable memo for their whole subtree.
+	disableMemo bool
+}
+
+type onDuplicateExprDepthFrame struct {
+	// maxChildDepth tracks the largest child expression depth while walking bottom-up.
+	maxChildDepth int
+}
+
+func newOnDuplicateExprMemo() *onDuplicateExprMemo {
+	return &onDuplicateExprMemo{
+		cache:        make(map[string]expression.Expression),
+		keyableNodes: make(map[ast.Node]struct{}),
+	}
+}
+
+func (m *onDuplicateExprMemo) resetPerAssignmentState() {
+	m.frames = m.frames[:0]
+	m.depthFrames = m.depthFrames[:0]
+	clear(m.keyableNodes)
+}
+
+func (m *onDuplicateExprMemo) prepareAssignment(expr ast.ExprNode) {
+	if expr == nil {
+		return
+	}
+	preparer := onDuplicateExprReusePreparer{memo: m}
+	expr.Accept(&preparer)
+	m.depthFrames = m.depthFrames[:0]
+}
+
+type onDuplicateExprReusePreparer struct {
+	memo *onDuplicateExprMemo
+}
+
+func (p *onDuplicateExprReusePreparer) Enter(in ast.Node) (ast.Node, bool) {
+	p.memo.depthFrames = append(p.memo.depthFrames, onDuplicateExprDepthFrame{})
+	return in, false
+}
+
+func (p *onDuplicateExprReusePreparer) Leave(in ast.Node) (ast.Node, bool) {
+	frame := p.memo.depthFrames[len(p.memo.depthFrames)-1]
+	p.memo.depthFrames = p.memo.depthFrames[:len(p.memo.depthFrames)-1]
+
+	depth := frame.maxChildDepth
+	if _, ok := in.(ast.ExprNode); ok {
+		depth++
+	}
+	if depth > maxOnDuplicateExprReuseKeyDepth+1 {
+		depth = maxOnDuplicateExprReuseKeyDepth + 1
+	}
+	if depth <= maxOnDuplicateExprReuseKeyDepth && isOnDuplicateFunctionLikeExprNode(in) {
+		p.memo.keyableNodes[in] = struct{}{}
+	}
+	if len(p.memo.depthFrames) > 0 {
+		parentFrame := &p.memo.depthFrames[len(p.memo.depthFrames)-1]
+		if depth > parentFrame.maxChildDepth {
+			parentFrame.maxChildDepth = depth
+		}
+	}
+	return in, true
+}
+
+func (m *onDuplicateExprMemo) pushFrame(frame onDuplicateMemoFrame) {
+	m.frames = append(m.frames, frame)
+}
+
+func (m *onDuplicateExprMemo) popFrame() onDuplicateMemoFrame {
+	frame := m.frames[len(m.frames)-1]
+	m.frames = m.frames[:len(m.frames)-1]
+	return frame
+}
+
+func (m *onDuplicateExprMemo) buildKey(node ast.Node) (string, bool) {
+	exprNode, ok := node.(ast.ExprNode)
+	if !ok {
+		return "", false
+	}
+	if _, ok := m.keyableNodes[node]; !ok {
+		return "", false
+	}
+	switch v := node.(type) {
+	case *driver.ParamMarkerExpr:
+		return "", false
+	case *ast.SubqueryExpr, *ast.CompareSubqueryExpr, *ast.ExistsSubqueryExpr, *ast.AggregateFuncExpr,
+		*ast.WindowFuncExpr, *ast.VariableExpr:
+		return "", false
+	case *ast.PatternInExpr:
+		if v.Sel != nil {
+			return "", false
+		}
+	}
+	const unsafeFlags = ast.FlagHasSubquery | ast.FlagHasAggregateFunc | ast.FlagHasWindowFunc |
+		ast.FlagHasVariable | ast.FlagHasParamMarker
+	if exprNode.GetFlag()&unsafeFlags != 0 {
+		return "", false
+	}
+	m.restoreBuf.Reset()
+	const restoreFlags = format.DefaultRestoreFlags
+	if m.restoreCtx == nil {
+		m.restoreCtx = format.NewRestoreCtx(restoreFlags, &m.restoreBuf)
+	} else {
+		m.restoreCtx.Flags = restoreFlags
+		m.restoreCtx.In = &m.restoreBuf
+		m.restoreCtx.DefaultDB = ""
+		m.restoreCtx.CTERestorer = format.CTERestorer{}
+	}
+	if err := node.Restore(m.restoreCtx); err != nil {
+		return "", false
+	}
+	return m.restoreBuf.String(), true
 }
 
 func (er *expressionRewriter) ctxStackLen() int {
@@ -519,6 +675,40 @@ func (er *expressionRewriter) requirePlanCtx(inNode ast.Node, detail string) (ct
 
 // Enter implements Visitor interface.
 func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
+	if er.onDuplicateMemo != nil {
+		frame := onDuplicateMemoFrame{stackLen: er.ctxStackLen()}
+		if _, ok := inNode.(*ast.SetCollationExpr); ok {
+			// SetCollationExpr is produced by expressions like `expr COLLATE utf8mb4_bin`.
+			// Its Leave mutates or wraps the rewritten child expression with explicit collation and
+			// coercibility. If assignments such as `(if(...) COLLATE utf8mb4_bin)` and
+			// `(if(...) COLLATE utf8mb4_general_ci)` shared the same cached inner `if(...)`, one
+			// assignment could overwrite the other's FieldType collation. Disable memo for the
+			// whole COLLATE subtree so those side effects stay local to each assignment.
+			frame.disableMemo = true
+			er.onDuplicateMemoDisableDepth++
+		}
+		if er.onDuplicateMemoDisableDepth == 0 {
+			key, ok := er.onDuplicateMemo.buildKey(inNode)
+			if !ok {
+				er.onDuplicateMemo.pushFrame(frame)
+				return er.enterWithoutOnDuplicateMemo(inNode)
+			}
+			frame.valid = true
+			frame.key = key
+			if expr, ok := er.onDuplicateMemo.cache[key]; ok {
+				frame.hit = true
+				er.ctxStackAppend(expr, types.EmptyName)
+				er.onDuplicateMemo.pushFrame(frame)
+				return inNode, true
+			}
+		}
+		er.onDuplicateMemo.pushFrame(frame)
+	}
+
+	return er.enterWithoutOnDuplicateMemo(inNode)
+}
+
+func (er *expressionRewriter) enterWithoutOnDuplicateMemo(inNode ast.Node) (ast.Node, bool) {
 	enterWithPlanCtx := func(fn func(*exprRewriterPlanCtx) (ast.Node, bool)) (ast.Node, bool) {
 		planCtx, err := er.requirePlanCtx(inNode, "")
 		if err != nil {
@@ -1441,6 +1631,18 @@ func (er *expressionRewriter) adjustUTF8MB4Collation(tp *types.FieldType) {
 
 // Leave implements Visitor interface.
 func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok bool) {
+	var onDupFrame onDuplicateMemoFrame
+	var hasOnDupFrame bool
+	if er.onDuplicateMemo != nil {
+		onDupFrame = er.onDuplicateMemo.popFrame()
+		hasOnDupFrame = true
+		if onDupFrame.disableMemo {
+			er.onDuplicateMemoDisableDepth--
+		}
+		if onDupFrame.hit {
+			return originInNode, true
+		}
+	}
 	if er.err != nil {
 		return retNode, false
 	}
@@ -1651,6 +1853,12 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 
 	if er.err != nil {
 		return retNode, false
+	}
+	if hasOnDupFrame && onDupFrame.valid && er.ctxStackLen() == onDupFrame.stackLen+1 {
+		expr := er.ctxStack[len(er.ctxStack)-1]
+		if !expression.IsMutableEffectsExpr(expr) {
+			er.onDuplicateMemo.cache[onDupFrame.key] = expr
+		}
 	}
 	return originInNode, true
 }

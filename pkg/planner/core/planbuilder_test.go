@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -36,9 +37,11 @@ import (
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -204,6 +207,553 @@ func TestDisableFold(t *testing.T) {
 			require.IsType(t, expectedArg, rewrittenArg)
 		}
 	}
+}
+
+func TestInsertOnDuplicateUpdateReusesCommonSubExpressions(t *testing.T) {
+	ctx := MockContext()
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
+
+	rewritePair := func(enableOnDuplicateExpressionReuse bool) (*Insert, expression.Expression, expression.Expression) {
+		ctx.GetSessionVars().EnableOnDuplicateExprReuse = enableOnDuplicateExpressionReuse
+
+		colNames := []string{"c1", "c2", "c3"}
+		cols := make([]*expression.Column, 0, len(colNames))
+		names := make(types.NameSlice, 0, len(colNames))
+		for i, name := range colNames {
+			cols = append(cols, &expression.Column{
+				RetType:  types.NewFieldType(mysql.TypeLonglong),
+				ID:       int64(i + 1),
+				UniqueID: int64(i + 1),
+				Index:    i,
+				OrigName: name,
+			})
+			names = append(names, &types.FieldName{ColName: pmodel.NewCIStr(name)})
+		}
+		schema := expression.NewSchema(cols...)
+
+		insertPlan := Insert{
+			tableSchema:                       schema,
+			tableColNames:                     names,
+			Schema4OnDuplicate:                schema,
+			names4OnDuplicate:                 names,
+			onDuplicateExpressionReuseEnabled: enableOnDuplicateExpressionReuse,
+		}.Init(ctx)
+		mockTablePlan := logicalop.LogicalTableDual{}.Init(ctx, 0)
+		mockTablePlan.SetSchema(schema)
+		mockTablePlan.SetOutputNames(names)
+
+		parseExpr := func(exprSQL string) ast.ExprNode {
+			stmt, err := parser.New().ParseOneStmt("select "+exprSQL, "", "")
+			require.NoError(t, err)
+			return stmt.(*ast.SelectStmt).Fields.Fields[0].Expr
+		}
+
+		builder, _ := NewPlanBuilder().Init(ctx, nil, hint.NewQBHintHandler(nil))
+		var onDupMemo *onDuplicateExprMemo
+		if ctx.GetSessionVars().EnableOnDuplicateExprReuse {
+			onDupMemo = newOnDuplicateExprMemo()
+		}
+		expr1, err := builder.rewriteInsertOnDuplicateUpdate(
+			context.Background(),
+			parseExpr("if(values(c1) is not null and c2 = 1, values(c1), c1)"),
+			mockTablePlan,
+			insertPlan,
+			onDupMemo,
+		)
+		require.NoError(t, err)
+		expr2, err := builder.rewriteInsertOnDuplicateUpdate(
+			context.Background(),
+			parseExpr("if(values(c1) is not null and c2 = 1, values(c2), c2)"),
+			mockTablePlan,
+			insertPlan,
+			onDupMemo,
+		)
+		require.NoError(t, err)
+
+		insertPlan.OnDuplicate = []*expression.Assignment{
+			{Col: cols[0], ColName: names[0].ColName, Expr: expr1},
+			{Col: cols[1], ColName: names[1].ColName, Expr: expr2},
+		}
+		return insertPlan, expr1, expr2
+	}
+
+	t.Run("enabled", func(t *testing.T) {
+		insertPlan, expr1, expr2 := rewritePair(true)
+		cond1 := expr1.(*expression.ScalarFunction).GetArgs()[0]
+		cond2 := expr2.(*expression.ScalarFunction).GetArgs()[0]
+		require.Same(t, cond1, cond2)
+
+		require.NoError(t, insertPlan.ResolveIndices())
+
+		resolvedCond1 := insertPlan.OnDuplicate[0].Expr.(*expression.ScalarFunction).GetArgs()[0]
+		resolvedCond2 := insertPlan.OnDuplicate[1].Expr.(*expression.ScalarFunction).GetArgs()[0]
+		require.Same(t, resolvedCond1, resolvedCond2)
+	})
+
+	t.Run("disabled", func(t *testing.T) {
+		insertPlan, expr1, expr2 := rewritePair(false)
+		cond1 := expr1.(*expression.ScalarFunction).GetArgs()[0]
+		cond2 := expr2.(*expression.ScalarFunction).GetArgs()[0]
+		require.NotSame(t, cond1, cond2)
+
+		require.NoError(t, insertPlan.ResolveIndices())
+
+		resolvedCond1 := insertPlan.OnDuplicate[0].Expr.(*expression.ScalarFunction).GetArgs()[0]
+		resolvedCond2 := insertPlan.OnDuplicate[1].Expr.(*expression.ScalarFunction).GetArgs()[0]
+		require.NotSame(t, resolvedCond1, resolvedCond2)
+	})
+}
+
+func TestInsertOnDuplicateUpdateExpressionReuseComplexityGate(t *testing.T) {
+	parseAssignment := func(exprSQL string) *ast.Assignment {
+		stmt, err := parser.New().ParseOneStmt("insert into t values (1) on duplicate key update c1 = "+exprSQL, "", "")
+		require.NoError(t, err)
+		return stmt.(*ast.InsertStmt).OnDuplicate[0]
+	}
+
+	require.False(t, hasEnoughOnDuplicateFunctionsForExpressionReuse([]*ast.Assignment{
+		parseAssignment("values(c1)"),
+		parseAssignment("values(c2)"),
+		parseAssignment("values(c3)"),
+		parseAssignment("values(c4)"),
+		parseAssignment("values(c5)"),
+		parseAssignment("values(c6)"),
+		parseAssignment("values(c7)"),
+	}))
+	require.True(t, hasEnoughOnDuplicateFunctionsForExpressionReuse([]*ast.Assignment{
+		parseAssignment("if(values(c1) is not null and (c1 <= values(c1) or c1 = '2100-01-01 00:00:00') and values(c2) != 1, values(c3), c3)"),
+		parseAssignment("if(values(c1) is not null and (c1 <= values(c1) or c1 = '2100-01-01 00:00:00') and values(c2) != 1, values(c4), c4)"),
+	}))
+}
+
+func TestOnDuplicateExprMemoBuildKeySkipsSimpleNodes(t *testing.T) {
+	parseAssignment := func(exprSQL string) *ast.Assignment {
+		stmt, err := parser.New().ParseOneStmt("insert into t values (1) on duplicate key update c1 = "+exprSQL, "", "")
+		require.NoError(t, err)
+		return stmt.(*ast.InsertStmt).OnDuplicate[0]
+	}
+
+	memo := newOnDuplicateExprMemo()
+	buildKey := func(exprSQL string) (string, bool) {
+		assign := parseAssignment(exprSQL)
+		memo.resetPerAssignmentState()
+		memo.prepareAssignment(assign.Expr)
+		return memo.buildKey(assign.Expr)
+	}
+
+	_, ok := buildKey("values(c1)")
+	require.False(t, ok)
+	_, ok = buildKey("c1")
+	require.False(t, ok)
+	_, ok = buildKey("1")
+	require.False(t, ok)
+
+	key, ok := buildKey("if(c1 > 1, values(c1), c1)")
+	require.True(t, ok)
+	require.NotEmpty(t, key)
+	_, ok = buildKey("if(c1 > ?, values(c1), c1)")
+	require.False(t, ok)
+}
+
+func TestOnDuplicateExprMemoBuildKeyKeepsSchemaName(t *testing.T) {
+	parseAssignment := func(exprSQL string) *ast.Assignment {
+		stmt, err := parser.New().ParseOneStmt("insert into t values (1) on duplicate key update c1 = "+exprSQL, "", "")
+		require.NoError(t, err)
+		return stmt.(*ast.InsertStmt).OnDuplicate[0]
+	}
+
+	memo := newOnDuplicateExprMemo()
+	buildKey := func(exprSQL string) (string, bool) {
+		assign := parseAssignment(exprSQL)
+		memo.resetPerAssignmentState()
+		memo.prepareAssignment(assign.Expr)
+		return memo.buildKey(assign.Expr)
+	}
+
+	key1, ok := buildKey("if(d1.t.c > 0, values(c1), c1)")
+	require.True(t, ok)
+	key2, ok := buildKey("if(d2.t.c > 0, values(c1), c1)")
+	require.True(t, ok)
+	require.Contains(t, key1, "`d1`.`t`.`c`")
+	require.Contains(t, key2, "`d2`.`t`.`c`")
+	require.NotEqual(t, key1, key2)
+}
+
+func TestOnDuplicateExprMemoBuildKeySkipsDeepNodes(t *testing.T) {
+	exprSQL := "c1"
+	for range maxOnDuplicateExprReuseKeyDepth {
+		exprSQL = "if(c1 > 1, " + exprSQL + ", c1)"
+	}
+	stmt, err := parser.New().ParseOneStmt("insert into t values (1) on duplicate key update c1 = "+exprSQL, "", "")
+	require.NoError(t, err)
+	rootExpr := stmt.(*ast.InsertStmt).OnDuplicate[0].Expr
+
+	memo := newOnDuplicateExprMemo()
+	memo.prepareAssignment(rootExpr)
+	_, ok := memo.buildKey(rootExpr)
+	require.False(t, ok)
+
+	shallowExpr := rootExpr
+	for range 2 {
+		shallowExpr = shallowExpr.(*ast.FuncCallExpr).Args[1]
+	}
+	key, ok := memo.buildKey(shallowExpr)
+	require.True(t, ok)
+	require.NotEmpty(t, key)
+}
+
+func TestInsertOnDuplicateUpdateExpressionReuseSetVarHint(t *testing.T) {
+	testCases := []struct {
+		name                string
+		sessionReuseEnabled bool
+		hintValue           string
+		expectedEnabled     bool
+	}{
+		{
+			name:                "disable_by_hint",
+			sessionReuseEnabled: true,
+			hintValue:           "off",
+			expectedEnabled:     false,
+		},
+		{
+			name:                "enable_by_hint",
+			sessionReuseEnabled: false,
+			hintValue:           "on",
+			expectedEnabled:     true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := MockContext()
+			defer func() {
+				domain.GetDomain(ctx).StatsHandle().Close()
+			}()
+			ctx.GetSessionVars().CurrentDB = "test"
+			err := ctx.GetSessionVars().SetSystemVar(variable.TiDBEnableOnDuplicateExpressionReuse, variable.BoolToOnOff(tc.sessionReuseEnabled))
+			require.NoError(t, err)
+
+			insertSQL := strings.Replace(
+				benchmarkOnDuplicateUpdateInsertSQL(),
+				"insert into",
+				fmt.Sprintf("insert /*+ SET_VAR(%s=%s) */ into", variable.TiDBEnableOnDuplicateExpressionReuse, tc.hintValue),
+				1,
+			)
+			insertPlan := buildInsertPlanWithSetVarHint(t, ctx, benchmarkOnDuplicateUpdateTableInfo(), insertSQL)
+			require.Equal(t, tc.expectedEnabled, insertPlan.onDuplicateExpressionReuseEnabled)
+			require.Equal(t, tc.sessionReuseEnabled, ctx.GetSessionVars().EnableOnDuplicateExprReuse)
+		})
+	}
+}
+
+func buildInsertPlanWithSetVarHint(t *testing.T, ctx *mock.Context, tableInfo *model.TableInfo, insertSQL string) *Insert {
+	is := infoschema.MockInfoSchema([]*model.TableInfo{tableInfo})
+	stmt, err := parser.New().ParseOneStmt(insertSQL, "", "")
+	require.NoError(t, err)
+	nodeW := resolve.NewNodeW(stmt)
+	err = Preprocess(context.Background(), ctx, nodeW, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: is}))
+	require.NoError(t, err)
+
+	restoreSetVarHint := applySetVarHintForTest(t, ctx, stmt)
+	defer restoreSetVarHint()
+
+	plan, err := BuildLogicalPlanForTest(context.Background(), ctx, nodeW, is)
+	require.NoError(t, err)
+	insertPlan, ok := plan.(*Insert)
+	require.True(t, ok)
+	return insertPlan
+}
+
+func applySetVarHintForTest(t *testing.T, ctx *mock.Context, stmt ast.StmtNode) func() {
+	tableHints := hint.ExtractTableHintsFromStmtNode(stmt, ctx.GetSessionVars().StmtCtx)
+	stmtHints, _, warns := hint.ParseStmtHints(tableHints, func(varName, hintName string) (bool, error) {
+		sysVar := variable.GetSysVar(varName)
+		if sysVar == nil {
+			return false, errors.Errorf("unknown SET_VAR hint %s in %s", varName, hintName)
+		}
+		if !sysVar.IsHintUpdatableVerified {
+			return true, errors.Errorf("SET_VAR hint %s is not verified as hint-updatable", varName)
+		}
+		return true, nil
+	}, nil, ctx.GetSessionVars().CurrentDB, byte(kv.ReplicaReadFollower))
+	require.Empty(t, warns)
+	require.Len(t, stmtHints.SetVars, 1)
+	require.Contains(t, stmtHints.SetVars, variable.TiDBEnableOnDuplicateExpressionReuse)
+	ctx.GetSessionVars().StmtCtx.StmtHints = stmtHints
+
+	oldValues := make(map[string]string, len(stmtHints.SetVars))
+	for name, val := range stmtHints.SetVars {
+		oldVal, err := ctx.GetSessionVars().SetSystemVarWithOldValAsRet(name, val)
+		require.NoError(t, err)
+		oldValues[name] = oldVal
+	}
+
+	return func() {
+		for name, oldVal := range oldValues {
+			require.NoError(t, ctx.GetSessionVars().SetSystemVar(name, oldVal))
+		}
+	}
+}
+
+func mockBenchmarkOnDuplicateUpdateTableInfo(name string, colTypes []byte) *model.TableInfo {
+	columns := make([]*model.ColumnInfo, 0, len(colTypes))
+	for i, tp := range colTypes {
+		colName := fmt.Sprintf("c%d", i+1)
+		colInfo := &model.ColumnInfo{
+			ID:        int64(i + 1),
+			Name:      pmodel.NewCIStr(colName),
+			Offset:    i,
+			FieldType: benchmarkOnDuplicateUpdateFieldType(tp),
+			State:     model.StatePublic,
+		}
+		if i == 0 {
+			colInfo.SetFlag(mysql.PriKeyFlag | mysql.NotNullFlag)
+		}
+		columns = append(columns, colInfo)
+	}
+	return &model.TableInfo{
+		ID:         1,
+		Name:       pmodel.NewCIStr(name),
+		Columns:    columns,
+		PKIsHandle: true,
+		State:      model.StatePublic,
+	}
+}
+
+func benchmarkOnDuplicateUpdateFieldType(tp byte) types.FieldType {
+	fieldType := types.NewFieldType(tp)
+	switch tp {
+	case mysql.TypeVarchar:
+		ch, coll := types.DefaultCharsetForType(tp)
+		fieldType.SetCharset(ch)
+		fieldType.SetCollate(coll)
+	case mysql.TypeNewDecimal:
+		fieldType.SetFlen(19)
+		fieldType.SetDecimal(6)
+	}
+	return *fieldType
+}
+
+func benchmarkOnDuplicateUpdateTableInfo() *model.TableInfo {
+	return mockBenchmarkOnDuplicateUpdateTableInfo("t_on_duplicate_update_complex", []byte{
+		mysql.TypeLonglong,
+		mysql.TypeVarchar,
+		mysql.TypeVarchar,
+		mysql.TypeVarchar,
+		mysql.TypeLong,
+		mysql.TypeLong,
+		mysql.TypeVarchar,
+		mysql.TypeVarchar,
+		mysql.TypeVarchar,
+		mysql.TypeVarchar,
+		mysql.TypeVarchar,
+		mysql.TypeDatetime,
+		mysql.TypeVarchar,
+		mysql.TypeNewDecimal,
+		mysql.TypeNewDecimal,
+		mysql.TypeNewDecimal,
+		mysql.TypeNewDecimal,
+		mysql.TypeNewDecimal,
+		mysql.TypeDatetime,
+		mysql.TypeLonglong,
+		mysql.TypeDatetime,
+		mysql.TypeLonglong,
+		mysql.TypeLong,
+		mysql.TypeVarchar,
+		mysql.TypeVarchar,
+		mysql.TypeVarchar,
+		mysql.TypeNewDecimal,
+		mysql.TypeTiny,
+		mysql.TypeVarchar,
+		mysql.TypeNewDecimal,
+		mysql.TypeVarchar,
+		mysql.TypeVarchar,
+		mysql.TypeDatetime,
+		mysql.TypeLong,
+		mysql.TypeVarchar,
+		mysql.TypeDatetime,
+		mysql.TypeLong,
+		mysql.TypeNewDecimal,
+		mysql.TypeNewDecimal,
+		mysql.TypeNewDecimal,
+		mysql.TypeNewDecimal,
+		mysql.TypeNewDecimal,
+		mysql.TypeNewDecimal,
+		mysql.TypeLong,
+		mysql.TypeDate,
+	})
+}
+
+func benchmarkOnDuplicateUpdateInsertSQL() string {
+	values := []string{
+		"1",
+		"'v2'",
+		"'v3'",
+		"'v4'",
+		"1",
+		"2",
+		"'v7'",
+		"'v8'",
+		"'v9'",
+		"'v10'",
+		"'v11'",
+		"'2026-06-01 00:00:00'",
+		"'v13'",
+		"1.23",
+		"2.34",
+		"3.45",
+		"4.56",
+		"5.67",
+		"'2026-06-02 00:00:00'",
+		"1",
+		"'2026-06-02 00:00:01'",
+		"2",
+		"2",
+		"'v24'",
+		"'v25'",
+		"'v26'",
+		"100.00",
+		"0",
+		"'v29'",
+		"1.50",
+		"'v31'",
+		"'v32'",
+		"'2026-06-02 00:00:02'",
+		"123",
+		"'v35'",
+		"'2026-06-02 00:00:03'",
+		"1",
+		"0.05",
+		"0.06",
+		"0.07",
+		"0.08",
+		"0.09",
+		"0.10",
+		"0",
+		"'2026-06-02'",
+	}
+
+	tail := strings.TrimSpace(`
+ON DUPLICATE KEY UPDATE
+c3 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c3), c3),
+c9 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c9), c9),
+c4 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c4), c4),
+c5 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c5), c5),
+c6 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c6), c6),
+c7 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c7), c7),
+c8 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c8), c8),
+c10 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c10), c10),
+c14 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c14), c14),
+c15 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c15), c15),
+c16 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c16), c16),
+c39 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c39), c39),
+c38 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c38) != 1, values(c38), c38),
+c17 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c17), c17),
+c40 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c40), c40),
+c41 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c41), c41),
+c42 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c42), c42),
+c43 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c43), c43),
+c18 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c18), c18),
+c19 = IF((values(c19) is not null and c20 = 0) or values(c23) = 3, values(c19), c19),
+c23 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c23), c23),
+c24 = IF(c24 is null or c24 = '', values(c24), c24),
+c25 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c25), c25),
+c26 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c26), c26),
+c27 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c27), c27),
+c28 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c28), c28),
+c29= IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c29), c29),
+c30 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c30), c30),
+c31 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c31), c31),
+c32 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c32), c32),
+c33 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c33), c33),
+c34 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c34), c34),
+c35 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c35), c35),
+c36= IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c36), c36),
+c20= IF((values(c20) is not null and c20 = 0) or values(c23) = 3, values(c20), c20),
+c22 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c22),c22),
+c21 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, values(c21), c21),
+c45 = IF(values(c21) is not null and (c21 <= values(c21) or c21 = '2100-01-01 00:00:00') and values(c23) != 1, DATE(values(c36)), c45)
+`)
+
+	return "insert into t_on_duplicate_update_complex values (" + strings.Join(values, ", ") + ") " + tail
+}
+
+func benchmarkOnDuplicateUpdateValuesOnlyTableInfo() *model.TableInfo {
+	return mockBenchmarkOnDuplicateUpdateTableInfo("t_on_duplicate_update_values_only", []byte{
+		mysql.TypeLonglong,
+		mysql.TypeVarchar,
+		mysql.TypeVarchar,
+		mysql.TypeVarchar,
+		mysql.TypeNewDecimal,
+		mysql.TypeNewDecimal,
+		mysql.TypeLong,
+		mysql.TypeDatetime,
+	})
+}
+
+func benchmarkOnDuplicateUpdateValuesOnlyInsertSQL() string {
+	return strings.TrimSpace(`
+insert into t_on_duplicate_update_values_only values (
+	1,
+	'2026-06-01',
+	'v3',
+	'v4',
+	1.23,
+	2.34,
+	1,
+	'2026-06-01 00:00:00'
+) on duplicate key update
+  c2 = values(c2),
+  c3 = values(c3),
+  c4 = values(c4),
+  c5 = values(c5),
+  c6 = values(c6),
+  c7 = values(c7),
+  c8 = values(c8)
+`)
+}
+
+func runInsertOnDuplicateUpdateCompileBenchmark(b *testing.B, tableInfo *model.TableInfo, insertSQL string) {
+	run := func(b *testing.B, enableOnDuplicateExpressionReuse bool) {
+		ctx := MockContext()
+		ctx.GetSessionVars().CurrentDB = "test"
+		ctx.GetSessionVars().EnableOnDuplicateExprReuse = enableOnDuplicateExpressionReuse
+
+		is := infoschema.MockInfoSchema([]*model.TableInfo{tableInfo})
+
+		stmt, err := parser.New().ParseOneStmt(insertSQL, "", "")
+		require.NoError(b, err)
+		nodeW := resolve.NewNodeW(stmt)
+		ret := &PreprocessorReturn{InfoSchema: is}
+		err = Preprocess(context.Background(), ctx, nodeW, WithPreprocessorReturn(ret))
+		require.NoError(b, err)
+
+		builder := NewPlanBuilder()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			builder, _ = builder.ResetForReuse().Init(ctx.GetPlanCtx(), ret.InfoSchema, hint.NewQBHintHandler(nil))
+			_, err := builder.Build(context.Background(), nodeW)
+			require.NoError(b, err)
+		}
+		b.ReportAllocs()
+	}
+
+	b.Run("reuse_off", func(b *testing.B) {
+		run(b, false)
+	})
+	b.Run("reuse_on", func(b *testing.B) {
+		run(b, true)
+	})
+}
+
+func BenchmarkInsertOnDuplicateUpdateCompile(b *testing.B) {
+	runInsertOnDuplicateUpdateCompileBenchmark(b, benchmarkOnDuplicateUpdateTableInfo(), benchmarkOnDuplicateUpdateInsertSQL())
+}
+
+func BenchmarkInsertOnDuplicateUpdateCompileValuesOnly(b *testing.B) {
+	runInsertOnDuplicateUpdateCompileBenchmark(b, benchmarkOnDuplicateUpdateValuesOnlyTableInfo(), benchmarkOnDuplicateUpdateValuesOnlyInsertSQL())
 }
 
 func TestDeepClone(t *testing.T) {

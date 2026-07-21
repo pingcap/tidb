@@ -431,6 +431,17 @@ func (b *baseBuiltinFunc) cloneFrom(from *baseBuiltinFunc) {
 	}
 }
 
+func (b *baseBuiltinFunc) cloneFromWithArgs(from *baseBuiltinFunc, args []Expression) {
+	b.args = slices.Clone(args)
+	b.tp = from.tp
+	b.pbCode = from.pbCode
+	b.childrenVectorized = false
+	b.childrenVectorizedOnce = new(sync.Once)
+	if from.ctor != nil {
+		b.ctor = from.ctor.Clone()
+	}
+}
+
 func (*baseBuiltinFunc) Clone() builtinFunc {
 	panic("you should not call this method.")
 }
@@ -453,6 +464,11 @@ func (b *baseBuiltinCastFunc) metadata() proto.Message {
 
 func (b *baseBuiltinCastFunc) cloneFrom(from *baseBuiltinCastFunc) {
 	b.baseBuiltinFunc.cloneFrom(&from.baseBuiltinFunc)
+	b.inUnion = from.inUnion
+}
+
+func (b *baseBuiltinCastFunc) cloneFromWithArgs(from *baseBuiltinCastFunc, args []Expression) {
+	b.baseBuiltinFunc.cloneFromWithArgs(&from.baseBuiltinFunc, args)
 	b.inUnion = from.inUnion
 }
 
@@ -564,6 +580,8 @@ type builtinFunc interface {
 	metadata() proto.Message
 	// Clone returns a copy of itself.
 	Clone() builtinFunc
+	// CloneWithArgs clones itself and uses the provided arguments without cloning them.
+	CloneWithArgs(args []Expression) builtinFunc
 
 	MemoryUsage() int64
 
