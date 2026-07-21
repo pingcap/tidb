@@ -318,7 +318,7 @@ func showCommentsFromJob(job *model.Job) string {
 		job.Type == model.ActionAddPrimaryKey
 	if isAddingIndex && kerneltype.IsNextGen() {
 		// The parameters are determined automatically in next-gen.
-		labels = append(labels, formatAutoSplitHotRegionResults(m.AutoSplitHotRegionResults)...)
+		labels = append(labels, formatAutoPresplitIndexRegionResults(m.AutoPresplitIndexRegionResults)...)
 		return strings.Join(labels, ", ")
 	}
 	if isAddingIndex {
@@ -357,14 +357,14 @@ func showCommentsFromJob(job *model.Job) string {
 			labels = append(labels, fmt.Sprintf("max_node_count=%d", m.MaxNodeCount))
 		}
 	}
-	labels = append(labels, formatAutoSplitHotRegionResults(m.AutoSplitHotRegionResults)...)
+	labels = append(labels, formatAutoPresplitIndexRegionResults(m.AutoPresplitIndexRegionResults)...)
 	return strings.Join(labels, ", ")
 }
 
 func showCommentsFromSubjob(sub *model.SubJob, useDXF, useCloud bool) string {
-	autoSplitLabels := formatAutoSplitHotRegionResults(sub.AutoSplitHotRegionResults)
+	autoPresplitLabels := formatAutoPresplitIndexRegionResults(sub.AutoPresplitIndexRegionResults)
 	if kerneltype.IsNextGen() || sub.ReorgTp == model.ReorgTypeNone {
-		return strings.Join(autoSplitLabels, ", ")
+		return strings.Join(autoPresplitLabels, ", ")
 	}
 	labels := []string{sub.ReorgTp.String()}
 	if useDXF {
@@ -373,11 +373,11 @@ func showCommentsFromSubjob(sub *model.SubJob, useDXF, useCloud bool) string {
 	if useDXF && useCloud {
 		labels = append(labels, "cloud")
 	}
-	labels = append(labels, autoSplitLabels...)
+	labels = append(labels, autoPresplitLabels...)
 	return strings.Join(labels, ", ")
 }
 
-func formatAutoSplitHotRegionResults(results []model.AutoSplitHotRegionResult) []string {
+func formatAutoPresplitIndexRegionResults(results []model.AutoPresplitIndexRegionResult) []string {
 	labels := make([]string, 0, len(results))
 	for _, result := range results {
 		parts := []string{string(result.Status)}
@@ -393,7 +393,7 @@ func formatAutoSplitHotRegionResults(results []model.AutoSplitHotRegionResult) [
 		if result.Reason != "" {
 			parts = append(parts, fmt.Sprintf("reason=%q", result.Reason))
 		}
-		labels = append(labels, fmt.Sprintf("auto_split_hot_region=%s(%s)", result.IndexName, strings.Join(parts, ", ")))
+		labels = append(labels, fmt.Sprintf("auto_presplit_index_region=%s(%s)", result.IndexName, strings.Join(parts, ", ")))
 	}
 	return labels
 }

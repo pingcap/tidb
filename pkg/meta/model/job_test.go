@@ -199,19 +199,19 @@ func TestSubJobToProxyJobWithResumeReason(t *testing.T) {
 		Type:    ActionAddIndex,
 		State:   JobStateQueueing,
 		ReorgTp: ReorgTypeTxn,
-		AutoSplitHotRegionResults: []AutoSplitHotRegionResult{{
+		AutoPresplitIndexRegionResults: []AutoPresplitIndexRegionResult{{
 			IndexName:     "idx",
-			Status:        AutoSplitHotRegionStatusSplit,
+			Status:        AutoPresplitIndexRegionStatusSplit,
 			SplitKeyCount: 3,
 		}},
 	}
 	proxyJob := subJob.ToProxyJob(parentJob, 0)
 	require.True(t, proxyJob.HasResumeReason(JobResumeReasonKVDiskFull))
-	require.Equal(t, subJob.AutoSplitHotRegionResults, proxyJob.ReorgMeta.AutoSplitHotRegionResults)
+	require.Equal(t, subJob.AutoPresplitIndexRegionResults, proxyJob.ReorgMeta.AutoPresplitIndexRegionResults)
 
-	proxyJob.ReorgMeta.AutoSplitHotRegionResults[0].Status = AutoSplitHotRegionStatusFailed
+	proxyJob.ReorgMeta.AutoPresplitIndexRegionResults[0].Status = AutoPresplitIndexRegionStatusFailed
 	subJob.FromProxyJob(&proxyJob, 1)
-	require.Equal(t, AutoSplitHotRegionStatusFailed, subJob.AutoSplitHotRegionResults[0].Status)
+	require.Equal(t, AutoPresplitIndexRegionStatusFailed, subJob.AutoPresplitIndexRegionResults[0].Status)
 }
 
 func TestJobSize(t *testing.T) {
