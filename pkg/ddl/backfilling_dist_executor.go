@@ -219,6 +219,7 @@ func (s *backfillDistExecutor) Init(ctx context.Context) error {
 	}
 
 	s.taskMeta = bgm
+	// TODO: Recheck local disk when users increase concurrency with ADMIN ALTER DDL JOB.
 	if len(s.taskMeta.CloudStorageURI) == 0 && s.task.Step == proto.BackfillStepReadIndex {
 		runningLocalSortJobs, err := s.getRunningLocalSortJobDiskRequirements(ctx)
 		if err != nil {

@@ -259,12 +259,14 @@ func checkLocalSortFreeDisk(
 		allJobsRequiredBytes += uint64(runningJob.RequiredSlots) * LocalSortBytesPerSlot
 		allJobsUsedBytes += runningJob.UsedBytes
 	}
+	// Slot-based reservations are a shared soft budget, not per-job limits.
+	// Excess usage triggers ingest and releases disk, so we check aggregate remaining growth.
 	allJobsGapBytes := uint64(0)
 	if allJobsRequiredBytes > allJobsUsedBytes {
 		allJobsGapBytes = allJobsRequiredBytes - allJobsUsedBytes
 	}
 	totalRequiredBytes := totalCapacityBytes/10 + allJobsGapBytes
-	if availableBytes >= totalRequiredBytes {
+	if availableBytes > totalRequiredBytes {
 		logutil.DDLIngestLogger().Info("local sort free disk check passed",
 			zap.Uint64("totalRequiredBytes", totalRequiredBytes),
 			zap.Uint64("availableBytes", availableBytes),
