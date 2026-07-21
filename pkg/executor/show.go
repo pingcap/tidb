@@ -1049,6 +1049,17 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 	return constructResultOfShowCreateTable(ctx, nil, tableInfo, allocators, buf)
 }
 
+// ConstructResultOfShowCreateTableWithDB constructs SHOW CREATE TABLE with the current database name.
+func ConstructResultOfShowCreateTableWithDB(
+	ctx sessionctx.Context,
+	dbName ast.CIStr,
+	tableInfo *model.TableInfo,
+	allocators autoid.Allocators,
+	buf *bytes.Buffer,
+) error {
+	return constructResultOfShowCreateTable(ctx, &dbName, tableInfo, allocators, buf)
+}
+
 func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr, tableInfo *model.TableInfo, allocators autoid.Allocators, buf *bytes.Buffer) (err error) {
 	if tableInfo.IsView() {
 		fetchShowCreateTable4View(ctx, tableInfo, buf)

@@ -118,8 +118,12 @@ func TestPackedRowsUseTiDBStorageEncoding(t *testing.T) {
 		id bigint primary key clustered,
 		name varchar(16) not null,
 		note varchar(16),
+		description text,
 		payload varbinary(8),
 		amount decimal(10,2),
+		large_float float,
+		large_double double,
+		year_zero year,
 		created datetime(3),
 		flags bit(4),
 		status enum('new', 'done'),
@@ -127,14 +131,26 @@ func TestPackedRowsUseTiDBStorageEncoding(t *testing.T) {
 		name_len int as (length(name)),
 		id_twice bigint as (id * 2) stored
 	)`)
-	tk.MustExec("insert into packed_int (id, name, note, payload, amount, created, flags, status, labels) values (1, 'alpha', null, x'00ff', -12.30, '2026-07-16 01:02:03.456', b'1010', 'done', 'a,b')")
-	tk.MustExec("insert into packed_int (id, name, note, payload, amount, created, flags, status, labels) values (2, 'beta', '', x'', 0, '2020-01-02 03:04:05.000', b'0001', 'new', '')")
+	tk.MustExec("insert into packed_int (id, name, note, description, payload, amount, large_float, large_double, year_zero, created, flags, status, labels) values (1, 'alpha', null, 'plain text', x'00ff', -12.30, 1e20, 1e20, 0, '2026-07-16 01:02:03.456', b'1010', 'done', 'a,b')")
+	tk.MustExec("insert into packed_int (id, name, note, description, payload, amount, large_float, large_double, year_zero, created, flags, status, labels) values (2, 'beta', '', '', x'', 0, 1, 1, 2000, '2020-01-02 03:04:05.000', b'0001', 'new', '')")
 	tk.MustExec("alter table packed_int add column added int not null default 7, add column later_nullable varchar(8)")
 
 	tk.MustExec("create table packed_common (tenant varchar(8), id int, value varchar(16), primary key (tenant, id) clustered)")
 	tk.MustExec("insert into packed_common values ('acme', 9, 'common')")
+	tk.MustExec("create table packed_common_prefix (tenant varchar(8), id int, value varchar(16), primary key (tenant(2), id) clustered)")
+	tk.MustExec("insert into packed_common_prefix values ('acme', 9, 'prefix')")
+	tk.MustExec("set tidb_row_format_version = 1")
+	tk.MustExec("create table packed_legacy (tenant varchar(8), id int, value varchar(16), primary key (tenant(2), id) clustered)")
+	tk.MustExec("insert into packed_legacy values ('legacy', 10, 'old row')")
+	tk.MustExec("set tidb_row_format_version = 2")
+	tk.MustExec("alter table packed_legacy add column added int not null default 7")
+	tk.MustExec("create table packed_decimal_scale (id int primary key clustered, amount decimal(10,4))")
+	tk.MustExec("insert into packed_decimal_scale values (1, 1.2350)")
 	tk.MustExec("create table packed_partition (id int primary key, value varchar(16)) partition by range (id) (partition p0 values less than (10), partition p1 values less than maxvalue)")
 	tk.MustExec("insert into packed_partition values (1, 'first'), (11, 'second')")
+	tk.MustExec("create database packed_parent")
+	tk.MustExec("create table packed_parent.parent (id int primary key)")
+	tk.MustExec("create table packed_child (id int primary key, parent_id int, foreign key (parent_id) references packed_parent.parent(id))")
 
 	txn, err := store.Begin()
 	require.NoError(t, err)
@@ -168,22 +184,49 @@ func TestPackedRowsUseTiDBStorageEncoding(t *testing.T) {
 		}
 	}
 	require.NotNil(t, database)
+	var packedChild *model.TableInfo
+	for _, candidate := range database.Deprecated.Tables {
+		if candidate.Name.L == "packed_child" {
+			packedChild = candidate
+			break
+		}
+	}
+	require.NotNil(t, packedChild)
+	createSQL, err := packedCreateTableSQL(database.Name, packedChild)
+	require.NoError(t, err)
+	require.Contains(t, createSQL, "REFERENCES `packed_parent`.`parent`")
 
 	initColTypeRowReceiverMap()
 	testCases := []struct {
-		table string
-		rows  []string
+		table  string
+		adjust func(*model.TableInfo)
+		rows   []string
 	}{
 		{
 			table: "packed_int",
 			rows: []string{
-				`1,"alpha",\N,"00ff",-12.30,"2026-07-16 01:02:03.456","0a","done","a,b",7,\N`,
-				`2,"beta","","",0.00,"2020-01-02 03:04:05.000","01","new","",7,\N`,
+				`1,"alpha",\N,"plain text","00ff",-12.30,1e20,1e20,"0000","2026-07-16 01:02:03.456","0a","done","a,b",7,\N`,
+				`2,"beta","","","",0.00,1,1,"2000","2020-01-02 03:04:05.000","01","new","",7,\N`,
 			},
 		},
 		{
 			table: "packed_common",
 			rows:  []string{`"acme",9,"common"`},
+		},
+		{
+			table: "packed_common_prefix",
+			rows:  []string{`"acme",9,"prefix"`},
+		},
+		{
+			table: "packed_legacy",
+			rows:  []string{`"legacy",10,"old row",7`},
+		},
+		{
+			table: "packed_decimal_scale",
+			adjust: func(table *model.TableInfo) {
+				table.Columns[1].SetDecimal(2)
+			},
+			rows: []string{`1,1.24`},
 		},
 		{
 			table: "packed_partition",
@@ -199,6 +242,10 @@ func TestPackedRowsUseTiDBStorageEncoding(t *testing.T) {
 			}
 		}
 		require.NotNil(t, table, testCase.table)
+		if testCase.adjust != nil {
+			table = table.Clone()
+			testCase.adjust(table)
+		}
 		rows := readPackedTestRows(t, store, table)
 		require.Equal(t, testCase.rows, rows, testCase.table)
 	}
@@ -212,6 +259,8 @@ func readPackedTestRows(t *testing.T, store kv.Storage, table *model.TableInfo) 
 		require.NoError(t, txn.Rollback())
 	}()
 	meta := newPackedTableMeta("test", table, "")
+	decoder, err := newPackedRowDecoder(table)
+	require.NoError(t, err)
 	option := &csvOption{
 		nullValue:      "\\N",
 		separator:      []byte(","),
@@ -227,11 +276,12 @@ func readPackedTestRows(t *testing.T, store kv.Storage, table *model.TableInfo) 
 		for iterator.Valid() {
 			row := MakeRowReceiver(meta.ColumnTypes())
 			packed := &packedRowIter{
-				table:  table,
-				key:    append([]byte(nil), iterator.Key()...),
-				value:  append([]byte(nil), iterator.Value()...),
-				args:   make([]any, meta.ColumnCount()),
-				hasRow: true,
+				table:   table,
+				decoder: decoder,
+				key:     append([]byte(nil), iterator.Key()...),
+				value:   append([]byte(nil), iterator.Value()...),
+				args:    make([]any, meta.ColumnCount()),
+				hasRow:  true,
 			}
 			require.NoError(t, packed.Decode(row))
 			var output bytes.Buffer

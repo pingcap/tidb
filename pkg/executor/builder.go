@@ -5752,14 +5752,16 @@ func (b *executorBuilder) buildSQLBindExec(v *plannercore.SQLBindPlan) exec.Exec
 
 // NewRowDecoder creates a chunk decoder for new row format row value decode.
 func NewRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model.TableInfo) *rowcodec.ChunkDecoder {
-	getColInfoByID := func(tbl *model.TableInfo, colID int64) *model.ColumnInfo {
-		for _, col := range tbl.Columns {
-			if col.ID == colID {
-				return col
-			}
-		}
-		return nil
-	}
+	return NewRowDecoderWithBuildContext(ctx.GetExprCtx(), ctx.GetSessionVars().Location(), schema, tbl)
+}
+
+// NewRowDecoderWithBuildContext creates a chunk decoder without requiring a session context.
+func NewRowDecoderWithBuildContext(
+	ctx expression.BuildContext,
+	loc *time.Location,
+	schema *expression.Schema,
+	tbl *model.TableInfo,
+) *rowcodec.ChunkDecoder {
 	var pkCols []int64
 	reqCols := make([]rowcodec.ColInfo, len(schema.Columns))
 	for i := range schema.Columns {
@@ -5793,14 +5795,14 @@ func NewRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model
 		}
 
 		ci := getColInfoByID(tbl, reqCols[i].ID)
-		d, err := table.GetColOriginDefaultValue(ctx.GetExprCtx(), ci)
+		d, err := table.GetColOriginDefaultValue(ctx, ci)
 		if err != nil {
 			return err
 		}
 		chk.AppendDatum(i, &d)
 		return nil
 	}
-	return rowcodec.NewChunkDecoder(reqCols, pkCols, defVal, ctx.GetSessionVars().Location())
+	return rowcodec.NewChunkDecoder(reqCols, pkCols, defVal, loc)
 }
 
 func (b *executorBuilder) buildBatchPointGet(plan *physicalop.BatchPointGetPlan) exec.Executor {

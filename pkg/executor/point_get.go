@@ -734,14 +734,37 @@ func (e *PointGetExecutor) verifyTxnScope() error {
 // DecodeRowValToChunk decodes row value into chunk checking row format used.
 func DecodeRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, tblInfo *model.TableInfo,
 	handle kv.Handle, rowVal []byte, chk *chunk.Chunk, rd *rowcodec.ChunkDecoder) error {
+	return DecodeRowValToChunkWithBuildContext(
+		sctx.GetExprCtx(), sctx.GetSessionVars().Location(), schema, tblInfo, handle, rowVal, chk, rd,
+	)
+}
+
+// DecodeRowValToChunkWithBuildContext decodes a row value without requiring a session context.
+func DecodeRowValToChunkWithBuildContext(
+	exprCtx expression.BuildContext,
+	loc *time.Location,
+	schema *expression.Schema,
+	tblInfo *model.TableInfo,
+	handle kv.Handle,
+	rowVal []byte,
+	chk *chunk.Chunk,
+	rd *rowcodec.ChunkDecoder,
+) error {
 	if rowcodec.IsNewFormat(rowVal) {
 		return rd.DecodeToChunk(rowVal, 0, handle, chk)
 	}
-	return decodeOldRowValToChunk(sctx, schema, tblInfo, handle, rowVal, chk)
+	return decodeOldRowValToChunk(exprCtx, loc, schema, tblInfo, handle, rowVal, chk)
 }
 
-func decodeOldRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, tblInfo *model.TableInfo, handle kv.Handle,
-	rowVal []byte, chk *chunk.Chunk) error {
+func decodeOldRowValToChunk(
+	exprCtx expression.BuildContext,
+	loc *time.Location,
+	schema *expression.Schema,
+	tblInfo *model.TableInfo,
+	handle kv.Handle,
+	rowVal []byte,
+	chk *chunk.Chunk,
+) error {
 	pkCols := tables.TryGetCommonPkColumnIds(tblInfo)
 	prefixColIDs := tables.PrimaryPrefixColumnIDs(tblInfo)
 	colID2CutPos := make(map[int64]int, schema.Len())
@@ -757,7 +780,7 @@ func decodeOldRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, 
 	if cutVals == nil {
 		cutVals = make([][]byte, len(colID2CutPos))
 	}
-	decoder := codec.NewDecoder(chk, sctx.GetSessionVars().Location())
+	decoder := codec.NewDecoder(chk, loc)
 	for i, col := range schema.Columns {
 		// fill the virtual column value after row calculation
 		if col.VirtualExpr != nil {
@@ -774,7 +797,7 @@ func decodeOldRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, 
 		cutPos := colID2CutPos[col.ID]
 		if len(cutVals[cutPos]) == 0 {
 			colInfo := getColInfoByID(tblInfo, col.ID)
-			d, err1 := table.GetColOriginDefaultValue(sctx.GetExprCtx(), colInfo)
+			d, err1 := table.GetColOriginDefaultValue(exprCtx, colInfo)
 			if err1 != nil {
 				return err1
 			}

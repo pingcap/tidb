@@ -28,6 +28,10 @@ The supplied MinIO fixture proves the result. Exporting `test.warehouse` while t
 - [x] (2026-07-18) Passed focused CSE tests and failpoint-safe Dumpling WIP tests after the scope rewrite.
 - [x] (2026-07-18) Passed CSE format, clippy, and release build; passed TiDB Bazel preparation, optimized build, and Ready lint.
 - [x] (2026-07-18) Exported the real MinIO fixture with the release CSE binary, verified stable hashes and row shape, and audited the packed-only logs for volume and sensitive content.
+- [x] (2026-07-21) Added regression coverage for prefix clustered keys, legacy row format, DECIMAL scale changes, TEXT, extreme FLOAT/DOUBLE, YEAR zero, and cross-database foreign keys; recorded the expected pre-fix TEXT, float, and YEAR failures.
+- [x] (2026-07-21) Reused TiDB's new/legacy row decoder, field-type naming, SHOW CREATE implementation, and shared MySQL scalar text formatting without requiring a source session.
+- [x] (2026-07-21) Passed focused Dumpling/executor/server tests, `make bazel_prepare`, Ready `make lint`, and the final diff/test-quality audit.
+- [x] (2026-07-21) Re-exported `test.warehouse` from the real MinIO fixture with the final semantic-alignment binary and verified 300 data rows plus the stable CSV and schema hashes.
 
 ## Surprises & Discoveries
 
@@ -48,6 +52,18 @@ The supplied MinIO fixture proves the result. Exporting `test.warehouse` while t
 
 - Observation: A child range duration alone cannot identify a storage bottleneck because stdout backpressure can extend the child lifetime.
   Evidence: CSE reports object/snapshot/iteration and stdout time separately. TiDB reports pipe-read and packed row-decode time, while the existing Dumpling writer metrics continue to cover generic destination writes.
+
+- Observation: TiDB already exposes the complete row-decoding path needed by packed export, including new-row decoding and the legacy-row fallback.
+  Evidence: `pkg/executor/builder.go` constructs `rowcodec.ChunkDecoder`, while `pkg/executor/point_get.go` routes both row formats through `executor.DecodeRowValToChunk`; these paths prefer restored row data for incomplete common handles and round encoded DECIMAL values to the current field scale.
+
+- Observation: MySQL float text formatting is currently owned by `pkg/server/internal/util`, whose Go `internal` boundary prevents Dumpling from importing it directly.
+  Evidence: `pkg/server/internal/column.DumpTextRow` calls `util.AppendFormatFloat`, while packed export currently calls `types.Datum.ToBytes`, which always uses fixed-point float formatting.
+
+- Observation: TiDB already maps a field type plus charset to its text/blob and char/binary type name.
+  Evidence: `pkg/types.TypeToStr` delegates to the parser field-type mapping used by information schema, so packed export does not need a parallel type switch.
+
+- Observation: The executor fallback also decodes row-format-v1 prefix common handles and fills columns added after the row was written.
+  Evidence: The focused packed regression exports `("legacy", 10, "old row", 7)` from a row written with `tidb_row_format_version = 1` before the defaulted column existed.
 
 ## Decision Log
 
@@ -95,11 +111,29 @@ The supplied MinIO fixture proves the result. Exporting `test.warehouse` while t
   Rationale: Three `CSE packed perf` lines need no JSON schema, environment gate, field parser, or secondary process protocol. TiDB filters at line boundaries and forwards the original message at debug level.
   Date/Author: 2026-07-18, Codex.
 
+- Decision: Decode packed rows through the executor's build-context variants of `NewRowDecoder` and `DecodeRowValToChunk` under a canonical static UTC expression context.
+  Rationale: Reusing the SQL executor's decoder keeps common-handle restoration, legacy rows, missing-column defaults, and DECIMAL scale handling in one implementation without introducing a fake session. UTC preserves the packed path's explicit behavior where no source session exists.
+  Date/Author: 2026-07-21, Codex.
+
+- Decision: Move MySQL float and YEAR scalar formatting into a shared utility called by both the SQL text protocol and packed export.
+  Rationale: Packed output must match protocol bytes without copying threshold, exponent cleanup, or zero-year rules into a second implementation.
+  Date/Author: 2026-07-21, Codex.
+
+- Decision: Derive packed receiver type names through `types.TypeToStr`.
+  Rationale: The existing TiDB field-type mapping already distinguishes nonbinary TEXT from binary BLOB and the corresponding CHAR variants, avoiding another mapping table in packed export.
+  Date/Author: 2026-07-21, Codex.
+
+- Decision: Limit this semantic-alignment pass to behavior derivable from row bytes and backup schema metadata.
+  Rationale: Session timezone, SQL mode overrides, result charset, snapshot selection, placement-policy definitions, allocator state, optional objects, and global sorting require state or execution facilities absent from the packed range interface.
+  Date/Author: 2026-07-21, Codex.
+
 ## Outcomes & Retrospective
 
 The implementation now matches the one-shot raw KV design in both workspaces. CSE no longer imports TiDB schema types or table-key codecs from its packed reader. Dumpling starts no persistent CSE processes, reconstructs schema from raw metadata, and launches table range scans only while writers consume rows.
 
 The one-shot export feature and its packed-only observability have passed repository gates and the real fixture. Test changes stay inside broad existing tests: the framing table covers clean EOF, corrupt streams, and stderr chunk boundaries, while the storage-encoding feature test uses real TiDB DDL/DML. The CSE multi-shard reader test jointly validates rows, range pruning, statistics, and peak live-file behavior, so the observability assertions are not standalone happy-path or tautological fixture tests.
+
+The session-independent alignment now uses the executor's common new/legacy row decoder, `types.TypeToStr`, the existing SHOW CREATE implementation, and protocol-shared FLOAT/YEAR formatters. The focused storage test jointly covers prefix handles, row-format-v1 fallback, missing defaults, DECIMAL scale changes, text/binary receiver selection, scalar formatting, partitions, and cross-schema foreign keys; it is neither addition-only nor a standalone happy-path or synthetic round-trip test. Focused tests, Bazel preparation, and Ready lint passed. The final binary also reproduced the real MinIO fixture's 301-line CSV, CSV SHA256 `ba114d3290558252db863c0ee51177721da09a2296d96eaf2cd2e91abb5f7f79`, and schema SHA256 `04c67a09bed9d3b993cdf48605a023953b2d57d1fe22ab1f7461d32e9ff42e8c`.
 
 ## Context and Orientation
 
@@ -137,6 +171,12 @@ In Dumpling, keep one packed-export observation handle. Measure child spawn, fir
 
 In CSE, keep timing state in packed-reader and dumper-specific observability files. Emit exactly three human-readable stderr lines for setup, scan, and stdout. Include only manifest size, SST selection, object reads, KV/byte counts, major I/O or compute durations, total time, and success. Do not emit keys, ranges, row content, encryption details, slow samples, procfs data, or JSON telemetry.
 
+### Milestone 5: Align session-independent SQL semantics
+
+Extend `TestPackedRowsUseTiDBStorageEncoding` with real TiDB-created new- and legacy-format prefix clustered keys, TEXT, extreme FLOAT/DOUBLE, YEAR zero, and cross-schema foreign-key metadata. Keep these cases inside the existing broad storage feature test so the fixture jointly validates decoding, receiver classification, protocol-compatible formatting, and schema construction. Before implementation, the focused test must expose the known truncated common handle, binary-encoded TEXT, fixed-point extreme float, zero-year, and unqualified foreign-key output.
+
+Replace the packed-specific datum-map reconstruction with the executor's existing row decoder and old-row fallback. Convert the resulting chunk row to datums only at the packed-to-Dumpling boundary. Move MySQL float and YEAR formatting primitives to `pkg/util/format`, retain the server utility wrapper for compatibility, and call the shared primitives from both server protocol encoding and packed export. Map TiDB field metadata through `types.TypeToStr` to the text-versus-binary receiver categories accepted by Dumpling's existing `database/sql` adapter. Add an exported `SHOW CREATE TABLE` constructor variant that accepts a database name and delegates to the existing implementation, then use it for packed schema output.
+
 ## Concrete Steps
 
 From `/root/workspace/cloud-storage-engine/exp-export-packed-csv`, run:
@@ -156,6 +196,16 @@ From `/root/workspace/tidb/exp-export-packed`, run Bazel preparation because the
     ./tools/check/failpoint-go-test.sh dumpling/export -run '^(TestWriteDatabaseMeta|TestWriteTableMeta|TestWriteTableDataWithFileSize|TestWriteInsertInCsv|TestWriteInsertInCsvWithDialect)$' -count=1
     go build -trimpath -ldflags '-s -w' -o /tmp/dumpling-packed-observability ./dumpling/cmd/dumpling
     make lint
+
+For the 2026-07-21 semantic-alignment milestone, first run the existing broad regression test before implementation and retain its failure output. During the WIP loop run:
+
+    ./tools/check/failpoint-go-test.sh dumpling/export -run '^TestPackedRowsUseTiDBStorageEncoding$' -count=1
+    ./tools/check/failpoint-go-test.sh pkg/executor -run '^(TestReturnValues|TestShow)$' -count=1
+    go test ./pkg/util/format -run '^TestFormat$' -tags=intest,deadlock -count=1
+    go test ./pkg/server/internal/util -run '^TestAppendFormatFloat$' -tags=intest,deadlock -count=1
+    go test ./pkg/server/internal/column -run '^TestDumpTextValue$' -tags=intest,deadlock -count=1
+
+After imports settle, inspect the Bazel gate inputs and run `make bazel_prepare` if generated dependency metadata changes. The Ready gate additionally runs `make lint`.
 
 Run the real fixture with an unusable TiDB port:
 
@@ -178,6 +228,8 @@ Acceptance requires all of the following:
 CSE adds the manifest keyspace prefix before storage access, scans `WRITE_CF` with `Some(backup_ts)`, and strips the prefix from emitted keys. Existing checksums, compressed blocks, blob/file access, shard coverage, and snapshot file lifetimes remain delegated to `SnapAccess` and `PackedContentDfs`.
 
 Dumpling loads full public database/table schema through raw metadata ranges, exports partition ranges sequentially, and has no persistent child process pool. Existing SQL-source tests remain green. Packed mode completes with `--host 127.0.0.1 --port 1`, proving no TiDB connection is used.
+
+For session-independent row semantics, a prefix clustered primary-key column must retain its full row value, nonbinary TEXT must remain textual under Snowflake/Redshift/BigQuery CSV dialects, extreme floats and YEAR zero must match TiDB text-protocol bytes, encoded DECIMAL scale must follow the current column type, and a cross-database foreign key must retain its referenced schema. The same shared formatter must be exercised by the SQL protocol and packed export; packed code must not contain copied exponent-threshold or zero-year algorithms.
 
 The fixture output contains `test-schema-create.sql`, `test.warehouse-schema.sql`, and `test.warehouse.000000000.csv`. The CSV has one header and 300 rows, 300 unique IDs, and nine fields per record. Its schema and CSV hashes match below. The release-profile run must show three forwarded `CSE packed perf` lines per scan and two compact TiDB terminal lines. No full metadata URL, access key, secret key, session token, master-key material, key/range content, JSON telemetry, slow/progress sampling, or procfs data may appear.
 
@@ -251,4 +303,4 @@ stdout repeats `u32_le key_len`, `u32_le value_len`, `key`, and `value`. A clean
 
 In TiDB, `packedRangeScanner` accepts a context, start/end logical keys, and an emit callback. `loadPackedDatabases` uses it for metadata hashes. `packedTableData` stores executable, URL, table schema, and physical ranges. `packedRowIter` owns at most one `cseDumperScan` and advances ranges sequentially. These types remain behind the existing `TableMeta`, `TableDataIR`, and `SQLRowIter` interfaces.
 
-Revision note: Created on 2026-07-16 for the initial packed CSV implementation. Rewritten later that day to record the one-shot raw KV command, TiDB-owned schema parsing, removal of the long-lived protocol, and current validation evidence. Updated on 2026-07-18 with the range-pruning and low-noise observability milestone plus release-profile acceptance steps.
+Revision note: Created on 2026-07-16 for the initial packed CSV implementation. Rewritten later that day to record the one-shot raw KV command, TiDB-owned schema parsing, removal of the long-lived protocol, and current validation evidence. Updated on 2026-07-18 with the range-pruning and low-noise observability milestone plus release-profile acceptance steps. Updated on 2026-07-21 with the completed session-independent semantic alignment, focused validation evidence, Ready lint, and final audit.

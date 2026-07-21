@@ -22,7 +22,60 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"math"
+	"slices"
+	"strconv"
 )
+
+const (
+	expFormatBig     = 1e15
+	expFormatSmall   = 1e-15
+	defaultMySQLPrec = 5
+)
+
+// AppendFormatFloat appends a float64 in MySQL text protocol format.
+func AppendFormatFloat(in []byte, fVal float64, prec, bitSize int) []byte {
+	absVal := math.Abs(fVal)
+	if absVal > math.MaxFloat64 || math.IsNaN(absVal) {
+		return []byte{'0'}
+	}
+	isEFormat := false
+	if bitSize == 32 {
+		isEFormat = float32(absVal) >= expFormatBig || (float32(absVal) != 0 && float32(absVal) < expFormatSmall)
+	} else {
+		isEFormat = absVal >= expFormatBig || (absVal != 0 && absVal < expFormatSmall)
+	}
+	if !isEFormat {
+		return strconv.AppendFloat(in, fVal, 'f', prec, bitSize)
+	}
+	if bitSize == 32 {
+		prec = defaultMySQLPrec
+	}
+	out := strconv.AppendFloat(in, fVal, 'e', prec, bitSize)
+	valStr := out[len(in):]
+	if plusPos := bytes.IndexByte(valStr, '+'); plusPos > 0 {
+		plusPos += len(in)
+		out = slices.Delete(out, plusPos, plusPos+1)
+	}
+	ePos := bytes.IndexByte(valStr, 'e') + len(in)
+	pointPos := bytes.IndexByte(valStr, '.') + len(in)
+	validPos := ePos
+	for i := ePos - 1; i >= pointPos; i-- {
+		if out[i] != '0' && out[i] != '.' {
+			break
+		}
+		validPos = i
+	}
+	return append(out[:validPos], out[ePos:]...)
+}
+
+// AppendFormatYear appends a YEAR value in MySQL text protocol format.
+func AppendFormatYear(in []byte, year int64) []byte {
+	if year == 0 {
+		return append(in, "0000"...)
+	}
+	return strconv.AppendInt(in, year, 10)
+}
 
 const (
 	st0 = iota

@@ -34,14 +34,16 @@ import (
 	tidbmeta "github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/structure"
-	tidbtable "github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	formatutil "github.com/pingcap/tidb/pkg/util/format"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -91,45 +93,7 @@ func (*packedTableMeta) AvgRowLength() uint64        { return 0 }
 func (*packedTableMeta) HasImplicitRowID() bool      { return false }
 
 func packedColumnType(column *model.ColumnInfo) string {
-	if column.GetCharset() == charset.CharsetBin {
-		switch column.GetType() {
-		case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString,
-			mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
-			return "BLOB"
-		}
-	}
-	switch column.GetType() {
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-		return "BIGINT"
-	case mysql.TypeFloat:
-		return "FLOAT"
-	case mysql.TypeDouble:
-		return "DOUBLE"
-	case mysql.TypeNewDecimal:
-		return "DECIMAL"
-	case mysql.TypeBit:
-		return "BIT"
-	case mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob, mysql.TypeGeometry:
-		return "BLOB"
-	case mysql.TypeDate, mysql.TypeNewDate:
-		return "DATE"
-	case mysql.TypeDatetime:
-		return "DATETIME"
-	case mysql.TypeTimestamp:
-		return "TIMESTAMP"
-	case mysql.TypeDuration:
-		return "TIME"
-	case mysql.TypeYear:
-		return "YEAR"
-	case mysql.TypeEnum:
-		return "ENUM"
-	case mysql.TypeSet:
-		return "SET"
-	case mysql.TypeJSON:
-		return "JSON"
-	default:
-		return "VARCHAR"
-	}
+	return strings.ToUpper(types.TypeToStr(column.GetType(), column.GetCharset()))
 }
 
 type packedTableData struct {
@@ -209,7 +173,6 @@ type packedRowIter struct {
 	key              []byte
 	value            []byte
 	args             []any
-	defaults         expression.BuildContext
 	err              error
 	hasRow           bool
 }
@@ -234,10 +197,7 @@ func (i *packedRowIter) decode(receiver RowReceiver) error {
 		}
 		i.decoder = decoder
 	}
-	if i.defaults == nil {
-		i.defaults = exprstatic.NewExprContext()
-	}
-	values, err := i.decoder.decode(i.table, i.key, i.value, i.defaults)
+	values, err := i.decoder.decode(i.key, i.value)
 	if err != nil {
 		return err
 	}
@@ -254,7 +214,7 @@ func (i *packedRowIter) decode(receiver RowReceiver) error {
 			*destination = nil
 			continue
 		}
-		data, err := values[index].ToBytes()
+		data, err := packedDatumBytes(i.decoder.columns[index], &values[index])
 		if err != nil {
 			return errors.Annotatef(err, "format packed backup column %d", index)
 		}
@@ -264,6 +224,19 @@ func (i *packedRowIter) decode(receiver RowReceiver) error {
 		}
 	}
 	return nil
+}
+
+func packedDatumBytes(column *model.ColumnInfo, value *types.Datum) ([]byte, error) {
+	switch column.GetType() {
+	case mysql.TypeFloat:
+		return formatutil.AppendFormatFloat(nil, float64(value.GetFloat32()), types.UnspecifiedLength, 32), nil
+	case mysql.TypeDouble:
+		return formatutil.AppendFormatFloat(nil, value.GetFloat64(), types.UnspecifiedLength, 64), nil
+	case mysql.TypeYear:
+		return formatutil.AppendFormatYear(nil, value.GetInt64()), nil
+	default:
+		return value.ToBytes()
+	}
 }
 
 func (i *packedRowIter) Next() {
@@ -328,85 +301,76 @@ func (i *packedRowIter) readNext() {
 }
 
 type packedRowDecoder struct {
-	columns             []*model.ColumnInfo
-	columnTypes         map[int64]*types.FieldType
-	commonHandleOffsets map[int64]int
+	columns     []*model.ColumnInfo
+	fieldTypes  []*types.FieldType
+	schema      *expression.Schema
+	table       *model.TableInfo
+	decodeCtx   expression.BuildContext
+	rowDecoder  *rowcodec.ChunkDecoder
+	decodeChunk *chunk.Chunk
 }
 
 func newPackedRowDecoder(table *model.TableInfo) (*packedRowDecoder, error) {
-	columns := packedVisibleColumns(table)
-	columnTypes := make(map[int64]*types.FieldType, len(columns))
-	for _, column := range columns {
-		if !table.PKIsHandle || !mysql.HasPriKeyFlag(column.GetFlag()) {
-			columnTypes[column.ID] = &column.FieldType
-		}
-	}
-	commonHandleOffsets, err := packedCommonHandleColumnOffsets(table)
-	if err != nil {
+	if err := validatePackedCommonHandle(table); err != nil {
 		return nil, err
 	}
+	columns := packedVisibleColumns(table)
+	fieldTypes := make([]*types.FieldType, len(columns))
+	schemaColumns := make([]*expression.Column, len(columns))
+	for index, column := range columns {
+		fieldTypes[index] = &column.FieldType
+		schemaColumns[index] = &expression.Column{ID: column.ID, RetType: &column.FieldType}
+	}
+	schema := expression.NewSchema(schemaColumns...)
+	decodeCtx := exprstatic.NewExprContext()
 	return &packedRowDecoder{
-		columns:             columns,
-		columnTypes:         columnTypes,
-		commonHandleOffsets: commonHandleOffsets,
+		columns:     columns,
+		fieldTypes:  fieldTypes,
+		schema:      schema,
+		table:       table,
+		decodeCtx:   decodeCtx,
+		rowDecoder:  executor.NewRowDecoderWithBuildContext(decodeCtx, time.UTC, schema, table),
+		decodeChunk: chunk.New(fieldTypes, 1, 1),
 	}, nil
 }
 
+func validatePackedCommonHandle(table *model.TableInfo) error {
+	if !table.IsCommonHandle {
+		return nil
+	}
+	primary := table.GetPrimaryKey()
+	if primary == nil || !primary.Primary {
+		return errors.Errorf("packed backup table %q has a common handle without a primary index", table.Name.O)
+	}
+	for _, indexColumn := range primary.Columns {
+		if indexColumn.Offset < 0 || indexColumn.Offset >= len(table.Columns) {
+			return errors.Errorf("packed backup table %q has invalid primary column offset %d", table.Name.O, indexColumn.Offset)
+		}
+	}
+	return nil
+}
+
 func (d *packedRowDecoder) decode(
-	table *model.TableInfo,
 	key, value []byte,
-	defaults expression.BuildContext,
 ) ([]types.Datum, error) {
 	handle, err := tablecodec.DecodeRowKey(key)
 	if err != nil {
 		return nil, errors.Annotatef(err, "decode packed backup row key %x", key)
 	}
-	rowMap, err := tablecodec.DecodeRowToDatumMap(value, d.columnTypes, time.UTC)
-	if err != nil {
+	d.decodeChunk.Reset()
+	if err := executor.DecodeRowValToChunkWithBuildContext(
+		d.decodeCtx,
+		time.UTC,
+		d.schema,
+		d.table,
+		handle,
+		value,
+		d.decodeChunk,
+		d.rowDecoder,
+	); err != nil {
 		return nil, errors.Annotatef(err, "decode packed backup row value at key %x", key)
 	}
-	values := make([]types.Datum, 0, len(d.columns))
-	for _, column := range d.columns {
-		decoded, err := decodePackedColumn(table, column, handle, rowMap, d.commonHandleOffsets, defaults)
-		if err != nil {
-			return nil, errors.Annotatef(err, "decode column %q at packed backup key %x", column.Name.O, key)
-		}
-		values = append(values, decoded)
-	}
-	return values, nil
-}
-
-func decodePackedColumn(
-	table *model.TableInfo,
-	column *model.ColumnInfo,
-	handle kv.Handle,
-	rowMap map[int64]types.Datum,
-	commonHandleOffsets map[int64]int,
-	defaults expression.BuildContext,
-) (types.Datum, error) {
-	if table.PKIsHandle && mysql.HasPriKeyFlag(column.GetFlag()) {
-		var value types.Datum
-		if mysql.HasUnsignedFlag(column.GetFlag()) {
-			value.SetUint64(uint64(handle.IntValue()))
-		} else {
-			value.SetInt64(handle.IntValue())
-		}
-		return value, nil
-	}
-	if handleOffset, ok := commonHandleOffsets[column.ID]; ok {
-		if handleOffset >= handle.NumCols() {
-			return types.Datum{}, errors.Errorf("common handle has %d columns, need offset %d", handle.NumCols(), handleOffset)
-		}
-		_, value, err := codec.DecodeOne(handle.EncodedCol(handleOffset))
-		if err != nil {
-			return types.Datum{}, err
-		}
-		return tablecodec.Unflatten(value, &column.FieldType, time.UTC)
-	}
-	if value, ok := rowMap[column.ID]; ok {
-		return value, nil
-	}
-	return tidbtable.GetColOriginDefaultValue(defaults, column)
+	return d.decodeChunk.GetRow(0).GetDatumRow(d.fieldTypes), nil
 }
 
 func packedVisibleColumns(table *model.TableInfo) []*model.ColumnInfo {
@@ -439,24 +403,6 @@ func packedPhysicalTableRanges(table *model.TableInfo) []packedRange {
 		ranges = append(ranges, packedRange{start: start, end: start.PrefixNext()})
 	}
 	return ranges
-}
-
-func packedCommonHandleColumnOffsets(table *model.TableInfo) (map[int64]int, error) {
-	offsets := make(map[int64]int)
-	if !table.IsCommonHandle {
-		return offsets, nil
-	}
-	primary := table.GetPrimaryKey()
-	if primary == nil || !primary.Primary {
-		return nil, errors.Errorf("packed backup table %q has a common handle without a primary index", table.Name.O)
-	}
-	for handleOffset, indexColumn := range primary.Columns {
-		if indexColumn.Offset < 0 || indexColumn.Offset >= len(table.Columns) {
-			return nil, errors.Errorf("packed backup table %q has invalid primary column offset %d", table.Name.O, indexColumn.Offset)
-		}
-		offsets[table.Columns[indexColumn.Offset].ID] = handleOffset
-	}
-	return offsets, nil
 }
 
 type packedRangeScanner func(
@@ -566,9 +512,11 @@ func packedCreateDatabaseSQL(database *model.DBInfo) (string, error) {
 	return output.String(), nil
 }
 
-func packedCreateTableSQL(table *model.TableInfo) (string, error) {
+func packedCreateTableSQL(database ast.CIStr, table *model.TableInfo) (string, error) {
 	var output bytes.Buffer
-	if err := executor.ConstructResultOfShowCreateTable(mock.NewContextDeprecated(), table, autoid.Allocators{}, &output); err != nil {
+	if err := executor.ConstructResultOfShowCreateTableWithDB(
+		mock.NewContextDeprecated(), database, table, autoid.Allocators{}, &output,
+	); err != nil {
 		return "", errors.Annotatef(err, "build schema for packed table %q", table.Name.O)
 	}
 	return output.String(), nil
@@ -635,7 +583,7 @@ func (d *Dumper) dumpPacked() (resultErr error) {
 			tableCount++
 			var createSQL string
 			if !d.conf.NoSchemas {
-				createSQL, err = packedCreateTableSQL(table)
+				createSQL, err = packedCreateTableSQL(database.Name, table)
 				if err != nil {
 					close(taskIn)
 					_ = wg.Wait()

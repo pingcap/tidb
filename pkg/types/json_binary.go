@@ -332,9 +332,8 @@ func (bj BinaryJSON) valEntryGet(valEntryOff int) BinaryJSON {
 
 func (bj BinaryJSON) marshalFloat64To(buf []byte) ([]byte, error) {
 	// NOTE: copied from Go standard library.
-	// TODO: this function is very similar to `util.AppendFormatFloat`, it'd be better to unify them.
-	// Now the `util.AppendFormatFloat` is an internal function of `server` package, and the `marshalFloat64To`
-	// handles the tailing `.0` specially, so they are not merged yet.
+	// This is similar to `format.AppendFormatFloat`, but JSON rejects non-finite values and preserves a
+	// trailing `.0` for integer-valued floats, so the two formatters have different contracts.
 	f := bj.GetFloat64()
 	if math.IsInf(f, 0) || math.IsNaN(f) {
 		return buf, &json.UnsupportedValueError{Str: strconv.FormatFloat(f, 'g', -1, 64)}
@@ -349,7 +348,7 @@ func (bj BinaryJSON) marshalFloat64To(buf []byte) ([]byte, error) {
 	ffmt := byte('f')
 	// Note: Must use float32 comparisons for underlying float32 value to get precise cutoffs right.
 	if abs != 0 {
-		// The scientific notation range for MySQL is different from Go JSON. Ref `util.AppendFormatFloat`
+		// The scientific notation range for MySQL is different from Go JSON. Ref `format.AppendFormatFloat`.
 		if abs < 1e-15 || abs >= 1e15 {
 			ffmt = 'e'
 		}
