@@ -21,13 +21,8 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
->>>>>>> 128130e72c8 (executor: optimize join chunk initial capacity (#69049))
 )
 
 var (

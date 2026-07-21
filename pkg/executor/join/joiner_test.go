@@ -50,7 +50,7 @@ func TestJoinerOtherConditionChunkUsesInitChunkSize(t *testing.T) {
 	conditions := []expression.Expression{expression.NewOne()}
 	defaultInner := []types.Datum{types.NewIntDatum(0)}
 
-	for _, joinType := range []base.JoinType{base.InnerJoin, base.LeftOuterJoin, base.RightOuterJoin} {
+	for _, joinType := range []logicalop.JoinType{logicalop.InnerJoin, logicalop.LeftOuterJoin, logicalop.RightOuterJoin} {
 		ctx := defaultCtx()
 		initChunkSize := 8
 		ctx.GetSessionVars().InitChunkSize = initChunkSize
