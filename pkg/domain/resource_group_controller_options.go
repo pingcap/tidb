@@ -49,8 +49,13 @@ func newResourceGroupsControllerOptions() []rmclient.ResourceControlCreateOption
 	}
 	if deploymode.IsStarter() && config.GetGlobalConfig().StarterParams.EnableGetResourceGroupDegraded {
 		opts = append(opts,
-			// Keep degraded-group synthesis inside the controller so degraded
-			// resource groups are not inserted into the controller cache.
+			// This Starter-only degraded path is a best-effort UX fallback for
+			// temporary GetResourceGroup failures. It provides a permissive
+			// group so user requests do not fail immediately; it is not intended
+			// to define a precise cross-RPC RU limit or response-side accounting
+			// contract while resource manager is unavailable. Keep synthesis
+			// inside the controller so degraded groups are not inserted into the
+			// normal metadata cache.
 			rmclient.WithDegradedRUSettings(newDefaultDegradedRUSettings()),
 			rmclient.WithDegradedModeWaitDuration(defaultDegradedModeWaitTimeout),
 			rmclient.WithWaitRetryInterval(tokenWaitRetryInterval),
