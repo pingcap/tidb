@@ -54,7 +54,7 @@ func (mgr *TaskManager) CancelTask(ctx context.Context, taskID int64) error {
 }
 
 // CancelTaskByKeySession cancels task by key using input session.
-func (*TaskManager) CancelTaskByKeySession(ctx context.Context, se sessionctx.Context, taskKey string) (bool, error) {
+func (*TaskManager) CancelTaskByKeySession(ctx context.Context, se sessionctx.Context, taskKey string) error {
 	_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
 		`update mysql.tidb_global_task
 		 set state = %?,
@@ -63,10 +63,7 @@ func (*TaskManager) CancelTaskByKeySession(ctx context.Context, se sessionctx.Co
 		proto.TaskStateCancelling, taskKey, proto.TaskStatePending, proto.TaskStateRunning,
 		proto.TaskStateAwaitingResolution,
 	)
-	if err != nil {
-		return false, err
-	}
-	return se.GetSessionVars().StmtCtx.AffectedRows() != 0, nil
+	return err
 }
 
 // FailTask implements the scheduler.TaskManager interface.

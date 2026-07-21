@@ -193,6 +193,37 @@ func TestSubmitTaskNextgen(t *testing.T) {
 			Check(testkit.Rows("0"))
 	})
 
+	t.Run("cancel user keyspace job with an already reverted DXF task", func(t *testing.T) {
+		sysKSTK.MustExec("delete from mysql.tidb_import_jobs")
+		sysKSTK.MustExec("delete from mysql.tidb_global_task")
+		userKSTK.MustExec("delete from mysql.tidb_import_jobs")
+		userKSTK.MustExec("delete from mysql.tidb_global_task")
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.KeyspaceName = "ks"
+		})
+		sysKSTaskMgr := manuallyInitFn(t, userKSStore, sysKSStore)
+
+		conn := userKSTK.Session().GetSQLExecutor()
+		jobID, err := importer.CreateJob(ctx, conn, "test", "t", 1,
+			userKSTK.Session().GetSessionVars().User.String(), "", &importer.ImportParameters{}, 123)
+		require.NoError(t, err)
+		taskID, err := sysKSTaskMgr.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, "", 1, "", 0, proto.ExtraParams{}, nil)
+		require.NoError(t, err)
+		// This is a synthetic state, not a normal real-world scheduler outcome:
+		// onReverting calls importScheduler.OnDone to fail or cancel the job before
+		// RevertedTask marks the DXF task reverted. Bypassing OnDone here isolates
+		// the check that an existing terminal task is not treated as a missing task.
+		require.NoError(t, sysKSTaskMgr.RevertTask(ctx, taskID, proto.TaskStatePending, fmt.Errorf("already reverted")))
+		require.NoError(t, sysKSTaskMgr.RevertedTask(ctx, taskID))
+
+		userKSTK.MustExec(fmt.Sprintf("cancel import job %d", jobID))
+
+		userKSTK.MustQuery("select status from mysql.tidb_import_jobs where id = ?", jobID).
+			Check(testkit.Rows("pending"))
+		sysKSTK.MustQuery("select state from mysql.tidb_global_task where id = ?", taskID).
+			Check(testkit.Rows(string(proto.TaskStateReverted)))
+	})
+
 	t.Run("cancel user keyspace job treats task created after miss as dangling", func(t *testing.T) {
 		sysKSTK.MustExec("delete from mysql.tidb_import_jobs")
 		sysKSTK.MustExec("delete from mysql.tidb_global_task")
