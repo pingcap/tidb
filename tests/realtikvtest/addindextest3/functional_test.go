@@ -282,7 +282,7 @@ func TestAddIndexPresplitFunctional(t *testing.T) {
 	tk.MustExec("alter table t add index idx(b) pre_split_regions = (between (1) and (2) regions 3);")
 	tk.MustExec("drop table t;")
 
-	// Auto split uses the local reorg path, while DXF and fast reorg are always enabled on NextGen.
+	// Auto presplit uses the local reorg path, while DXF and fast reorg are always enabled on NextGen.
 	if kerneltype.IsNextGen() {
 		return
 	}
@@ -294,10 +294,10 @@ func TestAddIndexPresplitFunctional(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("set @@global.tidb_enable_dist_task = %q", fmt.Sprint(originalDistTask)))
 	})
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockAutoSplitHotRegionConfig", "return(10)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockAutoPresplitConfig", "return(10)")
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = off")
 	tk.MustExec("set @@global.tidb_enable_dist_task = off")
-	tk.MustExec("set @@session.tidb_ddl_enable_auto_split_hot_region = on")
+	tk.MustExec("set @@session.tidb_ddl_enable_auto_split_index_regions = on")
 	tk.MustExec("create table t (a int primary key, b int)")
 	for i := range 40 {
 		b := i

@@ -1212,13 +1212,13 @@ SwitchIndexState:
 			job.State = model.JobStateCancelled
 			return ver, err
 		}
-		enableAutoSplitHotRegion := false
-		if val, ok := job.GetSystemVars(vardef.TiDBDDLEnableAutoSplitHotRegion); ok {
-			enableAutoSplitHotRegion = variable.TiDBOptOn(val)
+		enableAutoPresplit := false
+		if val, ok := job.GetSystemVars(vardef.TiDBDDLEnableAutoSplitIndexRegions); ok {
+			enableAutoPresplit = variable.TiDBOptOn(val)
 		}
 		err = preSplitIndexRegions(
 			jobCtx.stepCtx, w.sess.Context, jobCtx.store, tblInfo, allIndexInfos,
-			job.ReorgMeta, args, w.ddlCtx.statsHandle, enableAutoSplitHotRegion)
+			job.ReorgMeta, args, w.ddlCtx.statsHandle, enableAutoPresplit)
 		if err != nil {
 			if dbterror.ErrPausedDDLJob.Equal(err) {
 				return ver, nil

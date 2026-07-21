@@ -113,27 +113,27 @@ func TestShowCommentsFromJob(t *testing.T) {
 
 	job.ReorgMeta = &model.DDLReorgMeta{
 		ReorgTp: model.ReorgTypeTxn,
-		AutoSplitHotRegionResults: []model.AutoSplitHotRegionResult{{
+		AutoPresplitIndexRegionResults: []model.AutoPresplitIndexRegionResult{{
 			IndexName:            "idx",
-			Status:               model.AutoSplitHotRegionStatusSplit,
+			Status:               model.AutoPresplitIndexRegionStatusSplit,
 			SplitKeyCount:        3,
 			SplitRegionCount:     3,
 			ScatteredRegionCount: 2,
 		}},
 	}
 	res = showCommentsFromJob(job)
-	require.Equal(t, "txn, auto_split_hot_region=idx(split, split_keys=3, split_regions=3, scattered_regions=2)", res)
+	require.Equal(t, "txn, auto_presplit_index_region=idx(split, split_keys=3, split_regions=3, scattered_regions=2)", res)
 
 	job.ReorgMeta = &model.DDLReorgMeta{
 		ReorgTp: model.ReorgTypeTxn,
-		AutoSplitHotRegionResults: []model.AutoSplitHotRegionResult{{
+		AutoPresplitIndexRegionResults: []model.AutoPresplitIndexRegionResult{{
 			IndexName: "idx",
-			Status:    model.AutoSplitHotRegionStatusSkipped,
+			Status:    model.AutoPresplitIndexRegionStatusSkipped,
 			Reason:    "stats pseudo",
 		}},
 	}
 	res = showCommentsFromJob(job)
-	require.Equal(t, "txn, auto_split_hot_region=idx(skipped, reason=\"stats pseudo\")", res)
+	require.Equal(t, "txn, auto_presplit_index_region=idx(skipped, reason=\"stats pseudo\")", res)
 }
 
 func TestShowCommentsFromSubJob(t *testing.T) {
@@ -160,13 +160,13 @@ func TestShowCommentsFromSubJob(t *testing.T) {
 	res = showCommentsFromSubjob(subJob, false, true)
 	require.Equal(t, "ingest", res)
 
-	subJob.AutoSplitHotRegionResults = []model.AutoSplitHotRegionResult{{
+	subJob.AutoPresplitIndexRegionResults = []model.AutoPresplitIndexRegionResult{{
 		IndexName:        "idx",
-		Status:           model.AutoSplitHotRegionStatusFailed,
+		Status:           model.AutoPresplitIndexRegionStatusFailed,
 		SplitKeyCount:    3,
 		SplitRegionCount: 1,
 		Reason:           "mock split error",
 	}}
 	res = showCommentsFromSubjob(subJob, true, true)
-	require.Equal(t, "ingest, DXF, cloud, auto_split_hot_region=idx(failed, split_keys=3, split_regions=1, reason=\"mock split error\")", res)
+	require.Equal(t, "ingest, DXF, cloud, auto_presplit_index_region=idx(failed, split_keys=3, split_regions=1, reason=\"mock split error\")", res)
 }

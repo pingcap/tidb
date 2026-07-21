@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/generic"
 )
 
-type autoSplitStatsProvider interface {
+type autoPresplitStatsProvider interface {
 	GetPhysicalTableStats(physicalTableID int64, tblInfo *model.TableInfo) *statistics.Table
 	LoadColumnTopN(
 		ctx context.Context,
@@ -38,7 +38,7 @@ type autoSplitStatsProvider interface {
 	) (*statistics.TopN, error)
 }
 
-type autoSplitHotRegionConfig struct {
+type autoPresplitConfig struct {
 	minTableRows           int64
 	maxTopNKeysPerPhysical int
 	topNMinCount           uint64
@@ -46,15 +46,15 @@ type autoSplitHotRegionConfig struct {
 	minStatsHealthy        int64
 }
 
-func getAutoSplitHotRegionConfig() autoSplitHotRegionConfig {
-	cfg := autoSplitHotRegionConfig{
+func getAutoPresplitConfig() autoPresplitConfig {
+	cfg := autoPresplitConfig{
 		minTableRows:           1_000_000,
 		maxTopNKeysPerPhysical: 100,
 		topNMinCount:           500_000,
 		topNMinRatio:           0.01,
 		minStatsHealthy:        80,
 	}
-	failpoint.Inject("mockAutoSplitHotRegionConfig", func(val failpoint.Value) {
+	failpoint.Inject("mockAutoPresplitConfig", func(val failpoint.Value) {
 		if minRows, ok := val.(int); ok && minRows > 0 {
 			cfg.applyTestConfigOverrides(minRows)
 		}
@@ -62,7 +62,7 @@ func getAutoSplitHotRegionConfig() autoSplitHotRegionConfig {
 	return cfg
 }
 
-func (cfg *autoSplitHotRegionConfig) applyTestConfigOverrides(minRows int) {
+func (cfg *autoPresplitConfig) applyTestConfigOverrides(minRows int) {
 	cfg.minTableRows = int64(minRows)
 	cfg.maxTopNKeysPerPhysical = 4
 	cfg.topNMinCount = uint64(minRows)
@@ -70,13 +70,13 @@ func (cfg *autoSplitHotRegionConfig) applyTestConfigOverrides(minRows int) {
 	cfg.minStatsHealthy = 0
 }
 
-func planAutoSplitIndexRegions(
+func planAutoPresplitIndexRegions(
 	ctx context.Context,
 	sctx sessionctx.Context,
-	statsProvider autoSplitStatsProvider,
+	statsProvider autoPresplitStatsProvider,
 	tblInfo *model.TableInfo,
 	idxInfo *model.IndexInfo,
-	cfg autoSplitHotRegionConfig,
+	cfg autoPresplitConfig,
 ) ([][]byte, string, error) {
 	if tblInfo.GetPartitionInfo() != nil {
 		return nil, "partitioned table", nil
@@ -114,7 +114,7 @@ func planAutoSplitIndexRegions(
 		return nil, fmt.Sprintf("row count %d below threshold %d", statsTbl.RealtimeCount, cfg.minTableRows), nil
 	}
 
-	// Auto-splitting intentionally uses only the leading index column. The available
+	// Auto presplit intentionally uses only the leading index column. The available
 	// per-column statistics cannot describe later-column distributions under a hot
 	// leading-column value, and deriving such split keys would require reading table data.
 	leadingIdxCol := idxInfo.Columns[0]
@@ -144,7 +144,7 @@ func planAutoSplitIndexRegions(
 		topN = colStats.TopN
 	}
 
-	topNRows, err := buildAutoSplitTopNRows(sctx, statsTbl, topN, leadingCol, cfg)
+	topNRows, err := buildAutoPresplitTopNRows(sctx, statsTbl, topN, leadingCol, cfg)
 	if err != nil {
 		return nil, "failed to build TopN split keys", err
 	}
@@ -156,16 +156,16 @@ func planAutoSplitIndexRegions(
 		return nil, "failed to build TopN split keys", err
 	}
 
-	splitKeys = sortAndDedupeAutoSplitKeys(splitKeys)
+	splitKeys = sortAndDedupeAutoPresplitKeys(splitKeys)
 	return splitKeys, "", nil
 }
 
-func buildAutoSplitTopNRows(
+func buildAutoPresplitTopNRows(
 	sctx sessionctx.Context,
 	statsTbl *statistics.Table,
 	topN *statistics.TopN,
 	colInfo *model.ColumnInfo,
-	cfg autoSplitHotRegionConfig,
+	cfg autoPresplitConfig,
 ) ([][]types.Datum, error) {
 	if cfg.maxTopNKeysPerPhysical == 0 || topN == nil || topN.Num() == 0 {
 		return nil, nil
@@ -192,8 +192,8 @@ func buildAutoSplitTopNRows(
 
 	topNRows := make([][]types.Datum, 0, len(selectedTopN))
 	for _, topNItem := range selectedTopN {
-		datum, err := statistics.TopNColumnValueToDatum(
-			topNItem, colInfo.GetType(), sctx.GetSessionVars().Location())
+		datum, err := statistics.DecodeColumnTopNValue(
+			topNItem.Encoded, colInfo.GetType(), sctx.GetSessionVars().Location())
 		if err != nil {
 			return nil, err
 		}
@@ -218,7 +218,7 @@ func buildAutoSplitTopNRows(
 	return topNRows, nil
 }
 
-func sortAndDedupeAutoSplitKeys(keys [][]byte) [][]byte {
+func sortAndDedupeAutoPresplitKeys(keys [][]byte) [][]byte {
 	keys = slices.DeleteFunc(keys, func(key []byte) bool { return len(key) == 0 })
 	slices.SortFunc(keys, bytes.Compare)
 	return slices.CompactFunc(keys, bytes.Equal)

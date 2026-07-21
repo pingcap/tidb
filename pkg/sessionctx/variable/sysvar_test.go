@@ -950,18 +950,39 @@ func TestSetTIDBFastDDL(t *testing.T) {
 	require.Equal(t, vardef.Off, val)
 }
 
-func TestSetTiDBDDLEnableAutoSplitHotRegion(t *testing.T) {
+func TestSetTiDBDDLEnableAutoSplitIndexRegions(t *testing.T) {
 	vars := NewSessionVars(nil)
-	autoSplit := GetSysVar(vardef.TiDBDDLEnableAutoSplitHotRegion)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	autoPresplit := GetSysVar(vardef.TiDBDDLEnableAutoSplitIndexRegions)
 
-	require.Equal(t, vardef.Off, autoSplit.Value)
-	require.Equal(t, vardef.TypeBool, autoSplit.Type)
-	require.True(t, autoSplit.HasGlobalScope())
-	require.True(t, autoSplit.HasSessionScope())
+	require.Equal(t, vardef.Off, autoPresplit.Value)
+	require.Equal(t, vardef.TypeBool, autoPresplit.Type)
+	require.True(t, autoPresplit.HasGlobalScope())
+	require.True(t, autoPresplit.HasSessionScope())
 
-	normalizedVal, err := autoSplit.Validate(vars, "1", vardef.ScopeSession)
+	normalizedVal, err := autoPresplit.Validate(vars, "1", vardef.ScopeSession)
 	require.NoError(t, err)
 	require.Equal(t, vardef.On, normalizedVal)
+
+	require.NoError(t, vars.SetSystemVar(vardef.TiDBDDLEnableAutoSplitIndexRegions, "1"))
+	val, ok := vars.GetSystemVar(vardef.TiDBDDLEnableAutoSplitIndexRegions)
+	require.True(t, ok)
+	require.Equal(t, vardef.On, val)
+	require.NoError(t, vars.SetSystemVar(vardef.TiDBDDLEnableAutoSplitIndexRegions, "0"))
+	val, ok = vars.GetSystemVar(vardef.TiDBDDLEnableAutoSplitIndexRegions)
+	require.True(t, ok)
+	require.Equal(t, vardef.Off, val)
+
+	require.NoError(t, mock.SetGlobalSysVar(context.Background(), vardef.TiDBDDLEnableAutoSplitIndexRegions, "1"))
+	val, err = mock.GetGlobalSysVar(vardef.TiDBDDLEnableAutoSplitIndexRegions)
+	require.NoError(t, err)
+	require.Equal(t, vardef.On, val)
+	require.NoError(t, mock.SetGlobalSysVar(context.Background(), vardef.TiDBDDLEnableAutoSplitIndexRegions, "0"))
+	val, err = mock.GetGlobalSysVar(vardef.TiDBDDLEnableAutoSplitIndexRegions)
+	require.NoError(t, err)
+	require.Equal(t, vardef.Off, val)
 }
 
 func TestSetTIDBDiskQuota(t *testing.T) {
