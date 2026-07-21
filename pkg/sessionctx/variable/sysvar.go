@@ -1835,6 +1835,17 @@ var defaultSysVars = []*SysVar{
 			vardef.HistoricalStatsDuration.Store(d)
 			return nil
 		}},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBPlanReplayerGCDuration, Value: vardef.DefTiDBPlanReplayerGCDuration.String(), Type: vardef.TypeDuration, MaxValue: uint64(time.Hour * 24 * 365),
+		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return vardef.GetPlanReplayerGCDuration().String(), nil
+		}, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			d, err := time.ParseDuration(s)
+			if err != nil {
+				return err
+			}
+			vardef.SetPlanReplayerGCDuration(d)
+			return nil
+		}},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBLowResolutionTSOUpdateInterval, Value: strconv.Itoa(vardef.DefTiDBLowResolutionTSOUpdateInterval), Type: vardef.TypeInt, MinValue: 10, MaxValue: 60000,
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			vardef.LowResolutionTSOUpdateInterval.Store(uint32(TidbOptInt64(val, vardef.DefTiDBLowResolutionTSOUpdateInterval)))
