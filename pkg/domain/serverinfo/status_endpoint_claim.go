@@ -82,7 +82,7 @@ func newStatusEndpointClaim(etcdClient *clientv3.Client, info *ServerInfo, enabl
 	return claim
 }
 
-func buildStatusEndpointClaim(info *ServerInfo, reportStatus bool) (string, string) {
+func buildStatusEndpointClaim(info *ServerInfo, reportStatus bool) (endpoint, claimKey string) {
 	if !reportStatus || info.IsAssumed() || info.StatusPort == 0 {
 		return "", ""
 	}
@@ -100,9 +100,10 @@ func buildStatusEndpointClaim(info *ServerInfo, reportStatus bool) (string, stri
 		return "", ""
 	}
 
-	endpoint := net.JoinHostPort(host, strconv.Itoa(int(info.StatusPort)))
+	endpoint = net.JoinHostPort(host, strconv.Itoa(int(info.StatusPort)))
 	segment := base64.RawURLEncoding.EncodeToString([]byte(endpoint))
-	return endpoint, fmt.Sprintf("%s/%s", serverStatusAddressPath, segment)
+	claimKey = fmt.Sprintf("%s/%s", serverStatusAddressPath, segment)
+	return endpoint, claimKey
 }
 
 func (c *statusEndpointClaim) check(ctx context.Context, lease clientv3.LeaseID) {
