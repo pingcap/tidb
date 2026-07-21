@@ -1094,20 +1094,8 @@ type StarterParams struct {
 	// ManagerAddr is the TiDB manager address used by the shutdown notifier.
 	// When empty and EnableManagerNotifier is true, the Starter path derives the service address from starter additional params.
 	ManagerAddr string `toml:"manager-addr" json:"manager-addr,omitempty"`
-	// ManagerNamespace captures the runtime manager namespace from --starter-additional-params.
-	// It is command-line derived runtime metadata rather than file-backed config.
-	ManagerNamespace string `toml:"-" json:"-"`
-	// PodName captures the runtime pod name from --starter-additional-params.
-	// It is command-line derived runtime metadata rather than file-backed config.
-	PodName string `toml:"-" json:"-"`
-	// PodIP captures the runtime pod IP from --starter-additional-params.
-	// It is command-line derived runtime metadata rather than file-backed config.
-	PodIP string `toml:"-" json:"-"`
-	// PodNamespace captures the runtime pod namespace from --starter-additional-params.
-	// It is command-line derived runtime metadata rather than file-backed config.
-	PodNamespace string `toml:"-" json:"-"`
 	// EnableGetResourceGroupDegraded enables degraded GetResourceGroup handling for resource control.
-	// It is command-line derived runtime metadata rather than file-backed config.
+	// It is populated from --starter-additional-params and is not file-backed config.
 	EnableGetResourceGroupDegraded bool `toml:"-" json:"-"`
 	// MaxImportDataSize is the maximum total real source data size allowed for IMPORT INTO.
 	// Zero means unlimited.

@@ -1416,10 +1416,6 @@ func applyStarterAdditionalParams(cfg *config.Config, raw string) error {
 	if err != nil {
 		return err
 	}
-	cfg.StarterParams.ManagerNamespace = params.managerNamespace
-	cfg.StarterParams.PodName = params.podName
-	cfg.StarterParams.PodIP = params.podIP
-	cfg.StarterParams.PodNamespace = params.podNamespace
 	cfg.StarterParams.EnableGetResourceGroupDegraded = params.enableGetResourceGroupDegraded
 	return nil
 }
@@ -1447,18 +1443,23 @@ func createMgrClientForStarter() (tidbmanager.Client, error) {
 		return nil, err
 	}
 
+	params, err := parseStarterAdditionalParams(getStarterAdditionalParams())
+	if err != nil {
+		return nil, err
+	}
+
 	managerAddr := cfg.StarterParams.ManagerAddr
 	if managerAddr == "" {
-		managerNs := cfg.StarterParams.ManagerNamespace
+		managerNs := params.managerNamespace
 		if managerNs == "" {
 			return nil, fmt.Errorf("manager notifier requires manager-addr config or manager-namespace in --starter-additional-params")
 		}
 		managerAddr = fmt.Sprintf("manager-server.%s.svc:8000", managerNs)
 	}
 
-	podName := cfg.StarterParams.PodName
-	podIP := cfg.StarterParams.PodIP
-	namespace := cfg.StarterParams.PodNamespace
+	podName := params.podName
+	podIP := params.podIP
+	namespace := params.podNamespace
 	if podName == "" || podIP == "" || namespace == "" {
 		return nil, fmt.Errorf("manager notifier requires --starter-additional-params with pod-name, pod-ip and pod-namespace: pod-name=%q, pod-ip=%q, pod-namespace=%q",
 			podName, podIP, namespace)

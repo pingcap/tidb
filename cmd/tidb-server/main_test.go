@@ -92,9 +92,6 @@ func TestOverrideConfigKeyspaceActivateMode(t *testing.T) {
 	cfg.DeployMode = deploymode.Starter
 	overrideConfig(cfg, fset)
 	require.True(t, cfg.KeyspaceActivateMode)
-	require.Equal(t, "pod-1", cfg.StarterParams.PodName)
-	require.Equal(t, "10.0.0.1", cfg.StarterParams.PodIP)
-	require.Equal(t, "ns-1", cfg.StarterParams.PodNamespace)
 	require.True(t, cfg.StarterParams.EnableGetResourceGroupDegraded)
 	require.Equal(t, "pod-name=pod-1,pod-ip=10.0.0.1,pod-namespace=ns-1,enable-get-resource-group-degraded=true", *starterAdditionalParams)
 }
@@ -213,37 +210,30 @@ func TestCreateMgrClientRequiresPodIdentityInStarter(t *testing.T) {
 	require.ErrorContains(t, err, "manager notifier requires --starter-additional-params")
 
 	duplicatedParam := "pod-name=pod-1,pod-name=pod-2,pod-ip=10.0.0.1,pod-namespace=ns-1"
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.StarterParams.ManagerNamespace = ""
-		conf.StarterParams.PodName = ""
-		conf.StarterParams.PodIP = ""
-		conf.StarterParams.PodNamespace = ""
-	})
-	err = applyStarterAdditionalParams(config.GetGlobalConfig(), duplicatedParam)
+	starterAdditionalParams = &duplicatedParam
+	_, err = createMgrClientForStarter()
 	require.ErrorContains(t, err, `starter additional param "pod-name" is duplicated`)
 
 	unknownParam := "pod-name=pod-1,pod-ip=10.0.0.1,pod-namespace=ns-1,unknown=value"
-	err = applyStarterAdditionalParams(config.GetGlobalConfig(), unknownParam)
+	starterAdditionalParams = &unknownParam
+	_, err = createMgrClientForStarter()
 	require.ErrorContains(t, err, `unknown starter additional param "unknown"`)
 
 	invalidBoolParam := "enable-get-resource-group-degraded=definitely"
-	err = applyStarterAdditionalParams(config.GetGlobalConfig(), invalidBoolParam)
+	starterAdditionalParams = &invalidBoolParam
+	_, err = createMgrClientForStarter()
 	require.ErrorContains(t, err, `starter additional param "enable-get-resource-group-degraded" must be a bool`)
 
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.StarterParams.ManagerAddr = ""
-		conf.StarterParams.ManagerNamespace = ""
-		conf.StarterParams.PodName = ""
-		conf.StarterParams.PodIP = ""
-		conf.StarterParams.PodNamespace = ""
 	})
 	missingManagerNamespace := "pod-name=pod-1,pod-ip=10.0.0.1,pod-namespace=ns-1"
-	require.NoError(t, applyStarterAdditionalParams(config.GetGlobalConfig(), missingManagerNamespace))
+	starterAdditionalParams = &missingManagerNamespace
 	_, err = createMgrClientForStarter()
 	require.ErrorContains(t, err, "manager notifier requires manager-addr config or manager-namespace in --starter-additional-params")
 
 	validParams := "manager-namespace=manager-ns,pod-name=pod-1,pod-ip=10.0.0.1,pod-namespace=ns-1"
-	require.NoError(t, applyStarterAdditionalParams(config.GetGlobalConfig(), validParams))
+	starterAdditionalParams = &validParams
 	cli, err := createMgrClientForStarter()
 	require.NoError(t, err)
 	require.NotNil(t, cli)

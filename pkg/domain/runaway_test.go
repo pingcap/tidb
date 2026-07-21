@@ -216,7 +216,6 @@ func TestResourceGroupsControllerOptions(t *testing.T) {
 		restoreResourceGroupControllerTestState(t)
 		require.NoError(t, deploymode.Set(deploymode.Starter))
 		config.UpdateGlobal(func(conf *config.Config) {
-			conf.StarterParams.PodNamespace = "starter-standard-ns"
 			conf.StarterParams.EnableGetResourceGroupDegraded = true
 		})
 
@@ -226,11 +225,10 @@ func TestResourceGroupsControllerOptions(t *testing.T) {
 		require.Equal(t, defaultDegradedModeWaitTimeout, ruConfig.DegradedModeWaitDuration)
 	})
 
-	t.Run("starter namespace alone does not enable degraded mode", func(t *testing.T) {
+	t.Run("starter without degraded flag keeps default retry settings", func(t *testing.T) {
 		restoreResourceGroupControllerTestState(t)
 		require.NoError(t, deploymode.Set(deploymode.Starter))
 		config.UpdateGlobal(func(conf *config.Config) {
-			conf.StarterParams.PodNamespace = "starter-vip-ns"
 			conf.StarterParams.EnableGetResourceGroupDegraded = false
 		})
 
