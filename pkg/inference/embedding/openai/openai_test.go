@@ -416,9 +416,8 @@ func TestOpenAIEmbedder_UnauthorizedAPIKey(t *testing.T) {
 		GetBaseURL: func() string { return badRequestServer.URL },
 	})
 	_, err = embedder.CreateEmbeddings(context.Background(), "text-embedding-3-small", texts, nil)
-	require.Error(t, err)
+	require.EqualError(t, err, "OpenAI: status code 400, message: invalid api key: [REDACTED]")
 	require.NotContains(t, err.Error(), providerKey)
-	require.ErrorContains(t, err, "invalid api key: [REDACTED]")
 
 	entries := observedLogs.FilterMessage("OpenAI API request failed").All()
 	require.Len(t, entries, 1)
@@ -439,7 +438,7 @@ func TestOpenAIEmbedder_UnauthorizedAPIKey(t *testing.T) {
 		GetBaseURL: func() string { return malformedResponseServer.URL },
 	})
 	_, err = embedder.CreateEmbeddings(context.Background(), "text-embedding-3-small", texts, nil)
-	require.EqualError(t, err, "OpenAI: status code 502")
+	require.EqualError(t, err, "OpenAI: status code 502, message: Bad Gateway")
 
 	entries = observedLogs.FilterMessage("OpenAI API request failed").All()
 	require.Len(t, entries, 2)

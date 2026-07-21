@@ -193,10 +193,10 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 			}
 			return nil, fmt.Errorf("OpenAI returns status unauthorized, check API key")
 		}
-		if message != "" {
-			return nil, fmt.Errorf("OpenAI: %s", message)
+		if message == "" {
+			message = http.StatusText(resp.StatusCode)
 		}
-		return nil, fmt.Errorf("OpenAI: status code %d", resp.StatusCode)
+		return nil, fmt.Errorf("OpenAI: status code %d, message: %s", resp.StatusCode, message)
 	}
 
 	var respObj Response

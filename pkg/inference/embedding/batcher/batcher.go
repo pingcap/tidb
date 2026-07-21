@@ -168,6 +168,7 @@ func isNilEmbedder(embedder base.Embedder) bool {
 	if embedder == nil {
 		return true
 	}
+	// An interface containing a typed nil value is itself non-nil.
 	value := reflect.ValueOf(embedder)
 	switch value.Kind() {
 	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice, reflect.UnsafePointer:
