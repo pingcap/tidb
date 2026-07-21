@@ -409,12 +409,7 @@ func cancelAndWaitImportJob(ctx context.Context, jobID int64) error {
 	}
 	taskKey := importinto.TaskKey(jobID)
 	_, err = manager.GetTaskByKey(ctx, taskKey)
-	if err != nil {
-		if !goerrors.Is(err, dxfstorage.ErrTaskNotFound) {
-			return err
-		}
-		failpoint.InjectCall("afterCancelImportTaskProbeMiss", jobID)
-	} else {
+	if err == nil {
 		if err := manager.WithNewTxn(ctx, func(se sessionctx.Context) error {
 			ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 			return manager.CancelTaskByKeySession(ctx, se, taskKey)
@@ -423,6 +418,10 @@ func cancelAndWaitImportJob(ctx context.Context, jobID int64) error {
 		}
 		return handle.WaitTaskDoneByKey(ctx, taskKey)
 	}
+	if !goerrors.Is(err, dxfstorage.ErrTaskNotFound) {
+		return err
+	}
+	failpoint.InjectCall("afterCancelImportTaskProbeMiss", jobID)
 
 	// In next-gen, the import job and DXF task are created in separate
 	// transactions. The job row can exist before the DXF task row is committed,
