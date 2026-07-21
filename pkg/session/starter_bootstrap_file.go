@@ -54,7 +54,6 @@ const (
 
 // These values are part of the existing PD keyspace metadata contract.
 const (
-	starterBranchConfigKey         = "serverless_is_branch"
 	starterBranchResetCompleteKey  = "serverless_is_branch_bootstrapped"
 	starterRestoreResetCompleteKey = "serverless_is_bootstrapped_for_restore"
 )
@@ -62,11 +61,14 @@ const (
 var (
 	starterBootstrapPlaceholderRe = regexp.MustCompile(`<[A-Za-z0-9_-]+>`)
 	starterPrivilegeResetSQL      = []string{
+		"DELETE FROM mysql.columns_priv",
 		"DELETE FROM mysql.db",
 		"DELETE FROM mysql.default_roles",
 		"DELETE FROM mysql.global_grants",
 		"DELETE FROM mysql.global_priv",
+		"DELETE FROM mysql.password_history",
 		"DELETE FROM mysql.role_edges",
+		"DELETE FROM mysql.tables_priv",
 		"DELETE FROM mysql.user",
 	}
 )
@@ -83,9 +85,8 @@ type starterBootstrapUpgradeSpec struct {
 }
 
 type starterPrivilegeResetState struct {
-	keyspaceName  string
-	completionKey string
-	observedValue string
+	keyspaceName   string
+	pendingMarkers map[string]string
 }
 
 func runStarterBootstrapLocked(s sessionapi.Session, bootstrapFile *starterBootstrapFileSpec) error {
@@ -256,24 +257,22 @@ func upgradeStarterBootstrapWithFile(store kv.Storage, bootstrapFile *starterBoo
 }
 
 func pendingStarterPrivilegeReset(keyspaceConfig map[string]string) (starterPrivilegeResetState, bool) {
-	completionKey := starterRestoreResetCompleteKey
-	isBranch, _ := strconv.ParseBool(keyspaceConfig[starterBranchConfigKey])
-	if isBranch {
-		completionKey = starterBranchResetCompleteKey
+	state := starterPrivilegeResetState{}
+	for _, key := range []string{starterBranchResetCompleteKey, starterRestoreResetCompleteKey} {
+		value, ok := keyspaceConfig[key]
+		if !ok || value == "" {
+			continue
+		}
+		complete, _ := strconv.ParseBool(value)
+		if complete {
+			continue
+		}
+		if state.pendingMarkers == nil {
+			state.pendingMarkers = make(map[string]string)
+		}
+		state.pendingMarkers[key] = value
 	}
-
-	value, ok := keyspaceConfig[completionKey]
-	if !ok || value == "" {
-		return starterPrivilegeResetState{}, false
-	}
-	complete, _ := strconv.ParseBool(value)
-	if complete {
-		return starterPrivilegeResetState{}, false
-	}
-	return starterPrivilegeResetState{
-		completionKey: completionKey,
-		observedValue: value,
-	}, true
+	return state, len(state.pendingMarkers) > 0
 }
 
 func readStarterPrivilegeResetState(store kv.Storage, refreshFromPD bool) (starterPrivilegeResetState, bool, error) {
@@ -299,13 +298,16 @@ func readStarterPrivilegeResetState(store kv.Storage, refreshFromPD bool) (start
 
 func markStarterPrivilegeResetComplete(ctx context.Context, state starterPrivilegeResetState) error {
 	completeValue := "True"
+	config := make(map[string]*string, len(state.pendingMarkers))
+	preconditions := make(map[string]*string, len(state.pendingMarkers))
+	for key, value := range state.pendingMarkers {
+		observedValue := value
+		config[key] = &completeValue
+		preconditions[key] = &observedValue
+	}
 	return infosync.SetKeyspaceConfig(ctx, state.keyspaceName, pdhttp.UpdateKeyspaceConfigParams{
-		Config: map[string]*string{
-			state.completionKey: &completeValue,
-		},
-		Preconditions: map[string]*string{
-			state.completionKey: &state.observedValue,
-		},
+		Config:        config,
+		Preconditions: preconditions,
 	})
 }
 

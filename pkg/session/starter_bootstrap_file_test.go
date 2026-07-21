@@ -388,11 +388,9 @@ func TestStarterBootstrapStoreVersionGate(t *testing.T) {
 
 func TestStarterPrivilegeResetMetadataState(t *testing.T) {
 	tests := []struct {
-		name          string
-		config        map[string]string
-		pending       bool
-		completionKey string
-		observedValue string
+		name           string
+		config         map[string]string
+		pendingMarkers map[string]string
 	}{
 		{
 			name: "ordinary keyspace",
@@ -402,9 +400,9 @@ func TestStarterPrivilegeResetMetadataState(t *testing.T) {
 			config: map[string]string{
 				starterRestoreResetCompleteKey: "False",
 			},
-			pending:       true,
-			completionKey: starterRestoreResetCompleteKey,
-			observedValue: "False",
+			pendingMarkers: map[string]string{
+				starterRestoreResetCompleteKey: "False",
+			},
 		},
 		{
 			name: "restore complete",
@@ -415,18 +413,37 @@ func TestStarterPrivilegeResetMetadataState(t *testing.T) {
 		{
 			name: "branch pending",
 			config: map[string]string{
-				starterBranchConfigKey:        "true",
 				starterBranchResetCompleteKey: "False",
 			},
-			pending:       true,
-			completionKey: starterBranchResetCompleteKey,
-			observedValue: "False",
+			pendingMarkers: map[string]string{
+				starterBranchResetCompleteKey: "False",
+			},
 		},
 		{
 			name: "branch complete",
 			config: map[string]string{
-				starterBranchConfigKey:        "true",
 				starterBranchResetCompleteKey: "true",
+			},
+		},
+		{
+			name: "branch complete and restore pending",
+			config: map[string]string{
+				starterBranchResetCompleteKey:  "true",
+				starterRestoreResetCompleteKey: "False",
+			},
+			pendingMarkers: map[string]string{
+				starterRestoreResetCompleteKey: "False",
+			},
+		},
+		{
+			name: "branch and restore pending",
+			config: map[string]string{
+				starterBranchResetCompleteKey:  "False",
+				starterRestoreResetCompleteKey: "invalid",
+			},
+			pendingMarkers: map[string]string{
+				starterBranchResetCompleteKey:  "False",
+				starterRestoreResetCompleteKey: "invalid",
 			},
 		},
 	}
@@ -434,9 +451,8 @@ func TestStarterPrivilegeResetMetadataState(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			state, pending := pendingStarterPrivilegeReset(tt.config)
-			require.Equal(t, tt.pending, pending)
-			require.Equal(t, tt.completionKey, state.completionKey)
-			require.Equal(t, tt.observedValue, state.observedValue)
+			require.Equal(t, len(tt.pendingMarkers) > 0, pending)
+			require.Equal(t, tt.pendingMarkers, state.pendingMarkers)
 		})
 	}
 }
@@ -482,14 +498,21 @@ func TestStarterPrivilegeReset(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, runStarterPrivilegeResetLocked(se, bootstrapFile))
-	for _, table := range []string{"db", "default_roles", "global_grants", "global_priv", "user"} {
+	for _, table := range []string{
+		"columns_priv",
+		"db",
+		"default_roles",
+		"global_grants",
+		"global_priv",
+		"password_history",
+		"tables_priv",
+		"user",
+	} {
 		require.Equal(t, int64(0), mustCountStarterPrivilegeRows(t, se,
 			"SELECT COUNT(*) FROM mysql."+table+" WHERE User = ?", "source_keyspace.user"), table)
 	}
 	require.Equal(t, int64(0), mustCountStarterPrivilegeRows(t, se,
 		"SELECT COUNT(*) FROM mysql.role_edges WHERE TO_USER = ?", "source_keyspace.user"), "role_edges")
-	require.Equal(t, int64(1), mustCountStarterPrivilegeRows(t, se,
-		"SELECT COUNT(*) FROM mysql.tables_priv WHERE User = ?", "source_keyspace.user"))
 	require.Equal(t, int64(1), mustCountStarterPrivilegeRows(t, se,
 		"SELECT COUNT(*) FROM mysql.user WHERE Host = '%' AND User = ? AND authentication_string = ''",
 		"restored_keyspace.root"))
@@ -512,10 +535,12 @@ func TestStarterPrivilegeReset(t *testing.T) {
 
 func seedStarterPrivilegeRows(t *testing.T, se sessionapi.Session, user string) {
 	t.Helper()
+	MustExec(t, se, "INSERT INTO mysql.columns_priv (Host, DB, User, Table_name, Column_name) VALUES ('%', 'test', ?, 't', 'c')", user)
 	MustExec(t, se, "INSERT INTO mysql.db (Host, DB, User) VALUES ('%', 'test', ?)", user)
 	MustExec(t, se, "INSERT INTO mysql.default_roles (Host, User, DEFAULT_ROLE_HOST, DEFAULT_ROLE_USER) VALUES ('%', ?, '%', 'source_role')", user)
 	MustExec(t, se, "INSERT INTO mysql.global_grants (User, Host, Priv) VALUES (?, '%', 'BACKUP_ADMIN')", user)
 	MustExec(t, se, "INSERT INTO mysql.global_priv (Host, User, Priv) VALUES ('%', ?, '{}')", user)
+	MustExec(t, se, "INSERT INTO mysql.password_history (Host, User, Password) VALUES ('%', ?, 'hash')", user)
 	MustExec(t, se, "INSERT INTO mysql.role_edges (FROM_HOST, FROM_USER, TO_HOST, TO_USER) VALUES ('%', 'source_role', '%', ?)", user)
 	MustExec(t, se, "INSERT INTO mysql.user (Host, User) VALUES ('%', ?)", user)
 	MustExec(t, se, "INSERT INTO mysql.tables_priv (Host, DB, User, Table_name) VALUES ('%', 'test', ?, 't')", user)
