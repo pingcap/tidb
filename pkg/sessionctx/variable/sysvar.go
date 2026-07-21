@@ -2854,6 +2854,10 @@ var defaultSysVars = []*SysVar{
 		s.EnableVectorizedExpression = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableOnDuplicateExpressionReuse, Value: BoolToOnOff(vardef.DefTiDBEnableOnDuplicateExpressionReuse), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableOnDuplicateExprReuse = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableTiKVShortCircuitExpression, Value: BoolToOnOff(vardef.DefTiDBEnableTiKVShortCircuitExpression), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableTiKVShortCircuitExpression = TiDBOptOn(val)
 		if s.StmtCtx != nil {

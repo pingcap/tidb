@@ -4442,8 +4442,13 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	mockTablePlan.SetSchema(insertPlan.Schema4OnDuplicate)
 	mockTablePlan.SetOutputNames(insertPlan.Names4OnDuplicate)
 
+	var onDupMemo *onDuplicateExprMemo
+	if b.ctx.GetSessionVars().EnableOnDuplicateExprReuse && hasEnoughOnDuplicateFunctionsForExpressionReuse(insert.OnDuplicate) {
+		onDupMemo = newOnDuplicateExprMemo()
+		insertPlan.OnDuplicateExpressionReuseEnabled = true
+	}
 	onDupColSet, err := insertPlan.ResolveOnDuplicate(insert.OnDuplicate, tableInfo, func(node ast.ExprNode) (expression.Expression, error) {
-		return b.rewriteInsertOnDuplicateUpdate(ctx, node, mockTablePlan, insertPlan)
+		return b.rewriteInsertOnDuplicateUpdate(ctx, node, mockTablePlan, insertPlan, onDupMemo)
 	})
 	if err != nil {
 		return nil, err
@@ -4463,6 +4468,76 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	}
 	err = insertPlan.BuildOnInsertFKTriggers(b.ctx, b.is, tnW.DBInfo.Name.L)
 	return insertPlan, err
+}
+
+const minOnDuplicateFunctionCountForExpressionReuse = 8
+
+func hasEnoughOnDuplicateFunctionsForExpressionReuse(onDup []*ast.Assignment) bool {
+	hasNonSimpleExpr := false
+	for _, assign := range onDup {
+		if assign.Expr != nil && !isSimpleOnDuplicateExprForExpressionReuse(assign.Expr) {
+			hasNonSimpleExpr = true
+			break
+		}
+	}
+	if !hasNonSimpleExpr {
+		return false
+	}
+
+	counter := onDuplicateFunctionCounter{}
+	for _, assign := range onDup {
+		if assign.Expr == nil {
+			continue
+		}
+		assign.Expr.Accept(&counter)
+		if counter.count >= minOnDuplicateFunctionCountForExpressionReuse {
+			return true
+		}
+	}
+	return false
+}
+
+func isSimpleOnDuplicateExprForExpressionReuse(expr ast.ExprNode) bool {
+	for {
+		parentheses, ok := expr.(*ast.ParenthesesExpr)
+		if !ok {
+			break
+		}
+		expr = parentheses.Expr
+	}
+	switch expr.(type) {
+	case *ast.ColumnNameExpr, *ast.DefaultExpr, *ast.ValuesExpr, *driver.ValueExpr:
+		return true
+	default:
+		return false
+	}
+}
+
+func isOnDuplicateFunctionLikeExprNode(node ast.Node) bool {
+	switch node.(type) {
+	case *ast.BetweenExpr, *ast.BinaryOperationExpr, *ast.CaseExpr, *ast.FuncCallExpr,
+		*ast.FuncCastExpr, *ast.IsNullExpr, *ast.IsTruthExpr, *ast.PatternInExpr,
+		*ast.PatternLikeOrIlikeExpr, *ast.PatternRegexpExpr, *ast.RowExpr,
+		*ast.UnaryOperationExpr:
+		return true
+	default:
+		return false
+	}
+}
+
+type onDuplicateFunctionCounter struct {
+	count int
+}
+
+func (c *onDuplicateFunctionCounter) Enter(in ast.Node) (ast.Node, bool) {
+	if isOnDuplicateFunctionLikeExprNode(in) {
+		c.count++
+	}
+	return in, c.count >= minOnDuplicateFunctionCountForExpressionReuse
+}
+
+func (*onDuplicateFunctionCounter) Leave(in ast.Node) (ast.Node, bool) {
+	return in, true
 }
 
 func (*PlanBuilder) getAffectCols(insertStmt *ast.InsertStmt, insertPlan *physicalop.Insert) (affectedValuesCols []*table.Column, err error) {

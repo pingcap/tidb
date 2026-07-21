@@ -8,6 +8,7 @@ go_library(
         "builtin_arithmetic_vec.go",
         "builtin_cast.go",
         "builtin_cast_vec.go",
+        "builtin_clone_with_args.go",
         "builtin_compare.go",
         "builtin_compare_vec.go",
         "builtin_compare_vec_generated.go",
