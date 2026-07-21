@@ -560,13 +560,14 @@ func TestIndexPruneWithSharedClusteredPrefix(t *testing.T) {
 		tk.MustQuery(`explain format = 'plan_tree' select payload from tenant_obj
 			force index (ix_tenant_created) where tenant_ws = 'w1'`).CheckContain("ix_tenant_created")
 
-		// Dedup identity must include discounted columns at their declared chain
-		// position: idx(tenant_ws, a) and idx(a) score identically, but ranger only
-		// builds ranges over declared index columns, so idx(tenant_ws, a) reaches a
-		// two-column range while idx(a) ranges on `a` alone with tenant_ws as an
-		// index filter. Both must survive. ix_tenant_a_c_b is declared before
-		// ix_tenant_a_c so that an index-ID tiebreak would keep the wider index;
-		// the column-count tiebreak must prefer the narrower one at any chain length.
+		// idx(tenant_ws, a) and idx(a) cover the same interesting columns but through
+		// different leading columns. The common handle (tenant_ws, id) is appended to a
+		// non-unique secondary index's key, so idx(a) accesses (a=, tenant_ws=) while
+		// idx(tenant_ws, a) accesses (tenant_ws=, a=). Neither consecutive prefix is a
+		// prefix of the other, so neither dominates and both must survive as distinct
+		// access orders. ix_tenant_a_c_b is declared before ix_tenant_a_c so that an
+		// index-ID tiebreak would keep the wider index; the column-count tiebreak must
+		// prefer the narrower one at any chain length.
 		tk.MustExec("drop table if exists tenant_dup")
 		tk.MustExec(`create table tenant_dup (
 			id binary(16) not null,

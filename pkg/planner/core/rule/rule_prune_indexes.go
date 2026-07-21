@@ -23,11 +23,9 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
-	"github.com/pingcap/tidb/pkg/types"
 )
 
 const (
@@ -62,10 +60,12 @@ type indexWithScore struct {
 type columnRequirements struct {
 	interestingColIDs map[int64]struct{}
 	// discountedColIDs is the equality/IN-bound leading prefix of the clustered key
-	// (e.g. a tenant ID that leads every index in a multi-tenant schema). The table
-	// path serves these columns directly, so covering them carries no discriminating
-	// power when ranking indexes: they extend an index's usable prefix but contribute
-	// nothing to its score.
+	// (e.g. a tenant ID that leads every index in a multi-tenant schema). These columns
+	// still count toward an index's score like any other covered column; they are tracked
+	// only to identify redundant indexes: an index whose entire covered access lies within
+	// this prefix (coversNonDiscounted == false) is served by the clustered table path and
+	// is dropped. The name is retained for continuity with earlier revisions that instead
+	// subtracted these columns from the score.
 	discountedColIDs map[int64]struct{}
 }
 
@@ -422,49 +422,27 @@ func isDominatedCoverage(entry scoredIndex, state *indexSelectionState) bool {
 
 // effectiveIndexColumnIDs returns the column IDs of an index's physical key: the declared
 // index columns followed by the clustered-handle columns TiKV appends to a non-unique
-// secondary index's key when they are not already part of the index. It mirrors the
-// int-handle append in fillIndexPath and its common-handle counterpart
-// (tryAppendCommonHandleColsToIndexPath) so that pruning ranks an index by the access
-// conditions its real key can satisfy: a trailing handle column bound by an equality
-// predicate extends the usable prefix exactly as a declared column would. A negative
-// sentinel marks a position whose column is unavailable so prefix tracking still breaks
-// there. The append is not performed for unique or primary indexes, whose key does not
-// carry the handle.
+// secondary index's key. It derives the appended suffix from ds.HandleColsToAppend — the
+// same method fillIndexPath uses to extend the path for range building — so pruning ranks
+// an index by the access conditions its real key can satisfy: a trailing handle column
+// bound by an equality predicate extends the usable prefix exactly as a declared column
+// would. A negative sentinel marks a position whose column is unavailable so prefix
+// tracking still breaks there. FullIdxCols carries the declared columns at prune time
+// (fillIndexPath, which performs the append on the path itself, runs later).
 func effectiveIndexColumnIDs(ds *logicalop.DataSource, path *util.AccessPath) []int64 {
 	ids := make([]int64, 0, len(path.FullIdxCols)+len(ds.CommonHandleCols)+1)
-	present := make(map[int64]struct{}, len(path.FullIdxCols))
 	for _, col := range path.FullIdxCols {
 		if col == nil {
 			ids = append(ids, -1)
 			continue
 		}
 		ids = append(ids, col.ID)
-		present[col.ID] = struct{}{}
 	}
-	if path.Index == nil || path.Index.Unique || path.Index.Primary {
-		return ids
-	}
-	appendHandle := func(col *expression.Column) {
-		if col == nil {
-			return
+	appendCols, _ := ds.HandleColsToAppend(path, path.FullIdxCols)
+	for _, col := range appendCols {
+		if col != nil {
+			ids = append(ids, col.ID)
 		}
-		if _, ok := present[col.ID]; ok {
-			return
-		}
-		present[col.ID] = struct{}{}
-		ids = append(ids, col.ID)
-	}
-	if ds.TableInfo != nil && ds.TableInfo.IsCommonHandle {
-		for i, col := range ds.CommonHandleCols {
-			if i < len(ds.CommonHandleLens) && ds.CommonHandleLens[i] != types.UnspecifiedLength {
-				// A prefix handle column cannot fully satisfy an equality predicate.
-				break
-			}
-			appendHandle(col)
-		}
-	} else if handleCol := ds.GetPKIsHandleCol(); handleCol != nil &&
-		!mysql.HasUnsignedFlag(handleCol.RetType.GetFlag()) {
-		appendHandle(handleCol)
 	}
 	return ids
 }
