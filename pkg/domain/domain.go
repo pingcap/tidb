@@ -1867,7 +1867,7 @@ func (do *Domain) DumpFileGcCheckerLoop() {
 			case <-do.exit:
 				return
 			case <-gcTicker.C:
-				do.dumpFileGcChecker.GCDumpFiles(do.ctx, vardef.GetPlanReplayerGCDuration(), time.Hour*24*7)
+				do.dumpFileGcChecker.GCDumpFiles(do.ctx, vardef.GetPlanReplayerFileRetentionTime(), time.Hour*24*7)
 			}
 		}
 	}, "dumpFileGcChecker")
