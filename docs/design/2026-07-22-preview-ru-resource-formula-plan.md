@@ -21,6 +21,8 @@ This plan deliberately does not implement production code. It freezes the model,
 - [x] (2026-07-22 11:15Z) Incorporated the final ordering clarification: Sort owns `n*log(n)`, TopN owns `n*log(k)` with `k` derived from offset plus count, and expression evaluation remains Projection-owned.
 - [x] (2026-07-22 11:40Z) A fresh-context release reviewer re-read the updated user handoff, plan, and code and concluded: “当前版本无需必要修改”.
 - [x] (2026-07-22 11:45Z) Applied the Ready profile to this design-only diff: no Go/Bazel trigger was present and the staged Markdown patch passed `git diff --cached --check`.
+- [x] (2026-07-22 13:05Z) A later fresh-context completion audit found that explicit-transaction DML write RPCs are statement-local and cannot all be deferred to COMMIT; revised ownership to charge each DML and COMMIT from its own frozen `RUV2Metrics` snapshot.
+- [x] (2026-07-22 13:35Z) A new no-inherited-context reviewer inspected the corrected plan and current code and concluded exactly: “当前版本无需必要修改”. Because this iteration changed a substantive ownership rule, the convergence policy still requires another fresh-context iteration before design-loop completion.
 - [ ] Implement Milestone 1: introduce v4 work units and expression-count helpers without changing production RUv2.
 - [ ] Implement Milestone 2: construct operator units from current runtime details and add only the permitted HashJoin state-row detail.
 - [ ] Implement Milestone 3: migrate all preview outputs atomically and add regression coverage.
@@ -54,6 +56,9 @@ This plan deliberately does not implement production code. It freezes the model,
 
 - Observation: zero-valued RUv2 getters do not prove that their payload was present, and the read-RPC counter is broader than cop response bytes.
   Evidence: absent/bypassed `RUV2Metrics` reads as zero; `ResourceManagerReadCnt` covers TiKV read RPC producers including unsupported point/ancillary paths, while `TiKVCoprocessorResponseBytes` covers cop responses. Runtime task coverage and a closed producer set are therefore required before zero or statement-wide totals are attributable.
+
+- Observation: write RPC counters are statement-local even inside an explicit transaction.
+  Evidence: `session.executeStmtImpl` installs the current statement's `RUV2Metrics`, `ExecStmt.finalizeStatementRUV2Metrics` drains raw/commit details into it before preview construction, and `TestRUV2MetricsIsolatedPerStatementInExplicitTxn` proves successive statements use distinct instances. A pessimistic DML's write requests therefore cannot be deferred to the later COMMIT snapshot.
 
 ## Decision Log
 
@@ -101,13 +106,17 @@ This plan deliberately does not implement production code. It freezes the model,
   Rationale: this preserves one CPU-priced unit without adding independent mutation weights. `mutation_bytes_per_cpu_unit` is a versioned normalization constant, not an RU coefficient; it must be calibrated and validated as positive before a weighted total is published.
   Date/Author: 2026-07-22 / Codex.
 
+- Decision: charge write requests to the statement whose frozen `RUV2Metrics` snapshot contains them; an explicit-transaction DML and the eventual COMMIT each own only their respective snapshots.
+  Rationale: TiDB installs a fresh `RUV2Metrics` object for every statement and finalizes raw RU details into that statement before preview construction. Pessimistic DML can issue write RPCs before COMMIT, so deferring all request work to COMMIT would permanently omit those DML-local requests. A cross-statement accumulator is unnecessary and would weaken the existing statement-local contract.
+  Date/Author: 2026-07-22 / Codex.
+
 - Decision: do not guess numerical v4 weights or silently map the heterogeneous v3 opclass weights.
   Rationale: there is no evidence-backed one-to-one mapping. The implementation first publishes v4 base units with `uncalibrated_weights` and no total until an explicit v4 weight set and positive mutation normalization are installed. The preview flag is off by default, so this is safer than presenting arbitrary numbers as RU.
   Date/Author: 2026-07-22 / Codex.
 
 ## Outcomes & Retrospective
 
-The design phase is stable and independently reviewed. It keeps the requested simple formula family, identifies every current data source, assigns Sort `n*log(n)` and TopN `n*log(offset+count)` work without repeating Projection expression evaluation, removes IndexJoin request double charging, limits new runtime data to one HashJoin state-row count, and defines a no-guess migration. A final reviewer with no inherited conversation context concluded that the current version needs no necessary modification. Implementation is intentionally pending and must happen in the separate worktree specified below.
+The design keeps the requested simple formula family, identifies every current data source, assigns Sort `n*log(n)` and TopN `n*log(offset+count)` work without repeating Projection expression evaluation, removes IndexJoin request double charging, limits new runtime data to one HashJoin state-row count, and defines a no-guess migration. A later fresh-context audit also corrected explicit-transaction write-request ownership so pessimistic DML requests remain attached to their actual statement snapshot rather than being lost at COMMIT. A subsequent no-inherited-context reviewer found no further necessary modification. Implementation is intentionally pending and must happen in the separate worktree specified below; because this iteration changed a substantive ownership rule, one more fresh-context iteration is required by the convergence policy before the design phase is closed.
 
 ## Context and Orientation
 
@@ -276,7 +285,7 @@ The v4 combined unit is:
 
 `mutation_bytes_per_cpu_unit` is a positive, finite, versioned normalization constant with units bytes per expression-equivalent CPU-work unit. It is stored alongside the v4 weights and included in output metadata. It is not independently multiplied by RU. If it is unset, zero, negative, NaN, or infinite, mutation base components remain visible but weighted v4 total is unavailable with `uncalibrated_weights`.
 
-`write_request_count` is `RUV2Metrics.ResourceManagerWriteCnt()` and uses the same `request_weight` as reads. The frozen snapshot must exist and be non-bypassed. Autocommit DML normally emits mutation and write-request work together; a nonzero mutation with a zero/missing request payload is partial. Explicit-transaction DML emits statement-local mutation work only; the eventual COMMIT emits transaction-scoped write requests with empty `dml_kind`, without back-attributing them to earlier DML. A known empty transaction COMMIT emits observed zero request work; an absent lifecycle snapshot is missing, not zero. SQL `ROLLBACK` remains unsupported in v4 and emits neither a zero unit nor a total: current routing has no complete rollback-RPC attribution, and declaring it free would be unsafe.
+`write_request_count` is `RUV2Metrics.ResourceManagerWriteCnt()` and uses the same `request_weight` as reads. The frozen snapshot must exist and be non-bypassed. Every DML statement, whether autocommit or inside an explicit transaction, emits the write-request count present in its own finalized snapshot alongside its statement-local mutation work. This is required for pessimistic transactions, whose DML statements can issue nonzero write RPCs before COMMIT. The eventual COMMIT emits only the write requests in its own fresh snapshot, with empty `dml_kind`; it neither absorbs nor back-attributes earlier DML requests. Thus each physical request is owned once by the statement whose RU details recorded it. A nonzero mutation with a missing request payload is partial, while an observed zero DML request count is valid only when the non-bypassed statement snapshot is present and finalized. A known empty transaction COMMIT likewise emits observed zero request work; an absent lifecycle snapshot is missing, not zero. SQL `ROLLBACK` remains unsupported in v4 and emits neither a zero unit nor a total: current routing has no complete rollback-RPC attribution, and declaring it free would be unsafe.
 
 Pipelined transactions retain valid mutation units but mark the write-request component `pipelined_tikv_payload_unsupported` until current details prove a complete logical flush request count. Deprecated batch DML accumulates available write-request snapshots across internal transaction switches; any missing switch makes the request component partial. Optimistic retry/replay keeps the mutation behavior above and marks unavailable request attribution partial. Thus no retry, pipeline, or batch path publishes a known-incomplete zero.
 
@@ -288,7 +297,7 @@ The existing preview gates remain: the feature is default off; `EXPLAIN ANALYZE 
 
 For side-effect-free SELECT, billing is statement-atomic. If any executed supported operator lacks a required input, the statement records status and reason but emits no billable v4 units and no `total_preview_ru`. This prevents a partial plan from looking cheap. Diagnostic status rows may still identify every missing operator.
 
-For DML, read-tree, mutation, and transaction-request components keep independent status because explicit transactions separate their lifetimes. Complete components may retain coefficient-free units for calibration, but a statement-level weighted total is absent unless every component expected at that lifecycle point is complete and the weight set is calibrated.
+For DML, read-tree, mutation, and statement-local write-request components keep independent status. COMMIT has its own write-request component because explicit transactions separate statement lifetimes. Complete components may retain coefficient-free units for calibration, but a statement-level weighted total is absent unless every component expected at that lifecycle point is complete and the weight set is calibrated.
 
 Observed zero is accepted only with presence evidence: an existing root stat, a cop stat with complete task coverage, a HashJoin state-row runtime stat, a mutation recorder snapshot, or a frozen RUv2 snapshot plus the reader consistency checks above. Missing, negative, overflowed, NaN, and infinite inputs have bounded reasons. New reasons are `missing_expression_count`, `missing_ordering_projection`, `invalid_topn_bound`, `missing_reader_transport_details`, `ambiguous_reader_transport_producers`, `missing_hash_state_rows`, `invalid_hash_state_rows`, and `uncalibrated_weights`.
 
@@ -338,7 +347,7 @@ Use the existing flat-plan build/probe/left/right labels for join rows and the j
 
 Add `HashTableRuntimeStats` in `pkg/util/execdetails/runtime_stats.go`. Implement it for both HashJoin runtime-stat versions in `pkg/executor/join/hash_join_stats.go`, recording successful v1/v2 state admissions at the existing build completion points in `hash_join_v1.go` and `hash_join_v2.go`. Do not add a unique-key collector or any non-Join runtime field.
 
-Change write construction in `pkg/planner/core/explain_ru.go` to derive `mutation_work` and use statement/COMMIT write RPC count. Retain raw mutation units as diagnostics.
+Change write construction in `pkg/planner/core/explain_ru.go` to derive `mutation_work` and use the current statement's finalized write RPC count for both DML and COMMIT. Do not carry request counts across statements or defer explicit-transaction DML requests to COMMIT. Retain raw mutation units as diagnostics.
 
 Acceptance: every required formula input can be traced to the source table below; source searches show exactly one new Join-only state-row counter and no other runtime field.
 
@@ -368,7 +377,7 @@ Acceptance: internal formula tests observe exact calibrated totals. EXPLAIN, met
 | HashJoin `hash_state_rows` | v1 hash-table `Len` plus NAAJ null-bucket entries; v2 row-table `validKeyCount` | completed build round, cumulative across rebuilds | **yes, Join only** |
 | Join `output_rows` | Join node own `BasicRuntimeStats.GetActRows` | executed root stat required | no |
 | `mutation_count/bytes` | `StatementContext` preview mutation recorder | current attempted-call semantics | no |
-| `write_request_count` | `RUV2Metrics.ResourceManagerWriteCnt` | DML/COMMIT lifecycle snapshot | no |
+| `write_request_count` | current statement's `RUV2Metrics.ResourceManagerWriteCnt` | finalized, present, non-bypassed snapshot; each DML and COMMIT owns only its own count | no |
 
 ## Concrete Steps
 
@@ -400,7 +409,7 @@ Implement milestones in order. During WIP, run the smallest targeted tests. The 
     ./tools/check/failpoint-go-test.sh pkg/planner/core -run 'TestExplainRU(PlanFormulaAndOperatorClasses|ComponentSnapshotStatusAndWeights)|TestReadBillingDemo'
     ./tools/check/failpoint-go-test.sh pkg/executor -run 'TestExplainAnalyzeFormatRU|TestReadBillingDemoMetricsHook|TestReadBillingDemoGeneralLogUnits|TestWriteSlowLog'
     ./tools/check/failpoint-go-test.sh pkg/executor/join -run 'Test.*HashJoin.*RuntimeStats'
-    ./tools/check/failpoint-go-test.sh pkg/session -run 'TestPreviewKVMutationRecorder|TestRUV2MetricsIsolatedPerStatementInExplicitTxn'
+    ./tools/check/failpoint-go-test.sh pkg/session -run 'TestPreviewKVMutationRecorder|TestRUV2Metrics(IsolatedPerStatementInExplicitTxn|WriteRequestsInPessimisticTxn)'
     ./tools/check/failpoint-go-test.sh pkg/util/stmtsummary -run 'TestReadBillingDemo(BaseUnitsToDatum|StructuredRowsToDatum|AggregationCaps|DMLKindAggregation|ReservedStatusMergeBypassesStatusCap)'
     ./tools/check/failpoint-go-test.sh pkg/util/stmtsummary/v2 -run 'TestStmtRecordReadBillingDemoStructuredStats|TestReadBillingDemo(MemReader|HistoryReader)'
     go test -tags=intest,deadlock ./pkg/metrics -run 'TestExplainRUMetrics|TestExplainRUMetricsIgnoreEmptyLabelsAndMissingValues'
@@ -419,7 +428,7 @@ The implementation is accepted only when all of the following are observable.
 
 With private test weights set to simple values inside `pkg/planner/core`, table-driven formula tests show exact results for every operator row in the formula table, including zero rows, one row, multiple expressions, multi-key joins, all three IndexJoin-family key representations, V1 NAAJ null-bucket state, and Window frame expressions. Sort uses `log2(max(rows,2))`; TopN uses `log2(max(offset+count,2))`, with checked addition and cases where offset is nonzero. Neither ordering operator has an expression/key-count multiplier, and unmaterialized scalar ordering expressions fail closed rather than being charged there.
 
-End-to-end `EXPLAIN ANALYZE FORMAT='RU'` cases cover Selection/Projection, Sort/TopN, Table/Index scans, each reader family including IndexMerge, Stream/HashAgg, Merge/Hash/IndexJoin, Limit, Window, autocommit write, explicit DML plus COMMIT, unsupported ROLLBACK, and zero-mutation/zero-row cases. Each attributable case exposes its coefficient-free units, source, and model/weight versions. Because these tests are package-external and production defaults are not calibrated, they assert `uncalibrated_weights` and absence of `total_preview_ru`; exact weighted totals belong to private core formula tests.
+End-to-end `EXPLAIN ANALYZE FORMAT='RU'` cases cover Selection/Projection, Sort/TopN, Table/Index scans, each reader family including IndexMerge, Stream/HashAgg, Merge/Hash/IndexJoin, Limit, Window, autocommit write, explicit DML plus COMMIT, unsupported ROLLBACK, and zero-mutation/zero-row cases. An explicit pessimistic transaction case must prove that a DML-local nonzero `ResourceManagerWriteCnt` is emitted by that DML, the later COMMIT emits only its own fresh-snapshot count, and neither count is lost or duplicated. Each attributable case exposes its coefficient-free units, source, and model/weight versions. Because these tests are package-external and production defaults are not calibrated, they assert `uncalibrated_weights` and absence of `total_preview_ru`; exact weighted totals belong to private core formula tests.
 
 A multi-reader or IndexMerge case proves that statement `net_bytes` and read `request_count` appear once, while every scan retains its own `scan_bytes`. An IndexJoin case proves that inner lookup requests appear only in reader transport and no Join-local request unit is emitted. Sort/TopN cases prove that root scalar expressions materialized by inline Projection are evaluated only there, ordinary-column/multi-key ordering receives one aggregate complexity term without a key multiplier, TopN offset changes `k`, and an unmaterialized pushed scalar TopN fails closed. Reader-gate cases prove that zero rows with observed/expected cop tasks plus a zero RUv2 payload is missing, `requests > 0 && bytes == 0` is valid, a supported reader mixed with PointGet fails closed, and DML with unexcludable ancillary reads marks only reader transport unknown. A ROLLBACK case proves the explicit unsupported status and absence of units.
 
@@ -466,4 +475,4 @@ At milestone completion, the key internal interfaces should have these conceptua
 
 The exact private names may follow nearby conventions, but the semantics, data sources, one-Join-runtime-datum boundary, and de-duplication rules in this plan are mandatory.
 
-Revision note (2026-07-22): first complete design draft created from current branch evidence, then revised for explicit de-duplication and the final ordering contract: inline Projection alone owns scalar Sort/TopN evaluation, Sort owns `n*log(n)`, TopN owns `n*log(k)` with checked `k=offset+count`, and inner readers own IndexJoin request cost. HashJoin uses the sole permitted runtime addition to expose actual admitted hash-state rows instead of approximating them with all build rows.
+Revision note (2026-07-22): first complete design draft created from current branch evidence, then revised for explicit de-duplication and the final ordering contract: inline Projection alone owns scalar Sort/TopN evaluation, Sort owns `n*log(n)`, TopN owns `n*log(k)` with checked `k=offset+count`, and inner readers own IndexJoin request cost. HashJoin uses the sole permitted runtime addition to expose actual admitted hash-state rows instead of approximating them with all build rows. A later fresh-context audit corrected write-request ownership: explicit-transaction DML and COMMIT each charge only the write RPCs in their own finalized statement snapshot, preventing pessimistic DML requests from being lost.
