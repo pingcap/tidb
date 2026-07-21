@@ -1004,8 +1004,8 @@ type SubJob struct {
 	ReorgTp      ReorgType       `json:"reorg_tp"`
 	ReorgStage   ReorgStage      `json:"reorg_stage"`
 	AnalyzeState int8            `json:"analyze_state"`
-	// AutoSplitHotRegionResults records per-subjob ADD INDEX and ADD PRIMARY KEY auto split summaries.
-	AutoSplitHotRegionResults []AutoSplitHotRegionResult `json:"auto_split_hot_region_results,omitempty"`
+	// AutoPresplitIndexRegionResults records per-subjob ADD INDEX and ADD PRIMARY KEY auto presplit summaries.
+	AutoPresplitIndexRegionResults []AutoPresplitIndexRegionResult `json:"auto_presplit_index_region_results,omitempty"`
 }
 
 // IsNormal returns true if the sub-job is normally running.
@@ -1034,8 +1034,8 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		reorgMeta.ReorgTp = sub.ReorgTp
 		reorgMeta.Stage = sub.ReorgStage
 		reorgMeta.AnalyzeState = sub.AnalyzeState
-		reorgMeta.AutoSplitHotRegionResults = append(
-			[]AutoSplitHotRegionResult(nil), sub.AutoSplitHotRegionResults...)
+		reorgMeta.AutoPresplitIndexRegionResults = append(
+			[]AutoPresplitIndexRegionResult(nil), sub.AutoPresplitIndexRegionResults...)
 	}
 	return Job{
 		Version:         parentJob.Version,
@@ -1089,8 +1089,8 @@ func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
 		sub.ReorgTp = proxyJob.ReorgMeta.ReorgTp
 		sub.ReorgStage = proxyJob.ReorgMeta.Stage
 		sub.AnalyzeState = proxyJob.ReorgMeta.AnalyzeState
-		sub.AutoSplitHotRegionResults = append(
-			[]AutoSplitHotRegionResult(nil), proxyJob.ReorgMeta.AutoSplitHotRegionResults...)
+		sub.AutoPresplitIndexRegionResults = append(
+			[]AutoPresplitIndexRegionResult(nil), proxyJob.ReorgMeta.AutoPresplitIndexRegionResults...)
 	}
 }
 
@@ -1109,8 +1109,8 @@ func (sub *SubJob) FillArgs(jobVer JobVersion) {
 func (sub *SubJob) Clone() *SubJob {
 	clonedSubJob := *sub
 	clonedSubJob.args = nil
-	clonedSubJob.AutoSplitHotRegionResults = append(
-		[]AutoSplitHotRegionResult(nil), sub.AutoSplitHotRegionResults...)
+	clonedSubJob.AutoPresplitIndexRegionResults = append(
+		[]AutoPresplitIndexRegionResult(nil), sub.AutoPresplitIndexRegionResults...)
 	return &clonedSubJob
 }
 
