@@ -48,15 +48,15 @@ func preSplitIndexRegions(
 	allIndexInfos []*model.IndexInfo,
 	reorgMeta *model.DDLReorgMeta,
 	args *model.ModifyIndexArgs,
-	statsProvider autoSplitStatsProvider,
-	enableAutoSplitHotRegion bool,
+	statsProvider autoPresplitStatsProvider,
+	enableAutoPresplit bool,
 ) error {
 	warnHandler := contextutil.NewStaticWarnHandler(0)
 	exprCtx, err := newReorgExprCtxWithReorgMeta(reorgMeta, warnHandler)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	reorgMeta.AutoSplitHotRegionResults = nil
+	reorgMeta.AutoPresplitIndexRegionResults = nil
 	// Preserve the target keyspace used by explicit PRE_SPLIT_REGIONS: txn reorg
 	// splits normal index keys, while ingest and txn-merge split temporary index
 	// keys used by concurrent DML. Fast reorg does not additionally split the
@@ -73,16 +73,16 @@ func preSplitIndexRegions(
 			return errors.Trace(err)
 		}
 		if splitArgs == nil {
-			if !enableAutoSplitHotRegion {
+			if !enableAutoPresplit {
 				continue
 			}
-			result, err := autoSplitIndexRegion(
+			result, err := autoPresplitIndexRegion(
 				ctx, sctx, store, tblInfo, idxInfo, statsProvider, splitOnTempIdx)
 			if err != nil {
 				return err
 			}
 			result.IndexName = idxInfo.Name.L
-			reorgMeta.AutoSplitHotRegionResults = append(reorgMeta.AutoSplitHotRegionResults, result)
+			reorgMeta.AutoPresplitIndexRegionResults = append(reorgMeta.AutoPresplitIndexRegionResults, result)
 			continue
 		}
 
@@ -114,19 +114,19 @@ func preSplitIndexRegions(
 	return context.Cause(ctx)
 }
 
-func autoSplitIndexRegion(
+func autoPresplitIndexRegion(
 	ctx context.Context,
 	sctx sessionctx.Context,
 	store kv.Storage,
 	tblInfo *model.TableInfo,
 	idxInfo *model.IndexInfo,
-	statsProvider autoSplitStatsProvider,
+	statsProvider autoPresplitStatsProvider,
 	splitOnTempIdx bool,
-) (model.AutoSplitHotRegionResult, error) {
-	splitKeys, reason, err := planAutoSplitIndexRegions(
-		ctx, sctx, statsProvider, tblInfo, idxInfo, getAutoSplitHotRegionConfig())
+) (model.AutoPresplitIndexRegionResult, error) {
+	splitKeys, reason, err := planAutoPresplitIndexRegions(
+		ctx, sctx, statsProvider, tblInfo, idxInfo, getAutoPresplitConfig())
 	if ctxErr := context.Cause(ctx); ctxErr != nil {
-		return model.AutoSplitHotRegionResult{}, ctxErr
+		return model.AutoPresplitIndexRegionResult{}, ctxErr
 	}
 	if err != nil {
 		if reason == "" {
@@ -134,23 +134,23 @@ func autoSplitIndexRegion(
 		} else {
 			reason += ": " + err.Error()
 		}
-		logutil.DDLLogger().Warn("auto split hot index region planning failed, continue add-index",
+		logutil.DDLLogger().Warn("auto presplit index region planning failed, continue add-index",
 			zap.String("table", tblInfo.Name.L),
 			zap.String("index", idxInfo.Name.L),
 			zap.String("reason", reason),
 			zap.Error(err))
-		return model.AutoSplitHotRegionResult{
-			Status: model.AutoSplitHotRegionStatusFailed,
+		return model.AutoPresplitIndexRegionResult{
+			Status: model.AutoPresplitIndexRegionStatusFailed,
 			Reason: reason,
 		}, nil
 	}
 	if len(splitKeys) == 0 {
-		logutil.DDLLogger().Info("skip auto split hot index region",
+		logutil.DDLLogger().Info("skip auto presplit index region",
 			zap.String("table", tblInfo.Name.L),
 			zap.String("index", idxInfo.Name.L),
 			zap.String("reason", reason))
-		return model.AutoSplitHotRegionResult{
-			Status: model.AutoSplitHotRegionStatusSkipped,
+		return model.AutoPresplitIndexRegionResult{
+			Status: model.AutoPresplitIndexRegionStatusSkipped,
 			Reason: reason,
 		}, nil
 	}
@@ -159,22 +159,22 @@ func autoSplitIndexRegion(
 	failpoint.InjectCall("beforePresplitIndex", splitKeys)
 	splitResult, err := splitIndexRegionAndWait(ctx, sctx, store, tblInfo, idxInfo, splitKeys)
 	if ctxErr := context.Cause(ctx); ctxErr != nil {
-		return model.AutoSplitHotRegionResult{}, ctxErr
+		return model.AutoPresplitIndexRegionResult{}, ctxErr
 	}
-	result := model.AutoSplitHotRegionResult{
+	result := model.AutoPresplitIndexRegionResult{
 		SplitKeyCount:        len(splitKeys),
 		SplitRegionCount:     splitResult.splitRegions,
 		ScatteredRegionCount: splitResult.scatterRegions,
 	}
 	if splitResult.unsupported {
-		result.Status = model.AutoSplitHotRegionStatusUnsupported
+		result.Status = model.AutoPresplitIndexRegionStatusUnsupported
 		result.Reason = "storage does not support split regions"
 		return result, nil
 	}
 	if err != nil {
-		result.Status = model.AutoSplitHotRegionStatusFailed
+		result.Status = model.AutoPresplitIndexRegionStatusFailed
 		result.Reason = err.Error()
-		logutil.DDLLogger().Warn("auto split hot index region failed, continue add-index",
+		logutil.DDLLogger().Warn("auto presplit index region failed, continue add-index",
 			zap.String("table", tblInfo.Name.L),
 			zap.String("index", idxInfo.Name.L),
 			zap.Int("splitKeys", len(splitKeys)),
@@ -184,8 +184,8 @@ func autoSplitIndexRegion(
 		return result, nil
 	}
 
-	result.Status = model.AutoSplitHotRegionStatusSplit
-	logutil.DDLLogger().Info("auto split hot index region finished",
+	result.Status = model.AutoPresplitIndexRegionStatusSplit
+	logutil.DDLLogger().Info("auto presplit index region finished",
 		zap.String("table", tblInfo.Name.L),
 		zap.String("index", idxInfo.Name.L),
 		zap.Int("splitKeys", len(splitKeys)),
