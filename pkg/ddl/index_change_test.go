@@ -126,14 +126,14 @@ func TestIndexChange(t *testing.T) {
 	checkJobWithHistory(t, tk.Session(), jobID.Load(), nil, noneTable.Meta())
 }
 
-func TestAddIndexAutoSplitLoadsLeadingColumnTopNFromStorage(t *testing.T) {
+func TestAddIndexAutoPresplitLoadsLeadingColumnTopNFromStorage(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version=2")
-	tk.MustExec("set @@session.tidb_ddl_enable_auto_split_hot_region = 1")
-	tk.MustExec("create table t_auto_split(a int primary key, b int)")
-	tk.MustExec("insert into t_auto_split values " +
+	tk.MustExec("set @@session.tidb_ddl_enable_auto_split_index_regions = 1")
+	tk.MustExec("create table t_auto_presplit(a int primary key, b int)")
+	tk.MustExec("insert into t_auto_presplit values " +
 		"(1,1),(2,1),(3,1),(4,1),(5,1),(6,1),(7,1),(8,1),(9,1),(10,1)," +
 		"(11,2),(12,2),(13,2),(14,2),(15,2),(16,3),(17,4),(18,5),(19,6),(20,7)")
 
@@ -142,7 +142,7 @@ func TestAddIndexAutoSplitLoadsLeadingColumnTopNFromStorage(t *testing.T) {
 	h.SetLease(time.Millisecond)
 	defer h.SetLease(originLease)
 
-	tk.MustExec("analyze table t_auto_split all columns with 2 topn, 2 buckets")
+	tk.MustExec("analyze table t_auto_presplit all columns with 2 topn, 2 buckets")
 
 	var capturedKeys [][]byte
 	type topNFromStorageArgs struct {
@@ -151,7 +151,7 @@ func TestAddIndexAutoSplitLoadsLeadingColumnTopNFromStorage(t *testing.T) {
 		priority int
 	}
 	var loadedTopNFromStorage atomic.Pointer[topNFromStorageArgs]
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockAutoSplitHotRegionConfig", "return(5)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockAutoPresplitConfig", "return(5)")
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/statistics/handle/storage/beforeTopNFromStorageWithPriority",
 		func(_ int64, isIndex int, histID int64, priority int) {
 			loadedTopNFromStorage.Store(&topNFromStorageArgs{
@@ -164,7 +164,7 @@ func TestAddIndexAutoSplitLoadsLeadingColumnTopNFromStorage(t *testing.T) {
 		capturedKeys = append(capturedKeys, splitKeys...)
 	})
 
-	tk.MustExec("alter table t_auto_split add index idx_b(b)")
+	tk.MustExec("alter table t_auto_presplit add index idx_b(b)")
 	loadedArgs := loadedTopNFromStorage.Load()
 	require.NotNil(t, loadedArgs)
 	require.Equal(t, 0, loadedArgs.isIndex)
@@ -172,7 +172,7 @@ func TestAddIndexAutoSplitLoadsLeadingColumnTopNFromStorage(t *testing.T) {
 	require.Equal(t, kv.PriorityNormal, loadedArgs.priority)
 	require.NotEmpty(t, capturedKeys)
 	comments := tk.MustQuery("admin show ddl jobs 1").Rows()[0][12].(string)
-	require.Contains(t, comments, "auto_split_hot_region=idx_b(")
+	require.Contains(t, comments, "auto_presplit_index_region=idx_b(")
 	require.Contains(t, comments, "split_keys=")
 }
 
