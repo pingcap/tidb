@@ -408,7 +408,7 @@ func cancelAndWaitImportJob(ctx context.Context, jobID int64) error {
 		return err
 	}
 	taskKey := importinto.TaskKey(jobID)
-	_, err = manager.GetTaskByKey(ctx, taskKey)
+	_, err = manager.GetTaskBaseByKeyWithHistory(ctx, taskKey)
 	if err == nil {
 		if err := manager.WithNewTxn(ctx, func(se sessionctx.Context) error {
 			ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
@@ -425,13 +425,13 @@ func cancelAndWaitImportJob(ctx context.Context, jobID int64) error {
 
 	// In next-gen, the import job and DXF task are created in separate
 	// transactions. The job row can exist before the DXF task row is committed,
-	// or the task submission can fail after the job is created. The live-task
-	// lookup distinguishes a missing task from one outside the cancel update's
+	// or the task submission can fail after the job is created. The task lookup
+	// distinguishes a missing task from one outside the cancel update's
 	// state predicate. If the task row is committed after the lookup, do not wait
 	// for it. The dangling fallback will either cancel the still-pending import
 	// job or report that the scheduler changed the job state first.
 	// see job_doc.go for more detail
-	logutil.Logger(ctx).Info("cancel import job directly because dxf task is not found",
+	logutil.Logger(ctx).Info("cancel import job directly after initial dxf task lookup found no task",
 		zap.Int64("jobID", jobID),
 		zap.String("taskKey", taskKey))
 	failpoint.InjectCall("beforeCancelDanglingImportJob", jobID)
