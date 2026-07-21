@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -87,17 +88,27 @@ type starterPrivilegeResetState struct {
 }
 
 func runStarterBootstrapLocked(s sessionapi.Session, bootstrapFile *starterBootstrapFileSpec) error {
-	return runStarterBootstrapTransaction(s, bootstrapFile, false)
+	stmts, err := prepareStarterBootstrapStatements(s, bootstrapFile.BootstrapSQLBlocks)
+	if err != nil {
+		return err
+	}
+	return runStarterBootstrapTransaction(s, bootstrapFile, stmts, false)
 }
 
 func runStarterPrivilegeResetLocked(s sessionapi.Session, bootstrapFile *starterBootstrapFileSpec) error {
-	if len(bootstrapFile.BootstrapSQLBlocks) == 0 {
-		return errors.New("starter bootstrap file must contain bootstrap SQL for privilege reset")
+	stmts, err := prepareStarterBootstrapStatements(s, bootstrapFile.BootstrapSQLBlocks)
+	if err != nil {
+		return err
 	}
-	return runStarterBootstrapTransaction(s, bootstrapFile, true)
+	return runStarterBootstrapTransaction(s, bootstrapFile, stmts, true)
 }
 
-func runStarterBootstrapTransaction(s sessionapi.Session, bootstrapFile *starterBootstrapFileSpec, resetPrivileges bool) error {
+func runStarterBootstrapTransaction(
+	s sessionapi.Session,
+	bootstrapFile *starterBootstrapFileSpec,
+	bootstrapStmts []ast.StmtNode,
+	resetPrivileges bool,
+) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	if _, err := s.ExecuteInternal(ctx, "BEGIN"); err != nil {
 		return errors.Annotate(err, "begin starter bootstrap file")
@@ -116,8 +127,13 @@ func runStarterBootstrapTransaction(s sessionapi.Session, bootstrapFile *starter
 			return errors.Annotate(err, "reset starter privilege tables")
 		}
 	}
-	if err := executeStarterBootstrapSQLBlocks(s, bootstrapFile.BootstrapSQLBlocks); err != nil {
+	if err := executeStarterBootstrapStatements(s, bootstrapStmts); err != nil {
 		return err
+	}
+	if resetPrivileges {
+		if err := verifyStarterRootUser(s); err != nil {
+			return err
+		}
 	}
 	if err := updateStarterBootstrapVersion(s, bootstrapFile.Version); err != nil {
 		return err
@@ -208,6 +224,10 @@ func upgradeStarterBootstrapWithFile(store kv.Storage, bootstrapFile *starterBoo
 		return err
 	}
 	if privilegeResetPending {
+		copiedVersion := max(completedVersion, storedVersion)
+		if copiedVersion > bootstrapFile.Version {
+			return errors.Errorf("starter bootstrap file version %d is older than copied version %d", bootstrapFile.Version, copiedVersion)
+		}
 		if err = runStarterPrivilegeResetLocked(s, bootstrapFile); err != nil {
 			return err
 		}
@@ -481,9 +501,28 @@ func updateStarterBootstrapVersion(s sessionapi.Session, version int64) error {
 }
 
 func executeStarterBootstrapSQLBlocks(s sessionapi.Session, blocks []string) error {
-	if len(blocks) == 0 {
-		return nil
+	stmts, err := parseStarterBootstrapSQLBlocks(s, blocks)
+	if err != nil {
+		return err
 	}
+	return executeStarterBootstrapStatements(s, stmts)
+}
+
+func prepareStarterBootstrapStatements(s sessionapi.Session, blocks []string) ([]ast.StmtNode, error) {
+	if len(blocks) == 0 {
+		return nil, errors.New("starter bootstrap file must contain bootstrap SQL")
+	}
+	stmts, err := parseStarterBootstrapSQLBlocks(s, blocks)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateStarterBootstrapStatements(stmts); err != nil {
+		return nil, err
+	}
+	return stmts, nil
+}
+
+func parseStarterBootstrapSQLBlocks(s sessionapi.Session, blocks []string) ([]ast.StmtNode, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	sessionVars := s.GetSessionVars()
 	originalInRestrictedSQL := sessionVars.InRestrictedSQL
@@ -492,24 +531,77 @@ func executeStarterBootstrapSQLBlocks(s sessionapi.Session, blocks []string) err
 		sessionVars.InRestrictedSQL = originalInRestrictedSQL
 	}()
 
+	stmts := make([]ast.StmtNode, 0, len(blocks))
 	for blockIdx, block := range blocks {
 		rendered := renderStarterBootstrapSQL(block)
-		stmts, err := s.Parse(ctx, rendered)
+		parsed, err := s.Parse(ctx, rendered)
 		if err != nil {
-			return errors.Annotatef(err, "parse SQL block %d", blockIdx)
+			return nil, errors.Annotatef(err, "parse SQL block %d", blockIdx)
 		}
-		if len(stmts) != 1 {
-			return errors.Errorf("SQL block %d must contain exactly one statement", blockIdx)
+		if len(parsed) != 1 {
+			return nil, errors.Errorf("SQL block %d must contain exactly one statement", blockIdx)
 		}
-		rs, err := s.ExecuteStmt(ctx, stmts[0])
+		stmts = append(stmts, parsed[0])
+	}
+	return stmts, nil
+}
+
+func validateStarterBootstrapStatements(stmts []ast.StmtNode) error {
+	for i, stmt := range stmts {
+		switch stmt.(type) {
+		case *ast.InsertStmt, *ast.UpdateStmt, *ast.DeleteStmt:
+		default:
+			return errors.Errorf("bootstrap SQL block %d must be INSERT, REPLACE, UPDATE, or DELETE", i)
+		}
+	}
+	return nil
+}
+
+func executeStarterBootstrapStatements(s sessionapi.Session, stmts []ast.StmtNode) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	sessionVars := s.GetSessionVars()
+	originalInRestrictedSQL := sessionVars.InRestrictedSQL
+	sessionVars.InRestrictedSQL = true
+	defer func() {
+		sessionVars.InRestrictedSQL = originalInRestrictedSQL
+	}()
+
+	for i, stmt := range stmts {
+		rs, err := s.ExecuteStmt(ctx, stmt)
 		if err != nil {
-			return errors.Annotatef(err, "execute SQL block %d", blockIdx)
+			return errors.Annotatef(err, "execute SQL block %d", i)
 		}
 		if rs != nil {
 			if err := rs.Close(); err != nil {
 				return errors.Annotate(err, "close SQL result")
 			}
 		}
+	}
+	return nil
+}
+
+func verifyStarterRootUser(s sessionapi.Session) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rootUser := config.GetGlobalKeyspaceName() + ".root"
+	rs, err := s.ExecuteInternal(ctx,
+		"SELECT 1 FROM mysql.user WHERE Host = '%' AND User = %? LIMIT 1", rootUser)
+	if err != nil {
+		return errors.Annotate(err, "verify starter root user")
+	}
+	if rs == nil {
+		return errors.New("verify starter root user returned no result")
+	}
+	req := rs.NewChunk(nil)
+	nextErr := rs.Next(ctx, req)
+	closeErr := rs.Close()
+	if nextErr != nil {
+		return errors.Annotate(nextErr, "verify starter root user")
+	}
+	if closeErr != nil {
+		return errors.Annotate(closeErr, "close starter root verification result")
+	}
+	if req.NumRows() == 0 {
+		return errors.Errorf("starter bootstrap file must create '%s'@'%%' for privilege reset", rootUser)
 	}
 	return nil
 }

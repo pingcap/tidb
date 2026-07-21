@@ -372,7 +372,9 @@ func TestStarterBootstrapStoreVersionGate(t *testing.T) {
 	mappedDomain, err := domap.Get(store)
 	require.NoError(t, err)
 	require.Same(t, dom, mappedDomain)
-	require.NoError(t, upgradeStarterBootstrapWithFile(store, bootstrapFile))
+	currentBootstrapFile := *bootstrapFile
+	currentBootstrapFile.BootstrapSQLBlocks = []string{"CREATE TABLE mysql.starter_file_noop (id INT)"}
+	require.NoError(t, upgradeStarterBootstrapWithFile(store, &currentBootstrapFile))
 	mappedDomain, err = domap.Get(store)
 	require.NoError(t, err)
 	require.Same(t, dom, mappedDomain)
@@ -488,6 +490,30 @@ func TestStarterPrivilegeReset(t *testing.T) {
 		"must contain bootstrap SQL")
 	require.Equal(t, int64(1), mustCountStarterPrivilegeRows(t, se,
 		"SELECT COUNT(*) FROM mysql.user WHERE User = ?", "source_keyspace.user"))
+
+	nonTransactionalFile, err := parseStarterBootstrapFile([]byte(`{
+		"version": 3,
+		"bootstrap": ["CREATE TABLE mysql.starter_reset_ddl (id INT)"]
+	}`))
+	require.NoError(t, err)
+	require.ErrorContains(t, runStarterPrivilegeResetLocked(se, nonTransactionalFile),
+		"must be INSERT, REPLACE, UPDATE, or DELETE")
+	require.Equal(t, int64(1), mustCountStarterPrivilegeRows(t, se,
+		"SELECT COUNT(*) FROM mysql.user WHERE User = ?", "source_keyspace.user"))
+
+	missingRootFile, err := parseStarterBootstrapFile([]byte(`{
+		"version": 3,
+		"bootstrap": [
+			"INSERT INTO mysql.user (Host, User) VALUES ('%', '<keyspace>.not_root')"
+		]
+	}`))
+	require.NoError(t, err)
+	require.ErrorContains(t, runStarterPrivilegeResetLocked(se, missingRootFile),
+		"must create 'restored_keyspace.root'@'%'")
+	require.Equal(t, int64(1), mustCountStarterPrivilegeRows(t, se,
+		"SELECT COUNT(*) FROM mysql.user WHERE User = ?", "source_keyspace.user"))
+	require.Equal(t, int64(0), mustCountStarterPrivilegeRows(t, se,
+		"SELECT COUNT(*) FROM mysql.user WHERE User = ?", "restored_keyspace.not_root"))
 
 	bootstrapFile, err := parseStarterBootstrapFile([]byte(`{
 		"version": 3,

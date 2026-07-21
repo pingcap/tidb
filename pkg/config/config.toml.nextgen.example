@@ -486,19 +486,22 @@ engines = ["tikv", "tiflash", "tidb"]
 # does not replay the upgrade entries.
 # Each SQL array element must contain exactly one retry-safe statement. `<keyspace>`
 # is the only supported placeholder and is replaced with the current keyspace name.
+# "bootstrap" must use only INSERT, REPLACE, UPDATE, or DELETE statements. When
+# replayed for a privilege reset, it must recreate the `<keyspace>.root`@`%`
+# account. The DML restriction does not apply to "upgrades" migrations.
 #
 # Example /etc/tidb/starter-bootstrap.json:
 # {
 #   "version": 2,
 #   "bootstrap": [
-#     "INSERT INTO mysql.user (Host, User, authentication_string, plugin) VALUES ('%', '<keyspace>.starter_admin', '', 'mysql_native_password') ON DUPLICATE KEY UPDATE authentication_string = VALUES(authentication_string), plugin = VALUES(plugin)",
-#     "INSERT INTO mysql.global_grants (User, Host, Priv) VALUES ('<keyspace>.starter_admin', '%', 'SYSTEM_VARIABLES_ADMIN') ON DUPLICATE KEY UPDATE WITH_GRANT_OPTION = 'N'"
+#     "INSERT INTO mysql.user (Host, User, authentication_string, plugin) VALUES ('%', '<keyspace>.root', '', 'mysql_native_password') ON DUPLICATE KEY UPDATE authentication_string = VALUES(authentication_string), plugin = VALUES(plugin)",
+#     "INSERT INTO mysql.global_grants (User, Host, Priv) VALUES ('<keyspace>.root', '%', 'SYSTEM_VARIABLES_ADMIN') ON DUPLICATE KEY UPDATE WITH_GRANT_OPTION = 'N'"
 #   ],
 #   "upgrades": [
 #     {
 #       "version": 2,
 #       "sql": [
-#         "INSERT INTO mysql.global_grants (User, Host, Priv) VALUES ('<keyspace>.starter_admin', '%', 'SYSTEM_VARIABLES_ADMIN') ON DUPLICATE KEY UPDATE WITH_GRANT_OPTION = 'N'"
+#         "INSERT INTO mysql.global_grants (User, Host, Priv) VALUES ('<keyspace>.root', '%', 'SYSTEM_VARIABLES_ADMIN') ON DUPLICATE KEY UPDATE WITH_GRANT_OPTION = 'N'"
 #       ]
 #     }
 #   ]
