@@ -954,8 +954,8 @@ Example response:
    "ID": 30001,
    "Key": "keyspace1/ddl/backfill/9",
    "Type": "backfill",
-   "State": "succeed",
-   "Step": -2,
+   "State": "reverted",
+   "Step": 1,
    "Priority": 512,
    "RequiredSlots": 1,
    "TargetScope": "dxf_service",
@@ -963,6 +963,8 @@ Example response:
    "MaxNodeCount": 1,
    "ExtraParams": {},
    "Keyspace": "keyspace1",
+   "ErrorCode": "kv:1062",
+   "ErrorCategory": "data-error",
    "StartTime": "2026-04-13T11:30:13+08:00",
    "StateUpdateTime": "2026-04-13T11:30:17+08:00",
    "EndTime": "2026-04-13T11:30:16+08:00"
@@ -973,6 +975,8 @@ Example response:
  "ApproxTotalCount": 1
 }
 ```
+
+`ErrorCode` contains the effective RFC error code when the stored task error provides one, and is empty for a plain error. `ErrorCategory` is `failed`, `cancelled`, or `data-error` for a task with an error, and is empty when the task has no error. The response does not include the task error message.
 
 ### Get IMPORT INTO history job details
 
@@ -1051,6 +1055,40 @@ curl -X POST "http://{TiDBIP}:10080/dxf/schedule/max_concurrent_task?value={numb
 ```json
 {
  "max_concurrent_task": 128,
+ "persistence": "memory_only"
+}
+```
+
+### Get or update the DXF task cleanup batch size
+
+This API gets or updates the maximum number of finished DXF tasks returned by each cleanup query, independently of the scheduler concurrency limit. It is available only on a TiDB server that uses the `SYSTEM` keyspace. The value applies only to the TiDB process that handles the request, is kept in memory only, and is reset when that process restarts. Send requests to the current DXF owner to inspect or update the effective value.
+
+Get the current value, which defaults to `20`:
+
+```shell
+curl http://{TiDBIP}:10080/dxf/schedule/task_cleanup_batch_size
+```
+
+Example response:
+
+```json
+{
+ "task_cleanup_batch_size": 20,
+ "persistence": "memory_only"
+}
+```
+
+Update the value:
+
+```shell
+curl -X POST "http://{TiDBIP}:10080/dxf/schedule/task_cleanup_batch_size?value={number}"
+```
+
+The `value` parameter is required and must be an integer in the range `[1, 1000]`. The response uses the same format as the `GET` request:
+
+```json
+{
+ "task_cleanup_batch_size": 128,
  "persistence": "memory_only"
 }
 ```

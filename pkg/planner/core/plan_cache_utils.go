@@ -139,6 +139,12 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	}
 	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text())
 	hasUsePlanCacheHint := hint.ContainTableHintInStmtNode(paramStmt, hint.HintUsePlanCache)
+	var bindingInfo bindinfo.BindingMatchInfo
+	if isPrepStmt {
+		// PlanBuilder may rewrite the prepared AST, so keep the original binding key.
+		_, bindingInfo.NoDBDigest = bindinfo.NormalizeStmtForBinding(prepared.Stmt, "", true)
+		bindingInfo.TableNames = bindinfo.CollectTableNames(prepared.Stmt)
+	}
 
 	var (
 		cacheable bool
@@ -224,6 +230,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		StmtCacheable:       cacheable,
 		UncacheableReason:   reason,
 		HasUsePlanCacheHint: hasUsePlanCacheHint,
+		BindingInfo:         bindingInfo,
 		dbName:              dbName,
 		tbls:                tbls,
 		SchemaVersion:       ret.InfoSchema.SchemaMetaVersion(),

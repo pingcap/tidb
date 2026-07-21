@@ -14,7 +14,12 @@
 
 package extworkload
 
-import "github.com/pingcap/tidb/pkg/config"
+import (
+	"context"
+
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/kv"
+)
 
 // IsEnabled reports whether a Manager is present.
 func IsEnabled(m Manager) bool { return m != nil }
@@ -30,6 +35,41 @@ func IsTTLTaskWorker(m Manager) bool { return roleIs(m, config.RoleTTLTaskWorker
 
 // IsAutoAnalyzeWorker reports whether this TiDB should run auto-analyze jobs.
 func IsAutoAnalyzeWorker(m Manager) bool { return roleIs(m, config.RoleAutoAnalyzeWorker) }
+
+type managerStoreKey struct{}
+
+// SetManagerForStore binds the manager to store. Passing nil removes it.
+func SetManagerForStore(store kv.Storage, mgr Manager) {
+	if store == nil {
+		return
+	}
+	store.SetOption(managerStoreKey{}, mgr)
+}
+
+// GetManagerFromStore returns the manager bound to store.
+func GetManagerFromStore(store kv.Storage) Manager {
+	if store == nil {
+		return nil
+	}
+	v, ok := store.GetOption(managerStoreKey{})
+	if !ok {
+		return nil
+	}
+	mgr, _ := v.(Manager)
+	return mgr
+}
+
+// AbortGCV2ForUpgrade aborts GCV2 work when this TiDB is the dedicated GCV2
+// worker. It returns true when the caller must terminate after the abort.
+func AbortGCV2ForUpgrade(ctx context.Context, mgr Manager) (bool, error) {
+	if !IsGCV2Worker(mgr) {
+		return false, nil
+	}
+	if err := mgr.AbortGCV2(ctx); err != nil {
+		return false, err
+	}
+	return true, nil
+}
 
 func roleIs(m Manager, role config.ExternalWorkloadRole) bool {
 	return IsEnabled(m) && m.Role() == role

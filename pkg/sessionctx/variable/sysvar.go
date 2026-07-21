@@ -3074,7 +3074,7 @@ var defaultSysVars = []*SysVar{
 		s.MaxPagingSize = tidbOptPositiveInt32(val, vardef.DefMaxPagingSize)
 		return nil
 	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBPagingSizeBytes, Value: strconv.Itoa(vardef.DefPagingSizeBytes), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBPagingSizeBytes, Value: strconv.Itoa(vardef.DefPagingSizeBytes), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt64, IsHintUpdatableVerified: true, SetSession: func(s *SessionVars, val string) error {
 		s.PagingSizeBytes = int(TidbOptInt64(val, int64(vardef.DefPagingSizeBytes)))
 		return nil
 	}},
@@ -4044,6 +4044,12 @@ var defaultSysVars = []*SysVar{
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableCachePrepareStmt, Value: BoolToOnOff(vardef.DefEnableCachePrepareStmt), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableCachePrepareStmt = TiDBOptOn(val)
 		return nil
+	}},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableConnectionEventLog, Value: BoolToOnOff(vardef.DefTiDBEnableConnectionEventLog), Type: vardef.TypeBool, SetGlobal: func(_ context.Context, _ *SessionVars, val string) error {
+		vardef.EnableConnectionEventLog.Store(TiDBOptOn(val))
+		return nil
+	}, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
+		return BoolToOnOff(vardef.EnableConnectionEventLog.Load()), nil
 	}},
 }
 

@@ -376,6 +376,8 @@ func TestAddInfo(t *testing.T) {
 			maxRocksdbBlockReadCount:     3,
 			sumRocksdbBlockReadByte:      4,
 			maxRocksdbBlockReadByte:      4,
+			sumIARemoteReadSegmentCount:  8,
+			maxIARemoteReadSegmentCount:  3,
 
 			// txn
 			commitCount:          8,
@@ -474,6 +476,8 @@ func TestAddInfo(t *testing.T) {
 			maxRocksdbBlockReadCount:     3,
 			sumRocksdbBlockReadByte:      4,
 			maxRocksdbBlockReadByte:      4,
+			sumIARemoteReadSegmentCount:  8,
+			maxIARemoteReadSegmentCount:  5,
 
 			// txn
 			commitCount:          8,
@@ -579,6 +583,8 @@ func TestAddInfo(t *testing.T) {
 			maxRocksdbBlockReadCount:     3,
 			sumRocksdbBlockReadByte:      8,
 			maxRocksdbBlockReadByte:      4,
+			sumIARemoteReadSegmentCount:  16,
+			maxIARemoteReadSegmentCount:  5,
 
 			// txn
 			commitCount:          16,

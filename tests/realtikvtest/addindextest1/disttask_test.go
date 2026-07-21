@@ -570,12 +570,12 @@ func TestAddIndexScheduleAway(t *testing.T) {
 			tk1.MustExec("use test")
 			updateExecID := fmt.Sprintf(`
 				update mysql.tidb_background_subtask set exec_id = 'other' where task_key in
-					(select id from mysql.tidb_global_task where task_key like '%%%d')`, jobID.Load())
+					(select CAST(id AS CHAR) from mysql.tidb_global_task where task_key like '%%%d')`, jobID.Load())
 			tk1.MustExec(updateExecID)
 			<-afterCancel
 			updateExecID = fmt.Sprintf(`
 				update mysql.tidb_background_subtask set exec_id = ':4000' where task_key in
-					(select id from mysql.tidb_global_task where task_key like '%%%d')`, jobID.Load())
+					(select CAST(id AS CHAR) from mysql.tidb_global_task where task_key like '%%%d')`, jobID.Load())
 			tk1.MustExec(updateExecID)
 		})
 	})

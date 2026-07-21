@@ -8,6 +8,7 @@ go_library(
         "conflict_resolution.go",
         "encode_and_sort_operator.go",
         "job.go",
+        "job_doc.go",
         "metrics.go",
         "planner.go",
         "proto.go",
@@ -111,7 +112,7 @@ go_test(
     ],
     embed = [":importinto"],
     flaky = True,
-    shard_count = 29,
+    shard_count = 30,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",

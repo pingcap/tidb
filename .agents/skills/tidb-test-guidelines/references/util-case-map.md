@@ -397,7 +397,7 @@
 ### Tests
 - `pkg/util/profile/flamegraph_test.go` - util/profile: Tests profile to datum.
 - `pkg/util/profile/main_test.go` - Configures default goleak settings and registers testdata.
-- `pkg/util/profile/profile_test.go` - util/profile: Tests profiles.
+- `pkg/util/profile/profile_test.go` - util/profile: Tests profile tables and profiling logs.
 
 ### Testdata
 - `pkg/util/profile/testdata/test.pprof`

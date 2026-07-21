@@ -67,7 +67,7 @@ go_test(
     embed = [":scheduler"],
     flaky = True,
     race = "off",
-    shard_count = 46,
+    shard_count = 45,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
@@ -86,6 +86,7 @@ go_test(
         "//pkg/ingestor/errdef",
         "//pkg/keyspace",
         "//pkg/kv",
+        "//pkg/lightning/common",
         "//pkg/sessionctx",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",

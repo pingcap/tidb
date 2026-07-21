@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/session"
@@ -66,6 +67,31 @@ type mockGCWorkerLockResolver struct {
 	tikvStore         tikv.Storage
 	scanLocks         func([]*txnlock.Lock, []byte) ([]*txnlock.Lock, *tikv.KeyLocation)
 	batchResolveLocks func([]*txnlock.Lock, *tikv.KeyLocation) (*tikv.KeyLocation, error)
+}
+
+type stubGCV2Manager struct {
+	extworkload.Manager
+
+	role             config.ExternalWorkloadRole
+	meta             *keyspacepb.KeyspaceMeta
+	err              error
+	recycleSafePoint uint64
+	registerCount    int
+	recycleCount     int
+}
+
+func (m *stubGCV2Manager) Role() config.ExternalWorkloadRole { return m.role }
+func (m *stubGCV2Manager) Meta() *keyspacepb.KeyspaceMeta    { return m.meta }
+
+func (m *stubGCV2Manager) RegisterGCV2(_ context.Context, _ uint64, _ time.Duration) error {
+	m.registerCount++
+	return m.err
+}
+
+func (m *stubGCV2Manager) RecycleGCV2(_ context.Context, safePoint uint64) error {
+	m.recycleSafePoint = safePoint
+	m.recycleCount++
+	return m.err
 }
 
 func (l *mockGCWorkerLockResolver) ScanLocksInOneRegion(bo *tikv.Backoffer, key []byte, endKey []byte, maxVersion uint64, limit uint32) ([]*txnlock.Lock, *tikv.KeyLocation, error) {
@@ -222,6 +248,60 @@ func createGCWorkerSuite(t *testing.T, opts ...mockGCWorkerSuiteOption) *mockGCW
 	s.gcWorker = gcWorker
 
 	return s
+}
+
+func TestNotifyGCV2AfterGCForDedicatedWorker(t *testing.T) {
+	const safePoint = 123
+	for _, tc := range []struct {
+		name             string
+		gcManagementType string
+		recycleErr       error
+		wantRecycleCount int
+	}{
+		{
+			name:             "keyspace level GC",
+			gcManagementType: pd.KeyspaceConfigGCManagementTypeKeyspaceLevel,
+			wantRecycleCount: 1,
+		},
+		{
+			name:             "recycle failure is best effort",
+			gcManagementType: pd.KeyspaceConfigGCManagementTypeKeyspaceLevel,
+			recycleErr:       errors.New("mock recycle GCV2 failure"),
+			wantRecycleCount: 1,
+		},
+		{
+			name:             "unified GC",
+			gcManagementType: pd.KeyspaceConfigGCManagementTypeUnified,
+			wantRecycleCount: 0,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, err := mockstore.NewMockStore(mockstore.WithCurrentKeyspaceMeta(&keyspacepb.KeyspaceMeta{
+				Id:     1,
+				Name:   "ks",
+				Config: map[string]string{pd.KeyspaceConfigGCManagementType: tc.gcManagementType},
+			}))
+			require.NoError(t, err)
+			t.Cleanup(func() {
+				require.NoError(t, store.Close())
+			})
+
+			mgr := &stubGCV2Manager{
+				role: config.RoleGCV2Worker,
+				meta: store.GetCodec().GetKeyspaceMeta(),
+				err:  tc.recycleErr,
+			}
+			extworkload.SetManagerForStore(store, mgr)
+			worker := &GCWorker{store: store}
+
+			worker.notifyGCV2AfterGC(context.Background(), safePoint)
+			require.Zero(t, mgr.registerCount)
+			require.Equal(t, tc.wantRecycleCount, mgr.recycleCount)
+			if tc.wantRecycleCount > 0 {
+				require.Equal(t, uint64(safePoint), mgr.recycleSafePoint)
+			}
+		})
+	}
 }
 
 func (s *mockGCWorkerSuite) mustPut(t *testing.T, key, value string) {
