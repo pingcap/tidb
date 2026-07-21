@@ -403,187 +403,66 @@ const (
 )
 
 // CoprRequestLimiter limits the aggregate number of in-flight cop request
-// attempts.
-//
-// A token is acquired before SendReqCtx sends one cop request attempt and is
-// released after SendReqCtx returns. The token therefore covers the RPC
-// send/receive phase only. It does not cover result consumption after the
-// response has been handed back to the cop iterator.
-//
-// Implementations can represent different scopes, such as a local operator
-// limiter or a query-owned per-store limiter.
-type CoprRequestLimiter interface {
-	// Capacity returns the maximum number of request attempts this limiter can
-	// admit concurrently.
-	Capacity() int
-
-	// Acquire blocks until this limiter admits one request attempt or done is
-	// closed. When exit is false, callers must call Release exactly once after
-	// the request attempt finishes. When exit is true, no token is held and
-	// callers should stop the current request attempt.
-	Acquire(done <-chan struct{}) (exit bool)
-
-	// TryAcquire attempts to acquire one token without blocking. It must not
-	// bypass existing waiters.
-	TryAcquire() bool
-
-	// Release releases one token acquired by Acquire. It must only be called
-	// after Acquire returns false.
-	Release()
-}
-
-type fixedCoprRequestLimiter struct {
-	capacity int64
-	inflight atomic.Int64
-	waiters  atomic.Int64
-
-	mu   sync.Mutex
-	head *coprRequestWaiter
-	tail *coprRequestWaiter
-}
-
-type coprRequestWaiter struct {
-	ready    chan struct{}
-	prev     *coprRequestWaiter
-	next     *coprRequestWaiter
-	queued   bool
-	admitted bool
+// attempts. A token covers the RPC send/receive phase only, from before
+// SendReqCtx is called until it returns. It must be created with
+// NewCoprRequestLimiter.
+type CoprRequestLimiter struct {
+	token chan struct{}
 }
 
 // NewCoprRequestLimiter creates a cop request limiter with capacity n.
-func NewCoprRequestLimiter(n int) CoprRequestLimiter {
+func NewCoprRequestLimiter(n int) *CoprRequestLimiter {
 	if n <= 0 {
 		return nil
 	}
-	return &fixedCoprRequestLimiter{
-		capacity: int64(n),
+	return &CoprRequestLimiter{
+		token: make(chan struct{}, n),
 	}
 }
 
-func (l *fixedCoprRequestLimiter) Acquire(done <-chan struct{}) (exit bool) {
-	if l.tryAcquireFast() {
+// Acquire blocks until the limiter admits one request attempt or done is
+// closed. When it returns false, the caller must call Release exactly once.
+func (l *CoprRequestLimiter) Acquire(done <-chan struct{}) (exit bool) {
+	if l.TryAcquire() {
 		return false
 	}
 
 	select {
 	case <-done:
 		return true
+	case l.token <- struct{}{}:
+		return false
+	}
+}
+
+// Release releases one acquired request token.
+func (l *CoprRequestLimiter) Release() {
+	select {
+	case <-l.token:
 	default:
-	}
-
-	waiter := &coprRequestWaiter{ready: make(chan struct{})}
-	l.waiters.Inc()
-	l.mu.Lock()
-	if l.head == nil && l.tryAcquire() {
-		l.waiters.Dec()
-		l.mu.Unlock()
-		return false
-	}
-	l.pushWaiter(waiter)
-	l.mu.Unlock()
-
-	select {
-	case <-done:
-		l.mu.Lock()
-		if waiter.admitted {
-			l.mu.Unlock()
-			return false
-		}
-		if waiter.queued {
-			l.removeWaiter(waiter)
-			l.waiters.Dec()
-		}
-		l.mu.Unlock()
-		return true
-	case <-waiter.ready:
-		return false
-	}
-}
-
-func (l *fixedCoprRequestLimiter) Release() {
-	if l.inflight.Add(-1) < 0 {
-		l.inflight.Inc()
 		panic("release a redundant cop request token")
 	}
-	if l.waiters.Load() == 0 {
-		return
-	}
-
-	var admitted *coprRequestWaiter
-	l.mu.Lock()
-	if l.head != nil && l.inflight.Load() < l.capacity {
-		waiter := l.head
-		l.removeWaiter(waiter)
-		l.waiters.Dec()
-		waiter.admitted = true
-		l.inflight.Inc()
-		admitted = waiter
-	}
-	l.mu.Unlock()
-	if admitted != nil {
-		close(admitted.ready)
-	}
 }
 
-func (l *fixedCoprRequestLimiter) TryAcquire() bool {
-	return l.tryAcquireFast()
-}
-
-func (l *fixedCoprRequestLimiter) Capacity() int {
-	return int(l.capacity)
-}
-
-func (l *fixedCoprRequestLimiter) tryAcquireFast() bool {
-	if l.waiters.Load() > 0 {
+// TryAcquire attempts to acquire one token without blocking.
+func (l *CoprRequestLimiter) TryAcquire() bool {
+	select {
+	case l.token <- struct{}{}:
+		return true
+	default:
 		return false
 	}
-	return l.tryAcquire()
 }
 
-func (l *fixedCoprRequestLimiter) tryAcquire() bool {
-	for {
-		inflight := l.inflight.Load()
-		if inflight >= l.capacity {
-			return false
-		}
-		if l.inflight.CompareAndSwap(inflight, inflight+1) {
-			return true
-		}
-	}
-}
-
-func (l *fixedCoprRequestLimiter) pushWaiter(waiter *coprRequestWaiter) {
-	waiter.queued = true
-	if l.tail == nil {
-		l.head = waiter
-		l.tail = waiter
-		return
-	}
-	waiter.prev = l.tail
-	l.tail.next = waiter
-	l.tail = waiter
-}
-
-func (l *fixedCoprRequestLimiter) removeWaiter(waiter *coprRequestWaiter) {
-	if waiter.prev != nil {
-		waiter.prev.next = waiter.next
-	} else {
-		l.head = waiter.next
-	}
-	if waiter.next != nil {
-		waiter.next.prev = waiter.prev
-	} else {
-		l.tail = waiter.prev
-	}
-	waiter.prev = nil
-	waiter.next = nil
-	waiter.queued = false
+// Capacity returns the maximum number of concurrent request attempts.
+func (l *CoprRequestLimiter) Capacity() int {
+	return cap(l.token)
 }
 
 // QueryCopStoreLimiter owns per-store cop request limiters for one statement.
 type QueryCopStoreLimiter struct {
 	limit  int
-	stores sync.Map // storeID -> CoprRequestLimiter
+	stores sync.Map // storeID -> *CoprRequestLimiter
 }
 
 // NewQueryCopStoreLimiter creates a query-scoped per-store cop limiter.
@@ -595,16 +474,16 @@ func NewQueryCopStoreLimiter(limit int) *QueryCopStoreLimiter {
 }
 
 // GetStoreLimiter returns the query-scoped limiter for a TiKV store.
-func (l *QueryCopStoreLimiter) GetStoreLimiter(storeID uint64) CoprRequestLimiter {
+func (l *QueryCopStoreLimiter) GetStoreLimiter(storeID uint64) *CoprRequestLimiter {
 	if l == nil || l.limit <= 0 || storeID == 0 {
 		return nil
 	}
 	if limiter, ok := l.stores.Load(storeID); ok {
-		return limiter.(CoprRequestLimiter)
+		return limiter.(*CoprRequestLimiter)
 	}
 	newLimiter := NewCoprRequestLimiter(l.limit)
 	limiter, _ := l.stores.LoadOrStore(storeID, newLimiter)
-	return limiter.(CoprRequestLimiter)
+	return limiter.(*CoprRequestLimiter)
 }
 
 // Capacity returns the per-store concurrency limit.
@@ -800,7 +679,7 @@ type Request struct {
 	// CoprRequestLimiter, if not nil, is used as the shared in-flight request
 	// limiter for all cop iterators created from this request. The token lifecycle
 	// is tied to request send/response receive instead of result consumption.
-	CoprRequestLimiter CoprRequestLimiter
+	CoprRequestLimiter *CoprRequestLimiter
 	// QueryCopStoreLimiter, if not nil, limits in-flight cop request attempts
 	// per TiKV store within this request's statement.
 	QueryCopStoreLimiter *QueryCopStoreLimiter

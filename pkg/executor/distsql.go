@@ -1021,7 +1021,7 @@ func getSelectResultInFlightCost(result distsql.SelectResult) int {
 	return inFlightCost
 }
 
-func getMergeSortSharedCoprRequestLimiter(needMerge bool, distSQLConcurrency int) kv.CoprRequestLimiter {
+func getMergeSortSharedCoprRequestLimiter(needMerge bool, distSQLConcurrency int) *kv.CoprRequestLimiter {
 	if !needMerge {
 		return nil
 	}
@@ -1063,7 +1063,7 @@ func (e *IndexLookUpExecutor) buildIndexSelectResultForRange(
 	totalRanges int,
 	batchSize int,
 	indexScanConcurrency int,
-	sharedCoprRequestLimiter kv.CoprRequestLimiter,
+	sharedCoprRequestLimiter *kv.CoprRequestLimiter,
 ) (distsql.SelectResult, error) {
 	if tblScanIdxForRewritePartitionID >= 0 {
 		// We should set the TblScan's TableID to the partition physical ID to make sure

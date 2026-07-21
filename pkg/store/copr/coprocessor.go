@@ -1363,7 +1363,7 @@ func (it *copIterator) GetSendRate() *util.RateLimit {
 }
 
 // GetRequestLimiter returns the shared request limiter.
-func (it *copIterator) GetRequestLimiter() kv.CoprRequestLimiter {
+func (it *copIterator) GetRequestLimiter() *kv.CoprRequestLimiter {
 	return it.req.CoprRequestLimiter
 }
 
@@ -1893,7 +1893,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 	return result, err
 }
 
-func acquireCoprRequestLimiter(limiter kv.CoprRequestLimiter, done <-chan struct{}) (release func(), waitTime time.Duration, exit bool) {
+func acquireCoprRequestLimiter(limiter *kv.CoprRequestLimiter, done <-chan struct{}) (release func(), waitTime time.Duration, exit bool) {
 	if limiter == nil {
 		return nil, 0, false
 	}
