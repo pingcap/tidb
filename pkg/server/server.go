@@ -69,6 +69,7 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	servererr "github.com/pingcap/tidb/pkg/server/err"
+	"github.com/pingcap/tidb/pkg/server/internal/advertisedstatus"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
@@ -492,6 +493,24 @@ func setSSLVariable(ca, key, cert string) {
 func (s *Server) reportConfig() {
 	metrics.ConfigStatus.WithLabelValues("token-limit").Set(float64(s.cfg.TokenLimit))
 	metrics.ConfigStatus.WithLabelValues("max_connections").Set(float64(s.cfg.Instance.MaxConnections))
+}
+
+func (s *Server) startAdvertisedStatusEndpointCheck(ctx context.Context) {
+	if s.dom == nil {
+		return
+	}
+	ddl := s.dom.DDL()
+	if ddl == nil {
+		return
+	}
+	advertisedstatus.Start(ctx, advertisedstatus.Options{
+		ReportStatus:     s.cfg.Status.ReportStatus,
+		StatusListener:   s.statusListener,
+		AdvertiseAddress: s.cfg.AdvertiseAddress,
+		LocalID:          ddl.GetID(),
+		Scheme:           util.InternalHTTPSchema(),
+		BaseHTTPClient:   util.InternalHTTPClient(),
+	})
 }
 
 // Run runs the server.

@@ -13,7 +13,6 @@
 - `pkg/server/conn_stmt_test.go` - server: Tests cursor exists flag.
 - `pkg/server/conn_test.go` - server: Tests issue33699.
 - `pkg/server/driver_tidb_test.go` - server: Tests convert column info.
-- `pkg/server/http_status_test.go` - server: Tests the advertised status endpoint self-check.
 - `pkg/server/main_test.go` - Configures default goleak settings and registers testdata.
 - `pkg/server/mock_conn_test.go` - server: Tests mock conn.
 - `pkg/server/server_test.go` - server: Tests issue46197.
@@ -52,6 +51,11 @@
 
 ### Tests
 - `pkg/server/internal/packetio_test.go` - server/internal: Tests packet IO write.
+
+## pkg/server/internal/advertisedstatus
+
+### Tests
+- `pkg/server/internal/advertisedstatus/checker_test.go` - server/internal/advertisedstatus: Tests the advertised status endpoint self-check.
 
 ## pkg/server/internal/column
 

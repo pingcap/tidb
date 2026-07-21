@@ -1,0 +1,25 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "advertisedstatus",
+    srcs = ["checker.go"],
+    importpath = "github.com/pingcap/tidb/pkg/server/internal/advertisedstatus",
+    visibility = ["//pkg/server:__subpackages__"],
+    deps = [
+        "//pkg/domain/serverinfo",
+        "//pkg/util",
+        "//pkg/util/logutil",
+        "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "advertisedstatus_test",
+    timeout = "short",
+    srcs = ["checker_test.go"],
+    embed = [":advertisedstatus"],
+    flaky = True,
+    shard_count = 8,
+    deps = ["@com_github_stretchr_testify//require"],
+)
