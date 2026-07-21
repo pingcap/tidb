@@ -2685,9 +2685,11 @@ func fillDistributionJobToChunk(ctx context.Context, job map[string]any, result 
 // "Phase", "Status", "Source_File_Size", "Imported_Rows",
 // "Result_Message", "Create_Time", "Start_Time", "End_Time", "Created_By"}
 func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
-	var hasSuperPriv bool
-	if pm := privilege.GetPrivilegeManager(e.Ctx()); pm != nil {
-		hasSuperPriv = pm.RequestVerification(e.Ctx().GetSessionVars().ActiveRoles, "", "", "", mysql.SuperPriv)
+	sctx := e.Ctx()
+
+	var hasElevatedPrivilege bool
+	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
+		hasElevatedPrivilege = pm.RequestDynamicVerification(sctx.GetSessionVars().ActiveRoles, "IMPORT_JOB_VIEW", false)
 	}
 	// we use sessionCtx from GetTaskManager, user ctx might not have system table privileges.
 	taskManager, err := fstorage.GetTaskManager()
@@ -2700,7 +2702,7 @@ func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
 		if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
 			exec := se.GetSQLExecutor()
 			var err2 error
-			info, err2 = importer.GetJob(ctx, exec, *e.ImportJobID, e.Ctx().GetSessionVars().User.String(), hasSuperPriv)
+			info, err2 = importer.GetJob(ctx, exec, *e.ImportJobID, sctx.GetSessionVars().User.String(), hasElevatedPrivilege)
 			return err2
 		}); err != nil {
 			return err
@@ -2711,7 +2713,7 @@ func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
 	if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
 		exec := se.GetSQLExecutor()
 		var err2 error
-		infos, err2 = importer.GetAllViewableJobs(ctx, exec, e.Ctx().GetSessionVars().User.String(), hasSuperPriv)
+		infos, err2 = importer.GetAllViewableJobs(ctx, exec, sctx.GetSessionVars().User.String(), hasElevatedPrivilege)
 		return err2
 	}); err != nil {
 		return err
