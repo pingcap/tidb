@@ -202,6 +202,20 @@ func fillIndexPath(ds *logicalop.DataSource, path *util.AccessPath, conds []expr
 	return err
 }
 
+// pathRangesIncludeAppendedHandle reports whether the ranges of a non-unique index path
+// extend past the declared index columns into the appended handle columns.
+func pathRangesIncludeAppendedHandle(path *util.AccessPath) bool {
+	if path.Index == nil || len(path.IdxCols) <= len(path.Index.Columns) {
+		return false
+	}
+	for _, ran := range path.Ranges {
+		if len(ran.LowVal) > len(path.Index.Columns) || len(ran.HighVal) > len(path.Index.Columns) {
+			return true
+		}
+	}
+	return false
+}
+
 // tryAppendCommonHandleColsToIndexPath is the common-handle counterpart of the int-handle
 // append in fillIndexPath. The key of a non-unique secondary index on a clustered table
 // physically ends with the full common handle, so appending the primary key columns to the
@@ -258,6 +272,21 @@ func adjustCountAfterAccess(ds *logicalop.DataSource, path *util.AccessPath) {
 	// We prefer the `stats.RowCount` to provide consistency in estimation across all paths.
 	// Add an arbitrary tolerance factor to account for comparison with floating point
 	if (path.CountAfterAccess + cost.ToleranceFactor) < ds.StatsInfo().RowCount {
+		// When the ranges include the appended handle columns, the handle predicates were
+		// credited with deliberately damped exponential backoff, so falling below the
+		// independence-leaning stats.RowCount is expected rather than a sign of
+		// inconsistent assumptions. Align to stats.RowCount without the SelectionFactor
+		// penalty so the credited path is not made more expensive than an uncredited one.
+		if pathRangesIncludeAppendedHandle(path) {
+			if path.MinCountAfterAccess > 0 {
+				path.MinCountAfterAccess = min(path.MinCountAfterAccess, path.CountAfterAccess)
+			} else {
+				path.MinCountAfterAccess = path.CountAfterAccess
+			}
+			path.CountAfterAccess = ds.StatsInfo().RowCount
+			path.MaxCountAfterAccess = max(path.CountAfterAccess, path.MaxCountAfterAccess)
+			return
+		}
 		// Store the MinCountAfterAccess "before" adjusting the "CountAfterAccess". This can be used to differentiate
 		// the "Min" estimate for each index/inthandle path when CountAfterAccess has been equalized.
 		if path.MinCountAfterAccess > 0 {
@@ -496,8 +525,16 @@ func detachCondAndBuildRangeForPath(
 		}
 	}
 	count, err := cardinality.GetRowCountByIndexRanges(sctx, histColl, path.Index.ID, estimateRanges, indexCols)
+	if err != nil {
+		return err
+	}
+	if needPruneEstimateRange {
+		// The pruned estimate gives the appended handle predicates no credit; damp it
+		// with the handle columns' selectivities.
+		count = cardinality.AdjustRowCountForAppendedHandleColumns(sctx, histColl, path.Ranges, path.IdxCols, len(indexCols), count)
+	}
 	path.CountAfterAccess, path.MinCountAfterAccess, path.MaxCountAfterAccess = count.Est, count.MinEst, count.MaxEst
-	return err
+	return nil
 }
 
 // pruneEstimateRange truncates ranges built over the index columns plus the appended handle

@@ -565,7 +565,7 @@ func (sch *importScheduler) OnDone(ctx context.Context, _ storage.TaskHandle, ta
 	if task.State == proto.TaskStateReverting {
 		errMsg := ""
 		if task.Error != nil {
-			if scheduler.IsCancelledErr(task.Error) {
+			if storage.IsCancelledErr(task.Error) {
 				return sch.cancelJob(ctx, task, taskMeta, logger)
 			}
 			errMsg = task.Error.Error()

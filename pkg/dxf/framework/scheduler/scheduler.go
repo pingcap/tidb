@@ -19,7 +19,6 @@ import (
 	goerrors "errors"
 	"fmt"
 	"math/rand"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -44,16 +43,7 @@ import (
 	"go.uber.org/zap"
 )
 
-const (
-	// for a cancelled task, it's terminal state is reverted or reverted_failed,
-	// so we use a special error message to indicate that the task is cancelled
-	// by user.
-	taskCancelMsg = "cancelled by user"
-
-	metricStateAll       = "all"
-	metricStateCancelled = "cancelled"
-	metricStateDataError = "data-error"
-)
+const metricStateAll = "all"
 
 var (
 	// CheckTaskFinishedInterval is the interval for scheduler.
@@ -292,7 +282,7 @@ func (s *BaseScheduler) onCancelling() error {
 	s.logger.Info("on cancelling state", zap.Stringer("state", task.State),
 		zap.String("step", proto.Step2Str(task.Type, task.Step)))
 
-	return s.revertTask(errors.New(taskCancelMsg))
+	return s.revertTask(errors.New(storage.TaskCancelMessage))
 }
 
 // handle task in pausing state, cancel all running subtasks.
@@ -808,14 +798,6 @@ func (s *BaseScheduler) GetLogger() *zap.Logger {
 	return s.logger
 }
 
-// IsCancelledErr checks if the error is a cancelled error.
-func IsCancelledErr(err error) bool {
-	if err == nil {
-		return false
-	}
-	return strings.Contains(err.Error(), taskCancelMsg)
-}
-
 // getEligibleNodes returns the eligible(live) nodes for the task.
 // if the task can only be scheduled to some specific nodes, return them directly,
 // we don't care liveliness of them.
@@ -848,44 +830,11 @@ func getMetricState(state proto.TaskState, taskErr error) string {
 	case proto.TaskStateFailed:
 		return state.String()
 	case proto.TaskStateReverted:
-		if IsCancelledErr(taskErr) {
-			return metricStateCancelled
-		}
-		if isDataErrorForMetric(taskErr) {
-			return metricStateDataError
+		if classification := storage.ClassifyTaskError(state, taskErr); classification != "" {
+			return classification
 		}
 		return proto.TaskStateFailed.String()
 	default:
 		return ""
 	}
-}
-
-func isDataErrorForMetric(taskErr error) bool {
-	if taskErr == nil {
-		return false
-	}
-	errMsg := taskErr.Error()
-	// Keep these checks string-based to avoid depending on Lightning error definitions
-	// from the DXF scheduler. We can replace this when those error definitions are
-	// split out of the Lightning package. DXF error serialization keeps only the
-	// outer error code, so nested data errors must be identified by their canonical
-	// messages.
-	//
-	// import-into examples:
-	// [Lightning:Restore:ErrEncodeKV]when encoding 1-th data row in this chunk:
-	// encode kv error in file orderlab/orderlab.shipment_events.000000000.csv.gz:0
-	// at offset 0: Value conversion failed for column 'event_id'. Expected type:
-	// bigint, received value: ?. Reason: [types:1292]Truncated incorrect DOUBLE value: '?'.
-	//
-	// add-index examples:
-	// [kv:1062]Duplicate entry '1' for key 't.idx'
-	isImportDataErr := strings.Contains(errMsg, "ErrEncodeKV") &&
-		(strings.Contains(errMsg, "Value conversion failed for column") ||
-			(strings.Contains(errMsg, "Check constraint '") && strings.Contains(errMsg, "' is violated")) ||
-			strings.Contains(errMsg, "Table has no partition for value"))
-	isImportConflictErr := (strings.Contains(errMsg, "[executor:8167]") && strings.Contains(errMsg, "Duplicate key conflict found")) ||
-		(strings.Contains(errMsg, "ErrFoundDataConflictRecords") && strings.Contains(errMsg, "found data conflict records")) ||
-		(strings.Contains(errMsg, "ErrFoundIndexConflictRecords") && strings.Contains(errMsg, "found index conflict records"))
-	isUKDupEntryErr := strings.Contains(errMsg, "[kv:1062]") && strings.Contains(errMsg, "Duplicate entry")
-	return isImportDataErr || isImportConflictErr || isUKDupEntryErr
 }

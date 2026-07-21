@@ -89,6 +89,7 @@ var (
 	mIncIDPrefix           = "IID"
 	mRandomIDPrefix        = "TARID"
 	mBootstrapKey          = []byte("BootstrapKey")
+	mStarterBootstrapKey   = []byte("StarterBootstrapKey")
 	mSchemaDiffPrefix      = "Diff"
 	mPolicies              = []byte("Policies")
 	mPolicyPrefix          = "Policy"
@@ -2060,6 +2061,18 @@ func (m *Mutator) GetBootstrapVersion() (int64, error) {
 // FinishBootstrap finishes bootstrap.
 func (m *Mutator) FinishBootstrap(version int64) error {
 	err := m.txn.Set(mBootstrapKey, []byte(strconv.FormatInt(version, 10)))
+	return errors.Trace(err)
+}
+
+// GetStarterBootstrapVersion returns the completed starter bootstrap version.
+func (m *Mutator) GetStarterBootstrapVersion() (int64, error) {
+	value, err := m.txn.GetInt64(mStarterBootstrapKey)
+	return value, errors.Trace(err)
+}
+
+// FinishStarterBootstrap records the completed starter bootstrap version.
+func (m *Mutator) FinishStarterBootstrap(version int64) error {
+	err := m.txn.Set(mStarterBootstrapKey, []byte(strconv.FormatInt(version, 10)))
 	return errors.Trace(err)
 }
 
