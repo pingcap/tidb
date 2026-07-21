@@ -499,13 +499,10 @@ func TestStarterPrivilegeReset(t *testing.T) {
 
 	require.NoError(t, runStarterPrivilegeResetLocked(se, bootstrapFile))
 	for _, table := range []string{
-		"columns_priv",
 		"db",
 		"default_roles",
 		"global_grants",
 		"global_priv",
-		"password_history",
-		"tables_priv",
 		"user",
 	} {
 		require.Equal(t, int64(0), mustCountStarterPrivilegeRows(t, se,
@@ -513,6 +510,10 @@ func TestStarterPrivilegeReset(t *testing.T) {
 	}
 	require.Equal(t, int64(0), mustCountStarterPrivilegeRows(t, se,
 		"SELECT COUNT(*) FROM mysql.role_edges WHERE TO_USER = ?", "source_keyspace.user"), "role_edges")
+	for _, table := range []string{"columns_priv", "password_history", "tables_priv"} {
+		require.Equal(t, int64(1), mustCountStarterPrivilegeRows(t, se,
+			"SELECT COUNT(*) FROM mysql."+table+" WHERE User = ?", "source_keyspace.user"), table)
+	}
 	require.Equal(t, int64(1), mustCountStarterPrivilegeRows(t, se,
 		"SELECT COUNT(*) FROM mysql.user WHERE Host = '%' AND User = ? AND authentication_string = ''",
 		"restored_keyspace.root"))

@@ -61,14 +61,11 @@ const (
 var (
 	starterBootstrapPlaceholderRe = regexp.MustCompile(`<[A-Za-z0-9_-]+>`)
 	starterPrivilegeResetSQL      = []string{
-		"DELETE FROM mysql.columns_priv",
 		"DELETE FROM mysql.db",
 		"DELETE FROM mysql.default_roles",
 		"DELETE FROM mysql.global_grants",
 		"DELETE FROM mysql.global_priv",
-		"DELETE FROM mysql.password_history",
 		"DELETE FROM mysql.role_edges",
-		"DELETE FROM mysql.tables_priv",
 		"DELETE FROM mysql.user",
 	}
 )
