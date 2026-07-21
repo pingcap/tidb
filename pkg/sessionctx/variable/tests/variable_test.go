@@ -635,6 +635,7 @@ func TestSetSysVar(t *testing.T) {
 	originalDeployMode := deploymode.Get()
 	originalRequireSecureTransport := tidbtls.RequireSecureTransport.Load()
 	originalEnableConnectionEventLog := vardef.EnableConnectionEventLog.Load()
+	originalPlanReplayerGCDuration := vardef.GetPlanReplayerGCDuration()
 	t.Cleanup(func() {
 		config.StoreGlobalConfig(&originalCfg)
 		if kerneltype.IsNextGen() {
@@ -642,6 +643,7 @@ func TestSetSysVar(t *testing.T) {
 		}
 		tidbtls.RequireSecureTransport.Store(originalRequireSecureTransport)
 		vardef.EnableConnectionEventLog.Store(originalEnableConnectionEventLog)
+		vardef.SetPlanReplayerGCDuration(originalPlanReplayerGCDuration)
 	})
 
 	mock := variable.NewMockGlobalAccessor4Tests()
@@ -677,6 +679,16 @@ func TestSetSysVar(t *testing.T) {
 
 	require.NoError(t, variable.GetSysVar(vardef.TiDBEnableConnectionEventLog).SetGlobalFromHook(context.Background(), mock.SessionVars, vardef.Off, false))
 	require.False(t, vardef.EnableConnectionEventLog.Load())
+
+	planReplayerGCDurationVar := variable.GetSysVar(vardef.TiDBPlanReplayerGCDuration)
+	require.NotNil(t, planReplayerGCDurationVar)
+	require.Equal(t, (7 * 24 * time.Hour).String(), planReplayerGCDurationVar.Value)
+	require.NoError(t, mock.SetGlobalSysVar(context.Background(), vardef.TiDBPlanReplayerGCDuration, "2h"))
+	require.Equal(t, 2*time.Hour, vardef.GetPlanReplayerGCDuration())
+	val, err = mock.GetGlobalSysVar(vardef.TiDBPlanReplayerGCDuration)
+	require.NoError(t, err)
+	require.Equal(t, (2 * time.Hour).String(), val)
+	require.Error(t, mock.SetGlobalSysVar(context.Background(), vardef.TiDBPlanReplayerGCDuration, "2hours"))
 }
 
 func TestSkipSysvarCache(t *testing.T) {
