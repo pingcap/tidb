@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package server
+package advertisedstatus
 
 import (
 	"context"
@@ -57,37 +57,111 @@ func TestAdvertisedStatusEndpointCheckInput(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, listener.Close()) })
 
 	port := listener.Addr().(*net.TCPAddr).Port
-	input, ok := newAdvertisedStatusEndpointCheckInput(true, listener, "2001:db8::1", "local-id", "https")
-	require.True(t, ok)
+	input, err := newAdvertisedStatusEndpointCheckInput(listener, "2001:db8::1", "local-id", "https")
+	require.NoError(t, err)
 	require.Equal(t, "https://[2001:db8::1]:"+strconv.Itoa(port)+"/info", input.endpoint)
+	require.Equal(t, "2001:db8::1", input.advertiseAddress)
 	require.Equal(t, "local-id", input.localID)
 
-	zeroPortListener := &advertisedStatusEndpointTestListener{addr: &net.TCPAddr{IP: net.ParseIP("127.0.0.1")}}
-	testCases := []struct {
-		name             string
-		reportStatus     bool
-		listener         net.Listener
-		advertiseAddress string
-		localID          string
-	}{
-		{name: "report status disabled", listener: listener, advertiseAddress: "127.0.0.1", localID: "local-id"},
-		{name: "listener missing", reportStatus: true, advertiseAddress: "127.0.0.1", localID: "local-id"},
-		{name: "effective port missing", reportStatus: true, listener: zeroPortListener, advertiseAddress: "127.0.0.1", localID: "local-id"},
-		{name: "advertise address missing", reportStatus: true, listener: listener, localID: "local-id"},
-		{name: "local identity missing", reportStatus: true, listener: listener, advertiseAddress: "127.0.0.1"},
-	}
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			_, ok := newAdvertisedStatusEndpointCheckInput(
-				testCase.reportStatus,
-				testCase.listener,
-				testCase.advertiseAddress,
-				testCase.localID,
-				"http",
-			)
-			require.False(t, ok)
-		})
-	}
+	t.Run("unavailable prerequisites skip silently", func(t *testing.T) {
+		baseOptions := Options{
+			ReportStatus:     true,
+			StatusListener:   listener,
+			AdvertiseAddress: "127.0.0.1",
+			LocalID:          "local-id",
+			Scheme:           "http",
+			BaseHTTPClient:   &http.Client{Transport: &advertisedStatusEndpointTestTransport{}},
+		}
+		testCases := []struct {
+			name   string
+			update func(*Options)
+		}{
+			{name: "report status disabled", update: func(options *Options) { options.ReportStatus = false }},
+			{name: "listener missing", update: func(options *Options) { options.StatusListener = nil }},
+			{name: "advertise address missing", update: func(options *Options) { options.AdvertiseAddress = "" }},
+			{name: "local identity missing", update: func(options *Options) { options.LocalID = "" }},
+		}
+		for _, testCase := range testCases {
+			t.Run(testCase.name, func(t *testing.T) {
+				options := baseOptions
+				testCase.update(&options)
+				var reports atomic.Int32
+				start(t.Context(), options, func(advertisedStatusEndpointCheckInput, advertisedStatusEndpointCheckResult) {
+					reports.Add(1)
+				})
+				require.Zero(t, reports.Load())
+			})
+		}
+	})
+
+	t.Run("construction failures report once", func(t *testing.T) {
+		testCases := []struct {
+			name          string
+			listener      net.Listener
+			scheme        string
+			errorContains string
+		}{
+			{
+				name:          "listener address missing",
+				listener:      &advertisedStatusEndpointTestListener{},
+				scheme:        "http",
+				errorContains: "status listener address is nil",
+			},
+			{
+				name:          "listener address malformed",
+				listener:      &advertisedStatusEndpointTestListener{addr: advertisedStatusEndpointTestAddr("not-an-address")},
+				scheme:        "http",
+				errorContains: "parse status listener address",
+			},
+			{
+				name:          "listener port malformed",
+				listener:      &advertisedStatusEndpointTestListener{addr: advertisedStatusEndpointTestAddr("127.0.0.1:not-a-port")},
+				scheme:        "http",
+				errorContains: "parse effective status port",
+			},
+			{
+				name:          "listener port missing",
+				listener:      &advertisedStatusEndpointTestListener{addr: &net.TCPAddr{IP: net.ParseIP("127.0.0.1")}},
+				scheme:        "http",
+				errorContains: "invalid effective status port 0",
+			},
+			{
+				name:          "scheme unsupported",
+				listener:      listener,
+				scheme:        "ftp",
+				errorContains: "unsupported advertised status endpoint scheme",
+			},
+		}
+		for _, testCase := range testCases {
+			t.Run(testCase.name, func(t *testing.T) {
+				input, err := newAdvertisedStatusEndpointCheckInput(
+					testCase.listener,
+					"127.0.0.1",
+					"local-id",
+					testCase.scheme,
+				)
+				require.ErrorContains(t, err, testCase.errorContains)
+				require.Empty(t, input.endpoint)
+				require.Equal(t, "127.0.0.1", input.advertiseAddress)
+				require.Equal(t, "local-id", input.localID)
+
+				var reports atomic.Int32
+				start(t.Context(), Options{
+					ReportStatus:     true,
+					StatusListener:   testCase.listener,
+					AdvertiseAddress: "127.0.0.1",
+					LocalID:          "local-id",
+					Scheme:           testCase.scheme,
+				}, func(reportedInput advertisedStatusEndpointCheckInput, result advertisedStatusEndpointCheckResult) {
+					reports.Add(1)
+					require.Equal(t, input, reportedInput)
+					require.Equal(t, advertisedStatusEndpointInputSetupFailed, result.reason)
+					require.ErrorContains(t, result.err, testCase.errorContains)
+				})
+				require.Equal(t, int32(1), reports.Load())
+			})
+		}
+	})
 }
 
 func TestAdvertisedStatusEndpointCheckResponses(t *testing.T) {
@@ -448,6 +522,16 @@ func (*advertisedStatusEndpointTestListener) Close() error {
 
 func (l *advertisedStatusEndpointTestListener) Addr() net.Addr {
 	return l.addr
+}
+
+type advertisedStatusEndpointTestAddr string
+
+func (advertisedStatusEndpointTestAddr) Network() string {
+	return "test"
+}
+
+func (a advertisedStatusEndpointTestAddr) String() string {
+	return string(a)
 }
 
 type advertisedStatusEndpointTestTransport struct {
