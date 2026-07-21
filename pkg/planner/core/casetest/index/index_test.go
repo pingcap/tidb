@@ -548,6 +548,11 @@ func TestIndexPruneWithSharedClusteredPrefix(t *testing.T) {
 		kept = runQuery("explain format = 'plan_tree' select payload from tenant_obj where tenant_ws = 'w1'")
 		require.Empty(t, kept)
 
+		// The null-safe equality <=> binds the tenant prefix exactly as = does (the
+		// ranger builds the same access range), so the same all-pruned outcome holds.
+		kept = runQuery("explain format = 'plan_tree' select payload from tenant_obj where tenant_ws <=> 'w1'")
+		require.Empty(t, kept)
+
 		// Without an equality on tenant_ws there is no discount: indexes covering
 		// the predicate column are kept as before.
 		kept = runQuery("explain format = 'plan_tree' select label from tenant_obj where num1 = 1")

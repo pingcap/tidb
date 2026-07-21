@@ -258,7 +258,9 @@ func buildColumnRequirements(interestingColumns []*expression.Column) columnRequ
 }
 
 // collectEqOrInBoundColIDs returns the IDs of columns bound by an equality or IN
-// predicate against constants in the given conjunctive conditions.
+// predicate against constants in the given conjunctive conditions. Both = and the
+// null-safe <=> (ast.NullEQ) count, since the ranger builds equality access ranges
+// for either (see detacher.go extractEqAndInCondition).
 func collectEqOrInBoundColIDs(conds []expression.Expression) map[int64]struct{} {
 	var colIDs map[int64]struct{}
 	addCol := func(col *expression.Column) {
@@ -274,7 +276,7 @@ func collectEqOrInBoundColIDs(conds []expression.Expression) map[int64]struct{} 
 		}
 		args := sf.GetArgs()
 		switch sf.FuncName.L {
-		case ast.EQ:
+		case ast.EQ, ast.NullEQ:
 			if col, ok := args[0].(*expression.Column); ok {
 				if _, isConst := args[1].(*expression.Constant); isConst {
 					addCol(col)
