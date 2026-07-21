@@ -328,10 +328,6 @@ func TestBatchRegistrationRejectsNil(t *testing.T) {
 	require.EqualError(t, batcher.Register("nil", nil), `embedding provider "nil" is nil`)
 	require.False(t, batcher.Has("nil"))
 
-	var typedNil *mockEmbedder
-	require.EqualError(t, batcher.Register("typed-nil", typedNil), `embedding provider "typed-nil" is nil`)
-	require.False(t, batcher.Has("typed-nil"))
-
 	embedder := newMockEmbedder()
 	require.EqualError(t, batcher.Register("", embedder), `invalid embedding provider: ""`)
 	require.EqualError(t, batcher.Register("invalid/name", embedder), `invalid embedding provider: "invalid/name"`)

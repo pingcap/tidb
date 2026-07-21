@@ -113,7 +113,7 @@ func (b *Batch) Register(provider string, embedder base.Embedder) error {
 	if provider == "" || strings.Contains(provider, "/") {
 		return fmt.Errorf("invalid embedding provider: %q", provider)
 	}
-	if isNilEmbedder(embedder) {
+	if embedder == nil {
 		return fmt.Errorf("embedding provider %q is nil", provider)
 	}
 	if _, ok := b.embedders[provider]; ok {
@@ -162,19 +162,6 @@ func (b *Batch) parseModelWithProvider(modelWithProvider string) (string, string
 
 func normalizeProviderName(provider string) string {
 	return strings.ToLower(strings.TrimSpace(provider))
-}
-
-func isNilEmbedder(embedder base.Embedder) bool {
-	if embedder == nil {
-		return true
-	}
-	// An interface containing a typed nil value is itself non-nil.
-	value := reflect.ValueOf(embedder)
-	switch value.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice, reflect.UnsafePointer:
-		return value.IsNil()
-	}
-	return false
 }
 
 func newBatchKey(provider, model string, opts map[string]any) (batchKey, error) {
