@@ -69,8 +69,8 @@ type statusEndpointClaim struct {
 	report     func(statusEndpointClaimResult)
 }
 
-func newStatusEndpointClaim(etcdClient *clientv3.Client, info *ServerInfo, enabled bool) *statusEndpointClaim {
-	endpoint, key := buildStatusEndpointClaim(info, enabled)
+func newStatusEndpointClaim(etcdClient *clientv3.Client, info *ServerInfo, claimEnabled bool) *statusEndpointClaim {
+	endpoint, key := buildStatusEndpointClaim(info, claimEnabled)
 	claim := &statusEndpointClaim{
 		etcdClient: etcdClient,
 		endpoint:   endpoint,
@@ -82,8 +82,8 @@ func newStatusEndpointClaim(etcdClient *clientv3.Client, info *ServerInfo, enabl
 	return claim
 }
 
-func buildStatusEndpointClaim(info *ServerInfo, reportStatus bool) (endpoint, claimKey string) {
-	if !reportStatus || info.IsAssumed() || info.StatusPort == 0 {
+func buildStatusEndpointClaim(info *ServerInfo, claimEnabled bool) (endpoint, claimKey string) {
+	if !claimEnabled || info.IsAssumed() || info.StatusPort == 0 {
 		return "", ""
 	}
 
@@ -106,8 +106,9 @@ func buildStatusEndpointClaim(info *ServerInfo, reportStatus bool) (endpoint, cl
 	return endpoint, claimKey
 }
 
-func (c *statusEndpointClaim) check(ctx context.Context, lease clientv3.LeaseID) {
+func (c *statusEndpointClaim) tryAcquireAndReport(ctx context.Context, lease clientv3.LeaseID) {
 	result := c.acquire(ctx, lease)
+	// Do not report after cancellation because shutdown or abort should not emit a misleading claim warning.
 	if ctx.Err() == nil && c.report != nil {
 		c.report(result)
 	}

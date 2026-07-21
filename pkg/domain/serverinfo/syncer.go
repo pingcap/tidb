@@ -117,12 +117,12 @@ func newSyncer(
 		option(args)
 	}
 	info := getServerInfo(uuid, serverIDGetter, assumedKS)
-	reportStatus := config.GetGlobalConfig().Status.ReportStatus && !args.skipStatusEndpointClaim
+	claimEnabled := config.GetGlobalConfig().Status.ReportStatus && !args.skipStatusEndpointClaim
 	is := &Syncer{
 		etcdCli:        etcdCli,
 		reporter:       reporter,
 		serverInfoPath: serverInfoKeyPath(uuid),
-		endpointClaim:  newStatusEndpointClaim(etcdCli, info, reportStatus),
+		endpointClaim:  newStatusEndpointClaim(etcdCli, info, claimEnabled),
 	}
 	is.info.Store(info)
 	return is
@@ -141,8 +141,8 @@ func (s *Syncer) NewSessionAndStoreServerInfo(ctx context.Context) error {
 	}
 	s.session = session
 
-	// Endpoint claim checks are best-effort; conflicts and check errors must not block server info registration.
-	s.endpointClaim.check(ctx, session.Lease())
+	// Endpoint claim attempts are best-effort; conflicts and operation errors must not block server info registration.
+	s.endpointClaim.tryAcquireAndReport(ctx, session.Lease())
 
 	storeErr := s.StoreServerInfo(ctx)
 	if storeErr == nil {
@@ -365,13 +365,14 @@ func (s *Syncer) ServerInfoSyncLoop(store tidbkv.Storage, exitCh chan struct{}) 
 		case <-ticker.C:
 			s.reporter.ReportMinStartTS(store, s.session)
 		case <-s.Done():
+			// Recheck exitCh because select does not prioritize it when both channels are ready.
 			if serverInfoSyncLoopExitRequested(exitCh) {
 				return
 			}
 			logutil.BgLogger().Info("server info syncer need to restart")
 			if err := s.Restart(context.Background()); err != nil {
 				logutil.BgLogger().Error("server info syncer restart failed", zap.Error(err))
-				if !waitForServerInfoRestart(exitCh) {
+				if !waitForServerInfoRestartRetry(exitCh) {
 					return
 				}
 			} else {
@@ -392,7 +393,8 @@ func serverInfoSyncLoopExitRequested(exitCh <-chan struct{}) bool {
 	}
 }
 
-func waitForServerInfoRestart(exitCh <-chan struct{}) bool {
+// waitForServerInfoRestartRetry backs off failed restart attempts while allowing shutdown to interrupt the wait.
+func waitForServerInfoRestartRetry(exitCh <-chan struct{}) bool {
 	timer := time.NewTimer(time.Second)
 	defer timer.Stop()
 	select {
