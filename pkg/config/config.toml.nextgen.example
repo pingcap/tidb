@@ -486,9 +486,8 @@ engines = ["tikv", "tiflash", "tidb"]
 # does not replay the upgrade entries.
 # Each SQL array element must contain exactly one retry-safe statement. `<keyspace>`
 # is the only supported placeholder and is replaced with the current keyspace name.
-# "bootstrap" must use only INSERT, REPLACE, UPDATE, or DELETE statements. When
-# replayed for a privilege reset, it must recreate the `<keyspace>.root`@`%`
-# account. The DML restriction does not apply to "upgrades" migrations.
+# "bootstrap" must use only INSERT, REPLACE, UPDATE, or DELETE statements and
+# create the `<keyspace>.root`@`%` account.
 #
 # Example /etc/tidb/starter-bootstrap.json:
 # {
