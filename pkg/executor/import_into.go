@@ -431,6 +431,7 @@ func cancelAndWaitImportJob(ctx context.Context, jobID int64) error {
 	// state predicate. If the task row is committed after the lookup, do not wait
 	// for it. The dangling fallback will either cancel the still-pending import
 	// job or report that the scheduler changed the job state first.
+	// see job_doc.go for more detail
 	logutil.Logger(ctx).Info("cancel import job directly because dxf task is not found",
 		zap.Int64("jobID", jobID),
 		zap.String("taskKey", taskKey))
