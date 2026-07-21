@@ -471,7 +471,6 @@ func TestAutoIDNotLeaderRetry(t *testing.T) {
 				require.Equal(t, "fast-failed", terminalFields["outcome"])
 				require.Equal(t, autoIDNotLeaderAction, terminalFields["action"])
 				require.Empty(t, logs.FilterMessage("autoid request completed after not-leader retry").All())
-
 			})
 		}
 	})
@@ -493,10 +492,10 @@ func TestAutoIDNotLeaderRetry(t *testing.T) {
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		min, max, err := allocator.Alloc(ctx, 1, 1, 1)
+		minID, maxID, err := allocator.Alloc(ctx, 1, 1, 1)
 		require.NoError(t, err)
-		require.Equal(t, int64(100), min)
-		require.Equal(t, int64(101), max)
+		require.Equal(t, int64(100), minID)
+		require.Equal(t, int64(101), maxID)
 		require.Equal(t, int64(3), service.allocCallCount.Load())
 		starts := logs.FilterMessage("autoid request entered not-leader retry").All()
 		require.Len(t, starts, 1)
