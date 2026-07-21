@@ -164,7 +164,9 @@ func TestNewEtcdClientForLocalBackendUsesMetaServiceGroup(t *testing.T) {
 	}
 	tls, err := common.NewTLS("", "", "", "127.0.0.1:10080", nil, nil, nil)
 	require.NoError(t, err)
-	rc := &Controller{tls: tls}
+	cfg := config.NewConfig()
+	cfg.TiDB.PdAddr = "127.0.0.1:2379"
+	rc := &Controller{cfg: cfg, tls: tls}
 
 	etcdCli, err := rc.newEtcdClientForLocalBackend(context.Background(), store)
 	require.NoError(t, err)
@@ -178,4 +180,29 @@ func TestNewEtcdClientForLocalBackendUsesMetaServiceGroup(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, resp.Kvs, 1)
 	require.Contains(t, string(resp.Kvs[0].Key), "checksum-key")
+
+	globalKeyspaceMeta := &keyspacepb.KeyspaceMeta{
+		Id:     45,
+		Name:   "ks-global",
+		Config: map[string]string{"gc_management_type": "keyspace_level"},
+	}
+	globalCodec, err := tikv.NewCodecV2(tikv.ModeTxn, globalKeyspaceMeta)
+	require.NoError(t, err)
+	globalStore := &metaServiceGroupStore{
+		Store: &utilmock.Store{},
+		codec: globalCodec,
+		pdCli: &metaServiceGroupPDClient{
+			members: []*pdpb.Member{{
+				ClientUrls: []string{"http://internal-pd:2379"},
+			}},
+			keyspaceMeta: globalKeyspaceMeta,
+		},
+	}
+	globalCfg := config.NewConfig()
+	globalCfg.TiDB.PdAddr = "pd-proxy:2379"
+	globalRC := &Controller{cfg: globalCfg, tls: tls}
+	globalEtcdCli, err := globalRC.newEtcdClientForLocalBackend(context.Background(), globalStore)
+	require.NoError(t, err)
+	defer globalEtcdCli.Close()
+	require.Equal(t, []string{"pd-proxy:2379"}, globalEtcdCli.Endpoints())
 }

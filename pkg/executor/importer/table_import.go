@@ -906,7 +906,7 @@ func RebaseAllocatorBases(ctx context.Context, kvStore tidbkv.Storage, maxIDs ma
 		return err2
 	}
 
-	etcdCli, err := newEtcdClientForAllocatorRebase(ctx, kvStore, tls)
+	etcdCli, err := newEtcdClientForAllocatorRebase(ctx, kvStore, tls, strings.Split(tidbCfg.Path, ","))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -926,6 +926,7 @@ func newEtcdClientForAllocatorRebase(
 	ctx context.Context,
 	kvStore tidbkv.Storage,
 	tls *common.TLS,
+	callerPDAddrs []string,
 ) (*clientv3.Client, error) {
 	kvStoreWithPD, ok := kvStore.(tidbkv.StorageWithPD)
 	if !ok {
@@ -935,6 +936,7 @@ func newEtcdClientForAllocatorRebase(
 		ctx,
 		kvStoreWithPD.GetPDClient(),
 		kvStore.GetCodec().GetKeyspaceMeta(),
+		callerPDAddrs,
 		clientv3.Config{
 			AutoSyncInterval: 30 * time.Second,
 			TLS:              tls.TLSConfig(),

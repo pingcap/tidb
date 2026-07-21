@@ -135,6 +135,26 @@ func TestGetPDAddrsPDOnlyClient(t *testing.T) {
 		require.Equal(t, []string{"pd-proxy:2379"}, dialInfo.Endpoints)
 		require.NotEmpty(t, dialInfo.Namespace)
 	})
+
+	t.Run("NewEtcdClientFromPDClient keeps caller provided endpoints for global group", func(t *testing.T) {
+		pdCli := &mockPDClient{
+			members: []*pdpb.Member{{
+				ClientUrls: []string{"http://internal-pd:2379"},
+			}},
+		}
+		keyspaceMeta := &keyspacepb.KeyspaceMeta{
+			Id:     44,
+			Name:   "ks3",
+			Config: map[string]string{"gc_management_type": "keyspace_level"},
+		}
+
+		etcdCli, err := NewEtcdClientFromPDClient(
+			context.Background(), pdCli, keyspaceMeta, []string{"pd-proxy:2379"}, clientv3.Config{},
+		)
+		require.NoError(t, err)
+		defer etcdCli.Close()
+		require.Equal(t, []string{"pd-proxy:2379"}, etcdCli.Endpoints())
+	})
 }
 
 func TestNewClientReturnsNilWithoutClients(t *testing.T) {

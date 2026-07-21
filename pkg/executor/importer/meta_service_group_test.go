@@ -93,7 +93,7 @@ func TestNewEtcdClientForAllocatorRebaseUsesMetaServiceGroup(t *testing.T) {
 	tls, err := common.NewTLS("", "", "", "127.0.0.1:10080", nil, nil, nil)
 	require.NoError(t, err)
 
-	etcdCli, err := newEtcdClientForAllocatorRebase(context.Background(), store, tls)
+	etcdCli, err := newEtcdClientForAllocatorRebase(context.Background(), store, tls, []string{"pd-proxy:2379"})
 	require.NoError(t, err)
 	defer etcdCli.Close()
 
@@ -105,4 +105,28 @@ func TestNewEtcdClientForAllocatorRebaseUsesMetaServiceGroup(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, resp.Kvs, 1)
 	require.Contains(t, string(resp.Kvs[0].Key), "rebase-key")
+
+	globalKeyspaceMeta := &keyspacepb.KeyspaceMeta{
+		Id:     46,
+		Name:   "ks-global",
+		Config: map[string]string{"gc_management_type": "keyspace_level"},
+	}
+	globalCodec, err := tikv.NewCodecV2(tikv.ModeTxn, globalKeyspaceMeta)
+	require.NoError(t, err)
+	globalStore := &metaServiceGroupStore{
+		Store: &utilmock.Store{},
+		codec: globalCodec,
+		pdCli: &metaServiceGroupPDClient{
+			members: []*pdpb.Member{{
+				ClientUrls: []string{"http://internal-pd:2379"},
+			}},
+			keyspaceMeta: globalKeyspaceMeta,
+		},
+	}
+	globalEtcdCli, err := newEtcdClientForAllocatorRebase(
+		context.Background(), globalStore, tls, []string{"pd-proxy:2379"},
+	)
+	require.NoError(t, err)
+	defer globalEtcdCli.Close()
+	require.Equal(t, []string{"pd-proxy:2379"}, globalEtcdCli.Endpoints())
 }

@@ -64,9 +64,9 @@ func resolveEtcdDialInfo(
 	ctx context.Context,
 	pdCli pd.Client,
 	keyspaceMeta *keyspacepb.KeyspaceMeta,
-	fallbackPDAddrs []string,
+	callerPDAddrs []string,
 ) (EtcdDialInfo, error) {
-	pdAddrs := fallbackPDAddrs
+	pdAddrs := filterEmptyAddrs(callerPDAddrs)
 	if len(pdAddrs) == 0 && usesGlobalMetaServiceGroup(keyspaceMeta) {
 		var err error
 		pdAddrs, err = GetPDAddrs(ctx, pdCli, false)
@@ -91,6 +91,19 @@ func resolveEtcdDialInfo(
 	return dialInfo, nil
 }
 
+func filterEmptyAddrs(addrs []string) []string {
+	if len(addrs) == 0 {
+		return nil
+	}
+	filtered := make([]string, 0, len(addrs))
+	for _, addr := range addrs {
+		if addr != "" {
+			filtered = append(filtered, addr)
+		}
+	}
+	return filtered
+}
+
 func usesGlobalMetaServiceGroup(keyspaceMeta *keyspacepb.KeyspaceMeta) bool {
 	if keyspaceMeta == nil {
 		return true
@@ -100,14 +113,16 @@ func usesGlobalMetaServiceGroup(keyspaceMeta *keyspacepb.KeyspaceMeta) bool {
 }
 
 // NewEtcdClientFromPDClient resolves the meta service group from an existing PD
-// client and returns a namespaced etcd client.
+// client and returns a namespaced etcd client. callerPDAddrs are used when the
+// keyspace does not have a dedicated meta service group.
 func NewEtcdClientFromPDClient(
 	ctx context.Context,
 	pdCli pd.Client,
 	keyspaceMeta *keyspacepb.KeyspaceMeta,
+	callerPDAddrs []string,
 	etcdCfg clientv3.Config,
 ) (*clientv3.Client, error) {
-	return newEtcdClientFromPDClient(ctx, pdCli, keyspaceMeta, nil, etcdCfg)
+	return newEtcdClientFromPDClient(ctx, pdCli, keyspaceMeta, callerPDAddrs, etcdCfg)
 }
 
 // DialEtcdClient resolves the target meta service group and returns a namespaced etcd client.
@@ -151,10 +166,10 @@ func newEtcdClientFromPDClient(
 	ctx context.Context,
 	pdCli pd.Client,
 	keyspaceMeta *keyspacepb.KeyspaceMeta,
-	fallbackPDAddrs []string,
+	callerPDAddrs []string,
 	etcdCfg clientv3.Config,
 ) (*clientv3.Client, error) {
-	dialInfo, err := resolveEtcdDialInfo(ctx, pdCli, keyspaceMeta, fallbackPDAddrs)
+	dialInfo, err := resolveEtcdDialInfo(ctx, pdCli, keyspaceMeta, callerPDAddrs)
 	if err != nil {
 		return nil, err
 	}

@@ -1301,10 +1301,12 @@ func (rc *Controller) newEtcdClientForLocalBackend(ctx context.Context, kvStore 
 	if !ok {
 		return nil, errors.Errorf("TiKV store does not expose PD client")
 	}
+	callerPDAddrs := strings.Split(rc.cfg.TiDB.PdAddr, ",")
 	return metaservice.NewEtcdClientFromPDClient(
 		ctx,
 		kvStoreWithPD.GetPDClient(),
 		kvStore.GetCodec().GetKeyspaceMeta(),
+		callerPDAddrs,
 		clientv3.Config{
 			AutoSyncInterval: 30 * time.Second,
 			TLS:              rc.tls.TLSConfig(),
