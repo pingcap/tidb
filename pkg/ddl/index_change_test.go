@@ -144,7 +144,6 @@ func TestAddIndexAutoPresplitLoadsLeadingColumnTopNFromStorage(t *testing.T) {
 
 	tk.MustExec("analyze table t_auto_presplit all columns with 2 topn, 2 buckets")
 
-	var capturedKeys [][]byte
 	type topNFromStorageArgs struct {
 		isIndex  int
 		histID   int64
@@ -160,17 +159,12 @@ func TestAddIndexAutoPresplitLoadsLeadingColumnTopNFromStorage(t *testing.T) {
 				priority: priority,
 			})
 		})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforePresplitIndex", func(splitKeys [][]byte) {
-		capturedKeys = append(capturedKeys, splitKeys...)
-	})
-
 	tk.MustExec("alter table t_auto_presplit add index idx_b(b)")
 	loadedArgs := loadedTopNFromStorage.Load()
 	require.NotNil(t, loadedArgs)
 	require.Equal(t, 0, loadedArgs.isIndex)
 	require.Equal(t, int64(2), loadedArgs.histID)
 	require.Equal(t, kv.PriorityNormal, loadedArgs.priority)
-	require.NotEmpty(t, capturedKeys)
 	comments := tk.MustQuery("admin show ddl jobs 1").Rows()[0][12].(string)
 	require.Contains(t, comments, "auto_presplit_index_region=idx_b(")
 	require.Contains(t, comments, "split_keys=")

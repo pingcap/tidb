@@ -124,13 +124,8 @@ func TestShowCommentsFromJob(t *testing.T) {
 	res = showCommentsFromJob(job)
 	require.Equal(t, "txn, auto_presplit_index_region=idx(split, split_keys=3, split_regions=3, scattered_regions=2)", res)
 
-	job.ReorgMeta = &model.DDLReorgMeta{
-		ReorgTp: model.ReorgTypeTxn,
-		AutoPresplitIndexRegionResults: []model.AutoPresplitIndexRegionResult{{
-			IndexName: "idx",
-			Status:    model.AutoPresplitIndexRegionStatusSkipped,
-			Reason:    "stats pseudo",
-		}},
+	job.ReorgMeta.AutoPresplitIndexRegionResults[0] = model.AutoPresplitIndexRegionResult{
+		IndexName: "idx", Status: model.AutoPresplitIndexRegionStatusSkipped, Reason: "stats pseudo",
 	}
 	res = showCommentsFromJob(job)
 	require.Equal(t, "txn, auto_presplit_index_region=idx(skipped, reason=\"stats pseudo\")", res)

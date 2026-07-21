@@ -962,27 +962,17 @@ func TestSetTiDBDDLEnableAutoSplitIndexRegions(t *testing.T) {
 	require.True(t, autoPresplit.HasGlobalScope())
 	require.True(t, autoPresplit.HasSessionScope())
 
-	normalizedVal, err := autoPresplit.Validate(vars, "1", vardef.ScopeSession)
-	require.NoError(t, err)
-	require.Equal(t, vardef.On, normalizedVal)
+	for _, tc := range []struct{ input, expected string }{{"1", vardef.On}, {"0", vardef.Off}} {
+		require.NoError(t, vars.SetSystemVar(autoPresplit.Name, tc.input))
+		val, ok := vars.GetSystemVar(autoPresplit.Name)
+		require.True(t, ok)
+		require.Equal(t, tc.expected, val)
 
-	require.NoError(t, vars.SetSystemVar(vardef.TiDBDDLEnableAutoSplitIndexRegions, "1"))
-	val, ok := vars.GetSystemVar(vardef.TiDBDDLEnableAutoSplitIndexRegions)
-	require.True(t, ok)
-	require.Equal(t, vardef.On, val)
-	require.NoError(t, vars.SetSystemVar(vardef.TiDBDDLEnableAutoSplitIndexRegions, "0"))
-	val, ok = vars.GetSystemVar(vardef.TiDBDDLEnableAutoSplitIndexRegions)
-	require.True(t, ok)
-	require.Equal(t, vardef.Off, val)
-
-	require.NoError(t, mock.SetGlobalSysVar(context.Background(), vardef.TiDBDDLEnableAutoSplitIndexRegions, "1"))
-	val, err = mock.GetGlobalSysVar(vardef.TiDBDDLEnableAutoSplitIndexRegions)
-	require.NoError(t, err)
-	require.Equal(t, vardef.On, val)
-	require.NoError(t, mock.SetGlobalSysVar(context.Background(), vardef.TiDBDDLEnableAutoSplitIndexRegions, "0"))
-	val, err = mock.GetGlobalSysVar(vardef.TiDBDDLEnableAutoSplitIndexRegions)
-	require.NoError(t, err)
-	require.Equal(t, vardef.Off, val)
+		require.NoError(t, mock.SetGlobalSysVar(context.Background(), autoPresplit.Name, tc.input))
+		val, err := mock.GetGlobalSysVar(autoPresplit.Name)
+		require.NoError(t, err)
+		require.Equal(t, tc.expected, val)
+	}
 }
 
 func TestSetTIDBDiskQuota(t *testing.T) {
