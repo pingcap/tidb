@@ -747,7 +747,7 @@ Projection	root		1->Column
 └─HashJoin	root		inner join, equal:[eq(test.tceb7972c.col_19, Column)]
   ├─TableReader(Build)	root	partition:all	data:Selection
   │ └─Selection	cop[tikv]		or(json_memberof(cast(16739493649928310215, json BINARY), test.tceb7972c.col_17), not(istrue_with_null(json_contains(test.tceb7972c.col_17, cast("6019730272580550835", json BINARY)))))
-  │   └─TableFullScan	cop[tikv]	table:tceb7972c	keep order:false, stats:partial[col_17:missing]
+  │   └─TableFullScan	cop[tikv]	table:tceb7972c	keep order:false
   └─Projection(Probe)	root		cast(test.t61a85298.col_71, double BINARY)->Column
     └─TableReader	root		data:TableFullScan
       └─TableFullScan	cop[tikv]	table:t61a85298	keep order:false, stats:pseudo
