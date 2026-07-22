@@ -222,6 +222,21 @@ For each parallel frontier:
 7. Run one 12-job workspace/differential/live gate for the frozen frontier.
 8. Issue receipts, release claims, and regenerate status only after the gate.
 
+A receipted package that needs repair must first be reopened as one complete
+package transaction:
+
+```bash
+python3 scripts/work-unit-queue.py reopen-package --owner <package-slice>
+```
+
+The command accepts only a schema-2 `covered` manifest with its exact current
+receipt. It requires a globally quiescent claim/gate state, refuses packages
+with covered transitive dependents, removes the receipt, and returns the
+manifest to a dependency-ready, legally claimable `ready` state. Reopen covered
+dependents first, then their dependencies. Historical campaign manifests and
+`workstreams/campaigns/integrated-members.tsv` remain immutable evidence; the
+new repair closes through a new campaign and receipt.
+
 If a package cannot close, keep it `blocked`, record the exact missing package
 obligations, and continue with another source/test/write-disjoint ready package.
 Keep unfinished implementation on its package branch; do not integrate or

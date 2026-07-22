@@ -25,6 +25,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 SCRIPT = Path(__file__).with_name("work-unit-queue.py")
@@ -387,6 +388,160 @@ class WorkUnitQueueTest(unittest.TestCase):
         receipts.joinpath("planner-package.json").write_text(
             json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
+
+    def cover_consumer_package(self) -> None:
+        """Adds a covered package that depends on the covered planner fixture."""
+        evidence = self.shared_fixture_artifact.relative_to(self.repo).as_posix()
+        self.write_tracked("pkg/consumer/consumer.go", "package consumer\n")
+        source = self.root / "difftests/corpus/coverage/go_source_inventory.tsv"
+        with source.open("a", encoding="utf-8") as output:
+            output.write(
+                "pkg/consumer/consumer.go\t1\ttidb-server\tfalse\tCOVERED\t"
+                f"consumer-package\t{evidence}\tcovered\n"
+            )
+        rust_path = "rust/crates/tidb-server/src/consumer-package.rs"
+        self.write_tracked(rust_path, "// complete consumer package\n")
+        manifest = self.write_package_slice(
+            "consumer-package",
+            packages=["pkg/consumer"],
+            targets=["tidb-server"],
+            rings=["unassigned"],
+            depends_on=["planner-package"],
+            rust_paths=[rust_path],
+        )
+        spec = importlib.util.spec_from_file_location("work_unit_queue_consumer", SCRIPT)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        record = module.load_slices(self.root)["consumer-package"]
+        manifest.write_text(
+            manifest.read_text(encoding="utf-8").replace(
+                'status = "ready"', 'status = "covered"'
+            ),
+            encoding="utf-8",
+        )
+        receipt = module.package_receipt_payload(
+            self.root,
+            "consumer-package",
+            "test-campaign",
+            record,
+            {
+                "claims": {"consumer-package": {"claim_sha256": "f" * 64}},
+                "workspace_sha256": "1" * 64,
+                "slice_manifests_sha256": "2" * 64,
+            },
+        )
+        receipts = self.root / "workstreams/package-receipts"
+        receipts.joinpath("consumer-package.json").write_text(
+            json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+
+    def test_reopen_package_returns_exact_receipt_to_claimable_ready_state(self) -> None:
+        self.cover_planner_package_with_support()
+        history = self.root / "workstreams/campaigns/integrated-members.tsv"
+        history.parent.mkdir(parents=True)
+        history.write_text("# immutable historical membership\n", encoding="utf-8")
+        history_before = history.read_bytes()
+
+        result = self.run_tool("reopen-package", "--owner", "planner-package")
+
+        self.assertEqual(result.stdout, "package_reopened\tplanner-package\n")
+        manifest = self.root / "workstreams/slices/planner-package.toml"
+        self.assertIn('status = "ready"', manifest.read_text(encoding="utf-8"))
+        self.assertFalse(
+            (self.root / "workstreams/package-receipts/planner-package.json").exists()
+        )
+        self.assertEqual(history.read_bytes(), history_before)
+        self.run_tool(
+            "claim-slice", "--owner", "planner-package", "--slice", "planner-package"
+        )
+
+    def test_reopen_package_refuses_stale_receipt_without_mutation(self) -> None:
+        self.cover_planner_package_with_support()
+        manifest = self.root / "workstreams/slices/planner-package.toml"
+        receipt = self.root / "workstreams/package-receipts/planner-package.json"
+        payload = json.loads(receipt.read_text(encoding="utf-8"))
+        payload["package"] = {}
+        receipt.write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        manifest_before = manifest.read_bytes()
+        receipt_before = receipt.read_bytes()
+
+        result = self.run_tool(
+            "reopen-package", "--owner", "planner-package", success=False
+        )
+
+        self.assertIn("package inventory or artifact digest is stale", result.stderr)
+        self.assertEqual(manifest.read_bytes(), manifest_before)
+        self.assertEqual(receipt.read_bytes(), receipt_before)
+
+    def test_reopen_package_requires_global_claim_and_gate_quiescence(self) -> None:
+        self.cover_planner_package_with_support()
+        claim = self.root / "workstreams/claims/other.claim.json"
+        claim.parent.mkdir(parents=True, exist_ok=True)
+        claim.write_text("{}\n", encoding="utf-8")
+        claimed = self.run_tool(
+            "reopen-package", "--owner", "planner-package", success=False
+        )
+        self.assertIn("while any claim is active", claimed.stderr)
+        claim.unlink()
+
+        for relative in (
+            "workstreams/integration-attempt.json",
+            "workstreams/integration-receipt.json",
+        ):
+            gate = self.root / relative
+            gate.write_text("{}\n", encoding="utf-8")
+            with self.subTest(relative=relative):
+                result = self.run_tool(
+                    "reopen-package", "--owner", "planner-package", success=False
+                )
+                self.assertIn("while integration state exists", result.stderr)
+            gate.unlink()
+
+    def test_reopen_package_refuses_covered_transitive_dependent(self) -> None:
+        self.cover_planner_package_with_support()
+        self.cover_consumer_package()
+
+        result = self.run_tool(
+            "reopen-package", "--owner", "planner-package", success=False
+        )
+
+        self.assertIn("covered downstream dependent consumer-package", result.stderr)
+        self.assertTrue(
+            (self.root / "workstreams/package-receipts/planner-package.json").exists()
+        )
+        self.assertIn(
+            'status = "covered"',
+            (self.root / "workstreams/slices/planner-package.toml").read_text(
+                encoding="utf-8"
+            ),
+        )
+
+    def test_reopen_package_rolls_back_both_files_on_transaction_failure(self) -> None:
+        self.cover_planner_package_with_support()
+        spec = importlib.util.spec_from_file_location("work_unit_queue_rollback", SCRIPT)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        manifest = self.root / "workstreams/slices/planner-package.toml"
+        receipt = self.root / "workstreams/package-receipts/planner-package.json"
+        manifest_before = manifest.read_bytes()
+        receipt_before = receipt.read_bytes()
+        original_unlink = Path.unlink
+
+        def fail_receipt_unlink(path: Path, *args: object, **kwargs: object) -> None:
+            if path == receipt:
+                raise OSError("injected receipt removal failure")
+            original_unlink(path, *args, **kwargs)
+
+        with mock.patch.object(module.Path, "unlink", fail_receipt_unlink):
+            with self.assertRaisesRegex(ValueError, "was rolled back"):
+                module.reopen_package(self.root, "planner-package")
+
+        self.assertEqual(manifest.read_bytes(), manifest_before)
+        self.assertEqual(receipt.read_bytes(), receipt_before)
 
     def test_queue_emits_the_complete_go_package_as_candidate(self) -> None:
         result = self.run_tool(

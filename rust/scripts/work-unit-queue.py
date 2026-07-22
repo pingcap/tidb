@@ -1763,6 +1763,19 @@ def atomic_write_json(path: Path, payload: object) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def atomic_write_bytes(path: Path, contents: bytes) -> None:
+    """Replaces one transaction file without exposing partial contents."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    descriptor = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    try:
+        with os.fdopen(descriptor, "wb") as output:
+            output.write(contents)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def file_digest(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as source:
@@ -2598,6 +2611,143 @@ def amend(root: Path, owner: str, sources: list[str], tests: list[str]) -> None:
     )
 
 
+def _manifest_with_status(contents: bytes, old: str, new: str, path: Path) -> bytes:
+    """Changes the single package-manifest status while preserving all other bytes."""
+    try:
+        text = contents.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ValueError(f"{path}: package manifest is not UTF-8") from error
+    pattern = re.compile(
+        rf'(?m)^([ \t]*status[ \t]*=[ \t]*)(["\']){re.escape(old)}\2([ \t]*(?:#.*)?)$'
+    )
+    matches = list(pattern.finditer(text))
+    if len(matches) != 1:
+        raise ValueError(
+            f"{path}: expected exactly one status = {old!r} assignment"
+        )
+    match = matches[0]
+    replacement = (
+        f"{match.group(1)}{match.group(2)}{new}{match.group(2)}{match.group(3)}"
+    )
+    return (text[: match.start()] + replacement + text[match.end() :]).encode("utf-8")
+
+
+def _transitively_depends_on(
+    records: dict[str, dict[str, object]], candidate: str, dependency: str
+) -> bool:
+    pending = list(records[candidate]["depends_on"])
+    visited: set[str] = set()
+    while pending:
+        current = pending.pop()
+        if current == dependency:
+            return True
+        if current in visited:
+            continue
+        visited.add(current)
+        pending.extend(records[current]["depends_on"])
+    return False
+
+
+def reopen_package(root: Path, owner: str) -> None:
+    """Reopens one exact receipted package for a new complete repair campaign."""
+    if not OWNER_RE.fullmatch(owner):
+        raise ValueError("invalid owner")
+    with claim_lock(root):
+        for gate_path in (INTEGRATION_ATTEMPT, INTEGRATION_RECEIPT):
+            if (root / gate_path).exists():
+                raise ValueError(
+                    f"cannot reopen a package while integration state exists: {gate_path}"
+                )
+        active_claims = sorted((root / CLAIMS_DIR).glob("*.claim.json"))
+        if active_claims:
+            raise ValueError(
+                "cannot reopen a package while any claim is active: "
+                f"{active_claims[0].relative_to(root)}"
+            )
+
+        manifest_path = root / SLICES_DIR / f"{owner}.toml"
+        receipt_path = root / PACKAGE_RECEIPTS_DIR / f"{owner}.json"
+        try:
+            manifest_before = manifest_path.read_bytes()
+            receipt_before = receipt_path.read_bytes()
+        except OSError as error:
+            raise ValueError(f"cannot snapshot package reopen inputs: {error}") from error
+
+        # This validates every covered package and its exact immutable receipt
+        # against the bytes frozen above before changing either durable file.
+        records = load_slices(root)
+        record = records.get(owner)
+        if record is None:
+            raise ValueError(f"unknown package slice {owner}")
+        if record["schema"] != "2":
+            raise ValueError("reopen-package accepts only schema-2 package slices")
+        if record["status"] != "covered":
+            raise ValueError(
+                f"package slice {owner} must be covered before reopen; "
+                f"found {record['status']}"
+            )
+        validate_package_receipt(root, owner, record)
+
+        unmet = unmet_slice_prerequisites(record, records)
+        if unmet:
+            raise ValueError(
+                f"package slice {owner} cannot return to a claimable state; "
+                f"unmet prerequisites: {'; '.join(unmet)}"
+            )
+        covered_dependents = sorted(
+            name
+            for name, candidate in records.items()
+            if name != owner
+            and candidate["status"] == "covered"
+            and _transitively_depends_on(records, name, owner)
+        )
+        if covered_dependents:
+            raise ValueError(
+                f"package slice {owner} has covered downstream dependent "
+                f"{covered_dependents[0]}; reopen downstream packages first"
+            )
+
+        if Path(record["_path"]) != manifest_path:
+            raise ValueError(f"package slice {owner} resolved to an unexpected manifest")
+        manifest_after = _manifest_with_status(
+            manifest_before, "covered", "ready", manifest_path
+        )
+        if (
+            manifest_path.read_bytes() != manifest_before
+            or receipt_path.read_bytes() != receipt_before
+        ):
+            raise ValueError("package manifest or receipt changed during reopen")
+
+        try:
+            # Ready-with-a-receipt is validation-safe during the short interval
+            # between the two file operations. The claim lock prevents a new
+            # claim from observing the transaction before the receipt is gone.
+            atomic_write_bytes(manifest_path, manifest_after)
+            receipt_path.unlink()
+            reopened = load_slices(root)
+            load_campaigns(root, reopened)
+            if not slice_is_ready(reopened[owner], reopened):
+                raise ValueError(
+                    f"package slice {owner} did not become legally claimable"
+                )
+        except Exception as error:
+            rollback_errors: list[str] = []
+            for path, contents in (
+                (manifest_path, manifest_before),
+                (receipt_path, receipt_before),
+            ):
+                try:
+                    atomic_write_bytes(path, contents)
+                except OSError as rollback_error:
+                    rollback_errors.append(f"{path}: {rollback_error}")
+            if rollback_errors:
+                raise ValueError(
+                    f"package reopen failed and rollback failed: {'; '.join(rollback_errors)}"
+                ) from error
+            raise ValueError(f"package reopen failed and was rolled back: {error}") from error
+    print(f"package_reopened\t{owner}")
+
+
 def queue(root: Path, target: str, ring: str, limit: int | None) -> None:
     claims = validate_claims(root)
     slices = load_slices(root)
@@ -2977,6 +3127,11 @@ def parser() -> argparse.ArgumentParser:
     amend_command.add_argument("--owner", required=True)
     amend_command.add_argument("--source", action="append", default=[])
     amend_command.add_argument("--test", action="append", default=[])
+    reopen_command = subcommands.add_parser(
+        "reopen-package",
+        help="atomically reopen one exact receipted schema-2 package for repair",
+    )
+    reopen_command.add_argument("--owner", required=True)
     subcommands.add_parser("gate-begin", help=argparse.SUPPRESS)
     subcommands.add_parser("gate-finish", help=argparse.SUPPRESS)
     subcommands.add_parser("gate-abort", help=argparse.SUPPRESS)
@@ -3008,6 +3163,8 @@ def main() -> int:
             )
         elif arguments.command == "amend":
             amend(RUST_ROOT, arguments.owner, arguments.source, arguments.test)
+        elif arguments.command == "reopen-package":
+            reopen_package(RUST_ROOT, arguments.owner)
         elif arguments.command == "gate-begin":
             begin_integration(RUST_ROOT)
         elif arguments.command == "gate-finish":
