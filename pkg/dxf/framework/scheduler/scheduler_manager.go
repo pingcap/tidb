@@ -405,7 +405,7 @@ func (sm *Manager) startScheduler(basicTask *proto.TaskBase, allocateSlots bool,
 
 func (sm *Manager) cleanupTaskLoop() {
 	sm.logger.Info("cleanup loop start")
-	sm.doCleanupTasks()
+	sm.drainCleanupTaskBatches()
 	ticker := time.NewTicker(DefaultCleanUpInterval)
 	defer ticker.Stop()
 	for {
@@ -414,25 +414,26 @@ func (sm *Manager) cleanupTaskLoop() {
 			sm.logger.Info("cleanup loop exits")
 			return
 		case <-sm.finishCh:
-			sm.doCleanupTasks()
+			sm.drainCleanupTaskBatches()
 		case <-ticker.C:
-			sm.doCleanupTasks()
+			sm.drainCleanupTaskBatches()
 		}
 	}
 }
 
-// doCleanupTasks keeps cleaning limited batches while each batch transfers at least one task.
-func (sm *Manager) doCleanupTasks() {
-	for sm.doCleanupTask() > 0 {
+// drainCleanupTaskBatches processes bounded batches until one transfers no task to history.
+func (sm *Manager) drainCleanupTaskBatches() {
+	for sm.processCleanupTaskBatch() > 0 {
 	}
 }
 
-// doCleanupTask processes one batch of cleanup routine defined by each type of tasks and cleanupMeta.
+// processCleanupTaskBatch processes one bounded batch of cleanup routines.
 // It returns the number of tasks transferred to history.
 // For example:
 //
 //	tasks with global sort should clean up tmp files stored on S3.
-func (sm *Manager) doCleanupTask() int {
+func (sm *Manager) processCleanupTaskBatch() int {
+	// Keep this failpoint name stable for RealTiKV tests that synchronize with cleanup.
 	failpoint.InjectCall("doCleanupTask")
 	tasks, err := sm.taskMgr.GetCleanupTasks(sm.ctx)
 	if err != nil {
@@ -453,6 +454,8 @@ func (sm *Manager) doCleanupTask() int {
 	return transferredTaskCount
 }
 
+// cleanupFinishedTasks runs cleanup and transfers the successfully cleaned tasks to history.
+// The returned count reports history-transfer progress and is zero if that transfer fails.
 func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) (int, error) {
 	type singleCleanUpTask struct {
 		task    *proto.Task

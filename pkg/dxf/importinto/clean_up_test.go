@@ -126,26 +126,20 @@ func TestSendMeterOnCleanUpInParallelLimitsConcurrency(t *testing.T) {
 		}
 	}
 
-	firstBatchStarted := make(chan struct{})
-	release := make(chan struct{})
-	overflow := make(chan struct{})
+	startedTasks := make(chan int64, len(tasks))
+	release := make(chan struct{}, len(tasks))
 	done := make(chan error, 1)
-	var active, maxActive, started, overflowed int32
+	var active, maxActive int32
 	sendFn := func(ctx context.Context, task *proto.Task, logger *zap.Logger) error {
 		current := atomic.AddInt32(&active, 1)
 		defer atomic.AddInt32(&active, -1)
-		if current > int32(cleanUpMeteringConcurrency) && atomic.CompareAndSwapInt32(&overflowed, 0, 1) {
-			close(overflow)
-		}
 		for {
 			maxSeen := atomic.LoadInt32(&maxActive)
 			if current <= maxSeen || atomic.CompareAndSwapInt32(&maxActive, maxSeen, current) {
 				break
 			}
 		}
-		if atomic.AddInt32(&started, 1) == int32(cleanUpMeteringConcurrency) {
-			close(firstBatchStarted)
-		}
+		startedTasks <- task.ID
 		select {
 		case <-release:
 			return nil
@@ -158,22 +152,26 @@ func TestSendMeterOnCleanUpInParallelLimitsConcurrency(t *testing.T) {
 		done <- sendMeterOnCleanUpInParallel(ctx, tasks, sendFn)
 	}()
 
-	select {
-	case <-firstBatchStarted:
-	case <-ctx.Done():
-		require.NoError(t, ctx.Err())
-	}
-	select {
-	case <-overflow:
-		close(release)
-		require.FailNow(t, "metering cleanup exceeded concurrency limit")
-	case err := <-done:
-		require.NoError(t, err)
-		require.FailNow(t, "metering cleanup returned before workers were released")
-	case <-time.After(100 * time.Millisecond):
+	for range cleanUpMeteringConcurrency {
+		select {
+		case <-startedTasks:
+		case <-ctx.Done():
+			require.NoError(t, ctx.Err())
+		}
 	}
 
-	close(release)
+	for range len(tasks) - cleanUpMeteringConcurrency {
+		release <- struct{}{}
+		select {
+		case <-startedTasks:
+		case <-ctx.Done():
+			require.NoError(t, ctx.Err())
+		}
+	}
+	for range cleanUpMeteringConcurrency {
+		release <- struct{}{}
+	}
+
 	var err error
 	select {
 	case err = <-done:
@@ -181,8 +179,77 @@ func TestSendMeterOnCleanUpInParallelLimitsConcurrency(t *testing.T) {
 		require.NoError(t, ctx.Err())
 	}
 	require.NoError(t, err)
-	require.Equal(t, int32(len(tasks)), atomic.LoadInt32(&started))
 	require.Equal(t, int32(cleanUpMeteringConcurrency), atomic.LoadInt32(&maxActive))
+}
+
+func TestSendMeterOnCleanUpInParallelCancellation(t *testing.T) {
+	t.Run("send error stops starting pending tasks", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+
+		tasks := make([]*proto.Task, cleanUpMeteringConcurrency*2)
+		releases := make([]chan error, len(tasks))
+		for i := range tasks {
+			tasks[i] = &proto.Task{
+				TaskBase: proto.TaskBase{
+					ID:    int64(i + 1),
+					State: proto.TaskStateSucceed,
+				},
+			}
+			releases[i] = make(chan error, 1)
+		}
+
+		startedTasks := make(chan int64, len(tasks))
+		done := make(chan error, 1)
+		sendFn := func(ctx context.Context, task *proto.Task, logger *zap.Logger) error {
+			startedTasks <- task.ID
+			select {
+			case err := <-releases[task.ID-1]:
+				return err
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+
+		go func() {
+			done <- sendMeterOnCleanUpInParallel(ctx, tasks, sendFn)
+		}()
+
+		startedTaskIDs := make([]int64, 0, cleanUpMeteringConcurrency)
+		for range cleanUpMeteringConcurrency {
+			select {
+			case taskID := <-startedTasks:
+				startedTaskIDs = append(startedTaskIDs, taskID)
+			case <-ctx.Done():
+				require.NoError(t, ctx.Err())
+			}
+		}
+
+		sendErr := fmt.Errorf("metering failed")
+		releases[startedTaskIDs[0]-1] <- sendErr
+		var err error
+		select {
+		case err = <-done:
+		case <-ctx.Done():
+			require.NoError(t, ctx.Err())
+		}
+		require.ErrorIs(t, err, sendErr)
+		require.Empty(t, startedTasks)
+	})
+
+	t.Run("parent cancellation prevents tasks from starting", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		tasks := []*proto.Task{{TaskBase: proto.TaskBase{ID: 1, State: proto.TaskStateSucceed}}}
+		var started int32
+
+		err := sendMeterOnCleanUpInParallel(ctx, tasks, func(context.Context, *proto.Task, *zap.Logger) error {
+			atomic.AddInt32(&started, 1)
+			return nil
+		})
+		require.ErrorIs(t, err, context.Canceled)
+		require.Zero(t, atomic.LoadInt32(&started))
+	})
 }
 
 func TestSendMeterOnCleanUpInParallelRecoversPanic(t *testing.T) {

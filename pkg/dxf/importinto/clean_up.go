@@ -46,6 +46,8 @@ var (
 	_ scheduler.BatchCleanUpRoutine = (*ImportCleanUp)(nil)
 )
 
+// Metering sends use little CPU and memory, so four concurrent workers are a
+// temporary conservative setting to improve throughput without unbounded pressure.
 const cleanUpMeteringConcurrency = 4
 
 // ImportCleanUp implements scheduler.BatchCleanUpRoutine.
@@ -133,18 +135,42 @@ func (*ImportCleanUp) CleanUpBatch(ctx context.Context, tasks []*proto.Task) err
 }
 
 func sendMeterOnCleanUpInParallel(ctx context.Context, tasks []*proto.Task, sendFn sendMeterOnCleanUpFunc) error {
+	if len(tasks) == 0 {
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
-	eg.SetLimit(cleanUpMeteringConcurrency)
-	for _, task := range tasks {
+	taskCh := make(chan *proto.Task)
+	workerCount := min(cleanUpMeteringConcurrency, len(tasks))
+	for range workerCount {
 		eg.Go(func() error {
-			logger := logutil.BgLogger().With(zap.Int64("task-id", task.ID))
-			if err := sendFn(egCtx, task, logger); err != nil {
-				logger.Warn("failed to send metering data on cleanup", zap.Error(err))
-				return err
+			for task := range taskCh {
+				logger := logutil.BgLogger().With(zap.Int64("task-id", task.ID))
+				if err := sendFn(egCtx, task, logger); err != nil {
+					logger.Warn("failed to send metering data on cleanup", zap.Error(err))
+					return err
+				}
 			}
 			return nil
 		})
 	}
+
+	for _, task := range tasks {
+		select {
+		case <-egCtx.Done():
+			cancelErr := egCtx.Err()
+			close(taskCh)
+			if err := eg.Wait(); err != nil {
+				return err
+			}
+			return cancelErr
+		case taskCh <- task:
+		}
+	}
+	close(taskCh)
 	return eg.Wait()
 }
 
