@@ -116,9 +116,10 @@ generated ledgers and must not be converted into percentage progress.
    package test/support inventory. Rust-specific redesign is limited to
    runtime mechanisms that cannot be carried faithfully, such as GC pools,
    goroutine ownership, or untyped registries.
-5. Run focused package checks during implementation. Then run shared routing,
-   manifests, generated inventories, full workspace tests, Clippy, and live
-   gates in one clean integration state using 12 jobs.
+5. Run focused package checks during implementation. At close, let
+   `campaign_close.py --gate` refresh only the active package's derived ledger
+   rows, reject unrelated churn, run static checks first, then run full
+   workspace tests, Clippy, and applicable live gates using 12 jobs.
 6. Issue a package receipt only after inventory closure and required
    differential/live evidence. Until then every carried ledger row stays
    honestly untriaged, partial, or blocked.
@@ -173,5 +174,7 @@ normal-2PC leaves are inputs, not completion evidence.
   exists.
 - Preserve unrelated files and local claims. Do not hand-edit generated
   ledgers or status.
+- Read live claim count from `work-unit-queue.py check`; `STATUS.md` records
+  stable manifest/receipt state and deliberately excludes ignored lease files.
 - Record current architecture and blockers here; record changing counters in
   generated status and let Git carry history.

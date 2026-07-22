@@ -230,9 +230,13 @@ For each package or dependency-closed frontier:
    concurrency semantics.
 5. Port or differentially cover every original test and support artifact.
 6. Run focused package gates during development using a reused Cargo target.
-7. Run the dependency-frontier and workspace gates with 12 build jobs.
-8. Close the campaign atomically, generate the receipt, and refresh status.
-9. If the audit or gate exposes a cross-package flaw, fix the owning package or
+7. At close, regenerate only the active claims' source/test ledger rows and
+   stable dashboard. Reject any unrelated generated churn.
+8. Run static ownership, dependency, and generated-inventory gates before the
+   expensive 12-job workspace tests and Clippy; repeat static validation after
+   tests before issuing the gate receipt.
+9. Close the campaign atomically, generate the receipt, and refresh status.
+10. If the audit or gate exposes a cross-package flaw, fix the owning package or
    reopen its receipt; do not add a downstream conditional workaround.
 
 Claims protect scope even in a single-owner workflow. Worktrees may isolate
@@ -380,10 +384,12 @@ silently delete historical compatibility evidence from an accepted revision.
 ### Workspace gate
 
 A dependency frontier closes only after its package gates pass together in one
-clean integration state. Completion and release candidates additionally require
-the repository Ready verification profile, including repository lint when code
-changed. Expensive live suites run when the frontier touches their contract;
-they are never replaced by mocks when real PD/TiKV behavior is at issue.
+clean integration state. Cheap static/generated checks run first so stale
+bookkeeping cannot waste a workspace build. Completion and release candidates
+additionally require the repository Ready verification profile, including
+repository lint when code changed. Expensive live suites run when the frontier
+touches their contract; they are never replaced by mocks when real PD/TiKV
+behavior is at issue.
 
 ## Deployment ladder
 

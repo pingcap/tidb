@@ -30,7 +30,7 @@ if [ -z "${CARGO_TARGET_DIR:-}" ]; then
 fi
 
 usage() {
-    echo "usage: $0 status | leaf <package> <test-target> [filter] | static | integrate" >&2
+    echo "usage: $0 status | leaf <package> <test-target> [filter] | prepare | static | integrate" >&2
     exit 2
 }
 
@@ -79,6 +79,13 @@ static_gates() {
     "$CARGO_TARGET_DIR/debug/parser_translation_manifest" --check-fragments
 }
 
+prepare_generated() {
+    build_evidence_tools
+    "$CARGO_TARGET_DIR/debug/go_source_ledger" --write
+    "$CARGO_TARGET_DIR/debug/go_test_ledger" --write-evidence
+    python3 scripts/status-dashboard.py --write
+}
+
 case ${1:-} in
     status)
         [ "$#" -eq 1 ] || usage
@@ -98,6 +105,10 @@ case ${1:-} in
         cargo clippy --offline --locked -j12 -p "$package" --test "$test_target" -- -D warnings
         git -C .. diff --check -- rust
         ;;
+    prepare)
+        [ "$#" -eq 1 ] || usage
+        prepare_generated
+        ;;
     static)
         [ "$#" -eq 1 ] || usage
         cargo fmt --all -- --check
@@ -109,6 +120,9 @@ case ${1:-} in
         scripts/work-unit-queue.py gate-begin
         trap 'scripts/work-unit-queue.py gate-abort >/dev/null 2>&1 || true' EXIT HUP INT TERM
         cargo fmt --all -- --check
+        # Fail on cheap ownership, dashboard, and generated-inventory drift
+        # before paying for workspace Clippy and every test binary.
+        static_gates
         cargo clippy --offline --locked -j12 --workspace --all-targets -- -D warnings
         cargo test --offline --locked -j12 --workspace -q
         python3 -m unittest \

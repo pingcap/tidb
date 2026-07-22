@@ -9,7 +9,6 @@ the source or obligation still has explicit unported behavior.
 
 ## Queue
 
-- Active package claims: 0
 - Inventory packages: 0
 - Declared ready packages: 3
 - Active packages: 0
@@ -29,7 +28,6 @@ the source or obligation still has explicit unported behavior.
 Legacy records are retained as bounded evidence only. They do not
 contribute to the package queue, package campaigns, or package completion.
 
-- Legacy claims present: 0
 - Legacy slice records: 164
 - Legacy campaign records: 28
 

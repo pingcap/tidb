@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter, defaultdict
-import json
 from pathlib import Path
 import sys
 import tomllib
@@ -33,7 +32,6 @@ EXTERNAL_SOURCE_LEDGER = ROOT / "difftests/corpus/coverage/external_go_source_in
 EXTERNAL_TEST_LEDGER = ROOT / "difftests/corpus/coverage/external_go_test_inventory.tsv"
 SLICE_DIR = ROOT / "workstreams/slices"
 CAMPAIGN_DIR = ROOT / "workstreams/campaigns"
-CLAIM_DIR = ROOT / "workstreams/claims"
 OUTPUT = ROOT / "STATUS.md"
 STATUSES = ("UNTRIAGED", "PARTIAL", "COVERED", "BLOCKED")
 
@@ -52,11 +50,6 @@ def read_toml_dir(path: Path) -> list[dict[str, object]]:
     return [tomllib.loads(item.read_text()) for item in sorted(path.glob("*.toml"))]
 
 
-def read_json_dir(path: Path) -> list[dict[str, object]]:
-    """Read deterministic JSON records from one manifest directory."""
-    return [json.loads(item.read_text()) for item in sorted(path.glob("*.claim.json"))]
-
-
 def records_for_schema(
     records: list[dict[str, object]], schema: int
 ) -> list[dict[str, object]]:
@@ -64,13 +57,10 @@ def records_for_schema(
     return [record for record in records if str(record.get("schema")) == str(schema)]
 
 
-def queue_status(
-    slices: list[dict[str, object]], claims: list[dict[str, object]]
-) -> tuple[Counter[str], int]:
-    """Return current package state without promoting legacy evidence."""
+def queue_status(slices: list[dict[str, object]]) -> Counter[str]:
+    """Return stable package-manifest state without transient local claims."""
     packages = records_for_schema(slices, 2)
-    package_claims = records_for_schema(claims, 2)
-    return Counter(str(item["status"]) for item in packages), len(package_claims)
+    return Counter(str(item["status"]) for item in packages)
 
 
 def markdown_table(headers: tuple[str, ...], rows: list[tuple[object, ...]]) -> list[str]:
@@ -107,12 +97,10 @@ def render() -> str:
     external_tests = read_tsv(EXTERNAL_TEST_LEDGER)
     slices = read_toml_dir(SLICE_DIR)
     campaigns = read_toml_dir(CAMPAIGN_DIR)
-    claims = read_json_dir(CLAIM_DIR) if CLAIM_DIR.exists() else []
     package_slices = records_for_schema(slices, 2)
     legacy_slices = records_for_schema(slices, 1)
     package_campaigns = records_for_schema(campaigns, 2)
     legacy_campaigns = records_for_schema(campaigns, 1)
-    legacy_claims = records_for_schema(claims, 1)
     source_counts = status_counts(sources, 4)
     test_counts = status_counts(tests, 5)
     source_groups = grouped_status_counts(sources, 2, 4)
@@ -121,7 +109,7 @@ def render() -> str:
     external_test_counts = status_counts(external_tests, 7)
     external_source_groups = grouped_status_counts(external_sources, 0, 4)
     external_test_groups = grouped_status_counts(external_tests, 0, 7)
-    package_counts, active_package_claims = queue_status(slices, claims)
+    package_counts = queue_status(slices)
 
     lines = [
         "# TiDB Rust rewrite current status",
@@ -135,7 +123,6 @@ def render() -> str:
         "",
         "## Queue",
         "",
-        f"- Active package claims: {active_package_claims}",
         f"- Inventory packages: {package_counts['inventory']}",
         f"- Declared ready packages: {package_counts['ready']}",
         f"- Active packages: {package_counts['active']}",
@@ -158,7 +145,6 @@ def render() -> str:
             "Legacy records are retained as bounded evidence only. They do not",
             "contribute to the package queue, package campaigns, or package completion.",
             "",
-            f"- Legacy claims present: {len(legacy_claims)}",
             f"- Legacy slice records: {len(legacy_slices)}",
             f"- Legacy campaign records: {len(legacy_campaigns)}",
         ]

@@ -47,8 +47,15 @@ package receipts before its Rust code reaches the shared branch.
   package: generated all 2,879 non-identity Go Unicode-15 simple-case mappings,
   preserved arbitrary bytes and one-call writer results, declared the missing
   production consumer seam, and issued a fresh immutable receipt through a
-  one-member atomic campaign. Status now reports two covered schema-2 packages
-  and zero active claims; all remaining rows stay partial or untriaged.
+  one-member atomic campaign. Stable status now reports two covered schema-2
+  packages, the live queue reports zero active claims, and all remaining rows
+  stay partial or untriaged.
+- [x] (2026-07-22) Refactor the close loop so guarded generated-state
+  preparation and static validation happen before workspace Clippy/tests, and
+  transient ignored claims cannot stale the tracked dashboard. Added exact
+  owner/anchor rollback regressions and passed static inventories, 100 Python
+  governance tests, workspace Clippy/tests, parser isolation, and repository
+  `make -j12 lint`.
 
 ## Surprises & Discoveries
 
@@ -107,6 +114,12 @@ package receipts before its Rust code reaches the shared branch.
   executing one whole package at a time. The correct close invariant is one or
   more unique package members that exactly equal the active schema-2 claim set;
   both single-member close and stray-claim rejection now have regressions.
+- Observation: the package gate discovered cheap generated-state drift only
+  after running the expensive workspace suite.
+  Evidence: parser-format close paid three rolled-back full attempts for stale
+  test-ledger rendering, transient claim count in `STATUS.md`, and stale
+  source-ledger rendering before the fourth attempt passed. None of the three
+  late failures was a semantic Rust failure.
 
 ## Decision Log
 
@@ -168,6 +181,19 @@ package receipts before its Rust code reaches the shared branch.
   exact claim closure prevents a gate from attesting or releasing work outside
   the receipt transaction.
   Date/Author: 2026-07-22 / Qiliu and Codex.
+- Decision: prepare only exact active-claim ledger anchors and run static gates
+  before expensive workspace validation.
+  Rationale: the final generated owner and anchor must belong to the frozen
+  claim, so legacy-to-package promotion remains legal while unrelated or
+  unowned churn rolls back. Static-first ordering shortens failed loops without
+  removing any acceptance proof.
+  Date/Author: 2026-07-22 / Qiliu and Codex.
+- Decision: tracked `STATUS.md` records stable manifest/receipt state, not
+  ignored claim leases.
+  Rationale: a tracked generated file cannot remain current against untracked
+  transient inputs without forcing meaningless implementation and release
+  commits. Live claim state remains authoritative through the queue command.
+  Date/Author: 2026-07-22 / Qiliu and Codex.
 
 ## Outcomes & Retrospective
 
@@ -182,6 +208,11 @@ The immediate outcome is to select and claim the next dependency-ready whole
 package from the checked DAG before any implementation commit. The single
 owner must declare stable leaves and every mutable integration seam, then close
 that package through the same full gate and atomic receipt transaction.
+
+Before that claim, the close loop was shortened at the mechanism layer:
+active-package ledger rows are regenerated under exact claim scope, static
+checks run before workspace work, and the stable dashboard no longer depends
+on ignored leases. This changes failure latency, not package acceptance.
 
 ## Context and Orientation
 
@@ -295,10 +326,16 @@ promote ledger state. If the inventory changes after claim, the checker must
 fail. Abandon and recreate the claim from the new checked manifest rather than
 amending a schema-2 snapshot.
 
-Package worktrees are isolated by complete upstream and Rust write sets.
-Preserve unrelated files in the primary checkout. Never delete or rewrite
-schema-1 evidence to resolve an overlap; fix the package manifest, dependency
-contract, or integration-path ownership instead.
+`campaign_close.py --gate` prepares derived source/test rows before its close
+preflight. Preparation restores its snapshot on generator, scope, or preflight
+failure. Once preparation succeeds, a later workspace-gate failure retains the
+now-current derived files but still rolls back every receipt, status transition,
+and claim release; the next attempt therefore does not repeat bookkeeping.
+
+If worktrees are used, isolate them by complete upstream and Rust write sets.
+With one worker, keep the current checkout and preserve unrelated files. Never
+delete or rewrite schema-1 evidence to resolve an overlap; fix the package
+manifest, dependency contract, or integration-path ownership instead.
 
 ## Artifacts and Notes
 

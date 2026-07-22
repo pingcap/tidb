@@ -57,7 +57,9 @@ queue = _load_queue_module()
 
 SOURCE_EVIDENCE = Path("difftests/corpus/coverage/evidence/source")
 TEST_EVIDENCE = Path("difftests/corpus/coverage/evidence/tests")
-GENERATED_PATHS = (Path("STATUS.md"),)
+SOURCE_LEDGER = Path("difftests/corpus/coverage/go_source_inventory.tsv")
+TEST_LEDGER = Path("difftests/corpus/coverage/go_test_inventory.tsv")
+GENERATED_PATHS = (Path("STATUS.md"), SOURCE_LEDGER, TEST_LEDGER)
 
 
 class ClosePlan:
@@ -286,26 +288,11 @@ def _validate_member(
             )
 
 
-def build_close_plan(root: Path, campaign_name: str) -> ClosePlan:
-    """Preflight complete package evidence and return the status mutation."""
-    if not queue.OWNER_RE.fullmatch(campaign_name):
-        raise ValueError("invalid campaign name")
-    slices = queue.load_slices(root)
-    campaigns = queue.load_campaigns(root, slices)
-    campaign = campaigns.get(campaign_name)
-    if campaign is None:
-        raise ValueError(f"unknown campaign {campaign_name}")
-    if campaign["schema"] != "2":
-        raise ValueError(
-            f"campaign {campaign_name} is legacy schema 1 and cannot be closed"
-        )
-    if campaign["status"] not in {"planned", "active"}:
-        raise ValueError(
-            f"campaign {campaign_name} must be planned or active before close; "
-            f"found {campaign['status']}"
-        )
-
-    members = tuple(str(member) for member in campaign["slices"])
+def _exact_campaign_claims(
+    root: Path, members: Iterable[str]
+) -> dict[str, dict[str, object]]:
+    """Return the exact active schema-2 claim set for campaign members."""
+    members = tuple(members)
     claims = queue.validate_claims(root)
     claim_by_owner = {str(claim["owner"]): claim for claim in claims}
     missing = [member for member in members if member not in claim_by_owner]
@@ -327,6 +314,30 @@ def build_close_plan(root: Path, campaign_name: str) -> ClosePlan:
             "package campaign members must exactly match active schema-2 claims; "
             f"active claim {extra[0]} is outside the campaign"
         )
+    return claim_by_owner
+
+
+def build_close_plan(root: Path, campaign_name: str) -> ClosePlan:
+    """Preflight complete package evidence and return the status mutation."""
+    if not queue.OWNER_RE.fullmatch(campaign_name):
+        raise ValueError("invalid campaign name")
+    slices = queue.load_slices(root)
+    campaigns = queue.load_campaigns(root, slices)
+    campaign = campaigns.get(campaign_name)
+    if campaign is None:
+        raise ValueError(f"unknown campaign {campaign_name}")
+    if campaign["schema"] != "2":
+        raise ValueError(
+            f"campaign {campaign_name} is legacy schema 1 and cannot be closed"
+        )
+    if campaign["status"] not in {"planned", "active"}:
+        raise ValueError(
+            f"campaign {campaign_name} must be planned or active before close; "
+            f"found {campaign['status']}"
+        )
+
+    members = tuple(str(member) for member in campaign["slices"])
+    claim_by_owner = _exact_campaign_claims(root, members)
 
     source_rows = {str(row["path"]): row for row in queue.load_source_rows(root)}
     test_rows = {queue.test_key(row): row for row in queue.load_test_rows(root)}
@@ -402,6 +413,108 @@ CommandRunner = Callable[[list[str], Path], None]
 
 def _run(command: list[str], root: Path) -> None:
     subprocess.run(command, cwd=root, check=True)
+
+
+def _ledger_rows(content: bytes | None, kind: str) -> dict[str, tuple[str, ...]]:
+    """Parse generated ledger rows by their stable source/test anchor."""
+    if content is None:
+        return {}
+    rows: dict[str, tuple[str, ...]] = {}
+    for number, line in enumerate(content.decode("utf-8").splitlines(), 1):
+        if not line or line.startswith("#"):
+            continue
+        fields = tuple(line.split("\t"))
+        minimum = 6 if kind == "source" else 7
+        if len(fields) < minimum:
+            raise ValueError(f"prepared {kind} ledger row {number} is malformed")
+        key = (
+            fields[0]
+            if kind == "source"
+            else f"{fields[1]}:{int(fields[2])}:{fields[3]}"
+        )
+        if key in rows:
+            raise ValueError(f"prepared {kind} ledger duplicates anchor {key}")
+        rows[key] = fields
+    return rows
+
+
+def _validate_prepared_ledger_scope(
+    before: bytes | None,
+    after: bytes | None,
+    *,
+    kind: str,
+    claim_owner_by_anchor: dict[str, str],
+) -> int:
+    """Reject generated changes outside exact active package claims."""
+    old_rows = _ledger_rows(before, kind)
+    new_rows = _ledger_rows(after, kind)
+    owner_index = 5 if kind == "source" else 6
+    changed = 0
+    for anchor in sorted(set(old_rows) | set(new_rows)):
+        old = old_rows.get(anchor)
+        new = new_rows.get(anchor)
+        if old == new:
+            continue
+        changed += 1
+        final = new if new is not None else old
+        assert final is not None
+        owner = final[owner_index]
+        if claim_owner_by_anchor.get(anchor) != owner:
+            raise ValueError(
+                f"package close preparation changed {kind} ledger anchor "
+                f"{anchor} outside active campaign claims: owner={owner}"
+            )
+    return changed
+
+
+def prepare_close_plan(
+    root: Path,
+    campaign_name: str,
+    *,
+    command_runner: CommandRunner = _run,
+) -> ClosePlan:
+    """Refresh derived package rows, reject unrelated churn, then preflight."""
+    slices = queue.load_slices(root)
+    campaign = queue.load_campaigns(root, slices).get(campaign_name)
+    if campaign is None:
+        raise ValueError(f"unknown campaign {campaign_name}")
+    members = tuple(str(member) for member in campaign["slices"])
+    claims = _exact_campaign_claims(root, members)
+    source_claim_owners = {
+        str(anchor): member
+        for member in members
+        for anchor in claims[member]["_sources"]
+    }
+    test_claim_owners = {
+        str(anchor): member
+        for member in members
+        for anchor in claims[member]["tests"]
+    }
+    paths = {root / path for path in GENERATED_PATHS}
+    before = _snapshot(paths)
+    try:
+        command_runner(["scripts/rewrite-gate.sh", "prepare"], root)
+        source_changes = _validate_prepared_ledger_scope(
+            before[root / SOURCE_LEDGER],
+            (root / SOURCE_LEDGER).read_bytes(),
+            kind="source",
+            claim_owner_by_anchor=source_claim_owners,
+        )
+        test_changes = _validate_prepared_ledger_scope(
+            before[root / TEST_LEDGER],
+            (root / TEST_LEDGER).read_bytes(),
+            kind="test",
+            claim_owner_by_anchor=test_claim_owners,
+        )
+        plan = build_close_plan(root, campaign_name)
+    except BaseException:
+        _restore(before)
+        raise
+    print(
+        f"campaign_prepare\t{campaign_name}\t"
+        f"source_rows={source_changes}\ttest_rows={test_changes}"
+    )
+    return plan
 
 
 def _same_plan(left: ClosePlan, right: ClosePlan) -> bool:
@@ -516,11 +629,12 @@ def parser() -> argparse.ArgumentParser:
 def main() -> int:
     arguments = parser().parse_args()
     try:
-        plan = build_close_plan(RUST_ROOT, arguments.campaign)
         if arguments.gate:
+            plan = prepare_close_plan(RUST_ROOT, arguments.campaign)
             apply_close_plan(RUST_ROOT, plan)
             action = "gated-and-integrated"
         else:
+            plan = build_close_plan(RUST_ROOT, arguments.campaign)
             action = "dry-run"
         print(
             f"campaign_close\t{action}\t{plan.campaign}\t"

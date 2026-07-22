@@ -27,6 +27,7 @@ import unittest
 
 
 SCRIPT = Path(__file__).with_name("campaign_close.py")
+GATE_SCRIPT = Path(__file__).with_name("rewrite-gate.sh")
 SPEC = importlib.util.spec_from_file_location("campaign_close", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
 campaign_close = importlib.util.module_from_spec(SPEC)
@@ -219,6 +220,26 @@ class CampaignCloseTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
+    def test_integrate_fails_static_before_expensive_workspace_work(self) -> None:
+        integrate = GATE_SCRIPT.read_text(encoding="utf-8").split(
+            "    integrate)", 1
+        )[1]
+        first_static = integrate.index("        static_gates")
+        clippy = integrate.index("        cargo clippy")
+        tests = integrate.index("        cargo test")
+        last_static = integrate.rindex("        static_gates")
+        self.assertLess(first_static, clippy)
+        self.assertLess(clippy, tests)
+        self.assertGreater(last_static, tests)
+
+    def test_prepare_regenerates_only_derived_close_surfaces(self) -> None:
+        prepare = GATE_SCRIPT.read_text(encoding="utf-8").split(
+            "prepare_generated() {", 1
+        )[1].split("\n}", 1)[0]
+        self.assertIn('go_source_ledger" --write', prepare)
+        self.assertIn('go_test_ledger" --write-evidence', prepare)
+        self.assertIn("status-dashboard.py --write", prepare)
+
     def _replace_once(self, path: Path, old: str, new: str) -> None:
         path.write_text(
             path.read_text(encoding="utf-8").replace(old, new, 1),
@@ -245,6 +266,101 @@ class CampaignCloseTest(unittest.TestCase):
         self.assertIn('status = "integrated"', plan.writes[self.campaign_path])
         self.assertEqual(self.campaign_path.read_bytes(), before)
         self.assertFalse(self.archive_path.exists())
+
+    def test_prepare_refreshes_only_active_campaign_rows(self) -> None:
+        source = self.root / "difftests/corpus/coverage/go_source_inventory.tsv"
+        tests = self.root / "difftests/corpus/coverage/go_test_inventory.tsv"
+        self._replace_once(
+            source,
+            "COVERED\tpackage-a\trust/difftests/corpus/coverage/"
+            "evidence/source/package-a.tsv\tcomplete",
+            "PARTIAL\tlegacy-owner\trust/difftests/corpus/coverage/"
+            "evidence/source/package-a.tsv\tlegacy",
+        )
+        self._replace_once(
+            tests,
+            "COVERED\tpackage-a\trust/difftests/corpus/coverage/"
+            "evidence/tests/package-a.tsv\tcomplete",
+            "PARTIAL\tlegacy-owner\trust/difftests/corpus/coverage/"
+            "evidence/tests/package-a.tsv\tlegacy",
+        )
+
+        def prepare(command: list[str], root: Path) -> None:
+            self.assertEqual(command, ["scripts/rewrite-gate.sh", "prepare"])
+            self._replace_once(
+                source,
+                "PARTIAL\tlegacy-owner\trust/difftests/corpus/coverage/"
+                "evidence/source/package-a.tsv\tlegacy",
+                "COVERED\tpackage-a\trust/difftests/corpus/coverage/"
+                "evidence/source/package-a.tsv\tprepared",
+            )
+            self._replace_once(
+                tests,
+                "PARTIAL\tlegacy-owner\trust/difftests/corpus/coverage/"
+                "evidence/tests/package-a.tsv\tlegacy",
+                "COVERED\tpackage-a\trust/difftests/corpus/coverage/"
+                "evidence/tests/package-a.tsv\tprepared",
+            )
+            (root / "STATUS.md").write_text("prepared\n", encoding="utf-8")
+
+        plan = campaign_close.prepare_close_plan(
+            self.root, "campaign-x", command_runner=prepare
+        )
+
+        self.assertEqual(plan.members, self.members)
+        self.assertIn("evidence/source/package-a.tsv\tprepared", source.read_text())
+        self.assertIn("evidence/tests/package-a.tsv\tprepared", tests.read_text())
+        self.assertEqual((self.root / "STATUS.md").read_text(), "prepared\n")
+
+    def test_prepare_rejects_unrelated_generated_churn_and_rolls_back(self) -> None:
+        self.campaign_path.write_text(
+            'schema = "2"\ncampaign = "campaign-x"\nstatus = "active"\n'
+            'slices = ["package-a"]\n',
+            encoding="utf-8",
+        )
+        (self.root / "workstreams/claims/package-b.claim.json").unlink()
+        package_b = self.root / "workstreams/slices/package-b.toml"
+        self._replace_once(package_b, 'status = "active"', 'status = "ready"')
+        source = self.root / "difftests/corpus/coverage/go_source_inventory.tsv"
+        before = source.read_bytes()
+
+        def prepare(command: list[str], root: Path) -> None:
+            self._replace_once(
+                source,
+                "COVERED\tpackage-b\trust/difftests/corpus/coverage/"
+                "evidence/source/package-b.tsv\tcomplete",
+                "COVERED\tpackage-a\trust/difftests/corpus/coverage/"
+                "evidence/source/package-b.tsv\tspoofed",
+            )
+            (root / "STATUS.md").write_text("must roll back\n", encoding="utf-8")
+
+        with self.assertRaisesRegex(ValueError, "outside active campaign claims"):
+            campaign_close.prepare_close_plan(
+                self.root, "campaign-x", command_runner=prepare
+            )
+
+        self.assertEqual(source.read_bytes(), before)
+        self.assertFalse((self.root / "STATUS.md").exists())
+
+    def test_prepare_rejects_claimed_anchor_with_wrong_owner(self) -> None:
+        source = self.root / "difftests/corpus/coverage/go_source_inventory.tsv"
+        before = source.read_bytes()
+
+        def prepare(command: list[str], root: Path) -> None:
+            self._replace_once(
+                source,
+                "COVERED\tpackage-b\trust/difftests/corpus/coverage/"
+                "evidence/source/package-b.tsv\tcomplete",
+                "COVERED\tpackage-a\trust/difftests/corpus/coverage/"
+                "evidence/source/package-b.tsv\twrong-owner",
+            )
+
+        with self.assertRaisesRegex(ValueError, "outside active campaign claims"):
+            campaign_close.prepare_close_plan(
+                self.root, "campaign-x", command_runner=prepare
+            )
+
+        self.assertEqual(source.read_bytes(), before)
 
     def test_single_package_campaign_closes_atomically(self) -> None:
         self.campaign_path.write_text(

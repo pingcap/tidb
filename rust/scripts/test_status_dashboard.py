@@ -59,7 +59,7 @@ class StatusDashboardTest(unittest.TestCase):
     def test_render_identifies_dashboard_as_non_parity_percentage(self) -> None:
         rendered = dashboard.render()
         self.assertIn("ownership states, not product-parity percentages", rendered)
-        self.assertIn("- Active package claims:", rendered)
+        self.assertNotIn("Active package claims", rendered)
         self.assertIn("- Declared ready packages:", rendered)
         self.assertIn("## Blocked packages", rendered)
         self.assertIn("## Legacy schema-1 evidence", rendered)
@@ -75,17 +75,11 @@ class StatusDashboardTest(unittest.TestCase):
             {"schema": "2", "status": "ready"},
             {"schema": "2", "status": "active"},
         ]
-        claims = [
-            {"schema": 1, "owner": "legacy-ready"},
-            {"schema": 2, "owner": "package-active"},
-        ]
-
-        counts, active_claims = dashboard.queue_status(slices, claims)
+        counts = dashboard.queue_status(slices)
 
         self.assertEqual(counts["ready"], 1)
         self.assertEqual(counts["active"], 1)
         self.assertEqual(counts["covered"], 0)
-        self.assertEqual(active_claims, 1)
 
     def test_legacy_campaigns_are_not_package_campaigns(self) -> None:
         campaigns = [

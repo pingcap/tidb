@@ -30,8 +30,9 @@ umbrella; they are not independently promotable package claims.
 
 ## Start here
 
-1. Read generated [`STATUS.md`](STATUS.md) for ledger state; do not infer
-   product progress from its counts.
+1. Read generated [`STATUS.md`](STATUS.md) for stable ledger/manifest state and
+   `scripts/work-unit-queue.py check` for live claims; do not infer product
+   progress from either count.
 2. Read [`docs/architecture/workspace.md`](docs/architecture/workspace.md) for
    crate boundaries and protected seams.
 3. Read the owning Go package documentation, every production file, and its
@@ -93,9 +94,10 @@ active package; they may overlap across package manifests but must not
 overlap any schema-2 stable path by ancestry. The claim freezes both exact
 lists.
 
-Use one `codex/<package-owner>` branch and one writable in-repo worktree for the
-active package claim. Local lease files remain ignored coordination state. Edit
-only declared package leaves, mirrored tests, owner-named evidence, and frozen
+With one worker, use the current branch and checkout. A `codex/<package-owner>`
+branch or worktree is optional isolation for an experiment, not an acceptance
+requirement. Local lease files remain ignored coordination state. Edit only
+declared package leaves, mirrored tests, owner-named evidence, and frozen
 integration paths. Update shared manifests, crate roots, `Cargo.toml`, generated
 inventories, status, and this protocol only as part of the controlled package
 integration step.
@@ -175,8 +177,10 @@ invalidates the gate.
   anchors and retain separate external totals.
 - Evidence fragments remain owner-named and append-only. Ownership transfer
   uses checked transfer records; never silently delete or rewrite history.
-- Claims coordinate writes but cannot change ledger state. Generated status and
-  ledgers are integration outputs, not implementation-loop edit surfaces.
+- Claims coordinate writes but cannot change ledger state. At close, generated
+  source/test rows may change only when their final owner and anchor match the
+  exact active claims. `STATUS.md` excludes transient ignored claims; the queue
+  command reports those live.
 - A package receipt enumerates its complete inventory and exact focused,
   differential, fault, and live gates. Missing inventory makes the receipt
   invalid.
@@ -209,12 +213,17 @@ For each frontier:
 1. Generate and audit complete package inventories.
 2. Freeze dependency contracts, stable Rust paths, integration seams, and the
    shared Git base.
-3. Atomically claim every package and create the active worktree.
+3. Atomically claim every package; keep the current checkout when there is one
+   worker.
 4. Translate and test packages in dependency order.
-5. Land seam changes and generated artifacts in dependency order.
-6. Run static ownership/DAG checks.
-7. Run one 12-job workspace/differential/live gate for the frozen frontier.
-8. Issue receipts, release claims, and regenerate status only after the gate.
+5. Land seam changes in dependency order.
+6. Let package close regenerate the active claims' derived ledger rows and
+   reject any unrelated generated change.
+7. Run static ownership/DAG/generated checks before expensive work.
+8. Run one 12-job workspace/differential/live gate for the frozen frontier,
+   then repeat static validation before attestation.
+9. Issue receipts, release claims, and regenerate stable status only after the
+   gate.
 
 A receipted package that needs repair must first be reopened as one complete
 package transaction:
