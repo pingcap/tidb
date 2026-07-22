@@ -11,14 +11,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! `crypto` family builtins — see `super`'s doc for the dispatch contract
-//! and `rust/PARALLEL.md` for ownership. Every builtin here is a faithful
-//! port of its Go implementation in `pkg/expression/builtin_encryption.go`,
-//! cited per function; test vectors come from
+//! `crypto` family builtins. Every builtin here is transcreated from
+//! `pkg/expression/builtin_encryption.go`; test vectors come from
 //! `pkg/expression/builtin_encryption_test.go`.
 //!
-//! Deliberately NOT ported from `builtin_encryption.go` (honest skips, per
-//! `rust/PARALLEL.md` invariant 4 — never approximate silently):
+//! Deliberately not yet ported from `builtin_encryption.go` because their
+//! required session or binary-value contracts are not present:
 //! - `AES_ENCRYPT`/`AES_DECRYPT` (`builtinAesEncrypt*`/`builtinAesDecrypt*`):
 //!   behavior is chosen by the `block_encryption_mode` session variable
 //!   (key size / block mode / IV requirement via the `aesModes` table) and
@@ -42,9 +40,9 @@
 //!   its UTF-8/default-charset scalar value contract below; connection
 //!   charset/session warning behavior and arbitrary typed collation metadata
 //!   remain explicit boundaries.
-//! - `SM3` (`builtinSM3Sig`): TiDB extension hash backed by a hand-rolled
-//!   implementation in `pkg/parser/auth`; no SM3 crate is among the
-//!   pre-added RustCrypto deps and `Cargo.toml` is frozen.
+//! - `SM3` (`builtinSM3Sig`): TiDB extension hash backed by
+//!   `pkg/parser/auth`; the complete expression package must route it through
+//!   the existing Rust parser-auth implementation.
 
 use md5::{Digest, Md5};
 use sha1::Sha1;

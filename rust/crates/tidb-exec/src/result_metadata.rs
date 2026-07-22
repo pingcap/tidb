@@ -272,6 +272,8 @@ fn max_bytes_per_character(collation: Collation) -> u32 {
         | tidb_datatype::Charset::Latin1 => 1,
         tidb_datatype::Charset::Utf8 => 3,
         tidb_datatype::Charset::Utf8Mb4 => 4,
+        tidb_datatype::Charset::Gbk => 2,
+        tidb_datatype::Charset::Gb18030 => 4,
     }
 }
 
@@ -287,6 +289,8 @@ fn collation_id(collation: Collation) -> u16 {
         Collation::Utf8Mb4Bin => 46,
         Collation::Utf8Mb4GeneralCi => 45,
         Collation::Utf8Mb4UnicodeCi => 224,
+        Collation::GbkBin => 87,
+        Collation::Gb18030Bin => 249,
     }
 }
 

@@ -12,29 +12,38 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::fmt;
+//! Complete registry from `pkg/parser/charset/charset.go`.
 
-/// A character set registered by TiDB's charset package.
-///
-/// The registry is intentionally explicit while the scalar domain is being
-/// ported. Additions must come with their row from
-/// `pkg/parser/charset/charset.go`; this is not a free-form session string.
+use std::collections::HashMap;
+use std::fmt;
+use std::sync::{OnceLock, RwLock};
+
+/// Trailing spaces are insignificant.
+pub const PAD_SPACE: &str = "PAD SPACE";
+/// Trailing spaces are significant.
+pub const PAD_NONE: &str = "NO PAD";
+
+/// A charset fully supported by TiDB's parser charset package.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Charset {
     /// MySQL's byte-oriented pseudo-character-set.
     Binary,
-    /// MySQL's seven-bit ASCII character set.
+    /// Seven-bit ASCII.
     Ascii,
-    /// MySQL's single-byte Latin-1 character set.
+    /// TiDB's backward-compatible Latin-1 behavior.
     Latin1,
-    /// MySQL's legacy three-byte UTF-8 character set.
+    /// Legacy three-byte UTF-8.
     Utf8,
-    /// MySQL's four-byte UTF-8 character set.
+    /// Four-byte UTF-8.
     Utf8Mb4,
+    /// GBK/CP936.
+    Gbk,
+    /// GB18030-2022.
+    Gb18030,
 }
 
 impl Charset {
-    /// Returns the canonical TiDB registry name.
+    /// Returns the canonical registry name.
     pub const fn name(self) -> &'static str {
         match self {
             Self::Binary => "binary",
@@ -42,10 +51,12 @@ impl Charset {
             Self::Latin1 => "latin1",
             Self::Utf8 => "utf8",
             Self::Utf8Mb4 => "utf8mb4",
+            Self::Gbk => "gbk",
+            Self::Gb18030 => "gb18030",
         }
     }
 
-    /// Resolves a Go charset name, including the legacy `utf8mb3` alias.
+    /// Resolves a supported name, including the `utf8mb3` alias.
     pub fn from_name(name: &str) -> Option<Self> {
         match name.to_ascii_lowercase().as_str() {
             "binary" => Some(Self::Binary),
@@ -53,214 +64,468 @@ impl Charset {
             "latin1" => Some(Self::Latin1),
             "utf8" | "utf8mb3" => Some(Self::Utf8),
             "utf8mb4" => Some(Self::Utf8Mb4),
+            "gbk" => Some(Self::Gbk),
+            "gb18030" => Some(Self::Gb18030),
             _ => None,
         }
     }
 
-    /// Returns the registry default rather than duplicating the relationship
-    /// in callers.
-    pub fn default_collation(self) -> Collation {
-        COLLATIONS
-            .iter()
-            .find(|entry| entry.charset == self && entry.is_default)
-            .expect("every registered charset has one default collation")
-            .collation
+    /// Returns the parser package's default collation.
+    pub const fn default_collation(self) -> Collation {
+        match self {
+            Self::Binary => Collation::Binary,
+            Self::Ascii => Collation::AsciiBin,
+            Self::Latin1 => Collation::Latin1Bin,
+            Self::Utf8 => Collation::Utf8Bin,
+            Self::Utf8Mb4 => Collation::Utf8Mb4Bin,
+            Self::Gbk => Collation::GbkBin,
+            Self::Gb18030 => Collation::Gb18030Bin,
+        }
     }
 }
 
 impl fmt::Display for Charset {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.name())
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.name())
     }
 }
 
-/// A collation registered by TiDB's charset package.
-///
-/// Keeping this as an enum makes an unregistered collation unrepresentable.
-/// Its character set is always derived through the crate-owned registry.
+/// Collations represented directly in shared typed metadata.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Collation {
-    /// The default collation for [`Charset::Binary`].
+    /// Binary collation.
     Binary,
-    /// The default collation for [`Charset::Ascii`].
+    /// ASCII binary collation.
     AsciiBin,
-    /// The default collation for [`Charset::Latin1`].
+    /// Latin-1 binary collation.
     Latin1Bin,
-    /// TiDB's default collation for [`Charset::Utf8`].
+    /// UTF-8 binary collation.
     Utf8Bin,
-    /// MySQL's legacy UTF-8 general case-insensitive collation.
+    /// UTF-8 general CI collation.
     Utf8GeneralCi,
-    /// MySQL's UCA 4.0 UTF-8 Unicode collation.
+    /// UTF-8 Unicode CI collation.
     Utf8UnicodeCi,
-    /// TiDB's default collation for [`Charset::Utf8Mb4`].
+    /// UTF8MB4 binary collation.
     Utf8Mb4Bin,
-    /// The utf8mb4 alias of [`Self::Utf8GeneralCi`].
+    /// UTF8MB4 general CI collation.
     Utf8Mb4GeneralCi,
-    /// The utf8mb4 alias of [`Self::Utf8UnicodeCi`].
+    /// UTF8MB4 Unicode CI collation.
     Utf8Mb4UnicodeCi,
+    /// GBK binary collation.
+    GbkBin,
+    /// GB18030 binary collation.
+    Gb18030Bin,
 }
 
 impl Collation {
-    /// TiDB's default collation (`mysql.DefaultCollationName`).
+    /// TiDB's default collation.
     pub const DEFAULT: Self = Self::Utf8Mb4Bin;
 
-    fn registry_entry(self) -> &'static CollationEntry {
-        COLLATIONS
-            .iter()
-            .find(|entry| entry.collation == self)
-            .expect("every Collation variant is registered")
+    /// Returns the canonical name.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Binary => "binary",
+            Self::AsciiBin => "ascii_bin",
+            Self::Latin1Bin => "latin1_bin",
+            Self::Utf8Bin => "utf8_bin",
+            Self::Utf8GeneralCi => "utf8_general_ci",
+            Self::Utf8UnicodeCi => "utf8_unicode_ci",
+            Self::Utf8Mb4Bin => "utf8mb4_bin",
+            Self::Utf8Mb4GeneralCi => "utf8mb4_general_ci",
+            Self::Utf8Mb4UnicodeCi => "utf8mb4_unicode_ci",
+            Self::GbkBin => "gbk_bin",
+            Self::Gb18030Bin => "gb18030_bin",
+        }
     }
 
-    /// Returns the canonical TiDB registry name.
-    pub fn name(self) -> &'static str {
-        self.registry_entry().name
+    /// Returns the owning supported charset.
+    pub const fn charset(self) -> Charset {
+        match self {
+            Self::Binary => Charset::Binary,
+            Self::AsciiBin => Charset::Ascii,
+            Self::Latin1Bin => Charset::Latin1,
+            Self::Utf8Bin | Self::Utf8GeneralCi | Self::Utf8UnicodeCi => Charset::Utf8,
+            Self::Utf8Mb4Bin | Self::Utf8Mb4GeneralCi | Self::Utf8Mb4UnicodeCi => Charset::Utf8Mb4,
+            Self::GbkBin => Charset::Gbk,
+            Self::Gb18030Bin => Charset::Gb18030,
+        }
     }
 
-    /// Returns the character set registered for this collation.
-    pub fn charset(self) -> Charset {
-        self.registry_entry().charset
-    }
-
-    /// Mirrors `charset.GetCollationByName`: registered names are matched
-    /// without ASCII case sensitivity and unknown names are rejected.
+    /// Resolves a typed collation, including UTF8MB3 aliases.
     pub fn from_name(name: &str) -> Option<Self> {
-        let lower = name.to_ascii_lowercase();
-        let name = match lower.as_str() {
-            "utf8mb3_bin" => "utf8_bin",
-            "utf8mb3_general_ci" => "utf8_general_ci",
-            "utf8mb3_unicode_ci" => "utf8_unicode_ci",
-            other => other,
-        };
-        COLLATIONS
-            .iter()
-            .find(|entry| entry.name.eq_ignore_ascii_case(name))
-            .map(|entry| entry.collation)
+        match utf8_alias(&name.to_ascii_lowercase()) {
+            "binary" => Some(Self::Binary),
+            "ascii_bin" => Some(Self::AsciiBin),
+            "latin1_bin" => Some(Self::Latin1Bin),
+            "utf8_bin" => Some(Self::Utf8Bin),
+            "utf8_general_ci" => Some(Self::Utf8GeneralCi),
+            "utf8_unicode_ci" => Some(Self::Utf8UnicodeCi),
+            "utf8mb4_bin" => Some(Self::Utf8Mb4Bin),
+            "utf8mb4_general_ci" => Some(Self::Utf8Mb4GeneralCi),
+            "utf8mb4_unicode_ci" => Some(Self::Utf8Mb4UnicodeCi),
+            "gbk_bin" => Some(Self::GbkBin),
+            "gb18030_bin" => Some(Self::Gb18030Bin),
+            _ => None,
+        }
     }
 }
 
 impl fmt::Display for Collation {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.name())
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.name())
     }
 }
 
-#[derive(Debug)]
-struct CollationEntry {
-    collation: Collation,
-    name: &'static str,
-    charset: Charset,
-    is_default: bool,
+/// Full charset metadata, including custom parser registrations.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CharsetInfo {
+    /// Canonical name.
+    pub name: String,
+    /// Default collation name.
+    pub default_collation: String,
+    /// Collations keyed by canonical name.
+    pub collations: HashMap<String, CollationInfo>,
+    /// Human-readable MySQL description.
+    pub description: String,
+    /// Maximum encoded bytes per character.
+    pub maxlen: usize,
 }
 
-/// Source: `pkg/parser/charset/charset.go` (`CharacterSetInfos`, default
-/// collation constants, and the binary/bin/general-CI/Unicode-CI registry rows
-/// for utf8 and utf8mb4).
-const COLLATIONS: &[CollationEntry] = &[
-    CollationEntry {
-        collation: Collation::Utf8Bin,
-        name: "utf8_bin",
-        charset: Charset::Utf8,
-        is_default: true,
-    },
-    CollationEntry {
-        collation: Collation::Utf8GeneralCi,
-        name: "utf8_general_ci",
-        charset: Charset::Utf8,
-        is_default: false,
-    },
-    CollationEntry {
-        collation: Collation::Utf8UnicodeCi,
-        name: "utf8_unicode_ci",
-        charset: Charset::Utf8,
-        is_default: false,
-    },
-    CollationEntry {
-        collation: Collation::Utf8Mb4Bin,
-        name: "utf8mb4_bin",
-        charset: Charset::Utf8Mb4,
-        is_default: true,
-    },
-    CollationEntry {
-        collation: Collation::Utf8Mb4GeneralCi,
-        name: "utf8mb4_general_ci",
-        charset: Charset::Utf8Mb4,
-        is_default: false,
-    },
-    CollationEntry {
-        collation: Collation::Utf8Mb4UnicodeCi,
-        name: "utf8mb4_unicode_ci",
-        charset: Charset::Utf8Mb4,
-        is_default: false,
-    },
-    CollationEntry {
-        collation: Collation::Binary,
-        name: "binary",
-        charset: Charset::Binary,
-        is_default: true,
-    },
-    CollationEntry {
-        collation: Collation::AsciiBin,
-        name: "ascii_bin",
-        charset: Charset::Ascii,
-        is_default: true,
-    },
-    CollationEntry {
-        collation: Collation::Latin1Bin,
-        name: "latin1_bin",
-        charset: Charset::Latin1,
-        is_default: true,
-    },
-];
+/// Full collation metadata from MySQL's registry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CollationInfo {
+    /// Numeric collation ID.
+    pub id: i32,
+    /// Owning charset name.
+    pub charset_name: String,
+    /// Canonical collation name.
+    pub name: String,
+    /// Whether this row is the source table's default.
+    pub is_default: bool,
+    /// Source sort length.
+    pub sortlen: usize,
+    /// `PAD SPACE` or `NO PAD`.
+    pub pad_attribute: String,
+}
+
+/// Registry lookup error with source-compatible text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CharsetError {
+    /// Name exists in MySQL's table but TiDB does not support it.
+    UnsupportedCharset(String),
+    /// Name is absent from MySQL's table.
+    UnknownCharset(String),
+    /// Collation name is unknown.
+    UnknownCollation(String),
+    /// Collation ID is unknown.
+    UnknownCollationId(i32),
+}
+
+impl fmt::Display for CharsetError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnsupportedCharset(name) => write!(formatter, "Unsupported charset {name}"),
+            Self::UnknownCharset(name) => write!(formatter, "Unknown charset {name}"),
+            Self::UnknownCollation(name) => {
+                write!(formatter, "[ddl:1273]Unknown collation: '{name}'")
+            }
+            Self::UnknownCollationId(id) => write!(formatter, "Unknown collation id {id}"),
+        }
+    }
+}
+
+impl std::error::Error for CharsetError {}
+
+pub(crate) struct StaticCharsetInfo {
+    name: &'static str,
+    default_collation: &'static str,
+    description: &'static str,
+    maxlen: usize,
+}
+
+pub(crate) struct StaticCollationInfo {
+    id: i32,
+    charset: &'static str,
+    name: &'static str,
+    is_default: bool,
+    sortlen: usize,
+    pad_space: bool,
+}
+
+#[allow(dead_code)]
+pub(crate) struct CaseRange {
+    pub(crate) lo: u32,
+    pub(crate) hi: u32,
+    pub(crate) upper: i32,
+    pub(crate) lower: i32,
+    pub(crate) title: i32,
+}
+
+include!("charset_data.rs");
+
+struct Registry {
+    supported: HashMap<String, CharsetInfo>,
+    known: HashMap<String, CharsetInfo>,
+    collations_by_id: HashMap<i32, CollationInfo>,
+    collations_by_name: HashMap<String, CollationInfo>,
+    supported_collations: Vec<CollationInfo>,
+}
+
+fn blank_charset(name: &str, default: &str, description: &str, maxlen: usize) -> CharsetInfo {
+    CharsetInfo {
+        name: name.to_owned(),
+        default_collation: default.to_owned(),
+        collations: HashMap::new(),
+        description: description.to_owned(),
+        maxlen,
+    }
+}
+
+impl Registry {
+    fn source() -> Self {
+        let known = KNOWN_CHARSETS
+            .iter()
+            .map(|row| {
+                (
+                    row.name.to_owned(),
+                    blank_charset(row.name, row.default_collation, row.description, row.maxlen),
+                )
+            })
+            .collect();
+        let mut registry = Self {
+            supported: HashMap::new(),
+            known,
+            collations_by_id: HashMap::new(),
+            collations_by_name: HashMap::new(),
+            supported_collations: Vec::new(),
+        };
+        for (name, default, description, maxlen) in [
+            ("utf8", "utf8_bin", "UTF-8 Unicode", 3),
+            ("utf8mb4", "utf8mb4_bin", "UTF-8 Unicode", 4),
+            ("ascii", "ascii_bin", "US ASCII", 1),
+            ("latin1", "latin1_bin", "Latin1", 1),
+            ("binary", "binary", "binary", 1),
+            ("gbk", "gbk_bin", "Chinese Internal Code Specification", 2),
+            (
+                "gb18030",
+                "gb18030_bin",
+                "China National Standard GB18030",
+                4,
+            ),
+        ] {
+            registry.supported.insert(
+                name.to_owned(),
+                blank_charset(name, default, description, maxlen),
+            );
+        }
+        for row in ALL_COLLATIONS {
+            registry.add_collation(CollationInfo {
+                id: row.id,
+                charset_name: row.charset.to_owned(),
+                name: row.name.to_owned(),
+                is_default: row.is_default,
+                sortlen: row.sortlen,
+                pad_attribute: if row.pad_space { PAD_SPACE } else { PAD_NONE }.to_owned(),
+            });
+        }
+        registry
+    }
+
+    fn add_collation(&mut self, collation: CollationInfo) {
+        self.collations_by_id
+            .insert(collation.id, collation.clone());
+        self.collations_by_name
+            .insert(collation.name.clone(), collation.clone());
+        if matches!(
+            collation.name.as_str(),
+            "utf8_bin"
+                | "utf8mb4_bin"
+                | "ascii_bin"
+                | "latin1_bin"
+                | "binary"
+                | "gbk_bin"
+                | "gb18030_bin"
+        ) {
+            self.supported_collations.push(collation.clone());
+        }
+        if let Some(charset) = self.supported.get_mut(&collation.charset_name) {
+            charset
+                .collations
+                .insert(collation.name.clone(), collation.clone());
+        }
+        if let Some(charset) = self.known.get_mut(&collation.charset_name) {
+            charset.collations.insert(collation.name.clone(), collation);
+        }
+    }
+}
+
+fn registry() -> &'static RwLock<Registry> {
+    static REGISTRY: OnceLock<RwLock<Registry>> = OnceLock::new();
+    REGISTRY.get_or_init(|| RwLock::new(Registry::source()))
+}
+
+fn utf8_alias(name: &str) -> &str {
+    match name {
+        "utf8mb3_bin" => "utf8_bin",
+        "utf8mb3_unicode_ci" => "utf8_unicode_ci",
+        "utf8mb3_general_ci" => "utf8_general_ci",
+        _ => name,
+    }
+}
+
+/// Returns all supported charsets sorted by name.
+pub fn get_supported_charsets() -> Vec<CharsetInfo> {
+    let guard = registry().read().expect("charset registry lock poisoned");
+    let mut result: Vec<_> = guard.supported.values().cloned().collect();
+    result.sort_by(|left, right| left.name.cmp(&right.name));
+    result
+}
+
+/// Returns the source-ordered supported collation list.
+pub fn get_supported_collations() -> Vec<CollationInfo> {
+    registry()
+        .read()
+        .expect("charset registry lock poisoned")
+        .supported_collations
+        .clone()
+}
+
+/// Checks a supported charset/collation pair.
+pub fn valid_charset_and_collation(charset: &str, collation: &str) -> bool {
+    let charset = if charset.is_empty() || charset.eq_ignore_ascii_case("utf8mb3") {
+        "utf8"
+    } else {
+        charset
+    };
+    let Ok(info) = get_charset_info(charset) else {
+        return false;
+    };
+    collation.is_empty()
+        || info
+            .collations
+            .contains_key(utf8_alias(&collation.to_ascii_lowercase()))
+}
+
+/// Returns the legacy parser default; GBK and GB18030 are deliberately absent.
+pub fn get_default_collation_legacy(charset: &str) -> Result<String, CharsetError> {
+    let lower = charset.to_ascii_lowercase();
+    match lower.as_str() {
+        "utf8mb3" => get_default_collation("utf8"),
+        "utf8" | "utf8mb4" | "ascii" | "latin1" | "binary" => get_default_collation(&lower),
+        _ => Err(CharsetError::UnknownCharset(charset.to_owned())),
+    }
+}
+
+/// Returns a supported charset's default collation.
+pub fn get_default_collation(charset: &str) -> Result<String, CharsetError> {
+    Ok(get_charset_info(charset)?.default_collation)
+}
+
+/// Returns TiDB's default charset and collation.
+pub const fn get_default_charset_and_collate() -> (&'static str, &'static str) {
+    ("utf8mb4", "utf8mb4_bin")
+}
+
+/// Looks up supported charset information and distinguishes unsupported names.
+pub fn get_charset_info(charset: &str) -> Result<CharsetInfo, CharsetError> {
+    let canonical = if charset.eq_ignore_ascii_case("utf8mb3") {
+        "utf8".to_owned()
+    } else {
+        charset.to_ascii_lowercase()
+    };
+    let guard = registry().read().expect("charset registry lock poisoned");
+    if let Some(info) = guard.supported.get(&canonical) {
+        return Ok(info.clone());
+    }
+    if guard.known.contains_key(&canonical) {
+        return Err(CharsetError::UnsupportedCharset(charset.to_owned()));
+    }
+    Err(CharsetError::UnknownCharset(charset.to_owned()))
+}
+
+/// Looks up a collation ID, returning TiDB defaults alongside an error when unknown.
+pub fn get_charset_info_by_id(id: i32) -> (String, String, Option<CharsetError>) {
+    if id == 46 {
+        return ("utf8mb4".to_owned(), "utf8mb4_bin".to_owned(), None);
+    }
+    if let Some(collation) = registry()
+        .read()
+        .expect("charset registry lock poisoned")
+        .collations_by_id
+        .get(&id)
+        .cloned()
+    {
+        return (collation.charset_name, collation.name, None);
+    }
+    (
+        "utf8mb4".to_owned(),
+        "utf8mb4_bin".to_owned(),
+        Some(CharsetError::UnknownCollationId(id)),
+    )
+}
+
+/// Looks up any registered collation name.
+pub fn get_collation_by_name(name: &str) -> Result<CollationInfo, CharsetError> {
+    registry()
+        .read()
+        .expect("charset registry lock poisoned")
+        .collations_by_name
+        .get(utf8_alias(&name.to_ascii_lowercase()))
+        .cloned()
+        .ok_or_else(|| CharsetError::UnknownCollation(name.to_owned()))
+}
+
+/// Looks up any registered collation ID.
+pub fn get_collation_by_id(id: i32) -> Result<CollationInfo, CharsetError> {
+    registry()
+        .read()
+        .expect("charset registry lock poisoned")
+        .collations_by_id
+        .get(&id)
+        .cloned()
+        .ok_or(CharsetError::UnknownCollationId(id))
+}
+
+/// Adds a custom supported charset.
+pub fn add_charset(charset: CharsetInfo) {
+    registry()
+        .write()
+        .expect("charset registry lock poisoned")
+        .supported
+        .insert(charset.name.clone(), charset);
+}
+
+/// Removes a custom supported charset.
+pub fn remove_charset(name: &str) {
+    let mut guard = registry().write().expect("charset registry lock poisoned");
+    guard.supported.remove(name);
+    // Preserve the source implementation's name comparison exactly.
+    guard.supported_collations.retain(|row| row.name != name);
+}
+
+/// Adds a collation to every applicable registry view.
+pub fn add_collation(collation: CollationInfo) {
+    registry()
+        .write()
+        .expect("charset registry lock poisoned")
+        .add_collation(collation);
+}
+
+/// Appends a collation to the supported list.
+pub fn add_supported_collation(collation: CollationInfo) {
+    registry()
+        .write()
+        .expect("charset registry lock poisoned")
+        .supported_collations
+        .push(collation);
+}
 
 #[cfg(test)]
 mod tests {
-    use super::{Charset, Collation};
-
-    /// Vectors from `pkg/parser/charset/charset_test.go`:
-    /// `TestGetDefaultCollation` and `TestGetCollationByName`.
-    #[test]
-    fn go_registry_vectors_preserve_collation_charset_relation() {
-        assert_eq!(Charset::Utf8Mb4.default_collation(), Collation::Utf8Mb4Bin);
-        assert_eq!(Charset::Utf8.default_collation(), Collation::Utf8Bin);
-        assert_eq!(Charset::Binary.default_collation(), Collation::Binary);
-        assert_eq!(Charset::Ascii.default_collation(), Collation::AsciiBin);
-        assert_eq!(Charset::Latin1.default_collation(), Collation::Latin1Bin);
-        assert_eq!(Collation::Utf8Mb4Bin.charset(), Charset::Utf8Mb4);
-        assert_eq!(Collation::Binary.charset(), Charset::Binary);
-        assert_eq!(Collation::AsciiBin.charset(), Charset::Ascii);
-        assert_eq!(Collation::Latin1Bin.charset(), Charset::Latin1);
-        assert_eq!(Collation::Utf8GeneralCi.charset(), Charset::Utf8);
-        assert_eq!(Collation::Utf8Mb4UnicodeCi.charset(), Charset::Utf8Mb4);
-        assert_eq!(
-            Collation::from_name("UTF8MB4_BIN"),
-            Some(Collation::Utf8Mb4Bin)
-        );
-        assert_eq!(Collation::from_name("non_exist"), None);
-        assert_eq!(
-            Collation::from_name("UTF8_UNICODE_CI"),
-            Some(Collation::Utf8UnicodeCi)
-        );
-        assert_eq!(
-            Collation::from_name("utf8mb3_unicode_ci"),
-            Some(Collation::Utf8UnicodeCi)
-        );
-    }
-
-    fn valid_charset_and_collation(charset: &str, collation: &str) -> bool {
-        let charset = if charset.is_empty() {
-            Charset::Utf8
-        } else if let Some(charset) = Charset::from_name(charset) {
-            charset
-        } else {
-            return false;
-        };
-        collation.is_empty()
-            || Collation::from_name(collation)
-                .is_some_and(|collation| collation.charset() == charset)
-    }
+    use super::*;
 
     #[test]
-    fn go_valid_charset_vectors() {
+    fn source_registry_vectors() {
         for (charset, collation, expected) in [
             ("utf8", "utf8_general_ci", true),
             ("", "utf8_general_ci", true),
@@ -273,35 +538,34 @@ mod tests {
             ("UTF8MB4", "UTF8MB4_general_ci", true),
             ("utf8mb3", "utf8mb3_unicode_ci", true),
         ] {
-            assert_eq!(
-                valid_charset_and_collation(charset, collation),
-                expected,
-                "{charset}/{collation}"
-            );
+            assert_eq!(valid_charset_and_collation(charset, collation), expected);
+        }
+        assert_eq!(get_default_collation("utf8").unwrap(), "utf8_bin");
+        assert_eq!(get_default_collation("gbk").unwrap(), "gbk_bin");
+        assert_eq!(get_charset_info("utf8mb3").unwrap().name, "utf8");
+        assert_eq!(
+            get_collation_by_name("non_exist").unwrap_err().to_string(),
+            "[ddl:1273]Unknown collation: 'non_exist'"
+        );
+        for row in ALL_COLLATIONS {
+            assert_eq!(get_collation_by_name(row.name).unwrap().id, row.id);
         }
     }
 
     #[test]
-    fn go_charset_description_and_legacy_defaults() {
-        for (input, canonical) in [
-            ("utf8", "utf8"),
-            ("UTF8", "utf8"),
-            ("utf8mb3", "utf8"),
-            ("utf8mb4", "utf8mb4"),
-            ("ascii", "ascii"),
-            ("binary", "binary"),
-            ("latin1", "latin1"),
-        ] {
-            assert_eq!(
-                Charset::from_name(input).map(Charset::name),
-                Some(canonical)
-            );
-        }
-        assert_eq!(Charset::from_name("invalid_cs"), None);
-        assert_eq!(Charset::from_name(""), None);
-        assert_eq!(
-            Charset::from_name("utf8mb3").map(Charset::default_collation),
-            Some(Collation::Utf8Bin)
-        );
+    fn source_custom_charset_mutation() {
+        add_charset(blank_charset("custom", "custom_collation", "Custom", 4));
+        add_collation(CollationInfo {
+            id: 99_999,
+            charset_name: "custom".to_owned(),
+            name: "custom_collation".to_owned(),
+            is_default: true,
+            sortlen: 8,
+            pad_attribute: PAD_NONE.to_owned(),
+        });
+        assert!(valid_charset_and_collation("custom", "custom_collation"));
+        assert_eq!(get_collation_by_id(99_999).unwrap().sortlen, 8);
+        remove_charset("custom");
+        assert!(get_charset_info("custom").is_err());
     }
 }

@@ -1062,6 +1062,7 @@ dependencies = [
 name = "tidb-datatype"
 version = "0.0.0"
 dependencies = [
+ "encoding_rs",
  "sha2",
  "tidb-error",
 ]
@@ -1188,7 +1189,6 @@ dependencies = [
 name = "tidb-protocol"
 version = "0.0.0"
 dependencies = [
- "encoding_rs",
  "flate2",
  "tidb-datatype",
  "tidb-error",

@@ -9,12 +9,12 @@ It never links Go through cgo or FFI. The Go tree is the behavioral authority.
 rust/
   crates/              production Rust crates
   difftests/           differential harnesses and checked corpora
-  ports/               one generated proof per completed Go package
+  ported-packages.json compact current package set
   scripts/
-    package-port.py    whole-package inventory and acceptance
+    port.py            inventory, recording, drift check, checkpoint
     run-*.sh           bounded live/real-cluster checks
   docs/                current architecture and validation guidance
-  workstreams/         subsystem notes and the active ExecPlan
+  HANDOFF.md           current status and active ExecPlan
 ```
 
 Legacy feature-slice scheduling, claims, campaigns, transfer ledgers, mutable
@@ -74,14 +74,15 @@ when a complete package takes ownership.
 
 ## Whole-package acceptance
 
-`scripts/package-port.py finish` derives every top-level Go package file and
+`scripts/port.py inventory` derives every top-level Go package file and
 `testdata` file, all test/benchmark/fuzz/example entry points and literal
-subtests, direct internal dependencies, and a content digest. It verifies the
-declared Rust crates, paths, and test targets, then writes one proof under
-`ports/<go-package>.toml` only after focused checks pass.
+subtests, direct internal dependencies, and a content digest. After the source
+audit and translation, `record` runs every target in the owning crates and
+updates `ported-packages.json` with only the digest and crate names.
 
 Git is the only history, review, atomic commit, rollback, and repair mechanism.
-The pre-push workspace sweep is `scripts/package-port.py checkpoint`.
+Pre-push validation uses ordinary Cargo and repository commands; it is not a
+second rewrite workflow.
 
 ## Test process layout
 
@@ -92,6 +93,5 @@ and source paths stay intact without compiling and launching hundreds of tiny
 binaries. A source that requires integration-crate-root topology carries the
 `aggregate-test: standalone` marker and remains an explicit Cargo target.
 
-The checkpoint gives aggregate harnesses 12 internal test threads and runs
-standalone binaries 12-way with one test thread each. This keeps the total
-thread budget bounded while matching the two different workload shapes.
+Cargo runs the aggregate harnesses with its normal test runner. The aggregation
+removes repeated compile and process startup without adding a custom scheduler.

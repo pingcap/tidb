@@ -11,15 +11,12 @@ through TiDB's serialized protocols and the differential rings.
 ## Start here
 
 - [`HANDOFF.md`](HANDOFF.md): current architecture, completed packages, and
-  largest gaps.
-- [`PARALLEL.md`](PARALLEL.md): the retained link for the single-worker
-  whole-package contract.
+  active ExecPlan.
 - [`docs/architecture/workspace.md`](docs/architecture/workspace.md): crate
   boundaries and target concurrency boundaries.
 - [`docs/operations/validation.md`](docs/operations/validation.md): exact WIP
   validation commands.
-- [`ports/`](ports/): the complete set of accepted whole-package proofs.
-- [`workstreams/plans/2026-07-whole-package-transcreation.md`](workstreams/plans/2026-07-whole-package-transcreation.md): active execution plan.
+- [`ported-packages.json`](ported-packages.json): compact current package set.
 
 The Go implementation is authoritative. Work starts from one complete Go
 package plus its original tests/support; differential output verifies the port
@@ -57,8 +54,7 @@ with a locally convenient rule just to make a golden pass.
 ## Unit of work
 
 One complete Go package or module is the minimum unit. A package may map to
-several Rust crates; all implementation and original tests still finish under
-one proof.
+several Rust crates; all implementation and original tests still move together.
 
 ## Evidence model
 
@@ -76,8 +72,9 @@ The result ring's expression corpus includes source-owned scalar vectors for
 preserve NULL, separator, numeric, empty-field, and raw-binary behavior while
 keeping unsupported temporal/error/session boundaries visible.
 
-Inventory is not coverage. Only a valid whole-package proof under `ports/`
-counts as completed; partial Rust code remains seed material.
+Inventory is not coverage. Only a current whole-package record backed by the
+source audit and owning-crate tests counts; partial Rust code remains seed
+material.
 
 Executable corpus namespaces use paired `<topic>.txt` and
 `<topic>.golden.txt` files. Explanatory evidence belongs under
@@ -86,26 +83,23 @@ files in executable namespaces.
 
 ## Whole-package development loop
 
-Transcreate one complete Go package, translate all of its original tests, then
-finish it with one command from `rust/`:
+Transcreate one complete Go package, translate all original tests, then record
+it with one command from `rust/`:
 
 ```sh
-scripts/package-port.py finish pkg/example \
-  --crate tidb-example \
-  --rust-path rust/crates/tidb-example/src/lib.rs \
-  --rust-path rust/crates/tidb-example/tests/package_source.rs \
-  --test-target tidb-example:package_source
+scripts/port.py record pkg/example -p tidb-example
 ```
 
-This derives the complete Go source/test/support inventory, checks dependency
-closure, and runs 12-job formatting, all-target Clippy, library tests, and the
-declared integration tests before writing one proof. There is no start command,
-claim, queue, campaign, transfer ledger, or separate receipt.
+This derives the Go digest and dependencies and runs every target in the owning
+crate. The manifest stores only the digest and crate names. There is no start
+command, claim, queue, campaign, gate, transfer ledger, or receipt.
 
-Before push or after shared-foundation changes, run the grouped workspace check:
+Before push, run the ordinary repository validation commands:
 
 ```sh
-scripts/package-port.py checkpoint
+cargo fmt --all -- --check
+cargo clippy --offline --locked -j12 --workspace --all-targets -- -D warnings
+cargo test --offline --locked -j12 --workspace --all-targets
 ```
 
 ## Current structural priorities
@@ -114,9 +108,9 @@ scripts/package-port.py checkpoint
 - transcreate each selected package structurally from Go, including its full
   input domain and error behavior;
 - translate every original test, benchmark, fuzz target, example, fixture,
-  build variant, and support file before writing its proof;
+  build variant, and support file before recording the package;
 - split a Go package across Rust crates when that improves cohesion or compile
-  time, while keeping one package proof;
+  time, while keeping one whole-package acceptance boundary;
 - run real PD/TiKV and MySQL-client checks when the package reaches those
   boundaries.
 

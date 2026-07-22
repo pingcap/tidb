@@ -18,15 +18,12 @@
 //! `pkg/format/textrow/result_encoder.go`.  It deliberately does not pretend
 //! to be a general character-set conversion library: the currently registered
 //! binary/UTF-8/Latin-1 paths are byte preserving (which is also what TiDB's
-//! Go implementations do for those paths), while ASCII and GBK use the
-//! source-shaped replacement policies. Unknown session or column charset IDs
-//! are explicit errors instead of silently falling back to binary.
+//! Go implementations do for those paths), while other supported encodings
+//! use the complete `pkg/parser/charset` authority in `tidb-datatype`.
 
 use std::fmt;
 
-use encoding_rs::{EncoderResult, GBK};
-use tidb_datatype::ascii_encoding::ASCII_ENCODING;
-use tidb_datatype::{Charset, TransformOp};
+use tidb_datatype::{find_encoding, get_charset_info_by_id, Charset, TransformOp};
 
 use crate::result::is_string_column_type as source_is_string_column_type;
 
@@ -54,6 +51,8 @@ pub const UTF8_UNICODE_CI_COLLATION_ID: u16 = 192;
 pub const BINARY_DEFAULT_COLLATION_ID: u16 = 63;
 /// The default `gbk_bin` collation ID.
 pub const GBK_DEFAULT_COLLATION_ID: u16 = 28;
+/// MySQL's GB18030 default collation ID.
+pub const GB18030_DEFAULT_COLLATION_ID: u16 = 248;
 
 /// Errors for result charset state that is outside the currently ported
 /// registry boundary.
@@ -69,12 +68,6 @@ pub enum ResultEncoderError {
 }
 
 /// Character sets that can be emitted by the result protocol.
-///
-/// GBK intentionally lives here rather than in `tidb-datatype`: result
-/// encoding needs a byte conversion table, while the shared datatype
-/// registry is still limited to the charsets needed by expression and
-/// metadata code. Keeping this enum local prevents an incomplete registry
-/// entry from being mistaken for full GBK support elsewhere.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResultCharset {
     /// Byte-oriented binary result data.
@@ -89,6 +82,8 @@ pub enum ResultCharset {
     Utf8Mb4,
     /// GBK/CP936 result data.
     Gbk,
+    /// GB18030-2022 result data.
+    Gb18030,
 }
 
 impl ResultCharset {
@@ -99,6 +94,8 @@ impl ResultCharset {
             Charset::Latin1 => Self::Latin1,
             Charset::Utf8 => Self::Utf8,
             Charset::Utf8Mb4 => Self::Utf8Mb4,
+            Charset::Gbk => Self::Gbk,
+            Charset::Gb18030 => Self::Gb18030,
         }
     }
 }
@@ -147,14 +144,11 @@ impl ResultEncoder {
         let result_charset = if result_charset.is_empty() {
             None
         } else {
-            Some(match result_charset.to_ascii_lowercase().as_str() {
-                "gbk" => ResultCharset::Gbk,
-                name => {
-                    ResultCharset::from_datatype(Charset::from_name(name).ok_or_else(|| {
-                        ResultEncoderError::UnsupportedCharsetName(result_charset.to_owned())
-                    })?)
-                }
-            })
+            Some(ResultCharset::from_datatype(
+                Charset::from_name(result_charset).ok_or_else(|| {
+                    ResultEncoderError::UnsupportedCharsetName(result_charset.to_owned())
+                })?,
+            ))
         };
         Ok(Self {
             result_charset,
@@ -237,23 +231,17 @@ fn charset_default_collation_id(charset: ResultCharset) -> u16 {
         ResultCharset::Utf8 => UTF8_DEFAULT_COLLATION_ID,
         ResultCharset::Binary => BINARY_DEFAULT_COLLATION_ID,
         ResultCharset::Gbk => GBK_DEFAULT_COLLATION_ID,
+        ResultCharset::Gb18030 => GB18030_DEFAULT_COLLATION_ID,
     }
 }
 
 fn charset_from_collation_id(id: u16) -> Option<ResultCharset> {
-    match id {
-        UTF8MB4_DEFAULT_COLLATION_ID
-        | UTF8MB4_GENERAL_CI_COLLATION_ID
-        | UTF8MB4_UNICODE_CI_COLLATION_ID => Some(ResultCharset::Utf8Mb4),
-        LATIN1_DEFAULT_COLLATION_ID => Some(ResultCharset::Latin1),
-        ASCII_DEFAULT_COLLATION_ID => Some(ResultCharset::Ascii),
-        UTF8_DEFAULT_COLLATION_ID | UTF8_GENERAL_CI_COLLATION_ID | UTF8_UNICODE_CI_COLLATION_ID => {
-            Some(ResultCharset::Utf8)
-        }
-        BINARY_DEFAULT_COLLATION_ID => Some(ResultCharset::Binary),
-        GBK_DEFAULT_COLLATION_ID => Some(ResultCharset::Gbk),
-        _ => None,
-    }
+    let (charset, _, error) = get_charset_info_by_id(i32::from(id));
+    error
+        .is_none()
+        .then(|| Charset::from_name(&charset))
+        .flatten()
+        .map(ResultCharset::from_datatype)
 }
 
 fn encode_with_charset(src: &[u8], charset: ResultCharset) -> Vec<u8> {
@@ -265,73 +253,16 @@ fn encode_with_charset(src: &[u8], charset: ResultCharset) -> Vec<u8> {
         | ResultCharset::Latin1
         | ResultCharset::Utf8
         | ResultCharset::Utf8Mb4 => src.to_vec(),
-        ResultCharset::Ascii => ASCII_ENCODING
+        ResultCharset::Ascii | ResultCharset::Gbk | ResultCharset::Gb18030 => {
+            find_encoding(match charset {
+                ResultCharset::Ascii => "ascii",
+                ResultCharset::Gbk => "gbk",
+                ResultCharset::Gb18030 => "gb18030",
+                _ => unreachable!(),
+            })
             .transform(src, TransformOp::ENCODE_REPLACE)
             .bytes()
-            .to_vec(),
-        ResultCharset::Gbk => encode_gbk(src),
-    }
-}
-
-/// Encode UTF-8 bytes with TiDB's custom GBK policy.
-///
-/// `encoding_rs` supplies the same GBK/CP936 mapping as Go's
-/// `simplifiedchinese.GBK`. TiDB's wrapper differs in one important way: the
-/// euro sign is deliberately rejected and replacement mode emits `?`, not
-/// the WHATWG encoder's HTML escape. Encoding one Unicode scalar at a time
-/// lets us preserve that replacement boundary and also mirrors Go's
-/// `utf8.DecodeRune` behavior for malformed input (one `?` per bad byte).
-fn encode_gbk(src: &[u8]) -> Vec<u8> {
-    let mut output = Vec::with_capacity(src.len());
-    let mut remaining = src;
-    while !remaining.is_empty() {
-        match std::str::from_utf8(remaining) {
-            Ok(valid) => {
-                encode_valid_gbk(valid, &mut output);
-                break;
-            }
-            Err(error) => {
-                let valid_up_to = error.valid_up_to();
-                if valid_up_to != 0 {
-                    // `valid_up_to` is always a UTF-8 scalar boundary.
-                    encode_valid_gbk(
-                        std::str::from_utf8(&remaining[..valid_up_to])
-                            .expect("the UTF-8 error boundary is a valid prefix"),
-                        &mut output,
-                    );
-                    remaining = &remaining[valid_up_to..];
-                }
-                // Go's DecodeRune consumes only the invalid leading byte,
-                // even when the malformed sequence contains continuations.
-                output.push(b'?');
-                remaining = &remaining[1..];
-            }
-        }
-    }
-    output
-}
-
-fn encode_valid_gbk(src: &str, output: &mut Vec<u8>) {
-    for ch in src.chars() {
-        // pkg/parser/charset/encoding_gbk.go intentionally rejects `€` even
-        // though Windows-936/WHATWG GBK has a euro extension.
-        if ch == '\u{20ac}' {
-            output.push(b'?');
-            continue;
-        }
-        let mut input_buf = [0u8; 4];
-        let input = ch.encode_utf8(&mut input_buf);
-        let mut bytes = [0u8; 8];
-        let (result, read, written) = GBK
-            .new_encoder()
-            .encode_from_utf8_without_replacement(input, &mut bytes, true);
-        match result {
-            EncoderResult::InputEmpty => {
-                debug_assert_eq!(read, input.len());
-                output.extend_from_slice(&bytes[..written]);
-            }
-            EncoderResult::Unmappable(_) => output.push(b'?'),
-            EncoderResult::OutputFull => unreachable!("GBK scalar exceeds eight output bytes"),
+            .to_vec()
         }
     }
 }
@@ -421,7 +352,9 @@ mod tests {
             [0xd2, 0xbb, 0xb6, 0xfe, 0xc8, 0xfd, b'1', b'2', b'3']
         );
         assert_eq!(encoder.encode_meta("€aÀ".as_bytes()).unwrap(), b"?a?");
-        assert_eq!(encoder.encode_meta(b"a\x80b").unwrap(), b"a?b");
+        // `encodingUTF8.Peek` groups the invalid 0x80 lead with the following
+        // byte before GBK replacement, exactly like `encodingBase.Foreach`.
+        assert_eq!(encoder.encode_meta(b"a\x80b").unwrap(), b"a?");
     }
 
     #[test]

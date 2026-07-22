@@ -31,12 +31,14 @@ mod datum;
 mod decimal;
 mod duration;
 pub(crate) mod encoding_base;
+mod encoding_table;
 mod enum_set;
 mod eval_type;
 mod field_name;
 mod field_type;
 mod format;
 mod fsp;
+mod multibyte_encoding;
 mod overflow;
 mod packed_time;
 mod time_parse;
@@ -69,7 +71,13 @@ pub use binary_literal::{
     BinaryLiteralWidth, BitLiteral, HexLiteral, InvalidBinaryLiteralWidth,
 };
 pub use char_length::{produce_char_value, DataTooLongError};
-pub use charset::{Charset, Collation};
+pub use charset::{
+    add_charset, add_collation, add_supported_collation, get_charset_info, get_charset_info_by_id,
+    get_collation_by_id, get_collation_by_name, get_default_charset_and_collate,
+    get_default_collation, get_default_collation_legacy, get_supported_charsets,
+    get_supported_collations, remove_charset, valid_charset_and_collation, Charset, CharsetError,
+    CharsetInfo, Collation, CollationInfo, PAD_NONE, PAD_SPACE,
+};
 pub use conversion_context::{
     ConversionContext, ConversionFlags, ConversionLocation, ConversionWarningAppender,
     IgnoreConversionWarnings, DEFAULT_STATEMENT_FLAGS, IGNORE_CONVERSION_WARNINGS, STRICT_FLAGS,
@@ -84,6 +92,7 @@ pub use duration::{
     TIME_MAX_HOUR, TIME_MAX_MINUTE, TIME_MAX_SECOND,
 };
 pub use encoding_base::{TransformOp, TransformResult};
+pub use encoding_table::{lookup_encoding, HtmlEncoding, HtmlEncodingError};
 pub use enum_set::{
     parse_enum, parse_enum_name, parse_enum_value, parse_set, parse_set_name, parse_set_value,
     EnumParseError, MysqlEnum, MysqlSet, SetParseError,
@@ -106,6 +115,10 @@ pub use format::{
 };
 pub use fsp::{
     align_frac, check_fsp, parse_frac, FspError, DEFAULT_FSP, MAX_FSP, MIN_FSP, UNSPECIFIED_FSP,
+};
+pub use multibyte_encoding::{
+    count_valid_bytes, count_valid_bytes_decode, find_encoding, find_encoding_take_utf8_as_noop,
+    is_supported_encoding, Encoding, EncodingError, EncodingResult, EncodingType,
 };
 pub use overflow::{
     add_duration, add_int64, add_integer, add_uint64, div_int64, div_int_with_uint,

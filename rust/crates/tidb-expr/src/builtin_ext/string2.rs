@@ -11,10 +11,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! `string2` family builtins — see `super`'s doc for the dispatch contract
-//! and `rust/PARALLEL.md` for ownership. Every builtin here is a faithful
-//! port of its Go implementation in `pkg/expression/builtin_*.go`, cited
-//! per function.
+//! `string2` family builtins. Every builtin here is transcreated from its
+//! implementation in `pkg/expression/builtin_*.go`, cited per function.
 
 use crate::coerce::coerce_str;
 use crate::string_fn::{format_num_locale, substring};

@@ -21,15 +21,15 @@ import tempfile
 import unittest
 
 
-SCRIPT = Path(__file__).with_name("package-port.py")
-SPEC = importlib.util.spec_from_file_location("package_port", SCRIPT)
+SCRIPT = Path(__file__).with_name("port.py")
+SPEC = importlib.util.spec_from_file_location("port", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
-package_port = importlib.util.module_from_spec(SPEC)
-sys.modules[SPEC.name] = package_port
-SPEC.loader.exec_module(package_port)
+port = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = port
+SPEC.loader.exec_module(port)
 
 
-class PackagePortTest(unittest.TestCase):
+class PortTest(unittest.TestCase):
     def test_inventory_is_complete_and_preserves_colons_in_subtests(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -52,16 +52,12 @@ class PackagePortTest(unittest.TestCase):
             nested_package.mkdir()
             (nested_package / "nested.go").write_text("package nested\n", encoding="utf-8")
             (nested_package / "private.txt").write_text("nested\n", encoding="utf-8")
-            deep_package = package / "internal" / "deep"
-            deep_package.mkdir(parents=True)
-            (deep_package / "deep.go").write_text("package deep\n", encoding="utf-8")
-            (deep_package / "private.txt").write_text("deep\n", encoding="utf-8")
-            original_root = package_port.REPO_ROOT
+            original_root = port.REPO_ROOT
             try:
-                package_port.REPO_ROOT = root
-                inventory = package_port.package_inventory("pkg/demo")
+                port.REPO_ROOT = root
+                inventory = port.package_inventory("pkg/demo")
             finally:
-                package_port.REPO_ROOT = original_root
+                port.REPO_ROOT = original_root
 
             self.assertEqual(inventory.sources, ("pkg/demo/demo.go",))
             self.assertEqual(inventory.test_files, ("pkg/demo/demo_test.go",))
@@ -75,9 +71,7 @@ class PackagePortTest(unittest.TestCase):
             )
             self.assertEqual(inventory.dependencies, ("pkg/base",))
             self.assertIn("pkg/demo/demo_test.go:2:TestDemo", inventory.tests)
-            self.assertIn(
-                "pkg/demo/demo_test.go:2:subtest:leader: healthy", inventory.tests
-            )
+            self.assertIn("pkg/demo/demo_test.go:2:subtest:leader: healthy", inventory.tests)
             self.assertIn("pkg/demo/demo_test.go:2:subtest:raw:name", inventory.tests)
 
     def test_inventory_digest_changes_with_support_data(self) -> None:
@@ -88,29 +82,15 @@ class PackagePortTest(unittest.TestCase):
             (package / "demo.go").write_text("package demo\n", encoding="utf-8")
             support = package / "fixture.json"
             support.write_text("{}\n", encoding="utf-8")
-            original_root = package_port.REPO_ROOT
+            original_root = port.REPO_ROOT
             try:
-                package_port.REPO_ROOT = root
-                before = package_port.package_inventory("pkg/demo").digest
+                port.REPO_ROOT = root
+                before = port.package_inventory("pkg/demo").digest
                 support.write_text('{"changed":true}\n', encoding="utf-8")
-                after = package_port.package_inventory("pkg/demo").digest
+                after = port.package_inventory("pkg/demo").digest
             finally:
-                package_port.REPO_ROOT = original_root
+                port.REPO_ROOT = original_root
             self.assertNotEqual(before, after)
-
-    def test_cargo_test_executables_are_deduplicated_and_test_only(self) -> None:
-        messages = "\n".join(
-            [
-                '{"reason":"compiler-artifact","profile":{"test":true},"executable":"/tmp/a"}',
-                '{"reason":"compiler-artifact","profile":{"test":true},"executable":"/tmp/a"}',
-                '{"reason":"compiler-artifact","profile":{"test":false},"executable":"/tmp/b"}',
-                '{"reason":"build-finished","success":true}',
-            ]
-        )
-        self.assertEqual(package_port.cargo_test_executables(messages), ["/tmp/a"])
-        self.assertTrue(package_port.is_aggregate_test_executable("/tmp/all-deadbeef"))
-        self.assertFalse(package_port.is_aggregate_test_executable("/tmp/small-deadbeef"))
-
 
 if __name__ == "__main__":
     unittest.main()

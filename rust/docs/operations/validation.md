@@ -2,51 +2,42 @@
 
 Run commands from `rust/`. Cargo always uses 12 jobs.
 
-## Package loop
+## Fast package loop
 
-During implementation, run the smallest relevant Cargo test directly. When one
-complete Go package and all of its original tests/support are translated, run:
-
-```sh
-scripts/package-port.py finish pkg/example \
-  --crate tidb-example \
-  --rust-path rust/crates/tidb-example/src/lib.rs \
-  --rust-path rust/crates/tidb-example/tests/package_source.rs \
-  --test-target tidb-example:package_source
-```
-
-`finish` derives the live Go inventory and direct internal dependencies, then
-runs formatting, strict all-target Clippy, crate library tests, and only the
-declared integration-test targets. It writes one file under `ports/` after all
-checks pass. A later repair can omit the mapping flags and reuse the proof.
-
-Useful read-only commands:
+Read the complete live Go inventory:
 
 ```sh
-scripts/package-port.py inventory pkg/example
-scripts/package-port.py check pkg/example
-scripts/package-port.py check
+scripts/port.py inventory pkg/example --verbose
 ```
 
-## Pre-push checkpoint
-
-Run the workspace-wide sweep once before push/release or after a shared
-foundation changes:
+During implementation, run the smallest relevant Cargo test directly. After
+the whole package and every original test/support obligation are translated:
 
 ```sh
-scripts/package-port.py checkpoint
+scripts/port.py record pkg/example -p tidb-example
 ```
 
-It checks every package proof, then runs workspace formatting, all-target
-Clippy, tests, tool regressions, and `git diff --check`. Real PD/TiKV, protocol,
-or differential suites remain additional requirements when the changed package
-reaches those boundaries.
+`record` checks dependency closure, runs every target in each named crate once,
+then atomically stores the package digest and crate names in
+`ported-packages.json`. A repair can omit `-p` and reuse the existing crates.
 
-Large integration-test directories are compiled as aggregate harnesses through
-`scripts/aggregate-tests.rs`; topology-sensitive files remain standalone. The
-checkpoint runs aggregate tests with 12 internal threads and standalone test
-binaries 12-way. Every source file still executes, but Cargo no longer launches
-one process for each tiny test file.
+## Pre-push validation
 
-There is no queue, start step, claim, campaign, generated ledger, transfer,
-frozen workspace, or separate receipt.
+Use ordinary tools once before push:
+
+```sh
+cargo fmt --all -- --check
+cargo clippy --offline --locked -j12 --workspace --all-targets -- -D warnings
+cargo test --offline --locked -j12 --workspace --all-targets
+cargo test --offline --locked -j12 --workspace --doc
+python3 -m unittest scripts/test_port.py
+git -C .. diff --check -- rust
+```
+
+Large integration-test directories compile through `scripts/aggregate-tests.rs`.
+This retains every test source while avoiding hundreds of tiny Cargo binaries.
+
+Real PD/TiKV, protocol, or differential suites remain additional acceptance
+requirements when the changed package reaches those boundaries. There is no
+queue, start step, claim, campaign, gate, transfer, frozen workspace, or
+receipt.

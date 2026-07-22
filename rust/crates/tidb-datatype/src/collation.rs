@@ -31,7 +31,7 @@ impl Collation {
     pub fn compare(self, left: &[u8], right: &[u8]) -> Ordering {
         match self {
             Self::Binary | Self::AsciiBin | Self::Latin1Bin => left.cmp(right),
-            Self::Utf8Bin | Self::Utf8Mb4Bin => {
+            Self::Utf8Bin | Self::Utf8Mb4Bin | Self::GbkBin | Self::Gb18030Bin => {
                 trim_trailing_spaces(left).cmp(trim_trailing_spaces(right))
             }
             Self::Utf8GeneralCi | Self::Utf8Mb4GeneralCi => general_ci_compare(left, right),
@@ -43,7 +43,9 @@ impl Collation {
     pub fn key(self, value: &[u8]) -> Vec<u8> {
         match self {
             Self::Binary | Self::AsciiBin | Self::Latin1Bin => value.to_vec(),
-            Self::Utf8Bin | Self::Utf8Mb4Bin => trim_trailing_spaces(value).to_vec(),
+            Self::Utf8Bin | Self::Utf8Mb4Bin | Self::GbkBin | Self::Gb18030Bin => {
+                trim_trailing_spaces(value).to_vec()
+            }
             Self::Utf8GeneralCi | Self::Utf8Mb4GeneralCi => general_ci_key(value, true),
             Self::Utf8UnicodeCi | Self::Utf8Mb4UnicodeCi => unicode_0400_key(value, true),
         }
@@ -52,9 +54,13 @@ impl Collation {
     /// Returns the source key without the collation's PAD SPACE preprocessing.
     pub fn key_without_trim_right_space(self, value: &[u8]) -> Vec<u8> {
         match self {
-            Self::Binary | Self::AsciiBin | Self::Latin1Bin | Self::Utf8Bin | Self::Utf8Mb4Bin => {
-                value.to_vec()
-            }
+            Self::Binary
+            | Self::AsciiBin
+            | Self::Latin1Bin
+            | Self::Utf8Bin
+            | Self::Utf8Mb4Bin
+            | Self::GbkBin
+            | Self::Gb18030Bin => value.to_vec(),
             Self::Utf8GeneralCi | Self::Utf8Mb4GeneralCi => general_ci_key(value, false),
             Self::Utf8UnicodeCi | Self::Utf8Mb4UnicodeCi => unicode_0400_key(value, false),
         }
@@ -63,9 +69,13 @@ impl Collation {
     /// Returns the exact upper bound exposed by the corresponding Go collator.
     pub fn max_key_len(self, value: &[u8]) -> usize {
         match self {
-            Self::Binary | Self::AsciiBin | Self::Latin1Bin | Self::Utf8Bin | Self::Utf8Mb4Bin => {
-                value.len()
-            }
+            Self::Binary
+            | Self::AsciiBin
+            | Self::Latin1Bin
+            | Self::Utf8Bin
+            | Self::Utf8Mb4Bin
+            | Self::GbkBin
+            | Self::Gb18030Bin => value.len(),
             Self::Utf8GeneralCi | Self::Utf8Mb4GeneralCi => go_rune_count(value) * 2,
             Self::Utf8UnicodeCi | Self::Utf8Mb4UnicodeCi => go_rune_count(value) * 16,
         }

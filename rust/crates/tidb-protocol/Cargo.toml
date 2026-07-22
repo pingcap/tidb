@@ -9,12 +9,7 @@ description = "Source-backed MySQL packet framing for the TiDB Rust rewrite."
 autotests = false
 build = "../../scripts/aggregate-tests.rs"
 
-# GBK result encoding uses the audited WHATWG GBK tables. The conversion is
-# kept in this protocol leaf because the datatype registry deliberately only
-# covers the charsets that are shared by expression/metadata code today.
-
 [dependencies]
-encoding_rs.workspace = true
 flate2.workspace = true
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-error = { path = "../tidb-error" }
