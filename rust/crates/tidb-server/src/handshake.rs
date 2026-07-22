@@ -23,6 +23,8 @@ use std::{collections::HashMap, fmt};
 
 use tidb_protocol::{PacketError, PacketWriter};
 
+use crate::handshake_response::HandshakeResponse41;
+
 /// MySQL `CLIENT_CONNECT_WITH_DB`.
 pub const CLIENT_CONNECT_WITH_DB: u32 = 1 << 3;
 /// MySQL `CLIENT_PROTOCOL_41`.
@@ -134,38 +136,6 @@ fn validate_initial_handshake(handshake: &InitialHandshake) -> Result<(), Handsh
 /// Parsed common fields from a HandshakeResponse41 or SSLRequest packet.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HandshakeResponseHeader {
-    /// Client capability flags.
-    pub capability: u32,
-    /// Client requested collation.
-    pub collation: u8,
-}
-
-/// Rust-native authority for Go's complete `handshake.Response41` contract.
-///
-/// [`Default`] preserves the useful semantics of Go's zero value: collection
-/// reads are empty, owned strings and authentication bytes have length zero,
-/// and every numeric field is zero. `HashMap` is the native mutable-map owner;
-/// unlike Go's nil map it can be populated without a separate allocation
-/// state, while preserving zero-value lookup and length behavior.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct HandshakeResponse41 {
-    /// Client connection attributes.  Duplicate keys follow Go map semantics:
-    /// the last value wins.
-    pub attrs: HashMap<String, String>,
-    /// Client user name.
-    pub user: String,
-    /// Optional initial database name.
-    pub db_name: String,
-    /// Client-selected authentication plugin.
-    pub auth_plugin: String,
-    /// Authentication response bytes.  This is not an authentication result.
-    pub auth: Vec<u8>,
-    /// Requested zstd level when the corresponding capability is set.
-    ///
-    /// The wire field is one byte, but the zstd encoder API and negotiated
-    /// compression owner both use `i32`; normalizing once during parsing keeps
-    /// the shared response contract native to all downstream consumers.
-    pub zstd_level: i32,
     /// Client capability flags.
     pub capability: u32,
     /// Client requested collation.
@@ -385,16 +355,6 @@ pub enum AuthHandshakePacket {
     Authentication(AuthHandshakeRequest),
 }
 
-impl HandshakeResponse41 {
-    fn from_header(header: HandshakeResponseHeader) -> Self {
-        Self {
-            capability: header.capability,
-            collation: header.collation,
-            ..Self::default()
-        }
-    }
-}
-
 /// Parses the 32-byte common HandshakeResponse41/SSLRequest header.
 pub fn parse_response_header(
     data: &[u8],
@@ -428,7 +388,11 @@ pub fn parse_response_body(
     data: &[u8],
     mut offset: usize,
 ) -> Result<HandshakeResponse41, HandshakeError> {
-    let mut response = HandshakeResponse41::from_header(header.clone());
+    let mut response = HandshakeResponse41 {
+        capability: header.capability,
+        collation: header.collation,
+        ..HandshakeResponse41::default()
+    };
 
     let (user, next) = read_nul_string(data, offset, "user")?;
     response.user = user;

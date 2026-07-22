@@ -37,6 +37,7 @@ pub mod connection_resultset;
 mod distinct_result_set;
 mod error_response;
 pub mod handshake;
+mod handshake_response;
 mod listener;
 mod mysql_connection;
 mod native_password;
@@ -98,8 +99,9 @@ pub use error_response::{frame_execution_error_response, frame_rendered_error_re
 pub use handshake::{
     negotiate_capabilities, parse_response, parse_response_body, parse_response_header,
     AuthHandshake, AuthHandshakePacket, AuthHandshakePhase, AuthHandshakeRequest, AuthPluginAction,
-    HandshakeError, HandshakeResponse41, HandshakeResponseHeader, InitialHandshake,
+    HandshakeError, HandshakeResponseHeader, InitialHandshake,
 };
+pub use handshake_response::HandshakeResponse41;
 pub use listener::{ListenerConfig, ListenerError, ListenerLifecycle, ListenerState};
 pub use mysql_connection::{
     serve_mysql_connection, ConnectionCommandCounts, ConnectionExit, ConnectionReport,
