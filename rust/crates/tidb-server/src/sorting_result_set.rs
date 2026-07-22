@@ -148,14 +148,20 @@ mod tests {
             rows: vec![int_row(3), int_row(1), int_row(2)],
             finished: false,
         });
-        let mut sorted =
-            SortingResultSetSource::new(inner, vec![int_key(ConfiguredOrderDirection::Ascending)], 1);
+        let mut sorted = SortingResultSetSource::new(
+            inner,
+            vec![int_key(ConfiguredOrderDirection::Ascending)],
+            1,
+        );
 
         // The first batch of two returns the two smallest, in order.
         let first = sorted.next_batch(2).expect("ordered pull");
         assert_eq!(first, vec![int_row(1), int_row(2)]);
         // The remainder, then an empty batch signalling the buffer is drained.
-        assert_eq!(sorted.next_batch(2).expect("ordered pull"), vec![int_row(3)]);
+        assert_eq!(
+            sorted.next_batch(2).expect("ordered pull"),
+            vec![int_row(3)]
+        );
         assert!(sorted.next_batch(2).expect("ordered pull").is_empty());
     }
 

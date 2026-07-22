@@ -146,7 +146,11 @@ mod tests {
         let second = txn.read_snapshot(|| clock.acquire()).unwrap();
         assert_eq!(first, Some(1000));
         assert_eq!(second, Some(1000), "reads share one transaction snapshot");
-        assert_eq!(clock.issued.get(), 1, "the snapshot is acquired exactly once");
+        assert_eq!(
+            clock.issued.get(),
+            1,
+            "the snapshot is acquired exactly once"
+        );
     }
 
     #[test]
@@ -178,7 +182,10 @@ mod tests {
         let mut txn = SessionTransaction::new();
         txn.begin();
         // A failed acquisition surfaces and pins nothing, so a later read retries.
-        assert_eq!(txn.read_snapshot(|| Err::<u64, _>("pd unavailable")), Err("pd unavailable"));
+        assert_eq!(
+            txn.read_snapshot(|| Err::<u64, _>("pd unavailable")),
+            Err("pd unavailable")
+        );
         let clock = FakeClock::new();
         assert_eq!(txn.read_snapshot(|| clock.acquire()).unwrap(), Some(1000));
     }

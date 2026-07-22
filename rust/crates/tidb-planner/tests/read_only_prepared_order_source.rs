@@ -66,8 +66,7 @@ fn order_by(sql: &str) -> Vec<(usize, ConfiguredOrderDirection, ConfiguredScalar
 }
 
 fn ordering_rejection(sql: &str) -> PreparedPlanError {
-    lower_prepared_point_read(&select(sql), &catalog())
-        .expect_err("statement must fail to lower")
+    lower_prepared_point_read(&select(sql), &catalog()).expect_err("statement must fail to lower")
 }
 
 fn is_distinct(sql: &str) -> bool {
@@ -93,7 +92,11 @@ fn range_read_orders_by_the_projected_char_column() {
 fn descending_order_on_the_clustered_handle_resolves_to_bigint() {
     assert_eq!(
         order_by("SELECT id, c FROM sbtest1 WHERE id = ? ORDER BY id DESC"),
-        vec![(0, ConfiguredOrderDirection::Descending, ConfiguredScalarType::BigInt)],
+        vec![(
+            0,
+            ConfiguredOrderDirection::Descending,
+            ConfiguredScalarType::BigInt
+        )],
     );
 }
 
@@ -103,7 +106,11 @@ fn order_offset_follows_projection_order_not_catalog_order() {
     // it is the second catalog column and `c` sorts by string.
     assert_eq!(
         order_by("SELECT c, k FROM sbtest1 WHERE id = ? ORDER BY k"),
-        vec![(1, ConfiguredOrderDirection::Ascending, ConfiguredScalarType::Int)],
+        vec![(
+            1,
+            ConfiguredOrderDirection::Ascending,
+            ConfiguredScalarType::Int
+        )],
     );
 }
 
@@ -117,7 +124,11 @@ fn multiple_order_keys_retain_source_order() {
                 ConfiguredOrderDirection::Descending,
                 ConfiguredScalarType::Char { max_length: 120 }
             ),
-            (0, ConfiguredOrderDirection::Ascending, ConfiguredScalarType::Int),
+            (
+                0,
+                ConfiguredOrderDirection::Ascending,
+                ConfiguredScalarType::Int
+            ),
         ],
     );
 }
@@ -185,7 +196,9 @@ fn distinct_without_order_is_admitted_and_order_free() {
 
 #[test]
 fn a_non_distinct_read_carries_no_distinct_flag() {
-    assert!(!is_distinct("SELECT c FROM sbtest1 WHERE id = ? ORDER BY c"));
+    assert!(!is_distinct(
+        "SELECT c FROM sbtest1 WHERE id = ? ORDER BY c"
+    ));
 }
 
 /// `(kind, source_offset, output_name, result_flen, result_decimals)`.

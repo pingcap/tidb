@@ -37,8 +37,8 @@ use tidb_exec::real_tikv_dml::{
 use tidb_planner::{
     configured_catalog::ConfiguredCatalog,
     prepared_dml::{
-        lower_prepared_write, ConfiguredAssignment, ConfiguredInsertRow,
-        ConfiguredPreparedWrite, PreparedBindValue,
+        lower_prepared_write, ConfiguredAssignment, ConfiguredInsertRow, ConfiguredPreparedWrite,
+        PreparedBindValue,
     },
     read_only_scan::{ConfiguredColumn, ConfiguredIndex, ConfiguredScalarType, ConfiguredTable},
 };
@@ -684,12 +684,20 @@ fn a_direct_int_update_outside_the_domain_fails_closed() {
 const BALANCE_INDEX_ID: i64 = 7;
 
 fn indexed_table() -> ConfiguredTable {
-    table().with_indexes([ConfiguredIndex::non_unique(BALANCE_INDEX_ID, BALANCE_COLUMN)])
+    table().with_indexes([ConfiguredIndex::non_unique(
+        BALANCE_INDEX_ID,
+        BALANCE_COLUMN,
+    )])
 }
 
 fn expected_index_entry(balance: i64, handle: i64) -> Vec<u8> {
-    encode_non_unique_index_key(TABLE_ID, BALANCE_INDEX_ID, &[Datum::new_int(balance)], handle)
-        .expect("index key encodes")
+    encode_non_unique_index_key(
+        TABLE_ID,
+        BALANCE_INDEX_ID,
+        &[Datum::new_int(balance)],
+        handle,
+    )
+    .expect("index key encodes")
 }
 
 #[test]
@@ -801,7 +809,11 @@ fn updating_an_unindexed_column_leaves_the_index_alone() {
     .expect("update must plan") else {
         panic!("a changed row publishes");
     };
-    assert_eq!(mutations.len(), 1, "only the record mutation, no index change");
+    assert_eq!(
+        mutations.len(),
+        1,
+        "only the record mutation, no index change"
+    );
     assert_eq!(mutations[0].kind(), OptimisticMutationKind::PutExisting);
 }
 
@@ -838,7 +850,8 @@ fn updating_an_int_column_preserves_the_char_columns_of_a_mixed_row() {
         ConfiguredAssignment::Add(1),
         Some(&stored),
     )
-    .expect("update must plan") else {
+    .expect("update must plan")
+    else {
         panic!("a changed row publishes");
     };
     assert_eq!(affected_rows, 1);
@@ -935,7 +948,8 @@ fn setting_a_char_column_replaces_only_its_bytes_and_keeps_the_int_columns() {
         ConfiguredAssignment::SetBytes(b"new value".to_vec()),
         Some(&stored),
     )
-    .expect("update must plan") else {
+    .expect("update must plan")
+    else {
         panic!("a changed row publishes");
     };
     assert_eq!(affected_rows, 1);
@@ -978,14 +992,10 @@ fn updating_k_on_an_indexed_mixed_table_moves_the_index_and_keeps_char_columns()
     // c/pad, and the k index entry moves from the old value to the new.
     let table = mixed_table().with_indexes([ConfiguredIndex::non_unique(7, 2)]);
     let stored = stored_mixed_row(50, b"hi", b"pad");
-    let ConfiguredWritePlan::Write { mutations, .. } = plan_update(
-        &table,
-        1,
-        1,
-        ConfiguredAssignment::Add(1),
-        Some(&stored),
-    )
-    .expect("update must plan") else {
+    let ConfiguredWritePlan::Write { mutations, .. } =
+        plan_update(&table, 1, 1, ConfiguredAssignment::Add(1), Some(&stored))
+            .expect("update must plan")
+    else {
         panic!("a changed row publishes");
     };
     assert_eq!(mutations.len(), 3);
@@ -1213,7 +1223,11 @@ fn plan_configured_write_reads_the_row_then_plans_an_update() {
         reads: Vec::new(),
     };
     let plan = plan_configured_write(&mut snapshot, &write, &call()).expect("update plans");
-    assert_eq!(snapshot.reads.len(), 1, "the UPDATE reads exactly its own row");
+    assert_eq!(
+        snapshot.reads.len(),
+        1,
+        "the UPDATE reads exactly its own row"
+    );
     assert!(
         matches!(plan, ConfiguredWritePlan::Write { affected_rows, .. } if affected_rows == 1),
         "a changed row plans exactly one write"

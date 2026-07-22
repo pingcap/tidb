@@ -376,10 +376,7 @@ fn a_null_cell_sets_its_bitmap_bit_and_writes_no_value_bytes() {
 fn a_null_cell_among_values_marks_only_its_own_column() {
     // Columns 0 (Long, bit 2) and 1 (Null, bit 3): only bit 3 is set (0x08), the
     // non-null Long still dumps its four little-endian value bytes.
-    let row = encode_binary_result_row(&[
-        BinaryResultCell::Long(5),
-        BinaryResultCell::Null,
-    ]);
+    let row = encode_binary_result_row(&[BinaryResultCell::Long(5), BinaryResultCell::Null]);
     let mut expected = vec![0x00, 0x08];
     expected.extend_from_slice(&5_u32.to_le_bytes());
     assert_eq!(row, expected);

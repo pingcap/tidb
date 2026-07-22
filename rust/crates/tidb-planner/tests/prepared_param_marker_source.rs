@@ -159,7 +159,10 @@ fn prepared_range_read_binds_one_marker_per_handle_bound() {
     let plan = template("SELECT balance FROM accounts WHERE id >= ? AND id <= ?")
         .bind(&[5, 10])
         .expect("range binds through the scan authority");
-    assert_eq!(plan.handle_ranges(), [SignedBigIntRange::new(5, 10).unwrap()]);
+    assert_eq!(
+        plan.handle_ranges(),
+        [SignedBigIntRange::new(5, 10).unwrap()]
+    );
     assert!(plan.selection().is_none());
 
     // `id BETWEEN ? AND ?` desugars to the same two-marker range.

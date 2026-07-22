@@ -330,15 +330,15 @@ fn integer_result(unsigned: bool, bits: u64) -> Datum {
 /// exceeds the unsigned operand, or overflows past `u64::MAX`.
 fn integer_add(a: Integer, b: Integer) -> Result<Datum, EvalError> {
     match (a, b) {
-        (Integer::Signed(x), Integer::Signed(y)) => {
-            x.checked_add(y).map(Datum::Int).ok_or(EvalError::IntOverflow)
-        }
+        (Integer::Signed(x), Integer::Signed(y)) => x
+            .checked_add(y)
+            .map(Datum::Int)
+            .ok_or(EvalError::IntOverflow),
         (Integer::Unsigned(x), Integer::Unsigned(y)) => x
             .checked_add(y)
             .map(Datum::UInt)
             .ok_or(EvalError::IntOverflow),
-        (Integer::Unsigned(x), Integer::Signed(y))
-        | (Integer::Signed(y), Integer::Unsigned(x)) => {
+        (Integer::Unsigned(x), Integer::Signed(y)) | (Integer::Signed(y), Integer::Unsigned(x)) => {
             let sum = if y < 0 {
                 x.checked_sub(y.unsigned_abs())
             } else {
@@ -1010,7 +1010,11 @@ mod tests {
     fn integer_plus_reports_overflow_like_go_instead_of_wrapping() {
         for (lhs, rhs, expected) in [
             // signed + signed
-            (Datum::Int(i64::MAX), Datum::Int(1), Err(EvalError::IntOverflow)),
+            (
+                Datum::Int(i64::MAX),
+                Datum::Int(1),
+                Err(EvalError::IntOverflow),
+            ),
             (
                 Datum::Int(i64::MIN),
                 Datum::Int(-1),
@@ -1027,7 +1031,11 @@ mod tests {
                 Datum::UInt(1),
                 Err(EvalError::IntOverflow),
             ),
-            (Datum::UInt(u64::MAX), Datum::UInt(0), Ok(Datum::UInt(u64::MAX))),
+            (
+                Datum::UInt(u64::MAX),
+                Datum::UInt(0),
+                Ok(Datum::UInt(u64::MAX)),
+            ),
             // mixed -> unsigned result: a negative addend can underflow past 0,
             // and a positive addend can overflow past u64::MAX.
             (Datum::UInt(1), Datum::Int(-2), Err(EvalError::IntOverflow)),
@@ -1143,7 +1151,11 @@ mod tests {
                 Ok(Datum::UInt(0)),
             ),
             // uu equal -> 0 (resUnsigned, no overflow).
-            (Datum::UInt(u64::MAX), Datum::UInt(u64::MAX), Ok(Datum::UInt(0))),
+            (
+                Datum::UInt(u64::MAX),
+                Datum::UInt(u64::MAX),
+                Ok(Datum::UInt(0)),
+            ),
         ] {
             assert_eq!(eval_binary(BinaryOp::Minus, lhs, rhs), expected);
         }
@@ -1158,7 +1170,11 @@ mod tests {
         for (lhs, rhs, expected) in [
             // unsigned * unsigned
             (Datum::UInt(3), Datum::UInt(4), Ok(Datum::UInt(12))),
-            (Datum::UInt(u64::MAX), Datum::UInt(1), Ok(Datum::UInt(u64::MAX))),
+            (
+                Datum::UInt(u64::MAX),
+                Datum::UInt(1),
+                Ok(Datum::UInt(u64::MAX)),
+            ),
             (Datum::UInt(0), Datum::UInt(5), Ok(Datum::UInt(0))),
             (
                 Datum::UInt(4294967296),

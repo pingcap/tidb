@@ -366,7 +366,11 @@ impl Decimal {
             return self.digits.parse::<u64>().ok();
         }
         let split = self.digits.len() - self.storage_scale as usize;
-        let int_part = if split == 0 { "0" } else { &self.digits[..split] };
+        let int_part = if split == 0 {
+            "0"
+        } else {
+            &self.digits[..split]
+        };
         let round_up = self.digits.as_bytes()[split] >= b'5';
         let magnitude: u64 = int_part.parse().ok()?;
         if round_up {
@@ -781,7 +785,16 @@ const CODEC_MAX_DECIMAL_SCALE: i32 = 30;
 const DIG2BYTES: [usize; 10] = [0, 1, 1, 2, 2, 3, 3, 4, 4, 4];
 /// `10^k` for `k` in `0..=9` (all fit in `i32`; `10^9 < i32::MAX`).
 const CODEC_POWERS10: [i32; 10] = [
-    1, 10, 100, 1_000, 10_000, 100_000, 1_000_000, 10_000_000, 100_000_000, 1_000_000_000,
+    1,
+    10,
+    100,
+    1_000,
+    10_000,
+    100_000,
+    1_000_000,
+    10_000_000,
+    100_000_000,
+    1_000_000_000,
 ];
 
 /// Hard codec failure — Go `ErrBadNumber` (illegal precision/scale, or a corrupt
@@ -857,8 +870,10 @@ fn read_word(b: &[u8], size: usize) -> i32 {
         2 => (i32::from(b[0] as i8) << 8) + i32::from(b[1]),
         3 => {
             if b[0] & 128 > 0 {
-                (0xFF00_0000u32 | (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]))
-                    as i32
+                (0xFF00_0000u32
+                    | (u32::from(b[0]) << 16)
+                    | (u32::from(b[1]) << 8)
+                    | u32::from(b[2])) as i32
             } else {
                 ((u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2])) as i32
             }
@@ -1130,7 +1145,8 @@ impl Decimal {
         let mut words_int_from: i64 = (digits_int_from / DIGITS_PER_WORD as i32) as i64;
         let mut leading_digits_from =
             (digits_int_from - words_int_from as i32 * DIGITS_PER_WORD as i32) as usize;
-        let i_size_from = words_int_from as usize * CODEC_WORD_SIZE + DIG2BYTES[leading_digits_from];
+        let i_size_from =
+            words_int_from as usize * CODEC_WORD_SIZE + DIG2BYTES[leading_digits_from];
 
         let mut words_frac_from = words_frac_from0;
         let mut trailing_digits_from = trailing_digits_from0;
@@ -1179,7 +1195,8 @@ impl Decimal {
         // xIntFrom part: the leading partial integer word.
         if leading_digits_from > 0 {
             let i = DIG2BYTES[leading_digits_from];
-            let x = (d.word_buf[word_idx_from as usize] % CODEC_POWERS10[leading_digits_from]) ^ mask;
+            let x =
+                (d.word_buf[word_idx_from as usize] % CODEC_POWERS10[leading_digits_from]) ^ mask;
             word_idx_from += 1;
             write_word(&mut bin[bin_idx..], x, i);
             bin_idx += i;
@@ -1205,7 +1222,8 @@ impl Decimal {
             while tdf < lim && DIG2BYTES[tdf] == i {
                 tdf += 1;
             }
-            let x = (d.word_buf[word_idx_from as usize] / CODEC_POWERS10[DIGITS_PER_WORD - tdf]) ^ mask;
+            let x =
+                (d.word_buf[word_idx_from as usize] / CODEC_POWERS10[DIGITS_PER_WORD - tdf]) ^ mask;
             write_word(&mut bin[bin_idx..], x, i);
             bin_idx += i;
         }

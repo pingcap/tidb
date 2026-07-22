@@ -45,9 +45,8 @@ use tidb_codec::{
 use tidb_datatype::{produce_char_value, Datum};
 use tidb_planner::{
     prepared_dml::{
-        lower_prepared_write, ConfiguredAssignment, ConfiguredInsertRow,
-        ConfiguredPreparedWrite, ConfiguredPreparedWriteTemplate, PreparedBindValue,
-        PreparedWritePlanError,
+        lower_prepared_write, ConfiguredAssignment, ConfiguredInsertRow, ConfiguredPreparedWrite,
+        ConfiguredPreparedWriteTemplate, PreparedBindValue, PreparedWritePlanError,
     },
     read_only_scan::{
         configured_catalog::ConfiguredCatalog, ConfiguredColumn, ConfiguredColumnKind,
@@ -304,7 +303,12 @@ pub fn plan_insert(
         // the same 2PC as the record so the index can never lag the row.
         for index in table.indexes() {
             let indexed = indexed_insert_value(index, &columns)?;
-            mutations.push(index_put_mutation(table.table_id(), index, indexed, handle)?);
+            mutations.push(index_put_mutation(
+                table.table_id(),
+                index,
+                indexed,
+                handle,
+            )?);
         }
     }
     // One affected row per record, independent of how many index entries each
@@ -415,7 +419,12 @@ pub fn plan_update(
         if index.column_id() == assigned.id() {
             match (&stored_value, &new_value) {
                 (ConfiguredValue::Int(old), ConfiguredValue::Int(new)) => {
-                    mutations.push(index_delete_mutation(table.table_id(), index, *old, handle)?);
+                    mutations.push(index_delete_mutation(
+                        table.table_id(),
+                        index,
+                        *old,
+                        handle,
+                    )?);
                     mutations.push(index_put_mutation(table.table_id(), index, *new, handle)?);
                 }
                 _ => {
@@ -452,7 +461,12 @@ pub fn plan_delete(
     // at `start_ts`.
     for index in table.indexes() {
         let indexed = indexed_stored_value(index, stored)?;
-        mutations.push(index_delete_mutation(table.table_id(), index, indexed, handle)?);
+        mutations.push(index_delete_mutation(
+            table.table_id(),
+            index,
+            indexed,
+            handle,
+        )?);
     }
     Ok(ConfiguredWritePlan::Write {
         mutations,
@@ -550,8 +564,9 @@ fn index_put_mutation(
     value: i64,
     handle: i64,
 ) -> Result<OptimisticMutation, ConfiguredWriteError> {
-    let key = encode_non_unique_index_key(table_id, index.index_id(), &[Datum::new_int(value)], handle)
-        .map_err(|_| ConfiguredWriteError::UnsupportedIndex {
+    let key =
+        encode_non_unique_index_key(table_id, index.index_id(), &[Datum::new_int(value)], handle)
+            .map_err(|_| ConfiguredWriteError::UnsupportedIndex {
             reason: "index column value is not encodable",
         })?;
     OptimisticMutation::index_put(key, non_unique_index_value())
@@ -566,8 +581,9 @@ fn index_delete_mutation(
     value: i64,
     handle: i64,
 ) -> Result<OptimisticMutation, ConfiguredWriteError> {
-    let key = encode_non_unique_index_key(table_id, index.index_id(), &[Datum::new_int(value)], handle)
-        .map_err(|_| ConfiguredWriteError::UnsupportedIndex {
+    let key =
+        encode_non_unique_index_key(table_id, index.index_id(), &[Datum::new_int(value)], handle)
+            .map_err(|_| ConfiguredWriteError::UnsupportedIndex {
             reason: "index column value is not encodable",
         })?;
     OptimisticMutation::index_delete(key).map_err(ConfiguredWriteError::Mutations)

@@ -24,6 +24,7 @@
 //! catalog-backed schema binding, and every unsupported command remain
 //! explicit boundaries instead of becoming fake success paths.
 
+mod aggregate_result_set;
 mod auth_exchange;
 mod auth_identity;
 mod auth_plugin_registry;
@@ -33,6 +34,7 @@ mod bootstrap;
 mod compressed_command_io;
 mod configured_user_store;
 pub mod connection_resultset;
+mod distinct_result_set;
 mod error_response;
 pub mod handshake;
 mod listener;
@@ -40,14 +42,12 @@ mod mysql_connection;
 mod native_password;
 mod node_config;
 mod real_tikv_multi_node;
-mod aggregate_result_set;
-mod distinct_result_set;
 mod real_tikv_node;
 pub mod resultset_source;
-mod session_transaction;
-mod sorting_result_set;
 pub mod resultset_writer;
 mod secure_transport;
+mod session_transaction;
+mod sorting_result_set;
 mod sql_node;
 
 use std::io::Cursor;
@@ -60,6 +60,7 @@ use tidb_protocol::{
     ResultSetOptions,
 };
 
+pub use aggregate_result_set::AggregateResultSetSource;
 pub use auth_exchange::{
     decode_client_packet, AuthClientResponse, AuthExchangeError, AuthMoreData, AuthSwitchRequest,
     AUTH_MORE_DATA_PREFIX, AUTH_SWITCH_REQUEST,
@@ -92,6 +93,7 @@ pub use compressed_command_io::{
 pub use configured_user_store::{
     AuthenticatedIdentity, ConfiguredUserStore, ConfiguredUserStoreError,
 };
+pub use distinct_result_set::DistinctResultSetSource;
 pub use error_response::{frame_execution_error_response, frame_rendered_error_response};
 pub use handshake::{
     negotiate_capabilities, parse_response, parse_response_body, parse_response_header,
@@ -118,14 +120,12 @@ pub use real_tikv_node::{
     run_configured_node as run_single_configured_node, run_with_process_shutdown,
     ProcessReadAuthority, RealTiKvServerSession, RealTiKvSessionFactory, RunConfiguredNodeError,
 };
-pub use aggregate_result_set::AggregateResultSetSource;
-pub use distinct_result_set::DistinctResultSetSource;
 pub use resultset_source::ResultSetSource;
-pub use session_transaction::SessionTransaction;
-pub use sorting_result_set::SortingResultSetSource;
 pub use secure_transport::{
     SecureTransportError, SecureTransportPolicy, TransportDecision, TransportKind,
 };
+pub use session_transaction::SessionTransaction;
+pub use sorting_result_set::SortingResultSetSource;
 pub use sql_node::{
     ActiveQueryCancellation, BoxedResultSetSource, ConcurrentSqlNode, ConnectionCancellation,
     ConnectionTracker, PreparedPointRead, PreparedStatement, PreparedWrite, QueryCancellationLease,

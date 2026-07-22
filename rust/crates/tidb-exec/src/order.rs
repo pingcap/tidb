@@ -863,11 +863,19 @@ mod tests {
             ConfiguredOrderDirection::Ascending,
             ConfiguredScalarType::BigInt,
         );
-        let mut rows = vec![vec![Datum::Int(30)], vec![Datum::Int(-5)], vec![Datum::Int(2)]];
+        let mut rows = vec![
+            vec![Datum::Int(30)],
+            vec![Datum::Int(-5)],
+            vec![Datum::Int(2)],
+        ];
         stable_order_prepared_rows(&mut rows, 1, &[key]).expect("signed int rows");
         assert_eq!(
             rows,
-            vec![vec![Datum::Int(-5)], vec![Datum::Int(2)], vec![Datum::Int(30)]]
+            vec![
+                vec![Datum::Int(-5)],
+                vec![Datum::Int(2)],
+                vec![Datum::Int(30)]
+            ]
         );
     }
 
@@ -898,7 +906,10 @@ mod tests {
         let mut rows = vec![vec![Datum::Int(1)]];
         assert_eq!(
             stable_order_prepared_rows(&mut rows, 1, &[int_key]),
-            Err(PreparedOrderError::OutputOffset { offset: 1, width: 1 })
+            Err(PreparedOrderError::OutputOffset {
+                offset: 1,
+                width: 1
+            })
         );
 
         let mut narrow = vec![vec![Datum::Int(1), Datum::Int(2)], vec![Datum::Int(3)]];

@@ -243,7 +243,8 @@ impl RealTiKvServerSession {
         }
         let snapshot = {
             let inner = &self.inner;
-            self.transaction.read_snapshot(|| inner.acquire_snapshot_ts())?
+            self.transaction
+                .read_snapshot(|| inner.acquire_snapshot_ts())?
         };
         match snapshot {
             Some(pinned) => self
@@ -650,7 +651,8 @@ pub(crate) fn configured_table(table: &ConfiguredReadTable) -> ConfiguredTable {
         .indexes
         .iter()
         .map(|index| ConfiguredIndex::non_unique(index.index_id, index.column_id));
-    ConfiguredTable::new(&table.database, &table.table, table.table_id, columns).with_indexes(indexes)
+    ConfiguredTable::new(&table.database, &table.table, table.table_id, columns)
+        .with_indexes(indexes)
 }
 
 /// Converts the one canonical startup list into the planner's immutable

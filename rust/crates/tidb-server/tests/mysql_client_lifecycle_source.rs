@@ -17,11 +17,11 @@ use tidb_planner::prepared_dml::{ConfiguredPreparedWrite, PreparedBindValue};
 use tidb_planner::read_only_scan::{
     configured_catalog::ConfiguredCatalog, ConfiguredColumn, ConfiguredTable,
 };
+use tidb_planner::transaction_control::{classify_transaction_control, TransactionControl};
 use tidb_protocol::{
     ColumnInfo, PacketReader, PacketWriter, COM_INIT_DB, COM_PING, COM_QUERY, COM_QUIT,
     COM_STMT_CLOSE, COM_STMT_EXECUTE, COM_STMT_PREPARE, DEFAULT_MAX_ALLOWED_PACKET, TYPE_LONGLONG,
 };
-use tidb_planner::transaction_control::{classify_transaction_control, TransactionControl};
 use tidb_server::{
     serve_mysql_connection, ConfiguredUserStore, ConnectionCancellation, ConnectionExit,
     ConnectionTracker, PreparedPointRead, PreparedWrite, QueryResult, QuerySession,
@@ -351,7 +351,8 @@ impl QuerySession for PreparedSession {
         }
         let affected_rows = match bound {
             ConfiguredPreparedWrite::InsertRows { rows, .. } => rows.len() as u64,
-            ConfiguredPreparedWrite::UpdatePoint { .. } | ConfiguredPreparedWrite::DeletePoint { .. } => 1,
+            ConfiguredPreparedWrite::UpdatePoint { .. }
+            | ConfiguredPreparedWrite::DeletePoint { .. } => 1,
         };
         Ok(WriteOutcome { affected_rows })
     }

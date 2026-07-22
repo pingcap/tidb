@@ -206,19 +206,30 @@ mod tests {
         // PAD SPACE trims the right only: a leading or interior space is a real
         // character that keeps the values in separate groups.
         let inner = Box::new(MockSource {
-            rows: vec![char_row("a"), char_row(" a"), char_row("a b"), char_row("ab")],
+            rows: vec![
+                char_row("a"),
+                char_row(" a"),
+                char_row("a b"),
+                char_row("ab"),
+            ],
         });
         let mut distinct = DistinctResultSetSource::new(inner);
         assert_eq!(
             distinct.next_batch(10).expect("dedup pull"),
-            vec![char_row("a"), char_row(" a"), char_row("a b"), char_row("ab")],
+            vec![
+                char_row("a"),
+                char_row(" a"),
+                char_row("a b"),
+                char_row("ab")
+            ],
             "leading and interior spaces keep the values distinct"
         );
     }
 
     #[test]
     fn dedups_multi_column_tuples_by_the_whole_row() {
-        let row = |k: i64, c: &str| vec![Datum::new_int(k), Datum::new_bytes(c.as_bytes().to_vec())];
+        let row =
+            |k: i64, c: &str| vec![Datum::new_int(k), Datum::new_bytes(c.as_bytes().to_vec())];
         let inner = Box::new(MockSource {
             rows: vec![row(1, "x"), row(1, "x"), row(1, "y"), row(2, "x")],
         });
@@ -234,7 +245,8 @@ mod tests {
         // The CHAR component is PAD SPACE-normalized within the tuple key while
         // the integer component stays an exact identity: (1,"x ") and (1,"x")
         // share a group, but (2,"x") differs by the integer.
-        let row = |k: i64, c: &str| vec![Datum::new_int(k), Datum::new_bytes(c.as_bytes().to_vec())];
+        let row =
+            |k: i64, c: &str| vec![Datum::new_int(k), Datum::new_bytes(c.as_bytes().to_vec())];
         let inner = Box::new(MockSource {
             rows: vec![row(1, "x "), row(1, "x"), row(2, "x")],
         });

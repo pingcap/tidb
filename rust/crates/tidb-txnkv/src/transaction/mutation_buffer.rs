@@ -53,9 +53,8 @@ pub enum MutationBufferError {
 impl std::fmt::Display for MutationBufferError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::UnsupportedCoalesce { .. } => formatter.write_str(
-                "transaction stages an unsupported same-key mutation combination",
-            ),
+            Self::UnsupportedCoalesce { .. } => formatter
+                .write_str("transaction stages an unsupported same-key mutation combination"),
         }
     }
 }
@@ -222,7 +221,8 @@ mod tests {
             .stage(OptimisticMutation::put_existing(b"row".to_vec(), b"v1".to_vec()).unwrap())
             .unwrap();
         assert_eq!(
-            buffer.stage(OptimisticMutation::put_existing(b"row".to_vec(), b"v2".to_vec()).unwrap()),
+            buffer
+                .stage(OptimisticMutation::put_existing(b"row".to_vec(), b"v2".to_vec()).unwrap()),
             Err(MutationBufferError::UnsupportedCoalesce {
                 key: b"row".to_vec()
             })

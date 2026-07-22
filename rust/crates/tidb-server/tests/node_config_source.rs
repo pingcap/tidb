@@ -505,7 +505,10 @@ fn typed_stored_columns_admit_bigint_int_and_char() {
     let columns = &config.read_tables[0].columns;
     assert_eq!(columns.len(), 4);
     assert_eq!(columns[0].name, "id");
-    assert_eq!(columns[0].kind, ConfiguredReadColumnKind::ClusteredPrimaryKey);
+    assert_eq!(
+        columns[0].kind,
+        ConfiguredReadColumnKind::ClusteredPrimaryKey
+    );
     assert_eq!(columns[1].name, "k");
     assert_eq!(columns[1].kind, ConfiguredReadColumnKind::StoredIntNotNull);
     assert_eq!(columns[2].name, "c");

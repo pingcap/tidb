@@ -103,10 +103,7 @@ mod tests {
         // length exceeds the character limit.
         let three_chars = "€€€".as_bytes();
         assert_eq!(three_chars.len(), 9);
-        assert_eq!(
-            produce_char_value(three_chars, 3),
-            Ok(three_chars.to_vec())
-        );
+        assert_eq!(produce_char_value(three_chars, 3), Ok(three_chars.to_vec()));
         // A fourth character overflows.
         let four_chars = "€€€€".as_bytes();
         assert_eq!(
