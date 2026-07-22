@@ -234,3 +234,123 @@ fn restore_optional_restrict_and_state(
         MaskingPolicyState::Disabled => out.push_str(" DISABLE"),
     }
 }
+
+// BEGIN GENERATED AST VISITOR IMPLEMENTATIONS
+
+impl crate::Visitable for MaskingPolicyState {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::ImplicitEnabled => {}
+            Self::Enabled => {}
+            Self::Disabled => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for MaskingPolicyRestrictOps {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self(field_0) = self;
+        let _ = field_0;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for CreateMaskingPolicyStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            or_replace,
+            if_not_exists,
+            name,
+            table,
+            column,
+            expr,
+            restrict_ops,
+            state,
+        } = self;
+        if !crate::Visitable::accept(expr, visitor) {
+            return false;
+        }
+        if !crate::Visitable::accept(restrict_ops, visitor) {
+            return false;
+        }
+        if !crate::Visitable::accept(state, visitor) {
+            return false;
+        }
+        let _ = or_replace;
+        let _ = if_not_exists;
+        let _ = name;
+        let _ = table;
+        let _ = column;
+        let _ = expr;
+        let _ = restrict_ops;
+        let _ = state;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for AlterMaskingPolicyAction {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Add {
+                name,
+                column,
+                expr,
+                restrict_ops,
+                state,
+            } => {
+                if !crate::Visitable::accept(expr, visitor) {
+                    return false;
+                }
+                if !crate::Visitable::accept(restrict_ops, visitor) {
+                    return false;
+                }
+                if !crate::Visitable::accept(state, visitor) {
+                    return false;
+                }
+                let _ = name;
+                let _ = column;
+                let _ = expr;
+                let _ = restrict_ops;
+                let _ = state;
+            }
+            Self::Enable(field_0) => {
+                let _ = field_0;
+            }
+            Self::Disable(field_0) => {
+                let _ = field_0;
+            }
+            Self::Drop(field_0) => {
+                let _ = field_0;
+            }
+            Self::ModifyExpression { name, expr } => {
+                if !crate::Visitable::accept(expr, visitor) {
+                    return false;
+                }
+                let _ = name;
+                let _ = expr;
+            }
+            Self::ModifyRestrict { name, restrict_ops } => {
+                if !crate::Visitable::accept(restrict_ops, visitor) {
+                    return false;
+                }
+                let _ = name;
+                let _ = restrict_ops;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+// END GENERATED AST VISITOR IMPLEMENTATIONS

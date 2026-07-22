@@ -1524,13 +1524,11 @@ fn collect_node_leaves(node: &tidb_ast::JoinNode, out: &mut Vec<(String, String)
     }
 }
 
-/// True if `expr` is a bare `DEFAULT` value placeholder (a zero-arg
-/// `DEFAULT` func — see the parser's `parse_expr_or_default`), meaning "use
+/// True if `expr` is a bare `DEFAULT` value placeholder, meaning "use
 /// this column's declared default". This is shared by INSERT values, ON
-/// DUPLICATE KEY UPDATE, and single-table UPDATE. `DEFAULT(col)` (one
-/// argument) is a normal function call and is NOT this.
+/// DUPLICATE KEY UPDATE, and single-table UPDATE. `DEFAULT(col)` is not this.
 fn is_default_placeholder(expr: &Expr) -> bool {
-    matches!(expr, Expr::Func { name, args } if args.is_empty() && name.eq_ignore_ascii_case("DEFAULT"))
+    matches!(expr, Expr::Default(None))
 }
 
 /// Evaluates a column's declared `DEFAULT`, or `NULL` if it has none.

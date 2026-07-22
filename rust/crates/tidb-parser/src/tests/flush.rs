@@ -41,7 +41,7 @@ fn flush_tables_restore_and_shape_match_go() {
         statement,
         tidb_ast::Stmt::Admin(admin)
             if matches!(admin.as_ref(), tidb_ast::AdminStmt::Flush(flush)
-                if matches!(flush.as_ref(), tidb_ast::FlushStmt::Tables { tables, read_lock }
+                if matches!(&flush.target, tidb_ast::FlushTarget::Tables { tables, read_lock }
                     if tables.len() == 2 && *read_lock))
     ));
 }
@@ -54,26 +54,131 @@ fn flush_status_and_privileges_keep_distinct_payloads() {
         parse("flush privileges"),
         Ok(tidb_ast::Stmt::Admin(admin))
             if matches!(admin.as_ref(), tidb_ast::AdminStmt::Flush(flush)
-                if matches!(flush.as_ref(), tidb_ast::FlushStmt::Privileges))
+                if matches!(flush.target, tidb_ast::FlushTarget::Privileges))
     ));
 }
 
 #[test]
-fn unrepresented_go_flush_payloads_remain_explicit_gaps() {
-    for sql in [
-        "flush no_write_to_binlog tables t",
-        "flush local tables t",
-        "flush tidb plugins audit",
-        "flush hosts",
-        "flush logs",
-        "flush binary logs",
-        "flush engine logs",
-        "flush error logs",
-        "flush general logs",
-        "flush slow logs",
-        "flush client_errors_summary",
-        "flush stats_delta *.*",
+fn complete_go_flush_payloads_restore_source_rows() {
+    for (sql, expected) in [
+        (
+            "flush no_write_to_binlog tables tbl1 with read lock",
+            "FLUSH NO_WRITE_TO_BINLOG TABLES `tbl1` WITH READ LOCK",
+        ),
+        (
+            "flush no_write_to_binlog tables tbl1",
+            "FLUSH NO_WRITE_TO_BINLOG TABLES `tbl1`",
+        ),
+        (
+            "flush local tables tbl1",
+            "FLUSH NO_WRITE_TO_BINLOG TABLES `tbl1`",
+        ),
+        ("flush tidb plugins plugin1", "FLUSH TIDB PLUGINS plugin1"),
+        (
+            "flush tidb plugins plugin1, plugin2",
+            "FLUSH TIDB PLUGINS plugin1, plugin2",
+        ),
+        ("flush hosts", "FLUSH HOSTS"),
+        ("flush logs", "FLUSH LOGS"),
+        ("flush binary logs", "FLUSH BINARY LOGS"),
+        ("flush engine logs", "FLUSH ENGINE LOGS"),
+        ("flush error logs", "FLUSH ERROR LOGS"),
+        ("flush general logs", "FLUSH GENERAL LOGS"),
+        ("flush slow logs", "FLUSH SLOW LOGS"),
+        ("flush client_errors_summary", "FLUSH CLIENT_ERRORS_SUMMARY"),
     ] {
-        assert!(parse(sql).is_err(), "unrepresented payload accepted: {sql}");
+        assert_eq!(r(sql), expected, "{sql}");
+    }
+}
+
+#[test]
+fn test_flush_stats_delta_scoped() {
+    for (sql, restored, object_count, cluster) in [
+        ("FLUSH STATS_DELTA *.*", "FLUSH STATS_DELTA *.*", 1, false),
+        (
+            "FLUSH STATS_DELTA *.* CLUSTER",
+            "FLUSH STATS_DELTA *.* CLUSTER",
+            1,
+            true,
+        ),
+        (
+            "FLUSH STATS_DELTA db1.*",
+            "FLUSH STATS_DELTA `db1`.*",
+            1,
+            false,
+        ),
+        (
+            "FLUSH STATS_DELTA db1.t1",
+            "FLUSH STATS_DELTA `db1`.`t1`",
+            1,
+            false,
+        ),
+        (
+            "FLUSH STATS_DELTA db1.t1 CLUSTER",
+            "FLUSH STATS_DELTA `db1`.`t1` CLUSTER",
+            1,
+            true,
+        ),
+        (
+            "FLUSH STATS_DELTA table1",
+            "FLUSH STATS_DELTA `table1`",
+            1,
+            false,
+        ),
+        (
+            "FLUSH STATS_DELTA db1.t1, db2.*, *.*",
+            "FLUSH STATS_DELTA `db1`.`t1`, `db2`.*, *.*",
+            3,
+            false,
+        ),
+        (
+            "FLUSH STATS_DELTA db1.t1, db2.* CLUSTER",
+            "FLUSH STATS_DELTA `db1`.`t1`, `db2`.* CLUSTER",
+            2,
+            true,
+        ),
+    ] {
+        let statement = parse(sql).expect("FLUSH STATS_DELTA parses");
+        assert_eq!(statement.restore(), restored, "{sql}");
+        assert!(matches!(
+            statement,
+            tidb_ast::Stmt::Admin(admin)
+                if matches!(admin.as_ref(), tidb_ast::AdminStmt::Flush(flush)
+                    if matches!(&flush.target, tidb_ast::FlushTarget::StatsDelta { objects, cluster: actual_cluster }
+                        if objects.len() == object_count && *actual_cluster == cluster))
+        ));
+    }
+
+    for (sql, restored) in [
+        (
+            "FLUSH STATS_DELTA table1, db1.t1, *.*, db2.t2",
+            "FLUSH STATS_DELTA *.*",
+        ),
+        (
+            "FLUSH STATS_DELTA db1.t1, db2.t1, db1.*, db2.t2",
+            "FLUSH STATS_DELTA `db2`.`t1`, `db1`.*, `db2`.`t2`",
+        ),
+        (
+            "FLUSH STATS_DELTA db1.t1, db1.T1, db2.t1",
+            "FLUSH STATS_DELTA `db1`.`t1`, `db2`.`t1`",
+        ),
+        (
+            "FLUSH STATS_DELTA `a.b`.`c`, `a`.`b.c`",
+            "FLUSH STATS_DELTA `a.b`.`c`, `a`.`b.c`",
+        ),
+    ] {
+        let tidb_ast::Stmt::Admin(admin) = parse(sql).expect("FLUSH STATS_DELTA parses") else {
+            panic!("expected admin statement");
+        };
+        let tidb_ast::AdminStmt::Flush(mut flush) = admin.into_inner() else {
+            panic!("expected flush statement");
+        };
+        flush.dedup_stats_objects();
+        assert_eq!(
+            tidb_ast::Stmt::Admin(tidb_ast::NodeBox::new(tidb_ast::AdminStmt::Flush(flush)))
+                .restore(),
+            restored,
+            "{sql}"
+        );
     }
 }

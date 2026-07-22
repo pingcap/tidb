@@ -18,8 +18,9 @@ use super::*;
 
 /// Exact standalone `TestDDL` COMMENT row at `pkg/parser/parser_test.go:3419`.
 ///
-/// Line 3420 has an unported leading `ENABLE KEYS` action; this COMMENT-only
-/// leaf deliberately does not claim that independent option family.
+/// The complete mixed owner row, including its leading `ENABLE KEYS`, lives in
+/// `ddl::alter_table_enable_disable_keys_match_go_owner_rows`; these rows keep
+/// the COMMENT payload boundary explicit.
 #[test]
 fn alter_table_comment_restores_original_go_rows() {
     assert_eq!(

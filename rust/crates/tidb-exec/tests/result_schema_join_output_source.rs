@@ -68,7 +68,7 @@ fn join(sql: &str) -> Join {
     let Stmt::Query(query) = tidb_parser::parse(sql).expect("parse join SQL") else {
         panic!("expected query")
     };
-    let QueryStmt::Select(select) = *query else {
+    let QueryStmt::Select(select) = query.into_inner() else {
         panic!("expected plain SELECT")
     };
     let select = *select;

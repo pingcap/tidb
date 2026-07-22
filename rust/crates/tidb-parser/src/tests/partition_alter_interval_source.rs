@@ -39,7 +39,7 @@ fn alter_interval_partition_bounds_keep_typed_go_payload() {
     else {
         panic!("expected DDL");
     };
-    let tidb_ast::DdlStmt::AlterTable(alter) = *ddl else {
+    let tidb_ast::DdlStmt::AlterTable(alter) = ddl.into_inner() else {
         panic!("expected ALTER TABLE");
     };
     assert_eq!(
@@ -57,7 +57,7 @@ fn alter_interval_partition_bounds_keep_typed_go_payload() {
     else {
         panic!("expected DDL");
     };
-    let tidb_ast::DdlStmt::AlterTable(alter) = *ddl else {
+    let tidb_ast::DdlStmt::AlterTable(alter) = ddl.into_inner() else {
         panic!("expected ALTER TABLE");
     };
     assert_eq!(

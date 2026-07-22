@@ -52,3 +52,26 @@ impl CheckConstraintDefinition {
         });
     }
 }
+
+// BEGIN GENERATED AST VISITOR IMPLEMENTATIONS
+
+impl crate::Visitable for CheckConstraintDefinition {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            name,
+            expression,
+            enforced,
+        } = self;
+        if !crate::Visitable::accept(expression, visitor) {
+            return false;
+        }
+        let _ = name;
+        let _ = expression;
+        let _ = enforced;
+        visitor.leave(self)
+    }
+}
+// END GENERATED AST VISITOR IMPLEMENTATIONS

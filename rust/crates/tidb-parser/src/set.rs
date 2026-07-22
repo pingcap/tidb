@@ -405,7 +405,7 @@ impl Parser {
         // lower-case variable name even when the source wrote `SQL_MODE` in
         // upper case. Keep this normalization local to SET's variable leaf;
         // expression-level `@@` references retain their own AST contract.
-        Ok((scope, name.to_ascii_lowercase()))
+        Ok((scope, decode_set_variable_name(name).to_ascii_lowercase()))
     }
 
     fn parse_system_variable_name(&mut self) -> PResult<String> {
@@ -539,5 +539,15 @@ impl Parser {
         } else {
             Err(self.err_here("expected ISOLATION LEVEL or READ ONLY/WRITE"))
         }
+    }
+}
+
+fn decode_set_variable_name(raw: &str) -> String {
+    if matches!(raw.as_bytes().first(), Some(b'\'') | Some(b'"')) {
+        decode_string(raw)
+    } else if raw.starts_with('`') && raw.ends_with('`') && raw.len() >= 2 {
+        raw[1..raw.len() - 1].replace("``", "`")
+    } else {
+        raw.to_string()
     }
 }

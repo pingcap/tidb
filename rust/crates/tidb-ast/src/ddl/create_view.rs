@@ -15,58 +15,7 @@
 //! The source-owned `CREATE VIEW` AST and canonical restore boundary.
 
 use crate::util::{back_quote, push_name_path};
-use crate::QueryStmt;
-
-/// The `ALGORITHM` characteristic of a `CREATE VIEW` statement.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum ViewAlgorithm {
-    /// `ALGORITHM = UNDEFINED` (the default).
-    #[default]
-    Undefined,
-    /// `ALGORITHM = MERGE`.
-    Merge,
-    /// `ALGORITHM = TEMPTABLE`.
-    Temptable,
-}
-
-impl ViewAlgorithm {
-    pub(crate) fn restore(self) -> &'static str {
-        match self {
-            Self::Undefined => "UNDEFINED",
-            Self::Merge => "MERGE",
-            Self::Temptable => "TEMPTABLE",
-        }
-    }
-}
-
-/// The check-option payload this Rust slice can restore for `CREATE VIEW`.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum ViewCheckOption {
-    /// The implicit or explicit `CASCADED` form, omitted on restore.
-    #[default]
-    Cascaded,
-    /// `WITH LOCAL CHECK OPTION`.
-    Local,
-}
-
-/// The `SQL SECURITY` characteristic of a `CREATE VIEW` statement.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum ViewSecurity {
-    /// `SQL SECURITY DEFINER` (the default).
-    #[default]
-    Definer,
-    /// `SQL SECURITY INVOKER`.
-    Invoker,
-}
-
-impl ViewSecurity {
-    pub(crate) fn restore(self) -> &'static str {
-        match self {
-            Self::Definer => "DEFINER",
-            Self::Invoker => "INVOKER",
-        }
-    }
-}
+use crate::{QueryStmt, ViewAlgorithm, ViewCheckOption, ViewSecurity};
 
 /// A `CREATE [OR REPLACE] [ALGORITHM = ...] VIEW` definition.
 ///
@@ -108,7 +57,7 @@ impl CreateViewStmt {
             out.push_str("OR REPLACE ");
         }
         out.push_str("ALGORITHM = ");
-        out.push_str(self.algorithm.restore());
+        out.push_str(self.algorithm.sql());
         out.push_str(" DEFINER = ");
         // `CreateViewStmt.Restore` deliberately differs from
         // `auth.UserIdentity.Restore`: a view's explicitly empty hostname
@@ -124,7 +73,7 @@ impl CreateViewStmt {
             }
         }
         out.push_str(" SQL SECURITY ");
-        out.push_str(self.security.restore());
+        out.push_str(self.security.sql());
         out.push_str(" VIEW ");
         push_name_path(out, &self.name);
         if !self.columns.is_empty() {
@@ -150,3 +99,50 @@ impl CreateViewStmt {
         }
     }
 }
+
+// BEGIN GENERATED AST VISITOR IMPLEMENTATIONS
+
+impl crate::Visitable for CreateViewStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            or_replace,
+            algorithm,
+            definer,
+            security,
+            name,
+            columns,
+            query,
+            query_parenthesized,
+            check_option,
+        } = self;
+        if !crate::Visitable::accept(algorithm, visitor) {
+            return false;
+        }
+        if !crate::Visitable::accept(definer, visitor) {
+            return false;
+        }
+        if !crate::Visitable::accept(security, visitor) {
+            return false;
+        }
+        if !crate::Visitable::accept(query.as_mut(), visitor) {
+            return false;
+        }
+        if !crate::Visitable::accept(check_option, visitor) {
+            return false;
+        }
+        let _ = or_replace;
+        let _ = algorithm;
+        let _ = definer;
+        let _ = security;
+        let _ = name;
+        let _ = columns;
+        let _ = query;
+        let _ = query_parenthesized;
+        let _ = check_option;
+        visitor.leave(self)
+    }
+}
+// END GENERATED AST VISITOR IMPLEMENTATIONS

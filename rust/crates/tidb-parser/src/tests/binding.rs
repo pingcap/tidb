@@ -17,6 +17,31 @@
 
 use super::*;
 
+#[test]
+fn binding_derived_query_collapses_redundant_whole_query_parentheses() {
+    for (sql, expected) in [
+        (
+            "create global binding for select * from ((select * from t where a = 1)) tt using select * from (select * from t where a = 1) tt",
+            "CREATE GLOBAL BINDING FOR SELECT * FROM (SELECT * FROM `t` WHERE `a`=1) AS `tt` USING SELECT * FROM (SELECT * FROM `t` WHERE `a`=1) AS `tt`",
+        ),
+        (
+            "drop global binding for select * from (((select * from t where a = 1))) tt",
+            "DROP GLOBAL BINDING FOR SELECT * FROM (SELECT * FROM `t` WHERE `a`=1) AS `tt`",
+        ),
+        (
+            "select * from ((select 1 union select 2)) tt",
+            "SELECT * FROM (SELECT 1 UNION SELECT 2) AS `tt`",
+        ),
+        (
+            "select * from ((select 1) union (select 2)) tt",
+            "SELECT * FROM ((SELECT 1) UNION (SELECT 2)) AS `tt`",
+        ),
+    ] {
+        let statement = parse(sql).unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+        assert_eq!(statement.restore(), expected, "{sql}");
+    }
+}
+
 /// SQL binding commands share Go's parser/restore contract but deliberately
 /// contain typed nested statements rather than captured SQL text. These vectors
 /// cover every command family in `pkg/parser/binding_parser.go` and the

@@ -260,6 +260,7 @@ fn strip_parens(mut expr: &Expr) -> &Expr {
 fn ast_variant_category(expr: &Expr) -> &'static str {
     match expr {
         Expr::ParamMarker { .. } => "param_marker",
+        Expr::Default(_) => "default",
         Expr::Assign { .. } => "assign",
         Expr::GroupConcat { .. } => "group_concat",
         Expr::Window { .. } => "window",

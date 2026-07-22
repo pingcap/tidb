@@ -410,3 +410,293 @@ impl AlterUserStmt {
         }
     }
 }
+
+// BEGIN GENERATED AST VISITOR IMPLEMENTATIONS
+
+impl crate::Visitable for UserSpec {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            current_user,
+            user,
+            host,
+        } = self;
+        let _ = current_user;
+        let _ = user;
+        let _ = host;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for CreateUserAuth {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::By(field_0) => {
+                let _ = field_0;
+            }
+            Self::With { plugin, credential } => {
+                if let Some(value) = credential.as_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                let _ = plugin;
+                let _ = credential;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for CreateUserCredential {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::By(field_0) => {
+                let _ = field_0;
+            }
+            Self::As(field_0) => {
+                let _ = field_0;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for AlterUserDualPassword {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::RetainCurrent => {}
+            Self::DiscardOld => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for CreateUserSpec {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            user,
+            auth,
+            dual_password,
+        } = self;
+        if !crate::Visitable::accept(user, visitor) {
+            return false;
+        }
+        if let Some(value) = auth.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        if let Some(value) = dual_password.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        let _ = user;
+        let _ = auth;
+        let _ = dual_password;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for AlterUserPasswordExpire {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Expire => {}
+            Self::Default => {}
+            Self::Never => {}
+            Self::Interval(field_0) => {
+                let _ = field_0;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for CreateUserPasswordOption {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Expire(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::History(field_0) => {
+                let _ = field_0;
+            }
+            Self::HistoryDefault => {}
+            Self::ReuseInterval(field_0) => {
+                let _ = field_0;
+            }
+            Self::ReuseDefault => {}
+            Self::RequireCurrentDefault => {}
+            Self::AccountLock => {}
+            Self::AccountUnlock => {}
+            Self::FailedLoginAttempts(field_0) => {
+                let _ = field_0;
+            }
+            Self::PasswordLockTime(field_0) => {
+                let _ = field_0;
+            }
+            Self::PasswordLockTimeUnbounded => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for CreateUserCommentOrAttribute {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Comment(field_0) => {
+                let _ = field_0;
+            }
+            Self::Attribute(field_0) => {
+                let _ = field_0;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for AlterUserTlsOption {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::None => {}
+            Self::Ssl => {}
+            Self::X509 => {}
+            Self::Cipher(field_0) => {
+                let _ = field_0;
+            }
+            Self::Issuer(field_0) => {
+                let _ = field_0;
+            }
+            Self::Subject(field_0) => {
+                let _ = field_0;
+            }
+            Self::San(field_0) => {
+                let _ = field_0;
+            }
+            Self::TokenIssuer(field_0) => {
+                let _ = field_0;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for AlterUserResourceKind {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::MaxQueriesPerHour => {}
+            Self::MaxUpdatesPerHour => {}
+            Self::MaxConnectionsPerHour => {}
+            Self::MaxUserConnections => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for AlterUserResourceOption {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { kind, count } = self;
+        if !crate::Visitable::accept(kind, visitor) {
+            return false;
+        }
+        let _ = kind;
+        let _ = count;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for AlterUserStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            if_exists,
+            users,
+            user_function_auth,
+            user_function_dual_password,
+            tls_options,
+            resource_options,
+            password_options,
+            comment_or_attribute,
+            resource_group,
+        } = self;
+        for value in users.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        if let Some(value) = user_function_dual_password.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        for value in tls_options.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        for value in resource_options.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        for value in password_options.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        if let Some(value) = comment_or_attribute.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        let _ = if_exists;
+        let _ = users;
+        let _ = user_function_auth;
+        let _ = user_function_dual_password;
+        let _ = tls_options;
+        let _ = resource_options;
+        let _ = password_options;
+        let _ = comment_or_attribute;
+        let _ = resource_group;
+        visitor.leave(self)
+    }
+}
+// END GENERATED AST VISITOR IMPLEMENTATIONS

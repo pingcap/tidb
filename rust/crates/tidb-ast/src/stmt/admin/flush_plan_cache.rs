@@ -19,6 +19,8 @@
 pub enum AdminPlanCacheScope {
     /// `ADMIN FLUSH SESSION PLAN_CACHE`.
     Session,
+    /// `ADMIN FLUSH INSTANCE PLAN_CACHE`.
+    Instance,
     /// `ADMIN FLUSH GLOBAL PLAN_CACHE`.
     Global,
 }
@@ -28,8 +30,26 @@ impl AdminPlanCacheScope {
         out.push_str("ADMIN FLUSH ");
         out.push_str(match self {
             Self::Session => "SESSION",
+            Self::Instance => "INSTANCE",
             Self::Global => "GLOBAL",
         });
         out.push_str(" PLAN_CACHE");
     }
 }
+
+// BEGIN GENERATED AST VISITOR IMPLEMENTATIONS
+
+impl crate::Visitable for AdminPlanCacheScope {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Session => {}
+            Self::Instance => {}
+            Self::Global => {}
+        }
+        visitor.leave(self)
+    }
+}
+// END GENERATED AST VISITOR IMPLEMENTATIONS

@@ -85,14 +85,23 @@ impl StatsLockStmt {
     }
 }
 
-/// The supported `ast.ExplainStmt` shape: an optional `ANALYZE` flag, the
-/// Go-format string, and an already parsed explainable inner statement.
-///
-/// This intentionally excludes Go's `FOR CONNECTION`, plan-digest, and
-/// `EXPLORE` branches: each carries a distinct AST contract that this seed
-/// AST does not model, so the parser rejects them instead of collapsing them
-/// into an ordinary inner statement. The shared `DESC table` normal form is
-/// instead represented faithfully by [`DescribeTableStmt`].
+/// The mutually exclusive targets of Go's `ast.ExplainStmt`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExplainTarget {
+    /// An ordinary query, DML, or ALTER TABLE statement.
+    Statement(Box<Stmt>),
+    /// A plan digest supplied as a string literal.
+    PlanDigest(String),
+    /// `EXPLORE 'sql-or-digest'`.
+    ExploreDigest(String),
+    /// `EXPLORE REPLAYER 'file'`.
+    ExploreReplayer(String),
+    /// `EXPLORE` applied to a parsed statement.
+    ExploreStatement(Box<Stmt>),
+}
+
+/// Complete `ast.ExplainStmt` payload. `FOR CONNECTION` remains the separate
+/// [`crate::ExplainForStmt`] node used by Go.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExplainStmt {
     /// Whether the wrapper requested runtime analysis.
@@ -100,23 +109,156 @@ pub struct ExplainStmt {
     /// Go defaults this to `row`; its spelling is preserved for non-default
     /// values because restore prints the original payload case.
     pub format: String,
-    /// The DML/query/ALTER statement being explained.
-    pub statement: Box<Stmt>,
+    /// Explain target.
+    pub target: ExplainTarget,
 }
 
 impl ExplainStmt {
+    /// Returns the parsed statement target when this EXPLAIN owns one.
+    pub fn statement(&self) -> Option<&Stmt> {
+        match &self.target {
+            ExplainTarget::Statement(statement) | ExplainTarget::ExploreStatement(statement) => {
+                Some(statement)
+            }
+            _ => None,
+        }
+    }
+
     pub(crate) fn restore_into(&self, out: &mut String) {
         out.push_str("EXPLAIN ");
         if self.analyze {
             out.push_str("ANALYZE ");
         }
-        // Go's ast.ExplainStmt suppresses only the default ROW format after
-        // ANALYZE. Plain EXPLAIN always writes FORMAT = 'row'.
-        if !self.analyze || !self.format.eq_ignore_ascii_case("row") {
-            out.push_str("FORMAT = '");
-            out.push_str(&escape_string_literal(&self.format));
-            out.push_str("' ");
+        match &self.target {
+            ExplainTarget::ExploreDigest(value) => {
+                out.push_str("EXPLORE '");
+                out.push_str(&escape_string_literal(value));
+                out.push('\'');
+            }
+            ExplainTarget::ExploreReplayer(file) => {
+                out.push_str("EXPLORE REPLAYER '");
+                out.push_str(&escape_string_literal(file));
+                out.push('\'');
+            }
+            ExplainTarget::ExploreStatement(statement) => {
+                out.push_str("EXPLORE ");
+                statement.restore_into(out);
+            }
+            ExplainTarget::PlanDigest(digest) => {
+                if !self.analyze || !self.format.eq_ignore_ascii_case("row") {
+                    restore_format(out, &self.format);
+                }
+                out.push('\'');
+                out.push_str(&escape_string_literal(digest));
+                out.push('\'');
+            }
+            ExplainTarget::Statement(statement) => {
+                if !self.analyze || !self.format.eq_ignore_ascii_case("row") {
+                    restore_format(out, &self.format);
+                }
+                statement.restore_into(out);
+            }
         }
-        self.statement.restore_into(out);
     }
 }
+
+fn restore_format(out: &mut String, format: &str) {
+    out.push_str("FORMAT = '");
+    out.push_str(&escape_string_literal(format));
+    out.push_str("' ");
+}
+
+// BEGIN GENERATED AST VISITOR IMPLEMENTATIONS
+
+impl crate::Visitable for DescribeTableStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { table, column } = self;
+        let _ = table;
+        let _ = column;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for StatsLockTable {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { name, partitions } = self;
+        let _ = name;
+        let _ = partitions;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for StatsLockStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { tables } = self;
+        for value in tables.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        let _ = tables;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for ExplainTarget {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Statement(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::PlanDigest(field_0) => {
+                let _ = field_0;
+            }
+            Self::ExploreDigest(field_0) => {
+                let _ = field_0;
+            }
+            Self::ExploreReplayer(field_0) => {
+                let _ = field_0;
+            }
+            Self::ExploreStatement(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for ExplainStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            analyze,
+            format,
+            target,
+        } = self;
+        if !crate::Visitable::accept(target, visitor) {
+            return false;
+        }
+        let _ = analyze;
+        let _ = format;
+        let _ = target;
+        visitor.leave(self)
+    }
+}
+// END GENERATED AST VISITOR IMPLEMENTATIONS

@@ -68,7 +68,7 @@ fn select(sql: &str) -> tidb_ast::SelectStmt {
     let Stmt::Query(query) = tidb_parser::parse(sql).expect("parse source SQL") else {
         panic!("expected query")
     };
-    let QueryStmt::Select(select) = *query else {
+    let QueryStmt::Select(select) = query.into_inner() else {
         panic!("expected plain SELECT")
     };
     *select

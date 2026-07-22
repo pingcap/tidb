@@ -37,7 +37,7 @@ fn alter_table_generic_options_match_go_restore() {
     let tidb_ast::Stmt::Ddl(ddl) = statement else {
         panic!("expected DDL statement");
     };
-    let tidb_ast::DdlStmt::AlterTable(table) = *ddl else {
+    let tidb_ast::DdlStmt::AlterTable(table) = ddl.into_inner() else {
         panic!("expected ALTER TABLE statement");
     };
     assert_eq!(

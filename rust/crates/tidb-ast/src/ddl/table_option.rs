@@ -31,6 +31,8 @@ pub enum TableOption {
     Engine(String),
     /// `AUTO_INCREMENT [=] n` — the starting auto-increment value.
     AutoIncrement(String),
+    /// `FORCE AUTO_INCREMENT [=] n` in an `ALTER TABLE` option list.
+    ForceAutoIncrement(String),
     /// `[DEFAULT] {CHARACTER SET | CHARSET} [=] name`.
     CharacterSet(String),
     /// `[DEFAULT] COLLATE [=] name`.
@@ -163,6 +165,10 @@ impl TableOption {
         match self {
             Self::Engine(v) => push_table_option_bare(out, "ENGINE", v),
             Self::AutoIncrement(v) => push_table_option_bare(out, "AUTO_INCREMENT", v),
+            Self::ForceAutoIncrement(v) => {
+                out.push_str("FORCE AUTO_INCREMENT = ");
+                out.push_str(v);
+            }
             Self::CharacterSet(v) => push_table_option_bare(out, "DEFAULT CHARACTER SET", v),
             Self::Collate(v) => push_table_option_bare(out, "DEFAULT COLLATE", v),
             Self::Comment(v) => push_table_option_string(out, "COMMENT", v),
@@ -222,7 +228,11 @@ impl TableOption {
                 push_table_option_string(out, "SECONDARY_ENGINE_ATTRIBUTE", v)
             }
             Self::EngineAttribute(v) => push_table_option_string(out, "ENGINE_ATTRIBUTE", v),
-            Self::PlacementPolicy(v) => push_table_option_name(out, "PLACEMENT POLICY", v),
+            Self::PlacementPolicy(v) => {
+                context.write_with_tidb_special_comment(out, "placement", |out| {
+                    push_table_option_name(out, "PLACEMENT POLICY", v)
+                })
+            }
             Self::StatsBuckets(v) => push_table_option_bare(out, "STATS_BUCKETS", v),
             Self::StatsTopN(v) => push_table_option_bare(out, "STATS_TOPN", v),
             Self::StatsSampleRate(v) => push_table_option_bare(out, "STATS_SAMPLE_RATE", v),
@@ -281,3 +291,176 @@ fn push_table_option_name(out: &mut String, keyword: &str, value: &str) {
     out.push_str(" = ");
     out.push_str(&back_quote(value));
 }
+
+// BEGIN GENERATED AST VISITOR IMPLEMENTATIONS
+
+impl crate::Visitable for TableOption {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Engine(field_0) => {
+                let _ = field_0;
+            }
+            Self::AutoIncrement(field_0) => {
+                let _ = field_0;
+            }
+            Self::ForceAutoIncrement(field_0) => {
+                let _ = field_0;
+            }
+            Self::CharacterSet(field_0) => {
+                let _ = field_0;
+            }
+            Self::Collate(field_0) => {
+                let _ = field_0;
+            }
+            Self::Comment(field_0) => {
+                let _ = field_0;
+            }
+            Self::RowFormat(field_0) => {
+                let _ = field_0;
+            }
+            Self::KeyBlockSize(field_0) => {
+                let _ = field_0;
+            }
+            Self::Compression(field_0) => {
+                let _ = field_0;
+            }
+            Self::Tablespace(field_0) => {
+                let _ = field_0;
+            }
+            Self::ShardRowIdBits(field_0) => {
+                let _ = field_0;
+            }
+            Self::PreSplitRegions(field_0) => {
+                let _ = field_0;
+            }
+            Self::AutoIdCache(field_0) => {
+                let _ = field_0;
+            }
+            Self::MaxRows(field_0) => {
+                let _ = field_0;
+            }
+            Self::MinRows(field_0) => {
+                let _ = field_0;
+            }
+            Self::AvgRowLength(field_0) => {
+                let _ = field_0;
+            }
+            Self::Checksum(field_0) => {
+                let _ = field_0;
+            }
+            Self::DelayKeyWrite(field_0) => {
+                let _ = field_0;
+            }
+            Self::StatsPersistent => {}
+            Self::PackKeys => {}
+            Self::AutoRandomBase(field_0) => {
+                let _ = field_0;
+            }
+            Self::ForceAutoRandomBase(field_0) => {
+                let _ = field_0;
+            }
+            Self::Connection(field_0) => {
+                let _ = field_0;
+            }
+            Self::Password(field_0) => {
+                let _ = field_0;
+            }
+            Self::StatsAutoRecalc(field_0) => {
+                let _ = field_0;
+            }
+            Self::Nodegroup(field_0) => {
+                let _ = field_0;
+            }
+            Self::DataDirectory(field_0) => {
+                let _ = field_0;
+            }
+            Self::IndexDirectory(field_0) => {
+                let _ = field_0;
+            }
+            Self::AutoextendSize(field_0) => {
+                let _ = field_0;
+            }
+            Self::PageChecksum(field_0) => {
+                let _ = field_0;
+            }
+            Self::PageCompressed(field_0) => {
+                let _ = field_0;
+            }
+            Self::PageCompressionLevel(field_0) => {
+                let _ = field_0;
+            }
+            Self::Transactional(field_0) => {
+                let _ = field_0;
+            }
+            Self::IetfQuotes(field_0) => {
+                let _ = field_0;
+            }
+            Self::Sequence(field_0) => {
+                let _ = field_0;
+            }
+            Self::Union(field_0) => {
+                let _ = field_0;
+            }
+            Self::InsertMethod(field_0) => {
+                let _ = field_0;
+            }
+            Self::Encryption(field_0) => {
+                let _ = field_0;
+            }
+            Self::SecondaryEngine(field_0) => {
+                let _ = field_0;
+            }
+            Self::SecondaryEngineNull => {}
+            Self::SecondaryEngineAttribute(field_0) => {
+                let _ = field_0;
+            }
+            Self::EngineAttribute(field_0) => {
+                let _ = field_0;
+            }
+            Self::PlacementPolicy(field_0) => {
+                let _ = field_0;
+            }
+            Self::StatsBuckets(field_0) => {
+                let _ = field_0;
+            }
+            Self::StatsTopN(field_0) => {
+                let _ = field_0;
+            }
+            Self::StatsSampleRate(field_0) => {
+                let _ = field_0;
+            }
+            Self::StatsColChoice(field_0) => {
+                let _ = field_0;
+            }
+            Self::StatsColList(field_0) => {
+                let _ = field_0;
+            }
+            Self::Ttl {
+                column,
+                value,
+                unit,
+            } => {
+                if !crate::Visitable::accept(value.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = column;
+                let _ = value;
+                let _ = unit;
+            }
+            Self::TtlEnable(field_0) => {
+                let _ = field_0;
+            }
+            Self::TtlJobInterval(field_0) => {
+                let _ = field_0;
+            }
+            Self::Affinity(field_0) => {
+                let _ = field_0;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+// END GENERATED AST VISITOR IMPLEMENTATIONS

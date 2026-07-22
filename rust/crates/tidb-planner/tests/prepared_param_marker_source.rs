@@ -44,7 +44,7 @@ fn select(sql: &str) -> tidb_ast::SelectStmt {
     let Stmt::Query(query) = tidb_parser::parse(sql).expect("SQL must parse") else {
         panic!("expected query statement");
     };
-    let QueryStmt::Select(select) = *query else {
+    let QueryStmt::Select(select) = query.into_inner() else {
         panic!("expected SELECT");
     };
     *select
@@ -77,7 +77,7 @@ fn parser_numbers_parameter_markers_left_to_right_and_per_statement() {
         let Stmt::Query(query) = statement else {
             panic!("expected query statement");
         };
-        let QueryStmt::Select(select) = *query else {
+        let QueryStmt::Select(select) = query.into_inner() else {
             panic!("expected SELECT");
         };
         assert!(matches!(

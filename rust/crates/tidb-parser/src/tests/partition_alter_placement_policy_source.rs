@@ -50,7 +50,7 @@ fn partition_alter_placement_policy_retains_the_partition_target() {
     else {
         panic!("expected DDL");
     };
-    let tidb_ast::DdlStmt::AlterTable(alter) = *ddl else {
+    let tidb_ast::DdlStmt::AlterTable(alter) = ddl.into_inner() else {
         panic!("expected ALTER TABLE");
     };
     assert_eq!(

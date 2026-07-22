@@ -22,16 +22,18 @@ mod incremental;
 
 pub use incremental::{AnalyzeIncrementalStmt, AnalyzeIncrementalTarget};
 
-/// The current source-backed subset of Go's `ANALYZE TABLE` AST.
+/// Go's `ANALYZE TABLE` AST payload.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AnalyzeTableStmt {
     /// One or more dotted table-name paths, in source order.
     pub tables: Vec<Vec<String>>,
     /// Optional simple partition names.
     pub partitions: Vec<String>,
+    /// Whether `NO_WRITE_TO_BINLOG` or its `LOCAL` alias was specified.
+    pub no_write_to_binlog: bool,
     /// The one optional analysis target selector.
     pub target: AnalyzeTarget,
-    /// Ordered `WITH` options in the accepted current subset.
+    /// Ordered `WITH` options.
     pub options: Vec<AnalyzeOption>,
 }
 
@@ -44,8 +46,26 @@ pub enum AnalyzeTarget {
     Index(Vec<String>),
     /// `ALL COLUMNS`.
     AllColumns,
+    /// `PREDICATE COLUMNS`.
+    PredicateColumns,
     /// `COLUMNS name [, ...]`.
     Columns(Vec<String>),
+    /// `UPDATE|DROP HISTOGRAM ON name [, ...]`.
+    Histogram {
+        /// Whether histogram data is updated or removed.
+        operation: HistogramOperation,
+        /// Simple column names in source order.
+        columns: Vec<String>,
+    },
+}
+
+/// The histogram operation selected by `ANALYZE TABLE`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HistogramOperation {
+    /// `UPDATE HISTOGRAM`.
+    Update,
+    /// `DROP HISTOGRAM`.
+    Drop,
 }
 
 /// A source-backed `ANALYZE TABLE ... WITH` option.
@@ -53,7 +73,7 @@ pub enum AnalyzeTarget {
 pub struct AnalyzeOption {
     /// The exact accepted numeric literal spelling.
     pub value: String,
-    /// Whether this requests `TOPN` or `BUCKETS`.
+    /// The requested statistics option.
     pub kind: AnalyzeOptionKind,
 }
 
@@ -64,11 +84,25 @@ pub enum AnalyzeOptionKind {
     TopN,
     /// `BUCKETS`.
     Buckets,
+    /// `CMSKETCH DEPTH`.
+    CmSketchDepth,
+    /// `CMSKETCH WIDTH`.
+    CmSketchWidth,
+    /// `SAMPLES`.
+    Samples,
+    /// `SAMPLERATE`.
+    SampleRate,
+    /// `NDVRATE`.
+    NdvRate,
 }
 
 impl AnalyzeTableStmt {
     pub(crate) fn restore_into(&self, out: &mut String) {
-        out.push_str("ANALYZE TABLE ");
+        out.push_str("ANALYZE ");
+        if self.no_write_to_binlog {
+            out.push_str("NO_WRITE_TO_BINLOG ");
+        }
+        out.push_str("TABLE ");
         for (i, table) in self.tables.iter().enumerate() {
             if i > 0 {
                 out.push(',');
@@ -99,8 +133,21 @@ impl AnalyzeTableStmt {
                 }
             }
             AnalyzeTarget::AllColumns => out.push_str(" ALL COLUMNS"),
+            AnalyzeTarget::PredicateColumns => out.push_str(" PREDICATE COLUMNS"),
             AnalyzeTarget::Columns(columns) => {
                 out.push_str(" COLUMNS ");
+                for (i, column) in columns.iter().enumerate() {
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    out.push_str(&back_quote(column));
+                }
+            }
+            AnalyzeTarget::Histogram { operation, columns } => {
+                out.push_str(match operation {
+                    HistogramOperation::Update => " UPDATE HISTOGRAM ON ",
+                    HistogramOperation::Drop => " DROP HISTOGRAM ON ",
+                });
                 for (i, column) in columns.iter().enumerate() {
                     if i > 0 {
                         out.push(',');
@@ -120,8 +167,118 @@ impl AnalyzeTableStmt {
                 out.push_str(match option.kind {
                     AnalyzeOptionKind::TopN => "TOPN",
                     AnalyzeOptionKind::Buckets => "BUCKETS",
+                    AnalyzeOptionKind::CmSketchDepth => "CMSKETCH DEPTH",
+                    AnalyzeOptionKind::CmSketchWidth => "CMSKETCH WIDTH",
+                    AnalyzeOptionKind::Samples => "SAMPLES",
+                    AnalyzeOptionKind::SampleRate => "SAMPLERATE",
+                    AnalyzeOptionKind::NdvRate => "NDVRATE",
                 });
             }
         }
     }
 }
+
+// BEGIN GENERATED AST VISITOR IMPLEMENTATIONS
+
+impl crate::Visitable for AnalyzeTableStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            tables,
+            partitions,
+            no_write_to_binlog,
+            target,
+            options,
+        } = self;
+        if !crate::Visitable::accept(target, visitor) {
+            return false;
+        }
+        for value in options.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        let _ = tables;
+        let _ = partitions;
+        let _ = no_write_to_binlog;
+        let _ = target;
+        let _ = options;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for AnalyzeTarget {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Default => {}
+            Self::Index(field_0) => {
+                let _ = field_0;
+            }
+            Self::AllColumns => {}
+            Self::PredicateColumns => {}
+            Self::Columns(field_0) => {
+                let _ = field_0;
+            }
+            Self::Histogram { operation, columns } => {
+                if !crate::Visitable::accept(operation, visitor) {
+                    return false;
+                }
+                let _ = operation;
+                let _ = columns;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for HistogramOperation {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Update => {}
+            Self::Drop => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for AnalyzeOption {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { value, kind } = self;
+        if !crate::Visitable::accept(kind, visitor) {
+            return false;
+        }
+        let _ = value;
+        let _ = kind;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for AnalyzeOptionKind {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::TopN => {}
+            Self::Buckets => {}
+            Self::CmSketchDepth => {}
+            Self::CmSketchWidth => {}
+            Self::Samples => {}
+            Self::SampleRate => {}
+            Self::NdvRate => {}
+        }
+        visitor.leave(self)
+    }
+}
+// END GENERATED AST VISITOR IMPLEMENTATIONS

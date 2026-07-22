@@ -17,6 +17,104 @@
 //! kept here rather than duplicated or hung off any one domain, since none
 //! of these carry domain-specific meaning of their own.
 
+use crate::{AdminStmt, QueryStmt, SelectStmt, SetOprStmt, SetOprTermBody, Stmt};
+
+impl Stmt {
+    /// Returns whether executing this statement is read-only.
+    ///
+    /// This is the immutable Rust equivalent of Go's `ast.IsReadOnly` visitor.
+    /// The global-variable switch is retained in the API; Rust's parser
+    /// normalizes `@@scope.name := value` to the same user-variable assignment
+    /// node as Go, so there is no distinct global assignment left to reject.
+    pub fn is_read_only(&self, _check_global_vars: bool) -> bool {
+        match self {
+            Self::Query(query) => query.is_read_only(),
+            Self::Admin(admin) => admin.is_read_only(_check_global_vars),
+            Self::Dml(_) | Self::Ddl(_) | Self::Session(_) => false,
+        }
+    }
+}
+
+impl QueryStmt {
+    fn is_read_only(&self) -> bool {
+        match self {
+            Self::Select(select) => select.is_read_only(),
+            Self::SetOpr(set_operation) => set_operation.is_read_only(),
+        }
+    }
+}
+
+impl SelectStmt {
+    fn is_read_only(&self) -> bool {
+        self.lock.is_none()
+    }
+}
+
+impl SetOprStmt {
+    fn is_read_only(&self) -> bool {
+        self.lock.is_none()
+            && self.terms.iter().all(|term| match &term.body {
+                SetOprTermBody::Select(select) => select.is_read_only(),
+                SetOprTermBody::Nested(set_operation) => set_operation.is_read_only(),
+            })
+    }
+}
+
+impl AdminStmt {
+    fn is_read_only(&self, check_global_vars: bool) -> bool {
+        match self {
+            Self::Explain(explain) => {
+                !explain.analyze
+                    || explain
+                        .statement()
+                        .is_none_or(|statement| statement.is_read_only(check_global_vars))
+            }
+            Self::Do(_)
+            | Self::ShowGrants(_)
+            | Self::ShowMasterStatus
+            | Self::ShowPrivileges
+            | Self::ShowBuiltins
+            | Self::ShowImportJobs(_)
+            | Self::ShowImportGroups(_)
+            | Self::ShowBdrRole
+            | Self::ShowSlow(_)
+            | Self::ShowDdl
+            | Self::ShowDdlJobs(_)
+            | Self::ShowDdlJobQueries(_)
+            | Self::ShowNextRowId(_)
+            | Self::ShowCreate { .. }
+            | Self::ShowCreateUser(_)
+            | Self::ShowVariables { .. }
+            | Self::ShowStatus(_)
+            | Self::ShowWarnings(_)
+            | Self::ShowErrors(_)
+            | Self::ShowCollation(_)
+            | Self::ShowEngines(_)
+            | Self::ShowCharset(_)
+            | Self::ShowStatsHistograms(_)
+            | Self::ShowStatsBuckets(_)
+            | Self::ShowStatsLocked(_)
+            | Self::ShowStatsTopN(_)
+            | Self::ShowDatabases(_)
+            | Self::ShowTables(_)
+            | Self::ShowOpenTables(_)
+            | Self::ShowTableStatus(_)
+            | Self::ShowTableNextRowId(_)
+            | Self::ShowColumns(_)
+            | Self::ShowIndex(_)
+            | Self::ShowInspection(_)
+            | Self::ShowDistributionJobs(_)
+            | Self::ShowTablePlacement(_)
+            | Self::ShowPlacement(_)
+            | Self::ShowProfile(_)
+            | Self::ShowMaskingPolicies(_)
+            | Self::ShowBindings(_)
+            | Self::DescribeTable(_) => true,
+            _ => false,
+        }
+    }
+}
+
 /// Back-quotes an identifier, doubling any embedded back-quote
 /// (`RestoreNameBackQuotes`).
 pub(crate) fn back_quote(name: &str) -> String {
@@ -28,6 +126,59 @@ pub(crate) fn back_quote(name: &str) -> String {
 /// quotes are doubled, so the text re-parses to the same value.
 pub fn restore_string_literal(value: &str) -> String {
     format!("_UTF8MB4'{}'", escape_string_literal(value))
+}
+
+/// Redacts credentials carried in an external-storage URL.
+///
+/// This is the Rust transcreation of `ast.RedactURL`. Query keys are sorted
+/// because Go's `url.Values.Encode` sorts them before rebuilding the URL.
+pub fn redact_url(value: &str) -> String {
+    let Some((scheme, _)) = value.split_once("://") else {
+        return value.to_string();
+    };
+    let sensitive_keys: &[&str] = match scheme.to_ascii_lowercase().as_str() {
+        "s3" | "ks3" | "oss" => &["access-key", "secret-access-key", "session-token"],
+        "azure" | "azblob" => &["account-key", "encryption-key", "sas-token"],
+        _ => return value.to_string(),
+    };
+    let Some((base, query_and_fragment)) = value.split_once('?') else {
+        return value.to_string();
+    };
+    let (query, fragment) = query_and_fragment
+        .split_once('#')
+        .map_or((query_and_fragment, None), |(query, fragment)| {
+            (query, Some(fragment))
+        });
+    let mut fields: Vec<(String, String)> = query
+        .split('&')
+        .filter(|field| !field.is_empty())
+        .map(|field| {
+            let (key, value) = field.split_once('=').unwrap_or((field, ""));
+            let normalized = key.to_ascii_lowercase().replace('_', "-");
+            let value = if sensitive_keys.contains(&normalized.as_str()) {
+                "xxxxxx"
+            } else {
+                value
+            };
+            (key.to_string(), value.to_string())
+        })
+        .collect();
+    fields.sort();
+
+    let mut result = format!("{base}?");
+    for (index, (key, value)) in fields.iter().enumerate() {
+        if index > 0 {
+            result.push('&');
+        }
+        result.push_str(key);
+        result.push('=');
+        result.push_str(value);
+    }
+    if let Some(fragment) = fragment {
+        result.push('#');
+        result.push_str(fragment);
+    }
+    result
 }
 
 /// Escapes a string literal's body (backslash and quote doubling) without

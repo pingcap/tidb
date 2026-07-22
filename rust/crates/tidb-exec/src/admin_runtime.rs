@@ -30,6 +30,7 @@ impl Database {
             // This seed has none of that state, so reject before any catalog
             // or transaction mutation rather than pretending a grant applied.
             AdminStmt::Grant(_) => Err(ExecError::Unsupported("GRANT")),
+            AdminStmt::GrantProxy(_) => Err(ExecError::Unsupported("GRANT PROXY")),
             // Role membership mutates the same durable account/role graph as
             // privilege grants, but Go gives it a distinct AST and executor
             // path. Keep that distinction at the unsupported boundary too.
@@ -56,20 +57,56 @@ impl Database {
             // schema. The seed owns neither, so reject before transaction
             // mutation rather than fabricate an incomplete list.
             AdminStmt::ShowBuiltins => Err(ExecError::Unsupported("SHOW BUILTINS")),
+            AdminStmt::Brie(_) => Err(ExecError::Unsupported("BACKUP/RESTORE")),
+            AdminStmt::Trace(_)
+            | AdminStmt::ExplainFor(_)
+            | AdminStmt::Binlog(_)
+            | AdminStmt::Kill(_)
+            | AdminStmt::SetConfig(_)
+            | AdminStmt::RecommendIndex(_)
+            | AdminStmt::CreateStatistics(_)
+            | AdminStmt::DropStatistics(_)
+            | AdminStmt::ServerControl(_)
+            | AdminStmt::CancelDistributionJob(_)
+            | AdminStmt::CalibrateResource(_) => Err(ExecError::Unsupported(
+                "miscellaneous administrative statement",
+            )),
+            AdminStmt::AddQueryWatch(_) | AdminStmt::DropQueryWatch(_) => {
+                Err(ExecError::Unsupported("QUERY WATCH"))
+            }
+            AdminStmt::CancelImportJob(_) => Err(ExecError::Unsupported("CANCEL IMPORT JOB")),
+            AdminStmt::ShowImportJobs(_) => Err(ExecError::Unsupported("SHOW IMPORT JOBS")),
+            AdminStmt::ShowImportGroups(_) => Err(ExecError::Unsupported("SHOW IMPORT GROUPS")),
             // FLUSH STATUS resets session status counters, while FLUSH TABLES
             // coordinates table-handle invalidation and optional global read
-            // locks. This seed owns none of that state, so reject before any
-            // transaction mutation rather than make either command a no-op.
-            AdminStmt::Flush(flush) => match flush.as_ref() {
-                tidb_ast::FlushStmt::Status => Err(ExecError::Unsupported("FLUSH STATUS")),
-                tidb_ast::FlushStmt::Tables { .. } => Err(ExecError::Unsupported("FLUSH TABLES")),
-                tidb_ast::FlushStmt::Privileges => Err(ExecError::Unsupported("FLUSH PRIVILEGES")),
+            // locks. STATS_DELTA flushes in-memory statistics through TiDB's
+            // statistics handle. This seed owns none of that state, so reject
+            // before any transaction mutation rather than make a command a
+            // no-op.
+            AdminStmt::Flush(flush) => match &flush.target {
+                tidb_ast::FlushTarget::Status => Err(ExecError::Unsupported("FLUSH STATUS")),
+                tidb_ast::FlushTarget::Tables { .. } => Err(ExecError::Unsupported("FLUSH TABLES")),
+                tidb_ast::FlushTarget::Privileges => {
+                    Err(ExecError::Unsupported("FLUSH PRIVILEGES"))
+                }
+                tidb_ast::FlushTarget::StatsDelta { .. } => {
+                    Err(ExecError::Unsupported("FLUSH STATS_DELTA"))
+                }
+                tidb_ast::FlushTarget::TiDbPlugins(_) => {
+                    Err(ExecError::Unsupported("FLUSH TIDB PLUGINS"))
+                }
+                tidb_ast::FlushTarget::Hosts => Err(ExecError::Unsupported("FLUSH HOSTS")),
+                tidb_ast::FlushTarget::Logs(_) => Err(ExecError::Unsupported("FLUSH LOGS")),
+                tidb_ast::FlushTarget::ClientErrorsSummary => {
+                    Err(ExecError::Unsupported("FLUSH CLIENT_ERRORS_SUMMARY"))
+                }
             },
             // Scoped plan-cache eviction requires TiDB's prepared-plan cache,
             // session registry, and cross-instance invalidation protocol.
             // Reject before transaction mutation until those subsystems exist.
             AdminStmt::FlushPlanCache(scope) => Err(ExecError::Unsupported(match scope {
                 tidb_ast::AdminPlanCacheScope::Session => "ADMIN FLUSH SESSION PLAN_CACHE",
+                tidb_ast::AdminPlanCacheScope::Instance => "ADMIN FLUSH INSTANCE PLAN_CACHE",
                 tidb_ast::AdminPlanCacheScope::Global => "ADMIN FLUSH GLOBAL PLAN_CACHE",
             })),
             // Reloading optimizer blacklists, bindings, or statistics mutates
@@ -201,6 +238,16 @@ impl Database {
             // those, so reject before touching transaction state rather than
             // inventing empty or partial metadata rows.
             AdminStmt::ShowIndex(_) => Err(ExecError::Unsupported("SHOW INDEX")),
+            AdminStmt::ShowInspection(_) => Err(ExecError::Unsupported("SHOW")),
+            AdminStmt::ShowDistributionJobs(_) => {
+                Err(ExecError::Unsupported("SHOW DISTRIBUTION JOBS"))
+            }
+            AdminStmt::ShowTablePlacement(_) => Err(ExecError::Unsupported("SHOW TABLE PLACEMENT")),
+            AdminStmt::ShowPlacement(_) => Err(ExecError::Unsupported("SHOW PLACEMENT")),
+            AdminStmt::ShowProfile(_) => Err(ExecError::Unsupported("SHOW PROFILE")),
+            AdminStmt::ShowMaskingPolicies(_) => {
+                Err(ExecError::Unsupported("SHOW MASKING POLICIES"))
+            }
             AdminStmt::CreateBinding(_) => Err(ExecError::Unsupported("CREATE BINDING")),
             AdminStmt::DropBinding(_) => Err(ExecError::Unsupported("DROP BINDING")),
             AdminStmt::SetBinding(_) => Err(ExecError::Unsupported("SET BINDING")),
@@ -231,6 +278,12 @@ impl Database {
             // durable secondary indexes nor TiKV key encodings, so reject
             // before touching an active transaction.
             AdminStmt::AdminRecoverIndex(_) => Err(ExecError::Unsupported("ADMIN RECOVER INDEX")),
+            AdminStmt::AdminCleanupIndex(_) => Err(ExecError::Unsupported("ADMIN CLEANUP INDEX")),
+            AdminStmt::Plugins { .. } => Err(ExecError::Unsupported("ADMIN PLUGINS")),
+            AdminStmt::BindingControl(_) => Err(ExecError::Unsupported("ADMIN BINDING CONTROL")),
+            AdminStmt::CreateWorkloadSnapshot => {
+                Err(ExecError::Unsupported("ADMIN CREATE WORKLOAD SNAPSHOT"))
+            }
             // Cleanup releases stale metadata locks owned by named tables.
             // The seed has no lock-manager state, so reject before touching
             // the catalog or active transaction rather than silently making
@@ -250,9 +303,7 @@ impl Database {
             // Plan Replayer needs planner traces, statistics snapshots, and
             // durable artifact storage. The seed executor has none of those,
             // so reject before any transaction or catalog mutation.
-            AdminStmt::PlanReplayerDumpExplain(_) => {
-                Err(ExecError::Unsupported("PLAN REPLAYER DUMP EXPLAIN"))
-            }
+            AdminStmt::PlanReplayer(_) => Err(ExecError::Unsupported("PLAN REPLAYER")),
             AdminStmt::DescribeTable(_) => Err(ExecError::Unsupported("DESC")),
         }
     }

@@ -27,7 +27,7 @@ pub(super) fn e(expr: &str) -> String {
     let Stmt::Query(query) = stmt else {
         panic!("not query")
     };
-    let QueryStmt::Select(s) = *query else {
+    let QueryStmt::Select(s) = query.into_inner() else {
         panic!("not select")
     };
     match &s.fields[0] {
@@ -45,7 +45,7 @@ pub(super) fn v(expr: &str) -> Datum {
     let Stmt::Query(query) = stmt else {
         panic!("not query")
     };
-    let QueryStmt::Select(s) = *query else {
+    let QueryStmt::Select(s) = query.into_inner() else {
         panic!("not select")
     };
     match &s.fields[0] {
@@ -1332,7 +1332,7 @@ fn builtin_other_type_conversion_source_scalars() {
         let Stmt::Query(query) = stmt else {
             panic!("not query")
         };
-        let QueryStmt::Select(s) = *query else {
+        let QueryStmt::Select(s) = query.into_inner() else {
             panic!("not select")
         };
         let SelectField::Expr { expr, .. } = &s.fields[0] else {
@@ -1606,7 +1606,7 @@ fn out_of_domain_is_unsupported() {
             let Stmt::Query(query) = stmt else {
                 unreachable!()
             };
-            let QueryStmt::Select(s) = *query else {
+            let QueryStmt::Select(s) = query.into_inner() else {
                 unreachable!()
             };
             let SelectField::Expr { expr, .. } = &s.fields[0] else {
@@ -1624,7 +1624,7 @@ fn out_of_domain_is_unsupported() {
             let Stmt::Query(query) = stmt else {
                 unreachable!()
             };
-            let QueryStmt::Select(s) = *query else {
+            let QueryStmt::Select(s) = query.into_inner() else {
                 unreachable!()
             };
             let SelectField::Expr { expr, .. } = &s.fields[0] else {
@@ -1766,7 +1766,7 @@ fn e_at(expr: &str, clock: &FixedClock) -> String {
     let Stmt::Query(query) = stmt else {
         panic!("expected Query")
     };
-    let QueryStmt::Select(s) = *query else {
+    let QueryStmt::Select(s) = query.into_inner() else {
         panic!("expected Select")
     };
     let SelectField::Expr { expr, .. } = &s.fields[0] else {

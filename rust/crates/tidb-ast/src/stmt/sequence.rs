@@ -203,3 +203,135 @@ impl AlterRangeStmt {
             .restore_into(out, PlacementRestoreMode::Default);
     }
 }
+
+// BEGIN GENERATED AST VISITOR IMPLEMENTATIONS
+
+impl crate::Visitable for CreateSequenceStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            if_not_exists,
+            name,
+            options,
+            table_options,
+        } = self;
+        for value in options.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        for value in table_options.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        let _ = if_not_exists;
+        let _ = name;
+        let _ = options;
+        let _ = table_options;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for AlterSequenceStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            if_exists,
+            name,
+            options,
+        } = self;
+        for value in options.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        let _ = if_exists;
+        let _ = name;
+        let _ = options;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for DropSequenceStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { if_exists, names } = self;
+        let _ = if_exists;
+        let _ = names;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for SequenceOption {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::IncrementBy(field_0) => {
+                let _ = field_0;
+            }
+            Self::StartWith(field_0) => {
+                let _ = field_0;
+            }
+            Self::MinValue(field_0) => {
+                let _ = field_0;
+            }
+            Self::NoMinValue => {}
+            Self::MaxValue(field_0) => {
+                let _ = field_0;
+            }
+            Self::NoMaxValue => {}
+            Self::Cache(field_0) => {
+                let _ = field_0;
+            }
+            Self::NoCache => {}
+            Self::Cycle => {}
+            Self::NoCycle => {}
+            Self::Restart => {}
+            Self::RestartWith(field_0) => {
+                let _ = field_0;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for AlterInstanceStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            no_rollback_on_error,
+        } = self;
+        let _ = no_rollback_on_error;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for AlterRangeStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            range_name,
+            placement,
+        } = self;
+        if !crate::Visitable::accept(placement, visitor) {
+            return false;
+        }
+        let _ = range_name;
+        let _ = placement;
+        visitor.leave(self)
+    }
+}
+// END GENERATED AST VISITOR IMPLEMENTATIONS

@@ -18,7 +18,7 @@ use tidb_ast::{
     ResourceGroupBackgroundOption, ResourceGroupBurstable, ResourceGroupOption,
     ResourceGroupPriority, ResourceGroupRate, ResourceGroupRunawayAction,
     ResourceGroupRunawayOption, ResourceGroupRunawayRule, ResourceGroupRunawayWatch,
-    ResourceGroupRunawayWatchType,
+    RunawayWatchType,
 };
 use tidb_lexer::TokenKind;
 
@@ -330,13 +330,13 @@ impl Parser {
             self.accept_eq();
             let watch_type = if self.is_kw("SIMILAR") {
                 self.bump();
-                ResourceGroupRunawayWatchType::Similar
+                RunawayWatchType::Similar
             } else if self.is_kw("EXACT") {
                 self.bump();
-                ResourceGroupRunawayWatchType::Exact
+                RunawayWatchType::Exact
             } else if self.is_kw("PLAN") {
                 self.bump();
-                ResourceGroupRunawayWatchType::Plan
+                RunawayWatchType::Plan
             } else {
                 return Err(self.err_here("expected SIMILAR, EXACT, or PLAN after WATCH"));
             };

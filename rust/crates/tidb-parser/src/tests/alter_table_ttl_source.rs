@@ -17,7 +17,7 @@
 use super::*;
 
 #[test]
-fn alter_table_ttl_testttltableoption_rows_match_go_restore() {
+fn test_table_option_ttl_restore() {
     for (sql, expected) in [
         (
             "alter table t TTL = created_at + INTERVAL 1 MONTH",
@@ -31,6 +31,32 @@ fn alter_table_ttl_testttltableoption_rows_match_go_restore() {
     ] {
         assert_eq!(r(sql), expected, "source SQL: {sql}");
     }
+
+    let flags = tidb_ast::RestoreFlags::DEFAULT | tidb_ast::RestoreFlags::TIDB_SPECIAL_COMMENT;
+    for (sql, expected) in [
+        (
+            "create table t (created_at datetime) ttl = created_at + INTERVAL 1 YEAR",
+            "CREATE TABLE `t` (`created_at` DATETIME) TTL = `created_at` + INTERVAL 1 YEAR",
+        ),
+        (
+            "alter table t ttl_enable = 'OFF'",
+            "ALTER TABLE `t` TTL_ENABLE = 'OFF'",
+        ),
+    ] {
+        assert_eq!(r(sql), expected);
+    }
+    assert_eq!(
+        parse("create table t (created_at datetime) ttl = created_at + INTERVAL 1 YEAR")
+            .expect("parse")
+            .restore_with_flags(flags),
+        "CREATE TABLE `t` (`created_at` DATETIME) /*T![ttl] TTL = `created_at` + INTERVAL 1 YEAR */"
+    );
+    assert_eq!(
+        parse("alter table t ttl_enable = 'OFF'")
+            .expect("parse")
+            .restore_with_flags(flags),
+        "ALTER TABLE `t` /*T![ttl] TTL_ENABLE = 'OFF' */"
+    );
 }
 
 #[test]

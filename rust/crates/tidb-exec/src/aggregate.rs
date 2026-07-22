@@ -217,12 +217,21 @@ impl Database {
         let windows = window_exprs
             .into_iter()
             .map(|w| {
-                let Expr::Window { name, args, over } = &w else {
+                let Expr::Window {
+                    name,
+                    args,
+                    distinct,
+                    ignore_nulls,
+                    from_last,
+                    over,
+                } = &w
+                else {
                     unreachable!("collect_windows_in only ever pushes Expr::Window")
                 };
                 let WindowOver::Def(WindowDef { spec, .. }) = over else {
                     unreachable!("resolve_named_windows already normalized every OVER clause")
                 };
+                crate::window::validate_window_modifiers(*distinct, *ignore_nulls, *from_last)?;
                 self.compute_window(name, args, spec, &groups, cols, outer)
                     .map(|vals| (w.clone(), vals))
             })

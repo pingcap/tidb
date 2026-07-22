@@ -16,6 +16,28 @@
 
 use crate::{Expr, TransactionMode};
 
+/// Completion mode carried by `COMMIT` and `ROLLBACK`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum CompletionType {
+    /// Default / `NO RELEASE` / `AND NO CHAIN`; restores nothing.
+    #[default]
+    Default,
+    /// `AND CHAIN`.
+    Chain,
+    /// `RELEASE`.
+    Release,
+}
+
+impl CompletionType {
+    pub(crate) const fn sql(self) -> &'static str {
+        match self {
+            Self::Default => "",
+            Self::Chain => " AND CHAIN",
+            Self::Release => " RELEASE",
+        }
+    }
+}
+
 /// The complete payload carried by Go's `ast.BeginStmt`.
 ///
 /// `READ WRITE` and `WITH CONSISTENT SNAPSHOT` deliberately have no dedicated
@@ -53,5 +75,44 @@ impl BeginStmt {
             TransactionMode::Optimistic => out.push_str("BEGIN OPTIMISTIC"),
             TransactionMode::Pessimistic => out.push_str("BEGIN PESSIMISTIC"),
         }
+    }
+}
+
+// BEGIN GENERATED AST VISITOR IMPLEMENTATIONS
+
+impl crate::Visitable for BeginStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            mode,
+            read_only,
+            as_of,
+            causal_consistency_only,
+        } = self;
+        if !crate::Visitable::accept(mode, visitor) {
+            return false;
+        }
+        if let Some(value) = as_of.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        let _ = mode;
+        let _ = read_only;
+        let _ = as_of;
+        let _ = causal_consistency_only;
+        visitor.leave(self)
+    }
+}
+// END GENERATED AST VISITOR IMPLEMENTATIONS
+
+impl crate::Visitable for CompletionType {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        visitor.leave(self)
     }
 }

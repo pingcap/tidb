@@ -167,7 +167,7 @@ fn leading_hint() {
     // itself silently drops it with a warning instead (confirmed via
     // `godump restore`), a deliberate, narrower divergence matching this
     // project's own `ParseError`-over-silent-drop convention.
-    assert!(parse("select /*+ leading() */ a from t").is_err());
+    assert_eq!(r("select /*+ leading() */ a from t"), "SELECT `a` FROM `t`");
     assert_eq!(
         r("select /*+ leading(t1, (t2, t3)) */ a from t1, t2, t3"),
         "SELECT /*+ LEADING(`t1`, (`t2`, `t3`))*/ `a` FROM ((`t1`) JOIN `t2`) JOIN `t3`"
@@ -207,8 +207,14 @@ fn use_toja_hint() {
     // — real TiDB itself silently drops the whole hint with a warning
     // instead, the SAME narrower, `ParseError`-over-silent-drop
     // convention already applied to `LEADING()`.
-    assert!(parse("select /*+ use_toja(1) */ a from t1").is_err());
-    assert!(parse("select /*+ use_toja() */ a from t1").is_err());
+    assert_eq!(
+        r("select /*+ use_toja(1) */ a from t1"),
+        "SELECT `a` FROM `t1`"
+    );
+    assert_eq!(
+        r("select /*+ use_toja() */ a from t1"),
+        "SELECT `a` FROM `t1`"
+    );
 }
 
 /// `RESOURCE_GROUP(name)` — a single bare identifier argument hint, see
@@ -235,8 +241,14 @@ fn resource_group_hint() {
     // `ParseError` here, real TiDB itself silently drops the whole
     // hint with a warning instead (confirmed via `godump restore`),
     // the SAME narrower convention already applied to `LEADING()`.
-    assert!(parse("select /*+ resource_group(rg1@sel_1) */ a from t1").is_err());
-    assert!(parse("select /*+ resource_group() */ a from t1").is_err());
+    assert_eq!(
+        r("select /*+ resource_group(rg1@sel_1) */ a from t1"),
+        "SELECT `a` FROM `t1`"
+    );
+    assert_eq!(
+        r("select /*+ resource_group() */ a from t1"),
+        "SELECT `a` FROM `t1`"
+    );
 }
 
 /// `MAX_EXECUTION_TIME([@qb_name] N)` / `NTH_PLAN([@qb_name] N)` — see
@@ -365,7 +377,10 @@ fn unrecognized_hint_names_silently_dropped() {
     // would risk discarding real content for OTHER, similarly-shaped
     // unimplemented cases (see `is_recognized_hint_token_name`'s own
     // doc).
-    assert!(parse("select /*+ resource_group() */ a from t1").is_err());
+    assert_eq!(
+        r("select /*+ resource_group() */ a from t1"),
+        "SELECT `a` FROM `t1`"
+    );
 }
 
 /// `NAME([@qb_name] table1, table2, ...)` — a table-list hint's own
@@ -445,5 +460,8 @@ fn read_from_storage_hint() {
     // convention (real TiDB itself silently drops the rest of the
     // occurrence instead, an obscure malformed-input edge case not
     // replicated — see the dispatch arm's own doc).
-    assert!(parse("select /*+ read_from_storage(tidb[t1]) */ 1 from t1").is_err());
+    assert_eq!(
+        r("select /*+ read_from_storage(tidb[t1]) */ 1 from t1"),
+        "SELECT 1 FROM `t1`"
+    );
 }

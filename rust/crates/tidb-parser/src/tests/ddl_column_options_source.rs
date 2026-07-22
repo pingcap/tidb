@@ -23,7 +23,7 @@ fn first_column_options(sql: &str) -> Vec<tidb_ast::ColumnOption> {
     let Stmt::Ddl(ddl) = parse(sql).expect("parse Go source row") else {
         panic!("expected DDL");
     };
-    let tidb_ast::DdlStmt::CreateTable(table) = *ddl else {
+    let tidb_ast::DdlStmt::CreateTable(table) = ddl.into_inner() else {
         panic!("expected CREATE TABLE");
     };
     table.columns[0].options.clone()

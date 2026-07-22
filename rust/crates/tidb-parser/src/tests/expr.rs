@@ -673,7 +673,7 @@ fn group_concat() {
     let Stmt::Query(query) = stmt else {
         panic!("expected Query envelope")
     };
-    let tidb_ast::QueryStmt::Select(s) = *query else {
+    let tidb_ast::QueryStmt::Select(s) = query.into_inner() else {
         panic!("expected SELECT query")
     };
     let SelectField::Expr { expr, .. } = &s.fields[0] else {
@@ -753,7 +753,7 @@ fn date_add_sub() {
     let Stmt::Query(query) = stmt else {
         panic!("expected Query envelope")
     };
-    let tidb_ast::QueryStmt::Select(s) = *query else {
+    let tidb_ast::QueryStmt::Select(s) = query.into_inner() else {
         panic!("expected SELECT query")
     };
     let SelectField::Expr { expr, .. } = &s.fields[0] else {
@@ -860,7 +860,7 @@ fn extract() {
     let Stmt::Query(query) = stmt else {
         panic!("expected Query envelope")
     };
-    let tidb_ast::QueryStmt::Select(s) = *query else {
+    let tidb_ast::QueryStmt::Select(s) = query.into_inner() else {
         panic!("expected SELECT query")
     };
     let SelectField::Expr { expr, .. } = &s.fields[0] else {
@@ -1110,7 +1110,7 @@ fn cast_and_convert() {
     let Stmt::Query(query) = stmt else {
         panic!("expected Query envelope")
     };
-    let tidb_ast::QueryStmt::Select(s) = *query else {
+    let tidb_ast::QueryStmt::Select(s) = query.into_inner() else {
         panic!("expected SELECT query")
     };
     let SelectField::Expr { expr, .. } = &s.fields[0] else {

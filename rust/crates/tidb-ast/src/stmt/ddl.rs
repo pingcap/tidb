@@ -16,9 +16,10 @@
 use crate::util::{back_quote, push_name_path};
 use crate::{
     AlterInstanceStmt, AlterRangeStmt, AlterSequenceStmt, AlterTableStmt, CreateIndexStmt,
-    CreateSequenceStmt, CreateTableStmt, CreateUserCommentOrAttribute, CreateUserPasswordOption,
-    CreateUserSpec, CreateViewStmt, DropIndexStmt, DropSequenceStmt, DropTableStmt,
-    RenameTableStmt, RestoreContext, RoleSpec, UserSpec,
+    CreateProcedureStmt, CreateSequenceStmt, CreateTableStmt, CreateUserCommentOrAttribute,
+    CreateUserPasswordOption, CreateUserSpec, CreateViewStmt, DropIndexStmt, DropProcedureStmt,
+    DropSequenceStmt, DropTableStmt, Expr, RenameTableStmt, RestoreContext, RoleSpec,
+    TableLockType, UserSpec,
 };
 
 /// One `old_user TO new_user` pair in `RENAME USER`.
@@ -30,37 +31,73 @@ pub struct RenameUserPair {
     pub new_user: UserSpec,
 }
 
-/// One table lock mode carried by Go's `ast.TableLock`.
-///
-/// `None` is intentionally a real payload, not a parser error: the Go hand
-/// parser accepts `LOCK TABLE name` and its AST restore materializes the
-/// otherwise-unwritten `NONE` mode. Keeping that behavior typed prevents an
-/// execution implementation from mistaking an omitted mode for `READ`.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum TableLockType {
-    /// Go's zero-value `TableLockNone`, restored as `NONE`.
-    #[default]
-    None,
-    /// `READ`.
-    Read,
-    /// `READ LOCAL`.
-    ReadLocal,
-    /// `WRITE`.
-    Write,
-    /// `WRITE LOCAL`.
-    WriteLocal,
+/// `FLASHBACK DATABASE name [TO new_name]`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlashbackDatabaseStmt {
+    /// Original database name.
+    pub name: String,
+    /// Optional restored database name.
+    pub new_name: Option<String>,
 }
 
-impl TableLockType {
-    fn restore(self) -> &'static str {
-        match self {
-            Self::None => "NONE",
-            Self::Read => "READ",
-            Self::ReadLocal => "READ LOCAL",
-            Self::Write => "WRITE",
-            Self::WriteLocal => "WRITE LOCAL",
-        }
-    }
+/// `RECOVER TABLE table [job_num]` or `RECOVER TABLE BY JOB job_id`.
+///
+/// The optional table preserves Go's constructible partial AST: absence picks
+/// the BY JOB branch, while a present table takes precedence over `job_id`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecoverTableStmt {
+    /// DDL job identifier used by the BY JOB form.
+    pub job_id: i64,
+    /// Table restored by name; `None` selects BY JOB.
+    pub table: Option<Vec<String>>,
+    /// Optional historical job count following a table name.
+    pub job_num: i64,
+}
+
+/// `FLASHBACK {TABLE ... | DATABASE ... | CLUSTER} TO {TIMESTAMP expr | TSO n}`.
+///
+/// Field precedence exactly follows Go restore: non-empty `tables`, then a
+/// non-empty database name, otherwise CLUSTER. A nonzero TSO selects the TSO
+/// branch; otherwise `flashback_ts` is required and restore panics if absent,
+/// matching Go's nil-interface dereference for an invalid hand-built node.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FlashbackToTimestampStmt {
+    /// Timestamp expression used when `flashback_tso == 0`.
+    pub flashback_ts: Option<Expr>,
+    /// Numeric TSO; zero selects the timestamp-expression branch.
+    pub flashback_tso: u64,
+    /// Tables in source order; non-empty takes target precedence.
+    pub tables: Vec<Vec<String>>,
+    /// Database target, or an empty string for CLUSTER.
+    pub database_name: String,
+}
+
+/// `FLASHBACK TABLE table [TO new_name]`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlashbackTableStmt {
+    /// Table to restore. Invalid hand-built absence panics during restore,
+    /// matching Go's required pointer dereference.
+    pub table: Option<Vec<String>>,
+    /// New table name; empty means retain the original name.
+    pub new_name: String,
+}
+
+/// `OPTIMIZE [NO_WRITE_TO_BINLOG] TABLE table [, ...]`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OptimizeTableStmt {
+    /// Suppress binary-log recording (`LOCAL` is the input alias).
+    pub no_write_to_binlog: bool,
+    /// Tables in source order.
+    pub tables: Vec<Vec<String>>,
+}
+
+/// `ADMIN REPAIR TABLE table CREATE TABLE ...`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RepairTableStmt {
+    /// Table being repaired.
+    pub table: Vec<String>,
+    /// Replacement table definition.
+    pub create: CreateTableStmt,
 }
 
 /// One `table_name lock_mode` entry in `LOCK TABLE[S]`.
@@ -262,14 +299,30 @@ pub enum DdlStmt {
     TruncateTable(Box<Vec<String>>),
     /// A `CREATE SEQUENCE` statement.
     CreateSequence(Box<CreateSequenceStmt>),
+    /// A `CREATE PROCEDURE` statement.
+    CreateProcedure(Box<CreateProcedureStmt>),
     /// An `ALTER SEQUENCE` statement.
     AlterSequence(Box<AlterSequenceStmt>),
     /// A `DROP SEQUENCE` statement.
     DropSequence(Box<DropSequenceStmt>),
+    /// A `DROP PROCEDURE` statement.
+    DropProcedure(Box<DropProcedureStmt>),
     /// `ALTER INSTANCE RELOAD TLS [NO ROLLBACK ON ERROR]`.
     AlterInstance(Box<AlterInstanceStmt>),
     /// `ALTER RANGE name placement_option`.
     AlterRange(Box<AlterRangeStmt>),
+    /// Restore a dropped database under its original or a new name.
+    FlashbackDatabase(Box<FlashbackDatabaseStmt>),
+    /// Recover a dropped table by table name or DDL job identifier.
+    RecoverTable(Box<RecoverTableStmt>),
+    /// Restore tables, a database, or the cluster to a timestamp or TSO.
+    FlashbackToTimestamp(Box<FlashbackToTimestampStmt>),
+    /// Restore a dropped or truncated table, optionally under a new name.
+    FlashbackTable(Box<FlashbackTableStmt>),
+    /// Optimize one or more tables.
+    OptimizeTable(Box<OptimizeTableStmt>),
+    /// Repair a table using an explicit replacement definition.
+    RepairTable(Box<RepairTableStmt>),
 }
 
 impl DdlStmt {
@@ -353,7 +406,7 @@ impl DdlStmt {
                     }
                     push_name_path(out, &lock.table);
                     out.push(' ');
-                    out.push_str(lock.lock_type.restore());
+                    out.push_str(lock.lock_type.sql());
                 }
             }
             Self::UnlockTables => out.push_str("UNLOCK TABLES"),
@@ -469,10 +522,622 @@ impl DdlStmt {
                 push_name_path(out, name);
             }
             Self::CreateSequence(sequence) => sequence.restore_into(out),
+            Self::CreateProcedure(procedure) => procedure.restore_into(out),
             Self::AlterSequence(sequence) => sequence.restore_into(out),
             Self::DropSequence(sequence) => sequence.restore_into(out),
+            Self::DropProcedure(procedure) => procedure.restore_into(out),
             Self::AlterInstance(instance) => instance.restore_into(out),
             Self::AlterRange(range) => range.restore_into(out),
+            Self::FlashbackDatabase(statement) => {
+                out.push_str("FLASHBACK DATABASE ");
+                out.push_str(&back_quote(&statement.name));
+                if let Some(new_name) = &statement.new_name {
+                    out.push_str(" TO ");
+                    out.push_str(&back_quote(new_name));
+                }
+            }
+            Self::RecoverTable(statement) => {
+                out.push_str("RECOVER TABLE ");
+                if let Some(table) = &statement.table {
+                    push_name_path(out, table);
+                    if statement.job_num > 0 {
+                        out.push(' ');
+                        out.push_str(&statement.job_num.to_string());
+                    }
+                } else {
+                    out.push_str("BY JOB ");
+                    out.push_str(&statement.job_id.to_string());
+                }
+            }
+            Self::FlashbackToTimestamp(statement) => {
+                out.push_str("FLASHBACK ");
+                if !statement.tables.is_empty() {
+                    out.push_str("TABLE ");
+                    for (index, table) in statement.tables.iter().enumerate() {
+                        if index > 0 {
+                            out.push_str(", ");
+                        }
+                        push_name_path(out, table);
+                    }
+                } else if !statement.database_name.is_empty() {
+                    out.push_str("DATABASE ");
+                    out.push_str(&back_quote(&statement.database_name));
+                } else {
+                    out.push_str("CLUSTER");
+                }
+                if statement.flashback_tso == 0 {
+                    out.push_str(" TO TIMESTAMP ");
+                    statement
+                        .flashback_ts
+                        .as_ref()
+                        .expect("FLASHBACK TO TIMESTAMP requires an expression")
+                        .restore_into(out);
+                } else {
+                    out.push_str(" TO TSO ");
+                    out.push_str(&statement.flashback_tso.to_string());
+                }
+            }
+            Self::FlashbackTable(statement) => {
+                out.push_str("FLASHBACK TABLE ");
+                push_name_path(
+                    out,
+                    statement
+                        .table
+                        .as_ref()
+                        .expect("FLASHBACK TABLE requires a table"),
+                );
+                if !statement.new_name.is_empty() {
+                    out.push_str(" TO ");
+                    out.push_str(&back_quote(&statement.new_name));
+                }
+            }
+            Self::OptimizeTable(statement) => {
+                out.push_str("OPTIMIZE ");
+                if statement.no_write_to_binlog {
+                    out.push_str("NO_WRITE_TO_BINLOG ");
+                }
+                out.push_str("TABLE ");
+                for (index, table) in statement.tables.iter().enumerate() {
+                    if index > 0 {
+                        out.push_str(", ");
+                    }
+                    push_name_path(out, table);
+                }
+            }
+            Self::RepairTable(statement) => {
+                out.push_str("ADMIN REPAIR TABLE ");
+                push_name_path(out, &statement.table);
+                out.push(' ');
+                statement.create.restore_into_with_context(out, context);
+            }
         }
+    }
+}
+
+// BEGIN GENERATED AST VISITOR IMPLEMENTATIONS
+
+impl crate::Visitable for RenameUserPair {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { old_user, new_user } = self;
+        if !crate::Visitable::accept(old_user, visitor) {
+            return false;
+        }
+        if !crate::Visitable::accept(new_user, visitor) {
+            return false;
+        }
+        let _ = old_user;
+        let _ = new_user;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for FlashbackDatabaseStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { name, new_name } = self;
+        let _ = name;
+        let _ = new_name;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for RecoverTableStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            job_id,
+            table,
+            job_num,
+        } = self;
+        let _ = job_id;
+        let _ = table;
+        let _ = job_num;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for FlashbackToTimestampStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            flashback_ts,
+            flashback_tso,
+            tables,
+            database_name,
+        } = self;
+        if *flashback_tso == 0 {
+            if let Some(expression) = flashback_ts.as_mut() {
+                if !crate::Visitable::accept(expression, visitor) {
+                    return false;
+                }
+            }
+        }
+        let _ = flashback_ts;
+        let _ = flashback_tso;
+        let _ = tables;
+        let _ = database_name;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for FlashbackTableStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { table, new_name } = self;
+        let _ = table;
+        let _ = new_name;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for OptimizeTableStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            no_write_to_binlog,
+            tables,
+        } = self;
+        let _ = no_write_to_binlog;
+        let _ = tables;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for RepairTableStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { table, create } = self;
+        if !crate::Visitable::accept(create, visitor) {
+            return false;
+        }
+        let _ = table;
+        let _ = create;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for TableLock {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { table, lock_type } = self;
+        if !crate::Visitable::accept(lock_type, visitor) {
+            return false;
+        }
+        let _ = table;
+        let _ = lock_type;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for DatabaseOption {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::CharacterSet(field_0) => {
+                let _ = field_0;
+            }
+            Self::Collate(field_0) => {
+                let _ = field_0;
+            }
+            Self::Encryption(field_0) => {
+                let _ = field_0;
+            }
+            Self::PlacementPolicy(field_0) => {
+                let _ = field_0;
+            }
+            Self::SetTiFlashReplica { count, labels } => {
+                let _ = count;
+                let _ = labels;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for DdlStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::CreateTable(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::CreateView(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::CreateIndex(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::DropIndex(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::CreateDatabase {
+                if_not_exists,
+                name,
+                options,
+            } => {
+                for value in options.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                let _ = if_not_exists;
+                let _ = name;
+                let _ = options;
+            }
+            Self::AlterDatabase { name, options } => {
+                for value in options.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                let _ = name;
+                let _ = options;
+            }
+            Self::CreatePlacementPolicy(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::AlterPlacementPolicy(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::AlterTable(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::RenameTable(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::RenameUser { pairs } => {
+                for value in pairs.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                let _ = pairs;
+            }
+            Self::LockTables(field_0) => {
+                for value in field_0.as_mut().iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                let _ = field_0;
+            }
+            Self::UnlockTables => {}
+            Self::DropTable(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::DropView { if_exists, names } => {
+                let _ = if_exists;
+                let _ = names;
+            }
+            Self::DropDatabase { if_exists, name } => {
+                let _ = if_exists;
+                let _ = name;
+            }
+            Self::DropPlacementPolicy(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::DropResourceGroup(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::CreateResourceGroup(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::AlterResourceGroup(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::CreateMaskingPolicy(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::CreateUser {
+                if_not_exists,
+                users,
+                tls_options,
+                resource_options,
+                password_options,
+                comment_or_attribute,
+                resource_group,
+            } => {
+                for value in users.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                for value in tls_options.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                for value in resource_options.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                for value in password_options.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                if let Some(value) = comment_or_attribute.as_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                let _ = if_not_exists;
+                let _ = users;
+                let _ = tls_options;
+                let _ = resource_options;
+                let _ = password_options;
+                let _ = comment_or_attribute;
+                let _ = resource_group;
+            }
+            Self::CreateRole {
+                if_not_exists,
+                roles,
+            } => {
+                for value in roles.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                let _ = if_not_exists;
+                let _ = roles;
+            }
+            Self::AlterUser(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::DropUser {
+                is_role,
+                if_exists,
+                users,
+            } => {
+                for value in users.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                let _ = is_role;
+                let _ = if_exists;
+                let _ = users;
+            }
+            Self::TruncateTable(field_0) => {
+                let _ = field_0;
+            }
+            Self::CreateSequence(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::CreateProcedure(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::AlterSequence(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::DropSequence(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::DropProcedure(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::AlterInstance(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::AlterRange(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::FlashbackDatabase(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::RecoverTable(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::FlashbackToTimestamp(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::FlashbackTable(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::OptimizeTable(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::RepairTable(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+// END GENERATED AST VISITOR IMPLEMENTATIONS
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{DdlStmt, Stmt};
+
+    fn ddl(statement: DdlStmt) -> String {
+        Stmt::Ddl(crate::NodeBox::new(statement)).restore()
+    }
+
+    #[test]
+    fn recover_and_flashback_statements_preserve_go_field_precedence() {
+        assert_eq!(
+            ddl(DdlStmt::RecoverTable(Box::new(RecoverTableStmt {
+                job_id: 99,
+                table: Some(vec!["db".into(), "t".into()]),
+                job_num: 3,
+            }))),
+            "RECOVER TABLE `db`.`t` 3"
+        );
+        assert_eq!(
+            ddl(DdlStmt::RecoverTable(Box::new(RecoverTableStmt {
+                job_id: 99,
+                table: None,
+                job_num: 3,
+            }))),
+            "RECOVER TABLE BY JOB 99"
+        );
+        assert_eq!(
+            ddl(DdlStmt::FlashbackToTimestamp(Box::new(
+                FlashbackToTimestampStmt {
+                    flashback_ts: Some(Expr::String("2026-07-23".into())),
+                    flashback_tso: 0,
+                    tables: vec![vec!["db".into(), "t".into()], vec!["t2".into()]],
+                    database_name: "ignored".into(),
+                },
+            ))),
+            "FLASHBACK TABLE `db`.`t`, `t2` TO TIMESTAMP _UTF8MB4'2026-07-23'"
+        );
+        assert_eq!(
+            ddl(DdlStmt::FlashbackToTimestamp(Box::new(
+                FlashbackToTimestampStmt {
+                    flashback_ts: None,
+                    flashback_tso: 123,
+                    tables: Vec::new(),
+                    database_name: "db".into(),
+                },
+            ))),
+            "FLASHBACK DATABASE `db` TO TSO 123"
+        );
+        assert_eq!(
+            ddl(DdlStmt::FlashbackToTimestamp(Box::new(
+                FlashbackToTimestampStmt {
+                    flashback_ts: None,
+                    flashback_tso: 123,
+                    tables: Vec::new(),
+                    database_name: String::new(),
+                },
+            ))),
+            "FLASHBACK CLUSTER TO TSO 123"
+        );
+        assert_eq!(
+            ddl(DdlStmt::FlashbackTable(Box::new(FlashbackTableStmt {
+                table: Some(vec!["old".into()]),
+                new_name: "new".into(),
+            }))),
+            "FLASHBACK TABLE `old` TO `new`"
+        );
     }
 }

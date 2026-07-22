@@ -59,7 +59,7 @@ fn lower_select_binds_direct_alias_and_ordinal_keys_to_fullschema() {
     )
     .expect("valid configured query");
     let select = match statement {
-        tidb_ast::Stmt::Query(query) => match *query {
+        tidb_ast::Stmt::Query(query) => match query.into_inner() {
             tidb_ast::QueryStmt::Select(select) => select,
             _ => panic!("plain SELECT"),
         },

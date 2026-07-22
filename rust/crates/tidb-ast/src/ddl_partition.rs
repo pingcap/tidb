@@ -14,6 +14,8 @@
 
 //! Partition payloads shared by `CREATE TABLE` and `ALTER TABLE`.
 
+use crate::PartitionType;
+
 use super::{back_quote, push_name_path, Expr, TableOption};
 
 /// Every `ALTER TABLE` partition action belongs to this envelope. The outer
@@ -123,7 +125,11 @@ pub enum AlterPartitionAction {
 }
 
 /// Restores the partition envelope with Go's canonical bytes.
-pub(super) fn restore_alter_action(out: &mut String, action: &AlterPartitionAction) {
+pub(super) fn restore_alter_action(
+    out: &mut String,
+    action: &AlterPartitionAction,
+    context: crate::RestoreContext,
+) {
     match action {
         AlterPartitionAction::Repartition(partitioning) => {
             partitioning.restore_after_alter_table(out);
@@ -145,10 +151,12 @@ pub(super) fn restore_alter_action(out: &mut String, action: &AlterPartitionActi
             }
         }
         AlterPartitionAction::SetPlacementPolicy { partition, policy } => {
-            out.push_str("PARTITION ");
-            out.push_str(&back_quote(partition));
-            out.push_str(" PLACEMENT POLICY = ");
-            out.push_str(&back_quote(policy));
+            context.write_with_tidb_special_comment(out, "placement", |out| {
+                out.push_str("PARTITION ");
+                out.push_str(&back_quote(partition));
+                out.push_str(" PLACEMENT POLICY = ");
+                out.push_str(&back_quote(policy));
+            });
         }
         AlterPartitionAction::Add {
             if_not_exists,
@@ -379,21 +387,6 @@ pub struct PartitionMethod {
     pub interval: Option<PartitionInterval>,
 }
 
-/// The supported `PARTITION BY` method classes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PartitionType {
-    /// `HASH (expr)`.
-    Hash,
-    /// `KEY [ALGORITHM = n] (columns)`.
-    Key,
-    /// `RANGE (expr)` or `RANGE COLUMNS (columns)`.
-    Range,
-    /// `LIST (expr)` or `LIST COLUMNS (columns)`.
-    List,
-    /// `SYSTEM_TIME [INTERVAL expr unit | LIMIT n]`.
-    SystemTime,
-}
-
 /// `RANGE ... INTERVAL (...)` creation-only syntax.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PartitionInterval {
@@ -547,13 +540,7 @@ impl PartitionMethod {
         if self.linear {
             out.push_str("LINEAR ");
         }
-        out.push_str(match self.kind {
-            PartitionType::Hash => "HASH",
-            PartitionType::Key => "KEY",
-            PartitionType::Range => "RANGE",
-            PartitionType::List => "LIST",
-            PartitionType::SystemTime => "SYSTEM_TIME",
-        });
+        out.push_str(self.kind.sql());
         if let Some(algorithm) = self.key_algorithm {
             out.push_str(" ALGORITHM = ");
             out.push_str(&algorithm.to_string());
@@ -691,3 +678,411 @@ fn restore_partition_values(out: &mut String, values: &[PartitionValue]) {
         }
     }
 }
+
+// BEGIN GENERATED AST VISITOR IMPLEMENTATIONS
+
+impl crate::Visitable for AlterPartitionAction {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Repartition(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::SetAttributes {
+                partition,
+                attributes,
+            } => {
+                let _ = partition;
+                let _ = attributes;
+            }
+            Self::SetPlacementPolicy { partition, policy } => {
+                let _ = partition;
+                let _ = policy;
+            }
+            Self::Add {
+                if_not_exists,
+                no_write_to_binlog,
+                spec,
+            } => {
+                if !crate::Visitable::accept(spec, visitor) {
+                    return false;
+                }
+                let _ = if_not_exists;
+                let _ = no_write_to_binlog;
+                let _ = spec;
+            }
+            Self::Exchange {
+                partition,
+                table,
+                with_validation,
+            } => {
+                let _ = partition;
+                let _ = table;
+                let _ = with_validation;
+            }
+            Self::Drop { if_exists, names } => {
+                let _ = if_exists;
+                let _ = names;
+            }
+            Self::Reorganize {
+                no_write_to_binlog,
+                names,
+                definitions,
+            } => {
+                for value in definitions.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                let _ = no_write_to_binlog;
+                let _ = names;
+                let _ = definitions;
+            }
+            Self::Coalesce {
+                no_write_to_binlog,
+                count,
+            } => {
+                let _ = no_write_to_binlog;
+                let _ = count;
+            }
+            Self::Truncate { all, names } => {
+                let _ = all;
+                let _ = names;
+            }
+            Self::Check { all, names } => {
+                let _ = all;
+                let _ = names;
+            }
+            Self::ImportTablespace { all, names } => {
+                let _ = all;
+                let _ = names;
+            }
+            Self::DiscardTablespace { all, names } => {
+                let _ = all;
+                let _ = names;
+            }
+            Self::RemovePartitioning => {}
+            Self::FirstPartitionLessThan { expr, if_exists } => {
+                if !crate::Visitable::accept(expr, visitor) {
+                    return false;
+                }
+                let _ = expr;
+                let _ = if_exists;
+            }
+            Self::LastPartitionLessThan {
+                expr,
+                no_write_to_binlog,
+            } => {
+                if !crate::Visitable::accept(expr, visitor) {
+                    return false;
+                }
+                let _ = expr;
+                let _ = no_write_to_binlog;
+            }
+            Self::SplitMaxValuePartition { expr } => {
+                if !crate::Visitable::accept(expr, visitor) {
+                    return false;
+                }
+                let _ = expr;
+            }
+            Self::MergeFirstPartitionLessThan { expr } => {
+                if !crate::Visitable::accept(expr, visitor) {
+                    return false;
+                }
+                let _ = expr;
+            }
+            Self::Maintain {
+                operation,
+                no_write_to_binlog,
+                all,
+                names,
+            } => {
+                if !crate::Visitable::accept(operation, visitor) {
+                    return false;
+                }
+                let _ = operation;
+                let _ = no_write_to_binlog;
+                let _ = all;
+                let _ = names;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for PartitionMaintenanceOp {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Rebuild => {}
+            Self::Optimize => {}
+            Self::Repair => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for AddPartitionSpec {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Count(field_0) => {
+                let _ = field_0;
+            }
+            Self::Definitions(field_0) => {
+                for value in field_0.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                let _ = field_0;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for PartitionMethod {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            kind,
+            linear,
+            expr,
+            columns,
+            key_algorithm,
+            unit,
+            limit,
+            count,
+            interval,
+        } = self;
+        if !crate::Visitable::accept(kind, visitor) {
+            return false;
+        }
+        if let Some(value) = expr.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        if let Some(value) = interval.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        let _ = kind;
+        let _ = linear;
+        let _ = expr;
+        let _ = columns;
+        let _ = key_algorithm;
+        let _ = unit;
+        let _ = limit;
+        let _ = count;
+        let _ = interval;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for PartitionInterval {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            expr,
+            unit,
+            first_range_end,
+            last_range_end,
+            null_partition,
+            maxvalue_partition,
+        } = self;
+        if !crate::Visitable::accept(expr, visitor) {
+            return false;
+        }
+        if let Some(value) = first_range_end.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        if let Some(value) = last_range_end.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        let _ = expr;
+        let _ = unit;
+        let _ = first_range_end;
+        let _ = last_range_end;
+        let _ = null_partition;
+        let _ = maxvalue_partition;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for TablePartitioning {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            method,
+            subpartition,
+            definitions,
+            update_indexes,
+        } = self;
+        if !crate::Visitable::accept(method, visitor) {
+            return false;
+        }
+        if let Some(value) = subpartition.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        for value in definitions.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        for value in update_indexes.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        let _ = method;
+        let _ = subpartition;
+        let _ = definitions;
+        let _ = update_indexes;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for PartitionIndexUpdate {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { name, global } = self;
+        let _ = name;
+        let _ = global;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for PartitionDefinition {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            name,
+            clause,
+            options,
+            sub_partitions,
+        } = self;
+        if !crate::Visitable::accept(clause, visitor) {
+            return false;
+        }
+        for value in options.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        for value in sub_partitions.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        let _ = name;
+        let _ = clause;
+        let _ = options;
+        let _ = sub_partitions;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for SubPartitionDefinition {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { name, options } = self;
+        for value in options.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        let _ = name;
+        let _ = options;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for PartitionDefinitionClause {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::None => {}
+            Self::LessThan(field_0) => {
+                for value in field_0.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                let _ = field_0;
+            }
+            Self::In(field_0) => {
+                for value in field_0.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                let _ = field_0;
+            }
+            Self::Default => {}
+            Self::History { current } => {
+                let _ = current;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for PartitionValue {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Expr(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::Tuple(field_0) => {
+                for value in field_0.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                let _ = field_0;
+            }
+            Self::Default => {}
+            Self::MaxValue => {}
+        }
+        visitor.leave(self)
+    }
+}
+// END GENERATED AST VISITOR IMPLEMENTATIONS

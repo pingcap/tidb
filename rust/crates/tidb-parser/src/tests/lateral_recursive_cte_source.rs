@@ -37,7 +37,7 @@ fn recursive_lateral_cte_source_rows_restore_like_go() {
         let Stmt::Query(query) = statement else {
             panic!("expected query statement")
         };
-        let QueryStmt::Select(select) = *query else {
+        let QueryStmt::Select(select) = query.into_inner() else {
             panic!("expected SELECT query")
         };
         let Some(with) = select.with else {

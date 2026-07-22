@@ -31,5 +31,8 @@ fn json_memberof_pinned_go_restore_failure_is_explicit() {
     assert_eq!(record.outcome, GoOutcome::RestoreFailure);
     assert_eq!(record.statement_count, 0);
     let statement = tidb_parser::parse(&record.input.sql).expect("Rust parser accepts the row");
-    assert_eq!(statement.restore(), "SELECT JSON_MEMBEROF()");
+    assert_eq!(
+        statement.try_restore().unwrap_err(),
+        "Incorrect parameter count in the call to native function 'json_memberof'"
+    );
 }

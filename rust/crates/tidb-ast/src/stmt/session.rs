@@ -1,8 +1,8 @@
 use crate::{
     set::restore_set_charset,
     util::{back_quote, escape_string_literal},
-    BeginStmt, CharsetSetKind, PrepareSource, SetResourceGroupStmt, SetSessionStatesStmt, SetStmt,
-    SetUserVarStmt, UserSpec,
+    BeginStmt, CharsetSetKind, CompletionType, Expr, PrepareSource, SetResourceGroupStmt,
+    SetSessionStatesStmt, SetStmt, SetUserVarStmt, UserSpec,
 };
 
 /// Session-scoped statements, grouped behind [`crate::Stmt::Session`].
@@ -49,21 +49,28 @@ pub enum SessionStmt {
     Execute {
         /// The prepared statement's name.
         name: String,
-        /// User variables listed by `USING`, without `@`.
-        using: Vec<String>,
+        /// Expressions listed by `USING`.
+        ///
+        /// TiDB's parser grammar produces user variables here, but the Go AST
+        /// deliberately stores `[]ExprNode`: hand-built and rewritten trees
+        /// may therefore contain any expression and must restore and visit it.
+        using: Vec<Expr>,
     },
     /// `DEALLOCATE PREPARE name`.
     Deallocate(String),
     /// `BEGIN [OPTIMISTIC|PESSIMISTIC]` or `START TRANSACTION`.
     Begin(Box<BeginStmt>),
-    /// `COMMIT`.
-    Commit,
-    /// `ROLLBACK`.
-    Rollback,
+    /// `COMMIT` with its source completion mode.
+    Commit(CompletionType),
+    /// `ROLLBACK`, optionally to a savepoint, with its completion mode.
+    Rollback {
+        /// Savepoint name for `ROLLBACK TO`.
+        savepoint: Option<String>,
+        /// Transaction completion behavior.
+        completion: CompletionType,
+    },
     /// `SAVEPOINT name`.
     Savepoint(Box<String>),
-    /// `ROLLBACK TO [SAVEPOINT] name`.
-    RollbackToSavepoint(Box<String>),
     /// `RELEASE SAVEPOINT name`.
     ReleaseSavepoint(Box<String>),
 }
@@ -108,12 +115,11 @@ impl SessionStmt {
                 out.push_str(&back_quote(name));
                 if !using.is_empty() {
                     out.push_str(" USING ");
-                    for (i, name) in using.iter().enumerate() {
+                    for (i, expression) in using.iter().enumerate() {
                         if i > 0 {
                             out.push(',');
                         }
-                        out.push('@');
-                        out.push_str(&back_quote(name));
+                        expression.restore_into(out);
                     }
                 }
             }
@@ -122,14 +128,23 @@ impl SessionStmt {
                 out.push_str(&back_quote(name));
             }
             Self::Begin(begin) => begin.restore_into(out),
-            Self::Commit => out.push_str("COMMIT"),
-            Self::Rollback => out.push_str("ROLLBACK"),
+            Self::Commit(completion) => {
+                out.push_str("COMMIT");
+                out.push_str(completion.sql());
+            }
+            Self::Rollback {
+                savepoint,
+                completion,
+            } => {
+                out.push_str("ROLLBACK");
+                if let Some(savepoint) = savepoint {
+                    out.push_str(" TO ");
+                    out.push_str(savepoint);
+                }
+                out.push_str(completion.sql());
+            }
             Self::Savepoint(name) => {
                 out.push_str("SAVEPOINT ");
-                out.push_str(name);
-            }
-            Self::RollbackToSavepoint(name) => {
-                out.push_str("ROLLBACK TO ");
                 out.push_str(name);
             }
             Self::ReleaseSavepoint(name) => {
@@ -286,4 +301,258 @@ impl SetPasswordStmt {
             out.push_str(" RETAIN CURRENT PASSWORD");
         }
     }
+
+    /// Returns TiDB's password-redacted audit text.
+    pub fn secure_text(&self) -> String {
+        let mut out = String::from("set password");
+        if let Some(user) = &self.user {
+            out.push_str(" for user ");
+            if user.current_user {
+                out.push_str("CURRENT_USER");
+            } else {
+                out.push_str(&user.user);
+                out.push('@');
+                out.push_str(&user.host);
+            }
+        }
+        if self.retain_current_password {
+            out.push_str(" RETAIN CURRENT PASSWORD");
+        }
+        out
+    }
 }
+
+// BEGIN GENERATED AST VISITOR IMPLEMENTATIONS
+
+impl crate::Visitable for SessionStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Use(field_0) => {
+                let _ = field_0;
+            }
+            Self::Set(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::SetUserVar(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::SetCharset {
+                kind,
+                charset,
+                collation,
+            } => {
+                if !crate::Visitable::accept(kind, visitor) {
+                    return false;
+                }
+                let _ = kind;
+                let _ = charset;
+                let _ = collation;
+            }
+            Self::SetPassword(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::SetRole(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::SetDefaultRole(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::SetResourceGroup(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::SetSessionStates(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::Prepare { name, source } => {
+                if !crate::Visitable::accept(source, visitor) {
+                    return false;
+                }
+                let _ = name;
+                let _ = source;
+            }
+            Self::Execute { name, using } => {
+                for value in using.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                let _ = name;
+                let _ = using;
+            }
+            Self::Deallocate(field_0) => {
+                let _ = field_0;
+            }
+            Self::Begin(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::Commit(completion) => {
+                if !crate::Visitable::accept(completion, visitor) {
+                    return false;
+                }
+            }
+            Self::Rollback {
+                savepoint,
+                completion,
+            } => {
+                if !crate::Visitable::accept(completion, visitor) {
+                    return false;
+                }
+                let _ = savepoint;
+            }
+            Self::Savepoint(field_0) => {
+                let _ = field_0;
+            }
+            Self::ReleaseSavepoint(field_0) => {
+                let _ = field_0;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for RoleSpec {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { role, host } = self;
+        let _ = role;
+        let _ = host;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for SetRoleSelection {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Default => {}
+            Self::None => {}
+            Self::All => {}
+            Self::AllExcept(field_0) => {
+                for value in field_0.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                let _ = field_0;
+            }
+            Self::Roles(field_0) => {
+                for value in field_0.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                let _ = field_0;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for SetRoleStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { selection } = self;
+        if !crate::Visitable::accept(selection, visitor) {
+            return false;
+        }
+        let _ = selection;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for DefaultRoleSelection {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::None => {}
+            Self::All => {}
+            Self::Roles(field_0) => {
+                for value in field_0.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                let _ = field_0;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for SetDefaultRoleStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { selection, users } = self;
+        if !crate::Visitable::accept(selection, visitor) {
+            return false;
+        }
+        for value in users.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        let _ = selection;
+        let _ = users;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for SetPasswordStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            user,
+            password,
+            retain_current_password,
+        } = self;
+        if let Some(value) = user.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        let _ = user;
+        let _ = password;
+        let _ = retain_current_password;
+        visitor.leave(self)
+    }
+}
+// END GENERATED AST VISITOR IMPLEMENTATIONS

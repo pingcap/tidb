@@ -46,7 +46,7 @@ fn rust_eval_label(expr: &str) -> Result<String, String> {
     let Stmt::Query(query) = stmt else {
         return Err("not a query".to_string());
     };
-    let QueryStmt::Select(sel) = *query else {
+    let QueryStmt::Select(sel) = query.into_inner() else {
         return Err("not a select".to_string());
     };
     match sel.fields.first() {

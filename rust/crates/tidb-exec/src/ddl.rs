@@ -133,6 +133,7 @@ impl Database {
                 self.create_sequence(statement)?;
                 Ok(Outcome::Done)
             }
+            DdlStmt::CreateProcedure(_) => Err(ExecError::Unsupported("CREATE PROCEDURE")),
             DdlStmt::AlterSequence(statement) => {
                 self.transaction.commit();
                 self.alter_sequence(statement)?;
@@ -143,6 +144,13 @@ impl Database {
                 self.drop_sequence(statement)?;
                 Ok(Outcome::Done)
             }
+            DdlStmt::DropProcedure(_) => Err(ExecError::Unsupported("DROP PROCEDURE")),
+            DdlStmt::FlashbackDatabase(_) => Err(ExecError::Unsupported("FLASHBACK DATABASE")),
+            DdlStmt::RecoverTable(_) => Err(ExecError::Unsupported("RECOVER TABLE")),
+            DdlStmt::FlashbackToTimestamp(_) => Err(ExecError::Unsupported("FLASHBACK CLUSTER")),
+            DdlStmt::FlashbackTable(_) => Err(ExecError::Unsupported("FLASHBACK TABLE")),
+            DdlStmt::OptimizeTable(_) => Err(ExecError::Unsupported("OPTIMIZE TABLE")),
+            DdlStmt::RepairTable(_) => Err(ExecError::Unsupported("ADMIN REPAIR TABLE")),
         }
     }
 

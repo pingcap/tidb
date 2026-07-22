@@ -73,7 +73,7 @@ fn table_option_source_rows_use_the_physical_option_leaf() {
         let Stmt::Ddl(ddl) = parse(sql).expect("parse typed compatibility option") else {
             panic!("not a DDL statement: {sql}");
         };
-        let DdlStmt::CreateTable(table) = *ddl else {
+        let DdlStmt::CreateTable(table) = ddl.into_inner() else {
             panic!("not a CREATE TABLE statement: {sql}");
         };
         assert!(is_expected(&table.table_options), "typed AST drift: {sql}");
@@ -185,7 +185,7 @@ fn table_option_merge_union_source_row_is_typed_and_restored() {
     let Stmt::Ddl(ddl) = parse(sql).expect("parse MERGE UNION") else {
         panic!("not a DDL statement");
     };
-    let DdlStmt::CreateTable(table) = *ddl else {
+    let DdlStmt::CreateTable(table) = ddl.into_inner() else {
         panic!("not a CREATE TABLE statement");
     };
     assert!(matches!(

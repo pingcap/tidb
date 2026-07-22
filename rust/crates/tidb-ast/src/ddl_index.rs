@@ -18,9 +18,11 @@
 //! vocabulary without yet changing an existing statement envelope: the parser
 //! and executor can switch to one lossless contract atomically.
 
+use crate::{IndexType, PrimaryKeyStorage, ReferentialAction};
+
 use super::{
     back_quote, escape_string_literal, push_index_parts, push_name_path, Expr, IndexPart,
-    PrimaryKeyStorage, ReferentialAction, RestoreContext, SplitOption,
+    RestoreContext, SplitOption,
 };
 
 const FEATURE_CLUSTERED_INDEX: &str = "clustered_index";
@@ -57,43 +59,6 @@ impl IndexKind {
             Self::Fulltext => "FULLTEXT INDEX",
             Self::Vector => "VECTOR INDEX",
             Self::Columnar => "COLUMNAR INDEX",
-        }
-    }
-}
-
-/// The index method stored by Go's `ast.IndexOption.Tp`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IndexType {
-    /// `BTREE`.
-    Btree,
-    /// `HASH`.
-    Hash,
-    /// `RTREE`.
-    Rtree,
-    /// `HYPO`.
-    Hypo,
-    /// `VECTOR`.
-    Vector,
-    /// `INVERTED`.
-    Inverted,
-    /// `HNSW`.
-    Hnsw,
-    /// `FULLTEXT`.
-    Fulltext,
-}
-
-impl IndexType {
-    /// Returns the canonical SQL spelling for this index method.
-    pub fn sql(self) -> &'static str {
-        match self {
-            Self::Btree => "BTREE",
-            Self::Hash => "HASH",
-            Self::Rtree => "RTREE",
-            Self::Hypo => "HYPO",
-            Self::Vector => "VECTOR",
-            Self::Inverted => "INVERTED",
-            Self::Hnsw => "HNSW",
-            Self::Fulltext => "FULLTEXT",
         }
     }
 }
@@ -577,11 +542,11 @@ impl ForeignKeyReference {
         }
         if let Some(on_delete) = &self.on_delete {
             out.push_str(" ON DELETE ");
-            out.push_str(on_delete.restore());
+            out.push_str(on_delete.sql());
         }
         if let Some(on_update) = &self.on_update {
             out.push_str(" ON UPDATE ");
-            out.push_str(on_update.restore());
+            out.push_str(on_update.sql());
         }
     }
 }
@@ -637,6 +602,304 @@ impl ForeignKeyConstraintDefinition {
         self.reference.restore_into(out);
     }
 }
+
+// BEGIN GENERATED AST VISITOR IMPLEMENTATIONS
+
+impl crate::Visitable for IndexKind {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Ordinary => {}
+            Self::Unique => {}
+            Self::Spatial => {}
+            Self::Fulltext => {}
+            Self::Vector => {}
+            Self::Columnar => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for IndexVisibility {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Visible => {}
+            Self::Invisible => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for IndexAlgorithm {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Copy => {}
+            Self::Inplace => {}
+            Self::Instant => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for IndexLock {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::None => {}
+            Self::Shared => {}
+            Self::Exclusive => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for IndexOnlineDdl {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { algorithm, lock } = self;
+        if let Some(value) = algorithm.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        if let Some(value) = lock.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        let _ = algorithm;
+        let _ = lock;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for IndexPreSplitRegions {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Count(field_0) => {
+                let _ = field_0;
+            }
+            Self::Boundaries(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for IndexOptions {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            key_block_size,
+            index_type,
+            parser_name,
+            comment,
+            visibility,
+            primary_key_storage,
+            global,
+            pre_split_regions,
+            secondary_engine_attribute,
+            add_columnar_replica_on_demand,
+            condition,
+        } = self;
+        if let Some(value) = index_type.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        if let Some(value) = visibility.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        if let Some(value) = primary_key_storage.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        if let Some(value) = pre_split_regions.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        if let Some(value) = condition.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        let _ = key_block_size;
+        let _ = index_type;
+        let _ = parser_name;
+        let _ = comment;
+        let _ = visibility;
+        let _ = primary_key_storage;
+        let _ = global;
+        let _ = pre_split_regions;
+        let _ = secondary_engine_attribute;
+        let _ = add_columnar_replica_on_demand;
+        let _ = condition;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for IndexConstraintKind {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::PrimaryKey => {}
+            Self::Key => {}
+            Self::Index => {}
+            Self::Unique => {}
+            Self::UniqueKey => {}
+            Self::UniqueIndex => {}
+            Self::Fulltext => {}
+            Self::Vector => {}
+            Self::Columnar => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for IndexConstraintDefinition {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            kind,
+            if_not_exists,
+            name,
+            is_empty_index,
+            parts,
+            options,
+        } = self;
+        if !crate::Visitable::accept(kind, visitor) {
+            return false;
+        }
+        for value in parts.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        if !crate::Visitable::accept(options, visitor) {
+            return false;
+        }
+        let _ = kind;
+        let _ = if_not_exists;
+        let _ = name;
+        let _ = is_empty_index;
+        let _ = parts;
+        let _ = options;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for ForeignKeyMatch {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::None => {}
+            Self::Full => {}
+            Self::Partial => {}
+            Self::Simple => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for ForeignKeyReference {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            table,
+            parts,
+            match_type,
+            on_delete,
+            on_update,
+        } = self;
+        if let Some(value) = parts.as_mut() {
+            for value in value.iter_mut() {
+                if !crate::Visitable::accept(value, visitor) {
+                    return false;
+                }
+            }
+        }
+        if !crate::Visitable::accept(match_type, visitor) {
+            return false;
+        }
+        if let Some(value) = on_delete.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        if let Some(value) = on_update.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        let _ = table;
+        let _ = parts;
+        let _ = match_type;
+        let _ = on_delete;
+        let _ = on_update;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for ForeignKeyConstraintDefinition {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            name,
+            if_not_exists,
+            parts,
+            reference,
+        } = self;
+        for value in parts.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        if !crate::Visitable::accept(reference, visitor) {
+            return false;
+        }
+        let _ = name;
+        let _ = if_not_exists;
+        let _ = parts;
+        let _ = reference;
+        visitor.leave(self)
+    }
+}
+// END GENERATED AST VISITOR IMPLEMENTATIONS
 
 #[cfg(test)]
 mod tests {

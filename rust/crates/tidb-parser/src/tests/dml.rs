@@ -15,6 +15,23 @@
 
 use super::*;
 
+/// `pkg/parser/ast/dml_test.go::TestDMLVisitorCover`.
+#[test]
+fn test_dml_visitor_cover() {
+    for sql in [
+        "DELETE FROM t WHERE a = 1 ORDER BY b LIMIT 3",
+        "SHOW TABLES LIKE 't%'",
+        "LOAD DATA INFILE '/tmp/t.csv' INTO TABLE t (a)",
+        "IMPORT INTO t FROM '/tmp/t.csv'",
+        "INSERT INTO t SELECT * FROM s WHERE a = 1",
+        "SELECT a FROM t WHERE b = 1 GROUP BY a HAVING COUNT(*) > 0 ORDER BY a LIMIT 1",
+        "SELECT 1 UNION SELECT 2",
+        "UPDATE t SET a = a + 1 WHERE b = 2",
+    ] {
+        assert_full_visitor_traversal(sql);
+    }
+}
+
 #[test]
 fn dml_statements_use_one_outer_envelope() {
     for (sql, expected) in [
@@ -301,10 +318,10 @@ fn single_table_update_accepts_bare_default_assignments() {
 /// restored (task #137, a common statement surfaced by the real-TiDB
 /// corpus).
 #[test]
-fn truncate_table() {
+fn test_ddl_truncate_table_stmt_restore() {
     assert_eq!(r("truncate table t"), "TRUNCATE TABLE `t`");
     assert_eq!(r("truncate t"), "TRUNCATE TABLE `t`");
-    assert_eq!(r("truncate table db.t"), "TRUNCATE TABLE `db`.`t`");
+    assert_eq!(r("truncate table a.t1"), "TRUNCATE TABLE `a`.`t1`");
 }
 
 /// `REPLACE` reuses the `INSERT ... VALUES` grammar (`INTO` optional and

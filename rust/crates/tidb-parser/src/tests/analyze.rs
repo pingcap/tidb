@@ -88,24 +88,60 @@ fn analyze_topn_and_bucket_options_preserve_order() {
             "ANALYZE TABLE `t` PARTITION `p0` INDEX `i` WITH 4 BUCKETS",
         ),
     ] {
-        assert_eq!(r(sql), restored, "{sql}");
+        let statement = parse(sql).unwrap_or_else(|error| panic!("parse {sql:?}: {error:?}"));
+        assert_eq!(statement.restore(), restored, "{sql}");
     }
 }
 
 #[test]
-fn unrepresented_go_analyze_payloads_remain_explicit_gaps() {
-    for sql in [
-        "analyze no_write_to_binlog table t",
-        "analyze local table t",
-        "analyze table t update histogram on c1",
-        "analyze table t drop histogram on c1",
-        "analyze table t predicate columns",
-        "analyze table t with 4 cmsketch width",
-        "analyze table t with 4 cmsketch depth",
-        "analyze table t with 4 samples",
-        "analyze table t with 0.1 samplerate",
-        "analyze table t with 0.05 ndvrate",
+fn analyze_complete_stats_source_payloads_match_go() {
+    for (sql, restored) in [
+        (
+            "analyze no_write_to_binlog table t",
+            "ANALYZE NO_WRITE_TO_BINLOG TABLE `t`",
+        ),
+        (
+            "analyze local table t",
+            "ANALYZE NO_WRITE_TO_BINLOG TABLE `t`",
+        ),
+        (
+            "analyze table t update histogram on c1,c2",
+            "ANALYZE TABLE `t` UPDATE HISTOGRAM ON `c1`,`c2`",
+        ),
+        (
+            "analyze table t drop histogram on c1",
+            "ANALYZE TABLE `t` DROP HISTOGRAM ON `c1`",
+        ),
+        (
+            "analyze table t predicate columns",
+            "ANALYZE TABLE `t` PREDICATE COLUMNS",
+        ),
+        (
+            "analyze table t with 4 cmsketch width",
+            "ANALYZE TABLE `t` WITH 4 CMSKETCH WIDTH",
+        ),
+        (
+            "analyze table t with 4 cmsketch depth",
+            "ANALYZE TABLE `t` WITH 4 CMSKETCH DEPTH",
+        ),
+        (
+            "analyze table t with 4 samples",
+            "ANALYZE TABLE `t` WITH 4 SAMPLES",
+        ),
+        (
+            "analyze table t with 0.1 samplerate",
+            "ANALYZE TABLE `t` WITH 0.1 SAMPLERATE",
+        ),
+        (
+            "analyze table t with 0.05 ndvrate",
+            "ANALYZE TABLE `t` WITH 0.05 NDVRATE",
+        ),
+        (
+            "analyze table t with 0.05 ndvrate 0.00001 samplerate",
+            "ANALYZE TABLE `t` WITH 0.05 NDVRATE, 0.00001 SAMPLERATE",
+        ),
     ] {
-        assert!(parse(sql).is_err(), "unrepresented payload accepted: {sql}");
+        let statement = parse(sql).unwrap_or_else(|error| panic!("parse {sql:?}: {error:?}"));
+        assert_eq!(statement.restore(), restored, "{sql}");
     }
 }

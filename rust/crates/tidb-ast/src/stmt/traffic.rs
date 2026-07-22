@@ -16,7 +16,7 @@
 
 use std::collections::HashSet;
 
-use crate::util::{back_quote, escape_string_literal};
+use crate::util::{back_quote, escape_string_literal, redact_url};
 
 /// A traffic-capture, traffic-replay, or traffic-job command.
 ///
@@ -222,61 +222,65 @@ impl RefreshStatsStmt {
     /// Removes duplicate and shadowed targets using Go's case-insensitive
     /// `RefreshStatsStmt.Dedup` rules while retaining source order.
     pub fn dedup(&mut self) {
-        let mut databases = HashSet::new();
-        let mut tables = HashSet::new();
-        let mut result = Vec::with_capacity(self.objects.len());
-
-        for object in std::mem::take(&mut self.objects) {
-            match &object {
-                StatsObject::Global => {
-                    result.clear();
-                    result.push(object);
-                    break;
-                }
-                StatsObject::Database(database) => {
-                    let database_key = database.to_lowercase();
-                    if !databases.insert(database_key.clone()) {
-                        continue;
-                    }
-                    for existing in &result {
-                        if let StatsObject::Table {
-                            database: Some(existing_database),
-                            table,
-                        } = existing
-                        {
-                            if existing_database.to_lowercase() == database_key {
-                                tables.remove(&(database_key.clone(), table.to_lowercase()));
-                            }
-                        }
-                    }
-                    result.retain(|existing| {
-                        !matches!(existing,
-                            StatsObject::Table { database: Some(existing_database), .. }
-                                if existing_database.to_lowercase() == database_key)
-                    });
-                    result.push(object);
-                }
-                StatsObject::Table { database, table } => {
-                    let database_key = database
-                        .as_ref()
-                        .map(|name| name.to_lowercase())
-                        .unwrap_or_default();
-                    if !database_key.is_empty() && databases.contains(&database_key) {
-                        continue;
-                    }
-                    if tables.insert((database_key, table.to_lowercase())) {
-                        result.push(object);
-                    }
-                }
-            }
-        }
-
-        self.objects = result;
+        dedup_stats_objects(&mut self.objects);
     }
 }
 
+pub(crate) fn dedup_stats_objects(objects: &mut Vec<StatsObject>) {
+    let mut databases = HashSet::new();
+    let mut tables = HashSet::new();
+    let mut result = Vec::with_capacity(objects.len());
+
+    for object in std::mem::take(objects) {
+        match &object {
+            StatsObject::Global => {
+                result.clear();
+                result.push(object);
+                break;
+            }
+            StatsObject::Database(database) => {
+                let database_key = database.to_lowercase();
+                if !databases.insert(database_key.clone()) {
+                    continue;
+                }
+                for existing in &result {
+                    if let StatsObject::Table {
+                        database: Some(existing_database),
+                        table,
+                    } = existing
+                    {
+                        if existing_database.to_lowercase() == database_key {
+                            tables.remove(&(database_key.clone(), table.to_lowercase()));
+                        }
+                    }
+                }
+                result.retain(|existing| {
+                    !matches!(existing,
+                            StatsObject::Table { database: Some(existing_database), .. }
+                                if existing_database.to_lowercase() == database_key)
+                });
+                result.push(object);
+            }
+            StatsObject::Table { database, table } => {
+                let database_key = database
+                    .as_ref()
+                    .map(|name| name.to_lowercase())
+                    .unwrap_or_default();
+                if !database_key.is_empty() && databases.contains(&database_key) {
+                    continue;
+                }
+                if tables.insert((database_key, table.to_lowercase())) {
+                    result.push(object);
+                }
+            }
+        }
+    }
+
+    *objects = result;
+}
+
 impl StatsObject {
-    fn restore_into(&self, out: &mut String) {
+    pub(crate) fn restore_into(&self, out: &mut String) {
         match self {
             Self::Table { database, table } => {
                 if let Some(database) = database {
@@ -300,51 +304,138 @@ fn push_plain_string(out: &mut String, value: &str) {
     out.push('\'');
 }
 
-fn redact_url(value: &str) -> String {
-    let Some((scheme, _)) = value.split_once("://") else {
-        return value.to_string();
-    };
-    let sensitive_keys: &[&str] = match scheme.to_ascii_lowercase().as_str() {
-        "s3" | "ks3" | "oss" => &["access-key", "secret-access-key", "session-token"],
-        "azure" | "azblob" => &["account-key", "encryption-key", "sas-token"],
-        _ => return value.to_string(),
-    };
-    let Some((base, query_and_fragment)) = value.split_once('?') else {
-        return value.to_string();
-    };
-    let (query, fragment) = query_and_fragment
-        .split_once('#')
-        .map_or((query_and_fragment, None), |(query, fragment)| {
-            (query, Some(fragment))
-        });
-    let mut fields: Vec<(String, String)> = query
-        .split('&')
-        .filter(|field| !field.is_empty())
-        .map(|field| {
-            let (key, value) = field.split_once('=').unwrap_or((field, ""));
-            let normalized = key.to_ascii_lowercase().replace('_', "-");
-            let value = if sensitive_keys.contains(&normalized.as_str()) {
-                "xxxxxx"
-            } else {
-                value
-            };
-            (key.to_string(), value.to_string())
-        })
-        .collect();
-    fields.sort();
+// BEGIN GENERATED AST VISITOR IMPLEMENTATIONS
 
-    let mut result = format!("{base}?");
-    for (index, (key, value)) in fields.iter().enumerate() {
-        if index > 0 {
-            result.push('&');
+impl crate::Visitable for TrafficStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
         }
-        result.push_str(key);
-        result.push('=');
-        result.push_str(value);
+        match self {
+            Self::Capture { dir, options } => {
+                for value in options.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                let _ = dir;
+                let _ = options;
+            }
+            Self::Replay { dir, options } => {
+                for value in options.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                let _ = dir;
+                let _ = options;
+            }
+            Self::ShowJobs => {}
+            Self::CancelJobs => {}
+        }
+        visitor.leave(self)
     }
-    if let Some(fragment) = fragment {
-        result.push('#');
-        result.push_str(fragment);
-    }
-    result
 }
+
+impl crate::Visitable for TrafficCaptureOption {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Duration(field_0) => {
+                let _ = field_0;
+            }
+            Self::EncryptionMethod(field_0) => {
+                let _ = field_0;
+            }
+            Self::Compress(field_0) => {
+                let _ = field_0;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for TrafficReplayOption {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::User(field_0) => {
+                let _ = field_0;
+            }
+            Self::Password(field_0) => {
+                let _ = field_0;
+            }
+            Self::Speed(field_0) => {
+                let _ = field_0;
+            }
+            Self::ReadOnly(field_0) => {
+                let _ = field_0;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for RefreshStatsStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            objects,
+            mode,
+            cluster_wide,
+        } = self;
+        for value in objects.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        if let Some(value) = mode.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        let _ = objects;
+        let _ = mode;
+        let _ = cluster_wide;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for RefreshStatsMode {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Lite => {}
+            Self::Full => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for StatsObject {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Table { database, table } => {
+                let _ = database;
+                let _ = table;
+            }
+            Self::Database(field_0) => {
+                let _ = field_0;
+            }
+            Self::Global => {}
+        }
+        visitor.leave(self)
+    }
+}
+// END GENERATED AST VISITOR IMPLEMENTATIONS

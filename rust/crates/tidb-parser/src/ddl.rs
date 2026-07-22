@@ -18,9 +18,10 @@ use tidb_ast::{
     AdminStmt, AlterOrderItem, AlterPartitionAction, AlterTableAction, AlterTableStmt,
     AnalyzeTableStmt, ColumnOption, ColumnPosition, CompactReplicaKind, CreateTableTemporary,
     CreateViewStmt, DatabaseOption, DropIndexAlgorithm, DropIndexLock, DropIndexStmt,
-    DropTableStmt, DropTemporary, IndexConstraintKind, QueryStmt, RenameTableStmt, SetOprTermBody,
-    SplitOption, SplitRegionStmt, SplitTarget, Stmt, TableLock, TableLockType, TableOption,
-    UserSpec, ViewAlgorithm, ViewCheckOption, ViewSecurity,
+    DropTableStmt, DropTemporary, FlashbackDatabaseStmt, IndexConstraintKind, OptimizeTableStmt,
+    QueryStmt, RenameTableStmt, RepairTableStmt, SetOprTermBody, SplitOption, SplitRegionStmt,
+    SplitTarget, Stmt, TableLock, TableLockType, TableOption, UserSpec, ViewAlgorithm,
+    ViewCheckOption, ViewSecurity,
 };
 use tidb_lexer::{canonical_charset, canonical_collation, TokenKind};
 
@@ -54,6 +55,56 @@ mod partition;
 mod table_option;
 
 impl Parser {
+    pub(crate) fn parse_flashback_database(&mut self) -> PResult<FlashbackDatabaseStmt> {
+        self.expect_kw("FLASHBACK")?;
+        if self.is_kw("DATABASE") || self.is_kw("SCHEMA") {
+            self.bump();
+        } else {
+            return Err(self.err_here("expected DATABASE or SCHEMA"));
+        }
+        let name = self.parse_name_or_keyword()?;
+        let new_name = if self.is_kw("TO") {
+            self.bump();
+            Some(self.parse_name_or_keyword()?)
+        } else {
+            None
+        };
+        Ok(FlashbackDatabaseStmt { name, new_name })
+    }
+
+    pub(crate) fn parse_optimize_table(&mut self) -> PResult<OptimizeTableStmt> {
+        self.expect_kw("OPTIMIZE")?;
+        let no_write_to_binlog = if self.is_kw("LOCAL") || self.is_kw("NO_WRITE_TO_BINLOG") {
+            self.bump();
+            true
+        } else {
+            false
+        };
+        if self.is_kw("TABLE") || self.is_kw("TABLES") {
+            self.bump();
+        } else {
+            return Err(self.err_here("expected TABLE"));
+        }
+        let mut tables = vec![self.parse_name_path()?];
+        while self.is_op(",") {
+            self.bump();
+            tables.push(self.parse_name_path()?);
+        }
+        Ok(OptimizeTableStmt {
+            no_write_to_binlog,
+            tables,
+        })
+    }
+
+    pub(crate) fn parse_repair_table(&mut self) -> PResult<RepairTableStmt> {
+        self.expect_kw("ADMIN")?;
+        self.expect_kw("REPAIR")?;
+        self.expect_kw("TABLE")?;
+        let table = self.parse_name_path()?;
+        let create = self.parse_create_table()?;
+        Ok(RepairTableStmt { table, create })
+    }
+
     /// Parses Go's `parseCreateDatabaseStmt`, keeping its options as typed
     /// AST data rather than accepting them and then losing them before
     /// canonical restore. Go's parser test proves `CREATE SCHEMA` maps to the
@@ -709,9 +760,9 @@ impl Parser {
         if self.is_kw("ANALYZE") {
             return self.parse_alter_analyze_partition(name);
         }
-        Ok(Stmt::Ddl(Box::new(tidb_ast::DdlStmt::AlterTable(
-            Box::new(self.parse_alter_table_after_name(name)?),
-        ))))
+        Ok(Stmt::Ddl(tidb_ast::NodeBox::new(
+            tidb_ast::DdlStmt::AlterTable(Box::new(self.parse_alter_table_after_name(name)?)),
+        )))
     }
 
     fn parse_alter_analyze_partition(&mut self, table: Vec<String>) -> PResult<Stmt> {
@@ -722,14 +773,15 @@ impl Parser {
             self.bump();
             partitions.push(self.parse_name()?);
         }
-        Ok(Stmt::Admin(Box::new(AdminStmt::AnalyzeTable(Box::new(
-            AnalyzeTableStmt {
+        Ok(Stmt::Admin(tidb_ast::NodeBox::new(
+            AdminStmt::AnalyzeTable(Box::new(AnalyzeTableStmt {
                 tables: vec![table],
                 partitions,
+                no_write_to_binlog: false,
                 target: tidb_ast::AnalyzeTarget::Default,
                 options: Vec::new(),
-            },
-        )))))
+            })),
+        )))
     }
 
     fn parse_alter_table_after_name(&mut self, name: Vec<String>) -> PResult<AlterTableStmt> {
@@ -804,6 +856,12 @@ impl Parser {
         if self.is_masking_policy_alter_action() {
             return self.parse_masking_policy_alter_action().map(Some);
         }
+        if self.is_kw("ENABLE") || self.is_kw("DISABLE") {
+            let enabled = self.is_kw("ENABLE");
+            self.bump();
+            self.expect_kw("KEYS")?;
+            return Ok(Some(AlterTableAction::SetKeysEnabled(enabled)));
+        }
         // Go's `parseAlterTableSpec` owns WITH/WITHOUT VALIDATION as a
         // standalone ordered specification. Keep the lookahead exact: a
         // bare WITH/WITHOUT is not an ALTER action and must remain a parse
@@ -830,10 +888,6 @@ impl Parser {
         } else if let Some(action) = alter::auto_increment::parse(self)? {
             action
         } else if let Some(action) = alter::auto_id_options::parse(self)? {
-            action
-        } else if let Some(action) = alter::placement_policy::parse(self)? {
-            action
-        } else if let Some(action) = alter::comment::parse(self)? {
             action
         } else if self.is_kw("CONVERT") {
             AlterTableAction::ConvertCharacterSet {
@@ -1343,9 +1397,12 @@ impl Parser {
     fn starts_alter_table_generic_option(&self) -> bool {
         self.is_kw("ENGINE")
             || self.is_kw("ROW_FORMAT")
+            || self.is_kw("KEY_BLOCK_SIZE")
             || self.is_kw("INSERT_METHOD")
             || self.is_kw("PRE_SPLIT_REGIONS")
             || self.is_kw("UNION")
+            || self.is_kw("PLACEMENT")
+            || self.peek().text.eq_ignore_ascii_case("COMMENT")
     }
 
     /// Parses Go's `CONVERT TO { CHARACTER SET | CHARSET | CHAR SET }

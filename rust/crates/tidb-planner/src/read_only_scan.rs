@@ -1176,7 +1176,7 @@ impl ReadOnlyScanPlan {
             ReadOnlyScanError::Parse(format!("{} at byte {}", error.message, error.offset))
         })?;
         let select = match statement {
-            Stmt::Query(query) => match *query {
+            Stmt::Query(query) => match query.into_inner() {
                 QueryStmt::Select(select) => select,
                 QueryStmt::SetOpr(_) => {
                     return Err(ReadOnlyScanError::Unsupported(

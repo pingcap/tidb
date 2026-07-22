@@ -17,14 +17,48 @@
 
 use tidb_ast::{
     Assignment, BatchDml, BatchDmlDryRun, BatchDmlStmt, ColumnOrUserVar, DeleteKind, DeleteStmt,
-    Expr, Hint, ImportIntoStmt, ImportSource, InsertStmt, LoadDataOption, UnaryOp, UpdateKind,
-    UpdateStmt,
+    DistributeTableStmt, Expr, Hint, ImportIntoStmt, ImportSource, InsertStmt, LoadDataOption,
+    StatementPriority, UnaryOp, UpdateKind, UpdateStmt,
 };
 
 use crate::{decode_string, prec, select::parse_hint_comment, PResult, Parser};
 use tidb_lexer::TokenKind;
 
 impl Parser {
+    pub(crate) fn parse_distribute_table(&mut self) -> PResult<DistributeTableStmt> {
+        self.expect_kw("DISTRIBUTE")?;
+        self.expect_kw("TABLE")?;
+        let table = self.parse_name_path()?;
+        let partitions = self.parse_partition_opt()?;
+        let rule = self.parse_distribute_string_option("RULE")?;
+        let engine = self.parse_distribute_string_option("ENGINE")?;
+        let timeout = self.parse_distribute_string_option("TIMEOUT")?;
+        if rule.is_none() && engine.is_none() && timeout.is_none() {
+            return Err(self.err_here("DISTRIBUTE TABLE requires RULE, ENGINE, or TIMEOUT"));
+        }
+        Ok(DistributeTableStmt {
+            table,
+            partitions,
+            rule,
+            engine,
+            timeout,
+        })
+    }
+
+    fn parse_distribute_string_option(&mut self, name: &str) -> PResult<Option<String>> {
+        if !self.is_kw(name) {
+            return Ok(None);
+        }
+        self.bump();
+        if self.is_op("=") {
+            self.bump();
+        }
+        if self.peek().kind != TokenKind::Str {
+            return Err(self.err_here("DISTRIBUTE TABLE option requires a string"));
+        }
+        Ok(Some(decode_string(&self.bump().text)))
+    }
+
     /// Direct Rust translation of Go's `parseImportIntoStmt` in
     /// `pkg/parser/import_brie_parser.go`:
     ///
@@ -114,7 +148,9 @@ impl Parser {
                 let query = self.parse_select_or_setopr()?;
                 self.expect_op(")")?;
                 query
-            } else if self.is_kw("SELECT") || self.is_kw("WITH") {
+            } else if self.is_kw("WITH") {
+                self.parse_with_select()?
+            } else if self.is_kw("SELECT") {
                 self.parse_select_or_setopr()?
             } else {
                 return Err(self.err_here("expected IMPORT file path or SELECT source"));
@@ -127,12 +163,22 @@ impl Parser {
                 .iter()
                 .any(|column| matches!(column, ColumnOrUserVar::UserVar(_)))
             {
-                return Err(
-                    self.err_here("cannot use an IMPORT user variable with a SELECT source")
+                let message = format!(
+                    "Cannot use user variable({}) in IMPORT INTO FROM SELECT statement",
+                    columns_and_user_vars
+                        .iter()
+                        .find_map(|column| match column {
+                            ColumnOrUserVar::UserVar(name) => Some(name.as_str()),
+                            ColumnOrUserVar::Column(_) => None,
+                        })
+                        .expect("user variable was found")
                 );
+                return Err(self.err_here(&message));
             }
             if !column_assignments.is_empty() {
-                return Err(self.err_here("cannot use IMPORT SET with a SELECT source"));
+                return Err(
+                    self.err_here("Cannot use SET clause in IMPORT INTO FROM SELECT statement.")
+                );
             }
             ImportSource::Select {
                 query: Box::new(query),
@@ -290,8 +336,7 @@ impl Parser {
             self.expect_kw("INSERT")?;
         }
         let hints = self.parse_dml_hints()?;
-        // Priority modifiers (LOW_PRIORITY/DELAYED/HIGH_PRIORITY) are not
-        // modelled yet.
+        let priority = self.parse_statement_priority();
         let ignore = if !replace && self.is_kw("IGNORE") {
             self.bump();
             true
@@ -313,16 +358,21 @@ impl Parser {
         // INSERT ... SELECT path.
         let mut source = None;
         let mut source_parenthesized = false;
+        let mut columns_specified = false;
         let columns = if self.is_parenthesized_insert_source() {
             source = Some(Box::new(self.parse_parenthesized_insert_source()?));
             source_parenthesized = true;
             Vec::new()
         } else if self.is_op("(") {
             self.bump();
-            let mut cols = vec![self.parse_name_or_keyword()?];
-            while self.is_op(",") {
-                self.bump();
+            columns_specified = true;
+            let mut cols = Vec::new();
+            if !self.is_op(")") {
                 cols.push(self.parse_name_or_keyword()?);
+                while self.is_op(",") {
+                    self.bump();
+                    cols.push(self.parse_name_or_keyword()?);
+                }
             }
             self.expect_op(")")?;
             cols
@@ -356,6 +406,10 @@ impl Parser {
             source = Some(Box::new(self.parse_with_select()?));
         } else if self.is_kw("SELECT") {
             source = Some(Box::new(self.parse_select_or_setopr()?));
+        } else if self.is_kw("TABLE") {
+            source = Some(Box::new(tidb_ast::QueryStmt::Select(Box::new(
+                self.parse_table_statement()?,
+            ))));
         } else if self.is_parenthesized_insert_source() {
             source = Some(Box::new(self.parse_parenthesized_insert_source()?));
             source_parenthesized = true;
@@ -373,6 +427,27 @@ impl Parser {
                 self.bump();
                 rows.push(self.parse_value_row()?);
             }
+        }
+        let (row_alias, column_aliases) =
+            if self.is_kw("AS") && (set_syntax || (source.is_none() && !rows.is_empty())) {
+                self.bump();
+                let alias = self.parse_name()?;
+                let mut aliases = Vec::new();
+                if self.is_op("(") {
+                    self.bump();
+                    aliases.push(self.parse_name()?);
+                    while self.is_op(",") {
+                        self.bump();
+                        aliases.push(self.parse_name()?);
+                    }
+                    self.expect_op(")")?;
+                }
+                (Some(alias), aliases)
+            } else {
+                (None, Vec::new())
+            };
+        if replace && row_alias.is_some() {
+            return Err(self.err_here("REPLACE does not support a row alias"));
         }
         // `REPLACE` never carries `ON DUPLICATE KEY UPDATE`.
         let on_duplicate = if !replace && self.is_kw("ON") {
@@ -392,18 +467,28 @@ impl Parser {
         } else {
             Vec::new()
         };
+        let returning = if replace {
+            Vec::new()
+        } else {
+            self.parse_returning_fields()?
+        };
         Ok(InsertStmt {
             hints,
+            priority,
             ignore,
             table,
             partitions,
             columns,
+            columns_specified,
             set_columns,
             rows,
             source,
             source_parenthesized,
             set_syntax,
             on_duplicate,
+            row_alias,
+            column_aliases,
+            returning,
             replace,
         })
     }
@@ -411,8 +496,7 @@ impl Parser {
     /// Go's `parseInsertStmt` accepts a result-set source inside one pair of
     /// INSERT-owned parentheses both immediately after the target table and
     /// after an explicit target-column list. Restrict this leaf to the
-    /// already typed SELECT/WITH result-set family; `TABLE` and `VALUES`
-    /// result-set statements need their own typed QueryStmt variants first.
+    /// already typed SELECT/WITH result-set family.
     fn is_parenthesized_insert_source(&self) -> bool {
         self.is_op("(") && (self.is_kw_at(1, "SELECT") || self.is_kw_at(1, "WITH"))
     }
@@ -462,8 +546,8 @@ impl Parser {
     }
 
     /// Parses one `INSERT` value: either a bare `DEFAULT` keyword (meaning
-    /// "this column's declared default", modelled as a zero-arg `DEFAULT`
-    /// func and restored as the bare keyword) or an arbitrary expression. A
+    /// "this column's declared default", represented by the dedicated
+    /// default node and restored as the bare keyword) or an arbitrary expression. A
     /// `DEFAULT(col)` with
     /// parens is a normal expression handled by `parse_expr`, NOT
     /// intercepted here.
@@ -474,15 +558,12 @@ impl Parser {
     /// Parses Go `parseExprOrDefault` positions that this parser models:
     /// INSERT value/SET items, ON DUPLICATE KEY UPDATE, and single-table
     /// UPDATE assignments.
-    /// `DEFAULT(column)` remains an ordinary expression and is delegated to
-    /// the general expression parser.
+    /// `DEFAULT(column)` remains a general expression and is delegated to the
+    /// expression parser's dedicated default node.
     pub(crate) fn parse_expr_or_default(&mut self) -> PResult<Expr> {
         if self.is_kw("DEFAULT") && !self.is_op_at(1, "(") {
             self.bump();
-            return Ok(Expr::Func {
-                name: "DEFAULT".to_string(),
-                args: Vec::new(),
-            });
+            return Ok(Expr::Default(None));
         }
         self.parse_expr(prec::NONE)
     }
@@ -490,7 +571,7 @@ impl Parser {
     pub(crate) fn parse_update(&mut self) -> PResult<UpdateStmt> {
         self.expect_kw("UPDATE")?;
         let hints = self.parse_dml_hints()?;
-        // Priority modifiers (LOW_PRIORITY) are not modelled; `IGNORE` is.
+        let priority = self.parse_statement_priority();
         let ignore = if self.is_kw("IGNORE") {
             self.bump();
             true
@@ -556,14 +637,17 @@ impl Parser {
         {
             return Err(self.err_here("UPDATE comma-join does not allow ORDER BY or LIMIT"));
         }
+        let returning = self.parse_returning_fields()?;
         Ok(UpdateStmt {
             hints,
+            priority,
             ignore,
             kind,
             assignments,
             where_clause,
             order_by,
             limit,
+            returning,
         })
     }
 
@@ -581,7 +665,13 @@ impl Parser {
     pub(crate) fn parse_delete(&mut self) -> PResult<DeleteStmt> {
         self.expect_kw("DELETE")?;
         let hints = self.parse_dml_hints()?;
-        // Priority/QUICK modifiers are not modelled; `IGNORE` is.
+        let priority = self.parse_statement_priority();
+        let quick = if self.is_kw("QUICK") {
+            self.bump();
+            true
+        } else {
+            false
+        };
         let ignore = if self.is_kw("IGNORE") {
             self.bump();
             true
@@ -632,14 +722,45 @@ impl Parser {
         if matches!(&kind, DeleteKind::Multi { .. }) && (!order_by.is_empty() || limit.is_some()) {
             return Err(self.err_here("multi-table DELETE does not allow ORDER BY or LIMIT"));
         }
+        let returning = if matches!(&kind, DeleteKind::Multi { .. }) {
+            Vec::new()
+        } else {
+            self.parse_returning_fields()?
+        };
         Ok(DeleteStmt {
             hints,
+            priority,
+            quick,
             ignore,
             kind,
             where_clause,
             order_by,
             limit,
+            returning,
         })
+    }
+
+    fn parse_returning_fields(&mut self) -> PResult<Vec<tidb_ast::SelectField>> {
+        if !self.is_kw("RETURNING") {
+            return Ok(Vec::new());
+        }
+        self.bump();
+        self.parse_select_list()
+    }
+
+    pub(crate) fn parse_statement_priority(&mut self) -> StatementPriority {
+        if self.is_kw("LOW_PRIORITY") {
+            self.bump();
+            StatementPriority::Low
+        } else if self.is_kw("HIGH_PRIORITY") {
+            self.bump();
+            StatementPriority::High
+        } else if self.is_kw("DELAYED") {
+            self.bump();
+            StatementPriority::Delayed
+        } else {
+            StatementPriority::None
+        }
     }
 
     /// Parses the fixed-order `ORDER BY ... LIMIT ...` tail shared by TiDB's

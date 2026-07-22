@@ -64,7 +64,6 @@ fn alter_table_auto_id_options_keep_integer_and_force_boundaries() {
         "alter table t auto_random_base = 1.5",
         "alter table t auto_random_base = '1'",
         "alter table t force auto_id_cache = 10",
-        "alter table t force auto_increment = 10",
     ] {
         assert!(parse(sql).is_err(), "Go rejects: {sql}");
     }
@@ -81,6 +80,20 @@ fn alter_table_auto_id_options_keep_integer_and_force_boundaries() {
         statement.actions,
         vec![tidb_ast::AlterTableAction::SetTableOptions {
             options: vec![tidb_ast::TableOption::ForceAutoRandomBase("50".to_string())],
+        }]
+    );
+
+    let tidb_ast::Stmt::Ddl(ddl) = parse("alter table t force auto_increment = 10").expect("parse")
+    else {
+        panic!("expected ALTER TABLE statement");
+    };
+    let tidb_ast::DdlStmt::AlterTable(statement) = ddl.as_ref() else {
+        panic!("expected ALTER TABLE statement");
+    };
+    assert_eq!(
+        statement.actions,
+        vec![tidb_ast::AlterTableAction::SetTableOptions {
+            options: vec![tidb_ast::TableOption::ForceAutoIncrement("10".to_string())],
         }]
     );
 }

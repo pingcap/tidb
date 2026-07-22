@@ -27,3 +27,21 @@ pub struct AlterIndexVisibility {
     /// Requested optimizer visibility.
     pub visibility: IndexVisibility,
 }
+
+// BEGIN GENERATED AST VISITOR IMPLEMENTATIONS
+
+impl crate::Visitable for AlterIndexVisibility {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { name, visibility } = self;
+        if !crate::Visitable::accept(visibility, visitor) {
+            return false;
+        }
+        let _ = name;
+        let _ = visibility;
+        visitor.leave(self)
+    }
+}
+// END GENERATED AST VISITOR IMPLEMENTATIONS

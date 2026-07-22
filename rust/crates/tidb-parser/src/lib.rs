@@ -284,6 +284,7 @@ mod analyze;
 pub mod arena;
 pub mod auth;
 mod binding;
+mod brie;
 mod cast;
 mod ddl;
 mod dml;
@@ -291,9 +292,12 @@ mod expr;
 mod flush;
 mod load_data;
 mod masking;
+mod misc;
 mod placement;
 mod prec;
 mod privilege;
+mod procedure;
+mod query_watch;
 mod resource_group;
 mod select;
 mod sequence;
@@ -304,8 +308,8 @@ mod traffic;
 mod user;
 
 use tidb_ast::{
-    AdminStmt, DdlStmt, DescribeTableStmt, ExplainStmt, Expr, PlanReplayerDumpExplainStmt,
-    StatsLockStmt, StatsLockTable, Stmt,
+    AdminStmt, DdlStmt, DescribeTableStmt, ExplainForStmt, ExplainStmt, ExplainTarget, Expr,
+    PlanReplayerStmt, PlanReplayerTarget, StatsLockStmt, StatsLockTable, Stmt,
 };
 use tidb_lexer::{is_reserved, unescape_char, Lexer, Token, TokenKind};
 
@@ -331,7 +335,16 @@ pub fn parse(sql: &str) -> PResult<Stmt> {
 /// callers must opt in before `AS ROW START|END` becomes grammar.
 pub fn parse_with_mariadb(sql: &str, enable_mariadb: bool) -> PResult<Stmt> {
     let mut p = Parser::new_with_mariadb(sql, enable_mariadb);
-    let stmt = p.parse_statement()?;
+    let start = p.peek().offset;
+    let mut stmt = p.parse_statement()?;
+    let end = if p.is_op(";") {
+        p.bump().end_offset
+    } else {
+        p.peek().offset
+    };
+    if end > start {
+        stmt.set_text(None, sql.as_bytes()[start..end].to_vec());
+    }
     p.skip_semicolons();
     if !p.at_eof() {
         return Err(p.err_here("unexpected trailing tokens"));
@@ -361,7 +374,17 @@ pub fn parse_multi_with_mariadb(sql: &str, enable_mariadb: bool) -> PResult<Vec<
     p.skip_semicolons();
     while !p.at_eof() {
         p.reset_param_marker_positions();
-        statements.push(p.parse_statement()?);
+        let start = p.peek().offset;
+        let mut statement = p.parse_statement()?;
+        let end = if p.is_op(";") {
+            p.bump().end_offset
+        } else {
+            p.peek().offset
+        };
+        if end > start {
+            statement.set_text(None, sql.as_bytes()[start..end].to_vec());
+        }
+        statements.push(statement);
         p.skip_semicolons();
     }
     Ok(statements)
@@ -600,6 +623,36 @@ impl Parser {
     /// important: `DESC SELECT ...` is not a describe-table statement in
     /// TiDB, and Go restores it as an ordinary `EXPLAIN` wrapper.
     fn parse_explain_tail(&mut self) -> PResult<Stmt> {
+        let explore = if self.is_kw("EXPLORE") {
+            self.bump();
+            if self.peek().kind == TokenKind::Str {
+                let digest = decode_string(&self.bump().text);
+                return Ok(Stmt::Admin(tidb_ast::NodeBox::new(AdminStmt::Explain(
+                    Box::new(ExplainStmt {
+                        analyze: false,
+                        format: String::new(),
+                        target: ExplainTarget::ExploreDigest(digest),
+                    }),
+                ))));
+            }
+            if self.is_kw("REPLAYER") {
+                self.bump();
+                let token = self.bump();
+                if token.kind != TokenKind::Str {
+                    return Err(self.err_here("expected EXPLAIN EXPLORE replayer file"));
+                }
+                return Ok(Stmt::Admin(tidb_ast::NodeBox::new(AdminStmt::Explain(
+                    Box::new(ExplainStmt {
+                        analyze: false,
+                        format: String::new(),
+                        target: ExplainTarget::ExploreReplayer(decode_string(&token.text)),
+                    }),
+                ))));
+            }
+            true
+        } else {
+            false
+        };
         let analyze = if self.is_kw("ANALYZE") {
             self.bump();
             true
@@ -624,15 +677,44 @@ impl Parser {
             };
         }
 
+        if !explore && !analyze && self.is_kw("FOR") {
+            self.bump();
+            self.expect_kw("CONNECTION")?;
+            let token = self.bump();
+            let connection_id = token
+                .text
+                .parse::<u64>()
+                .map_err(|_| self.err_here("expected connection ID"))?;
+            return Ok(Stmt::Admin(tidb_ast::NodeBox::new(AdminStmt::ExplainFor(
+                Box::new(ExplainForStmt {
+                    format,
+                    connection_id,
+                }),
+            ))));
+        }
+
+        if self.peek().kind == TokenKind::Str {
+            let digest = decode_string(&self.bump().text);
+            return Ok(Stmt::Admin(tidb_ast::NodeBox::new(AdminStmt::Explain(
+                Box::new(ExplainStmt {
+                    analyze,
+                    format,
+                    target: ExplainTarget::PlanDigest(digest),
+                }),
+            ))));
+        }
+
         // Go's default arm maps `EXPLAIN <table> [column]` to `SHOW COLUMNS`
         // and its `ExplainStmt.Restore` then emits `DESC ...`. It is not the
         // `TABLE <query>` result-set branch (whose leading TABLE keyword is
         // reserved and deliberately does not enter this path).
-        if is_name_or_keyword(self.peek()) {
+        if !explore && is_name_or_keyword(self.peek()) {
             return self.parse_describe_table();
         }
         let statement = if self.is_op("(") && self.is_op_at(1, "(") && self.is_kw_at(2, "VALUES") {
-            Stmt::Query(Box::new(self.parse_explain_parenthesized_values()?))
+            Stmt::Query(tidb_ast::NodeBox::new(
+                self.parse_explain_parenthesized_values()?,
+            ))
         } else {
             self.parse_statement()?
         };
@@ -644,39 +726,134 @@ impl Parser {
         {
             return Err(self.err_here("unsupported EXPLAIN inner statement"));
         }
-        Ok(Stmt::Admin(Box::new(AdminStmt::Explain(Box::new(
-            ExplainStmt {
+        Ok(Stmt::Admin(tidb_ast::NodeBox::new(AdminStmt::Explain(
+            Box::new(ExplainStmt {
                 analyze,
                 format,
-                statement: Box::new(statement),
-            },
-        )))))
+                target: if explore {
+                    ExplainTarget::ExploreStatement(Box::new(statement))
+                } else {
+                    ExplainTarget::Statement(Box::new(statement))
+                },
+            }),
+        ))))
     }
 
-    /// Parses the exact source-backed `PLAN REPLAYER DUMP EXPLAIN <query>`
-    /// envelope used by the static integration corpus. Go delegates its
-    /// nested statement to the ordinary parser; this narrower typed form
-    /// delegates only a query, preserving the existing CTE/set-operation
-    /// model without accepting Plan Replayer's separate file/list/capture
-    /// command families prematurely.
+    /// Parses the complete Plan Replayer operation family.
     fn parse_plan_replayer_dump_explain(&mut self) -> PResult<Stmt> {
         self.expect_kw("PLAN")?;
         self.expect_kw("REPLAYER")?;
-        self.expect_kw("DUMP")?;
-        self.expect_kw("EXPLAIN")?;
-
-        let query = if self.is_kw("WITH") {
-            self.parse_with_select()?
-        } else if self.is_kw("SELECT") || (self.is_op("(") && self.is_kw_at(1, "SELECT")) {
-            self.parse_select_or_setopr()?
+        if self.is_kw("LOAD") {
+            self.bump();
+            let token = self.bump();
+            if token.kind != TokenKind::Str {
+                return Err(self.err_here("expected PLAN REPLAYER file"));
+            }
+            return Ok(Stmt::Admin(tidb_ast::NodeBox::new(
+                AdminStmt::PlanReplayer(Box::new(PlanReplayerStmt::Load(decode_string(
+                    &token.text,
+                )))),
+            )));
+        }
+        if self.is_kw("CAPTURE") {
+            self.bump();
+            let remove = if self.is_kw("REMOVE") {
+                self.bump();
+                true
+            } else {
+                false
+            };
+            let sql_digest = self.bump();
+            let plan_digest = self.bump();
+            if sql_digest.kind != TokenKind::Str || plan_digest.kind != TokenKind::Str {
+                return Err(self.err_here("expected SQL and plan digest strings"));
+            }
+            return Ok(Stmt::Admin(tidb_ast::NodeBox::new(
+                AdminStmt::PlanReplayer(Box::new(PlanReplayerStmt::Capture {
+                    remove,
+                    sql_digest: decode_string(&sql_digest.text),
+                    plan_digest: decode_string(&plan_digest.text),
+                })),
+            )));
+        }
+        if self.is_kw("DUMP") {
+            self.bump();
+        }
+        let historical_stats = if self.is_kw("WITH") {
+            self.bump();
+            self.expect_kw("STATS")?;
+            self.expect_kw("AS OF")?;
+            self.expect_kw("TIMESTAMP")?;
+            Some(Box::new(self.parse_expr(prec::NONE)?))
         } else {
-            return Err(self.err_here("expected query after PLAN REPLAYER DUMP EXPLAIN"));
+            None
         };
-        Ok(Stmt::Admin(Box::new(AdminStmt::PlanReplayerDumpExplain(
-            Box::new(PlanReplayerDumpExplainStmt {
-                query: Box::new(query),
-            }),
-        ))))
+        self.expect_kw("EXPLAIN")?;
+        let analyze = if self.is_kw("ANALYZE") {
+            self.bump();
+            true
+        } else {
+            false
+        };
+        let target = if self.peek().kind == TokenKind::Str {
+            PlanReplayerTarget::File(decode_string(&self.bump().text))
+        } else if self.is_op("(") && self.peek_n(1).kind == TokenKind::Str {
+            self.bump();
+            let mut statements = Vec::new();
+            loop {
+                let token = self.bump();
+                if token.kind != TokenKind::Str {
+                    return Err(self.err_here("expected SQL string"));
+                }
+                statements.push(decode_string(&token.text));
+                if !self.is_op(",") {
+                    break;
+                }
+                self.bump();
+            }
+            self.expect_op(")")?;
+            PlanReplayerTarget::Statements(statements)
+        } else if self.is_kw("SLOW") {
+            self.bump();
+            self.expect_kw("QUERY")?;
+            let where_clause = if self.is_kw("WHERE") {
+                self.bump();
+                Some(Box::new(self.parse_expr(prec::NONE)?))
+            } else {
+                None
+            };
+            let order_by = if self.is_kw("ORDER") {
+                self.bump();
+                self.expect_kw("BY")?;
+                self.parse_order_list()?
+            } else {
+                Vec::new()
+            };
+            let limit = if self.is_kw("LIMIT") {
+                self.bump();
+                Some(Box::new(self.parse_limit()?))
+            } else {
+                None
+            };
+            PlanReplayerTarget::SlowQuery {
+                where_clause,
+                order_by,
+                limit,
+            }
+        } else if self.is_kw("WITH") {
+            PlanReplayerTarget::Statement(Box::new(Stmt::Query(tidb_ast::NodeBox::new(
+                self.parse_with_select()?,
+            ))))
+        } else {
+            PlanReplayerTarget::Statement(Box::new(self.parse_statement()?))
+        };
+        Ok(Stmt::Admin(tidb_ast::NodeBox::new(
+            AdminStmt::PlanReplayer(Box::new(PlanReplayerStmt::Dump {
+                historical_stats,
+                analyze,
+                target: Box::new(target),
+            })),
+        )))
     }
 
     /// Parses the common `DESC`/`DESCRIBE` and `EXPLAIN <table>` fallback
@@ -693,9 +870,9 @@ impl Parser {
         } else {
             None
         };
-        Ok(Stmt::Admin(Box::new(AdminStmt::DescribeTable(Box::new(
-            DescribeTableStmt { table, column },
-        )))))
+        Ok(Stmt::Admin(tidb_ast::NodeBox::new(
+            AdminStmt::DescribeTable(Box::new(DescribeTableStmt { table, column })),
+        )))
     }
 
     /// Parses a dotted name path from Go's wider `isIdentLike` slots. This

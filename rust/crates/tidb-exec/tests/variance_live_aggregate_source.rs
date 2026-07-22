@@ -341,6 +341,9 @@ fn variance_result_metadata_is_always_double_23_with_unspecified_scale() {
             Expr::Window {
                 name: name.to_owned(),
                 args: vec![Expr::Int("1".to_owned())],
+                distinct: false,
+                ignore_nulls: false,
+                from_last: false,
                 over: WindowOver::Def(WindowDef::default()),
             },
         ] {

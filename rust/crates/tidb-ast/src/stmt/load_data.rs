@@ -102,7 +102,7 @@ pub struct LoadDataFields {
 }
 
 impl LoadDataFields {
-    fn restore_into(&self, out: &mut String) {
+    pub(crate) fn restore_into(&self, out: &mut String) {
         if self.terminated.is_none()
             && self.enclosed.is_none()
             && self.escaped.is_none()
@@ -146,7 +146,7 @@ pub struct LoadDataLines {
 }
 
 impl LoadDataLines {
-    fn restore_into(&self, out: &mut String) {
+    pub(crate) fn restore_into(&self, out: &mut String) {
         if self.starting.is_none() && self.terminated.is_none() {
             return;
         }
@@ -269,3 +269,153 @@ fn restore_load_string(out: &mut String, value: &str) {
     out.push_str(&escape_string_literal(value));
     out.push('\'');
 }
+
+// BEGIN GENERATED AST VISITOR IMPLEMENTATIONS
+
+impl crate::Visitable for LoadDataOnDuplicate {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Error => {}
+            Self::Replace => {}
+            Self::Ignore => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for ColumnOrUserVar {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Column(field_0) => {
+                let _ = field_0;
+            }
+            Self::UserVar(field_0) => {
+                let _ = field_0;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for LoadDataOption {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { name, value } = self;
+        if let Some(value) = value.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        let _ = name;
+        let _ = value;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for LoadDataFields {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            terminated,
+            enclosed,
+            optionally_enclosed,
+            escaped,
+            defined_null_by,
+            null_optionally_enclosed,
+        } = self;
+        let _ = terminated;
+        let _ = enclosed;
+        let _ = optionally_enclosed;
+        let _ = escaped;
+        let _ = defined_null_by;
+        let _ = null_optionally_enclosed;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for LoadDataLines {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            starting,
+            terminated,
+        } = self;
+        let _ = starting;
+        let _ = terminated;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for LoadDataStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            low_priority,
+            local,
+            path,
+            format,
+            on_duplicate,
+            table,
+            charset,
+            fields,
+            lines,
+            ignore_lines,
+            columns_and_user_vars,
+            column_assignments,
+            options,
+        } = self;
+        if !crate::Visitable::accept(on_duplicate, visitor) {
+            return false;
+        }
+        if !crate::Visitable::accept(fields, visitor) {
+            return false;
+        }
+        if !crate::Visitable::accept(lines, visitor) {
+            return false;
+        }
+        for value in columns_and_user_vars.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        for value in column_assignments.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        for value in options.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        let _ = low_priority;
+        let _ = local;
+        let _ = path;
+        let _ = format;
+        let _ = on_duplicate;
+        let _ = table;
+        let _ = charset;
+        let _ = fields;
+        let _ = lines;
+        let _ = ignore_lines;
+        let _ = columns_and_user_vars;
+        let _ = column_assignments;
+        let _ = options;
+        visitor.leave(self)
+    }
+}
+// END GENERATED AST VISITOR IMPLEMENTATIONS

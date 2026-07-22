@@ -26,3 +26,18 @@ pub struct AlterCheck {
     /// Whether TiDB should enforce the constraint.
     pub enforced: bool,
 }
+
+// BEGIN GENERATED AST VISITOR IMPLEMENTATIONS
+
+impl crate::Visitable for AlterCheck {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { name, enforced } = self;
+        let _ = name;
+        let _ = enforced;
+        visitor.leave(self)
+    }
+}
+// END GENERATED AST VISITOR IMPLEMENTATIONS

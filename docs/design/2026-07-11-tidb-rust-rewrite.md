@@ -60,27 +60,36 @@ Direct internal Go dependencies must already be current, or the selected work
 must include the dependency-closed group. Existing partial Rust code is seed
 material, never evidence of package completion.
 
-## Simple development loop
+## Development loop
 
-There is one worker and no scheduling subsystem. The only loop is:
+There is one worker and one loop:
 
-1. Select a dependency-ready package with high downstream value.
-2. Run `rust/scripts/port.py inventory <package> --verbose` and read every
-   listed source, test, and support artifact.
-3. Transcreate the whole package directly from Go. Delete duplicate Rust
-   authorities when ownership moves.
-4. Translate every original test obligation. Add Rust-specific safety tests,
-   but never substitute them for source tests.
-5. Run the smallest affected Rust tests while editing.
-6. From `rust/`, run `scripts/port.py record <package> -p <crate>`. This runs
-   every target in the owning crates once and updates `ported-packages.json`.
-7. Before push, run ordinary Cargo/repository Ready validation once, plus the
-   relevant differential or live real-cluster test.
+1. Choose one dependency-ready Go package.
+2. Translate its production files and complete test/support owners directly.
+3. Compile and test only the Rust owners changed by the current edit.
+4. Commit and push every cohesive green checkpoint.
+5. After every source and test owner has moved, run package-wide parity and
+   declare the Go package complete.
 
-`ported-packages.json` stores only package digest and Rust crates. The Go tree
-supplies inventory, Cargo supplies tests, and Git supplies history, review, and
-rollback. There are no queues, claims, campaigns, gates, worktree leases,
-transfer ledgers, receipts, copied file lists, or copied test lists.
+The whole Go package is the **completion and parity-claim boundary**, not a
+branch, commit, or integration gate. Keeping weeks of valid work in one frozen
+working tree slows development and increases merge risk without improving
+correctness. Intermediate commits may cover any coherent subset of the active
+package, but their messages and status reports must say that the package is
+still open.
+
+The source layout follows ownership, not implementation history. Each Go
+production or test file has one primary Rust owner module. Do not create modules
+for individual grammar alternatives, bugs, or test rows.
+Split a Go file only when the result is a stable Rust dependency boundary with
+several cohesive types; never split it merely to make a partial port look
+closed. Existing leaf modules are folded back into their Go owner while that
+owner is completed.
+
+Run focused compiler or test commands whenever useful. Do not run workspace
+sweeps after every local edit. Run them when a shared public API changes and
+once at package close. The Go tree is the inventory and behavior authority,
+Cargo and Go are the runners, and Git records small recoverable checkpoints.
 
 ## Target architecture
 
@@ -120,7 +129,8 @@ package moves.
 
 No single suite proves parity:
 
-1. Package inventory and source tests prove the local translation.
+1. The complete Go package and its transcreated source tests prove the local
+   translation.
 2. Parser differential tests compare AST, restore output, offsets, warnings,
    flags, and errors.
 3. Planner differential tests compare normalized plans, ranges, properties,
@@ -134,10 +144,9 @@ No single suite proves parity:
 7. Mixed-cluster tests cover schema lease/MDL, topology, rolling upgrade,
    ownership, failover, and recovery.
 
-`scripts/port.py record` is intentionally the only acceptance operation: one
-all-target Cargo test for the owning crates and one manifest update. Formatting,
-workspace Clippy/tests, repository lint, and relevant live checks run once
-before push through their ordinary commands. Mocks never replace live checks.
+There is no special acceptance operation. Formatting, owning-crate tests,
+workspace Clippy/tests, repository lint, and relevant live checks run through
+their ordinary commands. Mocks never replace live checks.
 
 ## Deployment ladder
 
@@ -156,9 +165,9 @@ Rust nodes, and continue on Go nodes. It must not require data conversion.
 
 ## Completion
 
-The rewrite is complete only when every in-scope Go package is current in
-`rust/ported-packages.json`, every original test/support obligation is covered,
-all differential and mixed-cluster rings pass, the Rust node serves production
+The rewrite is complete only when every in-scope Go package and original
+test/support obligation has a transcreated Rust implementation, all
+differential and mixed-cluster rings pass, the Rust node serves production
 read/write workloads through real services, full-peer roles work without a Go
 node, and no migration-only duplicate authority remains.
 

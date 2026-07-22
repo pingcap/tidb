@@ -19,13 +19,41 @@
 mod role_grant;
 
 use tidb_ast::{
-    GrantLevel, GrantObjectType, GrantPrivilege, GrantStmt, RevokeStmt, ShowGrantsStmt,
+    GrantLevel, GrantObjectType, GrantPrivilege, GrantProxyStmt, GrantStmt, RevokeStmt,
+    ShowGrantsStmt,
 };
 use tidb_lexer::TokenKind;
 
 use crate::{PResult, Parser};
 
 impl Parser {
+    /// Direct translation of Go's special `GRANT PROXY` branch.
+    pub(crate) fn parse_grant_proxy_stmt(&mut self) -> PResult<GrantProxyStmt> {
+        self.expect_kw("GRANT")?;
+        self.expect_kw("PROXY")?;
+        self.expect_kw("ON")?;
+        let local_user = self.parse_user_spec()?;
+        self.expect_kw("TO")?;
+        let mut external_users = vec![self.parse_user_spec()?];
+        while self.is_op(",") {
+            self.bump();
+            external_users.push(self.parse_user_spec()?);
+        }
+        let with_grant = if self.is_kw("WITH") {
+            self.bump();
+            self.expect_kw("GRANT")?;
+            self.expect_kw("OPTION")?;
+            true
+        } else {
+            false
+        };
+        Ok(GrantProxyStmt {
+            local_user,
+            external_users,
+            with_grant,
+        })
+    }
+
     /// Direct translation of Go's `parseShowGrants`: the optional `FOR`
     /// account owns an optional `USING` role list.
     pub(crate) fn parse_show_grants(&mut self) -> PResult<ShowGrantsStmt> {

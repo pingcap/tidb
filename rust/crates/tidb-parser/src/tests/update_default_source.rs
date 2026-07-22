@@ -36,17 +36,14 @@ fn joined_update_default_assignments_restore_like_go() {
 }
 
 #[test]
-fn joined_update_default_is_a_zero_argument_placeholder() {
+fn joined_update_default_is_a_dedicated_placeholder() {
     let Stmt::Dml(dml) = parse("UPDATE tt AS s1, tt AS s2 SET s1.z = DEFAULT, s2.z = 456")
         .expect("joined UPDATE with DEFAULT parses")
     else {
         panic!("expected DML envelope");
     };
-    let tidb_ast::DmlStmt::Update(update) = *dml else {
+    let tidb_ast::DmlStmt::Update(update) = dml.into_inner() else {
         panic!("expected UPDATE statement");
     };
-    assert!(matches!(
-        update.assignments[0].value,
-        Expr::Func { ref name, ref args } if name == "DEFAULT" && args.is_empty()
-    ));
+    assert!(matches!(update.assignments[0].value, Expr::Default(None)));
 }

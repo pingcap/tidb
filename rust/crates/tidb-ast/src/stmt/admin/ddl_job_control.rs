@@ -63,3 +63,35 @@ impl AdminDdlJobControlStmt {
         }
     }
 }
+
+// BEGIN GENERATED AST VISITOR IMPLEMENTATIONS
+
+impl crate::Visitable for AdminDdlJobControlKind {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Cancel => {}
+            Self::Pause => {}
+            Self::Resume => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for AdminDdlJobControlStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { kind, job_ids } = self;
+        if !crate::Visitable::accept(kind, visitor) {
+            return false;
+        }
+        let _ = kind;
+        let _ = job_ids;
+        visitor.leave(self)
+    }
+}
+// END GENERATED AST VISITOR IMPLEMENTATIONS

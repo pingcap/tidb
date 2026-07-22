@@ -19,12 +19,12 @@ use tidb_ast::{AlterTableAction, TableOption};
 use crate::{PResult, Parser};
 
 /// Parses one of the auto-ID table options owned by Go's alter-table option
-/// handler. The FORCE modifier is valid only for AUTO_RANDOM_BASE; preserving
-/// it in a distinct typed payload avoids accepting `FORCE AUTO_ID_CACHE` or
-/// dropping the modifier during restore.
+/// handler. The FORCE modifier is valid for AUTO_INCREMENT and
+/// AUTO_RANDOM_BASE; preserving it in distinct typed payloads avoids accepting
+/// `FORCE AUTO_ID_CACHE` or dropping the modifier during restore.
 pub(crate) fn parse(parser: &mut Parser) -> PResult<Option<AlterTableAction>> {
     let force = if parser.is_kw("FORCE") {
-        if !parser.is_kw_at(1, "AUTO_RANDOM_BASE") {
+        if !parser.is_kw_at(1, "AUTO_INCREMENT") && !parser.is_kw_at(1, "AUTO_RANDOM_BASE") {
             return Ok(None);
         }
         parser.bump();
@@ -33,7 +33,16 @@ pub(crate) fn parse(parser: &mut Parser) -> PResult<Option<AlterTableAction>> {
         false
     };
 
-    let option = if parser.is_kw("AUTO_ID_CACHE") {
+    let option = if parser.is_kw("AUTO_INCREMENT") {
+        parser.bump();
+        parser.accept_optional_equals();
+        let value = parser.parse_table_option_integer("AUTO_INCREMENT")?;
+        if force {
+            TableOption::ForceAutoIncrement(value)
+        } else {
+            TableOption::AutoIncrement(value)
+        }
+    } else if parser.is_kw("AUTO_ID_CACHE") {
         if force {
             return Err(parser.err_here("FORCE applies only to AUTO_RANDOM_BASE"));
         }

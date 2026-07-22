@@ -66,7 +66,7 @@ fn create_user_with_resource_options_is_typed_before_password_policy_tail() {
         resource_options,
         password_options,
         ..
-    } = *ddl
+    } = ddl.into_inner()
     else {
         panic!("expected CREATE USER");
     };
@@ -129,7 +129,7 @@ fn create_user_statement_global_resource_group_matches_go() {
     let Stmt::Ddl(ddl) = parse("CREATE USER usr1 RESOURCE GROUP rg1").expect("parse") else {
         panic!("expected DDL");
     };
-    let tidb_ast::DdlStmt::CreateUser { resource_group, .. } = *ddl else {
+    let tidb_ast::DdlStmt::CreateUser { resource_group, .. } = ddl.into_inner() else {
         panic!("expected CREATE USER");
     };
     assert_eq!(resource_group.as_deref(), Some("rg1"));

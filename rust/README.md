@@ -10,13 +10,11 @@ through TiDB's serialized protocols and the differential rings.
 
 ## Start here
 
-- [`HANDOFF.md`](HANDOFF.md): current architecture, completed packages, and
-  active ExecPlan.
+- [`HANDOFF.md`](HANDOFF.md): current package state and active ExecPlan.
 - [`docs/architecture/workspace.md`](docs/architecture/workspace.md): crate
   boundaries and target concurrency boundaries.
 - [`docs/operations/validation.md`](docs/operations/validation.md): exact WIP
   validation commands.
-- [`ported-packages.json`](ported-packages.json): compact current package set.
 
 The Go implementation is authoritative. Work starts from one complete Go
 package plus its original tests/support; differential output verifies the port
@@ -56,43 +54,18 @@ with a locally convenient rule just to make a golden pass.
 One complete Go package or module is the minimum unit. A package may map to
 several Rust crates; all implementation and original tests still move together.
 
-## Evidence model
-
-The rewrite has four independent rings:
-
-- parser: parse/restore/error parity against the checked Go oracle;
-- plan: `EXPLAIN` and plan-digest parity;
-- result: SQL result and error parity against Go TiDB and, where useful,
-  MySQL;
-- transaction: client-go-compatible failure injection plus real-TiKV and
-  Jepsen evidence.
-
-The result ring's expression corpus includes source-owned scalar vectors for
-`CONCAT` and `CONCAT_WS`; their paired golden output and coverage fragment
-preserve NULL, separator, numeric, empty-field, and raw-binary behavior while
-keeping unsupported temporal/error/session boundaries visible.
-
-Inventory is not coverage. Only a current whole-package record backed by the
-source audit and owning-crate tests counts; partial Rust code remains seed
-material.
-
-Executable corpus namespaces use paired `<topic>.txt` and
-`<topic>.golden.txt` files. Explanatory evidence belongs under
-`difftests/corpus/coverage/`; the validation gate rejects prose or orphan
-files in executable namespaces.
-
 ## Whole-package development loop
 
-Transcreate one complete Go package, translate all original tests, then record
-it with one command from `rust/`:
+Transcreate one complete Go package and all original tests. During translation,
+run focused Cargo checks directly. Commit and push each cohesive green
+checkpoint; this does not claim that a partially translated Go package is
+complete. At the package boundary, run the original Go tests and every target
+in the owning Rust crates.
 
-```sh
-scripts/port.py record pkg/example -p tidb-example
-```
-
-This derives the Go digest and dependencies and runs every target in the owning
-crate. The manifest stores only the digest and crate names. There is no start
-command, claim, queue, campaign, gate, transfer ledger, or receipt.
+Keep one primary Rust implementation/test module per original Go owner file.
+Do not create files for individual syntax alternatives, bugs, waves, or test
+rows. A Rust-native split is justified only by a stable dependency boundary,
+not by partial completion.
 
 Before push, run the ordinary repository validation commands:
 
@@ -102,17 +75,6 @@ cargo clippy --offline --locked -j12 --workspace --all-targets -- -D warnings
 cargo test --offline --locked -j12 --workspace --all-targets
 ```
 
-## Current structural priorities
-
-- select dependency-ready Go packages with downstream runtime value;
-- transcreate each selected package structurally from Go, including its full
-  input domain and error behavior;
-- translate every original test, benchmark, fuzz target, example, fixture,
-  build variant, and support file before recording the package;
-- split a Go package across Rust crates when that improves cohesion or compile
-  time, while keeping one whole-package acceptance boundary;
-- run real PD/TiKV and MySQL-client checks when the package reaches those
-  boundaries.
-
-Progress and exact reviewed counts live only in [`HANDOFF.md`](HANDOFF.md), so
-this entrypoint does not become another per-wave changelog.
+The only active state is the package name, the current source owner, and the
+package definition of done in [`HANDOFF.md`](HANDOFF.md). There are no queues,
+campaigns, receipts, freeze gates, or separate integration ceremonies.

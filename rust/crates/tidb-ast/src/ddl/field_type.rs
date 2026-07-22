@@ -106,7 +106,7 @@ impl ColumnType {
     }
 
     /// Restores the canonical Go `FieldType` spelling for a column owner.
-    pub(super) fn restore_into(&self, out: &mut String) {
+    pub(crate) fn restore_into(&self, out: &mut String) {
         out.push_str(&self.name);
         if !self.args.is_empty() {
             out.push('(');
@@ -144,6 +144,27 @@ impl ColumnType {
                 out.push_str(charset);
             }
         }
+    }
+
+    /// Restores the `FieldType.CompactStr` form used by stored procedures.
+    pub(crate) fn restore_compact_into(&self, out: &mut String) {
+        if self.args.is_empty() {
+            let default_width = match self.name.as_str() {
+                "TINYINT" => Some("4"),
+                "SMALLINT" => Some("6"),
+                "MEDIUMINT" => Some("9"),
+                "INT" => Some("11"),
+                "BIGINT" => Some("20"),
+                _ => None,
+            };
+            if let Some(default_width) = default_width {
+                let mut compact = self.clone();
+                compact.args.push(ColumnTypeArg::text(default_width));
+                compact.restore_into(out);
+                return;
+            }
+        }
+        self.restore_into(out);
     }
 
     /// Appends this field type to a byte-preserving restore sink.
@@ -187,3 +208,51 @@ impl ColumnType {
         }
     }
 }
+
+// BEGIN GENERATED AST VISITOR IMPLEMENTATIONS
+
+impl crate::Visitable for ColumnTypeArg {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Text(field_0) => {
+                let _ = field_0;
+            }
+            Self::Bytes(field_0) => {
+                let _ = field_0;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for ColumnType {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            name,
+            args,
+            unsigned,
+            zerofill,
+            binary,
+            charset,
+        } = self;
+        for value in args.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        let _ = name;
+        let _ = args;
+        let _ = unsigned;
+        let _ = zerofill;
+        let _ = binary;
+        let _ = charset;
+        visitor.leave(self)
+    }
+}
+// END GENERATED AST VISITOR IMPLEMENTATIONS

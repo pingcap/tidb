@@ -15,7 +15,9 @@
 //! `ANALYZE TABLE` grammar translated from
 //! `pkg/parser/ddl_drop_parser.go:252-410`.
 
-use tidb_ast::{AnalyzeOption, AnalyzeOptionKind, AnalyzeTableStmt, AnalyzeTarget};
+use tidb_ast::{
+    AnalyzeOption, AnalyzeOptionKind, AnalyzeTableStmt, AnalyzeTarget, HistogramOperation,
+};
 use tidb_lexer::TokenKind;
 
 #[path = "analyze/incremental.rs"]
@@ -24,11 +26,15 @@ mod incremental;
 use crate::{is_name_or_keyword, PResult, Parser};
 
 impl Parser {
-    /// Parses the current typed subset: table and partition lists, one target
-    /// selector, and ordered `TOPN`/`BUCKETS` options. Other Go payload fields
-    /// remain explicit parse errors until represented by the AST.
+    /// Parses Go's complete `AnalyzeTableStmt` grammar.
     pub(crate) fn parse_analyze_table(&mut self) -> PResult<AnalyzeTableStmt> {
         self.expect_kw("ANALYZE")?;
+        let no_write_to_binlog = if self.is_kw("NO_WRITE_TO_BINLOG") || self.is_kw("LOCAL") {
+            self.bump();
+            true
+        } else {
+            false
+        };
         self.expect_kw("TABLE")?;
 
         let mut tables = vec![self.parse_name_path()?];
@@ -47,40 +53,60 @@ impl Parser {
             }
         }
 
-        let target = if self.is_kw("INDEX") {
-            self.bump();
-            let mut indexes = Vec::new();
-            if self.is_kw("PRIMARY") {
-                indexes.push(self.bump().text);
-            } else if is_name_or_keyword(self.peek()) {
-                indexes.push(self.parse_name_or_keyword()?);
-            }
-            while self.is_op(",") {
+        let target =
+            if (self.is_kw("UPDATE") || self.is_kw("DROP")) && self.is_kw_at(1, "HISTOGRAM") {
+                let operation = if self.is_kw("UPDATE") {
+                    HistogramOperation::Update
+                } else {
+                    HistogramOperation::Drop
+                };
                 self.bump();
+                self.bump();
+                self.expect_kw("ON")?;
+                let mut columns = vec![self.parse_name()?];
+                while self.is_op(",") {
+                    self.bump();
+                    columns.push(self.parse_name()?);
+                }
+                AnalyzeTarget::Histogram { operation, columns }
+            } else if self.is_kw("INDEX") {
+                self.bump();
+                let mut indexes = Vec::new();
                 if self.is_kw("PRIMARY") {
                     indexes.push(self.bump().text);
                 } else if is_name_or_keyword(self.peek()) {
                     indexes.push(self.parse_name_or_keyword()?);
-                } else {
-                    return Err(self.err_here("expected index name after ','"));
                 }
-            }
-            AnalyzeTarget::Index(indexes)
-        } else if self.is_kw("ALL") {
-            self.bump();
-            self.expect_kw("COLUMNS")?;
-            AnalyzeTarget::AllColumns
-        } else if self.is_kw("COLUMNS") {
-            self.bump();
-            let mut columns = vec![self.parse_name()?];
-            while self.is_op(",") {
+                while self.is_op(",") {
+                    self.bump();
+                    if self.is_kw("PRIMARY") {
+                        indexes.push(self.bump().text);
+                    } else if is_name_or_keyword(self.peek()) {
+                        indexes.push(self.parse_name_or_keyword()?);
+                    } else {
+                        return Err(self.err_here("expected index name after ','"));
+                    }
+                }
+                AnalyzeTarget::Index(indexes)
+            } else if self.is_kw("ALL") {
                 self.bump();
-                columns.push(self.parse_name()?);
-            }
-            AnalyzeTarget::Columns(columns)
-        } else {
-            AnalyzeTarget::Default
-        };
+                self.expect_kw("COLUMNS")?;
+                AnalyzeTarget::AllColumns
+            } else if self.is_kw("PREDICATE") {
+                self.bump();
+                self.expect_kw("COLUMNS")?;
+                AnalyzeTarget::PredicateColumns
+            } else if self.is_kw("COLUMNS") {
+                self.bump();
+                let mut columns = vec![self.parse_name()?];
+                while self.is_op(",") {
+                    self.bump();
+                    columns.push(self.parse_name()?);
+                }
+                AnalyzeTarget::Columns(columns)
+            } else {
+                AnalyzeTarget::Default
+            };
 
         let mut options = Vec::new();
         if self.is_kw("WITH") {
@@ -100,10 +126,28 @@ impl Parser {
                 } else if self.is_kw("BUCKETS") {
                     self.bump();
                     AnalyzeOptionKind::Buckets
+                } else if self.is_kw("CMSKETCH") {
+                    self.bump();
+                    if self.is_kw("WIDTH") {
+                        self.bump();
+                        AnalyzeOptionKind::CmSketchWidth
+                    } else if self.is_kw("DEPTH") {
+                        self.bump();
+                        AnalyzeOptionKind::CmSketchDepth
+                    } else {
+                        return Err(self.err_here("expected WIDTH or DEPTH after CMSKETCH"));
+                    }
+                } else if self.is_kw("SAMPLES") {
+                    self.bump();
+                    AnalyzeOptionKind::Samples
+                } else if self.is_kw("SAMPLERATE") {
+                    self.bump();
+                    AnalyzeOptionKind::SampleRate
+                } else if self.is_kw("NDVRATE") {
+                    self.bump();
+                    AnalyzeOptionKind::NdvRate
                 } else {
-                    return Err(
-                        self.err_here("expected TOPN or BUCKETS after ANALYZE option number")
-                    );
+                    return Err(self.err_here("expected ANALYZE option name after number"));
                 };
                 options.push(AnalyzeOption {
                     value: token.text,
@@ -111,6 +155,11 @@ impl Parser {
                 });
                 if self.is_op(",") {
                     self.bump();
+                } else if matches!(
+                    self.peek().kind,
+                    TokenKind::IntLit | TokenKind::DecLit | TokenKind::FloatLit
+                ) {
+                    continue;
                 } else {
                     break;
                 }
@@ -120,6 +169,7 @@ impl Parser {
         Ok(AnalyzeTableStmt {
             tables,
             partitions,
+            no_write_to_binlog,
             target,
             options,
         })

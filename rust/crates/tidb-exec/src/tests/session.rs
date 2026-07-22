@@ -483,7 +483,7 @@ fn plan_replayer_dump_explain_is_unsupported_before_mutation() {
             &tidb_parser::parse("plan replayer dump explain select id from plan_replayer_boundary")
                 .expect("parse PLAN REPLAYER DUMP EXPLAIN")
         ),
-        Err(ExecError::Unsupported("PLAN REPLAYER DUMP EXPLAIN"))
+        Err(ExecError::Unsupported("PLAN REPLAYER"))
     ));
 
     // The unsupported administration command must not implicitly commit the

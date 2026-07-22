@@ -17,3 +17,15 @@
 /// Go's payload-free AlterTableRemoveTTL specification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AlterTableRemoveTtl;
+
+// BEGIN GENERATED AST VISITOR IMPLEMENTATIONS
+
+impl crate::Visitable for AlterTableRemoveTtl {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        visitor.leave(self)
+    }
+}
+// END GENERATED AST VISITOR IMPLEMENTATIONS

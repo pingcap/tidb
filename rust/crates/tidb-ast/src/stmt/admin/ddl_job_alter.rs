@@ -60,3 +60,41 @@ impl AdminAlterDdlJobsStmt {
         }
     }
 }
+
+// BEGIN GENERATED AST VISITOR IMPLEMENTATIONS
+
+impl crate::Visitable for AdminAlterDdlJobOption {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { name, value } = self;
+        if !crate::Visitable::accept(value, visitor) {
+            return false;
+        }
+        let _ = name;
+        let _ = value;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for AdminAlterDdlJobsStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            job_number,
+            options,
+        } = self;
+        for value in options.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        let _ = job_number;
+        let _ = options;
+        visitor.leave(self)
+    }
+}
+// END GENERATED AST VISITOR IMPLEMENTATIONS

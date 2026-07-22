@@ -163,7 +163,7 @@ fn traffic_job_commands_and_invalid_operations_match_go() {
 }
 
 #[test]
-fn traffic_secure_text_redacts_url_credentials_and_password() {
+fn test_redact_traffic_stmt() {
     for (sql, secured) in [
         (
             "traffic capture to 's3://bucket/prefix?access-key=abcdefghi&secret-access-key=123&force-path-style=true' duration='1m'",
@@ -185,7 +185,7 @@ fn traffic_secure_text_redacts_url_credentials_and_password() {
 }
 
 #[test]
-fn refresh_stats_restore_and_shape_match_go() {
+fn test_refresh_stats_stmt() {
     for (sql, restored) in [
         ("REFRESH STATS *.*", "REFRESH STATS *.*"),
         ("refresh stats *.*", "REFRESH STATS *.*"),
@@ -236,7 +236,7 @@ fn refresh_stats_restore_and_shape_match_go() {
 }
 
 #[test]
-fn refresh_stats_dedup_matches_go() {
+fn test_refresh_stats_stmt_dedup() {
     for (sql, restored) in [
         (
             "REFRESH STATS table1, db1.t1, *.*, db2.t2",
@@ -266,12 +266,12 @@ fn refresh_stats_dedup_matches_go() {
         let Stmt::Admin(admin) = parse(sql).expect("REFRESH STATS parses") else {
             panic!("expected admin statement");
         };
-        let AdminStmt::RefreshStats(mut refresh) = *admin else {
+        let AdminStmt::RefreshStats(mut refresh) = admin.into_inner() else {
             panic!("expected refresh stats statement");
         };
         refresh.dedup();
         assert_eq!(
-            Stmt::Admin(Box::new(AdminStmt::RefreshStats(refresh))).restore(),
+            Stmt::Admin(tidb_ast::NodeBox::new(AdminStmt::RefreshStats(refresh))).restore(),
             restored,
             "{sql}"
         );

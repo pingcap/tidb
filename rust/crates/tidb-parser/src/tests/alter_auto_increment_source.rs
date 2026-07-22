@@ -18,8 +18,8 @@ use super::*;
 
 /// `TestDDL` rows at `pkg/parser/parser_test.go:3944,3946` prove the
 /// AUTO_INCREMENT prefix accepts optional `=` and restores it canonically.
-/// Their following AUTO_RANDOM_BASE action belongs to a separate, explicitly
-/// unported leaf, so this test keeps the source-owned prefix independent.
+/// The mixed AUTO_RANDOM_BASE rows are included so the complete source-owned
+/// ALTER option sequence remains visible in one ordinary test module.
 #[test]
 fn alter_table_auto_increment_testddl_prefix_restores_like_go() {
     for (sql, expected) in [
@@ -34,6 +34,18 @@ fn alter_table_auto_increment_testddl_prefix_restores_like_go() {
         (
             "alter table t auto_increment = 110, auto_increment = 90",
             "ALTER TABLE `t` AUTO_INCREMENT = 110, AUTO_INCREMENT = 90",
+        ),
+        (
+            "alter table t force auto_increment = 3",
+            "ALTER TABLE `t` FORCE AUTO_INCREMENT = 3",
+        ),
+        (
+            "alter table t auto_increment 30, auto_random_base 40",
+            "ALTER TABLE `t` AUTO_INCREMENT = 30, AUTO_RANDOM_BASE = 40",
+        ),
+        (
+            "alter table t auto_increment 30, force auto_random_base 40",
+            "ALTER TABLE `t` AUTO_INCREMENT = 30, FORCE AUTO_RANDOM_BASE = 40",
         ),
     ] {
         assert_eq!(r(sql), expected, "source SQL: {sql}");

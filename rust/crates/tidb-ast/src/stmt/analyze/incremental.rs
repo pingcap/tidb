@@ -80,3 +80,39 @@ impl AnalyzeIncrementalStmt {
         }
     }
 }
+
+// BEGIN GENERATED AST VISITOR IMPLEMENTATIONS
+
+impl crate::Visitable for AnalyzeIncrementalTarget {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Tables(field_0) => {
+                let _ = field_0;
+            }
+            Self::Partitions { tables, partitions } => {
+                let _ = tables;
+                let _ = partitions;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for AnalyzeIncrementalStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { target, indexes } = self;
+        if !crate::Visitable::accept(target, visitor) {
+            return false;
+        }
+        let _ = target;
+        let _ = indexes;
+        visitor.leave(self)
+    }
+}
+// END GENERATED AST VISITOR IMPLEMENTATIONS

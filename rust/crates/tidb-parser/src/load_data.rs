@@ -85,10 +85,10 @@ impl Parser {
         loop {
             if self.is_kw("FIELDS") || self.is_kw("COLUMNS") {
                 self.bump();
-                fields = self.parse_load_data_fields()?;
+                fields = self.parse_fields_clause(true)?;
             } else if self.is_kw("LINES") {
                 self.bump();
-                lines = self.parse_load_data_lines()?;
+                lines = self.parse_lines_clause()?;
             } else {
                 break;
             }
@@ -176,7 +176,7 @@ impl Parser {
         })
     }
 
-    fn parse_load_data_fields(&mut self) -> PResult<LoadDataFields> {
+    pub(crate) fn parse_fields_clause(&mut self, load_data_mode: bool) -> PResult<LoadDataFields> {
         let mut fields = LoadDataFields::default();
         loop {
             if self.is_kw("TERMINATED") {
@@ -203,7 +203,7 @@ impl Parser {
                 let value = self.parse_load_string_value()?;
                 self.validate_load_field_separator(&value)?;
                 fields.escaped = Some(value);
-            } else if self.is_kw("DEFINED") {
+            } else if load_data_mode && self.is_kw("DEFINED") {
                 self.bump();
                 self.expect_kw("NULL")?;
                 self.expect_kw("BY")?;
@@ -222,7 +222,7 @@ impl Parser {
         Ok(fields)
     }
 
-    fn parse_load_data_lines(&mut self) -> PResult<LoadDataLines> {
+    pub(crate) fn parse_lines_clause(&mut self) -> PResult<LoadDataLines> {
         let mut lines = LoadDataLines::default();
         loop {
             if self.is_kw("STARTING") {

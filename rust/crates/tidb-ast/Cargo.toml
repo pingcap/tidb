@@ -11,3 +11,9 @@ description = "TiDB SQL abstract syntax tree (Rust)."
 workspace = true
 
 [dependencies]
+serde.workspace = true
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-lexer = { path = "../tidb-lexer" }
+
+[dev-dependencies]
+serde_json.workspace = true

@@ -12,14 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Source rows for `ADMIN FLUSH {SESSION | GLOBAL} PLAN_CACHE` from Go
-//! `TestDDL` and `planner/core/tests/prepare/prepare.test`.
+//! Source rows for the complete `ADMIN FLUSH PLAN_CACHE` family from Go's
+//! `TestAdminStmt`.
 
 use super::*;
 
 #[test]
 fn admin_flush_plan_cache_source_rows_restore_like_go() {
     for (sql, expected) in [
+        ("admin flush plan_cache", "ADMIN FLUSH SESSION PLAN_CACHE"),
+        (
+            "admin flush instance plan_cache",
+            "ADMIN FLUSH INSTANCE PLAN_CACHE",
+        ),
         (
             "admin flush session plan_cache",
             "ADMIN FLUSH SESSION PLAN_CACHE",
@@ -36,6 +41,14 @@ fn admin_flush_plan_cache_source_rows_restore_like_go() {
 #[test]
 fn admin_flush_plan_cache_retains_scope_as_typed_state() {
     for (sql, expected_scope) in [
+        (
+            "admin flush plan_cache",
+            tidb_ast::AdminPlanCacheScope::Session,
+        ),
+        (
+            "admin flush instance plan_cache",
+            tidb_ast::AdminPlanCacheScope::Instance,
+        ),
         (
             "admin flush session plan_cache",
             tidb_ast::AdminPlanCacheScope::Session,
@@ -60,6 +73,7 @@ fn admin_flush_plan_cache_requires_its_scoped_plan_cache_shape() {
     for sql in [
         "admin flush session",
         "admin flush global",
+        "admin flush instance",
         "admin flush session cache",
         "admin flush global cache",
     ] {

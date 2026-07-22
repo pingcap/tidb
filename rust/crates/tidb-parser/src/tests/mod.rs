@@ -17,11 +17,9 @@
 //! doc for what it covers and, where relevant, which `godump restore`
 //! probe confirmed the assertion). Split by concern, mirroring the source
 //! modules (`admin`/`binding`/`ddl`/`dml`/`expr`/`privilege`/`select`/`set`/
-//! `show`/`user`), plus
-//! [`hints`] (optimizer-hint grammar, a cohesive family of its own) and
-//! [`stmt`] (the remaining statement-level odds and ends) — so two agents
-//! extending different grammar areas never touch the same test file. Shared
-//! helpers (`r`) and imports live here; every submodule starts with
+//! `show`/`user`), plus [`hints`] (optimizer-hint grammar, a cohesive family
+//! of its own) and [`stmt`] (the remaining statement-level odds and ends).
+//! Shared helpers (`r`) and imports live here; every submodule starts with
 //! `use super::*;`.
 
 use super::*;
@@ -45,6 +43,37 @@ fn plain_key_parts(names: &[&str]) -> Vec<IndexPart> {
             desc: false,
         })
         .collect()
+}
+
+/// Exercises the package-wide mutable visitor contract on parsed source.
+/// Individual owner tests supply the original Go vectors; the shared helper
+/// only checks the invariant common to all of them.
+fn assert_full_visitor_traversal(sql: &str) {
+    #[derive(Default)]
+    struct BalancedVisitor {
+        entered: usize,
+        left: usize,
+    }
+
+    impl tidb_ast::Visitor for BalancedVisitor {
+        fn enter(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            self.entered += 1;
+            false
+        }
+
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            self.left += 1;
+            true
+        }
+    }
+
+    use tidb_ast::Visitable;
+
+    let mut statement = parse(sql).unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+    let mut visitor = BalancedVisitor::default();
+    assert!(statement.accept(&mut visitor), "{sql}");
+    assert!(visitor.entered > 0, "{sql}");
+    assert_eq!(visitor.entered, visitor.left, "{sql}");
 }
 
 mod admin;
@@ -95,6 +124,7 @@ mod ddl_check_time_source;
 mod ddl_column_check_source;
 mod ddl_column_options_source;
 mod ddl_default_source;
+mod ddl_remaining_source;
 mod ddl_table_parser_source;
 mod dml;
 mod dml_join_restore_source;
@@ -105,10 +135,12 @@ mod explain_binary_source;
 mod explain_plan_tree_source;
 mod explain_values_source;
 mod expr;
-mod expressions_restore_source_wave;
+mod expressions;
 mod field_type_source;
+mod flag;
 mod flush;
-mod functions_source;
+mod format;
+mod functions;
 mod generated_source;
 mod grant_revoke_role_source;
 mod grant_tls_source;
@@ -119,9 +151,11 @@ mod index_source;
 mod inline_key_source;
 mod insert_binary_escape_source;
 mod insert_with_table_for_update_source;
+mod label;
 mod lateral_recursive_cte_source;
 mod load_data;
 mod masking;
+mod misc;
 mod multi_statement_source;
 mod named_table_constraints;
 mod parenthesized_setopr_source;
@@ -139,6 +173,7 @@ mod partition_interval_source;
 mod partition_key_algorithm_source;
 mod placement;
 mod privilege;
+mod procedure;
 mod resource_group;
 mod restore_context;
 mod revoke_all_grant_option_source;
@@ -149,13 +184,6 @@ mod set;
 mod set_restore_mismatch_source;
 mod set_transaction_snapshot_source;
 mod show;
-mod show_builtins_full_tables_source;
-mod show_character_set_source;
-mod show_engines_source;
-mod show_master_privileges_source;
-mod show_open_tables_source;
-mod show_stats_buckets_source;
-mod show_stats_locked_source;
 mod stmt;
 mod table_option_charset_source;
 mod table_option_source;
@@ -163,4 +191,5 @@ mod traffic;
 mod update_default_source;
 mod use_reserved_name_source;
 mod user;
+mod util;
 mod with_parenthesized_source;

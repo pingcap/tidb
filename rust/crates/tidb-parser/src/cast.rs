@@ -146,7 +146,16 @@ impl Parser {
         } else if self.is_kw("CHAR") {
             self.bump();
             let len = self.parse_optional_paren_uint()?;
-            let charset = self.parse_optional_charset_clause()?;
+            // Go's `Char OptFieldLen OptBinary` production accepts a bare
+            // `BINARY` suffix as the binary charset. It is checked before
+            // the longer CHARACTER SET / CHARSET forms and restores as a
+            // BINARY cast type (`CHAR(3) BINARY` -> `BINARY(3)`).
+            let charset = if self.is_kw("BINARY") {
+                self.bump();
+                Some("BINARY".to_string())
+            } else {
+                self.parse_optional_charset_clause()?
+            };
             // `len` and `charset` are independent — both may be given
             // together (see `tidb_ast::CastType::Char`'s own doc for why
             // an EARLIER "charset dropped once a length is given"

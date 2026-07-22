@@ -16,12 +16,131 @@
 
 use super::*;
 
+/// `pkg/parser/ast/ddl_test.go::TestDDLVisitorCover`.
+#[test]
+fn test_ddl_visitor_cover() {
+    for sql in [
+        "CREATE DATABASE d",
+        "ALTER DATABASE d CHARACTER SET utf8mb4",
+        "DROP DATABASE d",
+        "DROP INDEX i ON t",
+        "DROP TABLE t1, t2",
+        "RENAME TABLE t1 TO t2",
+        "TRUNCATE TABLE t",
+        "ALTER TABLE t ADD COLUMN a INT DEFAULT 1",
+        "CREATE INDEX i ON t (a)",
+        "CREATE TABLE t (a INT DEFAULT 1, CONSTRAINT c CHECK (a > 0))",
+        "CREATE VIEW v AS SELECT 1",
+    ] {
+        assert_full_visitor_traversal(sql);
+    }
+}
+
+#[test]
+fn alter_table_enable_disable_keys_match_go_owner_rows() {
+    for (sql, restored, enabled) in [
+        (
+            "ALTER TABLE t ENABLE KEYS",
+            "ALTER TABLE `t` ENABLE KEYS",
+            true,
+        ),
+        (
+            "ALTER TABLE t DISABLE KEYS",
+            "ALTER TABLE `t` DISABLE KEYS",
+            false,
+        ),
+    ] {
+        let statement = parse(sql).expect("ALTER TABLE keys action parses");
+        assert_eq!(statement.restore(), restored);
+        let Stmt::Ddl(ddl) = statement else {
+            panic!("expected DDL statement");
+        };
+        let tidb_ast::DdlStmt::AlterTable(alter) = ddl.into_inner() else {
+            panic!("expected ALTER TABLE");
+        };
+        assert_eq!(
+            alter.actions,
+            vec![AlterTableAction::SetKeysEnabled(enabled)]
+        );
+    }
+
+    assert_eq!(
+        r("ALTER TABLE t ENABLE KEYS, COMMENT = 'cmt' PARTITION BY HASH(a)"),
+        "ALTER TABLE `t` ENABLE KEYS, COMMENT = 'cmt' PARTITION BY HASH (`a`) PARTITIONS 1"
+    );
+    for sql in [
+        "ALTER TABLE t ENABLE",
+        "ALTER TABLE t DISABLE",
+        "ALTER TABLE t ENABLE INDEX",
+        "ALTER TABLE t DISABLE INDEX",
+    ] {
+        assert!(parse(sql).is_err(), "accepted invalid keys action: {sql}");
+    }
+}
+
+#[test]
+fn test_column_position_restore() {
+    for (suffix, expected) in [
+        ("", "ALTER TABLE `t` ADD COLUMN `a` VARCHAR(255)"),
+        ("FIRST", "ALTER TABLE `t` ADD COLUMN `a` VARCHAR(255) FIRST"),
+        (
+            "AFTER b",
+            "ALTER TABLE `t` ADD COLUMN `a` VARCHAR(255) AFTER `b`",
+        ),
+    ] {
+        assert_eq!(
+            r(&format!("ALTER TABLE t ADD COLUMN a VARCHAR(255) {suffix}")),
+            expected
+        );
+    }
+}
+
+#[test]
+fn test_alter_table_option_restore() {
+    for (sql, expected) in [
+        (
+            "ALTER TABLE t ROW_FORMAT = COMPRESSED KEY_BLOCK_SIZE = 8",
+            "ALTER TABLE `t` ROW_FORMAT = COMPRESSED KEY_BLOCK_SIZE = 8",
+        ),
+        (
+            "ALTER TABLE t ROW_FORMAT = COMPRESSED, KEY_BLOCK_SIZE = 8",
+            "ALTER TABLE `t` ROW_FORMAT = COMPRESSED, KEY_BLOCK_SIZE = 8",
+        ),
+    ] {
+        assert_eq!(r(sql), expected);
+    }
+}
+
+#[test]
+fn test_alter_table_with_special_comment_restore() {
+    let flags = tidb_ast::RestoreFlags::DEFAULT | tidb_ast::RestoreFlags::TIDB_SPECIAL_COMMENT;
+    for (sql, expected) in [
+        (
+            "ALTER TABLE t PLACEMENT POLICY p1",
+            "ALTER TABLE `t` /*T![placement] PLACEMENT POLICY = `p1` */",
+        ),
+        (
+            "ALTER TABLE t PLACEMENT POLICY p1 COMMENT='aaa'",
+            "ALTER TABLE `t` /*T![placement] PLACEMENT POLICY = `p1` */ COMMENT = 'aaa'",
+        ),
+        (
+            "ALTER TABLE t PARTITION p0 PLACEMENT POLICY p1",
+            "ALTER TABLE `t` /*T![placement] PARTITION `p0` PLACEMENT POLICY = `p1` */",
+        ),
+    ] {
+        assert_eq!(
+            parse(sql).expect("parse").restore_with_flags(flags),
+            expected
+        );
+    }
+}
+
 macro_rules! ddl_payload {
     ($stmt:expr, $variant:ident) => {{
         let Stmt::Ddl(ddl) = $stmt else {
             panic!("expected DDL envelope")
         };
-        let tidb_ast::DdlStmt::$variant(payload) = *ddl else {
+        let tidb_ast::DdlStmt::$variant(payload) = ddl.into_inner() else {
             panic!("expected {} payload", stringify!($variant))
         };
         payload
@@ -127,7 +246,10 @@ fn lock_tables_leaf_grammar_matches_go_ast_restore_contract() {
     assert_eq!(locks[2].table, vec!["*", "all_tables"]);
     assert_eq!(locks[2].lock_type, tidb_ast::TableLockType::None);
     assert_eq!(
-        Stmt::Ddl(Box::new(tidb_ast::DdlStmt::LockTables(Box::new(locks)))).restore(),
+        Stmt::Ddl(tidb_ast::NodeBox::new(tidb_ast::DdlStmt::LockTables(
+            Box::new(locks)
+        )))
+        .restore(),
         "LOCK TABLES `select` READ LOCAL, `app`.`t` WRITE, `*`.`all_tables` NONE"
     );
 
@@ -138,7 +260,10 @@ fn lock_tables_leaf_grammar_matches_go_ast_restore_contract() {
     assert!(charset_name.at_eof());
     assert_eq!(locks[0].table, vec!["utf8"]);
     assert_eq!(
-        Stmt::Ddl(Box::new(tidb_ast::DdlStmt::LockTables(Box::new(locks)))).restore(),
+        Stmt::Ddl(tidb_ast::NodeBox::new(tidb_ast::DdlStmt::LockTables(
+            Box::new(locks)
+        )))
+        .restore(),
         "LOCK TABLES `utf8` READ"
     );
 
@@ -148,7 +273,7 @@ fn lock_tables_leaf_grammar_matches_go_ast_restore_contract() {
         .expect("parse singular UNLOCK TABLE spelling");
     assert!(unlock.at_eof());
     assert_eq!(
-        Stmt::Ddl(Box::new(tidb_ast::DdlStmt::UnlockTables)).restore(),
+        Stmt::Ddl(tidb_ast::NodeBox::new(tidb_ast::DdlStmt::UnlockTables)).restore(),
         "UNLOCK TABLES"
     );
 }
@@ -176,7 +301,7 @@ fn drop_index_leaf_grammar_preserves_typed_options() {
     let Stmt::Ddl(ddl) = hypo else {
         panic!("expected DDL envelope for DROP HYPO INDEX")
     };
-    let tidb_ast::DdlStmt::DropIndex(statement) = *ddl else {
+    let tidb_ast::DdlStmt::DropIndex(statement) = ddl.into_inner() else {
         panic!("expected DROP INDEX payload")
     };
     assert!(statement.is_hypo);
@@ -326,7 +451,7 @@ fn create_database_options_restore_and_scope() {
 }
 
 #[test]
-fn alter_database_preserves_name_option_and_schema_forms() {
+fn test_alter_database_restore() {
     assert_eq!(
         r("alter database db1 default character set = utf8 collate = utf8_bin"),
         "ALTER DATABASE `db1` CHARACTER SET = utf8 COLLATE = utf8_bin"
@@ -2172,7 +2297,7 @@ fn alter_table_drop_index() {
 }
 
 #[test]
-fn drop_table() {
+fn test_ddl_drop_table_stmt_restore() {
     assert_eq!(r("drop table t"), "DROP TABLE `t`");
     assert_eq!(
         r("drop table if exists t1, t2"),
@@ -2191,6 +2316,10 @@ fn drop_table() {
     assert_eq!(
         r("drop temporary table if exists t1, t2"),
         "DROP TEMPORARY TABLE IF EXISTS `t1`, `t2`"
+    );
+    assert_eq!(
+        r("DROP /*!40005 TEMPORARY */ TABLE IF EXISTS `test`"),
+        "DROP TEMPORARY TABLE IF EXISTS `test`"
     );
     assert_eq!(
         r("drop global temporary table if exists temp"),

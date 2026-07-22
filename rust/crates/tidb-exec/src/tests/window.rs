@@ -523,17 +523,25 @@ fn window_functions() {
         "RS:1|a|100|1"
     );
 
-    // Deliberate scope boundaries: `DISTINCT` in a window aggregate and
-    // `IGNORE NULLS` (confirmed via `gorun` that real TiDB itself
-    // rejects it too) stay a `ParseError` rather than silently
-    // misparsing or computing a wrong value.
-    assert!(
-        tidb_parser::parse("select max(distinct salary) over (partition by dept) from t").is_err()
-    );
-    assert!(
-        tidb_parser::parse("select lag(salary) ignore nulls over (order by salary) from t")
-            .is_err()
-    );
+    // TiDB preserves these modifiers in the AST and rejects them during
+    // semantic planning. The executor must therefore fail closed after parse,
+    // never erase the modifier and compute an ordinary window value.
+    for (sql, message) in [
+        (
+            "select max(distinct salary) over (partition by dept) from single",
+            "DISTINCT window function",
+        ),
+        (
+            "select lag(salary) ignore nulls over (order by salary) from single",
+            "IGNORE NULLS window function",
+        ),
+    ] {
+        let statement = tidb_parser::parse(sql).expect("modifier remains AST-visible");
+        assert!(matches!(
+            db3.run(&statement),
+            Err(ExecError::Unsupported(actual)) if actual == message
+        ));
+    }
 
     // `RANGE` frames: value-distance against the single `ORDER BY`
     // key, not physical position -- `50 PRECEDING`/`50 FOLLOWING`

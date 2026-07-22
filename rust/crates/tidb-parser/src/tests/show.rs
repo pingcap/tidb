@@ -16,6 +16,40 @@
 
 use super::*;
 
+/// Direct `TestParseShowOpenTables` rows from `pkg/parser/parser_test.go`,
+/// including the shared filter payload owned by Go's `ShowStmt`.
+#[test]
+fn show_open_tables_restores_complete_source_shape() {
+    for (sql, expected) in [
+        ("show open tables", "SHOW OPEN TABLES"),
+        ("show open tables in test", "SHOW OPEN TABLES IN `test`"),
+        ("show open tables from test", "SHOW OPEN TABLES IN `test`"),
+        (
+            "show open tables from test like 't%'",
+            "SHOW OPEN TABLES IN `test` LIKE _UTF8MB4't%'",
+        ),
+        (
+            "show open tables where In_use > 0",
+            "SHOW OPEN TABLES WHERE `In_use`>0",
+        ),
+    ] {
+        assert_eq!(r(sql), expected, "source SQL: {sql}");
+    }
+
+    let tidb_ast::Stmt::Admin(admin) =
+        parse("show open tables from executor__show").expect("parse Go source form")
+    else {
+        panic!("expected administrative statement");
+    };
+    let tidb_ast::AdminStmt::ShowOpenTables(show) = admin.as_ref() else {
+        panic!("expected typed SHOW OPEN TABLES statement");
+    };
+    assert_eq!(show.database.as_deref(), Some("executor__show"));
+    assert!(show.filter.is_none());
+
+    assert!(parse("show open").is_err());
+}
+
 #[test]
 fn show_create() {
     assert_eq!(r("show create table t"), "SHOW CREATE TABLE `t`");
@@ -28,6 +62,14 @@ fn show_create() {
     );
     assert_eq!(r("show create schema db"), "SHOW CREATE DATABASE `db`");
     assert_eq!(r("show create table db.t"), "SHOW CREATE TABLE `db`.`t`");
+    assert_eq!(
+        r("show create placement policy x"),
+        "SHOW CREATE PLACEMENT POLICY `x`"
+    );
+    assert_eq!(
+        r("show create resource group rg1"),
+        "SHOW CREATE RESOURCE GROUP `rg1`"
+    );
 }
 
 #[test]
@@ -125,6 +167,8 @@ fn show_status_preserves_scope_and_filters() {
 #[test]
 fn show_warnings_restore_and_scope() {
     assert_eq!(r("show warnings"), "SHOW WARNINGS");
+    assert_eq!(r("show count(*) warnings"), "SHOW WARNINGS");
+    assert_eq!(r("show count(*) errors"), "SHOW ERRORS");
     assert_eq!(
         r("show warnings like 'Warn%'"),
         "SHOW WARNINGS LIKE _UTF8MB4'Warn%'"
@@ -155,7 +199,14 @@ fn show_warnings_restore_and_scope() {
         admin.as_ref(),
         tidb_ast::AdminStmt::ShowErrors(show) if show.count_only
     ));
-    assert!(parse("show count(*) warnings").is_err());
+    let warnings = parse("show count(*) warnings").expect("SHOW COUNT(*) WARNINGS parses");
+    let tidb_ast::Stmt::Admin(admin) = warnings else {
+        panic!("SHOW WARNINGS must use Admin envelope")
+    };
+    assert!(matches!(
+        admin.as_ref(),
+        tidb_ast::AdminStmt::ShowWarnings(show) if show.count_only
+    ));
 }
 
 #[test]
@@ -333,6 +384,15 @@ fn show_columns_restore_and_scope() {
         "SHOW COLUMNS IN `schema_name`.`table_name`"
     );
     assert_eq!(r("show fields from City"), "SHOW COLUMNS IN `City`");
+    assert_eq!(r("show full columns in t"), "SHOW FULL COLUMNS IN `t`");
+    assert_eq!(
+        r("show extended full fields from City"),
+        "SHOW EXTENDED FULL COLUMNS IN `City`"
+    );
+    assert_eq!(
+        r("show columns from t from test"),
+        "SHOW COLUMNS IN `test`.`t`"
+    );
     assert_eq!(
         r("show columns in t like id"),
         "SHOW COLUMNS IN `t` LIKE `id`"
@@ -369,10 +429,6 @@ fn show_columns_restore_and_scope() {
     ));
 
     assert!(parse("show columns t").is_err());
-    assert!(parse("show full columns from t").is_err());
-    assert!(parse("show full fields from t").is_err());
-    assert!(parse("show extended columns from t").is_err());
-    assert!(parse("show fields from t from test").is_err());
 }
 
 #[test]
@@ -381,6 +437,10 @@ fn show_index_restore_and_scope() {
     assert_eq!(r("show keys from t"), "SHOW INDEX IN `t`");
     assert_eq!(r("show index in t"), "SHOW INDEX IN `t`");
     assert_eq!(r("show keys in t"), "SHOW INDEX IN `t`");
+    assert_eq!(
+        r("show keys from t from test where true"),
+        "SHOW INDEX IN `test`.`t` WHERE TRUE"
+    );
     assert_eq!(
         r("show indexes in t where true"),
         "SHOW INDEX IN `t` WHERE TRUE"
@@ -409,5 +469,448 @@ fn show_index_restore_and_scope() {
     ));
 
     assert!(parse("show index t").is_err());
-    assert!(parse("show keys from t from test").is_err());
+}
+
+#[test]
+fn common_show_inspection_family_matches_go_source_rows() {
+    for (sql, expected) in [
+        ("show triggers like 't'", "SHOW TRIGGERS LIKE _UTF8MB4't'"),
+        (
+            "show procedure status where Db='test'",
+            "SHOW PROCEDURE STATUS WHERE `Db`=_UTF8MB4'test'",
+        ),
+        (
+            "show function status where Db='test'",
+            "SHOW FUNCTION STATUS WHERE `Db`=_UTF8MB4'test'",
+        ),
+        (
+            "show events from test_db where definer='current_user'",
+            "SHOW EVENTS IN `test_db` WHERE `definer`=_UTF8MB4'current_user'",
+        ),
+        (
+            "show plugins like 'Validate%'",
+            "SHOW PLUGINS LIKE _UTF8MB4'Validate%'",
+        ),
+        (
+            "show stats_extended where table_name='t'",
+            "SHOW STATS_EXTENDED WHERE `table_name`=_UTF8MB4't'",
+        ),
+        (
+            "show stats_meta where table_name='t'",
+            "SHOW STATS_META WHERE `table_name`=_UTF8MB4't'",
+        ),
+        (
+            "show stats_healthy where table_name='t'",
+            "SHOW STATS_HEALTHY WHERE `table_name`=_UTF8MB4't'",
+        ),
+        ("show histograms_in_flight", "SHOW HISTOGRAMS_IN_FLIGHT"),
+        (
+            "show column_stats_usage where table_name='t'",
+            "SHOW COLUMN_STATS_USAGE WHERE `table_name`=_UTF8MB4't'",
+        ),
+        ("show binding_cache status", "SHOW BINDING_CACHE STATUS"),
+        (
+            "show analyze status where table_name like '%'",
+            "SHOW ANALYZE STATUS WHERE `table_name` LIKE _UTF8MB4'%'",
+        ),
+        (
+            "show backups where start_time > now() - interval 10 hour",
+            "SHOW BACKUPS WHERE `start_time`>DATE_SUB(NOW(), INTERVAL 10 HOUR)",
+        ),
+        (
+            "show restores like 'r0001'",
+            "SHOW RESTORES LIKE _UTF8MB4'r0001'",
+        ),
+        (
+            "show config where type='tidb'",
+            "SHOW CONFIG WHERE `type`=_UTF8MB4'tidb'",
+        ),
+        ("show replica status", "SHOW REPLICA STATUS"),
+        ("show slave status", "SHOW REPLICA STATUS"),
+        ("show binary log status", "SHOW BINARY LOG STATUS"),
+        ("show profiles", "SHOW PROFILES"),
+        ("show session_states", "SHOW SESSION_STATES"),
+        ("show processlist", "SHOW PROCESSLIST"),
+        ("show full processlist", "SHOW FULL PROCESSLIST"),
+        ("show affinity", "SHOW AFFINITY"),
+    ] {
+        assert_eq!(r(sql), expected, "Go TestDMLStmt row: {sql}");
+    }
+}
+
+#[test]
+fn show_masking_policies_matches_go_rows() {
+    assert_eq!(
+        r("show masking policies for t"),
+        "SHOW MASKING POLICIES FOR `t`"
+    );
+    assert_eq!(
+        r("show masking policies for t where column_name = 'c'"),
+        "SHOW MASKING POLICIES FOR `t` WHERE `column_name`=_UTF8MB4'c'"
+    );
+}
+
+#[test]
+fn table_region_distribution_and_job_show_rows_match_go() {
+    for (sql, expected) in [
+        ("show table t1 regions", "SHOW TABLE `t1` REGIONS"),
+        (
+            "show table t1 index idx1 regions where a=2",
+            "SHOW TABLE `t1` INDEX `idx1` REGIONS WHERE `a`=2",
+        ),
+        (
+            "show table t1 partition (p0,p1) regions",
+            "SHOW TABLE `t1` PARTITION(`p0`, `p1`) REGIONS",
+        ),
+        (
+            "show table t1 partition (p0,p1) index idx1 regions where a=2",
+            "SHOW TABLE `t1` PARTITION(`p0`, `p1`) INDEX `idx1` REGIONS WHERE `a`=2",
+        ),
+        (
+            "show table t1 distributions where a=1",
+            "SHOW TABLE `t1` DISTRIBUTIONS WHERE `a`=1",
+        ),
+        (
+            "show table t1 partition (p0,p1) distributions",
+            "SHOW TABLE `t1` PARTITION(`p0`, `p1`) DISTRIBUTIONS",
+        ),
+        ("show distribution jobs", "SHOW DISTRIBUTION JOBS"),
+        (
+            "show distribution jobs where id > 0",
+            "SHOW DISTRIBUTION JOBS WHERE `id`>0",
+        ),
+        ("show distribution job 1", "SHOW DISTRIBUTION JOB 1"),
+    ] {
+        assert_eq!(r(sql), expected, "Go TestDMLStmt row: {sql}");
+    }
+}
+
+#[test]
+fn placement_show_family_matches_go_rows() {
+    for (sql, expected) in [
+        ("show placement", "SHOW PLACEMENT"),
+        (
+            "show placement like 'POLICY foo%'",
+            "SHOW PLACEMENT LIKE _UTF8MB4'POLICY foo%'",
+        ),
+        (
+            "show placement where Target='TABLE test.t1'",
+            "SHOW PLACEMENT WHERE `Target`=_UTF8MB4'TABLE test.t1'",
+        ),
+        (
+            "show placement for schema db1",
+            "SHOW PLACEMENT FOR DATABASE `db1`",
+        ),
+        (
+            "show placement for table db1.tb1",
+            "SHOW PLACEMENT FOR TABLE `db1`.`tb1`",
+        ),
+        (
+            "show placement for table db1.tb1 partition p1",
+            "SHOW PLACEMENT FOR TABLE `db1`.`tb1` PARTITION `p1`",
+        ),
+        ("show placement labels", "SHOW PLACEMENT LABELS"),
+        (
+            "show placement labels like '%zone%'",
+            "SHOW PLACEMENT LABELS LIKE _UTF8MB4'%zone%'",
+        ),
+    ] {
+        assert_eq!(r(sql), expected, "Go TestDMLStmt row: {sql}");
+    }
+    for sql in [
+        "show placement for",
+        "show placement database db1",
+        "show placement for db db1",
+        "show placement for database db1 table tb1",
+        "show placement for partition p1",
+        "show placement for database db1 like '%'",
+    ] {
+        assert!(parse(sql).is_err(), "Go rejects: {sql}");
+    }
+}
+
+#[test]
+fn show_profile_payload_matches_go_rows() {
+    for (sql, expected) in [
+        ("show profile", "SHOW PROFILE"),
+        ("show profile for query 1", "SHOW PROFILE FOR QUERY 1"),
+        (
+            "show profile cpu for query 2 limit 1,1",
+            "SHOW PROFILE CPU FOR QUERY 2 LIMIT 1,1",
+        ),
+        (
+            "show profile cpu, memory, block io, context switches, page faults, ipc, swaps, source for query 1 limit 100",
+            "SHOW PROFILE CPU, MEMORY, BLOCK IO, CONTEXT SWITCHES, PAGE FAULTS, IPC, SWAPS, SOURCE FOR QUERY 1 LIMIT 100",
+        ),
+    ] {
+        assert_eq!(r(sql), expected, "Go TestDMLStmt row: {sql}");
+    }
+}
+
+#[test]
+fn show_builtins_restores_the_source_row() {
+    assert_eq!(r("show builtins"), "SHOW BUILTINS");
+
+    let statement = parse("show builtins").expect("parse SHOW BUILTINS");
+    let Stmt::Admin(admin) = statement else {
+        panic!("expected administrative statement");
+    };
+    assert!(matches!(admin.as_ref(), tidb_ast::AdminStmt::ShowBuiltins));
+}
+
+#[test]
+fn show_builtins_has_no_filter_or_trailing_payload() {
+    for sql in ["show builtins like 'x'", "show builtins where 1 = 1"] {
+        assert!(parse(sql).is_err(), "Go rejects: {sql}");
+    }
+}
+
+#[test]
+fn show_full_tables_restores_full_scope_and_filter() {
+    for (sql, expected) in [
+        (
+            "show full tables like '%lmn'",
+            "SHOW FULL TABLES LIKE _UTF8MB4'%lmn'",
+        ),
+        (
+            "show full tables from demo like 't%'",
+            "SHOW FULL TABLES IN `demo` LIKE _UTF8MB4't%'",
+        ),
+        (
+            "show tables where Table_type = 'BASE TABLE'",
+            "SHOW TABLES WHERE `Table_type`=_UTF8MB4'BASE TABLE'",
+        ),
+    ] {
+        assert_eq!(r(sql), expected, "source SQL: {sql}");
+    }
+}
+
+#[test]
+fn show_tables_keeps_full_and_filter_typed() {
+    let statement = parse("show full tables from demo where Table_type = 'BASE TABLE'")
+        .expect("parse full SHOW TABLES");
+    let Stmt::Admin(admin) = statement else {
+        panic!("expected administrative statement");
+    };
+    let tidb_ast::AdminStmt::ShowTables(show) = admin.as_ref() else {
+        panic!("expected typed SHOW TABLES");
+    };
+    assert!(show.full);
+    assert_eq!(show.database.as_deref(), Some("demo"));
+    assert!(matches!(
+        show.filter,
+        Some(tidb_ast::ShowTablesFilter::Where(_))
+    ));
+}
+
+#[test]
+fn show_tables_rejects_incomplete_filters() {
+    for sql in [
+        "show full",
+        "show full tables like",
+        "show full tables where",
+        "show tables from",
+    ] {
+        assert!(parse(sql).is_err(), "Go rejects: {sql}");
+    }
+}
+
+/// Exact `TestDBAStmt` rows at `pkg/parser/parser_test.go:1314-1315`.
+#[test]
+fn show_character_set_restores_go_aliases() {
+    for sql in ["show character set", "show char set", "show charset"] {
+        assert_eq!(r(sql), "SHOW CHARSET", "source spelling: {sql}");
+    }
+}
+
+#[test]
+fn show_character_set_preserves_filter_payload() {
+    assert_eq!(
+        r("show character set like '%utf8mb4%'"),
+        "SHOW CHARSET LIKE _UTF8MB4'%utf8mb4%'"
+    );
+    assert_eq!(
+        r("show charset where Charset = 'utf8'"),
+        "SHOW CHARSET WHERE `Charset`=_UTF8MB4'utf8'"
+    );
+
+    let statement = parse("show character set where Charset = 'utf8'")
+        .expect("SHOW CHARACTER SET with WHERE parses");
+    let tidb_ast::Stmt::Admin(admin) = statement else {
+        panic!("expected Admin envelope");
+    };
+    let tidb_ast::AdminStmt::ShowCharset(show) = admin.as_ref() else {
+        panic!("expected typed SHOW CHARSET");
+    };
+    assert!(matches!(
+        &show.filter,
+        Some(tidb_ast::ShowCharsetFilter::Where(_))
+    ));
+
+    for sql in [
+        "show character set like",
+        "show character set where",
+        "show charset like 'x%' where Charset = 'utf8'",
+    ] {
+        assert!(parse(sql).is_err(), "Go rejects: {sql}");
+    }
+}
+
+/// The differential parser corpus's source row is the executor `TestShow`
+/// statement at `tests/integrationtest/t/executor/executor.test:1660`.
+#[test]
+fn show_engines_restores_go_source_row() {
+    assert_eq!(r("show engines"), "SHOW ENGINES");
+}
+
+#[test]
+fn show_engines_preserves_the_shared_filter_payload() {
+    assert_eq!(
+        r("show engines like 'innodb%'"),
+        "SHOW ENGINES LIKE _UTF8MB4'innodb%'"
+    );
+    assert_eq!(
+        r("show engines where Engine = 'InnoDB'"),
+        "SHOW ENGINES WHERE `Engine`=_UTF8MB4'InnoDB'"
+    );
+
+    let statement = parse("show engines where Engine = 'InnoDB'").expect("parse SHOW ENGINES");
+    let tidb_ast::Stmt::Admin(admin) = statement else {
+        panic!("expected Admin envelope");
+    };
+    let tidb_ast::AdminStmt::ShowEngines(show) = admin.as_ref() else {
+        panic!("expected typed SHOW ENGINES");
+    };
+    assert!(matches!(
+        &show.filter,
+        Some(tidb_ast::ShowEnginesFilter::Where(_))
+    ));
+
+    for sql in [
+        "show engines like",
+        "show engines where",
+        "show engines like 'x%' where Engine = 'InnoDB'",
+    ] {
+        assert!(parse(sql).is_err(), "Go rejects: {sql}");
+    }
+}
+
+#[test]
+fn show_master_status_and_privileges_restore_source_rows() {
+    assert_eq!(r("show master status"), "SHOW MASTER STATUS");
+    assert_eq!(r("show privileges"), "SHOW PRIVILEGES");
+}
+
+#[test]
+fn show_master_status_and_privileges_have_distinct_typed_leaves() {
+    let master = parse("show master status").expect("SHOW MASTER STATUS parses");
+    let Stmt::Admin(master) = master else {
+        panic!("SHOW MASTER STATUS must use Admin envelope");
+    };
+    assert!(matches!(
+        master.as_ref(),
+        tidb_ast::AdminStmt::ShowMasterStatus
+    ));
+
+    let privileges = parse("show privileges").expect("SHOW PRIVILEGES parses");
+    let Stmt::Admin(privileges) = privileges else {
+        panic!("SHOW PRIVILEGES must use Admin envelope");
+    };
+    assert!(matches!(
+        privileges.as_ref(),
+        tidb_ast::AdminStmt::ShowPrivileges
+    ));
+}
+
+#[test]
+fn show_master_status_and_privileges_reject_trailing_or_missing_payload() {
+    for sql in [
+        "show master",
+        "show master status like 'x'",
+        "show privileges like 'x'",
+    ] {
+        assert!(parse(sql).is_err(), "Go rejects: {sql}");
+    }
+}
+
+/// Exact `TestDBAStmt` rows at `pkg/parser/parser_test.go:1355-1356`.
+#[test]
+fn show_stats_buckets_restores_original_go_rows() {
+    assert_eq!(r("show stats_buckets"), "SHOW STATS_BUCKETS");
+    assert_eq!(
+        r("show stats_buckets where col_name = 'a'"),
+        "SHOW STATS_BUCKETS WHERE `col_name`=_UTF8MB4'a'"
+    );
+}
+
+#[test]
+fn show_stats_buckets_preserves_its_own_filter_payload() {
+    assert_eq!(
+        r("show stats_buckets like 'col%'"),
+        "SHOW STATS_BUCKETS LIKE _UTF8MB4'col%'"
+    );
+    let tidb_ast::Stmt::Admin(admin) =
+        parse("show stats_buckets where db_name = 'test'").expect("parse")
+    else {
+        panic!("expected SHOW administrative envelope");
+    };
+    let tidb_ast::AdminStmt::ShowStatsBuckets(buckets) = admin.as_ref() else {
+        panic!("expected typed SHOW STATS_BUCKETS");
+    };
+    assert!(matches!(
+        &buckets.filter,
+        Some(tidb_ast::ShowStatsBucketsFilter::Where(_))
+    ));
+    for sql in [
+        "show stats_buckets like",
+        "show stats_buckets where",
+        "show stats_buckets like 'x%' where col_name = 'a'",
+    ] {
+        assert!(parse(sql).is_err(), "Go rejects: {sql}");
+    }
+}
+
+/// Exact `TestDBAStmt` rows at `pkg/parser/parser_test.go:1349-1350`.
+#[test]
+fn show_stats_locked_restores_original_go_rows() {
+    assert_eq!(r("show stats_locked"), "SHOW STATS_LOCKED");
+    assert_eq!(
+        r("show stats_locked where table_name = 't'"),
+        "SHOW STATS_LOCKED WHERE `table_name`=_UTF8MB4't'"
+    );
+}
+
+/// Go's shared `parseShowLikeOrWhere` gives LIKE a simple expression and
+/// WHERE a full expression, while retaining a distinct typed payload.
+#[test]
+fn show_stats_locked_preserves_shared_show_filters() {
+    assert_eq!(
+        r("show stats_locked like 'table_%'"),
+        "SHOW STATS_LOCKED LIKE _UTF8MB4'table_%'"
+    );
+    assert_eq!(
+        r("show stats_locked where table_name like '%'"),
+        "SHOW STATS_LOCKED WHERE `table_name` LIKE _UTF8MB4'%'"
+    );
+
+    let tidb_ast::Stmt::Admin(admin) =
+        parse("show stats_locked where table_name = 't'").expect("parse")
+    else {
+        panic!("expected SHOW administrative envelope");
+    };
+    let tidb_ast::AdminStmt::ShowStatsLocked(locked) = admin.as_ref() else {
+        panic!("expected typed SHOW STATS_LOCKED");
+    };
+    assert!(matches!(
+        &locked.filter,
+        Some(tidb_ast::ShowStatsLockedFilter::Where(_))
+    ));
+
+    for sql in [
+        "show stats_locked like",
+        "show stats_locked where",
+        "show stats_locked like 't%' where table_name = 't'",
+    ] {
+        assert!(parse(sql).is_err(), "Go rejects: {sql}");
+    }
 }

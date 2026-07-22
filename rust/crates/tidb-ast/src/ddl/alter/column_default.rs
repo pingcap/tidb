@@ -29,3 +29,26 @@ pub struct AlterColumnDefault {
     /// New default expression, or `None` for `DROP DEFAULT`.
     pub default_value: Option<Expr>,
 }
+
+// BEGIN GENERATED AST VISITOR IMPLEMENTATIONS
+
+impl crate::Visitable for AlterColumnDefault {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            name,
+            default_value,
+        } = self;
+        if let Some(value) = default_value.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        let _ = name;
+        let _ = default_value;
+        visitor.leave(self)
+    }
+}
+// END GENERATED AST VISITOR IMPLEMENTATIONS

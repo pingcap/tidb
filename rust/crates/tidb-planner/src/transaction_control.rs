@@ -43,7 +43,7 @@ pub fn classify_transaction_control(sql: &str) -> Option<TransactionControl> {
     let Stmt::Session(session) = statement else {
         return None;
     };
-    match *session {
+    match session.into_inner() {
         SessionStmt::Begin(begin) => {
             if begin.as_of.is_some() {
                 // `START TRANSACTION READ ONLY AS OF TIMESTAMP <expr>` pins a
@@ -56,7 +56,21 @@ pub fn classify_transaction_control(sql: &str) -> Option<TransactionControl> {
                 Some(TransactionControl::Begin)
             }
         }
-        SessionStmt::Commit | SessionStmt::Rollback => Some(TransactionControl::End),
+        SessionStmt::Commit(tidb_ast::CompletionType::Default)
+        | SessionStmt::Rollback {
+            savepoint: None,
+            completion: tidb_ast::CompletionType::Default,
+        } => Some(TransactionControl::End),
+        SessionStmt::Commit(completion) if completion != tidb_ast::CompletionType::Default => Some(
+            TransactionControl::Unsupported("transaction completion mode"),
+        ),
+        SessionStmt::Rollback { completion, .. }
+            if completion != tidb_ast::CompletionType::Default =>
+        {
+            Some(TransactionControl::Unsupported(
+                "transaction completion mode",
+            ))
+        }
         // Savepoints and every other session statement are not this node's
         // transaction control; the query path admits or rejects them.
         _ => None,

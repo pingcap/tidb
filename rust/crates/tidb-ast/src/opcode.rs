@@ -365,3 +365,34 @@ impl fmt::Display for Op {
         formatter.write_str(self.name())
     }
 }
+
+// BEGIN GENERATED AST VISITOR IMPLEMENTATIONS
+
+impl crate::Visitable for OpInfo {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            name,
+            literal,
+            is_keyword,
+        } = self;
+        let _ = name;
+        let _ = literal;
+        let _ = is_keyword;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for Op {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self(field_0) = self;
+        let _ = field_0;
+        visitor.leave(self)
+    }
+}
+// END GENERATED AST VISITOR IMPLEMENTATIONS

@@ -137,6 +137,9 @@ fn parse_partition_method(parser: &mut Parser, subpartition: bool) -> PResult<Pa
         interval: None,
     };
     match kind {
+        PartitionType::None => {
+            return Err(parser.err_here("NONE is not a partition method"));
+        }
         PartitionType::Hash => method.expr = Some(parse_partition_expr(parser)?),
         PartitionType::Key => {
             if parser.is_kw("ALGORITHM") {

@@ -110,7 +110,7 @@ pub fn derive_tableless_select_result(
     let Stmt::Query(query) = statement else {
         return Err(AutomaticResultResponseError::NonQueryStatement);
     };
-    let QueryStmt::Select(select) = *query else {
+    let QueryStmt::Select(select) = query.into_inner() else {
         return Err(AutomaticResultResponseError::SetOperationRequiresSchema);
     };
     if select.kind != SelectStatementKind::Select {

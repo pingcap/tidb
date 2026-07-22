@@ -150,6 +150,23 @@ pub(crate) mod ranking_runtime;
 
 use ranking_runtime::WindowPartitionRuntime;
 
+pub(crate) fn validate_window_modifiers(
+    distinct: bool,
+    ignore_nulls: bool,
+    from_last: bool,
+) -> Result<(), ExecError> {
+    if distinct {
+        return Err(ExecError::Unsupported("DISTINCT window function"));
+    }
+    if ignore_nulls {
+        return Err(ExecError::Unsupported("IGNORE NULLS window function"));
+    }
+    if from_last {
+        return Err(ExecError::Unsupported("FROM LAST window function"));
+    }
+    Ok(())
+}
+
 /// Collects every DISTINCT `Expr::Window` node appearing in `expr`'s tree
 /// into `out` (deduplicated by full structural equality — name, argument,
 /// AND spec together — in first-encountered order). Does not recurse into
@@ -501,9 +518,19 @@ pub(crate) fn resolve_named_windows(sel: &SelectStmt) -> Result<SelectStmt, Exec
 /// subquery's own body, nor into a window call's OWN argument).
 fn rewrite_window_over(expr: &Expr, windows: &[(String, WindowDef)]) -> Result<Expr, ExecError> {
     Ok(match expr {
-        Expr::Window { name, args, over } => Expr::Window {
+        Expr::Window {
+            name,
+            args,
+            distinct,
+            ignore_nulls,
+            from_last,
+            over,
+        } => Expr::Window {
             name: name.clone(),
             args: args.clone(),
+            distinct: *distinct,
+            ignore_nulls: *ignore_nulls,
+            from_last: *from_last,
             over: WindowOver::Def(WindowDef {
                 base: None,
                 spec: resolve_window_over(over, windows)?,

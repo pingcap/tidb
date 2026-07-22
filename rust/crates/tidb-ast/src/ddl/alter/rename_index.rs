@@ -25,3 +25,18 @@ pub struct RenameIndex {
     /// Replacement index name.
     pub to: String,
 }
+
+// BEGIN GENERATED AST VISITOR IMPLEMENTATIONS
+
+impl crate::Visitable for RenameIndex {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { from, to } = self;
+        let _ = from;
+        let _ = to;
+        visitor.leave(self)
+    }
+}
+// END GENERATED AST VISITOR IMPLEMENTATIONS

@@ -25,7 +25,7 @@ fn parenthesized_setopr_keeps_statement_wrapper_and_tail() {
     let Stmt::Query(query) = statement else {
         panic!("expected query statement")
     };
-    let tidb_ast::QueryStmt::SetOpr(setopr) = *query else {
+    let tidb_ast::QueryStmt::SetOpr(setopr) = query.into_inner() else {
         panic!("expected set operation")
     };
     assert!(setopr.is_in_braces);

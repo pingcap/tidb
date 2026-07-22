@@ -41,7 +41,7 @@ fn alter_table_validation_actions_are_typed() {
     let Stmt::Ddl(ddl) = parse("ALTER TABLE t WITHOUT VALIDATION, WITH VALIDATION").unwrap() else {
         panic!("expected DDL envelope");
     };
-    let tidb_ast::DdlStmt::AlterTable(statement) = *ddl else {
+    let tidb_ast::DdlStmt::AlterTable(statement) = ddl.into_inner() else {
         panic!("expected ALTER TABLE payload");
     };
     assert_eq!(

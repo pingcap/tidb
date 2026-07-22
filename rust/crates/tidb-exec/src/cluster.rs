@@ -293,7 +293,7 @@ impl Session {
         let Stmt::Query(query) = statement else {
             return Err("automatic result metadata requires a plain SELECT".to_owned());
         };
-        let QueryStmt::Select(select) = *query else {
+        let QueryStmt::Select(select) = query.into_inner() else {
             return Err("automatic result metadata requires a plain SELECT".to_owned());
         };
         if select.from.is_none() {
@@ -1262,6 +1262,9 @@ fn safe_shared_dml(dml: &DmlStmt) -> bool {
                 && insert.source.is_none()
                 && !insert.source_parenthesized
                 && insert.on_duplicate.is_empty()
+                && insert.row_alias.is_none()
+                && insert.column_aliases.is_empty()
+                && insert.returning.is_empty()
                 && !insert.set_syntax
                 && !insert.replace
                 && insert.rows.iter().flatten().all(shared_pure_expr)
@@ -1277,7 +1280,9 @@ fn safe_shared_dml(dml: &DmlStmt) -> bool {
                 && update.where_clause.as_ref().is_none_or(shared_pure_expr)
                 && update.order_by.is_empty()
                 && update.limit.is_none()
+                && update.returning.is_empty()
         }
+        DmlStmt::Delete(_) | DmlStmt::DistributeTable(_) => false,
         _ => false,
     }
 }

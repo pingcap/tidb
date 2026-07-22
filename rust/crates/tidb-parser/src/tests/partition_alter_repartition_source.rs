@@ -14,8 +14,8 @@
 
 //! Direct `PARTITION BY` re-partitioning rows from Go
 //! `pkg/parser/parser_test.go:TestDDL` lines 3409-3429. The two accepted
-//! rows whose preceding COMMENT/ENABLE KEYS action is separately unported do
-//! not belong to this partition-owned leaf.
+//! mixed COMMENT/ENABLE KEYS row is covered in `tests::ddl`; these rows isolate
+//! the repartition production's own payload contract.
 
 use super::*;
 
@@ -67,7 +67,7 @@ fn alter_table_repartition_source_rows_restore_and_are_terminal() {
     else {
         panic!("expected DDL");
     };
-    let tidb_ast::DdlStmt::AlterTable(alter) = *ddl else {
+    let tidb_ast::DdlStmt::AlterTable(alter) = ddl.into_inner() else {
         panic!("expected ALTER TABLE");
     };
     assert!(matches!(

@@ -16,7 +16,7 @@
 //! `EXCEPT`/`INTERSECT`, with parenthesized terms and statement-level
 //! `ORDER BY`/`LIMIT`/locking clause). Called from
 //! `crate::Parser::parse_statement`, and from `crate::expr` for
-//! subqueries (`parse_paren_subquery`).
+//! subqueries (`parse_query_subquery`).
 //!
 //! `ORDER BY`/`LIMIT`/the locking clause (`Parser::parse_order_limit_lock`)
 //! parse in ANY relative order — a real MySQL/TiDB grammar flexibility,
@@ -49,13 +49,9 @@
 //!   non-first term specifically, also handled in
 //!   `Parser::parse_setopr_rest`'s own loop.
 //!
-//! A SOLE parenthesized statement (`(SELECT ...)` with no set operator at
-//! all) does NOT get this same trailing-tail treatment — real MySQL/TiDB
-//! instead folds a trailing `ORDER BY`/etc. INTO the inner `SELECT`
-//! (confirmed via `godump restore`: `(SELECT a FROM t) ORDER BY 1`
-//! restores as `(SELECT a FROM t ORDER BY 1)`, moved inside the parens),
-//! a genuinely different shape from this crate's `SelectStmt`/`SetOprStmt`
-//! model — deliberately out of scope, not attempted.
+//! A sole parenthesized statement folds outer `ORDER BY`/`LIMIT` into the
+//! inner query while retaining `SelectStmt::is_in_braces`. TiDB rejects a
+//! locking clause or `INTO OUTFILE` at that outer position.
 //!
 //! A SOLE parenthesized set operation (`(SELECT ... UNION SELECT ...)`) is
 //! represented separately by [`tidb_ast::SetOprStmt::is_in_braces`]. Its
@@ -154,7 +150,7 @@ impl Parser {
         // A parenthesized outer query after WITH keeps its own braces on the
         // query node. Derived-table parsing owns its wrapper separately, so
         // this must not be folded into the generic parenthesized-term path.
-        if self.is_op("(") && (self.is_kw_at(1, "SELECT") || self.is_kw_at(1, "WITH")) {
+        if self.starts_parenthesized_query() {
             self.bump();
             let query = if self.is_kw("WITH") {
                 self.parse_with_select()?
@@ -218,20 +214,20 @@ impl Parser {
             )));
         }
         match first {
-            // A SOLE parenthesized SELECT (`first_braces` true, no set
-            // operator) does NOT attempt an outer trailing tail here —
-            // real MySQL/TiDB actually folds a trailing `ORDER BY`/etc.
-            // INTO the inner `SELECT` in that case instead (confirmed
-            // via `godump restore`: `(SELECT a FROM t) ORDER BY 1`
-            // restores as `(SELECT a FROM t ORDER BY 1)`, the clause
-            // moved INSIDE the parens, not as a separate outer clause),
-            // a genuinely different shape from this crate's
-            // `SelectStmt`/`SetOprStmt` model — deliberately out of
-            // scope, not attempted (this also silently drops the fact
-            // that the SELECT was parenthesized at all; this remains a
-            // separate, pre-existing gap for plain SELECT statements.
             SetOprTermBody::Select(mut sel) => {
-                sel.into_outfile = self.parse_opt_into_outfile()?;
+                if first_braces {
+                    let (order_by, limit, lock) = self.parse_order_limit_lock()?;
+                    if lock.is_some() {
+                        return Err(self.err_here(
+                            "a parenthesized SELECT cannot carry an outer locking clause",
+                        ));
+                    }
+                    sel.order_by = order_by;
+                    sel.limit = limit;
+                    sel.is_in_braces = true;
+                } else {
+                    sel.into_outfile = self.parse_opt_into_outfile()?;
+                }
                 Ok(QueryStmt::Select(sel))
             }
             // A sole parenthesized set operation is a statement-level shape,
@@ -242,15 +238,6 @@ impl Parser {
             // ORDER BY 1)`.
             SetOprTermBody::Nested(mut setopr) => {
                 let (order_by, limit, lock) = self.parse_order_limit_lock()?;
-                // A second structural parenthesis belongs to the enclosing
-                // derived-table grammar, not this statement-level wrapper;
-                // retaining it here would restore `((...))` where TiDB's
-                // parser rejects the redundant shape.
-                if self.is_op(")") {
-                    return Err(
-                        self.err_here("a doubly parenthesized set operation is not supported here")
-                    );
-                }
                 setopr.order_by = order_by;
                 setopr.limit = limit;
                 setopr.lock = lock;
@@ -268,7 +255,7 @@ impl Parser {
     /// see [`Parser::parse_select_or_setopr`]'s own doc for why bare and
     /// parenthesized terms need different tail-parsing timing).
     fn parse_one_term(&mut self) -> PResult<(bool, SetOprTermBody)> {
-        if self.is_op("(") && (self.is_kw_at(1, "SELECT") || self.is_kw_at(1, "WITH")) {
+        if self.starts_parenthesized_query() {
             self.bump(); // (
             let inner = if self.is_kw("WITH") {
                 self.parse_with_select()?
@@ -298,16 +285,6 @@ impl Parser {
         } else {
             Err(self.err_here("expected SELECT query term"))
         }
-    }
-
-    fn parse_select(&mut self) -> PResult<SelectStmt> {
-        let mut sel = self.parse_select_no_tail()?;
-        let (order_by, limit, lock) = self.parse_order_limit_lock()?;
-        sel.order_by = order_by;
-        sel.limit = limit;
-        sel.lock = lock;
-        sel.into_outfile = self.parse_opt_into_outfile()?;
-        Ok(sel)
     }
 
     /// Parses the standalone `TABLE table_name` result-set statement.  Its
@@ -342,30 +319,60 @@ impl Parser {
         } else {
             Vec::new()
         };
-        // DISTINCT and an explicit ALL are both preserved on restore.
-        // `SQL_CALC_FOUND_ROWS` is a genuinely independent SELECT
-        // modifier, freely orderable with the other two (real TiDB's
-        // own `parseSelectOpts` accepts every SELECT-level modifier
-        // keyword in any order via one shared loop, see
-        // `tidb_ast::SelectStmt::calc_found_rows`'s own doc) — other
-        // real MySQL modifiers in that SAME loop (`HIGH_PRIORITY`/
-        // `STRAIGHT_JOIN`/`SQL_NO_CACHE`/`SQL_SMALL_RESULT`/
-        // `SQL_BIG_RESULT`/`SQL_BUFFER_RESULT`) are deliberately NOT
-        // modelled — not exercised by the real-TiDB integration-test
-        // corpus this project measures coverage against.
+        // Go accepts all SELECT modifiers in one freely ordered loop and
+        // restores them in the fixed field order owned by `SelectStmt`.
         let mut distinct = false;
         let mut all = false;
         let mut calc_found_rows = false;
+        let mut priority = tidb_ast::StatementPriority::None;
+        let mut sql_small_result = false;
+        let mut sql_big_result = false;
+        let mut sql_buffer_result = false;
+        let mut sql_no_cache = false;
+        let mut straight_join = false;
         loop {
             if self.is_kw("DISTINCT") || self.is_kw("DISTINCTROW") {
                 self.bump();
+                if all {
+                    return Err(self.err_here("wrong usage of ALL and DISTINCT"));
+                }
                 distinct = true;
             } else if self.is_kw("ALL") {
                 self.bump();
+                if distinct {
+                    return Err(self.err_here("wrong usage of ALL and DISTINCT"));
+                }
                 all = true;
+            } else if self.is_kw("HIGH_PRIORITY") {
+                self.bump();
+                priority = tidb_ast::StatementPriority::High;
+            } else if self.is_kw("LOW_PRIORITY") {
+                self.bump();
+                priority = tidb_ast::StatementPriority::Low;
+            } else if self.is_kw("DELAYED") {
+                self.bump();
+                priority = tidb_ast::StatementPriority::Delayed;
+            } else if self.is_kw("STRAIGHT_JOIN") {
+                self.bump();
+                straight_join = true;
             } else if self.is_kw("SQL_CALC_FOUND_ROWS") {
                 self.bump();
                 calc_found_rows = true;
+            } else if self.is_kw("SQL_CACHE") {
+                self.bump();
+                sql_no_cache = false;
+            } else if self.is_kw("SQL_NO_CACHE") {
+                self.bump();
+                sql_no_cache = true;
+            } else if self.is_kw("SQL_SMALL_RESULT") {
+                self.bump();
+                sql_small_result = true;
+            } else if self.is_kw("SQL_BIG_RESULT") {
+                self.bump();
+                sql_big_result = true;
+            } else if self.is_kw("SQL_BUFFER_RESULT") {
+                self.bump();
+                sql_buffer_result = true;
             } else {
                 break;
             }
@@ -424,6 +431,12 @@ impl Parser {
             is_in_braces: false,
             with: None,
             hints,
+            priority,
+            sql_small_result,
+            sql_big_result,
+            sql_buffer_result,
+            sql_no_cache,
+            straight_join,
             calc_found_rows,
             distinct,
             all,
@@ -461,6 +474,12 @@ impl Parser {
             is_in_braces: false,
             with: None,
             hints: Vec::new(),
+            priority: tidb_ast::StatementPriority::None,
+            sql_small_result: false,
+            sql_big_result: false,
+            sql_buffer_result: false,
+            sql_no_cache: false,
+            straight_join: false,
             calc_found_rows: false,
             distinct: false,
             all: false,
@@ -519,6 +538,12 @@ impl Parser {
             is_in_braces: false,
             with: None,
             hints: Vec::new(),
+            priority: tidb_ast::StatementPriority::None,
+            sql_small_result: false,
+            sql_big_result: false,
+            sql_buffer_result: false,
+            sql_no_cache: false,
+            straight_join: false,
             calc_found_rows: false,
             distinct: false,
             all: false,
@@ -579,6 +604,8 @@ impl Parser {
             | "HASH_JOIN"
             | "HASH_JOIN_BUILD"
             | "HASH_JOIN_PROBE"
+            | "BROADCAST_JOIN"
+            | "SHUFFLE_JOIN"
             | "NO_HASH_JOIN"
             | "MERGE_JOIN"
             | "NO_MERGE_JOIN"
@@ -735,6 +762,11 @@ impl Parser {
             }
             "USE_TOJA" | "USE_CASCADES" => {
                 self.expect_op("(")?;
+                let qb_name = if self.peek().kind == TokenKind::UserVar {
+                    Some(decode_at_name(&self.bump().text))
+                } else {
+                    None
+                };
                 let value = if self.is_kw("TRUE") {
                     self.bump();
                     true
@@ -747,7 +779,7 @@ impl Parser {
                 self.expect_op(")")?;
                 Ok(Hint {
                     name,
-                    kind: HintKind::Bool(value),
+                    kind: HintKind::Bool { qb_name, value },
                 })
             }
             // `RESOURCE_GROUP(name)` — a single BARE identifier argument
@@ -766,11 +798,89 @@ impl Parser {
             // applied to `LEADING()`/`USE_TOJA(1)`.
             "RESOURCE_GROUP" => {
                 self.expect_op("(")?;
+                let qb_name = if self.peek().kind == TokenKind::UserVar {
+                    Some(decode_at_name(&self.bump().text))
+                } else {
+                    None
+                };
                 let group_name = self.parse_charset_name()?;
                 self.expect_op(")")?;
                 Ok(Hint {
                     name,
-                    kind: HintKind::Name(group_name),
+                    kind: HintKind::Name {
+                        qb_name,
+                        name: group_name,
+                    },
+                })
+            }
+            "QUERY_TYPE" => {
+                self.expect_op("(")?;
+                let qb_name = if self.peek().kind == TokenKind::UserVar {
+                    Some(decode_at_name(&self.bump().text))
+                } else {
+                    None
+                };
+                if !self.peek().text.eq_ignore_ascii_case("OLAP")
+                    && !self.peek().text.eq_ignore_ascii_case("OLTP")
+                {
+                    return Err(self.err_here("expected OLAP or OLTP"));
+                }
+                let value = self.bump().text.to_ascii_uppercase();
+                self.expect_op(")")?;
+                Ok(Hint {
+                    name,
+                    kind: HintKind::Keyword { qb_name, value },
+                })
+            }
+            "MEMORY_QUOTA" => {
+                self.expect_op("(")?;
+                let qb_name = if self.peek().kind == TokenKind::UserVar {
+                    Some(decode_at_name(&self.bump().text))
+                } else {
+                    None
+                };
+                if self.peek().kind != TokenKind::IntLit {
+                    return Err(self.err_here("expected memory quota integer"));
+                }
+                let value = self
+                    .bump()
+                    .text
+                    .parse::<u64>()
+                    .map_err(|_| self.err_here("invalid memory quota"))?;
+                let multiplier = if self.peek().text.eq_ignore_ascii_case("MB") {
+                    self.bump();
+                    1_048_576_u64
+                } else if self.peek().text.eq_ignore_ascii_case("GB") {
+                    self.bump();
+                    1_073_741_824_u64
+                } else {
+                    return Err(self.err_here("expected MB or GB"));
+                };
+                let bytes = value
+                    .checked_mul(multiplier)
+                    .and_then(|bytes| i64::try_from(bytes).ok())
+                    .ok_or_else(|| self.err_here("memory quota overflow"))?;
+                self.expect_op(")")?;
+                Ok(Hint {
+                    name,
+                    kind: HintKind::MemoryQuota { qb_name, bytes },
+                })
+            }
+            "TIME_RANGE" => {
+                self.expect_op("(")?;
+                if self.peek().kind != TokenKind::Str {
+                    return Err(self.err_here("expected TIME_RANGE start string"));
+                }
+                let from = decode_string(&self.bump().text);
+                self.expect_op(",")?;
+                if self.peek().kind != TokenKind::Str {
+                    return Err(self.err_here("expected TIME_RANGE end string"));
+                }
+                let to = decode_string(&self.bump().text);
+                self.expect_op(")")?;
+                Ok(Hint {
+                    name,
+                    kind: HintKind::TimeRange { from, to },
                 })
             }
             // `NAME([@qb_name] N)` — an OPTIONAL leading query-block name
@@ -886,9 +996,19 @@ impl Parser {
                     kind: HintKind::ReadFromStorage { qb_name, groups },
                 })
             }
-            "STREAM_AGG" | "HASH_AGG" | "AGG_TO_COP" | "NO_DECORRELATE" | "NO_INDEX_MERGE"
-            | "IGNORE_PLAN_CACHE" | "LIMIT_TO_COP" | "USE_PLAN_CACHE" | "SEMI_JOIN_REWRITE"
-            | "STRAIGHT_JOIN" => {
+            "STREAM_AGG"
+            | "HASH_AGG"
+            | "MPP_1PHASE_AGG"
+            | "MPP_2PHASE_AGG"
+            | "AGG_TO_COP"
+            | "NO_DECORRELATE"
+            | "NO_INDEX_MERGE"
+            | "IGNORE_PLAN_CACHE"
+            | "LIMIT_TO_COP"
+            | "USE_PLAN_CACHE"
+            | "SEMI_JOIN_REWRITE"
+            | "STRAIGHT_JOIN"
+            | "READ_CONSISTENT_REPLICA" => {
                 // The parens are optional; when present they may contain
                 // one query-block name. Restore always shows the parens;
                 // see `tidb_ast::HintKind::Nullary`.
@@ -943,10 +1063,22 @@ impl Parser {
         } else {
             None
         };
+        let mut partitions = Vec::new();
+        if self.is_kw("PARTITION") {
+            self.bump();
+            self.expect_op("(")?;
+            partitions.push(self.parse_charset_name()?);
+            while self.is_op(",") {
+                self.bump();
+                partitions.push(self.parse_charset_name()?);
+            }
+            self.expect_op(")")?;
+        }
         Ok(HintTable {
             db_name,
             name,
             qb_name,
+            partitions,
         })
     }
 
@@ -978,6 +1110,7 @@ impl Parser {
                 db_name: None,
                 name: String::new(),
                 qb_name: Some(decode_at_name(&self.bump().text)),
+                partitions: Vec::new(),
             });
         }
         let name = self.parse_charset_name()?;
@@ -990,6 +1123,7 @@ impl Parser {
             db_name: None,
             name,
             qb_name,
+            partitions: Vec::new(),
         })
     }
 
@@ -1108,14 +1242,11 @@ impl Parser {
         Ok((order_by, limit, lock))
     }
 
-    /// Parses an optional trailing `INTO OUTFILE 'file'` clause — see
-    /// [`tidb_ast::SelectStmt::into_outfile`]'s own doc for the exact
-    /// scope (bare filename only, no `FIELDS`/`LINES`; never recognized
-    /// as part of a set operation's own tail). Always called AFTER
+    /// Parses the complete trailing `INTO OUTFILE` payload. Always called AFTER
     /// [`Parser::parse_order_limit_lock`], never folded into that same
     /// loop — real TiDB's own grammar checks for `INTO` only once that
     /// entire loop has already finished, not interleaved with it.
-    fn parse_opt_into_outfile(&mut self) -> PResult<Option<String>> {
+    fn parse_opt_into_outfile(&mut self) -> PResult<Option<tidb_ast::SelectIntoOption>> {
         if !self.is_kw("INTO") {
             return Ok(None);
         }
@@ -1124,7 +1255,24 @@ impl Parser {
         if self.peek().kind != TokenKind::Str {
             return Err(self.err_here("expected a string literal after INTO OUTFILE"));
         }
-        Ok(Some(decode_string(&self.bump().text)))
+        let file_name = decode_string(&self.bump().text);
+        let fields = if self.is_kw("FIELDS") || self.is_kw("COLUMNS") {
+            self.bump();
+            self.parse_fields_clause(false)?
+        } else {
+            tidb_ast::LoadDataFields::default()
+        };
+        let lines = if self.is_kw("LINES") {
+            self.bump();
+            self.parse_lines_clause()?
+        } else {
+            tidb_ast::LoadDataLines::default()
+        };
+        Ok(Some(tidb_ast::SelectIntoOption {
+            file_name,
+            fields,
+            lines,
+        }))
     }
 
     /// Parses `FOR UPDATE|SHARE [OF table[, table...]] [NOWAIT|SKIP
@@ -1407,7 +1555,7 @@ impl Parser {
         Ok(expr)
     }
 
-    fn parse_select_list(&mut self) -> PResult<Vec<SelectField>> {
+    pub(crate) fn parse_select_list(&mut self) -> PResult<Vec<SelectField>> {
         let mut fields = vec![self.parse_select_field()?];
         while self.is_op(",") {
             self.bump();
@@ -1834,11 +1982,7 @@ impl Parser {
         if self.is_kw("LATERAL") {
             self.bump();
             self.expect_op("(")?;
-            let subquery = if self.is_kw("WITH") {
-                self.parse_with_select()?
-            } else {
-                self.parse_select_or_setopr()?
-            };
+            let subquery = self.parse_derived_query_payload()?;
             self.expect_op(")")?;
             if self.is_kw("AS") {
                 self.bump();
@@ -1889,11 +2033,7 @@ impl Parser {
         }
         if self.looks_like_derived_table() {
             self.bump(); // (
-            let subquery = if self.is_kw("WITH") {
-                self.parse_with_select()?
-            } else {
-                self.parse_select_or_setopr()?
-            };
+            let subquery = self.parse_derived_query_payload()?;
             self.expect_op(")")?;
             // Unlike `LATERAL`, a plain derived table's alias is
             // OPTIONAL (confirmed via `godump restore`: `SELECT * FROM
@@ -1932,6 +2072,30 @@ impl Parser {
             return Ok(JoinNode::Join(Box::new(inner)));
         }
         Ok(JoinNode::Table(self.parse_table_ref()?))
+    }
+
+    /// Parses the query after a derived table's structural opening `(`.
+    ///
+    /// Consecutive whole-query wrappers collapse into the one pair owned by
+    /// the table source. Only leading `((` pairs are peeled here: a single
+    /// `(SELECT ...)` may instead be the first parenthesized term of a set
+    /// operation, whose braces Go preserves.
+    fn parse_derived_query_payload(&mut self) -> PResult<QueryStmt> {
+        let mut redundant_wrappers = 0;
+        while self.is_op("(") && self.is_op_at(1, "(") {
+            self.bump();
+            redundant_wrappers += 1;
+        }
+        let mut query = if self.is_kw("WITH") {
+            self.parse_with_select()?
+        } else {
+            self.parse_select_or_setopr()?
+        };
+        for _ in 0..redundant_wrappers {
+            self.expect_op(")")?;
+        }
+        clear_derived_query_outer_braces(&mut query);
+        Ok(query)
     }
 
     /// Reports whether the current position starts a derived table: `(`,
@@ -2066,49 +2230,11 @@ impl Parser {
         }
     }
 
-    /// Parses `( [WITH [RECURSIVE] ...] SELECT ... )` and returns the
-    /// inner plain statement. Called from `crate::expr` for `ANY`/`ALL`
-    /// subquery shapes — scalar and `EXISTS` use the sibling
-    /// [`Parser::parse_query_subquery`] because Go's general
-    /// `parseExistsSubquery` also preserves a top-level set operation. A
-    /// derived table
-    /// (`crate::select`'s own `parse_table_factor`) uses
-    /// `parse_select_or_setopr` directly instead (it needs to accept a
-    /// `UNION`-bodied subquery too, a shape this function's own callers
-    /// don't, see [`tidb_ast::JoinNode::Derived`]'s own doc), so this is
-    /// NOT shared with that position despite the similar-looking parens.
-    ///
-    /// A leading `WITH` is delegated to [`Parser::parse_with_select`] —
-    /// the SAME CTE grammar the top-level statement position already
-    /// uses, confirmed via `godump restore` to work identically nested
-    /// inside a subquery (`> ALL (WITH cte AS (...) SELECT ...)`, ...). A CTE
-    /// prefix whose outer query is a set operation is deliberately
-    /// rejected here: these scalar-shaped AST slots are `SelectStmt`s, while
-    /// `EXISTS`, `IN`, and derived-table slots own a full `QueryStmt` and
-    /// preserve it.
-    pub(crate) fn parse_paren_subquery(&mut self) -> PResult<SelectStmt> {
-        self.expect_op("(")?;
-        let sub = if self.is_kw("WITH") {
-            match self.parse_with_select()? {
-                QueryStmt::Select(sel) => *sel,
-                QueryStmt::SetOpr(_) => {
-                    return Err(self.err_here(
-                        "a WITH-prefixed set operation is not representable in this scalar subquery",
-                    ));
-                }
-            }
-        } else {
-            self.parse_select()?
-        };
-        self.expect_op(")")?;
-        Ok(sub)
-    }
-
     /// Parses `(SELECT ...)`/`(WITH ... SELECT ...)` in a subquery position
     /// that preserves a top-level `UNION`/`EXCEPT`/`INTERSECT`. TiDB's Go
     /// `parseExistsSubquery` uses the general `parseSubquery` path, so an
-    /// `EXISTS` body can be a set operation even though scalar and
-    /// `ANY`/`ALL` positions remain `SelectStmt`-only in this AST slice.
+    /// every scalar, `EXISTS`, `IN`, and `ANY`/`ALL` body can retain a set
+    /// operation without narrowing to one select term.
     pub(crate) fn parse_query_subquery(&mut self) -> PResult<QueryStmt> {
         self.expect_op("(")?;
         let query = if self.is_kw("WITH") {
@@ -2118,6 +2244,13 @@ impl Parser {
         };
         self.expect_op(")")?;
         Ok(query)
+    }
+}
+
+fn clear_derived_query_outer_braces(query: &mut QueryStmt) {
+    match query {
+        QueryStmt::Select(select) => select.is_in_braces = false,
+        QueryStmt::SetOpr(setopr) => setopr.is_in_braces = false,
     }
 }
 
@@ -2145,55 +2278,6 @@ pub(crate) fn parse_hint_comment(text: &str) -> PResult<Vec<Hint>> {
         let name = matches!(hp.peek().kind, TokenKind::Ident | TokenKind::Keyword)
             .then(|| hp.peek().text.to_ascii_uppercase());
         if name.as_deref().is_some_and(|n| {
-            matches!(
-                n,
-                "USE_INDEX"
-                    | "FORCE_INDEX"
-                    | "USE_INDEX_MERGE"
-                    | "IGNORE_INDEX"
-                    | "INDEX_LOOKUP_PUSHDOWN"
-                    | "NO_INDEX_LOOKUP_PUSHDOWN"
-                    | "ORDER_INDEX"
-                    | "NO_ORDER_INDEX"
-            )
-        }) {
-            // An index-level hint with
-            // genuinely EMPTY parens is a real internal syntax error in
-            // real TiDB's own hint parser too (`parseIndexLevelHint`,
-            // `pkg/parser/hintparser.go`: "Empty arguments like
-            // USE_INDEX() ... are syntax errors"), which then silently
-            // DROPS the whole hint rather than propagating the error to
-            // the statement (confirmed via `godump restore`: the rest
-            // of the statement restores unchanged, the hint just
-            // vanishes) — detected and skipped HERE, before ever
-            // reaching `parse_one_hint`'s own general `ParseError`-
-            // over-silent-drop convention (see `tidb_ast::Hint`'s own
-            // doc), so this deliberately does NOT touch that convention
-            // for any other hint shape (see below).
-            if hp.peek_n(1).kind == TokenKind::Op
-                && hp.peek_n(1).text == "("
-                && hp.peek_n(2).kind == TokenKind::Op
-                && hp.peek_n(2).text == ")"
-            {
-                hp.bump(); // name
-                hp.bump(); // (
-                hp.bump(); // )
-            } else {
-                match hp.parse_one_hint() {
-                    Ok(hint) => hints.push(hint),
-                    Err(error) if name.as_deref() == Some("NO_HASH_JOIN") => {
-                        // Go's hint parser warns and drops a malformed
-                        // table-level hint while keeping the enclosing
-                        // statement accepted. The integration corpus has a
-                        // real unterminated NO_HASH_JOIN comment; do not let
-                        // that hint error poison the EXPLAIN query.
-                        let _ = error;
-                        break;
-                    }
-                    Err(error) => return Err(error),
-                }
-            }
-        } else if name.as_deref().is_some_and(|n| {
             is_always_unsupported_hint_name(n) || !is_recognized_hint_token_name(n)
         }) {
             // A name real TiDB's own lexer doesn't recognize AT ALL
@@ -2214,13 +2298,18 @@ pub(crate) fn parse_hint_comment(text: &str) -> PResult<Vec<Hint>> {
             hp.bump(); // name
             hp.skip_hint_args();
         } else {
+            let start = hp.pos;
             match hp.parse_one_hint() {
                 Ok(hint) => hints.push(hint),
-                Err(error) if name.as_deref() == Some("NO_HASH_JOIN") => {
-                    let _ = error;
-                    break;
+                Err(_) => {
+                    // TiDB reports hint syntax through warnings and keeps the
+                    // enclosing SQL statement. Rewind to the occurrence,
+                    // discard its complete argument group, and continue with
+                    // later hints in the same comment.
+                    hp.pos = start;
+                    hp.bump();
+                    hp.skip_hint_args();
                 }
-                Err(error) => return Err(error),
             }
         }
         // A comma between hints is optional (confirmed via `godump
@@ -2400,6 +2489,7 @@ fn is_alias_excluded_keyword(name: &str) -> bool {
             | "INSERT"
             | "INTO"
             | "VALUES"
+            | "RETURNING"
             | "ON"
             | "USING"
             | "AS"

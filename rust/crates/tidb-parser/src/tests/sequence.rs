@@ -451,7 +451,7 @@ fn sequence_source_statements_have_typed_ddl_variants() {
     for (sql, expected) in cases {
         let statement = parse(sql).expect("parse sequence-owned statement");
         let actual = match statement {
-            tidb_ast::Stmt::Ddl(ddl) => match *ddl {
+            tidb_ast::Stmt::Ddl(ddl) => match ddl.into_inner() {
                 tidb_ast::DdlStmt::CreateSequence(_) => "create",
                 tidb_ast::DdlStmt::AlterSequence(_) => "alter",
                 tidb_ast::DdlStmt::DropSequence(_) => "drop",

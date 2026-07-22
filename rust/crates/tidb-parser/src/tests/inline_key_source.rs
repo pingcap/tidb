@@ -22,7 +22,7 @@ fn first_inline_option(sql: &str) -> ColumnOption {
     let tidb_ast::Stmt::Ddl(ddl) = stmt else {
         panic!("expected DDL for {sql}");
     };
-    let tidb_ast::DdlStmt::CreateTable(table) = *ddl else {
+    let tidb_ast::DdlStmt::CreateTable(table) = ddl.into_inner() else {
         panic!("expected CREATE TABLE for {sql}");
     };
     // Keep the AST assertion local to source rows while the shared test

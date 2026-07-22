@@ -36,17 +36,15 @@ pub(crate) fn parse(parser: &mut Parser) -> PResult<Option<AlterTableAction>> {
         return Ok(None);
     }
     let mut options = Vec::new();
-    while matches!(
-        parser.peek().text.to_ascii_uppercase().as_str(),
-        "TTL" | "TTL_ENABLE" | "TTL_JOB_INTERVAL"
-    ) {
-        let Some(option) = parser.parse_table_option()? else {
-            unreachable!("TTL prefix is a shared table option");
-        };
-        if !matches!(
-            option,
-            TableOption::Ttl { .. } | TableOption::TtlEnable(_) | TableOption::TtlJobInterval(_)
-        ) {
+    while let Some(option) = parser.parse_table_option()? {
+        if options.is_empty()
+            && !matches!(
+                option,
+                TableOption::Ttl { .. }
+                    | TableOption::TtlEnable(_)
+                    | TableOption::TtlJobInterval(_)
+            )
+        {
             unreachable!("TTL parser prefix selected a non-TTL option");
         }
         options.push(option);

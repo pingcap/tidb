@@ -58,7 +58,7 @@ fn multi_spec_long_mixed_statement_preserves_each_action() {
     let Stmt::Ddl(ddl) = statement else {
         panic!("expected ALTER TABLE statement");
     };
-    let tidb_ast::DdlStmt::AlterTable(table) = *ddl else {
+    let tidb_ast::DdlStmt::AlterTable(table) = ddl.into_inner() else {
         panic!("expected ALTER TABLE statement");
     };
     let actions = table.actions.as_slice();

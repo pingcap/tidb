@@ -81,7 +81,7 @@ mod partition;
 pub use partition::{
     AddPartitionSpec, AlterPartitionAction, PartitionDefinition, PartitionDefinitionClause,
     PartitionIndexUpdate, PartitionInterval, PartitionMaintenanceOp, PartitionMethod,
-    PartitionType, PartitionValue, SubPartitionDefinition, TablePartitioning,
+    PartitionValue, SubPartitionDefinition, TablePartitioning,
 };
 
 // Index syntax is shared by standalone CREATE/DROP, CREATE TABLE constraints,
@@ -92,7 +92,7 @@ mod index;
 pub use index::{
     ForeignKeyConstraintDefinition, ForeignKeyMatch, ForeignKeyReference, IndexAlgorithm,
     IndexConstraintDefinition, IndexConstraintKind, IndexKind, IndexLock, IndexOnlineDdl,
-    IndexOptions, IndexPreSplitRegions, IndexType, IndexVisibility,
+    IndexOptions, IndexPreSplitRegions, IndexVisibility,
 };
 
 // `CREATE VIEW` has a distinct grammar envelope from table creation. Keep its
@@ -100,7 +100,7 @@ pub use index::{
 // source family can evolve without reopening this shared DDL root.
 #[path = "ddl/create_view.rs"]
 mod create_view;
-pub use create_view::{CreateViewStmt, ViewAlgorithm, ViewCheckOption, ViewSecurity};
+pub use create_view::CreateViewStmt;
 
 /// The non-default `ALGORITHM` characteristic of a standalone `DROP INDEX`.
 ///
@@ -603,18 +603,32 @@ impl AlterTableStmt {
     pub(crate) fn restore_into_with_context(&self, out: &mut String, context: RestoreContext) {
         out.push_str("ALTER TABLE ");
         push_name_path(out, &self.name);
-        for (index, action) in self.actions.iter().enumerate() {
-            if index == 0 || action.uses_space_separator() {
+        let mut restored = 0;
+        for action in &self.actions {
+            if action.is_suppressed(context) {
+                continue;
+            }
+            if restored == 0 || action.uses_space_separator() {
                 out.push(' ');
             } else {
                 out.push_str(", ");
             }
             action.restore_into_with_context(out, context);
+            restored += 1;
         }
     }
 }
 
 impl AlterTableAction {
+    fn is_suppressed(&self, context: RestoreContext) -> bool {
+        context.flags().has_with_ttl_enable_off()
+            && matches!(
+                self,
+                Self::SetTableOptions { options }
+                    if options.iter().all(|option| matches!(option, TableOption::TtlEnable(_)))
+            )
+    }
+
     /// Go joins terminal partition replacement/removal specs with whitespace
     /// rather than the ordinary comma separator.
     fn uses_space_separator(&self) -> bool {
@@ -642,7 +656,16 @@ impl AlterTableAction {
 
     fn restore_into_with_context(&self, out: &mut String, context: RestoreContext) {
         match self {
-            AlterTableAction::Partition(action) => partition::restore_alter_action(out, action),
+            AlterTableAction::Partition(action) => {
+                partition::restore_alter_action(out, action, context)
+            }
+            AlterTableAction::SetKeysEnabled(enabled) => {
+                out.push_str(if *enabled {
+                    "ENABLE KEYS"
+                } else {
+                    "DISABLE KEYS"
+                });
+            }
             AlterTableAction::AddColumn {
                 if_not_exists,
                 column,
@@ -815,14 +838,29 @@ impl AlterTableAction {
                     out.push_str(collation);
                     return;
                 }
-                for (index, option) in options.iter().enumerate() {
-                    if index > 0 {
+                let mut restored = 0;
+                let mut has_ttl_definition = false;
+                for option in options {
+                    if context.flags().has_with_ttl_enable_off()
+                        && matches!(option, TableOption::TtlEnable(_))
+                    {
+                        continue;
+                    }
+                    if restored > 0 {
                         out.push(' ');
                     }
                     // Go's `parseAlterTableOptions` keeps adjacent options
                     // in one spec; its restore separates them with spaces,
                     // never commas.
                     option.restore_into_with_context(out, context);
+                    restored += 1;
+                    has_ttl_definition |= matches!(option, TableOption::Ttl { .. });
+                }
+                if context.flags().has_with_ttl_enable_off() && has_ttl_definition {
+                    if restored > 0 {
+                        out.push(' ');
+                    }
+                    TableOption::TtlEnable(false).restore_into_with_context(out, context);
                 }
             }
             AlterTableAction::ConvertCharacterSet { charset, collation } => {
@@ -976,6 +1014,10 @@ pub enum AlterTableAction {
     /// [`Self::WithValidation`], preserved as a distinct Go specification so
     /// restore cannot lose the source choice.
     WithoutValidation,
+    /// `ENABLE KEYS` or `DISABLE KEYS`. Go retains these as distinct
+    /// payload-free ALTER specifications; one boolean keeps the same closed
+    /// state space without two empty Rust variants.
+    SetKeysEnabled(bool),
     /// `ADD [COLUMN] col type [options...] [FIRST | AFTER col]`. `ADD`
     /// alone (without `COLUMN`) restores identically, matching the Go AST's
     /// normalization.
@@ -1220,58 +1262,587 @@ pub enum TableConstraint {
     ForeignKey(ForeignKeyConstraintDefinition),
 }
 
-/// An explicitly requested primary-key storage layout. The default is
-/// represented by the existing ordinary primary-key AST variants.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PrimaryKeyStorage {
-    /// `CLUSTERED`.
-    Clustered,
-    /// `NONCLUSTERED`.
-    NonClustered,
-}
+// BEGIN GENERATED AST VISITOR IMPLEMENTATIONS
 
-impl PrimaryKeyStorage {
-    fn restore(self) -> &'static str {
-        match self {
-            Self::Clustered => "CLUSTERED",
-            Self::NonClustered => "NONCLUSTERED",
+impl crate::Visitable for DropIndexAlgorithm {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
         }
+        match self {
+            Self::Inplace => {}
+            Self::Copy => {}
+            Self::Instant => {}
+        }
+        visitor.leave(self)
     }
 }
 
-/// A `FOREIGN KEY`'s `ON DELETE`/`ON UPDATE` action. On the "child side"
-/// (an `INSERT`/`UPDATE` into the table THAT DECLARES the constraint must
-/// reference an existing parent row, or have a `NULL` referencing column
-/// — see `Database::check_foreign_keys`), the action itself is irrelevant.
-/// On the "parent side," both are enforced: `ON DELETE` when a REFERENCED
-/// row is deleted (see `Database::delete_row_cascading`), and `ON UPDATE`
-/// when a REFERENCED column's VALUE actually changes (see
-/// `Database::propagate_parent_update`).
-#[derive(Debug, Clone, PartialEq)]
-pub enum ReferentialAction {
-    /// `CASCADE`.
-    Cascade,
-    /// `SET NULL`.
-    SetNull,
-    /// `RESTRICT`.
-    Restrict,
-    /// `NO ACTION`.
-    NoAction,
-    /// `SET DEFAULT`.
-    SetDefault,
-}
-
-impl ReferentialAction {
-    fn restore(&self) -> &'static str {
-        match self {
-            ReferentialAction::Cascade => "CASCADE",
-            ReferentialAction::SetNull => "SET NULL",
-            ReferentialAction::Restrict => "RESTRICT",
-            ReferentialAction::NoAction => "NO ACTION",
-            ReferentialAction::SetDefault => "SET DEFAULT",
+impl crate::Visitable for DropIndexLock {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
         }
+        match self {
+            Self::None => {}
+            Self::Shared => {}
+            Self::Exclusive => {}
+        }
+        visitor.leave(self)
     }
 }
+
+impl crate::Visitable for DropIndexStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            is_hypo,
+            if_exists,
+            name,
+            table,
+            algorithm,
+            lock,
+        } = self;
+        if let Some(value) = algorithm.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        if let Some(value) = lock.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        let _ = is_hypo;
+        let _ = if_exists;
+        let _ = name;
+        let _ = table;
+        let _ = algorithm;
+        let _ = lock;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for RenameTableStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { pairs } = self;
+        let _ = pairs;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for DropTableStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            temporary,
+            if_exists,
+            names,
+        } = self;
+        if !crate::Visitable::accept(temporary, visitor) {
+            return false;
+        }
+        let _ = temporary;
+        let _ = if_exists;
+        let _ = names;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for DropTemporary {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::None => {}
+            Self::Local => {}
+            Self::Global => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for IndexPart {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Column {
+                name,
+                prefix_len,
+                desc,
+            } => {
+                let _ = name;
+                let _ = prefix_len;
+                let _ = desc;
+            }
+            Self::Expr { expr, desc } => {
+                if !crate::Visitable::accept(expr, visitor) {
+                    return false;
+                }
+                let _ = expr;
+                let _ = desc;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for CreateIndexStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            kind,
+            if_not_exists,
+            name,
+            table,
+            parts,
+            options,
+            online,
+        } = self;
+        if !crate::Visitable::accept(kind, visitor) {
+            return false;
+        }
+        for value in parts.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        if !crate::Visitable::accept(options, visitor) {
+            return false;
+        }
+        if !crate::Visitable::accept(online, visitor) {
+            return false;
+        }
+        let _ = kind;
+        let _ = if_not_exists;
+        let _ = name;
+        let _ = table;
+        let _ = parts;
+        let _ = options;
+        let _ = online;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for AlterTableStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { name, actions } = self;
+        for value in actions.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        let _ = name;
+        let _ = actions;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for SplitOption {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::By(field_0) => {
+                for value in field_0.iter_mut() {
+                    for value in value.iter_mut() {
+                        if !crate::Visitable::accept(value, visitor) {
+                            return false;
+                        }
+                    }
+                }
+                let _ = field_0;
+            }
+            Self::Between {
+                lower,
+                upper,
+                regions,
+            } => {
+                for value in lower.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                for value in upper.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                let _ = lower;
+                let _ = upper;
+                let _ = regions;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for SplitTarget {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Table => {}
+            Self::PrimaryKey => {}
+            Self::Index(field_0) => {
+                let _ = field_0;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for SplitRegionStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            region_for,
+            partition_syntax,
+            table,
+            partitions,
+            index,
+            option,
+        } = self;
+        if !crate::Visitable::accept(option, visitor) {
+            return false;
+        }
+        let _ = region_for;
+        let _ = partition_syntax;
+        let _ = table;
+        let _ = partitions;
+        let _ = index;
+        let _ = option;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for AlterTableAction {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::RemoveTtl(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::Cache(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::SetTableOptions { options } => {
+                for value in options.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                let _ = options;
+            }
+            Self::ConvertCharacterSet { charset, collation } => {
+                let _ = charset;
+                let _ = collation;
+            }
+            Self::SetAffinity { level } => {
+                let _ = level;
+            }
+            Self::SetAttributes { attributes } => {
+                let _ = attributes;
+            }
+            Self::WithValidation => {}
+            Self::WithoutValidation => {}
+            Self::SetKeysEnabled(field_0) => {
+                let _ = field_0;
+            }
+            Self::AddColumn {
+                if_not_exists,
+                column,
+                position,
+            } => {
+                if !crate::Visitable::accept(column, visitor) {
+                    return false;
+                }
+                if !crate::Visitable::accept(position, visitor) {
+                    return false;
+                }
+                let _ = if_not_exists;
+                let _ = column;
+                let _ = position;
+            }
+            Self::AddColumns {
+                if_not_exists,
+                columns,
+                constraints,
+            } => {
+                for value in columns.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                for value in constraints.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                let _ = if_not_exists;
+                let _ = columns;
+                let _ = constraints;
+            }
+            Self::DropColumn { if_exists, name } => {
+                let _ = if_exists;
+                let _ = name;
+            }
+            Self::DropPrimaryKey(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::DropIndex { if_exists, name } => {
+                let _ = if_exists;
+                let _ = name;
+            }
+            Self::DropForeignKey(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::DropCheck(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::Lock(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::AlterIndexVisibility(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::AlterCheck(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::AlterColumnDefault(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::RenameIndex(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::RenameColumn(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::ModifyColumn { column, position } => {
+                if !crate::Visitable::accept(column, visitor) {
+                    return false;
+                }
+                if !crate::Visitable::accept(position, visitor) {
+                    return false;
+                }
+                let _ = column;
+                let _ = position;
+            }
+            Self::ChangeColumn {
+                old_name,
+                column,
+                position,
+            } => {
+                if !crate::Visitable::accept(column, visitor) {
+                    return false;
+                }
+                if !crate::Visitable::accept(position, visitor) {
+                    return false;
+                }
+                let _ = old_name;
+                let _ = column;
+                let _ = position;
+            }
+            Self::OrderByColumns { items } => {
+                for value in items.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                let _ = items;
+            }
+            Self::RenameTable { new_name } => {
+                let _ = new_name;
+            }
+            Self::AddIndexConstraint(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::AddForeignKey(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::AddCheck(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::Partition(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::SetTiFlashReplica {
+                hypo,
+                count,
+                labels,
+            } => {
+                let _ = hypo;
+                let _ = count;
+                let _ = labels;
+            }
+            Self::Compact {
+                partitions,
+                replica_kind,
+            } => {
+                if !crate::Visitable::accept(replica_kind, visitor) {
+                    return false;
+                }
+                let _ = partitions;
+                let _ = replica_kind;
+            }
+            Self::SplitRegion { target, option } => {
+                if !crate::Visitable::accept(target, visitor) {
+                    return false;
+                }
+                if !crate::Visitable::accept(option, visitor) {
+                    return false;
+                }
+                let _ = target;
+                let _ = option;
+            }
+            Self::MaskingPolicy(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for AlterOrderItem {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { column, desc } = self;
+        let _ = column;
+        let _ = desc;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for CompactReplicaKind {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::All => {}
+            Self::TiFlash => {}
+            Self::TiKv => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for ColumnPosition {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Default => {}
+            Self::First => {}
+            Self::After(field_0) => {
+                let _ = field_0;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for TableConstraint {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Index(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::Check(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::ForeignKey(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+// END GENERATED AST VISITOR IMPLEMENTATIONS
 
 #[cfg(test)]
 mod tests {

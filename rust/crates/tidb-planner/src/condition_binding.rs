@@ -320,6 +320,7 @@ fn collect_known_columns(
         | Expr::CharsetString { .. }
         | Expr::Null
         | Expr::Bool(_)
+        | Expr::Default(_)
         | Expr::UserVar(_)
         | Expr::SysVar { .. } => {}
     }

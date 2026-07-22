@@ -41,7 +41,7 @@ fn bare_check_time_keywords_are_typed_nullary_functions() {
     else {
         panic!("expected CREATE TABLE");
     };
-    let tidb_ast::DdlStmt::CreateTable(table) = *ddl else {
+    let tidb_ast::DdlStmt::CreateTable(table) = ddl.into_inner() else {
         panic!("expected CREATE TABLE payload");
     };
     let ColumnOption::Check(check) = &table.columns[0].options[0] else {

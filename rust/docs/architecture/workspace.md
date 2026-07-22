@@ -9,16 +9,11 @@ It never links Go through cgo or FFI. The Go tree is the behavioral authority.
 rust/
   crates/              production Rust crates
   difftests/           differential harnesses and checked corpora
-  ported-packages.json compact current package set
   scripts/
-    port.py            inventory, recording, drift check, checkpoint
     run-*.sh           bounded live/real-cluster checks
   docs/                current architecture and validation guidance
   HANDOFF.md           current status and active ExecPlan
 ```
-
-Legacy feature-slice scheduling, claims, campaigns, transfer ledgers, mutable
-status, and receipts have been removed. They are not architecture.
 
 ## Crate responsibilities
 
@@ -74,15 +69,11 @@ when a complete package takes ownership.
 
 ## Whole-package acceptance
 
-`scripts/port.py inventory` derives every top-level Go package file and
-`testdata` file, all test/benchmark/fuzz/example entry points and literal
-subtests, direct internal dependencies, and a content digest. After the source
-audit and translation, `record` runs every target in the owning crates and
-updates `ported-packages.json` with only the digest and crate names.
-
-Git is the only history, review, atomic commit, rollback, and repair mechanism.
-Pre-push validation uses ordinary Cargo and repository commands; it is not a
-second rewrite workflow.
+The live Go package directory is the complete source/test/support inventory.
+After translating it, run the original Go package tests and every target in the
+owning Rust crates. Git is the only checkpoint, review, atomic commit, rollback,
+and repair mechanism. Pre-push validation uses ordinary Cargo and repository
+commands; there is no second rewrite workflow.
 
 ## Test process layout
 

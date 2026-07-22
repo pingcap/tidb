@@ -84,7 +84,9 @@ pub(crate) fn execute_select(
 /// Go plans this statement in `pkg/planner/core/planbuilder.go` and executes
 /// its non-result-set sink in `pkg/executor/select_into.go`; returning the
 /// ordinary projection would therefore be a wrong-shaped outcome.
-pub(crate) fn check_no_into_outfile(into_outfile: &Option<String>) -> Result<(), ExecError> {
+pub(crate) fn check_no_into_outfile(
+    into_outfile: &Option<tidb_ast::SelectIntoOption>,
+) -> Result<(), ExecError> {
     if into_outfile.is_none() {
         Ok(())
     } else {
@@ -253,12 +255,21 @@ impl Database {
             let windows = window_exprs
                 .into_iter()
                 .map(|w| {
-                    let Expr::Window { name, args, over } = &w else {
+                    let Expr::Window {
+                        name,
+                        args,
+                        distinct,
+                        ignore_nulls,
+                        from_last,
+                        over,
+                    } = &w
+                    else {
                         unreachable!("collect_windows_in only ever pushes Expr::Window")
                     };
                     let WindowOver::Def(WindowDef { spec, .. }) = over else {
                         unreachable!("resolve_named_windows already normalized every OVER clause")
                     };
+                    crate::window::validate_window_modifiers(*distinct, *ignore_nulls, *from_last)?;
                     self.compute_window(name, args, spec, &groups, &rel.cols, outer)
                         .map(|vals| (w.clone(), vals))
                 })

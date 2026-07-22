@@ -15,9 +15,9 @@
 //! Shared `CREATE`/`ALTER TABLE` column-definition AST and restore boundary.
 
 use crate::util::{back_quote, escape_string_literal};
-use crate::{Expr, RestoreContext, RestoreFlags};
+use crate::{Expr, PrimaryKeyStorage, RestoreContext, RestoreFlags};
 
-use super::{CheckConstraintDefinition, ColumnType, ForeignKeyReference, PrimaryKeyStorage};
+use super::{CheckConstraintDefinition, ColumnType, ForeignKeyReference};
 
 const FEATURE_AUTO_RANDOM: &str = "auto_rand";
 
@@ -292,7 +292,7 @@ impl InlineKeyOption {
                 out.push_str("PRIMARY KEY");
                 if let Some(storage) = storage {
                     out.push(' ');
-                    out.push_str(storage.restore());
+                    out.push_str(storage.sql());
                 }
             }
             InlineKeyKind::Unique => out.push_str("UNIQUE KEY"),
@@ -311,7 +311,7 @@ impl InlineKeyOption {
             } => {
                 out.push_str("PRIMARY KEY ");
                 context.write_with_tidb_special_comment(out, "clustered_index", |out| {
-                    out.push_str(storage.restore());
+                    out.push_str(storage.sql());
                 });
             }
             _ => self.restore_into(out),
@@ -446,3 +446,191 @@ fn restore_column_default_expression(expression: &Expr, out: &mut String) {
         out.push(')');
     }
 }
+
+// BEGIN GENERATED AST VISITOR IMPLEMENTATIONS
+
+impl crate::Visitable for ColumnDef {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            qualifier,
+            name,
+            ty,
+            options,
+        } = self;
+        if !crate::Visitable::accept(ty, visitor) {
+            return false;
+        }
+        for value in options.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        let _ = qualifier;
+        let _ = name;
+        let _ = ty;
+        let _ = options;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for ColumnOption {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::InlineKey(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::NotNull => {}
+            Self::Null => {}
+            Self::AutoIncrement => {}
+            Self::Default(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::Generated { expression, stored } => {
+                if !crate::Visitable::accept(expression, visitor) {
+                    return false;
+                }
+                let _ = expression;
+                let _ = stored;
+            }
+            Self::OnUpdate(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::Comment(field_0) => {
+                let _ = field_0;
+            }
+            Self::Collate(field_0) => {
+                let _ = field_0;
+            }
+            Self::Check(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::Reference(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::ColumnFormat(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::Storage(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::AutoRandom(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::SecondaryEngineAttribute(field_0) => {
+                let _ = field_0;
+            }
+            Self::MariaDbRowStart => {}
+            Self::MariaDbRowEnd => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for ColumnFormat {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Default => {}
+            Self::Fixed => {}
+            Self::Dynamic => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for ColumnStorage {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Default => {}
+            Self::Disk => {}
+            Self::Memory => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for AutoRandomOption {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            shard_bits,
+            range_bits,
+        } = self;
+        let _ = shard_bits;
+        let _ = range_bits;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for InlineKeyKind {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Primary { storage } => {
+                if let Some(value) = storage.as_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                let _ = storage;
+            }
+            Self::Unique => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for InlineKeyOption {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { kind, global } = self;
+        if !crate::Visitable::accept(kind, visitor) {
+            return false;
+        }
+        let _ = kind;
+        let _ = global;
+        visitor.leave(self)
+    }
+}
+// END GENERATED AST VISITOR IMPLEMENTATIONS

@@ -251,6 +251,18 @@ fn unsupported_insert_forms_are_rejected_before_a_handle_exists() {
         unsupported("INSERT INTO campaign28.accounts PARTITION (p0) (id, balance) VALUES (?, ?)"),
         UnsupportedPreparedWrite::Partition
     );
+    assert_eq!(
+        unsupported(
+            "INSERT INTO campaign28.accounts (id, balance) VALUES (?, ?) RETURNING id"
+        ),
+        UnsupportedPreparedWrite::Returning
+    );
+    assert_eq!(
+        unsupported(
+            "INSERT INTO campaign28.accounts (id, balance) VALUES (?, ?) AS new_row"
+        ),
+        UnsupportedPreparedWrite::InsertRowAlias
+    );
 }
 
 // -----------------------------------------------------------------------------
@@ -363,6 +375,12 @@ fn unsupported_update_tails_and_targets_are_rejected() {
         UnsupportedPreparedWrite::Limit
     );
     assert_eq!(
+        unsupported(
+            "UPDATE campaign28.accounts SET balance = ? WHERE id = ? RETURNING balance"
+        ),
+        UnsupportedPreparedWrite::Returning
+    );
+    assert_eq!(
         unsupported("UPDATE campaign28.accounts AS a SET balance = ? WHERE id = ?"),
         UnsupportedPreparedWrite::TableAlias
     );
@@ -434,6 +452,10 @@ fn unsupported_delete_tails_and_targets_are_rejected() {
     assert_eq!(
         unsupported("DELETE FROM campaign28.accounts WHERE id = ? LIMIT 1"),
         UnsupportedPreparedWrite::Limit
+    );
+    assert_eq!(
+        unsupported("DELETE FROM campaign28.accounts WHERE id = ? RETURNING id"),
+        UnsupportedPreparedWrite::Returning
     );
     assert_eq!(
         unsupported(

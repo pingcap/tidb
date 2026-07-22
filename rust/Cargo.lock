@@ -1050,6 +1050,12 @@ dependencies = [
 [[package]]
 name = "tidb-ast"
 version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tidb-datatype",
+ "tidb-lexer",
+]
 
 [[package]]
 name = "tidb-codec"

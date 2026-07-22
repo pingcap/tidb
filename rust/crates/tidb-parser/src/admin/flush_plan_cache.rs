@@ -18,23 +18,27 @@ use tidb_ast::AdminPlanCacheScope;
 
 use crate::{PResult, Parser};
 
-/// Claims only the SESSION and GLOBAL forms assigned to this source vertical.
-/// Go also accepts a default SESSION spelling and INSTANCE scope; those are
-/// intentionally separate parser leaves and remain unclaimed here.
+/// Parses every Go plan-cache scope, including the default SESSION spelling.
 pub(crate) fn parse(parser: &mut Parser) -> PResult<Option<AdminPlanCacheScope>> {
     if !parser.is_kw("ADMIN") || !parser.is_kw_at(1, "FLUSH") {
         return Ok(None);
     }
-    let scope = if parser.is_kw_at(2, "SESSION") && parser.is_kw_at(3, "PLAN_CACHE") {
-        AdminPlanCacheScope::Session
+    let (scope, scoped) = if parser.is_kw_at(2, "PLAN_CACHE") {
+        (AdminPlanCacheScope::Session, false)
+    } else if parser.is_kw_at(2, "SESSION") && parser.is_kw_at(3, "PLAN_CACHE") {
+        (AdminPlanCacheScope::Session, true)
+    } else if parser.is_kw_at(2, "INSTANCE") && parser.is_kw_at(3, "PLAN_CACHE") {
+        (AdminPlanCacheScope::Instance, true)
     } else if parser.is_kw_at(2, "GLOBAL") && parser.is_kw_at(3, "PLAN_CACHE") {
-        AdminPlanCacheScope::Global
+        (AdminPlanCacheScope::Global, true)
     } else {
         return Ok(None);
     };
     parser.expect_kw("ADMIN")?;
     parser.expect_kw("FLUSH")?;
-    parser.bump(); // SESSION or GLOBAL, fixed by the discriminator above.
+    if scoped {
+        parser.bump();
+    }
     parser.expect_kw("PLAN_CACHE")?;
     Ok(Some(scope))
 }

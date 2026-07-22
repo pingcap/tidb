@@ -26,7 +26,7 @@ impl Parser {
     /// Go's `parseIntegerOptions`: `UNSIGNED` sets the flag, `SIGNED` clears
     /// it, and `ZEROFILL` sets both flags. `BIT` deliberately never accepts
     /// them (see below).
-    pub(super) fn parse_column_type(&mut self) -> PResult<ColumnType> {
+    pub(crate) fn parse_column_type(&mut self) -> PResult<ColumnType> {
         let accepts_double_precision = self.is_kw("DOUBLE") || self.is_kw("FLOAT8");
         let char_type = self.is_kw("CHAR") || self.is_kw("CHARACTER") || self.is_kw("NCHAR");
         let national_type = self.is_kw("NATIONAL");

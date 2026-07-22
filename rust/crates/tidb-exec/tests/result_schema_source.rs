@@ -64,7 +64,7 @@ fn schema() -> CatalogTableSchema {
 
 fn select(sql: &str) -> tidb_ast::SelectStmt {
     match tidb_parser::parse(sql).expect("parse source SQL") {
-        Stmt::Query(query) => match *query {
+        Stmt::Query(query) => match query.into_inner() {
             tidb_ast::QueryStmt::Select(select) => *select,
             tidb_ast::QueryStmt::SetOpr(_) => panic!("expected plain SELECT"),
         },

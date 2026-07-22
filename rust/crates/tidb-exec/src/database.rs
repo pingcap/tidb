@@ -38,6 +38,7 @@ fn dml_publishes_row_count(dml: &DmlStmt) -> bool {
         DmlStmt::Delete(delete) => delete.order_by.is_empty() && delete.limit.is_none(),
         DmlStmt::With { .. }
         | DmlStmt::Batch(_)
+        | DmlStmt::DistributeTable(_)
         | DmlStmt::ImportInto(_)
         | DmlStmt::LoadData(_) => false,
     }
@@ -277,6 +278,15 @@ impl Database {
         if matches!(dml, DmlStmt::LoadData(_)) {
             return Err(ExecError::Unsupported("LOAD DATA"));
         }
+        if matches!(dml, DmlStmt::DistributeTable(_)) {
+            return Err(ExecError::Unsupported("DISTRIBUTE TABLE"));
+        }
+        if matches!(dml, DmlStmt::Insert(insert) if !insert.returning.is_empty())
+            || matches!(dml, DmlStmt::Update(update) if !update.returning.is_empty())
+            || matches!(dml, DmlStmt::Delete(delete) if !delete.returning.is_empty())
+        {
+            return Err(ExecError::Unsupported("DML RETURNING"));
+        }
         // UPDATE/DELETE ordering and row limiting are observable mutation
         // semantics. This executor currently scans/mutates every matching
         // row in storage order, so it must reject these parsed tails before
@@ -310,6 +320,9 @@ impl Database {
                 unreachable!("IMPORT INTO rejected before transaction mutation")
             }
             DmlStmt::LoadData(_) => unreachable!("LOAD DATA rejected before transaction mutation"),
+            DmlStmt::DistributeTable(_) => {
+                unreachable!("DISTRIBUTE TABLE rejected before transaction mutation")
+            }
         };
         if result.is_err() {
             self.tables = statement_tables;

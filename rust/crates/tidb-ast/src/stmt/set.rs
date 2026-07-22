@@ -159,3 +159,108 @@ impl SetSessionStatesStmt {
         out.push('\'');
     }
 }
+
+// BEGIN GENERATED AST VISITOR IMPLEMENTATIONS
+
+impl crate::Visitable for SetStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { assignments } = self;
+        for value in assignments.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        let _ = assignments;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for SystemVariableAssignment {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { scope, name, value } = self;
+        if !crate::Visitable::accept(scope, visitor) {
+            return false;
+        }
+        if !crate::Visitable::accept(value, visitor) {
+            return false;
+        }
+        let _ = scope;
+        let _ = name;
+        let _ = value;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for SystemVariableScope {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Session => {}
+            Self::Global => {}
+            Self::Instance => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for SetVariableValue {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Default => {}
+            Self::Expr(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for CharsetSetKind {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Names => {}
+            Self::Charset => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for SetResourceGroupStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { name } = self;
+        let _ = name;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for SetSessionStatesStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { session_states } = self;
+        let _ = session_states;
+        visitor.leave(self)
+    }
+}
+// END GENERATED AST VISITOR IMPLEMENTATIONS

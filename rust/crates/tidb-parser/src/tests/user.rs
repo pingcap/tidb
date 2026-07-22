@@ -63,7 +63,7 @@ fn create_user_auth_restore_and_scope() {
         password_options,
         comment_or_attribute,
         resource_group,
-    } = *ddl
+    } = ddl.into_inner()
     else {
         panic!("expected CreateUser");
     };
@@ -145,7 +145,7 @@ fn alter_user_resource_group_restore_and_scope() {
     let Stmt::Ddl(ddl) = parse("alter user app resource group rg1").unwrap() else {
         panic!("expected DDL envelope");
     };
-    let tidb_ast::DdlStmt::AlterUser(statement) = *ddl else {
+    let tidb_ast::DdlStmt::AlterUser(statement) = ddl.into_inner() else {
         panic!("expected ALTER USER payload");
     };
     assert_eq!(statement.users.len(), 1);
@@ -175,7 +175,7 @@ fn rename_user_restore_and_scope() {
     let Stmt::Ddl(ddl) = parse("rename user u1 to u2, u3 to u4").unwrap() else {
         panic!("expected DDL envelope");
     };
-    let tidb_ast::DdlStmt::RenameUser { pairs } = *ddl else {
+    let tidb_ast::DdlStmt::RenameUser { pairs } = ddl.into_inner() else {
         panic!("expected RENAME USER payload");
     };
     assert_eq!(pairs.len(), 2);
@@ -217,7 +217,7 @@ fn alter_user_password_expire_restore_and_scope() {
     let Stmt::Ddl(ddl) = parse("alter user app password expire interval 7 day").unwrap() else {
         panic!("expected DDL envelope")
     };
-    let tidb_ast::DdlStmt::AlterUser(statement) = *ddl else {
+    let tidb_ast::DdlStmt::AlterUser(statement) = ddl.into_inner() else {
         panic!("expected ALTER USER payload")
     };
     assert_eq!(statement.users.len(), 1);
@@ -272,7 +272,7 @@ fn alter_user_full_source_order_and_typed_options() {
     let Stmt::Ddl(ddl) = parse(sql).unwrap() else {
         panic!("expected DDL envelope")
     };
-    let tidb_ast::DdlStmt::AlterUser(statement) = *ddl else {
+    let tidb_ast::DdlStmt::AlterUser(statement) = ddl.into_inner() else {
         panic!("expected ALTER USER payload")
     };
     assert!(statement.if_exists);
@@ -342,7 +342,7 @@ fn create_role_restore_uses_strict_role_identity() {
     let tidb_ast::DdlStmt::CreateRole {
         if_not_exists,
         roles,
-    } = *ddl
+    } = ddl.into_inner()
     else {
         panic!("expected CreateRole");
     };

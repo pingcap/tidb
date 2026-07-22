@@ -242,8 +242,8 @@ pub(super) fn prepare(
                 )?)?,
                 ref_table: table_key(table),
                 ref_cols: plain_column_names(reference_parts, "advanced FOREIGN KEY")?,
-                on_delete: foreign_key.reference.on_delete.clone(),
-                on_update: foreign_key.reference.on_update.clone(),
+                on_delete: foreign_key.reference.on_delete,
+                on_update: foreign_key.reference.on_update,
             })
         })
         .collect::<Result<_, ExecError>>()?;

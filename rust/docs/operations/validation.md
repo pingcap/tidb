@@ -4,22 +4,18 @@ Run commands from `rust/`. Cargo always uses 12 jobs.
 
 ## Fast package loop
 
-Read the complete live Go inventory:
+Use the live Go package as the inventory and run the smallest relevant Cargo
+test directly during implementation. A green cohesive edit may be committed
+and pushed immediately; package completion is not a commit gate. Do not run a
+workspace sweep unless the edit changes a shared public API.
+
+After the whole package and every original test/support obligation are
+translated, run:
 
 ```sh
-scripts/port.py inventory pkg/example --verbose
+cd .. && go test ./pkg/example
+cd rust && cargo test --offline --locked -j12 -p tidb-example --all-targets
 ```
-
-During implementation, run the smallest relevant Cargo test directly. After
-the whole package and every original test/support obligation are translated:
-
-```sh
-scripts/port.py record pkg/example -p tidb-example
-```
-
-`record` checks dependency closure, runs every target in each named crate once,
-then atomically stores the package digest and crate names in
-`ported-packages.json`. A repair can omit `-p` and reuse the existing crates.
 
 ## Pre-push validation
 
@@ -30,7 +26,6 @@ cargo fmt --all -- --check
 cargo clippy --offline --locked -j12 --workspace --all-targets -- -D warnings
 cargo test --offline --locked -j12 --workspace --all-targets
 cargo test --offline --locked -j12 --workspace --doc
-python3 -m unittest scripts/test_port.py
 git -C .. diff --check -- rust
 ```
 
@@ -38,6 +33,4 @@ Large integration-test directories compile through `scripts/aggregate-tests.rs`.
 This retains every test source while avoiding hundreds of tiny Cargo binaries.
 
 Real PD/TiKV, protocol, or differential suites remain additional acceptance
-requirements when the changed package reaches those boundaries. There is no
-queue, start step, claim, campaign, gate, transfer, frozen workspace, or
-receipt.
+requirements when the changed package reaches those boundaries.

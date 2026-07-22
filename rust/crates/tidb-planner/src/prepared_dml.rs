@@ -177,6 +177,10 @@ pub enum UnsupportedPreparedWrite {
     Partition,
     /// Optimizer hints.
     Hint,
+    /// A DML `RETURNING` result projection.
+    Returning,
+    /// An INSERT row alias or column alias list.
+    InsertRowAlias,
     /// An INSERT with no explicit column list.
     MissingInsertColumns,
     /// A multi-table UPDATE.
@@ -564,7 +568,10 @@ pub fn lower_prepared_write(
             lower_prepared_delete(delete, catalog).map(ConfiguredPreparedWriteTemplate::Delete)
         }
         DmlStmt::With { .. } => Err(unsupported(UnsupportedPreparedWrite::CommonTableExpression)),
-        DmlStmt::ImportInto(_) | DmlStmt::LoadData(_) | DmlStmt::Batch(_) => Err(unsupported(
+        DmlStmt::ImportInto(_)
+        | DmlStmt::LoadData(_)
+        | DmlStmt::Batch(_)
+        | DmlStmt::DistributeTable(_) => Err(unsupported(
             UnsupportedPreparedWrite::UnsupportedDmlStatement,
         )),
     }
@@ -595,6 +602,12 @@ pub fn lower_prepared_insert(
     }
     if !statement.hints.is_empty() {
         return Err(unsupported(UnsupportedPreparedWrite::Hint));
+    }
+    if !statement.returning.is_empty() {
+        return Err(unsupported(UnsupportedPreparedWrite::Returning));
+    }
+    if statement.row_alias.is_some() || !statement.column_aliases.is_empty() {
+        return Err(unsupported(UnsupportedPreparedWrite::InsertRowAlias));
     }
     if statement.columns.is_empty() {
         return Err(unsupported(UnsupportedPreparedWrite::MissingInsertColumns));
@@ -649,6 +662,9 @@ pub fn lower_prepared_update(
     }
     if statement.limit.is_some() {
         return Err(unsupported(UnsupportedPreparedWrite::Limit));
+    }
+    if !statement.returning.is_empty() {
+        return Err(unsupported(UnsupportedPreparedWrite::Returning));
     }
     let UpdateKind::Single(table_ref) = &statement.kind else {
         return Err(unsupported(UnsupportedPreparedWrite::MultiTableUpdate));
@@ -731,6 +747,9 @@ pub fn lower_prepared_delete(
     }
     if statement.limit.is_some() {
         return Err(unsupported(UnsupportedPreparedWrite::Limit));
+    }
+    if !statement.returning.is_empty() {
+        return Err(unsupported(UnsupportedPreparedWrite::Returning));
     }
     let DeleteKind::Single(table_ref) = &statement.kind else {
         return Err(unsupported(UnsupportedPreparedWrite::MultiTableDelete));

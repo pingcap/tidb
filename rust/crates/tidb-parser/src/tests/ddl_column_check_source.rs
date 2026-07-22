@@ -23,7 +23,7 @@ fn first_column_options(sql: &str) -> Vec<ColumnOption> {
     let Stmt::Ddl(ddl) = parse(sql).expect("parse Go column CHECK source case") else {
         panic!("expected DDL statement");
     };
-    let tidb_ast::DdlStmt::CreateTable(table) = *ddl else {
+    let tidb_ast::DdlStmt::CreateTable(table) = ddl.into_inner() else {
         panic!("expected CREATE TABLE");
     };
     table.columns[0].options.clone()
@@ -104,7 +104,7 @@ fn column_constraint_check_does_not_consume_enclosing_table_constraints() {
     else {
         panic!("expected DDL statement");
     };
-    let tidb_ast::DdlStmt::CreateTable(table) = *ddl else {
+    let tidb_ast::DdlStmt::CreateTable(table) = ddl.into_inner() else {
         panic!("expected CREATE TABLE");
     };
     assert!(matches!(

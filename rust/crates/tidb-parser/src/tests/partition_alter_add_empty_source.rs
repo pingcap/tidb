@@ -45,7 +45,7 @@ fn alter_add_partition_empty_payload_is_typed_as_zero_count() {
     else {
         panic!("expected DDL");
     };
-    let tidb_ast::DdlStmt::AlterTable(alter) = *ddl else {
+    let tidb_ast::DdlStmt::AlterTable(alter) = ddl.into_inner() else {
         panic!("expected ALTER TABLE");
     };
     assert_eq!(

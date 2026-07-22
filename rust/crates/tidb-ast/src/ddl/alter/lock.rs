@@ -48,3 +48,35 @@ pub struct AlterTableLock {
     /// Requested lock level.
     pub mode: AlterTableLockMode,
 }
+
+// BEGIN GENERATED AST VISITOR IMPLEMENTATIONS
+
+impl crate::Visitable for AlterTableLockMode {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Default => {}
+            Self::None => {}
+            Self::Shared => {}
+            Self::Exclusive => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for AlterTableLock {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { mode } = self;
+        if !crate::Visitable::accept(mode, visitor) {
+            return false;
+        }
+        let _ = mode;
+        visitor.leave(self)
+    }
+}
+// END GENERATED AST VISITOR IMPLEMENTATIONS

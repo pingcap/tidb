@@ -31,13 +31,16 @@ fn explain_parenthesized_values_restores_like_go() {
     let Stmt::Admin(admin) = statement else {
         panic!("expected EXPLAIN admin statement")
     };
-    let AdminStmt::Explain(explain) = *admin else {
+    let AdminStmt::Explain(explain) = admin.into_inner() else {
         panic!("expected typed EXPLAIN statement")
     };
-    let Stmt::Query(query) = *explain.statement else {
+    let ExplainTarget::Statement(statement) = explain.target else {
+        panic!("expected ordinary statement target")
+    };
+    let Stmt::Query(query) = *statement else {
         panic!("expected query target")
     };
-    let QueryStmt::Select(values) = *query else {
+    let QueryStmt::Select(values) = query.into_inner() else {
         panic!("expected VALUES query target")
     };
     assert_eq!(values.kind, SelectStatementKind::Values);

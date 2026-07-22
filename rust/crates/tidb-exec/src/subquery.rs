@@ -16,7 +16,7 @@
 //! aggregate's own argument) can evaluate the resulting subquery-free
 //! expression normally. Called from `crate::select` and `crate::aggregate`.
 
-use tidb_ast::{BinaryOp, CastExpr, Expr, OrderItem, QueryStmt, SelectStmt};
+use tidb_ast::{BinaryOp, CastExpr, Expr, OrderItem, QueryStmt};
 use tidb_datatype::Datum;
 use tidb_expr::Columns;
 
@@ -332,7 +332,7 @@ impl Database {
                     BinaryOp::LogicOr
                 };
                 let mut acc = Expr::Bool(*all);
-                for v in self.subquery_column(subquery, Some(outer))? {
+                for v in self.in_subquery_column(subquery, Some(outer))? {
                     let cmp = Expr::Binary(*op, Box::new(l.clone()), Box::new(value_to_literal(v)));
                     acc = Expr::Binary(fold_op, Box::new(acc), Box::new(cmp));
                 }
@@ -396,22 +396,8 @@ impl Database {
 
     /// Executes a subquery for `x <op> ANY|ALL (...)`, collecting its
     /// first column's values.
-    fn subquery_column(
-        &self,
-        sel: &SelectStmt,
-        outer: Option<&dyn Columns>,
-    ) -> Result<Vec<Datum>, ExecError> {
-        Self::first_column(self.select(sel, outer)?.rows)
-    }
-
-    /// Like [`Database::subquery_column`], but for `IN`'s own subquery,
-    /// which — unlike every OTHER subquery position here — may ALSO be
-    /// `UNION`/`EXCEPT`/`INTERSECT`-bodied (see
-    /// `tidb_ast::Expr::InSubquery`'s own doc), hence the full `QueryStmt`
-    /// rather than always a plain `SelectStmt`. `parse_predicate` only
-    /// always constructs a `QueryStmt::Select` or `QueryStmt::SetOpr` here
-    /// (mirroring `Parser::parse_select_or_setopr`'s own contract), so
-    /// those are the only two reachable arms.
+    /// Returns the first column from any typed query subquery, including a
+    /// set-operation body.
     fn in_subquery_column(
         &self,
         stmt: &QueryStmt,

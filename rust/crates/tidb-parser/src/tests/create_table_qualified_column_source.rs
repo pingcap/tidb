@@ -70,7 +70,7 @@ fn create_table_qualified_column_names_restore_as_name_paths() {
         let Stmt::Ddl(ddl) = statement else {
             panic!("expected DDL statement")
         };
-        let tidb_ast::DdlStmt::CreateTable(table) = *ddl else {
+        let tidb_ast::DdlStmt::CreateTable(table) = ddl.into_inner() else {
             panic!("expected CREATE TABLE")
         };
         let column = table.columns.last().expect("column definition");

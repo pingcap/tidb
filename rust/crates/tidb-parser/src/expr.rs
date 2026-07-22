@@ -201,7 +201,7 @@ impl Parser {
             {
                 let all = self.is_kw("ALL");
                 self.bump(); // ANY / SOME / ALL
-                let subquery = self.parse_paren_subquery()?;
+                let subquery = self.parse_query_subquery()?;
                 left = Expr::CompareSubquery {
                     op,
                     left: Box::new(left),
@@ -534,7 +534,14 @@ impl Parser {
                     }
                     self.bump();
                     let e = self.parse_expr(prec::NOT)?;
-                    Ok(Expr::Unary(UnaryOp::NotKeyword, Box::new(e)))
+                    if let Expr::Exists { subquery, not } = e {
+                        Ok(Expr::Exists {
+                            subquery,
+                            not: !not,
+                        })
+                    } else {
+                        Ok(Expr::Unary(UnaryOp::NotKeyword, Box::new(e)))
+                    }
                 }
                 // `[NOT] EXISTS (subquery)`; `NOT` is handled by the unary path,
                 // so restore of `NOT EXISTS (...)` matches.
@@ -868,7 +875,7 @@ impl Parser {
                     // `ROW(...)`). The `WITH` alternative here mirrors
                     // `EXISTS`/`ANY`/`SOME`/`ALL`'s own subquery position,
                     // which needed no lookahead widening at all (they
-                    // dispatch to `parse_paren_subquery` unconditionally,
+                    // dispatch to `parse_query_subquery` unconditionally,
                     // no disambiguation against a competing shape) — this
                     // position and `IN`'s own (below) are the only two
                     // that need this SAME one-token lookahead widened,
@@ -1149,14 +1156,8 @@ impl Parser {
         Ok(Expr::Row(values))
     }
 
-    /// `DEFAULT(col)` — the column's own `DEFAULT` value. Modelled as a
-    /// plain [`Expr::Func`] call (`name: "DEFAULT"`, one argument) rather
-    /// than a dedicated AST node: real TiDB's own hand-written parser
-    /// DOES use a dedicated `ast.DefaultExpr` (`pkg/parser/
-    /// expr_subquery_parser.go`'s `parseDefaultExpr`), but its restore
-    /// (`DEFAULT(col)`) is byte-identical to what `Expr::Func` already
-    /// produces for a single [`Expr::Column`] argument, so no new variant
-    /// is needed here. `col` is a DOTTED COLUMN-NAME PATH specifically,
+    /// `DEFAULT(col)` — the column's own `DEFAULT` value. `col` is a
+    /// DOTTED COLUMN-NAME PATH specifically,
     /// NOT an arbitrary expression (confirmed via `godump restore`:
     /// `DEFAULT(1+1)`/`DEFAULT()`/`DEFAULT(a,b)` are all genuine
     /// `ParseError`s) — reuses [`Parser::parse_name_path`] rather than
@@ -1171,10 +1172,7 @@ impl Parser {
         self.expect_op("(")?;
         let path = self.parse_name_path()?;
         self.expect_op(")")?;
-        Ok(Expr::Func {
-            name: "DEFAULT".to_string(),
-            args: vec![Expr::Column(path)],
-        })
+        Ok(Expr::Default(Some(path)))
     }
 
     /// `CHAR(expr, ...)` / `CHAR(expr, ... USING charset)` — desugars to a
@@ -1623,10 +1621,7 @@ impl Parser {
     /// rule, read directly from `pkg/parser/expr_func_parser.go`'s
     /// `parseAggregateFuncCall` rather than guessed. If `OVER` follows,
     /// this is instead a window AGGREGATE ([`Expr::Window`], sharing this
-    /// same argument-parsing shape) — `DISTINCT` is not supported in that
-    /// position (`MAX(DISTINCT x) OVER (...)` is real but rare MySQL
-    /// grammar, deliberately not modelled: a genuine `ParseError`, not
-    /// silently dropped).
+    /// same argument-parsing shape and preserving `DISTINCT`).
     fn parse_aggregate(&mut self) -> PResult<Expr> {
         let name = agg_canonical(&self.bump().text)
             .expect("aggregate name")
@@ -1642,6 +1637,9 @@ impl Parser {
                 return Ok(Expr::Window {
                     name,
                     args: vec![arg],
+                    distinct: false,
+                    ignore_nulls: false,
+                    from_last: false,
                     over,
                 });
             }
@@ -1651,7 +1649,7 @@ impl Parser {
                 args: vec![arg],
             });
         }
-        let distinct = if self.is_kw("DISTINCT") {
+        let distinct = if self.is_kw("DISTINCT") || self.is_kw("DISTINCTROW") {
             self.bump();
             true
         } else {
@@ -1660,6 +1658,9 @@ impl Parser {
             }
             false
         };
+        if distinct && self.is_kw("ALL") {
+            self.bump();
+        }
         let mut args = vec![self.parse_expr(prec::NONE)?];
         while self.is_op(",") {
             self.bump();
@@ -1677,12 +1678,16 @@ impl Parser {
             }
         }
         if self.is_kw("OVER") {
-            if distinct {
-                return Err(self.err_here("DISTINCT is not supported in a window aggregate"));
-            }
             self.bump();
             let over = self.parse_over_clause()?;
-            return Ok(Expr::Window { name, args, over });
+            return Ok(Expr::Window {
+                name,
+                args,
+                distinct,
+                ignore_nulls: false,
+                from_last: false,
+                over,
+            });
         }
         Ok(Expr::Aggregate {
             name,
@@ -1698,11 +1703,8 @@ impl Parser {
     /// argument) and `NTH_VALUE` (two: value, then a 1-based position);
     /// and `LAG`/`LEAD` (one to three: value, an optional offset, an
     /// optional out-of-range default) — see [`tidb_ast::Expr::Window`]'s
-    /// own doc for the exact arity of each. `IGNORE NULLS`/`FROM LAST`
-    /// (real ANSI SQL grammar these functions can carry) are not parsed —
-    /// confirmed via `gorun` that real TiDB itself rejects both
-    /// unconditionally, so not parsing them here matches real scope
-    /// exactly rather than under- or over-accepting.
+    /// own doc for the exact arity of each. Optional `FROM FIRST|LAST` and
+    /// `IGNORE|RESPECT NULLS` modifiers are preserved in the AST.
     fn parse_window_func(&mut self) -> PResult<Expr> {
         let name = window_func_canonical(&self.bump().text)
             .expect("window function name")
@@ -1732,9 +1734,38 @@ impl Parser {
             }
         };
         self.expect_op(")")?;
+        let from_last = if self.is_kw("FROM") && self.is_kw_at(1, "LAST") {
+            self.bump();
+            self.bump();
+            true
+        } else {
+            if self.is_kw("FROM") && self.is_kw_at(1, "FIRST") {
+                self.bump();
+                self.bump();
+            }
+            false
+        };
+        let ignore_nulls = if self.is_kw("IGNORE") && self.is_kw_at(1, "NULLS") {
+            self.bump();
+            self.bump();
+            true
+        } else {
+            if self.is_kw("RESPECT") && self.is_kw_at(1, "NULLS") {
+                self.bump();
+                self.bump();
+            }
+            false
+        };
         self.expect_kw("OVER")?;
         let over = self.parse_over_clause()?;
-        Ok(Expr::Window { name, args, over })
+        Ok(Expr::Window {
+            name,
+            args,
+            distinct: false,
+            ignore_nulls,
+            from_last,
+            over,
+        })
     }
 
     /// Parses the `OVER` clause itself (the `OVER` keyword is already
@@ -2293,24 +2324,30 @@ fn parse_variable(text: &str) -> Option<Expr> {
             if scope.is_some() {
                 return Some(Expr::SysVar {
                     scope,
-                    name: name.to_string(),
+                    name: decode_variable_name(name).to_ascii_lowercase(),
                 });
             }
             // A dotted name with an unknown prefix is not a scope; keep it whole.
             return Some(Expr::SysVar {
                 scope: None,
-                name: rest.to_string(),
+                name: decode_variable_name(rest).to_ascii_lowercase(),
             });
         }
         return Some(Expr::SysVar {
             scope: None,
-            name: rest.to_string(),
+            name: decode_variable_name(rest).to_ascii_lowercase(),
         });
     }
     let name = text.strip_prefix('@')?;
-    // Quoted user-variable names are not modelled yet.
-    if name.starts_with('\'') || name.starts_with('"') || name.starts_with('`') {
-        return None;
+    Some(Expr::UserVar(decode_variable_name(name)))
+}
+
+fn decode_variable_name(raw: &str) -> String {
+    if matches!(raw.as_bytes().first(), Some(b'\'') | Some(b'"')) {
+        decode_string(raw)
+    } else if raw.starts_with('`') && raw.ends_with('`') && raw.len() >= 2 {
+        raw[1..raw.len() - 1].replace("``", "`")
+    } else {
+        raw.to_string()
     }
-    Some(Expr::UserVar(name.to_string()))
 }

@@ -240,6 +240,33 @@ fn admin_check_checksum_and_recover_restore_and_shape() {
         r("admin recover index schema.t `idx_name`"),
         "ADMIN RECOVER INDEX `schema`.`t` idx_name"
     );
+    assert_eq!(
+        r("admin cleanup index schema.t `idx_name`"),
+        "ADMIN CLEANUP INDEX `schema`.`t` idx_name"
+    );
+}
+
+#[test]
+fn admin_remaining_value_less_and_plugin_source_rows_restore_like_go() {
+    for (sql, expected) in [
+        (
+            "admin create workload snapshot",
+            "ADMIN CREATE WORKLOAD SNAPSHOT",
+        ),
+        (
+            "admin plugins disable audit, whitelist",
+            "ADMIN PLUGINS DISABLE audit, whitelist",
+        ),
+        (
+            "admin plugins enable audit, whitelist",
+            "ADMIN PLUGINS ENABLE audit, whitelist",
+        ),
+        ("admin flush bindings", "ADMIN FLUSH BINDINGS"),
+        ("admin capture bindings", "ADMIN CAPTURE BINDINGS"),
+        ("admin evolve bindings", "ADMIN EVOLVE BINDINGS"),
+    ] {
+        assert_eq!(r(sql), expected, "Go TestAdminStmt row: {sql}");
+    }
 }
 
 /// Go accepts exactly the two named cluster roles; no-role is the separate

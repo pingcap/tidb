@@ -100,18 +100,22 @@ impl Parser {
             }
             "PLACEMENT" => {
                 self.bump();
-                self.expect_kw("POLICY")?;
+                if self.is_kw("POLICY") {
+                    self.bump();
+                }
                 let value = if self.is_kw("SET") && self.is_kw_at(1, "DEFAULT") {
                     self.bump();
                     self.bump();
                     "DEFAULT".to_string()
+                } else if self.is_kw("SET") {
+                    return Err(self.err_here("expected DEFAULT after PLACEMENT POLICY SET"));
                 } else {
                     self.accept_optional_equals();
                     if self.is_kw("DEFAULT") {
                         self.bump();
                         "DEFAULT".to_string()
                     } else {
-                        self.parse_table_option_word()?
+                        self.parse_placement_policy_name()?
                     }
                 };
                 Some(TableOption::PlacementPolicy(value))

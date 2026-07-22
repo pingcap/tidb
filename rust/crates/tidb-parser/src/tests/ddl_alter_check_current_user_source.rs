@@ -30,7 +30,7 @@ fn alter_add_check_bare_current_user_restores_as_nullary_function() {
     let Stmt::Ddl(ddl) = statement else {
         panic!("expected ALTER TABLE DDL");
     };
-    let tidb_ast::DdlStmt::AlterTable(alter) = *ddl else {
+    let tidb_ast::DdlStmt::AlterTable(alter) = ddl.into_inner() else {
         panic!("expected ALTER TABLE statement");
     };
     let [tidb_ast::AlterTableAction::AddCheck(check)] = alter.actions.as_slice() else {

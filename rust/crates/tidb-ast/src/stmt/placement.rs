@@ -233,3 +233,128 @@ impl DropPlacementPolicyStmt {
         out.push_str(&back_quote(&self.name));
     }
 }
+
+// BEGIN GENERATED AST VISITOR IMPLEMENTATIONS
+
+impl crate::Visitable for PlacementRestoreMode {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Default => {}
+            Self::SpecialComment => {}
+            Self::Skip => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for CreatePlacementPolicyStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            or_replace,
+            if_not_exists,
+            name,
+            options,
+        } = self;
+        for value in options.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        let _ = or_replace;
+        let _ = if_not_exists;
+        let _ = name;
+        let _ = options;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for AlterPlacementPolicyStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            if_exists,
+            name,
+            options,
+        } = self;
+        for value in options.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        let _ = if_exists;
+        let _ = name;
+        let _ = options;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for DropPlacementPolicyStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { if_exists, name } = self;
+        let _ = if_exists;
+        let _ = name;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for PlacementOption {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::PrimaryRegion(field_0) => {
+                let _ = field_0;
+            }
+            Self::Regions(field_0) => {
+                let _ = field_0;
+            }
+            Self::Followers(field_0) => {
+                let _ = field_0;
+            }
+            Self::Voters(field_0) => {
+                let _ = field_0;
+            }
+            Self::Learners(field_0) => {
+                let _ = field_0;
+            }
+            Self::Schedule(field_0) => {
+                let _ = field_0;
+            }
+            Self::Constraints(field_0) => {
+                let _ = field_0;
+            }
+            Self::LeaderConstraints(field_0) => {
+                let _ = field_0;
+            }
+            Self::FollowerConstraints(field_0) => {
+                let _ = field_0;
+            }
+            Self::VoterConstraints(field_0) => {
+                let _ = field_0;
+            }
+            Self::LearnerConstraints(field_0) => {
+                let _ = field_0;
+            }
+            Self::SurvivalPreferences(field_0) => {
+                let _ = field_0;
+            }
+            Self::Policy(field_0) => {
+                let _ = field_0;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+// END GENERATED AST VISITOR IMPLEMENTATIONS

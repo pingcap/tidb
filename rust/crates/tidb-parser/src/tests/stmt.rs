@@ -17,6 +17,21 @@
 use super::*;
 
 #[test]
+fn root_statement_preserves_source_text_and_position() {
+    let mut statement = parse(" \tselect 1;  ").expect("statement parses");
+    assert_eq!(statement.original_text(), b"select 1;");
+    assert_eq!(statement.text(), b"select 1;");
+
+    statement.set_origin_text_position(3);
+    assert_eq!(statement.origin_text_position(), 3);
+
+    let statements = parse_multi(" select 1;  SELECT 2").expect("statements parse");
+    assert_eq!(statements.len(), 2);
+    assert_eq!(statements[0].original_text(), b"select 1;");
+    assert_eq!(statements[1].original_text(), b"SELECT 2");
+}
+
+#[test]
 fn rejects_unsupported() {
     // Out-of-scope constructs error rather than mis-parse. (`TRUNCATE
     // TABLE` used to sit here but is now modelled — see `ddl` tests.)
@@ -60,23 +75,22 @@ fn plan_replayer_dump_explain_query_restore_and_scope() {
     let tidb_ast::Stmt::Admin(admin) = statement else {
         panic!("expected Admin envelope");
     };
-    let tidb_ast::AdminStmt::PlanReplayerDumpExplain(replayer) = admin.as_ref() else {
+    let tidb_ast::AdminStmt::PlanReplayer(replayer) = admin.as_ref() else {
         panic!("expected typed Plan Replayer dump/explain payload");
     };
     assert!(matches!(
-        replayer.query.as_ref(),
-        tidb_ast::QueryStmt::Select(_)
+        replayer.as_ref(),
+        tidb_ast::PlanReplayerStmt::Dump {
+            target,
+            ..
+        } if matches!(target.as_ref(), tidb_ast::PlanReplayerTarget::Statement(statement)
+            if matches!(statement.as_ref(), tidb_ast::Stmt::Query(_)))
     ));
 
-    for sql in [
-        "plan replayer load 'replayer.zip'",
-        "plan replayer capture 'sql' 'plan'",
-        "plan replayer dump explain analyze select 1",
-        "plan replayer dump explain 'sql.txt'",
-        "plan replayer dump explain ('select 1')",
-    ] {
-        assert!(parse(sql).is_err(), "{sql}");
-    }
+    assert_eq!(
+        r("plan replayer load 'replayer.zip'"),
+        "PLAN REPLAYER LOAD 'replayer.zip'"
+    );
 }
 #[test]
 fn stats_lock_restore_and_scope() {
@@ -112,11 +126,45 @@ fn explain_wrapper_restore_and_scope() {
         "EXPLAIN FORMAT = 'row' ALTER TABLE `t` ADD COLUMN `a` INT"
     );
 
-    // These Go `ExplainStmt` branches have distinct AST payloads not yet
-    // modelled by this Rust AST. Reject rather than lose their meaning.
-    assert!(parse("explain for connection 1").is_err());
-    assert!(parse("explain 'plan_digest'").is_err());
-    assert!(parse("explain explore 'digest'").is_err());
+    assert_eq!(
+        r("explain for connection 1"),
+        "EXPLAIN FORMAT = 'row' FOR CONNECTION 1"
+    );
+    assert_eq!(
+        r("explain 'plan_digest'"),
+        "EXPLAIN FORMAT = 'row' 'plan_digest'"
+    );
+    assert_eq!(r("explain explore 'digest'"), "EXPLAIN EXPLORE 'digest'");
+}
+
+#[test]
+fn explain_digest_and_explore_source_rows() {
+    for (sql, expected) in [
+        ("EXPLAIN ANALYZE 'sqldigest'", "EXPLAIN ANALYZE 'sqldigest'"),
+        (
+            "EXPLAIN ANALYZE format='json' 'sqldigest'",
+            "EXPLAIN ANALYZE FORMAT = 'json' 'sqldigest'",
+        ),
+        ("explain explore 'digestxxx'", "EXPLAIN EXPLORE 'digestxxx'"),
+        (
+            "explain explore replayer '/tmp/replayer.zip'",
+            "EXPLAIN EXPLORE REPLAYER '/tmp/replayer.zip'",
+        ),
+        (
+            "explain explore select 1 from t",
+            "EXPLAIN EXPLORE SELECT 1 FROM `t`",
+        ),
+        (
+            "explain explore select 1 from t1, t2",
+            "EXPLAIN EXPLORE SELECT 1 FROM (`t1`) JOIN `t2`",
+        ),
+        (
+            "explain explore select 1 from t where t1.a > (select max(a) from t2)",
+            "EXPLAIN EXPLORE SELECT 1 FROM `t` WHERE `t1`.`a`>(SELECT MAX(`a`) FROM `t2`)",
+        ),
+    ] {
+        assert_eq!(r(sql), expected, "{sql}");
+    }
 }
 
 /// Go shares `parseExplainStmt` across EXPLAIN/DESC/DESCRIBE. A query target
@@ -224,6 +272,46 @@ fn prepared_statements() {
     );
     assert_eq!(r("deallocate prepare stmt"), "DEALLOCATE PREPARE `stmt`");
     assert_eq!(r("drop prepare stmt"), "DEALLOCATE PREPARE `stmt`");
+
+    // Go parses an empty SQL string into PrepareStmt, then Restore rejects
+    // the zero-value SQLText/SQLVar state. Keep parse and restore failures as
+    // distinct boundaries instead of rejecting the grammar early.
+    let empty = parse("prepare stmt from ''").expect("Go accepts the syntax");
+    assert_eq!(
+        empty.try_restore().unwrap_err(),
+        "An error occurred while restore PrepareStmt"
+    );
+
+    // Go's grammar only produces user variables, but ExecuteStmt stores
+    // []ExprNode. Preserve that production AST contract for rewritten and
+    // hand-built trees instead of narrowing it to variable names.
+    let mut statement =
+        tidb_ast::Stmt::Session(tidb_ast::NodeBox::new(tidb_ast::SessionStmt::Execute {
+            name: "stmt".to_owned(),
+            using: vec![tidb_ast::Expr::Binary(
+                tidb_ast::BinaryOp::Plus,
+                Box::new(tidb_ast::Expr::Int("1".to_owned())),
+                Box::new(tidb_ast::Expr::Int("2".to_owned())),
+            )],
+        }));
+    assert_eq!(statement.restore(), "EXECUTE `stmt` USING 1+2");
+
+    struct CountExpressions(usize);
+    impl tidb_ast::Visitor for CountExpressions {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            if node.is::<tidb_ast::Expr>() {
+                self.0 += 1;
+            }
+            false
+        }
+
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            true
+        }
+    }
+    let mut visitor = CountExpressions(0);
+    assert!(tidb_ast::Visitable::accept(&mut statement, &mut visitor));
+    assert_eq!(visitor.0, 3);
 }
 
 #[test]
@@ -422,6 +510,22 @@ fn transactions() {
     assert_eq!(r("start transaction"), "START TRANSACTION");
     assert_eq!(r("commit"), "COMMIT");
     assert_eq!(r("rollback"), "ROLLBACK");
+    for (sql, expected) in [
+        ("COMMIT AND NO CHAIN", "COMMIT"),
+        ("COMMIT NO RELEASE", "COMMIT"),
+        ("COMMIT AND NO CHAIN NO RELEASE", "COMMIT"),
+        ("COMMIT AND NO CHAIN RELEASE", "COMMIT RELEASE"),
+        ("COMMIT AND CHAIN NO RELEASE", "COMMIT AND CHAIN"),
+        ("ROLLBACK AND NO CHAIN", "ROLLBACK"),
+        ("ROLLBACK NO RELEASE", "ROLLBACK"),
+        ("ROLLBACK AND NO CHAIN NO RELEASE", "ROLLBACK"),
+        ("ROLLBACK AND NO CHAIN RELEASE", "ROLLBACK RELEASE"),
+        ("ROLLBACK AND CHAIN NO RELEASE", "ROLLBACK AND CHAIN"),
+    ] {
+        assert_eq!(r(sql), expected, "{sql}");
+    }
+    assert!(parse("COMMIT AND CHAIN RELEASE").is_err());
+    assert!(parse("ROLLBACK AND CHAIN RELEASE").is_err());
     // Savepoint names restore VERBATIM, case preserved, no
     // backtick-quoting (confirmed via `godump restore`, unlike a
     // plain table/column identifier).
@@ -456,10 +560,14 @@ fn session_statements_use_one_outer_envelope() {
             tidb_ast::SessionStmt::Execute { .. } => "execute",
             tidb_ast::SessionStmt::Deallocate(_) => "deallocate",
             tidb_ast::SessionStmt::Begin(_) => "begin",
-            tidb_ast::SessionStmt::Commit => "commit",
-            tidb_ast::SessionStmt::Rollback => "rollback",
+            tidb_ast::SessionStmt::Commit(_) => "commit",
+            tidb_ast::SessionStmt::Rollback {
+                savepoint: None, ..
+            } => "rollback",
             tidb_ast::SessionStmt::Savepoint(_) => "savepoint",
-            tidb_ast::SessionStmt::RollbackToSavepoint(_) => "rollback to savepoint",
+            tidb_ast::SessionStmt::Rollback {
+                savepoint: Some(_), ..
+            } => "rollback to savepoint",
             tidb_ast::SessionStmt::ReleaseSavepoint(_) => "release savepoint",
             _ => panic!("source-owned session variant belongs in its leaf test"),
         }

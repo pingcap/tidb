@@ -63,6 +63,43 @@ impl CreateTableSplit {
     }
 }
 
+// BEGIN GENERATED AST VISITOR IMPLEMENTATIONS
+
+impl crate::Visitable for CreateTableSplitTarget {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Table => {}
+            Self::PrimaryKey => {}
+            Self::Index(field_0) => {
+                let _ = field_0;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for CreateTableSplit {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { target, option } = self;
+        if !crate::Visitable::accept(target, visitor) {
+            return false;
+        }
+        if !crate::Visitable::accept(option, visitor) {
+            return false;
+        }
+        let _ = target;
+        let _ = option;
+        visitor.leave(self)
+    }
+}
+// END GENERATED AST VISITOR IMPLEMENTATIONS
+
 #[cfg(test)]
 mod tests {
     use crate::{

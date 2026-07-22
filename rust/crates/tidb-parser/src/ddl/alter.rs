@@ -24,8 +24,6 @@ pub(super) mod cache;
 pub(super) mod check;
 #[path = "alter/column_default.rs"]
 pub(super) mod column_default;
-#[path = "alter/comment.rs"]
-pub(super) mod comment;
 #[path = "alter/drop_check.rs"]
 pub(super) mod drop_check;
 #[path = "alter/drop_foreign_key.rs"]
@@ -36,8 +34,6 @@ pub(super) mod drop_primary_key;
 pub(super) mod index_visibility;
 #[path = "alter/lock.rs"]
 pub(super) mod lock;
-#[path = "alter/placement_policy.rs"]
-pub(super) mod placement_policy;
 #[path = "alter/rename_column.rs"]
 pub(super) mod rename_column;
 #[path = "alter/rename_index.rs"]

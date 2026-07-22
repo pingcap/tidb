@@ -70,7 +70,7 @@ pub fn prepare_configured_point_read(
         )))
     })?;
     let select = match statement {
-        Stmt::Query(query) => match *query {
+        Stmt::Query(query) => match query.into_inner() {
             QueryStmt::Select(select) => select,
             QueryStmt::SetOpr(_) => {
                 return Err(PreparedPlanError::ReadOnly(ReadOnlyScanError::Unsupported(

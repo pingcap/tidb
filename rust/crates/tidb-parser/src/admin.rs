@@ -14,14 +14,14 @@
 
 //! Typed `ADMIN` grammar translated from `pkg/parser/admin_stmt_parser.go`.
 //!
-//! This leaf owns only the currently represented `ADMIN` commands. Standalone
-//! `ANALYZE` and `FLUSH` have different Go source owners and stay outside it.
+//! Standalone `ANALYZE` and `FLUSH` have different Go source owners and stay
+//! outside this module.
 
 use tidb_ast::{
-    AdminCheckHandleRange, AdminCheckStmt, AdminChecksumStmt, AdminCleanupTableLockStmt,
-    AdminRecoverIndexStmt, AdminReloadKind, AdminShowDdlJobQueriesStmt, AdminShowDdlJobsStmt,
-    AdminShowNextRowIdStmt, AdminShowSlowMode, AdminShowSlowStmt, AdminShowSlowTopScope, AdminStmt,
-    BdrRole,
+    AdminBindingControlKind, AdminCheckHandleRange, AdminCheckStmt, AdminChecksumStmt,
+    AdminCleanupTableLockStmt, AdminRecoverIndexStmt, AdminReloadKind, AdminShowDdlJobQueriesStmt,
+    AdminShowDdlJobsStmt, AdminShowNextRowIdStmt, AdminShowSlowMode, AdminShowSlowStmt,
+    AdminShowSlowTopScope, AdminStmt, BdrRole,
 };
 use tidb_lexer::TokenKind;
 
@@ -35,8 +35,7 @@ mod ddl_job_control;
 mod flush_plan_cache;
 
 impl Parser {
-    /// Routes every currently typed command with the `ADMIN` leader. Other
-    /// ADMIN families remain parse errors until their distinct payloads exist.
+    /// Routes the complete `AdminStmtType` family with the `ADMIN` leader.
     pub(crate) fn parse_admin_statement(&mut self) -> PResult<AdminStmt> {
         if let Some(scope) = flush_plan_cache::parse(self)? {
             return Ok(AdminStmt::FlushPlanCache(scope));
@@ -85,6 +84,34 @@ impl Parser {
         if self.is_kw_at(1, "RELOAD") {
             return Ok(AdminStmt::Reload(self.parse_admin_reload()?));
         }
+        if self.is_kw_at(1, "CREATE") && self.is_kw_at(2, "WORKLOAD") {
+            self.expect_kw("ADMIN")?;
+            self.expect_kw("CREATE")?;
+            self.expect_kw("WORKLOAD")?;
+            self.expect_kw("SNAPSHOT")?;
+            return Ok(AdminStmt::CreateWorkloadSnapshot);
+        }
+        if self.is_kw_at(1, "PLUGINS") {
+            return self.parse_admin_plugins();
+        }
+        if self.is_kw_at(1, "FLUSH") && self.is_kw_at(2, "BINDINGS") {
+            self.bump();
+            self.bump();
+            self.bump();
+            return Ok(AdminStmt::BindingControl(AdminBindingControlKind::Flush));
+        }
+        if self.is_kw_at(1, "CAPTURE") && self.is_kw_at(2, "BINDINGS") {
+            self.bump();
+            self.bump();
+            self.bump();
+            return Ok(AdminStmt::BindingControl(AdminBindingControlKind::Capture));
+        }
+        if self.is_kw_at(1, "EVOLVE") && self.is_kw_at(2, "BINDINGS") {
+            self.bump();
+            self.bump();
+            self.bump();
+            return Ok(AdminStmt::BindingControl(AdminBindingControlKind::Evolve));
+        }
         if self.is_kw_at(1, "CHECKSUM") {
             return Ok(AdminStmt::AdminChecksum(Box::new(
                 self.parse_admin_checksum()?,
@@ -95,6 +122,11 @@ impl Parser {
                 self.parse_admin_recover_index()?,
             )));
         }
+        if self.is_kw_at(1, "CLEANUP") && self.is_kw_at(2, "INDEX") {
+            return Ok(AdminStmt::AdminCleanupIndex(Box::new(
+                self.parse_admin_index_operation("CLEANUP")?,
+            )));
+        }
         if self.is_kw_at(1, "CHECK") {
             return Ok(AdminStmt::AdminCheck(Box::new(self.parse_admin_check()?)));
         }
@@ -103,7 +135,25 @@ impl Parser {
                 self.parse_admin_cleanup_table_lock()?,
             )));
         }
-        Err(self.err_here("unsupported ADMIN command in this phase"))
+        Err(self.err_here("unsupported ADMIN command"))
+    }
+
+    fn parse_admin_plugins(&mut self) -> PResult<AdminStmt> {
+        self.expect_kw("ADMIN")?;
+        self.expect_kw("PLUGINS")?;
+        let enable = if self.is_kw("ENABLE") {
+            self.bump();
+            true
+        } else {
+            self.expect_kw("DISABLE")?;
+            false
+        };
+        let mut plugins = vec![self.parse_name()?];
+        while self.is_op(",") {
+            self.bump();
+            plugins.push(self.parse_name()?);
+        }
+        Ok(AdminStmt::Plugins { enable, plugins })
     }
 
     /// Parses Go's distinct `CleanupTableLockStmt` production. The table
@@ -122,8 +172,7 @@ impl Parser {
         Ok(AdminCleanupTableLockStmt { tables })
     }
 
-    /// Parses the source-backed `ADMIN CHECK` subset: table lists, or one
-    /// index with an optional comma-separated list of handle ranges.
+    /// Parses `ADMIN CHECK`: table lists, or one index with optional ranges.
     fn parse_admin_check(&mut self) -> PResult<AdminCheckStmt> {
         self.expect_kw("ADMIN")?;
         self.expect_kw("CHECK")?;
@@ -184,8 +233,12 @@ impl Parser {
 
     /// Parses Go's `ADMIN RECOVER INDEX table index` production.
     fn parse_admin_recover_index(&mut self) -> PResult<AdminRecoverIndexStmt> {
+        self.parse_admin_index_operation("RECOVER")
+    }
+
+    fn parse_admin_index_operation(&mut self, operation: &str) -> PResult<AdminRecoverIndexStmt> {
         self.expect_kw("ADMIN")?;
-        self.expect_kw("RECOVER")?;
+        self.expect_kw(operation)?;
         self.expect_kw("INDEX")?;
         let table = self.parse_name_path()?;
         let index = self.parse_name()?;

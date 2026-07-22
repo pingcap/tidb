@@ -39,7 +39,7 @@ fn alter_merge_first_partition_keeps_typed_go_payload() {
     else {
         panic!("expected DDL");
     };
-    let tidb_ast::DdlStmt::AlterTable(alter) = *ddl else {
+    let tidb_ast::DdlStmt::AlterTable(alter) = ddl.into_inner() else {
         panic!("expected ALTER TABLE");
     };
     assert_eq!(

@@ -185,7 +185,7 @@ impl ConfiguredRelationTree {
 pub(crate) fn parse_select(sql: &str) -> Result<SelectStmt, RelationBindError> {
     let stmt = tidb_parser::parse(sql).map_err(|error| RelationBindError::Parse(error.message))?;
     match stmt {
-        Stmt::Query(query) => match *query {
+        Stmt::Query(query) => match query.into_inner() {
             QueryStmt::Select(select) => Ok(*select),
             QueryStmt::SetOpr(_) => Err(RelationBindError::UnsupportedQueryShape),
         },

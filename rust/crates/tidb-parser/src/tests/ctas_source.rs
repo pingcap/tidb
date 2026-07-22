@@ -68,7 +68,7 @@ fn go_test_ddl_ctas_select_duplicate_and_parenthesized_rows() {
         let Stmt::Ddl(ddl) = statement else {
             panic!("expected DDL statement");
         };
-        let tidb_ast::DdlStmt::CreateTable(table) = *ddl else {
+        let tidb_ast::DdlStmt::CreateTable(table) = ddl.into_inner() else {
             panic!("expected CREATE TABLE");
         };
         assert!(table.ctas.is_some(), "source SQL: {sql}");
@@ -130,7 +130,7 @@ fn go_test_ddl_bare_create_and_dangling_ctas_markers_stay_parser_valid() {
         let Stmt::Ddl(ddl) = statement else {
             panic!("expected DDL statement");
         };
-        let tidb_ast::DdlStmt::CreateTable(table) = *ddl else {
+        let tidb_ast::DdlStmt::CreateTable(table) = ddl.into_inner() else {
             panic!("expected CREATE TABLE");
         };
         assert!(table.ctas.is_none(), "source SQL: {sql}");

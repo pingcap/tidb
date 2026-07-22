@@ -252,7 +252,69 @@ fn go_ast_placement_policy_special_comment_restore_cases() {
 }
 
 #[test]
-fn go_ast_remove_placement_restore_standalone_case() {
+fn test_create_placement_policy_restore() {
+    for (sql, normal, special) in [
+        (
+            "create placement policy p1 primary_region=\"r1\" regions='r1,r2' followers=1",
+            "CREATE PLACEMENT POLICY `p1` PRIMARY_REGION = 'r1' REGIONS = 'r1,r2' FOLLOWERS = 1",
+            "/*T![placement] CREATE PLACEMENT POLICY `p1` PRIMARY_REGION = 'r1' REGIONS = 'r1,r2' FOLLOWERS = 1 */",
+        ),
+        (
+            "create placement policy if not exists p1 primary_region=\"r1\" regions='r1,r2' followers=1",
+            "CREATE PLACEMENT POLICY IF NOT EXISTS `p1` PRIMARY_REGION = 'r1' REGIONS = 'r1,r2' FOLLOWERS = 1",
+            "/*T![placement] CREATE PLACEMENT POLICY IF NOT EXISTS `p1` PRIMARY_REGION = 'r1' REGIONS = 'r1,r2' FOLLOWERS = 1 */",
+        ),
+        (
+            "create or replace placement policy p1 followers=1",
+            "CREATE OR REPLACE PLACEMENT POLICY `p1` FOLLOWERS = 1",
+            "/*T![placement] CREATE OR REPLACE PLACEMENT POLICY `p1` FOLLOWERS = 1 */",
+        ),
+    ] {
+        assert_eq!(r(sql), normal);
+        assert_eq!(
+            restore_with_mode(sql, tidb_ast::PlacementRestoreMode::SpecialComment),
+            special
+        );
+    }
+}
+
+#[test]
+fn test_alter_placement_policy_restore() {
+    let sql = "alter placement policy p1 primary_region=\"r1\" regions='r1,r2' followers=1";
+    assert_eq!(
+        r(sql),
+        "ALTER PLACEMENT POLICY `p1` PRIMARY_REGION = 'r1' REGIONS = 'r1,r2' FOLLOWERS = 1"
+    );
+    assert_eq!(
+        restore_with_mode(sql, tidb_ast::PlacementRestoreMode::SpecialComment),
+        "/*T![placement] ALTER PLACEMENT POLICY `p1` PRIMARY_REGION = 'r1' REGIONS = 'r1,r2' FOLLOWERS = 1 */"
+    );
+}
+
+#[test]
+fn test_drop_placement_policy_restore() {
+    for (sql, normal, special) in [
+        (
+            "drop placement policy p1",
+            "DROP PLACEMENT POLICY `p1`",
+            "/*T![placement] DROP PLACEMENT POLICY `p1` */",
+        ),
+        (
+            "drop placement policy if exists p1",
+            "DROP PLACEMENT POLICY IF EXISTS `p1`",
+            "/*T![placement] DROP PLACEMENT POLICY IF EXISTS `p1` */",
+        ),
+    ] {
+        assert_eq!(r(sql), normal);
+        assert_eq!(
+            restore_with_mode(sql, tidb_ast::PlacementRestoreMode::SpecialComment),
+            special
+        );
+    }
+}
+
+#[test]
+fn test_remove_placement_restore() {
     assert_eq!(
         restore_with_mode(
             "ALTER PLACEMENT POLICY p3 PRIMARY_REGION='us-east-1' REGIONS='us-east-1,us-east-2,us-west-1'",

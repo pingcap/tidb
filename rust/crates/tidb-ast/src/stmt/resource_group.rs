@@ -16,6 +16,7 @@
 //! domain.
 
 use crate::util::{back_quote, escape_string_literal};
+use crate::Expr;
 
 /// A `CREATE RESOURCE GROUP` statement.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -130,25 +131,63 @@ pub enum ResourceGroupRunawayAction {
     SwitchGroup(String),
 }
 
-/// The query-watch matching mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ResourceGroupRunawayWatchType {
-    /// Exact SQL text matching.
-    Exact,
-    /// Similar SQL text matching.
-    Similar,
-    /// Plan matching.
-    Plan,
-}
-
 /// A `WATCH` option. `None` is Go's empty duration sentinel and restores as
 /// `UNLIMITED`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResourceGroupRunawayWatch {
     /// The matching mode.
-    pub watch_type: ResourceGroupRunawayWatchType,
+    pub watch_type: crate::RunawayWatchType,
     /// A finite duration, or `None` for unlimited.
     pub duration: Option<String>,
+}
+
+/// `QUERY WATCH ADD` statement.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AddQueryWatchStmt {
+    /// Options in source order. Go rejects duplicate option families.
+    pub options: Vec<QueryWatchOption>,
+}
+
+/// `QUERY WATCH REMOVE` statement.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DropQueryWatchStmt {
+    /// Numeric watch ID or resource-group target.
+    pub target: QueryWatchRemoveTarget,
+}
+
+/// Target accepted by `QUERY WATCH REMOVE`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum QueryWatchRemoveTarget {
+    /// Numeric watch ID.
+    Id(i64),
+    /// Static resource-group name.
+    ResourceGroup(String),
+    /// Resource-group expression, such as a user variable.
+    ResourceGroupExpr(Expr),
+}
+
+/// One option of `QUERY WATCH ADD`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum QueryWatchOption {
+    /// Static resource-group name.
+    ResourceGroup(String),
+    /// Resource-group expression, such as a user variable.
+    ResourceGroupExpr(Expr),
+    /// Action to apply when the watch matches.
+    Action(ResourceGroupRunawayAction),
+    /// SQL text or digest matching rule.
+    Text(QueryWatchTextOption),
+}
+
+/// SQL text or digest matching rule for `QUERY WATCH ADD`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct QueryWatchTextOption {
+    /// Exact, similar, or plan matching.
+    pub watch_type: crate::RunawayWatchType,
+    /// Pattern expression.
+    pub pattern: Expr,
+    /// Whether source used `SQL TEXT <type> TO` instead of a digest form.
+    pub type_specified: bool,
 }
 
 /// One `BACKGROUND` sub-option.
@@ -306,11 +345,7 @@ impl ResourceGroupRunawayAction {
 impl ResourceGroupRunawayWatch {
     fn restore_into(&self, out: &mut String) {
         out.push_str("WATCH = ");
-        out.push_str(match self.watch_type {
-            ResourceGroupRunawayWatchType::Exact => "EXACT",
-            ResourceGroupRunawayWatchType::Similar => "SIMILAR",
-            ResourceGroupRunawayWatchType::Plan => "PLAN",
-        });
+        out.push_str(self.watch_type.sql());
         out.push_str(" DURATION = ");
         if let Some(duration) = &self.duration {
             out.push('\'');
@@ -319,6 +354,67 @@ impl ResourceGroupRunawayWatch {
         } else {
             out.push_str("UNLIMITED");
         }
+    }
+}
+
+impl AddQueryWatchStmt {
+    pub(crate) fn restore_into(&self, out: &mut String) {
+        out.push_str("QUERY WATCH ADD");
+        for option in &self.options {
+            out.push(' ');
+            option.restore_into(out);
+        }
+    }
+}
+
+impl DropQueryWatchStmt {
+    pub(crate) fn restore_into(&self, out: &mut String) {
+        out.push_str("QUERY WATCH REMOVE ");
+        match &self.target {
+            QueryWatchRemoveTarget::Id(id) => out.push_str(&id.to_string()),
+            QueryWatchRemoveTarget::ResourceGroup(name) => {
+                out.push_str("RESOURCE GROUP ");
+                out.push_str(&back_quote(name));
+            }
+            QueryWatchRemoveTarget::ResourceGroupExpr(expr) => {
+                out.push_str("RESOURCE GROUP ");
+                expr.restore_into(out);
+            }
+        }
+    }
+}
+
+impl QueryWatchOption {
+    fn restore_into(&self, out: &mut String) {
+        match self {
+            Self::ResourceGroup(name) => {
+                out.push_str("RESOURCE GROUP ");
+                out.push_str(&back_quote(name));
+            }
+            Self::ResourceGroupExpr(expr) => {
+                out.push_str("RESOURCE GROUP ");
+                expr.restore_into(out);
+            }
+            Self::Action(action) => action.restore_into(out),
+            Self::Text(text) => text.restore_into(out),
+        }
+    }
+}
+
+impl QueryWatchTextOption {
+    fn restore_into(&self, out: &mut String) {
+        if self.type_specified {
+            out.push_str("SQL TEXT ");
+            out.push_str(self.watch_type.sql());
+            out.push_str(" TO ");
+        } else {
+            out.push_str(match self.watch_type {
+                crate::RunawayWatchType::Similar => "SQL DIGEST ",
+                crate::RunawayWatchType::Plan => "PLAN DIGEST ",
+                _ => "",
+            });
+        }
+        self.pattern.restore_into(out);
     }
 }
 
@@ -337,3 +433,359 @@ impl ResourceGroupBackgroundOption {
         }
     }
 }
+
+// BEGIN GENERATED AST VISITOR IMPLEMENTATIONS
+
+impl crate::Visitable for CreateResourceGroupStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            if_not_exists,
+            name,
+            options,
+        } = self;
+        for value in options.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        let _ = if_not_exists;
+        let _ = name;
+        let _ = options;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for AlterResourceGroupStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            if_exists,
+            name,
+            options,
+        } = self;
+        for value in options.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        let _ = if_exists;
+        let _ = name;
+        let _ = options;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for DropResourceGroupStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { if_exists, name } = self;
+        let _ = if_exists;
+        let _ = name;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for ResourceGroupOption {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::RuPerSec(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::Priority(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::Burstable(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::QueryLimit(field_0) => {
+                for value in field_0.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                let _ = field_0;
+            }
+            Self::Background(field_0) => {
+                for value in field_0.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                let _ = field_0;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for ResourceGroupRate {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Limited(field_0) => {
+                let _ = field_0;
+            }
+            Self::Unlimited => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for ResourceGroupPriority {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Low => {}
+            Self::Medium => {}
+            Self::High => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for ResourceGroupBurstable {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Unlimited => {}
+            Self::Moderated => {}
+            Self::Off => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for ResourceGroupRunawayOption {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Rule(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::Action(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::Watch(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for ResourceGroupRunawayRule {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::ExecElapsed(field_0) => {
+                let _ = field_0;
+            }
+            Self::ProcessedKeys(field_0) => {
+                let _ = field_0;
+            }
+            Self::RequestUnit(field_0) => {
+                let _ = field_0;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for ResourceGroupRunawayAction {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::DryRun => {}
+            Self::Cooldown => {}
+            Self::Kill => {}
+            Self::SwitchGroup(field_0) => {
+                let _ = field_0;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for ResourceGroupRunawayWatch {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            watch_type,
+            duration,
+        } = self;
+        if !crate::Visitable::accept(watch_type, visitor) {
+            return false;
+        }
+        let _ = watch_type;
+        let _ = duration;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for AddQueryWatchStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { options } = self;
+        for value in options.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        let _ = options;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for DropQueryWatchStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { target } = self;
+        if !crate::Visitable::accept(target, visitor) {
+            return false;
+        }
+        let _ = target;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for QueryWatchRemoveTarget {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Id(field_0) => {
+                let _ = field_0;
+            }
+            Self::ResourceGroup(field_0) => {
+                let _ = field_0;
+            }
+            Self::ResourceGroupExpr(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for QueryWatchOption {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::ResourceGroup(field_0) => {
+                let _ = field_0;
+            }
+            Self::ResourceGroupExpr(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::Action(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::Text(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for QueryWatchTextOption {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            watch_type,
+            pattern,
+            type_specified,
+        } = self;
+        if !crate::Visitable::accept(watch_type, visitor) {
+            return false;
+        }
+        if !crate::Visitable::accept(pattern, visitor) {
+            return false;
+        }
+        let _ = watch_type;
+        let _ = pattern;
+        let _ = type_specified;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for ResourceGroupBackgroundOption {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::TaskTypes(field_0) => {
+                let _ = field_0;
+            }
+            Self::UtilizationLimit(field_0) => {
+                let _ = field_0;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+// END GENERATED AST VISITOR IMPLEMENTATIONS

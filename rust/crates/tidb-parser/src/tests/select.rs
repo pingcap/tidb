@@ -112,14 +112,55 @@ fn into_outfile_clause() {
         r("select 1 into outfile '/tmp/it''s'"),
         "SELECT 1 INTO OUTFILE '/tmp/it''s'"
     );
-    // `[FIELDS ...] [LINES ...]` sub-clauses are deliberately NOT
-    // modelled (not exercised by the corpus) — a genuine `ParseError`,
-    // not silently dropped.
-    assert!(parse("select a,b into outfile '/tmp/x' fields terminated by ','").is_err());
-    assert!(parse("select a into outfile '/tmp/x' lines terminated by '\\n'").is_err());
+    for (sql, expected) in [
+        (
+            "select a,b,a+b from t into outfile '/tmp/result.txt' fields terminated by ','",
+            "SELECT `a`,`b`,`a`+`b` FROM `t` INTO OUTFILE '/tmp/result.txt' FIELDS TERMINATED BY ','",
+        ),
+        (
+            "select a,b,a+b from t into outfile '/tmp/result.txt' fields terminated by ',' enclosed by '\"'",
+            "SELECT `a`,`b`,`a`+`b` FROM `t` INTO OUTFILE '/tmp/result.txt' FIELDS TERMINATED BY ',' ENCLOSED BY '\"'",
+        ),
+        (
+            "select a,b,a+b from t into outfile '/tmp/result.txt' fields terminated by ',' optionally enclosed by '\"'",
+            "SELECT `a`,`b`,`a`+`b` FROM `t` INTO OUTFILE '/tmp/result.txt' FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '\"'",
+        ),
+        (
+            "select a,b,a+b from t into outfile '/tmp/result.txt' lines terminated by '\\n'",
+            "SELECT `a`,`b`,`a`+`b` FROM `t` INTO OUTFILE '/tmp/result.txt' LINES TERMINATED BY '\n'",
+        ),
+        (
+            "select a,b,a+b from t into outfile '/tmp/result.txt' fields terminated by ',' optionally enclosed by '\"' lines terminated by '\\r'",
+            "SELECT `a`,`b`,`a`+`b` FROM `t` INTO OUTFILE '/tmp/result.txt' FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '\"' LINES TERMINATED BY '\r'",
+        ),
+        (
+            "select a,b,a+b from t into outfile '/tmp/result.txt' fields terminated by ',' enclosed by '\"' lines terminated by '\\r'",
+            "SELECT `a`,`b`,`a`+`b` FROM `t` INTO OUTFILE '/tmp/result.txt' FIELDS TERMINATED BY ',' ENCLOSED BY '\"' LINES TERMINATED BY '\r'",
+        ),
+        (
+            "select a,b,a+b from t into outfile '/tmp/result.txt' fields terminated by ',' optionally enclosed by '\"' lines starting by 'xy' terminated by '\\r'",
+            "SELECT `a`,`b`,`a`+`b` FROM `t` INTO OUTFILE '/tmp/result.txt' FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '\"' LINES STARTING BY 'xy' TERMINATED BY '\r'",
+        ),
+        (
+            "select a,b,a+b from t into outfile '/tmp/result.txt' fields terminated by ',' enclosed by '\"' lines starting by 'xy' terminated by '\\r'",
+            "SELECT `a`,`b`,`a`+`b` FROM `t` INTO OUTFILE '/tmp/result.txt' FIELDS TERMINATED BY ',' ENCLOSED BY '\"' LINES STARTING BY 'xy' TERMINATED BY '\r'",
+        ),
+    ] {
+        assert_eq!(r(sql), expected, "Go TestDMLStmt row: {sql}");
+    }
     // Deliberately NOT threaded into a set operation's own tail — see
     // `tidb_ast::SelectStmt::into_outfile`'s own doc for why.
     assert!(parse("select 1 union select 2 into outfile '/tmp/x'").is_err());
+}
+
+#[test]
+fn sole_parenthesized_select_preserves_braces_and_folds_its_tail() {
+    assert_eq!(r("(select 1)"), "(SELECT 1)");
+    assert_eq!(
+        r("(select a from t) order by 1 limit 2"),
+        "(SELECT `a` FROM `t` ORDER BY 1 LIMIT 2)"
+    );
+    assert!(parse("(select 1) into outfile '/tmp/x'").is_err());
 }
 
 #[test]
@@ -357,10 +398,8 @@ fn subqueries() {
 }
 
 /// `WITH [RECURSIVE] cte AS (...) SELECT ...` inside a scalar/`IN`/
-/// `EXISTS`/`ANY`-`SOME`-`ALL` subquery position. Scalar and `ANY`/`SOME`/
-/// `ALL` use `Parser::parse_paren_subquery`; `EXISTS` uses the sibling
-/// query-envelope path so a top-level set operation remains typed, while
-/// the scalar and `IN` positions gate entry with their own lookahead.
+/// `EXISTS`/`ANY`-`SOME`-`ALL` subquery position. Every form retains the
+/// complete query envelope, including a top-level set operation.
 #[test]
 fn with_in_subquery() {
     assert_eq!(
@@ -378,6 +417,10 @@ fn with_in_subquery() {
     assert_eq!(
         r("select 1 = all (with q as (select 1) select * from q)"),
         "SELECT 1=ALL (WITH `q` AS (SELECT 1) SELECT * FROM `q`)"
+    );
+    assert_eq!(
+        r("select 1 = all (with q as (select 1) select * from q union select 2)"),
+        "SELECT 1=ALL (WITH `q` AS (SELECT 1) SELECT * FROM `q` UNION SELECT 2)"
     );
     // `RECURSIVE` works too, the same CTE grammar the top-level
     // statement position already uses.
@@ -489,7 +532,7 @@ fn query_envelope_preserves_query_only_children() {
     let Stmt::Query(query) = stmt else {
         panic!("expected Query envelope")
     };
-    let tidb_ast::QueryStmt::Select(select) = *query else {
+    let tidb_ast::QueryStmt::Select(select) = query.into_inner() else {
         panic!("expected SELECT query")
     };
     assert!(matches!(
@@ -503,7 +546,7 @@ fn query_envelope_preserves_query_only_children() {
     let Stmt::Query(query) = stmt else {
         panic!("expected Query envelope")
     };
-    let tidb_ast::QueryStmt::Select(select) = *query else {
+    let tidb_ast::QueryStmt::Select(select) = query.into_inner() else {
         panic!("expected SELECT query")
     };
     let from = select.from.as_ref().unwrap();
@@ -522,7 +565,7 @@ fn query_envelope_preserves_query_only_children() {
     let Stmt::Dml(dml) = stmt else {
         panic!("expected DML envelope")
     };
-    let tidb_ast::DmlStmt::Insert(insert) = *dml else {
+    let tidb_ast::DmlStmt::Insert(insert) = dml.into_inner() else {
         panic!("expected INSERT")
     };
     assert!(matches!(
@@ -681,12 +724,14 @@ fn window_functions() {
         r("select cume_dist() over () from t"),
         "SELECT CUME_DIST() OVER () FROM `t`"
     );
-    // Scope: `DISTINCT` in a window aggregate and `IGNORE NULLS`
-    // (real ANSI SQL grammar for `LAG`/`LEAD`, but confirmed via
-    // `gorun` that real TiDB itself rejects it too) are genuine
-    // `ParseError`s here, not silently misparsed or dropped.
-    assert!(parse("select max(distinct salary) over (partition by dept) from t").is_err());
-    assert!(parse("select lag(salary) ignore nulls over (order by salary) from t").is_err());
+    assert_eq!(
+        r("select max(distinct salary) over (partition by dept) from t"),
+        "SELECT MAX(DISTINCT `salary`) OVER (PARTITION BY `dept`) FROM `t`"
+    );
+    assert_eq!(
+        r("select lag(salary) ignore nulls over (order by salary) from t"),
+        "SELECT LAG(`salary`) IGNORE NULLS OVER (ORDER BY `salary`) FROM `t`"
+    );
     // Named windows: `OVER w` (bare, no parentheses) restores
     // differently from `OVER (w)` (parenthesized, no extension) even
     // though they're semantically identical -- confirmed via `godump
@@ -1045,7 +1090,7 @@ fn group_by_direction() {
     let Stmt::Query(query) = stmt else {
         panic!("expected Query envelope")
     };
-    let tidb_ast::QueryStmt::Select(s) = *query else {
+    let tidb_ast::QueryStmt::Select(s) = query.into_inner() else {
         panic!("expected SELECT query")
     };
     let dirs: Vec<Option<bool>> = s.group_by.iter().map(|item| item.desc).collect();
@@ -1548,10 +1593,18 @@ fn nested_set_op_term() {
     );
     // A solitary parenthesized set operation is a statement-level wrapper;
     // its source parentheses are retained on the typed `SetOprStmt` and
-    // therefore restore losslessly. Doubly-parenthesized derived-table
-    // forms remain a separate grammar boundary for now.
+    // therefore restores once. Go also accepts redundant whole-query
+    // wrappers and collapses them, both at statement level and inside a
+    // derived table.
     assert_eq!(r("(select 1 union select 2)"), "(SELECT 1 UNION SELECT 2)");
-    assert!(parse("select * from ((select 1 union select 2)) t").is_err());
+    assert_eq!(
+        r("((select 1 union select 2))"),
+        "(SELECT 1 UNION SELECT 2)"
+    );
+    assert_eq!(
+        r("select * from ((select 1 union select 2)) t"),
+        "SELECT * FROM (SELECT 1 UNION SELECT 2) AS `t`"
+    );
 }
 
 /// `SQL_CALC_FOUND_ROWS` — a `SELECT`-level modifier, freely orderable

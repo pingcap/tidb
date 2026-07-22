@@ -19,7 +19,28 @@ use crate::util::{
     back_quote, escape_string_literal, format_go_float, normalize_decimal, normalize_int,
     restore_string_literal,
 };
-use crate::{Op, OrderItem, QueryStmt, RestoreContext, RestoreFlags, SelectStmt, WindowOver};
+use crate::{Op, OrderItem, QueryStmt, RestoreContext, RestoreFlags, WindowOver};
+
+/// Expression flag bits from `pkg/parser/ast/ast.go`.
+pub const FLAG_CONSTANT: u64 = 0;
+/// Contains a prepared-statement parameter marker.
+pub const FLAG_HAS_PARAM_MARKER: u64 = 1 << 1;
+/// Contains an ordinary scalar function.
+pub const FLAG_HAS_FUNC: u64 = 1 << 2;
+/// Contains a column or positional reference.
+pub const FLAG_HAS_REFERENCE: u64 = 1 << 3;
+/// Contains an aggregate function.
+pub const FLAG_HAS_AGGREGATE_FUNC: u64 = 1 << 4;
+/// Contains a subquery.
+pub const FLAG_HAS_SUBQUERY: u64 = 1 << 5;
+/// Contains a user or system variable.
+pub const FLAG_HAS_VARIABLE: u64 = 1 << 6;
+/// Contains a `DEFAULT` expression.
+pub const FLAG_HAS_DEFAULT: u64 = 1 << 7;
+/// Was pre-evaluated by an earlier phase.
+pub const FLAG_PRE_EVALUATED: u64 = 1 << 8;
+/// Contains a window function.
+pub const FLAG_HAS_WINDOW_FUNC: u64 = 1 << 9;
 
 /// The scope of a system variable (`@@GLOBAL.x` / `@@SESSION.x`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,6 +120,9 @@ pub enum Expr {
     Null,
     /// A boolean literal (`TRUE` / `FALSE`).
     Bool(bool),
+    /// `DEFAULT` or `DEFAULT(column)`. `None` is the bare value placeholder
+    /// accepted only by INSERT/UPDATE assignment grammar.
+    Default(Option<Vec<String>>),
     /// A user variable reference `@name`.
     UserVar(String),
     /// A system variable reference `@@[scope.]name`.
@@ -249,13 +273,10 @@ pub enum Expr {
     /// optional default value used when the offset falls outside the
     /// partition — `NULL` if unwritten); and `NTILE` (one argument, a
     /// positive bucket count) alongside the zero-argument `PERCENT_RANK`/
-    /// `CUME_DIST`. `DISTINCT` in the aggregate position (`MAX(DISTINCT
-    /// x) OVER (...)`, real but rare MySQL grammar) is not modelled — a
-    /// genuine `ParseError`, not silently dropped or ignored. `IGNORE
-    /// NULLS`/`FROM LAST` (ANSI SQL grammar `LAG`/`LEAD`/etc. can carry)
-    /// are not modelled — confirmed via `gorun` that real TiDB itself
-    /// rejects both unconditionally, so this is not a real divergence,
-    /// just matching real scope exactly. The `OVER` clause itself may be
+    /// `CUME_DIST`. Aggregate `DISTINCT`, `IGNORE NULLS`, and `FROM LAST`
+    /// remain explicit fields because Go's AST preserves them even when a
+    /// later semantic phase rejects a particular function/modifier pair. The
+    /// `OVER` clause itself may be
     /// a bare or parenthesized named-window reference in addition to a
     /// fully inline spec (see [`WindowOver`]) — resolving a name against
     /// the enclosing [`SelectStmt::windows`] clause, and validating what
@@ -266,6 +287,12 @@ pub enum Expr {
         /// The call arguments — empty for a ranking function; see this
         /// variant's own doc for each function's exact arity.
         args: Vec<Expr>,
+        /// Whether the aggregate arguments were prefixed with `DISTINCT`.
+        distinct: bool,
+        /// Whether `IGNORE NULLS` was specified.
+        ignore_nulls: bool,
+        /// Whether `FROM LAST` was specified.
+        from_last: bool,
         /// The `OVER` clause.
         over: WindowOver,
     },
@@ -544,16 +571,14 @@ pub enum Expr {
         /// Whether negated (`NOT EXISTS`).
         not: bool,
     },
-    /// `expr [NOT] IN (SELECT ...)` — one of the two parenthesized-subquery
-    /// positions (the other is [`Expr::Exists`]) whose subquery may ALSO be
-    /// `UNION`/`EXCEPT`/`INTERSECT`-bodied, hence `Box<QueryStmt>` here rather
-    /// than `Box<SelectStmt>` — confirmed via `godump restore`: `x NOT IN
+    /// `expr [NOT] IN (SELECT ...)`, whose subquery may be
+    /// `UNION`/`EXCEPT`/`INTERSECT`-bodied. Confirmed via `godump restore`:
+    /// `x NOT IN
     /// (SELECT 1 UNION SELECT 2)` restores unchanged. Always either
     /// `QueryStmt::Select` or `QueryStmt::SetOpr` (real TiDB's own
     /// `parseSubquery`/this crate's own `Parser::parse_select_or_setopr`,
     /// which this variant's own parsing calls directly — never any other
-    /// `Stmt` variant). Scalar, `ANY`/`ALL`, and the parenthesized scalar
-    /// expression positions retain their narrower `SelectStmt` AST slots.
+    /// `Stmt` variant).
     InSubquery {
         /// The tested expression.
         expr: Box<Expr>,
@@ -562,7 +587,7 @@ pub enum Expr {
         /// Whether negated (`NOT IN`).
         not: bool,
     },
-    /// `expr <op> ANY|ALL (SELECT ...)`.
+    /// `expr <op> ANY|ALL (query)`, including a set-operation query.
     CompareSubquery {
         /// The comparison operator.
         op: BinaryOp,
@@ -571,7 +596,7 @@ pub enum Expr {
         /// `true` for `ALL`, `false` for `ANY`/`SOME`.
         all: bool,
         /// The subquery.
-        subquery: Box<SelectStmt>,
+        subquery: Box<QueryStmt>,
     },
     /// `CASE [value] (WHEN cond THEN result)+ [ELSE result] END` — `value`
     /// present is the "simple" form (`WHEN` clauses compare `value = cond`
@@ -719,6 +744,23 @@ pub enum MatchModifier {
     QueryExpansion,
 }
 
+impl MatchModifier {
+    /// Reports Go's `FulltextSearchModifierBooleanMode` bit.
+    pub const fn is_boolean_mode(self) -> bool {
+        matches!(self, Self::BooleanMode)
+    }
+
+    /// Reports Go's natural-language mode, including its implicit default.
+    pub const fn is_natural_language_mode(self) -> bool {
+        !self.is_boolean_mode()
+    }
+
+    /// Reports Go's `FulltextSearchModifierWithQueryExpansion` bit.
+    pub const fn with_query_expansion(self) -> bool {
+        matches!(self, Self::QueryExpansion)
+    }
+}
+
 /// A [`Expr::GetFormat`] format-type selector — see that variant's own doc
 /// for why `TIMESTAMP` collapses into [`GetFormatSelector::Datetime`]
 /// rather than having its own variant.
@@ -733,6 +775,360 @@ pub enum GetFormatSelector {
 }
 
 impl Expr {
+    /// Formats this expression using Go AST's `ExprNode.Format` contract.
+    ///
+    /// This is intentionally separate from [`Self::restore`]: `Format`
+    /// uses double-quoted strings, lowercase function names, and spaces
+    /// around every binary operator. Go leaves several expression kinds
+    /// unimplemented; the corresponding Rust variants panic as well.
+    pub fn format(&self) -> String {
+        let mut out = String::new();
+        self.format_into(&mut out);
+        out
+    }
+
+    fn format_into(&self, out: &mut String) {
+        match self {
+            Self::Column(path) => restore_path(path, out),
+            Self::ParamMarker { .. } => panic!("Format is not implemented for parameter markers"),
+            Self::Int(value) => out.push_str(&normalize_int(value)),
+            Self::Decimal(value) => out.push_str(&normalize_decimal(value)),
+            Self::Float(value) => out.push_str(&format_go_float(*value)),
+            Self::Hex(value) => {
+                out.push_str("x'");
+                out.push_str(value);
+                out.push('\'');
+            }
+            Self::Bit(value) => {
+                out.push_str("b'");
+                out.push_str(value);
+                out.push('\'');
+            }
+            Self::String(value) | Self::RawString(value) | Self::CharsetString { value, .. } => {
+                format_double_quoted_string(value, out);
+            }
+            Self::Null => out.push_str("NULL"),
+            Self::Bool(true) => out.push_str("TRUE"),
+            Self::Bool(false) => out.push_str("FALSE"),
+            Self::Default(None) => out.push_str("DEFAULT"),
+            Self::Default(Some(_)) => panic!("Format is not implemented for DEFAULT(column)"),
+            Self::UserVar(_) | Self::SysVar { .. } | Self::Assign { .. } => {
+                panic!("Format is not implemented for variable expressions")
+            }
+            Self::Unary(op, expr) => {
+                out.push_str(op.restore());
+                expr.format_into(out);
+            }
+            Self::Binary(op, left, right) => {
+                left.format_into(out);
+                out.push(' ');
+                out.push_str(op.opcode().literal());
+                out.push(' ');
+                right.format_into(out);
+            }
+            Self::Paren(expr) => {
+                out.push('(');
+                expr.format_into(out);
+                out.push(')');
+            }
+            Self::Row(_) => panic!("Format is not implemented for row expressions"),
+            Self::Func { name, args } => {
+                out.push_str(&name.to_ascii_lowercase());
+                out.push('(');
+                format_expr_list(args, out, ", ");
+                out.push(')');
+            }
+            Self::GenericFuncCall { name, args, .. } => {
+                out.push_str(&name.to_ascii_lowercase());
+                out.push('(');
+                format_expr_list(args, out, ", ");
+                out.push(')');
+            }
+            Self::Aggregate { .. } | Self::GroupConcat { .. } | Self::Window { .. } => {
+                panic!("Format is not implemented for aggregate or window expressions")
+            }
+            Self::Interval { value, unit } => {
+                out.push_str("INTERVAL ");
+                value.format_into(out);
+                out.push(' ');
+                out.push_str(unit);
+            }
+            Self::Extract { unit, value } => {
+                out.push_str("extract(");
+                out.push_str(unit);
+                out.push_str(" FROM ");
+                value.format_into(out);
+                out.push(')');
+            }
+            Self::Position { .. } | Self::WeightString { .. } | Self::Trim { .. } => {
+                panic!("Format is not implemented for this special function")
+            }
+            Self::TimestampAdd {
+                unit,
+                interval,
+                expr,
+            } => {
+                out.push_str("timestampadd(");
+                out.push_str(unit);
+                out.push_str(", ");
+                interval.format_into(out);
+                out.push_str(", ");
+                expr.format_into(out);
+                out.push(')');
+            }
+            Self::TimestampDiff { unit, expr1, expr2 } => {
+                out.push_str("timestampdiff(");
+                out.push_str(unit);
+                out.push_str(", ");
+                expr1.format_into(out);
+                out.push_str(", ");
+                expr2.format_into(out);
+                out.push(')');
+            }
+            Self::GetFormat { selector, expr } => {
+                out.push_str("get_format(");
+                out.push_str(match selector {
+                    GetFormatSelector::Date => "DATE",
+                    GetFormatSelector::Time => "TIME",
+                    GetFormatSelector::Datetime => "DATETIME",
+                });
+                out.push_str(", ");
+                expr.format_into(out);
+                out.push(')');
+            }
+            Self::In { expr, list, not } => {
+                expr.format_into(out);
+                out.push_str(if *not { " NOT IN (" } else { " IN (" });
+                format_expr_list(list, out, ",");
+                out.push(')');
+            }
+            Self::Between {
+                expr,
+                low,
+                high,
+                not,
+            } => {
+                expr.format_into(out);
+                out.push_str(if *not { " NOT BETWEEN " } else { " BETWEEN " });
+                low.format_into(out);
+                out.push_str(" AND ");
+                high.format_into(out);
+            }
+            Self::Like {
+                expr,
+                pattern,
+                not,
+                escape,
+            } => {
+                expr.format_into(out);
+                out.push_str(if *not { " NOT LIKE " } else { " LIKE " });
+                pattern.format_into(out);
+                if let Some(escape) = escape {
+                    out.push_str(" ESCAPE '");
+                    if *escape != 0 {
+                        out.push(*escape as char);
+                    }
+                    out.push('\'');
+                }
+            }
+            Self::Regexp { expr, pattern, not } => {
+                expr.format_into(out);
+                out.push_str(if *not { " NOT REGEXP " } else { " REGEXP " });
+                pattern.format_into(out);
+            }
+            Self::Is { expr, target, not } => {
+                expr.format_into(out);
+                out.push_str(if *not { " IS NOT " } else { " IS " });
+                out.push_str(match target {
+                    IsTarget::Null => "NULL",
+                    IsTarget::True => "TRUE",
+                    IsTarget::False => "FALSE",
+                    IsTarget::Unknown => "UNKNOWN",
+                });
+            }
+            Self::Subquery(_)
+            | Self::Exists { .. }
+            | Self::InSubquery { .. }
+            | Self::CompareSubquery { .. } => {
+                panic!("Format is not implemented for subquery expressions")
+            }
+            Self::Case {
+                value,
+                when_clauses,
+                else_clause,
+            } => {
+                out.push_str("CASE");
+                if let Some(value) = value {
+                    out.push(' ');
+                    value.format_into(out);
+                }
+                for (condition, result) in when_clauses {
+                    out.push_str(" WHEN ");
+                    condition.format_into(out);
+                    out.push_str(" THEN ");
+                    result.format_into(out);
+                }
+                if let Some(expr) = else_clause {
+                    out.push_str(" ELSE ");
+                    expr.format_into(out);
+                }
+                out.push_str(" END");
+            }
+            Self::Cast(cast) => format_cast(cast, out),
+            Self::ConvertUsing { .. } => panic!("Format is not implemented for CONVERT USING"),
+            Self::Collate { expr, collation } => {
+                expr.format_into(out);
+                out.push_str(" COLLATE ");
+                out.push_str(collation);
+            }
+            Self::MatchAgainst {
+                columns,
+                against,
+                modifier,
+            } => {
+                out.push_str("MATCH(");
+                for (index, column) in columns.iter().enumerate() {
+                    if index > 0 {
+                        out.push_str(", ");
+                    }
+                    restore_path(column, out);
+                }
+                out.push_str(") AGAINST(");
+                against.format_into(out);
+                match modifier {
+                    MatchModifier::None => {}
+                    MatchModifier::BooleanMode => out.push_str(" IN BOOLEAN MODE"),
+                    MatchModifier::QueryExpansion => out.push_str(" WITH QUERY EXPANSION"),
+                }
+                out.push(')');
+            }
+            Self::MemberOf { .. } => panic!("Format is not implemented for MEMBER OF"),
+        }
+    }
+
+    /// Restores this expression to canonical SQL.
+    pub fn restore(&self) -> String {
+        let mut out = String::new();
+        self.restore_into(&mut out);
+        out
+    }
+
+    /// Restores this expression with Go-compatible formatting flags.
+    pub fn restore_with_flags(&self, flags: RestoreFlags) -> String {
+        let mut out = String::new();
+        self.restore_into_with_context(&mut out, RestoreContext::new(flags));
+        out
+    }
+
+    /// Fallible restore for source AST shapes whose validity is checked at
+    /// restore time rather than parse time.
+    pub fn try_restore(&self) -> Result<String, String> {
+        if let Self::Func { name, args } = self {
+            if name.eq_ignore_ascii_case("JSON_MEMBEROF") && args.len() != 2 {
+                return Err(
+                    "Incorrect parameter count in the call to native function 'json_memberof'"
+                        .to_string(),
+                );
+            }
+        }
+        Ok(self.restore())
+    }
+
+    /// Derives the source `SetFlag` result from this immutable Rust tree.
+    ///
+    /// Go stores the result in every expression node after a visitor pass.
+    /// Rust does not need mutable parser metadata: deriving it here removes
+    /// the setter state while preserving the observable bit mask.
+    pub fn flags(&self) -> u64 {
+        let combine = |items: &[Expr]| {
+            items
+                .iter()
+                .fold(FLAG_CONSTANT, |bits, item| bits | item.flags())
+        };
+        match self {
+            Self::Column(_) => FLAG_HAS_REFERENCE,
+            Self::ParamMarker { .. } => FLAG_HAS_PARAM_MARKER,
+            Self::Default(_) => FLAG_HAS_DEFAULT,
+            Self::UserVar(_) | Self::SysVar { .. } => FLAG_HAS_VARIABLE,
+            Self::Assign { value, .. } => FLAG_HAS_VARIABLE | value.flags(),
+            Self::Unary(_, expr)
+            | Self::Paren(expr)
+            | Self::Extract { value: expr, .. }
+            | Self::GetFormat { expr, .. }
+            | Self::Is { expr, .. }
+            | Self::ConvertUsing { expr, .. }
+            | Self::Collate { expr, .. } => expr.flags(),
+            Self::Binary(_, left, right)
+            | Self::MemberOf {
+                expr: left,
+                array: right,
+            } => left.flags() | right.flags(),
+            Self::Row(items) => combine(items),
+            Self::Func { args, .. } | Self::GenericFuncCall { args, .. } => {
+                FLAG_HAS_FUNC | combine(args)
+            }
+            Self::Aggregate { args, .. } | Self::GroupConcat { args, .. } => {
+                FLAG_HAS_AGGREGATE_FUNC | combine(args)
+            }
+            Self::Window { args, .. } => FLAG_HAS_WINDOW_FUNC | combine(args),
+            Self::Interval { value, .. } => value.flags(),
+            Self::Position { substr, str } => FLAG_HAS_FUNC | substr.flags() | str.flags(),
+            Self::WeightString { expr, .. } => FLAG_HAS_FUNC | expr.flags(),
+            Self::Trim { expr, remstr, .. } => {
+                FLAG_HAS_FUNC | expr.flags() | remstr.as_deref().map_or(0, Self::flags)
+            }
+            Self::TimestampAdd { interval, expr, .. } => {
+                FLAG_HAS_FUNC | interval.flags() | expr.flags()
+            }
+            Self::TimestampDiff { expr1, expr2, .. } => {
+                FLAG_HAS_FUNC | expr1.flags() | expr2.flags()
+            }
+            Self::In { expr, list, .. } => expr.flags() | combine(list),
+            Self::Between {
+                expr, low, high, ..
+            } => expr.flags() | low.flags() | high.flags(),
+            Self::Like { expr, pattern, .. } | Self::Regexp { expr, pattern, .. } => {
+                expr.flags() | pattern.flags()
+            }
+            Self::Subquery(_) | Self::Exists { .. } => FLAG_HAS_SUBQUERY,
+            Self::InSubquery { expr, .. } => expr.flags() | FLAG_HAS_SUBQUERY,
+            Self::CompareSubquery { left, .. } => left.flags() | FLAG_HAS_SUBQUERY,
+            Self::Case {
+                value,
+                when_clauses,
+                else_clause,
+            } => {
+                let value = value.as_deref().map_or(0, Self::flags);
+                let clauses = when_clauses
+                    .iter()
+                    .fold(0, |bits, (when, then)| bits | when.flags() | then.flags());
+                value | clauses | else_clause.as_deref().map_or(0, Self::flags)
+            }
+            Self::Cast(cast) => FLAG_HAS_FUNC | cast.expr.flags(),
+            Self::MatchAgainst { against, .. } => against.flags(),
+            Self::Int(_)
+            | Self::Decimal(_)
+            | Self::Float(_)
+            | Self::Hex(_)
+            | Self::Bit(_)
+            | Self::String(_)
+            | Self::RawString(_)
+            | Self::CharsetString { .. }
+            | Self::Null
+            | Self::Bool(_) => FLAG_CONSTANT,
+        }
+    }
+
+    /// Checks the aggregate-function bit.
+    pub fn has_aggregate_flag(&self) -> bool {
+        self.flags() & FLAG_HAS_AGGREGATE_FUNC != 0
+    }
+
+    /// Checks the window-function bit.
+    pub fn has_window_flag(&self) -> bool {
+        self.flags() & FLAG_HAS_WINDOW_FUNC != 0
+    }
+
     pub(crate) fn restore_into(&self, out: &mut String) {
         self.restore_into_with_context(out, RestoreContext::default());
     }
@@ -776,6 +1172,14 @@ impl Expr {
             Expr::Null => out.push_str("NULL"),
             Expr::Bool(true) => out.push_str("TRUE"),
             Expr::Bool(false) => out.push_str("FALSE"),
+            Expr::Default(column) => {
+                out.push_str("DEFAULT");
+                if let Some(path) = column {
+                    out.push('(');
+                    restore_path_with_context(path, out, context);
+                    out.push(')');
+                }
+            }
             Expr::UserVar(name) => {
                 out.push('@');
                 out.push_str(&back_quote(name));
@@ -800,9 +1204,22 @@ impl Expr {
                 e.restore_into_with_context(out, context);
             }
             Expr::Binary(op, l, r) => {
+                let bracket = context.flags().has_bracket_around_binary_operation();
+                if bracket {
+                    out.push('(');
+                }
                 l.restore_into_with_context(out, context);
-                out.push_str(op.restore());
+                if context.flags().has_spaces_around_binary_operation() {
+                    out.push(' ');
+                    out.push_str(op.restore().trim());
+                    out.push(' ');
+                } else {
+                    out.push_str(op.restore());
+                }
                 r.restore_into_with_context(out, context);
+                if bracket {
+                    out.push(')');
+                }
             }
             Expr::Paren(e) => {
                 out.push('(');
@@ -819,20 +1236,14 @@ impl Expr {
                 }
                 out.push(')');
             }
-            // A bare `DEFAULT` (no parens) — legal in `INSERT`
-            // `VALUES`/`SET` items and single-table `UPDATE` assignments,
-            // where it means "this column's declared DEFAULT value".
-            // Modelled as a zero-arg
-            // `DEFAULT` func (real TiDB's `DEFAULT()` with zero args is
-            // itself a `ParseError`, so an empty arg list is unambiguous)
-            // and restored as the bare keyword. `DEFAULT(col)` (one arg)
-            // still restores via the normal `NAME(args)` path below.
-            Expr::Func { name, args }
-                if args.is_empty() && name.eq_ignore_ascii_case("DEFAULT") =>
-            {
-                out.push_str("DEFAULT");
-            }
             Expr::Func { name, args } => {
+                if name.eq_ignore_ascii_case("JSON_MEMBEROF") && args.len() == 2 {
+                    args[0].restore_into_with_context(out, context);
+                    out.push_str(" MEMBER OF (");
+                    args[1].restore_into_with_context(out, context);
+                    out.push(')');
+                    return;
+                }
                 out.push_str(&name.to_ascii_uppercase());
                 out.push('(');
                 for (i, a) in args.iter().enumerate() {
@@ -903,16 +1314,32 @@ impl Expr {
                 out.push_str(&escape_string_literal(separator));
                 out.push_str("')");
             }
-            Expr::Window { name, args, over } => {
+            Expr::Window {
+                name,
+                args,
+                distinct,
+                ignore_nulls,
+                from_last,
+                over,
+            } => {
                 out.push_str(name);
                 out.push('(');
                 for (i, a) in args.iter().enumerate() {
                     if i > 0 {
                         out.push_str(", ");
+                    } else if *distinct {
+                        out.push_str("DISTINCT ");
                     }
                     a.restore_into_with_context(out, context);
                 }
-                out.push_str(") OVER ");
+                out.push(')');
+                if *from_last {
+                    out.push_str(" FROM LAST");
+                }
+                if *ignore_nulls {
+                    out.push_str(" IGNORE NULLS");
+                }
+                out.push_str(" OVER ");
                 match over {
                     // A bare name has NO enclosing parentheses at all —
                     // confirmed via `godump restore` this restores
@@ -1207,6 +1634,67 @@ impl Expr {
                 array.restore_into_with_context(out, context);
                 out.push(')');
             }
+        }
+    }
+}
+
+fn format_expr_list(exprs: &[Expr], out: &mut String, separator: &str) {
+    for (index, expr) in exprs.iter().enumerate() {
+        if index > 0 {
+            out.push_str(separator);
+        }
+        expr.format_into(out);
+    }
+}
+
+fn format_double_quoted_string(value: &str, out: &mut String) {
+    out.push('"');
+    for character in value.chars() {
+        match character {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            other => out.push(other),
+        }
+    }
+    out.push('"');
+}
+
+fn format_cast(cast: &CastExpr, out: &mut String) {
+    match cast.style {
+        CastStyle::Cast | CastStyle::JsonSumCrc32 => {
+            out.push_str(if cast.style == CastStyle::JsonSumCrc32 {
+                "JSON_SUM_CRC32("
+            } else {
+                "CAST("
+            });
+            cast.expr.format_into(out);
+            out.push_str(" AS ");
+            restore_cast_type(&cast.cast_type, cast.array, out);
+            out.push(')');
+        }
+        CastStyle::Convert => {
+            out.push_str("CONVERT(");
+            cast.expr.format_into(out);
+            out.push_str(", ");
+            restore_cast_type(&cast.cast_type, cast.array, out);
+            out.push(')');
+        }
+        CastStyle::BinaryOperator => {
+            out.push_str("BINARY ");
+            cast.expr.format_into(out);
+        }
+        CastStyle::DateLiteral | CastStyle::TimeLiteral | CastStyle::TimestampLiteral => {
+            out.push_str(match cast.style {
+                CastStyle::DateLiteral => "'tidb`.(dateliteral(",
+                CastStyle::TimeLiteral => "'tidb`.(timeliteral(",
+                CastStyle::TimestampLiteral => "'tidb`.(timestampliteral(",
+                _ => unreachable!(),
+            });
+            cast.expr.format_into(out);
+            out.push(')');
         }
     }
 }
@@ -1766,3 +2254,687 @@ impl BinaryOp {
         }
     }
 }
+
+// BEGIN GENERATED AST VISITOR IMPLEMENTATIONS
+
+impl crate::Visitable for SysVarScope {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Global => {}
+            Self::Session => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for Expr {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Column(field_0) => {
+                let _ = field_0;
+            }
+            Self::ParamMarker { position } => {
+                let _ = position;
+            }
+            Self::Int(field_0) => {
+                let _ = field_0;
+            }
+            Self::Decimal(field_0) => {
+                let _ = field_0;
+            }
+            Self::Float(field_0) => {
+                let _ = field_0;
+            }
+            Self::Hex(field_0) => {
+                let _ = field_0;
+            }
+            Self::Bit(field_0) => {
+                let _ = field_0;
+            }
+            Self::String(field_0) => {
+                let _ = field_0;
+            }
+            Self::RawString(field_0) => {
+                let _ = field_0;
+            }
+            Self::CharsetString { charset, value } => {
+                let _ = charset;
+                let _ = value;
+            }
+            Self::Null => {}
+            Self::Bool(field_0) => {
+                let _ = field_0;
+            }
+            Self::Default(field_0) => {
+                let _ = field_0;
+            }
+            Self::UserVar(field_0) => {
+                let _ = field_0;
+            }
+            Self::SysVar { scope, name } => {
+                if let Some(value) = scope.as_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                let _ = scope;
+                let _ = name;
+            }
+            Self::Assign { name, value } => {
+                if !crate::Visitable::accept(value.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = name;
+                let _ = value;
+            }
+            Self::Unary(field_0, field_1) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                if !crate::Visitable::accept(field_1.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+                let _ = field_1;
+            }
+            Self::Binary(field_0, field_1, field_2) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                if !crate::Visitable::accept(field_1.as_mut(), visitor) {
+                    return false;
+                }
+                if !crate::Visitable::accept(field_2.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+                let _ = field_1;
+                let _ = field_2;
+            }
+            Self::Paren(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::Row(field_0) => {
+                for value in field_0.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                let _ = field_0;
+            }
+            Self::Func { name, args } => {
+                for value in args.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                let _ = name;
+                let _ = args;
+            }
+            Self::GenericFuncCall { schema, name, args } => {
+                for value in args.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                let _ = schema;
+                let _ = name;
+                let _ = args;
+            }
+            Self::Aggregate {
+                name,
+                distinct,
+                args,
+            } => {
+                for value in args.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                let _ = name;
+                let _ = distinct;
+                let _ = args;
+            }
+            Self::GroupConcat {
+                distinct,
+                args,
+                order_by,
+                separator,
+            } => {
+                for value in args.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                for value in order_by.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                let _ = distinct;
+                let _ = args;
+                let _ = order_by;
+                let _ = separator;
+            }
+            Self::Window {
+                name,
+                args,
+                distinct,
+                ignore_nulls,
+                from_last,
+                over,
+            } => {
+                for value in args.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                if !crate::Visitable::accept(over, visitor) {
+                    return false;
+                }
+                let _ = name;
+                let _ = args;
+                let _ = distinct;
+                let _ = ignore_nulls;
+                let _ = from_last;
+                let _ = over;
+            }
+            Self::Interval { value, unit } => {
+                if !crate::Visitable::accept(value.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = value;
+                let _ = unit;
+            }
+            Self::Extract { unit, value } => {
+                if !crate::Visitable::accept(value.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = unit;
+                let _ = value;
+            }
+            Self::Position { substr, str } => {
+                if !crate::Visitable::accept(substr.as_mut(), visitor) {
+                    return false;
+                }
+                if !crate::Visitable::accept(str.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = substr;
+                let _ = str;
+            }
+            Self::WeightString { expr, as_type } => {
+                if !crate::Visitable::accept(expr.as_mut(), visitor) {
+                    return false;
+                }
+                if let Some(value) = as_type.as_mut() {
+                    if !crate::Visitable::accept(&mut value.0, visitor) {
+                        return false;
+                    }
+                }
+                let _ = expr;
+                let _ = as_type;
+            }
+            Self::Trim {
+                expr,
+                remstr,
+                direction,
+            } => {
+                if !crate::Visitable::accept(expr.as_mut(), visitor) {
+                    return false;
+                }
+                if let Some(value) = remstr.as_mut() {
+                    if !crate::Visitable::accept(value.as_mut(), visitor) {
+                        return false;
+                    }
+                }
+                if let Some(value) = direction.as_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                let _ = expr;
+                let _ = remstr;
+                let _ = direction;
+            }
+            Self::TimestampAdd {
+                unit,
+                interval,
+                expr,
+            } => {
+                if !crate::Visitable::accept(interval.as_mut(), visitor) {
+                    return false;
+                }
+                if !crate::Visitable::accept(expr.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = unit;
+                let _ = interval;
+                let _ = expr;
+            }
+            Self::TimestampDiff { unit, expr1, expr2 } => {
+                if !crate::Visitable::accept(expr1.as_mut(), visitor) {
+                    return false;
+                }
+                if !crate::Visitable::accept(expr2.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = unit;
+                let _ = expr1;
+                let _ = expr2;
+            }
+            Self::GetFormat { selector, expr } => {
+                if !crate::Visitable::accept(selector, visitor) {
+                    return false;
+                }
+                if !crate::Visitable::accept(expr.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = selector;
+                let _ = expr;
+            }
+            Self::In { expr, list, not } => {
+                if !crate::Visitable::accept(expr.as_mut(), visitor) {
+                    return false;
+                }
+                for value in list.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                let _ = expr;
+                let _ = list;
+                let _ = not;
+            }
+            Self::Between {
+                expr,
+                low,
+                high,
+                not,
+            } => {
+                if !crate::Visitable::accept(expr.as_mut(), visitor) {
+                    return false;
+                }
+                if !crate::Visitable::accept(low.as_mut(), visitor) {
+                    return false;
+                }
+                if !crate::Visitable::accept(high.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = expr;
+                let _ = low;
+                let _ = high;
+                let _ = not;
+            }
+            Self::Like {
+                expr,
+                pattern,
+                not,
+                escape,
+            } => {
+                if !crate::Visitable::accept(expr.as_mut(), visitor) {
+                    return false;
+                }
+                if !crate::Visitable::accept(pattern.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = expr;
+                let _ = pattern;
+                let _ = not;
+                let _ = escape;
+            }
+            Self::Regexp { expr, pattern, not } => {
+                if !crate::Visitable::accept(expr.as_mut(), visitor) {
+                    return false;
+                }
+                if !crate::Visitable::accept(pattern.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = expr;
+                let _ = pattern;
+                let _ = not;
+            }
+            Self::Is { expr, target, not } => {
+                if !crate::Visitable::accept(expr.as_mut(), visitor) {
+                    return false;
+                }
+                if !crate::Visitable::accept(target, visitor) {
+                    return false;
+                }
+                let _ = expr;
+                let _ = target;
+                let _ = not;
+            }
+            Self::Subquery(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::Exists { subquery, not } => {
+                if !crate::Visitable::accept(subquery.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = subquery;
+                let _ = not;
+            }
+            Self::InSubquery {
+                expr,
+                subquery,
+                not,
+            } => {
+                if !crate::Visitable::accept(expr.as_mut(), visitor) {
+                    return false;
+                }
+                if !crate::Visitable::accept(subquery.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = expr;
+                let _ = subquery;
+                let _ = not;
+            }
+            Self::CompareSubquery {
+                op,
+                left,
+                all,
+                subquery,
+            } => {
+                if !crate::Visitable::accept(op, visitor) {
+                    return false;
+                }
+                if !crate::Visitable::accept(left.as_mut(), visitor) {
+                    return false;
+                }
+                if !crate::Visitable::accept(subquery.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = op;
+                let _ = left;
+                let _ = all;
+                let _ = subquery;
+            }
+            Self::Case {
+                value,
+                when_clauses,
+                else_clause,
+            } => {
+                if let Some(value) = value.as_mut() {
+                    if !crate::Visitable::accept(value.as_mut(), visitor) {
+                        return false;
+                    }
+                }
+                for value in when_clauses.iter_mut() {
+                    if !crate::Visitable::accept(&mut value.0, visitor) {
+                        return false;
+                    }
+                    if !crate::Visitable::accept(&mut value.1, visitor) {
+                        return false;
+                    }
+                }
+                if let Some(value) = else_clause.as_mut() {
+                    if !crate::Visitable::accept(value.as_mut(), visitor) {
+                        return false;
+                    }
+                }
+                let _ = value;
+                let _ = when_clauses;
+                let _ = else_clause;
+            }
+            Self::Cast(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::ConvertUsing { expr, charset } => {
+                if !crate::Visitable::accept(expr.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = expr;
+                let _ = charset;
+            }
+            Self::Collate { expr, collation } => {
+                if !crate::Visitable::accept(expr.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = expr;
+                let _ = collation;
+            }
+            Self::MatchAgainst {
+                columns,
+                against,
+                modifier,
+            } => {
+                if !crate::Visitable::accept(against.as_mut(), visitor) {
+                    return false;
+                }
+                if !crate::Visitable::accept(modifier, visitor) {
+                    return false;
+                }
+                let _ = columns;
+                let _ = against;
+                let _ = modifier;
+            }
+            Self::MemberOf { expr, array } => {
+                if !crate::Visitable::accept(expr.as_mut(), visitor) {
+                    return false;
+                }
+                if !crate::Visitable::accept(array.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = expr;
+                let _ = array;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for MatchModifier {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::None => {}
+            Self::BooleanMode => {}
+            Self::QueryExpansion => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for GetFormatSelector {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Date => {}
+            Self::Time => {}
+            Self::Datetime => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for CastStyle {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Cast => {}
+            Self::Convert => {}
+            Self::BinaryOperator => {}
+            Self::DateLiteral => {}
+            Self::TimeLiteral => {}
+            Self::TimestampLiteral => {}
+            Self::JsonSumCrc32 => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for CastExpr {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            expr,
+            cast_type,
+            style,
+            array,
+        } = self;
+        if !crate::Visitable::accept(expr.as_mut(), visitor) {
+            return false;
+        }
+        if !crate::Visitable::accept(cast_type, visitor) {
+            return false;
+        }
+        if !crate::Visitable::accept(style, visitor) {
+            return false;
+        }
+        let _ = expr;
+        let _ = cast_type;
+        let _ = style;
+        let _ = array;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for CastType {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Signed => {}
+            Self::Unsigned => {}
+            Self::Char { len, charset } => {
+                let _ = len;
+                let _ = charset;
+            }
+            Self::Binary { len } => {
+                let _ = len;
+            }
+            Self::Decimal { flen, scale } => {
+                let _ = flen;
+                let _ = scale;
+            }
+            Self::Date => {}
+            Self::DateTime { fsp } => {
+                let _ = fsp;
+            }
+            Self::Time { fsp } => {
+                let _ = fsp;
+            }
+            Self::Year => {}
+            Self::Double => {}
+            Self::Float => {}
+            Self::Json => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for WeightStringType {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Char => {}
+            Self::Binary => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for TrimDirection {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Both => {}
+            Self::Leading => {}
+            Self::Trailing => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for IsTarget {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Null => {}
+            Self::True => {}
+            Self::False => {}
+            Self::Unknown => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for UnaryOp {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Plus => {}
+            Self::Minus => {}
+            Self::BitNeg => {}
+            Self::Not => {}
+            Self::NotKeyword => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for BinaryOp {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Plus => {}
+            Self::Minus => {}
+            Self::Mul => {}
+            Self::Div => {}
+            Self::Mod => {}
+            Self::IntDiv => {}
+            Self::BitOr => {}
+            Self::BitAnd => {}
+            Self::BitXor => {}
+            Self::LeftShift => {}
+            Self::RightShift => {}
+            Self::Eq => {}
+            Self::NullEq => {}
+            Self::Ge => {}
+            Self::Gt => {}
+            Self::Le => {}
+            Self::Lt => {}
+            Self::Ne => {}
+            Self::LogicAnd => {}
+            Self::LogicOr => {}
+            Self::LogicXor => {}
+        }
+        visitor.leave(self)
+    }
+}
+// END GENERATED AST VISITOR IMPLEMENTATIONS

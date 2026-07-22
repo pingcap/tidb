@@ -96,14 +96,22 @@ impl Database {
                 self.transaction.begin(&self.tables);
                 Ok(Outcome::Done)
             }
-            SessionStmt::Commit => {
+            SessionStmt::Commit(tidb_ast::CompletionType::Default) => {
                 self.transaction.commit();
                 Ok(Outcome::Done)
             }
-            SessionStmt::Rollback => {
+            SessionStmt::Commit(_) => Err(ExecError::Unsupported("COMMIT completion mode")),
+            SessionStmt::Rollback {
+                savepoint: None,
+                completion: tidb_ast::CompletionType::Default,
+            } => {
                 self.transaction.rollback(&mut self.tables);
                 Ok(Outcome::Done)
             }
+            SessionStmt::Rollback {
+                savepoint: None,
+                completion: _,
+            } => Err(ExecError::Unsupported("ROLLBACK completion mode")),
             SessionStmt::Savepoint(name) => {
                 // Go's SimpleExec opens the lazy non-autocommit transaction
                 // for SAVEPOINT itself (`Ctx().Txn(true)`), not only for a
@@ -113,11 +121,20 @@ impl Database {
                 self.transaction.savepoint(name, &self.tables);
                 Ok(Outcome::Done)
             }
-            SessionStmt::RollbackToSavepoint(name) => {
+            SessionStmt::Rollback {
+                savepoint: Some(name),
+                completion: tidb_ast::CompletionType::Default,
+            } => {
                 self.transaction
                     .rollback_to_savepoint(name, &mut self.tables)?;
                 Ok(Outcome::Done)
             }
+            SessionStmt::Rollback {
+                savepoint: Some(_),
+                completion: _,
+            } => Err(ExecError::Unsupported(
+                "ROLLBACK TO SAVEPOINT completion mode",
+            )),
             SessionStmt::ReleaseSavepoint(name) => {
                 self.transaction.release_savepoint(name)?;
                 Ok(Outcome::Done)

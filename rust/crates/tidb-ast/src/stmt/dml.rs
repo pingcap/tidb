@@ -14,7 +14,10 @@
 //! Data-manipulation statements and their shared restore boundary.
 
 use crate::util::push_name_path;
-use crate::{DeleteStmt, ImportIntoStmt, InsertStmt, LoadDataStmt, UpdateStmt, WithClause};
+use crate::{
+    DeleteStmt, DistributeTableStmt, ImportIntoStmt, InsertStmt, LoadDataStmt, UpdateStmt,
+    WithClause,
+};
 
 /// A statement that mutates table rows.
 #[derive(Debug, Clone, PartialEq)]
@@ -39,6 +42,8 @@ pub enum DmlStmt {
     LoadData(Box<LoadDataStmt>),
     /// A TiDB non-transactional `BATCH ... <DML>` wrapper.
     Batch(Box<BatchDmlStmt>),
+    /// A physical `DISTRIBUTE TABLE` request.
+    DistributeTable(Box<DistributeTableStmt>),
 }
 
 impl DmlStmt {
@@ -56,6 +61,7 @@ impl DmlStmt {
             Self::ImportInto(import) => import.restore_into(out),
             Self::LoadData(load) => load.restore_into(out),
             Self::Batch(batch) => batch.restore_into(out),
+            Self::DistributeTable(distribute) => distribute.restore_into(out),
         }
     }
 }
@@ -136,3 +142,137 @@ impl BatchDmlStmt {
         self.dml.restore_into(out);
     }
 }
+
+// BEGIN GENERATED AST VISITOR IMPLEMENTATIONS
+
+impl crate::Visitable for DmlStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::With { with, statement } => {
+                if !crate::Visitable::accept(with, visitor) {
+                    return false;
+                }
+                if !crate::Visitable::accept(statement.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = with;
+                let _ = statement;
+            }
+            Self::Insert(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::Update(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::Delete(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::ImportInto(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::LoadData(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::Batch(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::DistributeTable(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for BatchDmlDryRun {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::None => {}
+            Self::Query => {}
+            Self::SplitDml => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for BatchDml {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Insert(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::Update(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::Delete(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for BatchDmlStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            shard_column,
+            limit,
+            dry_run,
+            dml,
+        } = self;
+        if !crate::Visitable::accept(dry_run, visitor) {
+            return false;
+        }
+        if !crate::Visitable::accept(dml, visitor) {
+            return false;
+        }
+        let _ = shard_column;
+        let _ = limit;
+        let _ = dry_run;
+        let _ = dml;
+        visitor.leave(self)
+    }
+}
+// END GENERATED AST VISITOR IMPLEMENTATIONS

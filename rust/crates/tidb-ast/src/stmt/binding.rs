@@ -257,3 +257,236 @@ impl ShowBindingsStmt {
         }
     }
 }
+
+// BEGIN GENERATED AST VISITOR IMPLEMENTATIONS
+
+impl crate::Visitable for BindingScope {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Global => {}
+            Self::Session => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for BindingValue {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::String(field_0) => {
+                let _ = field_0;
+            }
+            Self::UserVar(field_0) => {
+                let _ = field_0;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for BindingStatementTarget {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { origin, hinted } = self;
+        if !crate::Visitable::accept(origin.as_mut(), visitor) {
+            return false;
+        }
+        if let Some(value) = hinted.as_mut() {
+            if !crate::Visitable::accept(value.as_mut(), visitor) {
+                return false;
+            }
+        }
+        let _ = origin;
+        let _ = hinted;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for CreateBindingSource {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Statement { target } => {
+                if !crate::Visitable::accept(target, visitor) {
+                    return false;
+                }
+                let _ = target;
+            }
+            Self::History { plan_digests } => {
+                for value in plan_digests.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                let _ = plan_digests;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for CreateBindingStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { scope, source } = self;
+        if !crate::Visitable::accept(scope, visitor) {
+            return false;
+        }
+        if !crate::Visitable::accept(source, visitor) {
+            return false;
+        }
+        let _ = scope;
+        let _ = source;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for DropBindingTarget {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Statement(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::SqlDigests(field_0) => {
+                for value in field_0.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                let _ = field_0;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for DropBindingStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { scope, target } = self;
+        if !crate::Visitable::accept(scope, visitor) {
+            return false;
+        }
+        if !crate::Visitable::accept(target, visitor) {
+            return false;
+        }
+        let _ = scope;
+        let _ = target;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for BindingStatus {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Enabled => {}
+            Self::Disabled => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for SetBindingTarget {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Statement(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::SqlDigest(field_0) => {
+                let _ = field_0;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for SetBindingStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { status, target } = self;
+        if !crate::Visitable::accept(status, visitor) {
+            return false;
+        }
+        if !crate::Visitable::accept(target, visitor) {
+            return false;
+        }
+        let _ = status;
+        let _ = target;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for ShowBindingsStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { scope, filter } = self;
+        if !crate::Visitable::accept(scope, visitor) {
+            return false;
+        }
+        if let Some(value) = filter.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        let _ = scope;
+        let _ = filter;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for ShowBindingsFilter {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Like(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::Where(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+// END GENERATED AST VISITOR IMPLEMENTATIONS

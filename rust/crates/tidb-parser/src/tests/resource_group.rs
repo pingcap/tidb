@@ -718,7 +718,7 @@ fn go_parser_test_resource_group_cases() {
 }
 
 #[test]
-fn go_ast_resource_group_ddl_restore_cases() {
+fn test_resource_group_ddl_stmt_restore() {
     let cases = [
         (
             r#"CREATE RESOURCE GROUP IF NOT EXISTS rg1 RU_PER_SEC = 500"#,
@@ -876,7 +876,7 @@ fn resource_group_payload_is_typed_end_to_end() {
                 ),
                 tidb_ast::ResourceGroupRunawayOption::Watch(
                     tidb_ast::ResourceGroupRunawayWatch {
-                        watch_type: tidb_ast::ResourceGroupRunawayWatchType::Plan,
+                        watch_type: tidb_ast::RunawayWatchType::Plan,
                         duration: None,
                     }
                 )

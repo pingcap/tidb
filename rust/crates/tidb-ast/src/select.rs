@@ -15,7 +15,7 @@
 //! `WITH`/window/lock clauses) and their restore.
 
 use crate::util::{back_quote, escape_string_literal};
-use crate::{Expr, QueryStmt};
+use crate::{Expr, LoadDataFields, LoadDataLines, QueryStmt, StatementPriority};
 
 /// A set-operation statement: a chain of `SELECT` terms joined by set operators,
 /// with optional statement-level `ORDER BY` / `LIMIT`.
@@ -200,9 +200,7 @@ pub enum SelectStatementKind {
     Values,
 }
 
-/// A `SELECT`, `TABLE`, or standalone `VALUES` statement (Phase 0 subset:
-/// select list, single-table FROM, optional WHERE/GROUP BY/HAVING/ORDER BY/
-/// LIMIT).
+/// A `SELECT`, `TABLE`, or standalone `VALUES` statement.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SelectStmt {
     /// The SQL statement form preserved by restore.
@@ -225,6 +223,18 @@ pub struct SelectStmt {
     /// follow-up here — see [`Hint`]'s own doc for the modelled-shape
     /// scope boundary). Empty if no hint comment was written.
     pub hints: Vec<Hint>,
+    /// Optional MySQL statement priority.
+    pub priority: StatementPriority,
+    /// `SQL_SMALL_RESULT`.
+    pub sql_small_result: bool,
+    /// `SQL_BIG_RESULT`.
+    pub sql_big_result: bool,
+    /// `SQL_BUFFER_RESULT`.
+    pub sql_buffer_result: bool,
+    /// `SQL_NO_CACHE` (Go defaults the cache flag to enabled).
+    pub sql_no_cache: bool,
+    /// `STRAIGHT_JOIN` select modifier.
+    pub straight_join: bool,
     /// Whether `SQL_CALC_FOUND_ROWS` was specified — a `SELECT`
     /// modifier, syntactically independent of and freely orderable
     /// with `DISTINCT`/`ALL` (real TiDB's own `parseSelectOpts`,
@@ -298,36 +308,30 @@ pub struct SelectStmt {
     /// `godump restore`: `t1 FOR UPDATE UNION t2` restores with `FOR
     /// UPDATE` immediately after `t1`, not hoisted to the end).
     pub lock: Option<SelectLock>,
-    /// A trailing `INTO OUTFILE 'file'` clause, if any — the file path,
-    /// decoded (restore re-quotes/re-escapes it, same as any other
-    /// string value). Real TiDB's own hand-written parser
-    /// (`pkg/parser/select_parser.go`'s `parseSelectStmt`) checks for
-    /// this unconditionally at the very end of ANY full `SELECT`
-    /// statement's own tail — confirmed via `godump restore` this is
-    /// syntactically legal even inside a derived table or a scalar/IN/
-    /// EXISTS/ALL subquery's own parens (`SELECT * FROM (SELECT 1 INTO
-    /// OUTFILE '/tmp/x') AS t` restores unchanged), not restricted to
-    /// "only at the true top level" the way one might first assume.
-    /// `[FIELDS ...] [LINES ...]` sub-clauses (real TiDB's own
-    /// `ast.SelectIntoOption::FieldsInfo`/`LinesInfo`) are deliberately
-    /// NOT modelled — not exercised by the corpus (only the bare-
-    /// filename form appears in `tests/integrationtest`). Also
-    /// deliberately NOT threaded through [`SetOprStmt`]'s own tail
-    /// parsing (`t1 UNION t2 INTO OUTFILE 'x'` stays a `ParseError`,
-    /// its exact pre-existing behavior) — real TiDB's own
-    /// `SelectIntoOpt` field lives only on `ast.SelectStmt`, never
-    /// `ast.SetOprStmt`, and its exact per-term-vs-statement-level
-    /// attachment rule for a set operation (mirroring `lock`'s own
-    /// already-intricate asymmetric rule above) is unconfirmed and not
-    /// exercised by the corpus — a deliberate, documented scope cut.
-    /// Execution deliberately does NOT write a real file (this crate
-    /// has no filesystem to write to) and does NOT return a normal
-    /// result set either — confirmed via `gorun` that real TiDB
-    /// returns a bare `OK` (no rows) for this statement, a genuine
-    /// different execution outcome this crate does not replicate, so
-    /// `tidb-exec` rejects it as `Unsupported` rather than silently
-    /// returning the wrong kind of result.
-    pub into_outfile: Option<String>,
+    /// The complete trailing `INTO OUTFILE` payload.
+    pub into_outfile: Option<SelectIntoOption>,
+}
+
+/// Go's `SelectIntoOption` payload. Only OUTFILE is restorable in Go; its
+/// optional FIELDS and LINES clauses share the LOAD DATA grammar.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelectIntoOption {
+    /// Decoded output path.
+    pub file_name: String,
+    /// Optional field delimiters.
+    pub fields: LoadDataFields,
+    /// Optional line delimiters.
+    pub lines: LoadDataLines,
+}
+
+impl SelectIntoOption {
+    fn restore_into(&self, out: &mut String) {
+        out.push_str("INTO OUTFILE '");
+        out.push_str(&escape_string_literal(&self.file_name));
+        out.push('\'');
+        self.fields.restore_into(out);
+        self.lines.restore_into(out);
+    }
 }
 
 impl SelectStmt {
@@ -363,10 +367,9 @@ impl SelectStmt {
             restore_order_by(out, &self.order_by);
             restore_limit(out, &self.limit);
             restore_lock(out, &self.lock);
-            if let Some(file) = &self.into_outfile {
-                out.push_str(" INTO OUTFILE '");
-                out.push_str(&escape_string_literal(file));
-                out.push('\'');
+            if let Some(into) = &self.into_outfile {
+                out.push(' ');
+                into.restore_into(out);
             }
             return;
         }
@@ -391,10 +394,9 @@ impl SelectStmt {
             restore_order_by(out, &self.order_by);
             restore_limit(out, &self.limit);
             restore_lock(out, &self.lock);
-            if let Some(file) = &self.into_outfile {
-                out.push_str(" INTO OUTFILE '");
-                out.push_str(&escape_string_literal(file));
-                out.push('\'');
+            if let Some(into) = &self.into_outfile {
+                out.push(' ');
+                into.restore_into(out);
             }
             if self.is_in_braces {
                 out.push(')');
@@ -409,6 +411,22 @@ impl SelectStmt {
             out.push('(');
         }
         out.push_str("SELECT ");
+        self.priority.restore_into(out);
+        if self.sql_small_result {
+            out.push_str("SQL_SMALL_RESULT ");
+        }
+        if self.sql_big_result {
+            out.push_str("SQL_BIG_RESULT ");
+        }
+        if self.sql_buffer_result {
+            out.push_str("SQL_BUFFER_RESULT ");
+        }
+        if self.sql_no_cache {
+            out.push_str("SQL_NO_CACHE ");
+        }
+        if self.calc_found_rows {
+            out.push_str("SQL_CALC_FOUND_ROWS ");
+        }
         if !self.hints.is_empty() {
             out.push_str("/*+ ");
             for (i, h) in self.hints.iter().enumerate() {
@@ -419,13 +437,13 @@ impl SelectStmt {
             }
             out.push_str("*/ ");
         }
-        if self.calc_found_rows {
-            out.push_str("SQL_CALC_FOUND_ROWS ");
-        }
         if self.distinct {
             out.push_str("DISTINCT ");
         } else if self.all {
             out.push_str("ALL ");
+        }
+        if self.straight_join {
+            out.push_str("STRAIGHT_JOIN ");
         }
         for (i, f) in self.fields.iter().enumerate() {
             if i > 0 {
@@ -488,10 +506,9 @@ impl SelectStmt {
         // (real SQL clause order — see `SelectStmt::lock`'s own doc for
         // the opposite `SetOprStmt`-level order).
         restore_lock(out, &self.lock);
-        if let Some(file) = &self.into_outfile {
-            out.push_str(" INTO OUTFILE '");
-            out.push_str(&escape_string_literal(file));
-            out.push('\'');
+        if let Some(into) = &self.into_outfile {
+            out.push(' ');
+            into.restore_into(out);
         }
         if self.is_in_braces {
             out.push(')');
@@ -938,7 +955,7 @@ pub struct Limit {
 }
 
 impl Limit {
-    fn restore_into(&self, out: &mut String) {
+    pub(crate) fn restore_into(&self, out: &mut String) {
         out.push_str(" LIMIT ");
         if let Some(off) = &self.offset {
             off.restore_into(out);
@@ -970,7 +987,7 @@ pub enum SelectField {
 }
 
 impl SelectField {
-    fn restore_into(&self, out: &mut String) {
+    pub(crate) fn restore_into(&self, out: &mut String) {
         match self {
             SelectField::Wildcard(path) => {
                 for q in path {
@@ -1397,7 +1414,12 @@ pub enum HintKind {
     /// hint with a warning instead, the SAME narrower,
     /// `ParseError`-over-silent-drop convention already applied to
     /// `LEADING()`.
-    Bool(bool),
+    Bool {
+        /// Optional hint-level query block.
+        qb_name: Option<String>,
+        /// Boolean argument.
+        value: bool,
+    },
     /// `NAME(identifier)` — `RESOURCE_GROUP`. A single BARE identifier
     /// argument, always back-quoted on restore (real TiDB's own
     /// `WriteName`, confirmed via `godump restore`: `RESOURCE_GROUP(rg1)`
@@ -1408,7 +1430,33 @@ pub enum HintKind {
     /// the whole hint vanishes from restore — this project's own
     /// narrower `ParseError`-over-silent-drop convention applies here
     /// too).
-    Name(String),
+    Name {
+        /// Optional hint-level query block.
+        qb_name: Option<String>,
+        /// Identifier argument.
+        name: String,
+    },
+    /// `QUERY_TYPE([@qb] OLAP|OLTP)`.
+    Keyword {
+        /// Optional hint-level query block.
+        qb_name: Option<String>,
+        /// Canonical keyword value.
+        value: String,
+    },
+    /// `MEMORY_QUOTA([@qb] n MB|GB)`, stored in bytes.
+    MemoryQuota {
+        /// Optional hint-level query block.
+        qb_name: Option<String>,
+        /// Quota in bytes.
+        bytes: i64,
+    },
+    /// `TIME_RANGE(from, to)`.
+    TimeRange {
+        /// Inclusive start text.
+        from: String,
+        /// Inclusive end text.
+        to: String,
+    },
     /// `NAME([@qb_name] N)` — `MAX_EXECUTION_TIME`/`NTH_PLAN`, a plain
     /// integer argument with an OPTIONAL leading query-block name
     /// (confirmed via `godump restore`: `MAX_EXECUTION_TIME(@sel_1 10)`
@@ -1483,9 +1531,8 @@ pub enum HintKind {
 }
 
 /// One table argument inside a [`Hint`] — a NARROWER shape than
-/// [`crate::TableRef`] (no partition list, no `AS` alias; a hint table
-/// argument is a bare name plus an optional schema qualifier and
-/// query-block suffix only).
+/// [`crate::TableRef`] (no alias; a hint table argument is a bare name plus
+/// optional schema, query-block, and partition qualifiers).
 #[derive(Debug, Clone, PartialEq)]
 pub struct HintTable {
     /// An optional `db.` schema qualifier, restoring as `` `db`. ``
@@ -1504,6 +1551,8 @@ pub struct HintTable {
     /// (confirmed via `godump restore`: the query-block name is
     /// back-quoted too, not bare).
     pub qb_name: Option<String>,
+    /// Optional partition list.
+    pub partitions: Vec<String>,
 }
 
 /// One recursive element of a `LEADING` hint. Go retains nested lists in
@@ -1634,8 +1683,46 @@ impl Hint {
                 out.push_str(&escape_string_literal(value));
                 out.push('\'');
             }
-            HintKind::Bool(v) => out.push_str(if *v { "TRUE" } else { "FALSE" }),
-            HintKind::Name(name) => out.push_str(&back_quote(name)),
+            HintKind::Bool { qb_name, value } => {
+                if let Some(qb_name) = qb_name {
+                    out.push('@');
+                    out.push_str(&back_quote(qb_name));
+                    out.push(' ');
+                }
+                out.push_str(if *value { "TRUE" } else { "FALSE" });
+            }
+            HintKind::Name { qb_name, name } => {
+                if let Some(qb_name) = qb_name {
+                    out.push('@');
+                    out.push_str(&back_quote(qb_name));
+                    out.push(' ');
+                }
+                out.push_str(&back_quote(name));
+            }
+            HintKind::Keyword { qb_name, value } => {
+                if let Some(qb_name) = qb_name {
+                    out.push('@');
+                    out.push_str(&back_quote(qb_name));
+                    out.push(' ');
+                }
+                out.push_str(value);
+            }
+            HintKind::MemoryQuota { qb_name, bytes } => {
+                if let Some(qb_name) = qb_name {
+                    out.push('@');
+                    out.push_str(&back_quote(qb_name));
+                    out.push(' ');
+                }
+                out.push_str(&(bytes / 1_048_576).to_string());
+                out.push_str(" MB");
+            }
+            HintKind::TimeRange { from, to } => {
+                out.push('\'');
+                out.push_str(&escape_string_literal(from));
+                out.push_str("', '");
+                out.push_str(&escape_string_literal(to));
+                out.push('\'');
+            }
             HintKind::Number { qb_name, value } => {
                 if let Some(qb) = qb_name {
                     out.push('@');
@@ -1674,6 +1761,16 @@ impl HintTable {
         if let Some(qb) = &self.qb_name {
             out.push('@');
             out.push_str(&back_quote(qb));
+        }
+        if !self.partitions.is_empty() {
+            out.push_str(" PARTITION(");
+            for (index, partition) in self.partitions.iter().enumerate() {
+                if index > 0 {
+                    out.push_str(", ");
+                }
+                out.push_str(&back_quote(partition));
+            }
+            out.push(')');
         }
     }
 }
@@ -1882,3 +1979,974 @@ pub enum JoinType {
     /// `RIGHT [OUTER] JOIN`.
     Right,
 }
+
+// BEGIN GENERATED AST VISITOR IMPLEMENTATIONS
+
+impl crate::Visitable for SetOprStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            with,
+            is_in_braces,
+            terms,
+            order_by,
+            limit,
+            lock,
+        } = self;
+        if let Some(value) = with.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        for value in terms.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        for value in order_by.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        if let Some(value) = limit.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        if let Some(value) = lock.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        let _ = with;
+        let _ = is_in_braces;
+        let _ = terms;
+        let _ = order_by;
+        let _ = limit;
+        let _ = lock;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for SetOprTerm {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            op,
+            in_braces,
+            body,
+        } = self;
+        if let Some(value) = op.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        if !crate::Visitable::accept(body, visitor) {
+            return false;
+        }
+        let _ = op;
+        let _ = in_braces;
+        let _ = body;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for SetOprTermBody {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Select(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::Nested(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for SetOp {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Union { all } => {
+                let _ = all;
+            }
+            Self::Except { all } => {
+                let _ = all;
+            }
+            Self::Intersect { all } => {
+                let _ = all;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for SelectStatementKind {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Select => {}
+            Self::Table => {}
+            Self::Values => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for SelectStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            kind,
+            is_in_braces,
+            with,
+            hints,
+            priority,
+            sql_small_result,
+            sql_big_result,
+            sql_buffer_result,
+            sql_no_cache,
+            straight_join,
+            calc_found_rows,
+            distinct,
+            all,
+            fields,
+            values,
+            from,
+            where_clause,
+            group_by,
+            rollup,
+            having,
+            windows,
+            order_by,
+            limit,
+            lock,
+            into_outfile,
+        } = self;
+        if !crate::Visitable::accept(kind, visitor) {
+            return false;
+        }
+        if let Some(value) = with.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        for value in hints.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        if !crate::Visitable::accept(priority, visitor) {
+            return false;
+        }
+        for value in fields.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        for value in values.iter_mut() {
+            for value in value.iter_mut() {
+                if !crate::Visitable::accept(value, visitor) {
+                    return false;
+                }
+            }
+        }
+        if let Some(value) = from.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        if let Some(value) = where_clause.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        for value in group_by.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        if let Some(value) = having.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        for value in windows.iter_mut() {
+            if !crate::Visitable::accept(&mut value.1, visitor) {
+                return false;
+            }
+        }
+        for value in order_by.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        if let Some(value) = limit.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        if let Some(value) = lock.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        if let Some(value) = into_outfile.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        let _ = kind;
+        let _ = is_in_braces;
+        let _ = with;
+        let _ = hints;
+        let _ = priority;
+        let _ = sql_small_result;
+        let _ = sql_big_result;
+        let _ = sql_buffer_result;
+        let _ = sql_no_cache;
+        let _ = straight_join;
+        let _ = calc_found_rows;
+        let _ = distinct;
+        let _ = all;
+        let _ = fields;
+        let _ = values;
+        let _ = from;
+        let _ = where_clause;
+        let _ = group_by;
+        let _ = rollup;
+        let _ = having;
+        let _ = windows;
+        let _ = order_by;
+        let _ = limit;
+        let _ = lock;
+        let _ = into_outfile;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for SelectIntoOption {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            file_name,
+            fields,
+            lines,
+        } = self;
+        if !crate::Visitable::accept(fields, visitor) {
+            return false;
+        }
+        if !crate::Visitable::accept(lines, visitor) {
+            return false;
+        }
+        let _ = file_name;
+        let _ = fields;
+        let _ = lines;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for SelectLock {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { kind, of, wait } = self;
+        if !crate::Visitable::accept(kind, visitor) {
+            return false;
+        }
+        if !crate::Visitable::accept(wait, visitor) {
+            return false;
+        }
+        let _ = kind;
+        let _ = of;
+        let _ = wait;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for LockKind {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Update => {}
+            Self::Share => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for LockWait {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Default => {}
+            Self::NoWait => {}
+            Self::SkipLocked => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for WithClause {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { recursive, ctes } = self;
+        for value in ctes.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        let _ = recursive;
+        let _ = ctes;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for Cte {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            name,
+            columns,
+            query,
+        } = self;
+        if !crate::Visitable::accept(query.as_mut(), visitor) {
+            return false;
+        }
+        let _ = name;
+        let _ = columns;
+        let _ = query;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for OrderItem {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { expr, desc } = self;
+        if !crate::Visitable::accept(expr, visitor) {
+            return false;
+        }
+        let _ = expr;
+        let _ = desc;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for GroupByItem {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { expr, desc } = self;
+        if !crate::Visitable::accept(expr, visitor) {
+            return false;
+        }
+        let _ = expr;
+        let _ = desc;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for WindowSpec {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            partition_by,
+            order_by,
+            frame,
+        } = self;
+        for value in partition_by.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        for value in order_by.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        if let Some(value) = frame.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        let _ = partition_by;
+        let _ = order_by;
+        let _ = frame;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for WindowDef {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { base, spec } = self;
+        if !crate::Visitable::accept(spec, visitor) {
+            return false;
+        }
+        let _ = base;
+        let _ = spec;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for WindowOver {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Name(field_0) => {
+                let _ = field_0;
+            }
+            Self::Def(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for WindowFrame {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { kind, start, end } = self;
+        if !crate::Visitable::accept(kind, visitor) {
+            return false;
+        }
+        if !crate::Visitable::accept(start, visitor) {
+            return false;
+        }
+        if !crate::Visitable::accept(end, visitor) {
+            return false;
+        }
+        let _ = kind;
+        let _ = start;
+        let _ = end;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for FrameKind {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Rows => {}
+            Self::Range => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for FrameBound {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::UnboundedPreceding => {}
+            Self::Preceding(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::CurrentRow => {}
+            Self::Following(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::UnboundedFollowing => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for Limit {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { offset, count } = self;
+        if let Some(value) = offset.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        if !crate::Visitable::accept(count, visitor) {
+            return false;
+        }
+        let _ = offset;
+        let _ = count;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for SelectField {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Wildcard(field_0) => {
+                let _ = field_0;
+            }
+            Self::Expr { expr, alias } => {
+                if !crate::Visitable::accept(expr, visitor) {
+                    return false;
+                }
+                let _ = expr;
+                let _ = alias;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for TableRef {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            name,
+            partitions,
+            alias,
+            as_of,
+            hints,
+            sample,
+        } = self;
+        if let Some(value) = as_of.as_mut() {
+            if !crate::Visitable::accept(value.as_mut(), visitor) {
+                return false;
+            }
+        }
+        for value in hints.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        if let Some(value) = sample.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        let _ = name;
+        let _ = partitions;
+        let _ = alias;
+        let _ = as_of;
+        let _ = hints;
+        let _ = sample;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for TableSample {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            method,
+            expr,
+            unit,
+            repeatable,
+        } = self;
+        if let Some(value) = method.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        if let Some(value) = expr.as_mut() {
+            if !crate::Visitable::accept(value.as_mut(), visitor) {
+                return false;
+            }
+        }
+        if let Some(value) = unit.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        if let Some(value) = repeatable.as_mut() {
+            if !crate::Visitable::accept(value.as_mut(), visitor) {
+                return false;
+            }
+        }
+        let _ = method;
+        let _ = expr;
+        let _ = unit;
+        let _ = repeatable;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for SampleMethod {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::System => {}
+            Self::Bernoulli => {}
+            Self::Region => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for SampleUnit {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Percent => {}
+            Self::Rows => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for IndexHint {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            kind,
+            scope,
+            indexes,
+        } = self;
+        if !crate::Visitable::accept(kind, visitor) {
+            return false;
+        }
+        if !crate::Visitable::accept(scope, visitor) {
+            return false;
+        }
+        let _ = kind;
+        let _ = scope;
+        let _ = indexes;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for IndexHintKind {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Use => {}
+            Self::Force => {}
+            Self::Ignore => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for IndexHintScope {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::All => {}
+            Self::Join => {}
+            Self::OrderBy => {}
+            Self::GroupBy => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for Hint {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { name, kind } = self;
+        if !crate::Visitable::accept(kind, visitor) {
+            return false;
+        }
+        let _ = name;
+        let _ = kind;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for HintKind {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Nullary { qb_name } => {
+                let _ = qb_name;
+            }
+            Self::Tables { qb_name, tables } => {
+                for value in tables.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                let _ = qb_name;
+                let _ = tables;
+            }
+            Self::Leading { qb_name, elements } => {
+                for value in elements.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                let _ = qb_name;
+                let _ = elements;
+            }
+            Self::Index {
+                qb_name,
+                table,
+                indexes,
+            } => {
+                if !crate::Visitable::accept(table, visitor) {
+                    return false;
+                }
+                let _ = qb_name;
+                let _ = table;
+                let _ = indexes;
+            }
+            Self::SetVar { var_name, value } => {
+                let _ = var_name;
+                let _ = value;
+            }
+            Self::Bool { qb_name, value } => {
+                let _ = qb_name;
+                let _ = value;
+            }
+            Self::Name { qb_name, name } => {
+                let _ = qb_name;
+                let _ = name;
+            }
+            Self::Keyword { qb_name, value } => {
+                let _ = qb_name;
+                let _ = value;
+            }
+            Self::MemoryQuota { qb_name, bytes } => {
+                let _ = qb_name;
+                let _ = bytes;
+            }
+            Self::TimeRange { from, to } => {
+                let _ = from;
+                let _ = to;
+            }
+            Self::Number { qb_name, value } => {
+                let _ = qb_name;
+                let _ = value;
+            }
+            Self::QbName { qb_name, views } => {
+                for value in views.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                let _ = qb_name;
+                let _ = views;
+            }
+            Self::ReadFromStorage { qb_name, groups } => {
+                for value in groups.iter_mut() {
+                    for value in &mut value.1.iter_mut() {
+                        if !crate::Visitable::accept(value, visitor) {
+                            return false;
+                        }
+                    }
+                }
+                let _ = qb_name;
+                let _ = groups;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for HintTable {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            db_name,
+            name,
+            qb_name,
+            partitions,
+        } = self;
+        let _ = db_name;
+        let _ = name;
+        let _ = qb_name;
+        let _ = partitions;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for LeadingElement {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Table(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::Group(field_0) => {
+                for value in field_0.iter_mut() {
+                    if !crate::Visitable::accept(value, visitor) {
+                        return false;
+                    }
+                }
+                let _ = field_0;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for Join {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            left,
+            right,
+            tp,
+            straight,
+            on,
+            using,
+            natural,
+        } = self;
+        if !crate::Visitable::accept(left, visitor) {
+            return false;
+        }
+        if let Some(value) = right.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        if !crate::Visitable::accept(tp, visitor) {
+            return false;
+        }
+        if let Some(value) = on.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        let _ = left;
+        let _ = right;
+        let _ = tp;
+        let _ = straight;
+        let _ = on;
+        let _ = using;
+        let _ = natural;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for JoinNode {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Table(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::Derived {
+                subquery,
+                alias,
+                lateral,
+                column_names,
+            } => {
+                if !crate::Visitable::accept(subquery.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = subquery;
+                let _ = alias;
+                let _ = lateral;
+                let _ = column_names;
+            }
+            Self::Join(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for JoinType {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Cross => {}
+            Self::Left => {}
+            Self::Right => {}
+        }
+        visitor.leave(self)
+    }
+}
+// END GENERATED AST VISITOR IMPLEMENTATIONS

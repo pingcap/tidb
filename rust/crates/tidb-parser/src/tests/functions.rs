@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Source-shaped coverage for `pkg/parser/ast/functions_test.go`.
+//! Transcreation of `pkg/parser/ast/functions_test.go`.
 //!
 //! The Go tests exercise AST restoration, including canonical spellings for
 //! function names, charset introducers, `COUNT(*)`, aggregate aliases, and
@@ -20,6 +20,19 @@
 //! ownership slice so parser work can proceed without growing `expr.rs`.
 
 use super::*;
+
+/// `pkg/parser/ast/functions_test.go::TestFunctionsVisitorCover`.
+#[test]
+fn test_functions_visitor_cover() {
+    for expression in [
+        "SUM(42)",
+        "ABS(42)",
+        "CAST(42 AS SIGNED)",
+        "ROW_NUMBER() OVER ()",
+    ] {
+        assert_full_visitor_traversal(&format!("SELECT {expression}"));
+    }
+}
 
 #[test]
 fn func_call_restore_source_vectors() {
@@ -288,7 +301,7 @@ fn convert_charset_source_vectors() {
         let tidb_ast::Stmt::Query(query) = parse(sql).expect("valid CONVERT source row") else {
             panic!("expected query statement for {sql}");
         };
-        let tidb_ast::QueryStmt::Select(select) = *query else {
+        let tidb_ast::QueryStmt::Select(select) = query.into_inner() else {
             panic!("expected SELECT statement for {sql}");
         };
         let tidb_ast::SelectField::Expr { expr, .. } = &select.fields[0] else {
@@ -309,4 +322,125 @@ fn convert_charset_source_vectors() {
     ] {
         assert!(parse(sql).is_err(), "Go rejects unknown charset: {sql}");
     }
+}
+
+#[test]
+fn char_charset_source_vectors() {
+    for (sql, expected) in [
+        (
+            r#"SELECT CHAR("abc" USING "latin1")"#,
+            "SELECT CHAR_FUNC(_UTF8MB4'abc', 'latin1')",
+        ),
+        (
+            r#"SELECT CHAR("abc" USING laTiN1)"#,
+            "SELECT CHAR_FUNC(_UTF8MB4'abc', 'latin1')",
+        ),
+        (
+            r#"SELECT CHAR("abc" USING "binary")"#,
+            "SELECT CHAR_FUNC(_UTF8MB4'abc', 'binary')",
+        ),
+        (
+            r#"SELECT CHAR("abc" USING binary)"#,
+            "SELECT CHAR_FUNC(_UTF8MB4'abc', 'binary')",
+        ),
+    ] {
+        assert_eq!(r(sql), expected, "source SQL: {sql}");
+    }
+
+    for sql in [
+        "SELECT CHAR(a USING a)",
+        r#"SELECT CHAR("abc" USING CONCAT("utf", "8"))"#,
+    ] {
+        assert!(parse(sql).is_err(), "Go rejects unknown charset: {sql}");
+    }
+}
+
+#[test]
+fn test_window_func_expr_restore() {
+    for (sql, expected) in [
+        ("RANK() OVER w", "RANK() OVER `w`"),
+        (
+            "RANK() OVER (PARTITION BY a)",
+            "RANK() OVER (PARTITION BY `a`)",
+        ),
+        (
+            "MAX(DISTINCT a) OVER (PARTITION BY a)",
+            "MAX(DISTINCT `a`) OVER (PARTITION BY `a`)",
+        ),
+        (
+            "MAX(DISTINCTROW a) OVER (PARTITION BY a)",
+            "MAX(DISTINCT `a`) OVER (PARTITION BY `a`)",
+        ),
+        (
+            "MAX(DISTINCT ALL a) OVER (PARTITION BY a)",
+            "MAX(DISTINCT `a`) OVER (PARTITION BY `a`)",
+        ),
+        (
+            "MAX(ALL a) OVER (PARTITION BY a)",
+            "MAX(`a`) OVER (PARTITION BY `a`)",
+        ),
+        (
+            "FIRST_VALUE(val) IGNORE NULLS OVER (w)",
+            "FIRST_VALUE(`val`) IGNORE NULLS OVER (`w`)",
+        ),
+        (
+            "FIRST_VALUE(val) RESPECT NULLS OVER w",
+            "FIRST_VALUE(`val`) OVER `w`",
+        ),
+        (
+            "NTH_VALUE(val, 233) FROM LAST IGNORE NULLS OVER w",
+            "NTH_VALUE(`val`, 233) FROM LAST IGNORE NULLS OVER `w`",
+        ),
+        (
+            "NTH_VALUE(val, 233) FROM FIRST IGNORE NULLS OVER (w)",
+            "NTH_VALUE(`val`, 233) IGNORE NULLS OVER (`w`)",
+        ),
+    ] {
+        assert_eq!(
+            r(&format!("select {sql} from t")),
+            format!("SELECT {expected} FROM `t`"),
+            "source SQL: {sql}"
+        );
+    }
+}
+
+#[test]
+fn test_generic_func_restore() {
+    for (sql, expected) in [
+        ("s.a()", "`s`.`a`()"),
+        ("`s`.`a`()", "`s`.`a`()"),
+        ("now()", "NOW()"),
+        ("`s`.`now`()", "`s`.`now`()"),
+        ("generic_func()", "GENERIC_FUNC()"),
+        ("`ident.1`.`ident.2`()", "`ident.1`.`ident.2`()"),
+    ] {
+        assert_eq!(
+            r(&format!("select {sql} from t")),
+            format!("SELECT {expected} FROM `t`"),
+            "source SQL: {sql}"
+        );
+    }
+}
+
+#[test]
+fn test_restore_with_error() {
+    let Stmt::Query(query) = parse("select json_memberof()").expect("source accepts call") else {
+        panic!("expected query");
+    };
+    let tidb_ast::QueryStmt::Select(select) = query.into_inner() else {
+        panic!("expected select");
+    };
+    let SelectField::Expr { expr, .. } = &select.fields[0] else {
+        panic!("expected expression field");
+    };
+    assert_eq!(
+        expr.try_restore()
+            .expect_err("source restore rejects arity"),
+        "Incorrect parameter count in the call to native function 'json_memberof'"
+    );
+
+    assert_eq!(
+        r("select json_memberof(1, '[1]')"),
+        "SELECT 1 MEMBER OF (_UTF8MB4'[1]')"
+    );
 }

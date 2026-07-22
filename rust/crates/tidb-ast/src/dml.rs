@@ -14,16 +14,81 @@
 //! `INSERT`/`UPDATE`/`DELETE` statements and their restore.
 
 use crate::select::restore_partition_clause;
-use crate::util::{back_quote, escape_string_literal, push_name_path};
+use crate::util::{back_quote, escape_string_literal, push_name_path, redact_url};
 use crate::{
-    ColumnOrUserVar, Expr, Hint, Join, Limit, LoadDataOption, OrderItem, QueryStmt, TableRef,
+    ColumnOrUserVar, Expr, Hint, Join, Limit, LoadDataOption, OrderItem, QueryStmt, SelectField,
+    TableRef,
 };
 
-/// An `INSERT ... VALUES` statement (Phase 0 subset).
+/// MySQL statement priority shared by SELECT, INSERT/REPLACE, UPDATE, and
+/// DELETE. Go stores this as `mysql.PriorityEnum`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum StatementPriority {
+    /// No explicit priority.
+    #[default]
+    None,
+    /// `LOW_PRIORITY`.
+    Low,
+    /// `HIGH_PRIORITY`.
+    High,
+    /// `DELAYED`.
+    Delayed,
+}
+
+/// TiDB physical table distribution request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DistributeTableStmt {
+    /// Target table path.
+    pub table: Vec<String>,
+    /// Optional partition list.
+    pub partitions: Vec<String>,
+    /// Optional distribution rule.
+    pub rule: Option<String>,
+    /// Optional target engine.
+    pub engine: Option<String>,
+    /// Optional operation timeout.
+    pub timeout: Option<String>,
+}
+
+impl DistributeTableStmt {
+    pub(crate) fn restore_into(&self, out: &mut String) {
+        out.push_str("DISTRIBUTE TABLE ");
+        push_name_path(out, &self.table);
+        restore_partition_clause(out, &self.partitions);
+        for (name, value) in [
+            ("RULE", &self.rule),
+            ("ENGINE", &self.engine),
+            ("TIMEOUT", &self.timeout),
+        ] {
+            if let Some(value) = value {
+                out.push(' ');
+                out.push_str(name);
+                out.push_str(" = '");
+                out.push_str(&escape_string_literal(value));
+                out.push('\'');
+            }
+        }
+    }
+}
+
+impl StatementPriority {
+    pub(crate) fn restore_into(self, out: &mut String) {
+        out.push_str(match self {
+            Self::None => "",
+            Self::Low => "LOW_PRIORITY ",
+            Self::High => "HIGH_PRIORITY ",
+            Self::Delayed => "DELAYED ",
+        });
+    }
+}
+
+/// An `INSERT`, `REPLACE`, or `INSERT ... SELECT` statement.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InsertStmt {
     /// Optimizer hints immediately after `INSERT` or `REPLACE`.
     pub hints: Vec<Hint>,
+    /// Optional MySQL priority modifier.
+    pub priority: StatementPriority,
     /// Whether `IGNORE` was specified: a row that conflicts with an existing
     /// `PRIMARY KEY` value is silently skipped (the existing row is kept
     /// unchanged) rather than raising a duplicate-key error.
@@ -39,6 +104,8 @@ pub struct InsertStmt {
     pub partitions: Vec<String>,
     /// The optional explicit column list.
     pub columns: Vec<String>,
+    /// Whether a column list was written, including the valid empty `()` form.
+    pub columns_specified: bool,
     /// Typed assignment targets for `INSERT ... SET`. Empty for every other
     /// insert form. Unlike [`InsertStmt::columns`], these preserve a written
     /// table/schema qualifier (`t.c` or `db.t.c`) exactly as Go's
@@ -65,6 +132,12 @@ pub struct InsertStmt {
     /// value may reference `VALUES(col)` (restored as `Expr::Func{name:
     /// "VALUES", ..}`), the row that would have been inserted.
     pub on_duplicate: Vec<Assignment>,
+    /// Optional MySQL 8.0.19 row alias following VALUES or SET.
+    pub row_alias: Option<String>,
+    /// Optional positional column aliases attached to `row_alias`.
+    pub column_aliases: Vec<String>,
+    /// Optional TiDB `RETURNING` projection.
+    pub returning: Vec<SelectField>,
     /// Whether the values were written in `SET col=val, ...` assignment
     /// form rather than `[cols] VALUES (...)`. The two are equivalent —
     /// the parser keeps its typed LHS paths in [`InsertStmt::set_columns`]
@@ -91,6 +164,7 @@ impl InsertStmt {
             out.push_str("INSERT ");
         }
         restore_dml_hints(out, &self.hints);
+        self.priority.restore_into(out);
         if self.ignore {
             out.push_str("IGNORE ");
         }
@@ -110,18 +184,10 @@ impl InsertStmt {
                 out.push('=');
                 v.restore_into(out);
             }
-            if !self.on_duplicate.is_empty() {
-                out.push_str(" ON DUPLICATE KEY UPDATE ");
-                for (i, a) in self.on_duplicate.iter().enumerate() {
-                    if i > 0 {
-                        out.push(',');
-                    }
-                    a.restore_into(out);
-                }
-            }
+            restore_insert_tail(self, out);
             return;
         }
-        if !self.columns.is_empty() {
+        if self.columns_specified {
             out.push_str(" (");
             for (i, c) in self.columns.iter().enumerate() {
                 if i > 0 {
@@ -159,15 +225,7 @@ impl InsertStmt {
                 out.push(')');
             }
         }
-        if !self.on_duplicate.is_empty() {
-            out.push_str(" ON DUPLICATE KEY UPDATE ");
-            for (i, a) in self.on_duplicate.iter().enumerate() {
-                if i > 0 {
-                    out.push(','); // no space, unlike UPDATE's SET list
-                }
-                a.restore_into(out);
-            }
-        }
+        restore_insert_tail(self, out);
     }
 }
 
@@ -275,6 +333,33 @@ impl ImportIntoStmt {
             }
         }
     }
+
+    /// Restores the statement after redacting external-storage credentials.
+    pub fn secure_text(&self) -> String {
+        let mut redacted = self.clone();
+        if let ImportSource::File { path, .. } = &mut redacted.source {
+            *path = redact_url(path);
+        }
+        for option in &mut redacted.options {
+            if option.name.eq_ignore_ascii_case("cloud_storage_uri") {
+                if let Some(value) = &mut option.value {
+                    let redacted_value = match value {
+                        Expr::String(text) | Expr::RawString(text) => Some(redact_url(text)),
+                        Expr::CharsetString { value, .. } => Some(redact_url(value)),
+                        _ => None,
+                    };
+                    if let Some(redacted_value) = redacted_value {
+                        // Go rebuilds this option with `NewValueExpr(value,
+                        // "", "")`, so it restores as a plain quoted string.
+                        *value = Expr::RawString(redacted_value);
+                    }
+                }
+            }
+        }
+        let mut out = String::new();
+        redacted.restore_into(&mut out);
+        out
+    }
 }
 
 /// An `UPDATE ... SET` statement — single-table or multi-table (see
@@ -283,6 +368,8 @@ impl ImportIntoStmt {
 pub struct UpdateStmt {
     /// Optimizer hints immediately after `UPDATE`.
     pub hints: Vec<Hint>,
+    /// Optional MySQL priority modifier.
+    pub priority: StatementPriority,
     /// Whether `UPDATE IGNORE` was written — a row whose update would raise
     /// an error (e.g. a duplicate-key or data-conversion error) is skipped
     /// (with a warning in real MySQL) rather than aborting the statement.
@@ -299,6 +386,8 @@ pub struct UpdateStmt {
     pub order_by: Vec<OrderItem>,
     /// The optional single-table `LIMIT` tail.
     pub limit: Option<Limit>,
+    /// Optional TiDB `RETURNING` projection.
+    pub returning: Vec<SelectField>,
 }
 
 /// The shape of an `UPDATE`: an ordinary single-table update, or a
@@ -326,6 +415,7 @@ impl UpdateStmt {
     pub(crate) fn restore_into(&self, out: &mut String) {
         out.push_str("UPDATE ");
         restore_dml_hints(out, &self.hints);
+        self.priority.restore_into(out);
         if self.ignore {
             out.push_str("IGNORE ");
         }
@@ -345,6 +435,7 @@ impl UpdateStmt {
             w.restore_into(out);
         }
         restore_dml_order_limit(out, &self.order_by, &self.limit);
+        restore_returning(out, &self.returning);
     }
 }
 
@@ -353,6 +444,10 @@ impl UpdateStmt {
 pub struct DeleteStmt {
     /// Optimizer hints immediately after `DELETE`.
     pub hints: Vec<Hint>,
+    /// Optional MySQL priority modifier.
+    pub priority: StatementPriority,
+    /// Whether `QUICK` was written.
+    pub quick: bool,
     /// Whether `DELETE IGNORE` was written — an error that would abort a
     /// row's deletion (e.g. a foreign-key restriction) is turned into a
     /// skipped row plus a warning. Restored as `DELETE IGNORE`.
@@ -365,6 +460,8 @@ pub struct DeleteStmt {
     pub order_by: Vec<OrderItem>,
     /// The optional single-table `LIMIT` tail.
     pub limit: Option<Limit>,
+    /// Optional TiDB `RETURNING` projection.
+    pub returning: Vec<SelectField>,
 }
 
 /// The shape of a `DELETE`: an ordinary single-table delete, or a
@@ -397,6 +494,10 @@ impl DeleteStmt {
     pub(crate) fn restore_into(&self, out: &mut String) {
         out.push_str("DELETE ");
         restore_dml_hints(out, &self.hints);
+        self.priority.restore_into(out);
+        if self.quick {
+            out.push_str("QUICK ");
+        }
         if self.ignore {
             out.push_str("IGNORE ");
         }
@@ -426,6 +527,7 @@ impl DeleteStmt {
             w.restore_into(out);
         }
         restore_dml_order_limit(out, &self.order_by, &self.limit);
+        restore_returning(out, &self.returning);
     }
 }
 
@@ -480,6 +582,46 @@ fn restore_target_list(out: &mut String, targets: &[Vec<String>]) {
     }
 }
 
+fn restore_insert_tail(statement: &InsertStmt, out: &mut String) {
+    if let Some(alias) = &statement.row_alias {
+        out.push_str(" AS ");
+        out.push_str(&back_quote(alias));
+        if !statement.column_aliases.is_empty() {
+            out.push('(');
+            for (index, column) in statement.column_aliases.iter().enumerate() {
+                if index > 0 {
+                    out.push_str(", ");
+                }
+                out.push_str(&back_quote(column));
+            }
+            out.push(')');
+        }
+    }
+    if !statement.on_duplicate.is_empty() {
+        out.push_str(" ON DUPLICATE KEY UPDATE ");
+        for (index, assignment) in statement.on_duplicate.iter().enumerate() {
+            if index > 0 {
+                out.push(',');
+            }
+            assignment.restore_into(out);
+        }
+    }
+    restore_returning(out, &statement.returning);
+}
+
+fn restore_returning(out: &mut String, fields: &[SelectField]) {
+    if fields.is_empty() {
+        return;
+    }
+    out.push_str(" RETURNING ");
+    for (index, field) in fields.iter().enumerate() {
+        if index > 0 {
+            out.push_str(", ");
+        }
+        field.restore_into(out);
+    }
+}
+
 /// A single `col = value` assignment in `UPDATE ... SET`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Assignment {
@@ -496,3 +638,374 @@ impl Assignment {
         self.value.restore_into(out);
     }
 }
+
+// BEGIN GENERATED AST VISITOR IMPLEMENTATIONS
+
+impl crate::Visitable for StatementPriority {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::None => {}
+            Self::Low => {}
+            Self::High => {}
+            Self::Delayed => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for DistributeTableStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            table,
+            partitions,
+            rule,
+            engine,
+            timeout,
+        } = self;
+        let _ = table;
+        let _ = partitions;
+        let _ = rule;
+        let _ = engine;
+        let _ = timeout;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for InsertStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            hints,
+            priority,
+            ignore,
+            table,
+            partitions,
+            columns,
+            columns_specified,
+            set_columns,
+            rows,
+            source,
+            source_parenthesized,
+            on_duplicate,
+            row_alias,
+            column_aliases,
+            returning,
+            set_syntax,
+            replace,
+        } = self;
+        for value in hints.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        if !crate::Visitable::accept(priority, visitor) {
+            return false;
+        }
+        for value in rows.iter_mut() {
+            for value in value.iter_mut() {
+                if !crate::Visitable::accept(value, visitor) {
+                    return false;
+                }
+            }
+        }
+        if let Some(value) = source.as_mut() {
+            if !crate::Visitable::accept(value.as_mut(), visitor) {
+                return false;
+            }
+        }
+        for value in on_duplicate.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        for value in returning.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        let _ = hints;
+        let _ = priority;
+        let _ = ignore;
+        let _ = table;
+        let _ = partitions;
+        let _ = columns;
+        let _ = columns_specified;
+        let _ = set_columns;
+        let _ = rows;
+        let _ = source;
+        let _ = source_parenthesized;
+        let _ = on_duplicate;
+        let _ = row_alias;
+        let _ = column_aliases;
+        let _ = returning;
+        let _ = set_syntax;
+        let _ = replace;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for ImportSource {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::File { path, format } => {
+                let _ = path;
+                let _ = format;
+            }
+            Self::Select {
+                query,
+                parenthesized,
+            } => {
+                if !crate::Visitable::accept(query.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = query;
+                let _ = parenthesized;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for ImportIntoStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            table,
+            columns_and_user_vars,
+            column_assignments,
+            source,
+            options,
+        } = self;
+        for value in columns_and_user_vars.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        for value in column_assignments.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        if !crate::Visitable::accept(source, visitor) {
+            return false;
+        }
+        for value in options.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        let _ = table;
+        let _ = columns_and_user_vars;
+        let _ = column_assignments;
+        let _ = source;
+        let _ = options;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for UpdateStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            hints,
+            priority,
+            ignore,
+            kind,
+            assignments,
+            where_clause,
+            order_by,
+            limit,
+            returning,
+        } = self;
+        for value in hints.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        if !crate::Visitable::accept(priority, visitor) {
+            return false;
+        }
+        if !crate::Visitable::accept(kind, visitor) {
+            return false;
+        }
+        for value in assignments.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        if let Some(value) = where_clause.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        for value in order_by.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        if let Some(value) = limit.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        for value in returning.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        let _ = hints;
+        let _ = priority;
+        let _ = ignore;
+        let _ = kind;
+        let _ = assignments;
+        let _ = where_clause;
+        let _ = order_by;
+        let _ = limit;
+        let _ = returning;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for UpdateKind {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Single(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::Multi { from, comma_join } => {
+                if !crate::Visitable::accept(from.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = from;
+                let _ = comma_join;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for DeleteStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            hints,
+            priority,
+            quick,
+            ignore,
+            kind,
+            where_clause,
+            order_by,
+            limit,
+            returning,
+        } = self;
+        for value in hints.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        if !crate::Visitable::accept(priority, visitor) {
+            return false;
+        }
+        if !crate::Visitable::accept(kind, visitor) {
+            return false;
+        }
+        if let Some(value) = where_clause.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        for value in order_by.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        if let Some(value) = limit.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        for value in returning.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        let _ = hints;
+        let _ = priority;
+        let _ = quick;
+        let _ = ignore;
+        let _ = kind;
+        let _ = where_clause;
+        let _ = order_by;
+        let _ = limit;
+        let _ = returning;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for DeleteKind {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Single(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::Multi {
+                targets,
+                using,
+                from,
+            } => {
+                if !crate::Visitable::accept(from.as_mut(), visitor) {
+                    return false;
+                }
+                let _ = targets;
+                let _ = using;
+                let _ = from;
+            }
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for Assignment {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self { col, value } = self;
+        if !crate::Visitable::accept(value, visitor) {
+            return false;
+        }
+        let _ = col;
+        let _ = value;
+        visitor.leave(self)
+    }
+}
+// END GENERATED AST VISITOR IMPLEMENTATIONS

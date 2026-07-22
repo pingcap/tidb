@@ -188,9 +188,19 @@ impl CreateTableStmt {
         // Table options restore in WRITTEN order (unlike most other lists
         // here, which restore in a fixed canonical order) — confirmed via
         // `godump restore` on several reorderings.
+        let mut has_ttl_definition = false;
         for opt in &self.table_options {
+            if context.flags().has_with_ttl_enable_off() && matches!(opt, TableOption::TtlEnable(_))
+            {
+                continue;
+            }
             out.push(' ');
             opt.restore_into_with_context(out, context);
+            has_ttl_definition |= matches!(opt, TableOption::Ttl { .. });
+        }
+        if context.flags().has_with_ttl_enable_off() && has_ttl_definition {
+            out.push(' ');
+            TableOption::TtlEnable(false).restore_into_with_context(out, context);
         }
         if let Some(partitioning) = &self.partitioning {
             partitioning.restore_into(out);
@@ -332,3 +342,123 @@ fn push_name_path_bytes(out: &mut Vec<u8>, path: &[String]) {
         out.extend_from_slice(back_quote(part).as_bytes());
     }
 }
+
+// BEGIN GENERATED AST VISITOR IMPLEMENTATIONS
+
+impl crate::Visitable for CreateTableTemporary {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::None => {}
+            Self::Local => {}
+            Self::Global => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for CreateTableOnDuplicate {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        match self {
+            Self::Error => {}
+            Self::Ignore => {}
+            Self::Replace => {}
+        }
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for CreateTableAsQuery {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            on_duplicate,
+            query,
+            parenthesized,
+        } = self;
+        if !crate::Visitable::accept(on_duplicate, visitor) {
+            return false;
+        }
+        if !crate::Visitable::accept(query.as_mut(), visitor) {
+            return false;
+        }
+        let _ = on_duplicate;
+        let _ = query;
+        let _ = parenthesized;
+        visitor.leave(self)
+    }
+}
+
+impl crate::Visitable for CreateTableStmt {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        let Self {
+            temporary,
+            on_commit_delete,
+            if_not_exists,
+            name,
+            like_table,
+            columns,
+            table_constraints,
+            table_options,
+            partitioning,
+            splits,
+            ctas,
+        } = self;
+        if !crate::Visitable::accept(temporary, visitor) {
+            return false;
+        }
+        for value in columns.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        for value in table_constraints.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        for value in table_options.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        if let Some(value) = partitioning.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        for value in splits.iter_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        if let Some(value) = ctas.as_mut() {
+            if !crate::Visitable::accept(value, visitor) {
+                return false;
+            }
+        }
+        let _ = temporary;
+        let _ = on_commit_delete;
+        let _ = if_not_exists;
+        let _ = name;
+        let _ = like_table;
+        let _ = columns;
+        let _ = table_constraints;
+        let _ = table_options;
+        let _ = partitioning;
+        let _ = splits;
+        let _ = ctas;
+        visitor.leave(self)
+    }
+}
+// END GENERATED AST VISITOR IMPLEMENTATIONS

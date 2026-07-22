@@ -23,7 +23,7 @@ fn generated_option(sql: &str) -> tidb_ast::ColumnOption {
     let Stmt::Ddl(ddl) = parse(sql).expect("parse Go generated-column source case") else {
         panic!("expected DDL statement");
     };
-    let tidb_ast::DdlStmt::CreateTable(table) = *ddl else {
+    let tidb_ast::DdlStmt::CreateTable(table) = ddl.into_inner() else {
         panic!("expected CREATE TABLE");
     };
     table.columns[1]
@@ -171,7 +171,7 @@ fn float_precision_normalization_is_shared_by_ordinary_and_generated_columns() {
         else {
             panic!("expected DDL statement");
         };
-        let tidb_ast::DdlStmt::CreateTable(table) = *ddl else {
+        let tidb_ast::DdlStmt::CreateTable(table) = ddl.into_inner() else {
             panic!("expected CREATE TABLE");
         };
         assert_eq!(table.columns[0].ty.name, expected_name);
