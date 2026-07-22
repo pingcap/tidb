@@ -81,6 +81,23 @@ func TestRiskOfDiskFull(t *testing.T) {
 		}, 1)
 		require.Error(t, err)
 
+		// 60 slots reserve 120 GB, capped at the 100 GB quota. After subtracting
+		// 40 GB usage, the required space is 60 GB plus 20 GB capacity headroom.
+		err = checkLocalSortFreeDisk("/tmp/local-sort", 81*size.GB, 200*size.GB, []LocalSortJobDiskRequirement{
+			{RequiredSlots: 40, UsedBytes: 40 * size.GB},
+		}, 20)
+		require.NoError(t, err)
+
+		err = checkLocalSortFreeDisk("/tmp/local-sort", 80*size.GB, 200*size.GB, []LocalSortJobDiskRequirement{
+			{RequiredSlots: 40, UsedBytes: 40 * size.GB},
+		}, 20)
+		require.Error(t, err)
+
+		err = checkLocalSortFreeDisk("/tmp/local-sort", 21*size.GB, 200*size.GB, []LocalSortJobDiskRequirement{
+			{RequiredSlots: 40, UsedBytes: 101 * size.GB},
+		}, 20)
+		require.NoError(t, err)
+
 		err = checkLocalSortFreeDisk("/tmp/local-sort", size.GB, size.GB, []LocalSortJobDiskRequirement{
 			{RequiredSlots: 1, UsedBytes: 0},
 		}, 1)

@@ -259,11 +259,13 @@ func checkLocalSortFreeDisk(
 		allJobsRequiredBytes += uint64(runningJob.RequiredSlots) * LocalSortBytesPerSlot
 		allJobsUsedBytes += runningJob.UsedBytes
 	}
-	// Slot-based reservations are a shared soft budget, not per-job limits.
-	// Excess usage triggers ingest and releases disk, so we check aggregate remaining growth.
+	// Slot-based reservations and the ingest quota are shared soft budgets.
+	// Exceeding the quota triggers an import that releases disk, so check the
+	// aggregate growth until the smaller target is reached.
+	allJobsTargetBytes := min(allJobsRequiredBytes, vardef.DDLDiskQuota.Load())
 	allJobsGapBytes := uint64(0)
-	if allJobsRequiredBytes > allJobsUsedBytes {
-		allJobsGapBytes = allJobsRequiredBytes - allJobsUsedBytes
+	if allJobsTargetBytes > allJobsUsedBytes {
+		allJobsGapBytes = allJobsTargetBytes - allJobsUsedBytes
 	}
 	totalRequiredBytes := totalCapacityBytes/10 + allJobsGapBytes
 	if availableBytes > totalRequiredBytes {
