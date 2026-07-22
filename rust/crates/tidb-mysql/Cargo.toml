@@ -11,5 +11,4 @@ description = "Shared MySQL constants and value contracts for the TiDB Rust rewr
 workspace = true
 
 [dependencies]
-semver.workspace = true
 tidb-error = { path = "../tidb-error" }

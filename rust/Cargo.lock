@@ -913,12 +913,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "semver"
-version = "1.0.28"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
-
-[[package]]
 name = "serde"
 version = "1.0.228"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1136,7 +1130,6 @@ version = "0.0.0"
 name = "tidb-mysql"
 version = "0.0.0"
 dependencies = [
- "semver",
  "tidb-error",
 ]
 

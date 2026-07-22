@@ -51,7 +51,6 @@ repository = "https://github.com/pingcap/tidb"
 bytes = "1"
 encoding_rs = "0.8"
 regex = "1"
-semver = "1"
 # The first generated protocol leaf.  The proto source is checked in under
 # `crates/tidb-proto/proto`; keeping prost in the workspace makes subsequent
 # tipb/kvproto extraction use one generator and one lockfile.
