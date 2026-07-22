@@ -1,6 +1,6 @@
 schema = "2"
 slice = "parser-mysql-package"
-status = "ready"
+status = "covered"
 targets = ["tidb-error", "tidb-mysql"]
 rings = ["parser"]
 consumer = "Provides the complete Rust-native pkg/parser/mysql contract: shared protocol constants, charset/type/privilege/locale helpers, MySQL error construction and formatting, error names/codes, and SQLSTATE lookup; downstream parser, protocol, and session package migrations are not credited here."
