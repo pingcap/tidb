@@ -776,3 +776,40 @@ fn if_exists_restore_transcreates_every_original_go_row() {
         );
     }
 }
+
+#[test]
+fn alter_database_restore_transcreates_every_original_go_row() {
+    use tidb_ast::RestoreFlags;
+
+    for (sql, expected_normal, expected_special) in [
+        (
+            "alter database db1 charset='ascii'",
+            "ALTER DATABASE `db1` CHARACTER SET = ascii",
+            "ALTER DATABASE `db1` CHARACTER SET = ascii",
+        ),
+        (
+            "alter database db1 collate='ascii_bin'",
+            "ALTER DATABASE `db1` COLLATE = ascii_bin",
+            "ALTER DATABASE `db1` COLLATE = ascii_bin",
+        ),
+        (
+            "alter database db1 placement policy p1",
+            "ALTER DATABASE `db1` PLACEMENT POLICY = `p1`",
+            "/*T![placement] ALTER DATABASE `db1` PLACEMENT POLICY = `p1` */",
+        ),
+        (
+            "alter database db1 placement policy p1 charset='ascii'",
+            "ALTER DATABASE `db1` PLACEMENT POLICY = `p1` CHARACTER SET = ascii",
+            "ALTER DATABASE `db1` /*T![placement] PLACEMENT POLICY = `p1` */ CHARACTER SET = ascii",
+        ),
+    ] {
+        let statement = parse(sql).unwrap_or_else(|error| panic!("source SQL: {sql}: {error:?}"));
+        assert_eq!(statement.restore(), expected_normal, "source SQL: {sql}");
+        assert_eq!(
+            statement
+                .restore_with_flags(RestoreFlags::DEFAULT | RestoreFlags::TIDB_SPECIAL_COMMENT),
+            expected_special,
+            "source SQL: {sql}"
+        );
+    }
+}

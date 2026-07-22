@@ -374,25 +374,38 @@ impl DdlStmt {
             }
             Self::AlterDatabase { name, options } => {
                 let skip_placement = context.flags().has_skip_placement_rule_for_restore();
-                if skip_placement
-                    && !options.is_empty()
+                let only_placement = !options.is_empty()
                     && options
                         .iter()
-                        .all(|option| matches!(option, DatabaseOption::PlacementPolicy(_)))
-                {
+                        .all(|option| matches!(option, DatabaseOption::PlacementPolicy(_)));
+                if skip_placement && only_placement {
                     return;
                 }
-                out.push_str("ALTER DATABASE");
-                if let Some(name) = name {
-                    out.push(' ');
-                    out.push_str(&back_quote(name));
-                }
-                for option in options {
-                    out.push(' ');
-                    if skip_placement && matches!(option, DatabaseOption::PlacementPolicy(_)) {
-                        continue;
+
+                let restore = |out: &mut String| {
+                    out.push_str("ALTER DATABASE");
+                    if let Some(name) = name {
+                        out.push(' ');
+                        out.push_str(&back_quote(name));
                     }
-                    option.restore_into(out);
+                    for option in options {
+                        out.push(' ');
+                        if skip_placement && matches!(option, DatabaseOption::PlacementPolicy(_)) {
+                            continue;
+                        }
+                        if !only_placement && matches!(option, DatabaseOption::PlacementPolicy(_)) {
+                            context.write_with_tidb_special_comment(out, "placement", |out| {
+                                option.restore_into(out);
+                            });
+                        } else {
+                            option.restore_into(out);
+                        }
+                    }
+                };
+                if only_placement && context.flags().has_tidb_special_comment() {
+                    context.write_with_tidb_special_comment(out, "placement", restore);
+                } else {
+                    restore(out);
                 }
             }
             Self::CreatePlacementPolicy(statement) => statement.restore_into(out),
