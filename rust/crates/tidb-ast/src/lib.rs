@@ -59,6 +59,7 @@ mod format;
 mod load_data;
 #[path = "stmt/masking.rs"]
 mod masking;
+pub mod opcode;
 #[path = "stmt/placement.rs"]
 mod placement;
 #[path = "stmt/query.rs"]
@@ -117,6 +118,7 @@ pub use load_data::{
 pub use masking::{
     AlterMaskingPolicyAction, CreateMaskingPolicyStmt, MaskingPolicyRestrictOps, MaskingPolicyState,
 };
+pub use opcode::Op;
 pub use placement::{
     AlterPlacementPolicyStmt, CreatePlacementPolicyStmt, DropPlacementPolicyStmt, PlacementOption,
     PlacementRestoreMode,

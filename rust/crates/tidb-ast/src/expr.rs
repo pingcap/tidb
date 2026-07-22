@@ -19,7 +19,7 @@ use crate::util::{
     back_quote, escape_string_literal, format_go_float, normalize_decimal, normalize_int,
     restore_string_literal,
 };
-use crate::{OrderItem, QueryStmt, RestoreContext, RestoreFlags, SelectStmt, WindowOver};
+use crate::{Op, OrderItem, QueryStmt, RestoreContext, RestoreFlags, SelectStmt, WindowOver};
 
 /// The scope of a system variable (`@@GLOBAL.x` / `@@SESSION.x`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1656,14 +1656,19 @@ pub enum UnaryOp {
 }
 
 impl UnaryOp {
-    fn restore(self) -> &'static str {
+    /// Returns the single source opcode authority for this typed AST subset.
+    pub const fn opcode(self) -> Op {
         match self {
-            UnaryOp::Plus => "+",
-            UnaryOp::Minus => "-",
-            UnaryOp::BitNeg => "~",
-            UnaryOp::Not => "!",
-            UnaryOp::NotKeyword => "NOT ",
+            UnaryOp::Plus => Op::Plus,
+            UnaryOp::Minus => Op::Minus,
+            UnaryOp::BitNeg => Op::BitNeg,
+            UnaryOp::Not => Op::Not2,
+            UnaryOp::NotKeyword => Op::Not,
         }
+    }
+
+    fn restore(self) -> &'static str {
+        self.opcode().literal()
     }
 }
 
@@ -1715,30 +1720,41 @@ pub enum BinaryOp {
 }
 
 impl BinaryOp {
+    /// Returns the single source opcode authority for this typed AST subset.
+    pub const fn opcode(self) -> Op {
+        match self {
+            BinaryOp::Plus => Op::Plus,
+            BinaryOp::Minus => Op::Minus,
+            BinaryOp::Mul => Op::Mul,
+            BinaryOp::Div => Op::Div,
+            BinaryOp::Mod => Op::Mod,
+            BinaryOp::IntDiv => Op::IntDiv,
+            BinaryOp::BitOr => Op::Or,
+            BinaryOp::BitAnd => Op::And,
+            BinaryOp::BitXor => Op::Xor,
+            BinaryOp::LeftShift => Op::LeftShift,
+            BinaryOp::RightShift => Op::RightShift,
+            BinaryOp::Eq => Op::EQ,
+            BinaryOp::NullEq => Op::NullEQ,
+            BinaryOp::Ge => Op::GE,
+            BinaryOp::Gt => Op::GT,
+            BinaryOp::Le => Op::LE,
+            BinaryOp::Lt => Op::LT,
+            BinaryOp::Ne => Op::NE,
+            BinaryOp::LogicAnd => Op::LogicAnd,
+            BinaryOp::LogicOr => Op::LogicOr,
+            BinaryOp::LogicXor => Op::LogicXor,
+        }
+    }
+
     /// The restore text, including surrounding spaces for keyword operators.
     fn restore(self) -> &'static str {
-        match self {
-            BinaryOp::Plus => "+",
-            BinaryOp::Minus => "-",
-            BinaryOp::Mul => "*",
-            BinaryOp::Div => "/",
-            BinaryOp::Mod => "%",
-            BinaryOp::IntDiv => " DIV ",
-            BinaryOp::BitOr => "|",
-            BinaryOp::BitAnd => "&",
-            BinaryOp::BitXor => "^",
-            BinaryOp::LeftShift => "<<",
-            BinaryOp::RightShift => ">>",
-            BinaryOp::Eq => "=",
-            BinaryOp::NullEq => "<=>",
-            BinaryOp::Ge => ">=",
-            BinaryOp::Gt => ">",
-            BinaryOp::Le => "<=",
-            BinaryOp::Lt => "<",
-            BinaryOp::Ne => "!=",
-            BinaryOp::LogicAnd => " AND ",
-            BinaryOp::LogicOr => " OR ",
-            BinaryOp::LogicXor => " XOR ",
+        match self.opcode() {
+            Op::IntDiv => " DIV ",
+            Op::LogicAnd => " AND ",
+            Op::LogicOr => " OR ",
+            Op::LogicXor => " XOR ",
+            op => op.literal(),
         }
     }
 }
