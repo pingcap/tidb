@@ -282,7 +282,8 @@ func TestAddIndexPresplitFunctional(t *testing.T) {
 	tk.MustExec("alter table t add index idx(b) pre_split_regions = (between (1) and (2) regions 3);")
 	tk.MustExec("drop table t;")
 
-	// Auto presplit uses the local reorg path, while DXF and fast reorg are always enabled on NextGen.
+	// This scenario validates auto presplit on the txn-reorg normal-index keyspace.
+	// NextGen always uses fast reorg/DXF, so it cannot exercise this scenario.
 	if kerneltype.IsNextGen() {
 		return
 	}
