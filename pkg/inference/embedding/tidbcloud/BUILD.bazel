@@ -1,0 +1,29 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "tidbcloud",
+    srcs = [
+        "protocol.go",
+        "tidbcloud_free.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/inference/embedding/tidbcloud",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/inference/embedding/base",
+        "//pkg/util/logutil",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "tidbcloud_test",
+    timeout = "short",
+    srcs = ["tidbcloud_free_test.go"],
+    embed = [":tidbcloud"],
+    flaky = True,
+    shard_count = 13,
+    deps = [
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+    ],
+)

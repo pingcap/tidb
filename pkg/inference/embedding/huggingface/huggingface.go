@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package openai
+package huggingface
 
 import (
 	"bytes"
@@ -29,13 +29,13 @@ import (
 )
 
 const (
-	// DefaultAPIBaseURL is the default base URL (without the /embeddings suffix) for OpenAI embeddings API.
-	DefaultAPIBaseURL = "https://api.openai.com/v1"
-	// DefaultMaxResponseBodyBytes bounds memory used to read an OpenAI-compatible response.
+	// DefaultAPIBaseURL is the default base URL for HuggingFace inference API.
+	DefaultAPIBaseURL = "https://router.huggingface.co/hf-inference"
+	// DefaultMaxResponseBodyBytes bounds memory used to read a HuggingFace response.
 	DefaultMaxResponseBodyBytes int64 = base.DefaultMaxResponseBodyBytes
 )
 
-// Embedder is for OpenAI embeddings.
+// Embedder is for HuggingFace embeddings.
 type Embedder struct {
 	client http.Client
 	cfg    EmbedderConfig
@@ -43,25 +43,22 @@ type Embedder struct {
 
 var _ base.Embedder = (*Embedder)(nil)
 
-// EmbedderConfig holds the configuration for OpenAIEmbedder.
+// EmbedderConfig holds the configuration for HuggingFaceEmbedder.
 type EmbedderConfig struct {
 	GetAPIKey func() string
-	// GetBaseURL returns an OpenAI-compatible API base URL. A trailing
-	// /embeddings path is optional and is normalized by the embedder.
-	GetBaseURL func() string
-	// ErrMissingAPIKey optionally overrides the default missing-key error so
-	// callers can include deployment-specific configuration guidance.
-	ErrMissingAPIKey error
-	// ErrUnauthorized optionally overrides the default unauthorized error so
-	// callers can include deployment-specific configuration guidance.
-	ErrUnauthorized error
+	// GetBaseURL returns the inference API base. The embedder appends
+	// /models/<model>/pipeline/feature-extraction. An empty value uses
+	// DefaultAPIBaseURL.
+	GetBaseURL       func() string
+	ErrMissingAPIKey error // The error to return when API key is missing
+	ErrUnauthorized  error // The error to return when API key is invalid
 	// MaxResponseBodyBytes limits both successful and error response bodies.
 	// Non-positive values use DefaultMaxResponseBodyBytes.
 	MaxResponseBodyBytes int64
 }
 
-// NewOpenAIEmbedder creates a new OpenAIEmbedder instance with the provided configuration.
-func NewOpenAIEmbedder(cfg EmbedderConfig) *Embedder {
+// NewHuggingFaceEmbedder creates a new HuggingFaceEmbedder instance with the provided configuration.
+func NewHuggingFaceEmbedder(cfg EmbedderConfig) *Embedder {
 	if cfg.MaxResponseBodyBytes <= 0 {
 		cfg.MaxResponseBodyBytes = DefaultMaxResponseBodyBytes
 	}
@@ -71,42 +68,54 @@ func NewOpenAIEmbedder(cfg EmbedderConfig) *Embedder {
 	}
 }
 
-// embeddingsEndpoint resolves an OpenAI-compatible base URL to the embeddings endpoint.
-// The OpenAI API defines the endpoint as POST /v1/embeddings:
-// https://platform.openai.com/docs/api-reference/embeddings/create
-// For compatibility with existing callers, baseURL may already end in /embeddings.
-func embeddingsEndpoint(baseURL string) (string, error) {
+func featureExtractionEndpoint(configured, model string) (string, error) {
+	baseURL := strings.TrimSpace(configured)
+	if baseURL == "" {
+		baseURL = DefaultAPIBaseURL
+	}
 	u, err := url.Parse(baseURL)
 	if err != nil {
-		return "", fmt.Errorf("invalid OpenAI API base URL: %w", err)
+		return "", fmt.Errorf("invalid HuggingFace API base URL: %w", err)
 	}
-	if u.Scheme == "" || u.Host == "" {
-		return "", fmt.Errorf("invalid OpenAI API base URL: absolute URL is required")
+	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return "", fmt.Errorf("invalid HuggingFace API base URL: absolute HTTP(S) URL is required")
 	}
-
-	escapedPath := strings.TrimRight(u.EscapedPath(), "/")
-	if !strings.HasSuffix(escapedPath, "/embeddings") {
-		escapedPath += "/embeddings"
+	modelParts := strings.Split(model, "/")
+	for i := range modelParts {
+		modelParts[i] = escapePathSegment(modelParts[i])
 	}
+	escapedPath := strings.TrimRight(u.EscapedPath(), "/") + "/models/" + strings.Join(modelParts, "/") + "/pipeline/feature-extraction"
 	path, err := url.PathUnescape(escapedPath)
 	if err != nil {
-		return "", fmt.Errorf("invalid OpenAI API base URL path: %w", err)
+		return "", fmt.Errorf("invalid HuggingFace API base URL path: %w", err)
 	}
 	u.Path = path
 	u.RawPath = escapedPath
 	return u.String(), nil
 }
 
+func escapePathSegment(segment string) string {
+	escaped := url.PathEscape(segment)
+	if escaped == "." {
+		return "%2E"
+	}
+	if escaped == ".." {
+		return "%2E%2E"
+	}
+	return escaped
+}
+
 // CreateEmbeddings creates embeddings for the given texts using the specified model.
 // CreateEmbeddings implements base.Embedder
 func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []string, opts map[string]any) ([][]float32, error) {
-	// ref: https://platform.openai.com/docs/api-reference/embeddings/create
+	// ref: https://huggingface.co/docs/inference-providers/en/tasks/feature-extraction
 	if len(texts) == 0 {
 		return [][]float32{}, nil
 	}
 	if model == "" {
 		return nil, fmt.Errorf("model name is required")
 	}
+
 	var apiKey string
 	if e.cfg.GetAPIKey != nil {
 		apiKey = e.cfg.GetAPIKey()
@@ -115,27 +124,25 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 		if e.cfg.ErrMissingAPIKey != nil {
 			return nil, e.cfg.ErrMissingAPIKey
 		}
-		return nil, fmt.Errorf("API key is not configured for OpenAI")
+		return nil, fmt.Errorf("API key is not configured for HuggingFace")
 	}
-	baseURL := DefaultAPIBaseURL
+
+	var configuredBaseURL string
 	if e.cfg.GetBaseURL != nil {
-		if configured := strings.TrimSpace(e.cfg.GetBaseURL()); configured != "" {
-			baseURL = configured
-		}
+		configuredBaseURL = e.cfg.GetBaseURL()
 	}
-	endpoint, err := embeddingsEndpoint(baseURL)
+	endpoint, err := featureExtractionEndpoint(configuredBaseURL, model)
 	if err != nil {
 		return nil, err
 	}
 
 	jsonData, err := json.Marshal(base.JSONFieldsWithOptions(map[string]any{
-		"model":           model,
-		"input":           texts,
-		"encoding_format": "base64",
+		"inputs": texts,
 	}, opts))
 	if err != nil {
 		return nil, fmt.Errorf("unexpected marshal request error: %w", err)
 	}
+
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
@@ -161,10 +168,9 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 		var parseErr error
 		if err := json.Unmarshal(body, &errResp); err != nil {
 			parseErr = err
-		} else if errResp.Error.Message != "" {
-			message = base.SanitizeErrorText(errResp.Error.Message, apiKey)
+		} else if errResp.Error != "" {
+			message = base.SanitizeErrorText(errResp.Error, apiKey)
 		}
-
 		logFields := []zap.Field{zap.Int("status", resp.StatusCode)}
 		if message != "" {
 			logFields = append(logFields, zap.String("message", message))
@@ -172,43 +178,34 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 		if parseErr != nil {
 			logFields = append(logFields, zap.String("parse_error", base.SanitizeErrorText(parseErr.Error(), apiKey)))
 		}
-		logutil.BgLogger().Error("OpenAI API request failed",
-			logFields...,
-		)
+		logutil.BgLogger().Error("HuggingFace API request failed", logFields...)
+
 		if resp.StatusCode == http.StatusUnauthorized {
 			if e.cfg.ErrUnauthorized != nil {
 				return nil, e.cfg.ErrUnauthorized
 			}
-			return nil, fmt.Errorf("OpenAI returns status unauthorized, check API key")
+			return nil, fmt.Errorf("HuggingFace returns status unauthorized, check API key")
 		}
-		if message == "" {
-			message = http.StatusText(resp.StatusCode)
+
+		if resp.StatusCode == http.StatusNotFound {
+			return nil, fmt.Errorf("HuggingFace model '%s' does not exist or is not available", model)
 		}
-		return nil, fmt.Errorf("OpenAI: status code %d, message: %s", resp.StatusCode, message)
+
+		if message != "" {
+			return nil, fmt.Errorf("HuggingFace: %s", message)
+		}
+
+		return nil, fmt.Errorf("HuggingFace: status code %d", resp.StatusCode)
 	}
 
-	var respObj Response
-	if err := json.Unmarshal(body, &respObj); err != nil {
+	var embeddings Response
+	if err := json.Unmarshal(body, &embeddings); err != nil {
 		return nil, fmt.Errorf("unexpected unmarshal response error: %w", err)
 	}
-	if len(respObj.Data) != len(texts) {
-		return nil, fmt.Errorf("response data length %d does not match input texts length %d", len(respObj.Data), len(texts))
+
+	if len(embeddings) != len(texts) {
+		return nil, fmt.Errorf("response data length %d does not match input texts length %d", len(embeddings), len(texts))
 	}
-	embeddings := make([][]float32, len(respObj.Data))
-	for _, item := range respObj.Data {
-		if item.Index < 0 || item.Index >= len(texts) {
-			return nil, fmt.Errorf("response data index %d is out of range [0, %d)", item.Index, len(texts))
-		}
-		if embeddings[item.Index] != nil {
-			return nil, fmt.Errorf("response data contains duplicate index %d", item.Index)
-		}
-		// item.Embedding is []byte. During JSON unmarshal,
-		// it is already base64 decoded by Golang from base64.
-		e, err := base.DecodeFloat32ArrayBytes(item.Embedding)
-		if err != nil {
-			return nil, fmt.Errorf("failed to decode embedding for index %d: %w", item.Index, err)
-		}
-		embeddings[item.Index] = e
-	}
+
 	return embeddings, nil
 }

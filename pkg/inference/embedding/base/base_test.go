@@ -16,6 +16,7 @@ package base
 
 import (
 	"encoding/base64"
+	"math"
 	"strings"
 	"testing"
 
@@ -63,6 +64,22 @@ func TestDecodeBase64EmbeddingF32(t *testing.T) {
 	_, err = DecodeFloat32ArrayBytes([]byte{0x00, 0x01, 0x02, 0x03, 0x04})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid embedding data")
+}
+
+func TestReadResponseBody(t *testing.T) {
+	body, err := ReadResponseBody(strings.NewReader(strings.Repeat("x", 64)), 64)
+	require.NoError(t, err)
+	require.Len(t, body, 64)
+
+	_, err = ReadResponseBody(strings.NewReader(strings.Repeat("x", 65)), 64)
+	require.EqualError(t, err, "response body exceeds maximum size of 64 bytes")
+
+	body, err = ReadResponseBody(strings.NewReader("x"), math.MaxInt64)
+	require.NoError(t, err)
+	require.Equal(t, []byte("x"), body)
+
+	_, err = ReadResponseBody(strings.NewReader(""), -1)
+	require.EqualError(t, err, "maximum response body size must not be negative")
 }
 
 func TestJSONFieldsWithOptions(t *testing.T) {

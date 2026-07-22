@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"maps"
 	"math"
 	"regexp"
@@ -28,9 +29,34 @@ import (
 const (
 	// DefaultHTTPClientTimeout bounds embedding provider requests when the caller context is not cancelled.
 	DefaultHTTPClientTimeout = 30 * time.Second
+	// DefaultMaxResponseBodyBytes bounds memory used to read an embedding provider response.
+	DefaultMaxResponseBodyBytes int64 = 32 << 20
 
 	maxSanitizedErrorTextBytes = 4096
 )
+
+// ReadResponseBody reads an embedding provider response up to maxBytes and
+// reports an error if the response contains more data.
+func ReadResponseBody(reader io.Reader, maxBytes int64) ([]byte, error) {
+	if maxBytes < 0 {
+		return nil, fmt.Errorf("maximum response body size must not be negative")
+	}
+
+	// Read one extra byte to distinguish a response at the limit from one over
+	// the limit. Avoid overflowing when callers intentionally use MaxInt64.
+	readLimit := maxBytes
+	if readLimit < math.MaxInt64 {
+		readLimit++
+	}
+	body, err := io.ReadAll(io.LimitReader(reader, readLimit))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(body)) > maxBytes {
+		return nil, fmt.Errorf("response body exceeds maximum size of %d bytes", maxBytes)
+	}
+	return body, nil
+}
 
 var (
 	sensitiveJSONFieldPattern = regexp.MustCompile(`(?i)("(?:authorization|api[_-]?key|token|access[_-]?token|credentials)"\s*:\s*")([^"]*)(")`)

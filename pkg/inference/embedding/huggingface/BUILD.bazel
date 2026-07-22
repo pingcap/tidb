@@ -1,0 +1,29 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "huggingface",
+    srcs = [
+        "huggingface.go",
+        "protocol.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/inference/embedding/huggingface",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/inference/embedding/base",
+        "//pkg/util/logutil",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "huggingface_test",
+    timeout = "short",
+    srcs = ["huggingface_test.go"],
+    embed = [":huggingface"],
+    flaky = True,
+    shard_count = 14,
+    deps = [
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+    ],
+)

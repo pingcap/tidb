@@ -272,10 +272,6 @@ func TestOpenAIEmbedderHTTPClientTimeout(t *testing.T) {
 }
 
 func TestOpenAIEmbedderResponseBodyLimit(t *testing.T) {
-	body, err := readResponseBody(strings.NewReader(strings.Repeat("x", 64)), 64)
-	require.NoError(t, err)
-	require.Len(t, body, 64)
-
 	for _, status := range []int{http.StatusOK, http.StatusBadRequest} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

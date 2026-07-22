@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package openai
+package jina
 
 import (
 	"bytes"
@@ -29,13 +29,13 @@ import (
 )
 
 const (
-	// DefaultAPIBaseURL is the default base URL (without the /embeddings suffix) for OpenAI embeddings API.
-	DefaultAPIBaseURL = "https://api.openai.com/v1"
-	// DefaultMaxResponseBodyBytes bounds memory used to read an OpenAI-compatible response.
+	// DefaultAPIBaseURL is the default endpoint URL for the Jina AI embeddings API.
+	DefaultAPIBaseURL = "https://api.jina.ai/v1/embeddings"
+	// DefaultMaxResponseBodyBytes bounds memory used to read a Jina AI response.
 	DefaultMaxResponseBodyBytes int64 = base.DefaultMaxResponseBodyBytes
 )
 
-// Embedder is for OpenAI embeddings.
+// Embedder is for JinaAI embeddings.
 type Embedder struct {
 	client http.Client
 	cfg    EmbedderConfig
@@ -43,25 +43,21 @@ type Embedder struct {
 
 var _ base.Embedder = (*Embedder)(nil)
 
-// EmbedderConfig holds the configuration for OpenAIEmbedder.
+// EmbedderConfig holds the configuration for JinaEmbedder.
 type EmbedderConfig struct {
 	GetAPIKey func() string
-	// GetBaseURL returns an OpenAI-compatible API base URL. A trailing
-	// /embeddings path is optional and is normalized by the embedder.
-	GetBaseURL func() string
-	// ErrMissingAPIKey optionally overrides the default missing-key error so
-	// callers can include deployment-specific configuration guidance.
-	ErrMissingAPIKey error
-	// ErrUnauthorized optionally overrides the default unauthorized error so
-	// callers can include deployment-specific configuration guidance.
-	ErrUnauthorized error
+	// GetBaseURL returns the complete Jina AI embeddings endpoint. An empty
+	// value uses DefaultAPIBaseURL.
+	GetBaseURL       func() string
+	ErrMissingAPIKey error // The error to return when API key is missing
+	ErrUnauthorized  error // The error to return when API key is invalid
 	// MaxResponseBodyBytes limits both successful and error response bodies.
 	// Non-positive values use DefaultMaxResponseBodyBytes.
 	MaxResponseBodyBytes int64
 }
 
-// NewOpenAIEmbedder creates a new OpenAIEmbedder instance with the provided configuration.
-func NewOpenAIEmbedder(cfg EmbedderConfig) *Embedder {
+// NewJinaEmbedder creates a new JinaEmbedder instance with the provided configuration.
+func NewJinaEmbedder(cfg EmbedderConfig) *Embedder {
 	if cfg.MaxResponseBodyBytes <= 0 {
 		cfg.MaxResponseBodyBytes = DefaultMaxResponseBodyBytes
 	}
@@ -71,36 +67,25 @@ func NewOpenAIEmbedder(cfg EmbedderConfig) *Embedder {
 	}
 }
 
-// embeddingsEndpoint resolves an OpenAI-compatible base URL to the embeddings endpoint.
-// The OpenAI API defines the endpoint as POST /v1/embeddings:
-// https://platform.openai.com/docs/api-reference/embeddings/create
-// For compatibility with existing callers, baseURL may already end in /embeddings.
-func embeddingsEndpoint(baseURL string) (string, error) {
-	u, err := url.Parse(baseURL)
+func embeddingsEndpoint(configured string) (string, error) {
+	endpoint := strings.TrimSpace(configured)
+	if endpoint == "" {
+		endpoint = DefaultAPIBaseURL
+	}
+	u, err := url.Parse(endpoint)
 	if err != nil {
-		return "", fmt.Errorf("invalid OpenAI API base URL: %w", err)
+		return "", fmt.Errorf("invalid Jina AI API base URL: %w", err)
 	}
-	if u.Scheme == "" || u.Host == "" {
-		return "", fmt.Errorf("invalid OpenAI API base URL: absolute URL is required")
+	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return "", fmt.Errorf("invalid Jina AI API base URL: absolute HTTP(S) URL is required")
 	}
-
-	escapedPath := strings.TrimRight(u.EscapedPath(), "/")
-	if !strings.HasSuffix(escapedPath, "/embeddings") {
-		escapedPath += "/embeddings"
-	}
-	path, err := url.PathUnescape(escapedPath)
-	if err != nil {
-		return "", fmt.Errorf("invalid OpenAI API base URL path: %w", err)
-	}
-	u.Path = path
-	u.RawPath = escapedPath
 	return u.String(), nil
 }
 
 // CreateEmbeddings creates embeddings for the given texts using the specified model.
 // CreateEmbeddings implements base.Embedder
 func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []string, opts map[string]any) ([][]float32, error) {
-	// ref: https://platform.openai.com/docs/api-reference/embeddings/create
+	// ref: https://jina.ai/embeddings/
 	if len(texts) == 0 {
 		return [][]float32{}, nil
 	}
@@ -115,23 +100,21 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 		if e.cfg.ErrMissingAPIKey != nil {
 			return nil, e.cfg.ErrMissingAPIKey
 		}
-		return nil, fmt.Errorf("API key is not configured for OpenAI")
+		return nil, fmt.Errorf("API key is not configured for JinaAI")
 	}
-	baseURL := DefaultAPIBaseURL
+	var configuredBaseURL string
 	if e.cfg.GetBaseURL != nil {
-		if configured := strings.TrimSpace(e.cfg.GetBaseURL()); configured != "" {
-			baseURL = configured
-		}
+		configuredBaseURL = e.cfg.GetBaseURL()
 	}
-	endpoint, err := embeddingsEndpoint(baseURL)
+	endpoint, err := embeddingsEndpoint(configuredBaseURL)
 	if err != nil {
 		return nil, err
 	}
 
 	jsonData, err := json.Marshal(base.JSONFieldsWithOptions(map[string]any{
-		"model":           model,
-		"input":           texts,
-		"encoding_format": "base64",
+		"model":          model,
+		"input":          texts,
+		"embedding_type": "base64",
 	}, opts))
 	if err != nil {
 		return nil, fmt.Errorf("unexpected marshal request error: %w", err)
@@ -161,10 +144,9 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 		var parseErr error
 		if err := json.Unmarshal(body, &errResp); err != nil {
 			parseErr = err
-		} else if errResp.Error.Message != "" {
-			message = base.SanitizeErrorText(errResp.Error.Message, apiKey)
+		} else if errResp.Detail != "" {
+			message = base.SanitizeErrorText(errResp.Detail, apiKey)
 		}
-
 		logFields := []zap.Field{zap.Int("status", resp.StatusCode)}
 		if message != "" {
 			logFields = append(logFields, zap.String("message", message))
@@ -172,19 +154,17 @@ func (e *Embedder) CreateEmbeddings(ctx context.Context, model string, texts []s
 		if parseErr != nil {
 			logFields = append(logFields, zap.String("parse_error", base.SanitizeErrorText(parseErr.Error(), apiKey)))
 		}
-		logutil.BgLogger().Error("OpenAI API request failed",
-			logFields...,
-		)
+		logutil.BgLogger().Error("JinaAI API request failed", logFields...)
 		if resp.StatusCode == http.StatusUnauthorized {
 			if e.cfg.ErrUnauthorized != nil {
 				return nil, e.cfg.ErrUnauthorized
 			}
-			return nil, fmt.Errorf("OpenAI returns status unauthorized, check API key")
+			return nil, fmt.Errorf("JinaAI returns status unauthorized, check API key")
 		}
-		if message == "" {
-			message = http.StatusText(resp.StatusCode)
+		if message != "" {
+			return nil, fmt.Errorf("JinaAI: %s", message)
 		}
-		return nil, fmt.Errorf("OpenAI: status code %d, message: %s", resp.StatusCode, message)
+		return nil, fmt.Errorf("JinaAI: status code %d", resp.StatusCode)
 	}
 
 	var respObj Response

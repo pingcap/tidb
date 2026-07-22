@@ -1,0 +1,29 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "jina",
+    srcs = [
+        "jina.go",
+        "protocol.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/inference/embedding/jina",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/inference/embedding/base",
+        "//pkg/util/logutil",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "jina_test",
+    timeout = "short",
+    srcs = ["jina_test.go"],
+    embed = [":jina"],
+    flaky = True,
+    shard_count = 10,
+    deps = [
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+    ],
+)
