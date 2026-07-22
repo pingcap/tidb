@@ -661,6 +661,30 @@ pub struct StatsOptionsSpec {
     pub options: Option<String>,
 }
 
+/// Online DDL algorithm selected by `ALTER TABLE ... ALGORITHM`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AlterTableAlgorithm {
+    /// Let TiDB select the algorithm.
+    Default,
+    /// Copy the table.
+    Copy,
+    /// Perform the change in place.
+    Inplace,
+    /// Metadata-only instant change.
+    Instant,
+}
+
+impl AlterTableAlgorithm {
+    fn sql(self) -> &'static str {
+        match self {
+            Self::Default => "DEFAULT",
+            Self::Copy => "COPY",
+            Self::Inplace => "INPLACE",
+            Self::Instant => "INSTANT",
+        }
+    }
+}
+
 impl StatsOptionsSpec {
     fn restore_into(&self, out: &mut String) {
         out.push_str("STATS_OPTIONS=");
@@ -958,6 +982,34 @@ impl AlterTableAction {
             }
             AlterTableAction::SetAttributes(spec) => spec.restore_into(out),
             AlterTableAction::SetStatsOptions(spec) => spec.restore_into(out),
+            AlterTableAction::Algorithm(algorithm) => {
+                out.push_str("ALGORITHM = ");
+                out.push_str(algorithm.sql());
+            }
+            AlterTableAction::ReadOnly(read_only) => {
+                out.push_str(if *read_only {
+                    "READ ONLY"
+                } else {
+                    "READ WRITE"
+                });
+            }
+            AlterTableAction::Force => {
+                out.push_str("FORCE /* AlterTableForce is not supported */ ")
+            }
+            AlterTableAction::SecondaryLoad(load) => {
+                out.push_str(if *load {
+                    "SECONDARY_LOAD"
+                } else {
+                    "SECONDARY_UNLOAD"
+                });
+            }
+            AlterTableAction::TablespaceImport(import) => {
+                out.push_str(if *import {
+                    "IMPORT TABLESPACE"
+                } else {
+                    "DISCARD TABLESPACE"
+                });
+            }
             AlterTableAction::WithValidation => out.push_str("WITH VALIDATION"),
             AlterTableAction::WithoutValidation => out.push_str("WITHOUT VALIDATION"),
             AlterTableAction::AddIndexConstraint(constraint) => {
@@ -1068,6 +1120,16 @@ pub enum AlterTableAction {
     /// `STATS_OPTIONS [=] {DEFAULT | 'options'}` with its distinct Go AST
     /// node and visitor boundary.
     SetStatsOptions(StatsOptionsSpec),
+    /// `ALGORITHM [=] {DEFAULT|COPY|INPLACE|INSTANT}`.
+    Algorithm(AlterTableAlgorithm),
+    /// `READ ONLY` when true and `READ WRITE` when false.
+    ReadOnly(bool),
+    /// Bare `FORCE`; FORCE auto-ID options remain typed table options.
+    Force,
+    /// `SECONDARY_LOAD` when true and `SECONDARY_UNLOAD` when false.
+    SecondaryLoad(bool),
+    /// Table `IMPORT TABLESPACE` when true and `DISCARD TABLESPACE` when false.
+    TablespaceImport(bool),
     /// `WITH VALIDATION`. Go represents this as a standalone ALTER TABLE
     /// specification that may be ordered with other specifications; the
     /// seed executor keeps it typed but rejects it before transaction
@@ -1620,6 +1682,15 @@ impl crate::Visitable for StatsOptionsSpec {
     }
 }
 
+impl crate::Visitable for AlterTableAlgorithm {
+    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
+        if visitor.enter(self) {
+            return visitor.leave(self);
+        }
+        visitor.leave(self)
+    }
+}
+
 impl crate::Visitable for AlterTableAction {
     fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
         if visitor.enter(self) {
@@ -1665,6 +1736,18 @@ impl crate::Visitable for AlterTableAction {
                 }
                 let _ = field_0;
             }
+            Self::Algorithm(field_0) => {
+                if !crate::Visitable::accept(field_0, visitor) {
+                    return false;
+                }
+                let _ = field_0;
+            }
+            Self::ReadOnly(field_0)
+            | Self::SecondaryLoad(field_0)
+            | Self::TablespaceImport(field_0) => {
+                let _ = field_0;
+            }
+            Self::Force => {}
             Self::WithValidation => {}
             Self::WithoutValidation => {}
             Self::SetKeysEnabled(field_0) => {

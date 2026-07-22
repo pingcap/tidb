@@ -113,6 +113,123 @@ fn test_alter_table_option_restore() {
 }
 
 #[test]
+fn alter_table_statement_options_transcreate_the_complete_go_action_family() {
+    for (sql, expected) in [
+        (
+            "ALTER TABLE t ALGORITHM = DEFAULT",
+            "ALTER TABLE `t` ALGORITHM = DEFAULT",
+        ),
+        (
+            "ALTER TABLE t ALGORITHM COPY",
+            "ALTER TABLE `t` ALGORITHM = COPY",
+        ),
+        (
+            "ALTER TABLE t ALGORITHM = INPLACE",
+            "ALTER TABLE `t` ALGORITHM = INPLACE",
+        ),
+        (
+            "ALTER TABLE t ALGORITHM INSTANT",
+            "ALTER TABLE `t` ALGORITHM = INSTANT",
+        ),
+        ("ALTER TABLE t READ ONLY", "ALTER TABLE `t` READ ONLY"),
+        ("ALTER TABLE t READ WRITE", "ALTER TABLE `t` READ WRITE"),
+        (
+            "ALTER TABLE t FORCE",
+            "ALTER TABLE `t` FORCE /* AlterTableForce is not supported */ ",
+        ),
+        (
+            "ALTER TABLE d_n.t_n SECONDARY_LOAD",
+            "ALTER TABLE `d_n`.`t_n` SECONDARY_LOAD",
+        ),
+        (
+            "ALTER TABLE d_n.t_n SECONDARY_UNLOAD",
+            "ALTER TABLE `d_n`.`t_n` SECONDARY_UNLOAD",
+        ),
+        (
+            "ALTER TABLE t IMPORT TABLESPACE",
+            "ALTER TABLE `t` IMPORT TABLESPACE",
+        ),
+        (
+            "ALTER TABLE db.t DISCARD TABLESPACE",
+            "ALTER TABLE `db`.`t` DISCARD TABLESPACE",
+        ),
+        (
+            "ALTER TABLE t DISCARD TABLESPACE",
+            "ALTER TABLE `t` DISCARD TABLESPACE",
+        ),
+        (
+            "ALTER TABLE db.t IMPORT TABLESPACE",
+            "ALTER TABLE `db`.`t` IMPORT TABLESPACE",
+        ),
+        (
+            "ALTER TABLE t LOCK = DEFAULT, SECONDARY_LOAD",
+            "ALTER TABLE `t` LOCK = DEFAULT, SECONDARY_LOAD",
+        ),
+        (
+            "ALTER TABLE t ADD COLUMN c INT, ALGORITHM = INSTANT",
+            "ALTER TABLE `t` ADD COLUMN `c` INT, ALGORITHM = INSTANT",
+        ),
+        (
+            "ALTER TABLE d_n.t_n ALGORITHM = DEFAULT , MAX_ROWS 10, UNION ( d_n.t_n ) , ROW_FORMAT REDUNDANT, STATS_PERSISTENT = DEFAULT",
+            "ALTER TABLE `d_n`.`t_n` ALGORITHM = DEFAULT, MAX_ROWS = 10, UNION = (`d_n`.`t_n`), ROW_FORMAT = REDUNDANT, STATS_PERSISTENT = DEFAULT /* TableOptionStatsPersistent is not supported */ ",
+        ),
+        (
+            "ALTER TABLE `hello-world@dev`.`User` ADD COLUMN `name` mediumtext CHARACTER SET UTF8MB4 COLLATE UTF8MB4_UNICODE_CI NOT NULL , ALGORITHM = DEFAULT",
+            "ALTER TABLE `hello-world@dev`.`User` ADD COLUMN `name` MEDIUMTEXT CHARACTER SET UTF8MB4 COLLATE utf8mb4_unicode_ci NOT NULL, ALGORITHM = DEFAULT",
+        ),
+        (
+            "ALTER TABLE `hello-world@dev`.`User` ADD COLUMN `name` mediumtext CHARACTER SET UTF8MB4 COLLATE UTF8MB4_UNICODE_CI NOT NULL , ALGORITHM = INPLACE",
+            "ALTER TABLE `hello-world@dev`.`User` ADD COLUMN `name` MEDIUMTEXT CHARACTER SET UTF8MB4 COLLATE utf8mb4_unicode_ci NOT NULL, ALGORITHM = INPLACE",
+        ),
+        (
+            "ALTER TABLE `hello-world@dev`.`User` ADD COLUMN `name` mediumtext CHARACTER SET UTF8MB4 COLLATE UTF8MB4_UNICODE_CI NOT NULL , ALGORITHM = COPY",
+            "ALTER TABLE `hello-world@dev`.`User` ADD COLUMN `name` MEDIUMTEXT CHARACTER SET UTF8MB4 COLLATE utf8mb4_unicode_ci NOT NULL, ALGORITHM = COPY",
+        ),
+        (
+            "ALTER TABLE `hello-world@dev`.`User` ADD COLUMN `name` MEDIUMTEXT CHARACTER SET UTF8MB4 COLLATE UTF8MB4_UNICODE_CI NOT NULL, ALGORITHM = INSTANT",
+            "ALTER TABLE `hello-world@dev`.`User` ADD COLUMN `name` MEDIUMTEXT CHARACTER SET UTF8MB4 COLLATE utf8mb4_unicode_ci NOT NULL, ALGORITHM = INSTANT",
+        ),
+        (
+            "ALTER TABLE t_n LOCK = DEFAULT , SECONDARY_LOAD",
+            "ALTER TABLE `t_n` LOCK = DEFAULT, SECONDARY_LOAD",
+        ),
+        (
+            "ALTER TABLE d_n.t_n ALGORITHM = DEFAULT , SECONDARY_LOAD",
+            "ALTER TABLE `d_n`.`t_n` ALGORITHM = DEFAULT, SECONDARY_LOAD",
+        ),
+        (
+            "ALTER TABLE d_n.t_n ALGORITHM = DEFAULT , SECONDARY_UNLOAD",
+            "ALTER TABLE `d_n`.`t_n` ALGORITHM = DEFAULT, SECONDARY_UNLOAD",
+        ),
+    ] {
+        assert_eq!(r(sql), expected, "source SQL: {sql}");
+    }
+
+    for sql in [
+        "ALTER TABLE t ALGORITHM",
+        "ALTER TABLE t ALGORITHM = ident",
+        "ALTER TABLE t READ",
+        "ALTER TABLE t READ ident",
+        "ALTER TABLE t IMPORT",
+        "ALTER TABLE t DISCARD ident",
+    ] {
+        assert!(parse(sql).is_err(), "Go rejects: {sql}");
+    }
+
+    let statement = parse("ALTER TABLE t ALGORITHM=INPLACE").unwrap();
+    let Stmt::Ddl(ddl) = statement else {
+        panic!("expected DDL statement");
+    };
+    let DdlStmt::AlterTable(alter) = ddl.into_inner() else {
+        panic!("expected ALTER TABLE statement");
+    };
+    assert_eq!(
+        only_alter_action(&alter),
+        AlterTableAction::Algorithm(tidb_ast::AlterTableAlgorithm::Inplace)
+    );
+}
+
+#[test]
 fn test_alter_table_with_special_comment_restore() {
     let flags = tidb_ast::RestoreFlags::DEFAULT | tidb_ast::RestoreFlags::TIDB_SPECIAL_COMMENT;
     for (sql, expected) in [

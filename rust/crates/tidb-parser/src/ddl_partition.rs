@@ -652,7 +652,7 @@ pub(super) fn parse_alter_partition_action(
         };
         return Ok(Some(AlterPartitionAction::Check { all, names }));
     }
-    if parser.is_kw("IMPORT") {
+    if parser.is_kw("IMPORT") && parser.is_kw_at(1, "PARTITION") {
         parser.bump();
         parser.expect_kw("PARTITION")?;
         let all = parser.is_kw("ALL");
@@ -665,7 +665,7 @@ pub(super) fn parse_alter_partition_action(
         parser.expect_kw("TABLESPACE")?;
         return Ok(Some(AlterPartitionAction::ImportTablespace { all, names }));
     }
-    if parser.is_kw("DISCARD") {
+    if parser.is_kw("DISCARD") && parser.is_kw_at(1, "PARTITION") {
         parser.bump();
         parser.expect_kw("PARTITION")?;
         let all = parser.is_kw("ALL");

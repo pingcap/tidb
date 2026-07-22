@@ -15,13 +15,13 @@
 //! `DROP TABLE` statements. Called from `crate::Parser::parse_statement`.
 
 use tidb_ast::{
-    AdminStmt, AlterOrderItem, AlterPartitionAction, AlterTableAction, AlterTableStmt,
-    AnalyzeTableStmt, ColumnOption, ColumnPosition, CompactReplicaKind, CreateTableTemporary,
-    CreateViewStmt, DatabaseOption, DropIndexAlgorithm, DropIndexLock, DropIndexStmt,
-    DropTableStmt, DropTemporary, FlashbackDatabaseStmt, IndexConstraintKind, OptimizeTableStmt,
-    QueryStmt, RenameTableStmt, RepairTableStmt, SetOprTermBody, SplitOption, SplitRegionStmt,
-    SplitTarget, Stmt, TableLock, TableLockType, TableOption, UserSpec, ViewAlgorithm,
-    ViewCheckOption, ViewSecurity,
+    AdminStmt, AlterOrderItem, AlterPartitionAction, AlterTableAction, AlterTableAlgorithm,
+    AlterTableStmt, AnalyzeTableStmt, ColumnOption, ColumnPosition, CompactReplicaKind,
+    CreateTableTemporary, CreateViewStmt, DatabaseOption, DropIndexAlgorithm, DropIndexLock,
+    DropIndexStmt, DropTableStmt, DropTemporary, FlashbackDatabaseStmt, IndexConstraintKind,
+    OptimizeTableStmt, QueryStmt, RenameTableStmt, RepairTableStmt, SetOprTermBody, SplitOption,
+    SplitRegionStmt, SplitTarget, Stmt, TableLock, TableLockType, TableOption, UserSpec,
+    ViewAlgorithm, ViewCheckOption, ViewSecurity,
 };
 use tidb_lexer::{canonical_charset, canonical_collation, TokenKind};
 
@@ -909,6 +909,44 @@ impl Parser {
             action
         } else if let Some(action) = alter::auto_id_options::parse(self)? {
             action
+        } else if self.is_kw("FORCE") {
+            self.bump();
+            AlterTableAction::Force
+        } else if self.is_kw("ALGORITHM") {
+            self.bump();
+            self.accept_optional_equals();
+            let token = self.peek().clone();
+            if !matches!(token.kind, TokenKind::Ident | TokenKind::Keyword) {
+                return Err(self.err_here("expected ALTER TABLE algorithm"));
+            }
+            self.bump();
+            let algorithm = match token.text.to_ascii_uppercase().as_str() {
+                "DEFAULT" => AlterTableAlgorithm::Default,
+                "COPY" => AlterTableAlgorithm::Copy,
+                "INPLACE" => AlterTableAlgorithm::Inplace,
+                "INSTANT" => AlterTableAlgorithm::Instant,
+                _ => return Err(self.err_here("unknown ALTER TABLE algorithm")),
+            };
+            AlterTableAction::Algorithm(algorithm)
+        } else if self.is_kw("READ") {
+            self.bump();
+            let read_only = if self.is_kw("ONLY") {
+                self.bump();
+                true
+            } else {
+                self.expect_kw("WRITE")?;
+                false
+            };
+            AlterTableAction::ReadOnly(read_only)
+        } else if self.is_kw("SECONDARY_LOAD") || self.is_kw("SECONDARY_UNLOAD") {
+            let load = self.is_kw("SECONDARY_LOAD");
+            self.bump();
+            AlterTableAction::SecondaryLoad(load)
+        } else if self.is_kw("IMPORT") || self.is_kw("DISCARD") {
+            let import = self.is_kw("IMPORT");
+            self.bump();
+            self.expect_kw("TABLESPACE")?;
+            AlterTableAction::TablespaceImport(import)
         } else if self.is_kw("CONVERT") {
             AlterTableAction::ConvertCharacterSet {
                 charset: self.parse_alter_convert_character_set()?,
@@ -1436,14 +1474,57 @@ impl Parser {
     }
 
     fn starts_alter_table_generic_option(&self) -> bool {
-        self.is_kw("ENGINE")
-            || self.is_kw("ROW_FORMAT")
-            || self.is_kw("KEY_BLOCK_SIZE")
-            || self.is_kw("INSERT_METHOD")
-            || self.is_kw("PRE_SPLIT_REGIONS")
-            || self.is_kw("UNION")
-            || self.is_kw("PLACEMENT")
-            || self.peek().text.eq_ignore_ascii_case("COMMENT")
+        let keyword = self.peek().text.to_ascii_uppercase();
+        matches!(
+            keyword.as_str(),
+            "ENGINE"
+                | "COMMENT"
+                | "ROW_FORMAT"
+                | "KEY_BLOCK_SIZE"
+                | "COMPRESSION"
+                | "STORAGE"
+                | "TABLESPACE"
+                | "SHARD_ROW_ID_BITS"
+                | "PRE_SPLIT_REGIONS"
+                | "AUTO_ID_CACHE"
+                | "MAX_ROWS"
+                | "MIN_ROWS"
+                | "AVG_ROW_LENGTH"
+                | "CHECKSUM"
+                | "DELAY_KEY_WRITE"
+                | "STATS_PERSISTENT"
+                | "PACK_KEYS"
+                | "AUTO_RANDOM_BASE"
+                | "NODEGROUP"
+                | "AUTOEXTEND_SIZE"
+                | "PAGE_CHECKSUM"
+                | "PAGE_COMPRESSED"
+                | "PAGE_COMPRESSION_LEVEL"
+                | "TRANSACTIONAL"
+                | "IETF_QUOTES"
+                | "SEQUENCE"
+                | "UNION"
+                | "CONNECTION"
+                | "PASSWORD"
+                | "STATS_AUTO_RECALC"
+                | "STATS_SAMPLE_PAGES"
+                | "INSERT_METHOD"
+                | "SECONDARY_ENGINE"
+                | "SECONDARY_ENGINE_ATTRIBUTE"
+                | "ENGINE_ATTRIBUTE"
+                | "TABLE_CHECKSUM"
+                | "STATS_BUCKETS"
+                | "STATS_TOPN"
+                | "STATS_SAMPLE_RATE"
+                | "STATS_COL_CHOICE"
+                | "STATS_COL_LIST"
+                | "TTL"
+                | "TTL_ENABLE"
+                | "TTL_JOB_INTERVAL"
+                | "AFFINITY"
+                | "PLACEMENT"
+                | "ENCRYPTION"
+        ) || matches!(keyword.as_str(), "DATA" | "INDEX") && self.is_kw_at(1, "DIRECTORY")
     }
 
     /// Parses Go's `CONVERT TO { CHARACTER SET | CHARSET | CHAR SET }
