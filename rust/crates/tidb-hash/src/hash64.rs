@@ -31,8 +31,11 @@ pub trait IHasher {
     fn hash_float64(&mut self, value: f64);
     /// Hashes a Go rune represented as a signed 32-bit code point.
     fn hash_rune(&mut self, value: i32);
-    /// Hashes a UTF-8 string.
-    fn hash_string(&mut self, value: &str);
+    /// Hashes the arbitrary bytes of a Go string.
+    ///
+    /// Go strings are not required to contain valid UTF-8, so `&[u8]` is the
+    /// only lossless Rust representation of the source method's input domain.
+    fn hash_string(&mut self, value: &[u8]);
     /// Hashes one byte.
     fn hash_byte(&mut self, value: u8);
     /// Hashes a byte slice.

@@ -47,8 +47,8 @@ impl IHasher for RecordingHasher {
         self.calls.push(format!("rune:{value}"));
     }
 
-    fn hash_string(&mut self, value: &str) {
-        self.calls.push(format!("string:{value}"));
+    fn hash_string(&mut self, value: &[u8]) {
+        self.calls.push(format!("string:{value:?}"));
     }
 
     fn hash_byte(&mut self, value: u8) {
@@ -78,7 +78,7 @@ fn interface_exposes_every_go_method_with_source_widths() {
     hasher.hash_uint64(u64::MAX);
     hasher.hash_float64(1.5);
     hasher.hash_rune('界' as i32);
-    hasher.hash_string("TiDB");
+    hasher.hash_string(b"TiDB");
     hasher.hash_byte(0xff);
     hasher.hash_bytes(&[0, 1, 2]);
 
@@ -86,4 +86,11 @@ fn interface_exposes_every_go_method_with_source_widths() {
     assert_eq!(hasher.sum64(), 0);
     hasher.reset();
     assert!(hasher.calls.is_empty());
+}
+
+#[test]
+fn go_string_input_preserves_invalid_utf8_bytes() {
+    let mut hasher = RecordingHasher::default();
+    hasher.hash_string(&[b'a', 0xff, b'b']);
+    assert_eq!(hasher.calls, ["string:[97, 255, 98]"]);
 }

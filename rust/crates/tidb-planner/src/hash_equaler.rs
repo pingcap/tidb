@@ -129,10 +129,30 @@ impl IHasher for HashEqualer {
         self.absorb(value as u64);
     }
 
-    fn hash_string(&mut self, value: &str) {
+    fn hash_string(&mut self, value: &[u8]) {
         IHasher::hash_int(self, value.len() as i64);
-        for character in value.chars() {
-            IHasher::hash_rune(self, character as i32);
+        let mut remaining = value;
+        while !remaining.is_empty() {
+            match std::str::from_utf8(remaining) {
+                Ok(valid) => {
+                    for character in valid.chars() {
+                        IHasher::hash_rune(self, character as i32);
+                    }
+                    break;
+                }
+                Err(error) => {
+                    let valid_length = error.valid_up_to();
+                    let valid = std::str::from_utf8(&remaining[..valid_length])
+                        .expect("Utf8Error::valid_up_to always ends at a character boundary");
+                    for character in valid.chars() {
+                        IHasher::hash_rune(self, character as i32);
+                    }
+                    // Go's range over a malformed string yields RuneError and
+                    // advances one byte for every invalid encoding.
+                    IHasher::hash_rune(self, '\u{fffd}' as i32);
+                    remaining = &remaining[valid_length + 1..];
+                }
+            }
         }
     }
 
@@ -183,7 +203,7 @@ impl Hasher for HashEqualer {
     }
 
     fn hash_string(&mut self, value: &str) {
-        IHasher::hash_string(self, value);
+        IHasher::hash_string(self, value.as_bytes());
     }
 
     fn hash_byte(&mut self, value: u8) {
