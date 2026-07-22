@@ -70,9 +70,10 @@ type TiDBStatement struct {
 	numParams   int
 	boundParams [][]byte
 	// boundParamsBytes tracks the total bytes accumulated by COM_STMT_SEND_LONG_DATA for this statement.
-	boundParamsBytes uint64
-	paramsType       []byte
-	ctx              *TiDBContext
+	boundParamsBytes    uint64
+	boundParamsTooLarge bool
+	paramsType          []byte
+	ctx                 *TiDBContext
 	// this result set should have been closed before stored here. Only the `rowIterator` are used here. This field is
 	// not moved out to reuse the logic inside functions `writeResultSet...`
 	// TODO: move the `fetchedRows` into the statement, and remove the `ResultSet` from statement.
@@ -114,10 +115,21 @@ func (ts *TiDBStatement) AppendParam(paramID int, data []byte) error {
 		ts.boundParams[paramID] = []byte{}
 	} else {
 		if ts.boundParamsBytes+uint64(len(data)) > ts.ctx.GetSessionVars().MaxAllowedPacket {
-			return servererr.ErrNetPacketTooLarge
+			// MySQL reports the packet-too-large error on the following EXECUTE, not on SEND_LONG_DATA.
+			// Stop appending more bytes once the limit is exceeded so the statement cannot grow unboundedly.
+			ts.boundParamsTooLarge = true
+			return nil
 		}
 		ts.boundParams[paramID] = append(ts.boundParams[paramID], data...)
 		ts.boundParamsBytes += uint64(len(data))
+	}
+	return nil
+}
+
+// CheckLongDataSize implements PreparedStatement CheckLongDataSize method.
+func (ts *TiDBStatement) CheckLongDataSize() error {
+	if ts.boundParamsTooLarge || ts.boundParamsBytes > ts.ctx.GetSessionVars().MaxAllowedPacket {
+		return servererr.ErrNetPacketTooLarge
 	}
 	return nil
 }
@@ -160,6 +172,7 @@ func (ts *TiDBStatement) Reset() error {
 		ts.boundParams[i] = nil
 	}
 	ts.boundParamsBytes = 0
+	ts.boundParamsTooLarge = false
 	ts.hasActiveCursor = false
 
 	resultset.ReportCursorRUV2Delta(ts.rs, 0)

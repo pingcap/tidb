@@ -598,9 +598,19 @@ func TestStmtSendLongDataMaxAllowedPacket(t *testing.T) {
 	require.NoError(t, dispatchSendLongData(c, stmt.ID(), 1, bytes.Repeat([]byte{'b'}, 512)))
 
 	err = dispatchSendLongData(c, stmt.ID(), 0, []byte{'c'})
-	require.ErrorIs(t, err, servererr.ErrNetPacketTooLarge)
+	require.NoError(t, err)
 	require.Len(t, stmt.BoundParams()[0], 512)
 	require.Len(t, stmt.BoundParams()[1], 512)
+
+	err = c.Dispatch(context.Background(), append(
+		binary.LittleEndian.AppendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
+		0x0, 0x1, 0x0, 0x0, 0x0,
+		0x0, 0x0,
+	))
+	require.ErrorIs(t, err, servererr.ErrNetPacketTooLarge)
+	require.Nil(t, stmt.BoundParams()[0])
+	require.Nil(t, stmt.BoundParams()[1])
+	require.NoError(t, stmt.CheckLongDataSize())
 }
 
 func TestCursorFetchSendLongData(t *testing.T) {
