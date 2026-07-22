@@ -433,8 +433,6 @@ func (sm *Manager) drainCleanupTaskBatches() {
 //
 //	tasks with global sort should clean up tmp files stored on S3.
 func (sm *Manager) processCleanupTaskBatch() int {
-	// Keep this failpoint name stable for RealTiKV tests that synchronize with cleanup.
-	failpoint.InjectCall("doCleanupTask")
 	tasks, err := sm.taskMgr.GetCleanupTasks(sm.ctx)
 	if err != nil {
 		sm.logger.Warn("get cleanup tasks failed", zap.Error(err))
@@ -443,6 +441,7 @@ func (sm *Manager) processCleanupTaskBatch() int {
 	if len(tasks) == 0 {
 		return 0
 	}
+	failpoint.InjectCall("processCleanupTaskBatch")
 	sm.logger.Info("cleanup routine start")
 	transferredTaskCount, err := sm.cleanupFinishedTasks(tasks)
 	if err != nil {

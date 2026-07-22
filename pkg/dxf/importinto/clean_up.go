@@ -138,9 +138,6 @@ func sendMeterOnCleanUpInParallel(ctx context.Context, tasks []*proto.Task, send
 	if len(tasks) == 0 {
 		return nil
 	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
 
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
 	taskCh := make(chan *proto.Task)
