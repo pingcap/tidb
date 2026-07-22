@@ -1667,8 +1667,16 @@ impl UnaryOp {
         }
     }
 
+    /// Returns the canonical AST restore spelling for this unary adapter.
+    pub fn canonical_literal(self) -> &'static str {
+        match self.opcode() {
+            Op::Not => "NOT ",
+            op => op.literal(),
+        }
+    }
+
     fn restore(self) -> &'static str {
-        self.opcode().literal()
+        self.canonical_literal()
     }
 }
 

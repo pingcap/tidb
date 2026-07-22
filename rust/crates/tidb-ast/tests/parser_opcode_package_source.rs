@@ -157,4 +157,6 @@ fn expression_operator_adapters_delegate_to_the_opcode_authority() {
     for (adapter, op) in binary {
         assert_eq!(adapter.opcode(), op);
     }
+
+    assert_eq!(UnaryOp::NotKeyword.canonical_literal(), "NOT ");
 }
