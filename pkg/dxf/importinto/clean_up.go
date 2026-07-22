@@ -171,13 +171,8 @@ func cleanUpExternalFiles(ctx context.Context, fileGroup cleanUpFileGroup) error
 		return err
 	}
 	defer store.Close()
-<<<<<<< HEAD
-	if err = external.CleanUpFiles(ctx, store, strconv.Itoa(int(task.ID))); err != nil {
-		logger.Warn("failed to clean up files of task", zap.Error(err))
-=======
-	if err = globalsort.CleanUpFiles(ctx, store, fileGroup.nonPartitionedDirs...); err != nil {
+	if err = external.CleanUpFiles(ctx, store, fileGroup.nonPartitionedDirs...); err != nil {
 		logger.Warn("failed to clean up files of tasks", zap.Error(err))
->>>>>>> 130cbb64478 (dxf: batch cleanup for IMPORT INTO tasks (#69901))
 		return err
 	}
 	return nil
