@@ -1,0 +1,16 @@
+schema = "2"
+slice = "server-internal-dump-package"
+status = "ready"
+targets = ["tidb-protocol"]
+rings = ["unassigned"]
+consumer = "MySQL result, prepared-statement, column-metadata, and connection packets share one source-faithful authority for length-encoded values, little-endian integers, binary TIME, and binary DATE/DATETIME/TIMESTAMP values."
+test_target = "dump_package_source"
+go_packages = ["pkg/server/internal/dump"]
+module_packages = []
+depends_on = []
+rust_paths = [
+  "rust/crates/tidb-protocol/src/result.rs",
+  "rust/crates/tidb-protocol/src/prepared_statement.rs",
+  "rust/crates/tidb-protocol/src/lib.rs",
+  "rust/crates/tidb-protocol/tests/dump_package_source.rs",
+]

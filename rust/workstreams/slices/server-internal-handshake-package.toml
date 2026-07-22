@@ -1,0 +1,15 @@
+schema = "2"
+slice = "server-internal-handshake-package"
+status = "ready"
+targets = ["tidb-server"]
+rings = ["unassigned"]
+consumer = "The server handshake parser, authentication negotiation, compression selection, and connection lifecycle share one Rust-native HandshakeResponse41 value carrying every field from the complete Go package."
+test_target = "handshake_response_package_source"
+go_packages = ["pkg/server/internal/handshake"]
+module_packages = []
+depends_on = []
+rust_paths = [
+  "rust/crates/tidb-server/src/handshake.rs",
+  "rust/crates/tidb-server/src/lib.rs",
+  "rust/crates/tidb-server/tests/handshake_response_package_source.rs",
+]
