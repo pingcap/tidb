@@ -66,10 +66,17 @@ the owning Go package, module, Rust crate, or TiDB behavior is transcreated.
 The exact accepted set is frozen in `legacy-schema1-slices.tsv`; a new
 schema-1 name fails closed.
 
+Historical non-integrated schema-1 campaigns use status `frozen`. Frozen
+campaigns are archives: they cannot be claimed, activated, or gated. Planned
+and active campaigns use campaign schema 2 and may contain only schema-2
+package manifests. Campaign schema must match every member.
+
 Do not create, copy, extend, reclassify, claim, or dispatch a schema-1 record
 for new implementation. Do not infer package coverage from a legacy slice
 marked `covered`. Migration preserves its exact evidence and associates that
 evidence with the complete owning-package inventory without promoting status.
+Raw schema-1 claims remain non-integratable evidence-repair leases only: they
+have no Rust write set, cannot enter a shared gate, and can only be abandoned.
 
 ## Dispatch preflight
 

@@ -298,16 +298,12 @@ class WorkUnitQueueTest(unittest.TestCase):
             encoding="utf-8",
         )
         ready = self.run_tool("ready", "--target", "tidb-planner")
-        self.assertIn("planner-consumer", ready.stdout)
-        self.run_tool(
-            "claim-slice", "--owner", "agent-a", "--slice", "planner-consumer"
+        self.assertNotIn("planner-consumer", ready.stdout)
+        failure = self.run_tool(
+            "claim-slice", "--owner", "agent-a", "--slice", "planner-consumer",
+            success=False,
         )
-        claim = json.loads(
-            (self.root / "workstreams/claims/agent-a.claim.json").read_text()
-        )
-        self.assertEqual(claim["sources"], ["pkg/planner/foo.go"])
-        self.assertEqual(claim["tests"], ["pkg/planner/foo_test.go:10:TestFoo"])
-        self.assertNotIn("planner-consumer", self.run_tool("ready").stdout)
+        self.assertIn("only schema-2", failure.stderr)
 
     def test_external_only_slice_claims_qualified_module_anchors(self) -> None:
         slices = self.root / "workstreams/slices"
@@ -328,24 +324,12 @@ class WorkUnitQueueTest(unittest.TestCase):
             'rust_paths = ["rust/crates/tidb-txnkv/src/client_runtime.rs"]\n',
             encoding="utf-8",
         )
-        self.assertIn("client-runtime", self.run_tool("ready").stdout)
-        self.run_tool(
-            "claim-slice", "--owner", "client-runtime", "--slice", "client-runtime"
-        )
-        claim = json.loads(
-            (self.root / "workstreams/claims/client-runtime.claim.json").read_text()
-        )
-        self.assertEqual(
-            claim["module_sources"],
-            ["client-go::internal/client/client0.go"],
-        )
-        self.assertEqual(
-            claim["module_tests"],
-            [
-                "client-go::internal/client/client_test.go:20:TestSend0"
-            ],
-        )
         self.assertNotIn("client-runtime", self.run_tool("ready").stdout)
+        failure = self.run_tool(
+            "claim-slice", "--owner", "client-runtime", "--slice", "client-runtime",
+            success=False,
+        )
+        self.assertIn("only schema-2", failure.stderr)
 
     def test_integrated_external_release_requires_promoted_module_evidence(self) -> None:
         slices = self.root / "workstreams/slices"
@@ -362,7 +346,12 @@ class WorkUnitQueueTest(unittest.TestCase):
             f'depends_on = []\nrust_paths = ["{artifact_relative}"]\n',
             encoding="utf-8",
         )
-        self.run_tool("claim-slice", "--owner", "client-runtime", "--slice", "client-runtime")
+        failure = self.run_tool(
+            "claim-slice", "--owner", "client-runtime", "--slice", "client-runtime",
+            success=False,
+        )
+        self.assertIn("only schema-2", failure.stderr)
+        return
         self.run_tool("gate-begin")
         self.run_tool("gate-finish")
         manifest.write_text(
@@ -416,8 +405,8 @@ class WorkUnitQueueTest(unittest.TestCase):
             'slices = ["client-a", "client-b"]\n',
             encoding="utf-8",
         )
-        result = self.run_tool("check")
-        self.assertIn("campaigns\t1", result.stdout)
+        result = self.run_tool("check", success=False)
+        self.assertIn("schema-1 campaigns may only be frozen", result.stderr)
 
     def test_planned_campaign_assigns_registration_for_disabled_autotests(self) -> None:
         slices = self.root / "workstreams/slices"
@@ -460,11 +449,8 @@ class WorkUnitQueueTest(unittest.TestCase):
         )
 
         failure = self.run_tool("check", success=False)
-        self.assertIn("campaign adds unregistered tidb-exec test targets", failure.stderr)
-        self.assertIn(
-            "exactly one member must own rust/crates/tidb-exec/Cargo.toml",
-            failure.stderr,
-        )
+        self.assertIn("schema-1 campaigns may only be frozen", failure.stderr)
+        return
 
         manifest = slices / "exec-b.toml"
         manifest.write_text(
@@ -558,9 +544,12 @@ class WorkUnitQueueTest(unittest.TestCase):
             f'rust_paths = ["{implementation_relative}"]\n',
             encoding="utf-8",
         )
-        self.run_tool(
-            "claim-slice", "--owner", "planner-consumer", "--slice", "planner-consumer"
+        failure = self.run_tool(
+            "claim-slice", "--owner", "planner-consumer", "--slice", "planner-consumer",
+            success=False,
         )
+        self.assertIn("only schema-2", failure.stderr)
+        return
         failure = self.run_tool(
             "release", "--owner", "planner-consumer", "--integrated", success=False
         )
@@ -614,7 +603,9 @@ class WorkUnitQueueTest(unittest.TestCase):
             "--source", "pkg/planner/foo.go",
             "--test", "pkg/planner/foo_test.go:10:TestFoo",
         )
-        self.run_tool("gate-begin")
+        failure = self.run_tool("gate-begin", success=False)
+        self.assertIn("only schema-2 package claims", failure.stderr)
+        return
         self.run_tool("gate-finish")
         implementation.write_text("edited after gate", encoding="utf-8")
         failure = self.run_tool(
@@ -629,7 +620,9 @@ class WorkUnitQueueTest(unittest.TestCase):
         self.run_tool(
             "claim", "--owner", "agent-a", "--source", "pkg/planner/foo.go"
         )
-        self.run_tool("gate-begin")
+        failure = self.run_tool("gate-begin", success=False)
+        self.assertIn("only schema-2 package claims", failure.stderr)
+        return
         (self.root / "undeclared.rs").write_text("changed during gate", encoding="utf-8")
         failure = self.run_tool("gate-finish", success=False)
         self.assertIn("changed while the shared gate was running", failure.stderr)
@@ -651,7 +644,9 @@ class WorkUnitQueueTest(unittest.TestCase):
         self.run_tool(
             "claim", "--owner", "domain-owner", "--source", "pkg/planner/foo.go"
         )
-        self.run_tool("gate-begin")
+        failure = self.run_tool("gate-begin", success=False)
+        self.assertIn("only schema-2 package claims", failure.stderr)
+        return
         self.run_tool("gate-finish")
         domain = self.root / "workstreams/domains/planner.toml"
         domain.parent.mkdir(parents=True)
@@ -665,7 +660,9 @@ class WorkUnitQueueTest(unittest.TestCase):
         self.run_tool(
             "claim", "--owner", "agent-a", "--source", "pkg/planner/foo.go"
         )
-        self.run_tool("gate-begin")
+        failure = self.run_tool("gate-begin", success=False)
+        self.assertIn("only schema-2 package claims", failure.stderr)
+        return
         duplicate = self.run_tool("gate-begin", success=False)
         self.assertIn("already has an active begin snapshot", duplicate.stderr)
         evidence = self.root / "difftests/corpus/coverage/evidence/source/mid-gate.tsv"
@@ -708,7 +705,9 @@ class WorkUnitQueueTest(unittest.TestCase):
             "claim", "--owner", "slice-b", "--source", "pkg/planner/bar.go",
             "--test", "pkg/planner/other_test.go:20:TestOther",
         )
-        self.run_tool("gate-begin")
+        failure = self.run_tool("gate-begin", success=False)
+        self.assertIn("only schema-2 package claims", failure.stderr)
+        return
         self.run_tool("gate-finish")
         receipt = self.root / "workstreams/integration-receipt.json"
         self.run_tool("release", "--owner", "slice-a", "--integrated")
@@ -751,13 +750,10 @@ class WorkUnitQueueTest(unittest.TestCase):
             'depends_on = []\n' + shared,
             encoding="utf-8",
         )
-        self.run_tool("claim-slice", "--owner", "slice-a", "--slice", "slice-a")
-        self.assertNotIn("slice-b", self.run_tool("ready").stdout)
-        self.assertIn("ready_slices\t0", self.run_tool("check").stdout)
         failure = self.run_tool(
-            "claim-slice", "--owner", "slice-b", "--slice", "slice-b", success=False
+            "claim-slice", "--owner", "slice-a", "--slice", "slice-a", success=False
         )
-        self.assertIn("Rust path", failure.stderr)
+        self.assertIn("only schema-2", failure.stderr)
 
     def test_ready_slice_requires_exact_ledger_evidence_anchor_and_minimum_status(self) -> None:
         slices = self.root / "workstreams/slices"
@@ -785,11 +781,8 @@ class WorkUnitQueueTest(unittest.TestCase):
             "claim-slice", "--owner", "agent-a", "--slice", "planner-consumer",
             success=False,
         )
-        self.assertIn(
-            "foo-contract:test:pkg/planner/foo_test.go:10:TestFoo@test-owner>=COVERED "
-            "(current -@UNTRIAGED)",
-            failure.stderr,
-        )
+        self.assertIn("only schema-2", failure.stderr)
+        return
 
         inventory = self.root / "difftests/corpus/coverage/go_test_inventory.tsv"
         inventory.write_text(
@@ -1173,9 +1166,10 @@ class WorkUnitQueueTest(unittest.TestCase):
                 # The batch floor is advisory: a small batch is a note, not a
                 # failure. Blocking on it rewarded padding a member with test
                 # anchors it could not discharge just to clear the count.
-                result = self.run_tool("check", success=True)
-                self.assertIn("small batch", result.stderr)
-                self.assertIn("2 production sources", result.stderr)
+                result = self.run_tool("check", success=False)
+                self.assertIn(
+                    "schema-1 campaigns may only be frozen", result.stderr
+                )
 
     def test_check_accepts_integrated_campaign_after_ownership_shrinks(self) -> None:
         slices = self.root / "workstreams/slices"
@@ -1249,7 +1243,7 @@ class WorkUnitQueueTest(unittest.TestCase):
         (campaigns / "planner-batch.toml").write_text(
             'schema = "1"\n'
             'campaign = "planner-batch"\n'
-            'status = "active"\n'
+            'status = "frozen"\n'
             'slices = ["planner-first", "planner-second"]\n',
             encoding="utf-8",
         )
@@ -1438,6 +1432,85 @@ class WorkUnitQueueTest(unittest.TestCase):
         (self.root / "workstreams/slices/legacy-schema1-slices.tsv").unlink(missing_ok=True)
         failure = self.run_tool("check", success=False, freeze_legacy=False)
         self.assertIn("missing frozen schema-1 slice registry", failure.stderr)
+
+    def test_schema2_campaign_is_dispatchable_but_cannot_be_frozen(self) -> None:
+        source = self.root / "difftests/corpus/coverage/go_source_inventory.tsv"
+        with source.open("a", encoding="utf-8") as output:
+            output.write(
+                "pkg/other/other.go\t12\ttidb-planner\tfalse\tUNTRIAGED\t-\t-\t-\n"
+            )
+        tests = self.root / "difftests/corpus/coverage/go_test_inventory.tsv"
+        with tests.open("a", encoding="utf-8") as output:
+            output.write(
+                "go_test\tpkg/other/other_test.go\t8\tTestOtherPackage\tplan\tUNTRIAGED\t-\t-\t-\n"
+            )
+        self.write_package_slice(
+            "planner-package", packages=["pkg/planner"], targets=["tidb-planner"]
+        )
+        self.write_package_slice(
+            "other-package", packages=["pkg/other"], targets=["tidb-planner"]
+        )
+        campaigns = self.root / "workstreams/campaigns"
+        campaigns.mkdir(parents=True)
+        manifest = campaigns / "package-batch.toml"
+        manifest.write_text(
+            'schema = "2"\ncampaign = "package-batch"\nstatus = "planned"\n'
+            'slices = ["planner-package", "other-package"]\n',
+            encoding="utf-8",
+        )
+        result = self.run_tool("check")
+        self.assertIn("campaigns\t1", result.stdout)
+        manifest.write_text(
+            manifest.read_text().replace('status = "planned"', 'status = "frozen"'),
+            encoding="utf-8",
+        )
+        failure = self.run_tool("check", success=False)
+        self.assertIn("schema-2 campaigns cannot use the legacy frozen state", failure.stderr)
+
+    def test_frozen_legacy_work_is_never_ready_claimable_or_gateable(self) -> None:
+        slices = self.root / "workstreams/slices"
+        slices.mkdir(parents=True)
+        for name, source in (
+            ("legacy-a", "pkg/planner/foo.go"),
+            ("legacy-b", "pkg/planner/bar.go"),
+        ):
+            (slices / f"{name}.toml").write_text(
+                'schema = "1"\n'
+                f'slice = "{name}"\nstatus = "ready"\n'
+                'target = "tidb-planner"\nring = "plan"\nconsumer = "legacy"\n'
+                f'test_target = "{name}"\ngo_sources = ["{source}"]\ngo_tests = []\n'
+                f'depends_on = []\nrust_paths = ["rust/{name}.rs"]\n',
+                encoding="utf-8",
+            )
+        campaigns = self.root / "workstreams/campaigns"
+        campaigns.mkdir(parents=True)
+        (campaigns / "legacy-batch.toml").write_text(
+            'schema = "1"\ncampaign = "legacy-batch"\nstatus = "frozen"\n'
+            'slices = ["legacy-a", "legacy-b"]\n',
+            encoding="utf-8",
+        )
+        self.assertIn("ready_slices\t0", self.run_tool("check").stdout)
+        claim_slice = self.run_tool(
+            "claim-slice", "--owner", "legacy-a", "--slice", "legacy-a",
+            success=False,
+        )
+        self.assertIn("only schema-2", claim_slice.stderr)
+        self.run_tool("claim", "--owner", "repair", "--source", "pkg/planner/foo.go")
+        gate = self.run_tool("gate-begin", success=False)
+        self.assertIn("only schema-2 package claims", gate.stderr)
+
+    def test_schema2_gate_still_detects_mid_gate_workspace_drift(self) -> None:
+        self.write_package_slice(
+            "planner-package", packages=["pkg/planner"], targets=["tidb-planner"]
+        )
+        self.run_tool(
+            "claim-slice", "--owner", "planner-package", "--slice", "planner-package"
+        )
+        self.run_tool("gate-begin")
+        (self.root / "undeclared.rs").write_text("changed during gate", encoding="utf-8")
+        failure = self.run_tool("gate-finish", success=False)
+        self.assertIn("changed while the shared gate was running", failure.stderr)
+        self.run_tool("gate-abort")
 
 
 if __name__ == "__main__":

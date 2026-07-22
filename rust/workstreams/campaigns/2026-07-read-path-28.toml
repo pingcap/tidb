@@ -1,6 +1,6 @@
 schema = "1"
 campaign = "2026-07-read-path-28"
-status = "planned"
+status = "frozen"
 slices = [
   "txnkv-real-transaction-rpc-runtime",
   "txnkv-real-optimistic-2pc-runtime",

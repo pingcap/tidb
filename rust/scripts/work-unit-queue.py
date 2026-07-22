@@ -52,7 +52,7 @@ SLICE_STATUSES = {"ready", "active", "partial", "covered", "blocked", "retired"}
 PACKAGE_SLICE_STATUSES = {"inventory", "ready", "active", "blocked", "covered"}
 EVIDENCE_MINIMUM_STATUSES = {"PARTIAL", "COVERED"}
 EVIDENCE_STATUS_RANK = {"UNTRIAGED": 0, "PARTIAL": 1, "COVERED": 2}
-CAMPAIGN_STATUSES = {"planned", "active", "integrated"}
+CAMPAIGN_STATUSES = {"planned", "active", "frozen", "integrated"}
 CAMPAIGN_MIN_SOURCE_COUNT = 9
 CAMPAIGN_MIN_TEST_COUNT = 50
 
@@ -741,8 +741,9 @@ def load_campaigns(
     for path in sorted(directory.glob("*.toml")):
         with path.open("rb") as source:
             record = tomllib.load(source)
-        if record.get("schema") != "1":
-            raise ValueError(f"{path}: expected campaign schema 1")
+        campaign_schema = record.get("schema")
+        if campaign_schema not in {"1", "2"}:
+            raise ValueError(f"{path}: expected campaign schema 1 or 2")
         name = record.get("campaign")
         status = record.get("status")
         members = record.get("slices")
@@ -763,6 +764,19 @@ def load_campaigns(
         unknown = sorted(set(members) - set(slices))
         if unknown:
             raise ValueError(f"{path}: unknown campaign slice {unknown[0]}")
+        member_schemas = {str(slices[member]["schema"]) for member in members}
+        if member_schemas != {str(campaign_schema)}:
+            raise ValueError(
+                f"{path}: campaign schema must match every member slice schema"
+            )
+        if campaign_schema == "1" and status not in {"frozen", "integrated"}:
+            raise ValueError(
+                f"{path}: schema-1 campaigns may only be frozen or historical integrated"
+            )
+        if campaign_schema == "2" and status == "frozen":
+            raise ValueError(
+                f"{path}: schema-2 campaigns cannot use the legacy frozen state"
+            )
         frozen = frozen_members.get(name)
         if status == "integrated":
             if frozen is None:
@@ -802,7 +816,7 @@ def load_campaigns(
                             f"{seen[value]} and {member}"
                         )
                     seen[value] = member
-        if status != "integrated":
+        if status in {"planned", "active"}:
             unregistered_targets: dict[str, set[str]] = {}
             for member in members:
                 slice_record = slices[member]
@@ -835,7 +849,7 @@ def load_campaigns(
         # anchors out of an integrated member without changing what its gate
         # validated; rewriting campaign membership to satisfy today's count
         # would instead falsify that history.
-        if status != "integrated":
+        if status in {"planned", "active"}:
             combined_source_count = len(seen_sources) + len(seen_module_sources)
             combined_test_count = len(seen_tests) + len(seen_module_tests)
             # The batch floor is advisory. It was a disjunction in the design
@@ -1140,15 +1154,6 @@ def validate_claims(root: Path) -> list[dict[str, object]]:
                         f"{seen_rust_paths[rust_path]} and {owner}"
                     )
                 seen_rust_paths[rust_path] = owner
-        elif slice_record is not None:
-            claim["_rust_paths"] = list(slice_record["rust_paths"])
-            for rust_path in claim["_rust_paths"]:
-                if rust_path in seen_rust_paths:
-                    raise ValueError(
-                        f"Rust path {rust_path} overlaps slice claims "
-                        f"{seen_rust_paths[rust_path]} and {owner}"
-                    )
-                seen_rust_paths[rust_path] = owner
         else:
             claim["_rust_paths"] = []
         claim["_sources"] = claimed_sources
@@ -1374,6 +1379,10 @@ def begin_integration(root: Path) -> None:
                 "integration gate already has an active begin snapshot; abort it first"
             )
         claims = validate_claims(root)
+        if any(claim["schema"] != 2 for claim in claims):
+            raise ValueError(
+                "integration gate accepts only schema-2 package claims"
+            )
         snapshot = gate_snapshot(root, claims)
         # A new integration window invalidates every older release receipt;
         # no claim may leave while the workspace is under test.
@@ -1390,6 +1399,10 @@ def finish_integration(root: Path) -> None:
             raise ValueError("integration gate has no active begin snapshot")
         before = load_integration_state(root, INTEGRATION_ATTEMPT)
         claims = validate_claims(root)
+        if any(claim["schema"] != 2 for claim in claims):
+            raise ValueError(
+                "integration gate accepts only schema-2 package claims"
+            )
         after = gate_snapshot(root, claims)
         if before != after:
             raise ValueError(
@@ -1513,7 +1526,9 @@ def claim(
                 f"schema-2 package claim for {owner} must exactly match its "
                 "expanded package inventory; use claim-slice"
             )
-        new_rust_paths = set(new_slice["rust_paths"]) if new_slice is not None else set()
+        new_rust_paths = (
+            set(package_slice["rust_paths"]) if package_slice is not None else set()
+        )
         for active in claims:
             if active["owner"] == owner:
                 raise ValueError(f"owner {owner} already has an active claim")
@@ -1598,6 +1613,10 @@ def release(root: Path, owner: str, integrated: bool, abandon: bool) -> None:
             current = next((item for item in claims if item["owner"] == owner), None)
             if current is None:
                 raise ValueError(f"owner {owner} has no active claim")
+            if current["schema"] != 2:
+                raise ValueError(
+                    "integrated release accepts only schema-2 package claims"
+                )
             record = load_slices(root).get(owner)
             if record is None:
                 raise ValueError(
@@ -1948,6 +1967,8 @@ def ready_slices(root: Path, target: str | None, ring: str | None) -> None:
         "test_target\tdepends_on"
     )
     for name, record in sorted(records.items()):
+        if record["schema"] != "2":
+            continue
         if not slice_is_ready(record, records):
             continue
         if target is not None and target not in record["rust_targets"]:
@@ -1980,7 +2001,11 @@ def claim_slice(root: Path, owner: str, slice_name: str) -> None:
     record = records.get(slice_name)
     if record is None:
         raise ValueError(f"unknown vertical slice {slice_name}")
-    if record["schema"] == "2" and owner != slice_name:
+    if record["schema"] != "2":
+        raise ValueError(
+            "claim-slice dispatch accepts only schema-2 package slices"
+        )
+    if owner != slice_name:
         raise ValueError(
             "schema-2 package slice claim owner must equal the checked slice name"
         )
@@ -2100,6 +2125,7 @@ def main() -> int:
             ready = sum(
                 1
                 for record in slices.values()
+                if record["schema"] == "2"
                 if slice_is_ready(record, slices)
                 and not (set(record["go_sources"]) & claimed_sources)
                 and not (set(record["go_tests"]) & claimed_tests)

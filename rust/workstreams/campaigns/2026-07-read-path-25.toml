@@ -1,6 +1,6 @@
 schema = "1"
 campaign = "2026-07-read-path-25"
-status = "planned"
+status = "frozen"
 slices = [
   "planner-configured-multi-relation-catalog-runtime",
   "planner-configured-relation-tree-binding-runtime",
