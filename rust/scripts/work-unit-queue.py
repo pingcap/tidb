@@ -28,7 +28,7 @@ import re
 import subprocess
 import sys
 import tomllib
-from typing import Iterator
+from typing import Iterable, Iterator
 
 
 RUST_ROOT = Path(
@@ -320,6 +320,37 @@ def _nearest_package(path: str, packages: set[str]) -> str | None:
             return candidate
         parent = parent.parent
     return None
+
+
+def _group_package_anchors(
+    paths: Iterable[str], packages: set[str]
+) -> dict[str, list[str]]:
+    """Groups inventory paths once instead of rescanning it for every package."""
+    grouped = {package: [] for package in packages}
+    for path in paths:
+        package = _nearest_package(path, packages)
+        if package is not None:
+            grouped[package].append(path)
+    for anchors in grouped.values():
+        anchors.sort()
+    return grouped
+
+
+def _group_go_inventory(
+    source_by_path: dict[str, dict[str, object]],
+    test_by_anchor: dict[str, dict[str, object]],
+) -> tuple[set[str], dict[str, list[str]], dict[str, list[str]]]:
+    """Returns one canonical package assignment for source and test anchors."""
+    packages = _go_package_directories(source_by_path, test_by_anchor)
+    sources = _group_package_anchors(source_by_path, packages)
+    tests = {package: [] for package in packages}
+    for anchor, row in test_by_anchor.items():
+        package = _nearest_package(str(row["path"]), packages)
+        if package is not None:
+            tests[package].append(anchor)
+    for anchors in tests.values():
+        anchors.sort()
+    return packages, sources, tests
 
 
 def _go_module_path(repo_root: Path) -> str:
@@ -1509,9 +1540,12 @@ def validate_transfers(root: Path) -> None:
                 raise ValueError(f"{path}: replacement artifact is missing: {artifact}")
 
 
-def validate_claims(root: Path) -> list[dict[str, object]]:
+def validate_claims(
+    root: Path, slices: dict[str, dict[str, object]] | None = None
+) -> list[dict[str, object]]:
     validate_transfers(root)
-    slices = load_slices(root)
+    if slices is None:
+        slices = load_slices(root)
     load_campaigns(root, slices)
     sources = {str(row["path"]) for row in load_source_rows(root)}
     tests = {test_key(row) for row in load_test_rows(root)}
@@ -2810,8 +2844,8 @@ def reopen_package(root: Path, owner: str) -> None:
 
 
 def queue(root: Path, target: str, ring: str, limit: int | None) -> None:
-    claims = validate_claims(root)
     slices = load_slices(root)
+    claims = validate_claims(root, slices)
     covered_packages = _covered_go_packages(slices)
     claimed_sources = {source for item in claims for source in item["_sources"]}
     claimed_tests = {test for item in claims for test in item["tests"]}
@@ -2821,7 +2855,9 @@ def queue(root: Path, target: str, ring: str, limit: int | None) -> None:
     support_rows = load_support_rows(root)
     source_by_path = {str(row["path"]): row for row in source_rows}
     test_by_anchor = {test_key(row): row for row in test_rows}
-    known_packages = _go_package_directories(source_by_path, test_by_anchor)
+    known_packages, sources_by_package, tests_by_package = _group_go_inventory(
+        source_by_path, test_by_anchor
+    )
     support_by_package = {
         package: sorted(
             anchor
@@ -2835,16 +2871,8 @@ def queue(root: Path, target: str, ring: str, limit: int | None) -> None:
     for package in packages:
         if package in covered_packages:
             continue
-        package_sources = sorted(
-            str(source["path"])
-            for source in source_rows
-            if _nearest_package(str(source["path"]), known_packages) == package
-        )
-        package_tests = sorted(
-            test_key(row)
-            for row in test_rows
-            if _nearest_package(str(row["path"]), known_packages) == package
-        )
+        package_sources = sources_by_package[package]
+        package_tests = tests_by_package[package]
         package_supports = support_by_package[package]
         package_source_rows = [source_by_path[path] for path in package_sources]
         package_targets = sorted(
@@ -2951,10 +2979,275 @@ def _covered_go_packages(
     }
 
 
+def _suggested_package_owner(package: str) -> str:
+    parts = package.split("/")
+    if parts[0] == "pkg":
+        parts = parts[1:]
+    stem = "-".join(parts)
+    stem = re.sub(r"[^a-z0-9.-]+", "-", stem.lower()).strip("-.")
+    if not stem:
+        raise ValueError(f"cannot derive package owner from {package!r}")
+    return f"{stem}-package"
+
+
+def _package_dependency_paths(
+    package_sources: list[str],
+    package_tests: list[str],
+    package_supports: list[str],
+    support_rows: dict[str, dict[str, str]],
+) -> list[str]:
+    paths = set(package_sources)
+    paths.update(
+        path
+        for anchor in package_tests
+        for path in [_test_source_path(anchor)]
+        if path.endswith(".go")
+    )
+    paths.update(
+        support_rows[anchor]["path"]
+        for anchor in package_supports
+        if support_rows[anchor]["path"].endswith(".go")
+    )
+    return sorted(paths)
+
+
+def package_frontier(
+    root: Path,
+    target: str | None,
+    ring: str | None,
+    limit: int | None,
+    include_blocked: bool,
+) -> None:
+    """Prints dependency-checked whole packages that can start next."""
+    slices = load_slices(root)
+    claims = validate_claims(root, slices)
+    source_rows = load_source_rows(root)
+    test_rows = load_test_rows(root)
+    support_rows = load_support_rows(root)
+    source_by_path = {str(row["path"]): row for row in source_rows}
+    test_by_anchor = {test_key(row): row for row in test_rows}
+    known_packages, sources_by_package, tests_by_package = _group_go_inventory(
+        source_by_path, test_by_anchor
+    )
+    supports_by_package = {
+        package: sorted(
+            anchor
+            for anchor, row in support_rows.items()
+            if row["package"] == package
+        )
+        for package in known_packages
+    }
+    package_owners = {
+        str(package): name
+        for name, record in slices.items()
+        if record["schema"] == "2"
+        for package in record["go_packages"]
+    }
+    claimed_packages = {
+        str(package)
+        for claim in claims
+        if claim["schema"] == 2
+        for package in slices[str(claim["owner"])]["go_packages"]
+    }
+    candidates = []
+    for package in sorted(known_packages):
+        if package in package_owners or package in claimed_packages:
+            continue
+        package_sources = sources_by_package[package]
+        package_tests = tests_by_package[package]
+        package_supports = supports_by_package[package]
+        targets = sorted({str(source_by_path[path]["target"]) for path in package_sources})
+        rings = sorted({str(test_by_anchor[anchor]["ring"]) for anchor in package_tests})
+        if not rings:
+            rings = ["unassigned"]
+        if target is not None and target not in targets:
+            continue
+        if ring is not None and ring not in rings:
+            continue
+        dependencies = internal_go_dependencies(
+            root,
+            _package_dependency_paths(
+                package_sources, package_tests, package_supports, support_rows
+            ),
+        ) - {package}
+        depends_on = []
+        blockers = []
+        for dependency in sorted(dependencies):
+            owner = package_owners.get(dependency)
+            if owner is None:
+                blockers.append(f"{dependency}:missing-manifest")
+            elif slices[owner]["status"] != "covered":
+                blockers.append(f"{dependency}:{owner}@{slices[owner]['status']}")
+            else:
+                depends_on.append(owner)
+        readiness = "BLOCKED" if blockers else "READY"
+        if blockers and not include_blocked:
+            continue
+        production_lines = sum(
+            int(source_by_path[path]["lines"]) for path in package_sources
+        )
+        score = production_lines + 100 * len(package_tests)
+        candidates.append(
+            (
+                readiness != "READY",
+                -score,
+                package,
+                _suggested_package_owner(package),
+                targets,
+                rings,
+                package_sources,
+                package_tests,
+                package_supports,
+                production_lines,
+                depends_on,
+                blockers,
+            )
+        )
+    candidates.sort()
+    print(
+        "readiness\tpackage\tsuggested_owner\ttargets\trings\t"
+        "production_source_count\tproduction_lines\toriginal_obligation_count\t"
+        "support_count\tdepends_on\tblockers"
+    )
+    for (
+        blocked,
+        _negative_score,
+        package,
+        owner,
+        targets,
+        rings,
+        package_sources,
+        package_tests,
+        package_supports,
+        production_lines,
+        depends_on,
+        blockers,
+    ) in candidates[:limit]:
+        print(
+            f"{'BLOCKED' if blocked else 'READY'}\t{package}\t{owner}\t"
+            f"{','.join(targets) if targets else '-'}\t{','.join(rings)}\t"
+            f"{len(package_sources)}\t{production_lines}\t{len(package_tests)}\t"
+            f"{len(package_supports)}\t"
+            f"{','.join(depends_on) if depends_on else '-'}\t"
+            f"{','.join(blockers) if blockers else '-'}"
+        )
+
+
+def start_package(
+    root: Path,
+    package: str,
+    owner: str | None,
+    targets: list[str],
+    rust_paths: list[str],
+    integration_paths: list[str],
+    consumer: str | None,
+    test_target: str | None,
+) -> None:
+    """Creates and claims one dependency-ready whole-package manifest."""
+    _, package = _normalized_package(package, qualified=False)
+    owner = owner or _suggested_package_owner(package)
+    if not OWNER_RE.fullmatch(owner):
+        raise ValueError("owner must use lowercase letters, digits, '.', or '-'")
+    slices = load_slices(root)
+    if validate_claims(root, slices):
+        raise ValueError(
+            "start-package is a single-worker transaction and requires no active claim"
+        )
+    for name, record in slices.items():
+        if package in record["go_packages"]:
+            raise ValueError(
+                f"Go package {package} already has canonical schema-2 manifest {name}"
+            )
+    source_rows = {str(row["path"]): row for row in load_source_rows(root)}
+    test_rows = {test_key(row): row for row in load_test_rows(root)}
+    support_rows = load_support_rows(root)
+    package_sources, package_tests, package_supports = expand_go_packages(
+        [package], source_rows, test_rows, support_rows
+    )
+    checked_targets = sorted({str(source_rows[path]["target"]) for path in package_sources})
+    targets = sorted(set(targets or checked_targets))
+    if not targets:
+        raise ValueError("test-only packages require at least one explicit --target")
+    rings = sorted({str(test_rows[anchor]["ring"]) for anchor in package_tests})
+    if not rings:
+        rings = ["unassigned"]
+    package_owners = {
+        str(go_package): name
+        for name, record in slices.items()
+        if record["schema"] == "2"
+        for go_package in record["go_packages"]
+    }
+    dependencies = internal_go_dependencies(
+        root,
+        _package_dependency_paths(
+            package_sources, package_tests, package_supports, support_rows
+        ),
+    ) - {package}
+    depends_on = []
+    for dependency in sorted(dependencies):
+        dependency_owner = package_owners.get(dependency)
+        if dependency_owner is None:
+            raise ValueError(
+                f"cannot start {package}: direct internal Go import {dependency} "
+                "has no canonical schema-2 package manifest"
+            )
+        dependency_status = slices[dependency_owner]["status"]
+        if dependency_status != "covered":
+            raise ValueError(
+                f"cannot start {package}: dependency {dependency_owner} is "
+                f"{dependency_status}, not covered"
+            )
+        depends_on.append(dependency_owner)
+    rust_paths = sorted(
+        {_normalized_repo_path(path, label="Rust path") for path in rust_paths}
+    )
+    if not rust_paths:
+        raise ValueError("start-package requires at least one --rust-path")
+    integration_paths = sorted(
+        {
+            _normalized_repo_path(path, label="integration path")
+            for path in integration_paths
+        }
+    )
+    consumer = consumer or (
+        f"Provides the complete Rust-native {package} contract; downstream "
+        "package completion is not credited here."
+    )
+    test_target = test_target or f"{owner.replace('-', '_')}_source"
+    manifest = root / SLICES_DIR / f"{owner}.toml"
+    if manifest.exists():
+        raise ValueError(f"package manifest already exists: {manifest}")
+    contents = (
+        'schema = "2"\n'
+        f"slice = {json.dumps(owner)}\n"
+        'status = "ready"\n'
+        f"targets = {json.dumps(targets)}\n"
+        f"rings = {json.dumps(rings)}\n"
+        f"consumer = {json.dumps(consumer)}\n"
+        f"test_target = {json.dumps(test_target)}\n"
+        f"go_packages = {json.dumps([package])}\n"
+        "module_packages = []\n"
+        f"depends_on = {json.dumps(depends_on)}\n"
+        f"rust_paths = {json.dumps(rust_paths, indent=2)}\n"
+        f"integration_paths = {json.dumps(integration_paths, indent=2)}\n"
+    )
+    atomic_write_bytes(manifest, contents.encode())
+    try:
+        load_slices(root)
+        claim_slice(root, owner, owner)
+    except (OSError, ValueError):
+        manifest.unlink(missing_ok=True)
+        raise
+    print(
+        f"package_start\t{owner}\t{package}\tsources={len(package_sources)}\t"
+        f"tests={len(package_tests)}\tsupports={len(package_supports)}"
+    )
+
+
 def package_inventory(root: Path, target: str | None, module: str | None) -> None:
     """Prints exact package-sized dispatch units from checked inventories."""
-    claims = validate_claims(root)
     slices = load_slices(root)
+    claims = validate_claims(root, slices)
     source_rows = load_source_rows(root)
     test_rows = load_test_rows(root)
     support_rows = load_support_rows(root)
@@ -2966,7 +3259,9 @@ def package_inventory(root: Path, target: str | None, module: str | None) -> Non
         covered_packages = _covered_go_packages(slices)
         source_by_path = {str(row["path"]): row for row in source_rows}
         test_by_anchor = {test_key(row): row for row in test_rows}
-        known_packages = _go_package_directories(source_by_path, test_by_anchor)
+        known_packages, sources_by_package, tests_by_package = _group_go_inventory(
+            source_by_path, test_by_anchor
+        )
         declared_targets: dict[str, set[str]] = {}
         for record in slices.values():
             if record["schema"] != "2":
@@ -2985,9 +3280,7 @@ def package_inventory(root: Path, target: str | None, module: str | None) -> Non
         }
         for package in sorted(known_packages):
             package_sources = [
-                row
-                for row in source_rows
-                if _nearest_package(str(row["path"]), known_packages) == package
+                source_by_path[path] for path in sources_by_package[package]
             ]
             source_targets = sorted(
                 {str(row["target"]) for row in package_sources}
@@ -2997,9 +3290,7 @@ def package_inventory(root: Path, target: str | None, module: str | None) -> Non
             if target is not None and target not in visible_targets:
                 continue
             package_tests = [
-                row
-                for row in test_rows
-                if _nearest_package(str(row["path"]), known_packages) == package
+                test_by_anchor[anchor] for anchor in tests_by_package[package]
             ]
             package_supports = support_by_package[package]
             source_anchors = {str(row["path"]) for row in package_sources}
@@ -3076,7 +3367,7 @@ def package_inventory(root: Path, target: str | None, module: str | None) -> Non
 
 def ready_slices(root: Path, target: str | None, ring: str | None) -> None:
     records = load_slices(root)
-    claims = validate_claims(root)
+    claims = validate_claims(root, records)
     claimed_sources = {source for item in claims for source in item["_sources"]}
     claimed_module_sources = {
         source for item in claims for source in item["_module_sources"]
@@ -3161,6 +3452,29 @@ def parser() -> argparse.ArgumentParser:
     package_filter = packages_command.add_mutually_exclusive_group()
     package_filter.add_argument("--target")
     package_filter.add_argument("--module")
+    frontier_command = subcommands.add_parser(
+        "frontier",
+        help="rank dependency-checked whole packages that can start next",
+    )
+    frontier_command.add_argument("--target")
+    frontier_command.add_argument("--ring")
+    frontier_command.add_argument("--limit", type=int)
+    frontier_command.add_argument(
+        "--include-blocked",
+        action="store_true",
+        help="also show packages whose direct internal imports are not covered",
+    )
+    start_command = subcommands.add_parser(
+        "start-package",
+        help="scaffold, validate, and claim one dependency-ready whole package",
+    )
+    start_command.add_argument("--package", required=True)
+    start_command.add_argument("--owner")
+    start_command.add_argument("--target", action="append", default=[])
+    start_command.add_argument("--rust-path", action="append", required=True)
+    start_command.add_argument("--integration-path", action="append", default=[])
+    start_command.add_argument("--consumer")
+    start_command.add_argument("--test-target")
     ready_command = subcommands.add_parser("ready")
     ready_command.add_argument("--target")
     ready_command.add_argument("--ring")
@@ -3209,6 +3523,27 @@ def main() -> int:
             queue(RUST_ROOT, arguments.target, arguments.ring, arguments.limit)
         elif arguments.command == "packages":
             package_inventory(RUST_ROOT, arguments.target, arguments.module)
+        elif arguments.command == "frontier":
+            if arguments.limit is not None and arguments.limit < 1:
+                raise ValueError("--limit must be positive")
+            package_frontier(
+                RUST_ROOT,
+                arguments.target,
+                arguments.ring,
+                arguments.limit,
+                arguments.include_blocked,
+            )
+        elif arguments.command == "start-package":
+            start_package(
+                RUST_ROOT,
+                arguments.package,
+                arguments.owner,
+                arguments.target,
+                arguments.rust_path,
+                arguments.integration_path,
+                arguments.consumer,
+                arguments.test_target,
+            )
         elif arguments.command == "ready":
             ready_slices(RUST_ROOT, arguments.target, arguments.ring)
         elif arguments.command == "claim-slice":
@@ -3240,7 +3575,7 @@ def main() -> int:
             load_module_test_rows(RUST_ROOT)
             slices = load_slices(RUST_ROOT)
             campaigns = load_campaigns(RUST_ROOT, slices)
-            claims = validate_claims(RUST_ROOT)
+            claims = validate_claims(RUST_ROOT, slices)
             claimed_sources = {source for item in claims for source in item["_sources"]}
             claimed_tests = {test for item in claims for test in item["tests"]}
             claimed_supports = {

@@ -35,10 +35,12 @@ umbrella; they are not independently promotable package claims.
    progress from either count.
 2. Read [`docs/architecture/workspace.md`](docs/architecture/workspace.md) for
    crate boundaries and protected seams.
-3. Read the owning Go package documentation, every production file, and its
-   complete test/support inventory.
-4. Read the checked package manifest and dependency-DAG record. If either is
-   missing or stale, the package is not claimable.
+3. Run `scripts/work-unit-queue.py frontier` to select from packages whose
+   direct internal imports already have covered receipts.
+4. Read the owning Go package documentation, every production file, and its
+   complete test/support inventory. Declare all stable Rust paths and shared
+   integration seams, then use `start-package` to generate, validate, and claim
+   the checked manifest in one operation.
 5. Read the relevant workstream README and
    [`docs/operations/validation.md`](docs/operations/validation.md).
 
@@ -65,7 +67,8 @@ subset of ledger rows is not package coverage.
 
 ## Dependency-first selection
 
-Build a DAG whose nodes are whole Go packages. Claim only:
+The `frontier` command derives a DAG whose nodes are whole Go packages. Claim
+only:
 
 - a single package whose package dependencies expose the required checked
   contracts; or
@@ -77,7 +80,7 @@ package has one claim, one frozen inventory, one implementation owner, one
 integration decision, and one receipt. No file, function, branch, Rust crate,
 or test subset is independently integrated as completed work.
 
-Order the ready frontier by:
+Order the derived frontier by:
 
 1. package inventory obligations closed;
 2. deployed consumer unblocked;
@@ -86,7 +89,8 @@ Order the ready frontier by:
 
 ## Ownership and worktrees
 
-Acquire the complete package claim before creating a worktree.
+Acquire the complete package claim with `start-package` before creating a
+worktree or changing behavior.
 Claims must reject overlap in upstream source, original test/support artifacts,
 and stable package-owned Rust paths. `rust_paths` are exclusive package leaves.
 `integration_paths` are existing shared crate seams changed serially with the
@@ -211,11 +215,13 @@ the whole package satisfies its receipt.
 
 For each package or inseparable frontier:
 
-1. Generate and audit complete package inventories.
-2. Freeze dependency contracts, stable Rust paths, integration seams, and the
-   shared Git base.
-3. Atomically claim every package; keep the current checkout when there is one
-   worker.
+1. Derive the dependency-ready package frontier and audit the selected complete
+   package inventory.
+2. Declare stable Rust paths and integration seams, then use `start-package` to
+   derive dependency contracts and create the validated manifest and claim at
+   the shared Git base, rolling the manifest back if validation or claiming
+   fails.
+3. Keep the current checkout when there is one worker.
 4. Translate and test packages in dependency order.
 5. Land seam changes in dependency order.
 6. Let package close regenerate the active claim's derived ledger rows and

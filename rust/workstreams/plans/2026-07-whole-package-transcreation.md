@@ -86,6 +86,18 @@ package receipts before its Rust code reaches the shared branch.
   discarded. Directory pruning preserved byte-for-byte digest results while
   reducing the gate digest from 12.363 to 0.272 seconds and the release digest
   from 12.130 to 0.208 seconds.
+- [x] (2026-07-22) Audited, repaired, fully gated, and directly receipted the
+  complete `pkg/parser/opcode` package. The Rust authority now preserves Go's
+  machine-width `int` domain and exact one-call byte-writer behavior rather
+  than narrowing those contracts to `i32` and `fmt::Write`. Stable status now
+  reports five covered schema-2 packages.
+- [x] (2026-07-22) Replaced manual next-package setup with a single-worker fast
+  path. `frontier` derives dependency-ready package candidates from exact Go
+  imports, and `start-package` derives inventory, rings, targets, dependencies,
+  manifest, and immutable claim in one rollback-on-failure command. One-pass
+  package grouping reduced the existing parser queue query from about 40
+  seconds to under 4 seconds; the dependency-checked frontier completes in
+  under 3 seconds.
 
 ## Surprises & Discoveries
 
@@ -175,6 +187,13 @@ package receipts before its Rust code reaches the shared branch.
   spent over 12 seconds walking them per call and a one-package close invoked
   workspace digests repeatedly; top-down pruning produces the identical digest
   in under 0.3 seconds.
+- Observation: the old queue ranked work before checking dependency closure and
+  recomputed nearest-package ownership for every package-row pair.
+  Evidence: after `pkg/parser/opcode` closed, it reported zero ready manifests;
+  a parser queue query made 15,842,190 `_nearest_package` calls and took about
+  40 seconds while still putting the dependency-blocked root parser package
+  first. One-pass grouping plus direct-import frontier filtering now returns
+  only the two actually startable parser packages in under 3 seconds.
 
 ## Decision Log
 
@@ -269,23 +288,32 @@ package receipts before its Rust code reaches the shared branch.
   them is pure scale-dependent overhead and can make the safety mechanism cost
   more as the cache becomes more useful.
   Date/Author: 2026-07-22 / Qiliu and Codex.
+- Decision: replace the multi-worker ready queue as the normal entrypoint with
+  a dependency-filtered `frontier` and a single-worker `start-package`
+  command.
+  Rationale: with one owner, pre-authored ready manifests and lease scheduling
+  create idle gaps without adding isolation. Candidate derivation, manifest
+  validation, and exact claiming should happen just in time, while receipts and
+  the close gate continue to protect correctness.
+  Date/Author: 2026-07-22 / Qiliu and Codex.
 
 ## Outcomes & Retrospective
 
 The whole-package workflow and atomic receipt lifecycle are implemented.
 `pkg/server/internal/handshake`, repaired `pkg/parser/format`,
-`pkg/parser/mysql`, and `pkg/parser/util` now have current content-bound
-receipts. The parser-format
+`pkg/parser/mysql`, `pkg/parser/util`, and `pkg/parser/opcode` now have current
+content-bound receipts. The parser-format
 repair executes the complete
 generated Go simple-case oracle through the public Rust restore context and
 adds byte and writer-boundary regressions; its receipt also records the real
 field-type consumer seam that the earlier manifest omitted.
 
-The immediate outcome is to reduce gate latency without weakening its
-attestation, then claim the dependency-ready `pkg/parser/opcode` package before
-any implementation commit. The single owner must declare stable leaves and
-every mutable integration seam, then close that package directly from its exact
-claim through the full gate and atomic receipt transaction.
+The immediate outcome is to start the next dependency-ready parser package
+through the new single-worker command. `frontier` currently identifies
+`pkg/parser/terror` and `pkg/parser/duration`; `pkg/parser/terror` is the larger
+and more connected next unit. The owner must still audit its complete Go
+contract and declare every stable Rust leaf and mutable integration seam before
+`start-package` creates the manifest and claim.
 
 Before that claim, the close loop was shortened at the mechanism layer:
 active-package ledger rows are regenerated under exact claim scope, independent
@@ -337,11 +365,12 @@ all Rust targets, production source count and lines, original obligation count,
 aggregate status, and active owner. It includes test-only packages and packages
 whose production rows are covered but tests remain open.
 
-Fourth, select each frontier from the checked package view. Prefer one package
-that is dependency-ready and advances the connected SQL-node path. Use a
-dependency-closed package group only when one package cannot close
-independently; never batch unrelated packages to satisfy a count. Every
-candidate receives a complete inventory/dependency audit before selection.
+Fourth, select each frontier with `work-unit-queue.py frontier`, which derives
+direct internal imports and reports only packages whose schema-2 prerequisites
+are covered. Start the selected package with `start-package`, which writes and
+validates its manifest and creates the exact claim in one single-worker
+operation. Use a dependency-closed package group only when one package cannot
+close independently; never batch unrelated packages to satisfy a count.
 
 Finally, transcreate each selected package directly from all Go production and
 test/support artifacts. A package that cannot close stays unintegrated and
@@ -357,13 +386,15 @@ Run governance checks from the repository root:
 
     python3 rust/scripts/test_work_unit_queue.py
     python3 rust/scripts/work-unit-queue.py check
-    python3 rust/scripts/work-unit-queue.py packages
+    python3 rust/scripts/work-unit-queue.py frontier --target <crate> --limit 20
     git diff --check
 
-Inspect a package manifest and atomically claim it:
+Declare the complete Rust write set, then scaffold and claim the package:
 
-    python3 rust/scripts/work-unit-queue.py claim-slice \
-      --owner <package-owner> --slice <package-owner>
+    python3 rust/scripts/work-unit-queue.py start-package \
+      --package <go-package> \
+      --rust-path rust/crates/<crate>/src/<stable-leaf>.rs \
+      --integration-path rust/crates/<crate>/src/lib.rs
 
 Work in the current checkout when there is one worker; a branch/worktree is an
 optional isolation mechanism, not part of package acceptance. Run focused

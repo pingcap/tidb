@@ -69,7 +69,7 @@ states are generated in [`STATUS.md`](STATUS.md). Neither source is evidence
 that any upstream Go package is completely transcreated unless a package
 receipt says so.
 
-Four leaf packages currently have schema-2 receipts under
+Five leaf packages currently have schema-2 receipts under
 [`workstreams/package-receipts/`](workstreams/package-receipts/):
 
 - `pkg/server/internal/handshake`, implemented in `tidb-server`. It closes only
@@ -89,6 +89,11 @@ Four leaf packages currently have schema-2 receipts under
   every original test/build obligation, arbitrary-byte Go string hashing with
   malformed UTF-8 rune iteration, MySQL escape behavior, and the declared
   parser/planner consumer seams.
+- `pkg/parser/opcode`, implemented in `tidb-ast`. Its receipt covers the
+  machine-width Go `int` operator domain, all 32 operator definitions, literal
+  and keyword classification, one-call byte-writer behavior including short
+  writes and ignored errors, restore-flag precedence, and every original
+  package test/build obligation.
 
 ## Whole-package gaps
 
@@ -114,13 +119,17 @@ generated ledgers and must not be converted into percentage progress.
 
 ## Package execution workflow
 
-1. Generate a package manifest from the authoritative Go tree. Freeze every
-   source, test, support, fixture, generated, and build-metadata obligation.
-2. Resolve the package dependency DAG. Claim one package or a dependency-closed
-   package group; never claim a partial file/function subset as a transcreation
-   unit.
-3. Declare the complete Rust write set, including shared integration seams,
-   before creating a worktree or changing behavior.
+1. Run `work-unit-queue.py frontier` to rank only dependency-ready whole
+   packages from the authoritative inventories and direct Go imports. Do not
+   select from the unfiltered package table.
+2. Run `work-unit-queue.py start-package` with the selected package and its
+   complete stable Rust paths and shared integration paths. This single-worker
+   command derives the exact source/test/support inventory, rings, targets,
+   and covered dependencies, writes the schema-2 manifest, validates it, and
+   creates the immutable claim before behavior changes.
+3. If the package is dependency-inseparable from another package, declare the
+   complete umbrella explicitly; never split a file/function subset or use an
+   unrelated batch to make work appear ready.
 4. Translate directly from the Go implementation and port the complete
    package test/support inventory. Rust-specific redesign is limited to
    runtime mechanisms that cannot be carried faithfully, such as GC pools,
@@ -151,15 +160,15 @@ dispatch template for new package work.
 
 ## Immediate migration steps
 
-1. Select the next larger dependency-closed frontier from the checked package
-   DAG. Prioritize packages that unblock the connected SQL transaction path;
-   do not optimize for easy package counts.
-2. Freeze every package claim before its first implementation commit. The
-   common `base_commit` and committed-diff guard must cover the full work, not
-   only a takeover snapshot.
-3. Declare exclusive stable `rust_paths` and serialized shared
-   `integration_paths` before creating package worktrees. A Go package may
-   span several Rust crates under one umbrella claim and receipt.
+1. Select the next larger dependency-ready package with
+   `work-unit-queue.py frontier`. Prioritize packages that unblock the connected
+   SQL transaction path; do not optimize for easy package counts.
+2. Declare exclusive stable `rust_paths` and serialized shared
+   `integration_paths`, then use `work-unit-queue.py start-package` to scaffold,
+   validate, and claim the complete package in one operation. The claim's
+   `base_commit` must precede every implementation commit.
+3. A Go package may span several Rust crates under one umbrella claim and
+   receipt; crate-local intermediate results are not independently complete.
 4. Transcreate the package through one owner. Treat any crate-local intermediate
    result as staging only; never promote it independently.
 5. Add exact source/test/support evidence only after the complete package

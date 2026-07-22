@@ -10,9 +10,9 @@ the source or obligation still has explicit unported behavior.
 ## Queue
 
 - Inventory packages: 0
-- Declared ready packages: 1
+- Declared ready packages: 0
 - Active packages: 0
-- Covered packages: 4
+- Covered packages: 5
 - Blocked packages: 1
 
 ## Package campaigns

@@ -223,10 +223,16 @@ evidence, and rollback remain unambiguous.
 
 For each package or dependency-closed frontier:
 
-1. Audit the complete Go source, test, support, generated, and build inventory.
-2. Define or correct the schema-2 manifest, dependency edges, Rust mapping, and
-   exact mutable write set.
-3. Claim the whole package before behavior-changing implementation work.
+1. Derive the dependency-ready frontier directly from the checked Go
+   inventories and direct internal imports. Do not maintain a speculative queue
+   of pre-authored package manifests for a single worker.
+2. Audit the selected package's complete Go source, test, support, generated,
+   and build inventory, then declare its Rust mapping and exact mutable write
+   set.
+3. Start the package through one rollback-on-failure command. It derives the
+   target/ring and covered dependency edges, writes and validates the schema-2
+   manifest, and freezes the exact claim before behavior-changing
+   implementation work.
 4. Transcreate the complete behavior directly from Go, preserving control-flow
    order, constants, errors, state transitions, encodings, cancellation, and
    concurrency semantics.
@@ -251,6 +257,12 @@ completion authorities. Shared seams such as crate roots, parser/AST routing,
 datatype/evaluation context, planner/executor/session dispatch, server
 connection lifecycle, transaction/storage authority, and evidence generation
 are changed in one controlled frontier.
+
+The normal single-worker control surface has two commands: `frontier` selects
+only dependency-ready whole packages, and `start-package` scaffolds and claims
+the chosen package. The general package inventory remains an audit view; it is
+not a scheduling queue. Full workspace tests and Clippy run once at atomic
+close, while focused package checks remain the implementation loop.
 
 ## Translation rules
 

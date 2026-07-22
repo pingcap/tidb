@@ -1,6 +1,6 @@
 schema = "2"
 slice = "parser-opcode-package"
-status = "ready"
+status = "covered"
 targets = ["tidb-ast"]
 rings = ["parser"]
 consumer = "Provides the complete Rust-native pkg/parser/opcode authority: every operator value, name, literal, keyword classification, and restore behavior; downstream expression and planner package completion is not credited here."

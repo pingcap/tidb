@@ -573,6 +573,66 @@ class WorkUnitQueueTest(unittest.TestCase):
         self.assertIn("go_package", result.stdout)
         self.assertIn("pkg/planner\t2\t2\t0\t2\t2\t2", result.stdout)
 
+    def test_frontier_ranks_dependency_ready_complete_packages(self) -> None:
+        result = self.run_tool(
+            "frontier", "--target", "tidb-planner", "--ring", "plan", "--limit", "1"
+        )
+        self.assertIn("readiness\tpackage\tsuggested_owner", result.stdout)
+        self.assertIn(
+            "READY\tpkg/planner\tplanner-package\ttidb-planner\tplan\t"
+            "2\t250\t2\t0\t-\t-",
+            result.stdout,
+        )
+
+    def test_start_package_scaffolds_and_claims_one_complete_package(self) -> None:
+        (self.root / "workstreams/slices").mkdir(parents=True)
+        result = self.run_tool(
+            "start-package",
+            "--package", "pkg/planner",
+            "--rust-path", "rust/crates/tidb-planner/src/planner-package.rs",
+        )
+        self.assertIn(
+            "package_start\tplanner-package\tpkg/planner\tsources=2\ttests=2\tsupports=0",
+            result.stdout,
+        )
+        manifest = self.root / "workstreams/slices/planner-package.toml"
+        claim = self.root / "workstreams/claims/planner-package.claim.json"
+        self.assertTrue(manifest.is_file())
+        self.assertTrue(claim.is_file())
+        claimed = json.loads(claim.read_text(encoding="utf-8"))
+        self.assertEqual(claimed["sources"], ["pkg/planner/bar.go", "pkg/planner/foo.go"])
+        self.assertEqual(
+            claimed["tests"],
+            [
+                "pkg/planner/foo_test.go:10:TestFoo",
+                "pkg/planner/other_test.go:20:TestOther",
+            ],
+        )
+
+    def test_start_package_rolls_back_manifest_when_dependency_is_not_declared(self) -> None:
+        (self.root / "workstreams/slices").mkdir(parents=True)
+        self.write_tracked("pkg/types/types.go", "package types\n")
+        source = self.root / "difftests/corpus/coverage/go_source_inventory.tsv"
+        with source.open("a", encoding="utf-8") as output:
+            output.write(
+                "pkg/types/types.go\t1\ttidb-planner\tfalse\tUNTRIAGED\t-\t-\t-\n"
+            )
+        planner = self.repo / "pkg/planner/foo.go"
+        planner.write_text(
+            'package planner\nimport _ "github.com/pingcap/tidb/pkg/types"\n',
+            encoding="utf-8",
+        )
+        failure = self.run_tool(
+            "start-package",
+            "--package", "pkg/planner",
+            "--rust-path", "rust/crates/tidb-planner/src/planner-package.rs",
+            success=False,
+        )
+        self.assertIn("pkg/types has no canonical schema-2 package manifest", failure.stderr)
+        self.assertFalse(
+            (self.root / "workstreams/slices/planner-package.toml").exists()
+        )
+
     def test_covered_package_is_reported_covered_and_not_redispatched(self) -> None:
         self.cover_planner_package_with_support()
         listing = self.run_tool("packages")
