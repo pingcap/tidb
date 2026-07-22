@@ -1,0 +1,2 @@
+# support_path	sha256	disposition	evidence_artifact	note
+pkg/parser/mysql/BUILD.bazel	5807f470f29121cc29e3ef3512562386158420a6895315f7fe2151ce16dec05d	build-metadata-reviewed	rust/workstreams/slices/parser-mysql-package.toml	Reviewed the complete package build metadata: all ten production Go files and the mysql_test target are represented by the two Rust target crates, their dedicated package tests, and the checked Unicode-table generator; the BUILD file declares no additional fixture or generated-source obligation.

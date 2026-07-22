@@ -242,11 +242,11 @@ bazel_test_target	pkg/parser/auth/BUILD.bazel	21	auth_test	parser	UNTRIAGED	-	-	
 bazel_test_target	pkg/parser/charset/BUILD.bazel	37	charset_test	parser	UNTRIAGED	-	-	-
 bazel_test_target	pkg/parser/duration/BUILD.bazel	11	duration_test	parser	UNTRIAGED	-	-	-
 bazel_test_target	pkg/parser/format/BUILD.bazel	10	format_test	parser	COVERED	parser-format-package	rust/difftests/corpus/coverage/evidence/tests/parser-format-package.tsv	The original package test target is represented by dedicated parser_format_package_source integration targets in both owning Rust crates and is exercised together by the package campaign.
-bazel_test_target	pkg/parser/mysql/BUILD.bazel	26	mysql_test	parser	UNTRIAGED	-	-	-
-bazel_test_target	pkg/parser/opcode/BUILD.bazel	11	opcode_test	parser	UNTRIAGED	-	-	-
+bazel_test_target	pkg/parser/mysql/BUILD.bazel	26	mysql_test	parser	COVERED	parser-mysql-package	rust/difftests/corpus/coverage/evidence/tests/parser-mysql-package.tsv	The original package target is represented by dedicated tidb-mysql and tidb-error package tests and exercised together by the package campaign.
+bazel_test_target	pkg/parser/opcode/BUILD.bazel	11	opcode_test	parser	COVERED	parser-opcode-package	rust/difftests/corpus/coverage/evidence/tests/parser-opcode-package.tsv	The original package test target is represented by the dedicated parser_opcode_package_source Rust integration target and exercised by the package campaign.
 bazel_test_target	pkg/parser/terror/BUILD.bazel	16	terror_test	parser	UNTRIAGED	-	-	-
 bazel_test_target	pkg/parser/types/BUILD.bazel	21	types_test	parser	UNTRIAGED	-	-	-
-bazel_test_target	pkg/parser/util/BUILD.bazel	13	util_test	parser	UNTRIAGED	-	-	-
+bazel_test_target	pkg/parser/util/BUILD.bazel	13	util_test	parser	COVERED	parser-util-package	rust/difftests/corpus/coverage/evidence/tests/parser-util-package.tsv	The original package target is represented by dedicated source tests in tidb-lexer and tidb-hash plus parser and planner consumer tests, all exercised together by the package campaign.
 bazel_test_target	pkg/planner/cardinality/BUILD.bazel	48	cardinality_test	plan	UNTRIAGED	-	-	-
 bazel_test_target	pkg/planner/cascades/BUILD.bazel	20	cascades_test	plan	UNTRIAGED	-	-	-
 bazel_test_target	pkg/planner/cascades/base/BUILD.bazel	16	base_test	plan	UNTRIAGED	-	-	-
@@ -6215,18 +6215,18 @@ go_test	pkg/parser/lexer_test.go	556	TestIllegal	parser	COVERED	parser-lexer-sou
 go_test	pkg/parser/lexer_test.go	574	TestVersionDigits	parser	COVERED	parser-lexer-source	rust/crates/tidb-lexer/src/tests/lexer_source.rs	All min/max/reset and next-byte vectors execute against the source-faithful helper.
 go_test	pkg/parser/lexer_test.go	652	TestFeatureIDs	parser	COVERED	parser-lexer-source	rust/crates/tidb-lexer/src/tests/lexer_source.rs	All valid, malformed, rewind, and next-byte feature-id vectors execute against the source-faithful helper.
 go_test	pkg/parser/main_test.go	23	TestMain	parser	UNTRIAGED	-	-	-
-go_test	pkg/parser/mysql/const_test.go	22	TestSQLMode	parser	UNTRIAGED	-	-	-
-go_test	pkg/parser/mysql/const_test.go	98	TestVersionSeparator	parser	UNTRIAGED	-	-	-
-go_test	pkg/parser/mysql/const_test.go	103	TestBuildTiDBXReleaseVersion	parser	UNTRIAGED	-	-	-
-go_test	pkg/parser/mysql/const_test.go	126	TestNormalizeTiDBReleaseVersionForNextGen	parser	UNTRIAGED	-	-	-
-go_test	pkg/parser/mysql/error_test.go	22	TestSQLError	parser	COVERED	error-catalog-and-terror-identity	rust/crates/tidb-error/tests/error_catalog_source.rs	All four source constructor cases execute with exact code, explicit/default SQLSTATE, message, and ERROR code (state): message display behavior.
-go_test	pkg/parser/mysql/privs_test.go	22	TestPrivString	parser	UNTRIAGED	-	-	-
-go_test	pkg/parser/mysql/privs_test.go	32	TestPrivColumn	parser	UNTRIAGED	-	-	-
-go_test	pkg/parser/mysql/privs_test.go	53	TestPrivSetString	parser	UNTRIAGED	-	-	-
-go_test	pkg/parser/mysql/privs_test.go	68	TestPrivsHas	parser	UNTRIAGED	-	-	-
-go_test	pkg/parser/mysql/privs_test.go	81	TestPrivAllConsistency	parser	UNTRIAGED	-	-	-
-go_test	pkg/parser/mysql/type_test.go	22	TestFlags	parser	UNTRIAGED	-	-	-
-go_test	pkg/parser/opcode/opcode_test.go	21	TestT	parser	UNTRIAGED	-	-	-
+go_test	pkg/parser/mysql/const_test.go	22	TestSQLMode	parser	COVERED	parser-mysql-package	rust/difftests/corpus/coverage/evidence/tests/parser-mysql-package.tsv	All 33 SQL-mode bit identities, strict-mode behavior, deletion, combination expansion, normalization, and partial invalid-mode result are asserted.
+go_test	pkg/parser/mysql/const_test.go	98	TestVersionSeparator	parser	COVERED	parser-mysql-package	rust/difftests/corpus/coverage/evidence/tests/parser-mysql-package.tsv	The exact TiDB version separator is asserted.
+go_test	pkg/parser/mysql/const_test.go	103	TestBuildTiDBXReleaseVersion	parser	COVERED	parser-mysql-package	rust/difftests/corpus/coverage/evidence/tests/parser-mysql-package.tsv	Valid release and server-version forms plus every invalid upstream input are asserted.
+go_test	pkg/parser/mysql/const_test.go	126	TestNormalizeTiDBReleaseVersionForNextGen	parser	COVERED	parser-mysql-package	rust/difftests/corpus/coverage/evidence/tests/parser-mysql-package.tsv	The legacy placeholder conversion and ordinary-version preservation cases are asserted.
+go_test	pkg/parser/mysql/error_test.go	22	TestSQLError	parser	COVERED	parser-mysql-package	rust/difftests/corpus/coverage/evidence/tests/parser-mysql-package.tsv	Known and unknown codes, default SQLSTATE, catalog text, custom format text, nil rendering, and final Error string shape are asserted.
+go_test	pkg/parser/mysql/privs_test.go	22	TestPrivString	parser	COVERED	parser-mysql-package	rust/difftests/corpus/coverage/evidence/tests/parser-mysql-package.tsv	Every source privilege bit from Usage through All has a non-empty SQL spelling.
+go_test	pkg/parser/mysql/privs_test.go	32	TestPrivColumn	parser	COVERED	parser-mysql-package	rust/difftests/corpus/coverage/evidence/tests/parser-mysql-package.tsv	Every global, global-only, and database privilege has its exact column spelling and inverse lookup.
+go_test	pkg/parser/mysql/privs_test.go	53	TestPrivSetString	parser	COVERED	parser-mysql-package	rust/difftests/corpus/coverage/evidence/tests/parser-mysql-package.tsv	Every table and column privilege has its exact SET spelling and inverse lookup.
+go_test	pkg/parser/mysql/privs_test.go	68	TestPrivsHas	parser	COVERED	parser-mysql-package	rust/difftests/corpus/coverage/evidence/tests/parser-mysql-package.tsv	Positive and negative privilege-membership behavior is asserted exactly.
+go_test	pkg/parser/mysql/privs_test.go	81	TestPrivAllConsistency	parser	COVERED	parser-mysql-package	rust/difftests/corpus/coverage/evidence/tests/parser-mysql-package.tsv	All source privilege bits have column names and the expected table-length relationships hold.
+go_test	pkg/parser/mysql/type_test.go	22	TestFlags	parser	COVERED	parser-mysql-package	rust/difftests/corpus/coverage/evidence/tests/parser-mysql-package.tsv	Every upstream field-flag predicate is asserted with its corresponding flag bit.
+go_test	pkg/parser/opcode/opcode_test.go	21	TestT	parser	COVERED	parser-opcode-package	rust/difftests/corpus/coverage/evidence/tests/parser-opcode-package.tsv	The Plus string assertion, formatting loop including zero, and zero-value string behavior execute exactly; the Rust target additionally covers every table field, restore casing, adapters, and invalid values.
 go_test	pkg/parser/parser_integration_test.go	41	TestHandParserSimpleSelect	parser	UNTRIAGED	-	-	-
 go_test	pkg/parser/parser_integration_test.go	72	TestHandParserJoins	parser	UNTRIAGED	-	-	-
 go_test	pkg/parser/parser_integration_test.go	93	TestHandParserInsert	parser	UNTRIAGED	-	-	-
@@ -6357,7 +6357,7 @@ go_test	pkg/parser/types/field_type_test.go	197	TestHasCharsetFromStmt	parser	PA
 go_test	pkg/parser/types/field_type_test.go	245	TestEnumSetFlen	parser	PARTIAL	datatype-value-context-and-format	rust/crates/tidb-datatype/tests/field_type_source.rs	All enum maximum and set comma-inclusive display-length vectors are translated; SQL parser construction remains external.
 go_test	pkg/parser/types/field_type_test.go	276	TestFieldTypeEqual	parser	COVERED	datatype-value-context-and-format	rust/crates/tidb-datatype/tests/field_type_source.rs	All five source equality vectors execute against the deep FieldType authority.
 go_test	pkg/parser/types/field_type_test.go	303	TestCompactStr	parser	COVERED	datatype-value-context-and-format	rust/crates/tidb-datatype/tests/field_type_source.rs	All strict and legacy integer-display-width vectors execute against source-compatible compact formatting.
-go_test	pkg/parser/util/escape_test.go	22	TestUnescapeChar	parser	UNTRIAGED	-	-	-
+go_test	pkg/parser/util/escape_test.go	22	TestUnescapeChar	parser	COVERED	parser-util-package	rust/difftests/corpus/coverage/evidence/tests/parser-util-package.tsv	All upstream standard, pattern-preserving, self-escaping, and unknown-byte vectors execute exactly; an exhaustive 256-byte assertion prevents omitted cases.
 go_test	pkg/planner/cardinality/exponential_test.go	33	TestApplyExponentialBackoff	plan	COVERED	planner-cardinality-exponential	rust/difftests/planner-tests/tests/cardinality.rs	All twelve source vectors execute: five NDV cases including the four-column cap four selectivity cases three bound clamps and empty input; bounds are asserted for every vector through the external tidb-planner API
 go_test	pkg/planner/cardinality/main_test.go	30	TestMain	plan	UNTRIAGED	-	-	-
 go_test	pkg/planner/cardinality/ndv_test.go	31	TestScaleNDV	plan	PARTIAL	planner-cardinality-ndv-source-wave	rust/difftests/planner-tests/tests/cardinality.rs	All nine original TestScaleNDV vectors execute through the Rust scale_ndv leaf with the Go two-decimal oracle; SessionVars/testkit setup, property registration, and broader NDV/statistics tests remain outside the seed planner boundary
@@ -12304,11 +12304,11 @@ go_test_file	pkg/parser/keywords_test.go	0	keywords_test.go	parser	UNTRIAGED	-	-
 go_test_file	pkg/parser/lateral_test.go	0	lateral_test.go	parser	UNTRIAGED	-	-	-
 go_test_file	pkg/parser/lexer_test.go	0	lexer_test.go	parser	UNTRIAGED	-	-	-
 go_test_file	pkg/parser/main_test.go	0	main_test.go	parser	UNTRIAGED	-	-	-
-go_test_file	pkg/parser/mysql/const_test.go	0	const_test.go	parser	UNTRIAGED	-	-	-
-go_test_file	pkg/parser/mysql/error_test.go	0	error_test.go	parser	COVERED	error-catalog-and-terror-identity	rust/crates/tidb-error/tests/error_catalog_source.rs	The file's sole TestSQLError obligation is translated in the focused source target.
-go_test_file	pkg/parser/mysql/privs_test.go	0	privs_test.go	parser	UNTRIAGED	-	-	-
-go_test_file	pkg/parser/mysql/type_test.go	0	type_test.go	parser	UNTRIAGED	-	-	-
-go_test_file	pkg/parser/opcode/opcode_test.go	0	opcode_test.go	parser	UNTRIAGED	-	-	-
+go_test_file	pkg/parser/mysql/const_test.go	0	const_test.go	parser	COVERED	parser-mysql-package	rust/difftests/corpus/coverage/evidence/tests/parser-mysql-package.tsv	Every top-level constant and SQL-mode test in the upstream file has a matching Rust test obligation.
+go_test_file	pkg/parser/mysql/error_test.go	0	error_test.go	parser	COVERED	parser-mysql-package	rust/difftests/corpus/coverage/evidence/tests/parser-mysql-package.tsv	Every top-level SQL-error test in the upstream file has a matching Rust test obligation.
+go_test_file	pkg/parser/mysql/privs_test.go	0	privs_test.go	parser	COVERED	parser-mysql-package	rust/difftests/corpus/coverage/evidence/tests/parser-mysql-package.tsv	Every top-level privilege test in the upstream file has a matching Rust test obligation.
+go_test_file	pkg/parser/mysql/type_test.go	0	type_test.go	parser	COVERED	parser-mysql-package	rust/difftests/corpus/coverage/evidence/tests/parser-mysql-package.tsv	Every top-level type-flag test in the upstream file has a matching Rust test obligation.
+go_test_file	pkg/parser/opcode/opcode_test.go	0	opcode_test.go	parser	COVERED	parser-opcode-package	rust/difftests/corpus/coverage/evidence/tests/parser-opcode-package.tsv	Every top-level test in the sole upstream test file has an exact COVERED row and executes through the dedicated Rust package test.
 go_test_file	pkg/parser/parser_integration_test.go	0	parser_integration_test.go	parser	UNTRIAGED	-	-	-
 go_test_file	pkg/parser/parser_test.go	0	parser_test.go	parser	UNTRIAGED	-	-	-
 go_test_file	pkg/parser/terror/terror_test.go	0	terror_test.go	parser	PARTIAL	error-catalog-and-terror-identity	rust/crates/tidb-error/tests/terror_source.rs	All portable identity, generation, conversion, class, and equality assertions are covered; pingcap/errors JSON, logging, and Go stack-shape tests remain explicitly blocked
@@ -12319,7 +12319,7 @@ go_test_file	pkg/parser/test_offset_regression_test.go	0	test_offset_regression_
 go_test_file	pkg/parser/test_remaining_bugs_test.go	0	test_remaining_bugs_test.go	parser	UNTRIAGED	-	-	-
 go_test_file	pkg/parser/types/etc_test.go	0	etc_test.go	parser	UNTRIAGED	-	-	-
 go_test_file	pkg/parser/types/field_type_test.go	0	field_type_test.go	parser	UNTRIAGED	-	-	-
-go_test_file	pkg/parser/util/escape_test.go	0	escape_test.go	parser	UNTRIAGED	-	-	-
+go_test_file	pkg/parser/util/escape_test.go	0	escape_test.go	parser	COVERED	parser-util-package	rust/difftests/corpus/coverage/evidence/tests/parser-util-package.tsv	Every top-level test in the sole upstream test file has an exact COVERED row and executes through the dedicated Rust package test.
 go_test_file	pkg/planner/cardinality/exponential_test.go	0	exponential_test.go	plan	UNTRIAGED	-	-	-
 go_test_file	pkg/planner/cardinality/main_test.go	0	main_test.go	plan	UNTRIAGED	-	-	-
 go_test_file	pkg/planner/cardinality/ndv_test.go	0	ndv_test.go	plan	UNTRIAGED	-	-	-

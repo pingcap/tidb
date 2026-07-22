@@ -1,0 +1,2 @@
+# support_path	sha256	disposition	evidence_artifact	note
+pkg/parser/util/BUILD.bazel	ebe3a1fc5c9ff26f2b9da693b0aef297dd83d1f52027497ad9fc2c147f66d3c1	build-metadata-reviewed	rust/workstreams/slices/parser-util-package.toml	Reviewed the complete package build metadata: escape.go, hash64.go, and escape_test.go map to the shared lexer and hash authorities plus parser and planner consumers; the BUILD file declares no fixture or generated-source obligation.

@@ -1,0 +1,2 @@
+# support_path	sha256	disposition	evidence_artifact	note
+pkg/parser/opcode/BUILD.bazel	c7f575082b7f9b1de9868cbd74454caa76aac63c2c0a6290f6d79bb986a9cc4c	build-metadata-reviewed	rust/workstreams/slices/parser-opcode-package.toml	Reviewed the complete package build metadata: opcode.go and opcode_test.go map to the tidb-ast authority and dedicated parser_opcode_package_source target; the BUILD file declares no fixture or generated-source obligation.

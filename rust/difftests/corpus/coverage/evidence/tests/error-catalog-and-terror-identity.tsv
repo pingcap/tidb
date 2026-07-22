@@ -1,7 +1,5 @@
 # Canonical MySQL/TiDB catalog and terror identity test authority, transferred without changing coverage boundaries.
 # kind	path	line	name	status	owner	rust_target	note
-go_test	pkg/parser/mysql/error_test.go	22	TestSQLError	COVERED	error-catalog-and-terror-identity	rust/crates/tidb-error/tests/error_catalog_source.rs	All four source constructor cases execute with exact code, explicit/default SQLSTATE, message, and ERROR code (state): message display behavior.
-go_test_file	pkg/parser/mysql/error_test.go	0	error_test.go	COVERED	error-catalog-and-terror-identity	rust/crates/tidb-error/tests/error_catalog_source.rs	The file's sole TestSQLError obligation is translated in the focused source target.
 go_test	pkg/errno/errname_test.go	29	TestAllErrCodeHasMsg	COVERED	error-catalog-and-terror-identity	rust/crates/tidb-error/tests/error_catalog_source.rs	Every named Err constant, including code-alias sentinels, resolves to a TiDB message exactly as the embedded-source test requires.
 go_test	pkg/errno/errname_test.go	49	TestReservedErrCodeRange	COVERED	error-catalog-and-terror-identity	rust/crates/tidb-error/tests/error_catalog_source.rs	Every named Err constant is checked against the exact reserved half-open range 8800 through 8900.
 go_test_file	pkg/errno/errname_test.go	0	errname_test.go	COVERED	error-catalog-and-terror-identity	rust/crates/tidb-error/tests/error_catalog_source.rs	Both source tests and their embedded errcode fixture are represented in the focused target.

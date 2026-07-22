@@ -1,3 +1,2 @@
 # Source-owned source-port fragment for session-status-flags-wave.
 # source_path	status	owner	evidence_artifact	note
-pkg/parser/mysql/const.go	PARTIAL	session-status-flags-wave	rust/crates/tidb-exec/src/session_status.rs	The three protocol masks used by this leaf preserve source values; the complete MySQL status constant registry and packet serialization remain owned by the protocol/server layers
