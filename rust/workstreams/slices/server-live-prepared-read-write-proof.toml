@@ -16,11 +16,11 @@ module_sources = []
 module_tests = []
 depends_on = [
   "server-live-prepared-point-read-proof",
-  "server-prepared-dml-tcp-runtime",
 ]
 evidence_prerequisites = [
-  { capability = "live-sql-node-entrypoint", evidence_owner = "server-live-ordered-join-proof", kind = "source", anchor = "cmd/tidb-server/main.go", minimum_status = "PARTIAL" },
-  { capability = "tag-owned-realtikv-lifecycle", evidence_owner = "server-live-ordered-join-proof", kind = "source", anchor = "tests/realtikvtest/testkit.go", minimum_status = "PARTIAL" },
+  { capability = "prepared-dml-tcp-publication", evidence_owner = "server-prepared-dml-tcp-runtime", kind = "source", anchor = "pkg/server/conn_stmt_params.go", minimum_status = "PARTIAL" },
+  { capability = "live-sql-node-entrypoint", evidence_owner = "server-live-prepared-point-read-proof", kind = "source", anchor = "cmd/tidb-server/main.go", minimum_status = "PARTIAL" },
+  { capability = "tag-owned-realtikv-lifecycle", evidence_owner = "server-live-prepared-point-read-proof", kind = "source", anchor = "tests/realtikvtest/testkit.go", minimum_status = "PARTIAL" },
 ]
 support_anchors = [
   "Extend the shared tag-owned live SQL-node harness; start one real three-PD/three-TiKV topology, one independently running Go TiDB server, and one Rust server on distinct recorded endpoints, with no fixture-only or in-memory authority accepted",

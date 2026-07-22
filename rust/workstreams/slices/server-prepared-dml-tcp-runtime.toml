@@ -17,12 +17,14 @@ go_tests = [
 module_sources = []
 module_tests = []
 depends_on = [
-  "executor-prepared-dml-rowcodec-runtime",
   "protocol-prepared-statement-binary-framing-runtime",
   "server-prepared-point-read-tcp-runtime",
-  "txnkv-real-optimistic-2pc-runtime",
 ]
 evidence_prerequisites = [
+  { capability = "configured-prepared-insert-plan-and-rowcodec", evidence_owner = "executor-prepared-dml-rowcodec-runtime", kind = "source", anchor = "pkg/executor/insert.go", minimum_status = "PARTIAL" },
+  { capability = "configured-prepared-update-plan-and-rowcodec", evidence_owner = "executor-prepared-dml-rowcodec-runtime", kind = "source", anchor = "pkg/executor/update.go", minimum_status = "PARTIAL" },
+  { capability = "real-optimistic-2pc-snapshot-and-commit", evidence_owner = "txnkv-real-optimistic-2pc-runtime", kind = "test", anchor = "pkg/session/test/txn/txn_test.go:131:TestTxnLazyInitialize", minimum_status = "PARTIAL" },
+  { capability = "real-optimistic-2pc-cleanup", evidence_owner = "txnkv-real-optimistic-2pc-runtime", kind = "test", anchor = "pkg/session/test/txn/txn_test.go:346:TestErrorRollback", minimum_status = "PARTIAL" },
   { capability = "prepared-statement-framing", evidence_owner = "protocol-prepared-statement-binary-framing-runtime", kind = "source", anchor = "pkg/server/conn_stmt.go", minimum_status = "PARTIAL" },
   { capability = "configured-server-lifecycle", evidence_owner = "server-prepared-point-read-tcp-runtime", kind = "source", anchor = "pkg/server/server.go", minimum_status = "PARTIAL" },
 ]
