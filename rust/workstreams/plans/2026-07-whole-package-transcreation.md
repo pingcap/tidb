@@ -28,17 +28,21 @@ package receipts before its Rust code reaches the shared branch.
   evidence and abandoned active partial-slice claims.
 - [x] (2026-07-22) Rewrote the design, handoff, and parallel protocol around
   complete package ownership and removed dated campaign history.
-- [ ] Add and test the fail-closed schema-2 package manifest, package inventory
-  view, frozen claims, legacy registry, import closure, and package receipts.
+- [x] (2026-07-22) Added and tested the fail-closed schema-2 package manifest,
+  package inventory view, frozen claims, legacy registry, direct-import
+  closure, campaign close transaction, and immutable package receipts.
 - [x] (2026-07-22) Generated and reviewed the first dependency-ready package
   frontier: `pkg/parser/format` and `pkg/server/internal/handshake`.
-- [ ] Claim source/test/Rust-write-disjoint complete packages and create their
-  in-repository worktrees.
-- [ ] Transcreate the first complete package frontier from Go source and all
-  original test/support artifacts.
-- [ ] Run one reused 12-job integration gate and issue immutable package
-  receipts.
-- [ ] Regenerate status and report exact package closure and remaining gaps.
+- [x] (2026-07-22) Claimed source/test/support-complete, Rust-write-disjoint
+  `pkg/parser/format` and `pkg/server/internal/handshake` package manifests.
+- [x] (2026-07-22) Transcreated the first complete package frontier from Go
+  source and every original test/support artifact. The parser-format package
+  is split across `tidb-ast` and `tidb-datatype` under one umbrella receipt.
+- [x] (2026-07-22) Ran the reused 12-job integration gate and issued immutable
+  receipts for both packages.
+- [x] (2026-07-22) Regenerated status: two schema-2 packages are covered, no
+  package claim remains active, and the remaining source/test ledgers stay
+  explicitly partial or untriaged.
 
 ## Surprises & Discoveries
 
@@ -68,6 +72,24 @@ package receipts before its Rust code reaches the shared branch.
   Evidence: its stateful formatter and output escaping belong to
   `tidb-datatype`, while its restore flags, context, special-comment writer,
   and CTE scope belong to `tidb-ast`; both must close under one package receipt.
+- Observation: package-owned Rust leaves and shared crate integration seams
+  cannot use the same durability rule.
+  Evidence: crate roots and existing consumer tests are edited by later
+  packages, while package receipts must continue to hash the stable
+  implementation and mirrored tests. Schema 2 now freezes `rust_paths` as
+  exclusive content-bound ownership and records separately checked
+  `integration_paths` whose bytes are gate-attested but not permanently owned.
+- Observation: focused package Clippy is necessary but not sufficient for a
+  Ready frontier.
+  Evidence: the first full workspace gate found a `needless_borrow` in the Go
+  package-support ledger binary outside the three implementation crates. The
+  gate rolled back, the warning was fixed, and the complete gate then passed.
+- Observation: a takeover claim created after implementation commits can bind
+  current content and evidence but cannot retrospectively prove commit-scope
+  isolation.
+  Evidence: the first frontier existed before schema-2 `base_commit` claims.
+  Future package claims must be created before their implementation commits so
+  the committed-diff guard can reject every out-of-claim Rust change.
 
 ## Decision Log
 
@@ -98,13 +120,35 @@ package receipts before its Rust code reaches the shared branch.
   Rationale: existing Rust helpers for an imported type are partial evidence,
   not proof that the dependency package contract is complete.
   Date/Author: 2026-07-22 / Codex.
+- Decision: distinguish stable package-owned Rust paths from steward-owned
+  integration paths in every schema-2 manifest and receipt.
+  Rationale: stable files need exclusive ownership and durable content hashes;
+  crate roots, dispatch, and shared consumer seams need exact gate-time scope
+  without making later legitimate integration invalidate an earlier package.
+  Date/Author: 2026-07-22 / Codex.
+- Decision: close every dependency frontier with `campaign_close.py --gate`
+  as one rollback transaction.
+  Rationale: per-member promotion could expose half-integrated packages. The
+  campaign close now requires exact COVERED source/test evidence, current
+  support dispositions, a shared gate receipt, and all package receipts before
+  it releases any claim.
+  Date/Author: 2026-07-22 / Codex.
 
 ## Outcomes & Retrospective
 
-The policy, current-state documentation, and first independently audited
-frontier manifests are complete. Queue hardening and the first package receipt
-remain open. Do not report package completion or resume Rust implementation
-until the schema-2 checker passes with direct internal-import closure.
+The whole-package workflow and its first dependency-ready frontier are
+complete. `pkg/parser/format` and `pkg/server/internal/handshake` each have a
+content-bound immutable receipt, although the first maps to two Rust crates.
+The integration campaign passed workspace formatting, strict all-target
+Clippy, all Rust tests, the 86 governance regressions, source/test/support
+ledgers, 51,598 parser-oracle inputs, and plan inventory checks; repository
+`make -j12 lint` also passed.
+
+This closes two small leaf packages, not the parser module, server subsystem,
+or SQL-node rewrite. The immediate next outcome is a larger dependency-closed
+frontier chosen from the checked package DAG. Its claims must precede all
+implementation commits, package teams must own stable leaves only, and the
+steward must own every declared integration seam.
 
 ## Context and Orientation
 
@@ -179,11 +223,11 @@ Inspect a package manifest and atomically claim it:
 
 Create one branch/worktree per accepted package under `rust/.worktrees/` and
 use the `codex/` branch prefix. Package teams run only their focused checks.
-After a meaningful frontier freezes, the integration steward runs from
+After a meaningful frontier freezes, the integration steward closes it from
 `rust/` with one checkout-specific target:
 
     CARGO_BUILD_JOBS=12 CARGO_TARGET_DIR=/private/tmp/tidb-rust-package-gate \
-      scripts/rewrite-gate.sh integrate
+      python3 scripts/campaign_close.py --campaign <campaign> --gate
 
 Expected governance output contains zero active legacy partial claims and a
 package table whose expanded counts match the ledgers. Expected integration
@@ -228,9 +272,10 @@ contract, or steward ownership instead.
 
 The policy is defined in
 `docs/design/2026-07-11-tidb-rust-rewrite.md`, `rust/HANDOFF.md`, and
-`rust/PARALLEL.md`. The schema-2 implementation and its tests are the next
-required artifact. The first frontier manifests and receipts will be appended
-here as they are accepted.
+`rust/PARALLEL.md`. The schema-2 implementation, governance regressions, first
+frontier manifests, exact evidence, and immutable package receipts are checked
+artifacts. The next plan revision must name the next dependency-closed package
+frontier before any new Rust implementation commit is made.
 
 ## Interfaces and Dependencies
 

@@ -70,6 +70,14 @@ states are generated in [`STATUS.md`](STATUS.md). Neither source is evidence
 that any upstream Go package is completely transcreated unless a package
 receipt says so.
 
+Two leaf packages now have immutable schema-2 receipts under
+[`workstreams/package-receipts/`](workstreams/package-receipts/):
+`pkg/parser/format`, implemented across `tidb-ast` and `tidb-datatype`, and
+`pkg/server/internal/handshake`, implemented in `tidb-server`. These receipts
+close only their exact package inventories. They do not close the surrounding
+`pkg/parser` module, server handshake parser/authentication lifecycle, or
+`pkg/server` subsystem.
+
 ## Whole-package gaps
 
 The current Rust workspace is a connected seed assembled from legacy partial
@@ -127,19 +135,23 @@ dispatch template for new package work.
 
 ## Immediate migration steps
 
-1. Add a checked package-manifest schema and generator without rewriting the
-   existing source/test ledgers or schema-1 slice records.
-2. Generate the full package inventory, including test/support closure, and
-   fail the checker on any unowned or multiply owned artifact.
-3. Build the package dependency DAG and choose the first dependency-closed
-   frontier that advances the deployed SQL node.
-4. Consolidate existing partial Rust leaves and evidence into their owning
-   package manifests. Preserve their exact evidence; do not promote status
-   during the move.
-5. Dispatch whole-package worktrees with disjoint Rust write sets and a shared
-   integration steward.
-6. Close one package end to end, including its entire original package test
-   ring, before using the workflow for a wider frontier.
+1. Select the next larger dependency-closed frontier from the checked package
+   DAG. Prioritize packages that unblock the connected SQL transaction path;
+   do not optimize for easy package counts.
+2. Freeze every package claim before its first implementation commit. The
+   common `base_commit` and committed-diff guard must cover the full work, not
+   only a takeover snapshot.
+3. Declare exclusive stable `rust_paths` and steward-owned shared
+   `integration_paths` before creating package worktrees. A Go package may
+   span several Rust crates under one umbrella claim and receipt.
+4. Dispatch source/test/support-disjoint package teams and write-disjoint
+   crate subteams. Merge crate sub-results only into the package staging
+   branch; never promote them independently.
+5. Add exact source/test/support evidence only after the complete package
+   contract and all original tests are represented.
+6. Close the entire frontier with `campaign_close.py --gate`, issue every
+   immutable package receipt atomically, regenerate status, and run the Ready
+   profile before starting the following frontier.
 
 The highest-value first frontier is the connected SQL transaction path:
 `pkg/kv`/`pkg/store` dependencies, `pkg/session`/`pkg/sessionctx`, and the
