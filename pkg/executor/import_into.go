@@ -403,6 +403,7 @@ func (e *ImportIntoActionExec) checkPrivilegeAndStatus(ctx context.Context, mana
 }
 
 func cancelAndWaitImportJob(ctx context.Context, jobID int64) error {
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	manager, err := dxfstorage.GetDXFSvcTaskMgr()
 	if err != nil {
 		return err
@@ -411,7 +412,6 @@ func cancelAndWaitImportJob(ctx context.Context, jobID int64) error {
 	_, err = manager.GetTaskBaseByKeyWithHistory(ctx, taskKey)
 	if err == nil {
 		if err := manager.WithNewTxn(ctx, func(se sessionctx.Context) error {
-			ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 			return manager.CancelTaskByKeySession(ctx, se, taskKey)
 		}); err != nil {
 			return err
