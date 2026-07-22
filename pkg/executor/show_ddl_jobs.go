@@ -318,7 +318,7 @@ func showCommentsFromJob(job *model.Job) string {
 		job.Type == model.ActionAddPrimaryKey
 	if isAddingIndex && kerneltype.IsNextGen() {
 		// The parameters are determined automatically in next-gen.
-		labels = append(labels, formatAutoPresplitIndexRegionResults(m.AutoPresplitIndexRegionResults)...)
+		labels = append(labels, formatAutoPresplitResults(m.AutoPresplitResults)...)
 		return strings.Join(labels, ", ")
 	}
 	if isAddingIndex {
@@ -357,12 +357,12 @@ func showCommentsFromJob(job *model.Job) string {
 			labels = append(labels, fmt.Sprintf("max_node_count=%d", m.MaxNodeCount))
 		}
 	}
-	labels = append(labels, formatAutoPresplitIndexRegionResults(m.AutoPresplitIndexRegionResults)...)
+	labels = append(labels, formatAutoPresplitResults(m.AutoPresplitResults)...)
 	return strings.Join(labels, ", ")
 }
 
 func showCommentsFromSubjob(sub *model.SubJob, useDXF, useCloud bool) string {
-	autoPresplitLabels := formatAutoPresplitIndexRegionResults(sub.AutoPresplitIndexRegionResults)
+	autoPresplitLabels := formatAutoPresplitResults(sub.AutoPresplitResults)
 	if kerneltype.IsNextGen() || sub.ReorgTp == model.ReorgTypeNone {
 		return strings.Join(autoPresplitLabels, ", ")
 	}
@@ -377,7 +377,7 @@ func showCommentsFromSubjob(sub *model.SubJob, useDXF, useCloud bool) string {
 	return strings.Join(labels, ", ")
 }
 
-func formatAutoPresplitIndexRegionResults(results []model.AutoPresplitIndexRegionResult) []string {
+func formatAutoPresplitResults(results []model.AutoPresplitResult) []string {
 	labels := make([]string, 0, len(results))
 	for _, result := range results {
 		parts := []string{string(result.Status)}
