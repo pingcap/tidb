@@ -65,7 +65,11 @@ go_test(
     embed = [":scheduler"],
     flaky = True,
     race = "off",
+<<<<<<< HEAD
     shard_count = 43,
+=======
+    shard_count = 46,
+>>>>>>> 130cbb64478 (dxf: batch cleanup for IMPORT INTO tasks (#69901))
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
