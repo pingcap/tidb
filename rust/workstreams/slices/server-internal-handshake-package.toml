@@ -1,6 +1,6 @@
 schema = "2"
 slice = "server-internal-handshake-package"
-status = "ready"
+status = "covered"
 targets = ["tidb-server"]
 rings = ["unassigned"]
 consumer = "Provides the complete Rust-native Response41 data contract consumed by later handshake parsing and server packages; nil map/slice normalize to empty owned collections and Go strings to Rust UTF-8, while downstream parse/auth/compression/lifecycle behavior is not credited here."

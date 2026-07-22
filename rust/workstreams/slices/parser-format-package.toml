@@ -1,6 +1,6 @@
 schema = "2"
 slice = "parser-format-package"
-status = "ready"
+status = "covered"
 targets = ["tidb-ast", "tidb-datatype"]
 rings = ["parser"]
 consumer = "Provides the complete Rust-native pkg/parser/format leaf API: stateful indentation, output escaping, every restore flag, restore context writers, special comments, and CTE scope; migration of downstream AST-node packages is tracked separately and is not credited here."

@@ -117,3 +117,5 @@
 2026-07-read-path-27	protocol-prepared-statement-binary-framing-runtime
 2026-07-read-path-27	server-prepared-point-read-tcp-runtime
 2026-07-read-path-27	server-live-prepared-point-read-proof
+2026-07-package-frontier-01	parser-format-package
+2026-07-package-frontier-01	server-internal-handshake-package

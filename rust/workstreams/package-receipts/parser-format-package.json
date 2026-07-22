@@ -1,0 +1,122 @@
+{
+  "campaign": "2026-07-package-frontier-01",
+  "gate": {
+    "claim_sha256": "6e40f3c12b172a99571ddca2f26b49de94a159ab015e778ba614884577ea9902",
+    "command": [
+      "scripts/rewrite-gate.sh",
+      "integrate"
+    ],
+    "result": "passed",
+    "slice_manifests_sha256": "e2229f2bbc0ecc04dee89a2b0c89d7e635074df150d2a6375d6baf23dcd3107c",
+    "workspace_sha256": "d353bcdc44ac9f8dac84828dfac71e05e89f5f2187e391be1c64e61f568a11b0"
+  },
+  "owner": "parser-format-package",
+  "package": {
+    "go_packages": [
+      "pkg/parser/format"
+    ],
+    "integration_paths": [
+      "rust/crates/tidb-ast/src/lib.rs",
+      "rust/crates/tidb-datatype/src/lib.rs",
+      "rust/crates/tidb-datatype/tests/field_type_source.rs"
+    ],
+    "inventory_sha256": "f65ecf219fd0ebeecacac2ce1c97b403ebde0ab35fb8f9e2a06c481e75adccbe",
+    "manifest": {
+      "path": "rust/workstreams/slices/parser-format-package.toml",
+      "sha256": "eabd26270852ec8eaef7499f4c00579b9f2361c663797f42ce43a4825a7f7229"
+    },
+    "module_packages": [],
+    "module_sources": [],
+    "module_tests": [],
+    "rust_paths": [
+      {
+        "path": "rust/crates/tidb-ast/src/format.rs",
+        "sha256": "e93cbb3d4c455ad6299dc78d9b261ae73d321c85350e099211b7e632027bbd25"
+      },
+      {
+        "path": "rust/crates/tidb-ast/tests/parser_format_package_source.rs",
+        "sha256": "6091f9aad6be062b571279ac400b6e493eccaed582c4f08b3610ecc64d6e2c5f"
+      },
+      {
+        "path": "rust/crates/tidb-datatype/src/format.rs",
+        "sha256": "c4d6ed48548572872f24ca622e255f6d0d8acd6e6c1d6f0043abf0052c7dba0c"
+      },
+      {
+        "path": "rust/crates/tidb-datatype/tests/format_source.rs",
+        "sha256": "6f68d12dc85c18998c75904a7f001d19d4e6a61d20fff97b8be5a479785e950e"
+      },
+      {
+        "path": "rust/crates/tidb-datatype/tests/parser_format_package_source.rs",
+        "sha256": "d39b9bd0db484921d60e9dfddb1e8152fe4a99a43dbd6647852ee33bd512dcc8"
+      }
+    ],
+    "rust_targets": [
+      "tidb-ast",
+      "tidb-datatype"
+    ],
+    "sources": [
+      {
+        "anchor": "pkg/parser/format/format.go",
+        "evidence_artifact": "rust/difftests/corpus/coverage/evidence/source/parser-format-package.tsv",
+        "evidence_sha256": "2414950971d2f7b1e48a9b525ba34cab0eae77fb198e116d994d5c31ad708148",
+        "owner": "parser-format-package",
+        "status": "COVERED",
+        "upstream_sha256": "c20cd76f558742e980fdcff27a510d2d9e9cd312e9314b020bceafd1001b1f74"
+      }
+    ],
+    "supports": [
+      {
+        "anchor": "pkg/parser/format/BUILD.bazel@affceb3be0257a762a2c106b774bf4778874d754fc1b3ffb78971febbe455fbc",
+        "disposition": "build-metadata-reviewed",
+        "evidence_artifact": "rust/workstreams/slices/parser-format-package.toml",
+        "evidence_sha256": "eabd26270852ec8eaef7499f4c00579b9f2361c663797f42ce43a4825a7f7229",
+        "note": "Reviewed the sole package support artifact: its Go library and format_test target map to the tidb-ast and tidb-datatype crate targets plus their dedicated parser_format_package_source tests; it contains no generated source or fixture input.",
+        "path": "pkg/parser/format/BUILD.bazel",
+        "sha256": "affceb3be0257a762a2c106b774bf4778874d754fc1b3ffb78971febbe455fbc"
+      }
+    ],
+    "tests": [
+      {
+        "anchor": "pkg/parser/format/BUILD.bazel:10:format_test",
+        "evidence_artifact": "rust/difftests/corpus/coverage/evidence/tests/parser-format-package.tsv",
+        "evidence_sha256": "01ca1987bf2f3685464288c7669b4de8f1f832668eeee44ffea95b48a31422e3",
+        "owner": "parser-format-package",
+        "status": "COVERED",
+        "upstream_sha256": "affceb3be0257a762a2c106b774bf4778874d754fc1b3ffb78971febbe455fbc"
+      },
+      {
+        "anchor": "pkg/parser/format/format_test.go:0:format_test.go",
+        "evidence_artifact": "rust/difftests/corpus/coverage/evidence/tests/parser-format-package.tsv",
+        "evidence_sha256": "01ca1987bf2f3685464288c7669b4de8f1f832668eeee44ffea95b48a31422e3",
+        "owner": "parser-format-package",
+        "status": "COVERED",
+        "upstream_sha256": "929ad61ea9fd40c31a7dfbea6e34394d8432224e2d2de59c1e513b328ba0e36a"
+      },
+      {
+        "anchor": "pkg/parser/format/format_test.go:34:TestFormat",
+        "evidence_artifact": "rust/difftests/corpus/coverage/evidence/tests/parser-format-package.tsv",
+        "evidence_sha256": "01ca1987bf2f3685464288c7669b4de8f1f832668eeee44ffea95b48a31422e3",
+        "owner": "parser-format-package",
+        "status": "COVERED",
+        "upstream_sha256": "929ad61ea9fd40c31a7dfbea6e34394d8432224e2d2de59c1e513b328ba0e36a"
+      },
+      {
+        "anchor": "pkg/parser/format/format_test.go:52:TestRestoreCtx",
+        "evidence_artifact": "rust/difftests/corpus/coverage/evidence/tests/parser-format-package.tsv",
+        "evidence_sha256": "01ca1987bf2f3685464288c7669b4de8f1f832668eeee44ffea95b48a31422e3",
+        "owner": "parser-format-package",
+        "status": "COVERED",
+        "upstream_sha256": "929ad61ea9fd40c31a7dfbea6e34394d8432224e2d2de59c1e513b328ba0e36a"
+      },
+      {
+        "anchor": "pkg/parser/format/format_test.go:86:TestRestoreSpecialComment",
+        "evidence_artifact": "rust/difftests/corpus/coverage/evidence/tests/parser-format-package.tsv",
+        "evidence_sha256": "01ca1987bf2f3685464288c7669b4de8f1f832668eeee44ffea95b48a31422e3",
+        "owner": "parser-format-package",
+        "status": "COVERED",
+        "upstream_sha256": "929ad61ea9fd40c31a7dfbea6e34394d8432224e2d2de59c1e513b328ba0e36a"
+      }
+    ]
+  },
+  "schema": 1
+}
