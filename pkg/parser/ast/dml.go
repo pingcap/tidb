@@ -21,8 +21,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/util"
 	"github.com/pingcap/tidb/pkg/parser/types"
+	"github.com/pingcap/tidb/pkg/parser/util"
 )
 
 var (
@@ -547,7 +547,7 @@ type TableSource struct {
 	ColumnNames []CIStr
 }
 
-func (*TableSource) resultSet() {}
+func (*TableSource) resultSet()   {}
 func (*JSONTableExpr) resultSet() {}
 
 // JSONTableColumnKind represents the kind of JSON_TABLE column
@@ -577,8 +577,8 @@ type JSONTableHandler struct {
 
 // JSONTableHandlers is a struct for parser to hold both handlers
 type JSONTableHandlers struct {
-	OnEmpty  *JSONTableHandler
-    OnError  *JSONTableHandler
+	OnEmpty *JSONTableHandler
+    OnError *JSONTableHandler
 }
 
 // JSONTableColumn represents a column definition in JSON_TABLE
