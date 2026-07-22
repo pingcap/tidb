@@ -2600,6 +2600,8 @@ def amend(root: Path, owner: str, sources: list[str], tests: list[str]) -> None:
 
 def queue(root: Path, target: str, ring: str, limit: int | None) -> None:
     claims = validate_claims(root)
+    slices = load_slices(root)
+    covered_packages = _covered_go_packages(slices)
     claimed_sources = {source for item in claims for source in item["_sources"]}
     claimed_tests = {test for item in claims for test in item["tests"]}
     claimed_supports = {support for item in claims for support in item["_supports"]}
@@ -2620,6 +2622,8 @@ def queue(root: Path, target: str, ring: str, limit: int | None) -> None:
     packages = sorted(known_packages)
     candidates = []
     for package in packages:
+        if package in covered_packages:
+            continue
         package_sources = sorted(
             str(source["path"])
             for source in source_rows
@@ -2724,6 +2728,18 @@ def _aggregate_status(statuses: set[str]) -> str:
     return "COVERED"
 
 
+def _covered_go_packages(
+    slices: dict[str, dict[str, object]],
+) -> set[str]:
+    """Returns Go packages whose checked schema-2 receipt is already valid."""
+    return {
+        str(package)
+        for record in slices.values()
+        if record["schema"] == "2" and record["status"] == "covered"
+        for package in record["go_packages"]
+    }
+
+
 def package_inventory(root: Path, target: str | None, module: str | None) -> None:
     """Prints exact package-sized dispatch units from checked inventories."""
     claims = validate_claims(root)
@@ -2736,6 +2752,7 @@ def package_inventory(root: Path, target: str | None, module: str | None) -> Non
         "original_obligation_count\taggregate_status\tactive_owner"
     )
     if module is None:
+        covered_packages = _covered_go_packages(slices)
         source_by_path = {str(row["path"]): row for row in source_rows}
         test_by_anchor = {test_key(row): row for row in test_rows}
         known_packages = _go_package_directories(source_by_path, test_by_anchor)
@@ -2786,7 +2803,7 @@ def package_inventory(root: Path, target: str | None, module: str | None) -> Non
             statuses = {
                 str(row["status"]) for row in [*package_sources, *package_tests]
             }
-            if package_supports:
+            if package_supports and package not in covered_packages:
                 statuses.add("UNTRIAGED")
             print(
                 f"{package}\t{','.join(visible_targets) if visible_targets else '-'}\t"

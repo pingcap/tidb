@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import fcntl
 import hashlib
+import importlib.util
 import os
 from pathlib import Path
 import subprocess
@@ -311,12 +312,100 @@ class WorkUnitQueueTest(unittest.TestCase):
             )
         return path
 
+    def cover_planner_package_with_support(self) -> None:
+        """Creates one receipt-backed covered package in the CLI fixture."""
+        evidence = self.shared_fixture_artifact.relative_to(self.repo).as_posix()
+        source = self.root / "difftests/corpus/coverage/go_source_inventory.tsv"
+        source.write_text(
+            source.read_text(encoding="utf-8")
+            .replace("UNTRIAGED\t-\t-\t-", f"COVERED\tplanner-package\t{evidence}\tcovered")
+            .replace("PARTIAL\told\ta\tn", f"COVERED\tplanner-package\t{evidence}\tcovered"),
+            encoding="utf-8",
+        )
+        tests = self.root / "difftests/corpus/coverage/go_test_inventory.tsv"
+        tests.write_text(
+            tests.read_text(encoding="utf-8").replace(
+                "UNTRIAGED\t-\t-\t-",
+                f"COVERED\tplanner-package\t{evidence}\tcovered",
+            ),
+            encoding="utf-8",
+        )
+        support_digest = self.write_tracked(
+            "pkg/planner/BUILD.bazel", "planner package build metadata\n"
+        )
+        support = self.root / "difftests/corpus/coverage/go_package_support_inventory.tsv"
+        support.write_text(
+            "# package_path\tsupport_path\tsha256\n"
+            f"pkg/planner\tpkg/planner/BUILD.bazel\t{support_digest}\n",
+            encoding="utf-8",
+        )
+        rust_path = "rust/crates/tidb-planner/src/planner-package.rs"
+        self.write_tracked(rust_path, "// complete planner package\n")
+        manifest = self.write_package_slice(
+            "planner-package",
+            packages=["pkg/planner"],
+            targets=["tidb-planner"],
+            rust_paths=[rust_path],
+        )
+        package_evidence = self.root / "workstreams/package-evidence"
+        package_evidence.mkdir(parents=True)
+        package_evidence.joinpath("planner-package-support.tsv").write_text(
+            "# support_path\tsha256\tdisposition\tevidence_artifact\tnote\n"
+            f"pkg/planner/BUILD.bazel\t{support_digest}\tbuild-metadata-reviewed\t"
+            "rust/workstreams/slices/planner-package.toml\tcovered\n",
+            encoding="utf-8",
+        )
+        (manifest.parent / "legacy-schema1-slices.tsv").write_text(
+            "# test fixture legacy registry\n", encoding="utf-8"
+        )
+        spec = importlib.util.spec_from_file_location("work_unit_queue_tested", SCRIPT)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        record = module.load_slices(self.root)["planner-package"]
+        manifest.write_text(
+            manifest.read_text(encoding="utf-8").replace(
+                'status = "ready"', 'status = "covered"'
+            ),
+            encoding="utf-8",
+        )
+        receipt = module.package_receipt_payload(
+            self.root,
+            "planner-package",
+            "test-campaign",
+            record,
+            {
+                "claims": {
+                    "planner-package": {"claim_sha256": "c" * 64},
+                },
+                "workspace_sha256": "d" * 64,
+                "slice_manifests_sha256": "e" * 64,
+            },
+        )
+        receipts = self.root / "workstreams/package-receipts"
+        receipts.mkdir(parents=True)
+        receipts.joinpath("planner-package.json").write_text(
+            json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+
     def test_queue_emits_the_complete_go_package_as_candidate(self) -> None:
         result = self.run_tool(
             "queue", "--target", "tidb-planner", "--ring", "plan", "--limit", "1"
         )
         self.assertIn("go_package", result.stdout)
         self.assertIn("pkg/planner\t2\t2\t0\t2\t2\t2", result.stdout)
+
+    def test_covered_package_is_reported_covered_and_not_redispatched(self) -> None:
+        self.cover_planner_package_with_support()
+        listing = self.run_tool("packages")
+        self.assertIn(
+            "pkg/planner\ttidb-planner\t2\t250\t3\tCOVERED\t-",
+            listing.stdout,
+        )
+        queue = self.run_tool(
+            "queue", "--target", "tidb-planner", "--ring", "plan"
+        )
+        self.assertNotIn("pkg/planner", queue.stdout)
 
     def test_raw_claim_dispatch_is_disabled_and_legacy_can_only_abandon(self) -> None:
         anchor = "pkg/planner/foo_test.go:10:TestFoo"
