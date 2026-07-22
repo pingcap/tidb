@@ -146,7 +146,7 @@ fn rewrite_join_node_ctes(
         } => {
             let mut rewritten = subquery.clone();
             if let QueryStmt::Select(select) = rewritten.as_mut() {
-                *select = Box::new(rewrite_select_ctes(select, ctes)?);
+                **select = rewrite_select_ctes(select, ctes)?;
             }
             JoinNode::Derived {
                 subquery: rewritten,

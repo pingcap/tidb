@@ -45,6 +45,7 @@ fn test_ast_format() {
         ("001e-12", "1e-12".to_string()),
         ("345.678", "345.678".to_string()),
         ("00.0001000", "0.0001000".to_string()),
+        ("null", "NULL".to_string()),
         ("\"Hello, world\"", "\"Hello, world\"".to_string()),
         ("'Hello, world'", "\"Hello, world\"".to_string()),
         ("'Hello, \"world\"'", "\"Hello, \\\"world\\\"\"".to_string()),

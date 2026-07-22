@@ -54,6 +54,7 @@ fn test_flag() {
     let cases = [
         ("1 BETWEEN 0 AND 2", FLAG_CONSTANT),
         ("CASE 1 WHEN 1 THEN 1 ELSE 0 END", FLAG_CONSTANT),
+        ("CASE 1 WHEN 1 THEN 1 ELSE 0 END", FLAG_CONSTANT),
         (
             "CASE 1 WHEN a > 1 THEN 1 ELSE 0 END",
             FLAG_CONSTANT | FLAG_HAS_REFERENCE,

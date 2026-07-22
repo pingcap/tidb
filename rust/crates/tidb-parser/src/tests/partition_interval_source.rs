@@ -85,5 +85,5 @@ fn interval_partition_preserves_syntactic_sugar_source_metadata() {
         .expect("interval metadata");
     let start = sql.find("INTERVAL").expect("INTERVAL offset");
     assert_eq!(interval.origin_text_position(), start);
-    assert_eq!(interval.original_text(), sql[start..].as_bytes());
+    assert_eq!(interval.original_text(), &sql.as_bytes()[start..]);
 }
