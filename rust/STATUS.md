@@ -9,11 +9,11 @@ the source or obligation still has explicit unported behavior.
 
 ## Queue
 
-- Active package claims: 1
+- Active package claims: 0
 - Inventory packages: 0
-- Declared ready packages: 4
+- Declared ready packages: 3
 - Active packages: 0
-- Covered packages: 1
+- Covered packages: 2
 - Blocked packages: 1
 
 ## Package campaigns
@@ -22,7 +22,7 @@ the source or obligation still has explicit unported behavior.
 | --- | --- | --- |
 | 2026-07-package-frontier-01 | integrated | 2 |
 | 2026-07-package-frontier-02 | planned | 3 |
-| 2026-07-package-frontier-03 | planned | 1 |
+| 2026-07-package-frontier-03 | integrated | 1 |
 
 ## Legacy schema-1 evidence
 

@@ -69,17 +69,17 @@ states are generated in [`STATUS.md`](STATUS.md). Neither source is evidence
 that any upstream Go package is completely transcreated unless a package
 receipt says so.
 
-One leaf package currently has a schema-2 receipt under
+Two leaf packages currently have schema-2 receipts under
 [`workstreams/package-receipts/`](workstreams/package-receipts/):
-`pkg/server/internal/handshake`, implemented in `tidb-server`. It closes only
-that exact package inventory, not the server handshake parser/authentication
-lifecycle or the `pkg/server` subsystem.
 
-The former `pkg/parser/format` receipt has been reopened. Audit found Go/Rust
-parity gaps in Unicode casing and short-write behavior, and its manifest missed
-a production consumer integration path. Its existing implementation across
-`tidb-ast` and `tidb-datatype` is seed evidence until the complete package is
-repaired, re-gated, and issued a new receipt.
+- `pkg/server/internal/handshake`, implemented in `tidb-server`. It closes only
+  that exact package inventory, not the server handshake
+  parser/authentication lifecycle or the `pkg/server` subsystem.
+- `pkg/parser/format`, implemented across `tidb-ast` and `tidb-datatype`. Its
+  current receipt covers Go simple-rune Unicode casing, arbitrary format bytes,
+  one-call writer semantics, the original package tests/support, and the
+  declared production consumer seam. It does not credit downstream AST-node
+  packages.
 
 ## Whole-package gaps
 

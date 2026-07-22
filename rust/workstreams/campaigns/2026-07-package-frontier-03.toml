@@ -1,6 +1,6 @@
 schema = "2"
 campaign = "2026-07-package-frontier-03"
-status = "planned"
+status = "integrated"
 slices = [
   "parser-format-package",
 ]

@@ -43,9 +43,12 @@ package receipts before its Rust code reaches the shared branch.
   for both packages.
 - [x] (2026-07-22) Added an atomic `reopen-package` transition and used it when
   a later audit invalidated the `pkg/parser/format` receipt.
-- [x] (2026-07-22) Regenerated status: one schema-2 package remains covered,
-  `pkg/parser/format` is ready for complete repair, no package claim remains
-  active, and all remaining source/test rows stay partial or untriaged.
+- [x] (2026-07-22) Repaired and re-gated the complete `pkg/parser/format`
+  package: generated all 2,879 non-identity Go Unicode-15 simple-case mappings,
+  preserved arbitrary bytes and one-call writer results, declared the missing
+  production consumer seam, and issued a fresh immutable receipt through a
+  one-member atomic campaign. Status now reports two covered schema-2 packages
+  and zero active claims; all remaining rows stay partial or untriaged.
 
 ## Surprises & Discoveries
 
@@ -99,6 +102,11 @@ package receipts before its Rust code reaches the shared branch.
   Go applies simple-rune casing, different short-write behavior, and an omitted
   production consumer integration path. The receipt was reopened rather than
   preserving an incorrect covered count.
+- Observation: campaign cardinality is not a correctness invariant.
+  Evidence: the package loader required two members even though one owner is
+  executing one whole package at a time. The correct close invariant is one or
+  more unique package members that exactly equal the active schema-2 claim set;
+  both single-member close and stray-claim rejection now have regressions.
 
 ## Decision Log
 
@@ -154,20 +162,26 @@ package receipts before its Rust code reaches the shared branch.
   coverage immediately. `reopen-package` performs the fail-closed transition
   and refuses dependency-inconsistent reopening.
   Date/Author: 2026-07-22 / Qiliu and Codex.
+- Decision: allow a one-package atomic campaign and require campaign membership
+  to equal the complete active package-claim set.
+  Rationale: batching unrelated packages does not increase parity confidence;
+  exact claim closure prevents a gate from attesting or releasing work outside
+  the receipt transaction.
+  Date/Author: 2026-07-22 / Qiliu and Codex.
 
 ## Outcomes & Retrospective
 
 The whole-package workflow and atomic receipt lifecycle are implemented.
-`pkg/server/internal/handshake` retains a content-bound receipt.
-`pkg/parser/format` does not: its receipt was reopened after a semantic and
-consumer-path audit found missing parity. The earlier integration campaign
-remains historical evidence that its then-declared gates passed; it is no
-longer current package-completion evidence.
+`pkg/server/internal/handshake` and the repaired `pkg/parser/format` now have
+current content-bound receipts. The parser-format repair executes the complete
+generated Go simple-case oracle through the public Rust restore context and
+adds byte and writer-boundary regressions; its receipt also records the real
+field-type consumer seam that the earlier manifest omitted.
 
-The immediate outcome is to repair and re-gate the complete
-`pkg/parser/format` package, then select the next dependency-closed frontier
-from the checked DAG. Every claim must precede implementation commits, and the
-single owner must declare stable leaves and all mutable integration seams.
+The immediate outcome is to select and claim the next dependency-ready whole
+package from the checked DAG before any implementation commit. The single
+owner must declare stable leaves and every mutable integration seam, then close
+that package through the same full gate and atomic receipt transaction.
 
 ## Context and Orientation
 
@@ -213,12 +227,11 @@ all Rust targets, production source count and lines, original obligation count,
 aggregate status, and active owner. It includes test-only packages and packages
 whose production rows are covered but tests remain open.
 
-Fourth, generate each frontier from the checked package view. Prefer
-packages that are dependency-ready, advance the connected SQL-node path, and
-have disjoint Rust writes. Small packages may prove the workflow, but the same
-frontier must include a high-value dependency package so completion is not
-gamed through trivial package counts. Every candidate receives an independent
-inventory/dependency audit before selection.
+Fourth, select each frontier from the checked package view. Prefer one package
+that is dependency-ready and advances the connected SQL-node path. Use a
+dependency-closed package group only when one package cannot close
+independently; never batch unrelated packages to satisfy a count. Every
+candidate receives a complete inventory/dependency audit before selection.
 
 Finally, transcreate each selected package directly from all Go production and
 test/support artifacts. A package that cannot close stays unintegrated and
@@ -240,10 +253,10 @@ Inspect a package manifest and atomically claim it:
     python3 rust/scripts/work-unit-queue.py claim-slice \
       --owner <package-owner> --slice <package-owner>
 
-Create one branch/worktree for the active accepted package under
-`rust/.worktrees/` and use the `codex/` branch prefix. Run focused checks during
-implementation. After a meaningful frontier freezes, close it from `rust/`
-with one checkout-specific target:
+Work in the current checkout when there is one worker; a branch/worktree is an
+optional isolation mechanism, not part of package acceptance. Run focused
+checks during implementation. After the package frontier freezes, close it
+from `rust/` with one checkout-specific target:
 
     CARGO_BUILD_JOBS=12 CARGO_TARGET_DIR=/private/tmp/tidb-rust-package-gate \
       python3 scripts/campaign_close.py --campaign <campaign> --gate
