@@ -876,6 +876,67 @@ func TestIndexJoinPreferIndexCoversMoreJoinKeyCols(t *testing.T) {
 			})
 			testKit.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 		}
+
+		testKit.MustExec("drop table if exists index_join_outer, index_join_inner")
+		testKit.MustExec(`create table index_join_outer (
+			patient_id bigint not null,
+			source_type int not null,
+			reg_sn varchar(100) not null,
+			org_code varchar(20) not null,
+			branch_code varchar(10) not null,
+			key idx_patient (patient_id, source_type, org_code, branch_code, reg_sn)
+		)`)
+		testKit.MustExec(`create table index_join_inner (
+			org_code varchar(20) not null,
+			pres_id bigint not null,
+			seq bigint not null,
+			group_no bigint not null,
+			branch_code varchar(10) not null,
+			opc_id varchar(100),
+			del_flag char(1) not null default '0',
+			payload varchar(100),
+			primary key (org_code, pres_id, seq, group_no, branch_code) clustered,
+			key idx_join (org_code, opc_id, branch_code, del_flag)
+		)`)
+		testKit.MustExec("insert into index_join_outer values (1, 1, '1', 'ORG1', '01'), (1, 1, '999', 'ORG1', '01')")
+		// issue:69974
+		testKit.MustExec(`insert into index_join_inner
+			select 'ORG1', n, 1, 1, '01', cast(n as char), if(n % 2 = 1, '0', '1'), rpad('x', 100, 'x')
+			from (
+				with recursive numbers as (
+					select 1 as n
+					union all
+					select n + 1 from numbers where n < 1000
+				)
+				select n from numbers
+			) generated_rows`)
+		testKit.MustExec("analyze table index_join_outer, index_join_inner")
+		// The PK path only uses org_code and scans all 1000 inner rows per outer row, while idx_join uses all join keys.
+		testKit.MustUseIndex(`select /*+ inl_hash_join(i) */ i.payload
+			from index_join_outer o join index_join_inner i
+			on o.org_code = i.org_code
+			and o.reg_sn = i.opc_id
+			and o.branch_code = i.branch_code
+			and i.del_flag = '0'
+			where o.patient_id = 1 and o.source_type = 1`, "idx_join")
+
+		primaryPlan := testKit.MustQuery(`explain
+			select /*+ inl_hash_join(i) use_index(i, primary) */ i.payload
+			from index_join_outer o join index_join_inner i
+			on o.org_code = i.org_code
+			and o.reg_sn = i.opc_id
+			and o.branch_code = i.branch_code
+			and i.del_flag = '0'
+			where o.patient_id = 1 and o.source_type = 1`).Rows()
+		foundTableRangeScan := false
+		for _, row := range primaryPlan {
+			if strings.Contains(fmt.Sprint(row[0]), "TableRangeScan") {
+				foundTableRangeScan = true
+				// EXPLAIN displays the total estimate for the 2 outer probes.
+				require.Equal(t, "2000.00", fmt.Sprint(row[1]))
+			}
+		}
+		require.True(t, foundTableRangeScan)
 	})
 }
 

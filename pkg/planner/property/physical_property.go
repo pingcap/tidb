@@ -410,11 +410,10 @@ type IndexJoinRuntimeProp struct {
 	OuterJoinKeys []*expression.Column
 	// for inner ds/index to detect the range, cuz its runtime constant.
 	InnerJoinKeys []*expression.Column
-	// AvgInnerRowCnt is computed from join.EqualCondCount / outerChild.RowCount.
-	// since ds only can build empty range before seeing runtime data, the so inner
-	// ds can get an accurate countAfterAccess. Once index join prop pushed to the
-	// deeper side like through join, the deeper DS's countAfterAccess should be
-	// thought twice.
+	// AvgInnerRowCnt is computed from join.EqualCondCount / outerChild.RowCount. It
+	// represents the rows remaining after all equality join conditions, so it is a
+	// lower bound for an access path that can only use a subset of the join keys.
+	// The DataSource derives path-specific probe cardinalities after choosing the path.
 	AvgInnerRowCnt float64
 	// since tableRangeScan and indexRangeScan can't be told which one is better at
 	// copTask phase because of the latter attached operators into cop and the single

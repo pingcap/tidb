@@ -93,6 +93,7 @@ type indexJoinPathResult struct {
 	chosenRanges   ranger.MutableRanges    // the ranges used to access this index
 	usedColsLen    int                     // the number of columns used on this index, `t1.a=t2.a and t1.b=t2.b` can use 2 columns of index t1(a, b, c)
 	eqUsedColsNDV  float64                 // the estimated NDV of the EQ used columns on this index, the NDV of `t1(a, b)`, a,b are in EQ constraint.
+	lastColIsRange bool                    // whether the last used index column is accessed by a non-point range
 	idxOff2KeyOff  []int
 	lastColManager *physicalop.ColWithCmpFuncManager
 }
@@ -427,12 +428,47 @@ func indexJoinPathConstructResult(
 		candidate:      getIndexCandidateForIndexJoin(sctx, path, usedColsLen),
 		usedColsLen:    len(ranges.Range()[0].LowVal),
 		eqUsedColsNDV:  innerNDV,
+		lastColIsRange: lastColIsRange,
 		chosenRanges:   ranges,
 		chosenAccess:   accesses,
 		chosenRemained: remained,
 		idxOff2KeyOff:  idxOff2KeyOff,
 		lastColManager: lastColManager,
 	}
+}
+
+// estimateIndexJoinProbeCountAfterAccess estimates how many rows the chosen inner ranges match for
+// one outer row before residual DataSource filters and unused join equality conditions are evaluated.
+// It returns false when the path-independent join row count is sufficient or a range estimate is not
+// available, so the caller can preserve the existing fallback behavior.
+func estimateIndexJoinProbeCountAfterAccess(
+	ds *logicalop.DataSource,
+	result *indexJoinPathResult,
+	innerJoinKeyCount int,
+) (float64, bool) {
+	if result == nil || result.lastColIsRange || result.eqUsedColsNDV <= 0 ||
+		ds.TableStats == nil || ds.TableStats.RowCount <= 0 {
+		return 0, false
+	}
+	usedJoinKeyCount := 0
+	for _, keyOff := range result.idxOff2KeyOff {
+		if keyOff >= 0 {
+			usedJoinKeyCount++
+		}
+	}
+	if usedJoinKeyCount >= innerJoinKeyCount {
+		return 0, false
+	}
+	ranges := result.chosenRanges.Range()
+	if len(ranges) == 0 {
+		return 0, false
+	}
+
+	// The runtime values are unknown during optimization. Estimate an average point-prefix lookup
+	// from the NDV of exactly the equality columns used by this path. Multiple template ranges can
+	// be produced by static IN predicates, and their combined rows cannot exceed the whole table.
+	countAfterAccess := ds.TableStats.RowCount / result.eqUsedColsNDV * float64(len(ranges))
+	return math.Min(countAfterAccess, ds.TableStats.RowCount), true
 }
 
 func indexJoinPathBuildTmpRange(

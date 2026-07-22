@@ -698,12 +698,18 @@ func buildDataSource2IndexScanByIndexJoinProp(
 	if indexJoinResult == nil {
 		return base.InvalidTask
 	}
+	countAfterAccess, hasPathEstimate := estimateIndexJoinProbeCountAfterAccess(
+		ds, indexJoinResult, len(prop.IndexJoinProp.InnerJoinKeys))
+	indexConds, tableConds := splitIndexFilterConditions(
+		ds, indexJoinResult.chosenRemained, indexJoinResult.chosenPath.FullIdxCols, indexJoinResult.chosenPath.FullIdxColLens)
+	probeCardinality := estimateIndexJoinProbeCardinality(
+		ds, countAfterAccess, hasPathEstimate, indexConds, tableConds, prop.IndexJoinProp.AvgInnerRowCnt)
 	rangeInfo, maxOneRow := indexJoinPathGetRangeInfoAndMaxOneRow(ds.SCtx(), prop.IndexJoinProp.OuterJoinKeys, indexJoinResult)
 	var innerTask base.Task
 	if !prop.IsSortItemEmpty() && matchProperty(ds, indexJoinResult.chosenPath, prop) == property.PropMatched {
-		innerTask = constructDS2IndexScanTask(ds, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.idxOff2KeyOff, rangeInfo, true, prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
+		innerTask = constructDS2IndexScanTask(ds, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexConds, tableConds, indexJoinResult.idxOff2KeyOff, rangeInfo, true, prop.SortItems[0].Desc, probeCardinality, maxOneRow)
 	} else {
-		innerTask = constructDS2IndexScanTask(ds, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.idxOff2KeyOff, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
+		innerTask = constructDS2IndexScanTask(ds, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexConds, tableConds, indexJoinResult.idxOff2KeyOff, rangeInfo, false, false, probeCardinality, maxOneRow)
 	}
 	// since there is a possibility that inner task can't be built and the returned value is nil, we just return base.InvalidTask.
 	if innerTask == nil {
@@ -746,14 +752,18 @@ func buildDataSource2TableScanByIndexJoinProp(
 		if indexJoinResult == nil {
 			return base.InvalidTask
 		}
+		countAfterAccess, hasPathEstimate := estimateIndexJoinProbeCountAfterAccess(
+			ds, indexJoinResult, len(prop.IndexJoinProp.InnerJoinKeys))
+		probeCardinality := estimateIndexJoinProbeCardinality(
+			ds, countAfterAccess, hasPathEstimate, nil, indexJoinResult.chosenRemained, prop.IndexJoinProp.AvgInnerRowCnt)
 		// prepare the range info with outer join keys, it shows like: [xxx] decided by:
 		rangeInfo, maxOneRow := indexJoinPathGetRangeInfoAndMaxOneRow(ds.SCtx(), prop.IndexJoinProp.OuterJoinKeys, indexJoinResult)
 		// construct the inner task with chosen path and ranges, note: it only for this leaf datasource.
 		// like the normal way, we need to check whether the chosen path is matched with the prop, if so, we will set the `keepOrder` to true.
 		if matchProperty(ds, indexJoinResult.chosenPath, prop) == property.PropMatched {
-			innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.chosenAccess, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
+			innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.chosenAccess, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, probeCardinality, maxOneRow)
 		} else {
-			innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.chosenAccess, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
+			innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.chosenAccess, rangeInfo, false, false, probeCardinality, maxOneRow)
 		}
 		ranges = indexJoinResult.chosenRanges
 	} else {
@@ -771,10 +781,12 @@ func buildDataSource2TableScanByIndexJoinProp(
 		// For IntHandle (integer primary key), it's always a unique match.
 		maxOneRow := true
 		rangeInfo := indexJoinIntPKRangeInfo(ds.SCtx().GetExprCtx().GetEvalCtx(), newOuterJoinKeys)
+		probeCardinality := estimateIndexJoinProbeCardinality(
+			ds, 0, false, nil, ds.PushedDownConds, prop.IndexJoinProp.AvgInnerRowCnt)
 		if !prop.IsSortItemEmpty() && matchProperty(ds, chosenPath, prop) == property.PropMatched {
-			innerTask = constructDS2TableScanTask(ds, localRanges, ds.PushedDownConds, nil, rangeInfo, true, prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
+			innerTask = constructDS2TableScanTask(ds, localRanges, ds.PushedDownConds, nil, rangeInfo, true, prop.SortItems[0].Desc, probeCardinality, maxOneRow)
 		} else {
-			innerTask = constructDS2TableScanTask(ds, localRanges, ds.PushedDownConds, nil, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
+			innerTask = constructDS2TableScanTask(ds, localRanges, ds.PushedDownConds, nil, rangeInfo, false, false, probeCardinality, maxOneRow)
 		}
 	}
 	// since there is a possibility that inner task can't be built and the returned value is nil, we just return base.InvalidTask.
@@ -820,6 +832,74 @@ func completeIndexJoinFeedBackInfo(innerTask *physicalop.CopTask, indexJoinResul
 	innerTask.IndexJoinInfo = info
 }
 
+// indexJoinProbeCardinality records the estimated rows at each stage of an IndexJoin probe.
+// countAfterFilter includes residual DataSource filters, but not join equality conditions that
+// the chosen access path cannot use.
+type indexJoinProbeCardinality struct {
+	// Rows matched by runtime-built lookup ranges, before residual filters.
+	countAfterAccess float64
+
+	// Rows after filters evaluable from index columns and before table lookup.
+	// It equals countAfterAccess for a table path.
+	countAfterIndex float64
+
+	// Rows after all residual DataSource filters, but before join conditions
+	// that are not used by the access path.
+	countAfterFilter float64
+}
+
+func estimateIndexJoinProbeCardinality(
+	ds *logicalop.DataSource,
+	countAfterAccess float64,
+	hasPathEstimate bool,
+	indexConds []expression.Expression,
+	tableConds []expression.Expression,
+	fallbackCountAfterFilter float64,
+) indexJoinProbeCardinality {
+	// Estimate the index and table filter stages separately. This keeps the scan and
+	// lookup costs explicit instead of deriving both by dividing a final row count.
+	indexSelectivity := estimateIndexJoinFilterSelectivity(ds, indexConds)
+	tableSelectivity := estimateIndexJoinFilterSelectivity(ds, tableConds)
+	if !hasPathEstimate {
+		if fallbackCountAfterFilter <= 0 {
+			fallbackCountAfterFilter = 1
+		}
+		countAfterIndex := fallbackCountAfterFilter / tableSelectivity
+		return indexJoinProbeCardinality{
+			countAfterAccess: countAfterIndex / indexSelectivity,
+			countAfterIndex:  countAfterIndex,
+			countAfterFilter: fallbackCountAfterFilter,
+		}
+	}
+
+	probeCardinality := indexJoinProbeCardinality{
+		countAfterAccess: countAfterAccess,
+		countAfterIndex:  countAfterAccess * indexSelectivity,
+	}
+	probeCardinality.countAfterFilter = probeCardinality.countAfterIndex * tableSelectivity
+	// AvgInnerRowCnt is estimated after all equality join conditions. Conditions that this path
+	// cannot use can only reduce the probe rows further, so it is a lower bound here.
+	if probeCardinality.countAfterFilter < fallbackCountAfterFilter {
+		ratio := fallbackCountAfterFilter / probeCardinality.countAfterFilter
+		probeCardinality.countAfterAccess *= ratio
+		probeCardinality.countAfterIndex *= ratio
+		probeCardinality.countAfterFilter = fallbackCountAfterFilter
+	}
+	return probeCardinality
+}
+
+func estimateIndexJoinFilterSelectivity(ds *logicalop.DataSource, filters []expression.Expression) float64 {
+	if len(filters) == 0 {
+		return 1
+	}
+	selectivity, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, filters, ds.PossibleAccessPaths)
+	if err != nil || selectivity <= 0 {
+		logutil.BgLogger().Debug("unexpected selectivity, use selection factor", zap.Float64("selectivity", selectivity), zap.String("table", ds.TableAsName.L))
+		return cost.SelectionFactor
+	}
+	return selectivity
+}
+
 // constructDS2TableScanTask constructs the inner table scan task for index join.
 func constructDS2TableScanTask(
 	ds *logicalop.DataSource,
@@ -829,7 +909,7 @@ func constructDS2TableScanTask(
 	rangeInfo string,
 	keepOrder bool,
 	desc bool,
-	rowCount float64,
+	probeCardinality indexJoinProbeCardinality,
 	maxOneRow bool,
 ) base.Task {
 	// If `ds.TableInfo.GetPartitionInfo() != nil`,
@@ -854,31 +934,17 @@ func constructDS2TableScanTask(
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	ts.SetIsPartition(ds.PartitionDefIdx != nil)
 	ts.SetSchema(ds.Schema().Clone())
-	if rowCount <= 0 {
-		rowCount = float64(1)
-	}
-	selectivity := float64(1)
-	countAfterAccess := rowCount
-	if len(ts.FilterCondition) > 0 {
-		var err error
-		selectivity, err = cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, ts.FilterCondition, ds.PossibleAccessPaths)
-		if err != nil || selectivity <= 0 {
-			logutil.BgLogger().Debug("unexpected selectivity, use selection factor", zap.Float64("selectivity", selectivity), zap.String("table", ts.TableAsName.L))
-			selectivity = cost.SelectionFactor
-		}
-		// rowCount is computed from result row count of join, which has already accounted the filters on DataSource,
-		// i.e, rowCount equals to `countAfterAccess * selectivity`.
-		countAfterAccess = rowCount / selectivity
-	}
 	// Only apply the 1-row limit when we can guarantee at most one row per outer row.
 	// For CommonHandle, this requires matching ALL primary key columns with equality conditions.
 	// For prefix scans (e.g., only matching first column of a composite PK), we trust the statistical estimation.
-	finalRowCount := countAfterAccess
-	if maxOneRow {
-		finalRowCount = math.Min(1.0, countAfterAccess)
+	if maxOneRow && probeCardinality.countAfterAccess > 1 {
+		ratio := 1 / probeCardinality.countAfterAccess
+		probeCardinality.countAfterAccess = 1
+		probeCardinality.countAfterIndex *= ratio
+		probeCardinality.countAfterFilter *= ratio
 	}
 	ts.SetStats(&property.StatsInfo{
-		RowCount:     finalRowCount,
+		RowCount:     probeCardinality.countAfterAccess,
 		StatsVersion: ds.StatsInfo().StatsVersion,
 		// NDV would not be used in cost computation of IndexJoin, set leave it as default nil.
 	})
@@ -912,6 +978,7 @@ func constructDS2TableScanTask(
 	}
 	ts.FilterCondition = ranger.AppendConditionsIfNotExist(ds.SCtx().GetExprCtx().GetEvalCtx(), ts.FilterCondition, innerOnlyAccessConds)
 	copTask.RootTaskConds = append(copTask.RootTaskConds, rootTaskConds...)
+	selectivity := probeCardinality.countAfterFilter / probeCardinality.countAfterAccess
 	selStats := ts.StatsInfo().Scale(ds.SCtx().GetSessionVars(), selectivity)
 	addPushedDownSelection4PhysicalTableScan(ts, copTask, selStats, ds.AstIndexHints)
 	return copTask
@@ -1021,12 +1088,13 @@ func constructDS2IndexScanTask(
 	ds *logicalop.DataSource,
 	path *util.AccessPath,
 	ranges ranger.Ranges,
-	filterConds []expression.Expression,
+	indexConds []expression.Expression,
+	tblConds []expression.Expression,
 	idxOffset2joinKeyOffset []int,
 	rangeInfo string,
 	keepOrder bool,
 	desc bool,
-	rowCount float64,
+	probeCardinality indexJoinProbeCardinality,
 	maxOneRow bool,
 ) base.Task {
 	// If `ds.TableInfo.GetPartitionInfo() != nil`,
@@ -1109,7 +1177,6 @@ func constructDS2IndexScanTask(
 		cop.CommonHandleCols = ds.CommonHandleCols
 	}
 	is.InitSchema(append(path.FullIdxCols, ds.CommonHandleCols...), cop.TablePlan != nil)
-	indexConds, tblConds := splitIndexFilterConditions(ds, filterConds, path.FullIdxCols, path.FullIdxColLens)
 	// Only apply this gate to residual filters (not range builders) for IndexJoin probe side.
 	// Range-deriving predicates are decided earlier and remain unchanged.
 	pushDownIndexConds, rootTaskIndexConds := splitLargeInListFiltersForIndexJoinProbe(indexConds, indexJoinProbeSideLargeInNotInThreshold)
@@ -1142,62 +1209,31 @@ func constructDS2IndexScanTask(
 	}
 
 	if rowCountUpperBound > 0 {
-		rowCount = math.Min(rowCount, rowCountUpperBound)
+		probeCardinality.countAfterAccess = math.Min(probeCardinality.countAfterAccess, rowCountUpperBound)
+		probeCardinality.countAfterIndex = math.Min(probeCardinality.countAfterIndex, rowCountUpperBound)
+		probeCardinality.countAfterFilter = math.Min(probeCardinality.countAfterFilter, rowCountUpperBound)
 	}
 	if maxOneRow {
-		// Theoretically, this line is unnecessary because row count estimation of join should guarantee rowCount is not larger
-		// than 1.0; however, there may be rowCount larger than 1.0 in reality, e.g, pseudo statistics cases, which does not reflect
-		// unique constraint in NDV.
-		rowCount = math.Min(rowCount, 1.0)
+		// Theoretically, the join row-count estimate should not exceed 1.0. It can be larger
+		// with pseudo statistics, which do not reflect the unique constraint in their NDV.
+		probeCardinality.countAfterAccess = math.Min(probeCardinality.countAfterAccess, 1.0)
+		probeCardinality.countAfterIndex = math.Min(probeCardinality.countAfterIndex, 1.0)
+		probeCardinality.countAfterFilter = math.Min(probeCardinality.countAfterFilter, 1.0)
 	}
 	tmpPath := &util.AccessPath{
 		IndexFilters:        pushDownIndexConds,
 		TableFilters:        pushDownTblConds,
-		CountAfterIndex:     rowCount,
-		CountAfterAccess:    rowCount,
+		CountAfterIndex:     probeCardinality.countAfterIndex,
+		CountAfterAccess:    probeCardinality.countAfterAccess,
 		MinCountAfterAccess: 0,
 		MaxCountAfterAccess: 0,
-	}
-	// Assume equal conditions used by index join and other conditions are independent.
-	if len(tblConds) > 0 {
-		selectivity, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, tblConds, ds.PossibleAccessPaths)
-		if err != nil || selectivity <= 0 {
-			logutil.BgLogger().Debug("unexpected selectivity, use selection factor", zap.Float64("selectivity", selectivity), zap.String("table", ds.TableAsName.L))
-			selectivity = cost.SelectionFactor
-		}
-		// rowCount is computed from result row count of join, which has already accounted the filters on DataSource,
-		// i.e, rowCount equals to `countAfterIndex * selectivity`.
-		cnt := rowCount / selectivity
-		if rowCountUpperBound > 0 {
-			cnt = math.Min(cnt, rowCountUpperBound)
-		}
-		if maxOneRow {
-			cnt = math.Min(cnt, 1.0)
-		}
-		tmpPath.CountAfterIndex = cnt
-		tmpPath.CountAfterAccess = cnt
-	}
-	if len(indexConds) > 0 {
-		selectivity, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, indexConds, ds.PossibleAccessPaths)
-		if err != nil || selectivity <= 0 {
-			logutil.BgLogger().Debug("unexpected selectivity, use selection factor", zap.Float64("selectivity", selectivity), zap.String("table", ds.TableAsName.L))
-			selectivity = cost.SelectionFactor
-		}
-		cnt := tmpPath.CountAfterIndex / selectivity
-		if rowCountUpperBound > 0 {
-			cnt = math.Min(cnt, rowCountUpperBound)
-		}
-		if maxOneRow {
-			cnt = math.Min(cnt, 1.0)
-		}
-		tmpPath.CountAfterAccess = cnt
 	}
 	is.SetStats(ds.TableStats.ScaleByExpectCnt(is.SCtx().GetSessionVars(), tmpPath.CountAfterAccess))
 	usedStats := ds.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(false)
 	if usedStats != nil && usedStats.GetUsedInfo(is.PhysicalTableID) != nil {
 		is.UsedStatsInfo = usedStats.GetUsedInfo(is.PhysicalTableID)
 	}
-	finalStats := ds.TableStats.ScaleByExpectCnt(ds.SCtx().GetSessionVars(), rowCount)
+	finalStats := ds.TableStats.ScaleByExpectCnt(ds.SCtx().GetSessionVars(), probeCardinality.countAfterFilter)
 	cop.RootTaskConds = append(cop.RootTaskConds, rootTaskIndexConds...)
 	cop.RootTaskConds = append(cop.RootTaskConds, rootTaskTblConds...)
 	if err := addPushedDownSelection4PhysicalIndexScan(is, cop, ds, tmpPath, finalStats); err != nil {
