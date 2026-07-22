@@ -3,16 +3,12 @@ slice = "server-internal-handshake-package"
 status = "ready"
 targets = ["tidb-server"]
 rings = ["unassigned"]
-consumer = "The server handshake parser, authentication negotiation, compression selection, and connection lifecycle share one Rust-native HandshakeResponse41 value carrying every field from the complete Go package."
+consumer = "MySQL handshake parsing, authentication policy, compression setup, and connection startup consume one Rust-native HandshakeResponse41 data contract carrying every field from the complete Go package."
 test_target = "handshake_response_package_source"
 go_packages = ["pkg/server/internal/handshake"]
 module_packages = []
 depends_on = []
 rust_paths = [
-  "rust/crates/tidb-server/src/handshake.rs",
-  "rust/crates/tidb-server/src/compressed_command_io.rs",
-  "rust/crates/tidb-server/src/lib.rs",
+  "rust/crates/tidb-server/src/handshake_response.rs",
   "rust/crates/tidb-server/tests/handshake_response_package_source.rs",
-  "rust/crates/tidb-server/tests/handshake_source.rs",
-  "rust/crates/tidb-server/tests/compressed_command_io_source.rs",
 ]
