@@ -331,3 +331,29 @@ fn generic_formatter_go_print_radix_zero_and_rounded_g_boundaries() {
     assert_eq!(render("%.2G", FormatArg::from(99.9_f64)), "1E+02");
     assert_eq!(render("%.2g", FormatArg::from(9.99_f64)), "10");
 }
+
+#[test]
+fn generic_formatter_v_delegates_to_kind_specific_go_formatting() {
+    assert_eq!(render("%+v", FormatArg::from(7_i64)), "7");
+    assert_eq!(render("%+v", FormatArg::from(7_u64)), "7");
+    assert_eq!(render("%+v", FormatArg::from(1.5_f64)), "1.5");
+    assert_eq!(render("% v", FormatArg::from(7_i64)), " 7");
+    assert_eq!(render("% v", FormatArg::from(7_u64)), " 7");
+    assert_eq!(render("%v", FormatArg::from(1.23456789_f64)), "1.23456789");
+    assert_eq!(render("%.2v", FormatArg::from(99.9_f64)), "1e+02");
+    assert_eq!(render("% .2v", FormatArg::from(1.5_f64)), " 1.5");
+    assert_eq!(render("%#.2v", FormatArg::from(99.9_f64)), "1e+02");
+
+    assert_eq!(render("%#.4v", FormatArg::from(7_u64)), "0x0007");
+    assert_eq!(render("%#.0v", FormatArg::from(0_u64)), "");
+    assert_eq!(render("%#08v", FormatArg::from(7_u64)), "0x00000007");
+    assert_eq!(render("%# .4v", FormatArg::from(7_u64)), " 0x0007");
+    assert_eq!(render("%#.4v", FormatArg::from(7_i64)), "0007");
+    assert_eq!(render("%#.4v", FormatArg::from('A')), "0065");
+
+    assert_eq!(render("%#8.2v", FormatArg::from(true)), "    true");
+    assert_eq!(render("%#8.2v", FormatArg::from("hello")), "    \"he\"");
+    let custom = FormatArg::new("display", "debug", "custom");
+    assert_eq!(render("%.4v", custom.clone()), "disp");
+    assert_eq!(render("%#v", custom), "debug");
+}

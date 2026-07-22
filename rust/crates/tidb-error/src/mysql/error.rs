@@ -824,6 +824,14 @@ fn general_float(argument: &FormatArg, upper: bool, spec: FormatSpec) -> String 
     if let Some(value) = special_float(argument, spec) {
         return value;
     }
+    if spec.precision.is_none() && !spec.alternate {
+        let rendered = if upper {
+            argument.display.replace('e', "E")
+        } else {
+            argument.display.clone()
+        };
+        return pad_width(apply_float_sign(rendered, spec), spec, true);
+    }
     let value = argument
         .display
         .parse::<f64>()
@@ -1092,46 +1100,41 @@ fn render_argument(verb: u8, spec: FormatSpec, argument: &FormatArg) -> String {
             }
             _ => mismatch(verb, argument),
         },
-        b'v' if spec.alternate => match argument.kind {
-            FormatKind::String => pad_width(
-                quoted_string(&truncate(&argument.display, spec.precision), false, false),
-                spec,
-                false,
-            ),
-            FormatKind::Float => special_float(
-                argument,
-                FormatSpec {
-                    plus: false,
-                    ..spec
-                },
-            )
-            .unwrap_or_else(|| pad_width(argument.debug.clone(), spec, true)),
-            FormatKind::Signed | FormatKind::Unsigned | FormatKind::Char => {
-                pad_width(argument.debug.clone(), spec, true)
+        b'v' => {
+            let go_syntax = spec.alternate;
+            let spec = FormatSpec {
+                alternate: false,
+                plus: false,
+                ..spec
+            };
+            match argument.kind {
+                FormatKind::String if go_syntax => pad_width(
+                    quoted_string(&truncate(&argument.display, spec.precision), false, false),
+                    spec,
+                    false,
+                ),
+                FormatKind::String => {
+                    pad_width(truncate(&argument.display, spec.precision), spec, false)
+                }
+                FormatKind::Unsigned if go_syntax => radix_integer(
+                    argument,
+                    b'x',
+                    FormatSpec {
+                        alternate: true,
+                        ..spec
+                    },
+                ),
+                FormatKind::Signed | FormatKind::Unsigned | FormatKind::Char => {
+                    decimal_integer(argument, spec)
+                }
+                FormatKind::Float => general_float(argument, false, spec),
+                FormatKind::Custom if go_syntax => pad_width(argument.debug.clone(), spec, false),
+                FormatKind::Custom => {
+                    pad_width(truncate(&argument.display, spec.precision), spec, false)
+                }
+                _ => pad_width(argument.display.clone(), spec, false),
             }
-            _ => pad_width(argument.debug.clone(), spec, false),
-        },
-        b'v' => match argument.kind {
-            FormatKind::String | FormatKind::Custom => {
-                pad_width(truncate(&argument.display, spec.precision), spec, false)
-            }
-            FormatKind::Signed | FormatKind::Unsigned | FormatKind::Char => decimal_integer(
-                argument,
-                FormatSpec {
-                    plus: false,
-                    ..spec
-                },
-            ),
-            FormatKind::Float => special_float(
-                argument,
-                FormatSpec {
-                    plus: false,
-                    ..spec
-                },
-            )
-            .unwrap_or_else(|| pad_width(argument.display.clone(), spec, true)),
-            _ => pad_width(argument.display.clone(), spec, false),
-        },
+        }
         b'T' => pad_width(truncate(&argument.type_name, spec.precision), spec, false),
         b't' if argument.kind == FormatKind::Bool => {
             pad_width(argument.display.clone(), spec, false)
