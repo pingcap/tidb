@@ -258,6 +258,12 @@ datatype/evaluation context, planner/executor/session dispatch, server
 connection lifecycle, transaction/storage authority, and evidence generation
 are changed in one controlled frontier.
 
+Package claims may also declare the workspace `Cargo.toml` and generated
+`Cargo.lock` as shared integration seams when the complete package requires a
+new Rust dependency. They remain serialized and gate-attested; dependency
+changes must never escape the package claim merely because those files sit
+above its target crate.
+
 The normal single-worker control surface has two commands: `frontier` selects
 only dependency-ready whole packages, and `start-package` scaffolds and claims
 the chosen package. The general package inventory remains an audit view; it is

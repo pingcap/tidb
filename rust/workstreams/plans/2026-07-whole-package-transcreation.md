@@ -194,6 +194,13 @@ package receipts before its Rust code reaches the shared branch.
   40 seconds while still putting the dependency-blocked root parser package
   first. One-pass grouping plus direct-import frontier filtering now returns
   only the two actually startable parser packages in under 3 seconds.
+- Observation: crate-only integration paths made dependency-bearing package
+  claims impossible to complete honestly.
+  Evidence: the first `pkg/parser/terror` start needed JSON/logging dependencies
+  in `tidb-error`, but the generated Cargo lock sits at `rust/Cargo.lock`, above
+  every target crate. Schema 2 now permits only the workspace Cargo manifest
+  and lock as shared root integration seams and keeps both claim- and
+  gate-attested.
 
 ## Decision Log
 

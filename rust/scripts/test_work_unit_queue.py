@@ -2180,6 +2180,16 @@ class WorkUnitQueueTest(unittest.TestCase):
         failure = self.run_tool("check", success=False)
         self.assertIn("integration path overlaps stable Rust ownership", failure.stderr)
 
+    def test_schema2_allows_workspace_cargo_files_as_shared_integration_seams(self) -> None:
+        self.write_tracked("rust/Cargo.lock", "# generated lock\n")
+        self.write_package_slice(
+            "planner-package",
+            packages=["pkg/planner"],
+            targets=["tidb-planner"],
+            integration_paths=["rust/Cargo.toml", "rust/Cargo.lock"],
+        )
+        self.run_tool("check")
+
     def test_integration_seams_may_overlap_across_package_manifests(self) -> None:
         seam = "rust/crates/tidb-planner/src/lib.rs"
         self.write_tracked(seam, "pub mod shared;\n")

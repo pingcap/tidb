@@ -96,7 +96,10 @@ and stable package-owned Rust paths. `rust_paths` are exclusive package leaves.
 `integration_paths` are existing shared crate seams changed serially with the
 active package; they may overlap across package manifests but must not
 overlap any schema-2 stable path by ancestry. The claim freezes both exact
-lists.
+lists. A package that changes dependencies must also declare `rust/Cargo.toml`
+and/or generated `rust/Cargo.lock` as shared integration paths; these two
+workspace files are the only integration seams allowed outside declared target
+crate roots.
 
 With one worker, use the current branch and checkout. A `codex/<package-owner>`
 branch or worktree is optional isolation for an experiment, not an acceptance

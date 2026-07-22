@@ -57,6 +57,7 @@ GO_TOKEN_RE = re.compile(
 OPEN_STATUSES = {"UNTRIAGED", "PARTIAL", "BLOCKED"}
 SLICE_STATUSES = {"ready", "active", "partial", "covered", "blocked", "retired"}
 PACKAGE_SLICE_STATUSES = {"inventory", "ready", "active", "blocked", "covered"}
+WORKSPACE_INTEGRATION_PATHS = {"rust/Cargo.toml", "rust/Cargo.lock"}
 EVIDENCE_MINIMUM_STATUSES = {"PARTIAL", "COVERED"}
 EVIDENCE_STATUS_RANK = {"UNTRIAGED": 0, "PARTIAL": 1, "COVERED": 2}
 CAMPAIGN_STATUSES = {"planned", "active", "frozen", "integrated"}
@@ -910,10 +911,10 @@ def load_slices(root: Path) -> dict[str, dict[str, object]]:
                 if not any(
                     candidate.is_relative_to(Path(workspace_crates[target]))
                     for target in record["targets"]
-                ):
+                ) and integration_path not in WORKSPACE_INTEGRATION_PATHS:
                     raise ValueError(
                         f"{path}: integration path {integration_path} is outside "
-                        "the declared target workspace crates"
+                        "the declared target workspace crates and shared workspace manifests"
                     )
                 if not (root.parent / integration_path).is_file():
                     raise ValueError(
