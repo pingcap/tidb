@@ -16,6 +16,7 @@ package autoid
 
 import (
 	"context"
+	goerrors "errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -100,6 +101,35 @@ type notLeaderRetryState struct {
 	leader    autoIDLeaderSnapshot
 	count     int
 	firstSeen time.Time
+}
+
+type notLeaderFastFailMarker interface {
+	AutoIDNotLeaderFastFail()
+}
+
+type notLeaderFastFailError struct {
+	cause error
+}
+
+func (e *notLeaderFastFailError) Error() string {
+	return e.cause.Error()
+}
+
+func (e *notLeaderFastFailError) Cause() error {
+	return e.cause
+}
+
+func (e *notLeaderFastFailError) Unwrap() error {
+	return e.cause
+}
+
+func (*notLeaderFastFailError) AutoIDNotLeaderFastFail() {}
+
+// IsNotLeaderFastFailError reports whether err is a terminal error caused by
+// repeated not-leader responses from an unchanged AutoID leader.
+func IsNotLeaderFastFailError(err error) bool {
+	var marker notLeaderFastFailMarker
+	return goerrors.As(err, &marker)
 }
 
 func (s *notLeaderRetryState) observe(leader autoIDLeaderSnapshot, now time.Time, policy notLeaderRetryPolicy) bool {
@@ -244,7 +274,7 @@ func (sp *singlePointAlloc) repeatedNotLeaderError(
 ) error {
 	elapsed := now.Sub(state.firstSeen)
 	// TODO: Consider enriching terminal errors with the remote TiDB identity from /info.
-	return ErrAutoincReadFailed.GenWithStack(fmt.Sprintf(
+	message := fmt.Sprintf(
 		"autoid %s failed after %d consecutive %q responses from leader endpoint %s over %s; keyspace_id=%d, db_id=%d, table_id=%d; %s",
 		operation,
 		state.count,
@@ -255,7 +285,8 @@ func (sp *singlePointAlloc) repeatedNotLeaderError(
 		sp.dbID,
 		sp.tblID,
 		autoIDNotLeaderAction,
-	))
+	)
+	return errors.AddStack(&notLeaderFastFailError{cause: ErrAutoincReadFailed.FastGen(message)})
 }
 
 func (sp *singlePointAlloc) handleNotLeaderError(
